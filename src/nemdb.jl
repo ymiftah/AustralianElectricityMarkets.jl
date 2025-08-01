@@ -3,18 +3,18 @@ using Dates
 using TidierDB
 
 """
-    read_hive(table_name::Symbol, db::TidierDB.DBInterface.Connection; config::PyHiveConfiguration=CONFIG[])
+    read_hive(db::TidierDB.DBInterface.Connection,table_name::Symbol; config::PyHiveConfiguration=CONFIG[])
 
 Read a hive-partitioned parquet dataset into a TidierDB table.
 
 # Arguments
-- `table_name::Symbol`: The name of the table to read.
 - `db::TidierDB.DBInterface.Connection`: The database connection to use.
+- `table_name::Symbol`: The name of the table to read.
 - `config::PyHiveConfiguration`: The configuration to use. Defaults to `CONFIG[]`.
 """
 function read_hive(
-    table_name::Symbol,
-    db::TidierDB.DBInterface.Connection;
+    db::TidierDB.DBInterface.Connection,
+    table_name::Symbol;
     config::PyHiveConfiguration=CONFIG[],
 )
     hive_root = _parse_hive_root(config)
