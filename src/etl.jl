@@ -1,6 +1,5 @@
 using TidierDB
 
-
 """
     read_hive(table_name::Symbol, db::TidierDB.DBInterface.Connection; config::PyHiveConfiguration=CONFIG[])
 
@@ -14,7 +13,7 @@ Read a hive-partitioned parquet dataset into a TidierDB table.
 function read_hive(
     table_name::Symbol,
     db::TidierDB.DBInterface.Connection;
-    config::PyHiveConfiguration=CONFIG[]
+    config::PyHiveConfiguration=CONFIG[],
 )
     hive_root = _parse_hive_root(config)
     hive_path = """

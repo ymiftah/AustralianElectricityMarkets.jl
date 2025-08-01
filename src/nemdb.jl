@@ -1,7 +1,6 @@
 using PythonCall
 using Dates
 
-
 """
     populate(table::Symbol, time_range::Any; location::String=CONFIG[].hive_location, filesystem=CONFIG[].filesystem)
 
@@ -39,7 +38,7 @@ function list_available_tables()::Array{Symbol}
     nemdb = pyimport("nemdb")
     config = nemdb.Config
     dbs = nemdb.NEMWEBManager(config)
-    return pyconvert(Array, dbs.active_tables()) .|> Symbol
+    return Symbol.(pyconvert(Array, dbs.active_tables()))
 end
 
 """

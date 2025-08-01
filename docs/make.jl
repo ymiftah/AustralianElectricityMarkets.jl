@@ -1,7 +1,12 @@
 using AustralianElectricityMarket
 using Documenter
 
-DocMeta.setdocmeta!(AustralianElectricityMarket, :DocTestSetup, :(using AustralianElectricityMarket); recursive=true)
+DocMeta.setdocmeta!(
+    AustralianElectricityMarket,
+    :DocTestSetup,
+    :(using AustralianElectricityMarket);
+    recursive=true,
+)
 
 makedocs(;
     modules=[AustralianElectricityMarket],
@@ -12,12 +17,7 @@ makedocs(;
         edit_link="main",
         assets=String[],
     ),
-    pages=[
-        "Home" => "index.md",
-    ],
+    pages=["Home" => "index.md"],
 )
 
-deploydocs(;
-    repo="github.com/ymiftah/AustralianElectricityMarket.jl",
-    devbranch="main",
-)
+deploydocs(; repo="github.com/ymiftah/AustralianElectricityMarket.jl", devbranch="main")

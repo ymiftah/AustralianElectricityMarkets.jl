@@ -1,6 +1,5 @@
 module AustralianElectricityMarket
 
-
 # Write your package code here.
 include("configurations.jl")
 include("nemdb.jl")
