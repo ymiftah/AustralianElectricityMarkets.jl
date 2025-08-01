@@ -1,6 +1,8 @@
 using AustralianElectricityMarket
 using Test
+using TestItems
 
-@testset "AustralianElectricityMarket.jl" begin
+@testitem "CI test" begin
     # Write your tests here.
+    @test true
 end
