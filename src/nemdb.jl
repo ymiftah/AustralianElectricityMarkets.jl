@@ -28,10 +28,9 @@ function read_hive(
 end
 
 function _parse_hive_root(config::PyHiveConfiguration)
-    hive_location = config.hive_location
     filesystem = config.filesystem
     if filesystem == "local"
-        return hive_location
+        return config.hive_location
     elseif filesystem == "gs"
         return "gs://" * hive_location
     end
@@ -39,7 +38,7 @@ function _parse_hive_root(config::PyHiveConfiguration)
 end
 
 """
-    populate(table::Symbol, time_range::Any; location::String=CONFIG[].hive_location, filesystem=CONFIG[].filesystem)
+    fetch_table_data(table::Symbol, time_range::Any; location::String=CONFIG[].hive_location, filesystem=CONFIG[].filesystem)
 
 Download and cache data for a given `table` and `time_range`.
 
