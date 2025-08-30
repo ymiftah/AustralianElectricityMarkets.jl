@@ -41,6 +41,24 @@ const MATCH_TYPE_TO_PRIMEMOVER = Dict(
 
 )
 
+"""
+    get_bus_dataframe(db)
+
+Generates a DataFrame of bus information.
+
+# Arguments
+- `db`: The database connection.
+
+# Returns
+A `DataFrame` containing bus details.
+
+# Example
+```julia
+db = connect(duckdb())
+bus_df = get_bus_dataframe(db)
+println(bus_df)
+```
+"""
 function get_bus_dataframe(db)
     interconnectors = read_interconnectors(db)
     regions = @chain interconnectors begin
@@ -78,6 +96,24 @@ function get_bus_dataframe(db)
     end
 end
 
+"""
+    get_load_dataframe(db)
+
+Generates a DataFrame of load information.
+
+# Arguments
+- `db`: The database connection.
+
+# Returns
+A `DataFrame` containing load details.
+
+# Example
+```julia
+db = connect(duckdb())
+load_df = get_load_dataframe(db)
+println(load_df)
+```
+"""
 function get_load_dataframe(db)
     buses = get_bus_dataframe(db)
     loads = @chain buses begin
@@ -94,6 +130,24 @@ function get_load_dataframe(db)
     return loads
 end
 
+"""
+    get_branch_dataframe(db)
+
+Generates a DataFrame of branch information.
+
+# Arguments
+- `db`: The database connection.
+
+# Returns
+A `DataFrame` containing branch details.
+
+# Example
+```julia
+db = connect(duckdb())
+branch_df = get_branch_dataframe(db)
+println(branch_df)
+```
+"""
 function get_branch_dataframe(db)
     interconnectors = read_interconnectors(db)
     bus = select!(get_bus_dataframe(db), :bus_id, :name, :region)
@@ -129,6 +183,24 @@ function get_branch_dataframe(db)
     return vcat(load_branches, gen_branches)
 end
 
+"""
+    get_generators_dataframe(db)
+
+Generates a DataFrame of generator information.
+
+# Arguments
+- `db`: The database connection.
+
+# Returns
+A `DataFrame` containing generator details.
+
+# Example
+```julia
+db = connect(duckdb())
+gen_df = get_generators_dataframe(db)
+println(gen_df)
+```
+"""
 function get_generators_dataframe(db)
     bus = select!(get_bus_dataframe(db), :bus_id, :name)
     nem_units = read_units(db)
@@ -179,6 +251,24 @@ function get_generators_dataframe(db)
     end
 end
 
+"""
+    get_system(db)
+
+Assembles a `PowerSystems.System` object from the database.
+
+# Arguments
+- `db`: The database connection.
+
+# Returns
+A `PowerSystems.System` object.
+
+# Example
+```julia
+db = connect(duckdb())
+sys = get_system(db)
+println(sys)
+```
+"""
 function get_system(db)
     bus_df = get_bus_dataframe(db)
     loads_df = get_load_dataframe(db)
@@ -195,6 +285,15 @@ function get_system(db)
     return sys
 end
 
+"""
+    _add_buses!(sys, bus_df)
+
+Adds buses to the system.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `bus_df`: A `DataFrame` of bus data.
+"""
 function _add_buses!(sys, bus_df)
     areas = (Area(; name=row[:region]) for row in eachrow(unique(bus_df, :region)))
     add_components!(sys, areas)
@@ -213,6 +312,15 @@ function _add_buses!(sys, bus_df)
     add_components!(sys, buses)
 end
 
+"""
+    _add_branches!(sys, branch_df)
+
+Adds branches to the system.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `branch_df`: A `DataFrame` of branch data.
+"""
 function _add_branches!(sys, branch_df)
     lines = (
         Line(;
@@ -231,6 +339,15 @@ function _add_branches!(sys, branch_df)
     add_components!(sys, lines)
 end
 
+"""
+    _add_loads!(sys, loads_df)
+
+Adds loads to the system.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `loads_df`: A `DataFrame` of load data.
+"""
 function _add_loads!(sys, loads_df)
     loads = (
         PowerLoad(;
@@ -247,6 +364,15 @@ function _add_loads!(sys, loads_df)
     add_components!(sys, loads)
 end
 
+"""
+    _add_generation!(sys, gen_df)
+
+Adds generation units to the system.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `gen_df`: A `DataFrame` of generator data.
+"""
 function _add_generation!(sys, gen_df)
     renewable = subset(
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:RenewableDispatch]))
@@ -310,10 +436,31 @@ function _add_generation!(sys, gen_df)
     return sys
 end
 
+"""
+    _as_timearray(df, index, col, value)
+
+Converts a DataFrame to a TimeArray.
+
+# Arguments
+- `df`: The input `DataFrame`.
+- `index`: The column to use as the timestamp.
+- `col`: The column to use for the column names of the `TimeArray`.
+- `value`: The column to use for the values of the `TimeArray`.
+"""
 function _as_timearray(df, index, col, value)
     TimeArray(unstack(df, index, col, value); timestamp=index)
 end
 
+"""
+    _add_demand_ts_to_components!(sys, ts, type)
+
+Adds demand time series data to the system components.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `ts`: A `TimeArray` of demand data.
+- `type`: The type of component to add the time series to.
+"""
 function _add_demand_ts_to_components!(sys, ts, type)
     loads = colnames(ts)
     for component in get_components(type, sys)
@@ -331,6 +478,16 @@ function _add_demand_ts_to_components!(sys, ts, type)
     end
 end
 
+"""
+    _add_renewable_ts_to_components!(sys, ts, prime_mover)
+
+Adds renewable generation time series data to the system components.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `ts`: A `TimeArray` of renewable generation data.
+- `prime_mover`: The prime mover type of the renewable generator.
+"""
 function _add_renewable_ts_to_components!(sys, ts, prime_mover)
     for area in get_components(area -> get_name(area) in string.(colnames(ts)), Area, sys)
         area_symbol = Symbol(get_name(area))

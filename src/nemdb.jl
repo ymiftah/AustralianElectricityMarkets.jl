@@ -29,11 +29,18 @@ function read_hive(
     return TidierDB.dt(db, hive_path)
 end
 
+"""
+    _parse_hive_root(config::PyHiveConfiguration)
+
+Construct the correct path to the Hive dataset based on the specified filesystem.
+
+# Arguments
+- `config::PyHiveConfiguration`: The configuration object containing filesystem and location details.
+"""
 function _parse_hive_root(config::PyHiveConfiguration)
-    filesystem = config.filesystem
-    if filesystem == "local"
+    if config.filesystem == "local"
         return config.hive_location
-    elseif filesystem == "gs"
+    elseif config.filesystem == "gs"
         return "gs://" * hive_location
     end
     throw("Not a known filesystem")
@@ -96,6 +103,24 @@ function _get_pydb_manager(location::String, filesystem::String)
     return nemdb.NEMWEBManager(config)
 end
 
+"""
+    read_interconnectors(db)
+
+Reads and processes interconnector data from the database.
+
+# Arguments
+- `db`: The database connection.
+
+# Returns
+A `DataFrame` containing the latest interconnector constraint data.
+
+# Example
+```julia
+db = connect(duckdb())
+interconnectors_df = read_interconnectors(db)
+println(interconnectors_df)
+```
+"""
 function read_interconnectors(db)
     t_interconnector = read_hive(db, :INTERCONNECTOR)
     t_interconnector_constraint = read_hive(db, :INTERCONNECTORCONSTRAINT)
@@ -113,10 +138,23 @@ function read_interconnectors(db)
 end
 
 """
-	get_demand(year::String, month::String)
+    read_demand(db; resolution::Dates.Period=Dates.Minute(5))
 
-Read the regions demand data for a given year and month.
+Read and process regional demand data from the database.
 
+# Arguments
+- `db`: The database connection.
+- `resolution::Dates.Period`: The time resolution to which the data should be floored. Defaults to 5 minutes.
+
+# Returns
+A `DataFrame` with demand and renewable availability data, aggregated by the specified resolution.
+
+# Example
+```julia
+db = connect(duckdb())
+demand_df = read_demand(db; resolution=Dates.Hour(1))
+println(demand_df)
+```
    Row │ SETTLEMENTDATE       REGIONID  TOTALDEMAND  DISPATCHABLEGENERATION  DISPATCHABLELOAD  NETINTERCHANGE 
 	   │ Dates.DateTime       String7   Float64      Float64                 Float64           Float64        
 ───────┼──────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -151,6 +189,24 @@ function read_demand(db; resolution::Dates.Period=Dates.Minute(5))
     end
 end
 
+"""
+    read_units(db)
+
+Gathers and processes unit data from the database.
+
+# Arguments
+- `db`: The database connection.
+
+# Returns
+A `DataFrame` containing detailed information about each generation unit.
+
+# Example
+```julia
+db = connect(duckdb())
+units_df = read_units(db)
+println(units_df)
+```
+"""
 function read_units(db)
 
     # READ THE LIST OF UNITS
@@ -260,6 +316,15 @@ function read_units(db)
     return dudetail
 end
 
+"""
+    _filter_latest(table, key=:archive_month)
+
+Helper function to filter for the most recent records in a table.
+
+# Arguments
+- `table`: The table to filter.
+- `key`: The column to use for determining the latest records. Defaults to `:archive_month`.
+"""
 function _filter_latest(table)
     return _filter_latest(table, :archive_month)
 end
