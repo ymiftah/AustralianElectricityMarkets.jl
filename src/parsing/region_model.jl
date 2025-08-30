@@ -1,0 +1,396 @@
+module RegionModel
+
+using ..AustralianElectricityMarket
+using DataFrames, Chain
+import TimeSeries: TimeArray, colnames
+using PowerSystems
+
+const LOAD_SUFFIX = "_LOAD_BUS"
+const GEN_SUFFIX = "_GEN_BUS"
+const BASE_POWER = 100.0  # MVA
+
+const MATCH_TYPE_TO_PRIMEMOVER = Dict(
+    :RenewableDispatch => Set((PrimeMovers.WT, PrimeMovers.WS, PrimeMovers.PVe)),
+    :ThermalStandard => Set((
+        PrimeMovers.BT,  # Turbines Used in a Binary Cycle (including those used for geothermal applications)
+        PrimeMovers.CA,  # Combined-Cycle – Steam Part
+        PrimeMovers.CC,  # Combined-Cycle - Aggregated Plant *augmentation of EIA
+        PrimeMovers.CS,  # Combined-Cycle Single-Shaft Combustion turbine and steam turbine share a single generator
+        PrimeMovers.CT,  # Combined-Cycle Combustion Turbine Part
+        PrimeMovers.GT,  # Combustion (Gas) Turbine (including jet engine design)
+        PrimeMovers.IC,  # Internal Combustion (diesel, piston, reciprocating) Engine
+        PrimeMovers.OT,  # Other – Specify on SCHEDULE 9.
+        PrimeMovers.ST,  # Steam Turbine (including nuclear, geothermal and solar steam; does not include combined-cycle turbine)
+    )),
+    :HydroDispatch => Set((
+        PrimeMovers.HA,  # Hydrokinetic, Axial Flow Turbine
+        PrimeMovers.HB,  # Hydrokinetic, Wave Buoy
+        PrimeMovers.HK,  # Hydrokinetic, Other
+        PrimeMovers.HY,  # Hydraulic Turbine (including turbines associated with delivery of water by pipeline)
+    )),
+    :HydroEnergyReservoir => Set((
+        PrimeMovers.PS,  # Energy Storage, Reversible Hydraulic Turbine (Pumped Storage)
+    )),
+
+    # PrimeMovers.ES  # Energy Storage, Other (Specify on Schedule 9, Comments)
+    # PrimeMovers.FC,  # Fuel Cell
+    # PrimeMovers.FW,  # Energy Storage, Flywheel
+    # PrimeMovers.CE  # Energy Storage, Compressed Air
+    # PrimeMovers.CP  # Energy Storage, Concentrated Solar Power
+    # PrimeMovers.BA  # Energy Storage, Battery
+
+)
+
+function get_bus_dataframe(db)
+    interconnectors = read_interconnectors(db)
+    regions = @chain interconnectors begin
+        select(:REGIONFROM => :region)
+        vcat(select(interconnectors, :REGIONTO => :region))
+        unique
+        sort!(:region)
+    end
+
+    # Get a reference bus"_LOAD_BUS"
+    ref_bus = first(regions.region)
+    gen_buses = @chain regions begin
+        insertcols!(
+            :voltage => 1,
+            :angle => 0.0,
+            :base_voltage => 130,
+            :voltage_limits_min => 0.9,
+            :voltage_limits_max => 1.10,
+            :magnitude => 1.0,
+        )
+        transform!(
+            :region =>
+                ByRow(x -> x == ref_bus ? ACBusTypes.REF : ACBusTypes.PV) => :bustype,
+            :region => ByRow(x -> x * GEN_SUFFIX) => :name,
+        )
+    end
+    load_buses = @chain gen_buses begin
+        transform(
+            :bustype => ByRow(x -> ACBusTypes.PQ) => :bustype,
+            :region => ByRow(x -> x * LOAD_SUFFIX) => :name,
+        )
+    end
+    @chain vcat(gen_buses, load_buses) begin
+        insertcols!(_, :bus_id => 1:nrow(_))
+    end
+end
+
+function get_load_dataframe(db)
+    buses = get_bus_dataframe(db)
+    loads = @chain buses begin
+        select!(:bus_id, :region, :name)
+        subset!(:name => ByRow(contains(LOAD_SUFFIX)))
+        transform!(:region => ByRow(x -> x * " Load") => :name)
+        insertcols!(
+            :base_power => BASE_POWER,
+            :active_power => 0.1,
+            :available => true,
+            :max_active_power => 20,
+        )
+    end
+    return loads
+end
+
+function get_branch_dataframe(db)
+    interconnectors = read_interconnectors(db)
+    bus = select!(get_bus_dataframe(db), :bus_id, :name, :region)
+    load_buses = subset(bus, :name => ByRow(contains(LOAD_SUFFIX)))
+    gen_buses = subset(bus, :name => ByRow(contains(GEN_SUFFIX)))
+    load_branches = @chain interconnectors begin
+        select!(
+            :INTERCONNECTORID => :name,
+            :REGIONFROM => ByRow(x -> x * LOAD_SUFFIX) => :from,
+            :REGIONTO => ByRow(x -> x * LOAD_SUFFIX) => :to,
+        )
+        leftjoin!(load_buses; on=:from => :name)
+        rename!(:bus_id => :bus_from)
+        leftjoin!(select(load_buses, Not(:region)); on=:to => :name)
+        rename!(:bus_id => :bus_to)
+        insertcols!(:r => 0, :x => 0, :b => 0, :rate => 1e4)
+        select(Not(:region))
+    end
+
+    # Add branches from Load buses to the Gen buses
+    gen_branches = @chain gen_buses begin
+        select!(:bus_id => :bus_from, :region, :name => :from)
+        leftjoin!(select(load_buses, :bus_id => :bus_to, :region, :name => :to), on=:region)
+        select!(
+            [:from, :to] => ByRow((x, y) -> *(x, "-", y)) => :name,
+            :from,
+            :to,
+            :bus_from,
+            :bus_to,
+        )
+        insertcols!(:r => 0, :x => 0, :b => 0, :rate => 1e4)
+    end
+    return vcat(load_branches, gen_branches)
+end
+
+function get_generators_dataframe(db)
+    bus = select!(get_bus_dataframe(db), :bus_id, :name)
+    nem_units = read_units(db)
+
+    @chain nem_units begin
+        select!(
+            :REGIONID => ByRow(x -> x * GEN_SUFFIX) => :bus_name,
+            :REGIONID => :region,
+            :DUID => :name,
+            :REGISTEREDCAPACITY => :base_power,
+            [:MINCAPACITY, :REGISTEREDCAPACITY] =>
+                ByRow((m, r) -> r > 0 ? m / r : 0) => :min_active_power,
+            [:MAXCAPACITY, :REGISTEREDCAPACITY] =>
+                ByRow((m, r) -> r > 0 ? m / r : 0) => :max_active_power,
+            [:MAXRATEOFCHANGEDOWN, :REGISTEREDCAPACITY] =>
+                ByRow((m, r) -> r > 0 ? m / r : 0) => :max_ramp_up,
+            [:MAXRATEOFCHANGEUP, :REGISTEREDCAPACITY] =>
+                ByRow((m, r) -> r > 0 ? m / r : 0) => :max_ramp_down,
+            :STATIONID => :station_id,
+            :STATIONNAME => :station_name,
+            :TECHNOLOGY => :technology,
+            :FUELTYPE => :fuel_type,
+            :POSTCODE => :postcode,
+        )
+        insertcols!(
+            :rating => 1.0,
+            :available => true,
+            :active_power => 0.0,
+            :reactive_power => 0.0,
+            :output_point_0 => 0.0,
+            :output_point_1 => 1.0,
+            :max_reactive_power => 1.0,
+            :reactive_power_limits_max => 1.0,
+            :reactive_power_limits_min => -1.0,
+            :heat_rate_avg_0 => 0.0,
+            :heat_rate_incr_1 => 0.0,
+        )
+        leftjoin!(bus; on=:bus_name => :name)
+        # Make hydro generators unavailable
+        transform!(
+            :technology => ByRow(!=(PrimeMovers.HY)) => :available,
+            :min_active_power => ByRow(x->coalesce(x, 0)) => :min_active_power,
+            :max_ramp_up => ByRow(x->coalesce(x, nothing)) => :max_ramp_up,
+            :max_ramp_down => ByRow(x->coalesce(x, nothing)) => :max_ramp_down,
+        )
+        dropmissing!(:technology)
+        unique!(:name; keep=:first)
+    end
+end
+
+function get_system(db)
+    bus_df = get_bus_dataframe(db)
+    loads_df = get_load_dataframe(db)
+    branch_df = get_branch_dataframe(db)
+    gen_df = get_generators_dataframe(db)
+
+    sys = System(BASE_POWER)
+
+    _add_buses!(sys, bus_df)
+    _add_loads!(sys, loads_df)
+    _add_generation!(sys, gen_df)
+    _add_branches!(sys, branch_df)
+
+    return sys
+end
+
+function _add_buses!(sys, bus_df)
+    areas = (Area(; name=row[:region]) for row in eachrow(unique(bus_df, :region)))
+    add_components!(sys, areas)
+    buses = (
+        ACBus(;
+            number=row[:bus_id],
+            name=row[:name],
+            base_voltage=row[:base_voltage],
+            bustype=row[:bustype],
+            angle=row[:angle],
+            magnitude=row[:magnitude],
+            area=get_component(Area, sys, row[:region]),
+            voltage_limits=(min=row[:voltage_limits_min], max=row[:voltage_limits_max]),
+        ) for row in eachrow(bus_df)
+    )
+    add_components!(sys, buses)
+end
+
+function _add_branches!(sys, branch_df)
+    lines = (
+        Line(;
+            name=row[:name],
+            available=true,
+            active_power_flow=0.0,
+            reactive_power_flow=0.0,
+            arc=Arc(; from=get_bus(sys, row[:bus_from]), to=get_bus(sys, row[:bus_to])),
+            r=row[:r], # Per-unit
+            x=row[:x], # Per-unit
+            b=(from=row[:b] / 2, to=row[:b] / 2), # Per-unit
+            rating=row[:rate], # Line rating of 200 MVA / System base of 100 MVA
+            angle_limits=(min=-0.7, max=0.7),
+        ) for row in eachrow(branch_df)
+    )
+    add_components!(sys, lines)
+end
+
+function _add_loads!(sys, loads_df)
+    loads = (
+        PowerLoad(;
+            name=row[:name],
+            available=row[:available],
+            bus=get_bus(sys, row[:bus_id]),
+            active_power=row[:active_power], # Per-unitized by device base_power
+            reactive_power=0.0, # Per-unitized by device base_power
+            base_power=BASE_POWER, # MVA
+            max_active_power=row[:max_active_power], # 10 MW per-unitized by device base_power
+            max_reactive_power=row[:max_active_power],
+        ) for row in eachrow(loads_df)
+    )
+    add_components!(sys, loads)
+end
+
+function _add_generation!(sys, gen_df)
+    renewable = subset(
+        gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:RenewableDispatch]))
+    )
+    renewable_components = (
+        RenewableDispatch(;
+            name=row[:name],
+            available=row[:available],
+            bus=get_bus(sys, row[:bus_id]),
+            active_power=row[:active_power],
+            reactive_power=row[:reactive_power],
+            rating=row[:rating], # MW per-unitized by device base_power
+            prime_mover_type=row[:technology],
+            reactive_power_limits=nothing,  # (min = row[:reactive_power_limits_min], max = row[:reactive_power_limits_max]), # 0 MVAR to 0.25 MVAR per-unitized by device base_power
+            power_factor=1.0,
+            operation_cost=RenewableGenerationCost(nothing),
+            base_power=row[:base_power], # MVA
+            ext=Dict(
+                "postcode" => row[:postcode],
+                "station_name" => row[:station_name],
+                "station_id" => row[:station_id],
+            ),
+        ) for row in eachrow(renewable)
+    )
+    add_components!(sys, renewable_components)
+
+    thermal = subset(
+        gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:ThermalStandard]))
+    )
+    thermal_components = (
+        ThermalStandard(;
+            name=row[:name],
+            available=row[:available],
+            status=true,
+            bus=get_bus(sys, row[:bus_id]),
+            active_power=row[:active_power],
+            reactive_power=row[:reactive_power],
+            rating=row[:rating], # MW per-unitized by device base_power
+            active_power_limits=(min=row[:min_active_power], max=row[:max_active_power]), # 6 MW to 30 MW per-unitized by device base_power
+            reactive_power_limits=nothing, # Per-unitized by device base_power
+            ramp_limits=if isnothing(row[:max_ramp_up])
+                nothing # per-unitized by device base_power per minute
+            else
+                (up=row[:max_ramp_up], down=row[:max_ramp_down]) # per-unitized by device base_power per minute
+            end, # per-unitized by device base_power per minute
+            operation_cost=ThermalGenerationCost(nothing),  # TODO
+            base_power=row[:base_power], # MVA
+            time_limits=nothing, # TODO (up = 8.0, down = 8.0), # Hours
+            must_run=false,
+            prime_mover_type=row[:technology],
+            fuel=row[:fuel_type],
+            ext=Dict(
+                "postcode" => row[:postcode],
+                "station_name" => row[:station_name],
+                "station_id" => row[:station_id],
+            ),
+        ) for row in eachrow(thermal)
+    )
+    add_components!(sys, thermal_components)
+
+    return sys
+end
+
+function _as_timearray(df, index, col, value)
+    TimeArray(unstack(df, index, col, value); timestamp=index)
+end
+
+function _add_demand_ts_to_components!(sys, ts, type)
+    loads = colnames(ts)
+    for component in get_components(type, sys)
+        name = Symbol(get_name(component))
+        if !in(name, loads)
+            continue
+        end
+        max_active_power = get_max_active_power(component)
+        psy_ts = SingleTimeSeries(;
+            name="max_active_power",
+            data=ts[name] ./ max_active_power ./ BASE_POWER,
+            scaling_factor_multiplier=get_max_active_power,
+        )
+        add_time_series!(sys, component, psy_ts)
+    end
+end
+
+function _add_renewable_ts_to_components!(sys, ts, prime_mover)
+    for area in get_components(area -> get_name(area) in string.(colnames(ts)), Area, sys)
+        area_symbol = Symbol(get_name(area))
+        components_in_area = get_components(
+            x -> get_area(get_bus(x)) == area && get_prime_mover_type(x) == prime_mover,
+            RenewableDispatch,
+            sys,
+        )
+        psy_ts = SingleTimeSeries(;
+            name="max_active_power",
+            data=ts[area_symbol] ./ values(maximum(ts[area_symbol]))[1],
+            scaling_factor_multiplier=get_max_active_power,
+        )
+        add_time_series!(sys, components_in_area, psy_ts)
+    end
+end
+
+"""
+    set_demand!(sys, demand)
+
+Add Load timeseries to the system, based on provided demand
+"""
+function set_demand!(sys, db, date_range; kwargs...)
+    demand = read_demand(db; kwargs...)
+    ts = @chain demand begin
+        transform!(:REGIONID => ByRow(x -> x * " Load") => :name)
+        subset!(:SETTLEMENTDATE => ByRow(x->first(date_range) <= x < last(date_range)))
+        _as_timearray(:SETTLEMENTDATE, :name, :TOTALDEMAND)
+    end
+    _add_demand_ts_to_components!(sys, ts, PowerLoad)
+end
+
+"""
+    set_renewable_pv!(sys, demand)
+
+Add Renewable timeseries to the system, based on provided demand
+"""
+function set_renewable_pv!(sys, db, date_range; kwargs...)
+    demand = read_demand(db; kwargs...)
+    ts = @chain demand begin
+        subset!(:SETTLEMENTDATE => ByRow(x->first(date_range) <= x < last(date_range)))
+        _as_timearray(:SETTLEMENTDATE, :REGIONID, :SS_SOLAR_AVAILABILITY)
+    end
+    @info "Setting PV power time series"
+    _add_renewable_ts_to_components!(sys, ts, PrimeMovers.PVe)
+end
+
+"""
+    set_renewable_wind!(sys, demand)
+
+Add Renewable timeseries to the system, based on provided demand
+"""
+function set_renewable_wind!(sys, db, date_range; kwargs...)
+    demand = read_demand(db; kwargs...)
+    ts = @chain demand begin
+        subset!(:SETTLEMENTDATE => ByRow(x->first(date_range) <= x < last(date_range)))
+        _as_timearray(:SETTLEMENTDATE, :REGIONID, :SS_WIND_AVAILABILITY)
+    end
+    @info "Setting wind power time series"
+    _add_renewable_ts_to_components!(sys, ts, PrimeMovers.WT)
+end
+
+end
