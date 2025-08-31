@@ -15,10 +15,10 @@ Read a hive-partitioned parquet dataset into a TidierDB table.
 - `config::PyHiveConfiguration`: The configuration to use. Defaults to `CONFIG[]`.
 """
 function read_hive(
-    db::TidierDB.DBInterface.Connection,
-    table_name::Symbol;
-    config::PyHiveConfiguration=CONFIG[],
-)
+        db::TidierDB.DBInterface.Connection,
+        table_name::Symbol;
+        config::PyHiveConfiguration = CONFIG[],
+    )
     hive_root = _parse_hive_root(config)
     hive_path = """
     read_parquet(
@@ -58,11 +58,11 @@ Download and cache data for a given `table` and `time_range`.
 - `filesystem::String`: The filesystem to use for the cache. Defaults to `local`.
 """
 function fetch_table_data(
-    table::Symbol,
-    time_range::Any;
-    location::String=CONFIG[].hive_location,
-    filesystem=CONFIG[].filesystem,
-)
+        table::Symbol,
+        time_range::Any;
+        location::String = CONFIG[].hive_location,
+        filesystem = CONFIG[].filesystem,
+    )
     dbs = _get_pydb_manager(location, filesystem)
     dbItem = pygetattr(dbs, String(table), nothing)
     if isnothing(dbItem)
@@ -128,11 +128,11 @@ function read_interconnectors(db)
         AustralianElectricityMarket._filter_latest
     end
 
-    @chain t_interconnector_constraint begin
+    return @chain t_interconnector_constraint begin
         @inner_join(interconnector_ids, INTERCONNECTORID, archive_month)
         @arrange(INTERCONNECTORID, desc(EFFECTIVEDATE), desc(VERSIONNO))
         @collect
-        unique(:INTERCONNECTORID, keep=:first)
+        unique(:INTERCONNECTORID, keep = :first)
         select(Not(:archive_month))
     end
 end
@@ -164,7 +164,7 @@ println(demand_df)
 	 4 │ 2024-01-01T00:05:00  TAS1          1033.29                  580.29               0.0         -453.0
 	 5 │ 2024-01-01T00:05:00  VIC1          3977.1                  5071.17               0.0         1094.07
 """
-function read_demand(db; resolution::Dates.Period=Dates.Minute(5))
+function read_demand(db; resolution::Dates.Period = Dates.Minute(5))
     dudetail_table = read_hive(db, :DISPATCHREGIONSUM)
     df = @chain dudetail_table begin
         @select(
@@ -183,9 +183,9 @@ function read_demand(db; resolution::Dates.Period=Dates.Minute(5))
     # df[!, :TOTALDEMAND] .+= df[!, :DISPATCHABLELOAD]  # Adds the dispatchable load to the total demand to get the actual native demand
     df[!, :SETTLEMENTDATE] = floor.(df[!, :SETTLEMENTDATE], resolution)
     sort!(df, :SETTLEMENTDATE)
-    @chain df begin
+    return @chain df begin
         groupby([:SETTLEMENTDATE, :REGIONID])
-        combine(_, valuecols(_) .=> mean ∘ skipmissing; renamecols=false)
+        combine(_, valuecols(_) .=> mean ∘ skipmissing; renamecols = false)
     end
 end
 
@@ -227,7 +227,7 @@ function read_units(db)
     dudetail = @chain dudetail begin
         groupby([:DUID, :EFFECTIVEDATE])
         combine(:VERSIONNO => maximum => :VERSIONNO)
-        innerjoin(dudetail; on=[:DUID, :EFFECTIVEDATE, :VERSIONNO])
+        innerjoin(dudetail; on = [:DUID, :EFFECTIVEDATE, :VERSIONNO])
         sort(:DUID)
         select(Not([:archive_month]))
         unique
@@ -268,9 +268,9 @@ function read_units(db)
         @collect
         select(Not([:archive_month]))
         unique
-        leftjoin(station_names; on=:STATIONID)
+        leftjoin(station_names; on = :STATIONID)
         select!(:STATIONID, :STATUS, :STATIONNAME, :POSTCODE)
-        unique!(; keep=:last)
+        unique!(; keep = :last)
     end
 
     # GENSET / DUID mapping
@@ -284,7 +284,7 @@ function read_units(db)
             :CO2E_ENERGY_SOURCE => first,
             :CO2E_EMISSIONS_FACTOR => first,
             ;
-            renamecols=false,
+            renamecols = false,
         )
         transform(
             :CO2E_ENERGY_SOURCE => ByRow(x -> AEMO_PM_MAPPING[x]) => :TECHNOLOGY,
@@ -297,18 +297,18 @@ function read_units(db)
         @select(DUID, GENSETID, LASTCHANGED, VERSIONNO)
         @collect
         sort!([:DUID, :GENSETID, :LASTCHANGED, :VERSIONNO])
-        unique!([:GENSETID]; keep=:last)
+        unique!([:GENSETID]; keep = :last)
         select!(:GENSETID, :DUID)
     end
-    genunits = @chain innerjoin(genunits, dualloc; on=:GENSETID) begin
+    genunits = @chain innerjoin(genunits, dualloc; on = :GENSETID) begin
         select!(Not(:GENSETID))
         unique
     end
 
     # # Joins
-    dudetail = innerjoin(dudetail, genunits; on=:DUID)
-    dudetail = innerjoin(dudetail, summary; on=:DUID, makeunique=true)
-    dudetail = innerjoin(dudetail, op_status; on=:STATIONID)
+    dudetail = innerjoin(dudetail, genunits; on = :DUID)
+    dudetail = innerjoin(dudetail, summary; on = :DUID, makeunique = true)
+    dudetail = innerjoin(dudetail, op_status; on = :STATIONID)
     # # Keep commisioned and scheduled / semischeduled
     subset!(dudetail, :STATUS => ByRow(==("COMMISSIONED")))
     # TODO address duplicated columnz explicitly
@@ -333,7 +333,7 @@ function _filter_latest(table, key)
     max_eff_date = @eval @chain $table begin
         @summarise(max_key = maximum($key))
     end
-    @eval @chain $table begin
+    return @eval @chain $table begin
         @inner_join($max_eff_date, $key == max_key)
     end
 end
