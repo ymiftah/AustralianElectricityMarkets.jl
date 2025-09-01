@@ -5,6 +5,8 @@ using DataFrames, Chain
 import TimeSeries: TimeArray, colnames
 using PowerSystems
 
+export get_system, set_demand!, set_renewable_pv!, set_renewable_wind!
+
 const LOAD_SUFFIX = "_LOAD_BUS"
 const GEN_SUFFIX = "_GEN_BUS"
 const BASE_POWER = 100.0  # MVA
@@ -275,13 +277,13 @@ sys = get_system(db)
 println(sys)
 ```
 """
-function get_system(db)
+function get_system(db; kwargs...)
     bus_df = get_bus_dataframe(db)
     loads_df = get_load_dataframe(db)
     branch_df = get_branch_dataframe(db)
     gen_df = get_generators_dataframe(db)
 
-    sys = System(BASE_POWER)
+    sys = System(BASE_POWER; kwargs...)
 
     _add_buses!(sys, bus_df)
     _add_loads!(sys, loads_df)
@@ -394,7 +396,11 @@ function _add_generation!(sys, gen_df)
                 prime_mover_type = row[:technology],
                 reactive_power_limits = nothing,  # (min = row[:reactive_power_limits_min], max = row[:reactive_power_limits_max]), # 0 MVAR to 0.25 MVAR per-unitized by device base_power
                 power_factor = 1.0,
-                operation_cost = RenewableGenerationCost(nothing),
+                operation_cost = RenewableGenerationCost(;
+                    variable = CostCurve(
+                        LinearCurve(rand(1.0:5.0), rand(1.0:10.0))
+                    ),
+                ),
                 base_power = row[:base_power], # MVA
                 ext = Dict(
                     "postcode" => row[:postcode],
@@ -424,7 +430,14 @@ function _add_generation!(sys, gen_df)
             else
                     (up = row[:max_ramp_up], down = row[:max_ramp_down]) # per-unitized by device base_power per minute
             end, # per-unitized by device base_power per minute
-                operation_cost = ThermalGenerationCost(nothing),  # TODO
+                operation_cost = ThermalGenerationCost(;
+                    variable = CostCurve(
+                        LinearCurve(rand(10.0:50.0), rand(30.0:100.0))
+                    ),
+                    fixed = 1.0,
+                    start_up = 1.0,
+                    shut_down = 1.0
+                ),  # TODO
                 base_power = row[:base_power], # MVA
                 time_limits = nothing, # TODO (up = 8.0, down = 8.0), # Hours
                 must_run = false,
@@ -454,7 +467,8 @@ Converts a DataFrame to a TimeArray.
 - `value`: The column to use for the values of the `TimeArray`.
 """
 function _as_timearray(df, index, col, value)
-    return TimeArray(unstack(df, index, col, value); timestamp = index)
+    out = TimeArray(unstack(df, index, col, value); timestamp = index)
+    return Float64.(out)
 end
 
 """
@@ -472,12 +486,15 @@ function _add_demand_ts_to_components!(sys, ts, type)
     for component in get_components(type, sys)
         name = Symbol(get_name(component))
         if !in(name, loads)
-            continue
+            @info "Setting loads to 0 for $name"
+            ts_component = ts[first(loads)] .* 0.0
+        else
+            ts_component = ts[name]
         end
         max_active_power = get_max_active_power(component)
         psy_ts = SingleTimeSeries(;
             name = "max_active_power",
-            data = ts[name] ./ max_active_power ./ BASE_POWER,
+            data = Float64.(ts_component ./ max_active_power ./ BASE_POWER),
             scaling_factor_multiplier = get_max_active_power,
         )
         add_time_series!(sys, component, psy_ts)
@@ -537,6 +554,8 @@ function set_renewable_pv!(sys, db, date_range; kwargs...)
     demand = read_demand(db; kwargs...)
     ts = @chain demand begin
         subset!(:SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
+        select!(:SETTLEMENTDATE, :REGIONID, :SS_SOLAR_AVAILABILITY)
+        disallowmissing!
         _as_timearray(:SETTLEMENTDATE, :REGIONID, :SS_SOLAR_AVAILABILITY)
     end
     @info "Setting PV power time series"
@@ -552,6 +571,8 @@ function set_renewable_wind!(sys, db, date_range; kwargs...)
     demand = read_demand(db; kwargs...)
     ts = @chain demand begin
         subset!(:SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
+        select!(:SETTLEMENTDATE, :REGIONID, :SS_WIND_AVAILABILITY)
+        disallowmissing!
         _as_timearray(:SETTLEMENTDATE, :REGIONID, :SS_WIND_AVAILABILITY)
     end
     @info "Setting wind power time series"
