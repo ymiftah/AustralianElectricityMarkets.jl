@@ -1,7 +1,7 @@
 module RegionModel
 
 using ..AustralianElectricityMarket
-using DataFrames, Chain
+using DataFrames, Chain, Statistics
 import TimeSeries: TimeArray, colnames
 using PowerSystems
 
@@ -414,6 +414,24 @@ function _add_generation!(sys, gen_df)
     thermal = subset(
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:ThermalStandard]))
     )
+    # look up affine costs from isp
+    affine_heatrates = read_isp_thermal_costs_parameters(
+        # TODO hardcoded for now, todo work on interface
+        2025, "Step Change"
+    )
+    leftjoin!(thermal, affine_heatrates, on = :name => :unit; makeunique = true)
+
+    #fill missing values with median price
+    fill_missing(x) = all(ismissing.(x)) ? missing : median(skipmissing(x))
+    thermal_with_costs = @chain thermal begin
+        groupby(:technology)
+        transform(
+            :price_aud => fill_missing => :price_aud,
+            :no_load_heat_input_GJ_per_h => fill_missing => :no_load_heat_input_GJ_per_h,
+            :marginal_heat_rate_GJ_per_MWH => fill_missing => :marginal_heat_rate_GJ_per_MWH,
+        )
+    end
+
     thermal_components = (
         ThermalStandard(;
                 name = row[:name],
@@ -431,15 +449,22 @@ function _add_generation!(sys, gen_df)
                     (up = row[:max_ramp_up], down = row[:max_ramp_down]) # per-unitized by device base_power per minute
             end, # per-unitized by device base_power per minute
                 operation_cost = ThermalGenerationCost(;
-                    variable = CostCurve(
-                        LinearCurve(rand(10.0:50.0), rand(30.0:100.0))
+                    # variable = CostCurve(
+                    #     # LinearCurve(rand(10.0:50.0), rand(30.0:100.0))
+                    # ),
+                    variable = FuelCurve(;
+                        value_curve = LinearCurve(
+                            row[:marginal_heat_rate_GJ_per_MWH],
+                            row[:no_load_heat_input_GJ_per_h]
+                        ),
+                        fuel_cost = row[:price_aud]
                     ),
-                    fixed = 1.0,
-                    start_up = 1.0,
-                    shut_down = 1.0
-                ),  # TODO
+                    fixed = 100.0,
+                    start_up = 100.0,
+                    shut_down = 100.0
+                ),
                 base_power = row[:base_power], # MVA
-                time_limits = nothing, # TODO (up = 8.0, down = 8.0), # Hours
+                time_limits = (up = 8.0, down = 8.0), # Hours
                 must_run = false,
                 prime_mover_type = row[:technology],
                 fuel = row[:fuel_type],
@@ -448,7 +473,7 @@ function _add_generation!(sys, gen_df)
                     "station_name" => row[:station_name],
                     "station_id" => row[:station_id],
                 ),
-            ) for row in eachrow(thermal)
+            ) for row in eachrow(thermal_with_costs)
     )
     add_components!(sys, thermal_components)
 
