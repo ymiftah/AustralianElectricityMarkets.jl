@@ -4,6 +4,17 @@ using TidierDB
 using DataFrames
 using Statistics
 
+
+function read_pandapower_system()
+    nem_pp= pyimport("nemdb.models.pandapower")
+    model = nem_pp.get_pandapower_model()
+    Dict(
+        # Geopandas dataframes converted to pandas dataframes then julia dataframes
+        Symbol(key) => value |> PyPandasDataFrame |> DataFrame
+        for (key, value) in model.items()
+    )
+end
+
 """
     read_hive(db::TidierDB.DBInterface.Connection,table_name::Symbol; config::PyHiveConfiguration=CONFIG[])
 

@@ -2,10 +2,12 @@ module AustralianElectricityMarket
 
 using PowerSystems
 using TidierDB
+using HTTP, JSON3
 
 # Write your package code here.
 include("constants.jl")
 include("configurations.jl")
+include("geoutils.jl")
 
 # Modules
 include("nemdb.jl")
@@ -13,6 +15,8 @@ include("isp.jl")
 
 # Parsing data into models
 include("parsing/region_model.jl")
+
+#utils
 
 export fetch_table_data, list_available_tables
 export read_hive
