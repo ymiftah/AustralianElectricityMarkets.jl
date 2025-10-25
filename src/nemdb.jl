@@ -6,12 +6,12 @@ using Statistics
 
 
 function read_pandapower_system()
-    nem_pp= pyimport("nemdb.models.pandapower")
+    nem_pp = pyimport("nemdb.models.pandapower")
     model = nem_pp.get_pandapower_model()
-    Dict(
+    return Dict(
         # Geopandas dataframes converted to pandas dataframes then julia dataframes
         Symbol(key) => value |> PyPandasDataFrame |> DataFrame
-        for (key, value) in model.items()
+            for (key, value) in model.items()
     )
 end
 
@@ -136,7 +136,7 @@ function read_interconnectors(db)
     t_interconnector = read_hive(db, :INTERCONNECTOR)
     t_interconnector_constraint = read_hive(db, :INTERCONNECTORCONSTRAINT)
     interconnector_ids = @chain t_interconnector begin
-        AustralianElectricityMarket._filter_latest
+        AustralianElectricityMarkets._filter_latest
     end
 
     return @chain t_interconnector_constraint begin

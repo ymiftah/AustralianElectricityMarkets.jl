@@ -1,4 +1,4 @@
-using AustralianElectricityMarket
+using AustralianElectricityMarkets
 using Test
 using TestItems
 

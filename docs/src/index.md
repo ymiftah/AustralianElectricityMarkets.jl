@@ -1,14 +1,14 @@
 ```@meta
-CurrentModule = AustralianElectricityMarket
+CurrentModule = AustralianElectricityMarkets
 ```
 
-# AustralianElectricityMarket
+# AustralianElectricityMarkets
 
-Documentation for [AustralianElectricityMarket](https://github.com/ymiftah/AustralianElectricityMarket.jl).
+Documentation for [AustralianElectricityMarkets](https://github.com/ymiftah/AustralianElectricityMarkets.jl).
 
 ```@index
 ```
 
 ```@autodocs
-Modules = [AustralianElectricityMarket]
+Modules = [AustralianElectricityMarkets]
 ```

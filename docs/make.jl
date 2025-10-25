@@ -1,23 +1,23 @@
-using AustralianElectricityMarket
+using AustralianElectricityMarkets
 using Documenter
 
 DocMeta.setdocmeta!(
-    AustralianElectricityMarket,
+    AustralianElectricityMarkets,
     :DocTestSetup,
-    :(using AustralianElectricityMarket);
+    :(using AustralianElectricityMarkets);
     recursive = true,
 )
 
 makedocs(;
-    modules = [AustralianElectricityMarket],
+    modules = [AustralianElectricityMarkets],
     authors = "Youssef Miftah <miftahyo@outlook.fr> and contributors",
-    sitename = "AustralianElectricityMarket.jl",
+    sitename = "AustralianElectricityMarkets.jl",
     format = Documenter.HTML(;
-        canonical = "https://ymiftah.github.io/AustralianElectricityMarket.jl",
+        canonical = "https://ymiftah.github.io/AustralianElectricityMarkets.jl",
         edit_link = "main",
         assets = String[],
     ),
     pages = ["Home" => "index.md"],
 )
 
-deploydocs(; repo = "github.com/ymiftah/AustralianElectricityMarket.jl", devbranch = "main")
+deploydocs(; repo = "github.com/ymiftah/AustralianElectricityMarkets.jl", devbranch = "main")

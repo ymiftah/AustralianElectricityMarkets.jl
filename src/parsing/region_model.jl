@@ -1,6 +1,6 @@
 module RegionModel
 
-using ..AustralianElectricityMarket
+using ..AustralianElectricityMarkets
 using DataFrames, Chain, Statistics
 import TimeSeries: TimeArray, colnames
 using PowerSystems

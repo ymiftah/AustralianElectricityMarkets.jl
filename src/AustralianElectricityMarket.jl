@@ -1,4 +1,4 @@
-module AustralianElectricityMarket
+module AustralianElectricityMarkets
 
 using PowerSystems
 using TidierDB

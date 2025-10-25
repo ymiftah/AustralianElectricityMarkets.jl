@@ -1,8 +1,8 @@
-# AustralianElectricityMarket.jl
+# AustralianElectricityMarkets.jl
 
-[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://ymiftah.github.io/AustralianElectricityMarket.jl/stable)
-[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://ymiftah.github.io/AustralianElectricityMarket.jl/dev)
-[![Build Status](https://github.com/ymiftah/AustralianElectricityMarket.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/ymiftah/AustralianElectricityMarket.jl/actions/workflows/CI.yml?query=branch%3Amain)
+[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://ymiftah.github.io/AustralianElectricityMarkets.jl/stable)
+[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://ymiftah.github.io/AustralianElectricityMarkets.jl/dev)
+[![Build Status](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![code style: runic](https://img.shields.io/badge/code_style-%E1%9A%B1%E1%9A%A2%E1%9A%BE%E1%9B%81%E1%9A%B2-black)](https://github.com/fredrikekre/Runic.jl)
 
 A Julia package for interfacing with data from the Australian Energy Market Operator (AEMO) to simulate the operation of the Australian Electricity Market.
@@ -17,7 +17,7 @@ To install the package, open the Julia REPL and run:
 
 ```julia
 using Pkg
-Pkg.add("AustralianElectricityMarket")
+Pkg.add("AustralianElectricityMarkets")
 ```
 
 ## Usage
@@ -25,7 +25,7 @@ Pkg.add("AustralianElectricityMarket")
 Here is a basic example of how to use the package to read demand data:
 
 ```julia
-using AustralianElectricityMarket
+using AustralianElectricityMarkets
 using DuckDB
 using DataFrames
 
