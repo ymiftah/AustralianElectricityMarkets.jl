@@ -1,34 +1,27 @@
-using PythonCall
 using Dates
 using TidierDB
 using DataFrames
 using Statistics
+import TidierVest as TV
+using ZipArchives: ZipReader, zip_names, zip_readentry
+using Mmap: mmap
+using QuackIO: write_table
 
-
-function read_pandapower_system()
-    nem_pp = pyimport("nemdb.models.pandapower")
-    model = nem_pp.get_pandapower_model()
-    return Dict(
-        # Geopandas dataframes converted to pandas dataframes then julia dataframes
-        Symbol(key) => value |> PyPandasDataFrame |> DataFrame
-            for (key, value) in model.items()
-    )
-end
 
 """
-    read_hive(db::TidierDB.DBInterface.Connection,table_name::Symbol; config::PyHiveConfiguration=CONFIG[])
+    read_hive(db::TidierDB.DBInterface.Connection,table_name::Symbol; config::HiveConfiguration=CONFIG[])
 
 Read a hive-partitioned parquet dataset into a TidierDB table.
 
 # Arguments
 - `db::TidierDB.DBInterface.Connection`: The database connection to use.
 - `table_name::Symbol`: The name of the table to read.
-- `config::PyHiveConfiguration`: The configuration to use. Defaults to `CONFIG[]`.
+- `config::HiveConfiguration`: The configuration to use. Defaults to `CONFIG[]`.
 """
 function read_hive(
         db::TidierDB.DBInterface.Connection,
         table_name::Symbol;
-        config::PyHiveConfiguration = CONFIG[],
+        config::HiveConfiguration = CONFIG[],
     )
     hive_root = _parse_hive_root(config)
     hive_path = """
@@ -48,70 +41,13 @@ Construct the correct path to the Hive dataset based on the specified filesystem
 # Arguments
 - `config::PyHiveConfiguration`: The configuration object containing filesystem and location details.
 """
-function _parse_hive_root(config::PyHiveConfiguration)
+function _parse_hive_root(config::HiveConfiguration)
     if config.filesystem == "local"
         return config.hive_location
     elseif config.filesystem == "gs"
         return "gs://" * hive_location
     end
     throw("Not a known filesystem")
-end
-
-"""
-    fetch_table_data(table::Symbol, time_range::Any; location::String=CONFIG[].hive_location, filesystem=CONFIG[].filesystem)
-
-Download and cache data for a given `table` and `time_range`.
-
-# Arguments
-- `table::Symbol`: The table to populate.
-- `time_range::Any`: The time range to populate data for. (e.g. `Date(2023,1,1):Date(2023,3,1)`)
-- `location::String`: The directory to cache data in. Defaults to `~/.nemweb_cache`.
-- `filesystem::String`: The filesystem to use for the cache. Defaults to `local`.
-"""
-function fetch_table_data(
-        table::Symbol,
-        time_range::Any;
-        location::String = CONFIG[].hive_location,
-        filesystem = CONFIG[].filesystem,
-    )
-    dbs = _get_pydb_manager(location, filesystem)
-    dbItem = pygetattr(dbs, String(table), nothing)
-    if isnothing(dbItem)
-        available_tables = list_available_tables()
-        throw("No such table exists. Available tables are $available_tables")
-    end
-    from_date = first(time_range)
-    to_date = last(time_range)
-    return dbItem.populate(pyslice(Py(from_date), Py(to_date)))
-end
-
-"""
-    list_available_tables()::Array{String}
-
-List the available tables to fetch data for.
-"""
-function list_available_tables()::Array{Symbol}
-    nemdb = pyimport("nemdb")
-    config = nemdb.Config
-    dbs = nemdb.NEMWEBManager(config)
-    return Symbol.(pyconvert(Array, dbs.active_tables()))
-end
-
-"""
-    _get_pydb_manager(location::String, filesystem::String)
-
-Get a python `nemdb.NEMWEBManager` object.
-
-# Arguments
-- `location::String`: The directory to cache data in.
-- `filesystem::String`: The filesystem to use for the cache.
-"""
-function _get_pydb_manager(location::String, filesystem::String)
-    nemdb = pyimport("nemdb")
-    config = nemdb.Config
-    config.set_cache_dir(location)
-    config.set_filesystem(filesystem)
-    return nemdb.NEMWEBManager(config)
 end
 
 """
@@ -347,4 +283,88 @@ function _filter_latest(table, key)
     return @eval @chain $table begin
         @inner_join($max_eff_date, $key == max_key)
     end
+end
+
+
+function populate(
+        key::Symbol, year::Integer, month::Integer;
+        config::HiveConfiguration = CONFIG[],
+    )
+    cols = get(NEMWEB_TABLE_SCHEMA, key) do
+        throw("Key $key is not an option")
+    end
+    date = Date(year, month, 1)
+    # Check whether the partition already exists
+    cache_location = joinpath(config.hive_location, "$(string(key))")
+    if isdir(joinpath(cache_location, "archive_month=$(string(date))"))
+        @info "Partition already exists"
+        return nothing
+    end
+
+    # No existing files, get them from AEMO website
+    urls = get_data_url(string(key), year, month)
+
+    tmpdir = tempdir()
+    frames = []
+    for (i, url) in enumerate(urls)
+        file_path = joinpath(tmpdir, "$key-$year-$month-$i.zip")
+        if !isfile(file_path)
+            download(url, file_path)
+        end
+        push!(frames, read_zip_csv(file_path; select = cols))
+    end
+    df = vcat(frames...)
+    insertcols!(df, :archive_month => date)
+
+    return write_table(
+        cache_location,
+        df;
+        format = :parquet,
+        partition_by = :archive_month,
+        filename_pattern = "$(string(key))-{i}",
+        overwrite_or_ignore = true,
+    )
+end
+
+
+"""
+	read_zip_csv(path::String, select::Vector{Symbol})
+
+Read a CSV file from a zip archive.
+"""
+function read_zip_csv(
+        path::String;
+        select::Union{Nothing, Vector{Symbol}} = nothing,
+    )::DataFrame
+    if !isnothing(select)
+        push!(select, :I)
+    end
+    csv = open(path) do archive
+        zip = ZipReader(mmap(archive))
+        file = first(zip_names(zip))
+        entry = zip_readentry(zip, file)
+        CSV.File(entry; header = 2, select = select)
+    end
+    df = DataFrame(csv)
+    subset!(df, :I => ByRow(==("D")))
+    select!(df, Not(:I))
+    return df
+end
+
+"""
+	get_data_url(data::String, year::String, month::String)
+"""
+function get_data_url(data::String, year::Int, month::Int)
+    year = string(year)
+    month = lpad(month, 2, "0")
+    files = @chain begin
+        TV.read_html(
+            "https://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/$(year)/MMSDM_$(year)_$(month)/MMSDM_Historical_Data_SQLLoader/DATA/",
+        )
+        TV.html_elements("a")
+        TV.html_attrs("href")
+        filter(x -> occursin(Regex("[_#%3]$(data)[_#%]2"), x), _)
+    end
+    isempty(files) && throw("No files found for $(data), year:$year month:$month")
+    return "https://nemweb.com.au" .* files
 end
