@@ -52,7 +52,7 @@ function fetch_postcode_centroids()
         postcode = postcodes,
         centroid = locations
     )
-    @chain df begin
+    return @chain df begin
         transform!(
             :centroid => ByRow(x -> (x = x[1], y = x[2])) => AsTable
         )
