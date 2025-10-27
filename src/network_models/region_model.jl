@@ -556,9 +556,18 @@ function _add_renewable_ts_to_components!(sys, ts, prime_mover)
 end
 
 """
-    set_demand!(sys, demand)
+    set_demand!(sys, db, date_range; kwargs...)
 
-Add Load timeseries to the system, based on provided demand
+Adds load time series data to the system from the database.
+
+This function reads demand data for a specified date range, processes it into a time series,
+and attaches it to the `PowerLoad` components in the system.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `db`: The database connection.
+- `date_range`: A range of dates for which to fetch demand data.
+- `kwargs`: Additional keyword arguments passed to `read_demand`.
 """
 function set_demand!(sys, db, date_range; kwargs...)
     demand = read_demand(db; kwargs...)
@@ -571,9 +580,19 @@ function set_demand!(sys, db, date_range; kwargs...)
 end
 
 """
-    set_renewable_pv!(sys, demand)
+    set_renewable_pv!(sys, db, date_range; kwargs...)
 
-Add Renewable timeseries to the system, based on provided demand
+Adds photovoltaic (PV) renewable generation time series data to the system.
+
+This function reads solar availability data for a specified date range from the database,
+processes it into a time series, and attaches it to the `RenewableDispatch` components
+representing PV generators.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `db`: The database connection.
+- `date_range`: A range of dates for which to fetch the data.
+- `kwargs`: Additional keyword arguments passed to `read_demand`.
 """
 function set_renewable_pv!(sys, db, date_range; kwargs...)
     demand = read_demand(db; kwargs...)
@@ -588,9 +607,19 @@ function set_renewable_pv!(sys, db, date_range; kwargs...)
 end
 
 """
-    set_renewable_wind!(sys, demand)
+    set_renewable_wind!(sys, db, date_range; kwargs...)
 
-Add Renewable timeseries to the system, based on provided demand
+Adds wind turbine renewable generation time series data to the system.
+
+This function reads wind availability data for a specified date range from the database,
+processes it into a time series, and attaches it to the `RenewableDispatch` components
+representing wind turbines.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `db`: The database connection.
+- `date_range`: A range of dates for which to fetch the data.
+- `kwargs`: Additional keyword arguments passed to `read_demand`.
 """
 function set_renewable_wind!(sys, db, date_range; kwargs...)
     demand = read_demand(db; kwargs...)
@@ -603,5 +632,34 @@ function set_renewable_wind!(sys, db, date_range; kwargs...)
     @info "Setting wind power time series"
     return _add_renewable_ts_to_components!(sys, ts, PrimeMovers.WT)
 end
+
+
+"""
+    fetch_table_data(time_range; kwargs...)
+
+Fetches data for a predefined list of tables over a given time range.
+
+# Arguments
+- `time_range`: The time range for which to fetch data.
+- `kwargs`: Additional keyword arguments to be passed to the data fetching function.
+"""
+function fetch_table_data(time_range; kwargs...)
+    tables = [
+        :INTERCONNECTOR,
+        :INTERCONNECTORCONSTRAINT,
+        :DISPATCHREGIONSUM,
+        :DUDETAIL,
+        :DUDETAILSUMMARY,
+        :STATION,
+        :STATIONOPERATINGSTATUS,
+        :GENUNITS,
+        :DUALLOC,
+    ]
+    for table in tables
+        fetch_table_data(table, time_range; kwargs...)
+    end
+    return
+end
+
 
 end

@@ -14,7 +14,7 @@ include("nemdb.jl")
 include("isp.jl")
 
 # Parsing data into models
-include("parsing/region_model.jl")
+include("network_models/region_model.jl")
 
 #utils
 
