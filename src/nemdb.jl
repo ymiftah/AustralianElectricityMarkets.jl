@@ -276,6 +276,15 @@ function _filter_latest(table)
     return _filter_latest(table, :archive_month)
 end
 
+"""
+    _filter_latest(table, key)
+
+Helper function to filter for the most recent records in a table based on a given key.
+
+# Arguments
+- `table`: The TidierDB table to filter.
+- `key`: The column (as a Symbol) to use for determining the latest records.
+"""
 function _filter_latest(table, key)
     max_eff_date = @eval @chain $table begin
         @summarise(max_key = maximum($key))
@@ -285,7 +294,42 @@ function _filter_latest(table, key)
     end
 end
 
+"""
+    fetch_table_data(table::Symbol, time_range; config::HiveConfiguration=CONFIG[])
 
+Fetches data for a specified table over a given time range and populates the local cache.
+
+It iterates through the months in the `time_range` and calls `populate` for each month to download and cache the data.
+
+# Arguments
+- `table::Symbol`: The name of the table to fetch data for (e.g., `:DISPATCHREGIONSUM`).
+- `time_range`: A range of dates (e.g., `Date(2023, 1):Month(1):Date(2023, 3)`).
+- `config::HiveConfiguration`: The configuration to use. Defaults to `CONFIG[]`.
+"""
+function fetch_table_data(table::Symbol, time_range; config::HiveConfiguration = CONFIG[])
+    from_date = first(time_range)
+    end_date = last(time_range)
+    for date in from_date:Month(1):end_date
+        populate(table, year(date), month(date); config = config)
+    end
+    return
+end
+
+"""
+    populate(key::Symbol, year::Integer, month::Integer; config::HiveConfiguration=CONFIG[])
+
+Downloads and caches a month of data for a given table from the AEMO NEMWEB data source.
+
+If the data for the specified month and table already exists in the local cache, it does nothing. 
+Otherwise, it constructs the URL, downloads the zipped CSV data, reads it, and writes it to the 
+local hive-partitioned parquet cache.
+
+# Arguments
+- `key::Symbol`: The name of the table to populate (e.g., `:DISPATCHREGIONSUM`).
+- `year::Integer`: The year of the data to fetch.
+- `month::Integer`: The month of the data to fetch.
+- `config::HiveConfiguration`: The configuration to use. Defaults to `CONFIG[]`.
+"""
 function populate(
         key::Symbol, year::Integer, month::Integer;
         config::HiveConfiguration = CONFIG[],
@@ -328,9 +372,20 @@ end
 
 
 """
-	read_zip_csv(path::String, select::Vector{Symbol})
+    read_zip_csv(path::String; select::Union{Nothing, Vector{Symbol}}=nothing)::DataFrame
 
-Read a CSV file from a zip archive.
+Reads the first CSV file from a zip archive into a DataFrame.
+
+This function is designed to handle the specific format of AEMO's zipped data files, 
+which often contain a header section. It skips the initial metadata lines and only reads 
+the data rows, identified by a value of "D" in the 'I' column, which is then dropped.
+
+# Arguments
+- `path::String`: The file path to the zip archive.
+- `select::Union{Nothing, Vector{Symbol}}`: An optional vector of column names (as Symbols) to select from the CSV file. If `nothing`, all columns are read.
+
+# Returns
+- `DataFrame`: A DataFrame containing the data from the CSV file.
 """
 function read_zip_csv(
         path::String;
@@ -352,7 +407,19 @@ function read_zip_csv(
 end
 
 """
-	get_data_url(data::String, year::String, month::String)
+    get_data_url(data::String, year::Int, month::Int)
+
+Constructs the URL(s) for downloading a specific AEMO NEMWEB dataset for a given year and month.
+
+It scrapes the NEMWEB data archive page to find the correct link(s) to the zipped data file(s).
+
+# Arguments
+- `data::String`: The name of the dataset table (e.g., "DISPATCHREGIONSUM").
+- `year::Int`: The year of the data.
+- `month::Int`: The month of the data.
+
+# Returns
+- `Vector{String}`: A vector of full URL strings for the requested data files. Throws an error if no files are found.
 """
 function get_data_url(data::String, year::Int, month::Int)
     year = string(year)
