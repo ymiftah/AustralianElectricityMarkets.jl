@@ -10,5 +10,5 @@ Documentation for [AustralianElectricityMarkets](https://github.com/ymiftah/Aust
 ```
 
 ```@autodocs
-Modules = [AustralianElectricityMarkets]
+Modules = [AustralianElectricityMarkets, AustralianElectricityMarkets.RegionModel]
 ```

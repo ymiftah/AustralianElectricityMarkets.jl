@@ -5,7 +5,7 @@ DocMeta.setdocmeta!(
     AustralianElectricityMarkets,
     :DocTestSetup,
     :(using AustralianElectricityMarkets);
-    recursive = false,
+    recursive = true,
 )
 
 makedocs(;
