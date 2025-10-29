@@ -9,7 +9,7 @@ DocMeta.setdocmeta!(
 )
 
 makedocs(;
-    modules = [AustralianElectricityMarkets],
+    modules = [AustralianElectricityMarkets, AustralianElectricityMarkets.RegionModel],
     authors = "Youssef Miftah <miftahyo@outlook.fr> and contributors",
     sitename = "AustralianElectricityMarkets.jl",
     format = Documenter.HTML(;
