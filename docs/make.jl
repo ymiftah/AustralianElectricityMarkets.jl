@@ -5,11 +5,11 @@ DocMeta.setdocmeta!(
     AustralianElectricityMarkets,
     :DocTestSetup,
     :(using AustralianElectricityMarkets);
-    recursive = true,
+    recursive = false,
 )
 
 makedocs(;
-    modules = [AustralianElectricityMarkets, AustralianElectricityMarkets.RegionModel],
+    modules = [AustralianElectricityMarkets],
     authors = "Youssef Miftah <miftahyo@outlook.fr> and contributors",
     sitename = "AustralianElectricityMarkets.jl",
     format = Documenter.HTML(;
