@@ -2,10 +2,18 @@ using AustralianElectricityMarkets
 using Test
 using TestItems
 
-include("datareader.jl")
-include("regionmodel.jl")
+import AustralianElectricityMarkets.RegionModel as RM
+using Dates
+using TidierDB
+using DataFrames: nrow
+using PowerSystems
 
-@testitem "CI test" begin
+
+@testset "Test region model" begin
+    include("regionmodel.jl")
+end
+
+@testset "CI test" begin
     # Write your tests here.
     @test true
 end

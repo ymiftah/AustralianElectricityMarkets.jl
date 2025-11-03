@@ -1,10 +1,4 @@
-@testitem "Test RegionModel" begin
-    import AustralianElectricityMarkets.RegionModel as RM
-    using Dates
-    using TidierDB
-    using DataFrames: nrow
-    using PowerSystems
-
+@testset"Test RegionModel" begin
 
     db = connect(duckdb())
     map(
@@ -22,8 +16,8 @@
     ) do table
         fetch_table_data(table, Date(2025, 1, 1):Date(2025, 1, 1))
         table = read_hive(db, table) |> x -> (
-            @collect(
-                @head(
+            TidierDB.@collect(
+                TidierDB.@head(
                     x, 5
                 )
             )
