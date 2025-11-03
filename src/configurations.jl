@@ -14,4 +14,6 @@ Configuration for accessing data.
     filesystem::String = "local"
 end
 
+islocal(config::HiveConfiguration) = config.filesystem == "local"
+
 const CONFIG = ScopedValue(HiveConfiguration())
