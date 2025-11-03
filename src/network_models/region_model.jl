@@ -278,13 +278,16 @@ println(sys)
 ```
 """
 function get_system(db; kwargs...)
+    @info "parsing buses"
     bus_df = get_bus_dataframe(db)
+    @info "parsing loads"
     loads_df = get_load_dataframe(db)
+    @info "parsing branches"
     branch_df = get_branch_dataframe(db)
+    @info "parsing generators"
     gen_df = get_generators_dataframe(db)
 
     sys = System(BASE_POWER; kwargs...)
-
     _add_buses!(sys, bus_df)
     _add_loads!(sys, loads_df)
     _add_generation!(sys, gen_df)
@@ -397,6 +400,7 @@ function _add_generation!(sys, gen_df)
                 reactive_power_limits = nothing,  # (min = row[:reactive_power_limits_min], max = row[:reactive_power_limits_max]), # 0 MVAR to 0.25 MVAR per-unitized by device base_power
                 power_factor = 1.0,
                 operation_cost = RenewableGenerationCost(;
+                    # TODO find acceptable defaults issue #6
                     variable = CostCurve(
                         LinearCurve(rand(1.0:5.0), rand(1.0:10.0))
                     ),
@@ -443,11 +447,13 @@ function _add_generation!(sys, gen_df)
                 rating = row[:rating], # MW per-unitized by device base_power
                 active_power_limits = (min = row[:min_active_power], max = row[:max_active_power]), # 6 MW to 30 MW per-unitized by device base_power
                 reactive_power_limits = nothing, # Per-unitized by device base_power
-                ramp_limits = if isnothing(row[:max_ramp_up])
-                    nothing # per-unitized by device base_power per minute
-            else
-                    (up = row[:max_ramp_up], down = row[:max_ramp_down]) # per-unitized by device base_power per minute
-            end, # per-unitized by device base_power per minute
+                ramp_limits = (
+                    if isnothing(row[:max_ramp_up])
+                        nothing # per-unitized by device base_power per minute
+                else
+                        (up = row[:max_ramp_up], down = row[:max_ramp_down]) # per-unitized by device base_power per minute
+                end
+                ), # per-unitized by device base_power per minute
                 operation_cost = ThermalGenerationCost(;
                     # variable = CostCurve(
                     #     # LinearCurve(rand(10.0:50.0), rand(30.0:100.0))
@@ -656,10 +662,11 @@ function fetch_table_data(time_range; kwargs...)
         :DUALLOC,
     ]
     for table in tables
-        fetch_table_data(table, time_range; kwargs...)
+        AustralianElectricityMarkets.fetch_table_data(table, time_range; kwargs...)
     end
     return
 end
 
+AustralianElectricityMarkets.fetch_table_data(time_range; kwargs...) = fetch_table_data(time_range; kwargs...)
 
 end
