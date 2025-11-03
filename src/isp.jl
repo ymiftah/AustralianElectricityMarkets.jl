@@ -1,6 +1,6 @@
 using CSV, DataFrames, Chain;
 
-const ISP_DATA_DIR = "/home/simba/.julia/dev/AustralianElectricityMarkets/src/isp2025"; #joinpath(@__FILE__, "data", "isp2025")
+const ISP_DATA_DIR = joinpath(@__DIR__, "data", "isp2025")
 
 function read_affine_heatrates()
     file_source = joinpath(ISP_DATA_DIR, "affine_heat_rates.csv")
