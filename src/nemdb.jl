@@ -340,10 +340,14 @@ function populate(
     date = Date(year, month, 1)
     # Check whether the partition already exists
     cache_location = joinpath(config.hive_location, "$(string(key))")
-    if isdir(joinpath(cache_location, "archive_month=$(string(date))"))
+
+    if islocal(config) && !isdir(config.hive_location)
+        mkdir(config.cache_location)
+    elseif islocal(config) && isdir(joinpath(cache_location, "archive_month=$(string(date))"))
         @info "Partition already exists for table $key, skipping download."
         return nothing
     end
+
 
     # No existing files, get them from AEMO website
     urls = get_data_url(string(key), year, month)
