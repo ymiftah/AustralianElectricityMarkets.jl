@@ -341,18 +341,19 @@ function populate(
     # Check whether the partition already exists
     cache_location = joinpath(config.hive_location, "$(string(key))")
     if isdir(joinpath(cache_location, "archive_month=$(string(date))"))
-        @info "Partition already exists"
+        @info "Partition already exists for table $key, skipping download."
         return nothing
     end
 
     # No existing files, get them from AEMO website
     urls = get_data_url(string(key), year, month)
 
-    tmpdir = tempdir()
+    tmpdir = mktempdir()
     frames = []
     for (i, url) in enumerate(urls)
         file_path = joinpath(tmpdir, "$key-$year-$month-$i.zip")
         if !isfile(file_path)
+            @info "Downloading file from $url"
             download(url, file_path)
         end
         push!(frames, read_zip_csv(file_path; select = cols))
@@ -430,8 +431,17 @@ function get_data_url(data::String, year::Int, month::Int)
         )
         TV.html_elements("a")
         TV.html_attrs("href")
-        filter(x -> occursin(Regex("[_#%3]$(data)[_#%]2"), x), _)
     end
-    isempty(files) && throw("No files found for $(data), year:$year month:$month")
-    return "https://nemweb.com.au" .* files
+    filtered_files = filter(
+        x -> occursin(Regex("[%23]$(data)[%23]"), x),
+        files
+    )
+    if isempty(filtered_files)
+        filtered_files = filter(
+            x -> occursin(Regex("PUBLIC_DVD_$(data)_"), x),
+            files
+        )
+    end
+    isempty(filtered_files) && throw("No files found for $(data), year:$year month:$month")
+    return "https://nemweb.com.au" .* filtered_files
 end
