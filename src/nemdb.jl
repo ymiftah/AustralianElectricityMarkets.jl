@@ -342,7 +342,7 @@ function populate(
     cache_location = joinpath(config.hive_location, "$(string(key))")
 
     if islocal(config) && !isdir(config.hive_location)
-        mkdir(config.cache_location)
+        mkdir(config.hive_location)
     elseif islocal(config) && isdir(joinpath(cache_location, "archive_month=$(string(date))"))
         @info "Partition already exists for table $key, skipping download."
         return nothing
