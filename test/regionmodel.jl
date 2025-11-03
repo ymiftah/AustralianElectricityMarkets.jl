@@ -1,4 +1,4 @@
-@testset"Test RegionModel" begin
+@testset "Test RegionModel" begin
 
     db = connect(duckdb())
     map(
