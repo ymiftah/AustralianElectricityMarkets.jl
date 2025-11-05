@@ -42,10 +42,11 @@ Construct the correct path to the Hive dataset based on the specified filesystem
 - `config::PyHiveConfiguration`: The configuration object containing filesystem and location details.
 """
 function _parse_hive_root(config::HiveConfiguration)
-    if config.filesystem == "local"
+    if islocal(config)
         return config.hive_location
-    elseif config.filesystem == "gs"
-        return "gs://" * hive_location
+    else
+        prefix = get_backend(config)
+        return "$(prefix)://" * hive_location
     end
     throw("Not a known filesystem")
 end
