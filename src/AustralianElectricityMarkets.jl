@@ -3,6 +3,7 @@ module AustralianElectricityMarkets
 using PowerSystems
 using TidierDB
 using HTTP, JSON3
+using Dates
 
 # exports
 export NetworkConfiguration, HiveConfiguration

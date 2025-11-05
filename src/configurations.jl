@@ -10,7 +10,7 @@ Configuration for accessing data.
 - `filesystem::String`: The filesystem to use for the cache. Defaults to `"local"`. Can be s3, gs.
 """
 @kwdef struct HiveConfiguration
-    hive_location::String = joinpath(homedir(), ".nemweb_cache")
+    hive_location::String = joinpath(homedir(), ".aem_cache")
     filesystem::String = "file"
 end
 

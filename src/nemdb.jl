@@ -185,7 +185,7 @@ function read_units(db)
     summary_table = read_hive(db, :DUDETAILSUMMARY)
     summary = @chain summary_table begin
         _filter_latest
-        @filter(ismissing(END_DATE))
+        @filter(year(END_DATE) == 2999)  # AEMO specifies the latest version with a 2999-12-31 date
         @arrange(DUID, START_DATE)
         @collect
         unique(:DUID)
@@ -361,7 +361,7 @@ function populate(
             @info "Downloading file from $url"
             download(url, file_path)
         end
-        push!(frames, read_zip_csv(file_path; select = cols))
+        push!(frames, read_zip_csv(file_path; cols = cols))
     end
     df = vcat(frames...)
     insertcols!(df, :archive_month => date)
@@ -395,8 +395,9 @@ the data rows, identified by a value of "D" in the 'I' column, which is then dro
 """
 function read_zip_csv(
         path::String;
-        select::Union{Nothing, Vector{Symbol}} = nothing,
+        cols::Union{Nothing, Dict{Symbol, DataType}} = nothing,
     )::DataFrame
+    select = keys(cols) |> collect
     if !isnothing(select)
         push!(select, :I)
     end
@@ -404,7 +405,7 @@ function read_zip_csv(
         zip = ZipReader(mmap(archive))
         file = first(zip_names(zip))
         entry = zip_readentry(zip, file)
-        CSV.File(entry; header = 2, select = select)
+        CSV.File(entry; header = 2, select = select, types = cols, dateformat = "yyyy/mm/dd HH:MM:SS")
     end
     df = DataFrame(csv)
     subset!(df, :I => ByRow(==("D")))
