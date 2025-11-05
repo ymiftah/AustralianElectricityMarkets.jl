@@ -5,7 +5,7 @@ using DataFrames, Chain, Statistics
 import TimeSeries: TimeArray, colnames
 using PowerSystems
 
-export get_system, set_demand!, set_renewable_pv!, set_renewable_wind!
+export nem_system, set_demand!, set_renewable_pv!, set_renewable_wind!
 
 const LOAD_SUFFIX = "_LOAD_BUS"
 const GEN_SUFFIX = "_GEN_BUS"
@@ -260,7 +260,7 @@ function get_generators_dataframe(db)
 end
 
 """
-    get_system(db)
+    nem_system(db)
 
 Assembles a `PowerSystems.System` object from the database.
 
@@ -273,11 +273,11 @@ A `PowerSystems.System` object.
 # Example
 ```julia
 db = connect(duckdb())
-sys = get_system(db)
+sys = nem_system(db)
 println(sys)
 ```
 """
-function get_system(db; kwargs...)
+function nem_system(db; kwargs...)
     @info "parsing buses"
     bus_df = get_bus_dataframe(db)
     @info "parsing loads"
@@ -667,6 +667,17 @@ function fetch_table_data(time_range; kwargs...)
     return
 end
 
-AustralianElectricityMarkets.fetch_table_data(time_range; kwargs...) = fetch_table_data(time_range; kwargs...)
+
+"""
+    Each australian State (i.e. AEMO Region) is a combination of a load node and a generator node. The load nodes are connected.
+    between states by interconnectors
+"""
+struct RegionalNetworkConfiguration <: NetworkConfiguration end
+
+AustralianElectricityMarkets.fetch_table_data(time_range, ::RegionalNetworkConfiguration; kwargs...) = fetch_table_data(time_range; kwargs...)
+
+AustralianElectricityMarkets.nem_system(db, ::RegionalNetworkConfiguration; kwargs...) = nem_system(db; kwargs...)
+
+export RegionalNetworkConfiguration
 
 end

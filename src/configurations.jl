@@ -11,9 +11,9 @@ Configuration for accessing data.
 """
 @kwdef struct HiveConfiguration
     hive_location::String = joinpath(homedir(), ".nemweb_cache")
-    filesystem::String = "local"
+    filesystem::String = "file"
 end
 
-islocal(config::HiveConfiguration) = config.filesystem == "local"
+islocal(config::HiveConfiguration) = config.filesystem == "file"
 
 const CONFIG = ScopedValue(HiveConfiguration())
