@@ -17,3 +17,6 @@ end
 islocal(config::HiveConfiguration) = config.filesystem == "file"
 
 const CONFIG = ScopedValue(HiveConfiguration())
+
+
+abstract type NetworkConfiguration end
