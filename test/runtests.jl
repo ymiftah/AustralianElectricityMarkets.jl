@@ -2,7 +2,6 @@ using AustralianElectricityMarkets
 using Test
 using TestItems
 
-import AustralianElectricityMarkets.RegionModel as RM
 using Dates
 using TidierDB
 using DataFrames: nrow
