@@ -25,7 +25,7 @@
         @test nrow(table) == 5
     end
 
-    system = RM.nem_system(db, RegionalNetworkConfiguration())
+    system = nem_system(db, RegionalNetworkConfiguration())
 
     areas = get_components(Area, system) |> collect .|> get_name |> sort!
     @test areas == ["NSW1", "QLD1", "SA1", "SNOWY1", "TAS1", "VIC1"]
