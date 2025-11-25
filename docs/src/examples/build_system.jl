@@ -64,7 +64,7 @@ begin
     draw(spec; figure = figure_options)
 end
 
-# Australia as a fairly high penetration of rooftop PV, which at times exceed a state's total
+# Australia has a fairly high penetration of PV, which at times exceed a state's total
 # demand for electricity (in SA in particular)
 begin
     spec = data(
@@ -73,13 +73,13 @@ begin
     spec *= mapping(:SETTLEMENTDATE => "Date", :SS_SOLAR_AVAILABILITY => "Total Demand [MW]", color = :REGIONID => "State")
     spec *= visual(Lines)
     figure_options = (;
-        title = "Solar generationfrom semi-scheduled units per state",
-        subtitle = "Period of 20th January 2025 to 31st January 2025",
+        title = "Solar generation from semi-scheduled units per state",
+        subtitle = "Period of January 20th  2025 to January 31st 2025",
     )
     draw(spec; figure = figure_options)
 end
 
-## Integration with PowerSystems.jl
+# # Integration with PowerSystems.jl
 
 # Instantiate the system
 sys = nem_system(db, RegionalNetworkConfiguration())
