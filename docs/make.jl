@@ -42,7 +42,7 @@ makedocs(;
     pages = [
         "Home" => "index.md",
         "Getting started" => [
-            "Explore the NEM" => "examples/build_system.jl",
+            "Explore the NEM" => "examples/build_system.md",
         ],
     ],
 )
