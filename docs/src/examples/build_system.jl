@@ -96,6 +96,4 @@ end
 # Get informations for a specific unit
 gen = get_components_by_name(ThermalGen, sys, "JLA02")
 
-active_power_mw = with_units_base(gen, UnitSystem.NATURAL_UNITS) do
-    get_active_power(gen)
-end
+active_power_mw = get_active_power(gen)
