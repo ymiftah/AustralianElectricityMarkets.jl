@@ -85,7 +85,7 @@ end
 sys = nem_system(db, RegionalNetworkConfiguration())
 
 
-# Explore the Thermal generators
+# Explore the thermal generators
 thermal = @chain get_components(ThermalGen, sys) |> DataFrame begin
     select!([:name, :fuel, :prime_mover_type, :base_power])
     groupby(:fuel)
@@ -94,6 +94,12 @@ end
 
 
 # Get informations for a specific unit
-gen = get_components_by_name(ThermalGen, sys, "JLA02")
+gen = get_components_by_name(ThermalGen, sys, "JLA02") |> first
 
-active_power_mw = get_active_power(gen)
+# Check the prime mover type
+get_prime_mover_type(gen)
+
+# Check the rating in natural units
+with_units_base(sys, "NATURAL_UNITS") do
+    get_rating(gen)
+end
