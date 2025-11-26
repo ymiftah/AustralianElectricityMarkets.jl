@@ -88,6 +88,8 @@ const NEMWEB_TABLE_SCHEMA = Dict(
         :TOTALDEMAND => Float64,
         :AVAILABLEGENERATION => Float64,
         :AVAILABLELOAD => Float64,
+        :SS_SOLAR_AVAILABILITY => Float64,
+        :SS_WIND_AVAILABILITY => Float64,
     ),
     :INTERCONNECTOR => Dict(
         :INTERCONNECTORID => String,
