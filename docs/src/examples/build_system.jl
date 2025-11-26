@@ -5,7 +5,7 @@ begin
     using PowerSystems
     using DataFrames
     using Chain
-    using GLMakie, AlgebraOfGraphics
+    using CairoMakie, AlgebraOfGraphics
 end
 
 # # Overview of the NEM
