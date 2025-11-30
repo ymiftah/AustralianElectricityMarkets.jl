@@ -9,7 +9,7 @@ A Julia package for interfacing with the Australian Energy Market Operator (AEMO
 
 ## Description
 
-This package provides a set of tools to fetch, cache, and process data from AEMO's public data sources, particularly through the NEMWEB dataarchive. It allows users to read various datasets, and integrates with `PowerSystems.jl` for power system modeling and simulation.
+This package provides a set of tools to fetch, cache, and process data from AEMO's public data sources, particularly through the NEMWEB data archive. It allows users to read various datasets, and integrates with `PowerSystems.jl` for power system modeling and simulation.
 
 ## Installation
 
