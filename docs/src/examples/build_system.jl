@@ -1,3 +1,20 @@
+# # Overview of the NEM
+#
+# The [National Electricity Market (NEM)](https://www.aemo.com.au/energy-systems/electricity/national-electricity-market-nem)
+# operates on one of the world’s longest interconnected power systems. It covers around
+# 40,000 km of transmission lines and cables, supplying a population exceeding 23 million.
+
+# The NEM also
+
+# # Simple usage
+#
+# This package handles the download of data from the [NEMWEB Archive](https://www.aemo.com.au/energy-systems/electricity/national-electricity-market-nem/data-nem/market-data-nemweb)
+# and the parsing of the data into a System from `PowerSystems.jl`.
+# At the moment only a simple zonal network model is available (a nodal model with physical lines is a work-in-progress),
+# which allows to model a simple economic dispatch.
+# By default, the package will create a hidden folder `.aem_cache` in the home directory, and save the data into
+# parquet files.
+
 begin
     using AustralianElectricityMarkets
     using TidierDB
@@ -8,20 +25,22 @@ begin
     using CairoMakie, AlgebraOfGraphics
 end
 
-# # Overview of the NEM
 
-# Initialise a connection to manage the market data via duckdb
+## Initialise a connection to manage the market data via duckdb
 db = connect(duckdb());
 
-# Download data from AEMO's NEMWEB's Monthly archive
+## Download data from AEMO's NEMWEB's Monthly archive
 date_range = Date(2025, 1, 1):Date(2025, 1, 2)
 
-# Download the data from the monthly archive, saving them locally
-# in parquet files
-# Only the data requirements for a RegionalNetworkconfiguration are downloaded.
-fetch_table_data(date_range, RegionalNetworkConfiguration())
+## Download the data from the monthly archive, saving them locally
+## in parquet files.
+## Only the data requirements for a RegionalNetworkconfiguration are downloaded.
+fetch_table_data(date_range, RegionalNetworkConfiguration());
 
-# read all units
+# Once the data is downloaded, a few utility functions allow direct parsing of key quantities,
+# such as a table of all units registered in the NEM, or the region zonal operational demand
+
+## read all units
 units = read_units(db)
 
 capacity_by_fuel = @chain units begin
@@ -29,6 +48,9 @@ capacity_by_fuel = @chain units begin
     groupby([:CO2E_ENERGY_SOURCE, :REGIONID])
     combine(:REGISTEREDCAPACITY => (x -> sum(x) / 1000) => :installed_capacity_gw)
     dropmissing
+    sort!(:installed_capacity_gw)
+    ## Ignore marginal sources
+    subset!(:installed_capacity_gw => ByRow(>=(0.1)))
 end
 
 spec = mapping(
@@ -39,10 +61,10 @@ spec = mapping(
 ) * visual(
     BarPlot, alpha = 0.8,
 )
-
 fig = data(capacity_by_fuel) * spec
 draw(
-    fig, figure = (;
+    fig,
+    figure = (;
         title = "Installed capacity in the National Electricity Market by energy source",
     ),
     scales(Color = (; palette = from_continuous(:Paired_12)))
@@ -80,12 +102,16 @@ begin
 end
 
 # # Integration with PowerSystems.jl
+#
+# The main purpose of this package is to provide the data required for instantiating systems with
+# `PowerSystems.jl` and leverage the ecosystem of power systems modelling developed by NREL-Sienna.
 
-# Instantiate the system
+## Instantiate the system
 sys = nem_system(db, RegionalNetworkConfiguration())
 
+# Users can then interact with the system with all `PowerSystems` utilities
 
-# Explore the thermal generators
+## Explore the thermal generators
 thermal = @chain get_components(ThermalGen, sys) |> DataFrame begin
     select!([:name, :fuel, :prime_mover_type, :base_power])
     groupby(:fuel)
