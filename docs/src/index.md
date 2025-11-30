@@ -29,14 +29,26 @@ Here is a basic example of how to use the package to read demand data:
 
 ```julia
 using AustralianElectricityMarkets
-using DuckDB
-using DataFrames
+using TidierDB
 
 # Establish a database connection
-db = DBInterface.connect(DuckDB.DB)
+db = connect(duckdb());
 
-# Fetch and read the demand data
+# Download the data from the monthly archive, saving them locally
+# in parquet files
+# Only the data requirements for a RegionalNetworkconfiguration are downloaded.
+date_range = Date(2025, 1, 1):Date(2025, 1, 2)
+fetch_table_data(date_range, RegionalNetworkConfiguration())
+
 demand_df = read_demand(db)
+println(demand_df)
+```
+
+And parsing the data into `PowerSystems.jl`
+
+```julia
+# Instantiate a System
+sys = nem_system(db, RegionalNetworkConfiguration())
 
 println(demand_df)
 ```
@@ -60,7 +72,6 @@ This project is licensed under the MIT License.
 
 
 ## Index
-
 
 ```@index
 ```
