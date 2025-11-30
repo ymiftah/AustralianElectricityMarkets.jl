@@ -46,7 +46,7 @@ function _parse_hive_root(config::HiveConfiguration)
         return config.hive_location
     else
         prefix = get_backend(config)
-        return "$(prefix)://" * hive_location
+        return "$(prefix)://" * config.hive_location
     end
     throw("Not a known filesystem")
 end
@@ -450,4 +450,159 @@ function get_data_url(data::String, year::Int, month::Int)
     end
     isempty(filtered_files) && throw("No files found for $(data), year:$year month:$month")
     return "https://nemweb.com.au" .* filtered_files
+end
+
+
+"""
+    set_demand!(sys, db, date_range; kwargs...)
+
+Adds load time series data to the system from the database.
+
+This function reads demand data for a specified date range, processes it into a time series,
+and attaches it to the `PowerLoad` components in the system.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `db`: The database connection.
+- `date_range`: A range of dates for which to fetch demand data.
+- `kwargs`: Additional keyword arguments passed to `read_demand`.
+"""
+function set_demand!(sys, db, date_range; kwargs...)
+    demand = read_demand(db; kwargs...)
+    ts = @chain demand begin
+        transform!(:REGIONID => ByRow(x -> x * " Load") => :name)
+        subset!(:SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
+        _as_timearray(:SETTLEMENTDATE, :name, :TOTALDEMAND)
+    end
+    return _add_demand_ts_to_components!(sys, ts, PowerLoad)
+end
+
+"""
+    set_renewable_pv!(sys, db, date_range; kwargs...)
+
+Adds photovoltaic (PV) renewable generation time series data to the system.
+
+This function reads solar availability data for a specified date range from the database,
+processes it into a time series, and attaches it to the `RenewableDispatch` components
+representing PV generators.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `db`: The database connection.
+- `date_range`: A range of dates for which to fetch the data.
+- `kwargs`: Additional keyword arguments passed to `read_demand`.
+"""
+function set_renewable_pv!(sys, db, date_range; kwargs...)
+    demand = read_demand(db; kwargs...)
+    ts = @chain demand begin
+        subset!(:SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
+        select!(:SETTLEMENTDATE, :REGIONID, :SS_SOLAR_AVAILABILITY)
+        disallowmissing!
+        _as_timearray(:SETTLEMENTDATE, :REGIONID, :SS_SOLAR_AVAILABILITY)
+    end
+    @info "Setting PV power time series"
+    return _add_renewable_ts_to_components!(sys, ts, PrimeMovers.PVe)
+end
+
+"""
+    set_renewable_wind!(sys, db, date_range; kwargs...)
+
+Adds wind turbine renewable generation time series data to the system.
+
+This function reads wind availability data for a specified date range from the database,
+processes it into a time series, and attaches it to the `RenewableDispatch` components
+representing wind turbines.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `db`: The database connection.
+- `date_range`: A range of dates for which to fetch the data.
+- `kwargs`: Additional keyword arguments passed to `read_demand`.
+"""
+function set_renewable_wind!(sys, db, date_range; kwargs...)
+    demand = read_demand(db; kwargs...)
+    ts = @chain demand begin
+        subset!(:SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
+        select!(:SETTLEMENTDATE, :REGIONID, :SS_WIND_AVAILABILITY)
+        disallowmissing!
+        _as_timearray(:SETTLEMENTDATE, :REGIONID, :SS_WIND_AVAILABILITY)
+    end
+    @info "Setting wind power time series"
+    return _add_renewable_ts_to_components!(sys, ts, PrimeMovers.WT)
+end
+
+
+"""
+    _as_timearray(df, index, col, value)
+
+Converts a DataFrame to a TimeArray.
+
+# Arguments
+- `df`: The input `DataFrame`.
+- `index`: The column to use as the timestamp.
+- `col`: The column to use for the column names of the `TimeArray`.
+- `value`: The column to use for the values of the `TimeArray`.
+"""
+function _as_timearray(df, index, col, value)
+    out = TimeArray(unstack(df, index, col, value); timestamp = index)
+    return Float64.(out)
+end
+
+"""
+    _add_demand_ts_to_components!(sys, ts, type)
+
+Adds demand time series data to the system components.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `ts`: A `TimeArray` of demand data.
+- `type`: The type of component to add the time series to.
+"""
+function _add_demand_ts_to_components!(sys, ts, type)
+    loads = colnames(ts)
+    for component in get_components(type, sys)
+        name = Symbol(get_name(component))
+        if !in(name, loads)
+            @info "Setting loads to 0 for $name"
+            ts_component = ts[first(loads)] .* 0.0
+        else
+            ts_component = ts[name]
+        end
+        max_active_power = get_max_active_power(component)
+        psy_ts = SingleTimeSeries(;
+            name = "max_active_power",
+            data = Float64.(ts_component ./ max_active_power ./ get_base_power(sys)),
+            scaling_factor_multiplier = get_max_active_power,
+        )
+        add_time_series!(sys, component, psy_ts)
+    end
+    return
+end
+
+"""
+    _add_renewable_ts_to_components!(sys, ts, prime_mover)
+
+Adds renewable generation time series data to the system components.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `ts`: A `TimeArray` of renewable generation data.
+- `prime_mover`: The prime mover type of the renewable generator.
+"""
+function _add_renewable_ts_to_components!(sys, ts, prime_mover)
+    for area in get_components(area -> get_name(area) in string.(colnames(ts)), Area, sys)
+        area_symbol = Symbol(get_name(area))
+        components_in_area = get_components(
+            x -> get_area(get_bus(x)) == area && get_prime_mover_type(x) == prime_mover,
+            RenewableDispatch,
+            sys,
+        )
+        psy_ts = SingleTimeSeries(;
+            name = "max_active_power",
+            data = ts[area_symbol] ./ values(maximum(ts[area_symbol]))[1],
+            scaling_factor_multiplier = get_max_active_power,
+        )
+        add_time_series!(sys, components_in_area, psy_ts)
+    end
+    return
 end

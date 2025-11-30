@@ -5,11 +5,11 @@
 [![Build Status](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![code style: runic](https://img.shields.io/badge/code_style-%E1%9A%B1%E1%9A%A2%E1%9A%BE%E1%9B%81%E1%9A%B2-black)](https://github.com/fredrikekre/Runic.jl)
 
-A Julia package for interfacing with data from the Australian Energy Market Operator (AEMO) to simulate the operation of the Australian Electricity Market.
+A Julia package for interfacing with the Australian Energy Market Operator (AEMO) data archive.
 
 ## Description
 
-This package provides a set of tools to fetch, cache, and process data from AEMO's public data sources, particularly through the NEMDB database. It allows users to read various datasets, including interconnector data, regional demand, and generation unit details, and integrates with `PowerSystems.jl` for power system modeling and simulation.
+This package provides a set of tools to fetch, cache, and process data from AEMO's public data sources, particularly through the NEMWEB data archive. It allows users to read various datasets, and integrates with `PowerSystems.jl` for power system modeling and simulation.
 
 ## Installation
 
@@ -41,17 +41,15 @@ println(demand_df)
 ## Features
 
 *   **Data Fetching:** Fetch data from AEMO's NEMWEB data source for specified time ranges.
-*   **Data Caching:** Cache downloaded data locally for faster access.
 *   **Data Processing:** Read and process various NEMDB tables, including:
     *   Interconnector data
     *   Regional demand
     *   Generation unit details
 *   **PowerSystems.jl Integration:** Parse AEMO data into `PowerSystems.jl` models for simulation.
-*   **Flexible Data Backend:** Uses `TidierDB.jl` to support different database backends (e.g., DuckDB).
 
 ## Data Sources
 
-This package primarily interfaces with data from the [Australian Energy Market Operator (AEMO)](https://aemo.com.au/). It relies on the [NEMDB](https://github.com/opennem/nemdb) project for accessing and managing the underlying data.
+This package primarily interfaces with data from the [Australian Energy Market Operator (AEMO)](https://aemo.com.au/). It relies on the [NEMWEB](https://www.aemo.com.au/energy-systems/electricity/national-electricity-market-nem/data-nem/market-data-nemweb) data archives and data models.
 
 ## License
 

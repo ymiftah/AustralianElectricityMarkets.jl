@@ -45,6 +45,7 @@ makedocs(;
         "Home" => "index.md",
         "Getting started" => [
             "Explore the NEM" => "examples/build_system.md",
+            "Economic dispatch" => "examples/economic_dispatch.md",
         ],
     ],
 
