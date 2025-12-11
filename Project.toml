@@ -1,5 +1,5 @@
 [workspace]
-projects = ["AustralianElectricityMarketsData", "AustralianElectricityMarkets"]
+projects = ["AustralianElectricityMarketsData", "AustralianElectricityMarkets", "docs", "test"]
 
 [deps]
 AustralianElectricityMarkets = "1bf50fc4-d6fd-47c1-85ec-4976c2b5cc58"
