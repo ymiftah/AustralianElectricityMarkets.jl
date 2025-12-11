@@ -1,5 +1,10 @@
 [workspace]
-projects = [
-    "AustralianElectricityMarketsData",
-    "AustralianElectricityMarkets",
-]
+projects = ["AustralianElectricityMarketsData", "AustralianElectricityMarkets"]
+
+[deps]
+AustralianElectricityMarkets = "1bf50fc4-d6fd-47c1-85ec-4976c2b5cc58"
+AustralianElectricityMarketsData = "62da82ff-6881-4c5e-8851-534df85a2913"
+
+[sources]
+AustralianElectricityMarkets = {path = "AustralianElectricityMarkets"}
+AustralianElectricityMarketsData = {path = "AustralianElectricityMarketsData"}

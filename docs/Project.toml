@@ -1,6 +1,7 @@
 [deps]
 AlgebraOfGraphics = "cbdf2221-f076-402e-a563-3d30da359d67"
 AustralianElectricityMarkets = "1bf50fc4-d6fd-47c1-85ec-4976c2b5cc58"
+AustralianElectricityMarketsData = "62da82ff-6881-4c5e-8851-534df85a2913"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 Chain = "8be319e6-bccf-4806-a6f7-6fae938471bc"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
@@ -14,4 +15,5 @@ QuackIO = "7b8617ff-c43a-4c37-a28b-ad5a1791f8ae"
 TidierDB = "86993f9b-bbba-4084-97c5-ee15961ad48b"
 
 [sources]
-AustralianElectricityMarkets = {path = "/home/simba/.julia/dev/AustralianElectricityMarkets"}
+AustralianElectricityMarkets = {path = "/home/simba/.julia/dev/AustralianElectricityMarkets/AustralianElectricityMarkets"}
+AustralianElectricityMarketsData = {path = "/home/simba/.julia/dev/AustralianElectricityMarkets/AustralianElectricityMarketsData"}

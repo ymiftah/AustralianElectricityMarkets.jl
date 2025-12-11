@@ -11,7 +11,6 @@ export NetworkConfiguration, HiveConfiguration
 export nem_system
 export RegionalNetworkConfiguration
 
-export fetch_table_data
 export read_hive
 export read_interconnectors, read_units, read_demand, read_affine_heatrates,
     read_coal_prices, read_gas_prices, read_biomass_prices, read_isp_thermal_costs_parameters
