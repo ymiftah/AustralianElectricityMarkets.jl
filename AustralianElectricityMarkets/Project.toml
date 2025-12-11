@@ -1,0 +1,50 @@
+name = "AustralianElectricityMarkets"
+uuid = "1bf50fc4-d6fd-47c1-85ec-4976c2b5cc58"
+version = "1.0.0-DEV"
+authors = ["Youssef Miftah <miftahyo@outlook.fr> and contributors"]
+
+[deps]
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+Chain = "8be319e6-bccf-4806-a6f7-6fae938471bc"
+CoordRefSystems = "b46f11dc-f210-4604-bfba-323c1ec968cb"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+DuckDB = "d2f5444f-75bc-4fdf-ac35-56f514c445e1"
+HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+Mmap = "a63ad114-7e13-5084-954f-fe012c677804"
+PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
+QuackIO = "7b8617ff-c43a-4c37-a28b-ad5a1791f8ae"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+TidierDB = "86993f9b-bbba-4084-97c5-ee15961ad48b"
+TidierVest = "969b988e-7aed-4820-b60d-bdec252047c4"
+TimeSeries = "9e3dc215-6440-5c97-bce1-76c03772f85e"
+ZipArchives = "49080126-0e18-4c2a-b176-c102e4b3760c"
+
+[compat]
+CSV = "0.10.15"
+Chain = "0.6.0"
+CoordRefSystems = "0.18.10"
+DataFrames = "1.7.0"
+Dates = "1.11.0"
+DuckDB = "1.4.1"
+HTTP = "1.10.17"
+JSON3 = "1.14.3"
+Mmap = "1.11.0"
+PowerSystems = "4.6.2"
+QuackIO = "0.1.5"
+Statistics = "1.11.1"
+TidierDB = "0.8.7"
+TidierVest = "0.4.6"
+TimeSeries = "0.24.2"
+ZipArchives = "2.5.1"
+julia = "1.11"
+
+[extras]
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+Mocking = "78c3b35d-d492-501b-9361-3d52fe80e533"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+TestItems = "1c621080-faea-4a02-84b6-bbd5e436b8fe"
+
+[targets]
+test = ["Aqua", "Test", "TestItems", "Mocking"]

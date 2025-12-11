@@ -1,0 +1,12 @@
+name = "AustralianElectricityMarketsData"
+uuid = "62da82ff-6881-4c5e-8851-534df85a2913"
+version = "1.0.0-DEV"
+authors = ["Youssef Miftah <miftahyo@outlook.fr> and contributors"]
+
+[deps]
+CondaPkg = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"
+PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
+
+[compat]
+CondaPkg = "0.2.33"
+PythonCall = "0.9.30"

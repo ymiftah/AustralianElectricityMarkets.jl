@@ -1,0 +1,3 @@
+
+[pip.deps]
+nemdb = "@git+https://github.com/ymiftah/nemdb"
