@@ -1,6 +1,7 @@
 module AustralianElectricityMarketsData
 
 using PythonCall
+using Statistics: median
 using ..AustralianElectricityMarkets: PM_MAPPING
 
 export PyHiveConfiguration, fetch_table_data, list_available_tables
