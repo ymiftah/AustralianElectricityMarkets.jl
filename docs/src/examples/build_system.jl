@@ -17,7 +17,6 @@
 
 begin
     using AustralianElectricityMarkets
-    using AustralianElectricityMarketsData
     using TidierDB
     using Dates
     using PowerSystems

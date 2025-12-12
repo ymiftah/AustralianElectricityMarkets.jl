@@ -3,6 +3,7 @@ openssl = ">=3, <3.6"
 libstdcxx = ">=3.4,<15.0"
 uv = ">=0.4"
 libstdcxx-ng = ">=3.4,<15.0"
+copier = "*"
 
     [dependencies.python]
     channel = "conda-forge"

@@ -1,5 +1,3 @@
-using Base.ScopedValues
-
 """
     HiveConfiguration
 
@@ -17,7 +15,8 @@ end
 islocal(config::HiveConfiguration) = config.filesystem == "file"
 get_backend(config::HiveConfiguration) = config.filesystem
 
-const CONFIG = ScopedValue(HiveConfiguration())
-
-
 abstract type NetworkConfiguration end
+
+function tables_requirements(::NetworkConfiguration)
+    throw("Not implemented")
+end

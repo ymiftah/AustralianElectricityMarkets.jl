@@ -1,6 +1,5 @@
 begin
     using AustralianElectricityMarkets
-    using AustralianElectricityMarketsData
     using PowerSimulations
     using PowerSystems
 

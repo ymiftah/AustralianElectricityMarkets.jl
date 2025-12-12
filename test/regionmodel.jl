@@ -1,18 +1,10 @@
 @testset "Test RegionModel" begin
 
+    required_tables = tables_requirements(RegionalNetworkConfiguration())
+
     db = connect(duckdb())
     map(
-        [
-            :INTERCONNECTOR,
-            :INTERCONNECTORCONSTRAINT,
-            :DISPATCHREGIONSUM,
-            :DUDETAIL,
-            :DUDETAILSUMMARY,
-            :STATION,
-            :STATIONOPERATINGSTATUS,
-            :GENUNITS,
-            :DUALLOC,
-        ]
+        required_tables
     ) do table
         fetch_table_data(table, Date(2025, 1, 1):Date(2025, 1, 1))
         table = read_hive(db, table) |> x -> (
