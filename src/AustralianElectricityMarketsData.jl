@@ -1,6 +1,7 @@
 module AustralianElectricityMarketsData
 
 using PythonCall
+using ..AustralianElectricityMarkets: PM_MAPPING
 
 export PyHiveConfiguration, fetch_table_data, list_available_tables
 export read_affine_heatrates, read_coal_prices, read_gas_prices, read_biomass_prices, read_isp_thermal_costs_parameters
