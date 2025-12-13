@@ -14,15 +14,14 @@ end
 
 
 """
-    fetch_table_data(table::Symbol, time_range::Any; location::String=CONFIG[].hive_location, filesystem=CONFIG[].filesystem)
+    fetch_table_data(table::Symbol, time_range::Any; hive_configuration::PyHiveConfiguration)
 
 Download and cache data for a given `table` and `time_range`.
 
 # Arguments
 - `table::Symbol`: The table to populate.
 - `time_range::Any`: The time range to populate data for. (e.g. `Date(2023,1,1):Date(2023,3,1)`)
-- `location::String`: The directory to cache data in. Defaults to `~/.nemweb_cache`.
-- `filesystem::String`: The filesystem to use for the cache. Defaults to `local`.
+- `hive_configuration::PyHiveConfiguration`: Configuration to use for the cache. Defaults to a local directory ~/.nemweb_cache.
 """
 function fetch_table_data(
         table::Symbol,
@@ -41,15 +40,14 @@ function fetch_table_data(
 end
 
 """
-    fetch_table_data(table::Symbol, time_range::Any; location::String=CONFIG[].hive_location, filesystem=CONFIG[].filesystem)
+    fetch_table_data(table::Symbol, time_range::Any; hive_configuration::PyHiveConfiguration)
 
 Download and cache data for a given `table` and `time_range`.
 
 # Arguments
 - `table::Symbol`: The table to populate.
 - `time_range::Any`: The time range to populate data for. (e.g. `Date(2023,1,1):Date(2023,3,1)`)
-- `location::String`: The directory to cache data in. Defaults to `~/.nemweb_cache`.
-- `filesystem::String`: The filesystem to use for the cache. Defaults to `local`.
+- `hive_configuration::PyHiveConfiguration`: Configuration to use for the cache. Defaults to a local directory ~/.nemweb_cache.
 """
 function fetch_table_data(
         time_range::Any;
