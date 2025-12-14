@@ -7,6 +7,15 @@ using ..AustralianElectricityMarkets: PM_MAPPING
 export PyHiveConfiguration, fetch_table_data, list_available_tables
 export read_affine_heatrates, read_coal_prices, read_gas_prices, read_biomass_prices, read_isp_thermal_costs_parameters
 
+"""
+    PyHiveConfiguration
+
+Configuration for `nemdb` Python library cache.
+
+# Arguments
+- `base_dir::String`: The base directory to cache data in. Defaults to `~/.nemweb_cache`.
+- `filesystem::String`: The fsspec compatible filesystem to use. Defaults to `"local"`.
+"""
 @kwdef struct PyHiveConfiguration
     base_dir::String = joinpath(homedir(), ".nemweb_cache")
     filesystem::String = "local"
@@ -40,12 +49,11 @@ function fetch_table_data(
 end
 
 """
-    fetch_table_data(table::Symbol, time_range::Any; hive_configuration::PyHiveConfiguration)
+    fetch_table_data(time_range::Any; hive_configuration::PyHiveConfiguration)
 
-Download and cache data for a given `table` and `time_range`.
+Download and cache data for all tables for a given `time_range`.
 
 # Arguments
-- `table::Symbol`: The table to populate.
 - `time_range::Any`: The time range to populate data for. (e.g. `Date(2023,1,1):Date(2023,3,1)`)
 - `hive_configuration::PyHiveConfiguration`: Configuration to use for the cache. Defaults to a local directory ~/.nemweb_cache.
 """
@@ -94,6 +102,17 @@ using CSV, DataFrames, Chain;
 
 const ISP_DATA_DIR = joinpath(@__DIR__, "data", "isp2025")
 
+"""
+    read_affine_heatrates()
+
+Read affine heat rate model parameters from ISP 2025 data.
+
+The affine heat rate model is of the form:
+
+`HeatRate = a * CapacityFactor + b`
+
+where `a` is the slope and `b` is the intercept.
+"""
 function read_affine_heatrates()
     file_source = joinpath(ISP_DATA_DIR, "affine_heat_rates.csv")
     return @chain file_source begin
@@ -104,6 +123,11 @@ function read_affine_heatrates()
     end
 end
 
+"""
+    read_coal_prices()
+
+Read coal prices from ISP 2025 data.
+"""
 function read_coal_prices()
     file_source = joinpath(ISP_DATA_DIR, "coal_prices.csv")
     return @chain file_source begin
@@ -116,6 +140,11 @@ function read_coal_prices()
     end
 end
 
+"""
+    read_gas_prices()
+
+Read gas prices from ISP 2025 data.
+"""
 function read_gas_prices()
     file_source = joinpath(ISP_DATA_DIR, "gas_prices.csv")
     return @chain file_source begin
@@ -128,6 +157,11 @@ function read_gas_prices()
     end
 end
 
+"""
+    read_biomass_prices()
+
+Read biomass prices from ISP 2025 data.
+"""
 function read_biomass_prices()
     file_source = joinpath(ISP_DATA_DIR, "biomass_prices.csv")
     return @chain file_source begin
@@ -140,6 +174,15 @@ function read_biomass_prices()
     end
 end
 
+"""
+    read_isp_thermal_costs_parameters(year::Int, scenario::String)
+
+Read thermal costs parameters from ISP 2025 data for a given `year` and `scenario`.
+
+# Arguments
+- `year::Int`: The year to read data for.
+- `scenario::String`: The scenario to read data for.
+"""
 function read_isp_thermal_costs_parameters(year::Int, scenario::String)
     affine_heatrates = read_affine_heatrates()
     prices = vcat(
