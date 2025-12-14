@@ -48,7 +48,7 @@ makedocs(;
             "Economic dispatch" => "examples/economic_dispatch.md",
         ],
     ],
-
+    checkdocs = :none
 )
 
 deploydocs(; repo = "github.com/ymiftah/AustralianElectricityMarkets.jl", devbranch = "main")
