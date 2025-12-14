@@ -77,7 +77,7 @@ solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.05)
 
 
 problem = DecisionModel(template, sys; optimizer = solver, horizon = horizon)
-build!(problem)
+build!(problem; output_dir = joinpath(tempdir(), "out"))
 
 # Solve the problem
 solve!(problem)
