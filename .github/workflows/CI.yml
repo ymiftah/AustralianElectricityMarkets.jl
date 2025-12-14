@@ -25,7 +25,7 @@ jobs:
         version:
           - '1.11'
           - '1.12'
-          - '1.13'
+          - '~1.13.0-0'
         os:
           - ubuntu-latest
         arch:
