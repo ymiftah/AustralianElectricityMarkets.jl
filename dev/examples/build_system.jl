@@ -35,7 +35,10 @@ date_range = Date(2025, 1, 1):Date(2025, 1, 2)
 ## Download the data from the monthly archive, saving them locally
 ## in parquet files.
 ## Only the data requirements for a RegionalNetworkconfiguration are downloaded.
-fetch_table_data(date_range, RegionalNetworkConfiguration());
+tables = table_requirements(RegionalNetworkConfiguration())
+map(tables) do table
+    fetch_table_data(table, date_range)
+end;
 
 # Once the data is downloaded, a few utility functions allow direct parsing of key quantities,
 # such as a table of all units registered in the NEM, or the region zonal operational demand
