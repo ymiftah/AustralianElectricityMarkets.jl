@@ -1,6 +1,6 @@
 @testset "Test RegionModel" begin
 
-    required_tables = tables_requirements(RegionalNetworkConfiguration())
+    required_tables = table_requirements(RegionalNetworkConfiguration())
 
     db = connect(duckdb())
     map(

@@ -494,7 +494,7 @@ struct RegionalNetworkConfiguration <: NetworkConfiguration end
 
 
 """
-    tables_requirements(::RegionalNetworkConfiguration)
+    table_requirements(::RegionalNetworkConfiguration)
 
 
     :INTERCONNECTOR,
@@ -507,7 +507,7 @@ struct RegionalNetworkConfiguration <: NetworkConfiguration end
     :GENUNITS,
     :DUALLOC,
 """
-AustralianElectricityMarkets.tables_requirements(::RegionalNetworkConfiguration) = [
+AustralianElectricityMarkets.table_requirements(::RegionalNetworkConfiguration) = [
     :INTERCONNECTOR,
     :INTERCONNECTORCONSTRAINT,
     :DISPATCHREGIONSUM,

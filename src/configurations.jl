@@ -17,6 +17,6 @@ get_backend(config::HiveConfiguration) = config.filesystem
 
 abstract type NetworkConfiguration end
 
-function tables_requirements(::NetworkConfiguration)
+function table_requirements(::NetworkConfiguration)
     throw("Not implemented")
 end

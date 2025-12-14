@@ -8,7 +8,7 @@ import TimeSeries: TimeArray, colnames
 
 # exports
 export PyHiveConfiguration, fetch_table_data, list_available_tables
-export NetworkConfiguration, tables_requirements
+export NetworkConfiguration, table_requirements
 export nem_system
 export RegionalNetworkConfiguration
 
