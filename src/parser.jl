@@ -185,7 +185,7 @@ function read_units(db)
     summary_table = read_hive(db, :DUDETAILSUMMARY)
     summary = @chain summary_table begin
         _filter_latest
-        @filter(year(END_DATE) == 2999)  # AEMO specifies the latest version with a 2999-12-31 date
+        @filter(ismissing(END_DATE))  # AEMO specifies the latest version with a 2999-12-31 date, which is converted to a missing in nemdb.py
         @arrange(DUID, START_DATE)
         @collect
         unique(:DUID)
