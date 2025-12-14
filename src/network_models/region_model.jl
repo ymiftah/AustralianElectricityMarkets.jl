@@ -485,33 +485,6 @@ function _add_generation!(sys, gen_df)
     return sys
 end
 
-"""
-    fetch_table_data(time_range; kwargs...)
-
-Fetches data for a predefined list of tables over a given time range.
-
-# Arguments
-- `time_range`: The time range for which to fetch data.
-- `kwargs`: Additional keyword arguments to be passed to the data fetching function.
-"""
-function fetch_table_data(time_range; kwargs...)
-    tables = [
-        :INTERCONNECTOR,
-        :INTERCONNECTORCONSTRAINT,
-        :DISPATCHREGIONSUM,
-        :DUDETAIL,
-        :DUDETAILSUMMARY,
-        :STATION,
-        :STATIONOPERATINGSTATUS,
-        :GENUNITS,
-        :DUALLOC,
-    ]
-    for table in tables
-        AustralianElectricityMarkets.fetch_table_data(table, time_range; kwargs...)
-    end
-    return
-end
-
 
 """
     Each australian State (i.e. AEMO Region) is a combination of a load node and a generator node. The load nodes are connected.
@@ -519,7 +492,32 @@ end
 """
 struct RegionalNetworkConfiguration <: NetworkConfiguration end
 
-AustralianElectricityMarkets.fetch_table_data(time_range, ::RegionalNetworkConfiguration; kwargs...) = fetch_table_data(time_range; kwargs...)
+
+"""
+    table_requirements(::RegionalNetworkConfiguration)
+
+
+    :INTERCONNECTOR,
+    :INTERCONNECTORCONSTRAINT,
+    :DISPATCHREGIONSUM,
+    :DUDETAIL,
+    :DUDETAILSUMMARY,
+    :STATION,
+    :STATIONOPERATINGSTATUS,
+    :GENUNITS,
+    :DUALLOC,
+"""
+AustralianElectricityMarkets.table_requirements(::RegionalNetworkConfiguration) = [
+    :INTERCONNECTOR,
+    :INTERCONNECTORCONSTRAINT,
+    :DISPATCHREGIONSUM,
+    :DUDETAIL,
+    :DUDETAILSUMMARY,
+    :STATION,
+    :STATIONOPERATINGSTATUS,
+    :GENUNITS,
+    :DUALLOC,
+]
 
 AustralianElectricityMarkets.nem_system(db, ::RegionalNetworkConfiguration; kwargs...) = nem_system(db; kwargs...)
 

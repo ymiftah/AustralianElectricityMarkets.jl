@@ -3,6 +3,9 @@ uuid = "1bf50fc4-d6fd-47c1-85ec-4976c2b5cc58"
 version = "1.0.0-DEV"
 authors = ["Youssef Miftah <miftahyo@outlook.fr> and contributors"]
 
+[workspace]
+projects = ["test", "docs"]
+
 [deps]
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 Chain = "8be319e6-bccf-4806-a6f7-6fae938471bc"
@@ -20,8 +23,12 @@ TidierDB = "86993f9b-bbba-4084-97c5-ee15961ad48b"
 TidierVest = "969b988e-7aed-4820-b60d-bdec252047c4"
 TimeSeries = "9e3dc215-6440-5c97-bce1-76c03772f85e"
 ZipArchives = "49080126-0e18-4c2a-b176-c102e4b3760c"
+CondaPkg = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"
+PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
 
 [compat]
+CondaPkg = "0.2.33"
+PythonCall = "0.9.30"
 CSV = "0.10.15"
 Chain = "0.6.0"
 CoordRefSystems = "0.18.10"
@@ -39,12 +46,3 @@ TidierVest = "0.4.6"
 TimeSeries = "0.24.2"
 ZipArchives = "2.5.1"
 julia = "1.11"
-
-[extras]
-Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
-Mocking = "78c3b35d-d492-501b-9361-3d52fe80e533"
-Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-TestItems = "1c621080-faea-4a02-84b6-bbd5e436b8fe"
-
-[targets]
-test = ["Aqua", "Test", "TestItems", "Mocking"]

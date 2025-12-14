@@ -10,7 +10,7 @@
 		// A Feature to install Julia via juliaup. More info: https://github.com/JuliaLang/devcontainer-features/tree/main/src/julia.
 		"ghcr.io/julialang/devcontainer-features/julia:1": {},
 		"ghcr.io/devcontainers/features/python:1": {},
-		"ghcr.io/rocker-org/devcontainer-features/quarto-cli:1": {}
+		// "ghcr.io/rocker-org/devcontainer-features/quarto-cli:1": {}
 	}
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.

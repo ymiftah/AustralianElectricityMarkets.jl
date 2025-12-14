@@ -12,6 +12,3 @@ PowerSimulations = "e690365d-45e2-57bb-ac84-44ba829e73c4"
 PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
 QuackIO = "7b8617ff-c43a-4c37-a28b-ad5a1791f8ae"
 TidierDB = "86993f9b-bbba-4084-97c5-ee15961ad48b"
-
-[sources]
-AustralianElectricityMarkets = {path = "/home/simba/.julia/dev/AustralianElectricityMarkets"}

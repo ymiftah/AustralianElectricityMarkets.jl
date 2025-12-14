@@ -6,3 +6,5 @@
 /docs/build/
 /docs/src/examples/*.md
 /output/
+
+.env
