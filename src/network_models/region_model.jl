@@ -317,6 +317,7 @@ function _add_buses!(sys, bus_df)
                 magnitude = row[:magnitude],
                 area = get_component(Area, sys, row[:region]),
                 voltage_limits = (min = row[:voltage_limits_min], max = row[:voltage_limits_max]),
+                available = true,
             ) for row in eachrow(bus_df)
     )
     return add_components!(sys, buses)
