@@ -170,7 +170,7 @@ function get_branch_dataframe(db)
         rename!(:bus_id => :bus_from)
         leftjoin!(select(load_buses, Not(:region)); on = :to => :name)
         rename!(:bus_id => :bus_to)
-        insertcols!(:r => 0, :x => 0, :b => 0, :rate => 1.0e4)
+        insertcols!(:r => 0.01, :x => 0.01, :b => 0, :rate => 1.0e4)
         select(Not(:region))
     end
 
@@ -185,7 +185,7 @@ function get_branch_dataframe(db)
             :bus_from,
             :bus_to,
         )
-        insertcols!(:r => 0, :x => 0, :b => 0, :rate => 1.0e4)
+        insertcols!(:r => 0.01, :x => 0.01, :b => 0, :rate => 1.0e4)
     end
     return vcat(load_branches, gen_branches)
 end
