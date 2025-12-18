@@ -90,15 +90,14 @@ res = OptimizationProblemResults(problem)
 begin
     renewables = read_variable(res, "ActivePowerVariable__RenewableDispatch")
     thermal = read_variable(res, "ActivePowerVariable__ThermalStandard")
-    gens = innerjoin(renewables, thermal, on = :DateTime)
-    gens_long = stack(gens, Not([:DateTime]))
-
+    gens_long = vcat(renewables, thermal)
+    select!(gens_long, :DateTime, :name => :DUID, :value)
 
     by_fuel = @chain select(
         read_units(db),
         [:DUID, :STATIONID, :CO2E_ENERGY_SOURCE, :REGIONID]
     ) begin
-        rightjoin(gens_long, on = :DUID => :variable)
+        rightjoin(gens_long, on = :DUID)
         groupby([:CO2E_ENERGY_SOURCE, :REGIONID, :DateTime])
         combine(:value => sum => :value)
         subset(:value => ByRow(>(0.0)))
@@ -112,11 +111,10 @@ begin
 
     loads = @chain res begin
         read_parameter("ActivePowerTimeSeriesParameter__PowerLoad")
-        select(Not("SNOWY1 Load"))
-        stack()
         transform!(
-            :variable => ByRow(x -> split(x, " ")[1]) => :REGIONID
+            :name => ByRow(x -> split(x, " ")[1]) => :REGIONID
         )
+        subset!(:REGIONID => ByRow(!=("SNOWY1")))
         insertcols!(
             :Source => "Region demand"
         )
@@ -142,17 +140,24 @@ begin
 end
 
 # Let's observe the dispatch of a few thermal generators
+function filter_non_all_zero(df, group_by, value)
+    gdf = groupby(df, group_by)
+    is_all_zero = combine(gdf, :value => (x -> all(x == 0)) => :all_zero)
+    subset!(is_all_zero, :all_zero => x -> .!x)
+    return innerjoin(df, is_all_zero, on = group_by)
+end
+
 begin
-    thermals_non_zero = thermal[:, filter(x -> (x == "DateTime" || any(thermal[!, x] .> 0)), names(thermal))]
-    sample = select(thermals_non_zero, 1:6)
-    cols = names(select(sample, Not(:DateTime)))
-    data(sample) * mapping(:DateTime, cols, color = dims(1)) * visual(Lines) |> draw
+    thermals_non_zero = filter_non_all_zero(thermal, :name, :value)
+    sample = first(unique(thermals_non_zero.name), 5)
+    sample = subset!(thermals_non_zero, :name => ByRow(in(sample)))
+    data(sample) * mapping(:DateTime, :value, color = :name) * visual(Lines) |> draw
 end
 
 # Let's observe the dispatch of a few renewable generators
 begin
-    renewables_non_zero = renewables[:, filter(x -> (x == "DateTime" || any(renewables[!, x] .> 0)), names(renewables))]
-    sample = select(renewables_non_zero, 1:6)
-    cols = names(select(sample, Not(:DateTime)))
-    data(sample) * mapping(:DateTime, cols, color = dims(1)) * visual(Lines) |> draw
+    renewables_non_zero = filter_non_all_zero(renewables, :name, :value)
+    sample = first(unique(renewables_non_zero.name), 5)
+    sample = subset!(renewables_non_zero, :name => ByRow(in(sample)))
+    data(sample) * mapping(:DateTime, :value, color = :name) * visual(Lines) |> draw
 end
