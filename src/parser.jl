@@ -2,10 +2,6 @@ using Dates
 using TidierDB
 using DataFrames
 using Statistics
-import TidierVest as TV
-using ZipArchives: ZipReader, zip_names, zip_readentry
-using Mmap: mmap
-using QuackIO: write_table
 
 
 """
@@ -448,4 +444,102 @@ function _add_renewable_ts_to_components!(sys, ts, prime_mover)
         add_time_series!(sys, components_in_area, psy_ts)
     end
     return
+end
+
+
+"""
+    set_renewable_pv!(sys, db, date_range; kwargs...)
+
+Adds Market bids time series data to the system.
+
+This function reads solar availability data for a specified date range from the database,
+processes it into a time series, and attaches it to the `RenewableDispatch` components
+representing PV generators.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `db`: The database connection.
+- `date_range`: A range of dates for which to fetch the data.
+- `kwargs`: Additional keyword arguments passed to `read_demand`.
+"""
+function set_market_bids!(sys, db, date_range; kwargs...)
+    start_date = first(date_range)
+    end_date = last(date_range)
+
+    energy_bids_table = read_hive(db, :BIDPEROFFER_D; kwargs...)
+    pricebids_table = read_hive(db, :BIDDAYOFFER_D; kwargs...)
+    bids = _massage_bids(energy_bids_table, pricebids_table, start_date, end_date)
+
+    return foreach(get_components(Generator, sys)) do gen
+        gen_id = get_name(gen)
+        start_date = minimum(bids.INTERVAL_DATETIME)
+        gen_bids = subset(bids, :DUID => ByRow(==(gen_id)))
+        if DataFrames.isempty(gen_bids)
+            set_available!(gen, false)
+        else
+            set_operation_cost!(
+                gen,
+                MarketBidCost(;
+                    no_load_cost = 0.0,
+                    start_up = (hot = 0.0, warm = 0.0, cold = 0.0),
+                    shut_down = 0.0,
+                )
+            )
+            psd = gen_bids.piecewise_step_data
+            data = Dict(
+                start_date => psd
+            )
+            time_series_data = Deterministic(;
+                name = "variable_cost",
+                data = data,
+                resolution = get(kwargs, :resolution, Minute(5)),
+            )
+            set_incremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
+        end
+    end
+end
+
+
+function _extract_power_bids(row)
+    a = row.PRICEBANDARRAY[row.BANDAVAILARRAY .> 0]
+    b = [zero(eltype(row.PRICEBANDARRAY)); row.BANDAVAILARRAY[row.BANDAVAILARRAY .> 0] |> cumsum]
+    return PiecewiseStepData(b, a)
+end
+
+function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date)
+    energy_bids = @eval @chain energy_bids_table begin
+        @filter($start_date <= SETTLEMENTDATE, SETTLEMENTDATE <= $end_date)
+        @filter(BIDTYPE == "ENERGY")
+        # Only select the version no that are the latest for each interval
+        @group_by(SETTLEMENTDATE, INTERVAL_DATETIME, DUID)
+        @mutate(max_version = maximum(VERSIONNO))
+        @filter(VERSIONNO == max_version)
+        @select(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, MAXAVAIL, starts_with("BANDAVAIL"))
+        @arrange(SETTLEMENTDATE, INTERVAL_DATETIME)
+        @collect
+    end
+
+    pricebids = @chain pricebids_table begin
+        @filter(BIDTYPE == "ENERGY")
+        @filter($start_date <= SETTLEMENTDATE, SETTLEMENTDATE <= $end_date)
+        # Only select the version no that are the latest for each interval
+        @group_by(SETTLEMENTDATE, DUID)
+        @mutate(max_version = maximum(VERSIONNO))
+        @filter(VERSIONNO == max_version)
+        @select(SETTLEMENTDATE, DUID, DIRECTION, MINIMUMLOAD, DAILYENERGYCONSTRAINT, starts_with("PRICEBAND"))
+        @arrange(SETTLEMENTDATE)
+        @collect
+    end
+    all_bids = innerjoin(pricebids, energy_bids, on = [:SETTLEMENTDATE, :DUID, :DIRECTION])
+    prep_for_psy = @chain all_bids begin
+        transform(
+            AsTable(r"^PRICEBAND") => ByRow(collect) => :PRICEBANDARRAY,
+            AsTable(r"^BANDAVAIL") => ByRow(collect) => :BANDAVAILARRAY,
+        )
+        select(
+            :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME,
+            AsTable(:) => ByRow(extract_power_bids) => :piecewise_step_data
+        )
+    end
+    return prep_for_psy
 end
