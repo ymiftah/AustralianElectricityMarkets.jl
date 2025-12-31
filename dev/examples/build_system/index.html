@@ -22,117 +22,117 @@ date_range = Date(2025, 1, 1):Date(2025, 1, 2)
 tables = table_requirements(RegionalNetworkConfiguration())
 map(tables) do table
     fetch_table_data(table, date_range)
-end;</code></pre><pre><code class="nohighlight hljs">[2m2025-12-18 22:47:12[0m [[32m[1minfo     [0m] [1mCreating cache directory at /home/runner/.nemweb_cache[0m
-[2m2025-12-18 22:47:12[0m [[32m[1minfo     [0m] [1mCreating temp cache directory at /tmp/.nemweb_temp[0m
-[2m2025-12-18 22:47:12[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2025-12-18 22:47:12[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2025-12-18 22:47:12[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-18 22:47:12[0m [[32m[1minfo     [0m] [1mChecking if data already exists for INTERCONNECTOR 2025 / 1[0m
-[2m2025-12-18 22:47:12[0m [[32m[1minfo     [0m] [1mFetching data for INTERCONNECTOR 2025 / 1[0m
-[2m2025-12-18 22:47:12[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_INTERCONNECTOR_202501010000.zip[0m
-[2m2025-12-18 22:47:16[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_INTERCONNECTOR_202501010000.zip[0m
-[2m2025-12-18 22:47:16[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
-[2m2025-12-18 22:47:16[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23INTERCONNECTOR%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:17[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23INTERCONNECTOR%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:17[0m [[32m[1mdebug    [0m] [1mWriting data for INTERCONNECTOR 2025 / 1, at location INTERCONNECTOR-{i}.parquet[0m
-100%|██████████| 1/1 [00:04&lt;00:00,  4.62s/it]100%|██████████| 1/1 [00:04&lt;00:00,  4.62s/it]
-[2m2025-12-18 22:47:17[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2025-12-18 22:47:17[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2025-12-18 22:47:17[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-18 22:47:17[0m [[32m[1minfo     [0m] [1mChecking if data already exists for INTERCONNECTORCONSTRAINT 2025 / 1[0m
-[2m2025-12-18 22:47:17[0m [[32m[1minfo     [0m] [1mFetching data for INTERCONNECTORCONSTRAINT 2025 / 1[0m
-[2m2025-12-18 22:47:17[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_INTERCONNECTORCONSTRAINT_202501010000.zip[0m
-[2m2025-12-18 22:47:20[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_INTERCONNECTORCONSTRAINT_202501010000.zip[0m
-[2m2025-12-18 22:47:21[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
-[2m2025-12-18 22:47:21[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23INTERCONNECTORCONSTRAINT%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:22[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23INTERCONNECTORCONSTRAINT%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:22[0m [[32m[1mdebug    [0m] [1mWriting data for INTERCONNECTORCONSTRAINT 2025 / 1, at location INTERCONNECTORCONSTRAINT-{i}.parquet[0m
-100%|██████████| 1/1 [00:04&lt;00:00,  4.62s/it]100%|██████████| 1/1 [00:04&lt;00:00,  4.62s/it]
-[2m2025-12-18 22:47:22[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2025-12-18 22:47:22[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2025-12-18 22:47:22[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-18 22:47:22[0m [[32m[1minfo     [0m] [1mChecking if data already exists for DISPATCHREGIONSUM 2025 / 1[0m
-[2m2025-12-18 22:47:22[0m [[32m[1minfo     [0m] [1mFetching data for DISPATCHREGIONSUM 2025 / 1[0m
-[2m2025-12-18 22:47:22[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_DISPATCHREGIONSUM_202501010000.zip[0m
-[2m2025-12-18 22:47:25[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_DISPATCHREGIONSUM_202501010000.zip[0m
-[2m2025-12-18 22:47:26[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
-[2m2025-12-18 22:47:26[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23DISPATCHREGIONSUM%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:28[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23DISPATCHREGIONSUM%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:28[0m [[32m[1mdebug    [0m] [1mWriting data for DISPATCHREGIONSUM 2025 / 1, at location DISPATCHREGIONSUM-{i}.parquet[0m
-100%|██████████| 1/1 [00:06&lt;00:00,  6.32s/it]100%|██████████| 1/1 [00:06&lt;00:00,  6.32s/it]
-[2m2025-12-18 22:47:28[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2025-12-18 22:47:28[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2025-12-18 22:47:28[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-18 22:47:28[0m [[32m[1minfo     [0m] [1mChecking if data already exists for DUDETAIL 2025 / 1[0m
-[2m2025-12-18 22:47:28[0m [[32m[1minfo     [0m] [1mFetching data for DUDETAIL 2025 / 1[0m
-[2m2025-12-18 22:47:28[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_DUDETAIL_202501010000.zip[0m
-[2m2025-12-18 22:47:31[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_DUDETAIL_202501010000.zip[0m
-[2m2025-12-18 22:47:32[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
-[2m2025-12-18 22:47:32[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23DUDETAIL%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:33[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23DUDETAIL%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:33[0m [[32m[1mdebug    [0m] [1mWriting data for DUDETAIL 2025 / 1, at location DUDETAIL-{i}.parquet[0m
-100%|██████████| 1/1 [00:04&lt;00:00,  4.74s/it]100%|██████████| 1/1 [00:04&lt;00:00,  4.74s/it]
-[2m2025-12-18 22:47:33[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2025-12-18 22:47:33[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2025-12-18 22:47:33[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-18 22:47:33[0m [[32m[1minfo     [0m] [1mChecking if data already exists for DUDETAILSUMMARY 2025 / 1[0m
-[2m2025-12-18 22:47:33[0m [[32m[1minfo     [0m] [1mFetching data for DUDETAILSUMMARY 2025 / 1[0m
-[2m2025-12-18 22:47:33[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_DUDETAILSUMMARY_202501010000.zip[0m
-[2m2025-12-18 22:47:36[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_DUDETAILSUMMARY_202501010000.zip[0m
-[2m2025-12-18 22:47:37[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
-[2m2025-12-18 22:47:37[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23DUDETAILSUMMARY%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:38[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23DUDETAILSUMMARY%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:38[0m [[32m[1mdebug    [0m] [1mWriting data for DUDETAILSUMMARY 2025 / 1, at location DUDETAILSUMMARY-{i}.parquet[0m
-100%|██████████| 1/1 [00:05&lt;00:00,  5.13s/it]100%|██████████| 1/1 [00:05&lt;00:00,  5.13s/it]
-[2m2025-12-18 22:47:38[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2025-12-18 22:47:38[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2025-12-18 22:47:38[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-18 22:47:38[0m [[32m[1minfo     [0m] [1mChecking if data already exists for STATION 2025 / 1[0m
-[2m2025-12-18 22:47:38[0m [[32m[1minfo     [0m] [1mFetching data for STATION 2025 / 1[0m
-[2m2025-12-18 22:47:38[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_STATION_202501010000.zip[0m
-[2m2025-12-18 22:47:41[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_STATION_202501010000.zip[0m
-[2m2025-12-18 22:47:42[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
-[2m2025-12-18 22:47:42[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23STATION%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:42[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23STATION%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:42[0m [[32m[1mdebug    [0m] [1mWriting data for STATION 2025 / 1, at location STATION-{i}.parquet[0m
-100%|██████████| 1/1 [00:04&lt;00:00,  4.64s/it]100%|██████████| 1/1 [00:04&lt;00:00,  4.64s/it]
-[2m2025-12-18 22:47:42[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2025-12-18 22:47:42[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2025-12-18 22:47:42[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-18 22:47:42[0m [[32m[1minfo     [0m] [1mChecking if data already exists for STATIONOPERATINGSTATUS 2025 / 1[0m
-[2m2025-12-18 22:47:42[0m [[32m[1minfo     [0m] [1mFetching data for STATIONOPERATINGSTATUS 2025 / 1[0m
-[2m2025-12-18 22:47:42[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_STATIONOPERATINGSTATUS_202501010000.zip[0m
-[2m2025-12-18 22:47:46[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_STATIONOPERATINGSTATUS_202501010000.zip[0m
-[2m2025-12-18 22:47:46[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
-[2m2025-12-18 22:47:46[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23STATIONOPERATINGSTATUS%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:47[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23STATIONOPERATINGSTATUS%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:47[0m [[32m[1mdebug    [0m] [1mWriting data for STATIONOPERATINGSTATUS 2025 / 1, at location STATIONOPERATINGSTATUS-{i}.parquet[0m
-100%|██████████| 1/1 [00:04&lt;00:00,  4.66s/it]100%|██████████| 1/1 [00:04&lt;00:00,  4.66s/it]
-[2m2025-12-18 22:47:47[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2025-12-18 22:47:47[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2025-12-18 22:47:47[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-18 22:47:47[0m [[32m[1minfo     [0m] [1mChecking if data already exists for GENUNITS 2025 / 1[0m
-[2m2025-12-18 22:47:47[0m [[32m[1minfo     [0m] [1mFetching data for GENUNITS 2025 / 1[0m
-[2m2025-12-18 22:47:47[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_GENUNITS_202501010000.zip[0m
-[2m2025-12-18 22:47:51[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_GENUNITS_202501010000.zip[0m
-[2m2025-12-18 22:47:51[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
-[2m2025-12-18 22:47:51[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23GENUNITS%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:52[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23GENUNITS%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:52[0m [[32m[1minfo     [0m] [1mColumns {&#39;LOWERREG&#39;} were not found in the file [&#39;GENSETID&#39;, &#39;STATIONID&#39;, &#39;VOLTLEVEL&#39;, &#39;DISPATCHTYPE&#39;, &#39;STARTTYPE&#39;, &#39;NORMALSTATUS&#39;, &#39;MAXCAPACITY&#39;, &#39;GENSETTYPE&#39;, &#39;GENSETNAME&#39;, &#39;LOWERREG&#39;, &#39;CO2E_EMISSIONS_FACTOR&#39;, &#39;CO2E_ENERGY_SOURCE&#39;, &#39;CO2E_DATA_SOURCE&#39;, &#39;MINCAPACITY&#39;, &#39;REGISTEREDMINCAPACITY&#39;, &#39;LASTCHANGED&#39;] for 2025-1, filling with null values[0m
-[2m2025-12-18 22:47:52[0m [[32m[1mdebug    [0m] [1mWriting data for GENUNITS 2025 / 1, at location GENUNITS-{i}.parquet[0m
-100%|██████████| 1/1 [00:04&lt;00:00,  4.61s/it]100%|██████████| 1/1 [00:04&lt;00:00,  4.61s/it]
-[2m2025-12-18 22:47:52[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2025-12-18 22:47:52[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2025-12-18 22:47:52[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-18 22:47:52[0m [[32m[1minfo     [0m] [1mChecking if data already exists for DUALLOC 2025 / 1[0m
-[2m2025-12-18 22:47:52[0m [[32m[1minfo     [0m] [1mFetching data for DUALLOC 2025 / 1[0m
-[2m2025-12-18 22:47:52[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_DUALLOC_202501010000.zip[0m
-[2m2025-12-18 22:47:55[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_DUALLOC_202501010000.zip[0m
-[2m2025-12-18 22:47:56[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
-[2m2025-12-18 22:47:56[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23DUALLOC%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:56[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23DUALLOC%23FILE01%23202501010000.zip[0m
-[2m2025-12-18 22:47:56[0m [[32m[1mdebug    [0m] [1mWriting data for DUALLOC 2025 / 1, at location DUALLOC-{i}.parquet[0m
-100%|██████████| 1/1 [00:04&lt;00:00,  4.45s/it]100%|██████████| 1/1 [00:04&lt;00:00,  4.45s/it]
+end;</code></pre><pre><code class="nohighlight hljs">[2m2025-12-31 11:01:56[0m [[32m[1minfo     [0m] [1mCreating cache directory at /home/runner/.nemweb_cache[0m
+[2m2025-12-31 11:01:56[0m [[32m[1minfo     [0m] [1mCreating temp cache directory at /tmp/.nemweb_temp[0m
+[2m2025-12-31 11:01:56[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2025-12-31 11:01:56[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2025-12-31 11:01:56[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-31 11:01:56[0m [[32m[1minfo     [0m] [1mChecking if data already exists for INTERCONNECTOR 2025 / 1[0m
+[2m2025-12-31 11:01:56[0m [[32m[1minfo     [0m] [1mFetching data for INTERCONNECTOR 2025 / 1[0m
+[2m2025-12-31 11:01:56[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_INTERCONNECTOR_202501010000.zip[0m
+[2m2025-12-31 11:02:00[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_INTERCONNECTOR_202501010000.zip[0m
+[2m2025-12-31 11:02:00[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
+[2m2025-12-31 11:02:00[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23INTERCONNECTOR%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:01[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23INTERCONNECTOR%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:01[0m [[32m[1mdebug    [0m] [1mWriting data for INTERCONNECTOR 2025 / 1, at location INTERCONNECTOR-{i}.parquet[0m
+100%|██████████| 1/1 [00:04&lt;00:00,  4.63s/it]100%|██████████| 1/1 [00:04&lt;00:00,  4.64s/it]
+[2m2025-12-31 11:02:01[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2025-12-31 11:02:01[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2025-12-31 11:02:01[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-31 11:02:01[0m [[32m[1minfo     [0m] [1mChecking if data already exists for INTERCONNECTORCONSTRAINT 2025 / 1[0m
+[2m2025-12-31 11:02:01[0m [[32m[1minfo     [0m] [1mFetching data for INTERCONNECTORCONSTRAINT 2025 / 1[0m
+[2m2025-12-31 11:02:01[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_INTERCONNECTORCONSTRAINT_202501010000.zip[0m
+[2m2025-12-31 11:02:04[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_INTERCONNECTORCONSTRAINT_202501010000.zip[0m
+[2m2025-12-31 11:02:05[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
+[2m2025-12-31 11:02:05[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23INTERCONNECTORCONSTRAINT%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:05[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23INTERCONNECTORCONSTRAINT%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:05[0m [[32m[1mdebug    [0m] [1mWriting data for INTERCONNECTORCONSTRAINT 2025 / 1, at location INTERCONNECTORCONSTRAINT-{i}.parquet[0m
+100%|██████████| 1/1 [00:04&lt;00:00,  4.33s/it]100%|██████████| 1/1 [00:04&lt;00:00,  4.33s/it]
+[2m2025-12-31 11:02:05[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2025-12-31 11:02:05[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2025-12-31 11:02:05[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-31 11:02:05[0m [[32m[1minfo     [0m] [1mChecking if data already exists for DISPATCHREGIONSUM 2025 / 1[0m
+[2m2025-12-31 11:02:05[0m [[32m[1minfo     [0m] [1mFetching data for DISPATCHREGIONSUM 2025 / 1[0m
+[2m2025-12-31 11:02:05[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_DISPATCHREGIONSUM_202501010000.zip[0m
+[2m2025-12-31 11:02:09[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_DISPATCHREGIONSUM_202501010000.zip[0m
+[2m2025-12-31 11:02:09[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
+[2m2025-12-31 11:02:09[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23DISPATCHREGIONSUM%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:11[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23DISPATCHREGIONSUM%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:11[0m [[32m[1mdebug    [0m] [1mWriting data for DISPATCHREGIONSUM 2025 / 1, at location DISPATCHREGIONSUM-{i}.parquet[0m
+100%|██████████| 1/1 [00:05&lt;00:00,  5.92s/it]100%|██████████| 1/1 [00:05&lt;00:00,  5.92s/it]
+[2m2025-12-31 11:02:11[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2025-12-31 11:02:11[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2025-12-31 11:02:11[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-31 11:02:11[0m [[32m[1minfo     [0m] [1mChecking if data already exists for DUDETAIL 2025 / 1[0m
+[2m2025-12-31 11:02:11[0m [[32m[1minfo     [0m] [1mFetching data for DUDETAIL 2025 / 1[0m
+[2m2025-12-31 11:02:11[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_DUDETAIL_202501010000.zip[0m
+[2m2025-12-31 11:02:15[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_DUDETAIL_202501010000.zip[0m
+[2m2025-12-31 11:02:15[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
+[2m2025-12-31 11:02:15[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23DUDETAIL%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:16[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23DUDETAIL%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:16[0m [[32m[1mdebug    [0m] [1mWriting data for DUDETAIL 2025 / 1, at location DUDETAIL-{i}.parquet[0m
+100%|██████████| 1/1 [00:04&lt;00:00,  4.51s/it]100%|██████████| 1/1 [00:04&lt;00:00,  4.51s/it]
+[2m2025-12-31 11:02:16[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2025-12-31 11:02:16[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2025-12-31 11:02:16[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-31 11:02:16[0m [[32m[1minfo     [0m] [1mChecking if data already exists for DUDETAILSUMMARY 2025 / 1[0m
+[2m2025-12-31 11:02:16[0m [[32m[1minfo     [0m] [1mFetching data for DUDETAILSUMMARY 2025 / 1[0m
+[2m2025-12-31 11:02:16[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_DUDETAILSUMMARY_202501010000.zip[0m
+[2m2025-12-31 11:02:19[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_DUDETAILSUMMARY_202501010000.zip[0m
+[2m2025-12-31 11:02:20[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
+[2m2025-12-31 11:02:20[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23DUDETAILSUMMARY%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:21[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23DUDETAILSUMMARY%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:21[0m [[32m[1mdebug    [0m] [1mWriting data for DUDETAILSUMMARY 2025 / 1, at location DUDETAILSUMMARY-{i}.parquet[0m
+100%|██████████| 1/1 [00:05&lt;00:00,  5.00s/it]100%|██████████| 1/1 [00:05&lt;00:00,  5.00s/it]
+[2m2025-12-31 11:02:21[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2025-12-31 11:02:21[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2025-12-31 11:02:21[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-31 11:02:21[0m [[32m[1minfo     [0m] [1mChecking if data already exists for STATION 2025 / 1[0m
+[2m2025-12-31 11:02:21[0m [[32m[1minfo     [0m] [1mFetching data for STATION 2025 / 1[0m
+[2m2025-12-31 11:02:21[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_STATION_202501010000.zip[0m
+[2m2025-12-31 11:02:24[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_STATION_202501010000.zip[0m
+[2m2025-12-31 11:02:25[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
+[2m2025-12-31 11:02:25[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23STATION%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:25[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23STATION%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:25[0m [[32m[1mdebug    [0m] [1mWriting data for STATION 2025 / 1, at location STATION-{i}.parquet[0m
+100%|██████████| 1/1 [00:04&lt;00:00,  4.80s/it]100%|██████████| 1/1 [00:04&lt;00:00,  4.80s/it]
+[2m2025-12-31 11:02:25[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2025-12-31 11:02:25[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2025-12-31 11:02:25[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-31 11:02:25[0m [[32m[1minfo     [0m] [1mChecking if data already exists for STATIONOPERATINGSTATUS 2025 / 1[0m
+[2m2025-12-31 11:02:25[0m [[32m[1minfo     [0m] [1mFetching data for STATIONOPERATINGSTATUS 2025 / 1[0m
+[2m2025-12-31 11:02:25[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_STATIONOPERATINGSTATUS_202501010000.zip[0m
+[2m2025-12-31 11:02:29[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_STATIONOPERATINGSTATUS_202501010000.zip[0m
+[2m2025-12-31 11:02:29[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
+[2m2025-12-31 11:02:29[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23STATIONOPERATINGSTATUS%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:30[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23STATIONOPERATINGSTATUS%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:30[0m [[32m[1mdebug    [0m] [1mWriting data for STATIONOPERATINGSTATUS 2025 / 1, at location STATIONOPERATINGSTATUS-{i}.parquet[0m
+100%|██████████| 1/1 [00:04&lt;00:00,  4.27s/it]100%|██████████| 1/1 [00:04&lt;00:00,  4.27s/it]
+[2m2025-12-31 11:02:30[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2025-12-31 11:02:30[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2025-12-31 11:02:30[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-31 11:02:30[0m [[32m[1minfo     [0m] [1mChecking if data already exists for GENUNITS 2025 / 1[0m
+[2m2025-12-31 11:02:30[0m [[32m[1minfo     [0m] [1mFetching data for GENUNITS 2025 / 1[0m
+[2m2025-12-31 11:02:30[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_GENUNITS_202501010000.zip[0m
+[2m2025-12-31 11:02:33[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_GENUNITS_202501010000.zip[0m
+[2m2025-12-31 11:02:34[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
+[2m2025-12-31 11:02:34[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23GENUNITS%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:34[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23GENUNITS%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:34[0m [[32m[1minfo     [0m] [1mColumns {&#39;LOWERREG&#39;} were not found in the file [&#39;GENSETID&#39;, &#39;STATIONID&#39;, &#39;VOLTLEVEL&#39;, &#39;DISPATCHTYPE&#39;, &#39;STARTTYPE&#39;, &#39;NORMALSTATUS&#39;, &#39;MAXCAPACITY&#39;, &#39;GENSETTYPE&#39;, &#39;GENSETNAME&#39;, &#39;LOWERREG&#39;, &#39;CO2E_EMISSIONS_FACTOR&#39;, &#39;CO2E_ENERGY_SOURCE&#39;, &#39;CO2E_DATA_SOURCE&#39;, &#39;MINCAPACITY&#39;, &#39;REGISTEREDMINCAPACITY&#39;, &#39;LASTCHANGED&#39;] for 2025-1, filling with null values[0m
+[2m2025-12-31 11:02:34[0m [[32m[1mdebug    [0m] [1mWriting data for GENUNITS 2025 / 1, at location GENUNITS-{i}.parquet[0m
+100%|██████████| 1/1 [00:04&lt;00:00,  4.31s/it]100%|██████████| 1/1 [00:04&lt;00:00,  4.31s/it]
+[2m2025-12-31 11:02:34[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2025-12-31 11:02:34[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2025-12-31 11:02:34[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00&lt;?, ?it/s][2m2025-12-31 11:02:34[0m [[32m[1minfo     [0m] [1mChecking if data already exists for DUALLOC 2025 / 1[0m
+[2m2025-12-31 11:02:34[0m [[32m[1minfo     [0m] [1mFetching data for DUALLOC 2025 / 1[0m
+[2m2025-12-31 11:02:34[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_DUALLOC_202501010000.zip[0m
+[2m2025-12-31 11:02:37[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_DUALLOC_202501010000.zip[0m
+[2m2025-12-31 11:02:38[0m [[32m[1minfo     [0m] [1mRetry with alternative url    [0m
+[2m2025-12-31 11:02:38[0m [[32m[1minfo     [0m] [1mRequesting file form http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23DUALLOC%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:38[0m [[32m[1minfo     [0m] [1mWriting response to cache: /tmp/.nemweb_temp/PUBLIC_ARCHIVE%23DUALLOC%23FILE01%23202501010000.zip[0m
+[2m2025-12-31 11:02:38[0m [[32m[1mdebug    [0m] [1mWriting data for DUALLOC 2025 / 1, at location DUALLOC-{i}.parquet[0m
+100%|██████████| 1/1 [00:04&lt;00:00,  4.27s/it]100%|██████████| 1/1 [00:04&lt;00:00,  4.27s/it]
 </code></pre><p>Once the data is downloaded, a few utility functions allow direct parsing of key quantities, such as a table of all units registered in the NEM, or the region zonal operational demand</p><pre><code class="language-julia hljs"># read all units
 units = read_units(db)
 
@@ -298,4 +298,4 @@ end</code></pre><div><div style = "float: left;"><span>5×2 DataFrame</span></di
    has_supplemental_attributes: false
    has_time_series: false</code></pre><p>Check the prime mover type</p><pre><code class="language-julia hljs">get_prime_mover_type(gen)</code></pre><pre><code class="nohighlight hljs">PowerSystems.PrimeMoversModule.PrimeMovers.CC = 4</code></pre><p>Check the rating in natural units</p><pre><code class="language-julia hljs">with_units_base(sys, &quot;NATURAL_UNITS&quot;) do
     get_rating(gen)
-end</code></pre><pre><code class="nohighlight hljs">51.0</code></pre><hr/><p><em>This page was generated using <a href="https://github.com/fredrikekre/Literate.jl">Literate.jl</a>.</em></p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../../">« Home</a><a class="docs-footer-nextpage" href="../economic_dispatch/">Economic dispatch »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Thursday 18 December 2025 22:53">Thursday 18 December 2025</span>. Using Julia version 1.12.3.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+end</code></pre><pre><code class="nohighlight hljs">51.0</code></pre><hr/><p><em>This page was generated using <a href="https://github.com/fredrikekre/Literate.jl">Literate.jl</a>.</em></p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../../">« Home</a><a class="docs-footer-nextpage" href="../economic_dispatch/">Economic dispatch »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Wednesday 31 December 2025 11:11">Wednesday 31 December 2025</span>. Using Julia version 1.12.3.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
