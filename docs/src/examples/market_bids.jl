@@ -58,7 +58,7 @@ set_market_bids!(sys, db, date_range)
 # Derive forecasts from the deterministic timseries
 transform_single_time_series!(
     sys,
-    # convert(Minute, horizon), # horizon
+    ## convert(Minute, horizon), # horizon
     Millisecond(86400000),
     interval, # interval
 );
