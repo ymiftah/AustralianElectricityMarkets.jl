@@ -472,11 +472,13 @@ function set_market_bids!(sys, db, date_range; kwargs...)
 
     return foreach(get_components(Generator, sys)) do gen
         gen_id = get_name(gen)
-        start_date = minimum(bids.INTERVAL_DATETIME)
+        start_date = first(date_range)
         gen_bids = subset(bids, :DUID => ByRow(==(gen_id)))
         if DataFrames.isempty(gen_bids)
+            @warn "No bid data for generator $(gen_id), setting to unavailable."
             set_available!(gen, false)
         else
+            set_available!(gen, true)
             set_operation_cost!(
                 gen,
                 MarketBidCost(;
@@ -495,8 +497,25 @@ function set_market_bids!(sys, db, date_range; kwargs...)
                 resolution = get(kwargs, :resolution, Minute(5)),
             )
             set_incremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
+            time_series_incremental_initial_input = Deterministic(;
+                name = "incremental_initial_input",
+                data = Dict(
+                    start_date => zeros(size(psd))
+                ),
+                resolution = get(kwargs, :resolution, Minute(5)),
+            )
+            set_incremental_initial_input!(sys, gen, time_series_incremental_initial_input)
         end
     end
+end
+
+function read_bids(db, date_range; kwargs...)
+    energy_bids_table = read_hive(db, :BIDPEROFFER_D; kwargs...)
+    pricebids_table = read_hive(db, :BIDDAYOFFER_D; kwargs...)
+    start_date = first(date_range)
+    end_date = last(date_range)
+    bids = _massage_bids(energy_bids_table, pricebids_table, start_date, end_date)
+    return bids
 end
 
 
@@ -507,28 +526,32 @@ function _extract_power_bids(row)
 end
 
 function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date)
-    energy_bids = @eval @chain energy_bids_table begin
-        @filter($start_date <= SETTLEMENTDATE, SETTLEMENTDATE <= $end_date)
+    sd = Date(start_date)
+    ed = Date(end_date)
+    energy_bids = @eval @chain $energy_bids_table begin
+        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed)
         @filter(BIDTYPE == "ENERGY")
-        # Only select the version no that are the latest for each interval
+        # Only select the version no that are the latest for each interval and duid
         @group_by(SETTLEMENTDATE, INTERVAL_DATETIME, DUID)
         @mutate(max_version = maximum(VERSIONNO))
         @filter(VERSIONNO == max_version)
         @select(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, MAXAVAIL, starts_with("BANDAVAIL"))
         @arrange(SETTLEMENTDATE, INTERVAL_DATETIME)
         @collect
+        subset!(:SETTLEMENTDATE => ByRow(x -> $start_date <= x < $end_date))
     end
 
-    pricebids = @chain pricebids_table begin
+    pricebids = @eval @chain $pricebids_table begin
         @filter(BIDTYPE == "ENERGY")
-        @filter($start_date <= SETTLEMENTDATE, SETTLEMENTDATE <= $end_date)
-        # Only select the version no that are the latest for each interval
+        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed)
+        # Only select the version no that are the latest for each interval and duid
         @group_by(SETTLEMENTDATE, DUID)
         @mutate(max_version = maximum(VERSIONNO))
         @filter(VERSIONNO == max_version)
         @select(SETTLEMENTDATE, DUID, DIRECTION, MINIMUMLOAD, DAILYENERGYCONSTRAINT, starts_with("PRICEBAND"))
         @arrange(SETTLEMENTDATE)
         @collect
+        subset!(:SETTLEMENTDATE => ByRow(x -> $start_date <= x < $end_date))
     end
     all_bids = innerjoin(pricebids, energy_bids, on = [:SETTLEMENTDATE, :DUID, :DIRECTION])
     prep_for_psy = @chain all_bids begin
@@ -537,8 +560,8 @@ function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date)
             AsTable(r"^BANDAVAIL") => ByRow(collect) => :BANDAVAILARRAY,
         )
         select(
-            :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME,
-            AsTable(:) => ByRow(extract_power_bids) => :piecewise_step_data
+            :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME, :PRICEBANDARRAY, :BANDAVAILARRAY,
+            AsTable(:) => ByRow(_extract_power_bids) => :piecewise_step_data
         )
     end
     return prep_for_psy
