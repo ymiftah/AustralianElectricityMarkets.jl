@@ -46,7 +46,7 @@ date_range = start_date:interval:(start_date + horizon)
 @show date_range
 
 map([:BIDDAYOFFER_D, :BIDPEROFFER_D]) do table
-        fetch_table_data(table, date_range)
+    fetch_table_data(table, date_range)
 end;
 
 # Set deterministic timseries
