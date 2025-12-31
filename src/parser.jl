@@ -497,8 +497,25 @@ function set_market_bids!(sys, db, date_range; kwargs...)
                 resolution = get(kwargs, :resolution, Minute(5)),
             )
             set_incremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
+            time_series_incremental_initial_input = Deterministic(;
+                name = "incremental_initial_input",
+                data = Dict(
+                    start_date => zeros(size(psd))
+                ),
+                resolution = get(kwargs, :resolution, Minute(5)),
+            )
+            set_incremental_initial_input!(sys, gen, time_series_incremental_initial_input)
         end
     end
+end
+
+function read_bids(db, date_range; kwargs...)
+    energy_bids_table = read_hive(db, :BIDPEROFFER_D; kwargs...)
+    pricebids_table = read_hive(db, :BIDDAYOFFER_D; kwargs...)
+    start_date = first(date_range)
+    end_date = last(date_range)
+    bids = _massage_bids(energy_bids_table, pricebids_table, start_date, end_date)
+    return bids
 end
 
 
@@ -543,7 +560,7 @@ function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date)
             AsTable(r"^BANDAVAIL") => ByRow(collect) => :BANDAVAILARRAY,
         )
         select(
-            :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME,
+            :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME, :PRICEBANDARRAY, :BANDAVAILARRAY,
             AsTable(:) => ByRow(_extract_power_bids) => :piecewise_step_data
         )
     end
