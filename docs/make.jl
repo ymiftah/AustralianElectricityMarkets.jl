@@ -39,13 +39,14 @@ makedocs(;
         edit_link = "main",
         assets = String[],
         size_threshold_warn = 200 * 2^10, # raise slightly from 100 to 200 KiB
-        size_threshold = 1000 * 2^10,      # raise slightly 200 to to 300 KiB
+        size_threshold = 1000 * 2^10,      # raise slightly 200 to to 1000 KiB
     ),
     pages = [
         "Home" => "index.md",
         "Getting started" => [
             "Explore the NEM" => "examples/build_system.md",
             "Economic dispatch" => "examples/economic_dispatch.md",
+            "Using market bids" => "examples/market_bids.md",
         ],
     ],
     checkdocs = :none
