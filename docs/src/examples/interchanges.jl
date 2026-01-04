@@ -1,5 +1,6 @@
 begin
     using AustralianElectricityMarkets
+    import AustralianElectricityMarkets.RegionModel
     using PowerSimulations
     using PowerSystems
 
@@ -10,6 +11,8 @@ begin
     using Dates
     using HiGHS
 end
+
+RM = AustralianElectricityMarkets.RegionModel
 
 
 #=
@@ -45,9 +48,9 @@ start_date = DateTime(2025, 1, 1, 4, 0)
 date_range = start_date:interval:(start_date + horizon)
 @show date_range
 
-map([:BIDDAYOFFER_D, :BIDPEROFFER_D]) do table
-    fetch_table_data(table, date_range)
-end;
+# map([:BIDDAYOFFER_D, :BIDPEROFFER_D]) do table
+#     fetch_table_data(table, date_range)
+# end;
 
 # Set deterministic timseries
 set_demand!(sys, db, date_range; resolution = interval)
@@ -58,12 +61,12 @@ set_market_bids!(sys, db, date_range)
 # Derive forecasts from the deterministic timseries
 transform_single_time_series!(
     sys,
-    ## convert(Minute, horizon), # horizon
-    Millisecond(86400000),
+    horizon,
     interval, # interval
 );
 
 @show sys
+
 
 #=
 
@@ -78,10 +81,13 @@ demand at each region.
 =#
 
 template = template_unit_commitment()
+set_network_model!(template, NetworkModel(AreaBalancePowerModel; use_slacks = true))
+set_device_model!(template, AreaInterchange, StaticBranch)
+template
 
 # The Economic Dispatch problem will be solved with open source solver HiGHS, and a relatively large mip gap
 # for the purposes of this example.
-solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.05)
+solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.5)
 
 
 problem = DecisionModel(template, sys; optimizer = solver, horizon = horizon)
@@ -93,6 +99,8 @@ solve!(problem)
 
 # Observe the results
 res = OptimizationProblemResults(problem)
+
+res
 
 # Lets observe how the units are dispatched
 begin
@@ -189,3 +197,13 @@ end
 # incorporate the on/off constraints: Coal power plant bid at lower costs than solar plants because
 # it is more expensive for them to turn off, and they know they should be able to recoup the losses at time of
 # low solar generation, where there is less competition.
+
+
+res
+
+begin
+    interchange_flow = read_variable(res, "FlowActivePowerVariable__AreaInterchange")
+    spec = data(interchange_flow) * mapping(:DateTime, :value, color = :name) * visual(Lines)
+    draw(spec; figure = (; size = (500, 500)))
+end
+interchange_flow

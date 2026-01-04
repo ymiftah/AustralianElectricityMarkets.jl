@@ -47,6 +47,7 @@ makedocs(;
             "Explore the NEM" => "examples/build_system.md",
             "Economic dispatch" => "examples/economic_dispatch.md",
             "Using market bids" => "examples/market_bids.md",
+            "Adding interconnactions" => "examples/interchanges.md",
         ],
     ],
     checkdocs = :none

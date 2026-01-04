@@ -165,12 +165,13 @@ function get_branch_dataframe(db)
             :INTERCONNECTORID => :name,
             :REGIONFROM => ByRow(x -> x * LOAD_SUFFIX) => :from,
             :REGIONTO => ByRow(x -> x * LOAD_SUFFIX) => :to,
+            :MAXMWOUT => :rate
         )
         leftjoin!(load_buses; on = :from => :name)
         rename!(:bus_id => :bus_from)
         leftjoin!(select(load_buses, Not(:region)); on = :to => :name)
         rename!(:bus_id => :bus_to)
-        insertcols!(:r => 0.01, :x => 0.01, :b => 0, :rate => 1.0e4)
+        insertcols!(:r => 0.01, :x => 0.01, :b => 0)
         select(Not(:region))
     end
 
@@ -259,6 +260,42 @@ function get_generators_dataframe(db)
 end
 
 """
+    get_interfaces_dataframe(db)
+
+Generates a DataFrame of Interfaces information.
+
+# Arguments
+- `db`: The database connection.
+
+# Returns
+A `DataFrame` containing interfaces details.
+
+# Example
+```julia
+db = connect(duckdb())
+branch_df = get_branch_dataframe(db)
+println(branch_df)
+```
+"""
+function get_interfaces_dataframe(db)
+    interconnectors = read_interconnectors(db)
+    select!(
+        interconnectors,
+        :INTERCONNECTORID => :name,
+        :REGIONFROM => :from_area,
+        :REGIONTO => :to_area,
+        :MAXMWIN => :max_flow_from,
+        :MAXMWOUT => :max_flow_to,
+        :FROMREGIONLOSSSHARE => :from_region_loss_factor,
+        :LOSSCONSTANT => :loss_constant,
+        :LOSSFLOWCOEFFICIENT => :loss_flow_coefficient,
+        :ICTYPE => :ic_type,
+    )
+    return interconnectors
+end
+
+
+"""
     nem_system(db)
 
 Assembles a `PowerSystems.System` object from the database.
@@ -286,11 +323,15 @@ function nem_system(db; kwargs...)
     @info "parsing generators"
     gen_df = get_generators_dataframe(db)
 
+    @info "parsing interconnectors/area interchanges / transmission interface"
+    interfaces_df = get_interfaces_dataframe(db)
+
     sys = System(BASE_POWER; kwargs...)
     _add_buses!(sys, bus_df)
     _add_loads!(sys, loads_df)
     _add_generation!(sys, gen_df)
     _add_branches!(sys, branch_df)
+    _add_area_interfaces!(sys, interfaces_df)
 
     return sys
 end
@@ -484,6 +525,38 @@ function _add_generation!(sys, gen_df)
     add_components!(sys, thermal_components)
 
     return sys
+end
+
+function _add_area_interfaces!(sys, interconnectors)
+    interface_services = (
+        TransmissionInterface(
+                name = row[:name],
+                available = true,
+                active_power_flow_limits = (; min = 0.0, max = max(row[:max_flow_from], row[:max_flow_to])),
+                violation_penalty = 1.0e5,
+                direction_mapping = Dict(row[:name] => 1),
+            ) for row in eachrow(interconnectors)
+    )
+    add_components!(sys, interface_services)
+
+    area_interchanges = (
+        AreaInterchange(;
+                name = row[:name],
+                available = true,
+                active_power_flow = 0.0,
+                from_area = get_component(Area, sys, row[:from_area]),
+                to_area = get_component(Area, sys, row[:to_area]),
+                flow_limits = (row[:max_flow_from], row[:max_flow_to]),
+                # services=[get_component(TransmissionInterface, sys, row[:name])],
+                ext = Dict(
+                    "from_region_loss_factor" => row[:from_region_loss_factor],
+                    "loss_constant" => row[:loss_constant],
+                    "loss_flow_coefficient" => row[:loss_flow_coefficient],
+                    "ic_type" => row[:ic_type],
+                )
+            ) for row in eachrow(interconnectors)
+    )
+    return add_components!(sys, area_interchanges)
 end
 
 
