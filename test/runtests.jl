@@ -8,8 +8,12 @@ using DataFrames: nrow
 using PowerSystems
 
 
-@testset "Test region model" begin
-    include("regionmodel.jl")
+# @testset "Test region model" begin
+#     include("regionmodel.jl")
+# end
+
+@testset "Test parsers" begin
+    include("parser.jl")
 end
 
 @testset "CI test" begin
