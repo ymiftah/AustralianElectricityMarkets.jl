@@ -248,7 +248,7 @@ function get_generators_dataframe(db)
         leftjoin!(bus; on = :bus_name => :name)
         # Make hydro generators unavailable
         transform!(
-            :technology => ByRow(!=(PrimeMovers.HY)) => :available,
+            # :technology => ByRow(!=(PrimeMovers.HY)) => :available,
             :min_active_power => ByRow(x -> coalesce(x, 0)) => :min_active_power,
             :max_ramp_up => ByRow(x -> coalesce(x, nothing)) => :max_ramp_up,
             :max_ramp_down => ByRow(x -> coalesce(x, nothing)) => :max_ramp_down,
@@ -414,6 +414,39 @@ function _add_generation!(sys, gen_df)
             ) for row in eachrow(renewable)
     )
     add_components!(sys, renewable_components)
+
+    hydro = subset(
+        gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:HydroDispatch]))
+    )
+    hydro_components = (
+        HydroDispatch(;
+            name = row[:name],
+            available = row[:available],
+            bus = get_bus(sys, row[:bus_id]),
+            active_power = row[:active_power],
+            reactive_power = row[:reactive_power],
+            rating = row[:rating],
+            prime_mover_type = row[:technology],
+            active_power_limits = (min = row[:min_active_power], max = row[:max_active_power]),
+            reactive_power_limits = nothing,
+            ramp_limits = (
+                if isnothing(row[:max_ramp_up])
+                    nothing
+                else
+                    (up = row[:max_ramp_up], down = row[:max_ramp_down])
+                end
+            ),
+            time_limits = nothing,
+            operation_cost = HydroGenerationCost(; variable = CostCurve(LinearCurve(0.0, 0.0)), fixed=0.),
+            base_power = row[:base_power],
+            ext = Dict(
+                "postcode" => row[:postcode],
+                "station_name" => row[:station_name],
+                "station_id" => row[:station_id],
+            ),
+        ) for row in eachrow(hydro)
+    )
+    add_components!(sys, hydro_components)
 
     thermal = subset(
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:ThermalStandard]))
