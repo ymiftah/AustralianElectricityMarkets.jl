@@ -48,9 +48,9 @@ start_date = DateTime(2025, 1, 1, 4, 0)
 date_range = start_date:interval:(start_date + horizon)
 @show date_range
 
-# map([:BIDDAYOFFER_D, :BIDPEROFFER_D]) do table
-#     fetch_table_data(table, date_range)
-# end;
+map([:BIDDAYOFFER_D, :BIDPEROFFER_D]) do table
+    fetch_table_data(table, date_range)
+end;
 
 # Set deterministic timseries
 set_demand!(sys, db, date_range; resolution = interval)
@@ -100,7 +100,6 @@ solve!(problem)
 # Observe the results
 res = OptimizationProblemResults(problem)
 
-res
 
 # Lets observe how the units are dispatched
 begin
@@ -199,11 +198,8 @@ end
 # low solar generation, where there is less competition.
 
 
-res
-
 begin
     interchange_flow = read_variable(res, "FlowActivePowerVariable__AreaInterchange")
-    spec = data(interchange_flow) * mapping(:DateTime, :value, color = :name) * visual(Lines)
+    spec = data(interchange_flow) * mapping(:DateTime, :value => "Interchange flow (MW)", color = :name) * visual(Lines)
     draw(spec; figure = (; size = (500, 500)))
 end
-interchange_flow
