@@ -538,7 +538,7 @@ function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date)
         @select(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, MAXAVAIL, starts_with("BANDAVAIL"))
         @arrange(SETTLEMENTDATE, INTERVAL_DATETIME)
         @collect
-        subset!(:SETTLEMENTDATE => ByRow(x -> $start_date <= x < $end_date))
+        subset!(:INTERVAL_DATETIME => ByRow(x -> $start_date <= x <= $end_date))
     end
 
     pricebids = @eval @chain $pricebids_table begin
@@ -551,7 +551,6 @@ function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date)
         @select(SETTLEMENTDATE, DUID, DIRECTION, MINIMUMLOAD, DAILYENERGYCONSTRAINT, starts_with("PRICEBAND"))
         @arrange(SETTLEMENTDATE)
         @collect
-        subset!(:SETTLEMENTDATE => ByRow(x -> $start_date <= x < $end_date))
     end
     all_bids = innerjoin(pricebids, energy_bids, on = [:SETTLEMENTDATE, :DUID, :DIRECTION])
     prep_for_psy = @chain all_bids begin
