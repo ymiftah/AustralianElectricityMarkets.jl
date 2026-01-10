@@ -402,7 +402,7 @@ function _add_generation!(sys, gen_df)
                 operation_cost = RenewableGenerationCost(;
                     # TODO find acceptable defaults issue #6
                     variable = CostCurve(
-                        LinearCurve(rand(1.0:5.0), rand(1.0:10.0))
+                        LinearCurve(rand(1.:0.05:5.), rand(1.0:0.1:10.))
                     ),
                 ),
                 base_power = row[:base_power], # MVA
@@ -437,7 +437,12 @@ function _add_generation!(sys, gen_df)
                 end
             ),
             time_limits = nothing,
-            operation_cost = HydroGenerationCost(; variable = CostCurve(LinearCurve(0.0, 0.0)), fixed=0.),
+            operation_cost = HydroGenerationCost(; variable = CostCurve(
+                LinearCurve(
+                    rand(0.:0.05:1.),
+                    rand(0.1:0.05:1.)
+                    )
+                ), fixed=0.),
             base_power = row[:base_power],
             ext = Dict(
                 "postcode" => row[:postcode],

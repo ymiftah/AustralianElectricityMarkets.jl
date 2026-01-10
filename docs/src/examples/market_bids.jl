@@ -53,6 +53,7 @@ end;
 set_demand!(sys, db, date_range; resolution = interval)
 set_renewable_pv!(sys, db, date_range; resolution = interval)
 set_renewable_wind!(sys, db, date_range; resolution = interval)
+set_hydro_limits!(sys, db, date_range; resolution = interval)
 set_market_bids!(sys, db, date_range)
 
 # Derive forecasts from the deterministic timseries
