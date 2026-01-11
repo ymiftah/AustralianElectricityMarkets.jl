@@ -371,15 +371,15 @@ function set_renewable_wind!(sys, db, date_range; kwargs...)
 end
 
 function set_hydro_limits!(sys, db, date_range; kwargs...)
-    energy_bids = read_energy_bids(db, date_range; kwargs...) 
+    energy_bids = read_energy_bids(db, date_range; kwargs...)
     ts = @chain energy_bids begin
         subset!(:DIRECTION => ByRow(==("GEN")))
         select!(:INTERVAL_DATETIME, :DUID, :MAXAVAIL)
-        unstack(:INTERVAL_DATETIME, :DUID, :MAXAVAIL; combine=maximum)
+        unstack(:INTERVAL_DATETIME, :DUID, :MAXAVAIL; combine = maximum)
         disallowmissing!
-        TimeArray(timestamp=:INTERVAL_DATETIME)
+        TimeArray(timestamp = :INTERVAL_DATETIME)
     end
-    _add_demand_ts_to_components!(sys, ts, HydroDispatch)
+    return _add_demand_ts_to_components!(sys, ts, HydroDispatch)
 end
 
 
