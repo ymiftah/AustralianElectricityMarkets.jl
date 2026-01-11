@@ -35,6 +35,19 @@ jobs:
           version: "1"
       - name: Use Julia cache
         uses: julia-actions/cache@v2
+      - name: Cache market data
+        uses: actions/cache@v4
+        with:
+          path: ~/.nemweb_cache
+          key: ${{ runner.os }}-nemweb-data-${{ hashFiles('test/fetch_data.jl') }}
+          restore-keys: |
+            ${{ runner.os }}-nemweb-data-
+      - name: Fetch data
+        shell: julia --project=@. --color=yes {0}
+        run: |
+          using Pkg
+          Pkg.instantiate()
+          include("test/fetch_data.jl")
       - name: Instantiate environment with development version of the package
         run: |
           julia --project=docs -e '

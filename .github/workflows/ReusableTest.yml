@@ -41,7 +41,20 @@ jobs:
           arch: ${{ inputs.arch }}
       - name: Use Julia cache
         uses: julia-actions/cache@v2
+      - name: Cache market data
+        uses: actions/cache@v4
+        with:
+          path: ~/.nemweb_cache
+          key: ${{ runner.os }}-nemweb-data-${{ hashFiles('test/fetch_data.jl') }}
+          restore-keys: |
+            ${{ runner.os }}-nemweb-data-
       - uses: julia-actions/julia-buildpkg@v1
+      - name: Fetch data
+        shell: julia --project=@. --color=yes {0}
+        run: |
+          using Pkg
+          Pkg.instantiate()
+          include("test/fetch_data.jl")
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1
         if: ${{ inputs.run_codecov }}
