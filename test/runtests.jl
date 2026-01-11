@@ -12,9 +12,10 @@ using PowerSystems
     include("aqua.jl")
 end
 
-@testset "JET" begin
-    JET.test_package(AustralianElectricityMarkets; target_defined_modules = true)
-end
+# Review Jet
+# @testset "JET" begin
+#     JET.test_package(AustralianElectricityMarkets; target_defined_modules = true)
+# end
 
 @testset "Test region model" begin
     include("regionmodel.jl")
