@@ -549,7 +549,7 @@ function read_energy_bids(db, date_range; kwargs...)
         subset(
             :INTERVAL_DATETIME => ByRow(x -> ($start_datetime <= x < $end_datetime))
         )
-        
+
     end
 
     if :resolution in keys(kwargs)
