@@ -370,6 +370,18 @@ function set_renewable_wind!(sys, db, date_range; kwargs...)
     return _add_renewable_ts_to_components!(sys, ts, PrimeMovers.WT)
 end
 
+function set_hydro_limits!(sys, db, date_range; kwargs...)
+    energy_bids = read_energy_bids(db, date_range; kwargs...)
+    ts = @chain energy_bids begin
+        subset!(:DIRECTION => ByRow(==("GEN")))
+        select!(:INTERVAL_DATETIME, :DUID, :MAXAVAIL)
+        unstack(:INTERVAL_DATETIME, :DUID, :MAXAVAIL; combine = maximum)
+        disallowmissing!
+        TimeArray(timestamp = :INTERVAL_DATETIME)
+    end
+    return _add_demand_ts_to_components!(sys, ts, HydroDispatch)
+end
+
 
 """
     _as_timearray(df, index, col, value)
@@ -518,6 +530,32 @@ function read_bids(db, date_range; kwargs...)
     return bids
 end
 
+function read_energy_bids(db, date_range; kwargs...)
+    start_datetime = first(date_range)
+    end_datetime = last(date_range)
+    table = read_hive(db, :BIDPEROFFER_D)
+    energy_bids = @eval @chain $table begin
+        @select(SETTLEMENTDATE, BIDTYPE, INTERVAL_DATETIME, VERSIONNO, DUID, DIRECTION, MAXAVAIL, starts_with("BANDAVAIL"))
+        @filter($start_datetime <= INTERVAL_DATETIME, INTERVAL_DATETIME < $end_datetime, BIDTYPE == "ENERGY")
+        # Only select the version no that are the latest for each interval and duid
+        @group_by(SETTLEMENTDATE, INTERVAL_DATETIME, DUID)
+        @mutate(max_version = maximum(VERSIONNO))
+        @filter(VERSIONNO == max_version)
+        @arrange(SETTLEMENTDATE, INTERVAL_DATETIME)
+        @select(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, MAXAVAIL, starts_with("BANDAVAIL"))
+        @collect
+    end
+
+    if :resolution in keys(kwargs)
+        resolution = get(kwargs, :resolution, Minute(5))
+        energy_bids[!, :INTERVAL_DATETIME] = floor.(energy_bids[!, :INTERVAL_DATETIME], resolution)
+        return @chain energy_bids begin
+            groupby([:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION])
+            combine(_, valuecols(_) .=> maximum ∘ skipmissing; renamecols = false)
+        end
+    end
+    return energy_bids
+end
 
 function _extract_power_bids(row)
     a = row.PRICEBANDARRAY[row.BANDAVAILARRAY .> 0]

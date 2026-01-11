@@ -22,4 +22,7 @@
     areas = get_components(Area, system) |> collect .|> get_name |> sort!
     @test areas == ["NSW1", "QLD1", "SA1", "SNOWY1", "TAS1", "VIC1"]
 
+    hydro_generators = get_components(HydroDispatch, system)
+    @test !isempty(hydro_generators)
+
 end

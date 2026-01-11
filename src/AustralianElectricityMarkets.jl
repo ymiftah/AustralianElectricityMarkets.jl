@@ -13,10 +13,10 @@ export nem_system
 export RegionalNetworkConfiguration
 
 export read_hive
-export read_interconnectors, read_units, read_demand, read_bids
+export read_interconnectors, read_units, read_demand, read_bids, read_energy_bids
 export read_affine_heatrates,
     read_coal_prices, read_gas_prices, read_biomass_prices, read_isp_thermal_costs_parameters
-export set_demand!, set_renewable_pv!, set_renewable_wind!, set_market_bids!
+export set_demand!, set_renewable_pv!, set_renewable_wind!, set_market_bids!, set_hydro_limits!
 
 
 # Write your package code here.

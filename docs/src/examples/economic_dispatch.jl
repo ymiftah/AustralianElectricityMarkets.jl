@@ -1,7 +1,8 @@
 begin
     using AustralianElectricityMarkets
-    using PowerSimulations
     using PowerSystems
+    using PowerSimulations
+    using HydroPowerSimulations
 
     using Chain
     using DataFrames
@@ -39,7 +40,7 @@ db = connect(duckdb());
 sys = nem_system(db, RegionalNetworkConfiguration())
 
 # Set the horizon to consider for the simulation
-date_range = Date(2025, 1, 1):Date(2025, 1, 2)
+date_range = Date(2025, 1, 2):Date(2025, 1, 3)
 interval = Minute(30)
 horizon = Hour(24)
 
@@ -47,6 +48,7 @@ horizon = Hour(24)
 set_demand!(sys, db, date_range; resolution = interval)
 set_renewable_pv!(sys, db, date_range; resolution = interval)
 set_renewable_wind!(sys, db, date_range; resolution = interval)
+set_hydro_limits!(sys, db, date_range; resolution = interval)
 
 # Derive forecasts from the deterministic timseries
 transform_single_time_series!(
@@ -56,6 +58,7 @@ transform_single_time_series!(
 );
 
 @show sys
+
 
 #=
 
@@ -68,13 +71,20 @@ all units in the NEM need to to be dispatched at the lowest cost to meet the agg
 demand at each region.
 
 =#
-
-template = template_economic_dispatch()
+begin
+    template = ProblemTemplate()
+    set_device_model!(template, Line, StaticBranch)
+    set_device_model!(template, PowerLoad, StaticPowerLoad)
+    set_device_model!(template, RenewableDispatch, RenewableFullDispatch)
+    set_device_model!(template, ThermalStandard, ThermalBasicDispatch)
+    set_device_model!(template, HydroDispatch, HydroDispatchRunOfRiver)
+    set_network_model!(template, NetworkModel(CopperPlatePowerModel))
+    template
+end
 
 # The Economic Dispatch problem will be solved with open source solver HiGHS, and a relatively large mip gap
 # for the purposes of this example.
-solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.05)
-
+solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.2)
 
 problem = DecisionModel(template, sys; optimizer = solver, horizon = horizon)
 build!(problem; output_dir = joinpath(tempdir(), "out"))
@@ -90,7 +100,8 @@ res = OptimizationProblemResults(problem)
 begin
     renewables = read_variable(res, "ActivePowerVariable__RenewableDispatch")
     thermal = read_variable(res, "ActivePowerVariable__ThermalStandard")
-    gens_long = vcat(renewables, thermal)
+    hydro = read_variable(res, "ActivePowerVariable__HydroDispatch")
+    gens_long = vcat(renewables, thermal, hydro)
     select!(gens_long, :DateTime, :name => :DUID, :value)
 
     by_fuel = @chain select(
@@ -134,7 +145,7 @@ begin
 
     draw(
         demand + generation;
-        figure = (; size = (1000, 400)),
+        figure = (; size = (1000, 800)),
         legend = (; position = :bottom)
     )
 end
@@ -159,5 +170,13 @@ begin
     renewables_non_zero = filter_non_all_zero(renewables, :name, :value)
     sample = first(unique(renewables_non_zero.name), 5)
     sample = subset!(renewables_non_zero, :name => ByRow(in(sample)))
+    data(sample) * mapping(:DateTime, :value, color = :name) * visual(Lines) |> draw
+end
+
+# Let's observe the dispatch of a few hydro generators
+begin
+    hydro_non_zero = filter_non_all_zero(hydro, :name, :value)
+    sample = first(unique(hydro_non_zero.name), 5)
+    sample = subset!(hydro_non_zero, :name => ByRow(in(sample)))
     data(sample) * mapping(:DateTime, :value, color = :name) * visual(Lines) |> draw
 end

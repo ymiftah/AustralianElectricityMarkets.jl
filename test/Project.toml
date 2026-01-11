@@ -7,3 +7,9 @@ PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
 TidierDB = "86993f9b-bbba-4084-97c5-ee15961ad48b"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TestItems = "1c621080-faea-4a02-84b6-bbd5e436b8fe"
+
+[compat]
+Aqua = "0.8"
+DataFrames = "1.7"
+PowerSystems = ">= 5"
+TestItems = "1"
