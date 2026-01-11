@@ -41,7 +41,7 @@ sys = nem_system(db, RegionalNetworkConfiguration())
 # Set the horizon to consider for the simulation
 interval = Minute(5)
 horizon = Hour(24)
-start_date = DateTime(2025, 1, 1, 4, 0)
+start_date = DateTime(2025, 1, 2, 4, 0)
 date_range = start_date:interval:(start_date + horizon)
 @show date_range
 
@@ -59,8 +59,7 @@ set_market_bids!(sys, db, date_range)
 # Derive forecasts from the deterministic timseries
 transform_single_time_series!(
     sys,
-    ## convert(Minute, horizon), # horizon
-    Millisecond(86400000),
+    horizon, # horizon
     interval, # interval
 );
 

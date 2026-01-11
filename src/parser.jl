@@ -533,10 +533,12 @@ end
 function read_energy_bids(db, date_range; kwargs...)
     start_datetime = first(date_range)
     end_datetime = last(date_range)
+    sd = Date(start_datetime)
+    ed = Date(end_datetime)
     table = read_hive(db, :BIDPEROFFER_D)
     energy_bids = @eval @chain $table begin
         @select(SETTLEMENTDATE, BIDTYPE, INTERVAL_DATETIME, VERSIONNO, DUID, DIRECTION, MAXAVAIL, starts_with("BANDAVAIL"))
-        @filter($start_datetime <= INTERVAL_DATETIME, INTERVAL_DATETIME < $end_datetime, BIDTYPE == "ENERGY")
+        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed, BIDTYPE == "ENERGY")
         # Only select the version no that are the latest for each interval and duid
         @group_by(SETTLEMENTDATE, INTERVAL_DATETIME, DUID)
         @mutate(max_version = maximum(VERSIONNO))
@@ -544,6 +546,10 @@ function read_energy_bids(db, date_range; kwargs...)
         @arrange(SETTLEMENTDATE, INTERVAL_DATETIME)
         @select(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, MAXAVAIL, starts_with("BANDAVAIL"))
         @collect
+        subset(
+            :INTERVAL_DATETIME => ByRow(x -> ($start_datetime <= x < $end_datetime))
+        )
+        
     end
 
     if :resolution in keys(kwargs)
