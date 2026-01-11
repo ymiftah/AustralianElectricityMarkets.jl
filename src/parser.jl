@@ -533,8 +533,8 @@ end
 function read_energy_bids(db, date_range; kwargs...)
     start_datetime = first(date_range)
     end_datetime = last(date_range)
-    sd = Date(start_datetime)
-    ed = Date(end_datetime)
+    sd = Date(start_datetime) - Day(1)
+    ed = Date(end_datetime) + Day(1)
     table = read_hive(db, :BIDPEROFFER_D)
     energy_bids = @eval @chain $table begin
         @select(SETTLEMENTDATE, BIDTYPE, INTERVAL_DATETIME, VERSIONNO, DUID, DIRECTION, MAXAVAIL, starts_with("BANDAVAIL"))
