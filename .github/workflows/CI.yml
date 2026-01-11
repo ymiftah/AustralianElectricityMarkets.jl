@@ -62,7 +62,7 @@ jobs:
         version:
           - "1.11"
           - "1.12"
-          - "pre"
+          # - "pre"  # TODO reactivate after PSY/IS fix
         os:
           - ubuntu-latest
         arch:
