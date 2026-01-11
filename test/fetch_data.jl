@@ -16,7 +16,7 @@ for table in tables
     # this is a simple check to see if the directory for the table exists in the cache
     # though nemdb might do its own check, this is a safe way to avoid redundant calls
     cache_dir = joinpath(homedir(), ".nemweb_cache", String(table))
-    if isdir(cache_dir)
+    if isdir(cache_dir) & !isempty(readdir(cache_dir))
         println("Table $table already exists in cache at $cache_dir. Skipping.")
         continue
     end
