@@ -3,8 +3,22 @@ on:
   push:
     branches:
       - main
-    tags: ['*']
+    tags: ["*"]
+    paths:
+      - "src/**"
+      - "test/**"
+      - "docs/**"
+      - "*.toml"
+      - ".github/workflows/CI.yml"
+      - ".github/workflows/ReusableTest.yml"
   pull_request:
+    paths:
+      - "src/**"
+      - "test/**"
+      - "docs/**"
+      - "*.toml"
+      - ".github/workflows/CI.yml"
+      - ".github/workflows/ReusableTest.yml"
   workflow_dispatch:
 concurrency:
   # Skip intermediate builds: always.
@@ -19,7 +33,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: julia-actions/setup-julia@v2
         with:
-          version: '1'
+          version: "1"
       - uses: julia-actions/cache@v2
       - name: Cache market data
         uses: actions/cache@v4
@@ -39,45 +53,26 @@ jobs:
 
   test:
     needs: setup-data
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    permissions: # needed to allow julia-actions/cache to proactively delete old caches that it has created
-      actions: write
-      contents: read
     strategy:
       fail-fast: false
       matrix:
         version:
-          - '1.11'
-          - '1.12'
-          - 'pre'
+          - "1.11"
+          - "1.12"
+          - "pre"
         os:
           - ubuntu-latest
         arch:
           - x64
-    steps:
-      - uses: actions/checkout@v6
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: ${{ matrix.version }}
-          arch: ${{ matrix.arch }}
-      - uses: julia-actions/cache@v2
-      - name: Restore market data
-        uses: actions/cache@v4
-        with:
-          path: ~/.nemweb_cache
-          key: ${{ runner.os }}-nemweb-data-${{ hashFiles('test/fetch_data.jl') }}
-          restore-keys: |
-            ${{ runner.os }}-nemweb-data-
-      - uses: julia-actions/julia-buildpkg@v1
-      - uses: julia-actions/julia-runtest@v1
-      - uses: julia-actions/julia-processcoverage@v1
-      - uses: codecov/codecov-action@v5
-        with:
-          files: lcov.info
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
+    uses: ./.github/workflows/ReusableTest.yml
+    with:
+      version: ${{ matrix.version }}
+      os: ${{ matrix.os }}
+      arch: ${{ matrix.arch }}
+      run_codecov: ${{ matrix.version == '1.11' }}
+    secrets:
+      codecov_token: ${{ secrets.CODECOV_TOKEN }}
+
   docs:
     needs: setup-data
     name: Documentation
@@ -90,20 +85,28 @@ jobs:
       - uses: actions/checkout@v6
       - uses: julia-actions/setup-julia@v2
         with:
-          version: '1'
+          version: "1"
       - uses: julia-actions/cache@v2
       - name: Restore market data
         uses: actions/cache@v4
+        id: cache-market-data
         with:
           path: ~/.nemweb_cache
           key: ${{ runner.os }}-nemweb-data-${{ hashFiles('test/fetch_data.jl') }}
           restore-keys: |
             ${{ runner.os }}-nemweb-data-
+      - name: Fetch data fallback
+        if: steps.cache-market-data.outputs.cache-hit != 'true'
+        shell: julia --project=@. --color=yes {0}
+        run: |
+          using Pkg
+          Pkg.instantiate()
+          include("test/fetch_data.jl")
       - name: Configure doc environment
         shell: julia --project=docs --color=yes {0}
         run: |
           using Pkg
-          Pkg.develop(PackageSpec(path=pwd()))
+          Pkg.develop(PackageSpec(path = pwd()))
           Pkg.instantiate()
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-docdeploy@v1
@@ -115,5 +118,5 @@ jobs:
         run: |
           using Documenter: DocMeta, doctest
           using AustralianElectricityMarkets
-          DocMeta.setdocmeta!(AustralianElectricityMarkets, :DocTestSetup, :(using AustralianElectricityMarkets); recursive=true)
+          DocMeta.setdocmeta!(AustralianElectricityMarkets, :DocTestSetup, :(using AustralianElectricityMarkets); recursive = true)
           doctest(AustralianElectricityMarkets)

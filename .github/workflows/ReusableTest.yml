@@ -43,6 +43,7 @@ jobs:
         uses: julia-actions/cache@v2
       - name: Cache market data
         uses: actions/cache@v4
+        id: cache-market-data
         with:
           path: ~/.nemweb_cache
           key: ${{ runner.os }}-nemweb-data-${{ hashFiles('test/fetch_data.jl') }}
@@ -50,6 +51,7 @@ jobs:
             ${{ runner.os }}-nemweb-data-
       - uses: julia-actions/julia-buildpkg@v1
       - name: Fetch data
+        if: steps.cache-market-data.outputs.cache-hit != 'true'
         shell: julia --project=@. --color=yes {0}
         run: |
           using Pkg
@@ -58,8 +60,9 @@ jobs:
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1
         if: ${{ inputs.run_codecov }}
-      - uses: codecov/codecov-action@v4
+      - uses: codecov/codecov-action@v5
         if: ${{ inputs.run_codecov }}
         with:
-          file: lcov.info
+          files: lcov.info
           token: ${{ secrets.codecov_token }}
+          fail_ci_if_error: false
