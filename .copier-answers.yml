@@ -1,0 +1,12 @@
+# Changes here will be overwritten by Copier
+Authors: Youssef Miftah <miftahyo@outlook.fr> and contributors
+JuliaMinVersion: '1.11'
+License: MIT
+LicenseCopyrightHolders: Youssef Miftah
+PackageName: AustralianElectricityMarkets
+PackageOwner: ymiftah
+PackageUUID: 1bf50fc4-d6fd-47c1-85ec-4976c2b5cc58
+StrategyConfirmIncluded: false
+StrategyLevel: 1
+StrategyReviewExcluded: false
+_src_path: /home/simba/.julia/packages/BestieTemplate/GuTb8

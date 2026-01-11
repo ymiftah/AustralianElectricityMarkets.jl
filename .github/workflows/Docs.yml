@@ -1,0 +1,61 @@
+name: Docs
+
+on:
+  workflow_call:
+
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write # needed to allow julia-actions/cache to proactively delete old caches that it has created
+      contents: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1"
+      - name: Use Julia cache
+        uses: julia-actions/cache@v2
+      - name: Cache market data
+        uses: actions/cache@v4
+        id: cache-market-data
+        with:
+          path: ~/.nemweb_cache
+          key: ${{ runner.os }}-nemweb-data-${{ hashFiles('test/fetch_data.jl') }}
+          restore-keys: |
+            ${{ runner.os }}-nemweb-data-
+      - name: Fetch data
+        if: steps.cache-market-data.outputs.cache-hit != 'true'
+        shell: julia --project=@. --color=yes {0}
+        run: |
+          using Pkg
+          Pkg.instantiate()
+          include(joinpath(pwd(), "test/fetch_data.jl"))
+      - name: Instantiate environment with development version of the package
+        run: |
+          julia --project=docs -e '
+            using Pkg
+            Pkg.develop(PackageSpec(path=pwd()))
+            Pkg.instantiate()'
+      - name: Run doctest
+        run: |
+          julia --project=docs -e '
+            using Documenter: DocMeta, doctest
+            using AustralianElectricityMarkets
+            DocMeta.setdocmeta!(AustralianElectricityMarkets, :DocTestSetup, :(using AustralianElectricityMarkets); recursive=true)
+            doctest(AustralianElectricityMarkets)'
+      - name: Generate and deploy documentation
+        run: julia --project=docs docs/make.jl
+        env:
+          JULIA_PKG_SERVER: ""
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
+          GKSwstype: "100" # https://discourse.julialang.org/t/generation-of-documentation-fails-qt-qpa-xcb-could-not-connect-to-display/60988
