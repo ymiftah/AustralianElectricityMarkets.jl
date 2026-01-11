@@ -1,8 +1,11 @@
 # AustralianElectricityMarkets.jl
 
-[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://ymiftah.github.io/AustralianElectricityMarkets.jl/stable)
-[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://ymiftah.github.io/AustralianElectricityMarkets.jl/dev)
-[![Build Status](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/CI.yml?query=branch%3Amain)
+[![Stable Documentation](https://img.shields.io/badge/docs-stable-blue.svg)](https://ymiftah.github.io/AustralianElectricityMarkets.jl/stable)
+[![Development documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://ymiftah.github.io/AustralianElectricityMarkets.jl/dev)
+[![Test workflow status](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/Test.yml/badge.svg?branch=main)](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/Test.yml?query=branch%3Amain)
+[![Coverage](https://codecov.io/gh/ymiftah/AustralianElectricityMarkets.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/ymiftah/AustralianElectricityMarkets.jl)
+[![Docs workflow Status](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/Docs.yml/badge.svg?branch=main)](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/Docs.yml?query=branch%3Amain)
+[![BestieTemplate](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/JuliaBesties/BestieTemplate.jl/main/docs/src/assets/badge.json)](https://github.com/JuliaBesties/BestieTemplate.jl)
 [![code style: runic](https://img.shields.io/badge/code_style-%E1%9A%B1%E1%9A%A2%E1%9A%BE%E1%9B%81%E1%9A%B2-black)](https://github.com/fredrikekre/Runic.jl)
 
 A Julia package for interfacing with the Australian Energy Market Operator (AEMO) data archive.
@@ -26,14 +29,26 @@ Here is a basic example of how to use the package to read demand data:
 
 ```julia
 using AustralianElectricityMarkets
-using DuckDB
-using DataFrames
+using TidierDB
 
 # Establish a database connection
-db = DBInterface.connect(DuckDB.DB)
+db = connect(duckdb());
 
-# Fetch and read the demand data
+# Download the data from the monthly archive, saving them locally
+# in parquet files
+# Only the data requirements for a RegionalNetworkconfiguration are downloaded.
+date_range = Date(2025, 1, 1):Date(2025, 1, 2)
+fetch_table_data(date_range, RegionalNetworkConfiguration())
+
 demand_df = read_demand(db)
+println(demand_df)
+```
+
+And parsing the data into `PowerSystems.jl`
+
+```julia
+# Instantiate a System
+sys = nem_system(db, RegionalNetworkConfiguration())
 
 println(demand_df)
 ```
@@ -53,4 +68,4 @@ This package primarily interfaces with data from the [Australian Energy Market O
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the MIT License.

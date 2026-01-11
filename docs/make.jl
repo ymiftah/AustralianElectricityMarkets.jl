@@ -1,26 +1,31 @@
 using AustralianElectricityMarkets
 using Documenter
+using DocumenterVitepress
 using Literate
 
 # This code performs the automated addition of Literate - Generated Markdowns.
 julia_file_filter = x -> occursin(".jl", x)
-outputdir = joinpath(pwd(), "docs", "src", "examples")
-files = filter(julia_file_filter, readdir(outputdir))
+docs_src = joinpath(@__DIR__, "src")
+outputdir = joinpath(docs_src, "examples")
 
-for file in files
-    @show file
-    inputfile = joinpath(outputdir, "$file")
-    outputfile = replace("$file", ".jl" => "")
+if isdir(outputdir)
+    files = filter(julia_file_filter, readdir(outputdir))
+    @info "Generating markdowns from Literate files" files
 
-    Literate.markdown(
-        inputfile,
-        outputdir;
-        name = outputfile,
-        # credit = false,
-        flavor = Literate.DocumenterFlavor(),
-        # documenter = true,
-        execute = true,
-    )
+    for file in files
+        inputfile = joinpath(outputdir, file)
+        outputfile = replace(file, ".jl" => "")
+
+        Literate.markdown(
+            inputfile,
+            outputdir;
+            name = outputfile,
+            flavor = Literate.DocumenterFlavor(),
+            execute = true,
+        )
+    end
+else
+    @warn "Output directory for Literate not found" outputdir
 end
 
 DocMeta.setdocmeta!(
@@ -30,27 +35,78 @@ DocMeta.setdocmeta!(
     recursive = true,
 )
 
+# Add titles of sections and overrides page titles
+const titles = Dict(
+    "examples" => "Getting started",
+    "95-reference.md" => "Reference",
+)
+
+function recursively_list_pages(folder; path_prefix = "")
+    pages_list = Any[]
+    for file in readdir(folder)
+        if file == "index.md" || file == ".vitepress"
+            # We add index.md separately to make sure it is the first in the list
+            continue
+        end
+        # this is the relative path according to our prefix, not @__DIR__, i.e., relative to `src`
+        relpath = joinpath(path_prefix, file)
+        # full path of the file
+        fullpath = joinpath(folder, file)
+
+        if isdir(fullpath)
+            # If this is a folder, enter the recursion case
+            subsection = recursively_list_pages(fullpath; path_prefix = relpath)
+
+            # Ignore empty folders
+            if length(subsection) > 0
+                title = if haskey(titles, relpath)
+                    titles[relpath]
+                else
+                    # @error "Bad usage: '$relpath' does not have a title set. Fix in 'docs/make.jl'"
+                    relpath
+                end
+                push!(pages_list, title => subsection)
+            end
+
+            continue
+        end
+
+        if splitext(file)[2] != ".md" # non .md files are ignored
+            continue
+        elseif haskey(titles, relpath) # case 'title => path'
+            push!(pages_list, titles[relpath] => relpath)
+        else # case 'title'
+            push!(pages_list, relpath)
+        end
+    end
+
+    return pages_list
+end
+
+function list_pages()
+    root_dir = joinpath(@__DIR__, "src")
+    pages_list = recursively_list_pages(root_dir)
+
+    return ["index.md"; pages_list]
+end
+
 makedocs(;
     modules = [AustralianElectricityMarkets],
     authors = "Youssef Miftah <miftahyo@outlook.fr> and contributors",
+    repo = "https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/{commit}{path}#{line}",
     sitename = "AustralianElectricityMarkets.jl",
-    format = Documenter.HTML(;
-        canonical = "https://ymiftah.github.io/AustralianElectricityMarkets.jl",
-        edit_link = "main",
-        assets = String[],
-        size_threshold_warn = 200 * 2^10, # raise slightly from 100 to 200 KiB
-        size_threshold = 1000 * 2^10,      # raise slightly 200 to to 1000 KiB
+    format = DocumenterVitepress.Vitepress(
+        repo = "https://github.com/ymiftah/AustralianElectricityMarkets.jl",
+        devbranch = "main",
+        devurl = "dev",
     ),
-    pages = [
-        "Home" => "index.md",
-        "Getting started" => [
-            "Explore the NEM" => "examples/build_system.md",
-            "Economic dispatch" => "examples/economic_dispatch.md",
-            "Using market bids" => "examples/market_bids.md",
-            "Adding interconnactions" => "examples/interchanges.md",
-        ],
-    ],
-    checkdocs = :none
+    pages = list_pages(),
+    warnonly = true,
+    checkdocs = :none,
 )
 
-deploydocs(; repo = "github.com/ymiftah/AustralianElectricityMarkets.jl", devbranch = "main")
+deploydocs(;
+    repo = "github.com/ymiftah/AustralianElectricityMarkets.jl",
+    target = "build",
+    push_preview = true,
+)

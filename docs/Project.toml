@@ -6,20 +6,13 @@ Chain = "8be319e6-bccf-4806-a6f7-6fae938471bc"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+DocumenterVitepress = "4710194d-e776-4893-9690-8d956a29c365"
 HiGHS = "87dc4568-4c63-4d18-b0c0-bb2238e4078b"
 HydroPowerSimulations = "fc1677e0-6ad7-4515-bf3a-bd6bf20a0b1b"
 Literate = "98b081ad-f1c9-55d3-8b20-4c87d4299306"
 PowerSimulations = "e690365d-45e2-57bb-ac84-44ba829e73c4"
 PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
 TidierDB = "86993f9b-bbba-4084-97c5-ee15961ad48b"
-
-[compat]
-AlgebraOfGraphics = "0.7"
-CairoMakie = "0.12"
-Documenter = "1"
-Literate = "2"
-PowerSimulations = "0.22"
-PowerSystems = ">= 5"
 
 [sources]
 AustralianElectricityMarkets = {path = ".."}
