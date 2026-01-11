@@ -53,6 +53,9 @@ jobs:
 
   test:
     needs: setup-data
+    permissions:
+      actions: write # needed to allow julia-actions/cache to proactively delete old caches that it has created
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -75,4 +78,8 @@ jobs:
 
   docs:
     needs: setup-data
+    permissions:
+      actions: write # needed to allow julia-actions/cache to proactively delete old caches that it has created
+      contents: write
+      statuses: write
     uses: ./.github/workflows/Docs.yml
