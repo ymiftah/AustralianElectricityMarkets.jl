@@ -13,5 +13,13 @@ PowerSimulations = "e690365d-45e2-57bb-ac84-44ba829e73c4"
 PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
 TidierDB = "86993f9b-bbba-4084-97c5-ee15961ad48b"
 
+[compat]
+AlgebraOfGraphics = "0.7"
+CairoMakie = "0.12"
+Documenter = "1"
+Literate = "2"
+PowerSimulations = "0.22"
+PowerSystems = ">= 5"
+
 [sources]
 AustralianElectricityMarkets = {path = ".."}
