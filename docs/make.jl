@@ -21,7 +21,7 @@ if isdir(outputdir)
             outputdir;
             name = outputfile,
             flavor = Literate.DocumenterFlavor(),
-            execute = true,
+            execute = false,
         )
     end
 else
@@ -99,6 +99,8 @@ makedocs(;
     authors = "Youssef Miftah <miftahyo@outlook.fr> and contributors",
     repo = "https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/{commit}{path}#{line}",
     sitename = "AustralianElectricityMarkets.jl",
+    source = "src",
+    build = "build",
     format = DocumenterVitepress.MarkdownVitepress(
         repo = "https://github.com/ymiftah/AustralianElectricityMarkets.jl",
         devbranch = "main",
@@ -121,7 +123,7 @@ makedocs(;
     # clean=false,
 )
 
-deploydocs(;
+DocumenterVitepress.deploydocs(;
     repo = "github.com/ymiftah/AustralianElectricityMarkets.jl",
     target = "build",
     push_preview = true,
