@@ -2,12 +2,9 @@ name: Docs
 
 on:
   workflow_call:
-
-concurrency:
-  # Skip intermediate builds: always.
-  # Cancel intermediate builds: only if it is a pull request build.
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+    secrets:
+      DOCUMENTER_KEY:
+        required: false
 
 jobs:
   docs:

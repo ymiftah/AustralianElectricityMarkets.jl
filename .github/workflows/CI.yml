@@ -83,3 +83,4 @@ jobs:
       contents: write
       statuses: write
     uses: ./.github/workflows/Docs.yml
+    secrets: inherit
