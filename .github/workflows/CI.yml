@@ -49,7 +49,7 @@ jobs:
           Pkg.instantiate()
       - name: Fetch data
         shell: julia --project=@. --color=yes {0}
-        run: include(joinpath(pwd(), "test/fetch_data.jl"))
+        run: include(joinpath(pwd(), "test", "fetch_data.jl"))
 
   test:
     needs: setup-data
