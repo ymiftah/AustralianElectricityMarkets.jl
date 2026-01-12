@@ -16,14 +16,14 @@ const baseTemp = {
 
 const navTemp = {
   nav: [
-{ text: 'AustralianElectricityMarkets.jl', link: '/index' },
-{ text: 'Reference', link: '/95-reference' },
-{ text: 'Getting started', collapsed: false, items: [
-{ text: 'Overview of the NEM', link: '/examples/build_system' },
-{ text: 'Setup the system', link: '/examples/economic_dispatch' },
-{ text: 'Setup the system', link: '/examples/interchanges' },
-{ text: 'Setup the system', link: '/examples/market_bids' }]
- }
+{ text: 'Home', link: '/index' },
+{ text: 'Tutorials', collapsed: false, items: [
+{ text: 'Build the system', link: '/examples/build_system' },
+{ text: 'Economic dispatch', link: '/examples/economic_dispatch' },
+{ text: 'Area balance with interchanges', link: '/examples/interchanges' },
+{ text: 'Market clearing', link: '/examples/market_bids' }]
+ },
+{ text: 'Reference', link: '/95-reference' }
 ]
 ,
 }
@@ -96,14 +96,14 @@ export default defineConfig({
     },
     nav,
     sidebar: [
-{ text: 'AustralianElectricityMarkets.jl', link: '/index' },
-{ text: 'Reference', link: '/95-reference' },
-{ text: 'Getting started', collapsed: false, items: [
-{ text: 'Overview of the NEM', link: '/examples/build_system' },
-{ text: 'Setup the system', link: '/examples/economic_dispatch' },
-{ text: 'Setup the system', link: '/examples/interchanges' },
-{ text: 'Setup the system', link: '/examples/market_bids' }]
- }
+{ text: 'Home', link: '/index' },
+{ text: 'Tutorials', collapsed: false, items: [
+{ text: 'Build the system', link: '/examples/build_system' },
+{ text: 'Economic dispatch', link: '/examples/economic_dispatch' },
+{ text: 'Area balance with interchanges', link: '/examples/interchanges' },
+{ text: 'Market clearing', link: '/examples/market_bids' }]
+ },
+{ text: 'Reference', link: '/95-reference' }
 ]
 ,
     editLink: { pattern: "https://https://github.com/ymiftah/AustralianElectricityMarkets.jl/edit/main/docs/src/:path" },

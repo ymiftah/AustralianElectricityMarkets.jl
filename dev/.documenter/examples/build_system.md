@@ -40,73 +40,73 @@ end;
 
 
 ```
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mCreating cache directory at /home/runner/.nemweb_cache[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mCreating temp cache directory at /tmp/.nemweb_temp[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mChecking if data already exists for INTERCONNECTOR 2025 / 1[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mData already exists for INTERCONNECTOR 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
-100%|██████████| 1/1 [00:00<00:00, 15.36it/s]
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mChecking if data already exists for INTERCONNECTORCONSTRAINT 2025 / 1[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mData already exists for INTERCONNECTORCONSTRAINT 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
-100%|██████████| 1/1 [00:00<00:00, 164.83it/s]
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mChecking if data already exists for DISPATCHREGIONSUM 2025 / 1[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mData already exists for DISPATCHREGIONSUM 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
-100%|██████████| 1/1 [00:00<00:00, 151.63it/s]
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mChecking if data already exists for DUDETAIL 2025 / 1[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mData already exists for DUDETAIL 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
-100%|██████████| 1/1 [00:00<00:00, 267.89it/s]
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mChecking if data already exists for DUDETAILSUMMARY 2025 / 1[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mData already exists for DUDETAILSUMMARY 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
-100%|██████████| 1/1 [00:00<00:00, 167.42it/s]
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mChecking if data already exists for STATION 2025 / 1[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mData already exists for STATION 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
-100%|██████████| 1/1 [00:00<00:00, 526.59it/s]
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mChecking if data already exists for STATIONOPERATINGSTATUS 2025 / 1[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mData already exists for STATIONOPERATINGSTATUS 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
-100%|██████████| 1/1 [00:00<00:00, 548.56it/s]
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mChecking if data already exists for GENUNITS 2025 / 1[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mData already exists for GENUNITS 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
-100%|██████████| 1/1 [00:00<00:00, 544.79it/s]
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mChecking if data already exists for DUALLOC 2025 / 1[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mData already exists for DUALLOC 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
-100%|██████████| 1/1 [00:00<00:00, 524.55it/s]
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mChecking if data already exists for BIDDAYOFFER_D 2025 / 1[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mData already exists for BIDDAYOFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
-100%|██████████| 1/1 [00:00<00:00, 77.34it/s]
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
-  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:31:59[0m [[32m[1minfo     [0m] [1mChecking if data already exists for BIDPEROFFER_D 2025 / 1[0m
-[2m2026-01-12 07:32:01[0m [[32m[1minfo     [0m] [1mData already exists for BIDPEROFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mCreating cache directory at /home/runner/.nemweb_cache[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mCreating temp cache directory at /tmp/.nemweb_temp[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mChecking if data already exists for INTERCONNECTOR 2025 / 1[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mData already exists for INTERCONNECTOR 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
+100%|██████████| 1/1 [00:00<00:00,  8.06it/s]100%|██████████| 1/1 [00:00<00:00,  8.05it/s]
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mChecking if data already exists for INTERCONNECTORCONSTRAINT 2025 / 1[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mData already exists for INTERCONNECTORCONSTRAINT 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
+100%|██████████| 1/1 [00:00<00:00, 89.35it/s]
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mChecking if data already exists for DISPATCHREGIONSUM 2025 / 1[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mData already exists for DISPATCHREGIONSUM 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
+100%|██████████| 1/1 [00:00<00:00, 99.76it/s]
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mChecking if data already exists for DUDETAIL 2025 / 1[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mData already exists for DUDETAIL 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
+100%|██████████| 1/1 [00:00<00:00, 252.24it/s]
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mChecking if data already exists for DUDETAILSUMMARY 2025 / 1[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mData already exists for DUDETAILSUMMARY 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
+100%|██████████| 1/1 [00:00<00:00, 150.86it/s]
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mChecking if data already exists for STATION 2025 / 1[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mData already exists for STATION 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
+100%|██████████| 1/1 [00:00<00:00, 737.40it/s]
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mChecking if data already exists for STATIONOPERATINGSTATUS 2025 / 1[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mData already exists for STATIONOPERATINGSTATUS 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
+100%|██████████| 1/1 [00:00<00:00, 888.62it/s]
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mChecking if data already exists for GENUNITS 2025 / 1[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mData already exists for GENUNITS 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
+100%|██████████| 1/1 [00:00<00:00, 716.24it/s]
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mChecking if data already exists for DUALLOC 2025 / 1[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mData already exists for DUALLOC 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
+100%|██████████| 1/1 [00:00<00:00, 644.39it/s]
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mChecking if data already exists for BIDDAYOFFER_D 2025 / 1[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mData already exists for BIDDAYOFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
+100%|██████████| 1/1 [00:00<00:00, 83.36it/s]
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00[0m
+  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:59:29[0m [[32m[1minfo     [0m] [1mChecking if data already exists for BIDPEROFFER_D 2025 / 1[0m
+[2m2026-01-12 07:59:31[0m [[32m[1minfo     [0m] [1mData already exists for BIDPEROFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
 100%|██████████| 1/1 [00:01<00:00,  1.74s/it]100%|██████████| 1/1 [00:01<00:00,  1.74s/it]
 
 ```
