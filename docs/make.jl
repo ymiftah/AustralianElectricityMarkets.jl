@@ -95,7 +95,7 @@ makedocs(;
     authors = "Youssef Miftah <miftahyo@outlook.fr> and contributors",
     repo = "https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/{commit}{path}#{line}",
     sitename = "AustralianElectricityMarkets.jl",
-    format = DocumenterVitepress.Vitepress(
+    format = DocumenterVitepress.MarkdownVitepress(
         repo = "https://github.com/ymiftah/AustralianElectricityMarkets.jl",
         devbranch = "main",
         devurl = "dev",
