@@ -5,6 +5,9 @@ on:
     secrets:
       DOCUMENTER_KEY:
         required: false
+  
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
 
 jobs:
   docs:
@@ -36,23 +39,11 @@ jobs:
           using Pkg
           Pkg.instantiate()
           include(joinpath(pwd(), "test", "fetch_data.jl"))
-      - name: Instantiate environment with development version of the package
-        run: |
-          julia --project=docs -e '
-            using Pkg
-            Pkg.develop(PackageSpec(path=pwd()))
-            Pkg.instantiate()'
-      - name: Run doctest
-        run: |
-          julia --project=docs -e '
-            using Documenter: DocMeta, doctest
-            using AustralianElectricityMarkets
-            DocMeta.setdocmeta!(AustralianElectricityMarkets, :DocTestSetup, :(using AustralianElectricityMarkets); recursive=true)
-            doctest(AustralianElectricityMarkets)'
-      - name: Generate and deploy documentation
-        run: julia --project=docs docs/make.jl
+      - name: Build and deploy docs
+        uses: julia-actions/julia-docdeploy@v1
         env:
-          JULIA_PKG_SERVER: ""
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
-          GKSwstype: "100" # https://discourse.julialang.org/t/generation-of-documentation-fails-qt-qpa-xcb-could-not-connect-to-display/60988
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # For authentication with GitHub Actions token
+          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }} # For authentication with SSH deploy key
+          GKSwstype: "100" # for Plots.jl plots (if you have them)
+          JULIA_DEBUG: "Documenter"
+          DATADEPS_ALWAYS_ACCEPT: true

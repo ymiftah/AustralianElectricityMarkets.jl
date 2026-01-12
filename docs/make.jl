@@ -103,14 +103,19 @@ makedocs(;
         repo = "https://github.com/ymiftah/AustralianElectricityMarkets.jl",
         devbranch = "main",
         devurl = "dev",
+        # md_output_path = ".",
+        # build_vitepress = false
     ),
     pages = list_pages(),
     warnonly = true,
     checkdocs = :none,
+    # clean=false,
 )
 
 deploydocs(;
     repo = "github.com/ymiftah/AustralianElectricityMarkets.jl",
     target = "build",
     push_preview = true,
+    devbranch = "main",
+    branch = "gh-pages",
 )
