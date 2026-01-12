@@ -168,17 +168,17 @@ end;
 
 ```
 date_range = Dates.DateTime("2025-01-01T04:00:00"):Dates.Minute(5):Dates.DateTime("2025-01-02T04:00:00")
-[2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 04:00:00 to 2025-01-01 04:00:00[0m
-  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mChecking if data already exists for BIDDAYOFFER_D 2025 / 1[0m
-[2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mData already exists for BIDDAYOFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
-100%|██████████| 1/1 [00:00<00:00, 78.62it/s]
-[2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 04:00:00 to 2025-01-01 04:00:00[0m
-  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mChecking if data already exists for BIDPEROFFER_D 2025 / 1[0m
-[2m2026-01-12 07:17:19[0m [[32m[1minfo     [0m] [1mData already exists for BIDPEROFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
+[2m2026-01-12 07:37:34[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2026-01-12 07:37:34[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2026-01-12 07:37:34[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 04:00:00 to 2025-01-01 04:00:00[0m
+  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:37:34[0m [[32m[1minfo     [0m] [1mChecking if data already exists for BIDDAYOFFER_D 2025 / 1[0m
+[2m2026-01-12 07:37:34[0m [[32m[1minfo     [0m] [1mData already exists for BIDDAYOFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
+100%|██████████| 1/1 [00:00<00:00, 84.21it/s]
+[2m2026-01-12 07:37:34[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2026-01-12 07:37:34[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2026-01-12 07:37:34[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 04:00:00 to 2025-01-01 04:00:00[0m
+  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:37:34[0m [[32m[1minfo     [0m] [1mChecking if data already exists for BIDPEROFFER_D 2025 / 1[0m
+[2m2026-01-12 07:37:36[0m [[32m[1minfo     [0m] [1mData already exists for BIDPEROFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
 100%|██████████| 1/1 [00:01<00:00,  1.64s/it]100%|██████████| 1/1 [00:01<00:00,  1.64s/it]
 
 ```
@@ -198,78 +198,6 @@ set_market_bids!(sys, db, date_range)
 [ Info: Setting loads to 0 for SNOWY1 Load
 [ Info: Setting PV power time series
 [ Info: Setting wind power time series
-┌ Warning: No bid data for generator CULLRGWF, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator ROYALLA1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator GRIFSF1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator MLWF1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator BARCSF1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator PORTWF, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator NASF1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator CBWWPV1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator CODRNGTON, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator YSWF1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator TOORAWF, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator VALDORA1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator MLSP1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator CBWWPV2, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator CHALLHWF, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator WHILL1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator CESF1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator DIAPURWF1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator FSWF1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator WOOLNTH1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator MAROOWF1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator ADPPV2, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator CHPSTWF1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator WONWP, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator SKSF1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator BAKING1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator HUGSF1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator TIMWEST, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator LRSF1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator YAMBUKWF, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator WAUBRAWF, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator HEPWIND1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator YAWWF1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator ADPPV3, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator CBWF1, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
-┌ Warning: No bid data for generator CAPTL_WF, setting to unavailable.
-└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
 ┌ Warning: No bid data for generator EILDON3, setting to unavailable.
 └ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
 ┌ Warning: No bid data for generator HLMSEW01, setting to unavailable.
@@ -495,6 +423,78 @@ set_market_bids!(sys, db, date_range)
 ┌ Warning: No bid data for generator STANNL1, setting to unavailable.
 └ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
 ┌ Warning: No bid data for generator SHOAL1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator CULLRGWF, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator ROYALLA1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator GRIFSF1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator MLWF1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator BARCSF1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator PORTWF, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator NASF1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator CBWWPV1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator CODRNGTON, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator YSWF1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator TOORAWF, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator VALDORA1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator MLSP1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator CBWWPV2, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator CHALLHWF, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator WHILL1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator CESF1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator DIAPURWF1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator FSWF1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator WOOLNTH1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator MAROOWF1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator ADPPV2, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator CHPSTWF1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator WONWP, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator SKSF1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator BAKING1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator HUGSF1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator TIMWEST, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator LRSF1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator YAMBUKWF, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator WAUBRAWF, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator HEPWIND1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator YAWWF1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator ADPPV3, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator CBWF1, setting to unavailable.
+└ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
+┌ Warning: No bid data for generator CAPTL_WF, setting to unavailable.
 └ @ AustralianElectricityMarkets ~/work/AustralianElectricityMarkets.jl/AustralianElectricityMarkets.jl/src/parser.jl:490
 
 ```
@@ -1019,22 +1019,22 @@ res = OptimizationProblemResults(problem)
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">IncrementalCostAtMinParameter__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__PowerLoad</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__RenewableDispatch</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__PowerLoad</td>
+      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__RenewableDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerTimeSeriesParameter__RenewableDispatch</td>
@@ -1053,25 +1053,25 @@ res = OptimizationProblemResults(problem)
       <td style = "text-align: left;">SystemBalanceSlackUp__Area</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerVariable__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerVariable__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">StartVariable__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">StopVariable__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">SystemBalanceSlackDown__Area</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">FlowActivePowerVariable__AreaInterchange</td>
     </tr>
     <tr class = "dataRow">
+      <td style = "text-align: left;">SystemBalanceSlackDown__Area</td>
+    </tr>
+    <tr class = "dataRow">
       <td style = "text-align: left;">OnVariable__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerVariable__RenewableDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">StartVariable__ThermalStandard</td>
     </tr>
   </tbody>
 </table>
