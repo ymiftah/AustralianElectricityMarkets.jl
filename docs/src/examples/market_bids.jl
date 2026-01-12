@@ -45,10 +45,6 @@ start_date = DateTime(2025, 1, 2, 4, 0)
 date_range = start_date:interval:(start_date + horizon)
 @show date_range
 
-map([:BIDDAYOFFER_D, :BIDPEROFFER_D]) do table
-    fetch_table_data(table, date_range)
-end;
-
 # Set deterministic timseries
 set_demand!(sys, db, date_range; resolution = interval)
 set_renewable_pv!(sys, db, date_range; resolution = interval)
