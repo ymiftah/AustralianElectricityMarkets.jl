@@ -43,7 +43,7 @@ Configuration for accessing data.
   
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/configurations.jl#L1-L9" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/configurations.jl#L1-L9" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -68,7 +68,7 @@ Adds demand time series data to the system components.
   
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/parser.jl#L402-L411" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/parser.jl#L402-L411" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -93,7 +93,7 @@ Adds renewable generation time series data to the system components.
   
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/parser.jl#L433-L442" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/parser.jl#L433-L442" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -120,7 +120,7 @@ Converts a DataFrame to a TimeArray.
   
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/parser.jl#L386-L396" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/parser.jl#L386-L396" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -143,7 +143,7 @@ Helper function to filter for the most recent records in a table based on a give
   
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/parser.jl#L276-L284" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/parser.jl#L276-L284" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -166,7 +166,7 @@ Helper function to filter for the most recent records in a table.
   
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/parser.jl#L263-L271" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/parser.jl#L263-L271" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -187,7 +187,7 @@ Construct the correct path to the Hive dataset based on the specified filesystem
   
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/parser.jl#L32-L39" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/parser.jl#L32-L39" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -225,7 +225,7 @@ println(demand_df)
 Row │ SETTLEMENTDATE       REGIONID  TOTALDEMAND  DISPATCHABLEGENERATION  DISPATCHABLELOAD  NETINTERCHANGE  	   │ Dates.DateTime       String7   Float64      Float64                 Float64           Float64         ───────┼────────────────────────────────────────────────────────────────────────────────────────────────────── 	 1 │ 2024-01-01T00:05:00  NSW1          6574.92                 6721.88               0.0          146.96 	 2 │ 2024-01-01T00:05:00  QLD1          6228.31                 5713.21               0.0         -515.1 	 3 │ 2024-01-01T00:05:00  SA1           1293.98                 1116.68               0.0         -177.3 	 4 │ 2024-01-01T00:05:00  TAS1          1033.29                  580.29               0.0         -453.0 	 5 │ 2024-01-01T00:05:00  VIC1          3977.1                  5071.17               0.0         1094.07
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/parser.jl#L84-L110" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/parser.jl#L84-L110" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -250,7 +250,7 @@ Read a hive-partitioned parquet dataset into a TidierDB table.
   
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/parser.jl#L7-L16" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/parser.jl#L7-L16" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -284,7 +284,7 @@ println(interconnectors_df)
 
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/parser.jl#L50-L67" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/parser.jl#L50-L67" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -318,7 +318,7 @@ println(units_df)
 
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/parser.jl#L136-L153" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/parser.jl#L136-L153" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -347,7 +347,7 @@ This function reads demand data for a specified date range, processes it into a 
   
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/parser.jl#L295-L308" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/parser.jl#L295-L308" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -376,7 +376,7 @@ This function reads solar availability data for a specified date range from the 
   
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/parser.jl#L462-L476" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/parser.jl#L462-L476" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -405,7 +405,7 @@ This function reads solar availability data for a specified date range from the 
   
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/parser.jl#L319-L333" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/parser.jl#L319-L333" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -434,7 +434,7 @@ This function reads wind availability data for a specified date range from the d
   
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/parser.jl#L346-L360" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/parser.jl#L346-L360" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 

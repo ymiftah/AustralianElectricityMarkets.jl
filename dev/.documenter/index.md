@@ -120,7 +120,7 @@ between states by interconnectors
 
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/network_models/region_model.jl#L603-L606" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/network_models/region_model.jl#L603-L606" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -143,7 +143,7 @@ Adds branches to the system.
   
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/network_models/region_model.jl#L367-L375" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/network_models/region_model.jl#L367-L375" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -166,7 +166,7 @@ Adds buses to the system.
   
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/network_models/region_model.jl#L339-L347" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/network_models/region_model.jl#L339-L347" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -189,7 +189,7 @@ Adds generation units to the system.
   
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/network_models/region_model.jl#L419-L427" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/network_models/region_model.jl#L419-L427" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -212,7 +212,7 @@ Adds loads to the system.
   
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/network_models/region_model.jl#L394-L402" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/network_models/region_model.jl#L394-L402" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -246,7 +246,7 @@ println(branch_df)
 
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/network_models/region_model.jl#L140-L157" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/network_models/region_model.jl#L140-L157" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -280,7 +280,7 @@ println(bus_df)
 
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/network_models/region_model.jl#L51-L68" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/network_models/region_model.jl#L51-L68" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -314,7 +314,7 @@ println(gen_df)
 
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/network_models/region_model.jl#L194-L211" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/network_models/region_model.jl#L194-L211" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -348,7 +348,7 @@ println(branch_df)
 
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/network_models/region_model.jl#L262-L279" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/network_models/region_model.jl#L262-L279" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -382,7 +382,7 @@ println(load_df)
 
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/network_models/region_model.jl#L106-L123" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/network_models/region_model.jl#L106-L123" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -416,7 +416,7 @@ println(sys)
 
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/network_models/region_model.jl#L298-L315" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/network_models/region_model.jl#L298-L315" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 
@@ -442,7 +442,7 @@ table_requirements(::RegionalNetworkConfiguration)
 
 
 
-<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/54263e591e386d5b7163578b9f7efbf939526b56/src/network_models/region_model.jl#L610-L623" target="_blank" rel="noreferrer">source</a></Badge>
+<Badge type="info" class="source-link" text="source"><a href="https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/b719508839751c7b451881d8d5cb21880784d1f9/src/network_models/region_model.jl#L610-L623" target="_blank" rel="noreferrer">source</a></Badge>
 
 </details>
 

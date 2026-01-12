@@ -21,74 +21,74 @@ import{_ as E,c as I,o as R,aA as s}from"./chunks/framework.DuUd1na1.js";const t
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">tables </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> table_requirements</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">RegionalNetworkConfiguration</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">())</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">map</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(tables) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">do</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> table</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    fetch_table_data</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(table, date_range)</span></span>
-<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">end</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">;</span></span></code></pre></div><div class="language- vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang"></span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mCreating cache directory at /home/runner/.nemweb_cache\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mCreating temp cache directory at /tmp/.nemweb_temp\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
-<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for INTERCONNECTOR 2025 / 1\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for INTERCONNECTOR 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
-<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 35.18it/s]</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
-<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for INTERCONNECTORCONSTRAINT 2025 / 1\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for INTERCONNECTORCONSTRAINT 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
-<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 231.37it/s]</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
-<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for DISPATCHREGIONSUM 2025 / 1\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for DISPATCHREGIONSUM 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
-<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 154.49it/s]</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
-<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for DUDETAIL 2025 / 1\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for DUDETAIL 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
-<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 284.19it/s]</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
-<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for DUDETAILSUMMARY 2025 / 1\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for DUDETAILSUMMARY 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
-<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 139.93it/s]</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
-<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for STATION 2025 / 1\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for STATION 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
-<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 475.01it/s]</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
-<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for STATIONOPERATINGSTATUS 2025 / 1\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for STATIONOPERATINGSTATUS 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
-<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 638.40it/s]</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
-<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for GENUNITS 2025 / 1\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for GENUNITS 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
-<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 496.07it/s]</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
-<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for DUALLOC 2025 / 1\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for DUALLOC 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
-<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 446.58it/s]</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
-<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for BIDDAYOFFER_D 2025 / 1\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for BIDDAYOFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
-<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 72.82it/s]</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
-<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 06:13:11\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for BIDPEROFFER_D 2025 / 1\x1B[0m</span></span>
-<span class="line"><span>\x1B[2m2026-01-12 06:13:13\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for BIDPEROFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
-<span class="line"><span>100%|██████████| 1/1 [00:01&lt;00:00,  1.76s/it]100%|██████████| 1/1 [00:01&lt;00:00,  1.76s/it]</span></span></code></pre></div><p>Once the data is downloaded, a few utility functions allow direct parsing of key quantities, such as a table of all units registered in the NEM, or the region zonal operational demand</p><div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D;"># read all units</span></span>
+<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">end</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">;</span></span></code></pre></div><div class="language- vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang"></span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mCreating cache directory at /home/runner/.nemweb_cache\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mCreating temp cache directory at /tmp/.nemweb_temp\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
+<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for INTERCONNECTOR 2025 / 1\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for INTERCONNECTOR 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
+<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 10.29it/s]</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
+<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for INTERCONNECTORCONSTRAINT 2025 / 1\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for INTERCONNECTORCONSTRAINT 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
+<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 115.90it/s]</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
+<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for DISPATCHREGIONSUM 2025 / 1\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for DISPATCHREGIONSUM 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
+<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 99.42it/s]</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
+<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for DUDETAIL 2025 / 1\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for DUDETAIL 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
+<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 288.13it/s]</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
+<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for DUDETAILSUMMARY 2025 / 1\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for DUDETAILSUMMARY 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
+<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 155.51it/s]</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
+<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for STATION 2025 / 1\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for STATION 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
+<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 762.74it/s]</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
+<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for STATIONOPERATINGSTATUS 2025 / 1\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for STATIONOPERATINGSTATUS 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
+<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 921.02it/s]</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
+<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for GENUNITS 2025 / 1\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for GENUNITS 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
+<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 730.33it/s]</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
+<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for DUALLOC 2025 / 1\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for DUALLOC 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
+<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 689.51it/s]</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
+<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for BIDDAYOFFER_D 2025 / 1\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for BIDDAYOFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
+<span class="line"><span>100%|██████████| 1/1 [00:00&lt;00:00, 85.54it/s]</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet cache directory to /home/runner/.nemweb_cache\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mSet filesystem to local       \x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mPopulating database with data from 2025-01-01 00:00:00 to 2025-01-01 00:00:00\x1B[0m</span></span>
+<span class="line"><span>  0%|          | 0/1 [00:00&lt;?, ?it/s]\x1B[2m2026-01-12 07:12:05\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mChecking if data already exists for BIDPEROFFER_D 2025 / 1\x1B[0m</span></span>
+<span class="line"><span>\x1B[2m2026-01-12 07:12:07\x1B[0m [\x1B[32m\x1B[1minfo     \x1B[0m] \x1B[1mData already exists for BIDPEROFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.\x1B[0m</span></span>
+<span class="line"><span>100%|██████████| 1/1 [00:01&lt;00:00,  1.78s/it]100%|██████████| 1/1 [00:01&lt;00:00,  1.78s/it]</span></span></code></pre></div><p>Once the data is downloaded, a few utility functions allow direct parsing of key quantities, such as a table of all units registered in the NEM, or the region zonal operational demand</p><div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D;"># read all units</span></span>
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">units </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> read_units</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(db)</span></span>
 <span class="line"></span>
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">capacity_by_fuel </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> @chain</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> units </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>

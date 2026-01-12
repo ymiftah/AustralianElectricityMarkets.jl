@@ -168,18 +168,18 @@ end;
 
 ```
 date_range = Dates.DateTime("2025-01-01T04:00:00"):Dates.Minute(5):Dates.DateTime("2025-01-02T04:00:00")
-[2m2026-01-12 06:18:56[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2026-01-12 06:18:56[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2026-01-12 06:18:56[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 04:00:00 to 2025-01-01 04:00:00[0m
-  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 06:18:56[0m [[32m[1minfo     [0m] [1mChecking if data already exists for BIDDAYOFFER_D 2025 / 1[0m
-[2m2026-01-12 06:18:56[0m [[32m[1minfo     [0m] [1mData already exists for BIDDAYOFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
-100%|██████████| 1/1 [00:00<00:00, 79.17it/s]
-[2m2026-01-12 06:18:56[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
-[2m2026-01-12 06:18:56[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
-[2m2026-01-12 06:18:56[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 04:00:00 to 2025-01-01 04:00:00[0m
-  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 06:18:56[0m [[32m[1minfo     [0m] [1mChecking if data already exists for BIDPEROFFER_D 2025 / 1[0m
-[2m2026-01-12 06:18:57[0m [[32m[1minfo     [0m] [1mData already exists for BIDPEROFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
-100%|██████████| 1/1 [00:01<00:00,  1.66s/it]100%|██████████| 1/1 [00:01<00:00,  1.66s/it]
+[2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 04:00:00 to 2025-01-01 04:00:00[0m
+  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mChecking if data already exists for BIDDAYOFFER_D 2025 / 1[0m
+[2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mData already exists for BIDDAYOFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
+100%|██████████| 1/1 [00:00<00:00, 78.62it/s]
+[2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mSet cache directory to /home/runner/.nemweb_cache[0m
+[2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mSet filesystem to local       [0m
+[2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mPopulating database with data from 2025-01-01 04:00:00 to 2025-01-01 04:00:00[0m
+  0%|          | 0/1 [00:00<?, ?it/s][2m2026-01-12 07:17:17[0m [[32m[1minfo     [0m] [1mChecking if data already exists for BIDPEROFFER_D 2025 / 1[0m
+[2m2026-01-12 07:17:19[0m [[32m[1minfo     [0m] [1mData already exists for BIDPEROFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.[0m
+100%|██████████| 1/1 [00:01<00:00,  1.64s/it]100%|██████████| 1/1 [00:01<00:00,  1.64s/it]
 
 ```
 
