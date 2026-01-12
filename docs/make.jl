@@ -38,6 +38,10 @@ DocMeta.setdocmeta!(
 # Add titles of sections and overrides page titles
 const titles = Dict(
     "examples" => "Getting started",
+    "build_system" => "Build the system",
+    "economic_dispatch" => "Economic dispatch",
+    "interchanges" => "Area balance with interchanges",
+    "market_bids" => "Market clearing",
     "95-reference.md" => "Reference",
 )
 
