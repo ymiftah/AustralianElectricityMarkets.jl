@@ -1,3 +1,4 @@
+````@example economic_dispatch
 begin
     using AustralianElectricityMarkets
     using PowerSystems
@@ -11,9 +12,7 @@ begin
     using Dates
     using HiGHS
 end
-
-
-#=
+````
 
 # Setup the system
 
@@ -22,8 +21,8 @@ Initialise a connection to manage the market data via duckdb
 !!! note "Get the data first!"
     You will first need to download the data from the monthly archive, saving them locally
     in parquet files.
-    
-    
+
+
     ```julia
     tables = table_requirements(RegionalNetworkConfiguration())
     map(tables) do table
@@ -33,24 +32,37 @@ Initialise a connection to manage the market data via duckdb
 
     Only the data requirements for a RegionalNetworkconfiguration are downloaded.
 
-=#
+````@example economic_dispatch
 db = connect(duckdb());
+nothing #hide
+````
 
-# Instantiate the system
+Instantiate the system
+
+````@example economic_dispatch
 sys = nem_system(db, RegionalNetworkConfiguration())
+````
 
-# Set the horizon to consider for the simulation
+Set the horizon to consider for the simulation
+
+````@example economic_dispatch
 date_range = Date(2025, 1, 2):Date(2025, 1, 3)
 interval = Minute(30)
 horizon = Hour(24)
+````
 
-# Set deterministic timseries
+Set deterministic timseries
+
+````@example economic_dispatch
 set_demand!(sys, db, date_range; resolution = interval)
 set_renewable_pv!(sys, db, date_range; resolution = interval)
 set_renewable_wind!(sys, db, date_range; resolution = interval)
 set_hydro_limits!(sys, db, date_range; resolution = interval)
+````
 
-# Derive forecasts from the deterministic timseries
+Derive forecasts from the deterministic timseries
+
+````@example economic_dispatch
 transform_single_time_series!(
     sys,
     horizon, # horizon
@@ -58,9 +70,7 @@ transform_single_time_series!(
 );
 
 @show sys
-
-
-#=
+````
 
 # Economic dispatch
 
@@ -70,7 +80,7 @@ The following section demonstrates the definition of an economic dispatch proble
 all units in the NEM need to to be dispatched at the lowest cost to meet the aggregate
 demand at each region.
 
-=#
+````@example economic_dispatch
 begin
     template = ProblemTemplate()
     set_device_model!(template, Line, StaticBranch)
@@ -81,22 +91,33 @@ begin
     set_network_model!(template, NetworkModel(CopperPlatePowerModel))
     template
 end
+````
 
-# The Economic Dispatch problem will be solved with open source solver HiGHS, and a relatively large mip gap
-# for the purposes of this example.
+The Economic Dispatch problem will be solved with open source solver HiGHS, and a relatively large mip gap
+for the purposes of this example.
+
+````@example economic_dispatch
 solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.2)
 
 problem = DecisionModel(template, sys; optimizer = solver, horizon = horizon)
 build!(problem; output_dir = joinpath(tempdir(), "out"))
+````
 
-# Solve the problem
+Solve the problem
+
+````@example economic_dispatch
 solve!(problem)
+````
 
+Observe the results
 
-# Observe the results
+````@example economic_dispatch
 res = OptimizationProblemResults(problem)
+````
 
-# Lets observe how the units are dispatched
+Lets observe how the units are dispatched
+
+````@example economic_dispatch
 begin
     renewables = read_variable(res, "ActivePowerVariable__RenewableDispatch")
     thermal = read_variable(res, "ActivePowerVariable__ThermalStandard")
@@ -149,8 +170,11 @@ begin
         legend = (; position = :bottom)
     )
 end
+````
 
-# Let's observe the dispatch of a few thermal generators
+Let's observe the dispatch of a few thermal generators
+
+````@example economic_dispatch
 function filter_non_all_zero(df, group_by, value)
     gdf = groupby(df, group_by)
     is_all_zero = combine(gdf, :value => (x -> all(x == 0)) => :all_zero)
@@ -164,19 +188,27 @@ begin
     sample = subset!(thermals_non_zero, :name => ByRow(in(sample)))
     data(sample) * mapping(:DateTime, :value, color = :name) * visual(Lines) |> draw
 end
+````
 
-# Let's observe the dispatch of a few renewable generators
+Let's observe the dispatch of a few renewable generators
+
+````@example economic_dispatch
 begin
     renewables_non_zero = filter_non_all_zero(renewables, :name, :value)
     sample = first(unique(renewables_non_zero.name), 5)
     sample = subset!(renewables_non_zero, :name => ByRow(in(sample)))
     data(sample) * mapping(:DateTime, :value, color = :name) * visual(Lines) |> draw
 end
+````
 
-# Let's observe the dispatch of a few hydro generators
+Let's observe the dispatch of a few hydro generators
+
+````@example economic_dispatch
 begin
     hydro_non_zero = filter_non_all_zero(hydro, :name, :value)
     sample = first(unique(hydro_non_zero.name), 5)
     sample = subset!(hydro_non_zero, :name => ByRow(in(sample)))
     data(sample) * mapping(:DateTime, :value, color = :name) * visual(Lines) |> draw
 end
+````
+

@@ -1,32 +1,6 @@
 using AustralianElectricityMarkets
 using Documenter
 using DocumenterVitepress
-using Literate
-
-# This code performs the automated addition of Literate - Generated Markdowns.
-julia_file_filter = x -> occursin(".jl", x)
-docs_src = joinpath(@__DIR__, "src")
-outputdir = joinpath(docs_src, "examples")
-
-if isdir(outputdir)
-    files = filter(julia_file_filter, readdir(outputdir))
-    @info "Generating markdowns from Literate files" files
-
-    for file in files
-        inputfile = joinpath(outputdir, file)
-        outputfile = replace(file, ".jl" => "")
-
-        Literate.markdown(
-            inputfile,
-            outputdir;
-            name = outputfile,
-            flavor = Literate.DocumenterFlavor(),
-            execute = false,
-        )
-    end
-else
-    @warn "Output directory for Literate not found" outputdir
-end
 
 DocMeta.setdocmeta!(
     AustralianElectricityMarkets,
