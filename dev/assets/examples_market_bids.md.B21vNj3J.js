@@ -1,7 +1,8 @@
-import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n="/AustralianElectricityMarkets.jl/dev/assets/yfggylm.C1CLlQKo.png",e="/AustralianElectricityMarkets.jl/dev/assets/dpdrqes.C9mRD6qL.png",h="/AustralianElectricityMarkets.jl/dev/assets/zjyvqon.-5n-GiGm.png",k="/AustralianElectricityMarkets.jl/dev/assets/msqjjpj.BiUUC3wJ.png",c=JSON.parse('{"title":"Setup the system","description":"","frontmatter":{},"headers":[],"relativePath":"examples/market_bids.md","filePath":"examples/market_bids.md","lastUpdated":null}'),r={name:"examples/market_bids.md"};function d(p,i,g,o,f,b){return t(),a("div",null,[...i[0]||(i[0]=[l(`<div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
+import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n="/AustralianElectricityMarkets.jl/dev/assets/uxzodml.7g-w8frH.png",e="/AustralianElectricityMarkets.jl/dev/assets/cgfvryq.C9mRD6qL.png",h="/AustralianElectricityMarkets.jl/dev/assets/dllonrb.CxAmgVq5.png",k="/AustralianElectricityMarkets.jl/dev/assets/pwbvwlz.BiUUC3wJ.png",c=JSON.parse('{"title":"Setup the system","description":"","frontmatter":{},"headers":[],"relativePath":"examples/market_bids.md","filePath":"examples/market_bids.md","lastUpdated":null}'),r={name:"examples/market_bids.md"};function d(p,i,g,o,f,b){return t(),a("div",null,[...i[0]||(i[0]=[l(`<div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> AustralianElectricityMarkets</span></span>
-<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> PowerSimulations</span></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> PowerSystems</span></span>
+<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> PowerSimulations</span></span>
+<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> HydroPowerSimulations</span></span>
 <span class="line"></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> Chain</span></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> DataFrames</span></span>
@@ -753,7 +754,17 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
     </tr>
   </tbody>
 </table>
-</div><h1 id="Economic-dispatch" tabindex="-1">Economic dispatch <a class="header-anchor" href="#Economic-dispatch" aria-label="Permalink to &quot;Economic dispatch {#Economic-dispatch}&quot;">​</a></h1><p><code>PowerSimulation.jl</code> provides different utilities to simulate an electricity system.</p><p>The following section demonstrates the definition of an economic dispatch problem, where all units in the NEM need to to be dispatched at the lowest cost to meet the aggregate demand at each region.</p><div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">template </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> template_unit_commitment</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">()</span></span></code></pre></div><div><table>
+</div><h1 id="Economic-dispatch" tabindex="-1">Economic dispatch <a class="header-anchor" href="#Economic-dispatch" aria-label="Permalink to &quot;Economic dispatch {#Economic-dispatch}&quot;">​</a></h1><p><code>PowerSimulation.jl</code> provides different utilities to simulate an electricity system.</p><p>The following section demonstrates the definition of an economic dispatch problem, where all units in the NEM need to to be dispatched at the lowest cost to meet the aggregate demand at each region.</p><div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
+<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    template </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> ProblemTemplate</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">()</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, Line, StaticBranch)</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, PowerLoad, StaticPowerLoad)</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, RenewableDispatch, RenewableFullDispatch)</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, ThermalStandard, ThermalBasicUnitCommitment)</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, HydroDispatch, HydroDispatchRunOfRiver)</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_network_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">NetworkModel</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(AreaBalancePowerModel; use_slacks </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> true</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">))</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, AreaInterchange, StaticBranch)</span></span>
+<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    template</span></span>
+<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">end</span></span></code></pre></div><div><table>
   <thead>
     <tr class = "title">
       <td colspan = "2" style = "font-size: x-large; font-weight: bold; text-align: center;">Network Model</td>
@@ -762,11 +773,11 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
   <tbody>
     <tr class = "dataRow">
       <td style = "text-align: left;">Network Model</td>
-      <td style = "text-align: left;">PowerSimulations.CopperPlatePowerModel</td>
+      <td style = "text-align: left;">PowerSimulations.AreaBalancePowerModel</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">Slacks</td>
-      <td style = "text-align: left;">false</td>
+      <td style = "text-align: left;">true</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">PTDF</td>
@@ -801,23 +812,18 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
       <td style = "text-align: left;">false</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">PowerSystems.RenewableDispatch</td>
-      <td style = "text-align: left;">PowerSimulations.RenewableFullDispatch</td>
-      <td style = "text-align: left;">false</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">PowerSystems.PowerLoad</td>
       <td style = "text-align: left;">PowerSimulations.StaticPowerLoad</td>
       <td style = "text-align: left;">false</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">PowerSystems.RenewableNonDispatch</td>
-      <td style = "text-align: left;">PowerSimulations.FixedOutput</td>
+      <td style = "text-align: left;">PowerSystems.RenewableDispatch</td>
+      <td style = "text-align: left;">PowerSimulations.RenewableFullDispatch</td>
       <td style = "text-align: left;">false</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">PowerSystems.InterruptiblePowerLoad</td>
-      <td style = "text-align: left;">PowerSimulations.PowerLoadInterruption</td>
+      <td style = "text-align: left;">PowerSystems.HydroDispatch</td>
+      <td style = "text-align: left;">HydroPowerSimulations.HydroDispatchRunOfRiver</td>
       <td style = "text-align: left;">false</td>
     </tr>
   </tbody>
@@ -836,52 +842,14 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">PowerSystems.Transformer2W</td>
+      <td style = "text-align: left;">PowerSystems.AreaInterchange</td>
       <td style = "text-align: left;">PowerSimulations.StaticBranch</td>
-      <td style = "text-align: left;">false</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">PowerSystems.TwoTerminalGenericHVDCLine</td>
-      <td style = "text-align: left;">PowerSimulations.HVDCTwoTerminalDispatch</td>
       <td style = "text-align: left;">false</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">PowerSystems.Line</td>
       <td style = "text-align: left;">PowerSimulations.StaticBranch</td>
       <td style = "text-align: left;">false</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">PowerSystems.TapTransformer</td>
-      <td style = "text-align: left;">PowerSimulations.StaticBranch</td>
-      <td style = "text-align: left;">false</td>
-    </tr>
-  </tbody>
-</table>
-
-<table>
-  <thead>
-    <tr class = "title">
-      <td colspan = "4" style = "font-size: x-large; font-weight: bold; text-align: center;">Service Models</td>
-    </tr>
-    <tr class = "columnLabelRow">
-      <th style = "font-weight: bold; text-align: left;">Service Type</th>
-      <th style = "font-weight: bold; text-align: left;">Formulation</th>
-      <th style = "font-weight: bold; text-align: left;">Slacks</th>
-      <th style = "font-weight: bold; text-align: left;">Aggregated Model</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">PowerSystems.VariableReserve{PowerSystems.ReserveUp}</td>
-      <td style = "text-align: left;">PowerSimulations.RangeReserve</td>
-      <td style = "text-align: left;">false</td>
-      <td style = "text-align: left;">true</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">PowerSystems.VariableReserve{PowerSystems.ReserveDown}</td>
-      <td style = "text-align: left;">PowerSimulations.RangeReserve</td>
-      <td style = "text-align: left;">false</td>
-      <td style = "text-align: left;">true</td>
     </tr>
   </tbody>
 </table>
@@ -901,10 +869,13 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
   </thead>
   <tbody>
     <tr class = "dataRow">
+      <td style = "text-align: left;">TimeDurationOff__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
       <td style = "text-align: left;">TimeDurationOn__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">TimeDurationOff__ThermalStandard</td>
+      <td style = "text-align: left;">HydroEnergyOutput__HydroDispatch</td>
     </tr>
   </tbody>
 </table>
@@ -917,13 +888,16 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ProductionCostExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">ProductionCostExpression__RenewableDispatch</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerBalance__System</td>
+      <td style = "text-align: left;">ActivePowerBalance__Area</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ProductionCostExpression__HydroDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ProductionCostExpression__ThermalStandard</td>
     </tr>
   </tbody>
 </table>
@@ -936,6 +910,27 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
   </thead>
   <tbody>
     <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__PowerLoad</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__RenewableDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__RenewableDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__HydroDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__HydroDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">IncrementalCostAtMinParameter__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__HydroDispatch</td>
+    </tr>
+    <tr class = "dataRow">
       <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
@@ -943,18 +938,6 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalCostAtMinParameter__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__PowerLoad</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__RenewableDispatch</td>
     </tr>
   </tbody>
 </table>
@@ -967,19 +950,31 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerVariable__RenewableDispatch</td>
+      <td style = "text-align: left;">OnVariable__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerVariable__ThermalStandard</td>
+      <td style = "text-align: left;">SystemBalanceSlackUp__Area</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">StartVariable__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerVariable__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
       <td style = "text-align: left;">StopVariable__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">OnVariable__ThermalStandard</td>
+      <td style = "text-align: left;">SystemBalanceSlackDown__Area</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerVariable__HydroDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerVariable__RenewableDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">FlowActivePowerVariable__AreaInterchange</td>
     </tr>
   </tbody>
 </table>
@@ -1060,4 +1055,4 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    lines!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(index, values; label </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;"> &quot;COLEASF1&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    axislegend</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(ax)</span></span>
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    fig</span></span>
-<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">end</span></span></code></pre></div><p><img src="`+k+'" alt="" width="600px" height="450px"></p><p>This was not observed in the Economic dispatch example, and is due to the fact that the market bids ( in the Australian Electricity market) incorporate the on/off constraints: Coal power plant bid at lower costs than solar plants because it is more expensive for them to turn off, and they know they should be able to recoup the losses at time of low solar generation, where there is less competition.</p><hr><p><em>This page was generated using <a href="https://github.com/fredrikekre/Literate.jl" target="_blank" rel="noreferrer">Literate.jl</a>.</em></p>',46)])])}const E=s(r,[["render",d]]);export{c as __pageData,E as default};
+<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">end</span></span></code></pre></div><p><img src="`+k+'" alt="" width="600px" height="450px"></p><p>This was not observed in the Economic dispatch example, and is due to the fact that the market bids ( in the Australian Electricity market) incorporate the on/off constraints: Coal power plant bid at lower costs than solar plants because it is more expensive for them to turn off, and they know they should be able to recoup the losses at time of low solar generation, where there is less competition.</p>',44)])])}const E=s(r,[["render",d]]);export{c as __pageData,E as default};

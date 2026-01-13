@@ -1,4 +1,4 @@
-import{_ as i,c as t,o as a,aA as n}from"./chunks/framework.DuUd1na1.js";const l="/AustralianElectricityMarkets.jl/dev/assets/yfyzmba.CA86UkcI.png",e="/AustralianElectricityMarkets.jl/dev/assets/plesskx.DViLMu53.png",h="/AustralianElectricityMarkets.jl/dev/assets/umulsrv.BwY71lc5.png",k="/AustralianElectricityMarkets.jl/dev/assets/wopgjgb.B-H44Udg.png",f=JSON.parse('{"title":"Setup the system","description":"","frontmatter":{},"headers":[],"relativePath":"examples/economic_dispatch.md","filePath":"examples/economic_dispatch.md","lastUpdated":null}'),p={name:"examples/economic_dispatch.md"};function d(r,s,g,o,y,E){return a(),t("div",null,[...s[0]||(s[0]=[n(`<div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
+import{_ as i,c as t,o as a,aA as n}from"./chunks/framework.DuUd1na1.js";const l="/AustralianElectricityMarkets.jl/dev/assets/nwqpyef.DceNYf6P.png",e="/AustralianElectricityMarkets.jl/dev/assets/jpbwfhv.DViLMu53.png",h="/AustralianElectricityMarkets.jl/dev/assets/bclvccd.DQxkrHRz.png",k="/AustralianElectricityMarkets.jl/dev/assets/omlphxb.C1uJRO54.png",f=JSON.parse('{"title":"Setup the system","description":"","frontmatter":{},"headers":[],"relativePath":"examples/economic_dispatch.md","filePath":"examples/economic_dispatch.md","lastUpdated":null}'),p={name:"examples/economic_dispatch.md"};function d(g,s,r,o,y,E){return a(),t("div",null,[...s[0]||(s[0]=[n(`<div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> AustralianElectricityMarkets</span></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> PowerSystems</span></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> PowerSimulations</span></span>
@@ -502,16 +502,16 @@ import{_ as i,c as t,o as a,aA as n}from"./chunks/framework.DuUd1na1.js";const l
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ProductionCostExpression__ThermalStandard</td>
+      <td style = "text-align: left;">ProductionCostExpression__RenewableDispatch</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ProductionCostExpression__RenewableDispatch</td>
+      <td style = "text-align: left;">ProductionCostExpression__HydroDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">FuelConsumptionExpression__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ProductionCostExpression__HydroDispatch</td>
+      <td style = "text-align: left;">ProductionCostExpression__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerBalance__System</td>
@@ -527,13 +527,13 @@ import{_ as i,c as t,o as a,aA as n}from"./chunks/framework.DuUd1na1.js";const l
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__PowerLoad</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerTimeSeriesParameter__RenewableDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerTimeSeriesParameter__HydroDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__PowerLoad</td>
     </tr>
   </tbody>
 </table>
@@ -546,13 +546,13 @@ import{_ as i,c as t,o as a,aA as n}from"./chunks/framework.DuUd1na1.js";const l
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerVariable__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerVariable__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerVariable__HydroDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerVariable__RenewableDispatch</td>
     </tr>
   </tbody>
 </table>
@@ -629,4 +629,4 @@ import{_ as i,c as t,o as a,aA as n}from"./chunks/framework.DuUd1na1.js";const l
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    sample </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> first</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">unique</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(hydro_non_zero</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">.</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">name), </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">5</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    sample </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> subset!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(hydro_non_zero, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:name</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> =&gt;</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> ByRow</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">in</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(sample)))</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    data</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(sample) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">*</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> mapping</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:DateTime</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:value</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, color </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> :name</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">*</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> visual</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(Lines) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">|&gt;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> draw</span></span>
-<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">end</span></span></code></pre></div><p><img src="`+k+'" alt="" width="600px" height="450px"></p><hr><p><em>This page was generated using <a href="https://github.com/fredrikekre/Literate.jl" target="_blank" rel="noreferrer">Literate.jl</a>.</em></p>',45)])])}const b=i(p,[["render",d]]);export{f as __pageData,b as default};
+<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">end</span></span></code></pre></div><p><img src="`+k+'" alt="" width="600px" height="450px"></p>',43)])])}const b=i(p,[["render",d]]);export{f as __pageData,b as default};

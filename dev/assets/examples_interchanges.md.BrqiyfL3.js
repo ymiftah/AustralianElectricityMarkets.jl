@@ -1,8 +1,9 @@
-import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n="/AustralianElectricityMarkets.jl/dev/assets/fgdffxy.B3xocQhZ.png",e="/AustralianElectricityMarkets.jl/dev/assets/osjnaqg.B9DJT5yk.png",h="/AustralianElectricityMarkets.jl/dev/assets/rqcrrnp.DRfKHS9E.png",k="/AustralianElectricityMarkets.jl/dev/assets/mwkjkdd.DEbvmWPv.png",r="/AustralianElectricityMarkets.jl/dev/assets/xlaqlqq.Be5rzifi.png",E=JSON.parse('{"title":"Setup the system","description":"","frontmatter":{},"headers":[],"relativePath":"examples/interchanges.md","filePath":"examples/interchanges.md","lastUpdated":null}'),d={name:"examples/interchanges.md"};function p(g,i,o,f,b,y){return t(),a("div",null,[...i[0]||(i[0]=[l(`<div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
+import{_ as s,c as a,o as t,aA as n}from"./chunks/framework.DuUd1na1.js";const l="/AustralianElectricityMarkets.jl/dev/assets/cbzcfee.DEbvmWPv.png",f=JSON.parse('{"title":"Setup the system","description":"","frontmatter":{},"headers":[],"relativePath":"examples/interchanges.md","filePath":"examples/interchanges.md","lastUpdated":null}'),e={name:"examples/interchanges.md"};function h(k,i,r,d,p,o){return t(),a("div",null,[...i[0]||(i[0]=[n(`<div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> AustralianElectricityMarkets</span></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    import</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> AustralianElectricityMarkets</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">.</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">RegionModel</span></span>
-<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> PowerSimulations</span></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> PowerSystems</span></span>
+<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> PowerSimulations</span></span>
+<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> HydroPowerSimulations</span></span>
 <span class="line"></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> Chain</span></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> DataFrames</span></span>
@@ -116,23 +117,23 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">map</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">([</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:BIDDAYOFFER_D</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:BIDPEROFFER_D</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">]) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">do</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> table</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    fetch_table_data</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(table, date_range)</span></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">end</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">;</span></span></code></pre></div><div class="language- vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang"></span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">date_range = Dates.DateTime(&quot;2025-01-01T04:00:00&quot;):Dates.Minute(5):Dates.DateTime(&quot;2025-01-02T04:00:00&quot;)</span></span>
-<span class="line"><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-12 08:55:08</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Set cache directory to /home/runner/.nemweb_cache</span></span>
-<span class="line"><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-12 08:55:08</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Set filesystem to local       </span></span>
-<span class="line"><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-12 08:55:08</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Populating database with data from 2025-01-01 04:00:00 to 2025-01-01 04:00:00</span></span>
+<span class="line"><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-13 08:07:51</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Set cache directory to /home/runner/.nemweb_cache</span></span>
+<span class="line"><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-13 08:07:51</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Set filesystem to local       </span></span>
+<span class="line"><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-13 08:07:51</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Populating database with data from 2025-01-01 04:00:00 to 2025-01-01 04:00:00</span></span>
 <span class="line"></span>
-<span class="line"><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">  0%|          | 0/1 [00:00&lt;?, ?it/s]</span><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-12 08:55:08</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Checking if data already exists for BIDDAYOFFER_D 2025 / 1</span></span>
-<span class="line"><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-12 08:55:08</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Data already exists for BIDDAYOFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.</span></span>
+<span class="line"><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">  0%|          | 0/1 [00:00&lt;?, ?it/s]</span><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-13 08:07:51</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Checking if data already exists for BIDDAYOFFER_D 2025 / 1</span></span>
+<span class="line"><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-13 08:07:51</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Data already exists for BIDDAYOFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.</span></span>
 <span class="line"></span>
-<span class="line"><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">100%|██████████| 1/1 [00:00&lt;00:00, 84.15it/s]</span></span>
-<span class="line"><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-12 08:55:08</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Set cache directory to /home/runner/.nemweb_cache</span></span>
-<span class="line"><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-12 08:55:08</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Set filesystem to local       </span></span>
-<span class="line"><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-12 08:55:08</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Populating database with data from 2025-01-01 04:00:00 to 2025-01-01 04:00:00</span></span>
+<span class="line"><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">100%|██████████| 1/1 [00:00&lt;00:00, 80.40it/s]</span></span>
+<span class="line"><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-13 08:07:51</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Set cache directory to /home/runner/.nemweb_cache</span></span>
+<span class="line"><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-13 08:07:51</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Set filesystem to local       </span></span>
+<span class="line"><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-13 08:07:51</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Populating database with data from 2025-01-01 04:00:00 to 2025-01-01 04:00:00</span></span>
 <span class="line"></span>
-<span class="line"><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">  0%|          | 0/1 [00:00&lt;?, ?it/s]</span><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-12 08:55:08</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Checking if data already exists for BIDPEROFFER_D 2025 / 1</span></span>
-<span class="line"><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-12 08:55:10</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Data already exists for BIDPEROFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.</span></span>
+<span class="line"><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">  0%|          | 0/1 [00:00&lt;?, ?it/s]</span><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-13 08:07:51</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Checking if data already exists for BIDPEROFFER_D 2025 / 1</span></span>
+<span class="line"><span style="--shiki-light:#24292e80;--shiki-dark:#e1e4e880;">2026-01-13 08:07:53</span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;"> [</span><span style="--shiki-light:#28a745;--shiki-light-font-weight:bold;--shiki-dark:#34d058;--shiki-dark-font-weight:bold;">info     </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">] </span><span style="--shiki-light:#24292e;--shiki-light-font-weight:bold;--shiki-dark:#e1e4e8;--shiki-dark-font-weight:bold;">Data already exists for BIDPEROFFER_D 2025 / 1, skipping download. Use force_new=True to overwrite.</span></span>
 <span class="line"></span>
-<span class="line"><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">100%|██████████| 1/1 [00:01&lt;00:00,  1.69s/it]</span></span>
-<span class="line"><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">100%|██████████| 1/1 [00:01&lt;00:00,  1.69s/it]</span></span></code></pre></div><p>Set deterministic timseries</p><div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">set_demand!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(sys, db, date_range; resolution </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> interval)</span></span>
+<span class="line"><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">100%|██████████| 1/1 [00:01&lt;00:00,  1.64s/it]</span></span>
+<span class="line"><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">100%|██████████| 1/1 [00:01&lt;00:00,  1.64s/it]</span></span></code></pre></div><p>Set deterministic timseries</p><div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">set_demand!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(sys, db, date_range; resolution </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> interval)</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">set_renewable_pv!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(sys, db, date_range; resolution </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> interval)</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">set_renewable_wind!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(sys, db, date_range; resolution </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> interval)</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">set_market_bids!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(sys, db, date_range)</span></span></code></pre></div><div class="language- vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang"></span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#1b7c83;--shiki-light-font-weight:bold;--shiki-dark:#39c5cf;--shiki-dark-font-weight:bold;">[ </span><span style="--shiki-light:#1b7c83;--shiki-light-font-weight:bold;--shiki-dark:#39c5cf;--shiki-dark-font-weight:bold;">Info: </span><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">Setting loads to 0 for SNOWY1 Load</span></span>
@@ -711,10 +712,17 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
     </tr>
   </tbody>
 </table>
-</div><h1 id="Economic-dispatch" tabindex="-1">Economic dispatch <a class="header-anchor" href="#Economic-dispatch" aria-label="Permalink to &quot;Economic dispatch {#Economic-dispatch}&quot;">​</a></h1><p><code>PowerSimulation.jl</code> provides different utilities to simulate an electricity system.</p><p>The following section demonstrates the definition of an economic dispatch problem, where all units in the NEM need to to be dispatched at the lowest cost to meet the aggregate demand at each region.</p><div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">template </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> template_unit_commitment</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">()</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">set_network_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">NetworkModel</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(AreaBalancePowerModel; use_slacks </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> true</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">))</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, AreaInterchange, StaticBranch)</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">template</span></span></code></pre></div><div><table>
+</div><h1 id="Economic-dispatch" tabindex="-1">Economic dispatch <a class="header-anchor" href="#Economic-dispatch" aria-label="Permalink to &quot;Economic dispatch {#Economic-dispatch}&quot;">​</a></h1><p><code>PowerSimulation.jl</code> provides different utilities to simulate an electricity system.</p><p>The following section demonstrates the definition of an economic dispatch problem, where all units in the NEM need to to be dispatched at the lowest cost to meet the aggregate demand at each region.</p><div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
+<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    template </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> ProblemTemplate</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">()</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, Line, StaticBranch)</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, PowerLoad, StaticPowerLoad)</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, RenewableDispatch, RenewableFullDispatch)</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, ThermalStandard, ThermalBasicDispatch)</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, HydroDispatch, HydroDispatchRunOfRiver)</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_network_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">NetworkModel</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(AreaBalancePowerModel; use_slacks </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> true</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">))</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, AreaInterchange, StaticBranch)</span></span>
+<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    template</span></span>
+<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">end</span></span></code></pre></div><div><table>
   <thead>
     <tr class = "title">
       <td colspan = "2" style = "font-size: x-large; font-weight: bold; text-align: center;">Network Model</td>
@@ -758,12 +766,7 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
   <tbody>
     <tr class = "dataRow">
       <td style = "text-align: left;">PowerSystems.ThermalStandard</td>
-      <td style = "text-align: left;">PowerSimulations.ThermalBasicUnitCommitment</td>
-      <td style = "text-align: left;">false</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">PowerSystems.RenewableDispatch</td>
-      <td style = "text-align: left;">PowerSimulations.RenewableFullDispatch</td>
+      <td style = "text-align: left;">PowerSimulations.ThermalBasicDispatch</td>
       <td style = "text-align: left;">false</td>
     </tr>
     <tr class = "dataRow">
@@ -772,13 +775,13 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
       <td style = "text-align: left;">false</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">PowerSystems.RenewableNonDispatch</td>
-      <td style = "text-align: left;">PowerSimulations.FixedOutput</td>
+      <td style = "text-align: left;">PowerSystems.RenewableDispatch</td>
+      <td style = "text-align: left;">PowerSimulations.RenewableFullDispatch</td>
       <td style = "text-align: left;">false</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">PowerSystems.InterruptiblePowerLoad</td>
-      <td style = "text-align: left;">PowerSimulations.PowerLoadInterruption</td>
+      <td style = "text-align: left;">PowerSystems.HydroDispatch</td>
+      <td style = "text-align: left;">HydroPowerSimulations.HydroDispatchRunOfRiver</td>
       <td style = "text-align: left;">false</td>
     </tr>
   </tbody>
@@ -797,16 +800,6 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">PowerSystems.Transformer2W</td>
-      <td style = "text-align: left;">PowerSimulations.StaticBranch</td>
-      <td style = "text-align: left;">false</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">PowerSystems.TwoTerminalGenericHVDCLine</td>
-      <td style = "text-align: left;">PowerSimulations.HVDCTwoTerminalDispatch</td>
-      <td style = "text-align: left;">false</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">PowerSystems.AreaInterchange</td>
       <td style = "text-align: left;">PowerSimulations.StaticBranch</td>
       <td style = "text-align: left;">false</td>
@@ -816,217 +809,81 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
       <td style = "text-align: left;">PowerSimulations.StaticBranch</td>
       <td style = "text-align: left;">false</td>
     </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">PowerSystems.TapTransformer</td>
-      <td style = "text-align: left;">PowerSimulations.StaticBranch</td>
-      <td style = "text-align: left;">false</td>
-    </tr>
-  </tbody>
-</table>
-
-<table>
-  <thead>
-    <tr class = "title">
-      <td colspan = "4" style = "font-size: x-large; font-weight: bold; text-align: center;">Service Models</td>
-    </tr>
-    <tr class = "columnLabelRow">
-      <th style = "font-weight: bold; text-align: left;">Service Type</th>
-      <th style = "font-weight: bold; text-align: left;">Formulation</th>
-      <th style = "font-weight: bold; text-align: left;">Slacks</th>
-      <th style = "font-weight: bold; text-align: left;">Aggregated Model</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">PowerSystems.VariableReserve{PowerSystems.ReserveUp}</td>
-      <td style = "text-align: left;">PowerSimulations.RangeReserve</td>
-      <td style = "text-align: left;">false</td>
-      <td style = "text-align: left;">true</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">PowerSystems.VariableReserve{PowerSystems.ReserveDown}</td>
-      <td style = "text-align: left;">PowerSimulations.RangeReserve</td>
-      <td style = "text-align: left;">false</td>
-      <td style = "text-align: left;">true</td>
-    </tr>
   </tbody>
 </table>
 </div><p>The Economic Dispatch problem will be solved with open source solver HiGHS, and a relatively large mip gap for the purposes of this example.</p><div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">solver </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> optimizer_with_attributes</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(HiGHS</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">.</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">Optimizer, </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">&quot;mip_rel_gap&quot;</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> =&gt;</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> 0.5</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
 <span class="line"></span>
 <span class="line"></span>
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">problem </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> DecisionModel</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, sys; optimizer </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> solver, horizon </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> horizon)</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">build!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(problem; output_dir </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> joinpath</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">tempdir</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(), </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">&quot;out&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">))</span></span></code></pre></div><div class="language- vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang"></span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">InfrastructureSystems.Optimization.ModelBuildStatusModule.ModelBuildStatus.BUILT = 0</span></span></code></pre></div><p>Solve the problem</p><div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">solve!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(problem)</span></span></code></pre></div><div class="language- vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang"></span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">InfrastructureSystems.Simulation.RunStatusModule.RunStatus.SUCCESSFULLY_FINALIZED = 0</span></span></code></pre></div><p>Observe the results</p><div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">res </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> OptimizationProblemResults</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(problem)</span></span></code></pre></div><div><p> Start: 2025-01-01T04:00:00</p>
-<p> End: 2025-01-02T03:55:00</p>
-<p> Resolution: 5 minutes</p>
-
-<table>
-  <thead>
-    <tr class = "title">
-      <td colspan = "1" style = "font-size: x-large; font-weight: bold; text-align: center;">PowerSimulations Problem Auxiliary variables Results</td>
-    </tr>
-  </thead>
-  <tbody>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">TimeDurationOn__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">TimeDurationOff__ThermalStandard</td>
-    </tr>
-  </tbody>
-</table>
-
-<table>
-  <thead>
-    <tr class = "title">
-      <td colspan = "1" style = "font-size: x-large; font-weight: bold; text-align: center;">PowerSimulations Problem Expressions Results</td>
-    </tr>
-  </thead>
-  <tbody>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ProductionCostExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ProductionCostExpression__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerBalance__Area</td>
-    </tr>
-  </tbody>
-</table>
-
-<table>
-  <thead>
-    <tr class = "title">
-      <td colspan = "1" style = "font-size: x-large; font-weight: bold; text-align: center;">PowerSimulations Problem Parameters Results</td>
-    </tr>
-  </thead>
-  <tbody>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalCostAtMinParameter__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__PowerLoad</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__RenewableDispatch</td>
-    </tr>
-  </tbody>
-</table>
-
-<table>
-  <thead>
-    <tr class = "title">
-      <td colspan = "1" style = "font-size: x-large; font-weight: bold; text-align: center;">PowerSimulations Problem Variables Results</td>
-    </tr>
-  </thead>
-  <tbody>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">SystemBalanceSlackUp__Area</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerVariable__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerVariable__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">StartVariable__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">StopVariable__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">SystemBalanceSlackDown__Area</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">FlowActivePowerVariable__AreaInterchange</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">OnVariable__ThermalStandard</td>
-    </tr>
-  </tbody>
-</table>
-</div><p>Lets observe how the units are dispatched</p><div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    renewables </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> read_variable</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(res, </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">&quot;ActivePowerVariable__RenewableDispatch&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    thermal </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> read_variable</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(res, </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">&quot;ActivePowerVariable__ThermalStandard&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    gens_long </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> vcat</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(renewables, thermal)</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    select!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(gens_long, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:DateTime</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:name</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> =&gt;</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> :DUID</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:value</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
-<span class="line"></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    by_fuel </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> @chain</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> select</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">        read_units</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(db),</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">        [</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:DUID</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:STATIONID</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:CO2E_ENERGY_SOURCE</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:REGIONID</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">]</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    ) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">        rightjoin</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(gens_long, on </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> :DUID</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">        groupby</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">([</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:CO2E_ENERGY_SOURCE</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:REGIONID</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:DateTime</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">])</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">        combine</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:value</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> =&gt;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> sum </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=&gt;</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> :value</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">        subset</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:value</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> =&gt;</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> ByRow</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">&gt;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">0.0</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)))</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">        dropmissing!</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">        select!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">            :DateTime</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:REGIONID</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:CO2E_ENERGY_SOURCE</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> =&gt;</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> :Source</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">,</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">            :value</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">        )</span></span>
-<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    end</span></span>
-<span class="line"></span>
-<span class="line"></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    loads </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> @chain</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> res </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">        read_parameter</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">&quot;ActivePowerTimeSeriesParameter__PowerLoad&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">        transform!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">            :name</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> =&gt;</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> ByRow</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(x </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">-&gt;</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> split</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(x, </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">&quot; &quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)[</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">1</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">]) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=&gt;</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> :REGIONID</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">        )</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">        subset!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:REGIONID</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> =&gt;</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> ByRow</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">!=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">&quot;SNOWY1&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)))</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">        insertcols!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">            :Source</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> =&gt;</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;"> &quot;Region demand&quot;</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">        )</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">        select!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">            :DateTime</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:REGIONID</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:Source</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">,</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">            :value</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> =&gt;</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> ByRow</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">-</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=&gt;</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> :value</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">        )</span></span>
-<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    end</span></span>
-<span class="line"></span>
-<span class="line"></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    demand </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> data</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(loads) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">*</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> mapping</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">        :DateTime</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:value</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, color </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> :Source</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, layout </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> :REGIONID</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    ) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">*</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> visual</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(Lines, linestyle </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> (</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:dash</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:dense</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">))</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    generation </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> data</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(by_fuel) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">*</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> mapping</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">        :DateTime</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:value</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, color </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> :Source</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, layout </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> :REGIONID</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    ) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">*</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> visual</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(Lines)</span></span>
-<span class="line"></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    draw</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">        demand </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">+</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> generation;</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">        figure </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> (; size </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> (</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">1000</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">800</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)),</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">        legend </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> (; position </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> :bottom</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    )</span></span>
-<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">end</span></span></code></pre></div><p><img src="`+n+`" alt="" width="1000px" height="800px"></p><p>Let&#39;s observe the dispatch of a few thermal generators</p><div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">function</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;"> filter_non_all_zero</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(df, group_by, value)</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    gdf </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> groupby</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(df, group_by)</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    is_all_zero </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> combine</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(gdf, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:value</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> =&gt;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> (x </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">-&gt;</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> all</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(x </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">==</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> 0</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=&gt;</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> :all_zero</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    subset!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(is_all_zero, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:all_zero</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> =&gt;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> x </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">-&gt;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> .</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">x)</span></span>
-<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    return</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> innerjoin</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(df, is_all_zero, on </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> group_by)</span></span>
-<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">end</span></span>
-<span class="line"></span>
-<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    thermals_non_zero </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> filter_non_all_zero</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(thermal, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:name</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:value</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    sample </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> first</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">unique</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(thermals_non_zero</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">.</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">name), </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">5</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    sample </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> subset!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(thermals_non_zero, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:name</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> =&gt;</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> ByRow</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">in</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(sample)))</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    spec </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> data</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(sample) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">*</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> mapping</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:DateTime</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:value</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, color </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> :name</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">*</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> visual</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(Lines)</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    draw</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(spec; figure </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> (; size </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> (</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">500</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">500</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)))</span></span>
-<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">end</span></span></code></pre></div><p><img src="`+e+`" alt="" width="500px" height="500px"></p><p>Let&#39;s observe the dispatch of a few renewable generators</p><div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    renewables_non_zero </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> filter_non_all_zero</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(renewables, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:name</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:value</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    sample </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> first</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">unique</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(renewables_non_zero</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">.</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">name), </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">5</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    sample </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> subset!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(renewables_non_zero, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:name</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> =&gt;</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> ByRow</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">in</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(sample)))</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    data</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(sample) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">*</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> mapping</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:DateTime</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:value</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, color </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> :name</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">*</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> visual</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(Lines) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">|&gt;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> draw</span></span>
-<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">end</span></span></code></pre></div><p><img src="`+h+`" alt="" width="600px" height="450px"></p><p>Notice that most solar generators are actually <strong>not</strong> dispatched during the day here even though the solar output is definitely non-zero.</p><div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">build!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(problem; output_dir </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> joinpath</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">tempdir</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(), </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">&quot;out&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">))</span></span></code></pre></div><div class="language- vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang"></span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">InfrastructureSystems.Optimization.ModelBuildStatusModule.ModelBuildStatus.FAILED = 1</span></span></code></pre></div><p>Solve the problem</p><div class="language-@example vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">@example</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span>solve!(problem)</span></span></code></pre></div><p>Observe the results</p><div class="language-@example vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">@example</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span>res = OptimizationProblemResults(problem)</span></span></code></pre></div><p>Lets observe how the units are dispatched</p><div class="language-@example vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">@example</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span>begin</span></span>
+<span class="line"><span>    renewables = read_variable(res, &quot;ActivePowerVariable__RenewableDispatch&quot;)</span></span>
+<span class="line"><span>    thermal = read_variable(res, &quot;ActivePowerVariable__ThermalStandard&quot;)</span></span>
+<span class="line"><span>    gens_long = vcat(renewables, thermal)</span></span>
+<span class="line"><span>    select!(gens_long, :DateTime, :name =&gt; :DUID, :value)</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span>    by_fuel = @chain select(</span></span>
+<span class="line"><span>        read_units(db),</span></span>
+<span class="line"><span>        [:DUID, :STATIONID, :CO2E_ENERGY_SOURCE, :REGIONID]</span></span>
+<span class="line"><span>    ) begin</span></span>
+<span class="line"><span>        rightjoin(gens_long, on = :DUID)</span></span>
+<span class="line"><span>        groupby([:CO2E_ENERGY_SOURCE, :REGIONID, :DateTime])</span></span>
+<span class="line"><span>        combine(:value =&gt; sum =&gt; :value)</span></span>
+<span class="line"><span>        subset(:value =&gt; ByRow(&gt;(0.0)))</span></span>
+<span class="line"><span>        dropmissing!</span></span>
+<span class="line"><span>        select!(</span></span>
+<span class="line"><span>            :DateTime, :REGIONID, :CO2E_ENERGY_SOURCE =&gt; :Source,</span></span>
+<span class="line"><span>            :value</span></span>
+<span class="line"><span>        )</span></span>
+<span class="line"><span>    end</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span></span></span>
+<span class="line"><span>    loads = @chain res begin</span></span>
+<span class="line"><span>        read_parameter(&quot;ActivePowerTimeSeriesParameter__PowerLoad&quot;)</span></span>
+<span class="line"><span>        transform!(</span></span>
+<span class="line"><span>            :name =&gt; ByRow(x -&gt; split(x, &quot; &quot;)[1]) =&gt; :REGIONID</span></span>
+<span class="line"><span>        )</span></span>
+<span class="line"><span>        subset!(:REGIONID =&gt; ByRow(!=(&quot;SNOWY1&quot;)))</span></span>
+<span class="line"><span>        insertcols!(</span></span>
+<span class="line"><span>            :Source =&gt; &quot;Region demand&quot;</span></span>
+<span class="line"><span>        )</span></span>
+<span class="line"><span>        select!(</span></span>
+<span class="line"><span>            :DateTime, :REGIONID, :Source,</span></span>
+<span class="line"><span>            :value =&gt; ByRow(-) =&gt; :value</span></span>
+<span class="line"><span>        )</span></span>
+<span class="line"><span>    end</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span></span></span>
+<span class="line"><span>    demand = data(loads) * mapping(</span></span>
+<span class="line"><span>        :DateTime, :value, color = :Source, layout = :REGIONID</span></span>
+<span class="line"><span>    ) * visual(Lines, linestyle = (:dash, :dense))</span></span>
+<span class="line"><span>    generation = data(by_fuel) * mapping(</span></span>
+<span class="line"><span>        :DateTime, :value, color = :Source, layout = :REGIONID</span></span>
+<span class="line"><span>    ) * visual(Lines)</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span>    draw(</span></span>
+<span class="line"><span>        demand + generation;</span></span>
+<span class="line"><span>        figure = (; size = (1000, 800)),</span></span>
+<span class="line"><span>        legend = (; position = :bottom)</span></span>
+<span class="line"><span>    )</span></span>
+<span class="line"><span>end</span></span></code></pre></div><p>Let&#39;s observe the dispatch of a few thermal generators</p><div class="language-@example vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">@example</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span>function filter_non_all_zero(df, group_by, value)</span></span>
+<span class="line"><span>    gdf = groupby(df, group_by)</span></span>
+<span class="line"><span>    is_all_zero = combine(gdf, :value =&gt; (x -&gt; all(x == 0)) =&gt; :all_zero)</span></span>
+<span class="line"><span>    subset!(is_all_zero, :all_zero =&gt; x -&gt; .!x)</span></span>
+<span class="line"><span>    return innerjoin(df, is_all_zero, on = group_by)</span></span>
+<span class="line"><span>end</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span>begin</span></span>
+<span class="line"><span>    thermals_non_zero = filter_non_all_zero(thermal, :name, :value)</span></span>
+<span class="line"><span>    sample = first(unique(thermals_non_zero.name), 5)</span></span>
+<span class="line"><span>    sample = subset!(thermals_non_zero, :name =&gt; ByRow(in(sample)))</span></span>
+<span class="line"><span>    spec = data(sample) * mapping(:DateTime, :value, color = :name) * visual(Lines)</span></span>
+<span class="line"><span>    draw(spec; figure = (; size = (500, 500)))</span></span>
+<span class="line"><span>end</span></span></code></pre></div><p>Let&#39;s observe the dispatch of a few renewable generators</p><div class="language-@example vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">@example</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span>begin</span></span>
+<span class="line"><span>    renewables_non_zero = filter_non_all_zero(renewables, :name, :value)</span></span>
+<span class="line"><span>    sample = first(unique(renewables_non_zero.name), 5)</span></span>
+<span class="line"><span>    sample = subset!(renewables_non_zero, :name =&gt; ByRow(in(sample)))</span></span>
+<span class="line"><span>    data(sample) * mapping(:DateTime, :value, color = :name) * visual(Lines) |&gt; draw</span></span>
+<span class="line"><span>end</span></span></code></pre></div><p>Notice that most solar generators are actually <strong>not</strong> dispatched during the day here even though the solar output is definitely non-zero.</p><div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    ren </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> get_component</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(RenewableDispatch, sys, </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">&quot;COLEASF1&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    ts </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> get_time_series_array</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(Deterministic, ren, </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">&quot;max_active_power&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">|&gt;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> DataFrame</span></span>
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    index, values </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> ts</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">.</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">timestamp, ts</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">.</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">A </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">*</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> 100</span></span>
@@ -1035,8 +892,8 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    lines!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(index, values; label </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;"> &quot;COLEASF1&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    axislegend</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(ax)</span></span>
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    fig</span></span>
-<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">end</span></span></code></pre></div><p><img src="`+k+`" alt="" width="600px" height="450px"></p><p>This was not observed in the Economic dispatch example, and is due to the fact that the market bids ( in the Australian Electricity market) incorporate the on/off constraints: Coal power plant bid at lower costs than solar plants because it is more expensive for them to turn off, and they know they should be able to recoup the losses at time of low solar generation, where there is less competition.</p><div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    interchange_flow </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> read_variable</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(res, </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">&quot;FlowActivePowerVariable__AreaInterchange&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">    spec </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> data</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(interchange_flow) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">*</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> mapping</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:DateTime</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">:value</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> =&gt;</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;"> &quot;Interchange flow (MW)&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, color </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> :name</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">*</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> visual</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(Lines)</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    draw</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(spec; figure </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> (; size </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> (</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">500</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">500</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">)))</span></span>
-<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">end</span></span></code></pre></div><p><img src="`+r+'" alt="" width="500px" height="500px"></p><hr><p><em>This page was generated using <a href="https://github.com/fredrikekre/Literate.jl" target="_blank" rel="noreferrer">Literate.jl</a>.</em></p>',49)])])}const w=s(d,[["render",p]]);export{E as __pageData,w as default};
+<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">end</span></span></code></pre></div><p><img src="`+l+`" alt="" width="600px" height="450px"></p><p>This was not observed in the Economic dispatch example, and is due to the fact that the market bids ( in the Australian Electricity market) incorporate the on/off constraints: Coal power plant bid at lower costs than solar plants because it is more expensive for them to turn off, and they know they should be able to recoup the losses at time of low solar generation, where there is less competition.</p><div class="language-@example vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">@example</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span>begin</span></span>
+<span class="line"><span>    interchange_flow = read_variable(res, &quot;FlowActivePowerVariable__AreaInterchange&quot;)</span></span>
+<span class="line"><span>    spec = data(interchange_flow) * mapping(:DateTime, :value =&gt; &quot;Interchange flow (MW)&quot;, color = :name) * visual(Lines)</span></span>
+<span class="line"><span>    draw(spec; figure = (; size = (500, 500)))</span></span>
+<span class="line"><span>end</span></span></code></pre></div>`,41)])])}const b=s(e,[["render",h]]);export{f as __pageData,b as default};
