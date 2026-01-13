@@ -1,7 +1,9 @@
+````@example market_bids
 begin
     using AustralianElectricityMarkets
-    using PowerSimulations
     using PowerSystems
+    using PowerSimulations
+    using HydroPowerSimulations
 
     using Chain
     using DataFrames
@@ -10,9 +12,7 @@ begin
     using Dates
     using HiGHS
 end
-
-
-#=
+````
 
 # Setup the system
 
@@ -21,8 +21,8 @@ Initialise a connection to manage the market data via duckdb
 !!! note "Get the data first!"
     You will first need to download the data from the monthly archive, saving them locally
     in parquet files.
-    
-    
+
+
     ```julia
     tables = table_requirements(RegionalNetworkConfiguration())
     map(tables) do table
@@ -32,27 +32,40 @@ Initialise a connection to manage the market data via duckdb
 
     Only the data requirements for a RegionalNetworkconfiguration are downloaded.
 
-=#
+````@example market_bids
 db = connect(duckdb());
+nothing #hide
+````
 
-# Instantiate the system
+Instantiate the system
+
+````@example market_bids
 sys = nem_system(db, RegionalNetworkConfiguration())
+````
 
-# Set the horizon to consider for the simulation
+Set the horizon to consider for the simulation
+
+````@example market_bids
 interval = Minute(5)
 horizon = Hour(24)
 start_date = DateTime(2025, 1, 2, 4, 0)
 date_range = start_date:interval:(start_date + horizon)
 @show date_range
+````
 
-# Set deterministic timseries
+Set deterministic timseries
+
+````@example market_bids
 set_demand!(sys, db, date_range; resolution = interval)
 set_renewable_pv!(sys, db, date_range; resolution = interval)
 set_renewable_wind!(sys, db, date_range; resolution = interval)
 set_hydro_limits!(sys, db, date_range; resolution = interval)
 set_market_bids!(sys, db, date_range)
+````
 
-# Derive forecasts from the deterministic timseries
+Derive forecasts from the deterministic timseries
+
+````@example market_bids
 transform_single_time_series!(
     sys,
     horizon, # horizon
@@ -60,8 +73,7 @@ transform_single_time_series!(
 );
 
 @show sys
-
-#=
+````
 
 # Economic dispatch
 
@@ -71,26 +83,46 @@ The following section demonstrates the definition of an economic dispatch proble
 all units in the NEM need to to be dispatched at the lowest cost to meet the aggregate
 demand at each region.
 
-=#
+````@example market_bids
+begin
+    template = ProblemTemplate()
+    set_device_model!(template, Line, StaticBranch)
+    set_device_model!(template, PowerLoad, StaticPowerLoad)
+    set_device_model!(template, RenewableDispatch, RenewableFullDispatch)
+    set_device_model!(template, ThermalStandard, ThermalBasicUnitCommitment)
+    set_device_model!(template, HydroDispatch, HydroDispatchRunOfRiver)
+    set_network_model!(template, NetworkModel(AreaBalancePowerModel; use_slacks = true))
+    set_device_model!(template, AreaInterchange, StaticBranch)
+    template
+end
+````
 
-template = template_unit_commitment()
+The Economic Dispatch problem will be solved with open source solver HiGHS, and a relatively large mip gap
+for the purposes of this example.
 
-# The Economic Dispatch problem will be solved with open source solver HiGHS, and a relatively large mip gap
-# for the purposes of this example.
+````@example market_bids
 solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.05)
 
 
 problem = DecisionModel(template, sys; optimizer = solver, horizon = horizon)
 build!(problem; output_dir = joinpath(tempdir(), "out"))
+````
 
-# Solve the problem
+Solve the problem
+
+````@example market_bids
 solve!(problem)
+````
 
+Observe the results
 
-# Observe the results
+````@example market_bids
 res = OptimizationProblemResults(problem)
+````
 
-# Lets observe how the units are dispatched
+Lets observe how the units are dispatched
+
+````@example market_bids
 begin
     renewables = read_variable(res, "ActivePowerVariable__RenewableDispatch")
     thermal = read_variable(res, "ActivePowerVariable__ThermalStandard")
@@ -142,8 +174,11 @@ begin
         legend = (; position = :bottom)
     )
 end
+````
 
-# Let's observe the dispatch of a few thermal generators
+Let's observe the dispatch of a few thermal generators
+
+````@example market_bids
 function filter_non_all_zero(df, group_by, value)
     gdf = groupby(df, group_by)
     is_all_zero = combine(gdf, :value => (x -> all(x == 0)) => :all_zero)
@@ -158,18 +193,23 @@ begin
     spec = data(sample) * mapping(:DateTime, :value, color = :name) * visual(Lines)
     draw(spec; figure = (; size = (500, 500)))
 end
+````
 
-# Let's observe the dispatch of a few renewable generators
+Let's observe the dispatch of a few renewable generators
+
+````@example market_bids
 begin
     renewables_non_zero = filter_non_all_zero(renewables, :name, :value)
     sample = first(unique(renewables_non_zero.name), 5)
     sample = subset!(renewables_non_zero, :name => ByRow(in(sample)))
     data(sample) * mapping(:DateTime, :value, color = :name) * visual(Lines) |> draw
 end
+````
 
+Notice that most solar generators are actually **not** dispatched during the day here even
+though the solar output is definitely non-zero.
 
-# Notice that most solar generators are actually **not** dispatched during the day here even
-# though the solar output is definitely non-zero.
+````@example market_bids
 begin
     ren = get_component(RenewableDispatch, sys, "COLEASF1")
     ts = get_time_series_array(Deterministic, ren, "max_active_power") |> DataFrame
@@ -180,8 +220,10 @@ begin
     axislegend(ax)
     fig
 end
+````
 
-# This was not observed in the Economic dispatch example, and is due to the fact that the market bids ( in the Australian Electricity market)
-# incorporate the on/off constraints: Coal power plant bid at lower costs than solar plants because
-# it is more expensive for them to turn off, and they know they should be able to recoup the losses at time of
-# low solar generation, where there is less competition.
+This was not observed in the Economic dispatch example, and is due to the fact that the market bids ( in the Australian Electricity market)
+incorporate the on/off constraints: Coal power plant bid at lower costs than solar plants because
+it is more expensive for them to turn off, and they know they should be able to recoup the losses at time of
+low solar generation, where there is less competition.
+
