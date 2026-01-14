@@ -1,4 +1,4 @@
-import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n="/AustralianElectricityMarkets.jl/dev/assets/uxzodml.7g-w8frH.png",e="/AustralianElectricityMarkets.jl/dev/assets/cgfvryq.C9mRD6qL.png",h="/AustralianElectricityMarkets.jl/dev/assets/dllonrb.CxAmgVq5.png",k="/AustralianElectricityMarkets.jl/dev/assets/pwbvwlz.BiUUC3wJ.png",c=JSON.parse('{"title":"Setup the system","description":"","frontmatter":{},"headers":[],"relativePath":"examples/market_bids.md","filePath":"examples/market_bids.md","lastUpdated":null}'),r={name:"examples/market_bids.md"};function d(p,i,g,o,f,b){return t(),a("div",null,[...i[0]||(i[0]=[l(`<div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
+import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n="/AustralianElectricityMarkets.jl/dev/assets/xnfxplb.7g-w8frH.png",e="/AustralianElectricityMarkets.jl/dev/assets/wopnabz.C9mRD6qL.png",h="/AustralianElectricityMarkets.jl/dev/assets/utywfrr.CxAmgVq5.png",k="/AustralianElectricityMarkets.jl/dev/assets/adygbpj.BiUUC3wJ.png",c=JSON.parse('{"title":"Setup the system","description":"","frontmatter":{},"headers":[],"relativePath":"examples/market_bids.md","filePath":"examples/market_bids.md","lastUpdated":null}'),r={name:"examples/market_bids.md"};function d(p,i,g,o,f,b){return t(),a("div",null,[...i[0]||(i[0]=[l(`<div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> AustralianElectricityMarkets</span></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> PowerSystems</span></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> PowerSimulations</span></span>
@@ -869,13 +869,13 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">TimeDurationOff__ThermalStandard</td>
+      <td style = "text-align: left;">HydroEnergyOutput__HydroDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">TimeDurationOn__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">HydroEnergyOutput__HydroDispatch</td>
+      <td style = "text-align: left;">TimeDurationOff__ThermalStandard</td>
     </tr>
   </tbody>
 </table>
@@ -888,16 +888,16 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ProductionCostExpression__RenewableDispatch</td>
+      <td style = "text-align: left;">ProductionCostExpression__HydroDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ProductionCostExpression__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerBalance__Area</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ProductionCostExpression__HydroDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ProductionCostExpression__ThermalStandard</td>
+      <td style = "text-align: left;">ProductionCostExpression__RenewableDispatch</td>
     </tr>
   </tbody>
 </table>
@@ -910,34 +910,34 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__PowerLoad</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__RenewableDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__HydroDispatch</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__HydroDispatch</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">IncrementalCostAtMinParameter__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__HydroDispatch</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__ThermalStandard</td>
+      <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__RenewableDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__PowerLoad</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__RenewableDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">IncrementalPiecewiseLinearBreakpointParameter__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__RenewableDispatch</td>
+      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__HydroDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">IncrementalPiecewiseLinearSlopeParameter__HydroDispatch</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__RenewableDispatch</td>
     </tr>
   </tbody>
 </table>
@@ -950,28 +950,28 @@ import{_ as s,c as a,o as t,aA as l}from"./chunks/framework.DuUd1na1.js";const n
   </thead>
   <tbody>
     <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerVariable__RenewableDispatch</td>
+    </tr>
+    <tr class = "dataRow">
       <td style = "text-align: left;">OnVariable__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">SystemBalanceSlackUp__Area</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">StartVariable__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerVariable__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">StopVariable__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">SystemBalanceSlackDown__Area</td>
+      <td style = "text-align: left;">StartVariable__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerVariable__HydroDispatch</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerVariable__RenewableDispatch</td>
+      <td style = "text-align: left;">SystemBalanceSlackDown__Area</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">SystemBalanceSlackUp__Area</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">StopVariable__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">FlowActivePowerVariable__AreaInterchange</td>
