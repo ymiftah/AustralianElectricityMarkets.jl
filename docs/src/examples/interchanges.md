@@ -67,6 +67,7 @@ Set deterministic timseries
 set_demand!(sys, db, date_range; resolution = interval)
 set_renewable_pv!(sys, db, date_range; resolution = interval)
 set_renewable_wind!(sys, db, date_range; resolution = interval)
+set_hydro_limits!(sys, db, date_range; resolution = interval)
 set_market_bids!(sys, db, date_range)
 ````
 
@@ -82,7 +83,7 @@ transform_single_time_series!(
 @show sys
 ````
 
-# Economic dispatch
+# Dispatch
 
 `PowerSimulation.jl` provides different utilities to simulate an electricity system.
 
@@ -109,7 +110,7 @@ The Economic Dispatch problem will be solved with open source solver HiGHS, and 
 for the purposes of this example.
 
 ````@example interchanges
-solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.5)
+solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.2)
 
 
 problem = DecisionModel(template, sys; optimizer = solver, horizon = horizon)
@@ -134,7 +135,8 @@ Lets observe how the units are dispatched
 begin
     renewables = read_variable(res, "ActivePowerVariable__RenewableDispatch")
     thermal = read_variable(res, "ActivePowerVariable__ThermalStandard")
-    gens_long = vcat(renewables, thermal)
+    hydro = read_variable(res, "ActivePowerVariable__HydroDispatch")
+    gens_long = vcat(renewables, thermal, hydro)
     select!(gens_long, :DateTime, :name => :DUID, :value)
 
     by_fuel = @chain select(
