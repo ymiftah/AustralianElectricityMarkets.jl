@@ -24,7 +24,7 @@ TimeSeries = "9e3dc215-6440-5c97-bce1-76c03772f85e"
 
 [compat]
 CSV = "0.10"
-Chain = "0.6"
+Chain = "0.6, 1.0"
 CondaPkg = "0.2"
 CoordRefSystems = "0.19"
 DataFrames = "1.7"
