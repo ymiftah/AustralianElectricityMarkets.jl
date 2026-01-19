@@ -249,7 +249,6 @@ function get_generators_dataframe(db)
         leftjoin!(bus; on = :bus_name => :name)
         # Make hydro generators unavailable
         transform!(
-            # :technology => ByRow(!=(PrimeMovers.HY)) => :available,
             :min_active_power => ByRow(x -> coalesce(x, 0)) => :min_active_power,
             :max_ramp_up => ByRow(x -> coalesce(x, nothing)) => :max_ramp_up,
             :max_ramp_down => ByRow(x -> coalesce(x, nothing)) => :max_ramp_down,
@@ -258,6 +257,59 @@ function get_generators_dataframe(db)
         unique!(:name; keep = :first)
     end
 end
+
+"""
+    get_batteries_dataframe(db)
+
+Generates a DataFrame of Battery information.
+
+# Arguments
+- `db`: The database connection.
+
+# Returns
+A `DataFrame` containing batteries details.
+
+# Example
+```julia
+db = connect(duckdb())
+branch_df = get_batteries_dataframe(db)
+println(branch_df)
+```
+"""
+function get_batteries_dataframe(db)
+    bus = select!(get_bus_dataframe(db), :bus_id, :name)
+    units = read_units(db)
+    dropmissing!(units, :TECHNOLOGY)
+    subset!(units, :TECHNOLOGY => ByRow(==(PrimeMovers.BA)))
+    batteries = select!(
+        units,
+        [
+            :DUID => :name,
+            :STATUS => ByRow(==("COMMISSIONED")) => :available,
+            :REGIONID => ByRow(x -> x * GEN_SUFFIX) => :bus_name,
+            :REGIONID => :region,
+            :TECHNOLOGY => :prime_mover_type,
+            :TECHNOLOGY => ByRow(x -> StorageTech.LIB) => :storage_technology_type,  # Find source
+            :MAXSTORAGECAPACITY => :storage_capacity,
+            [:STORAGEIMPORTEFFICIENCYFACTOR, :STORAGEEXPORTEFFICIENCYFACTOR] => ByRow(tuple) => :efficiency,
+            :MAXCAPACITY => :base_power,
+        ]
+    )
+    leftjoin!(batteries, bus; on = :bus_name => :name)
+    insertcols!(
+        batteries,
+        :rating => 1.0,
+        :active_power => 0.0,
+        :reactive_power => 0.0,
+        :max_reactive_power => 1.0,
+        :reactive_power_limits => (-1.0, 1.0),
+        :storage_level_limits => (0.0, 1.0),
+        :initial_storage_capacity_level => 0.5,
+    )
+    dropmissing!(batteries)
+    return batteries
+end
+
 
 """
     get_interfaces_dataframe(db)
@@ -322,6 +374,8 @@ function nem_system(db; kwargs...)
     branch_df = get_branch_dataframe(db)
     @info "parsing generators"
     gen_df = get_generators_dataframe(db)
+    @info "parsing batteries"
+    batteries_df = get_batteries_dataframe(db)
 
     @info "parsing interconnectors/area interchanges / transmission interface"
     interfaces_df = get_interfaces_dataframe(db)
@@ -331,6 +385,7 @@ function nem_system(db; kwargs...)
     _add_loads!(sys, loads_df)
     _add_generation!(sys, gen_df)
     _add_branches!(sys, branch_df)
+    _add_batteries!(sys, batteries_df)
     _add_area_interfaces!(sys, interfaces_df)
 
     return sys
@@ -565,6 +620,30 @@ function _add_generation!(sys, gen_df)
     add_components!(sys, thermal_components)
 
     return sys
+end
+
+function _add_batteries!(sys, batteries_df)
+    battery_components = (
+        EnergyReservoirStorage(;
+                name = row[:name],
+                available = row[:available],
+                bus = get_bus(sys, row[:bus_id]),
+                prime_mover_type = row[:prime_mover_type],
+                storage_technology_type = row[:storage_technology_type],
+                storage_capacity = row[:storage_capacity],
+                storage_level_limits = row[:storage_level_limits],
+                initial_storage_capacity_level = row[:initial_storage_capacity_level],
+                rating = row[:rating],
+                active_power = 0.0,
+                reactive_power = 0,
+                reactive_power_limits = (-1.0, 1.0),
+                efficiency = row[:efficiency],
+                base_power = row[:base_power],
+                input_active_power_limits = (0, row[:base_power]),
+                output_active_power_limits = (0, row[:base_power]),
+            ) for row in eachrow(batteries_df)
+    )
+    return add_components!(sys, battery_components)
 end
 
 function _add_area_interfaces!(sys, interconnectors)
