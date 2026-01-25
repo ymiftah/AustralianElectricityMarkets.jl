@@ -86,13 +86,12 @@ makedocs(;
         "Home" => "index.md",
         "How-to" => [
             "Gather data" => "examples/gather_data.md",
-        ],
-        "Tutorials" => [
             "Build the system" => "examples/build_system.md",
             "Economic dispatch" => "examples/economic_dispatch.md",
             "Area balance with interchanges" => "examples/interchanges.md",
             "Market clearing" => "examples/market_bids.md",
         ],
+        "Roadmap" => "roadmap.md",
         "Reference" => "95-reference.md",
     ],
     warnonly = true,

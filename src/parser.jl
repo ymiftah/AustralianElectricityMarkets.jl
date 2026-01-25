@@ -41,7 +41,7 @@ function _parse_hive_root(config::HiveConfiguration)
     if islocal(config)
         return config.hive_location
     else
-        prefix = get_backend(config)
+        prefix = get_filesystem(config)
         return "$(prefix)://" * config.hive_location
     end
     throw("Not a known filesystem")
