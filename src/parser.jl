@@ -15,18 +15,17 @@ Read a hive-partitioned parquet dataset into a TidierDB table.
 - `config::HiveConfiguration`: The configuration to use. Defaults to `CONFIG[]`.
 """
 function read_hive(
-        db::TidierDB.DBInterface.Connection,
-        table_name::Symbol;
-        config::HiveConfiguration = HiveConfiguration(),
+        db::AEMDB,
+        table_name::Symbol,
     )
-    hive_root = _parse_hive_root(config)
+    hive_root = _parse_hive_root(db.config)
     hive_path = """
     read_parquet(
         "$hive_root/$table_name/**/*.parquet",
         hive_partitioning=true
     )
     """
-    return TidierDB.dt(db, hive_path)
+    return TidierDB.dt(db.db, hive_path)
 end
 
 """
@@ -60,7 +59,7 @@ A `DataFrame` containing the latest interconnector constraint data.
 
 # Example
 ```julia
-db = connect(duckdb())
+db = aem_connect(duckdb())
 interconnectors_df = read_interconnectors(db)
 println(interconnectors_df)
 ```
@@ -95,7 +94,7 @@ A `DataFrame` with demand and renewable availability data, aggregated by the spe
 
 # Example
 ```julia
-db = connect(duckdb())
+db = aem_connect(duckdb())
 demand_df = read_demand(db; resolution=Dates.Hour(1))
 println(demand_df)
 ```
@@ -146,7 +145,7 @@ A `DataFrame` containing detailed information about each generation unit.
 
 # Example
 ```julia
-db = connect(duckdb())
+db = aem_connect(duckdb())
 units_df = read_units(db)
 println(units_df)
 ```
@@ -478,8 +477,8 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     start_date = first(date_range)
     end_date = last(date_range)
 
-    energy_bids_table = read_hive(db, :BIDPEROFFER_D; config = get(kwargs, :config, HiveConfiguration()))
-    pricebids_table = read_hive(db, :BIDDAYOFFER_D; config = get(kwargs, :config, HiveConfiguration()))
+    energy_bids_table = read_hive(db, :BIDPEROFFER_D)
+    pricebids_table = read_hive(db, :BIDDAYOFFER_D)
     bids = _massage_bids(energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, :nothing))
 
     return foreach(get_components(Generator, sys)) do gen
@@ -522,8 +521,8 @@ function set_market_bids!(sys, db, date_range; kwargs...)
 end
 
 function read_bids(db, date_range; kwargs...)
-    energy_bids_table = read_hive(db, :BIDPEROFFER_D; config = get(kwargs, :config, HiveConfiguration()))
-    pricebids_table = read_hive(db, :BIDDAYOFFER_D; config = get(kwargs, :config, HiveConfiguration()))
+    energy_bids_table = read_hive(db, :BIDPEROFFER_D)
+    pricebids_table = read_hive(db, :BIDDAYOFFER_D)
     start_date = first(date_range)
     end_date = last(date_range)
     bids = _massage_bids(energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, nothing))

@@ -27,7 +27,7 @@ end
 
 
 # Initialise a connection to manage the market data via duckdb
-db = connect(duckdb());
+db = aem_connect(duckdb());
 
 # Download data from AEMO's NEMWEB's Monthly archive
 date_range = Date(2025, 1, 1):Date(2025, 1, 2)

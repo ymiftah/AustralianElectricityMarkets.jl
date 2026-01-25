@@ -9,6 +9,7 @@ import TimeSeries: TimeArray, colnames
 # exports
 export PyHiveConfiguration, fetch_table_data, list_available_tables
 export NetworkConfiguration, table_requirements
+export aem_connect
 export nem_system
 export RegionalNetworkConfiguration
 
@@ -20,6 +21,7 @@ export set_demand!, set_renewable_pv!, set_renewable_wind!, set_market_bids!, se
 
 
 # Write your package code here.
+include("data_utils.jl")
 include("constants.jl")
 include("configurations.jl")
 include("geoutils.jl")

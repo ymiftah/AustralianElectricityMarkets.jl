@@ -14,7 +14,10 @@ By default, data is cached in `~/.nemweb_cache`. You can customize the cache loc
 using AustralianElectricityMarkets
 
 # Configure a custom cache directory
-config = HiveConfiguration(base_dir = "/path/to/my_cache")
+config = PyHiveConfiguration(
+    base_dir = "/path/to/my_cache",
+    filesystem="local",  # supports Amazon s3, Google Cloud Platform gs
+    )
 ```
 
 ## Listing Available Tables
@@ -57,7 +60,7 @@ Once the data is cached, you can load itfor analysis. The package provides high-
 using TidierDB
 
 # Connect to a local DuckDB instance
-db = connect(duckdb())
+db = aem_connect(duckdb())
 
 # Low-level access to a specific hive table
 df_raw = read_hive(db, :DISPATCH_UNIT_SOLUTION) |> @collect

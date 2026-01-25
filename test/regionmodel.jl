@@ -2,7 +2,7 @@
 
     required_tables = table_requirements(RegionalNetworkConfiguration())
 
-    db = connect(duckdb())
+    db = aem_connect(duckdb())
     map(
         required_tables
     ) do table
