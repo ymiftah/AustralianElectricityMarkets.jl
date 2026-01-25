@@ -223,7 +223,7 @@ begin
 end
 ````
 
-This was not observed in the Economic dispatch example, and many factors can explain this behaviour.
+This was not observed in the Economic dispatch example, and many factors can explain this behaviour. For instance:
 - In the Australian Electricity market, the bids incorporate the on/off constraints: Coal power plant bid at lower costs than solar plants because it is more expensive for them to turn off, and they know they should be able to recoup the losses at time of low solar generation, where there is less competition.
 - Some generators may have hedged their risk with future contracts.
 
