@@ -91,8 +91,7 @@ begin
     set_device_model!(template, RenewableDispatch, RenewableFullDispatch)
     set_device_model!(template, ThermalStandard, ThermalBasicUnitCommitment)
     set_device_model!(template, HydroDispatch, HydroDispatchRunOfRiver)
-    set_network_model!(template, NetworkModel(AreaBalancePowerModel; use_slacks = true))
-    set_device_model!(template, AreaInterchange, StaticBranch)
+    set_network_model!(template, NetworkModel(CopperPlatePowerModel))
     template
 end
 ````
@@ -101,7 +100,7 @@ The dispatch problem will be solved with open source solver HiGHS, and a relativ
 for the purposes of this example.
 
 ````@example market_bids
-solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.2)
+solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.05)
 
 
 problem = DecisionModel(template, sys; optimizer = solver, horizon = horizon)
@@ -137,7 +136,6 @@ begin
         rightjoin(gens_long, on = :DUID)
         groupby([:CO2E_ENERGY_SOURCE, :REGIONID, :DateTime])
         combine(:value => sum => :value)
-        subset(:value => ByRow(>(0.0)))
         dropmissing!
         select!(
             :DateTime, :REGIONID, :CO2E_ENERGY_SOURCE => :Source,

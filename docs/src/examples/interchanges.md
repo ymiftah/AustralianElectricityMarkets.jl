@@ -49,9 +49,9 @@ sys = nem_system(db, RegionalNetworkConfiguration())
 Set the horizon to consider for the simulation
 
 ````@example interchanges
-interval = Minute(5)
+interval = Minute(10)
 horizon = Hour(24)
-start_date = DateTime(2025, 1, 1, 4, 0)
+start_date = DateTime(2025, 1, 2, 0, 0)
 date_range = start_date:interval:(start_date + horizon)
 @show date_range
 
@@ -68,7 +68,7 @@ set_demand!(sys, db, date_range; resolution = interval)
 set_renewable_pv!(sys, db, date_range; resolution = interval)
 set_renewable_wind!(sys, db, date_range; resolution = interval)
 set_hydro_limits!(sys, db, date_range; resolution = interval)
-set_market_bids!(sys, db, date_range)
+set_market_bids!(sys, db, date_range; resolution = interval)
 ````
 
 Derive forecasts from the deterministic timseries
@@ -146,7 +146,6 @@ begin
         rightjoin(gens_long, on = :DUID)
         groupby([:CO2E_ENERGY_SOURCE, :REGIONID, :DateTime])
         combine(:value => sum => :value)
-        subset(:value => ByRow(>(0.0)))
         dropmissing!
         select!(
             :DateTime, :REGIONID, :CO2E_ENERGY_SOURCE => :Source,
