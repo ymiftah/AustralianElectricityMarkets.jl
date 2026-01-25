@@ -21,9 +21,9 @@ export set_demand!, set_renewable_pv!, set_renewable_wind!, set_market_bids!, se
 
 
 # Write your package code here.
-include("data_utils.jl")
 include("constants.jl")
 include("configurations.jl")
+include("data_utils.jl")
 include("geoutils.jl")
 include("network_models/interface.jl")
 
