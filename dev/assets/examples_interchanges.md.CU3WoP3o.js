@@ -479,7 +479,7 @@ import{_ as s,o as a,c as t,aA as n}from"./chunks/framework.Bg8BcNkn.js";const g
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, Line, StaticBranch)</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, PowerLoad, StaticPowerLoad)</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, RenewableDispatch, RenewableFullDispatch)</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, ThermalStandard, ThermalBasicDispatch)</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, ThermalStandard, ThermalBasicUnitCommitment)</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, HydroDispatch, HydroDispatchRunOfRiver)</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_network_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">NetworkModel</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(AreaBalancePowerModel; use_slacks </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> true</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">))</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    set_device_model!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, AreaInterchange, StaticBranch)</span></span>
@@ -528,7 +528,7 @@ import{_ as s,o as a,c as t,aA as n}from"./chunks/framework.Bg8BcNkn.js";const g
   <tbody>
     <tr class = "dataRow">
       <td style = "text-align: left;">PowerSystems.ThermalStandard</td>
-      <td style = "text-align: left;">PowerSimulations.ThermalBasicDispatch</td>
+      <td style = "text-align: left;">PowerSimulations.ThermalBasicUnitCommitment</td>
       <td style = "text-align: left;">false</td>
     </tr>
     <tr class = "dataRow">
@@ -578,6 +578,14 @@ import{_ as s,o as a,c as t,aA as n}from"./chunks/framework.Bg8BcNkn.js";const g
 <span class="line"></span>
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">problem </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> DecisionModel</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(template, sys; optimizer </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> solver, horizon </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> horizon)</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">build!</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(problem; output_dir </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> joinpath</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">tempdir</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(), </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">&quot;out&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">))</span></span></code></pre></div><div class="language- vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang"></span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;">InfrastructureSystems.Optimization.ModelBuildStatusModule.ModelBuildStatus.FAILED = 1</span></span></code></pre></div><p>Solve the problem</p><div class="language-@example vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">@example</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span>solve!(problem)</span></span></code></pre></div><p>Observe the results</p><div class="language-@example vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">@example</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span>res = OptimizationProblemResults(problem)</span></span></code></pre></div><p>Lets observe how the units are dispatched</p><div class="language-@example vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">@example</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span>begin</span></span>
+<span class="line"><span>    function filter_non_all_zero(df, group_by, value)</span></span>
+<span class="line"><span>        gdf = groupby(df, group_by)</span></span>
+<span class="line"><span>        is_all_zero = combine(gdf, :value =&gt; (x -&gt; all(x == 0)) =&gt; :all_zero)</span></span>
+<span class="line"><span>        subset!(is_all_zero, :all_zero =&gt; x -&gt; .!x)</span></span>
+<span class="line"><span>        return innerjoin(df, is_all_zero, on = group_by)</span></span>
+<span class="line"><span>    end</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span></span></span>
 <span class="line"><span>    renewables = read_variable(res, &quot;ActivePowerVariable__RenewableDispatch&quot;)</span></span>
 <span class="line"><span>    thermal = read_variable(res, &quot;ActivePowerVariable__ThermalStandard&quot;)</span></span>
 <span class="line"><span>    hydro = read_variable(res, &quot;ActivePowerVariable__HydroDispatch&quot;)</span></span>
@@ -596,6 +604,7 @@ import{_ as s,o as a,c as t,aA as n}from"./chunks/framework.Bg8BcNkn.js";const g
 <span class="line"><span>            :DateTime, :REGIONID, :CO2E_ENERGY_SOURCE =&gt; :Source,</span></span>
 <span class="line"><span>            :value</span></span>
 <span class="line"><span>        )</span></span>
+<span class="line"><span>        filter_non_all_zero([:REGIONID, :Source], :value)</span></span>
 <span class="line"><span>    end</span></span>
 <span class="line"><span></span></span>
 <span class="line"><span></span></span>
@@ -627,14 +636,7 @@ import{_ as s,o as a,c as t,aA as n}from"./chunks/framework.Bg8BcNkn.js";const g
 <span class="line"><span>        figure = (; size = (1000, 800)),</span></span>
 <span class="line"><span>        legend = (; position = :bottom)</span></span>
 <span class="line"><span>    )</span></span>
-<span class="line"><span>end</span></span></code></pre></div><p>Let&#39;s observe the dispatch of a few thermal generators</p><div class="language-@example vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">@example</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span>function filter_non_all_zero(df, group_by, value)</span></span>
-<span class="line"><span>    gdf = groupby(df, group_by)</span></span>
-<span class="line"><span>    is_all_zero = combine(gdf, :value =&gt; (x -&gt; all(x == 0)) =&gt; :all_zero)</span></span>
-<span class="line"><span>    subset!(is_all_zero, :all_zero =&gt; x -&gt; .!x)</span></span>
-<span class="line"><span>    return innerjoin(df, is_all_zero, on = group_by)</span></span>
-<span class="line"><span>end</span></span>
-<span class="line"><span></span></span>
-<span class="line"><span>begin</span></span>
+<span class="line"><span>end</span></span></code></pre></div><p>Let&#39;s observe the dispatch of a few thermal generators</p><div class="language-@example vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">@example</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span>begin</span></span>
 <span class="line"><span>    thermals_non_zero = filter_non_all_zero(thermal, :name, :value)</span></span>
 <span class="line"><span>    sample = first(unique(thermals_non_zero.name), 5)</span></span>
 <span class="line"><span>    sample = subset!(thermals_non_zero, :name =&gt; ByRow(in(sample)))</span></span>
