@@ -14,8 +14,8 @@ const titles = Dict(
     "examples" => "Getting started",
     "build_system" => "Build the system",
     "economic_dispatch" => "Economic dispatch",
-    "interchanges" => "Area balance with interchanges",
     "market_bids" => "Market clearing",
+    "interchanges" => "Regional market clearing with interchanges",
     "95-reference.md" => "Reference",
 )
 

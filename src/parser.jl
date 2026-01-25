@@ -479,7 +479,7 @@ function set_market_bids!(sys, db, date_range; kwargs...)
 
     energy_bids_table = read_hive(db, :BIDPEROFFER_D)
     pricebids_table = read_hive(db, :BIDDAYOFFER_D)
-    bids = _massage_bids(energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, :nothing))
+    bids = _massage_bids(energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
 
     return foreach(get_components(Generator, sys)) do gen
         gen_id = get_name(gen)
@@ -569,8 +569,8 @@ function _extract_power_bids(row)
 end
 
 function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date; resolution = nothing)
-    sd = Date(start_date)
-    ed = Date(end_date)
+    sd = Date(start_date) - Day(1)
+    ed = Date(end_date) + Day(1)
     energy_bids = @eval @chain $energy_bids_table begin
         @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed)
         @filter(BIDTYPE == "ENERGY")
@@ -596,7 +596,7 @@ function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date;
         @collect
     end
 
-    if !isnothing(:resolution)
+    if !isnothing(resolution)
         energy_bids = @chain energy_bids begin
             transform(
 
