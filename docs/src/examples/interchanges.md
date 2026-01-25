@@ -49,7 +49,7 @@ sys = nem_system(db, RegionalNetworkConfiguration())
 Set the horizon to consider for the simulation
 
 ````@example interchanges
-interval = Minute(10)
+interval = Minute(5)
 horizon = Hour(24)
 start_date = DateTime(2025, 1, 2, 0, 0)
 date_range = start_date:interval:(start_date + horizon)
@@ -98,7 +98,7 @@ begin
     set_device_model!(template, Line, StaticBranch)
     set_device_model!(template, PowerLoad, StaticPowerLoad)
     set_device_model!(template, RenewableDispatch, RenewableFullDispatch)
-    set_device_model!(template, ThermalStandard, ThermalBasicDispatch)
+    set_device_model!(template, ThermalStandard, ThermalBasicUnitCommitment)
     set_device_model!(template, HydroDispatch, HydroDispatchRunOfRiver)
     set_network_model!(template, NetworkModel(AreaBalancePowerModel; use_slacks = true))
     set_device_model!(template, AreaInterchange, StaticBranch)
@@ -133,6 +133,14 @@ Lets observe how the units are dispatched
 
 ````@example interchanges
 begin
+    function filter_non_all_zero(df, group_by, value)
+        gdf = groupby(df, group_by)
+        is_all_zero = combine(gdf, :value => (x -> all(x == 0)) => :all_zero)
+        subset!(is_all_zero, :all_zero => x -> .!x)
+        return innerjoin(df, is_all_zero, on = group_by)
+    end
+
+
     renewables = read_variable(res, "ActivePowerVariable__RenewableDispatch")
     thermal = read_variable(res, "ActivePowerVariable__ThermalStandard")
     hydro = read_variable(res, "ActivePowerVariable__HydroDispatch")
@@ -151,6 +159,7 @@ begin
             :DateTime, :REGIONID, :CO2E_ENERGY_SOURCE => :Source,
             :value
         )
+        filter_non_all_zero([:REGIONID, :Source], :value)
     end
 
 
@@ -188,13 +197,6 @@ end
 Let's observe the dispatch of a few thermal generators
 
 ````@example interchanges
-function filter_non_all_zero(df, group_by, value)
-    gdf = groupby(df, group_by)
-    is_all_zero = combine(gdf, :value => (x -> all(x == 0)) => :all_zero)
-    subset!(is_all_zero, :all_zero => x -> .!x)
-    return innerjoin(df, is_all_zero, on = group_by)
-end
-
 begin
     thermals_non_zero = filter_non_all_zero(thermal, :name, :value)
     sample = first(unique(thermals_non_zero.name), 5)

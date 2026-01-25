@@ -123,6 +123,14 @@ Lets observe how the units are dispatched
 
 ````@example market_bids
 begin
+
+    function filter_non_all_zero(df, group_by, value)
+        gdf = groupby(df, group_by)
+        is_all_zero = combine(gdf, :value => (x -> all(x == 0)) => :all_zero)
+        subset!(is_all_zero, :all_zero => x -> .!x)
+        return innerjoin(df, is_all_zero, on = group_by)
+    end
+
     renewables = read_variable(res, "ActivePowerVariable__RenewableDispatch")
     thermal = read_variable(res, "ActivePowerVariable__ThermalStandard")
     hydro = read_variable(res, "ActivePowerVariable__HydroDispatch")
@@ -141,6 +149,7 @@ begin
             :DateTime, :REGIONID, :CO2E_ENERGY_SOURCE => :Source,
             :value
         )
+        filter_non_all_zero([:REGIONID, :Source], :value)
     end
 
 
@@ -178,12 +187,6 @@ end
 Let's observe the dispatch of a few thermal generators
 
 ````@example market_bids
-function filter_non_all_zero(df, group_by, value)
-    gdf = groupby(df, group_by)
-    is_all_zero = combine(gdf, :value => (x -> all(x == 0)) => :all_zero)
-    subset!(is_all_zero, :all_zero => x -> .!x)
-    return innerjoin(df, is_all_zero, on = group_by)
-end
 
 begin
     thermals_non_zero = filter_non_all_zero(thermal, :name, :value)
