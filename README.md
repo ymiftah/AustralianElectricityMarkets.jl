@@ -32,7 +32,7 @@ using AustralianElectricityMarkets
 using TidierDB
 
 # Establish a database connection
-db = connect(duckdb());
+db = aem_connect(duckdb());
 
 # Download the data from the monthly archive, saving them locally
 # in parquet files

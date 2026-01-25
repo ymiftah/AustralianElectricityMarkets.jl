@@ -33,7 +33,7 @@ Initialise a connection to manage the market data via duckdb
     Only the data requirements for a RegionalNetworkconfiguration are downloaded.
 
 ````@example economic_dispatch
-db = connect(duckdb());
+db = aem_connect(duckdb());
 nothing #hide
 ````
 

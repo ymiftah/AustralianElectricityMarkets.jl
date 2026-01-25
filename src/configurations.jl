@@ -13,7 +13,7 @@ Configuration for accessing data.
 end
 
 islocal(config::HiveConfiguration) = config.filesystem == "file"
-get_backend(config::HiveConfiguration) = config.filesystem
+get_filesystem(config::HiveConfiguration) = config.filesystem
 
 abstract type NetworkConfiguration end
 

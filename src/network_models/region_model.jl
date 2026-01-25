@@ -61,7 +61,7 @@ A `DataFrame` containing bus details.
 
 # Example
 ```julia
-db = connect(duckdb())
+db = aem_connect(duckdb())
 bus_df = get_bus_dataframe(db)
 println(bus_df)
 ```
@@ -116,7 +116,7 @@ A `DataFrame` containing load details.
 
 # Example
 ```julia
-db = connect(duckdb())
+db = aem_connect(duckdb())
 load_df = get_load_dataframe(db)
 println(load_df)
 ```
@@ -150,7 +150,7 @@ A `DataFrame` containing branch details.
 
 # Example
 ```julia
-db = connect(duckdb())
+db = aem_connect(duckdb())
 branch_df = get_branch_dataframe(db)
 println(branch_df)
 ```
@@ -204,7 +204,7 @@ A `DataFrame` containing generator details.
 
 # Example
 ```julia
-db = connect(duckdb())
+db = aem_connect(duckdb())
 gen_df = get_generators_dataframe(db)
 println(gen_df)
 ```
@@ -271,7 +271,7 @@ A `DataFrame` containing batteries details.
 
 # Example
 ```julia
-db = connect(duckdb())
+db = aem_connect(duckdb())
 branch_df = get_batteries_dataframe(db)
 println(branch_df)
 ```
@@ -324,7 +324,7 @@ A `DataFrame` containing interfaces details.
 
 # Example
 ```julia
-db = connect(duckdb())
+db = aem_connect(duckdb())
 branch_df = get_branch_dataframe(db)
 println(branch_df)
 ```
@@ -360,7 +360,7 @@ A `PowerSystems.System` object.
 
 # Example
 ```julia
-db = connect(duckdb())
+db = aem_connect(duckdb())
 sys = nem_system(db)
 println(sys)
 ```
@@ -639,8 +639,8 @@ function _add_batteries!(sys, batteries_df)
                 reactive_power_limits = (-1.0, 1.0),
                 efficiency = row[:efficiency],
                 base_power = row[:base_power],
-                input_active_power_limits = (0, row[:base_power]),
-                output_active_power_limits = (0, row[:base_power]),
+                input_active_power_limits = (0.0, 1.0),
+                output_active_power_limits = (0.0, 1.0),
             ) for row in eachrow(batteries_df)
     )
     return add_components!(sys, battery_components)

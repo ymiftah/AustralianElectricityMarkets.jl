@@ -8,7 +8,7 @@ begin
     using Base.ScopedValues
 end
 
-db = connect(duckdb())
+db = aem_connect(duckdb())
 
 x = RegionalNetworkConfiguration()
 
