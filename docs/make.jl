@@ -84,6 +84,9 @@ makedocs(;
     ),
     pages = [
         "Home" => "index.md",
+        "How-to" => [
+            "Gather data" => "examples/gather_data.md",
+        ],
         "Tutorials" => [
             "Build the system" => "examples/build_system.md",
             "Economic dispatch" => "examples/economic_dispatch.md",

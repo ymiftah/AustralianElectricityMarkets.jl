@@ -639,8 +639,8 @@ function _add_batteries!(sys, batteries_df)
                 reactive_power_limits = (-1.0, 1.0),
                 efficiency = row[:efficiency],
                 base_power = row[:base_power],
-                input_active_power_limits = (0, row[:base_power]),
-                output_active_power_limits = (0, row[:base_power]),
+                input_active_power_limits = (0.0, 1.0),
+                output_active_power_limits = (0.0, 1.0),
             ) for row in eachrow(batteries_df)
     )
     return add_components!(sys, battery_components)

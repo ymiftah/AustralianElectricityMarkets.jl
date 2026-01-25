@@ -478,9 +478,9 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     start_date = first(date_range)
     end_date = last(date_range)
 
-    energy_bids_table = read_hive(db, :BIDPEROFFER_D; kwargs...)
-    pricebids_table = read_hive(db, :BIDDAYOFFER_D; kwargs...)
-    bids = _massage_bids(energy_bids_table, pricebids_table, start_date, end_date)
+    energy_bids_table = read_hive(db, :BIDPEROFFER_D; config = get(kwargs, :config, HiveConfiguration()))
+    pricebids_table = read_hive(db, :BIDDAYOFFER_D; config = get(kwargs, :config, HiveConfiguration()))
+    bids = _massage_bids(energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, :nothing))
 
     return foreach(get_components(Generator, sys)) do gen
         gen_id = get_name(gen)
@@ -522,11 +522,11 @@ function set_market_bids!(sys, db, date_range; kwargs...)
 end
 
 function read_bids(db, date_range; kwargs...)
-    energy_bids_table = read_hive(db, :BIDPEROFFER_D; kwargs...)
-    pricebids_table = read_hive(db, :BIDDAYOFFER_D; kwargs...)
+    energy_bids_table = read_hive(db, :BIDPEROFFER_D; config = get(kwargs, :config, HiveConfiguration()))
+    pricebids_table = read_hive(db, :BIDDAYOFFER_D; config = get(kwargs, :config, HiveConfiguration()))
     start_date = first(date_range)
     end_date = last(date_range)
-    bids = _massage_bids(energy_bids_table, pricebids_table, start_date, end_date)
+    bids = _massage_bids(energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
     return bids
 end
 
@@ -569,7 +569,7 @@ function _extract_power_bids(row)
     return PiecewiseStepData(b, a)
 end
 
-function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date)
+function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date; resolution = nothing)
     sd = Date(start_date)
     ed = Date(end_date)
     energy_bids = @eval @chain $energy_bids_table begin
@@ -582,7 +582,7 @@ function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date)
         @select(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, MAXAVAIL, starts_with("BANDAVAIL"))
         @arrange(SETTLEMENTDATE, INTERVAL_DATETIME)
         @collect
-        subset!(:INTERVAL_DATETIME => ByRow(x -> $start_date <= x <= $end_date))
+        subset!(:INTERVAL_DATETIME => ByRow(x -> $start_date <= x < $end_date))
     end
 
     pricebids = @eval @chain $pricebids_table begin
@@ -596,6 +596,27 @@ function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date)
         @arrange(SETTLEMENTDATE)
         @collect
     end
+
+    if !isnothing(:resolution)
+        energy_bids = @chain energy_bids begin
+            transform(
+
+                :INTERVAL_DATETIME => ByRow(x -> floor.(x, resolution)),
+                Cols(r"^BANDAVAIL") .=> (x -> x * Minute(5) / resolution)
+                ;
+                renamecols = false
+            )
+            groupby([:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION])
+            combine(
+                _,
+                :MAXAVAIL => sum ∘ skipmissing,
+                Cols(r"^BANDAVAIL") .=> sum,
+                ;
+                renamecols = false
+            )
+        end
+    end
+
     all_bids = innerjoin(pricebids, energy_bids, on = [:SETTLEMENTDATE, :DUID, :DIRECTION])
     prep_for_psy = @chain all_bids begin
         transform(
