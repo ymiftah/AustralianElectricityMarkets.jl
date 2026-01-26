@@ -1,11 +1,5 @@
-@testitem "Datareader tests" begin
-    using AustralianElectricityMarkets
-    using TidierDB
-    using DataFrames
-    using Dates
-    using PowerSystems
-
-    hive_dir = get(ENV, "AEM_TEST_HIVE_DIR", "")
+let
+    hive_dir = AEM_TEST_HIVE_DIR
     @test isdir(hive_dir)
 
     config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")

@@ -10,12 +10,11 @@ function create_mock_data(hive_root::String)
 
     # Helper to save a DataFrame as Hive-partitioned parquet
     function save_hive(df, table_name)
-        csv_path = tempname() * ".csv"
-        CSV.write(csv_path, df)
+        DuckDB.register_data_frame(conn, df, "tmp_table")
         table_dir = joinpath(hive_root, string(table_name))
         mkpath(table_dir)
-        DuckDB.execute(conn, "COPY (SELECT * FROM read_csv_auto('$csv_path')) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
-        return rm(csv_path)
+        DuckDB.execute(conn, "COPY tmp_table TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+        return DuckDB.unregister_table(conn, "tmp_table")
     end
 
     n = 6
