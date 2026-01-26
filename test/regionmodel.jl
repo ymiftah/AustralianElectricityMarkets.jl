@@ -2,11 +2,16 @@
 
     required_tables = table_requirements(RegionalNetworkConfiguration())
 
-    db = aem_connect(duckdb())
+    hive_dir = get(ENV, "AEM_TEST_HIVE_DIR", "")
+    config = isempty(hive_dir) ? HiveConfiguration() : HiveConfiguration(hive_location = hive_dir, filesystem = "file")
+    db = aem_connect(duckdb(), config)
+
     map(
         required_tables
     ) do table
-        fetch_table_data(table, Date(2025, 1, 1):Date(2025, 1, 1))
+        if isempty(hive_dir)
+            fetch_table_data(table, Date(2025, 1, 1):Date(2025, 1, 1))
+        end
         table = read_hive(db, table) |> x -> (
             TidierDB.@collect(
                 TidierDB.@head(
