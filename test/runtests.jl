@@ -21,6 +21,10 @@ end
     include("regionmodel.jl")
 end
 
+@testset "Time series setter tests" begin
+    include("timeseries_setters.jl")
+end
+
 
 @testset "Aqua" begin
     include("aqua.jl")

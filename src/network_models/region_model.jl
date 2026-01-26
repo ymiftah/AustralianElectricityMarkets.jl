@@ -186,7 +186,7 @@ function get_branch_dataframe(db)
             :bus_from,
             :bus_to,
         )
-        insertcols!(:r => 0.01, :x => 0.01, :b => 0, :rate => 1.0e4)
+        insertcols!(:r => 0.01, :x => 0.01, :b => 0, :rate => 10.0)
     end
     return vcat(load_branches, gen_branches)
 end

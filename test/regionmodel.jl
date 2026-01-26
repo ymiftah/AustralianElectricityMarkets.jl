@@ -101,10 +101,13 @@
         # Generators: 6 total in mock data.
         # BW01 is Battery
         # BW02 is Hydro
-        # Others are ThermalStandard
-        @test length(get_components(ThermalStandard, system)) == 4
+        # BW03 is Solar (RenewableDispatch)
+        # BW04 is Wind (RenewableDispatch)
+        # ER01, ER02 are ThermalStandard
+        @test length(get_components(ThermalStandard, system)) == 2
         @test length(get_components(HydroDispatch, system)) == 1
         @test length(get_components(EnergyReservoirStorage, system)) == 1
+        @test length(get_components(RenewableDispatch, system)) == 2
 
         # Interconnectors/Interfaces
         @test length(get_components(AreaInterchange, system)) == 6
