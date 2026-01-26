@@ -1,6 +1,8 @@
+This software includes the PowerSystems and PowerSimulations libraries, which are licensed under the BSD 3-Clause License. See below for the full license text.
+
 BSD 3-Clause License
 
-Copyright (c) 2025 Youssef Miftah <miftahyo@outlook.fr> and contributors
+Copyright (c) 2018, 2023 Alliance for Sustainable Energy, LLC and The Regents of the University of California
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without

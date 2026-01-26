@@ -165,7 +165,7 @@ function get_branch_dataframe(db)
             :INTERCONNECTORID => :name,
             :REGIONFROM => ByRow(x -> x * LOAD_SUFFIX) => :from,
             :REGIONTO => ByRow(x -> x * LOAD_SUFFIX) => :to,
-            :MAXMWOUT => :rate
+            :MAXMWOUT => (x -> x / BASE_POWER) => :rate
         )
         leftjoin!(load_buses; on = :from => :name)
         rename!(:bus_id => :bus_from)
@@ -186,7 +186,7 @@ function get_branch_dataframe(db)
             :bus_from,
             :bus_to,
         )
-        insertcols!(:r => 0.01, :x => 0.01, :b => 0, :rate => 1.0e4)
+        insertcols!(:r => 0.01, :x => 0.01, :b => 0, :rate => 10.0)
     end
     return vcat(load_branches, gen_branches)
 end
@@ -342,6 +342,8 @@ function get_interfaces_dataframe(db)
         :LOSSCONSTANT => :loss_constant,
         :LOSSFLOWCOEFFICIENT => :loss_flow_coefficient,
         :ICTYPE => :ic_type,
+        # Make SNOWY interfaces unavailable by default, review status of this interconnector
+        [:REGIONFROM, :REGIONTO] => ByRow((from_, to_) -> (from_ != "SNOWY1") && (to_ != "SNOWY1")) => :available
     )
     return interconnectors
 end
@@ -650,8 +652,8 @@ function _add_area_interfaces!(sys, interconnectors)
     interface_services = (
         TransmissionInterface(
                 name = row[:name],
-                available = true,
-                active_power_flow_limits = (; min = 0.0, max = max(row[:max_flow_from], row[:max_flow_to])),
+                available = row[:available],
+                active_power_flow_limits = (; min = 0.0, max = max(row[:max_flow_from], row[:max_flow_to]) / BASE_POWER),
                 violation_penalty = 1.0e5,
                 direction_mapping = Dict(row[:name] => 1),
             ) for row in eachrow(interconnectors)
@@ -661,11 +663,11 @@ function _add_area_interfaces!(sys, interconnectors)
     area_interchanges = (
         AreaInterchange(;
                 name = row[:name],
-                available = true,
+                available = row[:available],
                 active_power_flow = 0.0,
                 from_area = get_component(Area, sys, row[:from_area]),
                 to_area = get_component(Area, sys, row[:to_area]),
-                flow_limits = (row[:max_flow_from], row[:max_flow_to]),
+                flow_limits = (row[:max_flow_from] / BASE_POWER, row[:max_flow_to] / BASE_POWER),
                 # services=[get_component(TransmissionInterface, sys, row[:name])],
                 ext = Dict(
                     "from_region_loss_factor" => row[:from_region_loss_factor],

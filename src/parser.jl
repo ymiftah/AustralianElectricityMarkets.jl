@@ -124,7 +124,7 @@ function read_demand(db; resolution::Dates.Period = Dates.Minute(5))
     end
     dropmissing!(df)
     # df[!, :TOTALDEMAND] .+= df[!, :DISPATCHABLELOAD]  # Adds the dispatchable load to the total demand to get the actual native demand
-    df[!, :SETTLEMENTDATE] = floor.(df[!, :SETTLEMENTDATE], resolution)
+    df[!, :SETTLEMENTDATE] = ceil.(df[!, :SETTLEMENTDATE], resolution)
     sort!(df, :SETTLEMENTDATE)
     return @chain df begin
         groupby([:SETTLEMENTDATE, :REGIONID])
@@ -500,7 +500,7 @@ function set_market_bids!(sys, db, date_range; kwargs...)
             )
             psd = gen_bids.piecewise_step_data
             data = Dict(
-                start_date => psd
+                start_date => psd,
             )
             time_series_data = Deterministic(;
                 name = "variable_cost",
@@ -545,20 +545,20 @@ function read_energy_bids(db, date_range; kwargs...)
         @arrange(SETTLEMENTDATE, INTERVAL_DATETIME)
         @select(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, MAXAVAIL, starts_with("BANDAVAIL"))
         @collect
-        subset(
-            :INTERVAL_DATETIME => ByRow(x -> ($start_datetime <= x < $end_datetime))
-        )
-
     end
 
     if :resolution in keys(kwargs)
         resolution = get(kwargs, :resolution, Minute(5))
-        energy_bids[!, :INTERVAL_DATETIME] = floor.(energy_bids[!, :INTERVAL_DATETIME], resolution)
-        return @chain energy_bids begin
+        energy_bids[!, :INTERVAL_DATETIME] = ceil.(energy_bids[!, :INTERVAL_DATETIME], resolution)
+        energy_bids = @chain energy_bids begin
             groupby([:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION])
             combine(_, valuecols(_) .=> maximum ∘ skipmissing; renamecols = false)
         end
     end
+    subset!(
+        energy_bids,
+        :INTERVAL_DATETIME => ByRow(x -> (start_datetime <= x < end_datetime))
+    )
     return energy_bids
 end
 
@@ -599,9 +599,8 @@ function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date;
     if !isnothing(resolution)
         energy_bids = @chain energy_bids begin
             transform(
-
-                :INTERVAL_DATETIME => ByRow(x -> floor.(x, resolution)),
-                Cols(r"^BANDAVAIL") .=> (x -> x * Minute(5) / resolution)
+                :INTERVAL_DATETIME => ByRow(x -> ceil.(x, resolution)),
+                Cols(r"^BANDAVAIL") .=> ByRow(x -> x * Minute(5) / resolution)
                 ;
                 renamecols = false
             )
@@ -618,6 +617,7 @@ function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date;
 
     all_bids = innerjoin(pricebids, energy_bids, on = [:SETTLEMENTDATE, :DUID, :DIRECTION])
     prep_for_psy = @chain all_bids begin
+        subset!(:INTERVAL_DATETIME => ByRow(x -> start_date <= x < end_date))
         transform(
             AsTable(r"^PRICEBAND") => ByRow(collect) => :PRICEBANDARRAY,
             AsTable(r"^BANDAVAIL") => ByRow(collect) => :BANDAVAILARRAY,

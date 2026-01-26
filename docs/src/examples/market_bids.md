@@ -75,13 +75,13 @@ transform_single_time_series!(
 @show sys
 ````
 
-# Dispatch
+# Market Clearing
 
 `PowerSimulation.jl` provides different utilities to simulate an electricity system.
 
-The following section demonstrates the definition of an economic dispatch problem, where
+The following section demonstrates the definition of a market clearing problem, where
 all units in the NEM need to to be dispatched at the lowest cost to meet the aggregate
-demand at each region.
+demand at each region. In this example, we ignore network constraints to simplify the problem, and adopt a "Copper Plate" formulaiton.
 
 ````@example market_bids
 begin

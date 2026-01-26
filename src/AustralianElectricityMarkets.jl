@@ -7,7 +7,7 @@ using Dates
 import TimeSeries: TimeArray, colnames
 
 # exports
-export PyHiveConfiguration, fetch_table_data, list_available_tables
+export HiveConfiguration, PyHiveConfiguration, fetch_table_data, list_available_tables
 export NetworkConfiguration, table_requirements
 export aem_connect
 export nem_system
