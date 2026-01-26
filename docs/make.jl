@@ -94,7 +94,6 @@ makedocs(;
         "Roadmap" => "roadmap.md",
         "Reference" => "95-reference.md",
     ],
-    warnonly = true,
     checkdocs = :none,
     # clean=false,
 )
