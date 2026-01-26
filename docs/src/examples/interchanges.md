@@ -1,7 +1,7 @@
 ````@example interchanges
 begin
     using AustralianElectricityMarkets
-    import AustralianElectricityMarkets.RegionModel
+    import AustralianElectricityMarkets.RegionModel as RM
     using PowerSystems
     using PowerSimulations
     using HydroPowerSimulations
@@ -14,7 +14,6 @@ begin
     using HiGHS
 end
 
-RM = AustralianElectricityMarkets.RegionModel
 ````
 
 # Setup the system
@@ -29,7 +28,7 @@ Initialise a connection to manage the market data via duckdb
     ```julia
     tables = table_requirements(RegionalNetworkConfiguration())
     map(tables) do table
-        fetch_table_data(table, date_range)
+        fetch_table_data(table, Date(2025, 1, 1):Date(2025,1,31))
     end;
     ```
 
@@ -37,7 +36,6 @@ Initialise a connection to manage the market data via duckdb
 
 ````@example interchanges
 db = aem_connect(duckdb());
-nothing #hide
 ````
 
 Instantiate the system
@@ -54,11 +52,6 @@ horizon = Hour(24)
 start_date = DateTime(2025, 1, 2, 0, 0)
 date_range = start_date:interval:(start_date + horizon)
 @show date_range
-
-map([:BIDDAYOFFER_D, :BIDPEROFFER_D]) do table
-    fetch_table_data(table, date_range)
-end;
-nothing #hide
 ````
 
 Set deterministic timseries
@@ -110,7 +103,7 @@ The Economic Dispatch problem will be solved with open source solver HiGHS, and 
 for the purposes of this example.
 
 ````@example interchanges
-solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.2)
+solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.05)
 
 
 problem = DecisionModel(template, sys; optimizer = solver, horizon = horizon)
@@ -251,5 +244,5 @@ begin
 end
 ````
 
-We see that a few lines are often saturated: V-S-MNSP1 connecting Victoria and South Australoa, or T-V-MSP1 connecting Victoria and Tasmania. The interfaces between New South Wales and Queensland, and New South Wales and Victoria are operated within their bounds and the power flows in both directions depending of the time of the day and resources available.
+We see that a few lines are often saturated: V-S-MNSP1 connecting Victoria and South Australia, or T-V-MSP1 connecting Victoria and Tasmania. The interfaces between New South Wales and Queensland, and New South Wales and Victoria are operated within their bounds and the power flows in both directions depending of the time of the day and resources available.
 
