@@ -98,8 +98,8 @@ db = aem_connect(duckdb())
 demand_df = read_demand(db; resolution=Dates.Hour(1))
 println(demand_df)
 ```
-   Row │ SETTLEMENTDATE       REGIONID  TOTALDEMAND  DISPATCHABLEGENERATION  DISPATCHABLELOAD  NETINTERCHANGE 
-	   │ Dates.DateTime       String7   Float64      Float64                 Float64           Float64        
+   Row │ SETTLEMENTDATE       REGIONID  TOTALDEMAND  DISPATCHABLEGENERATION  DISPATCHABLELOAD  NETINTERCHANGE
+	   │ Dates.DateTime       String7   Float64      Float64                 Float64           Float64
 ───────┼──────────────────────────────────────────────────────────────────────────────────────────────────────
 	 1 │ 2024-01-01T00:05:00  NSW1          6574.92                 6721.88               0.0          146.96
 	 2 │ 2024-01-01T00:05:00  QLD1          6228.31                 5713.21               0.0         -515.1

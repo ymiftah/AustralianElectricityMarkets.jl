@@ -14,7 +14,6 @@ The following points are the planned next steps in the development of this packa
 - [ ] Extend PowerSimulations with constraints specific to the NEM (e.g. FCAS constraints, interconnector constraints).
 - [ ] Separate the AustrlianElectricityMarketData module in its own package.
 
-
 ## Mid/Long-term
 
 - [ ] Extend the parsing of ISP inputs.
