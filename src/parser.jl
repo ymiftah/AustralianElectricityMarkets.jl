@@ -500,7 +500,7 @@ function set_market_bids!(sys, db, date_range; kwargs...)
             )
             psd = gen_bids.piecewise_step_data
             data = Dict(
-                start_date => psd
+                start_date => psd,
             )
             time_series_data = Deterministic(;
                 name = "variable_cost",
@@ -600,8 +600,8 @@ function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date;
         energy_bids = @chain energy_bids begin
             transform(
 
-                :INTERVAL_DATETIME => ByRow(x -> floor.(x, resolution)),
-                Cols(r"^BANDAVAIL") .=> (x -> x * Minute(5) / resolution)
+                :INTERVAL_DATETIME => ByRow(x -> ceil.(x, resolution)),
+                Cols(r"^BANDAVAIL") .=> ByRow(x -> x * Minute(5) / resolution)
                 ;
                 renamecols = false
             )
@@ -618,6 +618,7 @@ function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date;
 
     all_bids = innerjoin(pricebids, energy_bids, on = [:SETTLEMENTDATE, :DUID, :DIRECTION])
     prep_for_psy = @chain all_bids begin
+        subset!(:INTERVAL_DATETIME => ByRow(x -> start_date <= x < end_date))
         transform(
             AsTable(r"^PRICEBAND") => ByRow(collect) => :PRICEBANDARRAY,
             AsTable(r"^BANDAVAIL") => ByRow(collect) => :BANDAVAILARRAY,

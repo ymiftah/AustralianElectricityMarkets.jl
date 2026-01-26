@@ -165,7 +165,7 @@ function get_branch_dataframe(db)
             :INTERCONNECTORID => :name,
             :REGIONFROM => ByRow(x -> x * LOAD_SUFFIX) => :from,
             :REGIONTO => ByRow(x -> x * LOAD_SUFFIX) => :to,
-            :MAXMWOUT => :rate
+            :MAXMWOUT => (x -> x / BASE_POWER) => :rate
         )
         leftjoin!(load_buses; on = :from => :name)
         rename!(:bus_id => :bus_from)
