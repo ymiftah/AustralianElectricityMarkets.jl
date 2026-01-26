@@ -51,7 +51,6 @@ To display the data requirements for specific network configurations:
 table_requirements(RegionalNetworkConfiguration())
 ```
 
-
 ## Reading the Data
 
 Once the data is cached, you can load itfor analysis. The package provides high-level functions to parse this raw data into structured DataFrames via TidierDB.

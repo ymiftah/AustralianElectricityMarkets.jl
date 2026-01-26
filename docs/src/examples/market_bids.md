@@ -19,18 +19,17 @@ end
 Initialise a connection to manage the market data via duckdb
 
 !!! note "Get the data first!"
-    You will first need to download the data from the monthly archive, saving them locally
-    in parquet files.
+You will first need to download the data from the monthly archive, saving them locally
+in parquet files.
 
+```julia
+tables = table_requirements(RegionalNetworkConfiguration())
+map(tables) do table
+    fetch_table_data(table, date_range)
+end;
+```
 
-    ```julia
-    tables = table_requirements(RegionalNetworkConfiguration())
-    map(tables) do table
-        fetch_table_data(table, date_range)
-    end;
-    ```
-
-    Only the data requirements for a RegionalNetworkconfiguration are downloaded.
+Only the data requirements for a RegionalNetworkconfiguration are downloaded.
 
 ````@example market_bids
 db = aem_connect(duckdb());
@@ -225,6 +224,6 @@ end
 ````
 
 This was not observed in the Economic dispatch example, and many factors can explain this behaviour. For instance:
+
 - In the Australian Electricity market, the bids incorporate the on/off constraints: Coal power plant bid at lower costs than solar plants because it is more expensive for them to turn off, and they know they should be able to recoup the losses at time of low solar generation, where there is less competition.
 - Some generators may have hedged their risk with future contracts.
-

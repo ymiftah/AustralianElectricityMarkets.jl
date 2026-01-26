@@ -1,6 +1,7 @@
 ```@meta
 CurrentModule = AustralianElectricityMarkets
 ```
+
 # AustralianElectricityMarkets.jl
 
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://ymiftah.github.io/AustralianElectricityMarkets.jl/stable)
@@ -55,12 +56,12 @@ println(demand_df)
 
 ## Features
 
-*   **Data Fetching:** Fetch data from AEMO's NEMWEB data source for specified time ranges.
-*   **Data Processing:** Read and process various NEMDB tables, including:
-    *   Interconnector data
-    *   Regional demand
-    *   Generation unit details
-*   **PowerSystems.jl Integration:** Parse AEMO data into `PowerSystems.jl` models for simulation.
+* **Data Fetching:** Fetch data from AEMO's NEMWEB data source for specified time ranges.
+* **Data Processing:** Read and process various NEMDB tables, including:
+  * Interconnector data
+  * Regional demand
+  * Generation unit details
+* **PowerSystems.jl Integration:** Parse AEMO data into `PowerSystems.jl` models for simulation.
 
 ## Data Sources
 
@@ -69,7 +70,6 @@ This package primarily interfaces with data from the [Australian Energy Market O
 ## License
 
 This project is licensed under the BSD-3 License.
-
 
 ## Index
 

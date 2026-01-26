@@ -19,18 +19,17 @@ end
 Initialise a connection to manage the market data via duckdb
 
 !!! note "Get the data first!"
-    You will first need to download the data from the monthly archive, saving them locally
-    in parquet files.
+You will first need to download the data from the monthly archive, saving them locally
+in parquet files.
 
+```julia
+tables = table_requirements(RegionalNetworkConfiguration())
+map(tables) do table
+    fetch_table_data(table, date_range)
+end;
+```
 
-    ```julia
-    tables = table_requirements(RegionalNetworkConfiguration())
-    map(tables) do table
-        fetch_table_data(table, date_range)
-    end;
-    ```
-
-    Only the data requirements for a RegionalNetworkconfiguration are downloaded.
+Only the data requirements for a RegionalNetworkconfiguration are downloaded.
 
 ````@example economic_dispatch
 db = aem_connect(duckdb());
@@ -211,4 +210,3 @@ begin
     data(sample) * mapping(:DateTime, :value, color = :name) * visual(Lines) |> draw
 end
 ````
-

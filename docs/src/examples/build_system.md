@@ -4,8 +4,7 @@ The [National Electricity Market (NEM)](https://www.aemo.com.au/energy-systems/e
 operates on one of the world’s longest interconnected power systems. It covers around
 40,000 km of transmission lines and cables, supplying a population exceeding 23 million.
 
-
-# Simple usage
+## Simple usage
 
 This package handles the download of data from the [NEMWEB Archive](https://www.aemo.com.au/energy-systems/electricity/national-electricity-market-nem/data-nem/market-data-nemweb)
 and the parsing of the data into a System from `PowerSystems.jl`.
@@ -114,7 +113,7 @@ begin
 end
 ````
 
-# Integration with PowerSystems.jl
+## Integration with PowerSystems.jl
 
 The main purpose of this package is to provide the data required for instantiating systems with
 `PowerSystems.jl` and leverage the ecosystem of power systems modelling developed by NREL-Sienna.
@@ -154,4 +153,3 @@ with_units_base(sys, "NATURAL_UNITS") do
     get_rating(gen)
 end
 ````
-

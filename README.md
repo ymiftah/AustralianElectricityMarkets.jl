@@ -55,12 +55,12 @@ println(demand_df)
 
 ## Features
 
-*   **Data Fetching:** Fetch data from AEMO's NEMWEB data source for specified time ranges.
-*   **Data Processing:** Read and process various NEMDB tables, including:
-    *   Interconnector data
-    *   Regional demand
-    *   Generation unit details
-*   **PowerSystems.jl Integration:** Parse AEMO data into `PowerSystems.jl` models for simulation.
+* **Data Fetching:** Fetch data from AEMO's NEMWEB data source for specified time ranges.
+* **Data Processing:** Read and process various NEMDB tables, including:
+  * Interconnector data
+  * Regional demand
+  * Generation unit details
+* **PowerSystems.jl Integration:** Parse AEMO data into `PowerSystems.jl` models for simulation.
 
 ## Data Sources
 
