@@ -20,8 +20,8 @@ makedocs(;
         repo = "https://github.com/ymiftah/AustralianElectricityMarkets.jl",
         devbranch = "main",
         devurl = "dev",
-        # md_output_path = ".",
-        # build_vitepress = false
+        # md_output_path = ".",  # for local test
+        # build_vitepress = false  # for local test
     ),
     pages = [
         "Home" => "index.md",
@@ -36,7 +36,7 @@ makedocs(;
         "Reference" => "95-reference.md",
     ],
     checkdocs = :none,
-    # clean = false,
+    # clean = false, # for local test
 )
 
 DocumenterVitepress.deploydocs(;

@@ -70,12 +70,3 @@ This package primarily interfaces with data from the [Australian Energy Market O
 ## License
 
 This project is licensed under the BSD-3 License.
-
-## Index
-
-```@index
-```
-
-```@autodocs
-Modules = [AustralianElectricityMarkets, AustralianElectricityMarkets.RegionModel]
-```
