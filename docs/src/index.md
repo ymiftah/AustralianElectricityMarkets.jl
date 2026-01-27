@@ -37,7 +37,7 @@ db = aem_connect(duckdb());
 
 # Download the data from the monthly archive, saving them locally
 # in parquet files
-# Only the data requirements for a RegionalNetworkconfiguration are downloaded.
+# Only the data requirements for a RegionalNetworkConfiguration are downloaded.
 date_range = Date(2025, 1, 1):Date(2025, 1, 2)
 fetch_table_data(date_range, RegionalNetworkConfiguration())
 

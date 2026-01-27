@@ -31,7 +31,7 @@ map(tables) do table
 end;
 ```
 
-Only the data requirements for a RegionalNetworkconfiguration are downloaded.
+Only the data requirements for a RegionalNetworkConfiguration are downloaded.
 
 ````@example interchanges
 db = aem_connect(duckdb());
@@ -53,7 +53,7 @@ date_range = start_date:interval:(start_date + horizon)
 @show date_range
 ````
 
-Set deterministic timseries
+Set deterministic time series
 
 ````@example interchanges
 set_demand!(sys, db, date_range; resolution = interval)
@@ -63,7 +63,7 @@ set_hydro_limits!(sys, db, date_range; resolution = interval)
 set_market_bids!(sys, db, date_range; resolution = interval)
 ````
 
-Derive forecasts from the deterministic timseries
+Derive forecasts from the deterministic time series
 
 ````@example interchanges
 transform_single_time_series!(
@@ -77,11 +77,11 @@ transform_single_time_series!(
 
 # Market Clearing
 
-`PowerSimulation.jl` provides different utilities to simulate an electricity system.
+`PowerSimulations.jl` provides different utilities to simulate an electricity system.
 
 The following section demonstrates the definition of a market clearing problem, where
 all units in the NEM need to to be dispatched at the lowest cost to meet the aggregate
-demand at each region. This time, we also introduce interconnector constraints, which limits the flow of energy between regions due to physical limitations of power lines.
+demand at each region. This time, we also introduce interconnector constraints, which limit the flow of energy between regions due to physical limitations of power lines.
 
 ````@example interchanges
 
@@ -121,7 +121,7 @@ Observe the results
 res = OptimizationProblemResults(problem)
 ````
 
-Lets observe how the units are dispatched
+Let's observe how the units are dispatched
 
 ````@example interchanges
 begin
@@ -227,10 +227,10 @@ end
 
 This was not observed in the Economic dispatch example, and many factors can explain this behaviour. For instance:
 
-- In the Australian Electricity market, the bids incorporate the on/off constraints: Coal power plant bid at lower costs than solar plants because it is more expensive for them to turn off, and they know they should be able to recoup the losses at time of low solar generation, where there is less competition.
+- In the Australian Electricity market, the bids incorporate the on/off constraints: Coal power plants bid at lower costs than solar plants because it is more expensive for them to turn off, and they know they should be able to recoup the losses at times of low solar generation, where there is less competition.
 - Some generators may have hedged their risk with future contracts.
 
-Finally, let's have a look at the interchanges, which are critical components of the NEM: They allow units generating in one region to export they production to other regions.
+Finally, let's have a look at the interchanges, which are critical components of the NEM: They allow units generating in one region to export their production to other regions.
 
 ````@example interchanges
 begin
@@ -240,4 +240,4 @@ begin
 end
 ````
 
-We see that a few lines are often saturated: V-S-MNSP1 connecting Victoria and South Australia, or T-V-MSP1 connecting Victoria and Tasmania. The interfaces between New South Wales and Queensland, and New South Wales and Victoria are operated within their bounds and the power flows in both directions depending of the time of the day and resources available.
+We see that a few lines are often saturated: V-S-MNSP1 connecting Victoria and South Australia, or T-V-MSP1 connecting Victoria and Tasmania. The interfaces between New South Wales and Queensland, and New South Wales and Victoria are operated within their bounds and the power flows in both directions depending on the time of the day and resources available.

@@ -33,7 +33,7 @@ date_range = Date(2025, 1, 1):Date(2025, 1, 2)
 
 # Download the data from the monthly archive, saving them locally
 # in parquet files.
-# Only the data requirements for a RegionalNetworkconfiguration are downloaded.
+# Only the data requirements for a RegionalNetworkConfiguration are downloaded.
 tables = table_requirements(RegionalNetworkConfiguration())
 map(tables) do table
     fetch_table_data(table, date_range)
@@ -134,7 +134,7 @@ thermal = @chain get_components(ThermalGen, sys) |> DataFrame begin
 end
 ````
 
-Get informations for a specific unit
+Get information for a specific unit
 
 ````@example build_system
 gen = get_components_by_name(ThermalGen, sys, "JLA02") |> first

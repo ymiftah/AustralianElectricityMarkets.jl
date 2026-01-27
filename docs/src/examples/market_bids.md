@@ -29,7 +29,7 @@ map(tables) do table
 end;
 ```
 
-Only the data requirements for a RegionalNetworkconfiguration are downloaded.
+Only the data requirements for a RegionalNetworkConfiguration are downloaded.
 
 ````@example market_bids
 db = aem_connect(duckdb());
@@ -52,7 +52,7 @@ date_range = start_date:interval:(start_date + horizon)
 @show date_range
 ````
 
-Set deterministic timseries
+Set deterministic time series
 
 ````@example market_bids
 set_demand!(sys, db, date_range; resolution = interval)
@@ -62,7 +62,7 @@ set_hydro_limits!(sys, db, date_range; resolution = interval)
 set_market_bids!(sys, db, date_range)
 ````
 
-Derive forecasts from the deterministic timseries
+Derive forecasts from the deterministic time series
 
 ````@example market_bids
 transform_single_time_series!(
@@ -76,11 +76,11 @@ transform_single_time_series!(
 
 # Market Clearing
 
-`PowerSimulation.jl` provides different utilities to simulate an electricity system.
+`PowerSimulations.jl` provides different utilities to simulate an electricity system.
 
 The following section demonstrates the definition of a market clearing problem, where
 all units in the NEM need to to be dispatched at the lowest cost to meet the aggregate
-demand at each region. In this example, we ignore network constraints to simplify the problem, and adopt a "Copper Plate" formulaiton.
+demand at each region. In this example, we ignore network constraints to simplify the problem, and adopt a "Copper Plate" formulation.
 
 ````@example market_bids
 begin
@@ -118,7 +118,7 @@ Observe the results
 res = OptimizationProblemResults(problem)
 ````
 
-Lets observe how the units are dispatched
+Let's observe how the units are dispatched
 
 ````@example market_bids
 begin
@@ -225,5 +225,5 @@ end
 
 This was not observed in the Economic dispatch example, and many factors can explain this behaviour. For instance:
 
-- In the Australian Electricity market, the bids incorporate the on/off constraints: Coal power plant bid at lower costs than solar plants because it is more expensive for them to turn off, and they know they should be able to recoup the losses at time of low solar generation, where there is less competition.
+- In the Australian Electricity market, the bids incorporate the on/off constraints: Coal power plants bid at lower costs than solar plants because it is more expensive for them to turn off, and they know they should be able to recoup the losses at times of low solar generation, where there is less competition.
 - Some generators may have hedged their risk with future contracts.

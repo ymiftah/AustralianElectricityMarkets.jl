@@ -4,7 +4,7 @@
 
 ## How it Works
 
-The data is fetched from the NEMWEB archive and stored locally as hive-partitioned Parquet files. This provides a good trade-off between data compression and query effieciency using tools like DuckDB (via `TidierDB.jl`).
+The data is fetched from the NEMWEB archive and stored locally as hive-partitioned Parquet files. This provides a good trade-off between data compression and query efficiency using tools like DuckDB (via `TidierDB.jl`).
 
 ## Configuration
 
@@ -53,7 +53,7 @@ table_requirements(RegionalNetworkConfiguration())
 
 ## Reading the Data
 
-Once the data is cached, you can load itfor analysis. The package provides high-level functions to parse this raw data into structured DataFrames via TidierDB.
+Once the data is cached, you can load it for analysis. The package provides high-level functions to parse this raw data into structured DataFrames via TidierDB.
 
 ```julia
 using TidierDB
