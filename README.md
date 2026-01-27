@@ -2,9 +2,9 @@
 
 [![Stable Documentation](https://img.shields.io/badge/docs-stable-blue.svg)](https://ymiftah.github.io/AustralianElectricityMarkets.jl/stable)
 [![Development documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://ymiftah.github.io/AustralianElectricityMarkets.jl/dev)
-[![Test workflow status](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/CI.yml?query=branch%3Amain)
+[![Test workflow status](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/Test.yml/badge.svg?branch=main)](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/Test.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/ymiftah/AustralianElectricityMarkets.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/ymiftah/AustralianElectricityMarkets.jl)
-[![Docs workflow Status](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/Docs.yml/badge.svg?branch=main)](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/Docs.yml?query=branch%3Amain)
+[![Docs workflow Status](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/Documentation.yml/badge.svg?branch=main)](https://github.com/ymiftah/AustralianElectricityMarkets.jl/actions/workflows/Documentation.yml?query=branch%3Amain)
 [![BestieTemplate](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/JuliaBesties/BestieTemplate.jl/main/docs/src/assets/badge.json)](https://github.com/JuliaBesties/BestieTemplate.jl)
 [![code style: runic](https://img.shields.io/badge/code_style-%E1%9A%B1%E1%9A%A2%E1%9A%BE%E1%9B%81%E1%9A%B2-black)](https://github.com/fredrikekre/Runic.jl)
 
