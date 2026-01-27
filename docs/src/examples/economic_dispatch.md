@@ -29,7 +29,7 @@ map(tables) do table
 end;
 ```
 
-Only the data requirements for a RegionalNetworkconfiguration are downloaded.
+Only the data requirements for a RegionalNetworkConfiguration are downloaded.
 
 ````@example economic_dispatch
 db = aem_connect(duckdb());
@@ -50,7 +50,7 @@ interval = Minute(30)
 horizon = Hour(24)
 ````
 
-Set deterministic timseries
+Set deterministic time series
 
 ````@example economic_dispatch
 set_demand!(sys, db, date_range; resolution = interval)
@@ -59,7 +59,7 @@ set_renewable_wind!(sys, db, date_range; resolution = interval)
 set_hydro_limits!(sys, db, date_range; resolution = interval)
 ````
 
-Derive forecasts from the deterministic timseries
+Derive forecasts from the deterministic time series
 
 ````@example economic_dispatch
 transform_single_time_series!(
@@ -73,7 +73,7 @@ transform_single_time_series!(
 
 # Economic dispatch
 
-`PowerSimulation.jl` provides different utilities to simulate an electricity system.
+`PowerSimulations.jl` provides different utilities to simulate an electricity system.
 
 The following section demonstrates the definition of an economic dispatch problem, where
 all units in the NEM need to to be dispatched at the lowest cost to meet the aggregate
@@ -114,7 +114,7 @@ Observe the results
 res = OptimizationProblemResults(problem)
 ````
 
-Lets observe how the units are dispatched
+Let's observe how the units are dispatched
 
 ````@example economic_dispatch
 begin
