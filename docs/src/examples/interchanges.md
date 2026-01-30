@@ -16,7 +16,17 @@ end
 
 ````
 
-# Setup the system
+# The impact of network constraints
+
+We previously ignored the network constraints by adopting  a "Copper Plate" model.
+In this zonal model, we will treat each region as a single node (the "Regional Reference Node")
+and the interconnectors as links between them. This will limit the energy that can be transfered between regions, and lead to different prices across regions once the market is cleared
+
+While this captures inter-regional
+congestion, it does not model intra-regional constraints (congestion within a state),
+which AEMO manages through a process called "Constraint Equations."
+
+## Setup the system
 
 Initialise a connection to manage the market data via duckdb
 
@@ -75,13 +85,7 @@ transform_single_time_series!(
 @show sys
 ````
 
-# Market Clearing
-
-`PowerSimulations.jl` provides different utilities to simulate an electricity system.
-
-The following section demonstrates the definition of a market clearing problem, where
-all units in the NEM need to to be dispatched at the lowest cost to meet the aggregate
-demand at each region. This time, we also introduce interconnector constraints, which limit the flow of energy between regions due to physical limitations of power lines.
+## Set up the problem
 
 ````@example interchanges
 
@@ -98,11 +102,11 @@ begin
 end
 ````
 
-The Economic Dispatch problem will be solved with open source solver HiGHS, and a relatively large mip gap
+The dispatch problem will be solved with open source solver HiGHS, and a relatively large mip gap
 for the purposes of this example.
 
 ````@example interchanges
-solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.05)
+solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.1)
 
 
 problem = DecisionModel(template, sys; optimizer = solver, horizon = horizon)
@@ -225,12 +229,10 @@ begin
 end
 ````
 
-This was not observed in the Economic dispatch example, and many factors can explain this behaviour. For instance:
-
-- In the Australian Electricity market, the bids incorporate the on/off constraints: Coal power plants bid at lower costs than solar plants because it is more expensive for them to turn off, and they know they should be able to recoup the losses at times of low solar generation, where there is less competition.
-- Some generators may have hedged their risk with future contracts.
-
-Finally, let's have a look at the interchanges, which are critical components of the NEM: They allow units generating in one region to export their production to other regions.
+In the NEM, interconnectors are vital for sharing resources between states. However, when
+an interconnector reaches its limit (becomes saturated), the regions on either side can
+have different clearing prices. This **Price Separation** is a key feature of the NEM's
+regional structure. Let's have a look at the interchanges, and observe how close they operate to their limits.
 
 ````@example interchanges
 begin

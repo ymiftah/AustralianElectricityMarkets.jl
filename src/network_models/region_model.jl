@@ -632,7 +632,7 @@ function _add_batteries!(sys, batteries_df)
                 bus = get_bus(sys, row[:bus_id]),
                 prime_mover_type = row[:prime_mover_type],
                 storage_technology_type = row[:storage_technology_type],
-                storage_capacity = row[:storage_capacity],
+                storage_capacity = row[:storage_capacity] / row[:base_power],
                 storage_level_limits = row[:storage_level_limits],
                 initial_storage_capacity_level = row[:initial_storage_capacity_level],
                 rating = row[:rating],
