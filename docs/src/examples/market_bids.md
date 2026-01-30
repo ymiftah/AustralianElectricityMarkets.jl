@@ -14,7 +14,17 @@ begin
 end
 ````
 
-# Setup the system
+# Market Clearing
+
+In the NEM, generators submit bids consisting of up to **10 price-quantity bands** for
+each 5-minute dispatch interval. Prices can range from the market floor (currently -$1,000/MWh)
+to the market price cap (currently $17,500/MWh).
+
+The following section demonstrates the definition of a market clearing problem, where
+all units in the NEM need to to be dispatched according to their energy bids to meet the aggregate
+demand at each region. In this example, we still ignore network constraints to simplify the problem, and adopt a "Copper Plate" formulation.
+
+## Setup the system
 
 Initialise a connection to manage the market data via duckdb
 
@@ -74,13 +84,7 @@ transform_single_time_series!(
 @show sys
 ````
 
-# Market Clearing
-
-`PowerSimulations.jl` provides different utilities to simulate an electricity system.
-
-The following section demonstrates the definition of a market clearing problem, where
-all units in the NEM need to to be dispatched at the lowest cost to meet the aggregate
-demand at each region. In this example, we ignore network constraints to simplify the problem, and adopt a "Copper Plate" formulation.
+## Define the problem
 
 ````@example market_bids
 begin
@@ -225,5 +229,6 @@ end
 
 This was not observed in the Economic dispatch example, and many factors can explain this behaviour. For instance:
 
-- In the Australian Electricity market, the bids incorporate the on/off constraints: Coal power plants bid at lower costs than solar plants because it is more expensive for them to turn off, and they know they should be able to recoup the losses at times of low solar generation, where there is less competition.
-- Some generators may have hedged their risk with future contracts.
+- **Negative Bidding**: In the NEM, many generators (especially coal) have high "cycling costs": it is expensive for them to turn off and restart. To avoid this, they often bid at very low or even negative prices, ensuring they are dispatched even when demand is low or renewables are abundant.
+- **Contractual Obligations**: Some generators may have hedged their risk with future contracts, requiring them to generate regardless of the spot price.
+- **Strategic Behavior**: The 10-band bidding system allows for complex strategies that simple cost-minimization models do not capture.

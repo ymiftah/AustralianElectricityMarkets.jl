@@ -4,6 +4,11 @@ The [National Electricity Market (NEM)](https://www.aemo.com.au/energy-systems/e
 operates on one of the world’s longest interconnected power systems. It covers around
 40,000 km of transmission lines and cables, supplying a population exceeding 23 million.
 
+The NEM is a wholesale market where electricity is traded across five interconnected regions:
+Queensland (QLD), New South Wales (NSW), Victoria (VIC), South Australia (SA), and Tasmania (TAS).
+Each region acts as a separate pricing zone, and prices can diverge when the transmission lines
+(interconnectors) between them become congested.
+
 ## Simple usage
 
 This package handles the download of data from the [NEMWEB Archive](https://www.aemo.com.au/energy-systems/electricity/national-electricity-market-nem/data-nem/market-data-nemweb)
@@ -76,7 +81,10 @@ draw(
 )
 ````
 
-Read the demand for each state
+Read the demand for each state. In the NEM, this is referred to as **Operational Demand**,
+which is the demand met by local scheduled and semi-scheduled generation, plus net imports
+from other regions. It excludes "behind-the-meter" rooftop PV, which instead appears as a
+reduction in operational demand.
 
 ````@example build_system
 demand = read_demand(db)
@@ -96,7 +104,7 @@ end
 ````
 
 Australia has a fairly high penetration of PV, which at times exceed a state's total
-demand for electricity (in SA in particular)
+demand for electricity (in SA in particular).
 
 ````@example build_system
 begin

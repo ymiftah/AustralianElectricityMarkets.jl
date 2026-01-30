@@ -14,7 +14,15 @@ begin
 end
 ````
 
-# Setup the system
+# Economic dispatch
+
+`PowerSimulations.jl` provides different utilities to simulate an electricity system.
+
+The following section demonstrates the definition of an economic dispatch problem, where
+all units in the NEM need to to be dispatched at the lowest cost to meet the aggregate
+demand at each region.
+
+## Setup the system
 
 Initialise a connection to manage the market data via duckdb
 
@@ -71,13 +79,7 @@ transform_single_time_series!(
 @show sys
 ````
 
-# Economic dispatch
-
-`PowerSimulations.jl` provides different utilities to simulate an electricity system.
-
-The following section demonstrates the definition of an economic dispatch problem, where
-all units in the NEM need to to be dispatched at the lowest cost to meet the aggregate
-demand at each region.
+## Setup the problem
 
 ````@example economic_dispatch
 begin
@@ -91,6 +93,13 @@ begin
     template
 end
 ````
+
+!!! warning "Copper Plate Assumption"
+    A **Copper Plate** formulation assumes that power can flow freely across the entire
+    network without any losses or transmission constraints. In the real NEM, the vast
+    geographical distances (over 4,000 km from North QLD to TAS) and limited interconnector
+    capacities mean that this is a significant simplification. It is useful for a first
+    approximation of the lowest possible system cost.
 
 The Economic Dispatch problem will be solved with open source solver HiGHS, and a relatively large mip gap
 for the purposes of this example.

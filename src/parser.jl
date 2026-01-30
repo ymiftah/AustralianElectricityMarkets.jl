@@ -481,10 +481,11 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     pricebids_table = read_hive(db, :BIDDAYOFFER_D)
     bids = _massage_bids(energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
 
-    return foreach(get_components(Generator, sys)) do gen
+    # Sets all generator subtype first
+    foreach(get_components(Generator, sys)) do gen
         gen_id = get_name(gen)
         start_date = first(date_range)
-        gen_bids = subset(bids, :DUID => ByRow(==(gen_id)))
+        gen_bids = subset(bids, :DUID => ByRow(==(gen_id)), :DIRECTION => ByRow(==("GEN")))
         if DataFrames.isempty(gen_bids)
             @warn "No bid data for generator $(gen_id), setting to unavailable."
             set_available!(gen, false)
@@ -518,6 +519,67 @@ function set_market_bids!(sys, db, date_range; kwargs...)
             set_incremental_initial_input!(sys, gen, time_series_incremental_initial_input)
         end
     end
+
+    # Then sets the batteries
+    return foreach(get_components(EnergyReservoirStorage, sys)) do gen
+        gen_id = get_name(gen)
+        start_date = first(date_range)
+        gen_bids = subset(bids, :DUID => ByRow(==(gen_id)), :DIRECTION => ByRow(==("GEN")))
+        load_bids = subset(bids, :DUID => ByRow(==(gen_id)), :DIRECTION => ByRow(==("LOAD")))
+
+        if DataFrames.isempty(gen_bids) || DataFrames.isempty(load_bids)
+            @warn "No bid data for generator $(gen_id), setting to unavailable."
+            set_available!(gen, false)
+        else
+            set_available!(gen, true)
+            set_operation_cost!(
+                gen,
+                MarketBidCost(;
+                    no_load_cost = 0.0,
+                    start_up = (hot = 0.0, warm = 0.0, cold = 0.0),
+                    shut_down = 0.0,
+                )
+            )
+            psd = gen_bids.piecewise_step_data
+            data = Dict(
+                start_date => psd,
+            )
+            time_series_data = Deterministic(;
+                name = "variable_cost",
+                data = data,
+                resolution = get(kwargs, :resolution, Minute(5)),
+            )
+            set_incremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
+            time_series_incremental_initial_input = Deterministic(;
+                name = "incremental_initial_input",
+                data = Dict(
+                    start_date => zeros(size(psd))
+                ),
+                resolution = get(kwargs, :resolution, Minute(5)),
+            )
+            set_incremental_initial_input!(sys, gen, time_series_incremental_initial_input)
+
+            # Load bids as decremental inputs
+            psd = load_bids.piecewise_step_data
+            data = Dict(
+                start_date => psd,
+            )
+            time_series_data = Deterministic(;
+                name = "decremental_variable_cost",
+                data = data,
+                resolution = get(kwargs, :resolution, Minute(5)),
+            )
+            set_decremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
+            time_series_decremental_initial_input = Deterministic(;
+                name = "decremental_initial_input",
+                data = Dict(
+                    start_date => (first ∘ get_y_coords).(psd)
+                ),
+                resolution = get(kwargs, :resolution, Minute(5)),
+            )
+            set_decremental_initial_input!(sys, gen, time_series_decremental_initial_input)
+        end
+    end
 end
 
 function read_bids(db, date_range; kwargs...)
@@ -539,7 +601,7 @@ function read_energy_bids(db, date_range; kwargs...)
         @select(SETTLEMENTDATE, BIDTYPE, INTERVAL_DATETIME, VERSIONNO, DUID, DIRECTION, MAXAVAIL, starts_with("BANDAVAIL"))
         @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed, BIDTYPE == "ENERGY")
         # Only select the version no that are the latest for each interval and duid
-        @group_by(SETTLEMENTDATE, INTERVAL_DATETIME, DUID)
+        @group_by(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)
         @mutate(max_version = maximum(VERSIONNO))
         @filter(VERSIONNO == max_version)
         @arrange(SETTLEMENTDATE, INTERVAL_DATETIME)
@@ -563,8 +625,15 @@ function read_energy_bids(db, date_range; kwargs...)
 end
 
 function _extract_power_bids(row)
-    a = row.PRICEBANDARRAY[row.BANDAVAILARRAY .> 0]
-    b = [zero(eltype(row.PRICEBANDARRAY)); row.BANDAVAILARRAY[row.BANDAVAILARRAY .> 0] |> cumsum]
+    price_band_array = copy(row.PRICEBANDARRAY)
+    bandavail_array = copy(row.BANDAVAILARRAY)
+    if row.DIRECTION == "LOAD"
+        # Reverse the order for loads, so the decremental curves are concave
+        reverse!(price_band_array)
+        reverse!(bandavail_array)
+    end
+    a = price_band_array[bandavail_array .> 0]
+    b = [zero(eltype(price_band_array)); bandavail_array[bandavail_array .> 0] |> cumsum]
     return PiecewiseStepData(b, a)
 end
 
@@ -572,23 +641,21 @@ function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date;
     sd = Date(start_date) - Day(1)
     ed = Date(end_date) + Day(1)
     energy_bids = @eval @chain $energy_bids_table begin
-        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed)
-        @filter(BIDTYPE == "ENERGY")
+        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed, BIDTYPE == "ENERGY")
         # Only select the version no that are the latest for each interval and duid
-        @group_by(SETTLEMENTDATE, INTERVAL_DATETIME, DUID)
+        @group_by(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)
         @mutate(max_version = maximum(VERSIONNO))
         @filter(VERSIONNO == max_version)
         @select(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, MAXAVAIL, starts_with("BANDAVAIL"))
         @arrange(SETTLEMENTDATE, INTERVAL_DATETIME)
         @collect
-        subset!(:INTERVAL_DATETIME => ByRow(x -> $start_date <= x < $end_date))
     end
 
     pricebids = @eval @chain $pricebids_table begin
         @filter(BIDTYPE == "ENERGY")
         @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed)
         # Only select the version no that are the latest for each interval and duid
-        @group_by(SETTLEMENTDATE, DUID)
+        @group_by(SETTLEMENTDATE, DUID, DIRECTION)
         @mutate(max_version = maximum(VERSIONNO))
         @filter(VERSIONNO == max_version)
         @select(SETTLEMENTDATE, DUID, DIRECTION, MINIMUMLOAD, DAILYENERGYCONSTRAINT, starts_with("PRICEBAND"))
