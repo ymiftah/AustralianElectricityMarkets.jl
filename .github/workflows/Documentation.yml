@@ -22,34 +22,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 jobs:
-  setup-data:
-    name: Setup Market Data
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: "1"
-      - uses: julia-actions/cache@v2
-      - name: Cache market data
-        uses: actions/cache@v4
-        with:
-          path: ~/.nemweb_cache
-          key: ${{ runner.os }}-nemweb-data-${{ hashFiles('test/fetch_data.jl') }}
-          restore-keys: |
-            ${{ runner.os }}-nemweb-data-
-      - name: Install dependencies
-        shell: julia --project=@. --color=yes {0}
-        run: |
-          using Pkg
-          Pkg.instantiate()
-      - name: Fetch data
-        shell: julia --project=@. --color=yes {0}
-        run: include(joinpath(pwd(), "test", "fetch_data.jl"))
-
   docs:
     name: Documentation
-    needs: setup-data
     runs-on: ubuntu-latest
     permissions:
       actions: write # needed to allow julia-actions/cache to proactively delete old caches that it has created
@@ -71,7 +45,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nemweb-data-
       - name: Fetch data
-        if: steps.cache-market-data.outputs.cache-hit != 'true'
         shell: julia --project=@. --color=yes {0}
         run: |
           using Pkg
