@@ -53,9 +53,10 @@ sys = nem_system(db, RegionalNetworkConfiguration())
 Set the horizon to consider for the simulation
 
 ````@example economic_dispatch
-date_range = Date(2025, 1, 2):Date(2025, 1, 3)
 interval = Minute(30)
 horizon = Hour(24)
+start_date = DateTime(2025, 1, 3, 0, 0)
+date_range = start_date:interval:(start_date + horizon)
 ````
 
 Set deterministic time series
