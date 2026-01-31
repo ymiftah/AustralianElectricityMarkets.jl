@@ -1,6 +1,6 @@
 name = "AustralianElectricityMarkets"
 uuid = "1bf50fc4-d6fd-47c1-85ec-4976c2b5cc58"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Youssef Miftah <miftahyo@outlook.fr> and contributors"]
 
 [workspace]
