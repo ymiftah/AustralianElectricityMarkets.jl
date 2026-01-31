@@ -12,6 +12,4 @@ env
 node_modules
 wip
 
-.CondaPkg
-docs/.CondaPkg
-test/.CondaPkg
+**/.CondaPkg/
