@@ -153,7 +153,8 @@ function create_mock_data(hive_root::String)
     df_bid_per_offer = DataFrame()
     for i in intervals
         t = base_datetime + Minute(5 * i)
-        tmp = DataFrame(
+        # Standard GEN bids for everyone
+        tmp_gen = DataFrame(
             SETTLEMENTDATE = fill(test_date, n),
             BIDTYPE = fill("ENERGY", n),
             INTERVAL_DATETIME = fill(t, n),
@@ -163,15 +164,27 @@ function create_mock_data(hive_root::String)
             MAXAVAIL = fill(100.0 + i, n),
             archive_month = fill("2025-01", n)
         )
+        # LOAD bids for the battery (BW01)
+        tmp_load = DataFrame(
+            SETTLEMENTDATE = [test_date],
+            BIDTYPE = ["ENERGY"],
+            INTERVAL_DATETIME = [t],
+            VERSIONNO = [1],
+            DUID = ["BW01"],
+            DIRECTION = ["LOAD"],
+            MAXAVAIL = [100.0 + i],
+            archive_month = ["2025-01"]
+        )
+        tmp = vcat(tmp_gen, tmp_load)
         for b in 1:10
-            tmp[!, "BANDAVAIL$b"] = fill(10.0, n)
+            tmp[!, "BANDAVAIL$b"] = fill(10.0, nrow(tmp))
         end
         append!(df_bid_per_offer, tmp)
     end
     save_hive(df_bid_per_offer, :BIDPEROFFER_D)
 
     # 11. BIDDAYOFFER_D (Daily)
-    bid_day_offer = DataFrame(
+    bid_day_offer_gen = DataFrame(
         BIDTYPE = fill("ENERGY", n),
         SETTLEMENTDATE = fill(test_date, n),
         DUID = duids,
@@ -181,8 +194,19 @@ function create_mock_data(hive_root::String)
         VERSIONNO = fill(1, n),
         archive_month = fill("2025-01", n)
     )
+    bid_day_offer_load = DataFrame(
+        BIDTYPE = ["ENERGY"],
+        SETTLEMENTDATE = [test_date],
+        DUID = ["BW01"],
+        DIRECTION = ["LOAD"],
+        MINIMUMLOAD = [0.0],
+        DAILYENERGYCONSTRAINT = [1000.0],
+        VERSIONNO = [1],
+        archive_month = ["2025-01"]
+    )
+    bid_day_offer = vcat(bid_day_offer_gen, bid_day_offer_load)
     for i in 1:10
-        bid_day_offer[!, "PRICEBAND$i"] = fill(50.0 + i, n)
+        bid_day_offer[!, "PRICEBAND$i"] = fill(50.0 + i, nrow(bid_day_offer))
     end
     save_hive(bid_day_offer, :BIDDAYOFFER_D)
 

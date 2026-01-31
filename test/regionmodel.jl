@@ -71,6 +71,8 @@
         # Our mock data has 1 battery (BW01/GEN1)
         @test nrow(df) == 1
         @test df.name[1] == "BW01"
+        @test df.storage_capacity[1] == 200.0
+        @test df.base_power[1] == 100.0
     end
 
     @testset "get_interfaces_dataframe" begin
@@ -108,6 +110,10 @@
         @test length(get_components(HydroDispatch, system)) == 1
         @test length(get_components(EnergyReservoirStorage, system)) == 1
         @test length(get_components(RenewableDispatch, system)) == 2
+
+        # Check battery scaling (fix in a2b1f67)
+        bat = get_component(EnergyReservoirStorage, system, "BW01")
+        @test get_storage_capacity(bat) == 2.0 # 200.0 / 100.0
 
         # Interconnectors/Interfaces
         @test length(get_components(AreaInterchange, system)) == 6
