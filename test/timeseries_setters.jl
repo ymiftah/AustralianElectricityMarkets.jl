@@ -78,6 +78,22 @@
                     # at first(date_range). ta contains the values of that forecast.
                     @test length(ta) == length(date_range) - 1
                 end
+
+                @testset "Batteries" begin
+                    for bat in get_components(EnergyReservoirStorage, sys)
+                        # GEN bids
+                        ta_gen = get_time_series_array(Deterministic, bat, "variable_cost")
+                        @test length(ta_gen) == length(date_range) - 1
+
+                        # LOAD bids (decremental)
+                        ta_load = get_time_series_array(Deterministic, bat, "decremental_variable_cost")
+                        @test length(ta_load) == length(date_range) - 1
+
+                        # Initial inputs
+                        @test !isempty(get_time_series_array(Deterministic, bat, "incremental_initial_input"))
+                        @test !isempty(get_time_series_array(Deterministic, bat, "decremental_initial_input"))
+                    end
+                end
             end
         end
     end
