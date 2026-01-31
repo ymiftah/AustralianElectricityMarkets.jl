@@ -3,12 +3,8 @@ on:
   push:
     branches:
       - main
-    tags: ["*"]
-    paths:
-      - "src/**"
-      - "docs/**"
-      - "*.toml"
-      - ".github/workflows/Documentation.yml"
+    tags:
+      - "*"
   pull_request:
     paths:
       - "src/**"
@@ -51,10 +47,14 @@ jobs:
     name: Documentation
     needs: setup-data
     runs-on: ubuntu-latest
+    # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
     permissions:
-      actions: write # needed to allow julia-actions/cache to proactively delete old caches that it has created
       contents: write
+      pages: write
+      id-token: write
       statuses: write
+      actions: write # needed to allow julia-actions/cache to proactively delete old caches that it has created
+      deployments: write # deployments permission to deploy GitHub pages website
     steps:
       - uses: actions/checkout@v6
       - uses: julia-actions/setup-julia@v2
