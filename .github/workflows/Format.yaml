@@ -35,6 +35,8 @@ jobs:
           python-version: "3.11"
       - name: Un-Hack for setup-python cache # https://github.com/actions/setup-python/issues/807
         run: rm requirements.txt
+      - name: Install Julia dependencies
+        run: julia --project -e 'using Pkg; Pkg.instantiate(); Pkg.add("Runic")'
       - name: Cache pre-commit
         uses: actions/cache@v5
         with:
