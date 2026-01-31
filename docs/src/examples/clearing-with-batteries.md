@@ -60,7 +60,7 @@ Set the horizon and resolution for the simulation. Batteries are often more inte
 ````@example clearing_with_batteries
 interval = Minute(30)
 horizon = Hour(48)
-start_date = DateTime(2025, 1, 2, 4, 0)
+start_date = DateTime(2025, 1, 3, 0, 0)
 date_range = start_date:interval:(start_date + horizon)
 @show date_range
 ````

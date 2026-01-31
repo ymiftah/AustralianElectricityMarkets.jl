@@ -58,7 +58,7 @@ Set the horizon to consider for the simulation
 ````@example interchanges
 interval = Minute(5)
 horizon = Hour(24)
-start_date = DateTime(2025, 1, 2, 0, 0)
+start_date = DateTime(2025, 1, 3, 0, 0)
 date_range = start_date:interval:(start_date + horizon)
 @show date_range
 ````
