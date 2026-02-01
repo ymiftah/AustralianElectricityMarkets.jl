@@ -18,8 +18,8 @@ website:
             text: "Build the system"
       - href: roadmap.qmd
         text: Roadmap
-      - href: 95-reference.qmd
-        text: Reference
+        # - href: 95-reference.qmd
+        #   text: Reference
 
 format:
   html:
