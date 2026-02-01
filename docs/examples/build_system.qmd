@@ -50,6 +50,7 @@ Only the data requirements for a RegionalNetworkConfiguration are downloaded.
 
 ```{julia}
 #| output: false
+#| eval: false
 tables = table_requirements(RegionalNetworkConfiguration())
 map(tables) do table
     fetch_table_data(table, date_range)

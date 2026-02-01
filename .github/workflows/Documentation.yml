@@ -29,9 +29,20 @@ jobs:
       - name: Cache Julia
         uses: julia-actions/cache@v2
 
+      - name: Cache market data
+        uses: actions/cache@v4
+        with:
+          path: ~/.nemweb_cache
+          key: ${{ runner.os }}-nemweb-data-${{ hashFiles('test/fetch_data.jl') }}
+          restore-keys: |
+            ${{ runner.os }}-nemweb-data-
       - name: Install dependencies
         run: |
-          julia --project=docs -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
+          julia --project=docs -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate();'
+
+      - name: Fetch data
+        shell: julia --project=@. --color=yes {0}
+        run: include(joinpath(pwd(), "test", "fetch_data.jl"))
 
       - name: Render Quarto Project
         run: |
