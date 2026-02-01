@@ -145,7 +145,7 @@ end
 Get information for a specific unit
 
 ````@example build_system
-gen = get_components_by_name(ThermalGen, sys, "JLA02") |> first
+gen = get_component(ThermalGen, sys, "JLA02")
 ````
 
 Check the prime mover type
