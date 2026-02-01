@@ -1,4 +1,4 @@
-import{_ as i,o as t,c as a,aA as n}from"./chunks/framework.r5oKAnS_.js";const l="/AustralianElectricityMarkets.jl/previews/PR59/assets/mvjphrb.B_Ou6ivw.png",e="/AustralianElectricityMarkets.jl/previews/PR59/assets/jgurvhc.DViLMu53.png",h="/AustralianElectricityMarkets.jl/previews/PR59/assets/ceokttv.wUxuj6ip.png",k="/AustralianElectricityMarkets.jl/previews/PR59/assets/yddaxmq.C87Scw2J.png",f=JSON.parse('{"title":"Economic dispatch","description":"","frontmatter":{},"headers":[],"relativePath":"examples/economic_dispatch.md","filePath":"examples/economic_dispatch.md","lastUpdated":null}'),p={name:"examples/economic_dispatch.md"};function d(r,s,g,o,y,E){return t(),a("div",null,[...s[0]||(s[0]=[n(`<div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
+import{_ as i,o as t,c as a,aA as n}from"./chunks/framework.r5oKAnS_.js";const l="/AustralianElectricityMarkets.jl/previews/PR59/assets/zrxhzmr.6IAoqGxR.png",e="/AustralianElectricityMarkets.jl/previews/PR59/assets/pkwioeg.DViLMu53.png",h="/AustralianElectricityMarkets.jl/previews/PR59/assets/hbhuidd.D-xO1B9T.png",k="/AustralianElectricityMarkets.jl/previews/PR59/assets/eswigvd.CV1kvF5r.png",f=JSON.parse('{"title":"Economic dispatch","description":"","frontmatter":{},"headers":[],"relativePath":"examples/economic_dispatch.md","filePath":"examples/economic_dispatch.md","lastUpdated":null}'),p={name:"examples/economic_dispatch.md"};function d(r,s,g,o,y,E){return t(),a("div",null,[...s[0]||(s[0]=[n(`<div class="language-julia vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">julia</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">begin</span></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> AustralianElectricityMarkets</span></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> PowerSystems</span></span>
 <span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">    using</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> PowerSimulations</span></span>
@@ -510,6 +510,9 @@ import{_ as i,o as t,c as a,aA as n}from"./chunks/framework.r5oKAnS_.js";const l
   </thead>
   <tbody>
     <tr class = "dataRow">
+      <td style = "text-align: left;">ProductionCostExpression__ThermalStandard</td>
+    </tr>
+    <tr class = "dataRow">
       <td style = "text-align: left;">ProductionCostExpression__RenewableDispatch</td>
     </tr>
     <tr class = "dataRow">
@@ -517,9 +520,6 @@ import{_ as i,o as t,c as a,aA as n}from"./chunks/framework.r5oKAnS_.js";const l
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">FuelConsumptionExpression__ThermalStandard</td>
-    </tr>
-    <tr class = "dataRow">
-      <td style = "text-align: left;">ProductionCostExpression__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ProductionCostExpression__HydroDispatch</td>
@@ -535,13 +535,13 @@ import{_ as i,o as t,c as a,aA as n}from"./chunks/framework.r5oKAnS_.js";const l
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__HydroDispatch</td>
-    </tr>
-    <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerTimeSeriesParameter__RenewableDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerTimeSeriesParameter__PowerLoad</td>
+    </tr>
+    <tr class = "dataRow">
+      <td style = "text-align: left;">ActivePowerTimeSeriesParameter__HydroDispatch</td>
     </tr>
   </tbody>
 </table>
@@ -554,13 +554,13 @@ import{_ as i,o as t,c as a,aA as n}from"./chunks/framework.r5oKAnS_.js";const l
   </thead>
   <tbody>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerVariable__HydroDispatch</td>
+      <td style = "text-align: left;">ActivePowerVariable__RenewableDispatch</td>
     </tr>
     <tr class = "dataRow">
       <td style = "text-align: left;">ActivePowerVariable__ThermalStandard</td>
     </tr>
     <tr class = "dataRow">
-      <td style = "text-align: left;">ActivePowerVariable__RenewableDispatch</td>
+      <td style = "text-align: left;">ActivePowerVariable__HydroDispatch</td>
     </tr>
   </tbody>
 </table>
