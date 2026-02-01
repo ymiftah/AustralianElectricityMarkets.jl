@@ -1,0 +1,26 @@
+# Reference
+
+```{julia}
+#| echo: false
+#| output: asis
+using AustralianElectricityMarkets
+using Markdown
+
+# Iterate over exported names
+for name in names(AustralianElectricityMarkets)
+    name == :AustralianElectricityMarkets && continue
+
+    # Get the docstring
+    doc = Base.Docs.doc(Base.Docs.Binding(AustralianElectricityMarkets, name))
+
+    # Only print if it has a docstring (and it's not the empty one)
+    if !isempty(string(doc))
+        println("## `$(name)`")
+        println("")
+        println(doc)
+        println("")
+        println("---")
+        println("")
+    end
+end
+```

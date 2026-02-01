@@ -1,66 +1,45 @@
 name: Documentation
+
 on:
   push:
     branches:
       - main
-    tags: ["*"]
-    paths:
-      - "src/**"
-      - "docs/**"
-      - "*.toml"
-      - ".github/workflows/Documentation.yml"
   pull_request:
-    paths:
-      - "src/**"
-      - "docs/**"
-      - "*.toml"
-      - ".github/workflows/Documentation.yml"
-  workflow_dispatch:
-concurrency:
-  # Skip intermediate builds: always.
-  # Cancel intermediate builds: only if it is a pull request build.
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
-# needed to allow julia-actions/cache to delete old caches that it has created
 permissions:
-  actions: write
-  contents: read
+  contents: write
+  pages: write
+  id-token: write
 
 jobs:
-  docs:
-    name: Documentation
+  build-docs:
     runs-on: ubuntu-latest
-    permissions:
-      actions: write # needed to allow julia-actions/cache to proactively delete old caches that it has created
-      contents: write
-      statuses: write
     steps:
-      - uses: actions/checkout@v6
-      - uses: julia-actions/setup-julia@v2
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Quarto
+        uses: quarto-dev/quarto-actions/setup@v2
+
+      - name: Install Julia
+        uses: julia-actions/setup-julia@v2
         with:
-          version: "1"
-      - name: Use Julia cache
+          version: '1'
+
+      - name: Cache Julia
         uses: julia-actions/cache@v2
-      - name: Cache market data
-        uses: actions/cache@v4
-        id: cache-market-data
-        with:
-          path: ~/.nemweb_cache
-          key: ${{ runner.os }}-nemweb-data-${{ hashFiles('test/fetch_data.jl') }}
-          restore-keys: |
-            ${{ runner.os }}-nemweb-data-
-      - name: Fetch data
-        shell: julia --project=@. --color=yes {0}
+
+      - name: Install dependencies
         run: |
-          using Pkg
-          Pkg.instantiate()
-          include(joinpath(pwd(), "test", "fetch_data.jl"))
-      - name: Build and deploy docs
-        uses: julia-actions/julia-docdeploy@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # For authentication with GitHub Actions token
-          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }} # For authentication with SSH deploy key
-          GKSwstype: "100" # for Plots.jl plots (if you have them)
-          JULIA_DEBUG: "Documenter"
-          DATADEPS_ALWAYS_ACCEPT: true
+          julia --project=docs -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
+
+      - name: Render Quarto Project
+        run: |
+          quarto render docs
+
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs/_site

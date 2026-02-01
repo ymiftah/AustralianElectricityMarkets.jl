@@ -1,7 +1,3 @@
-```@meta
-CurrentModule = AustralianElectricityMarkets
-```
-
 # AustralianElectricityMarkets.jl
 
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://ymiftah.github.io/AustralianElectricityMarkets.jl/stable)

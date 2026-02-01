@@ -1,0 +1,27 @@
+project:
+  type: website
+  output-dir: _site
+
+engine: julia
+
+website:
+  title: "AustralianElectricityMarkets.jl"
+  sidebar:
+    style: "docked"
+    search: true
+    contents:
+      - href: index.qmd
+        text: Home
+      - section: "How-to"
+        contents:
+          - href: examples/build_system.qmd
+            text: "Build the system"
+      - href: roadmap.qmd
+        text: Roadmap
+      - href: 95-reference.qmd
+        text: Reference
+
+format:
+  html:
+    theme: cosmo
+    toc: true
