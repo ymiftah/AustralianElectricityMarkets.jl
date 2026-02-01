@@ -155,23 +155,3 @@ thermal = @chain get_components(ThermalGen, sys) |> DataFrame begin
     combine(:base_power => sum => :installed_capacity_mw)
 end
 ```
-
-Get information for a specific unit:
-
-```{julia}
-gen = get_component(ThermalGen, sys, "JLA02")
-```
-
-Check the prime mover type:
-
-```{julia}
-get_prime_mover_type(gen)
-```
-
-Check the rating in natural units:
-
-```{julia}
-with_units_base(sys, "NATURAL_UNITS") do
-    get_rating(gen)
-end
-```
