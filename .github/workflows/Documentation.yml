@@ -31,21 +31,18 @@ jobs:
       statuses: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          lfs: true
       - uses: julia-actions/setup-julia@v2
         with:
           version: "1"
       - name: Use Julia cache
         uses: julia-actions/cache@v2
-      - name: Cache market data
-        uses: actions/cache@v4
-        id: cache-market-data
-        with:
-          path: ~/.nemweb_cache
-          key: ${{ runner.os }}-nemweb-data-${{ hashFiles('test/fetch_data.jl') }}
-          restore-keys: |
-            ${{ runner.os }}-nemweb-data-
+      - name: Populate market data
+        run: |
+          mkdir -p ~/.nemweb_cache
+          cp -r docs/data/* ~/.nemweb_cache/
       - name: Fetch data
-        if: steps.cache-market-data.outputs.cache-hit != 'true'
         shell: julia --project=@. --color=yes {0}
         run: |
           using Pkg
