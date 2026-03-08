@@ -40,8 +40,8 @@ jobs:
         uses: julia-actions/cache@v2
       - name: Populate market data
         run: |
-          mkdir -p ~/.nemweb_cache
-          cp -r docs/data/* ~/.nemweb_cache/
+          mkdir -p ~/.nemdb_cache
+          cp -r docs/data/* ~/.nemdb_cache/
       - name: Fetch data
         shell: julia --project=@. --color=yes {0}
         run: |

@@ -8,7 +8,7 @@ The data is fetched from the NEMWEB archive and stored locally as hive-partition
 
 ## Configuration
 
-By default, data is cached in `~/.nemweb_cache`. You can customize the cache location and filesystem using `PyHiveConfiguration`.
+By default, data is cached in `~/.nemdb_cache`. You can customize the cache location and filesystem using `PyHiveConfiguration`.
 
 ```julia
 using AustralianElectricityMarkets

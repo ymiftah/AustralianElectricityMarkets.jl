@@ -13,11 +13,11 @@ export read_affine_heatrates, read_coal_prices, read_gas_prices, read_biomass_pr
 Configuration for `nemdb` Python library cache.
 
 # Arguments
-- `base_dir::String`: The base directory to cache data in. Defaults to `~/.nemweb_cache`.
+- `base_dir::String`: The base directory to cache data in. Defaults to `~/.nemdb_cache`.
 - `filesystem::String`: The fsspec compatible filesystem to use. Defaults to `"local"`.
 """
 @kwdef struct PyHiveConfiguration
-    base_dir::String = joinpath(homedir(), ".nemweb_cache")
+    base_dir::String = joinpath(homedir(), ".nemdb_cache")
     filesystem::String = "local"
 end
 
@@ -30,7 +30,7 @@ Download and cache data for a given `table` and `time_range`.
 # Arguments
 - `table::Symbol`: The table to populate.
 - `time_range::Any`: The time range to populate data for. (e.g. `Date(2023,1,1):Date(2023,3,1)`)
-- `hive_configuration::PyHiveConfiguration`: Configuration to use for the cache. Defaults to a local directory ~/.nemweb_cache.
+- `hive_configuration::PyHiveConfiguration`: Configuration to use for the cache. Defaults to a local directory ~/.nemdb_cache.
 """
 function fetch_table_data(
         table::Symbol,
@@ -55,7 +55,7 @@ Download and cache data for all tables for a given `time_range`.
 
 # Arguments
 - `time_range::Any`: The time range to populate data for. (e.g. `Date(2023,1,1):Date(2023,3,1)`)
-- `hive_configuration::PyHiveConfiguration`: Configuration to use for the cache. Defaults to a local directory ~/.nemweb_cache.
+- `hive_configuration::PyHiveConfiguration`: Configuration to use for the cache. Defaults to a local directory ~/.nemdb_cache.
 """
 function fetch_table_data(
         time_range::Any;
@@ -74,8 +74,7 @@ List the available tables to fetch data for.
 """
 function list_available_tables()::Array{Symbol}
     nemdb = pyimport("nemdb")
-    config = nemdb.Config
-    dbs = nemdb.NEMWEBManager(config)
+    dbs = nemdb.NEMWEBManager()
     return Symbol.(pyconvert(Array, dbs.active_tables()))
 end
 
@@ -89,10 +88,10 @@ Get a python `nemdb.NEMWEBManager` object.
 """
 function _get_pydb_manager(hive_configuration::PyHiveConfiguration)
     nemdb = pyimport("nemdb")
-    config = nemdb.Config
-    config.set_cache_dir(hive_configuration.base_dir)
-    config.set_filesystem(hive_configuration.filesystem)
-    return nemdb.NEMWEBManager(config)
+    py_config = nemdb.config
+    py_config.set_cache_dir(hive_configuration.base_dir)
+    py_config.set_filesystem(hive_configuration.filesystem)
+    return nemdb.NEMWEBManager()
 end
 
 
