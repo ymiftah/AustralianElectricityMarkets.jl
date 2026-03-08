@@ -1,6 +1,7 @@
 using AustralianElectricityMarkets
 using Documenter
 using DocumenterVitepress
+using Literate
 
 DocMeta.setdocmeta!(
     AustralianElectricityMarkets,
@@ -8,6 +9,16 @@ DocMeta.setdocmeta!(
     :(using AustralianElectricityMarkets);
     recursive = true,
 )
+
+## Generate Literate examples
+for name in ["build_system", "economic_dispatch", "market_bids", "interchanges", "clearing-with-batteries"]
+    Literate.markdown(
+        joinpath(@__DIR__, "literate", "$name.jl"),
+        joinpath(@__DIR__, "src", "examples");
+        execute = true,
+        credit = false,
+    )
+end
 
 makedocs(;
     modules = [AustralianElectricityMarkets],
