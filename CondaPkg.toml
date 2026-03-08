@@ -1,3 +1,4 @@
 
 [pip.deps]
 nemdb = "@git+https://github.com/ymiftah/nemdb#v0.4.0"
+openelectricity = "@git+https://github.com/opennem/openelectricity-python"
