@@ -74,7 +74,7 @@ List the available tables to fetch data for.
 """
 function list_available_tables()::Array{Symbol}
     nemdb = pyimport("nemdb")
-    dbs = nemdb.NEMWEBManager()
+    dbs = nemdb.NEMWEBManager(nemdb.Config)
     return Symbol.(pyconvert(Array, dbs.active_tables()))
 end
 
@@ -88,10 +88,10 @@ Get a python `nemdb.NEMWEBManager` object.
 """
 function _get_pydb_manager(hive_configuration::PyHiveConfiguration)
     nemdb = pyimport("nemdb")
-    py_config = nemdb.config.Config
+    py_config = nemdb.Config
     py_config.set_cache_dir(hive_configuration.base_dir)
     py_config.set_filesystem(hive_configuration.filesystem)
-    return nemdb.NEMWEBManager()
+    return nemdb.NEMWEBManager(py_config)
 end
 
 
