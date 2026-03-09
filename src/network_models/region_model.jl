@@ -279,7 +279,8 @@ println(branch_df)
 function get_batteries_dataframe(db)
     bus = select!(get_bus_dataframe(db), :bus_id, :name)
     units = read_units(db)
-    dropmissing!(units, :TECHNOLOGY)
+    dropmissing!(units, :TECHNOLOGY)  # TODO make assumptions when technology is missing ?
+    dropmissing!(units, :STORAGEIMPORTEFFICIENCYFACTOR) # TODO make assumptions when efficiency is  missing ?
     subset!(units, :TECHNOLOGY => ByRow(==(PrimeMovers.BA)))
     batteries = select!(
         units,
