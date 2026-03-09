@@ -91,7 +91,7 @@ function _get_pydb_manager(hive_configuration::PyHiveConfiguration)
     py_config = nemdb.config
     py_config.set_cache_dir(hive_configuration.base_dir)
     py_config.set_filesystem(hive_configuration.filesystem)
-    return nemdb.NEMWEBManager(py_config)
+    return nemdb.NEMWEBManager()
 end
 
 
