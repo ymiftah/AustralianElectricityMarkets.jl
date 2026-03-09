@@ -1,15 +1,17 @@
-using AustralianElectricityMarkets
-import AustralianElectricityMarkets.RegionModel as RM
-using PowerSystems
-using PowerSimulations
-using HydroPowerSimulations
-using StorageSystemsSimulations
-using Chain
-using DataFrames
-using AlgebraOfGraphics, CairoMakie
-using TidierDB
-using Dates
-using HiGHS
+begin
+    using AustralianElectricityMarkets
+    import AustralianElectricityMarkets.RegionModel as RM
+    using PowerSystems
+    using PowerSimulations
+    using HydroPowerSimulations
+    using StorageSystemsSimulations
+    using Chain
+    using DataFrames
+    using AlgebraOfGraphics, CairoMakie
+    using TidierDB
+    using Dates
+    using HiGHS
+end
 
 # # Addition of batteries
 #
@@ -46,7 +48,6 @@ using HiGHS
 db = aem_connect(duckdb());
 
 # Instantiate the system using a regional network configuration.
-
 sys = nem_system(db, RegionalNetworkConfiguration())
 
 # Set the horizon and resolution for the simulation. Batteries are often more interesting to
