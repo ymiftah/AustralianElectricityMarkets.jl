@@ -29,10 +29,10 @@ using CairoMakie, AlgebraOfGraphics
 db = aem_connect(duckdb());
 date_range = Date(2025, 1, 1):Date(2025, 1, 2)
 
-tables = table_requirements(RegionalNetworkConfiguration())
-map(tables) do table
-    fetch_table_data(table, date_range)
-end;
+# tables = table_requirements(RegionalNetworkConfiguration())
+# map(tables) do table
+#     fetch_table_data(table, date_range)
+# end;
 nothing #hide
 
 # Once the data is downloaded, a few utility functions allow direct parsing of key quantities,
