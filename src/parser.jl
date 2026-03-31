@@ -180,7 +180,7 @@ function read_units(db)
     summary_table = read_hive(db, :DUDETAILSUMMARY)
     summary = @chain summary_table begin
         _filter_latest
-        @filter(ismissing(END_DATE))  # AEMO specifies the latest version with a 2999-12-31 date, which is converted to a missing in nemdb.py
+        @filter(ismissing(END_DATE) || (year(END_DATE) == 2999))  # AEMO specifies the latest version with a 2999-12-31 or a missing date in nemdb.py
         @arrange(DUID, START_DATE)
         @collect
         unique(:DUID)
@@ -282,11 +282,16 @@ Helper function to filter for the most recent records in a table based on a give
 - `key`: The column (as a Symbol) to use for determining the latest records.
 """
 function _filter_latest(table, key)
+    # NOTE DuckDB.jl seem to have issues with queries on the hive partition
+    # keys, so find the value first, use it to filter
     max_eff_date = @eval @chain $table begin
-        @summarise(max_key = maximum($key))
+        @select($key)
+        @distinct
+        @collect
     end
+    max_eff_date = maximum(max_eff_date[!, key])
     return @eval @chain $table begin
-        @inner_join($max_eff_date, $key == max_key)
+        @filter($key == $max_eff_date)
     end
 end
 

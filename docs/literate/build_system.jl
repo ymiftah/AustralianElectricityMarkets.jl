@@ -15,7 +15,7 @@
 # and the parsing of the data into a System from `PowerSystems.jl`.
 # At the moment only a simple zonal network model is available (a nodal model with physical lines is a work-in-progress),
 # which allows to model a simple economic dispatch.
-# By default, the package will create a hidden folder `.aem_cache` in the home directory, and save the data into
+# By default, the package will create a hidden folder `.nemdb_cache` in the home directory, and save the data into
 # parquet files.
 
 using AustralianElectricityMarkets
@@ -29,10 +29,10 @@ using CairoMakie, AlgebraOfGraphics
 db = aem_connect(duckdb());
 date_range = Date(2025, 1, 1):Date(2025, 1, 2)
 
-tables = table_requirements(RegionalNetworkConfiguration())
-map(tables) do table
-    fetch_table_data(table, date_range)
-end;
+# tables = table_requirements(RegionalNetworkConfiguration())
+# map(tables) do table
+#     fetch_table_data(table, date_range)
+# end;
 nothing #hide
 
 # Once the data is downloaded, a few utility functions allow direct parsing of key quantities,
