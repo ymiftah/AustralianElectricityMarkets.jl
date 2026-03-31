@@ -6,6 +6,8 @@ using ..AustralianElectricityMarkets: PM_MAPPING
 
 export PyHiveConfiguration, fetch_table_data, list_available_tables
 export read_affine_heatrates, read_coal_prices, read_gas_prices, read_biomass_prices, read_isp_thermal_costs_parameters
+export read_isp_renewable_costs_parameters
+export read_isp_fixed_opex, read_isp_variable_opex
 
 """
     PyHiveConfiguration
@@ -219,6 +221,80 @@ function read_isp_thermal_costs_parameters(year::Int, scenario::String)
             ) => :price_aud
         )
     end
+end
+
+
+"""
+    read_isp_renewable_costs_parameters()
+
+Read renewable variable OPEX parameters from ISP 2025 data via nemdb.
+
+Returns a `DataFrame` with columns:
+- `unit`: DUID (or IASR ID) of the generator
+- `variable_opex_aud_mwh`: variable OPEX in AUD/MWh sent out
+
+Per ISP 2025, Wind and Large-scale Solar PV have 0 AUD/MWh variable OPEX
+because O&M costs are captured entirely in the Fixed O&M component.
+"""
+function read_isp_renewable_costs_parameters()
+    isp = pyimport("nemdb.isp.isp2025")
+    pl = pyimport("polars")
+    df = isp.variable_opex()
+    renewable_techs = ["Wind", "Large scale Solar PV"]
+    df_ren = df.filter(pl.col("technology").is_in(renewable_techs))
+    return DataFrame(
+        unit = pyconvert(Vector{String}, df_ren["iasr_id"].to_list()),
+        variable_opex_aud_mwh = pyconvert(Vector{Float64}, df_ren["variable_opex_aud_mwh_sent_out"].to_list()),
+    )
+end
+
+
+"""
+    read_isp_fixed_opex()
+
+Read fixed OPEX (AUD/kW/year) per generator from ISP 2025 data via nemdb.
+
+Returns a `DataFrame` with columns:
+- `unit`: IASR ID of the generator
+- `isp_technology`: ISP technology category (e.g. "Steam Sub Critical", "Wind")
+- `fixed_opex_aud_kw_year`: fixed OPEX in AUD/kW of installed capacity per year
+
+To convert to AUD/h for a unit with `base_power` in MVA:
+    `fixed_opex_aud_kw_year * base_power * 1000 / 8760`
+"""
+function read_isp_fixed_opex()
+    isp = pyimport("nemdb.isp.isp2025")
+    df = isp.fixed_opex()
+    return DataFrame(
+        unit = pyconvert(Vector{String}, df["iasr_id"].to_list()),
+        isp_technology = pyconvert(Vector{String}, df["technology"].to_list()),
+        fixed_opex_aud_kw_year = pyconvert(Vector{Float64}, df["fixed_opex_aud_kw_year"].to_list()),
+    )
+end
+
+
+"""
+    read_isp_variable_opex()
+
+Read variable OPEX (AUD/MWh sent out) per generator from ISP 2025 data via nemdb.
+
+Returns a `DataFrame` with columns:
+- `unit`: IASR ID of the generator
+- `isp_technology`: ISP technology category (e.g. "Steam Sub Critical", "Wind")
+- `variable_opex_aud_mwh`: variable OPEX in AUD/MWh sent out
+
+Covers all technology types (thermal, hydro, renewable, storage).
+Per ISP 2025, Wind and Large-scale Solar PV have 0 AUD/MWh variable OPEX
+because O&M costs are captured entirely in the Fixed O&M component.
+"""
+function read_isp_variable_opex()
+    isp = pyimport("nemdb.isp.isp2025")
+    df = isp.variable_opex()
+    return DataFrame(
+        unit = pyconvert(Vector{String}, df["iasr_id"].to_list()),
+        isp_technology = pyconvert(Vector{String}, df["technology"].to_list()),
+        variable_opex_aud_mwh = pyconvert(Vector{Float64}, df["variable_opex_aud_mwh_sent_out"].to_list()),
+    )
 end
 
 
