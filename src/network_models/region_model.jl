@@ -515,6 +515,7 @@ function _add_generation!(sys, gen_df)
                 power_factor = 1.0,
                 operation_cost = RenewableGenerationCost(;
                     # per ISP2025: "Wind and Large-scale Solar PV O&M costs are assumed to be included in the Fixed O&M costs"
+                    # so the variable cost below should be 0
                     variable = CostCurve(LinearCurve(coalesce(row[:variable_opex_aud_mwh], 0.0), 0.0)),
                     fixed = coalesce(row[:fixed_opex_aud_kw_year], 0.0) * row[:base_power] * 1000.0 / 8760.0,
                 ),
