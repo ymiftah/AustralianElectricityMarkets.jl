@@ -16,6 +16,10 @@ create_mock_data(AEM_TEST_HIVE_DIR)
     include("datareader.jl")
 end
 
+@testset "ISP data tests" begin
+    include("isp_data.jl")
+end
+
 
 @testset "Test region model" begin
     include("regionmodel.jl")
