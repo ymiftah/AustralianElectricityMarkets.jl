@@ -242,8 +242,10 @@ function read_isp_renewable_costs_parameters()
     df = isp.variable_opex()
     renewable_techs = ["Wind", "Large scale Solar PV"]
     df_ren = df.filter(pl.col("technology").is_in(renewable_techs))
+    techs = pyconvert(Vector{String}, df_ren["technology"].to_list())
     return DataFrame(
         unit = pyconvert(Vector{String}, df_ren["iasr_id"].to_list()),
+        primemover = [PM_MAPPING[t] for t in techs],
         variable_opex_aud_mwh = pyconvert(Vector{Float64}, df_ren["variable_opex_aud_mwh_sent_out"].to_list()),
     )
 end
@@ -265,9 +267,11 @@ To convert to AUD/h for a unit with `base_power` in MVA:
 function read_isp_fixed_opex()
     isp = pyimport("nemdb.isp.isp2025")
     df = isp.fixed_opex()
+    techs = pyconvert(Vector{String}, df["technology"].to_list())
     return DataFrame(
         unit = pyconvert(Vector{String}, df["iasr_id"].to_list()),
-        isp_technology = pyconvert(Vector{String}, df["technology"].to_list()),
+        isp_technology = techs,
+        primemover = [PM_MAPPING[t] for t in techs],
         fixed_opex_aud_kw_year = pyconvert(Vector{Float64}, df["fixed_opex_aud_kw_year"].to_list()),
     )
 end
@@ -290,9 +294,11 @@ because O&M costs are captured entirely in the Fixed O&M component.
 function read_isp_variable_opex()
     isp = pyimport("nemdb.isp.isp2025")
     df = isp.variable_opex()
+    techs = pyconvert(Vector{String}, df["technology"].to_list())
     return DataFrame(
         unit = pyconvert(Vector{String}, df["iasr_id"].to_list()),
-        isp_technology = pyconvert(Vector{String}, df["technology"].to_list()),
+        isp_technology = techs,
+        primemover = [PM_MAPPING[t] for t in techs],
         variable_opex_aud_mwh = pyconvert(Vector{Float64}, df["variable_opex_aud_mwh_sent_out"].to_list()),
     )
 end

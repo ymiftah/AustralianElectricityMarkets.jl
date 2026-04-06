@@ -27,12 +27,22 @@ const PM_MAPPING = Dict(
     "CCGT - Gas Turbine" => PrimeMovers.CA,
     "CCGT - Steam Turbine" => PrimeMovers.CA,
     "OCGT" => PrimeMovers.GT,
+    "OCGT (large GT)" => PrimeMovers.GT,
+    "OCGT (small GT)" => PrimeMovers.GT,
     "Gas-powered steam turbine" => PrimeMovers.GT,
     "Reciprocating Engine" => PrimeMovers.IC,
+    "Reciprocating engine" => PrimeMovers.IC,
     "Hydro" => PrimeMovers.HY,
     "Large scale Solar PV" => PrimeMovers.PVe,
     "Wind" => PrimeMovers.WT,
     "Pumped Hydro" => PrimeMovers.PS,
+    "Pumped Hydro (10hrs storage)" => PrimeMovers.PS,
+    "Pumped Hydro (24hrs storage)" => PrimeMovers.PS,
+    "Pumped Hydro (1wk storage)" => PrimeMovers.PS,
+    "Battery storage (1hr storage)" => PrimeMovers.BA,
+    "Battery storage (2hrs storage)" => PrimeMovers.BA,
+    "Battery storage (4hrs storage)" => PrimeMovers.BA,
+    "Battery storage (8hrs storage)" => PrimeMovers.BA,
 )
 
 const AEMO_PM_MAPPING = Dict(

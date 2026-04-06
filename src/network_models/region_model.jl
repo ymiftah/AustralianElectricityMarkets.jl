@@ -486,8 +486,9 @@ Adds generation units to the system.
 function _add_generation!(sys, gen_df)
     variable_opex_df = read_isp_variable_opex()
     fixed_opex_df = read_isp_fixed_opex()
-    # fill_missing groups by isp_technology so units of the same ISP technology class
-    # share a median default when their specific IASR ID is not found in the ISP data.
+    # Two-pass fill: first by isp_technology (fine-grained ISP class), then by
+    # :technology (PrimeMovers type, always present) to catch any unit whose
+    # IASR ID was not found in the ISP data at all.
     fill_missing(x) = all(ismissing.(x)) ? missing : median(skipmissing(x))
 
     renewable = subset(
@@ -497,6 +498,11 @@ function _add_generation!(sys, gen_df)
     leftjoin!(renewable, select(fixed_opex_df, :unit, :fixed_opex_aud_kw_year); on = :name => :unit)
     renewable = @chain renewable begin
         groupby(:isp_technology)
+        transform(
+            :variable_opex_aud_mwh => fill_missing => :variable_opex_aud_mwh,
+            :fixed_opex_aud_kw_year => fill_missing => :fixed_opex_aud_kw_year,
+        )
+        groupby(:technology)
         transform(
             :variable_opex_aud_mwh => fill_missing => :variable_opex_aud_mwh,
             :fixed_opex_aud_kw_year => fill_missing => :fixed_opex_aud_kw_year,
@@ -536,6 +542,11 @@ function _add_generation!(sys, gen_df)
     leftjoin!(hydro, select(fixed_opex_df, :unit, :fixed_opex_aud_kw_year); on = :name => :unit)
     hydro_with_costs = @chain hydro begin
         groupby(:isp_technology)
+        transform(
+            :variable_opex_aud_mwh => fill_missing => :variable_opex_aud_mwh,
+            :fixed_opex_aud_kw_year => fill_missing => :fixed_opex_aud_kw_year,
+        )
+        groupby(:technology)
         transform(
             :variable_opex_aud_mwh => fill_missing => :variable_opex_aud_mwh,
             :fixed_opex_aud_kw_year => fill_missing => :fixed_opex_aud_kw_year,
@@ -586,9 +597,17 @@ function _add_generation!(sys, gen_df)
     leftjoin!(thermal, variable_opex_df; on = :name => :unit)
     leftjoin!(thermal, select(fixed_opex_df, :unit, :fixed_opex_aud_kw_year); on = :name => :unit)
 
-    # fill missing values grouped by ISP technology category
+    # fill missing values: first by isp_technology, then by technology (PrimeMovers) as fallback
     thermal_with_costs = @chain thermal begin
         groupby(:isp_technology)
+        transform(
+            :price_aud => fill_missing => :price_aud,
+            :no_load_heat_input_GJ_per_h => fill_missing => :no_load_heat_input_GJ_per_h,
+            :marginal_heat_rate_GJ_per_MWH => fill_missing => :marginal_heat_rate_GJ_per_MWH,
+            :variable_opex_aud_mwh => fill_missing => :variable_opex_aud_mwh,
+            :fixed_opex_aud_kw_year => fill_missing => :fixed_opex_aud_kw_year,
+        )
+        groupby(:technology)
         transform(
             :price_aud => fill_missing => :price_aud,
             :no_load_heat_input_GJ_per_h => fill_missing => :no_load_heat_input_GJ_per_h,
