@@ -486,23 +486,43 @@ Adds generation units to the system.
 function _add_generation!(sys, gen_df)
     variable_opex_df = read_isp_variable_opex()
     fixed_opex_df = read_isp_fixed_opex()
-    # Two-pass fill: first by isp_technology (fine-grained ISP class), then by
-    # :technology (PrimeMovers type, always present) to catch any unit whose
-    # IASR ID was not found in the ISP data at all.
+
+    # Primemover-level medians used in step 2 of the 4-step fill cascade
+    pm_var_medians = combine(
+        groupby(variable_opex_df, :primemover),
+        :variable_opex_aud_mwh => median ∘ skipmissing => :variable_opex_aud_mwh_pm,
+    )
+    pm_fix_medians = combine(
+        groupby(fixed_opex_df, :primemover),
+        :fixed_opex_aud_kw_year => median ∘ skipmissing => :fixed_opex_aud_kw_year_pm,
+    )
+
     fill_missing(x) = all(ismissing.(x)) ? missing : median(skipmissing(x))
 
+    # 4-step OPEX fill cascade (applied after each per-unit leftjoin!):
+    #   1. per-unit join (IASR ID)          — done via leftjoin! on :name => :unit
+    #   2. primemover-level median          — leftjoin! on :technology => :primemover
+    #   3. isp_technology group median      — groupby(:isp_technology)
+    #   4. global median across all units   — ungrouped transform
     renewable = subset(
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:RenewableDispatch]))
     )
+    # step 1: per-unit join
     leftjoin!(renewable, variable_opex_df; on = :name => :unit)
     leftjoin!(renewable, select(fixed_opex_df, :unit, :fixed_opex_aud_kw_year); on = :name => :unit)
+    # step 2: primemover-level median for still-missing values
+    leftjoin!(renewable, pm_var_medians; on = :technology => :primemover)
+    leftjoin!(renewable, pm_fix_medians; on = :technology => :primemover)
+    renewable.variable_opex_aud_mwh = coalesce.(renewable.variable_opex_aud_mwh, renewable.variable_opex_aud_mwh_pm)
+    renewable.fixed_opex_aud_kw_year = coalesce.(renewable.fixed_opex_aud_kw_year, renewable.fixed_opex_aud_kw_year_pm)
+    select!(renewable, Not([:variable_opex_aud_mwh_pm, :fixed_opex_aud_kw_year_pm]))
+    # steps 3 & 4: isp_technology group median, then global median
     renewable = @chain renewable begin
         groupby(:isp_technology)
         transform(
             :variable_opex_aud_mwh => fill_missing => :variable_opex_aud_mwh,
             :fixed_opex_aud_kw_year => fill_missing => :fixed_opex_aud_kw_year,
         )
-        groupby(:technology)
         transform(
             :variable_opex_aud_mwh => fill_missing => :variable_opex_aud_mwh,
             :fixed_opex_aud_kw_year => fill_missing => :fixed_opex_aud_kw_year,
@@ -538,15 +558,22 @@ function _add_generation!(sys, gen_df)
     hydro = subset(
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:HydroDispatch]))
     )
+    # step 1: per-unit join
     leftjoin!(hydro, variable_opex_df; on = :name => :unit)
     leftjoin!(hydro, select(fixed_opex_df, :unit, :fixed_opex_aud_kw_year); on = :name => :unit)
+    # step 2: primemover-level median for still-missing values
+    leftjoin!(hydro, pm_var_medians; on = :technology => :primemover)
+    leftjoin!(hydro, pm_fix_medians; on = :technology => :primemover)
+    hydro.variable_opex_aud_mwh = coalesce.(hydro.variable_opex_aud_mwh, hydro.variable_opex_aud_mwh_pm)
+    hydro.fixed_opex_aud_kw_year = coalesce.(hydro.fixed_opex_aud_kw_year, hydro.fixed_opex_aud_kw_year_pm)
+    select!(hydro, Not([:variable_opex_aud_mwh_pm, :fixed_opex_aud_kw_year_pm]))
+    # steps 3 & 4: isp_technology group median, then global median
     hydro_with_costs = @chain hydro begin
         groupby(:isp_technology)
         transform(
             :variable_opex_aud_mwh => fill_missing => :variable_opex_aud_mwh,
             :fixed_opex_aud_kw_year => fill_missing => :fixed_opex_aud_kw_year,
         )
-        groupby(:technology)
         transform(
             :variable_opex_aud_mwh => fill_missing => :variable_opex_aud_mwh,
             :fixed_opex_aud_kw_year => fill_missing => :fixed_opex_aud_kw_year,
@@ -593,11 +620,17 @@ function _add_generation!(sys, gen_df)
         # TODO hardcoded for now, todo work on interface
         2025, "Step Change"
     )
+    # step 1: per-unit joins
     leftjoin!(thermal, affine_heatrates, on = :name => :unit; makeunique = true)
     leftjoin!(thermal, variable_opex_df; on = :name => :unit)
     leftjoin!(thermal, select(fixed_opex_df, :unit, :fixed_opex_aud_kw_year); on = :name => :unit)
-
-    # fill missing values: first by isp_technology, then by technology (PrimeMovers) as fallback
+    # step 2: primemover-level median for still-missing OPEX values
+    leftjoin!(thermal, pm_var_medians; on = :technology => :primemover)
+    leftjoin!(thermal, pm_fix_medians; on = :technology => :primemover)
+    thermal.variable_opex_aud_mwh = coalesce.(thermal.variable_opex_aud_mwh, thermal.variable_opex_aud_mwh_pm)
+    thermal.fixed_opex_aud_kw_year = coalesce.(thermal.fixed_opex_aud_kw_year, thermal.fixed_opex_aud_kw_year_pm)
+    select!(thermal, Not([:variable_opex_aud_mwh_pm, :fixed_opex_aud_kw_year_pm]))
+    # steps 3 & 4: isp_technology group median, then global median
     thermal_with_costs = @chain thermal begin
         groupby(:isp_technology)
         transform(
@@ -607,7 +640,6 @@ function _add_generation!(sys, gen_df)
             :variable_opex_aud_mwh => fill_missing => :variable_opex_aud_mwh,
             :fixed_opex_aud_kw_year => fill_missing => :fixed_opex_aud_kw_year,
         )
-        groupby(:technology)
         transform(
             :price_aud => fill_missing => :price_aud,
             :no_load_heat_input_GJ_per_h => fill_missing => :no_load_heat_input_GJ_per_h,
