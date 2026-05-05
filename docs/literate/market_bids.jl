@@ -58,7 +58,7 @@ set_demand!(sys, db, date_range; resolution = interval)
 set_renewable_pv!(sys, db, date_range; resolution = interval)
 set_renewable_wind!(sys, db, date_range; resolution = interval)
 set_hydro_limits!(sys, db, date_range; resolution = interval)
-set_market_bids!(sys, db, date_range)
+set_market_bids!(sys, db, date_range; resolution = interval)
 
 # Derive forecasts from the deterministic time series.
 
@@ -81,7 +81,7 @@ end
 # The dispatch problem will be solved with open source solver HiGHS.
 
 solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.05)
-problem = DecisionModel(template, sys; optimizer = solver, horizon = horizon)
+problem = DecisionModel(template, sys; optimizer = solver, horizon = horizon, interval = interval)
 build!(problem; output_dir = joinpath(tempdir(), "out"))
 
 # Solve the problem.
