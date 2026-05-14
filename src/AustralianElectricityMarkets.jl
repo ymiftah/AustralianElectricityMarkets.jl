@@ -16,7 +16,9 @@ export RegionalNetworkConfiguration
 export read_hive
 export read_interconnectors, read_units, read_demand, read_bids, read_energy_bids
 export read_affine_heatrates,
-    read_coal_prices, read_gas_prices, read_biomass_prices, read_isp_thermal_costs_parameters
+    read_coal_prices, read_gas_prices, read_biomass_prices, read_isp_thermal_costs_parameters,
+    read_isp_renewable_costs_parameters,
+    read_isp_fixed_opex, read_isp_variable_opex
 export set_demand!, set_renewable_pv!, set_renewable_wind!, set_market_bids!, set_hydro_limits!
 
 
@@ -31,7 +33,8 @@ include("AustralianElectricityMarketsData.jl")
 
 # Export data module
 using .AustralianElectricityMarketsData: PyHiveConfiguration, fetch_table_data, list_available_tables, read_affine_heatrates,
-    read_coal_prices, read_gas_prices, read_biomass_prices, read_isp_thermal_costs_parameters
+    read_coal_prices, read_gas_prices, read_biomass_prices, read_isp_thermal_costs_parameters,
+    read_isp_renewable_costs_parameters, read_isp_fixed_opex, read_isp_variable_opex
 
 # Modules
 include("parser.jl")
