@@ -15,5 +15,13 @@ PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
 StorageSystemsSimulations = "e2f1a126-19d0-4674-9252-42b2384f8e3c"
 TidierDB = "86993f9b-bbba-4084-97c5-ee15961ad48b"
 
+[compat]
+AustralianElectricityMarkets = "0.1"
+HiGHS = "1"
+HydroPowerSimulations = "0.15"
+PowerSimulations = "0.34"
+PowerSystems = "=5.10"
+StorageSystemsSimulations = "0.16"
+
 [sources]
 AustralianElectricityMarkets = {path = ".."}

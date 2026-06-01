@@ -368,7 +368,7 @@ sys = nem_system(db)
 println(sys)
 ```
 """
-function nem_system(db; kwargs...)
+function nem_system(db; time_series_in_memory = true, kwargs...)
     @info "parsing buses"
     bus_df = get_bus_dataframe(db)
     @info "parsing loads"
@@ -383,7 +383,7 @@ function nem_system(db; kwargs...)
     @info "parsing interconnectors/area interchanges / transmission interface"
     interfaces_df = get_interfaces_dataframe(db)
 
-    sys = System(BASE_POWER; kwargs...)
+    sys = System(BASE_POWER; time_series_in_memory = time_series_in_memory, kwargs...)
     _add_buses!(sys, bus_df)
     _add_loads!(sys, loads_df)
     _add_generation!(sys, gen_df)
