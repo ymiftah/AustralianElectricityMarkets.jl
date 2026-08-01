@@ -308,6 +308,7 @@ function get_batteries_dataframe(db)
         :initial_storage_capacity_level => 0.5,
     )
     dropmissing!(batteries)
+    unique!(batteries) # TODO verify where duplication happens
     return batteries
 end
 
