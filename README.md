@@ -29,10 +29,9 @@ Here is a basic example of how to use the package to read demand data:
 
 ```julia
 using AustralianElectricityMarkets
-using TidierDB
 
 # Establish a database connection
-db = aem_connect(duckdb());
+db = aem_connect();
 
 # Download the data from the monthly archive, saving them locally
 # in parquet files

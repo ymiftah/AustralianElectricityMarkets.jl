@@ -18,5 +18,5 @@ get_filesystem(config::HiveConfiguration) = config.filesystem
 abstract type NetworkConfiguration end
 
 function table_requirements(::NetworkConfiguration)
-    throw("Not implemented")
+    error("Not implemented")
 end

@@ -1,7 +1,7 @@
 module AustralianElectricityMarkets
 
 using PowerSystems
-using TidierDB
+using DuckDB
 using HTTP, JSON3
 using Dates
 import TimeSeries: TimeArray, colnames

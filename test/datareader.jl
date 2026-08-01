@@ -3,7 +3,7 @@ let
     @test isdir(hive_dir)
 
     config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
-    db = aem_connect(duckdb(), config)
+    db = aem_connect(config)
 
     @testset "read_interconnectors" begin
         df = read_interconnectors(db)
@@ -52,5 +52,31 @@ let
         @test nrow(df) > 0
         @test "DUID" in names(df)
         @test "piecewise_step_data" in names(df)
+    end
+
+    @testset "_filter_latest excludes stale partitions" begin
+        # All other mock tables only ever have a single archive_month value, so
+        # _filter_latest's "keep only the max partition" logic has never actually
+        # been exercised against genuinely stale data. Write a dedicated 2-partition
+        # table directly into the test hive dir to close that gap.
+        conn = DuckDB.connect(db.db)
+        DuckDB.execute(conn, "SET preserve_identifier_case=true")
+        table_dir = joinpath(hive_dir, "LATESTTEST")
+        mkpath(table_dir)
+        df = vcat(
+            DataFrame(id = [1, 2], marker = ["stale", "stale"], archive_month = ["2024-01", "2024-01"]),
+            DataFrame(id = [3], marker = ["current"], archive_month = ["2025-01"]),
+        )
+        DuckDB.register_data_frame(conn, df, "tmp_latest_test")
+        DuckDB.execute(conn, "COPY (SELECT * FROM tmp_latest_test) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+        DuckDB.unregister_table(conn, "tmp_latest_test")
+        DuckDB.disconnect(conn)
+
+        table = read_hive(db, :LATESTTEST)
+        latest_source = AustralianElectricityMarkets._filter_latest(table)
+        filtered = AustralianElectricityMarkets._query(db, "SELECT * FROM $latest_source")
+        @test nrow(filtered) == 1
+        @test filtered.marker[1] == "current"
+        @test filtered.archive_month[1] == "2025-01"
     end
 end

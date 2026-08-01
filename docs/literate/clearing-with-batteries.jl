@@ -8,7 +8,6 @@ begin
     using Chain
     using DataFrames
     using AlgebraOfGraphics, CairoMakie
-    using TidierDB
     using Dates
     using HiGHS
 end
@@ -45,7 +44,7 @@ end
 # end;
 # ```
 
-db = aem_connect(duckdb());
+db = aem_connect();
 
 # Instantiate the system using a regional network configuration.
 sys = nem_system(db, RegionalNetworkConfiguration())

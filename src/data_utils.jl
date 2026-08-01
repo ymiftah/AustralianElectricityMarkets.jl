@@ -8,5 +8,16 @@
     config::HiveConfiguration = HiveConfiguration()
 end
 
-aem_connect(db::TidierDB.SQLBackend) = AEMDB(db = TidierDB.connect(db))
-aem_connect(db::TidierDB.SQLBackend, config::HiveConfiguration) = AEMDB(db = TidierDB.connect(db), config = config)
+"""
+    aem_connect(config::HiveConfiguration = HiveConfiguration())
+
+Open a DuckDB connection wrapped in an `AEMDB`. Loads the `httpfs` extension
+when `config` points at a remote filesystem (S3, GS).
+"""
+function aem_connect(config::HiveConfiguration = HiveConfiguration())
+    db = DuckDB.DB()
+    if !islocal(config)
+        DuckDB.execute(db, "INSTALL httpfs; LOAD httpfs;")
+    end
+    return AEMDB(; db, config)
+end

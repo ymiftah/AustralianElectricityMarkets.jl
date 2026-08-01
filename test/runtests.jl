@@ -3,7 +3,8 @@ using Test
 # using JET
 
 using Dates
-using TidierDB
+using DuckDB
+using Chain
 using DataFrames: nrow
 using PowerSystems
 

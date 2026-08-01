@@ -16,3 +16,5 @@ wip
 docs/.CondaPkg
 test/.CondaPkg
 .env
+out/
+debug_out/

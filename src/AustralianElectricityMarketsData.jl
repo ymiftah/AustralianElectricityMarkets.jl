@@ -43,7 +43,7 @@ function fetch_table_data(
     dbItem = pygetattr(dbs, String(table), nothing)
     if isnothing(dbItem)
         available_tables = list_available_tables()
-        throw("No such table exists. Available tables are $available_tables")
+        throw(ArgumentError("No such table exists. Available tables are $available_tables"))
     end
     from_date = first(time_range)
     to_date = last(time_range)
@@ -70,7 +70,7 @@ function fetch_table_data(
 end
 
 """
-    list_available_tables()::Array{String}
+    list_available_tables()::Array{Symbol}
 
 List the available tables to fetch data for.
 """
@@ -193,7 +193,7 @@ function read_isp_thermal_costs_parameters(year::Int, scenario::String)
     available_scenarios = unique(prices.scenario)
     available_years = unique(prices.year)
     !in(available_scenarios)(scenario) && throw(ArgumentError("scenario value must be one of $available_scenarios"))
-    !in(available_years)(year) && throw(ArgumentError("year value must be one of $available_year"))
+    !in(available_years)(year) && throw(ArgumentError("year value must be one of $available_years"))
     subset!(prices, :year => ByRow(==(year)), :scenario => ByRow(==(scenario)))
     select!(prices, Not(:year, :scenario))
 

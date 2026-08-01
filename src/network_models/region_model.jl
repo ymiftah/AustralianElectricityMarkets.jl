@@ -61,7 +61,7 @@ A `DataFrame` containing bus details.
 
 # Example
 ```julia
-db = aem_connect(duckdb())
+db = aem_connect()
 bus_df = get_bus_dataframe(db)
 println(bus_df)
 ```
@@ -104,26 +104,26 @@ function get_bus_dataframe(db)
 end
 
 """
-    get_load_dataframe(db)
+    get_load_dataframe(bus_df)
 
 Generates a DataFrame of load information.
 
 # Arguments
-- `db`: The database connection.
+- `bus_df`: A `DataFrame` of bus data, as returned by `get_bus_dataframe`.
 
 # Returns
 A `DataFrame` containing load details.
 
 # Example
 ```julia
-db = aem_connect(duckdb())
-load_df = get_load_dataframe(db)
+db = aem_connect()
+bus_df = get_bus_dataframe(db)
+load_df = get_load_dataframe(bus_df)
 println(load_df)
 ```
 """
-function get_load_dataframe(db)
-    buses = get_bus_dataframe(db)
-    loads = @chain buses begin
+function get_load_dataframe(bus_df)
+    loads = @chain copy(bus_df) begin
         select!(:bus_id, :region, :name)
         subset!(:name => ByRow(contains(LOAD_SUFFIX)))
         transform!(:region => ByRow(x -> x * " Load") => :name)
@@ -138,29 +138,30 @@ function get_load_dataframe(db)
 end
 
 """
-    get_branch_dataframe(db)
+    get_branch_dataframe(bus_df, interconnectors)
 
 Generates a DataFrame of branch information.
 
 # Arguments
-- `db`: The database connection.
+- `bus_df`: A `DataFrame` of bus data, as returned by `get_bus_dataframe`.
+- `interconnectors`: A `DataFrame` of interconnector data, as returned by `read_interconnectors`.
 
 # Returns
 A `DataFrame` containing branch details.
 
 # Example
 ```julia
-db = aem_connect(duckdb())
-branch_df = get_branch_dataframe(db)
+db = aem_connect()
+bus_df = get_bus_dataframe(db)
+branch_df = get_branch_dataframe(bus_df, read_interconnectors(db))
 println(branch_df)
 ```
 """
-function get_branch_dataframe(db)
-    interconnectors = read_interconnectors(db)
-    bus = select!(get_bus_dataframe(db), :bus_id, :name, :region)
+function get_branch_dataframe(bus_df, interconnectors)
+    bus = select(bus_df, :bus_id, :name, :region)
     load_buses = subset(bus, :name => ByRow(contains(LOAD_SUFFIX)))
     gen_buses = subset(bus, :name => ByRow(contains(GEN_SUFFIX)))
-    load_branches = @chain interconnectors begin
+    load_branches = @chain copy(interconnectors) begin
         select!(
             :INTERCONNECTORID => :name,
             :REGIONFROM => ByRow(x -> x * LOAD_SUFFIX) => :from,
@@ -192,28 +193,29 @@ function get_branch_dataframe(db)
 end
 
 """
-    get_generators_dataframe(db)
+    get_generators_dataframe(bus_df, units)
 
 Generates a DataFrame of generator information.
 
 # Arguments
-- `db`: The database connection.
+- `bus_df`: A `DataFrame` of bus data, as returned by `get_bus_dataframe`.
+- `units`: A `DataFrame` of unit data, as returned by `read_units`.
 
 # Returns
 A `DataFrame` containing generator details.
 
 # Example
 ```julia
-db = aem_connect(duckdb())
-gen_df = get_generators_dataframe(db)
+db = aem_connect()
+bus_df = get_bus_dataframe(db)
+gen_df = get_generators_dataframe(bus_df, read_units(db))
 println(gen_df)
 ```
 """
-function get_generators_dataframe(db)
-    bus = select!(get_bus_dataframe(db), :bus_id, :name)
-    nem_units = read_units(db)
+function get_generators_dataframe(bus_df, units)
+    bus = select(bus_df, :bus_id, :name)
 
-    return @chain nem_units begin
+    return @chain copy(units) begin
         select!(
             :REGIONID => ByRow(x -> x * GEN_SUFFIX) => :bus_name,
             :REGIONID => :region,
@@ -259,26 +261,28 @@ function get_generators_dataframe(db)
 end
 
 """
-    get_batteries_dataframe(db)
+    get_batteries_dataframe(bus_df, units)
 
 Generates a DataFrame of Battery information.
 
 # Arguments
-- `db`: The database connection.
+- `bus_df`: A `DataFrame` of bus data, as returned by `get_bus_dataframe`.
+- `units`: A `DataFrame` of unit data, as returned by `read_units`.
 
 # Returns
 A `DataFrame` containing batteries details.
 
 # Example
 ```julia
-db = aem_connect(duckdb())
-branch_df = get_batteries_dataframe(db)
+db = aem_connect()
+bus_df = get_bus_dataframe(db)
+branch_df = get_batteries_dataframe(bus_df, read_units(db))
 println(branch_df)
 ```
 """
-function get_batteries_dataframe(db)
-    bus = select!(get_bus_dataframe(db), :bus_id, :name)
-    units = read_units(db)
+function get_batteries_dataframe(bus_df, units)
+    bus = select(bus_df, :bus_id, :name)
+    units = copy(units)
     dropmissing!(units, :TECHNOLOGY)  # TODO make assumptions when technology is missing ?
     dropmissing!(units, :STORAGEIMPORTEFFICIENCYFACTOR) # TODO make assumptions when efficiency is  missing ?
     subset!(units, :TECHNOLOGY => ByRow(==(PrimeMovers.BA)))
@@ -313,25 +317,25 @@ end
 
 
 """
-    get_interfaces_dataframe(db)
+    get_interfaces_dataframe(interconnectors)
 
 Generates a DataFrame of Interfaces information.
 
 # Arguments
-- `db`: The database connection.
+- `interconnectors`: A `DataFrame` of interconnector data, as returned by `read_interconnectors`.
 
 # Returns
 A `DataFrame` containing interfaces details.
 
 # Example
 ```julia
-db = aem_connect(duckdb())
-branch_df = get_branch_dataframe(db)
-println(branch_df)
+db = aem_connect()
+interfaces_df = get_interfaces_dataframe(read_interconnectors(db))
+println(interfaces_df)
 ```
 """
-function get_interfaces_dataframe(db)
-    interconnectors = read_interconnectors(db)
+function get_interfaces_dataframe(interconnectors)
+    interconnectors = copy(interconnectors)
     select!(
         interconnectors,
         :INTERCONNECTORID => :name,
@@ -363,7 +367,7 @@ A `PowerSystems.System` object.
 
 # Example
 ```julia
-db = aem_connect(duckdb())
+db = aem_connect()
 sys = nem_system(db)
 println(sys)
 ```
@@ -371,17 +375,19 @@ println(sys)
 function nem_system(db; kwargs...)
     @info "parsing buses"
     bus_df = get_bus_dataframe(db)
+    interconnectors = read_interconnectors(db)
+    units = read_units(db)
     @info "parsing loads"
-    loads_df = get_load_dataframe(db)
+    loads_df = get_load_dataframe(bus_df)
     @info "parsing branches"
-    branch_df = get_branch_dataframe(db)
+    branch_df = get_branch_dataframe(bus_df, interconnectors)
     @info "parsing generators"
-    gen_df = get_generators_dataframe(db)
+    gen_df = get_generators_dataframe(bus_df, units)
     @info "parsing batteries"
-    batteries_df = get_batteries_dataframe(db)
+    batteries_df = get_batteries_dataframe(bus_df, units)
 
     @info "parsing interconnectors/area interchanges / transmission interface"
-    interfaces_df = get_interfaces_dataframe(db)
+    interfaces_df = get_interfaces_dataframe(interconnectors)
 
     sys = System(BASE_POWER; kwargs...)
     _add_buses!(sys, bus_df)
@@ -483,6 +489,39 @@ Adds generation units to the system.
 - `sys`: The `PowerSystems.System` object.
 - `gen_df`: A `DataFrame` of generator data.
 """
+_fill_missing_median(x) = all(ismissing.(x)) ? missing : median(skipmissing(x))
+
+"""
+    _fill_opex!(df, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians; extra_median_cols = Symbol[])
+
+Applies the 4-step OPEX fill cascade to `df` in place:
+1. per-unit join (IASR ID)          — `leftjoin!` on `:name => :unit`
+2. primemover-level median          — `leftjoin!` on `:technology => :primemover`
+3. `isp_technology` group median    — `groupby(:isp_technology)`
+4. global median across all units   — ungrouped transform
+
+`extra_median_cols` are additional columns (e.g. thermal heat-rate/fuel-price
+columns) that only participate in steps 3 & 4, not the per-unit/primemover joins.
+"""
+function _fill_opex!(df, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians; extra_median_cols = Symbol[])
+    # step 1: per-unit join
+    leftjoin!(df, variable_opex_df; on = :name => :unit)
+    leftjoin!(df, select(fixed_opex_df, :unit, :fixed_opex_aud_kw_year); on = :name => :unit)
+    # step 2: primemover-level median for still-missing values
+    leftjoin!(df, pm_var_medians; on = :technology => :primemover)
+    leftjoin!(df, pm_fix_medians; on = :technology => :primemover)
+    df.variable_opex_aud_mwh = coalesce.(df.variable_opex_aud_mwh, df.variable_opex_aud_mwh_pm)
+    df.fixed_opex_aud_kw_year = coalesce.(df.fixed_opex_aud_kw_year, df.fixed_opex_aud_kw_year_pm)
+    select!(df, Not([:variable_opex_aud_mwh_pm, :fixed_opex_aud_kw_year_pm]))
+    # steps 3 & 4: isp_technology group median, then global median
+    median_cols = [:variable_opex_aud_mwh, :fixed_opex_aud_kw_year, extra_median_cols...]
+    return @chain df begin
+        groupby(:isp_technology)
+        transform(median_cols .=> _fill_missing_median .=> median_cols)
+        transform(median_cols .=> _fill_missing_median .=> median_cols)
+    end
+end
+
 function _add_generation!(sys, gen_df)
     variable_opex_df = read_isp_variable_opex()
     fixed_opex_df = read_isp_fixed_opex()
@@ -497,37 +536,10 @@ function _add_generation!(sys, gen_df)
         :fixed_opex_aud_kw_year => median ∘ skipmissing => :fixed_opex_aud_kw_year_pm,
     )
 
-    fill_missing(x) = all(ismissing.(x)) ? missing : median(skipmissing(x))
-
-    # 4-step OPEX fill cascade (applied after each per-unit leftjoin!):
-    #   1. per-unit join (IASR ID)          — done via leftjoin! on :name => :unit
-    #   2. primemover-level median          — leftjoin! on :technology => :primemover
-    #   3. isp_technology group median      — groupby(:isp_technology)
-    #   4. global median across all units   — ungrouped transform
     renewable = subset(
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:RenewableDispatch]))
     )
-    # step 1: per-unit join
-    leftjoin!(renewable, variable_opex_df; on = :name => :unit)
-    leftjoin!(renewable, select(fixed_opex_df, :unit, :fixed_opex_aud_kw_year); on = :name => :unit)
-    # step 2: primemover-level median for still-missing values
-    leftjoin!(renewable, pm_var_medians; on = :technology => :primemover)
-    leftjoin!(renewable, pm_fix_medians; on = :technology => :primemover)
-    renewable.variable_opex_aud_mwh = coalesce.(renewable.variable_opex_aud_mwh, renewable.variable_opex_aud_mwh_pm)
-    renewable.fixed_opex_aud_kw_year = coalesce.(renewable.fixed_opex_aud_kw_year, renewable.fixed_opex_aud_kw_year_pm)
-    select!(renewable, Not([:variable_opex_aud_mwh_pm, :fixed_opex_aud_kw_year_pm]))
-    # steps 3 & 4: isp_technology group median, then global median
-    renewable = @chain renewable begin
-        groupby(:isp_technology)
-        transform(
-            :variable_opex_aud_mwh => fill_missing => :variable_opex_aud_mwh,
-            :fixed_opex_aud_kw_year => fill_missing => :fixed_opex_aud_kw_year,
-        )
-        transform(
-            :variable_opex_aud_mwh => fill_missing => :variable_opex_aud_mwh,
-            :fixed_opex_aud_kw_year => fill_missing => :fixed_opex_aud_kw_year,
-        )
-    end
+    renewable = _fill_opex!(renewable, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians)
     renewable_components = (
         RenewableDispatch(;
                 name = row[:name],
@@ -558,27 +570,7 @@ function _add_generation!(sys, gen_df)
     hydro = subset(
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:HydroDispatch]))
     )
-    # step 1: per-unit join
-    leftjoin!(hydro, variable_opex_df; on = :name => :unit)
-    leftjoin!(hydro, select(fixed_opex_df, :unit, :fixed_opex_aud_kw_year); on = :name => :unit)
-    # step 2: primemover-level median for still-missing values
-    leftjoin!(hydro, pm_var_medians; on = :technology => :primemover)
-    leftjoin!(hydro, pm_fix_medians; on = :technology => :primemover)
-    hydro.variable_opex_aud_mwh = coalesce.(hydro.variable_opex_aud_mwh, hydro.variable_opex_aud_mwh_pm)
-    hydro.fixed_opex_aud_kw_year = coalesce.(hydro.fixed_opex_aud_kw_year, hydro.fixed_opex_aud_kw_year_pm)
-    select!(hydro, Not([:variable_opex_aud_mwh_pm, :fixed_opex_aud_kw_year_pm]))
-    # steps 3 & 4: isp_technology group median, then global median
-    hydro_with_costs = @chain hydro begin
-        groupby(:isp_technology)
-        transform(
-            :variable_opex_aud_mwh => fill_missing => :variable_opex_aud_mwh,
-            :fixed_opex_aud_kw_year => fill_missing => :fixed_opex_aud_kw_year,
-        )
-        transform(
-            :variable_opex_aud_mwh => fill_missing => :variable_opex_aud_mwh,
-            :fixed_opex_aud_kw_year => fill_missing => :fixed_opex_aud_kw_year,
-        )
-    end
+    hydro_with_costs = _fill_opex!(hydro, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians)
     hydro_components = (
         HydroDispatch(;
                 name = row[:name],
@@ -620,34 +612,12 @@ function _add_generation!(sys, gen_df)
         # TODO hardcoded for now, todo work on interface
         2025, "Step Change"
     )
-    # step 1: per-unit joins
+    # per-unit join of thermal-specific affine heat-rate/fuel-price parameters
     leftjoin!(thermal, affine_heatrates, on = :name => :unit; makeunique = true)
-    leftjoin!(thermal, variable_opex_df; on = :name => :unit)
-    leftjoin!(thermal, select(fixed_opex_df, :unit, :fixed_opex_aud_kw_year); on = :name => :unit)
-    # step 2: primemover-level median for still-missing OPEX values
-    leftjoin!(thermal, pm_var_medians; on = :technology => :primemover)
-    leftjoin!(thermal, pm_fix_medians; on = :technology => :primemover)
-    thermal.variable_opex_aud_mwh = coalesce.(thermal.variable_opex_aud_mwh, thermal.variable_opex_aud_mwh_pm)
-    thermal.fixed_opex_aud_kw_year = coalesce.(thermal.fixed_opex_aud_kw_year, thermal.fixed_opex_aud_kw_year_pm)
-    select!(thermal, Not([:variable_opex_aud_mwh_pm, :fixed_opex_aud_kw_year_pm]))
-    # steps 3 & 4: isp_technology group median, then global median
-    thermal_with_costs = @chain thermal begin
-        groupby(:isp_technology)
-        transform(
-            :price_aud => fill_missing => :price_aud,
-            :no_load_heat_input_GJ_per_h => fill_missing => :no_load_heat_input_GJ_per_h,
-            :marginal_heat_rate_GJ_per_MWH => fill_missing => :marginal_heat_rate_GJ_per_MWH,
-            :variable_opex_aud_mwh => fill_missing => :variable_opex_aud_mwh,
-            :fixed_opex_aud_kw_year => fill_missing => :fixed_opex_aud_kw_year,
-        )
-        transform(
-            :price_aud => fill_missing => :price_aud,
-            :no_load_heat_input_GJ_per_h => fill_missing => :no_load_heat_input_GJ_per_h,
-            :marginal_heat_rate_GJ_per_MWH => fill_missing => :marginal_heat_rate_GJ_per_MWH,
-            :variable_opex_aud_mwh => fill_missing => :variable_opex_aud_mwh,
-            :fixed_opex_aud_kw_year => fill_missing => :fixed_opex_aud_kw_year,
-        )
-    end
+    thermal_with_costs = _fill_opex!(
+        thermal, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians;
+        extra_median_cols = [:price_aud, :no_load_heat_input_GJ_per_h, :marginal_heat_rate_GJ_per_MWH],
+    )
 
     thermal_components = (
         ThermalStandard(;
