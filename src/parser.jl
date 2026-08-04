@@ -101,20 +101,22 @@ function read_interconnectors(db)
     t_interconnector = read_hive(db, :INTERCONNECTOR)
     t_interconnector_constraint = read_hive(db, :INTERCONNECTORCONSTRAINT)
 
-    # Get latest interconnector regions (keep latest archive_month)
-    interconnectors = _query(db, "SELECT INTERCONNECTORID, REGIONFROM, REGIONTO, archive_month FROM $t_interconnector")
-    sort!(interconnectors, :archive_month, rev=true)
-    unique!(interconnectors)
-    select!(interconnectors, Not(:archive_month))
-
-    # Get latest constraint records
-    constraints = _query(db, "SELECT * FROM $t_interconnector_constraint")
-    sort!(constraints, [:EFFECTIVEDATE, :VERSIONNO], rev=true)
-    unique!(constraints, :INTERCONNECTORID, keep=:first)
-    select!(constraints, Not(:archive_month))
-
-    # Join them
-    return leftjoin(constraints, interconnectors; on = :INTERCONNECTORID)
+    sql = """
+        WITH ic AS (SELECT * FROM $t_interconnector),
+             latest_ic AS (
+                 SELECT INTERCONNECTORID, REGIONFROM, REGIONTO, archive_month
+                 FROM $(_filter_latest("ic"))
+             ),
+             icc AS (SELECT * FROM $t_interconnector_constraint)
+        SELECT c.* EXCLUDE (archive_month), l.REGIONFROM, l.REGIONTO
+        FROM icc c
+        INNER JOIN latest_ic l
+          ON c.INTERCONNECTORID = l.INTERCONNECTORID AND c.archive_month = l.archive_month
+        QUALIFY row_number() OVER (
+            PARTITION BY c.INTERCONNECTORID ORDER BY c.EFFECTIVEDATE DESC, c.VERSIONNO DESC
+        ) = 1
+    """
+    return _query(db, sql)
 end
 
 """
@@ -151,9 +153,10 @@ function read_demand(db; resolution::Dates.Period = Dates.Minute(5))
         """
         SELECT SETTLEMENTDATE, REGIONID, TOTALDEMAND, SS_SOLAR_AVAILABILITY, SS_WIND_AVAILABILITY
         FROM $source
+        WHERE SETTLEMENTDATE IS NOT NULL AND REGIONID IS NOT NULL
+          AND TOTALDEMAND IS NOT NULL AND SS_SOLAR_AVAILABILITY IS NOT NULL AND SS_WIND_AVAILABILITY IS NOT NULL
         """
     )
-    dropmissing!(df)
     # df[!, :TOTALDEMAND] .+= df[!, :DISPATCHABLELOAD]  # Adds the dispatchable load to the total demand to get the actual native demand
     df[!, :SETTLEMENTDATE] = ceil.(df[!, :SETTLEMENTDATE], resolution)
     sort!(df, :SETTLEMENTDATE)
@@ -182,85 +185,89 @@ println(units_df)
 ```
 """
 function read_units(db)
-
-    # READ THE LIST OF UNITS: latest EFFECTIVEDATE/VERSIONNO per DUID
     dudetail_table = read_hive(db, :DUDETAIL)
-    dudetail = _query(
-        db,
-        """
-        SELECT *
-        FROM $dudetail_table
-        ORDER BY EFFECTIVEDATE DESC, VERSIONNO DESC
-        """
-    )
-    select!(dudetail, Not(:archive_month))
-    sort!(dudetail, :DUID)
-    unique!(dudetail)
-
-    # # JOIN THE SUMMARY Table to match station (among other info)
     summary_table = read_hive(db, :DUDETAILSUMMARY)
-    summary = _query(
-        db,
-        """
-        SELECT *
-        FROM $summary_table
-        WHERE archive_month = (SELECT max(archive_month) FROM $summary_table)
-          AND (END_DATE IS NULL OR year(END_DATE) = 2999)
-        ORDER BY START_DATE ASC
-        """
-    )
-    select!(summary, Not(:archive_month))
-    unique!(summary)
-
-    station_table = read_hive(db, :STATION)
-    station_names = _query(db, "SELECT DISTINCT STATIONID, STATIONNAME, POSTCODE FROM $station_table")
-
     op_status_table = read_hive(db, :STATIONOPERATINGSTATUS)
-    op_status = _query(
-        db,
-        """
-        SELECT * FROM $op_status_table
-        WHERE STATUS = 'COMMISSIONED'
-        """
-    )
-    sort!(op_status, [:STATIONID, :EFFECTIVEDATE], rev=[false, true])
-    unique!(op_status, :STATIONID, keep=:first)
-    select!(op_status, Not(:archive_month))
-    leftjoin!(op_status, station_names; on = :STATIONID)
-    unique!(op_status)
+    station_table = read_hive(db, :STATION)
+    gen_units_table = read_hive(db, :GENUNITS)
+    dualloc_table = read_hive(db, :DUALLOC)
 
-    # GENSET / DUID mapping
-    gen_units = read_hive(db, :GENUNITS)
-    genunits = _query(db, "SELECT * FROM $gen_units")
-    sort!(genunits, :archive_month, rev=true)
-    unique!(genunits, :GENSETID, keep=:first)
-    select!(genunits, [:GENSETID, :CO2E_ENERGY_SOURCE, :CO2E_EMISSIONS_FACTOR])
+    # All filtering, latest-partition/version resolution, and joins are pushed
+    # into DuckDB via CTEs. Each hive source is scanned exactly once (bound to
+    # a CTE) and reused from there — referencing the same `read_parquet(...)`
+    # fragment twice in one query trips a DuckDB internal assertion.
+    sql = """
+        WITH dd_raw AS (SELECT * FROM $dudetail_table),
+             dudetail AS (
+                 SELECT * EXCLUDE (archive_month)
+                 FROM dd_raw
+                 QUALIFY row_number() OVER (
+                     PARTITION BY DUID ORDER BY EFFECTIVEDATE DESC, VERSIONNO DESC
+                 ) = 1
+             ),
+             sm_raw AS (SELECT * FROM $summary_table),
+             summary AS (
+                 SELECT * EXCLUDE (archive_month)
+                 FROM $(_filter_latest("sm_raw"))
+                 WHERE END_DATE IS NULL OR year(END_DATE) = 2999
+                 QUALIFY row_number() OVER (PARTITION BY DUID ORDER BY START_DATE ASC) = 1
+             ),
+             op_raw AS (SELECT * FROM $op_status_table),
+             st_raw AS (SELECT * FROM $station_table),
+             commissioned_max AS (
+                 SELECT STATIONID, max(EFFECTIVEDATE) AS EFFECTIVEDATE, max(archive_month) AS archive_month
+                 FROM op_raw
+                 WHERE STATUS = 'COMMISSIONED'
+                 GROUP BY STATIONID
+             ),
+             station_names AS (
+                 SELECT DISTINCT STATIONID, STATIONNAME, POSTCODE FROM st_raw
+             ),
+             op_status AS (
+                 SELECT DISTINCT o.STATIONID, o.STATUS, s.STATIONNAME, s.POSTCODE
+                 FROM op_raw o
+                 INNER JOIN commissioned_max m
+                   ON o.STATIONID = m.STATIONID AND o.EFFECTIVEDATE = m.EFFECTIVEDATE AND o.archive_month = m.archive_month
+                 LEFT JOIN station_names s ON o.STATIONID = s.STATIONID
+             ),
+             gu_raw AS (SELECT * FROM $gen_units_table),
+             genunits_raw AS (
+                 SELECT GENSETID, first(CO2E_ENERGY_SOURCE) AS CO2E_ENERGY_SOURCE, first(CO2E_EMISSIONS_FACTOR) AS CO2E_EMISSIONS_FACTOR
+                 FROM $(_filter_latest("gu_raw"))
+                 GROUP BY GENSETID
+             ),
+             dl_raw AS (SELECT * FROM $dualloc_table),
+             dualloc AS (
+                 SELECT GENSETID, DUID
+                 FROM $(_filter_latest("dl_raw"))
+                 QUALIFY row_number() OVER (
+                     PARTITION BY GENSETID ORDER BY DUID DESC, LASTCHANGED DESC, VERSIONNO DESC
+                 ) = 1
+             ),
+             genunits AS (
+                 SELECT d.DUID, g.CO2E_ENERGY_SOURCE, g.CO2E_EMISSIONS_FACTOR
+                 FROM genunits_raw g
+                 INNER JOIN dualloc d ON g.GENSETID = d.GENSETID
+             )
+        SELECT dudetail.*, summary.* EXCLUDE (DUID, STATIONID), op_status.* EXCLUDE (STATIONID),
+               genunits.CO2E_ENERGY_SOURCE, genunits.CO2E_EMISSIONS_FACTOR
+        FROM dudetail
+        INNER JOIN genunits ON dudetail.DUID = genunits.DUID
+        INNER JOIN summary ON dudetail.DUID = summary.DUID
+        INNER JOIN op_status ON dudetail.STATIONID = op_status.STATIONID
+        WHERE op_status.STATUS = 'COMMISSIONED'
+        ORDER BY dudetail.DUID
+    """
+    dudetail = _query(db, sql)
+
+    # PowerSystems.jl enum lookups: inherently a Julia-side step, applied to
+    # the small, already-fully-joined/filtered result.
     transform!(
-        genunits,
+        dudetail,
         :CO2E_ENERGY_SOURCE => ByRow(x -> AEMO_PM_MAPPING[x]) => :TECHNOLOGY,
         :CO2E_ENERGY_SOURCE => ByRow(x -> AEMO_FUEL_MAPPING[x]) => :FUELTYPE,
     )
-    select!(genunits, Not(:CO2E_ENERGY_SOURCE))
-
-    dualloc_table = read_hive(db, :DUALLOC)
-    dualloc = _query(db, "SELECT * FROM $dualloc_table")
-    sort!(dualloc, [:GENSETID, :DUID, :LASTCHANGED, :VERSIONNO], rev=[false, true, true, true])
-    unique!(dualloc, :GENSETID, keep=:first)
-    select!(dualloc, [:GENSETID, :DUID])
-
-    genunits = @chain innerjoin(genunits, dualloc; on = :GENSETID) begin
-        select!(Not(:GENSETID))
-        unique
-    end
-
-    # # Joins
-    dudetail = innerjoin(dudetail, genunits; on = :DUID)
-    dudetail = innerjoin(dudetail, summary; on = :DUID, makeunique = true)
-    dudetail = innerjoin(dudetail, op_status; on = :STATIONID)
-    # # Keep commisioned and scheduled / semischeduled
-    subset!(dudetail, :STATUS => ByRow(==("COMMISSIONED")))
-    # TODO address duplicated columnz explicitly
-    select!(dudetail, Not(r"_[\d]"))
+    select!(dudetail, Not(:CO2E_ENERGY_SOURCE))
     return dudetail
 end
 
