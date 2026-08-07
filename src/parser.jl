@@ -512,6 +512,7 @@ function set_market_bids!(sys, db, date_range; kwargs...)
                 name = "variable_cost",
                 data = data,
                 resolution = get(kwargs, :resolution, Minute(5)),
+                interval = get(kwargs, :resolution, Minute(5)),
             )
             set_incremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
             time_series_incremental_initial_input = Deterministic(;
@@ -520,6 +521,7 @@ function set_market_bids!(sys, db, date_range; kwargs...)
                     start_date => zeros(size(psd))
                 ),
                 resolution = get(kwargs, :resolution, Minute(5)),
+                interval = get(kwargs, :resolution, Minute(5)),
             )
             set_incremental_initial_input!(sys, gen, time_series_incremental_initial_input)
         end
@@ -553,6 +555,7 @@ function set_market_bids!(sys, db, date_range; kwargs...)
                 name = "variable_cost",
                 data = data,
                 resolution = get(kwargs, :resolution, Minute(5)),
+                interval = get(kwargs, :resolution, Minute(5)),
             )
             set_incremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
             time_series_incremental_initial_input = Deterministic(;
@@ -561,6 +564,7 @@ function set_market_bids!(sys, db, date_range; kwargs...)
                     start_date => zeros(size(psd))
                 ),
                 resolution = get(kwargs, :resolution, Minute(5)),
+                interval = get(kwargs, :resolution, Minute(5)),
             )
             set_incremental_initial_input!(sys, gen, time_series_incremental_initial_input)
 
@@ -573,6 +577,7 @@ function set_market_bids!(sys, db, date_range; kwargs...)
                 name = "decremental_variable_cost",
                 data = data,
                 resolution = get(kwargs, :resolution, Minute(5)),
+                interval = get(kwargs, :resolution, Minute(5)),
             )
             set_decremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
             time_series_decremental_initial_input = Deterministic(;
@@ -581,6 +586,7 @@ function set_market_bids!(sys, db, date_range; kwargs...)
                     start_date => (first ∘ get_y_coords).(psd)
                 ),
                 resolution = get(kwargs, :resolution, Minute(5)),
+                interval = get(kwargs, :resolution, Minute(5)),
             )
             set_decremental_initial_input!(sys, gen, time_series_decremental_initial_input)
         end
