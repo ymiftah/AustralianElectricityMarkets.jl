@@ -3,20 +3,50 @@ using TidierDB
 using DataFrames
 using Statistics
 
-# AEMO BIDTYPE string -> FCASResponseTime for the 6 contingency FCAS markets in scope.
+# The fixed set of AEMO BIDTYPE values this repo's bid-reading functions accept. A scoped
+# enum (same convention as FCASResponseTime) rather than a free-floating String, since only
+# these values are ever valid - this catches a typo'd bid type at construction time instead
+# of it silently becoming a WHERE clause that matches zero rows.
+#
+# RAISE1SEC/LOWER1SEC are included so the enum doesn't need a breaking change when the
+# deferred 1-second markets are picked up later (see FCASResponseTime.SEC1 docstring) - no
+# function in this initial pass constructs or accepts them.
+#
+# A docstring can't be attached directly above this call: `@scoped_enum` expands to an
+# `Expr(:toplevel, ...)`, which Julia's docsystem cannot document.
+IS.@scoped_enum(
+    BidType,
+    ENERGY = 1,
+    RAISE6SEC = 2,
+    LOWER6SEC = 3,
+    RAISE60SEC = 4,
+    LOWER60SEC = 5,
+    RAISE5MIN = 6,
+    LOWER5MIN = 7,
+    RAISEREG = 8,
+    LOWERREG = 9,
+    RAISE1SEC = 10,  # deferred 1-second market, unused for now
+    LOWER1SEC = 11,  # deferred 1-second market, unused for now
+)
+
+# AEMO BIDTYPE -> FCASResponseTime for the 6 contingency FCAS markets in scope.
 # RAISE1SEC/LOWER1SEC are deferred (see FCASResponseTime.SEC1 docstring).
 const FCAS_CONTINGENCY_MARKETS = Dict(
-    "RAISE6SEC" => FCASResponseTime.SEC6,
-    "LOWER6SEC" => FCASResponseTime.SEC6,
-    "RAISE60SEC" => FCASResponseTime.SEC60,
-    "LOWER60SEC" => FCASResponseTime.SEC60,
-    "RAISE5MIN" => FCASResponseTime.MIN5,
-    "LOWER5MIN" => FCASResponseTime.MIN5,
+    BidType.RAISE6SEC => FCASResponseTime.SEC6,
+    BidType.LOWER6SEC => FCASResponseTime.SEC6,
+    BidType.RAISE60SEC => FCASResponseTime.SEC60,
+    BidType.LOWER60SEC => FCASResponseTime.SEC60,
+    BidType.RAISE5MIN => FCASResponseTime.MIN5,
+    BidType.LOWER5MIN => FCASResponseTime.MIN5,
 )
-const FCAS_REGULATION_MARKETS = ("RAISEREG", "LOWERREG")
+const FCAS_REGULATION_MARKETS = (BidType.RAISEREG, BidType.LOWERREG)
 const FCAS_BID_TYPES = (keys(FCAS_CONTINGENCY_MARKETS)..., FCAS_REGULATION_MARKETS...)
 
-_fcas_direction(bid_type::AbstractString) = startswith(bid_type, "RAISE") ? ReserveUp : ReserveDown
+# Note: string(bid_type), not "$bid_type" - @scoped_enum overrides Base.show (for a
+# human-readable "BidType.RAISE6SEC = 2" REPL display), and Julia's string interpolation
+# calls print -> show by default, not Base.string, so bare interpolation would silently
+# produce the wrong text anywhere a bid type is spliced into a name or SQL filter.
+_fcas_direction(bid_type::BidType) = startswith(string(bid_type), "RAISE") ? ReserveUp : ReserveDown
 
 
 """
@@ -617,15 +647,16 @@ function read_bids(db, date_range; kwargs...)
     return bids
 end
 
-function read_energy_bids(db, date_range; bid_type::AbstractString = "ENERGY", kwargs...)
+function read_energy_bids(db, date_range; bid_type::BidType = BidType.ENERGY, kwargs...)
     start_datetime = first(date_range)
     end_datetime = last(date_range)
     sd = Date(start_datetime) - Day(1)
     ed = Date(end_datetime) + Day(1)
+    bid_type_str = string(bid_type)
     table = read_hive(db, :BIDPEROFFER_D)
     energy_bids = @eval @chain $table begin
         @select(SETTLEMENTDATE, BIDTYPE, INTERVAL_DATETIME, VERSIONNO, DUID, DIRECTION, MAXAVAIL, starts_with("BANDAVAIL"))
-        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed, BIDTYPE == $bid_type)
+        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed, BIDTYPE == $bid_type_str)
         # Only select the version no that are the latest for each interval and duid
         @group_by(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)
         @mutate(max_version = maximum(VERSIONNO))
@@ -663,11 +694,12 @@ function _extract_power_bids(row)
     return PiecewiseStepData(b, a)
 end
 
-function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date; resolution = nothing, bid_type::AbstractString = "ENERGY")
+function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date; resolution = nothing, bid_type::BidType = BidType.ENERGY)
     sd = Date(start_date) - Day(1)
     ed = Date(end_date) + Day(1)
+    bid_type_str = string(bid_type)
     energy_bids = @eval @chain $energy_bids_table begin
-        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed, BIDTYPE == $bid_type)
+        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed, BIDTYPE == $bid_type_str)
         # Only select the version no that are the latest for each interval and duid
         @group_by(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)
         @mutate(max_version = maximum(VERSIONNO))
@@ -678,7 +710,7 @@ function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date;
     end
 
     pricebids = @eval @chain $pricebids_table begin
-        @filter(BIDTYPE == $bid_type)
+        @filter(BIDTYPE == $bid_type_str)
         @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed)
         # Only select the version no that are the latest for each interval and duid
         @group_by(SETTLEMENTDATE, DUID, DIRECTION)
@@ -724,16 +756,16 @@ function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date;
 end
 
 """
-    read_fcas_bids(db, date_range, bid_type; kwargs...)
+    read_fcas_bids(db, date_range, bid_type::BidType; kwargs...)
 
-Like [`read_bids`](@ref), but for an AEMO FCAS `bid_type` (e.g. `"RAISE6SEC"`,
-`"RAISEREG"` — see `FCAS_BID_TYPES`). Reuses `_massage_bids` for the 10-band offer curve
-(same shape as the energy bid path), and additionally reads the AEMO FCAS trapezium
+Like [`read_bids`](@ref), but for an AEMO FCAS `bid_type` (e.g. `BidType.RAISE6SEC`,
+`BidType.RAISEREG` — see `FCAS_BID_TYPES`). Reuses `_massage_bids` for the 10-band offer
+curve (same shape as the energy bid path), and additionally reads the AEMO FCAS trapezium
 columns from `BIDPEROFFER_D` (`ENABLEMENTMIN/MAX`, `LOWBREAKPOINT`, `HIGHBREAKPOINT`,
 `ROCUP`, `ROCDOWN` — already present in that table, just never selected by the
 energy-only bid path).
 """
-function read_fcas_bids(db, date_range, bid_type::AbstractString; kwargs...)
+function read_fcas_bids(db, date_range, bid_type::BidType; kwargs...)
     start_date = first(date_range)
     end_date = last(date_range)
     energy_bids_table = read_hive(db, :BIDPEROFFER_D)
@@ -749,16 +781,17 @@ function read_fcas_bids(db, date_range, bid_type::AbstractString; kwargs...)
     )
 end
 
-function _read_fcas_trapezium(energy_bids_table, bid_type::AbstractString, start_date, end_date)
+function _read_fcas_trapezium(energy_bids_table, bid_type::BidType, start_date, end_date)
     sd = Date(start_date) - Day(1)
     ed = Date(end_date) + Day(1)
+    bid_type_str = string(bid_type)
     trapezium = @eval @chain $energy_bids_table begin
         @select(
             SETTLEMENTDATE, BIDTYPE, INTERVAL_DATETIME, VERSIONNO, DUID, DIRECTION,
             ENABLEMENTMIN, LOWBREAKPOINT, HIGHBREAKPOINT, ENABLEMENTMAX, MAXAVAIL,
             ROCUP, ROCDOWN,
         )
-        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed, BIDTYPE == $bid_type)
+        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed, BIDTYPE == $bid_type_str)
         # Only select the version no that are the latest for each interval and duid
         @group_by(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)
         @mutate(max_version = maximum(VERSIONNO))
@@ -815,7 +848,7 @@ function add_fcas_reserves!(sys, regions; bid_types = FCAS_BID_TYPES, requiremen
         area = get_component(Area, sys, region)
         for bid_type in bid_types
             direction = _fcas_direction(bid_type)
-            name = "$(bid_type)_$(region)"
+            name = "$(string(bid_type))_$(region)"
             reserve = if haskey(FCAS_CONTINGENCY_MARKETS, bid_type)
                 ContingencyFCASReserve{direction}(;
                     name = name, available = true, region = area,
@@ -885,7 +918,8 @@ function set_fcas_offers!(sys, db, date_range, region_reserves::Dict{String, <:R
         transform!(bids, :DUID => ByRow(x -> get(duid_region, x, missing)) => :REGIONID)
         dropmissing!(bids, :REGIONID)
         DataFrames.isempty(bids) && continue
-        transform!(bids, :REGIONID => ByRow(region -> "$(bid_type)_$(region)") => :reserve_name)
+        bid_type_str = string(bid_type)
+        transform!(bids, :REGIONID => ByRow(region -> "$(bid_type_str)_$(region)") => :reserve_name)
         transform!(bids, AsTable(:) => ByRow(_extract_fcas_offer) => :fcas_offer)
 
         foreach(get_components(Generator, sys)) do gen
@@ -913,7 +947,7 @@ end
 
 Reads per-interval, per-region FCAS requirement quantities (MW) from the `RESERVE` table
 (consumed nowhere else in this repo today), long-format: one row per
-`(SETTLEMENTDATE, REGIONID, BIDTYPE, REQUIREMENT)`.
+`(SETTLEMENTDATE, REGIONID, BIDTYPE::BidType, REQUIREMENT)`.
 
 Note: as of this writing, `RESERVE`'s column set covers `LOWER5MIN, RAISE5MIN, RAISEREG,
 LOWERREG` — the 6SEC/60SEC contingency markets need the corresponding columns added
@@ -934,11 +968,15 @@ function read_fcas_requirements(db, date_range)
         @collect
     end
     subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
-    bid_type_cols = intersect(names(df), collect(FCAS_BID_TYPES))
-    isempty(bid_type_cols) && return DataFrame(SETTLEMENTDATE = DateTime[], REGIONID = String[], BIDTYPE = String[], REQUIREMENT = Float64[])
+    # RESERVE's column names are the raw AEMO BIDTYPE strings this table happens to carry -
+    # this is the one place a plain String, not BidType, is the right comparison, since
+    # column names come from DataFrames/DuckDB as String regardless of our enum.
+    bid_type_cols = intersect(names(df), string.(FCAS_BID_TYPES))
+    isempty(bid_type_cols) && return DataFrame(SETTLEMENTDATE = DateTime[], REGIONID = String[], BIDTYPE = BidType[], REQUIREMENT = Float64[])
     long = stack(
         select(df, :SETTLEMENTDATE, :REGIONID, bid_type_cols...), bid_type_cols;
         variable_name = :BIDTYPE, value_name = :REQUIREMENT,
     )
+    transform!(long, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
     return long
 end

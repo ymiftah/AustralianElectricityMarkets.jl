@@ -24,6 +24,7 @@ export read_affine_heatrates,
 export set_demand!, set_renewable_pv!, set_renewable_wind!, set_market_bids!, set_hydro_limits!
 export read_fcas_bids, add_fcas_reserves!, set_fcas_offers!, read_fcas_requirements
 export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS
+export BidType
 
 
 # Write your package code here.

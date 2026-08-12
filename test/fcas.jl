@@ -12,13 +12,13 @@
     date_range = start_date:Minute(5):(start_date + Hour(1))
 
     @testset "read_fcas_bids" begin
-        bids = read_fcas_bids(db, date_range, "RAISE6SEC")
+        bids = read_fcas_bids(db, date_range, BidType.RAISE6SEC)
         @test !isempty(bids)
         @test all(==(20.0), bids.ENABLEMENTMIN)
         @test all(==(100.0), bids.ENABLEMENTMAX)
         @test "piecewise_step_data" in names(bids)
 
-        reg_bids = read_fcas_bids(db, date_range, "RAISEREG")
+        reg_bids = read_fcas_bids(db, date_range, BidType.RAISEREG)
         @test !isempty(reg_bids)
         @test all(==(1.0), reg_bids.ROCUP)
     end
@@ -85,8 +85,8 @@
         req = read_fcas_requirements(db, date_range)
         @test !isempty(req)
         @test Set(names(req)) == Set(["SETTLEMENTDATE", "REGIONID", "BIDTYPE", "REQUIREMENT"])
-        @test "RAISEREG" in req.BIDTYPE
-        raisereg_nsw = subset(req, :REGIONID => ByRow(==("NSW1")), :BIDTYPE => ByRow(==("RAISEREG")))
+        @test BidType.RAISEREG in req.BIDTYPE
+        raisereg_nsw = subset(req, :REGIONID => ByRow(==("NSW1")), :BIDTYPE => ByRow(==(BidType.RAISEREG)))
         @test all(==(30.0), raisereg_nsw.REQUIREMENT)
     end
 
