@@ -2,21 +2,13 @@
     _add_data(source::DataSource, year::Int, month::Int)
 
 Download the NEMWEB archive for the given month and write it to the
-Hive-partitioned parquet cache in one DuckDB `read_csv`/`COPY` call — no
-Julia-side DataFrame or manual batching; DuckDB's own out-of-core execution
-(bounded via `_new_duckdb_connection`'s `memory_limit`/`temp_directory`)
-handles the file directly regardless of its size.
-
-Each intermediate file (zip, extracted CSV, D-lines-only CSV) is deleted as
-soon as the next stage no longer needs it, rather than all at the end, to
-keep peak disk/page-cache footprint down across the pipeline.
-
-Clears the target partition directory first: `_add_data` is only ever called
-when `populate` has already decided to (re)fetch this month (not cached, or
-`force_new=true`), so an unconditional clear here is always correct, and
-removes any risk of stale files from a previous run coexisting with fresh ones.
+Hive-partitioned parquet cache.
 """
 function _add_data(source::DataSource, year::Int, month::Int)
+    # `_add_data` is only ever called when `populate` has already decided to
+    # (re)fetch this month (not cached, or `force_new=true`), so clearing the
+    # partition unconditionally here is always correct, and removes any risk
+    # of stale files from a previous run coexisting with fresh ones.
     partition_dir = joinpath(source.path, "$ARCHIVE_MONTH_PARTITION=$(Date(year, month, 1))")
     isdir(partition_dir) && rm(partition_dir; recursive = true, force = true)
 
@@ -26,6 +18,10 @@ function _add_data(source::DataSource, year::Int, month::Int)
         csv_path = try
             _extract_csv_entry(zip_path)
         finally
+            # Each intermediate file (zip, extracted CSV, D-lines-only CSV) is
+            # deleted as soon as the next stage no longer needs it, rather
+            # than all at the end, to keep peak disk/page-cache footprint
+            # down across the pipeline.
             rm(zip_path; force = true)
         end
 

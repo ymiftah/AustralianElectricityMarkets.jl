@@ -69,12 +69,12 @@ zero-row query (cheap schema-only lookup, regardless of table size).
 """
 _hive_column_names(db::AEMDB, source::String) = names(_query(db, "SELECT * FROM $source LIMIT 0"))
 
+# Discovered dynamically rather than hardcoded, since the number of bid bands
+# isn't fixed in application code.
 """
     _prefixed_columns(db, source::String, prefix::String)
 
-Returns the column names of `source` starting with `prefix` (e.g. `"BANDAVAIL"`),
-mirroring the dynamic `starts_with(...)` column selection previously done via
-TidierDB, since the number of bid bands isn't hardcoded in application code.
+Returns the column names of `source` starting with `prefix` (e.g. `"BANDAVAIL"`).
 """
 _prefixed_columns(db::AEMDB, source::String, prefix::String) =
     filter(startswith(prefix), _hive_column_names(db, source))

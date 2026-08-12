@@ -11,13 +11,14 @@ using DataFrames, Dates, Logging, ZipFile, DuckDB, DBInterface
 
 """
 Build a minimal real-shaped NEMWEB CSV (plain file, not zipped) and return the
-temp path. AEMO's MMS CSV format always has a fixed 4-field prefix on I/D
-records (record_type, namespace, report, version) before the real columns —
-confirmed against real downloaded files (e.g.
-`I,DISPATCH,REGIONSUM,9,SETTLEMENTDATE,...`, `I,PARTICIPANT_REGISTRATION,STATION,1,STATIONID,...`).
-Caller is responsible for deleting the returned file.
+temp path. Caller is responsible for deleting the returned file.
 """
 function make_nemweb_csv(table_name, cols, rows)
+    # AEMO's MMS CSV format always has a fixed 4-field prefix on I/D records
+    # (record_type, namespace, report, version) before the real columns —
+    # confirmed against real downloaded files (e.g.
+    # `I,DISPATCH,REGIONSUM,9,SETTLEMENTDATE,...`,
+    # `I,PARTICIPANT_REGISTRATION,STATION,1,STATIONID,...`).
     tmp = tempname() * ".csv"
     open(tmp, "w") do io
         println(io, "C,SETP.WORLD,DVD_$table_name,AEMO,PUBLIC,2026/06/01,00:00:00,1,MONTHLY_ARCHIVE,1")

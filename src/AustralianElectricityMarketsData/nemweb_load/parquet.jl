@@ -3,12 +3,13 @@
 
 Open a DuckDB connection configured to spill to a real (non-tmpfs) disk
 directory once memory use crosses a conservative bound, rather than growing
-unbounded. Without this, an unconfigured in-memory `DuckDB.DB()` has nowhere
-to spill a large sort/aggregate to, and can be OOM-killed by the OS on wide,
-multi-million-row tables (confirmed directly: a bare connection processing
-`BIDPEROFFER_D` was killed at ~7.5GB resident).
+unbounded.
 """
 function _new_duckdb_connection()
+    # Without this, an unconfigured in-memory DuckDB.DB() has nowhere to spill
+    # a large sort/aggregate to, and can be OOM-killed by the OS on wide,
+    # multi-million-row tables (confirmed directly: a bare connection
+    # processing BIDPEROFFER_D was killed at ~7.5GB resident).
     conn = DuckDB.DB()
     spill_dir = expanduser("~/.cache/aem_duckdb_spill")
     mkpath(spill_dir)
@@ -21,13 +22,14 @@ end
     _local_tmp_dir() -> String
 
 A real-disk (non-tmpfs) scratch directory for extracted CSVs and line
-batches. Julia's bare `tempname()` defaults to `tempdir()`, which on this
-system is RAM-backed `/tmp` — using it here would silently defeat the whole
-point of spilling the pipeline's intermediate files to disk instead of
-holding them in memory (confirmed directly: `/tmp` ran out of space during
-this same investigation).
+batches.
 """
 function _local_tmp_dir()
+    # Julia's bare tempname() defaults to tempdir(), which on this system is
+    # RAM-backed /tmp — using it here would silently defeat the whole point of
+    # spilling the pipeline's intermediate files to disk instead of holding
+    # them in memory (confirmed directly: /tmp ran out of space during this
+    # same investigation).
     dir = expanduser("~/.cache/aem_nemweb_tmp")
     mkpath(dir)
     return dir
@@ -109,13 +111,6 @@ _duckdb_type(T::DataType) = get(_DUCKDB_TYPE_NAMES, T, "VARCHAR")
 
 Stream the ZIP's first `.csv` entry to a temp file on disk via `ZipArchives.jl`
 and return the temp path. Caller deletes it when done.
-
-Not `ZipFile.jl`: measured directly on a real `BIDPEROFFER_D` monthly archive
-(3.6GB decompressed), `ZipFile.jl`'s `readavailable`-in-a-loop path took 57
-minutes (~64KB/s — something is badly pathological in its inflate path).
-`ZipArchives.jl` decompresses the same entry in ~3.6 seconds (verified
-byte-identical output) — faster even than shelling out to the system `unzip`
-(~10s), while staying a pure-Julia dependency with no external binary.
 """
 function _extract_csv_entry(zip_path::String)::String
     reader = ZipReader(read(zip_path))
@@ -141,19 +136,17 @@ end
 
 Copy only the real "D" data-record lines of `csv_path` to a new temp file via
 the system `grep` and return its path. Caller deletes it when done.
-
-This exists to work around a DuckDB `read_csv` behavior confirmed directly on
-a real `BIDPEROFFER_D` file: feeding it the *raw* NEMWEB file — narrow C
-header/trailer + I header rows mixed with wide D rows, absorbed via
-`null_padding`/`ignore_errors` — produced one MORE row than the true D-row
-count (verified three independent ways: `grep -c`, `cut -c1 | uniq -c`, and
-re-parsing a pre-filtered D-only file, which matches exactly). Reproducible
-regardless of `threads`, so not a parallel chunk-boundary race — something in
-DuckDB's dialect/schema sniffing trips on the mixed row widths. Pre-filtering
-with `grep` (measured at a few seconds even on a multi-GB file) sidesteps the
-issue rather than trying to root-cause DuckDB's sniffer further.
 """
 function _filter_d_lines(csv_path::String)::String
+    # This exists to work around a DuckDB read_csv behavior confirmed
+    # directly on a real BIDPEROFFER_D file: feeding it the *raw* NEMWEB file
+    # — narrow C header/trailer + I header rows mixed with wide D rows,
+    # absorbed via null_padding/ignore_errors — produced one MORE row than
+    # the true D-row count. Reproducible regardless of threads, so not a
+    # parallel chunk-boundary race — something in DuckDB's dialect/schema
+    # sniffing trips on the mixed row widths. Pre-filtering with grep
+    # (measured at a few seconds even on a multi-GB file) sidesteps the
+    # issue rather than trying to root-cause DuckDB's sniffer further.
     d_path = tempname(_local_tmp_dir()) * ".csv"
     open(d_path, "w") do out
         run(pipeline(`grep '^D,' $csv_path`, stdout = out))
@@ -187,21 +180,21 @@ _cast_expr(col::String, T::DataType) = "TRY_CAST(\"$col\" AS $(_duckdb_type(T)))
 Read `csv_path` entirely inside DuckDB, in one query — every line as VARCHAR,
 filtered to real "D" records, cast to `COLUMN_TYPES`, missing columns filled
 as typed NULL, tagged with `archive_month` — and COPY straight to
-Hive-partitioned parquet. No Julia-side DataFrame is ever constructed, and
-DuckDB's own out-of-core `read_csv` (bounded via `_new_duckdb_connection`'s
-`memory_limit`/`temp_directory`) handles arbitrarily large files directly;
-there is no Julia-side batching layer to size a call around.
+Hive-partitioned parquet.
 
 `available_cols` is the file's real column names/order (see
-`_peek_header_columns`), taken as an explicit argument rather than peeked
-internally here because the caller may be passing a pre-filtered,
-D-lines-only file (see `_filter_d_lines`) that no longer has the header row
-to peek from.
+`_peek_header_columns`) and must be supplied explicitly, since `csv_path` may
+be a pre-filtered, D-lines-only file (see `_filter_d_lines`) with no header
+row left to read it from.
 """
 function _csv_to_parquet(
         conn, csv_path::String, available_cols::Vector{String}, table_columns::Vector{String}, path::String,
         partitions::Vector{String}, sort_by::Vector{String}, year::Int, month::Int,
     )
+    # No Julia-side DataFrame is ever constructed, and DuckDB's own
+    # out-of-core read_csv (bounded via `_new_duckdb_connection`'s
+    # memory_limit/temp_directory) handles arbitrarily large files directly;
+    # there is no Julia-side batching layer to size a call around.
     raw_names = vcat(["_record_type", "_namespace", "_report", "_version"], available_cols)
     names_sql = "[" * join(("'$n'" for n in raw_names), ", ") * "]"
 
