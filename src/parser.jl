@@ -24,12 +24,12 @@ function read_hive(
 end
 
 """
-    _parse_hive_root(config::PyHiveConfiguration)
+    _parse_hive_root(config::HiveConfiguration)
 
 Construct the correct path to the Hive dataset based on the specified filesystem.
 
 # Arguments
-- `config::PyHiveConfiguration`: The configuration object containing filesystem and location details.
+- `config::HiveConfiguration`: The configuration object containing filesystem and location details.
 """
 function _parse_hive_root(config::HiveConfiguration)
     if islocal(config)
@@ -57,7 +57,7 @@ keeps only rows whose `key` column equals the maximum `key` value present —
 i.e. the latest hive partition. Returns a new source fragment, so the result
 can itself be used as a `FROM` source in a larger query.
 """
-function _filter_latest(source::String, key::Symbol = :archive_month)
+function _filter_latest(source::String, key::Symbol = Symbol(ARCHIVE_MONTH_PARTITION))
     return "(SELECT * FROM $source WHERE $key = (SELECT max($key) FROM $source))"
 end
 
@@ -249,12 +249,12 @@ function read_units(db)
                  FROM genunits_raw g
                  INNER JOIN dualloc d ON g.GENSETID = d.GENSETID
              )
-        SELECT dudetail.*, summary.* EXCLUDE (DUID, STATIONID), op_status.* EXCLUDE (STATIONID),
+        SELECT dudetail.*, summary.* EXCLUDE (DUID), op_status.* EXCLUDE (STATIONID),
                genunits.CO2E_ENERGY_SOURCE, genunits.CO2E_EMISSIONS_FACTOR
         FROM dudetail
         INNER JOIN genunits ON dudetail.DUID = genunits.DUID
         INNER JOIN summary ON dudetail.DUID = summary.DUID
-        INNER JOIN op_status ON dudetail.STATIONID = op_status.STATIONID
+        INNER JOIN op_status ON summary.STATIONID = op_status.STATIONID
         WHERE op_status.STATUS = 'COMMISSIONED'
         ORDER BY dudetail.DUID
     """
@@ -267,7 +267,6 @@ function read_units(db)
         :CO2E_ENERGY_SOURCE => ByRow(x -> AEMO_PM_MAPPING[x]) => :TECHNOLOGY,
         :CO2E_ENERGY_SOURCE => ByRow(x -> AEMO_FUEL_MAPPING[x]) => :FUELTYPE,
     )
-    select!(dudetail, Not(:CO2E_ENERGY_SOURCE))
     return dudetail
 end
 

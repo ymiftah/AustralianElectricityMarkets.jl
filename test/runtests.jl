@@ -17,6 +17,10 @@ create_mock_data(AEM_TEST_HIVE_DIR)
     include("datareader.jl")
 end
 
+@testset "NEMWEB download/cache tests" begin
+    include("test-nemweb-load.jl")
+end
+
 @testset "ISP data tests" begin
     include("isp_data.jl")
 end
