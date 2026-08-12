@@ -40,6 +40,20 @@ hive locations, reusing the exact mechanism the read path already trusts
 (DuckDB `httpfs`, ambient credentials), without introducing a new
 per-provider abstraction.
 
+**Errata (found while writing the implementation plan):** `aem_connect`'s
+existing httpfs-loading call —
+`DuckDB.execute(db, "INSTALL httpfs; LOAD httpfs;")`
+(`src/data_utils.jl:20`) — is itself broken on the pinned DuckDB.jl version
+(1.5.2): a single semicolon-joined multi-statement string raises
+`DuckDB.QueryException("Invalid Input Error: Cannot prepare multiple
+statements at once!")`, confirmed directly. No existing test constructs
+`aem_connect` with a non-`"file"` filesystem, so this was never caught. The
+"read path already supports S3/GS" premise above was true by code-reading,
+not by execution. The implementation plan fixes this (two separate
+`execute` calls) as part of the same task that adds the equivalent
+httpfs-loading to `_new_duckdb_connection`, so the bug isn't propagated into
+new code.
+
 ## Non-goals
 
 - No new credential configuration surface on `HiveConfiguration`. Both S3 and
