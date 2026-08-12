@@ -221,7 +221,12 @@ function read_units(db)
                  GROUP BY STATIONID
              ),
              station_names AS (
-                 SELECT DISTINCT STATIONID, STATIONNAME, POSTCODE FROM st_raw
+                 -- One row per STATIONID: a station's name/postcode can change across
+                 -- archive_month partitions, so without this the LEFT JOIN below would
+                 -- fan out and duplicate DUID rows in the final result.
+                 SELECT STATIONID, STATIONNAME, POSTCODE
+                 FROM st_raw
+                 QUALIFY row_number() OVER (PARTITION BY STATIONID ORDER BY archive_month DESC) = 1
              ),
              op_status AS (
                  SELECT DISTINCT o.STATIONID, o.STATUS, s.STATIONNAME, s.POSTCODE

@@ -31,6 +31,14 @@ let
         @test df.DUID[1] == "BW01"
         # Verify technology mapping from mock data "Battery Storage" (first unit)
         @test df.TECHNOLOGY[1] == PrimeMovers.BA
+
+        # BAYSW (station for BW01-BW04) is renamed in a later STATION archive_month
+        # partition (mock_data.jl). read_units() must resolve one name per DUID —
+        # not fan out into duplicate rows via the STATIONID -> STATIONNAME join.
+        @test allunique(df.DUID)
+        bw01_names = df.STATIONNAME[df.DUID .== "BW01"]
+        @test length(bw01_names) == 1
+        @test only(bw01_names) == "Bayswater Power Station"
     end
 
     @testset "read_energy_bids" begin
