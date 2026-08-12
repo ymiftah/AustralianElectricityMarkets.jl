@@ -3,6 +3,21 @@ using TidierDB
 using DataFrames
 using Statistics
 
+# AEMO BIDTYPE string -> FCASResponseTime for the 6 contingency FCAS markets in scope.
+# RAISE1SEC/LOWER1SEC are deferred (see FCASResponseTime.SEC1 docstring).
+const FCAS_CONTINGENCY_MARKETS = Dict(
+    "RAISE6SEC" => FCASResponseTime.SEC6,
+    "LOWER6SEC" => FCASResponseTime.SEC6,
+    "RAISE60SEC" => FCASResponseTime.SEC60,
+    "LOWER60SEC" => FCASResponseTime.SEC60,
+    "RAISE5MIN" => FCASResponseTime.MIN5,
+    "LOWER5MIN" => FCASResponseTime.MIN5,
+)
+const FCAS_REGULATION_MARKETS = ("RAISEREG", "LOWERREG")
+const FCAS_BID_TYPES = (keys(FCAS_CONTINGENCY_MARKETS)..., FCAS_REGULATION_MARKETS...)
+
+_fcas_direction(bid_type::AbstractString) = startswith(bid_type, "RAISE") ? ReserveUp : ReserveDown
+
 
 """
     read_hive(db::TidierDB.DBInterface.Connection,table_name::Symbol; config::HiveConfiguration=CONFIG[])
@@ -602,7 +617,7 @@ function read_bids(db, date_range; kwargs...)
     return bids
 end
 
-function read_energy_bids(db, date_range; kwargs...)
+function read_energy_bids(db, date_range; bid_type::AbstractString = "ENERGY", kwargs...)
     start_datetime = first(date_range)
     end_datetime = last(date_range)
     sd = Date(start_datetime) - Day(1)
@@ -610,7 +625,7 @@ function read_energy_bids(db, date_range; kwargs...)
     table = read_hive(db, :BIDPEROFFER_D)
     energy_bids = @eval @chain $table begin
         @select(SETTLEMENTDATE, BIDTYPE, INTERVAL_DATETIME, VERSIONNO, DUID, DIRECTION, MAXAVAIL, starts_with("BANDAVAIL"))
-        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed, BIDTYPE == "ENERGY")
+        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed, BIDTYPE == $bid_type)
         # Only select the version no that are the latest for each interval and duid
         @group_by(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)
         @mutate(max_version = maximum(VERSIONNO))
@@ -648,11 +663,11 @@ function _extract_power_bids(row)
     return PiecewiseStepData(b, a)
 end
 
-function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date; resolution = nothing)
+function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date; resolution = nothing, bid_type::AbstractString = "ENERGY")
     sd = Date(start_date) - Day(1)
     ed = Date(end_date) + Day(1)
     energy_bids = @eval @chain $energy_bids_table begin
-        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed, BIDTYPE == "ENERGY")
+        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed, BIDTYPE == $bid_type)
         # Only select the version no that are the latest for each interval and duid
         @group_by(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)
         @mutate(max_version = maximum(VERSIONNO))
@@ -663,7 +678,7 @@ function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date;
     end
 
     pricebids = @eval @chain $pricebids_table begin
-        @filter(BIDTYPE == "ENERGY")
+        @filter(BIDTYPE == $bid_type)
         @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed)
         # Only select the version no that are the latest for each interval and duid
         @group_by(SETTLEMENTDATE, DUID, DIRECTION)
@@ -706,4 +721,224 @@ function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date;
         )
     end
     return prep_for_psy
+end
+
+"""
+    read_fcas_bids(db, date_range, bid_type; kwargs...)
+
+Like [`read_bids`](@ref), but for an AEMO FCAS `bid_type` (e.g. `"RAISE6SEC"`,
+`"RAISEREG"` — see `FCAS_BID_TYPES`). Reuses `_massage_bids` for the 10-band offer curve
+(same shape as the energy bid path), and additionally reads the AEMO FCAS trapezium
+columns from `BIDPEROFFER_D` (`ENABLEMENTMIN/MAX`, `LOWBREAKPOINT`, `HIGHBREAKPOINT`,
+`ROCUP`, `ROCDOWN` — already present in that table, just never selected by the
+energy-only bid path).
+"""
+function read_fcas_bids(db, date_range, bid_type::AbstractString; kwargs...)
+    start_date = first(date_range)
+    end_date = last(date_range)
+    energy_bids_table = read_hive(db, :BIDPEROFFER_D)
+    pricebids_table = read_hive(db, :BIDDAYOFFER_D)
+
+    bids = _massage_bids(
+        energy_bids_table, pricebids_table, start_date, end_date;
+        bid_type = bid_type, resolution = get(kwargs, :resolution, nothing),
+    )
+    trapezium = _read_fcas_trapezium(energy_bids_table, bid_type, start_date, end_date)
+    return innerjoin(
+        bids, trapezium; on = [:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION],
+    )
+end
+
+function _read_fcas_trapezium(energy_bids_table, bid_type::AbstractString, start_date, end_date)
+    sd = Date(start_date) - Day(1)
+    ed = Date(end_date) + Day(1)
+    trapezium = @eval @chain $energy_bids_table begin
+        @select(
+            SETTLEMENTDATE, BIDTYPE, INTERVAL_DATETIME, VERSIONNO, DUID, DIRECTION,
+            ENABLEMENTMIN, LOWBREAKPOINT, HIGHBREAKPOINT, ENABLEMENTMAX, MAXAVAIL,
+            ROCUP, ROCDOWN,
+        )
+        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed, BIDTYPE == $bid_type)
+        # Only select the version no that are the latest for each interval and duid
+        @group_by(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)
+        @mutate(max_version = maximum(VERSIONNO))
+        @filter(VERSIONNO == max_version)
+        @select(
+            SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION,
+            ENABLEMENTMIN, LOWBREAKPOINT, HIGHBREAKPOINT, ENABLEMENTMAX, MAXAVAIL,
+            ROCUP, ROCDOWN,
+        )
+        @collect
+    end
+    subset!(trapezium, :INTERVAL_DATETIME => ByRow(x -> start_date <= x < end_date))
+    return trapezium
+end
+
+"""
+    _extract_fcas_offer(row)
+
+Mirrors [`_extract_power_bids`](@ref), additionally building an [`FCASTrapezium`](@ref).
+Expects `row` to have the same `PRICEBANDARRAY`/`BANDAVAILARRAY` columns as
+`_extract_power_bids`, the trapezium columns from [`_read_fcas_trapezium`](@ref), and a
+`reserve_name` column (the target [`NEMFCASReserve`](@ref)'s name, e.g. `"RAISE6SEC_NSW1"`).
+"""
+function _extract_fcas_offer(row)
+    curve_data = _extract_power_bids(row)
+    offer_curve = make_market_bid_curve(curve_data, 0.0)
+    trapezium = FCASTrapezium(;
+        enablement_min = row.ENABLEMENTMIN,
+        low_breakpoint = row.LOWBREAKPOINT,
+        high_breakpoint = row.HIGHBREAKPOINT,
+        enablement_max = row.ENABLEMENTMAX,
+        max_avail = row.MAXAVAIL,
+        ramp_up_rate = ismissing(row.ROCUP) ? nothing : Float64(row.ROCUP),
+        ramp_down_rate = ismissing(row.ROCDOWN) ? nothing : Float64(row.ROCDOWN),
+    )
+    return FCASOffer(row.reserve_name, offer_curve, trapezium)
+end
+
+"""
+    add_fcas_reserves!(sys, regions; bid_types = FCAS_BID_TYPES, requirement = 0.0)
+
+Adds one [`ContingencyFCASReserve`](@ref)/[`RegulationFCASReserve`](@ref) service to `sys`
+per (FCAS market, region) pair, matching how AEMO settles regional FCAS requirements
+(mainland-vs-local contingency splits, e.g. SA islanding, are out of scope — see plan §4).
+`regions` is an iterable of NEM region names (e.g. `["NSW1", "QLD1", ...]`) already present
+as `PowerSystems.Area`s in `sys` (see `region_model.jl`).
+
+Returns a `Dict{String, PowerSystems.Reserve}` keyed by reserve name (e.g.
+`"RAISE6SEC_NSW1"`), for use by [`set_fcas_offers!`](@ref).
+"""
+function add_fcas_reserves!(sys, regions; bid_types = FCAS_BID_TYPES, requirement = 0.0)
+    reserves = Dict{String, Reserve}()
+    for region in regions
+        area = get_component(Area, sys, region)
+        for bid_type in bid_types
+            direction = _fcas_direction(bid_type)
+            name = "$(bid_type)_$(region)"
+            reserve = if haskey(FCAS_CONTINGENCY_MARKETS, bid_type)
+                ContingencyFCASReserve{direction}(;
+                    name = name, available = true, region = area,
+                    response_time = FCAS_CONTINGENCY_MARKETS[bid_type],
+                    requirement = Float64(requirement),
+                )
+            else
+                RegulationFCASReserve{direction}(;
+                    name = name, available = true, region = area,
+                    requirement = Float64(requirement),
+                )
+            end
+            # No contributing devices yet - those attach incrementally in set_fcas_offers!
+            # via add_service!(device, reserve, sys). PSY has no add_service!(sys, service)
+            # two-arg form; every documented form takes a (possibly empty) devices arg too.
+            add_service!(sys, reserve, Device[])
+            reserves[name] = reserve
+        end
+    end
+    return reserves
+end
+
+"""
+    set_fcas_offers!(sys, db, date_range, region_reserves; kwargs...)
+
+Adds FCAS bid data to the system, mirroring [`set_market_bids!`](@ref) for the energy bid
+path. For every (market, device) combination with bid data in `date_range`:
+- links the device to its regional [`NEMFCASReserve`](@ref) as a contributing device, via
+  `PowerSystems.add_service!(device, reserve, sys)` (so `get_contributing_devices(sys,
+  reserve)` finds it, same as any other PSY reserve);
+- stores the priced [`FCASOffer`](@ref) (10-band offer curve + [`FCASTrapezium`](@ref)) in
+  the device's `ext["fcas_offers"]::Vector{FCASOffer}`.
+
+`ext` is used rather than swapping the device's `operation_cost` to a
+[`NEMMarketBidCost`](@ref): confirmed directly (not just by reading the schema) that PSY's
+auto-generated device structs declare `operation_cost` as a *closed* `Union` of specific
+concrete cost types (e.g. `ThermalStandard.operation_cost::Union{ThermalGenerationCost,
+MarketBidCost}`), not the abstract `OperationalCost`/`OfferCurveCost` supertype — so no
+externally-defined `OfferCurveCost` subtype can ever be assigned there without modifying
+PowerSystems' generated structs, which would violate the zero-core-changes goal this plan
+is built on. `ext` is PSY's own sanctioned extension point for exactly this situation
+("metadata that [isn't] used in simulation" — e.g. `region_model.jl`'s existing
+`ext["station_name"]`/`ext["postcode"]` usage). The tradeoff: values stored there round-trip
+through `to_json`/`System(path)` as plain `Dict`s, not reconstructed `FCASOffer` structs —
+acceptable since simulation-time consumption of this data isn't in scope here (see plan §4).
+
+Unlike energy bids (attached as a full `Deterministic` time series across `date_range` by
+[`set_market_bids!`](@ref)), this attaches a single snapshot offer per device per market,
+taken from the first interval in `date_range` — full time-varying FCAS bid ingestion is
+deferred; see the NEMDE co-optimization scope note in the FCAS types plan.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object. Should already have FCAS reserves added via
+  [`add_fcas_reserves!`](@ref).
+- `db`: The database connection.
+- `date_range`: A range of dates for which to fetch FCAS bid data.
+- `region_reserves::Dict{String, <:Reserve}`: FCAS reserves already added to `sys`, keyed
+  by name (e.g. `"RAISE6SEC_NSW1"`) — see [`add_fcas_reserves!`](@ref).
+"""
+function set_fcas_offers!(sys, db, date_range, region_reserves::Dict{String, <:Reserve}; kwargs...)
+    units = read_units(db)
+    duid_region = Dict(zip(units.DUID, units.REGIONID))
+
+    for bid_type in FCAS_BID_TYPES
+        bids = read_fcas_bids(db, date_range, bid_type; kwargs...)
+        DataFrames.isempty(bids) && continue
+        transform!(bids, :DUID => ByRow(x -> get(duid_region, x, missing)) => :REGIONID)
+        dropmissing!(bids, :REGIONID)
+        DataFrames.isempty(bids) && continue
+        transform!(bids, :REGIONID => ByRow(region -> "$(bid_type)_$(region)") => :reserve_name)
+        transform!(bids, AsTable(:) => ByRow(_extract_fcas_offer) => :fcas_offer)
+
+        foreach(get_components(Generator, sys)) do gen
+            gen_id = get_name(gen)
+            gen_bids = subset(bids, :DUID => ByRow(==(gen_id)), :DIRECTION => ByRow(==("GEN")))
+            DataFrames.isempty(gen_bids) && return
+            reserve_name = first(gen_bids.reserve_name)
+            haskey(region_reserves, reserve_name) || return
+            _add_fcas_offer!(sys, gen, region_reserves[reserve_name], first(gen_bids.fcas_offer))
+        end
+    end
+    return
+end
+
+function _add_fcas_offer!(sys, gen, reserve::Reserve, offer::FCASOffer)
+    add_service!(gen, reserve, sys)
+    offers = get(get_ext(gen), "fcas_offers", FCASOffer[])
+    push!(offers, offer)
+    get_ext(gen)["fcas_offers"] = offers
+    return
+end
+
+"""
+    read_fcas_requirements(db, date_range)
+
+Reads per-interval, per-region FCAS requirement quantities (MW) from the `RESERVE` table
+(consumed nowhere else in this repo today), long-format: one row per
+`(SETTLEMENTDATE, REGIONID, BIDTYPE, REQUIREMENT)`.
+
+Note: as of this writing, `RESERVE`'s column set covers `LOWER5MIN, RAISE5MIN, RAISEREG,
+LOWERREG` — the 6SEC/60SEC contingency markets need the corresponding columns added
+(`AustralianElectricityMarketsData/nemweb_load/tables.jl` in the main branch's ingestion
+restructuring); the query below reads whichever `FCAS_BID_TYPES` columns are present.
+"""
+function read_fcas_requirements(db, date_range)
+    start_date = first(date_range)
+    end_date = last(date_range)
+    sd = Date(start_date) - Day(1)
+    ed = Date(end_date) + Day(1)
+    table = read_hive(db, :RESERVE)
+    df = @eval @chain $table begin
+        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed)
+        @group_by(SETTLEMENTDATE, REGIONID)
+        @mutate(max_version = maximum(VERSIONNO))
+        @filter(VERSIONNO == max_version)
+        @collect
+    end
+    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
+    bid_type_cols = intersect(names(df), collect(FCAS_BID_TYPES))
+    isempty(bid_type_cols) && return DataFrame(SETTLEMENTDATE = DateTime[], REGIONID = String[], BIDTYPE = String[], REQUIREMENT = Float64[])
+    long = stack(
+        select(df, :SETTLEMENTDATE, :REGIONID, bid_type_cols...), bid_type_cols;
+        variable_name = :BIDTYPE, value_name = :REQUIREMENT,
+    )
+    return long
 end

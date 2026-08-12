@@ -794,4 +794,35 @@ AustralianElectricityMarkets.nem_system(db, ::RegionalNetworkConfiguration; kwar
 
 export RegionalNetworkConfiguration
 
+"""
+    Like `RegionalNetworkConfiguration`, but also pulls the tables needed for NEM FCAS
+    (Frequency Control Ancillary Services) — `DISPATCHLOAD`, `DISPATCHPRICE`, `RESERVE`, in
+    addition to the `BIDDAYOFFER_D`/`BIDPEROFFER_D` bid tables already required — and adds
+    one FCAS reserve per (market, region) to the resulting system (see
+    `add_fcas_reserves!`). Kept separate from `RegionalNetworkConfiguration` so energy-only
+    users aren't forced to pull the extra tables.
+"""
+struct FCASNetworkConfiguration <: NetworkConfiguration end
+
+"""
+    table_requirements(::FCASNetworkConfiguration)
+
+`RegionalNetworkConfiguration`'s tables plus `:DISPATCHLOAD, :DISPATCHPRICE, :RESERVE`.
+"""
+AustralianElectricityMarkets.table_requirements(::FCASNetworkConfiguration) = [
+    table_requirements(RegionalNetworkConfiguration())...,
+    :DISPATCHLOAD,
+    :DISPATCHPRICE,
+    :RESERVE,
+]
+
+function AustralianElectricityMarkets.nem_system(db, ::FCASNetworkConfiguration; kwargs...)
+    sys = nem_system(db; kwargs...)
+    regions = get_name.(get_components(Area, sys))
+    add_fcas_reserves!(sys, regions)
+    return sys
+end
+
+export FCASNetworkConfiguration
+
 end

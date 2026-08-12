@@ -29,6 +29,10 @@ end
     include("timeseries_setters.jl")
 end
 
+@testset "FCAS types" begin
+    include("fcas.jl")
+end
+
 
 @testset "Aqua" begin
     include("aqua.jl")

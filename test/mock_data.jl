@@ -150,6 +150,8 @@ function create_mock_data(hive_root::String)
     )
 
     # 10. BIDPEROFFER_D (49 intervals)
+    fcas_bid_types = ["RAISE6SEC", "LOWER6SEC", "RAISE60SEC", "LOWER60SEC", "RAISE5MIN", "LOWER5MIN", "RAISEREG", "LOWERREG"]
+    trapezium_cols = ["ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN"]
     df_bid_per_offer = DataFrame()
     for i in intervals
         t = base_datetime + Minute(5 * i)
@@ -179,7 +181,36 @@ function create_mock_data(hive_root::String)
         for b in 1:10
             tmp[!, "BANDAVAIL$b"] = fill(10.0, nrow(tmp))
         end
-        append!(df_bid_per_offer, tmp)
+        for col in trapezium_cols
+            tmp[!, col] = fill(missing, nrow(tmp))
+        end
+
+        # FCAS GEN bids for everyone, one block per market
+        tmp_fcas = DataFrame()
+        for bid_type in fcas_bid_types
+            block = DataFrame(
+                SETTLEMENTDATE = fill(test_date, n),
+                BIDTYPE = fill(bid_type, n),
+                INTERVAL_DATETIME = fill(t, n),
+                VERSIONNO = fill(1, n),
+                DUID = duids,
+                DIRECTION = fill("GEN", n),
+                MAXAVAIL = fill(20.0 + i, n),
+                archive_month = fill("2025-01", n),
+                ENABLEMENTMIN = fill(20.0, n),
+                LOWBREAKPOINT = fill(30.0, n),
+                HIGHBREAKPOINT = fill(90.0, n),
+                ENABLEMENTMAX = fill(100.0, n),
+                ROCUP = fill(bid_type in ("RAISEREG", "LOWERREG") ? 1.0 : missing, n),
+                ROCDOWN = fill(bid_type in ("RAISEREG", "LOWERREG") ? 1.0 : missing, n),
+            )
+            for b in 1:10
+                block[!, "BANDAVAIL$b"] = fill(10.0, nrow(block))
+            end
+            append!(tmp_fcas, block; promote = true)
+        end
+
+        append!(df_bid_per_offer, vcat(tmp, tmp_fcas); promote = true)
     end
     save_hive(df_bid_per_offer, :BIDPEROFFER_D)
 
@@ -204,11 +235,46 @@ function create_mock_data(hive_root::String)
         VERSIONNO = [1],
         archive_month = ["2025-01"]
     )
-    bid_day_offer = vcat(bid_day_offer_gen, bid_day_offer_load)
+    bid_day_offer_fcas = DataFrame()
+    for bid_type in fcas_bid_types
+        append!(
+            bid_day_offer_fcas, DataFrame(
+                BIDTYPE = fill(bid_type, n),
+                SETTLEMENTDATE = fill(test_date, n),
+                DUID = duids,
+                DIRECTION = fill("GEN", n),
+                MINIMUMLOAD = fill(0.0, n),
+                DAILYENERGYCONSTRAINT = fill(1000.0, n),
+                VERSIONNO = fill(1, n),
+                archive_month = fill("2025-01", n)
+            )
+        )
+    end
+    bid_day_offer = vcat(bid_day_offer_gen, bid_day_offer_load, bid_day_offer_fcas)
     for i in 1:10
         bid_day_offer[!, "PRICEBAND$i"] = fill(50.0 + i, nrow(bid_day_offer))
     end
     save_hive(bid_day_offer, :BIDDAYOFFER_D)
+
+    # 12. RESERVE (49 intervals, per-region FCAS requirement quantities)
+    df_reserve = DataFrame()
+    for i in intervals
+        t = base_datetime + Minute(5 * i)
+        append!(
+            df_reserve, DataFrame(
+                SETTLEMENTDATE = fill(t, n),
+                VERSIONNO = fill(1, n),
+                REGIONID = regions,
+                PERIODID = fill(i + 1, n),
+                LOWER5MIN = fill(50.0, n),
+                RAISE5MIN = fill(50.0, n),
+                RAISEREG = fill(30.0, n),
+                LOWERREG = fill(30.0, n),
+                archive_month = fill("2025-01", n)
+            )
+        )
+    end
+    save_hive(df_reserve, :RESERVE)
 
     return DuckDB.disconnect(conn)
 end
