@@ -1,4 +1,4 @@
-using AustralianElectricityMarkets: AustralianElectricityMarketsData
+using AustralianElectricityMarkets: AustralianElectricityMarketsData, HiveConfiguration
 using AustralianElectricityMarkets.AustralianElectricityMarketsData:
     DataSource, get_table, MissingDataError, _TABLE_SPECS, ARCHIVE_MONTH_PARTITION,
     _extract_csv_entry, _filter_d_lines, _peek_header_columns, _csv_to_parquet,
@@ -281,6 +281,28 @@ end
     write_hive_parquet(df, tmpdir, ["archive_month"])
     @test isdir(joinpath(tmpdir, "archive_month=2024-01-01"))
     @test isdir(joinpath(tmpdir, "archive_month=2024-02-01"))
+end
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# A2. islocal / _parse_hive_root — shared local-vs-remote path logic
+# ══════════════════════════════════════════════════════════════════════════════
+
+@testset "islocal(filesystem::String): true only for \"file\"" begin
+    @test AustralianElectricityMarkets.islocal("file")
+    @test !AustralianElectricityMarkets.islocal("s3")
+    @test !AustralianElectricityMarkets.islocal("gs")
+end
+
+@testset "islocal(config): delegates to islocal(filesystem)" begin
+    @test AustralianElectricityMarkets.islocal(HiveConfiguration(filesystem = "file"))
+    @test !AustralianElectricityMarkets.islocal(HiveConfiguration(filesystem = "s3"))
+end
+
+@testset "_parse_hive_root: local returns hive_location, remote returns scheme://hive_location" begin
+    @test AustralianElectricityMarkets._parse_hive_root(HiveConfiguration(hive_location = "/tmp/x", filesystem = "file")) == "/tmp/x"
+    @test AustralianElectricityMarkets._parse_hive_root(HiveConfiguration(hive_location = "bucket/prefix", filesystem = "gs")) == "gs://bucket/prefix"
+    @test AustralianElectricityMarkets._parse_hive_root(HiveConfiguration(hive_location = "bucket/prefix", filesystem = "s3")) == "s3://bucket/prefix"
 end
 
 

@@ -24,23 +24,6 @@ function read_hive(
 end
 
 """
-    _parse_hive_root(config::HiveConfiguration)
-
-Construct the correct path to the Hive dataset based on the specified filesystem.
-
-# Arguments
-- `config::HiveConfiguration`: The configuration object containing filesystem and location details.
-"""
-function _parse_hive_root(config::HiveConfiguration)
-    if islocal(config)
-        return config.hive_location
-    else
-        prefix = get_filesystem(config)
-        return "$(prefix)://" * config.hive_location
-    end
-end
-
-"""
     _query(db::AEMDB, sql::String, params = ())
 
 Executes `sql` against `db`'s connection and materializes the result as a `DataFrame`.
