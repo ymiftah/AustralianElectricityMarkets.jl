@@ -6,7 +6,6 @@ using HydroPowerSimulations
 using Chain
 using DataFrames
 using AlgebraOfGraphics, CairoMakie
-using TidierDB
 using Dates
 using HiGHS
 
@@ -33,7 +32,7 @@ using HiGHS
 # end;
 # ```
 
-db = aem_connect(duckdb());
+db = aem_connect();
 
 # Instantiate the system.
 

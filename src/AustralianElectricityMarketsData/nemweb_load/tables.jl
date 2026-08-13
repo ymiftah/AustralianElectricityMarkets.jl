@@ -1,0 +1,259 @@
+# ── Table specifications ─────────────────────────────────────────────────────
+
+# Ordered table specifications — single source of truth for all NEMWEB tables.
+# To add a new table: add one entry here. Nothing else changes.
+const _TABLE_SPECS = [
+    (
+        name = "DISPATCHREGIONSUM",
+        columns = [
+            "SETTLEMENTDATE", "REGIONID", "TOTALDEMAND", "DEMANDFORECAST",
+            "DISPATCHABLELOAD", "INITIALSUPPLY", "SS_SOLAR_AVAILABILITY",
+            "SS_WIND_AVAILABILITY", "AVAILABLEGENERATION", "AVAILABLELOAD",
+        ],
+        sort_by = ["SETTLEMENTDATE", "REGIONID"],
+    ),
+    (
+        name = "DISPATCHLOAD",
+        columns = [
+            "SETTLEMENTDATE", "DUID", "DISPATCHMODE", "AGCSTATUS", "INITIALMW",
+            "TOTALCLEARED", "RAMPDOWNRATE", "RAMPUPRATE", "AVAILABILITY",
+            "RAISEREGENABLEMENTMAX", "RAISEREGENABLEMENTMIN",
+            "LOWERREGENABLEMENTMAX", "LOWERREGENABLEMENTMIN", "SEMIDISPATCHCAP",
+            "LOWER5MIN", "LOWER60SEC", "LOWER6SEC", "LOWER1SEC",
+            "RAISE5MIN", "RAISE60SEC", "RAISE6SEC", "RAISE1SEC",
+            "LOWERREG", "RAISEREG", "RAISEREGAVAILABILITY",
+            "RAISE6SECACTUALAVAILABILITY", "RAISE1SECACTUALAVAILABILITY",
+            "RAISE60SECACTUALAVAILABILITY", "RAISE5MINACTUALAVAILABILITY",
+            "RAISEREGACTUALAVAILABILITY", "LOWER6SECACTUALAVAILABILITY",
+            "LOWER1SECACTUALAVAILABILITY", "UIGF",
+        ],
+        sort_by = ["SETTLEMENTDATE", "DUID"],
+    ),
+    (
+        name = "DISPATCHPRICE",
+        columns = [
+            "SETTLEMENTDATE", "REGIONID", "RRP", "ROP",
+            "RAISE6SECROP", "RAISE1SECROP", "RAISE60SECROP", "RAISE5MINROP", "RAISEREGROP",
+            "LOWER6SECROP", "LOWER1SECROP", "LOWER60SECROP", "LOWER5MINROP", "LOWERREGROP",
+        ],
+        sort_by = ["SETTLEMENTDATE", "REGIONID"],
+    ),
+    (
+        name = "DUDETAILSUMMARY",
+        columns = [
+            "DUID", "START_DATE", "END_DATE", "DISPATCHTYPE", "CONNECTIONPOINTID",
+            "REGIONID", "STATIONID", "TRANSMISSIONLOSSFACTOR", "STARTTYPE",
+            "DISTRIBUTIONLOSSFACTOR", "MINIMUM_ENERGY_PRICE", "MAXIMUM_ENERGY_PRICE",
+            "SCHEDULE_TYPE", "MIN_RAMP_RATE_UP", "MIN_RAMP_RATE_DOWN",
+            "MAX_RAMP_RATE_UP", "MAX_RAMP_RATE_DOWN", "IS_AGGREGATED",
+            "LOAD_MINIMUM_ENERGY_PRICE", "LOAD_MAXIMUM_ENERGY_PRICE",
+            "LOAD_MIN_RAMP_RATE_UP", "LOAD_MIN_RAMP_RATE_DOWN",
+            "LOAD_MAX_RAMP_RATE_UP", "LOAD_MAX_RAMP_RATE_DOWN", "SECONDARY_TLF",
+        ],
+        sort_by = ["END_DATE", "REGIONID", "DUID"],
+    ),
+    (
+        name = "DUDETAIL",
+        columns = [
+            "DUID", "EFFECTIVEDATE", "VERSIONNO", "CONNECTIONPOINTID", "VOLTLEVEL",
+            "REGISTEREDCAPACITY", "AGCCAPABILITY", "DISPATCHTYPE", "MAXCAPACITY",
+            "STARTTYPE", "NORMALLYONFLAG", "SPINNINGRESERVEFLAG", "INTERMITTENTFLAG",
+            "SEMISCHEDULE_FLAG", "MAXRATEOFCHANGEUP", "MAXRATEOFCHANGEDOWN", "ADG_ID",
+            "MINCAPACITY", "REGISTEREDMINCAPACITY", "MAXRATEOFCHANGEUP_LOAD",
+            "MAXRATEOFCHANGEDOWN_LOAD", "MAXSTORAGECAPACITY",
+            "STORAGEIMPORTEFFICIENCYFACTOR", "STORAGEEXPORTEFFICIENCYFACTOR",
+            "MIN_RAMP_RATE_UP", "MIN_RAMP_RATE_DOWN",
+            "LOAD_MIN_RAMP_RATE_UP", "LOAD_MIN_RAMP_RATE_DOWN", "AGGREGATED",
+        ],
+        sort_by = ["VERSIONNO", "DUID", "EFFECTIVEDATE"],
+    ),
+    (
+        name = "BIDDAYOFFER_D",
+        columns = [
+            "DUID", "SETTLEMENTDATE", "BIDTYPE", "DIRECTION", "VERSIONNO",
+            "PARTICIPANTID", "DAILYENERGYCONSTRAINT",
+            "PRICEBAND1", "PRICEBAND2", "PRICEBAND3", "PRICEBAND4", "PRICEBAND5",
+            "PRICEBAND6", "PRICEBAND7", "PRICEBAND8", "PRICEBAND9", "PRICEBAND10",
+            "MINIMUMLOAD", "T1", "T2", "T3", "T4", "NORMALSTATUS", "ENTRYTYPE",
+        ],
+        sort_by = ["SETTLEMENTDATE", "DUID", "VERSIONNO", "BIDTYPE", "DIRECTION"],
+    ),
+    (
+        name = "BIDPEROFFER_D",
+        columns = [
+            "DUID", "SETTLEMENTDATE", "BIDTYPE", "DIRECTION", "VERSIONNO",
+            "INTERVAL_DATETIME", "MAXAVAIL", "FIXEDLOAD", "ROCUP", "ROCDOWN",
+            "ENABLEMENTMIN", "ENABLEMENTMAX", "LOWBREAKPOINT", "HIGHBREAKPOINT",
+            "BANDAVAIL1", "BANDAVAIL2", "BANDAVAIL3", "BANDAVAIL4", "BANDAVAIL5",
+            "BANDAVAIL6", "BANDAVAIL7", "BANDAVAIL8", "BANDAVAIL9", "BANDAVAIL10",
+            "ENERGYLIMIT", "LASTCHANGED",
+        ],
+        sort_by = ["SETTLEMENTDATE", "DUID", "INTERVAL_DATETIME", "BIDTYPE", "DIRECTION"],
+    ),
+    (
+        name = "STATION",
+        columns = [
+            "STATIONID", "STATIONNAME", "ADDRESS1", "ADDRESS2", "ADDRESS3",
+            "ADDRESS4", "CITY", "STATE", "POSTCODE",
+        ],
+        sort_by = ["STATIONID"],
+    ),
+    (
+        name = "DUALLOC",
+        columns = ["DUID", "GENSETID", "LASTCHANGED", "VERSIONNO"],
+        sort_by = ["DUID", "GENSETID", "LASTCHANGED", "VERSIONNO"],
+    ),
+    (
+        name = "GENUNITS",
+        columns = [
+            "GENSETID", "STATIONID", "VOLTLEVEL", "DISPATCHTYPE", "STARTTYPE",
+            "NORMALSTATUS", "MAXCAPACITY", "GENSETTYPE", "GENSETNAME", "LOWERREG",
+            "CO2E_EMISSIONS_FACTOR", "CO2E_ENERGY_SOURCE", "CO2E_DATA_SOURCE",
+            "MINCAPACITY", "REGISTEREDMINCAPACITY", "LASTCHANGED",
+        ],
+        sort_by = ["STATIONID", "GENSETID"],
+    ),
+    (
+        name = "DISPATCHCONSTRAINT",
+        columns = [
+            "SETTLEMENTDATE", "RUNNO", "CONSTRAINTID", "DISPATCHINTERVAL",
+            "INTERVENTION", "RHS", "MARGINALVALUE", "VIOLATIONDEGREE",
+            "LHS", "GENCONID_EFFECTIVEDATE", "GENCONID_VERSIONNO", "LASTCHANGED",
+        ],
+        sort_by = ["SETTLEMENTDATE", "RUNNO", "CONSTRAINTID", "INTERVENTION"],
+    ),
+    (
+        name = "SPDCONNECTIONPOINTCONSTRAINT",
+        columns = [
+            "CONNECTIONPOINTID", "EFFECTIVEDATE", "VERSIONNO",
+            "GENCONID", "PERIODID", "FACTOR", "BIDTYPE", "LASTCHANGED",
+        ],
+        sort_by = ["CONNECTIONPOINTID", "EFFECTIVEDATE", "VERSIONNO", "GENCONID", "PERIODID", "BIDTYPE"],
+    ),
+    (
+        name = "GENCONDATA",
+        columns = [
+            "GENCONID", "EFFECTIVEDATE", "VERSIONNO", "DESCRIPTION",
+            "GENERICCONSTRAINTWEIGHT", "CONSTRAINTTYPE", "LASTCHANGED",
+        ],
+        sort_by = ["GENCONID", "EFFECTIVEDATE", "VERSIONNO"],
+    ),
+    (
+        name = "DISPATCHINTERCONNECTORRES",
+        columns = [
+            "SETTLEMENTDATE", "RUNNO", "INTERCONNECTORID", "DISPATCHINTERVAL",
+            "INTERVENTION", "METEREDMWFLOW", "MWFLOW", "MWLOSSES",
+            "MARGINALVALUE", "VIOLATIONDEGREE", "EXPORTLIMIT", "IMPORTLIMIT",
+        ],
+        sort_by = [
+            "SETTLEMENTDATE", "RUNNO", "INTERCONNECTORID",
+            "DISPATCHINTERVAL", "INTERVENTION",
+        ],
+    ),
+    (
+        name = "DISPATCH_UNIT_SCADA",
+        columns = ["SETTLEMENTDATE", "DUID", "SCADAVALUE"],
+        sort_by = ["SETTLEMENTDATE", "DUID"],
+    ),
+    (
+        name = "STADUALLOC",
+        columns = ["DUID", "EFFECTIVEDATE", "STATIONID", "VERSIONNO"],
+        sort_by = ["DUID", "EFFECTIVEDATE", "STATIONID", "VERSIONNO"],
+    ),
+    (
+        name = "SPDREGIONCONSTRAINT",
+        columns = ["REGIONID", "EFFECTIVEDATE", "VERSIONNO", "GENCONID", "BIDTYPE", "FACTOR", "LASTCHANGED"],
+        sort_by = ["REGIONID", "GENCONID", "EFFECTIVEDATE", "VERSIONNO", "BIDTYPE"],
+    ),
+    (
+        name = "SPDINTERCONNECTORCONSTRAINT",
+        columns = ["INTERCONNECTORID", "EFFECTIVEDATE", "VERSIONNO", "GENCONID", "FACTOR", "LASTCHANGED"],
+        sort_by = ["INTERCONNECTORID", "GENCONID", "EFFECTIVEDATE", "VERSIONNO"],
+    ),
+    (
+        name = "GENCONSET",
+        columns = ["GENCONSETID", "EFFECTIVEDATE", "VERSIONNO", "GENCONID", "LASTCHANGED"],
+        sort_by = ["GENCONSETID", "EFFECTIVEDATE", "VERSIONNO", "GENCONID"],
+    ),
+    (
+        name = "GENCONSETINVOKE",
+        columns = [
+            "INVOCATION_ID", "STARTDATE", "STARTPERIOD", "GENCONSETID",
+            "ENDDATE", "ENDPERIOD", "STARTAUTHORISEDBY", "ENDAUTHORISEDBY",
+            "INTERVENTION", "ASCONSTRAINTTYPE", "LASTCHANGED",
+            "STARTINTERVALDATETIME", "ENDINTERVALDATETIME", "SYSTEMNORMAL",
+        ],
+        sort_by = ["INVOCATION_ID"],
+    ),
+    (
+        name = "GENCONSETTRK",
+        columns = [
+            "GENCONSETID", "EFFECTIVEDATE", "VERSIONNO", "DESCRIPTION",
+            "AUTHORISEDBY", "AUTHORISEDDATE", "LASTCHANGED",
+            "COVERAGE", "SYSTEMNORMAL", "OUTAGE",
+        ],
+        sort_by = ["GENCONSETID", "EFFECTIVEDATE", "VERSIONNO"],
+    ),
+    (
+        name = "INTERCONNECTOR",
+        columns = ["INTERCONNECTORID", "REGIONFROM", "REGIONTO"],
+        sort_by = ["INTERCONNECTORID"],
+    ),
+    (
+        name = "INTERCONNECTORCONSTRAINT",
+        columns = [
+            "INTERCONNECTORID", "EFFECTIVEDATE", "VERSIONNO",
+            "FROMREGIONLOSSSHARE", "ICTYPE", "LOSSCONSTANT", "LOSSFLOWCOEFFICIENT",
+            "IMPORTLIMIT", "EXPORTLIMIT", "MAXMWIN", "MAXMWOUT",
+        ],
+        sort_by = ["INTERCONNECTORID", "EFFECTIVEDATE", "VERSIONNO"],
+    ),
+    (
+        name = "LOSSMODEL",
+        columns = ["INTERCONNECTORID", "EFFECTIVEDATE", "VERSIONNO", "LOSSSEGMENT", "MWBREAKPOINT"],
+        sort_by = ["INTERCONNECTORID", "EFFECTIVEDATE", "VERSIONNO", "LOSSSEGMENT"],
+    ),
+    (
+        name = "LOSSFACTORMODEL",
+        columns = ["INTERCONNECTORID", "EFFECTIVEDATE", "VERSIONNO", "REGIONID", "DEMANDCOEFFICIENT"],
+        sort_by = ["INTERCONNECTORID", "EFFECTIVEDATE", "VERSIONNO", "REGIONID"],
+    ),
+    (
+        name = "MNSP_INTERCONNECTOR",
+        columns = [
+            "INTERCONNECTORID", "LINKID", "EFFECTIVEDATE", "VERSIONNO",
+            "FROMREGION", "TOREGION", "FROM_REGION_TLF", "TO_REGION_TLF",
+            "LHSFACTOR", "MAXCAPACITY",
+        ],
+        sort_by = ["INTERCONNECTORID", "LINKID", "EFFECTIVEDATE", "VERSIONNO"],
+    ),
+    (
+        name = "PARTICIPANT",
+        columns = [
+            "PARTICIPANTID", "PARTICIPANTCLASSID", "NAME", "DESCRIPTION",
+            "ACN", "PRIMARYBUSINESS", "LASTCHANGED",
+        ],
+        sort_by = ["PARTICIPANTID"],
+    ),
+    (
+        name = "STATIONOPERATINGSTATUS",
+        columns = ["EFFECTIVEDATE", "STATIONID", "VERSIONNO", "STATUS"],
+        sort_by = ["STATIONID", "EFFECTIVEDATE", "VERSIONNO"],
+    ),
+    (
+        name = "STATIONOWNER",
+        columns = ["EFFECTIVEDATE", "PARTICIPANTID", "STATIONID", "VERSIONNO"],
+        sort_by = ["STATIONID", "EFFECTIVEDATE", "VERSIONNO", "PARTICIPANTID"],
+    ),
+    (
+        name = "RESERVE",
+        columns = [
+            "SETTLEMENTDATE", "VERSIONNO", "REGIONID", "PERIODID",
+            "LOWER5MIN", "RAISE5MIN", "RAISEREG", "LOWERREG",
+        ],
+        sort_by = ["SETTLEMENTDATE", "REGIONID", "VERSIONNO", "PERIODID"],
+    ),
+]
+
+# O(1) lookup by table symbol, derived from _TABLE_SPECS — not a separate source of truth.
+const _TABLE_SPECS_BY_NAME = Dict(Symbol(spec.name) => spec for spec in _TABLE_SPECS)

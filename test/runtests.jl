@@ -3,7 +3,8 @@ using Test
 # using JET
 
 using Dates
-using TidierDB
+using DuckDB
+using Chain
 using DataFrames: nrow
 using PowerSystems
 
@@ -14,6 +15,10 @@ create_mock_data(AEM_TEST_HIVE_DIR)
 
 @testset "Data reader tests" begin
     include("datareader.jl")
+end
+
+@testset "NEMWEB download/cache tests" begin
+    include("test-nemweb-load.jl")
 end
 
 @testset "ISP data tests" begin

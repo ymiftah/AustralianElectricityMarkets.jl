@@ -4,22 +4,17 @@
 
     hive_dir = AEM_TEST_HIVE_DIR
     config = isempty(hive_dir) ? HiveConfiguration() : HiveConfiguration(hive_location = hive_dir, filesystem = "file")
-    db = aem_connect(duckdb(), config)
+    db = aem_connect(config)
 
     @testset "Table Requirements and Reading" begin
         map(
             required_tables
         ) do table
             if isempty(hive_dir)
-                fetch_table_data(table, Date(2025, 1, 1):Date(2025, 1, 1))
+                populate(db, table, Date(2025, 1, 1), Date(2025, 1, 1))
             end
-            df = read_hive(db, table) |> x -> (
-                TidierDB.@collect(
-                    TidierDB.@head(
-                        x, 5
-                    )
-                )
-            )
+            source = read_hive(db, table)
+            df = AustralianElectricityMarkets._query(db, "SELECT * FROM $source LIMIT 5")
             @test nrow(df) == 5
         end
     end
@@ -36,7 +31,8 @@
     end
 
     @testset "get_load_dataframe" begin
-        df = AustralianElectricityMarkets.RegionModel.get_load_dataframe(db)
+        bus_df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
+        df = AustralianElectricityMarkets.RegionModel.get_load_dataframe(bus_df)
         @test df isa DataFrame
         @test "active_power" in names(df)
         @test "max_active_power" in names(df)
@@ -44,7 +40,8 @@
     end
 
     @testset "get_branch_dataframe" begin
-        df = AustralianElectricityMarkets.RegionModel.get_branch_dataframe(db)
+        bus_df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
+        df = AustralianElectricityMarkets.RegionModel.get_branch_dataframe(bus_df, read_interconnectors(db))
         @test df isa DataFrame
         @test "rate" in names(df)
         @test "bus_from" in names(df)
@@ -54,7 +51,8 @@
     end
 
     @testset "get_generators_dataframe" begin
-        df = AustralianElectricityMarkets.RegionModel.get_generators_dataframe(db)
+        bus_df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
+        df = AustralianElectricityMarkets.RegionModel.get_generators_dataframe(bus_df, read_units(db))
         @test df isa DataFrame
         @test "technology" in names(df)
         @test "base_power" in names(df)
@@ -64,7 +62,8 @@
     end
 
     @testset "get_batteries_dataframe" begin
-        df = AustralianElectricityMarkets.RegionModel.get_batteries_dataframe(db)
+        bus_df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
+        df = AustralianElectricityMarkets.RegionModel.get_batteries_dataframe(bus_df, read_units(db))
         @test df isa DataFrame
         @test "storage_capacity" in names(df)
         @test "efficiency" in names(df)
@@ -76,7 +75,7 @@
     end
 
     @testset "get_interfaces_dataframe" begin
-        df = AustralianElectricityMarkets.RegionModel.get_interfaces_dataframe(db)
+        df = AustralianElectricityMarkets.RegionModel.get_interfaces_dataframe(read_interconnectors(db))
         @test df isa DataFrame
         @test "from_area" in names(df)
         @test "to_area" in names(df)

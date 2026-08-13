@@ -13,7 +13,6 @@ Literate = "98b081ad-f1c9-55d3-8b20-4c87d4299306"
 PowerSimulations = "e690365d-45e2-57bb-ac84-44ba829e73c4"
 PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
 StorageSystemsSimulations = "e2f1a126-19d0-4674-9252-42b2384f8e3c"
-TidierDB = "86993f9b-bbba-4084-97c5-ee15961ad48b"
 
 [compat]
 AustralianElectricityMarkets = "0.1"
