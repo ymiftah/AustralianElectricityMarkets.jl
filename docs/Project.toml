@@ -20,7 +20,7 @@ HiGHS = "1"
 HydroPowerSimulations = "0.15"
 PowerSimulations = "0.34"
 PowerSystems = "5.10"
-StorageSystemsSimulations = "0.16"
+StorageSystemsSimulations = "0.16, 0.20"
 
 [sources]
 AustralianElectricityMarkets = {path = ".."}
