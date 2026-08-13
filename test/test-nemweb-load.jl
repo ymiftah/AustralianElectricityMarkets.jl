@@ -435,6 +435,29 @@ end
 end
 
 
+@testset "_partition_has_data: local — true iff dir exists and has a .parquet file" begin
+    tmpdir = mktempdir()
+    source = DataSource("T", ["C"], HiveConfiguration(hive_location = tmpdir))
+    partition_dir = joinpath(tmpdir, "T", "archive_month=2024-01-01")
+
+    @test !AustralianElectricityMarkets.AustralianElectricityMarketsData._partition_has_data(source, partition_dir)
+
+    mkpath(partition_dir)
+    @test !AustralianElectricityMarkets.AustralianElectricityMarketsData._partition_has_data(source, partition_dir)  # dir exists, no parquet yet
+
+    write(joinpath(partition_dir, "data.parquet"), UInt8[])
+    @test AustralianElectricityMarkets.AustralianElectricityMarketsData._partition_has_data(source, partition_dir)
+end
+
+@testset "_partition_dir_names: local — matches readdir on source.path" begin
+    tmpdir = mktempdir()
+    source = DataSource("T", ["C"], HiveConfiguration(hive_location = tmpdir))
+    mkpath(joinpath(source.path, "archive_month=2024-01-01"))
+    mkpath(joinpath(source.path, "archive_month=2024-02-01"))
+    @test Set(AustralianElectricityMarkets.AustralianElectricityMarketsData._partition_dir_names(source)) ==
+        Set(["archive_month=2024-01-01", "archive_month=2024-02-01"])
+end
+
 # ══════════════════════════════════════════════════════════════════════════════
 # F. populate(::DataSource, ...) — skip-existing logic
 # ══════════════════════════════════════════════════════════════════════════════

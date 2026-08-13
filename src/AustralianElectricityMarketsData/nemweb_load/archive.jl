@@ -83,7 +83,7 @@ function populate(source::DataSource, date_range::StepRange{Date}; force_new::Bo
             # Check for Hive-partitioned data
             partition_date = Date(year, month, 1)
             partition_dir = joinpath(source.path, "$ARCHIVE_MONTH_PARTITION=$(partition_date)")
-            data_exists = isdir(partition_dir) && any(endswith(f, ".parquet") for f in readdir(partition_dir))
+            data_exists = _partition_has_data(source, partition_dir)
         end
 
         if !data_exists
