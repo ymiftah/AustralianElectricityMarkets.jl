@@ -17,3 +17,4 @@ out/
 debug_out/
 debug/
 .worktrees
+.vscode/
