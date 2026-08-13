@@ -17,6 +17,17 @@ islocal(config::HiveConfiguration) = islocal(config.filesystem)
 get_filesystem(config::HiveConfiguration) = config.filesystem
 
 """
+    get_filesystem(path::String) -> String
+
+Extract the scheme from a resolved Hive-root/data path (e.g. `"s3"` from
+`"s3://bucket/..."`), or `"file"` for a plain local path with no scheme.
+"""
+function get_filesystem(path::String)::String
+    parts = split(path, "://"; limit = 2)
+    return length(parts) == 2 ? String(parts[1]) : "file"
+end
+
+"""
     _parse_hive_root(config::HiveConfiguration)
 
 Construct the correct path to the Hive dataset based on the specified filesystem.
@@ -33,8 +44,27 @@ function _parse_hive_root(config::HiveConfiguration)
     end
 end
 
-abstract type NetworkConfiguration end
+"""
+    AEMDB(db::DuckDB, config::HiveConfiguration)
 
-function table_requirements(::NetworkConfiguration)
-    error("Not implemented")
+    Thin wrapper with the connection and a configuration for the data location
+"""
+@kwdef struct AEMDB
+    db::DuckDB.DB
+    config::HiveConfiguration = HiveConfiguration()
+end
+
+"""
+    aem_connect(config::HiveConfiguration = HiveConfiguration())
+
+Open a DuckDB connection wrapped in an `AEMDB`. Loads the `httpfs` extension
+when `config` points at a remote filesystem (S3, GS).
+"""
+function aem_connect(config::HiveConfiguration = HiveConfiguration())
+    db = DuckDB.DB()
+    if !islocal(config)
+        DuckDB.execute(db, "INSTALL httpfs;")
+        DuckDB.execute(db, "LOAD httpfs;")
+    end
+    return AEMDB(; db, config)
 end

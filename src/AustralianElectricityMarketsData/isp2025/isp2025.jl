@@ -2,7 +2,7 @@ export read_affine_heatrates, read_coal_prices, read_gas_prices, read_biomass_pr
 export read_isp_renewable_costs_parameters
 export read_isp_fixed_opex, read_isp_variable_opex
 
-const ISP_DATA_DIR = joinpath(@__DIR__, "..", "data", "isp2025")
+const ISP_DATA_DIR = joinpath(@__DIR__, "data")
 
 """
     read_affine_heatrates()

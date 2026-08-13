@@ -1,8 +1,7 @@
 using AustralianElectricityMarkets: AustralianElectricityMarketsData, HiveConfiguration
 using AustralianElectricityMarkets.AustralianElectricityMarketsData:
     DataSource, get_table, MissingDataError, _TABLE_SPECS, ARCHIVE_MONTH_PARTITION,
-    _extract_csv_entry, _filter_d_lines, _peek_header_columns, _csv_to_parquet,
-    write_hive_parquet, read_parquet_file, _new_duckdb_connection
+    _extract_d_lines, _csv_to_parquet, _new_duckdb_connection
 using DataFrames, Dates, Logging, ZipFile, DuckDB, DBInterface
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -56,6 +55,31 @@ function make_zip_with_csv(csv_path::String)
     return tmp
 end
 
+"""
+Read just the NEMWEB "I" record (line 2) of a plain (non-zipped) fixture CSV
+to learn its real column names/order — the same information `_extract_d_lines`
+captures inline when reading from a ZIP.
+"""
+_peek_header_columns(csv_path) =
+    open(csv_path) do io
+    readline(io)                        # C record
+    fields = split(readline(io), ",")   # I: I, namespace, report, version, col1, col2, ...
+    String.(strip.(fields[5:end]))
+end
+
+"""
+Read a Hive-partitioned parquet dataset back into a DataFrame, to check what
+`_csv_to_parquet` actually wrote.
+"""
+function _read_parquet_file(parquet_path)
+    conn = _new_duckdb_connection()
+    try
+        return DBInterface.execute(conn, "SELECT * FROM read_parquet('$parquet_path', hive_partitioning=true)") |> DataFrame
+    finally
+        DBInterface.close!(conn)
+    end
+end
+
 _run_csv_to_parquet(csv_path, table_columns, out_path; sort_by = String[], year = 2024, month = 1) =
 let conn = DuckDB.DB()
     try
@@ -68,18 +92,22 @@ end
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# A. _extract_csv_entry — ZIP handling
+# A. _extract_d_lines — ZIP handling + D-line filtering + header capture
 # ══════════════════════════════════════════════════════════════════════════════
 
-@testset "_extract_csv_entry: extracts the .csv entry's content unchanged" begin
-    csv_path = make_nemweb_csv("DISPATCHPRICE", ["REGIONID", "RRP"], [("NSW1", "100.5")])
+@testset "_extract_d_lines: keeps only D records, in original order, and captures columns" begin
+    csv_path = make_nemweb_csv("DISPATCHPRICE", ["REGIONID", "RRP"], [("NSW1", "1.0"), ("VIC1", "2.0"), ("QLD1", "3.0")])
     zip_path = make_zip_with_csv(csv_path)
     try
-        extracted = _extract_csv_entry(zip_path)
+        d_path, available_cols = _extract_d_lines(zip_path)
         try
-            @test read(extracted) == read(csv_path)
+            @test available_cols == ["REGIONID", "RRP"]
+            lines = readlines(d_path)
+            @test length(lines) == 3
+            @test all(startswith(l, "D,") for l in lines)
+            @test occursin("NSW1", lines[1]) && occursin("VIC1", lines[2]) && occursin("QLD1", lines[3])
         finally
-            isfile(extracted) && rm(extracted)
+            isfile(d_path) && rm(d_path)
         end
     finally
         isfile(csv_path) && rm(csv_path)
@@ -87,19 +115,19 @@ end
     end
 end
 
-@testset "_extract_csv_entry: empty ZIP throws MissingDataError" begin
+@testset "_extract_d_lines: empty ZIP throws MissingDataError" begin
     zip_path = make_empty_zip()
     try
-        @test_throws MissingDataError _extract_csv_entry(zip_path)
+        @test_throws MissingDataError _extract_d_lines(zip_path)
     finally
         isfile(zip_path) && rm(zip_path)
     end
 end
 
-@testset "_extract_csv_entry: ZIP with no .csv entry throws MissingDataError" begin
+@testset "_extract_d_lines: ZIP with no .csv entry throws MissingDataError" begin
     zip_path = make_zip_no_csv()
     try
-        @test_throws MissingDataError _extract_csv_entry(zip_path)
+        @test_throws MissingDataError _extract_d_lines(zip_path)
     finally
         isfile(zip_path) && rm(zip_path)
     end
@@ -123,7 +151,7 @@ end
     tmpdir = mktempdir()
     try
         _run_csv_to_parquet(csv_path, ["SETTLEMENTDATE", "REGIONID", "RRP"], tmpdir)
-        df = sort(read_parquet_file(tmpdir), :REGIONID)
+        df = sort(_read_parquet_file(tmpdir), :REGIONID)
         @test nrow(df) == 3
         @test df.REGIONID == ["NSW1", "QLD1", "VIC1"]
         row = df[df.REGIONID .== "NSW1", :]
@@ -139,7 +167,7 @@ end
     tmpdir = mktempdir()
     try
         _run_csv_to_parquet(csv_path, ["SETTLEMENTDATE", "REGIONID", "RRP"], tmpdir)
-        df = read_parquet_file(tmpdir)
+        df = _read_parquet_file(tmpdir)
         @test "RRP" in names(df)
         @test ismissing(df.RRP[1])
         @test eltype(df.RRP) <: Union{Missing, Float32}
@@ -156,7 +184,7 @@ end
     tmpdir = mktempdir()
     try
         _run_csv_to_parquet(csv_path, ["SETTLEMENTDATE", "REGIONID", "RRP"], tmpdir)
-        df = read_parquet_file(tmpdir)
+        df = _read_parquet_file(tmpdir)
         @test !("EXTRA_COL" in names(df))
         @test nrow(df) == 1
     finally
@@ -167,9 +195,10 @@ end
 @testset "_csv_to_parquet: a column empty on every row becomes typed NULL, not a crash" begin
     # Regression test: a real column present in the header but empty on every D
     # row previously made CSV.jl infer a bare-Missing (`Union{}`) column, which
-    # DuckDB's DataFrame registration couldn't map — crashing write_hive_parquet.
-    # The DuckDB-native pipeline reads everything as VARCHAR and TRY_CASTs, so an
-    # all-empty numeric column just becomes all-NULL.
+    # the old DataFrame-based write path's DuckDB registration couldn't map —
+    # crashing the write. The DuckDB-native pipeline reads everything as
+    # VARCHAR and TRY_CASTs, so an all-empty numeric column just becomes
+    # all-NULL.
     csv_path = make_nemweb_csv(
         "DISPATCHPRICE", ["SETTLEMENTDATE", "REGIONID", "RRP"],
         [("2024/01/15 05:00:00", "NSW1", ""), ("2024/01/15 05:05:00", "VIC1", "")],
@@ -177,7 +206,7 @@ end
     tmpdir = mktempdir()
     try
         _run_csv_to_parquet(csv_path, ["SETTLEMENTDATE", "REGIONID", "RRP"], tmpdir)
-        df = read_parquet_file(tmpdir)
+        df = _read_parquet_file(tmpdir)
         @test nrow(df) == 2
         @test all(ismissing, df.RRP)
         @test eltype(df.RRP) <: Union{Missing, Float32}
@@ -194,7 +223,7 @@ end
     tmpdir = mktempdir()
     try
         _run_csv_to_parquet(csv_path, ["REGIONID", "RRP"], tmpdir)
-        df = read_parquet_file(tmpdir)
+        df = _read_parquet_file(tmpdir)
         @test nrow(df) == 1
         @test df.REGIONID[1] == "NSW1"
     finally
@@ -209,7 +238,7 @@ end
     tmpdir = mktempdir()
     try
         _run_csv_to_parquet(csv_path, ["REGIONID", "RRP"], tmpdir)
-        df = read_parquet_file(tmpdir)
+        df = _read_parquet_file(tmpdir)
         @test nrow(df) == n
     finally
         isfile(csv_path) && rm(csv_path)
@@ -256,63 +285,6 @@ end
         rm(csv_path; force = true)
     end
 end
-
-@testset "_filter_d_lines: keeps only D records, in original order" begin
-    csv_path = make_nemweb_csv("DISPATCHPRICE", ["REGIONID", "RRP"], [("NSW1", "1.0"), ("VIC1", "2.0"), ("QLD1", "3.0")])
-    try
-        d_path = _filter_d_lines(csv_path)
-        try
-            lines = readlines(d_path)
-            @test length(lines) == 3
-            @test all(startswith(l, "D,") for l in lines)
-            @test occursin("NSW1", lines[1]) && occursin("VIC1", lines[2]) && occursin("QLD1", lines[3])
-        finally
-            isfile(d_path) && rm(d_path)
-        end
-    finally
-        isfile(csv_path) && rm(csv_path)
-    end
-end
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# C. Hive parquet round-trip (write_hive_parquet/read_parquet_file utilities)
-# ══════════════════════════════════════════════════════════════════════════════
-
-@testset "write_hive_parquet + read_parquet_file: data survives round-trip" begin
-    tmpdir = mktempdir()
-    df = DataFrame(
-        REGIONID = ["NSW1", "VIC1"],
-        RRP = Float32[100.5f0, 98.3f0],
-        archive_month = [Date(2024, 1, 1), Date(2024, 1, 1)],
-    )
-    write_hive_parquet(df, tmpdir, ["archive_month"])
-    result = read_parquet_file(tmpdir)
-    @test nrow(result) == 2
-    @test Set(result.REGIONID) == Set(["NSW1", "VIC1"])
-    @test sort(result.RRP) ≈ sort([98.3f0, 100.5f0])
-end
-
-@testset "write_hive_parquet: Hive partition directory and parquet file are created" begin
-    tmpdir = mktempdir()
-    df = DataFrame(REGIONID = ["NSW1"], archive_month = [Date(2024, 1, 1)])
-    write_hive_parquet(df, tmpdir, ["archive_month"])
-    partition_dir = joinpath(tmpdir, "archive_month=2024-01-01")
-    @test isdir(partition_dir)
-    @test any(endswith(f, ".parquet") for f in readdir(partition_dir))
-end
-
-@testset "write_hive_parquet: distinct archive_month values produce separate subdirectories" begin
-    tmpdir = mktempdir()
-    df = DataFrame(
-        REGIONID = ["NSW1", "VIC1", "QLD1"],
-        archive_month = [Date(2024, 1, 1), Date(2024, 2, 1), Date(2024, 1, 1)],
-    )
-    write_hive_parquet(df, tmpdir, ["archive_month"])
-    @test isdir(joinpath(tmpdir, "archive_month=2024-01-01"))
-    @test isdir(joinpath(tmpdir, "archive_month=2024-02-01"))
-end
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # A2. islocal / _parse_hive_root — shared local-vs-remote path logic
@@ -393,13 +365,15 @@ end
     config = HiveConfiguration(hive_location = "bucket/path", filesystem = "s3")
     source = DataSource("T", ["C"], config)
     @test source.path == "s3://bucket/path/T"
-    @test source.filesystem == "s3"
+    @test AustralianElectricityMarkets.AustralianElectricityMarketsData.get_filesystem(source) == "s3"
+    @test !AustralianElectricityMarkets.AustralianElectricityMarketsData.islocal(source)
 end
 
-@testset "DataSource: filesystem field matches config for local sources" begin
+@testset "DataSource: filesystem is derived from path's scheme for local sources" begin
     tmpdir = mktempdir()
     source = DataSource("T", ["C"], HiveConfiguration(hive_location = tmpdir))
-    @test source.filesystem == "file"
+    @test AustralianElectricityMarkets.AustralianElectricityMarketsData.get_filesystem(source) == "file"
+    @test AustralianElectricityMarkets.AustralianElectricityMarketsData.islocal(source)
 end
 
 
@@ -490,38 +464,28 @@ end
     @test_logs (:info, r"Fetching data") min_level = Logging.Info match_mode = :any populate(source, date_range; force_new = true)
 end
 
-@testset "_add_data: does not clear an existing partition when source.filesystem is remote" begin
-    # Uses a real local tmpdir as the "remote" path stand-in — filesystem="gs" only
-    # controls _add_data's *branching*, it doesn't make the path actually remote.
-    #
-    # NOTE: constructed via the raw 6-field positional inner constructor
-    # (rather than the HiveConfiguration-based outer constructor) so that
-    # source.path is a genuine absolute local path. Going through the outer
-    # constructor with filesystem="gs" would produce path = "gs://" * tmpdir
-    # (e.g. "gs:///tmp/jl_XXXX"), which is NOT an absolute path by Julia's
-    # rules (doesn't start with "/") — mkpath/write below would then silently
-    # create real "gs:/..." junk directories under the current working
-    # directory (the repo root, when tests run normally) instead of under
-    # tmpdir.
+@testset "_clear_local_partition: removes an existing partition dir for a local source" begin
     tmpdir = mktempdir()
-    source = DataSource(
-        "DISPATCHPRICE", ["SETTLEMENTDATE", "REGIONID", "RRP"],
-        String[], [ARCHIVE_MONTH_PARTITION], tmpdir, "gs",
-    )
-    @test source.filesystem == "gs"
-    partition_dir = joinpath(source.path, "archive_month=2024-01-01")
+    source = DataSource("T", ["C"], HiveConfiguration(hive_location = tmpdir))
+    partition_dir = joinpath(tmpdir, "archive_month=2024-01-01")
+    mkpath(partition_dir)
+    write(joinpath(partition_dir, "data.parquet"), UInt8[])
+
+    AustralianElectricityMarkets.AustralianElectricityMarketsData._clear_local_partition(source, partition_dir)
+    @test !isdir(partition_dir)
+end
+
+@testset "_clear_local_partition: leaves the directory untouched for a remote source" begin
+    # `source.path` (gs://...) is unrelated to `partition_dir` — the function only
+    # reads source's scheme to decide whether to touch the directory it's given.
+    remote_source = DataSource("T", ["C"], HiveConfiguration(hive_location = "bucket/path", filesystem = "gs"))
+    tmpdir = mktempdir()
+    partition_dir = joinpath(tmpdir, "archive_month=2024-01-01")
     mkpath(partition_dir)
     sentinel = joinpath(partition_dir, "sentinel.parquet")
     write(sentinel, UInt8[1, 2, 3])
 
-    # _add_data will attempt a real network fetch and fail (no real NEMWEB/gs
-    # endpoint reachable the way this test is set up) — that's fine, the only
-    # thing under test is that the local sentinel file is never removed by the
-    # (skipped, since filesystem != "file") partition-clear step.
-    try
-        AustralianElectricityMarkets.AustralianElectricityMarketsData._add_data(source, 2024, 1)
-    catch
-    end
+    AustralianElectricityMarkets.AustralianElectricityMarketsData._clear_local_partition(remote_source, partition_dir)
     @test isfile(sentinel)
 end
 
@@ -595,7 +559,7 @@ if _gs_test_reachable()
                 table_sort_by = ["SETTLEMENTDATE", "REGIONID"],
             )
             @test source.path == "gs://$test_prefix/DISPATCHPRICE"
-            @test source.filesystem == "gs"
+            @test AustralianElectricityMarkets.AustralianElectricityMarketsData.get_filesystem(source) == "gs"
 
             # cached_date_range is not exported by either module — call it
             # fully-qualified, same as _add_data/_partition_has_data elsewhere

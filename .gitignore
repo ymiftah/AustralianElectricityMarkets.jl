@@ -15,4 +15,5 @@ wip
 .env
 out/
 debug_out/
+debug/
 .worktrees

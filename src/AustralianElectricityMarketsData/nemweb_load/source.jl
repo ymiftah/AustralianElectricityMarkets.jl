@@ -5,13 +5,16 @@ Immutable description of one NEMWEB MMS table, cached as Hive-partitioned
 parquet under `config.hive_location`. Construction is pure — it does not
 touch the filesystem; `_add_data` creates `path` lazily on first write.
 
+The filesystem (`"file"`, `"s3"`, `"gs"`) is not stored separately — it's
+recovered from `path`'s scheme via `get_filesystem(::String)`, since `path`
+already encodes it (`s3://...`, `gs://...`, or a bare local path).
+
 # Fields
 - `table_name::String`: Name of the table
 - `table_columns::Vector{String}`: Columns to include
 - `table_sort_by::Vector{String}`: Columns to sort by within each output file (row-group locality; not an enforced uniqueness constraint)
 - `partitions::Vector{String}`: Partition columns
 - `path::String`: Path to parquet dataset (local path, or `scheme://...` URI for remote)
-- `filesystem::String`: The `HiveConfiguration.filesystem` this source was built from (`"file"`, `"s3"`, `"gs"`)
 """
 struct DataSource
     table_name::String
@@ -19,8 +22,10 @@ struct DataSource
     table_sort_by::Vector{String}
     partitions::Vector{String}
     path::String
-    filesystem::String
 end
+
+get_filesystem(source::DataSource) = get_filesystem(source.path)
+islocal(source::DataSource) = islocal(get_filesystem(source))
 
 """
     DataSource(table_name, table_columns, config=HiveConfiguration();
@@ -43,7 +48,6 @@ function DataSource(
         table_sort_by,
         vcat(add_partitions, ARCHIVE_MONTH_PARTITION),
         joinpath(_parse_hive_root(config), table_name),
-        get_filesystem(config),
     )
 end
 
@@ -55,10 +59,10 @@ Local filesystems use `isdir`/`readdir` directly; remote filesystems query
 DuckDB's `glob()` over `httpfs`.
 """
 function _partition_has_data(source::DataSource, partition_dir::String)::Bool
-    if islocal(source.filesystem)
+    if islocal(source)
         return isdir(partition_dir) && any(endswith(f, ".parquet") for f in readdir(partition_dir))
     end
-    conn = _new_duckdb_connection(source.filesystem)
+    conn = _new_duckdb_connection(get_filesystem(source))
     try
         df = DataFrame(DBInterface.execute(conn, "SELECT COUNT(*) AS n FROM glob('$partition_dir/*.parquet')"))
         return df.n[1] > 0
@@ -75,11 +79,11 @@ directly under `source.path`. Local filesystems use `readdir` directly;
 remote filesystems query DuckDB's `glob()` over `httpfs`.
 """
 function _partition_dir_names(source::DataSource)::Vector{String}
-    if islocal(source.filesystem)
+    if islocal(source)
         isdir(source.path) || return String[]
         return readdir(source.path)
     end
-    conn = _new_duckdb_connection(source.filesystem)
+    conn = _new_duckdb_connection(get_filesystem(source))
     try
         df = DataFrame(DBInterface.execute(conn, "SELECT file FROM glob('$(source.path)/*/')"))
         return [basename(rstrip(f, '/')) for f in df.file]
