@@ -11,8 +11,9 @@ tables = table_requirements(RegionalNetworkConfiguration())
 println("Fetching data for tables: ", tables)
 println("Date range: ", date_range)
 
+db = aem_connect()
 for table in tables
-    fetch_table_data(table, date_range)
+    populate(db, table, first(date_range), last(date_range))
 end
 
 println("Data fetching complete.")

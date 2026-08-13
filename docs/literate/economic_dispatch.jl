@@ -5,7 +5,6 @@ using HydroPowerSimulations
 using Chain
 using DataFrames
 using AlgebraOfGraphics, CairoMakie
-using TidierDB
 using Dates
 using HiGHS
 
@@ -34,7 +33,7 @@ using HiGHS
 #
 # Only the data requirements for a `RegionalNetworkConfiguration` are downloaded.
 
-db = aem_connect(duckdb());
+db = aem_connect();
 nothing #hide
 
 # Instantiate the system.

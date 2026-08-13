@@ -101,13 +101,24 @@ function create_mock_data(hive_root::String)
         ), :DUDETAILSUMMARY
     )
 
-    # 6. STATION
+    # 6. STATION. Includes a second, later archive_month partition renaming
+    # BAYSW — real NEMWEB STATION data does this over time. Exercises
+    # read_units()'s STATIONID -> STATIONNAME "latest archive_month wins"
+    # resolution (rather than fanning out into duplicate rows per DUID).
     save_hive(
-        DataFrame(
-            STATIONID = ["BAYSW", "ERARING", "ST3", "ST4", "ST5", "ST6"],
-            STATIONNAME = ["Bayswater", "Eraring", "Station 3", "Station 4", "Station 5", "Station 6"],
-            POSTCODE = fill("3000", n),
-            archive_month = fill("2025-01", n)
+        vcat(
+            DataFrame(
+                STATIONID = ["BAYSW", "ERARING", "ST3", "ST4", "ST5", "ST6"],
+                STATIONNAME = ["Bayswater", "Eraring", "Station 3", "Station 4", "Station 5", "Station 6"],
+                POSTCODE = fill("3000", n),
+                archive_month = fill("2025-01", n)
+            ),
+            DataFrame(
+                STATIONID = ["BAYSW"],
+                STATIONNAME = ["Bayswater Power Station"],
+                POSTCODE = ["3000"],
+                archive_month = ["2025-02"]
+            ),
         ), :STATION
     )
 

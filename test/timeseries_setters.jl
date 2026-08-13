@@ -3,14 +3,13 @@
     using PowerSystems
     using Dates
     using DataFrames
-    using TidierDB
     import TimeSeries
 
     hive_dir = AEM_TEST_HIVE_DIR
     @test isdir(hive_dir)
 
     config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
-    db = aem_connect(duckdb(), config)
+    db = aem_connect(config)
 
     # Base system for testing
     sys_base = nem_system(db, RegionalNetworkConfiguration())

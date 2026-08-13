@@ -1,7 +1,7 @@
 module AustralianElectricityMarkets
 
 using PowerSystems
-using TidierDB
+using DuckDB
 using HTTP, JSON3
 using Dates
 import TimeSeries: TimeArray, colnames
@@ -9,7 +9,7 @@ import PowerSystems as PSY
 import InfrastructureSystems as IS
 
 # exports
-export HiveConfiguration, PyHiveConfiguration, fetch_table_data, list_available_tables
+export HiveConfiguration, list_available_tables, populate
 export NetworkConfiguration, table_requirements
 export aem_connect
 export nem_system
@@ -29,17 +29,19 @@ export BidType
 
 # Write your package code here.
 include("constants.jl")
-include("configurations.jl")
-include("data_utils.jl")
 include("network_models/interface.jl")
 
-
-include("AustralianElectricityMarketsData.jl")
+include("AustralianElectricityMarketsData/AustralianElectricityMarketsData.jl")
 
 # Export data module
-using .AustralianElectricityMarketsData: PyHiveConfiguration, fetch_table_data, list_available_tables, read_affine_heatrates,
+using .AustralianElectricityMarketsData: populate, get_table, list_available_tables, ARCHIVE_MONTH_PARTITION
+using .AustralianElectricityMarketsData: read_affine_heatrates,
     read_coal_prices, read_gas_prices, read_biomass_prices, read_isp_thermal_costs_parameters,
     read_isp_renewable_costs_parameters, read_isp_fixed_opex, read_isp_variable_opex
+using .AustralianElectricityMarketsData: HiveConfiguration, AEMDB, aem_connect
+using .AustralianElectricityMarketsData: read_hive, read_interconnectors, read_units, read_demand, read_energy_bids
+using .AustralianElectricityMarketsData: _query
+using .AustralianElectricityMarketsData: islocal, get_filesystem, _parse_hive_root
 
 # FCAS (Frequency Control Ancillary Services) types.
 #

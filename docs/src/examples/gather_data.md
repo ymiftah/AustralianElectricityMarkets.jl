@@ -4,7 +4,7 @@
 
 ## How it Works
 
-The data is fetched from the NEMWEB archive and stored locally as hive-partitioned Parquet files. This provides a good trade-off between data compression and query efficiency using tools like DuckDB (via `TidierDB.jl`).
+The data is fetched from the NEMWEB archive and stored locally as hive-partitioned Parquet files. This provides a good trade-off between data compression and query efficiency using tools like DuckDB.
 
 ## Configuration
 
@@ -53,16 +53,18 @@ table_requirements(RegionalNetworkConfiguration())
 
 ## Reading the Data
 
-Once the data is cached, you can load it for analysis. The package provides high-level functions to parse this raw data into structured DataFrames via TidierDB.
+Once the data is cached, you can load it for analysis. The package provides high-level functions to parse this raw data into structured DataFrames, backed by DuckDB.
 
 ```julia
-using TidierDB
+using AustralianElectricityMarkets, DuckDB
 
 # Connect to a local DuckDB instance
-db = aem_connect(duckdb())
+db = aem_connect()
 
-# Low-level access to a specific hive table
-df_raw = read_hive(db, :DISPATCH_UNIT_SOLUTION) |> @collect
+# Low-level access to a specific hive table: read_hive returns a SQL source
+# fragment that can be queried directly with DuckDB
+source = read_hive(db, :DISPATCH_UNIT_SOLUTION)
+df_raw = DataFrame(DuckDB.execute(db.db, "SELECT * FROM $source LIMIT 10"))
 
 # Load unit information from the cached data
 units = read_units(db)

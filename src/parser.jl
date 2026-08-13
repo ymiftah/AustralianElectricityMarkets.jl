@@ -1,6 +1,7 @@
 using Dates
-using TidierDB
+using DuckDB
 using DataFrames
+using Chain
 using Statistics
 
 # The fixed set of AEMO BIDTYPE values this repo's bid-reading functions accept. A scoped
@@ -47,298 +48,6 @@ const FCAS_BID_TYPES = (keys(FCAS_CONTINGENCY_MARKETS)..., FCAS_REGULATION_MARKE
 # calls print -> show by default, not Base.string, so bare interpolation would silently
 # produce the wrong text anywhere a bid type is spliced into a name or SQL filter.
 _fcas_direction(bid_type::BidType) = startswith(string(bid_type), "RAISE") ? ReserveUp : ReserveDown
-
-
-"""
-    read_hive(db::TidierDB.DBInterface.Connection,table_name::Symbol; config::HiveConfiguration=CONFIG[])
-
-Read a hive-partitioned parquet dataset into a TidierDB table.
-
-# Arguments
-- `db::TidierDB.DBInterface.Connection`: The database connection to use.
-- `table_name::Symbol`: The name of the table to read.
-- `config::HiveConfiguration`: The configuration to use. Defaults to `CONFIG[]`.
-"""
-function read_hive(
-        db::AEMDB,
-        table_name::Symbol,
-    )
-    hive_root = _parse_hive_root(db.config)
-    hive_path = """
-    read_parquet(
-        "$hive_root/$table_name/**/*.parquet",
-        hive_partitioning=true
-    )
-    """
-    return TidierDB.dt(db.db, hive_path)
-end
-
-"""
-    _parse_hive_root(config::PyHiveConfiguration)
-
-Construct the correct path to the Hive dataset based on the specified filesystem.
-
-# Arguments
-- `config::PyHiveConfiguration`: The configuration object containing filesystem and location details.
-"""
-function _parse_hive_root(config::HiveConfiguration)
-    if islocal(config)
-        return config.hive_location
-    else
-        prefix = get_filesystem(config)
-        return "$(prefix)://" * config.hive_location
-    end
-    throw("Not a known filesystem")
-end
-
-"""
-    read_interconnectors(db)
-
-Reads and processes interconnector data from the database.
-
-# Arguments
-- `db`: The database connection.
-
-# Returns
-A `DataFrame` containing the latest interconnector constraint data.
-
-# Example
-```julia
-db = aem_connect(duckdb())
-interconnectors_df = read_interconnectors(db)
-println(interconnectors_df)
-```
-"""
-function read_interconnectors(db)
-    t_interconnector = read_hive(db, :INTERCONNECTOR)
-    t_interconnector_constraint = read_hive(db, :INTERCONNECTORCONSTRAINT)
-    interconnector_ids = @chain t_interconnector begin
-        AustralianElectricityMarkets._filter_latest
-    end
-
-    return @chain t_interconnector_constraint begin
-        @inner_join(interconnector_ids, INTERCONNECTORID, archive_month)
-        @arrange(INTERCONNECTORID, desc(EFFECTIVEDATE), desc(VERSIONNO))
-        @collect
-        unique(:INTERCONNECTORID, keep = :first)
-        select(Not(:archive_month))
-    end
-end
-
-"""
-    read_demand(db; resolution::Dates.Period=Dates.Minute(5))
-
-Read and process regional demand data from the database.
-
-# Arguments
-- `db`: The database connection.
-- `resolution::Dates.Period`: The time resolution to which the data should be floored. Defaults to 5 minutes.
-
-# Returns
-A `DataFrame` with demand and renewable availability data, aggregated by the specified resolution.
-
-# Example
-```julia
-db = aem_connect(duckdb())
-demand_df = read_demand(db; resolution=Dates.Hour(1))
-println(demand_df)
-```
-   Row │ SETTLEMENTDATE       REGIONID  TOTALDEMAND  DISPATCHABLEGENERATION  DISPATCHABLELOAD  NETINTERCHANGE
-	   │ Dates.DateTime       String7   Float64      Float64                 Float64           Float64
-───────┼──────────────────────────────────────────────────────────────────────────────────────────────────────
-	 1 │ 2024-01-01T00:05:00  NSW1          6574.92                 6721.88               0.0          146.96
-	 2 │ 2024-01-01T00:05:00  QLD1          6228.31                 5713.21               0.0         -515.1
-	 3 │ 2024-01-01T00:05:00  SA1           1293.98                 1116.68               0.0         -177.3
-	 4 │ 2024-01-01T00:05:00  TAS1          1033.29                  580.29               0.0         -453.0
-	 5 │ 2024-01-01T00:05:00  VIC1          3977.1                  5071.17               0.0         1094.07
-"""
-function read_demand(db; resolution::Dates.Period = Dates.Minute(5))
-    dudetail_table = read_hive(db, :DISPATCHREGIONSUM)
-    df = @chain dudetail_table begin
-        @select(
-            SETTLEMENTDATE,
-            REGIONID,
-            TOTALDEMAND,
-            # DISPATCHABLEGENERATION,
-            # DISPATCHABLELOAD,
-            # NETINTERCHANGE,
-            SS_SOLAR_AVAILABILITY,
-            SS_WIND_AVAILABILITY,
-        )
-        @collect
-    end
-    dropmissing!(df)
-    # df[!, :TOTALDEMAND] .+= df[!, :DISPATCHABLELOAD]  # Adds the dispatchable load to the total demand to get the actual native demand
-    df[!, :SETTLEMENTDATE] = ceil.(df[!, :SETTLEMENTDATE], resolution)
-    sort!(df, :SETTLEMENTDATE)
-    return @chain df begin
-        groupby([:SETTLEMENTDATE, :REGIONID])
-        combine(_, valuecols(_) .=> mean ∘ skipmissing; renamecols = false)
-    end
-end
-
-"""
-    read_units(db)
-
-Gathers and processes unit data from the database.
-
-# Arguments
-- `db`: The database connection.
-
-# Returns
-A `DataFrame` containing detailed information about each generation unit.
-
-# Example
-```julia
-db = aem_connect(duckdb())
-units_df = read_units(db)
-println(units_df)
-```
-"""
-function read_units(db)
-
-    # READ THE LIST OF UNITS
-    dudetail_table = read_hive(db, :DUDETAIL)
-    dudetail = @chain dudetail_table begin
-        @group_by(DUID)
-        @summarise(
-            EFFECTIVEDATE = maximum(EFFECTIVEDATE), archive_month = maximum(archive_month)
-        )
-        @inner_join(
-            dudetail_table,
-            DUID == DUID,
-            EFFECTIVEDATE == EFFECTIVEDATE,
-            archive_month == archive_month
-        )
-        @collect
-    end
-    dudetail = @chain dudetail begin
-        groupby([:DUID, :EFFECTIVEDATE])
-        combine(:VERSIONNO => maximum => :VERSIONNO)
-        innerjoin(dudetail; on = [:DUID, :EFFECTIVEDATE, :VERSIONNO])
-        sort(:DUID)
-        select(Not([:archive_month]))
-        unique
-    end
-
-    # # JOIN THE SUMMARY Table to match station (among other info)
-    summary_table = read_hive(db, :DUDETAILSUMMARY)
-    summary = @chain summary_table begin
-        _filter_latest
-        @filter(ismissing(END_DATE) || (year(END_DATE) == 2999))  # AEMO specifies the latest version with a 2999-12-31 or a missing date in nemdb.py
-        @arrange(DUID, START_DATE)
-        @collect
-        unique(:DUID)
-        select!(Not(:archive_month))
-    end
-
-    station_names = @chain read_hive(db, :STATION) begin
-        @select(STATIONID, STATIONNAME, POSTCODE)
-        @collect
-        unique
-    end
-    op_status_table = read_hive(db, :STATIONOPERATINGSTATUS)
-    max_eff_date = @chain op_status_table begin
-        @filter STATUS == "COMMISSIONED"
-        @group_by(STATIONID)
-        @summarise(
-            EFFECTIVEDATE = maximum(EFFECTIVEDATE), archive_month = maximum(archive_month)
-        )
-    end
-    op_status = @chain op_status_table begin
-        @inner_join(
-            max_eff_date,
-            STATIONID == STATIONID,
-            EFFECTIVEDATE == EFFECTIVEDATE,
-            archive_month == archive_month
-        )
-        @arrange(STATIONID, EFFECTIVEDATE, VERSIONNO)
-        @collect
-        select(Not([:archive_month]))
-        unique
-        leftjoin(station_names; on = :STATIONID)
-        select!(:STATIONID, :STATUS, :STATIONNAME, :POSTCODE)
-        unique!(; keep = :last)
-    end
-
-    # GENSET / DUID mapping
-    gen_units = read_hive(db, :GENUNITS)
-    genunits = @chain gen_units begin
-        _filter_latest(:archive_month)
-        @collect
-        select!(:GENSETID, :CO2E_ENERGY_SOURCE, :CO2E_EMISSIONS_FACTOR)
-        groupby(:GENSETID)
-        combine(
-            :CO2E_ENERGY_SOURCE => first,
-            :CO2E_EMISSIONS_FACTOR => first,
-            ;
-            renamecols = false,
-        )
-        transform(
-            :CO2E_ENERGY_SOURCE => ByRow(x -> AEMO_PM_MAPPING[x]) => :TECHNOLOGY,
-            :CO2E_ENERGY_SOURCE => ByRow(x -> AEMO_FUEL_MAPPING[x]) => :FUELTYPE,
-        )
-        unique!
-    end
-    dualloc = @chain read_hive(db, :DUALLOC) begin
-        _filter_latest
-        @select(DUID, GENSETID, LASTCHANGED, VERSIONNO)
-        @collect
-        sort!([:DUID, :GENSETID, :LASTCHANGED, :VERSIONNO])
-        unique!([:GENSETID]; keep = :last)
-        select!(:GENSETID, :DUID)
-    end
-    genunits = @chain innerjoin(genunits, dualloc; on = :GENSETID) begin
-        select!(Not(:GENSETID))
-        unique
-    end
-
-    # # Joins
-    dudetail = innerjoin(dudetail, genunits; on = :DUID)
-    dudetail = innerjoin(dudetail, summary; on = :DUID, makeunique = true)
-    dudetail = innerjoin(dudetail, op_status; on = :STATIONID)
-    # # Keep commisioned and scheduled / semischeduled
-    subset!(dudetail, :STATUS => ByRow(==("COMMISSIONED")))
-    # TODO address duplicated columnz explicitly
-    select!(dudetail, Not(r"_[\d]"))
-    return dudetail
-end
-
-"""
-    _filter_latest(table, key=:archive_month)
-
-Helper function to filter for the most recent records in a table.
-
-# Arguments
-- `table`: The table to filter.
-- `key`: The column to use for determining the latest records. Defaults to `:archive_month`.
-"""
-function _filter_latest(table)
-    return _filter_latest(table, :archive_month)
-end
-
-"""
-    _filter_latest(table, key)
-
-Helper function to filter for the most recent records in a table based on a given key.
-
-# Arguments
-- `table`: The TidierDB table to filter.
-- `key`: The column (as a Symbol) to use for determining the latest records.
-"""
-function _filter_latest(table, key)
-    # NOTE DuckDB.jl seem to have issues with queries on the hive partition
-    # keys, so find the value first, use it to filter
-    max_eff_date = @eval @chain $table begin
-        @select($key)
-        @distinct
-        @collect
-    end
-    max_eff_date = maximum(max_eff_date[!, key])
-    return @eval @chain $table begin
-        @filter($key == $max_eff_date)
-    end
-end
 
 
 """
@@ -509,73 +218,81 @@ end
 
 
 """
-    set_renewable_pv!(sys, db, date_range; kwargs...)
+    _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
 
-Adds Market bids time series data to the system.
+Sets `gen` available with a `MarketBidCost` and attaches its incremental
+(generation-side) variable cost time series and initial input, derived from
+`gen_bids.piecewise_step_data`. Shared by the generator and battery branches
+of `set_market_bids!`.
+"""
+function _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
+    set_available!(gen, true)
+    set_operation_cost!(
+        gen,
+        MarketBidCost(;
+            no_load_cost = 0.0,
+            start_up = (hot = 0.0, warm = 0.0, cold = 0.0),
+            shut_down = 0.0,
+        )
+    )
+    psd = gen_bids.piecewise_step_data
+    time_series_data = Deterministic(;
+        name = "variable_cost",
+        data = Dict(start_date => psd),
+        resolution = resolution,
+        interval = resolution
+    )
+    set_incremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
+    time_series_incremental_initial_input = Deterministic(;
+        name = "incremental_initial_input",
+        data = Dict(start_date => zeros(size(psd))),
+        resolution = resolution,
+        interval = resolution
+    )
+    set_incremental_initial_input!(sys, gen, time_series_incremental_initial_input)
+    return
+end
 
-This function reads solar availability data for a specified date range from the database,
-processes it into a time series, and attaches it to the `RenewableDispatch` components
-representing PV generators.
+"""
+    set_market_bids!(sys, db, date_range; kwargs...)
+
+Adds market bid cost time series data to the system.
+
+This function reads energy and price bid data for a specified date range from the
+database, converts it into piecewise `MarketBidCost` variable cost time series, and
+attaches it to `Generator` and `EnergyReservoirStorage` components (the latter also
+gets decremental/load-side bid costs).
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
 - `db`: The database connection.
 - `date_range`: A range of dates for which to fetch the data.
-- `kwargs`: Additional keyword arguments passed to `read_demand`.
+- `kwargs`: Additional keyword arguments passed to `_massage_bids` (e.g. `resolution`).
 """
 function set_market_bids!(sys, db, date_range; kwargs...)
     start_date = first(date_range)
     end_date = last(date_range)
+    resolution = get(kwargs, :resolution, Minute(5))
 
     energy_bids_table = read_hive(db, :BIDPEROFFER_D)
     pricebids_table = read_hive(db, :BIDDAYOFFER_D)
-    bids = _massage_bids(energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
+    bids = _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
 
     # Sets all generator subtype first
     foreach(get_components(Generator, sys)) do gen
         gen_id = get_name(gen)
-        start_date = first(date_range)
         gen_bids = subset(bids, :DUID => ByRow(==(gen_id)), :DIRECTION => ByRow(==("GEN")))
         if DataFrames.isempty(gen_bids)
             @warn "No bid data for generator $(gen_id), setting to unavailable."
             set_available!(gen, false)
         else
-            set_available!(gen, true)
-            set_operation_cost!(
-                gen,
-                MarketBidCost(;
-                    no_load_cost = 0.0,
-                    start_up = (hot = 0.0, warm = 0.0, cold = 0.0),
-                    shut_down = 0.0,
-                )
-            )
-            psd = gen_bids.piecewise_step_data
-            data = Dict(
-                start_date => psd,
-            )
-            time_series_data = Deterministic(;
-                name = "variable_cost",
-                data = data,
-                resolution = get(kwargs, :resolution, Minute(5)),
-                interval = get(kwargs, :resolution, Minute(5)),
-            )
-            set_incremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
-            time_series_incremental_initial_input = Deterministic(;
-                name = "incremental_initial_input",
-                data = Dict(
-                    start_date => zeros(size(psd))
-                ),
-                resolution = get(kwargs, :resolution, Minute(5)),
-                interval = get(kwargs, :resolution, Minute(5)),
-            )
-            set_incremental_initial_input!(sys, gen, time_series_incremental_initial_input)
+            _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
         end
     end
 
     # Then sets the batteries
     return foreach(get_components(EnergyReservoirStorage, sys)) do gen
         gen_id = get_name(gen)
-        start_date = first(date_range)
         gen_bids = subset(bids, :DUID => ByRow(==(gen_id)), :DIRECTION => ByRow(==("GEN")))
         load_bids = subset(bids, :DUID => ByRow(==(gen_id)), :DIRECTION => ByRow(==("LOAD")))
 
@@ -583,44 +300,13 @@ function set_market_bids!(sys, db, date_range; kwargs...)
             @warn "No bid data for generator $(gen_id), setting to unavailable."
             set_available!(gen, false)
         else
-            set_available!(gen, true)
-            set_operation_cost!(
-                gen,
-                MarketBidCost(;
-                    no_load_cost = 0.0,
-                    start_up = (hot = 0.0, warm = 0.0, cold = 0.0),
-                    shut_down = 0.0,
-                )
-            )
-            psd = gen_bids.piecewise_step_data
-            data = Dict(
-                start_date => psd,
-            )
-            time_series_data = Deterministic(;
-                name = "variable_cost",
-                data = data,
-                resolution = get(kwargs, :resolution, Minute(5)),
-                interval = get(kwargs, :resolution, Minute(5)),
-            )
-            set_incremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
-            time_series_incremental_initial_input = Deterministic(;
-                name = "incremental_initial_input",
-                data = Dict(
-                    start_date => zeros(size(psd))
-                ),
-                resolution = get(kwargs, :resolution, Minute(5)),
-                interval = get(kwargs, :resolution, Minute(5)),
-            )
-            set_incremental_initial_input!(sys, gen, time_series_incremental_initial_input)
+            _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
 
             # Load bids as decremental inputs
             psd = load_bids.piecewise_step_data
-            data = Dict(
-                start_date => psd,
-            )
             time_series_data = Deterministic(;
                 name = "decremental_variable_cost",
-                data = data,
+                data = Dict(start_date => psd),
                 resolution = get(kwargs, :resolution, Minute(5)),
                 interval = get(kwargs, :resolution, Minute(5)),
             )
@@ -643,42 +329,8 @@ function read_bids(db, date_range; kwargs...)
     pricebids_table = read_hive(db, :BIDDAYOFFER_D)
     start_date = first(date_range)
     end_date = last(date_range)
-    bids = _massage_bids(energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
+    bids = _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
     return bids
-end
-
-function read_energy_bids(db, date_range; bid_type::BidType = BidType.ENERGY, kwargs...)
-    start_datetime = first(date_range)
-    end_datetime = last(date_range)
-    sd = Date(start_datetime) - Day(1)
-    ed = Date(end_datetime) + Day(1)
-    bid_type_str = string(bid_type)
-    table = read_hive(db, :BIDPEROFFER_D)
-    energy_bids = @eval @chain $table begin
-        @select(SETTLEMENTDATE, BIDTYPE, INTERVAL_DATETIME, VERSIONNO, DUID, DIRECTION, MAXAVAIL, starts_with("BANDAVAIL"))
-        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed, BIDTYPE == $bid_type_str)
-        # Only select the version no that are the latest for each interval and duid
-        @group_by(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)
-        @mutate(max_version = maximum(VERSIONNO))
-        @filter(VERSIONNO == max_version)
-        @arrange(SETTLEMENTDATE, INTERVAL_DATETIME)
-        @select(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, MAXAVAIL, starts_with("BANDAVAIL"))
-        @collect
-    end
-
-    if :resolution in keys(kwargs)
-        resolution = get(kwargs, :resolution, Minute(5))
-        energy_bids[!, :INTERVAL_DATETIME] = ceil.(energy_bids[!, :INTERVAL_DATETIME], resolution)
-        energy_bids = @chain energy_bids begin
-            groupby([:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION])
-            combine(_, valuecols(_) .=> maximum ∘ skipmissing; renamecols = false)
-        end
-    end
-    subset!(
-        energy_bids,
-        :INTERVAL_DATETIME => ByRow(x -> (start_datetime <= x < end_datetime))
-    )
-    return energy_bids
 end
 
 function _extract_power_bids(row)
@@ -694,32 +346,42 @@ function _extract_power_bids(row)
     return PiecewiseStepData(b, a)
 end
 
-function _massage_bids(energy_bids_table, pricebids_table, start_date, end_date; resolution = nothing, bid_type::BidType = BidType.ENERGY)
+function _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_date; resolution = nothing, bid_type::BidType = BidType.ENERGY)
     sd = Date(start_date) - Day(1)
     ed = Date(end_date) + Day(1)
     bid_type_str = string(bid_type)
-    energy_bids = @eval @chain $energy_bids_table begin
-        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed, BIDTYPE == $bid_type_str)
-        # Only select the version no that are the latest for each interval and duid
-        @group_by(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)
-        @mutate(max_version = maximum(VERSIONNO))
-        @filter(VERSIONNO == max_version)
-        @select(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, MAXAVAIL, starts_with("BANDAVAIL"))
-        @arrange(SETTLEMENTDATE, INTERVAL_DATETIME)
-        @collect
-    end
 
-    pricebids = @eval @chain $pricebids_table begin
-        @filter(BIDTYPE == $bid_type_str)
-        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed)
-        # Only select the version no that are the latest for each interval and duid
-        @group_by(SETTLEMENTDATE, DUID, DIRECTION)
-        @mutate(max_version = maximum(VERSIONNO))
-        @filter(VERSIONNO == max_version)
-        @select(SETTLEMENTDATE, DUID, DIRECTION, MINIMUMLOAD, DAILYENERGYCONSTRAINT, starts_with("PRICEBAND"))
-        @arrange(SETTLEMENTDATE)
-        @collect
-    end
+    energy_schema = names(_query(db, "SELECT * FROM $energy_bids_table LIMIT 0"))
+    energy_band_cols = join(filter(startswith("BANDAVAIL"), energy_schema), ", ")
+    energy_bids = _query(
+        db,
+        """
+        SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, MAXAVAIL, $energy_band_cols
+        FROM $energy_bids_table
+        WHERE BIDTYPE = ? AND SETTLEMENTDATE BETWEEN ? AND ?
+        QUALIFY row_number() OVER (
+            PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION ORDER BY VERSIONNO DESC
+        ) = 1
+        ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME
+        """,
+        [bid_type_str, sd, ed],
+    )
+
+    priceband_schema = names(_query(db, "SELECT * FROM $pricebids_table LIMIT 0"))
+    priceband_cols = join(filter(startswith("PRICEBAND"), priceband_schema), ", ")
+    pricebids = _query(
+        db,
+        """
+        SELECT SETTLEMENTDATE, DUID, DIRECTION, MINIMUMLOAD, DAILYENERGYCONSTRAINT, $priceband_cols
+        FROM $pricebids_table
+        WHERE BIDTYPE = ? AND SETTLEMENTDATE BETWEEN ? AND ?
+        QUALIFY row_number() OVER (
+            PARTITION BY SETTLEMENTDATE, DUID, DIRECTION ORDER BY VERSIONNO DESC
+        ) = 1
+        ORDER BY SETTLEMENTDATE
+        """,
+        [bid_type_str, sd, ed],
+    )
 
     if !isnothing(resolution)
         energy_bids = @chain energy_bids begin
@@ -772,37 +434,34 @@ function read_fcas_bids(db, date_range, bid_type::BidType; kwargs...)
     pricebids_table = read_hive(db, :BIDDAYOFFER_D)
 
     bids = _massage_bids(
-        energy_bids_table, pricebids_table, start_date, end_date;
+        db, energy_bids_table, pricebids_table, start_date, end_date;
         bid_type = bid_type, resolution = get(kwargs, :resolution, nothing),
     )
-    trapezium = _read_fcas_trapezium(energy_bids_table, bid_type, start_date, end_date)
+    trapezium = _read_fcas_trapezium(db, energy_bids_table, bid_type, start_date, end_date)
     return innerjoin(
         bids, trapezium; on = [:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION],
     )
 end
 
-function _read_fcas_trapezium(energy_bids_table, bid_type::BidType, start_date, end_date)
+function _read_fcas_trapezium(db, energy_bids_table, bid_type::BidType, start_date, end_date)
     sd = Date(start_date) - Day(1)
     ed = Date(end_date) + Day(1)
     bid_type_str = string(bid_type)
-    trapezium = @eval @chain $energy_bids_table begin
-        @select(
-            SETTLEMENTDATE, BIDTYPE, INTERVAL_DATETIME, VERSIONNO, DUID, DIRECTION,
-            ENABLEMENTMIN, LOWBREAKPOINT, HIGHBREAKPOINT, ENABLEMENTMAX, MAXAVAIL,
-            ROCUP, ROCDOWN,
-        )
-        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed, BIDTYPE == $bid_type_str)
-        # Only select the version no that are the latest for each interval and duid
-        @group_by(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)
-        @mutate(max_version = maximum(VERSIONNO))
-        @filter(VERSIONNO == max_version)
-        @select(
-            SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION,
-            ENABLEMENTMIN, LOWBREAKPOINT, HIGHBREAKPOINT, ENABLEMENTMAX, MAXAVAIL,
-            ROCUP, ROCDOWN,
-        )
-        @collect
-    end
+    trapezium = _query(
+        db,
+        """
+        SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION,
+               ENABLEMENTMIN, LOWBREAKPOINT, HIGHBREAKPOINT, ENABLEMENTMAX, MAXAVAIL,
+               ROCUP, ROCDOWN
+        FROM $energy_bids_table
+        WHERE BIDTYPE = ? AND SETTLEMENTDATE BETWEEN ? AND ?
+        QUALIFY row_number() OVER (
+            PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION ORDER BY VERSIONNO DESC
+        ) = 1
+        ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME
+        """,
+        [bid_type_str, sd, ed],
+    )
     subset!(trapezium, :INTERVAL_DATETIME => ByRow(x -> start_date <= x < end_date))
     return trapezium
 end
@@ -960,21 +619,28 @@ function read_fcas_requirements(db, date_range)
     sd = Date(start_date) - Day(1)
     ed = Date(end_date) + Day(1)
     table = read_hive(db, :RESERVE)
-    df = @eval @chain $table begin
-        @filter($sd <= SETTLEMENTDATE, SETTLEMENTDATE <= $ed)
-        @group_by(SETTLEMENTDATE, REGIONID)
-        @mutate(max_version = maximum(VERSIONNO))
-        @filter(VERSIONNO == max_version)
-        @collect
-    end
-    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
     # RESERVE's column names are the raw AEMO BIDTYPE strings this table happens to carry -
     # this is the one place a plain String, not BidType, is the right comparison, since
     # column names come from DataFrames/DuckDB as String regardless of our enum.
-    bid_type_cols = intersect(names(df), string.(FCAS_BID_TYPES))
+    schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
+    bid_type_cols = intersect(schema, string.(FCAS_BID_TYPES))
     isempty(bid_type_cols) && return DataFrame(SETTLEMENTDATE = DateTime[], REGIONID = String[], BIDTYPE = BidType[], REQUIREMENT = Float64[])
+    bid_type_col_list = join(bid_type_cols, ", ")
+    df = _query(
+        db,
+        """
+        SELECT SETTLEMENTDATE, REGIONID, $bid_type_col_list
+        FROM $table
+        WHERE SETTLEMENTDATE BETWEEN ? AND ?
+        QUALIFY row_number() OVER (
+            PARTITION BY SETTLEMENTDATE, REGIONID ORDER BY VERSIONNO DESC
+        ) = 1
+        """,
+        [sd, ed],
+    )
+    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
     long = stack(
-        select(df, :SETTLEMENTDATE, :REGIONID, bid_type_cols...), bid_type_cols;
+        df, bid_type_cols;
         variable_name = :BIDTYPE, value_name = :REQUIREMENT,
     )
     transform!(long, :BIDTYPE => ByRow(BidType) => :BIDTYPE)

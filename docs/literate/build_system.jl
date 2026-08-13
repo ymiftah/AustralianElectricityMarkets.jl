@@ -19,14 +19,13 @@
 # parquet files.
 
 using AustralianElectricityMarkets
-using TidierDB
 using Dates
 using PowerSystems
 using DataFrames
 using Chain
 using CairoMakie, AlgebraOfGraphics
 
-db = aem_connect(duckdb());
+db = aem_connect();
 date_range = Date(2025, 1, 1):Date(2025, 1, 2)
 
 # tables = table_requirements(RegionalNetworkConfiguration())

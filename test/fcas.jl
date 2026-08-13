@@ -6,7 +6,7 @@
 
     hive_dir = AEM_TEST_HIVE_DIR
     config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
-    db = aem_connect(duckdb(), config)
+    db = aem_connect(config)
 
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:Minute(5):(start_date + Hour(1))
