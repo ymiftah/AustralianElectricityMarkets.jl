@@ -493,10 +493,20 @@ end
 @testset "_add_data: does not clear an existing partition when source.filesystem is remote" begin
     # Uses a real local tmpdir as the "remote" path stand-in — filesystem="gs" only
     # controls _add_data's *branching*, it doesn't make the path actually remote.
+    #
+    # NOTE: constructed via the raw 6-field positional inner constructor
+    # (rather than the HiveConfiguration-based outer constructor) so that
+    # source.path is a genuine absolute local path. Going through the outer
+    # constructor with filesystem="gs" would produce path = "gs://" * tmpdir
+    # (e.g. "gs:///tmp/jl_XXXX"), which is NOT an absolute path by Julia's
+    # rules (doesn't start with "/") — mkpath/write below would then silently
+    # create real "gs:/..." junk directories under the current working
+    # directory (the repo root, when tests run normally) instead of under
+    # tmpdir.
     tmpdir = mktempdir()
     source = DataSource(
         "DISPATCHPRICE", ["SETTLEMENTDATE", "REGIONID", "RRP"],
-        HiveConfiguration(hive_location = tmpdir, filesystem = "gs"),
+        String[], [ARCHIVE_MONTH_PARTITION], tmpdir, "gs",
     )
     @test source.filesystem == "gs"
     partition_dir = joinpath(source.path, "archive_month=2024-01-01")
@@ -562,15 +572,16 @@ using UUIDs: uuid4
 const _GS_TEST_BUCKET = "australian_electricity_markets"
 
 function _gs_test_reachable()
-    conn = _new_duckdb_connection("gs")
+    conn = nothing
     try
+        conn = _new_duckdb_connection("gs")
         DBInterface.execute(conn, "SELECT COUNT(*) FROM glob('gs://$_GS_TEST_BUCKET/*')")
         return true
     catch e
         @info "Skipping GS end-to-end tests — bucket unreachable/uncredentialed" exception = e
         return false
     finally
-        DBInterface.close!(conn)
+        conn === nothing || DBInterface.close!(conn)
     end
 end
 
