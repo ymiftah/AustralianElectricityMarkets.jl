@@ -11,7 +11,7 @@
             required_tables
         ) do table
             if isempty(hive_dir)
-                fetch_table_data(table, Date(2025, 1, 1):Date(2025, 1, 1))
+                populate(db, table, Date(2025, 1, 1), Date(2025, 1, 1))
             end
             source = read_hive(db, table)
             df = AustralianElectricityMarkets._query(db, "SELECT * FROM $source LIMIT 5")
