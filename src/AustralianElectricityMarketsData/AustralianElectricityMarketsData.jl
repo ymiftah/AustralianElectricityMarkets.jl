@@ -5,7 +5,7 @@ using DataFrames, HTTP, ZipArchives, Dates
 using DuckDB, DBInterface
 using Statistics: median
 
-using ..AustralianElectricityMarkets: HiveConfiguration, islocal, get_filesystem, AEMDB, PM_MAPPING
+using ..AustralianElectricityMarkets: HiveConfiguration, islocal, get_filesystem, _parse_hive_root, AEMDB, PM_MAPPING
 
 export populate, get_table, list_available_tables
 export ARCHIVE_MONTH_PARTITION

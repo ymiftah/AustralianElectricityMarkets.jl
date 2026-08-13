@@ -10,7 +10,8 @@ touch the filesystem; `_add_data` creates `path` lazily on first write.
 - `table_columns::Vector{String}`: Columns to include
 - `table_sort_by::Vector{String}`: Columns to sort by within each output file (row-group locality; not an enforced uniqueness constraint)
 - `partitions::Vector{String}`: Partition columns
-- `path::String`: Path to parquet dataset
+- `path::String`: Path to parquet dataset (local path, or `scheme://...` URI for remote)
+- `filesystem::String`: The `HiveConfiguration.filesystem` this source was built from (`"file"`, `"s3"`, `"gs"`)
 """
 struct DataSource
     table_name::String
@@ -18,6 +19,7 @@ struct DataSource
     table_sort_by::Vector{String}
     partitions::Vector{String}
     path::String
+    filesystem::String
 end
 
 """
@@ -25,6 +27,8 @@ end
                table_sort_by=String[], add_partitions=String[])
 
 Create a new `DataSource` for a NEMWEB table, rooted at `config.hive_location`.
+Works for both local and remote (`s3`/`gs`) `config.filesystem` — path
+construction is delegated to `_parse_hive_root`.
 """
 function DataSource(
         table_name::String,
@@ -33,17 +37,13 @@ function DataSource(
         table_sort_by::Vector{String} = String[],
         add_partitions::Vector{String} = String[],
     )
-    islocal(config) || throw(
-        ArgumentError(
-            "DataSource requires a local cache filesystem, got filesystem=$(get_filesystem(config))"
-        )
-    )
     return DataSource(
         table_name,
         table_columns,
         table_sort_by,
         vcat(add_partitions, ARCHIVE_MONTH_PARTITION),
-        joinpath(config.hive_location, table_name),
+        joinpath(_parse_hive_root(config), table_name),
+        get_filesystem(config),
     )
 end
 

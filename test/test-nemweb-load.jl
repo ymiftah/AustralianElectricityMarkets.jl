@@ -359,9 +359,17 @@ end
     @test !isdir(source.path)  # construction is pure — the write path creates it lazily
 end
 
-@testset "DataSource: rejects a non-local HiveConfiguration" begin
+@testset "DataSource: accepts a remote HiveConfiguration and builds a scheme:// path" begin
     config = HiveConfiguration(hive_location = "bucket/path", filesystem = "s3")
-    @test_throws ArgumentError DataSource("T", ["C"], config)
+    source = DataSource("T", ["C"], config)
+    @test source.path == "s3://bucket/path/T"
+    @test source.filesystem == "s3"
+end
+
+@testset "DataSource: filesystem field matches config for local sources" begin
+    tmpdir = mktempdir()
+    source = DataSource("T", ["C"], HiveConfiguration(hive_location = tmpdir))
+    @test source.filesystem == "file"
 end
 
 
