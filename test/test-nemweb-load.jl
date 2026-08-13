@@ -551,3 +551,65 @@ end
     processed = [l.kwargs[:table] for l in logs if l.message == "Processing table"]
     @test processed == [:DISPATCHPRICE]
 end
+
+
+using UUIDs: uuid4
+
+# ══════════════════════════════════════════════════════════════════════════════
+# H. Remote (GS) end-to-end — real bucket, skipped if unreachable
+# ══════════════════════════════════════════════════════════════════════════════
+
+const _GS_TEST_BUCKET = "australian_electricity_markets"
+
+function _gs_test_reachable()
+    conn = _new_duckdb_connection("gs")
+    try
+        DBInterface.execute(conn, "SELECT COUNT(*) FROM glob('gs://$_GS_TEST_BUCKET/*')")
+        return true
+    catch e
+        @info "Skipping GS end-to-end tests — bucket unreachable/uncredentialed" exception = e
+        return false
+    finally
+        DBInterface.close!(conn)
+    end
+end
+
+if _gs_test_reachable()
+    @testset "Remote (GS): DataSource + _add_data + populate against a real bucket" begin
+        test_prefix = "$_GS_TEST_BUCKET/_test/$(uuid4())"
+        config = HiveConfiguration(hive_location = test_prefix, filesystem = "gs")
+        try
+            source = DataSource(
+                "DISPATCHPRICE", ["SETTLEMENTDATE", "REGIONID", "RRP"], config;
+                table_sort_by = ["SETTLEMENTDATE", "REGIONID"],
+            )
+            @test source.path == "gs://$test_prefix/DISPATCHPRICE"
+            @test source.filesystem == "gs"
+
+            # cached_date_range is not exported by either module — call it
+            # fully-qualified, same as _add_data/_partition_has_data elsewhere
+            # in this file.
+            cached_date_range = AustralianElectricityMarkets.AustralianElectricityMarketsData.cached_date_range
+
+            # cached_date_range on a not-yet-written remote source: no data yet.
+            @test cached_date_range(source) === nothing
+
+            # populate() with force_new will attempt a real NEMWEB download for a
+            # known-good historical month, then write straight to GS via COPY.
+            date_range = Date(2024, 1, 1):Month(1):Date(2024, 1, 1)
+            populate(source, date_range)
+
+            # If NEMWEB had the file (network permitting), the partition should now
+            # be visible via the same remote existence-check path used by populate.
+            range = cached_date_range(source)
+            if range !== nothing
+                @test range == (Date(2024, 1, 1), Date(2024, 1, 31))
+
+                # populate again — should skip (data_exists) rather than re-fetch.
+                @test_logs (:info, r"already exists") min_level = Logging.Info match_mode = :any populate(source, date_range)
+            end
+        finally
+            run(`gcloud storage rm -r gs://$test_prefix`)
+        end
+    end
+end
