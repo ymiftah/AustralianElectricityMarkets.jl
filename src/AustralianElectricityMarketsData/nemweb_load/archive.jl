@@ -6,11 +6,19 @@ Hive-partitioned parquet cache.
 """
 function _add_data(source::DataSource, year::Int, month::Int)
     # `_add_data` is only ever called when `populate` has already decided to
-    # (re)fetch this month (not cached, or `force_new=true`), so clearing the
-    # partition unconditionally here is always correct, and removes any risk
-    # of stale files from a previous run coexisting with fresh ones.
+    # (re)fetch this month (not cached, or `force_new=true`). For local
+    # filesystems, clearing the partition unconditionally here is always
+    # correct and removes any risk of stale files from a previous run
+    # coexisting with fresh ones. For remote filesystems there is
+    # deliberately no equivalent clear step (see
+    # docs/superpowers/specs/2026-08-13-remote-storage-write-support-design.md,
+    # "Non-goals") — remote rewrites rely solely on COPY's
+    # OVERWRITE_OR_IGNORE, which does not guarantee removal of files left
+    # over from a differently-shaped previous write to the same partition.
     partition_dir = joinpath(source.path, "$ARCHIVE_MONTH_PARTITION=$(Date(year, month, 1))")
-    isdir(partition_dir) && rm(partition_dir; recursive = true, force = true)
+    if islocal(source.filesystem)
+        isdir(partition_dir) && rm(partition_dir; recursive = true, force = true)
+    end
 
     return try
         @info "Fetching data" table = source.table_name year month
@@ -34,11 +42,12 @@ function _add_data(source::DataSource, year::Int, month::Int)
 
         try
             @info "Writing Hive-partitioned parquet" path = source.path
-            conn = _new_duckdb_connection()
+            conn = _new_duckdb_connection(source.filesystem)
             try
                 _csv_to_parquet(
                     conn, d_only_path, available_cols, source.table_columns, source.path,
-                    source.partitions, source.table_sort_by, year, month,
+                    source.partitions, source.table_sort_by, year, month;
+                    islocal = islocal(source.filesystem),
                 )
             finally
                 DBInterface.close!(conn)

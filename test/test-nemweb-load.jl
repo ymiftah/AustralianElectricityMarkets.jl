@@ -467,6 +467,31 @@ end
     @test_logs (:info, r"Fetching data") min_level = Logging.Info match_mode = :any populate(source, date_range; force_new = true)
 end
 
+@testset "_add_data: does not clear an existing partition when source.filesystem is remote" begin
+    # Uses a real local tmpdir as the "remote" path stand-in — filesystem="gs" only
+    # controls _add_data's *branching*, it doesn't make the path actually remote.
+    tmpdir = mktempdir()
+    source = DataSource(
+        "DISPATCHPRICE", ["SETTLEMENTDATE", "REGIONID", "RRP"],
+        HiveConfiguration(hive_location = tmpdir, filesystem = "gs"),
+    )
+    @test source.filesystem == "gs"
+    partition_dir = joinpath(source.path, "archive_month=2024-01-01")
+    mkpath(partition_dir)
+    sentinel = joinpath(partition_dir, "sentinel.parquet")
+    write(sentinel, UInt8[1, 2, 3])
+
+    # _add_data will attempt a real network fetch and fail (no real NEMWEB/gs
+    # endpoint reachable the way this test is set up) — that's fine, the only
+    # thing under test is that the local sentinel file is never removed by the
+    # (skipped, since filesystem != "file") partition-clear step.
+    try
+        AustralianElectricityMarkets.AustralianElectricityMarketsData._add_data(source, 2024, 1)
+    catch
+    end
+    @test isfile(sentinel)
+end
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # G. populate(::AEMDB, ...) — the same struct used for both write and read
