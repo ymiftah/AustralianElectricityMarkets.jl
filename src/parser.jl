@@ -449,12 +449,14 @@ function _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
         name = "variable_cost",
         data = Dict(start_date => psd),
         resolution = resolution,
+        interval = resolution
     )
     set_incremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
     time_series_incremental_initial_input = Deterministic(;
         name = "incremental_initial_input",
         data = Dict(start_date => zeros(size(psd))),
         resolution = resolution,
+        interval = resolution
     )
     set_incremental_initial_input!(sys, gen, time_series_incremental_initial_input)
     return
@@ -513,14 +515,18 @@ function set_market_bids!(sys, db, date_range; kwargs...)
             psd = load_bids.piecewise_step_data
             time_series_data = Deterministic(;
                 name = "decremental_variable_cost",
-                data = Dict(start_date => psd),
-                resolution = resolution,
+                data = data,
+                resolution = get(kwargs, :resolution, Minute(5)),
+                interval = get(kwargs, :resolution, Minute(5)),
             )
             set_decremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
             time_series_decremental_initial_input = Deterministic(;
                 name = "decremental_initial_input",
-                data = Dict(start_date => (first ∘ get_y_coords).(psd)),
-                resolution = resolution,
+                data = Dict(
+                    start_date => (first ∘ get_y_coords).(psd)
+                ),
+                resolution = get(kwargs, :resolution, Minute(5)),
+                interval = get(kwargs, :resolution, Minute(5)),
             )
             set_decremental_initial_input!(sys, gen, time_series_decremental_initial_input)
         end
