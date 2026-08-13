@@ -2,7 +2,7 @@ using AustralianElectricityMarkets: AustralianElectricityMarketsData, HiveConfig
 using AustralianElectricityMarkets.AustralianElectricityMarketsData:
     DataSource, get_table, MissingDataError, _TABLE_SPECS, ARCHIVE_MONTH_PARTITION,
     _extract_csv_entry, _filter_d_lines, _peek_header_columns, _csv_to_parquet,
-    write_hive_parquet, read_parquet_file
+    write_hive_parquet, read_parquet_file, _new_duckdb_connection
 using DataFrames, Dates, Logging, ZipFile, DuckDB, DBInterface
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -303,6 +303,24 @@ end
     @test AustralianElectricityMarkets._parse_hive_root(HiveConfiguration(hive_location = "/tmp/x", filesystem = "file")) == "/tmp/x"
     @test AustralianElectricityMarkets._parse_hive_root(HiveConfiguration(hive_location = "bucket/prefix", filesystem = "gs")) == "gs://bucket/prefix"
     @test AustralianElectricityMarkets._parse_hive_root(HiveConfiguration(hive_location = "bucket/prefix", filesystem = "s3")) == "s3://bucket/prefix"
+end
+
+@testset "_new_duckdb_connection: local (default) works with no network access assumptions" begin
+    conn = _new_duckdb_connection()
+    try
+        @test DBInterface.execute(conn, "SELECT 1 AS x") |> DataFrame == DataFrame(x = [1])
+    finally
+        DBInterface.close!(conn)
+    end
+end
+
+@testset "_new_duckdb_connection: remote filesystem loads httpfs without error" begin
+    conn = _new_duckdb_connection("gs")
+    try
+        @test DBInterface.execute(conn, "SELECT 1 AS x") |> DataFrame == DataFrame(x = [1])
+    finally
+        DBInterface.close!(conn)
+    end
 end
 
 

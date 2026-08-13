@@ -1,16 +1,24 @@
 """
-    _new_duckdb_connection() -> DuckDB.DB
+    _new_duckdb_connection(filesystem::String = "file") -> DuckDB.DB
 
 Open a DuckDB connection configured to spill to a real (non-tmpfs) disk
 directory once memory use crosses a conservative bound, rather than growing
-unbounded.
+unbounded. Loads the `httpfs` extension when `filesystem` is remote
+(`"s3"`/`"gs"`), so subsequent `COPY`/`glob()` calls can reach it.
 """
-function _new_duckdb_connection()
+function _new_duckdb_connection(filesystem::String = "file")
     # Without this, an unconfigured in-memory DuckDB.DB() has nowhere to spill
     # a large sort/aggregate to, and can be OOM-killed by the OS on wide,
     # multi-million-row tables (confirmed directly: a bare connection
     # processing BIDPEROFFER_D was killed at ~7.5GB resident).
     conn = DuckDB.DB()
+    if !islocal(filesystem)
+        # Two separate calls, not one "INSTALL httpfs; LOAD httpfs;" string —
+        # DuckDB.jl 1.5.2 raises "Cannot prepare multiple statements at once!"
+        # on a semicolon-joined multi-statement string (confirmed directly).
+        DuckDB.execute(conn, "INSTALL httpfs;")
+        DuckDB.execute(conn, "LOAD httpfs;")
+    end
     spill_dir = expanduser("~/.cache/aem_duckdb_spill")
     mkpath(spill_dir)
     DBInterface.execute(conn, "SET memory_limit='2GB'")

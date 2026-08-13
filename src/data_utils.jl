@@ -17,7 +17,9 @@ when `config` points at a remote filesystem (S3, GS).
 function aem_connect(config::HiveConfiguration = HiveConfiguration())
     db = DuckDB.DB()
     if !islocal(config)
-        DuckDB.execute(db, "INSTALL httpfs; LOAD httpfs;")
+        # Two separate calls — see _new_duckdb_connection for why.
+        DuckDB.execute(db, "INSTALL httpfs;")
+        DuckDB.execute(db, "LOAD httpfs;")
     end
     return AEMDB(; db, config)
 end
