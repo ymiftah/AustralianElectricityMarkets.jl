@@ -197,7 +197,8 @@ row left to read it from.
 """
 function _csv_to_parquet(
         conn, csv_path::String, available_cols::Vector{String}, table_columns::Vector{String}, path::String,
-        partitions::Vector{String}, sort_by::Vector{String}, year::Int, month::Int,
+        partitions::Vector{String}, sort_by::Vector{String}, year::Int, month::Int;
+        islocal::Bool = true,
     )
     # No Julia-side DataFrame is ever constructed, and DuckDB's own
     # out-of-core read_csv (bounded via `_new_duckdb_connection`'s
@@ -222,7 +223,7 @@ function _csv_to_parquet(
     order_by = isempty(sort_cols) ? "" : "ORDER BY " * join(("\"$c\"" for c in sort_cols), ", ")
     partition_by = join(partitions, ", ")
 
-    mkpath(path)
+    islocal && mkpath(path)
     sql = """
         COPY (
             SELECT $select_list, DATE '$archive_month' AS $ARCHIVE_MONTH_PARTITION

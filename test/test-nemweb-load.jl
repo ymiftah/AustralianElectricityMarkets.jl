@@ -227,6 +227,36 @@ end
     end
 end
 
+@testset "_csv_to_parquet: islocal=false does not call mkpath" begin
+    # DuckDB's local COPY auto-creates at most ONE missing directory level
+    # itself (confirmed directly: COPY to a path with a single missing
+    # component succeeds even without a prior mkpath; COPY to a path with two
+    # or more missing components fails with "Failed to create directory").
+    # Nesting the fake path two levels below a fresh tmpdir means: if our
+    # code's `islocal && mkpath(path)` runs, the full tree exists before COPY
+    # and it succeeds; if it's skipped, COPY fails and no directory is
+    # created — a real, deterministic signal instead of relying on "no real
+    # s3/gs endpoint" reasoning.
+    csv_path = make_nemweb_csv("DISPATCHPRICE", ["REGIONID", "RRP"], [("NSW1", "100.5")])
+    try
+        conn = DuckDB.DB()
+        try
+            available_cols = _peek_header_columns(csv_path)
+            fake_path = joinpath(mktempdir(), "a", "b")
+            @test !isdir(fake_path)
+            @test_throws DuckDB.QueryException _csv_to_parquet(
+                conn, csv_path, available_cols, ["REGIONID", "RRP"], fake_path,
+                [ARCHIVE_MONTH_PARTITION], String[], 2024, 1; islocal = false,
+            )
+            @test !isdir(fake_path)  # mkpath was never called
+        finally
+            DBInterface.close!(conn)
+        end
+    finally
+        rm(csv_path; force = true)
+    end
+end
+
 @testset "_filter_d_lines: keeps only D records, in original order" begin
     csv_path = make_nemweb_csv("DISPATCHPRICE", ["REGIONID", "RRP"], [("NSW1", "1.0"), ("VIC1", "2.0"), ("QLD1", "3.0")])
     try
