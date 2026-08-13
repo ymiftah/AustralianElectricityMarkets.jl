@@ -526,6 +526,26 @@ end
     @test processed == [:DISPATCHPRICE]
 end
 
+@testset "show(::AEMDB): compact form reports hive_location and filesystem" begin
+    tmpdir = mktempdir()
+    db = aem_connect(HiveConfiguration(hive_location = tmpdir))
+    @test sprint(show, db) == "AEMDB(hive_location=\"$tmpdir\", filesystem=\"file\")"
+end
+
+@testset "show(::AEMDB, MIME\"text/plain\"): lists every table with its cached date range" begin
+    tmpdir = mktempdir()
+    db = aem_connect(HiveConfiguration(hive_location = tmpdir))
+    partition_dir = joinpath(tmpdir, "DISPATCHPRICE", "archive_month=2024-01-01")
+    mkpath(partition_dir)
+    write(joinpath(partition_dir, "data.parquet"), UInt8[])
+
+    output = sprint(io -> show(io, MIME("text/plain"), db))
+    @test occursin("DISPATCHPRICE", output)
+    @test occursin("2024-01-01 … 2024-01-31", output)
+    @test occursin("DISPATCHLOAD", output)
+    @test occursin("(not cached)", output)
+end
+
 
 using UUIDs: uuid4
 
