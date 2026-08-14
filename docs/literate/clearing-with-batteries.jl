@@ -23,11 +23,15 @@ end
 # when electricity prices are low (e.g., during the middle of the day when solar is abundant)
 # and discharging when prices are high (e.g., during the evening peak). Furthermore, they
 # provide essential services like **FCAS** (Frequency Control Ancillary Services) to keep the
-# grid stable.
+# grid stable. See [FCAS in the NEM](@ref) for a full introduction to FCAS markets, offers,
+# and requirements.
 #
-# !!! info "FCAS is a work in progress"
-#     This package does not support yet the definition of Ancillary Services consistent with the NEM rules.
-#     Stay tuned for the inclusion of those in the future.
+# !!! info "FCAS co-optimisation is a work in progress"
+#     This package can read FCAS offers, requirements and dispatch outcomes (see
+#     [FCAS in the NEM](@ref)), and represents FCAS reserves and offers as
+#     `PowerSystems.jl` types. It does not yet *enforce* the FCAS trapezium and joint
+#     capacity/ramping constraints inside a `PowerSimulations.jl` dispatch problem like this
+#     one - the battery's FCAS offers are not part of the optimisation below.
 #
 # ## Setup the system
 #

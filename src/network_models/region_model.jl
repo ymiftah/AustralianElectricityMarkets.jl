@@ -745,6 +745,8 @@ struct RegionalNetworkConfiguration <: NetworkConfiguration end
     :STATIONOPERATINGSTATUS,
     :GENUNITS,
     :DUALLOC,
+    :BIDDAYOFFER_D,
+    :BIDPEROFFER_D,
 """
 AustralianElectricityMarkets.table_requirements(::RegionalNetworkConfiguration) = [
     :INTERCONNECTOR,
@@ -766,24 +768,28 @@ export RegionalNetworkConfiguration
 
 """
     Like `RegionalNetworkConfiguration`, but also pulls the tables needed for NEM FCAS
-    (Frequency Control Ancillary Services) — `DISPATCHLOAD`, `DISPATCHPRICE`, `RESERVE`, in
-    addition to the `BIDDAYOFFER_D`/`BIDPEROFFER_D` bid tables already required — and adds
-    one FCAS reserve per (market, region) to the resulting system (see
-    `add_fcas_reserves!`). Kept separate from `RegionalNetworkConfiguration` so energy-only
-    users aren't forced to pull the extra tables.
+    (Frequency Control Ancillary Services) — `DISPATCHLOAD`, `DISPATCHPRICE`,
+    `DISPATCH_FCAS_REQ`, `DISPATCHCONSTRAINT`, `GENCONDATA`, in addition to the
+    `BIDDAYOFFER_D`/`BIDPEROFFER_D` bid tables already required — and adds one FCAS reserve
+    per (market, region) to the resulting system (see `add_fcas_reserves!`). Kept separate
+    from `RegionalNetworkConfiguration` so energy-only users aren't forced to pull the extra
+    tables.
 """
 struct FCASNetworkConfiguration <: NetworkConfiguration end
 
 """
     table_requirements(::FCASNetworkConfiguration)
 
-`RegionalNetworkConfiguration`'s tables plus `:DISPATCHLOAD, :DISPATCHPRICE, :RESERVE`.
+`RegionalNetworkConfiguration`'s tables plus `:DISPATCHLOAD, :DISPATCHPRICE,
+:DISPATCH_FCAS_REQ, :DISPATCHCONSTRAINT, :GENCONDATA`.
 """
 AustralianElectricityMarkets.table_requirements(::FCASNetworkConfiguration) = [
     table_requirements(RegionalNetworkConfiguration())...,
     :DISPATCHLOAD,
     :DISPATCHPRICE,
-    :RESERVE,
+    :DISPATCH_FCAS_REQ,
+    :DISPATCHCONSTRAINT,
+    :GENCONDATA,
 ]
 
 function AustralianElectricityMarkets.nem_system(db, ::FCASNetworkConfiguration; kwargs...)

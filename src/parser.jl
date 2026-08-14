@@ -601,48 +601,251 @@ function _add_fcas_offer!(sys, gen, reserve::Reserve, offer::FCASOffer)
     return
 end
 
-"""
-    read_fcas_requirements(db, date_range)
+# Some cached partitions predate this repo's `_TABLE_SPECS` adding a given column (observed
+# directly: RUNNO is entirely absent from every DISPATCHCONSTRAINT/DISPATCHPRICE partition,
+# and INTERVENTION from some DISPATCHLOAD/DISPATCHPRICE partitions, in a real, years-old
+# cache - apparently a legacy ingestion artifact). `read_hive`'s `union_by_name` only fills
+# NULL for a column present in *some* globbed file; referencing a column absent from *every*
+# file is still a hard Binder Error. So `INTERVENTION` filtering is built conditionally on
+# whether the column is actually in the resolved schema - a partition with no INTERVENTION
+# data was written by a pipeline that never distinguished intervention runs, so it is always
+# the normal run. RUNNO is "always 1" for ordinary dispatch per AEMO's data model, so it is
+# simply never used as a join/filter/partition key by these FCAS readers.
+_intervention_where(schema) = "INTERVENTION" in schema ? "AND COALESCE(INTERVENTION, 0) = ?" : ""
+_push_intervention!(params, schema, intervention) = "INTERVENTION" in schema ? push!(params, intervention) : params
 
-Reads per-interval, per-region FCAS requirement quantities (MW) from the `RESERVE` table
-(consumed nowhere else in this repo today), long-format: one row per
-`(SETTLEMENTDATE, REGIONID, BIDTYPE::BidType, REQUIREMENT)`.
+# `union_by_name` fixes *missing*-column schema drift (see above), but not *conflicting*-type
+# drift: observed directly on a real cache, one DISPATCHLOAD partition (out of 19) stores
+# TOTALCLEARED as VARCHAR while every other partition stores it as FLOAT, and DuckDB resolves
+# that conflict by widening the column to VARCHAR across the *entire* glob - silently turning
+# every row's TOTALCLEARED, even from well-typed partitions, into a string. `SELECT *` cannot
+# be trusted for a numeric column for this reason; every numeric column these FCAS readers
+# return is explicitly `TRY_CAST` to `DOUBLE`.
+_cast_double(col) = "TRY_CAST($col AS DOUBLE) AS $col"
 
-Note: as of this writing, `RESERVE`'s column set covers `LOWER5MIN, RAISE5MIN, RAISEREG,
-LOWERREG` — the 6SEC/60SEC contingency markets need the corresponding columns added
-(`AustralianElectricityMarketsData/nemweb_load/tables.jl` in the main branch's ingestion
-restructuring); the query below reads whichever `FCAS_BID_TYPES` columns are present.
 """
-function read_fcas_requirements(db, date_range)
+    read_fcas_requirements(db, date_range; intervention = 0)
+
+Reads per-interval, per-region FCAS requirement quantities (MW) actually enforced in
+dispatch, long-format: one row per `(SETTLEMENTDATE, REGIONID, BIDTYPE::BidType,
+GENCONID)`.
+
+AEMO stopped populating the `RESERVE` table (and `DISPATCHREGIONSUM`'s `*REQ` columns) in
+Dec 2003 - confirmed directly, both URL patterns 404 for every month tried. The modern
+mechanism is generic-constraint-based: `DISPATCH_FCAS_REQ` maps each
+`(region, service, interval)` to the `GENCONID` of the generic constraint governing it (a
+region/service can be governed by more than one constraint at once - e.g. a regulation
+market's target also appears on a contingency constraint's LHS - so this is joined, not
+aggregated, to one row per governing constraint), and `DISPATCHCONSTRAINT.RHS` holds the
+requirement quantity that constraint actually enforced. `REQUIREMENT` is that RHS;
+`MARGINALVALUE` is the constraint's shadow price, and summing it per `(REGIONID, BIDTYPE)`
+reproduces the regional FCAS price (see [`read_fcas_prices`](@ref)). `GENCONDATA` is joined
+in only for its human-readable `DESCRIPTION`/`CONSTRAINTTYPE`.
+
+`intervention` selects the dispatch run: `0` is the normal (non-intervention) run, which is
+the right choice for almost all uses.
+"""
+function read_fcas_requirements(db, date_range; intervention::Integer = 0)
     start_date = first(date_range)
     end_date = last(date_range)
     sd = Date(start_date) - Day(1)
     ed = Date(end_date) + Day(1)
-    table = read_hive(db, :RESERVE)
-    # RESERVE's column names are the raw AEMO BIDTYPE strings this table happens to carry -
-    # this is the one place a plain String, not BidType, is the right comparison, since
-    # column names come from DataFrames/DuckDB as String regardless of our enum.
-    schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
-    bid_type_cols = intersect(schema, string.(FCAS_BID_TYPES))
-    isempty(bid_type_cols) && return DataFrame(SETTLEMENTDATE = DateTime[], REGIONID = String[], BIDTYPE = BidType[], REQUIREMENT = Float64[])
-    bid_type_col_list = join(bid_type_cols, ", ")
+    req_table = read_hive(db, :DISPATCH_FCAS_REQ)
+    constraint_table = read_hive(db, :DISPATCHCONSTRAINT)
+    gencon_table = read_hive(db, :GENCONDATA)
+    req_schema = names(_query(db, "SELECT * FROM $req_table LIMIT 0"))
+    constraint_schema = names(_query(db, "SELECT * FROM $constraint_table LIMIT 0"))
+    params = Any[sd, ed]
+    _push_intervention!(params, req_schema, intervention)
+    append!(params, [sd, ed])
+    _push_intervention!(params, constraint_schema, intervention)
     df = _query(
         db,
         """
-        SELECT SETTLEMENTDATE, REGIONID, $bid_type_col_list
-        FROM $table
-        WHERE SETTLEMENTDATE BETWEEN ? AND ?
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, REGIONID ORDER BY VERSIONNO DESC
-        ) = 1
+        WITH req AS (
+            SELECT *
+            FROM $req_table
+            WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(req_schema))
+            QUALIFY row_number() OVER (
+                PARTITION BY SETTLEMENTDATE, GENCONID, REGIONID, BIDTYPE
+                ORDER BY archive_month DESC
+            ) = 1
+        ),
+        constraint_rhs AS (
+            SELECT SETTLEMENTDATE, CONSTRAINTID, RHS
+            FROM $constraint_table
+            WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(constraint_schema))
+            QUALIFY row_number() OVER (
+                PARTITION BY SETTLEMENTDATE, CONSTRAINTID
+                ORDER BY archive_month DESC
+            ) = 1
+        ),
+        gencon AS (
+            SELECT GENCONID, EFFECTIVEDATE, VERSIONNO, DESCRIPTION, CONSTRAINTTYPE
+            FROM $gencon_table
+            QUALIFY row_number() OVER (
+                PARTITION BY GENCONID, EFFECTIVEDATE, VERSIONNO ORDER BY archive_month DESC
+            ) = 1
+        )
+        SELECT
+            req.SETTLEMENTDATE, req.REGIONID, req.BIDTYPE, req.GENCONID,
+            TRY_CAST(c.RHS AS DOUBLE) AS REQUIREMENT, TRY_CAST(req.MARGINALVALUE AS DOUBLE) AS MARGINALVALUE,
+            g.DESCRIPTION, g.CONSTRAINTTYPE
+        FROM req
+        INNER JOIN constraint_rhs c
+            ON c.SETTLEMENTDATE = req.SETTLEMENTDATE AND c.CONSTRAINTID = req.GENCONID
+        LEFT JOIN gencon g
+            ON g.GENCONID = req.GENCONID AND g.EFFECTIVEDATE = req.GENCONEFFECTIVEDATE
+               AND g.VERSIONNO = req.GENCONVERSIONNO
+        ORDER BY req.SETTLEMENTDATE, req.REGIONID, req.BIDTYPE
         """,
-        [sd, ed],
+        params,
     )
     subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
-    long = stack(
-        df, bid_type_cols;
-        variable_name = :BIDTYPE, value_name = :REQUIREMENT,
+    # Restrict to the 8 in-scope FCAS markets (see FCAS_BID_TYPES) - DISPATCH_FCAS_REQ also
+    # carries the deferred RAISE1SEC/LOWER1SEC 1-second markets.
+    subset!(df, :BIDTYPE => ByRow(in(string.(FCAS_BID_TYPES))))
+    transform!(df, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
+    return df
+end
+
+"""
+    read_fcas_prices(db, date_range; intervention = 0)
+
+Reads per-interval, per-region FCAS clearing prices from `DISPATCHPRICE`, long-format: one
+row per `(SETTLEMENTDATE, REGIONID, BIDTYPE::BidType, RRP, ROP, APCFLAG)`.
+
+`RRP` is the settlement price; `ROP` is the price before scaling, capping, or VoLL
+override - they differ exactly when `APCFLAG != 0` (an administered price cap event).
+Summing [`read_fcas_requirements`](@ref)'s `MARGINALVALUE` per `(REGIONID, BIDTYPE)`
+reproduces `ROP` for that interval (not `RRP`, which may additionally be capped).
+
+`intervention` selects the dispatch run: `0` is the normal (non-intervention) run.
+
+`APCFLAG` is `missing` for cached partitions that predate its addition to `_TABLE_SPECS`
+(and `INTERVENTION` is compared via `COALESCE(INTERVENTION, 0)` for the same reason - see
+[`read_fcas_requirements`](@ref)).
+"""
+function read_fcas_prices(db, date_range; intervention::Integer = 0)
+    start_date = first(date_range)
+    end_date = last(date_range)
+    sd = Date(start_date) - Day(1)
+    ed = Date(end_date) + Day(1)
+    table = read_hive(db, :DISPATCHPRICE)
+    schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
+    params = Any[sd, ed]
+    _push_intervention!(params, schema, intervention)
+
+    price_cols = String[]
+    for bid_type in FCAS_BID_TYPES
+        bid_type_str = string(bid_type)
+        rrp_col, rop_col = "$(bid_type_str)RRP", "$(bid_type_str)ROP"
+        all(in(schema), (rrp_col, rop_col)) || continue
+        push!(price_cols, _cast_double(rrp_col), _cast_double(rop_col))
+        apc_col = "$(bid_type_str)APCFLAG"
+        apc_col in schema && push!(price_cols, "TRY_CAST($apc_col AS INTEGER) AS $apc_col")
+    end
+    select_list = join(["SETTLEMENTDATE", "REGIONID", price_cols...], ", ")
+    df = _query(
+        db,
+        """
+        SELECT $select_list
+        FROM $table
+        WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(schema))
+        QUALIFY row_number() OVER (
+            PARTITION BY SETTLEMENTDATE, REGIONID ORDER BY archive_month DESC
+        ) = 1
+        """,
+        params,
     )
-    transform!(long, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
+    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
+
+    long = DataFrame()
+    for bid_type in FCAS_BID_TYPES
+        bid_type_str = string(bid_type)
+        rrp_col, rop_col, apc_col = "$(bid_type_str)RRP", "$(bid_type_str)ROP", "$(bid_type_str)APCFLAG"
+        rrp_col in names(df) || continue
+        block = select(df, :SETTLEMENTDATE, :REGIONID, rrp_col => :RRP, rop_col => :ROP)
+        block[!, :APCFLAG] = apc_col in names(df) ? df[!, apc_col] : fill(missing, nrow(block))
+        block[!, :BIDTYPE] = fill(bid_type, nrow(block))
+        append!(long, block; promote = true)
+    end
+    return long
+end
+
+"""
+    read_fcas_dispatch(db, date_range; intervention = 0)
+
+Reads per-interval, per-unit FCAS dispatch outcomes from `DISPATCHLOAD`, long-format: one
+row per `(SETTLEMENTDATE, DUID, BIDTYPE::BidType, TARGET, ACTUALAVAILABILITY)`, plus the
+unit's energy context columns `INITIALMW`, `TOTALCLEARED`, `AVAILABILITY`, `AGCSTATUS`. This
+is the cleared counterpart to [`read_fcas_bids`](@ref)'s offered trapezium - comparing
+`TARGET`/`ACTUALAVAILABILITY` against the offer's trapezium shows how much of what a unit
+offered was actually deliverable at its dispatched energy level (see [`FCASTrapezium`](@ref)).
+
+`ACTUALAVAILABILITY` is `missing` for the two regulation markets (`RAISEREG`/`LOWERREG`) -
+AEMO does not publish a trapezium-adjusted availability for regulation, only the raw offer
+availability (`RAISEREGAVAILABILITY`/`LOWERREGAVAILABILITY`).
+
+`intervention` selects the dispatch run: `0` is the normal (non-intervention) run
+(`INTERVENTION` is compared via `COALESCE(INTERVENTION, 0)` for partitions predating that
+column - see [`read_fcas_requirements`](@ref)).
+"""
+function read_fcas_dispatch(db, date_range; intervention::Integer = 0)
+    start_date = first(date_range)
+    end_date = last(date_range)
+    sd = Date(start_date) - Day(1)
+    ed = Date(end_date) + Day(1)
+    table = read_hive(db, :DISPATCHLOAD)
+    dispatch_schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
+    params = Any[sd, ed]
+    _push_intervention!(params, dispatch_schema, intervention)
+
+    bidtype_cols = String[]
+    for bid_type in FCAS_BID_TYPES
+        bid_type_str = string(bid_type)
+        bid_type_str in dispatch_schema || continue
+        push!(bidtype_cols, _cast_double(bid_type_str))
+        avail_col = "$(bid_type_str)ACTUALAVAILABILITY"
+        avail_col in dispatch_schema && push!(bidtype_cols, _cast_double(avail_col))
+    end
+    select_list = join(
+        [
+            "SETTLEMENTDATE", "DUID",
+            _cast_double("INITIALMW"), _cast_double("TOTALCLEARED"), _cast_double("AVAILABILITY"),
+            "TRY_CAST(AGCSTATUS AS INTEGER) AS AGCSTATUS",
+            bidtype_cols...,
+        ],
+        ", ",
+    )
+    df = _query(
+        db,
+        """
+        SELECT $select_list
+        FROM $table
+        WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(dispatch_schema))
+        QUALIFY row_number() OVER (
+            PARTITION BY SETTLEMENTDATE, DUID ORDER BY archive_month DESC
+        ) = 1
+        """,
+        params,
+    )
+    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
+
+    long = DataFrame()
+    for bid_type in FCAS_BID_TYPES
+        bid_type_str = string(bid_type)
+        target_col = bid_type_str
+        avail_col = "$(bid_type_str)ACTUALAVAILABILITY"
+        target_col in names(df) || continue
+        block = select(
+            df,
+            :SETTLEMENTDATE, :DUID, :INITIALMW, :TOTALCLEARED, :AVAILABILITY, :AGCSTATUS,
+            target_col => :TARGET,
+        )
+        block[!, :ACTUALAVAILABILITY] = avail_col in names(df) ? df[!, avail_col] : fill(missing, nrow(block))
+        block[!, :BIDTYPE] = fill(bid_type, nrow(block))
+        append!(long, block; promote = true)
+    end
     return long
 end

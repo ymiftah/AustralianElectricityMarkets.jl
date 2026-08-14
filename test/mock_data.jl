@@ -267,25 +267,131 @@ function create_mock_data(hive_root::String)
     end
     save_hive(bid_day_offer, :BIDDAYOFFER_D)
 
-    # 12. RESERVE (49 intervals, per-region FCAS requirement quantities)
-    df_reserve = DataFrame()
+    # FCAS requirements are generic-constraint-based (RESERVE has been unpopulated by AEMO
+    # since Dec 2003 - see read_fcas_requirements docstring): one governing GENCONID per
+    # (region, market), DISPATCHCONSTRAINT.RHS carries the enforced requirement quantity, and
+    # DISPATCH_FCAS_REQ.MARGINALVALUE sums (trivially here, one constraint per region/market)
+    # to the DISPATCHPRICE regional FCAS price.
+    contingency_types = ["RAISE6SEC", "LOWER6SEC", "RAISE60SEC", "LOWER60SEC", "RAISE5MIN", "LOWER5MIN"]
+    regulation_types = ["RAISEREG", "LOWERREG"]
+    requirement_mw(bid_type) = bid_type in regulation_types ? 30.0 : 50.0
+    marginal_value(bid_type) = bid_type in regulation_types ? 2.25 : 5.5
+
+    # 12. GENCONDATA (one generic constraint per region/market, joined only for its
+    # human-readable DESCRIPTION/CONSTRAINTTYPE)
+    gencon_ids = ["F_$(region)_$(bid_type)" for region in regions for bid_type in fcas_bid_types]
+    save_hive(
+        DataFrame(
+            GENCONID = gencon_ids,
+            EFFECTIVEDATE = fill(test_date, length(gencon_ids)),
+            VERSIONNO = fill(1, length(gencon_ids)),
+            DESCRIPTION = ["$(gc) requirement" for gc in gencon_ids],
+            CONSTRAINTTYPE = fill(">=", length(gencon_ids)),
+            LASTCHANGED = fill(base_datetime, length(gencon_ids)),
+            archive_month = fill("2025-01", length(gencon_ids))
+        ), :GENCONDATA
+    )
+
+    # 13. DISPATCH_FCAS_REQ (49 intervals, maps each region/market to its governing constraint)
+    df_fcas_req = DataFrame()
     for i in intervals
         t = base_datetime + Minute(5 * i)
-        append!(
-            df_reserve, DataFrame(
-                SETTLEMENTDATE = fill(t, n),
-                VERSIONNO = fill(1, n),
-                REGIONID = regions,
-                PERIODID = fill(i + 1, n),
-                LOWER5MIN = fill(50.0, n),
-                RAISE5MIN = fill(50.0, n),
-                RAISEREG = fill(30.0, n),
-                LOWERREG = fill(30.0, n),
-                archive_month = fill("2025-01", n)
+        for bid_type in fcas_bid_types
+            append!(
+                df_fcas_req, DataFrame(
+                    SETTLEMENTDATE = fill(t, n),
+                    RUNNO = fill(1, n),
+                    INTERVENTION = fill(0, n),
+                    GENCONID = ["F_$(region)_$(bid_type)" for region in regions],
+                    REGIONID = regions,
+                    BIDTYPE = fill(bid_type, n),
+                    GENCONEFFECTIVEDATE = fill(test_date, n),
+                    GENCONVERSIONNO = fill(1, n),
+                    MARGINALVALUE = fill(marginal_value(bid_type), n),
+                    LASTCHANGED = fill(t, n),
+                    archive_month = fill("2025-01", n)
+                )
             )
-        )
+        end
     end
-    save_hive(df_reserve, :RESERVE)
+    save_hive(df_fcas_req, :DISPATCH_FCAS_REQ)
+
+    # 14. DISPATCHCONSTRAINT (RHS = the FCAS requirement quantity actually enforced)
+    df_constraint = DataFrame()
+    for i in intervals
+        t = base_datetime + Minute(5 * i)
+        for bid_type in fcas_bid_types
+            append!(
+                df_constraint, DataFrame(
+                    SETTLEMENTDATE = fill(t, n),
+                    RUNNO = fill(1, n),
+                    INTERVENTION = fill(0, n),
+                    CONSTRAINTID = ["F_$(region)_$(bid_type)" for region in regions],
+                    RHS = fill(requirement_mw(bid_type), n),
+                    MARGINALVALUE = fill(marginal_value(bid_type), n),
+                    LASTCHANGED = fill(t, n),
+                    archive_month = fill("2025-01", n)
+                )
+            )
+        end
+    end
+    save_hive(df_constraint, :DISPATCHCONSTRAINT)
+
+    # 15. DISPATCHLOAD (per-unit FCAS dispatch outcomes - cleared counterpart to the
+    # BIDPEROFFER_D trapezium; contingency markets get an ACTUALAVAILABILITY, regulation
+    # markets don't, matching what AEMO actually publishes)
+    df_dispatchload = DataFrame()
+    for i in intervals
+        t = base_datetime + Minute(5 * i)
+        block = DataFrame(
+            SETTLEMENTDATE = fill(t, n),
+            RUNNO = fill(1, n),
+            INTERVENTION = fill(0, n),
+            DUID = duids,
+            INITIALMW = fill(50.0, n),
+            TOTALCLEARED = fill(50.0, n),
+            AVAILABILITY = fill(100.0, n),
+            AGCSTATUS = fill(1, n),
+            RAISEREGAVAILABILITY = fill(3.0, n),
+            LOWERREGAVAILABILITY = fill(3.0, n),
+            archive_month = fill("2025-01", n),
+        )
+        for bid_type in contingency_types
+            block[!, bid_type] = fill(5.0, n)
+            block[!, "$(bid_type)ACTUALAVAILABILITY"] = fill(5.0, n)
+        end
+        for bid_type in regulation_types
+            block[!, bid_type] = fill(3.0, n)
+        end
+        append!(df_dispatchload, block; promote = true)
+    end
+    save_hive(df_dispatchload, :DISPATCHLOAD)
+
+    # 16. DISPATCHPRICE (regional FCAS clearing prices - RRP/ROP set equal to the mock's
+    # single governing constraint's MARGINALVALUE, so the price-decomposition identity in
+    # read_fcas_requirements/read_fcas_prices holds exactly)
+    df_dispatchprice = DataFrame()
+    for i in intervals
+        t = base_datetime + Minute(5 * i)
+        block = DataFrame(
+            SETTLEMENTDATE = fill(t, n),
+            RUNNO = fill(1, n),
+            INTERVENTION = fill(0, n),
+            REGIONID = regions,
+            RRP = fill(50.0 + i, n),
+            ROP = fill(50.0 + i, n),
+            APCFLAG = fill(0, n),
+            archive_month = fill("2025-01", n),
+        )
+        for bid_type in fcas_bid_types
+            mv = marginal_value(bid_type)
+            block[!, "$(bid_type)RRP"] = fill(mv, n)
+            block[!, "$(bid_type)ROP"] = fill(mv, n)
+            block[!, "$(bid_type)APCFLAG"] = fill(0, n)
+        end
+        append!(df_dispatchprice, block; promote = true)
+    end
+    save_hive(df_dispatchprice, :DISPATCHPRICE)
 
     return DuckDB.disconnect(conn)
 end

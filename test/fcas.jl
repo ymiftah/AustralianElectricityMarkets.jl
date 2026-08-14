@@ -45,7 +45,9 @@
 
     @testset "FCASNetworkConfiguration" begin
         required_tables = table_requirements(FCASNetworkConfiguration())
-        @test :RESERVE in required_tables
+        @test :DISPATCH_FCAS_REQ in required_tables
+        @test :DISPATCHCONSTRAINT in required_tables
+        @test :GENCONDATA in required_tables
         @test :DISPATCHLOAD in required_tables
         @test :BIDPEROFFER_D in required_tables
 
@@ -84,10 +86,51 @@
     @testset "read_fcas_requirements" begin
         req = read_fcas_requirements(db, date_range)
         @test !isempty(req)
-        @test Set(names(req)) == Set(["SETTLEMENTDATE", "REGIONID", "BIDTYPE", "REQUIREMENT"])
+        @test Set(["SETTLEMENTDATE", "REGIONID", "BIDTYPE", "GENCONID", "REQUIREMENT", "MARGINALVALUE", "DESCRIPTION", "CONSTRAINTTYPE"]) ⊆ Set(names(req))
         @test BidType.RAISEREG in req.BIDTYPE
         raisereg_nsw = subset(req, :REGIONID => ByRow(==("NSW1")), :BIDTYPE => ByRow(==(BidType.RAISEREG)))
         @test all(==(30.0), raisereg_nsw.REQUIREMENT)
+        @test all(==(2.25), raisereg_nsw.MARGINALVALUE)
+        raise6sec_nsw = subset(req, :REGIONID => ByRow(==("NSW1")), :BIDTYPE => ByRow(==(BidType.RAISE6SEC)))
+        @test all(==(50.0), raise6sec_nsw.REQUIREMENT)
+        @test all(!ismissing, req.DESCRIPTION)
+    end
+
+    @testset "read_fcas_prices" begin
+        prices = read_fcas_prices(db, date_range)
+        @test !isempty(prices)
+        @test Set(["SETTLEMENTDATE", "REGIONID", "BIDTYPE", "RRP", "ROP", "APCFLAG"]) == Set(names(prices))
+        @test BidType.RAISEREG in prices.BIDTYPE
+        raisereg_nsw = subset(prices, :REGIONID => ByRow(==("NSW1")), :BIDTYPE => ByRow(==(BidType.RAISEREG)))
+        @test all(==(2.25), raisereg_nsw.RRP)
+        @test all(==(2.25), raisereg_nsw.ROP)
+    end
+
+    @testset "read_fcas_dispatch" begin
+        dispatch = read_fcas_dispatch(db, date_range)
+        @test !isempty(dispatch)
+        @test Set(["SETTLEMENTDATE", "DUID", "INITIALMW", "TOTALCLEARED", "AVAILABILITY", "AGCSTATUS", "TARGET", "ACTUALAVAILABILITY", "BIDTYPE"]) == Set(names(dispatch))
+        raise6sec = subset(dispatch, :BIDTYPE => ByRow(==(BidType.RAISE6SEC)))
+        @test all(==(5.0), raise6sec.TARGET)
+        @test all(==(5.0), raise6sec.ACTUALAVAILABILITY)
+        raisereg = subset(dispatch, :BIDTYPE => ByRow(==(BidType.RAISEREG)))
+        @test all(==(3.0), raisereg.TARGET)
+        @test all(ismissing, raisereg.ACTUALAVAILABILITY)
+    end
+
+    @testset "FCAS price decomposition identity" begin
+        # Regional FCAS price = sum of MARGINALVALUE over the constraints governing that
+        # (region, market) - the mock has exactly one governing constraint per pair, so the
+        # sum degenerates to a single value; real NEMWEB data can have several (see docs).
+        req = read_fcas_requirements(db, date_range)
+        prices = read_fcas_prices(db, date_range)
+        derived = combine(
+            groupby(req, [:SETTLEMENTDATE, :REGIONID, :BIDTYPE]),
+            :MARGINALVALUE => sum => :derived_price,
+        )
+        joined = innerjoin(derived, prices, on = [:SETTLEMENTDATE, :REGIONID, :BIDTYPE])
+        @test !isempty(joined)
+        @test all(isapprox.(joined.derived_price, joined.ROP; atol = 1.0e-6))
     end
 
     @testset "JSON round-trip" begin
