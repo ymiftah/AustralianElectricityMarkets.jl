@@ -59,17 +59,9 @@ FCAS_BID_TYPES
 # ## Where the requirements come from
 #
 # Every dispatch interval, AEMO needs a target quantity (MW) of each FCAS service in each
-# region - how much raise-6-second capability Tasmania needs right now, for instance. It is
-# tempting to look for a single "requirements" table. Two exist, and both are dead ends:
-#
-# !!! warning "RESERVE and DISPATCHREGIONSUM's `*REQ` columns are unpopulated"
-#     `RESERVE` and `DISPATCHREGIONSUM`'s `RAISE6SECREQ`/`LOWER6SECREQ`/etc. columns look
-#     like exactly what's needed, and older NEM tooling reads them. AEMO stopped populating
-#     both in **December 2003** - confirmed directly while building this page: every NEMWEB
-#     monthly-archive URL for `RESERVE` returns HTTP 404. Do not build against them.
-#
-# The requirement is instead expressed the same way network limits are: as a **generic
-# constraint**. `DISPATCH_FCAS_REQ` maps each `(region, service, interval)` to the
+# region - how much raise-6-second capability Tasmania needs right now, for instance. The
+# requirement is expressed the same way network limits are: as a **generic constraint**.
+# `DISPATCH_FCAS_REQ` maps each `(region, service, interval)` to the
 # `GENCONID` of the constraint governing it; `DISPATCHCONSTRAINT.RHS` is the requirement
 # quantity that constraint actually enforced that interval, and `MARGINALVALUE` is its
 # shadow price (used in [Pricing](@ref fcas-pricing) below). [`read_fcas_requirements`](@ref)
