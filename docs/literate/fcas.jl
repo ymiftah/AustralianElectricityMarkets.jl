@@ -319,7 +319,7 @@ get_component(Reserve, sys, "RAISE6SEC_TAS1")
 # - The trapezium and joint-capacity/ramping constraints in [Co-optimisation in
 #   dispatch](@ref fcas-cooptimisation) are *read and explained* here, but not *enforced* in
 #   a `PowerSimulations.jl` dispatch problem - `FCASTrapezium`'s docstring flags this
-#   explicitly. Enabling that is on the [roadmap](@ref).
+#   explicitly. Enabling that is on the [Roadmap](@ref).
 # - Mainland-vs-local contingency splits (e.g. South Australian islanding).
 # - The `RAISE1SEC`/`LOWER1SEC` markets.
 # - AGC ramp-rate scaling (the missing telemetry noted above).

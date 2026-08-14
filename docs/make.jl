@@ -21,7 +21,11 @@ for name in ["fcas", "build_system", "economic_dispatch", "market_bids", "interc
 end
 
 makedocs(;
-    modules = [AustralianElectricityMarkets],
+    modules = [
+        AustralianElectricityMarkets,
+        AustralianElectricityMarkets.RegionModel,
+        AustralianElectricityMarkets.BidTypeModule,
+    ],
     authors = "Youssef Miftah <miftahyo@outlook.fr> and contributors",
     repo = "https://github.com/ymiftah/AustralianElectricityMarkets.jl/blob/{commit}{path}#{line}",
     sitename = "AustralianElectricityMarkets.jl",

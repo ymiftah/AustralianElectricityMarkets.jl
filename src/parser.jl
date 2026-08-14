@@ -30,6 +30,17 @@ IS.@scoped_enum(
     LOWER1SEC = 11,  # deferred 1-second market, unused for now
 )
 
+@doc """
+    BidType
+
+AEMO's `BIDTYPE` values this repo's bid-reading functions accept: `ENERGY`, and the eight
+in-scope FCAS markets (`RAISE6SEC`, `LOWER6SEC`, `RAISE60SEC`, `LOWER60SEC`, `RAISE5MIN`,
+`LOWER5MIN`, `RAISEREG`, `LOWERREG`). `RAISE1SEC`/`LOWER1SEC` are also defined (AEMO's newer
+1-second markets), but deferred - no function in this package constructs or accepts them
+yet. Construct from a string with `BidType("RAISE6SEC")`; convert back with `string(x)`
+(not `"\$x"` - see `_fcas_direction`).
+""" BidType
+
 # AEMO BIDTYPE -> FCASResponseTime for the 6 contingency FCAS markets in scope.
 # RAISE1SEC/LOWER1SEC are deferred (see FCASResponseTime.SEC1 docstring).
 const FCAS_CONTINGENCY_MARKETS = Dict(
@@ -324,6 +335,14 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     end
 end
 
+"""
+    read_bids(db, date_range; kwargs...)
+
+Reads energy offers from `BIDPEROFFER_D`/`BIDDAYOFFER_D` and returns one row per
+`(SETTLEMENTDATE, DUID, DIRECTION, INTERVAL_DATETIME)` with the 10-band offer curve
+collapsed into a `piecewise_step_data` column. See [`read_fcas_bids`](@ref) for the
+FCAS-market equivalent.
+"""
 function read_bids(db, date_range; kwargs...)
     energy_bids_table = read_hive(db, :BIDPEROFFER_D)
     pricebids_table = read_hive(db, :BIDDAYOFFER_D)
@@ -333,6 +352,13 @@ function read_bids(db, date_range; kwargs...)
     return bids
 end
 
+"""
+    _extract_power_bids(row)
+
+Builds a `PiecewiseStepData` offer curve from a row's `PRICEBANDARRAY`/`BANDAVAILARRAY`
+columns, reversing band order for `DIRECTION == "LOAD"` rows so the resulting curve stays
+concave.
+"""
 function _extract_power_bids(row)
     price_band_array = copy(row.PRICEBANDARRAY)
     bandavail_array = copy(row.BANDAVAILARRAY)
@@ -443,6 +469,13 @@ function read_fcas_bids(db, date_range, bid_type::BidType; kwargs...)
     )
 end
 
+"""
+    _read_fcas_trapezium(db, energy_bids_table, bid_type::BidType, start_date, end_date)
+
+Reads the FCAS trapezium columns (`ENABLEMENTMIN/MAX`, `LOWBREAKPOINT`, `HIGHBREAKPOINT`,
+`MAXAVAIL`, `ROCUP`, `ROCDOWN`) from `BIDPEROFFER_D` for `bid_type`, latest-`VERSIONNO`
+resolved per `(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)`.
+"""
 function _read_fcas_trapezium(db, energy_bids_table, bid_type::BidType, start_date, end_date)
     sd = Date(start_date) - Day(1)
     ed = Date(end_date) + Day(1)
