@@ -328,6 +328,7 @@ function create_mock_data(hive_root::String)
                     INTERVENTION = fill(0, n),
                     CONSTRAINTID = ["F_$(region)_$(bid_type)" for region in regions],
                     RHS = fill(requirement_mw(bid_type), n),
+                    LHS = fill(requirement_mw(bid_type), n),
                     MARGINALVALUE = fill(marginal_value(bid_type), n),
                     LASTCHANGED = fill(t, n),
                     archive_month = fill("2025-01", n)

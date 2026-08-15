@@ -11,8 +11,10 @@ using HiGHS
 # # Market Clearing
 #
 # In the NEM, generators submit bids consisting of up to **10 price-quantity bands** for
-# each 5-minute dispatch interval. Prices can range from the market floor (currently -$1,000/MWh)
-# to the market price cap (currently $17,500/MWh).
+# each 5-minute dispatch interval. Prices can range from the market floor (-\$1,000/MWh) to
+# the market price cap (\$23,200/MWh for FY2026-27) - see [Prices, caps and
+# floors](@ref nem-price-settings) in [The National Electricity Market](@ref) for the full
+# set of reliability settings.
 #
 # The following section demonstrates the definition of a market clearing problem, where
 # all units in the NEM need to be dispatched according to their energy bids to meet the aggregate

@@ -23,7 +23,7 @@ export read_affine_heatrates,
     read_isp_fixed_opex, read_isp_variable_opex
 export set_demand!, set_renewable_pv!, set_renewable_wind!, set_market_bids!, set_hydro_limits!
 export read_fcas_bids, add_fcas_reserves!, set_fcas_offers!, read_fcas_requirements,
-    read_fcas_prices, read_fcas_dispatch
+    read_fcas_prices, read_fcas_dispatch, read_prices
 export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS
 export BidType
 
@@ -43,6 +43,14 @@ using .AustralianElectricityMarketsData: HiveConfiguration, AEMDB, aem_connect
 using .AustralianElectricityMarketsData: read_hive, read_interconnectors, read_units, read_demand, read_energy_bids
 using .AustralianElectricityMarketsData: _query
 using .AustralianElectricityMarketsData: islocal, get_filesystem, _parse_hive_root
+
+# `read_demand`/`read_interconnectors` are documented at their definition site inside the
+# `AustralianElectricityMarketsData` submodule; `@doc` here binds that same docstring onto
+# this module's own exported name, so `[`read_demand`](@ref)` etc. resolve from Documenter
+# pages without duplicating the text (see the identical `nem_system`/`RegionalNetworkConfiguration`
+# situation below).
+@doc (@doc AustralianElectricityMarketsData.read_demand) read_demand
+@doc (@doc AustralianElectricityMarketsData.read_interconnectors) read_interconnectors
 
 # FCAS (Frequency Control Ancillary Services) types.
 #

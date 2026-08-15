@@ -659,9 +659,8 @@ _cast_double(col) = "TRY_CAST($col AS DOUBLE) AS $col"
 """
     read_fcas_requirements(db, date_range; intervention = 0)
 
-Reads per-interval, per-region FCAS requirement quantities (MW) actually enforced in
-dispatch, long-format: one row per `(SETTLEMENTDATE, REGIONID, BIDTYPE::BidType,
-GENCONID)`.
+Reads per-interval, per-region FCAS requirement constraints actually enforced in dispatch,
+long-format: one row per `(SETTLEMENTDATE, REGIONID, BIDTYPE::BidType, GENCONID)`.
 
 AEMO stopped populating the `RESERVE` table (and `DISPATCHREGIONSUM`'s `*REQ` columns) in
 Dec 2003 - confirmed directly, both URL patterns 404 for every month tried. The modern
@@ -669,11 +668,30 @@ mechanism is generic-constraint-based: `DISPATCH_FCAS_REQ` maps each
 `(region, service, interval)` to the `GENCONID` of the generic constraint governing it (a
 region/service can be governed by more than one constraint at once - e.g. a regulation
 market's target also appears on a contingency constraint's LHS - so this is joined, not
-aggregated, to one row per governing constraint), and `DISPATCHCONSTRAINT.RHS` holds the
-requirement quantity that constraint actually enforced. `REQUIREMENT` is that RHS;
+aggregated, to one row per governing constraint).
+
+Each row is a linear constraint `LHS CONSTRAINTTYPE REQUIREMENT` (`CONSTRAINTTYPE` is
+`<=`/`>=`/`=`), not a standalone MW quantity - `REQUIREMENT` (`DISPATCHCONSTRAINT.RHS`) is
+only meaningful together with `LHS` (`DISPATCHCONSTRAINT.LHS`, the FCAS-and-related dispatch
+terms NEMDE actually summed) and `CONSTRAINTTYPE`. Two regimes are common in practice:
+
+- **Disarmed**: AEMO switches an inapplicable constraint variant off by offsetting its
+  `REQUIREMENT` by a large negative multiple of 10,000 so it can never bind regardless of
+  `LHS` - a `REQUIREMENT` far below any plausible FCAS quantity (in the thousands or tens of
+  thousands negative) is this, not a literal deficit. `MARGINALVALUE` is always `0.0` for
+  these rows.
+- **Armed**: `REQUIREMENT` is the real bound. It can still be negative here - the same
+  region/service is often governed by more than one constraint variant (e.g. one that nets
+  FCAS against an interconnector flow term on `LHS`), and only one variant is armed at a
+  time. Compare `LHS` to `REQUIREMENT` under `CONSTRAINTTYPE` to see whether the constraint
+  is satisfied or violated; `MARGINALVALUE != 0.0` confirms it is binding.
+
 `MARGINALVALUE` is the constraint's shadow price, and summing it per `(REGIONID, BIDTYPE)`
 reproduces the regional FCAS price (see [`read_fcas_prices`](@ref)). `GENCONDATA` is joined
-in only for its human-readable `DESCRIPTION`/`CONSTRAINTTYPE`.
+in only for its human-readable `DESCRIPTION`/`CONSTRAINTTYPE` - `GENCONDATA` is a
+change-only table (a constraint version appears only in the archive month it was published),
+so a `missing` `DESCRIPTION`/`CONSTRAINTTYPE` usually means the defining archive month isn't
+in the local cache, not that AEMO never published one.
 
 `intervention` selects the dispatch run: `0` is the normal (non-intervention) run, which is
 the right choice for almost all uses.
@@ -705,7 +723,7 @@ function read_fcas_requirements(db, date_range; intervention::Integer = 0)
             ) = 1
         ),
         constraint_rhs AS (
-            SELECT SETTLEMENTDATE, CONSTRAINTID, RHS
+            SELECT SETTLEMENTDATE, CONSTRAINTID, RHS, LHS
             FROM $constraint_table
             WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(constraint_schema))
             QUALIFY row_number() OVER (
@@ -722,7 +740,8 @@ function read_fcas_requirements(db, date_range; intervention::Integer = 0)
         )
         SELECT
             req.SETTLEMENTDATE, req.REGIONID, req.BIDTYPE, req.GENCONID,
-            TRY_CAST(c.RHS AS DOUBLE) AS REQUIREMENT, TRY_CAST(req.MARGINALVALUE AS DOUBLE) AS MARGINALVALUE,
+            TRY_CAST(c.RHS AS DOUBLE) AS REQUIREMENT, TRY_CAST(c.LHS AS DOUBLE) AS LHS,
+            TRY_CAST(req.MARGINALVALUE AS DOUBLE) AS MARGINALVALUE,
             g.DESCRIPTION, g.CONSTRAINTTYPE
         FROM req
         INNER JOIN constraint_rhs c
@@ -804,6 +823,51 @@ function read_fcas_prices(db, date_range; intervention::Integer = 0)
         append!(long, block; promote = true)
     end
     return long
+end
+
+"""
+    read_prices(db, date_range; intervention = 0)
+
+Reads per-interval, per-region **energy** spot prices from `DISPATCHPRICE`: one row per
+`(SETTLEMENTDATE, REGIONID)` with `RRP`, `ROP`, `APCFLAG`.
+
+`RRP` is the settlement price; `ROP` is the price before scaling, capping, or VoLL
+override - they differ exactly when `APCFLAG != 0` (an administered price cap event). See
+[`read_fcas_prices`](@ref) for the FCAS-market equivalent.
+
+`intervention` selects the dispatch run: `0` is the normal (non-intervention) run.
+
+`APCFLAG` is `missing` for cached partitions that predate its addition to `_TABLE_SPECS`
+(and `INTERVENTION` is compared via `COALESCE(INTERVENTION, 0)` for the same reason).
+"""
+function read_prices(db, date_range; intervention::Integer = 0)
+    start_date = first(date_range)
+    end_date = last(date_range)
+    sd = Date(start_date) - Day(1)
+    ed = Date(end_date) + Day(1)
+    table = read_hive(db, :DISPATCHPRICE)
+    schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
+    params = Any[sd, ed]
+    _push_intervention!(params, schema, intervention)
+
+    select_cols = ["SETTLEMENTDATE", "REGIONID", _cast_double("RRP"), _cast_double("ROP")]
+    "APCFLAG" in schema && push!(select_cols, "TRY_CAST(APCFLAG AS INTEGER) AS APCFLAG")
+    select_list = join(select_cols, ", ")
+    df = _query(
+        db,
+        """
+        SELECT $select_list
+        FROM $table
+        WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(schema))
+        QUALIFY row_number() OVER (
+            PARTITION BY SETTLEMENTDATE, REGIONID ORDER BY archive_month DESC
+        ) = 1
+        """,
+        params,
+    )
+    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
+    "APCFLAG" in names(df) || (df[!, :APCFLAG] = fill(missing, nrow(df)))
+    return df
 end
 
 """

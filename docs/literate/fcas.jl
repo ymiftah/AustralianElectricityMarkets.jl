@@ -11,24 +11,20 @@ end
 # # FCAS in the NEM
 #
 # **Frequency Control Ancillary Services (FCAS)** are the National Electricity Market's
-# mechanism for keeping the power system's frequency at 50 Hz. Australia's mainland and
-# Tasmania are (mostly) large, weakly-interconnected AC systems with no significant
-# import/export capacity to the rest of the world - unlike Europe's synchronous grid, there
-# is nowhere else to borrow inertia or reserve from. Every megawatt of frequency response has
+# mechanism for keeping the power system's frequency at 50 Hz. Every megawatt of frequency response has
 # to come from a generator, load, or battery physically connected to the NEM, procured
-# through a market AEMO runs alongside (and co-optimised with) the energy market.
+# through markets AEMO runs alongside (and co-optimised with) the energy market.
 #
-# This page works through FCAS from AEMO's own primary documents - the trapezium, the
-# generic-constraint mechanism that sets requirements, and the joint dispatch constraints -
-# illustrating every concept with real NEMWEB data read straight through this package's
-# `read_fcas_*` functions, for a single, real dispatch interval: **13 January 2025, interval
+# This page works through FCAS from AEMO's own dispatch data - the
+# generic-constraint mechanism that sets requirements, the trapezium rule applied to each unit, and the joint dispatch constraints -
+# illustrating every concept with real NEMWEB data for a single dispatch interval: **13 January 2025, interval
 # ending 16:30, Tasmania (TAS1)**. That interval was picked because it happens to show three
 # things worth seeing together: a scarce regulation market, a constraint that could not quite
 # be satisfied, and a hydro unit visibly limited by its own trapezium.
 #
-# !!! note "Sources"
-#     Every claim below is sourced. See [References](@ref fcas-references) at the end for
-#     full citations - AEMO's [*Guide to Ancillary Services in the National Electricity
+# !!! note "References"
+#     See [References](@ref fcas-references) at the end for
+#     official AEMO reference documents - AEMO's [*Guide to Ancillary Services in the National Electricity
 #     Market*](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/ancillary_services/guide-to-ancillary-services-in-the-national-electricity-market.pdf)
 #     for FCAS mechanics generally, and [*FCAS Model in
 #     NEMDE*](https://nempy.readthedocs.io/en/latest/_downloads/e3c8a21d3084db332a30bd0d564e93c3/FCAS%20Model%20in%20NEMDE.pdf)
@@ -46,26 +42,25 @@ nothing #hide
 # - **Contingency FCAS** responds to a sudden, large frequency deviation - a generator or
 #   interconnector tripping - and comes in three response-time bands, each with a raise and a
 #   lower direction: **6 second**, **60 second**, and **5 minute**. A **1 second** band was
-#   added on 9 October 2023 for very fast response (batteries, mostly) but this package
-#   defers it for now (see [How this maps onto the package's types](@ref fcas-types-mapping)).
+#   added on 9 October 2023 for very fast response (batteries, mostly) - deferred by this
+#   package for now (see [How this maps onto the package's types](@ref fcas-types-mapping)).
 # - **Regulation FCAS** (`RAISEREG`/`LOWERREG`) continuously trims small, everyday frequency
 #   deviations via AEMO's Automatic Generation Control (AGC) signal - not response-time
 #   banded, since it is always "on" for an enabled unit.
 #
-# This package represents the eight in-scope markets as a scoped enum, [`BidType`](@ref):
 
-FCAS_BID_TYPES
 
 # ## Where the requirements come from
 #
 # Every dispatch interval, AEMO needs a target quantity (MW) of each FCAS service in each
 # region - how much raise-6-second capability Tasmania needs right now, for instance. The
-# requirement is expressed the same way network limits are: as a **generic constraint**.
-# `DISPATCH_FCAS_REQ` maps each `(region, service, interval)` to the
-# `GENCONID` of the constraint governing it; `DISPATCHCONSTRAINT.RHS` is the requirement
-# quantity that constraint actually enforced that interval, and `MARGINALVALUE` is its
-# shadow price (used in [Pricing](@ref fcas-pricing) below). [`read_fcas_requirements`](@ref)
-# does this join:
+# requirement is expressed the same way network limits are: as a **generic constraint**, a
+# linear inequality `LHS CONSTRAINTTYPE RHS` that NEMDE enforces alongside every other network
+# and market constraint. `DISPATCH_FCAS_REQ` maps each `(region, service, interval)` to the
+# `GENCONID` of the constraint governing it; `DISPATCHCONSTRAINT.RHS`/`LHS` are that
+# constraint's two sides as actually solved that interval, and `MARGINALVALUE` is its shadow
+# price (used in [Pricing](@ref fcas-pricing) below). [`read_fcas_requirements`](@ref) does
+# this join and returns `RHS` as `REQUIREMENT` alongside `LHS`:
 
 date_range = DateTime(2025, 1, 13, 16, 0):Minute(5):DateTime(2025, 1, 13, 17, 0)
 requirements = read_fcas_requirements(db, date_range)
@@ -74,15 +69,76 @@ first(requirements, 5)
 # A region/service is very often governed by *more than one* constraint at once - regional
 # aggregate requirements, network-outage-specific requirements, islanding contingencies -
 # so [`read_fcas_requirements`](@ref) returns one row **per governing constraint**, not one
-# row per `(region, service)`. Most have a `DESCRIPTION` from `GENCONDATA`; a few of the
-# broad regional aggregates (e.g. Tasmania's raise-regulation requirement below) do not - not
-# every generic constraint has a published human-readable description, and this package
-# doesn't invent one:
+# row per `(region, service)`. When a row does resolve a `DESCRIPTION` from `GENCONDATA`, it
+# reads like this:
 
 @chain requirements begin
     subset(:GENCONID => ByRow(==("F_T+NIL_ML_RECL_L5")), :BIDTYPE => ByRow(==(BidType.LOWER5MIN)))
     select(:GENCONID, :REQUIREMENT, :MARGINALVALUE, :DESCRIPTION)
 end
+
+# But most rows don't: of the 148 distinct constraints `DISPATCH_FCAS_REQ` references on 13
+# January 2025, only 23 (16%) resolve a `DESCRIPTION`/`CONSTRAINTTYPE` at all in this cache.
+# `GENCONDATA` is a **change-only** table - a constraint version is published only in the
+# archive month it first took effect - so `missing` here almost always means that month isn't
+# in the local NEMWEB cache, not that AEMO never documented the constraint. In practice,
+# expect to read `REQUIREMENT`/`LHS` **without** `CONSTRAINTTYPE` or `DESCRIPTION` most of the
+# time; the next section works through exactly that case.
+
+# ## [Reading `REQUIREMENT` and `LHS` together](@id fcas-requirement-reading)
+#
+# `REQUIREMENT` is not itself "the MW of FCAS this region needs" - it's just the right-hand
+# side of whatever linear expression `LHS` computes, and by itself its sign carries no
+# physical meaning. Reading it correctly means reading it alongside `LHS` and, when it
+# resolves, `CONSTRAINTTYPE`. Two regimes show up constantly in real data:
+#
+# - **Disarmed.** AEMO frequently defines several *variants* of the same requirement (e.g.
+#   one used only during a particular network outage) and switches the inapplicable ones off
+#   by offsetting their `REQUIREMENT` by a large negative multiple of 10,000 - so far below
+#   any plausible FCAS quantity that `LHS` can never reach it. `MARGINALVALUE` is always
+#   `0.0` on these rows; they are noise to filter out, not deficits to explain.
+# - **Armed.** `REQUIREMENT` is the real bound `LHS` is being held to. It can still be
+#   negative here, because `LHS` isn't always "sum of enabled FCAS targets" either - it can
+#   net FCAS against other terms (like an interconnector flow) with negative coefficients.
+#   Whether the constraint is satisfied or violated is `LHS` vs. `REQUIREMENT`.
+#
+# Tasmania's `RAISE6SEC` requirement this hour is governed by two variants of the same
+# underlying constraint, `F_T+NIL_MG_R6` and `F_T++NIL_MG_R6` - and, as is typical, *neither*
+# resolves a `DESCRIPTION` or `CONSTRAINTTYPE` in this cache:
+
+@chain requirements begin
+    subset(:GENCONID => ByRow(in(["F_T+NIL_MG_R6", "F_T++NIL_MG_R6"])))
+    select(:GENCONID, :DESCRIPTION, :CONSTRAINTTYPE)
+    unique
+end
+
+# Two things make the pair readable anyway. First, `CONSTRAINTTYPE` does resolve for enough
+# *other* FCAS requirement constraints in this cache (15,092 rows on 13 January 2025 alone) to
+# establish the convention: every single one is `>=` - an FCAS requirement enforces "enough
+# capability must be available", never a ceiling - so `LHS >= REQUIREMENT` is a safe reading
+# even when `CONSTRAINTTYPE` itself is missing. Second, what `LHS` actually sums can be
+# reverse-engineered directly from the numbers: cross-referencing `DISPATCHINTERCONNECTORRES`
+# for Basslink (`T-V-MNSP1`) shows `LHS(F_T++NIL_MG_R6) == LHS(F_T+NIL_MG_R6) + MWFLOW` to
+# three decimal places at every interval this hour - so `F_T++` is the variant that nets
+# Basslink's flow into the raise-6-second requirement, and `F_T+` is the one that doesn't.
+# No `DESCRIPTION` needed to establish that; the data says it directly.
+#
+# Which variant is armed changes mid-interval:
+
+@chain requirements begin
+    subset(:REGIONID => ByRow(==("TAS1")), :BIDTYPE => ByRow(==(BidType.RAISE6SEC)))
+    subset(:GENCONID => ByRow(in(["F_T+NIL_MG_R6", "F_T++NIL_MG_R6"])))
+    select(:SETTLEMENTDATE, :GENCONID, :REQUIREMENT, :LHS, :MARGINALVALUE)
+    sort([:SETTLEMENTDATE, :GENCONID])
+end
+
+# Through 16:25, `F_T++NIL_MG_R6` is armed and comfortably satisfied (`LHS` well above
+# `REQUIREMENT`) while `F_T+NIL_MG_R6` sits disarmed around −9,900. At **16:30 the two swap**:
+# `F_T+NIL_MG_R6` arms with `REQUIREMENT = 137.5` against `LHS = 129.65` - short by 7.84 MW -
+# and picks up the \$140,000/MW violation penalty as its `MARGINALVALUE`; `F_T++NIL_MG_R6`
+# disarms to −9862.5. Nothing about "Tasmania needed −9862 MW of raise" - it's the same
+# requirement, expressed two ways, and dispatch is reading whichever one currently applies.
+# This is the mechanism behind the pricing anomaly in [Pricing](@ref fcas-pricing) below.
 
 # ## How a bid is submitted
 #
@@ -202,8 +258,7 @@ end
 #     capacity constraint above - regulation is instead limited by the **joint ramping**
 #     constraint (§6.1), which compares the combined energy + regulation ramp against the
 #     unit's *telemetered* AGC ramp rate. That telemetry isn't published in MMSDM, so it
-#     can't be reproduced from public data the way the contingency figures above can - stated
-#     here rather than fudged.
+#     can't be reproduced from public data the way the contingency figures above can.
 
 # ## [Pricing](@id fcas-pricing)
 #
@@ -237,11 +292,13 @@ raisereg_price = only(
 (derived = sum(raisereg_req.MARGINALVALUE), published = raisereg_price)
 
 # Not every FCAS price is this orderly. In the same interval, Tasmania's `RAISE6SEC`
-# requirement (`F_T+NIL_MG_R6` - a network-event contingency requirement) could not be fully
-# satisfied: `MARGINALVALUE` on that single constraint is **\$140,000/MW**, AEMO's
-# constraint-violation penalty rate, not a market-clearing price. That one dominant term is
-# why the regional `RAISE6SEC` price this interval is over five thousand dollars per MW,
-# an order of magnitude above the \$17,500/MWh energy market price cap:
+# requirement could not be fully satisfied: this is the same `F_T+NIL_MG_R6`/`F_T++NIL_MG_R6`
+# swap from [Reading `REQUIREMENT` and `LHS` together](@ref fcas-requirement-reading) - at
+# 16:30 the armed variant needed `LHS ≥ 137.5` but only reached `129.65`, so `MARGINALVALUE`
+# on that single constraint is **\$140,000/MW**, AEMO's constraint-violation penalty rate, not
+# a market-clearing price. That one dominant term is why the regional `RAISE6SEC` price this
+# interval is over five thousand dollars per MW - about sixteen times TAS1's own energy price
+# (`RRP`) that same interval:
 
 raise6sec_req = @chain requirements begin
     subset(:SETTLEMENTDATE => ByRow(==(DateTime(2025, 1, 13, 16, 30))), :REGIONID => ByRow(==("TAS1")), :BIDTYPE => ByRow(==(BidType.RAISE6SEC)))

@@ -86,7 +86,7 @@
     @testset "read_fcas_requirements" begin
         req = read_fcas_requirements(db, date_range)
         @test !isempty(req)
-        @test Set(["SETTLEMENTDATE", "REGIONID", "BIDTYPE", "GENCONID", "REQUIREMENT", "MARGINALVALUE", "DESCRIPTION", "CONSTRAINTTYPE"]) ⊆ Set(names(req))
+        @test Set(["SETTLEMENTDATE", "REGIONID", "BIDTYPE", "GENCONID", "REQUIREMENT", "LHS", "MARGINALVALUE", "DESCRIPTION", "CONSTRAINTTYPE"]) ⊆ Set(names(req))
         @test BidType.RAISEREG in req.BIDTYPE
         raisereg_nsw = subset(req, :REGIONID => ByRow(==("NSW1")), :BIDTYPE => ByRow(==(BidType.RAISEREG)))
         @test all(==(30.0), raisereg_nsw.REQUIREMENT)
@@ -104,6 +104,16 @@
         raisereg_nsw = subset(prices, :REGIONID => ByRow(==("NSW1")), :BIDTYPE => ByRow(==(BidType.RAISEREG)))
         @test all(==(2.25), raisereg_nsw.RRP)
         @test all(==(2.25), raisereg_nsw.ROP)
+    end
+
+    @testset "read_prices" begin
+        prices = read_prices(db, date_range)
+        @test !isempty(prices)
+        @test Set(["SETTLEMENTDATE", "REGIONID", "RRP", "ROP", "APCFLAG"]) == Set(names(prices))
+        @test eltype(prices.RRP) == Float64
+        first_interval = subset(prices, :SETTLEMENTDATE => ByRow(==(start_date)))
+        @test all(==(50.0), first_interval.RRP)
+        @test all(==(50.0), first_interval.ROP)
     end
 
     @testset "read_fcas_dispatch" begin
