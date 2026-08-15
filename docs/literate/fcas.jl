@@ -6,7 +6,7 @@ begin
     using DataFrames
     using Chain
     using AlgebraOfGraphics, CairoMakie
-end
+end;
 
 # # FCAS in the NEM
 #

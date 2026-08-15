@@ -12,30 +12,7 @@ end
 # # The National Electricity Market
 #
 # The **National Electricity Market (NEM)** is the wholesale electricity market covering
-# Australia's eastern and south-eastern seaboard. It is a **long, thin, weakly-meshed**
-# power system with no external interconnection - unlike Europe's synchronous grid, or the
-# US grids that border Canada and Mexico, there is nowhere else to import from or export to
-# when something goes wrong. That physical isolation, more than any single policy choice,
-# explains several of the design decisions below.
-#
-# This page introduces the NEM's institutions, market design, and dispatch process, then
-# contrasts it directly with the US ISO/RTO and European day-ahead market designs many
-# readers of this package will already know. [FCAS in the NEM](@ref) picks up one part of
-# this design - frequency control - in much greater depth.
-#
-# !!! note "References"
-#     See [References](@ref nem-references) at the end for official sources - AEMO's
-#     [*Fact Sheet: National Electricity
-#     Market*](https://www.aemo.com.au/-/media/files/electricity/nem/national-electricity-market-fact-sheet.pdf)
-#     for the market overview, and the AER's [*State of the Energy Market
-#     2025*](https://www.aer.gov.au/system/files/2025-08/State%20of%20the%20energy%20market%202025%20-%20Chapter%202%20-%20National%20Electricity%20Market.pdf),
-#     Chapter 2, for the regulatory and institutional detail.
-
-db = aem_connect();
-nothing #hide
-
-# ## What the NEM is
-#
+# Australia's eastern and south-eastern seaboard.
 # The NEM interconnects **five regions**, each simultaneously a state (or, for NSW, a state
 # plus a territory) and a wholesale pricing zone:
 #
@@ -51,18 +28,32 @@ nothing #hide
 # population. It began operating as a wholesale spot market in December 1998, under the
 # **National Electricity Law** and the **National Electricity Rules** - the legal instruments
 # that, together, specify almost everything on this page.
+#
+# This page introduces the NEM's institutions, market design, and dispatch process, then
+# contrasts it's design with other electricity markets. [FCAS in the NEM](@ref) picks up one part of
+# the NEM's specificity - frequency control - in much greater depth.
+#
+# !!! note "References"
+#     See [References](@ref nem-references) at the end for official sources - AEMO's
+#     [*Fact Sheet: National Electricity
+#     Market*](https://www.aemo.com.au/-/media/files/electricity/nem/national-electricity-market-fact-sheet.pdf)
+#     for the market overview, and the AER's [*State of the Energy Market
+#     2025*](https://www.aer.gov.au/system/files/2025-08/State%20of%20the%20energy%20market%202025%20-%20Chapter%202%20-%20National%20Electricity%20Market.pdf),
+#     Chapter 2, for the regulatory and institutional detail.
+
+db = aem_connect();
+nothing #hide
+
 
 # ## Who runs it
 #
 # | Body | Role |
 # |---|---|
-# | **AEMO** (Australian Energy Market Operator) | Operates the power system in real time and runs the wholesale market - the source of every dataset this package reads. A not-for-profit company, roughly 60% government-owned and 40% industry-owned, funded on a cost-recovery basis. |
+# | **AEMO** (Australian Energy Market Operator) | Operates the power system in real time and runs the wholesale market. A not-for-profit company, roughly 60% government-owned and 40% industry-owned, funded on a cost-recovery basis. |
 # | **AER** (Australian Energy Regulator) | Economic regulation of electricity and gas networks and retail markets; monitors and enforces compliance with the National Electricity Rules. |
 # | **AEMC** (Australian Energy Market Commission) | Makes and amends the National Electricity Rules; reviews and sets the annual reliability settings - the price cap and floor in [Prices, caps and floors](@ref nem-price-settings) below. |
 # | TNSPs / DNSPs | State-based transmission and distribution network businesses that own and operate the physical wires between generators, substations, and customers. |
 #
-# This three-way split - operator, economic regulator, rule-maker - is the first thing that
-# trips up readers used to a single body (a FERC, an Ofgem) covering all three roles.
 
 # ## [How the market is organised](@id nem-organisation)
 #
@@ -70,15 +61,14 @@ nothing #hide
 #
 # - **Mandatory gross pool.** Every megawatt-hour physically supplied to or consumed from the
 #   grid is bought and sold through AEMO at the regional spot price. There is no physical
-#   bilateral trading of the kind allowed in Great Britain's pre-2001 market design or in
-#   NEM-adjacent markets elsewhere - a generator's own contracts (ASX futures, swaps, caps,
+#   bilateral trading, a generator's own contracts (ASX futures, swaps, caps,
 #   OTC hedges) are purely financial overlays settled against the spot price, not physical
 #   delivery agreements.
 # - **Energy-only.** Generators are paid only for the energy (and FCAS) they are dispatched
 #   to supply. There is no separate capacity market and no explicit payment for being
 #   available but undispatched. Resource adequacy instead relies on the high price cap
-#   (below) giving peaking and firming capacity a chance to recover its costs in a small
-#   number of extreme-price intervals, backstopped by the Retailer Reliability Obligation,
+#   giving peaking and firming capacity a chance to recover its costs in a small
+#   number of extreme-price intervals. This is backstopped by the Retailer Reliability Obligation,
 #   which requires retailers to contract sufficient firm capacity ahead of forecast shortfalls.
 # - **Regional pricing, not nodal pricing.** Each of the five regions clears at a single spot
 #   price, set at that region's **Regional Reference Node (RRN)**. This is a coarser
@@ -144,8 +134,7 @@ nothing #hide
 # generators, most rooftop solar) run without following a AEMO-issued target at all.
 #
 # Settlement has matched dispatch resolution since **1 October 2021**: 288 five-minute
-# trading intervals a day, priced at the dispatch price itself, rather than the earlier
-# 30-minute trading interval settled at the average of six preceding dispatch prices.
+# trading intervals a day, priced at the dispatch price itself.
 
 # ## [Prices, caps and floors](@id nem-price-settings)
 #
@@ -256,7 +245,7 @@ get_component(Area, sys, "TAS1")
 #    year*](https://www.aemc.gov.au/sites/default/files/2026-02/Schedule%20of%20reliability%20settings%20-%202026-27%20financial%20year.pdf) -
 #    market price cap, floor, cumulative price threshold, administered price cap.
 # 4. AEMO, [*Dispatch* operating procedure
-#    (SO_OP_3705)](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/power_system_ops/procedures/so_op_3705-dispatch-draft.pdf) -
+#    (SO_OP_3705)](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/power_system_ops/procedures/so_op_3705-dispatch.pdf?la=en) -
 #    PASA, pre-dispatch, and dispatch timing and process.
 # 5. AEMO, *MMS Data Model Report*, Electricity - per-table definitions for the table read on
 #    this page,
