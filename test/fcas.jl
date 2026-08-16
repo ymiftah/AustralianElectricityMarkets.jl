@@ -11,6 +11,34 @@
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:Minute(5):(start_date + Hour(1))
 
+    @testset "FCASTrapezium slope coefficients" begin
+        t = FCASTrapezium(;
+            enablement_min = 1.0, low_breakpoint = 5.0, high_breakpoint = 9.0,
+            enablement_max = 13.0, max_avail = 4.0,
+        )
+        @test get_lower_slope_coeff(t) == (5.0 - 1.0) / 4.0
+        @test get_upper_slope_coeff(t) == (13.0 - 9.0) / 4.0
+
+        zero_avail = FCASTrapezium(;
+            enablement_min = 1.0, low_breakpoint = 5.0, high_breakpoint = 9.0,
+            enablement_max = 13.0, max_avail = 0.0,
+        )
+        @test get_lower_slope_coeff(zero_avail) == 0.0
+        @test get_upper_slope_coeff(zero_avail) == 0.0
+    end
+
+    @testset "FCASBid construction" begin
+        curve = make_market_bid_curve(PiecewiseStepData([0.0, 5.0, 10.0], [50.0, 60.0]), 0.0)
+        trapezium = FCASTrapezium(;
+            enablement_min = 20.0, low_breakpoint = 30.0, high_breakpoint = 90.0,
+            enablement_max = 100.0, max_avail = 10.0,
+        )
+        bid = FCASBid(BidType.RAISE6SEC, curve, trapezium)
+        @test get_service(bid) == BidType.RAISE6SEC
+        @test get_offer_curve(bid) === curve
+        @test get_trapezium(bid) === trapezium
+    end
+
     @testset "read_fcas_bids" begin
         bids = read_fcas_bids(db, date_range, BidType.RAISE6SEC)
         @test !isempty(bids)
