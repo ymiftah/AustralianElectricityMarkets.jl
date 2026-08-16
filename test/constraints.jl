@@ -45,4 +45,46 @@
         set_rhs!(gc, 10.0)
         @test get_rhs(gc) == 10.0
     end
+
+    @testset "GenericConstraint JSON round-trip" begin
+        sys = System(100.0)
+        gc = GenericConstraint(;
+            name = "F_ROUNDTRIP",
+            sense = ConstraintSense.GE,
+            rhs = 137.5,
+            constraint_weight = 2.0,
+            terms = ConstraintTerm[
+                UnitTerm("BW01", BidType.RAISE6SEC, 1.0),
+                InterconnectorTerm("IC1", -1.0),
+                RegionTerm("NSW1", BidType.ENERGY, 0.5),
+            ],
+            governs = FCASRequirement[FCASRequirement("TAS1", BidType.RAISE6SEC), FCASRequirement("TAS1", BidType.RAISE5MIN)],
+            ext = Dict{String, Any}("description" => "test constraint"),
+        )
+        add_component!(sys, gc)
+
+        mktpath = mktempdir()
+        json_path = joinpath(mktpath, "sys.json")
+        to_json(sys, json_path)
+        sys2 = System(json_path)
+
+        gc2 = get_component(GenericConstraint, sys2, "F_ROUNDTRIP")
+        @test !isnothing(gc2)
+        @test get_sense(gc2) == ConstraintSense.GE
+        @test get_rhs(gc2) == 137.5
+        @test get_constraint_weight(gc2) == 2.0
+        @test length(get_terms(gc2)) == 3
+        @test length(get_governs(gc2)) == 2
+
+        unit_term = only(filter(t -> t isa UnitTerm, get_terms(gc2)))
+        @test get_duid(unit_term) == "BW01"
+        @test get_bid_type(unit_term) == BidType.RAISE6SEC
+        ic_term = only(filter(t -> t isa InterconnectorTerm, get_terms(gc2)))
+        @test get_interconnector(ic_term) == "IC1"
+        region_term = only(filter(t -> t isa RegionTerm, get_terms(gc2)))
+        @test get_region(region_term) == "NSW1"
+
+        @test all(r -> get_region(r) == "TAS1", get_governs(gc2))
+        @test Set(get_service.(get_governs(gc2))) == Set([BidType.RAISE6SEC, BidType.RAISE5MIN])
+    end
 end
