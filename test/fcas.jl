@@ -213,4 +213,76 @@
         end
         @test found_offer
     end
+
+    @testset "FCASBid time series round-trip" begin
+        # Canary result: Vector{FCASBid} directly as a Deterministic payload is rejected at
+        # *construction* time (not just JSON round-trip) - InfrastructureSystems only allows
+        # Real, Tuple, Vector{<:Tuple}, Matrix, or its own FunctionData types as the per-horizon-
+        # step element type, and raises ArgumentError("unsupported element type FCASBid")
+        # immediately. So this falls back to two numeric series per (device, service), per the
+        # task brief. One further wrinkle found here: `Vector{Float64}` (a plain vector) is
+        # *also* rejected as a per-step element type by the same check - only `Tuple` (a fixed-
+        # length, concrete-typed tuple) is accepted - so the trapezium row is packed as an
+        # `NTuple{7, Float64}`, not a `Vector{Float64}`, while keeping the same 7 fixed-order
+        # fields the brief specifies. Task 6's `set_fcas_bids!` must match this exactly.
+        sys = System(100.0)
+        bus = ACBus(; number = 1, name = "b1", available = true, bustype = ACBusTypes.REF, angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1), base_voltage = 130.0)
+        add_component!(sys, bus)
+        gen = ThermalStandard(;
+            name = "G1", available = true, status = true, bus = bus,
+            active_power = 0.0, reactive_power = 0.0, rating = 1.0,
+            active_power_limits = (min = 0.0, max = 1.0), reactive_power_limits = nothing,
+            ramp_limits = nothing,
+            operation_cost = ThermalGenerationCost(;
+                variable = CostCurve(LinearCurve(0.0)), fixed = 0.0, start_up = 0.0, shut_down = 0.0,
+            ),
+            base_power = 100.0, time_limits = nothing, must_run = false,
+            prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL,
+        )
+        add_component!(sys, gen)
+
+        psd = PiecewiseStepData([0.0, 5.0], [50.0])
+        trapezium = FCASTrapezium(; enablement_min = 20.0, low_breakpoint = 30.0, high_breakpoint = 90.0, enablement_max = 100.0, max_avail = 10.0)
+        trap_row = (
+            get_enablement_min(trapezium), get_low_breakpoint(trapezium), get_high_breakpoint(trapezium),
+            get_enablement_max(trapezium), get_max_avail(trapezium),
+            something(get_ramp_up_rate(trapezium), NaN), something(get_ramp_down_rate(trapezium), NaN),
+        )
+
+        start_date = DateTime(2025, 1, 1)
+        curve_ts = Deterministic(;
+            name = "fcas_curve_RAISE6SEC", data = Dict(start_date => [psd, psd]),
+            resolution = Minute(5), interval = Minute(5),
+        )
+        add_time_series!(sys, gen, curve_ts)
+        trapezium_ts = Deterministic(;
+            name = "fcas_trapezium_RAISE6SEC", data = Dict(start_date => [trap_row, trap_row]),
+            resolution = Minute(5), interval = Minute(5),
+        )
+        add_time_series!(sys, gen, trapezium_ts)
+
+        mktpath = mktempdir()
+        json_path = joinpath(mktpath, "sys.json")
+        to_json(sys, json_path)
+        sys2 = System(json_path)
+        gen2 = get_component(ThermalStandard, sys2, "G1")
+
+        curve_ts2 = get_time_series(Deterministic, gen2, "fcas_curve_RAISE6SEC")
+        trapezium_ts2 = get_time_series(Deterministic, gen2, "fcas_trapezium_RAISE6SEC")
+        @test !isnothing(curve_ts2)
+        @test !isnothing(trapezium_ts2)
+
+        curve_data2 = only(values(get_data(curve_ts2)))
+        @test curve_data2 isa Vector{PiecewiseStepData}
+        @test length(curve_data2) == 2
+        @test get_x_coords(curve_data2[1]) == [0.0, 5.0]
+        @test get_y_coords(curve_data2[1]) == [50.0]
+
+        trapezium_data2 = only(values(get_data(trapezium_ts2)))
+        @test length(trapezium_data2) == 2
+        row2 = trapezium_data2[1]
+        @test collect(row2[1:5]) == [20.0, 30.0, 90.0, 100.0, 10.0]
+        @test isnan(row2[6])
+        @test isnan(row2[7])
+    end
 end
