@@ -51,24 +51,29 @@
         @test all(==(1.0), reg_bids.ROCUP)
     end
 
-    @testset "add_fcas_reserves!" begin
+    @testset "set_fcas_bids!" begin
+        # Two Deterministic series per (generator, market), not a Reserve/service and not a
+        # single-object FCASBid series: confirmed directly that Deterministic rejects
+        # FCASBid/bare Vector{Float64} as a per-step element type (see "FCASBid time series
+        # round-trip" below).
         sys = nem_system(db, RegionalNetworkConfiguration())
-        regions = get_name.(get_components(Area, sys))
-        reserves = add_fcas_reserves!(sys, regions)
+        set_fcas_bids!(sys, db, date_range)
 
-        # 6 regions * 8 in-scope FCAS markets
-        @test length(reserves) == 48
-        @test length(collect(get_components(Reserve, sys))) == 48
-
-        raise6sec = reserves["RAISE6SEC_NSW1"]
-        @test raise6sec isa ContingencyFCASReserve{ReserveUp}
-        @test get_response_time(raise6sec) == FCASResponseTime.SEC6
-        @test get_region(raise6sec) === get_component(Area, sys, "NSW1")
-
-        raisereg = reserves["RAISEREG_NSW1"]
-        @test raisereg isa RegulationFCASReserve{ReserveUp}
-        lowerreg = reserves["LOWERREG_NSW1"]
-        @test lowerreg isa RegulationFCASReserve{ReserveDown}
+        found = false
+        for gen in get_components(Generator, sys)
+            # has_time_series (not get_time_series + isnothing): get_time_series throws
+            # ArgumentError, rather than returning nothing, for an owner with no metadata
+            # registered at all for (Deterministic, name) - confirmed directly.
+            has_time_series(gen, Deterministic, "fcas_curve_RAISE6SEC") || continue
+            found = true
+            curve_ts = get_time_series(Deterministic, gen, "fcas_curve_RAISE6SEC")
+            trapezium_ts = get_time_series(Deterministic, gen, "fcas_trapezium_RAISE6SEC")
+            @test !isnothing(curve_ts)
+            @test !isnothing(trapezium_ts)
+            trap_rows = first(values(get_data(trapezium_ts)))
+            @test first(trap_rows)[1] == 20.0
+        end
+        @test found
     end
 
     @testset "FCASNetworkConfiguration" begin
@@ -79,36 +84,10 @@
         @test :DISPATCHLOAD in required_tables
         @test :BIDPEROFFER_D in required_tables
 
-        sys = nem_system(db, FCASNetworkConfiguration())
-        @test length(collect(get_components(Reserve, sys))) == 48
-    end
-
-    @testset "set_fcas_offers!" begin
-        # operation_cost isn't touched here: PSY's generated device structs (e.g.
-        # ThermalStandard.operation_cost::Union{ThermalGenerationCost, MarketBidCost}) use a
-        # *closed* Union, so an externally-defined OfferCurveCost subtype like
-        # NEMMarketBidCost can never be assigned there without modifying PowerSystems itself
-        # - confirmed directly. set_fcas_offers! instead links devices to their reserve via
-        # add_service!(device, reserve, sys) and stores the priced offer in ext.
-        sys = nem_system(db, RegionalNetworkConfiguration())
-        regions = get_name.(get_components(Area, sys))
-        region_reserves = add_fcas_reserves!(sys, regions)
-
-        set_fcas_offers!(sys, db, date_range, region_reserves)
-
-        found_offer = false
-        for gen in get_components(Generator, sys)
-            offers = get(get_ext(gen), "fcas_offers", FCASOffer[])
-            isempty(offers) && continue
-            found_offer = true
-            offer = first(offers)
-            @test offer isa FCASOffer
-            @test haskey(region_reserves, get_reserve_name(offer))
-            @test get_trapezium(offer).enablement_min == 20.0
-            reserve = region_reserves[get_reserve_name(offer)]
-            @test gen in collect(get_contributing_devices(sys, reserve))
-        end
-        @test found_offer
+        # Still expected to fail here: region_model.jl's FCASNetworkConfiguration method
+        # calls the now-deleted add_fcas_reserves! - Task 10 (renaming this to
+        # ConstrainedNetworkConfiguration) rewrites that method to stop doing so.
+        nem_system(db, FCASNetworkConfiguration())
     end
 
     @testset "read_fcas_requirements" begin
@@ -179,39 +158,25 @@
         # to FCAS (it reproduces with plain MarketBidCost, no FCAS types involved) and out of
         # scope to fix here. This testset isolates the FCAS-specific round-trip behavior.
         sys = nem_system(db, RegionalNetworkConfiguration())
-        regions = get_name.(get_components(Area, sys))
-        region_reserves = add_fcas_reserves!(sys, regions)
-        set_fcas_offers!(sys, db, date_range, region_reserves)
+        set_fcas_bids!(sys, db, date_range)
 
         mktpath = mktempdir()
         json_path = joinpath(mktpath, "sys.json")
         to_json(sys, json_path)
         sys2 = System(json_path)
 
-        r1 = get_component(Reserve, sys, "RAISE6SEC_NSW1")
-        r2 = get_component(Reserve, sys2, "RAISE6SEC_NSW1")
-        @test !isnothing(r2)
-        @test r2 isa ContingencyFCASReserve{ReserveUp}
-        @test get_name(r1) == get_name(r2)
-        @test get_response_time(r1) == get_response_time(r2)
-        @test get_requirement(r1) == get_requirement(r2)
-        @test length(collect(get_components(Reserve, sys2))) == 48
-
-        found_offer = false
+        found = false
         for gen in get_components(Generator, sys2)
-            ext = get_ext(gen)
-            haskey(ext, "fcas_offers") || continue
-            offers = ext["fcas_offers"]
-            isempty(offers) && continue
-            found_offer = true
-            # ext round-trips as plain Dicts, not reconstructed FCASOffer structs (see
-            # set_fcas_offers! docstring) - assert on the dict shape accordingly.
-            @test offers[1]["trapezium"]["enablement_min"] == 20.0
-            reserve_name = offers[1]["reserve_name"]
-            reserve2 = get_component(Reserve, sys2, reserve_name)
-            @test gen in collect(get_contributing_devices(sys2, reserve2))
+            has_time_series(gen, Deterministic, "fcas_curve_RAISE6SEC") || continue
+            found = true
+            curve_ts = get_time_series(Deterministic, gen, "fcas_curve_RAISE6SEC")
+            trapezium_ts = get_time_series(Deterministic, gen, "fcas_trapezium_RAISE6SEC")
+            @test !isnothing(curve_ts)
+            @test !isnothing(trapezium_ts)
+            trap_rows = first(values(get_data(trapezium_ts)))
+            @test first(trap_rows)[1] == 20.0
         end
-        @test found_offer
+        @test found
     end
 
     @testset "FCASBid time series round-trip" begin
