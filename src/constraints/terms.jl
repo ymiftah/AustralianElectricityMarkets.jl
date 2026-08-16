@@ -66,12 +66,8 @@ end
 get_region(v::FCASRequirement) = v.region
 get_service(v::FCASRequirement) = v.service
 
-# IS's generic deserializer resolves a nested field's concrete type from its own
-# `__metadata__` tag when the field itself is a `Dict` (e.g. a single `ValueCurve`), but the
-# array-valued branch in `PSY.deserialize_uuid_handling` reads only the *declared* field
-# type and never inspects elements - so a `Vector` of polymorphic structs never round-trips.
-# `GenericConstraint`'s `terms::Vector{ConstraintTerm}` and `governs::Vector{FCASRequirement}`
-# need this per-element resolution.
+# `Vector{ConstraintTerm}`/`Vector{FCASRequirement}` don't round-trip via IS's default
+# per-field dispatch - see task-2-report.md for why.
 _deserialize_device_parameter(d::Dict) =
     IS.deserialize(IS.get_type_from_serialization_metadata(IS.get_serialization_metadata(d)), d)
 IS.deserialize(::Type{Vector{ConstraintTerm}}, data::Vector) =
