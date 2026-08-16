@@ -34,12 +34,6 @@ include("constants.jl")
 include("units.jl")
 include("network_models/interface.jl")
 
-# FCAS (Frequency Control Ancillary Services) types - include early because parser.jl depends on FCASResponseTime and FCASOffer
-include("fcas/types.jl")
-include("fcas/offers.jl")
-
-include("parser.jl")
-
 # Export data module
 using .AustralianElectricityMarketsData: populate, get_table, list_available_tables, ARCHIVE_MONTH_PARTITION
 using .AustralianElectricityMarketsData: read_affine_heatrates,
@@ -58,15 +52,32 @@ using .AustralianElectricityMarketsData: islocal, get_filesystem, _parse_hive_ro
 @doc (@doc AustralianElectricityMarketsData.read_demand) read_demand
 @doc (@doc AustralianElectricityMarketsData.read_interconnectors) read_interconnectors
 
-# FCAS bid types (in addition to types.jl and offers.jl above)
-include("fcas/bids.jl")
+# FCAS (Frequency Control Ancillary Services) types.
+#
+# Defined directly in this top-level module, NOT a nested submodule (despite the
+# `RegionModel` precedent for network-configuration types): confirmed directly that PSY/IS's
+# component-type lookup on JSON deserialize (`InfrastructureSystems.get_module`, via
+# `Base.root_module`) only resolves top-level package names, not dotted submodule paths like
+# `AustralianElectricityMarkets.FCAS` - nesting these `Reserve`/`DeviceParameter` subtypes in
+# a submodule made `to_json`/`System(path)` round-trips throw `KeyError:
+# Symbol("AustralianElectricityMarkets.FCAS") not found`. `RegionModel`'s own types don't hit
+# this because they're never added as components to a `System` (so never serialized this
+# way) - only genuinely serializable types need to live at this top level.
+include("fcas/types.jl")
+include("fcas/offers.jl")
 
 export NEMFCASReserve, ContingencyFCASReserve, RegulationFCASReserve, FCASResponseTime,
-    FCASTrapezium, FCASOffer, FCASBid, NEMMarketBidCost,
+    FCASTrapezium, FCASOffer, NEMMarketBidCost,
     get_region, set_region!, get_response_time, set_response_time!,
     get_enablement_min, get_low_breakpoint, get_high_breakpoint, get_enablement_max,
     get_max_avail, get_ramp_up_rate, get_ramp_down_rate,
-    get_reserve_name, get_offer_curve, get_trapezium,
+    get_reserve_name, get_offer_curve, get_trapezium
+
+# Modules
+include("parser.jl")
+include("fcas/bids.jl")
+
+export FCASBid,
     get_lower_slope_coeff, get_upper_slope_coeff, get_service
 
 # Parsing data into models
