@@ -42,10 +42,10 @@ end
 #     in parquet files.
 #
 # ```julia
-# tables = table_requirements(RegionalNetworkConfiguration())
-# map(tables) do table
-#     fetch_table_data(table, Date(2025, 1, 1):Date(2025,1,31))
-# end;
+# populate(
+#     db, Date(2025, 1, 1), Date(2025, 1, 31);
+#     tables = table_requirements(RegionalNetworkConfiguration()),
+# )
 # ```
 
 db = aem_connect();
