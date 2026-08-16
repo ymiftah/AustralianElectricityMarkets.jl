@@ -215,16 +215,8 @@
     end
 
     @testset "FCASBid time series round-trip" begin
-        # Canary result: Vector{FCASBid} directly as a Deterministic payload is rejected at
-        # *construction* time (not just JSON round-trip) - InfrastructureSystems only allows
-        # Real, Tuple, Vector{<:Tuple}, Matrix, or its own FunctionData types as the per-horizon-
-        # step element type, and raises ArgumentError("unsupported element type FCASBid")
-        # immediately. So this falls back to two numeric series per (device, service), per the
-        # task brief. One further wrinkle found here: `Vector{Float64}` (a plain vector) is
-        # *also* rejected as a per-step element type by the same check - only `Tuple` (a fixed-
-        # length, concrete-typed tuple) is accepted - so the trapezium row is packed as an
-        # `NTuple{7, Float64}`, not a `Vector{Float64}`, while keeping the same 7 fixed-order
-        # fields the brief specifies. Task 6's `set_fcas_bids!` must match this exactly.
+        # Deterministic rejects FCASBid and bare Vector{Float64} as per-step element types;
+        # use NTuple{7,Float64} (see task-4-report.md).
         sys = System(100.0)
         bus = ACBus(; number = 1, name = "b1", available = true, bustype = ACBusTypes.REF, angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1), base_voltage = 130.0)
         add_component!(sys, bus)
