@@ -1,0 +1,14 @@
+name = "AustralianElectricityMarketsSimulations"
+uuid = "262ca99f-a0b8-4426-9e4f-bb8b4568790b"
+version = "0.1.0"
+authors = ["Youssef Miftah <miftahyo@outlook.fr> and contributors"]
+
+[deps]
+AustralianElectricityMarkets = "1bf50fc4-d6fd-47c1-85ec-4976c2b5cc58"
+
+[compat]
+AustralianElectricityMarkets = "0.1"
+julia = "1.11"
+
+[sources]
+AustralianElectricityMarkets = {path = ".."}

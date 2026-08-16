@@ -5,8 +5,6 @@ using DataFrames, HTTP, ZipArchives, Dates
 using DuckDB, DBInterface
 using Statistics: median, mean
 
-using ..AustralianElectricityMarkets: PM_MAPPING, AEMO_PM_MAPPING, AEMO_FUEL_MAPPING
-
 export populate, get_table, list_available_tables
 export ARCHIVE_MONTH_PARTITION
 export HiveConfiguration, AEMDB, aem_connect

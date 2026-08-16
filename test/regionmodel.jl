@@ -118,4 +118,14 @@
         @test length(get_components(AreaInterchange, system)) == 6
     end
 
+    @testset "ISP technology coverage in PM_MAPPING" begin
+        # AustralianElectricityMarketsData.read_isp_variable_opex/read_isp_fixed_opex return
+        # raw isp_technology strings (that package does not depend on PowerSystems); the
+        # PM_MAPPING lookup, used by RegionModel._map_primemover!, must have an entry for
+        # every isp_technology value present in the bundled ISP2025 data.
+        for tech in unique(vcat(read_isp_variable_opex().isp_technology, read_isp_fixed_opex().isp_technology))
+            @test haskey(AustralianElectricityMarkets.PM_MAPPING, tech)
+        end
+    end
+
 end

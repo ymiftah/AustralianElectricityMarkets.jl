@@ -1,5 +1,5 @@
-using AustralianElectricityMarkets: AustralianElectricityMarketsData, HiveConfiguration
-using AustralianElectricityMarkets.AustralianElectricityMarketsData:
+using AustralianElectricityMarketsData: HiveConfiguration
+using AustralianElectricityMarketsData:
     DataSource, get_table, MissingDataError, _TABLE_SPECS, ARCHIVE_MONTH_PARTITION,
     _extract_d_lines, _csv_to_parquet, _new_duckdb_connection
 using DataFrames, Dates, Logging, ZipFile, DuckDB, DBInterface
@@ -291,20 +291,20 @@ end
 # ══════════════════════════════════════════════════════════════════════════════
 
 @testset "islocal(filesystem::String): true only for \"file\"" begin
-    @test AustralianElectricityMarkets.islocal("file")
-    @test !AustralianElectricityMarkets.islocal("s3")
-    @test !AustralianElectricityMarkets.islocal("gs")
+    @test AustralianElectricityMarketsData.islocal("file")
+    @test !AustralianElectricityMarketsData.islocal("s3")
+    @test !AustralianElectricityMarketsData.islocal("gs")
 end
 
 @testset "islocal(config): delegates to islocal(filesystem)" begin
-    @test AustralianElectricityMarkets.islocal(HiveConfiguration(filesystem = "file"))
-    @test !AustralianElectricityMarkets.islocal(HiveConfiguration(filesystem = "s3"))
+    @test AustralianElectricityMarketsData.islocal(HiveConfiguration(filesystem = "file"))
+    @test !AustralianElectricityMarketsData.islocal(HiveConfiguration(filesystem = "s3"))
 end
 
 @testset "_parse_hive_root: local returns hive_location, remote returns scheme://hive_location" begin
-    @test AustralianElectricityMarkets._parse_hive_root(HiveConfiguration(hive_location = "/tmp/x", filesystem = "file")) == "/tmp/x"
-    @test AustralianElectricityMarkets._parse_hive_root(HiveConfiguration(hive_location = "bucket/prefix", filesystem = "gs")) == "gs://bucket/prefix"
-    @test AustralianElectricityMarkets._parse_hive_root(HiveConfiguration(hive_location = "bucket/prefix", filesystem = "s3")) == "s3://bucket/prefix"
+    @test AustralianElectricityMarketsData._parse_hive_root(HiveConfiguration(hive_location = "/tmp/x", filesystem = "file")) == "/tmp/x"
+    @test AustralianElectricityMarketsData._parse_hive_root(HiveConfiguration(hive_location = "bucket/prefix", filesystem = "gs")) == "gs://bucket/prefix"
+    @test AustralianElectricityMarketsData._parse_hive_root(HiveConfiguration(hive_location = "bucket/prefix", filesystem = "s3")) == "s3://bucket/prefix"
 end
 
 @testset "_new_duckdb_connection: local (default) works with no network access assumptions" begin
@@ -365,15 +365,15 @@ end
     config = HiveConfiguration(hive_location = "bucket/path", filesystem = "s3")
     source = DataSource("T", ["C"], config)
     @test source.path == "s3://bucket/path/T"
-    @test AustralianElectricityMarkets.AustralianElectricityMarketsData.get_filesystem(source) == "s3"
-    @test !AustralianElectricityMarkets.AustralianElectricityMarketsData.islocal(source)
+    @test AustralianElectricityMarketsData.get_filesystem(source) == "s3"
+    @test !AustralianElectricityMarketsData.islocal(source)
 end
 
 @testset "DataSource: filesystem is derived from path's scheme for local sources" begin
     tmpdir = mktempdir()
     source = DataSource("T", ["C"], HiveConfiguration(hive_location = tmpdir))
-    @test AustralianElectricityMarkets.AustralianElectricityMarketsData.get_filesystem(source) == "file"
-    @test AustralianElectricityMarkets.AustralianElectricityMarketsData.islocal(source)
+    @test AustralianElectricityMarketsData.get_filesystem(source) == "file"
+    @test AustralianElectricityMarketsData.islocal(source)
 end
 
 
@@ -414,13 +414,13 @@ end
     source = DataSource("T", ["C"], HiveConfiguration(hive_location = tmpdir))
     partition_dir = joinpath(tmpdir, "T", "archive_month=2024-01-01")
 
-    @test !AustralianElectricityMarkets.AustralianElectricityMarketsData._partition_has_data(source, partition_dir)
+    @test !AustralianElectricityMarketsData._partition_has_data(source, partition_dir)
 
     mkpath(partition_dir)
-    @test !AustralianElectricityMarkets.AustralianElectricityMarketsData._partition_has_data(source, partition_dir)  # dir exists, no parquet yet
+    @test !AustralianElectricityMarketsData._partition_has_data(source, partition_dir)  # dir exists, no parquet yet
 
     write(joinpath(partition_dir, "data.parquet"), UInt8[])
-    @test AustralianElectricityMarkets.AustralianElectricityMarketsData._partition_has_data(source, partition_dir)
+    @test AustralianElectricityMarketsData._partition_has_data(source, partition_dir)
 end
 
 @testset "_partition_dir_names: local — matches readdir on source.path" begin
@@ -428,7 +428,7 @@ end
     source = DataSource("T", ["C"], HiveConfiguration(hive_location = tmpdir))
     mkpath(joinpath(source.path, "archive_month=2024-01-01"))
     mkpath(joinpath(source.path, "archive_month=2024-02-01"))
-    @test Set(AustralianElectricityMarkets.AustralianElectricityMarketsData._partition_dir_names(source)) ==
+    @test Set(AustralianElectricityMarketsData._partition_dir_names(source)) ==
         Set(["archive_month=2024-01-01", "archive_month=2024-02-01"])
 end
 
@@ -471,7 +471,7 @@ end
     mkpath(partition_dir)
     write(joinpath(partition_dir, "data.parquet"), UInt8[])
 
-    AustralianElectricityMarkets.AustralianElectricityMarketsData._clear_local_partition(source, partition_dir)
+    AustralianElectricityMarketsData._clear_local_partition(source, partition_dir)
     @test !isdir(partition_dir)
 end
 
@@ -485,7 +485,7 @@ end
     sentinel = joinpath(partition_dir, "sentinel.parquet")
     write(sentinel, UInt8[1, 2, 3])
 
-    AustralianElectricityMarkets.AustralianElectricityMarketsData._clear_local_partition(remote_source, partition_dir)
+    AustralianElectricityMarketsData._clear_local_partition(remote_source, partition_dir)
     @test isfile(sentinel)
 end
 
@@ -579,12 +579,12 @@ if _gs_test_reachable()
                 table_sort_by = ["SETTLEMENTDATE", "REGIONID"],
             )
             @test source.path == "gs://$test_prefix/DISPATCHPRICE"
-            @test AustralianElectricityMarkets.AustralianElectricityMarketsData.get_filesystem(source) == "gs"
+            @test AustralianElectricityMarketsData.get_filesystem(source) == "gs"
 
             # cached_date_range is not exported by either module — call it
             # fully-qualified, same as _add_data/_partition_has_data elsewhere
             # in this file.
-            cached_date_range = AustralianElectricityMarkets.AustralianElectricityMarketsData.cached_date_range
+            cached_date_range = AustralianElectricityMarketsData.cached_date_range
 
             # cached_date_range on a not-yet-written remote source: no data yet.
             @test cached_date_range(source) === nothing

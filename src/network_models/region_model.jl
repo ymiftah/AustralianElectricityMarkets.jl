@@ -49,6 +49,20 @@ const MATCH_TYPE_TO_PRIMEMOVER = Dict(
 )
 
 """
+    _map_primemover!(df)
+
+Add a `:primemover::PrimeMovers` column to an ISP2025-reader DataFrame
+(`read_isp_variable_opex`, `read_isp_fixed_opex`), derived from its raw `:isp_technology`
+column via `PM_MAPPING`. These readers return the raw ISP technology string, not a PSY
+enum, because `AustralianElectricityMarketsData` (which owns them) does not depend on
+PowerSystems.jl.
+"""
+function _map_primemover!(df)
+    transform!(df, :isp_technology => ByRow(x -> AustralianElectricityMarkets.PM_MAPPING[x]) => :primemover)
+    return df
+end
+
+"""
     get_bus_dataframe(db)
 
 Generates a DataFrame of bus information.
@@ -524,8 +538,8 @@ function _fill_opex!(df, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix
 end
 
 function _add_generation!(sys, gen_df)
-    variable_opex_df = read_isp_variable_opex()
-    fixed_opex_df = read_isp_fixed_opex()
+    variable_opex_df = _map_primemover!(read_isp_variable_opex())
+    fixed_opex_df = _map_primemover!(read_isp_fixed_opex())
 
     # Primemover-level medians used in step 2 of the 4-step fill cascade
     pm_var_medians = combine(

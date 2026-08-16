@@ -1,7 +1,6 @@
 using DataFrames
 using Dates
 using DuckDB
-using CSV
 
 function create_mock_data(hive_root::String)
     db = DuckDB.DB()

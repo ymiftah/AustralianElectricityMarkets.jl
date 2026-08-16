@@ -210,6 +210,7 @@ const COLUMN_TYPES = Dict(
     "PERIODID" => Int32,
     "RUNNO" => Int32,
     "GENCONEFFECTIVEDATE" => Date,
+    "GENCONEFFDATE" => Date,
     "GENCONVERSIONNO" => Int32,
     "BASE_COST" => Float32,
     "ADJUSTED_COST" => Float32,

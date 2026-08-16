@@ -218,14 +218,6 @@ function read_units(db)
         ORDER BY dudetail.DUID
     """
     dudetail = _query(db, sql)
-
-    # PowerSystems.jl enum lookups: inherently a Julia-side step, applied to
-    # the small, already-fully-joined/filtered result.
-    transform!(
-        dudetail,
-        :CO2E_ENERGY_SOURCE => ByRow(x -> AEMO_PM_MAPPING[x]) => :TECHNOLOGY,
-        :CO2E_ENERGY_SOURCE => ByRow(x -> AEMO_FUEL_MAPPING[x]) => :FUELTYPE,
-    )
     return dudetail
 end
 
