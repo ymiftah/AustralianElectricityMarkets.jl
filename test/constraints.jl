@@ -168,3 +168,43 @@ end
         @test only(raise6sec_nsw1.BIDTYPE) == BidType.RAISE6SEC
     end
 end
+
+@testset "add_nem_constraints!" begin
+    hive_dir = AEM_TEST_HIVE_DIR
+    config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
+    db = aem_connect(config)
+    start_date = DateTime(2025, 1, 1, 0, 0)
+    date_range = start_date:Minute(5):(start_date + Hour(1))
+
+    sys = nem_system(db, RegionalNetworkConfiguration())
+    added, skipped = add_nem_constraints!(sys, db, date_range)
+
+    @test "F_VIC1_RAISE6SEC" in added
+    @test "N_BAYSW_THERMAL" in added
+    @test "N_PHANTOM_TEST" ∉ added
+    @test skipped["N_PHANTOM_TEST"] == :unknown_duid
+
+    gc = get_component(GenericConstraint, sys, "F_VIC1_RAISE6SEC")
+    @test !isnothing(gc)
+    @test get_sense(gc) == ConstraintSense.GE
+    @test length(get_terms(gc)) == 4  # one UnitTerm per DUID behind CP_BAYSW
+    @test length(get_governs(gc)) == 1
+    @test only(get_governs(gc)) == FCASRequirement("VIC1", BidType.RAISE6SEC)
+
+    network_gc = get_component(GenericConstraint, sys, "N_BAYSW_THERMAL")
+    @test isempty(get_governs(network_gc))  # pure network constraint
+    @test !isempty(get_terms(network_gc))
+
+    nsw1_raise6sec = get_component(GenericConstraint, sys, "F_NSW1_RAISE6SEC")
+    @test any(t -> t isa InterconnectorTerm && get_interconnector(t) == "IC1", get_terms(nsw1_raise6sec))
+
+    rhs_ts = get_time_series(Deterministic, gc, "rhs")
+    @test !isnothing(rhs_ts)
+    rhs_values = first(values(get_data(rhs_ts)))
+    @test issorted(rhs_values)  # RHS = 50.0 + 0.1*i, confirmed time-varying in Task 8
+
+    @test !has_time_series(gc, Deterministic, "lhs")  # include_solution defaults false
+
+    added2, _ = add_nem_constraints!(nem_system(db, RegionalNetworkConfiguration()), db, date_range; include_solution = true)
+    @test "F_VIC1_RAISE6SEC" in added2
+end

@@ -43,6 +43,7 @@ end
 
 PSY.get_available(value::GenericConstraint) = value.available
 PSY.set_available!(value::GenericConstraint, val) = value.available = val
+PSY.supports_time_series(::GenericConstraint) = true
 get_sense(value::GenericConstraint) = value.sense
 set_sense!(value::GenericConstraint, val) = value.sense = val
 get_rhs(value::GenericConstraint) = value.rhs

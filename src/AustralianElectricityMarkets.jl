@@ -70,7 +70,7 @@ include("fcas/bids.jl")
 include("constraints/terms.jl")
 include("constraints/generic_constraint.jl")
 include("constraints/read.jl")
-# include("constraints/build.jl")  # Task 9
+include("constraints/build.jl")
 
 export FCASTrapezium, FCASBid,
     get_enablement_min, get_low_breakpoint, get_high_breakpoint, get_enablement_max,
