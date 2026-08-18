@@ -17,12 +17,7 @@ where `a` is the slope and `b` is the intercept.
 """
 function read_affine_heatrates()
     file_source = joinpath(ISP_DATA_DIR, "affine_heat_rates.csv")
-    return @chain file_source begin
-        CSV.read(DataFrame)
-        transform!(
-            :technology => ByRow(x -> PM_MAPPING[x]) => :primemovers,
-        )
-    end
+    return CSV.read(file_source, DataFrame)
 end
 
 """
@@ -143,7 +138,6 @@ function read_isp_fixed_opex()
     return DataFrame(
         unit = df.iasr_id,
         isp_technology = df.technology,
-        primemover = [PM_MAPPING[t] for t in df.technology],
         fixed_opex_aud_kw_year = df.fixed_opex_aud_kw_year,
     )
 end
@@ -168,7 +162,6 @@ function read_isp_variable_opex()
     return DataFrame(
         unit = df.iasr_id,
         isp_technology = df.technology,
-        primemover = [PM_MAPPING[t] for t in df.technology],
         variable_opex_aud_mwh = df.variable_opex_aud_mwh_sent_out,
     )
 end

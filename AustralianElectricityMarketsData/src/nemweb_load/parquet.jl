@@ -129,6 +129,9 @@ function _csv_to_parquet(
     )
     isempty(cols_missing) || @info "Columns not found in file" cols_missing year month
 
+    cols_extra = setdiff(available_cols, table_columns)
+    isempty(cols_extra) || @info "Columns in file not captured by table spec" cols_extra year month
+
     archive_month = Date(year, month, 1)
     sort_cols = intersect(vcat(partitions, sort_by), table_columns)
     order_by = isempty(sort_cols) ? "" : "ORDER BY " * join(("\"$c\"" for c in sort_cols), ", ")

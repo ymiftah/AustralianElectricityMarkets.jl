@@ -11,7 +11,7 @@ The following points are the planned next steps in the development of this packa
 - [ ] Create a full network configuration with all lines (using GIS data) for AC/DC operation problems (work started in [nemdb](https://github.com/ymiftah/nemdb)).
 - [ ] Account for Commissioning / Decommissioning dates to model the system at different years.
 - [ ] Parse latest ISP assumptions for operation costs.
-- [ ] Extend PowerSimulations with constraints specific to the NEM (e.g. FCAS constraints, interconnector constraints).
+- [ ] Enforce the FCAS trapezium and joint capacity/ramping constraints (see [FCAS in the NEM](@ref)) inside a `PowerSimulations.jl` dispatch problem, and interconnector constraints.
 - [ ] Separate the AustralianElectricityMarketData module in its own package.
 
 ## Mid/Long-term
