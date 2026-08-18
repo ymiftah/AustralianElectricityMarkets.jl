@@ -350,29 +350,37 @@ end
 
 # ## [How this maps onto the package's types](@id fcas-types-mapping)
 #
-# This package represents FCAS as `PowerSystems.jl` types, built with the same NEM data
-# read above:
+# This package represents FCAS requirements the same way it represents network limits -
+# both are AEMO generic constraints, and both become the same type:
 #
-# - [`ContingencyFCASReserve`](@ref) / [`RegulationFCASReserve`](@ref) - one regional reserve
-#   requirement per (market, region), added via [`add_fcas_reserves!`](@ref).
-# - [`FCASTrapezium`](@ref) / [`FCASOffer`](@ref) - a device's offered trapezium and priced
-#   offer curve for one market, attached via [`set_fcas_offers!`](@ref).
-# - [`FCASNetworkConfiguration`](@ref) - a [`nem_system`](@ref) configuration that pulls in
-#   all the tables this page reads and builds the reserves automatically.
+# - [`GenericConstraint`](@ref) - one component per `GENCONID` actually invoked in dispatch,
+#   with its LHS `terms` ([`UnitTerm`](@ref)/[`RegionTerm`](@ref)/[`InterconnectorTerm`](@ref))
+#   and, for FCAS requirements specifically, a non-empty `governs` list tagging which
+#   regional `(service, region)` price its shadow price feeds - see
+#   [`add_nem_constraints!`](@ref).
+# - [`FCASTrapezium`](@ref)/[`FCASBid`](@ref) - a device's offered trapezium and priced
+#   10-band offer curve for one FCAS market, attached as a `Deterministic` time series via
+#   [`set_fcas_bids!`](@ref).
+# - [`ConstrainedNetworkConfiguration`](@ref) - a [`nem_system`](@ref) configuration that
+#   pulls in all the tables this page reads and builds both the bids and the constraints
+#   automatically (it requires a `date_range` keyword, since both are interval-scoped).
 
-sys = nem_system(db, FCASNetworkConfiguration())
-get_component(Reserve, sys, "RAISE6SEC_TAS1")
+sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = date_range)
+get_component(GenericConstraint, sys, "F_T+NIL_MG_R6")
 
 # **Not (yet) modelled** by this package, stated plainly:
 #
 # - The trapezium and joint-capacity/ramping constraints in [Co-optimisation in
-#   dispatch](@ref fcas-cooptimisation) are *read and explained* here, but not *enforced* in
-#   a `PowerSimulations.jl` dispatch problem - `FCASTrapezium`'s docstring flags this
-#   explicitly. Enabling that is on the [Roadmap](@ref).
+#   dispatch](@ref fcas-cooptimisation) are *read and explained* here, and their raw
+#   parameters are retrievable from `FCASTrapezium`, but not *enforced* in a
+#   `PowerSimulations.jl` dispatch problem - that is the intended next layer built on top of
+#   `GenericConstraint`. Enabling that is on the [Roadmap](@ref).
 # - Mainland-vs-local contingency splits (e.g. South Australian islanding).
 # - The `RAISE1SEC`/`LOWER1SEC` markets.
 # - AGC ramp-rate scaling (the missing telemetry noted above).
 # - FCAS cost recovery (`BASE_COST`/`ADJUSTED_COST`/CMPF/CRMPF in `DISPATCH_FCAS_REQ`).
+# - Recomputing `RHS` from AEMO's RPN expressions - NEMDE derives it from live SCADA that
+#   MMSDM doesn't publish; `add_nem_constraints!` replays `DISPATCHCONSTRAINT.RHS` instead.
 
 # ## [References](@id fcas-references)
 #
