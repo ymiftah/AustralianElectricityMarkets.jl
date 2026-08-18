@@ -14,12 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`read_prices`**: New reader for per-region energy spot prices (`DISPATCHPRICE.RRP`/`ROP`/`APCFLAG`).
 - **"FCAS in the NEM" documentation**: A new Explanation page walking through NEM FCAS markets, the offer trapezium, and dispatch co-optimisation from AEMO's own documents, with every figure computed from real NEMWEB data.
 - **"The National Electricity Market" documentation**: A new Explanation page (the first in that section) introducing the NEM's institutions, market design, and dispatch process, and contrasting it with US ISO/RTO and European market designs, with a real-data figure of regional price divergence.
+- **`GenericConstraint`/`ConstraintTerm`/`FCASRequirement`**: New NEM generic-constraint types (`src/constraints/`), representing both network limits and FCAS requirements as one `PowerSystems.Component` — matching how AEMO actually models them, rather than as separate `PowerSystems.Reserve` subtypes.
+- **`read_invoked_constraints`/`read_constraint_definitions`/`read_constraint_terms`/`read_constraint_governs`/`add_nem_constraints!`**: New readers and `System` builder for the constraint suite, joining `DISPATCHCONSTRAINT`'s per-interval `GENCONID_EFFECTIVEDATE`/`GENCONID_VERSIONNO` to `GENCONDATA`/`SPDCONNECTIONPOINTCONSTRAINT`/`SPDREGIONCONSTRAINT`/`SPDINTERCONNECTORCONSTRAINT` by exact version equality.
+- **`ConstrainedNetworkConfiguration`**: Replaces `FCASNetworkConfiguration` — builds both FCAS bids and NEM generic constraints (network and FCAS-requirement alike) into the resulting `System`.
 
 ### Changed
 
 - **`read_fcas_requirements`**: Rewritten to read the generic-constraint-based `DISPATCH_FCAS_REQ`/`DISPATCHCONSTRAINT`/`GENCONDATA` tables instead of the `RESERVE` table, which AEMO stopped populating in Dec 2003. The `RESERVE` table entry has been removed from `_TABLE_SPECS` accordingly.
 - **`read_hive`**: Now reads with `union_by_name=true`, so a table's `_TABLE_SPECS` entry can grow new columns without invalidating partitions already cached under an older, narrower schema.
 - **Market price cap**: Corrected stale `$17,500/MWh` figures (FY2024-25) in the docs to the current `$23,200/MWh` (FY2026-27).
+- **FCAS requirements are no longer modelled as `PowerSystems.Reserve`s**: `ContingencyFCASReserve`/`RegulationFCASReserve`/`FCASResponseTime`/`NEMMarketBidCost` are removed. A `PSY.Reserve` cannot represent a requirement governed by several constraints at once, netting an interconnector flow, or armed/disarmed by a large RHS offset — all of which are common in real NEMWEB data (see the "FCAS in the NEM" docs page). `FCASOffer` is renamed `FCASBid` (keyed by `BidType`, not a reserve name) and `set_fcas_offers!` is renamed `set_fcas_bids!`, now attaching a genuinely time-varying `Deterministic` series instead of a single-interval snapshot.
 
 ### Fixed
 
