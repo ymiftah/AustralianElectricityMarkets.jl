@@ -8,7 +8,7 @@ using Chain
 using DataFrames: nrow
 using PowerSystems
 
-include("mock_data.jl")
+include(joinpath(@__DIR__, "..", "AustralianElectricityMarketsData", "test", "mock_data.jl"))
 # Create mock data in a temporary directory for the duration of the test session
 const AEM_TEST_HIVE_DIR = mktempdir()
 create_mock_data(AEM_TEST_HIVE_DIR)
@@ -17,21 +17,16 @@ create_mock_data(AEM_TEST_HIVE_DIR)
     include("datareader.jl")
 end
 
-@testset "NEMWEB download/cache tests" begin
-    include("test-nemweb-load.jl")
-end
-
-@testset "ISP data tests" begin
-    include("isp_data.jl")
-end
-
-
 @testset "Test region model" begin
     include("regionmodel.jl")
 end
 
 @testset "Time series setter tests" begin
     include("timeseries_setters.jl")
+end
+
+@testset "FCAS types" begin
+    include("fcas.jl")
 end
 
 

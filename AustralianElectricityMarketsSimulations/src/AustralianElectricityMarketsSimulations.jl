@@ -1,0 +1,5 @@
+module AustralianElectricityMarketsSimulations
+
+using AustralianElectricityMarkets
+
+end
