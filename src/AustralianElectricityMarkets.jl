@@ -86,20 +86,15 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
 include("network_models/region_model.jl")
 
 # Exports the network models implemented
-# `RegionModel.FCASNetworkConfiguration` doesn't exist until Task 10 renames it to
-# `ConstrainedNetworkConfiguration` — leave this `using` (and the `@doc` line below it)
-# referencing `FCASNetworkConfiguration` for now, matching what `region_model.jl` currently
-# defines; `ConstrainedNetworkConfiguration` is exported above but left undefined until
-# Task 10 completes the rename.
-using .RegionModel: RegionalNetworkConfiguration, FCASNetworkConfiguration
+using .RegionModel: RegionalNetworkConfiguration, ConstrainedNetworkConfiguration
 
-# `nem_system`/`RegionalNetworkConfiguration`/`FCASNetworkConfiguration` are documented at
-# their definition site inside the `RegionModel` submodule; `@doc` here binds that same
+# `nem_system`/`RegionalNetworkConfiguration`/`ConstrainedNetworkConfiguration` are documented
+# at their definition site inside the `RegionModel` submodule; `@doc` here binds that same
 # docstring onto this module's own exported name, so `[`nem_system`](@ref)` etc. resolve
 # from Documenter pages without duplicating the text (`nem_system(db, config)`'s own methods
 # in `interface.jl`/`region_model.jl` are undocumented dispatch stubs).
 @doc (@doc RegionModel.nem_system) nem_system
 @doc (@doc RegionModel.RegionalNetworkConfiguration) RegionalNetworkConfiguration
-@doc (@doc RegionModel.FCASNetworkConfiguration) FCASNetworkConfiguration
+@doc (@doc RegionModel.ConstrainedNetworkConfiguration) ConstrainedNetworkConfiguration
 
 end

@@ -76,18 +76,29 @@
         @test found
     end
 
-    @testset "FCASNetworkConfiguration" begin
-        required_tables = table_requirements(FCASNetworkConfiguration())
+    @testset "ConstrainedNetworkConfiguration" begin
+        required_tables = table_requirements(ConstrainedNetworkConfiguration())
         @test :DISPATCH_FCAS_REQ in required_tables
         @test :DISPATCHCONSTRAINT in required_tables
         @test :GENCONDATA in required_tables
         @test :DISPATCHLOAD in required_tables
         @test :BIDPEROFFER_D in required_tables
+        @test :SPDCONNECTIONPOINTCONSTRAINT in required_tables
+        @test :SPDREGIONCONSTRAINT in required_tables
+        @test :SPDINTERCONNECTORCONSTRAINT in required_tables
 
-        # Still expected to fail here: region_model.jl's FCASNetworkConfiguration method
-        # calls the now-deleted add_fcas_reserves! - Task 10 (renaming this to
-        # ConstrainedNetworkConfiguration) rewrites that method to stop doing so.
-        nem_system(db, FCASNetworkConfiguration())
+        sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = date_range)
+        @test !isempty(collect(get_components(GenericConstraint, sys)))
+        found = false
+        for gen in get_components(Generator, sys)
+            # has_time_series (not get_time_series + isnothing): get_time_series throws
+            # ArgumentError, rather than returning nothing, for an owner with no metadata
+            # registered at all - confirmed directly, same as "set_fcas_bids!" above. Series
+            # name is "fcas_curve_<SERVICE>" per set_fcas_bids!, not "fcas_bid_<SERVICE>".
+            has_time_series(gen, Deterministic, "fcas_curve_RAISE6SEC") || continue
+            found = true
+        end
+        @test found
     end
 
     @testset "read_fcas_requirements" begin
