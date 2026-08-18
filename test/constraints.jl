@@ -88,3 +88,83 @@
         @test Set(get_service.(get_governs(gc2))) == Set([BidType.RAISE6SEC, BidType.RAISE5MIN])
     end
 end
+
+@testset "Constraint readers against mock data" begin
+    using AustralianElectricityMarkets
+    using PowerSystems
+    using Dates
+    using DataFrames
+
+    hive_dir = AEM_TEST_HIVE_DIR
+    config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
+    db = aem_connect(config)
+    start_date = DateTime(2025, 1, 1, 0, 0)
+    date_range = start_date:Minute(5):(start_date + Hour(1))
+
+    @testset "read_invoked_constraints" begin
+        invoked = read_invoked_constraints(db, date_range)
+        @test !isempty(invoked)
+        @test "N_BAYSW_THERMAL" in invoked.GENCONID
+        @test "N_PHANTOM_TEST" in invoked.GENCONID
+        f_raise6sec_nsw1 = subset(invoked, :GENCONID => ByRow(==("F_NSW1_RAISE6SEC")))
+        sort!(f_raise6sec_nsw1, :SETTLEMENTDATE)
+        # RHS = requirement_mw("RAISE6SEC") + 0.1*i = 50.0 + 0.1*i, i = 0..12 over this range
+        @test isapprox(first(f_raise6sec_nsw1.RHS), 50.0; atol = 1.0e-9)
+        @test issorted(f_raise6sec_nsw1.RHS)  # confirms the RHS actually varies per interval
+        @test all(==(DateTime(2025, 1, 1)), f_raise6sec_nsw1.GENCONID_EFFECTIVEDATE)
+        @test all(==(1), f_raise6sec_nsw1.GENCONID_VERSIONNO)
+    end
+
+    @testset "read_constraint_definitions" begin
+        invoked = read_invoked_constraints(db, date_range)
+        versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
+        defs = read_constraint_definitions(db, versions)
+        @test !isempty(defs)
+        thermal = only(subset(defs, :GENCONID => ByRow(==("N_BAYSW_THERMAL"))))
+        @test thermal.CONSTRAINTTYPE == ">="
+        @test thermal.GENERICCONSTRAINTWEIGHT == 1.0
+        @test thermal.CONSTRAINTVALUE == 100.0
+        raise6sec_nsw1 = only(subset(defs, :GENCONID => ByRow(==("F_NSW1_RAISE6SEC"))))
+        @test raise6sec_nsw1.CONSTRAINTVALUE == 50.0
+    end
+
+    @testset "read_constraint_terms" begin
+        invoked = read_invoked_constraints(db, date_range)
+        versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
+        terms = read_constraint_terms(db, versions, date_range)
+        @test !isempty(terms)
+
+        # F_VIC1_RAISE6SEC expands to 4 UnitTerms - every DUID behind CP_BAYSW (BW01-04)
+        vic1_terms = subset(terms, :GENCONID => ByRow(==("F_VIC1_RAISE6SEC")))
+        @test nrow(vic1_terms) == 4
+        @test Set(vic1_terms.KEY) == Set(["BW01", "BW02", "BW03", "BW04"])
+        @test all(==("UNIT"), vic1_terms.TERM_KIND)
+        @test all(==("RAISE6SEC"), vic1_terms.BIDTYPE)
+
+        # N_PHANTOM_TEST's only term references PHANTOM1, a DUDETAILSUMMARY-only DUID
+        phantom_terms = subset(terms, :GENCONID => ByRow(==("N_PHANTOM_TEST")))
+        @test nrow(phantom_terms) == 1
+        @test only(phantom_terms.KEY) == "PHANTOM1"
+
+        # F_NSW1_RAISEREG has both a UNIT term (its own DUID) and a REGION term
+        raisereg_terms = subset(terms, :GENCONID => ByRow(==("F_NSW1_RAISEREG")))
+        @test "REGION" in raisereg_terms.TERM_KIND
+
+        # F_NSW1_RAISE6SEC additionally nets IC1
+        ic_terms = subset(terms, :GENCONID => ByRow(==("F_NSW1_RAISE6SEC")), :TERM_KIND => ByRow(==("INTERCONNECTOR")))
+        @test nrow(ic_terms) == 1
+        @test only(ic_terms.KEY) == "IC1"
+        @test only(ic_terms.FACTOR) == -1.0
+    end
+
+    @testset "read_constraint_governs" begin
+        governs = read_constraint_governs(db, date_range)
+        @test !isempty(governs)
+        @test "N_BAYSW_THERMAL" ∉ governs.GENCONID  # pure network constraint
+        @test "N_PHANTOM_TEST" ∉ governs.GENCONID
+        raise6sec_nsw1 = subset(governs, :GENCONID => ByRow(==("F_NSW1_RAISE6SEC")))
+        @test nrow(raise6sec_nsw1) == 1
+        @test only(raise6sec_nsw1.REGIONID) == "NSW1"
+        @test only(raise6sec_nsw1.BIDTYPE) == BidType.RAISE6SEC
+    end
+end

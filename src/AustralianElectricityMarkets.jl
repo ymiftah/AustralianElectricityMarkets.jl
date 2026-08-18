@@ -69,7 +69,7 @@ include("parser.jl")
 include("fcas/bids.jl")
 include("constraints/terms.jl")
 include("constraints/generic_constraint.jl")
-# include("constraints/read.jl")   # Task 7
+include("constraints/read.jl")
 # include("constraints/build.jl")  # Task 9
 
 export FCASTrapezium, FCASBid,
