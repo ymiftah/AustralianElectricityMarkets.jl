@@ -89,14 +89,32 @@ function create_mock_data(hive_root::String)
         ), :DUDETAIL
     )
 
-    # 5. DUDETAILSUMMARY
+    # 5. DUDETAILSUMMARY. CONNECTIONPOINTID groups BW01-04 under Bayswater's connection
+    # point and ER01-02 under Eraring's - exercises the constraint-term reader's 1:many
+    # connection-point -> DUID expansion. A 7th, PHANTOM1 row shares no other table (never
+    # becomes a System component) - exercises add_nem_constraints!'s unresolvable-term skip
+    # path (see test/constraints.jl).
+    connection_points = ["CP_BAYSW", "CP_BAYSW", "CP_BAYSW", "CP_BAYSW", "CP_ERARING", "CP_ERARING"]
     save_hive(
-        DataFrame(
-            DUID = duids,
-            START_DATE = fill(DateTime(2020, 1, 1), n),
-            END_DATE = Union{DateTime, Missing}[missing for i in 1:n],
-            STATIONID = station_ids,
-            archive_month = fill("2025-01", n)
+        vcat(
+            DataFrame(
+                DUID = duids,
+                START_DATE = fill(DateTime(2020, 1, 1), n),
+                END_DATE = Union{DateTime, Missing}[missing for i in 1:n],
+                STATIONID = station_ids,
+                CONNECTIONPOINTID = connection_points,
+                REGIONID = regions,
+                archive_month = fill("2025-01", n)
+            ),
+            DataFrame(
+                DUID = ["PHANTOM1"],
+                START_DATE = [DateTime(2020, 1, 1)],
+                END_DATE = Union{DateTime, Missing}[missing],
+                STATIONID = ["PHANTOM"],
+                CONNECTIONPOINTID = ["CP_PHANTOM"],
+                REGIONID = ["VIC1"],
+                archive_month = ["2025-01"]
+            ),
         ), :DUDETAILSUMMARY
     )
 
@@ -162,6 +180,10 @@ function create_mock_data(hive_root::String)
     # 10. BIDPEROFFER_D (49 intervals)
     fcas_bid_types = ["RAISE6SEC", "LOWER6SEC", "RAISE60SEC", "LOWER60SEC", "RAISE5MIN", "LOWER5MIN", "RAISEREG", "LOWERREG"]
     trapezium_cols = ["ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN"]
+    contingency_types = ["RAISE6SEC", "LOWER6SEC", "RAISE60SEC", "LOWER60SEC", "RAISE5MIN", "LOWER5MIN"]
+    regulation_types = ["RAISEREG", "LOWERREG"]
+    requirement_mw(bid_type) = bid_type in regulation_types ? 30.0 : 50.0
+    marginal_value(bid_type) = bid_type in regulation_types ? 2.25 : 5.5
     df_bid_per_offer = DataFrame()
     for i in intervals
         t = base_datetime + Minute(5 * i)
@@ -271,23 +293,31 @@ function create_mock_data(hive_root::String)
     # (region, market), DISPATCHCONSTRAINT.RHS carries the enforced requirement quantity, and
     # DISPATCH_FCAS_REQ.MARGINALVALUE sums (trivially here, one constraint per region/market)
     # to the DISPATCHPRICE regional FCAS price.
-    contingency_types = ["RAISE6SEC", "LOWER6SEC", "RAISE60SEC", "LOWER60SEC", "RAISE5MIN", "LOWER5MIN"]
-    regulation_types = ["RAISEREG", "LOWERREG"]
-    requirement_mw(bid_type) = bid_type in regulation_types ? 30.0 : 50.0
-    marginal_value(bid_type) = bid_type in regulation_types ? 2.25 : 5.5
 
-    # 12. GENCONDATA (one generic constraint per region/market, joined only for its
-    # human-readable DESCRIPTION/CONSTRAINTTYPE)
+    # 12. GENCONDATA. One FCAS-requirement constraint per (region, market) plus one pure
+    # network constraint (N_BAYSW_THERMAL, governs nothing - no DISPATCH_FCAS_REQ row) and
+    # one unresolvable-term constraint (N_PHANTOM_TEST, references DUDETAILSUMMARY's
+    # PHANTOM1 DUID, which is never built into a System component).
     gencon_ids = ["F_$(region)_$(bid_type)" for region in regions for bid_type in fcas_bid_types]
+    all_gencon_ids = vcat(gencon_ids, ["N_BAYSW_THERMAL", "N_PHANTOM_TEST"])
+    n_all = length(all_gencon_ids)
     save_hive(
         DataFrame(
-            GENCONID = gencon_ids,
-            EFFECTIVEDATE = fill(test_date, length(gencon_ids)),
-            VERSIONNO = fill(1, length(gencon_ids)),
-            DESCRIPTION = ["$(gc) requirement" for gc in gencon_ids],
-            CONSTRAINTTYPE = fill(">=", length(gencon_ids)),
-            LASTCHANGED = fill(base_datetime, length(gencon_ids)),
-            archive_month = fill("2025-01", length(gencon_ids))
+            GENCONID = all_gencon_ids,
+            EFFECTIVEDATE = fill(test_date, n_all),
+            VERSIONNO = fill(1, n_all),
+            DESCRIPTION = ["$(gc) requirement" for gc in all_gencon_ids],
+            CONSTRAINTTYPE = fill(">=", n_all),
+            LASTCHANGED = fill(base_datetime, n_all),
+            GENERICCONSTRAINTWEIGHT = fill(1.0, n_all),
+            CONSTRAINTVALUE = [
+                gc in gencon_ids ? requirement_mw(split(gc, "_")[end]) : 100.0
+                    for gc in all_gencon_ids
+            ],
+            DYNAMICRHS = fill(0, n_all),
+            LIMITTYPE = fill("FCAS", n_all),
+            SOURCE = fill("mock", n_all),
+            archive_month = fill("2025-01", n_all)
         ), :GENCONDATA
     )
 
@@ -315,7 +345,12 @@ function create_mock_data(hive_root::String)
     end
     save_hive(df_fcas_req, :DISPATCH_FCAS_REQ)
 
-    # 14. DISPATCHCONSTRAINT (RHS = the FCAS requirement quantity actually enforced)
+    # 14. DISPATCHCONSTRAINT. RHS varies per interval (requirement_mw + 0.1*i) to exercise
+    # the "rhs" Deterministic time series, not just a flat default. GENCONID_EFFECTIVEDATE/
+    # GENCONID_VERSIONNO pin the exact GENCONDATA version, matching test_date/1 above -
+    # AEMO's own mechanism for exact-equality constraint-term joins (no date-window
+    # heuristic). N_BAYSW_THERMAL and N_PHANTOM_TEST are invoked here too, so they're
+    # eligible for add_nem_constraints! despite not appearing in DISPATCH_FCAS_REQ.
     df_constraint = DataFrame()
     for i in intervals
         t = base_datetime + Minute(5 * i)
@@ -326,16 +361,94 @@ function create_mock_data(hive_root::String)
                     RUNNO = fill(1, n),
                     INTERVENTION = fill(0, n),
                     CONSTRAINTID = ["F_$(region)_$(bid_type)" for region in regions],
-                    RHS = fill(requirement_mw(bid_type), n),
-                    LHS = fill(requirement_mw(bid_type), n),
+                    RHS = fill(requirement_mw(bid_type) + 0.1 * i, n),
+                    LHS = fill(requirement_mw(bid_type) + 0.1 * i, n),
                     MARGINALVALUE = fill(marginal_value(bid_type), n),
+                    GENCONID_EFFECTIVEDATE = fill(test_date, n),
+                    GENCONID_VERSIONNO = fill(1, n),
                     LASTCHANGED = fill(t, n),
                     archive_month = fill("2025-01", n)
                 )
             )
         end
+        append!(
+            df_constraint, DataFrame(
+                SETTLEMENTDATE = [t, t],
+                RUNNO = [1, 1],
+                INTERVENTION = [0, 0],
+                CONSTRAINTID = ["N_BAYSW_THERMAL", "N_PHANTOM_TEST"],
+                RHS = [200.0, 100.0],
+                LHS = [180.0, 90.0],
+                MARGINALVALUE = [0.0, 0.0],
+                GENCONID_EFFECTIVEDATE = [test_date, test_date],
+                GENCONID_VERSIONNO = [1, 1],
+                LASTCHANGED = [t, t],
+                archive_month = ["2025-01", "2025-01"]
+            )
+        )
     end
     save_hive(df_constraint, :DISPATCHCONSTRAINT)
+
+    # 17. SPDCONNECTIONPOINTCONSTRAINT. F_$(region)_$(bid_type) constraints reference their
+    # own region's DUIDs (one FCAS-market UnitTerm each, factor 1.0). N_BAYSW_THERMAL
+    # references CP_BAYSW - the connection point behind BW01-04 - exercising the 1:many
+    # connection-point -> DUID expansion. N_PHANTOM_TEST references CP_PHANTOM (PHANTOM1
+    # only, which is never built into the System).
+    save_hive(
+        vcat(
+            DataFrame(
+                CONNECTIONPOINTID = [cp for cp in connection_points for _ in fcas_bid_types],
+                EFFECTIVEDATE = fill(test_date, n * length(fcas_bid_types)),
+                VERSIONNO = fill(1, n * length(fcas_bid_types)),
+                GENCONID = ["F_$(r)_$(bt)" for r in regions for bt in fcas_bid_types],
+                PERIODID = fill(1, n * length(fcas_bid_types)),
+                FACTOR = fill(1.0, n * length(fcas_bid_types)),
+                BIDTYPE = [bt for _ in regions for bt in fcas_bid_types],
+                LASTCHANGED = fill(base_datetime, n * length(fcas_bid_types)),
+                archive_month = fill("2025-01", n * length(fcas_bid_types))
+            ),
+            DataFrame(
+                CONNECTIONPOINTID = ["CP_BAYSW"],
+                EFFECTIVEDATE = [test_date], VERSIONNO = [1], GENCONID = ["N_BAYSW_THERMAL"],
+                PERIODID = [1], FACTOR = [1.0], BIDTYPE = ["ENERGY"],
+                LASTCHANGED = [base_datetime], archive_month = ["2025-01"]
+            ),
+            DataFrame(
+                CONNECTIONPOINTID = ["CP_PHANTOM"],
+                EFFECTIVEDATE = [test_date], VERSIONNO = [1], GENCONID = ["N_PHANTOM_TEST"],
+                PERIODID = [1], FACTOR = [1.0], BIDTYPE = ["ENERGY"],
+                LASTCHANGED = [base_datetime], archive_month = ["2025-01"]
+            ),
+        ), :SPDCONNECTIONPOINTCONSTRAINT
+    )
+
+    # 18. SPDREGIONCONSTRAINT (regulation FCAS's region-level term, one per region/market)
+    save_hive(
+        DataFrame(
+            REGIONID = [r for r in regions for _ in regulation_types],
+            EFFECTIVEDATE = fill(test_date, n * length(regulation_types)),
+            VERSIONNO = fill(1, n * length(regulation_types)),
+            GENCONID = ["F_$(r)_$(bt)" for r in regions for bt in regulation_types],
+            BIDTYPE = [bt for _ in regions for bt in regulation_types],
+            FACTOR = fill(1.0, n * length(regulation_types)),
+            LASTCHANGED = fill(base_datetime, n * length(regulation_types)),
+            archive_month = fill("2025-01", n * length(regulation_types))
+        ), :SPDREGIONCONSTRAINT
+    )
+
+    # 19. SPDINTERCONNECTORCONSTRAINT (RAISE6SEC's NSW1 requirement additionally nets an
+    # interconnector flow term, mirroring the real F_T++ Basslink-netting pattern)
+    save_hive(
+        DataFrame(
+            INTERCONNECTORID = ["IC1"],
+            EFFECTIVEDATE = [test_date],
+            VERSIONNO = [1],
+            GENCONID = ["F_NSW1_RAISE6SEC"],
+            FACTOR = [-1.0],
+            LASTCHANGED = [base_datetime],
+            archive_month = ["2025-01"]
+        ), :SPDINTERCONNECTORCONSTRAINT
+    )
 
     # 15. DISPATCHLOAD (per-unit FCAS dispatch outcomes - cleared counterpart to the
     # BIDPEROFFER_D trapezium; contingency markets get an ACTUALAVAILABILITY, regulation
