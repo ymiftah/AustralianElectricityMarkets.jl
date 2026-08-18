@@ -1,4 +1,20 @@
 """
+    _modal_row_count(counts) -> Int
+
+Most frequent value in `counts` (a row count per invoked `GENCONID`); ties break toward the
+larger value, since a larger row count is definitionally closer to full interval coverage and
+is the safer default for [`add_nem_constraints!`](@ref)'s `:partial_interval_coverage` check.
+"""
+function _modal_row_count(counts)
+    tally = Dict{Int, Int}()
+    for n in counts
+        tally[n] = get(tally, n, 0) + 1
+    end
+    max_tally = maximum(values(tally))
+    return maximum(k for (k, v) in tally if v == max_tally)
+end
+
+"""
     add_nem_constraints!(sys, db, date_range; intervention = 0, include_solution = false)
 
 Adds one [`GenericConstraint`](@ref) per constraint invoked in `date_range`
@@ -30,12 +46,7 @@ function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0, in
     end
     invoked_by_id = groupby(invoked, :GENCONID)
 
-    row_count_tally = Dict{Int, Int}()
-    for group in invoked_by_id
-        n = nrow(group)
-        row_count_tally[n] = get(row_count_tally, n, 0) + 1
-    end
-    modal_row_count = argmax(row_count_tally)
+    modal_row_count = _modal_row_count(nrow(group) for group in invoked_by_id)
 
     gencon_versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
     definitions = read_constraint_definitions(db, gencon_versions)
@@ -57,6 +68,10 @@ function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0, in
         end
         if !haskey(terms_by_id, (gencon_id,))
             skipped[gencon_id] = :no_terms
+            continue
+        end
+        if nrow(invoked_by_id[(gencon_id,)]) < modal_row_count
+            skipped[gencon_id] = :partial_interval_coverage
             continue
         end
         def = def_by_id[gencon_id]
@@ -98,10 +113,6 @@ function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0, in
             FCASRequirement[]
 
         constraint_rows = sort(invoked_by_id[(gencon_id,)], :SETTLEMENTDATE)
-        if nrow(constraint_rows) < modal_row_count
-            skipped[gencon_id] = :partial_interval_coverage
-            continue
-        end
         rhs_series = constraint_rows.RHS
 
         gc = GenericConstraint(;

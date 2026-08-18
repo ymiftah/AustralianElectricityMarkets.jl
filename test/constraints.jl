@@ -2,6 +2,18 @@
     using AustralianElectricityMarkets
     using PowerSystems
 
+    @testset "_modal_row_count tie-breaking" begin
+        # Plain mode, no tie.
+        @test AustralianElectricityMarkets._modal_row_count([12, 12, 12, 6]) == 12
+        # Tallies tie 3-vs-3 between a full-coverage count (12) and a partial one (6): must
+        # prefer the larger count, the safer default against reintroducing the short-series
+        # crash the :partial_interval_coverage check exists to prevent.
+        @test AustralianElectricityMarkets._modal_row_count([12, 12, 12, 6, 6, 6]) == 12
+        @test AustralianElectricityMarkets._modal_row_count([100, 100, 3, 3]) == 100
+        # Order shouldn't matter.
+        @test AustralianElectricityMarkets._modal_row_count([6, 12, 6, 12, 6, 12]) == 12
+    end
+
     @testset "ConstraintTerm construction and accessors" begin
         ut = UnitTerm("BW01", BidType.RAISE6SEC, 1.0)
         @test get_duid(ut) == "BW01"
