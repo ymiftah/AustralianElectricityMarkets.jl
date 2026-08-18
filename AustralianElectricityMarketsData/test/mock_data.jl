@@ -295,11 +295,14 @@ function create_mock_data(hive_root::String)
     # to the DISPATCHPRICE regional FCAS price.
 
     # 12. GENCONDATA. One FCAS-requirement constraint per (region, market) plus one pure
-    # network constraint (N_BAYSW_THERMAL, governs nothing - no DISPATCH_FCAS_REQ row) and
-    # one unresolvable-term constraint (N_PHANTOM_TEST, references DUDETAILSUMMARY's
-    # PHANTOM1 DUID, which is never built into a System component).
+    # network constraint (N_BAYSW_THERMAL, governs nothing - no DISPATCH_FCAS_REQ row), one
+    # unresolvable-term constraint (N_PHANTOM_TEST, references DUDETAILSUMMARY's PHANTOM1
+    # DUID, which is never built into a System component), and one partial-coverage
+    # constraint (N_PARTIAL_COVERAGE, invoked in DISPATCHCONSTRAINT for only every other
+    # interval - exercises add_nem_constraints!'s :partial_interval_coverage skip path, see
+    # test/constraints.jl).
     gencon_ids = ["F_$(region)_$(bid_type)" for region in regions for bid_type in fcas_bid_types]
-    all_gencon_ids = vcat(gencon_ids, ["N_BAYSW_THERMAL", "N_PHANTOM_TEST"])
+    all_gencon_ids = vcat(gencon_ids, ["N_BAYSW_THERMAL", "N_PHANTOM_TEST", "N_PARTIAL_COVERAGE"])
     n_all = length(all_gencon_ids)
     save_hive(
         DataFrame(
@@ -351,6 +354,9 @@ function create_mock_data(hive_root::String)
     # AEMO's own mechanism for exact-equality constraint-term joins (no date-window
     # heuristic). N_BAYSW_THERMAL and N_PHANTOM_TEST are invoked here too, so they're
     # eligible for add_nem_constraints! despite not appearing in DISPATCH_FCAS_REQ.
+    # N_PARTIAL_COVERAGE is invoked for only every other interval - real AEMO constraints
+    # invoked less than every dispatch interval within a date_range, unlike this mock's other
+    # (fully-covered-by-construction) synthetic constraints.
     df_constraint = DataFrame()
     for i in intervals
         t = base_datetime + Minute(5 * i)
@@ -386,14 +392,31 @@ function create_mock_data(hive_root::String)
                 archive_month = ["2025-01", "2025-01"]
             )
         )
+        if iseven(i)
+            append!(
+                df_constraint, DataFrame(
+                    SETTLEMENTDATE = [t],
+                    RUNNO = [1],
+                    INTERVENTION = [0],
+                    CONSTRAINTID = ["N_PARTIAL_COVERAGE"],
+                    RHS = [150.0],
+                    LHS = [140.0],
+                    MARGINALVALUE = [0.0],
+                    GENCONID_EFFECTIVEDATE = [test_date],
+                    GENCONID_VERSIONNO = [1],
+                    LASTCHANGED = [t],
+                    archive_month = ["2025-01"]
+                )
+            )
+        end
     end
     save_hive(df_constraint, :DISPATCHCONSTRAINT)
 
     # 17. SPDCONNECTIONPOINTCONSTRAINT. F_$(region)_$(bid_type) constraints reference their
-    # own region's DUIDs (one FCAS-market UnitTerm each, factor 1.0). N_BAYSW_THERMAL
-    # references CP_BAYSW - the connection point behind BW01-04 - exercising the 1:many
-    # connection-point -> DUID expansion. N_PHANTOM_TEST references CP_PHANTOM (PHANTOM1
-    # only, which is never built into the System).
+    # own region's DUIDs (one FCAS-market UnitTerm each, factor 1.0). N_BAYSW_THERMAL and
+    # N_PARTIAL_COVERAGE both reference CP_BAYSW - the connection point behind BW01-04 -
+    # exercising the 1:many connection-point -> DUID expansion. N_PHANTOM_TEST references
+    # CP_PHANTOM (PHANTOM1 only, which is never built into the System).
     save_hive(
         vcat(
             DataFrame(
@@ -416,6 +439,12 @@ function create_mock_data(hive_root::String)
             DataFrame(
                 CONNECTIONPOINTID = ["CP_PHANTOM"],
                 EFFECTIVEDATE = [test_date], VERSIONNO = [1], GENCONID = ["N_PHANTOM_TEST"],
+                PERIODID = [1], FACTOR = [1.0], BIDTYPE = ["ENERGY"],
+                LASTCHANGED = [base_datetime], archive_month = ["2025-01"]
+            ),
+            DataFrame(
+                CONNECTIONPOINTID = ["CP_BAYSW"],
+                EFFECTIVEDATE = [test_date], VERSIONNO = [1], GENCONID = ["N_PARTIAL_COVERAGE"],
                 PERIODID = [1], FACTOR = [1.0], BIDTYPE = ["ENERGY"],
                 LASTCHANGED = [base_datetime], archive_month = ["2025-01"]
             ),

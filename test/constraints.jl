@@ -184,6 +184,13 @@ end
     @test "N_PHANTOM_TEST" ∉ added
     @test skipped["N_PHANTOM_TEST"] == :unknown_duid
 
+    # N_PARTIAL_COVERAGE is only invoked in DISPATCHCONSTRAINT for every other interval
+    # (6 of 12 rows over this date_range) - fewer than the modal 12-row coverage every other
+    # invoked constraint has, so it must be skipped rather than added with a short "rhs"
+    # series that would fail PSY's cross-component time-series horizon check.
+    @test "N_PARTIAL_COVERAGE" ∉ added
+    @test skipped["N_PARTIAL_COVERAGE"] == :partial_interval_coverage
+
     gc = get_component(GenericConstraint, sys, "F_VIC1_RAISE6SEC")
     @test !isnothing(gc)
     @test get_sense(gc) == ConstraintSense.GE

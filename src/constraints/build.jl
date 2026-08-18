@@ -11,9 +11,13 @@ into a dispatch simulation is the same category error as using `RRP` as an LP in
 
 Returns `(added, skipped)`: `added::Vector{String}` of `GENCONID`s successfully added, and
 `skipped::Dict{String, Symbol}` mapping a skipped `GENCONID` to one reason — `:no_definition`
-(no matching `GENCONDATA` version), `:no_terms` (no `SPD*` rows for its version), or
+(no matching `GENCONDATA` version), `:no_terms` (no `SPD*` rows for its version),
 `:unknown_duid`/`:unknown_region`/`:unknown_interconnector` (a term referenced a component
-`sys` doesn't have). Skips are reported as one summary `@warn`, not one per constraint.
+`sys` doesn't have), or `:partial_interval_coverage` (fewer `DISPATCHCONSTRAINT` rows than the
+modal row count across all constraints invoked in `date_range` — the constraint stopped or
+started applying partway through, so its `"rhs"` series would be shorter than the rest of
+`sys`'s time series and fail PSY's cross-component horizon check). Skips are reported as one
+summary `@warn`, not one per constraint.
 """
 function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0, include_solution::Bool = false)
     start_date = first(date_range)
@@ -25,6 +29,13 @@ function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0, in
         return String[], Dict{String, Symbol}()
     end
     invoked_by_id = groupby(invoked, :GENCONID)
+
+    row_count_tally = Dict{Int, Int}()
+    for group in invoked_by_id
+        n = nrow(group)
+        row_count_tally[n] = get(row_count_tally, n, 0) + 1
+    end
+    modal_row_count = argmax(row_count_tally)
 
     gencon_versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
     definitions = read_constraint_definitions(db, gencon_versions)
@@ -87,6 +98,10 @@ function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0, in
             FCASRequirement[]
 
         constraint_rows = sort(invoked_by_id[(gencon_id,)], :SETTLEMENTDATE)
+        if nrow(constraint_rows) < modal_row_count
+            skipped[gencon_id] = :partial_interval_coverage
+            continue
+        end
         rhs_series = constraint_rows.RHS
 
         gc = GenericConstraint(;
