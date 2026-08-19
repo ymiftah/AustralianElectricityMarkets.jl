@@ -781,38 +781,47 @@ AustralianElectricityMarkets.nem_system(db, ::RegionalNetworkConfiguration; kwar
 export RegionalNetworkConfiguration
 
 """
-    Like `RegionalNetworkConfiguration`, but also pulls the tables needed for NEM FCAS
-    (Frequency Control Ancillary Services) — `DISPATCHLOAD`, `DISPATCHPRICE`,
-    `DISPATCH_FCAS_REQ`, `DISPATCHCONSTRAINT`, `GENCONDATA`, in addition to the
-    `BIDDAYOFFER_D`/`BIDPEROFFER_D` bid tables already required — and adds one FCAS reserve
-    per (market, region) to the resulting system (see `add_fcas_reserves!`). Kept separate
-    from `RegionalNetworkConfiguration` so energy-only users aren't forced to pull the extra
-    tables.
+    Like `RegionalNetworkConfiguration`, but also pulls the tables needed for NEM generic
+    constraints — FCAS requirements and network limits alike (see `GenericConstraint`) — and
+    builds them into the resulting system via `set_fcas_bids!`/`add_nem_constraints!`. Kept
+    separate from `RegionalNetworkConfiguration` so energy-only users aren't forced to pull
+    the extra tables.
 """
-struct FCASNetworkConfiguration <: NetworkConfiguration end
+struct ConstrainedNetworkConfiguration <: NetworkConfiguration end
 
 """
-    table_requirements(::FCASNetworkConfiguration)
+    table_requirements(::ConstrainedNetworkConfiguration)
 
 `RegionalNetworkConfiguration`'s tables plus `:DISPATCHLOAD, :DISPATCHPRICE,
-:DISPATCH_FCAS_REQ, :DISPATCHCONSTRAINT, :GENCONDATA`.
+:DISPATCH_FCAS_REQ, :DISPATCHCONSTRAINT, :GENCONDATA, :SPDCONNECTIONPOINTCONSTRAINT,
+:SPDREGIONCONSTRAINT, :SPDINTERCONNECTORCONSTRAINT`.
 """
-AustralianElectricityMarkets.table_requirements(::FCASNetworkConfiguration) = [
+AustralianElectricityMarkets.table_requirements(::ConstrainedNetworkConfiguration) = [
     table_requirements(RegionalNetworkConfiguration())...,
     :DISPATCHLOAD,
     :DISPATCHPRICE,
     :DISPATCH_FCAS_REQ,
     :DISPATCHCONSTRAINT,
     :GENCONDATA,
+    :SPDCONNECTIONPOINTCONSTRAINT,
+    :SPDREGIONCONSTRAINT,
+    :SPDINTERCONNECTORCONSTRAINT,
 ]
 
-function AustralianElectricityMarkets.nem_system(db, ::FCASNetworkConfiguration; kwargs...)
+# date_range is its own explicit keyword (not extracted from kwargs after the fact): this
+# makes Julia's keyword dispatch bind it separately so it is excluded from what `kwargs...`
+# forwards down to `System(base_power; kwargs...)`, whose constructor rejects any kwarg it
+# doesn't recognize - confirmed directly that forwarding date_range through kwargs crashes.
+function AustralianElectricityMarkets.nem_system(db, ::ConstrainedNetworkConfiguration; date_range = nothing, kwargs...)
+    if isnothing(date_range)
+        error("ConstrainedNetworkConfiguration requires a `date_range` keyword argument (e.g. `nem_system(db, ConstrainedNetworkConfiguration(); date_range = start:Minute(5):stop)`).")
+    end
     sys = nem_system(db; kwargs...)
-    regions = get_name.(get_components(Area, sys))
-    add_fcas_reserves!(sys, regions)
+    set_fcas_bids!(sys, db, date_range)
+    add_nem_constraints!(sys, db, date_range)
     return sys
 end
 
-export FCASNetworkConfiguration
+export ConstrainedNetworkConfiguration
 
 end

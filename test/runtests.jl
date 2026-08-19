@@ -29,6 +29,10 @@ end
     include("fcas.jl")
 end
 
+@testset "Constraint types" begin
+    include("constraints.jl")
+end
+
 
 @testset "Aqua" begin
     include("aqua.jl")

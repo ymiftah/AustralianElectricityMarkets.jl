@@ -5,13 +5,13 @@ using Chain
 using Statistics
 
 # The fixed set of AEMO BIDTYPE values this repo's bid-reading functions accept. A scoped
-# enum (same convention as FCASResponseTime) rather than a free-floating String, since only
-# these values are ever valid - this catches a typo'd bid type at construction time instead
-# of it silently becoming a WHERE clause that matches zero rows.
+# enum rather than a free-floating String, since only these values are ever valid - this
+# catches a typo'd bid type at construction time instead of it silently becoming a WHERE
+# clause that matches zero rows.
 #
 # RAISE1SEC/LOWER1SEC are included so the enum doesn't need a breaking change when the
-# deferred 1-second markets are picked up later (see FCASResponseTime.SEC1 docstring) - no
-# function in this initial pass constructs or accepts them.
+# deferred 1-second markets are picked up later - no function in this initial pass
+# constructs or accepts them.
 #
 # A docstring can't be attached directly above this call: `@scoped_enum` expands to an
 # `Expr(:toplevel, ...)`, which Julia's docsystem cannot document.
@@ -38,28 +38,24 @@ in-scope FCAS markets (`RAISE6SEC`, `LOWER6SEC`, `RAISE60SEC`, `LOWER60SEC`, `RA
 `LOWER5MIN`, `RAISEREG`, `LOWERREG`). `RAISE1SEC`/`LOWER1SEC` are also defined (AEMO's newer
 1-second markets), but deferred - no function in this package constructs or accepts them
 yet. Construct from a string with `BidType("RAISE6SEC")`; convert back with `string(x)`
-(not `"\$x"` - see `_fcas_direction`).
+(not `"\$x"` - see the note below on `@scoped_enum` and `Base.show`).
 """ BidType
 
-# AEMO BIDTYPE -> FCASResponseTime for the 6 contingency FCAS markets in scope.
-# RAISE1SEC/LOWER1SEC are deferred (see FCASResponseTime.SEC1 docstring).
-const FCAS_CONTINGENCY_MARKETS = Dict(
-    BidType.RAISE6SEC => FCASResponseTime.SEC6,
-    BidType.LOWER6SEC => FCASResponseTime.SEC6,
-    BidType.RAISE60SEC => FCASResponseTime.SEC60,
-    BidType.LOWER60SEC => FCASResponseTime.SEC60,
-    BidType.RAISE5MIN => FCASResponseTime.MIN5,
-    BidType.LOWER5MIN => FCASResponseTime.MIN5,
+# The 6 in-scope contingency FCAS markets. Was a `Dict{BidType, FCASResponseTime}` keyed dict
+# (response-time band per market); the `FCASResponseTime`-based `Reserve` API that was its
+# only consumer is gone (see `GenericConstraint`/`FCASBid` types design,
+# docs/superpowers/specs/2026-08-16-*), so this is now just the plain tuple of markets.
+const FCAS_CONTINGENCY_MARKETS = (
+    BidType.RAISE6SEC, BidType.LOWER6SEC, BidType.RAISE60SEC,
+    BidType.LOWER60SEC, BidType.RAISE5MIN, BidType.LOWER5MIN,
 )
 const FCAS_REGULATION_MARKETS = (BidType.RAISEREG, BidType.LOWERREG)
-const FCAS_BID_TYPES = (keys(FCAS_CONTINGENCY_MARKETS)..., FCAS_REGULATION_MARKETS...)
+const FCAS_BID_TYPES = (FCAS_CONTINGENCY_MARKETS..., FCAS_REGULATION_MARKETS...)
 
 # Note: string(bid_type), not "$bid_type" - @scoped_enum overrides Base.show (for a
 # human-readable "BidType.RAISE6SEC = 2" REPL display), and Julia's string interpolation
 # calls print -> show by default, not Base.string, so bare interpolation would silently
 # produce the wrong text anywhere a bid type is spliced into a name or SQL filter.
-_fcas_direction(bid_type::BidType) = startswith(string(bid_type), "RAISE") ? ReserveUp : ReserveDown
-
 
 """
     set_demand!(sys, db, date_range; kwargs...)
@@ -340,7 +336,9 @@ end
 
 Reads energy offers from `BIDPEROFFER_D`/`BIDDAYOFFER_D` and returns one row per
 `(SETTLEMENTDATE, DUID, DIRECTION, INTERVAL_DATETIME)` with the 10-band offer curve
-collapsed into a `piecewise_step_data` column. See [`read_fcas_bids`](@ref) for the
+collapsed into a `piecewise_step_data` column, plus `MAXAVAIL` (`BIDPEROFFER_D`) and
+`MINIMUMLOAD`/`DAILYENERGYCONSTRAINT` (`BIDDAYOFFER_D`) - the physical bounds a caller needs
+to clip dispatch to, not just the priced curve. See [`read_fcas_bids`](@ref) for the
 FCAS-market equivalent.
 """
 function read_bids(db, date_range; kwargs...)
@@ -437,6 +435,7 @@ function _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_d
         )
         select(
             :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME, :PRICEBANDARRAY, :BANDAVAILARRAY,
+            :MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT,
             AsTable(:) => ByRow(_extract_power_bids) => :piecewise_step_data
         )
     end
@@ -473,8 +472,10 @@ end
     _read_fcas_trapezium(db, energy_bids_table, bid_type::BidType, start_date, end_date)
 
 Reads the FCAS trapezium columns (`ENABLEMENTMIN/MAX`, `LOWBREAKPOINT`, `HIGHBREAKPOINT`,
-`MAXAVAIL`, `ROCUP`, `ROCDOWN`) from `BIDPEROFFER_D` for `bid_type`, latest-`VERSIONNO`
-resolved per `(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)`.
+`ROCUP`, `ROCDOWN`) from `BIDPEROFFER_D` for `bid_type`, latest-`VERSIONNO` resolved per
+`(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)`. Does not select `MAXAVAIL` - `bids`
+already carries it from the same table/filter via [`_massage_bids`](@ref), and duplicating it
+here would force `read_fcas_bids`'s join to rename one copy out from under `_extract_fcas_bid`.
 """
 function _read_fcas_trapezium(db, energy_bids_table, bid_type::BidType, start_date, end_date)
     sd = Date(start_date) - Day(1)
@@ -484,7 +485,7 @@ function _read_fcas_trapezium(db, energy_bids_table, bid_type::BidType, start_da
         db,
         """
         SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION,
-               ENABLEMENTMIN, LOWBREAKPOINT, HIGHBREAKPOINT, ENABLEMENTMAX, MAXAVAIL,
+               ENABLEMENTMIN, LOWBREAKPOINT, HIGHBREAKPOINT, ENABLEMENTMAX,
                ROCUP, ROCDOWN
         FROM $energy_bids_table
         WHERE BIDTYPE = ? AND SETTLEMENTDATE BETWEEN ? AND ?
@@ -500,137 +501,118 @@ function _read_fcas_trapezium(db, energy_bids_table, bid_type::BidType, start_da
 end
 
 """
-    _extract_fcas_offer(row)
+    _extract_fcas_bid(row)
 
-Mirrors [`_extract_power_bids`](@ref), additionally building an [`FCASTrapezium`](@ref).
-Expects `row` to have the same `PRICEBANDARRAY`/`BANDAVAILARRAY` columns as
-`_extract_power_bids`, the trapezium columns from [`_read_fcas_trapezium`](@ref), and a
-`reserve_name` column (the target [`NEMFCASReserve`](@ref)'s name, e.g. `"RAISE6SEC_NSW1"`).
+Mirrors [`_extract_power_bids`](@ref), additionally building the FCAS trapezium row from
+`row`'s trapezium columns ([`_read_fcas_trapezium`](@ref)). Returns `(curve_data,
+trapezium_row)`: a `PiecewiseStepData` plus an `NTuple{7,Float64}` packing
+`(enablement_min, low_breakpoint, high_breakpoint, enablement_max, max_avail, ramp_up_rate,
+ramp_down_rate)` (`NaN` where a ramp rate is missing, i.e. non-regulation markets) - the
+shape [`set_fcas_bids!`](@ref) attaches as two `Deterministic` series per (generator,
+market). Not a single [`FCASBid`](@ref)/[`FCASTrapezium`](@ref) object: confirmed directly
+that `Deterministic` rejects `FCASBid` and bare `Vector{Float64}` as a per-step element type
+(see `test/fcas.jl`'s `"FCASBid time series round-trip"` testset).
 """
-function _extract_fcas_offer(row)
+function _extract_fcas_bid(row)
     curve_data = _extract_power_bids(row)
-    offer_curve = make_market_bid_curve(curve_data, 0.0)
-    trapezium = FCASTrapezium(;
-        enablement_min = row.ENABLEMENTMIN,
-        low_breakpoint = row.LOWBREAKPOINT,
-        high_breakpoint = row.HIGHBREAKPOINT,
-        enablement_max = row.ENABLEMENTMAX,
-        max_avail = row.MAXAVAIL,
-        ramp_up_rate = ismissing(row.ROCUP) ? nothing : Float64(row.ROCUP),
-        ramp_down_rate = ismissing(row.ROCDOWN) ? nothing : Float64(row.ROCDOWN),
+    trapezium_row = (
+        row.ENABLEMENTMIN, row.LOWBREAKPOINT, row.HIGHBREAKPOINT, row.ENABLEMENTMAX, row.MAXAVAIL,
+        ismissing(row.ROCUP) ? NaN : Float64(row.ROCUP),
+        ismissing(row.ROCDOWN) ? NaN : Float64(row.ROCDOWN),
     )
-    return FCASOffer(row.reserve_name, offer_curve, trapezium)
+    return curve_data, trapezium_row
 end
 
 """
-    add_fcas_reserves!(sys, regions; bid_types = FCAS_BID_TYPES, requirement = 0.0)
+    _attach_fcas_bid_series!(sys, component, gdf, duid, series_suffix, start_date, resolution)
 
-Adds one [`ContingencyFCASReserve`](@ref)/[`RegulationFCASReserve`](@ref) service to `sys`
-per (FCAS market, region) pair, matching how AEMO settles regional FCAS requirements
-(mainland-vs-local contingency splits, e.g. SA islanding, are out of scope — see plan §4).
-`regions` is an iterable of NEM region names (e.g. `["NSW1", "QLD1", ...]`) already present
-as `PowerSystems.Area`s in `sys` (see `region_model.jl`).
-
-Returns a `Dict{String, PowerSystems.Reserve}` keyed by reserve name (e.g.
-`"RAISE6SEC_NSW1"`), for use by [`set_fcas_offers!`](@ref).
+Attaches the two per-`(component, FCAS market)` `Deterministic` series - `"fcas_curve_\$
+series_suffix"` and `"fcas_trapezium_\$series_suffix"` - from `gdf` (a `DUID`-grouped bids
+`DataFrame`) if `duid` has a group in it. No-op otherwise, so callers can probe a component
+against several `DIRECTION` groupings without checking `haskey` themselves.
 """
-function add_fcas_reserves!(sys, regions; bid_types = FCAS_BID_TYPES, requirement = 0.0)
-    reserves = Dict{String, Reserve}()
-    for region in regions
-        area = get_component(Area, sys, region)
-        for bid_type in bid_types
-            direction = _fcas_direction(bid_type)
-            name = "$(string(bid_type))_$(region)"
-            reserve = if haskey(FCAS_CONTINGENCY_MARKETS, bid_type)
-                ContingencyFCASReserve{direction}(;
-                    name = name, available = true, region = area,
-                    response_time = FCAS_CONTINGENCY_MARKETS[bid_type],
-                    requirement = Float64(requirement),
-                )
-            else
-                RegulationFCASReserve{direction}(;
-                    name = name, available = true, region = area,
-                    requirement = Float64(requirement),
-                )
-            end
-            # No contributing devices yet - those attach incrementally in set_fcas_offers!
-            # via add_service!(device, reserve, sys). PSY has no add_service!(sys, service)
-            # two-arg form; every documented form takes a (possibly empty) devices arg too.
-            add_service!(sys, reserve, Device[])
-            reserves[name] = reserve
-        end
-    end
-    return reserves
+function _attach_fcas_bid_series!(sys, component, gdf, duid::AbstractString, series_suffix::AbstractString, start_date, resolution)
+    (isnothing(gdf) || !haskey(gdf, (duid,))) && return
+    rows = gdf[(duid,)]
+    # rows.curve_data/.trapezium_row are SubArray views into the grouped DataFrame -
+    # Deterministic's convert_data only accepts a plain Vector.
+    curve_ts = Deterministic(;
+        name = "fcas_curve_$(series_suffix)",
+        data = Dict(start_date => collect(rows.curve_data)),
+        resolution = resolution,
+        interval = resolution,
+    )
+    add_time_series!(sys, component, curve_ts)
+    trapezium_ts = Deterministic(;
+        name = "fcas_trapezium_$(series_suffix)",
+        data = Dict(start_date => collect(rows.trapezium_row)),
+        resolution = resolution,
+        interval = resolution,
+    )
+    add_time_series!(sys, component, trapezium_ts)
+    return
 end
 
 """
-    set_fcas_offers!(sys, db, date_range, region_reserves; kwargs...)
+    set_fcas_bids!(sys, db, date_range; kwargs...)
 
-Adds FCAS bid data to the system, mirroring [`set_market_bids!`](@ref) for the energy bid
-path. For every (market, device) combination with bid data in `date_range`:
-- links the device to its regional [`NEMFCASReserve`](@ref) as a contributing device, via
-  `PowerSystems.add_service!(device, reserve, sys)` (so `get_contributing_devices(sys,
-  reserve)` finds it, same as any other PSY reserve);
-- stores the priced [`FCASOffer`](@ref) (10-band offer curve + [`FCASTrapezium`](@ref)) in
-  the device's `ext["fcas_offers"]::Vector{FCASOffer}`.
+Attaches FCAS bid data to the system as two `Deterministic` time series per `(component,
+FCAS market)` with bid data in `date_range`:
+- `"fcas_curve_<SERVICE>"` (e.g. `"fcas_curve_RAISE6SEC"`), a `Vector{PiecewiseStepData}` -
+  the priced 10-band offer curve per interval;
+- `"fcas_trapezium_<SERVICE>"`, a `Vector{NTuple{7,Float64}}` - the AEMO trapezium per
+  interval, packed by [`_extract_fcas_bid`](@ref).
 
-`ext` is used rather than swapping the device's `operation_cost` to a
-[`NEMMarketBidCost`](@ref): confirmed directly (not just by reading the schema) that PSY's
-auto-generated device structs declare `operation_cost` as a *closed* `Union` of specific
-concrete cost types (e.g. `ThermalStandard.operation_cost::Union{ThermalGenerationCost,
-MarketBidCost}`), not the abstract `OperationalCost`/`OfferCurveCost` supertype — so no
-externally-defined `OfferCurveCost` subtype can ever be assigned there without modifying
-PowerSystems' generated structs, which would violate the zero-core-changes goal this plan
-is built on. `ext` is PSY's own sanctioned extension point for exactly this situation
-("metadata that [isn't] used in simulation" — e.g. `region_model.jl`'s existing
-`ext["station_name"]`/`ext["postcode"]` usage). The tradeoff: values stored there round-trip
-through `to_json`/`System(path)` as plain `Dict`s, not reconstructed `FCASOffer` structs —
-acceptable since simulation-time consumption of this data isn't in scope here (see plan §4).
+`DIRECTION` routes and names the series, mirroring [`set_market_bids!`](@ref)'s energy-bid
+GEN/LOAD split: `GEN` and `BIDIRECTIONAL` rows are both capability offered while the unit
+dispatches normally (a `BIDIRECTIONAL` bid doesn't distinguish charge/discharge, so it's
+attached under the plain `<SERVICE>` name alongside `GEN`), attached to every matching
+`Generator` and `EnergyReservoirStorage`; `LOAD` rows are decremental capability, attached
+only to `EnergyReservoirStorage` under `"<SERVICE>_decremental"`. Dropping `LOAD`/
+`BIDIRECTIONAL` rows entirely (as an earlier version of this function did) silently loses a
+large share of real FCAS providers - measured on 2 Jan 2025 `BIDPEROFFER_D`, `LOAD` and
+`BIDIRECTIONAL` rows together outnumber `GEN` rows for several contingency markets.
 
-Unlike energy bids (attached as a full `Deterministic` time series across `date_range` by
-[`set_market_bids!`](@ref)), this attaches a single snapshot offer per device per market,
-taken from the first interval in `date_range` — full time-varying FCAS bid ingestion is
-deferred; see the NEMDE co-optimization scope note in the FCAS types plan.
+Two series, not one carrying [`FCASBid`](@ref)/[`FCASTrapezium`](@ref) objects directly:
+confirmed directly that `Deterministic` rejects those (and bare `Vector{Float64}`) as a
+per-step element type - see `test/fcas.jl`'s `"FCASBid time series round-trip"` testset for
+the proven shape this mirrors. Does not require or create any `Reserve`/service - FCAS
+requirements are [`GenericConstraint`](@ref)s built separately by
+[`add_nem_constraints!`](@ref).
+
+Unlike the deleted `set_fcas_offers!`, this is genuinely time-varying (mirrors
+[`set_market_bids!`](@ref)'s energy-bid path), not a single-interval snapshot.
 
 # Arguments
-- `sys`: The `PowerSystems.System` object. Should already have FCAS reserves added via
-  [`add_fcas_reserves!`](@ref).
+- `sys`: The `PowerSystems.System` object.
 - `db`: The database connection.
 - `date_range`: A range of dates for which to fetch FCAS bid data.
-- `region_reserves::Dict{String, <:Reserve}`: FCAS reserves already added to `sys`, keyed
-  by name (e.g. `"RAISE6SEC_NSW1"`) — see [`add_fcas_reserves!`](@ref).
 """
-function set_fcas_offers!(sys, db, date_range, region_reserves::Dict{String, <:Reserve}; kwargs...)
-    units = read_units(db)
-    duid_region = Dict(zip(units.DUID, units.REGIONID))
+function set_fcas_bids!(sys, db, date_range; kwargs...)
+    start_date = first(date_range)
+    resolution = get(kwargs, :resolution, Minute(5))
 
     for bid_type in FCAS_BID_TYPES
         bids = read_fcas_bids(db, date_range, bid_type; kwargs...)
         DataFrames.isempty(bids) && continue
-        transform!(bids, :DUID => ByRow(x -> get(duid_region, x, missing)) => :REGIONID)
-        dropmissing!(bids, :REGIONID)
-        DataFrames.isempty(bids) && continue
+        transform!(bids, AsTable(:) => ByRow(_extract_fcas_bid) => [:curve_data, :trapezium_row])
+        sort!(bids, :INTERVAL_DATETIME)
         bid_type_str = string(bid_type)
-        transform!(bids, :REGIONID => ByRow(region -> "$(bid_type_str)_$(region)") => :reserve_name)
-        transform!(bids, AsTable(:) => ByRow(_extract_fcas_offer) => :fcas_offer)
+
+        incremental = subset(bids, :DIRECTION => ByRow(in(("GEN", "BIDIRECTIONAL"))))
+        decremental = subset(bids, :DIRECTION => ByRow(==("LOAD")))
+        gdf_inc = DataFrames.isempty(incremental) ? nothing : groupby(incremental, :DUID)
+        gdf_dec = DataFrames.isempty(decremental) ? nothing : groupby(decremental, :DUID)
 
         foreach(get_components(Generator, sys)) do gen
-            gen_id = get_name(gen)
-            gen_bids = subset(bids, :DUID => ByRow(==(gen_id)), :DIRECTION => ByRow(==("GEN")))
-            DataFrames.isempty(gen_bids) && return
-            reserve_name = first(gen_bids.reserve_name)
-            haskey(region_reserves, reserve_name) || return
-            _add_fcas_offer!(sys, gen, region_reserves[reserve_name], first(gen_bids.fcas_offer))
+            _attach_fcas_bid_series!(sys, gen, gdf_inc, get_name(gen), bid_type_str, start_date, resolution)
+        end
+        foreach(get_components(EnergyReservoirStorage, sys)) do stor
+            duid = get_name(stor)
+            _attach_fcas_bid_series!(sys, stor, gdf_inc, duid, bid_type_str, start_date, resolution)
+            _attach_fcas_bid_series!(sys, stor, gdf_dec, duid, "$(bid_type_str)_decremental", start_date, resolution)
         end
     end
-    return
-end
-
-function _add_fcas_offer!(sys, gen, reserve::Reserve, offer::FCASOffer)
-    add_service!(gen, reserve, sys)
-    offers = get(get_ext(gen), "fcas_offers", FCASOffer[])
-    push!(offers, offer)
-    get_ext(gen)["fcas_offers"] = offers
     return
 end
 
