@@ -336,7 +336,9 @@ end
 
 Reads energy offers from `BIDPEROFFER_D`/`BIDDAYOFFER_D` and returns one row per
 `(SETTLEMENTDATE, DUID, DIRECTION, INTERVAL_DATETIME)` with the 10-band offer curve
-collapsed into a `piecewise_step_data` column. See [`read_fcas_bids`](@ref) for the
+collapsed into a `piecewise_step_data` column, plus `MAXAVAIL` (`BIDPEROFFER_D`) and
+`MINIMUMLOAD`/`DAILYENERGYCONSTRAINT` (`BIDDAYOFFER_D`) - the physical bounds a caller needs
+to clip dispatch to, not just the priced curve. See [`read_fcas_bids`](@ref) for the
 FCAS-market equivalent.
 """
 function read_bids(db, date_range; kwargs...)
@@ -433,6 +435,7 @@ function _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_d
         )
         select(
             :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME, :PRICEBANDARRAY, :BANDAVAILARRAY,
+            :MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT,
             AsTable(:) => ByRow(_extract_power_bids) => :piecewise_step_data
         )
     end
@@ -469,8 +472,10 @@ end
     _read_fcas_trapezium(db, energy_bids_table, bid_type::BidType, start_date, end_date)
 
 Reads the FCAS trapezium columns (`ENABLEMENTMIN/MAX`, `LOWBREAKPOINT`, `HIGHBREAKPOINT`,
-`MAXAVAIL`, `ROCUP`, `ROCDOWN`) from `BIDPEROFFER_D` for `bid_type`, latest-`VERSIONNO`
-resolved per `(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)`.
+`ROCUP`, `ROCDOWN`) from `BIDPEROFFER_D` for `bid_type`, latest-`VERSIONNO` resolved per
+`(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)`. Does not select `MAXAVAIL` - `bids`
+already carries it from the same table/filter via [`_massage_bids`](@ref), and duplicating it
+here would force `read_fcas_bids`'s join to rename one copy out from under `_extract_fcas_bid`.
 """
 function _read_fcas_trapezium(db, energy_bids_table, bid_type::BidType, start_date, end_date)
     sd = Date(start_date) - Day(1)
@@ -480,7 +485,7 @@ function _read_fcas_trapezium(db, energy_bids_table, bid_type::BidType, start_da
         db,
         """
         SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION,
-               ENABLEMENTMIN, LOWBREAKPOINT, HIGHBREAKPOINT, ENABLEMENTMAX, MAXAVAIL,
+               ENABLEMENTMIN, LOWBREAKPOINT, HIGHBREAKPOINT, ENABLEMENTMAX,
                ROCUP, ROCDOWN
         FROM $energy_bids_table
         WHERE BIDTYPE = ? AND SETTLEMENTDATE BETWEEN ? AND ?
