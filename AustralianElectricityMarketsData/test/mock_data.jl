@@ -343,7 +343,7 @@ function create_mock_data(hive_root::String)
     # unresolvable-term constraint (N_PHANTOM_TEST, references DUDETAILSUMMARY's PHANTOM1
     # DUID, which is never built into a System component), and one partial-coverage
     # constraint (N_PARTIAL_COVERAGE, invoked in DISPATCHCONSTRAINT for only every other
-    # interval - exercises add_nem_constraints!'s :partial_interval_coverage skip path, see
+    # interval - exercises add_nem_constraints!'s rhs-padding/"invoked"-mask path, see
     # test/constraints.jl).
     gencon_ids = ["F_$(region)_$(bid_type)" for region in regions for bid_type in fcas_bid_types]
     all_gencon_ids = vcat(gencon_ids, ["N_BAYSW_THERMAL", "N_PHANTOM_TEST", "N_PARTIAL_COVERAGE"])

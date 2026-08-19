@@ -1,17 +1,20 @@
 @testset "Constraint types" begin
     using AustralianElectricityMarkets
     using PowerSystems
+    using Dates
 
-    @testset "_modal_row_count tie-breaking" begin
-        # Plain mode, no tie.
-        @test AustralianElectricityMarkets._modal_row_count([12, 12, 12, 6]) == 12
-        # Tallies tie 3-vs-3 between a full-coverage count (12) and a partial one (6): must
-        # prefer the larger count, the safer default against reintroducing the short-series
-        # crash the :partial_interval_coverage check exists to prevent.
-        @test AustralianElectricityMarkets._modal_row_count([12, 12, 12, 6, 6, 6]) == 12
-        @test AustralianElectricityMarkets._modal_row_count([100, 100, 3, 3]) == 100
-        # Order shouldn't matter.
-        @test AustralianElectricityMarkets._modal_row_count([6, 12, 6, 12, 6, 12]) == 12
+    @testset "_pad_to_grid carries the last known value forward" begin
+        grid = [DateTime(2025, 1, 1, 0, 5 * i) for i in 0:3]
+        values_by_time = Dict(grid[1] => 10.0, grid[3] => 30.0)
+        series, invoked = AustralianElectricityMarkets._pad_to_grid(values_by_time, grid, 0.0)
+        @test series == [10.0, 10.0, 30.0, 30.0]
+        @test invoked == [1.0, 0.0, 1.0, 0.0]
+
+        # A gap before the first known value falls back to initial_fill.
+        values_by_time2 = Dict(grid[3] => 30.0)
+        series2, invoked2 = AustralianElectricityMarkets._pad_to_grid(values_by_time2, grid, -1.0)
+        @test series2 == [-1.0, -1.0, 30.0, 30.0]
+        @test invoked2 == [0.0, 0.0, 1.0, 0.0]
     end
 
     @testset "ConstraintTerm construction and accessors" begin
@@ -197,11 +200,17 @@ end
     @test skipped["N_PHANTOM_TEST"] == :unknown_duid
 
     # N_PARTIAL_COVERAGE is only invoked in DISPATCHCONSTRAINT for every other interval
-    # (6 of 12 rows over this date_range) - fewer than the modal 12-row coverage every other
-    # invoked constraint has, so it must be skipped rather than added with a short "rhs"
-    # series that would fail PSY's cross-component time-series horizon check.
-    @test "N_PARTIAL_COVERAGE" ∉ added
-    @test skipped["N_PARTIAL_COVERAGE"] == :partial_interval_coverage
+    # (6 of 12 rows over this date_range) - it is added anyway, with its "rhs"/"lhs" padded
+    # to the full 12-interval grid (carrying the last known value forward) and an "invoked"
+    # series recording which of those 12 were real, so it never silently drops a real-data
+    # constraint that just wasn't invoked every interval (see add_nem_constraints! docstring).
+    @test "N_PARTIAL_COVERAGE" in added
+    partial_gc = get_component(GenericConstraint, sys, "N_PARTIAL_COVERAGE")
+    partial_rhs = first(values(get_data(get_time_series(Deterministic, partial_gc, "rhs"))))
+    partial_invoked = first(values(get_data(get_time_series(Deterministic, partial_gc, "invoked"))))
+    @test length(partial_rhs) == 12
+    @test all(==(150.0), partial_rhs)  # constant RHS - forward-fill is a no-op here
+    @test partial_invoked == [isodd(i) ? 0.0 : 1.0 for i in 0:11]
 
     gc = get_component(GenericConstraint, sys, "F_VIC1_RAISE6SEC")
     @test !isnothing(gc)

@@ -1,17 +1,27 @@
 """
-    _modal_row_count(counts) -> Int
+    _pad_to_grid(values_by_time, grid, initial_fill) -> (series, invoked_mask)
 
-Most frequent value in `counts` (a row count per invoked `GENCONID`); ties break toward the
-larger value, since a larger row count is definitionally closer to full interval coverage and
-is the safer default for [`add_nem_constraints!`](@ref)'s `:partial_interval_coverage` check.
+Reindexes a `SETTLEMENTDATE -> Float64` mapping onto `grid` (sorted, one entry per dispatch
+interval NEMDE actually solved somewhere in the requested range — see [`add_nem_constraints!`](@ref)).
+A gap — an interval this `GENCONID` wasn't invoked at, e.g. its constraint set applied only
+partway through the range — carries the last known value forward rather than an invented
+sentinel; `invoked_mask` (`1.0`/`0.0`) is the authoritative per-interval signal for whether the
+value at that position was actually enforced, since the carried-forward value itself is not.
 """
-function _modal_row_count(counts)
-    tally = Dict{Int, Int}()
-    for n in counts
-        tally[n] = get(tally, n, 0) + 1
+function _pad_to_grid(values_by_time::Dict, grid::Vector{DateTime}, initial_fill::Float64)
+    series = Vector{Float64}(undef, length(grid))
+    mask = Vector{Float64}(undef, length(grid))
+    last_value = initial_fill
+    for (i, t) in enumerate(grid)
+        if haskey(values_by_time, t)
+            last_value = values_by_time[t]
+            mask[i] = 1.0
+        else
+            mask[i] = 0.0
+        end
+        series[i] = last_value
     end
-    max_tally = maximum(values(tally))
-    return maximum(k for (k, v) in tally if v == max_tally)
+    return series, mask
 end
 
 """
@@ -20,20 +30,24 @@ end
 Adds one [`GenericConstraint`](@ref) per constraint invoked in `date_range`
 (`DISPATCHCONSTRAINT` membership) whose LHS terms all resolve against components already in
 `sys` — a constraint with any unresolvable term is skipped entirely, never added with a
-partial LHS. Each added constraint gets an `"rhs"` `Deterministic` time series replaying
-`DISPATCHCONSTRAINT.RHS` per interval; `include_solution = true` additionally attaches
-`"lhs"`/`"marginal_value"` series (validation-only — feeding a solved `MARGINALVALUE` back
-into a dispatch simulation is the same category error as using `RRP` as an LP input).
+partial LHS. Each added constraint gets an `"rhs"` `Deterministic` time series spanning every
+dispatch interval any constraint was invoked at in `date_range`, replaying
+`DISPATCHCONSTRAINT.RHS` where this `GENCONID` was actually invoked and carrying the last
+known value forward elsewhere (a constraint's own coverage can be shorter than another's — it
+stopped or started applying partway through the range — and a short series would fail PSY's
+cross-component time-series horizon check). A companion `"invoked"` `Deterministic` series
+(`1.0`/`0.0`) is the authoritative record of which intervals were real: **do not** treat a
+carried-forward `"rhs"` value as enforced without checking it. `include_solution = true`
+additionally attaches `"lhs"` (same carry-forward) and `"marginal_value"` (`0.0`, not
+carried forward, at any interval `"invoked"` is `0.0` — a constraint not in force has no
+shadow price, by definition) — both validation-only, since feeding a solved `MARGINALVALUE`
+back into a dispatch simulation is the same category error as using `RRP` as an LP input.
 
 Returns `(added, skipped)`: `added::Vector{String}` of `GENCONID`s successfully added, and
 `skipped::Dict{String, Symbol}` mapping a skipped `GENCONID` to one reason — `:no_definition`
-(no matching `GENCONDATA` version), `:no_terms` (no `SPD*` rows for its version),
+(no matching `GENCONDATA` version), `:no_terms` (no `SPD*` rows for its version), or
 `:unknown_duid`/`:unknown_region`/`:unknown_interconnector` (a term referenced a component
-`sys` doesn't have), or `:partial_interval_coverage` (fewer `DISPATCHCONSTRAINT` rows than the
-modal row count across all constraints invoked in `date_range` — the constraint stopped or
-started applying partway through, so its `"rhs"` series would be shorter than the rest of
-`sys`'s time series and fail PSY's cross-component horizon check). Skips are reported as one
-summary `@warn`, not one per constraint.
+`sys` doesn't have). Skips are reported as one summary `@warn`, not one per constraint.
 """
 function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0, include_solution::Bool = false)
     start_date = first(date_range)
@@ -46,7 +60,10 @@ function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0, in
     end
     invoked_by_id = groupby(invoked, :GENCONID)
 
-    modal_row_count = _modal_row_count(nrow(group) for group in invoked_by_id)
+    # Every interval any constraint was invoked at — not just one constraint's own rows, since
+    # no single GENCONID's coverage reliably represents "every interval NEMDE dispatched" (see
+    # docstring above).
+    full_grid = sort(unique(invoked.SETTLEMENTDATE))
 
     gencon_versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
     definitions = read_constraint_definitions(db, gencon_versions)
@@ -68,10 +85,6 @@ function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0, in
         end
         if !haskey(terms_by_id, (gencon_id,))
             skipped[gencon_id] = :no_terms
-            continue
-        end
-        if nrow(invoked_by_id[(gencon_id,)]) < modal_row_count
-            skipped[gencon_id] = :partial_interval_coverage
             continue
         end
         def = def_by_id[gencon_id]
@@ -113,7 +126,10 @@ function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0, in
             FCASRequirement[]
 
         constraint_rows = sort(invoked_by_id[(gencon_id,)], :SETTLEMENTDATE)
-        rhs_series = constraint_rows.RHS
+        rhs_by_time = Dict(zip(constraint_rows.SETTLEMENTDATE, constraint_rows.RHS))
+        rhs_series, invoked_series = _pad_to_grid(
+            rhs_by_time, full_grid, coalesce(def.CONSTRAINTVALUE, first(constraint_rows.RHS)),
+        )
 
         gc = GenericConstraint(;
             name = gencon_id,
@@ -137,14 +153,25 @@ function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0, in
             sys, gc,
             Deterministic(; name = "rhs", data = Dict(start_date => rhs_series), resolution = resolution, interval = resolution),
         )
+        add_time_series!(
+            sys, gc,
+            Deterministic(; name = "invoked", data = Dict(start_date => invoked_series), resolution = resolution, interval = resolution),
+        )
         if include_solution
+            lhs_by_time = Dict(zip(constraint_rows.SETTLEMENTDATE, constraint_rows.LHS))
+            lhs_series, _ = _pad_to_grid(lhs_by_time, full_grid, first(constraint_rows.LHS))
+            mv_by_time = Dict(zip(constraint_rows.SETTLEMENTDATE, constraint_rows.MARGINALVALUE))
+            # Not carried forward like rhs/lhs: an interval this constraint wasn't invoked at
+            # genuinely has zero shadow price, so 0.0 is a fact here, not a filler value.
+            marginal_value_series = [get(mv_by_time, t, 0.0) for t in full_grid]
+
             add_time_series!(
                 sys, gc,
-                Deterministic(; name = "lhs", data = Dict(start_date => constraint_rows.LHS), resolution = resolution, interval = resolution),
+                Deterministic(; name = "lhs", data = Dict(start_date => lhs_series), resolution = resolution, interval = resolution),
             )
             add_time_series!(
                 sys, gc,
-                Deterministic(; name = "marginal_value", data = Dict(start_date => constraint_rows.MARGINALVALUE), resolution = resolution, interval = resolution),
+                Deterministic(; name = "marginal_value", data = Dict(start_date => marginal_value_series), resolution = resolution, interval = resolution),
             )
         end
 
