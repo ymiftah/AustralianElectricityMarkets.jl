@@ -29,21 +29,26 @@ function _get_archive(table_name::String, year::Int, month::Int)::String
         "{table}" => table_name
     )
 
+    # Only a 404 (MissingDataError) justifies trying the other naming pattern - AEMO uses
+    # PUBLIC_DVD for some months and PUBLIC_ARCHIVE#...#FILE01# for others. A
+    # TransientDownloadError propagates immediately instead: when NEMWEB is rate-limiting
+    # us, retrying a second URL only adds load, and the retry/backoff already happened
+    # inside _download_and_cache.
     try
         @info "Downloading from primary URL" url
         _download_and_cache(url, tmp_zip)
     catch e
-        e isa HTTP.Exceptions.HTTPError || rethrow()
+        e isa MissingDataError || rethrow()
         try
             @info "Downloading from alternative URL" url_alt
             _download_and_cache(url_alt, tmp_zip)
         catch e2
-            e2 isa HTTP.Exceptions.HTTPError || rethrow()
+            e2 isa MissingDataError || rethrow()
             throw(
                 MissingDataError(
                     "Requested data for table: $table_name, year: $year, month: $month\n" *
-                        "not downloaded. Please check your internet connection.\n" *
-                        "Also check http://nemweb.com.au/#mms-data-model to see if your requested data is available."
+                        "returned HTTP 404 under both known URL patterns, so AEMO does not publish it.\n" *
+                        "Check http://nemweb.com.au/#mms-data-model to confirm availability."
                 )
             )
         end
@@ -52,18 +57,75 @@ function _get_archive(table_name::String, year::Int, month::Int)::String
     return tmp_zip   # return the zip path, not an extracted CSV
 end
 
+"Maximum attempts per URL before giving up with a [`TransientDownloadError`](@ref)."
+const _DOWNLOAD_MAX_ATTEMPTS = 5
+"Base seconds for the exponential backoff between download attempts."
+const _DOWNLOAD_BASE_DELAY_S = 2.0
+
+"""
+    _is_transient_status(status::Integer) -> Bool
+
+Whether an HTTP status means "ask again later" rather than "this does not exist".
+
+`403` is in the list because that is how NEMWEB rate-limits: a burst of requests (easily
+produced by bulk-populating a wide date range, or by two populate runs at once) gets 403 on
+URLs that resolve perfectly a minute later. Treating it as absence is what silently puts
+holes in a cache.
+"""
+_is_transient_status(status::Integer) =
+    status in (403, 408, 425, 429, 500, 502, 503, 504)
+
 """
     _download_and_cache(url::String, cache_path::String)
 
-Download file from URL and save to cache.
+Download `url` to `cache_path`, retrying transient failures with exponential backoff.
+
+Throws [`MissingDataError`](@ref) on a 404 (and any other non-transient non-200), or
+[`TransientDownloadError`](@ref) if a transient failure - see [`_is_transient_status`](@ref)
+\\- persists across [`_DOWNLOAD_MAX_ATTEMPTS`](@ref) attempts. The distinction is the whole
+point: callers skip the former and must not skip the latter.
 """
 function _download_and_cache(url::String, cache_path::String)
-    response = HTTP.get(url)
-    if response.status != 200
-        throw(MissingDataError("HTTP $(response.status): Unable to download from $url"))
+    last_reason = "unknown"
+    for attempt in 1:_DOWNLOAD_MAX_ATTEMPTS
+        transient = false
+        response = nothing
+        try
+            # status_exception=false so a non-2xx comes back as a response to classify
+            # rather than an exception; retry=false so backoff stays in one place here.
+            response = HTTP.get(url; status_exception = false, retry = false)
+        catch e
+            # Connection-level failure (DNS, reset, timeout) - no status to classify, and
+            # transient by nature.
+            (e isa HTTP.Exceptions.HTTPError || e isa Base.IOError) || rethrow()
+            transient = true
+            last_reason = sprint(showerror, e)
+        end
+
+        if !isnothing(response)
+            if response.status == 200
+                mkpath(dirname(cache_path))
+                return write(cache_path, response.body)
+            elseif _is_transient_status(response.status)
+                transient = true
+                last_reason = "HTTP $(response.status)"
+            else
+                throw(MissingDataError("HTTP $(response.status): Unable to download from $url"))
+            end
+        end
+
+        if transient && attempt < _DOWNLOAD_MAX_ATTEMPTS
+            delay = _DOWNLOAD_BASE_DELAY_S * 2.0^(attempt - 1)
+            @warn "Transient download failure; retrying" url reason = last_reason attempt delay_s = delay
+            sleep(delay)
+        end
     end
-    mkpath(dirname(cache_path))
-    return write(cache_path, response.body)
+    return throw(
+        TransientDownloadError(
+            "$last_reason after $_DOWNLOAD_MAX_ATTEMPTS attempts: $url\n" *
+                "NEMWEB is likely rate-limiting. This is NOT a missing month - re-run to gap-fill."
+        )
+    )
 end
 
 # ── DataSource-based fetch/write pipeline ─────────────────────────────────────
@@ -124,7 +186,10 @@ function _add_data(source::DataSource, year::Int, month::Int)
 
     catch e
         if isa(e, MissingDataError)
-            @error "No data available" table = source.table_name year month
+            # 404 under every known URL pattern: AEMO does not publish this month, so
+            # skipping is correct. A TransientDownloadError is NOT caught here - it must
+            # abort rather than leave a silent hole (see errors.jl).
+            @error "No data available (HTTP 404 - not published by AEMO)" table = source.table_name year month
         else
             rethrow(e)
         end
