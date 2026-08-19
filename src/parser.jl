@@ -524,14 +524,54 @@ function _extract_fcas_bid(row)
 end
 
 """
+    _attach_fcas_bid_series!(sys, component, gdf, duid, series_suffix, start_date, resolution)
+
+Attaches the two per-`(component, FCAS market)` `Deterministic` series - `"fcas_curve_\$
+series_suffix"` and `"fcas_trapezium_\$series_suffix"` - from `gdf` (a `DUID`-grouped bids
+`DataFrame`) if `duid` has a group in it. No-op otherwise, so callers can probe a component
+against several `DIRECTION` groupings without checking `haskey` themselves.
+"""
+function _attach_fcas_bid_series!(sys, component, gdf, duid::AbstractString, series_suffix::AbstractString, start_date, resolution)
+    (isnothing(gdf) || !haskey(gdf, (duid,))) && return
+    rows = gdf[(duid,)]
+    # rows.curve_data/.trapezium_row are SubArray views into the grouped DataFrame -
+    # Deterministic's convert_data only accepts a plain Vector.
+    curve_ts = Deterministic(;
+        name = "fcas_curve_$(series_suffix)",
+        data = Dict(start_date => collect(rows.curve_data)),
+        resolution = resolution,
+        interval = resolution,
+    )
+    add_time_series!(sys, component, curve_ts)
+    trapezium_ts = Deterministic(;
+        name = "fcas_trapezium_$(series_suffix)",
+        data = Dict(start_date => collect(rows.trapezium_row)),
+        resolution = resolution,
+        interval = resolution,
+    )
+    add_time_series!(sys, component, trapezium_ts)
+    return
+end
+
+"""
     set_fcas_bids!(sys, db, date_range; kwargs...)
 
-Attaches FCAS bid data to the system as two `Deterministic` time series per `(Generator,
+Attaches FCAS bid data to the system as two `Deterministic` time series per `(component,
 FCAS market)` with bid data in `date_range`:
 - `"fcas_curve_<SERVICE>"` (e.g. `"fcas_curve_RAISE6SEC"`), a `Vector{PiecewiseStepData}` -
   the priced 10-band offer curve per interval;
 - `"fcas_trapezium_<SERVICE>"`, a `Vector{NTuple{7,Float64}}` - the AEMO trapezium per
   interval, packed by [`_extract_fcas_bid`](@ref).
+
+`DIRECTION` routes and names the series, mirroring [`set_market_bids!`](@ref)'s energy-bid
+GEN/LOAD split: `GEN` and `BIDIRECTIONAL` rows are both capability offered while the unit
+dispatches normally (a `BIDIRECTIONAL` bid doesn't distinguish charge/discharge, so it's
+attached under the plain `<SERVICE>` name alongside `GEN`), attached to every matching
+`Generator` and `EnergyReservoirStorage`; `LOAD` rows are decremental capability, attached
+only to `EnergyReservoirStorage` under `"<SERVICE>_decremental"`. Dropping `LOAD`/
+`BIDIRECTIONAL` rows entirely (as an earlier version of this function did) silently loses a
+large share of real FCAS providers - measured on 2 Jan 2025 `BIDPEROFFER_D`, `LOAD` and
+`BIDIRECTIONAL` rows together outnumber `GEN` rows for several contingency markets.
 
 Two series, not one carrying [`FCASBid`](@ref)/[`FCASTrapezium`](@ref) objects directly:
 confirmed directly that `Deterministic` rejects those (and bare `Vector{Float64}`) as a
@@ -555,33 +595,22 @@ function set_fcas_bids!(sys, db, date_range; kwargs...)
     for bid_type in FCAS_BID_TYPES
         bids = read_fcas_bids(db, date_range, bid_type; kwargs...)
         DataFrames.isempty(bids) && continue
-        subset!(bids, :DIRECTION => ByRow(==("GEN")))
-        DataFrames.isempty(bids) && continue
         transform!(bids, AsTable(:) => ByRow(_extract_fcas_bid) => [:curve_data, :trapezium_row])
         sort!(bids, :INTERVAL_DATETIME)
-        gdf = groupby(bids, :DUID)
         bid_type_str = string(bid_type)
 
+        incremental = subset(bids, :DIRECTION => ByRow(in(("GEN", "BIDIRECTIONAL"))))
+        decremental = subset(bids, :DIRECTION => ByRow(==("LOAD")))
+        gdf_inc = DataFrames.isempty(incremental) ? nothing : groupby(incremental, :DUID)
+        gdf_dec = DataFrames.isempty(decremental) ? nothing : groupby(decremental, :DUID)
+
         foreach(get_components(Generator, sys)) do gen
-            gen_id = get_name(gen)
-            haskey(gdf, (gen_id,)) || return
-            gen_bids = gdf[(gen_id,)]
-            # gen_bids.curve_data/.trapezium_row are SubArray views into the grouped
-            # DataFrame - Deterministic's convert_data only accepts a plain Vector.
-            curve_ts = Deterministic(;
-                name = "fcas_curve_$(bid_type_str)",
-                data = Dict(start_date => collect(gen_bids.curve_data)),
-                resolution = resolution,
-                interval = resolution,
-            )
-            add_time_series!(sys, gen, curve_ts)
-            trapezium_ts = Deterministic(;
-                name = "fcas_trapezium_$(bid_type_str)",
-                data = Dict(start_date => collect(gen_bids.trapezium_row)),
-                resolution = resolution,
-                interval = resolution,
-            )
-            add_time_series!(sys, gen, trapezium_ts)
+            _attach_fcas_bid_series!(sys, gen, gdf_inc, get_name(gen), bid_type_str, start_date, resolution)
+        end
+        foreach(get_components(EnergyReservoirStorage, sys)) do stor
+            duid = get_name(stor)
+            _attach_fcas_bid_series!(sys, stor, gdf_inc, duid, bid_type_str, start_date, resolution)
+            _attach_fcas_bid_series!(sys, stor, gdf_dec, duid, "$(bid_type_str)_decremental", start_date, resolution)
         end
     end
     return

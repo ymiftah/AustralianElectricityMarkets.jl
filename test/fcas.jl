@@ -52,7 +52,7 @@
     end
 
     @testset "set_fcas_bids!" begin
-        # Two Deterministic series per (generator, market), not a Reserve/service and not a
+        # Two Deterministic series per (component, market), not a Reserve/service and not a
         # single-object FCASBid series: confirmed directly that Deterministic rejects
         # FCASBid/bare Vector{Float64} as a per-step element type (see "FCASBid time series
         # round-trip" below).
@@ -74,6 +74,14 @@
             @test first(trap_rows)[1] == 20.0
         end
         @test found
+
+        # BW01's LOAD-direction FCAS bids attach to its EnergyReservoirStorage component
+        # under the "_decremental" suffix, not dropped like an earlier version of
+        # set_fcas_bids! dropped every non-GEN DIRECTION row.
+        bw01 = get_component(EnergyReservoirStorage, sys, "BW01")
+        @test !isnothing(bw01)
+        @test has_time_series(bw01, Deterministic, "fcas_curve_RAISE6SEC_decremental")
+        @test has_time_series(bw01, Deterministic, "fcas_trapezium_RAISE6SEC_decremental")
     end
 
     @testset "ConstrainedNetworkConfiguration" begin

@@ -242,7 +242,34 @@ function create_mock_data(hive_root::String)
             append!(tmp_fcas, block; promote = true)
         end
 
-        append!(df_bid_per_offer, vcat(tmp, tmp_fcas); promote = true)
+        # FCAS LOAD bids for the battery (BW01) - exercises set_fcas_bids!'s decremental path,
+        # real NEMWEB data has substantial LOAD/BIDIRECTIONAL FCAS bid volume that an
+        # earlier version of set_fcas_bids! silently dropped.
+        tmp_fcas_load = DataFrame()
+        for bid_type in fcas_bid_types
+            block = DataFrame(
+                SETTLEMENTDATE = [test_date],
+                BIDTYPE = [bid_type],
+                INTERVAL_DATETIME = [t],
+                VERSIONNO = [1],
+                DUID = ["BW01"],
+                DIRECTION = ["LOAD"],
+                MAXAVAIL = [20.0 + i],
+                archive_month = ["2025-01"],
+                ENABLEMENTMIN = [20.0],
+                LOWBREAKPOINT = [30.0],
+                HIGHBREAKPOINT = [90.0],
+                ENABLEMENTMAX = [100.0],
+                ROCUP = [bid_type in ("RAISEREG", "LOWERREG") ? 1.0 : missing],
+                ROCDOWN = [bid_type in ("RAISEREG", "LOWERREG") ? 1.0 : missing],
+            )
+            for b in 1:10
+                block[!, "BANDAVAIL$b"] = fill(10.0, nrow(block))
+            end
+            append!(tmp_fcas_load, block; promote = true)
+        end
+
+        append!(df_bid_per_offer, vcat(tmp, tmp_fcas, tmp_fcas_load); promote = true)
     end
     save_hive(df_bid_per_offer, :BIDPEROFFER_D)
 
@@ -282,7 +309,24 @@ function create_mock_data(hive_root::String)
             )
         )
     end
-    bid_day_offer = vcat(bid_day_offer_gen, bid_day_offer_load, bid_day_offer_fcas)
+    # LOAD-direction FCAS price bands for BW01, matching the BIDPEROFFER_D LOAD block above -
+    # _massage_bids inner-joins on (SETTLEMENTDATE, DUID, DIRECTION).
+    bid_day_offer_fcas_load = DataFrame()
+    for bid_type in fcas_bid_types
+        append!(
+            bid_day_offer_fcas_load, DataFrame(
+                BIDTYPE = [bid_type],
+                SETTLEMENTDATE = [test_date],
+                DUID = ["BW01"],
+                DIRECTION = ["LOAD"],
+                MINIMUMLOAD = [0.0],
+                DAILYENERGYCONSTRAINT = [1000.0],
+                VERSIONNO = [1],
+                archive_month = ["2025-01"]
+            )
+        )
+    end
+    bid_day_offer = vcat(bid_day_offer_gen, bid_day_offer_load, bid_day_offer_fcas, bid_day_offer_fcas_load)
     for i in 1:10
         bid_day_offer[!, "PRICEBAND$i"] = fill(50.0 + i, nrow(bid_day_offer))
     end
