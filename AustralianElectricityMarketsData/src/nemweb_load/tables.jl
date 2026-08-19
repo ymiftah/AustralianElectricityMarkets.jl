@@ -57,6 +57,29 @@ const _TABLE_SPECS = [
         ],
         sort_by = ["SETTLEMENTDATE", "RUNNO", "INTERVENTION", "REGIONID", "BIDTYPE", "GENCONID"],
     ),
+    # AEMO retired DISPATCH_FCAS_REQ after the 2025-05 archive month and split it in two
+    # (last published 202505; 202506 onward 404s under both the PUBLIC_DVD and
+    # PUBLIC_ARCHIVE naming patterns). DISPATCH_FCAS_REQ_CONSTRAINT is the successor
+    # carrying the per-(region, service) rows; it renames GENCONID -> CONSTRAINTID and
+    # SETTLEMENTDATE -> INTERVAL_DATETIME, drops INTERVENTION and the
+    # GENCONEFFECTIVEDATE/GENCONVERSIONNO version-pinning pair, and adds LHS/RHS/RRP and
+    # the enablement and FPP cost columns. Readers union the two - see
+    # `read_constraint_fcas_requirements`.
+    (
+        name = "DISPATCH_FCAS_REQ_CONSTRAINT",
+        columns = [
+            "RUN_DATETIME", "RUNNO", "INTERVAL_DATETIME", "CONSTRAINTID", "REGIONID",
+            "BIDTYPE", "LHS", "RHS", "MARGINALVALUE", "RRP", "REGIONAL_ENABLEMENT",
+            "CONSTRAINT_ENABLEMENT", "REGION_BASE_COST", "BASE_COST", "ADJUSTED_COST",
+            "P_REGULATION",
+        ],
+        sort_by = ["INTERVAL_DATETIME", "RUNNO", "REGIONID", "BIDTYPE", "CONSTRAINTID"],
+    ),
+    (
+        name = "DISPATCH_FCAS_REQ_RUN",
+        columns = ["RUN_DATETIME", "RUNNO", "LASTCHANGED"],
+        sort_by = ["RUN_DATETIME", "RUNNO"],
+    ),
     (
         name = "DUDETAILSUMMARY",
         columns = [

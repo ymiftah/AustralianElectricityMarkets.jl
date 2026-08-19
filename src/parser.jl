@@ -639,6 +639,25 @@ _push_intervention!(params, schema, intervention) = "INTERVENTION" in schema ? p
 _cast_double(col) = "TRY_CAST($col AS DOUBLE) AS $col"
 
 """
+    _table_is_cached(db, table_name) -> Bool
+
+Whether `table_name` has at least one parquet file in the cache. `read_hive` only builds a
+glob string, so referencing an uncached table is a hard DuckDB error rather than an empty
+result - readers that tolerate a partially-populated cache (e.g. only one side of AEMO's
+`DISPATCH_FCAS_REQ` split) must check first. Uses DuckDB's `glob` so it works for remote
+filesystems too, not just a local `isdir`.
+"""
+function _table_is_cached(db, table_name::Symbol)
+    hive_root = AustralianElectricityMarketsData._parse_hive_root(db.config)
+    return try
+        df = _query(db, "SELECT COUNT(*) AS n FROM glob('$hive_root/$table_name/**/*.parquet')")
+        df.n[1] > 0
+    catch
+        false
+    end
+end
+
+"""
     read_fcas_requirements(db, date_range; intervention = 0)
 
 Reads per-interval, per-region FCAS requirement constraints actually enforced in dispatch,
@@ -683,13 +702,20 @@ function read_fcas_requirements(db, date_range; intervention::Integer = 0)
     end_date = last(date_range)
     sd = Date(start_date) - Day(1)
     ed = Date(end_date) + Day(1)
-    req_table = read_hive(db, :DISPATCH_FCAS_REQ)
     constraint_table = read_hive(db, :DISPATCHCONSTRAINT)
     gencon_table = read_hive(db, :GENCONDATA)
-    req_schema = names(_query(db, "SELECT * FROM $req_table LIMIT 0"))
     constraint_schema = names(_query(db, "SELECT * FROM $constraint_table LIMIT 0"))
-    params = Any[sd, ed]
-    _push_intervention!(params, req_schema, intervention)
+    req_union_sql, req_param_spec = _fcas_req_union_sql(db, intervention)
+    if isnothing(req_union_sql)
+        @warn "Neither DISPATCH_FCAS_REQ nor DISPATCH_FCAS_REQ_CONSTRAINT is cached; no FCAS requirements to read."
+        return DataFrame(
+            SETTLEMENTDATE = DateTime[], REGIONID = String[], BIDTYPE = BidType[],
+            GENCONID = String[], REQUIREMENT = Float64[], LHS = Float64[],
+            MARGINALVALUE = Float64[], DESCRIPTION = Union{Missing, String}[],
+            CONSTRAINTTYPE = Union{Missing, String}[],
+        )
+    end
+    params = _expand_fcas_req_params(req_param_spec, sd, ed)
     append!(params, [sd, ed])
     _push_intervention!(params, constraint_schema, intervention)
     df = _query(
@@ -697,11 +723,10 @@ function read_fcas_requirements(db, date_range; intervention::Integer = 0)
         """
         WITH req AS (
             SELECT *
-            FROM $req_table
-            WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(req_schema))
+            FROM ($req_union_sql)
             QUALIFY row_number() OVER (
                 PARTITION BY SETTLEMENTDATE, GENCONID, REGIONID, BIDTYPE
-                ORDER BY archive_month DESC
+                ORDER BY GENCONEFFECTIVEDATE DESC NULLS LAST
             ) = 1
         ),
         constraint_rhs AS (
@@ -728,9 +753,23 @@ function read_fcas_requirements(db, date_range; intervention::Integer = 0)
         FROM req
         INNER JOIN constraint_rhs c
             ON c.SETTLEMENTDATE = req.SETTLEMENTDATE AND c.CONSTRAINTID = req.GENCONID
+        -- Exact-version join on the old table's GENCONEFFECTIVEDATE/GENCONVERSIONNO pair;
+        -- DISPATCH_FCAS_REQ_CONSTRAINT dropped both, so post-2025-05 rows fall back to the
+        -- latest version effective at the interval. DESCRIPTION/CONSTRAINTTYPE are
+        -- cosmetic enrichment, so a looser match is acceptable here - it is NOT acceptable
+        -- for LHS term joins, which stay exact-equality (see read_constraint_terms).
         LEFT JOIN gencon g
-            ON g.GENCONID = req.GENCONID AND g.EFFECTIVEDATE = req.GENCONEFFECTIVEDATE
-               AND g.VERSIONNO = req.GENCONVERSIONNO
+            ON g.GENCONID = req.GENCONID
+               AND (
+                   (req.GENCONEFFECTIVEDATE IS NOT NULL
+                        AND g.EFFECTIVEDATE = req.GENCONEFFECTIVEDATE
+                        AND g.VERSIONNO = req.GENCONVERSIONNO)
+                   OR (req.GENCONEFFECTIVEDATE IS NULL AND g.EFFECTIVEDATE <= req.SETTLEMENTDATE)
+               )
+        QUALIFY row_number() OVER (
+            PARTITION BY req.SETTLEMENTDATE, req.GENCONID, req.REGIONID, req.BIDTYPE
+            ORDER BY g.EFFECTIVEDATE DESC NULLS LAST, g.VERSIONNO DESC NULLS LAST
+        ) = 1
         ORDER BY req.SETTLEMENTDATE, req.REGIONID, req.BIDTYPE
         """,
         params,

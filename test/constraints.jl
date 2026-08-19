@@ -188,6 +188,30 @@ end
         @test only(raise6sec_nsw1.REGIONID) == "NSW1"
         @test only(raise6sec_nsw1.BIDTYPE) == BidType.RAISE6SEC
     end
+
+    @testset "read_constraint_fcas_requirements spans the DISPATCH_FCAS_REQ split" begin
+        # AEMO retired DISPATCH_FCAS_REQ after the 2025-05 archive month, replacing it with
+        # DISPATCH_FCAS_REQ_CONSTRAINT. The mock stops the old table at interval 24 and runs
+        # the new one across all 49 (see mock_data.jl step 13), reproducing both the takeover
+        # and the backfill overlap.
+        overlap_range = start_date:Minute(5):(start_date + Minute(5 * 10))
+        new_only_range = (start_date + Minute(5 * 30)):Minute(5):(start_date + Minute(5 * 40))
+
+        # Old-table territory: unchanged behaviour.
+        @test !isempty(read_constraint_fcas_requirements(db, overlap_range))
+
+        # Past where the old table stops, attribution must still resolve - before the union
+        # this returned empty, silently making every constraint look purely network-driven.
+        new_only = read_constraint_fcas_requirements(db, new_only_range)
+        @test !isempty(new_only)
+        @test "F_NSW1_RAISE6SEC" in new_only.GENCONID
+        @test "N_BAYSW_THERMAL" ∉ new_only.GENCONID
+
+        # Overlap must dedup, not double-count: one row per (GENCONID, REGIONID, BIDTYPE).
+        overlap = read_constraint_fcas_requirements(db, overlap_range)
+        @test nrow(overlap) == nrow(unique(select(overlap, :GENCONID, :REGIONID, :BIDTYPE)))
+        @test nrow(subset(overlap, :GENCONID => ByRow(==("F_NSW1_RAISE6SEC")))) == 1
+    end
 end
 
 @testset "add_nem_constraints!" begin

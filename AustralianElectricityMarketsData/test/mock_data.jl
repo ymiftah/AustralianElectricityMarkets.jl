@@ -368,9 +368,18 @@ function create_mock_data(hive_root::String)
         ), :GENCONDATA
     )
 
-    # 13. DISPATCH_FCAS_REQ (49 intervals, maps each region/market to its governing constraint)
+    # 13. The dispatch FCAS requirement table, in BOTH of AEMO's generations - it maps each
+    # region/market to its governing constraint. AEMO last published DISPATCH_FCAS_REQ for
+    # the 2025-05 archive month and replaced it with DISPATCH_FCAS_REQ_CONSTRAINT (GENCONID
+    # -> CONSTRAINTID, SETTLEMENTDATE -> INTERVAL_DATETIME, no INTERVENTION, no
+    # GENCONEFFECTIVEDATE/GENCONVERSIONNO), backfilling the new table rather than starting it
+    # at the changeover. The fixture reproduces that shape: the old table stops halfway
+    # through the interval range while the new one spans all of it, so the two overlap on
+    # the first half and only the new one covers the second. That exercises both halves of
+    # the union in `_fcas_req_union_sql` - the takeover AND the overlap dedup.
+    fcas_req_old_intervals = 0:24
     df_fcas_req = DataFrame()
-    for i in intervals
+    for i in fcas_req_old_intervals
         t = base_datetime + Minute(5 * i)
         for bid_type in fcas_bid_types
             append!(
@@ -391,6 +400,43 @@ function create_mock_data(hive_root::String)
         end
     end
     save_hive(df_fcas_req, :DISPATCH_FCAS_REQ)
+
+    df_fcas_req_constraint = DataFrame()
+    df_fcas_req_run = DataFrame()
+    for i in intervals
+        t = base_datetime + Minute(5 * i)
+        append!(
+            df_fcas_req_run, DataFrame(
+                RUN_DATETIME = [t], RUNNO = [1], LASTCHANGED = [t],
+                archive_month = ["2025-01"]
+            )
+        )
+        for bid_type in fcas_bid_types
+            append!(
+                df_fcas_req_constraint, DataFrame(
+                    RUN_DATETIME = fill(t, n),
+                    RUNNO = fill(1, n),
+                    INTERVAL_DATETIME = fill(t, n),
+                    CONSTRAINTID = ["F_$(region)_$(bid_type)" for region in regions],
+                    REGIONID = regions,
+                    BIDTYPE = fill(bid_type, n),
+                    LHS = fill(requirement_mw(bid_type) + 0.1 * i, n),
+                    RHS = fill(requirement_mw(bid_type) + 0.1 * i, n),
+                    MARGINALVALUE = fill(marginal_value(bid_type), n),
+                    RRP = fill(marginal_value(bid_type), n),
+                    REGIONAL_ENABLEMENT = fill(120.0, n),
+                    CONSTRAINT_ENABLEMENT = fill(100.0, n),
+                    REGION_BASE_COST = fill(0.0, n),
+                    BASE_COST = fill(0.0, n),
+                    ADJUSTED_COST = fill(0.0, n),
+                    P_REGULATION = fill(0.0, n),
+                    archive_month = fill("2025-01", n)
+                )
+            )
+        end
+    end
+    save_hive(df_fcas_req_constraint, :DISPATCH_FCAS_REQ_CONSTRAINT)
+    save_hive(df_fcas_req_run, :DISPATCH_FCAS_REQ_RUN)
 
     # 14. DISPATCHCONSTRAINT. RHS varies per interval (requirement_mw + 0.1*i) to exercise
     # the "rhs" Deterministic time series, not just a flat default. GENCONID_EFFECTIVEDATE/
