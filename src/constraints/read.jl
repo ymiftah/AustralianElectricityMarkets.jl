@@ -34,6 +34,16 @@ function read_invoked_constraints(db, date_range; intervention::Integer = 0)
     return df
 end
 
+# Upper bound for pruning the versioned reference tables. A version effective *after* the
+# newest one NEMDE invoked can never satisfy the exact-equality join, and because each
+# archive month only holds the versions that became effective in it, DuckDB turns this into
+# partition pruning. Bounding below is not valid: a constraint invoked today can be on a
+# version effective years earlier, whose rows live only in that old month's partition.
+function _effective_date_bound(wanted)
+    bound = maximum(skipmissing(wanted.GENCONID_EFFECTIVEDATE); init = typemin(DateTime))
+    return "CAST('$bound' AS TIMESTAMP)"
+end
+
 """
     read_constraint_definitions(db, gencon_versions)
 
@@ -43,17 +53,16 @@ rows (see [`read_invoked_constraints`](@ref)). Joins each to its exact `GENCONDA
 `DESCRIPTION`/`LIMITTYPE`/`SOURCE`. A `GENCONID` absent from the result has no `GENCONDATA`
 row for that exact version — usually because the defining archive month isn't cached (see
 [`read_fcas_requirements`](@ref)) — callers must treat that as "no definition available".
+Throws an `ArgumentError` on an empty `gencon_versions`: nothing was invoked over the range,
+which means `DISPATCHCONSTRAINT` was never cached for it.
 """
 function read_constraint_definitions(db, gencon_versions)
-    if DataFrames.isempty(gencon_versions)
-        return DataFrame(
-            GENCONID = String[], EFFECTIVEDATE = DateTime[], VERSIONNO = Int[],
-            CONSTRAINTTYPE = Union{Missing, String}[], GENERICCONSTRAINTWEIGHT = Union{Missing, Float64}[],
-            CONSTRAINTVALUE = Union{Missing, Float64}[], DYNAMICRHS = Union{Missing, Int}[],
-            DESCRIPTION = Union{Missing, String}[], LIMITTYPE = Union{Missing, String}[],
-            SOURCE = Union{Missing, String}[],
-        )
-    end
+    DataFrames.isempty(gencon_versions) && throw(
+        ArgumentError(
+            "gencon_versions is empty: no constraint was invoked over the requested range. " *
+                "That means DISPATCHCONSTRAINT is not cached for it — run `populate(db, :DISPATCHCONSTRAINT, ...)` first.",
+        ),
+    )
     wanted = unique(select(gencon_versions, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
     DuckDB.register_data_frame(db.db, wanted, "wanted_gencon_versions")
     table = read_hive(db, :GENCONDATA)
@@ -63,6 +72,7 @@ function read_constraint_definitions(db, gencon_versions)
         WITH gencon AS (
             SELECT *
             FROM $table
+            WHERE EFFECTIVEDATE <= $(_effective_date_bound(wanted))
             QUALIFY row_number() OVER (
                 PARTITION BY GENCONID, EFFECTIVEDATE, VERSIONNO ORDER BY archive_month DESC
             ) = 1
@@ -94,14 +104,19 @@ in `gencon_versions`, long-format: one row per `(GENCONID, TERM_KIND, KEY, BIDTY
 row's `CONNECTIONPOINTID` is resolved to every `DUID` behind it as of `date_range`
 (`DUDETAILSUMMARY.START_DATE <= last(date_range) AND (END_DATE IS NULL OR END_DATE >= first(date_range))`)
 — one SPD row can expand to several `UnitTerm`s when a connection point serves multiple units.
+Throws an `ArgumentError` on an empty `gencon_versions`, as [`read_constraint_definitions`](@ref) does.
 """
 function read_constraint_terms(db, gencon_versions, date_range)
-    if DataFrames.isempty(gencon_versions)
-        return DataFrame(GENCONID = String[], TERM_KIND = String[], KEY = String[], BIDTYPE = Union{Missing, String}[], FACTOR = Float64[])
-    end
+    DataFrames.isempty(gencon_versions) && throw(
+        ArgumentError(
+            "gencon_versions is empty: no constraint was invoked over the requested range. " *
+                "That means DISPATCHCONSTRAINT is not cached for it — run `populate(db, :DISPATCHCONSTRAINT, ...)` first.",
+        ),
+    )
     start_date = first(date_range)
     end_date = last(date_range)
     wanted = unique(select(gencon_versions, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
+    eff_bound = _effective_date_bound(wanted)
     DuckDB.register_data_frame(db.db, wanted, "wanted_gencon_versions")
 
     cp_table = read_hive(db, :SPDCONNECTIONPOINTCONSTRAINT)
@@ -114,6 +129,7 @@ function read_constraint_terms(db, gencon_versions, date_range)
         """
         WITH cp AS (
             SELECT * FROM $cp_table
+            WHERE EFFECTIVEDATE <= $eff_bound
             QUALIFY row_number() OVER (
                 PARTITION BY CONNECTIONPOINTID, EFFECTIVEDATE, VERSIONNO, GENCONID, BIDTYPE
                 ORDER BY archive_month DESC
@@ -139,6 +155,7 @@ function read_constraint_terms(db, gencon_versions, date_range)
         SELECT r.GENCONID, 'REGION' AS TERM_KIND, r.REGIONID AS KEY, r.BIDTYPE, TRY_CAST(r.FACTOR AS DOUBLE) AS FACTOR
         FROM (
             SELECT * FROM $region_table
+            WHERE EFFECTIVEDATE <= $eff_bound
             QUALIFY row_number() OVER (
                 PARTITION BY REGIONID, EFFECTIVEDATE, VERSIONNO, GENCONID, BIDTYPE ORDER BY archive_month DESC
             ) = 1
@@ -152,6 +169,7 @@ function read_constraint_terms(db, gencon_versions, date_range)
                CAST(NULL AS VARCHAR) AS BIDTYPE, TRY_CAST(i.FACTOR AS DOUBLE) AS FACTOR
         FROM (
             SELECT * FROM $ic_table
+            WHERE EFFECTIVEDATE <= $eff_bound
             QUALIFY row_number() OVER (
                 PARTITION BY INTERCONNECTORID, EFFECTIVEDATE, VERSIONNO, GENCONID ORDER BY archive_month DESC
             ) = 1
@@ -166,14 +184,14 @@ function read_constraint_terms(db, gencon_versions, date_range)
 end
 
 """
-    read_constraint_governs(db, date_range; intervention = 0)
+    read_constraint_fcas_requirements(db, date_range; intervention = 0)
 
 Reads `DISPATCH_FCAS_REQ`'s `GENCONID -> (REGIONID, BIDTYPE)` mapping over `date_range`,
 long-format: one row per distinct pair observed. Warns (does not silently merge) if a
 `GENCONID`'s pair-set changes mid-range — AEMO re-scoping a constraint's market attribution
 partway through is rare but not representable by a single static set.
 """
-function read_constraint_governs(db, date_range; intervention::Integer = 0)
+function read_constraint_fcas_requirements(db, date_range; intervention::Integer = 0)
     start_date = first(date_range)
     end_date = last(date_range)
     sd = Date(start_date) - Day(1)

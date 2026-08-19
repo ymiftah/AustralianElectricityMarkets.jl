@@ -72,8 +72,8 @@ function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0, in
     terms_long = read_constraint_terms(db, gencon_versions, date_range)
     terms_by_id = groupby(terms_long, :GENCONID)
 
-    governs_long = read_constraint_governs(db, date_range; intervention = intervention)
-    governs_by_id = groupby(governs_long, :GENCONID)
+    reqs_long = read_constraint_fcas_requirements(db, date_range; intervention = intervention)
+    req_by_id = groupby(reqs_long, :GENCONID)
 
     added = String[]
     skipped = Dict{String, Symbol}()
@@ -121,8 +121,8 @@ function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0, in
         sense = def.CONSTRAINTTYPE == "<=" ? ConstraintSense.LE :
             def.CONSTRAINTTYPE == ">=" ? ConstraintSense.GE : ConstraintSense.EQ
 
-        governs = haskey(governs_by_id, (gencon_id,)) ?
-            [FCASRequirement(r.REGIONID, r.BIDTYPE) for r in eachrow(governs_by_id[(gencon_id,)])] :
+        reqs = haskey(req_by_id, (gencon_id,)) ?
+            [FCASRequirement(r.REGIONID, r.BIDTYPE) for r in eachrow(req_by_id[(gencon_id,)])] :
             FCASRequirement[]
 
         constraint_rows = sort(invoked_by_id[(gencon_id,)], :SETTLEMENTDATE)
@@ -137,7 +137,7 @@ function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0, in
             rhs = coalesce(def.CONSTRAINTVALUE, first(rhs_series)),
             constraint_weight = coalesce(def.GENERICCONSTRAINTWEIGHT, 1.0),
             terms = resolved_terms,
-            governs = governs,
+            fcas_requirements = reqs,
             ext = Dict{String, Any}(
                 "description" => def.DESCRIPTION,
                 "limit_type" => def.LIMITTYPE,

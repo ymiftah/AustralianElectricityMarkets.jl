@@ -339,7 +339,7 @@ function create_mock_data(hive_root::String)
     # to the DISPATCHPRICE regional FCAS price.
 
     # 12. GENCONDATA. One FCAS-requirement constraint per (region, market) plus one pure
-    # network constraint (N_BAYSW_THERMAL, governs nothing - no DISPATCH_FCAS_REQ row), one
+    # network constraint (N_BAYSW_THERMAL, no DISPATCH_FCAS_REQ row), one
     # unresolvable-term constraint (N_PHANTOM_TEST, references DUDETAILSUMMARY's PHANTOM1
     # DUID, which is never built into a System component), and one partial-coverage
     # constraint (N_PARTIAL_COVERAGE, invoked in DISPATCHCONSTRAINT for only every other

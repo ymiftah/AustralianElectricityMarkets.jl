@@ -44,7 +44,7 @@
             rhs = 137.5,
             constraint_weight = 2.0,
             terms = ConstraintTerm[UnitTerm("BW01", BidType.RAISE6SEC, 1.0), InterconnectorTerm("IC1", -1.0)],
-            governs = FCASRequirement[FCASRequirement("TAS1", BidType.RAISE6SEC)],
+            fcas_requirements = FCASRequirement[FCASRequirement("TAS1", BidType.RAISE6SEC)],
         )
         @test get_name(gc) == "F_TEST"
         @test get_available(gc) == true
@@ -52,7 +52,7 @@
         @test get_rhs(gc) == 137.5
         @test get_constraint_weight(gc) == 2.0
         @test length(get_terms(gc)) == 2
-        @test length(get_governs(gc)) == 1
+        @test length(get_fcas_requirements(gc)) == 1
         @test get_terms(gc)[1] isa UnitTerm
 
         set_available!(gc, false)
@@ -73,7 +73,7 @@
                 InterconnectorTerm("IC1", -1.0),
                 RegionTerm("NSW1", BidType.ENERGY, 0.5),
             ],
-            governs = FCASRequirement[FCASRequirement("TAS1", BidType.RAISE6SEC), FCASRequirement("TAS1", BidType.RAISE5MIN)],
+            fcas_requirements = FCASRequirement[FCASRequirement("TAS1", BidType.RAISE6SEC), FCASRequirement("TAS1", BidType.RAISE5MIN)],
             ext = Dict{String, Any}("description" => "test constraint"),
         )
         add_component!(sys, gc)
@@ -89,7 +89,7 @@
         @test get_rhs(gc2) == 137.5
         @test get_constraint_weight(gc2) == 2.0
         @test length(get_terms(gc2)) == 3
-        @test length(get_governs(gc2)) == 2
+        @test length(get_fcas_requirements(gc2)) == 2
 
         unit_term = only(filter(t -> t isa UnitTerm, get_terms(gc2)))
         @test get_duid(unit_term) == "BW01"
@@ -99,8 +99,8 @@
         region_term = only(filter(t -> t isa RegionTerm, get_terms(gc2)))
         @test get_region(region_term) == "NSW1"
 
-        @test all(r -> get_region(r) == "TAS1", get_governs(gc2))
-        @test Set(get_service.(get_governs(gc2))) == Set([BidType.RAISE6SEC, BidType.RAISE5MIN])
+        @test all(r -> get_region(r) == "TAS1", get_fcas_requirements(gc2))
+        @test Set(get_service.(get_fcas_requirements(gc2))) == Set([BidType.RAISE6SEC, BidType.RAISE5MIN])
     end
 end
 
@@ -143,6 +143,12 @@ end
         @test raise6sec_nsw1.CONSTRAINTVALUE == 50.0
     end
 
+    @testset "empty gencon_versions throws" begin
+        empty_versions = DataFrame(GENCONID = String[], GENCONID_EFFECTIVEDATE = DateTime[], GENCONID_VERSIONNO = Int[])
+        @test_throws ArgumentError read_constraint_definitions(db, empty_versions)
+        @test_throws ArgumentError read_constraint_terms(db, empty_versions, date_range)
+    end
+
     @testset "read_constraint_terms" begin
         invoked = read_invoked_constraints(db, date_range)
         versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
@@ -172,12 +178,12 @@ end
         @test only(ic_terms.FACTOR) == -1.0
     end
 
-    @testset "read_constraint_governs" begin
-        governs = read_constraint_governs(db, date_range)
-        @test !isempty(governs)
-        @test "N_BAYSW_THERMAL" ∉ governs.GENCONID  # pure network constraint
-        @test "N_PHANTOM_TEST" ∉ governs.GENCONID
-        raise6sec_nsw1 = subset(governs, :GENCONID => ByRow(==("F_NSW1_RAISE6SEC")))
+    @testset "read_constraint_fcas_requirements" begin
+        reqs = read_constraint_fcas_requirements(db, date_range)
+        @test !isempty(reqs)
+        @test "N_BAYSW_THERMAL" ∉ reqs.GENCONID  # pure network constraint
+        @test "N_PHANTOM_TEST" ∉ reqs.GENCONID
+        raise6sec_nsw1 = subset(reqs, :GENCONID => ByRow(==("F_NSW1_RAISE6SEC")))
         @test nrow(raise6sec_nsw1) == 1
         @test only(raise6sec_nsw1.REGIONID) == "NSW1"
         @test only(raise6sec_nsw1.BIDTYPE) == BidType.RAISE6SEC
@@ -216,11 +222,11 @@ end
     @test !isnothing(gc)
     @test get_sense(gc) == ConstraintSense.GE
     @test length(get_terms(gc)) == 4  # one UnitTerm per DUID behind CP_BAYSW
-    @test length(get_governs(gc)) == 1
-    @test only(get_governs(gc)) == FCASRequirement("VIC1", BidType.RAISE6SEC)
+    @test length(get_fcas_requirements(gc)) == 1
+    @test only(get_fcas_requirements(gc)) == FCASRequirement("VIC1", BidType.RAISE6SEC)
 
     network_gc = get_component(GenericConstraint, sys, "N_BAYSW_THERMAL")
-    @test isempty(get_governs(network_gc))  # pure network constraint
+    @test isempty(get_fcas_requirements(network_gc))  # pure network constraint
     @test !isempty(get_terms(network_gc))
 
     nsw1_raise6sec = get_component(GenericConstraint, sys, "F_NSW1_RAISE6SEC")

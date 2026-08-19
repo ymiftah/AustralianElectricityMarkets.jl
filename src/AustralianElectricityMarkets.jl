@@ -26,7 +26,7 @@ export set_demand!, set_renewable_pv!, set_renewable_wind!, set_market_bids!, se
 export read_fcas_bids, set_fcas_bids!, read_fcas_requirements,
     read_fcas_prices, read_fcas_dispatch, read_prices
 export read_invoked_constraints, read_constraint_definitions, read_constraint_terms,
-    read_constraint_governs, add_nem_constraints!
+    read_constraint_fcas_requirements, add_nem_constraints!
 export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS
 export BidType
 
@@ -80,7 +80,7 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
     GenericConstraint,
     get_duid, get_bid_type, get_factor, get_interconnector, get_region, get_service,
     get_sense, set_sense!, get_rhs, set_rhs!, get_constraint_weight, set_constraint_weight!,
-    get_terms, set_terms!, get_governs, set_governs!
+    get_terms, set_terms!, get_fcas_requirements, set_fcas_requirements!
 
 # Parsing data into models
 include("network_models/region_model.jl")

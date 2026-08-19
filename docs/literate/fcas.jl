@@ -355,7 +355,7 @@ end
 #
 # - [`GenericConstraint`](@ref) - one component per `GENCONID` actually invoked in dispatch,
 #   with its LHS `terms` ([`UnitTerm`](@ref)/[`RegionTerm`](@ref)/[`InterconnectorTerm`](@ref))
-#   and, for FCAS requirements specifically, a non-empty `governs` list tagging which
+#   and, for FCAS requirements specifically, a non-empty `fcas_requirements` list tagging which
 #   regional `(service, region)` price its shadow price feeds - see
 #   [`add_nem_constraints!`](@ref).
 # - [`FCASTrapezium`](@ref)/[`FCASBid`](@ref) - a device's offered trapezium and priced

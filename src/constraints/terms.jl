@@ -66,8 +66,9 @@ end
 get_region(v::FCASRequirement) = v.region
 get_service(v::FCASRequirement) = v.service
 
-# `Vector{ConstraintTerm}`/`Vector{FCASRequirement}` don't round-trip via IS's default
-# per-field dispatch - see task-2-report.md for why.
+# IS reads a field's concrete type back from its own `__metadata__` tag only when the field
+# serialized to a single `Dict`; an array field dispatches on the *declared* type, so
+# `Vector{ConstraintTerm}` comes back as raw `Dict`s. Resolve each element individually.
 _deserialize_device_parameter(d::Dict) =
     IS.deserialize(IS.get_type_from_serialization_metadata(IS.get_serialization_metadata(d)), d)
 IS.deserialize(::Type{Vector{ConstraintTerm}}, data::Vector) =
