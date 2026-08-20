@@ -1,16 +1,3 @@
-@testset "resolve_rebids" begin
-    bids = DataFrame(
-        DUID = ["A", "A", "B"],
-        BIDTYPE = ["ENERGY", "ENERGY", "ENERGY"],
-        DIRECTION = ["GEN", "GEN", "GEN"],
-        VERSIONNO = [1, 2, 3],
-        BANDAVAIL1 = [10.0, 20.0, 5.0],
-    )
-    resolved = resolve_rebids(bids)
-    @test nrow(resolved) == 2
-    @test only(resolved[resolved.DUID .== "A", :BANDAVAIL1]) == 20.0
-end
-
 @testset "energy_bounds" begin
     # Ramp is the binding limit: 50 MW start, 120 MW/hr -> ±10 MW over 5 minutes.
     b = energy_bounds(;

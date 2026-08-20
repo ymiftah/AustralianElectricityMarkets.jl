@@ -1,22 +1,6 @@
 const DISPATCH_INTERVAL_HOURS = 1 / 12
 
 """
-    resolve_rebids(bids)
-
-Keeps the latest rebid per `(DUID, BIDTYPE, DIRECTION)`, ordering by `VERSIONNO`. Participants
-may rebid quantities up to gate closure, so the archive holds several rows per unit per
-interval and only the last one was dispatched.
-
-# Returns
-A `DataFrame` with one row per `(DUID, BIDTYPE, DIRECTION)`.
-"""
-function resolve_rebids(bids::DataFrame)
-    isempty(bids) && return bids
-    sorted = sort(bids, [:DUID, :BIDTYPE, :DIRECTION, :VERSIONNO])
-    return combine(groupby(sorted, [:DUID, :BIDTYPE, :DIRECTION]), last)
-end
-
-"""
     energy_bounds(; initial_mw, ramp_up_rate, ramp_down_rate, max_avail, min_load, uigf,
         is_semi_scheduled)
 

@@ -10,9 +10,6 @@ matching NEMWEB convention.
 - `initial_mw`: `DUID -> INITIALMW`, the metered output at interval start (the ramp base).
 - `demand`: `REGIONID -> TOTALDEMAND`.
 - `uigf`: `DUID -> UIGF`, semi-scheduled weather ceiling. Absent for scheduled units.
-- `energy_bids`: rebid-resolved energy bands, one row per `(DUID, DIRECTION)`.
-- `fcas_bids`: rebid-resolved FCAS bands with trapezium columns, one row per
-  `(DUID, BIDTYPE, DIRECTION)`.
 - `interconnector_flows`: `INTERCONNECTORID -> MWFLOW` at interval start.
 - `intervention`: 0 for the pricing run, 1 for the physical run.
 """
@@ -21,8 +18,6 @@ struct IntervalInputs
     initial_mw::Dict{String, Float64}
     demand::Dict{String, Float64}
     uigf::Dict{String, Float64}
-    energy_bids::DataFrame
-    fcas_bids::DataFrame
     interconnector_flows::Dict{String, Float64}
     intervention::Int
 end
@@ -50,13 +45,10 @@ function read_interval_inputs(db, settlement_date::DateTime; intervention::Integ
 
     uigf = _read_uigf(db, settlement_date, intervention)
 
-    energy_bids = read_bids(db, settlement_date:Minute(5):(settlement_date + Minute(5)))
-    fcas_bids = _read_all_fcas_bids(db, settlement_date)
-
     flows = _read_interconnector_flows(db, settlement_date, intervention)
 
     return IntervalInputs(
-        settlement_date, initial_mw, demand, uigf, energy_bids, fcas_bids, flows, Int(intervention),
+        settlement_date, initial_mw, demand, uigf, flows, Int(intervention),
     )
 end
 
@@ -173,23 +165,4 @@ function _read_interconnector_flows(db, settlement_date::DateTime, intervention:
         params,
     )
     return Dict{String, Float64}(row.INTERCONNECTORID => row.MWFLOW for row in eachrow(df) if !ismissing(row.MWFLOW))
-end
-
-"""
-    _read_all_fcas_bids(db, settlement_date)
-
-Reads rebid-resolved FCAS bands (with trapezium columns) for every in-scope FCAS market
-(`FCAS_BID_TYPES`) at `settlement_date`, tagging each block with its `BIDTYPE` and stacking
-them into one `DataFrame`.
-"""
-function _read_all_fcas_bids(db, settlement_date::DateTime)
-    date_range = settlement_date:Minute(5):(settlement_date + Minute(5))
-    all_bids = DataFrame()
-    for bid_type in FCAS_BID_TYPES
-        bids = read_fcas_bids(db, date_range, bid_type)
-        DataFrames.isempty(bids) && continue
-        bids[!, :BIDTYPE] = fill(bid_type, nrow(bids))
-        append!(all_bids, bids; promote = true)
-    end
-    return all_bids
 end

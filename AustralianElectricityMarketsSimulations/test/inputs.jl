@@ -11,6 +11,13 @@
     @test haskey(inputs.initial_mw, "BW01")
     # UIGF only covers semi-scheduled units.
     @test !haskey(inputs.uigf, "BW01")
-    @test !isempty(inputs.energy_bids)
-    @test "DUID" in names(inputs.energy_bids)
+end
+
+@testset "IntervalInputs no longer carries bid data" begin
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    inputs = read_interval_inputs(db, DateTime(2025, 1, 1, 0, 5, 0))
+    @test !hasproperty(inputs, :energy_bids)
+    @test !hasproperty(inputs, :fcas_bids)
+    @test inputs isa IntervalInputs
+    @test !isempty(inputs.demand)
 end
