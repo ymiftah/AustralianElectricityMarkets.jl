@@ -61,6 +61,16 @@ end
 const _DOWNLOAD_MAX_ATTEMPTS = 5
 "Base seconds for the exponential backoff between download attempts."
 const _DOWNLOAD_BASE_DELAY_S = 2.0
+"""
+Seconds without data before a download is abandoned as transient.
+
+Without this an archive fetch can block forever on a half-open socket - a laptop suspending
+mid-run is the easy way to get one, since the peer drops the connection while the local end
+never learns of it. Generous, because the monthly archives are large and genuinely slow.
+"""
+const _DOWNLOAD_READ_TIMEOUT_S = 300
+"Seconds to wait for the TCP connection itself."
+const _DOWNLOAD_CONNECT_TIMEOUT_S = 30
 
 """
     _is_transient_status(status::Integer) -> Bool
@@ -93,7 +103,13 @@ function _download_and_cache(url::String, cache_path::String)
         try
             # status_exception=false so a non-2xx comes back as a response to classify
             # rather than an exception; retry=false so backoff stays in one place here.
-            response = HTTP.get(url; status_exception = false, retry = false)
+            # The timeouts turn a wedged socket into a retryable failure instead of an
+            # indefinite hang (see _DOWNLOAD_READ_TIMEOUT_S).
+            response = HTTP.get(
+                url; status_exception = false, retry = false,
+                readtimeout = _DOWNLOAD_READ_TIMEOUT_S,
+                connect_timeout = _DOWNLOAD_CONNECT_TIMEOUT_S,
+            )
         catch e
             # Connection-level failure (DNS, reset, timeout) - no status to classify, and
             # transient by nature.
