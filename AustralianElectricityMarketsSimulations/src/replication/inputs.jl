@@ -1,0 +1,195 @@
+"""
+One dispatch interval's NEMDE inputs, read from the NEMWEB archive.
+
+Every field is a historical fact for `settlement_date`, never a modelled value — this is what
+makes an interval reproducible in isolation. `settlement_date` is the **end** of the interval,
+matching NEMWEB convention.
+
+# Fields
+- `settlement_date`: interval end.
+- `initial_mw`: `DUID -> INITIALMW`, the metered output at interval start (the ramp base).
+- `demand`: `REGIONID -> TOTALDEMAND`.
+- `uigf`: `DUID -> UIGF`, semi-scheduled weather ceiling. Absent for scheduled units.
+- `energy_bids`: rebid-resolved energy bands, one row per `(DUID, DIRECTION)`.
+- `fcas_bids`: rebid-resolved FCAS bands with trapezium columns, one row per
+  `(DUID, BIDTYPE, DIRECTION)`.
+- `interconnector_flows`: `INTERCONNECTORID -> MWFLOW` at interval start.
+- `intervention`: 0 for the pricing run, 1 for the physical run.
+"""
+struct IntervalInputs
+    settlement_date::DateTime
+    initial_mw::Dict{String, Float64}
+    demand::Dict{String, Float64}
+    uigf::Dict{String, Float64}
+    energy_bids::DataFrame
+    fcas_bids::DataFrame
+    interconnector_flows::Dict{String, Float64}
+    intervention::Int
+end
+
+"""
+    read_interval_inputs(db, settlement_date; intervention = 0)
+
+Reads every NEMWEB input needed to reconstruct one dispatch interval into an
+[`IntervalInputs`](@ref).
+
+# Arguments
+- `db`: an `AEMDB` connection.
+- `settlement_date`: the interval end (`DateTime`).
+- `intervention`: 0 for the pricing run, 1 for the physical run.
+
+# Returns
+An [`IntervalInputs`](@ref).
+"""
+function read_interval_inputs(db, settlement_date::DateTime; intervention::Integer = 0)
+    load = _read_dispatch_load(db, settlement_date, intervention)
+    initial_mw = Dict{String, Float64}(row.DUID => row.INITIALMW for row in eachrow(load) if !ismissing(row.INITIALMW))
+
+    regionsum = _read_region_sum(db, settlement_date, intervention)
+    demand = Dict{String, Float64}(row.REGIONID => row.TOTALDEMAND for row in eachrow(regionsum) if !ismissing(row.TOTALDEMAND))
+
+    uigf = _read_uigf(db, settlement_date, intervention)
+
+    energy_bids = read_bids(db, settlement_date:Minute(5):(settlement_date + Minute(5)))
+    fcas_bids = _read_all_fcas_bids(db, settlement_date)
+
+    flows = _read_interconnector_flows(db, settlement_date, intervention)
+
+    return IntervalInputs(
+        settlement_date, initial_mw, demand, uigf, energy_bids, fcas_bids, flows, Int(intervention),
+    )
+end
+
+# Some cached partitions predate a table gaining an INTERVENTION column (see the identical
+# note above `_intervention_where` in `src/parser.jl`) - referencing a column absent from
+# *every* file in a `read_hive` glob is a hard DuckDB Binder Error, so every helper below
+# checks the resolved schema first, mirroring the rest of this codebase's readers.
+
+"""
+    _read_dispatch_load(db, settlement_date, intervention)
+
+Reads `DISPATCHLOAD.INITIALMW` for every `DUID` dispatched at `settlement_date`, deduplicating
+archive-month overlap. One row per `DUID`.
+"""
+function _read_dispatch_load(db, settlement_date::DateTime, intervention::Integer)
+    table = read_hive(db, :DISPATCHLOAD)
+    schema = names(AustralianElectricityMarkets._query(db, "SELECT * FROM $table LIMIT 0"))
+    params = Any[settlement_date]
+    AustralianElectricityMarkets._push_intervention!(params, schema, intervention)
+    return AustralianElectricityMarkets._query(
+        db,
+        """
+        SELECT DUID, TRY_CAST(INITIALMW AS DOUBLE) AS INITIALMW
+        FROM $table
+        WHERE SETTLEMENTDATE = ? $(AustralianElectricityMarkets._intervention_where(schema))
+        QUALIFY row_number() OVER (
+            PARTITION BY DUID ORDER BY archive_month DESC
+        ) = 1
+        """,
+        params,
+    )
+end
+
+"""
+    _read_region_sum(db, settlement_date, intervention)
+
+Reads `DISPATCHREGIONSUM.TOTALDEMAND` for every `REGIONID` at `settlement_date`, deduplicating
+archive-month overlap. One row per `REGIONID`.
+"""
+function _read_region_sum(db, settlement_date::DateTime, intervention::Integer)
+    table = read_hive(db, :DISPATCHREGIONSUM)
+    schema = names(AustralianElectricityMarkets._query(db, "SELECT * FROM $table LIMIT 0"))
+    params = Any[settlement_date]
+    AustralianElectricityMarkets._push_intervention!(params, schema, intervention)
+    return AustralianElectricityMarkets._query(
+        db,
+        """
+        SELECT REGIONID, TRY_CAST(TOTALDEMAND AS DOUBLE) AS TOTALDEMAND
+        FROM $table
+        WHERE SETTLEMENTDATE = ? $(AustralianElectricityMarkets._intervention_where(schema))
+        QUALIFY row_number() OVER (
+            PARTITION BY REGIONID ORDER BY archive_month DESC
+        ) = 1
+        """,
+        params,
+    )
+end
+
+"""
+    _read_uigf(db, settlement_date, intervention)
+
+Reads `DISPATCHLOAD.UIGF` — the semi-scheduled weather ceiling NEMDE actually applied that
+interval — for every `DUID` at `settlement_date`. `DISPATCHLOAD` has one row per
+`(SETTLEMENTDATE, DUID, INTERVENTION)`, so no forecast-priority ranking is needed (unlike
+`INTERMITTENT_DS_RUN`, which carries multiple forecast runs per interval). Only non-`missing`,
+non-negative values are kept — `UIGF` is `NULL` for scheduled units.
+"""
+function _read_uigf(db, settlement_date::DateTime, intervention::Integer)
+    table = read_hive(db, :DISPATCHLOAD)
+    schema = names(AustralianElectricityMarkets._query(db, "SELECT * FROM $table LIMIT 0"))
+    params = Any[settlement_date]
+    AustralianElectricityMarkets._push_intervention!(params, schema, intervention)
+    df = AustralianElectricityMarkets._query(
+        db,
+        """
+        SELECT DUID, TRY_CAST(UIGF AS DOUBLE) AS UIGF
+        FROM $table
+        WHERE SETTLEMENTDATE = ? $(AustralianElectricityMarkets._intervention_where(schema))
+        QUALIFY row_number() OVER (
+            PARTITION BY DUID ORDER BY archive_month DESC
+        ) = 1
+        """,
+        params,
+    )
+    return Dict{String, Float64}(
+        row.DUID => row.UIGF for row in eachrow(df) if !ismissing(row.UIGF) && row.UIGF >= 0.0
+    )
+end
+
+"""
+    _read_interconnector_flows(db, settlement_date, intervention)
+
+Reads `DISPATCHINTERCONNECTORRES.MWFLOW` for every `INTERCONNECTORID` at `settlement_date`.
+Returns an empty `Dict` (rather than raising) when `DISPATCHINTERCONNECTORRES` isn't cached,
+matching [`read_constraint_fcas_requirements`](@ref)'s tolerance of a partially-populated cache.
+"""
+function _read_interconnector_flows(db, settlement_date::DateTime, intervention::Integer)
+    AustralianElectricityMarkets._table_is_cached(db, :DISPATCHINTERCONNECTORRES) ||
+        return Dict{String, Float64}()
+    table = read_hive(db, :DISPATCHINTERCONNECTORRES)
+    schema = names(AustralianElectricityMarkets._query(db, "SELECT * FROM $table LIMIT 0"))
+    params = Any[settlement_date]
+    AustralianElectricityMarkets._push_intervention!(params, schema, intervention)
+    df = AustralianElectricityMarkets._query(
+        db,
+        """
+        SELECT INTERCONNECTORID, TRY_CAST(MWFLOW AS DOUBLE) AS MWFLOW
+        FROM $table
+        WHERE SETTLEMENTDATE = ? $(AustralianElectricityMarkets._intervention_where(schema))
+        QUALIFY row_number() OVER (
+            PARTITION BY INTERCONNECTORID ORDER BY archive_month DESC
+        ) = 1
+        """,
+        params,
+    )
+    return Dict{String, Float64}(row.INTERCONNECTORID => row.MWFLOW for row in eachrow(df) if !ismissing(row.MWFLOW))
+end
+
+"""
+    _read_all_fcas_bids(db, settlement_date)
+
+Reads rebid-resolved FCAS bands (with trapezium columns) for every in-scope FCAS market
+(`FCAS_BID_TYPES`) at `settlement_date`, tagging each block with its `BIDTYPE` and stacking
+them into one `DataFrame`.
+"""
+function _read_all_fcas_bids(db, settlement_date::DateTime)
+    date_range = settlement_date:Minute(5):(settlement_date + Minute(5))
+    all_bids = DataFrame()
+    for bid_type in FCAS_BID_TYPES
+        bids = read_fcas_bids(db, date_range, bid_type)
+        DataFrames.isempty(bids) && continue
+        bids[!, :BIDTYPE] = fill(bid_type, nrow(bids))
+        append!(all_bids, bids; promote = true)
+    end
+    return all_bids
+end
