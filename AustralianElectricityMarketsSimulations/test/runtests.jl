@@ -15,4 +15,8 @@ create_mock_data(AEM_TEST_HIVE_DIR)
     @testset "Interval inputs" begin
         include("inputs.jl")
     end
+
+    @testset "Preprocessing" begin
+        include("preprocessing.jl")
+    end
 end
