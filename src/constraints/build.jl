@@ -90,12 +90,23 @@ Returns `(added, skipped)`: `added::Vector{String}` of `GENCONID`s successfully 
 (no matching `GENCONDATA` version), `:no_terms` (no `SPD*` rows for its version), or
 `:unknown_duid`/`:unknown_region`/`:unknown_interconnector` (a term referenced a component
 `sys` doesn't have). Skips are reported as one summary `@warn`, not one per constraint.
+
+Throws an `ArgumentError` when `DISPATCHCONSTRAINT` isn't cached at all. If it *is* cached but
+genuinely has no rows in `date_range`, that is a real answer, not a missing-data problem — this
+warns and returns `(String[], Dict{String, Symbol}())` rather than throwing.
 """
 function add_nem_constraints!(
         sys, db, date_range; intervention::Integer = 0, include_solution::Bool = false,
         resolution::Union{Nothing, Dates.Period} = nothing,
     )
     start_date = first(date_range)
+
+    _table_is_cached(db, :DISPATCHCONSTRAINT) || throw(
+        ArgumentError(
+            "DISPATCHCONSTRAINT is not cached for $date_range — run " *
+                "`populate(db, :DISPATCHCONSTRAINT, <from>, <to>)` first.",
+        ),
+    )
 
     invoked = read_invoked_constraints(db, date_range; intervention = intervention)
     if DataFrames.isempty(invoked)

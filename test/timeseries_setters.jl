@@ -225,6 +225,45 @@
                 @test isapprox(short_vals, long_vals[1:length(short_vals)]; atol = 1.0e-6)
             end
         end
+
+        @testset "read_uigf throws when DISPATCHLOAD is not cached" begin
+            empty_db = aem_connect(HiveConfiguration(hive_location = mktempdir(), filesystem = "file"))
+            err = try
+                read_uigf(empty_db, date_range; resolution = resolution)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            @test occursin("DISPATCHLOAD", err.msg)
+        end
+
+        @testset "read_uigf warns and returns empty when cached DISPATCHLOAD predates the UIGF column" begin
+            # Legitimate schema evolution (read_hive's union_by_name exists to tolerate it),
+            # not a missing download - must not throw, unlike the "not cached at all" case above.
+            no_uigf_hive = mktempdir()
+            ddb = DuckDB.DB()
+            conn = DuckDB.connect(ddb)
+            DuckDB.execute(conn, "SET preserve_identifier_case=true")
+            df = DataFrame(
+                SETTLEMENTDATE = [start_date], DUID = ["BW01"], INTERVENTION = [0],
+                TOTALCLEARED = [100.0], archive_month = ["2025-01"],
+            )
+            DuckDB.register_data_frame(conn, df, "tmp_table")
+            table_dir = joinpath(no_uigf_hive, "DISPATCHLOAD")
+            mkpath(table_dir)
+            DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+            DuckDB.unregister_table(conn, "tmp_table")
+
+            no_uigf_db = aem_connect(HiveConfiguration(hive_location = no_uigf_hive, filesystem = "file"))
+            result = nothing
+            @test_logs (:warn, r"UIGF column") match_mode = :any begin
+                result = read_uigf(no_uigf_db, date_range; resolution = resolution)
+            end
+            @test result isa DataFrame
+            @test isempty(result)
+            @test Set(names(result)) == Set(["SETTLEMENTDATE", "DUID", "UIGF"])
+        end
     end
 
     @testset "read_bids resolution aggregation uses per-bucket mean (regression: scale-then-sum bug)" begin

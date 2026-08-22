@@ -644,15 +644,17 @@ glob string, so referencing an uncached table is a hard DuckDB error rather than
 result - readers that tolerate a partially-populated cache (e.g. only one side of AEMO's
 `DISPATCH_FCAS_REQ` split) must check first. Uses DuckDB's `glob` so it works for remote
 filesystems too, not just a local `isdir`.
+
+A glob matching zero files is a legitimate, silent `false` - confirmed directly, DuckDB's
+`glob` returns an empty result rather than erroring for a nonexistent local path. It is
+*not* silent about a genuine failure to check (bad S3/GS credentials, a network drop,
+corrupt parquet): those raise DuckDB's own exception uncaught, naming the real cause,
+rather than being swallowed into a false "not cached".
 """
 function _table_is_cached(db, table_name::Symbol)
     hive_root = AustralianElectricityMarketsData._parse_hive_root(db.config)
-    return try
-        df = _query(db, "SELECT COUNT(*) AS n FROM glob('$hive_root/$table_name/**/*.parquet')")
-        df.n[1] > 0
-    catch
-        false
-    end
+    df = _query(db, "SELECT COUNT(*) AS n FROM glob('$hive_root/$table_name/**/*.parquet')")
+    return df.n[1] > 0
 end
 
 """
@@ -694,6 +696,9 @@ in the local cache, not that AEMO never published one.
 
 `intervention` selects the dispatch run: `0` is the normal (non-intervention) run, which is
 the right choice for almost all uses.
+
+Throws an `ArgumentError` when neither `DISPATCH_FCAS_REQ` nor `DISPATCH_FCAS_REQ_CONSTRAINT`
+is cached.
 """
 function read_fcas_requirements(db, date_range; intervention::Integer = 0)
     start_date = first(date_range)
@@ -705,12 +710,12 @@ function read_fcas_requirements(db, date_range; intervention::Integer = 0)
     constraint_schema = names(_query(db, "SELECT * FROM $constraint_table LIMIT 0"))
     req_union_sql, req_param_spec = _fcas_req_union_sql(db, intervention)
     if isnothing(req_union_sql)
-        @warn "Neither DISPATCH_FCAS_REQ nor DISPATCH_FCAS_REQ_CONSTRAINT is cached; no FCAS requirements to read."
-        return DataFrame(
-            SETTLEMENTDATE = DateTime[], REGIONID = String[], BIDTYPE = BidType[],
-            GENCONID = String[], REQUIREMENT = Float64[], LHS = Float64[],
-            MARGINALVALUE = Float64[], DESCRIPTION = Union{Missing, String}[],
-            CONSTRAINTTYPE = Union{Missing, String}[],
+        throw(
+            ArgumentError(
+                "Neither DISPATCH_FCAS_REQ nor DISPATCH_FCAS_REQ_CONSTRAINT is cached — run " *
+                    "`populate(db, :DISPATCH_FCAS_REQ, ...)` or `populate(db, :DISPATCH_FCAS_REQ_CONSTRAINT, ...)` " *
+                    "first (AEMO switched tables at the 2025-05/2025-06 boundary; which one you need depends on the date range).",
+            ),
         )
     end
     params = _expand_fcas_req_params(req_param_spec, sd, ed)
@@ -974,14 +979,24 @@ archive-month overlap.
 
 `DISPATCHLOAD` carries one row per `(SETTLEMENTDATE, DUID, INTERVENTION)`, so ranking by
 `archive_month` alone is enough - there is no forecast-priority dimension to break ties on
-(unlike `INTERMITTENT_DS_RUN`, which publishes several forecast runs per interval). Returns an
-empty frame when the cached partitions predate the `UIGF` column: referencing a column absent
-from *every* file in a `read_hive` glob is a hard DuckDB Binder Error.
+(unlike `INTERMITTENT_DS_RUN`, which publishes several forecast runs per interval).
+
+Throws an `ArgumentError` when `DISPATCHLOAD` isn't cached at all. Warns and returns an empty
+frame when it *is* cached but every cached partition predates the `UIGF` column - that is
+legitimate schema evolution (`read_hive`'s `union_by_name` exists to tolerate it), not a
+missing download, so it is not an error; referencing a column absent from *every* file in a
+`read_hive` glob would otherwise be a hard DuckDB Binder Error.
 """
 function _uigf_rows(db, where_sql::AbstractString, params::Vector{Any}, intervention::Integer)
+    _table_is_cached(db, :DISPATCHLOAD) || throw(
+        ArgumentError(
+            "DISPATCHLOAD is not cached — run `populate(db, :DISPATCHLOAD, <from>, <to>)` first.",
+        ),
+    )
     table = read_hive(db, :DISPATCHLOAD)
     schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
     if !("UIGF" in schema)
+        @warn "DISPATCHLOAD is cached, but none of its cached partitions have a UIGF column (they predate AEMO adding it); returning no UIGF rows."
         return DataFrame(SETTLEMENTDATE = DateTime[], DUID = String[], UIGF = Float64[])
     end
     _push_intervention!(params, schema, intervention)

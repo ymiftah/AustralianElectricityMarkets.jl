@@ -124,12 +124,19 @@ end
     _read_interconnector_flows(db, settlement_date, intervention)
 
 Reads `DISPATCHINTERCONNECTORRES.MWFLOW` for every `INTERCONNECTORID` at `settlement_date`.
-Returns an empty `Dict` (rather than raising) when `DISPATCHINTERCONNECTORRES` isn't cached,
-matching [`read_constraint_fcas_requirements`](@ref)'s tolerance of a partially-populated cache.
+Throws an `ArgumentError` when `DISPATCHINTERCONNECTORRES` isn't cached: a replicated
+interval silently missing every interconnector flow is indistinguishable from one where every
+interconnector was genuinely at zero flow, which is the same failure class as
+[`read_fcas_requirements`](@ref)'s empty-cache case — both are now hard errors rather than a
+tolerated partial cache.
 """
 function _read_interconnector_flows(db, settlement_date::DateTime, intervention::Integer)
-    AustralianElectricityMarkets._table_is_cached(db, :DISPATCHINTERCONNECTORRES) ||
-        return Dict{String, Float64}()
+    AustralianElectricityMarkets._table_is_cached(db, :DISPATCHINTERCONNECTORRES) || throw(
+        ArgumentError(
+            "DISPATCHINTERCONNECTORRES is not cached for $settlement_date — run " *
+                "`populate(db, :DISPATCHINTERCONNECTORRES, <from>, <to>)` first.",
+        ),
+    )
     table = read_hive(db, :DISPATCHINTERCONNECTORRES)
     schema = names(AustralianElectricityMarkets._query(db, "SELECT * FROM $table LIMIT 0"))
     params = Any[settlement_date]

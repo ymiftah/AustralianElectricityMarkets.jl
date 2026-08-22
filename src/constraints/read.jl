@@ -274,6 +274,9 @@ Reads the dispatch FCAS requirement table's `GENCONID -> (REGIONID, BIDTYPE)` ma
 [`_fcas_req_union_sql`](@ref). Warns (does not silently merge) if a `GENCONID`'s pair-set
 changes mid-range — AEMO re-scoping a constraint's market attribution partway through is
 rare but not representable by a single static set.
+
+Throws an `ArgumentError` when neither `DISPATCH_FCAS_REQ` nor `DISPATCH_FCAS_REQ_CONSTRAINT`
+is cached.
 """
 function read_constraint_fcas_requirements(db, date_range; intervention::Integer = 0)
     start_date = first(date_range)
@@ -282,8 +285,13 @@ function read_constraint_fcas_requirements(db, date_range; intervention::Integer
     ed = Date(end_date) + Day(1)
     union_sql, param_spec = _fcas_req_union_sql(db, intervention)
     if isnothing(union_sql)
-        @warn "Neither DISPATCH_FCAS_REQ nor DISPATCH_FCAS_REQ_CONSTRAINT is cached; no constraint governs a regional FCAS price."
-        return DataFrame(GENCONID = String[], REGIONID = String[], BIDTYPE = BidType[])
+        throw(
+            ArgumentError(
+                "Neither DISPATCH_FCAS_REQ nor DISPATCH_FCAS_REQ_CONSTRAINT is cached — run " *
+                    "`populate(db, :DISPATCH_FCAS_REQ, ...)` or `populate(db, :DISPATCH_FCAS_REQ_CONSTRAINT, ...)` " *
+                    "first (AEMO switched tables at the 2025-05/2025-06 boundary; which one you need depends on the date range).",
+            ),
+        )
     end
     df = _query(
         db,

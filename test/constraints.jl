@@ -212,6 +212,21 @@ end
         @test nrow(overlap) == nrow(unique(select(overlap, :GENCONID, :REGIONID, :BIDTYPE)))
         @test nrow(subset(overlap, :GENCONID => ByRow(==("F_NSW1_RAISE6SEC")))) == 1
     end
+
+    @testset "read_constraint_fcas_requirements throws when neither FCAS_REQ table is cached" begin
+        # Neither table needs anything else cached first - _fcas_req_union_sql only checks
+        # _table_is_cached, so an entirely empty hive reproduces the missing-cache case.
+        empty_db = aem_connect(HiveConfiguration(hive_location = mktempdir(), filesystem = "file"))
+        err = try
+            read_constraint_fcas_requirements(empty_db, date_range)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("DISPATCH_FCAS_REQ", err.msg)
+        @test occursin("DISPATCH_FCAS_REQ_CONSTRAINT", err.msg)
+    end
 end
 
 @testset "add_nem_constraints!" begin
@@ -302,5 +317,32 @@ end
             inferred = AustralianElectricityMarkets._infer_resolution(gappy_grid)
         end
         @test inferred == Minute(5)
+    end
+
+    @testset "throws when DISPATCHCONSTRAINT is not cached" begin
+        empty_db = aem_connect(HiveConfiguration(hive_location = mktempdir(), filesystem = "file"))
+        empty_sys = nem_system(db, RegionalNetworkConfiguration())
+        err = try
+            add_nem_constraints!(empty_sys, empty_db, date_range)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("DISPATCHCONSTRAINT", err.msg)
+    end
+
+    @testset "warns and returns empty when DISPATCHCONSTRAINT is cached but has no rows in range" begin
+        # DISPATCHCONSTRAINT is cached (the fixture is 2025-01), just not for this range - a
+        # real answer, not missing data, so this must warn rather than throw (contrast with
+        # the "not cached at all" case above).
+        far_future_range = DateTime(2030, 1, 1):Minute(5):(DateTime(2030, 1, 1) + Hour(1))
+        far_sys = nem_system(db, RegionalNetworkConfiguration())
+        added_far, skipped_far = nothing, nothing
+        @test_logs (:warn, r"No constraints invoked") match_mode = :any begin
+            added_far, skipped_far = add_nem_constraints!(far_sys, db, far_future_range)
+        end
+        @test added_far == String[]
+        @test skipped_far == Dict{String, Symbol}()
     end
 end
