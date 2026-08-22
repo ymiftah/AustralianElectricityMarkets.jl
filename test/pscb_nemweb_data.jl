@@ -55,8 +55,9 @@ Five constraints are defined, each reaching a distinct code path:
 | `N_HYDRO_LIMIT` | `<=` | unit (`CP_HYD`) | no |
 | `N_PARTIAL` | `<=` | unit (`CP_SOLAR`) | no, and invoked for only part of the grid |
 
-Intervals are 5-minutely over `2025-01-01T00:00` -> `02:00`, because
-`add_nem_constraints!` builds its series at a hardcoded `Minute(5)` resolution.
+Intervals are 5-minutely over `2025-01-01T00:00` -> `02:00`, matching real `DISPATCHCONSTRAINT`
+(the resolution `add_nem_constraints!` builds its series at is inferred from the data, not
+hardcoded, since commit 9466d9d).
 """
 function create_pscb_nemweb_data(hive_root::String)
     db = DuckDB.DB()
