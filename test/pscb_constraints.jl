@@ -6,7 +6,10 @@
 
     config = HiveConfiguration(hive_location = AEM_TEST_PSCB_HIVE_DIR, filesystem = "file")
     db = aem_connect(config)
-    start_date = DateTime(2025, 1, 1, 0, 0)
+    # Same t0 as augmented_pscb_system()'s own PowerSystemCaseBuilder forecast (2020-01-01T00:00,
+    # see pscb_nemweb_data.jl for why resolution stays 5-minutely), so a PSI.DecisionModel's
+    # dispatch timesteps land exactly on this grid's rows.
+    start_date = DateTime(2020, 1, 1, 0, 0)
     # `read_invoked_constraints` filters SETTLEMENTDATE < last(date_range) (exclusive), so the
     # range must extend past 02:00 to keep the i=24 (02:00) interval in the full grid.
     date_range = start_date:Minute(5):(start_date + Hour(2) + Minute(5))
