@@ -206,4 +206,76 @@
             @test has_time_series(bat2, Deterministic, "fcas_trapezium_RAISEREG_decremental")
         end
     end
+
+    @testset "FCAS dispatch readiness" begin
+        # Precondition check before any optimisation layer exists: the requirements, the
+        # offering units' trapezia, and the constraint rhs must be mutually consistent, or
+        # the eventual dispatch problem starts out infeasible.
+        sys = augmented_pscb_system()
+        add_nem_constraints!(sys, db, date_range)
+        set_fcas_bids!(sys, db, date_range)
+
+        @testset "requirement regions exist" begin
+            for gc in get_components(GenericConstraint, sys)
+                for req in get_fcas_requirements(gc)
+                    @test !isnothing(get_component(Area, sys, get_region(req)))
+                end
+            end
+        end
+
+        @testset "requirement constraints have offering units" begin
+            for gc in get_components(GenericConstraint, sys)
+                isempty(get_fcas_requirements(gc)) && continue
+                unit_terms = filter(t -> t isa UnitTerm, get_terms(gc))
+                @test !isempty(unit_terms)
+                for t in unit_terms
+                    comp = get_component(Device, sys, get_duid(t))
+                    @test !isnothing(comp)
+                    isnothing(comp) && continue
+                    series_name = "fcas_trapezium_$(string(get_bid_type(t)))"
+                    @test has_time_series(comp, Deterministic, series_name)
+                end
+            end
+        end
+
+        @testset "trapezia are well-formed at every timestep" begin
+            bid_type_strs = collect(string.(FCAS_BID_TYPES))
+            suffixes = vcat(bid_type_strs, bid_type_strs .* "_decremental")
+            checked = 0
+            for comp in get_components(Device, sys)
+                for suffix in suffixes
+                    series_name = "fcas_trapezium_$suffix"
+                    has_time_series(comp, Deterministic, series_name) || continue
+                    rows = first(values(get_data(get_time_series(Deterministic, comp, series_name))))
+                    @test all(row -> row[1] <= row[2] <= row[3] <= row[4], rows)
+                    @test all(row -> row[5] >= 0, rows)
+                    checked += 1
+                end
+            end
+            @test checked > 0  # sanity: the fixture actually attaches trapezium series
+        end
+
+        @testset "requirements are satisfiable at every interval" begin
+            headrooms = Dict{String, Float64}()
+            for gc in get_components(GenericConstraint, sys)
+                isempty(get_fcas_requirements(gc)) && continue
+                gc_name = get_name(gc)
+                rhs_series = first(values(get_data(get_time_series(Deterministic, gc, "rhs"))))
+                unit_terms = filter(t -> t isa UnitTerm, get_terms(gc))
+                offered = zeros(length(rhs_series))
+                for t in unit_terms
+                    comp = get_component(Device, sys, get_duid(t))
+                    series_name = "fcas_trapezium_$(string(get_bid_type(t)))"
+                    trap_rows = first(values(get_data(get_time_series(Deterministic, comp, series_name))))
+                    offered .+= getindex.(trap_rows, 5)
+                end
+                headroom = offered .- rhs_series
+                @test all(>=(0), headroom)
+                headrooms[gc_name] = minimum(headroom)
+            end
+            for (gc_name, h) in sort(collect(headrooms))
+                println("FCAS dispatch readiness: min headroom for $gc_name = $h MW")
+            end
+        end
+    end
 end

@@ -99,7 +99,9 @@ function create_pscb_nemweb_data(hive_root::String)
     # GENCONDATA - definitions, joined by exact (GENCONID, EFFECTIVEDATE, VERSIONNO).
     gencon_ids = ["F_R1_RAISE6SEC", "F_R2_LOWERREG", "N_IC1_LIMIT", "N_HYDRO_LIMIT", "N_PARTIAL"]
     senses = [">=", ">=", "<=", "<=", "<="]
-    values = [30.0, 25.0, 100.0, 60.0, 40.0]
+    # F_R2_LOWERREG's only offering unit is Solitude (MAXAVAIL = 20.0 + i); 15.0 keeps
+    # rhs = 15.0 + 0.1*i below that at every i in 0:24, with headroom that only grows.
+    values = [30.0, 15.0, 100.0, 60.0, 40.0]
     n_gc = length(gencon_ids)
     save_hive(
         DataFrame(
