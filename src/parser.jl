@@ -412,17 +412,12 @@ function _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_d
 
     if !isnothing(resolution)
         energy_bids = @chain energy_bids begin
-            transform(
-                :INTERVAL_DATETIME => ByRow(x -> ceil.(x, resolution)),
-                Cols(r"^BANDAVAIL") .=> ByRow(x -> x * Minute(5) / resolution)
-                ;
-                renamecols = false
-            )
+            transform(:INTERVAL_DATETIME => ByRow(x -> ceil.(x, resolution)); renamecols = false)
             groupby([:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION])
             combine(
                 _,
-                :MAXAVAIL => sum ∘ skipmissing,
-                Cols(r"^BANDAVAIL") .=> sum,
+                :MAXAVAIL => mean ∘ skipmissing,
+                Cols(r"^BANDAVAIL") .=> mean ∘ skipmissing,
                 ;
                 renamecols = false
             )
