@@ -139,6 +139,26 @@
         @test all(!ismissing, req.DESCRIPTION)
     end
 
+    @testset "read_fcas_requirements throws when neither FCAS_REQ table is cached" begin
+        # DISPATCHCONSTRAINT/GENCONDATA must stay cached here (read_fcas_requirements queries
+        # their schema before reaching the FCAS_REQ check) - only the FCAS_REQ tables are
+        # missing, reproducing the AEMO 2025-05/2025-06 changeover with nothing downloaded yet.
+        partial_hive = mktempdir()
+        create_mock_data(partial_hive)
+        rm(joinpath(partial_hive, "DISPATCH_FCAS_REQ"); recursive = true)
+        rm(joinpath(partial_hive, "DISPATCH_FCAS_REQ_CONSTRAINT"); recursive = true)
+        partial_db = aem_connect(HiveConfiguration(hive_location = partial_hive, filesystem = "file"))
+        err = try
+            read_fcas_requirements(partial_db, date_range)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("DISPATCH_FCAS_REQ", err.msg)
+        @test occursin("DISPATCH_FCAS_REQ_CONSTRAINT", err.msg)
+    end
+
     @testset "read_fcas_prices" begin
         prices = read_fcas_prices(db, date_range)
         @test !isempty(prices)

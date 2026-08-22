@@ -17,6 +17,24 @@
     # Fixture profiles at 00:05 (interval 1): BW03 = 40 + i, BW04 = 70 - i.
     @test inputs.uigf["BW03"] ≈ 41.0
     @test inputs.uigf["BW04"] ≈ 69.0
+
+    # Fixture interconnector flows at 00:05 (i=1): MWFLOW = 100*k + i for IC1..IC6.
+    @test Set(keys(inputs.interconnector_flows)) == Set(["IC$i" for i in 1:6])
+    @test inputs.interconnector_flows["IC1"] ≈ 101.0
+    @test inputs.interconnector_flows["IC6"] ≈ 601.0
+end
+
+@testset "_read_interconnector_flows throws when DISPATCHINTERCONNECTORRES is not cached" begin
+    empty_db = aem_connect(HiveConfiguration(hive_location = mktempdir(), filesystem = "file"))
+    t = DateTime(2025, 1, 1, 0, 5, 0)
+    err = try
+        AustralianElectricityMarketsSimulations._read_interconnector_flows(empty_db, t, 0)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("DISPATCHINTERCONNECTORRES", err.msg)
 end
 
 @testset "IntervalInputs no longer carries bid data" begin
