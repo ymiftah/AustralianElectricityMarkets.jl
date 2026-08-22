@@ -265,4 +265,42 @@ end
 
     added2, _ = add_nem_constraints!(nem_system(db, RegionalNetworkConfiguration()), db, date_range; include_solution = true)
     @test "F_VIC1_RAISE6SEC" in added2
+
+    @testset "resolution inference" begin
+        # Multi-interval grid: the fixture is 5-minutely, so inference must read Minute(5) off
+        # the data itself, not just happen to match a hardcoded default.
+        sys_default = nem_system(db, RegionalNetworkConfiguration())
+        add_nem_constraints!(sys_default, db, date_range)
+        gc_default = get_component(GenericConstraint, sys_default, "N_BAYSW_THERMAL")
+        rhs_ts_default = get_time_series(Deterministic, gc_default, "rhs")
+        @test get_resolution(rhs_ts_default) == Minute(5)
+
+        # Explicit resolution is honoured as given, with no inference or validation.
+        sys_explicit = nem_system(db, RegionalNetworkConfiguration())
+        add_nem_constraints!(sys_explicit, db, date_range; resolution = Minute(30))
+        gc_explicit = get_component(GenericConstraint, sys_explicit, "N_BAYSW_THERMAL")
+        rhs_ts_explicit = get_time_series(Deterministic, gc_explicit, "rhs")
+        @test get_resolution(rhs_ts_explicit) == Minute(30)
+
+        # A single-interval grid can't be exercised end-to-end through add_nem_constraints!:
+        # PSY's Deterministic itself requires forecast arrays of length >= 2 (InfrastructureSystems
+        # _check_forecast_data), independent of resolution - so a 1-point full_grid always errors
+        # before resolution matters. _infer_resolution is unit-tested directly instead, contrasted
+        # with the genuine multi-interval inference above (which is not just matching the fallback
+        # by coincidence, since it uses a non-5-minute spacing).
+        @test AustralianElectricityMarkets._infer_resolution(DateTime[]) == Minute(5)
+        @test AustralianElectricityMarkets._infer_resolution([start_date]) == Minute(5)
+
+        grid_30min = [start_date + Minute(30 * i) for i in 0:3]
+        @test AustralianElectricityMarkets._infer_resolution(grid_30min) == Minute(30)
+
+        # Irregular spacing warns (naming the distinct spacings) and falls back to the smallest
+        # one rather than throwing - real, gappy caches still need a result.
+        gappy_grid = [start_date, start_date + Minute(5), start_date + Minute(15)]
+        inferred = nothing
+        @test_logs (:warn, r"not uniform") match_mode = :any begin
+            inferred = AustralianElectricityMarkets._infer_resolution(gappy_grid)
+        end
+        @test inferred == Minute(5)
+    end
 end
