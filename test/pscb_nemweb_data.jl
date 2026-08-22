@@ -55,9 +55,24 @@ Five constraints are defined, each reaching a distinct code path:
 | `N_HYDRO_LIMIT` | `<=` | unit (`CP_HYD`) | no |
 | `N_PARTIAL` | `<=` | unit (`CP_SOLAR`) | no, and invoked for only part of the grid |
 
-Intervals are 5-minutely over `2025-01-01T00:00` -> `02:00`, matching real `DISPATCHCONSTRAINT`
+Intervals are 5-minutely over `2020-01-01T00:00` -> `02:00`, matching real `DISPATCHCONSTRAINT`
 (the resolution `add_nem_constraints!` builds its series at is inferred from the data, not
 hardcoded, since commit 9466d9d).
+
+`t0` is deliberately the same as [`augmented_pscb_system`](@ref)'s own `PowerSystemCaseBuilder`
+forecast (`2020-01-01T00:00`, see `get_forecast_initial_timestamp`), so a `PSI.DecisionModel`
+built on the augmented system runs its dispatch timesteps on the same origin this fixture's
+FCAS/constraint series start from - letting a later milestone couple FCAS capacity to energy
+dispatch by looking up each dispatch timestep's exact row in these series. Resolution is *not*
+also matched to that forecast's hourly one: `augmented_pscb_system()`'s native forecast is a
+genuine rolling 2015-window `Deterministic` at `(resolution, interval) = (Hour(1), Hour(1))`, and
+`PowerSystems`/`InfrastructureSystems` require every `Deterministic` series sharing a `System`'s
+`(resolution, interval)` key to also share its `count`/`initial_timestamp`/`horizon` - confirmed
+directly: attaching this fixture's single-window series at `resolution = Hour(1)` raises
+`InfrastructureSystems.ConflictingInputsError("forecast count 1 does not match system count
+2015")`. Staying 5-minutely keeps this fixture in its own `(Minute(5), Minute(5))` group (no
+collision) while every model dispatch timestep (whole-hour multiples) still lands exactly on one
+of this fixture's rows, since 60 minutes is an exact multiple of 5.
 """
 function create_pscb_nemweb_data(hive_root::String)
     db = DuckDB.DB()
@@ -75,10 +90,10 @@ function create_pscb_nemweb_data(hive_root::String)
         return DuckDB.unregister_table(conn, "tmp_table")
     end
 
-    test_date = Date(2025, 1, 1)
-    base_datetime = DateTime(2025, 1, 1, 0, 0)
+    test_date = Date(2020, 1, 1)
+    base_datetime = DateTime(2020, 1, 1, 0, 0)
     intervals = 0:24
-    am = "2025-01"
+    am = "2020-01"
 
     # DUDETAILSUMMARY - only the CONNECTIONPOINTID -> DUID mapping is read here.
     dudetail_rows = DataFrame()
