@@ -184,30 +184,114 @@ function read_constraint_terms(db, gencon_versions, date_range)
 end
 
 """
+    _fcas_req_union_sql(db, intervention) -> (sql_fragment, params_for_fragment)
+
+A `SELECT`-able fragment presenting AEMO's two generations of the dispatch FCAS requirement
+table under the **old** column names — `SETTLEMENTDATE`, `GENCONID`, `REGIONID`, `BIDTYPE`,
+`MARGINALVALUE`, `GENCONEFFECTIVEDATE`, `GENCONVERSIONNO`.
+
+`DISPATCH_FCAS_REQ` was last published for the 2025-05 archive month; from 2025-06 AEMO
+publishes `DISPATCH_FCAS_REQ_CONSTRAINT` instead, which renames `GENCONID` to
+`CONSTRAINTID` and `SETTLEMENTDATE` to `INTERVAL_DATETIME`. Callers get one continuous
+series across the cut rather than silently empty results for recent dates.
+
+Two columns have no successor and come back `NULL` for post-cut rows:
+`GENCONEFFECTIVEDATE`/`GENCONVERSIONNO`, so a constraint's `GENCONDATA` version can only be
+resolved by exact equality on the old side (see [`read_fcas_requirements`](@ref) for the
+fallback). The new table also drops `INTERVENTION` entirely — `intervention` therefore
+filters the old side only, and post-cut rows are whatever runs AEMO published.
+
+Either table may be absent from the cache; a missing one contributes no rows instead of
+raising, so a cache covering only one side of the cut still works.
+"""
+function _fcas_req_union_sql(db, intervention::Integer)
+    branches = String[]
+    params = Any[]
+
+    if _table_is_cached(db, :DISPATCH_FCAS_REQ)
+        table = read_hive(db, :DISPATCH_FCAS_REQ)
+        schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
+        push!(
+            branches,
+            """
+            SELECT SETTLEMENTDATE, GENCONID, REGIONID, BIDTYPE,
+                   TRY_CAST(MARGINALVALUE AS DOUBLE) AS MARGINALVALUE,
+                   GENCONEFFECTIVEDATE, GENCONVERSIONNO
+            FROM $table
+            WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(schema))
+            """,
+        )
+        push!(params, :dates)
+        _intervention_where(schema) == "" || push!(params, intervention)
+    end
+
+    if _table_is_cached(db, :DISPATCH_FCAS_REQ_CONSTRAINT)
+        table = read_hive(db, :DISPATCH_FCAS_REQ_CONSTRAINT)
+        push!(
+            branches,
+            """
+            SELECT INTERVAL_DATETIME AS SETTLEMENTDATE, CONSTRAINTID AS GENCONID,
+                   REGIONID, BIDTYPE,
+                   TRY_CAST(MARGINALVALUE AS DOUBLE) AS MARGINALVALUE,
+                   CAST(NULL AS DATE) AS GENCONEFFECTIVEDATE,
+                   CAST(NULL AS INTEGER) AS GENCONVERSIONNO
+            FROM $table
+            WHERE INTERVAL_DATETIME BETWEEN ? AND ?
+            """,
+        )
+        push!(params, :dates)
+    end
+
+    isempty(branches) && return nothing, Any[]
+    return join(branches, "\nUNION ALL\n"), params
+end
+
+"""
+    _expand_fcas_req_params(param_spec, sd, ed) -> Vector{Any}
+
+Substitutes each `:dates` placeholder from [`_fcas_req_union_sql`](@ref) with the `sd`/`ed`
+pair, keeping positional `?` binding aligned across a variable number of `UNION ALL`
+branches.
+"""
+function _expand_fcas_req_params(param_spec, sd, ed)
+    out = Any[]
+    for p in param_spec
+        if p === :dates
+            push!(out, sd, ed)
+        else
+            push!(out, p)
+        end
+    end
+    return out
+end
+
+"""
     read_constraint_fcas_requirements(db, date_range; intervention = 0)
 
-Reads `DISPATCH_FCAS_REQ`'s `GENCONID -> (REGIONID, BIDTYPE)` mapping over `date_range`,
-long-format: one row per distinct pair observed. Warns (does not silently merge) if a
-`GENCONID`'s pair-set changes mid-range — AEMO re-scoping a constraint's market attribution
-partway through is rare but not representable by a single static set.
+Reads the dispatch FCAS requirement table's `GENCONID -> (REGIONID, BIDTYPE)` mapping over
+`date_range`, long-format: one row per distinct pair observed. Spans AEMO's 2025-05/2025-06
+`DISPATCH_FCAS_REQ` → `DISPATCH_FCAS_REQ_CONSTRAINT` split via
+[`_fcas_req_union_sql`](@ref). Warns (does not silently merge) if a `GENCONID`'s pair-set
+changes mid-range — AEMO re-scoping a constraint's market attribution partway through is
+rare but not representable by a single static set.
 """
 function read_constraint_fcas_requirements(db, date_range; intervention::Integer = 0)
     start_date = first(date_range)
     end_date = last(date_range)
     sd = Date(start_date) - Day(1)
     ed = Date(end_date) + Day(1)
-    table = read_hive(db, :DISPATCH_FCAS_REQ)
-    schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
-    params = Any[sd, ed]
-    _push_intervention!(params, schema, intervention)
+    union_sql, param_spec = _fcas_req_union_sql(db, intervention)
+    if isnothing(union_sql)
+        @warn "Neither DISPATCH_FCAS_REQ nor DISPATCH_FCAS_REQ_CONSTRAINT is cached; no constraint governs a regional FCAS price."
+        return DataFrame(GENCONID = String[], REGIONID = String[], BIDTYPE = BidType[])
+    end
     df = _query(
         db,
         """
         SELECT DISTINCT SETTLEMENTDATE, GENCONID, REGIONID, BIDTYPE
-        FROM $table
-        WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(schema))
+        FROM ($union_sql)
         """,
-        params,
+        _expand_fcas_req_params(param_spec, sd, ed),
     )
     subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
     subset!(df, :BIDTYPE => ByRow(in(string.(FCAS_BID_TYPES))))

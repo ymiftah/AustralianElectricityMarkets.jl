@@ -87,6 +87,7 @@
     @testset "ConstrainedNetworkConfiguration" begin
         required_tables = table_requirements(ConstrainedNetworkConfiguration())
         @test :DISPATCH_FCAS_REQ in required_tables
+        @test :DISPATCH_FCAS_REQ_CONSTRAINT in required_tables
         @test :DISPATCHCONSTRAINT in required_tables
         @test :GENCONDATA in required_tables
         @test :DISPATCHLOAD in required_tables
@@ -121,6 +122,20 @@
         @test all(==(2.25), raisereg_nsw.MARGINALVALUE)
         raise6sec_nsw = sort(subset(req, :REGIONID => ByRow(==("NSW1")), :BIDTYPE => ByRow(==(BidType.RAISE6SEC))), :SETTLEMENTDATE)
         @test raise6sec_nsw.REQUIREMENT ≈ [50.0 + 0.1 * i for i in 0:(nrow(raise6sec_nsw) - 1)]
+        @test all(!ismissing, req.DESCRIPTION)
+    end
+
+    @testset "read_fcas_requirements spans the DISPATCH_FCAS_REQ split" begin
+        # Past interval 24 only DISPATCH_FCAS_REQ_CONSTRAINT has rows (mock_data.jl step 13).
+        new_only_range = (start_date + Minute(5 * 30)):Minute(5):(start_date + Minute(5 * 40))
+        req = read_fcas_requirements(db, new_only_range)
+        @test !isempty(req)
+        @test BidType.RAISEREG in req.BIDTYPE
+        # One row per (SETTLEMENTDATE, REGIONID, BIDTYPE, GENCONID) - the QUALIFY in the
+        # union must not fan out against GENCONDATA's version rows.
+        @test nrow(req) == nrow(unique(select(req, :SETTLEMENTDATE, :REGIONID, :BIDTYPE, :GENCONID)))
+        # DESCRIPTION still resolves post-split even though the new table dropped
+        # GENCONEFFECTIVEDATE/GENCONVERSIONNO - via the latest-version-at-interval fallback.
         @test all(!ismissing, req.DESCRIPTION)
     end
 
