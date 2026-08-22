@@ -19,11 +19,13 @@ include("errors.jl")
 include("replication/inputs.jl")
 include("replication/preprocessing.jl")
 include("replication/tiers.jl")
+include("fcas_variables.jl")
 
 export IntervalInputs, read_interval_inputs
 export energy_bounds
 export EffectiveTrapezium, scale_trapezium, lower_slope_coeff, upper_slope_coeff
 export FidelityTier, T0CopperPlate, T1Interconnected, tier_name
 export IntervalResult, build_template, solve_interval
+export add_fcas_variables!
 
 end
