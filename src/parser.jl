@@ -987,6 +987,7 @@ function _uigf_rows(db, where_sql::AbstractString, params::Vector{Any}, interven
     table = read_hive(db, :DISPATCHLOAD)
     schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
     if !("UIGF" in schema)
+        @warn "No UIGF column was found in the DISPATCHLOAD table. It may be a stale archive pre-dating the addition of the UIGF column."
         return DataFrame(SETTLEMENTDATE = DateTime[], DUID = String[], UIGF = Float64[])
     end
     _push_intervention!(params, schema, intervention)
