@@ -124,7 +124,9 @@ Attaches a two-step (5-minute resolution) `Deterministic` time series window cov
 `docs/literate/economic_dispatch.jl`/`interchanges.jl` call for a whole `date_range`, called
 here for exactly one interval so each [`solve_interval`](@ref) call is self-contained and
 independently parallelisable (design spec §3: no PSI `Simulation` state carryover between
-intervals). `set_market_bids!` is only called for [`T1Interconnected`](@ref), mirroring
+intervals). The renewable ceiling is now each unit's own `UIGF` (the weather forecast NEMDE
+itself applied), not a regional aggregate, so it no longer depends on how wide the seeded window
+is. `set_market_bids!` is only called for [`T1Interconnected`](@ref), mirroring
 `interchanges.jl` exactly — `economic_dispatch.jl`'s `ThermalBasicDispatch` has no `OnVariable`
 for `MarketBidCost`'s piecewise constraint to reference and instead relies on `ThermalStandard`'s
 default `ThermalGenerationCost` set at `nem_system` parse time.

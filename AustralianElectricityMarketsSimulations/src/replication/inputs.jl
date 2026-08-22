@@ -111,31 +111,13 @@ end
     _read_uigf(db, settlement_date, intervention)
 
 Reads `DISPATCHLOAD.UIGF` — the semi-scheduled weather ceiling NEMDE actually applied that
-interval — for every `DUID` at `settlement_date`. `DISPATCHLOAD` has one row per
-`(SETTLEMENTDATE, DUID, INTERVENTION)`, so no forecast-priority ranking is needed (unlike
-`INTERMITTENT_DS_RUN`, which carries multiple forecast runs per interval). Only non-`missing`,
-non-negative values are kept — `UIGF` is `NULL` for scheduled units.
+interval — as `DUID -> MW`. A `Dict` view over [`read_uigf`](@ref)'s single-interval method, so
+the SQL lives in one place. Only non-negative values are kept: `UIGF` is `NULL` for scheduled
+units, and a negative ceiling is not a physical bound.
 """
 function _read_uigf(db, settlement_date::DateTime, intervention::Integer)
-    table = read_hive(db, :DISPATCHLOAD)
-    schema = names(AustralianElectricityMarkets._query(db, "SELECT * FROM $table LIMIT 0"))
-    params = Any[settlement_date]
-    AustralianElectricityMarkets._push_intervention!(params, schema, intervention)
-    df = AustralianElectricityMarkets._query(
-        db,
-        """
-        SELECT DUID, TRY_CAST(UIGF AS DOUBLE) AS UIGF
-        FROM $table
-        WHERE SETTLEMENTDATE = ? $(AustralianElectricityMarkets._intervention_where(schema))
-        QUALIFY row_number() OVER (
-            PARTITION BY DUID ORDER BY archive_month DESC
-        ) = 1
-        """,
-        params,
-    )
-    return Dict{String, Float64}(
-        row.DUID => row.UIGF for row in eachrow(df) if !ismissing(row.UIGF) && row.UIGF >= 0.0
-    )
+    df = read_uigf(db, settlement_date; intervention = intervention)
+    return Dict{String, Float64}(row.DUID => row.UIGF for row in eachrow(df) if row.UIGF >= 0.0)
 end
 
 """

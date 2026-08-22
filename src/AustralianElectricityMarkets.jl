@@ -24,7 +24,7 @@ export read_affine_heatrates,
     read_isp_fixed_opex, read_isp_variable_opex
 export set_demand!, set_renewable_pv!, set_renewable_wind!, set_market_bids!, set_hydro_limits!
 export read_fcas_bids, set_fcas_bids!, read_fcas_requirements,
-    read_fcas_prices, read_fcas_dispatch, read_prices
+    read_fcas_prices, read_fcas_dispatch, read_prices, read_uigf
 export read_invoked_constraints, read_constraint_definitions, read_constraint_terms,
     read_constraint_fcas_requirements, add_nem_constraints!
 export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS
