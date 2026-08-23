@@ -571,9 +571,12 @@ function create_mock_data(hive_root::String)
 
     # 15. DISPATCHLOAD (per-unit FCAS dispatch outcomes - cleared counterpart to the
     # BIDPEROFFER_D trapezium; contingency markets get an ACTUALAVAILABILITY, regulation
-    # markets don't, matching what AEMO actually publishes). UIGF is `missing` throughout -
-    # every mock DUID is a scheduled (coal/battery) unit, and real NEMWEB only populates UIGF
-    # for semi-scheduled units - see `_read_uigf`'s test in AustralianElectricityMarketsSimulations.
+    # markets don't, matching what AEMO actually publishes). UIGF is populated only for the
+    # two semi-scheduled units (BW03 Solar, BW04 Wind - see GENUNITS above) and `missing` for
+    # the scheduled coal/battery/hydro DUIDs, matching what real NEMWEB publishes. Both
+    # profiles vary across intervals and stay strictly below the 100 MW REGISTEREDCAPACITY, so
+    # a setter that pins a unit's ceiling to its nameplate is detectable.
+    uigf_for(duid, i) = duid == "BW03" ? 40.0 + i : (duid == "BW04" ? 70.0 - i : missing)
     df_dispatchload = DataFrame()
     for i in intervals
         t = base_datetime + Minute(5 * i)
@@ -588,7 +591,7 @@ function create_mock_data(hive_root::String)
             AGCSTATUS = fill(1, n),
             RAISEREGAVAILABILITY = fill(3.0, n),
             LOWERREGAVAILABILITY = fill(3.0, n),
-            UIGF = Union{Float64, Missing}[missing for _ in 1:n],
+            UIGF = Union{Float64, Missing}[uigf_for(d, i) for d in duids],
             archive_month = fill("2025-01", n),
         )
         for bid_type in contingency_types

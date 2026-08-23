@@ -84,55 +84,42 @@ end
 """
     set_renewable_pv!(sys, db, date_range; kwargs...)
 
-Adds photovoltaic (PV) renewable generation time series data to the system.
+Adds photovoltaic (PV) generation ceilings to the system, from each unit's own
+[`read_uigf`](@ref) forecast.
 
-This function reads solar availability data for a specified date range from the database,
-processes it into a time series, and attaches it to the `RenewableDispatch` components
-representing PV generators.
+`UIGF` is the per-`DUID` upper limit NEMDE itself applied to a semi-scheduled unit. Units with no `UIGF` (scheduled units, or
+intervals AEMO did not publish) keep their static `max_active_power` and get no time series.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
 - `db`: The database connection.
 - `date_range`: A range of dates for which to fetch the data.
-- `kwargs`: Additional keyword arguments passed to `read_demand`.
+- `kwargs`: Additional keyword arguments passed to [`read_uigf`](@ref), e.g. `resolution`.
 """
 function set_renewable_pv!(sys, db, date_range; kwargs...)
-    demand = read_demand(db; kwargs...)
-    ts = @chain demand begin
-        subset!(:SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
-        select!(:SETTLEMENTDATE, :REGIONID, :SS_SOLAR_AVAILABILITY)
-        disallowmissing!
-        _as_timearray(:SETTLEMENTDATE, :REGIONID, :SS_SOLAR_AVAILABILITY)
-    end
+    uigf = read_uigf(db, date_range; kwargs...)
     @info "Setting PV power time series"
-    return _add_renewable_ts_to_components!(sys, ts, PrimeMovers.PVe)
+    return _add_uigf_ts_to_components!(sys, uigf, PrimeMovers.PVe)
 end
 
 """
     set_renewable_wind!(sys, db, date_range; kwargs...)
 
-Adds wind turbine renewable generation time series data to the system.
+Adds wind generation ceilings to the system, from each unit's own [`read_uigf`](@ref) forecast.
 
-This function reads wind availability data for a specified date range from the database,
-processes it into a time series, and attaches it to the `RenewableDispatch` components
-representing wind turbines.
+`UIGF` is the per-`DUID` upper limit NEMDE itself applied to a semi-scheduled unit. Units with no `UIGF` (scheduled units, or
+intervals AEMO did not publish) keep their static `max_active_power` and get no time series.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
 - `db`: The database connection.
 - `date_range`: A range of dates for which to fetch the data.
-- `kwargs`: Additional keyword arguments passed to `read_demand`.
+- `kwargs`: Additional keyword arguments passed to [`read_uigf`](@ref), e.g. `resolution`.
 """
 function set_renewable_wind!(sys, db, date_range; kwargs...)
-    demand = read_demand(db; kwargs...)
-    ts = @chain demand begin
-        subset!(:SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
-        select!(:SETTLEMENTDATE, :REGIONID, :SS_WIND_AVAILABILITY)
-        disallowmissing!
-        _as_timearray(:SETTLEMENTDATE, :REGIONID, :SS_WIND_AVAILABILITY)
-    end
+    uigf = read_uigf(db, date_range; kwargs...)
     @info "Setting wind power time series"
-    return _add_renewable_ts_to_components!(sys, ts, PrimeMovers.WT)
+    return _add_uigf_ts_to_components!(sys, uigf, PrimeMovers.WT)
 end
 
 function set_hydro_limits!(sys, db, date_range; kwargs...)
@@ -184,10 +171,10 @@ function _add_demand_ts_to_components!(sys, ts, type)
         else
             ts_component = ts[name]
         end
-        max_active_power = get_max_active_power(component)
+        max_active_power = with_units_base(() -> get_max_active_power(component), sys, "NATURAL_UNITS")
         psy_ts = SingleTimeSeries(;
             name = "max_active_power",
-            data = Float64.(ts_component ./ max_active_power ./ get_base_power(sys)),
+            data = Float64.(ts_component ./ max_active_power),
             scaling_factor_multiplier = get_max_active_power,
         )
         add_time_series!(sys, component, psy_ts)
@@ -196,29 +183,33 @@ function _add_demand_ts_to_components!(sys, ts, type)
 end
 
 """
-    _add_renewable_ts_to_components!(sys, ts, prime_mover)
+    _add_uigf_ts_to_components!(sys, uigf, prime_mover)
 
-Adds renewable generation time series data to the system components.
+Attaches each semi-scheduled unit's own `UIGF` upper limit to the matching `RenewableDispatch`
+component, keyed by `DUID`.
+
+Units absent from `uigf` are left untouched.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
-- `ts`: A `TimeArray` of renewable generation data.
+- `uigf`: A `DataFrame` from [`read_uigf`](@ref) (`SETTLEMENTDATE`, `DUID`, `UIGF`).
 - `prime_mover`: The prime mover type of the renewable generator.
 """
-function _add_renewable_ts_to_components!(sys, ts, prime_mover)
-    for area in get_components(area -> get_name(area) in string.(colnames(ts)), Area, sys)
-        area_symbol = Symbol(get_name(area))
-        components_in_area = get_components(
-            x -> get_area(get_bus(x)) == area && get_prime_mover_type(x) == prime_mover,
-            RenewableDispatch,
-            sys,
-        )
+function _add_uigf_ts_to_components!(sys, uigf, prime_mover)
+    isempty(uigf) && return
+    by_duid = groupby(uigf, :DUID)
+    for component in get_components(x -> get_prime_mover_type(x) == prime_mover, RenewableDispatch, sys)
+        name = get_name(component)
+        haskey(by_duid, (DUID = name,)) || continue
+        rows = sort(DataFrame(by_duid[(DUID = name,)]), :SETTLEMENTDATE)
+        nrow(rows) > 1 || continue
+        max_active_power = with_units_base(() -> get_max_active_power(component), sys, "NATURAL_UNITS")
         psy_ts = SingleTimeSeries(;
             name = "max_active_power",
-            data = ts[area_symbol] ./ values(maximum(ts[area_symbol]))[1],
+            data = TimeArray(rows.SETTLEMENTDATE, Float64.(rows.UIGF ./ max_active_power)),
             scaling_factor_multiplier = get_max_active_power,
         )
-        add_time_series!(sys, components_in_area, psy_ts)
+        add_time_series!(sys, component, psy_ts)
     end
     return
 end
@@ -966,4 +957,96 @@ function read_fcas_dispatch(db, date_range; intervention::Integer = 0)
         append!(long, block; promote = true)
     end
     return long
+end
+
+"""
+    _uigf_rows(db, where_sql, params, intervention)
+
+Raw `(SETTLEMENTDATE, DUID, UIGF)` rows behind both [`read_uigf`](@ref) methods, deduplicating
+archive-month overlap.
+
+`DISPATCHLOAD` carries one row per `(SETTLEMENTDATE, DUID, INTERVENTION)`, so ranking by
+`archive_month` alone is enough. Returns an empty frame when the cached partitions predate the `UIGF` addition.
+"""
+function _uigf_rows(db, where_sql::AbstractString, params::Vector{Any}, intervention::Integer)
+    table = read_hive(db, :DISPATCHLOAD)
+    schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
+    if !("UIGF" in schema)
+        @warn "No UIGF column was found in the DISPATCHLOAD table. It may be a stale archive pre-dating the addition of the UIGF column."
+        return DataFrame(SETTLEMENTDATE = DateTime[], DUID = String[], UIGF = Float64[])
+    end
+    _push_intervention!(params, schema, intervention)
+    df = _query(
+        db,
+        """
+        SELECT SETTLEMENTDATE, DUID, $(_cast_double("UIGF"))
+        FROM $table
+        WHERE $where_sql AND UIGF IS NOT NULL
+          $(_intervention_where(schema))
+        QUALIFY row_number() OVER (
+            PARTITION BY SETTLEMENTDATE, DUID ORDER BY archive_month DESC
+        ) = 1
+        """,
+        params,
+    )
+    dropmissing!(df, :UIGF)
+    return df
+end
+
+"""
+    read_uigf(db, date_range; resolution = Minute(5), intervention = 0)
+    read_uigf(db, settlement_date::DateTime; intervention = 0)
+
+Reads the per-unit Unconstrained Intermittent Generation Forecast (`DISPATCHLOAD.UIGF`) - the
+upper limit NEMDE applies to each semi-scheduled unit for each dispatch interval.
+
+`UIGF` is `NULL` for scheduled units, so only semi-scheduled DUIDs appear in the result. Over a
+`date_range`, rows are ceiled onto `resolution` and averaged within each bucket, matching
+[`read_demand`](@ref)'s convention. The `DateTime` method reads exactly one interval and skips
+both the widened scan and the bucketing - use it when replicating a single dispatch interval.
+
+`intervention` selects the dispatch run: `0` is the normal (non-intervention) run
+(`INTERVENTION` is compared via `COALESCE(INTERVENTION, 0)` for partitions predating that
+column - see [`read_fcas_requirements`](@ref)).
+
+# Arguments
+- `db`: an `AEMDB` connection.
+- `date_range`: the range of interval timestamps to read (half-open: `start <= t < stop`).
+- `settlement_date`: a single interval end, read exactly.
+- `resolution`: the resolution to aggregate onto. Defaults to 5 minutes.
+- `intervention`: 0 for the pricing run, 1 for the physical run.
+
+# Returns
+A `DataFrame` with `SETTLEMENTDATE`, `DUID` and `UIGF` (MW).
+
+# Example
+```julia
+uigf = read_uigf(db, Date(2025, 1, 1):Date(2025, 1, 2); resolution = Minute(30))
+one_interval = read_uigf(db, DateTime(2025, 1, 1, 0, 5))
+```
+"""
+function read_uigf(db, date_range; resolution::Dates.Period = Minute(5), intervention::Integer = 0)
+    start_date = first(date_range)
+    end_date = last(date_range)
+    df = _uigf_rows(
+        db,
+        "SETTLEMENTDATE BETWEEN ? AND ?",
+        Any[Date(start_date) - Day(1), Date(end_date) + Day(1)],
+        intervention,
+    )
+    isempty(df) && return df
+    # Ceil onto `resolution` before filtering, matching `read_demand`/`set_demand!`: filtering
+    # the raw stamps first would let an interval just inside the range (e.g. 01:55) round up
+    # onto a bucket just outside it (02:00) and add a spurious trailing bucket.
+    df[!, :SETTLEMENTDATE] = ceil.(df[!, :SETTLEMENTDATE], resolution)
+    return @chain df begin
+        groupby([:SETTLEMENTDATE, :DUID])
+        combine(:UIGF => mean => :UIGF)
+        subset(:SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
+        sort([:DUID, :SETTLEMENTDATE])
+    end
+end
+
+function read_uigf(db, settlement_date::DateTime; intervention::Integer = 0)
+    return _uigf_rows(db, "SETTLEMENTDATE = ?", Any[settlement_date], intervention)
 end
