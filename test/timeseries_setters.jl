@@ -3,6 +3,7 @@
     using PowerSystems
     using Dates
     using DataFrames
+    using Statistics
     import TimeSeries
 
     hive_dir = AEM_TEST_HIVE_DIR
@@ -222,6 +223,43 @@
                 long_gen = get_component(RenewableDispatch, sys, get_name(gen))
                 long_vals = get_time_series_values(SingleTimeSeries, long_gen, "max_active_power")
                 @test isapprox(short_vals, long_vals[1:length(short_vals)]; atol = 1.0e-6)
+            end
+        end
+    end
+
+    @testset "read_bids resolution aggregation uses per-bucket mean (regression: scale-then-sum bug)" begin
+        # Fixture: every DUID gets a GEN energy bid with MAXAVAIL = 100.0 + i and ten
+        # BANDAVAIL bands of 10.0 each, for i in 0:48 at 5-minute intervals from 00:00.
+        start_date = DateTime(2025, 1, 1, 0, 0)
+        duid = "BW02"
+
+        for (resolution, buckets) in (
+                Minute(5) => [0:0, 6:6],
+                Minute(30) => [0:0, 1:6],
+                Hour(1) => [0:0, 1:12],
+            )
+            @testset "Resolution: $resolution" begin
+                date_range = start_date:resolution:(start_date + Hour(2))
+                bids = read_bids(db, date_range; resolution = resolution)
+                gen_bids = @chain bids begin
+                    subset(:DUID => ByRow(==(duid)), :DIRECTION => ByRow(==("GEN")))
+                    sort(:INTERVAL_DATETIME)
+                end
+                @test !isempty(gen_bids)
+
+                for is in buckets
+                    # `ceil` on INTERVAL_DATETIME buckets by the bucket's own end stamp, so the
+                    # first (partial) bucket is the singleton i=0, not a full-width bucket.
+                    bucket_end = start_date + Minute(5 * last(is))
+                    row = only(subset(gen_bids, :INTERVAL_DATETIME => ByRow(==(bucket_end))))
+
+                    expected_maxavail = mean(100.0 .+ is)
+                    @test isapprox(row.MAXAVAIL, expected_maxavail; atol = 1.0e-8)
+                    # 10 bands of 10.0 each, constant across i, so the bucket mean per band is
+                    # still 10.0 and the row's summed BANDAVAILARRAY is 100.0 regardless of
+                    # bucket width - including the partial first bucket.
+                    @test isapprox(sum(row.BANDAVAILARRAY), 100.0; atol = 1.0e-8)
+                end
             end
         end
     end
