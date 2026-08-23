@@ -42,7 +42,7 @@ function read_interval_inputs(db, settlement_date::DateTime; intervention::Integ
     regionsum = _read_region_sum(db, settlement_date, intervention)
     demand = Dict{String, Float64}(row.REGIONID => row.TOTALDEMAND for row in eachrow(regionsum) if !ismissing(row.TOTALDEMAND))
 
-    uigf = _read_uigf(db, settlement_date, intervention)
+    uigf = read_uigf_as_dict(db, settlement_date, intervention)
 
     flows = _read_interconnector_flows(db, settlement_date, intervention)
 
@@ -107,14 +107,14 @@ function _read_region_sum(db, settlement_date::DateTime, intervention::Integer)
 end
 
 """
-    _read_uigf(db, settlement_date, intervention)
+    read_uigf_as_dict(db, settlement_date, intervention)
 
 Reads `DISPATCHLOAD.UIGF` — the semi-scheduled weather ceiling NEMDE actually applied that
 interval — as `DUID -> MW`. A `Dict` view over [`read_uigf`](@ref)'s single-interval method, so
 the SQL lives in one place. Only non-negative values are kept: `UIGF` is `NULL` for scheduled
 units, and a negative ceiling is not a physical bound.
 """
-function _read_uigf(db, settlement_date::DateTime, intervention::Integer)
+function read_uigf_as_dict(db, settlement_date::DateTime, intervention::Integer)
     df = read_uigf(db, settlement_date; intervention = intervention)
     return Dict{String, Float64}(row.DUID => row.UIGF for row in eachrow(df) if row.UIGF >= 0.0)
 end

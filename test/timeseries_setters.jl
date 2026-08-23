@@ -179,7 +179,7 @@
         end
 
         @testset "single-interval method agrees with the range method" begin
-            # `_read_uigf` in AustralianElectricityMarketsSimulations reads one interval at a
+            # `read_uigf_as_dict` in AustralianElectricityMarketsSimulations reads one interval at a
             # time through this method rather than carrying its own copy of the query, so it
             # must return exactly the range method's rows for that stamp.
             t = start_date + resolution
