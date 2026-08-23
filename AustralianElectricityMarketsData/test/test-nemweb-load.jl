@@ -92,6 +92,34 @@ end
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# A0. Download failure classification — absence vs. rate limiting
+# ══════════════════════════════════════════════════════════════════════════════
+
+@testset "_is_transient_status: separates 'ask again later' from 'does not exist'" begin
+    # 403 is the important one: NEMWEB rate-limits with it, and a bulk populate over a wide
+    # date range trips that easily. Classifying it as absence is what silently holes a cache.
+    for s in (403, 408, 425, 429, 500, 502, 503, 504)
+        @test AustralianElectricityMarketsData._is_transient_status(s)
+    end
+    # 404 is the only status that actually means AEMO never published the month.
+    @test !AustralianElectricityMarketsData._is_transient_status(404)
+    for s in (200, 301, 400, 401, 410)
+        @test !AustralianElectricityMarketsData._is_transient_status(s)
+    end
+end
+
+@testset "MissingDataError and TransientDownloadError are distinct types" begin
+    # populate skips MissingDataError and must NOT skip TransientDownloadError; if one were
+    # a subtype of the other, `isa` in _add_data's catch would silently swallow both.
+    miss = AustralianElectricityMarketsData.MissingDataError("gone")
+    transient = AustralianElectricityMarketsData.TransientDownloadError("throttled")
+    @test miss isa Exception
+    @test transient isa Exception
+    @test !(transient isa AustralianElectricityMarketsData.MissingDataError)
+    @test !(miss isa AustralianElectricityMarketsData.TransientDownloadError)
+end
+
+# ══════════════════════════════════════════════════════════════════════════════
 # A. _extract_d_lines — ZIP handling + D-line filtering + header capture
 # ══════════════════════════════════════════════════════════════════════════════
 
