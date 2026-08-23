@@ -5,10 +5,33 @@ authors = ["Youssef Miftah <miftahyo@outlook.fr> and contributors"]
 
 [deps]
 AustralianElectricityMarkets = "1bf50fc4-d6fd-47c1-85ec-4976c2b5cc58"
+AustralianElectricityMarketsData = "72087003-a296-4e4a-a8a5-0267d35bd839"
+Chain = "8be319e6-bccf-4806-a6f7-6fae938471bc"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+DuckDB = "d2f5444f-75bc-4fdf-ac35-56f514c445e1"
+HiGHS = "87dc4568-4c63-4d18-b0c0-bb2238e4078b"
+HydroPowerSimulations = "fc1677e0-6ad7-4515-bf3a-bd6bf20a0b1b"
+JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
+PowerSimulations = "e690365d-45e2-57bb-ac84-44ba829e73c4"
+PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
 [compat]
 AustralianElectricityMarkets = "0.1"
+AustralianElectricityMarketsData = "0.1"
+Chain = "0.6, 1.0"
+DataFrames = "1.7"
+Dates = "1"
+DuckDB = "1"
+HiGHS = "1"
+HydroPowerSimulations = "0.15"
+JuMP = "1"
+PowerSimulations = "0.34, 0.38"
+PowerSystems = "5.10.0"
+Statistics = "1"
 julia = "1.11"
 
 [sources]
 AustralianElectricityMarkets = {path = ".."}
+AustralianElectricityMarketsData = {path = "../AustralianElectricityMarketsData"}
