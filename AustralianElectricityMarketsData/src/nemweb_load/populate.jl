@@ -63,10 +63,6 @@ const _DOWNLOAD_MAX_ATTEMPTS = 5
 const _DOWNLOAD_BASE_DELAY_S = 2.0
 """
 Seconds without data before a download is abandoned as transient.
-
-Without this an archive fetch can block forever on a half-open socket - a laptop suspending
-mid-run is the easy way to get one, since the peer drops the connection while the local end
-never learns of it. Generous, because the monthly archives are large and genuinely slow.
 """
 const _DOWNLOAD_READ_TIMEOUT_S = 300
 "Seconds to wait for the TCP connection itself."
@@ -92,8 +88,7 @@ Download `url` to `cache_path`, retrying transient failures with exponential bac
 
 Throws [`MissingDataError`](@ref) on a 404 (and any other non-transient non-200), or
 [`TransientDownloadError`](@ref) if a transient failure - see [`_is_transient_status`](@ref)
-\\- persists across [`_DOWNLOAD_MAX_ATTEMPTS`](@ref) attempts. The distinction is the whole
-point: callers skip the former and must not skip the latter.
+\\- persists across [`_DOWNLOAD_MAX_ATTEMPTS`](@ref) attempts.
 """
 function _download_and_cache(url::String, cache_path::String)
     last_reason = "unknown"
