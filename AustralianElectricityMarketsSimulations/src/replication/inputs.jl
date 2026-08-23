@@ -1,15 +1,14 @@
 """
 One dispatch interval's NEMDE inputs, read from the NEMWEB archive.
 
-Every field is a historical fact for `settlement_date`, never a modelled value — this is what
-makes an interval reproducible in isolation. `settlement_date` is the **end** of the interval,
-matching NEMWEB convention.
+Every field is a historical measurement for `settlement_date`.
+`settlement_date` is the **end** of the interval, matching NEMWEB convention.
 
 # Fields
 - `settlement_date`: interval end.
 - `initial_mw`: `DUID -> INITIALMW`, the metered output at interval start (the ramp base).
 - `demand`: `REGIONID -> TOTALDEMAND`.
-- `uigf`: `DUID -> UIGF`, semi-scheduled weather ceiling. Absent for scheduled units.
+- `uigf`: `DUID -> UIGF`, semi-scheduled weather forecast. Absent for scheduled units.
 - `interconnector_flows`: `INTERCONNECTORID -> MWFLOW` at interval start.
 - `intervention`: 0 for the pricing run, 1 for the physical run.
 """
