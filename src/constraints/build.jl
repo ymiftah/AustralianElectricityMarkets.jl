@@ -25,7 +25,42 @@ function _pad_to_grid(values_by_time::Dict, grid::Vector{DateTime}, initial_fill
 end
 
 """
-    add_nem_constraints!(sys, db, date_range; intervention = 0, include_solution = false)
+    _infer_resolution(grid) -> Dates.Period
+
+Infers the sampling resolution of a sorted, deduplicated grid of timestamps as the spacing
+between consecutive points, canonicalized to `Minute`/`Second` where it divides evenly
+(see [`_canonical_period`](@ref)). Fewer than 2 points carries no spacing information and
+falls back to `Minute(5)`. Unequal spacings mean the grid has gaps a single fixed resolution
+cannot represent exactly; this warns naming the distinct spacings found and proceeds using
+the smallest one, rather than throwing.
+"""
+function _infer_resolution(grid::Vector{DateTime})
+    length(grid) < 2 && return Minute(5)
+    distinct = sort(unique(diff(grid)))
+    if length(distinct) > 1
+        @warn "add_nem_constraints!: grid spacing is not uniform (found $(join(distinct, ", "))); the stored series' fixed resolution will not match every SETTLEMENTDATE. Proceeding with the smallest spacing, $(first(distinct))."
+    end
+    return _canonical_period(first(distinct))
+end
+
+"""
+    _canonical_period(ms::Millisecond) -> Dates.Period
+
+Converts a `Millisecond` period to `Minute` or `Second` where it divides evenly, so a stored
+time series' resolution reads naturally (e.g. `Minute(5)`) rather than as raw milliseconds.
+"""
+function _canonical_period(ms::Millisecond)
+    if ms.value % 60_000 == 0
+        return Minute(ms.value ÷ 60_000)
+    elseif ms.value % 1000 == 0
+        return Second(ms.value ÷ 1000)
+    else
+        return ms
+    end
+end
+
+"""
+    add_nem_constraints!(sys, db, date_range; intervention = 0, include_solution = false, resolution = nothing)
 
 Adds one [`GenericConstraint`](@ref) per constraint invoked in `date_range`
 (`DISPATCHCONSTRAINT` membership) whose LHS terms all resolve against components already in
@@ -43,15 +78,24 @@ carried forward, at any interval `"invoked"` is `0.0` — a constraint not in fo
 shadow price, by definition) — both validation-only, since feeding a solved `MARGINALVALUE`
 back into a dispatch simulation is the same category error as using `RRP` as an LP input.
 
+`resolution` sets the declared `resolution`/`interval` of every attached `Deterministic`. When
+`nothing` (the default) it is inferred from `full_grid` via [`_infer_resolution`](@ref): the
+spacing between consecutive grid points, or `Minute(5)` if the grid has fewer than 2 points.
+An irregular grid (unequal spacings) warns and falls back to the smallest spacing found rather
+than throwing, since real caches can be gappy. Passing `resolution` explicitly skips inference
+and validation — the caller is asserting it themselves.
+
 Returns `(added, skipped)`: `added::Vector{String}` of `GENCONID`s successfully added, and
 `skipped::Dict{String, Symbol}` mapping a skipped `GENCONID` to one reason — `:no_definition`
 (no matching `GENCONDATA` version), `:no_terms` (no `SPD*` rows for its version), or
 `:unknown_duid`/`:unknown_region`/`:unknown_interconnector` (a term referenced a component
 `sys` doesn't have). Skips are reported as one summary `@warn`, not one per constraint.
 """
-function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0, include_solution::Bool = false)
+function add_nem_constraints!(
+        sys, db, date_range; intervention::Integer = 0, include_solution::Bool = false,
+        resolution::Union{Nothing, Dates.Period} = nothing,
+    )
     start_date = first(date_range)
-    resolution = Minute(5)
 
     invoked = read_invoked_constraints(db, date_range; intervention = intervention)
     if DataFrames.isempty(invoked)
@@ -64,6 +108,7 @@ function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0, in
     # no single GENCONID's coverage reliably represents "every interval NEMDE dispatched" (see
     # docstring above).
     full_grid = sort(unique(invoked.SETTLEMENTDATE))
+    resolution = isnothing(resolution) ? _infer_resolution(full_grid) : resolution
 
     gencon_versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
     definitions = read_constraint_definitions(db, gencon_versions)
