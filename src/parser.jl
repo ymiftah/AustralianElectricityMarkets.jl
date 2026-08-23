@@ -185,13 +185,10 @@ end
 """
     _add_uigf_ts_to_components!(sys, uigf, prime_mover)
 
-Attaches each semi-scheduled unit's own `UIGF` ceiling to the matching `RenewableDispatch`
+Attaches each semi-scheduled unit's own `UIGF` upper limit to the matching `RenewableDispatch`
 component, keyed by `DUID`.
 
-Units absent from `uigf` are left untouched — their static `max_active_power` remains the
-ceiling. Stores `UIGF / max_active_power` so `scaling_factor_multiplier` reconstructs MW; see
-[`_add_demand_ts_to_components!`](@ref) for why that ratio is taken against the natural-units
-capacity.
+Units absent from `uigf` are left untouched.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
@@ -969,10 +966,7 @@ Raw `(SETTLEMENTDATE, DUID, UIGF)` rows behind both [`read_uigf`](@ref) methods,
 archive-month overlap.
 
 `DISPATCHLOAD` carries one row per `(SETTLEMENTDATE, DUID, INTERVENTION)`, so ranking by
-`archive_month` alone is enough - there is no forecast-priority dimension to break ties on
-(unlike `INTERMITTENT_DS_RUN`, which publishes several forecast runs per interval). Returns an
-empty frame when the cached partitions predate the `UIGF` column: referencing a column absent
-from *every* file in a `read_hive` glob is a hard DuckDB Binder Error.
+`archive_month` alone is enough. Returns an empty frame when the cached partitions predate the `UIGF` addition.
 """
 function _uigf_rows(db, where_sql::AbstractString, params::Vector{Any}, intervention::Integer)
     table = read_hive(db, :DISPATCHLOAD)
@@ -1004,7 +998,7 @@ end
     read_uigf(db, settlement_date::DateTime; intervention = 0)
 
 Reads the per-unit Unconstrained Intermittent Generation Forecast (`DISPATCHLOAD.UIGF`) - the
-weather ceiling NEMDE applied to each semi-scheduled unit for each dispatch interval.
+upper limit NEMDE applies to each semi-scheduled unit for each dispatch interval.
 
 `UIGF` is `NULL` for scheduled units, so only semi-scheduled DUIDs appear in the result. Over a
 `date_range`, rows are ceiled onto `resolution` and averaged within each bucket, matching
