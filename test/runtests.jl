@@ -13,6 +13,11 @@ include(joinpath(@__DIR__, "..", "AustralianElectricityMarketsData", "test", "mo
 const AEM_TEST_HIVE_DIR = mktempdir()
 create_mock_data(AEM_TEST_HIVE_DIR)
 
+include("pscb_fixture.jl")
+include("pscb_nemweb_data.jl")
+const AEM_TEST_PSCB_HIVE_DIR = mktempdir()
+create_pscb_nemweb_data(AEM_TEST_PSCB_HIVE_DIR)
+
 @testset "Data reader tests" begin
     include("datareader.jl")
 end
@@ -31,6 +36,14 @@ end
 
 @testset "Constraint types" begin
     include("constraints.jl")
+end
+
+@testset "PSCB fixture" begin
+    include("pscb_fixture_tests.jl")
+end
+
+@testset "PSCB constraints and FCAS" begin
+    include("pscb_constraints.jl")
 end
 
 
