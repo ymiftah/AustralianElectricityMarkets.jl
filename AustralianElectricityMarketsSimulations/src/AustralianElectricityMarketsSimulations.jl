@@ -15,6 +15,7 @@ using Statistics
 import PowerSimulations as PSI
 import PowerSystems as PSY
 
+include("errors.jl")
 include("replication/inputs.jl")
 include("replication/preprocessing.jl")
 include("replication/tiers.jl")
