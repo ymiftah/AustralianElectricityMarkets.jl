@@ -87,8 +87,7 @@ end
 Adds photovoltaic (PV) generation ceilings to the system, from each unit's own
 [`read_uigf`](@ref) forecast.
 
-`UIGF` is the per-`DUID` weather ceiling NEMDE itself applied to a semi-scheduled unit, so it
-is the correct upper bound for that unit's dispatch. Units with no `UIGF` (scheduled units, or
+`UIGF` is the per-`DUID` upper limit NEMDE itself applied to a semi-scheduled unit. Units with no `UIGF` (scheduled units, or
 intervals AEMO did not publish) keep their static `max_active_power` and get no time series.
 
 # Arguments
@@ -108,8 +107,7 @@ end
 
 Adds wind generation ceilings to the system, from each unit's own [`read_uigf`](@ref) forecast.
 
-`UIGF` is the per-`DUID` weather ceiling NEMDE itself applied to a semi-scheduled unit, so it
-is the correct upper bound for that unit's dispatch. Units with no `UIGF` (scheduled units, or
+`UIGF` is the per-`DUID` upper limit NEMDE itself applied to a semi-scheduled unit. Units with no `UIGF` (scheduled units, or
 intervals AEMO did not publish) keep their static `max_active_power` and get no time series.
 
 # Arguments
@@ -157,13 +155,6 @@ end
     _add_demand_ts_to_components!(sys, ts, type)
 
 Adds demand time series data to the system components.
-
-Stores `value / max_active_power` rather than the raw MW, because `scaling_factor_multiplier`
-re-multiplies by `get_max_active_power` when the series is read back. That divisor is taken in
-`NATURAL_UNITS` regardless of the `System`'s current units base: `get_max_active_power` is
-itself unit-mode-aware, so taking it in the caller's mode would make the stored series depend
-on whether the caller happened to be in `SYSTEM_BASE` (as after `nem_system`) or
-`NATURAL_UNITS` — a silent factor of `get_base_power(sys)`.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
