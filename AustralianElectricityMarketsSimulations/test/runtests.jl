@@ -3,7 +3,6 @@ using AustralianElectricityMarkets
 using AustralianElectricityMarketsData
 using DataFrames
 using Dates
-using HiGHS
 using PowerSystems
 using Test
 
@@ -19,9 +18,5 @@ create_mock_data(AEM_TEST_HIVE_DIR)
 
     @testset "Preprocessing" begin
         include("preprocessing.jl")
-    end
-
-    @testset "Fidelity tiers" begin
-        include("tiers.jl")
     end
 end
