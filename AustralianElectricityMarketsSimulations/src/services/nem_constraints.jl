@@ -38,7 +38,10 @@ PSI.get_multiplier_value(::NEMConstraintRHSParameter, ::GenericConstraint, ::NEM
 # `ArgumentConstructStage` but *before* services' `ModelConstructStage`
 # (`core/optimization_container.jl:build_impl!`), so an interconnector term's device isn't
 # reliably checkable any earlier.
-const _NEM_CONSTRAINT_SKIP_CACHE = Base.IdDict{PSI.OptimizationContainer, Dict{String, Symbol}}()
+# `WeakKeyDict`, not `IdDict`: an `IdDict` holds a strong reference to every `container` key, so
+# every `Simulation`-lifetime `OptimizationContainer` ever built would live for the process's
+# life. A `WeakKeyDict` entry is pruned once nothing else references the container.
+const _NEM_CONSTRAINT_SKIP_CACHE = Base.WeakKeyDict{PSI.OptimizationContainer, Dict{String, Symbol}}()
 
 _term_bid_type(term::Union{UnitTerm, RegionTerm}) = get_bid_type(term)
 
@@ -235,7 +238,16 @@ function PSI.add_constraints!(
     jm = PSI.get_jump_model(container)
     sense = get_sense(gc)
     for t in time_steps
-        invoked[t] == 0.0 && continue
+        if invoked[t] == 0.0
+            # `con` spans every time step (dense container); PSI's dual read-back
+            # (`_calculate_dual_variable_value!`) broadcasts over the whole thing regardless of
+            # which cells this loop ever assigns, so leaving a cell `#undef` throws
+            # `UndefRefError` the moment any interval is skipped. A vacuous, disconnected
+            # constraint keeps the cell defined, adds no LHS, and reads back a dual of exactly
+            # `0.0` (verified empirically) - "not invoked" without an undefined container cell.
+            con[name, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
+            continue
+        end
         con[name, t] = if sense == ConstraintSense.LE
             JuMP.@constraint(jm, expr[name, t] <= rhs_refs[t] / base_power)
         elseif sense == ConstraintSense.GE
