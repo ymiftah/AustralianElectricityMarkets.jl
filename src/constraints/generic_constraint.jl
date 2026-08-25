@@ -13,7 +13,7 @@ be dynamic (`GENCONDATA.DYNAMICRHS`) or an armed/disarmed variant switch.
 the violation penalty in dollars; a PowerSimulations.jl extension multiplies it by an
 AEMC-set base CVP rate.
 """
-mutable struct GenericConstraint <: PSY.Component
+mutable struct GenericConstraint <: PSY.Service
     name::String
     available::Bool
     sense::ConstraintSense
