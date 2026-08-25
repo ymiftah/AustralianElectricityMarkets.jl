@@ -60,12 +60,33 @@ function _canonical_period(ms::Millisecond)
 end
 
 """
+    _region_devices(sys, region) -> Vector{Device}
+
+Every `Generator`/`Storage` unit in `sys` whose bus's area is named `region` — the
+[`GenericConstraint`](@ref) `Service` machinery's contributing-device set for a `RegionTerm`
+(see the "GenericConstraint as a service" design; a `PowerSimulations.jl` extension further
+restricts this to a term's `bid_type` at LHS-assembly time).
+"""
+function _region_devices(sys, region::AbstractString)
+    devices = Device[]
+    for d in Iterators.flatten((get_components(Generator, sys), get_components(Storage, sys)))
+        get_name(get_area(get_bus(d))) == region && push!(devices, d)
+    end
+    return devices
+end
+
+"""
     add_nem_constraints!(sys, db, date_range; intervention = 0, include_solution = false, resolution = nothing)
 
 Adds one [`GenericConstraint`](@ref) per constraint invoked in `date_range`
 (`DISPATCHCONSTRAINT` membership) whose LHS terms all resolve against components already in
 `sys` — a constraint with any unresolvable term is skipped entirely, never added with a
-partial LHS. Each added constraint gets an `"rhs"` `Deterministic` time series spanning every
+partial LHS. `GenericConstraint` is a `PSY.Service`, so each added constraint is attached via
+`add_service!` with its contributing devices: a `UnitTerm`/`InterconnectorTerm`'s single named
+device, or (Ruling R8) a `RegionTerm`'s every `Generator`/`Storage` unit in that region (see
+[`_region_devices`](@ref)) — a region with no matching unit skips the whole constraint
+(`:no_region_devices`), the same as an unresolvable `UnitTerm`/`InterconnectorTerm`. Each added
+constraint also gets an `"rhs"` `Deterministic` time series spanning every
 dispatch interval any constraint was invoked at in `date_range`, replaying
 `DISPATCHCONSTRAINT.RHS` where this `GENCONID` was actually invoked and carrying the last
 known value forward elsewhere (a constraint's own coverage can be shorter than another's — it
@@ -87,9 +108,11 @@ and validation — the caller is asserting it themselves.
 
 Returns `(added, skipped)`: `added::Vector{String}` of `GENCONID`s successfully added, and
 `skipped::Dict{String, Symbol}` mapping a skipped `GENCONID` to one reason — `:no_definition`
-(no matching `GENCONDATA` version), `:no_terms` (no `SPD*` rows for its version), or
+(no matching `GENCONDATA` version), `:no_terms` (no `SPD*` rows for its version),
 `:unknown_duid`/`:unknown_region`/`:unknown_interconnector` (a term referenced a component
-`sys` doesn't have). Skips are reported as one summary `@warn`, not one per constraint.
+`sys` doesn't have), or `:no_region_devices` (a `RegionTerm`'s region has no matching
+`Generator`/`Storage` unit in `sys`). Skips are reported as one summary `@warn`, not one per
+constraint.
 
 Throws an `ArgumentError` when `DISPATCHCONSTRAINT` isn't cached at all. If it *is* cached but
 genuinely has no rows in `date_range`, that is a real answer, not a missing-data problem — this
@@ -147,26 +170,37 @@ function add_nem_constraints!(
         term_rows = terms_by_id[(gencon_id,)]
 
         resolved_terms = ConstraintTerm[]
+        contributing_devices = Device[]
         skip_reason = nothing
         for row in eachrow(term_rows)
             if row.TERM_KIND == "UNIT"
-                if isnothing(get_component(Device, sys, row.KEY))
+                device = get_component(Device, sys, row.KEY)
+                if isnothing(device)
                     skip_reason = :unknown_duid
                     break
                 end
                 push!(resolved_terms, UnitTerm(row.KEY, BidType(row.BIDTYPE), row.FACTOR))
+                push!(contributing_devices, device)
             elseif row.TERM_KIND == "REGION"
                 if isnothing(get_component(Area, sys, row.KEY))
                     skip_reason = :unknown_region
                     break
                 end
+                region_devices = _region_devices(sys, row.KEY)
+                if isempty(region_devices)
+                    skip_reason = :no_region_devices
+                    break
+                end
                 push!(resolved_terms, RegionTerm(row.KEY, BidType(row.BIDTYPE), row.FACTOR))
+                append!(contributing_devices, region_devices)
             else
-                if isnothing(get_component(AreaInterchange, sys, row.KEY))
+                device = get_component(AreaInterchange, sys, row.KEY)
+                if isnothing(device)
                     skip_reason = :unknown_interconnector
                     break
                 end
                 push!(resolved_terms, InterconnectorTerm(row.KEY, row.FACTOR))
+                push!(contributing_devices, device)
             end
         end
         if !isnothing(skip_reason)
@@ -203,7 +237,7 @@ function add_nem_constraints!(
                 "version_no" => def.VERSIONNO,
             ),
         )
-        add_component!(sys, gc)
+        add_service!(sys, gc, unique(contributing_devices))
 
         add_time_series!(
             sys, gc,

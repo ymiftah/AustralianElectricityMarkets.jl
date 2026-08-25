@@ -49,4 +49,8 @@ end
     @testset "Preprocessing" begin
         include("preprocessing.jl")
     end
+
+    @testset "NEM constraints as a PSI Service" begin
+        include("nem_constraints.jl")
+    end
 end
