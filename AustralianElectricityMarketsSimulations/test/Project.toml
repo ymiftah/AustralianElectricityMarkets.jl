@@ -5,5 +5,12 @@ AustralianElectricityMarketsSimulations = "262ca99f-a0b8-4426-9e4f-bb8b4568790b"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 DuckDB = "d2f5444f-75bc-4fdf-ac35-56f514c445e1"
+HiGHS = "87dc4568-4c63-4d18-b0c0-bb2238e4078b"
+HydroPowerSimulations = "fc1677e0-6ad7-4515-bf3a-bd6bf20a0b1b"
+PowerSimulations = "e690365d-45e2-57bb-ac84-44ba829e73c4"
+PowerSystemCaseBuilder = "f00506e0-b84f-492a-93c2-c0a9afc4364e"
 PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[compat]
+PowerSystemCaseBuilder = "2.6"
