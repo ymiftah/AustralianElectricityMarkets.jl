@@ -1,31 +1,17 @@
 # T0/T1 as real PowerSimulations.jl problems, built and solved directly via `build_template`
 # against `PowerSystemCaseBuilder`'s fixture rather than through `solve_interval`.
 #
-# `solve_interval`/`_seed_interval_time_series!` seed demand via `set_demand!`, which matches
-# time series columns to `PowerLoad` component names of the form "<REGIONID> Load" - the
-# convention `nem_system` builds. `augmented_pscb_system()`'s loads keep PowerSystemCaseBuilder's
-# own bus names ("bus2", "bus3", "bus4"), so that match always misses and `set_demand!` would
-# silently zero every load's demand (confirmed empirically, not guessed) rather than error -
-# exactly the "silent pass on missing data" this codebase avoids elsewhere. `solve_interval`
-# therefore stays a `nem_system`-only entry point; this test instead drives `build_template`'s
-# `ProblemTemplate` through PSI's `DecisionModel`/`build!`/`solve!` directly, against the PSCB
-# system's own native (2020-01-01, hourly, 2-hour horizon) time series, which is
-# supply-adequate by construction and needs no NEMWEB seeding at all.
+# `solve_interval` needs `nem_system`-style "<REGIONID> Load" names; PSCB's bus-named loads
+# don't match, so this builds/solves directly instead. See docstring on
+# `_seed_interval_time_series!`.
 
 using HiGHS
 import PowerSimulations as PSI
 
 include(joinpath(@__DIR__, "..", "..", "test", "pscb_fixture.jl"))
 
-# Sundance's static MINCAPACITY floor (100 MW, in natural units) exceeds this fixture's entire
-# demand (~71 MW static max, ~42 MW actual at the tested hour) - a genuine box-constraint
-# contradiction that makes every `ThermalBasicDispatch`-templated interval infeasible regardless
-# of tier (confirmed empirically: INFEASIBLE_POINT, independent of ramp/initial-condition or
-# network topology - `ThermalBasicUnitCommitment`/T1 sidesteps it by choosing to leave Sundance
-# off, but T0 has no commitment decision). Lowering every thermal unit's floor to 0 here
-# (fixture-local, not touching `pscb_fixture.jl`) resolves it without changing what the rest of
-# the suite exercises - mirrors the dropped `_fix_hydro_floor!` exactly, just for
-# `ThermalStandard` instead of `HydroDispatch`.
+# Sundance's 100 MW floor exceeds fixture demand under no-commitment dispatch (T0 has no
+# unit-commitment decision to leave it off).
 function _fix_thermal_floor!(sys)
     for gen in get_components(ThermalStandard, sys)
         limits = get_active_power_limits(gen)
