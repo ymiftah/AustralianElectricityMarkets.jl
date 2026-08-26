@@ -19,10 +19,10 @@ StorageSystemsSimulations = "e2f1a126-19d0-4674-9252-42b2384f8e3c"
 AustralianElectricityMarkets = "0.1"
 DuckDB = "1"
 HiGHS = "1"
-HydroPowerSimulations = "0.15"
-PowerSimulations = "0.34"
+HydroPowerSimulations = "0.19"
+PowerSimulations = "0.38"
 PowerSystems = "5.10"
-StorageSystemsSimulations = "0.16"
+StorageSystemsSimulations = "0.20"
 
 [sources]
 AustralianElectricityMarkets = {path = ".."}
