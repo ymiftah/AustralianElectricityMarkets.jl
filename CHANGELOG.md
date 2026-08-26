@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A device not fully coupled into shared headroom (missing `ActivePowerVariable` or its range-expression container) is reported once via a summary `@warn`, never silently. Decremental (load-direction) bidding stays out of scope.
   Stays a direct `PSI.AbstractServiceFormulation` subtype rather than joining `AbstractNEMConstraintFormulation` — mirrors how installed PSI keeps `TransmissionInterface`'s formulation a sibling of `AbstractReservesFormulation`, not a member of it.
   `AustralianElectricityMarketsSimulations/src/psi_compat.jl`'s quarantined `PSI._modify_device_model!` no-op now covers both `TermConstraint` and `NEMFCASMarket` via one `Union`-dispatched method.
+- **FCAS terms in generic constraints, and price attribution** (`AustralianElectricityMarketsSimulations/src/services/nem_constraints.jl`, `.../services/fcas_pricing.jl`): an FCAS-typed `UnitTerm`/`RegionTerm` now resolves to `NEMFCASMarket`'s `FCASCapacityVariable` instead of being skipped — a device must both carry the market's bid series and hold an actual slot in that market's built variable container, since PSI narrows a service's contributing devices to types the device template models. No explicit construction ordering between `TermConstraint` and `NEMFCASMarket` is needed: every service's variable-creation stage completes before any service's constraint-building stage begins.
+  `compute_fcas_prices` sums `TermConstraint` duals (rescaled to \$/MW) of every `GenericConstraint` governing a `(region, service)` pair, returning the same column names as `read_fcas_prices` for direct comparison against AEMO-published prices.
 
 ### Changed
 
