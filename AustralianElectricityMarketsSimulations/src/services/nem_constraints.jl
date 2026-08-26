@@ -14,15 +14,15 @@ struct NEMConstraintLimit <: PSI.ConstraintType end
 struct NEMConstraintRHSParameter <: PSI.TimeSeriesParameter end
 
 "Formulation for [`GenericConstraint`](@ref) as a `PSI.Service`: energy terms only."
-struct NEMGenericConstraint <: PSI.AbstractServiceFormulation end
+struct TermConstraint <: AbstractNEMConstraintFormulation end
 
-PSI.get_default_time_series_names(::Type{GenericConstraint}, ::Type{NEMGenericConstraint}) =
+PSI.get_default_time_series_names(::Type{GenericConstraint}, ::Type{TermConstraint}) =
     Dict{Type{<:PSI.TimeSeriesParameter}, String}(NEMConstraintRHSParameter => "rhs")
 
-PSI.get_default_attributes(::Type{GenericConstraint}, ::Type{NEMGenericConstraint}) =
+PSI.get_default_attributes(::Type{GenericConstraint}, ::Type{TermConstraint}) =
     Dict{String, Any}()
 
-PSI.get_multiplier_value(::NEMConstraintRHSParameter, ::GenericConstraint, ::NEMGenericConstraint) =
+PSI.get_multiplier_value(::NEMConstraintRHSParameter, ::GenericConstraint, ::TermConstraint) =
     1.0
 
 # --- Step 6: skip-whole-constraint-and-warn-once ---
@@ -100,7 +100,7 @@ function _skip_reasons!(container::PSI.OptimizationContainer, sys::PSY.System)
             for reason in values(skipped)
                 reason_counts[reason] = get(reason_counts, reason, 0) + 1
             end
-            @warn "NEMGenericConstraint: skipped $(length(skipped)) of $(length(all_gcs)) GenericConstraints" reason_counts
+            @warn "TermConstraint: skipped $(length(skipped)) of $(length(all_gcs)) GenericConstraints" reason_counts
         end
         return skipped
     end
@@ -213,7 +213,7 @@ function PSI.add_constraints!(
         container::PSI.OptimizationContainer,
         ::Type{NEMConstraintLimit},
         gc::GenericConstraint,
-        model::PSI.ServiceModel{GenericConstraint, NEMGenericConstraint},
+        model::PSI.ServiceModel{GenericConstraint, TermConstraint},
     )
     name = PSY.get_name(gc)
     expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
@@ -265,7 +265,7 @@ function PSI.construct_service!(
         container::PSI.OptimizationContainer,
         sys::PSY.System,
         ::PSI.ArgumentConstructStage,
-        model::PSI.ServiceModel{GenericConstraint, NEMGenericConstraint},
+        model::PSI.ServiceModel{GenericConstraint, TermConstraint},
         devices_template::Dict{Symbol, PSI.DeviceModel},
         incompatible_device_types::Set{<:DataType},
         network_model::PSI.NetworkModel,
@@ -286,7 +286,7 @@ function PSI.construct_service!(
         container::PSI.OptimizationContainer,
         sys::PSY.System,
         ::PSI.ModelConstructStage,
-        model::PSI.ServiceModel{GenericConstraint, NEMGenericConstraint},
+        model::PSI.ServiceModel{GenericConstraint, TermConstraint},
         devices_template::Dict{Symbol, PSI.DeviceModel},
         incompatible_device_types::Set{<:DataType},
         network_model::PSI.NetworkModel,
@@ -324,5 +324,5 @@ end
 # simulation-level concern, not modeled here).
 PSI.objective_function!(
     ::PSI.OptimizationContainer, ::GenericConstraint,
-    ::PSI.ServiceModel{GenericConstraint, NEMGenericConstraint},
+    ::PSI.ServiceModel{GenericConstraint, TermConstraint},
 ) = nothing

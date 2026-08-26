@@ -39,7 +39,7 @@ function PSI.add_constraint_dual!(
 end
 
 """
-    PSI._modify_device_model!(devices_template, ::PSI.ServiceModel{GenericConstraint, NEMGenericConstraint}, contributing_devices)
+    PSI._modify_device_model!(devices_template, ::PSI.ServiceModel{GenericConstraint, TermConstraint}, contributing_devices)
 
 No-op override of a PSI *private* function (`operation/problem_template.jl`, unexported,
 underscore-prefixed). `_add_services_to_device_model!` calls it unconditionally for every
@@ -47,7 +47,7 @@ underscore-prefixed). `_add_services_to_device_model!` calls it unconditionally 
 `Service` formulation without one raises a `MethodError` at template-finalization time, before
 `construct_service!` is ever reached. The generic `PSY.Reserve` method pushes `service_model`
 onto each contributing device's own `DeviceModel.services` list, letting reserve formulations
-add per-device variables/constraints keyed by service; `NEMGenericConstraint` does nothing like
+add per-device variables/constraints keyed by service; `TermConstraint` does nothing like
 that — its LHS is assembled directly in `construct_service!` from the service's own stored
 terms (`services/nem_constraints.jl`), mirroring `TransmissionInterface`'s own no-op override
 of this same hook (`services_models/transmission_interface.jl`) for the same reason.
@@ -55,14 +55,14 @@ of this same hook (`services_models/transmission_interface.jl`) for the same rea
 Confirmed present at this location, unexported, underscore-prefixed, with zero external
 precedent, across `PowerSimulations.jl` 0.34.2, 0.38.2, and 0.38.3 (`fSDT9` — the version this
 package's Manifest installs). Not type piracy under Aqua.jl's definition — `GenericConstraint`
-and `NEMGenericConstraint` are both this package's own types, and they're the dispatch-relevant
+and `TermConstraint` are both this package's own types, and they're the dispatch-relevant
 parameters — but it IS fragile coupling to an unexported, undocumented implementation detail: a
 future PSI patch could rename or restructure `_modify_device_model!` with no deprecation.
 Delete or update this method if that happens.
 """
 function PSI._modify_device_model!(
         ::Dict{Symbol, PSI.DeviceModel},
-        ::PSI.ServiceModel{GenericConstraint, NEMGenericConstraint},
+        ::PSI.ServiceModel{GenericConstraint, TermConstraint},
         ::Vector,
     )
     return nothing
