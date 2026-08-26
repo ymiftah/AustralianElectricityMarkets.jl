@@ -26,6 +26,7 @@ include("replication/preprocessing.jl")
 # included after preprocessing.jl. psi_compat.jl's `_modify_device_model!` no-ops dispatch on
 # both nem_constraints.jl's and fcas_market.jl's formulation types, so it must be included last.
 include("services/fcas_market.jl")
+include("services/fcas_pricing.jl")
 include("psi_compat.jl")
 
 export IntervalInputs, read_interval_inputs
@@ -34,5 +35,6 @@ export EffectiveTrapezium, scale_trapezium, lower_slope_coeff, upper_slope_coeff
 export AbstractNEMConstraintFormulation
 export NEMConstraintLHS, NEMConstraintLimit, NEMConstraintRHSParameter, TermConstraint
 export NEMFCASService, NEMFCASMarket, FCASCapacityVariable, add_fcas_services!
+export compute_fcas_prices
 
 end

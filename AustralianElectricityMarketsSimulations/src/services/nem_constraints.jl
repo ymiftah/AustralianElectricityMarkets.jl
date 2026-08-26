@@ -1,8 +1,10 @@
-# NEM `GenericConstraint`s as a `PowerSimulations.jl` `Service` — energy terms only
-# (`InterconnectorTerm`, and `UnitTerm`/`RegionTerm` with `bid_type == BidType.ENERGY`). FCAS
-# terms are a later task. Follows the `TransmissionInterface` extension pattern in installed
-# PSI (`services_models/transmission_interface.jl`); the `_modify_device_model!` no-op this
-# needs lives in `psi_compat.jl`, not here (isolated on purpose — see that file).
+# NEM `GenericConstraint`s as a `PowerSimulations.jl` `Service`. `InterconnectorTerm` and
+# ENERGY-typed `UnitTerm`/`RegionTerm` resolve to `ActivePowerVariable`/`FlowActivePowerVariable`;
+# FCAS-typed `UnitTerm`/`RegionTerm` resolve to `NEMFCASMarket`'s `FCASCapacityVariable` instead
+# (Task 5) — no explicit construction ordering needed, see the note at `_skip_reason` below.
+# Follows the `TransmissionInterface` extension pattern in installed PSI
+# (`services_models/transmission_interface.jl`); the `_modify_device_model!` no-op this needs
+# lives in `psi_compat.jl`, not here (isolated on purpose — see that file).
 
 "LHS expression for a [`GenericConstraint`](@ref): the weighted sum of its energy terms."
 struct NEMConstraintLHS <: PSI.ExpressionType end
@@ -27,9 +29,9 @@ PSI.get_multiplier_value(::NEMConstraintRHSParameter, ::GenericConstraint, ::Ter
 
 # --- Step 6: skip-whole-constraint-and-warn-once ---
 #
-# A constraint referencing a component absent from `sys`, an unsupported (non-ENERGY) bid_type,
-# or a device type this template doesn't model is skipped whole, never with a partial LHS -
-# mirrors `add_nem_constraints!`'s own skip behaviour. PSI expands one `GenericConstraint` into
+# A constraint referencing a component absent from `sys`, an FCAS market this template doesn't
+# model, or a device type this template doesn't model is skipped whole, never with a partial LHS
+# - mirrors `add_nem_constraints!`'s own skip behaviour. PSI expands one `GenericConstraint` into
 # its own `ServiceModel` entry per instance (`problem_template.jl:_populate_aggregated_service_model!`)
 # and calls `construct_service!` once per entry with no hook that sees them all at once, so
 # every constraint is scanned eagerly on the first `ModelConstructStage` call (cached by
@@ -45,21 +47,57 @@ const _NEM_CONSTRAINT_SKIP_CACHE = Base.WeakKeyDict{PSI.OptimizationContainer, D
 
 _term_bid_type(term::Union{UnitTerm, RegionTerm}) = get_bid_type(term)
 
-function _skip_reason(container::PSI.OptimizationContainer, sys::PSY.System, term::UnitTerm)
-    _term_bid_type(term) != BidType.ENERGY && return :unsupported_bid_type
-    device = PSY.get_component(PSY.Device, sys, get_duid(term))
-    isnothing(device) && return :missing_component
-    PSI.has_container_key(container, PSI.ActivePowerVariable, typeof(device)) ||
-        return :unmodeled_device_type
+"""
+    _fcas_skip_reason(container, device, bid_type) -> Union{Nothing, Symbol}
+
+Whether `device` can supply `bid_type`'s `NEMFCASMarket` capacity variable in `container`: this
+template must have a `ServiceModel(NEMFCASService, NEMFCASMarket)` registered for that specific
+market, and `device` must actually hold a slot in that market's `FCASCapacityVariable` container.
+Carrying the `"fcas_trapezium_<SERVICE>"` series ([`add_fcas_services!`](@ref)'s own
+contributing-device criterion) is *not* sufficient on its own - confirmed empirically on the PSCB
+fixture: PSI narrows a `ServiceModel`'s resolved `get_contributing_devices` to device types the
+*device* template actually models (`HydroDispatch` carries every FCAS series in the fixture but
+the test suite's own T1 `ProblemTemplate` never gives it a `DeviceModel`, so it never gets a slot even though the market
+itself is registered) - so membership must be checked directly on the built variable, not
+inferred from the raw time series. No explicit construction ordering between `TermConstraint` and
+`NEMFCASMarket` is needed for this read: all services' `ArgumentConstructStage` (where
+`FCASCapacityVariable` is created) completes before any service's `ModelConstructStage` (where
+this read happens) begins (`core/optimization_container.jl:build_impl!`).
+"""
+function _fcas_skip_reason(container::PSI.OptimizationContainer, device::PSY.Device, bid_type)
+    service_name = string(bid_type)
+    PSI.has_container_key(container, FCASCapacityVariable, NEMFCASService, service_name) ||
+        return :unmodeled_fcas_service
+    var = PSI.get_variable(container, FCASCapacityVariable(), NEMFCASService, service_name)
+    PSY.get_name(device) in axes(var, 1) || return :unmodeled_fcas_service
     return nothing
 end
 
+function _skip_reason(container::PSI.OptimizationContainer, sys::PSY.System, term::UnitTerm)
+    device = PSY.get_component(PSY.Device, sys, get_duid(term))
+    isnothing(device) && return :missing_component
+    bid_type = _term_bid_type(term)
+    if bid_type == BidType.ENERGY
+        PSI.has_container_key(container, PSI.ActivePowerVariable, typeof(device)) ||
+            return :unmodeled_device_type
+        return nothing
+    end
+    return _fcas_skip_reason(container, device, bid_type)
+end
+
 function _skip_reason(container::PSI.OptimizationContainer, sys::PSY.System, term::RegionTerm)
-    _term_bid_type(term) != BidType.ENERGY && return :unsupported_bid_type
     devices = AustralianElectricityMarkets._region_devices(sys, get_region(term))
     isempty(devices) && return :no_region_devices
-    any(d -> !PSI.has_container_key(container, PSI.ActivePowerVariable, typeof(d)), devices) &&
-        return :unmodeled_device_type
+    bid_type = _term_bid_type(term)
+    if bid_type == BidType.ENERGY
+        any(d -> !PSI.has_container_key(container, PSI.ActivePowerVariable, typeof(d)), devices) &&
+            return :unmodeled_device_type
+        return nothing
+    end
+    for device in devices
+        reason = _fcas_skip_reason(container, device, bid_type)
+        isnothing(reason) || return reason
+    end
     return nothing
 end
 
@@ -118,11 +156,17 @@ end
 # modeled, so no defensive `has_container_key` checks are repeated here.
 #
 # `get_factor(term)` multiplies the device variable directly, with no per-unit conversion:
-# `ActivePowerVariable`/`FlowActivePowerVariable` are themselves already in per-unit of
-# `PSI.get_base_power(container)`, and a `ConstraintTerm.factor` is a dimensionless multiplier
-# on that same quantity (AEMO's own `FACTOR` columns are ratios, e.g. `-1.0` to net a flow), so
-# it carries no MW units to convert. Only `NEMConstraintRHSParameter` - a real natural-MW
-# value - needs the base-power conversion, applied in `add_constraints!`.
+# `ActivePowerVariable`/`FlowActivePowerVariable`/`FCASCapacityVariable` are themselves already
+# in per-unit of `PSI.get_base_power(container)`, and a `ConstraintTerm.factor` is a
+# dimensionless multiplier on that same quantity (AEMO's own `FACTOR` columns are ratios, e.g.
+# `-1.0` to net a flow), so it carries no MW units to convert. Only `NEMConstraintRHSParameter`
+# - a real natural-MW value - needs the base-power conversion, applied in `add_constraints!`.
+
+"`bid_type`'s resolved variable for `device` - `ActivePowerVariable` (ENERGY) or `NEMFCASMarket`'s `FCASCapacityVariable` (FCAS)."
+function _term_variable(container::PSI.OptimizationContainer, device::PSY.Device, bid_type)
+    bid_type == BidType.ENERGY && return PSI.get_variable(container, PSI.ActivePowerVariable(), typeof(device))
+    return PSI.get_variable(container, FCASCapacityVariable(), NEMFCASService, string(bid_type))
+end
 
 function PSI.add_to_expression!(
         container::PSI.OptimizationContainer,
@@ -135,7 +179,7 @@ function PSI.add_to_expression!(
     name = PSY.get_name(gc)
     expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
     device = PSY.get_component(PSY.Device, sys, get_duid(term))
-    var = PSI.get_variable(container, PSI.ActivePowerVariable(), typeof(device))
+    var = _term_variable(container, device, get_bid_type(term))
     dname = PSY.get_name(device)
     for t in PSI.get_time_steps(container)
         JuMP.add_to_expression!(expr[name, t], get_factor(term), var[dname, t])
@@ -153,8 +197,9 @@ function PSI.add_to_expression!(
     )
     name = PSY.get_name(gc)
     expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
+    bid_type = get_bid_type(term)
     for device in AustralianElectricityMarkets._region_devices(sys, get_region(term))
-        var = PSI.get_variable(container, PSI.ActivePowerVariable(), typeof(device))
+        var = _term_variable(container, device, bid_type)
         dname = PSY.get_name(device)
         for t in PSI.get_time_steps(container)
             JuMP.add_to_expression!(expr[name, t], get_factor(term), var[dname, t])

@@ -27,4 +27,8 @@ create_mock_data(AEM_TEST_HIVE_DIR)
     @testset "NEM FCAS market participation as a PSI Service" begin
         include("fcas_market.jl")
     end
+
+    @testset "FCAS terms in generic constraints, and price attribution" begin
+        include("fcas_pricing.jl")
+    end
 end
