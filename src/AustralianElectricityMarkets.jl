@@ -28,6 +28,7 @@ export read_fcas_bids, set_fcas_bids!, read_fcas_requirements,
 export read_invoked_constraints, read_constraint_definitions, read_constraint_terms,
     read_constraint_fcas_requirements, add_nem_constraints!
 export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS
+export is_raise_market, is_regulation_market
 export BidType
 
 

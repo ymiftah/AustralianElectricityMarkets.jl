@@ -52,6 +52,13 @@ const FCAS_CONTINGENCY_MARKETS = (
 const FCAS_REGULATION_MARKETS = (BidType.RAISEREG, BidType.LOWERREG)
 const FCAS_BID_TYPES = (FCAS_CONTINGENCY_MARKETS..., FCAS_REGULATION_MARKETS...)
 
+"Is `bid_type` one of the four raise-direction FCAS markets (`RAISE6SEC`/`RAISE60SEC`/`RAISE5MIN`/`RAISEREG`)?"
+is_raise_market(bid_type::BidType) =
+    bid_type in (BidType.RAISE6SEC, BidType.RAISE60SEC, BidType.RAISE5MIN, BidType.RAISEREG)
+
+"Is `bid_type` one of the two regulation FCAS markets (`RAISEREG`/`LOWERREG`)?"
+is_regulation_market(bid_type::BidType) = bid_type in FCAS_REGULATION_MARKETS
+
 # Note: string(bid_type), not "$bid_type" - @scoped_enum overrides Base.show (for a
 # human-readable "BidType.RAISE6SEC = 2" REPL display), and Julia's string interpolation
 # calls print -> show by default, not Base.string, so bare interpolation would silently

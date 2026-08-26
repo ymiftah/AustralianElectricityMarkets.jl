@@ -53,4 +53,8 @@ end
     @testset "NEM constraints as a PSI Service" begin
         include("nem_constraints.jl")
     end
+
+    @testset "NEM FCAS market participation as a PSI Service" begin
+        include("fcas_market.jl")
+    end
 end

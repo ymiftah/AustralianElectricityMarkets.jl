@@ -46,21 +46,26 @@ if !_psi_registers_area_balance_dual()
     end
 end
 
+const _NoServiceDeviceModel = Union{
+    PSI.ServiceModel{GenericConstraint, TermConstraint},
+    PSI.ServiceModel{NEMFCASService, NEMFCASMarket},
+}
+
 """
-    PSI._modify_device_model!(devices_template, ::PSI.ServiceModel{GenericConstraint, TermConstraint}, contributing_devices)
+    PSI._modify_device_model!(devices_template, ::_NoServiceDeviceModel, contributing_devices)
 
 No-op override of a PSI private function (`operation/problem_template.jl`).
 `_add_services_to_device_model!` calls it unconditionally for every `ServiceModel` with a
 non-empty contributing-devices list and there is no fallback method, so a `Service` formulation
 without one raises a `MethodError` at template-finalization time. The generic `PSY.Reserve`
 method pushes `service_model` onto each contributing device's own `DeviceModel.services` list;
-`TermConstraint` needs nothing of the sort — its LHS is assembled directly in
-`construct_service!` from the service's own stored terms. Mirrors `TransmissionInterface`'s
-no-op override of the same hook (`services_models/transmission_interface.jl`).
+neither `TermConstraint` nor `NEMFCASMarket` needs that — both assemble their own constraints
+directly in `construct_service!`. Mirrors `TransmissionInterface`'s no-op override of the same
+hook (`services_models/transmission_interface.jl`).
 """
 function PSI._modify_device_model!(
         ::Dict{Symbol, PSI.DeviceModel},
-        ::PSI.ServiceModel{GenericConstraint, TermConstraint},
+        ::_NoServiceDeviceModel,
         ::Vector,
     )
     return nothing
