@@ -12,6 +12,11 @@ be dynamic (`GENCONDATA.DYNAMICRHS`) or an armed/disarmed variant switch.
 `constraint_weight` is `GENCONDATA.GENERICCONSTRAINTWEIGHT` verbatim — a *weight*, not itself
 the violation penalty in dollars; a PowerSimulations.jl extension multiplies it by an
 AEMC-set base CVP rate.
+
+`sense` is deliberately a field, not a type parameter like PowerSimulations.jl's
+`Reserve{T<:ReserveDirection}`: it's an independent runtime fact per instance
+(`GENCONDATA.CONSTRAINTTYPE`), affecting exactly one call site (the constraint operator chosen
+in `add_constraints!`), not a compile-time modelling choice that multiple methods key off.
 """
 mutable struct GenericConstraint <: PSY.Service
     name::String

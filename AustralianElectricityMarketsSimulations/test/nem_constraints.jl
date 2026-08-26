@@ -1,4 +1,4 @@
-# `GenericConstraint` as a `PSI.Service` (`NEMGenericConstraint`), energy terms only. Built
+# `GenericConstraint` as a `PSI.Service` (`TermConstraint`), energy terms only. Built
 # against the PSCB fixture (`test/pscb_fixture.jl`/`test/pscb_nemweb_data.jl`), self-contained
 # like `tiers.jl` - not dependent on run order elsewhere in `runtests.jl`.
 
@@ -114,9 +114,13 @@ function _nem_service_template()
     template = _t1_template()
     PSI.set_service_model!(
         template,
-        PSI.ServiceModel(GenericConstraint, AEMS.NEMGenericConstraint; duals = [AEMS.NEMConstraintLimit]),
+        PSI.ServiceModel(GenericConstraint, AEMS.TermConstraint; duals = [AEMS.NEMConstraintLimit]),
     )
     return template
+end
+
+@testset "TermConstraint sits under AbstractNEMConstraintFormulation, under PSI's own formulation type" begin
+    @test AEMS.TermConstraint <: AEMS.AbstractNEMConstraintFormulation <: PSI.AbstractServiceFormulation
 end
 
 @testset "add_nem_constraints! attaches all five as Services with resolved contributing devices" begin
@@ -147,7 +151,7 @@ end
     @test unconstrained_lhs > 0.0  # otherwise there's nothing to tighten below
 
     # Phase 2: rebuild with N_IC1_LIMIT's rhs tightened to half the unconstrained flow, and the
-    # NEMGenericConstraint service model applied.
+    # TermConstraint service model applied.
     tightened_rhs = unconstrained_lhs / 2
     sys = _prepared_system(Dict("N_IC1_LIMIT" => tightened_rhs))
     template = _nem_service_template()
