@@ -5,6 +5,13 @@ let
     config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
     db = aem_connect(config)
 
+    @testset "_table_is_cached" begin
+        # A glob matching zero files is a legitimate false, not an error - confirmed directly
+        # this still holds once the bare `catch -> false` was removed (see parser.jl).
+        @test AustralianElectricityMarkets._table_is_cached(db, :DISPATCHCONSTRAINT)
+        @test !AustralianElectricityMarkets._table_is_cached(db, :NOT_A_REAL_TABLE)
+    end
+
     @testset "read_units" begin
         df = read_units(db)
         @test df isa DataFrame
