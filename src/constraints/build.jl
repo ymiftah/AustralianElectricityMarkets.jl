@@ -86,13 +86,15 @@ partial LHS. `GenericConstraint` is a `PSY.Service`, so each added constraint is
 device, or (Ruling R8) a `RegionTerm`'s every `Generator`/`Storage` unit in that region (see
 [`_region_devices`](@ref)) — a region with no matching unit skips the whole constraint
 (`:no_region_devices`), the same as an unresolvable `UnitTerm`/`InterconnectorTerm`. Each added
-constraint also gets an `"rhs"` `Deterministic` time series spanning every
-dispatch interval any constraint was invoked at in `date_range`, replaying
-`DISPATCHCONSTRAINT.RHS` where this `GENCONID` was actually invoked and carrying the last
-known value forward elsewhere (a constraint's own coverage can be shorter than another's — it
-stopped or started applying partway through the range — and a short series would fail PSY's
-cross-component time-series horizon check). A companion `"invoked"` `Deterministic` series
-(`1.0`/`0.0`) is the authoritative record of which intervals were real: **do not** treat a
+constraint also gets an `"rhs"` `Deterministic` time series spanning every interval in
+`date_range` itself (not merely the intervals this or any other `GENCONID` happened to be
+invoked at), replaying `DISPATCHCONSTRAINT.RHS` where this `GENCONID` was actually invoked and
+carrying the last known value forward elsewhere (a constraint's own coverage can be shorter than
+`date_range` — it stopped or started applying partway through the range, or simply wasn't bound
+at every interval — and a series shorter than `date_range` would fail `PowerSystems.jl`'s
+cross-component time-series horizon check the moment it's combined with another time series -
+`set_demand!`'s, say - that does span the full range). A companion `"invoked"` `Deterministic`
+series (`1.0`/`0.0`) is the authoritative record of which intervals were real: **do not** treat a
 carried-forward `"rhs"` value as enforced without checking it. `include_solution = true`
 additionally attaches `"lhs"` (same carry-forward) and `"marginal_value"` (`0.0`, not
 carried forward, at any interval `"invoked"` is `0.0` — a constraint not in force has no
@@ -100,11 +102,9 @@ shadow price, by definition) — both validation-only, since feeding a solved `M
 back into a dispatch simulation is the same category error as using `RRP` as an LP input.
 
 `resolution` sets the declared `resolution`/`interval` of every attached `Deterministic`. When
-`nothing` (the default) it is inferred from `full_grid` via [`_infer_resolution`](@ref): the
-spacing between consecutive grid points, or `Minute(5)` if the grid has fewer than 2 points.
-An irregular grid (unequal spacings) warns and falls back to the smallest spacing found rather
-than throwing, since real caches can be gappy. Passing `resolution` explicitly skips inference
-and validation — the caller is asserting it themselves.
+`nothing` (the default) it is inferred from `date_range` via [`_infer_resolution`](@ref): the
+spacing between consecutive points. Passing `resolution` explicitly skips inference — the caller
+is asserting it themselves.
 
 Returns `(added, skipped)`: `added::Vector{String}` of `GENCONID`s successfully added, and
 `skipped::Dict{String, Symbol}` mapping a skipped `GENCONID` to one reason — `:no_definition`
@@ -138,10 +138,21 @@ function add_nem_constraints!(
     end
     invoked_by_id = groupby(invoked, :GENCONID)
 
-    # Every interval any constraint was invoked at — not just one constraint's own rows, since
-    # no single GENCONID's coverage reliably represents "every interval NEMDE dispatched" (see
-    # docstring above).
-    full_grid = sort(unique(invoked.SETTLEMENTDATE))
+    # The caller's own requested range, not `unique(invoked.SETTLEMENTDATE)`: a GENCONID's rows
+    # only cover the intervals it was actually invoked at, so deriving the grid from whichever
+    # intervals *any* constraint happened to be invoked at silently shrinks it the moment real
+    # data has a gap NEMDE genuinely dispatched through with nothing bound — every constraint's
+    # series must span exactly what the caller asked for so it matches every other time series
+    # attached to the same `System` (e.g. `set_demand!`'s), or `PowerSystems.jl`'s cross-
+    # component horizon check rejects the mismatch outright (confirmed empirically: a real
+    # historical hour with a sparser subset of intervals actually invoked produced a shorter
+    # `GenericConstraint` series than `set_demand!`'s, and `transform_single_time_series!` then
+    # raised `ConflictingInputsError` complaining the two didn't agree). Drop the last point:
+    # `date_range`'s N+1 grid points label N interval *starts*, matching `read_fcas_bids`/
+    # `set_demand!`'s own half-open (`start <= x < stop`) convention — keeping all N+1 points
+    # produces a series one row longer than theirs and the same conflicting-horizon error from
+    # the opposite direction (confirmed empirically against `test/fcas.jl`'s own fixture).
+    full_grid = collect(date_range)[1:(end - 1)]
     resolution = isnothing(resolution) ? _infer_resolution(full_grid) : resolution
 
     gencon_versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
