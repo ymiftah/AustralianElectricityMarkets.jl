@@ -42,6 +42,11 @@ function _native_forecast_start(sys)
     return dts.initial_timestamp
 end
 
+"`comp`'s real physical MW ceiling, per device type - the value FCAS enablement shouldn't exceed."
+_component_max_mw(comp::EnergyReservoirStorage) = get_output_active_power_limits(comp).max
+_component_max_mw(comp::RenewableGen) = get_max_active_power(comp)
+_component_max_mw(comp) = get_active_power_limits(comp).max
+
 """
     _retime_fcas_series!(sys, new_start)
 
@@ -57,13 +62,24 @@ package's production code ever reads them (Step 6) - `InfrastructureSystems` req
 leftover 2025-dated decremental series would block every other series in the same group from
 moving to 2020.
 
-Also widens every `fcas_trapezium_<SERVICE>` row's `enablement_min`/`enablement_max` (indices 1
-and 4 of the packed `NTuple{7,Float64}`) to `0.0`/`250.0` - `test/pscb_nemweb_data.jl`'s flat
-`ENABLEMENTMIN=20.0`/`ENABLEMENTMAX=100.0` (fine for parsing/round-trip tests, which never build
-a real constraint from it) exceeds several PSCB units' own `active_power_limits` outright (Alta
-tops out at 2.6 MW, `HydroDispatch1` at 5.0 MW), so `FCASLowerSlopeConstraint` alone -
-independent of any `FCASCapacityVariable` value - makes the model infeasible before Step 4 can
-even test the slope relationship. Breakpoints/`max_avail`/ramp rates are untouched.
+Also rescales every `fcas_trapezium_<SERVICE>` row's `low_breakpoint`/`high_breakpoint`/
+`enablement_max` (indices 2-4 of the packed `NTuple{7,Float64}`) proportionally to that
+component's own real physical rating ([`_component_max_mw`](@ref)) -
+`test/pscb_nemweb_data.jl`'s flat `LOWBREAKPOINT/HIGHBREAKPOINT/ENABLEMENTMAX = 30.0/90.0/100.0`
+(fine for parsing/round-trip tests, which never build a real constraint from it) exceeds several
+PSCB units' own `active_power_limits` outright (Alta tops out at 2.6 MW, `HydroDispatch1` at
+5.0 MW), so `FCASLowerSlopeConstraint` alone - independent of any `FCASCapacityVariable` value -
+would make the model infeasible before any test could exercise the slope relationship.
+Overriding only `enablement_max` and leaving the breakpoints at their flat values breaks the
+trapezium's required ordering the moment a unit's real rating falls below `HIGHBREAKPOINT=90.0`
+(a smaller `enablement_max` than `high_breakpoint` makes `upper_slope_coeff` negative) - a
+uniform scale-down by `max_rating / 100.0` preserves the shape and the ordering. `enablement_min`
+stays `0.0` rather than also scaling proportionally: a nonzero `enablement_min` forces every
+FCAS-bidding unit's `ActivePowerVariable` to that floor even with `FCASCapacityVariable == 0`, a
+side effect no test here depends on and that silently broke feasibility elsewhere the one time
+this was tried. Per-unit rather than a flat override also makes the ceiling a unit's *real*
+rating, so a test can assert the joint energy+FCAS bound is tight against a number that would
+actually catch a scaling bug (Step 7). `max_avail`/ramp rates are untouched.
 """
 function _retime_fcas_series!(sys, new_start::DateTime)
     # Two passes, not remove-then-add per series: removing and re-adding one series at a time
@@ -84,7 +100,8 @@ function _retime_fcas_series!(sys, new_start::DateTime)
                 resolution = get_resolution(ts_data)
                 rows = first(values(get_data(ts_data)))
                 if startswith(series_name, "fcas_trapezium_")
-                    rows = [(0.0, r[2], r[3], 250.0, r[5], r[6], r[7]) for r in rows]
+                    scale = _component_max_mw(comp) / 100.0  # 100.0 = pscb_nemweb_data.jl's flat ENABLEMENTMAX
+                    rows = [(0.0, r[2] * scale, r[3] * scale, r[4] * scale, r[5], r[6], r[7]) for r in rows]
                 end
                 push!(to_retime, (comp, series_name, resolution, rows))
             end
@@ -211,6 +228,71 @@ end
     template = _fcas_template()
     model = PSI.DecisionModel(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2), resolution = Hour(1), interval = Hour(1))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
+end
+
+"""
+    _built_fcas_model(sys) -> (model, container, timestamps, t1, base_power)
+
+Builds (not solves) `_fcas_template()` against `sys`; returns the pieces every Step 7 phase reads.
+"""
+function _built_fcas_model(sys)
+    template = _fcas_template()
+    model = PSI.DecisionModel(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2), resolution = Hour(1), interval = Hour(1))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    timestamps = AEMS._container_timestamps(container)
+    t1 = first(PSI.get_time_steps(container))
+    return model, container, timestamps, t1, PSI.get_base_power(container)
+end
+
+@testset "Step 7: joint energy + FCAS capacity is capped at Park City's own physical rating, tightly" begin
+    # Real capacity/trapezium must be read before any PSI.build!/solve! call touches this System
+    # instance - PSI's own build pipeline switches a System's unit base internally, so reading
+    # `get_active_power_limits` afterwards silently returns per-unit fractions of `base_power`
+    # (e.g. 0.11) instead of natural MW (11.0), not an error, just the wrong number.
+    sys = _prepared_fcas_system()
+    park_city = get_component(ThermalStandard, sys, "Park City")
+    park_city_real_max = get_active_power_limits(park_city).max
+    @test park_city_real_max < 250.0  # the old flat ceiling this test is replacing could never be caught by any number this small
+    resolved0 = AEMS._resolve_fcas_series(park_city, "fcas_trapezium_RAISE6SEC")
+
+    model, container, timestamps, t1, base_power = _built_fcas_model(sys)
+    row = AEMS._fcas_series_row(resolved0, timestamps[t1])
+    trap = AEMS._fcas_trapezium(row)
+    @test trap.enablement_max == park_city_real_max  # Step 1a's fix: no longer the old flat 250 MW
+    eff = scale_trapezium(trap; uigf = nothing, agc_ramp_mw = nothing, is_regulation = false)
+    usc = upper_slope_coeff(eff)
+    @test usc > 0.0  # otherwise fixing capacity can't shrink the bound at all - test isn't exercising anything
+
+    fixed_raise_mw = 1.0
+    joint_bound_mw = eff.enablement_max - usc * fixed_raise_mw
+    @test joint_bound_mw < park_city_real_max  # FCAS enablement genuinely shrinks headroom below the unit's own rating
+
+    # Proof of tightness that doesn't depend on what Park City's own economics would otherwise
+    # prefer (in this fixture cheap hydro/renewable capacity covers all demand, so every thermal
+    # unit's unconstrained baseline dispatch is 0.0 MW - "tighten below the economic optimum",
+    # `nem_constraints.jl`'s Step 1 own method, has nothing to tighten below here). Instead: fix
+    # both FCASCapacityVariable and ActivePowerVariable directly and show the slope constraint
+    # itself accepts or rejects exactly at the computed boundary, in both directions.
+    raise_var = PSI.get_variable(container, AEMS.FCASCapacityVariable(), AEMS.NEMFCASService, "RAISE6SEC")
+    energy_var = PSI.get_variable(container, PSI.ActivePowerVariable(), ThermalStandard)
+    JuMP.fix(raise_var["Park City", t1], fixed_raise_mw / base_power; force = true)
+
+    # Even 1 MW above the trapezium-shrunk ceiling must be infeasible.
+    JuMP.fix(energy_var["Park City", t1], (joint_bound_mw + 1.0) / base_power; force = true)
+    PSI.solve!(model)
+    @test PSI.get_run_status(model) != PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+    # Exactly at the ceiling must be feasible - the constraint isn't overly conservative either.
+    # A fresh model+build, not a re-solve of the same JuMP model: PSI's post-solve dual-computation
+    # dance (Step 4's comment) leaves the live model in a state a second `solve!` shouldn't rely on.
+    model2, container2, timestamps2, t1_2, base_power2 = _built_fcas_model(sys)
+    raise_var2 = PSI.get_variable(container2, AEMS.FCASCapacityVariable(), AEMS.NEMFCASService, "RAISE6SEC")
+    energy_var2 = PSI.get_variable(container2, PSI.ActivePowerVariable(), ThermalStandard)
+    JuMP.fix(raise_var2["Park City", t1_2], fixed_raise_mw / base_power2; force = true)
+    JuMP.fix(energy_var2["Park City", t1_2], joint_bound_mw / base_power2; force = true)
+    PSI.solve!(model2)
+    @test PSI.get_run_status(model2) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
 end
 
 @testset "Step 4: trapezium slope constraints bind ActivePowerVariable to FCASCapacityVariable" begin
