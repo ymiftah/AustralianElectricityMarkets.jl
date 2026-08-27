@@ -211,7 +211,7 @@ end
     # second exercises the exact branch `add_constraints!` skips: without the container fix,
     # `PSI.calculate_dual_variables!` throws `UndefRefError` reading the unfilled cell.
     baseline_sys = _prepared_system()
-    baseline_template = AEMS.build_template(AEMS.T1Interconnected())
+    baseline_template = _t1_template()
     baseline_model = PSI.DecisionModel(baseline_template, baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(baseline_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(baseline_model)
