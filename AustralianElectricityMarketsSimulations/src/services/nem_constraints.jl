@@ -45,12 +45,23 @@ const _NEM_CONSTRAINT_SKIP_CACHE = Base.WeakKeyDict{PSI.OptimizationContainer, D
 
 _term_bid_type(term::Union{UnitTerm, RegionTerm}) = get_bid_type(term)
 
+# A device's ENERGY variables and each one's multiplier in its net injection. `PSY.Storage` has no
+# `ActivePowerVariable`: storage formulations split it into charge/discharge, which PSI's own
+# nodal balance nets with variable multipliers of -1.0 and +1.0.
+_energy_variables(::PSY.Storage) =
+    ((PSI.ActivePowerOutVariable, 1.0), (PSI.ActivePowerInVariable, -1.0))
+_energy_variables(::PSY.Device) = ((PSI.ActivePowerVariable, 1.0),)
+
+_energy_modeled(container::PSI.OptimizationContainer, device::PSY.Device) = all(
+    v -> PSI.has_container_key(container, first(v), typeof(device)),
+    _energy_variables(device),
+)
+
 function _skip_reason(container::PSI.OptimizationContainer, sys::PSY.System, term::UnitTerm)
     _term_bid_type(term) != BidType.ENERGY && return :unsupported_bid_type
     device = PSY.get_component(PSY.Device, sys, get_duid(term))
     isnothing(device) && return :missing_component
-    PSI.has_container_key(container, PSI.ActivePowerVariable, typeof(device)) ||
-        return :unmodeled_device_type
+    _energy_modeled(container, device) || return :unmodeled_device_type
     return nothing
 end
 
@@ -58,8 +69,7 @@ function _skip_reason(container::PSI.OptimizationContainer, sys::PSY.System, ter
     _term_bid_type(term) != BidType.ENERGY && return :unsupported_bid_type
     devices = AustralianElectricityMarkets._region_devices(sys, get_region(term))
     isempty(devices) && return :no_region_devices
-    any(d -> !PSI.has_container_key(container, PSI.ActivePowerVariable, typeof(d)), devices) &&
-        return :unmodeled_device_type
+    all(d -> _energy_modeled(container, d), devices) || return :unmodeled_device_type
     return nothing
 end
 
@@ -111,7 +121,7 @@ end
 # Each method resolves its own term's device(s) from `sys` directly (rather than from
 # `PSI.get_contributing_devices_map(model)`, which flattens every term's devices into one
 # per-type list and would lose a term's own factor when two terms of different types share a
-# device) and adds `factor * device's ActivePowerVariable` (or, for an interconnector,
+# device) and adds `factor * device's net injection` (or, for an interconnector,
 # `FlowActivePowerVariable`) into the constraint's LHS expression - the `InterfaceTotalFlow`
 # pattern (`add_to_expression.jl`), adapted for per-term rather than per-service assembly.
 # Callers only reach these once `_skip_reason` has confirmed every device is present and
@@ -124,6 +134,18 @@ end
 # it carries no MW units to convert. Only `NEMConstraintRHSParameter` - a real natural-MW
 # value - needs the base-power conversion, applied in `add_constraints!`.
 
+"Adds `factor * device's net injection` into `expr`, over every variable `_energy_variables` names."
+function _add_device_energy_terms!(container, expr, name, device, factor)
+    dname = PSY.get_name(device)
+    for (var_type, multiplier) in _energy_variables(device)
+        var = PSI.get_variable(container, var_type(), typeof(device))
+        for t in PSI.get_time_steps(container)
+            JuMP.add_to_expression!(expr[name, t], multiplier * factor, var[dname, t])
+        end
+    end
+    return
+end
+
 function PSI.add_to_expression!(
         container::PSI.OptimizationContainer,
         ::Type{NEMConstraintLHS},
@@ -135,11 +157,7 @@ function PSI.add_to_expression!(
     name = PSY.get_name(gc)
     expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
     device = PSY.get_component(PSY.Device, sys, get_duid(term))
-    var = PSI.get_variable(container, PSI.ActivePowerVariable(), typeof(device))
-    dname = PSY.get_name(device)
-    for t in PSI.get_time_steps(container)
-        JuMP.add_to_expression!(expr[name, t], get_factor(term), var[dname, t])
-    end
+    _add_device_energy_terms!(container, expr, name, device, get_factor(term))
     return
 end
 
@@ -154,11 +172,7 @@ function PSI.add_to_expression!(
     name = PSY.get_name(gc)
     expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
     for device in AustralianElectricityMarkets._region_devices(sys, get_region(term))
-        var = PSI.get_variable(container, PSI.ActivePowerVariable(), typeof(device))
-        dname = PSY.get_name(device)
-        for t in PSI.get_time_steps(container)
-            JuMP.add_to_expression!(expr[name, t], get_factor(term), var[dname, t])
-        end
+        _add_device_energy_terms!(container, expr, name, device, get_factor(term))
     end
     return
 end
