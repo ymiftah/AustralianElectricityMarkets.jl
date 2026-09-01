@@ -51,6 +51,42 @@ function create_mock_data(hive_root::String)
         ), :INTERCONNECTORCONSTRAINT
     )
 
+    # 2b. LOSSMODEL — IC1..IC5 only, so an interconnector with loss parameters but no breakpoints
+    # exercises `interconnector_loss_models`'s skip-and-warn path. IC1 additionally carries a
+    # superseded EFFECTIVEDATE, so version resolution is exercised rather than assumed.
+    let ics = ["IC$i" for i in 1:5], breaks = [-500.0, -250.0, 0.0, 250.0, 500.0]
+        nb = length(breaks)
+        current = DataFrame(
+            INTERCONNECTORID = repeat(ics; inner = nb),
+            EFFECTIVEDATE = fill(base_datetime, length(ics) * nb),
+            VERSIONNO = fill(1, length(ics) * nb),
+            LOSSSEGMENT = repeat(1:nb, length(ics)),
+            MWBREAKPOINT = repeat(breaks, length(ics)),
+            archive_month = fill("2025-01", length(ics) * nb),
+        )
+        superseded = DataFrame(
+            INTERCONNECTORID = fill("IC1", nb),
+            EFFECTIVEDATE = fill(DateTime(2024, 1, 1), nb),
+            VERSIONNO = fill(1, nb),
+            LOSSSEGMENT = collect(1:nb),
+            MWBREAKPOINT = [-100.0, -50.0, 0.0, 50.0, 100.0],
+            archive_month = fill("2024-01", nb),
+        )
+        save_hive(vcat(current, superseded), :LOSSMODEL)
+    end
+
+    # 2c. LOSSFACTORMODEL — one demand coefficient per (interconnector, connected region).
+    save_hive(
+        DataFrame(
+            INTERCONNECTORID = repeat(["IC$i" for i in 1:n]; inner = 2),
+            EFFECTIVEDATE = fill(base_datetime, 2n),
+            VERSIONNO = fill(1, 2n),
+            REGIONID = collect(Iterators.flatten(zip(regions, circshift(regions, 1)))),
+            DEMANDCOEFFICIENT = repeat([1.0e-5, -2.0e-5], n),
+            archive_month = fill("2025-01", 2n)
+        ), :LOSSFACTORMODEL
+    )
+
     # 3. DISPATCHREGIONSUM (49 intervals of 5 minutes = 4 hours)
     intervals = 0:48
     df_demand = DataFrame()
