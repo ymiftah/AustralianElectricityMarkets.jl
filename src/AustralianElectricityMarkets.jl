@@ -18,11 +18,13 @@ export RegionalNetworkConfiguration, ConstrainedNetworkConfiguration
 
 export read_hive
 export read_interconnectors, read_units, read_demand, read_bids, read_energy_bids
+export read_marginal_loss_factors
 export read_affine_heatrates,
     read_coal_prices, read_gas_prices, read_biomass_prices, read_isp_thermal_costs_parameters,
     read_isp_renewable_costs_parameters,
     read_isp_fixed_opex, read_isp_variable_opex
 export set_demand!, set_renewable_pv!, set_renewable_wind!, set_market_bids!, set_hydro_limits!
+export set_bid_ramp_rates!, set_bid_minimum_load!, set_marginal_loss_factors!
 export read_fcas_bids, set_fcas_bids!, read_fcas_requirements,
     read_fcas_prices, read_fcas_dispatch, read_prices, read_uigf
 export read_invoked_constraints, read_constraint_definitions, read_constraint_terms,

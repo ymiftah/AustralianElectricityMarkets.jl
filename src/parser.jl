@@ -330,23 +330,222 @@ function set_market_bids!(sys, db, date_range; kwargs...)
 end
 
 """
+    _effective_ramp_rate(rocup, rocdown, registered)
+
+`(up, down)::NTuple{2,Float64}`, the NEMDE-effective ramp rate for one interval: whichever is
+tighter of the interval's bid (`rocup`/`rocdown`, `missing` when not bid that interval) and the
+unit's `registered::@NamedTuple{up::Float64,down::Float64}` cap ([`region_model.jl`](@ref)'s
+static `ramp_limits`, in the same units as `rocup`/`rocdown`). A bid rate never loosens the
+registered cap; a missing bid rate falls back to it rather than to "unlimited".
+"""
+function _effective_ramp_rate(rocup, rocdown, registered)
+    up = ismissing(rocup) ? registered.up : min(rocup, registered.up)
+    down = ismissing(rocdown) ? registered.down : min(rocdown, registered.down)
+    return (up, down)
+end
+
+"""
+    set_bid_ramp_rates!(sys, db, date_range; kwargs...)
+
+Attaches each `ThermalStandard`/`HydroDispatch` generator's *effective* ramp rate - `min(bid,
+registered)`, [`_effective_ramp_rate`](@ref) - as a `"bid_ramp_rate"` `Deterministic` time
+series (MW/minute, natural units; packing `(up, down)::NTuple{2,Float64}` per dispatch
+interval), from [`read_bids`](@ref)'s `ROCUP`/`ROCDOWN`.
+
+NEMDE constrains a unit's ramp by whichever is tighter: the rate the participant bid that
+interval, or the unit's static registered cap (`region_model.jl`'s `ramp_limits`, set once at
+`System`-build time from the unit's registered `MAXRATEOFCHANGEUP`/`MAXRATEOFCHANGEDOWN`).
+Using only the registered rate - what the static field alone gives - overstates a unit's
+flexibility whenever it bids a lower rate that interval.
+
+Attached as a time series rather than overwriting the static `ramp_limits` field: the bid rate
+genuinely varies interval to interval (unlike the registered rate, fixed once at
+construction), and PowerSystems has no time-varying convention for `ramp_limits` the way it
+does for `max_active_power` (a scaling-factor time series - see
+[`_add_uigf_ts_to_components!`](@ref)). Leaving the registered field untouched also keeps it
+as an always-valid hard ceiling if this series is ever absent (e.g. no bid data cached for an
+interval); this series is the additional, tighter, time-varying bound a later formulation can
+enforce alongside it.
+
+Components with no registered `ramp_limits` (`region_model.jl` sets `nothing` when a unit has
+no registered rate), or no `GEN`-direction bid data in `date_range`, are left untouched.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `db`: The database connection.
+- `date_range`: A range of dates for which to fetch bid data.
+- `kwargs`: Additional keyword arguments passed to [`read_bids`](@ref) (e.g. `resolution`).
+"""
+function set_bid_ramp_rates!(sys, db, date_range; kwargs...)
+    start_date = first(date_range)
+    resolution = get(kwargs, :resolution, Minute(5))
+    bids = read_bids(db, date_range; kwargs...)
+    gen_bids = subset(bids, :DIRECTION => ByRow(==("GEN")))
+    DataFrames.isempty(gen_bids) && return
+    sort!(gen_bids, :INTERVAL_DATETIME)
+    gdf = groupby(gen_bids, :DUID)
+    for T in (ThermalStandard, HydroDispatch)
+        foreach(get_components(T, sys)) do gen
+            duid = get_name(gen)
+            haskey(gdf, (duid,)) || return
+            registered = with_units_base(() -> get_ramp_limits(gen), sys, "NATURAL_UNITS")
+            isnothing(registered) && return
+            rows = gdf[(duid,)]
+            effective = [_effective_ramp_rate(row.ROCUP, row.ROCDOWN, registered) for row in eachrow(rows)]
+            psy_ts = Deterministic(;
+                name = "bid_ramp_rate",
+                data = Dict(start_date => effective),
+                resolution = resolution,
+                interval = resolution,
+            )
+            add_time_series!(sys, gen, psy_ts)
+        end
+    end
+    return
+end
+
+"""
+    set_bid_minimum_load!(sys, db, date_range; kwargs...)
+
+Attaches each generator's self-declared per-trading-day minimum loading
+(`BIDDAYOFFER_D.MINIMUMLOAD`, via [`read_bids`](@ref)) as a `"bid_minimum_load"`
+`Deterministic` time series (MW, natural units), one point per dispatch interval in
+`date_range`.
+
+`MINIMUMLOAD` is the unit's *bid*, not its registered technical minimum
+(`region_model.jl`'s static `active_power_limits.min`, from registered `MINCAPACITY`) - it is
+primarily relevant to fast-start units, and can be tighter or looser than the registered
+floor. Read but never attached before this: `set_market_bids!`'s `gen_bids` frame already
+carried `MINIMUMLOAD`, unused - see [`_set_incremental_bid_cost!`](@ref), which only reads
+`gen_bids.piecewise_step_data`.
+
+`GEN`-direction rows only, mirroring [`set_market_bids!`](@ref); generators with no bid data
+in `date_range` are left untouched.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `db`: The database connection.
+- `date_range`: A range of dates for which to fetch bid data.
+- `kwargs`: Additional keyword arguments passed to [`read_bids`](@ref) (e.g. `resolution`).
+"""
+function set_bid_minimum_load!(sys, db, date_range; kwargs...)
+    start_date = first(date_range)
+    resolution = get(kwargs, :resolution, Minute(5))
+    bids = read_bids(db, date_range; kwargs...)
+    gen_bids = subset(bids, :DIRECTION => ByRow(==("GEN")))
+    DataFrames.isempty(gen_bids) && return
+    sort!(gen_bids, :INTERVAL_DATETIME)
+    gdf = groupby(gen_bids, :DUID)
+    foreach(get_components(Generator, sys)) do gen
+        duid = get_name(gen)
+        haskey(gdf, (duid,)) || return
+        rows = gdf[(duid,)]
+        psy_ts = Deterministic(;
+            name = "bid_minimum_load",
+            data = Dict(start_date => collect(Float64.(coalesce.(rows.MINIMUMLOAD, 0.0)))),
+            resolution = resolution,
+            interval = resolution,
+        )
+        add_time_series!(sys, gen, psy_ts)
+    end
+    return
+end
+
+"""
+    set_marginal_loss_factors!(sys, db, date_range)
+
+Attaches each unit's Marginal Loss Factor ([`read_marginal_loss_factors`](@ref)) onto its
+matching `Generator`/`EnergyReservoirStorage` component's `ext` dict, under
+`"transmission_loss_factor"` - the same per-unit `ext` mechanism `region_model.jl` already
+uses to carry `"postcode"`/`"station_name"`/`"station_id"` (and, for `AreaInterchange`, the
+interconnector loss parameters). A later PR consumes this in the regional energy balance; no
+new PSY component type is introduced.
+
+Components absent from the MLF lookup (no `DUDETAILSUMMARY` row valid over `date_range`) are
+left untouched, mirroring [`_add_uigf_ts_to_components!`](@ref).
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `db`: The database connection.
+- `date_range`: A range of dates the MLF must be valid over.
+"""
+function set_marginal_loss_factors!(sys, db, date_range)
+    mlfs = read_marginal_loss_factors(db, date_range)
+    for component in Iterators.flatten((get_components(Generator, sys), get_components(EnergyReservoirStorage, sys)))
+        haskey(mlfs, get_name(component)) || continue
+        get_ext(component)["transmission_loss_factor"] = mlfs[get_name(component)]
+    end
+    return
+end
+
+"""
     read_bids(db, date_range; kwargs...)
 
 Reads energy offers from `BIDPEROFFER_D`/`BIDDAYOFFER_D` and returns one row per
 `(SETTLEMENTDATE, DUID, DIRECTION, INTERVAL_DATETIME)` with the 10-band offer curve
-collapsed into a `piecewise_step_data` column, plus `MAXAVAIL` (`BIDPEROFFER_D`) and
-`MINIMUMLOAD`/`DAILYENERGYCONSTRAINT` (`BIDDAYOFFER_D`) - the physical bounds a caller needs
-to clip dispatch to, not just the priced curve. See [`read_fcas_bids`](@ref) for the
-FCAS-market equivalent.
+collapsed into a `piecewise_step_data` column, plus `MAXAVAIL`/`ROCUP`/`ROCDOWN`
+(`BIDPEROFFER_D`) and `MINIMUMLOAD`/`DAILYENERGYCONSTRAINT` (`BIDDAYOFFER_D`) - the physical
+bounds a caller needs to clip dispatch to, not just the priced curve. `ROCUP`/`ROCDOWN` are
+`missing` for an interval the participant didn't bid a ramp rate for - see
+[`set_bid_ramp_rates!`](@ref) for how a caller should fall back in that case. See
+[`read_fcas_bids`](@ref) for the FCAS-market equivalent.
 """
 function read_bids(db, date_range; kwargs...)
     energy_bids_table = read_hive(db, :BIDPEROFFER_D)
     pricebids_table = read_hive(db, :BIDDAYOFFER_D)
     start_date = first(date_range)
     end_date = last(date_range)
-    bids = _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
-    return bids
+    resolution = get(kwargs, :resolution, nothing)
+    bids = _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_date; resolution = resolution)
+    ramp_rates = _read_energy_ramp_rates(db, energy_bids_table, start_date, end_date; resolution = resolution)
+    return leftjoin(bids, ramp_rates; on = [:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION])
 end
+
+"""
+    _read_energy_ramp_rates(db, energy_bids_table, start_date, end_date; resolution = nothing)
+
+Reads `ROCUP`/`ROCDOWN` (MW/minute) from `BIDPEROFFER_D` for `BidType.ENERGY`, latest-`VERSIONNO`
+resolved per `(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)` - mirrors
+[`_read_fcas_trapezium`](@ref)'s resolution, applied to the energy market's own bid ramp rates.
+Kept separate from [`_massage_bids`](@ref) for the same reason `_read_fcas_trapezium` is: adding
+these columns straight into `_massage_bids`'s shared SELECT would duplicate them across
+[`read_fcas_bids`](@ref)'s join.
+"""
+function _read_energy_ramp_rates(db, energy_bids_table, start_date, end_date; resolution = nothing)
+    sd = Date(start_date) - Day(1)
+    ed = Date(end_date) + Day(1)
+    rates = _query(
+        db,
+        """
+        SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, ROCUP, ROCDOWN
+        FROM $energy_bids_table
+        WHERE BIDTYPE = 'ENERGY' AND SETTLEMENTDATE BETWEEN ? AND ?
+        QUALIFY row_number() OVER (
+            PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION ORDER BY VERSIONNO DESC
+        ) = 1
+        ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME
+        """,
+        [sd, ed],
+    )
+    if !isnothing(resolution)
+        rates = @chain rates begin
+            transform(:INTERVAL_DATETIME => ByRow(x -> ceil.(x, resolution)); renamecols = false)
+            groupby([:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION])
+            combine(_, [:ROCUP, :ROCDOWN] .=> _mean_skipmissing .=> [:ROCUP, :ROCDOWN])
+        end
+    end
+    subset!(rates, :INTERVAL_DATETIME => ByRow(x -> start_date <= x < end_date))
+    return rates
+end
+
+"""
+    _mean_skipmissing(x)
+
+`mean(skipmissing(x))`, or `missing` when every element of `x` is missing - `mean ∘
+skipmissing` throws on an empty iterator, which an all-missing bucket (a DUID that never bid
+a ramp rate over a whole resolution window) would otherwise trigger.
+"""
+_mean_skipmissing(x) = all(ismissing, x) ? missing : mean(skipmissing(x))
 
 """
     _extract_power_bids(row)

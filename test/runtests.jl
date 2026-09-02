@@ -30,6 +30,10 @@ end
     include("timeseries_setters.jl")
 end
 
+@testset "Unit physical bid parameters and MLFs" begin
+    include("units.jl")
+end
+
 @testset "FCAS types" begin
     include("fcas.jl")
 end

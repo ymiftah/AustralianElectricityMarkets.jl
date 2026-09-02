@@ -130,17 +130,46 @@ function create_mock_data(hive_root::String)
     # connection-point -> DUID expansion. A 7th, PHANTOM1 row shares no other table (never
     # becomes a System component) - exercises add_nem_constraints!'s unresolvable-term skip
     # path (see test/constraints.jl).
+    #
+    # TRANSMISSIONLOSSFACTOR is distinct per DUID so a reader test can tell rows apart. BW01
+    # additionally carries a superseded validity window (2020-2024, TLF 0.80) and a stale
+    # archive_month duplicate of its *current* window (2024-12, TLF 0.50, superseded by the
+    # 2025-01 row's 0.95) - together these exercise read_marginal_loss_factors' date-window
+    # resolution (test/units.jl): picking the right window for a given date_range, and the
+    # latest archive_month within a window.
     connection_points = ["CP_BAYSW", "CP_BAYSW", "CP_BAYSW", "CP_BAYSW", "CP_ERARING", "CP_ERARING"]
+    tlfs = [0.95, 0.96, 0.97, 0.98, 0.99, 1.0]
     save_hive(
         vcat(
             DataFrame(
                 DUID = duids,
-                START_DATE = fill(DateTime(2020, 1, 1), n),
+                START_DATE = fill(DateTime(2025, 1, 1), n),
                 END_DATE = Union{DateTime, Missing}[missing for i in 1:n],
                 STATIONID = station_ids,
                 CONNECTIONPOINTID = connection_points,
                 REGIONID = regions,
+                TRANSMISSIONLOSSFACTOR = tlfs,
                 archive_month = fill("2025-01", n)
+            ),
+            DataFrame(
+                DUID = ["BW01"],
+                START_DATE = [DateTime(2025, 1, 1)],
+                END_DATE = Union{DateTime, Missing}[missing],
+                STATIONID = ["BAYSW"],
+                CONNECTIONPOINTID = ["CP_BAYSW"],
+                REGIONID = ["VIC1"],
+                TRANSMISSIONLOSSFACTOR = [0.5],
+                archive_month = ["2024-12"]
+            ),
+            DataFrame(
+                DUID = ["BW01"],
+                START_DATE = [DateTime(2020, 1, 1)],
+                END_DATE = [DateTime(2024, 12, 31)],
+                STATIONID = ["BAYSW"],
+                CONNECTIONPOINTID = ["CP_BAYSW"],
+                REGIONID = ["VIC1"],
+                TRANSMISSIONLOSSFACTOR = [0.8],
+                archive_month = ["2020-01"]
             ),
             DataFrame(
                 DUID = ["PHANTOM1"],
@@ -149,6 +178,7 @@ function create_mock_data(hive_root::String)
                 STATIONID = ["PHANTOM"],
                 CONNECTIONPOINTID = ["CP_PHANTOM"],
                 REGIONID = ["VIC1"],
+                TRANSMISSIONLOSSFACTOR = [1.0],
                 archive_month = ["2025-01"]
             ),
         ), :DUDETAILSUMMARY
@@ -215,7 +245,6 @@ function create_mock_data(hive_root::String)
 
     # 10. BIDPEROFFER_D (49 intervals)
     fcas_bid_types = ["RAISE6SEC", "LOWER6SEC", "RAISE60SEC", "LOWER60SEC", "RAISE5MIN", "LOWER5MIN", "RAISEREG", "LOWERREG"]
-    trapezium_cols = ["ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN"]
     contingency_types = ["RAISE6SEC", "LOWER6SEC", "RAISE60SEC", "LOWER60SEC", "RAISE5MIN", "LOWER5MIN"]
     regulation_types = ["RAISEREG", "LOWERREG"]
     requirement_mw(bid_type) = bid_type in regulation_types ? 30.0 : 50.0
@@ -249,9 +278,20 @@ function create_mock_data(hive_root::String)
         for b in 1:10
             tmp[!, "BANDAVAIL$b"] = fill(10.0, nrow(tmp))
         end
-        for col in trapezium_cols
+        for col in ("ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX")
             tmp[!, col] = fill(missing, nrow(tmp))
         end
+        # Energy-path bid ramp rates (MW/minute), for the two DUIDs whose PSY component type
+        # actually carries `ramp_limits` (ThermalStandard/HydroDispatch - BW01 is a battery,
+        # BW03/BW04 are renewables, none of which have the field): ER01 (thermal) bids faster
+        # than its registered MAXRATEOFCHANGEUP/DOWN (1.0, mock DUDETAIL), so the
+        # effective-rate cap must bind down to 1.0; BW02 (hydro) bids slower, so its own
+        # tighter bid rate passes through unchanged; ER02 stays missing so the missing-bid
+        # registered-rate fallback is exercised (see test/units.jl).
+        rocup_by_duid = Dict("ER01" => 5.0, "BW02" => 0.5)
+        rocdown_by_duid = Dict("ER01" => 5.0, "BW02" => 0.4)
+        tmp[!, "ROCUP"] = [get(rocup_by_duid, duid, missing) for duid in tmp.DUID]
+        tmp[!, "ROCDOWN"] = [get(rocdown_by_duid, duid, missing) for duid in tmp.DUID]
 
         # FCAS GEN bids for everyone, one block per market
         tmp_fcas = DataFrame()
@@ -309,13 +349,15 @@ function create_mock_data(hive_root::String)
     end
     save_hive(df_bid_per_offer, :BIDPEROFFER_D)
 
-    # 11. BIDDAYOFFER_D (Daily)
+    # 11. BIDDAYOFFER_D (Daily). MINIMUMLOAD is distinct per DUID (rather than uniformly
+    # 0.0) so set_bid_minimum_load!'s attached series can be checked against a real,
+    # per-unit value - see test/units.jl.
     bid_day_offer_gen = DataFrame(
         BIDTYPE = fill("ENERGY", n),
         SETTLEMENTDATE = fill(test_date, n),
         DUID = duids,
         DIRECTION = fill("GEN", n),
-        MINIMUMLOAD = fill(0.0, n),
+        MINIMUMLOAD = [5.0 * i for i in 1:n],
         DAILYENERGYCONSTRAINT = fill(1000.0, n),
         VERSIONNO = fill(1, n),
         archive_month = fill("2025-01", n)
