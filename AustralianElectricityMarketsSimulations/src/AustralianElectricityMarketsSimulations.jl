@@ -28,6 +28,10 @@ include("replication/preprocessing.jl")
 include("services/fcas_market.jl")
 include("services/fcas_pricing.jl")
 include("psi_compat.jl")
+# Reuses fcas_market.jl's _resolve_fcas_series/_fcas_series_row/_container_timestamps, so must be
+# included after it. No interaction with psi_compat.jl's no-ops (a device, not service,
+# formulation), so its position relative to that file doesn't matter.
+include("devices/interconnector_losses.jl")
 
 export IntervalInputs, read_interval_inputs
 export energy_bounds
@@ -36,5 +40,7 @@ export AbstractNEMConstraintFormulation
 export NEMConstraintLHS, NEMConstraintLimit, NEMConstraintRHSParameter, TermConstraint
 export NEMFCASService, NEMFCASMarket, FCASCapacityVariable, add_fcas_services!
 export compute_fcas_prices
+export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegmentVariable
+export InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint
 
 end

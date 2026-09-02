@@ -61,4 +61,8 @@ end
     @testset "FCAS terms in generic constraints, and price attribution" begin
         include("fcas_pricing.jl")
     end
+
+    @testset "NEMInterconnectorLoss: interconnector losses on AreaInterchange" begin
+        include("interconnector_losses.jl")
+    end
 end
