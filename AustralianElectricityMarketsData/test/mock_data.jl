@@ -80,8 +80,10 @@ function create_mock_data(hive_root::String)
             REGISTEREDCAPACITY = fill(100.0, n),
             MINCAPACITY = fill(10.0, n),
             MAXCAPACITY = fill(100.0, n),
-            MAXRATEOFCHANGEDOWN = fill(1.0, n),
-            MAXRATEOFCHANGEUP = fill(1.0, n),
+            # ER01 (index 5) carries deliberately asymmetric ramp rates - guards against
+            # up/down being crossed when mapped into PSY ramp_limits (see test/regionmodel.jl).
+            MAXRATEOFCHANGEDOWN = [1.0, 1.0, 1.0, 1.0, 7.0, 1.0],
+            MAXRATEOFCHANGEUP = [1.0, 1.0, 1.0, 1.0, 3.0, 1.0],
             MAXSTORAGECAPACITY = fill(200.0, n),
             STORAGEIMPORTEFFICIENCYFACTOR = fill(0.9, n),
             STORAGEEXPORTEFFICIENCYFACTOR = fill(0.9, n),

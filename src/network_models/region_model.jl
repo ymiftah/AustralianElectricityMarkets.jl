@@ -239,9 +239,9 @@ function get_generators_dataframe(bus_df, units)
                 ByRow((m, r) -> r > 0 ? m / r : 0) => :min_active_power,
             [:MAXCAPACITY, :REGISTEREDCAPACITY] =>
                 ByRow((m, r) -> r > 0 ? m / r : 0) => :max_active_power,
-            [:MAXRATEOFCHANGEDOWN, :REGISTEREDCAPACITY] =>
-                ByRow((m, r) -> r > 0 ? m / r : 0) => :max_ramp_up,
             [:MAXRATEOFCHANGEUP, :REGISTEREDCAPACITY] =>
+                ByRow((m, r) -> r > 0 ? m / r : 0) => :max_ramp_up,
+            [:MAXRATEOFCHANGEDOWN, :REGISTEREDCAPACITY] =>
                 ByRow((m, r) -> r > 0 ? m / r : 0) => :max_ramp_down,
             :STATIONID => :station_id,
             :STATIONNAME => :station_name,
