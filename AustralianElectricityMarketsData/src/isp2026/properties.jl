@@ -15,13 +15,20 @@ implemented here, in order:
    rank last. Picking the earliest instead is the classic failure — it silently returns a
    superseded capacity.
 3. **Bands.** Only records in `band`; an untagged record is band 1.
-4. **Tags.** A record is applicable when it is **untagged**, or tagged to a `Timeslice`
-   object whose `Include` month expression contains `horizon_start`'s month (e.g. `"M4-10"`
-   matches April–October). Records tagged to a Data File or Variable object, or to a
-   non-matching or non-month Timeslice (a day/hour timeslice such as `"D1,H1; D15,H1"`), are
-   excluded. Among applicable records, a timeslice-matched one **outranks** an untagged one —
-   real ISP data often carries no untagged annual record at all, only a seasonal split, so the
-   untagged fallback only wins when nothing more specific applies.
+4. **Tags.** A record is applicable when it is **untagged**, or tagged to an *active*
+   `Timeslice` object whose months contain `horizon_start`'s month. A Timeslice is active
+   when its own `Include` property (a PLEXOS boolean: `-1` = active, `0` = inactive) is
+   `-1` — an inactive Timeslice (e.g. a regional seasonal rating disabled in this model run)
+   never matches, regardless of whether its months could otherwise be determined. An active
+   Timeslice's months come from its `Include` text expression when it has one (e.g.
+   `"M4-10"` matches April–October; a non-month form like `"D1,H1; D15,H1"` never matches),
+   or, failing that, from its own name when it is exactly `"M<1-12>"` (e.g. an object named
+   `"M7"` matches July). An **active** Timeslice with neither a usable expression nor a
+   month-form name is a genuine gap, not a silent non-match — resolving throws, naming it.
+   Records tagged to a Data File or Variable object, or to a non-matching Timeslice, are
+   excluded. Among applicable records, a timeslice-matched one **outranks** an untagged
+   one — real ISP data often carries no untagged annual record at all, only a seasonal
+   split, so the untagged fallback only wins when nothing more specific applies.
 5. **Fallback.** An object with no applicable record takes the property's own
    `default_value`. `missing` is never propagated.
 
@@ -168,12 +175,24 @@ end
 """
     _matching_timeslice_ids(db, schema, month) -> Set{String}
 
-Find every `Timeslice` object whose `Include` expression contains `month`.
+Find every **active** `Timeslice` object whose months contain `month`.
 
-A timeslice's applicable months are stored as a text expression on its own `Include`
-property (found via `t_text`, since PLEXOS carries text-valued properties out of line from
-`t_data.value`), e.g. `"M4-10"` or `"M1-3,11,12"`. There are only ever a handful of
-timeslices in a model, so the month parsing happens in Julia rather than in SQL.
+`Include` is a PLEXOS boolean property on the Timeslice itself (`-1` = active, `0` =
+inactive, per its `input_mask`/`validation_rule`): a Timeslice can be disabled for a
+model run — e.g. AEMO's regional seasonal ratings, defined in an external Data File —
+without its months ever being determined, and that disabling must be respected before any
+month lookup is attempted.
+
+For an active Timeslice, months come from its own `Include` text expression when present
+(found via `t_text`, since PLEXOS carries text-valued properties out of line from
+`t_data.value`), e.g. `"M4-10"` or `"M1-3,11,12"`; failing that, from its own name when it
+is exactly `"M<1-12>"` (AEMO also models single-month timeslices this way, tagged to
+themselves, with no inline expression at all). An active Timeslice with neither throws —
+that combination means the parsing here has a real gap, not that the Timeslice doesn't
+apply; silently treating it as a non-match would zero out every property tagged to it.
+
+There are only ever a handful of timeslices in a model, so the month parsing happens in
+Julia rather than in SQL.
 
 # Arguments
 - `db`: an open [`AEMDB`](@ref).
@@ -187,22 +206,60 @@ function _matching_timeslice_ids(db::AEMDB, schema::AbstractString, month::Integ
     rows = _query(
         db,
         """
-        SELECT o.object_id AS object_id, tx.value AS expression
+        SELECT
+            o.object_id                   AS object_id,
+            o.name                        AS name,
+            bool_or(d.value = '-1')       AS is_active,
+            max(tx.value)                 AS expression
         FROM $(schema).t_object o
         JOIN $(schema).t_class      cl ON cl.class_id       = o.class_id
         JOIN $(schema).t_membership m  ON m.child_object_id = o.object_id
         JOIN $(schema).t_data       d  ON d.membership_id   = m.membership_id
         JOIN $(schema).t_property   p  ON p.property_id     = d.property_id
-        JOIN $(schema).t_text       tx ON tx.data_id        = d.data_id
+        LEFT JOIN $(schema).t_text  tx ON tx.data_id        = d.data_id
         WHERE cl.name = 'Timeslice' AND p.name = 'Include'
+        GROUP BY o.object_id, o.name
         """,
     )
     matching = Set{String}()
     for row in eachrow(rows)
-        ismissing(row.expression) && continue
-        _month_expression_matches(row.expression, month) && push!(matching, row.object_id)
+        row.is_active || continue
+        if !ismissing(row.expression)
+            _month_expression_matches(row.expression, month) && push!(matching, row.object_id)
+            continue
+        end
+        self_named = _self_named_month(row.name)
+        if self_named === nothing
+            throw(
+                ArgumentError(
+                    "Timeslice $(repr(row.name)) (object_id $(row.object_id)) is active " *
+                        "(Include = -1) but has no Include text expression and its name is " *
+                        "not of the form \"M<1-12>\"; cannot determine which months it covers.",
+                ),
+            )
+        end
+        self_named == month && push!(matching, row.object_id)
     end
     return matching
+end
+
+"""
+    _self_named_month(name) -> Union{Int, Nothing}
+
+Parse a Timeslice's own name as a single-month form `"M<1-12>"`, e.g. `"M7"` => `7`.
+
+# Arguments
+- `name`: the Timeslice object's name.
+
+# Returns
+- The month as an `Int`, or `nothing` if `name` is not of that form (or the number is out
+  of range).
+"""
+function _self_named_month(name::AbstractString)
+    m = match(r"^M(\d{1,2})$", name)
+    m === nothing && return nothing
+    n = parse(Int, m.captures[1])
+    return 1 <= n <= 12 ? n : nothing
 end
 
 """
