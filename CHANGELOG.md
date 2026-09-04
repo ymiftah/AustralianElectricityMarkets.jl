@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`read_plexos_xml`/`load_isp_xml!`/`resolve_properties`**: New parsing layer for AEMO's ISP PLEXOS model (`AustralianElectricityMarketsData/src/isp2026/`). The model's XML export is a flat relational dump of 27 uniformly-shaped `t_*` tables, so one table-agnostic reader turns it into a `DataFrame` per table; those load into DuckDB under one schema per ISP scenario, since PLEXOS `object_id`s are per-file and sharing a table set would let a missing `scenario` predicate silently cross-join scenarios. `resolve_properties` implements PLEXOS property precedence — date scoping (latest `date_from` wins among overlapping open-ended records), band selection, timeslice matching against the horizon month (honouring each Timeslice's `Include` flag), and fallback to the property default — as one SQL query, because choosing the wrong record here yields a plausible wrong number rather than an error.
+
 ### Fixed
 
 - The AGC ramp rate that caps regulation and joint ramping is the larger of `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE` and the regulation availability spread over the interval, instead of the bid-capped ramp rate alone. Regulation caps now match NEMDE's; joint ramping can be tighter than NEMDE's, because the telemetered rate is not published.
