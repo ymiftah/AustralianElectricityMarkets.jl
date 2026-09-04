@@ -20,4 +20,3 @@ function ISPBuildOptionProbe(;
 end
 
 IS.get_internal(v::ISPBuildOptionProbe) = v.internal
-IS.get_uuid(v::ISPBuildOptionProbe) = IS.get_uuid(v.internal)

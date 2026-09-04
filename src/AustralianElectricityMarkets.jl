@@ -86,7 +86,6 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
     get_duid, get_bid_type, get_factor, get_interconnector, get_region, get_service,
     get_sense, set_sense!, get_rhs, set_rhs!, get_constraint_weight, set_constraint_weight!,
     get_terms, set_terms!, get_fcas_requirements, set_fcas_requirements!
-export ISPBuildOptionProbe
 
 # Parsing data into models
 include("network_models/region_model.jl")

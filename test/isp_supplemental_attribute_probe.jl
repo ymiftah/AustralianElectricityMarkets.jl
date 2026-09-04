@@ -7,8 +7,9 @@
 # component types that get serialized must live in the top-level module"). This probe instead
 # uses `ISPBuildOptionProbe`, defined in `src/isp/build_option_probe.jl` inside the
 # `AustralianElectricityMarkets` top-level module — the same place `FCASTrapezium` lives —
-# which is the configuration that actually answers the question. `runtests.jl`'s `using
-# AustralianElectricityMarkets` brings the exported `ISPBuildOptionProbe` into scope here.
+# which is the configuration that actually answers the question. It is not exported (it exists
+# solely to answer this gate question, not as public API), so it is referenced here as
+# `AustralianElectricityMarkets.ISPBuildOptionProbe`.
 #
 # Each fallible step is asserted with `@test`/`@test_throws` rather than left as a bare
 # statement: a bare exception inside a top-level `@testset` here would abort `Pkg.test()`
@@ -31,7 +32,7 @@
     )
     add_component!(sys, gen)
 
-    attr = ISPBuildOptionProbe(; build_cost = 1234.5)
+    attr = AustralianElectricityMarkets.ISPBuildOptionProbe(; build_cost = 1234.5)
 
     # (a) constructible and addable.
     @test begin
@@ -49,13 +50,13 @@
     # (c) deserialization, including the association back to its owning component.
     sys2 = nothing
     gen2 = nothing
-    attrs = ISPBuildOptionProbe[]
+    attrs = AustralianElectricityMarkets.ISPBuildOptionProbe[]
     @test begin
         sys2 = System(path)
         gen2 = get_component(ThermalStandard, sys2, "gen1")
         # `get_supplemental_attributes(::Type{T}, component)` is the real 2-arg PSY/IS
         # signature — there is no 3-arg `(Type, System, component)` method.
-        attrs = get_supplemental_attributes(ISPBuildOptionProbe, gen2)
+        attrs = get_supplemental_attributes(AustralianElectricityMarkets.ISPBuildOptionProbe, gen2)
         true
     end
 
