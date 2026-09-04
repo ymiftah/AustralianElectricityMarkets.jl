@@ -25,5 +25,6 @@ include("nemweb_load/tables.jl")
 include("nemweb_load/populate.jl")
 include("isp2025/isp2025.jl")
 include("isp2026/xml.jl")
+include("isp2026/properties.jl")
 
 end
