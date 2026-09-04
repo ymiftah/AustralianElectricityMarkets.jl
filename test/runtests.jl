@@ -46,6 +46,9 @@ end
     include("pscb_constraints.jl")
 end
 
+@testset "ISP supplemental attribute probe" begin
+    include("isp_supplemental_attribute_probe.jl")
+end
 
 @testset "Aqua" begin
     include("aqua.jl")
