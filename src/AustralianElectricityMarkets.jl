@@ -72,6 +72,11 @@ include("constraints/generic_constraint.jl")
 include("constraints/read.jl")
 include("constraints/build.jl")
 
+# Round-trip gate for the ISP 2026 build-economics design; see the docstring in
+# isp/build_option_probe.jl. Same top-level-module requirement as the FCAS/constraint types
+# above, so it lives in the same block.
+include("isp/build_option_probe.jl")
+
 export FCASTrapezium, FCASBid,
     get_enablement_min, get_low_breakpoint, get_high_breakpoint, get_enablement_max,
     get_max_avail, get_ramp_up_rate, get_ramp_down_rate, get_lower_slope_coeff, get_upper_slope_coeff,
@@ -81,6 +86,7 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
     get_duid, get_bid_type, get_factor, get_interconnector, get_region, get_service,
     get_sense, set_sense!, get_rhs, set_rhs!, get_constraint_weight, set_constraint_weight!,
     get_terms, set_terms!, get_fcas_requirements, set_fcas_requirements!
+export ISPBuildOptionProbe
 
 # Parsing data into models
 include("network_models/region_model.jl")

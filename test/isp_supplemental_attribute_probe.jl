@@ -1,26 +1,18 @@
 # Probe: can an externally-defined SupplementalAttribute subtype round-trip through
 # System JSON? Decides how ISPBuildOption is stored (see the ISP 2026 ingestion spec).
 #
-# `test/runtests.jl` does only `using PowerSystems`, so the PSY/IS aliases this file needs
-# are imported here rather than assumed.
-import PowerSystems as PSY
-import InfrastructureSystems as IS
-
-struct _ProbeBuildOption <: PSY.SupplementalAttribute
-    build_cost::Float64
-    internal::IS.InfrastructureSystemsInternal
-end
-
-function _ProbeBuildOption(;
-        build_cost::Float64,
-        internal::IS.InfrastructureSystemsInternal = IS.InfrastructureSystemsInternal(),
-    )
-    return _ProbeBuildOption(build_cost, internal)
-end
-
-IS.get_internal(v::_ProbeBuildOption) = v.internal
-IS.get_uuid(v::_ProbeBuildOption) = IS.get_uuid(v.internal)
-
+# A first version of this probe defined its type locally in this test script (module `Main`)
+# and failed to deserialize — but that failure was `IS.get_module` being unable to resolve
+# `Main` at all, unrelated to supplemental attributes (see this repo's CLAUDE.md: "PSY
+# component types that get serialized must live in the top-level module"). This probe instead
+# uses `ISPBuildOptionProbe`, defined in `src/isp/build_option_probe.jl` inside the
+# `AustralianElectricityMarkets` top-level module — the same place `FCASTrapezium` lives —
+# which is the configuration that actually answers the question. `runtests.jl`'s `using
+# AustralianElectricityMarkets` brings the exported `ISPBuildOptionProbe` into scope here.
+#
+# Each fallible step is asserted with `@test`/`@test_throws` rather than left as a bare
+# statement: a bare exception inside a top-level `@testset` here would abort `Pkg.test()`
+# before later testsets (e.g. Aqua) run, masking unrelated regressions on this branch.
 @testset "SupplementalAttribute round-trip probe" begin
     sys = System(100.0)
     # Keyword form, matching `_add_buses!` in src/network_models/region_model.jl — the
@@ -39,14 +31,33 @@ IS.get_uuid(v::_ProbeBuildOption) = IS.get_uuid(v.internal)
     )
     add_component!(sys, gen)
 
-    attr = _ProbeBuildOption(; build_cost = 1234.5)
-    add_supplemental_attribute!(sys, gen, attr)
+    attr = ISPBuildOptionProbe(; build_cost = 1234.5)
+
+    # (a) constructible and addable.
+    @test begin
+        add_supplemental_attribute!(sys, gen, attr)
+        true
+    end
 
     path = joinpath(mktempdir(), "probe.json")
-    to_json(sys, path)
-    sys2 = System(path)
-    gen2 = get_component(ThermalStandard, sys2, "gen1")
-    attrs = get_supplemental_attributes(_ProbeBuildOption, sys2, gen2)
+    # (b) to_json.
+    @test begin
+        to_json(sys, path)
+        true
+    end
+
+    # (c) deserialization, including the association back to its owning component.
+    sys2 = nothing
+    gen2 = nothing
+    attrs = ISPBuildOptionProbe[]
+    @test begin
+        sys2 = System(path)
+        gen2 = get_component(ThermalStandard, sys2, "gen1")
+        # `get_supplemental_attributes(::Type{T}, component)` is the real 2-arg PSY/IS
+        # signature — there is no 3-arg `(Type, System, component)` method.
+        attrs = get_supplemental_attributes(ISPBuildOptionProbe, gen2)
+        true
+    end
 
     @test length(attrs) == 1
     @test only(attrs).build_cost == 1234.5
