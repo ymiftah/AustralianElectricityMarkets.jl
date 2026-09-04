@@ -4,8 +4,8 @@
     frames = read_plexos_xml(path)
 
     @test frames isa Dict{String, DataFrame}
-    @test nrow(frames["t_object"]) == 12
-    @test nrow(frames["t_data"]) == 14
+    @test nrow(frames["t_object"]) == 16
+    @test nrow(frames["t_data"]) == 18
     @test nrow(frames["t_date_from"]) == 5
     @test nrow(frames["t_band"]) == 1
 
@@ -28,7 +28,7 @@ end
     @test "t_data" in loaded
 
     counted = AustralianElectricityMarketsData._query(db, "SELECT count(*) AS n FROM step_change.t_object")
-    @test counted.n[1] == 12
+    @test counted.n[1] == 16
 
     # A second scenario is isolated: same object_ids, different schema.
     load_isp_xml!(db, path, :slower_growth)
@@ -39,13 +39,13 @@ end
                (SELECT count(*) FROM slower_growth.t_object) AS b
         """,
     )
-    @test both.a[1] == 12
-    @test both.b[1] == 12
+    @test both.a[1] == 16
+    @test both.b[1] == 16
 
     # Reloading the same scenario replaces rather than appends.
     load_isp_xml!(db, path, :step_change)
     again = AustralianElectricityMarketsData._query(db, "SELECT count(*) AS n FROM step_change.t_object")
-    @test again.n[1] == 12
+    @test again.n[1] == 16
 
     @test_throws ArgumentError isp_scenario_schema(Symbol("drop table; --"))
 end
@@ -76,9 +76,15 @@ end
     @test values["GEN_SPECIFICITY"] == 33.0
     # Rule 4: tagged to a non-month (day/hour) timeslice; never matches, never throws.
     @test values["GEN_ODD"] == 42.0
+    # Rule 4: tagged to M7, an active timeslice with no text expression, matched by name.
+    @test values["GEN_SELF_MONTH"] == 66.0
+    # Rule 4: tagged to Retired, an inactive (Include = 0) timeslice with neither a text
+    # expression nor a month-form name; excluded by the flag before any lookup is
+    # attempted, so this falls back to the default without throwing.
+    @test values["GEN_INACTIVE_TAG"] == 42.0
 
     # Every object of the class appears, even with no data of its own.
-    @test nrow(df) == 8
+    @test nrow(df) == 10
     @test df.category[df.name .== "GEN_PLAIN"] == ["Black Coal NSW"]
 
     # Band selection is explicit.
@@ -111,4 +117,25 @@ end
     @test winter_id in matched
     @test !(summer_id in matched)
     @test !(odd_id in matched)
+end
+
+@testset "resolve_properties throws on an unresolvable active timeslice" begin
+    # An active (Include = -1) timeslice with neither a text expression nor a
+    # month-form name is a genuine parsing gap, not a silent non-match: it must fail
+    # loudly rather than zero out every property tagged to it. This fixture variant is
+    # isolated to its own scenario, since the throw fires on any resolve_properties call
+    # against the schema, not just one touching the broken tag.
+    path = joinpath(mktempdir(), "fixture.xml")
+    write_isp_fixture(path; broken_timeslice = true)
+    db = aem_connect()
+    load_isp_xml!(db, path, :broken_timeslice)
+
+    err = try
+        resolve_properties(db, :broken_timeslice, "Generator", ["Max Capacity"], Date(2026, 7, 1))
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("Mystery", err.msg)
 end
