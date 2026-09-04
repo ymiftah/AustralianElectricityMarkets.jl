@@ -70,3 +70,58 @@ function _rows_to_dataframe(rows::Vector{Dict{String, Union{String, Missing}}})
     sort!(columns)
     return DataFrame([col => [get(row, col, missing) for row in rows] for col in columns])
 end
+
+export load_isp_xml!, isp_scenario_schema
+
+"""
+    isp_scenario_schema(scenario::Symbol)
+
+Validate `scenario` as a DuckDB schema identifier and return it as a `String`.
+
+Scenario names are interpolated into DDL, so they are restricted to a leading letter followed
+by letters, digits and underscores. Anything else throws.
+"""
+function isp_scenario_schema(scenario::Symbol)
+    name = String(scenario)
+    occursin(r"^[A-Za-z][A-Za-z0-9_]*$", name) ||
+        throw(ArgumentError("invalid scenario name $(repr(name)): expected a leading letter then letters, digits or underscores"))
+    return name
+end
+
+"""
+    load_isp_xml!(db::AEMDB, path::AbstractString, scenario::Symbol; tables = ISP_XML_TABLES)
+
+Load a PLEXOS XML export into `db` under a schema named for `scenario`.
+
+Each scenario gets its own DuckDB schema because PLEXOS `object_id`s are per-file: the same
+integer means different objects in different scenarios. Isolating them by schema means the
+resolution queries can be written once against unqualified table names and simply executed
+with the schema selected, with no `scenario` predicate that a later join could forget.
+
+Reloading a scenario replaces its tables.
+
+# Arguments
+- `db`: an open [`AEMDB`](@ref).
+- `path`: path to the scenario's XML file.
+- `scenario`: schema name, e.g. `:step_change`.
+- `tables`: table names to load.
+
+# Returns
+- `Vector{String}` of loaded table names, sorted.
+"""
+function load_isp_xml!(db::AEMDB, path::AbstractString, scenario::Symbol; tables = ISP_XML_TABLES)
+    schema = isp_scenario_schema(scenario)
+    frames = read_plexos_xml(path; tables)
+    conn = DuckDB.connect(db.db)
+    try
+        DuckDB.execute(conn, "CREATE SCHEMA IF NOT EXISTS $(schema)")
+        for (table, frame) in frames
+            DuckDB.register_data_frame(conn, frame, "_isp_stage")
+            DuckDB.execute(conn, "CREATE OR REPLACE TABLE $(schema).$(table) AS SELECT * FROM _isp_stage")
+            DuckDB.unregister_table(conn, "_isp_stage")
+        end
+    finally
+        DuckDB.disconnect(conn)
+    end
+    return sort!(collect(keys(frames)))
+end
