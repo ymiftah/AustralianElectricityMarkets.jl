@@ -114,6 +114,13 @@
         bat = get_component(EnergyReservoirStorage, system, "BW01")
         @test get_storage_capacity(bat) == 2.0 # 200.0 / 100.0
 
+        # ER01 has deliberately asymmetric mock MAXRATEOFCHANGEUP=3.0/MAXRATEOFCHANGEDOWN=7.0
+        # (REGISTEREDCAPACITY=100.0) - guards against up/down being crossed in get_generators_dataframe.
+        thermal = get_component(ThermalStandard, system, "ER01")
+        limits = get_ramp_limits(thermal)
+        @test limits.up == 0.03 # 3.0 / 100.0
+        @test limits.down == 0.07 # 7.0 / 100.0
+
         # Interconnectors/Interfaces
         @test length(get_components(AreaInterchange, system)) == 6
     end
