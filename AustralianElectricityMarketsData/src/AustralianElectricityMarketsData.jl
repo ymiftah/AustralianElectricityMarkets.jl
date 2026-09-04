@@ -22,6 +22,7 @@ include("nemweb_load/download.jl")
 include("nemweb_load/populate.jl")
 include("nemweb_load/legacy.jl")
 include("isp2026/xml.jl")
+include("isp2026/properties.jl")
 
 @doc (@doc AustralianElectricityMarketsCache.HiveConfiguration) HiveConfiguration
 @doc (@doc AustralianElectricityMarketsCache.AEMDB) AEMDB
