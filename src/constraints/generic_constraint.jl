@@ -1,22 +1,17 @@
 """
 A NEM generic constraint: `LHS <sense> RHS`, the mechanism AEMO uses for both network limits
-and FCAS requirements. `terms` is the LHS algebra (from `SPD*`); `fcas_requirements` is
-market attribution (from `DISPATCH_FCAS_REQ`) — a constraint typically governs several
+and FCAS requirements.
+- `terms` is the LHS algebra (from Security and Projected Dispatch `SPD*` tables)
+- `fcas_requirements` is market attribution (from `DISPATCH_FCAS_REQ`), a constraint typically governs several
 `(region, service)` prices at once, and an empty list means a pure network constraint.
-`rhs` is a static default
-(`GENCONDATA.CONSTRAINTVALUE`); a `"rhs"` `Deterministic` time series attached separately
+- `rhs` is a static default (`GENCONDATA.CONSTRAINTVALUE`); a `"rhs"` `Deterministic` time series attached separately
 (see [`add_nem_constraints!`](@ref)) replays `DISPATCHCONSTRAINT.RHS` per interval and is
 the value that should be used wherever a real interval's enforced RHS matters, since RHS can
 be dynamic (`GENCONDATA.DYNAMICRHS`) or an armed/disarmed variant switch.
-
-`constraint_weight` is `GENCONDATA.GENERICCONSTRAINTWEIGHT` verbatim — a *weight*, not itself
+- `constraint_weight` is `GENCONDATA.GENERICCONSTRAINTWEIGHT` verbatim: a *weight*, not itself
 the violation penalty in dollars; a PowerSimulations.jl extension multiplies it by an
 AEMC-set base CVP rate.
-
-`sense` is deliberately a field, not a type parameter like PowerSimulations.jl's
-`Reserve{T<:ReserveDirection}`: it's an independent runtime fact per instance
-(`GENCONDATA.CONSTRAINTTYPE`), affecting exactly one call site (the constraint operator chosen
-in `add_constraints!`), not a compile-time modelling choice that multiple methods key off.
+- `sense` is the constraint sense, `:le` or `:ge` (from `GENCONDATA.CONSTRAINTSENSE`).
 """
 mutable struct GenericConstraint <: PSY.Service
     name::String

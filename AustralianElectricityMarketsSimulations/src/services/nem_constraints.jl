@@ -1,9 +1,3 @@
-# NEM `GenericConstraint`s as a `PowerSimulations.jl` `Service` — energy terms only
-# (`InterconnectorTerm`, and `UnitTerm`/`RegionTerm` with `bid_type == BidType.ENERGY`). FCAS
-# terms are a later task. Follows the `TransmissionInterface` extension pattern in installed
-# PSI (`services_models/transmission_interface.jl`); the `_modify_device_model!` no-op this
-# needs lives in `psi_compat.jl`, not here (isolated on purpose — see that file).
-
 "LHS expression for a [`GenericConstraint`](@ref): the weighted sum of its energy terms."
 struct NEMConstraintLHS <: PSI.ExpressionType end
 
