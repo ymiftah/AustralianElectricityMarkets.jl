@@ -46,6 +46,8 @@ Julia 1.11 workspace: root, `test/`, and `docs/` share one Manifest.
   cross-reference with `` [`name`](@ref) ``.
 - **Keep comments short** — a line or two for the genuinely non-obvious. Do not write paragraph-long
   design-rationale comments; surface that reasoning to the user at the end of a session instead.
+  Code comments are for humans reading the code, not for recording *why* an architectural decision
+  was made — that belongs in an ADR under `docs/adr/` (see `docs/agents/domain.md`).
 - Naming: NEMWEB tables/columns stay `SCREAMING_CASE`; Julia API is `snake_case`; private helpers
   are `_`-prefixed; mutating functions take `!`.
 - Submodule symbols are exported twice (in the submodule, then re-exported at top level) with
@@ -66,3 +68,18 @@ Julia 1.11 workspace: root, `test/`, and `docs/` share one Manifest.
   as separate `DuckDB.execute` calls.
 - PSY component types that get serialized must live in the **top-level** module: `IS.get_module`
   only resolves top-level package names, so submodule-nested types break `System` JSON round-trips.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues for `ymiftah/AustralianElectricityMarkets.jl`, via the `gh` CLI. See
+`docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Multi-context: root `CONTEXT-MAP.md` pointing to a `CONTEXT.md` per package (`src/`,
+`AustralianElectricityMarketsData/`, `AustralianElectricityMarketsSimulations/`). See
+`docs/agents/domain.md`. Architecture decisions and their rationale are tracked as ADRs under
+`docs/adr/` (or `<package>/docs/adr/`), not as comments in code — code comments are for humans
+reading the code, not for recording design history.

@@ -21,27 +21,17 @@ PSI.get_multiplier_value(::NEMConstraintRHSParameter, ::GenericConstraint, ::Ter
 
 # --- Step 6: skip-whole-constraint-and-warn-once ---
 #
-# A constraint referencing a component absent from `sys`, an unsupported (non-ENERGY) bid_type,
-# or a device type this template doesn't model is skipped whole, never with a partial LHS -
-# mirrors `add_nem_constraints!`'s own skip behaviour. PSI expands one `GenericConstraint` into
-# its own `ServiceModel` entry per instance (`problem_template.jl:_populate_aggregated_service_model!`)
-# and calls `construct_service!` once per entry with no hook that sees them all at once, so
-# every constraint is scanned eagerly on the first `ModelConstructStage` call (cached by
-# `container` identity) to still get one summary `@warn`. The scan can only happen at
-# `ModelConstructStage`: PSI builds branches (where `AreaInterchange` lives) *after* services'
-# `ArgumentConstructStage` but *before* services' `ModelConstructStage`
-# (`core/optimization_container.jl:build_impl!`), so an interconnector term's device isn't
-# reliably checkable any earlier.
-# `WeakKeyDict`, not `IdDict`: an `IdDict` holds a strong reference to every `container` key, so
-# every `Simulation`-lifetime `OptimizationContainer` ever built would live for the process's
-# life. A `WeakKeyDict` entry is pruned once nothing else references the container.
+# Scanned eagerly at ModelConstructStage (cached by `container`, for one summary `@warn`): PSI
+# builds branches - where `AreaInterchange` lives - only after services' ArgumentConstructStage,
+# so that's the earliest point every term's device is reliably checkable.
+# `WeakKeyDict`, not `IdDict`: an `IdDict` would strongly reference every container key, leaking
+# each built `OptimizationContainer` for the process's life.
 const _NEM_CONSTRAINT_SKIP_CACHE = Base.WeakKeyDict{PSI.OptimizationContainer, Dict{String, Symbol}}()
 
 _term_bid_type(term::Union{UnitTerm, RegionTerm}) = get_bid_type(term)
 
-# A device's ENERGY variables and each one's multiplier in its net injection. `PSY.Storage` has no
-# `ActivePowerVariable`: storage formulations split it into charge/discharge, which PSI's own
-# nodal balance nets with variable multipliers of -1.0 and +1.0.
+# `PSY.Storage` has no `ActivePowerVariable`: formulations split it into charge/discharge, netted
+# by PSI's nodal balance via -1.0/+1.0 multipliers.
 _energy_variables(::PSY.Storage) =
     ((PSI.ActivePowerOutVariable, 1.0), (PSI.ActivePowerInVariable, -1.0))
 _energy_variables(::PSY.Device) = ((PSI.ActivePowerVariable, 1.0),)
@@ -112,21 +102,10 @@ end
 
 # --- Step 3: add_to_expression! per term type ---
 #
-# Each method resolves its own term's device(s) from `sys` directly (rather than from
-# `PSI.get_contributing_devices_map(model)`, which flattens every term's devices into one
-# per-type list and would lose a term's own factor when two terms of different types share a
-# device) and adds `factor * device's net injection` (or, for an interconnector,
-# `FlowActivePowerVariable`) into the constraint's LHS expression - the `InterfaceTotalFlow`
-# pattern (`add_to_expression.jl`), adapted for per-term rather than per-service assembly.
-# Callers only reach these once `_skip_reason` has confirmed every device is present and
-# modeled, so no defensive `has_container_key` checks are repeated here.
-#
-# `get_factor(term)` multiplies the device variable directly, with no per-unit conversion:
-# `ActivePowerVariable`/`FlowActivePowerVariable` are themselves already in per-unit of
-# `PSI.get_base_power(container)`, and a `ConstraintTerm.factor` is a dimensionless multiplier
-# on that same quantity (AEMO's own `FACTOR` columns are ratios, e.g. `-1.0` to net a flow), so
-# it carries no MW units to convert. Only `NEMConstraintRHSParameter` - a real natural-MW
-# value - needs the base-power conversion, applied in `add_constraints!`.
+# Each method resolves its own term's device(s) directly from `sys`, not via PSI's flattened
+# contributing-devices map - that would lose a term's own factor when two terms of different
+# types share a device. Device variables are already per-unit; only `NEMConstraintRHSParameter`
+# (a real natural-MW value) needs base-power conversion.
 
 "Adds `factor * device's net injection` into `expr`, over every variable `_energy_variables` names."
 function _add_device_energy_terms!(container, expr, name, device, factor)
@@ -226,33 +205,23 @@ function PSI.add_constraints!(
     name = PSY.get_name(gc)
     expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
     time_steps = PSI.get_time_steps(container)
-    # Own container per constraint instance (`meta = name`), not one shared across every
-    # `GenericConstraint` of this type: a skipped constraint (Step 6) never gets a
-    # `NEMConstraintLimit`/dual entry at all, so `calculate_dual_variables!`'s blanket
-    # broadcast over a *shared* container's rows would hit `#undef` for it. `TransmissionInterface`
-    # can share one container because every registered interface always gets built; we can't,
-    # since we skip whole instances.
+    # Own container per constraint (`meta = name`): a skipped constraint never gets an entry, so a
+    # shared container's blanket dual broadcast would hit `#undef` for it.
     con = PSI.lazy_container_addition!(
         container, NEMConstraintLimit(), GenericConstraint, [name], time_steps; meta = name,
     )
     rhs_param = PSI.get_parameter(container, NEMConstraintRHSParameter(), GenericConstraint, name)
     rhs_refs = PSI.get_parameter_column_refs(rhs_param, name)
-    # `rhs_refs` holds the raw natural-MW "rhs" series value (`get_multiplier_value` is 1.0,
-    # see its docstring); `expr`'s terms are already per-unit (device variables are). Divide by
-    # the base power here rather than fighting `get_multiplier_value`'s signature - it has no
-    # `container` to read the base power from.
+    # `rhs_refs` is raw natural-MW; `expr`'s terms are already per-unit. Divide by base power here
+    # - `get_multiplier_value` has no `container` to do the conversion itself.
     base_power = PSI.get_base_power(container)
     invoked = _invoked_mask(container, gc)
     jm = PSI.get_jump_model(container)
     sense = get_sense(gc)
     for t in time_steps
         if invoked[t] == 0.0
-            # `con` spans every time step (dense container); PSI's dual read-back
-            # (`_calculate_dual_variable_value!`) broadcasts over the whole thing regardless of
-            # which cells this loop ever assigns, so leaving a cell `#undef` throws
-            # `UndefRefError` the moment any interval is skipped. A vacuous, disconnected
-            # constraint keeps the cell defined, adds no LHS, and reads back a dual of exactly
-            # `0.0` (verified empirically) - "not invoked" without an undefined container cell.
+            # `con` is dense: an `#undef` cell throws `UndefRefError` on PSI's dual read-back. A
+            # vacuous, disconnected constraint stays defined and reads back dual `0.0` instead.
             con[name, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
             continue
         end
@@ -312,11 +281,8 @@ function PSI.construct_service!(
 
     PSI.add_constraints!(container, NEMConstraintLimit, gc, model)
 
-    # Not `PSI.add_constraint_dual!(container, sys, model)` - broken for any generic `Service` +
-    # `duals=` in installed PSI 0.38.3 (Task 0 spike finding #1). `add_dual_container!` directly
-    # is exactly what that method's scalar-`D<:PSY.Service` branch does internally. `meta = name`
-    # for the same reason as the constraint container above: a skipped instance must never
-    # register a dual container at all.
+    # Not `PSI.add_constraint_dual!` - broken for a generic `Service` + `duals=` in installed PSI
+    # 0.38.3; re-check this if PSI is upgraded.
     if !isempty(PSI.get_duals(model))
         time_steps = PSI.get_time_steps(container)
         for constraint_type in PSI.get_duals(model)
