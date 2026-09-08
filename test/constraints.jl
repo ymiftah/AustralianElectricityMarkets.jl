@@ -31,6 +31,12 @@
         @test get_region(rt) == "NSW1"
         @test get_bid_type(rt) == BidType.ENERGY
         @test get_factor(rt) == 2.0
+        @test get_devices(rt) == String[]  # sensible default: hand-authored terms still construct
+
+        rt_with_devices = RegionTerm("NSW1", BidType.ENERGY, 2.0, ["BW01", "BW02"])
+        @test get_devices(rt_with_devices) == ["BW01", "BW02"]
+        rt_kw = RegionTerm(; region = "NSW1", bid_type = BidType.ENERGY, factor = 2.0, devices = ["BW01"])
+        @test get_devices(rt_kw) == ["BW01"]
 
         req = FCASRequirement("NSW1", BidType.RAISEREG)
         @test get_region(req) == "NSW1"
@@ -89,7 +95,7 @@
             terms = ConstraintTerm[
                 UnitTerm("BW01", BidType.RAISE6SEC, 1.0),
                 InterconnectorTerm("IC1", -1.0),
-                RegionTerm("NSW1", BidType.ENERGY, 0.5),
+                RegionTerm("NSW1", BidType.ENERGY, 0.5, ["BW01", "BW02"]),
             ],
             fcas_requirements = FCASRequirement[FCASRequirement("TAS1", BidType.RAISE6SEC), FCASRequirement("TAS1", BidType.RAISE5MIN)],
         )
@@ -116,6 +122,7 @@
         @test get_interconnector(ic_term) == "IC1"
         region_term = only(filter(t -> t isa RegionTerm, get_terms(gc2)))
         @test get_region(region_term) == "NSW1"
+        @test get_devices(region_term) == ["BW01", "BW02"]  # devices survives the JSON round trip
 
         @test all(r -> get_region(r) == "TAS1", get_fcas_requirements(gc2))
         @test Set(get_service.(get_fcas_requirements(gc2))) == Set([BidType.RAISE6SEC, BidType.RAISE5MIN])
@@ -324,7 +331,7 @@ end
         end
 
         # RegionTerm: every Generator/Storage in that region carries the service, not just
-        # the constraint's own UnitTerm device.
+        # the constraint's own UnitTerm device. And its `devices` field names exactly that set.
         nsw1_gc = get_component(GenericConstraint, sys, "F_NSW1_RAISEREG")
         region_term = only(filter(t -> t isa RegionTerm, get_terms(nsw1_gc)))
         region_devices = AustralianElectricityMarkets._region_devices(sys, get_region(region_term))
@@ -332,6 +339,7 @@ end
         for d in region_devices
             @test has_service(d, nsw1_gc)
         end
+        @test Set(get_devices(region_term)) == Set(get_name.(region_devices))
     end
 
     @testset "_region_devices" begin
@@ -342,19 +350,68 @@ end
         @test all(d -> d isa Generator || d isa Storage, nsw1_devices)
     end
 
-    @testset "RegionTerm naming a region with no Generator/Storage is skipped" begin
+    @testset "resolve_term_devices" begin
+        # UnitTerm: nothing for an unknown DUID, the DUID itself for a known one.
+        @test isnothing(resolve_term_devices(sys, UnitTerm("NO_SUCH_DUID", BidType.RAISE6SEC, 1.0)))
+        @test resolve_term_devices(sys, UnitTerm("BW01", BidType.RAISE6SEC, 1.0)) == ["BW01"]
+
+        # InterconnectorTerm: nothing for an unknown interconnector, its name for a known one.
+        @test isnothing(resolve_term_devices(sys, InterconnectorTerm("NO_SUCH_IC", 1.0)))
+        @test resolve_term_devices(sys, InterconnectorTerm("IC1", 1.0)) == ["IC1"]
+
+        # RegionTerm: nothing for an unknown region; a possibly-empty Vector{String} for a known
+        # one - the empty-vs-nothing distinction is the entire contract.
+        @test isnothing(resolve_term_devices(sys, RegionTerm("NO_SUCH_REGION", BidType.ENERGY, 1.0)))
+        nsw1_names = resolve_term_devices(sys, RegionTerm("NSW1", BidType.ENERGY, 1.0))
+        @test nsw1_names isa Vector{String}
+        @test !isempty(nsw1_names)
+        expected_nsw1 = get_name.(AustralianElectricityMarkets._region_devices(sys, "NSW1"))
+        @test Set(nsw1_names) == Set(expected_nsw1)
+    end
+
+    @testset "empty RegionTerm devices: default throws, allow_empty_region_terms=true warns" begin
         # Relocating TAS1's only unit onto NSW1's bus leaves its UnitTerm resolvable, so this
-        # exercises :no_region_devices independently of :unknown_duid.
+        # exercises the empty-region-devices case independently of :unknown_duid/:unknown_region.
         sys_relocated = nem_system(db, RegionalNetworkConfiguration())
         er01 = get_component(Device, sys_relocated, "ER01")
         set_bus!(er01, get_bus(sys_relocated, "NSW1_GEN_BUS"))
         @test isempty(AustralianElectricityMarkets._region_devices(sys_relocated, "TAS1"))
+        @test resolve_term_devices(sys_relocated, RegionTerm("TAS1", BidType.RAISEREG, 1.0)) == String[]
 
-        added_r, skipped_r = add_nem_constraints!(sys_relocated, db, date_range)
-        @test skipped_r["F_TAS1_RAISEREG"] == :no_region_devices
-        @test skipped_r["F_TAS1_LOWERREG"] == :no_region_devices
-        # A TAS1 constraint with no RegionTerm (a contingency market) is unaffected.
-        @test "F_TAS1_RAISE6SEC" in added_r
+        err = try
+            add_nem_constraints!(sys_relocated, db, date_range)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        # Names every affected GENCONID/region/bid_type in one aggregated message.
+        @test occursin("F_TAS1_RAISEREG", err.msg)
+        @test occursin("F_TAS1_LOWERREG", err.msg)
+        @test occursin("TAS1", err.msg)
+        @test occursin("RAISEREG", err.msg)
+        @test occursin("LOWERREG", err.msg)
+        @test occursin("allow_empty_region_terms", err.msg)
+
+        # A fresh System: the default call above already threw after partially mutating
+        # sys_relocated (the aggregated throw happens only after the whole build completes),
+        # so reusing it here would double-add the constraints it did manage to attach.
+        sys_relocated_ok = nem_system(db, RegionalNetworkConfiguration())
+        er01_ok = get_component(Device, sys_relocated_ok, "ER01")
+        set_bus!(er01_ok, get_bus(sys_relocated_ok, "NSW1_GEN_BUS"))
+
+        added_w, skipped_w = nothing, nothing
+        @test_logs (:warn, r"RegionTerm.*empty devices") match_mode = :any begin
+            added_w, skipped_w = add_nem_constraints!(sys_relocated_ok, db, date_range; allow_empty_region_terms = true)
+        end
+        @test "F_TAS1_RAISEREG" in added_w
+        @test "F_TAS1_LOWERREG" in added_w
+        @test :no_region_devices ∉ values(skipped_w)  # the reason no longer exists at all
+        tas1_gc = get_component(GenericConstraint, sys_relocated_ok, "F_TAS1_RAISEREG")
+        tas1_region_term = only(filter(t -> t isa RegionTerm, get_terms(tas1_gc)))
+        @test isempty(get_devices(tas1_region_term))
+        # A TAS1 constraint with no RegionTerm (a contingency market) is unaffected either way.
+        @test "F_TAS1_RAISE6SEC" in added_w
     end
 
     @testset "rhs/invoked grid spans date_range, not just invoked SETTLEMENTDATEs" begin

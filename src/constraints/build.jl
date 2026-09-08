@@ -69,27 +69,7 @@ function _canonical_period(ms::Millisecond)
 end
 
 """
-    _region_devices(sys, region) -> Vector{Device}
-
-A [`RegionTerm`](@ref)'s contributing devices.
-
-# Arguments
-- `sys`: the `System` to search.
-- `region`: an `Area` name.
-
-# Returns
-`Vector{Device}` of every `Generator`/`Storage` in `sys` whose bus's area is named `region`.
-"""
-function _region_devices(sys, region::AbstractString)
-    devices = Device[]
-    for d in Iterators.flatten((get_components(Generator, sys), get_components(Storage, sys)))
-        get_name(get_area(get_bus(d))) == region && push!(devices, d)
-    end
-    return devices
-end
-
-"""
-    add_nem_constraints!(sys, db, date_range; intervention = 0, include_solution = false, resolution = nothing)
+    add_nem_constraints!(sys, db, date_range; intervention = 0, include_solution = false, resolution = nothing, allow_empty_region_terms = false)
 
 Adds one [`GenericConstraint`](@ref) per constraint invoked in `date_range`, attaching each via
 `add_service!` to its contributing devices. A constraint with any unresolvable term is skipped
@@ -109,12 +89,16 @@ treat a carried-forward `"rhs"` value as enforced without checking `"invoked"`.
   `MARGINALVALUE` is not a dispatch input.
 - `resolution`: declared resolution of every attached series. Inferred from `date_range` when
   `nothing`.
+- `allow_empty_region_terms`: policy for a `RegionTerm` whose region has no
+  `Generator`/`Storage`. `false` (default) throws one aggregated `ArgumentError` naming every
+  affected `GENCONID`/region/`bid_type`; `true` warns once and proceeds with an empty
+  `devices`.
 
 # Returns
 `(added, skipped)`. `added::Vector{String}` names the constraints added.
 `skipped::Dict{String, Symbol}` maps a skipped `GENCONID` to one reason: `:no_definition`,
-`:no_terms`, `:unknown_duid`, `:unknown_region`, `:unknown_interconnector`, or
-`:no_region_devices`. Skips are reported as one summary `@warn`.
+`:no_terms`, `:unknown_duid`, `:unknown_region`, or `:unknown_interconnector`. Skips are
+reported as one summary `@warn`.
 
 Throws `ArgumentError` when `DISPATCHCONSTRAINT` is not cached. A cached table with no rows in
 `date_range` warns and returns empties.
@@ -122,6 +106,7 @@ Throws `ArgumentError` when `DISPATCHCONSTRAINT` is not cached. A cached table w
 function add_nem_constraints!(
         sys, db, date_range; intervention::Integer = 0, include_solution::Bool = false,
         resolution::Union{Nothing, Dates.Period} = nothing,
+        allow_empty_region_terms::Bool = false,
     )
     start_date = first(date_range)
 
@@ -156,6 +141,7 @@ function add_nem_constraints!(
 
     added = String[]
     skipped = Dict{String, Symbol}()
+    empty_region_terms = @NamedTuple{gencon_id::String, region::String, bid_type::BidType}[]
 
     for gencon_id in unique(invoked.GENCONID)
         if !haskey(def_by_id, gencon_id)
@@ -174,33 +160,38 @@ function add_nem_constraints!(
         skip_reason = nothing
         for row in eachrow(term_rows)
             if row.TERM_KIND == "UNIT"
-                device = get_component(Device, sys, row.KEY)
-                if isnothing(device)
+                term = UnitTerm(row.KEY, BidType(row.BIDTYPE), row.FACTOR)
+                names = resolve_term_devices(sys, term)
+                if isnothing(names)
                     skip_reason = :unknown_duid
                     break
                 end
-                push!(resolved_terms, UnitTerm(row.KEY, BidType(row.BIDTYPE), row.FACTOR))
-                push!(contributing_devices, device)
+                push!(resolved_terms, term)
+                push!(contributing_devices, get_component(Device, sys, only(names)))
             elseif row.TERM_KIND == "REGION"
-                if isnothing(get_component(Area, sys, row.KEY))
+                bid_type = BidType(row.BIDTYPE)
+                names = resolve_term_devices(sys, RegionTerm(row.KEY, bid_type, row.FACTOR))
+                if isnothing(names)
                     skip_reason = :unknown_region
                     break
                 end
-                region_devices = _region_devices(sys, row.KEY)
-                if isempty(region_devices)
-                    skip_reason = :no_region_devices
-                    break
-                end
-                push!(resolved_terms, RegionTerm(row.KEY, BidType(row.BIDTYPE), row.FACTOR))
-                append!(contributing_devices, region_devices)
+                isempty(names) && push!(
+                    empty_region_terms, (gencon_id = gencon_id, region = row.KEY, bid_type = bid_type),
+                )
+                push!(resolved_terms, RegionTerm(row.KEY, bid_type, row.FACTOR, names))
+                # Not a name-based re-lookup: `Device` is ambiguous by name across concrete
+                # types (e.g. an interconnector's own `AreaInterchange` vs. a same-named
+                # `Line`), so this reuses `_region_devices`'s own typed result directly.
+                append!(contributing_devices, _region_devices(sys, row.KEY))
             else
-                device = get_component(AreaInterchange, sys, row.KEY)
-                if isnothing(device)
+                term = InterconnectorTerm(row.KEY, row.FACTOR)
+                names = resolve_term_devices(sys, term)
+                if isnothing(names)
                     skip_reason = :unknown_interconnector
                     break
                 end
-                push!(resolved_terms, InterconnectorTerm(row.KEY, row.FACTOR))
-                push!(contributing_devices, device)
+                push!(resolved_terms, term)
+                push!(contributing_devices, get_component(AreaInterchange, sys, only(names)))
             end
         end
         if !isnothing(skip_reason)
@@ -273,6 +264,26 @@ function add_nem_constraints!(
             reason_counts[reason] = get(reason_counts, reason, 0) + 1
         end
         @warn "add_nem_constraints!: skipped $(length(skipped)) of $(length(unique(invoked.GENCONID))) invoked constraints" reason_counts
+    end
+
+    if !isempty(empty_region_terms)
+        # string(bid_type), not "$bid_type" - @scoped_enum overrides Base.show (see parser.jl).
+        detail = join(
+            (
+                "GENCONID=$(e.gencon_id) region=$(e.region) bid_type=$(string(e.bid_type))"
+                    for e in empty_region_terms
+            ), "; ",
+        )
+        if allow_empty_region_terms
+            @warn "add_nem_constraints!: $(length(empty_region_terms)) RegionTerm(s) resolved to a region with no Generator/Storage in sys; proceeding with empty devices (allow_empty_region_terms=true): $detail"
+        else
+            throw(
+                ArgumentError(
+                    "add_nem_constraints!: $(length(empty_region_terms)) RegionTerm(s) resolved to a region with no Generator/Storage in sys: $detail. " *
+                        "Pass allow_empty_region_terms=true to add these constraints anyway with an empty RegionTerm.devices.",
+                ),
+            )
+        end
     end
 
     return added, skipped
