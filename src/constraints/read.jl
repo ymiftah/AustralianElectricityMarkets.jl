@@ -95,15 +95,12 @@ end
 """
     read_constraint_terms(db, gencon_versions, date_range)
 
-Reads the three `SPD*` tables (`SPDCONNECTIONPOINTCONSTRAINT`, `SPDREGIONCONSTRAINT`,
-`SPDINTERCONNECTORCONSTRAINT`) for the exact `(GENCONID, EFFECTIVEDATE, VERSIONNO)` triples
-in `gencon_versions`, long-format: one row per `(GENCONID, TERM_KIND, KEY, BIDTYPE, FACTOR)`.
-`TERM_KIND` is `"UNIT"`, `"REGION"`, or `"INTERCONNECTOR"` (`BIDTYPE` is `missing` for
-`"INTERCONNECTOR"` rows — AEMO's interconnector terms aren't service-specific). A `"UNIT"`
-row's `CONNECTIONPOINTID` is resolved to every `DUID` behind it as of `date_range`
-(`DUDETAILSUMMARY.START_DATE <= last(date_range) AND (END_DATE IS NULL OR END_DATE >= first(date_range))`)
-— one SPD row can expand to several `UnitTerm`s when a connection point serves multiple units.
-Throws an `ArgumentError` on an empty `gencon_versions`, as [`read_constraint_definitions`](@ref) does.
+Reads the three `SPD*` tables for the exact versions in `gencon_versions`.
+
+# Returns
+Long-format `DataFrame`, one row per
+`(GENCONID, EFFECTIVEDATE, VERSIONNO, TERM_KIND, KEY, BIDTYPE, FACTOR)`. Throws
+`ArgumentError` on an empty `gencon_versions`.
 """
 function read_constraint_terms(db, gencon_versions, date_range)
     DataFrames.isempty(gencon_versions) && throw(
@@ -135,7 +132,8 @@ function read_constraint_terms(db, gencon_versions, date_range)
             ) = 1
         ),
         cp_matched AS (
-            SELECT cp.GENCONID, cp.CONNECTIONPOINTID, cp.BIDTYPE, TRY_CAST(cp.FACTOR AS DOUBLE) AS FACTOR
+            SELECT cp.GENCONID, cp.EFFECTIVEDATE, cp.VERSIONNO, cp.CONNECTIONPOINTID, cp.BIDTYPE,
+                   TRY_CAST(cp.FACTOR AS DOUBLE) AS FACTOR
             FROM cp
             INNER JOIN wanted_gencon_versions w
                 ON w.GENCONID = cp.GENCONID AND w.GENCONID_EFFECTIVEDATE = cp.EFFECTIVEDATE
@@ -146,12 +144,14 @@ function read_constraint_terms(db, gencon_versions, date_range)
             FROM $dudetailsummary_table
             WHERE START_DATE <= ? AND (END_DATE IS NULL OR END_DATE >= ?)
         )
-        SELECT cp_matched.GENCONID, 'UNIT' AS TERM_KIND, duids.DUID AS KEY, cp_matched.BIDTYPE, cp_matched.FACTOR
+        SELECT cp_matched.GENCONID, cp_matched.EFFECTIVEDATE, cp_matched.VERSIONNO,
+               'UNIT' AS TERM_KIND, duids.DUID AS KEY, cp_matched.BIDTYPE, cp_matched.FACTOR
         FROM cp_matched INNER JOIN duids ON duids.CONNECTIONPOINTID = cp_matched.CONNECTIONPOINTID
 
         UNION ALL
 
-        SELECT r.GENCONID, 'REGION' AS TERM_KIND, r.REGIONID AS KEY, r.BIDTYPE, TRY_CAST(r.FACTOR AS DOUBLE) AS FACTOR
+        SELECT r.GENCONID, r.EFFECTIVEDATE, r.VERSIONNO, 'REGION' AS TERM_KIND, r.REGIONID AS KEY,
+               r.BIDTYPE, TRY_CAST(r.FACTOR AS DOUBLE) AS FACTOR
         FROM (
             SELECT * FROM $region_table
             WHERE EFFECTIVEDATE <= $eff_bound
@@ -164,8 +164,8 @@ function read_constraint_terms(db, gencon_versions, date_range)
 
         UNION ALL
 
-        SELECT i.GENCONID, 'INTERCONNECTOR' AS TERM_KIND, i.INTERCONNECTORID AS KEY,
-               CAST(NULL AS VARCHAR) AS BIDTYPE, TRY_CAST(i.FACTOR AS DOUBLE) AS FACTOR
+        SELECT i.GENCONID, i.EFFECTIVEDATE, i.VERSIONNO, 'INTERCONNECTOR' AS TERM_KIND,
+               i.INTERCONNECTORID AS KEY, CAST(NULL AS VARCHAR) AS BIDTYPE, TRY_CAST(i.FACTOR AS DOUBLE) AS FACTOR
         FROM (
             SELECT * FROM $ic_table
             WHERE EFFECTIVEDATE <= $eff_bound
@@ -268,14 +268,11 @@ end
     read_constraint_fcas_requirements(db, date_range; intervention = 0)
 
 Reads the dispatch FCAS requirement table's `GENCONID -> (REGIONID, BIDTYPE)` mapping over
-`date_range`, long-format: one row per distinct pair observed. Spans AEMO's 2025-05/2025-06
-`DISPATCH_FCAS_REQ` → `DISPATCH_FCAS_REQ_CONSTRAINT` split via
-[`_fcas_req_union_sql`](@ref). Warns (does not silently merge) if a `GENCONID`'s pair-set
-changes mid-range — AEMO re-scoping a constraint's market attribution partway through is
-rare but not representable by a single static set.
+`date_range`. Keyed by bare `GENCONID`.
 
-Throws an `ArgumentError` when neither `DISPATCH_FCAS_REQ` nor `DISPATCH_FCAS_REQ_CONSTRAINT`
-is cached.
+# Returns
+Long-format `DataFrame`. Throws `ArgumentError` when neither `DISPATCH_FCAS_REQ` nor
+`DISPATCH_FCAS_REQ_CONSTRAINT` is cached.
 """
 function read_constraint_fcas_requirements(db, date_range; intervention::Integer = 0)
     start_date = first(date_range)

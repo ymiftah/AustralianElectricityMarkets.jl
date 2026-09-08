@@ -3,21 +3,15 @@ A NEM generic constraint, `LHS <sense> RHS` — the mechanism AEMO uses for both
 and FCAS requirements. Attached to its contributing devices as a `PSY.Service`.
 
 # Fields
-- `name`: the constraint's identifier.
+- `name`: identifier — `GENCONID@EFFECTIVEDATE#VERSIONNO` for an AEMO-sourced constraint.
 - `available`: whether it is enforced.
 - `sense`: `LE`, `GE` or `EQ`, from `GENCONDATA.CONSTRAINTTYPE`.
-- `rhs`: static default from `GENCONDATA.CONSTRAINTVALUE`. The `"rhs"` `Deterministic` series
-  attached by [`add_nem_constraints!`](@ref) is the per-interval value NEMDE enforced, and is
-  what should be used wherever a real interval's RHS matters.
-- `constraint_weight`: `GENCONDATA.GENERICCONSTRAINTWEIGHT` verbatim — a weight, not a dollar
-  penalty. A `PowerSimulations.jl` extension multiplies it by an AEMC-set base CVP rate.
+- `rhs`: static default from `GENCONDATA.CONSTRAINTVALUE`.
+- `constraint_weight`: `GENCONDATA.GENERICCONSTRAINTWEIGHT` verbatim.
 - `description`: human-readable, defaults to `""`.
 - `terms`: the LHS algebra, from the `SPD*` tables.
-- `fcas_requirements`: the `(region, service)` prices this constraint governs, from
-  `DISPATCH_FCAS_REQ`. Empty for a pure network constraint.
-- `ext`: AEMO provenance from `GENCONDATA` — `limit_type`, `source`, `effective_date`,
-  `version_no`, read through [`get_limit_type`](@ref)/[`get_source`](@ref)/
-  [`get_effective_date`](@ref)/[`get_version_no`](@ref).
+- `fcas_requirements`: the `(region, service)` prices this constraint governs.
+- `ext`: AEMO provenance — `gencon_id`, `limit_type`, `source`, `effective_date`, `version_no`.
 - `internal`: `InfrastructureSystems` bookkeeping.
 """
 mutable struct GenericConstraint <: PSY.Service
@@ -96,3 +90,11 @@ get_effective_date(value::GenericConstraint) = get(value.ext, "effective_date", 
 `GENCONDATA.VERSIONNO`, or `nothing` if absent.
 """
 get_version_no(value::GenericConstraint) = get(value.ext, "version_no", nothing)
+
+"""
+    get_gencon_id(value::GenericConstraint) -> Union{String, Nothing}
+
+AEMO's bare `GENCONID`, unversioned — unlike [`get_name`](@ref), which may include the
+`EFFECTIVEDATE#VERSIONNO` suffix. Returns `nothing` if absent.
+"""
+get_gencon_id(value::GenericConstraint) = get(value.ext, "gencon_id", nothing)

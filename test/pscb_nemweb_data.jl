@@ -39,13 +39,18 @@ const PSCB_REGULATION_TYPES = ["RAISEREG", "LOWERREG"]
 # simply not invoked. Drives add_nem_constraints!'s rhs padding and "invoked" mask.
 const PSCB_PARTIAL_FROM = 10
 
+# `N_VERSIONED_LIMIT` is invoked at every interval, but AEMO switches which GENCONDATA/SPD*
+# version NEMDE used partway through: VERSIONNO 1 for i < this, VERSIONNO 2 from here on -
+# the real mid-day version-switch pattern.
+const PSCB_VERSION_SWITCH_FROM = 15
+
 """
     create_pscb_nemweb_data(hive_root)
 
 Writes the FCAS and constraint tables keyed to [`augmented_pscb_system`](@ref)'s component
 names into a Hive-partitioned parquet cache rooted at `hive_root`.
 
-Five constraints are defined, each reaching a distinct code path:
+Six constraints are defined, each reaching a distinct code path:
 
 | `GENCONID` | sense | terms | FCAS requirement |
 | --- | --- | --- | --- |
@@ -54,6 +59,7 @@ Five constraints are defined, each reaching a distinct code path:
 | `N_IC1_LIMIT` | `<=` | interconnector `IC1`, unit (`CP_B`) | no |
 | `N_HYDRO_LIMIT` | `<=` | unit (`CP_HYD`) | no |
 | `N_PARTIAL` | `<=` | unit (`CP_SOLAR`) | no, and invoked for only part of the grid |
+| `N_VERSIONED_LIMIT` | `<=` then `>=` | unit (`CP_BAT`) | no, and switches `GENCONDATA`/`SPD*` version (sense and `FACTOR` both change) partway through the grid, at [`PSCB_VERSION_SWITCH_FROM`](@ref) |
 
 Intervals are 5-minutely over `2025-01-01T00:00` -> `02:00`, because
 `add_nem_constraints!` builds its series at a hardcoded `Minute(5)` resolution.
@@ -97,40 +103,54 @@ function create_pscb_nemweb_data(hive_root::String)
     save_hive(dudetail_rows, :DUDETAILSUMMARY)
 
     # GENCONDATA - definitions, joined by exact (GENCONID, EFFECTIVEDATE, VERSIONNO).
-    gencon_ids = ["F_R1_RAISE6SEC", "F_R2_LOWERREG", "N_IC1_LIMIT", "N_HYDRO_LIMIT", "N_PARTIAL"]
-    senses = [">=", ">=", "<=", "<=", "<="]
-    values = [30.0, 25.0, 100.0, 60.0, 40.0]
+    # N_VERSIONED_LIMIT gets two rows, VERSIONNO 1 and 2, differing in both CONSTRAINTTYPE
+    # (sense) and CONSTRAINTVALUE - see PSCB_VERSION_SWITCH_FROM.
+    gencon_ids = [
+        "F_R1_RAISE6SEC", "F_R2_LOWERREG", "N_IC1_LIMIT", "N_HYDRO_LIMIT", "N_PARTIAL",
+        "N_VERSIONED_LIMIT", "N_VERSIONED_LIMIT",
+    ]
+    gencon_versionno = [1, 1, 1, 1, 1, 1, 2]
+    senses = [">=", ">=", "<=", "<=", "<=", "<=", ">="]
+    values = [30.0, 25.0, 100.0, 60.0, 40.0, 50.0, 55.0]
+    descriptions = [
+        "$(gc) (PSCB fixture)" for gc in gencon_ids[1:5]
+    ]
+    push!(descriptions, "N_VERSIONED_LIMIT v1 (PSCB fixture)", "N_VERSIONED_LIMIT v2 (PSCB fixture)")
     n_gc = length(gencon_ids)
     save_hive(
         DataFrame(
             GENCONID = gencon_ids,
             EFFECTIVEDATE = fill(test_date, n_gc),
-            VERSIONNO = fill(1, n_gc),
-            DESCRIPTION = ["$(gc) (PSCB fixture)" for gc in gencon_ids],
+            VERSIONNO = gencon_versionno,
+            DESCRIPTION = descriptions,
             CONSTRAINTTYPE = senses,
             LASTCHANGED = fill(base_datetime, n_gc),
             GENERICCONSTRAINTWEIGHT = fill(1.0, n_gc),
             CONSTRAINTVALUE = values,
             DYNAMICRHS = fill(0, n_gc),
-            LIMITTYPE = ["FCAS", "FCAS", "TRANSIENT STABILITY", "THERMAL", "THERMAL"],
+            LIMITTYPE = ["FCAS", "FCAS", "TRANSIENT STABILITY", "THERMAL", "THERMAL", "THERMAL", "THERMAL"],
             SOURCE = fill("pscb", n_gc),
             archive_month = fill(am, n_gc),
         ), :GENCONDATA
     )
 
-    # SPDCONNECTIONPOINTCONSTRAINT -> UNIT terms.
+    # SPDCONNECTIONPOINTCONSTRAINT -> UNIT terms. N_VERSIONED_LIMIT's two rows carry the same
+    # CONNECTIONPOINTID but a different VERSIONNO and FACTOR - the term coefficient that must
+    # not be merged across versions (see PSCB_VERSION_SWITCH_FROM).
     cp_terms = [
-        ("CP_A", "F_R1_RAISE6SEC", "RAISE6SEC", 1.0),
-        ("CP_C", "F_R2_LOWERREG", "LOWERREG", 1.0),
-        ("CP_B", "N_IC1_LIMIT", "ENERGY", 1.0),
-        ("CP_HYD", "N_HYDRO_LIMIT", "ENERGY", 1.0),
-        ("CP_SOLAR", "N_PARTIAL", "ENERGY", 1.0),
+        ("CP_A", "F_R1_RAISE6SEC", "RAISE6SEC", 1.0, 1),
+        ("CP_C", "F_R2_LOWERREG", "LOWERREG", 1.0, 1),
+        ("CP_B", "N_IC1_LIMIT", "ENERGY", 1.0, 1),
+        ("CP_HYD", "N_HYDRO_LIMIT", "ENERGY", 1.0, 1),
+        ("CP_SOLAR", "N_PARTIAL", "ENERGY", 1.0, 1),
+        ("CP_BAT", "N_VERSIONED_LIMIT", "ENERGY", 1.0, 1),
+        ("CP_BAT", "N_VERSIONED_LIMIT", "ENERGY", 2.0, 2),
     ]
     save_hive(
         DataFrame(
             CONNECTIONPOINTID = [t[1] for t in cp_terms],
             EFFECTIVEDATE = fill(test_date, length(cp_terms)),
-            VERSIONNO = fill(1, length(cp_terms)),
+            VERSIONNO = [t[5] for t in cp_terms],
             GENCONID = [t[2] for t in cp_terms],
             PERIODID = fill(1, length(cp_terms)),
             FACTOR = [t[4] for t in cp_terms],
@@ -200,6 +220,21 @@ function create_pscb_nemweb_data(hive_root::String)
                 )
             )
         end
+
+        # N_VERSIONED_LIMIT is invoked at every interval, but under VERSIONNO 1 before the
+        # switch and VERSIONNO 2 from it on - exactly one version's row per interval, never
+        # both, so add_nem_constraints! must produce two GenericConstraints whose "invoked"
+        # series are complementary.
+        versioned_verno = i >= PSCB_VERSION_SWITCH_FROM ? 2 : 1
+        versioned_rhs = (versioned_verno == 1 ? 50.0 : 55.0) + 0.1 * i
+        append!(
+            df_constraint, DataFrame(
+                SETTLEMENTDATE = [t], RUNNO = [1], INTERVENTION = [0],
+                CONSTRAINTID = ["N_VERSIONED_LIMIT"], RHS = [versioned_rhs], LHS = [versioned_rhs - 1.0],
+                MARGINALVALUE = [0.0], GENCONID_EFFECTIVEDATE = [test_date],
+                GENCONID_VERSIONNO = [versioned_verno], LASTCHANGED = [t], archive_month = [am],
+            )
+        )
     end
     save_hive(df_constraint, :DISPATCHCONSTRAINT)
 
