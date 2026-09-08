@@ -38,17 +38,38 @@ function InterconnectorTerm(; interconnector::AbstractString, factor::Float64)
 end
 get_interconnector(t::InterconnectorTerm) = t.interconnector
 
-"A `FACTOR * <region's BidType aggregate>` term, from `SPDREGIONCONSTRAINT`."
+"""
+A `FACTOR * <region's BidType aggregate>` term, from `SPDREGIONCONSTRAINT`. `devices` is the
+region's contributing `Generator`/`Storage` names, resolved once by
+[`resolve_term_devices`](@ref) at ingestion time (see [`add_nem_constraints!`](@ref)) — `region`
+and `bid_type` are kept alongside it so downstream code can still see this is a regional
+aggregate, not merely an unlabelled device list.
+"""
 struct RegionTerm <: ConstraintTerm
     region::String
     bid_type::BidType
     factor::Float64
+    devices::Vector{String}
 end
-function RegionTerm(; region::AbstractString, bid_type::BidType, factor::Float64)
-    return RegionTerm(String(region), bid_type, factor)
+function RegionTerm(
+        region::AbstractString, bid_type::BidType, factor::Float64, devices::AbstractVector = String[],
+    )
+    return RegionTerm(String(region), bid_type, factor, String[d for d in devices])
+end
+# AbstractVector, not AbstractVector{<:AbstractString}: JSON deserialization passes a raw
+# Vector{Any}, which the narrower bound would reject.
+function RegionTerm(; region::AbstractString, bid_type::BidType, factor::Float64, devices::AbstractVector = String[])
+    return RegionTerm(String(region), bid_type, factor, String[d for d in devices])
 end
 get_region(t::RegionTerm) = t.region
 get_bid_type(t::RegionTerm) = t.bid_type
+
+"""
+    get_devices(t::RegionTerm) -> Vector{String}
+
+The region's contributing `Generator`/`Storage` names. Possibly empty.
+"""
+get_devices(t::RegionTerm) = t.devices
 
 """
 Tags a [`GenericConstraint`](@ref) as governing a `(region, service)` FCAS price — its shadow

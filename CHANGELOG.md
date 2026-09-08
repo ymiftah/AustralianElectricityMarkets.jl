@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`resolve_term_devices`**: New canonical resolver from a `ConstraintTerm` to the names of the
+  devices it contributes in a `System` — a `UnitTerm`/`InterconnectorTerm`'s single named device
+  if it exists, or every `Generator`/`Storage` in a `RegionTerm`'s region if its `Area` exists
+  (possibly empty). Called exactly once per term inside `add_nem_constraints!`; nothing
+  downstream re-resolves. `_region_devices` moved from `src/constraints/build.jl` to the new
+  `src/constraints/resolve.jl` alongside it.
+
 - **`IntervalInputs`/`read_interval_inputs`** (new `AustralianElectricityMarketsSimulations` package): Reads every NEMWEB input needed to reconstruct one historical dispatch interval in isolation — `DISPATCHLOAD.INITIALMW`/`UIGF`, `DISPATCHREGIONSUM.TOTALDEMAND`, rebid-resolved energy and FCAS bids, and `DISPATCHINTERCONNECTORRES.MWFLOW` — the foundation for the dispatch-replication harness that validates how closely `PowerSimulations.jl` reproduces NEMDE.
 - **`DISPATCH_FCAS_REQ` data source**: Added ingestion support for AEMO's `DISPATCH_FCAS_REQ` table, and widened `DISPATCHLOAD`/`DISPATCHPRICE`/`DISPATCHREGIONSUM` to carry `RUNNO`/`INTERVENTION` and the remaining FCAS-related columns AEMO publishes on them.
 - **`read_fcas_prices`/`read_fcas_dispatch`**: New readers for per-region FCAS clearing prices (`DISPATCHPRICE`) and per-unit FCAS dispatch outcomes (`DISPATCHLOAD`), complementing `read_fcas_requirements`.
@@ -23,11 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **`GENCONDATA.DYNAMICRHS` is no longer read or interpreted**: `read_constraint_definitions` no longer selects it and `add_nem_constraints!` no longer puts it on `GenericConstraint.ext`. AEMO documents the column as "Not used", and this package replays `DISPATCHCONSTRAINT.RHS` rather than deriving RHS itself, so the column was never meaningful here. The raw NEMWEB ingestion column list is untouched — the column is still cached faithfully — only the interpretation is gone. See `docs/adr/0003-no-dynamic-rhs.md`, which also records the decision not to ingest `GENERICCONSTRAINTRHS`.
+- **`GENCONDATA.DYNAMICRHS` is no longer read or interpreted**: `read_constraint_definitions` no longer selects it, and `add_nem_constraints!` no longer puts it on `GenericConstraint.ext`. AEMO documents the column as "Not used"; the raw NEMWEB ingestion column list is untouched.
 
 ### Changed
 
 - **`AustralianElectricityMarketsSimulations`**: Re-added `PowerSimulations`/`JuMP`/`HiGHS`/`HydroPowerSimulations` dependencies, pinned to `PowerSimulations = "0.38"` (PSI's service-model API, not the 0.34 line the abandoned replication work targeted), laying the groundwork for a PSI service-model integration of NEM generic constraints.
+- **BREAKING: `RegionTerm` gains a `devices::Vector{String}` field** (region and bid_type kept alongside it), resolved once via `resolve_term_devices` at ingestion time and read through the new `get_devices` accessor. `RegionTerm`'s positional and keyword constructors both default `devices` to `String[]`, so hand-authored terms still construct.
+- **BREAKING: `add_nem_constraints!` throws by default when a `RegionTerm`'s region resolves but has no `Generator`/`Storage` in `sys`**, instead of silently skipping the constraint (`:no_region_devices` is removed from the `skipped` reasons). Every offending case across the whole build is collected and reported together, as one aggregated `ArgumentError` naming every affected `GENCONID`, region and `bid_type`.
+  The new `allow_empty_region_terms = true` keyword restores the old behaviour of proceeding — but now with an aggregated one-time `@warn` rather than a silent, per-constraint skip, and the constraint is still added with an empty `RegionTerm.devices`.
 - **BREAKING: `read_constraint_fcas_requirements`/`read_fcas_requirements`/`add_nem_constraints!` (and `AustralianElectricityMarketsSimulations`'s interconnector-flow read behind `read_interval_inputs`) now throw `ArgumentError` when their table isn't cached at all**, instead of silently returning an empty `DataFrame`/`Dict`/`(String[], Dict())`. An empty result was indistinguishable from a genuine "nothing governs this" answer — the exact defect class behind `read_fcas_requirements` silently dropping every FCAS requirement after AEMO's 2025-05 table changeover. Each error names the missing table (`DISPATCH_FCAS_REQ`/`DISPATCH_FCAS_REQ_CONSTRAINT`, `DISPATCHCONSTRAINT`, or `DISPATCHINTERCONNECTORRES`) and the `populate` call to fix it.
 - **`add_nem_constraints!`/`read_uigf` still warn (not throw) for a genuinely empty answer from a cached table**: `add_nem_constraints!` warns and returns `(String[], Dict())` when `DISPATCHCONSTRAINT` is cached but has no rows in the requested range — a real result, not missing data. `read_uigf` warns and returns an empty frame when `DISPATCHLOAD` is cached but every partition predates the `UIGF` column — ordinary schema evolution `read_hive`'s `union_by_name` exists to tolerate, not a missing download. Both still throw when their table isn't cached at all.
 - **`_table_is_cached`**: No longer catches every exception into `false`. A glob matching zero files is still a legitimate `false`, but a genuine failure to check (bad S3/GS credentials, a network drop, corrupt parquet) now raises DuckDB's own error instead of being silently reported as "not cached".
@@ -46,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   AEMO constraint-authoring values (`limit_type`, `source`, `effective_date`, `version_no`) stay in
   `ext`, but gain read-only accessors — `get_limit_type`, `get_source`, `get_effective_date`,
   `get_version_no` — that return `nothing` when the key is absent, as it is for a hand-authored
-  constraint. See `docs/adr/0005-aemo-provenance-stays-in-ext.md`.
+  constraint.
 - **`add_nem_constraints!`'s `"rhs"`/`"invoked"` grid is now derived from `date_range` directly**, not `unique(invoked.SETTLEMENTDATE)` (whichever intervals *any* constraint happened to be invoked at). The old derivation silently shrank the grid the moment real data had an interval NEMDE genuinely dispatched through with nothing bound, producing a `GenericConstraint` series shorter than every other time series on the same `System` and tripping `PowerSystems.jl`'s cross-component horizon check the moment `ConstrainedNetworkConfiguration` was combined with a wide, real multi-interval `date_range`. The grid now drops `date_range`'s own last point to match `read_fcas_bids`/`set_demand!`'s half-open (`start <= x < stop`) convention.
 
 ### Fixed

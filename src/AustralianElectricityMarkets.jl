@@ -70,6 +70,7 @@ include("fcas/bids.jl")
 include("constraints/terms.jl")
 include("constraints/generic_constraint.jl")
 include("constraints/read.jl")
+include("constraints/resolve.jl")
 include("constraints/build.jl")
 
 export FCASTrapezium, FCASBid,
@@ -78,10 +79,11 @@ export FCASTrapezium, FCASBid,
     get_offer_curve, get_trapezium
 export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm, FCASRequirement,
     GenericConstraint,
-    get_duid, get_bid_type, get_factor, get_interconnector, get_region, get_service,
+    get_duid, get_bid_type, get_factor, get_interconnector, get_region, get_service, get_devices,
     get_sense, set_sense!, get_rhs, set_rhs!, get_constraint_weight, set_constraint_weight!,
     get_limit_type, get_source, get_effective_date, get_version_no,
-    get_terms, set_terms!, get_fcas_requirements, set_fcas_requirements!
+    get_terms, set_terms!, get_fcas_requirements, set_fcas_requirements!,
+    resolve_term_devices
 
 # Parsing data into models
 include("network_models/region_model.jl")
