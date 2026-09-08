@@ -49,7 +49,7 @@ end
 
 `gencon_versions` has distinct `(GENCONID, GENCONID_EFFECTIVEDATE, GENCONID_VERSIONNO)`
 rows (see [`read_invoked_constraints`](@ref)). Joins each to its exact `GENCONDATA` version:
-`CONSTRAINTTYPE`, `GENERICCONSTRAINTWEIGHT`, `CONSTRAINTVALUE`, `DYNAMICRHS`, plus
+`CONSTRAINTTYPE`, `GENERICCONSTRAINTWEIGHT`, `CONSTRAINTVALUE`, plus
 `DESCRIPTION`/`LIMITTYPE`/`SOURCE`. A `GENCONID` absent from the result has no `GENCONDATA`
 row for that exact version — usually because the defining archive month isn't cached (see
 [`read_fcas_requirements`](@ref)) — callers must treat that as "no definition available".
@@ -81,7 +81,6 @@ function read_constraint_definitions(db, gencon_versions)
             g.GENCONID, g.EFFECTIVEDATE, g.VERSIONNO, g.CONSTRAINTTYPE,
             TRY_CAST(g.GENERICCONSTRAINTWEIGHT AS DOUBLE) AS GENERICCONSTRAINTWEIGHT,
             TRY_CAST(g.CONSTRAINTVALUE AS DOUBLE) AS CONSTRAINTVALUE,
-            TRY_CAST(g.DYNAMICRHS AS INTEGER) AS DYNAMICRHS,
             g.DESCRIPTION, g.LIMITTYPE, g.SOURCE
         FROM wanted_gencon_versions w
         INNER JOIN gencon g
