@@ -1,19 +1,23 @@
 """
-A NEM generic constraint: `LHS <sense> RHS`, the mechanism AEMO uses for both network limits
-and FCAS requirements. `terms` is the LHS algebra (from `SPD*`); `fcas_requirements` is
-market attribution (from `DISPATCH_FCAS_REQ`) — a constraint typically governs several
-`(region, service)` prices at once, and an empty list means a pure network constraint.
-`rhs` is a static default
-(`GENCONDATA.CONSTRAINTVALUE`); a `"rhs"` `Deterministic` time series attached separately
-(see [`add_nem_constraints!`](@ref)) replays `DISPATCHCONSTRAINT.RHS` per interval and is
-the value that should be used wherever a real interval's enforced RHS matters, since RHS can
-be dynamic (`GENCONDATA.DYNAMICRHS`) or an armed/disarmed variant switch.
+A NEM generic constraint, `LHS <sense> RHS` — the mechanism AEMO uses for both network limits
+and FCAS requirements. Attached to its contributing devices as a `PSY.Service`.
 
-`constraint_weight` is `GENCONDATA.GENERICCONSTRAINTWEIGHT` verbatim — a *weight*, not itself
-the violation penalty in dollars; a PowerSimulations.jl extension multiplies it by an
-AEMC-set base CVP rate.
+# Fields
+- `name`: the constraint's identifier.
+- `available`: whether it is enforced.
+- `sense`: `LE`, `GE` or `EQ`, from `GENCONDATA.CONSTRAINTTYPE`.
+- `rhs`: static default from `GENCONDATA.CONSTRAINTVALUE`. The `"rhs"` `Deterministic` series
+  attached by [`add_nem_constraints!`](@ref) is the per-interval value NEMDE enforced, and is
+  what should be used wherever a real interval's RHS matters.
+- `constraint_weight`: `GENCONDATA.GENERICCONSTRAINTWEIGHT` verbatim — a weight, not a dollar
+  penalty. A `PowerSimulations.jl` extension multiplies it by an AEMC-set base CVP rate.
+- `terms`: the LHS algebra, from the `SPD*` tables.
+- `fcas_requirements`: the `(region, service)` prices this constraint governs, from
+  `DISPATCH_FCAS_REQ`. Empty for a pure network constraint.
+- `ext`: AEMO provenance from `GENCONDATA`.
+- `internal`: `InfrastructureSystems` bookkeeping.
 """
-mutable struct GenericConstraint <: PSY.Component
+mutable struct GenericConstraint <: PSY.Service
     name::String
     available::Bool
     sense::ConstraintSense
