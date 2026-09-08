@@ -254,6 +254,7 @@ end
     partial_rhs = first(values(get_data(get_time_series(Deterministic, partial_gc, "rhs"))))
     partial_invoked = first(values(get_data(get_time_series(Deterministic, partial_gc, "invoked"))))
     @test length(partial_rhs) == 12
+    @test length(partial_rhs) == length(date_range) - 1  # grid spans date_range, not invocations
     @test all(==(150.0), partial_rhs)  # constant RHS - forward-fill is a no-op here
     @test partial_invoked == [isodd(i) ? 0.0 : 1.0 for i in 0:11]
 
@@ -280,6 +281,81 @@ end
 
     added2, _ = add_nem_constraints!(nem_system(db, RegionalNetworkConfiguration()), db, date_range; include_solution = true)
     @test "F_VIC1_RAISE6SEC" in added2
+
+    @testset "GenericConstraint attaches as a Service, not merely a Component" begin
+        # UnitTerm: every term's own device carries the service.
+        vic1_gc = get_component(GenericConstraint, sys, "F_VIC1_RAISE6SEC")
+        unit_terms = filter(t -> t isa UnitTerm, get_terms(vic1_gc))
+        @test !isempty(unit_terms)
+        for t in unit_terms
+            device = get_component(Device, sys, get_duid(t))
+            @test has_service(device, vic1_gc)
+        end
+
+        # RegionTerm: every Generator/Storage in that region carries the service, not just
+        # the constraint's own UnitTerm device.
+        nsw1_gc = get_component(GenericConstraint, sys, "F_NSW1_RAISEREG")
+        region_term = only(filter(t -> t isa RegionTerm, get_terms(nsw1_gc)))
+        region_devices = AustralianElectricityMarkets._region_devices(sys, get_region(region_term))
+        @test !isempty(region_devices)
+        for d in region_devices
+            @test has_service(d, nsw1_gc)
+        end
+    end
+
+    @testset "_region_devices" begin
+        nsw1_devices = AustralianElectricityMarkets._region_devices(sys, "NSW1")
+        all_devices = collect(Iterators.flatten((get_components(Generator, sys), get_components(Storage, sys))))
+        expected = filter(d -> get_name(get_area(get_bus(d))) == "NSW1", all_devices)
+        @test Set(get_name.(nsw1_devices)) == Set(get_name.(expected))
+        @test all(d -> d isa Generator || d isa Storage, nsw1_devices)
+    end
+
+    @testset "RegionTerm naming a region with no Generator/Storage is skipped" begin
+        # Relocating TAS1's only unit onto NSW1's bus leaves its UnitTerm resolvable, so this
+        # exercises :no_region_devices independently of :unknown_duid.
+        sys_relocated = nem_system(db, RegionalNetworkConfiguration())
+        er01 = get_component(Device, sys_relocated, "ER01")
+        set_bus!(er01, get_bus(sys_relocated, "NSW1_GEN_BUS"))
+        @test isempty(AustralianElectricityMarkets._region_devices(sys_relocated, "TAS1"))
+
+        added_r, skipped_r = add_nem_constraints!(sys_relocated, db, date_range)
+        @test skipped_r["F_TAS1_RAISEREG"] == :no_region_devices
+        @test skipped_r["F_TAS1_LOWERREG"] == :no_region_devices
+        # A TAS1 constraint with no RegionTerm (a contingency market) is unaffected.
+        @test "F_TAS1_RAISE6SEC" in added_r
+    end
+
+    @testset "rhs/invoked grid spans date_range, not just invoked SETTLEMENTDATEs" begin
+        # Delete every DISPATCHCONSTRAINT row at one interval so no GENCONID is invoked
+        # there, creating a genuine gap in unique(invoked.SETTLEMENTDATE).
+        gap_hive = mktempdir()
+        create_mock_data(gap_hive)
+        gap_time = start_date + Minute(5 * 6)
+        constraint_dir = joinpath(gap_hive, "DISPATCHCONSTRAINT")
+        gap_conn = DuckDB.connect(DuckDB.DB())
+        DuckDB.execute(gap_conn, "SET preserve_identifier_case=true")
+        new_dir = constraint_dir * "_new"
+        DuckDB.execute(
+            gap_conn,
+            "COPY (SELECT * FROM read_parquet('$(constraint_dir)/**/*.parquet', hive_partitioning=true) " *
+                "WHERE SETTLEMENTDATE != TIMESTAMP '$(gap_time)') TO '$(new_dir)' (FORMAT 'PARQUET', PARTITION_BY (archive_month))",
+        )
+        rm(constraint_dir; recursive = true)
+        mv(new_dir, constraint_dir)
+
+        gap_db = aem_connect(HiveConfiguration(hive_location = gap_hive, filesystem = "file"))
+        invoked_gap = read_invoked_constraints(gap_db, date_range)
+        @test gap_time ∉ unique(invoked_gap.SETTLEMENTDATE)
+        @test length(unique(invoked_gap.SETTLEMENTDATE)) == length(date_range) - 2
+
+        gap_sys = nem_system(gap_db, RegionalNetworkConfiguration())
+        add_nem_constraints!(gap_sys, gap_db, date_range)
+        gap_gc = get_component(GenericConstraint, gap_sys, "N_BAYSW_THERMAL")
+        rhs_len = length(first(values(get_data(get_time_series(Deterministic, gap_gc, "rhs")))))
+        @test rhs_len == length(date_range) - 1
+        @test rhs_len != length(unique(invoked_gap.SETTLEMENTDATE))
+    end
 
     @testset "resolution inference" begin
         # Multi-interval grid: the fixture is 5-minutely, so inference must read Minute(5) off

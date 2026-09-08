@@ -1,12 +1,18 @@
 """
     _pad_to_grid(values_by_time, grid, initial_fill) -> (series, invoked_mask)
 
-Reindexes a `SETTLEMENTDATE -> Float64` mapping onto `grid` (sorted, one entry per dispatch
-interval NEMDE actually solved somewhere in the requested range — see [`add_nem_constraints!`](@ref)).
-A gap — an interval this `GENCONID` wasn't invoked at, e.g. its constraint set applied only
-partway through the range — carries the last known value forward rather than an invented
-sentinel; `invoked_mask` (`1.0`/`0.0`) is the authoritative per-interval signal for whether the
-value at that position was actually enforced, since the carried-forward value itself is not.
+Reindexes a `SETTLEMENTDATE -> Float64` mapping onto `grid`, carrying the last known value
+forward across gaps.
+
+# Arguments
+- `values_by_time`: known values, keyed by timestamp.
+- `grid`: sorted timestamps to reindex onto.
+- `initial_fill`: value used before the first known one.
+
+# Returns
+`(series, invoked_mask)`, both `Vector{Float64}` of `length(grid)`. `invoked_mask` is `1.0`
+where `grid`'s timestamp was present in `values_by_time` and `0.0` where the value was carried
+forward.
 """
 function _pad_to_grid(values_by_time::Dict, grid::Vector{DateTime}, initial_fill::Float64)
     series = Vector{Float64}(undef, length(grid))
@@ -27,12 +33,15 @@ end
 """
     _infer_resolution(grid) -> Dates.Period
 
-Infers the sampling resolution of a sorted, deduplicated grid of timestamps as the spacing
-between consecutive points, canonicalized to `Minute`/`Second` where it divides evenly
-(see [`_canonical_period`](@ref)). Fewer than 2 points carries no spacing information and
-falls back to `Minute(5)`. Unequal spacings mean the grid has gaps a single fixed resolution
-cannot represent exactly; this warns naming the distinct spacings found and proceeds using
-the smallest one, rather than throwing.
+The spacing between consecutive points of a sorted grid, canonicalized by
+[`_canonical_period`](@ref).
+
+# Arguments
+- `grid`: sorted, deduplicated timestamps.
+
+# Returns
+A `Dates.Period`. Falls back to `Minute(5)` for fewer than 2 points; warns and uses the
+smallest spacing if spacings are unequal.
 """
 function _infer_resolution(grid::Vector{DateTime})
     length(grid) < 2 && return Minute(5)
@@ -60,40 +69,55 @@ function _canonical_period(ms::Millisecond)
 end
 
 """
+    _region_devices(sys, region) -> Vector{Device}
+
+A [`RegionTerm`](@ref)'s contributing devices.
+
+# Arguments
+- `sys`: the `System` to search.
+- `region`: an `Area` name.
+
+# Returns
+`Vector{Device}` of every `Generator`/`Storage` in `sys` whose bus's area is named `region`.
+"""
+function _region_devices(sys, region::AbstractString)
+    devices = Device[]
+    for d in Iterators.flatten((get_components(Generator, sys), get_components(Storage, sys)))
+        get_name(get_area(get_bus(d))) == region && push!(devices, d)
+    end
+    return devices
+end
+
+"""
     add_nem_constraints!(sys, db, date_range; intervention = 0, include_solution = false, resolution = nothing)
 
-Adds one [`GenericConstraint`](@ref) per constraint invoked in `date_range`
-(`DISPATCHCONSTRAINT` membership) whose LHS terms all resolve against components already in
-`sys` — a constraint with any unresolvable term is skipped entirely, never added with a
-partial LHS. Each added constraint gets an `"rhs"` `Deterministic` time series spanning every
-dispatch interval any constraint was invoked at in `date_range`, replaying
-`DISPATCHCONSTRAINT.RHS` where this `GENCONID` was actually invoked and carrying the last
-known value forward elsewhere (a constraint's own coverage can be shorter than another's — it
-stopped or started applying partway through the range — and a short series would fail PSY's
-cross-component time-series horizon check). A companion `"invoked"` `Deterministic` series
-(`1.0`/`0.0`) is the authoritative record of which intervals were real: **do not** treat a
-carried-forward `"rhs"` value as enforced without checking it. `include_solution = true`
-additionally attaches `"lhs"` (same carry-forward) and `"marginal_value"` (`0.0`, not
-carried forward, at any interval `"invoked"` is `0.0` — a constraint not in force has no
-shadow price, by definition) — both validation-only, since feeding a solved `MARGINALVALUE`
-back into a dispatch simulation is the same category error as using `RRP` as an LP input.
+Adds one [`GenericConstraint`](@ref) per constraint invoked in `date_range`, attaching each via
+`add_service!` to its contributing devices. A constraint with any unresolvable term is skipped
+whole, never added with a partial LHS.
 
-`resolution` sets the declared `resolution`/`interval` of every attached `Deterministic`. When
-`nothing` (the default) it is inferred from `full_grid` via [`_infer_resolution`](@ref): the
-spacing between consecutive grid points, or `Minute(5)` if the grid has fewer than 2 points.
-An irregular grid (unequal spacings) warns and falls back to the smallest spacing found rather
-than throwing, since real caches can be gappy. Passing `resolution` explicitly skips inference
-and validation — the caller is asserting it themselves.
+Each added constraint carries an `"rhs"` `Deterministic` series replaying
+`DISPATCHCONSTRAINT.RHS` over `date_range`, carried forward where the constraint was not
+invoked, and an `"invoked"` series (`1.0`/`0.0`) recording which intervals were real. Do not
+treat a carried-forward `"rhs"` value as enforced without checking `"invoked"`.
 
-Returns `(added, skipped)`: `added::Vector{String}` of `GENCONID`s successfully added, and
-`skipped::Dict{String, Symbol}` mapping a skipped `GENCONID` to one reason — `:no_definition`
-(no matching `GENCONDATA` version), `:no_terms` (no `SPD*` rows for its version), or
-`:unknown_duid`/`:unknown_region`/`:unknown_interconnector` (a term referenced a component
-`sys` doesn't have). Skips are reported as one summary `@warn`, not one per constraint.
+# Arguments
+- `sys`: the `System` to add to.
+- `db`: an `AEMDB` connection.
+- `date_range`: the dispatch intervals to replay.
+- `intervention`: `DISPATCHCONSTRAINT.INTERVENTION` to read (default `0`, the normal run).
+- `include_solution`: also attach `"lhs"` and `"marginal_value"`. Validation only — a solved
+  `MARGINALVALUE` is not a dispatch input.
+- `resolution`: declared resolution of every attached series. Inferred from `date_range` when
+  `nothing`.
 
-Throws an `ArgumentError` when `DISPATCHCONSTRAINT` isn't cached at all. If it *is* cached but
-genuinely has no rows in `date_range`, that is a real answer, not a missing-data problem — this
-warns and returns `(String[], Dict{String, Symbol}())` rather than throwing.
+# Returns
+`(added, skipped)`. `added::Vector{String}` names the constraints added.
+`skipped::Dict{String, Symbol}` maps a skipped `GENCONID` to one reason: `:no_definition`,
+`:no_terms`, `:unknown_duid`, `:unknown_region`, `:unknown_interconnector`, or
+`:no_region_devices`. Skips are reported as one summary `@warn`.
+
+Throws `ArgumentError` when `DISPATCHCONSTRAINT` is not cached. A cached table with no rows in
+`date_range` warns and returns empties.
 """
 function add_nem_constraints!(
         sys, db, date_range; intervention::Integer = 0, include_solution::Bool = false,
@@ -115,10 +139,9 @@ function add_nem_constraints!(
     end
     invoked_by_id = groupby(invoked, :GENCONID)
 
-    # Every interval any constraint was invoked at — not just one constraint's own rows, since
-    # no single GENCONID's coverage reliably represents "every interval NEMDE dispatched" (see
-    # docstring above).
-    full_grid = sort(unique(invoked.SETTLEMENTDATE))
+    # Drop the last point: `date_range`'s N+1 timestamps label N interval starts, matching
+    # `read_fcas_bids`/`set_demand!`'s half-open convention.
+    full_grid = collect(date_range)[1:(end - 1)]
     resolution = isnothing(resolution) ? _infer_resolution(full_grid) : resolution
 
     gencon_versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
@@ -147,26 +170,37 @@ function add_nem_constraints!(
         term_rows = terms_by_id[(gencon_id,)]
 
         resolved_terms = ConstraintTerm[]
+        contributing_devices = Device[]
         skip_reason = nothing
         for row in eachrow(term_rows)
             if row.TERM_KIND == "UNIT"
-                if isnothing(get_component(Device, sys, row.KEY))
+                device = get_component(Device, sys, row.KEY)
+                if isnothing(device)
                     skip_reason = :unknown_duid
                     break
                 end
                 push!(resolved_terms, UnitTerm(row.KEY, BidType(row.BIDTYPE), row.FACTOR))
+                push!(contributing_devices, device)
             elseif row.TERM_KIND == "REGION"
                 if isnothing(get_component(Area, sys, row.KEY))
                     skip_reason = :unknown_region
                     break
                 end
+                region_devices = _region_devices(sys, row.KEY)
+                if isempty(region_devices)
+                    skip_reason = :no_region_devices
+                    break
+                end
                 push!(resolved_terms, RegionTerm(row.KEY, BidType(row.BIDTYPE), row.FACTOR))
+                append!(contributing_devices, region_devices)
             else
-                if isnothing(get_component(AreaInterchange, sys, row.KEY))
+                device = get_component(AreaInterchange, sys, row.KEY)
+                if isnothing(device)
                     skip_reason = :unknown_interconnector
                     break
                 end
                 push!(resolved_terms, InterconnectorTerm(row.KEY, row.FACTOR))
+                push!(contributing_devices, device)
             end
         end
         if !isnothing(skip_reason)
@@ -203,7 +237,7 @@ function add_nem_constraints!(
                 "version_no" => def.VERSIONNO,
             ),
         )
-        add_component!(sys, gc)
+        add_service!(sys, gc, unique(contributing_devices))
 
         add_time_series!(
             sys, gc,

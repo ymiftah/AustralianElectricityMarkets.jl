@@ -42,10 +42,18 @@ Julia 1.11 workspace: root, `test/`, and `docs/` share one Manifest.
 - **Runic** is the formatter (there is no JuliaFormatter config): 4-space indent, 8-space
   continuation indent on multi-line signatures, trailing commas.
 - Every function ends in an explicit `return` (bare `return` for `nothing`-returning functions).
-- Docstrings: signature line, prose, then `# Arguments` / `# Returns` / `# Fields` / `# Example`;
-  cross-reference with `` [`name`](@ref) ``.
-- **Keep comments short** — a line or two for the genuinely non-obvious. Do not write paragraph-long
-  design-rationale comments; surface that reasoning to the user at the end of a session instead.
+- Docstrings: signature line, one or two sentences of prose, then `# Arguments` / `# Returns` /
+  `# Fields` / `# Example`; cross-reference with `` [`name`](@ref) ``.
+- **Docstrings are reference documentation, not developer notes.** State what the function does,
+  its arguments and its return value — nothing else. A docstring is too long if it runs past a
+  short paragraph before the `# Arguments` section. Never put in a docstring: why an approach was
+  chosen over another, what failed in testing, empirical findings, history ("used to", "previously",
+  "this avoids"), or a narrative of how a bug was found. That reasoning goes in `docs/adr/`.
+- **Never reference `docs/adr/` or an ADR number from a docstring, comment, or any user-facing
+  text.** ADRs are internal memory for agents, not documentation for users of this package.
+- **Keep comments short** — a line or two for the genuinely non-obvious, explaining *what* the
+  non-obvious thing is, not the investigation behind it. Do not write paragraph-long
+  design-rationale comments.
 - Naming: NEMWEB tables/columns stay `SCREAMING_CASE`; Julia API is `snake_case`; private helpers
   are `_`-prefixed; mutating functions take `!`.
 - Submodule symbols are exported twice (in the submodule, then re-exported at top level) with
