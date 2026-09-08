@@ -232,7 +232,6 @@ function add_nem_constraints!(
                 "description" => def.DESCRIPTION,
                 "limit_type" => def.LIMITTYPE,
                 "source" => def.SOURCE,
-                "dynamic_rhs" => def.DYNAMICRHS,
                 "effective_date" => string(def.EFFECTIVEDATE),
                 "version_no" => def.VERSIONNO,
             ),
