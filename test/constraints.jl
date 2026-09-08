@@ -61,6 +61,23 @@
         @test get_rhs(gc) == 10.0
     end
 
+    @testset "GenericConstraint hand-authored: description field, no AEMO provenance" begin
+        gc = GenericConstraint(;
+            name = "HAND_AUTHORED",
+            sense = ConstraintSense.LE,
+            rhs = 42.0,
+        )
+        @test get_description(gc) == ""
+        @test get_limit_type(gc) === nothing
+        @test get_source(gc) === nothing
+        @test get_effective_date(gc) === nothing
+        @test get_version_no(gc) === nothing
+        @test isempty(get_ext(gc))
+
+        set_description!(gc, "a hand-authored test constraint")
+        @test get_description(gc) == "a hand-authored test constraint"
+    end
+
     @testset "GenericConstraint JSON round-trip" begin
         sys = System(100.0)
         gc = GenericConstraint(;
@@ -68,13 +85,13 @@
             sense = ConstraintSense.GE,
             rhs = 137.5,
             constraint_weight = 2.0,
+            description = "test constraint",
             terms = ConstraintTerm[
                 UnitTerm("BW01", BidType.RAISE6SEC, 1.0),
                 InterconnectorTerm("IC1", -1.0),
                 RegionTerm("NSW1", BidType.ENERGY, 0.5),
             ],
             fcas_requirements = FCASRequirement[FCASRequirement("TAS1", BidType.RAISE6SEC), FCASRequirement("TAS1", BidType.RAISE5MIN)],
-            ext = Dict{String, Any}("description" => "test constraint"),
         )
         add_component!(sys, gc)
 
@@ -88,6 +105,7 @@
         @test get_sense(gc2) == ConstraintSense.GE
         @test get_rhs(gc2) == 137.5
         @test get_constraint_weight(gc2) == 2.0
+        @test get_description(gc2) == "test constraint"
         @test length(get_terms(gc2)) == 3
         @test length(get_fcas_requirements(gc2)) == 2
 
@@ -264,6 +282,19 @@ end
     @test length(get_terms(gc)) == 4  # one UnitTerm per DUID behind CP_BAYSW
     @test length(get_fcas_requirements(gc)) == 1
     @test only(get_fcas_requirements(gc)) == FCASRequirement("VIC1", BidType.RAISE6SEC)
+
+    @testset "AEMO provenance: description is a field, the rest live in ext via accessors" begin
+        @test get_description(gc) isa String
+        @test !haskey(get_ext(gc), "description")
+        @test get_limit_type(gc) !== nothing
+        @test get_source(gc) !== nothing
+        @test get_effective_date(gc) !== nothing
+        @test get_version_no(gc) !== nothing
+        @test get_limit_type(gc) == get_ext(gc)["limit_type"]
+        @test get_source(gc) == get_ext(gc)["source"]
+        @test get_effective_date(gc) == get_ext(gc)["effective_date"]
+        @test get_version_no(gc) == get_ext(gc)["version_no"]
+    end
 
     network_gc = get_component(GenericConstraint, sys, "N_BAYSW_THERMAL")
     @test isempty(get_fcas_requirements(network_gc))  # pure network constraint

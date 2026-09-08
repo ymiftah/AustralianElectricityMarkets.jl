@@ -226,10 +226,10 @@ function add_nem_constraints!(
             sense = sense,
             rhs = coalesce(def.CONSTRAINTVALUE, first(rhs_series)),
             constraint_weight = coalesce(def.GENERICCONSTRAINTWEIGHT, 1.0),
+            description = coalesce(def.DESCRIPTION, ""),
             terms = resolved_terms,
             fcas_requirements = reqs,
             ext = Dict{String, Any}(
-                "description" => def.DESCRIPTION,
                 "limit_type" => def.LIMITTYPE,
                 "source" => def.SOURCE,
                 "effective_date" => string(def.EFFECTIVEDATE),
