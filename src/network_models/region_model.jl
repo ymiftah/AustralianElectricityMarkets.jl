@@ -3,6 +3,7 @@ module RegionModel
 using ..AustralianElectricityMarkets
 using DataFrames, Chain, Statistics
 using PowerSystems
+using Dates
 
 export nem_system, set_demand!, set_renewable_pv!, set_renewable_wind!
 
@@ -812,17 +813,27 @@ AustralianElectricityMarkets.table_requirements(::ConstrainedNetworkConfiguratio
     :SPDINTERCONNECTORCONSTRAINT,
 ]
 
-# date_range is its own explicit keyword (not extracted from kwargs after the fact): this
-# makes Julia's keyword dispatch bind it separately so it is excluded from what `kwargs...`
-# forwards down to `System(base_power; kwargs...)`, whose constructor rejects any kwarg it
-# doesn't recognize - confirmed directly that forwarding date_range through kwargs crashes.
-function AustralianElectricityMarkets.nem_system(db, ::ConstrainedNetworkConfiguration; date_range = nothing, kwargs...)
+# date_range is its own explicit keyword (not extracted from kwargs after the fact), and so are
+# every add_nem_constraints! keyword below: this makes Julia's keyword dispatch bind them
+# separately so only genuine System kwargs flow through to System(base_power; kwargs...), whose
+# constructor rejects any kwarg it doesn't recognize - confirmed directly that forwarding
+# date_range (or any add_nem_constraints! keyword) through kwargs crashes it.
+function AustralianElectricityMarkets.nem_system(
+        db, ::ConstrainedNetworkConfiguration; date_range = nothing,
+        intervention::Integer = 0, include_solution::Bool = false,
+        resolution::Union{Nothing, Dates.Period} = nothing,
+        allow_empty_region_terms::Bool = false,
+        kwargs...,
+    )
     if isnothing(date_range)
         error("ConstrainedNetworkConfiguration requires a `date_range` keyword argument (e.g. `nem_system(db, ConstrainedNetworkConfiguration(); date_range = start:Minute(5):stop)`).")
     end
     sys = nem_system(db; kwargs...)
     set_fcas_bids!(sys, db, date_range)
-    add_nem_constraints!(sys, db, date_range)
+    add_nem_constraints!(
+        sys, db, date_range; intervention = intervention, include_solution = include_solution,
+        resolution = resolution, allow_empty_region_terms = allow_empty_region_terms,
+    )
     add_fcas_services!(sys)
     attach_interconnector_losses!(sys, db, first(date_range))
     return sys

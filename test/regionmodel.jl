@@ -164,6 +164,20 @@
                 for ic in get_components(AreaInterchange, sys)
         )
         @test has_loss_model
+
+        @testset "add_nem_constraints! keywords plumb through nem_system" begin
+            sys_solution = nem_system(
+                db, ConstrainedNetworkConfiguration(); date_range = date_range, include_solution = true,
+            )
+            gc_solution = first(get_components(GenericConstraint, sys_solution))
+            @test has_time_series(gc_solution, Deterministic, "lhs")
+
+            sys_res = nem_system(
+                db, ConstrainedNetworkConfiguration(); date_range = date_range, resolution = Minute(30),
+            )
+            gc_res = first(get_components(GenericConstraint, sys_res))
+            @test get_resolution(get_time_series(Deterministic, gc_res, "rhs")) == Minute(30)
+        end
     end
 
     @testset "ISP technology coverage in PM_MAPPING" begin
