@@ -813,11 +813,8 @@ AustralianElectricityMarkets.table_requirements(::ConstrainedNetworkConfiguratio
     :SPDINTERCONNECTORCONSTRAINT,
 ]
 
-# date_range is its own explicit keyword (not extracted from kwargs after the fact), and so are
-# every add_nem_constraints! keyword below: this makes Julia's keyword dispatch bind them
-# separately so only genuine System kwargs flow through to System(base_power; kwargs...), whose
-# constructor rejects any kwarg it doesn't recognize - confirmed directly that forwarding
-# date_range (or any add_nem_constraints! keyword) through kwargs crashes it.
+# Explicit kwargs (not folded into kwargs...) so none of them leak into System(base_power;
+# kwargs...), which rejects any kwarg it doesn't recognize.
 function AustralianElectricityMarkets.nem_system(
         db, ::ConstrainedNetworkConfiguration; date_range = nothing,
         intervention::Integer = 0, include_solution::Bool = false,
