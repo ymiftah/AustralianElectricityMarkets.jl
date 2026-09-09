@@ -456,6 +456,34 @@ end
         @test rhs_len != length(unique(invoked_gap.SETTLEMENTDATE))
     end
 
+    @testset "grid misalignment between invoked SETTLEMENTDATE and date_range warns" begin
+        # Shift one row's SETTLEMENTDATE by 1 second so it can never match date_range's
+        # 5-minute grid exactly - reproduces a caller passing a date_range whose step doesn't
+        # match the cache's real dispatch cadence.
+        misaligned_hive = mktempdir()
+        create_mock_data(misaligned_hive)
+        constraint_dir = joinpath(misaligned_hive, "DISPATCHCONSTRAINT")
+        shift_time = start_date + Minute(5 * 3)
+        misalign_conn = DuckDB.connect(DuckDB.DB())
+        DuckDB.execute(misalign_conn, "SET preserve_identifier_case=true")
+        new_dir = constraint_dir * "_new"
+        DuckDB.execute(
+            misalign_conn,
+            "COPY (SELECT * REPLACE (CASE WHEN SETTLEMENTDATE = TIMESTAMP '$(shift_time)' " *
+                "THEN SETTLEMENTDATE + INTERVAL 1 SECOND ELSE SETTLEMENTDATE END AS SETTLEMENTDATE) " *
+                "FROM read_parquet('$(constraint_dir)/**/*.parquet', hive_partitioning=true)) " *
+                "TO '$(new_dir)' (FORMAT 'PARQUET', PARTITION_BY (archive_month))",
+        )
+        rm(constraint_dir; recursive = true)
+        mv(new_dir, constraint_dir)
+
+        misaligned_db = aem_connect(HiveConfiguration(hive_location = misaligned_hive, filesystem = "file"))
+        misaligned_sys = nem_system(misaligned_db, RegionalNetworkConfiguration())
+        @test_logs (:warn, r"fall outside date_range's grid") match_mode = :any begin
+            add_nem_constraints!(misaligned_sys, misaligned_db, date_range)
+        end
+    end
+
     @testset "resolution inference" begin
         # Multi-interval grid: the fixture is 5-minutely, so inference must read Minute(5) off
         # the data itself, not just happen to match a hardcoded default.

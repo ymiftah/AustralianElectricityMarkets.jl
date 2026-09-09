@@ -108,6 +108,12 @@ function add_nem_constraints!(
     full_grid = collect(date_range)[1:(end - 1)]
     resolution = isnothing(resolution) ? _infer_resolution(full_grid) : resolution
 
+    grid_set = Set(full_grid)
+    unaligned = setdiff(Set(invoked.SETTLEMENTDATE), grid_set)
+    if !isempty(unaligned)
+        @warn "add_nem_constraints!: $(length(unaligned)) invoked SETTLEMENTDATE(s) fall outside date_range's grid and will be dropped from every constraint's \"rhs\"/\"invoked\" series - check that date_range's step matches the cache's real dispatch cadence: $(sort(collect(unaligned)))"
+    end
+
     gencon_versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
     definitions = read_constraint_definitions(db, gencon_versions)
     def_by_version = Dict((row.GENCONID, row.EFFECTIVEDATE, row.VERSIONNO) => row for row in eachrow(definitions))
