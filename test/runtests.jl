@@ -54,6 +54,10 @@ end
     include("fcas_service.jl")
 end
 
+@testset "System build coverage and JSON round-trip" begin
+    include("system_build_coverage.jl")
+end
+
 
 @testset "Aqua" begin
     include("aqua.jl")
