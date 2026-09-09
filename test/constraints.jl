@@ -399,6 +399,11 @@ end
         @test occursin("LOWERREG", err.msg)
         @test occursin("allow_empty_region_terms", err.msg)
 
+        # The throw must leave sys untouched - a caller retrying with
+        # allow_empty_region_terms=true on the same sys must not hit duplicate-component
+        # errors from whatever this call partially added before it threw.
+        @test isempty(collect(get_components(GenericConstraint, sys_relocated)))
+
         # A fresh System: the default call above already threw after partially mutating
         # sys_relocated (the aggregated throw happens only after the whole build completes),
         # so reusing it here would double-add the constraints it did manage to attach.

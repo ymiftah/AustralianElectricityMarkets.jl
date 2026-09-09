@@ -122,6 +122,12 @@ function add_nem_constraints!(
     added = String[]
     skipped = Dict{String, Symbol}()
     empty_region_terms = @NamedTuple{constraint_name::String, region::String, bid_type::BidType}[]
+    staged = @NamedTuple{
+        gc::GenericConstraint, contributing_devices::Vector{Device},
+        rhs_series::Vector{Float64}, invoked_series::Vector{Float64},
+        lhs_series::Union{Nothing, Vector{Float64}},
+        marginal_value_series::Union{Nothing, Vector{Float64}},
+    }[]
 
     for key in eachrow(gencon_versions)
         gencon_id = key.GENCONID
@@ -216,16 +222,9 @@ function add_nem_constraints!(
                 "version_no" => def.VERSIONNO,
             ),
         )
-        add_service!(sys, gc, unique(contributing_devices))
 
-        add_time_series!(
-            sys, gc,
-            Deterministic(; name = "rhs", data = Dict(start_date => rhs_series), resolution = resolution, interval = resolution),
-        )
-        add_time_series!(
-            sys, gc,
-            Deterministic(; name = "invoked", data = Dict(start_date => invoked_series), resolution = resolution, interval = resolution),
-        )
+        lhs_series = nothing
+        marginal_value_series = nothing
         if include_solution
             lhs_by_time = Dict(zip(constraint_rows.SETTLEMENTDATE, constraint_rows.LHS))
             lhs_series, _ = _pad_to_grid(lhs_by_time, full_grid, first(constraint_rows.LHS))
@@ -233,17 +232,16 @@ function add_nem_constraints!(
             # Not carried forward like rhs/lhs: an interval this constraint wasn't invoked at
             # genuinely has zero shadow price, so 0.0 is a fact here, not a filler value.
             marginal_value_series = [get(mv_by_time, t, 0.0) for t in full_grid]
-
-            add_time_series!(
-                sys, gc,
-                Deterministic(; name = "lhs", data = Dict(start_date => lhs_series), resolution = resolution, interval = resolution),
-            )
-            add_time_series!(
-                sys, gc,
-                Deterministic(; name = "marginal_value", data = Dict(start_date => marginal_value_series), resolution = resolution, interval = resolution),
-            )
         end
 
+        push!(
+            staged,
+            (
+                gc = gc, contributing_devices = unique(contributing_devices), rhs_series = rhs_series,
+                invoked_series = invoked_series, lhs_series = lhs_series,
+                marginal_value_series = marginal_value_series,
+            ),
+        )
         push!(added, versioned_name)
     end
 
@@ -271,6 +269,30 @@ function add_nem_constraints!(
                     "add_nem_constraints!: $(length(empty_region_terms)) RegionTerm(s) resolved to a region with no Generator/Storage in sys: $detail. " *
                         "Pass allow_empty_region_terms=true to add these constraints anyway with an empty RegionTerm.devices.",
                 ),
+            )
+        end
+    end
+
+    # sys is mutated only past this point - every throw above leaves it untouched, so a caller
+    # retrying with allow_empty_region_terms=true on the same sys never double-adds anything.
+    for entry in staged
+        add_service!(sys, entry.gc, entry.contributing_devices)
+        add_time_series!(
+            sys, entry.gc,
+            Deterministic(; name = "rhs", data = Dict(start_date => entry.rhs_series), resolution = resolution, interval = resolution),
+        )
+        add_time_series!(
+            sys, entry.gc,
+            Deterministic(; name = "invoked", data = Dict(start_date => entry.invoked_series), resolution = resolution, interval = resolution),
+        )
+        if include_solution
+            add_time_series!(
+                sys, entry.gc,
+                Deterministic(; name = "lhs", data = Dict(start_date => entry.lhs_series), resolution = resolution, interval = resolution),
+            )
+            add_time_series!(
+                sys, entry.gc,
+                Deterministic(; name = "marginal_value", data = Dict(start_date => entry.marginal_value_series), resolution = resolution, interval = resolution),
             )
         end
     end
