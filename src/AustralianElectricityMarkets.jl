@@ -74,6 +74,11 @@ include("constraints/read.jl")
 include("constraints/resolve.jl")
 include("fcas/service.jl")
 include("constraints/build.jl")
+include("interconnector_losses.jl")
+
+export InterconnectorLossModel, loss_factor, interconnector_losses, loss_segments
+export read_interconnector_loss_breakpoints, read_interconnector_demand_coefficients,
+    read_interconnector_loss_parameters, interconnector_loss_models
 
 export FCASTrapezium, FCASBid,
     get_enablement_min, get_low_breakpoint, get_high_breakpoint, get_enablement_max,
