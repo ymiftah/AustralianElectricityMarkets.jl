@@ -44,13 +44,39 @@ get_lower_slope_coeff(t::FCASTrapezium) = iszero(t.max_avail) ? 0.0 : (t.low_bre
 get_upper_slope_coeff(t::FCASTrapezium) = iszero(t.max_avail) ? 0.0 : (t.enablement_max - t.high_breakpoint) / t.max_avail
 
 """
+    Tuple(t::FCASTrapezium) -> NTuple{7, Float64}
+
+Packs `t` as `(enablement_min, low_breakpoint, high_breakpoint, enablement_max, max_avail,
+ramp_up_rate, ramp_down_rate)`, `NaN` for a `nothing` ramp rate.
+"""
+function Base.Tuple(t::FCASTrapezium)
+    return (
+        t.enablement_min, t.low_breakpoint, t.high_breakpoint, t.enablement_max, t.max_avail,
+        something(t.ramp_up_rate, NaN), something(t.ramp_down_rate, NaN),
+    )
+end
+
+"""
+    FCASTrapezium(t::NTuple{7, Float64}) -> FCASTrapezium
+
+Inverse of `Tuple(::FCASTrapezium)`: a `NaN` ramp rate becomes `nothing`.
+"""
+function FCASTrapezium(t::NTuple{7, Float64})
+    return FCASTrapezium(
+        t[1], t[2], t[3], t[4], t[5],
+        isnan(t[6]) ? nothing : t[6],
+        isnan(t[7]) ? nothing : t[7],
+    )
+end
+
+"""
 One device's bid into one FCAS market for one interval: a 10-band offer curve plus the
 trapezium parameters for that market. Keyed by `service::BidType` (not a reserve name — FCAS
 requirements are [`GenericConstraint`](@ref)s, not `PowerSystems.Reserve`s).
 """
 struct FCASBid <: PSY.DeviceParameter
     service::BidType
-    offer_curve::PSY.CostCurve{PSY.PiecewiseIncrementalCurve}
+    offer_curve::PSY.PiecewiseStepData
     trapezium::FCASTrapezium
 end
 
