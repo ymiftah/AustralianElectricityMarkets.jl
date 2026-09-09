@@ -1,8 +1,10 @@
-# 0010. A Phase 2 formulation must emit a vacuous constraint where `"invoked" == 0`, not skip it
+# 0010. Filling an uninvoked `(component, t)` cell: vacuous constraint vs. a custom dual-reader
 
 ## Status
 
-Accepted
+Proposed — a trade-off for Phase 2 to weigh with real formulation code, not a closed decision.
+This finding is inherited from prior branch experimentation building the PSI service
+formulation, not verified independently in this phase.
 
 ## Context
 
@@ -11,21 +13,34 @@ this constraint wasn't actually enforced. A `PowerSimulations.jl` formulation co
 be tempted to skip building a constraint at those `(component, t)` cells entirely, since there's
 nothing to enforce.
 
-That skip breaks dual-variable readback. PSI's `_calculate_dual_variable_value!` broadcasts over
-the whole dense `(component, t)` container; a cell with no constraint object registered throws
-`UndefRefError` rather than reading back a sensible dual.
+PSI's `ServiceModel` constraint containers are typically dense arrays pre-allocated over the
+full `(component, timestep)` grid — not something a formulation author controls — and
+`_calculate_dual_variable_value!` broadcasts over that whole container to extract duals. A cell
+with no `ConstraintRef` assigned throws `UndefRefError` rather than reading back a dual.
 
 ## Decision
 
-At every interval `"invoked" == 0`, a Phase 2 formulation must still emit a constraint — a
-vacuous one, e.g. `0.0 <= 1.0` — rather than omit the cell. It adds nothing to the LHS and reads
-back a dual of exactly `0.0`, which is also the mathematically correct answer: a constraint not
-in force has no shadow price.
+Two ways to keep every cell readable, neither implemented or benchmarked yet:
+
+- **Vacuous constraint**: emit `0.0 <= 1.0` at every uninvoked cell instead of omitting it. It
+  has no decision-variable coefficients, adds nothing to the LHS, and reads back a dual of
+  exactly `0.0` — the mathematically correct answer, since a constraint not in force has no
+  shadow price. Cheap to write and stays inside PSI's generic dual-reading machinery, but adds
+  one live `ConstraintRef`/MOI object per uninvoked cell — real per-constraint bookkeeping
+  overhead in JuMP's model-build and memory footprint that scales with
+  `(constrained devices × horizon length)`, even though an empty row typically presolves away
+  before the solve itself.
+- **Custom sparse dual-reader**: use a sparse/`Dict`-keyed container instead of PSI's dense
+  array for this constraint type, and write a dual-reader that only touches cells that actually
+  exist. Avoids the row bloat entirely, at the cost of bypassing PSI's generic dual-computation
+  path — more custom code to write and keep in sync with PSI's own container conventions across
+  version upgrades.
 
 ## Consequences
 
-- Every `(component, t)` cell in a `GenericConstraint`-derived container stays defined for the
-  full horizon, regardless of `"invoked"`.
-- This is guidance for Phase 2's formulation code, not something Phase 1 enforces itself — Phase
-  1 carries no PSI dependency. Recorded now so it isn't rediscovered the first time Phase 2 hits
-  the same `UndefRefError`.
+- This is guidance for Phase 2's formulation code, not something Phase 1 enforces — Phase 1
+  carries no PSI dependency and builds nothing that exercises either path.
+- Phase 2 should profile both options against real formulation code before picking one, rather
+  than defaulting to the vacuous constraint on the strength of this ADR alone — there is no
+  formulation code yet to measure against, and the row-count-vs-custom-code trade-off may look
+  different once one exists.
