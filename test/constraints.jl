@@ -404,9 +404,9 @@ end
         # errors from whatever this call partially added before it threw.
         @test isempty(collect(get_components(GenericConstraint, sys_relocated)))
 
-        # A fresh System: the default call above already threw after partially mutating
-        # sys_relocated (the aggregated throw happens only after the whole build completes),
-        # so reusing it here would double-add the constraints it did manage to attach.
+        # A fresh System, not sys_relocated: sys_relocated is now guaranteed untouched by the
+        # throw above (see the isempty assertion), but a separate System still keeps this
+        # warn-path scenario isolated from the throw-path one.
         sys_relocated_ok = nem_system(db, RegionalNetworkConfiguration())
         er01_ok = get_component(Device, sys_relocated_ok, "ER01")
         set_bus!(er01_ok, get_bus(sys_relocated_ok, "NSW1_GEN_BUS"))

@@ -77,7 +77,8 @@ its contributing devices.
 mapping a skipped name to `:no_definition`, `:no_terms`, `:unknown_duid`, `:unknown_region`, or
 `:unknown_interconnector`.
 
-Throws `ArgumentError` when `DISPATCHCONSTRAINT` is not cached.
+Throws `ArgumentError` when `DISPATCHCONSTRAINT` is not cached, or when an empty `RegionTerm` is
+found and `allow_empty_region_terms = false`; either throw leaves `sys` unmodified.
 """
 function add_nem_constraints!(
         sys, db, date_range; intervention::Integer = 0, include_solution::Bool = false,
