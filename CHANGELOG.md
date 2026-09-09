@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: `add_nem_constraints!` builds one `GenericConstraint` per exact `(GENCONID, EFFECTIVEDATE, VERSIONNO)` triple invoked, not one per bare `GENCONID`**, named `GENCONID@EFFECTIVEDATE#VERSIONNO` (e.g. `"N_BAYSW_THERMAL@2025-01-01#1"`).
+  `GENCONID` is AEMO's reporting identity, not a stable mathematical one: AEMO revises a constraint's sense, terms and coefficients across versions while keeping `GENCONID` fixed, and on the real cache 178 of 6258 distinct constraint IDs (2.8%) were invoked under more than one version within a single archive month, 96 of those switches mid-day.
+  Previously `add_nem_constraints!` merged every version invoked in the requested range into one `GenericConstraint`, silently blending different AEMO equations.
+  The bare `GENCONID` is kept on `ext["gencon_id"]`, read through the new `get_gencon_id` accessor. `added`/`skipped` are now keyed by the versioned component name for the same reason.
+  `read_constraint_terms` now carries `EFFECTIVEDATE`/`VERSIONNO` through to its output (previously dropped in the final `SELECT`, silently merging two versions' terms into one bag).
+  `fcas_requirements` remains matched by bare `GENCONID` only and is attached to every version — AEMO's current FCAS-requirement table has no version columns to match against.
 - **`AustralianElectricityMarketsSimulations`**: Re-added `PowerSimulations`/`JuMP`/`HiGHS`/`HydroPowerSimulations` dependencies, pinned to `PowerSimulations = "0.38"` (PSI's service-model API, not the 0.34 line the abandoned replication work targeted), laying the groundwork for a PSI service-model integration of NEM generic constraints.
 - **BREAKING: `RegionTerm` gains a `devices::Vector{String}` field** (region and bid_type kept alongside it), resolved once via `resolve_term_devices` at ingestion time and read through the new `get_devices` accessor. `RegionTerm`'s positional and keyword constructors both default `devices` to `String[]`, so hand-authored terms still construct.
 - **BREAKING: `add_nem_constraints!` throws by default when a `RegionTerm`'s region resolves but has no `Generator`/`Storage` in `sys`**, instead of silently skipping the constraint (`:no_region_devices` is removed from the `skipped` reasons). Every offending case across the whole build is collected and reported together, as one aggregated `ArgumentError` naming every affected `GENCONID`, region and `bid_type`.

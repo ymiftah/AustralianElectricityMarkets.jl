@@ -1,18 +1,11 @@
 """
     _pad_to_grid(values_by_time, grid, initial_fill) -> (series, invoked_mask)
 
-Reindexes a `SETTLEMENTDATE -> Float64` mapping onto `grid`, carrying the last known value
-forward across gaps.
-
-# Arguments
-- `values_by_time`: known values, keyed by timestamp.
-- `grid`: sorted timestamps to reindex onto.
-- `initial_fill`: value used before the first known one.
+Reindexes `values_by_time` onto `grid`, carrying the last known value forward across gaps.
 
 # Returns
-`(series, invoked_mask)`, both `Vector{Float64}` of `length(grid)`. `invoked_mask` is `1.0`
-where `grid`'s timestamp was present in `values_by_time` and `0.0` where the value was carried
-forward.
+`(series, invoked_mask)`: both `Vector{Float64}` of `length(grid)`; `invoked_mask` is `1.0`
+where a value was present, `0.0` where carried forward.
 """
 function _pad_to_grid(values_by_time::Dict, grid::Vector{DateTime}, initial_fill::Float64)
     series = Vector{Float64}(undef, length(grid))
@@ -33,15 +26,8 @@ end
 """
     _infer_resolution(grid) -> Dates.Period
 
-The spacing between consecutive points of a sorted grid, canonicalized by
-[`_canonical_period`](@ref).
-
-# Arguments
-- `grid`: sorted, deduplicated timestamps.
-
-# Returns
-A `Dates.Period`. Falls back to `Minute(5)` for fewer than 2 points; warns and uses the
-smallest spacing if spacings are unequal.
+Spacing between consecutive points of a sorted `grid`. Falls back to `Minute(5)` for fewer
+than 2 points; warns and uses the smallest spacing if unequal.
 """
 function _infer_resolution(grid::Vector{DateTime})
     length(grid) < 2 && return Minute(5)
@@ -71,37 +57,27 @@ end
 """
     add_nem_constraints!(sys, db, date_range; intervention = 0, include_solution = false, resolution = nothing, allow_empty_region_terms = false)
 
-Adds one [`GenericConstraint`](@ref) per constraint invoked in `date_range`, attaching each via
-`add_service!` to its contributing devices. A constraint with any unresolvable term is skipped
-whole, never added with a partial LHS.
-
-Each added constraint carries an `"rhs"` `Deterministic` series replaying
-`DISPATCHCONSTRAINT.RHS` over `date_range`, carried forward where the constraint was not
-invoked, and an `"invoked"` series (`1.0`/`0.0`) recording which intervals were real. Do not
-treat a carried-forward `"rhs"` value as enforced without checking `"invoked"`.
+Adds one [`GenericConstraint`](@ref) per exact `(GENCONID, EFFECTIVEDATE, VERSIONNO)` invoked
+in `date_range`, named `GENCONID@EFFECTIVEDATE#VERSIONNO` and attached via `add_service!` to
+its contributing devices.
 
 # Arguments
 - `sys`: the `System` to add to.
 - `db`: an `AEMDB` connection.
 - `date_range`: the dispatch intervals to replay.
-- `intervention`: `DISPATCHCONSTRAINT.INTERVENTION` to read (default `0`, the normal run).
-- `include_solution`: also attach `"lhs"` and `"marginal_value"`. Validation only — a solved
-  `MARGINALVALUE` is not a dispatch input.
+- `intervention`: `DISPATCHCONSTRAINT.INTERVENTION` to read (default `0`).
+- `include_solution`: also attach `"lhs"` and `"marginal_value"`.
 - `resolution`: declared resolution of every attached series. Inferred from `date_range` when
   `nothing`.
-- `allow_empty_region_terms`: policy for a `RegionTerm` whose region has no
-  `Generator`/`Storage`. `false` (default) throws one aggregated `ArgumentError` naming every
-  affected `GENCONID`/region/`bid_type`; `true` warns once and proceeds with an empty
-  `devices`.
+- `allow_empty_region_terms`: default `false` throws on an empty `RegionTerm`; `true` warns and
+  proceeds.
 
 # Returns
-`(added, skipped)`. `added::Vector{String}` names the constraints added.
-`skipped::Dict{String, Symbol}` maps a skipped `GENCONID` to one reason: `:no_definition`,
-`:no_terms`, `:unknown_duid`, `:unknown_region`, or `:unknown_interconnector`. Skips are
-reported as one summary `@warn`.
+`(added, skipped)`: `added::Vector{String}` of component names, `skipped::Dict{String, Symbol}`
+mapping a skipped name to `:no_definition`, `:no_terms`, `:unknown_duid`, `:unknown_region`, or
+`:unknown_interconnector`.
 
-Throws `ArgumentError` when `DISPATCHCONSTRAINT` is not cached. A cached table with no rows in
-`date_range` warns and returns empties.
+Throws `ArgumentError` when `DISPATCHCONSTRAINT` is not cached.
 """
 function add_nem_constraints!(
         sys, db, date_range; intervention::Integer = 0, include_solution::Bool = false,
@@ -122,7 +98,9 @@ function add_nem_constraints!(
         @warn "No constraints invoked over $date_range; nothing added."
         return String[], Dict{String, Symbol}()
     end
-    invoked_by_id = groupby(invoked, :GENCONID)
+    # Grouped by the full (GENCONID, EFFECTIVEDATE, VERSIONNO) triple, not GENCONID alone: two
+    # versions must never be merged into one "invoked"/"rhs" series.
+    invoked_by_version = groupby(invoked, [:GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO])
 
     # Drop the last point: `date_range`'s N+1 timestamps label N interval starts, matching
     # `read_fcas_bids`/`set_demand!`'s half-open convention.
@@ -131,29 +109,37 @@ function add_nem_constraints!(
 
     gencon_versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
     definitions = read_constraint_definitions(db, gencon_versions)
-    def_by_id = Dict(row.GENCONID => row for row in eachrow(definitions))
+    def_by_version = Dict((row.GENCONID, row.EFFECTIVEDATE, row.VERSIONNO) => row for row in eachrow(definitions))
 
     terms_long = read_constraint_terms(db, gencon_versions, date_range)
-    terms_by_id = groupby(terms_long, :GENCONID)
+    terms_by_version = groupby(terms_long, [:GENCONID, :EFFECTIVEDATE, :VERSIONNO])
 
+    # Deliberately GENCONID alone, not the triple above: DISPATCH_FCAS_REQ_CONSTRAINT carries
+    # no version columns, so a requirement attaches to every version of its GENCONID.
     reqs_long = read_constraint_fcas_requirements(db, date_range; intervention = intervention)
     req_by_id = groupby(reqs_long, :GENCONID)
 
     added = String[]
     skipped = Dict{String, Symbol}()
-    empty_region_terms = @NamedTuple{gencon_id::String, region::String, bid_type::BidType}[]
+    empty_region_terms = @NamedTuple{constraint_name::String, region::String, bid_type::BidType}[]
 
-    for gencon_id in unique(invoked.GENCONID)
-        if !haskey(def_by_id, gencon_id)
-            skipped[gencon_id] = :no_definition
+    for key in eachrow(gencon_versions)
+        gencon_id = key.GENCONID
+        eff = key.GENCONID_EFFECTIVEDATE
+        ver = key.GENCONID_VERSIONNO
+        version_key = (gencon_id, eff, ver)
+        versioned_name = "$(gencon_id)@$(string(eff))#$(ver)"
+
+        if !haskey(def_by_version, version_key)
+            skipped[versioned_name] = :no_definition
             continue
         end
-        if !haskey(terms_by_id, (gencon_id,))
-            skipped[gencon_id] = :no_terms
+        if !haskey(terms_by_version, version_key)
+            skipped[versioned_name] = :no_terms
             continue
         end
-        def = def_by_id[gencon_id]
-        term_rows = terms_by_id[(gencon_id,)]
+        def = def_by_version[version_key]
+        term_rows = terms_by_version[version_key]
 
         resolved_terms = ConstraintTerm[]
         contributing_devices = Device[]
@@ -176,7 +162,7 @@ function add_nem_constraints!(
                     break
                 end
                 isempty(names) && push!(
-                    empty_region_terms, (gencon_id = gencon_id, region = row.KEY, bid_type = bid_type),
+                    empty_region_terms, (constraint_name = versioned_name, region = row.KEY, bid_type = bid_type),
                 )
                 push!(resolved_terms, RegionTerm(row.KEY, bid_type, row.FACTOR, names))
                 # Not a name-based re-lookup: `Device` is ambiguous by name across concrete
@@ -195,25 +181,27 @@ function add_nem_constraints!(
             end
         end
         if !isnothing(skip_reason)
-            skipped[gencon_id] = skip_reason
+            skipped[versioned_name] = skip_reason
             continue
         end
 
         sense = def.CONSTRAINTTYPE == "<=" ? ConstraintSense.LE :
             def.CONSTRAINTTYPE == ">=" ? ConstraintSense.GE : ConstraintSense.EQ
 
+        # GENCONID alone, not the version triple - fcas_requirements has no version to match
+        # against on recent data, so every version of a GENCONID gets the same attribution.
         reqs = haskey(req_by_id, (gencon_id,)) ?
             [FCASRequirement(r.REGIONID, r.BIDTYPE) for r in eachrow(req_by_id[(gencon_id,)])] :
             FCASRequirement[]
 
-        constraint_rows = sort(invoked_by_id[(gencon_id,)], :SETTLEMENTDATE)
+        constraint_rows = sort(invoked_by_version[version_key], :SETTLEMENTDATE)
         rhs_by_time = Dict(zip(constraint_rows.SETTLEMENTDATE, constraint_rows.RHS))
         rhs_series, invoked_series = _pad_to_grid(
             rhs_by_time, full_grid, coalesce(def.CONSTRAINTVALUE, first(constraint_rows.RHS)),
         )
 
         gc = GenericConstraint(;
-            name = gencon_id,
+            name = versioned_name,
             sense = sense,
             rhs = coalesce(def.CONSTRAINTVALUE, first(rhs_series)),
             constraint_weight = coalesce(def.GENERICCONSTRAINTWEIGHT, 1.0),
@@ -221,6 +209,7 @@ function add_nem_constraints!(
             terms = resolved_terms,
             fcas_requirements = reqs,
             ext = Dict{String, Any}(
+                "gencon_id" => gencon_id,
                 "limit_type" => def.LIMITTYPE,
                 "source" => def.SOURCE,
                 "effective_date" => string(def.EFFECTIVEDATE),
@@ -255,7 +244,7 @@ function add_nem_constraints!(
             )
         end
 
-        push!(added, gencon_id)
+        push!(added, versioned_name)
     end
 
     if !isempty(skipped)
@@ -263,14 +252,14 @@ function add_nem_constraints!(
         for reason in values(skipped)
             reason_counts[reason] = get(reason_counts, reason, 0) + 1
         end
-        @warn "add_nem_constraints!: skipped $(length(skipped)) of $(length(unique(invoked.GENCONID))) invoked constraints" reason_counts
+        @warn "add_nem_constraints!: skipped $(length(skipped)) of $(nrow(gencon_versions)) invoked constraint versions" reason_counts
     end
 
     if !isempty(empty_region_terms)
         # string(bid_type), not "$bid_type" - @scoped_enum overrides Base.show (see parser.jl).
         detail = join(
             (
-                "GENCONID=$(e.gencon_id) region=$(e.region) bid_type=$(string(e.bid_type))"
+                "constraint=$(e.constraint_name) region=$(e.region) bid_type=$(string(e.bid_type))"
                     for e in empty_region_terms
             ), "; ",
         )

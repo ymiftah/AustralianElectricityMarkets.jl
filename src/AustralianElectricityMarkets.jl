@@ -81,7 +81,7 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
     GenericConstraint,
     get_duid, get_bid_type, get_factor, get_interconnector, get_region, get_service, get_devices,
     get_sense, set_sense!, get_rhs, set_rhs!, get_constraint_weight, set_constraint_weight!,
-    get_limit_type, get_source, get_effective_date, get_version_no,
+    get_limit_type, get_source, get_effective_date, get_version_no, get_gencon_id,
     get_terms, set_terms!, get_fcas_requirements, set_fcas_requirements!,
     resolve_term_devices
 

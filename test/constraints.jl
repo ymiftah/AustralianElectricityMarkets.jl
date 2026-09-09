@@ -264,18 +264,24 @@ end
     sys = nem_system(db, RegionalNetworkConfiguration())
     added, skipped = add_nem_constraints!(sys, db, date_range)
 
-    @test "F_VIC1_RAISE6SEC" in added
-    @test "N_BAYSW_THERMAL" in added
-    @test "N_PHANTOM_TEST" ∉ added
-    @test skipped["N_PHANTOM_TEST"] == :unknown_duid
+    # Every GENCONID in mock_data.jl has exactly one invoked GENCONDATA/SPD* version, always
+    # EFFECTIVEDATE=2025-01-01, VERSIONNO=1. add_nem_constraints! names components by the full
+    # versioned triple, so tests look
+    # components up by this name rather than the bare GENCONID.
+    vname(gencon_id, version = 1) = "$gencon_id@2025-01-01#$version"
+
+    @test vname("F_VIC1_RAISE6SEC") in added
+    @test vname("N_BAYSW_THERMAL") in added
+    @test vname("N_PHANTOM_TEST") ∉ added
+    @test skipped[vname("N_PHANTOM_TEST")] == :unknown_duid
 
     # N_PARTIAL_COVERAGE is only invoked in DISPATCHCONSTRAINT for every other interval
     # (6 of 12 rows over this date_range) - it is added anyway, with its "rhs"/"lhs" padded
     # to the full 12-interval grid (carrying the last known value forward) and an "invoked"
     # series recording which of those 12 were real, so it never silently drops a real-data
     # constraint that just wasn't invoked every interval (see add_nem_constraints! docstring).
-    @test "N_PARTIAL_COVERAGE" in added
-    partial_gc = get_component(GenericConstraint, sys, "N_PARTIAL_COVERAGE")
+    @test vname("N_PARTIAL_COVERAGE") in added
+    partial_gc = get_component(GenericConstraint, sys, vname("N_PARTIAL_COVERAGE"))
     partial_rhs = first(values(get_data(get_time_series(Deterministic, partial_gc, "rhs"))))
     partial_invoked = first(values(get_data(get_time_series(Deterministic, partial_gc, "invoked"))))
     @test length(partial_rhs) == 12
@@ -283,7 +289,7 @@ end
     @test all(==(150.0), partial_rhs)  # constant RHS - forward-fill is a no-op here
     @test partial_invoked == [isodd(i) ? 0.0 : 1.0 for i in 0:11]
 
-    gc = get_component(GenericConstraint, sys, "F_VIC1_RAISE6SEC")
+    gc = get_component(GenericConstraint, sys, vname("F_VIC1_RAISE6SEC"))
     @test !isnothing(gc)
     @test get_sense(gc) == ConstraintSense.GE
     @test length(get_terms(gc)) == 4  # one UnitTerm per DUID behind CP_BAYSW
@@ -303,11 +309,11 @@ end
         @test get_version_no(gc) == get_ext(gc)["version_no"]
     end
 
-    network_gc = get_component(GenericConstraint, sys, "N_BAYSW_THERMAL")
+    network_gc = get_component(GenericConstraint, sys, vname("N_BAYSW_THERMAL"))
     @test isempty(get_fcas_requirements(network_gc))  # pure network constraint
     @test !isempty(get_terms(network_gc))
 
-    nsw1_raise6sec = get_component(GenericConstraint, sys, "F_NSW1_RAISE6SEC")
+    nsw1_raise6sec = get_component(GenericConstraint, sys, vname("F_NSW1_RAISE6SEC"))
     @test any(t -> t isa InterconnectorTerm && get_interconnector(t) == "IC1", get_terms(nsw1_raise6sec))
 
     rhs_ts = get_time_series(Deterministic, gc, "rhs")
@@ -318,11 +324,11 @@ end
     @test !has_time_series(gc, Deterministic, "lhs")  # include_solution defaults false
 
     added2, _ = add_nem_constraints!(nem_system(db, RegionalNetworkConfiguration()), db, date_range; include_solution = true)
-    @test "F_VIC1_RAISE6SEC" in added2
+    @test vname("F_VIC1_RAISE6SEC") in added2
 
     @testset "GenericConstraint attaches as a Service, not merely a Component" begin
         # UnitTerm: every term's own device carries the service.
-        vic1_gc = get_component(GenericConstraint, sys, "F_VIC1_RAISE6SEC")
+        vic1_gc = get_component(GenericConstraint, sys, vname("F_VIC1_RAISE6SEC"))
         unit_terms = filter(t -> t isa UnitTerm, get_terms(vic1_gc))
         @test !isempty(unit_terms)
         for t in unit_terms
@@ -332,7 +338,7 @@ end
 
         # RegionTerm: every Generator/Storage in that region carries the service, not just
         # the constraint's own UnitTerm device. And its `devices` field names exactly that set.
-        nsw1_gc = get_component(GenericConstraint, sys, "F_NSW1_RAISEREG")
+        nsw1_gc = get_component(GenericConstraint, sys, vname("F_NSW1_RAISEREG"))
         region_term = only(filter(t -> t isa RegionTerm, get_terms(nsw1_gc)))
         region_devices = AustralianElectricityMarkets._region_devices(sys, get_region(region_term))
         @test !isempty(region_devices)
@@ -404,14 +410,14 @@ end
         @test_logs (:warn, r"RegionTerm.*empty devices") match_mode = :any begin
             added_w, skipped_w = add_nem_constraints!(sys_relocated_ok, db, date_range; allow_empty_region_terms = true)
         end
-        @test "F_TAS1_RAISEREG" in added_w
-        @test "F_TAS1_LOWERREG" in added_w
+        @test vname("F_TAS1_RAISEREG") in added_w
+        @test vname("F_TAS1_LOWERREG") in added_w
         @test :no_region_devices ∉ values(skipped_w)  # the reason no longer exists at all
-        tas1_gc = get_component(GenericConstraint, sys_relocated_ok, "F_TAS1_RAISEREG")
+        tas1_gc = get_component(GenericConstraint, sys_relocated_ok, vname("F_TAS1_RAISEREG"))
         tas1_region_term = only(filter(t -> t isa RegionTerm, get_terms(tas1_gc)))
         @test isempty(get_devices(tas1_region_term))
         # A TAS1 constraint with no RegionTerm (a contingency market) is unaffected either way.
-        @test "F_TAS1_RAISE6SEC" in added_w
+        @test vname("F_TAS1_RAISE6SEC") in added_w
     end
 
     @testset "rhs/invoked grid spans date_range, not just invoked SETTLEMENTDATEs" begin
@@ -439,7 +445,7 @@ end
 
         gap_sys = nem_system(gap_db, RegionalNetworkConfiguration())
         add_nem_constraints!(gap_sys, gap_db, date_range)
-        gap_gc = get_component(GenericConstraint, gap_sys, "N_BAYSW_THERMAL")
+        gap_gc = get_component(GenericConstraint, gap_sys, vname("N_BAYSW_THERMAL"))
         rhs_len = length(first(values(get_data(get_time_series(Deterministic, gap_gc, "rhs")))))
         @test rhs_len == length(date_range) - 1
         @test rhs_len != length(unique(invoked_gap.SETTLEMENTDATE))
@@ -450,14 +456,14 @@ end
         # the data itself, not just happen to match a hardcoded default.
         sys_default = nem_system(db, RegionalNetworkConfiguration())
         add_nem_constraints!(sys_default, db, date_range)
-        gc_default = get_component(GenericConstraint, sys_default, "N_BAYSW_THERMAL")
+        gc_default = get_component(GenericConstraint, sys_default, vname("N_BAYSW_THERMAL"))
         rhs_ts_default = get_time_series(Deterministic, gc_default, "rhs")
         @test get_resolution(rhs_ts_default) == Minute(5)
 
         # Explicit resolution is honoured as given, with no inference or validation.
         sys_explicit = nem_system(db, RegionalNetworkConfiguration())
         add_nem_constraints!(sys_explicit, db, date_range; resolution = Minute(30))
-        gc_explicit = get_component(GenericConstraint, sys_explicit, "N_BAYSW_THERMAL")
+        gc_explicit = get_component(GenericConstraint, sys_explicit, vname("N_BAYSW_THERMAL"))
         rhs_ts_explicit = get_time_series(Deterministic, gc_explicit, "rhs")
         @test get_resolution(rhs_ts_explicit) == Minute(30)
 
