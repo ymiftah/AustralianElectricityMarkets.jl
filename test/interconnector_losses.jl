@@ -3,10 +3,11 @@ using DataFrames: DataFrame, nrow
 # A hand-built model with realistic NEMDE magnitudes: LOSSCONSTANT is a loss *factor*, so it sits
 # near 1.0, and the mock hive's 0.01 is deliberately not reused here - the closed forms below are
 # checked against numbers a real interconnector would carry.
-const TEST_LOSS_MODEL = InterconnectorLossModel(
-    "IC_TEST", "VIC1", "NSW1", 0.4, 1.02, 2.0e-4,
-    Dict("VIC1" => 1.0e-5, "NSW1" => -2.0e-5),
-    [-500.0, -250.0, 0.0, 250.0, 500.0],
+const TEST_LOSS_MODEL = InterconnectorLossModel(;
+    interconnector = "IC_TEST", from_region = "VIC1", to_region = "NSW1",
+    from_region_loss_share = 0.4, loss_constant = 1.02, loss_flow_coefficient = 2.0e-4,
+    demand_coefficients = Dict("VIC1" => 1.0e-5, "NSW1" => -2.0e-5),
+    breakpoints = [-500.0, -250.0, 0.0, 250.0, 500.0],
 )
 const TEST_DEMAND = Dict("VIC1" => 4000.0, "NSW1" => 7000.0)
 
@@ -55,8 +56,10 @@ end
 
     # A single breakpoint defines no segment; returning an empty vector would silently present a
     # lossless interconnector as a modelled one.
-    single = InterconnectorLossModel(
-        "IC_ONE", "VIC1", "NSW1", 0.5, 1.0, 0.0, Dict{String, Float64}(), [0.0],
+    single = InterconnectorLossModel(;
+        interconnector = "IC_ONE", from_region = "VIC1", to_region = "NSW1",
+        from_region_loss_share = 0.5, loss_constant = 1.0, loss_flow_coefficient = 0.0,
+        demand_coefficients = Dict{String, Float64}(), breakpoints = [0.0],
     )
     @test_throws ArgumentError loss_segments(single, TEST_DEMAND)
 end
@@ -130,5 +133,42 @@ let
         # Every EFFECTIVEDATE postdates this, so nothing resolves - a real "nothing to model"
         # answer is indistinguishable from missing data here, so it must not be returned empty.
         @test_throws ArgumentError interconnector_loss_models(db, Date(2020, 1, 1))
+    end
+
+    @testset "attach_interconnector_losses!" begin
+        sys = nem_system(db, RegionalNetworkConfiguration())
+        added, skipped = @test_logs (:warn, r"no resolvable loss model") match_mode = :any begin
+            attach_interconnector_losses!(sys, db, as_of)
+        end
+        # IC6 has no LOSSMODEL breakpoints, same as interconnector_loss_models above.
+        @test Set(added) == Set("IC$i" for i in 1:5)
+        @test skipped == Dict("IC6" => :no_loss_model)
+
+        ic1 = get_component(AreaInterchange, sys, "IC1")
+        attached = only(get_supplemental_attributes(InterconnectorLossModel, ic1))
+        @test attached.interconnector == "IC1"
+        @test attached.breakpoints == [-500.0, -250.0, 0.0, 250.0, 500.0]
+
+        ic6 = get_component(AreaInterchange, sys, "IC6")
+        @test isempty(get_supplemental_attributes(InterconnectorLossModel, ic6))
+    end
+
+    @testset "InterconnectorLossModel JSON round-trip" begin
+        sys = nem_system(db, RegionalNetworkConfiguration())
+        attach_interconnector_losses!(sys, db, as_of)
+
+        mktpath = mktempdir()
+        json_path = joinpath(mktpath, "sys.json")
+        to_json(sys, json_path)
+        sys2 = System(json_path)
+
+        ic1 = get_component(AreaInterchange, sys2, "IC1")
+        model = only(get_supplemental_attributes(InterconnectorLossModel, ic1))
+        @test model.interconnector == "IC1"
+        @test model.from_region == "VIC1"
+        @test model.to_region == "SNOWY1"
+        @test model.breakpoints == [-500.0, -250.0, 0.0, 250.0, 500.0]
+        @test model.demand_coefficients isa Dict{String, Float64}
+        @test Set(keys(model.demand_coefficients)) == Set(["VIC1", "SNOWY1"])
     end
 end

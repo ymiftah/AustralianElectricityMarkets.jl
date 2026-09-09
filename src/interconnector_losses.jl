@@ -22,8 +22,9 @@ linearises that quadratic on, reproduced by [`loss_segments`](@ref).
 - `loss_flow_coefficient`: `LOSSFLOWCOEFFICIENT`.
 - `demand_coefficients`: `REGIONID => DEMANDCOEFFICIENT`.
 - `breakpoints`: `MWBREAKPOINT` values, ascending.
+- `internal`: `InfrastructureSystems` bookkeeping.
 """
-struct InterconnectorLossModel
+struct InterconnectorLossModel <: PSY.SupplementalAttribute
     interconnector::String
     from_region::String
     to_region::String
@@ -32,7 +33,36 @@ struct InterconnectorLossModel
     loss_flow_coefficient::Float64
     demand_coefficients::Dict{String, Float64}
     breakpoints::Vector{Float64}
+    internal::IS.InfrastructureSystemsInternal
 end
+
+function InterconnectorLossModel(;
+        interconnector::AbstractString,
+        from_region::AbstractString,
+        to_region::AbstractString,
+        from_region_loss_share::Real,
+        loss_constant::Real,
+        loss_flow_coefficient::Real,
+        demand_coefficients::AbstractDict,
+        breakpoints::AbstractVector,
+        internal::IS.InfrastructureSystemsInternal = IS.InfrastructureSystemsInternal(),
+    )
+    # JSON round-trips deliver demand_coefficients as Dict{String, Any} (JSON.jl doesn't know
+    # the value type), hence the coercion here rather than a Dict{String, Float64} annotation.
+    return InterconnectorLossModel(
+        String(interconnector),
+        String(from_region),
+        String(to_region),
+        Float64(from_region_loss_share),
+        Float64(loss_constant),
+        Float64(loss_flow_coefficient),
+        Dict{String, Float64}(String(k) => Float64(v) for (k, v) in demand_coefficients),
+        Float64.(breakpoints),
+        internal,
+    )
+end
+
+IS.get_internal(model::InterconnectorLossModel) = model.internal
 
 """
     loss_factor(model, flow, demand) -> Float64
@@ -284,15 +314,15 @@ function interconnector_loss_models(db, as_of::Union{Date, DateTime})
             push!(skipped, id)
             continue
         end
-        models[id] = InterconnectorLossModel(
-            id,
-            row.REGIONFROM,
-            row.REGIONTO,
-            coalesce(row.FROMREGIONLOSSSHARE, 0.5),
-            coalesce(row.LOSSCONSTANT, 1.0),
-            coalesce(row.LOSSFLOWCOEFFICIENT, 0.0),
-            get(demand_coefficients, id, Dict{String, Float64}()),
-            bps,
+        models[id] = InterconnectorLossModel(;
+            interconnector = id,
+            from_region = row.REGIONFROM,
+            to_region = row.REGIONTO,
+            from_region_loss_share = coalesce(row.FROMREGIONLOSSSHARE, 0.5),
+            loss_constant = coalesce(row.LOSSCONSTANT, 1.0),
+            loss_flow_coefficient = coalesce(row.LOSSFLOWCOEFFICIENT, 0.0),
+            demand_coefficients = get(demand_coefficients, id, Dict{String, Float64}()),
+            breakpoints = bps,
         )
     end
     isempty(skipped) ||
@@ -305,4 +335,42 @@ function interconnector_loss_models(db, as_of::Union{Date, DateTime})
         ),
     )
     return models
+end
+
+"""
+    attach_interconnector_losses!(sys, db, as_of) -> (added, skipped)
+
+Attaches each `PSY.AreaInterchange` already in `sys` its [`InterconnectorLossModel`](@ref) from
+[`interconnector_loss_models`](@ref), as of `as_of`.
+
+# Arguments
+- `sys`: the `System` to attach to.
+- `db`: the database connection.
+- `as_of`: `Date` or `DateTime` passed through to [`interconnector_loss_models`](@ref).
+
+# Returns
+`(added, skipped)`: `added::Vector{String}` of interconnector names attached, `skipped::Dict{
+String, Symbol}` mapping a skipped name to `:no_loss_model`.
+"""
+function attach_interconnector_losses!(sys, db, as_of::Union{Date, DateTime})
+    models = interconnector_loss_models(db, as_of)
+
+    added = String[]
+    skipped = Dict{String, Symbol}()
+    for area_interchange in get_components(PSY.AreaInterchange, sys)
+        name = PSY.get_name(area_interchange)
+        model = get(models, name, nothing)
+        if isnothing(model)
+            skipped[name] = :no_loss_model
+            continue
+        end
+        PSY.add_supplemental_attribute!(sys, area_interchange, model)
+        push!(added, name)
+    end
+
+    if !isempty(skipped)
+        @warn "attach_interconnector_losses!: skipped $(length(skipped)) of $(length(added) + length(skipped)) interconnector(s) with no resolvable loss model" skipped
+    end
+
+    return added, skipped
 end
