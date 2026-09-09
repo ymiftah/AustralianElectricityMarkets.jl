@@ -38,6 +38,10 @@ end
     include("constraints.jl")
 end
 
+@testset "Interconnector losses" begin
+    include("interconnector_losses.jl")
+end
+
 @testset "PSCB fixture" begin
     include("pscb_fixture_tests.jl")
 end
