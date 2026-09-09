@@ -65,6 +65,19 @@
         @test get_available(gc) == false
         set_rhs!(gc, 10.0)
         @test get_rhs(gc) == 10.0
+
+        gc_null_ext = GenericConstraint(;
+            name = "F_NULL_EXT", sense = ConstraintSense.LE, rhs = 1.0,
+            ext = Dict{String, Any}(
+                "limit_type" => missing, "source" => missing,
+                "effective_date" => missing, "version_no" => missing, "gencon_id" => missing,
+            ),
+        )
+        @test get_limit_type(gc_null_ext) === nothing
+        @test get_source(gc_null_ext) === nothing
+        @test get_effective_date(gc_null_ext) === nothing
+        @test get_version_no(gc_null_ext) === nothing
+        @test get_gencon_id(gc_null_ext) === nothing
     end
 
     @testset "GenericConstraint hand-authored: description field, no AEMO provenance" begin
