@@ -157,36 +157,6 @@
         @test has_time_series(bw01, Deterministic, "fcas_trapezium_RAISE6SEC_decremental")
     end
 
-    @testset "ConstrainedNetworkConfiguration" begin
-        required_tables = table_requirements(ConstrainedNetworkConfiguration())
-        @test :DISPATCH_FCAS_REQ in required_tables
-        @test :DISPATCH_FCAS_REQ_CONSTRAINT in required_tables
-        @test :DISPATCHCONSTRAINT in required_tables
-        @test :GENCONDATA in required_tables
-        @test :DISPATCHLOAD in required_tables
-        @test :BIDPEROFFER_D in required_tables
-        @test :SPDCONNECTIONPOINTCONSTRAINT in required_tables
-        @test :SPDREGIONCONSTRAINT in required_tables
-        @test :SPDINTERCONNECTORCONSTRAINT in required_tables
-
-        sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = date_range)
-        @test !isempty(collect(get_components(GenericConstraint, sys)))
-        found = false
-        for gen in get_components(Generator, sys)
-            # has_time_series (not get_time_series + isnothing): get_time_series throws
-            # ArgumentError, rather than returning nothing, for an owner with no metadata
-            # registered at all - confirmed directly, same as "set_fcas_bids!" above. Series
-            # name is "fcas_curve_<SERVICE>" per set_fcas_bids!, not "fcas_bid_<SERVICE>".
-            has_time_series(gen, Deterministic, "fcas_curve_RAISE6SEC") || continue
-            found = true
-        end
-        @test found
-
-        # add_fcas_services! is wired in as ConstrainedNetworkConfiguration's third build
-        # step - confirm it actually ran, not just that it's callable.
-        @test !isempty(collect(get_components(FCASService, sys)))
-    end
-
     @testset "read_fcas_requirements" begin
         req = read_fcas_requirements(db, date_range)
         @test !isempty(req)

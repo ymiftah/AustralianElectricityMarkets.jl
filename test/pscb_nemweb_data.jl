@@ -3,9 +3,9 @@ using Dates
 using DuckDB
 
 # NEMWEB fixture keyed to `augmented_pscb_system()`'s component names, for testing the FCAS and
-# constraint types against a real system. Only the tables `set_fcas_bids!` and
-# `add_nem_constraints!` read are written - `nem_system` is never called on this hive, so the
-# unit/station/interconnector build tables are deliberately absent.
+# constraint types against a real system. Only the tables `set_fcas_bids!`, `add_nem_constraints!`
+# and `attach_interconnector_losses!` read are written - `nem_system` is never called on this
+# hive, so the unit/station build tables are deliberately absent.
 #
 # `mock_data.jl` remains the fixture for the NEMWEB-quirk reader tests; this one exists so the
 # FCAS/constraint types are exercised against PowerSystemCaseBuilder's system rather than
@@ -60,6 +60,10 @@ Six constraints are defined, each reaching a distinct code path:
 | `N_HYDRO_LIMIT` | `<=` | unit (`CP_HYD`) | no |
 | `N_PARTIAL` | `<=` | unit (`CP_SOLAR`) | no, and invoked for only part of the grid |
 | `N_VERSIONED_LIMIT` | `<=` then `>=` | unit (`CP_BAT`) | no, and switches `GENCONDATA`/`SPD*` version (sense and `FACTOR` both change) partway through the grid, at [`PSCB_VERSION_SWITCH_FROM`](@ref) |
+
+`IC1` additionally gets an `INTERCONNECTORCONSTRAINT`/`LOSSMODEL`/`LOSSFACTORMODEL` loss model
+(5 breakpoints, region `"1"` -> `"2"`) for [`attach_interconnector_losses!`](@ref), and every
+`DUID` gets a `DISPATCHLOAD` row per interval, with `UIGF` populated only for `SOLAR1`.
 
 Intervals are 5-minutely over `2025-01-01T00:00` -> `02:00`, because
 `add_nem_constraints!` builds its series at a hardcoded `Minute(5)` resolution.
@@ -187,6 +191,52 @@ function create_pscb_nemweb_data(hive_root::String)
             LASTCHANGED = [base_datetime],
             archive_month = [am],
         ), :SPDINTERCONNECTORCONSTRAINT
+    )
+
+    # INTERCONNECTOR / INTERCONNECTORCONSTRAINT / LOSSMODEL / LOSSFACTORMODEL - IC1's loss
+    # model, keyed to augmented_pscb_system()'s "1"->"2" AreaInterchange and its 100 MW
+    # flow_limits, for attach_interconnector_losses!.
+    save_hive(
+        DataFrame(
+            INTERCONNECTORID = ["IC1"], REGIONFROM = ["1"], REGIONTO = ["2"], archive_month = [am],
+        ), :INTERCONNECTOR
+    )
+    save_hive(
+        DataFrame(
+            INTERCONNECTORID = ["IC1"],
+            EFFECTIVEDATE = [base_datetime],
+            VERSIONNO = [1],
+            MAXMWIN = [100.0],
+            MAXMWOUT = [100.0],
+            FROMREGIONLOSSSHARE = [0.5],
+            LOSSCONSTANT = [1.02],
+            LOSSFLOWCOEFFICIENT = [2.0e-4],
+            ICTYPE = ["REGULATED"],
+            archive_month = [am],
+        ), :INTERCONNECTORCONSTRAINT
+    )
+    let breaks = [-100.0, -50.0, 0.0, 50.0, 100.0]
+        nb = length(breaks)
+        save_hive(
+            DataFrame(
+                INTERCONNECTORID = fill("IC1", nb),
+                EFFECTIVEDATE = fill(base_datetime, nb),
+                VERSIONNO = fill(1, nb),
+                LOSSSEGMENT = collect(1:nb),
+                MWBREAKPOINT = breaks,
+                archive_month = fill(am, nb),
+            ), :LOSSMODEL
+        )
+    end
+    save_hive(
+        DataFrame(
+            INTERCONNECTORID = ["IC1", "IC1"],
+            EFFECTIVEDATE = fill(base_datetime, 2),
+            VERSIONNO = fill(1, 2),
+            REGIONID = ["1", "2"],
+            DEMANDCOEFFICIENT = [1.0e-5, -2.0e-5],
+            archive_month = fill(am, 2),
+        ), :LOSSFACTORMODEL
     )
 
     # DISPATCHCONSTRAINT - RHS varies per interval so the "rhs" series is not flat.
@@ -320,6 +370,34 @@ function create_pscb_nemweb_data(hive_root::String)
         df_day_offer[!, "PRICEBAND$b"] = fill(50.0 + b, nrow(df_day_offer))
     end
     save_hive(df_day_offer, :BIDDAYOFFER_D)
+
+    # DISPATCHLOAD - per-interval unit dispatch outcomes. SOLAR1 (the fixture's only
+    # semi-scheduled unit) gets a real UIGF; every other DUID gets `missing`, matching what
+    # real NEMWEB publishes. RAISE6SEC/LOWERREG target columns mirror the fixture's two
+    # FCAS markets, so read_fcas_dispatch's long-format output is non-empty.
+    uigf_for(duid, i) = duid == "SOLAR1" ? 20.0 + i : missing
+    df_dispatchload = DataFrame()
+    nd = length(PSCB_DUIDS)
+    for i in intervals
+        t = base_datetime + Minute(5 * i)
+        block = DataFrame(
+            SETTLEMENTDATE = fill(t, nd),
+            RUNNO = fill(1, nd),
+            INTERVENTION = fill(0, nd),
+            DUID = PSCB_DUIDS,
+            INITIALMW = fill(40.0 + i, nd),
+            TOTALCLEARED = fill(40.0 + i, nd),
+            AVAILABILITY = fill(100.0, nd),
+            AGCSTATUS = fill(1, nd),
+            UIGF = Union{Float64, Missing}[uigf_for(d, i) for d in PSCB_DUIDS],
+            RAISE6SEC = fill(5.0, nd),
+            RAISE6SECACTUALAVAILABILITY = fill(5.0, nd),
+            LOWERREG = fill(3.0, nd),
+            archive_month = fill(am, nd),
+        )
+        append!(df_dispatchload, block)
+    end
+    save_hive(df_dispatchload, :DISPATCHLOAD)
 
     DuckDB.disconnect(conn)
     return hive_root
