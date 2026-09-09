@@ -67,6 +67,7 @@ include("parser.jl")
 # bid_type::BidType fields both need BidType (defined in parser.jl) in scope at
 # struct-definition time.
 include("fcas/bids.jl")
+include("fcas/access.jl")
 include("constraints/terms.jl")
 include("constraints/generic_constraint.jl")
 include("constraints/read.jl")
@@ -77,6 +78,7 @@ export FCASTrapezium, FCASBid,
     get_enablement_min, get_low_breakpoint, get_high_breakpoint, get_enablement_max,
     get_max_avail, get_ramp_up_rate, get_ramp_down_rate, get_lower_slope_coeff, get_upper_slope_coeff,
     get_offer_curve, get_trapezium
+export get_fcas_trapezium, get_fcas_offer_curve, get_fcas_bid
 export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm, FCASRequirement,
     GenericConstraint,
     get_duid, get_bid_type, get_factor, get_interconnector, get_region, get_service, get_devices,

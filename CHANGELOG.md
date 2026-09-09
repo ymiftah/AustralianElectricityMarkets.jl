@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`get_fcas_trapezium`/`get_fcas_offer_curve`/`get_fcas_bid`**: New full-series accessors
+  reconstructing typed `FCASTrapezium`/`PiecewiseStepData`/`FCASBid` values from the raw
+  tuple/curve series `set_fcas_bids!` stores. `decremental = true` reads a storage device's
+  LOAD-direction series. Throw `ArgumentError` if the series isn't attached.
 - **`resolve_term_devices`**: New canonical resolver from a `ConstraintTerm` to the names of the
   devices it contributes in a `System` — a `UnitTerm`/`InterconnectorTerm`'s single named device
   if it exists, or every `Generator`/`Storage` in a `RegionTerm`'s region if its `Area` exists
@@ -34,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: `FCASBid.offer_curve` is now typed `PSY.PiecewiseStepData`**, not
+  `PSY.CostCurve{PiecewiseIncrementalCurve}`.
 - **BREAKING: `add_nem_constraints!` builds one `GenericConstraint` per exact `(GENCONID, EFFECTIVEDATE, VERSIONNO)` triple invoked, not one per bare `GENCONID`**, named `GENCONID@EFFECTIVEDATE#VERSIONNO` (e.g. `"N_BAYSW_THERMAL@2025-01-01#1"`).
   `GENCONID` is AEMO's reporting identity, not a stable mathematical one: AEMO revises a constraint's sense, terms and coefficients across versions while keeping `GENCONID` fixed, and on the real cache 178 of 6258 distinct constraint IDs (2.8%) were invoked under more than one version within a single archive month, 96 of those switches mid-day.
   Previously `add_nem_constraints!` merged every version invoked in the requested range into one `GenericConstraint`, silently blending different AEMO equations.

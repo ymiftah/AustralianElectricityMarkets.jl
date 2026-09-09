@@ -28,7 +28,7 @@
     end
 
     @testset "FCASBid construction" begin
-        curve = make_market_bid_curve(PiecewiseStepData([0.0, 5.0, 10.0], [50.0, 60.0]), 0.0)
+        curve = PiecewiseStepData([0.0, 5.0, 10.0], [50.0, 60.0])
         trapezium = FCASTrapezium(;
             enablement_min = 20.0, low_breakpoint = 30.0, high_breakpoint = 90.0,
             enablement_max = 100.0, max_avail = 10.0,
@@ -36,7 +36,80 @@
         bid = FCASBid(BidType.RAISE6SEC, curve, trapezium)
         @test get_service(bid) == BidType.RAISE6SEC
         @test get_offer_curve(bid) === curve
+        @test get_offer_curve(bid) isa PiecewiseStepData
         @test get_trapezium(bid) === trapezium
+    end
+
+    @testset "Tuple/FCASTrapezium round trip" begin
+        # Regulation markets: both ramp rates present.
+        with_ramps = FCASTrapezium(;
+            enablement_min = 1.0, low_breakpoint = 5.0, high_breakpoint = 9.0,
+            enablement_max = 13.0, max_avail = 4.0, ramp_up_rate = 2.0, ramp_down_rate = 3.0,
+        )
+        t = Tuple(with_ramps)
+        @test t isa NTuple{7, Float64}
+        @test t == (1.0, 5.0, 9.0, 13.0, 4.0, 2.0, 3.0)
+        back = FCASTrapezium(t)
+        @test back == with_ramps
+
+        # Non-regulation markets: both ramp rates nothing -> NaN -> nothing. NaN != NaN, so
+        # `==` on the tuple is wrong here - use isequal.
+        no_ramps = FCASTrapezium(;
+            enablement_min = 20.0, low_breakpoint = 30.0, high_breakpoint = 90.0,
+            enablement_max = 100.0, max_avail = 10.0,
+        )
+        nt = Tuple(no_ramps)
+        @test isnan(nt[6])
+        @test isnan(nt[7])
+        @test isequal(nt, (20.0, 30.0, 90.0, 100.0, 10.0, NaN, NaN))
+        back_no_ramps = FCASTrapezium(nt)
+        @test back_no_ramps.enablement_min == no_ramps.enablement_min
+        @test back_no_ramps.low_breakpoint == no_ramps.low_breakpoint
+        @test back_no_ramps.high_breakpoint == no_ramps.high_breakpoint
+        @test back_no_ramps.enablement_max == no_ramps.enablement_max
+        @test back_no_ramps.max_avail == no_ramps.max_avail
+        @test isnothing(back_no_ramps.ramp_up_rate)
+        @test isnothing(back_no_ramps.ramp_down_rate)
+        @test isequal(back_no_ramps, no_ramps)
+    end
+
+    @testset "get_fcas_trapezium/get_fcas_offer_curve/get_fcas_bid" begin
+        sys = nem_system(db, RegionalNetworkConfiguration())
+        set_fcas_bids!(sys, db, date_range)
+        bw01 = get_component(EnergyReservoirStorage, sys, "BW01")
+        horizon = length(date_range) - 1
+
+        trapeziums = get_fcas_trapezium(bw01, BidType.RAISE6SEC, start_date, horizon)
+        curves = get_fcas_offer_curve(bw01, BidType.RAISE6SEC, start_date, horizon)
+        bids = get_fcas_bid(bw01, BidType.RAISE6SEC, start_date, horizon)
+        @test trapeziums isa Vector{FCASTrapezium}
+        @test curves isa Vector{PiecewiseStepData}
+        @test bids isa Vector{FCASBid}
+        @test length(trapeziums) == length(curves) == length(bids) == horizon
+        @test all(get_trapezium(b) == trapeziums[i] for (i, b) in enumerate(bids))
+        @test all(get_offer_curve(b) == curves[i] for (i, b) in enumerate(bids))
+
+        # decremental = true reads a genuinely separate series: it succeeds for BW01 (which
+        # has both directions attached) but throws for a Generator (incremental-only), proving
+        # it isn't just re-reading the incremental series under a different name.
+        dec_trapeziums = get_fcas_trapezium(bw01, BidType.RAISE6SEC, start_date, horizon; decremental = true)
+        @test dec_trapeziums isa Vector{FCASTrapezium}
+        @test length(dec_trapeziums) == horizon
+        @test_throws ArgumentError get_fcas_trapezium(
+            first(get_components(Generator, sys)), BidType.RAISE6SEC, start_date, horizon; decremental = true,
+        )
+
+        # A component with no FCAS series attached at all throws, naming what's missing.
+        no_bids_sys = nem_system(db, RegionalNetworkConfiguration())
+        no_bids_gen = first(get_components(Generator, no_bids_sys))
+        err = try
+            get_fcas_trapezium(no_bids_gen, BidType.RAISE6SEC, start_date, horizon)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("RAISE6SEC", err.msg)
     end
 
     @testset "read_fcas_bids" begin

@@ -489,24 +489,24 @@ end
 """
     _extract_fcas_bid(row)
 
-Mirrors [`_extract_power_bids`](@ref), additionally building the FCAS trapezium row from
-`row`'s trapezium columns ([`_read_fcas_trapezium`](@ref)). Returns `(curve_data,
-trapezium_row)`: a `PiecewiseStepData` plus an `NTuple{7,Float64}` packing
-`(enablement_min, low_breakpoint, high_breakpoint, enablement_max, max_avail, ramp_up_rate,
-ramp_down_rate)` (`NaN` where a ramp rate is missing, i.e. non-regulation markets) - the
-shape [`set_fcas_bids!`](@ref) attaches as two `Deterministic` series per (generator,
-market). Not a single [`FCASBid`](@ref)/[`FCASTrapezium`](@ref) object: confirmed directly
-that `Deterministic` rejects `FCASBid` and bare `Vector{Float64}` as a per-step element type
-(see `test/fcas.jl`'s `"FCASBid time series round-trip"` testset).
+Mirrors [`_extract_power_bids`](@ref), also building the FCAS trapezium.
+
+# Returns
+`(curve_data, trapezium_row)`: a `PiecewiseStepData` and the `NTuple{7,Float64}` wire form
+of an [`FCASTrapezium`](@ref).
 """
 function _extract_fcas_bid(row)
     curve_data = _extract_power_bids(row)
-    trapezium_row = (
-        row.ENABLEMENTMIN, row.LOWBREAKPOINT, row.HIGHBREAKPOINT, row.ENABLEMENTMAX, row.MAXAVAIL,
-        ismissing(row.ROCUP) ? NaN : Float64(row.ROCUP),
-        ismissing(row.ROCDOWN) ? NaN : Float64(row.ROCDOWN),
+    trapezium = FCASTrapezium(;
+        enablement_min = Float64(row.ENABLEMENTMIN),
+        low_breakpoint = Float64(row.LOWBREAKPOINT),
+        high_breakpoint = Float64(row.HIGHBREAKPOINT),
+        enablement_max = Float64(row.ENABLEMENTMAX),
+        max_avail = Float64(row.MAXAVAIL),
+        ramp_up_rate = ismissing(row.ROCUP) ? nothing : Float64(row.ROCUP),
+        ramp_down_rate = ismissing(row.ROCDOWN) ? nothing : Float64(row.ROCDOWN),
     )
-    return curve_data, trapezium_row
+    return curve_data, Tuple(trapezium)
 end
 
 """
