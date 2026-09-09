@@ -181,6 +181,10 @@
             found = true
         end
         @test found
+
+        # add_fcas_services! is wired in as ConstrainedNetworkConfiguration's third build
+        # step - confirm it actually ran, not just that it's callable.
+        @test !isempty(collect(get_components(FCASService, sys)))
     end
 
     @testset "read_fcas_requirements" begin

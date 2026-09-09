@@ -783,9 +783,9 @@ export RegionalNetworkConfiguration
 """
     Like `RegionalNetworkConfiguration`, but also pulls the tables needed for NEM generic
     constraints — FCAS requirements and network limits alike (see `GenericConstraint`) — and
-    builds them into the resulting system via `set_fcas_bids!`/`add_nem_constraints!`. Kept
-    separate from `RegionalNetworkConfiguration` so energy-only users aren't forced to pull
-    the extra tables.
+    builds them into the resulting system via `set_fcas_bids!`/`add_nem_constraints!`/
+    `add_fcas_services!`. Kept separate from `RegionalNetworkConfiguration` so energy-only
+    users aren't forced to pull the extra tables.
 """
 struct ConstrainedNetworkConfiguration <: NetworkConfiguration end
 
@@ -823,6 +823,7 @@ function AustralianElectricityMarkets.nem_system(db, ::ConstrainedNetworkConfigu
     sys = nem_system(db; kwargs...)
     set_fcas_bids!(sys, db, date_range)
     add_nem_constraints!(sys, db, date_range)
+    add_fcas_services!(sys)
     return sys
 end
 
