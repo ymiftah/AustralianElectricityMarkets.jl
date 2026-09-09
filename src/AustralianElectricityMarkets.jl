@@ -72,6 +72,7 @@ include("constraints/terms.jl")
 include("constraints/generic_constraint.jl")
 include("constraints/read.jl")
 include("constraints/resolve.jl")
+include("fcas/service.jl")
 include("constraints/build.jl")
 
 export FCASTrapezium, FCASBid,
@@ -86,6 +87,7 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
     get_limit_type, get_source, get_effective_date, get_version_no, get_gencon_id,
     get_terms, set_terms!, get_fcas_requirements, set_fcas_requirements!,
     resolve_term_devices
+export FCASService, add_fcas_services!
 
 # Parsing data into models
 include("network_models/region_model.jl")

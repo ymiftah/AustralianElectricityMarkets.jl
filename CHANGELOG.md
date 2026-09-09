@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FCASService`/`add_fcas_services!`**: New `PSY.Service` anchoring the devices
+  contributing to each `(region, bid_type)` FCAS market actually governed by a
+  `GenericConstraint` in a `System` — a plain `add_service!` join, carrying no requirement or
+  time series of its own. Wired as the third build step in `ConstrainedNetworkConfiguration`,
+  after `set_fcas_bids!`/`add_nem_constraints!`.
 - **`get_fcas_trapezium`/`get_fcas_offer_curve`/`get_fcas_bid`**: New full-series accessors
   reconstructing typed `FCASTrapezium`/`PiecewiseStepData`/`FCASBid` values from the raw
   tuple/curve series `set_fcas_bids!` stores. `decremental = true` reads a storage device's

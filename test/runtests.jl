@@ -46,6 +46,10 @@ end
     include("pscb_constraints.jl")
 end
 
+@testset "PSCB FCASService" begin
+    include("fcas_service.jl")
+end
+
 
 @testset "Aqua" begin
     include("aqua.jl")
