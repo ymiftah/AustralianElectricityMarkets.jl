@@ -117,7 +117,7 @@ function create_mock_data(hive_root::String)
             MINCAPACITY = fill(10.0, n),
             MAXCAPACITY = fill(100.0, n),
             # ER01 (index 5) carries deliberately asymmetric ramp rates - guards against
-            # up/down being crossed when mapped into PSY ramp_limits (see test/regionmodel.jl).
+            # up/down being crossed when mapped into PSY ramp_limits (see test/network_models/common.jl).
             MAXRATEOFCHANGEDOWN = [1.0, 1.0, 1.0, 1.0, 7.0, 1.0],
             MAXRATEOFCHANGEUP = [1.0, 1.0, 1.0, 1.0, 3.0, 1.0],
             MAXSTORAGECAPACITY = fill(200.0, n),
@@ -131,7 +131,7 @@ function create_mock_data(hive_root::String)
     # point and ER01-02 under Eraring's - exercises the constraint-term reader's 1:many
     # connection-point -> DUID expansion. A 7th, PHANTOM1 row shares no other table (never
     # becomes a System component) - exercises add_nem_constraints!'s unresolvable-term skip
-    # path (see test/constraints.jl).
+    # path (see test/constraints/constraints.jl).
     connection_points = ["CP_BAYSW", "CP_BAYSW", "CP_BAYSW", "CP_BAYSW", "CP_ERARING", "CP_ERARING"]
     save_hive(
         vcat(
@@ -382,7 +382,7 @@ function create_mock_data(hive_root::String)
     # DUID, which is never built into a System component), and one partial-coverage
     # constraint (N_PARTIAL_COVERAGE, invoked in DISPATCHCONSTRAINT for only every other
     # interval - exercises add_nem_constraints!'s rhs-padding/"invoked"-mask path, see
-    # test/constraints.jl).
+    # test/constraints/constraints.jl).
     gencon_ids = ["F_$(region)_$(bid_type)" for region in regions for bid_type in fcas_bid_types]
     all_gencon_ids = vcat(gencon_ids, ["N_BAYSW_THERMAL", "N_PHANTOM_TEST", "N_PARTIAL_COVERAGE"])
     n_all = length(all_gencon_ids)

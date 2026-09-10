@@ -11,7 +11,7 @@ plus an `FCASTrapezium`. `IS.Deterministic`'s inner constructor gates the per-st
 type through `is_transform_array_for_hdf_supported`, a closed dispatch table (`Real`, concrete
 `Tuple`, `Matrix`, and PSY's named curve types). Neither `FCASTrapezium` nor `FCASBid` matches
 any of those, so both are rejected outright at construction — confirmed directly, not assumed
-(`test/fcas.jl`'s `"FCASBid time series round-trip"` testset).
+(`test/fcas/fcas.jl`'s `"FCASBid time series round-trip"` testset).
 
 ## Decision
 

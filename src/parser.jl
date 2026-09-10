@@ -578,7 +578,7 @@ large share of real FCAS providers - measured on 2 Jan 2025 `BIDPEROFFER_D`, `LO
 
 Two series, not one carrying [`FCASBid`](@ref)/[`FCASTrapezium`](@ref) objects directly:
 confirmed directly that `Deterministic` rejects those (and bare `Vector{Float64}`) as a
-per-step element type - see `test/fcas.jl`'s `"FCASBid time series round-trip"` testset for
+per-step element type - see `test/fcas/fcas.jl`'s `"FCASBid time series round-trip"` testset for
 the proven shape this mirrors. Does not require or create any `Reserve`/service - FCAS
 requirements are [`GenericConstraint`](@ref)s built separately by
 [`add_nem_constraints!`](@ref).
