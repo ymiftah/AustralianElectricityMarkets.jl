@@ -16,11 +16,15 @@ import PowerSimulations as PSI
 import PowerSystems as PSY
 
 include("errors.jl")
+include("constraint_formulations.jl")
+include("psi_compat.jl")
 include("replication/inputs.jl")
 include("replication/preprocessing.jl")
 
 export IntervalInputs, read_interval_inputs
 export energy_bounds
 export EffectiveTrapezium, scale_trapezium, lower_slope_coeff, upper_slope_coeff
+export AbstractNEMConstraintFormulation, NEMConstraintLHS, NEMConstraintLimit,
+    NEMConstraintRHSParameter, LinearFactorLimit, FCASMarket
 
 end
