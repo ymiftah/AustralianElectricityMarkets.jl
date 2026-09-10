@@ -73,6 +73,23 @@
         @test isequal(back_no_ramps, no_ramps)
     end
 
+    @testset "_extract_fcas_bid throws an actionable error on a missing required field" begin
+        row = (
+            DIRECTION = "GEN", PRICEBANDARRAY = [10.0, 20.0], BANDAVAILARRAY = [5.0, 5.0],
+            DUID = "BW01", ENABLEMENTMIN = missing, LOWBREAKPOINT = 30.0, HIGHBREAKPOINT = 90.0,
+            ENABLEMENTMAX = 100.0, MAXAVAIL = 10.0, ROCUP = missing, ROCDOWN = missing,
+        )
+        err = try
+            AustralianElectricityMarkets._extract_fcas_bid(row)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("ENABLEMENTMIN", err.msg)
+        @test occursin("BW01", err.msg)
+    end
+
     @testset "get_fcas_trapezium/get_fcas_offer_curve/get_fcas_bid" begin
         sys = nem_system(db, RegionalNetworkConfiguration())
         set_fcas_bids!(sys, db, date_range)
