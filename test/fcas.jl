@@ -129,6 +129,31 @@
         @test occursin("RAISE6SEC", err.msg)
     end
 
+    @testset "_require_equal_length throws on mismatched trapezium/curve series lengths" begin
+        trapeziums = FCASTrapezium[
+            FCASTrapezium(;
+                enablement_min = 1.0, low_breakpoint = 2.0, high_breakpoint = 3.0,
+                enablement_max = 4.0, max_avail = 5.0,
+            ),
+        ]
+        curves = PiecewiseStepData[
+            PiecewiseStepData([0.0, 1.0], [1.0]), PiecewiseStepData([0.0, 1.0], [1.0]),
+        ]
+
+        # Create a simple mock component for testing
+        mock_bus = ACBus(; number = 1, name = "BW01", available = true, bustype = ACBusTypes.REF, angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1), base_voltage = 130.0)
+
+        err = try
+            AustralianElectricityMarkets._require_equal_length(trapeziums, curves, BidType.RAISE6SEC, mock_bus)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("RAISE6SEC", err.msg)
+        @test occursin("BW01", err.msg)
+    end
+
     @testset "read_fcas_bids" begin
         bids = read_fcas_bids(db, date_range, BidType.RAISE6SEC)
         @test !isempty(bids)

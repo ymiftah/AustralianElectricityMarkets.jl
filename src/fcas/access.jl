@@ -41,14 +41,33 @@ function get_fcas_offer_curve(component, service::BidType, initial_time, horizon
 end
 
 """
+    _require_equal_length(a, b, service, component)
+
+`nothing` if `a` and `b` have the same length; otherwise an `ArgumentError` naming `service`
+and `component`.
+"""
+function _require_equal_length(a::AbstractVector, b::AbstractVector, service::BidType, component)
+    length(a) == length(b) || throw(
+        ArgumentError(
+            "FCAS trapezium series ($(length(a)) points) and offer curve series " *
+                "($(length(b)) points) for $(string(service)) on \"$(get_name(component))\" " *
+                "have different lengths - cannot pair them into FCASBids.",
+        ),
+    )
+    return nothing
+end
+
+"""
     get_fcas_bid(component, service, initial_time, horizon; decremental = false) -> Vector{FCASBid}
 
 Full-series read of `component`'s FCAS bid for `service`, `horizon` steps from
 `initial_time`. `decremental` selects the storage `DIRECTION == "LOAD"` series. Throws
-`ArgumentError` if the series isn't attached.
+`ArgumentError` if the series isn't attached or if the trapezium and curve series have
+different lengths.
 """
 function get_fcas_bid(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
     trapeziums = get_fcas_trapezium(component, service, initial_time, horizon; decremental = decremental)
     curves = get_fcas_offer_curve(component, service, initial_time, horizon; decremental = decremental)
+    _require_equal_length(trapeziums, curves, service, component)
     return [FCASBid(service, curve, trapezium) for (curve, trapezium) in zip(curves, trapeziums)]
 end
