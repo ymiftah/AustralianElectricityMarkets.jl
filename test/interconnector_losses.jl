@@ -62,6 +62,15 @@ end
         demand_coefficients = Dict{String, Float64}(), breakpoints = [0.0],
     )
     @test_throws ArgumentError loss_segments(single, TEST_DEMAND)
+
+    # Two equal adjacent breakpoints would otherwise divide by zero and produce a silent NaN
+    # slope, corrupting any downstream LP that consumes loss_segments' output.
+    degenerate = InterconnectorLossModel(;
+        interconnector = "IC_DEGENERATE", from_region = "VIC1", to_region = "NSW1",
+        from_region_loss_share = 0.5, loss_constant = 1.0, loss_flow_coefficient = 0.0,
+        demand_coefficients = Dict{String, Float64}(), breakpoints = [0.0, 0.0, 500.0],
+    )
+    @test_throws ArgumentError loss_segments(degenerate, TEST_DEMAND)
 end
 
 let

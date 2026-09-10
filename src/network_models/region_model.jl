@@ -3,6 +3,7 @@ module RegionModel
 using ..AustralianElectricityMarkets
 using DataFrames, Chain, Statistics
 using PowerSystems
+using Dates
 
 export nem_system, set_demand!, set_renewable_pv!, set_renewable_wind!
 
@@ -786,6 +787,16 @@ export RegionalNetworkConfiguration
     builds them into the resulting system via `set_fcas_bids!`/`add_nem_constraints!`/
     `add_fcas_services!`/`attach_interconnector_losses!`. Kept separate from
     `RegionalNetworkConfiguration` so energy-only users aren't forced to pull the extra tables.
+
+# Arguments
+- `date_range`: required, the date range to build FCAS bids and constraints over.
+- `intervention`: which AEMO intervention run to read (default `0`).
+- `include_solution`: whether to attach `"lhs"`/`"marginal_value"` solution series to each
+  `GenericConstraint` (default `false`).
+- `resolution`: the resolution for `GenericConstraint` time series; inferred from the data
+  when `nothing` (default). FCAS bid series are unaffected and always use `Minute(5)`.
+- `allow_empty_region_terms`: whether to proceed (with a warning) instead of throwing when a
+  `RegionTerm`'s region has no matching device (default `false`).
 """
 struct ConstrainedNetworkConfiguration <: NetworkConfiguration end
 
@@ -812,17 +823,24 @@ AustralianElectricityMarkets.table_requirements(::ConstrainedNetworkConfiguratio
     :SPDINTERCONNECTORCONSTRAINT,
 ]
 
-# date_range is its own explicit keyword (not extracted from kwargs after the fact): this
-# makes Julia's keyword dispatch bind it separately so it is excluded from what `kwargs...`
-# forwards down to `System(base_power; kwargs...)`, whose constructor rejects any kwarg it
-# doesn't recognize - confirmed directly that forwarding date_range through kwargs crashes.
-function AustralianElectricityMarkets.nem_system(db, ::ConstrainedNetworkConfiguration; date_range = nothing, kwargs...)
+# Explicit kwargs (not folded into kwargs...) so none of them leak into System(base_power;
+# kwargs...), which rejects any kwarg it doesn't recognize.
+function AustralianElectricityMarkets.nem_system(
+        db, ::ConstrainedNetworkConfiguration; date_range = nothing,
+        intervention::Integer = 0, include_solution::Bool = false,
+        resolution::Union{Nothing, Dates.Period} = nothing,
+        allow_empty_region_terms::Bool = false,
+        kwargs...,
+    )
     if isnothing(date_range)
         error("ConstrainedNetworkConfiguration requires a `date_range` keyword argument (e.g. `nem_system(db, ConstrainedNetworkConfiguration(); date_range = start:Minute(5):stop)`).")
     end
     sys = nem_system(db; kwargs...)
     set_fcas_bids!(sys, db, date_range)
-    add_nem_constraints!(sys, db, date_range)
+    add_nem_constraints!(
+        sys, db, date_range; intervention = intervention, include_solution = include_solution,
+        resolution = resolution, allow_empty_region_terms = allow_empty_region_terms,
+    )
     add_fcas_services!(sys)
     attach_interconnector_losses!(sys, db, first(date_range))
     return sys

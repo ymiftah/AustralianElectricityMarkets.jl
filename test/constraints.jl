@@ -65,6 +65,19 @@
         @test get_available(gc) == false
         set_rhs!(gc, 10.0)
         @test get_rhs(gc) == 10.0
+
+        gc_null_ext = GenericConstraint(;
+            name = "F_NULL_EXT", sense = ConstraintSense.LE, rhs = 1.0,
+            ext = Dict{String, Any}(
+                "limit_type" => missing, "source" => missing,
+                "effective_date" => missing, "version_no" => missing, "gencon_id" => missing,
+            ),
+        )
+        @test get_limit_type(gc_null_ext) === nothing
+        @test get_source(gc_null_ext) === nothing
+        @test get_effective_date(gc_null_ext) === nothing
+        @test get_version_no(gc_null_ext) === nothing
+        @test get_gencon_id(gc_null_ext) === nothing
     end
 
     @testset "GenericConstraint hand-authored: description field, no AEMO provenance" begin
@@ -399,9 +412,14 @@ end
         @test occursin("LOWERREG", err.msg)
         @test occursin("allow_empty_region_terms", err.msg)
 
-        # A fresh System: the default call above already threw after partially mutating
-        # sys_relocated (the aggregated throw happens only after the whole build completes),
-        # so reusing it here would double-add the constraints it did manage to attach.
+        # The throw must leave sys untouched - a caller retrying with
+        # allow_empty_region_terms=true on the same sys must not hit duplicate-component
+        # errors from whatever this call partially added before it threw.
+        @test isempty(collect(get_components(GenericConstraint, sys_relocated)))
+
+        # A fresh System, not sys_relocated: sys_relocated is now guaranteed untouched by the
+        # throw above (see the isempty assertion), but a separate System still keeps this
+        # warn-path scenario isolated from the throw-path one.
         sys_relocated_ok = nem_system(db, RegionalNetworkConfiguration())
         er01_ok = get_component(Device, sys_relocated_ok, "ER01")
         set_bus!(er01_ok, get_bus(sys_relocated_ok, "NSW1_GEN_BUS"))
@@ -449,6 +467,34 @@ end
         rhs_len = length(first(values(get_data(get_time_series(Deterministic, gap_gc, "rhs")))))
         @test rhs_len == length(date_range) - 1
         @test rhs_len != length(unique(invoked_gap.SETTLEMENTDATE))
+    end
+
+    @testset "grid misalignment between invoked SETTLEMENTDATE and date_range warns" begin
+        # Shift one row's SETTLEMENTDATE by 1 second so it can never match date_range's
+        # 5-minute grid exactly - reproduces a caller passing a date_range whose step doesn't
+        # match the cache's real dispatch cadence.
+        misaligned_hive = mktempdir()
+        create_mock_data(misaligned_hive)
+        constraint_dir = joinpath(misaligned_hive, "DISPATCHCONSTRAINT")
+        shift_time = start_date + Minute(5 * 3)
+        misalign_conn = DuckDB.connect(DuckDB.DB())
+        DuckDB.execute(misalign_conn, "SET preserve_identifier_case=true")
+        new_dir = constraint_dir * "_new"
+        DuckDB.execute(
+            misalign_conn,
+            "COPY (SELECT * REPLACE (CASE WHEN SETTLEMENTDATE = TIMESTAMP '$(shift_time)' " *
+                "THEN SETTLEMENTDATE + INTERVAL 1 SECOND ELSE SETTLEMENTDATE END AS SETTLEMENTDATE) " *
+                "FROM read_parquet('$(constraint_dir)/**/*.parquet', hive_partitioning=true)) " *
+                "TO '$(new_dir)' (FORMAT 'PARQUET', PARTITION_BY (archive_month))",
+        )
+        rm(constraint_dir; recursive = true)
+        mv(new_dir, constraint_dir)
+
+        misaligned_db = aem_connect(HiveConfiguration(hive_location = misaligned_hive, filesystem = "file"))
+        misaligned_sys = nem_system(misaligned_db, RegionalNetworkConfiguration())
+        @test_logs (:warn, r"fall outside date_range's grid") match_mode = :any begin
+            add_nem_constraints!(misaligned_sys, misaligned_db, date_range)
+        end
     end
 
     @testset "resolution inference" begin

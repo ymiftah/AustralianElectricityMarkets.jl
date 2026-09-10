@@ -104,7 +104,7 @@ end
 flow across the segment — the chord of [`interconnector_losses`](@ref), which is exact at every
 breakpoint and is what NEMDE's LP sees.
 
-Throws `ArgumentError` when `model` carries fewer than two breakpoints.
+Throws `ArgumentError` when `model` carries fewer than two breakpoints or has duplicate adjacent breakpoints.
 """
 function loss_segments(model::InterconnectorLossModel, demand::AbstractDict)
     length(model.breakpoints) < 2 && throw(
@@ -115,6 +115,13 @@ function loss_segments(model::InterconnectorLossModel, demand::AbstractDict)
         ),
     )
     bps = model.breakpoints
+    any(bps[i] == bps[i + 1] for i in 1:(length(bps) - 1)) && throw(
+        ArgumentError(
+            "interconnector $(model.interconnector) has duplicate adjacent loss breakpoints " *
+                "$(bps) - cannot compute a segment slope. Check LOSSMODEL for the affected " *
+                "EFFECTIVEDATE/VERSIONNO.",
+        ),
+    )
     return [
         (
                 from_mw = bps[i],

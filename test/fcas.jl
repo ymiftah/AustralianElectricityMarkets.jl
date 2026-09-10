@@ -73,6 +73,23 @@
         @test isequal(back_no_ramps, no_ramps)
     end
 
+    @testset "_extract_fcas_bid throws an actionable error on a missing required field" begin
+        row = (
+            DIRECTION = "GEN", PRICEBANDARRAY = [10.0, 20.0], BANDAVAILARRAY = [5.0, 5.0],
+            DUID = "BW01", ENABLEMENTMIN = missing, LOWBREAKPOINT = 30.0, HIGHBREAKPOINT = 90.0,
+            ENABLEMENTMAX = 100.0, MAXAVAIL = 10.0, ROCUP = missing, ROCDOWN = missing,
+        )
+        err = try
+            AustralianElectricityMarkets._extract_fcas_bid(row)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("ENABLEMENTMIN", err.msg)
+        @test occursin("BW01", err.msg)
+    end
+
     @testset "get_fcas_trapezium/get_fcas_offer_curve/get_fcas_bid" begin
         sys = nem_system(db, RegionalNetworkConfiguration())
         set_fcas_bids!(sys, db, date_range)
@@ -110,6 +127,31 @@
         end
         @test err isa ArgumentError
         @test occursin("RAISE6SEC", err.msg)
+    end
+
+    @testset "_require_equal_length throws on mismatched trapezium/curve series lengths" begin
+        trapeziums = FCASTrapezium[
+            FCASTrapezium(;
+                enablement_min = 1.0, low_breakpoint = 2.0, high_breakpoint = 3.0,
+                enablement_max = 4.0, max_avail = 5.0,
+            ),
+        ]
+        curves = PiecewiseStepData[
+            PiecewiseStepData([0.0, 1.0], [1.0]), PiecewiseStepData([0.0, 1.0], [1.0]),
+        ]
+
+        # Create a simple mock component for testing
+        mock_bus = ACBus(; number = 1, name = "BW01", available = true, bustype = ACBusTypes.REF, angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1), base_voltage = 130.0)
+
+        err = try
+            AustralianElectricityMarkets._require_equal_length(trapeziums, curves, BidType.RAISE6SEC, mock_bus)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("RAISE6SEC", err.msg)
+        @test occursin("BW01", err.msg)
     end
 
     @testset "read_fcas_bids" begin

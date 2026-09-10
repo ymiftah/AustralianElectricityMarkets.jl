@@ -487,6 +487,23 @@ function _read_fcas_trapezium(db, energy_bids_table, bid_type::BidType, start_da
 end
 
 """
+    _require_fcas_float(row, field::Symbol)
+
+`Float64(getproperty(row, field))`, or an actionable `ArgumentError` naming `field` and the
+row's `DUID` if the value is `missing`.
+"""
+function _require_fcas_float(row, field::Symbol)
+    value = getproperty(row, field)
+    ismissing(value) && throw(
+        ArgumentError(
+            "BIDPEROFFER_D.$field is missing for DUID $(row.DUID) - cannot build an " *
+                "FCASTrapezium without it.",
+        ),
+    )
+    return Float64(value)
+end
+
+"""
     _extract_fcas_bid(row)
 
 Mirrors [`_extract_power_bids`](@ref), also building the FCAS trapezium.
@@ -498,11 +515,11 @@ of an [`FCASTrapezium`](@ref).
 function _extract_fcas_bid(row)
     curve_data = _extract_power_bids(row)
     trapezium = FCASTrapezium(;
-        enablement_min = Float64(row.ENABLEMENTMIN),
-        low_breakpoint = Float64(row.LOWBREAKPOINT),
-        high_breakpoint = Float64(row.HIGHBREAKPOINT),
-        enablement_max = Float64(row.ENABLEMENTMAX),
-        max_avail = Float64(row.MAXAVAIL),
+        enablement_min = _require_fcas_float(row, :ENABLEMENTMIN),
+        low_breakpoint = _require_fcas_float(row, :LOWBREAKPOINT),
+        high_breakpoint = _require_fcas_float(row, :HIGHBREAKPOINT),
+        enablement_max = _require_fcas_float(row, :ENABLEMENTMAX),
+        max_avail = _require_fcas_float(row, :MAXAVAIL),
         ramp_up_rate = ismissing(row.ROCUP) ? nothing : Float64(row.ROCUP),
         ramp_down_rate = ismissing(row.ROCDOWN) ? nothing : Float64(row.ROCDOWN),
     )

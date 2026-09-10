@@ -68,28 +68,28 @@ PSY.set_ext!(value::GenericConstraint, val) = value.ext = val
 
 `GENCONDATA.LIMITTYPE`, or `nothing` if absent.
 """
-get_limit_type(value::GenericConstraint) = get(value.ext, "limit_type", nothing)
+get_limit_type(value::GenericConstraint) = coalesce(get(value.ext, "limit_type", nothing), nothing)
 
 """
     get_source(value::GenericConstraint) -> Union{String, Nothing}
 
 `GENCONDATA.SOURCE`, or `nothing` if absent.
 """
-get_source(value::GenericConstraint) = get(value.ext, "source", nothing)
+get_source(value::GenericConstraint) = coalesce(get(value.ext, "source", nothing), nothing)
 
 """
     get_effective_date(value::GenericConstraint) -> Union{String, Nothing}
 
 `GENCONDATA.EFFECTIVEDATE`, or `nothing` if absent.
 """
-get_effective_date(value::GenericConstraint) = get(value.ext, "effective_date", nothing)
+get_effective_date(value::GenericConstraint) = coalesce(get(value.ext, "effective_date", nothing), nothing)
 
 """
     get_version_no(value::GenericConstraint) -> Union{Int, Nothing}
 
 `GENCONDATA.VERSIONNO`, or `nothing` if absent.
 """
-get_version_no(value::GenericConstraint) = get(value.ext, "version_no", nothing)
+get_version_no(value::GenericConstraint) = coalesce(get(value.ext, "version_no", nothing), nothing)
 
 """
     get_gencon_id(value::GenericConstraint) -> Union{String, Nothing}
@@ -97,4 +97,4 @@ get_version_no(value::GenericConstraint) = get(value.ext, "version_no", nothing)
 AEMO's bare `GENCONID`, unversioned — unlike [`get_name`](@ref), which may include the
 `EFFECTIVEDATE#VERSIONNO` suffix. Returns `nothing` if absent.
 """
-get_gencon_id(value::GenericConstraint) = get(value.ext, "gencon_id", nothing)
+get_gencon_id(value::GenericConstraint) = coalesce(get(value.ext, "gencon_id", nothing), nothing)

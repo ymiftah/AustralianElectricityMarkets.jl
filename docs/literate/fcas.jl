@@ -366,7 +366,7 @@ end
 #   automatically (it requires a `date_range` keyword, since both are interval-scoped).
 
 sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = date_range)
-get_component(GenericConstraint, sys, "F_T+NIL_MG_R6")
+only(filter(gc -> get_gencon_id(gc) == "F_T+NIL_MG_R6", collect(get_components(GenericConstraint, sys))))
 
 # **Not (yet) modelled** by this package, stated plainly:
 #

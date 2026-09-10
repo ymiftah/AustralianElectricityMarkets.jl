@@ -80,6 +80,20 @@
         @test isnothing(get_component(FCASService, sys, "1_ENERGY"))
     end
 
+    @testset "disarmed GenericConstraint's FCAS requirement is excluded" begin
+        vname(gencon_id, version = 1) = "$gencon_id@2025-01-01#$version"
+        sys = augmented_pscb_system()
+        set_fcas_bids!(sys, db, date_range)
+        add_nem_constraints!(sys, db, date_range)
+
+        gc = get_component(GenericConstraint, sys, vname("F_R1_RAISE6SEC"))
+        set_available!(gc, false)
+
+        added, skipped = add_fcas_services!(sys)
+        @test "1_RAISE6SEC" ∉ added
+        @test isnothing(get_component(FCASService, sys, "1_RAISE6SEC"))
+    end
+
     @testset "device with only a decremental bid series still contributes" begin
         # Neither this fixture nor mock_data.jl ever produces a decremental-only device -
         # every DUID that gets a LOAD row (BAT1 here, BW01 in mock_data.jl) also gets a
