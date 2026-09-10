@@ -67,6 +67,7 @@ Symbol}` mapping a skipped `"<REGIONID>_<BIDTYPE>"` name to `:no_devices`.
 function add_fcas_services!(sys)
     pairs = Set{Tuple{String, BidType}}()
     for gc in get_components(GenericConstraint, sys)
+        get_available(gc) || continue
         for req in get_fcas_requirements(gc)
             push!(pairs, (get_region(req), get_service(req)))
         end
