@@ -787,6 +787,16 @@ export RegionalNetworkConfiguration
     builds them into the resulting system via `set_fcas_bids!`/`add_nem_constraints!`/
     `add_fcas_services!`/`attach_interconnector_losses!`. Kept separate from
     `RegionalNetworkConfiguration` so energy-only users aren't forced to pull the extra tables.
+
+# Arguments
+- `date_range`: required, the date range to build FCAS bids and constraints over.
+- `intervention`: which AEMO intervention run to read (default `0`).
+- `include_solution`: whether to attach `"lhs"`/`"marginal_value"` solution series to each
+  `GenericConstraint` (default `false`).
+- `resolution`: the resolution for `GenericConstraint` time series; inferred from the data
+  when `nothing` (default). FCAS bid series are unaffected and always use `Minute(5)`.
+- `allow_empty_region_terms`: whether to proceed (with a warning) instead of throwing when a
+  `RegionTerm`'s region has no matching device (default `false`).
 """
 struct ConstrainedNetworkConfiguration <: NetworkConfiguration end
 
