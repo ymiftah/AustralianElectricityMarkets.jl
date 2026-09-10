@@ -115,6 +115,13 @@ function loss_segments(model::InterconnectorLossModel, demand::AbstractDict)
         ),
     )
     bps = model.breakpoints
+    any(bps[i] == bps[i + 1] for i in 1:(length(bps) - 1)) && throw(
+        ArgumentError(
+            "interconnector $(model.interconnector) has duplicate adjacent loss breakpoints " *
+                "$(bps) - cannot compute a segment slope. Check LOSSMODEL for the affected " *
+                "EFFECTIVEDATE/VERSIONNO.",
+        ),
+    )
     return [
         (
                 from_mw = bps[i],
