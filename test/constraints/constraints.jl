@@ -295,11 +295,12 @@ end
     # constraint that just wasn't invoked every interval (see add_nem_constraints! docstring).
     @test vname("N_PARTIAL_COVERAGE") in added
     partial_gc = get_component(GenericConstraint, sys, vname("N_PARTIAL_COVERAGE"))
+    base_power = get_base_power(sys)
     partial_rhs = first(values(get_data(get_time_series(Deterministic, partial_gc, "rhs"))))
     partial_invoked = first(values(get_data(get_time_series(Deterministic, partial_gc, "invoked"))))
     @test length(partial_rhs) == 12
     @test length(partial_rhs) == length(date_range) - 1  # grid spans date_range, not invocations
-    @test all(==(150.0), partial_rhs)  # constant RHS - forward-fill is a no-op here
+    @test all(==(150.0 / base_power), partial_rhs)  # constant RHS - forward-fill is a no-op here
     @test partial_invoked == [isodd(i) ? 0.0 : 1.0 for i in 0:11]
 
     gc = get_component(GenericConstraint, sys, vname("F_VIC1_RAISE6SEC"))

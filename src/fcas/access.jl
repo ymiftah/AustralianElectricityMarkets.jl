@@ -1,6 +1,33 @@
 _fcas_series_name(prefix::AbstractString, service::BidType, decremental::Bool) =
     decremental ? "$(prefix)_$(string(service))_decremental" : "$(prefix)_$(string(service))"
 
+"""
+    _fcas_units_multiplier(component) -> Float64
+
+Factor to bring a per-unit-of-system-base FCAS value stored on `component` into its
+`System`'s current display units: `get_base_power(sys)` under `NATURAL_UNITS`, `1.0` under
+`SYSTEM_BASE`. Throws under `DEVICE_BASE`.
+"""
+function _fcas_units_multiplier(component)
+    info = IS.get_internal(component).units_info
+    isnothing(info) && return 1.0
+    # FCAS values are per-unit of the *system* base, while a device's own fields are per-unit
+    # of its `base_power`. Under DEVICE_BASE the two would read as the same number meaning
+    # different MW, so refuse rather than return a mislabelled value.
+    if info.unit_system == UnitSystem.DEVICE_BASE
+        throw(
+            ArgumentError(
+                "FCAS values cannot be read while \"$(get_name(component))\"'s `System` is in " *
+                    "DEVICE_BASE: they are stored per-unit of the system base " *
+                    "($(info.base_value) MVA), not of the device's own base power " *
+                    "($(PSY.get_base_power(component)) MVA). Read them under NATURAL_UNITS or " *
+                    "SYSTEM_BASE, e.g. `with_units_base(sys, \"NATURAL_UNITS\") do ... end`.",
+            ),
+        )
+    end
+    return info.unit_system == UnitSystem.NATURAL_UNITS ? info.base_value : 1.0
+end
+
 function _read_fcas_series(kind::AbstractString, component, name::AbstractString, service::BidType, decremental::Bool, initial_time, horizon::Integer)
     if !has_time_series(component, Deterministic, name)
         throw(
@@ -18,26 +45,31 @@ end
     get_fcas_trapezium(component, service, initial_time, horizon; decremental = false) -> Vector{FCASTrapezium}
 
 Full-series read of `component`'s FCAS trapezium for `service`, `horizon` steps from
-`initial_time`. `decremental` selects the storage `DIRECTION == "LOAD"` series. Throws
-`ArgumentError` if the series isn't attached.
+`initial_time`, in `component`'s `System`'s current display units (MW under `NATURAL_UNITS`,
+per-unit of the system base under `SYSTEM_BASE`). `decremental` selects the storage
+`DIRECTION == "LOAD"` series. Throws `ArgumentError` if the series isn't attached.
 """
 function get_fcas_trapezium(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
     name = _fcas_series_name("fcas_trapezium", service, decremental)
     rows = _read_fcas_series("trapezium", component, name, service, decremental, initial_time, horizon)
-    return FCASTrapezium.(rows)
+    multiplier = _fcas_units_multiplier(component)
+    return [FCASTrapezium(t .* multiplier) for t in rows]
 end
 
 """
     get_fcas_offer_curve(component, service, initial_time, horizon; decremental = false) -> Vector{PSY.PiecewiseStepData}
 
 Full-series read of `component`'s FCAS offer curve for `service`, `horizon` steps from
-`initial_time`. `decremental` selects the storage `DIRECTION == "LOAD"` series. Throws
-`ArgumentError` if the series isn't attached.
+`initial_time`. Quantities (`x_coords`) are in `component`'s `System`'s current display units
+(MW under `NATURAL_UNITS`, per-unit of the system base under `SYSTEM_BASE`); prices
+(`y_coords`) are always \$/MW, never per-unitized. `decremental` selects the storage
+`DIRECTION == "LOAD"` series. Throws `ArgumentError` if the series isn't attached.
 """
 function get_fcas_offer_curve(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
     name = _fcas_series_name("fcas_curve", service, decremental)
     rows = _read_fcas_series("curve", component, name, service, decremental, initial_time, horizon)
-    return PSY.PiecewiseStepData[c for c in rows]
+    multiplier = _fcas_units_multiplier(component)
+    return [PSY.PiecewiseStepData(get_x_coords(c) .* multiplier, get_y_coords(c)) for c in rows]
 end
 
 """

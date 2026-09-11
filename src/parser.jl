@@ -566,6 +566,10 @@ FCAS market)` with bid data in `date_range`:
 - `"fcas_trapezium_<SERVICE>"`, a `Vector{NTuple{7,Float64}}` - the AEMO trapezium per
   interval, packed by [`_extract_fcas_bid`](@ref).
 
+Both series' MW quantities (curve `x_coords`, all trapezium fields but not prices) are stored
+per-unit of `sys`'s system base; [`get_fcas_trapezium`](@ref)/[`get_fcas_offer_curve`](@ref)
+convert back on read.
+
 `DIRECTION` routes and names the series, mirroring [`set_market_bids!`](@ref)'s energy-bid
 GEN/LOAD split: `GEN` and `BIDIRECTIONAL` rows are both capability offered while the unit
 dispatches normally (a `BIDIRECTIONAL` bid doesn't distinguish charge/discharge, so it's
@@ -594,11 +598,19 @@ Unlike the deleted `set_fcas_offers!`, this is genuinely time-varying (mirrors
 function set_fcas_bids!(sys, db, date_range; kwargs...)
     start_date = first(date_range)
     resolution = get(kwargs, :resolution, Minute(5))
+    base_power = get_base_power(sys)
 
     for bid_type in FCAS_BID_TYPES
         bids = read_fcas_bids(db, date_range, bid_type; kwargs...)
         DataFrames.isempty(bids) && continue
         transform!(bids, AsTable(:) => ByRow(_extract_fcas_bid) => [:curve_data, :trapezium_row])
+        # Per-unitize quantities (offer curve x_coords, trapezium MW/ramp-rate fields), not
+        # prices (curve y_coords) - src/fcas/access.jl converts back on read.
+        transform!(
+            bids,
+            :curve_data => ByRow(psd -> PiecewiseStepData(get_x_coords(psd) ./ base_power, get_y_coords(psd))) => :curve_data,
+            :trapezium_row => ByRow(t -> t ./ base_power) => :trapezium_row,
+        )
         sort!(bids, :INTERVAL_DATETIME)
         bid_type_str = string(bid_type)
 
