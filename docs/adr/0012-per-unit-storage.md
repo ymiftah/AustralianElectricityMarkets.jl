@@ -74,6 +74,13 @@ opposite: values are per-unit under `SYSTEM_BASE` and equal the original MW unde
   `System`'s optimization variables (system-base per-unit) once this package has built the
   `System`; converting again would silently reintroduce the exact defect this ADR fixes, in the
   opposite direction.
+- `"marginal_value"` stays in \$/MW while `"rhs"`/`"lhs"` become per-unit, so the two are no
+  longer on a common basis. AEMO's published marginal value is a price per MW of the constraint's
+  natural units; a dual recovered from a per-unitised constraint row is a price per per-unit, and
+  is larger by the system base power. Anything comparing a solved dual against
+  `"marginal_value"` - a replication harness scoring a solve against AEMO's own numbers, most
+  obviously - must scale one side by `get_base_power(sys)` before the comparison means anything.
+
 - A caller that only ever reads MW/\$ off these types (never switches a `System`'s units base
   away from `NATURAL_UNITS`) sees no behavioural change.
 - `nem_system`'s base builder and `augmented_pscb_system()` (the test fixture) disagree on which

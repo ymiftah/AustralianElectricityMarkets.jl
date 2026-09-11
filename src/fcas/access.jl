@@ -6,11 +6,25 @@ _fcas_series_name(prefix::AbstractString, service::BidType, decremental::Bool) =
 
 Factor to bring a per-unit-of-system-base FCAS value stored on `component` into its
 `System`'s current display units: `get_base_power(sys)` under `NATURAL_UNITS`, `1.0` under
-`SYSTEM_BASE`/`DEVICE_BASE`.
+`SYSTEM_BASE`. Throws under `DEVICE_BASE`.
 """
 function _fcas_units_multiplier(component)
     info = IS.get_internal(component).units_info
     isnothing(info) && return 1.0
+    # FCAS values are per-unit of the *system* base, while a device's own fields are per-unit
+    # of its `base_power`. Under DEVICE_BASE the two would read as the same number meaning
+    # different MW, so refuse rather than return a mislabelled value.
+    if info.unit_system == UnitSystem.DEVICE_BASE
+        throw(
+            ArgumentError(
+                "FCAS values cannot be read while \"$(get_name(component))\"'s `System` is in " *
+                    "DEVICE_BASE: they are stored per-unit of the system base " *
+                    "($(info.base_value) MVA), not of the device's own base power " *
+                    "($(PSY.get_base_power(component)) MVA). Read them under NATURAL_UNITS or " *
+                    "SYSTEM_BASE, e.g. `with_units_base(sys, \"NATURAL_UNITS\") do ... end`.",
+            ),
+        )
+    end
     return info.unit_system == UnitSystem.NATURAL_UNITS ? info.base_value : 1.0
 end
 

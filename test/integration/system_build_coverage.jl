@@ -126,6 +126,21 @@
         # Switching back reproduces the original MW/$ values exactly.
         @test get_rhs(gc) == rhs_mw
         @test get_active_power_limits(sundance).max == limits_mw.max
+
+        # FCAS values are per-unit of the system base; a device's own fields are per-unit of
+        # its base_power. Under DEVICE_BASE those read as the same number meaning different
+        # MW, so reading FCAS there must throw rather than return a mislabelled value.
+        @test get_base_power(sundance) != base_power
+        set_units_base_system!(sys, "DEVICE_BASE")
+        try
+            @test_throws ArgumentError get_fcas_trapezium(
+                sundance, BidType.RAISE6SEC, start_date, 1,
+            )
+        finally
+            set_units_base_system!(sys, "NATURAL_UNITS")
+        end
+        @test get_max_avail(only(get_fcas_trapezium(sundance, BidType.RAISE6SEC, start_date, 1))) ==
+            get_max_avail(trapezium_mw)
     end
 
     @testset "JSON round-trip" begin
