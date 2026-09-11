@@ -42,6 +42,10 @@ let
 end
 
 @testset "AustralianElectricityMarketsSimulations" begin
+    @testset "Per-unit conversion" begin
+        include("per_unit.jl")
+    end
+
     @testset "Interval inputs" begin
         include("inputs.jl")
     end
