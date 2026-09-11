@@ -49,4 +49,12 @@ end
     @testset "Preprocessing" begin
         include("preprocessing.jl")
     end
+
+    @testset "Constraint formulations" begin
+        include("constraint_formulations.jl")
+    end
+
+    @testset "PSI compat" begin
+        include("psi_compat.jl")
+    end
 end
