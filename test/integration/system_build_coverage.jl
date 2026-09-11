@@ -94,16 +94,38 @@
         @test Set(uigf.DUID) == Set(["SOLAR1"])
     end
 
-    @testset "unit contract: native MW/\$, not per-unitized" begin
+    @testset "unit contract: per-unit under SYSTEM_BASE, native MW/\$ under NATURAL_UNITS" begin
         gc = get_component(GenericConstraint, sys, vname("F_R1_RAISE6SEC"))
-        @test 10.0 <= get_rhs(gc) <= 200.0
-
         sundance = get_component(ThermalStandard, sys, "Sundance")
-        limits = get_active_power_limits(sundance)
-        @test 10.0 <= limits.max <= 500.0
+        base_power = get_base_power(sys)
 
-        trapezium = only(get_fcas_trapezium(sundance, BidType.RAISE6SEC, start_date, 1))
-        @test 10.0 <= get_max_avail(trapezium) <= 500.0
+        # augmented_pscb_system() leaves sys in NATURAL_UNITS - same MW/$ ranges the
+        # pre-PR-1.12 contract asserted directly off the stored fields.
+        @test get_units_base(sys) == "NATURAL_UNITS"
+        rhs_mw = get_rhs(gc)
+        limits_mw = get_active_power_limits(sundance)
+        trapezium_mw = only(get_fcas_trapezium(sundance, BidType.RAISE6SEC, start_date, 1))
+        @test 10.0 <= rhs_mw <= 200.0
+        @test 10.0 <= limits_mw.max <= 500.0
+        @test 10.0 <= get_max_avail(trapezium_mw) <= 500.0
+
+        # Every one of those must divide by base_power under SYSTEM_BASE - the contract this
+        # PR exists to guarantee: GenericConstraint.rhs and FCASTrapezium track PSY's units
+        # base exactly like a native PSY device field does, instead of silently staying MW.
+        set_units_base_system!(sys, "SYSTEM_BASE")
+        try
+            @test get_rhs(gc) ≈ rhs_mw / base_power
+            limits_pu = get_active_power_limits(sundance)
+            @test limits_pu.max ≈ limits_mw.max / base_power
+            trapezium_pu = only(get_fcas_trapezium(sundance, BidType.RAISE6SEC, start_date, 1))
+            @test get_max_avail(trapezium_pu) ≈ get_max_avail(trapezium_mw) / base_power
+        finally
+            set_units_base_system!(sys, "NATURAL_UNITS")
+        end
+
+        # Switching back reproduces the original MW/$ values exactly.
+        @test get_rhs(gc) == rhs_mw
+        @test get_active_power_limits(sundance).max == limits_mw.max
     end
 
     @testset "JSON round-trip" begin

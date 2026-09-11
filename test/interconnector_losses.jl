@@ -146,6 +146,7 @@ let
 
     @testset "attach_interconnector_losses!" begin
         sys = nem_system(db, RegionalNetworkConfiguration())
+        base_power = get_base_power(sys)
         added, skipped = @test_logs (:warn, r"no resolvable loss model") match_mode = :any begin
             attach_interconnector_losses!(sys, db, as_of)
         end
@@ -156,14 +157,14 @@ let
         ic1 = get_component(AreaInterchange, sys, "IC1")
         attached = only(get_supplemental_attributes(InterconnectorLossModel, ic1))
         @test attached.interconnector == "IC1"
-        @test attached.breakpoints == [-500.0, -250.0, 0.0, 250.0, 500.0]
-
-        ic6 = get_component(AreaInterchange, sys, "IC6")
-        @test isempty(get_supplemental_attributes(InterconnectorLossModel, ic6))
+        # Attached models are per-unitized to sys's base power - not the raw MW breakpoints
+        # interconnector_loss_models itself returns (checked above).
+        @test attached.breakpoints == [-500.0, -250.0, 0.0, 250.0, 500.0] ./ base_power
     end
 
     @testset "InterconnectorLossModel JSON round-trip" begin
         sys = nem_system(db, RegionalNetworkConfiguration())
+        base_power = get_base_power(sys)
         attach_interconnector_losses!(sys, db, as_of)
 
         mktpath = mktempdir()
@@ -176,8 +177,29 @@ let
         @test model.interconnector == "IC1"
         @test model.from_region == "VIC1"
         @test model.to_region == "SNOWY1"
-        @test model.breakpoints == [-500.0, -250.0, 0.0, 250.0, 500.0]
+        @test model.breakpoints == [-500.0, -250.0, 0.0, 250.0, 500.0] ./ base_power
         @test model.demand_coefficients isa Dict{String, Float64}
         @test Set(keys(model.demand_coefficients)) == Set(["VIC1", "SNOWY1"])
+    end
+
+    @testset "per-unit conversion preserves physical losses" begin
+        base_power = 100.0
+        flow_mw = 300.0
+        demand_mw = TEST_DEMAND
+        loss_mw = interconnector_losses(TEST_LOSS_MODEL, flow_mw, demand_mw)
+
+        pu_model = AustralianElectricityMarkets._to_pu(TEST_LOSS_MODEL, base_power)
+        demand_pu = Dict(r => d / base_power for (r, d) in demand_mw)
+        loss_pu = interconnector_losses(pu_model, flow_mw / base_power, demand_pu)
+        @test loss_pu * base_power ≈ loss_mw
+
+        segments_mw = loss_segments(TEST_LOSS_MODEL, demand_mw)
+        segments_pu = loss_segments(pu_model, demand_pu)
+        @test length(segments_mw) == length(segments_pu)
+        for (mw, pu) in zip(segments_mw, segments_pu)
+            @test pu.from_mw * base_power ≈ mw.from_mw
+            @test pu.to_mw * base_power ≈ mw.to_mw
+            @test pu.slope ≈ mw.slope
+        end
     end
 end

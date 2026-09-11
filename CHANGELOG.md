@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`GenericConstraint.rhs`/`"rhs"`/`"lhs"` time series, `FCASTrapezium`/`FCASBid`, and `InterconnectorLossModel` ignored the `System`'s units base**: every one of these stored raw MW as a
+  literal field, so a `System` switched to `SYSTEM_BASE` (the default `PowerSystems.System` constructs unless told otherwise, and the base `AustralianElectricityMarketsSimulations` builds its
+  optimization model in) reported native PSY device limits per-unit while these types kept reporting MW - an internally inconsistent `System`, confirmed directly by comparing
+  `get_active_power_limits`/`get_rhs` under both units bases. `GenericConstraint`/`FCASService` scalar fields now route through `PSY.get_value`/`PSY.set_value` like any other PSY component
+  field; the `"rhs"`/`"lhs"` time series and `FCASTrapezium`/`FCASBid` (neither of which can use PSY's own per-component machinery) are written per-unit of the system base by
+  `add_nem_constraints!`/`set_fcas_bids!` and converted back to MW on read by `get_fcas_trapezium`/`get_fcas_offer_curve` under `NATURAL_UNITS`; `InterconnectorLossModel` is per-unitized once,
+  at `attach_interconnector_losses!` time. `ConstraintTerm.factor`, the `"invoked"` mask, `constraint_weight`, `$/MWh`/`$/MW` prices, and `from_region_loss_share` are unaffected - none of them
+  are power quantities. This reverses the Phase 1 exit test's `"unit contract: native MW/\$, not per-unitized"` testset, which pinned the broken behaviour; it now asserts the opposite.
+
 - **`allow_empty_region_terms` was unreachable**: `nem_system(db, ConstrainedNetworkConfiguration(); date_range, ...)` now forwards `intervention`/`include_solution`/`resolution`/`allow_empty_region_terms` to `add_nem_constraints!` explicitly, instead of silently routing them into `System`'s constructor kwargs.
 - **`add_nem_constraints!` no longer partially mutates `sys` before an aggregated empty-`RegionTerm` throw** — a caller retrying with `allow_empty_region_terms = true` on the same `System` no longer hits duplicate-component errors.
 - **`add_nem_constraints!` warns when invoked `SETTLEMENTDATE`s don't align to `date_range`'s grid**, instead of silently producing an all-zero `"invoked"` series.
