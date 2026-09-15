@@ -173,6 +173,7 @@
         # round-trip" below).
         sys = nem_system(db, RegionalNetworkConfiguration())
         set_fcas_bids!(sys, db, date_range)
+        base_power = get_base_power(sys)
 
         found = false
         for gen in get_components(Generator, sys)
@@ -186,7 +187,9 @@
             @test !isnothing(curve_ts)
             @test !isnothing(trapezium_ts)
             trap_rows = first(values(get_data(trapezium_ts)))
-            @test first(trap_rows)[1] == 20.0
+            # Raw stored series is per-unit of sys's base power - get_fcas_trapezium (tested
+            # above) is what converts back to MW.
+            @test first(trap_rows)[1] == 20.0 / base_power
         end
         @test found
 
@@ -304,6 +307,7 @@
         # scope to fix here. This testset isolates the FCAS-specific round-trip behavior.
         sys = nem_system(db, RegionalNetworkConfiguration())
         set_fcas_bids!(sys, db, date_range)
+        base_power = get_base_power(sys)
 
         mktpath = mktempdir()
         json_path = joinpath(mktpath, "sys.json")
@@ -319,7 +323,7 @@
             @test !isnothing(curve_ts)
             @test !isnothing(trapezium_ts)
             trap_rows = first(values(get_data(trapezium_ts)))
-            @test first(trap_rows)[1] == 20.0
+            @test first(trap_rows)[1] == 20.0 / base_power
         end
         @test found
     end

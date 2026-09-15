@@ -74,6 +74,7 @@
 
         @testset "N_PARTIAL padding" begin
             gc = get_component(GenericConstraint, sys, vname("N_PARTIAL"))
+            base_power = get_base_power(sys)
             invoked_series = first(values(get_data(get_time_series(Deterministic, gc, "invoked"))))
             rhs_series = first(values(get_data(get_time_series(Deterministic, gc, "rhs"))))
 
@@ -81,16 +82,18 @@
             @test invoked_series[1:10] == fill(0.0, 10)   # intervals 0..9: not yet invoked
             @test invoked_series[11:25] == fill(1.0, 15)  # intervals 10..24: invoked
 
-            # rhs is carried forward before interval 10 and real thereafter.
+            # rhs is carried forward before interval 10 and real thereafter. The "rhs" series is
+            # stored per-unit of sys's base power - see GenericConstraint.
             @test all(==(rhs_series[10]), rhs_series[1:10])
-            @test rhs_series[11:25] ≈ [40.0 + 0.1 * i for i in 10:24]
+            @test rhs_series[11:25] ≈ [(40.0 + 0.1 * i) / base_power for i in 10:24]
         end
 
         @testset "rhs varies across intervals for a fully-covered constraint" begin
             gc = get_component(GenericConstraint, sys, vname("F_R1_RAISE6SEC"))
+            base_power = get_base_power(sys)
             rhs_series = first(values(get_data(get_time_series(Deterministic, gc, "rhs"))))
             @test length(rhs_series) == 25
-            @test rhs_series ≈ [30.0 + 0.1 * i for i in 0:24]
+            @test rhs_series ≈ [(30.0 + 0.1 * i) / base_power for i in 0:24]
             @test issorted(rhs_series)  # confirms it isn't flat
         end
 
@@ -251,13 +254,14 @@
 
         @testset "N_PARTIAL rhs/invoked series survive exactly" begin
             gc2 = get_component(GenericConstraint, sys2, vname("N_PARTIAL"))
+            base_power = get_base_power(sys2)
             invoked_series = first(values(get_data(get_time_series(Deterministic, gc2, "invoked"))))
             rhs_series = first(values(get_data(get_time_series(Deterministic, gc2, "rhs"))))
             @test length(invoked_series) == length(rhs_series) == 25
             @test invoked_series[1:10] == fill(0.0, 10)
             @test invoked_series[11:25] == fill(1.0, 15)
             @test all(==(rhs_series[10]), rhs_series[1:10])
-            @test rhs_series[11:25] ≈ [40.0 + 0.1 * i for i in 10:24]
+            @test rhs_series[11:25] ≈ [(40.0 + 0.1 * i) / base_power for i in 10:24]
         end
 
         @testset "BAT1 FCAS bid series, including decremental, survive" begin

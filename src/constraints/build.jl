@@ -86,6 +86,7 @@ function add_nem_constraints!(
         allow_empty_region_terms::Bool = false,
     )
     start_date = first(date_range)
+    base_power = get_base_power(sys)
 
     _table_is_cached(db, :DISPATCHCONSTRAINT) || throw(
         ArgumentError(
@@ -209,14 +210,17 @@ function add_nem_constraints!(
 
         constraint_rows = sort(invoked_by_version[version_key], :SETTLEMENTDATE)
         rhs_by_time = Dict(zip(constraint_rows.SETTLEMENTDATE, constraint_rows.RHS))
-        rhs_series, invoked_series = _pad_to_grid(
-            rhs_by_time, full_grid, coalesce(def.CONSTRAINTVALUE, first(constraint_rows.RHS)),
-        )
+        default_rhs_mw = coalesce(def.CONSTRAINTVALUE, first(constraint_rows.RHS))
+        rhs_series_mw, invoked_series = _pad_to_grid(rhs_by_time, full_grid, default_rhs_mw)
+        # rhs/lhs are per-unitized here, once, before either is stored - the "rhs" time series
+        # and GenericConstraint.rhs must agree with PSY.get_value's SYSTEM_BASE/NATURAL_UNITS
+        # convention for every other power quantity on this System.
+        rhs_series = rhs_series_mw ./ base_power
 
         gc = GenericConstraint(;
             name = versioned_name,
             sense = sense,
-            rhs = coalesce(def.CONSTRAINTVALUE, first(rhs_series)),
+            rhs = default_rhs_mw / base_power,
             constraint_weight = coalesce(def.GENERICCONSTRAINTWEIGHT, 1.0),
             description = coalesce(def.DESCRIPTION, ""),
             terms = resolved_terms,
@@ -234,10 +238,14 @@ function add_nem_constraints!(
         marginal_value_series = nothing
         if include_solution
             lhs_by_time = Dict(zip(constraint_rows.SETTLEMENTDATE, constraint_rows.LHS))
-            lhs_series, _ = _pad_to_grid(lhs_by_time, full_grid, first(constraint_rows.LHS))
+            lhs_series_mw, _ = _pad_to_grid(lhs_by_time, full_grid, first(constraint_rows.LHS))
+            # Same convention as "rhs" - lhs is the constraint's achieved level, directly
+            # compared against rhs, so it is per-unitized the same way.
+            lhs_series = lhs_series_mw ./ base_power
             mv_by_time = Dict(zip(constraint_rows.SETTLEMENTDATE, constraint_rows.MARGINALVALUE))
             # Not carried forward like rhs/lhs: an interval this constraint wasn't invoked at
             # genuinely has zero shadow price, so 0.0 is a fact here, not a filler value.
+            # A $/MW price, not a power quantity - not per-unitized, unlike rhs/lhs.
             marginal_value_series = [get(mv_by_time, t, 0.0) for t in full_grid]
         end
 

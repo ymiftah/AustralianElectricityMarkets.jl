@@ -19,10 +19,19 @@ linearises that quadratic on, reproduced by [`loss_segments`](@ref).
 - `from_region`/`to_region`: `REGIONFROM`/`REGIONTO`; flow is positive from → to.
 - `from_region_loss_share`: fraction of losses attributed to `from_region`.
 - `loss_constant`: `LOSSCONSTANT`.
-- `loss_flow_coefficient`: `LOSSFLOWCOEFFICIENT`.
-- `demand_coefficients`: `REGIONID => DEMANDCOEFFICIENT`.
-- `breakpoints`: `MWBREAKPOINT` values, ascending.
+- `loss_flow_coefficient`: `LOSSFLOWCOEFFICIENT`, natural-units MW unless the model has been
+  per-unitized (see [`attach_interconnector_losses!`](@ref)).
+- `demand_coefficients`: `REGIONID => DEMANDCOEFFICIENT`, same units convention as
+  `loss_flow_coefficient`.
+- `breakpoints`: `MWBREAKPOINT` values, ascending, same units convention as
+  `loss_flow_coefficient`.
 - `internal`: `InfrastructureSystems` bookkeeping.
+
+A model returned by [`interconnector_loss_models`](@ref) carries natural-units MW throughout;
+one attached to a `System` by [`attach_interconnector_losses!`](@ref) is per-unit of that
+`System`'s base power instead. [`loss_factor`](@ref)/[`interconnector_losses`](@ref)/
+[`loss_segments`](@ref) are unit-agnostic - `flow`/`demand` must be passed in whichever
+convention `model` itself uses.
 """
 struct InterconnectorLossModel <: PSY.SupplementalAttribute
     interconnector::String
@@ -345,10 +354,30 @@ function interconnector_loss_models(db, as_of::Union{Date, DateTime})
 end
 
 """
+    _to_pu(model::InterconnectorLossModel, base_power::Real) -> InterconnectorLossModel
+
+Rescales `model`'s MW-based fields to per-unit of `base_power`. `breakpoints` divide by
+`base_power`; `loss_flow_coefficient` and `demand_coefficients` (both 1/MW) multiply by
+`base_power`; `loss_constant` and `from_region_loss_share` are dimensionless and unchanged.
+"""
+function _to_pu(model::InterconnectorLossModel, base_power::Real)
+    return InterconnectorLossModel(;
+        interconnector = model.interconnector,
+        from_region = model.from_region,
+        to_region = model.to_region,
+        from_region_loss_share = model.from_region_loss_share,
+        loss_constant = model.loss_constant,
+        loss_flow_coefficient = model.loss_flow_coefficient * base_power,
+        demand_coefficients = Dict(k => v * base_power for (k, v) in model.demand_coefficients),
+        breakpoints = model.breakpoints ./ base_power,
+    )
+end
+
+"""
     attach_interconnector_losses!(sys, db, as_of) -> (added, skipped)
 
 Attaches each `PSY.AreaInterchange` already in `sys` its [`InterconnectorLossModel`](@ref) from
-[`interconnector_loss_models`](@ref), as of `as_of`.
+[`interconnector_loss_models`](@ref), as of `as_of`, per-unitized to `sys`'s base power.
 
 # Arguments
 - `sys`: the `System` to attach to.
@@ -361,6 +390,7 @@ String, Symbol}` mapping a skipped name to `:no_loss_model`.
 """
 function attach_interconnector_losses!(sys, db, as_of::Union{Date, DateTime})
     models = interconnector_loss_models(db, as_of)
+    base_power = PSY.get_base_power(sys)
 
     added = String[]
     skipped = Dict{String, Symbol}()
@@ -371,7 +401,9 @@ function attach_interconnector_losses!(sys, db, as_of::Union{Date, DateTime})
             skipped[name] = :no_loss_model
             continue
         end
-        PSY.add_supplemental_attribute!(sys, area_interchange, model)
+        # SupplementalAttribute is never stamped with units_info, so unlike GenericConstraint
+        # this per-unitizes once here rather than converting on every read.
+        PSY.add_supplemental_attribute!(sys, area_interchange, _to_pu(model, base_power))
         push!(added, name)
     end
 

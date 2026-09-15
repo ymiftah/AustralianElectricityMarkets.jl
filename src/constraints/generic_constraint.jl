@@ -6,7 +6,7 @@ and FCAS requirements. Attached to its contributing devices as a `PSY.Service`.
 - `name`: identifier — `GENCONID@EFFECTIVEDATE#VERSIONNO` for an AEMO-sourced constraint.
 - `available`: whether it is enforced.
 - `sense`: `LE`, `GE` or `EQ`, from `GENCONDATA.CONSTRAINTTYPE`.
-- `rhs`: static default from `GENCONDATA.CONSTRAINTVALUE`.
+- `rhs`: static default from `GENCONDATA.CONSTRAINTVALUE`, per-unit of the system base.
 - `constraint_weight`: `GENCONDATA.GENERICCONSTRAINTWEIGHT` verbatim.
 - `description`: human-readable, defaults to `""`.
 - `terms`: the LHS algebra, from the `SPD*` tables.
@@ -50,8 +50,10 @@ PSY.set_available!(value::GenericConstraint, val) = value.available = val
 PSY.supports_time_series(::GenericConstraint) = true
 get_sense(value::GenericConstraint) = value.sense
 set_sense!(value::GenericConstraint, val) = value.sense = val
-get_rhs(value::GenericConstraint) = value.rhs
-set_rhs!(value::GenericConstraint, val) = value.rhs = val
+# pu under SYSTEM_BASE, MW under NATURAL_UNITS - stamped by add_service! like any other
+# PSY.Component's units_info.
+get_rhs(value::GenericConstraint) = PSY.get_value(value, Val(:rhs), Val(:mva))
+set_rhs!(value::GenericConstraint, val) = value.rhs = PSY.set_value(value, Val(:rhs), val, Val(:mva))
 get_constraint_weight(value::GenericConstraint) = value.constraint_weight
 set_constraint_weight!(value::GenericConstraint, val) = value.constraint_weight = val
 PSY.get_description(value::GenericConstraint) = value.description

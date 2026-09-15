@@ -1,7 +1,9 @@
 """
 AEMO FCAS trapezium parameters for one device's offer into one FCAS market. Zero below
 `enablement_min`, ramping to `max_avail` at `low_breakpoint`, flat until `high_breakpoint`,
-ramping back to zero at `enablement_max` (AEMO, *FCAS Model in NEMDE*, §2).
+ramping back to zero at `enablement_max` (AEMO, *FCAS Model in NEMDE*, §2). All MW/MW-per-minute
+fields are as returned by [`get_fcas_trapezium`](@ref): MW under `NATURAL_UNITS`, per-unit of
+the system base under `SYSTEM_BASE`.
 """
 struct FCASTrapezium <: PSY.DeviceParameter
     enablement_min::Float64
