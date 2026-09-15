@@ -42,6 +42,10 @@ let
 end
 
 @testset "AustralianElectricityMarketsSimulations" begin
+    @testset "Time basis" begin
+        include("time_basis.jl")
+    end
+
     @testset "Interval inputs" begin
         include("inputs.jl")
     end
