@@ -1,5 +1,3 @@
-const DISPATCH_INTERVAL_HOURS = 1 / 12
-
 """
     energy_bounds(; initial_mw, ramp_up_rate, ramp_down_rate, max_avail, min_load, uigf,
         is_semi_scheduled)

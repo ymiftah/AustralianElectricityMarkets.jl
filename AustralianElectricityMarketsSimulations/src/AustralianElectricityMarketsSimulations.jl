@@ -16,11 +16,13 @@ import PowerSimulations as PSI
 import PowerSystems as PSY
 
 include("errors.jl")
+include("time_basis.jl")
 include("constraint_formulations.jl")
 include("psi_compat.jl")
 include("replication/inputs.jl")
 include("replication/preprocessing.jl")
 
+export DISPATCH_INTERVAL_HOURS, interval_cost_coefficient
 export IntervalInputs, read_interval_inputs
 export energy_bounds
 export EffectiveTrapezium, scale_trapezium, lower_slope_coeff, upper_slope_coeff
