@@ -485,3 +485,73 @@ end
     # The RHS series is flat, so the cap applies at every step, not just the first.
     @test _bat_net(out_df, in_df, t2) <= tightened_rhs + 1.0e-3
 end
+
+@testset "filter_buildable_generic_constraints throws one aggregated ArgumentError naming every unbuildable constraint" begin
+    sys = _prepared_system()
+    template = _t1_template()
+    err = try
+        AEMS.filter_buildable_generic_constraints(sys, template)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    msg = sprint(showerror, err)
+    @test occursin("F_R1_RAISE6SEC", msg)
+    @test occursin("F_R2_LOWERREG", msg)
+    @test occursin("N_HYDRO_LIMIT", msg)
+    @test occursin("bid_type", msg)
+    @test occursin("allow_partial_coverage", msg)
+    @test !occursin("N_IC1_LIMIT", msg)
+    @test !occursin("N_PARTIAL", msg)
+end
+
+@testset "filter_buildable_generic_constraints with allow_partial_coverage = true returns the buildable subset and warns once" begin
+    sys = _prepared_system()
+    template = _t1_template()
+    result = @test_logs (:warn,) AEMS.filter_buildable_generic_constraints(
+        sys, template; allow_partial_coverage = true,
+    )
+    expected = Set(PSY.get_name(_gc(sys, id)) for id in ("N_IC1_LIMIT", "N_PARTIAL"))
+    @test Set(PSY.get_name.(result)) == expected
+    @test issorted(PSY.get_name.(result))
+end
+
+@testset "the buildable subset builds and solves under per-instance registration, where the aggregated registration throws" begin
+    sys = _prepared_system()
+    template = _t1_template()
+    buildable = AEMS.filter_buildable_generic_constraints(sys, template; allow_partial_coverage = true)
+
+    aggregated_template = _t1_template()
+    PSI.set_service_model!(
+        aggregated_template,
+        PSI.ServiceModel(GenericConstraint, AEMS.LinearFactorLimit; duals = [AEMS.NEMConstraintLimit]),
+    )
+    aggregated_model = PSI.DecisionModel(
+        aggregated_template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
+    )
+    @test _build_error(aggregated_model) isa ArgumentError
+
+    filtered_template = _t1_template()
+    for gc in buildable
+        name = PSY.get_name(gc)
+        PSI.set_service_model!(
+            filtered_template, name,
+            PSI.ServiceModel(
+                GenericConstraint, AEMS.LinearFactorLimit, name;
+                duals = [AEMS.NEMConstraintLimit],
+            ),
+        )
+    end
+    model = PSI.DecisionModel(filtered_template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    PSI.solve!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+    container = PSI.get_optimization_container(model)
+    nem_keys = [
+        k for k in PSI.get_constraint_keys(container)
+            if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit
+    ]
+    @test Set(k.meta for k in nem_keys) == Set(PSY.get_name.(buildable))
+end
