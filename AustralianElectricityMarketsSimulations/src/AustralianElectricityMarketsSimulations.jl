@@ -18,6 +18,7 @@ import PowerSystems as PSY
 include("errors.jl")
 include("time_basis.jl")
 include("constraint_formulations.jl")
+include("nem_constraints.jl")
 include("psi_compat.jl")
 include("replication/inputs.jl")
 include("replication/preprocessing.jl")

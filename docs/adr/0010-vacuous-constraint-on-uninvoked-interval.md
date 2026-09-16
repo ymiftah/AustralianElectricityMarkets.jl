@@ -2,9 +2,8 @@
 
 ## Status
 
-Proposed — a trade-off for Phase 2 to weigh with real formulation code, not a closed decision.
-This finding is inherited from prior branch experimentation building the PSI service
-formulation, not verified independently in this phase.
+Accepted — the vacuous constraint. Measured against a working sparse implementation on real
+data, as this ADR asked for; see "Decision" below.
 
 ## Context
 
@@ -20,7 +19,35 @@ with no `ConstraintRef` assigned throws `UndefRefError` rather than reading back
 
 ## Decision
 
-Two ways to keep every cell readable, neither implemented or benchmarked yet:
+Emit a vacuous `0.0 <= 1.0` constraint at every uninvoked cell.
+
+Both options below were implemented against the `LinearFactorLimit` formulation and measured on
+one real dispatch day (2026-06-04, 288 five-minute intervals, 644 buildable `GenericConstraint`
+versions, 185,472 `(name, t)` cells of which 154,439 are invoked — 31,033 vacuous rows):
+
+| | vacuous | sparse |
+| --- | --- | --- |
+| `build!` | 106.3 s | 104.6 s |
+| `solve!` | 254.7 s | 230.1 s |
+| RSS added by `build!` | 628 MB | 518 MB |
+| JuMP constraints | 2,211,840 | 2,180,807 |
+
+The 31,033-row difference is the whole effect, and it is within run-to-run noise at this scale.
+In isolation a vacuous row costs ~3.2 µs and ~40 bytes, so even the extreme case — a whole
+month held in one model, where AEMO's own data is 79% uninvoked (about 42M vacuous cells) —
+projects to ~135 s and a few GB, and no model of that horizon is built: the replication harness
+runs a single interval, and operational horizons are a day.
+
+Sparsity is also a function of horizon, and that cuts against the sparse option at the horizons
+actually used: over a single day 83% of cells are invoked, against 21% over a whole month.
+
+The sparse container additionally needs a hand-built `SparseAxisArray`, because
+`PowerSimulations.jl`'s own `sparse_container_spec` pre-fills every cell of the axes product
+with `nothing` for a `ConstraintRef` — sparse only in being `Dict`-backed. Leaving an uninvoked
+cell unassigned there makes the dual read-back call `jump_value(nothing)`. That is a private
+behaviour to re-verify on every PSI upgrade, bought for no measured gain.
+
+The two options considered:
 
 - **Vacuous constraint**: emit `0.0 <= 1.0` at every uninvoked cell instead of omitting it. It
   has no decision-variable coefficients, adds nothing to the LHS, and reads back a dual of
@@ -38,9 +65,10 @@ Two ways to keep every cell readable, neither implemented or benchmarked yet:
 
 ## Consequences
 
-- This is guidance for Phase 2's formulation code, not something Phase 1 enforces — Phase 1
-  carries no PSI dependency and builds nothing that exercises either path.
-- Phase 2 should profile both options against real formulation code before picking one, rather
-  than defaulting to the vacuous constraint on the strength of this ADR alone — there is no
-  formulation code yet to measure against, and the row-count-vs-custom-code trade-off may look
-  different once one exists.
+- `LinearFactorLimit` builds a dense `NEMConstraintLimit` container per constraint instance and
+  fills uninvoked cells with a vacuous row. Its dual reads back as exactly `0.0` there.
+- The sparse implementation is not kept in the code. Should a use case appear that holds a
+  month or more in one model, it is worth reviving; the measurements above say which numbers
+  would have to change first.
+- Row count scales with `constrained instances × horizon`, so a future horizon much longer than
+  a day should re-measure rather than assume this result carries over.
