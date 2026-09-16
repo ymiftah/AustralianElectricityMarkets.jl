@@ -38,6 +38,24 @@ function PSI._modify_device_model!(
     return nothing
 end
 
+"""
+    PSI.get_initial_conditions_service_model(model, service_model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit})
+
+No-op override of `PowerSimulations.jl` 0.38.4's private `get_initial_conditions_service_model`
+hook, called for every registered `ServiceModel` when building the sub-model PSI derives
+ramp/commitment initial conditions from. [`LinearFactorLimit`](@ref) carries no ramp/commitment
+state of its own to initialize.
+
+# Returns
+`PSI.ServiceModel(GenericConstraint, LinearFactorLimit)`.
+"""
+function PSI.get_initial_conditions_service_model(
+        ::PSI.OperationModel,
+        ::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
+    )
+    return PSI.ServiceModel(GenericConstraint, LinearFactorLimit)
+end
+
 # Area-balance dual registration: `AreaBalancePowerModel` is a `PM.AbstractPowerModel`, so stock PSI
 # 0.38.4's `add_constraint_dual!`/`assign_dual_variable!` dispatch to their generic
 # `PM.AbstractPowerModel` methods and register a bus-keyed dual, the wrong shape for
