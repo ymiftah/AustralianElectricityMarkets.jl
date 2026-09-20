@@ -39,6 +39,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`read_dispatch_ramp_rates`/`set_nem_dispatch_limits!`**: New reader and `System` setter for
+  `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE`/`INITIALMW` — the ramp rate NEMDE actually applied
+  in dispatch and its ramp base, as three per-device `SingleTimeSeries` (`"ramp_up_rate"`,
+  `"ramp_down_rate"`, `"initial_mw"`) on every `ThermalStandard`, `HydroDispatch` and
+  `RenewableDispatch`, stored per-unit of the system base. `allow_missing_ramp_rates` opts into
+  proceeding on the buildable subset when some devices lack usable data; the default throws one
+  aggregated `ArgumentError` naming every affected `DUID`.
+- **`set_nem_initial_conditions!`**: New `System` setter that seeds `active_power` on every
+  `ThermalStandard`, `HydroDispatch` and `RenewableDispatch` from `DISPATCHLOAD.INITIALMW` at a
+  single dispatch interval, for PSI's `DevicePower` initial condition under the chained ramp
+  base mode. Shares `set_nem_dispatch_limits!`'s missing-data policy: `allow_missing_ramp_rates`
+  opts into proceeding on the buildable subset; the default throws one aggregated
+  `ArgumentError` naming every affected `DUID`.
 - **Interconnector loss model** (`src/interconnector_losses.jl`): `InterconnectorLossModel`, three readers `read_interconnector_loss_breakpoints`/`read_interconnector_demand_coefficients`/`read_interconnector_loss_parameters`, and `interconnector_loss_models` assembler. NEMDE models losses as quadratic in flow with demand-dependent linear coefficients; `loss_factor` evaluates it, `interconnector_losses` integrates it, and `loss_segments` linearises on `LOSSMODEL`'s `MWBREAKPOINT`s as chord slopes. Readers are version-resolved on `EFFECTIVEDATE`/`VERSIONNO` as of a caller-supplied date, not `archive_month`, and throw `ArgumentError` naming the missing table when uncached.
 - **`attach_interconnector_losses!`**: `InterconnectorLossModel` is now a `PSY.SupplementalAttribute`, so it can be attached to a `System`'s `AreaInterchange` components and round-trips through JSON. `attach_interconnector_losses!(sys, db, as_of)` attaches one per `AreaInterchange`, matched by `INTERCONNECTORID`; an interconnector with no resolvable loss model is skipped and reported in one aggregated `@warn`. Wired as the fourth build step in `ConstrainedNetworkConfiguration`, after `add_fcas_services!`.
 - **`FCASService`/`add_fcas_services!`**: New `PSY.Service` anchoring the devices

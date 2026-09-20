@@ -346,4 +346,231 @@
             end
         end
     end
+
+    @testset "set_nem_dispatch_limits!" begin
+        resolution = Minute(5)
+        start_date = DateTime(2025, 1, 1, 0, 0)
+        date_range = start_date:resolution:(start_date + Hour(2))
+        base_power = get_base_power(sys_base)
+
+        truth = read_dispatch_ramp_rates(db, date_range)
+
+        @testset "attaches to a thermal, hydro and renewable unit" begin
+            sys = deepcopy(sys_base)
+            set_nem_dispatch_limits!(sys, db, date_range)
+
+            thermal = get_component(ThermalStandard, sys, "ER01")
+            hydro = get_component(HydroDispatch, sys, "BW02")
+            renewable = get_component(RenewableDispatch, sys, "BW03")
+            @test !isnothing(thermal)
+            @test !isnothing(hydro)
+            @test !isnothing(renewable)
+
+            for device in (thermal, hydro, renewable)
+                for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw")
+                    ta = get_time_series_array(SingleTimeSeries, device, name)
+                    @test length(ta) == length(date_range) - 1
+                end
+            end
+        end
+
+        @testset "values are per-unit of the system base, matching DISPATCHLOAD exactly" begin
+            sys = deepcopy(sys_base)
+            set_nem_dispatch_limits!(sys, db, date_range)
+
+            devices = vcat(
+                collect(get_components(ThermalStandard, sys)),
+                collect(get_components(HydroDispatch, sys)),
+                collect(get_components(RenewableDispatch, sys)),
+            )
+            n_checked = 0
+            for device in devices
+                duid = get_name(device)
+                rows = sort(subset(truth, :DUID => ByRow(==(duid))), :SETTLEMENTDATE)
+                isempty(rows) && continue
+
+                got_up = get_time_series_values(SingleTimeSeries, device, "ramp_up_rate")
+                got_down = get_time_series_values(SingleTimeSeries, device, "ramp_down_rate")
+                got_init = get_time_series_values(SingleTimeSeries, device, "initial_mw")
+
+                @test isapprox(got_up, rows.RAMPUPRATE ./ base_power; atol = 1.0e-8)
+                @test isapprox(got_down, rows.RAMPDOWNRATE ./ base_power; atol = 1.0e-8)
+                @test isapprox(got_init, rows.INITIALMW ./ base_power; atol = 1.0e-8)
+                n_checked += 1
+            end
+            @test n_checked == 5  # ER01, ER02, BW02, BW03, BW04
+        end
+
+        @testset "rates vary per interval, not a scalar" begin
+            sys = deepcopy(sys_base)
+            set_nem_dispatch_limits!(sys, db, date_range)
+            thermal = get_component(ThermalStandard, sys, "ER01")
+            @test length(unique(get_time_series_values(SingleTimeSeries, thermal, "ramp_up_rate"))) > 1
+            @test length(unique(get_time_series_values(SingleTimeSeries, thermal, "ramp_down_rate"))) > 1
+            @test length(unique(get_time_series_values(SingleTimeSeries, thermal, "initial_mw"))) > 1
+        end
+
+        @testset "JSON round-trip" begin
+            sys = deepcopy(sys_base)
+            set_nem_dispatch_limits!(sys, db, date_range)
+
+            mktpath = mktempdir()
+            json_path = joinpath(mktpath, "sys.json")
+            to_json(sys, json_path)
+            sys2 = System(json_path)
+
+            thermal1 = get_component(ThermalStandard, sys, "ER01")
+            thermal2 = get_component(ThermalStandard, sys2, "ER01")
+            for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw")
+                v1 = get_time_series_values(SingleTimeSeries, thermal1, name)
+                v2 = get_time_series_values(SingleTimeSeries, thermal2, name)
+                @test isapprox(v1, v2; atol = 1.0e-10)
+            end
+        end
+
+        @testset "missing/non-positive ramp data throws, naming the DUID" begin
+            bad_hive = mktempdir()
+            ddb = DuckDB.DB()
+            conn = DuckDB.connect(ddb)
+            DuckDB.execute(conn, "SET preserve_identifier_case=true")
+
+            short_range = start_date:resolution:(start_date + Minute(10))
+            grid = collect(short_range)[1:(end - 1)]  # 3 intervals
+            duids = ["BW02", "BW03", "BW04", "ER01", "ER02"]
+
+            rows = DataFrame(
+                SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
+                INITIALMW = Union{Float64, Missing}[], RAMPUPRATE = Union{Float64, Missing}[],
+                RAMPDOWNRATE = Union{Float64, Missing}[],
+            )
+            for (i, t) in enumerate(grid), duid in duids
+                bad = duid == "ER01" && i == 2
+                push!(
+                    rows,
+                    (
+                        SETTLEMENTDATE = t, DUID = duid, INTERVENTION = 0,
+                        INITIALMW = 50.0, RAMPUPRATE = bad ? missing : 5.0, RAMPDOWNRATE = 4.0,
+                    ),
+                )
+            end
+            rows[!, :archive_month] = fill("2025-01", nrow(rows))
+
+            DuckDB.register_data_frame(conn, rows, "tmp_table")
+            table_dir = joinpath(bad_hive, "DISPATCHLOAD")
+            mkpath(table_dir)
+            DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+            DuckDB.unregister_table(conn, "tmp_table")
+
+            bad_db = aem_connect(HiveConfiguration(hive_location = bad_hive, filesystem = "file"))
+            sys = deepcopy(sys_base)
+
+            err = try
+                set_nem_dispatch_limits!(sys, bad_db, short_range)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            @test occursin("ER01", err.msg)
+            # Throwing leaves sys untouched, even for the devices with perfectly good data.
+            @test !has_time_series(get_component(ThermalStandard, sys, "ER02"), SingleTimeSeries, "ramp_up_rate")
+
+            @test_logs (:warn, r"ER01") match_mode = :any begin
+                set_nem_dispatch_limits!(sys, bad_db, short_range; allow_missing_ramp_rates = true)
+            end
+            @test !has_time_series(get_component(ThermalStandard, sys, "ER01"), SingleTimeSeries, "ramp_up_rate")
+            @test has_time_series(get_component(ThermalStandard, sys, "ER02"), SingleTimeSeries, "ramp_up_rate")
+            @test has_time_series(get_component(HydroDispatch, sys, "BW02"), SingleTimeSeries, "ramp_up_rate")
+        end
+    end
+
+    @testset "set_nem_initial_conditions!" begin
+        interval = DateTime(2025, 1, 1, 0, 0)
+        base_power = get_base_power(sys_base)
+        truth = read_dispatch_ramp_rates(db, [interval, interval + Minute(1)])
+
+        @testset "seeds active_power on a thermal, hydro and renewable unit (NATURAL_UNITS)" begin
+            sys = deepcopy(sys_base)
+            set_units_base_system!(sys, "NATURAL_UNITS")
+            set_nem_initial_conditions!(sys, db, interval)
+
+            for (type, duid) in
+                ((ThermalStandard, "ER01"), (HydroDispatch, "BW02"), (RenewableDispatch, "BW03"))
+                device = get_component(type, sys, duid)
+                @test !isnothing(device)
+                expected = only(subset(truth, :DUID => ByRow(==(duid))).INITIALMW)
+                @test isapprox(get_active_power(device), expected; atol = 1.0e-8)
+            end
+        end
+
+        @testset "seeds active_power on a thermal, hydro and renewable unit (SYSTEM_BASE)" begin
+            sys = deepcopy(sys_base)
+            set_units_base_system!(sys, "SYSTEM_BASE")
+            set_nem_initial_conditions!(sys, db, interval)
+
+            for (type, duid) in
+                ((ThermalStandard, "ER01"), (HydroDispatch, "BW02"), (RenewableDispatch, "BW03"))
+                device = get_component(type, sys, duid)
+                expected = only(subset(truth, :DUID => ByRow(==(duid))).INITIALMW)
+                @test isapprox(get_active_power(device), expected / base_power; atol = 1.0e-8)
+            end
+        end
+
+        @testset "missing INITIALMW throws, naming the DUID, and leaves sys untouched" begin
+            bad_hive = mktempdir()
+            ddb = DuckDB.DB()
+            conn = DuckDB.connect(ddb)
+            DuckDB.execute(conn, "SET preserve_identifier_case=true")
+
+            duids = ["BW02", "BW03", "BW04", "ER01", "ER02"]
+            rows = DataFrame(
+                SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
+                INITIALMW = Union{Float64, Missing}[], RAMPUPRATE = Union{Float64, Missing}[],
+                RAMPDOWNRATE = Union{Float64, Missing}[],
+            )
+            for duid in duids
+                bad = duid == "ER01"
+                push!(
+                    rows,
+                    (
+                        SETTLEMENTDATE = interval, DUID = duid, INTERVENTION = 0,
+                        INITIALMW = bad ? missing : 50.0, RAMPUPRATE = 5.0, RAMPDOWNRATE = 4.0,
+                    ),
+                )
+            end
+            rows[!, :archive_month] = fill("2025-01", nrow(rows))
+
+            DuckDB.register_data_frame(conn, rows, "tmp_table")
+            table_dir = joinpath(bad_hive, "DISPATCHLOAD")
+            mkpath(table_dir)
+            DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+            DuckDB.unregister_table(conn, "tmp_table")
+
+            bad_db = aem_connect(HiveConfiguration(hive_location = bad_hive, filesystem = "file"))
+            sys = deepcopy(sys_base)
+            er01_before = get_active_power(get_component(ThermalStandard, sys, "ER01"))
+            er02_before = get_active_power(get_component(ThermalStandard, sys, "ER02"))
+
+            err = try
+                set_nem_initial_conditions!(sys, bad_db, interval)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            @test occursin("ER01", err.msg)
+            # Throwing leaves sys untouched, even for the devices with perfectly good data.
+            @test get_active_power(get_component(ThermalStandard, sys, "ER01")) == er01_before
+            @test get_active_power(get_component(ThermalStandard, sys, "ER02")) == er02_before
+
+            @test_logs (:warn, r"ER01") match_mode = :any begin
+                set_nem_initial_conditions!(sys, bad_db, interval; allow_missing_ramp_rates = true)
+            end
+            @test get_active_power(get_component(ThermalStandard, sys, "ER01")) == er01_before
+            @test isapprox(
+                get_active_power(get_component(ThermalStandard, sys, "ER02")),
+                50.0 / get_base_power(sys); atol = 1.0e-8,
+            )
+        end
+    end
 end
