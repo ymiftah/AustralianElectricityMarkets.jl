@@ -7,7 +7,7 @@ let
 
     @testset "_table_is_cached" begin
         # A glob matching zero files is a legitimate false, not an error - confirmed directly
-        # this still holds once the bare `catch -> false` was removed (see parser.jl).
+        # this still holds once the bare `catch -> false` was removed (see query_helpers.jl).
         @test AustralianElectricityMarkets._table_is_cached(db, :DISPATCHCONSTRAINT)
         @test !AustralianElectricityMarkets._table_is_cached(db, :NOT_A_REAL_TABLE)
     end
