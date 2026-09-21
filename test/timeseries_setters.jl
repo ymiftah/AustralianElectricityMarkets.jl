@@ -428,7 +428,7 @@
             end
         end
 
-        @testset "missing/non-positive ramp data throws, naming the DUID" begin
+        @testset "missing ramp data throws, naming the DUID" begin
             bad_hive = mktempdir()
             ddb = DuckDB.DB()
             conn = DuckDB.connect(ddb)
@@ -481,6 +481,99 @@
             @test !has_time_series(get_component(ThermalStandard, sys, "ER01"), SingleTimeSeries, "ramp_up_rate")
             @test has_time_series(get_component(ThermalStandard, sys, "ER02"), SingleTimeSeries, "ramp_up_rate")
             @test has_time_series(get_component(HydroDispatch, sys, "BW02"), SingleTimeSeries, "ramp_up_rate")
+        end
+
+        @testset "zero ramp rates are carried through, not rejected" begin
+            # AEMO publishes RAMPUPRATE/RAMPDOWNRATE = 0 for a unit held at fixed output. That
+            # is a real dispatch limit, so it must reach the System rather than drop the device.
+            zero_hive = mktempdir()
+            ddb = DuckDB.DB()
+            conn = DuckDB.connect(ddb)
+            DuckDB.execute(conn, "SET preserve_identifier_case=true")
+
+            short_range = start_date:resolution:(start_date + Minute(10))
+            grid = collect(short_range)[1:(end - 1)]  # 3 intervals
+            duids = ["BW02", "BW03", "BW04", "ER01", "ER02"]
+
+            rows = DataFrame(
+                SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
+                INITIALMW = Union{Float64, Missing}[], RAMPUPRATE = Union{Float64, Missing}[],
+                RAMPDOWNRATE = Union{Float64, Missing}[],
+            )
+            for t in grid, duid in duids
+                pinned = duid == "ER02"
+                push!(
+                    rows,
+                    (
+                        SETTLEMENTDATE = t, DUID = duid, INTERVENTION = 0, INITIALMW = 50.0,
+                        RAMPUPRATE = pinned ? 0.0 : 5.0, RAMPDOWNRATE = pinned ? 0.0 : 4.0,
+                    ),
+                )
+            end
+            rows[!, :archive_month] = fill("2025-01", nrow(rows))
+
+            DuckDB.register_data_frame(conn, rows, "tmp_table")
+            table_dir = joinpath(zero_hive, "DISPATCHLOAD")
+            mkpath(table_dir)
+            DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+            DuckDB.unregister_table(conn, "tmp_table")
+
+            zero_db = aem_connect(HiveConfiguration(hive_location = zero_hive, filesystem = "file"))
+            sys = deepcopy(sys_base)
+
+            @test_nowarn set_nem_dispatch_limits!(sys, zero_db, short_range)
+
+            fixed = get_component(ThermalStandard, sys, "ER02")
+            @test all(iszero, get_time_series_values(SingleTimeSeries, fixed, "ramp_up_rate"))
+            @test all(iszero, get_time_series_values(SingleTimeSeries, fixed, "ramp_down_rate"))
+            @test has_time_series(get_component(HydroDispatch, sys, "BW02"), SingleTimeSeries, "ramp_up_rate")
+        end
+
+        @testset "negative ramp rates throw, naming the DUID" begin
+            neg_hive = mktempdir()
+            ddb = DuckDB.DB()
+            conn = DuckDB.connect(ddb)
+            DuckDB.execute(conn, "SET preserve_identifier_case=true")
+
+            short_range = start_date:resolution:(start_date + Minute(10))
+            grid = collect(short_range)[1:(end - 1)]  # 3 intervals
+            duids = ["BW02", "BW03", "BW04", "ER01", "ER02"]
+
+            rows = DataFrame(
+                SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
+                INITIALMW = Union{Float64, Missing}[], RAMPUPRATE = Union{Float64, Missing}[],
+                RAMPDOWNRATE = Union{Float64, Missing}[],
+            )
+            for (i, t) in enumerate(grid), duid in duids
+                bad = duid == "ER01" && i == 2
+                push!(
+                    rows,
+                    (
+                        SETTLEMENTDATE = t, DUID = duid, INTERVENTION = 0, INITIALMW = 50.0,
+                        RAMPUPRATE = bad ? -5.0 : 5.0, RAMPDOWNRATE = 4.0,
+                    ),
+                )
+            end
+            rows[!, :archive_month] = fill("2025-01", nrow(rows))
+
+            DuckDB.register_data_frame(conn, rows, "tmp_table")
+            table_dir = joinpath(neg_hive, "DISPATCHLOAD")
+            mkpath(table_dir)
+            DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+            DuckDB.unregister_table(conn, "tmp_table")
+
+            neg_db = aem_connect(HiveConfiguration(hive_location = neg_hive, filesystem = "file"))
+            sys = deepcopy(sys_base)
+
+            err = try
+                set_nem_dispatch_limits!(sys, neg_db, short_range)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            @test occursin("ER01", err.msg)
+            @test !has_time_series(get_component(ThermalStandard, sys, "ER02"), SingleTimeSeries, "ramp_up_rate")
         end
     end
 

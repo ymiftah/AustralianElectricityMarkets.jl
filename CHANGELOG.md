@@ -43,9 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE`/`INITIALMW` — the ramp rate NEMDE actually applied
   in dispatch and its ramp base, as three per-device `SingleTimeSeries` (`"ramp_up_rate"`,
   `"ramp_down_rate"`, `"initial_mw"`) on every `ThermalStandard`, `HydroDispatch` and
-  `RenewableDispatch`, stored per-unit of the system base. `allow_missing_ramp_rates` opts into
-  proceeding on the buildable subset when some devices lack usable data; the default throws one
-  aggregated `ArgumentError` naming every affected `DUID`.
+  `RenewableDispatch`, stored per-unit of the system base. A zero `RAMPUPRATE`/`RAMPDOWNRATE` is
+  a real dispatch limit AEMO publishes for a unit held at fixed output, and is carried through
+  unchanged; only a `missing` or negative rate is treated as unusable. `allow_missing_ramp_rates`
+  opts into proceeding on the buildable subset when some devices lack usable data; the default
+  throws one aggregated `ArgumentError` naming every affected `DUID`.
 - **`set_nem_initial_conditions!`**: New `System` setter that seeds `active_power` on every
   `ThermalStandard`, `HydroDispatch` and `RenewableDispatch` from `DISPATCHLOAD.INITIALMW` at a
   single dispatch interval, for PSI's `DevicePower` initial condition under the chained ramp

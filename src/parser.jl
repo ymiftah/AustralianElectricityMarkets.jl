@@ -1111,8 +1111,10 @@ Attaches three per-device `SingleTimeSeries` from [`read_dispatch_ramp_rates`](@
 All three are stored per-unit of `sys`'s system base, rates per minute.
 
 A device with no `DISPATCHLOAD` rows in `date_range`, missing intervals, a `missing` rate or
-`INITIALMW`, or a non-positive `RAMPUPRATE`/`RAMPDOWNRATE` is a problem. With
-`allow_missing_ramp_rates = false` (the default), every problem across every device is
+`INITIALMW`, or a negative `RAMPUPRATE`/`RAMPDOWNRATE` is a problem. A zero `RAMPUPRATE` or
+`RAMPDOWNRATE` is carried through as-is: it is AEMO stating that the device cannot move in
+that interval. With `allow_missing_ramp_rates = false` (the default), every problem across
+every device is
 collected and raised as one aggregated `ArgumentError` naming the affected `DUID`s, and `sys`
 is left unmodified. With `allow_missing_ramp_rates = true`, one summary `@warn` is issued and
 series are attached only to the devices with complete, valid data.
@@ -1164,8 +1166,8 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
             if ismissing(row.INITIALMW) || ismissing(row.RAMPUPRATE) || ismissing(row.RAMPDOWNRATE)
                 reason = "missing INITIALMW/RAMPUPRATE/RAMPDOWNRATE at $t"
                 break
-            elseif row.RAMPUPRATE <= 0 || row.RAMPDOWNRATE <= 0
-                reason = "non-positive RAMPUPRATE/RAMPDOWNRATE ($(row.RAMPUPRATE)/$(row.RAMPDOWNRATE)) at $t"
+            elseif row.RAMPUPRATE < 0 || row.RAMPDOWNRATE < 0
+                reason = "negative RAMPUPRATE/RAMPDOWNRATE ($(row.RAMPUPRATE)/$(row.RAMPDOWNRATE)) at $t"
                 break
             end
             push!(initial_mw, row.INITIALMW)
