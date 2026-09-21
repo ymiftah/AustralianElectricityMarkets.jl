@@ -39,15 +39,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`read_dispatch_ramp_rates`/`set_nem_dispatch_limits!`**: New reader and `System` setter for
-  `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE`/`INITIALMW` — the ramp rate NEMDE actually applied
-  in dispatch and its ramp base, as three per-device `SingleTimeSeries` (`"ramp_up_rate"`,
-  `"ramp_down_rate"`, `"initial_mw"`) on every `ThermalStandard`, `HydroDispatch` and
-  `RenewableDispatch`, stored per-unit of the system base. A zero `RAMPUPRATE`/`RAMPDOWNRATE` is
-  a real dispatch limit AEMO publishes for a unit held at fixed output, and is carried through
-  unchanged; only a `missing` or negative rate is treated as unusable. `allow_missing_ramp_rates`
-  opts into proceeding on the buildable subset when some devices lack usable data; the default
-  throws one aggregated `ArgumentError` naming every affected `DUID`.
+- **`read_dispatch_limits`/`set_nem_dispatch_limits!`**: New reader and `System` setter for
+  `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE`/`INITIALMW`/`AVAILABILITY` — the ramp rate and
+  dispatch envelope NEMDE actually applied in dispatch — as four per-device `SingleTimeSeries`
+  on every `ThermalStandard`, `HydroDispatch` and `RenewableDispatch`: `"ramp_up_rate"`,
+  `"ramp_down_rate"` and `"initial_mw"`, stored per-unit of the system base, and
+  `"max_active_power"`, stored PSI-native (normalised by the device's own static
+  `max_active_power`, with `scaling_factor_multiplier = get_max_active_power`) so it overwrites
+  any `UIGF`- or bid-derived `"max_active_power"` series the device already carries — `AVAILABILITY`
+  is already the lower of `MAXAVAIL` bid availability and `UIGF` for semi-scheduled units, so it
+  is the uniform envelope across all three device types. A zero `RAMPUPRATE`, `RAMPDOWNRATE` or
+  `AVAILABILITY` is a real dispatch limit AEMO publishes — a unit held at fixed output, a unit on
+  outage, a PV farm at night — and is carried through unchanged; only a `missing` or negative
+  value is treated as unusable. `allow_missing_ramp_rates` opts into proceeding on the buildable
+  subset when some devices lack usable data (including a non-positive static `max_active_power`,
+  which would otherwise divide by zero); the default throws one aggregated `ArgumentError` naming
+  every affected `DUID`. (Reader renamed from `read_dispatch_ramp_rates`, since it now reads the
+  dispatch envelope too.)
 - **`set_nem_initial_conditions!`**: New `System` setter that seeds `active_power` on every
   `ThermalStandard`, `HydroDispatch` and `RenewableDispatch` from `DISPATCHLOAD.INITIALMW` at a
   single dispatch interval, for PSI's `DevicePower` initial condition under the chained ramp

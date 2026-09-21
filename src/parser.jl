@@ -989,11 +989,15 @@ function read_fcas_dispatch(db, date_range; intervention::Integer = 0)
 end
 
 """
-    read_dispatch_ramp_rates(db, date_range; intervention = 0)
+    read_dispatch_limits(db, date_range; intervention = 0)
 
-Reads per-interval, per-unit ramp rates and dispatch ramp base from `DISPATCHLOAD`: one row
-per `(SETTLEMENTDATE, DUID)` with `INITIALMW`, `RAMPUPRATE`, `RAMPDOWNRATE` — the effective
-ramp rate NEMDE applied for that interval.
+Reads per-interval, per-unit dispatch limits from `DISPATCHLOAD`: one row per
+`(SETTLEMENTDATE, DUID)` with `INITIALMW`, `RAMPUPRATE`, `RAMPDOWNRATE` and `AVAILABILITY` —
+the ramp rate and dispatch envelope NEMDE actually applied for that interval.
+
+`AVAILABILITY` is the per-interval upper bound NEMDE applied: the `MAXAVAIL` bid availability
+for a scheduled unit, or the lower of `MAXAVAIL` bid availability and `UIGF` for a
+semi-scheduled unit.
 
 `intervention` selects the dispatch run: `0` is the normal (non-intervention) run
 (`INTERVENTION` is compared via `COALESCE(INTERVENTION, 0)` for partitions predating that
@@ -1005,9 +1009,10 @@ column — see [`read_fcas_requirements`](@ref)).
 - `intervention`: `0` for the pricing run, `1` for the physical run.
 
 # Returns
-A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `INITIALMW`, `RAMPUPRATE`, `RAMPDOWNRATE`.
+A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `INITIALMW`, `RAMPUPRATE`, `RAMPDOWNRATE`,
+`AVAILABILITY`.
 """
-function read_dispatch_ramp_rates(db, date_range; intervention::Integer = 0)
+function read_dispatch_limits(db, date_range; intervention::Integer = 0)
     start_date = first(date_range)
     end_date = last(date_range)
     sd = Date(start_date) - Day(1)
@@ -1020,7 +1025,7 @@ function read_dispatch_ramp_rates(db, date_range; intervention::Integer = 0)
     )
     table = read_hive(db, :DISPATCHLOAD)
     schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
-    for col in ("RAMPUPRATE", "RAMPDOWNRATE")
+    for col in ("RAMPUPRATE", "RAMPDOWNRATE", "AVAILABILITY")
         col in schema || throw(
             ArgumentError(
                 "DISPATCHLOAD's cached partitions have no $col column at all — they predate " *
@@ -1036,7 +1041,8 @@ function read_dispatch_ramp_rates(db, date_range; intervention::Integer = 0)
         db,
         """
         SELECT SETTLEMENTDATE, DUID,
-               $(_cast_double("INITIALMW")), $(_cast_double("RAMPUPRATE")), $(_cast_double("RAMPDOWNRATE"))
+               $(_cast_double("INITIALMW")), $(_cast_double("RAMPUPRATE")), $(_cast_double("RAMPDOWNRATE")),
+               $(_cast_double("AVAILABILITY"))
         FROM $table
         WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(schema))
         QUALIFY row_number() OVER (
@@ -1105,26 +1111,34 @@ end
 """
     set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates = false, kwargs...)
 
-Attaches three per-device `SingleTimeSeries` from [`read_dispatch_ramp_rates`](@ref) to every
+Attaches four per-device `SingleTimeSeries` from [`read_dispatch_limits`](@ref) to every
 `ThermalStandard`, `HydroDispatch` and `RenewableDispatch` in `sys`: `"ramp_up_rate"` and
-`"ramp_down_rate"` (from `RAMPUPRATE`/`RAMPDOWNRATE`) and `"initial_mw"` (from `INITIALMW`).
-All three are stored per-unit of `sys`'s system base, rates per minute.
+`"ramp_down_rate"` (from `RAMPUPRATE`/`RAMPDOWNRATE`), `"initial_mw"` (from `INITIALMW`), and
+`"max_active_power"` (from `AVAILABILITY`) — the per-interval dispatch envelope NEMDE actually
+applied, replacing any `UIGF`- or bid-derived `"max_active_power"` series a device already
+carries.
 
-A device with no `DISPATCHLOAD` rows in `date_range`, missing intervals, a `missing` rate or
-`INITIALMW`, or a negative `RAMPUPRATE`/`RAMPDOWNRATE` is a problem. A zero `RAMPUPRATE` or
-`RAMPDOWNRATE` is carried through as-is: it is AEMO stating that the device cannot move in
-that interval. With `allow_missing_ramp_rates = false` (the default), every problem across
-every device is
-collected and raised as one aggregated `ArgumentError` naming the affected `DUID`s, and `sys`
-is left unmodified. With `allow_missing_ramp_rates = true`, one summary `@warn` is issued and
-series are attached only to the devices with complete, valid data.
+`"ramp_up_rate"`, `"ramp_down_rate"` and `"initial_mw"` are stored per-unit of `sys`'s system
+base, rates per minute. `"max_active_power"` follows PSY's native convention instead: data
+normalised by the device's own static `max_active_power` (read under `NATURAL_UNITS`), with
+`scaling_factor_multiplier = get_max_active_power`.
+
+A device with no `DISPATCHLOAD` rows in `date_range`, missing intervals, a `missing` rate,
+`INITIALMW` or `AVAILABILITY`, a negative `RAMPUPRATE`/`RAMPDOWNRATE`/`AVAILABILITY`, or a
+non-positive static `max_active_power` is a problem. A zero `RAMPUPRATE`, `RAMPDOWNRATE` or
+`AVAILABILITY` is carried through as-is: it is AEMO stating that the device cannot move, or
+cannot generate, in that interval. With `allow_missing_ramp_rates = false` (the default),
+every problem across every device is collected and raised as one aggregated `ArgumentError`
+naming the affected `DUID`s, and `sys` is left unmodified. With
+`allow_missing_ramp_rates = true`, one summary `@warn` is issued and series are attached only
+to the devices with complete, valid data.
 
 # Arguments
 - `sys`: the `System` to add to.
 - `db`: an `AEMDB` connection.
 - `date_range`: the dispatch intervals to replay.
 - `allow_missing_ramp_rates`: proceed with the buildable subset instead of throwing.
-- `kwargs`: passed to [`read_dispatch_ramp_rates`](@ref) (e.g. `intervention`).
+- `kwargs`: passed to [`read_dispatch_limits`](@ref) (e.g. `intervention`).
 
 # Returns
 `nothing`.
@@ -1133,13 +1147,19 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
     base_power = get_base_power(sys)
     full_grid = collect(date_range)[1:(end - 1)]
 
-    rows = read_dispatch_ramp_rates(db, date_range; kwargs...)
+    rows = read_dispatch_limits(db, date_range; kwargs...)
     by_duid = DataFrames.isempty(rows) ? nothing : groupby(rows, :DUID)
 
     devices = _nem_dispatch_devices(sys)
 
     problems = String[]
-    buildable = Dict{String, @NamedTuple{initial_mw::Vector{Float64}, ramp_up_rate::Vector{Float64}, ramp_down_rate::Vector{Float64}}}()
+    buildable = Dict{
+        String,
+        @NamedTuple{
+            initial_mw::Vector{Float64}, ramp_up_rate::Vector{Float64},
+            ramp_down_rate::Vector{Float64}, max_active_power::Vector{Float64},
+        }
+    }()
 
     for device in devices
         duid = get_name(device)
@@ -1157,28 +1177,45 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
             continue
         end
 
+        static_max_active_power = with_units_base(() -> get_max_active_power(device), sys, "NATURAL_UNITS")
+        if static_max_active_power <= 0
+            push!(
+                problems,
+                "$duid: static max_active_power is $static_max_active_power — cannot normalise AVAILABILITY without dividing by zero",
+            )
+            continue
+        end
+
         initial_mw = Float64[]
         ramp_up_rate = Float64[]
         ramp_down_rate = Float64[]
+        max_active_power = Float64[]
         reason = nothing
         for t in full_grid
             row = by_time[t]
-            if ismissing(row.INITIALMW) || ismissing(row.RAMPUPRATE) || ismissing(row.RAMPDOWNRATE)
-                reason = "missing INITIALMW/RAMPUPRATE/RAMPDOWNRATE at $t"
+            if ismissing(row.INITIALMW) || ismissing(row.RAMPUPRATE) || ismissing(row.RAMPDOWNRATE) || ismissing(row.AVAILABILITY)
+                reason = "missing INITIALMW/RAMPUPRATE/RAMPDOWNRATE/AVAILABILITY at $t"
                 break
             elseif row.RAMPUPRATE < 0 || row.RAMPDOWNRATE < 0
                 reason = "negative RAMPUPRATE/RAMPDOWNRATE ($(row.RAMPUPRATE)/$(row.RAMPDOWNRATE)) at $t"
+                break
+            elseif row.AVAILABILITY < 0
+                reason = "negative AVAILABILITY ($(row.AVAILABILITY)) at $t"
                 break
             end
             push!(initial_mw, row.INITIALMW)
             push!(ramp_up_rate, row.RAMPUPRATE)
             push!(ramp_down_rate, row.RAMPDOWNRATE)
+            push!(max_active_power, row.AVAILABILITY / static_max_active_power)
         end
         if !isnothing(reason)
             push!(problems, "$duid: $reason")
             continue
         end
-        buildable[duid] = (initial_mw = initial_mw, ramp_up_rate = ramp_up_rate, ramp_down_rate = ramp_down_rate)
+        buildable[duid] = (
+            initial_mw = initial_mw, ramp_up_rate = ramp_up_rate,
+            ramp_down_rate = ramp_down_rate, max_active_power = max_active_power,
+        )
     end
 
     _report_ramp_data_problems!(problems, allow_missing_ramp_rates, "set_nem_dispatch_limits!")
@@ -1200,6 +1237,20 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
         add_time_series!(
             sys, device,
             SingleTimeSeries(; name = "initial_mw", data = TimeArray(full_grid, d.initial_mw ./ base_power)),
+        )
+        # RenewableDispatch/HydroDispatch may already carry a "max_active_power" series from
+        # set_renewable_pv!/set_renewable_wind!/set_hydro_limits! - add_time_series! throws on a
+        # duplicate name, so the existing series is removed first, deterministically overwriting
+        # it regardless of call order.
+        has_time_series(device, SingleTimeSeries, "max_active_power") &&
+            remove_time_series!(sys, SingleTimeSeries, device, "max_active_power")
+        add_time_series!(
+            sys, device,
+            SingleTimeSeries(;
+                name = "max_active_power",
+                data = TimeArray(full_grid, d.max_active_power),
+                scaling_factor_multiplier = get_max_active_power,
+            ),
         )
     end
     return
@@ -1225,13 +1276,13 @@ is left unmodified. With `allow_missing_ramp_rates = true`, one summary `@warn` 
 - `db`: an `AEMDB` connection.
 - `interval`: the single dispatch interval to read `INITIALMW` from.
 - `allow_missing_ramp_rates`: proceed with the buildable subset instead of throwing.
-- `kwargs`: passed to [`read_dispatch_ramp_rates`](@ref) (e.g. `intervention`).
+- `kwargs`: passed to [`read_dispatch_limits`](@ref) (e.g. `intervention`).
 
 # Returns
 `nothing`.
 """
 function set_nem_initial_conditions!(sys, db, interval::DateTime; allow_missing_ramp_rates::Bool = false, kwargs...)
-    rows = read_dispatch_ramp_rates(db, [interval, interval + Minute(1)]; kwargs...)
+    rows = read_dispatch_limits(db, [interval, interval + Minute(1)]; kwargs...)
     by_duid = DataFrames.isempty(rows) ? nothing : groupby(rows, :DUID)
 
     devices = _nem_dispatch_devices(sys)
