@@ -101,6 +101,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`src/parser.jl` split into nine files by domain**: the 1424-line file mixed the `BidType` enum, shared DuckDB helpers, six NEMWEB readers and six `System` setters. It is now
+  `src/bid_types.jl` (the enum and FCAS market tuples), `src/query_helpers.jl` (`_table_is_cached`, `_cast_double`, intervention filtering — all already used from `constraints/` and
+  `interconnector_losses.jl`), `src/readers/prices.jl`, `src/readers/dispatch.jl`, `src/setters/timeseries.jl`, `src/setters/bids.jl`, `src/setters/dispatch_limits.jl`,
+  `src/fcas/bid_parser.jl` and `src/fcas/requirements.jl`. A pure move: no function body, docstring or comment changed, and the include order still puts `BidType` ahead of the
+  `FCASBid`/`UnitTerm` struct definitions that annotate fields with it.
 - **BREAKING: `FCASBid.offer_curve` is now typed `PSY.PiecewiseStepData`**, not
   `PSY.CostCurve{PiecewiseIncrementalCurve}`.
 - **BREAKING: `add_nem_constraints!` builds one `GenericConstraint` per exact `(GENCONID, EFFECTIVEDATE, VERSIONNO)` triple invoked, not one per bare `GENCONID`**, named `GENCONID@EFFECTIVEDATE#VERSIONNO` (e.g. `"N_BAYSW_THERMAL@2025-01-01#1"`).

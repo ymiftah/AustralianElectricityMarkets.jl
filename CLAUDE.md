@@ -33,8 +33,11 @@ Julia 1.11 workspace: root, `test/`, and `docs/` share one Manifest.
 | `src/AustralianElectricityMarketsData/` | submodule: NEMWEB download, parquet cache, DuckDB queries |
 | `…/nemweb_load/tables.jl` | `_TABLE_SPECS` — one entry per NEMWEB table |
 | `…/nemweb_load/column_types.jl` | `COLUMN_TYPES`; unlisted columns silently become `VARCHAR` |
-| `src/parser.jl` | time-series setters, bid and FCAS readers |
-| `src/fcas/` | FCAS reserve and offer types |
+| `src/bid_types.jl` | `BidType` scoped enum and the FCAS market tuples |
+| `src/query_helpers.jl` | shared DuckDB helpers: `_table_is_cached`, `_cast_double`, intervention filtering |
+| `src/readers/` | NEMWEB readers returning DataFrames: `prices.jl`, `dispatch.jl` |
+| `src/setters/` | PSY `System` mutators: `timeseries.jl`, `bids.jl`, `dispatch_limits.jl` |
+| `src/fcas/` | FCAS reserve and offer types, plus `bid_parser.jl` and `requirements.jl` |
 | `src/network_models/region_model.jl` | `RegionModel` submodule: builds the PSY `System` |
 
 ## Standards

@@ -269,7 +269,7 @@ function add_nem_constraints!(
     end
 
     if !isempty(empty_region_terms)
-        # string(bid_type), not "$bid_type" - @scoped_enum overrides Base.show (see parser.jl).
+        # string(bid_type), not "$bid_type" - @scoped_enum overrides Base.show (see bid_types.jl).
         detail = join(
             (
                 "constraint=$(e.constraint_name) region=$(e.region) bid_type=$(string(e.bid_type))"
