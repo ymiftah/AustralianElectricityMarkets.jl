@@ -35,8 +35,7 @@ export energy_bounds
 export EffectiveTrapezium, scale_trapezium, lower_slope_coeff, upper_slope_coeff
 export AbstractNEMConstraintFormulation, NEMConstraintLHS, NEMConstraintLimit,
     NEMConstraintRHSParameter, LinearFactorLimit, FCASMarket
-export RampBase, MeteredRampBase, ChainedRampBase, NEMDispatch,
-    NEMReplayDispatch, NEMLookaheadDispatch,
+export AbstractNEMDispatch, NEMReplayDispatch, NEMLookaheadDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter
 export nem_dispatch_participants, set_nem_dispatch_models!

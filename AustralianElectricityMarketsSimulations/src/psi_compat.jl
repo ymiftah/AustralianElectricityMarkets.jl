@@ -46,7 +46,7 @@ end
 # `NetworkModel{AreaBalancePowerModel}` methods that register the correct `Area`-keyed container
 # instead — so no method is defined here.
 
-# `NEMDispatch` builds the market-bid path with no `OnVariable`. `PowerSimulations.jl` 0.38.4's
+# `AbstractNEMDispatch` builds the market-bid path with no `OnVariable`. `PowerSimulations.jl` 0.38.4's
 # `_include_min_gen_power_in_constraint` / `_include_constant_min_gen_power_in_constraint`
 # (`devices/common/objective_function/market_bid.jl`) exist for exactly that case. PSI's competing
 # methods are keyed on the device type with a bare `AbstractDeviceFormulation`, so a single
@@ -54,7 +54,7 @@ end
 # below break that tie without narrowing the formulation itself.
 
 """
-    PSI._include_min_gen_power_in_constraint(::PSY.StaticInjection, ::PSI.ActivePowerVariable, ::NEMDispatch)
+    PSI._include_min_gen_power_in_constraint(::PSY.StaticInjection, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch)
 
 Override of `PowerSimulations.jl` 0.38.4's private market-bid hook. NEM bid stacks start at zero,
 so the first breakpoint contributes no minimum-generation offset and no `OnVariable` is required.
@@ -62,12 +62,12 @@ so the first breakpoint contributes no minimum-generation offset and no `OnVaria
 # Returns
 `false`.
 """
-PSI._include_min_gen_power_in_constraint(::PSY.StaticInjection, ::PSI.ActivePowerVariable, ::NEMDispatch) = false
-PSI._include_min_gen_power_in_constraint(::PSY.Generator, ::PSI.ActivePowerVariable, ::NEMDispatch) = false
-PSI._include_min_gen_power_in_constraint(::PSY.RenewableDispatch, ::PSI.ActivePowerVariable, ::NEMDispatch) = false
+PSI._include_min_gen_power_in_constraint(::PSY.StaticInjection, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = false
+PSI._include_min_gen_power_in_constraint(::PSY.Generator, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = false
+PSI._include_min_gen_power_in_constraint(::PSY.RenewableDispatch, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = false
 
 """
-    PSI._include_constant_min_gen_power_in_constraint(::PSY.StaticInjection, ::PSI.ActivePowerVariable, ::NEMDispatch)
+    PSI._include_constant_min_gen_power_in_constraint(::PSY.StaticInjection, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch)
 
 Override of `PowerSimulations.jl` 0.38.4's private market-bid hook: the bid stack's first
 breakpoint enters the power balance as a constant rather than through an `OnVariable`.
@@ -75,4 +75,4 @@ breakpoint enters the power balance as a constant rather than through an `OnVari
 # Returns
 `true`.
 """
-PSI._include_constant_min_gen_power_in_constraint(::PSY.StaticInjection, ::PSI.ActivePowerVariable, ::NEMDispatch) = true
+PSI._include_constant_min_gen_power_in_constraint(::PSY.StaticInjection, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = true

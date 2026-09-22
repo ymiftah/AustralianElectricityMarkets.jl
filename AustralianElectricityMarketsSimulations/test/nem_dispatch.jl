@@ -81,20 +81,19 @@ component_keys(container_keys, ::Type{T}) where {T} =
     [k for k in container_keys if IS.Optimization.get_component_type(k) === T]
 
 @testset "formulation types" begin
-    @test NEMReplayDispatch === NEMDispatch{MeteredRampBase}
-    @test NEMLookaheadDispatch === NEMDispatch{ChainedRampBase}
-    @test NEMDispatch <: PSI.AbstractDeviceFormulation
-    @test MeteredRampBase <: RampBase && ChainedRampBase <: RampBase
+    @test AbstractNEMDispatch <: PSI.AbstractDeviceFormulation
+    @test NEMReplayDispatch <: AbstractNEMDispatch
+    @test NEMLookaheadDispatch <: AbstractNEMDispatch
 
-    @testset "bare NEMDispatch is a UnionAll and PSI rejects it" begin
-        @test NEMDispatch isa UnionAll
-        @test !isconcretetype(NEMDispatch)
+    @testset "both modes are concrete, so a DeviceModel is buildable from either" begin
         @test isconcretetype(NEMReplayDispatch) && isconcretetype(NEMLookaheadDispatch)
-        # A consumer must name a mode; the bare type cannot reach a build.
-        @test_throws Exception PSI.DeviceModel(PSY.ThermalStandard, NEMDispatch)
+        @test isabstracttype(AbstractNEMDispatch)
+        for F in (NEMReplayDispatch, NEMLookaheadDispatch)
+            @test PSI.get_formulation(PSI.DeviceModel(PSY.ThermalStandard, F)) === F
+        end
     end
 
-    @testset "only the chained base requires an initial-conditions sub-solve" begin
+    @testset "only the lookahead mode requires an initial-conditions sub-solve" begin
         @test PSI.requires_initialization(NEMReplayDispatch()) == false
         @test PSI.requires_initialization(NEMLookaheadDispatch()) == true
     end
@@ -126,9 +125,9 @@ end
                     PSI._include_min_gen_power_in_constraint,
                     PSI._include_constant_min_gen_power_in_constraint,
                 )
-                signature = (T, PSI.ActivePowerVariable, NEMDispatch{MeteredRampBase})
+                signature = (T, PSI.ActivePowerVariable, NEMReplayDispatch)
                 @test hasmethod(hook, signature)
-                @test which(hook, signature).sig.parameters[4] <: NEMDispatch
+                @test which(hook, signature).sig.parameters[4] <: AbstractNEMDispatch
             end
         end
     end
@@ -273,7 +272,7 @@ end
         model2 = nem_dispatch_model(sys)
         build!(model2; output_dir = mktempdir())
         container = PSI.get_optimization_container(model2)
-        for T in nem_dispatch_participants(sys), meta in ("up", "dn")
+        for T in nem_dispatch_participants(sys), meta in ("up", "down")
             constraint = PSI.get_constraint(container, PSI.RampConstraint(), T, meta)
             names, steps = axes(constraint)
             @test length(names) == length(collect(PSY.get_components(T, sys)))
