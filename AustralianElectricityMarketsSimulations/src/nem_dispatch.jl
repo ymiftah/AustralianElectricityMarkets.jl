@@ -194,26 +194,6 @@ function PSI.construct_device!(
         network_model,
     )
 
-    # A service model folds its headroom into these range expressions.
-    if PSI.has_service_model(model)
-        PSI.add_to_expression!(
-            container,
-            PSI.ActivePowerRangeExpressionLB,
-            PSI.ActivePowerVariable,
-            devices,
-            model,
-            network_model,
-        )
-        PSI.add_to_expression!(
-            container,
-            PSI.ActivePowerRangeExpressionUB,
-            PSI.ActivePowerVariable,
-            devices,
-            model,
-            network_model,
-        )
-    end
-
     PSI.add_feedforward_arguments!(container, model, devices)
     return
 end
@@ -238,33 +218,14 @@ function PSI.construct_device!(
 
     _check_dispatch_envelope(container, devices, model)
 
-    if PSI.has_service_model(model)
-        PSI.add_constraints!(
-            container,
-            PSI.ActivePowerVariableLimitsConstraint,
-            PSI.ActivePowerRangeExpressionLB,
-            devices,
-            model,
-            network_model,
-        )
-        PSI.add_constraints!(
-            container,
-            PSI.ActivePowerVariableLimitsConstraint,
-            PSI.ActivePowerRangeExpressionUB,
-            devices,
-            model,
-            network_model,
-        )
-    else
-        PSI.add_constraints!(
-            container,
-            PSI.ActivePowerVariableLimitsConstraint,
-            PSI.ActivePowerVariable,
-            devices,
-            model,
-            network_model,
-        )
-    end
+    PSI.add_constraints!(
+        container,
+        PSI.ActivePowerVariableLimitsConstraint,
+        PSI.ActivePowerVariable,
+        devices,
+        model,
+        network_model,
+    )
 
     PSI.add_constraints!(container, PSI.RampConstraint, PSI.ActivePowerVariable, devices, model, network_model)
 
@@ -287,7 +248,7 @@ envelope.
 function PSI.add_constraints!(
         container::PSI.OptimizationContainer,
         ::Type{PSI.ActivePowerVariableLimitsConstraint},
-        U::Type{<:Union{PSI.VariableType, PSI.ActivePowerRangeExpressionUB}},
+        U::Type{<:PSI.VariableType},
         devices::IS.FlattenIteratorWrapper{T},
         model::PSI.DeviceModel{T, D},
         ::PSI.NetworkModel{X},
@@ -301,18 +262,6 @@ function PSI.add_constraints!(
         model,
         X,
     )
-    return
-end
-
-function PSI.add_constraints!(
-        container::PSI.OptimizationContainer,
-        T::Type{PSI.ActivePowerVariableLimitsConstraint},
-        U::Type{PSI.ActivePowerRangeExpressionLB},
-        devices::IS.FlattenIteratorWrapper{V},
-        model::PSI.DeviceModel{V, D},
-        ::PSI.NetworkModel{X},
-    ) where {V <: PSY.StaticInjection, D <: AbstractNEMDispatch, X <: PM.AbstractPowerModel}
-    PSI.add_range_constraints!(container, T, U, devices, model, X)
     return
 end
 
