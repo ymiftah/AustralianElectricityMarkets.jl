@@ -37,6 +37,6 @@ export AbstractNEMConstraintFormulation, NEMConstraintLHS, NEMConstraintLimit,
 export AbstractNEMDispatch, NEMReplayDispatch, NEMLookaheadDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter
-export nem_dispatch_participants, set_nem_dispatch_models!, has_nem_dispatch_limits
+export nem_dispatch_participants, set_nem_dispatch_models!
 
 end

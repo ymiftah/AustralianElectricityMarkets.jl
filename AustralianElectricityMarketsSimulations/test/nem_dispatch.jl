@@ -346,7 +346,7 @@ end
     )
     stripped = PSY.get_component(PSY.ThermalStandard, sys, "ER02")
 
-    @test !has_nem_dispatch_limits(stripped, NEMReplayDispatch)
+    @test !AEMS._has_nem_dispatch_limits(stripped, NEMReplayDispatch)
     # The type stays a participant: its other components are still covered.
     @test PSY.ThermalStandard in nem_dispatch_participants(sys)
 

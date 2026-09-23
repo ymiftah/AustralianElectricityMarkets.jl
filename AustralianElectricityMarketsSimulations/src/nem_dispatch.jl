@@ -112,7 +112,7 @@ function PSI.get_default_attributes(
 end
 
 """
-    has_nem_dispatch_limits(device, formulation)
+    _has_nem_dispatch_limits(device, formulation)
 
 Whether `device` carries every time series `formulation` reads as a parameter.
 
@@ -123,7 +123,7 @@ Whether `device` carries every time series `formulation` reads as a parameter.
 # Returns
 `true` when every registered series is attached, `false` otherwise.
 """
-function has_nem_dispatch_limits(device, formulation::Type{<:AbstractNEMDispatch})
+function _has_nem_dispatch_limits(device, formulation::Type{<:AbstractNEMDispatch})
     names = PSI.get_default_time_series_names(typeof(device), formulation)
     return all(
         PSY.has_time_series(device, PSY.SingleTimeSeries, name) for name in values(names)
@@ -482,7 +482,7 @@ end
 
 The component types in `sys` that participate in a NEM dispatch: any
 `PowerSystems.StaticInjection` with at least one component satisfying
-[`has_nem_dispatch_limits`](@ref) for `formulation`.
+[`_has_nem_dispatch_limits`](@ref) for `formulation`.
 
 # Arguments
 - `sys`: the `PowerSystems.System` to inspect.
@@ -494,7 +494,7 @@ A sorted `Vector` of component types.
 function nem_dispatch_participants(sys, formulation::Type{<:AbstractNEMDispatch} = NEMReplayDispatch)
     types = Set{DataType}()
     for device in PSY.get_components(PSY.StaticInjection, sys)
-        has_nem_dispatch_limits(device, formulation) || continue
+        _has_nem_dispatch_limits(device, formulation) || continue
         push!(types, typeof(device))
     end
     return sort!(collect(types); by = string)
@@ -504,7 +504,7 @@ function _uncovered_names(sys, types, formulation)
     names = String[]
     for T in types, device in PSY.get_components(T, sys)
         PSY.get_available(device) || continue
-        has_nem_dispatch_limits(device, formulation) && continue
+        _has_nem_dispatch_limits(device, formulation) && continue
         push!(names, PSY.get_name(device))
     end
     return names
@@ -521,7 +521,7 @@ Sets `formulation` as the device model for every dispatch participant in `sys`.
   [`nem_dispatch_participants`](@ref).
 - `formulation`: [`NEMReplayDispatch`](@ref) or [`NEMLookaheadDispatch`](@ref).
 - `skip_uncovered`: when `true`, each device model carries a `"filter_function"` attribute
-  excluding components that fail [`has_nem_dispatch_limits`](@ref), and the excluded names are
+  excluding components that fail [`_has_nem_dispatch_limits`](@ref), and the excluded names are
   warned about. When `false` such a component fails the build by name.
 
 # Returns
@@ -548,7 +548,7 @@ function set_nem_dispatch_models!(
                 PSI.DeviceModel(
                     T, formulation;
                     attributes = Dict{String, Any}(
-                        "filter_function" => d -> has_nem_dispatch_limits(d, formulation),
+                        "filter_function" => d -> _has_nem_dispatch_limits(d, formulation),
                     ),
                 ),
             )
