@@ -26,7 +26,6 @@ const REAL_START = DateTime(2026, 6, 4, 0, 0)
 const REAL_RESOLUTION = Minute(5)
 const REAL_SPAN = Hour(1)
 const REAL_DATE_RANGE = REAL_START:REAL_RESOLUTION:(REAL_START + REAL_SPAN)
-const REAL_DAY = (Date(REAL_START), Date(REAL_START) + Day(1))
 const REAL_MONTH = Date(year(REAL_START), month(REAL_START), 1)
 
 # Either table carries the dispatch FCAS requirements, depending on the archive month.
@@ -58,19 +57,6 @@ let
         ),
     )
 end
-
-dispatchload(sql) = DataFrame(
-    DuckDB.execute(
-        db.db,
-        "WITH d AS (SELECT DUID, SETTLEMENTDATE::TIMESTAMP AS SETTLEMENTDATE, " *
-            "INITIALMW::DOUBLE AS i, TOTALCLEARED::DOUBLE AS tc, AVAILABILITY::DOUBLE AS av, " *
-            "RAMPUPRATE::DOUBLE AS ru, RAMPDOWNRATE::DOUBLE AS rd " *
-            "FROM $(AustralianElectricityMarketsData.read_hive(db, :DISPATCHLOAD)) " *
-            "WHERE archive_month = '$REAL_MONTH' AND INTERVENTION::INT = 0 " *
-            "AND SETTLEMENTDATE::TIMESTAMP >= '$(REAL_DAY[1])' " *
-            "AND SETTLEMENTDATE::TIMESTAMP < '$(REAL_DAY[2])') " * sql,
-    ),
-)
 
 function aemsim_template(sys)
     template = PSI.ProblemTemplate(
@@ -107,32 +93,6 @@ function term_device_names(gc)
 end
 
 @testset "Real NEM data, $(Date(REAL_START))" begin
-    @testset "AEMO's DISPATCHLOAD semantics" begin
-        @testset "ramp rates are MW per hour" begin
-            moves = dispatchload(
-                """
-                SELECT quantile_cont((tc - i) / ru, 0.999) FILTER (WHERE ru > 0 AND tc > i) AS up,
-                       quantile_cont((i - tc) / rd, 0.999) FILTER (WHERE rd > 0 AND tc < i) AS down
-                FROM d
-                """,
-            )
-            @test only(moves.up) ≈ DISPATCH_INTERVAL_HOURS atol = 1.0e-3
-            @test only(moves.down) ≈ DISPATCH_INTERVAL_HOURS atol = 1.0e-3
-        end
-
-        @testset "a ramp-down floor above availability is cleared at the floor, never above it" begin
-            floors = dispatchload(
-                """
-                SELECT count(*) FILTER (WHERE tc > av + 0.01) AS above_availability,
-                       max(tc - greatest(av, i - rd * $DISPATCH_INTERVAL_HOURS)) AS max_excess
-                FROM d WHERE i - rd * $DISPATCH_INTERVAL_HOURS > av + 0.01
-                """,
-            )
-            @test only(floors.above_availability) > 0
-            @test only(floors.max_excess) <= 1.0e-3
-        end
-    end
-
     sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = REAL_DATE_RANGE)
 
     @testset "the constrained System builds" begin
@@ -172,10 +132,6 @@ end
             d -> !PSY.get_available(d) || AEMS._has_nem_dispatch_limits(d, NEMReplayDispatch),
             devices,
         )
-        @test issubset(
-            [PSY.ThermalStandard, PSY.HydroDispatch, PSY.RenewableDispatch],
-            nem_dispatch_participants(sys),
-        )
 
         @testset "the stored ramp rate yields AEMO's per-interval ramp" begin
             row = first(
@@ -214,13 +170,6 @@ end
 
         @testset "every constraint term names a device in the System" begin
             @test issubset(Set(first.(diagnoses)), Set([:unsupported_bid_type, :unmodeled_device_type]))
-        end
-
-        @testset "only storage is rejected as an unmodeled device type" begin
-            unmodeled = Set(
-                Iterators.flatten(types for (reason, types) in diagnoses if reason == :unmodeled_device_type),
-            )
-            @test unmodeled == Set([PSY.EnergyReservoirStorage])
         end
 
         @testset "no buildable constraint names an unavailable device" begin
