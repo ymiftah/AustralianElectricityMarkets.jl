@@ -93,6 +93,25 @@ takes `skip_uncovered`, mirroring that flag: it installs PSI's `"filter_function
 attribute (read by `get_available_components`) to exclude uncovered components, and warns naming
 them. Excluding a device is never silent and never the default.
 
+### The lookahead mode's initial-conditions sub-model
+
+`requires_initialization` is `true` for the chained base, so `PowerSimulations.jl` builds and
+solves a separate initialisation problem whose `ActivePowerVariable` becomes the main model's
+`DevicePower` condition. Two things this forces:
+
+`get_initial_conditions_template` overwrites the sub-model's `time_series_names` with the
+*parent* model's (`initial_conditions/initialization.jl:32-38`), while
+`get_initial_conditions_device_model` sets its formulation to `NEMReplayDispatch`. The sub-model
+is therefore the replay formulation paired with whatever names the parent registered. Both modes
+consequently register `"initial_mw"`: were it registered only for replay, a lookahead parent
+would hand the sub-model a name set without it and the sub-model's metered ramp base would look
+up a parameter that was never added. For the same reason nothing may infer a registered series
+from the formulation type alone - `_check_dispatch_envelope` checks the registered names as well
+as the formulation.
+
+`add_initial_condition!` must be called in the argument stage for the condition to exist at all;
+defining `initial_condition_default`/`initial_condition_variable` only says how to value it.
+
 ### `INITIALMW` as a time series, not a scalar
 
 NEMDE takes `INITIALMW` from metering at the start of every interval; it is not the previous

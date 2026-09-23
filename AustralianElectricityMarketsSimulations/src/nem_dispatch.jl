@@ -77,32 +77,22 @@ PSI.initial_condition_variable(::PSI.DevicePower, ::PSY.StaticInjection, ::Abstr
 """
     PSI.get_default_time_series_names(::Type{<:PSY.StaticInjection}, ::Type{<:AbstractNEMDispatch})
 
-Registers the time series [`AbstractNEMDispatch`](@ref) reads as parameters. `"initial_mw"` is
-registered only for [`NEMReplayDispatch`](@ref).
+Registers the time series [`AbstractNEMDispatch`](@ref) reads as parameters. Both modes register
+`"initial_mw"`: `PowerSimulations.jl` copies the parent model's names onto the
+initial-conditions sub-model, which runs [`NEMReplayDispatch`](@ref) and reads it.
 
 # Returns
 A `Dict` mapping each `PowerSimulations.TimeSeriesParameter` type to its series name.
 """
 function PSI.get_default_time_series_names(
         ::Type{<:PSY.StaticInjection},
-        ::Type{NEMReplayDispatch},
+        ::Type{<:AbstractNEMDispatch},
     )
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
         PSI.ActivePowerTimeSeriesParameter => "max_active_power",
         RampUpRateTimeSeriesParameter => "ramp_up_rate",
         RampDownRateTimeSeriesParameter => "ramp_down_rate",
         InitialPowerTimeSeriesParameter => "initial_mw",
-    )
-end
-
-function PSI.get_default_time_series_names(
-        ::Type{<:PSY.StaticInjection},
-        ::Type{NEMLookaheadDispatch},
-    )
-    return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
-        PSI.ActivePowerTimeSeriesParameter => "max_active_power",
-        RampUpRateTimeSeriesParameter => "ramp_up_rate",
-        RampDownRateTimeSeriesParameter => "ramp_down_rate",
     )
 end
 
@@ -186,6 +176,11 @@ function PSI.construct_device!(
         haskey(PSI.get_time_series_names(model), param) || continue
         PSI.add_parameters!(container, param, devices, model)
     end
+
+    # The chained base measures interval 1 against a DevicePower initial condition, which has to
+    # be declared here for PowerSimulations to populate it from the initialisation sub-solve.
+    PSI.requires_initialization(D()) &&
+        PSI.add_initial_condition!(container, devices, D(), PSI.DevicePower())
 
     PSI.process_market_bid_parameters!(container, devices, model)
     PSI.add_cost_expressions!(container, devices, model)
@@ -385,6 +380,12 @@ function _ts_parameter_accessor(container, ::Type{P}, ::Type{T}) where {P <: PSI
 end
 
 function _ramp_base_accessor(container, ::Type{NEMReplayDispatch}, ::Type{T}, names, _) where {T}
+    PSI.has_container_key(container, InitialPowerTimeSeriesParameter, T) || throw(
+        ArgumentError(
+            "NEMReplayDispatch: the device model registers no \"initial_mw\" parameter, so the " *
+                "ramp has no base to measure against",
+        ),
+    )
     initial, covered = _ts_parameter_accessor(container, InitialPowerTimeSeriesParameter, T)
     _require_coverage(names, "no \"initial_mw\" time series", _SETTER_REMEDY, covered)
     return initial
@@ -439,8 +440,11 @@ const _RAMP_FLOOR_TOLERANCE = 1.0e-6
 
 # A ramp-down floor above the availability ceiling is infeasible; report it at build.
 function _check_dispatch_envelope(container, devices, model)
-    # Only the replay mode has a metered floor; the lookahead floor is a variable.
+    # Only the replay mode has a metered floor; the lookahead floor is a variable. The name check
+    # is not redundant: the initial-conditions sub-model pairs this formulation with the parent
+    # model's registered names.
     PSI.get_formulation(model) === NEMReplayDispatch || return
+    haskey(PSI.get_time_series_names(model), InitialPowerTimeSeriesParameter) || return
     isempty(devices) && return
     T = typeof(first(devices))
     time_steps = PSI.get_time_steps(container)
