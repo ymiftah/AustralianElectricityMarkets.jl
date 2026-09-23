@@ -31,7 +31,7 @@
                 set_demand!(sys, db, date_range; resolution = resolution)
                 for load in get_components(PowerLoad, sys)
                     ta = get_time_series_array(SingleTimeSeries, load, "max_active_power")
-                    # subset! logic in parser.jl: first(date_range) <= x < last(date_range)
+                    # subset! logic in setters/timeseries.jl: first(date_range) <= x < last(date_range)
                     @test length(ta) == length(date_range) - 1
                     if length(ta) > 1
                         @test TimeSeries.timestamp(ta)[2] - TimeSeries.timestamp(ta)[1] == resolution
