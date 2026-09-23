@@ -1,6 +1,5 @@
-# Every isolated PowerSimulations.jl override lives in this one file so the compat surface is
-# auditable in one place. Each override states the PSI version it was written against; re-check
-# this file on every PSI upgrade.
+# Every PowerSimulations.jl override this package declares lives here, each stating the PSI
+# version it was written against. Re-check this file on every PSI upgrade.
 
 """
     PSI._modify_device_model!(devices_template, ::PSI.ServiceModel{GenericConstraint, LinearFactorLimit}, contributing_devices)
@@ -38,10 +37,30 @@ function PSI._modify_device_model!(
     return nothing
 end
 
-# Area-balance dual registration: `AreaBalancePowerModel` is a `PM.AbstractPowerModel`, so stock PSI
-# 0.38.4's `add_constraint_dual!`/`assign_dual_variable!` dispatch to their generic
-# `PM.AbstractPowerModel` methods and register a bus-keyed dual, the wrong shape for
-# `AreaBalancePowerModel`'s `PSY.Area`-keyed `CopperPlateBalanceConstraint`. This package's pinned
-# PowerSimulations.jl fork (see `[sources]` in Project.toml) adds more specific
-# `NetworkModel{AreaBalancePowerModel}` methods that register the correct `Area`-keyed container
-# instead — so no method is defined here.
+# PSI 0.38.4 keys these on the device type with a bare `AbstractDeviceFormulation`, so the
+# `PSY.StaticInjection` method below is ambiguous for a `PSY.Generator`; the two narrower methods
+# break the tie.
+
+"""
+    PSI._include_min_gen_power_in_constraint(::PSY.StaticInjection, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch)
+
+Override of `PowerSimulations.jl` 0.38.4's private market-bid hook: the bid stack's first
+breakpoint contributes no minimum-generation offset, so no `OnVariable` is required.
+
+# Returns
+`false`.
+"""
+PSI._include_min_gen_power_in_constraint(::PSY.StaticInjection, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = false
+PSI._include_min_gen_power_in_constraint(::PSY.Generator, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = false
+PSI._include_min_gen_power_in_constraint(::PSY.RenewableDispatch, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = false
+
+"""
+    PSI._include_constant_min_gen_power_in_constraint(::PSY.StaticInjection, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch)
+
+Override of `PowerSimulations.jl` 0.38.4's private market-bid hook: the bid stack's first
+breakpoint enters the power balance as a constant rather than through an `OnVariable`.
+
+# Returns
+`true`.
+"""
+PSI._include_constant_min_gen_power_in_constraint(::PSY.StaticInjection, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = true
