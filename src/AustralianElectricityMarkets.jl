@@ -3,6 +3,9 @@ module AustralianElectricityMarkets
 using PowerSystems
 using DuckDB
 using Dates
+using DataFrames
+using Chain
+using Statistics
 import TimeSeries: TimeArray, colnames
 import PowerSystems as PSY
 import InfrastructureSystems as IS
@@ -25,6 +28,7 @@ export read_affine_heatrates,
 export set_demand!, set_renewable_pv!, set_renewable_wind!, set_market_bids!, set_hydro_limits!
 export read_fcas_bids, set_fcas_bids!, read_fcas_requirements,
     read_fcas_prices, read_fcas_dispatch, read_prices, read_uigf
+export read_dispatch_limits, set_nem_dispatch_limits!, set_nem_initial_conditions!
 export read_invoked_constraints, read_constraint_definitions, read_constraint_terms,
     read_constraint_fcas_requirements, add_nem_constraints!
 export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS
@@ -55,7 +59,15 @@ using .AustralianElectricityMarketsData: islocal, get_filesystem, _parse_hive_ro
 @doc (@doc AustralianElectricityMarketsData.read_interconnectors) read_interconnectors
 
 # Modules
-include("parser.jl")
+include("bid_types.jl")
+include("query_helpers.jl")
+include("readers/prices.jl")
+include("readers/dispatch.jl")
+include("setters/timeseries.jl")
+include("setters/bids.jl")
+include("setters/dispatch_limits.jl")
+include("fcas/bid_parser.jl")
+include("fcas/requirements.jl")
 
 # FCAS (Frequency Control Ancillary Services) and NEM generic constraint types.
 #
@@ -63,8 +75,8 @@ include("parser.jl")
 # that PSY/IS's component-type lookup on JSON deserialize (`InfrastructureSystems.get_module`,
 # via `Base.root_module`) only resolves top-level package names, not dotted submodule paths.
 #
-# Included after parser.jl: FCASBid.service::BidType and UnitTerm/RegionTerm's
-# bid_type::BidType fields both need BidType (defined in parser.jl) in scope at
+# Included after bid_types.jl: FCASBid.service::BidType and UnitTerm/RegionTerm's
+# bid_type::BidType fields both need BidType (defined in bid_types.jl) in scope at
 # struct-definition time.
 include("fcas/bids.jl")
 include("fcas/access.jl")

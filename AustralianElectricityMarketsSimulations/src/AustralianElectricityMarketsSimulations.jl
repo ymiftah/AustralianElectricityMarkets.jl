@@ -15,11 +15,17 @@ using Statistics
 import PowerSimulations as PSI
 import PowerSystems as PSY
 
+# Reached through PSI/PSY rather than declared as direct dependencies, so they cannot version-skew
+# from the pinned PowerSimulations.
+const IS = PSY.IS
+const PM = PSI.PM
+
 include("errors.jl")
 include("time_basis.jl")
 include("constraint_formulations.jl")
 include("nem_constraints.jl")
 include("buildability.jl")
+include("nem_dispatch.jl")
 include("psi_compat.jl")
 include("replication/inputs.jl")
 include("replication/preprocessing.jl")
@@ -31,5 +37,9 @@ export EffectiveTrapezium, scale_trapezium, lower_slope_coeff, upper_slope_coeff
 export AbstractNEMConstraintFormulation, NEMConstraintLHS, NEMConstraintLimit,
     NEMConstraintRHSParameter, LinearFactorLimit, FCASMarket
 export filter_buildable_generic_constraints
+export AbstractNEMDispatch, NEMReplayDispatch, NEMLookaheadDispatch,
+    RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
+    InitialPowerTimeSeriesParameter
+export nem_dispatch_participants, set_nem_dispatch_models!
 
 end

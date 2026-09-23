@@ -1,4 +1,4 @@
-# 0013. `LinearFactorLimit` assembles its LHS in the Model stage, not the Argument stage
+# 0015. `LinearFactorLimit` assembles its LHS in the Model stage, not the Argument stage
 
 ## Status
 

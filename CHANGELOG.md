@@ -39,6 +39,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`AbstractNEMDispatch`, a uniform device formulation for NEM dispatch participants** (`AustralianElectricityMarketsSimulations`): a per-band bid stack from `MarketBidCost`, a per-interval ramp limit from the `"ramp_up_rate"`/`"ramp_down_rate"` series, and the `DISPATCHLOAD.AVAILABILITY` envelope, replacing the stock `ThermalBasicDispatch`/`RenewableFullDispatch`/`HydroDispatchRunOfRiver` formulations whose commitment binaries, forecast ceiling and energy budget NEMDE does not apply. The formulation is written against `PowerSystems.StaticInjection` and is never gated on a fixed list of device types: NEMDE dispatches on market participation, not technology, so a `ThermalMultiStart` or any other injector a user brings is treated identically. It models one injection variable per device; state of charge for bidirectional units layers on as its own formulation.
+- **`NEMReplayDispatch` and `NEMLookaheadDispatch`**, the two concrete `AbstractNEMDispatch` formulations, differing only in what the ramp constraint measures against: the replay formulation measures every interval against its own metered `INITIALMW`, as NEMDE does, and the lookahead formulation chains each interval from the previous one's dispatch. Both are concrete, so a consumer always names one and the choice is never made by default.
+- **`nem_dispatch_participants` and `set_nem_dispatch_models!`**, which set one formulation across every participant by reading which components carry the dispatch-limit series rather than assuming types, plus the `RampUpRateTimeSeriesParameter`/`RampDownRateTimeSeriesParameter`/`InitialPowerTimeSeriesParameter` parameter types. An `AbstractNEMDispatch` model builds as a pure LP with no `OnVariable`, and a device missing a ramp series or with a ramp-down floor above its availability ceiling is named at build rather than surfacing as a solver `INFEASIBLE`.
+- **`set_nem_dispatch_models!(...; skip_uncovered = true)`**, which excludes uncovered components from the device models behind a warning instead of failing the build. This is the sim-side counterpart to `set_nem_dispatch_limits!(...; allow_missing_ramp_rates = true)`: without it, proceeding with a partial subset in the data layer still could not be built. Participation is now decided by the formulation's full registered series set rather than by probing `"ramp_up_rate"` alone.
+- **`NEMLookaheadDispatch` now builds and solves.** It never had: the argument stage never called `add_initial_condition!`, so the `DevicePower` condition its ramp base reads was never declared; and `"initial_mw"` was registered only for `NEMReplayDispatch`, while `PowerSimulations.jl` copies the parent model's time-series names onto the initial-conditions sub-model it runs under `NEMReplayDispatch`, leaving that sub-model reaching for a parameter that was never added. Both modes now register `"initial_mw"`, and the envelope pre-flight checks the registered names rather than inferring them from the formulation type.
+
+- **`read_dispatch_limits`/`set_nem_dispatch_limits!`**: New reader and `System` setter for
+  `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE`/`INITIALMW`/`AVAILABILITY` — the ramp rate and
+  dispatch envelope NEMDE actually applied in dispatch — as four per-device `SingleTimeSeries`
+  on every `ThermalStandard`, `HydroDispatch` and `RenewableDispatch`: `"ramp_up_rate"`,
+  `"ramp_down_rate"` and `"initial_mw"`, stored per-unit of the system base, and
+  `"max_active_power"`, stored PSI-native (normalised by the device's own static
+  `max_active_power`, with `scaling_factor_multiplier = get_max_active_power`) so it overwrites
+  any `UIGF`- or bid-derived `"max_active_power"` series the device already carries — `AVAILABILITY`
+  is already the lower of `MAXAVAIL` bid availability and `UIGF` for semi-scheduled units, so it
+  is the uniform envelope across all three device types. A zero `RAMPUPRATE`, `RAMPDOWNRATE` or
+  `AVAILABILITY` is a real dispatch limit AEMO publishes — a unit held at fixed output, a unit on
+  outage, a PV farm at night — and is carried through unchanged; only a `missing` or negative
+  value is treated as unusable. `allow_missing_ramp_rates` opts into proceeding on the buildable
+  subset when some devices lack usable data (including a non-positive static `max_active_power`,
+  which would otherwise divide by zero); the default throws one aggregated `ArgumentError` naming
+  every affected `DUID`. (Reader renamed from `read_dispatch_ramp_rates`, since it now reads the
+  dispatch envelope too.)
+- **`set_nem_initial_conditions!`**: New `System` setter that seeds `active_power` on every
+  `ThermalStandard`, `HydroDispatch` and `RenewableDispatch` from `DISPATCHLOAD.INITIALMW` at a
+  single dispatch interval, for PSI's `DevicePower` initial condition under the chained ramp
+  base mode. Shares `set_nem_dispatch_limits!`'s missing-data policy: `allow_missing_ramp_rates`
+  opts into proceeding on the buildable subset; the default throws one aggregated
+  `ArgumentError` naming every affected `DUID`.
 - **Interconnector loss model** (`src/interconnector_losses.jl`): `InterconnectorLossModel`, three readers `read_interconnector_loss_breakpoints`/`read_interconnector_demand_coefficients`/`read_interconnector_loss_parameters`, and `interconnector_loss_models` assembler. NEMDE models losses as quadratic in flow with demand-dependent linear coefficients; `loss_factor` evaluates it, `interconnector_losses` integrates it, and `loss_segments` linearises on `LOSSMODEL`'s `MWBREAKPOINT`s as chord slopes. Readers are version-resolved on `EFFECTIVEDATE`/`VERSIONNO` as of a caller-supplied date, not `archive_month`, and throw `ArgumentError` naming the missing table when uncached.
 - **`attach_interconnector_losses!`**: `InterconnectorLossModel` is now a `PSY.SupplementalAttribute`, so it can be attached to a `System`'s `AreaInterchange` components and round-trips through JSON. `attach_interconnector_losses!(sys, db, as_of)` attaches one per `AreaInterchange`, matched by `INTERCONNECTORID`; an interconnector with no resolvable loss model is skipped and reported in one aggregated `@warn`. Wired as the fourth build step in `ConstrainedNetworkConfiguration`, after `add_fcas_services!`.
 - **`FCASService`/`add_fcas_services!`**: New `PSY.Service` anchoring the devices
@@ -81,6 +110,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`src/parser.jl` split into nine files by domain**: the 1424-line file mixed the `BidType` enum, shared DuckDB helpers, six NEMWEB readers and six `System` setters. It is now
+  `src/bid_types.jl` (the enum and FCAS market tuples), `src/query_helpers.jl` (`_table_is_cached`, `_cast_double`, intervention filtering — all already used from `constraints/` and
+  `interconnector_losses.jl`), `src/readers/prices.jl`, `src/readers/dispatch.jl`, `src/setters/timeseries.jl`, `src/setters/bids.jl`, `src/setters/dispatch_limits.jl`,
+  `src/fcas/bid_parser.jl` and `src/fcas/requirements.jl`. A pure move: no function body, docstring or comment changed, and the include order still puts `BidType` ahead of the
+  `FCASBid`/`UnitTerm` struct definitions that annotate fields with it.
 - **BREAKING: `FCASBid.offer_curve` is now typed `PSY.PiecewiseStepData`**, not
   `PSY.CostCurve{PiecewiseIncrementalCurve}`.
 - **BREAKING: `add_nem_constraints!` builds one `GenericConstraint` per exact `(GENCONID, EFFECTIVEDATE, VERSIONNO)` triple invoked, not one per bare `GENCONID`**, named `GENCONID@EFFECTIVEDATE#VERSIONNO` (e.g. `"N_BAYSW_THERMAL@2025-01-01#1"`).

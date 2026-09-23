@@ -614,7 +614,24 @@ function create_mock_data(hive_root::String)
     # the scheduled coal/battery/hydro DUIDs, matching what real NEMWEB publishes. Both
     # profiles vary across intervals and stay strictly below the 100 MW REGISTEREDCAPACITY, so
     # a setter that pins a unit's ceiling to its nameplate is detectable.
+    #
+    # INITIALMW/RAMPUPRATE/RAMPDOWNRATE (the effective dispatch ramp rate and ramp base read by
+    # read_dispatch_limits/set_nem_dispatch_limits!) vary per interval and per DUID - a
+    # per-unit, per-interval offset keyed on each DUID's position in `duids` - so a test
+    # asserting a per-interval, per-unit value is capable of failing.
+    #
+    # AVAILABILITY (the dispatch envelope read_dispatch_limits/set_nem_dispatch_limits! writes
+    # into every device's "max_active_power" series) also varies per DUID and interval, and
+    # stays strictly below the 100 MW REGISTEREDCAPACITY so the normalised fraction isn't
+    # trivially 1.0. For BW03/BW04 it is deliberately kept off the UIGF profile above (a
+    # different formula entirely), so a test can prove set_nem_dispatch_limits! actually
+    # overwrites the UIGF-derived "max_active_power" series rather than coinciding with it.
     uigf_for(duid, i) = duid == "BW03" ? 40.0 + i : (duid == "BW04" ? 70.0 - i : missing)
+    duid_offset(duid) = findfirst(==(duid), duids) - 1
+    initial_mw_for(duid, i) = 40.0 + duid_offset(duid) + (i % 10)
+    ramp_up_rate_for(duid, i) = 4.0 + duid_offset(duid) + (i % 5)
+    ramp_down_rate_for(duid, i) = 3.0 + duid_offset(duid) + (i % 5)
+    availability_for(duid, i) = 90.0 - 3 * duid_offset(duid) + (i % 6)
     df_dispatchload = DataFrame()
     for i in intervals
         t = base_datetime + Minute(5 * i)
@@ -623,9 +640,11 @@ function create_mock_data(hive_root::String)
             RUNNO = fill(1, n),
             INTERVENTION = fill(0, n),
             DUID = duids,
-            INITIALMW = fill(50.0, n),
+            INITIALMW = [initial_mw_for(d, i) for d in duids],
+            RAMPUPRATE = [ramp_up_rate_for(d, i) for d in duids],
+            RAMPDOWNRATE = [ramp_down_rate_for(d, i) for d in duids],
             TOTALCLEARED = fill(50.0, n),
-            AVAILABILITY = fill(100.0, n),
+            AVAILABILITY = [availability_for(d, i) for d in duids],
             AGCSTATUS = fill(1, n),
             RAISEREGAVAILABILITY = fill(3.0, n),
             LOWERREGAVAILABILITY = fill(3.0, n),
