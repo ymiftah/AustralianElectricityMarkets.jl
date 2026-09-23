@@ -69,15 +69,19 @@ yields a plausible but wrong answer.
 
 ### Which series marks a participant
 
-`nem_dispatch_participants` asks whether a component carries the series
+`nem_dispatch_participants` asks whether a component carries every series
 `get_default_time_series_names(D, F)` registers. An earlier revision probed the single name
-`"ramp_up_rate"`. Of the four series `set_nem_dispatch_limits!` writes, only three can serve as a
-marker at all: `"max_active_power"` is also written by `set_renewable_pv!`/`set_renewable_wind!`/
-`set_hydro_limits!` (`src/parser.jl:176`, `:208`), so a renewable carrying a UIGF ceiling but no
-`DISPATCHLOAD` row would be falsely elected. Of the remaining three, the two ramp rates are
-preferable to `"initial_mw"`, which only `NEMReplayDispatch` registers; between up and down the
-choice is arbitrary. Deriving the set from `get_default_time_series_names` removes the choice and
-keeps the probe in step with what the formulation actually reads.
+`"ramp_up_rate"`, which was both arbitrary and liable to drift from what the formulation reads.
+
+No single name is a good marker. `"max_active_power"` is also written by
+`set_renewable_pv!`/`set_renewable_wind!`/`set_hydro_limits!` (`src/setters/timeseries.jl:116`,
+`:148`), so a renewable carrying a UIGF ceiling but no `DISPATCHLOAD` row would be falsely
+elected by it. The other three are exclusive to `set_nem_dispatch_limits!`, which writes them in
+one unconditional block, making any of them an equivalent and equally arbitrary choice.
+
+Requiring the whole registered set removes the choice, and keeps the probe in step with the
+formulation: a mode that stops reading a series stops requiring it, with no second place to
+update.
 
 ### Partial coverage is opt-in, not silent
 
