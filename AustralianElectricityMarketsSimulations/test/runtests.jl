@@ -65,4 +65,8 @@ end
     @testset "NEM dispatch formulation" begin
         include("nem_dispatch.jl")
     end
+
+    @testset "NEM dispatch on a toy PSCB system" begin
+        include("nem_dispatch_toy.jl")
+    end
 end
