@@ -325,6 +325,48 @@ end
     @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
 end
 
+@testset "skip_uncovered excludes a device with no rates instead of failing the build" begin
+    # Strip through the fixture's hook: a series cannot be removed once the transform has
+    # wrapped it in a DeterministicSingleTimeSeries.
+    sys = nem_dispatch_system(;
+        mutate! = function (s)
+            device = PSY.get_component(PSY.ThermalStandard, s, "ER02")
+            for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw")
+                PSY.remove_time_series!(s, PSY.SingleTimeSeries, device, name)
+            end
+            return s
+        end,
+    )
+    stripped = PSY.get_component(PSY.ThermalStandard, sys, "ER02")
+
+    @test !has_nem_dispatch_limits(stripped, NEMReplayDispatch)
+    # The type stays a participant: its other components are still covered.
+    @test PSY.ThermalStandard in nem_dispatch_participants(sys)
+
+    template = ProblemTemplate(NetworkModel(AreaBalancePowerModel; use_slacks = true))
+    @test_logs (:warn, r"ER02") set_nem_dispatch_models!(template, sys; skip_uncovered = true)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+
+    model = DecisionModel(
+        template, sys;
+        optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+        horizon = NEM_DISPATCH_HORIZON,
+        resolution = NEM_DISPATCH_RESOLUTION,
+        interval = NEM_DISPATCH_RESOLUTION,
+        initial_time = NEM_DISPATCH_START,
+        name = "nem_dispatch_skip_uncovered",
+        store_variable_names = true,
+    )
+    @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    @test solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+    container = PSI.get_optimization_container(model)
+    power = PSI.get_variable(container, PSI.ActivePowerVariable(), PSY.ThermalStandard)
+    dispatched = first(axes(power))
+    @test "ER02" ∉ dispatched
+    @test !isempty(dispatched)
+end
+
 @testset "a missing ramp series is reported, naming the setter" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
     sys = nem_system(db, RegionalNetworkConfiguration())

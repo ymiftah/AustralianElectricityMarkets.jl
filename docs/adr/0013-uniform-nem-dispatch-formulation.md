@@ -67,6 +67,32 @@ fail-at-build-and-name-the-device policy the rest of the formulation follows.
 The two names are chosen for their use, not their mechanism, because picking the wrong one
 yields a plausible but wrong answer.
 
+### Which series marks a participant
+
+`nem_dispatch_participants` asks whether a component carries the series
+`get_default_time_series_names(D, F)` registers. An earlier revision probed the single name
+`"ramp_up_rate"`. Of the four series `set_nem_dispatch_limits!` writes, only three can serve as a
+marker at all: `"max_active_power"` is also written by `set_renewable_pv!`/`set_renewable_wind!`/
+`set_hydro_limits!` (`src/parser.jl:176`, `:208`), so a renewable carrying a UIGF ceiling but no
+`DISPATCHLOAD` row would be falsely elected. Of the remaining three, the two ramp rates are
+preferable to `"initial_mw"`, which only `NEMReplayDispatch` registers; between up and down the
+choice is arbitrary. Deriving the set from `get_default_time_series_names` removes the choice and
+keeps the probe in step with what the formulation actually reads.
+
+### Partial coverage is opt-in, not silent
+
+The probe elects *types*, and PSI hands a device model every component of its type, so a
+component the setters skipped reaches the constructor. By default that component fails the build
+by name, which is right when it indicates a mistake - a device added after the setters ran, or a
+series removed by hand.
+
+It is wrong for the case `set_nem_dispatch_limits!(...; allow_missing_ramp_rates = true)` exists
+to serve: there the caller has already been warned and has chosen to proceed with the buildable
+subset, and the sim layer would then refuse to build at all. `set_nem_dispatch_models!` therefore
+takes `skip_uncovered`, mirroring that flag: it installs PSI's `"filter_function"` device-model
+attribute (read by `get_available_components`) to exclude uncovered components, and warns naming
+them. Excluding a device is never silent and never the default.
+
 ### `INITIALMW` as a time series, not a scalar
 
 NEMDE takes `INITIALMW` from metering at the start of every interval; it is not the previous
