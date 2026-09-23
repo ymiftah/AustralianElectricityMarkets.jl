@@ -38,26 +38,18 @@ function PSI._modify_device_model!(
     return nothing
 end
 
-# Area-balance dual registration: `AreaBalancePowerModel` is a `PM.AbstractPowerModel`, so stock PSI
-# 0.38.4's `add_constraint_dual!`/`assign_dual_variable!` dispatch to their generic
-# `PM.AbstractPowerModel` methods and register a bus-keyed dual, the wrong shape for
-# `AreaBalancePowerModel`'s `PSY.Area`-keyed `CopperPlateBalanceConstraint`. This package's pinned
-# PowerSimulations.jl fork (see `[sources]` in Project.toml) adds more specific
-# `NetworkModel{AreaBalancePowerModel}` methods that register the correct `Area`-keyed container
-# instead — so no method is defined here.
+# No area-balance dual override here: the pinned PowerSimulations.jl fork (see `[sources]` in
+# Project.toml) registers the `PSY.Area`-keyed container itself.
 
-# `AbstractNEMDispatch` builds the market-bid path with no `OnVariable`. `PowerSimulations.jl` 0.38.4's
-# `_include_min_gen_power_in_constraint` / `_include_constant_min_gen_power_in_constraint`
-# (`devices/common/objective_function/market_bid.jl`) exist for exactly that case. PSI's competing
-# methods are keyed on the device type with a bare `AbstractDeviceFormulation`, so a single
-# `PSY.StaticInjection` method would be ambiguous for a `PSY.Generator`; the two narrower methods
-# below break that tie without narrowing the formulation itself.
+# PSI 0.38.4 keys these on the device type with a bare `AbstractDeviceFormulation`, so the
+# `PSY.StaticInjection` method below is ambiguous for a `PSY.Generator`; the two narrower methods
+# break the tie.
 
 """
     PSI._include_min_gen_power_in_constraint(::PSY.StaticInjection, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch)
 
-Override of `PowerSimulations.jl` 0.38.4's private market-bid hook. NEM bid stacks start at zero,
-so the first breakpoint contributes no minimum-generation offset and no `OnVariable` is required.
+Override of `PowerSimulations.jl` 0.38.4's private market-bid hook: the bid stack's first
+breakpoint contributes no minimum-generation offset, so no `OnVariable` is required.
 
 # Returns
 `false`.

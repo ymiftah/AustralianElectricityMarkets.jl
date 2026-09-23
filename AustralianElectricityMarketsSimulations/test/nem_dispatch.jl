@@ -14,9 +14,8 @@ const NEM_DISPATCH_RESOLUTION = Minute(5)
 const NEM_DISPATCH_START = DateTime(2025, 1, 1, 0, 0)
 const NEM_DISPATCH_HORIZON = Hour(1)
 
-# `set_market_bids!` writes a `Deterministic` while the dispatch-limit setters write
-# `SingleTimeSeries`, so the transform's horizon and interval have to produce the same single
-# forecast window the bid series already has.
+# The bid series is a `Deterministic` and the dispatch limits are `SingleTimeSeries`, so the
+# transform must produce the one forecast window the bids already have.
 function nem_dispatch_system(; mutate! = identity)
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
     sys = nem_system(db, RegionalNetworkConfiguration())
@@ -29,8 +28,7 @@ function nem_dispatch_system(; mutate! = identity)
     return sys
 end
 
-# Overwrites one device's series with a flat value, so a test can make a chosen limit the
-# binding one rather than depend on which limit happens to bind in the mock data.
+# Overwrites one device's series with a flat value, to make a chosen limit the binding one.
 function flatten_series!(sys, duid, name, value)
     device = PSY.get_component(PSY.ThermalStandard, sys, duid)
     stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name)
@@ -100,8 +98,7 @@ component_keys(container_keys, ::Type{T}) where {T} =
 end
 
 @testset "the formulation is not gated on device type" begin
-    # NEMDE dispatches on market participation, not technology: a type the current System does
-    # not happen to contain must still resolve every hook.
+    # A type the current System does not contain must still resolve every hook.
     for T in (
             PSY.ThermalStandard, PSY.ThermalMultiStart, PSY.HydroDispatch,
             PSY.RenewableDispatch, PSY.EnergyReservoirStorage,
@@ -115,8 +112,7 @@ end
     end
 
     @testset "the market-bid hooks resolve to our override, for a non-Generator injector too" begin
-        # PSI keys these on the device type with a bare AbstractDeviceFormulation and defines no
-        # `Any` fallback, so a non-Generator participant would otherwise be a MethodError.
+        # PSI defines no `Any` fallback, so a non-Generator participant would MethodError.
         for T in (
                 PSY.ThermalStandard, PSY.ThermalMultiStart, PSY.HydroDispatch,
                 PSY.RenewableDispatch, PSY.EnergyReservoirStorage,
@@ -253,14 +249,13 @@ end
     end
 
     @testset "the rate varies per interval rather than being a scalar" begin
-        # The property the time series buys over a scalar: the bound moves with t.
+        # The bound moves with t.
         bounds = [initial_mw[t] + up_rate[t] * 5 for t in eachindex(solved)]
         @test length(unique(round.(bounds; digits = 9))) > 1
     end
 
     @testset "the availability envelope, not the ramp, is what binds in this fixture" begin
-        # Stated so the tightened-rate test below is understood as the one that exercises the
-        # ramp constraint, rather than this one silently proving nothing.
+        # The envelope, not the ramp, is what binds in the base fixture.
         envelope = PSY.get_time_series_values(
             PSY.SingleTimeSeries, device, "max_active_power"; len = 12,
         ) .* PSY.get_max_active_power(device)
@@ -282,8 +277,7 @@ end
 end
 
 @testset "a tightened ramp rate changes the answer" begin
-    # The fixture's ramp bound is slack, so tighten one unit's rate until the ramp is what
-    # binds. Comparing against the untightened solve proves the constraint is load-bearing.
+    # Tighten one unit's rate until the ramp binds, then compare against the untightened solve.
     tight_rate = 0.001
     base_sys = nem_dispatch_system()
     tight_sys = nem_dispatch_system(;
@@ -319,8 +313,7 @@ end
 end
 
 @testset "an inconsistent envelope is reported at build, not left to the solver" begin
-    # A ramp-down floor above the availability ceiling cannot be met. Zero availability with a
-    # positive INITIALMW and a tiny down rate is that case.
+    # Zero availability with a positive INITIALMW and a tiny down rate: an unmeetable floor.
     sys = nem_dispatch_system(;
         mutate! = function (s)
             flatten_series!(s, "ER02", "ramp_down_rate", 0.0)

@@ -15,9 +15,8 @@ using Statistics
 import PowerSimulations as PSI
 import PowerSystems as PSY
 
-# Reached through PSI/PSY rather than taken as direct dependencies: this package is already
-# pinned to one PowerSimulations version (see psi_compat.jl), so these cannot version-skew from
-# it, and adding them as deps would be a second place to keep in step.
+# Reached through PSI/PSY rather than declared as direct dependencies, so they cannot version-skew
+# from the pinned PowerSimulations.
 const IS = PSY.IS
 const PM = PSI.PM
 

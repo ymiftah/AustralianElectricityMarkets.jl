@@ -2,19 +2,12 @@
     AbstractNEMDispatch
 
 Supertype for the NEM dispatch device formulations: a per-band bid stack, a per-interval ramp
-limit, and the `DISPATCHLOAD.AVAILABILITY` envelope.
+limit, and the `DISPATCHLOAD.AVAILABILITY` envelope, applied to one active power variable per
+device.
 
-NEMDE applies these to every scheduled resource identically, so the formulations are written
-against `PowerSystems.StaticInjection` and are set per device type by the template, not
-restricted to a fixed list of types. Technology enters through the numbers on the bid stack,
-the rates and the envelope — never through the form of the constraints.
-
-A formulation models a single injection variable per device. A device whose dispatch needs more
-than that, such as a bidirectional unit tracking state of charge, layers that on as its own
-formulation; NEMDE itself carries no state of charge.
-
-Subtypes differ only in what the ramp constraint measures against: see [`NEMReplayDispatch`](@ref)
-and [`NEMLookaheadDispatch`](@ref).
+Methods are defined over `PowerSystems.StaticInjection`; a `PowerSimulations.ProblemTemplate`
+selects the component types they apply to. Subtypes differ only in what the ramp constraint
+measures against: [`NEMReplayDispatch`](@ref) and [`NEMLookaheadDispatch`](@ref).
 """
 abstract type AbstractNEMDispatch <: PSI.AbstractDeviceFormulation end
 
@@ -22,7 +15,7 @@ abstract type AbstractNEMDispatch <: PSI.AbstractDeviceFormulation end
     NEMReplayDispatch
 
 [`AbstractNEMDispatch`](@ref) whose ramp constraint measures against the device's `"initial_mw"`
-time series at every interval, as NEMDE does. Intervals are decoupled.
+time series at every interval. Intervals are decoupled.
 """
 struct NEMReplayDispatch <: AbstractNEMDispatch end
 
@@ -64,9 +57,8 @@ PSI.get_variable_multiplier(::PSI.ActivePowerVariable, ::Type{<:PSY.StaticInject
 PSI.get_variable_lower_bound(::PSI.ActivePowerVariable, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 0.0
 PSI.get_variable_upper_bound(::PSI.ActivePowerVariable, d::PSY.StaticInjection, ::AbstractNEMDispatch) = PSY.get_max_active_power(d)
 
-# The "max_active_power" series is normalised by the device's static rating, so its parameter
-# carries that rating as the multiplier. The three dispatch-limit series are stored as absolute
-# system-base per-unit, so theirs is 1.0.
+# "max_active_power" is stored normalised by the static rating; the dispatch-limit series are
+# stored as absolute system-base per-unit.
 PSI.get_multiplier_value(::PSI.ActivePowerTimeSeriesParameter, d::PSY.StaticInjection, ::AbstractNEMDispatch) = PSY.get_max_active_power(d)
 PSI.get_multiplier_value(::RampUpRateTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
 PSI.get_multiplier_value(::RampDownRateTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
@@ -85,9 +77,8 @@ PSI.initial_condition_variable(::PSI.DevicePower, ::PSY.StaticInjection, ::Abstr
 """
     PSI.get_default_time_series_names(::Type{<:PSY.StaticInjection}, ::Type{<:AbstractNEMDispatch})
 
-Registers the time series [`AbstractNEMDispatch`](@ref) reads as parameters. `"initial_mw"` is registered
-only for [`NEMReplayDispatch`](@ref); [`NEMLookaheadDispatch`](@ref) reads a `DevicePower` initial
-condition instead.
+Registers the time series [`AbstractNEMDispatch`](@ref) reads as parameters. `"initial_mw"` is
+registered only for [`NEMReplayDispatch`](@ref).
 
 # Returns
 A `Dict` mapping each `PowerSimulations.TimeSeriesParameter` type to its series name.
@@ -137,8 +128,7 @@ Device model used to build the initial-conditions sub-model that [`NEMLookaheadD
 requires.
 
 # Returns
-A `PowerSimulations.DeviceModel` over the same component type with [`NEMReplayDispatch`](@ref),
-which needs no initial condition of its own.
+A `PowerSimulations.DeviceModel` over the same component type with [`NEMReplayDispatch`](@ref).
 """
 function PSI.get_initial_conditions_device_model(
         ::PSI.OperationModel,
@@ -190,8 +180,7 @@ function PSI.construct_device!(
         network_model,
     )
 
-    # FCAS co-optimisation folds headroom into these, so they must exist whenever a service
-    # model is attached.
+    # A service model folds its headroom into these range expressions.
     if PSI.has_service_model(model)
         PSI.add_to_expression!(
             container,
@@ -317,7 +306,7 @@ end
     PSI.add_constraints!(container, ::Type{PSI.RampConstraint}, ::Type{PSI.ActivePowerVariable}, devices, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
 
 Holds each device's active power within its per-interval ramp rates of the base its formulation
-measures against. Rates are read from the `"ramp_up_rate"` and `"ramp_down_rate"` parameters as
+measures against. Rates are read from the `"ramp_up_rate"` and `"ramp_down_rate"` parameters in
 system-base per-unit per minute and multiplied by the interval length in minutes.
 
 # Returns
@@ -365,8 +354,7 @@ function PSI.add_constraints!(
     return
 end
 
-# A time-series parameter array is keyed by time-series UUID, not device name, so a value is
-# read through `get_parameter_column_refs` and scaled by the name-keyed multiplier.
+# Parameter arrays are keyed by time-series UUID, not device name.
 function _ts_parameter_accessor(container, ::Type{P}, ::Type{T}) where {P <: PSI.TimeSeriesParameter, T}
     param_container = PSI.get_parameter(container, P(), T)
     multiplier = PSI.get_multiplier_array(param_container)
@@ -397,9 +385,7 @@ end
 
 const _SETTER_REMEDY = "Call set_nem_dispatch_limits! over the model's date range first."
 
-# The root package's setters throw when DISPATCHLOAD has no usable value, so a device missing a
-# series here means the setter was never run for it. Name every such device up front rather than
-# let the parameter lookup fail mid-loop on an internal key.
+# Names every uncovered device up front, before the constraint loop reaches an internal key.
 function _require_coverage(names, problem, remedy, covered...)
     missing_names = [n for n in names if any(!in(n, c) for c in covered)]
     isempty(missing_names) && return
@@ -413,8 +399,8 @@ end
 """
     PSI.objective_function!(container, devices, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_formulation)
 
-Prices an [`AbstractNEMDispatch`](@ref) device's dispatch through `PowerSimulations.jl`'s market-bid
-path, so the objective is the device's own submitted bid stack.
+Prices an [`AbstractNEMDispatch`](@ref) device's dispatch through `PowerSimulations.jl`'s
+market-bid path, so the objective is the device's own submitted bid stack.
 
 # Returns
 `nothing`.
@@ -432,12 +418,9 @@ end
 "Per-unit slack allowed before a ramp-down floor above the availability ceiling is reported."
 const _RAMP_FLOOR_TOLERANCE = 1.0e-6
 
-# A ramp-down floor above the availability ceiling is infeasible. With rates, INITIALMW and
-# AVAILABILITY all taken from the same DISPATCHLOAD row this cannot arise, so it signals
-# inconsistent inputs: name the devices at build rather than return INFEASIBLE with no cause.
+# A ramp-down floor above the availability ceiling is infeasible; report it at build.
 function _check_dispatch_envelope(container, devices, model)
-    # Only the replay base has a metered floor to compare against; the lookahead base's floor is
-    # the previous interval's dispatch, which is a variable.
+    # Only the replay mode has a metered floor; the lookahead floor is a variable.
     PSI.get_formulation(model) === NEMReplayDispatch || return
     isempty(devices) && return
     T = typeof(first(devices))
@@ -474,11 +457,8 @@ end
 """
     nem_dispatch_participants(sys)
 
-The component types in `sys` that carry the per-interval dispatch limits
-`set_nem_dispatch_limits!` attaches, and so participate in a NEMDE-style dispatch.
-
-Membership is decided by the data on the components, not by a fixed list of types: any
-`PowerSystems.StaticInjection` whose components carry a `"ramp_up_rate"` series qualifies.
+The component types in `sys` that participate in a NEM dispatch: any
+`PowerSystems.StaticInjection` carrying a `"ramp_up_rate"` time series.
 
 # Arguments
 - `sys`: the `PowerSystems.System` to inspect.
@@ -498,8 +478,7 @@ end
 """
     set_nem_dispatch_models!(template, sys; formulation = NEMReplayDispatch)
 
-Sets `formulation` as the device model for every dispatch participant in `sys`, so all of them
-are dispatched by the same rules.
+Sets `formulation` as the device model for every dispatch participant in `sys`.
 
 # Arguments
 - `template`: the `PowerSimulations.ProblemTemplate` to mutate.
