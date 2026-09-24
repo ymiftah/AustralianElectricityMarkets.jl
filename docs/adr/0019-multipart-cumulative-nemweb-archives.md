@@ -1,4 +1,4 @@
-# 0015. Multi-part NEMWEB archives are fetched in full and cumulative tables are scoped to their archive month
+# 0019. Multi-part NEMWEB archives are fetched in full and cumulative tables are scoped to their archive month
 
 ## Status
 
@@ -36,19 +36,26 @@ since AEMO could split any table's archive in the future.
   primary URL's own 404 into the existing "not published under either pattern" error. A
   transient failure on any part propagates immediately, exactly as it does today for the
   primary/`FILE01` pair — it is never mistaken for "no more parts". `_get_archive` returns
-  `Vector{String}`; `_extract_d_lines` gained an overload for a vector of ZIP paths that
-  concatenates each part's D-lines, in part order, into one combined CSV, reusing the
-  single-ZIP method per part. Both `_extract_d_lines` methods delete their own temp CSV if
-  they fail after creating it, not just on the happy path — confirmed necessary directly: a
-  real multi-part `DISPATCH_FCAS_REQ_CONSTRAINT` re-populate hit a downstream disk limit and
-  left a multi-gigabyte temp file behind before this was added.
+  `Vector{String}`.
+- `_write_d_lines` streams one ZIP part's D-lines straight into a caller-supplied `IO`;
+  `_extract_d_lines` has a single-ZIP method (writes to its own temp file) and a
+  `Vector{String}` method (streams every part into one combined temp file, in part order, with
+  no intermediate per-part file — a part's decompressed size is never held as a second copy in
+  memory or on disk). Both `_extract_d_lines` methods delete their own temp CSV if they fail
+  after creating it, not just on the happy path — confirmed necessary directly: a real
+  multi-part `DISPATCH_FCAS_REQ_CONSTRAINT` re-populate hit a downstream disk limit and left a
+  multi-gigabyte temp file behind before this was added.
 - `_TABLE_SPECS` entries may carry an optional `month_filter_column`, read via
   `get(spec, :month_filter_column, nothing)` so every other entry is untouched.
-  `DISPATCH_FCAS_REQ_CONSTRAINT` sets it to `"INTERVAL_DATETIME"`. When set,
-  `_csv_to_parquet` keeps only rows whose parsed `month_filter_column` falls in `(first of
-  archive month, first of next month]`, and — since a genuine duplicate row can now appear
-  once per overlapping part — deduplicates on `sort_by` via `DISTINCT ON`, gated on the same
-  field so it only ever runs for a table AEMO is known to publish cumulatively.
+  `DISPATCH_FCAS_REQ_CONSTRAINT` sets it to `"INTERVAL_DATETIME"`. When set, `_write_d_lines`
+  drops an out-of-month "D" line before it ever reaches disk — found necessary directly: this
+  table's full cumulative history, held even briefly as a combined temp CSV, is tens of
+  gigabytes, more than this package's own scratch directory can be assumed to hold. The
+  column's raw text field (quotes stripped) is compared lexicographically against
+  `_month_filter_bounds`' `"YYYY/MM/DD HH:MM:SS"` strings, which sorts correctly because NEMWEB
+  always zero-pads that format. `_csv_to_parquet`'s own `WHERE`/`DISTINCT ON` stay as a second,
+  independent check: they keep rows scoped and deduplicated (on `sort_by`) even if a caller
+  ever invokes `_csv_to_parquet` directly on an unfiltered CSV.
 - **Boundary rule**: `INTERVAL_DATETIME` is the interval's *end*, not its start (the MMSDM
   convention). The interval ending exactly at `YYYY-MM-01 00:00:00` is the last interval of the
   *previous* month, not the first of the new one, so a month's window excludes its own opening

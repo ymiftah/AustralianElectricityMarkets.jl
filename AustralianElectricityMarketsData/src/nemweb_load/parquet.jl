@@ -54,42 +54,92 @@ const _DUCKDB_TYPE_NAMES = Dict{DataType, String}(
 _duckdb_type(T::DataType) = get(_DUCKDB_TYPE_NAMES, T, "VARCHAR")
 
 """
-    _extract_d_lines(zip_path::String) -> (String, Vector{String})
+    _month_filter_bounds(year::Int, month::Int) -> (String, String)
 
-Stream the ZIP's first `.csv` entry, in one pass via `ZipArchives.jl`, writing
-only the real "D" data-record lines to a new temp file and capturing the "I"
-record's column names/order along the way. Returns `(d_only_path,
-available_cols)`; caller deletes `d_only_path` when done.
+The NEMWEB-formatted (`"YYYY/MM/DD HH:MM:SS"`) lower (exclusive) and upper (inclusive)
+bounds of one archive month, for lexicographic comparison against a raw CSV field. An
+interval ending exactly on the lower bound belongs to the *previous* month.
+
+# Returns
+- `(String, String)`: `(lo, hi)`.
 """
-function _extract_d_lines(zip_path::String)::Tuple{String, Vector{String}}
-    # Pre-filtering to D-only lines before DuckDB ever sees the file works
-    # around a DuckDB read_csv behavior confirmed directly on a real
-    # BIDPEROFFER_D file: feeding it the *raw* NEMWEB file — narrow C
-    # header/trailer + I header rows mixed with wide D rows, absorbed via
-    # null_padding/ignore_errors — produced one MORE row than the true D-row
-    # count. Filtering in this single Julia pass over
-    # the decompressed stream (rather than shelling out to `grep`, or writing
-    # the full CSV to disk and filtering it in a second pass).
+function _month_filter_bounds(year::Int, month::Int)::Tuple{String, String}
+    lo = "$year/$(lpad(month, 2, '0'))/01 00:00:00"
+    next_year, next_month = month == 12 ? (year + 1, 1) : (year, month + 1)
+    hi = "$next_year/$(lpad(next_month, 2, '0'))/01 00:00:00"
+    return lo, hi
+end
+
+"""
+    _write_d_lines(out::IO, zip_path::String;
+                   month_filter_column=nothing, lo=nothing, hi=nothing) -> Vector{String}
+
+Stream the ZIP's first `.csv` entry, in one pass via `ZipArchives.jl`, writing only the
+real "D" data-record lines to `out` and capturing the "I" record's column names/order
+along the way.
+
+When `month_filter_column` is given, a "D" line is written only when that column's raw
+field, quotes stripped, satisfies `lo < field <= hi`.
+
+# Returns
+- `Vector{String}`: the file's column names/order, from its "I" record.
+"""
+function _write_d_lines(
+        out::IO, zip_path::String;
+        month_filter_column::Union{Nothing, String} = nothing,
+        lo::Union{Nothing, String} = nothing, hi::Union{Nothing, String} = nothing,
+    )::Vector{String}
+    # Pre-filtering to D-only lines before DuckDB ever sees the file works around a DuckDB
+    # read_csv behavior confirmed directly on a real BIDPEROFFER_D file: feeding it the
+    # *raw* NEMWEB file — narrow C header/trailer + I header rows mixed with wide D rows,
+    # absorbed via null_padding/ignore_errors — produced one MORE row than the true D-row
+    # count. Filtering happens in this single Julia pass over the decompressed stream
+    # instead, rather than shelling out to `grep` or writing the full CSV to disk first.
     reader = ZipReader(read(zip_path))
     entries = zip_names(reader)
     idx = findfirst(e -> endswith(lowercase(e), ".csv"), entries)
     isnothing(idx) && throw(MissingDataError("No CSV file found in $zip_path"))
 
-    d_path = tempname(_local_tmp_dir()) * ".csv"
     available_cols = String[]
+    filter_idx = nothing
     io = zip_openentry(reader, entries[idx])
-    try
-        open(d_path, "w") do out
-            for line in eachline(io)
-                if startswith(line, "D,")
-                    println(out, line)
-                elseif isempty(available_cols) && startswith(line, "I,")
-                    # I: I, namespace, report, version, col1, col2, ...
-                    available_cols = String.(strip.(split(line, ",")[5:end]))
-                end
+    for line in eachline(io)
+        if startswith(line, "D,")
+            if !isnothing(filter_idx)
+                field = strip(split(line, ",")[4 + filter_idx], '"')
+                (lo < field <= hi) || continue
+            end
+            println(out, line)
+        elseif isempty(available_cols) && startswith(line, "I,")
+            # I: I, namespace, report, version, col1, col2, ...
+            available_cols = String.(strip.(split(line, ",")[5:end]))
+            if !isnothing(month_filter_column)
+                filter_idx = findfirst(==(month_filter_column), available_cols)
             end
         end
-        isempty(available_cols) && throw(MissingDataError("No I (header) record found in $zip_path"))
+    end
+    isempty(available_cols) && throw(MissingDataError("No I (header) record found in $zip_path"))
+    return available_cols
+end
+
+"""
+    _extract_d_lines(zip_path::String;
+                     month_filter_column=nothing, lo=nothing, hi=nothing) -> (String, Vector{String})
+
+Write one ZIP's D-lines, via [`_write_d_lines`](@ref), to a new temp file. Returns
+`(d_only_path, available_cols)`; caller deletes `d_only_path` when done.
+"""
+function _extract_d_lines(
+        zip_path::String;
+        month_filter_column::Union{Nothing, String} = nothing,
+        lo::Union{Nothing, String} = nothing, hi::Union{Nothing, String} = nothing,
+    )::Tuple{String, Vector{String}}
+    d_path = tempname(_local_tmp_dir()) * ".csv"
+    available_cols = String[]
+    try
+        open(d_path, "w") do out
+            available_cols = _write_d_lines(out, zip_path; month_filter_column, lo, hi)
+        end
     catch
         rm(d_path; force = true)
         rethrow()
@@ -98,25 +148,26 @@ function _extract_d_lines(zip_path::String)::Tuple{String, Vector{String}}
 end
 
 """
-    _extract_d_lines(zip_paths::Vector{String}) -> (String, Vector{String})
+    _extract_d_lines(zip_paths::Vector{String};
+                     month_filter_column=nothing, lo=nothing, hi=nothing) -> (String, Vector{String})
 
-Extract each ZIP part's D-lines with [`_extract_d_lines`](@ref) and concatenate them, in
-order, into one combined temp CSV. Returns `(d_only_path, available_cols)`, taking
-`available_cols` from the first part; caller deletes `d_only_path` when done.
+Stream every ZIP part's D-lines, via [`_write_d_lines`](@ref), straight into one combined
+temp file, in part order — no intermediate per-part file. Returns `(d_only_path,
+available_cols)`, taking `available_cols` from the first part; caller deletes
+`d_only_path` when done.
 """
-function _extract_d_lines(zip_paths::Vector{String})::Tuple{String, Vector{String}}
+function _extract_d_lines(
+        zip_paths::Vector{String};
+        month_filter_column::Union{Nothing, String} = nothing,
+        lo::Union{Nothing, String} = nothing, hi::Union{Nothing, String} = nothing,
+    )::Tuple{String, Vector{String}}
     combined_path = tempname(_local_tmp_dir()) * ".csv"
     available_cols = String[]
     try
         open(combined_path, "w") do out
             for zip_path in zip_paths
-                part_path, part_cols = _extract_d_lines(zip_path)
-                try
-                    isempty(available_cols) && (available_cols = part_cols)
-                    write(out, read(part_path))
-                finally
-                    rm(part_path; force = true)
-                end
+                part_cols = _write_d_lines(out, zip_path; month_filter_column, lo, hi)
+                isempty(available_cols) && (available_cols = part_cols)
             end
         end
     catch

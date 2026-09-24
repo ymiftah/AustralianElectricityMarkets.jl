@@ -1,7 +1,8 @@
 using AustralianElectricityMarketsData: HiveConfiguration
 using AustralianElectricityMarketsData:
     DataSource, get_table, MissingDataError, TransientDownloadError, _TABLE_SPECS, ARCHIVE_MONTH_PARTITION,
-    _extract_d_lines, _csv_to_parquet, _new_duckdb_connection, _get_archive, NEMWEB_URL, NEMWEB_URL_ALT
+    _extract_d_lines, _csv_to_parquet, _new_duckdb_connection, _get_archive, NEMWEB_URL, NEMWEB_URL_ALT,
+    _month_filter_bounds
 using DataFrames, Dates, Logging, ZipFile, DuckDB, DBInterface
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -307,6 +308,65 @@ end
         @test Set(readdir(tmp_dir)) == before  # no leaked combined-CSV temp file
     finally
         foreach(p -> isfile(p) && rm(p), (csv1, zip1, zip2))
+    end
+end
+
+@testset "_month_filter_bounds: lower is exclusive first-of-month, upper is inclusive first-of-next-month" begin
+    @test _month_filter_bounds(2026, 6) == ("2026/06/01 00:00:00", "2026/07/01 00:00:00")
+    @test _month_filter_bounds(2026, 12) == ("2026/12/01 00:00:00", "2027/01/01 00:00:00")
+end
+
+@testset "_extract_d_lines: month filtering keeps only in-window D lines, boundary included" begin
+    csv_path = make_nemweb_csv(
+        "DISPATCH_FCAS_REQ_CONSTRAINT",
+        ["INTERVAL_DATETIME", "REGIONID"],
+        [
+            ("2026/05/31 23:55:00", "PREV"),           # last May interval - excluded
+            ("2026/06/01 00:00:00", "PREV_BOUNDARY"),  # ends exactly at June 1 00:00 - belongs to May, excluded
+            ("2026/06/01 00:05:00", "FIRST"),          # first real June interval - included
+            ("2026/06/30 23:55:00", "LAST"),           # last June interval - included
+            ("2026/07/01 00:00:00", "NEXT_BOUNDARY"),  # ends exactly at July 1 00:00 - belongs to June, included
+            ("2026/07/01 00:05:00", "NEXT"),           # first July interval - excluded
+        ],
+    )
+    zip_path = make_zip_with_csv(csv_path)
+    lo, hi = _month_filter_bounds(2026, 6)
+    try
+        d_path, available_cols = _extract_d_lines(zip_path; month_filter_column = "INTERVAL_DATETIME", lo, hi)
+        try
+            @test available_cols == ["INTERVAL_DATETIME", "REGIONID"]
+            regions = [split(l, ",")[end] for l in readlines(d_path)]
+            @test Set(regions) == Set(["FIRST", "LAST", "NEXT_BOUNDARY"])  # out-of-month lines never reach the file
+        finally
+            isfile(d_path) && rm(d_path)
+        end
+    finally
+        isfile(csv_path) && rm(csv_path)
+        isfile(zip_path) && rm(zip_path)
+    end
+end
+
+@testset "_extract_d_lines(::Vector): month filtering applies to every part while streaming" begin
+    csv1 = make_nemweb_csv(
+        "DISPATCH_FCAS_REQ_CONSTRAINT", ["INTERVAL_DATETIME", "REGIONID"],
+        [("2026/05/31 23:55:00", "PREV"), ("2026/06/01 00:05:00", "FIRST")],
+    )
+    csv2 = make_nemweb_csv(
+        "DISPATCH_FCAS_REQ_CONSTRAINT", ["INTERVAL_DATETIME", "REGIONID"],
+        [("2026/06/15 00:05:00", "MID"), ("2026/07/01 00:05:00", "NEXT")],
+    )
+    zip1, zip2 = make_zip_with_csv(csv1), make_zip_with_csv(csv2)
+    lo, hi = _month_filter_bounds(2026, 6)
+    try
+        d_path, _ = _extract_d_lines([zip1, zip2]; month_filter_column = "INTERVAL_DATETIME", lo, hi)
+        try
+            regions = [split(l, ",")[end] for l in readlines(d_path)]
+            @test Set(regions) == Set(["FIRST", "MID"])
+        finally
+            isfile(d_path) && rm(d_path)
+        end
+    finally
+        foreach(p -> isfile(p) && rm(p), (csv1, csv2, zip1, zip2))
     end
 end
 

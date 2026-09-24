@@ -192,8 +192,9 @@ function _add_data(source::DataSource, year::Int, month::Int)
     return try
         @info "Fetching data" table = source.table_name year month
         zip_paths = _get_archive(source.table_name, year, month)
+        lo, hi = isnothing(source.month_filter_column) ? (nothing, nothing) : _month_filter_bounds(year, month)
         d_only_path, available_cols = try
-            _extract_d_lines(zip_paths)
+            _extract_d_lines(zip_paths; month_filter_column = source.month_filter_column, lo, hi)
         finally
             # Every part's zip is deleted as soon as the combined D-lines-only
             # CSV has been extracted from it.
