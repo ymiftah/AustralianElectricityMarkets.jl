@@ -92,14 +92,40 @@ function _extract_d_lines(zip_path::String)::Tuple{String, Vector{String}}
     return d_path, available_cols
 end
 
+"""
+    _extract_d_lines(zip_paths::Vector{String}) -> (String, Vector{String})
+
+Extract each ZIP part's D-lines with [`_extract_d_lines`](@ref) and concatenate them, in
+order, into one combined temp CSV. Returns `(d_only_path, available_cols)`, taking
+`available_cols` from the first part; caller deletes `d_only_path` when done.
+"""
+function _extract_d_lines(zip_paths::Vector{String})::Tuple{String, Vector{String}}
+    combined_path = tempname(_local_tmp_dir()) * ".csv"
+    available_cols = String[]
+    open(combined_path, "w") do out
+        for zip_path in zip_paths
+            part_path, part_cols = _extract_d_lines(zip_path)
+            try
+                isempty(available_cols) && (available_cols = part_cols)
+                write(out, read(part_path))
+            finally
+                rm(part_path; force = true)
+            end
+        end
+    end
+    return combined_path, available_cols
+end
+
+_datetime_parse_expr(col::String) = "try_strptime(\"$col\", '%Y/%m/%d %H:%M:%S')"
 _cast_expr(col::String) = _cast_expr(col, get(COLUMN_TYPES, col, String))
-_cast_expr(col::String, ::Type{DateTime}) = "try_strptime(\"$col\", '%Y/%m/%d %H:%M:%S') AS \"$col\""
-_cast_expr(col::String, ::Type{Date}) = "CAST(try_strptime(\"$col\", '%Y/%m/%d %H:%M:%S') AS DATE) AS \"$col\""
+_cast_expr(col::String, ::Type{DateTime}) = "$(_datetime_parse_expr(col)) AS \"$col\""
+_cast_expr(col::String, ::Type{Date}) = "CAST($(_datetime_parse_expr(col)) AS DATE) AS \"$col\""
 _cast_expr(col::String, ::Type{String}) = "\"$col\" AS \"$col\""
 _cast_expr(col::String, T::DataType) = "TRY_CAST(\"$col\" AS $(_duckdb_type(T))) AS \"$col\""
 
 """
-    _csv_to_parquet(conn, csv_path, available_cols, table_columns, path, partitions, sort_by, year, month)
+    _csv_to_parquet(conn, csv_path, available_cols, table_columns, path, partitions, sort_by, year, month;
+                    islocal=true, month_filter_column=nothing)
 
 Read `csv_path` entirely inside DuckDB, in one query — every line as VARCHAR,
 filtered to real "D" records, cast to `COLUMN_TYPES`, missing columns filled
@@ -109,11 +135,16 @@ Hive-partitioned parquet.
 `available_cols` is the file's real column names/order and must be supplied
 explicitly, since `csv_path` may be a pre-filtered, D-lines-only file (see
 `_extract_d_lines`) with no header row left to read it from.
+
+When `month_filter_column` is given, rows are kept only when that column's parsed
+datetime falls in `(first of month, first of next month]` — the MMSDM convention that a
+datetime column holds the interval **end**, so the boundary instant belongs to the
+earlier month — and, if `sort_by` gives a non-empty key, rows are deduplicated on it.
 """
 function _csv_to_parquet(
         conn, csv_path::String, available_cols::Vector{String}, table_columns::Vector{String}, path::String,
         partitions::Vector{String}, sort_by::Vector{String}, year::Int, month::Int;
-        islocal::Bool = true,
+        islocal::Bool = true, month_filter_column::Union{Nothing, String} = nothing,
     )
     raw_names = vcat(["_record_type", "_namespace", "_report", "_version"], available_cols)
     names_sql = "[" * join(("'$n'" for n in raw_names), ", ") * "]"
@@ -133,18 +164,28 @@ function _csv_to_parquet(
     isempty(cols_extra) || @info "Columns in file not captured by table spec" cols_extra year month
 
     archive_month = Date(year, month, 1)
+    next_archive_month = archive_month + Month(1)
     sort_cols = intersect(vcat(partitions, sort_by), table_columns)
     order_by = isempty(sort_cols) ? "" : "ORDER BY " * join(("\"$c\"" for c in sort_cols), ", ")
     partition_by = join(partitions, ", ")
 
+    month_where = ""
+    if !isnothing(month_filter_column) && month_filter_column in cols_present
+        parsed = _datetime_parse_expr(month_filter_column)
+        month_where = "AND $parsed > TIMESTAMP '$archive_month' AND $parsed <= TIMESTAMP '$next_archive_month'"
+    end
+
+    distinct_on = (!isnothing(month_filter_column) && !isempty(sort_cols)) ?
+        "DISTINCT ON ($(join(("\"$c\"" for c in sort_cols), ", "))) " : ""
+
     islocal && mkpath(path)
     sql = """
         COPY (
-            SELECT $select_list, DATE '$archive_month' AS $ARCHIVE_MONTH_PARTITION
+            SELECT $distinct_on$select_list, DATE '$archive_month' AS $ARCHIVE_MONTH_PARTITION
             FROM read_csv('$csv_path', header=false, names=$names_sql, all_varchar=true,
                            delim=',', quote='"', escape='"', strict_mode=false,
                            null_padding=true, ignore_errors=true)
-            WHERE _record_type = 'D'
+            WHERE _record_type = 'D' $month_where
             $order_by
         ) TO '$path' (FORMAT PARQUET, PARTITION_BY ($partition_by), OVERWRITE_OR_IGNORE TRUE)
     """
