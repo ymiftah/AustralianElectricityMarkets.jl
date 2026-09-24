@@ -78,17 +78,22 @@ function _extract_d_lines(zip_path::String)::Tuple{String, Vector{String}}
     d_path = tempname(_local_tmp_dir()) * ".csv"
     available_cols = String[]
     io = zip_openentry(reader, entries[idx])
-    open(d_path, "w") do out
-        for line in eachline(io)
-            if startswith(line, "D,")
-                println(out, line)
-            elseif isempty(available_cols) && startswith(line, "I,")
-                # I: I, namespace, report, version, col1, col2, ...
-                available_cols = String.(strip.(split(line, ",")[5:end]))
+    try
+        open(d_path, "w") do out
+            for line in eachline(io)
+                if startswith(line, "D,")
+                    println(out, line)
+                elseif isempty(available_cols) && startswith(line, "I,")
+                    # I: I, namespace, report, version, col1, col2, ...
+                    available_cols = String.(strip.(split(line, ",")[5:end]))
+                end
             end
         end
+        isempty(available_cols) && throw(MissingDataError("No I (header) record found in $zip_path"))
+    catch
+        rm(d_path; force = true)
+        rethrow()
     end
-    isempty(available_cols) && throw(MissingDataError("No I (header) record found in $zip_path"))
     return d_path, available_cols
 end
 
@@ -102,16 +107,21 @@ order, into one combined temp CSV. Returns `(d_only_path, available_cols)`, taki
 function _extract_d_lines(zip_paths::Vector{String})::Tuple{String, Vector{String}}
     combined_path = tempname(_local_tmp_dir()) * ".csv"
     available_cols = String[]
-    open(combined_path, "w") do out
-        for zip_path in zip_paths
-            part_path, part_cols = _extract_d_lines(zip_path)
-            try
-                isempty(available_cols) && (available_cols = part_cols)
-                write(out, read(part_path))
-            finally
-                rm(part_path; force = true)
+    try
+        open(combined_path, "w") do out
+            for zip_path in zip_paths
+                part_path, part_cols = _extract_d_lines(zip_path)
+                try
+                    isempty(available_cols) && (available_cols = part_cols)
+                    write(out, read(part_path))
+                finally
+                    rm(part_path; force = true)
+                end
             end
         end
+    catch
+        rm(combined_path; force = true)
+        rethrow()
     end
     return combined_path, available_cols
 end

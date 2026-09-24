@@ -38,7 +38,10 @@ since AEMO could split any table's archive in the future.
   primary/`FILE01` pair — it is never mistaken for "no more parts". `_get_archive` returns
   `Vector{String}`; `_extract_d_lines` gained an overload for a vector of ZIP paths that
   concatenates each part's D-lines, in part order, into one combined CSV, reusing the
-  single-ZIP method per part.
+  single-ZIP method per part. Both `_extract_d_lines` methods delete their own temp CSV if
+  they fail after creating it, not just on the happy path — confirmed necessary directly: a
+  real multi-part `DISPATCH_FCAS_REQ_CONSTRAINT` re-populate hit a downstream disk limit and
+  left a multi-gigabyte temp file behind before this was added.
 - `_TABLE_SPECS` entries may carry an optional `month_filter_column`, read via
   `get(spec, :month_filter_column, nothing)` so every other entry is untouched.
   `DISPATCH_FCAS_REQ_CONSTRAINT` sets it to `"INTERVAL_DATETIME"`. When set,

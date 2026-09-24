@@ -258,6 +258,25 @@ end
     end
 end
 
+@testset "_extract_d_lines: cleans up its temp CSV when it errors after partially writing" begin
+    # D lines with no preceding I record: the write completes (some content already on
+    # disk), then the missing-header check throws — exercising cleanup-after-partial-write,
+    # not the empty-ZIP/no-.csv-entry cases above, which never create a temp file at all.
+    tmp = tempname() * ".csv"
+    open(tmp, "w") do io
+        println(io, "D,TEST,DISPATCHPRICE,1,NSW1,1.0")
+    end
+    zip_path = make_zip_with_csv(tmp)
+    tmp_dir = AustralianElectricityMarketsData._local_tmp_dir()
+    before = Set(readdir(tmp_dir))
+    try
+        @test_throws MissingDataError _extract_d_lines(zip_path)
+        @test Set(readdir(tmp_dir)) == before
+    finally
+        foreach(p -> isfile(p) && rm(p), (tmp, zip_path))
+    end
+end
+
 @testset "_extract_d_lines(::Vector): concatenates every part's D lines, in order, using the first part's columns" begin
     csv1 = make_nemweb_csv("DISPATCHPRICE", ["REGIONID", "RRP"], [("NSW1", "1.0"), ("VIC1", "2.0")])
     csv2 = make_nemweb_csv("DISPATCHPRICE", ["REGIONID", "RRP"], [("QLD1", "3.0")])
@@ -274,6 +293,20 @@ end
         end
     finally
         foreach(p -> isfile(p) && rm(p), (csv1, csv2, zip1, zip2))
+    end
+end
+
+@testset "_extract_d_lines(::Vector): cleans up the combined temp CSV when a later part fails" begin
+    csv1 = make_nemweb_csv("DISPATCHPRICE", ["REGIONID", "RRP"], [("NSW1", "1.0")])
+    zip1 = make_zip_with_csv(csv1)
+    zip2 = make_zip_no_csv()  # second part fails, after the first part's bytes are already combined
+    tmp_dir = AustralianElectricityMarketsData._local_tmp_dir()
+    before = Set(readdir(tmp_dir))
+    try
+        @test_throws MissingDataError _extract_d_lines([zip1, zip2])
+        @test Set(readdir(tmp_dir)) == before  # no leaked combined-CSV temp file
+    finally
+        foreach(p -> isfile(p) && rm(p), (csv1, zip1, zip2))
     end
 end
 
