@@ -102,6 +102,7 @@ export FCASTrapezium, FCASBid,
     get_offer_curve, get_trapezium
 export scale_fcas_trapezium
 export get_fcas_trapezium, get_fcas_offer_curve, get_fcas_bid, get_scaled_fcas_trapezium
+export get_fcas_agc_ramp_capability, get_fcas_agc_status
 export read_fcas_scaling_inputs, set_fcas_scaling_inputs!
 export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm, FCASRequirement,
     GenericConstraint,
