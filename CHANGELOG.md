@@ -55,6 +55,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FCASMarket`, the `FCASService` co-optimisation formulation** (`AustralianElectricityMarketsSimulations`):
+  a `FCASCapacityVariable` per contributing device and interval, bounded above by the device's
+  `MAXAVAIL` for that market, and both forms (upper and lower) of the joint capacity constraint
+  from AEMO's *FCAS Model in NEMDE* §6.2/§6.3, each held in a per-`(device, t)`
+  `FCASJointCapacityLHS` expression: energy dispatch, offset by the service's own trapezium slope
+  and any matching regulation target, held inside `[EnablementMin, EnablementMax]`. A `PSY.Storage`
+  device's energy term is always its net `ActivePowerOutVariable - ActivePowerInVariable`, matching
+  how real battery contingency FCAS is bid (`DIRECTION = BIDIRECTIONAL`, against a net-MW
+  trapezium). The computable subset of AEMO's §5 enablement pre-conditions (`MaxAvail`, a positive
+  offer band, the enablement sign and energy-maximum-availability tests, and "stranded" outside the
+  trapezium) gates a disabled `(device, t)` to zero capacity and a vacuous constraint row, rather
+  than a device NEMDE would not enable being forced on. Trapezium and offer-curve data are read
+  directly off the `Deterministic` series `set_fcas_bids!` attaches, so no `PSI.TimeSeriesParameter`
+  is registered for them and they never conflict with the `SingleTimeSeries`-derived forecasts every
+  other formulation reads. Offer cost is an epigraph over the device's step offer curve (band
+  variables filling cheapest-first), priced with the same `$/MWh`-over-an-interval basis as energy,
+  scaled by the system base power to price a per-unit capacity variable against a natural-`$`/MW
+  offer. A decremental (`LOAD`-direction) bid on a non-`Storage` device throws — no scheduled-load
+  device type exists in this package yet, and `set_fcas_bids!` never produces one. `check_fcas_services`
+  is a pre-flight check confirming every contributing device has a device model in the template and
+  a supported FCAS bid direction. AEMSim's own duplicate trapezium-slope arithmetic
+  (`EffectiveTrapezium`, the local `lower_slope_coeff`/`upper_slope_coeff`) is gone; `scale_trapezium`
+  now returns an `FCASTrapezium` directly, reading root's
+  `get_lower_slope_coeff`/`get_upper_slope_coeff`.
 - **`AbstractNEMDispatch`, a uniform device formulation for NEM dispatch participants** (`AustralianElectricityMarketsSimulations`): a per-band bid stack from `MarketBidCost`, a per-interval ramp limit from the `"ramp_up_rate"`/`"ramp_down_rate"` series, and the `DISPATCHLOAD.AVAILABILITY` envelope, replacing the stock `ThermalBasicDispatch`/`RenewableFullDispatch`/`HydroDispatchRunOfRiver` formulations whose commitment binaries, forecast ceiling and energy budget NEMDE does not apply. The formulation is written against `PowerSystems.StaticInjection` and is never gated on a fixed list of device types: NEMDE dispatches on market participation, not technology, so a `ThermalMultiStart` or any other injector a user brings is treated identically. It models one injection variable per device; state of charge for bidirectional units layers on as its own formulation.
 - **`NEMReplayDispatch` and `NEMLookaheadDispatch`**, the two concrete `AbstractNEMDispatch` formulations, differing only in what the ramp constraint measures against: the replay formulation measures every interval against its own metered `INITIALMW`, as NEMDE does, and the lookahead formulation chains each interval from the previous one's dispatch. Both are concrete, so a consumer always names one and the choice is never made by default.
 - **`nem_dispatch_participants` and `set_nem_dispatch_models!`**, which set one formulation across every participant by reading which components carry the dispatch-limit series rather than assuming types, plus the `RampUpRateTimeSeriesParameter`/`RampDownRateTimeSeriesParameter`/`InitialPowerTimeSeriesParameter` parameter types. An `AbstractNEMDispatch` model builds as a pure LP with no `OnVariable`, and a device missing a ramp series or with a ramp-down floor above its availability ceiling is named at build rather than surfacing as a solver `INFEASIBLE`.
