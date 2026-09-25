@@ -59,6 +59,43 @@ function add_toy_fcas!(
 end
 
 """
+    add_toy_fcas_scaling!(sys, device, initial_timestamp, n, bid_type; agc_enablement_min = nothing,
+        agc_enablement_max = nothing, agc_max_avail = nothing, uigf = nothing)
+
+Attaches [`set_fcas_scaling_inputs!`](@ref)'s per-device `"fcas_agc_enablement_min_<bid_type>"`/
+`"fcas_agc_enablement_max_<bid_type>"`/`"fcas_agc_max_avail_<bid_type>"`/`"fcas_uigf"`
+`SingleTimeSeries`, one flat window of `n` steps at `initial_timestamp`, mirroring its
+per-unit-of-system-base convention. A `nothing` keyword leaves the matching series unattached.
+"""
+function add_toy_fcas_scaling!(
+        sys, device, initial_timestamp, n::Integer, bid_type::BidType;
+        agc_enablement_min::Union{Nothing, Float64} = nothing,
+        agc_enablement_max::Union{Nothing, Float64} = nothing,
+        agc_max_avail::Union{Nothing, Float64} = nothing,
+        uigf::Union{Nothing, Float64} = nothing,
+        resolution = TOY_RESOLUTION,
+    )
+    base_power = PSY.get_base_power(sys)
+    stamps = [initial_timestamp + (i - 1) * resolution for i in 1:n]
+    bid_type_str = string(bid_type)
+    for (value, name) in (
+            (agc_enablement_min, "fcas_agc_enablement_min_$bid_type_str"),
+            (agc_enablement_max, "fcas_agc_enablement_max_$bid_type_str"),
+            (agc_max_avail, "fcas_agc_max_avail_$bid_type_str"),
+            (uigf, "fcas_uigf"),
+        )
+        isnothing(value) && continue
+        PSY.add_time_series!(
+            sys, device,
+            PSY.SingleTimeSeries(;
+                name = name, data = PSY.TimeSeries.TimeArray(stamps, fill(value / base_power, n)),
+            ),
+        )
+    end
+    return
+end
+
+"""
     fcas_toy_template(sys, service_names)
 
 `NEMReplayDispatch`/`StaticPowerLoad` for the toy's devices, plus [`FCASMarket`](@ref) for each
@@ -181,6 +218,46 @@ fcas_mw(container, service_name, duid) =
         raise60sec_var = fcas_capacity(container, "TAS1_RAISE60SEC")
         @test PSI.JuMP.upper_bound(raise60sec_var[duid, 1]) ≈ 21.0 / base_power atol = 1.0e-9
     end
+end
+
+@testset "a scaled regulation trapezium changes the solved cap" begin
+    duid = TOY_CHEAP
+    service_name = "TAS1_RAISEREG_SCALED"
+    # Fully flat trapezium (LowBreakpoint == EnablementMin, HighBreakpoint == EnablementMax):
+    # only MaxAvail bounds the capacity variable at any energy level in [0, 100].
+    trapezium_mw = (0.0, 0.0, 100.0, 100.0, 25.0)
+
+    function raisereg_cap(; agc_max_avail::Union{Nothing, Float64})
+        sys = fcas_energy_toy_system(
+            2.0;
+            mutate! = (sys, stamps) -> begin
+                device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+                n = length(stamps)
+                add_toy_fcas!(sys, device, stamps[1], n, BidType.RAISEREG, trapezium_mw, [(25.0, 10.0)])
+                isnothing(agc_max_avail) || add_toy_fcas_scaling!(
+                    sys, device, stamps[1], n, BidType.RAISEREG; agc_max_avail = agc_max_avail,
+                )
+                PSY.add_service!(
+                    sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG),
+                    [device],
+                )
+            end,
+        )
+        container = build_fcas(sys, [service_name])
+        fix_energy!(container, duid, 2.0)
+        maximize_and_solve!(container) do container
+            fcas_capacity(container, service_name)[duid, 1]
+        end
+        return fcas_mw(container, service_name, duid)
+    end
+
+    # Unscaled: MaxAvail (25.0) is the bound.
+    @test raisereg_cap(; agc_max_avail = nothing) ≈ 25.0 atol = FCAS_TOY_TOLERANCE
+    # AGC ramping capability (15.0) is more restrictive than the bid MaxAvail: the effective
+    # trapezium's MaxAvail - not the bid's - bounds the solved capacity.
+    @test raisereg_cap(; agc_max_avail = 15.0) ≈ 15.0 atol = FCAS_TOY_TOLERANCE
+    # AGC ramping capability (40.0) is less restrictive than the bid MaxAvail: no impact.
+    @test raisereg_cap(; agc_max_avail = 40.0) ≈ 25.0 atol = FCAS_TOY_TOLERANCE
 end
 
 @testset "the LOWER6SEC trapezium genuinely binds as energy moves" begin
