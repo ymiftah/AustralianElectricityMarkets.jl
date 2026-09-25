@@ -374,7 +374,7 @@
             end
         end
 
-        @testset "values are per-unit of the system base, matching DISPATCHLOAD exactly" begin
+        @testset "ramp rates convert MW/h to MW/min and per-unitise; initial_mw matches DISPATCHLOAD exactly, per-unitised" begin
             sys = deepcopy(sys_base)
             set_nem_dispatch_limits!(sys, db, date_range)
 
@@ -393,8 +393,8 @@
                 got_down = get_time_series_values(SingleTimeSeries, device, "ramp_down_rate")
                 got_init = get_time_series_values(SingleTimeSeries, device, "initial_mw")
 
-                @test isapprox(got_up, rows.RAMPUPRATE ./ base_power; atol = 1.0e-8)
-                @test isapprox(got_down, rows.RAMPDOWNRATE ./ base_power; atol = 1.0e-8)
+                @test isapprox(got_up, rows.RAMPUPRATE ./ 60 ./ base_power; atol = 1.0e-8)
+                @test isapprox(got_down, rows.RAMPDOWNRATE ./ 60 ./ base_power; atol = 1.0e-8)
                 @test isapprox(got_init, rows.INITIALMW ./ base_power; atol = 1.0e-8)
                 n_checked += 1
             end
@@ -825,6 +825,137 @@
                 get_active_power(get_component(ThermalStandard, sys, "ER02")),
                 50.0 / get_base_power(sys); atol = 1.0e-8,
             )
+        end
+    end
+
+    @testset "ramp-down floor above AVAILABILITY raises max_active_power to the floor" begin
+        floor_hive = mktempdir()
+        ddb = DuckDB.DB()
+        conn = DuckDB.connect(ddb)
+        DuckDB.execute(conn, "SET preserve_identifier_case=true")
+
+        resolution = Minute(5)
+        start_date = DateTime(2025, 1, 1, 0, 0)
+        short_range = start_date:resolution:(start_date + Minute(10))
+        grid = collect(short_range)[1:(end - 1)]  # 3 intervals
+        duids = ["BW02", "BW03", "BW04", "ER01", "ER02"]
+
+        rows = DataFrame(
+            SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
+            INITIALMW = Union{Float64, Missing}[], RAMPUPRATE = Union{Float64, Missing}[],
+            RAMPDOWNRATE = Union{Float64, Missing}[], AVAILABILITY = Union{Float64, Missing}[],
+        )
+        for t in grid, duid in duids
+            # ER01: zero RAMPDOWNRATE and INITIALMW above AVAILABILITY, so the floor is INITIALMW.
+            floor_case = duid == "ER01"
+            push!(
+                rows,
+                (
+                    SETTLEMENTDATE = t, DUID = duid, INTERVENTION = 0,
+                    INITIALMW = floor_case ? 65.41 : 50.0,
+                    RAMPUPRATE = 5.0,
+                    RAMPDOWNRATE = floor_case ? 0.0 : 4.0,
+                    AVAILABILITY = floor_case ? 65.0 : 100.0,
+                ),
+            )
+        end
+        rows[!, :archive_month] = fill("2025-01", nrow(rows))
+
+        DuckDB.register_data_frame(conn, rows, "tmp_table")
+        table_dir = joinpath(floor_hive, "DISPATCHLOAD")
+        mkpath(table_dir)
+        DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+        DuckDB.unregister_table(conn, "tmp_table")
+
+        floor_db = aem_connect(HiveConfiguration(hive_location = floor_hive, filesystem = "file"))
+        sys = deepcopy(sys_base)
+        set_nem_dispatch_limits!(sys, floor_db, short_range)
+
+        er01 = get_component(ThermalStandard, sys, "ER01")
+        static_cap = with_units_base(() -> get_max_active_power(er01), sys, "NATURAL_UNITS")
+        got_er01 = get_time_series_values(
+            SingleTimeSeries, er01, "max_active_power"; ignore_scaling_factors = true,
+        )
+        @test all(isapprox.(got_er01, 65.41 / static_cap; atol = 1.0e-8))
+
+        # ER02's floor (50.0 - 4.0/12 ≈ 49.67) is below its AVAILABILITY (100.0).
+        er02 = get_component(ThermalStandard, sys, "ER02")
+        got_er02 = get_time_series_values(
+            SingleTimeSeries, er02, "max_active_power"; ignore_scaling_factors = true,
+        )
+        @test all(isapprox.(got_er02, 100.0 / static_cap; atol = 1.0e-8))
+    end
+
+    @testset "unavailable devices are excluded from the strict setters" begin
+        partial_hive = mktempdir()
+        ddb = DuckDB.DB()
+        conn = DuckDB.connect(ddb)
+        DuckDB.execute(conn, "SET preserve_identifier_case=true")
+
+        resolution = Minute(5)
+        start_date = DateTime(2025, 1, 1, 0, 0)
+        short_range = start_date:resolution:(start_date + Minute(10))
+        grid = collect(short_range)[1:(end - 1)]  # 3 intervals
+        covered_duids = ["BW02", "BW03", "BW04", "ER02"]  # every dispatch device except ER01
+
+        rows = DataFrame(
+            SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
+            INITIALMW = Union{Float64, Missing}[], RAMPUPRATE = Union{Float64, Missing}[],
+            RAMPDOWNRATE = Union{Float64, Missing}[], AVAILABILITY = Union{Float64, Missing}[],
+        )
+        for t in grid, duid in covered_duids
+            push!(
+                rows,
+                (
+                    SETTLEMENTDATE = t, DUID = duid, INTERVENTION = 0,
+                    INITIALMW = 50.0, RAMPUPRATE = 5.0, RAMPDOWNRATE = 4.0, AVAILABILITY = 100.0,
+                ),
+            )
+        end
+        rows[!, :archive_month] = fill("2025-01", nrow(rows))
+
+        DuckDB.register_data_frame(conn, rows, "tmp_table")
+        table_dir = joinpath(partial_hive, "DISPATCHLOAD")
+        mkpath(table_dir)
+        DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+        DuckDB.unregister_table(conn, "tmp_table")
+
+        partial_db = aem_connect(HiveConfiguration(hive_location = partial_hive, filesystem = "file"))
+
+        @testset "unavailable: no throw, and no series added for the unavailable device" begin
+            sys = deepcopy(sys_base)
+            er01 = get_component(ThermalStandard, sys, "ER01")
+            set_available!(er01, false)
+
+            @test_nowarn set_nem_dispatch_limits!(sys, partial_db, short_range)
+            @test !has_time_series(er01, SingleTimeSeries, "ramp_up_rate")
+            @test has_time_series(get_component(ThermalStandard, sys, "ER02"), SingleTimeSeries, "ramp_up_rate")
+
+            er01_active_power_before = get_active_power(er01)
+            @test_nowarn set_nem_initial_conditions!(sys, partial_db, first(short_range))
+            @test get_active_power(er01) == er01_active_power_before
+        end
+
+        @testset "available: still throws, naming the DUID" begin
+            sys = deepcopy(sys_base)
+
+            err = try
+                set_nem_dispatch_limits!(sys, partial_db, short_range)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            @test occursin("ER01", err.msg)
+
+            err2 = try
+                set_nem_initial_conditions!(sys, partial_db, first(short_range))
+                nothing
+            catch e
+                e
+            end
+            @test err2 isa ArgumentError
+            @test occursin("ER01", err2.msg)
         end
     end
 end

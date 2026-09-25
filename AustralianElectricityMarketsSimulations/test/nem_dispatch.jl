@@ -261,13 +261,14 @@ end
         @test length(unique(round.(bounds; digits = 9))) > 1
     end
 
-    @testset "the availability envelope, not the ramp, is what binds in this fixture" begin
-        # The envelope, not the ramp, is what binds in the base fixture.
+    @testset "the ramp, not the availability envelope, is what binds in this fixture" begin
+        # ER02's 5-minute ramp band (under 1.1 MW) is far tighter than its 75-80 MW ceiling.
         envelope = PSY.get_time_series_values(
             PSY.SingleTimeSeries, device, "max_active_power"; len = 12,
         ) .* PSY.get_max_active_power(device)
-        @test all(solved .<= envelope .+ 1.0e-9)
-        @test all([initial_mw[t] + up_rate[t] * 5 for t in eachindex(solved)] .>= envelope .- 1.0e-9)
+        ramp_bound = [initial_mw[t] + up_rate[t] * 5 for t in eachindex(solved)]
+        @test all(ramp_bound .< envelope .- 1.0e-9)
+        @test all(solved .<= ramp_bound .+ 1.0e-6)
     end
 
     @testset "both ramp directions are built for every participant and interval" begin

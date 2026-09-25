@@ -1,9 +1,9 @@
 """
     _nem_dispatch_devices(sys)
 
-Collects every `ThermalStandard`, `HydroDispatch` and `RenewableDispatch` in `sys` — the
-device types that [`set_nem_dispatch_limits!`](@ref) and [`set_nem_initial_conditions!`](@ref)
-apply to.
+Collects every available `ThermalStandard`, `HydroDispatch` and `RenewableDispatch` in `sys` —
+the device types that [`set_nem_dispatch_limits!`](@ref) and
+[`set_nem_initial_conditions!`](@ref) apply to.
 
 # Arguments
 - `sys`: the `System` to collect from.
@@ -13,9 +13,9 @@ A `Vector{Device}`.
 """
 function _nem_dispatch_devices(sys)
     devices = Device[]
-    append!(devices, collect(get_components(ThermalStandard, sys)))
-    append!(devices, collect(get_components(HydroDispatch, sys)))
-    append!(devices, collect(get_components(RenewableDispatch, sys)))
+    append!(devices, collect(get_components(get_available, ThermalStandard, sys)))
+    append!(devices, collect(get_components(get_available, HydroDispatch, sys)))
+    append!(devices, collect(get_components(get_available, RenewableDispatch, sys)))
     return devices
 end
 
@@ -55,11 +55,12 @@ end
     set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates = false, kwargs...)
 
 Attaches four per-device `SingleTimeSeries` from [`read_dispatch_limits`](@ref) to every
-`ThermalStandard`, `HydroDispatch` and `RenewableDispatch` in `sys`: `"ramp_up_rate"` and
-`"ramp_down_rate"` (from `RAMPUPRATE`/`RAMPDOWNRATE`), `"initial_mw"` (from `INITIALMW`), and
-`"max_active_power"` (from `AVAILABILITY`) — the per-interval dispatch envelope NEMDE actually
-applied, replacing any `UIGF`- or bid-derived `"max_active_power"` series a device already
-carries.
+available `ThermalStandard`, `HydroDispatch` and `RenewableDispatch` in `sys`: `"ramp_up_rate"`
+and `"ramp_down_rate"` (from `RAMPUPRATE`/`RAMPDOWNRATE`), `"initial_mw"` (from `INITIALMW`),
+and `"max_active_power"` — the device's upper dispatch limit, `AVAILABILITY` raised to the
+ramp-down floor `INITIALMW - RAMPDOWNRATE × Δ` when that floor is higher, where Δ is the
+interval length in hours taken from `date_range`'s step — replacing any `UIGF`- or bid-derived
+`"max_active_power"` series a device already carries.
 
 `"ramp_up_rate"`, `"ramp_down_rate"` and `"initial_mw"` are stored per-unit of `sys`'s system
 base, rates per minute. `"max_active_power"` follows PSY's native convention instead: data
@@ -89,6 +90,7 @@ to the devices with complete, valid data.
 function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates::Bool = false, kwargs...)
     base_power = get_base_power(sys)
     full_grid = collect(date_range)[1:(end - 1)]
+    interval_hours = Dates.value(Millisecond(step(date_range))) / (1000 * 60 * 60)
 
     rows = read_dispatch_limits(db, date_range; kwargs...)
     by_duid = DataFrames.isempty(rows) ? nothing : groupby(rows, :DUID)
@@ -149,7 +151,8 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
             push!(initial_mw, row.INITIALMW)
             push!(ramp_up_rate, row.RAMPUPRATE)
             push!(ramp_down_rate, row.RAMPDOWNRATE)
-            push!(max_active_power, row.AVAILABILITY / static_max_active_power)
+            ramp_down_floor = row.INITIALMW - row.RAMPDOWNRATE * interval_hours
+            push!(max_active_power, max(row.AVAILABILITY, ramp_down_floor) / static_max_active_power)
         end
         if !isnothing(reason)
             push!(problems, "$duid: $reason")
@@ -171,11 +174,11 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
         d = buildable[duid]
         add_time_series!(
             sys, device,
-            SingleTimeSeries(; name = "ramp_up_rate", data = TimeArray(full_grid, d.ramp_up_rate ./ base_power)),
+            SingleTimeSeries(; name = "ramp_up_rate", data = TimeArray(full_grid, d.ramp_up_rate ./ 60 ./ base_power)),
         )
         add_time_series!(
             sys, device,
-            SingleTimeSeries(; name = "ramp_down_rate", data = TimeArray(full_grid, d.ramp_down_rate ./ base_power)),
+            SingleTimeSeries(; name = "ramp_down_rate", data = TimeArray(full_grid, d.ramp_down_rate ./ 60 ./ base_power)),
         )
         add_time_series!(
             sys, device,
@@ -202,11 +205,12 @@ end
 """
     set_nem_initial_conditions!(sys, db, interval; allow_missing_ramp_rates = false, kwargs...)
 
-Seeds `active_power` on every `ThermalStandard`, `HydroDispatch` and `RenewableDispatch` in
-`sys` from `DISPATCHLOAD.INITIALMW` at `interval`, via `PSY.set_active_power!`. This is the
-convenience call for the chained ramp base mode, whose `DevicePower` initial condition is read
-from `active_power`; the metered ramp base mode instead reads the `"initial_mw"` time series
-attached by [`set_nem_dispatch_limits!`](@ref) at every interval.
+Seeds `active_power` on every available `ThermalStandard`, `HydroDispatch` and
+`RenewableDispatch` in `sys` from `DISPATCHLOAD.INITIALMW` at `interval`, via
+`PSY.set_active_power!`. This is the convenience call for the chained ramp base mode, whose
+`DevicePower` initial condition is read from `active_power`; the metered ramp base mode instead
+reads the `"initial_mw"` time series attached by [`set_nem_dispatch_limits!`](@ref) at every
+interval.
 
 A device with no `DISPATCHLOAD` row at `interval` or a `missing` `INITIALMW` is a problem. With
 `allow_missing_ramp_rates = false` (the default), every problem across every device is
