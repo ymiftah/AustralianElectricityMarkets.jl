@@ -71,6 +71,31 @@ the telemetered value is the more restrictive one. AEMO's text says only "zero o
 `x > 0.0` - relevant now that this package models a `PSY.Storage` device's regulation bid on
 both sides (ADR-0017), where a negative `EnablementMin` is the ordinary case, not an edge case.
 
+### A shared AGC enablement window against a two-sided battery
+
+`get_scaled_fcas_trapezium` reads `"fcas_agc_enablement_min/max_<service>"` by `service`
+(`RAISEREG`/`LOWERREG`) only, not by `decremental` - the same telemetered pair scales both a
+`PSY.Storage` device's generation-side and load-side trapezium for that service, since
+`DISPATCHLOAD` reports one `RAISEREGENABLEMENTMIN/MAX`/`LOWERREGENABLEMENTMIN/MAX` pair per DUID
+per interval, not one per side. Real cache values (`~/.nemdb_cache`, `DISPATCHLOAD`, DUIDs
+`WANDB1`/`ERB01` among other `DISPATCHTYPE = 'BIDIRECTIONAL'` units) confirm the pair ordinarily
+spans both sides of zero (e.g. `WANDB1`, `RAISEREGENABLEMENTMIN = -75`,
+`RAISEREGENABLEMENTMAX = 87`), so applying it to both a positive-axis and a negative-axis
+trapezium is ordinarily a no-op or a genuine narrowing on the correct side.
+
+`AGCSTATUS = 0` rows are the exception: `ERB01`, `LOWERREGENABLEMENTMIN = 368.39502`,
+`LOWERREGENABLEMENTMAX = 0.0` (`AGCSTATUS = 0`, `RAISEREG = LOWERREG = 0.0` that interval) - a
+pair inconsistent with either side's own domain. Applied one bound at a time (the bid's own
+`EnablementMax` as the other bound), `max(bid EnablementMin, 368.4)` alone collapses the
+load-side trapezium (`EnablementMax = 0`) to a zero-width point at `368.4`, and would do the same
+to a positive-axis (generation-side) trapezium whose own `EnablementMax` is below `368.4`. Across
+every `BIDIRECTIONAL` DUID in the cache, `RAISEREGENABLEMENTMIN > RAISEREGENABLEMENTMAX` (or the
+`LOWERREG` equivalent) on 144073/1862903 `AGCSTATUS = 0` rows versus 944/6374089
+`AGCSTATUS = 1` rows - this package does not yet gate FCAS enablement on `AGCSTATUS` (a §5
+pre-condition, not part of §4 scaling), so `scale_fcas_trapezium` guards against the input
+itself: it computes both bounds' would-be-applied values before committing either, and applies
+neither if doing so would put `EnablementMin` above `EnablementMax`.
+
 ### UIGF and "semi-scheduled"
 
 `RenewableDispatch` devices already carry a `UIGF`-derived ceiling
@@ -104,7 +129,10 @@ per interval (the same convention as the constraint-term reader's `DUDETAILSUMMA
   enablement/`MaxAvail` values - algebraically equivalent to applying each scaling step in
   sequence (each step alone provably preserves the other's slope, since a step that moves an
   enablement bound shifts its paired breakpoint by the same delta, leaving the slope ratio
-  unchanged), but computed in one pass rather than three intermediate `FCASTrapezium`s.
+  unchanged), but computed in one pass rather than three intermediate `FCASTrapezium`s. An
+  `agc_enablement_min`/`agc_enablement_max` pair is applied only if doing so leaves
+  `EnablementMin <= EnablementMax`; otherwise neither bound is applied, and `EnablementMin`/
+  `EnablementMax` are left at the bid's own values.
 - `set_fcas_scaling_inputs!(sys, db, date_range)` (`src/setters/fcas_scaling.jl`) attaches six
   per-device `SingleTimeSeries` (`"fcas_agc_enablement_min/max_RAISEREG/LOWERREG"`,
   `"fcas_agc_max_avail_RAISEREG/LOWERREG"`, MW/h ramp rates converted to MW over the interval by
@@ -136,3 +164,8 @@ per interval (the same convention as the constraint-term reader's `DUDETAILSUMMA
   negative `EnablementMin`.
 - §6.1 joint ramping (ADR-0017's known gap) still is not modelled; trapezium scaling narrows the
   *bounds* the joint capacity constraint and `MaxAvail` see, it does not add ramping itself.
+- AEMO's §5 `AGCSTATUS` pre-condition (regulation enabled only while the unit is under AGC
+  control) is still not modelled. The `EnablementMin <= EnablementMax` guard on the AGC
+  enablement pair is a defensive check on `scale_fcas_trapezium`'s own inputs, not a substitute
+  for it: an `AGCSTATUS = 0` interval whose AGC enablement pair still happens to be internally
+  consistent is scaled as if regulation were enabled.

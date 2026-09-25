@@ -29,6 +29,7 @@ export set_demand!, set_renewable_pv!, set_renewable_wind!, set_market_bids!, se
 export read_fcas_bids, set_fcas_bids!, read_fcas_requirements,
     read_fcas_prices, read_fcas_dispatch, read_prices, read_uigf
 export read_dispatch_limits, set_nem_dispatch_limits!, set_nem_initial_conditions!
+export set_storage_initial_mw!, get_storage_initial_mw
 export read_invoked_constraints, read_constraint_definitions, read_constraint_terms,
     read_constraint_fcas_requirements, add_nem_constraints!
 export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS
@@ -100,6 +101,7 @@ export FCASTrapezium, FCASBid,
     get_offer_curve, get_trapezium
 export scale_fcas_trapezium
 export get_fcas_trapezium, get_fcas_offer_curve, get_fcas_bid, get_scaled_fcas_trapezium
+export get_fcas_agc_ramp_capability, get_fcas_agc_status
 export read_fcas_scaling_inputs, set_fcas_scaling_inputs!
 export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm, FCASRequirement,
     GenericConstraint,

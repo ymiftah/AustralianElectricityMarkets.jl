@@ -265,3 +265,61 @@ function set_nem_initial_conditions!(sys, db, interval::DateTime; allow_missing_
     end
     return
 end
+
+"""
+    set_storage_initial_mw!(sys, db, date_range; kwargs...)
+
+Attaches an `"initial_mw"` `SingleTimeSeries` (net `DISPATCHLOAD.INITIALMW`, positive
+discharging, negative charging) to every available `EnergyReservoirStorage` in `sys`, from
+[`read_dispatch_limits`](@ref) - the reader [`set_nem_dispatch_limits!`](@ref) also uses, since
+`EnergyReservoirStorage` is not one of the device types that setter covers. A device with an
+incomplete series over `date_range` (a missing interval, or a `missing` `INITIALMW`) is left
+without the series rather than partially attached.
+
+# Arguments
+- `sys`: the `System` to add to.
+- `db`: an `AEMDB` connection.
+- `date_range`: the dispatch intervals to replay.
+- `kwargs`: passed to [`read_dispatch_limits`](@ref) (e.g. `intervention`).
+
+# Returns
+`nothing`.
+"""
+function set_storage_initial_mw!(sys, db, date_range; kwargs...)
+    base_power = get_base_power(sys)
+    full_grid = collect(date_range)[1:(end - 1)]
+
+    rows = read_dispatch_limits(db, date_range; kwargs...)
+    by_duid = DataFrames.isempty(rows) ? nothing : groupby(rows, :DUID)
+
+    for device in get_components(get_available, EnergyReservoirStorage, sys)
+        duid = get_name(device)
+        (isnothing(by_duid) || !haskey(by_duid, (duid,))) && continue
+        by_time = Dict(zip(by_duid[(duid,)].SETTLEMENTDATE, eachrow(by_duid[(duid,)])))
+        values = Float64[]
+        for t in full_grid
+            row = get(by_time, t, nothing)
+            (isnothing(row) || ismissing(row.INITIALMW)) && (values = Float64[]; break)
+            push!(values, row.INITIALMW / base_power)
+        end
+        isempty(values) && continue
+        add_time_series!(sys, device, SingleTimeSeries(; name = "initial_mw", data = TimeArray(full_grid, values)))
+    end
+    return
+end
+
+"""
+    get_storage_initial_mw(component, initial_time, horizon) -> Union{Nothing, Vector{Float64}}
+
+Full-series read of `component`'s `"initial_mw"` `SingleTimeSeries`
+([`set_storage_initial_mw!`](@ref)), `horizon` steps from `initial_time`, in `component`'s
+`System`'s current display units. `nothing` if `component` carries no such series.
+
+# Returns
+`Union{Nothing, Vector{Float64}}`.
+"""
+function get_storage_initial_mw(component, initial_time, horizon::Integer)
+    has_time_series(component, SingleTimeSeries, "initial_mw") || return nothing
+    multiplier = _fcas_units_multiplier(component)
+    return get_time_series_values(SingleTimeSeries, component, "initial_mw"; start_time = initial_time, len = horizon) .* multiplier
+end

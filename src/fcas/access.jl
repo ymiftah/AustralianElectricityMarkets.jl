@@ -107,6 +107,38 @@ function get_scaled_fcas_trapezium(component, service::BidType, initial_time, ho
 end
 
 """
+    get_fcas_agc_ramp_capability(component, service, initial_time, horizon) -> Union{Nothing, Vector{Float64}}
+
+Full-series read of `component`'s `"fcas_agc_max_avail_<service>"` `SingleTimeSeries`
+([`set_fcas_scaling_inputs!`](@ref)), `horizon` steps from `initial_time`, in `component`'s
+`System`'s current display units. `service` must be a regulation `BidType`. `nothing` if
+`component` carries no such series.
+
+# Returns
+`Union{Nothing, Vector{Float64}}`.
+"""
+function get_fcas_agc_ramp_capability(component, service::BidType, initial_time, horizon::Integer)
+    return _read_optional_fcas_scaling_series(component, "fcas_agc_max_avail_$(string(service))", initial_time, horizon)
+end
+
+"""
+    get_fcas_agc_status(component, initial_time, horizon) -> Union{Nothing, Vector{Int}}
+
+Full-series read of `component`'s `"fcas_agc_status"` `SingleTimeSeries`
+([`set_fcas_scaling_inputs!`](@ref)), `horizon` steps from `initial_time`: `DISPATCHLOAD.AGCSTATUS`,
+`1` while the unit is under AGC control and `0` otherwise. `nothing` if `component` carries no
+such series.
+
+# Returns
+`Union{Nothing, Vector{Int}}`.
+"""
+function get_fcas_agc_status(component, initial_time, horizon::Integer)
+    has_time_series(component, SingleTimeSeries, "fcas_agc_status") || return nothing
+    values = get_time_series_values(SingleTimeSeries, component, "fcas_agc_status"; start_time = initial_time, len = horizon)
+    return round.(Int, values)
+end
+
+"""
     get_fcas_offer_curve(component, service, initial_time, horizon; decremental = false) -> Vector{PSY.PiecewiseStepData}
 
 Full-series read of `component`'s FCAS offer curve for `service`, `horizon` steps from
