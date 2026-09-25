@@ -70,7 +70,10 @@ end
     _fcas_series(container, device, bid_type, decremental) -> (trapeziums, curves)
 
 `device`'s FCAS trapezium and offer-curve series for `bid_type`, one entry per
-`PSI.get_time_steps(container)`, read via [`get_fcas_trapezium`](@ref)/[`get_fcas_offer_curve`](@ref).
+`PSI.get_time_steps(container)`, read via
+[`get_scaled_fcas_trapezium`](@ref)/[`get_fcas_offer_curve`](@ref). The trapezium is AEMO
+*FCAS Model in NEMDE* §4's scaled/effective trapezium wherever `device` carries the scaling
+input series ([`set_fcas_scaling_inputs!`](@ref)); otherwise it is the bid trapezium unscaled.
 
 # Returns
 `(trapeziums::Vector{FCASTrapezium}, curves::Vector{PSY.PiecewiseStepData})`.
@@ -78,7 +81,7 @@ end
 function _fcas_series(container::PSI.OptimizationContainer, device, bid_type::BidType, decremental::Bool)
     initial_time = PSI.get_initial_time(container)
     horizon = length(PSI.get_time_steps(container))
-    trapeziums = get_fcas_trapezium(device, bid_type, initial_time, horizon; decremental = decremental)
+    trapeziums = get_scaled_fcas_trapezium(device, bid_type, initial_time, horizon; decremental = decremental)
     curves = get_fcas_offer_curve(device, bid_type, initial_time, horizon; decremental = decremental)
     return trapeziums, curves
 end

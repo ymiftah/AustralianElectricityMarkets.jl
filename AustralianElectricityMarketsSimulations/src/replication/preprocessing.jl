@@ -40,11 +40,10 @@ end
 """
     scale_trapezium(trap; uigf, agc_ramp_mw, is_regulation)
 
-Applies NEMDE's trapezium scaling to an offered [`FCASTrapezium`](@ref), in AEMO's order: UIGF
-ceiling for semi-scheduled units, then the telemetered AGC ramp cap for regulation services.
-Breakpoints pivot with the bound that moved, so slope coefficients (read back with
-[`get_lower_slope_coeff`](@ref)/[`get_upper_slope_coeff`](@ref)) are preserved rather than
-silently steepened.
+Applies NEMDE's trapezium scaling to an offered [`FCASTrapezium`](@ref): the UIGF ceiling for
+semi-scheduled units, and the telemetered AGC ramp cap for regulation services. A thin
+single-interval wrapper over root's [`scale_fcas_trapezium`](@ref) (§4.1's AGC enablement-limit
+scaling is not wired in here - this replication path has no telemetered AGC enablement input).
 
 # Arguments
 - `trap`: the offered trapezium.
@@ -62,35 +61,5 @@ function scale_trapezium(
         agc_ramp_mw::Union{Nothing, Float64},
         is_regulation::Bool,
     )
-    enablement_min = get_enablement_min(trap)
-    low_breakpoint = get_low_breakpoint(trap)
-    high_breakpoint = get_high_breakpoint(trap)
-    enablement_max = get_enablement_max(trap)
-    max_avail = get_max_avail(trap)
-
-    if !isnothing(uigf) && uigf < enablement_max
-        high_breakpoint -= (enablement_max - uigf)
-        enablement_max = uigf
-    end
-
-    if is_regulation && !isnothing(agc_ramp_mw) && agc_ramp_mw < max_avail
-        # Hold both slopes while the plateau narrows to the ramp-limited availability.
-        pre_agc = FCASTrapezium(;
-            enablement_min = enablement_min, low_breakpoint = low_breakpoint,
-            high_breakpoint = high_breakpoint, enablement_max = enablement_max, max_avail = max_avail,
-        )
-        lower_slope = get_lower_slope_coeff(pre_agc)
-        upper_slope = get_upper_slope_coeff(pre_agc)
-        max_avail = agc_ramp_mw
-        low_breakpoint = enablement_min + lower_slope * max_avail
-        high_breakpoint = enablement_max - upper_slope * max_avail
-    end
-
-    high_breakpoint = max(high_breakpoint, low_breakpoint)
-    enablement_max = max(enablement_max, enablement_min)
-    return FCASTrapezium(;
-        enablement_min = enablement_min, low_breakpoint = low_breakpoint,
-        high_breakpoint = high_breakpoint, enablement_max = enablement_max, max_avail = max_avail,
-        ramp_up_rate = get_ramp_up_rate(trap), ramp_down_rate = get_ramp_down_rate(trap),
-    )
+    return scale_fcas_trapezium(trap; agc_max_avail = agc_ramp_mw, uigf = uigf, is_regulation = is_regulation)
 end
