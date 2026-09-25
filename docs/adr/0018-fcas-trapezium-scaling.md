@@ -78,11 +78,22 @@ both sides (ADR-0017), where a negative `EnablementMin` is the ordinary case, no
 device's own `max_active_power`, PSY's `NATURAL_UNITS` scaling-factor idiom) than FCAS values
 (per-unit of the system base, no scaling-factor multiplier). `set_fcas_scaling_inputs!` attaches
 a dedicated `"fcas_uigf"` series in the FCAS convention instead of reusing that series, and a
-device counts as semi-scheduled for §4.3 purely by carrying `"fcas_uigf"` - i.e. by having
-`DISPATCHLOAD.UIGF` rows at all, the same test `read_uigf` already uses ("`UIGF` is `NULL` for
-scheduled units"), and the same test nempy uses (`_scaling_for_uigf`,
-`units.py:1501-1508`: `semi_scheduled_units = ugif_values['DUID'].unique()`). No new
-classification is invented.
+device counts as semi-scheduled for §4.3 purely by carrying `"fcas_uigf"`, i.e. by appearing in
+`read_uigf`'s result.
+
+`read_uigf` originally took "has a non-NULL `DISPATCHLOAD.UIGF`" as the semi-scheduled test,
+mirroring nempy (`_scaling_for_uigf`, `units.py:1501-1508`: `semi_scheduled_units =
+ugif_values['DUID'].unique()`). nempy's UIGF values come from the NEMDE XML case file
+(`xml_cache.py` `get_UIGF_values`), where only semi-scheduled traders carry a `@UIGF`
+attribute, so the test is sound there. It is wrong for `DISPATCHLOAD`: it publishes `UIGF = 0`, not `NULL`, for
+scheduled and non-scheduled units. On 2026-06-04 00:00-01:00 all 298 scheduled and 60
+non-scheduled DUIDs had `UIGF = 0`; the 207 semi-scheduled ones had 87 positive and 120 zero
+(solar overnight, a real forecast). Every scheduled unit therefore got a zero `"fcas_uigf"`,
+§4.3 clamped its `EnablementMax` to zero, and enabled generator FCAS `(device, t)` pairs on the
+real-data window fell from 3,418 to 52. The value cannot tell the two apart, since a
+semi-scheduled forecast of `0.0` is real, so `read_uigf` classifies by
+`DUDETAILSUMMARY.SCHEDULE_TYPE = 'SEMI-SCHEDULED'`, version-matched on `START_DATE`/`END_DATE`
+per interval (the same convention as the constraint-term reader's `DUDETAILSUMMARY` join).
 
 ## Decision
 

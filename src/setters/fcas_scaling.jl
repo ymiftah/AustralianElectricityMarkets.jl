@@ -57,7 +57,7 @@ NEMDE* §4) to every available `Generator` and `EnergyReservoirStorage` in `sys`
 - `"fcas_agc_max_avail_RAISEREG"`/`"fcas_agc_max_avail_LOWERREG"` from `RAMPUPRATE`/
   `RAMPDOWNRATE` (MW/h), multiplied by the interval length in hours taken from `date_range`'s
   step (§4.2);
-- `"fcas_uigf"` from `UIGF`, for units with `UIGF` rows only (§4.3).
+- `"fcas_uigf"` from `UIGF`, for semi-scheduled units only (§4.3).
 
 Every series is per-unit of `sys`'s system base, read back by
 [`get_scaled_fcas_trapezium`](@ref). A device with an incomplete series over `date_range` (a

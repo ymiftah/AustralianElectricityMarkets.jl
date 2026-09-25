@@ -264,6 +264,48 @@
             @test isempty(result)
             @test Set(names(result)) == Set(["SETTLEMENTDATE", "DUID", "UIGF"])
         end
+
+        @testset "read_uigf throws without DUDETAILSUMMARY's SCHEDULE_TYPE" begin
+            function save_table(hive, df, table)
+                conn = DuckDB.connect(DuckDB.DB())
+                DuckDB.execute(conn, "SET preserve_identifier_case=true")
+                DuckDB.register_data_frame(conn, df, "tmp_table")
+                table_dir = joinpath(hive, table)
+                mkpath(table_dir)
+                DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+                return
+            end
+            hive = mktempdir()
+            save_table(
+                hive, DataFrame(
+                    SETTLEMENTDATE = [start_date], DUID = ["BW03"], INTERVENTION = [0],
+                    UIGF = [40.0], archive_month = ["2025-01"],
+                ), "DISPATCHLOAD",
+            )
+            hive_db = aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
+            err = try
+                read_uigf(hive_db, date_range; resolution = resolution)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            @test occursin("DUDETAILSUMMARY is not cached", err.msg)
+
+            save_table(
+                hive, DataFrame(
+                    DUID = ["BW03"], START_DATE = [DateTime(2020, 1, 1)], archive_month = ["2025-01"],
+                ), "DUDETAILSUMMARY",
+            )
+            err = try
+                read_uigf(hive_db, date_range; resolution = resolution)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            @test occursin("SCHEDULE_TYPE", err.msg)
+        end
     end
 
     @testset "read_bids resolution aggregation uses per-bucket mean (regression: scale-then-sum bug)" begin
