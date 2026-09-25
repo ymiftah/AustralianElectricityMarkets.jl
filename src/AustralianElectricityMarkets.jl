@@ -66,6 +66,7 @@ include("readers/dispatch.jl")
 include("setters/timeseries.jl")
 include("setters/bids.jl")
 include("setters/dispatch_limits.jl")
+include("setters/fcas_scaling.jl")
 include("fcas/bid_parser.jl")
 include("fcas/requirements.jl")
 
@@ -79,6 +80,7 @@ include("fcas/requirements.jl")
 # bid_type::BidType fields both need BidType (defined in bid_types.jl) in scope at
 # struct-definition time.
 include("fcas/bids.jl")
+include("fcas/scaling.jl")
 include("fcas/access.jl")
 include("constraints/terms.jl")
 include("constraints/generic_constraint.jl")
@@ -96,7 +98,9 @@ export FCASTrapezium, FCASBid,
     get_enablement_min, get_low_breakpoint, get_high_breakpoint, get_enablement_max,
     get_max_avail, get_ramp_up_rate, get_ramp_down_rate, get_lower_slope_coeff, get_upper_slope_coeff,
     get_offer_curve, get_trapezium
-export get_fcas_trapezium, get_fcas_offer_curve, get_fcas_bid
+export scale_fcas_trapezium
+export get_fcas_trapezium, get_fcas_offer_curve, get_fcas_bid, get_scaled_fcas_trapezium
+export read_fcas_scaling_inputs, set_fcas_scaling_inputs!
 export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm, FCASRequirement,
     GenericConstraint,
     get_duid, get_bid_type, get_factor, get_interconnector, get_region, get_service, get_devices,

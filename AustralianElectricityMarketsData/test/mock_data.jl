@@ -632,6 +632,14 @@ function create_mock_data(hive_root::String)
     ramp_up_rate_for(duid, i) = 4.0 + duid_offset(duid) + (i % 5)
     ramp_down_rate_for(duid, i) = 3.0 + duid_offset(duid) + (i % 5)
     availability_for(duid, i) = 90.0 - 3 * duid_offset(duid) + (i % 6)
+    # AEMO *FCAS Model in NEMDE* §4.1 telemetered AGC enablement limits - strictly inside the
+    # BIDPEROFFER_D RAISEREG/LOWERREG trapezium's own [20.0, 100.0] enablement span (see
+    # BIDPEROFFER_D above), so set_fcas_scaling_inputs! + scale_fcas_trapezium's shrinkage is
+    # detectable. Per-DUID/per-interval, mirroring the ramp-rate helpers above.
+    raise_reg_enablement_min_for(duid, i) = 21.0 + duid_offset(duid) + (i % 3)
+    raise_reg_enablement_max_for(duid, i) = 99.0 - duid_offset(duid) - (i % 3)
+    lower_reg_enablement_min_for(duid, i) = 22.0 + duid_offset(duid) + (i % 3)
+    lower_reg_enablement_max_for(duid, i) = 98.0 - duid_offset(duid) - (i % 3)
     df_dispatchload = DataFrame()
     for i in intervals
         t = base_datetime + Minute(5 * i)
@@ -648,6 +656,10 @@ function create_mock_data(hive_root::String)
             AGCSTATUS = fill(1, n),
             RAISEREGAVAILABILITY = fill(3.0, n),
             LOWERREGAVAILABILITY = fill(3.0, n),
+            RAISEREGENABLEMENTMIN = [raise_reg_enablement_min_for(d, i) for d in duids],
+            RAISEREGENABLEMENTMAX = [raise_reg_enablement_max_for(d, i) for d in duids],
+            LOWERREGENABLEMENTMIN = [lower_reg_enablement_min_for(d, i) for d in duids],
+            LOWERREGENABLEMENTMAX = [lower_reg_enablement_max_for(d, i) for d in duids],
             UIGF = Union{Float64, Missing}[uigf_for(d, i) for d in duids],
             archive_month = fill("2025-01", n),
         )
