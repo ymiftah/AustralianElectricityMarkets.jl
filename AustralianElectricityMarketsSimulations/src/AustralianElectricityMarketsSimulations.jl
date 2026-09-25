@@ -23,6 +23,7 @@ const PM = PSI.PM
 include("errors.jl")
 include("time_basis.jl")
 include("constraint_formulations.jl")
+include("nem_constraints.jl")
 include("nem_dispatch.jl")
 include("psi_compat.jl")
 include("replication/inputs.jl")
