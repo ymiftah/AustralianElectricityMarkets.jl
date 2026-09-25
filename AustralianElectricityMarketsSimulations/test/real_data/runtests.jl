@@ -106,6 +106,7 @@ end
 
     set_demand!(sys, db, REAL_DATE_RANGE; resolution = REAL_RESOLUTION)
     set_market_bids!(sys, db, REAL_DATE_RANGE; resolution = REAL_RESOLUTION)
+    set_fcas_scaling_inputs!(sys, db, REAL_DATE_RANGE)
     limits = read_dispatch_limits(db, REAL_DATE_RANGE)
     devices = AEM._nem_dispatch_devices(sys)
 
@@ -251,6 +252,25 @@ end
         # ConstrainedNetworkConfiguration's add_fcas_services! built one FCASService per bid
         # (region, bid type), attaching only the bids FCASMarket models.
         fcas_registered = PSY.get_name.(PSY.get_components(FCASService, sys))
+        n_regulation_trapeziums = 0
+        n_regulation_trapeziums_scaled = 0
+        horizon = Int(REAL_SPAN / REAL_RESOLUTION)
+        for svc in PSY.get_components(FCASService, sys)
+            bid_type = get_bid_type(svc)
+            # Count how many (device, t) regulation trapeziums AEMO's §4 scaling actually
+            # narrowed - contingency bid types are never scaled for a scheduled unit.
+            bid_type in AEM.FCAS_REGULATION_MARKETS || continue
+            for d in PSY.get_contributing_devices(sys, svc)
+                decremental = AEM._fcas_bid_direction(d, bid_type) == :decremental
+                raw = get_fcas_trapezium(d, bid_type, REAL_START, horizon; decremental = decremental)
+                scaled = get_scaled_fcas_trapezium(d, bid_type, REAL_START, horizon; decremental = decremental)
+                n_regulation_trapeziums += length(raw)
+                n_regulation_trapeziums_scaled += count(
+                    i -> !isequal(Tuple(raw[i]), Tuple(scaled[i])), eachindex(raw),
+                )
+            end
+        end
+
         @test !isempty(fcas_registered)
 
         fcas_template = aemsim_template(sys)
@@ -298,6 +318,6 @@ end
         end
         @test n_enabled_pairs > 0
 
-        @info "Real-data FCASMarket DecisionModel" build_time solve_time n_services = length(fcas_registered) n_enabled_pairs
+        @info "Real-data FCASMarket DecisionModel" build_time solve_time n_services = length(fcas_registered) n_enabled_pairs n_regulation_trapeziums_scaled n_regulation_trapeziums
     end
 end
