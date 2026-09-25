@@ -115,18 +115,10 @@ end
             @test all(d -> PSY.get_name(d) in dispatched || !PSY.get_available(d), devices)
         end
 
-        # The strict setter also demands DISPATCHLOAD rows for units that are unavailable.
-        strict_ok = try
+        @test begin
             set_nem_dispatch_limits!(sys, db, REAL_DATE_RANGE)
             true
-        catch e
-            e isa ArgumentError || rethrow()
-            false
         end
-        @test_broken strict_ok
-        strict_ok || set_nem_dispatch_limits!(
-            sys, db, REAL_DATE_RANGE; allow_missing_ramp_rates = true,
-        )
 
         @test all(
             d -> !PSY.get_available(d) || AEMS._has_nem_dispatch_limits(d, NEMReplayDispatch),
@@ -146,9 +138,37 @@ end
             stored = first(PSY.get_time_series_values(PSY.SingleTimeSeries, device, "ramp_up_rate"))
             minutes = Dates.value(Minute(REAL_RESOLUTION))
             # The formulation multiplies the stored rate by the interval in minutes.
-            @test_broken stored * minutes ≈
+            @test stored * minutes ≈
                 row.RAMPUPRATE * DISPATCH_INTERVAL_HOURS / PSY.get_base_power(sys) rtol = 1.0e-9
         end
+    end
+
+    @testset "the stored dispatch ceiling is max(AVAILABILITY, ramp-down floor)" begin
+        full_grid = collect(REAL_DATE_RANGE)[1:(end - 1)]
+        checked = 0
+        mismatches = String[]
+        for device in devices
+            PSY.has_time_series(device, PSY.SingleTimeSeries, "max_active_power") || continue
+            duid = PSY.get_name(device)
+            static_max_active_power = PSY.with_units_base(
+                () -> PSY.get_max_active_power(device), sys, "NATURAL_UNITS",
+            )
+            series = PSY.get_time_series_values(
+                PSY.SingleTimeSeries, device, "max_active_power"; ignore_scaling_factors = true,
+            )
+            rows = filter(:DUID => ==(duid), limits)
+            by_time = Dict(zip(rows.SETTLEMENTDATE, eachrow(rows)))
+            for (t, value) in zip(full_grid, series)
+                row = get(by_time, t, nothing)
+                isnothing(row) && continue
+                expected = max(row.AVAILABILITY, row.INITIALMW - row.RAMPDOWNRATE * DISPATCH_INTERVAL_HOURS)
+                checked += 1
+                isapprox(value * static_max_active_power, expected; atol = 1.0e-6) ||
+                    push!(mismatches, "$duid at $t: $(value * static_max_active_power) vs $expected")
+            end
+        end
+        @test checked > 0
+        @test isempty(mismatches)
     end
 
     template = aemsim_template(sys)
@@ -182,7 +202,7 @@ end
         end
     end
 
-    @testset "the AEMSim template builds a DecisionModel" begin
+    @testset "the AEMSim template builds and solves a DecisionModel" begin
         PSY.transform_single_time_series!(sys, REAL_SPAN, REAL_RESOLUTION)
         for gc in buildable
             name = PSY.get_name(gc)
@@ -200,13 +220,30 @@ end
             initial_time = REAL_START,
             name = "real_data",
         )
-        err = build_error(model)
-        # The ramp-down floor and availability are both hard, so a unit AEMO clears above its
-        # availability makes the model infeasible.
-        @test_broken isnothing(err)
-        if !isnothing(err)
-            @test err isa ArgumentError
-            @test occursin("inconsistent dispatch envelope", sprint(showerror, err))
+
+        build_time = @elapsed build_status = PSI.build!(model; output_dir = mktempdir())
+        if build_status != PSI.ModelBuildStatus.BUILT
+            err = build_error(model)
+            isnothing(err) || @error "build! did not reach BUILT" exception = err
         end
+        @test build_status == PSI.ModelBuildStatus.BUILT
+
+        solve_time = @elapsed run_status = PSI.solve!(model)
+        @test run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+        container = PSI.get_optimization_container(model)
+        base_power = PSY.get_base_power(sys)
+        slack_keys = filter(PSI.get_variable_keys(container)) do key
+            PSI.get_component_type(key) == PSY.Area && occursin("Slack", string(PSI.get_entry_type(key)))
+        end
+        slack_mw = Dict{Tuple{String, Int}, Float64}()
+        for key in slack_keys
+            var = PSI.get_variable(container, key)
+            for area in axes(var, 1), t in axes(var, 2)
+                slack_mw[(area, t)] = get(slack_mw, (area, t), 0.0) + PSI.JuMP.value(var[area, t]) * base_power
+            end
+        end
+        total_area_slack_mw = sum(values(slack_mw); init = 0.0)
+        @info "Real-data DecisionModel" build_time solve_time total_area_slack_mw
     end
 end

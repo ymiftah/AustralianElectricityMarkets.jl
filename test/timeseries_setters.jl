@@ -888,7 +888,7 @@
         start_date = DateTime(2025, 1, 1, 0, 0)
         short_range = start_date:resolution:(start_date + Minute(10))
         grid = collect(short_range)[1:(end - 1)]  # 3 intervals
-        duids = ["BW02", "BW03", "BW04", "ER01", "ER02"]
+        duids = ["BW01", "BW02", "BW03", "BW04", "ER01", "ER02"]
 
         rows = DataFrame(
             SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
@@ -946,7 +946,7 @@
         start_date = DateTime(2025, 1, 1, 0, 0)
         short_range = start_date:resolution:(start_date + Minute(10))
         grid = collect(short_range)[1:(end - 1)]  # 3 intervals
-        covered_duids = ["BW02", "BW03", "BW04", "ER02"]  # every dispatch device except ER01
+        covered_duids = ["BW01", "BW02", "BW03", "BW04", "ER02"]  # every dispatch device except ER01
 
         rows = DataFrame(
             SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],

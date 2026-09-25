@@ -364,11 +364,29 @@ end
     @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
 end
 
-@testset "the envelope check also names an inconsistent battery" begin
-    # Zero generation availability with a positive net INITIALMW and a zero down rate: the
-    # battery cannot ramp down to meet a ceiling of zero.
+@testset "a net ramp-down floor above a battery's generation availability raises the ceiling instead of failing the build" begin
+    # Zero generation availability with a positive net INITIALMW and a zero down rate: the net
+    # ramp-down floor equals INITIALMW, above the zeroed generation availability. The generation
+    # ceiling is raised to the floor, so the build succeeds instead of failing.
     sys = nem_dispatch_system(;
         mutate! = function (s)
+            flatten_series!(s, PSY.EnergyReservoirStorage, "BW01", "ramp_down_rate", 0.0)
+            flatten_storage_avail!(s, "BW01", "energy_max_avail", 0.0)
+            return s
+        end,
+    )
+    model = nem_dispatch_model(sys)
+    @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+end
+
+@testset "the envelope check names a battery whose raised ceiling exceeds its own rating" begin
+    # A net ramp-down floor above generation availability raises the generation ceiling, but the
+    # battery's own output rating is lowered below that floor first, so the raise itself is
+    # inconsistent with the device.
+    sys = nem_dispatch_system(;
+        mutate! = function (s)
+            battery = PSY.get_component(PSY.EnergyReservoirStorage, s, "BW01")
+            PSY.set_output_active_power_limits!(battery, (min = 0.0, max = 1.0e-6))
             flatten_series!(s, PSY.EnergyReservoirStorage, "BW01", "ramp_down_rate", 0.0)
             flatten_storage_avail!(s, "BW01", "energy_max_avail", 0.0)
             return s
