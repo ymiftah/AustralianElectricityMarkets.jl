@@ -131,7 +131,8 @@ function create_mock_data(hive_root::String)
     # point and ER01-02 under Eraring's - exercises the constraint-term reader's 1:many
     # connection-point -> DUID expansion. A 7th, PHANTOM1 row shares no other table (never
     # becomes a System component) - exercises add_nem_constraints!'s unresolvable-term skip
-    # path (see test/constraints/constraints.jl).
+    # path (see test/constraints/constraints.jl). SCHEDULE_TYPE marks BW03/BW04 as the
+    # semi-scheduled units (see GENUNITS below).
     connection_points = ["CP_BAYSW", "CP_BAYSW", "CP_BAYSW", "CP_BAYSW", "CP_ERARING", "CP_ERARING"]
     save_hive(
         vcat(
@@ -142,6 +143,7 @@ function create_mock_data(hive_root::String)
                 STATIONID = station_ids,
                 CONNECTIONPOINTID = connection_points,
                 REGIONID = regions,
+                SCHEDULE_TYPE = [d in ("BW03", "BW04") ? "SEMI-SCHEDULED" : "SCHEDULED" for d in duids],
                 archive_month = fill("2025-01", n)
             ),
             DataFrame(
@@ -151,6 +153,7 @@ function create_mock_data(hive_root::String)
                 STATIONID = ["PHANTOM"],
                 CONNECTIONPOINTID = ["CP_PHANTOM"],
                 REGIONID = ["VIC1"],
+                SCHEDULE_TYPE = ["SCHEDULED"],
                 archive_month = ["2025-01"]
             ),
         ), :DUDETAILSUMMARY
@@ -609,8 +612,8 @@ function create_mock_data(hive_root::String)
 
     # 15. DISPATCHLOAD (per-unit FCAS dispatch outcomes - cleared counterpart to the
     # BIDPEROFFER_D trapezium; contingency markets get an ACTUALAVAILABILITY, regulation
-    # markets don't, matching what AEMO actually publishes). UIGF is populated only for the
-    # two semi-scheduled units (BW03 Solar, BW04 Wind - see GENUNITS above) and `missing` for
+    # markets don't, matching what AEMO actually publishes). UIGF is a forecast only for the
+    # two semi-scheduled units (BW03 Solar, BW04 Wind - see GENUNITS above) and `0.0` for
     # the scheduled coal/battery/hydro DUIDs, matching what real NEMWEB publishes. Both
     # profiles vary across intervals and stay strictly below the 100 MW REGISTEREDCAPACITY, so
     # a setter that pins a unit's ceiling to its nameplate is detectable.
@@ -626,7 +629,7 @@ function create_mock_data(hive_root::String)
     # trivially 1.0. For BW03/BW04 it is deliberately kept off the UIGF profile above (a
     # different formula entirely), so a test can prove set_nem_dispatch_limits! actually
     # overwrites the UIGF-derived "max_active_power" series rather than coinciding with it.
-    uigf_for(duid, i) = duid == "BW03" ? 40.0 + i : (duid == "BW04" ? 70.0 - i : missing)
+    uigf_for(duid, i) = duid == "BW03" ? 40.0 + i : (duid == "BW04" ? 70.0 - i : 0.0)
     duid_offset(duid) = findfirst(==(duid), duids) - 1
     initial_mw_for(duid, i) = 40.0 + duid_offset(duid) + (i % 10)
     ramp_up_rate_for(duid, i) = 4.0 + duid_offset(duid) + (i % 5)

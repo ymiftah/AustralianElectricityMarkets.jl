@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`read_uigf` returned scheduled and non-scheduled units**: `DISPATCHLOAD` publishes
+  `UIGF = 0` rather than `NULL` for them, so `set_fcas_scaling_inputs!` attached a zero
+  `"fcas_uigf"` series to every scheduled unit and §4.3 scaling clamped its FCAS
+  `EnablementMax` to zero. `read_uigf` now keeps only DUIDs that `DUDETAILSUMMARY.SCHEDULE_TYPE`
+  lists as `SEMI-SCHEDULED` at each interval, and throws if `DUDETAILSUMMARY` isn't cached.
 - **`set_nem_dispatch_limits!` stored `RAMPUPRATE`/`RAMPDOWNRATE` as MW per minute when AEMO
   publishes them as MW per hour**: the `"ramp_up_rate"`/`"ramp_down_rate"` series it wrote, and
   the `AustralianElectricityMarketsSimulations` formulation reading them, are documented as

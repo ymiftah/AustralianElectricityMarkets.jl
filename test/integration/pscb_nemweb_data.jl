@@ -63,7 +63,7 @@ Six constraints are defined, each reaching a distinct code path:
 
 `IC1` additionally gets an `INTERCONNECTORCONSTRAINT`/`LOSSMODEL`/`LOSSFACTORMODEL` loss model
 (5 breakpoints, region `"1"` -> `"2"`) for [`attach_interconnector_losses!`](@ref), and every
-`DUID` gets a `DISPATCHLOAD` row per interval, with `UIGF` populated only for `SOLAR1`.
+`DUID` gets a `DISPATCHLOAD` row per interval, with a `UIGF` forecast only for `SOLAR1` and `0.0` for every other DUID.
 
 Intervals are 5-minutely over `2025-01-01T00:00` -> `02:00`, because
 `add_nem_constraints!` builds its series at a hardcoded `Minute(5)` resolution.
@@ -89,7 +89,8 @@ function create_pscb_nemweb_data(hive_root::String)
     intervals = 0:24
     am = "2025-01"
 
-    # DUDETAILSUMMARY - only the CONNECTIONPOINTID -> DUID mapping is read here.
+    # DUDETAILSUMMARY - the CONNECTIONPOINTID -> DUID mapping, and SOLAR1 as the only
+    # semi-scheduled unit.
     dudetail_rows = DataFrame()
     for (cp, duids) in PSCB_CONNECTION_POINTS
         append!(
@@ -100,6 +101,7 @@ function create_pscb_nemweb_data(hive_root::String)
                 STATIONID = fill(replace(cp, "CP_" => "ST_"), length(duids)),
                 CONNECTIONPOINTID = fill(cp, length(duids)),
                 REGIONID = [PSCB_REGION_OF[d] for d in duids],
+                SCHEDULE_TYPE = [d == "SOLAR1" ? "SEMI-SCHEDULED" : "SCHEDULED" for d in duids],
                 archive_month = fill(am, length(duids)),
             )
         )
@@ -372,10 +374,10 @@ function create_pscb_nemweb_data(hive_root::String)
     save_hive(df_day_offer, :BIDDAYOFFER_D)
 
     # DISPATCHLOAD - per-interval unit dispatch outcomes. SOLAR1 (the fixture's only
-    # semi-scheduled unit) gets a real UIGF; every other DUID gets `missing`, matching what
+    # semi-scheduled unit) gets a real UIGF; every other DUID gets `0.0`, matching what
     # real NEMWEB publishes. RAISE6SEC/LOWERREG target columns mirror the fixture's two
     # FCAS markets, so read_fcas_dispatch's long-format output is non-empty.
-    uigf_for(duid, i) = duid == "SOLAR1" ? 20.0 + i : missing
+    uigf_for(duid, i) = duid == "SOLAR1" ? 20.0 + i : 0.0
     df_dispatchload = DataFrame()
     nd = length(PSCB_DUIDS)
     for i in intervals

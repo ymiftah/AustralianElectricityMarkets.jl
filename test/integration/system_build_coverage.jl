@@ -89,8 +89,7 @@
 
         uigf = read_uigf(db, date_range)
         @test !isempty(uigf)
-        # UIGF is populated only for SOLAR1 (the fixture's only semi-scheduled unit) -
-        # read_uigf drops missing rows, so only SOLAR1 should come back.
+        # SOLAR1 is the fixture's only semi-scheduled unit; every other DUID's UIGF is 0.0.
         @test Set(uigf.DUID) == Set(["SOLAR1"])
     end
 
