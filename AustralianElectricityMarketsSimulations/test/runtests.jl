@@ -62,6 +62,10 @@ end
         include("psi_compat.jl")
     end
 
+    @testset "NEM constraints" begin
+        include("nem_constraints.jl")
+    end
+
     @testset "NEM dispatch formulation" begin
         include("nem_dispatch.jl")
     end

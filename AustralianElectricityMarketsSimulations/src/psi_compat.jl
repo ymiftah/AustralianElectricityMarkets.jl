@@ -37,6 +37,24 @@ function PSI._modify_device_model!(
     return nothing
 end
 
+"""
+    PSI.get_initial_conditions_service_model(model, service_model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit})
+
+No-op override of `PowerSimulations.jl` 0.38.4's private `get_initial_conditions_service_model`
+hook, called for every registered `ServiceModel` when building the sub-model PSI derives
+ramp/commitment initial conditions from. [`LinearFactorLimit`](@ref) carries no ramp/commitment
+state of its own to initialize.
+
+# Returns
+`PSI.ServiceModel(GenericConstraint, LinearFactorLimit)`.
+"""
+function PSI.get_initial_conditions_service_model(
+        ::PSI.OperationModel,
+        ::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
+    )
+    return PSI.ServiceModel(GenericConstraint, LinearFactorLimit)
+end
+
 # PSI 0.38.4 keys these on the device type with a bare `AbstractDeviceFormulation`, so the
 # `PSY.StaticInjection` method below is ambiguous for a `PSY.Generator`; the two narrower methods
 # break the tie.

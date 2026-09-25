@@ -39,7 +39,9 @@ end
 # intervals. `batteries` is a vector of `name => toy_battery(...)` pairs, each built as an
 # `EnergyReservoirStorage` on bus1 with a generous static rating (never the binding limit),
 # an incremental/decremental offer curve, and the ramp/initial/energy-availability series.
-function nem_toy_system(units, load_mw; batteries = Pair{String, Any}[])
+# `mutate!(sys, stamps)`, when given, runs just before the fixture's
+# `transform_single_time_series!`, so it can attach raw two-timestamp series of its own.
+function nem_toy_system(units, load_mw; batteries = Pair{String, Any}[], mutate! = nothing)
     sys = PSB.build_system(PSISystems, "5_bus_hydro_ed_sys")
     PSY.clear_time_series!(sys)
     PSY.set_units_base_system!(sys, "NATURAL_UNITS")
@@ -136,13 +138,41 @@ function nem_toy_system(units, load_mw; batteries = Pair{String, Any}[])
         add_series!(battery, "initial_mw", bat.initial / base_power)
     end
 
+    isnothing(mutate!) || mutate!(sys, stamps)
+
     # One two-interval window, matching the single window the bid forecast carries.
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
     return sys
 end
 
+# A single ENERGY `UnitTerm` `GenericConstraint` named "N_TOY_LIMIT", `<=` `rhs_mw` on `duid`'s
+# ENERGY output, with "rhs"/"invoked" series on `stamps`, in the form `add_nem_constraints!`
+# would produce. `rhs_mw` is a natural-MW value, stored per-unit of the system base.
+function add_toy_generic_constraint!(sys, stamps, duid, rhs_mw)
+    base_power = PSY.get_base_power(sys)
+    rhs_pu = rhs_mw / base_power
+    gc = GenericConstraint(;
+        name = "N_TOY_LIMIT",
+        sense = ConstraintSense.LE,
+        rhs = rhs_pu,
+        terms = ConstraintTerm[UnitTerm(duid, BidType.ENERGY, 1.0)],
+    )
+    PSY.add_service!(sys, gc, [PSY.get_component(PSY.ThermalStandard, sys, duid)])
+    PSY.add_time_series!(
+        sys, gc,
+        PSY.SingleTimeSeries(; name = "rhs", data = PSY.TimeSeries.TimeArray(stamps, fill(rhs_pu, length(stamps)))),
+    )
+    PSY.add_time_series!(
+        sys, gc,
+        PSY.SingleTimeSeries(; name = "invoked", data = PSY.TimeSeries.TimeArray(stamps, fill(1.0, length(stamps)))),
+    )
+    return
+end
+
 # Solves one 5-minute interval under `NEMReplayDispatch`. Returns dispatch and per-band offers in
-# MW, the area price in $/MWh, and the objective in $.
+# MW, the area price in $/MWh, the objective in $, and each `GenericConstraint`'s shadow price in
+# $/MWh, keyed by name (empty if `sys` carries none). Any `GenericConstraint` in `sys` is registered
+# under `LinearFactorLimit`.
 function solve_toy(sys)
     network = PSI.NetworkModel(
         PSI.AreaBalancePowerModel;
@@ -152,6 +182,12 @@ function solve_toy(sys)
     template = PSI.ProblemTemplate(network)
     set_nem_dispatch_models!(template, sys)
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    if !isempty(PSY.get_components(GenericConstraint, sys))
+        PSI.set_service_model!(
+            template,
+            PSI.ServiceModel(GenericConstraint, LinearFactorLimit; duals = [NEMConstraintLimit]),
+        )
+    end
     model = PSI.DecisionModel(
         template, sys;
         optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
@@ -186,6 +222,10 @@ function solve_toy(sys)
             dispatch_mw[row.name] = get(dispatch_mw, row.name, 0.0) - row.value
         end
     end
+    nem_keys = [
+        k for k in PSI.get_constraint_keys(container)
+            if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit
+    ]
     return (;
         dispatch_mw = dispatch_mw,
         battery_out_mw = battery_out_mw,
@@ -196,6 +236,10 @@ function solve_toy(sys)
         ),
         price = dual / (base_power * DISPATCH_INTERVAL_HOURS),
         objective = PSI.JuMP.objective_value(PSI.get_jump_model(container)),
+        constraint_price = Dict(
+            k.meta => only(read_dual(results, k).value) / (base_power * DISPATCH_INTERVAL_HOURS)
+                for k in nem_keys
+        ),
     )
 end
 
@@ -379,5 +423,39 @@ end
         @test out.dispatch_mw[TOY_CHEAP] ≈ 8.0 atol = TOY_TOLERANCE
         @test out.price ≈ 20.0 atol = TOY_TOLERANCE
         @test out.objective ≈ (8.0 * 20.0 - 8.0 * 1000.0) * DISPATCH_INTERVAL_HOURS atol = TOY_TOLERANCE
+    end
+end
+
+@testset "a generic constraint binds against NEMReplayDispatch" begin
+    function constrained_toy(rhs_mw)
+        return nem_toy_system(
+            [
+                TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0),
+                TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 60.0, ramp_up = 100.0),
+            ],
+            120.0;
+            mutate! = (sys, stamps) -> add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, rhs_mw),
+        )
+    end
+
+    @testset "a 70 MW cap on the cheap unit binds, forcing the expensive unit up" begin
+        out = solve_toy(constrained_toy(70.0))
+
+        @test out.dispatch_mw[TOY_CHEAP] ≈ 70.0 atol = TOY_TOLERANCE
+        @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 50.0 atol = TOY_TOLERANCE
+        @test out.price ≈ 80.0 atol = TOY_TOLERANCE
+        @test out.objective ≈ (70.0 * 20.0 + 50.0 * 80.0) * DISPATCH_INTERVAL_HOURS atol = TOY_TOLERANCE
+
+        # A binding `<=` carries a negative dual under minimisation.
+        @test out.constraint_price["N_TOY_LIMIT"] ≈ -60.0 atol = TOY_TOLERANCE
+    end
+
+    @testset "a 120 MW cap is slack, and merit order is unaffected" begin
+        out = solve_toy(constrained_toy(120.0))
+
+        @test out.dispatch_mw[TOY_CHEAP] ≈ 100.0 atol = TOY_TOLERANCE
+        @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 20.0 atol = TOY_TOLERANCE
+        @test out.price ≈ 80.0 atol = TOY_TOLERANCE
+        @test out.constraint_price["N_TOY_LIMIT"] ≈ 0.0 atol = TOY_TOLERANCE
     end
 end
