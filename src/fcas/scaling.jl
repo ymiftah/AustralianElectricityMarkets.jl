@@ -13,6 +13,9 @@ A `nothing` or `0.0` `agc_enablement_min`, `agc_enablement_max` or `agc_max_avai
 as absent: no scaling on that leg. `uigf` has no such exemption — `0.0` clamps `enablement_max`
 to zero, matching a semi-scheduled unit's weather forecast of no output.
 
+If applying the present `agc_enablement_min`/`agc_enablement_max` bound(s) would leave
+`enablement_min` above `enablement_max`, neither bound is applied.
+
 # Arguments
 - `trap`: the offered `FCASTrapezium`.
 - `agc_enablement_min`, `agc_enablement_max`: telemetered AGC enablement limits, in `trap`'s
@@ -42,11 +45,17 @@ function scale_fcas_trapezium(
     new_max_avail = get_max_avail(trap)
 
     if is_regulation
+        agc_enablement_min_applied = new_enablement_min
+        agc_enablement_max_applied = new_enablement_max
         if !isnothing(agc_enablement_min) && !iszero(agc_enablement_min)
-            new_enablement_min = max(new_enablement_min, agc_enablement_min)
+            agc_enablement_min_applied = max(agc_enablement_min_applied, agc_enablement_min)
         end
         if !isnothing(agc_enablement_max) && !iszero(agc_enablement_max)
-            new_enablement_max = min(new_enablement_max, agc_enablement_max)
+            agc_enablement_max_applied = min(agc_enablement_max_applied, agc_enablement_max)
+        end
+        if agc_enablement_min_applied <= agc_enablement_max_applied
+            new_enablement_min = agc_enablement_min_applied
+            new_enablement_max = agc_enablement_max_applied
         end
         if !isnothing(agc_max_avail) && !iszero(agc_max_avail)
             new_max_avail = min(new_max_avail, agc_max_avail)

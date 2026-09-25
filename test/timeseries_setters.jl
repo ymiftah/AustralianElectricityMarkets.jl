@@ -808,6 +808,7 @@
                 got_lower_max = get_time_series_values(SingleTimeSeries, device, "fcas_agc_enablement_max_LOWERREG")
                 got_raise_avail = get_time_series_values(SingleTimeSeries, device, "fcas_agc_max_avail_RAISEREG")
                 got_lower_avail = get_time_series_values(SingleTimeSeries, device, "fcas_agc_max_avail_LOWERREG")
+                got_agc_status = get_time_series_values(SingleTimeSeries, device, "fcas_agc_status")
 
                 @test isapprox(got_raise_min, rows.RAISEREGENABLEMENTMIN ./ base_power; atol = 1.0e-9)
                 @test isapprox(got_raise_max, rows.RAISEREGENABLEMENTMAX ./ base_power; atol = 1.0e-9)
@@ -815,7 +816,18 @@
                 @test isapprox(got_lower_max, rows.LOWERREGENABLEMENTMAX ./ base_power; atol = 1.0e-9)
                 @test isapprox(got_raise_avail, rows.RAMPUPRATE .* interval_hours ./ base_power; atol = 1.0e-9)
                 @test isapprox(got_lower_avail, rows.RAMPDOWNRATE .* interval_hours ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_agc_status, rows.AGCSTATUS; atol = 1.0e-9)
+
+                initial_time = start_date
+                horizon = length(date_range) - 1
+                @test get_fcas_agc_status(device, initial_time, horizon) == round.(Int, rows.AGCSTATUS)
             end
+        end
+
+        @testset "get_fcas_agc_status is nothing when fcas_agc_status is not attached" begin
+            sys = deepcopy(sys_base)
+            device = get_component(ThermalStandard, sys, "ER01")
+            @test isnothing(get_fcas_agc_status(device, start_date, length(date_range) - 1))
         end
 
         @testset "fcas_uigf is attached only for semi-scheduled units (BW03, BW04)" begin
@@ -875,6 +887,47 @@
             raw_contingency = get_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
             scaled_contingency = get_scaled_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
             @test all(i -> isequal(Tuple(raw_contingency[i]), Tuple(scaled_contingency[i])), 1:horizon)
+        end
+    end
+
+    @testset "set_storage_initial_mw!" begin
+        resolution = Minute(5)
+        start_date = DateTime(2025, 1, 1, 0, 0)
+        date_range = start_date:resolution:(start_date + Hour(2))
+        base_power = get_base_power(sys_base)
+        truth = read_dispatch_limits(db, date_range)
+        rows = sort(subset(truth, :DUID => ByRow(==("BW01"))), :SETTLEMENTDATE)
+
+        @testset "attaches net initial_mw to the EnergyReservoirStorage device" begin
+            sys = deepcopy(sys_base)
+            set_storage_initial_mw!(sys, db, date_range)
+            bat = get_component(EnergyReservoirStorage, sys, "BW01")
+            got = get_time_series_values(SingleTimeSeries, bat, "initial_mw")
+            @test isapprox(got, rows.INITIALMW ./ base_power; atol = 1.0e-9)
+
+            initial_time = start_date
+            horizon = length(date_range) - 1
+            with_units_base(sys, "NATURAL_UNITS") do
+                @test isapprox(
+                    get_storage_initial_mw(bat, initial_time, horizon), rows.INITIALMW; atol = 1.0e-9,
+                )
+                return
+            end
+        end
+
+        @testset "get_storage_initial_mw is nothing when initial_mw is not attached" begin
+            sys = deepcopy(sys_base)
+            bat = get_component(EnergyReservoirStorage, sys, "BW01")
+            @test isnothing(get_storage_initial_mw(bat, start_date, length(date_range) - 1))
+        end
+
+        @testset "a device with an incomplete series over date_range is left without it" begin
+            sys = deepcopy(sys_base)
+            bat = get_component(EnergyReservoirStorage, sys, "BW01")
+            # No DISPATCHLOAD rows exist for this far-future range: every interval is missing.
+            future_range = DateTime(2099, 1, 1, 0, 0):resolution:(DateTime(2099, 1, 1, 2, 0))
+            set_storage_initial_mw!(sys, db, future_range)
+            @test !has_time_series(bat, SingleTimeSeries, "initial_mw")
         end
     end
 

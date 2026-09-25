@@ -51,6 +51,36 @@
             eff = scale_fcas_trapezium(bid; is_regulation = true)
             @test trap_tuple(eff) == trap_tuple(bid)
         end
+
+        @testset "a load-side (negative net-MW axis) trapezium narrows like any other" begin
+            load_bid = FCASTrapezium(;
+                enablement_min = -100.0, low_breakpoint = -70.0, high_breakpoint = -10.0,
+                enablement_max = 0.0, max_avail = 30.0,
+            )
+            eff = scale_fcas_trapezium(
+                load_bid; agc_enablement_min = -80.0, agc_enablement_max = 90.0, is_regulation = true,
+            )
+            @test trap_tuple(eff) == (-80.0, -50.0, -10.0, 0.0, 30.0)
+        end
+
+        @testset "an AGC window that would invert a side's own span is not applied to either bound" begin
+            load_bid = FCASTrapezium(;
+                enablement_min = -100.0, low_breakpoint = -70.0, high_breakpoint = -10.0,
+                enablement_max = 0.0, max_avail = 30.0,
+            )
+            gen_bid = FCASTrapezium(;
+                enablement_min = 0.0, low_breakpoint = 20.0, high_breakpoint = 80.0,
+                enablement_max = 100.0, max_avail = 20.0,
+            )
+            eff_load = scale_fcas_trapezium(
+                load_bid; agc_enablement_min = 368.39502, agc_enablement_max = 0.0, is_regulation = true,
+            )
+            eff_gen = scale_fcas_trapezium(
+                gen_bid; agc_enablement_min = 368.39502, agc_enablement_max = 0.0, is_regulation = true,
+            )
+            @test trap_tuple(eff_load) == trap_tuple(load_bid)
+            @test trap_tuple(eff_gen) == trap_tuple(gen_bid)
+        end
     end
 
     @testset "§4.2 AGC ramp rate (regulation only)" begin
