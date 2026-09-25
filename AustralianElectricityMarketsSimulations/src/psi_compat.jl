@@ -55,6 +55,21 @@ function PSI.get_initial_conditions_service_model(
     return PSI.ServiceModel(GenericConstraint, LinearFactorLimit)
 end
 
+"""
+    PSI.get_initial_conditions_service_model(model, service_model::PSI.ServiceModel{FCASService, FCASMarket})
+
+The service model PSI's initial-conditions sub-model uses for an [`FCASService`](@ref).
+
+# Returns
+`PSI.ServiceModel(FCASService, FCASMarket)`.
+"""
+function PSI.get_initial_conditions_service_model(
+        ::PSI.OperationModel,
+        ::PSI.ServiceModel{FCASService, FCASMarket},
+    )
+    return PSI.ServiceModel(FCASService, FCASMarket)
+end
+
 # PSI 0.38.4 keys these on the device type with a bare `AbstractDeviceFormulation`, so the
 # `PSY.StaticInjection` method below is ambiguous for a `PSY.Generator`; the two narrower methods
 # break the tie.
