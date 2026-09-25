@@ -264,6 +264,48 @@
             @test isempty(result)
             @test Set(names(result)) == Set(["SETTLEMENTDATE", "DUID", "UIGF"])
         end
+
+        @testset "read_uigf throws without DUDETAILSUMMARY's SCHEDULE_TYPE" begin
+            function save_table(hive, df, table)
+                conn = DuckDB.connect(DuckDB.DB())
+                DuckDB.execute(conn, "SET preserve_identifier_case=true")
+                DuckDB.register_data_frame(conn, df, "tmp_table")
+                table_dir = joinpath(hive, table)
+                mkpath(table_dir)
+                DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+                return
+            end
+            hive = mktempdir()
+            save_table(
+                hive, DataFrame(
+                    SETTLEMENTDATE = [start_date], DUID = ["BW03"], INTERVENTION = [0],
+                    UIGF = [40.0], archive_month = ["2025-01"],
+                ), "DISPATCHLOAD",
+            )
+            hive_db = aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
+            err = try
+                read_uigf(hive_db, date_range; resolution = resolution)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            @test occursin("DUDETAILSUMMARY is not cached", err.msg)
+
+            save_table(
+                hive, DataFrame(
+                    DUID = ["BW03"], START_DATE = [DateTime(2020, 1, 1)], archive_month = ["2025-01"],
+                ), "DUDETAILSUMMARY",
+            )
+            err = try
+                read_uigf(hive_db, date_range; resolution = resolution)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            @test occursin("SCHEDULE_TYPE", err.msg)
+        end
     end
 
     @testset "read_bids resolution aggregation uses per-bucket mean (regression: scale-then-sum bug)" begin
@@ -734,6 +776,105 @@
             end
             @test !has_time_series(thermal, SingleTimeSeries, "max_active_power")
             @test has_time_series(get_component(HydroDispatch, sys, "BW02"), SingleTimeSeries, "max_active_power")
+        end
+    end
+
+    @testset "set_fcas_scaling_inputs!" begin
+        resolution = Minute(5)
+        start_date = DateTime(2025, 1, 1, 0, 0)
+        date_range = start_date:resolution:(start_date + Hour(2))
+        base_power = get_base_power(sys_base)
+        interval_hours = 5.0 / 60.0
+
+        truth = read_fcas_scaling_inputs(db, date_range)
+
+        @testset "attaches AGC enablement/ramp series to every DUID with scaling rows" begin
+            sys = deepcopy(sys_base)
+            set_fcas_scaling_inputs!(sys, db, date_range)
+
+            devices = vcat(
+                collect(get_components(Generator, sys)), collect(get_components(EnergyReservoirStorage, sys)),
+            )
+            @test length(devices) == 6  # BW01, BW02, BW03, BW04, ER01, ER02
+
+            for device in devices
+                duid = get_name(device)
+                rows = sort(subset(truth, :DUID => ByRow(==(duid))), :SETTLEMENTDATE)
+                @test !isempty(rows)
+
+                got_raise_min = get_time_series_values(SingleTimeSeries, device, "fcas_agc_enablement_min_RAISEREG")
+                got_raise_max = get_time_series_values(SingleTimeSeries, device, "fcas_agc_enablement_max_RAISEREG")
+                got_lower_min = get_time_series_values(SingleTimeSeries, device, "fcas_agc_enablement_min_LOWERREG")
+                got_lower_max = get_time_series_values(SingleTimeSeries, device, "fcas_agc_enablement_max_LOWERREG")
+                got_raise_avail = get_time_series_values(SingleTimeSeries, device, "fcas_agc_max_avail_RAISEREG")
+                got_lower_avail = get_time_series_values(SingleTimeSeries, device, "fcas_agc_max_avail_LOWERREG")
+
+                @test isapprox(got_raise_min, rows.RAISEREGENABLEMENTMIN ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_raise_max, rows.RAISEREGENABLEMENTMAX ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_lower_min, rows.LOWERREGENABLEMENTMIN ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_lower_max, rows.LOWERREGENABLEMENTMAX ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_raise_avail, rows.RAMPUPRATE .* interval_hours ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_lower_avail, rows.RAMPDOWNRATE .* interval_hours ./ base_power; atol = 1.0e-9)
+            end
+        end
+
+        @testset "fcas_uigf is attached only for semi-scheduled units (BW03, BW04)" begin
+            sys = deepcopy(sys_base)
+            set_fcas_scaling_inputs!(sys, db, date_range)
+
+            @test has_time_series(get_component(RenewableDispatch, sys, "BW03"), SingleTimeSeries, "fcas_uigf")
+            @test has_time_series(get_component(RenewableDispatch, sys, "BW04"), SingleTimeSeries, "fcas_uigf")
+            @test !has_time_series(get_component(ThermalStandard, sys, "ER01"), SingleTimeSeries, "fcas_uigf")
+            @test !has_time_series(get_component(HydroDispatch, sys, "BW02"), SingleTimeSeries, "fcas_uigf")
+        end
+
+        @testset "a device with an incomplete scaling column over date_range is left without that series" begin
+            sys = deepcopy(sys_base)
+            device = get_component(ThermalStandard, sys, "ER01")
+            full_grid = collect(date_range)[1:(end - 1)]
+            complete_by_time = Dict(t => (RAISEREGENABLEMENTMIN = 25.0,) for t in full_grid)
+            incomplete_by_time = Dict(
+                t => (RAISEREGENABLEMENTMIN = (t == full_grid[1] ? missing : 25.0),) for t in full_grid
+            )
+
+            AustralianElectricityMarkets._attach_fcas_scaling_series!(
+                sys, device, complete_by_time, full_grid, :RAISEREGENABLEMENTMIN,
+                "fcas_agc_enablement_max_RAISEREG", base_power,
+            )
+            @test has_time_series(device, SingleTimeSeries, "fcas_agc_enablement_max_RAISEREG")
+
+            AustralianElectricityMarkets._attach_fcas_scaling_series!(
+                sys, device, incomplete_by_time, full_grid, :RAISEREGENABLEMENTMIN,
+                "fcas_agc_enablement_min_RAISEREG", base_power,
+            )
+            @test !has_time_series(device, SingleTimeSeries, "fcas_agc_enablement_min_RAISEREG")
+        end
+
+        @testset "get_scaled_fcas_trapezium narrows the trapezium wherever the AGC input is more restrictive" begin
+            sys = deepcopy(sys_base)
+            set_market_bids!(sys, db, date_range; resolution = resolution)
+            set_fcas_bids!(sys, db, date_range; resolution = resolution)
+            set_fcas_scaling_inputs!(sys, db, date_range)
+
+            device = get_component(ThermalStandard, sys, "ER01")
+            initial_time = start_date
+            horizon = length(date_range) - 1
+
+            raw = get_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)
+            scaled = get_scaled_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)
+            @test length(raw) == horizon
+
+            for i in 1:horizon
+                @test get_max_avail(scaled[i]) <= get_max_avail(raw[i])
+                @test get_enablement_min(scaled[i]) >= get_enablement_min(raw[i])
+                @test get_enablement_max(scaled[i]) <= get_enablement_max(raw[i])
+            end
+            @test any(i -> get_max_avail(scaled[i]) < get_max_avail(raw[i]), 1:horizon)
+
+            # A contingency market carries no AGC scaling input series at all: unscaled.
+            raw_contingency = get_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
+            scaled_contingency = get_scaled_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
+            @test all(i -> isequal(Tuple(raw_contingency[i]), Tuple(scaled_contingency[i])), 1:horizon)
         end
     end
 
