@@ -1,4 +1,4 @@
-# 0017. `FCASMarket`: direct bid reads, two-sided joint capacity, net storage energy, §5 gating
+# 0017. `FCASMarket`: direct bid reads, two-sided joint capacity, net storage energy, per-side BDU regulation, §5 gating
 
 ## Status
 
@@ -132,21 +132,24 @@ per `(device, t)`, the pre-conditions computable from data already in the `Syste
   when the device carries it — this already folds in the semi-scheduled UIGF ceiling, since
   `set_nem_dispatch_limits!`'s own `"max_active_power"` series is the lower of bid `MAXAVAIL` and
   UIGF); for a `Storage` device, both static ratings must leave the trapezium reachable:
-  `−InputActivePowerLimit.max ≤ EnablementMax` and `OutputActivePowerLimit.max ≥ EnablementMin`
-  (applied the same for a contingency or a regulation bid — §5 only states the single-sided form
-  per regulation direction, but this package does not yet distinguish a storage device's two
-  regulation-side trapeziums enough to apply just one side correctly).
-- the "stranded" pre-condition (`EnablementMin ≤ max(InitialMW, 0) ≤ EnablementMax`), checked only
-  for a non-`Storage` device carrying `InitialPowerTimeSeriesParameter` (an `AbstractNEMDispatch`
-  generator). No net initial-MW figure is available for a `PSY.Storage` device today, so this
-  pre-condition is skipped for one rather than approximated.
+  `−InputActivePowerLimit.max ≤ EnablementMax` and `OutputActivePowerLimit.max ≥ EnablementMin`.
+  §5 states only one of these two inequalities per regulation side (the other for contingency);
+  `_fcas_energy_max_avail_ok` checks both regardless, on each side's own call, an accepted
+  over-check rather than a per-side split of this particular pre-condition.
+- the "stranded" pre-condition: `EnablementMin ≤ max(InitialMW, 0) ≤ EnablementMax` for a
+  non-`Storage` device (`InitialMW` from `PSI.InitialPowerTimeSeriesParameter`); the combined
+  both-sides form below for a `PSY.Storage` device bidding regulation on both sides; `EnablementMin
+  ≤ InitialMW ≤ EnablementMax` (that side's own trapezium, raw `InitialMW`, no clamp) for any other
+  `PSY.Storage` bid (`InitialMW` from [`get_storage_initial_mw`](@ref)). Skipped wherever the
+  relevant `InitialMW` series isn't attached.
+- for a regulation service, the AGC-status pre-condition: `agc_status != 0`
+  ([`get_fcas_agc_status`](@ref)), skipped when not attached.
 
 A disabled `(device, t)` gets its `FCASCapacityVariable` bounded to exactly zero and a vacuous
 `0.0 ≤ 1.0` row in place of both real constraints — matching AEMO's own "no joint capacity
 constraint is created" for an unenabled unit, while keeping the dense dual containers valid.
 
-Not checked: AGC status (no telemetry in MMSDM) and the daily/profiled-energy pre-conditions (no
-data this package reads carries them).
+Not checked: the daily/profiled-energy pre-conditions (no data this package reads carries them).
 
 ### Collapsing the duplicate trapezium-slope arithmetic
 
@@ -156,6 +159,98 @@ root's `FCASTrapezium`/`get_lower_slope_coeff`/`get_upper_slope_coeff`. `Effecti
 the same five fields as `FCASTrapezium` (plus the two optional regulation ramp rates
 `FCASTrapezium` already carries), so `scale_trapezium` now returns an `FCASTrapezium` directly and
 the local slope functions are gone; callers use root's accessors.
+
+### A `PSY.Storage` device bidding regulation on both sides: two capacity variables, per-side (§6.3 footnote 8, §6.4)
+
+`_fcas_direction` throws whenever a non-`PSY.Storage` device carries both an incremental and a
+decremental series for the same market. Real `BIDPEROFFER_D` data shows carrying both is the
+*common* case for a battery's `RAISEREG`/`LOWERREG`: a `DIRECTION = GEN` row (generation-side bid)
+and a `DIRECTION = LOAD` row (load-side bid), both against the net-MW axis (2026-06-04, e.g. DUID
+`WANDB1`: `RAISEREG` GEN `EnablementMin/Max = 0/100`, `MaxAvail = 100`; `RAISEREG` LOAD
+`EnablementMin/Max = -75/0`, `MaxAvail = 75`). Contingency FCAS from the same device is unaffected —
+AEMO's *FCAS Model in NEMDE* v3.0 §2.4 (pp. 9-10, Figure 5) bids a BDU's contingency service as one
+trapezium spanning the whole net-MW axis, submitted once (`DIRECTION = BIDIRECTIONAL`), so
+`set_fcas_bids!` only ever attaches it as the incremental series; `_fcas_direction` returning
+`:both` is only reachable for a regulation market.
+
+An earlier revision of this ADR modelled both sides against one combined `FCASCapacityVariable`
+and an amalgamated trapezium (upper form from the generation side, lower form from the load
+side), citing §2.4's "amalgamated only for bid validation, the §5 initial-point precondition,
+trapped/stranded, and availability" and §7.1's footnote that "the regulation FCAS trapeziums are
+treated independently during the NEMDE optimisation but are amalgamated into one aggregate
+trapezium for the availability calculations". Re-reading §6.3 footnote 8 and §6.4 together shows
+that reading conflated "amalgamated for publication" with "amalgamated for optimisation": §6.3
+footnote 8 states NEMDE creates *a pair of* energy-and-regulating-FCAS-capacity constraints "for
+the generation side of the unit, the load side of the unit, or for both sides", each pair against
+that side's *own* trapezium and that side's *own* regulating FCAS target — not one pair against an
+amalgamated shape — and §6.4 names a *separate* target for each side ("Raise Regulation FCAS
+Target"/"Lower Regulation FCAS Target" per side, capped individually and, for the unit as a whole,
+jointly). `FCASMarket` now builds that directly:
+
+- **Two capacity variables per `(device, t)`.** `FCASSideCapacityVariable`, one instance keyed
+  `"<service>_gen"` and one keyed `"<service>_load"` (both keyed by device name, `both_names`:
+  the devices bidding both sides of that service). Each is bounded above by its own side's scaled
+  `MaxAvail` (`get_scaled_fcas_trapezium(...; decremental)`) and gated by its own side's §5
+  pre-conditions via [`_fcas_enabled`](@ref) (`check_stranded = false` — see below).
+- **Each side pairs with its own energy term.** The generation side's `FCASJointCapacityLHS`
+  (`"<service>_gen_upper"`/`"_gen_lower"`) carries only `ActivePowerOutVariable`; the load side's
+  (`"<service>_load_upper"`/`"_load_lower"`) carries only `-ActivePowerInVariable`
+  ([`_fcas_side_energy_terms`](@ref)) — not the net `Out - In` the single-sided/contingency path
+  uses. Each side's own slope term (`UpperSlopeCoeff`/`LowerSlopeCoeff` from that side's own
+  trapezium) is added the same way the single-sided path already does.
+- **A `FCASUnitRegulationTarget` expression is the unit's published total.** `Reg_gen + Reg_load`
+  for a both-sided device, or the single `FCASCapacityVariable` for a one-sided device — built once
+  per contributing device of a regulation service, keyed by the device's own name. §6.2's joint
+  capacity constraint (the `[RaiseRegEnabled]×RaiseRegTarget` cross term on another service's own
+  constraint) reads this expression via `_device_regulation_target`, replacing the earlier direct
+  `FCASCapacityVariable` lookup — the "target" AEMO's constraint equations reference is always the
+  unit's total, whether the unit bid one side or two.
+- **§6.4's BDU SCADA ramping constraint bounds that same total.** `FCASBDURampingConstraint`,
+  built only for both-sided devices on a regulation service, `Reg_gen + Reg_load ≤` the device's
+  AGC ramping capability (`get_fcas_agc_ramp_capability`, the same `RAMPUPRATE`/`RAMPDOWNRATE ×
+  interval` quantity §4.2 already scales each side's own `MaxAvail` by) — skipped (no constraint
+  row) for a `(device, t)` carrying no ramp-capability series. AEMO's own text motivates this as
+  preventing exactly the "double-counting" the combined-variable model above could not represent:
+  each side's own `MaxAvail` is independently capped at the ramp capability by §4.2, but nothing
+  stopped both sides reaching that cap *simultaneously* until this constraint sums them.
+- **Offer cost is priced per side, against that side's own curve**, via two independent
+  `_add_fcas_offer_cost!` calls (one per `FCASSideCapacityVariable`) rather than one call against
+  a merged curve — `_merge_offer_curve` is removed, since a genuine price difference between the
+  two sides' bids (real data shows one) is now respected without needing to pre-sort it into one
+  curve.
+
+**§5's combined stranded pre-condition, not two independent per-side checks.** The document's own
+bullet for a both-sides regulation bid (p. 19) is a single combined inequality,
+`EnablementMin_LOAD ≤ InitialMW ≤ EnablementMax_GEN` (raw net `InitialMW`, not `Max[InitialMW,
+0]` — that clamp is only in the non-bidirectional bullet), gating *both* sides together: if it
+fails, neither side is enabled, regardless of what each side's own sign/energy-max-avail
+pre-conditions would otherwise allow. [`_fcas_both_sides_enabled`](@ref) evaluates each side's own
+pre-conditions independently (`check_stranded = false` on each [`_fcas_enabled`](@ref) call) and
+ANDs the result with this one combined check. `InitialMW` comes from
+[`get_storage_initial_mw`](@ref) ([`set_storage_initial_mw!`](@ref) — `PSY.Storage` is not one of
+the device types `set_nem_dispatch_limits!` covers, so it gets its own, narrower setter attaching
+only `"initial_mw"`, reusing `read_dispatch_limits`); `nothing` (no series attached) skips the
+check, as for the single-sided case.
+
+**§5's AGC status pre-condition.** "In real time dispatch... the unit must be on AGC to be enabled
+for regulating FCAS" (p. 18) applies to every regulation bid, one- or two-sided:
+[`_fcas_enabled`](@ref) now takes `agc_status` (from [`get_fcas_agc_status`](@ref) /
+`"fcas_agc_status"`, `DISPATCHLOAD.AGCSTATUS`) and returns `false` whenever `agc_status == 0` and
+`is_regulation`. `nothing` (no series attached) does not gate — this package cannot distinguish
+"known off AGC" from "AGC status not tracked for this `System`" without it. This closes the
+`scale_fcas_trapezium` DUID-level AGC-enablement-window anomaly noted for `AGCSTATUS = 0`
+intervals in ADR-0018: those intervals are now excluded from regulation enablement directly,
+rather than relying only on that function's own defensive guard against an internally
+inconsistent window.
+
+A non-`PSY.Storage` device carrying both directions of any market, or a `PSY.Storage` device
+carrying both directions of a *contingency* market, still throws: `_fcas_direction` only returns
+`:both` for a `PSY.Storage` device on a regulation market; `check_fcas_services` reports the same
+restriction as a pre-flight problem instead of a build-time throw.
+
+**Not modelled: §6.1 joint ramping.** The unit's regulation target is still not bound by the
+telemetered AGC ramp rate against its *energy* dispatch (as opposed to §6.4's bound against the
+*other side's* regulation target) — tracked in the Phase 2 plan, unchanged by this revision.
 
 ## Decision
 
@@ -170,10 +265,33 @@ the local slope functions are gone; callers use root's accessors.
 - A `PSY.Storage` device's energy term is always its net `ActivePowerOutVariable −
   ActivePowerInVariable`; a decremental bid on any other device type throws, since no scheduled-load
   device type exists in this package yet.
-- The computable subset of §5's enablement pre-conditions gates each `(device, t)`'s
-  `FCASCapacityVariable` to zero and its constraint rows to a vacuous `0.0 ≤ 1.0` pair.
+- A `PSY.Storage` device bidding a regulation market on both sides gets two
+  `FCASSideCapacityVariable`s per `(device, t)` (`"<service>_gen"`/`"<service>_load"`), each
+  bounded above by that side's own scaled `MaxAvail`, each constrained by its own §6.3 joint
+  capacity pair against its own trapezium and its own energy term (`Out` for the generation side,
+  `-In` for the load side), and priced against its own offer curve. `FCASUnitRegulationTarget`
+  (`Reg_gen + Reg_load`, or the single `FCASCapacityVariable` for a one-sided device) is the unit
+  total §6.2's cross term and §6.4's ramping cap read. `FCASBDURampingConstraint` bounds that total
+  against the device's AGC ramping capability for both-sided devices, skipped where no
+  ramping-capability series is attached. Both directions of a contingency market, or of any market
+  on a non-`PSY.Storage` device, still throw.
+- The computable subset of §5's enablement pre-conditions gates each `(device, t)`'s capacity
+  variable(s) to zero and its constraint rows to a vacuous `0.0 ≤ 1.0` pair; for a both-sides
+  regulation bid, each side's own pre-conditions gate that side independently, ANDed with one
+  combined stranded pre-condition gating both sides together. The AGC-status pre-condition gates
+  every regulation bid, one- or two-sided.
+- `set_storage_initial_mw!`/`get_storage_initial_mw` (root) attach/read a `PSY.Storage` device's
+  net `"initial_mw"`, mirroring `set_nem_dispatch_limits!`'s `"initial_mw"` for the device types it
+  covers; `get_fcas_agc_status` (root) reads `"fcas_agc_status"`
+  ([`set_fcas_scaling_inputs!`](@ref)).
 - `scale_trapezium` returns an `FCASTrapezium`; `EffectiveTrapezium` and the local
   `lower_slope_coeff`/`upper_slope_coeff` are removed from `AustralianElectricityMarketsSimulations`.
+- Cross-checked against nempy (UNSW-CEEM/nempy, commit `2d3cef0`). The per-side model matches its
+  `energy_and_regulation_capacity_constraints`, and its load-side energy sign flip
+  (`spot_market_backend/variable_ids.py:160-172`). One difference: nempy's
+  `joint_capacity_constraints` gives the load side's `lower_reg` coefficient `+1.0` in the lower
+  form (`spot_market_backend/fcas_constraints.py:298-301`). Here the lower form subtracts the whole
+  unit `LowerRegTarget`, as §6.2 states.
 
 ## Consequences
 
@@ -183,13 +301,13 @@ the local slope functions are gone; callers use root's accessors.
 - Per-band FCAS dispatch is not retrievable from a solved model's results — only the aggregate
   `FCASCapacityVariable`. Retrievable per-band detail can be added later without changing the cost
   arithmetic, by registering a real `PSI.VariableType` for the bands.
-- §6.1 joint ramping (regulation's own binding constraint in real dispatch) remains unimplemented;
-  a `FCASMarket` build lets a regulation service's capacity rise as far as its own trapezium and
-  `MAXAVAIL` allow, which a `System` with no ramping data will not correct.
-- A bidirectional unit with separate generation-side and load-side regulation trapeziums is priced
-  and constrained with the same net-energy term on both sides; the two sides' individually correct
-  §5 energy-maximum-availability single-sided forms are not distinguished (see above). A device
-  bidding both directions of the *same* market (rather than separate regulation sides) still
-  throws, per the existing bidirectional-capacity limitation.
-- The AGC-on and daily/profiled-energy §5 pre-conditions are not enforced; a `System` that would
-  fail one of those in real dispatch is not caught here.
+- §6.1 joint ramping (regulation's own binding constraint against a unit's *energy* dispatch in
+  real dispatch) remains unimplemented; a `FCASMarket` build lets a regulation service's per-side
+  capacity rise as far as that side's own trapezium, `MAXAVAIL` and (for a both-sided device)
+  §6.4's ramping cap allow, which a `System` with no §6.1 ramping data will not further correct.
+- The daily/profiled-energy §5 pre-conditions are not enforced; a `System` that would fail one of
+  those in real dispatch is not caught here.
+- A `PSY.Storage` device's per-side pre-conditions (sign, energy-maximum-availability) are
+  evaluated per side, but the energy-maximum-availability check itself still checks both of §5's
+  inequalities rather than only the one the bid side calls for (documented above) - an accepted,
+  narrower remaining approximation than the one this revision replaces.

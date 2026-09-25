@@ -84,6 +84,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`EffectiveTrapezium`, the local `lower_slope_coeff`/`upper_slope_coeff`) is gone; `scale_trapezium`
   now returns an `FCASTrapezium` directly, reading root's
   `get_lower_slope_coeff`/`get_upper_slope_coeff`.
+- **`FCASMarket` models a `PSY.Storage` device bidding regulation on both sides per-side**
+  (`AustralianElectricityMarketsSimulations`), per AEMO *FCAS Model in NEMDE* §6.3 footnote 8 and
+  §6.4: two `FCASSideCapacityVariable`s per `(device, t)` (`"<service>_gen"`/`"<service>_load"`),
+  each with its own energy term (`ActivePowerOutVariable` for the generation side,
+  `-ActivePowerInVariable` for the load side), its own §6.3 joint capacity pair against its own
+  scaled trapezium, and priced against its own offer curve. A new `FCASUnitRegulationTarget`
+  expression (`Reg_gen + Reg_load`, or the single-sided `FCASCapacityVariable` otherwise) is the
+  unit's published regulation total: §6.2's cross term on another service's joint capacity
+  constraint, and a new `FCASBDURampingConstraint` (§6.4's "BDU regulating FCAS SCADA ramping
+  constraint", bounding the total against the device's AGC ramping capability, skipped where no
+  ramping-capability series is attached), both read it. AEMO's §5 pre-conditions gate each side
+  independently, ANDed with one combined stranded pre-condition
+  (`EnablementMin_LOAD <= InitialMW <= EnablementMax_GEN`, from new root `set_storage_initial_mw!`/
+  `get_storage_initial_mw`) gating both sides together, and a new AGC-status pre-condition
+  (`get_fcas_agc_status`/`"fcas_agc_status"`, also gating a single-sided or non-`Storage` device's
+  regulation bid) gates every regulation bid. `_merge_offer_curve` is gone - each side now prices
+  against its own curve. Both directions of a contingency market, or of any market on a
+  non-`PSY.Storage` device, still throw, and `check_fcas_services` reports them.
 - **FCAS trapezium scaling** (AEMO *FCAS Model in NEMDE* §4): `scale_fcas_trapezium` (root) is
   the pure §4.1/§4.2/§4.3 arithmetic — the telemetered AGC enablement limits and AGC ramping
   capability narrow a `RAISEREG`/`LOWERREG` trapezium, and a semi-scheduled unit's UIGF narrows

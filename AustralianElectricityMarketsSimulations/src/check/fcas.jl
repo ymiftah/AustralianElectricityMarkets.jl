@@ -19,8 +19,8 @@ end
 
 Verifies every [`FCASService`](@ref) in `sys` is buildable under `template`: each contributing
 device's type is modeled by some `PSI.DeviceModel`, and the device carries exactly one direction
-of FCAS bid for that service's market, and a decremental-only bid only on a `PSY.Storage`
-device.
+of FCAS bid for that service's market (both directions only on a `PSY.Storage` device's
+regulation market), and a decremental-only bid only on a `PSY.Storage` device.
 
 # Arguments
 - `sys`: system to read services and components from.
@@ -50,12 +50,13 @@ function check_fcas_services(sys::PSY.System, template::PSI.ProblemTemplate)
                     "FCASService \"$svc_name\": device \"$dname\" carries neither an " *
                         "incremental nor a decremental $(string(bid_type)) bid.",
                 )
-            elseif direction == :both
+            elseif direction == :both && !(device isa PSY.Storage && _is_regulation_service(bid_type))
                 push!(
                     problems,
                     "FCASService \"$svc_name\": device \"$dname\" carries both an incremental " *
                         "and a decremental $(string(bid_type)) bid; bidirectional FCAS " *
-                        "capacity is not modeled.",
+                        "capacity is modeled only for a `PSY.Storage` device's regulation " *
+                        "markets.",
                 )
             elseif direction == :decremental && !(device isa PSY.Storage)
                 push!(
