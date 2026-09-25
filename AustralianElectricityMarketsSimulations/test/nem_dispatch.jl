@@ -30,8 +30,8 @@ function nem_dispatch_system(; mutate! = identity, data_span = NEM_DISPATCH_HORI
 end
 
 # Overwrites one device's series with a flat value, to make a chosen limit the binding one.
-function flatten_series!(sys, duid, name, value)
-    device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+function flatten_series!(sys, ::Type{T}, duid, name, value) where {T}
+    device = PSY.get_component(T, sys, duid)
     stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name)
     existing = PSY.get_time_series(PSY.SingleTimeSeries, device, name)
     multiplier = IS.get_scaling_factor_multiplier(existing)
@@ -42,6 +42,25 @@ function flatten_series!(sys, duid, name, value)
             name = name,
             data = TimeSeries.TimeArray(stamps, fill(value, length(stamps))),
             scaling_factor_multiplier = multiplier,
+        ),
+    )
+    return sys
+end
+flatten_series!(sys, duid, name, value) = flatten_series!(sys, PSY.ThermalStandard, duid, name, value)
+
+# Overwrites one battery's per-direction energy-availability `Deterministic` series with a flat
+# value, mirroring `flatten_series!` for the `SingleTimeSeries` ramp/initial series.
+function flatten_storage_avail!(sys, duid, name, value)
+    device = PSY.get_component(PSY.EnergyReservoirStorage, sys, duid)
+    stamps = PSY.get_time_series_timestamps(PSY.Deterministic, device, name)
+    PSY.remove_time_series!(sys, PSY.Deterministic, device, name)
+    PSY.add_time_series!(
+        sys, device,
+        PSY.Deterministic(;
+            name = name,
+            data = Dict(first(stamps) => fill(value, length(stamps))),
+            resolution = NEM_DISPATCH_RESOLUTION,
+            interval = NEM_DISPATCH_RESOLUTION,
         ),
     )
     return sys
@@ -149,6 +168,7 @@ end
     @test PSY.ThermalStandard in types
     @test PSY.HydroDispatch in types
     @test PSY.RenewableDispatch in types
+    @test PSY.EnergyReservoirStorage in types
     # A load carries no ramp series, so it is not a participant.
     @test !(PSY.PowerLoad in types)
 
@@ -193,15 +213,26 @@ end
         @test !(PSI.OnVariable in entry_types(variable_keys))
     end
 
-    @testset "every participant gets identical variable and constraint entry types" begin
+    @testset "every generator participant gets identical variable and constraint entry types" begin
         participants = nem_dispatch_participants(sys)
         @test length(participants) >= 3
-        variable_sets = [entry_types(component_keys(variable_keys, T)) for T in participants]
-        constraint_sets = [entry_types(component_keys(constraint_keys, T)) for T in participants]
+        @test PSY.EnergyReservoirStorage in participants
+        generator_participants = filter(!=(PSY.EnergyReservoirStorage), participants)
+        variable_sets = [entry_types(component_keys(variable_keys, T)) for T in generator_participants]
+        constraint_sets = [entry_types(component_keys(constraint_keys, T)) for T in generator_participants]
         @test allequal(variable_sets)
         @test allequal(constraint_sets)
         @test PSI.ActivePowerVariable in first(variable_sets)
         @test PSI.RampConstraint in first(constraint_sets)
+
+        @testset "a battery gets the per-direction shape instead of a single ActivePowerVariable" begin
+            battery_variables = entry_types(component_keys(variable_keys, PSY.EnergyReservoirStorage))
+            battery_constraints = entry_types(component_keys(constraint_keys, PSY.EnergyReservoirStorage))
+            @test PSI.ActivePowerOutVariable in battery_variables
+            @test PSI.ActivePowerInVariable in battery_variables
+            @test !(PSI.ActivePowerVariable in battery_variables)
+            @test PSI.RampConstraint in battery_constraints
+        end
     end
 
     @testset "the bid stack becomes per-band variables" begin
@@ -325,6 +356,20 @@ end
         mutate! = function (s)
             flatten_series!(s, "ER02", "ramp_down_rate", 0.0)
             flatten_series!(s, "ER02", "max_active_power", 0.0)
+            return s
+        end,
+    )
+    model = nem_dispatch_model(sys)
+    @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
+end
+
+@testset "the envelope check also names an inconsistent battery" begin
+    # Zero generation availability with a positive net INITIALMW and a zero down rate: the
+    # battery cannot ramp down to meet a ceiling of zero.
+    sys = nem_dispatch_system(;
+        mutate! = function (s)
+            flatten_series!(s, PSY.EnergyReservoirStorage, "BW01", "ramp_down_rate", 0.0)
+            flatten_storage_avail!(s, "BW01", "energy_max_avail", 0.0)
             return s
         end,
     )

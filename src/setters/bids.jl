@@ -42,7 +42,8 @@ Adds market bid cost time series data to the system.
 This function reads energy and price bid data for a specified date range from the
 database, converts it into piecewise `MarketBidCost` variable cost time series, and
 attaches it to `Generator` and `EnergyReservoirStorage` components (the latter also
-gets decremental/load-side bid costs).
+gets decremental/load-side bid costs, and each direction's energy `MAXAVAIL`, read back by
+[`get_storage_energy_max_avail`](@ref)).
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
@@ -101,8 +102,53 @@ function set_market_bids!(sys, db, date_range; kwargs...)
                 interval = get(kwargs, :resolution, Minute(5)),
             )
             set_decremental_initial_input!(sys, gen, time_series_decremental_initial_input)
+
+            _set_storage_energy_max_avail!(sys, gen, gen_bids, "energy_max_avail", start_date, resolution)
+            _set_storage_energy_max_avail!(sys, gen, load_bids, "energy_max_avail_decremental", start_date, resolution)
         end
     end
+end
+
+"""
+    _set_storage_energy_max_avail!(sys, storage, bids, name, start_date, resolution)
+
+Attaches `bids.MAXAVAIL` to `storage` as a `Deterministic` series `name`, per-unit of `sys`'s
+system base. No-op if any interval's `MAXAVAIL` is missing or not finite.
+
+# Returns
+`nothing`.
+"""
+function _set_storage_energy_max_avail!(sys, storage, bids, name::AbstractString, start_date, resolution)
+    all(x -> !ismissing(x) && isfinite(x), bids.MAXAVAIL) || return
+    add_time_series!(
+        sys, storage,
+        Deterministic(;
+            name = name,
+            data = Dict(start_date => Float64.(bids.MAXAVAIL) ./ get_base_power(sys)),
+            resolution = resolution,
+            interval = resolution,
+        ),
+    )
+    return
+end
+
+"""
+    get_storage_energy_max_avail(component, initial_time, horizon) -> Union{Nothing, NamedTuple}
+
+`component`'s energy bid `MAXAVAIL` for each direction, as attached by
+[`set_market_bids!`](@ref), `horizon` steps from `initial_time`, in `component`'s `System`'s
+current display units.
+
+# Returns
+`(gen = Vector{Float64}, load = Vector{Float64})`, or `nothing` unless both directions'
+series are attached.
+"""
+function get_storage_energy_max_avail(component, initial_time, horizon::Integer)
+    has_time_series(component, Deterministic, "energy_max_avail") || return nothing
+    has_time_series(component, Deterministic, "energy_max_avail_decremental") || return nothing
+    multiplier = _fcas_units_multiplier(component)
+    read(name) = get_time_series_values(Deterministic, component, name; start_time = initial_time, len = horizon) .* multiplier
+    return (gen = read("energy_max_avail"), load = read("energy_max_avail_decremental"))
 end
 
 """

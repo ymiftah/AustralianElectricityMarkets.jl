@@ -1,9 +1,9 @@
 """
     _nem_dispatch_devices(sys)
 
-Collects every `ThermalStandard`, `HydroDispatch` and `RenewableDispatch` in `sys` — the
-device types that [`set_nem_dispatch_limits!`](@ref) and [`set_nem_initial_conditions!`](@ref)
-apply to.
+Collects every `ThermalStandard`, `HydroDispatch`, `RenewableDispatch` and
+`EnergyReservoirStorage` in `sys` — the device types that [`set_nem_dispatch_limits!`](@ref)
+and [`set_nem_initial_conditions!`](@ref) apply to.
 
 # Arguments
 - `sys`: the `System` to collect from.
@@ -16,6 +16,7 @@ function _nem_dispatch_devices(sys)
     append!(devices, collect(get_components(ThermalStandard, sys)))
     append!(devices, collect(get_components(HydroDispatch, sys)))
     append!(devices, collect(get_components(RenewableDispatch, sys)))
+    append!(devices, collect(get_components(EnergyReservoirStorage, sys)))
     return devices
 end
 
@@ -54,25 +55,29 @@ end
 """
     set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates = false, kwargs...)
 
-Attaches four per-device `SingleTimeSeries` from [`read_dispatch_limits`](@ref) to every
-`ThermalStandard`, `HydroDispatch` and `RenewableDispatch` in `sys`: `"ramp_up_rate"` and
-`"ramp_down_rate"` (from `RAMPUPRATE`/`RAMPDOWNRATE`), `"initial_mw"` (from `INITIALMW`), and
-`"max_active_power"` (from `AVAILABILITY`) — the per-interval dispatch envelope NEMDE actually
-applied, replacing any `UIGF`- or bid-derived `"max_active_power"` series a device already
-carries.
+Attaches per-device `SingleTimeSeries` from [`read_dispatch_limits`](@ref) to every
+`ThermalStandard`, `HydroDispatch`, `RenewableDispatch` and `EnergyReservoirStorage` in `sys`:
+`"ramp_up_rate"` and `"ramp_down_rate"` (from `RAMPUPRATE`/`RAMPDOWNRATE`) and `"initial_mw"`
+(from `INITIALMW`, net MW for a battery). A `ThermalStandard`, `HydroDispatch` or
+`RenewableDispatch` also gets `"max_active_power"` (from `AVAILABILITY`) — the per-interval
+dispatch envelope NEMDE actually applied, replacing any `UIGF`- or bid-derived
+`"max_active_power"` series a device already carries. An `EnergyReservoirStorage` gets no
+`"max_active_power"` series: its per-direction availability is the energy bid `MAXAVAIL` series
+[`set_market_bids!`](@ref) attaches, read back by [`get_storage_energy_max_avail`](@ref).
 
 `"ramp_up_rate"`, `"ramp_down_rate"` and `"initial_mw"` are stored per-unit of `sys`'s system
 base, rates per minute. `"max_active_power"` follows PSY's native convention instead: data
 normalised by the device's own static `max_active_power` (read under `NATURAL_UNITS`), with
 `scaling_factor_multiplier = get_max_active_power`.
 
-A device with no `DISPATCHLOAD` rows in `date_range`, missing intervals, a `missing` rate,
-`INITIALMW` or `AVAILABILITY`, a negative `RAMPUPRATE`/`RAMPDOWNRATE`/`AVAILABILITY`, or a
-non-positive static `max_active_power` is a problem. A zero `RAMPUPRATE`, `RAMPDOWNRATE` or
-`AVAILABILITY` is carried through as-is: it is AEMO stating that the device cannot move, or
-cannot generate, in that interval. With `allow_missing_ramp_rates = false` (the default),
-every problem across every device is collected and raised as one aggregated `ArgumentError`
-naming the affected `DUID`s, and `sys` is left unmodified. With
+A device with no `DISPATCHLOAD` rows in `date_range`, missing intervals, a `missing` rate or
+`INITIALMW`, or a negative `RAMPUPRATE`/`RAMPDOWNRATE` is a problem; for a `ThermalStandard`,
+`HydroDispatch` or `RenewableDispatch`, a `missing` or negative `AVAILABILITY`, or a
+non-positive static `max_active_power`, is also a problem. A zero `RAMPUPRATE`,
+`RAMPDOWNRATE` or `AVAILABILITY` is carried through as-is: it is AEMO stating that the device
+cannot move, or cannot generate, in that interval. With `allow_missing_ramp_rates = false`
+(the default), every problem across every device is collected and raised as one aggregated
+`ArgumentError` naming the affected `DUID`s, and `sys` is left unmodified. With
 `allow_missing_ramp_rates = true`, one summary `@warn` is issued and series are attached only
 to the devices with complete, valid data.
 
@@ -100,12 +105,13 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
         String,
         @NamedTuple{
             initial_mw::Vector{Float64}, ramp_up_rate::Vector{Float64},
-            ramp_down_rate::Vector{Float64}, max_active_power::Vector{Float64},
+            ramp_down_rate::Vector{Float64}, max_active_power::Union{Nothing, Vector{Float64}},
         }
     }()
 
     for device in devices
         duid = get_name(device)
+        is_storage = device isa EnergyReservoirStorage
         if isnothing(by_duid) || !haskey(by_duid, (duid,))
             push!(problems, "$duid: no DISPATCHLOAD rows in $date_range")
             continue
@@ -120,36 +126,42 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
             continue
         end
 
-        static_max_active_power = with_units_base(() -> get_max_active_power(device), sys, "NATURAL_UNITS")
-        if static_max_active_power <= 0
-            push!(
-                problems,
-                "$duid: static max_active_power is $static_max_active_power — cannot normalise AVAILABILITY without dividing by zero",
-            )
-            continue
+        static_max_active_power = if is_storage
+            nothing
+        else
+            smap = with_units_base(() -> get_max_active_power(device), sys, "NATURAL_UNITS")
+            if smap <= 0
+                push!(
+                    problems,
+                    "$duid: static max_active_power is $smap — cannot normalise AVAILABILITY without dividing by zero",
+                )
+                continue
+            end
+            smap
         end
 
         initial_mw = Float64[]
         ramp_up_rate = Float64[]
         ramp_down_rate = Float64[]
-        max_active_power = Float64[]
+        max_active_power = is_storage ? nothing : Float64[]
         reason = nothing
         for t in full_grid
             row = by_time[t]
-            if ismissing(row.INITIALMW) || ismissing(row.RAMPUPRATE) || ismissing(row.RAMPDOWNRATE) || ismissing(row.AVAILABILITY)
-                reason = "missing INITIALMW/RAMPUPRATE/RAMPDOWNRATE/AVAILABILITY at $t"
+            if ismissing(row.INITIALMW) || ismissing(row.RAMPUPRATE) || ismissing(row.RAMPDOWNRATE) ||
+                    (!is_storage && ismissing(row.AVAILABILITY))
+                reason = "missing INITIALMW/RAMPUPRATE/RAMPDOWNRATE" * (is_storage ? "" : "/AVAILABILITY") * " at $t"
                 break
             elseif row.RAMPUPRATE < 0 || row.RAMPDOWNRATE < 0
                 reason = "negative RAMPUPRATE/RAMPDOWNRATE ($(row.RAMPUPRATE)/$(row.RAMPDOWNRATE)) at $t"
                 break
-            elseif row.AVAILABILITY < 0
+            elseif !is_storage && row.AVAILABILITY < 0
                 reason = "negative AVAILABILITY ($(row.AVAILABILITY)) at $t"
                 break
             end
             push!(initial_mw, row.INITIALMW)
             push!(ramp_up_rate, row.RAMPUPRATE)
             push!(ramp_down_rate, row.RAMPDOWNRATE)
-            push!(max_active_power, row.AVAILABILITY / static_max_active_power)
+            is_storage || push!(max_active_power, row.AVAILABILITY / static_max_active_power)
         end
         if !isnothing(reason)
             push!(problems, "$duid: $reason")
@@ -181,6 +193,7 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
             sys, device,
             SingleTimeSeries(; name = "initial_mw", data = TimeArray(full_grid, d.initial_mw ./ base_power)),
         )
+        isnothing(d.max_active_power) && continue
         # RenewableDispatch/HydroDispatch may already carry a "max_active_power" series from
         # set_renewable_pv!/set_renewable_wind!/set_hydro_limits! - add_time_series! throws on a
         # duplicate name, so the existing series is removed first, deterministically overwriting
@@ -202,8 +215,9 @@ end
 """
     set_nem_initial_conditions!(sys, db, interval; allow_missing_ramp_rates = false, kwargs...)
 
-Seeds `active_power` on every `ThermalStandard`, `HydroDispatch` and `RenewableDispatch` in
-`sys` from `DISPATCHLOAD.INITIALMW` at `interval`, via `PSY.set_active_power!`. This is the
+Seeds `active_power` on every `ThermalStandard`, `HydroDispatch`, `RenewableDispatch` and
+`EnergyReservoirStorage` in `sys` from `DISPATCHLOAD.INITIALMW` at `interval` (net MW for a
+battery), via `PSY.set_active_power!`. This is the
 convenience call for the chained ramp base mode, whose `DevicePower` initial condition is read
 from `active_power`; the metered ramp base mode instead reads the `"initial_mw"` time series
 attached by [`set_nem_dispatch_limits!`](@ref) at every interval.

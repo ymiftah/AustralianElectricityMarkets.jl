@@ -92,7 +92,20 @@
                         # Initial inputs
                         @test !isempty(get_time_series_array(Deterministic, bat, "incremental_initial_input"))
                         @test !isempty(get_time_series_array(Deterministic, bat, "decremental_initial_input"))
+
+                        # Energy MAXAVAIL per direction; the mock bids 100 + i MW on both sides,
+                        # rising with the interval index i.
+                        horizon = length(date_range) - 1
+                        avail = with_units_base(sys, "NATURAL_UNITS") do
+                            get_storage_energy_max_avail(bat, first(date_range), horizon)
+                        end
+                        @test !isnothing(avail)
+                        @test length(avail.gen) == horizon
+                        @test avail.gen ≈ avail.load
+                        @test all(x -> 100.0 <= x <= 149.0, avail.gen)
+                        @test avail.gen[end] > avail.gen[1]
                     end
+                    @test isnothing(get_storage_energy_max_avail(first(get_components(ThermalStandard, sys)), first(date_range), 1))
                 end
             end
         end
@@ -374,6 +387,28 @@
             end
         end
 
+        @testset "attaches ramp/initial series to a battery, with no max_active_power" begin
+            sys = deepcopy(sys_base)
+            set_nem_dispatch_limits!(sys, db, date_range)
+
+            battery = get_component(EnergyReservoirStorage, sys, "BW01")
+            @test !isnothing(battery)
+            for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw")
+                ta = get_time_series_array(SingleTimeSeries, battery, name)
+                @test length(ta) == length(date_range) - 1
+            end
+            # A battery's availability comes from its per-direction energy bid, not AVAILABILITY.
+            @test !has_time_series(battery, SingleTimeSeries, "max_active_power")
+
+            rows = sort(subset(truth, :DUID => ByRow(==("BW01"))), :SETTLEMENTDATE)
+            got_up = get_time_series_values(SingleTimeSeries, battery, "ramp_up_rate")
+            got_down = get_time_series_values(SingleTimeSeries, battery, "ramp_down_rate")
+            got_init = get_time_series_values(SingleTimeSeries, battery, "initial_mw")
+            @test isapprox(got_up, rows.RAMPUPRATE ./ base_power; atol = 1.0e-8)
+            @test isapprox(got_down, rows.RAMPDOWNRATE ./ base_power; atol = 1.0e-8)
+            @test isapprox(got_init, rows.INITIALMW ./ base_power; atol = 1.0e-8)
+        end
+
         @testset "values are per-unit of the system base, matching DISPATCHLOAD exactly" begin
             sys = deepcopy(sys_base)
             set_nem_dispatch_limits!(sys, db, date_range)
@@ -615,7 +650,7 @@
 
             short_range = start_date:resolution:(start_date + Minute(10))
             grid = collect(short_range)[1:(end - 1)]  # 3 intervals
-            duids = ["BW02", "BW03", "BW04", "ER01", "ER02"]
+            duids = ["BW01", "BW02", "BW03", "BW04", "ER01", "ER02"]
 
             rows = DataFrame(
                 SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
@@ -648,6 +683,10 @@
             sys = deepcopy(sys_base)
 
             @test_nowarn set_nem_dispatch_limits!(sys, zero_db, short_range)
+
+            battery = get_component(EnergyReservoirStorage, sys, "BW01")
+            @test has_time_series(battery, SingleTimeSeries, "ramp_up_rate")
+            @test !has_time_series(battery, SingleTimeSeries, "max_active_power")
 
             offline = get_component(ThermalStandard, sys, "ER01")
             @test all(
@@ -754,6 +793,17 @@
                 expected = only(subset(truth, :DUID => ByRow(==(duid))).INITIALMW)
                 @test isapprox(get_active_power(device), expected; atol = 1.0e-8)
             end
+        end
+
+        @testset "seeds active_power on a battery (net MW, NATURAL_UNITS)" begin
+            sys = deepcopy(sys_base)
+            set_units_base_system!(sys, "NATURAL_UNITS")
+            set_nem_initial_conditions!(sys, db, interval)
+
+            battery = get_component(EnergyReservoirStorage, sys, "BW01")
+            @test !isnothing(battery)
+            expected = only(subset(truth, :DUID => ByRow(==("BW01"))).INITIALMW)
+            @test isapprox(get_active_power(battery), expected; atol = 1.0e-8)
         end
 
         @testset "seeds active_power on a thermal, hydro and renewable unit (SYSTEM_BASE)" begin
