@@ -140,11 +140,14 @@ series at this point means the setter was never run for it. Every such device is
 before the constraint loop, rather than letting the parameter lookup fail mid-loop on an internal
 key.
 
-A ramp-down floor above the availability ceiling is infeasible. With rates, `INITIALMW` and
-`AVAILABILITY` all taken from the same `DISPATCHLOAD` row this cannot arise, so it signals
-inconsistent inputs and is reported at build rather than surfacing as a solver `INFEASIBLE` with
-no cause. The check applies only to the replay mode: the lookahead floor is the previous
-interval's dispatch, which is a variable.
+A ramp-down floor above `AVAILABILITY` is not an inconsistency: it is a real, recorded NEMDE
+outcome, and [ADR 0016](0016-dispatch-limits-follow-nemde.md) has the evidence. The device's
+upper dispatch limit is `AVAILABILITY` raised to that floor when it is higher, so the setter's
+own series never produce this condition; `_check_dispatch_envelope` remains as a guard against a
+hand-built series where the floor genuinely does exceed the upper dispatch limit, which is still
+infeasible and is reported at build rather than surfacing as a solver `INFEASIBLE` with no cause.
+The check applies only to the replay mode: the lookahead floor is the previous interval's
+dispatch, which is a variable.
 
 ### The market-bid hooks in `psi_compat.jl`
 

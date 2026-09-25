@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`set_nem_dispatch_limits!` stored `RAMPUPRATE`/`RAMPDOWNRATE` as MW per minute when AEMO
+  publishes them as MW per hour**: the `"ramp_up_rate"`/`"ramp_down_rate"` series it wrote, and
+  the `AustralianElectricityMarketsSimulations` formulation reading them, are documented as
+  per-minute, so every ramp band was 60 times too wide. The setter now divides both rates by 60
+  before per-unitising; the formulation's own per-interval scaling is unchanged.
+- **The dispatch envelope ignored AEMO's ramp-down floor**: `set_nem_dispatch_limits!`'s
+  `"max_active_power"` series, and `AustralianElectricityMarketsSimulations`'s `energy_bounds`,
+  capped a unit's upper dispatch limit at `AVAILABILITY` even when `INITIALMW - RAMPDOWNRATE ×
+  Δ` (Δ the interval in hours) was higher — a real, recorded NEMDE outcome, not an
+  inconsistency — making the model infeasible on real data. The upper dispatch limit is now
+  `AVAILABILITY` raised to that ramp-down floor when the floor is higher.
+- **`set_nem_dispatch_limits!`/`set_nem_initial_conditions!` demanded `DISPATCHLOAD` data for
+  unavailable units**: `_nem_dispatch_devices` selected every
+  `ThermalStandard`/`HydroDispatch`/`RenewableDispatch`/`EnergyReservoirStorage` regardless of
+  availability, so a unit `set_market_bids!` had already marked unavailable for having no bids
+  made the strict setter throw. Both setters now only require data for available devices.
+- **A battery's net ramp floor/ceiling could exceed its per-direction availability**: mirroring
+  the generator fix above, `_storage_dispatch_ceilings`
+  (`AustralianElectricityMarketsSimulations/src/nem_dispatch_storage.jl`) now raises the
+  generation-side ceiling to a net ramp-down floor above it, and the load-side ceiling to match a
+  net ramp-up ceiling below its negative, instead of leaving the two inconsistent and the model
+  infeasible.
 - **`GenericConstraint.rhs`/`"rhs"`/`"lhs"` time series, `FCASTrapezium`/`FCASBid`, and `InterconnectorLossModel` ignored the `System`'s units base**: every one of these stored raw MW as a
   literal field, so a `System` switched to `SYSTEM_BASE` (the default `PowerSystems.System` constructs unless told otherwise, and the base `AustralianElectricityMarketsSimulations` builds its
   optimization model in) reported native PSY device limits per-unit while these types kept reporting MW - an internally inconsistent `System`, confirmed directly by comparing
