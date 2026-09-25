@@ -17,6 +17,7 @@ using AustralianElectricityMarketsData
 using AustralianElectricityMarketsSimulations
 import PowerSimulations as PSI
 import PowerSystems as PSY
+import StorageSystemsSimulations
 
 const AEM = AustralianElectricityMarkets
 const AEMS = AustralianElectricityMarketsSimulations
@@ -258,12 +259,22 @@ end
         fcas_registered = String[]
         n_regulation_trapeziums = 0
         n_regulation_trapeziums_scaled = 0
+        n_two_sided_pairs = 0
+        n_agc_disabled_pairs = 0
+        raisereg_both_names = Dict{String, Vector{String}}()  # service name -> two-sided DUIDs
         horizon = Int(REAL_SPAN / REAL_RESOLUTION)
         for region in regions, bid_type in AEM.FCAS_BID_TYPES
             devices = AEM._fcas_service_devices(sys, region, bid_type)
-            devices = filter(d -> typeof(d) in dispatch_types, devices)
+            # A PSY.Storage device dispatches under StorageSystemsSimulations, not
+            # AbstractNEMDispatch, so it never appears in `dispatch_types`.
+            devices = filter(d -> typeof(d) in dispatch_types || d isa PSY.Storage, devices)
             isempty(devices) && continue
-            keep = filter(d -> AEMS._fcas_bid_direction(d, bid_type) == :incremental, devices)
+            keep = filter(devices) do d
+                direction = AEMS._fcas_bid_direction(d, bid_type)
+                direction == :incremental ||
+                    (direction == :decremental && d isa PSY.Storage) ||
+                    (direction == :both && d isa PSY.Storage && bid_type in AEM.FCAS_REGULATION_MARKETS)
+            end
             n_excluded += length(devices) - length(keep)
             isempty(keep) && continue
             name = "$(region)_$(string(bid_type))"
@@ -271,21 +282,44 @@ end
             push!(fcas_registered, name)
 
             # Count how many (device, t) regulation trapeziums AEMO's §4 scaling actually
-            # narrowed - contingency bid types are never scaled for a scheduled unit.
+            # narrowed - contingency bid types are never scaled for a scheduled unit. Also count
+            # two-sided battery (device, t) pairs and how many regulation (device, t) pairs
+            # AGCSTATUS = 0 disables.
             bid_type in AEM.FCAS_REGULATION_MARKETS || continue
+            both_names = String[]
             for d in keep
-                raw = get_fcas_trapezium(d, bid_type, REAL_START, horizon)
-                scaled = get_scaled_fcas_trapezium(d, bid_type, REAL_START, horizon)
-                n_regulation_trapeziums += length(raw)
-                n_regulation_trapeziums_scaled += count(
-                    i -> !isequal(Tuple(raw[i]), Tuple(scaled[i])), eachindex(raw),
-                )
+                direction = AEMS._fcas_bid_direction(d, bid_type)
+                for decremental in (direction == :both ? (false, true) : (direction == :decremental,))
+                    raw = get_fcas_trapezium(d, bid_type, REAL_START, horizon; decremental = decremental)
+                    scaled = get_scaled_fcas_trapezium(d, bid_type, REAL_START, horizon; decremental = decremental)
+                    n_regulation_trapeziums += length(raw)
+                    n_regulation_trapeziums_scaled += count(
+                        i -> !isequal(Tuple(raw[i]), Tuple(scaled[i])), eachindex(raw),
+                    )
+                end
+                direction == :both && (n_two_sided_pairs += horizon; push!(both_names, PSY.get_name(d)))
+
+                status = get_fcas_agc_status(d, REAL_START, horizon)
+                isnothing(status) || (n_agc_disabled_pairs += count(==(0), status))
             end
+            bid_type == BidType.RAISEREG && (raisereg_both_names[name] = both_names)
         end
 
         @test !isempty(fcas_registered)
 
+        set_storage_initial_mw!(sys, db, REAL_DATE_RANGE)
+
         fcas_template = aemsim_template(sys)
+        PSI.set_device_model!(
+            fcas_template,
+            PSI.DeviceModel(
+                PSY.EnergyReservoirStorage, StorageSystemsSimulations.StorageDispatchWithReserves;
+                attributes = Dict(
+                    "reservation" => true, "energy_target" => false,
+                    "cycling_limits" => false, "regularization" => false,
+                ),
+            ),
+        )
         for gc in buildable
             name = PSY.get_name(gc)
             PSI.set_service_model!(
@@ -324,12 +358,52 @@ end
         container = PSI.get_optimization_container(fcas_model)
         n_enabled_pairs = 0
         for name in fcas_registered
-            PSI.has_container_key(container, FCASCapacityVariable, FCASService, name) || continue
-            var = PSI.get_variable(container, FCASCapacityVariable(), FCASService, name)
-            n_enabled_pairs += count(k -> PSI.JuMP.upper_bound(var[k...]) > 0.0, Iterators.product(axes(var)...))
+            if PSI.has_container_key(container, FCASCapacityVariable, FCASService, name)
+                var = PSI.get_variable(container, FCASCapacityVariable(), FCASService, name)
+                n_enabled_pairs += count(k -> PSI.JuMP.upper_bound(var[k...]) > 0.0, Iterators.product(axes(var)...))
+            end
+            for side in ("gen", "load")
+                PSI.has_container_key(container, FCASSideCapacityVariable, FCASService, "$(name)_$side") || continue
+                var = PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "$(name)_$side")
+                n_enabled_pairs += count(k -> PSI.JuMP.upper_bound(var[k...]) > 0.0, Iterators.product(axes(var)...))
+            end
         end
         @test n_enabled_pairs > 0
 
-        @info "Real-data FCASMarket DecisionModel" build_time solve_time n_services = length(fcas_registered) n_excluded n_enabled_pairs n_regulation_trapeziums_scaled n_regulation_trapeziums
+        # Aggregate, report-only sanity check: at t=1, does this build's implied upper bound on
+        # each battery's total RAISEREG target (its own side bound(s), further capped by the
+        # §6.4 SCADA ramping constraint where attached) match AEMO's published
+        # RAISEREGACTUALAVAILABILITY? Not asserted - §6.1 joint ramping is not modelled, so a
+        # mismatch is expected wherever it would have bound the real dispatch.
+        raisereg_dispatch = filter(
+            :BIDTYPE => ==(BidType.RAISEREG), AEM.read_fcas_dispatch(db, REAL_DATE_RANGE),
+        )
+        raisereg_t1 = filter(:SETTLEMENTDATE => ==(REAL_START), raisereg_dispatch)
+        n_compared = 0
+        n_matched = 0
+        for (name, both_names) in raisereg_both_names
+            isempty(both_names) && continue
+            PSI.has_container_key(container, FCASBDURampingConstraint, FCASService, name) || continue
+            gen_var = PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "$(name)_gen")
+            load_var = PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "$(name)_load")
+            for duid in both_names
+                duid in axes(gen_var, 1) || continue
+                published_rows = filter(:DUID => ==(duid), raisereg_t1)
+                isempty(published_rows) && continue
+                published = only(published_rows.ACTUALAVAILABILITY)
+                ismissing(published) && continue
+                bound = PSI.JuMP.upper_bound(gen_var[duid, 1]) + PSI.JuMP.upper_bound(load_var[duid, 1])
+                ramp_cap = get_fcas_agc_ramp_capability(
+                    PSY.get_component(PSY.EnergyReservoirStorage, sys, duid), BidType.RAISEREG, REAL_START, 1,
+                )
+                isnothing(ramp_cap) || (bound = min(bound, ramp_cap[1]))
+                bound *= PSY.get_base_power(sys)
+                n_compared += 1
+                isapprox(bound, published; atol = 1.0) && (n_matched += 1)
+            end
+        end
+        raisereg_match_rate = n_compared > 0 ? n_matched / n_compared : NaN
+
+        @info "Real-data FCASMarket DecisionModel" build_time solve_time n_services = length(fcas_registered) n_excluded n_enabled_pairs n_regulation_trapeziums_scaled n_regulation_trapeziums n_two_sided_pairs n_agc_disabled_pairs n_compared n_matched raisereg_match_rate
     end
 end
