@@ -143,6 +143,75 @@ function read_dispatch_limits(db, date_range; intervention::Integer = 0)
 end
 
 """
+    read_fcas_scaling_inputs(db, date_range; intervention = 0)
+
+Reads per-interval, per-unit AEMO *FCAS Model in NEMDE* §4.1/§4.2 scaling inputs from
+`DISPATCHLOAD`: one row per `(SETTLEMENTDATE, DUID)` with `RAISEREGENABLEMENTMIN/MAX`,
+`LOWERREGENABLEMENTMIN/MAX` (the telemetered AGC enablement limits, already the more
+restrictive of bid and telemetered per AEMO's data model) and `RAMPUPRATE`/`RAMPDOWNRATE`
+(the telemetered AGC ramp rate, MW/h - the same column [`read_dispatch_limits`](@ref) reads
+for energy ramping).
+
+`intervention` selects the dispatch run: `0` is the normal (non-intervention) run
+(`INTERVENTION` is compared via `COALESCE(INTERVENTION, 0)` for partitions predating that
+column - see [`read_fcas_requirements`](@ref)).
+
+# Arguments
+- `db`: an `AEMDB` connection.
+- `date_range`: the dispatch intervals to read (half-open: `start <= t < stop`).
+- `intervention`: `0` for the pricing run, `1` for the physical run.
+
+# Returns
+A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `RAISEREGENABLEMENTMIN`, `RAISEREGENABLEMENTMAX`,
+`LOWERREGENABLEMENTMIN`, `LOWERREGENABLEMENTMAX`, `RAMPUPRATE`, `RAMPDOWNRATE`.
+"""
+function read_fcas_scaling_inputs(db, date_range; intervention::Integer = 0)
+    start_date = first(date_range)
+    end_date = last(date_range)
+    sd = Date(start_date) - Day(1)
+    ed = Date(end_date) + Day(1)
+
+    _table_is_cached(db, :DISPATCHLOAD) || throw(
+        ArgumentError(
+            "DISPATCHLOAD is not cached — run `populate(db, :DISPATCHLOAD, <from>, <to>)` first.",
+        ),
+    )
+    table = read_hive(db, :DISPATCHLOAD)
+    schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
+    scaling_cols = (
+        "RAISEREGENABLEMENTMIN", "RAISEREGENABLEMENTMAX",
+        "LOWERREGENABLEMENTMIN", "LOWERREGENABLEMENTMAX", "RAMPUPRATE", "RAMPDOWNRATE",
+    )
+    for col in scaling_cols
+        col in schema || throw(
+            ArgumentError(
+                "DISPATCHLOAD's cached partitions have no $col column at all — they predate " *
+                    "AEMO publishing it. Run `populate(db, :DISPATCHLOAD, <from>, <to>; force_new = true)` " *
+                    "to re-download.",
+            ),
+        )
+    end
+
+    params = Any[sd, ed]
+    _push_intervention!(params, schema, intervention)
+    select_list = join(["SETTLEMENTDATE", "DUID", (_cast_double(c) for c in scaling_cols)...], ", ")
+    df = _query(
+        db,
+        """
+        SELECT $select_list
+        FROM $table
+        WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(schema))
+        QUALIFY row_number() OVER (
+            PARTITION BY SETTLEMENTDATE, DUID ORDER BY archive_month DESC
+        ) = 1
+        """,
+        params,
+    )
+    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
+    return df
+end
+
+"""
     _uigf_rows(db, where_sql, params, intervention)
 
 Raw `(SETTLEMENTDATE, DUID, UIGF)` rows behind both [`read_uigf`](@ref) methods, deduplicating
