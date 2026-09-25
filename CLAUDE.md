@@ -21,6 +21,9 @@ via the `HiveConfiguration` struct (`filesystem = "file" | "s3" | "gs"`) — no 
 julia --project -e 'using Pkg; Pkg.test()'   # full suite; never hits the network
 julia --project=docs docs/make.jl            # Literate + Documenter/Vitepress
 pre-commit run -a                            # Runic + markdownlint + yamlfmt (CI "Linting" job)
+# Real-data integration suite: local only (not in Pkg.test or CI), reads ~/.nemdb_cache
+julia --project=AustralianElectricityMarketsSimulations/test \
+    AustralianElectricityMarketsSimulations/test/real_data/runtests.jl [hive_location]
 ```
 
 Julia 1.11 workspace: root, `test/`, and `docs/` share one Manifest.
