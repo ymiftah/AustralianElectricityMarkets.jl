@@ -73,4 +73,8 @@ end
     @testset "NEM dispatch on a toy PSCB system" begin
         include("nem_dispatch_toy.jl")
     end
+
+    @testset "FCAS market" begin
+        include("fcas_market.jl")
+    end
 end
