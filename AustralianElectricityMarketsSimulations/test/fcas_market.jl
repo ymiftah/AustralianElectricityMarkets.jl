@@ -2,7 +2,6 @@ using HiGHS
 using PowerSimulations
 import PowerSimulations as PSI
 import PowerSystems as PSY
-import StorageSystemsSimulations
 
 const FCAS_TOY_TOLERANCE = 1.0e-4
 
@@ -308,7 +307,7 @@ end
 """
     storage_fcas_toy_model(service_name, bid_type, trapezium_mw; decremental = false, energy_max_avail_mw = nothing)
 
-Builds the toy PSCB `DecisionModel` with BAT1, under `StorageDispatchWithReserves`, as the only
+Builds the toy PSCB `DecisionModel` with BAT1, under `NEMReplayDispatch`, as the only
 contributor to one [`FCASService`](@ref) bidding `trapezium_mw`. `energy_max_avail_mw = (gen,
 load)` attaches BAT1's energy `MAXAVAIL` series in MW, as [`set_market_bids!`](@ref) does.
 
@@ -343,6 +342,41 @@ function storage_fcas_toy_model(
             ),
         )
     end
+    # NEMReplayDispatch's own requirements: an energy MarketBidCost (cheap generation, worthless
+    # decremental so charging isn't attractive) and generous ramp rates from a zero net initial_mw
+    # - fixed thermal floor and generous ratings mean neither ever binds in these tests.
+    rating = get_output_active_power_limits(bat).max
+    set_operation_cost!(
+        bat, MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0),
+    )
+    set_incremental_variable_cost!(
+        sys, bat, PSY.SingleTimeSeries(;
+            name = "variable_cost",
+            data = PSY.TimeSeries.TimeArray(stamps, fill(PiecewiseStepData([0.0, rating], [1.0]), length(stamps))),
+        ), UnitSystem.NATURAL_UNITS,
+    )
+    set_incremental_initial_input!(
+        sys, bat, PSY.SingleTimeSeries(; name = "incremental_initial_input", data = PSY.TimeSeries.TimeArray(stamps, fill(0.0, length(stamps)))),
+    )
+    set_decremental_variable_cost!(
+        sys, bat, PSY.SingleTimeSeries(;
+            name = "decremental_variable_cost",
+            data = PSY.TimeSeries.TimeArray(stamps, fill(PiecewiseStepData([0.0, rating], [0.0]), length(stamps))),
+        ), UnitSystem.NATURAL_UNITS,
+    )
+    set_decremental_initial_input!(
+        sys, bat, PSY.SingleTimeSeries(; name = "decremental_initial_input", data = PSY.TimeSeries.TimeArray(stamps, fill(0.0, length(stamps)))),
+    )
+    base_power_bat = get_base_power(sys)
+    for name in ("ramp_up_rate", "ramp_down_rate")
+        PSY.add_time_series!(
+            sys, bat, PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, fill(1.0e4 / base_power_bat, length(stamps)))),
+        )
+    end
+    PSY.add_time_series!(
+        sys, bat, PSY.SingleTimeSeries(; name = "initial_mw", data = PSY.TimeSeries.TimeArray(stamps, fill(0.0, length(stamps)))),
+    )
+
     add_toy_fcas!(sys, bat, stamps[1], length(stamps), bid_type, trapezium_mw, [(10.0, 50.0)]; decremental = decremental)
     if !isnothing(energy_max_avail_mw)
         for (name, mw) in zip(("energy_max_avail", "energy_max_avail_decremental"), energy_max_avail_mw)
@@ -358,17 +392,8 @@ function storage_fcas_toy_model(
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = bid_type), [bat])
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
-    template = _t1_template()
-    PSI.set_device_model!(
-        template,
-        PSI.DeviceModel(
-            EnergyReservoirStorage, StorageSystemsSimulations.StorageDispatchWithReserves;
-            attributes = Dict(
-                "reservation" => true, "energy_target" => false,
-                "cycling_limits" => false, "regularization" => false,
-            ),
-        ),
-    )
+    template = _area_balance_template()
+    PSI.set_device_model!(template, EnergyReservoirStorage, NEMReplayDispatch)
     PSI.set_service_model!(
         template, service_name,
         PSI.ServiceModel(FCASService, FCASMarket, service_name; duals = [FCASJointCapacityConstraint]),
