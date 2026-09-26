@@ -157,47 +157,6 @@ function PSI.objective_function!(
 end
 
 """
-    PSI._add_variable_cost_to_objective!(container, ::PSI.ActivePowerOutVariable, component::PSY.Storage, cost_function::PSY.MarketBidCost, ::AbstractNEMDispatch)
-
-Override of `PowerSimulations.jl` 0.38.4's private market-bid hook: prices a battery's
-discharge on its incremental (`"variable_cost"`) offer curve.
-
-# Returns
-`nothing`.
-"""
-function PSI._add_variable_cost_to_objective!(
-        container::PSI.OptimizationContainer,
-        ::T,
-        component::PSY.Storage,
-        cost_function::PSY.MarketBidCost,
-        ::V,
-    ) where {T <: PSI.ActivePowerOutVariable, V <: AbstractNEMDispatch}
-    PSI.add_pwl_term!(false, container, component, cost_function, T(), V())
-    return
-end
-
-"""
-    PSI._add_variable_cost_to_objective!(container, ::PSI.ActivePowerInVariable, component::PSY.Storage, cost_function::PSY.MarketBidCost, ::AbstractNEMDispatch)
-
-Override of `PowerSimulations.jl` 0.38.4's private market-bid hook: prices a battery's charge
-on its decremental (`"decremental_variable_cost"`) offer curve, so a load bid band lowers the
-objective when cleared.
-
-# Returns
-`nothing`.
-"""
-function PSI._add_variable_cost_to_objective!(
-        container::PSI.OptimizationContainer,
-        ::T,
-        component::PSY.Storage,
-        cost_function::PSY.MarketBidCost,
-        ::V,
-    ) where {T <: PSI.ActivePowerInVariable, V <: AbstractNEMDispatch}
-    PSI.add_pwl_term!(true, container, component, cost_function, T(), V())
-    return
-end
-
-"""
     _add_storage_availability_constraints!(container, devices, model)
 
 Bounds each battery's `PowerSimulations.ActivePowerOutVariable`/`ActivePowerInVariable` above
