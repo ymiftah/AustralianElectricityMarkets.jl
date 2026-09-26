@@ -133,13 +133,13 @@ function loss_segments(model::InterconnectorLossModel, demand::AbstractDict)
     )
     return [
         (
-                from_mw = bps[i],
-                to_mw = bps[i + 1],
-                slope = (
-                    interconnector_losses(model, bps[i + 1], demand) -
+            from_mw = bps[i],
+            to_mw = bps[i + 1],
+            slope = (
+                interconnector_losses(model, bps[i + 1], demand) -
                     interconnector_losses(model, bps[i], demand)
-                ) / (bps[i + 1] - bps[i]),
-            )
+            ) / (bps[i + 1] - bps[i]),
+        )
             for i in 1:(length(bps) - 1)
     ]
 end

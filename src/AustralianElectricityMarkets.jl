@@ -26,6 +26,7 @@ export read_affine_heatrates,
     read_isp_renewable_costs_parameters,
     read_isp_fixed_opex, read_isp_variable_opex
 export set_demand!, set_renewable_pv!, set_renewable_wind!, set_market_bids!, set_hydro_limits!
+export get_storage_energy_max_avail
 export read_fcas_bids, set_fcas_bids!, read_fcas_requirements,
     read_fcas_prices, read_fcas_dispatch, read_prices, read_uigf
 export read_dispatch_limits, set_nem_dispatch_limits!, set_nem_initial_conditions!
