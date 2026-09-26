@@ -421,16 +421,16 @@ function _add_buses!(sys, bus_df)
     add_components!(sys, areas)
     buses = (
         ACBus(;
-                number = row[:bus_id],
-                name = row[:name],
-                base_voltage = row[:base_voltage],
-                bustype = row[:bustype],
-                angle = row[:angle],
-                magnitude = row[:magnitude],
-                area = get_component(Area, sys, row[:region]),
-                voltage_limits = (min = row[:voltage_limits_min], max = row[:voltage_limits_max]),
-                available = true,
-            ) for row in eachrow(bus_df)
+            number = row[:bus_id],
+            name = row[:name],
+            base_voltage = row[:base_voltage],
+            bustype = row[:bustype],
+            angle = row[:angle],
+            magnitude = row[:magnitude],
+            area = get_component(Area, sys, row[:region]),
+            voltage_limits = (min = row[:voltage_limits_min], max = row[:voltage_limits_max]),
+            available = true,
+        ) for row in eachrow(bus_df)
     )
     return add_components!(sys, buses)
 end
@@ -447,17 +447,17 @@ Adds branches to the system.
 function _add_branches!(sys, branch_df)
     lines = (
         Line(;
-                name = row[:name],
-                available = true,
-                active_power_flow = 0.0,
-                reactive_power_flow = 0.0,
-                arc = Arc(; from = get_bus(sys, row[:bus_from]), to = get_bus(sys, row[:bus_to])),
-                r = row[:r], # Per-unit
-                x = row[:x], # Per-unit
-                b = (from = row[:b] / 2, to = row[:b] / 2), # Per-unit
-                rating = row[:rate], # Line rating of 200 MVA / System base of 100 MVA
-                angle_limits = (min = -0.7, max = 0.7),
-            ) for row in eachrow(branch_df)
+            name = row[:name],
+            available = true,
+            active_power_flow = 0.0,
+            reactive_power_flow = 0.0,
+            arc = Arc(; from = get_bus(sys, row[:bus_from]), to = get_bus(sys, row[:bus_to])),
+            r = row[:r], # Per-unit
+            x = row[:x], # Per-unit
+            b = (from = row[:b] / 2, to = row[:b] / 2), # Per-unit
+            rating = row[:rate], # Line rating of 200 MVA / System base of 100 MVA
+            angle_limits = (min = -0.7, max = 0.7),
+        ) for row in eachrow(branch_df)
     )
     return add_components!(sys, lines)
 end
@@ -474,15 +474,15 @@ Adds loads to the system.
 function _add_loads!(sys, loads_df)
     loads = (
         PowerLoad(;
-                name = row[:name],
-                available = row[:available],
-                bus = get_bus(sys, row[:bus_id]),
-                active_power = row[:active_power], # Per-unitized by device base_power
-                reactive_power = 0.0, # Per-unitized by device base_power
-                base_power = BASE_POWER, # MVA
-                max_active_power = row[:max_active_power], # 10 MW per-unitized by device base_power
-                max_reactive_power = row[:max_active_power],
-            ) for row in eachrow(loads_df)
+            name = row[:name],
+            available = row[:available],
+            bus = get_bus(sys, row[:bus_id]),
+            active_power = row[:active_power], # Per-unitized by device base_power
+            reactive_power = 0.0, # Per-unitized by device base_power
+            base_power = BASE_POWER, # MVA
+            max_active_power = row[:max_active_power], # 10 MW per-unitized by device base_power
+            max_reactive_power = row[:max_active_power],
+        ) for row in eachrow(loads_df)
     )
     return add_components!(sys, loads)
 end
@@ -549,28 +549,28 @@ function _add_generation!(sys, gen_df)
     renewable = _fill_opex!(renewable, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians)
     renewable_components = (
         RenewableDispatch(;
-                name = row[:name],
-                available = row[:available],
-                bus = get_bus(sys, row[:bus_id]),
-                active_power = row[:active_power],
-                reactive_power = row[:reactive_power],
-                rating = row[:rating], # MW per-unitized by device base_power
-                prime_mover_type = row[:technology],
-                reactive_power_limits = nothing,  # (min = row[:reactive_power_limits_min], max = row[:reactive_power_limits_max]), # 0 MVAR to 0.25 MVAR per-unitized by device base_power
-                power_factor = 1.0,
-                operation_cost = RenewableGenerationCost(;
-                    # per ISP2025: "Wind and Large-scale Solar PV O&M costs are assumed to be included in the Fixed O&M costs"
-                    # so the variable cost below should be 0
-                    variable = CostCurve(LinearCurve(coalesce(row[:variable_opex_aud_mwh], 0.0), 0.0)),
-                    fixed = coalesce(row[:fixed_opex_aud_kw_year], 0.0) * row[:base_power] * 1000.0 / 8760.0,
-                ),
-                base_power = row[:base_power], # MVA
-                ext = Dict(
-                    "postcode" => row[:postcode],
-                    "station_name" => row[:station_name],
-                    "station_id" => row[:station_id],
-                ),
-            ) for row in eachrow(renewable)
+            name = row[:name],
+            available = row[:available],
+            bus = get_bus(sys, row[:bus_id]),
+            active_power = row[:active_power],
+            reactive_power = row[:reactive_power],
+            rating = row[:rating], # MW per-unitized by device base_power
+            prime_mover_type = row[:technology],
+            reactive_power_limits = nothing,  # (min = row[:reactive_power_limits_min], max = row[:reactive_power_limits_max]), # 0 MVAR to 0.25 MVAR per-unitized by device base_power
+            power_factor = 1.0,
+            operation_cost = RenewableGenerationCost(;
+                # per ISP2025: "Wind and Large-scale Solar PV O&M costs are assumed to be included in the Fixed O&M costs"
+                # so the variable cost below should be 0
+                variable = CostCurve(LinearCurve(coalesce(row[:variable_opex_aud_mwh], 0.0), 0.0)),
+                fixed = coalesce(row[:fixed_opex_aud_kw_year], 0.0) * row[:base_power] * 1000.0 / 8760.0,
+            ),
+            base_power = row[:base_power], # MVA
+            ext = Dict(
+                "postcode" => row[:postcode],
+                "station_name" => row[:station_name],
+                "station_id" => row[:station_id],
+            ),
+        ) for row in eachrow(renewable)
     )
     add_components!(sys, renewable_components)
 
@@ -580,34 +580,34 @@ function _add_generation!(sys, gen_df)
     hydro_with_costs = _fill_opex!(hydro, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians)
     hydro_components = (
         HydroDispatch(;
-                name = row[:name],
-                available = row[:available],
-                bus = get_bus(sys, row[:bus_id]),
-                active_power = row[:active_power],
-                reactive_power = row[:reactive_power],
-                rating = row[:rating],
-                prime_mover_type = row[:technology],
-                active_power_limits = (min = row[:min_active_power], max = row[:max_active_power]),
-                reactive_power_limits = nothing,
-                ramp_limits = (
-                    if isnothing(row[:max_ramp_up])
-                        nothing
+            name = row[:name],
+            available = row[:available],
+            bus = get_bus(sys, row[:bus_id]),
+            active_power = row[:active_power],
+            reactive_power = row[:reactive_power],
+            rating = row[:rating],
+            prime_mover_type = row[:technology],
+            active_power_limits = (min = row[:min_active_power], max = row[:max_active_power]),
+            reactive_power_limits = nothing,
+            ramp_limits = (
+                if isnothing(row[:max_ramp_up])
+                    nothing
                 else
-                        (up = row[:max_ramp_up], down = row[:max_ramp_down])
+                    (up = row[:max_ramp_up], down = row[:max_ramp_down])
                 end
-                ),
-                time_limits = nothing,
-                operation_cost = HydroGenerationCost(;
-                    variable = CostCurve(LinearCurve(coalesce(row[:variable_opex_aud_mwh], 0.0))),
-                    fixed = coalesce(row[:fixed_opex_aud_kw_year], 0.0) * row[:base_power] * 1000.0 / 8760.0,
-                ),
-                base_power = row[:base_power],
-                ext = Dict(
-                    "postcode" => row[:postcode],
-                    "station_name" => row[:station_name],
-                    "station_id" => row[:station_id],
-                ),
-            ) for row in eachrow(hydro_with_costs)
+            ),
+            time_limits = nothing,
+            operation_cost = HydroGenerationCost(;
+                variable = CostCurve(LinearCurve(coalesce(row[:variable_opex_aud_mwh], 0.0))),
+                fixed = coalesce(row[:fixed_opex_aud_kw_year], 0.0) * row[:base_power] * 1000.0 / 8760.0,
+            ),
+            base_power = row[:base_power],
+            ext = Dict(
+                "postcode" => row[:postcode],
+                "station_name" => row[:station_name],
+                "station_id" => row[:station_id],
+            ),
+        ) for row in eachrow(hydro_with_costs)
     )
     add_components!(sys, hydro_components)
 
@@ -628,46 +628,46 @@ function _add_generation!(sys, gen_df)
 
     thermal_components = (
         ThermalStandard(;
-                name = row[:name],
-                available = row[:available],
-                status = true,
-                bus = get_bus(sys, row[:bus_id]),
-                active_power = row[:active_power],
-                reactive_power = row[:reactive_power],
-                rating = row[:rating], # MW per-unitized by device base_power
-                active_power_limits = (min = row[:min_active_power], max = row[:max_active_power]), # 6 MW to 30 MW per-unitized by device base_power
-                reactive_power_limits = nothing, # Per-unitized by device base_power
-                ramp_limits = (
-                    if isnothing(row[:max_ramp_up])
-                        nothing # per-unitized by device base_power per minute
+            name = row[:name],
+            available = row[:available],
+            status = true,
+            bus = get_bus(sys, row[:bus_id]),
+            active_power = row[:active_power],
+            reactive_power = row[:reactive_power],
+            rating = row[:rating], # MW per-unitized by device base_power
+            active_power_limits = (min = row[:min_active_power], max = row[:max_active_power]), # 6 MW to 30 MW per-unitized by device base_power
+            reactive_power_limits = nothing, # Per-unitized by device base_power
+            ramp_limits = (
+                if isnothing(row[:max_ramp_up])
+                    nothing # per-unitized by device base_power per minute
                 else
-                        (up = row[:max_ramp_up], down = row[:max_ramp_down]) # per-unitized by device base_power per minute
+                    (up = row[:max_ramp_up], down = row[:max_ramp_down]) # per-unitized by device base_power per minute
                 end
-                ), # per-unitized by device base_power per minute
-                operation_cost = ThermalGenerationCost(;
-                    variable = FuelCurve(;
-                        value_curve = LinearCurve(
-                            row[:marginal_heat_rate_GJ_per_MWH],
-                            row[:no_load_heat_input_GJ_per_h]
-                        ),
-                        fuel_cost = row[:price_aud],
-                        vom_cost = LinearCurve(coalesce(row[:variable_opex_aud_mwh], 0.0)),
+            ), # per-unitized by device base_power per minute
+            operation_cost = ThermalGenerationCost(;
+                variable = FuelCurve(;
+                    value_curve = LinearCurve(
+                        row[:marginal_heat_rate_GJ_per_MWH],
+                        row[:no_load_heat_input_GJ_per_h]
                     ),
-                    fixed = coalesce(row[:fixed_opex_aud_kw_year], 0.0) * row[:base_power] * 1000.0 / 8760.0,
-                    start_up = 100.0,
-                    shut_down = 100.0
+                    fuel_cost = row[:price_aud],
+                    vom_cost = LinearCurve(coalesce(row[:variable_opex_aud_mwh], 0.0)),
                 ),
-                base_power = row[:base_power], # MVA
-                time_limits = (up = 8.0, down = 8.0), # Hours
-                must_run = false,
-                prime_mover_type = row[:technology],
-                fuel = row[:fuel_type],
-                ext = Dict(
-                    "postcode" => row[:postcode],
-                    "station_name" => row[:station_name],
-                    "station_id" => row[:station_id],
-                ),
-            ) for row in eachrow(thermal_with_costs)
+                fixed = coalesce(row[:fixed_opex_aud_kw_year], 0.0) * row[:base_power] * 1000.0 / 8760.0,
+                start_up = 100.0,
+                shut_down = 100.0
+            ),
+            base_power = row[:base_power], # MVA
+            time_limits = (up = 8.0, down = 8.0), # Hours
+            must_run = false,
+            prime_mover_type = row[:technology],
+            fuel = row[:fuel_type],
+            ext = Dict(
+                "postcode" => row[:postcode],
+                "station_name" => row[:station_name],
+                "station_id" => row[:station_id],
+            ),
+        ) for row in eachrow(thermal_with_costs)
     )
     add_components!(sys, thermal_components)
 
@@ -677,23 +677,23 @@ end
 function _add_batteries!(sys, batteries_df)
     battery_components = (
         EnergyReservoirStorage(;
-                name = row[:name],
-                available = row[:available],
-                bus = get_bus(sys, row[:bus_id]),
-                prime_mover_type = row[:prime_mover_type],
-                storage_technology_type = row[:storage_technology_type],
-                storage_capacity = row[:storage_capacity] / row[:base_power],
-                storage_level_limits = row[:storage_level_limits],
-                initial_storage_capacity_level = row[:initial_storage_capacity_level],
-                rating = row[:rating],
-                active_power = 0.0,
-                reactive_power = 0,
-                reactive_power_limits = (-1.0, 1.0),
-                efficiency = row[:efficiency],
-                base_power = row[:base_power],
-                input_active_power_limits = (0.0, 1.0),
-                output_active_power_limits = (0.0, 1.0),
-            ) for row in eachrow(batteries_df)
+            name = row[:name],
+            available = row[:available],
+            bus = get_bus(sys, row[:bus_id]),
+            prime_mover_type = row[:prime_mover_type],
+            storage_technology_type = row[:storage_technology_type],
+            storage_capacity = row[:storage_capacity] / row[:base_power],
+            storage_level_limits = row[:storage_level_limits],
+            initial_storage_capacity_level = row[:initial_storage_capacity_level],
+            rating = row[:rating],
+            active_power = 0.0,
+            reactive_power = 0,
+            reactive_power_limits = (-1.0, 1.0),
+            efficiency = row[:efficiency],
+            base_power = row[:base_power],
+            input_active_power_limits = (0.0, 1.0),
+            output_active_power_limits = (0.0, 1.0),
+        ) for row in eachrow(batteries_df)
     )
     return add_components!(sys, battery_components)
 end
@@ -701,31 +701,31 @@ end
 function _add_area_interfaces!(sys, interconnectors)
     interface_services = (
         TransmissionInterface(
-                name = row[:name],
-                available = row[:available],
-                active_power_flow_limits = (; min = 0.0, max = max(row[:max_flow_from], row[:max_flow_to]) / BASE_POWER),
-                violation_penalty = 1.0e5,
-                direction_mapping = Dict(row[:name] => 1),
-            ) for row in eachrow(interconnectors)
+            name = row[:name],
+            available = row[:available],
+            active_power_flow_limits = (; min = 0.0, max = max(row[:max_flow_from], row[:max_flow_to]) / BASE_POWER),
+            violation_penalty = 1.0e5,
+            direction_mapping = Dict(row[:name] => 1),
+        ) for row in eachrow(interconnectors)
     )
     add_components!(sys, interface_services)
 
     area_interchanges = (
         AreaInterchange(;
-                name = row[:name],
-                available = row[:available],
-                active_power_flow = 0.0,
-                from_area = get_component(Area, sys, row[:from_area]),
-                to_area = get_component(Area, sys, row[:to_area]),
-                flow_limits = (row[:max_flow_from] / BASE_POWER, row[:max_flow_to] / BASE_POWER),
-                # services=[get_component(TransmissionInterface, sys, row[:name])],
-                ext = Dict(
-                    "from_region_loss_factor" => row[:from_region_loss_factor],
-                    "loss_constant" => row[:loss_constant],
-                    "loss_flow_coefficient" => row[:loss_flow_coefficient],
-                    "ic_type" => row[:ic_type],
-                )
-            ) for row in eachrow(interconnectors)
+            name = row[:name],
+            available = row[:available],
+            active_power_flow = 0.0,
+            from_area = get_component(Area, sys, row[:from_area]),
+            to_area = get_component(Area, sys, row[:to_area]),
+            flow_limits = (row[:max_flow_from] / BASE_POWER, row[:max_flow_to] / BASE_POWER),
+            # services=[get_component(TransmissionInterface, sys, row[:name])],
+            ext = Dict(
+                "from_region_loss_factor" => row[:from_region_loss_factor],
+                "loss_constant" => row[:loss_constant],
+                "loss_flow_coefficient" => row[:loss_flow_coefficient],
+                "ic_type" => row[:ic_type],
+            )
+        ) for row in eachrow(interconnectors)
     )
     return add_components!(sys, area_interchanges)
 end
