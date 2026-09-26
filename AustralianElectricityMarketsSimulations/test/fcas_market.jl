@@ -128,6 +128,50 @@ function add_toy_storage_initial_mw!(sys, device, initial_timestamp, n::Integer,
 end
 
 """
+    _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
+
+Attaches `bat`'s `NEMReplayDispatch` requirements over `stamps`: a cheap generation-side and
+worthless load-side `MarketBidCost` (so charging is never attractive), generous ramp rates, and
+a zero net `"initial_mw"` - none of these ever bind in these tests, which fix the energy
+variables directly. Callers that need a specific `"initial_mw"` overwrite it afterwards, e.g.
+via [`add_toy_storage_initial_mw!`](@ref).
+"""
+function _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
+    rating = PSY.get_output_active_power_limits(bat).max
+    PSY.set_operation_cost!(
+        bat, PSY.MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0),
+    )
+    PSY.set_incremental_variable_cost!(
+        sys, bat, PSY.SingleTimeSeries(;
+            name = "variable_cost",
+            data = PSY.TimeSeries.TimeArray(stamps, fill(PSY.PiecewiseStepData([0.0, rating], [1.0]), length(stamps))),
+        ), PSY.UnitSystem.NATURAL_UNITS,
+    )
+    PSY.set_incremental_initial_input!(
+        sys, bat, PSY.SingleTimeSeries(; name = "incremental_initial_input", data = PSY.TimeSeries.TimeArray(stamps, fill(0.0, length(stamps)))),
+    )
+    PSY.set_decremental_variable_cost!(
+        sys, bat, PSY.SingleTimeSeries(;
+            name = "decremental_variable_cost",
+            data = PSY.TimeSeries.TimeArray(stamps, fill(PSY.PiecewiseStepData([0.0, rating], [0.0]), length(stamps))),
+        ), PSY.UnitSystem.NATURAL_UNITS,
+    )
+    PSY.set_decremental_initial_input!(
+        sys, bat, PSY.SingleTimeSeries(; name = "decremental_initial_input", data = PSY.TimeSeries.TimeArray(stamps, fill(0.0, length(stamps)))),
+    )
+    base_power = PSY.get_base_power(sys)
+    for name in ("ramp_up_rate", "ramp_down_rate")
+        PSY.add_time_series!(
+            sys, bat, PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, fill(1.0e4 / base_power, length(stamps)))),
+        )
+    end
+    PSY.add_time_series!(
+        sys, bat, PSY.SingleTimeSeries(; name = "initial_mw", data = PSY.TimeSeries.TimeArray(stamps, fill(0.0, length(stamps)))),
+    )
+    return
+end
+
+"""
     fcas_toy_template(sys, service_names)
 
 `NEMReplayDispatch`/`StaticPowerLoad` for the toy's devices, plus [`FCASMarket`](@ref) for each
@@ -774,7 +818,7 @@ unit's total RAISEREG target.
 """
 function _build_bdu_regulation(
         service_name, out_mw, in_mw;
-        reservation::Bool = true, agc_status::Union{Nothing, Int} = nothing,
+        agc_status::Union{Nothing, Int} = nothing,
         agc_max_avail::Union{Nothing, Float64} = nothing,
         storage_initial_mw::Union{Nothing, Float64} = nothing,
         agc_enablement_min::Union{Nothing, Float64} = nothing,
@@ -815,7 +859,9 @@ function _build_bdu_regulation(
     if !isnothing(agc_status)
         add_toy_fcas_agc_status!(sys, bat, stamps[1], length(stamps), agc_status)
     end
+    _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
     if !isnothing(storage_initial_mw)
+        PSY.remove_time_series!(sys, PSY.SingleTimeSeries, bat, "initial_mw")
         add_toy_storage_initial_mw!(sys, bat, stamps[1], length(stamps), storage_initial_mw)
     end
     if !isnothing(agc_max_avail) || !isnothing(agc_enablement_min) || !isnothing(agc_enablement_max)
@@ -828,17 +874,8 @@ function _build_bdu_regulation(
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG), [bat])
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
-    template = _t1_template()
-    PSI.set_device_model!(
-        template,
-        PSI.DeviceModel(
-            EnergyReservoirStorage, StorageSystemsSimulations.StorageDispatchWithReserves;
-            attributes = Dict(
-                "reservation" => reservation, "energy_target" => false,
-                "cycling_limits" => false, "regularization" => false,
-            ),
-        ),
-    )
+    template = _area_balance_template()
+    PSI.set_device_model!(template, EnergyReservoirStorage, NEMReplayDispatch)
     PSI.set_service_model!(
         template, service_name,
         PSI.ServiceModel(FCASService, FCASMarket, service_name; duals = [FCASJointCapacityConstraint]),
@@ -887,14 +924,14 @@ end
     end
 
     @testset "§6.4: the BDU SCADA ramping cap binds on the unit total, not each side alone" begin
-        # With the complementarity ("reservation") constraint off, Out and In are fixed to 15 MW
+        # NEMReplayDispatch has no charge/discharge exclusivity, so Out and In are fixed to 15 MW
         # each - well inside each side's own plateau (gen: [5, 20], load: [-20, -5]), so neither
         # side's own §6.3 slope form binds and each side's own capacity is bounded only by its
         # bid MaxAvail (10 MW each, 20 MW combined). AGC ramping capability of 12 MW/interval
         # (agc_max_avail, less restrictive than either side's own 10 MW bid MaxAvail, so §4.2
         # does not scale either trapezium) caps the unit total at 12 MW.
         container = _build_bdu_regulation(
-            "TAS1_RAISEREG_BDU_RAMP", 15.0, 15.0; reservation = false, agc_max_avail = 12.0,
+            "TAS1_RAISEREG_BDU_RAMP", 15.0, 15.0; agc_max_avail = 12.0,
         )
         @test fcas_unit_mw(container, "TAS1_RAISEREG_BDU_RAMP", "BAT1") ≈ 12.0 atol = FCAS_TOY_TOLERANCE
         @test fcas_side_mw(container, "TAS1_RAISEREG_BDU_RAMP", :gen, "BAT1") <= 10.0 + FCAS_TOY_TOLERANCE

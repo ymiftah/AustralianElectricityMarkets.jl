@@ -17,7 +17,6 @@ using AustralianElectricityMarketsData
 using AustralianElectricityMarketsSimulations
 import PowerSimulations as PSI
 import PowerSystems as PSY
-import StorageSystemsSimulations
 
 const AEM = AustralianElectricityMarkets
 const AEMS = AustralianElectricityMarketsSimulations
@@ -290,19 +289,7 @@ end
         # AGC telemetry is tighter than the bid for some units on any real window.
         @test n_regulation_trapeziums_scaled > 0
 
-        set_storage_initial_mw!(sys, db, REAL_DATE_RANGE)
-
         fcas_template = aemsim_template(sys)
-        PSI.set_device_model!(
-            fcas_template,
-            PSI.DeviceModel(
-                PSY.EnergyReservoirStorage, StorageSystemsSimulations.StorageDispatchWithReserves;
-                attributes = Dict(
-                    "reservation" => true, "energy_target" => false,
-                    "cycling_limits" => false, "regularization" => false,
-                ),
-            ),
-        )
         for gc in buildable
             name = PSY.get_name(gc)
             PSI.set_service_model!(
