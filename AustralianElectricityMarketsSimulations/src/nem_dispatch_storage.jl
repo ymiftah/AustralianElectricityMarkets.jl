@@ -157,12 +157,57 @@ function PSI.objective_function!(
 end
 
 """
+    _storage_dispatch_ceilings(container, devices, model)
+
+Per-direction dispatch ceilings for a battery: the generation-side and load-side energy bid
+ceilings from [`get_storage_energy_max_avail`](@ref), each raised on the net axis to the ramp
+floor a `NEMReplayDispatch` metered `"initial_mw"` chain requires — a net ramp-down floor above
+the generation ceiling raises it to that floor; a net ramp-up ceiling below the negative load
+ceiling raises the load ceiling to match.
+
+# Returns
+A `Dict{String}` mapping each covered device name to a `(gen, load)` `NamedTuple` of
+`Vector{Float64}`. A battery with no `MAXAVAIL` series attached is left out.
+"""
+function _storage_dispatch_ceilings(container, devices, model::PSI.DeviceModel{T}) where {T}
+    time_steps = PSI.get_time_steps(container)
+    initial_time = PSI.get_initial_time(container)
+    horizon = length(time_steps)
+    minutes = PSI._get_minutes_per_period(container)
+
+    is_replay = PSI.get_formulation(model) === NEMReplayDispatch &&
+        haskey(PSI.get_time_series_names(model), InitialPowerTimeSeriesParameter)
+    initial, initial_covered = is_replay ? _ts_parameter_accessor(container, InitialPowerTimeSeriesParameter, T) : (nothing, Set{String}())
+    down_rate, down_covered = is_replay ? _ts_parameter_accessor(container, RampDownRateTimeSeriesParameter, T) : (nothing, Set{String}())
+    up_rate, up_covered = is_replay ? _ts_parameter_accessor(container, RampUpRateTimeSeriesParameter, T) : (nothing, Set{String}())
+
+    ceilings = Dict{String, @NamedTuple{gen::Vector{Float64}, load::Vector{Float64}}}()
+    for d in devices
+        avail = get_storage_energy_max_avail(d, initial_time, horizon)
+        isnothing(avail) && continue
+        name = PSY.get_name(d)
+        gen = copy(avail.gen)
+        load = copy(avail.load)
+        if is_replay && name in initial_covered && name in down_covered && name in up_covered
+            for t in time_steps
+                floor_mw = JuMP.value(initial(name, t)) - JuMP.value(down_rate(name, t)) * minutes
+                ceiling_mw = JuMP.value(initial(name, t)) + JuMP.value(up_rate(name, t)) * minutes
+                gen[t] = max(gen[t], floor_mw)
+                load[t] = max(load[t], -ceiling_mw)
+            end
+        end
+        ceilings[name] = (gen = gen, load = load)
+    end
+    return ceilings
+end
+
+"""
     _add_storage_availability_constraints!(container, devices, model)
 
 Bounds each battery's `PowerSimulations.ActivePowerOutVariable`/`ActivePowerInVariable` above
-by [`get_storage_energy_max_avail`](@ref)'s per-direction energy bid `MAXAVAIL`, read once at
-build over the model's own window. A battery with no `MAXAVAIL` series attached is left
-unconstrained on both sides.
+by [`_storage_dispatch_ceilings`](@ref)'s per-direction ceilings, read once at build over the
+model's own window. A battery with no `MAXAVAIL` series attached is left unconstrained on both
+sides.
 
 # Returns
 `nothing`.
@@ -170,23 +215,12 @@ unconstrained on both sides.
 function _add_storage_availability_constraints!(container, devices, model::PSI.DeviceModel{T}) where {T}
     isempty(devices) && return
     time_steps = PSI.get_time_steps(container)
-    initial_time = PSI.get_initial_time(container)
-    horizon = length(time_steps)
     jump_model = PSI.get_jump_model(container)
     out = PSI.get_variable(container, PSI.ActivePowerOutVariable(), T)
     in_ = PSI.get_variable(container, PSI.ActivePowerInVariable(), T)
 
-    names = String[]
-    gen_ceiling = Dict{String, Vector{Float64}}()
-    load_ceiling = Dict{String, Vector{Float64}}()
-    for d in devices
-        avail = get_storage_energy_max_avail(d, initial_time, horizon)
-        isnothing(avail) && continue
-        name = PSY.get_name(d)
-        push!(names, name)
-        gen_ceiling[name] = avail.gen
-        load_ceiling[name] = avail.load
-    end
+    ceilings = _storage_dispatch_ceilings(container, devices, model)
+    names = collect(keys(ceilings))
     isempty(names) && return
 
     con_out = PSI.add_constraints_container!(
@@ -196,8 +230,8 @@ function _add_storage_availability_constraints!(container, devices, model::PSI.D
         container, PSI.ActivePowerVariableLimitsConstraint(), T, names, time_steps; meta = "in",
     )
     for name in names, t in time_steps
-        con_out[name, t] = JuMP.@constraint(jump_model, out[name, t] <= gen_ceiling[name][t])
-        con_in[name, t] = JuMP.@constraint(jump_model, in_[name, t] <= load_ceiling[name][t])
+        con_out[name, t] = JuMP.@constraint(jump_model, out[name, t] <= ceilings[name].gen[t])
+        con_in[name, t] = JuMP.@constraint(jump_model, in_[name, t] <= ceilings[name].load[t])
     end
     return
 end
@@ -264,7 +298,9 @@ function _storage_ramp_base_accessor(container, ::Type{NEMLookaheadDispatch}, ::
     return (name, t) -> t > 1 ? out[name, t - 1] - in_[name, t - 1] : out_ic[name] - in_ic[name]
 end
 
-# A ramp window that never reaches the availability envelope is infeasible; report it at build.
+# The net ramp floor/ceiling [`_storage_dispatch_ceilings`](@ref) raises the availability
+# envelope to can still exceed the device's own physical rating, independently of whatever the
+# submitted `MAXAVAIL` bid says; that combination is infeasible and is reported here, at build.
 function _check_storage_dispatch_envelope(container, devices, model)
     PSI.get_formulation(model) === NEMReplayDispatch || return
     haskey(PSI.get_time_series_names(model), InitialPowerTimeSeriesParameter) || return
@@ -272,8 +308,6 @@ function _check_storage_dispatch_envelope(container, devices, model)
     T = typeof(first(devices))
     time_steps = PSI.get_time_steps(container)
     minutes = PSI._get_minutes_per_period(container)
-    initial_time = PSI.get_initial_time(container)
-    horizon = length(time_steps)
     initial, initial_covered = _ts_parameter_accessor(container, InitialPowerTimeSeriesParameter, T)
     down_rate, down_covered = _ts_parameter_accessor(container, RampDownRateTimeSeriesParameter, T)
     up_rate, up_covered = _ts_parameter_accessor(container, RampUpRateTimeSeriesParameter, T)
@@ -281,21 +315,21 @@ function _check_storage_dispatch_envelope(container, devices, model)
     for d in devices
         name = PSY.get_name(d)
         all(name in c for c in (initial_covered, down_covered, up_covered)) || continue
-        avail = get_storage_energy_max_avail(d, initial_time, horizon)
-        isnothing(avail) && continue
+        gen_max = PSY.get_output_active_power_limits(d).max
+        load_max = PSY.get_input_active_power_limits(d).max
         for t in time_steps
             floor_mw = JuMP.value(initial(name, t)) - JuMP.value(down_rate(name, t)) * minutes
             ceiling_mw = JuMP.value(initial(name, t)) + JuMP.value(up_rate(name, t)) * minutes
-            if floor_mw > avail.gen[t] + _RAMP_FLOOR_TOLERANCE
+            if floor_mw > gen_max + _RAMP_FLOOR_TOLERANCE
                 push!(
                     problems,
-                    "$name at interval $t: ramp-down floor $floor_mw exceeds generation availability $(avail.gen[t])",
+                    "$name at interval $t: ramp-down floor $floor_mw exceeds the generation rating $gen_max",
                 )
                 break
-            elseif ceiling_mw < -avail.load[t] - _RAMP_FLOOR_TOLERANCE
+            elseif -ceiling_mw > load_max + _RAMP_FLOOR_TOLERANCE
                 push!(
                     problems,
-                    "$name at interval $t: ramp-up ceiling $ceiling_mw is below negative load availability $(-avail.load[t])",
+                    "$name at interval $t: negative ramp-up ceiling $(-ceiling_mw) exceeds the load rating $load_max",
                 )
                 break
             end

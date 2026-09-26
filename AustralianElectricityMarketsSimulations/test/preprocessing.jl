@@ -34,6 +34,14 @@
         max_avail = 100.0, min_load = 40.0, uigf = nothing, is_semi_scheduled = false,
     )
     @test b5.lower <= b5.upper
+
+    # A 90 MW ramp-down floor (100 MW start, 120 MW/h over 5 minutes) above an 80 MW MAXAVAIL.
+    b6 = energy_bounds(;
+        initial_mw = 100.0, ramp_up_rate = 0.0, ramp_down_rate = 120.0,
+        max_avail = 80.0, min_load = 0.0, uigf = nothing, is_semi_scheduled = false,
+    )
+    @test b6.upper ≈ 90.0
+    @test b6.lower ≈ 90.0
 end
 
 @testset "scale_trapezium" begin

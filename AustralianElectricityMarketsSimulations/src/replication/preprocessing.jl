@@ -2,8 +2,9 @@
     energy_bounds(; initial_mw, ramp_up_rate, ramp_down_rate, max_avail, min_load, uigf,
         is_semi_scheduled)
 
-Physical energy dispatch bounds for one unit in one interval, applied in NEMDE's order: ramp
-limits from `initial_mw`, then `MAXAVAIL`, then the UIGF weather ceiling for semi-scheduled
+Physical energy dispatch bounds for one unit in one interval, applied in NEMDE's order: the
+upper bound is the lesser of the ramp-up limit from `initial_mw` and the greater of `max_avail`
+and the ramp-down floor from `initial_mw`, then the UIGF weather ceiling for semi-scheduled
 units, then `MINIMUMLOAD` for an online unit.
 
 `uigf` caps semi-scheduled units unconditionally — `SEMIDISPATCHCAP = 0` means AEMO did not
@@ -21,14 +22,14 @@ function energy_bounds(;
         uigf::Union{Nothing, Float64},
         is_semi_scheduled::Bool,
     )
-    upper = initial_mw + ramp_up_rate * DISPATCH_INTERVAL_HOURS
-    lower = initial_mw - ramp_down_rate * DISPATCH_INTERVAL_HOURS
+    ramp_up_limit = initial_mw + ramp_up_rate * DISPATCH_INTERVAL_HOURS
+    ramp_down_floor = initial_mw - ramp_down_rate * DISPATCH_INTERVAL_HOURS
 
-    upper = min(upper, max_avail)
+    upper = min(ramp_up_limit, max(max_avail, ramp_down_floor))
     if is_semi_scheduled && !isnothing(uigf)
         upper = min(upper, uigf)
     end
-    lower = max(lower, 0.0)
+    lower = max(ramp_down_floor, 0.0)
     if initial_mw > 0.0 && min_load > 0.0
         lower = max(lower, min(min_load, upper))
     end

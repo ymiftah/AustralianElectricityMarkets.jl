@@ -2,8 +2,7 @@
     AbstractNEMDispatch
 
 Supertype for the NEM dispatch device formulations: a per-band bid stack, a per-interval ramp
-limit, and the `DISPATCHLOAD.AVAILABILITY` envelope, applied to one active power variable per
-device.
+limit, and the upper dispatch limit, applied to one active power variable per device.
 
 Methods are defined over `PowerSystems.StaticInjection`; a `PowerSimulations.ProblemTemplate`
 selects the component types they apply to. Subtypes differ only in what the ramp constraint
@@ -149,9 +148,9 @@ end
 """
     PSI.construct_device!(container, sys, ::PSI.ArgumentConstructStage, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
 
-Argument stage for [`AbstractNEMDispatch`](@ref): the active power variable, the availability envelope
-and ramp parameters, the per-band bid variables, and the device's contribution to the active
-power balance.
+Argument stage for [`AbstractNEMDispatch`](@ref): the active power variable, the upper dispatch
+limit and ramp parameters, the per-band bid variables, and the device's contribution to the
+active power balance.
 
 # Returns
 `nothing`.
@@ -201,8 +200,8 @@ end
 """
     PSI.construct_device!(container, sys, ::PSI.ModelConstructStage, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
 
-Model stage for [`AbstractNEMDispatch`](@ref): the availability envelope limits, the ramp constraint and
-the market-bid objective.
+Model stage for [`AbstractNEMDispatch`](@ref): the upper dispatch limit constraint, the ramp
+constraint and the market-bid objective.
 
 # Returns
 `nothing`.
@@ -239,8 +238,8 @@ end
     PSI.add_constraints!(container, ::Type{PSI.ActivePowerVariableLimitsConstraint}, U, devices, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
 
 Bounds an [`AbstractNEMDispatch`](@ref) device's active power above by its
-`PowerSimulations.ActivePowerTimeSeriesParameter`, which carries the `DISPATCHLOAD.AVAILABILITY`
-envelope.
+`PowerSimulations.ActivePowerTimeSeriesParameter`, which carries the device's upper dispatch
+limit: `AVAILABILITY`, raised to the ramp-down floor when that is higher.
 
 # Returns
 `nothing`.

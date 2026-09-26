@@ -380,6 +380,52 @@ end
     @test out.objective ≈ (5.0 * 20.0 - 5.0 * 30.0) * DISPATCH_INTERVAL_HOURS atol = TOY_TOLERANCE
 end
 
+@testset "a net ramp-down floor above generation availability raises the generation ceiling" begin
+    # INITIALMW = 20 (discharging); ramp_down = 1 MW/min over the 5-minute interval gives a net
+    # ramp-down floor of 20 - 5 = 15, above the battery's own 10 MW generation availability. The
+    # generation ceiling is raised to the floor, so the battery covers the full 15 MW load at its
+    # $5/MWh offer instead of being capped at 10 MW.
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 100.0)]; initial = 0.0, ramp_up = 100.0)],
+        15.0;
+        batteries = [
+            TOY_BATTERY => toy_battery(
+                100.0, 5.0, 100.0, 1.0;
+                initial = 20.0, ramp_up = 100.0, ramp_down = 1.0, gen_avail = 10.0,
+            ),
+        ],
+    )
+    out = solve_toy(sys)
+
+    @test out.battery_out_mw[TOY_BATTERY] ≈ 15.0 atol = TOY_TOLERANCE
+    @test out.battery_in_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
+    @test out.dispatch_mw[TOY_CHEAP] ≈ 0.0 atol = TOY_TOLERANCE
+    @test out.objective ≈ 15.0 * 5.0 * DISPATCH_INTERVAL_HOURS atol = TOY_TOLERANCE
+end
+
+@testset "a net ramp-up ceiling below negative load availability raises the load ceiling" begin
+    # INITIALMW = -20 (charging); ramp_up = 1 MW/min over the 5-minute interval gives a net
+    # ramp-up ceiling of -20 + 5 = -15, below the negative of the battery's own 10 MW load
+    # availability (-10). The load ceiling is raised to 15, so the battery charges the full 15 MW
+    # its $1000/MWh load bid values, off Alta's $20/MWh supply, instead of being capped at 10 MW.
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
+        0.0;
+        batteries = [
+            TOY_BATTERY => toy_battery(
+                100.0, 1.0, 100.0, 1000.0;
+                initial = -20.0, ramp_up = 1.0, ramp_down = 100.0, gen_avail = 0.0, load_avail = 10.0,
+            ),
+        ],
+    )
+    out = solve_toy(sys)
+
+    @test out.battery_in_mw[TOY_BATTERY] ≈ 15.0 atol = TOY_TOLERANCE
+    @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
+    @test out.dispatch_mw[TOY_CHEAP] ≈ 15.0 atol = TOY_TOLERANCE
+    @test out.objective ≈ (15.0 * 20.0 - 15.0 * 1000.0) * DISPATCH_INTERVAL_HOURS atol = TOY_TOLERANCE
+end
+
 @testset "a per-direction availability binding" begin
     @testset "discharge is capped by the generation-side MAXAVAIL, not the cheaper price" begin
         # The battery's $5/MWh offer is cheaper than Alta's $20/MWh, so it would fill first
