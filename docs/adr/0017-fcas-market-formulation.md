@@ -155,6 +155,23 @@ constraint is created" for an unenabled unit, while keeping the dense dual conta
 Not checked: AGC status (no telemetry in MMSDM) and the daily/profiled-energy pre-conditions (no
 data this package reads carries them).
 
+### Malformed offered trapeziums are rejected on read, as AEMO rejects them on submission
+
+AEMO validates an FCAS bid against the unit's registration (`BIDDUIDDETAILS`) when it is submitted
+and rejects a malformed one, so it never reaches NEMDE or `BIDPEROFFER_D`. A scan of every cached
+FCAS row (2025-01 to 2026-07, ~290M rows) found no row breaking
+`EnablementMin ≤ LowBreakpoint ≤ HighBreakpoint ≤ EnablementMax` or `MaxAvail ≥ 0` (§2 Figure 1).
+The same scan found 22 BDUs whose GEN regulation rows have `EnablementMin < 0` and LOAD rows
+`EnablementMax > 0` (e.g. TEMPB1 at ±111 MW), so §2.4's "generation side non-negative, load side
+non-positive" is not a submission rule; the §5 sign pre-condition handles those rows at dispatch.
+
+`_extract_fcas_bid` (on parse) and `get_fcas_trapezium` (on every read, catching hand-attached
+series) therefore throw on a broken ordering or a negative `MaxAvail`. Only the offered trapezium is
+checked: §4 scaling can legitimately push `EnablementMax` below `EnablementMin`, which the §5
+`EnablementMax ≥ EnablementMin` gate disables rather than rejects. The registration-envelope checks
+(enablement levels and slope angles within `BIDDUIDDETAILS`) are not replicated: that table is not
+cached.
+
 ### Collapsing the duplicate trapezium-slope arithmetic
 
 `AustralianElectricityMarketsSimulations/src/replication/preprocessing.jl` carried its own

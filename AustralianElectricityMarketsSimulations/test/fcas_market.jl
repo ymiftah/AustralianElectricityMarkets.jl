@@ -263,6 +263,36 @@ end
     @test lower6sec_cap(; with_raisereg = true) ≈ 9.0 atol = FCAS_TOY_TOLERANCE
 end
 
+@testset "a malformed offered trapezium is rejected before the build" begin
+    duid = TOY_CHEAP
+    service_name = "TAS1_RAISE6SEC"
+    sys = fcas_energy_toy_system(
+        2.0;
+        mutate! = (sys, stamps) -> begin
+            device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+            # HighBreakpoint (110) above EnablementMax (100).
+            add_toy_fcas!(
+                sys, device, stamps[1], length(stamps), BidType.RAISE6SEC,
+                (0.0, 0.0, 110.0, 100.0, 10.0), [(10.0, 10.0)],
+            )
+            PSY.add_service!(
+                sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC),
+                [device],
+            )
+        end,
+    )
+    device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+    err = try
+        get_fcas_trapezium(device, BidType.RAISE6SEC, TOY_START, 1)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("Malformed FCAS trapezium", err.msg)
+    @test occursin(duid, err.msg)
+end
+
 @testset "offer cost equals the hand-worked band cost" begin
     duid = TOY_CHEAP
     service_name = "TAS1_RAISE6SEC"

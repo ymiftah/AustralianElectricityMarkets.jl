@@ -90,6 +90,38 @@
         @test occursin("BW01", err.msg)
     end
 
+    @testset "_extract_fcas_bid rejects a malformed trapezium" begin
+        base_row = (
+            DIRECTION = "GEN", PRICEBANDARRAY = [10.0, 20.0], BANDAVAILARRAY = [5.0, 5.0],
+            DUID = "BW01", ENABLEMENTMIN = 10.0, LOWBREAKPOINT = 30.0, HIGHBREAKPOINT = 90.0,
+            ENABLEMENTMAX = 100.0, MAXAVAIL = 10.0, ROCUP = missing, ROCDOWN = missing,
+        )
+        # Well-formed, including the degenerate vertical and triangular shapes.
+        @test AustralianElectricityMarkets._extract_fcas_bid(base_row) isa Tuple
+        vertical = merge(base_row, (ENABLEMENTMIN = 0.0, LOWBREAKPOINT = 0.0, HIGHBREAKPOINT = 0.0, ENABLEMENTMAX = 0.0))
+        @test AustralianElectricityMarkets._extract_fcas_bid(vertical) isa Tuple
+        triangle = merge(base_row, (LOWBREAKPOINT = 50.0, HIGHBREAKPOINT = 50.0))
+        @test AustralianElectricityMarkets._extract_fcas_bid(triangle) isa Tuple
+
+        for bad in (
+                (LOWBREAKPOINT = 5.0,),                         # LowBreakpoint < EnablementMin
+                (LOWBREAKPOINT = 95.0,),                        # LowBreakpoint > HighBreakpoint
+                (HIGHBREAKPOINT = 110.0,),                      # HighBreakpoint > EnablementMax
+                (ENABLEMENTMIN = 120.0, LOWBREAKPOINT = 120.0), # EnablementMin > EnablementMax
+                (MAXAVAIL = -1.0,),
+            )
+            err = try
+                AustralianElectricityMarkets._extract_fcas_bid(merge(base_row, bad))
+                nothing
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            @test occursin("Malformed FCAS trapezium", err.msg)
+            @test occursin("BW01", err.msg)
+        end
+    end
+
     @testset "get_fcas_trapezium/get_fcas_offer_curve/get_fcas_bid" begin
         sys = nem_system(db, RegionalNetworkConfiguration())
         set_fcas_bids!(sys, db, date_range)

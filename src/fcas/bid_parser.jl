@@ -93,6 +93,8 @@ function _extract_fcas_bid(row)
         ramp_up_rate = ismissing(row.ROCUP) ? nothing : Float64(row.ROCUP),
         ramp_down_rate = ismissing(row.ROCDOWN) ? nothing : Float64(row.ROCDOWN),
     )
+    interval = hasproperty(row, :INTERVAL_DATETIME) ? " at $(row.INTERVAL_DATETIME)" : ""
+    _validate_fcas_trapezium(trapezium, "BIDPEROFFER_D DUID $(row.DUID) ($(row.DIRECTION))$interval")
     return curve_data, Tuple(trapezium)
 end
 
