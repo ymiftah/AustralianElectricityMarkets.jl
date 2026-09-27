@@ -430,6 +430,30 @@ end
     @test fcas_mw(container, service_name, "BAT1") ≈ 2.0 atol = FCAS_TOY_TOLERANCE
 end
 
+@testset "a Storage device's one-sided regulation reads that side's energy only" begin
+    # GEN-side RAISEREG on [0, 20]: while charging, the generation side's energy is 0, so the
+    # lower form 0 - 1.0×R >= 0 holds with R = 0 instead of forbidding the charge.
+    service_name = "TAS1_RAISEREG_STOR"
+    model, sys = storage_fcas_toy_model(service_name, BidType.RAISEREG, (0.0, 10.0, 15.0, 20.0, 10.0))
+    base_power = get_base_power(sys)
+    container = PSI.get_optimization_container(model)
+    out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), EnergyReservoirStorage)
+    in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)
+    for side in ("upper", "lower")
+        row = PSI.JuMP.constraint_object(
+            PSI.get_constraint(container, FCASJointCapacityConstraint(), FCASService, "$(service_name)_$side")["BAT1", 1],
+        )
+        @test haskey(row.func.terms, out_var["BAT1", 1])
+        @test !haskey(row.func.terms, in_var["BAT1", 1])
+    end
+    PSI.JuMP.fix(out_var["BAT1", 1], 0.0; force = true)
+    PSI.JuMP.fix(in_var["BAT1", 1], 6.0 / base_power; force = true)  # charging at 6 MW
+    maximize_and_solve!(container) do container
+        fcas_capacity(container, service_name)["BAT1", 1]
+    end
+    @test fcas_mw(container, service_name, "BAT1") ≈ 0.0 atol = FCAS_TOY_TOLERANCE
+end
+
 @testset "a Storage device's energy bid availability gates FCAS per side" begin
     AEMS = AustralianElectricityMarketsSimulations
     bat = get_component(EnergyReservoirStorage, augmented_pscb_system(), "BAT1")

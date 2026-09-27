@@ -1,4 +1,4 @@
-# 0017. `FCASMarket`: direct bid reads, two-sided joint capacity, net storage energy, §5 gating
+# 0017. `FCASMarket`: direct bid reads, two-sided joint capacity, storage energy terms, §5 gating
 
 ## Status
 
@@ -91,17 +91,21 @@ expression into the `@constraint`. This gives a real, keyed per-`(device, t)` co
 later PR (2.6's requirement terms, 2.8's elastic slack) can append to, rather than requiring it to
 reconstruct the LHS from scratch.
 
-### A `PSY.Storage` device's energy term is its net (out − in) dispatch, always
+### A `PSY.Storage` device's energy term: net on contingency, the bid side's own on regulation
 
 Real `BIDPEROFFER_D` data (2026-06-04) shows battery contingency FCAS bid with
 `DIRECTION = BIDIRECTIONAL`, against a trapezium on the **net** MW axis — `EnablementMin` runs
-negative (observed to −460 MW) on the charging side. `set_fcas_bids!` stores `GEN`/`BIDIRECTIONAL`
-rows as the incremental series and `LOAD` rows as decremental, but the *energy* term the joint
-capacity constraint reads is not "whichever direction the series came from" — it is always the net
-`ActivePowerOutVariable − ActivePowerInVariable`, for every FCAS market a `PSY.Storage` device
-provides, contingency or regulation. `_fcas_direction`'s incremental/decremental result still
-selects which trapezium/offer-curve series to read; it no longer selects which variable enters the
-constraint for a storage device.
+negative (observed to −460 MW) on the charging side. The contingency energy term is therefore the
+net `ActivePowerOutVariable − ActivePowerInVariable`.
+
+Regulation comes as separate `GEN` and `LOAD` rows, each a trapezium for one side of the unit
+(§2.4 Figures 6/7, §6.3 footnote 8). Each side's joint capacity rows read that side's own energy:
+`ActivePowerOutVariable` for a `GEN` (incremental) bid, `−ActivePowerInVariable` for a `LOAD`
+(decremental) one — as nempy does (`energy_and_regulation_capacity_constraints` takes the energy
+variable from the trapezium row's dispatch type; `variable_ids.py` gives load-side energy a −1
+coefficient). Using the net term on a one-sided regulation bid is wrong: a battery charging with a
+`GEN`-side RAISEREG trapezium on `[0, EnablementMax]` would face `net − LowerSlope·R ≥ 0`, which
+forbids charging outright even at `R = 0`, where the per-side term (`Out = 0`) just forces `R = 0`.
 
 ### The sign-swapped §6.2 form is unreachable — no scheduled-load device type exists yet
 
@@ -170,9 +174,10 @@ the local slope functions are gone; callers use root's accessors.
 - Both forms of the §6.2/§6.3 joint capacity constraint are built for every service, as two
   `FCASJointCapacityLHS` expressions and two `FCASJointCapacityConstraint` rows keyed
   `"<name>_upper"`/`"<name>_lower"`.
-- A `PSY.Storage` device's energy term is always its net `ActivePowerOutVariable −
-  ActivePowerInVariable`; a decremental bid on any other device type throws, since no scheduled-load
-  device type exists in this package yet.
+- A `PSY.Storage` device's energy term is its net `ActivePowerOutVariable −
+  ActivePowerInVariable` on contingency and the bid side's own energy on regulation; a decremental
+  bid on any other device type throws, since no scheduled-load device type exists in this package
+  yet.
 - The computable subset of §5's enablement pre-conditions gates each `(device, t)`'s
   `FCASCapacityVariable` to zero and its constraint rows to a vacuous `0.0 ≤ 1.0` pair.
 - `scale_trapezium` returns an `FCASTrapezium`; `EffectiveTrapezium` and the local

@@ -36,18 +36,22 @@ function _fcas_direction(device, bid_type::BidType)
 end
 
 """
-    _fcas_energy_terms(device, decremental) -> Vector{Tuple{DataType, Float64}}
+    _fcas_energy_terms(device, is_regulation, decremental) -> Vector{Tuple{DataType, Float64}}
 
-The `PSI.VariableType`s (and their sign) making up `device`'s FCAS "Energy Dispatch Target": the
-net `ActivePowerOutVariable - ActivePowerInVariable` for a `PSY.Storage` device, or
-`ActivePowerVariable` otherwise. Throws `ArgumentError` for a decremental (`LOAD`-direction) bid
-on a non-`Storage` device.
+The `PSI.VariableType`s (and their sign) making up `device`'s FCAS "Energy Dispatch Target": for a
+`PSY.Storage` device, the bid side's own energy on regulation (`ActivePowerOutVariable` for a
+generation-side bid, `-ActivePowerInVariable` for a load-side one) and the net
+`ActivePowerOutVariable - ActivePowerInVariable` on contingency; `ActivePowerVariable` otherwise.
+Throws `ArgumentError` for a decremental (`LOAD`-direction) bid on a non-`Storage` device.
 
 # Returns
 `Vector{Tuple{DataType, Float64}}` of `(VariableType, multiplier)` pairs.
 """
-function _fcas_energy_terms(device::PSY.Device, decremental::Bool)
-    device isa PSY.Storage && return [(PSI.ActivePowerOutVariable, 1.0), (PSI.ActivePowerInVariable, -1.0)]
+function _fcas_energy_terms(device::PSY.Device, is_regulation::Bool, decremental::Bool)
+    if device isa PSY.Storage
+        is_regulation || return [(PSI.ActivePowerOutVariable, 1.0), (PSI.ActivePowerInVariable, -1.0)]
+        return decremental ? [(PSI.ActivePowerInVariable, -1.0)] : [(PSI.ActivePowerOutVariable, 1.0)]
+    end
     decremental && throw(
         ArgumentError(
             "FCASMarket: \"$(PSY.get_name(device))\" ($(typeof(device))) has a decremental FCAS " *
@@ -58,8 +62,10 @@ function _fcas_energy_terms(device::PSY.Device, decremental::Bool)
 end
 
 "Adds `device`'s FCAS energy terms ([`_fcas_energy_terms`](@ref)) into `expr` at `(dname, t)`."
-function _add_fcas_energy_terms!(container, expr, device::PSY.Device, decremental::Bool, dname::AbstractString, t::Int)
-    for (var_type, multiplier) in _fcas_energy_terms(device, decremental)
+function _add_fcas_energy_terms!(
+        container, expr, device::PSY.Device, is_regulation::Bool, decremental::Bool, dname::AbstractString, t::Int,
+    )
+    for (var_type, multiplier) in _fcas_energy_terms(device, is_regulation, decremental)
         var = PSI.get_variable(container, var_type(), typeof(device))
         JuMP.add_to_expression!(expr, multiplier, var[dname, t])
     end
@@ -260,9 +266,9 @@ function PSI.construct_service!(
             )
             JuMP.set_upper_bound(var[dname, t], enabled ? max(get_max_avail(trap), 0.0) : 0.0)
 
-            _add_fcas_energy_terms!(container, upper_lhs[dname, t], device, decremental, dname, t)
+            _add_fcas_energy_terms!(container, upper_lhs[dname, t], device, is_regulation, decremental, dname, t)
             JuMP.add_to_expression!(upper_lhs[dname, t], get_upper_slope_coeff(trap), var[dname, t])
-            _add_fcas_energy_terms!(container, lower_lhs[dname, t], device, decremental, dname, t)
+            _add_fcas_energy_terms!(container, lower_lhs[dname, t], device, is_regulation, decremental, dname, t)
             JuMP.add_to_expression!(lower_lhs[dname, t], -get_lower_slope_coeff(trap), var[dname, t])
         end
     end
