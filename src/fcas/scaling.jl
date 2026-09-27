@@ -7,7 +7,9 @@ enablement limits (§4.1) and AGC ramping capability (§4.2) for a regulation tr
 (`is_regulation`), and the UIGF ceiling (§4.3) for a semi-scheduled unit. Each bound is
 replaced only when the corresponding input is more restrictive than the bid's own value, and
 the paired breakpoint slides to keep that side's slope angle (`low_breakpoint` with
-`enablement_min`, `high_breakpoint` with `enablement_max`) equal to the bid's.
+`enablement_min`, `high_breakpoint` with `enablement_max`) equal to the bid's. The breakpoints are
+never clamped, so a squeezed result can have `high_breakpoint < low_breakpoint` (a trapezium whose
+peak lies below `max_avail`) or `enablement_max < enablement_min` (no feasible FCAS).
 
 A `nothing` or `0.0` `agc_enablement_min`, `agc_enablement_max` or `agc_max_avail` is treated
 as absent: no scaling on that leg. `uigf` has no such exemption — `0.0` clamps `enablement_max`
@@ -54,11 +56,8 @@ function scale_fcas_trapezium(
     end
     isnothing(uigf) || (new_enablement_max = min(new_enablement_max, uigf))
 
-    # A trapezium narrowed past its own enablement span can't be represented; clamp rather
-    # than invert.
-    new_enablement_max = max(new_enablement_max, new_enablement_min)
     new_low_breakpoint = new_enablement_min + lower_slope * new_max_avail
-    new_high_breakpoint = max(new_enablement_max - upper_slope * new_max_avail, new_low_breakpoint)
+    new_high_breakpoint = new_enablement_max - upper_slope * new_max_avail
 
     return FCASTrapezium(;
         enablement_min = new_enablement_min, low_breakpoint = new_low_breakpoint,

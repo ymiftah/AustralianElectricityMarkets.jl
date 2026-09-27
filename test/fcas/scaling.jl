@@ -107,7 +107,17 @@
         @testset "zero UIGF is NOT treated as absent: clamps EnablementMax to zero" begin
             eff = scale_fcas_trapezium(bid; uigf = 0.0, is_regulation = false)
             @test get_enablement_max(eff) == 0.0
-            @test get_high_breakpoint(eff) == 0.0
+            # The high breakpoint slides past the low one: the upper slope still forces zero
+            # FCAS at zero output (E + UpperSlope·X <= 0).
+            @test get_high_breakpoint(eff) == -20.0
+            @test get_upper_slope_coeff(eff) ≈ get_upper_slope_coeff(bid)
+        end
+
+        @testset "a squeezed trapezium keeps both slopes rather than clamping its breakpoints" begin
+            eff = scale_fcas_trapezium(bid; uigf = 10.0, is_regulation = false)
+            @test trap_tuple(eff) == (0.0, 0.0, -10.0, 10.0, 20.0)
+            @test get_lower_slope_coeff(eff) ≈ get_lower_slope_coeff(bid)
+            @test get_upper_slope_coeff(eff) ≈ get_upper_slope_coeff(bid)
         end
     end
 

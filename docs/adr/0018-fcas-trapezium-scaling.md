@@ -105,6 +105,12 @@ per interval (the same convention as the constraint-term reader's `DUDETAILSUMMA
   sequence (each step alone provably preserves the other's slope, since a step that moves an
   enablement bound shifts its paired breakpoint by the same delta, leaving the slope ratio
   unchanged), but computed in one pass rather than three intermediate `FCASTrapezium`s.
+  The breakpoints are never clamped. A squeezed trapezium can come out with `HighBreakpoint <
+  LowBreakpoint` or `EnablementMax < EnablementMin`; `FCASMarket` rebuilds the slope coefficients
+  from the scaled breakpoints, so clamping them (as an earlier version did) flattened the slopes
+  and enabled FCAS NEMDE would not - e.g. a solar farm with UIGF 0 was given its full `MaxAvail`
+  at zero output. nempy's scaling also shifts without clamping. The §5 `EnablementMax ≥
+  EnablementMin` gate disables the empty case.
 - `set_fcas_scaling_inputs!(sys, db, date_range)` (`src/setters/fcas_scaling.jl`) attaches six
   per-device `SingleTimeSeries` (`"fcas_agc_enablement_min/max_RAISEREG/LOWERREG"`,
   `"fcas_agc_max_avail_RAISEREG/LOWERREG"`, MW/h ramp rates converted to MW over the interval by
