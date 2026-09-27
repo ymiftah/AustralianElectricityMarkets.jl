@@ -28,6 +28,22 @@ julia --project=AustralianElectricityMarketsSimulations/test \
 
 Julia 1.11 workspace: root, `test/`, and `docs/` share one Manifest.
 
+**Run only the test groups your change touches, not the full suite.** Both runners take group
+names (listed in `TEST_GROUPS` at the top of each `runtests.jl`; no arguments runs everything):
+
+```bash
+julia --project -e 'using Pkg; Pkg.test(; test_args = ["fcas", "timeseries_setters"])'
+julia --project=AustralianElectricityMarketsSimulations/test \
+    AustralianElectricityMarketsSimulations/test/runtests.jl fcas_market preprocessing
+```
+
+Pick the groups whose test file covers the source you edited (e.g. `src/fcas/` → `fcas`,
+`fcas_scaling`, `fcas_service`; `…Simulations/src/fcas_market.jl` → `fcas_market`). Run the full
+suite only for cross-cutting changes (shared fixtures, runner, dependencies) or before opening a
+PR. Use absolute paths when launching Julia from a backgrounded subshell. Shared test fixtures
+live in `…Simulations/test/toy_fixture.jl` and `template_helpers.jl`, which the runner always
+loads, so each group runs on its own.
+
 ## Layout
 
 | Path | Role |
