@@ -302,6 +302,17 @@ end
 
     @test (o2 - o0) ≈ interval_cost_coefficient(10.0) * 2.0 atol = FCAS_TOY_TOLERANCE
     @test (o3 - o2) ≈ interval_cost_coefficient(30.0) * 1.0 atol = FCAS_TOY_TOLERANCE
+
+    # The band cost follows the container's resolution, not a fixed 5 minutes.
+    container = build_fcas(sys, [service_name])
+    PSI.set_resolution!(container.settings, Minute(30))
+    jm = PSI.get_jump_model(container)
+    capacity = PSI.JuMP.@variable(jm)
+    curve = PSY.PiecewiseStepData([0.0, 2.0 / base_power], [10.0])
+    AustralianElectricityMarketsSimulations._add_fcas_offer_cost!(container, duid, 1, capacity, curve)
+    band_var = last(PSI.JuMP.all_variables(jm))
+    invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
+    @test PSI.JuMP.coefficient(invariant, band_var) ≈ base_power * 10.0 * 0.5
 end
 
 """

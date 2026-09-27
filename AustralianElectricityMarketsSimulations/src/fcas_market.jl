@@ -281,7 +281,8 @@ end
 Adds `capacity_var`'s offer cost under `curve` (a `PSY.PiecewiseStepData` of cumulative-MW
 bands with non-decreasing per-band prices) to the objective, via one bounded band variable per
 band summing to `capacity_var`. Band quantities are per-unit of the system base and prices are
-`\$/MW`, so each coefficient is scaled by `PSI.get_base_power(container)`.
+`\$/MW` per hour, so each coefficient is scaled by `PSI.get_base_power(container)` and the
+container's resolution in hours.
 
 # Returns
 `nothing`.
@@ -294,13 +295,14 @@ function _add_fcas_offer_cost!(
     n_bands = length(y)
     n_bands == 0 && return
     base_power = PSI.get_base_power(container)
+    resolution = PSI.get_resolution(container)
     jm = PSI.get_jump_model(container)
     bands = JuMP.@variable(
         jm, [i = 1:n_bands], base_name = "FCASOfferBandVariable_$(dname)_{$t}",
         lower_bound = 0.0, upper_bound = x[i + 1] - x[i],
     )
     JuMP.@constraint(jm, sum(bands) == capacity_var)
-    cost = base_power * sum(interval_cost_coefficient(y[i]) * bands[i] for i in 1:n_bands)
+    cost = base_power * sum(interval_cost_coefficient(y[i], resolution) * bands[i] for i in 1:n_bands)
     PSI.add_to_objective_invariant_expression!(container, cost)
     return
 end

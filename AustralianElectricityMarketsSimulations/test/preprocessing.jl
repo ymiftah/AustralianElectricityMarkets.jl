@@ -7,6 +7,15 @@
     @test b.upper ≈ 60.0
     @test b.lower ≈ 40.0
 
+    # Same unit over a 30-minute interval: ±60 MW.
+    b30 = energy_bounds(;
+        initial_mw = 50.0, ramp_up_rate = 120.0, ramp_down_rate = 120.0,
+        max_avail = 200.0, min_load = 0.0, uigf = nothing, is_semi_scheduled = false,
+        resolution = Minute(30),
+    )
+    @test b30.upper ≈ 110.0
+    @test b30.lower ≈ 0.0
+
     # MAXAVAIL clips below the ramp ceiling.
     b2 = energy_bounds(;
         initial_mw = 50.0, ramp_up_rate = 120.0, ramp_down_rate = 120.0,

@@ -33,7 +33,7 @@ include("check/fcas.jl")
 include("replication/inputs.jl")
 include("replication/preprocessing.jl")
 
-export DISPATCH_INTERVAL_HOURS, interval_cost_coefficient
+export DISPATCH_INTERVAL_HOURS, DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
 export IntervalInputs, read_interval_inputs
 export energy_bounds
 export scale_trapezium
