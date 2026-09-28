@@ -172,7 +172,9 @@ so the check cannot be a build-time gate there. Both checks are skipped after th
 AEMO applies the telemetry-based steps over different intervals in each process (§4.4 Table 1,
 §6.5 Table 3). `_fcas_process` reads the process off the device formulation and the model's
 resolution: `NEMReplayDispatch` is dispatch; `NEMLookaheadDispatch` is 5-minute pre-dispatch at a
-5-minute resolution and 30-minute pre-dispatch at a longer one.
+5-minute resolution and 30-minute pre-dispatch at a longer one. Dispatch replay is the target; the
+pre-dispatch mapping follows AEMO's tables but is not validated against published pre-dispatch
+outcomes.
 
 | Step | Dispatch | 5-minute pre-dispatch | 30-minute pre-dispatch |
 | --- | --- | --- | --- |
