@@ -84,23 +84,36 @@ function _add_fcas_energy_terms!(
 end
 
 """
-    _fcas_series(container, device, bid_type, decremental) -> (trapeziums, curves)
+    _fcas_series(container, devices_template, device, bid_type, decremental) -> (trapeziums, curves)
 
 `device`'s FCAS trapezium and offer-curve series for `bid_type`, one entry per
 `PSI.get_time_steps(container)`, read via
 [`get_scaled_fcas_trapezium`](@ref)/[`get_fcas_offer_curve`](@ref). The trapezium is AEMO
 *FCAS Model in NEMDE* §4's scaled/effective trapezium wherever `device` carries the scaling
-input series ([`set_fcas_scaling_inputs!`](@ref)); otherwise it is the bid trapezium unscaled.
+input series ([`set_fcas_scaling_inputs!`](@ref)), with the AGC ramping capability taken over the
+container's resolution and the AGC inputs applied to the first interval only under
+[`NEMLookaheadDispatch`](@ref); otherwise it is the bid trapezium unscaled.
 
 # Returns
 `(trapeziums::Vector{FCASTrapezium}, curves::Vector{PSY.PiecewiseStepData})`.
 """
-function _fcas_series(container::PSI.OptimizationContainer, device, bid_type::BidType, decremental::Bool)
+function _fcas_series(
+        container::PSI.OptimizationContainer, devices_template, device, bid_type::BidType, decremental::Bool,
+    )
     initial_time = PSI.get_initial_time(container)
     horizon = length(PSI.get_time_steps(container))
-    trapeziums = get_scaled_fcas_trapezium(device, bid_type, initial_time, horizon; decremental = decremental)
-    curves = get_fcas_offer_curve(device, bid_type, initial_time, horizon; decremental = decremental)
-    return trapeziums, curves
+    trapeziums = get_scaled_fcas_trapezium(
+        device, bid_type, initial_time, horizon; decremental = decremental,
+        resolution = PSI.get_resolution(container),
+        agc_first_interval_only = _fcas_telemetry_first_interval_only(devices_template, device),
+    )
+    return trapeziums, _fcas_offer_curves(container, device, bid_type, decremental)
+end
+
+"`device`'s FCAS offer curves for `bid_type`, one per `PSI.get_time_steps(container)` ([`get_fcas_offer_curve`](@ref))."
+function _fcas_offer_curves(container::PSI.OptimizationContainer, device, bid_type::BidType, decremental::Bool)
+    horizon = length(PSI.get_time_steps(container))
+    return get_fcas_offer_curve(device, bid_type, PSI.get_initial_time(container), horizon; decremental = decremental)
 end
 
 """
@@ -189,15 +202,16 @@ function _fcas_enabled(
 end
 
 """
-    _fcas_initial_mw_first_interval_only(devices_template, device) -> Bool
+    _fcas_telemetry_first_interval_only(devices_template, device) -> Bool
 
 Whether `device`'s dispatch model is [`NEMLookaheadDispatch`](@ref), whose later intervals start
-from the model's own dispatch rather than a metered `INITIALMW`.
+from the model's own dispatch, so telemetered inputs (`INITIALMW`, AGC limits) apply to the first
+interval only.
 
 # Returns
 `Bool`.
 """
-function _fcas_initial_mw_first_interval_only(devices_template, device::PSY.Device)
+function _fcas_telemetry_first_interval_only(devices_template, device::PSY.Device)
     for model in values(devices_template)
         PSI.get_component_type(model) == typeof(device) || continue
         return PSI.get_formulation(model) <: NEMLookaheadDispatch
@@ -223,9 +237,9 @@ function _fcas_enabled_mask(
     initial_time = PSI.get_initial_time(container)
     time_steps = PSI.get_time_steps(container)
     horizon = length(time_steps)
-    trapeziums, curves = _fcas_series(container, device, bid_type, decremental)
+    trapeziums, curves = _fcas_series(container, devices_template, device, bid_type, decremental)
     initial_mw = get_initial_mw(device, initial_time, horizon)
-    first_only = _fcas_initial_mw_first_interval_only(devices_template, device)
+    first_only = _fcas_telemetry_first_interval_only(devices_template, device)
     availability = if device isa PSY.Storage
         get_storage_energy_max_avail(device, initial_time, horizon)
     else
@@ -322,7 +336,7 @@ function PSI.construct_service!(
     for device in devices
         dname = PSY.get_name(device)
         decremental = _fcas_direction(device, bid_type)
-        trapeziums, _ = _fcas_series(container, device, bid_type, decremental)
+        trapeziums, _ = _fcas_series(container, devices_template, device, bid_type, decremental)
         enabled = _fcas_enabled_mask(container, devices_template, device, bid_type, decremental)
         for t in time_steps
             trap = trapeziums[t]
@@ -395,7 +409,7 @@ function PSI.objective_function!(
     for device in devices
         dname = PSY.get_name(device)
         decremental = _fcas_direction(device, bid_type)
-        _, curves = _fcas_series(container, device, bid_type, decremental)
+        curves = _fcas_offer_curves(container, device, bid_type, decremental)
         for t in time_steps
             _add_fcas_offer_cost!(container, name, dname, t, fcas_var[dname, t], curves[t])
         end
@@ -448,7 +462,7 @@ function PSI.construct_service!(
     for device in devices
         dname = PSY.get_name(device)
         decremental = _fcas_direction(device, bid_type)
-        trapeziums, _ = _fcas_series(container, device, bid_type, decremental)
+        trapeziums, _ = _fcas_series(container, devices_template, device, bid_type, decremental)
         enabled = _fcas_enabled_mask(container, devices_template, device, bid_type, decremental)
         for t in time_steps
             if !enabled[t]

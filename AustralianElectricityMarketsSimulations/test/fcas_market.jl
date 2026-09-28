@@ -62,9 +62,11 @@ end
         agc_enablement_max = nothing, agc_max_avail = nothing, uigf = nothing)
 
 Attaches [`set_fcas_scaling_inputs!`](@ref)'s per-device `"fcas_agc_enablement_min_<bid_type>"`/
-`"fcas_agc_enablement_max_<bid_type>"`/`"fcas_agc_max_avail_<bid_type>"`/`"fcas_uigf"`
+`"fcas_agc_enablement_max_<bid_type>"`/`"fcas_agc_ramp_rate_<bid_type>"`/`"fcas_uigf"`
 `SingleTimeSeries`, one flat window of `n` steps at `initial_timestamp`, mirroring its
-per-unit-of-system-base convention. A `nothing` keyword leaves the matching series unattached.
+per-unit-of-system-base convention. `agc_max_avail` is the AGC ramping capability in MW over one
+`TOY_RESOLUTION` interval, stored as the equivalent MW/h ramp rate. A `nothing` keyword leaves the
+matching series unattached.
 """
 function add_toy_fcas_scaling!(
         sys, device, initial_timestamp, n::Integer, bid_type::BidType;
@@ -80,7 +82,7 @@ function add_toy_fcas_scaling!(
     for (value, name) in (
             (agc_enablement_min, "fcas_agc_enablement_min_$bid_type_str"),
             (agc_enablement_max, "fcas_agc_enablement_max_$bid_type_str"),
-            (agc_max_avail, "fcas_agc_max_avail_$bid_type_str"),
+            (isnothing(agc_max_avail) ? nothing : agc_max_avail / (Dates.value(Minute(TOY_RESOLUTION)) / 60), "fcas_agc_ramp_rate_$bid_type_str"),
             (uigf, "fcas_uigf"),
         )
         isnothing(value) && continue
@@ -257,6 +259,30 @@ end
     @test raisereg_cap(; agc_max_avail = 15.0) ≈ 15.0 atol = FCAS_TOY_TOLERANCE
     # AGC ramping capability (40.0) is less restrictive than the bid MaxAvail: no impact.
     @test raisereg_cap(; agc_max_avail = 40.0) ≈ 25.0 atol = FCAS_TOY_TOLERANCE
+
+    @testset "the AGC ramping capability is taken over the model's resolution" begin
+        sys = fcas_energy_toy_system(
+            2.0;
+            mutate! = (sys, stamps) -> begin
+                device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+                n = length(stamps)
+                add_toy_fcas!(sys, device, stamps[1], n, BidType.RAISEREG, trapezium_mw, [(25.0, 10.0)])
+                add_toy_fcas_scaling!(sys, device, stamps[1], n, BidType.RAISEREG; agc_max_avail = 10.0)
+                PSY.add_service!(
+                    sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG), [device],
+                )
+            end,
+        )
+        container = build_fcas(sys, [service_name])
+        device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+        replay = Dict{Symbol, PSI.DeviceModel}(:ThermalStandard => PSI.DeviceModel(PSY.ThermalStandard, NEMReplayDispatch))
+        max_avail_mw() = get_max_avail(
+            only(AustralianElectricityMarketsSimulations._fcas_series(container, replay, device, BidType.RAISEREG, false)[1]),
+        ) * PSI.get_base_power(container)
+        @test max_avail_mw() ≈ 10.0  # 120 MW/h over 5 minutes
+        PSI.set_resolution!(container.settings, Minute(10))
+        @test max_avail_mw() ≈ 20.0  # the same rate over 10 minutes
+    end
 end
 
 @testset "the LOWER6SEC trapezium genuinely binds as energy moves" begin
