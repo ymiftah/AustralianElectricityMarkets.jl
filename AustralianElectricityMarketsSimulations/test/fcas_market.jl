@@ -91,13 +91,13 @@ function fcas_energy_toy_system(energy_mw; mutate! = nothing)
     )
 end
 
-"Builds a `PSI.DecisionModel` for `sys`/`service_names` and returns its `PSI.OptimizationContainer`."
-function build_fcas(sys, service_names)
+"Builds a `steps`-interval `PSI.DecisionModel` for `sys`/`service_names` and returns its `PSI.OptimizationContainer`."
+function build_fcas(sys, service_names; steps = 1)
     template = fcas_toy_template(sys, service_names)
     model = PSI.DecisionModel(
         template, sys;
         optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
-        horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
+        horizon = steps * TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
         initial_time = TOY_START, name = "fcas_toy", store_variable_names = true,
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
@@ -339,24 +339,25 @@ end
     jm = PSI.get_jump_model(container)
     capacity = PSI.JuMP.@variable(jm)
     curve = PSY.PiecewiseStepData([0.0, 2.0 / base_power], [10.0])
-    AustralianElectricityMarketsSimulations._add_fcas_offer_cost!(container, duid, 1, capacity, curve)
+    AustralianElectricityMarketsSimulations._add_fcas_offer_cost!(container, service_name, duid, 1, capacity, curve)
     band_var = last(PSI.JuMP.all_variables(jm))
     invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
     @test PSI.JuMP.coefficient(invariant, band_var) ≈ base_power * 10.0 * 0.5
 end
 
 """
-    storage_fcas_toy_model(service_name, bid_type, trapezium_mw; decremental = false, energy_max_avail_mw = nothing)
+    storage_fcas_toy_model(service_name, bid_type, trapezium_mw; decremental = false, energy_max_avail_mw = nothing, initial_mw = 0.0)
 
 Builds the toy PSCB `DecisionModel` with BAT1, under `NEMReplayDispatch`, as the only
 contributor to one [`FCASService`](@ref) bidding `trapezium_mw`. `energy_max_avail_mw = (gen,
-load)` attaches BAT1's energy `MAXAVAIL` series in MW, as [`set_market_bids!`](@ref) does.
+load)` attaches BAT1's energy `MAXAVAIL` series in MW, as [`set_market_bids!`](@ref) does;
+`initial_mw` is BAT1's net `INITIALMW` in MW.
 
 # Returns
 `(model, sys)`, with `model` built.
 """
 function storage_fcas_toy_model(
-        service_name, bid_type, trapezium_mw; decremental = false, energy_max_avail_mw = nothing,
+        service_name, bid_type, trapezium_mw; decremental = false, energy_max_avail_mw = nothing, initial_mw = 0.0,
     )
     sys = augmented_pscb_system()
     _fix_thermal_floor!(sys)
@@ -415,7 +416,9 @@ function storage_fcas_toy_model(
         )
     end
     PSY.add_time_series!(
-        sys, bat, PSY.SingleTimeSeries(; name = "initial_mw", data = PSY.TimeSeries.TimeArray(stamps, fill(0.0, length(stamps)))),
+        sys, bat, PSY.SingleTimeSeries(;
+            name = "initial_mw", data = PSY.TimeSeries.TimeArray(stamps, fill(initial_mw / base_power_bat, length(stamps))),
+        ),
     )
 
     add_toy_fcas!(sys, bat, stamps[1], length(stamps), bid_type, trapezium_mw, [(10.0, 50.0)]; decremental = decremental)
@@ -451,9 +454,10 @@ function storage_fcas_toy_model(
 end
 
 @testset "a Storage device's FCAS constraint reads its net (out - in) energy" begin
-    # Battery trapeziums are on the net-MW axis, so EnablementMin is negative.
+    # Battery contingency is bid BIDIRECTIONAL (the incremental series) on the net-MW axis, so
+    # EnablementMin is negative.
     service_name = "TAS1_LOWER6SEC_STOR"
-    model, sys = storage_fcas_toy_model(service_name, BidType.LOWER6SEC, (-8.0, 2.0, 5.0, 20.0, 10.0); decremental = true)
+    model, sys = storage_fcas_toy_model(service_name, BidType.LOWER6SEC, (-8.0, 2.0, 5.0, 20.0, 10.0))
     base_power = get_base_power(sys)
 
     container = PSI.get_optimization_container(model)
@@ -526,6 +530,7 @@ end
     capacity_bound(gen_mw) = begin
         model, _ = storage_fcas_toy_model(
             service_name, BidType.RAISE6SEC, (2.0, 4.0, 15.0, 20.0, 10.0); energy_max_avail_mw = (gen_mw, 50.0),
+            initial_mw = 3.0,
         )
         container = PSI.get_optimization_container(model)
         PSI.JuMP.upper_bound(fcas_capacity(container, service_name)["BAT1", 1])
@@ -628,6 +633,7 @@ end
         network = PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true)
         template = PSI.ProblemTemplate(network)
         PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+        PSI.set_service_model!(template, service_name, PSI.ServiceModel(FCASService, FCASMarket, service_name))
         err = try
             check_fcas_services(sys, template)
             nothing
@@ -665,4 +671,293 @@ end
         @test err isa ArgumentError
         @test occursin("scheduled-load", sprint(showerror, err))
     end
+end
+
+"""
+    raise6sec_toy(; units, trapezium_mw, service_name = "TAS1_RAISE6SEC")
+
+A toy `System` of `units` (`name => toy_unit(...)`), each bidding RAISE6SEC with `trapezium_mw`
+and one 10 MW band, all contributing to one `FCASService`.
+"""
+function raise6sec_toy(; units, trapezium_mw, service_name = "TAS1_RAISE6SEC")
+    return nem_toy_system(
+        units, sum(u.initial for (_, u) in units);
+        mutate! = (sys, stamps) -> begin
+            devices = [PSY.get_component(PSY.ThermalStandard, sys, name) for (name, _) in units]
+            for device in devices
+                add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISE6SEC, trapezium_mw, [(10.0, 10.0)])
+            end
+            PSY.add_service!(
+                sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC), devices,
+            )
+        end,
+    )
+end
+
+@testset "§5 enablement pre-conditions on a generator" begin
+    service_name = "TAS1_RAISE6SEC"
+    function gated_container(trapezium_mw, bands; initial = 20.0, availability = 100.0)
+        sys = nem_toy_system(
+            [
+                TOY_CHEAP => toy_unit(
+                    100.0, [(100.0, 20.0)]; initial = initial, ramp_up = 1.0e4, ramp_down = 1.0e4,
+                    availability = availability,
+                ),
+            ],
+            initial;
+            mutate! = (sys, stamps) -> begin
+                device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+                add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISE6SEC, trapezium_mw, bands)
+                PSY.add_service!(
+                    sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC),
+                    [device],
+                )
+            end,
+        )
+        return build_fcas(sys, [service_name])
+    end
+    capacity_bound_mw(container) =
+        PSI.JuMP.upper_bound(fcas_capacity(container, service_name)[TOY_CHEAP, 1]) * PSI.get_base_power(container)
+    joint_row(container, side) = PSI.JuMP.constraint_object(
+        PSI.get_constraint(container, FCASJointCapacityConstraint(), FCASService, "$(service_name)_$side")[TOY_CHEAP, 1],
+    )
+
+    trapezium = (5.0, 10.0, 90.0, 100.0, 10.0)
+    bands = [(10.0, 10.0)]
+
+    @testset "all pre-conditions met: enabled, bounded at MaxAvail, real joint rows" begin
+        container = gated_container(trapezium, bands)
+        @test capacity_bound_mw(container) ≈ 10.0
+        @test !isempty(joint_row(container, "upper").func.terms)
+        @test !isempty(joint_row(container, "lower").func.terms)
+    end
+
+    @testset "MaxAvail = 0: disabled, vacuous joint rows" begin
+        container = gated_container((5.0, 10.0, 90.0, 100.0, 0.0), bands)
+        @test capacity_bound_mw(container) == 0.0
+        @test isempty(joint_row(container, "upper").func.terms)
+        @test isempty(joint_row(container, "lower").func.terms)
+    end
+
+    @testset "no band with quantity: disabled" begin
+        @test capacity_bound_mw(gated_container(trapezium, [(0.0, 10.0)])) == 0.0
+    end
+
+    @testset "stranded (InitialMW below EnablementMin): disabled" begin
+        @test capacity_bound_mw(gated_container(trapezium, bands; initial = 2.0)) == 0.0
+    end
+
+    @testset "stranded (InitialMW above EnablementMax): disabled" begin
+        @test capacity_bound_mw(gated_container((5.0, 10.0, 40.0, 50.0, 10.0), bands; initial = 60.0)) == 0.0
+    end
+
+    @testset "energy availability below EnablementMin: disabled" begin
+        @test capacity_bound_mw(gated_container(trapezium, bands; initial = 6.0, availability = 4.0)) == 0.0
+    end
+
+    @testset "EnablementMax < 0 (sign pre-condition): disabled" begin
+        @test capacity_bound_mw(gated_container((-20.0, -15.0, -10.0, -5.0, 10.0), bands)) == 0.0
+    end
+end
+
+@testset "several devices over several intervals are gated independently" begin
+    service_name = "TAS1_RAISE6SEC"
+    unit(initial) = toy_unit(100.0, [(100.0, 20.0)]; initial = initial, ramp_up = 1.0e4, ramp_down = 1.0e4)
+    sys = raise6sec_toy(;
+        units = [TOY_CHEAP => unit(20.0), TOY_EXPENSIVE => unit(2.0)], trapezium_mw = (5.0, 10.0, 90.0, 100.0, 10.0),
+    )
+    container = build_fcas(sys, [service_name]; steps = 2)
+    base_power = PSI.get_base_power(container)
+    var = fcas_capacity(container, service_name)
+    bound(dname, t) = PSI.JuMP.upper_bound(var[dname, t]) * base_power
+    # TOY_EXPENSIVE starts at 2 MW, below EnablementMin: stranded in both intervals.
+    @test [bound(TOY_CHEAP, t) for t in 1:2] ≈ [10.0, 10.0]
+    @test [bound(TOY_EXPENSIVE, t) for t in 1:2] == [0.0, 0.0]
+
+    @testset "under NEMLookaheadDispatch, only the first interval checks the metered InitialMW" begin
+        device = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
+        lookahead = Dict{Symbol, PSI.DeviceModel}(:ThermalStandard => PSI.DeviceModel(PSY.ThermalStandard, NEMLookaheadDispatch))
+        replay = Dict{Symbol, PSI.DeviceModel}(:ThermalStandard => PSI.DeviceModel(PSY.ThermalStandard, NEMReplayDispatch))
+        AEMS = AustralianElectricityMarketsSimulations
+        @test AEMS._fcas_enabled_mask(container, lookahead, device, BidType.RAISE6SEC, false) == [false, true]
+        @test AEMS._fcas_enabled_mask(container, replay, device, BidType.RAISE6SEC, false) == [false, false]
+    end
+end
+
+@testset "a LOWERREG term enters a contingency service's lower form" begin
+    duid = TOY_CHEAP
+    sys = fcas_energy_toy_system(
+        50.0;
+        mutate! = (sys, stamps) -> begin
+            device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+            for (bid_type, name) in ((BidType.RAISE6SEC, "TAS1_RAISE6SEC"), (BidType.LOWERREG, "TAS1_LOWERREG"))
+                add_toy_fcas!(sys, device, stamps[1], length(stamps), bid_type, (0.0, 10.0, 90.0, 100.0, 10.0), [(10.0, 10.0)])
+                PSY.add_service!(sys, FCASService(; name = name, region = "TAS1", bid_type = bid_type), [device])
+            end
+        end,
+    )
+    container = build_fcas(sys, ["TAS1_RAISE6SEC", "TAS1_LOWERREG"])
+    lower_reg = fcas_capacity(container, "TAS1_LOWERREG")[duid, 1]
+    row(side) = PSI.JuMP.constraint_object(
+        PSI.get_constraint(container, FCASJointCapacityConstraint(), FCASService, "TAS1_RAISE6SEC_$side")[duid, 1],
+    )
+    @test row("lower").func.terms[lower_reg] == -1.0
+    @test !haskey(row("upper").func.terms, lower_reg)
+end
+
+@testset "a Storage device's LOAD-side regulation reads its charging energy only" begin
+    service_name = "TAS1_LOWERREG_STOR"
+    model, _ = storage_fcas_toy_model(service_name, BidType.LOWERREG, (-20.0, -15.0, -5.0, 0.0, 10.0); decremental = true)
+    container = PSI.get_optimization_container(model)
+    out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), EnergyReservoirStorage)
+    in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)
+    for side in ("upper", "lower")
+        row = PSI.JuMP.constraint_object(
+            PSI.get_constraint(container, FCASJointCapacityConstraint(), FCASService, "$(service_name)_$side")["BAT1", 1],
+        )
+        @test row.func.terms[in_var["BAT1", 1]] == -1.0
+        @test !haskey(row.func.terms, out_var["BAT1", 1])
+    end
+end
+
+@testset "a Storage device's GEN-side regulation with a vertical lower slope" begin
+    # GEN-side RAISEREG with EnablementMin = LowBreakpoint = 0: the generation side offers its
+    # full MaxAvail at zero generation. Enabled from a net InitialMW of 0, the battery keeps it
+    # while charging; stranded from a charging InitialMW, it is disabled.
+    service_name = "TAS1_RAISEREG_STOR"
+    function raise_reg_mw(initial_mw)
+        model, sys = storage_fcas_toy_model(
+            service_name, BidType.RAISEREG, (0.0, 0.0, 15.0, 20.0, 10.0); initial_mw = initial_mw,
+        )
+        base_power = get_base_power(sys)
+        container = PSI.get_optimization_container(model)
+        PSI.JuMP.fix(PSI.get_variable(container, PSI.ActivePowerOutVariable(), EnergyReservoirStorage)["BAT1", 1], 0.0; force = true)
+        PSI.JuMP.fix(
+            PSI.get_variable(container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)["BAT1", 1], 6.0 / base_power; force = true,
+        )
+        maximize_and_solve!(container) do container
+            fcas_capacity(container, service_name)["BAT1", 1]
+        end
+        return fcas_mw(container, service_name, "BAT1")
+    end
+    @test raise_reg_mw(0.0) ≈ 10.0 atol = FCAS_TOY_TOLERANCE
+    @test raise_reg_mw(-6.0) ≈ 0.0 atol = FCAS_TOY_TOLERANCE
+end
+
+@testset "a device in two FCASServices of one market" begin
+    duid = TOY_CHEAP
+    sys = fcas_energy_toy_system(
+        2.0;
+        mutate! = (sys, stamps) -> begin
+            device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+            add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISEREG, (0.0, 0.0, 100.0, 100.0, 9.0), [(9.0, 10.0)])
+            add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISE6SEC, (0.0, 0.0, 100.0, 100.0, 10.0), [(10.0, 10.0)])
+            for name in ("TAS1_RAISEREG", "TAS1_RAISEREG_B")
+                PSY.add_service!(sys, FCASService(; name = name, region = "TAS1", bid_type = BidType.RAISEREG), [device])
+            end
+            PSY.add_service!(
+                sys, FCASService(; name = "TAS1_RAISE6SEC", region = "TAS1", bid_type = BidType.RAISE6SEC), [device],
+            )
+        end,
+    )
+    service_names = ["TAS1_RAISEREG", "TAS1_RAISEREG_B", "TAS1_RAISE6SEC"]
+    template = fcas_toy_template(sys, service_names)
+
+    @testset "check_fcas_services reports it, naming both services" begin
+        err = try
+            check_fcas_services(sys, template)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        msg = sprint(showerror, err)
+        @test occursin("TAS1_RAISEREG, TAS1_RAISEREG_B", msg)
+        @test occursin(duid, msg)
+    end
+
+    @testset "the build refuses it rather than counting only one regulation target" begin
+        model = PSI.DecisionModel(
+            template, sys;
+            optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+            horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
+            initial_time = TOY_START, name = "fcas_toy_dup",
+        )
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
+    end
+end
+
+@testset "check_fcas_services scope" begin
+    duid = TOY_CHEAP
+    service_name = "TAS1_RAISE6SEC"
+    sys = fcas_energy_toy_system(
+        2.0;
+        mutate! = (sys, stamps) -> begin
+            device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+            add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISE6SEC, (0.0, 0.0, 100.0, 100.0, 10.0), [(10.0, 10.0)])
+            # TOY_EXPENSIVE is unavailable in the toy system and carries no FCAS bid.
+            offline = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
+            PSY.add_service!(
+                sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC), [device, offline],
+            )
+            # A service the template doesn't model under FCASMarket, with an unbid contributor.
+            PSY.add_service!(sys, FCASService(; name = "TAS1_LOWER6SEC", region = "TAS1", bid_type = BidType.LOWER6SEC), [device])
+        end,
+    )
+
+    @testset "unavailable devices and services not modeled by FCASMarket are skipped" begin
+        @test !PSY.get_available(PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE))
+        @test isnothing(check_fcas_services(sys, fcas_toy_template(sys, [service_name])))
+    end
+
+    @testset "a contributor modeled as FixedOutput is reported" begin
+        network = PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true)
+        template = PSI.ProblemTemplate(network)
+        PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+        PSI.set_device_model!(template, PSY.ThermalStandard, PSI.FixedOutput)
+        PSI.set_service_model!(template, service_name, PSI.ServiceModel(FCASService, FCASMarket, service_name))
+        err = try
+            check_fcas_services(sys, template)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("FixedOutput", sprint(showerror, err))
+    end
+end
+
+@testset "FCASMarket refuses unsupported duals and recurrent-solve containers" begin
+    service_name = "TAS1_RAISE6SEC"
+    sys = fcas_energy_toy_system(
+        2.0;
+        mutate! = (sys, stamps) -> begin
+            device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+            add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISE6SEC, (0.0, 0.0, 100.0, 100.0, 10.0), [(10.0, 10.0)])
+            PSY.add_service!(
+                sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC), [device],
+            )
+        end,
+    )
+    container = build_fcas(sys, [service_name])
+    function construct_error(service_model)
+        try
+            PSI.construct_service!(
+                container, sys, PSI.ArgumentConstructStage(), service_model,
+                Dict{Symbol, PSI.DeviceModel}(), Set{DataType}(), PSI.NetworkModel(PSI.CopperPlatePowerModel),
+            )
+            return nothing
+        catch e
+            return e
+        end
+    end
+
+    err = construct_error(PSI.ServiceModel(FCASService, FCASMarket, service_name; duals = [PSI.CopperPlateBalanceConstraint]))
+    @test err isa ArgumentError
+    @test occursin("FCASJointCapacityConstraint only", err.msg)
+
+    container.built_for_recurrent_solves = true
+    err = construct_error(PSI.ServiceModel(FCASService, FCASMarket, service_name))
+    @test err isa ArgumentError
+    @test occursin("DecisionModel", err.msg)
 end

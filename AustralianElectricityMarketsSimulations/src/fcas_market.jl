@@ -61,11 +61,22 @@ function _fcas_energy_terms(device::PSY.Device, is_regulation::Bool, decremental
     return [(PSI.ActivePowerVariable, 1.0)]
 end
 
-"Adds `device`'s FCAS energy terms ([`_fcas_energy_terms`](@ref)) into `expr` at `(dname, t)`."
+"""
+    _add_fcas_energy_terms!(container, expr, device, is_regulation, decremental, dname, t)
+
+Adds `device`'s FCAS energy terms ([`_fcas_energy_terms`](@ref)) into `expr` at `(dname, t)`.
+Throws `ArgumentError` if `device`'s formulation defines no such energy variable.
+"""
 function _add_fcas_energy_terms!(
         container, expr, device::PSY.Device, is_regulation::Bool, decremental::Bool, dname::AbstractString, t::Int,
     )
     for (var_type, multiplier) in _fcas_energy_terms(device, is_regulation, decremental)
+        PSI.has_container_key(container, var_type, typeof(device)) || throw(
+            ArgumentError(
+                "FCASMarket: \"$dname\" ($(typeof(device))) contributes to an FCASService, but its " *
+                    "device formulation defines no $(nameof(var_type)) for the FCAS energy term.",
+            ),
+        )
         var = PSI.get_variable(container, var_type(), typeof(device))
         JuMP.add_to_expression!(expr, multiplier, var[dname, t])
     end
@@ -87,21 +98,6 @@ function _fcas_series(container::PSI.OptimizationContainer, device, bid_type::Bi
     trapeziums = get_fcas_trapezium(device, bid_type, initial_time, horizon; decremental = decremental)
     curves = get_fcas_offer_curve(device, bid_type, initial_time, horizon; decremental = decremental)
     return trapeziums, curves
-end
-
-"""
-    _fcas_ts_value_accessor(container, ::Type{P}, ::Type{T}) -> Union{Nothing, Function}
-
-An `(name, t) -> Float64` reader of `T`'s `P` time-series parameter, or `nothing` when `T`
-carries no such parameter in `container`.
-
-# Returns
-`Union{Nothing, Function}`.
-"""
-function _fcas_ts_value_accessor(container::PSI.OptimizationContainer, ::Type{P}, ::Type{T}) where {P <: PSI.TimeSeriesParameter, T}
-    PSI.has_container_key(container, P, T) || return nothing
-    accessor, _ = _ts_parameter_accessor(container, P, T)
-    return (name, t) -> JuMP.value(accessor(name, t))
 end
 
 """
@@ -163,10 +159,10 @@ end
 The computable subset of AEMO's *FCAS Model in NEMDE* §5 enablement pre-conditions: `MaxAvail`
 positive; at least one priced band with positive quantity; `EnablementMax` at or above
 `EnablementMin`; the sign pre-condition ([`_fcas_sign_ok`](@ref)); the energy-maximum-availability
-pre-condition ([`_fcas_energy_max_avail_ok`](@ref)); and, when `initial_mw` is known, `Max[
-InitialMW, 0]` inside `[EnablementMin, EnablementMax]` (the "stranded" pre-condition, checked only
-for a non-`PSY.Storage` device, where an initial-MW series is available). The AGC-status and
-daily/profiled-energy pre-conditions are not checked - they read data this package does not have.
+pre-condition ([`_fcas_energy_max_avail_ok`](@ref)); and, when `initial_mw` is known, the
+"stranded" pre-condition: `initial_mw` (net, for a `PSY.Storage` device) or `Max[initial_mw, 0]`
+(otherwise) inside `[EnablementMin, EnablementMax]`. The AGC-status and daily/profiled-energy
+pre-conditions are not checked.
 
 # Returns
 `Bool`.
@@ -182,34 +178,99 @@ function _fcas_enabled(
     get_enablement_max(trap) >= get_enablement_min(trap) || return false
     _fcas_sign_ok(device, is_regulation, decremental, trap) || return false
     _fcas_energy_max_avail_ok(device, is_regulation, decremental, trap, energy_max_avail) || return false
-    if !(device isa PSY.Storage) && !isnothing(initial_mw)
-        get_enablement_min(trap) <= max(initial_mw, 0.0) <= get_enablement_max(trap) || return false
+    if !isnothing(initial_mw)
+        point = device isa PSY.Storage ? initial_mw : max(initial_mw, 0.0)
+        get_enablement_min(trap) <= point <= get_enablement_max(trap) || return false
     end
     return true
+end
+
+"""
+    _fcas_initial_mw_first_interval_only(devices_template, device) -> Bool
+
+Whether `device`'s dispatch model is [`NEMLookaheadDispatch`](@ref), whose later intervals start
+from the model's own dispatch rather than a metered `INITIALMW`.
+
+# Returns
+`Bool`.
+"""
+function _fcas_initial_mw_first_interval_only(devices_template, device::PSY.Device)
+    for model in values(devices_template)
+        PSI.get_component_type(model) == typeof(device) || continue
+        return PSI.get_formulation(model) <: NEMLookaheadDispatch
+    end
+    return false
+end
+
+"""
+    _fcas_enabled_mask(container, devices_template, device, bid_type, decremental) -> Vector{Bool}
+
+Per-interval [`_fcas_enabled`](@ref) for `device`'s `bid_type` bid, with `InitialMW` from
+[`get_initial_mw`](@ref) (first interval only under [`NEMLookaheadDispatch`](@ref)) and energy
+availability from [`get_energy_availability`](@ref), or [`get_storage_energy_max_avail`](@ref)
+for a `PSY.Storage` device.
+
+# Returns
+`Vector{Bool}`, one entry per `PSI.get_time_steps(container)`.
+"""
+function _fcas_enabled_mask(
+        container::PSI.OptimizationContainer, devices_template, device::PSY.Device, bid_type::BidType, decremental::Bool,
+    )
+    is_regulation = _is_regulation_service(bid_type)
+    initial_time = PSI.get_initial_time(container)
+    time_steps = PSI.get_time_steps(container)
+    horizon = length(time_steps)
+    trapeziums, curves = _fcas_series(container, device, bid_type, decremental)
+    initial_mw = get_initial_mw(device, initial_time, horizon)
+    first_only = _fcas_initial_mw_first_interval_only(devices_template, device)
+    availability = if device isa PSY.Storage
+        get_storage_energy_max_avail(device, initial_time, horizon)
+    else
+        get_energy_availability(device, initial_time, horizon)
+    end
+    return map(time_steps) do t
+        init = (isnothing(initial_mw) || (first_only && t > 1)) ? nothing : initial_mw[t]
+        avail = if isnothing(availability)
+            nothing
+        elseif device isa PSY.Storage
+            (gen = availability.gen[t], load = availability.load[t])
+        else
+            availability[t]
+        end
+        _fcas_enabled(device, is_regulation, decremental, trapeziums[t], curves[t], avail, init)
+    end
 end
 
 """
     _device_regulation_var(container, device, reg_bid_type, t) -> Union{Nothing, JuMP.VariableRef}
 
 `device`'s [`FCASCapacityVariable`](@ref) at `t` for the `reg_bid_type` regulation market it
-belongs to, found via `PSY.get_services(device)`. `nothing` when `device` carries no such service, or that service wasn't built under
-[`FCASMarket`](@ref) this run.
+belongs to, found via `PSY.get_services(device)`. `nothing` when `device` carries no such
+service, or that service wasn't built under [`FCASMarket`](@ref) this run. Throws
+`ArgumentError` if `device` belongs to more than one such service.
 
 # Returns
 `Union{Nothing, JuMP.VariableRef}`.
 """
 function _device_regulation_var(container::PSI.OptimizationContainer, device::PSY.Device, reg_bid_type::BidType, t::Int)
+    dname = PSY.get_name(device)
+    found = JuMP.VariableRef[]
     for svc in PSY.get_services(device)
         svc isa FCASService || continue
         get_bid_type(svc) == reg_bid_type || continue
         name = PSY.get_name(svc)
         PSI.has_container_key(container, FCASCapacityVariable, FCASService, name) || continue
         var = PSI.get_variable(container, FCASCapacityVariable(), FCASService, name)
-        dname = PSY.get_name(device)
         dname in axes(var, 1) || continue
-        return var[dname, t]
+        push!(found, var[dname, t])
     end
-    return nothing
+    length(found) > 1 && throw(
+        ArgumentError(
+            "FCASMarket: \"$dname\" contributes to $(length(found)) $(string(reg_bid_type)) " *
+                "FCASServices; a device can offer each FCAS market through only one.",
+        ),
+    )
+    return isempty(found) ? nothing : only(found)
 end
 
 function PSI.construct_service!(
@@ -220,6 +281,19 @@ function PSI.construct_service!(
         devices_template::Dict{Symbol, PSI.DeviceModel},
         incompatible_device_types::Set{<:DataType},
         network_model::PSI.NetworkModel,
+    )
+    PSI.built_for_recurrent_solves(container) && throw(
+        ArgumentError(
+            "FCASMarket supports a standalone `DecisionModel` only: FCAS bids and the §5 " *
+                "enablement pre-conditions are read once at build, so a `Simulation` would solve " *
+                "every later step with the first step's FCAS data.",
+        ),
+    )
+    unsupported = filter(!=(FCASJointCapacityConstraint), PSI.get_duals(model))
+    isempty(unsupported) || throw(
+        ArgumentError(
+            "FCASMarket records duals for FCASJointCapacityConstraint only; got $(unsupported).",
+        ),
     )
     name = PSI.get_service_name(model)
     svc = PSY.get_component(FCASService, sys, name)
@@ -245,26 +319,14 @@ function PSI.construct_service!(
     for device in devices
         dname = PSY.get_name(device)
         decremental = _fcas_direction(device, bid_type)
-        trapeziums, curves = _fcas_series(container, device, bid_type, decremental)
-        is_storage = device isa PSY.Storage
-        initial_mw_at = is_storage ? nothing : _fcas_ts_value_accessor(container, InitialPowerTimeSeriesParameter, typeof(device))
-        energy_max_avail_at = is_storage ? nothing : _fcas_ts_value_accessor(container, PSI.ActivePowerTimeSeriesParameter, typeof(device))
-        storage_energy_max_avail = is_storage ?
-            get_storage_energy_max_avail(device, PSI.get_initial_time(container), length(time_steps)) : nothing
+        trapeziums, _ = _fcas_series(container, device, bid_type, decremental)
+        enabled = _fcas_enabled_mask(container, devices_template, device, bid_type, decremental)
         for t in time_steps
             trap = trapeziums[t]
-            initial_mw = isnothing(initial_mw_at) ? nothing : initial_mw_at(dname, t)
-            energy_max_avail = if !isnothing(storage_energy_max_avail)
-                (gen = storage_energy_max_avail.gen[t], load = storage_energy_max_avail.load[t])
-            else
-                isnothing(energy_max_avail_at) ? nothing : energy_max_avail_at(dname, t)
-            end
-            enabled = _fcas_enabled(device, is_regulation, decremental, trap, curves[t], energy_max_avail, initial_mw)
-
             var[dname, t] = JuMP.@variable(
                 jm, base_name = "FCASCapacityVariable_FCASService_$(name)_{$dname, $t}", lower_bound = 0.0,
             )
-            JuMP.set_upper_bound(var[dname, t], enabled ? max(get_max_avail(trap), 0.0) : 0.0)
+            JuMP.set_upper_bound(var[dname, t], enabled[t] ? get_max_avail(trap) : 0.0)
 
             _add_fcas_energy_terms!(container, upper_lhs[dname, t], device, is_regulation, decremental, dname, t)
             JuMP.add_to_expression!(upper_lhs[dname, t], get_upper_slope_coeff(trap), var[dname, t])
@@ -276,7 +338,7 @@ function PSI.construct_service!(
 end
 
 """
-    _add_fcas_offer_cost!(container, dname, t, capacity_var, curve)
+    _add_fcas_offer_cost!(container, service_name, dname, t, capacity_var, curve)
 
 Adds `capacity_var`'s offer cost under `curve` (a `PSY.PiecewiseStepData` of cumulative-MW
 bands with non-decreasing per-band prices) to the objective, via one bounded band variable per
@@ -288,7 +350,8 @@ container's resolution in hours.
 `nothing`.
 """
 function _add_fcas_offer_cost!(
-        container::PSI.OptimizationContainer, dname::AbstractString, t::Int, capacity_var, curve::PSY.PiecewiseStepData,
+        container::PSI.OptimizationContainer, service_name::AbstractString, dname::AbstractString, t::Int,
+        capacity_var, curve::PSY.PiecewiseStepData,
     )
     x = PSY.get_x_coords(curve)
     y = PSY.get_y_coords(curve)
@@ -298,7 +361,7 @@ function _add_fcas_offer_cost!(
     resolution = PSI.get_resolution(container)
     jm = PSI.get_jump_model(container)
     bands = JuMP.@variable(
-        jm, [i = 1:n_bands], base_name = "FCASOfferBandVariable_$(dname)_{$t}",
+        jm, [i = 1:n_bands], base_name = "FCASOfferBandVariable_$(service_name)_{$dname, $t}",
         lower_bound = 0.0, upper_bound = x[i + 1] - x[i],
     )
     JuMP.@constraint(jm, sum(bands) == capacity_var)
@@ -331,7 +394,7 @@ function PSI.objective_function!(
         decremental = _fcas_direction(device, bid_type)
         _, curves = _fcas_series(container, device, bid_type, decremental)
         for t in time_steps
-            _add_fcas_offer_cost!(container, dname, t, fcas_var[dname, t], curves[t])
+            _add_fcas_offer_cost!(container, name, dname, t, fcas_var[dname, t], curves[t])
         end
     end
     return
@@ -359,7 +422,6 @@ function PSI.construct_service!(
 
     upper_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_upper")
     lower_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_lower")
-    fcas_var = PSI.get_variable(container, FCASCapacityVariable(), FCASService, name)
 
     # Contingency services carry the regulation targets: `RaiseReg` upper, `LowerReg` lower.
     if !is_regulation
@@ -384,9 +446,9 @@ function PSI.construct_service!(
         dname = PSY.get_name(device)
         decremental = _fcas_direction(device, bid_type)
         trapeziums, _ = _fcas_series(container, device, bid_type, decremental)
+        enabled = _fcas_enabled_mask(container, devices_template, device, bid_type, decremental)
         for t in time_steps
-            # A zero upper bound marks a (device, t) not enabled for this service.
-            if JuMP.upper_bound(fcas_var[dname, t]) <= 0.0
+            if !enabled[t]
                 con_upper[dname, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
                 con_lower[dname, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
                 continue
@@ -397,13 +459,10 @@ function PSI.construct_service!(
         end
     end
 
-    if !isempty(PSI.get_duals(model))
-        for constraint_type in PSI.get_duals(model)
+    if FCASJointCapacityConstraint in PSI.get_duals(model)
+        for side in ("upper", "lower")
             PSI.add_dual_container!(
-                container, constraint_type, FCASService, names, time_steps; meta = "$(name)_upper",
-            )
-            PSI.add_dual_container!(
-                container, constraint_type, FCASService, names, time_steps; meta = "$(name)_lower",
+                container, FCASJointCapacityConstraint, FCASService, names, time_steps; meta = "$(name)_$side",
             )
         end
     end

@@ -17,10 +17,12 @@ end
 """
     check_fcas_services(sys, template)
 
-Verifies every [`FCASService`](@ref) in `sys` is buildable under `template`: each contributing
-device's type is modeled by some `PSI.DeviceModel`, and the device carries exactly one direction
-of FCAS bid for that service's market, and a decremental-only bid only on a `PSY.Storage`
-device.
+Verifies every available [`FCASService`](@ref) that `template` models under
+[`FCASMarket`](@ref) is buildable: each available contributing device's type is modeled by a
+`PSI.DeviceModel` whose formulation dispatches energy (not `PSI.FixedOutput`), the device
+carries exactly one direction of FCAS bid for that service's market, a decremental-only bid sits
+only on a `PSY.Storage` device, and no device contributes to more than one such `FCASService` of
+the same market.
 
 # Arguments
 - `sys`: system to read services and components from.
@@ -30,19 +32,37 @@ device.
 `nothing`. Throws `ArgumentError` naming every problem device otherwise.
 """
 function check_fcas_services(sys::PSY.System, template::PSI.ProblemTemplate)
-    modeled_types = _modeled_device_types(template)
+    device_models = collect(values(PSI.get_device_models(template)))
+    fcas_market_services = Set(
+        name for ((name, _), model) in PSI.get_service_models(template)
+            if PSI.get_component_type(model) == FCASService && PSI.get_formulation(model) == FCASMarket
+    )
     problems = String[]
+    services_by_market = Dict{Tuple{String, BidType}, Vector{String}}()
     for svc in PSY.get_components(FCASService, sys)
         PSY.get_available(svc) || continue
-        bid_type = get_bid_type(svc)
         svc_name = PSY.get_name(svc)
+        svc_name in fcas_market_services || continue
+        bid_type = get_bid_type(svc)
         for device in PSY.get_contributing_devices(sys, svc)
+            PSY.get_available(device) || continue
             dname = PSY.get_name(device)
-            _type_modeled(device, modeled_types) || push!(
-                problems,
-                "FCASService \"$svc_name\": device \"$dname\" ($(typeof(device))) has no " *
-                    "device model in this template.",
-            )
+            push!(get!(services_by_market, (dname, bid_type), String[]), svc_name)
+            idx = findfirst(m -> device isa PSI.get_component_type(m), device_models)
+            if isnothing(idx)
+                push!(
+                    problems,
+                    "FCASService \"$svc_name\": device \"$dname\" ($(typeof(device))) has no " *
+                        "device model in this template.",
+                )
+            elseif PSI.get_formulation(device_models[idx]) <: PSI.FixedOutput
+                push!(
+                    problems,
+                    "FCASService \"$svc_name\": device \"$dname\" ($(typeof(device))) is modeled " *
+                        "as $(PSI.get_formulation(device_models[idx])), which dispatches no energy " *
+                        "for the FCAS joint capacity constraints.",
+                )
+            end
             direction = _fcas_bid_direction(device, bid_type)
             if direction == :none
                 push!(
@@ -67,11 +87,19 @@ function check_fcas_services(sys::PSY.System, template::PSI.ProblemTemplate)
             end
         end
     end
-    isempty(problems) && return nothing
-    throw(
+    for ((dname, bid_type), svc_names) in services_by_market
+        length(svc_names) > 1 && push!(
+            problems,
+            "device \"$dname\" contributes to $(length(svc_names)) $(string(bid_type)) " *
+                "FCASServices ($(join(sort(svc_names), ", "))); a device can offer each FCAS " *
+                "market through only one.",
+        )
+    end
+    isempty(problems) || throw(
         ArgumentError(
             "template cannot build $(length(problems)) FCASService contributing device(s):\n  " *
                 join(problems, "\n  "),
         ),
     )
+    return
 end

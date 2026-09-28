@@ -452,6 +452,24 @@
             @test isapprox(got[3], 86.0 / 100.0; atol = 1.0e-8)
         end
 
+        @testset "availability and initial_mw read back as raw AVAILABILITY/INITIALMW" begin
+            sys = deepcopy(sys_base)
+            set_nem_dispatch_limits!(sys, db, date_range)
+            renewable = get_component(RenewableDispatch, sys, "BW03")
+            battery = get_component(EnergyReservoirStorage, sys, "BW01")
+            horizon = length(date_range) - 1
+            with_units_base(sys, "NATURAL_UNITS") do
+                for (device, duid) in ((renewable, "BW03"), (battery, "BW01"))
+                    rows = sort(subset(truth, :DUID => ByRow(==(duid))), :SETTLEMENTDATE)
+                    @test isapprox(get_initial_mw(device, start_date, horizon), rows.INITIALMW; atol = 1.0e-8)
+                end
+                rows = sort(subset(truth, :DUID => ByRow(==("BW03"))), :SETTLEMENTDATE)
+                @test isapprox(get_energy_availability(renewable, start_date, horizon), rows.AVAILABILITY; atol = 1.0e-8)
+            end
+            # A battery's availability comes from its energy bid, not AVAILABILITY.
+            @test isnothing(get_energy_availability(battery, start_date, horizon))
+        end
+
         @testset "max_active_power's scaling_factor_multiplier round-trips to the MW envelope" begin
             sys = deepcopy(sys_base)
             set_units_base_system!(sys, "NATURAL_UNITS")

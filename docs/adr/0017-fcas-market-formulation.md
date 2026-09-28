@@ -103,9 +103,19 @@ Regulation comes as separate `GEN` and `LOAD` rows, each a trapezium for one sid
 `ActivePowerOutVariable` for a `GEN` (incremental) bid, `−ActivePowerInVariable` for a `LOAD`
 (decremental) one — as nempy does (`energy_and_regulation_capacity_constraints` takes the energy
 variable from the trapezium row's dispatch type; `variable_ids.py` gives load-side energy a −1
-coefficient). Using the net term on a one-sided regulation bid is wrong: a battery charging with a
-`GEN`-side RAISEREG trapezium on `[0, EnablementMax]` would face `net − LowerSlope·R ≥ 0`, which
-forbids charging outright even at `R = 0`, where the per-side term (`Out = 0`) just forces `R = 0`.
+coefficient).
+
+AEMO does not name the energy term for a BDU side outright, but §6.3 footnote 8 settles it: NEMDE
+builds one energy-and-regulation constraint pair per side. If each side's pair read net energy, a
+unit bidding both sides would face `net ≥ EnablementMin_GEN = 0` from the generation side and
+`net ≤ EnablementMax_LOAD = 0` from the load side (§2.4's contiguity rule), pinning it at exactly
+zero — so each pair reads its side's own energy, and a one-sided bid is the same pair built for one
+side. Where AEMO does work on the net axis is §5: the "stranded" pre-condition compares the net
+`InitialMW` against the side's trapezium, so a battery charging at the start of the interval is not
+enabled for generation-side regulation at all. A reviewer argued for the net term on a one-sided
+bid (it "traps" the unit within the trapezium, as §6.3 describes for generators); it was rejected
+because it contradicts the both-sided case above, and because net energy with a `GEN`-side
+trapezium on `[0, EnablementMax]` forbids charging outright even at `R = 0`.
 
 ### The sign-swapped §6.2 form is unreachable — no scheduled-load device type exists yet
 
@@ -132,10 +142,11 @@ per `(device, t)`, the pre-conditions computable from data already in the `Syste
   `EnablementMax ≥ 0` on a generation-side (incremental) regulation bid, `EnablementMin ≤ 0` on a
   load-side (decremental) one, and no sign requirement for a contingency bid.
 - the energy-maximum-availability pre-condition: for a non-`Storage` device,
-  `EnergyMaxAvail ≥ EnablementMin` (`EnergyMaxAvail` read from `PSI.ActivePowerTimeSeriesParameter`
-  when the device carries it — this already folds in the semi-scheduled UIGF ceiling, since
-  `set_nem_dispatch_limits!`'s own `"max_active_power"` series is the lower of bid `MAXAVAIL` and
-  UIGF); for a `Storage` device, §5's per-side forms on each direction's energy bid `MAXAVAIL`
+  `EnergyMaxAvail ≥ EnablementMin`, with `EnergyMaxAvail` the raw `DISPATCHLOAD.AVAILABILITY`
+  (`set_nem_dispatch_limits!`'s `"availability"` series, read by `get_energy_availability`) — the
+  bid `MAXAVAIL`, already the lower of `MAXAVAIL` and UIGF for a semi-scheduled unit, as §5 asks.
+  The `"max_active_power"` series is not used: it raises `AVAILABILITY` to the ramp-down floor, so
+  it would over-enable. For a `Storage` device, §5's per-side forms on each direction's energy bid `MAXAVAIL`
   (`BIDPEROFFER_D`, attached by `set_market_bids!`): load-side regulation requires
   `−EnergyMaxAvail_LOAD ≤ EnablementMax`, generation-side regulation requires
   `EnergyMaxAvail_GEN ≥ EnablementMin`, and contingency requires both. §5's "Energy Max
@@ -143,14 +154,19 @@ per `(device, t)`, the pre-conditions computable from data already in the `Syste
   `get_unit_bid_availability`). `DISPATCHLOAD.AVAILABILITY`/`MIN_AVAILABILITY` carry the same values
   for a BDU, but `MIN_AVAILABILITY` is not in the cached `DISPATCHLOAD` column list. Without the bid
   series the device's static output/input ratings stand in, which only ever over-enables.
-- the "stranded" pre-condition (`EnablementMin ≤ max(InitialMW, 0) ≤ EnablementMax`), checked only
-  for a non-`Storage` device carrying `InitialPowerTimeSeriesParameter` (an `AbstractNEMDispatch`
-  generator). No net initial-MW figure is available for a `PSY.Storage` device today, so this
-  pre-condition is skipped for one rather than approximated.
+- the "stranded" pre-condition, with `InitialMW` from `set_nem_dispatch_limits!`'s `"initial_mw"`
+  series (`get_initial_mw`): `EnablementMin ≤ max(InitialMW, 0) ≤ EnablementMax` for a
+  non-`Storage` device and `EnablementMin ≤ InitialMW ≤ EnablementMax` on the raw net figure for a
+  `Storage` device (§5's "all other types of FCAS bids from bidirectional units"). Under
+  `NEMLookaheadDispatch` it is checked in the first interval only: later intervals start from the
+  model's own dispatch, not a metered `INITIALMW`, and NEMDE's pre-dispatch likewise gates only its
+  first interval on telemetry.
 
 A disabled `(device, t)` gets its `FCASCapacityVariable` bounded to exactly zero and a vacuous
 `0.0 ≤ 1.0` row in place of both real constraints — matching AEMO's own "no joint capacity
-constraint is created" for an unenabled unit, while keeping the dense dual containers valid.
+constraint is created" for an unenabled unit, while keeping the dense dual containers valid. The
+enablement mask is recomputed from the same inputs at both construct stages (`_fcas_enabled_mask`)
+rather than inferred from the variable's upper bound, which a later formulation may change.
 
 Not checked: AGC status (no telemetry in MMSDM) and the daily/profiled-energy pre-conditions (no
 data this package reads carries them).
@@ -211,10 +227,14 @@ the local slope functions are gone; callers use root's accessors.
 - §6.1 joint ramping (regulation's own binding constraint in real dispatch) remains unimplemented;
   a `FCASMarket` build lets a regulation service's capacity rise as far as its own trapezium and
   `MAXAVAIL` allow, which a `System` with no ramping data will not correct.
-- A bidirectional unit with separate generation-side and load-side regulation trapeziums is priced
-  and constrained with the same net-energy term on both sides; the two sides' individually correct
-  §5 energy-maximum-availability single-sided forms are not distinguished (see above). A device
-  bidding both directions of the *same* market (rather than separate regulation sides) still
-  throws, per the existing bidirectional-capacity limitation.
+- A device carrying both an incremental and a decremental series for the same market — a battery
+  bidding regulation on both sides — throws at build; its per-side model (§6.3 footnote 8, §6.4)
+  is a separate formulation step.
+- `FCASMarket` throws when built for recurrent solves (a `Simulation`), since it reads FCAS data
+  and the §5 gate once at build; records duals only for `FCASJointCapacityConstraint`, throwing on
+  any other requested type; and throws when a device contributes to more than one `FCASService`
+  of the same market, since each would carry its own `MaxAvail`-bounded capacity and only one
+  regulation target could enter the §6.2 rows. `check_fcas_services` reports the same up front,
+  scoped to the available services and devices the template models under `FCASMarket`.
 - The AGC-on and daily/profiled-energy §5 pre-conditions are not enforced; a `System` that would
   fail one of those in real dispatch is not caught here.
