@@ -841,7 +841,6 @@
         start_date = DateTime(2025, 1, 1, 0, 0)
         date_range = start_date:resolution:(start_date + Hour(2))
         base_power = get_base_power(sys_base)
-        interval_hours = 5.0 / 60.0
 
         truth = read_fcas_scaling_inputs(db, date_range)
 
@@ -863,15 +862,15 @@
                 got_raise_max = get_time_series_values(SingleTimeSeries, device, "fcas_agc_enablement_max_RAISEREG")
                 got_lower_min = get_time_series_values(SingleTimeSeries, device, "fcas_agc_enablement_min_LOWERREG")
                 got_lower_max = get_time_series_values(SingleTimeSeries, device, "fcas_agc_enablement_max_LOWERREG")
-                got_raise_avail = get_time_series_values(SingleTimeSeries, device, "fcas_agc_max_avail_RAISEREG")
-                got_lower_avail = get_time_series_values(SingleTimeSeries, device, "fcas_agc_max_avail_LOWERREG")
+                got_raise_rate = get_time_series_values(SingleTimeSeries, device, "fcas_agc_ramp_rate_RAISEREG")
+                got_lower_rate = get_time_series_values(SingleTimeSeries, device, "fcas_agc_ramp_rate_LOWERREG")
 
                 @test isapprox(got_raise_min, rows.RAISEREGENABLEMENTMIN ./ base_power; atol = 1.0e-9)
                 @test isapprox(got_raise_max, rows.RAISEREGENABLEMENTMAX ./ base_power; atol = 1.0e-9)
                 @test isapprox(got_lower_min, rows.LOWERREGENABLEMENTMIN ./ base_power; atol = 1.0e-9)
                 @test isapprox(got_lower_max, rows.LOWERREGENABLEMENTMAX ./ base_power; atol = 1.0e-9)
-                @test isapprox(got_raise_avail, rows.RAMPUPRATE .* interval_hours ./ base_power; atol = 1.0e-9)
-                @test isapprox(got_lower_avail, rows.RAMPDOWNRATE .* interval_hours ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_raise_rate, rows.RAMPUPRATE ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_lower_rate, rows.RAMPDOWNRATE ./ base_power; atol = 1.0e-9)
             end
         end
 
@@ -927,6 +926,23 @@
                 @test get_enablement_max(scaled[i]) <= get_enablement_max(raw[i])
             end
             @test any(i -> get_max_avail(scaled[i]) < get_max_avail(raw[i]), 1:horizon)
+
+            # The AGC ramping capability is the MW/h ramp rate times the interval length.
+            rows = sort(subset(truth, :DUID => ByRow(==("ER01"))), :SETTLEMENTDATE)
+            for (resolution_i, hours) in ((Minute(5), 5 / 60), (Minute(30), 0.5))
+                scaled_i = with_units_base(sys, "NATURAL_UNITS") do
+                    get_scaled_fcas_trapezium(
+                        device, BidType.RAISEREG, initial_time, horizon; resolution = resolution_i,
+                    )
+                end
+                raw_mw = with_units_base(() -> get_max_avail.(get_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)), sys, "NATURAL_UNITS")
+                @test isapprox(get_max_avail.(scaled_i), min.(raw_mw, rows.RAMPUPRATE .* hours); atol = 1.0e-6)
+            end
+
+            # agc_first_interval_only: AGC scaling on the first step only.
+            first_only = get_scaled_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon; agc_first_interval_only = true)
+            @test isequal(Tuple(first_only[1]), Tuple(scaled[1]))
+            @test all(i -> isequal(Tuple(first_only[i]), Tuple(raw[i])), 2:horizon)
 
             # A contingency market carries no AGC scaling input series at all: unscaled.
             raw_contingency = get_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)

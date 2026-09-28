@@ -113,15 +113,19 @@ per interval (the same convention as the constraint-term reader's `DUDETAILSUMMA
   EnablementMin` gate disables the empty case.
 - `set_fcas_scaling_inputs!(sys, db, date_range)` (`src/setters/fcas_scaling.jl`) attaches six
   per-device `SingleTimeSeries` (`"fcas_agc_enablement_min/max_RAISEREG/LOWERREG"`,
-  `"fcas_agc_max_avail_RAISEREG/LOWERREG"`, MW/h ramp rates converted to MW over the interval by
-  the same `interval_hours` pattern as `set_nem_dispatch_limits!`) plus `"fcas_uigf"`, read via
+  `"fcas_agc_ramp_rate_RAISEREG/LOWERREG"`, the raw MW/h ramp rates) plus `"fcas_uigf"`, read via
   the new `read_fcas_scaling_inputs` (mirrors `read_dispatch_limits`'s shape) and the existing
   `read_uigf`. A device with an incomplete series over `date_range` (any missing interval or
   value) is left without that series entirely, rather than partially attached - reading it back
   then finds the series absent, which is exactly AEMO's "zero or absent ⇒ no scaling" rule.
 - `get_scaled_fcas_trapezium` (`src/fcas/access.jl`) reads a device's bid trapezium
   (`get_fcas_trapezium`) and whichever scaling series are attached, and applies
-  `scale_fcas_trapezium` per interval. `FCASMarket`'s `_fcas_series`
+  `scale_fcas_trapezium` per interval. §4.2's AGC ramping capability is the ramp rate times the
+  *model's* interval length (its `resolution` argument), not `date_range`'s step: a series attached
+  over 5-minute data and read by a 30-minute model otherwise carries a sixth of the capability.
+  `agc_first_interval_only` applies the AGC inputs (§4.1/§4.2) to the first step only: AEMO applies
+  AGC scaling in real-time dispatch and the first interval of pre-dispatch (§4 Table 1), where
+  telemetry exists; later pre-dispatch intervals keep the bid trapezium, UIGF-scaled. `FCASMarket`'s `_fcas_series`
   (`AustralianElectricityMarketsSimulations/src/fcas_market.jl`) calls this instead of
   `get_fcas_trapezium` - its only change for this ADR.
 - `AustralianElectricityMarketsSimulations`'s single-interval replication path

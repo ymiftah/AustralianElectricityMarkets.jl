@@ -74,19 +74,25 @@ function _read_optional_fcas_scaling_series(component, name::AbstractString, ini
 end
 
 """
-    get_scaled_fcas_trapezium(component, service, initial_time, horizon; decremental = false) -> Vector{FCASTrapezium}
+    get_scaled_fcas_trapezium(component, service, initial_time, horizon; decremental = false,
+        resolution = Minute(5), agc_first_interval_only = false) -> Vector{FCASTrapezium}
 
 Like [`get_fcas_trapezium`](@ref), but applies [`scale_fcas_trapezium`](@ref) at every step
-using `component`'s `"fcas_agc_enablement_min_<service>"`/`"fcas_agc_enablement_max_<service>"`/
-`"fcas_agc_max_avail_<service>"` series (regulation `service`s only, from
-[`set_fcas_scaling_inputs!`](@ref)) and its `"fcas_uigf"` series, when attached.
-`decremental` selects the storage `DIRECTION == "LOAD"` trapezium series only - the AGC
-enablement/ramp/UIGF series are shared by both directions of the same device.
+using `component`'s `"fcas_agc_enablement_min_<service>"`/`"fcas_agc_enablement_max_<service>"`
+series and its AGC ramping capability, `"fcas_agc_ramp_rate_<service>"` (MW/h) times
+`resolution` (regulation `service`s only, from [`set_fcas_scaling_inputs!`](@ref)), and its
+`"fcas_uigf"` series, when attached. With `agc_first_interval_only`, the AGC inputs apply to the
+first step only; UIGF applies at every step. `decremental` selects the storage
+`DIRECTION == "LOAD"` trapezium series only - the AGC enablement/ramp/UIGF series are shared by
+both directions of the same device.
 
 # Returns
 `Vector{FCASTrapezium}`.
 """
-function get_scaled_fcas_trapezium(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
+function get_scaled_fcas_trapezium(
+        component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false,
+        resolution::Dates.Period = Minute(5), agc_first_interval_only::Bool = false,
+    )
     trapeziums = get_fcas_trapezium(component, service, initial_time, horizon; decremental = decremental)
     is_regulation = service in FCAS_REGULATION_MARKETS
     service_str = string(service)
@@ -94,16 +100,19 @@ function get_scaled_fcas_trapezium(component, service::BidType, initial_time, ho
         _read_optional_fcas_scaling_series(component, "fcas_agc_enablement_min_$service_str", initial_time, horizon) : nothing
     agc_enablement_max = is_regulation ?
         _read_optional_fcas_scaling_series(component, "fcas_agc_enablement_max_$service_str", initial_time, horizon) : nothing
-    agc_max_avail = is_regulation ?
-        _read_optional_fcas_scaling_series(component, "fcas_agc_max_avail_$service_str", initial_time, horizon) : nothing
+    agc_ramp_rate = is_regulation ?
+        _read_optional_fcas_scaling_series(component, "fcas_agc_ramp_rate_$service_str", initial_time, horizon) : nothing
+    agc_max_avail = isnothing(agc_ramp_rate) ? nothing :
+        agc_ramp_rate .* (Dates.value(Millisecond(resolution)) / 3_600_000)
+    agc_at(series, i) = (isnothing(series) || (agc_first_interval_only && i > 1)) ? nothing : series[i]
     uigf = _read_optional_fcas_scaling_series(component, "fcas_uigf", initial_time, horizon)
 
     return [
         scale_fcas_trapezium(
             trapeziums[i];
-            agc_enablement_min = isnothing(agc_enablement_min) ? nothing : agc_enablement_min[i],
-            agc_enablement_max = isnothing(agc_enablement_max) ? nothing : agc_enablement_max[i],
-            agc_max_avail = isnothing(agc_max_avail) ? nothing : agc_max_avail[i],
+            agc_enablement_min = agc_at(agc_enablement_min, i),
+            agc_enablement_max = agc_at(agc_enablement_max, i),
+            agc_max_avail = agc_at(agc_max_avail, i),
             uigf = isnothing(uigf) ? nothing : uigf[i],
             is_regulation = is_regulation,
         ) for i in eachindex(trapeziums)

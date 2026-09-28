@@ -54,9 +54,9 @@ NEMDE* §4) to every available `Generator` and `EnergyReservoirStorage` in `sys`
   `RAISEREGENABLEMENTMIN`/`RAISEREGENABLEMENTMAX` (§4.1);
 - `"fcas_agc_enablement_min_LOWERREG"`/`"fcas_agc_enablement_max_LOWERREG"` from
   `LOWERREGENABLEMENTMIN`/`LOWERREGENABLEMENTMAX` (§4.1);
-- `"fcas_agc_max_avail_RAISEREG"`/`"fcas_agc_max_avail_LOWERREG"` from `RAMPUPRATE`/
-  `RAMPDOWNRATE` (MW/h), multiplied by the interval length in hours taken from `date_range`'s
-  step (§4.2);
+- `"fcas_agc_ramp_rate_RAISEREG"`/`"fcas_agc_ramp_rate_LOWERREG"` from `RAMPUPRATE`/
+  `RAMPDOWNRATE`, in MW/h (§4.2's AGC ramping capability is this rate times the model's interval
+  length, applied on read);
 - `"fcas_uigf"` from `UIGF`, for semi-scheduled units only (§4.3).
 
 Every series is per-unit of `sys`'s system base, read back by
@@ -78,7 +78,6 @@ rather than partially attached - reading it back then finds the series absent, w
 function set_fcas_scaling_inputs!(sys, db, date_range; kwargs...)
     base_power = get_base_power(sys)
     full_grid = collect(date_range)[1:(end - 1)]
-    interval_hours = Dates.value(Millisecond(step(date_range))) / (1000 * 60 * 60)
 
     scaling_rows = read_fcas_scaling_inputs(db, date_range; kwargs...)
     by_duid = DataFrames.isempty(scaling_rows) ? nothing : groupby(scaling_rows, :DUID)
@@ -107,12 +106,10 @@ function set_fcas_scaling_inputs!(sys, db, date_range; kwargs...)
                 "fcas_agc_enablement_max_LOWERREG", base_power,
             )
             _attach_fcas_scaling_series!(
-                sys, device, by_time, full_grid, :RAMPUPRATE,
-                "fcas_agc_max_avail_RAISEREG", base_power; scale = interval_hours,
+                sys, device, by_time, full_grid, :RAMPUPRATE, "fcas_agc_ramp_rate_RAISEREG", base_power,
             )
             _attach_fcas_scaling_series!(
-                sys, device, by_time, full_grid, :RAMPDOWNRATE,
-                "fcas_agc_max_avail_LOWERREG", base_power; scale = interval_hours,
+                sys, device, by_time, full_grid, :RAMPDOWNRATE, "fcas_agc_ramp_rate_LOWERREG", base_power,
             )
         end
 
