@@ -164,9 +164,22 @@ per `(device, t)`, the pre-conditions computable from data already in the `Syste
   ([`get_fcas_agc_status`](@ref)), skipped when not attached.
 
 Under `NEMLookaheadDispatch`, `InitialMW` and AGC status are telemetry for the first interval only:
-later intervals start from the model's own dispatch, and NEMDE's pre-dispatch likewise gates only
-its first interval on telemetry. The stranded and AGC-status checks are skipped after the first
-interval there.
+later intervals start from the model's own dispatch. §5 restricts the AGC-status check to the first
+interval of both pre-dispatch processes. It states no such restriction for the stranded check, but
+a later interval's `InitialMW` is the model's own previous dispatch target, a decision variable,
+so the check cannot be a build-time gate there. Both checks are skipped after the first interval.
+
+AEMO applies the telemetry-based steps over different intervals in each process (§4.4 Table 1,
+§6.5 Table 3). `_fcas_process` reads the process off the device formulation and the model's
+resolution: `NEMReplayDispatch` is dispatch; `NEMLookaheadDispatch` is 5-minute pre-dispatch at a
+5-minute resolution and 30-minute pre-dispatch at a longer one.
+
+| Step | Dispatch | 5-minute pre-dispatch | 30-minute pre-dispatch |
+| --- | --- | --- | --- |
+| §4.1 AGC enablement scaling | all | first | first |
+| §4.2 AGC ramp scaling | all | first | none |
+| §6.4 BDU SCADA ramping | all | first | none |
+| §5 AGC status, stranded | all | first | first |
 
 A disabled `(device, t)` gets its `FCASCapacityVariable` bounded to exactly zero and a vacuous
 `0.0 ≤ 1.0` row in place of both real constraints — matching AEMO's own "no joint capacity
@@ -291,6 +304,13 @@ carrying both directions of a *contingency* market, still throws: `_fcas_directi
 `:both` for a `PSY.Storage` device on a regulation market; `check_fcas_services` reports the same
 restriction as a pre-flight problem instead of a build-time throw.
 
+**Per-side energy terms assume a battery does not charge and discharge at once.** NEMDE dispatches
+a battery to one signed net target. Here the generation side's rows read `ActivePowerOutVariable`
+and the load side's read `ActivePowerInVariable`, and ADR 0020 lets both be positive in the same
+interval. Raising both by the same amount leaves net output unchanged but moves each side along its
+own trapezium slope, so a solve that circulates energy can enable regulation NEMDE would not. The
+real-data suite asserts that no battery charges and discharges in the same interval.
+
 **Not modelled: §6.1 joint ramping.** The unit's regulation target is still not bound by the
 telemetered AGC ramp rate against its *energy* dispatch (as opposed to §6.4's bound against the
 *other side's* regulation target) — tracked in the Phase 2 plan, unchanged by this revision.
@@ -318,7 +338,8 @@ telemetered AGC ramp rate against its *energy* dispatch (as opposed to §6.4's b
   total §6.2's cross term and §6.4's ramping cap read. `FCASBDURampingConstraint` bounds that total
   against the device's AGC ramping capability over the model's resolution for both-sided devices,
   skipped where no ramping-capability series is attached or the SCADA ramp rate is zero (§4.2's
-  "zero or absent" reading). Both directions of a contingency market, or of any market
+  "zero or absent" reading), and applied over the intervals §6.5 Table 3 gives for the modelled
+  process. Both directions of a contingency market, or of any market
   on a non-`PSY.Storage` device, still throw.
 - The computable subset of §5's enablement pre-conditions gates each `(device, t)`'s capacity
   variable(s) to zero and its constraint rows to a vacuous `0.0 ≤ 1.0` pair; for a both-sides

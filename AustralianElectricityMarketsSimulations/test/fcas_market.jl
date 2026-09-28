@@ -814,7 +814,8 @@ generation-side trapezium (`EnablementMin=0, LowBreakpoint=5, HighBreakpoint=20,
 EnablementMax=25, MaxAvail=10`, on the net-MW axis) and the load-side trapezium
 (`EnablementMin=-25, LowBreakpoint=-20, HighBreakpoint=-5, EnablementMax=0, MaxAvail=10`) -
 with `ActivePowerOutVariable`/`ActivePowerInVariable` fixed at `out_mw`/`in_mw`, maximising the
-unit's total RAISEREG target.
+unit's total RAISEREG target. With `solve = false`, returns the built, unsolved
+`PSI.DecisionModel` instead.
 """
 function _build_bdu_regulation(
         service_name, out_mw, in_mw;
@@ -824,6 +825,7 @@ function _build_bdu_regulation(
         agc_enablement_min::Union{Nothing, Float64} = nothing,
         agc_enablement_max::Union{Nothing, Float64} = nothing,
         load_max_avail::Float64 = 10.0,
+        solve::Bool = true,
     )
     sys = augmented_pscb_system()
     _fix_thermal_floor!(sys)
@@ -889,6 +891,7 @@ function _build_bdu_regulation(
         initial_time = TOY_START,
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    solve || return model
 
     container = PSI.get_optimization_container(model)
     base_power = PSY.get_base_power(sys)
@@ -980,6 +983,23 @@ end
         # unit total reaches both sides' combined bid MaxAvail.
         container = _build_bdu_regulation("TAS1_RAISEREG_BDU_ZERO_RAMP", 15.0, 15.0; agc_max_avail = 0.0)
         @test fcas_unit_mw(container, "TAS1_RAISEREG_BDU_ZERO_RAMP", "BAT1") ≈ 20.0 atol = FCAS_TOY_TOLERANCE
+    end
+
+    @testset "§6.4: the SCADA ramping cap follows AEMO's Table 3 timing" begin
+        model = _build_bdu_regulation("TAS1_RAISEREG_BDU_TIMING", 15.0, 15.0; agc_max_avail = 12.0, solve = false)
+        container = PSI.get_optimization_container(model)
+        bat = PSY.get_component(EnergyReservoirStorage, PSI.get_system(model), "BAT1")
+        model_for(formulation) = Dict{Symbol, PSI.DeviceModel}(
+            :EnergyReservoirStorage => PSI.DeviceModel(EnergyReservoirStorage, formulation),
+        )
+        caps_mw(formulation) = AustralianElectricityMarketsSimulations._fcas_bdu_ramp_caps(
+            container, model_for(formulation), bat, BidType.RAISEREG,
+        ) .* PSI.get_base_power(container)
+        # Dispatch and 5-minute pre-dispatch apply it; 30-minute pre-dispatch does not.
+        @test caps_mw(NEMReplayDispatch) ≈ [12.0]
+        @test caps_mw(NEMLookaheadDispatch) ≈ [12.0]
+        PSI.set_resolution!(container.settings, Minute(30))
+        @test caps_mw(NEMLookaheadDispatch) == [0.0]
     end
 end
 

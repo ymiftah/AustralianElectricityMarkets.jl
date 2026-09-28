@@ -116,7 +116,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unit's published regulation total: §6.2's cross term on another service's joint capacity
   constraint, and a new `FCASBDURampingConstraint` (§6.4's "BDU regulating FCAS SCADA ramping
   constraint", bounding the total against the device's AGC ramping capability, skipped where no
-  ramping-capability series or a zero SCADA ramp rate), both read it. AEMO's §5 pre-conditions
+  ramping-capability series or a zero SCADA ramp rate, and applied per AEMO's Table 3: every
+  interval in dispatch, the first in 5-minute pre-dispatch, none in 30-minute pre-dispatch), both
+  read it. AEMO's §5 pre-conditions
   gate each side independently; when both sides pass, one combined stranded pre-condition
   (`EnablementMin_LOAD <= InitialMW <= EnablementMax_GEN`) gates both together, and otherwise the
   side still enabled is checked against its own trapezium. A new AGC-status pre-condition

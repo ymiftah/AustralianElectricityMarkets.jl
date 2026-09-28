@@ -340,6 +340,20 @@ end
         end
         @test n_enabled_pairs > 0
 
+        # Per-side regulation reads a battery's discharge and charge separately, so the solve
+        # must not charge and discharge a battery in the same interval.
+        n_circulating = 0
+        if PSI.has_container_key(container, PSI.ActivePowerOutVariable, PSY.EnergyReservoirStorage)
+            out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), PSY.EnergyReservoirStorage)
+            in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), PSY.EnergyReservoirStorage)
+            base_power = PSY.get_base_power(sys)
+            for duid in axes(out_var, 1), t in axes(out_var, 2)
+                simultaneous_mw = min(PSI.JuMP.value(out_var[duid, t]), PSI.JuMP.value(in_var[duid, t])) * base_power
+                simultaneous_mw > 1.0e-3 && (n_circulating += 1)
+            end
+        end
+        @test n_circulating == 0
+
         # Aggregate, report-only sanity check: at t=1, does this build's implied upper bound on
         # each battery's total RAISEREG target (its own side bound(s), further capped by the
         # §6.4 SCADA ramping constraint where attached) match AEMO's published

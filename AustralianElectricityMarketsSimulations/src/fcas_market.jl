@@ -127,8 +127,8 @@ end
 The AEMO central dispatch process `device`'s FCAS telemetry timing follows: `:dispatch` unless
 its dispatch model is [`NEMLookaheadDispatch`](@ref), then `:p5min` (5-minute pre-dispatch) at a
 5-minute resolution and `:predispatch` (30-minute pre-dispatch) at a longer one. Telemetered
-inputs (`INITIALMW`, AGC limits) apply to every interval of `:dispatch` and to the first interval
-otherwise.
+inputs (`INITIALMW`, AGC limits and status) apply to every interval of `:dispatch` and to the
+first interval otherwise.
 
 # Returns
 `:dispatch`, `:p5min` or `:predispatch`.
@@ -141,6 +141,18 @@ function _fcas_process(container::PSI.OptimizationContainer, devices_template, d
     end
     return :dispatch
 end
+
+"""
+    _fcas_agc_ramp_applies(process, t) -> Bool
+
+Whether AEMO *FCAS Model in NEMDE* §4.2 AGC ramp scaling and §6.4 BDU SCADA ramping apply at
+interval `t` of `process` ([`_fcas_process`](@ref)): every interval in dispatch, the first in
+5-minute pre-dispatch, none in 30-minute pre-dispatch.
+
+# Returns
+`Bool`.
+"""
+_fcas_agc_ramp_applies(process::Symbol, t::Int) = process === :dispatch || (process === :p5min && t == 1)
 
 """
     _fcas_series(container, devices_template, device, bid_type, decremental) -> (trapeziums, curves)
@@ -393,6 +405,26 @@ function _fcas_both_sides_enabled_mask(
         )
     end
     return first.(flags), last.(flags)
+end
+
+"""
+    _fcas_bdu_ramp_caps(container, devices_template, device, bid_type) -> Vector{Float64}
+
+`device`'s AEMO *FCAS Model in NEMDE* §6.4 BDU SCADA ramping cap on its regulation `bid_type`
+target, one entry per `PSI.get_time_steps(container)`: the AGC ramping capability
+([`get_fcas_agc_ramp_capability`](@ref)) over the container's resolution wherever
+[`_fcas_agc_ramp_applies`](@ref), `0.0` (no cap) elsewhere or where the ramp rate is zero or absent.
+
+# Returns
+`Vector{Float64}`.
+"""
+function _fcas_bdu_ramp_caps(container::PSI.OptimizationContainer, devices_template, device::PSY.Device, bid_type::BidType)
+    time_steps = PSI.get_time_steps(container)
+    ramp_cap = get_fcas_agc_ramp_capability(
+        device, bid_type, PSI.get_initial_time(container), length(time_steps); resolution = PSI.get_resolution(container),
+    )
+    process = _fcas_process(container, devices_template, device)
+    return [(isnothing(ramp_cap) || !_fcas_agc_ramp_applies(process, t)) ? 0.0 : ramp_cap[t] for t in time_steps]
 end
 
 """
@@ -660,8 +692,6 @@ function PSI.construct_service!(
     bid_type = get_bid_type(svc)
     is_regulation = _is_regulation_service(bid_type)
     time_steps = PSI.get_time_steps(container)
-    initial_time = PSI.get_initial_time(container)
-    horizon = length(time_steps)
     jm = PSI.get_jump_model(container)
 
     directions = Dict(PSY.get_name(d) => _fcas_direction(d, bid_type) for d in devices)
@@ -762,15 +792,10 @@ function PSI.construct_service!(
             )
             for device in both_devices
                 dname = PSY.get_name(device)
-                ramp_cap = get_fcas_agc_ramp_capability(
-                    device, bid_type, initial_time, horizon; resolution = PSI.get_resolution(container),
-                )
-                first_only = _fcas_process(container, devices_template, device) !== :dispatch
+                caps = _fcas_bdu_ramp_caps(container, devices_template, device, bid_type)
                 for t in time_steps
-                    # A zero or absent SCADA ramp rate imposes no cap (§4.2's "zero or absent").
-                    cap = (isnothing(ramp_cap) || (first_only && t > 1)) ? 0.0 : ramp_cap[t]
-                    con_ramp[dname, t] = iszero(cap) ?
-                        JuMP.@constraint(jm, 0.0 <= 1.0) : JuMP.@constraint(jm, target[dname, t] <= cap)
+                    con_ramp[dname, t] = iszero(caps[t]) ?
+                        JuMP.@constraint(jm, 0.0 <= 1.0) : JuMP.@constraint(jm, target[dname, t] <= caps[t])
                 end
             end
         end

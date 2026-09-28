@@ -996,6 +996,12 @@
             @test isequal(Tuple(first_only[1]), Tuple(scaled[1]))
             @test all(i -> isequal(Tuple(first_only[i]), Tuple(raw[i])), 2:horizon)
 
+            # agc_ramp_scaling = false: AGC enablement scaling only, MaxAvail left at the bid's.
+            no_ramp = get_scaled_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon; agc_ramp_scaling = false)
+            @test get_max_avail.(no_ramp) == get_max_avail.(raw)
+            @test get_enablement_min.(no_ramp) == get_enablement_min.(scaled)
+            @test get_enablement_max.(no_ramp) == get_enablement_max.(scaled)
+
             # A contingency market carries no AGC scaling input series at all: unscaled.
             raw_contingency = get_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
             scaled_contingency = get_scaled_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
