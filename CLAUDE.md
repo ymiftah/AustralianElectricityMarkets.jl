@@ -1,15 +1,23 @@
 # AustralianElectricityMarkets.jl
 
-Julia package that fetches AEMO **NEMWEB (MMSDM)** market data into a local Hive-partitioned parquet
-cache, queries it with DuckDB, and parses it into **PowerSystems.jl** `System` objects — including
-NEM-specific FCAS reserve and offer types.
+Julia monorepo that turns AEMO **NEMWEB (MMSDM)** market data into **PowerSystems.jl** `System`s and
+solves NEM dispatch replicas of them with **PowerSimulations.jl**. It is a Julia 1.11 workspace of
+three packages sharing the root `Manifest.toml`; each builds on the one above it:
+
+| Package | Path | Responsible for |
+| --- | --- | --- |
+| `AustralianElectricityMarketsData` | `AustralianElectricityMarketsData/` | NEMWEB download, Hive-partitioned parquet cache, DuckDB connection and raw queries, ISP inputs. No PowerSystems dependency. |
+| `AustralianElectricityMarkets` | repo root (`src/`) | Builds the PSY `System`: network configurations, readers, time-series/bid/limit setters, NEM-specific FCAS reserve and offer types, generic constraints, interconnector losses. Re-exports the Data package's API. |
+| `AustralianElectricityMarketsSimulations` | `AustralianElectricityMarketsSimulations/` | NEMDE replication in PSI: `AbstractNEMDispatch` device formulations (batteries included), FCAS market and trapezium formulations, NEM constraint formulations, per-interval inputs and preprocessing, pre-flight checks. |
 
 ## Quick start
 
 ```julia
 db = aem_connect()                                    # AEMDB wrapper over DuckDB.DB
 populate(db, :DISPATCHPRICE, Date(2025, 1, 1), Date(2025, 1, 3))
-sys = nem_system(db, RegionalNetworkConfiguration())  # or FCASNetworkConfiguration()
+sys = nem_system(db, RegionalNetworkConfiguration())  # energy-only regional system
+sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = start:Minute(5):stop)
+                                                      # + FCAS services, generic constraints, losses
 ```
 
 Cache layout: `~/.nemdb_cache/<TABLE>/archive_month=YYYY-MM-01/*.parquet`. Configuration is entirely
@@ -18,7 +26,9 @@ via the `HiveConfiguration` struct (`filesystem = "file" | "s3" | "gs"`) — no 
 ## Commands
 
 ```bash
-julia --project -e 'using Pkg; Pkg.test()'   # full suite; never hits the network
+julia --project -e 'using Pkg; Pkg.test()'                                         # root suite
+julia --project=AustralianElectricityMarketsData -e 'using Pkg; Pkg.test()'        # Data suite
+julia --project=AustralianElectricityMarketsSimulations -e 'using Pkg; Pkg.test()' # Simulations suite
 julia --project=docs docs/make.jl            # Literate + Documenter/Vitepress
 pre-commit run -a                            # Runic + markdownlint + yamlfmt (CI "Linting" job)
 # Real-data integration suite: local only (not in Pkg.test or CI), reads ~/.nemdb_cache
@@ -26,9 +36,9 @@ julia --project=AustralianElectricityMarketsSimulations/test \
     AustralianElectricityMarketsSimulations/test/real_data/runtests.jl [hive_location]
 ```
 
-Julia 1.11 workspace: root, `test/`, and `docs/` share one Manifest.
+All three suites run on generated mock parquet data and never hit the network; CI runs all three.
 
-**Run only the test groups your change touches, not the full suite.** Both runners take group
+**Run only the test groups your change touches.** The root and Simulations runners take group
 names (listed in `TEST_GROUPS` at the top of each `runtests.jl`; no arguments runs everything):
 
 ```bash
@@ -39,53 +49,60 @@ julia --project=AustralianElectricityMarketsSimulations/test \
 
 Pick the groups whose test file covers the source you edited (e.g. `src/fcas/` → `fcas`,
 `fcas_scaling`, `fcas_service`; `…Simulations/src/fcas_market.jl` → `fcas_market`). Run the full
-suite only for cross-cutting changes (shared fixtures, runner, dependencies) or before opening a
-PR. Use absolute paths when launching Julia from a backgrounded subshell. Shared test fixtures
-live in `…Simulations/test/toy_fixture.jl` and `template_helpers.jl`, which the runner always
-loads, so each group runs on its own.
+suites only for cross-cutting changes (shared fixtures, runner, dependencies, a change in one
+package that the next one consumes) or before opening a PR. Use absolute paths when launching Julia
+from a backgrounded subshell. Shared fixtures: `AustralianElectricityMarketsData/test/mock_data.jl`
+(all three suites), `test/integration/pscb_*.jl` (root and Simulations), and
+`…Simulations/test/toy_fixture.jl` / `template_helpers.jl`; each runner loads its fixtures up
+front, so every group runs on its own.
 
-## Layout
+## Where things live
 
 | Path | Role |
 | --- | --- |
-| `src/AustralianElectricityMarkets.jl` | top module: exports, includes, `@doc` re-binding |
-| `src/AustralianElectricityMarketsData/` | submodule: NEMWEB download, parquet cache, DuckDB queries |
-| `…/nemweb_load/tables.jl` | `_TABLE_SPECS` — one entry per NEMWEB table |
-| `…/nemweb_load/column_types.jl` | `COLUMN_TYPES`; unlisted columns silently become `VARCHAR` |
-| `src/bid_types.jl` | `BidType` scoped enum and the FCAS market tuples |
-| `src/query_helpers.jl` | shared DuckDB helpers: `_table_is_cached`, `_cast_double`, intervention filtering |
-| `src/readers/` | NEMWEB readers returning DataFrames: `prices.jl`, `dispatch.jl` |
-| `src/setters/` | PSY `System` mutators: `timeseries.jl`, `bids.jl`, `dispatch_limits.jl` |
-| `src/fcas/` | FCAS reserve and offer types, plus `bid_parser.jl` and `requirements.jl` |
-| `src/network_models/region_model.jl` | `RegionModel` submodule: builds the PSY `System` |
+| `…Data/src/nemweb_load/tables.jl` | `_TABLE_SPECS` — one entry per NEMWEB table |
+| `…Data/src/nemweb_load/column_types.jl` | `COLUMN_TYPES`; unlisted columns silently become `VARCHAR` |
+| `src/AustralianElectricityMarkets.jl` | exports, includes, `@doc` re-binding of Data/`RegionModel` names |
+| `src/network_models/` | `NetworkConfiguration` interface; `RegionModel` submodule builds the `System` |
+| `src/fcas/`, `src/constraints/` | FCAS types/bids/scaling/`FCASService`; `GenericConstraint` and its terms |
+| `…Simulations/src/nem_dispatch*.jl` | `AbstractNEMDispatch` formulations and `set_nem_dispatch_models!` |
+| `…Simulations/src/check/<what_is_checked>.jl` | pre-flight checks run before a build |
+| `…Simulations/src/psi_compat.jl` | shims over the pinned PowerSimulations fork |
+| `docs/adr/` | architecture decisions — design rationale goes here |
+| `docs/superpowers/plans/` | implementation plans; follow-up work is recorded here or in an ADR |
 
 ## Standards
 
-- **Runic** is the formatter (there is no JuliaFormatter config): 4-space indent, 8-space
-  continuation indent on multi-line signatures, trailing commas.
+- **Runic** is the formatter, run it at the end of a task.
 - Every function ends in an explicit `return` (bare `return` for `nothing`-returning functions).
 - Docstrings: signature line, one or two sentences of prose, then `# Arguments` / `# Returns` /
   `# Fields` / `# Example`; cross-reference with `` [`name`](@ref) ``.
-- **Docstrings are reference documentation, not developer notes.** State what the function does,
-  its arguments and its return value — nothing else. A docstring is too long if it runs past a
-  short paragraph before the `# Arguments` section. Never put in a docstring: why an approach was
-  chosen over another, what failed in testing, empirical findings, history ("used to", "previously",
-  "this avoids"), or a narrative of how a bug was found. That reasoning goes in `docs/adr/`.
-- **Never reference `docs/adr/` or an ADR number from a docstring, comment, or any user-facing
-  text.** ADRs are internal memory for agents, not documentation for users of this package.
-- **Keep comments short** — a line or two for the genuinely non-obvious, explaining *what* the
-  non-obvious thing is, not the investigation behind it. Do not write paragraph-long
-  design-rationale comments.
+- **Docstrings are reference documentation.** State what the function does, its arguments and its
+  return value, in at most a short paragraph before `# Arguments`. Design rationale, test findings
+  and history go in `docs/adr/`.
+- **Docstrings, comments and user-facing text stand on their own**: they never cite `docs/adr/` or
+  an ADR number. ADRs are internal memory for agents, not documentation for users of this package.
+- **Comments are one or two lines**, reserved for the genuinely non-obvious, saying *what* the
+  non-obvious thing is.
 - Naming: NEMWEB tables/columns stay `SCREAMING_CASE`; Julia API is `snake_case`; private helpers
   are `_`-prefixed; mutating functions take `!`.
-- Submodule symbols are exported twice (in the submodule, then re-exported at top level) with
-  `@doc (@doc Sub.f) f` so Documenter resolves the docstring from the top-level name.
+- Names exported from the Data package or the `RegionModel` submodule are re-exported at the top
+  level with `@doc (@doc Sub.f) f` so Documenter resolves the docstring from the top-level name.
 - DataFrame work uses `@chain`. Parquet access goes through **DuckDB.jl** — `read_hive` returns a
   SQL source fragment you query with `DuckDB.execute`.
-- Keep `CHANGELOG.md`'s `## [Unreleased]` current. PRs need a `Closes #`, green tests and Linting,
+- Keep `CHANGELOG.md`'s `## [Unreleased]` current. PRs need green tests and Linting,
   and updated docs.
 - Scaffolded by BestieTemplate.jl (`.copier-answers.yml`); workflows and pre-commit config are
   copier-managed and can be clobbered on template update.
+- No em-dashes in prose.
+
+## NEM correctness
+
+Any change to the optimisation model (a dispatch, FCAS, constraint or loss formulation in
+`…Simulations/src/`, or the NEM types, bids and limits it reads from `src/`) is validated against
+AEMO's official documentation through the `nem-expert` skill. Load it when planning the change
+and again when reviewing it; every variable bound, constraint and cost term needs a matching
+AEMO source. Where the code departs from AEMO, record the departure in an ADR.
 
 ## Gotchas
 
@@ -94,5 +111,8 @@ loads, so each group runs on its own.
 - `read_hive` uses `union_by_name = true`, so old partitions read back `NULL` for newly added columns.
 - DuckDB.jl cannot prepare multiple statements at once — issue `INSTALL httpfs` and `LOAD httpfs`
   as separate `DuckDB.execute` calls.
-- PSY component types that get serialized must live in the **top-level** module: `IS.get_module`
-  only resolves top-level package names, so submodule-nested types break `System` JSON round-trips.
+- PSY component types that get serialized must live in the **top-level** `AustralianElectricityMarkets`
+  module: `IS.get_module` only resolves top-level package names, so submodule-nested types break
+  `System` JSON round-trips.
+- Simulations depends on a **pinned PowerSimulations fork** (`[sources]` in its `Project.toml`);
+  check PSI behaviour against that revision, not upstream.
