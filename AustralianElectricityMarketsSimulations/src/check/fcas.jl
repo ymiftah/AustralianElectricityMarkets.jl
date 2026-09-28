@@ -1,20 +1,4 @@
 """
-    _fcas_bid_direction(device, bid_type) -> Symbol
-
-`:incremental`, `:decremental`, `:both` or `:none`, describing which `"fcas_trapezium_<bid_type>
-[_decremental]"` series `device` carries.
-"""
-function _fcas_bid_direction(device, bid_type::BidType)
-    bid_type_str = string(bid_type)
-    has_inc = PSY.has_time_series(device, PSY.Deterministic, "fcas_trapezium_$bid_type_str")
-    has_dec = PSY.has_time_series(device, PSY.Deterministic, "fcas_trapezium_$(bid_type_str)_decremental")
-    has_inc && has_dec && return :both
-    has_inc && return :incremental
-    has_dec && return :decremental
-    return :none
-end
-
-"""
     check_fcas_services(sys, template)
 
 Verifies every available [`FCASService`](@ref) that `template` models under
@@ -63,7 +47,7 @@ function check_fcas_services(sys::PSY.System, template::PSI.ProblemTemplate)
                         "for the FCAS joint capacity constraints.",
                 )
             end
-            direction = _fcas_bid_direction(device, bid_type)
+            direction = AustralianElectricityMarkets._fcas_bid_direction(device, bid_type)
             if direction == :none
                 push!(
                     problems,

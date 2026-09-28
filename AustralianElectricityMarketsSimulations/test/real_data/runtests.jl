@@ -248,25 +248,9 @@ end
     end
 
     @testset "FCASMarket builds and solves alongside the constrained System" begin
-        # One FCASService per (region, bid type) straight from the bids, independent of requirements,
-        # replacing any `ConstrainedNetworkConfiguration` added from the requirement data.
-        foreach(s -> PSY.remove_component!(sys, s), collect(PSY.get_components(FCASService, sys)))
-        dispatch_types = Set(nem_dispatch_participants(sys))
-        regions = PSY.get_name.(PSY.get_components(PSY.Area, sys))
-        n_excluded = 0
-        fcas_registered = String[]
-        for region in regions, bid_type in AEM.FCAS_BID_TYPES
-            devices = AEM._fcas_service_devices(sys, region, bid_type)
-            devices = filter(d -> typeof(d) in dispatch_types, devices)
-            isempty(devices) && continue
-            keep = filter(d -> AEMS._fcas_bid_direction(d, bid_type) == :incremental, devices)
-            n_excluded += length(devices) - length(keep)
-            isempty(keep) && continue
-            name = "$(region)_$(string(bid_type))"
-            PSY.add_service!(sys, FCASService(; name = name, region = region, bid_type = bid_type), keep)
-            push!(fcas_registered, name)
-        end
-
+        # ConstrainedNetworkConfiguration's add_fcas_services! built one FCASService per bid
+        # (region, bid type), attaching only the bids FCASMarket models.
+        fcas_registered = PSY.get_name.(PSY.get_components(FCASService, sys))
         @test !isempty(fcas_registered)
 
         fcas_template = aemsim_template(sys)
@@ -314,6 +298,6 @@ end
         end
         @test n_enabled_pairs > 0
 
-        @info "Real-data FCASMarket DecisionModel" build_time solve_time n_services = length(fcas_registered) n_excluded n_enabled_pairs
+        @info "Real-data FCASMarket DecisionModel" build_time solve_time n_services = length(fcas_registered) n_enabled_pairs
     end
 end

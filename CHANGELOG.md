@@ -45,7 +45,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`add_nem_constraints!` warns when invoked `SETTLEMENTDATE`s don't align to `date_range`'s grid**, instead of silently producing an all-zero `"invoked"` series.
 - **`GenericConstraint`'s `get_limit_type`/`get_source`/`get_effective_date`/`get_version_no`/`get_gencon_id`** now return `nothing`, not Julia `missing`, when the underlying `GENCONDATA` field was `NULL`.
 - **`set_fcas_bids!` throws an actionable `ArgumentError`**, not a raw `MethodError`, when a required FCAS trapezium field (`ENABLEMENTMIN`/`LOWBREAKPOINT`/`HIGHBREAKPOINT`/`ENABLEMENTMAX`/`MAXAVAIL`) is `NULL`.
-- **`add_fcas_services!` excludes disarmed (`available = false`) `GenericConstraint`s** from the FCAS markets it builds.
 - **`loss_segments` throws on duplicate adjacent `LOSSMODEL` breakpoints** instead of silently producing a `NaN` slope.
 - **`get_fcas_bid` throws on a trapezium/offer-curve series length mismatch** instead of silently truncating via `zip`.
 - **Stale data-fetching documentation**: The README, docs landing page, "Gathering Data" page, and the commented download snippets in the Literate examples all referenced a `fetch_table_data` function and a `PyHiveConfiguration` type that no longer exist. They now use `populate` and `HiveConfiguration`, and the description of the package as a wrapper around a Python package has been removed.
@@ -139,10 +138,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Interconnector loss model** (`src/interconnector_losses.jl`): `InterconnectorLossModel`, three readers `read_interconnector_loss_breakpoints`/`read_interconnector_demand_coefficients`/`read_interconnector_loss_parameters`, and `interconnector_loss_models` assembler. NEMDE models losses as quadratic in flow with demand-dependent linear coefficients; `loss_factor` evaluates it, `interconnector_losses` integrates it, and `loss_segments` linearises on `LOSSMODEL`'s `MWBREAKPOINT`s as chord slopes. Readers are version-resolved on `EFFECTIVEDATE`/`VERSIONNO` as of a caller-supplied date, not `archive_month`, and throw `ArgumentError` naming the missing table when uncached.
 - **`attach_interconnector_losses!`**: `InterconnectorLossModel` is now a `PSY.SupplementalAttribute`, so it can be attached to a `System`'s `AreaInterchange` components and round-trips through JSON. `attach_interconnector_losses!(sys, db, as_of)` attaches one per `AreaInterchange`, matched by `INTERCONNECTORID`; an interconnector with no resolvable loss model is skipped and reported in one aggregated `@warn`. Wired as the fourth build step in `ConstrainedNetworkConfiguration`, after `add_fcas_services!`.
 - **`FCASService`/`add_fcas_services!`**: New `PSY.Service` anchoring the devices
-  contributing to each `(region, bid_type)` FCAS market actually governed by a
-  `GenericConstraint` in a `System` — a plain `add_service!` join, carrying no requirement or
-  time series of its own. Wired as the third build step in `ConstrainedNetworkConfiguration`,
-  after `set_fcas_bids!`/`add_nem_constraints!`.
+  contributing to each `(region, bid_type)` FCAS market with at least one available bidder — a
+  plain `add_service!` join, carrying no requirement or time series of its own. Only bids whose
+  direction `FCASMarket` models are attached (the rest are reported), and a service already in
+  the `System` is left as is. Wired as the third build step in `ConstrainedNetworkConfiguration`.
 - **`get_fcas_trapezium`/`get_fcas_offer_curve`/`get_fcas_bid`**: New full-series accessors
   reconstructing typed `FCASTrapezium`/`PiecewiseStepData`/`FCASBid` values from the raw
   tuple/curve series `set_fcas_bids!` stores. `decremental = true` reads a storage device's
