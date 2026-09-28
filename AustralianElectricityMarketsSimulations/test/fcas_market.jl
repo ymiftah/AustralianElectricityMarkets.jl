@@ -823,6 +823,7 @@ function _build_bdu_regulation(
         storage_initial_mw::Union{Nothing, Float64} = nothing,
         agc_enablement_min::Union{Nothing, Float64} = nothing,
         agc_enablement_max::Union{Nothing, Float64} = nothing,
+        load_max_avail::Float64 = 10.0,
     )
     sys = augmented_pscb_system()
     _fix_thermal_floor!(sys)
@@ -854,7 +855,7 @@ function _build_bdu_regulation(
     )
     add_toy_fcas!(
         sys, bat, stamps[1], length(stamps), BidType.RAISEREG,
-        (-25.0, -20.0, -5.0, 0.0, 10.0), [(10.0, 12.0)]; decremental = true,
+        (-25.0, -20.0, -5.0, 0.0, load_max_avail), [(10.0, 12.0)]; decremental = true,
     )
     if !isnothing(agc_status)
         add_toy_fcas_agc_status!(sys, bat, stamps[1], length(stamps), agc_status)
@@ -950,14 +951,35 @@ end
         @test fcas_unit_mw(container, "TAS1_RAISEREG_BDU_STRANDED", "BAT1") ≈ 0.0 atol = FCAS_TOY_TOLERANCE
     end
 
-    @testset "a DUID-level AGC enablement window degenerate relative to the load side scales through unchanged" begin
-        # agc_enablement_min (368.39502) is above the load side's own EnablementMax (0.0) and
-        # agc_enablement_max is absent: neither bound is applied, so the charging case still
-        # solves against the load side's own trapezium, not a collapsed one.
+    @testset "an AGC enablement window outside both sides' spans disables regulation" begin
+        # agc_enablement_min (368.39502) is above both sides' own EnablementMax (0 and 25 MW):
+        # each scaled trapezium comes out with EnablementMin > EnablementMax, which §5 disables,
+        # as AEMO's own scaling does.
         container = _build_bdu_regulation(
             "TAS1_RAISEREG_BDU_SCALED", 0.0, 22.0; agc_enablement_min = 368.39502, agc_enablement_max = 0.0,
         )
-        @test fcas_unit_mw(container, "TAS1_RAISEREG_BDU_SCALED", "BAT1") ≈ 6.0 atol = FCAS_TOY_TOLERANCE
+        @test fcas_unit_mw(container, "TAS1_RAISEREG_BDU_SCALED", "BAT1") ≈ 0.0 atol = FCAS_TOY_TOLERANCE
+    end
+
+    @testset "the combined stranded window applies only when both sides are really offered" begin
+        # Load side offers MaxAvail 0, so the unit bids regulation on the generation side only:
+        # InitialMW = -10 MW lies inside the combined window [-25, 25] but outside the generation
+        # side's own [0, 25], so the generation side is stranded.
+        stranded = _build_bdu_regulation(
+            "TAS1_RAISEREG_BDU_ONESIDE", 22.0, 0.0; load_max_avail = 0.0, storage_initial_mw = -10.0,
+        )
+        @test fcas_unit_mw(stranded, "TAS1_RAISEREG_BDU_ONESIDE", "BAT1") ≈ 0.0 atol = FCAS_TOY_TOLERANCE
+        inside = _build_bdu_regulation(
+            "TAS1_RAISEREG_BDU_ONESIDE_OK", 22.0, 0.0; load_max_avail = 0.0, storage_initial_mw = 10.0,
+        )
+        @test fcas_unit_mw(inside, "TAS1_RAISEREG_BDU_ONESIDE_OK", "BAT1") ≈ 6.0 atol = FCAS_TOY_TOLERANCE
+    end
+
+    @testset "§6.4: a zero SCADA ramp rate imposes no cap" begin
+        # Same 15/15 MW point as the binding-cap case: with the ramp rate zero ("absent"), the
+        # unit total reaches both sides' combined bid MaxAvail.
+        container = _build_bdu_regulation("TAS1_RAISEREG_BDU_ZERO_RAMP", 15.0, 15.0; agc_max_avail = 0.0)
+        @test fcas_unit_mw(container, "TAS1_RAISEREG_BDU_ZERO_RAMP", "BAT1") ≈ 20.0 atol = FCAS_TOY_TOLERANCE
     end
 end
 
@@ -1100,7 +1122,7 @@ end
 A toy `System` of `units` (`name => toy_unit(...)`), each bidding RAISE6SEC with `trapezium_mw`
 and one 10 MW band, all contributing to one `FCASService`.
 """
-function raise6sec_toy(; units, trapezium_mw, service_name = "TAS1_RAISE6SEC")
+function raise6sec_toy(; units, trapezium_mw, service_name = "TAS1_RAISE6SEC", extra! = nothing)
     return nem_toy_system(
         units, sum(u.initial for (_, u) in units);
         mutate! = (sys, stamps) -> begin
@@ -1111,6 +1133,7 @@ function raise6sec_toy(; units, trapezium_mw, service_name = "TAS1_RAISE6SEC")
             PSY.add_service!(
                 sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC), devices,
             )
+            isnothing(extra!) || extra!(sys, stamps)
         end,
     )
 end
@@ -1186,6 +1209,9 @@ end
     unit(initial) = toy_unit(100.0, [(100.0, 20.0)]; initial = initial, ramp_up = 1.0e4, ramp_down = 1.0e4)
     sys = raise6sec_toy(;
         units = [TOY_CHEAP => unit(20.0), TOY_EXPENSIVE => unit(2.0)], trapezium_mw = (5.0, 10.0, 90.0, 100.0, 10.0),
+        extra! = (sys, stamps) -> add_toy_fcas_agc_status!(
+            sys, PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP), stamps[1], length(stamps), 0,
+        ),
     )
     container = build_fcas(sys, [service_name]; steps = 2)
     base_power = PSI.get_base_power(container)
@@ -1202,6 +1228,13 @@ end
         AEMS = AustralianElectricityMarketsSimulations
         @test AEMS._fcas_enabled_mask(container, lookahead, device, BidType.RAISE6SEC, false) == [false, true]
         @test AEMS._fcas_enabled_mask(container, replay, device, BidType.RAISE6SEC, false) == [false, false]
+
+        # AGC status is telemetry too: known in every interval under replay, the first only under lookahead.
+        cheap = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+        _, _, agc_lookahead = AEMS._fcas_enablement_inputs(container, lookahead, cheap)
+        _, _, agc_replay = AEMS._fcas_enablement_inputs(container, replay, cheap)
+        @test [agc_lookahead(t) for t in 1:2] == [0, nothing]
+        @test [agc_replay(t) for t in 1:2] == [0, 0]
     end
 end
 

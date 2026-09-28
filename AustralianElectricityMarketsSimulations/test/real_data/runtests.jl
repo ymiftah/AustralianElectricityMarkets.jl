@@ -366,7 +366,7 @@ end
                 ramp_cap = get_fcas_agc_ramp_capability(
                     PSY.get_component(PSY.EnergyReservoirStorage, sys, duid), BidType.RAISEREG, REAL_START, 1,
                 )
-                isnothing(ramp_cap) || (bound = min(bound, ramp_cap[1]))
+                isnothing(ramp_cap) || iszero(ramp_cap[1]) || (bound = min(bound, ramp_cap[1]))
                 bound *= PSY.get_base_power(sys)
                 n_compared += 1
                 isapprox(bound, published; atol = 1.0) && (n_matched += 1)
