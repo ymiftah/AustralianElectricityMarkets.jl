@@ -75,10 +75,11 @@ is present alongside the lower-form's `LOWERREG` appearance in every lower servi
 container's `meta`), covering every service the same way regardless of direction. A regulation
 service's own two forms use only its own slope/target, matching §6.3's lack of a cross term.
 
-`RAISEREG`'s own target is *not* determined by either form in real dispatch — AEMO's §6.1 joint
-ramping constraint pins it, deferred to a later PR (see the Phase 2 plan, 2.9). The acceptance test
-fixes it to the published value directly, matching the literate example's own framing of it as a
-given input for this worked case, not a value this formulation derives.
+`RAISEREG`'s own target is not determined by either form alone in real dispatch: AEMO's §6.1
+joint ramping constraint (below) also binds it. The acceptance test's fixture carries no AGC ramp
+rate series, so §6.1 builds a placeholder row there; the test fixes the target to the published
+value directly, matching the literate example's own framing of it as a given input for this worked
+case, not a value this formulation derives.
 
 ### The joint LHS is an `ExpressionType`, not an ad hoc `JuMP` expression
 

@@ -66,6 +66,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FCASJointRampingConstraint`, AEMO *FCAS Model in NEMDE* §6.1's joint ramping constraint**
+  (`AustralianElectricityMarketsSimulations`): for every contributing device of a regulation
+  `FCASService`, bounds the device's net energy dispatch combined with its
+  `FCASUnitRegulationTarget` against `InitialMW` plus or minus its telemetered AGC ramp
+  (`get_fcas_agc_ramp_capability`, shared with §4.2 and §6.4 through the generalised
+  `_fcas_agc_ramp_caps`). Built over every contributing device regardless of bid direction, gated
+  to a vacuous row wherever the ramp capability is zero or absent, `InitialMW` is unknown at that
+  interval, or the device isn't enabled for the service. `check_fcas_services` now also reports a
+  regulation contributor that carries a positive AGC ramp rate but no `"initial_mw"` series.
 - **`FCASMarket`, the `FCASService` co-optimisation formulation** (`AustralianElectricityMarketsSimulations`):
   a `FCASCapacityVariable` per contributing device and interval, bounded above by the device's
   `MAXAVAIL` for that market, and both forms (upper and lower) of the joint capacity constraint
