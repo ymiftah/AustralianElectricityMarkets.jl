@@ -85,8 +85,7 @@ series and its AGC ramping capability, `"fcas_agc_ramp_rate_<service>"` (MW/h) t
 `agc_first_interval_only`, the AGC inputs apply to the first step only; with
 `agc_ramp_scaling = false`, the AGC ramping capability applies at no step. UIGF applies at every
 step. `decremental` selects the storage `DIRECTION == "LOAD"` trapezium series only - the AGC
-enablement/ramp/UIGF series are shared by
-both directions of the same device.
+enablement/ramp/UIGF series are shared by both directions of the same device.
 
 # Returns
 `Vector{FCASTrapezium}`.

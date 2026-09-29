@@ -424,7 +424,10 @@ function _fcas_bdu_ramp_caps(container::PSI.OptimizationContainer, devices_templ
         device, bid_type, PSI.get_initial_time(container), length(time_steps); resolution = PSI.get_resolution(container),
     )
     process = _fcas_process(container, devices_template, device)
-    return [(isnothing(ramp_cap) || !_fcas_agc_ramp_applies(process, t)) ? 0.0 : ramp_cap[t] for t in time_steps]
+    return [
+        (isnothing(ramp_cap) || isnan(ramp_cap[t]) || !_fcas_agc_ramp_applies(process, t)) ? 0.0 : ramp_cap[t]
+            for t in time_steps
+    ]
 end
 
 """
