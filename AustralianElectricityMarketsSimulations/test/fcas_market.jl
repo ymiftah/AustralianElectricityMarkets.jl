@@ -65,7 +65,7 @@ Attaches [`set_fcas_scaling_inputs!`](@ref)'s per-device `"fcas_agc_enablement_m
 `"fcas_agc_enablement_max_<bid_type>"`/`"fcas_agc_ramp_rate_<bid_type>"`/`"fcas_uigf"`
 `SingleTimeSeries`, one flat window of `n` steps at `initial_timestamp`, mirroring its
 per-unit-of-system-base convention. `agc_max_avail` is the AGC ramping capability in MW over one
-`TOY_RESOLUTION` interval, stored as the equivalent MW/h ramp rate. A `nothing` keyword leaves the
+`resolution` interval, stored as the equivalent MW/h ramp rate. A `nothing` keyword leaves the
 matching series unattached.
 """
 function add_toy_fcas_scaling!(
@@ -82,7 +82,7 @@ function add_toy_fcas_scaling!(
     for (value, name) in (
             (agc_enablement_min, "fcas_agc_enablement_min_$bid_type_str"),
             (agc_enablement_max, "fcas_agc_enablement_max_$bid_type_str"),
-            (isnothing(agc_max_avail) ? nothing : agc_max_avail / (Dates.value(Minute(TOY_RESOLUTION)) / 60), "fcas_agc_ramp_rate_$bid_type_str"),
+            (isnothing(agc_max_avail) ? nothing : agc_max_avail / (Dates.value(Minute(resolution)) / 60), "fcas_agc_ramp_rate_$bid_type_str"),
             (uigf, "fcas_uigf"),
         )
         isnothing(value) && continue
@@ -283,6 +283,79 @@ end
         PSI.set_resolution!(container.settings, Minute(10))
         @test max_avail_mw() ≈ 20.0  # the same rate over 10 minutes
     end
+
+    @testset "under NEMLookaheadDispatch, AGC scaling follows AEMO's pre-dispatch timing" begin
+        # 24 MW/h AGC ramp rate (2 MW per 5 minutes) and a 50 MW AGC EnablementMax.
+        sys = fcas_energy_toy_system(
+            2.0;
+            mutate! = (sys, stamps) -> begin
+                device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+                n = length(stamps)
+                add_toy_fcas!(sys, device, stamps[1], n, BidType.RAISEREG, trapezium_mw, [(25.0, 10.0)])
+                add_toy_fcas_scaling!(sys, device, stamps[1], n, BidType.RAISEREG; agc_max_avail = 2.0, agc_enablement_max = 50.0)
+                PSY.add_service!(
+                    sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG), [device],
+                )
+            end,
+        )
+        container = build_fcas(sys, [service_name]; steps = 2)
+        device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+        lookahead = Dict{Symbol, PSI.DeviceModel}(:ThermalStandard => PSI.DeviceModel(PSY.ThermalStandard, NEMLookaheadDispatch))
+        replay = Dict{Symbol, PSI.DeviceModel}(:ThermalStandard => PSI.DeviceModel(PSY.ThermalStandard, NEMReplayDispatch))
+        base_power = PSI.get_base_power(container)
+        traps(template) = AustralianElectricityMarketsSimulations._fcas_series(container, template, device, BidType.RAISEREG, false)[1]
+
+        # Dispatch (Table 1): AGC enablement and ramp scaling at every interval.
+        @test get_max_avail.(traps(replay)) .* base_power ≈ [2.0, 2.0]
+        @test get_enablement_max.(traps(replay)) .* base_power ≈ [50.0, 50.0]
+        # 5-minute pre-dispatch: both, first interval only.
+        @test get_max_avail.(traps(lookahead)) .* base_power ≈ [2.0, 25.0]
+        @test get_enablement_max.(traps(lookahead)) .* base_power ≈ [50.0, 100.0]
+        # 30-minute pre-dispatch: AGC enablement scaling first interval only, no ramp scaling.
+        PSI.set_resolution!(container.settings, Minute(30))
+        @test get_max_avail.(traps(lookahead)) .* base_power ≈ [25.0, 25.0]
+        @test get_enablement_max.(traps(lookahead)) .* base_power ≈ [50.0, 100.0]
+    end
+end
+
+@testset "AGC enablement scaling (§4.1) narrows the solved cap, and an empty window disables" begin
+    duid = TOY_CHEAP
+    service_name = "TAS1_RAISEREG_AGC_ENABLEMENT"
+    # Upper slope coefficient (100 - 90) / 25 = 0.4; energy is fixed at 45 MW.
+    trapezium_mw = (0.0, 0.0, 90.0, 100.0, 25.0)
+    function agc_container(; agc_enablement_min = nothing, agc_enablement_max = nothing)
+        sys = fcas_energy_toy_system(
+            45.0;
+            mutate! = (sys, stamps) -> begin
+                device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+                n = length(stamps)
+                add_toy_fcas!(sys, device, stamps[1], n, BidType.RAISEREG, trapezium_mw, [(25.0, 10.0)])
+                add_toy_fcas_scaling!(
+                    sys, device, stamps[1], n, BidType.RAISEREG;
+                    agc_enablement_min = agc_enablement_min, agc_enablement_max = agc_enablement_max,
+                )
+                PSY.add_service!(
+                    sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG), [device],
+                )
+            end,
+        )
+        return build_fcas(sys, [service_name])
+    end
+    function solved_cap(container)
+        fix_energy!(container, duid, 45.0)
+        maximize_and_solve!(container) do container
+            fcas_capacity(container, service_name)[duid, 1]
+        end
+        return fcas_mw(container, service_name, duid)
+    end
+
+    @test solved_cap(agc_container()) ≈ 25.0 atol = FCAS_TOY_TOLERANCE
+    # AGC EnablementMax 50: HighBreakpoint slides to 50 - 0.4 × 25 = 40, so at 45 MW the upper
+    # slope allows (50 - 45) / 0.4 = 12.5 MW.
+    @test solved_cap(agc_container(; agc_enablement_max = 50.0)) ≈ 12.5 atol = FCAS_TOY_TOLERANCE
+    # An inverted AGC window leaves EnablementMax < EnablementMin: §5 disables the bid.
+    empty_window = agc_container(; agc_enablement_min = 60.0, agc_enablement_max = 40.0)
+    @test PSI.JuMP.upper_bound(fcas_capacity(empty_window, service_name)[duid, 1]) == 0.0
 end
 
 @testset "the LOWER6SEC trapezium genuinely binds as energy moves" begin
@@ -449,18 +522,20 @@ end
 end
 
 """
-    storage_fcas_toy_model(service_name, bid_type, trapezium_mw; decremental = false, energy_max_avail_mw = nothing, initial_mw = 0.0)
+    storage_fcas_toy_model(service_name, bid_type, trapezium_mw; decremental = false, energy_max_avail_mw = nothing, initial_mw = 0.0, scaling = nothing)
 
 Builds the toy PSCB `DecisionModel` with BAT1, under `NEMReplayDispatch`, as the only
 contributor to one [`FCASService`](@ref) bidding `trapezium_mw`. `energy_max_avail_mw = (gen,
 load)` attaches BAT1's energy `MAXAVAIL` series in MW, as [`set_market_bids!`](@ref) does;
-`initial_mw` is BAT1's net `INITIALMW` in MW.
+`initial_mw` is BAT1's net `INITIALMW` in MW. `scaling`, a `NamedTuple`, is passed to
+[`add_toy_fcas_scaling!`](@ref) as keywords.
 
 # Returns
 `(model, sys)`, with `model` built.
 """
 function storage_fcas_toy_model(
         service_name, bid_type, trapezium_mw; decremental = false, energy_max_avail_mw = nothing, initial_mw = 0.0,
+        scaling = nothing,
     )
     sys = augmented_pscb_system()
     _fix_thermal_floor!(sys)
@@ -525,6 +600,7 @@ function storage_fcas_toy_model(
     )
 
     add_toy_fcas!(sys, bat, stamps[1], length(stamps), bid_type, trapezium_mw, [(10.0, 50.0)]; decremental = decremental)
+    isnothing(scaling) || add_toy_fcas_scaling!(sys, bat, stamps[1], length(stamps), bid_type; scaling...)
     if !isnothing(energy_max_avail_mw)
         for (name, mw) in zip(("energy_max_avail", "energy_max_avail_decremental"), energy_max_avail_mw)
             PSY.add_time_series!(
@@ -921,6 +997,21 @@ end
         @test row.func.terms[in_var["BAT1", 1]] == -1.0
         @test !haskey(row.func.terms, out_var["BAT1", 1])
     end
+end
+
+@testset "a Storage device's LOAD-side regulation trapezium is scaled" begin
+    # LOAD-side LOWERREG on [-20, 0], both slope coefficients 0.5. AGC EnablementMin -10 and a
+    # 4 MW AGC ramping capability give (-10, -10 + 0.5 × 4, 0 - 0.5 × 4, 0, 4).
+    service_name = "TAS1_LOWERREG_STOR_SCALED"
+    model, sys = storage_fcas_toy_model(
+        service_name, BidType.LOWERREG, (-20.0, -15.0, -5.0, 0.0, 10.0);
+        decremental = true, scaling = (; agc_enablement_min = -10.0, agc_max_avail = 4.0),
+    )
+    container = PSI.get_optimization_container(model)
+    bat = get_component(EnergyReservoirStorage, sys, "BAT1")
+    replay = Dict{Symbol, PSI.DeviceModel}(:EnergyReservoirStorage => PSI.DeviceModel(EnergyReservoirStorage, NEMReplayDispatch))
+    trap = only(AustralianElectricityMarketsSimulations._fcas_series(container, replay, bat, BidType.LOWERREG, true)[1])
+    @test collect(Tuple(trap)[1:5]) .* PSI.get_base_power(container) ≈ [-10.0, -8.0, -2.0, 0.0, 4.0]
 end
 
 @testset "a Storage device's GEN-side regulation with a vertical lower slope" begin

@@ -272,6 +272,8 @@ end
         end
 
         @test !isempty(fcas_registered)
+        # AGC telemetry is tighter than the bid for some units on any real window.
+        @test n_regulation_trapeziums_scaled > 0
 
         fcas_template = aemsim_template(sys)
         for gc in buildable

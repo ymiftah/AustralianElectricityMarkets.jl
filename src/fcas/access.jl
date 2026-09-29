@@ -75,14 +75,15 @@ end
 
 """
     get_scaled_fcas_trapezium(component, service, initial_time, horizon; decremental = false,
-        resolution = Minute(5), agc_first_interval_only = false) -> Vector{FCASTrapezium}
+        resolution = Minute(5), agc_first_interval_only = false, agc_ramp_scaling = true) -> Vector{FCASTrapezium}
 
 Like [`get_fcas_trapezium`](@ref), but applies [`scale_fcas_trapezium`](@ref) at every step
 using `component`'s `"fcas_agc_enablement_min_<service>"`/`"fcas_agc_enablement_max_<service>"`
 series and its AGC ramping capability, `"fcas_agc_ramp_rate_<service>"` (MW/h) times
 `resolution` (regulation `service`s only, from [`set_fcas_scaling_inputs!`](@ref)), and its
 `"fcas_uigf"` series, when attached. A `NaN` entry applies no scaling at that step. With
-`agc_first_interval_only`, the AGC inputs apply to the first step only; UIGF applies at every
+`agc_first_interval_only`, the AGC inputs apply to the first step only; with
+`agc_ramp_scaling = false`, the AGC ramping capability applies at no step. UIGF applies at every
 step. `decremental` selects the storage `DIRECTION == "LOAD"` trapezium series only - the AGC enablement/ramp/UIGF series are shared by
 both directions of the same device.
 
@@ -91,7 +92,7 @@ both directions of the same device.
 """
 function get_scaled_fcas_trapezium(
         component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false,
-        resolution::Dates.Period = Minute(5), agc_first_interval_only::Bool = false,
+        resolution::Dates.Period = Minute(5), agc_first_interval_only::Bool = false, agc_ramp_scaling::Bool = true,
     )
     trapeziums = get_fcas_trapezium(component, service, initial_time, horizon; decremental = decremental)
     is_regulation = service in FCAS_REGULATION_MARKETS
@@ -100,7 +101,7 @@ function get_scaled_fcas_trapezium(
         _read_optional_fcas_scaling_series(component, "fcas_agc_enablement_min_$service_str", initial_time, horizon) : nothing
     agc_enablement_max = is_regulation ?
         _read_optional_fcas_scaling_series(component, "fcas_agc_enablement_max_$service_str", initial_time, horizon) : nothing
-    agc_ramp_rate = is_regulation ?
+    agc_ramp_rate = is_regulation && agc_ramp_scaling ?
         _read_optional_fcas_scaling_series(component, "fcas_agc_ramp_rate_$service_str", initial_time, horizon) : nothing
     agc_max_avail = isnothing(agc_ramp_rate) ? nothing :
         agc_ramp_rate .* (Dates.value(Millisecond(resolution)) / 3_600_000)

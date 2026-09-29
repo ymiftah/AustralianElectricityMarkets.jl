@@ -91,8 +91,10 @@ end
 [`get_scaled_fcas_trapezium`](@ref)/[`get_fcas_offer_curve`](@ref). The trapezium is AEMO
 *FCAS Model in NEMDE* §4's scaled/effective trapezium wherever `device` carries the scaling
 input series ([`set_fcas_scaling_inputs!`](@ref)), with the AGC ramping capability taken over the
-container's resolution and the AGC inputs applied to the first interval only under
-[`NEMLookaheadDispatch`](@ref); otherwise it is the bid trapezium unscaled.
+container's resolution, following [`_fcas_process`](@ref): every interval in dispatch; AGC
+enablement and ramp scaling on the first interval only in 5-minute pre-dispatch; AGC enablement
+scaling on the first interval only and no ramp scaling in 30-minute pre-dispatch. Otherwise it
+is the bid trapezium unscaled.
 
 # Returns
 `(trapeziums::Vector{FCASTrapezium}, curves::Vector{PSY.PiecewiseStepData})`.
@@ -102,10 +104,11 @@ function _fcas_series(
     )
     initial_time = PSI.get_initial_time(container)
     horizon = length(PSI.get_time_steps(container))
+    process = _fcas_process(container, devices_template, device)
     trapeziums = get_scaled_fcas_trapezium(
         device, bid_type, initial_time, horizon; decremental = decremental,
         resolution = PSI.get_resolution(container),
-        agc_first_interval_only = _fcas_telemetry_first_interval_only(devices_template, device),
+        agc_first_interval_only = process !== :dispatch, agc_ramp_scaling = process !== :predispatch,
     )
     return trapeziums, _fcas_offer_curves(container, device, bid_type, decremental)
 end
@@ -202,28 +205,31 @@ function _fcas_enabled(
 end
 
 """
-    _fcas_telemetry_first_interval_only(devices_template, device) -> Bool
+    _fcas_process(container, devices_template, device) -> Symbol
 
-Whether `device`'s dispatch model is [`NEMLookaheadDispatch`](@ref), whose later intervals start
-from the model's own dispatch, so telemetered inputs (`INITIALMW`, AGC limits) apply to the first
-interval only.
+The AEMO central dispatch process `device`'s FCAS telemetry timing follows: `:dispatch` unless
+its dispatch model is [`NEMLookaheadDispatch`](@ref), then `:p5min` (5-minute pre-dispatch) at a
+5-minute resolution and `:predispatch` (30-minute pre-dispatch) at a longer one. Telemetered
+inputs (`INITIALMW`, AGC limits) apply to every interval of `:dispatch` and to the first interval
+otherwise.
 
 # Returns
-`Bool`.
+`:dispatch`, `:p5min` or `:predispatch`.
 """
-function _fcas_telemetry_first_interval_only(devices_template, device::PSY.Device)
+function _fcas_process(container::PSI.OptimizationContainer, devices_template, device::PSY.Device)
     for model in values(devices_template)
         PSI.get_component_type(model) == typeof(device) || continue
-        return PSI.get_formulation(model) <: NEMLookaheadDispatch
+        PSI.get_formulation(model) <: NEMLookaheadDispatch || return :dispatch
+        return PSI.get_resolution(container) > Minute(5) ? :predispatch : :p5min
     end
-    return false
+    return :dispatch
 end
 
 """
     _fcas_enabled_mask(container, devices_template, device, bid_type, decremental) -> Vector{Bool}
 
 Per-interval [`_fcas_enabled`](@ref) for `device`'s `bid_type` bid, with `InitialMW` from
-[`get_initial_mw`](@ref) (first interval only under [`NEMLookaheadDispatch`](@ref)) and energy
+[`get_initial_mw`](@ref) (first interval only outside dispatch, per [`_fcas_process`](@ref)) and energy
 availability from [`get_energy_availability`](@ref), or [`get_storage_energy_max_avail`](@ref)
 for a `PSY.Storage` device.
 
@@ -239,7 +245,7 @@ function _fcas_enabled_mask(
     horizon = length(time_steps)
     trapeziums, curves = _fcas_series(container, devices_template, device, bid_type, decremental)
     initial_mw = get_initial_mw(device, initial_time, horizon)
-    first_only = _fcas_telemetry_first_interval_only(devices_template, device)
+    first_only = _fcas_process(container, devices_template, device) !== :dispatch
     availability = if device isa PSY.Storage
         get_storage_energy_max_avail(device, initial_time, horizon)
     else

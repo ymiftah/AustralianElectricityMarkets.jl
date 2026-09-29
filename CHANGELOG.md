@@ -116,7 +116,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads a device's bid trapezium plus whichever of those series are attached and applies the
   scaling. `FCASMarket`'s `_fcas_series` (`AustralianElectricityMarketsSimulations`) now calls
   `get_scaled_fcas_trapezium` instead of `get_fcas_trapezium`; a `System` without
-  `set_fcas_scaling_inputs!` is unaffected, since an absent series scales nothing. No scaling
+  `set_fcas_scaling_inputs!` is unaffected, since an absent series scales nothing. The AGC inputs
+  follow AEMO's §4.4 Table 1 timing: every interval under `NEMReplayDispatch`; the first interval
+  only under `NEMLookaheadDispatch` at 5 minutes; and at longer resolutions (30-minute
+  pre-dispatch) AGC enablement scaling on the first interval and no AGC ramp scaling.
+  `get_scaled_fcas_trapezium` gains `agc_ramp_scaling` (default `true`) to drop §4.2. No scaling
   applies to a contingency bid from a scheduled unit, matching AEMO. An interval with no source
   value applies no scaling at that interval only.
 - **`AbstractNEMDispatch`, a uniform device formulation for NEM dispatch participants** (`AustralianElectricityMarketsSimulations`): a per-band bid stack from `MarketBidCost`, a per-interval ramp limit from the `"ramp_up_rate"`/`"ramp_down_rate"` series, and the `DISPATCHLOAD.AVAILABILITY` envelope, replacing the stock `ThermalBasicDispatch`/`RenewableFullDispatch`/`HydroDispatchRunOfRiver` formulations whose commitment binaries, forecast ceiling and energy budget NEMDE does not apply. The formulation is written against `PowerSystems.StaticInjection` and is never gated on a fixed list of device types: NEMDE dispatches on market participation, not technology, so a `ThermalMultiStart` or any other injector a user brings is treated identically. It models one injection variable per device; state of charge for bidirectional units layers on as its own formulation.
@@ -195,6 +199,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`scale_trapezium` (`AustralianElectricityMarketsSimulations`) follows root's
+  `scale_fcas_trapezium`**: a squeezed trapezium keeps the bid's slopes instead of having its
+  breakpoints clamped, and an `agc_ramp_mw` of `0.0` applies no cap instead of capping
+  `MaxAvail` at zero, as AEMO's "zero or absent" rule requires.
 - **`src/parser.jl` split into nine files by domain**: the 1424-line file mixed the `BidType` enum, shared DuckDB helpers, six NEMWEB readers and six `System` setters. It is now
   `src/bid_types.jl` (the enum and FCAS market tuples), `src/query_helpers.jl` (`_table_is_cached`, `_cast_double`, intervention filtering — all already used from `constraints/` and
   `interconnector_losses.jl`), `src/readers/prices.jl`, `src/readers/dispatch.jl`, `src/setters/timeseries.jl`, `src/setters/bids.jl`, `src/setters/dispatch_limits.jl`,

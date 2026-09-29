@@ -128,16 +128,24 @@ per interval (the same convention as the constraint-term reader's `DUDETAILSUMMA
   `scale_fcas_trapezium` per interval. §4.2's AGC ramping capability is the ramp rate times the
   *model's* interval length (its `resolution` argument), not `date_range`'s step: a series attached
   over 5-minute data and read by a 30-minute model otherwise carries a sixth of the capability.
-  `agc_first_interval_only` applies the AGC inputs (§4.1/§4.2) to the first step only: AEMO applies
-  AGC scaling in real-time dispatch and the first interval of pre-dispatch (§4 Table 1), where
-  telemetry exists; later pre-dispatch intervals keep the bid trapezium, UIGF-scaled. `FCASMarket`'s `_fcas_series`
+  `agc_first_interval_only` applies the AGC inputs (§4.1/§4.2) to the first step only, and
+  `agc_ramp_scaling = false` drops §4.2 entirely. §4.4 Table 1 applies both at every interval of
+  dispatch, both at the first interval of 5-minute pre-dispatch, and only §4.1 at the first
+  interval of 30-minute pre-dispatch (§4.2 "None"); later intervals keep the bid trapezium,
+  UIGF-scaled. `FCASMarket` picks the process from the device's formulation and the model's
+  resolution: `NEMReplayDispatch` is dispatch, `NEMLookaheadDispatch` at 5 minutes is 5-minute
+  pre-dispatch and at a longer resolution is 30-minute pre-dispatch. `FCASMarket`'s `_fcas_series`
   (`AustralianElectricityMarketsSimulations/src/fcas_market.jl`) calls this instead of
   `get_fcas_trapezium` - its only change for this ADR.
 - `AustralianElectricityMarketsSimulations`'s single-interval replication path
   (`src/replication/preprocessing.jl`, unrelated to `FCASMarket`) had its own duplicate of the
   §4.2/§4.3 arithmetic; `scale_trapezium` there is now a thin wrapper over
-  `scale_fcas_trapezium`, unchanged in behaviour (confirmed by its existing tests) and not
-  extended with §4.1 - that path has no telemetered AGC enablement input wired up.
+  `scale_fcas_trapezium`, not extended with §4.1 because that path has no telemetered AGC
+  enablement input wired up. Two behaviours changed with it, both towards AEMO: a squeezed
+  trapezium is no longer clamped (the old version forced `HighBreakpoint >= LowBreakpoint` and
+  `EnablementMax >= EnablementMin`), and `agc_ramp_mw = 0.0` now applies no cap, where the old
+  version capped `MaxAvail` at zero (§4.2: "If the AGC ramp rate is zero or absent, no scaling is
+  applied").
 
 ## Consequences
 

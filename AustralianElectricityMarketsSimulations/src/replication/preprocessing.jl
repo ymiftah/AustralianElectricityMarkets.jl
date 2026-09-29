@@ -44,15 +44,14 @@ end
     scale_trapezium(trap; uigf, agc_ramp_mw, is_regulation)
 
 Applies NEMDE's trapezium scaling to an offered [`FCASTrapezium`](@ref): the UIGF ceiling for
-semi-scheduled units, and the telemetered AGC ramp cap for regulation services. A thin
-single-interval wrapper over root's [`scale_fcas_trapezium`](@ref) (§4.1's AGC enablement-limit
-scaling is not wired in here - this replication path has no telemetered AGC enablement input).
+semi-scheduled units, and the telemetered AGC ramp cap for regulation services, via root's
+[`scale_fcas_trapezium`](@ref). AGC enablement limits are not applied.
 
 # Arguments
 - `trap`: the offered trapezium.
 - `uigf`: weather ceiling in MW, or `nothing` for scheduled units.
-- `agc_ramp_mw`: MW deliverable within the interval at the telemetered AGC ramp rate, or
-  `nothing` when unavailable.
+- `agc_ramp_mw`: MW deliverable within the interval at the telemetered AGC ramp rate; `0.0` or
+  `nothing` applies no cap.
 - `is_regulation`: whether this is `RAISEREG`/`LOWERREG`; the AGC cap applies only to those.
 
 # Returns
