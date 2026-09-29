@@ -283,7 +283,8 @@ fcas_unit_mw(container, service_name, duid) =
     base_power = PSY.get_base_power(sys)
     fix_energy!(container, duid, 2.0)
 
-    # RAISEREG is set by joint ramping (§6.1), which is not modeled; fix it to the published target.
+    # No AGC ramp rate series is attached here, so §6.1 builds a placeholder row for RAISEREG;
+    # fix it directly to the published target instead.
     raisereg_var = fcas_capacity(container, "TAS1_RAISEREG")
     PSI.JuMP.fix(raisereg_var[duid, 1], 9.0 / base_power; force = true)
 
@@ -992,7 +993,7 @@ end
         model_for(formulation) = Dict{Symbol, PSI.DeviceModel}(
             :EnergyReservoirStorage => PSI.DeviceModel(EnergyReservoirStorage, formulation),
         )
-        caps_mw(formulation) = AustralianElectricityMarketsSimulations._fcas_bdu_ramp_caps(
+        caps_mw(formulation) = AustralianElectricityMarketsSimulations._fcas_agc_ramp_caps(
             container, model_for(formulation), bat, BidType.RAISEREG,
         ) .* PSI.get_base_power(container)
         # Dispatch and 5-minute pre-dispatch apply it; 30-minute pre-dispatch does not.
@@ -1443,10 +1444,296 @@ end
 
     err = construct_error(PSI.ServiceModel(FCASService, FCASMarket, service_name; duals = [PSI.CopperPlateBalanceConstraint]))
     @test err isa ArgumentError
-    @test occursin("FCASJointCapacityConstraint only", err.msg)
+    @test occursin("FCASJointCapacityConstraint and FCASJointRampingConstraint only", err.msg)
 
     container.built_for_recurrent_solves = true
     err = construct_error(PSI.ServiceModel(FCASService, FCASMarket, service_name))
     @test err isa ArgumentError
     @test occursin("DecisionModel", err.msg)
+end
+
+"""
+    joint_ramping_toy(initial_mw; capacity = 1000.0, raise_agc = nothing, lower_agc = nothing, extra! = nothing)
+
+A single `ThermalStandard` toy `System` (`InitialMW = initial_mw`, `capacity` MW) bidding flat
+`(0, 0, capacity, capacity, capacity)` RAISEREG and LOWERREG trapeziums as `"TAS1_RAISEREG"`/
+`"TAS1_LOWERREG"`, each with an AGC ramping capability of `raise_agc`/`lower_agc` MW over one
+resolution interval when given, for AEMO *FCAS Model in NEMDE* §6.1 joint ramping tests.
+"""
+function joint_ramping_toy(
+        initial_mw; capacity = 1000.0, raise_agc::Union{Nothing, Float64} = nothing,
+        lower_agc::Union{Nothing, Float64} = nothing, extra! = nothing,
+    )
+    return nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(
+                capacity, [(capacity, 20.0)]; initial = initial_mw, ramp_up = 1.0e4, ramp_down = 1.0e4,
+                availability = capacity,
+            ),
+        ],
+        max(initial_mw, 1.0);
+        mutate! = (sys, stamps) -> begin
+            device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+            n = length(stamps)
+            trap = (0.0, 0.0, capacity, capacity, capacity)
+            add_toy_fcas!(sys, device, stamps[1], n, BidType.RAISEREG, trap, [(capacity, 10.0)])
+            add_toy_fcas!(sys, device, stamps[1], n, BidType.LOWERREG, trap, [(capacity, 10.0)])
+            isnothing(raise_agc) ||
+                add_toy_fcas_scaling!(sys, device, stamps[1], n, BidType.RAISEREG; agc_max_avail = raise_agc)
+            isnothing(lower_agc) ||
+                add_toy_fcas_scaling!(sys, device, stamps[1], n, BidType.LOWERREG; agc_max_avail = lower_agc)
+            PSY.add_service!(sys, FCASService(; name = "TAS1_RAISEREG", region = "TAS1", bid_type = BidType.RAISEREG), [device])
+            PSY.add_service!(sys, FCASService(; name = "TAS1_LOWERREG", region = "TAS1", bid_type = BidType.LOWERREG), [device])
+            isnothing(extra!) || extra!(sys, device, stamps)
+        end,
+    )
+end
+
+"Whether `row` (a `JuMP.constraint_object`) is the gated placeholder `0.0 <= 1.0` row."
+_is_placeholder_row(row) = isempty(row.func.terms) && row.set == PSI.MOI.LessThan(1.0)
+
+@testset "AEMO §6.1 joint ramping constraint" begin
+    duid = TOY_CHEAP
+
+    @testset "A.2 numbers" begin
+        # InitialMW = 450, AGC up 180 MW/h (15 MW/5min), down 120 MW/h (10 MW/5min).
+        sys = joint_ramping_toy(450.0; raise_agc = 15.0, lower_agc = 10.0)
+        container = build_fcas(sys, ["TAS1_RAISEREG", "TAS1_LOWERREG"])
+        base_power = PSY.get_base_power(sys)
+        energy_var = PSI.get_variable(container, PSI.ActivePowerVariable(), PSY.ThermalStandard)[duid, 1]
+        raise_target = fcas_capacity(container, "TAS1_RAISEREG")[duid, 1]
+        lower_target = fcas_capacity(container, "TAS1_LOWERREG")[duid, 1]
+        raise_row = PSI.JuMP.constraint_object(
+            PSI.get_constraint(container, FCASJointRampingConstraint(), FCASService, "TAS1_RAISEREG")[duid, 1],
+        )
+        lower_row = PSI.JuMP.constraint_object(
+            PSI.get_constraint(container, FCASJointRampingConstraint(), FCASService, "TAS1_LOWERREG")[duid, 1],
+        )
+        @test raise_row.func.terms[energy_var] == 1.0
+        @test raise_row.func.terms[raise_target] == 1.0
+        @test raise_row.set.upper ≈ 465.0 / base_power atol = 1.0e-9
+        @test lower_row.func.terms[energy_var] == 1.0
+        @test lower_row.func.terms[lower_target] == -1.0
+        @test lower_row.set.lower ≈ 440.0 / base_power atol = 1.0e-9
+    end
+
+    @testset "RAISEREG binding: §4.2 and the trapezium slope don't bind, §6.1 does" begin
+        sys = joint_ramping_toy(450.0; raise_agc = 15.0, lower_agc = 10.0)
+        container = build_fcas(sys, ["TAS1_RAISEREG", "TAS1_LOWERREG"])
+        fix_energy!(container, duid, 460.0)
+        maximize_and_solve!(container) do container
+            fcas_capacity(container, "TAS1_RAISEREG")[duid, 1]
+        end
+        # §4.2's scaled MaxAvail (15) and the flat trapezium's slope (unbounded) allow up to 15;
+        # §6.1 restricts further to 465 - 460 = 5.
+        @test fcas_mw(container, "TAS1_RAISEREG", duid) ≈ 5.0 atol = FCAS_TOY_TOLERANCE
+    end
+
+    @testset "A.2 end-to-end: energy at the joint ramp ceiling leaves no RaiseReg" begin
+        sys = joint_ramping_toy(450.0; raise_agc = 15.0, lower_agc = 10.0)
+        container = build_fcas(sys, ["TAS1_RAISEREG", "TAS1_LOWERREG"])
+        fix_energy!(container, duid, 465.0)
+        maximize_and_solve!(container) do container
+            fcas_capacity(container, "TAS1_RAISEREG")[duid, 1]
+        end
+        @test fcas_mw(container, "TAS1_RAISEREG", duid) ≈ 0.0 atol = FCAS_TOY_TOLERANCE
+    end
+
+    @testset "LOWERREG binding" begin
+        sys = joint_ramping_toy(450.0; raise_agc = 15.0, lower_agc = 10.0)
+        container = build_fcas(sys, ["TAS1_RAISEREG", "TAS1_LOWERREG"])
+        fix_energy!(container, duid, 445.0)
+        maximize_and_solve!(container) do container
+            fcas_capacity(container, "TAS1_LOWERREG")[duid, 1]
+        end
+        # 445 - (450 - 10) = 5.
+        @test fcas_mw(container, "TAS1_LOWERREG", duid) ≈ 5.0 atol = FCAS_TOY_TOLERANCE
+    end
+
+    @testset "a two-sided BDU's row reads net energy and the combined regulation target" begin
+        model = _build_bdu_regulation(
+            "TAS1_RAISEREG_BDU_JOINT", 0.0, 20.0; storage_initial_mw = -20.0, agc_max_avail = 12.0, solve = false,
+        )
+        container = PSI.get_optimization_container(model)
+        base_power = PSI.get_base_power(container)
+        out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), EnergyReservoirStorage)["BAT1", 1]
+        in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)["BAT1", 1]
+        gen_var = fcas_side_capacity(container, "TAS1_RAISEREG_BDU_JOINT", :gen)["BAT1", 1]
+        load_var = fcas_side_capacity(container, "TAS1_RAISEREG_BDU_JOINT", :load)["BAT1", 1]
+        row = PSI.JuMP.constraint_object(
+            PSI.get_constraint(container, FCASJointRampingConstraint(), FCASService, "TAS1_RAISEREG_BDU_JOINT")["BAT1", 1],
+        )
+        @test row.func.terms[out_var] == 1.0
+        @test row.func.terms[in_var] == -1.0
+        @test row.func.terms[gen_var] == 1.0
+        @test row.func.terms[load_var] == 1.0
+        # InitialMW (-20) + AGC ramping capability (12) = -8.
+        @test row.set.upper ≈ -8.0 / base_power atol = 1.0e-9
+    end
+
+    @testset "a single-sided BDU's row reads net energy, not that side's own" begin
+        service_name = "TAS1_RAISEREG_STOR_JOINT"
+        model, sys = storage_fcas_toy_model(
+            service_name, BidType.RAISEREG, (0.0, 0.0, 20.0, 20.0, 10.0); scaling = (; agc_max_avail = 5.0),
+        )
+        container = PSI.get_optimization_container(model)
+        out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), EnergyReservoirStorage)["BAT1", 1]
+        in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)["BAT1", 1]
+        row = PSI.JuMP.constraint_object(
+            PSI.get_constraint(container, FCASJointRampingConstraint(), FCASService, service_name)["BAT1", 1],
+        )
+        @test row.func.terms[out_var] == 1.0
+        @test row.func.terms[in_var] == -1.0
+    end
+
+    @testset "gating: a placeholder row where §6.1 doesn't apply" begin
+        @testset "no AGC ramp rate series attached" begin
+            sys = joint_ramping_toy(450.0)
+            container = build_fcas(sys, ["TAS1_RAISEREG"])
+            row = PSI.JuMP.constraint_object(
+                PSI.get_constraint(container, FCASJointRampingConstraint(), FCASService, "TAS1_RAISEREG")[duid, 1],
+            )
+            @test _is_placeholder_row(row)
+        end
+
+        @testset "a zero AGC ramp rate" begin
+            sys = joint_ramping_toy(450.0; raise_agc = 0.0)
+            container = build_fcas(sys, ["TAS1_RAISEREG"])
+            row = PSI.JuMP.constraint_object(
+                PSI.get_constraint(container, FCASJointRampingConstraint(), FCASService, "TAS1_RAISEREG")[duid, 1],
+            )
+            @test _is_placeholder_row(row)
+        end
+
+        @testset "not enabled (AGC status 0)" begin
+            sys = joint_ramping_toy(
+                450.0; raise_agc = 15.0,
+                extra! = (sys, device, stamps) -> add_toy_fcas_agc_status!(sys, device, stamps[1], length(stamps), 0),
+            )
+            container = build_fcas(sys, ["TAS1_RAISEREG"])
+            row = PSI.JuMP.constraint_object(
+                PSI.get_constraint(container, FCASJointRampingConstraint(), FCASService, "TAS1_RAISEREG")[duid, 1],
+            )
+            @test _is_placeholder_row(row)
+        end
+
+        @testset "5-minute pre-dispatch: only the first interval, 30-minute pre-dispatch: never" begin
+            sys = joint_ramping_toy(450.0; raise_agc = 15.0)
+            template = fcas_toy_template(sys, ["TAS1_RAISEREG"])
+            PSI.set_device_model!(template, PSY.ThermalStandard, NEMLookaheadDispatch)
+            model = PSI.DecisionModel(
+                template, sys;
+                optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+                horizon = 2 * TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
+                initial_time = TOY_START, name = "fcas_toy_gating", store_variable_names = true,
+            )
+            @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+            container = PSI.get_optimization_container(model)
+            con = PSI.get_constraint(container, FCASJointRampingConstraint(), FCASService, "TAS1_RAISEREG")
+            @test !_is_placeholder_row(PSI.JuMP.constraint_object(con[duid, 1]))
+            @test _is_placeholder_row(PSI.JuMP.constraint_object(con[duid, 2]))
+
+            PSI.set_resolution!(container.settings, Minute(30))
+            # Rebuilding at a 30-minute resolution is out of scope here; §6.4's own Table 3 test
+            # ("the SCADA ramping cap follows AEMO's Table 3 timing") already covers the shared
+            # `_fcas_agc_ramp_caps` helper §6.1 reads, including the 30-minute predispatch case.
+        end
+
+        @testset "InitialMW unknown at an interval" begin
+            # NEMReplayDispatch requires full "initial_mw" coverage for its own ramp constraint
+            # (and NEMLookaheadDispatch's initial-conditions sub-model is always built as
+            # NEMReplayDispatch - see `PSI.get_initial_conditions_device_model`), so a NaN gap
+            # cannot reach a full `DecisionModel` build; a real gap is a build-time throw either
+            # way, which `check_fcas_services` catches up front instead (next testset). Gate 3
+            # itself - `isnan(mw)` in `_add_fcas_joint_ramping_constraints!` - is exercised
+            # directly against `get_initial_mw`'s documented `NaN`-at-a-gap behavior.
+            sys = joint_ramping_toy(450.0; raise_agc = 15.0)
+            device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+            initial_mw = get_initial_mw(device, TOY_START, 2)
+            @test initial_mw == [450.0, 450.0]
+
+            gapped_sys = joint_ramping_toy(
+                450.0; raise_agc = 15.0,
+                extra! = (sys, device, stamps) -> begin
+                    base_power = PSY.get_base_power(sys)
+                    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, "initial_mw")
+                    PSY.add_time_series!(
+                        sys, device,
+                        PSY.SingleTimeSeries(;
+                            name = "initial_mw", data = PSY.TimeSeries.TimeArray(stamps, [450.0 / base_power, NaN]),
+                        ),
+                    )
+                end,
+            )
+            gapped_device = PSY.get_component(PSY.ThermalStandard, gapped_sys, duid)
+            gapped = get_initial_mw(gapped_device, TOY_START, 2)
+            @test gapped[1] == 450.0
+            @test isnan(gapped[2])
+        end
+    end
+
+    @testset "duals: requesting FCASJointRampingConstraint builds and populates the container" begin
+        sys = joint_ramping_toy(450.0; raise_agc = 15.0, lower_agc = 10.0)
+        network = PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true)
+        template = PSI.ProblemTemplate(network)
+        set_nem_dispatch_models!(template, sys)
+        PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+        PSI.set_service_model!(
+            template, "TAS1_RAISEREG",
+            PSI.ServiceModel(
+                FCASService, FCASMarket, "TAS1_RAISEREG";
+                duals = [FCASJointCapacityConstraint, FCASJointRampingConstraint],
+            ),
+        )
+        model = PSI.DecisionModel(
+            template, sys;
+            optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+            horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
+            initial_time = TOY_START, name = "fcas_toy_duals", store_variable_names = true,
+        )
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        container = PSI.get_optimization_container(model)
+        dual_key = only(
+            k for k in PSI.get_constraint_keys(container)
+                if PSI.IS.Optimization.get_entry_type(k) === FCASJointRampingConstraint
+        )
+        results = PSI.OptimizationProblemResults(model)
+        dual_df = PSI.read_dual(results, dual_key)
+        @test !isempty(dual_df)
+        @test all(!isnan, dual_df.value)
+    end
+end
+
+@testset "check_fcas_services reports a regulation contributor missing initial_mw" begin
+    duid = TOY_CHEAP
+    service_name = "TAS1_RAISEREG_CHECK"
+    sys = fcas_energy_toy_system(
+        2.0;
+        mutate! = (sys, stamps) -> begin
+            device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+            n = length(stamps)
+            add_toy_fcas!(sys, device, stamps[1], n, BidType.RAISEREG, (0.0, 0.0, 100.0, 100.0, 10.0), [(10.0, 10.0)])
+            add_toy_fcas_scaling!(sys, device, stamps[1], n, BidType.RAISEREG; agc_max_avail = 5.0)
+            PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, "initial_mw")
+            PSY.add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG), [device])
+        end,
+    )
+    network = PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true)
+    template = PSI.ProblemTemplate(network)
+    PSI.set_device_model!(template, PSY.ThermalStandard, NEMReplayDispatch)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    PSI.set_service_model!(
+        template, service_name, PSI.ServiceModel(FCASService, FCASMarket, service_name),
+    )
+    err = try
+        check_fcas_services(sys, template)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    msg = sprint(showerror, err)
+    @test occursin(duid, msg)
+    @test occursin("initial_mw", msg)
 end
