@@ -22,3 +22,13 @@ function _area_balance_template()
     PSI.set_device_model!(template, PSY.AreaInterchange, PSI.StaticBranch)
     return template
 end
+
+# Sundance's 100 MW floor exceeds fixture demand under no-commitment dispatch; zero every
+# `ThermalStandard` floor before building an `augmented_pscb_system()` template.
+function _fix_thermal_floor!(sys)
+    for gen in PSY.get_components(PSY.ThermalStandard, sys)
+        limits = PSY.get_active_power_limits(gen)
+        PSY.set_active_power_limits!(gen, (min = 0.0, max = limits.max))
+    end
+    return
+end

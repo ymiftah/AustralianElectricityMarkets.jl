@@ -21,7 +21,8 @@
                 dec = has_time_series(d, Deterministic, "fcas_trapezium_$(string(bid_type))_decremental")
                 (inc || dec) || continue
                 name = "$(region)_$(string(bid_type))"
-                modeled = (inc && !dec) || (dec && !inc && d isa Storage)
+                modeled = (inc && !dec) || (dec && !inc && d isa Storage) ||
+                    (inc && dec && d isa Storage && bid_type in FCAS_REGULATION_MARKETS)
                 push!(get!(modeled ? expected : left_out, name, Set{String}()), get_name(d))
             end
         end

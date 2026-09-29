@@ -51,6 +51,42 @@
             eff = scale_fcas_trapezium(bid; is_regulation = true)
             @test trap_tuple(eff) == trap_tuple(bid)
         end
+
+        @testset "a load-side (negative net-MW axis) trapezium narrows like any other" begin
+            load_bid = FCASTrapezium(;
+                enablement_min = -100.0, low_breakpoint = -70.0, high_breakpoint = -10.0,
+                enablement_max = 0.0, max_avail = 30.0,
+            )
+            eff = scale_fcas_trapezium(
+                load_bid; agc_enablement_min = -80.0, agc_enablement_max = 90.0, is_regulation = true,
+            )
+            @test trap_tuple(eff) == (-80.0, -50.0, -10.0, 0.0, 30.0)
+        end
+
+        @testset "an AGC window outside a side's own span leaves an empty trapezium" begin
+            load_bid = FCASTrapezium(;
+                enablement_min = -100.0, low_breakpoint = -70.0, high_breakpoint = -10.0,
+                enablement_max = 0.0, max_avail = 30.0,
+            )
+            gen_bid = FCASTrapezium(;
+                enablement_min = 0.0, low_breakpoint = 20.0, high_breakpoint = 80.0,
+                enablement_max = 100.0, max_avail = 20.0,
+            )
+            eff_load = scale_fcas_trapezium(
+                load_bid; agc_enablement_min = 368.39502, agc_enablement_max = 0.0, is_regulation = true,
+            )
+            eff_gen = scale_fcas_trapezium(
+                gen_bid; agc_enablement_min = 368.39502, agc_enablement_max = 0.0, is_regulation = true,
+            )
+            # EnablementMin rises to 368.4 while EnablementMax stays at the bid's: no feasible
+            # FCAS, which §5's EnablementMax >= EnablementMin pre-condition disables.
+            @test get_enablement_min(eff_load) ≈ 368.39502
+            @test get_enablement_max(eff_load) == 0.0
+            @test get_enablement_min(eff_gen) ≈ 368.39502
+            @test get_enablement_max(eff_gen) == 100.0
+            @test get_enablement_max(eff_load) < get_enablement_min(eff_load)
+            @test get_enablement_max(eff_gen) < get_enablement_min(eff_gen)
+        end
     end
 
     @testset "§4.2 AGC ramp rate (regulation only)" begin

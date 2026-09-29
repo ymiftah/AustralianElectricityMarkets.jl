@@ -864,6 +864,7 @@
                 got_lower_max = get_time_series_values(SingleTimeSeries, device, "fcas_agc_enablement_max_LOWERREG")
                 got_raise_rate = get_time_series_values(SingleTimeSeries, device, "fcas_agc_ramp_rate_RAISEREG")
                 got_lower_rate = get_time_series_values(SingleTimeSeries, device, "fcas_agc_ramp_rate_LOWERREG")
+                got_agc_status = get_time_series_values(SingleTimeSeries, device, "fcas_agc_status")
 
                 @test isapprox(got_raise_min, rows.RAISEREGENABLEMENTMIN ./ base_power; atol = 1.0e-9)
                 @test isapprox(got_raise_max, rows.RAISEREGENABLEMENTMAX ./ base_power; atol = 1.0e-9)
@@ -871,7 +872,31 @@
                 @test isapprox(got_lower_max, rows.LOWERREGENABLEMENTMAX ./ base_power; atol = 1.0e-9)
                 @test isapprox(got_raise_rate, rows.RAMPUPRATE ./ base_power; atol = 1.0e-9)
                 @test isapprox(got_lower_rate, rows.RAMPDOWNRATE ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_agc_status, rows.AGCSTATUS; atol = 1.0e-9)
+
+                initial_time = start_date
+                horizon = length(date_range) - 1
+                @test get_fcas_agc_status(device, initial_time, horizon) == round.(Int, rows.AGCSTATUS)
             end
+        end
+
+        @testset "get_fcas_agc_status is nothing when fcas_agc_status is not attached" begin
+            sys = deepcopy(sys_base)
+            device = get_component(ThermalStandard, sys, "ER01")
+            @test isnothing(get_fcas_agc_status(device, start_date, length(date_range) - 1))
+        end
+
+        @testset "get_fcas_agc_status is nothing at an interval with no AGCSTATUS" begin
+            sys = deepcopy(sys_base)
+            device = get_component(ThermalStandard, sys, "ER01")
+            full_grid = collect(date_range)[1:(end - 1)]
+            by_time = Dict(t => (AGCSTATUS = (t == full_grid[1] ? missing : 1.0),) for t in full_grid)
+            AustralianElectricityMarkets._attach_fcas_scaling_series!(
+                sys, device, by_time, full_grid, :AGCSTATUS, "fcas_agc_status", 1.0,
+            )
+            status = get_fcas_agc_status(device, start_date, length(full_grid))
+            @test isnothing(status[1])
+            @test all(==(1), status[2:end])
         end
 
         @testset "fcas_uigf is attached only for semi-scheduled units (BW03, BW04)" begin
@@ -971,10 +996,57 @@
             @test isequal(Tuple(first_only[1]), Tuple(scaled[1]))
             @test all(i -> isequal(Tuple(first_only[i]), Tuple(raw[i])), 2:horizon)
 
+            # agc_ramp_scaling = false: AGC enablement scaling only, MaxAvail left at the bid's.
+            no_ramp = get_scaled_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon; agc_ramp_scaling = false)
+            @test get_max_avail.(no_ramp) == get_max_avail.(raw)
+            @test get_enablement_min.(no_ramp) == get_enablement_min.(scaled)
+            @test get_enablement_max.(no_ramp) == get_enablement_max.(scaled)
+
             # A contingency market carries no AGC scaling input series at all: unscaled.
             raw_contingency = get_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
             scaled_contingency = get_scaled_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
             @test all(i -> isequal(Tuple(raw_contingency[i]), Tuple(scaled_contingency[i])), 1:horizon)
+        end
+    end
+
+    @testset "get_initial_mw reads a battery's net initial_mw series set_nem_dispatch_limits! attaches" begin
+        resolution = Minute(5)
+        start_date = DateTime(2025, 1, 1, 0, 0)
+        date_range = start_date:resolution:(start_date + Hour(2))
+        base_power = get_base_power(sys_base)
+        truth = read_dispatch_limits(db, date_range)
+        rows = sort(subset(truth, :DUID => ByRow(==("BW01"))), :SETTLEMENTDATE)
+
+        @testset "reads net initial_mw off the EnergyReservoirStorage device" begin
+            sys = deepcopy(sys_base)
+            set_nem_dispatch_limits!(sys, db, date_range)
+            bat = get_component(EnergyReservoirStorage, sys, "BW01")
+            got = get_time_series_values(SingleTimeSeries, bat, "initial_mw")
+            @test isapprox(got, rows.INITIALMW ./ base_power; atol = 1.0e-9)
+
+            initial_time = start_date
+            horizon = length(date_range) - 1
+            with_units_base(sys, "NATURAL_UNITS") do
+                @test isapprox(
+                    get_initial_mw(bat, initial_time, horizon), rows.INITIALMW; atol = 1.0e-9,
+                )
+                return
+            end
+        end
+
+        @testset "get_initial_mw is nothing when initial_mw is not attached" begin
+            sys = deepcopy(sys_base)
+            bat = get_component(EnergyReservoirStorage, sys, "BW01")
+            @test isnothing(get_initial_mw(bat, start_date, length(date_range) - 1))
+        end
+
+        @testset "a device with an incomplete series over date_range is left without it" begin
+            sys = deepcopy(sys_base)
+            bat = get_component(EnergyReservoirStorage, sys, "BW01")
+            # No DISPATCHLOAD rows exist for this far-future range: every interval is missing.
+            future_range = DateTime(2099, 1, 1, 0, 0):resolution:(DateTime(2099, 1, 1, 2, 0))
+            set_nem_dispatch_limits!(sys, db, future_range; allow_missing_ramp_rates = true)
+            @test !has_time_series(bat, SingleTimeSeries, "initial_mw")
         end
     end
 

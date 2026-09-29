@@ -106,6 +106,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **FCAS bid trapeziums are validated**: `set_fcas_bids!` and `get_fcas_trapezium` throw unless
   `EnablementMin ≤ LowBreakpoint ≤ HighBreakpoint ≤ EnablementMax` and `MaxAvail ≥ 0`, as AEMO's
   bid validation guarantees for every published bid.
+- **`FCASMarket` models a `PSY.Storage` device bidding regulation on both sides per-side**
+  (`AustralianElectricityMarketsSimulations`), per AEMO *FCAS Model in NEMDE* §6.3 footnote 8 and
+  §6.4: two `FCASSideCapacityVariable`s per `(device, t)` (`"<service>_gen"`/`"<service>_load"`),
+  each with its own energy term (`ActivePowerOutVariable` for the generation side,
+  `-ActivePowerInVariable` for the load side), its own §6.3 joint capacity pair against its own
+  scaled trapezium, and priced against its own offer curve. A new `FCASUnitRegulationTarget`
+  expression (`Reg_gen + Reg_load`, or the single-sided `FCASCapacityVariable` otherwise) is the
+  unit's published regulation total: §6.2's cross term on another service's joint capacity
+  constraint, and a new `FCASBDURampingConstraint` (§6.4's "BDU regulating FCAS SCADA ramping
+  constraint", bounding the total against the device's AGC ramping capability, skipped where no
+  ramping-capability series or a zero SCADA ramp rate, and applied per AEMO's Table 3: every
+  interval in dispatch, the first in 5-minute pre-dispatch, none in 30-minute pre-dispatch), both
+  read it. AEMO's §5 pre-conditions
+  gate each side independently; when both sides pass, one combined stranded pre-condition
+  (`EnablementMin_LOAD <= InitialMW <= EnablementMax_GEN`) gates both together, and otherwise the
+  side still enabled is checked against its own trapezium. A new AGC-status pre-condition
+  (`get_fcas_agc_status`/`"fcas_agc_status"`, also gating a single-sided or non-`Storage` device's
+  regulation bid) gates every regulation bid; under `NEMLookaheadDispatch` AGC status and the
+  SCADA ramping cap apply to the first interval only. `_merge_offer_curve` is gone - each side now prices
+  against its own curve. Both directions of a contingency market, or of any market on a
+  non-`PSY.Storage` device, still throw, and `check_fcas_services` reports them.
 - **FCAS trapezium scaling** (AEMO *FCAS Model in NEMDE* §4): `scale_fcas_trapezium` (root) is
   the pure §4.1/§4.2/§4.3 arithmetic — the telemetered AGC enablement limits and AGC ramping
   capability narrow a `RAISEREG`/`LOWERREG` trapezium, and a semi-scheduled unit's UIGF narrows
@@ -123,6 +144,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `get_scaled_fcas_trapezium` gains `agc_ramp_scaling` (default `true`) to drop §4.2. No scaling
   applies to a contingency bid from a scheduled unit, matching AEMO. An interval with no source
   value applies no scaling at that interval only.
+- **Battery FCAS inputs** (root): `set_fcas_scaling_inputs!` also attaches `AGCSTATUS` as
+  `"fcas_agc_status"`, read by `get_fcas_agc_status`. The same AGC enablement series is read for
+  both a `PSY.Storage` device's generation-side and load-side regulation trapezium; a window
+  outside a side's own span leaves that side's scaled trapezium empty (`EnablementMin >
+  EnablementMax`), which §5 disables.
 - **`AbstractNEMDispatch`, a uniform device formulation for NEM dispatch participants** (`AustralianElectricityMarketsSimulations`): a per-band bid stack from `MarketBidCost`, a per-interval ramp limit from the `"ramp_up_rate"`/`"ramp_down_rate"` series, and the `DISPATCHLOAD.AVAILABILITY` envelope, replacing the stock `ThermalBasicDispatch`/`RenewableFullDispatch`/`HydroDispatchRunOfRiver` formulations whose commitment binaries, forecast ceiling and energy budget NEMDE does not apply. The formulation is written against `PowerSystems.StaticInjection` and is never gated on a fixed list of device types: NEMDE dispatches on market participation, not technology, so a `ThermalMultiStart` or any other injector a user brings is treated identically. It models one injection variable per device; state of charge for bidirectional units layers on as its own formulation.
 - **`NEMReplayDispatch` and `NEMLookaheadDispatch`**, the two concrete `AbstractNEMDispatch` formulations, differing only in what the ramp constraint measures against: the replay formulation measures every interval against its own metered `INITIALMW`, as NEMDE does, and the lookahead formulation chains each interval from the previous one's dispatch. Both are concrete, so a consumer always names one and the choice is never made by default.
 - **`nem_dispatch_participants` and `set_nem_dispatch_models!`**, which set one formulation across every participant by reading which components carry the dispatch-limit series rather than assuming types, plus the `RampUpRateTimeSeriesParameter`/`RampDownRateTimeSeriesParameter`/`InitialPowerTimeSeriesParameter` parameter types. An `AbstractNEMDispatch` model builds as a pure LP with no `OnVariable`, and a device missing a ramp series or with a ramp-down floor above its availability ceiling is named at build rather than surfacing as a solver `INFEASIBLE`.
