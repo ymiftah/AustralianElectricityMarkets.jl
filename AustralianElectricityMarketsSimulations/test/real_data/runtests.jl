@@ -354,20 +354,24 @@ end
         end
         @test n_circulating == 0
 
-        # Aggregate, report-only sanity check: at t=1, does this build's implied upper bound on
-        # each battery's total RAISEREG target (its own side bound(s), further capped by the
-        # §6.4 SCADA ramping constraint where attached) match AEMO's published
-        # RAISEREGACTUALAVAILABILITY? Not asserted - §6.1 joint ramping is not modelled, so a
-        # mismatch is expected wherever it would have bound the real dispatch.
+        # Aggregate, report-only sanity check (AEMO §7): at t=1, does AEMO's five-term FCAS
+        # availability formula, evaluated at the published signed TOTALCLEARED on the
+        # combined (amalgamated) two-sided trapezium for a BDU, match published
+        # RAISEREGACTUALAVAILABILITY? Terms (1)-(3) and (5) follow §7.1 directly; term (4), the
+        # joint capacity constraint, is approximated here by this build's own implied side
+        # bound(s) (further capped by §6.4 where attached) rather than AEMO's own per-contingency
+        # sum, since published contingency targets are not read by this harness.
+        base_power = PSY.get_base_power(sys)
         raisereg_dispatch = filter(
             :BIDTYPE => ==(BidType.RAISEREG), AEM.read_fcas_dispatch(db, REAL_DATE_RANGE),
         )
         raisereg_t1 = filter(:SETTLEMENTDATE => ==(REAL_START), raisereg_dispatch)
         n_compared = 0
         n_matched = 0
+        n_joint_ramping_rows = 0
+        n_joint_ramping_violations = 0
         for (name, both_names) in raisereg_both_names
             isempty(both_names) && continue
-            PSI.has_container_key(container, FCASBDURampingConstraint, FCASService, name) || continue
             gen_var = PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "$(name)_gen")
             load_var = PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "$(name)_load")
             for duid in both_names
@@ -376,18 +380,41 @@ end
                 isempty(published_rows) && continue
                 published = only(published_rows.ACTUALAVAILABILITY)
                 ismissing(published) && continue
-                bound = PSI.JuMP.upper_bound(gen_var[duid, 1]) + PSI.JuMP.upper_bound(load_var[duid, 1])
-                ramp_cap = get_fcas_agc_ramp_capability(
-                    PSY.get_component(PSY.EnergyReservoirStorage, sys, duid), BidType.RAISEREG, REAL_START, 1,
+                energy_target = only(published_rows.TOTALCLEARED)
+                ismissing(energy_target) && continue
+
+                battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, duid)
+                gen_trap = only(get_scaled_fcas_trapezium(battery, BidType.RAISEREG, REAL_START, 1))
+                load_trap = only(
+                    get_scaled_fcas_trapezium(battery, BidType.RAISEREG, REAL_START, 1; decremental = true),
                 )
-                isnothing(ramp_cap) || isnan(ramp_cap[1]) || iszero(ramp_cap[1]) || (bound = min(bound, ramp_cap[1]))
-                bound *= PSY.get_base_power(sys)
+                term1 = (get_max_avail(gen_trap) + get_max_avail(load_trap)) * base_power
+                gen_upper = get_upper_slope_coeff(gen_trap)
+                term2 = gen_upper > 0.0 ?
+                    (get_enablement_max(gen_trap) * base_power - energy_target) / gen_upper : Inf
+                load_lower = get_lower_slope_coeff(load_trap)
+                term3 = load_lower > 0.0 ?
+                    (energy_target - get_enablement_min(load_trap) * base_power) / load_lower : Inf
+                term4 = (PSI.JuMP.upper_bound(gen_var[duid, 1]) + PSI.JuMP.upper_bound(load_var[duid, 1])) * base_power
+                initial_mw = only(published_rows.INITIALMW)
+                ramp_cap = get_fcas_agc_ramp_capability(battery, BidType.RAISEREG, REAL_START, 1)
+                joint_ramp_max = (ismissing(initial_mw) || isnothing(ramp_cap) || isnan(ramp_cap[1])) ?
+                    Inf : (initial_mw + ramp_cap[1]) * base_power
+                term5 = joint_ramp_max - energy_target
+                availability = max(0.0, min(term1, term2, term3, term4, term5))
+
                 n_compared += 1
-                isapprox(bound, published; atol = 1.0) && (n_matched += 1)
+                isapprox(availability, published; atol = 1.0) && (n_matched += 1)
+
+                # §6.1 fidelity: does the joint ramping row hold at NEMDE's own published solution?
+                if isfinite(joint_ramp_max)
+                    n_joint_ramping_rows += 1
+                    energy_target > joint_ramp_max + 1.0 && (n_joint_ramping_violations += 1)
+                end
             end
         end
         raisereg_match_rate = n_compared > 0 ? n_matched / n_compared : NaN
 
-        @info "Real-data FCASMarket DecisionModel" build_time solve_time n_services = length(fcas_registered) n_enabled_pairs n_regulation_trapeziums_scaled n_regulation_trapeziums n_two_sided_pairs n_agc_disabled_pairs n_compared n_matched raisereg_match_rate
+        @info "Real-data FCASMarket DecisionModel" build_time solve_time n_services = length(fcas_registered) n_enabled_pairs n_regulation_trapeziums_scaled n_regulation_trapeziums n_two_sided_pairs n_agc_disabled_pairs n_compared n_matched raisereg_match_rate n_joint_ramping_rows n_joint_ramping_violations
     end
 end
