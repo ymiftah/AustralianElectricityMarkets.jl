@@ -65,7 +65,7 @@ end
 
 Full-series read of `component`'s `name` `SingleTimeSeries`, `horizon` steps from
 `initial_time`, in `component`'s `System`'s current display units. `nothing` if `component`
-carries no such series - AEMO's *FCAS Model in NEMDE* §4 "zero or absent" scaling input rule.
+carries no such series; a `NaN` entry marks an interval with no input.
 """
 function _read_optional_fcas_scaling_series(component, name::AbstractString, initial_time, horizon::Integer)
     has_time_series(component, SingleTimeSeries, name) || return nothing
@@ -81,9 +81,9 @@ Like [`get_fcas_trapezium`](@ref), but applies [`scale_fcas_trapezium`](@ref) at
 using `component`'s `"fcas_agc_enablement_min_<service>"`/`"fcas_agc_enablement_max_<service>"`
 series and its AGC ramping capability, `"fcas_agc_ramp_rate_<service>"` (MW/h) times
 `resolution` (regulation `service`s only, from [`set_fcas_scaling_inputs!`](@ref)), and its
-`"fcas_uigf"` series, when attached. With `agc_first_interval_only`, the AGC inputs apply to the
-first step only; UIGF applies at every step. `decremental` selects the storage
-`DIRECTION == "LOAD"` trapezium series only - the AGC enablement/ramp/UIGF series are shared by
+`"fcas_uigf"` series, when attached. A `NaN` entry applies no scaling at that step. With
+`agc_first_interval_only`, the AGC inputs apply to the first step only; UIGF applies at every
+step. `decremental` selects the storage `DIRECTION == "LOAD"` trapezium series only - the AGC enablement/ramp/UIGF series are shared by
 both directions of the same device.
 
 # Returns
@@ -104,7 +104,8 @@ function get_scaled_fcas_trapezium(
         _read_optional_fcas_scaling_series(component, "fcas_agc_ramp_rate_$service_str", initial_time, horizon) : nothing
     agc_max_avail = isnothing(agc_ramp_rate) ? nothing :
         agc_ramp_rate .* (Dates.value(Millisecond(resolution)) / 3_600_000)
-    agc_at(series, i) = (isnothing(series) || (agc_first_interval_only && i > 1)) ? nothing : series[i]
+    input_at(series, i) = (isnothing(series) || isnan(series[i])) ? nothing : series[i]
+    agc_at(series, i) = (agc_first_interval_only && i > 1) ? nothing : input_at(series, i)
     uigf = _read_optional_fcas_scaling_series(component, "fcas_uigf", initial_time, horizon)
 
     return [
@@ -113,7 +114,7 @@ function get_scaled_fcas_trapezium(
             agc_enablement_min = agc_at(agc_enablement_min, i),
             agc_enablement_max = agc_at(agc_enablement_max, i),
             agc_max_avail = agc_at(agc_max_avail, i),
-            uigf = isnothing(uigf) ? nothing : uigf[i],
+            uigf = input_at(uigf, i),
             is_regulation = is_regulation,
         ) for i in eachindex(trapeziums)
     ]

@@ -36,20 +36,23 @@ enablement limit" input is correct either way, and is also what they publish as 
 enablement limits NEMDE used.
 
 `RAISEREGAVAILABILITY`/`LOWERREGAVAILABILITY` looked like the natural §4.2 input by the same
-"minimum of bid and telemetered" description, but real cache values (`~/.nemdb_cache`,
-`DISPATCHLOAD`, `archive_month=2026-06-01`, 2026-06-04) show the telemetered ramp rate feeding
-§4.2 is `RAMPUPRATE`/`RAMPDOWNRATE` - the same column `read_dispatch_limits`/
-`set_nem_dispatch_limits!` already reads for energy ramping - not the `*REGAVAILABILITY`
-columns:
+"minimum of bid and telemetered" description, but they are not the ramp-capped availability for
+every unit. In `~/.nemdb_cache` `DISPATCHLOAD`, `archive_month=2026-06-01`, normal run,
+`AGCSTATUS = 1` and `RAMPUPRATE > 0`, `RAISEREGAVAILABILITY` exceeds `RAMPUPRATE × 5/60` on
+77,431 of the 612,045 rows where it is positive (e.g. `WANDB1` 175 MW against a 100 MW ramp
+capability, `TUNGATIN` 77 against 70). AEMO's §4.2 input is the "AGC ramp rate", and
+`DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE` is documented as the "lesser of bid or telemetered
+rate", so the column is not the raw AGC ramp either. What the dispatch outcome shows is that
+NEMDE's cleared regulation stays within it:
 
-| DUID | RAMPUPRATE (MW/h) | RAMPUPRATE × 5/60 | RAISEREGAVAILABILITY |
-| --- | --- | --- | --- |
-| ER01 | 300.0 | 25.0 | 25.0 |
-| ER03 | 297.46 | 24.788(3) | 24.78828 |
-| ER04 | 299.29 | 24.9408(3) | 24.94087 |
+| Month 2026-06, `AGCSTATUS = 1` | Rows above `rate × 5/60` | Largest excess |
+| --- | --- | --- |
+| `RAISEREG` vs `RAMPUPRATE` | 335 of 999,691 | 0.0122 MW on `BW01`-`BW04`; one `LOYYB1` row at 24.8 MW |
+| `LOWERREG` vs `RAMPDOWNRATE` | 50 of 106,204 with `LOWERREG > 0` | 12 MW, all on `TUNGATIN` |
 
-`RAISEREGAVAILABILITY == min(bid MaxAvail, RAMPUPRATE × 5/60)` to within AEMO's own rounding on
-every checked row (BASTYAN, BRNDBES1 are bid-limited instead, confirming the `min`). This is
+The Bayswater excess is within rounding; the `LOYYB1` and `TUNGATIN` rows are unexplained
+outliers. `RAMPUPRATE`/`RAMPDOWNRATE` is therefore the §4.2 input for replay: the same
+column `read_dispatch_limits`/`set_nem_dispatch_limits!` already reads for energy ramping. This is
 independently confirmed by **nempy** (Gorman et al.,
 `src/nempy/historical_inputs/units.py:1291-1453`, `_scaling_for_agc_ramp_rates`): it reads
 `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE` (via `get_scada_ramp_rates`/`get_unit_initial_conditions`,
@@ -115,9 +118,11 @@ per interval (the same convention as the constraint-term reader's `DUDETAILSUMMA
   per-device `SingleTimeSeries` (`"fcas_agc_enablement_min/max_RAISEREG/LOWERREG"`,
   `"fcas_agc_ramp_rate_RAISEREG/LOWERREG"`, the raw MW/h ramp rates) plus `"fcas_uigf"`, read via
   the new `read_fcas_scaling_inputs` (mirrors `read_dispatch_limits`'s shape) and the existing
-  `read_uigf`. A device with an incomplete series over `date_range` (any missing interval or
-  value) is left without that series entirely, rather than partially attached - reading it back
-  then finds the series absent, which is exactly AEMO's "zero or absent ⇒ no scaling" rule.
+  `read_uigf`. An interval with no source row or a `missing` value is stored as `NaN` and read
+  back as an absent input for that interval only, per AEMO's "zero or absent ⇒ no scaling" rule,
+  which is per interval. An earlier version dropped the whole series when any interval was
+  absent, which removed a semi-scheduled unit's UIGF cap over the entire horizon for one missing
+  row. A column absent at every interval attaches no series.
 - `get_scaled_fcas_trapezium` (`src/fcas/access.jl`) reads a device's bid trapezium
   (`get_fcas_trapezium`) and whichever scaling series are attached, and applies
   `scale_fcas_trapezium` per interval. §4.2's AGC ramping capability is the ramp rate times the

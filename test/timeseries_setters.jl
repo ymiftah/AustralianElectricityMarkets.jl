@@ -884,26 +884,53 @@
             @test !has_time_series(get_component(HydroDispatch, sys, "BW02"), SingleTimeSeries, "fcas_uigf")
         end
 
-        @testset "a device with an incomplete scaling column over date_range is left without that series" begin
+        @testset "an absent interval is stored as NaN; an all-absent column attaches nothing" begin
             sys = deepcopy(sys_base)
             device = get_component(ThermalStandard, sys, "ER01")
             full_grid = collect(date_range)[1:(end - 1)]
-            complete_by_time = Dict(t => (RAISEREGENABLEMENTMIN = 25.0,) for t in full_grid)
             incomplete_by_time = Dict(
-                t => (RAISEREGENABLEMENTMIN = (t == full_grid[1] ? missing : 25.0),) for t in full_grid
+                t => (RAISEREGENABLEMENTMIN = (t == full_grid[1] ? missing : 25.0),) for t in full_grid[1:(end - 1)]
             )
-
-            AustralianElectricityMarkets._attach_fcas_scaling_series!(
-                sys, device, complete_by_time, full_grid, :RAISEREGENABLEMENTMIN,
-                "fcas_agc_enablement_max_RAISEREG", base_power,
-            )
-            @test has_time_series(device, SingleTimeSeries, "fcas_agc_enablement_max_RAISEREG")
+            absent_by_time = Dict(t => (RAISEREGENABLEMENTMIN = missing,) for t in full_grid)
 
             AustralianElectricityMarkets._attach_fcas_scaling_series!(
                 sys, device, incomplete_by_time, full_grid, :RAISEREGENABLEMENTMIN,
                 "fcas_agc_enablement_min_RAISEREG", base_power,
             )
-            @test !has_time_series(device, SingleTimeSeries, "fcas_agc_enablement_min_RAISEREG")
+            got = get_time_series_values(SingleTimeSeries, device, "fcas_agc_enablement_min_RAISEREG")
+            @test isnan(got[1]) && isnan(got[end])
+            @test all(isapprox.(got[2:(end - 1)], 25.0 / base_power))
+
+            AustralianElectricityMarkets._attach_fcas_scaling_series!(
+                sys, device, absent_by_time, full_grid, :RAISEREGENABLEMENTMIN,
+                "fcas_agc_enablement_max_RAISEREG", base_power,
+            )
+            @test !has_time_series(device, SingleTimeSeries, "fcas_agc_enablement_max_RAISEREG")
+        end
+
+        @testset "get_scaled_fcas_trapezium skips scaling only at an absent interval" begin
+            sys = deepcopy(sys_base)
+            set_market_bids!(sys, db, date_range; resolution = resolution)
+            set_fcas_bids!(sys, db, date_range; resolution = resolution)
+
+            device = get_component(ThermalStandard, sys, "ER01")
+            full_grid = collect(date_range)[1:(end - 1)]
+            horizon = length(full_grid)
+            # 60 MW/h is a 5 MW AGC ramping capability over 5 minutes.
+            by_time = Dict(t => (RAMPUPRATE = (t == full_grid[1] ? missing : 60.0),) for t in full_grid)
+            AustralianElectricityMarkets._attach_fcas_scaling_series!(
+                sys, device, by_time, full_grid, :RAMPUPRATE, "fcas_agc_ramp_rate_RAISEREG", base_power,
+            )
+
+            raw, scaled = with_units_base(sys, "NATURAL_UNITS") do
+                (
+                    get_fcas_trapezium(device, BidType.RAISEREG, start_date, horizon),
+                    get_scaled_fcas_trapezium(device, BidType.RAISEREG, start_date, horizon),
+                )
+            end
+            @test get_max_avail(raw[1]) > 5.0
+            @test isequal(Tuple(scaled[1]), Tuple(raw[1]))
+            @test all(i -> isapprox(get_max_avail(scaled[i]), min(get_max_avail(raw[i]), 5.0)), 2:horizon)
         end
 
         @testset "get_scaled_fcas_trapezium narrows the trapezium wherever the AGC input is more restrictive" begin

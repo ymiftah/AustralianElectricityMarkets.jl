@@ -19,10 +19,10 @@ end
     _attach_fcas_scaling_series!(sys, device, by_time, full_grid, col, name, base_power; scale = 1.0)
 
 Attaches a `SingleTimeSeries` named `name` to `device`, per-unitised by `base_power` and
-`scale`, from `by_time[t][col]` at every `t` in `full_grid`. No-op (and leaves `device`
-untouched) if `device` has no row in `by_time` for every `t`, or if any of those rows has a
-`missing` value for `col` - AEMO's *FCAS Model in NEMDE* §4.1/§4.2 "zero or absent" rule
-means an incomplete scaling input series is the same as no scaling.
+`scale`, from `by_time[t][col]` at every `t` in `full_grid`. An interval with no row in
+`by_time`, or a `missing` value for `col`, is stored as `NaN`, which
+[`get_scaled_fcas_trapezium`](@ref) reads as an absent input for that interval. No-op if every
+interval is absent.
 
 # Returns
 `nothing`.
@@ -34,9 +34,10 @@ function _attach_fcas_scaling_series!(
     values = Float64[]
     for t in full_grid
         row = get(by_time, t, nothing)
-        (isnothing(row) || ismissing(row[col])) && return nothing
-        push!(values, row[col] * scale / base_power)
+        absent = isnothing(row) || ismissing(row[col])
+        push!(values, absent ? NaN : row[col] * scale / base_power)
     end
+    all(isnan, values) && return nothing
     add_time_series!(
         sys, device, SingleTimeSeries(; name = name, data = TimeArray(full_grid, values)),
     )
@@ -60,10 +61,8 @@ NEMDE* §4) to every available `Generator` and `EnergyReservoirStorage` in `sys`
 - `"fcas_uigf"` from `UIGF`, for semi-scheduled units only (§4.3).
 
 Every series is per-unit of `sys`'s system base, read back by
-[`get_scaled_fcas_trapezium`](@ref). A device with an incomplete series over `date_range` (a
-missing interval, or a `missing` source value at some interval) is left without that series
-rather than partially attached - reading it back then finds the series absent, which AEMO's
-§4.1/§4.2 "zero or absent" rule already treats as no scaling on that leg.
+[`get_scaled_fcas_trapezium`](@ref). An interval with no source row or a `missing` source value
+is stored as `NaN` and applies no scaling at that interval, per §4's "zero or absent" rule.
 
 # Arguments
 - `sys`: the `System` to add to.
