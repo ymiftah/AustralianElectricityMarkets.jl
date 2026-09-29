@@ -186,7 +186,5 @@ per interval (the same convention as the constraint-term reader's `DUDETAILSUMMA
 - §6.1 joint ramping (ADR-0017's known gap) still is not modelled; trapezium scaling narrows the
   *bounds* the joint capacity constraint and `MaxAvail` see, it does not add ramping itself.
 - AEMO's §5 `AGCSTATUS` pre-condition (regulation enabled only while the unit is under AGC
-  control) is still not modelled. The `EnablementMin <= EnablementMax` guard on the AGC
-  enablement pair is a defensive check on `scale_fcas_trapezium`'s own inputs, not a substitute
-  for it: an `AGCSTATUS = 0` interval whose AGC enablement pair still happens to be internally
-  consistent is scaled as if regulation were enabled.
+  control) is applied by `FCASMarket`'s enablement gate (ADR 0017), not by scaling: an
+  `AGCSTATUS = 0` interval is still scaled, then disabled.

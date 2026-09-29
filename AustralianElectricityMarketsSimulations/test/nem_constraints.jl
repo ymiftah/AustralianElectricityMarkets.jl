@@ -1,16 +1,12 @@
 # `GenericConstraint` as a `PSI.Service` (`LinearFactorLimit`), energy terms only. Built
-# against the PSCB fixture (`test/integration/pscb_fixture.jl`/`pscb_nemweb_data.jl`),
-# self-contained like `tiers.jl` — not dependent on run order elsewhere in `runtests.jl`.
+# against the PSCB fixture (`test/integration/pscb_fixture.jl`/`pscb_nemweb_data.jl`), which
+# `runtests.jl` loads.
 
 using HiGHS
 using TimeSeries: TimeArray
 import PowerSimulations as PSI
 const AEMS = AustralianElectricityMarketsSimulations
 const ISOPT = PSI.IS.Optimization
-
-include(joinpath(@__DIR__, "..", "..", "test", "integration", "pscb_fixture.jl"))
-include(joinpath(@__DIR__, "..", "..", "test", "integration", "pscb_nemweb_data.jl"))
-include(joinpath(@__DIR__, "template_helpers.jl"))
 
 const NEM_CONSTRAINTS_HIVE_DIR = mktempdir()
 create_pscb_nemweb_data(NEM_CONSTRAINTS_HIVE_DIR)
@@ -22,16 +18,6 @@ const NEM_CONSTRAINTS_DATE_RANGE =
     NEM_CONSTRAINTS_START:Minute(5):(NEM_CONSTRAINTS_START + Hour(2) + Minute(5))
 const NEM_CONSTRAINTS_GENCON_IDS =
     ("F_R1_RAISE6SEC", "F_R2_LOWERREG", "N_HYDRO_LIMIT", "N_IC1_LIMIT", "N_PARTIAL")
-
-# Sundance's 100 MW floor exceeds fixture demand under no-commitment dispatch; same fix
-# `tiers.jl` applies before building any `augmented_pscb_system()` template.
-function _fix_thermal_floor!(sys)
-    for gen in get_components(ThermalStandard, sys)
-        limits = get_active_power_limits(gen)
-        set_active_power_limits!(gen, (min = 0.0, max = limits.max))
-    end
-    return
-end
 
 """
     _gc(sys, gencon_id) -> GenericConstraint
