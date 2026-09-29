@@ -15,6 +15,7 @@ already encodes it (`s3://...`, `gs://...`, or a bare local path).
 - `table_sort_by::Vector{String}`: Columns to sort by within each output file (row-group locality; not an enforced uniqueness constraint)
 - `partitions::Vector{String}`: Partition columns
 - `path::String`: Path to parquet dataset (local path, or `scheme://...` URI for remote)
+- `month_filter_column::Union{Nothing, String}`: Column scoping rows to their archive month, or `nothing`
 """
 struct DataSource
     table_name::String
@@ -22,6 +23,7 @@ struct DataSource
     table_sort_by::Vector{String}
     partitions::Vector{String}
     path::String
+    month_filter_column::Union{Nothing, String}
 end
 
 get_filesystem(source::DataSource) = get_filesystem(source.path)
@@ -29,7 +31,7 @@ islocal(source::DataSource) = islocal(get_filesystem(source))
 
 """
     DataSource(table_name, table_columns, config=HiveConfiguration();
-               table_sort_by=String[], add_partitions=String[])
+               table_sort_by=String[], add_partitions=String[], month_filter_column=nothing)
 
 Create a new `DataSource` for a NEMWEB table, rooted at `config.hive_location`.
 Works for both local and remote (`s3`/`gs`) `config.filesystem` — path
@@ -41,6 +43,7 @@ function DataSource(
         config::HiveConfiguration = HiveConfiguration();
         table_sort_by::Vector{String} = String[],
         add_partitions::Vector{String} = String[],
+        month_filter_column::Union{Nothing, String} = nothing,
     )
     return DataSource(
         table_name,
@@ -48,6 +51,7 @@ function DataSource(
         table_sort_by,
         vcat(add_partitions, ARCHIVE_MONTH_PARTITION),
         joinpath(_parse_hive_root(config), table_name),
+        month_filter_column,
     )
 end
 

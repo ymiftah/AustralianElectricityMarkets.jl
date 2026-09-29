@@ -11,7 +11,7 @@ export HiveConfiguration, AEMDB, aem_connect
 export read_hive, read_interconnectors, read_units, read_demand, read_energy_bids
 
 const NEMWEB_URL = "http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/{year}/MMSDM_{year}_{month:02d}/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_{table}_{year}{month:02d}010000.zip"
-const NEMWEB_URL_ALT = "http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/{year}/MMSDM_{year}_{month:02d}/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23{table}%23FILE01%23{year}{month:02d}010000.zip"
+const NEMWEB_URL_ALT = "http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/{year}/MMSDM_{year}_{month:02d}/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23{table}%23FILE{part:02d}%23{year}{month:02d}010000.zip"
 const ARCHIVE_MONTH_PARTITION = "archive_month"
 
 include("connection.jl")

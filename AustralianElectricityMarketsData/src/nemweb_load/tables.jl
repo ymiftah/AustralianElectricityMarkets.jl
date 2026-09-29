@@ -64,7 +64,9 @@ const _TABLE_SPECS = [
     # SETTLEMENTDATE -> INTERVAL_DATETIME, drops INTERVENTION and the
     # GENCONEFFECTIVEDATE/GENCONVERSIONNO version-pinning pair, and adds LHS/RHS/RRP and
     # the enablement and FPP cost columns. Readers union the two - see
-    # `read_constraint_fcas_requirements`.
+    # `read_constraint_fcas_requirements`. AEMO's monthly archive for this table is
+    # cumulative (every row since 2024-12-09), so `month_filter_column` scopes each
+    # cached partition back down to its own archive month.
     (
         name = "DISPATCH_FCAS_REQ_CONSTRAINT",
         columns = [
@@ -74,6 +76,7 @@ const _TABLE_SPECS = [
             "P_REGULATION",
         ],
         sort_by = ["INTERVAL_DATETIME", "RUNNO", "REGIONID", "BIDTYPE", "CONSTRAINTID"],
+        month_filter_column = "INTERVAL_DATETIME",
     ),
     (
         name = "DISPATCH_FCAS_REQ_RUN",

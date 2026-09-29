@@ -1,9 +1,14 @@
 # ── HTTP fetch — download and cache a NEMWEB archive ZIP ─────────────────────
 
 """
-    _get_archive(table_name::String, year::Int, month::Int) -> String
+    _get_archive(table_name::String, year::Int, month::Int; download! = _download_and_cache) -> Vector{String}
 
-Download and cache a NEMWEB data archive ZIP file. Returns path to the ZIP file.
+Download and cache the NEMWEB data archive ZIP file(s) for one month.
+
+AEMO publishes most tables as a single `PUBLIC_DVD_...` ZIP, but some are split into
+numbered parts under the `PUBLIC_ARCHIVE#...#FILEnn#...` naming pattern. When the primary
+(`PUBLIC_DVD`) URL 404s, this fetches `FILE01`, `FILE02`, ... under the alternative pattern
+until a part 404s, and returns every part fetched.
 
 # Arguments
 - `table_name::String`: Name of the NEMWEB table
@@ -11,50 +16,67 @@ Download and cache a NEMWEB data archive ZIP file. Returns path to the ZIP file.
 - `month::Int`: Month to download
 
 # Returns
-- `String`: Path to the downloaded ZIP file (caller is responsible for deletion)
+- `Vector{String}`: Paths to the downloaded ZIP file(s), in part order (caller is
+  responsible for deletion)
 """
-function _get_archive(table_name::String, year::Int, month::Int)::String
-    tmp_zip = tempname(_local_tmp_dir()) * ".zip"
-
+function _get_archive(
+        table_name::String, year::Int, month::Int;
+        download! = _download_and_cache,
+    )::Vector{String}
     url = replace(
         NEMWEB_URL,
         "{year}" => year,
         "{month:02d}" => lpad(month, 2, '0'),
         "{table}" => table_name
     )
-    url_alt = replace(
-        NEMWEB_URL_ALT,
-        "{year}" => year,
-        "{month:02d}" => lpad(month, 2, '0'),
-        "{table}" => table_name
-    )
 
     # Only a 404 (MissingDataError) justifies trying the other naming pattern - AEMO uses
-    # PUBLIC_DVD for some months and PUBLIC_ARCHIVE#...#FILE01# for others. A
-    # TransientDownloadError propagates immediately instead: when NEMWEB is rate-limiting
-    # us, retrying a second URL only adds load, and the retry/backoff already happened
-    # inside _download_and_cache.
+    # PUBLIC_DVD for some months and the numbered PUBLIC_ARCHIVE#...#FILEnn# pattern for
+    # others. A TransientDownloadError propagates immediately instead: when NEMWEB is
+    # rate-limiting us, retrying a second URL only adds load, and the retry/backoff already
+    # happened inside _download_and_cache.
+    tmp_zip = tempname(_local_tmp_dir()) * ".zip"
     try
         @info "Downloading from primary URL" url
-        _download_and_cache(url, tmp_zip)
+        download!(url, tmp_zip)
+        return [tmp_zip]
     catch e
         e isa MissingDataError || rethrow()
-        try
-            @info "Downloading from alternative URL" url_alt
-            _download_and_cache(url_alt, tmp_zip)
-        catch e2
-            e2 isa MissingDataError || rethrow()
-            throw(
-                MissingDataError(
-                    "Requested data for table: $table_name, year: $year, month: $month\n" *
-                        "returned HTTP 404 under both known URL patterns, so AEMO does not publish it.\n" *
-                        "Check http://nemweb.com.au/#mms-data-model to confirm availability."
-                )
-            )
-        end
     end
 
-    return tmp_zip   # return the zip path, not an extracted CSV
+    zip_paths = String[]
+    for part in Iterators.countfrom(1)
+        url_alt = replace(
+            NEMWEB_URL_ALT,
+            "{year}" => year,
+            "{month:02d}" => lpad(month, 2, '0'),
+            "{table}" => table_name,
+            "{part:02d}" => lpad(part, 2, '0'),
+        )
+        part_zip = tempname(_local_tmp_dir()) * ".zip"
+        try
+            @info "Downloading from alternative URL" url_alt part
+            download!(url_alt, part_zip)
+        catch e2
+            rm(part_zip; force = true)
+            if e2 isa MissingDataError
+                part > 1 && break
+                foreach(p -> rm(p; force = true), zip_paths)
+                throw(
+                    MissingDataError(
+                        "Requested data for table: $table_name, year: $year, month: $month\n" *
+                            "returned HTTP 404 under both known URL patterns, so AEMO does not publish it.\n" *
+                            "Check http://nemweb.com.au/#mms-data-model to confirm availability."
+                    )
+                )
+            end
+            foreach(p -> rm(p; force = true), zip_paths)
+            rethrow()
+        end
+        push!(zip_paths, part_zip)
+    end
+
+    return zip_paths
 end
 
 "Maximum attempts per URL before giving up with a [`TransientDownloadError`](@ref)."
@@ -169,13 +191,14 @@ function _add_data(source::DataSource, year::Int, month::Int)
 
     return try
         @info "Fetching data" table = source.table_name year month
-        zip_path = _get_archive(source.table_name, year, month)
+        zip_paths = _get_archive(source.table_name, year, month)
+        lo, hi = isnothing(source.month_filter_column) ? (nothing, nothing) : _month_filter_bounds(year, month)
         d_only_path, available_cols = try
-            _extract_d_lines(zip_path)
+            _extract_d_lines(zip_paths; month_filter_column = source.month_filter_column, lo, hi)
         finally
-            # The zip is deleted as soon as the D-lines-only CSV has been
-            # extracted from it.
-            rm(zip_path; force = true)
+            # Every part's zip is deleted as soon as the combined D-lines-only
+            # CSV has been extracted from it.
+            foreach(p -> rm(p; force = true), zip_paths)
         end
 
         try
@@ -185,7 +208,7 @@ function _add_data(source::DataSource, year::Int, month::Int)
                 _csv_to_parquet(
                     conn, d_only_path, available_cols, source.table_columns, source.path,
                     source.partitions, source.table_sort_by, year, month;
-                    islocal = islocal(source),
+                    islocal = islocal(source), month_filter_column = source.month_filter_column,
                 )
             finally
                 DBInterface.close!(conn)
@@ -249,7 +272,11 @@ function get_table(db::AEMDB, table_name::Symbol)::DataSource
     spec = get(_TABLE_SPECS_BY_NAME, table_name) do
         throw(ArgumentError("Table $table_name not found. Available: $(list_available_tables())"))
     end
-    return DataSource(spec.name, spec.columns, db.config; table_sort_by = spec.sort_by)
+    return DataSource(
+        spec.name, spec.columns, db.config;
+        table_sort_by = spec.sort_by,
+        month_filter_column = get(spec, :month_filter_column, nothing),
+    )
 end
 
 """
