@@ -7,6 +7,15 @@
     @test b.upper ≈ 60.0
     @test b.lower ≈ 40.0
 
+    # Same unit over a 30-minute interval: ±60 MW.
+    b30 = energy_bounds(;
+        initial_mw = 50.0, ramp_up_rate = 120.0, ramp_down_rate = 120.0,
+        max_avail = 200.0, min_load = 0.0, uigf = nothing, is_semi_scheduled = false,
+        resolution = Minute(30),
+    )
+    @test b30.upper ≈ 110.0
+    @test b30.lower ≈ 0.0
+
     # MAXAVAIL clips below the ramp ceiling.
     b2 = energy_bounds(;
         initial_mw = 50.0, ramp_up_rate = 120.0, ramp_down_rate = 120.0,
@@ -55,15 +64,15 @@ end
     @test eff.enablement_max == 100.0
     @test eff.high_breakpoint == 80.0
     @test eff.max_avail == 20.0
-    @test lower_slope_coeff(eff) ≈ (40.0 - 20.0) / 20.0
-    @test upper_slope_coeff(eff) ≈ (100.0 - 80.0) / 20.0
+    @test get_lower_slope_coeff(eff) ≈ (40.0 - 20.0) / 20.0
+    @test get_upper_slope_coeff(eff) ≈ (100.0 - 80.0) / 20.0
 
     # UIGF below enablement_max pulls the ceiling in and pivots high_breakpoint with it,
     # preserving the upper slope.
     eff_uigf = scale_trapezium(raw; uigf = 90.0, agc_ramp_mw = nothing, is_regulation = false)
     @test eff_uigf.enablement_max ≈ 90.0
     @test eff_uigf.high_breakpoint ≈ 70.0
-    @test upper_slope_coeff(eff_uigf) ≈ upper_slope_coeff(eff)
+    @test get_upper_slope_coeff(eff_uigf) ≈ get_upper_slope_coeff(eff)
 
     # UIGF above enablement_max is not binding.
     @test scale_trapezium(raw; uigf = 150.0, agc_ramp_mw = nothing, is_regulation = false).enablement_max == 100.0
@@ -83,6 +92,6 @@ end
         enablement_max = 100.0, max_avail = 0.0,
     )
     eff_flat = scale_trapezium(flat; uigf = nothing, agc_ramp_mw = nothing, is_regulation = false)
-    @test lower_slope_coeff(eff_flat) == 0.0
-    @test upper_slope_coeff(eff_flat) == 0.0
+    @test get_lower_slope_coeff(eff_flat) == 0.0
+    @test get_upper_slope_coeff(eff_flat) == 0.0
 end

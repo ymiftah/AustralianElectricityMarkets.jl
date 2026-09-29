@@ -92,6 +92,7 @@ function nem_toy_system(units, load_mw; batteries = Pair{String, Any}[], mutate!
         add_series!(gen, "ramp_up_rate", unit.ramp_up / base_power)
         add_series!(gen, "ramp_down_rate", unit.ramp_down / base_power)
         add_series!(gen, "initial_mw", unit.initial / base_power)
+        add_series!(gen, "availability", unit.availability / base_power)
     end
 
     load = PSY.get_component(PSY.PowerLoad, sys, "bus4")

@@ -43,3 +43,18 @@ knows — that's a Phase 2 / `PSI.ProblemTemplate` concept, out of scope here.
   as the third step in `ConstrainedNetworkConfiguration`.
 - Device eligibility here is necessarily provisional — a Phase 2 formulation may still exclude
   a device this service includes, if no template models it.
+
+## Amendment (FCASMarket, PR 2.5)
+
+The requirement-driven pair set and the "every bidder" device set are superseded:
+
+- `add_fcas_services!` builds one service per `(region, bid_type)` with at least one available
+  bidder, whether or not a `GenericConstraint` names that pair. NEMDE enables unit FCAS from the
+  offers alone; the requirement constraints bind on those enablements, so the services must
+  exist first and independently. It no longer needs `add_nem_constraints!` to have run.
+- It attaches only bids whose direction `FCASMarket` models (an incremental bid, or a
+  decremental-only bid on a `Storage` device) and reports the rest, rather than leaving an
+  unbuildable service for a template to reject. Unavailable devices are not attached.
+- It skips a name already in `sys`, so the real-data suite no longer deletes and rebuilds the
+  services `ConstrainedNetworkConfiguration` created - one builder, one set of components, which
+  the FCAS terms of the requirement constraints will reference.

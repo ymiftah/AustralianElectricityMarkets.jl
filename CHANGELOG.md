@@ -45,7 +45,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`add_nem_constraints!` warns when invoked `SETTLEMENTDATE`s don't align to `date_range`'s grid**, instead of silently producing an all-zero `"invoked"` series.
 - **`GenericConstraint`'s `get_limit_type`/`get_source`/`get_effective_date`/`get_version_no`/`get_gencon_id`** now return `nothing`, not Julia `missing`, when the underlying `GENCONDATA` field was `NULL`.
 - **`set_fcas_bids!` throws an actionable `ArgumentError`**, not a raw `MethodError`, when a required FCAS trapezium field (`ENABLEMENTMIN`/`LOWBREAKPOINT`/`HIGHBREAKPOINT`/`ENABLEMENTMAX`/`MAXAVAIL`) is `NULL`.
-- **`add_fcas_services!` excludes disarmed (`available = false`) `GenericConstraint`s** from the FCAS markets it builds.
 - **`loss_segments` throws on duplicate adjacent `LOSSMODEL` breakpoints** instead of silently producing a `NaN` slope.
 - **`get_fcas_bid` throws on a trapezium/offer-curve series length mismatch** instead of silently truncating via `zip`.
 - **Stale data-fetching documentation**: The README, docs landing page, "Gathering Data" page, and the commented download snippets in the Literate examples all referenced a `fetch_table_data` function and a `PyHiveConfiguration` type that no longer exist. They now use `populate` and `HiveConfiguration`, and the description of the package as a wrapper around a Python package has been removed.
@@ -61,6 +60,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FCASMarket`, the `FCASService` co-optimisation formulation** (`AustralianElectricityMarketsSimulations`):
+  a `FCASCapacityVariable` per contributing device and interval, bounded above by the device's
+  `MAXAVAIL` for that market, and both forms (upper and lower) of the joint capacity constraint
+  from AEMO's *FCAS Model in NEMDE* §6.2/§6.3, each held in a per-`(device, t)`
+  `FCASJointCapacityLHS` expression: energy dispatch, offset by the service's own trapezium slope
+  and any matching regulation target, held inside `[EnablementMin, EnablementMax]`. A `PSY.Storage`
+  device's energy term is its net `ActivePowerOutVariable - ActivePowerInVariable` on contingency,
+  matching how real battery contingency FCAS is bid (`DIRECTION = BIDIRECTIONAL`, against a net-MW
+  trapezium), and the bid side's own energy on regulation (`ActivePowerOutVariable` for a `GEN`
+  bid, `-ActivePowerInVariable` for a `LOAD` bid). The computable subset of AEMO's §5 enablement
+  pre-conditions (`MaxAvail`, a positive offer band, the enablement sign and
+  energy-maximum-availability tests against `DISPATCHLOAD.AVAILABILITY`, and "stranded" outside the
+  trapezium against `INITIALMW`, net for a battery, first interval only under
+  `NEMLookaheadDispatch`) gates a disabled `(device, t)` to zero capacity and a vacuous constraint
+  row, rather than a device NEMDE would not enable being forced on. For a `PSY.Storage` device the energy
+  test reads each direction's energy bid `MAXAVAIL`, which `set_market_bids!` now attaches and
+  `get_storage_energy_max_avail` reads back. Trapezium and offer-curve data are read
+  directly off the `Deterministic` series `set_fcas_bids!` attaches, so no `PSI.TimeSeriesParameter`
+  is registered for them and they never conflict with the `SingleTimeSeries`-derived forecasts every
+  other formulation reads. Offer cost is an epigraph over the device's step offer curve (band
+  variables filling cheapest-first), priced with the same `$/MWh`-over-an-interval basis as energy,
+  scaled by the system base power to price a per-unit capacity variable against a natural-`$`/MW
+  offer, over the model's own resolution (`interval_cost_coefficient(price, resolution)`).
+  `FCASMarket` supports a standalone `DecisionModel` only (it throws when built for a
+  `Simulation`), records duals for `FCASJointCapacityConstraint` only, and throws on a device
+  contributing to two `FCASService`s of the same market. A decremental (`LOAD`-direction) bid on a non-`Storage` device throws — no scheduled-load
+  device type exists in this package yet, and `set_fcas_bids!` never produces one. `check_fcas_services`
+  is a pre-flight check, over the available services the template models under `FCASMarket` and
+  their available contributors, confirming each has an energy-dispatching device model, a
+  supported FCAS bid direction and at most one service per market. AEMSim's own duplicate trapezium-slope arithmetic
+  (`EffectiveTrapezium`, the local `lower_slope_coeff`/`upper_slope_coeff`) is gone; `scale_trapezium`
+  now returns an `FCASTrapezium` directly, reading root's
+  `get_lower_slope_coeff`/`get_upper_slope_coeff`.
+- **`get_initial_mw`/`get_energy_availability`** read back `set_nem_dispatch_limits!`'s
+  `"initial_mw"` and new `"availability"` (raw `DISPATCHLOAD.AVAILABILITY`) series in display units.
+  `interval_cost_coefficient` takes an optional `resolution` (default `DISPATCH_INTERVAL`, 5
+  minutes), `energy_bounds` a `resolution` keyword, and `interval_hours`/`DISPATCH_INTERVAL` are
+  exported.
+- **FCAS bid trapeziums are validated**: `set_fcas_bids!` and `get_fcas_trapezium` throw unless
+  `EnablementMin ≤ LowBreakpoint ≤ HighBreakpoint ≤ EnablementMax` and `MaxAvail ≥ 0`, as AEMO's
+  bid validation guarantees for every published bid.
 - **`AbstractNEMDispatch`, a uniform device formulation for NEM dispatch participants** (`AustralianElectricityMarketsSimulations`): a per-band bid stack from `MarketBidCost`, a per-interval ramp limit from the `"ramp_up_rate"`/`"ramp_down_rate"` series, and the `DISPATCHLOAD.AVAILABILITY` envelope, replacing the stock `ThermalBasicDispatch`/`RenewableFullDispatch`/`HydroDispatchRunOfRiver` formulations whose commitment binaries, forecast ceiling and energy budget NEMDE does not apply. The formulation is written against `PowerSystems.StaticInjection` and is never gated on a fixed list of device types: NEMDE dispatches on market participation, not technology, so a `ThermalMultiStart` or any other injector a user brings is treated identically. It models one injection variable per device; state of charge for bidirectional units layers on as its own formulation.
 - **`NEMReplayDispatch` and `NEMLookaheadDispatch`**, the two concrete `AbstractNEMDispatch` formulations, differing only in what the ramp constraint measures against: the replay formulation measures every interval against its own metered `INITIALMW`, as NEMDE does, and the lookahead formulation chains each interval from the previous one's dispatch. Both are concrete, so a consumer always names one and the choice is never made by default.
 - **`nem_dispatch_participants` and `set_nem_dispatch_models!`**, which set one formulation across every participant by reading which components carry the dispatch-limit series rather than assuming types, plus the `RampUpRateTimeSeriesParameter`/`RampDownRateTimeSeriesParameter`/`InitialPowerTimeSeriesParameter` parameter types. An `AbstractNEMDispatch` model builds as a pure LP with no `OnVariable`, and a device missing a ramp series or with a ramp-down floor above its availability ceiling is named at build rather than surfacing as a solver `INFEASIBLE`.
@@ -98,10 +138,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Interconnector loss model** (`src/interconnector_losses.jl`): `InterconnectorLossModel`, three readers `read_interconnector_loss_breakpoints`/`read_interconnector_demand_coefficients`/`read_interconnector_loss_parameters`, and `interconnector_loss_models` assembler. NEMDE models losses as quadratic in flow with demand-dependent linear coefficients; `loss_factor` evaluates it, `interconnector_losses` integrates it, and `loss_segments` linearises on `LOSSMODEL`'s `MWBREAKPOINT`s as chord slopes. Readers are version-resolved on `EFFECTIVEDATE`/`VERSIONNO` as of a caller-supplied date, not `archive_month`, and throw `ArgumentError` naming the missing table when uncached.
 - **`attach_interconnector_losses!`**: `InterconnectorLossModel` is now a `PSY.SupplementalAttribute`, so it can be attached to a `System`'s `AreaInterchange` components and round-trips through JSON. `attach_interconnector_losses!(sys, db, as_of)` attaches one per `AreaInterchange`, matched by `INTERCONNECTORID`; an interconnector with no resolvable loss model is skipped and reported in one aggregated `@warn`. Wired as the fourth build step in `ConstrainedNetworkConfiguration`, after `add_fcas_services!`.
 - **`FCASService`/`add_fcas_services!`**: New `PSY.Service` anchoring the devices
-  contributing to each `(region, bid_type)` FCAS market actually governed by a
-  `GenericConstraint` in a `System` — a plain `add_service!` join, carrying no requirement or
-  time series of its own. Wired as the third build step in `ConstrainedNetworkConfiguration`,
-  after `set_fcas_bids!`/`add_nem_constraints!`.
+  contributing to each `(region, bid_type)` FCAS market with at least one available bidder — a
+  plain `add_service!` join, carrying no requirement or time series of its own. Only bids whose
+  direction `FCASMarket` models are attached (the rest are reported), and a service already in
+  the `System` is left as is. Wired as the third build step in `ConstrainedNetworkConfiguration`.
 - **`get_fcas_trapezium`/`get_fcas_offer_curve`/`get_fcas_bid`**: New full-series accessors
   reconstructing typed `FCASTrapezium`/`PiecewiseStepData`/`FCASBid` values from the raw
   tuple/curve series `set_fcas_bids!` stores. `decremental = true` reads a storage device's

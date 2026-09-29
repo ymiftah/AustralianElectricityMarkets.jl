@@ -1,11 +1,12 @@
 """
     energy_bounds(; initial_mw, ramp_up_rate, ramp_down_rate, max_avail, min_load, uigf,
-        is_semi_scheduled)
+        is_semi_scheduled, resolution = DISPATCH_INTERVAL)
 
 Physical energy dispatch bounds for one unit in one interval, applied in NEMDE's order: the
 upper bound is the lesser of the ramp-up limit from `initial_mw` and the greater of `max_avail`
 and the ramp-down floor from `initial_mw`, then the UIGF weather ceiling for semi-scheduled
-units, then `MINIMUMLOAD` for an online unit.
+units, then `MINIMUMLOAD` for an online unit. Ramp rates are in MW/h and are applied over one
+interval of length `resolution`.
 
 `uigf` caps semi-scheduled units unconditionally — `SEMIDISPATCHCAP = 0` means AEMO did not
 actively curtail, not that the weather limit is absent.
@@ -21,9 +22,11 @@ function energy_bounds(;
         min_load::Float64,
         uigf::Union{Nothing, Float64},
         is_semi_scheduled::Bool,
+        resolution::Dates.Period = DISPATCH_INTERVAL,
     )
-    ramp_up_limit = initial_mw + ramp_up_rate * DISPATCH_INTERVAL_HOURS
-    ramp_down_floor = initial_mw - ramp_down_rate * DISPATCH_INTERVAL_HOURS
+    hours = interval_hours(resolution)
+    ramp_up_limit = initial_mw + ramp_up_rate * hours
+    ramp_down_floor = initial_mw - ramp_down_rate * hours
 
     upper = min(ramp_up_limit, max(max_avail, ramp_down_floor))
     if is_semi_scheduled && !isnothing(uigf)
@@ -38,32 +41,12 @@ function energy_bounds(;
 end
 
 """
-NEMDE's *effective* FCAS trapezium for one unit, service and interval — the offered
-[`FCASTrapezium`](@ref) after UIGF and AGC ramp-rate scaling. Kept separate from the offered
-record so parsed archive data is never mutated.
-"""
-struct EffectiveTrapezium
-    enablement_min::Float64
-    low_breakpoint::Float64
-    high_breakpoint::Float64
-    enablement_max::Float64
-    max_avail::Float64
-end
-
-"LowerSlopeCoeff: `(low_breakpoint - enablement_min) / max_avail`, zero when `max_avail` is zero."
-lower_slope_coeff(t::EffectiveTrapezium) =
-    iszero(t.max_avail) ? 0.0 : (t.low_breakpoint - t.enablement_min) / t.max_avail
-
-"UpperSlopeCoeff: `(enablement_max - high_breakpoint) / max_avail`, zero when `max_avail` is zero."
-upper_slope_coeff(t::EffectiveTrapezium) =
-    iszero(t.max_avail) ? 0.0 : (t.enablement_max - t.high_breakpoint) / t.max_avail
-
-"""
     scale_trapezium(trap; uigf, agc_ramp_mw, is_regulation)
 
 Applies NEMDE's trapezium scaling to an offered [`FCASTrapezium`](@ref), in AEMO's order: UIGF
 ceiling for semi-scheduled units, then the telemetered AGC ramp cap for regulation services.
-Breakpoints pivot with the bound that moved, so slope coefficients are preserved rather than
+Breakpoints pivot with the bound that moved, so slope coefficients (read back with
+[`get_lower_slope_coeff`](@ref)/[`get_upper_slope_coeff`](@ref)) are preserved rather than
 silently steepened.
 
 # Arguments
@@ -74,7 +57,7 @@ silently steepened.
 - `is_regulation`: whether this is `RAISEREG`/`LOWERREG`; the AGC cap applies only to those.
 
 # Returns
-An [`EffectiveTrapezium`](@ref).
+An [`FCASTrapezium`](@ref).
 """
 function scale_trapezium(
         trap::FCASTrapezium;
@@ -95,8 +78,12 @@ function scale_trapezium(
 
     if is_regulation && !isnothing(agc_ramp_mw) && agc_ramp_mw < max_avail
         # Hold both slopes while the plateau narrows to the ramp-limited availability.
-        lower_slope = iszero(max_avail) ? 0.0 : (low_breakpoint - enablement_min) / max_avail
-        upper_slope = iszero(max_avail) ? 0.0 : (enablement_max - high_breakpoint) / max_avail
+        pre_agc = FCASTrapezium(;
+            enablement_min = enablement_min, low_breakpoint = low_breakpoint,
+            high_breakpoint = high_breakpoint, enablement_max = enablement_max, max_avail = max_avail,
+        )
+        lower_slope = get_lower_slope_coeff(pre_agc)
+        upper_slope = get_upper_slope_coeff(pre_agc)
         max_avail = agc_ramp_mw
         low_breakpoint = enablement_min + lower_slope * max_avail
         high_breakpoint = enablement_max - upper_slope * max_avail
@@ -104,7 +91,9 @@ function scale_trapezium(
 
     high_breakpoint = max(high_breakpoint, low_breakpoint)
     enablement_max = max(enablement_max, enablement_min)
-    return EffectiveTrapezium(
-        enablement_min, low_breakpoint, high_breakpoint, enablement_max, max_avail,
+    return FCASTrapezium(;
+        enablement_min = enablement_min, low_breakpoint = low_breakpoint,
+        high_breakpoint = high_breakpoint, enablement_max = enablement_max, max_avail = max_avail,
+        ramp_up_rate = get_ramp_up_rate(trap), ramp_down_rate = get_ramp_down_rate(trap),
     )
 end

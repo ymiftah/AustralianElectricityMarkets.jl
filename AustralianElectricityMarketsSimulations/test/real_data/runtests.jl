@@ -246,4 +246,58 @@ end
         total_area_slack_mw = sum(values(slack_mw); init = 0.0)
         @info "Real-data DecisionModel" build_time solve_time total_area_slack_mw
     end
+
+    @testset "FCASMarket builds and solves alongside the constrained System" begin
+        # ConstrainedNetworkConfiguration's add_fcas_services! built one FCASService per bid
+        # (region, bid type), attaching only the bids FCASMarket models.
+        fcas_registered = PSY.get_name.(PSY.get_components(FCASService, sys))
+        @test !isempty(fcas_registered)
+
+        fcas_template = aemsim_template(sys)
+        for gc in buildable
+            name = PSY.get_name(gc)
+            PSI.set_service_model!(
+                fcas_template, name,
+                PSI.ServiceModel(GenericConstraint, LinearFactorLimit, name; duals = [NEMConstraintLimit]),
+            )
+        end
+        for name in fcas_registered
+            PSI.set_service_model!(
+                fcas_template, name,
+                PSI.ServiceModel(FCASService, FCASMarket, name; duals = [FCASJointCapacityConstraint]),
+            )
+        end
+        @test isnothing(check_fcas_services(sys, fcas_template))
+
+        fcas_model = PSI.DecisionModel(
+            fcas_template, sys;
+            optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+            horizon = REAL_SPAN,
+            resolution = REAL_RESOLUTION,
+            interval = REAL_RESOLUTION,
+            initial_time = REAL_START,
+            name = "real_data_fcas",
+        )
+
+        build_time = @elapsed build_status = PSI.build!(fcas_model; output_dir = mktempdir())
+        if build_status != PSI.ModelBuildStatus.BUILT
+            err = build_error(fcas_model)
+            isnothing(err) || @error "FCASMarket build! did not reach BUILT" exception = err
+        end
+        @test build_status == PSI.ModelBuildStatus.BUILT
+
+        solve_time = @elapsed run_status = PSI.solve!(fcas_model)
+        @test run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+        container = PSI.get_optimization_container(fcas_model)
+        n_enabled_pairs = 0
+        for name in fcas_registered
+            PSI.has_container_key(container, FCASCapacityVariable, FCASService, name) || continue
+            var = PSI.get_variable(container, FCASCapacityVariable(), FCASService, name)
+            n_enabled_pairs += count(k -> PSI.JuMP.upper_bound(var[k...]) > 0.0, Iterators.product(axes(var)...))
+        end
+        @test n_enabled_pairs > 0
+
+        @info "Real-data FCASMarket DecisionModel" build_time solve_time n_services = length(fcas_registered) n_enabled_pairs
+    end
 end

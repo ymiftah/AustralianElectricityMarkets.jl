@@ -15,4 +15,15 @@ end
 
     # Int input, 60 $/MWh over 5/60 h -> 5.0 $/MW
     @test interval_cost_coefficient(60) ≈ 5.0
+
+    # Other resolutions: 300 $/MWh over 30 min -> 150 $/MW; over 1 h -> 300 $/MW.
+    @test interval_cost_coefficient(300.0, Minute(30)) ≈ 150.0
+    @test interval_cost_coefficient(300.0, Hour(1)) ≈ 300.0
+    @test interval_cost_coefficient(300.0, DISPATCH_INTERVAL) ≈ interval_cost_coefficient(300.0)
+end
+
+@testset "interval_hours" begin
+    @test interval_hours(DISPATCH_INTERVAL) ≈ DISPATCH_INTERVAL_HOURS
+    @test interval_hours(Minute(30)) ≈ 0.5
+    @test interval_hours(Second(90)) ≈ 90 / 3600
 end

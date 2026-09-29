@@ -46,6 +46,26 @@ get_lower_slope_coeff(t::FCASTrapezium) = iszero(t.max_avail) ? 0.0 : (t.low_bre
 get_upper_slope_coeff(t::FCASTrapezium) = iszero(t.max_avail) ? 0.0 : (t.enablement_max - t.high_breakpoint) / t.max_avail
 
 """
+    _validate_fcas_trapezium(t::FCASTrapezium, context::AbstractString) -> FCASTrapezium
+
+Returns `t` if it is a well-formed FCAS bid trapezium (AEMO, *FCAS Model in NEMDE*, §2):
+`enablement_min <= low_breakpoint <= high_breakpoint <= enablement_max` and `max_avail >= 0`.
+Throws an `ArgumentError` naming `context` otherwise.
+"""
+function _validate_fcas_trapezium(t::FCASTrapezium, context::AbstractString)
+    ordered = t.enablement_min <= t.low_breakpoint <= t.high_breakpoint <= t.enablement_max
+    (ordered && t.max_avail >= 0.0) && return t
+    throw(
+        ArgumentError(
+            "Malformed FCAS trapezium for $context: requires EnablementMin <= LowBreakpoint <= " *
+                "HighBreakpoint <= EnablementMax and MaxAvail >= 0, got EnablementMin = " *
+                "$(t.enablement_min), LowBreakpoint = $(t.low_breakpoint), HighBreakpoint = " *
+                "$(t.high_breakpoint), EnablementMax = $(t.enablement_max), MaxAvail = $(t.max_avail).",
+        ),
+    )
+end
+
+"""
     Tuple(t::FCASTrapezium) -> NTuple{7, Float64}
 
 Packs `t` as `(enablement_min, low_breakpoint, high_breakpoint, enablement_max, max_avail,

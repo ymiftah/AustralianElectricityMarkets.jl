@@ -62,14 +62,16 @@ Attaches per-device `SingleTimeSeries` from [`read_dispatch_limits`](@ref) to ev
 `RenewableDispatch` also gets `"max_active_power"` — the device's upper dispatch limit,
 `AVAILABILITY` raised to the ramp-down floor `INITIALMW - RAMPDOWNRATE × Δ` when that floor is
 higher, where Δ is the interval length in hours taken from `date_range`'s step — replacing any
-`UIGF`- or bid-derived `"max_active_power"` series a device already carries. An
+`UIGF`- or bid-derived `"max_active_power"` series a device already carries - and
+`"availability"`, the raw `AVAILABILITY` (for a semi-scheduled unit, the lower of bid `MAXAVAIL`
+and `UIGF`), read back by [`get_energy_availability`](@ref). An
 `EnergyReservoirStorage` gets no `"max_active_power"` series: its per-direction availability is
 the energy bid `MAXAVAIL` series [`set_market_bids!`](@ref) attaches, read back by
 [`get_storage_energy_max_avail`](@ref); the same ramp-floor rule is applied to it on the net
 axis when its dispatch model is built.
 
-`"ramp_up_rate"`, `"ramp_down_rate"` and `"initial_mw"` are stored per-unit of `sys`'s system
-base, rates per minute. `"max_active_power"` follows PSY's native convention instead: data
+`"ramp_up_rate"`, `"ramp_down_rate"`, `"initial_mw"` and `"availability"` are stored per-unit of
+`sys`'s system base, rates per minute. `"max_active_power"` follows PSY's native convention instead: data
 normalised by the device's own static `max_active_power` (read under `NATURAL_UNITS`), with
 `scaling_factor_multiplier = get_max_active_power`.
 
@@ -110,6 +112,7 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
         @NamedTuple{
             initial_mw::Vector{Float64}, ramp_up_rate::Vector{Float64},
             ramp_down_rate::Vector{Float64}, max_active_power::Union{Nothing, Vector{Float64}},
+            availability::Union{Nothing, Vector{Float64}},
         }
     }()
 
@@ -148,6 +151,7 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
         ramp_up_rate = Float64[]
         ramp_down_rate = Float64[]
         max_active_power = is_storage ? nothing : Float64[]
+        availability = is_storage ? nothing : Float64[]
         reason = nothing
         for t in full_grid
             row = by_time[t]
@@ -168,6 +172,7 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
             if !is_storage
                 ramp_down_floor = row.INITIALMW - row.RAMPDOWNRATE * interval_hours
                 push!(max_active_power, max(row.AVAILABILITY, ramp_down_floor) / static_max_active_power)
+                push!(availability, row.AVAILABILITY)
             end
         end
         if !isnothing(reason)
@@ -177,6 +182,7 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
         buildable[duid] = (
             initial_mw = initial_mw, ramp_up_rate = ramp_up_rate,
             ramp_down_rate = ramp_down_rate, max_active_power = max_active_power,
+            availability = availability,
         )
     end
 
@@ -201,6 +207,10 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
             SingleTimeSeries(; name = "initial_mw", data = TimeArray(full_grid, d.initial_mw ./ base_power)),
         )
         isnothing(d.max_active_power) && continue
+        add_time_series!(
+            sys, device,
+            SingleTimeSeries(; name = "availability", data = TimeArray(full_grid, d.availability ./ base_power)),
+        )
         # RenewableDispatch/HydroDispatch may already carry a "max_active_power" series from
         # set_renewable_pv!/set_renewable_wind!/set_hydro_limits! - add_time_series! throws on a
         # duplicate name, so the existing series is removed first, deterministically overwriting
@@ -217,6 +227,41 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
         )
     end
     return
+end
+
+"""
+    get_initial_mw(component, initial_time, horizon) -> Union{Nothing, Vector{Float64}}
+
+Full-series read of `component`'s `"initial_mw"` series ([`set_nem_dispatch_limits!`](@ref),
+`DISPATCHLOAD.INITIALMW`, net MW for a battery), `horizon` steps from `initial_time`, in
+`component`'s `System`'s current display units. `nothing` if `component` carries no such series.
+
+# Returns
+`Union{Nothing, Vector{Float64}}`.
+"""
+function get_initial_mw(component, initial_time, horizon::Integer)
+    return _read_dispatch_limit_series(component, "initial_mw", initial_time, horizon)
+end
+
+"""
+    get_energy_availability(component, initial_time, horizon) -> Union{Nothing, Vector{Float64}}
+
+Full-series read of `component`'s `"availability"` series ([`set_nem_dispatch_limits!`](@ref),
+`DISPATCHLOAD.AVAILABILITY`), `horizon` steps from `initial_time`, in `component`'s `System`'s
+current display units. `nothing` if `component` carries no such series.
+
+# Returns
+`Union{Nothing, Vector{Float64}}`.
+"""
+function get_energy_availability(component, initial_time, horizon::Integer)
+    return _read_dispatch_limit_series(component, "availability", initial_time, horizon)
+end
+
+"`component`'s `name` `SingleTimeSeries` over `horizon` steps from `initial_time`, in display units, or `nothing`."
+function _read_dispatch_limit_series(component, name::AbstractString, initial_time, horizon::Integer)
+    has_time_series(component, SingleTimeSeries, name) || return nothing
+    values = get_time_series_values(SingleTimeSeries, component, name; start_time = initial_time, len = horizon)
+    return values .* _fcas_units_multiplier(component)
 end
 
 """

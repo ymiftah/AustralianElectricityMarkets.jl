@@ -39,8 +39,37 @@ PSY.supports_time_series(::FCASService) = false
 get_region(value::FCASService) = value.region
 get_bid_type(value::FCASService) = value.bid_type
 
-# A device contributes to a (region, bid_type) market if it carries either direction's curve
-# series - a storage device can provide the market while charging or discharging.
+"""
+    _fcas_bid_direction(device, bid_type) -> Symbol
+
+`:incremental`, `:decremental`, `:both` or `:none`, describing which `"fcas_trapezium_<bid_type>
+[_decremental]"` series `device` carries.
+"""
+function _fcas_bid_direction(device, bid_type::BidType)
+    bid_type_str = string(bid_type)
+    has_inc = has_time_series(device, Deterministic, "fcas_trapezium_$bid_type_str")
+    has_dec = has_time_series(device, Deterministic, "fcas_trapezium_$(bid_type_str)_decremental")
+    has_inc && has_dec && return :both
+    has_inc && return :incremental
+    has_dec && return :decremental
+    return :none
+end
+
+"""
+    _fcas_bid_modeled(device, bid_type) -> Bool
+
+Whether `device`'s `bid_type` FCAS bid has a direction the FCAS market formulation models: an
+incremental bid on any device, or a decremental-only bid on a `Storage` device.
+"""
+function _fcas_bid_modeled(device, bid_type::BidType)
+    direction = _fcas_bid_direction(device, bid_type)
+    direction == :incremental && return true
+    direction == :decremental && return device isa Storage
+    return false
+end
+
+# A device bids a (region, bid_type) market if it carries either direction's curve series - a
+# storage device can provide the market while charging or discharging.
 function _fcas_service_devices(sys, region::AbstractString, bid_type::BidType)
     inc_name = _fcas_series_name("fcas_curve", bid_type, false)
     dec_name = _fcas_series_name("fcas_curve", bid_type, true)
@@ -50,45 +79,39 @@ function _fcas_service_devices(sys, region::AbstractString, bid_type::BidType)
 end
 
 """
-    add_fcas_services!(sys) -> (added, skipped)
+    add_fcas_services!(sys) -> (added, excluded)
 
-Adds one [`FCASService`](@ref) per `(region, bid_type)` pair governed by some
-[`GenericConstraint`](@ref) already in `sys` (via its `fcas_requirements`), attached via
-`add_service!` to every region device carrying an incremental or decremental FCAS bid series
-for that market.
+Adds one [`FCASService`](@ref) named `"<REGIONID>_<BIDTYPE>"` for every region and FCAS market
+with at least one available device bidding it, attached via `add_service!` to those devices
+whose bid direction the FCAS market formulation models (an incremental bid, or a
+decremental-only bid on a `Storage` device). A service already in `sys` under that name is left
+as is. Devices bidding a market in a direction the formulation does not model are left out and
+reported.
 
 # Arguments
-- `sys`: the `System` to add to, after `set_fcas_bids!` and `add_nem_constraints!` have run.
+- `sys`: the `System` to add to, after [`set_fcas_bids!`](@ref) has run.
 
 # Returns
-`(added, skipped)`: `added::Vector{String}` of service names created, `skipped::Dict{String,
-Symbol}` mapping a skipped `"<REGIONID>_<BIDTYPE>"` name to `:no_devices`.
+`(added, excluded)`: `added::Vector{String}` of service names created, and
+`excluded::Dict{String, Vector{String}}` mapping a service name to the device names left out of
+it.
 """
 function add_fcas_services!(sys)
-    pairs = Set{Tuple{String, BidType}}()
-    for gc in get_components(GenericConstraint, sys)
-        get_available(gc) || continue
-        for req in get_fcas_requirements(gc)
-            push!(pairs, (get_region(req), get_service(req)))
-        end
-    end
-
     added = String[]
-    skipped = Dict{String, Symbol}()
-    for (region, bid_type) in pairs
+    excluded = Dict{String, Vector{String}}()
+    for region in sort(get_name.(get_components(Area, sys))), bid_type in FCAS_BID_TYPES
         name = "$(region)_$(string(bid_type))"
-        devices = _fcas_service_devices(sys, region, bid_type)
-        if isempty(devices)
-            skipped[name] = :no_devices
-            continue
-        end
+        isnothing(get_component(FCASService, sys, name)) || continue
+        bidders = filter(get_available, _fcas_service_devices(sys, region, bid_type))
+        devices = filter(d -> _fcas_bid_modeled(d, bid_type), bidders)
+        left_out = setdiff(get_name.(bidders), get_name.(devices))
+        isempty(left_out) || (excluded[name] = sort(left_out))
+        isempty(devices) && continue
         add_service!(sys, FCASService(; name = name, region = region, bid_type = bid_type), devices)
         push!(added, name)
     end
-
-    if !isempty(skipped)
-        @warn "add_fcas_services!: skipped $(length(skipped)) of $(length(pairs)) (region, bid_type) pairs with no contributing devices" skipped
+    if !isempty(excluded)
+        @warn "add_fcas_services!: left $(sum(length, values(excluded))) device(s) out of $(length(excluded)) FCAS market(s) - their bid direction is not modeled" excluded
     end
-
-    return added, skipped
+    return added, excluded
 end

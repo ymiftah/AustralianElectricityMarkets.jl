@@ -47,13 +47,17 @@ end
 Full-series read of `component`'s FCAS trapezium for `service`, `horizon` steps from
 `initial_time`, in `component`'s `System`'s current display units (MW under `NATURAL_UNITS`,
 per-unit of the system base under `SYSTEM_BASE`). `decremental` selects the storage
-`DIRECTION == "LOAD"` series. Throws `ArgumentError` if the series isn't attached.
+`DIRECTION == "LOAD"` series. Throws `ArgumentError` if the series isn't attached, or if any
+step holds a malformed trapezium (out-of-order limits or a negative `MaxAvail`).
 """
 function get_fcas_trapezium(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
     name = _fcas_series_name("fcas_trapezium", service, decremental)
     rows = _read_fcas_series("trapezium", component, name, service, decremental, initial_time, horizon)
     multiplier = _fcas_units_multiplier(component)
-    return [FCASTrapezium(t .* multiplier) for t in rows]
+    return [
+        _validate_fcas_trapezium(FCASTrapezium(t .* multiplier), "\"$name\" on \"$(get_name(component))\" at step $i")
+            for (i, t) in enumerate(rows)
+    ]
 end
 
 """
