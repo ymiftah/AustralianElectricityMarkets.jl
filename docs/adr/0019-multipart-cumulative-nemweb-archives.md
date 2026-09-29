@@ -19,7 +19,9 @@ AEMO's monthly archive for this table is **cumulative** — each month's file ho
 since the table's 2024-12-09 introduction, sometimes running a week or more past the archive
 month itself (the 2026-06 archive's rows run to 2026-07-08). Every cached monthly partition was
 therefore an arbitrary ~39M-row slice of the same growing history, not that month's data, and
-consecutive partitions duplicated most of each other's rows. `nempy`'s NEMWEB loader
+consecutive partitions duplicated most of each other's rows. From archive month 2026-08 AEMO
+publishes this table as a single, month-scoped part (its first row is `2026/08/01 00:05:00`);
+the month filter below keeps every row of such a part, so it needs no special case. `nempy`'s NEMWEB loader
 (`historical_inputs/mms_db.py:475`) has the identical gap: it too requests only `FILE01` and
 does not special-case a cumulative table.
 
