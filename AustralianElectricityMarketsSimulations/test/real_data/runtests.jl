@@ -416,5 +416,11 @@ end
         raisereg_match_rate = n_compared > 0 ? n_matched / n_compared : NaN
 
         @info "Real-data FCASMarket DecisionModel" build_time solve_time n_services = length(fcas_registered) n_enabled_pairs n_regulation_trapeziums_scaled n_regulation_trapeziums n_two_sided_pairs n_agc_disabled_pairs n_compared n_matched raisereg_match_rate n_joint_ramping_rows n_joint_ramping_violations
+
+        # On 2026-06-04 this counts 6/42: the known departure (DISPATCHLOAD's bid-capped ramp
+        # rate standing in for the unpublished telemetered SCADA rate) can make our row tighter
+        # than NEMDE's own, so some published solutions fall outside it. Not ~0, but well under
+        # half the built rows.
+        @test n_joint_ramping_violations <= n_joint_ramping_rows / 4
     end
 end
