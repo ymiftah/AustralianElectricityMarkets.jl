@@ -41,12 +41,29 @@ function _fcas_direction(device, bid_type::BidType)
 end
 
 """
+    _fcas_net_energy_terms(device) -> Vector{Tuple{DataType, Float64}}
+
+The `PSI.VariableType`s (and their sign) making up `device`'s unit-level "Energy Dispatch
+Target": the net `ActivePowerOutVariable - ActivePowerInVariable` for a `PSY.Storage` device,
+`ActivePowerVariable` otherwise. Used wherever AEMO's formulation reads a single, signed
+unit-level energy term rather than one bid side's own energy - AEMO *FCAS Model in NEMDE* §6.1's
+joint ramping constraint and a `PSY.Storage` device's contingency FCAS.
+
+# Returns
+`Vector{Tuple{DataType, Float64}}` of `(VariableType, multiplier)` pairs.
+"""
+function _fcas_net_energy_terms(device::PSY.Device)
+    device isa PSY.Storage && return [(PSI.ActivePowerOutVariable, 1.0), (PSI.ActivePowerInVariable, -1.0)]
+    return [(PSI.ActivePowerVariable, 1.0)]
+end
+
+"""
     _fcas_energy_terms(device, is_regulation, decremental) -> Vector{Tuple{DataType, Float64}}
 
 The `PSI.VariableType`s (and their sign) making up `device`'s FCAS "Energy Dispatch Target": for a
 `PSY.Storage` device, the bid side's own energy on regulation (`ActivePowerOutVariable` for a
 generation-side bid, `-ActivePowerInVariable` for a load-side one) and the net
-`ActivePowerOutVariable - ActivePowerInVariable` on contingency; `ActivePowerVariable` otherwise.
+([`_fcas_net_energy_terms`](@ref)) on contingency; `ActivePowerVariable` otherwise.
 Throws `ArgumentError` for a decremental (`LOAD`-direction) bid on a non-`Storage` device.
 
 # Returns
@@ -54,7 +71,7 @@ Throws `ArgumentError` for a decremental (`LOAD`-direction) bid on a non-`Storag
 """
 function _fcas_energy_terms(device::PSY.Device, is_regulation::Bool, decremental::Bool)
     if device isa PSY.Storage
-        is_regulation || return [(PSI.ActivePowerOutVariable, 1.0), (PSI.ActivePowerInVariable, -1.0)]
+        is_regulation || return _fcas_net_energy_terms(device)
         return decremental ? [(PSI.ActivePowerInVariable, -1.0)] : [(PSI.ActivePowerOutVariable, 1.0)]
     end
     decremental && throw(
@@ -63,7 +80,18 @@ function _fcas_energy_terms(device::PSY.Device, is_regulation::Bool, decremental
                 "bid but is not a `PSY.Storage` device; scheduled-load FCAS capacity is not modeled.",
         ),
     )
-    return [(PSI.ActivePowerVariable, 1.0)]
+    return _fcas_net_energy_terms(device)
+end
+
+"""
+    _add_fcas_net_energy_terms!(container, expr, device, dname, t)
+
+Adds `device`'s net FCAS energy term ([`_fcas_net_energy_terms`](@ref)) into `expr` at
+`(dname, t)`. Throws `ArgumentError` if `device`'s formulation defines no such energy variable.
+"""
+function _add_fcas_net_energy_terms!(container, expr, device::PSY.Device, dname::AbstractString, t::Int)
+    _add_fcas_variable_terms!(container, expr, device, _fcas_net_energy_terms(device), dname, t)
+    return
 end
 
 """
@@ -145,9 +173,9 @@ end
 """
     _fcas_agc_ramp_applies(process, t) -> Bool
 
-Whether AEMO *FCAS Model in NEMDE* §4.2 AGC ramp scaling and §6.4 BDU SCADA ramping apply at
-interval `t` of `process` ([`_fcas_process`](@ref)): every interval in dispatch, the first in
-5-minute pre-dispatch, none in 30-minute pre-dispatch.
+Whether AEMO *FCAS Model in NEMDE* §4.2 AGC ramp scaling, §6.1 joint ramping and §6.4 BDU SCADA
+ramping apply at interval `t` of `process` ([`_fcas_process`](@ref)): every interval in dispatch,
+the first in 5-minute pre-dispatch, none in 30-minute pre-dispatch.
 
 # Returns
 `Bool`.
@@ -408,17 +436,19 @@ function _fcas_both_sides_enabled_mask(
 end
 
 """
-    _fcas_bdu_ramp_caps(container, devices_template, device, bid_type) -> Vector{Float64}
+    _fcas_agc_ramp_caps(container, devices_template, device, bid_type) -> Vector{Float64}
 
-`device`'s AEMO *FCAS Model in NEMDE* §6.4 BDU SCADA ramping cap on its regulation `bid_type`
-target, one entry per `PSI.get_time_steps(container)`: the AGC ramping capability
+`device`'s AGC ramping capability on its regulation `bid_type` target, one entry per
+`PSI.get_time_steps(container)`: the AGC ramping capability
 ([`get_fcas_agc_ramp_capability`](@ref)) over the container's resolution wherever
-[`_fcas_agc_ramp_applies`](@ref), `0.0` (no cap) elsewhere or where the ramp rate is zero or absent.
+[`_fcas_agc_ramp_applies`](@ref), `0.0` (no cap) elsewhere or where the ramp rate is zero or
+absent. Used by AEMO *FCAS Model in NEMDE* §6.1's joint ramping constraint (any device) and
+§6.4's BDU SCADA ramping constraint (a `PSY.Storage` device bidding both sides).
 
 # Returns
 `Vector{Float64}`.
 """
-function _fcas_bdu_ramp_caps(container::PSI.OptimizationContainer, devices_template, device::PSY.Device, bid_type::BidType)
+function _fcas_agc_ramp_caps(container::PSI.OptimizationContainer, devices_template, device::PSY.Device, bid_type::BidType)
     time_steps = PSI.get_time_steps(container)
     ramp_cap = get_fcas_agc_ramp_capability(
         device, bid_type, PSI.get_initial_time(container), length(time_steps); resolution = PSI.get_resolution(container),
@@ -428,6 +458,75 @@ function _fcas_bdu_ramp_caps(container::PSI.OptimizationContainer, devices_templ
         (isnothing(ramp_cap) || isnan(ramp_cap[t]) || !_fcas_agc_ramp_applies(process, t)) ? 0.0 : ramp_cap[t]
             for t in time_steps
     ]
+end
+
+"""
+    _fcas_regulation_enabled_mask(container, devices_template, device, bid_type, direction) -> Vector{Bool}
+
+`device`'s per-interval enablement for regulation `bid_type`, for the unit as a whole:
+[`_fcas_enabled_mask`](@ref) for a single-sided `direction` (`:incremental`/`:decremental`), or,
+for `direction == :both` (a `PSY.Storage` device bidding both sides), either side enabled
+([`_fcas_both_sides_enabled_mask`](@ref)).
+
+# Returns
+`Vector{Bool}`, one entry per `PSI.get_time_steps(container)`.
+"""
+function _fcas_regulation_enabled_mask(
+        container::PSI.OptimizationContainer, devices_template, device::PSY.Device, bid_type::BidType, direction::Symbol,
+    )
+    if direction == :both
+        gen_enabled, load_enabled = _fcas_both_sides_enabled_mask(container, devices_template, device, bid_type)
+        return gen_enabled .| load_enabled
+    end
+    return _fcas_enabled_mask(container, devices_template, device, bid_type, direction == :decremental)
+end
+
+"""
+    _add_fcas_joint_ramping_constraints!(container, jm, devices, directions, devices_template, bid_type, name, time_steps)
+
+Builds AEMO *FCAS Model in NEMDE* §6.1's [`FCASJointRampingConstraint`](@ref) for every
+contributing `device` of a regulation `FCASService` named `name`: the unit's net energy
+([`_fcas_net_energy_terms`](@ref)) combined with its [`FCASUnitRegulationTarget`](@ref) against
+`InitialMW` plus or minus its AGC ramp capability ([`_fcas_agc_ramp_caps`](@ref)) - the upper
+(`RAISEREG`) or lower (`LOWERREG`) form depending on `bid_type`. Builds a vacuous `0 <= 1` row at
+`(dname, t)` wherever the ramp capability is zero, `InitialMW` is unknown at `t`, or the device
+is not enabled for this service at `t` ([`_fcas_regulation_enabled_mask`](@ref)).
+
+# Returns
+`nothing`.
+"""
+function _add_fcas_joint_ramping_constraints!(
+        container::PSI.OptimizationContainer, jm, devices, directions::Dict{String, Symbol}, devices_template,
+        bid_type::BidType, name::AbstractString, time_steps,
+    )
+    names = PSY.get_name.(devices)
+    con = PSI.add_constraints_container!(
+        container, FCASJointRampingConstraint(), FCASService, names, time_steps; meta = name,
+    )
+    target = PSI.get_expression(container, FCASUnitRegulationTarget(), FCASService, name)
+    initial_time = PSI.get_initial_time(container)
+    horizon = length(time_steps)
+    for device in devices
+        dname = PSY.get_name(device)
+        caps = _fcas_agc_ramp_caps(container, devices_template, device, bid_type)
+        initial_mw = get_initial_mw(device, initial_time, horizon)
+        enabled = _fcas_regulation_enabled_mask(container, devices_template, device, bid_type, directions[dname])
+        for t in time_steps
+            mw = isnothing(initial_mw) ? NaN : initial_mw[t]
+            if iszero(caps[t]) || isnan(mw) || !enabled[t]
+                con[dname, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
+                continue
+            end
+            lhs = JuMP.AffExpr(0.0)
+            _add_fcas_net_energy_terms!(container, lhs, device, dname, t)
+            con[dname, t] = if bid_type == BidType.RAISEREG
+                JuMP.@constraint(jm, lhs + target[dname, t] <= mw + caps[t])
+            else
+                JuMP.@constraint(jm, lhs - target[dname, t] >= mw - caps[t])
+            end
+        end
+    end
+    return
 end
 
 """
@@ -478,10 +577,11 @@ function PSI.construct_service!(
                 "every later step with the first step's FCAS data.",
         ),
     )
-    unsupported = filter(!=(FCASJointCapacityConstraint), PSI.get_duals(model))
+    unsupported = filter(!in((FCASJointCapacityConstraint, FCASJointRampingConstraint)), PSI.get_duals(model))
     isempty(unsupported) || throw(
         ArgumentError(
-            "FCASMarket records duals for FCASJointCapacityConstraint only; got $(unsupported).",
+            "FCASMarket records duals for FCASJointCapacityConstraint and " *
+                "FCASJointRampingConstraint only; got $(unsupported).",
         ),
     )
     name = PSI.get_service_name(model)
@@ -795,13 +895,17 @@ function PSI.construct_service!(
             )
             for device in both_devices
                 dname = PSY.get_name(device)
-                caps = _fcas_bdu_ramp_caps(container, devices_template, device, bid_type)
+                caps = _fcas_agc_ramp_caps(container, devices_template, device, bid_type)
                 for t in time_steps
                     con_ramp[dname, t] = iszero(caps[t]) ?
                         JuMP.@constraint(jm, 0.0 <= 1.0) : JuMP.@constraint(jm, target[dname, t] <= caps[t])
                 end
             end
         end
+    end
+
+    if is_regulation
+        _add_fcas_joint_ramping_constraints!(container, jm, devices, directions, devices_template, bid_type, name, time_steps)
     end
 
     if FCASJointCapacityConstraint in PSI.get_duals(model)
@@ -815,6 +919,11 @@ function PSI.construct_service!(
                 container, FCASJointCapacityConstraint, FCASService, both_names, time_steps; meta = "$(name)_$side",
             )
         end
+    end
+
+    if is_regulation && FCASJointRampingConstraint in PSI.get_duals(model)
+        names = PSY.get_name.(devices)
+        PSI.add_dual_container!(container, FCASJointRampingConstraint, FCASService, names, time_steps; meta = name)
     end
 
     PSI.objective_function!(container, svc, model)
