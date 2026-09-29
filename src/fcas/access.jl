@@ -75,23 +75,24 @@ end
 
 """
     get_scaled_fcas_trapezium(component, service, initial_time, horizon; decremental = false,
-        resolution = Minute(5), agc_first_interval_only = false) -> Vector{FCASTrapezium}
+        resolution = Minute(5), agc_first_interval_only = false, agc_ramp_scaling = true) -> Vector{FCASTrapezium}
 
 Like [`get_fcas_trapezium`](@ref), but applies [`scale_fcas_trapezium`](@ref) at every step
 using `component`'s `"fcas_agc_enablement_min_<service>"`/`"fcas_agc_enablement_max_<service>"`
 series and its AGC ramping capability, `"fcas_agc_ramp_rate_<service>"` (MW/h) times
 `resolution` (regulation `service`s only, from [`set_fcas_scaling_inputs!`](@ref)), and its
 `"fcas_uigf"` series, when attached. A `NaN` entry applies no scaling at that step. With
-`agc_first_interval_only`, the AGC inputs apply to the first step only; UIGF applies at every
-step. `decremental` selects the storage `DIRECTION == "LOAD"` trapezium series only - the AGC enablement/ramp/UIGF series are shared by
-both directions of the same device.
+`agc_first_interval_only`, the AGC inputs apply to the first step only; with
+`agc_ramp_scaling = false`, the AGC ramping capability applies at no step. UIGF applies at every
+step. `decremental` selects the storage `DIRECTION == "LOAD"` trapezium series only - the AGC
+enablement/ramp/UIGF series are shared by both directions of the same device.
 
 # Returns
 `Vector{FCASTrapezium}`.
 """
 function get_scaled_fcas_trapezium(
         component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false,
-        resolution::Dates.Period = Minute(5), agc_first_interval_only::Bool = false,
+        resolution::Dates.Period = Minute(5), agc_first_interval_only::Bool = false, agc_ramp_scaling::Bool = true,
     )
     trapeziums = get_fcas_trapezium(component, service, initial_time, horizon; decremental = decremental)
     is_regulation = service in FCAS_REGULATION_MARKETS
@@ -100,10 +101,8 @@ function get_scaled_fcas_trapezium(
         _read_optional_fcas_scaling_series(component, "fcas_agc_enablement_min_$service_str", initial_time, horizon) : nothing
     agc_enablement_max = is_regulation ?
         _read_optional_fcas_scaling_series(component, "fcas_agc_enablement_max_$service_str", initial_time, horizon) : nothing
-    agc_ramp_rate = is_regulation ?
-        _read_optional_fcas_scaling_series(component, "fcas_agc_ramp_rate_$service_str", initial_time, horizon) : nothing
-    agc_max_avail = isnothing(agc_ramp_rate) ? nothing :
-        agc_ramp_rate .* (Dates.value(Millisecond(resolution)) / 3_600_000)
+    agc_max_avail = is_regulation && agc_ramp_scaling ?
+        get_fcas_agc_ramp_capability(component, service, initial_time, horizon; resolution = resolution) : nothing
     input_at(series, i) = (isnothing(series) || isnan(series[i])) ? nothing : series[i]
     agc_at(series, i) = (agc_first_interval_only && i > 1) ? nothing : input_at(series, i)
     uigf = _read_optional_fcas_scaling_series(component, "fcas_uigf", initial_time, horizon)
@@ -118,6 +117,42 @@ function get_scaled_fcas_trapezium(
             is_regulation = is_regulation,
         ) for i in eachindex(trapeziums)
     ]
+end
+
+"""
+    get_fcas_agc_ramp_capability(component, service, initial_time, horizon; resolution = Minute(5)) -> Union{Nothing, Vector{Float64}}
+
+`component`'s AGC ramping capability for regulation `service` (AEMO *FCAS Model in NEMDE* §4.2):
+its `"fcas_agc_ramp_rate_<service>"` series ([`set_fcas_scaling_inputs!`](@ref), MW/h) times
+`resolution`, `horizon` steps from `initial_time`, in `component`'s `System`'s current display
+units, `NaN` at an interval with no ramp rate. `nothing` if `component` carries no such series.
+
+# Returns
+`Union{Nothing, Vector{Float64}}`.
+"""
+function get_fcas_agc_ramp_capability(
+        component, service::BidType, initial_time, horizon::Integer; resolution::Dates.Period = Minute(5),
+    )
+    rate = _read_optional_fcas_scaling_series(component, "fcas_agc_ramp_rate_$(string(service))", initial_time, horizon)
+    isnothing(rate) && return nothing
+    return rate .* (Dates.value(Millisecond(resolution)) / 3_600_000)
+end
+
+"""
+    get_fcas_agc_status(component, initial_time, horizon) -> Union{Nothing, Vector{Int}}
+
+Full-series read of `component`'s `"fcas_agc_status"` `SingleTimeSeries`
+([`set_fcas_scaling_inputs!`](@ref)), `horizon` steps from `initial_time`: `DISPATCHLOAD.AGCSTATUS`,
+`1` while the unit is under AGC control and `0` otherwise, `nothing` at an interval with no
+value. `nothing` if `component` carries no such series.
+
+# Returns
+`Union{Nothing, Vector{Union{Nothing, Int}}}`.
+"""
+function get_fcas_agc_status(component, initial_time, horizon::Integer)
+    has_time_series(component, SingleTimeSeries, "fcas_agc_status") || return nothing
+    values = get_time_series_values(SingleTimeSeries, component, "fcas_agc_status"; start_time = initial_time, len = horizon)
+    return Union{Nothing, Int}[isnan(v) ? nothing : round(Int, v) for v in values]
 end
 
 """

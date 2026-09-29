@@ -83,6 +83,17 @@ end
     @test eff_agc.low_breakpoint ≈ 30.0
     @test eff_agc.high_breakpoint ≈ 90.0
 
+    # A zero AGC ramp capability applies no cap.
+    @test scale_trapezium(raw; uigf = nothing, agc_ramp_mw = 0.0, is_regulation = true).max_avail == 20.0
+
+    # A UIGF below the high breakpoint squeezes the trapezium without clamping: the breakpoints
+    # cross and the upper slope is kept.
+    eff_squeezed = scale_trapezium(raw; uigf = 50.0, agc_ramp_mw = nothing, is_regulation = false)
+    @test eff_squeezed.enablement_max ≈ 50.0
+    @test eff_squeezed.high_breakpoint ≈ 30.0
+    @test eff_squeezed.high_breakpoint < eff_squeezed.low_breakpoint
+    @test get_upper_slope_coeff(eff_squeezed) ≈ get_upper_slope_coeff(eff)
+
     # AGC ramp does not scale contingency services.
     @test scale_trapezium(raw; uigf = nothing, agc_ramp_mw = 10.0, is_regulation = false).max_avail == 20.0
 

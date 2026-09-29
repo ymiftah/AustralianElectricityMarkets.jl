@@ -48,8 +48,8 @@ end
     set_fcas_scaling_inputs!(sys, db, date_range; kwargs...)
 
 Attaches per-device, per-interval [`FCASTrapezium`](@ref) scaling inputs (AEMO *FCAS Model in
-NEMDE* §4) to every available `Generator` and `EnergyReservoirStorage` in `sys`, read from
-[`read_fcas_scaling_inputs`](@ref)/[`read_uigf`](@ref):
+NEMDE* §4) and the §5 AGC-status pre-condition input to every available `Generator` and
+`EnergyReservoirStorage` in `sys`, read from [`read_fcas_scaling_inputs`](@ref)/[`read_uigf`](@ref):
 
 - `"fcas_agc_enablement_min_RAISEREG"`/`"fcas_agc_enablement_max_RAISEREG"` from
   `RAISEREGENABLEMENTMIN`/`RAISEREGENABLEMENTMAX` (§4.1);
@@ -58,11 +58,15 @@ NEMDE* §4) to every available `Generator` and `EnergyReservoirStorage` in `sys`
 - `"fcas_agc_ramp_rate_RAISEREG"`/`"fcas_agc_ramp_rate_LOWERREG"` from `RAMPUPRATE`/
   `RAMPDOWNRATE`, in MW/h (§4.2's AGC ramping capability is this rate times the model's interval
   length, applied on read);
+- `"fcas_agc_status"` from `AGCSTATUS` (§5: `1` while the unit is under AGC control, `0`
+  otherwise), not per-unitized;
 - `"fcas_uigf"` from `UIGF`, for semi-scheduled units only (§4.3).
 
-Every series is per-unit of `sys`'s system base, read back by
-[`get_scaled_fcas_trapezium`](@ref). An interval with no source row or a `missing` source value
-is stored as `NaN` and applies no scaling at that interval, per §4's "zero or absent" rule.
+Every series but `"fcas_agc_status"` is per-unit of `sys`'s system base, read back by
+[`get_scaled_fcas_trapezium`](@ref); `"fcas_agc_status"` carries AGCSTATUS's raw `0`/`1` value,
+read back by [`get_fcas_agc_status`](@ref). An interval with no source row or a `missing` source
+value is stored as `NaN`: it applies no scaling at that interval, per §4's "zero or absent" rule,
+and reads back as an unknown AGC status.
 
 # Arguments
 - `sys`: the `System` to add to.
@@ -109,6 +113,9 @@ function set_fcas_scaling_inputs!(sys, db, date_range; kwargs...)
             )
             _attach_fcas_scaling_series!(
                 sys, device, by_time, full_grid, :RAMPDOWNRATE, "fcas_agc_ramp_rate_LOWERREG", base_power,
+            )
+            _attach_fcas_scaling_series!(
+                sys, device, by_time, full_grid, :AGCSTATUS, "fcas_agc_status", 1.0,
             )
         end
 

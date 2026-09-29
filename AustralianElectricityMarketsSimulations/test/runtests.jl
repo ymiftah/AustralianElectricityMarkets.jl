@@ -7,7 +7,13 @@ using DuckDB
 using PowerSystems
 using Test
 
+const AEMS = AustralianElectricityMarketsSimulations
+
 include(joinpath(@__DIR__, "..", "..", "AustralianElectricityMarketsData", "test", "mock_data.jl"))
+include(joinpath(@__DIR__, "..", "..", "test", "integration", "pscb_fixture.jl"))
+include(joinpath(@__DIR__, "..", "..", "test", "integration", "pscb_nemweb_data.jl"))
+include(joinpath(@__DIR__, "template_helpers.jl"))
+include(joinpath(@__DIR__, "toy_fixture.jl"))
 
 const AEM_TEST_HIVE_DIR = mktempdir()
 create_mock_data(AEM_TEST_HIVE_DIR)
@@ -41,40 +47,31 @@ let
     DuckDB.unregister_table(conn, "tmp_table")
 end
 
+# Test groups, in run order: name => (testset title, file). Pass group names as arguments to run
+# only those, e.g. `julia --project=test test/runtests.jl fcas_market preprocessing`.
+const TEST_GROUPS = [
+    "time_basis" => ("Time basis", "time_basis.jl"),
+    "inputs" => ("Interval inputs", "inputs.jl"),
+    "preprocessing" => ("Preprocessing", "preprocessing.jl"),
+    "constraint_formulations" => ("Constraint formulations", "constraint_formulations.jl"),
+    "psi_compat" => ("PSI compat", "psi_compat.jl"),
+    "nem_constraints" => ("NEM constraints", "nem_constraints.jl"),
+    "nem_dispatch" => ("NEM dispatch formulation", "nem_dispatch.jl"),
+    "nem_dispatch_toy" => ("NEM dispatch on a toy PSCB system", "nem_dispatch_toy.jl"),
+    "fcas_market" => ("FCAS market", "fcas_market.jl"),
+]
+
+const SELECTED_GROUPS = let known = first.(TEST_GROUPS)
+    unknown = setdiff(ARGS, known)
+    isempty(unknown) || error("Unknown test group(s) $(unknown); choose from $(known).")
+    isempty(ARGS) ? known : ARGS
+end
+
 @testset "AustralianElectricityMarketsSimulations" begin
-    @testset "Time basis" begin
-        include("time_basis.jl")
-    end
-
-    @testset "Interval inputs" begin
-        include("inputs.jl")
-    end
-
-    @testset "Preprocessing" begin
-        include("preprocessing.jl")
-    end
-
-    @testset "Constraint formulations" begin
-        include("constraint_formulations.jl")
-    end
-
-    @testset "PSI compat" begin
-        include("psi_compat.jl")
-    end
-
-    @testset "NEM constraints" begin
-        include("nem_constraints.jl")
-    end
-
-    @testset "NEM dispatch formulation" begin
-        include("nem_dispatch.jl")
-    end
-
-    @testset "NEM dispatch on a toy PSCB system" begin
-        include("nem_dispatch_toy.jl")
-    end
-
-    @testset "FCAS market" begin
-        include("fcas_market.jl")
+    for (name, (title, file)) in TEST_GROUPS
+        name in SELECTED_GROUPS || continue
+        @testset "$title" begin
+            include(file)
+        end
     end
 end

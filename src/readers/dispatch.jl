@@ -145,12 +145,12 @@ end
 """
     read_fcas_scaling_inputs(db, date_range; intervention = 0)
 
-Reads per-interval, per-unit AEMO *FCAS Model in NEMDE* §4.1/§4.2 scaling inputs from
-`DISPATCHLOAD`: one row per `(SETTLEMENTDATE, DUID)` with `RAISEREGENABLEMENTMIN/MAX`,
+Reads per-interval, per-unit AEMO *FCAS Model in NEMDE* §4.1/§4.2/§5 scaling and pre-condition
+inputs from `DISPATCHLOAD`: one row per `(SETTLEMENTDATE, DUID)` with `RAISEREGENABLEMENTMIN/MAX`,
 `LOWERREGENABLEMENTMIN/MAX` (the telemetered AGC enablement limits, already the more
-restrictive of bid and telemetered per AEMO's data model) and `RAMPUPRATE`/`RAMPDOWNRATE`
+restrictive of bid and telemetered per AEMO's data model), `RAMPUPRATE`/`RAMPDOWNRATE`
 (the telemetered AGC ramp rate, MW/h - the same column [`read_dispatch_limits`](@ref) reads
-for energy ramping).
+for energy ramping), and `AGCSTATUS` (`1` while the unit is under AGC control, `0` otherwise).
 
 `intervention` selects the dispatch run: `0` is the normal (non-intervention) run
 (`INTERVENTION` is compared via `COALESCE(INTERVENTION, 0)` for partitions predating that
@@ -163,7 +163,7 @@ column - see [`read_fcas_requirements`](@ref)).
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `RAISEREGENABLEMENTMIN`, `RAISEREGENABLEMENTMAX`,
-`LOWERREGENABLEMENTMIN`, `LOWERREGENABLEMENTMAX`, `RAMPUPRATE`, `RAMPDOWNRATE`.
+`LOWERREGENABLEMENTMIN`, `LOWERREGENABLEMENTMAX`, `RAMPUPRATE`, `RAMPDOWNRATE`, `AGCSTATUS`.
 """
 function read_fcas_scaling_inputs(db, date_range; intervention::Integer = 0)
     start_date = first(date_range)
@@ -180,7 +180,7 @@ function read_fcas_scaling_inputs(db, date_range; intervention::Integer = 0)
     schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
     scaling_cols = (
         "RAISEREGENABLEMENTMIN", "RAISEREGENABLEMENTMAX",
-        "LOWERREGENABLEMENTMIN", "LOWERREGENABLEMENTMAX", "RAMPUPRATE", "RAMPDOWNRATE",
+        "LOWERREGENABLEMENTMIN", "LOWERREGENABLEMENTMAX", "RAMPUPRATE", "RAMPDOWNRATE", "AGCSTATUS",
     )
     for col in scaling_cols
         col in schema || throw(

@@ -74,6 +74,32 @@ the telemetered value is the more restrictive one. AEMO's text says only "zero o
 `x > 0.0` - relevant now that this package models a `PSY.Storage` device's regulation bid on
 both sides (ADR-0017), where a negative `EnablementMin` is the ordinary case, not an edge case.
 
+### A shared AGC enablement window against a two-sided battery
+
+`get_scaled_fcas_trapezium` reads `"fcas_agc_enablement_min/max_<service>"` by `service`
+(`RAISEREG`/`LOWERREG`) only, not by `decremental` - the same telemetered pair scales both a
+`PSY.Storage` device's generation-side and load-side trapezium for that service, since
+`DISPATCHLOAD` reports one `RAISEREGENABLEMENTMIN/MAX`/`LOWERREGENABLEMENTMIN/MAX` pair per DUID
+per interval, not one per side. Real cache values (`~/.nemdb_cache`, `DISPATCHLOAD`, DUIDs
+`WANDB1`/`ERB01` among other `DISPATCHTYPE = 'BIDIRECTIONAL'` units) confirm the pair ordinarily
+spans both sides of zero (e.g. `WANDB1`, `RAISEREGENABLEMENTMIN = -75`,
+`RAISEREGENABLEMENTMAX = 87`), so applying it to both a positive-axis and a negative-axis
+trapezium is ordinarily a no-op or a genuine narrowing on the correct side.
+
+`AGCSTATUS = 0` rows are the exception: `ERB01`, `LOWERREGENABLEMENTMIN = 368.39502`,
+`LOWERREGENABLEMENTMAX = 0.0` (`AGCSTATUS = 0`, `RAISEREG = LOWERREG = 0.0` that interval) - a
+pair inconsistent with either side's own domain. Applied one bound at a time (the bid's own
+`EnablementMax` as the other bound), `max(bid EnablementMin, 368.4)` alone collapses the
+load-side trapezium (`EnablementMax = 0`) to a zero-width point at `368.4`, and would do the same
+to a positive-axis (generation-side) trapezium whose own `EnablementMax` is below `368.4`. Across
+every `BIDIRECTIONAL` DUID in the cache, `RAISEREGENABLEMENTMIN > RAISEREGENABLEMENTMAX` (or the
+`LOWERREG` equivalent) on 144073/1862903 `AGCSTATUS = 0` rows versus 944/6374089
+`AGCSTATUS = 1` rows. `scale_fcas_trapezium` applies such a window as AEMO's arithmetic does,
+leaving `EnablementMin > EnablementMax`; §5's `EnablementMax ≥ EnablementMin` pre-condition then
+disables the unit for that service, which is also AEMO's outcome (and the AGC-status pre-condition
+disables the `AGCSTATUS = 0` rows regardless). An earlier version skipped both bounds when they
+would invert, which enabled the unit on its unscaled bid - wrong for the 944 `AGCSTATUS = 1` rows.
+
 ### UIGF and "semi-scheduled"
 
 `RenewableDispatch` devices already carry a `UIGF`-derived ceiling
@@ -128,16 +154,24 @@ per interval (the same convention as the constraint-term reader's `DUDETAILSUMMA
   `scale_fcas_trapezium` per interval. §4.2's AGC ramping capability is the ramp rate times the
   *model's* interval length (its `resolution` argument), not `date_range`'s step: a series attached
   over 5-minute data and read by a 30-minute model otherwise carries a sixth of the capability.
-  `agc_first_interval_only` applies the AGC inputs (§4.1/§4.2) to the first step only: AEMO applies
-  AGC scaling in real-time dispatch and the first interval of pre-dispatch (§4 Table 1), where
-  telemetry exists; later pre-dispatch intervals keep the bid trapezium, UIGF-scaled. `FCASMarket`'s `_fcas_series`
+  `agc_first_interval_only` applies the AGC inputs (§4.1/§4.2) to the first step only, and
+  `agc_ramp_scaling = false` drops §4.2 entirely. §4.4 Table 1 applies both at every interval of
+  dispatch, both at the first interval of 5-minute pre-dispatch, and only §4.1 at the first
+  interval of 30-minute pre-dispatch (§4.2 "None"); later intervals keep the bid trapezium,
+  UIGF-scaled. `FCASMarket` picks the process from the device's formulation and the model's
+  resolution: `NEMReplayDispatch` is dispatch, `NEMLookaheadDispatch` at 5 minutes is 5-minute
+  pre-dispatch and at a longer resolution is 30-minute pre-dispatch. `FCASMarket`'s `_fcas_series`
   (`AustralianElectricityMarketsSimulations/src/fcas_market.jl`) calls this instead of
   `get_fcas_trapezium` - its only change for this ADR.
 - `AustralianElectricityMarketsSimulations`'s single-interval replication path
   (`src/replication/preprocessing.jl`, unrelated to `FCASMarket`) had its own duplicate of the
   §4.2/§4.3 arithmetic; `scale_trapezium` there is now a thin wrapper over
-  `scale_fcas_trapezium`, unchanged in behaviour (confirmed by its existing tests) and not
-  extended with §4.1 - that path has no telemetered AGC enablement input wired up.
+  `scale_fcas_trapezium`, not extended with §4.1 because that path has no telemetered AGC
+  enablement input wired up. Two behaviours changed with it, both towards AEMO: a squeezed
+  trapezium is no longer clamped (the old version forced `HighBreakpoint >= LowBreakpoint` and
+  `EnablementMax >= EnablementMin`), and `agc_ramp_mw = 0.0` now applies no cap, where the old
+  version capped `MaxAvail` at zero (§4.2: "If the AGC ramp rate is zero or absent, no scaling is
+  applied").
 
 ## Consequences
 
@@ -151,3 +185,6 @@ per interval (the same convention as the constraint-term reader's `DUDETAILSUMMA
   negative `EnablementMin`.
 - §6.1 joint ramping (ADR-0017's known gap) still is not modelled; trapezium scaling narrows the
   *bounds* the joint capacity constraint and `MaxAvail` see, it does not add ramping itself.
+- AEMO's §5 `AGCSTATUS` pre-condition (regulation enabled only while the unit is under AGC
+  control) is applied by `FCASMarket`'s enablement gate (ADR 0017), not by scaling: an
+  `AGCSTATUS = 0` interval is still scaled, then disabled.
