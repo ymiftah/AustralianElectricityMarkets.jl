@@ -36,6 +36,10 @@ end
     include("fcas/fcas.jl")
 end
 
+@testset "FCAS trapezium scaling" begin
+    include("fcas/scaling.jl")
+end
+
 @testset "Constraint types" begin
     include("constraints/constraints.jl")
 end
