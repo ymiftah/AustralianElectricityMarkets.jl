@@ -29,6 +29,8 @@ function _loss_test_system(;
         from_region_loss_share::Float64 = 0.4,
         loss_constant::Float64 = 1.05,
         breakpoints::Vector{Float64} = [-100.0, 100.0],
+        demand_coefficients::Dict{String, Float64} = Dict{String, Float64}(),
+        pin_multiplier::Bool = true,
     )
     sys = augmented_pscb_system()
     for gen in PSY.get_components(PSY.ThermalStandard, sys)
@@ -39,7 +41,6 @@ function _loss_test_system(;
     PSY.set_available!(PSY.get_component(PSY.RenewableDispatch, sys, "SOLAR1"), false)
 
     for load in PSY.get_components(PSY.PowerLoad, sys)
-        PSY.get_name(PSY.get_area(PSY.get_bus(load))) == "2" || continue
         raw = PSY.get_time_series(PSY.SingleTimeSeries, load, "max_active_power")
         stamps = timestamp(PSY.get_data(raw))
         data = TimeArray(stamps, ones(length(stamps)))
@@ -47,8 +48,15 @@ function _loss_test_system(;
         # SingleTimeSeries a Deterministic view still depends on.
         PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, load, "max_active_power")
         PSY.remove_time_series!(sys, PSY.SingleTimeSeries, load, "max_active_power")
-        PSY.add_time_series!(sys, load, PSY.SingleTimeSeries(; name = "max_active_power", data = data))
+        multiplier = pin_multiplier ? PSY.get_max_active_power : nothing
+        PSY.add_time_series!(
+            sys, load,
+            PSY.SingleTimeSeries(; name = "max_active_power", data = data, scaling_factor_multiplier = multiplier),
+        )
     end
+    # Regenerate the Deterministic views removed above, on the fixture's own hourly grid; PSI
+    # finds no load parameter to add when no PowerLoad carries one.
+    PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
 
     base_power = PSY.get_base_power(sys)
     model = AEMS.InterconnectorLossModel(;
@@ -56,7 +64,7 @@ function _loss_test_system(;
         from_region_loss_share = from_region_loss_share,
         loss_constant = loss_constant,
         loss_flow_coefficient = loss_flow_coefficient * base_power,
-        demand_coefficients = Dict{String, Float64}(),
+        demand_coefficients = Dict(k => v * base_power for (k, v) in demand_coefficients),
         breakpoints = breakpoints ./ base_power,
     )
     ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
@@ -139,14 +147,55 @@ end
     end
     @test flow ≈ load2 + (1.0 - share) * loss atol = 1.0e-6
 
-    @testset "losses split between the two regional balances by from_region_loss_share" begin
-        # Direct algebraic identity from the hand-computed values above, not a second solve:
-        # the from-area's share is `share * loss`, the to-area's the remainder.
-        from_share_loss = share * loss
-        to_share_loss = (1.0 - share) * loss
-        @test isapprox(from_share_loss + to_share_loss, loss; atol = 1.0e-9)
-        @test isapprox(from_share_loss / loss, share; atol = 1.0e-9)
-        @test isapprox(to_share_loss / loss, 1.0 - share; atol = 1.0e-9)
+    @testset "loss split balances the from-area: generation = load + flow + share * loss" begin
+        # Every generator is on area 1 (Solitude/SOLAR1, area 2's own generation, are disabled),
+        # so area 1's own balance equation pins its total generation directly - not a tautological
+        # restatement of the split fractions, but a genuine physical balance check.
+        thermal = PSI.read_variable(res, "ActivePowerVariable__ThermalStandard")
+        hydro = PSI.read_variable(res, "ActivePowerVariable__HydroDispatch")
+        gen1 = sum(subset(thermal, :DateTime => ByRow(==(t1))).value) +
+            sum(subset(hydro, :DateTime => ByRow(==(t1))).value)
+        load1 = PSY.with_units_base(sys, "NATURAL_UNITS") do
+            sum(
+                PSY.get_max_active_power(l)
+                    for l in PSY.get_components(PSY.PowerLoad, sys)
+                    if PSY.get_name(PSY.get_area(PSY.get_bus(l))) == "1"
+            )
+        end
+        @test gen1 ≈ load1 + flow + share * loss atol = 1.0e-6
+    end
+end
+
+@testset "multi-segment quadratic curve fills segments cheapest-first" begin
+    # A genuine quadratic (loss_flow_coefficient > 0) needs at least two segments to linearise,
+    # and their chord slopes strictly ascend - cost minimisation (positive marginal generation
+    # cost everywhere here) must fill the lower-slope segment fully before touching the next.
+    sys = _loss_test_system(;
+        loss_flow_coefficient = 2.0e-4, breakpoints = [-100.0, -25.0, 0.0, 25.0, 100.0],
+    )
+    model = PSI.DecisionModel(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    PSI.solve!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+    container = PSI.get_optimization_container(model)
+    gaps = interconnector_loss_gaps(container, sys)
+    # Positive marginal cost everywhere in this toy system, so the LP has no incentive to
+    # over-dissipate - the solved loss must land exactly on the curve at the solved flow.
+    @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
+
+    res = PSI.OptimizationProblemResults(model)
+    seg_df = PSI.read_variable(res, "InterconnectorLossSegmentVariable__AreaInterchange")
+    t1 = minimum(seg_df.DateTime)
+    widths = [75.0, 25.0, 25.0, 75.0]  # breakpoints [-100,-25,0,25,100], segment widths in order
+    rows = subset(seg_df, :DateTime => ByRow(==(t1)), :name => ByRow(==("IC1")))
+    values_by_segment = Dict(parse(Int, r.name2) => r.value for r in eachrow(rows))
+    segment_values = [values_by_segment[s] for s in 1:4]
+    # Cheapest-first (contiguous fill from segment 1): every fully-used segment precedes any
+    # partially- or un-used one - no segment is used while a strictly cheaper one sits idle.
+    first_not_full = findfirst(i -> !isapprox(segment_values[i], widths[i]; atol = 1.0e-6), 1:4)
+    if !isnothing(first_not_full)
+        @test all(isapprox(segment_values[i], 0.0; atol = 1.0e-6) for i in (first_not_full + 1):4)
     end
 end
 
@@ -157,4 +206,22 @@ end
     container = PSI.get_optimization_container(model)
     con_ub = PSI.get_constraint(container, PSI.FlowLimitConstraint(), PSY.AreaInterchange, "ub")
     @test !isnothing(con_ub)
+end
+
+@testset "scaling_factor_multiplier demand and nonzero demand_coefficients: LP loss matches the curve" begin
+    # Regression for the double-scaling bug: area loads carry a real scaling_factor_multiplier
+    # (PSY.get_max_active_power), and the loss model's demand_coefficients are nonzero, so
+    # get_time_series_values's own scaling must not be re-applied inside _area_demand.
+    sys = _loss_test_system(;
+        demand_coefficients = Dict("1" => 1.0e-4, "2" => -2.0e-4), pin_multiplier = true,
+    )
+    model = PSI.DecisionModel(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    PSI.solve!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+    container = PSI.get_optimization_container(model)
+    gaps = interconnector_loss_gaps(container, sys)
+    @test !isempty(gaps)
+    @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
 end
