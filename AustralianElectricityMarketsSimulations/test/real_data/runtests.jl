@@ -248,6 +248,67 @@ end
         @info "Real-data DecisionModel" build_time solve_time total_area_slack_mw
     end
 
+    @testset "interconnector over-dissipation gap and regional price signs" begin
+        # NEMInterconnectorLoss in place of the main model's lossless StaticBranch, so the LP
+        # Compare solved loss with the breakpoint interpolation at the same solved flow.
+        loss_template = aemsim_template(sys)
+        PSI.set_device_model!(loss_template, PSY.AreaInterchange, NEMInterconnectorLoss)
+        loss_model = PSI.DecisionModel(
+            loss_template, sys;
+            optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+            horizon = REAL_SPAN,
+            resolution = REAL_RESOLUTION,
+            interval = REAL_RESOLUTION,
+            initial_time = REAL_START,
+            name = "real_data_losses",
+        )
+        build_status = PSI.build!(loss_model; output_dir = mktempdir())
+        if build_status != PSI.ModelBuildStatus.BUILT
+            err = build_error(loss_model)
+            isnothing(err) || @error "NEMInterconnectorLoss build! did not reach BUILT" exception = err
+        end
+        @test build_status == PSI.ModelBuildStatus.BUILT
+        run_status = PSI.solve!(loss_model)
+        @test run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+        loss_res = PSI.OptimizationProblemResults(loss_model)
+        gaps = check_interconnector_loss_segments(loss_res, sys; tolerance = 1.0e-3)
+        timestamps = collect(REAL_DATE_RANGE)[1:(end - 1)]
+
+        # Weighted marginal price of a unit of loss: share * price_from + (1 - share) * price_to.
+        # The segment encoding is exact whenever this is positive.
+        dual_df = PSI.read_dual(loss_res, "CopperPlateBalanceConstraint__Area")
+        price = Dict((r.name, r.DateTime) => r.value for r in eachrow(dual_df))
+        weighted_price = Dict{Tuple{String, Int}, Float64}()
+        for ic in PSY.get_components(PSY.AreaInterchange, sys)
+            models = PSY.get_supplemental_attributes(InterconnectorLossModel, ic)
+            length(models) == 1 || continue
+            model = only(models)
+            for (t, stamp) in enumerate(timestamps)
+                pf = get(price, (model.from_region, stamp), NaN)
+                pt = get(price, (model.to_region, stamp), NaN)
+                weighted_price[(PSY.get_name(ic), t)] =
+                    model.from_region_loss_share * pf + (1 - model.from_region_loss_share) * pt
+            end
+        end
+
+        exact_pairs = [k for (k, wp) in weighted_price if wp > 1.0e-6 && haskey(gaps, k)]
+        @test !isempty(exact_pairs)
+        # Wherever the weighted price is positive, the LP has no incentive to over-dissipate.
+        @test all(abs(gaps[k]) < 1.0e-3 for k in exact_pairs)
+
+        names = sort(unique(first.(keys(gaps))))
+        report = join(
+            [
+                "$n: max|gap| $(round(maximum(abs(gaps[(n, t)]) for t in eachindex(timestamps)); digits = 4)) MW, " *
+                    "t1 weighted price $(weighted_price[(n, 1)] >= 0 ? "non-negative" : "NEGATIVE"), " *
+                    "$(count(t -> weighted_price[(n, t)] < 0, eachindex(timestamps))) negative interval(s)"
+                    for n in names
+            ], "; ",
+        )
+        @info "Interconnector over-dissipation gap (solved LP loss - curve at solved flow) and weighted price sign" report
+    end
+
     @testset "FCASMarket builds and solves alongside the constrained System" begin
         # ConstrainedNetworkConfiguration's add_fcas_services! built one FCASService per bid
         # (region, bid type), attaching only the bids FCASMarket models.
@@ -389,5 +450,79 @@ end
         raisereg_match_rate = n_compared > 0 ? n_matched / n_compared : NaN
 
         @info "Real-data FCASMarket DecisionModel" build_time solve_time n_services = length(fcas_registered) n_enabled_pairs n_regulation_trapeziums_scaled n_regulation_trapeziums n_two_sided_pairs n_agc_disabled_pairs n_compared n_matched raisereg_match_rate
+    end
+
+    @testset "interconnector losses: published MWFLOW -> modelled loss vs published MWLOSSES" begin
+        # Direct curve evaluation, no LP: isolates the loss model from dispatch. Each
+        # AreaInterchange's own attached model is used (already per-unit, so undone to MW below).
+        table = read_hive(db, :DISPATCHINTERCONNECTORRES)
+        flows_losses = AEM._query(
+            db,
+            """
+            SELECT SETTLEMENTDATE, INTERCONNECTORID,
+                   TRY_CAST(MWFLOW AS DOUBLE) AS MWFLOW, TRY_CAST(MWLOSSES AS DOUBLE) AS MWLOSSES
+            FROM $table
+            WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE <= ? AND INTERVENTION = 0
+            QUALIFY row_number() OVER (
+                PARTITION BY SETTLEMENTDATE, INTERCONNECTORID ORDER BY archive_month DESC
+            ) = 1
+            """,
+            [REAL_START, last(REAL_DATE_RANGE)],
+        )
+        filter!(row -> !ismissing(row.MWFLOW) && !ismissing(row.MWLOSSES), flows_losses)
+
+        # Two demand definitions: this package's TOTALDEMAND, and nempy's INITIALSUPPLY +
+        # DEMANDFORECAST. Keyed by `t.SETTLEMENTDATE`: a GroupKey never equals a DateTime.
+        region_sum = read_hive(db, :DISPATCHREGIONSUM)
+        demand_rows = AEM._query(
+            db,
+            """
+            SELECT SETTLEMENTDATE, REGIONID,
+                   TRY_CAST(TOTALDEMAND AS DOUBLE) AS TOTALDEMAND,
+                   TRY_CAST(INITIALSUPPLY AS DOUBLE) + TRY_CAST(DEMANDFORECAST AS DOUBLE) AS NEMPY_DEMAND
+            FROM $region_sum
+            WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE <= ? AND INTERVENTION = 0
+            QUALIFY row_number() OVER (
+                PARTITION BY SETTLEMENTDATE, REGIONID ORDER BY archive_month DESC
+            ) = 1
+            """,
+            [REAL_START, last(REAL_DATE_RANGE)],
+        )
+        demand_by_time(column) = Dict(
+            key.SETTLEMENTDATE => Dict(
+                r.REGIONID => r[column] for r in eachrow(rows) if !ismissing(r[column])
+            )
+                for (key, rows) in pairs(groupby(demand_rows, :SETTLEMENTDATE))
+        )
+        demands = ("TOTALDEMAND" => demand_by_time(:TOTALDEMAND), "INITIALSUPPLY+DEMANDFORECAST" => demand_by_time(:NEMPY_DEMAND))
+        @test !isempty(last(first(demands)))
+
+        base_power = PSY.get_base_power(sys)
+        reports = String[]
+        for (label, demand_lookup) in demands
+            abs_errors = Float64[]
+            per_ic_errors = Dict{String, Vector{Float64}}()
+            for row in eachrow(flows_losses)
+                ic = PSY.get_component(PSY.AreaInterchange, sys, row.INTERCONNECTORID)
+                isnothing(ic) && continue
+                models = PSY.get_supplemental_attributes(InterconnectorLossModel, ic)
+                length(models) == 1 || continue
+                model_mw = AEM._to_pu(only(models), 1.0 / base_power)
+                demand = get(demand_lookup, row.SETTLEMENTDATE, Dict{String, Float64}())
+                err = abs(interconnector_losses(model_mw, row.MWFLOW, demand) - row.MWLOSSES)
+                push!(abs_errors, err)
+                push!(get!(() -> Float64[], per_ic_errors, row.INTERCONNECTORID), err)
+            end
+            @test !isempty(abs_errors)
+            per_ic = join(
+                ["$ic $(round(sum(e) / length(e); digits = 3))" for (ic, e) in sort(collect(per_ic_errors))], ", ",
+            )
+            push!(
+                reports,
+                "[$label] n=$(length(abs_errors)) mean|err| $(round(sum(abs_errors) / length(abs_errors); digits = 3)) MW, " *
+                    "max|err| $(round(maximum(abs_errors); digits = 3)) MW; per-interconnector mean|err| MW: $per_ic",
+            )
+        end
+        @info "Interconnector loss comparison (published MWFLOW -> modelled loss vs published MWLOSSES)" report = join(reports, "\n")
     end
 end
