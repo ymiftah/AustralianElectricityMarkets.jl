@@ -179,10 +179,10 @@ already per-unit of `sys`'s base power, since `construct_device!` always runs wi
 `UnitSystem.SYSTEM_BASE`. An `Area` with no `PowerLoad` never appears as a key; [`loss_factor`](@ref)
 already treats a demand region absent from its dict as contributing zero.
 
-A `"max_active_power"` `Deterministic` row is a normalized `[0,1]` multiplier of
-`PSY.get_max_active_power(load)`, not an absolute value - PSI's own convention
-(`get_multiplier_value(::TimeSeriesParameter, ::PSY.ElectricLoad, ::PSI.StaticPowerLoad)`) and how
-this package's own `parser.jl` attaches NEM demand.
+`PSY.get_time_series_values` already applies a `"max_active_power"` series' own
+`scaling_factor_multiplier` (typically `PSY.get_max_active_power`, per `set_demand!`), so its
+return value is already the dispatched MW (pu of the system base) - it is not multiplied by the
+device's peak again here.
 """
 function _area_demand(container::PSI.OptimizationContainer, sys::PSY.System)
     time_steps = PSI.get_time_steps(container)
@@ -191,16 +191,16 @@ function _area_demand(container::PSI.OptimizationContainer, sys::PSY.System)
     for load in PSY.get_components(PSY.PowerLoad, sys)
         area_name = PSY.get_name(PSY.get_area(PSY.get_bus(load)))
         series = get!(() -> zeros(Float64, length(time_steps)), demand, area_name)
-        peak = PSY.get_max_active_power(load)
         if PSY.has_time_series(load, PSY.Deterministic, "max_active_power")
             forecast = PSY.get_time_series_values(
                 PSY.Deterministic, load, "max_active_power";
                 start_time = initial_time, len = length(time_steps),
             )
             for t in time_steps
-                series[t] += forecast[t] * peak
+                series[t] += forecast[t]
             end
         else
+            peak = PSY.get_max_active_power(load)
             for t in time_steps
                 series[t] += peak
             end
