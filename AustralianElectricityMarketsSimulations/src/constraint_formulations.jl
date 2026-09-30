@@ -130,6 +130,9 @@ or `EQ` and the owning `PSI.ServiceModel` has `use_slacks = true`. Merged into
 """
 struct GenericConstraintSlackDown <: PSI.VariableType end
 
+PSI.convert_result_to_natural_units(::Type{GenericConstraintSlackUp}) = true
+PSI.convert_result_to_natural_units(::Type{GenericConstraintSlackDown}) = true
+
 """
     FCASJointRampingConstraint
 
