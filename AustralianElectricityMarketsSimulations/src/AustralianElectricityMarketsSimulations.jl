@@ -28,6 +28,7 @@ include("check/nem_constraints.jl")
 include("nem_dispatch.jl")
 include("nem_dispatch_storage.jl")
 include("devices/interconnector_losses.jl")
+include("check/interconnector_losses.jl")
 include("psi_compat.jl")
 include("fcas_market.jl")
 include("check/fcas.jl")
@@ -50,5 +51,6 @@ export AbstractNEMDispatch, NEMReplayDispatch, NEMLookaheadDispatch,
 export nem_dispatch_participants, set_nem_dispatch_models!
 export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegmentVariable,
     InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint
+export interconnector_loss_gaps, check_interconnector_loss_segments
 
 end
