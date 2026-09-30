@@ -390,4 +390,58 @@ end
 
         @info "Real-data FCASMarket DecisionModel" build_time solve_time n_services = length(fcas_registered) n_enabled_pairs n_regulation_trapeziums_scaled n_regulation_trapeziums n_two_sided_pairs n_agc_disabled_pairs n_compared n_matched raisereg_match_rate
     end
+
+    @testset "interconnector losses: published MWFLOW -> modelled loss vs published MWLOSSES" begin
+        # Direct curve evaluation, no LP: isolates the loss model (InterconnectorLossModel,
+        # root package) from dispatch. ConstrainedNetworkConfiguration already ran
+        # attach_interconnector_losses!, so read each AreaInterchange's own attached model
+        # rather than a second `interconnector_loss_models` call.
+        table = read_hive(db, :DISPATCHINTERCONNECTORRES)
+        flows_losses = AEM._query(
+            db,
+            """
+            SELECT SETTLEMENTDATE, INTERCONNECTORID,
+                   TRY_CAST(MWFLOW AS DOUBLE) AS MWFLOW, TRY_CAST(MWLOSSES AS DOUBLE) AS MWLOSSES
+            FROM $table
+            WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE <= ?
+            QUALIFY row_number() OVER (
+                PARTITION BY SETTLEMENTDATE, INTERCONNECTORID ORDER BY archive_month DESC
+            ) = 1
+            """,
+            [REAL_START, last(REAL_DATE_RANGE)],
+        )
+        filter!(row -> !ismissing(row.MWFLOW) && !ismissing(row.MWLOSSES), flows_losses)
+
+        demand_df = read_demand(db; resolution = REAL_RESOLUTION)
+        demand_by_time = Dict(
+            t => Dict(r.REGIONID => r.TOTALDEMAND for r in eachrow(rows))
+                for (t, rows) in pairs(groupby(demand_df, :SETTLEMENTDATE))
+        )
+
+        base_power = PSY.get_base_power(sys)
+        n_compared = 0
+        abs_errors = Float64[]
+        per_ic_errors = Dict{String, Vector{Float64}}()
+        for row in eachrow(flows_losses)
+            ic = PSY.get_component(PSY.AreaInterchange, sys, row.INTERCONNECTORID)
+            isnothing(ic) && continue
+            models = PSY.get_supplemental_attributes(InterconnectorLossModel, ic)
+            length(models) == 1 || continue
+            model_mw = AEM._to_pu(only(models), 1.0 / base_power)  # undo attach_interconnector_losses!'s pu scaling
+            demand = get(demand_by_time, row.SETTLEMENTDATE, Dict{String, Float64}())
+            modelled = interconnector_losses(model_mw, row.MWFLOW, demand)
+            err = abs(modelled - row.MWLOSSES)
+            push!(abs_errors, err)
+            push!(get!(() -> Float64[], per_ic_errors, row.INTERCONNECTORID), err)
+            n_compared += 1
+        end
+
+        @test n_compared > 0
+        mean_abs_error_mw = isempty(abs_errors) ? NaN : sum(abs_errors) / length(abs_errors)
+        max_abs_error_mw = isempty(abs_errors) ? NaN : maximum(abs_errors)
+        per_ic_mean_error_mw = Dict(
+            ic => sum(errs) / length(errs) for (ic, errs) in per_ic_errors
+        )
+        @info "Interconnector loss comparison (published MWFLOW -> modelled loss vs published MWLOSSES)" n_compared mean_abs_error_mw max_abs_error_mw per_ic_mean_error_mw
+    end
 end
