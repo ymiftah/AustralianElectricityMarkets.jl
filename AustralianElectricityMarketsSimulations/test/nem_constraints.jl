@@ -93,9 +93,8 @@ end
     _add_infeasible_energy_requirement!(sys, params, duid, rhs_mw)
 
 Attaches an extra `>=` `GenericConstraint` named `N_INFEASIBLE_MIN`, one ENERGY `UnitTerm` on
-`duid` with `rhs_mw` set above that unit's max capacity - genuinely unreachable under a hard
-bound, mirroring the plan's TAS1 `RAISE6SEC` case (a real interval whose requirement wasn't met).
-`rhs_mw` is natural MW; stored per-unit like every other [`GenericConstraint`](@ref).
+`duid` with `rhs_mw` set above that unit's max capacity, genuinely unreachable under a hard
+bound. `rhs_mw` is natural MW; stored per-unit like every other [`GenericConstraint`](@ref).
 """
 function _add_infeasible_energy_requirement!(sys, params, duid::AbstractString, rhs_mw::Float64)
     base_power = get_base_power(sys)
@@ -215,11 +214,14 @@ function _prune_unbuildable_constraints!(sys)
     return
 end
 
-function _nem_service_template()
+function _nem_service_template(; use_slacks::Bool = false)
     template = _area_balance_template()
     PSI.set_service_model!(
         template,
-        PSI.ServiceModel(GenericConstraint, AEMS.LinearFactorLimit; duals = [AEMS.NEMConstraintLimit]),
+        PSI.ServiceModel(
+            GenericConstraint, AEMS.LinearFactorLimit; duals = [AEMS.NEMConstraintLimit],
+            use_slacks = use_slacks,
+        ),
     )
     return template
 end
@@ -650,37 +652,46 @@ end
 
 @testset "a genuinely violated interval is infeasible under a hard GenericConstraint, but builds and solves with a nonzero slack when elastic" begin
     hard_sys = _sys_with_infeasible_requirement()
-    hard_template = _nem_service_template()
-    hard_model = PSI.DecisionModel(hard_template, hard_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    hard_model = PSI.DecisionModel(
+        _nem_service_template(; use_slacks = false), hard_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
+    )
     @test PSI.build!(hard_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(hard_model)
     @test PSI.get_run_status(hard_model) != PSI.RunStatus.SUCCESSFULLY_FINALIZED
 
+    # Same network template as the hard case above; only the GenericConstraint ServiceModel's
+    # use_slacks differs.
     elastic_sys = _sys_with_infeasible_requirement()
-    elastic_template = _area_balance_template()
-    PSI.set_service_model!(
-        elastic_template,
-        PSI.ServiceModel(GenericConstraint, AEMS.LinearFactorLimit; use_slacks = true),
+    elastic_model = PSI.DecisionModel(
+        _nem_service_template(; use_slacks = true), elastic_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
     )
-    elastic_model = PSI.DecisionModel(elastic_template, elastic_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(elastic_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(elastic_model)
     @test PSI.get_run_status(elastic_model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
 
-    # Read back through PSI's own results API, not a direct JuMP.value on the container: PSI's
-    # MILP dual-recovery resolve (triggered by the network model's own duals, not this test's
-    # ServiceModel) leaves the container's JuMP model's result cache stale for direct reads.
+    # PSI.OptimizationProblemResults, not a direct JuMP.value on the container: after a full
+    # DecisionModel solve, the container's own JuMP model result cache is unreliable to read.
     results = PSI.OptimizationProblemResults(elastic_model)
     name = PSY.get_name(get_component(GenericConstraint, elastic_sys, "N_INFEASIBLE_MIN"))
-    # Meta-scoped, like every other per-instance container this formulation builds (see
-    # NEMConstraintLHS/NEMConstraintLimit's own `meta = name`) - the key string is
-    # "T__U__meta", not "T__U".
     slack_df = PSI.read_variable(results, "GenericConstraintSlackDown__GenericConstraint__$name")
-    slack_values = slack_df.value
-    @test all(v -> v >= 0.0, slack_values)
-    @test any(v -> v > 1.0e-6, slack_values)
+    energy_df = PSI.read_variable(results, "ActivePowerVariable__ThermalStandard")
+    park_city_mw = subset(energy_df, :name => ByRow(==("Park City"))).value
+    max_mw = get_max_active_power(get_component(ThermalStandard, elastic_sys, "Park City"))
+
+    @test all(v -> v >= 0.0, slack_df.value)
+    @test any(v -> v > 1.0e-6, slack_df.value)
+    # GE constraint minimized elastically binds exactly: slack = rhs - achieved dispatch.
+    @test slack_df.value .+ park_city_mw ≈ fill(max_mw * 10, length(slack_df.value)) atol = 1.0e-4
 
     container = PSI.get_optimization_container(elastic_model)
     @test !PSI.has_container_key(container, AEMS.GenericConstraintSlackUp, GenericConstraint, name)
     @test PSI.get_objective_value(results) > 0.0
+
+    dual_df = PSI.read_dual(results, "NEMConstraintLimit__GenericConstraint__$name")
+    base_power = PSY.get_base_power(elastic_sys)
+    resolution = PSI.get_resolution(container)
+    mpc = AEMS._financial_year_mpc(PSI.get_initial_time(container))
+    weight = get_constraint_weight(get_component(GenericConstraint, elastic_sys, "N_INFEASIBLE_MIN"))
+    expected_dual_mw = weight * interval_cost_coefficient(mpc, resolution)
+    @test abs.(dual_df.value) ≈ fill(expected_dual_mw, nrow(dual_df)) rtol = 1.0e-6
 end
