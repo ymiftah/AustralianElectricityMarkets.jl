@@ -24,15 +24,13 @@ AEMSim must never query DuckDB directly.
 
 ## nempy cross-check
 
-`nempy/historical_inputs/interconnectors.py` builds `interpolation_break_points` from
-`INTERCONNECTORCONSTRAINT`/`LOSSFACTORMODEL`/`LOSSMODEL` the same way; `nempy/spot_market_backend`
-represents the loss curve as a set of `loss_segment` variables constrained to sum to the flow minus
-the first breakpoint, exactly as this package's linearisation does. nempy uses SOS2 constraints to
-allow segment fill in any order (it does not assume convexity); this package instead proves
-convexity once per interconnector at construction (ascending chord slopes) and lets cost
-minimisation fill the cheapest segment first, avoiding SOS2/binary variables entirely. AEMO's
-published curves are convex in practice, so this is a faithful simplification, not a departure —
-recorded in ADR-0022 in case a future loss model breaks that assumption.
+`nempy` represents loss using interpolation weights at breakpoints, with SOS2 restricting the
+nonzero weights to adjacent breakpoints. This formulation instead uses bounded segment flow
+allocations. For a convex curve and positive weighted marginal loss price, the objective fills
+segments in slope order and reproduces the same interpolation. At zero or negative weighted
+price, that ordering is not guaranteed; the diagnostic compares solved loss to breakpoint
+interpolation and reports excess loss. AEMO's data model describes breakpoints and loss-factor
+coefficients but does not establish its internal solver encoding. ADR 0022 records this limit.
 
 ## Salvage diff vs what must change
 
@@ -70,8 +68,9 @@ Changes on the way in:
 
 ## Departures from AEMO / recorded gaps
 
-- No departures in the loss arithmetic itself; ADR-0022 records the convexity-substitutes-for-SOS2
-  simplification (matches AEMO's published curves, not a general proof).
+- The quadratic loss arithmetic follows the published coefficients. Segment accumulation can
+  over-dissipate when the weighted marginal price is zero or negative. Enforcing contiguous
+  segment allocation remains a Phase 3 follow-up, recorded in ADR 0022.
 
 ## Tests
 

@@ -60,7 +60,8 @@ not on a structural (SOS2 or big-M) guarantee that segments fill contiguously fr
 The relevant sign is the **loss's weighted marginal price**, not either region's price alone: a
 unit of loss costs `share * price_from + (1 - share) * price_to` (it is drawn from both regions in
 those proportions). The LP has no incentive to over-dissipate, and the segment encoding is exact,
-whenever this weighted price is `>= 0`. When it is negative, minimising the objective means
+whenever this weighted price is `> 0`. At zero weighted price, loss allocation can be
+indeterminate and need not reproduce the interpolation. When it is negative, minimising the objective means
 maximising loss instead, and nothing here prevents the LP from filling a higher-slope segment while
 leaving a lower-slope segment's capacity idle for the same total flow - reporting a loss strictly
 above the true convex-curve value at that flow. `nempy` (`spot_market_backend/interconnectors.py`,
@@ -77,8 +78,8 @@ package's plain accumulation or `nempy`'s SOS2) is closer to NEMDE's own solver 
 accumulation is kept for its simplicity (no SOS2/binary support needed from the pinned PSI fork).
 Fixing the gap (SOS2, or an explicit contiguous-fill ordering constraint) is Phase 3 scope.
 [`check_interconnector_loss_segments`](@ref) is a cheap post-solve diagnostic - it compares the
-solved `InterconnectorLossVariable` against [`interconnector_losses`](@ref) evaluated at the solved
-flow and `@warn`s on any interconnector whose gap exceeds a tolerance - used in the real-data suite
+solved `InterconnectorLossVariable` against the interpolation between the two surrounding
+breakpoints at the solved flow and `@warn`s on any interconnector whose gap exceeds a tolerance - used in the real-data suite
 below and available to any caller solving `NEMInterconnectorLoss` on real data.
 
 **Real-data evidence (2026-06-04 00:00-01:00, `~/.nemdb_cache`), after fixing two harness/formulation
@@ -94,20 +95,22 @@ region set entirely rather than letting them appear as a phantom, meaningless ar
 fixed:
 
 - Loss-curve fidelity (published `MWFLOW` -> [`interconnector_losses`](@ref) vs published
-  `MWLOSSES`, `INTERVENTION = 0` only, `TOTALDEMAND` demand): mean/max absolute error and a
-  per-interconnector breakdown are in the PR's final report; hand-checked at 2026-06-04 00:05
-  (`VIC1-NSW1`: modelled 113.20 MW vs published 113.23 MW; `NSW1-QLD1`: modelled 17.51 MW vs
-  published 17.66 MW).
+  `MWLOSSES`, `INTERVENTION = 0` only, `TOTALDEMAND` demand): across 78 observations, mean
+  absolute error was 0.152 MW and maximum absolute error was 1.180 MW. Per-interconnector mean
+  errors were N-Q-MNSP1 0.000, NSW1-QLD1 0.111, T-V-MNSP1 0.002, V-S-MNSP1 0.022, V-SA
+  0.504, and VIC1-NSW1 0.275 MW.
 - Over-dissipation gap ([`check_interconnector_loss_segments`](@ref), solved `NEMInterconnectorLoss`
-  vs the curve at the solved flow) and the weighted price `share * price_from + (1-share) *
-  price_to` per interconnector are also in the PR's final report. Wherever that weighted price was
-  `>= 0` the gap should be (and is asserted to be, in `test/real_data/runtests.jl`) approximately
-  zero - the segment encoding is exact under a non-negative weighted price by construction.
+  vs the breakpoint interpolation at the solved flow): all six interconnectors had zero gap to
+  four decimal places, with no negative weighted-price intervals in the sampled hour. The
+  real-data assertion passed for every positive weighted-price pair. Comparing against the
+  quadratic directly would count ordinary chord approximation error as excess loss.
 - Demand definition: this package uses `DISPATCHREGIONSUM.TOTALDEMAND`; `nempy`
   (`historical_inputs/mms_db/mms_tables.py`) instead builds regional demand from
   `INITIALSUPPLY + DEMANDFORECAST`. Both were compared against published losses over the same hour;
-  the per-interconnector mean absolute error for each is in the PR's final report, and this
-  package keeps `TOTALDEMAND` unless that comparison shows it is the worse choice.
+  `INITIALSUPPLY + DEMANDFORECAST` gave mean/max absolute errors of 1.405/11.676 MW, versus
+  0.152/1.180 MW for `TOTALDEMAND`. The latter was more accurate overall for this sample, though
+  V-SA's mean error was smaller with the alternative definition (0.381 versus 0.504 MW).
+  The package retains `TOTALDEMAND`.
 
 ## Consequences
 
@@ -135,3 +138,12 @@ fixed:
   (`historical_inputs/historical_interconnectors.py::_format_mnsp_transmission_loss_factors`), a
   separate fixed loss applied to MNSP interconnectors on top of the interconnector's own dynamic
   loss model. This package's `InterconnectorLossModel` carries only the dynamic component.
+
+## Review follow-up, 2026-10-01
+
+The post-solve diagnostic reads `OptimizationProblemResults` in natural MW and compares the
+solved loss to the chord between the surrounding breakpoints, rather than the quadratic value.
+This removes an expected interpolation error that made the multi-segment toy test fail despite
+its segment-order assertion passing. The toy test also checks a hand-derived chord formula,
+independently of the diagnostic. On 2026-10-01, the interconnector-loss group passed 23 assertions,
+the focused real-data loss checks passed seven, and the interconnector-reader checks passed five.

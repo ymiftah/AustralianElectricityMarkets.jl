@@ -74,8 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `INTERCONNECTORCONSTRAINT.FROMREGIONLOSSSHARE`: the from-area bears `share * loss`, the to-area
   the remainder, both as extra consumption on top of the ordinary lossless flow — matching both
   AEMO's data model and `nempy`'s `set_interconnector_losses`. The loss curve is linearised as
-  bounded segments with strictly ascending chord slopes, so cost minimisation fills the cheapest
-  segment first with no SOS2 or binary variables needed.
+  bounded segments with nondecreasing chord slopes. Positive weighted marginal prices make cost
+  minimisation fill the cheapest segment first; zero or negative prices may permit excess loss.
+  `interconnector_loss_gaps(results, sys)` reports this excess against the breakpoint
+  interpolation in MW, and `check_interconnector_loss_segments` warns above a supplied tolerance.
 - **`FCASMarket`, the `FCASService` co-optimisation formulation** (`AustralianElectricityMarketsSimulations`):
   a `FCASCapacityVariable` per contributing device and interval, bounded above by the device's
   `MAXAVAIL` for that market, and both forms (upper and lower) of the joint capacity constraint

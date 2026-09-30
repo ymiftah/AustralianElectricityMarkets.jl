@@ -250,9 +250,7 @@ end
 
     @testset "interconnector over-dissipation gap and regional price signs" begin
         # NEMInterconnectorLoss in place of the main model's lossless StaticBranch, so the LP
-        # actually allocates loss segments - the self-consistency check ADR-0022 asks for: does
-        # the LP's own InterconnectorLossVariable at the solved flow match interconnector_losses
-        # evaluated at that same flow (both natural MW), or has the LP over-dissipated?
+        # Compare solved loss with the breakpoint interpolation at the same solved flow.
         loss_template = aemsim_template(sys)
         PSI.set_device_model!(loss_template, PSY.AreaInterchange, NEMInterconnectorLoss)
         loss_model = PSI.DecisionModel(
@@ -274,12 +272,11 @@ end
         @test run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED
 
         loss_res = PSI.OptimizationProblemResults(loss_model)
-        loss_container = PSI.get_optimization_container(loss_model)
-        gaps = check_interconnector_loss_segments(loss_container, sys; tolerance = 1.0e-3)
+        gaps = check_interconnector_loss_segments(loss_res, sys; tolerance = 1.0e-3)
         timestamps = collect(REAL_DATE_RANGE)[1:(end - 1)]
 
         # Weighted marginal price of a unit of loss: share * price_from + (1 - share) * price_to.
-        # The segment encoding is exact whenever this is >= 0.
+        # The segment encoding is exact whenever this is positive.
         dual_df = PSI.read_dual(loss_res, "CopperPlateBalanceConstraint__Area")
         price = Dict((r.name, r.DateTime) => r.value for r in eachrow(dual_df))
         weighted_price = Dict{Tuple{String, Int}, Float64}()
@@ -295,9 +292,9 @@ end
             end
         end
 
-        exact_pairs = [k for (k, wp) in weighted_price if wp >= 0.0 && haskey(gaps, k)]
+        exact_pairs = [k for (k, wp) in weighted_price if wp > 1.0e-6 && haskey(gaps, k)]
         @test !isempty(exact_pairs)
-        # Wherever the weighted price is non-negative, the LP has no incentive to over-dissipate.
+        # Wherever the weighted price is positive, the LP has no incentive to over-dissipate.
         @test all(abs(gaps[k]) < 1.0e-3 for k in exact_pairs)
 
         names = sort(unique(first.(keys(gaps))))

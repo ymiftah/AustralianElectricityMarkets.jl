@@ -31,6 +31,7 @@ function _loss_test_system(;
         breakpoints::Vector{Float64} = [-100.0, 100.0],
         demand_coefficients::Dict{String, Float64} = Dict{String, Float64}(),
         pin_multiplier::Bool = true,
+        priced_supply_only::Bool = false,
     )
     sys = augmented_pscb_system()
     for gen in PSY.get_components(PSY.ThermalStandard, sys)
@@ -39,6 +40,9 @@ function _loss_test_system(;
     end
     PSY.set_available!(PSY.get_component(PSY.ThermalStandard, sys, "Solitude"), false)
     PSY.set_available!(PSY.get_component(PSY.RenewableDispatch, sys, "SOLAR1"), false)
+    # Zero-cost hydro makes every marginal price zero, so the LP is indifferent to how loss
+    # segments fill; thermal units carry a positive cost.
+    priced_supply_only && foreach(h -> PSY.set_available!(h, false), PSY.get_components(PSY.HydroDispatch, sys))
 
     for load in PSY.get_components(PSY.PowerLoad, sys)
         raw = PSY.get_time_series(PSY.SingleTimeSeries, load, "max_active_power")
@@ -172,6 +176,7 @@ end
     # cost everywhere here) must fill the lower-slope segment fully before touching the next.
     sys = _loss_test_system(;
         loss_flow_coefficient = 2.0e-4, breakpoints = [-100.0, -25.0, 0.0, 25.0, 100.0],
+        priced_supply_only = true,
     )
     model = PSI.DecisionModel(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
@@ -179,12 +184,28 @@ end
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
 
     container = PSI.get_optimization_container(model)
-    gaps = interconnector_loss_gaps(container, sys)
+    gaps = interconnector_loss_gaps(PSI.OptimizationProblemResults(model), sys)
+    @test !isempty(gaps)
     # Positive marginal cost everywhere in this toy system, so the LP has no incentive to
     # over-dissipate - the solved loss must land exactly on the curve at the solved flow.
     @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
 
     res = PSI.OptimizationProblemResults(model)
+    flow_df = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
+    loss_df = PSI.read_variable(res, "InterconnectorLossVariable__AreaInterchange")
+    comparison = innerjoin(
+        select(flow_df, :DateTime, :name, :value => :flow),
+        select(loss_df, :DateTime, :name, :value => :loss);
+        on = [:DateTime, :name], validate = (true, true),
+    )
+    for row in eachrow(comparison)
+        breakpoints = [-100.0, -25.0, 0.0, 25.0, 100.0]
+        segment = clamp(searchsortedlast(breakpoints, row.flow), 1, 4)
+        lo, hi = breakpoints[segment:(segment + 1)]
+        # Chord of 0.05 * flow + 0.0001 * flow^2 between lo and hi, in natural MW.
+        expected = 0.05 * row.flow + 0.0001 * ((lo + hi) * row.flow - lo * hi)
+        @test row.loss ≈ expected atol = 1.0e-6
+    end
     seg_df = PSI.read_variable(res, "InterconnectorLossSegmentVariable__AreaInterchange")
     t1 = minimum(seg_df.DateTime)
     widths = [75.0, 25.0, 25.0, 75.0]  # breakpoints [-100,-25,0,25,100], segment widths in order
@@ -221,7 +242,7 @@ end
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
 
     container = PSI.get_optimization_container(model)
-    gaps = interconnector_loss_gaps(container, sys)
+    gaps = interconnector_loss_gaps(PSI.OptimizationProblemResults(model), sys)
     @test !isempty(gaps)
     @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
 end

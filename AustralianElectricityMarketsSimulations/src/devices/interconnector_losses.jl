@@ -4,21 +4,15 @@
 """
     NEMInterconnectorLoss
 
-Device formulation for `PSY.AreaInterchange` that adds NEMDE's interconnector loss into the
-from/to area power balance on top of the lossless flow. Only `PSI.AreaBalancePowerModel` and
-`PSI.AreaPTDFPowerModel` are supported.
+Device formulation for `PSY.AreaInterchange` that apportions the attached
+[`InterconnectorLossModel`](@ref)'s segment losses between its two areas. Supports
+`PSI.AreaBalancePowerModel` and `PSI.AreaPTDFPowerModel`; missing or ambiguous loss models and
+concave curves throw `ArgumentError`.
 
-The loss curve is the [`InterconnectorLossModel`](@ref) attached to each `AreaInterchange` by
-`attach_interconnector_losses!`, linearised on its breakpoints into one bounded flow variable per
-segment (no SOS2 or binaries). A device with zero or several attached models throws an
-`ArgumentError`, as does a model with `loss_flow_coefficient < 0` (a concave curve). Regional
-demand for the loss factor is the total `PSY.PowerLoad` per `PSY.Area` at each time step.
-
-The loss is exact (the solved loss equals the chord value at the solved flow) whenever the loss's
-weighted marginal price `share * price_from + (1 - share) * price_to` is non-negative; when it is
-negative the solver may fill a higher-slope segment early and report more loss than the curve.
-Flow is also confined to `[breakpoints[1], breakpoints[end]]`, and a model narrower than the
-interconnector's own `flow_limits` triggers one warning at construction.
+# Notes
+Loss matches the breakpoint interpolation when its weighted marginal price is positive; zero or
+negative prices can permit excess loss. The breakpoint range also bounds flow, with a warning
+when it is narrower than the device's static flow limits.
 """
 struct NEMInterconnectorLoss <: PSI.AbstractBranchFormulation end
 
@@ -131,19 +125,18 @@ end
 """
     _area_demand(container, sys) -> Dict{String, Vector{Float64}}
 
-Total `PSY.PowerLoad` active power per `PSY.Area` name, at every `container` dispatch timestep -
-already per-unit of `sys`'s base power, since `construct_device!` always runs with `sys` in
-`UnitSystem.SYSTEM_BASE`. An `Area` with no `PowerLoad` never appears as a key; [`loss_factor`](@ref)
-already treats a demand region absent from its dict as contributing zero.
+Total `PSY.PowerLoad` active power per area and dispatch timestep, in the system's current units.
+Time-series scaling factors are applied once by `PSY.get_time_series_values`.
 
-`PSY.get_time_series_values` already applies a `"max_active_power"` series' own
-`scaling_factor_multiplier` (typically `PSY.get_max_active_power`, per `set_demand!`), so its
-return value is already the dispatched MW (pu of the system base) - it is not multiplied by the
-device's peak again here.
+# Returns
+A dictionary of area names to demand vectors; areas without loads are omitted.
 """
 function _area_demand(container::PSI.OptimizationContainer, sys::PSY.System)
-    time_steps = PSI.get_time_steps(container)
-    initial_time = PSI.get_initial_time(container)
+    return _area_demand(PSI.get_initial_time(container), length(PSI.get_time_steps(container)), sys)
+end
+
+function _area_demand(initial_time::Dates.DateTime, n_steps::Int, sys::PSY.System)
+    time_steps = 1:n_steps
     demand = Dict{String, Vector{Float64}}()
     for load in PSY.get_components(PSY.PowerLoad, sys)
         area_name = PSY.get_name(PSY.get_area(PSY.get_bus(load)))
@@ -151,7 +144,7 @@ function _area_demand(container::PSI.OptimizationContainer, sys::PSY.System)
         if PSY.has_time_series(load, PSY.Deterministic, "max_active_power")
             forecast = PSY.get_time_series_values(
                 PSY.Deterministic, load, "max_active_power";
-                start_time = initial_time, len = length(time_steps),
+                start_time = initial_time, len = n_steps,
             )
             for t in time_steps
                 series[t] += forecast[t]
