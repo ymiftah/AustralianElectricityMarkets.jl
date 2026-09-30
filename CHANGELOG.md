@@ -66,6 +66,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`NEMInterconnectorLoss`, the interconnector loss formulation** (`AustralianElectricityMarketsSimulations`):
+  a `PSY.AreaInterchange` device formulation that reads Phase 1's `InterconnectorLossModel`
+  `PSY.SupplementalAttribute` (root package's `attach_interconnector_losses!`) and linearises
+  NEMDE's quadratic loss curve into the from/to regional power balance on the model's own
+  `LOSSMODEL` breakpoints, no SOS2/binary needed. Losses are apportioned by
+  `INTERCONNECTORCONSTRAINT.FROMREGIONLOSSSHARE`: the from-area bears `share * loss`, the to-area
+  the remainder, both as extra consumption on top of the ordinary lossless flow — matching both
+  AEMO's data model and `nempy`'s `set_interconnector_losses`. See ADR-0022 for the segment
+  encoding, its cross-check against `nempy`'s SOS2 alternative, and a recorded limitation under
+  negative regional prices.
 - **`FCASMarket`, the `FCASService` co-optimisation formulation** (`AustralianElectricityMarketsSimulations`):
   a `FCASCapacityVariable` per contributing device and interval, bounded above by the device's
   `MAXAVAIL` for that market, and both forms (upper and lower) of the joint capacity constraint
