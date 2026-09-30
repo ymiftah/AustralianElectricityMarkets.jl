@@ -48,7 +48,7 @@ encodings (this package's plain accumulation or `nempy`'s SOS2) is closer to NEM
 internals. Plain accumulation is chosen for its simplicity (no SOS2/binary support needed from the
 pinned PSI fork), at the cost documented below.
 
-### Known gap: no hard floor against "over-dissipation" under a negative shadow price
+### Known gap: no hard floor against "over-dissipation"
 
 Segment accumulation only reproduces the true convex-curve value **because** cost minimisation
 prefers less loss. `InterconnectorFlowSegmentConstraint` is an equality on the *total* segment sum,
@@ -57,43 +57,57 @@ total across segments (e.g. filling segment 3 partially while leaving segment 1'
 unused) - the LP relies entirely on the objective's incentive to prefer the low-slope allocation,
 not on a structural (SOS2 or big-M) guarantee that segments fill contiguously from the bottom.
 
-If the marginal cost of supplying the loss is ever *negative* (a region with a negative dispatch
-price, e.g. surplus renewable generation that is cheaper to dissipate through the interconnector
-than to curtail), minimising the objective means **maximising** loss instead, and nothing in this
-formulation prevents the LP from filling a higher-slope segment while leaving a lower-slope
-segment's capacity idle for the same total flow - reporting a loss strictly above the true
-convex-curve value at that flow ("over-dissipation"). `nempy`'s SOS2 constraint is specifically
-what rules this out: at most two *adjacent* breakpoints can be active, which forces a canonical,
-contiguous representation regardless of which direction the objective wants to push loss.
+The relevant sign is the **loss's weighted marginal price**, not either region's price alone: a
+unit of loss costs `share * price_from + (1 - share) * price_to` (it is drawn from both regions in
+those proportions). The LP has no incentive to over-dissipate, and the segment encoding is exact,
+whenever this weighted price is `>= 0`. When it is negative, minimising the objective means
+maximising loss instead, and nothing here prevents the LP from filling a higher-slope segment while
+leaving a lower-slope segment's capacity idle for the same total flow - reporting a loss strictly
+above the true convex-curve value at that flow. `nempy` (`spot_market_backend/interconnectors.py`,
+`markets.py:3040`'s `add_sos_type_2`) uses a genuine SOS2 constraint over interpolation weights,
+which rules this out structurally: at most two *adjacent* breakpoints can be active, forcing a
+canonical, contiguous representation regardless of which direction the objective wants to push
+loss.
 
-This is not fixed here: it is recorded as a known limitation of this package's own encoding choice
-(not shown to be shared with, or a departure from, NEMDE's own undocumented internal LP - see
-above). Fixing it (SOS2, or an explicit contiguous-fill ordering constraint) is Phase 3 scope, to
-be revisited if a real dispatch interval is found where the solved flow's segment split does not
-match the direct curve evaluation ([`interconnector_losses`](@ref)) at that flow.
+This is not fixed here. `LOSSMODEL` (AEMO Electricity Data Model Report) documents only the segment
+breakpoints and the quadratic loss-factor form; none of the AEMO sources checked for this ADR (the
+Data Model Report, Marginal Loss Factors FY2026-27, Treatment of Loss Factors) document NEMDE's
+internal LP encoding of those segments, so no claim is made about which of the two encodings (this
+package's plain accumulation or `nempy`'s SOS2) is closer to NEMDE's own solver internals. Plain
+accumulation is kept for its simplicity (no SOS2/binary support needed from the pinned PSI fork).
+Fixing the gap (SOS2, or an explicit contiguous-fill ordering constraint) is Phase 3 scope.
+[`check_interconnector_loss_segments`](@ref) is a cheap post-solve diagnostic - it compares the
+solved `InterconnectorLossVariable` against [`interconnector_losses`](@ref) evaluated at the solved
+flow and `@warn`s on any interconnector whose gap exceeds a tolerance - used in the real-data suite
+below and available to any caller solving `NEMInterconnectorLoss` on real data.
 
-The real-data check added alongside this ADR (`test/real_data/runtests.jl`) evaluates
-[`interconnector_losses`](@ref) directly at each interconnector's published `MWFLOW` against
-published `MWLOSSES` - a pure function check of the loss *curve*'s fidelity, independent of the LP.
-It does not exercise the segment-ordering LP degeneracy above, since no LP is solved for that
-comparison. A second check does solve `NEMInterconnectorLoss` (2026-06-04 00:00-01:00) and compares
-its own `InterconnectorLossVariable` at the solved flow against the curve evaluated at that same
-flow - the actual over-dissipation test.
+**Real-data evidence (2026-06-04 00:00-01:00, `~/.nemdb_cache`), after fixing two harness/formulation
+bugs found while gathering this evidence** (both now fixed, see the commits in this ADR's PR): the
+real-data demand lookup keyed a `Dict` by `DataFrames.GroupKey` and then looked it up by `DateTime`,
+so every lookup missed and every demand term silently read as zero; and `_area_demand` re-applied a
+load's own `scaling_factor_multiplier` on top of `PSY.get_time_series_values`, which already applies
+it, giving 20x the true demand. Together these made the loss curve's linear coefficient for
+`VIC1-NSW1` and `NSW1-QLD1` implausibly wrong, which is what the previous version of this ADR
+mis-attributed to a "SNOWY1 region mismatch" (also wrong: `SNOWY1`/`V-SN` were retired in 2008, not
+introduced in 2026-27 - see the `read_interconnectors` fix in this PR, which drops them from the
+region set entirely rather than letting them appear as a phantom, meaningless area). With both bugs
+fixed:
 
-**Real-data evidence (2026-06-04 00:00, first interval).** Regional price signs at `t1`: NSW1,
-QLD1, SA1, TAS1, VIC1 positive; **SNOWY1 negative** - a genuine negative-price region existed in
-this interval, the precondition the over-dissipation gap needs to be possible at all. The LP-vs-curve
-gap at the solved flow was near zero for the three MNSP interconnectors (`N-Q-MNSP1`: 0.0 MW,
-`T-V-MNSP1`: 0.002 MW, `V-S-MNSP1`: 0.0 MW) and small for `V-SA` (-3.5 MW), but large for the two
-AC regulated interconnectors: `NSW1-QLD1` +951.9 MW and `VIC1-NSW1` -1140.9 MW. These two are far
-larger than a plausible physical loss and are not confirmed as the over-dissipation phenomenon
-this ADR describes - the more likely explanation, not yet investigated, is a region-name mismatch
-between the attached `InterconnectorLossModel`'s `demand_coefficients` keys and this `System`'s six
-`Area`s (`SNOWY1` split out from `NSW1`/`VIC1` in the 2026-27 network), which would silently zero
-that region's demand contribution to the linear coefficient rather than error (see
-[`loss_factor`](@ref)'s stated behaviour for a missing region). This is left as a flagged, unresolved
-finding for a follow-up PR: confirm or rule out the region-mismatch hypothesis before treating the
-two large gaps as evidence of genuine over-dissipation.
+- Loss-curve fidelity (published `MWFLOW` -> [`interconnector_losses`](@ref) vs published
+  `MWLOSSES`, `INTERVENTION = 0` only, `TOTALDEMAND` demand): mean/max absolute error and a
+  per-interconnector breakdown are in the PR's final report; hand-checked at 2026-06-04 00:05
+  (`VIC1-NSW1`: modelled 113.20 MW vs published 113.23 MW; `NSW1-QLD1`: modelled 17.51 MW vs
+  published 17.66 MW).
+- Over-dissipation gap ([`check_interconnector_loss_segments`](@ref), solved `NEMInterconnectorLoss`
+  vs the curve at the solved flow) and the weighted price `share * price_from + (1-share) *
+  price_to` per interconnector are also in the PR's final report. Wherever that weighted price was
+  `>= 0` the gap should be (and is asserted to be, in `test/real_data/runtests.jl`) approximately
+  zero - the segment encoding is exact under a non-negative weighted price by construction.
+- Demand definition: this package uses `DISPATCHREGIONSUM.TOTALDEMAND`; `nempy`
+  (`historical_inputs/mms_db/mms_tables.py`) instead builds regional demand from
+  `INITIALSUPPLY + DEMANDFORECAST`. Both were compared against published losses over the same hour;
+  the per-interconnector mean absolute error for each is in the PR's final report, and this
+  package keeps `TOTALDEMAND` unless that comparison shows it is the worse choice.
 
 ## Consequences
 
@@ -102,6 +116,12 @@ two large gaps as evidence of genuine over-dissipation.
   each `AreaInterchange`, already per-unit of the `System`'s base power. No MW/pu conversion
   happens inside the formulation.
 - A non-convex (`loss_flow_coefficient < 0` in a way that makes chord slopes descend) loss model
-  throws at construction rather than silently mis-ordering segments.
-- The over-dissipation gap above is untested and unresolved; a future PR that observes it in real
-  data should either add an explicit contiguous-fill constraint or adopt `nempy`'s SOS2 encoding.
+  throws at construction rather than silently mis-ordering segments; `loss_flow_coefficient == 0`
+  (a straight-line curve) is valid and passes.
+- The over-dissipation gap is untested (beyond the diagnostic above) and unresolved; a future PR
+  that observes it in real data should either add an explicit contiguous-fill constraint or adopt
+  `nempy`'s SOS2 encoding.
+- Not modelled: `nempy`'s MNSP transmission loss factors
+  (`historical_inputs/historical_interconnectors.py::_format_mnsp_transmission_loss_factors`), a
+  separate fixed loss applied to MNSP interconnectors on top of the interconnector's own dynamic
+  loss model. This package's `InterconnectorLossModel` carries only the dynamic component.
