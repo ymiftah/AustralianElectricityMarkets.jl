@@ -69,7 +69,30 @@ function read_interconnectors(db)
             PARTITION BY c.INTERCONNECTORID ORDER BY c.EFFECTIVEDATE DESC, c.VERSIONNO DESC
         ) = 1
     """
-    return _query(db, sql)
+    df = _query(db, sql)
+    current_regions = _current_regions(db)
+    retired = filter(
+        row -> !(row.REGIONFROM in current_regions) || !(row.REGIONTO in current_regions), df,
+    )
+    isempty(retired) ||
+        @warn "read_interconnectors: dropping $(nrow(retired)) interconnector(s) with a retired endpoint region not present in DISPATCHREGIONSUM" interconnectors = retired.INTERCONNECTORID
+    return filter(
+        row -> row.REGIONFROM in current_regions && row.REGIONTO in current_regions, df,
+    )
+end
+
+"""
+    _current_regions(db) -> Set{String}
+
+Every `REGIONID` present in the cached `DISPATCHREGIONSUM`, the authoritative source of which
+regions are currently active - `INTERCONNECTOR`/`INTERCONNECTORCONSTRAINT` retain rows for
+long-retired interconnectors (e.g. `SNOWY1`/`V-SN`, abolished 2008) that a naive
+`REGIONFROM`/`REGIONTO` union would otherwise resurrect as a phantom, zero-demand region.
+"""
+function _current_regions(db)
+    table = read_hive(db, :DISPATCHREGIONSUM)
+    df = _query(db, "SELECT DISTINCT REGIONID FROM $table WHERE REGIONID IS NOT NULL")
+    return Set(df.REGIONID)
 end
 
 """
