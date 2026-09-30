@@ -90,6 +90,35 @@ function _add_storage_constraint!(sys, params, rhs_mw::Float64)
 end
 
 """
+    _add_infeasible_energy_requirement!(sys, params, duid, rhs_mw)
+
+Attaches an extra `>=` `GenericConstraint` named `N_INFEASIBLE_MIN`, one ENERGY `UnitTerm` on
+`duid` with `rhs_mw` set above that unit's max capacity - genuinely unreachable under a hard
+bound, mirroring the plan's TAS1 `RAISE6SEC` case (a real interval whose requirement wasn't met).
+`rhs_mw` is natural MW; stored per-unit like every other [`GenericConstraint`](@ref).
+"""
+function _add_infeasible_energy_requirement!(sys, params, duid::AbstractString, rhs_mw::Float64)
+    base_power = get_base_power(sys)
+    rhs_pu = rhs_mw / base_power
+    times, n_raw = _raw_series_times(params)
+    gc = GenericConstraint(;
+        name = "N_INFEASIBLE_MIN",
+        sense = ConstraintSense.GE,
+        rhs = rhs_pu,
+        terms = ConstraintTerm[UnitTerm(duid, BidType.ENERGY, 1.0)],
+    )
+    add_service!(sys, gc, [get_component(ThermalStandard, sys, duid)])
+    add_time_series!(
+        sys, gc, SingleTimeSeries(; name = "rhs", data = TimeArray(times, fill(rhs_pu, n_raw))),
+    )
+    add_time_series!(
+        sys, gc,
+        SingleTimeSeries(; name = "invoked", data = TimeArray(times, fill(1.0, n_raw))),
+    )
+    return
+end
+
+"""
     _retime_gc_series!(sys, params, overrides_mw, invoked_overrides = Dict{String, Vector{Float64}}())
 
 Replaces every added [`GenericConstraint`](@ref)'s `"rhs"`/`"invoked"` `Deterministic` series
@@ -599,4 +628,59 @@ end
             if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit
     ]
     @test Set(k.meta for k in nem_keys) == Set(PSY.get_name.(buildable))
+end
+
+function _sys_with_infeasible_requirement()
+    sys = _prepared_system()
+    params = _native_forecast_params(sys)
+    # 10x TOY_CHEAP-equivalent max capacity on "Park City" - genuinely unreachable regardless of
+    # dispatch, mirroring the plan's TAS1 RAISE6SEC case (a real interval whose requirement
+    # wasn't met), not merely a tightened-but-satisfiable bound.
+    max_mw = get_max_active_power(get_component(ThermalStandard, sys, "Park City"))
+    _add_infeasible_energy_requirement!(sys, params, "Park City", max_mw * 10)
+    # _prepared_system() already ran transform_single_time_series! once; N_INFEASIBLE_MIN's raw
+    # SingleTimeSeries, added after, needs its own pass to become a DeterministicSingleTimeSeries.
+    transform_single_time_series!(sys, params.horizon, params.interval)
+    _prune_unbuildable_constraints!(sys)
+    for id in ("N_IC1_LIMIT", "N_PARTIAL")
+        remove_component!(sys, _gc(sys, id))
+    end
+    return sys
+end
+
+@testset "a genuinely violated interval is infeasible under a hard GenericConstraint, but builds and solves with a nonzero slack when elastic" begin
+    hard_sys = _sys_with_infeasible_requirement()
+    hard_template = _nem_service_template()
+    hard_model = PSI.DecisionModel(hard_template, hard_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(hard_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    PSI.solve!(hard_model)
+    @test PSI.get_run_status(hard_model) != PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+    elastic_sys = _sys_with_infeasible_requirement()
+    elastic_template = _area_balance_template()
+    PSI.set_service_model!(
+        elastic_template,
+        PSI.ServiceModel(GenericConstraint, AEMS.LinearFactorLimit; use_slacks = true),
+    )
+    elastic_model = PSI.DecisionModel(elastic_template, elastic_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(elastic_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    PSI.solve!(elastic_model)
+    @test PSI.get_run_status(elastic_model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+    # Read back through PSI's own results API, not a direct JuMP.value on the container: PSI's
+    # MILP dual-recovery resolve (triggered by the network model's own duals, not this test's
+    # ServiceModel) leaves the container's JuMP model's result cache stale for direct reads.
+    results = PSI.OptimizationProblemResults(elastic_model)
+    name = PSY.get_name(get_component(GenericConstraint, elastic_sys, "N_INFEASIBLE_MIN"))
+    # Meta-scoped, like every other per-instance container this formulation builds (see
+    # NEMConstraintLHS/NEMConstraintLimit's own `meta = name`) - the key string is
+    # "T__U__meta", not "T__U".
+    slack_df = PSI.read_variable(results, "GenericConstraintSlackDown__GenericConstraint__$name")
+    slack_values = slack_df.value
+    @test all(v -> v >= 0.0, slack_values)
+    @test any(v -> v > 1.0e-6, slack_values)
+
+    container = PSI.get_optimization_container(elastic_model)
+    @test !PSI.has_container_key(container, AEMS.GenericConstraintSlackUp, GenericConstraint, name)
+    @test PSI.get_objective_value(results) > 0.0
 end
