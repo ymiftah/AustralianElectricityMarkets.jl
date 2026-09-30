@@ -1,119 +1,106 @@
 # Phase 2.7: elastic generic constraints (constraint-violation slack + pricing)
 
-Status: implemented 2026-09-30. Plan: `~/.claude/plans/nem-redesign-phase2.md` §2.7.
-Base: `pr-2.9-fcas-joint-ramping` at `105c6ae`.
+Status: implemented 2026-09-30, corrected 2026-09-30 after review. Plan:
+`~/.claude/plans/nem-redesign-phase2.md` 2.7. Base: `pr-2.9-fcas-joint-ramping` at `105c6ae`.
 
 ## Goal
 
-`LinearFactorLimit` currently builds every `GenericConstraint` as a hard bound. A real dispatch
-interval whose requirement genuinely wasn't met (AEMO's own TAS1 `RAISE6SEC` example, where
-`DISPATCHCONSTRAINT.MARGINALVALUE = 140,000` — a CVP price, not a market price) makes the LP
-infeasible the moment it is replayed. This PR adds elastic slack variables, priced at a
-constraint-violation rate, so a genuinely violated interval builds and solves with a nonzero
-slack instead of throwing or failing to solve. §2.8 (FCAS joint requirement rows) reuses the same
-mechanism, so the slack construction is written once, keyed only off `get_sense(gc)`.
+`LinearFactorLimit` builds every `GenericConstraint` as a hard bound. A real dispatch interval
+whose requirement genuinely wasn't met makes the LP infeasible the moment it is replayed. This PR
+adds elastic slack variables, priced at AEMO's own constraint-violation rate, so a genuinely
+violated interval builds and solves with a nonzero slack instead of throwing or failing to solve.
+2.8 (FCAS joint requirement rows) reuses the same mechanism, so the slack construction is written
+once, keyed only off `get_sense(gc)`.
 
 ## AEMO sources
 
-- *Schedule of Constraint Violation Penalty Factors* (v8.0, effective 2025-12-02), §1
-  (Introduction): NEMDE prices a violation as `CVP factor × Market Price Cap × Violation degree`,
-  where `CVP factor = CVP price / MPC` is a dimensionless, per-constraint-**type** multiplier.
-  §3 Table 1 lists the CVP factor for each of 53 constraint types by name (e.g. Item 30, "Secure
-  Network Limit Thermal constraint... ": CVP factor 30; Item 41, "FCAS R6 Requirement
-  constraint": CVP factor 8) — never a dollar figure, and never keyed by `GENCONID`.
-- `nem-expert` `references/data-model/GENCONDATA.md` / `DISPATCHCONSTRAINT.md`:
-  `GENERICCONSTRAINTWEIGHT` (`GENCONDATA`) is a dimensionless per-constraint weight, unrelated to
-  the CVP factor above; `VIOLATIONDEGREE`/`MARGINALVALUE` (`DISPATCHCONSTRAINT`) are NEMDE's
-  *outputs* for a solved interval, not inputs.
-- The repo's own real-data evidence (cited in the Phase 2 plan): a cached TAS1 `RAISE6SEC`
-  interval where `MARGINALVALUE = 140,000` — an actually-observed CVP-priced dollar rate.
-
-**Gap this PR does not close.** The dollar CVP price NEMDE applies per constraint is carried in
-AEMO's NEMDE XML solver inputs (see `nempy`'s `ConstraintData.get_violation_costs`, which reads
-per-`GENCONID` dollar values like `6,300,000` or `525,000` directly from that XML), not in any
-MMSDM table this codebase caches. Classifying every `GENCONID` against Table 1's 53 constraint
-types from `GENCONDATA` alone is not attempted here — `GENCONDATA` carries no constraint-type
-column that maps onto Table 1's categories. This PR uses one caller-supplied `$/MW` rate for
-every `GenericConstraint`, scaled by the constraint's own `GENERICCONSTRAINTWEIGHT`, and records
-the departure below.
+- nem-expert `references/data-model/GENCONDATA.md` (line 41): `GENERICCONSTRAINTWEIGHT` is "The
+  constraint violation penalty factor", not merely a priority weight.
+- *Schedule of Constraint Violation Penalty Factors* (v8.0), section 1: `cost = CVP factor x
+  Market Price Cap x Violation degree`.
+- Verified directly against cached `DISPATCHCONSTRAINT`/`GENCONDATA` rows, May-August 2026: every
+  violated row (`VIOLATIONDEGREE > 0`, `INTERVENTION = 0`) with a version-matched `GENCONDATA` row
+  has `|MARGINALVALUE| = GENERICCONSTRAINTWEIGHT x Market Price Cap` exactly (weight 35 against
+  the FY25-26 MPC of $20,300 gives $710,500; weight 360 against the FY26-27 MPC of $23,200 gives
+  $8,352,000).
+- nem-expert `references/reliability-settings/00-purpose-and-values.md`: Market Price Cap $20,300
+  from 1 July 2025, $23,200 from 1 July 2026. `MARKET_PRICE_THRESHOLDS.VOLL` is not cached by this
+  codebase, so these values are typed into `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` from the AEMC
+  schedule text.
+- `AustralianElectricityMarketsSimulations/src/time_basis.jl`'s `interval_cost_coefficient` and
+  `fcas_market.jl`'s own use of it (`$/MWh` to a `$/MW`-per-interval objective coefficient, scaled
+  by `PSI.get_base_power(container)`) set the unit convention every other price in this package's
+  objective already follows.
 
 ## nempy cross-check
 
 `nempy.historical_inputs.constraint_data.ConstraintData.get_violation_costs` reads a per-`set`
-(constraint) dollar cost straight from the NEMDE XML case file for the interval being replayed,
-then `SpotMarket.make_constraints_elastic('generic', violation_costs)` adds one slack per
-constraint row, priced at that exact dollar figure — nempy never derives a price from
-`GENERICCONSTRAINTWEIGHT` or the CVP Factors schedule, because it has the real per-constraint
-price available. That data source isn't part of this package's Phase 1 scope (MMSDM only, no
-NEMDE XML client), so this PR's caller-supplied rate × `GENERICCONSTRAINTWEIGHT` is a deliberate,
-documented approximation where nempy has an exact answer.
+dollar cost straight from the NEMDE XML case file for the interval being replayed (values like
+$6,300,000 for a network constraint, $525,000 for others), not derived from
+`GENERICCONSTRAINTWEIGHT` or a Market Price Cap, because nempy has the real per-constraint price
+available from AEMO's own solver input. This codebase caches MMSDM only, not NEMDE XML, so it
+cannot read that price directly; `GENERICCONSTRAINTWEIGHT x Market Price Cap` reproduces the same
+number from cached data, confirmed exactly against real violated rows above.
 
 ## Design
 
-### Variable types (`…Simulations/src/constraint_formulations.jl`)
+### Variable types (`AustralianElectricityMarketsSimulations/src/constraint_formulations.jl`)
 
-- `GenericConstraintSlackUp <: PSI.VariableType` — absorbs LHS above RHS (`LE`/`EQ` senses).
-- `GenericConstraintSlackDown <: PSI.VariableType` — absorbs LHS below RHS (`GE`/`EQ` senses).
+- `GenericConstraintSlackUp <: PSI.VariableType`: absorbs LHS above RHS (`LE`/`EQ` senses).
+- `GenericConstraintSlackDown <: PSI.VariableType`: absorbs LHS below RHS (`GE`/`EQ` senses).
 
-Only the side(s) `get_sense(gc)` needs are built, matching the plan and
-`PSI.ServiceModel`'s existing `use_slacks::Bool` field (the same field
-`transmission_interface_slacks!` gates on for `PSY.TransmissionInterface`) — no new field on
-`LinearFactorLimit` itself; it stays a singleton `AbstractNEMConstraintFormulation` subtype and
-takes its policy from the `PSI.ServiceModel` instance, exactly like every other formulation
-attribute in this codebase.
+Only the side(s) `get_sense(gc)` needs are built, gated on `PSI.ServiceModel`'s existing
+`use_slacks::Bool` field (the same field PSI's own `transmission_interface_slacks!` gates on for
+`PSY.TransmissionInterface`). No new field on `LinearFactorLimit` itself.
 
-### Mechanism (`…Simulations/src/nem_constraints.jl`)
+### Mechanism (`AustralianElectricityMarketsSimulations/src/nem_constraints.jl`)
 
-- `_add_gc_slack_variables!(container, gc, model)`: a no-op unless
-  `PSI.get_use_slacks(model)`. Builds the needed slack(s) as one `JuMP.@variable` per
-  `(name, t)` with `lower_bound = 0.0`, and merges each into `NEMConstraintLHS` — `-slack_up` on
-  the `LE`/`EQ` side, `+slack_down` on the `GE`/`EQ` side — mirroring
-  `InterfaceFlowSlackUp`/`InterfaceFlowSlackDown`'s merge into `InterfaceTotalFlow` in installed
-  PSI's `TransmissionInterface`. Called from `construct_service!`'s `ModelConstructStage` after
-  the terms loop and before `PSI.add_constraints!`, so the stored `NEMConstraintLimit` constraint
-  is built already relaxed, not tightened first and loosened after.
+- `_add_gc_slack_variables!(container, gc, model)`: a no-op unless `PSI.get_use_slacks(model)`.
+  Builds the needed slack(s) as one `JuMP.@variable` per `(name, t)` with `lower_bound = 0.0`, and
+  merges each into `NEMConstraintLHS`: `-slack_up` on the `LE`/`EQ` side, `+slack_down` on the
+  `GE`/`EQ` side. Called from `construct_service!`'s `ModelConstructStage` after the terms loop
+  and before `PSI.add_constraints!`, so the stored `NEMConstraintLimit` constraint is built already
+  relaxed.
+- `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR`: a `Date => $/MWh` table, keyed by financial-year start (1
+  July). `_financial_year_mpc(t)` finds the entry covering `t`, throwing if none does.
+- `_market_price_cap(model, t)`: the `"market_price_cap"` `PSI.ServiceModel` attribute if set,
+  otherwise `_financial_year_mpc(t)`.
 - `PSI.objective_function!(container, gc, model::ServiceModel{GenericConstraint,
-  LinearFactorLimit})`: previously an unconditional no-op (the salvage branches' stub the plan
-  says not to port). Now reads back whichever slack container(s) `_add_gc_slack_variables!` built
-  (`PSI.has_container_key`) and adds `slack[t] * rate` to the objective via
-  `PSI.add_to_objective_invariant_expression!`, where
-  `rate = gc.constraint_weight * base_cvp_rate`.
-- `base_cvp_rate` is the `"base_cvp_rate"` string key of the `PSI.ServiceModel`'s own
-  `attributes::Dict{String, Any}` (`PSI.get_attribute(model, "base_cvp_rate")`), defaulting to
-  `DEFAULT_GENERIC_CONSTRAINT_CVP_RATE = 140_000.0` (the TAS1 `RAISE6SEC` observation above) when
-  unset. A caller sets a different rate via
-  `PSI.ServiceModel(GenericConstraint, LinearFactorLimit; attributes = Dict("base_cvp_rate" =>
-  ...), use_slacks = true)` — this is the "documented, cited field... supplied by the caller" the
-  plan calls for, expressed through PSI's own attribute mechanism rather than a new struct field,
-  since `LinearFactorLimit` is dispatched as a bare type parameter (`ServiceModel{T, D}`) in every
-  call site already in this codebase (`test/nem_constraints.jl`, `test/toy_fixture.jl`,
-  `test/real_data/runtests.jl`), not instantiated.
+  LinearFactorLimit})`: reads back whichever slack container(s) `_add_gc_slack_variables!` built
+  and adds, per `(name, t)`, `slack[t] * base_power * interval_cost_coefficient(weight * mpc,
+  resolution)` via `PSI.add_to_objective_invariant_expression!`, where `weight =
+  get_constraint_weight(gc)` and `mpc = _market_price_cap(model, timestamp_of(t))`.
 
-### Departures from the plan
+## Departures from the plan
 
-- The plan's own phrasing, "a documented, cited field on the formulation struct", is realised as
-  a `PSI.ServiceModel` attribute rather than a field on `LinearFactorLimit` itself, because every
-  existing call site passes `LinearFactorLimit` as a type, not a value — adding a field would
-  need a constructor and break every one of those call sites for no behavioural gain `ServiceModel`
-  attributes don't already provide.
+- The plan's "a documented, cited field on the formulation struct, supplied by the caller" is
+  realised as a `PSI.ServiceModel` attribute (`"market_price_cap"`), not a field on
+  `LinearFactorLimit` itself, because every existing call site passes `LinearFactorLimit` as a
+  bare type parameter (`ServiceModel{T, D}` dispatches on `D` as a type), not an instance.
 - No `NEMDispatchPolicy` type (already dropped by the plan itself).
+- `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` only covers FY25-26 and FY26-27, the years the cited AEMC
+  schedule publishes; a replay outside that range throws rather than guessing a rate.
+- Pricing PSI's own area-balance slack at its correct CVP rate (factor 150) is deferred to 2.8,
+  recorded in the Phase 2 plan file, not fixed here.
 
 ## Tests
 
-`…Simulations/test/nem_constraints.jl`: a new `@testset` adds a `>=` `GenericConstraint`
-(`N_INFEASIBLE_MIN`) requiring "Park City" to dispatch at ten times its max capacity — genuinely
-unreachable, not merely tightened-but-satisfiable — and shows the hard `LinearFactorLimit`
-template builds but fails to solve, while the same system under `use_slacks = true` builds,
-solves successfully, and reports a strictly positive `GenericConstraintSlackDown` value (read via
-`PSI.OptimizationProblemResults`/`PSI.read_variable`, the same API the file's other solved-model
-tests already use for variable values) and a strictly positive objective. `constraint_formulations.jl`
-gets a type-hierarchy check for the two new `VariableType`s.
+`test/nem_constraints.jl`: a `>=` `GenericConstraint` (`N_INFEASIBLE_MIN`) requires "Park City" to
+dispatch at ten times its max capacity, genuinely unreachable. The hard `LinearFactorLimit`
+template (same `_area_balance_template()` network config as the elastic case, only
+`use_slacks` differs) builds but fails to solve; the elastic one builds, solves, and: the slack
+plus the unit's achieved dispatch equals the RHS exactly (the GE constraint binds under a
+minimized slack), the objective is strictly positive, and the constraint's dual magnitude equals
+`weight * MPC` over the interval. `test/real_data/runtests.jl` adds an elastic-slack report
+against cached `DISPATCHCONSTRAINT.VIOLATIONDEGREE` for the real window it already builds.
+`constraint_formulations.jl` gets a type-hierarchy check for the two new `VariableType`s.
 
 ## Files
 
-- `…Simulations/src/constraint_formulations.jl` — `GenericConstraintSlackUp`/`SlackDown` types.
-- `…Simulations/src/nem_constraints.jl` — `_add_gc_slack_variables!`,
-  `DEFAULT_GENERIC_CONSTRAINT_CVP_RATE`, `_base_cvp_rate`, real `objective_function!`.
-- `…Simulations/src/AustralianElectricityMarketsSimulations.jl` — exports.
-- `…Simulations/test/nem_constraints.jl`, `test/constraint_formulations.jl` — tests.
-- `docs/adr/0021-elastic-generic-constraints.md` — this design's rationale record.
+- `AustralianElectricityMarketsSimulations/src/constraint_formulations.jl`: slack `VariableType`s.
+- `AustralianElectricityMarketsSimulations/src/nem_constraints.jl`: slack construction, MPC table
+  and lookup, `objective_function!`.
+- `AustralianElectricityMarketsSimulations/src/AustralianElectricityMarketsSimulations.jl`: exports.
+- `AustralianElectricityMarketsSimulations/test/nem_constraints.jl`,
+  `test/constraint_formulations.jl`, `test/real_data/runtests.jl`: tests.
+- `docs/adr/0021-elastic-generic-constraints.md`: this design's rationale record.
