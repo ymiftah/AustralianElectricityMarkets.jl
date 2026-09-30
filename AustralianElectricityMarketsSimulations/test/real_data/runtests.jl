@@ -28,6 +28,10 @@ const REAL_SPAN = Hour(1)
 const REAL_DATE_RANGE = REAL_START:REAL_RESOLUTION:(REAL_START + REAL_SPAN)
 const REAL_MONTH = Date(year(REAL_START), month(REAL_START), 1)
 
+const VIOLATION_START = DateTime(2026, 6, 9, 5, 0)
+const VIOLATION_SPAN = Hour(1)
+const VIOLATION_DATE_RANGE = VIOLATION_START:REAL_RESOLUTION:(VIOLATION_START + VIOLATION_SPAN)
+
 # Either table carries the dispatch FCAS requirements, depending on the archive month.
 const FCAS_REQ_TABLES = (:DISPATCH_FCAS_REQ, :DISPATCH_FCAS_REQ_CONSTRAINT)
 
@@ -569,5 +573,80 @@ end
         # every interval. No other category (fast start, intervention, AGC-disabled, or a
         # units/time-basis mismatch) appears in this window.
         @test n_unexplained_violations == 0
+    end
+end
+
+@testset "Elastic GenericConstraint slack matches AEMO's published violation, $(Date(VIOLATION_START))" begin
+    sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = VIOLATION_DATE_RANGE)
+    set_demand!(sys, db, VIOLATION_DATE_RANGE; resolution = REAL_RESOLUTION)
+    set_market_bids!(sys, db, VIOLATION_DATE_RANGE; resolution = REAL_RESOLUTION)
+    set_nem_dispatch_limits!(sys, db, VIOLATION_DATE_RANGE)
+    PSY.transform_single_time_series!(sys, VIOLATION_SPAN, REAL_RESOLUTION)
+
+    target_gencon_ids = ("Q_STR_ALDSF_ZERO", "Q_BRDDSF01_1INV")
+    gcs = [gc for gc in PSY.get_components(GenericConstraint, sys) if get_gencon_id(gc) in target_gencon_ids]
+    @test length(gcs) == length(target_gencon_ids)
+
+    template = aemsim_template(sys)
+    for gc in gcs
+        name = PSY.get_name(gc)
+        PSI.set_service_model!(
+            template, name,
+            PSI.ServiceModel(
+                GenericConstraint, LinearFactorLimit, name; duals = [NEMConstraintLimit],
+                use_slacks = true,
+            ),
+        )
+    end
+    model = PSI.DecisionModel(
+        template, sys;
+        optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+        horizon = VIOLATION_SPAN,
+        resolution = REAL_RESOLUTION,
+        interval = REAL_RESOLUTION,
+        initial_time = VIOLATION_START,
+        name = "real_data_violation",
+    )
+
+    build_status = PSI.build!(model; output_dir = mktempdir())
+    if build_status != PSI.ModelBuildStatus.BUILT
+        err = build_error(model)
+        @error "elastic GenericConstraint build did not reach BUILT" exception = err
+    end
+    @test build_status == PSI.ModelBuildStatus.BUILT
+    run_status = PSI.solve!(model)
+    @test run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+    results = PSI.OptimizationProblemResults(model)
+    base_power = PSY.get_base_power(sys)
+
+    dc_table = AustralianElectricityMarketsData.read_hive(db, :DISPATCHCONSTRAINT)
+    for gc in gcs
+        name = PSY.get_name(gc)
+        gencon_id = get_gencon_id(gc)
+        var_type = get_sense(gc) == ConstraintSense.LE ? "GenericConstraintSlackUp" : "GenericConstraintSlackDown"
+        slack_df = PSI.read_variable(results, "$(var_type)__GenericConstraint__$name")
+        dual_df = PSI.read_dual(results, "NEMConstraintLimit__GenericConstraint__$name")
+
+        published = DataFrame(
+            DuckDB.execute(
+                db.db,
+                """
+                SELECT SETTLEMENTDATE, VIOLATIONDEGREE, MARGINALVALUE FROM $dc_table
+                WHERE CONSTRAINTID = ? AND SETTLEMENTDATE BETWEEN ? AND ? AND INTERVENTION = 0
+                ORDER BY SETTLEMENTDATE
+                """,
+                [gencon_id, VIOLATION_START, VIOLATION_START + VIOLATION_SPAN],
+            ),
+        )
+        published = subset(published, :SETTLEMENTDATE => ByRow(t -> t > VIOLATION_START))
+
+        @test any(v -> v > 0.0, slack_df.value)
+        @test any(v -> v > 0.0, published.VIOLATIONDEGREE)
+        # slack_df.value is already natural-unit MW (GenericConstraintSlackUp/Down convert on
+        # read); dual_df.value is left in $ per pu of RHS per interval by PSI, so divide by
+        # base_power and the interval length for a $/MW comparison against AEMO's MARGINALVALUE.
+        @test slack_df.value ≈ published.VIOLATIONDEGREE atol = 1.0e-3
+        @test abs.(dual_df.value) ./ (base_power * interval_hours(REAL_RESOLUTION)) ≈ abs.(published.MARGINALVALUE) rtol = 1.0e-3
     end
 end
