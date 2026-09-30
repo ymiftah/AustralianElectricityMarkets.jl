@@ -12,6 +12,33 @@ PSI.get_default_attributes(::Type{GenericConstraint}, ::Type{LinearFactorLimit})
 PSI.get_multiplier_value(::NEMConstraintRHSParameter, ::GenericConstraint, ::LinearFactorLimit) =
     1.0
 
+"""
+    DEFAULT_GENERIC_CONSTRAINT_CVP_RATE
+
+Default `"base_cvp_rate"` attribute for [`LinearFactorLimit`](@ref) `PSI.ServiceModel`s, in
+`\$/MW`. AEMO's *Schedule of Constraint Violation Penalty Factors* (v8.0, §1) prices a violation
+as `CVP factor × Market Price Cap × violation degree`, where the CVP factor is a dimensionless,
+per-constraint-type multiplier (e.g. 30 for a Secure Network Limit Thermal constraint, §3 Item
+30) and the dollar CVP price NEMDE actually applies is published per constraint in AEMO's NEMDE
+XML solver inputs, not in any cached MMSDM table. Absent that per-constraint price, this default
+takes the one dollar figure this codebase has observed directly from cached NEMWEB data: the
+\$140,000/MW `DISPATCHCONSTRAINT.MARGINALVALUE` AEMO published for TAS1's binding `RAISE6SEC`
+requirement (a CVP-priced violation, not a market price). Override per `PSI.ServiceModel` via
+`attributes = Dict("base_cvp_rate" => ...)` for a different rate.
+"""
+const DEFAULT_GENERIC_CONSTRAINT_CVP_RATE = 140_000.0
+
+"""
+    _base_cvp_rate(model) -> Float64
+
+The `"base_cvp_rate"` attribute of `model` ([`DEFAULT_GENERIC_CONSTRAINT_CVP_RATE`](@ref) if
+unset).
+"""
+function _base_cvp_rate(model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit})
+    rate = PSI.get_attribute(model, "base_cvp_rate")
+    return isnothing(rate) ? DEFAULT_GENERIC_CONSTRAINT_CVP_RATE : rate
+end
+
 # --- Term validation: fail loudly, never a partial LHS ---
 
 _term_bid_type(term::Union{UnitTerm, RegionTerm}) = get_bid_type(term)
@@ -217,6 +244,51 @@ function _add_gc_term_to_expression!(container, gc, term::InterconnectorTerm, sy
     return
 end
 
+"""
+    _add_gc_slack_variables!(container, gc, model)
+
+Builds [`GenericConstraintSlackUp`](@ref)/[`GenericConstraintSlackDown`](@ref) for `gc` when
+`PSI.get_use_slacks(model)`, one side per `get_sense(gc)` (`LE` → up only, `GE` → down only,
+`EQ` → both), and merges each into [`NEMConstraintLHS`](@ref): `-slack_up` on the `LE` side,
+`+slack_down` on the `GE` side, so `add_constraints!`'s stored bound becomes satisfiable by
+relaxing it rather than infeasible. A no-op when `use_slacks` is `false`.
+"""
+function _add_gc_slack_variables!(
+        container::PSI.OptimizationContainer, gc::GenericConstraint,
+        model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
+    )
+    PSI.get_use_slacks(model) || return
+    name = PSY.get_name(gc)
+    time_steps = PSI.get_time_steps(container)
+    expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
+    sense = get_sense(gc)
+    jm = PSI.get_jump_model(container)
+
+    if sense in (ConstraintSense.LE, ConstraintSense.EQ)
+        slack = PSI.add_variable_container!(
+            container, GenericConstraintSlackUp(), GenericConstraint, [name], time_steps; meta = name,
+        )
+        for t in time_steps
+            slack[name, t] = JuMP.@variable(
+                jm, base_name = "GenericConstraintSlackUp_{$name,$t}", lower_bound = 0.0,
+            )
+            JuMP.add_to_expression!(expr[name, t], -1.0, slack[name, t])
+        end
+    end
+    if sense in (ConstraintSense.GE, ConstraintSense.EQ)
+        slack = PSI.add_variable_container!(
+            container, GenericConstraintSlackDown(), GenericConstraint, [name], time_steps; meta = name,
+        )
+        for t in time_steps
+            slack[name, t] = JuMP.@variable(
+                jm, base_name = "GenericConstraintSlackDown_{$name,$t}", lower_bound = 0.0,
+            )
+            JuMP.add_to_expression!(expr[name, t], 1.0, slack[name, t])
+        end
+    end
+    return
+end
+
 # --- add_constraints!: sense dispatch, honouring the "invoked" series ---
 
 """
@@ -310,6 +382,9 @@ function PSI.construct_service!(
     for term in get_terms(gc)
         _add_gc_term_to_expression!(container, gc, term, sys)
     end
+    # Before add_constraints! reads NEMConstraintLHS: a slack must already be merged in for the
+    # constraint it relaxes to be built with it, not around it.
+    _add_gc_slack_variables!(container, gc, model)
 
     PSI.add_constraints!(container, NEMConstraintLimit, gc, model)
 
@@ -328,8 +403,31 @@ function PSI.construct_service!(
     return
 end
 
-# GenericConstraints carry no cost of their own.
-PSI.objective_function!(
-    ::PSI.OptimizationContainer, ::GenericConstraint,
-    ::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
-) = nothing
+"""
+    PSI.objective_function!(container, gc, model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit})
+
+Prices `gc`'s elastic slacks (built by [`_add_gc_slack_variables!`](@ref), a no-op unless
+`PSI.get_use_slacks(model)`) into the objective at `gc.constraint_weight * base_cvp_rate`
+per unit of slack per interval, via `PSI.add_to_objective_invariant_expression!`.
+`base_cvp_rate` is [`_base_cvp_rate`](@ref)'s `"base_cvp_rate"` `PSI.ServiceModel` attribute.
+`GENERICCONSTRAINTWEIGHT` scales relative priority between constraints sharing one rate; it is
+not itself a CVP factor (AEMO *Schedule of Constraint Violation Penalty Factors*, §1).
+`GenericConstraint`s built without slacks carry no cost of their own.
+"""
+function PSI.objective_function!(
+        container::PSI.OptimizationContainer, gc::GenericConstraint,
+        model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
+    )
+    PSI.get_use_slacks(model) || return nothing
+    name = PSY.get_name(gc)
+    time_steps = PSI.get_time_steps(container)
+    rate = get_constraint_weight(gc) * _base_cvp_rate(model)
+    for var_type in (GenericConstraintSlackUp, GenericConstraintSlackDown)
+        PSI.has_container_key(container, var_type, GenericConstraint, name) || continue
+        slack = PSI.get_variable(container, var_type(), GenericConstraint, name)
+        for t in time_steps
+            PSI.add_to_objective_invariant_expression!(container, slack[name, t] * rate)
+        end
+    end
+    return nothing
+end
