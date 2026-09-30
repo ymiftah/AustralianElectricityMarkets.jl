@@ -43,7 +43,10 @@ function _loss_test_system(;
         raw = PSY.get_time_series(PSY.SingleTimeSeries, load, "max_active_power")
         stamps = timestamp(PSY.get_data(raw))
         data = TimeArray(stamps, ones(length(stamps)))
-        PSY.clear_time_series!(sys, load)
+        # The DeterministicSingleTimeSeries view must go first: PSY refuses to remove a
+        # SingleTimeSeries a Deterministic view still depends on.
+        PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, load, "max_active_power")
+        PSY.remove_time_series!(sys, PSY.SingleTimeSeries, load, "max_active_power")
         PSY.add_time_series!(sys, load, PSY.SingleTimeSeries(; name = "max_active_power", data = data))
     end
 
@@ -125,12 +128,15 @@ end
     @test loss ≈ 0.05 * flow atol = 1.0e-6
     # `_loss_test_system` pinned area 2's `"max_active_power"` multiplier to `1.0` at every
     # timestamp, so the dispatched demand is exactly the static rating - no time-series lookup
-    # needed to reconstruct it.
-    load2 = sum(
-        PSY.get_max_active_power(l)
-            for l in PSY.get_components(PSY.PowerLoad, sys)
-            if PSY.get_name(PSY.get_area(PSY.get_bus(l))) == "2"
-    )
+    # needed to reconstruct it. `PSI.build!` leaves `sys` in `UnitSystem.SYSTEM_BASE`, under
+    # which `get_max_active_power` reads per-unit, not MW - read it back in `NATURAL_UNITS`.
+    load2 = PSY.with_units_base(sys, "NATURAL_UNITS") do
+        sum(
+            PSY.get_max_active_power(l)
+                for l in PSY.get_components(PSY.PowerLoad, sys)
+                if PSY.get_name(PSY.get_area(PSY.get_bus(l))) == "2"
+        )
+    end
     @test flow ≈ load2 + (1.0 - share) * loss atol = 1.0e-6
 
     @testset "losses split between the two regional balances by from_region_loss_share" begin
