@@ -66,6 +66,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Elastic `GenericConstraint`s under `LinearFactorLimit`** (`AustralianElectricityMarketsSimulations`):
+  `GenericConstraintSlackUp`/`GenericConstraintSlackDown` variables, built only for the side(s)
+  `get_sense(gc)` needs and only when the owning `PSI.ServiceModel` sets `use_slacks = true`,
+  merged into `NEMConstraintLHS` so a genuinely violated interval (AEMO's own TAS1 `RAISE6SEC`
+  example, where `MARGINALVALUE` is a \$140,000/MW constraint-violation price, not a market price)
+  builds and solves with a nonzero slack instead of an infeasible LP. `objective_function!` for
+  `LinearFactorLimit` now prices each slack at `gc.constraint_weight * base_cvp_rate`,
+  `base_cvp_rate` a `"base_cvp_rate"` `PSI.ServiceModel` attribute defaulting to
+  `DEFAULT_GENERIC_CONSTRAINT_CVP_RATE = 140_000.0`. See ADR 0021.
 - **`FCASJointRampingConstraint`, AEMO *FCAS Model in NEMDE* §6.1's joint ramping constraint**
   (`AustralianElectricityMarketsSimulations`): for every contributing device of a regulation
   `FCASService`, bounds the device's net energy dispatch combined with its
