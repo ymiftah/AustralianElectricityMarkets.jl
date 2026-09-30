@@ -326,6 +326,26 @@ against the `DevicePower` initial condition at `t = 1`, not `"initial_mw"`; wher
 §6.1 at a zero regulation target can conflict with the device's own ramp plus availability outside
 the replay objective this package targets.
 
+§6.1 departs from nempy twice, following AEMO. nempy's BDU row adds energy only for the dispatch
+types carrying a regulation bid (`fcas_constraints.py:6-43`), so a single-sided BDU gets its own
+side's energy; we use net energy for every `PSY.Storage` device, per §6.1's unit-level form (one
+signed `INITIALMW`, one rate). nempy also builds rows at a zero ramp rate; we follow AEMO's "rate
+greater than zero" condition.
+
+Real-data evidence (2026-06-04, 1 hour, 1520 built §6.1 rows over both regulation services),
+evaluated at NEMDE's published solution (`TOTALCLEARED`, published regulation targets, `INITIALMW`):
+
+- 10 rows are violated, all `LYA2` `LOWERREG` in consecutive intervals. In each, `TOTALCLEARED`
+  sits exactly at `INITIALMW − RAMPDOWNRATE·Δt` yet NEMDE enabled 5-10 MW of `LOWERREG`. This is
+  the ramp-rate departure above: NEMDE's energy ramp uses the bid-capped rate, its §6.1 row the
+  looser telemetered one. No battery zero-crossing and no AGC-off unit shows a violation. The
+  real-data suite asserts that every violation carries this signature.
+- Two-sided battery `RAISEREGACTUALAVAILABILITY` at `t = 1`, from §7's formula at the published
+  `TOTALCLEARED`: 31/42 match with the §6.1 term (5), 33/42 without it (the earlier bound-only
+  proxy matched 20/42). The two mismatches term (5) adds are not yet diagnosed; the ramp-rate
+  departure is the likely cause. `LOWERREG` matches 15/42
+  with or without term (5); its combined-trapezium mirroring is a rougher approximation.
+
 ## Decision
 
 - `FCASMarket` reads FCAS trapezium/offer-curve data directly from the `System`'s `Deterministic`
