@@ -209,7 +209,10 @@ end
             name = PSY.get_name(gc)
             PSI.set_service_model!(
                 template, name,
-                PSI.ServiceModel(GenericConstraint, LinearFactorLimit, name; duals = [NEMConstraintLimit]),
+                PSI.ServiceModel(
+                    GenericConstraint, LinearFactorLimit, name; duals = [NEMConstraintLimit],
+                    use_slacks = true,
+                ),
             )
         end
         model = PSI.DecisionModel(
@@ -246,6 +249,41 @@ end
         end
         total_area_slack_mw = sum(values(slack_mw); init = 0.0)
         @info "Real-data DecisionModel" build_time solve_time total_area_slack_mw
+
+        @testset "elastic GenericConstraint slacks against AEMO's own published violations" begin
+            base_power = PSY.get_base_power(sys)
+            gc_slack_mw = Dict{String, Float64}()
+            for var_type in (GenericConstraintSlackUp, GenericConstraintSlackDown)
+                for key in PSI.get_variable_keys(container)
+                    PSI.get_entry_type(key) === var_type && PSI.get_component_type(key) === GenericConstraint || continue
+                    var = PSI.get_variable(container, key)
+                    for name in axes(var, 1), t in axes(var, 2)
+                        v = PSI.JuMP.value(var[name, t]) * base_power
+                        gc_slack_mw[name] = get(gc_slack_mw, name, 0.0) + v
+                    end
+                end
+            end
+            nonzero_gc_slacks = Dict(n => v for (n, v) in gc_slack_mw if v > 1.0e-6)
+
+            # AEMO's own record of which constraints were actually violated over this window
+            # (VIOLATIONDEGREE > 0 <=> MARGINALVALUE priced at a CVP rate, not a market price).
+            dc_table = AustralianElectricityMarketsData.read_hive(db, :DISPATCHCONSTRAINT)
+            violated = DataFrame(
+                DuckDB.execute(
+                    db.db,
+                    """
+                    SELECT DISTINCT CONSTRAINTID FROM $dc_table
+                    WHERE SETTLEMENTDATE BETWEEN ? AND ? AND VIOLATIONDEGREE > 0
+                    """,
+                    [REAL_START, REAL_START + REAL_SPAN],
+                ),
+            )
+            violated_ids = Set(violated.CONSTRAINTID)
+            nonzero_gencon_ids = Set(get_gencon_id(gc) for gc in buildable if PSY.get_name(gc) in keys(nonzero_gc_slacks))
+
+            @info "Elastic GenericConstraint slacks" n_nonzero_slacks = length(nonzero_gc_slacks) n_aemo_violated =
+                length(violated_ids) overlap = length(intersect(nonzero_gencon_ids, violated_ids)) nonzero_gc_slacks
+        end
     end
 
     @testset "FCASMarket builds and solves alongside the constrained System" begin
