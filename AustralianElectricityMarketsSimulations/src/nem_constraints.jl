@@ -13,30 +13,42 @@ PSI.get_multiplier_value(::NEMConstraintRHSParameter, ::GenericConstraint, ::Lin
     1.0
 
 """
-    DEFAULT_GENERIC_CONSTRAINT_CVP_RATE
+    MARKET_PRICE_CAP_BY_FINANCIAL_YEAR
 
-Default `"base_cvp_rate"` attribute for [`LinearFactorLimit`](@ref) `PSI.ServiceModel`s, in
-`\$/MW`. AEMO's *Schedule of Constraint Violation Penalty Factors* (v8.0, §1) prices a violation
-as `CVP factor × Market Price Cap × violation degree`, where the CVP factor is a dimensionless,
-per-constraint-type multiplier (e.g. 30 for a Secure Network Limit Thermal constraint, §3 Item
-30) and the dollar CVP price NEMDE actually applies is published per constraint in AEMO's NEMDE
-XML solver inputs, not in any cached MMSDM table. Absent that per-constraint price, this default
-takes the one dollar figure this codebase has observed directly from cached NEMWEB data: the
-\$140,000/MW `DISPATCHCONSTRAINT.MARGINALVALUE` AEMO published for TAS1's binding `RAISE6SEC`
-requirement (a CVP-priced violation, not a market price). Override per `PSI.ServiceModel` via
-`attributes = Dict("base_cvp_rate" => ...)` for a different rate.
+Published Market Price Cap (`\$/MWh`), by the `Date` its financial year starts (1 July).
+Source: AEMC *Schedule of reliability settings — 2026-27 financial year*.
 """
-const DEFAULT_GENERIC_CONSTRAINT_CVP_RATE = 140_000.0
+const MARKET_PRICE_CAP_BY_FINANCIAL_YEAR = [
+    Date(2025, 7, 1) => 20_300.0,
+    Date(2026, 7, 1) => 23_200.0,
+]
 
 """
-    _base_cvp_rate(model) -> Float64
+    _financial_year_mpc(t::DateTime) -> Float64
 
-The `"base_cvp_rate"` attribute of `model` ([`DEFAULT_GENERIC_CONSTRAINT_CVP_RATE`](@ref) if
-unset).
+The published Market Price Cap for the financial year containing `t`.
+
+# Returns
+A `\$/MWh` value.
 """
-function _base_cvp_rate(model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit})
-    rate = PSI.get_attribute(model, "base_cvp_rate")
-    return isnothing(rate) ? DEFAULT_GENERIC_CONSTRAINT_CVP_RATE : rate
+function _financial_year_mpc(t::DateTime)
+    idx = findlast(p -> p[1] <= Date(t), MARKET_PRICE_CAP_BY_FINANCIAL_YEAR)
+    isnothing(idx) && throw(
+        ArgumentError(
+            "No published Market Price Cap covers $t; extend MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.",
+        ),
+    )
+    return MARKET_PRICE_CAP_BY_FINANCIAL_YEAR[idx][2]
+end
+
+"""
+    _market_price_cap(model, t::DateTime) -> Float64
+
+The `"market_price_cap"` attribute of `model`, or [`_financial_year_mpc`](@ref)`(t)` if unset.
+"""
+function _market_price_cap(model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit}, t::DateTime)
+    rate = PSI.get_attribute(model, "market_price_cap")
+    return isnothing(rate) ? _financial_year_mpc(t) : rate
 end
 
 # --- Term validation: fail loudly, never a partial LHS ---
@@ -407,12 +419,11 @@ end
     PSI.objective_function!(container, gc, model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit})
 
 Prices `gc`'s elastic slacks (built by [`_add_gc_slack_variables!`](@ref), a no-op unless
-`PSI.get_use_slacks(model)`) into the objective at `gc.constraint_weight * base_cvp_rate`
-per unit of slack per interval, via `PSI.add_to_objective_invariant_expression!`.
-`base_cvp_rate` is [`_base_cvp_rate`](@ref)'s `"base_cvp_rate"` `PSI.ServiceModel` attribute.
-`GENERICCONSTRAINTWEIGHT` scales relative priority between constraints sharing one rate; it is
-not itself a CVP factor (AEMO *Schedule of Constraint Violation Penalty Factors*, §1).
+`PSI.get_use_slacks(model)`) into the objective via `PSI.add_to_objective_invariant_expression!`.
 `GenericConstraint`s built without slacks carry no cost of their own.
+
+# Returns
+`nothing`.
 """
 function PSI.objective_function!(
         container::PSI.OptimizationContainer, gc::GenericConstraint,
@@ -421,12 +432,18 @@ function PSI.objective_function!(
     PSI.get_use_slacks(model) || return nothing
     name = PSY.get_name(gc)
     time_steps = PSI.get_time_steps(container)
-    rate = get_constraint_weight(gc) * _base_cvp_rate(model)
+    resolution = PSI.get_resolution(container)
+    initial_time = PSI.get_initial_time(container)
+    base_power = PSI.get_base_power(container)
+    weight = get_constraint_weight(gc)
     for var_type in (GenericConstraintSlackUp, GenericConstraintSlackDown)
         PSI.has_container_key(container, var_type, GenericConstraint, name) || continue
         slack = PSI.get_variable(container, var_type(), GenericConstraint, name)
         for t in time_steps
-            PSI.add_to_objective_invariant_expression!(container, slack[name, t] * rate)
+            ts = initial_time + resolution * (t - 1)
+            mpc = _market_price_cap(model, ts)
+            coefficient = base_power * interval_cost_coefficient(weight * mpc, resolution)
+            PSI.add_to_objective_invariant_expression!(container, slack[name, t] * coefficient)
         end
     end
     return nothing

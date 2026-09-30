@@ -116,8 +116,7 @@ struct FCASBDURampingConstraint <: PSI.ConstraintType end
 Variable type for the elastic slack absorbing a [`GenericConstraint`](@ref)'s left-hand side
 above its right-hand side limit, built only when [`LinearFactorLimit`](@ref)'s `sense` is `LE`
 or `EQ` and the owning `PSI.ServiceModel` has `use_slacks = true`. Merged into
-[`NEMConstraintLHS`](@ref) with multiplier `-1.0`, mirroring `PowerSimulations.jl`'s
-`InterfaceFlowSlackUp`/`InterfaceTotalFlow` pattern for `PSY.TransmissionInterface`.
+[`NEMConstraintLHS`](@ref) with multiplier `-1.0`.
 """
 struct GenericConstraintSlackUp <: PSI.VariableType end
 
@@ -127,8 +126,7 @@ struct GenericConstraintSlackUp <: PSI.VariableType end
 Variable type for the elastic slack absorbing a [`GenericConstraint`](@ref)'s left-hand side
 below its right-hand side limit, built only when [`LinearFactorLimit`](@ref)'s `sense` is `GE`
 or `EQ` and the owning `PSI.ServiceModel` has `use_slacks = true`. Merged into
-[`NEMConstraintLHS`](@ref) with multiplier `+1.0`, mirroring `PowerSimulations.jl`'s
-`InterfaceFlowSlackDown`/`InterfaceTotalFlow` pattern for `PSY.TransmissionInterface`.
+[`NEMConstraintLHS`](@ref) with multiplier `+1.0`.
 """
 struct GenericConstraintSlackDown <: PSI.VariableType end
 

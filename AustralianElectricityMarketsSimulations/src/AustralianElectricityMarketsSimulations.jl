@@ -39,7 +39,7 @@ export energy_bounds
 export scale_trapezium
 export AbstractNEMConstraintFormulation, NEMConstraintLHS, NEMConstraintLimit,
     NEMConstraintRHSParameter, LinearFactorLimit, FCASMarket
-export GenericConstraintSlackUp, GenericConstraintSlackDown, DEFAULT_GENERIC_CONSTRAINT_CVP_RATE
+export GenericConstraintSlackUp, GenericConstraintSlackDown, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR
 export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASJointCapacityLHS, FCASJointCapacityConstraint, FCASBDURampingConstraint,
     FCASJointRampingConstraint
