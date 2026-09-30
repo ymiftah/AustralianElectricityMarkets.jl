@@ -121,6 +121,16 @@ fixed:
 - The over-dissipation gap is untested (beyond the diagnostic above) and unresolved; a future PR
   that observes it in real data should either add an explicit contiguous-fill constraint or adopt
   `nempy`'s SOS2 encoding.
+- Convexity is checked once per interconnector, against an empty demand: segment `i`'s chord slope
+  is `linear(demand) + 0.5 * loss_flow_coefficient * (breakpoints[i] + breakpoints[i + 1])`, and
+  `linear(demand)` is the same additive constant on every segment, so only the sign of
+  `loss_flow_coefficient` decides whether the slopes ascend.
+- The breakpoint range is an implicit flow limit: `flow == breakpoints[1] + sum(segment flows)`
+  confines flow to `[breakpoints[1], breakpoints[end]]`, on top of (and possibly tighter than)
+  the interconnector's own `flow_limits`. Real `LOSSMODEL` breakpoints span the operating range;
+  a narrower model produces one summary warning at construction.
+- The loss constraint set is a re-implementation rather than a reuse of PSI's `FlowLimitConstraint`
+  builder, which dispatches on the concrete `DeviceModel{AreaInterchange, StaticBranch}` type.
 - Not modelled: `nempy`'s MNSP transmission loss factors
   (`historical_inputs/historical_interconnectors.py::_format_mnsp_transmission_loss_factors`), a
   separate fixed loss applied to MNSP interconnectors on top of the interconnector's own dynamic

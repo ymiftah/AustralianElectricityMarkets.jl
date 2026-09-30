@@ -1,43 +1,24 @@
-# NEMDE's interconnector losses (`InterconnectorLossModel`, root `src/interconnector_losses.jl`)
-# on `PSY.AreaInterchange`, linearised into the from/to area balance as monotonically-increasing
-# chord slopes - no SOS2/binary needed, cost minimisation fills the cheapest (lowest-slope)
-# segment first on its own (see `NEMInterconnectorLoss`'s docstring). The lossless
-# `FlowActivePowerVariable` contribution (`-flow` from-area, `+flow` to-area) is inherited from
-# PSI's own `add_to_expression!` method for `W <: AbstractBranchFormulation`
-# (`devices/common/add_to_expression.jl`) - this file only adds the loss terms on top.
+# `PSY.AreaInterchange` loss terms from the attached `InterconnectorLossModel`, added on top of
+# PSI's own lossless `-flow`/`+flow` balance terms (inherited from `AbstractBranchFormulation`).
 
 """
-Device formulation for `PSY.AreaInterchange` that adds NEMDE's interconnector losses into the
-from/to area power balance, on top of the ordinary lossless flow.
+    NEMInterconnectorLoss
 
-The loss curve is the [`InterconnectorLossModel`](@ref) (root package) `attach_interconnector_losses!`
-stamps onto the `AreaInterchange` as a `PSY.SupplementalAttribute`, already per-unitized to the
-`System`'s base power. This formulation reads it straight off the component - it never queries
-the database and never accepts a loss model any other way. An `AreaInterchange` with zero or more
-than one attached `InterconnectorLossModel` throws an `ArgumentError` naming it.
+Device formulation for `PSY.AreaInterchange` that adds NEMDE's interconnector loss into the
+from/to area power balance on top of the lossless flow. Only `PSI.AreaBalancePowerModel` and
+`PSI.AreaPTDFPowerModel` are supported.
 
-Regional demand for the loss curve's linear coefficient ([`loss_factor`](@ref)) is resolved
-per timestep from the `System` itself: total `PSY.PowerLoad` active power per `PSY.Area`, so
-`Area` names must match the loss model's own region names for its `demand_coefficients` to
-apply (they contribute nothing, not an error, otherwise - see [`loss_factor`](@ref)).
+The loss curve is the [`InterconnectorLossModel`](@ref) attached to each `AreaInterchange` by
+`attach_interconnector_losses!`, linearised on its breakpoints into one bounded flow variable per
+segment (no SOS2 or binaries). A device with zero or several attached models throws an
+`ArgumentError`, as does a model with `loss_flow_coefficient < 0` (a concave curve). Regional
+demand for the loss factor is the total `PSY.PowerLoad` per `PSY.Area` at each time step.
 
-Only `PSI.AreaBalancePowerModel`/`PSI.AreaPTDFPowerModel` are supported (losses are an area-level
-concept in this package's NEM model), and only two decision variables are needed per loss
-segment - no SOS2/binary: the loss curve is convex (chord slopes strictly increase across
-segments, `loss_segments`), and losses only ever subtract from the area balance, so minimising
-generation cost always fills the lowest-slope segment first. A `loss_flow_coefficient <= 0`
-breaks that convexity and is rejected with an `ArgumentError` at construction (see
-[`_validate_convex_segments`](@ref)) rather than silently understating losses.
-
-**The loss model's breakpoint range is an implicit flow limit.** `InterconnectorFlowSegmentConstraint`
-pins `flow == breakpoints[1] + sum(segment flows)`, and the segment widths sum to
-`breakpoints[end] - breakpoints[1]`, so flow is confined to `[breakpoints[1], breakpoints[end]]` -
-on top of, and potentially tighter than, `PSI.FlowLimitConstraint`'s own bound from the
-interconnector's `flow_limits`. For real AEMO data `LOSSMODEL`'s breakpoints do span the
-interconnector's operating range, so this is faithful to NEMDE; but a caller-supplied loss model
-narrower than the interconnector's actual flow limits silently tightens dispatch with no
-indication beyond one summary `@warn` at construction naming every such interconnector (see
-[`_narrow_breakpoint_interconnectors`](@ref)).
+The loss is exact (the solved loss equals the chord value at the solved flow) whenever the loss's
+weighted marginal price `share * price_from + (1 - share) * price_to` is non-negative; when it is
+negative the solver may fill a higher-slope segment early and report more loss than the curve.
+Flow is also confined to `[breakpoints[1], breakpoints[end]]`, and a model narrower than the
+interconnector's own `flow_limits` triggers one warning at construction.
 """
 struct NEMInterconnectorLoss <: PSI.AbstractBranchFormulation end
 
@@ -61,10 +42,8 @@ struct InterconnectorLossDefinitionConstraint <: PSI.ConstraintType end
 PSI.convert_result_to_natural_units(::Type{InterconnectorLossVariable}) = true
 PSI.convert_result_to_natural_units(::Type{InterconnectorLossSegmentVariable}) = true
 
-# `get_default_time_series_names`/`get_default_attributes`/`get_initial_conditions_device_model`
-# for `PSY.AreaInterchange` are already defined generically over `V <: AbstractBranchFormulation`
-# in installed PSI's `devices/area_interchange.jl`, so `NEMInterconnectorLoss` inherits them -
-# no override needed here.
+# `AreaInterchange`'s default attributes and time-series names are inherited from PSI's generic
+# `AbstractBranchFormulation` methods.
 
 # --- attached `InterconnectorLossModel` + per-interconnector validation ---
 
@@ -98,21 +77,9 @@ end
 """
     _validate_convex_segments(name, model)
 
-Throws `ArgumentError` naming `name` if `model`'s [`loss_segments`](@ref) are not ascending -
-the convexity [`NEMInterconnectorLoss`](@ref)'s no-SOS2/no-binary segment encoding relies on
-(see its docstring). Checked once per interconnector at construction, not per timestep: from
-`loss_segments`, segment `i`'s chord slope is
-
-```
-linear(demand) + 0.5 * loss_flow_coefficient * (breakpoints[i] + breakpoints[i + 1])
-```
-
-`linear(demand)` (`loss_constant - 1 + Σ demand_coefficients[r] * demand[r]`) is the same additive
-constant on every segment regardless of `demand`, so it can never change their relative order;
-`breakpoints[i] + breakpoints[i + 1]` is strictly increasing in `i` since `breakpoints` themselves
-are strictly ascending. Only `loss_flow_coefficient`'s sign decides ascending-vs-descending, and
-that's fixed at construction - hence one check per interconnector, evaluated against an empty
-demand dict (any demand gives the same order), rather than one per (interconnector, timestep).
+Throws `ArgumentError` naming `name` when `model`'s [`loss_segments`](@ref) chord slopes are not
+ascending. Evaluated once per interconnector against an empty demand, since demand shifts every
+slope by the same constant.
 """
 function _validate_convex_segments(name::AbstractString, model::InterconnectorLossModel)
     segments = loss_segments(model, Dict{String, Float64}())
@@ -131,14 +98,8 @@ end
 """
     _narrow_breakpoint_interconnectors(devices, loss_models) -> Vector{String}
 
-Names of `devices` whose [`InterconnectorLossModel`](@ref) breakpoint range
-`[breakpoints[1], breakpoints[end]]` is strictly narrower than the interconnector's own static
-`PSY.get_flow_limits` - see [`NEMInterconnectorLoss`](@ref)'s docstring for why this silently
-tightens dispatch. Skips any device carrying `from_to_flow_limit`/`to_from_flow_limit` time
-series: their applied limit varies per timestep, so no single static comparison is meaningful.
-The attached model and `get_flow_limits` are both already per-unit of the `System`'s base power
-(`PSI.init_optimization_container!` sets `UnitSystem.SYSTEM_BASE` before any device is
-constructed), so they compare directly with no rescale.
+Names of `devices` (without flow-limit time series) whose loss-model breakpoint range is strictly
+narrower than their static `PSY.get_flow_limits`. Both are per-unit of the system base.
 """
 function _narrow_breakpoint_interconnectors(devices, loss_models::Dict{String, InterconnectorLossModel})
     narrow = String[]
@@ -157,11 +118,7 @@ end
 """
     _warn_narrow_breakpoints(narrow)
 
-One summary `@warn` naming every interconnector in `narrow` (from
-[`_narrow_breakpoint_interconnectors`](@ref)) - split out from that pure function so it, and the
-warning it emits, can each be tested directly without going through `PSI.build!`'s own logger
-setup (which filters `@warn` below its `console_level` default of `Logging.Error`, so it never
-reaches a `@test_logs` wrapped around a full build).
+Emits one `@warn` naming every interconnector in `narrow`; silent when `narrow` is empty.
 """
 function _warn_narrow_breakpoints(narrow::Vector{String})
     isempty(narrow) ||
@@ -218,19 +175,10 @@ _demand_at(demand::Dict{String, Vector{Float64}}, t::Int) =
 """
     _add_loss_variables_and_constraints!(container, sys, devices, loss_models)
 
-Adds [`InterconnectorLossSegmentVariable`](@ref)/[`InterconnectorLossVariable`](@ref) and their
-defining constraints ([`InterconnectorFlowSegmentConstraint`](@ref)/
-[`InterconnectorLossDefinitionConstraint`](@ref)) for every one of `devices`, plus the loss terms
-into the area balance expression - the whole point of [`NEMInterconnectorLoss`](@ref). Every
-device's [`loss_segments`](@ref) is recomputed per timestep since NEMDE's loss curve shifts with
-regional demand ([`_area_demand`](@ref)). The segment variable container is sized to the largest
-interconnector's segment count (as a `Vector{String}` axis - PSI's result store only knows how to
-write a 3-axis variable shaped `(String, String, Int)`); a smaller interconnector's unused cells
-are fixed to `0.0` rather than left `#undef`.
-
-Every quantity here (flow, segments, loss, `loss_models`, `_area_demand`) is already per-unit of
-`PSI.get_base_power(container)` - `attach_interconnector_losses!` per-unitized the loss model
-before it was ever attached, so no rescaling happens in this formulation at all.
+Adds the segment and loss variables, their defining constraints, and the `-share * loss` and
+`-(1 - share) * loss` terms in the from and to area balances, for every device. The segment axis
+is sized to the largest interconnector; unused cells are fixed to zero. All quantities are
+per-unit of the system base.
 """
 function _add_loss_variables_and_constraints!(
         container::PSI.OptimizationContainer,
@@ -306,18 +254,13 @@ function _add_loss_variables_and_constraints!(
     return
 end
 
-# --- FlowLimitConstraint, duplicated from installed PSI's `PSY.AreaInterchange`/`StaticBranch`
-# builder (`branch_constructor.jl`/`area_interchange.jl`) rather than reused: that method is
-# dispatched on the concrete `DeviceModel{PSY.AreaInterchange, StaticBranch}` type, not on
-# `AbstractBranchFormulation`, so it never fires for `NEMInterconnectorLoss`. ---
+# PSI builds `FlowLimitConstraint` only for the concrete `StaticBranch` model, so it is repeated here.
 
 """
     _add_flow_limit_constraint!(container, devices, device_model, network_model)
 
-`PSI.FlowActivePowerVariable` bounds by the interconnector's own static `flow_limits`, or - when
-every device carries `from_to_flow_limit`/`to_from_flow_limit` time series - by
-`PSI.FromToFlowLimitParameter`/`PSI.ToFromFlowLimitParameter` instead. See this file's module
-comment for why this duplicates rather than calls PSI's own `PSI.StaticBranch` builder.
+Bounds `PSI.FlowActivePowerVariable` by the static `flow_limits`, or by the from-to and to-from
+flow-limit parameters when every device carries those time series.
 """
 function _add_flow_limit_constraint!(
         container::PSI.OptimizationContainer,
