@@ -94,3 +94,21 @@ interval_cost_coefficient(weight * mpc, resolution)`.
   above the area-balance slack, while AEMO's own CVP ranking puts the area balance (factor 150,
   nem-expert `constraint-violation-penalty-factors/05-items-22-35.md`) above it. Reconciling the
   two slack costs is recorded as a Phase 2 follow-up (2.8) in the plan file, not fixed here.
+
+## Review follow-up, 2026-10-01
+
+The financial-year lookup now requires an exact year entry, including for dates after the last
+published year. The earlier lower-bound lookup silently reused FY2026-27's price for FY2027-28
+and later, contradicting the intended failure on unknown years.
+
+The 2026-06-09 real-data comparison uses each constraint's `invoked` time series to select the
+model intervals where that constraint is active. PSI still returns results for the full model
+window, including uninvoked intervals; those intervals must have zero slack and are excluded from
+the published violation and dual comparisons. Every invoked model timestamp must have a published
+`DISPATCHCONSTRAINT` row, so missing coverage cannot disappear through an inner join. The mask's
+length and timestamps are checked against both result tables. Slack equality uses a per-row MW
+tolerance, and CVP dual equality is asserted only where the published violation is positive. At
+zero violation the dual is not uniquely fixed by the slack penalty. The pre-fix real-data run had
+13 passing assertions and two failures caused by joining uninvoked intervals. The focused
+post-fix real-data test passed all 31 assertions on 2026-10-01, including invoked coverage,
+zero slack outside invocation, and the published slack and dual comparisons.

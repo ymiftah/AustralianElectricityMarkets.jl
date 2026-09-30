@@ -32,7 +32,8 @@ The published Market Price Cap for the financial year containing `t`.
 A `\$/MWh` value.
 """
 function _financial_year_mpc(t::DateTime)
-    idx = findlast(p -> p[1] <= Date(t), MARKET_PRICE_CAP_BY_FINANCIAL_YEAR)
+    year_start = Date(year(t) - (month(t) < 7), 7, 1)
+    idx = findfirst(p -> p[1] == year_start, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR)
     isnothing(idx) && throw(
         ArgumentError(
             "No published Market Price Cap covers $t; extend MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.",

@@ -627,6 +627,23 @@ end
         var_type = get_sense(gc) == ConstraintSense.LE ? "GenericConstraintSlackUp" : "GenericConstraintSlackDown"
         slack_df = PSI.read_variable(results, "$(var_type)__GenericConstraint__$name")
         dual_df = PSI.read_dual(results, "NEMConstraintLimit__GenericConstraint__$name")
+        invoked_timestamps = PSY.get_time_series_timestamps(
+            PSY.Deterministic, gc, "invoked";
+            start_time = VIOLATION_START, len = nrow(slack_df),
+        )
+        invoked_values = PSY.get_time_series_values(
+            PSY.Deterministic, gc, "invoked";
+            start_time = VIOLATION_START, len = nrow(slack_df),
+        )
+        @test length(invoked_values) == nrow(slack_df)
+        @test invoked_timestamps == slack_df.DateTime
+        @test invoked_timestamps == dual_df.DateTime
+        invoked_df = DataFrame(DateTime = invoked_timestamps, invoked = invoked_values .> 0.0)
+        invoked_slack = innerjoin(slack_df, invoked_df; on = :DateTime, validate = (true, true))
+        @test nrow(invoked_slack) == nrow(slack_df)
+        @test any(.!invoked_slack.invoked)
+        @test all(abs.(invoked_slack.value[.!invoked_slack.invoked]) .<= 1.0e-6)
+        invoked_slack = subset(invoked_slack, :invoked => ByRow(identity))
 
         published = DataFrame(
             DuckDB.execute(
@@ -639,14 +656,32 @@ end
                 [gencon_id, VIOLATION_START, VIOLATION_START + VIOLATION_SPAN],
             ),
         )
-        published = subset(published, :SETTLEMENTDATE => ByRow(t -> t > VIOLATION_START))
-
-        @test any(v -> v > 0.0, slack_df.value)
-        @test any(v -> v > 0.0, published.VIOLATIONDEGREE)
+        invoked_dates = invoked_timestamps[invoked_values .> 0.0]
+        published_invoked = subset(published, :SETTLEMENTDATE => ByRow(in(invoked_dates)))
+        @test Set(published_invoked.SETTLEMENTDATE) == Set(invoked_dates)
+        @test nrow(published_invoked) == length(invoked_dates)
+        comparison = innerjoin(
+            invoked_slack, select(published_invoked, :SETTLEMENTDATE => :DateTime, :VIOLATIONDEGREE, :MARGINALVALUE);
+            on = :DateTime, validate = (true, true),
+        )
+        comparison = innerjoin(
+            comparison, select(dual_df, :DateTime, :value => :dual);
+            on = :DateTime, validate = (true, true),
+        )
+        @test nrow(comparison) == length(invoked_dates)
+        @test any(v -> v > 0.0, comparison.value)
+        @test any(v -> v > 0.0, comparison.VIOLATIONDEGREE)
         # slack_df.value is already natural-unit MW (GenericConstraintSlackUp/Down convert on
         # read); dual_df.value is left in $ per pu of RHS per interval by PSI, so divide by
         # base_power and the interval length for a $/MW comparison against AEMO's MARGINALVALUE.
-        @test slack_df.value ≈ published.VIOLATIONDEGREE atol = 1.0e-3
-        @test abs.(dual_df.value) ./ (base_power * interval_hours(REAL_RESOLUTION)) ≈ abs.(published.MARGINALVALUE) rtol = 1.0e-3
+        @test all(isapprox.(comparison.value, comparison.VIOLATIONDEGREE; atol = 1.0e-6))
+        violated = subset(comparison, :VIOLATIONDEGREE => ByRow(>(1.0e-6)))
+        @test nrow(violated) > 0
+        @test all(
+            isapprox.(
+                abs.(violated.dual) ./ (base_power * interval_hours(REAL_RESOLUTION)),
+                abs.(violated.MARGINALVALUE); rtol = 1.0e-6,
+            )
+        )
     end
 end

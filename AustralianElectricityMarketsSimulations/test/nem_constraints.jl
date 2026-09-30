@@ -706,3 +706,12 @@ end
     @test abs.(dual_df.value) ./ (base_power * interval_hours(resolution)) ≈
         fill(weight * test_mpc, nrow(dual_df)) rtol = 1.0e-6
 end
+
+@testset "Market Price Cap lookup covers only the published financial years" begin
+    @test AEMS._financial_year_mpc(DateTime(2025, 7, 1)) == 20_300.0
+    @test AEMS._financial_year_mpc(DateTime(2026, 6, 30, 23, 55)) == 20_300.0
+    @test AEMS._financial_year_mpc(DateTime(2026, 7, 1)) == 23_200.0
+    @test AEMS._financial_year_mpc(DateTime(2027, 6, 30, 23, 55)) == 23_200.0
+    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2025, 6, 30))
+    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2027, 7, 1))
+end

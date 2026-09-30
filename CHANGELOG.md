@@ -74,7 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slack at `GENERICCONSTRAINTWEIGHT * Market Price Cap` for the interval's financial year (a new
   `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` table, overridable per `PSI.ServiceModel` via a
   `"market_price_cap"` attribute), converted to an objective coefficient the same way every other
-  price in this package's objective is (`interval_cost_coefficient`, `base_power`).
+  price in this package's objective is (`interval_cost_coefficient`, `base_power`). Years absent
+  from the published table throw instead of reusing an earlier year's cap.
 - **`FCASJointRampingConstraint`, AEMO *FCAS Model in NEMDE* §6.1's joint ramping constraint**
   (`AustralianElectricityMarketsSimulations`): for every contributing device of a regulation
   `FCASService`, bounds the device's net energy dispatch combined with its
