@@ -76,7 +76,24 @@ The real-data check added alongside this ADR (`test/real_data/runtests.jl`) eval
 [`interconnector_losses`](@ref) directly at each interconnector's published `MWFLOW` against
 published `MWLOSSES` - a pure function check of the loss *curve*'s fidelity, independent of the LP.
 It does not exercise the segment-ordering LP degeneracy above, since no LP is solved for that
-comparison.
+comparison. A second check does solve `NEMInterconnectorLoss` (2026-06-04 00:00-01:00) and compares
+its own `InterconnectorLossVariable` at the solved flow against the curve evaluated at that same
+flow - the actual over-dissipation test.
+
+**Real-data evidence (2026-06-04 00:00, first interval).** Regional price signs at `t1`: NSW1,
+QLD1, SA1, TAS1, VIC1 positive; **SNOWY1 negative** - a genuine negative-price region existed in
+this interval, the precondition the over-dissipation gap needs to be possible at all. The LP-vs-curve
+gap at the solved flow was near zero for the three MNSP interconnectors (`N-Q-MNSP1`: 0.0 MW,
+`T-V-MNSP1`: 0.002 MW, `V-S-MNSP1`: 0.0 MW) and small for `V-SA` (-3.5 MW), but large for the two
+AC regulated interconnectors: `NSW1-QLD1` +951.9 MW and `VIC1-NSW1` -1140.9 MW. These two are far
+larger than a plausible physical loss and are not confirmed as the over-dissipation phenomenon
+this ADR describes - the more likely explanation, not yet investigated, is a region-name mismatch
+between the attached `InterconnectorLossModel`'s `demand_coefficients` keys and this `System`'s six
+`Area`s (`SNOWY1` split out from `NSW1`/`VIC1` in the 2026-27 network), which would silently zero
+that region's demand contribution to the linear coefficient rather than error (see
+[`loss_factor`](@ref)'s stated behaviour for a missing region). This is left as a flagged, unresolved
+finding for a follow-up PR: confirm or rule out the region-mismatch hypothesis before treating the
+two large gaps as evidence of genuine over-dissipation.
 
 ## Consequences
 
