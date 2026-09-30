@@ -248,6 +248,75 @@ end
         @info "Real-data DecisionModel" build_time solve_time total_area_slack_mw
     end
 
+    @testset "interconnector over-dissipation gap and regional price signs" begin
+        # NEMInterconnectorLoss in place of the main model's lossless StaticBranch, so the LP
+        # actually allocates loss segments - the self-consistency check ADR-0022 asks for: does
+        # the LP's own InterconnectorLossVariable at the solved flow match interconnector_losses
+        # evaluated at that same flow (both natural MW), or has the LP over-dissipated?
+        loss_template = aemsim_template(sys)
+        PSI.set_device_model!(loss_template, PSY.AreaInterchange, NEMInterconnectorLoss)
+        loss_model = PSI.DecisionModel(
+            loss_template, sys;
+            optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+            horizon = REAL_SPAN,
+            resolution = REAL_RESOLUTION,
+            interval = REAL_RESOLUTION,
+            initial_time = REAL_START,
+            name = "real_data_losses",
+        )
+        build_status = PSI.build!(loss_model; output_dir = mktempdir())
+        if build_status != PSI.ModelBuildStatus.BUILT
+            err = build_error(loss_model)
+            isnothing(err) || @error "NEMInterconnectorLoss build! did not reach BUILT" exception = err
+        end
+        @test build_status == PSI.ModelBuildStatus.BUILT
+        run_status = PSI.solve!(loss_model)
+        @test run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+        loss_res = PSI.OptimizationProblemResults(loss_model)
+        flow_df = PSI.read_variable(loss_res, "FlowActivePowerVariable__AreaInterchange")
+        loss_df = PSI.read_variable(loss_res, "InterconnectorLossVariable__AreaInterchange")
+        demand_df2 = read_demand(db; resolution = REAL_RESOLUTION)
+        demand_by_time2 = Dict(
+            t => Dict(r.REGIONID => r.TOTALDEMAND for r in eachrow(rows))
+                for (t, rows) in pairs(groupby(demand_df2, :SETTLEMENTDATE))
+        )
+        base_power2 = PSY.get_base_power(sys)
+        over_dissipation_mw = Dict{String, Float64}()
+        for ic in PSY.get_components(PSY.AreaInterchange, sys)
+            name = PSY.get_name(ic)
+            flow_rows = subset(flow_df, :name => ByRow(==(name)))
+            isempty(flow_rows) && continue
+            loss_rows = subset(loss_df, :name => ByRow(==(name)))
+            models = PSY.get_supplemental_attributes(InterconnectorLossModel, ic)
+            length(models) == 1 || continue
+            model_mw = AEM._to_pu(only(models), 1.0 / base_power2)
+            t1_row_flow = first(sort(flow_rows, :DateTime))
+            t1_row_loss = first(sort(loss_rows, :DateTime))
+            demand = get(demand_by_time2, t1_row_flow.DateTime, Dict{String, Float64}())
+            curve_loss = interconnector_losses(model_mw, t1_row_flow.value, demand)
+            over_dissipation_mw[name] = t1_row_loss.value - curve_loss
+        end
+
+        # Each region's solved price sign at t1 - context for whether over-dissipation had a
+        # negative-price incentive to exploit at all.
+        dual_df = PSI.read_dual(loss_res, "CopperPlateBalanceConstraint__Area")
+        price_sign = Dict(
+            r.name => sign(r.value)
+                for r in eachrow(subset(dual_df, :DateTime => ByRow(==(REAL_START))))
+        )
+
+        over_dissipation_report = join(
+            ["$ic: $(round(gap; digits = 5)) MW" for (ic, gap) in sort(collect(over_dissipation_mw))],
+            ", ",
+        )
+        price_sign_report = join(
+            ["$region: $(sign_value > 0 ? "positive" : sign_value < 0 ? "negative" : "zero")" for (region, sign_value) in sort(collect(price_sign))],
+            ", ",
+        )
+        @info "Interconnector over-dissipation gap (LP loss - curve loss at solved flow, MW) and regional price signs" over_dissipation_report price_sign_report
+    end
+
     @testset "FCASMarket builds and solves alongside the constrained System" begin
         # ConstrainedNetworkConfiguration's add_fcas_services! built one FCASService per bid
         # (region, bid type), attaching only the bids FCASMarket models.
@@ -442,6 +511,10 @@ end
         per_ic_mean_error_mw = Dict(
             ic => sum(errs) / length(errs) for (ic, errs) in per_ic_errors
         )
-        @info "Interconnector loss comparison (published MWFLOW -> modelled loss vs published MWLOSSES)" n_compared mean_abs_error_mw max_abs_error_mw per_ic_mean_error_mw
+        per_ic_report = join(
+            ["$ic: $(round(err; digits = 3)) MW" for (ic, err) in sort(collect(per_ic_mean_error_mw))],
+            ", ",
+        )
+        @info "Interconnector loss comparison (published MWFLOW -> modelled loss vs published MWLOSSES)" n_compared mean_abs_error_mw max_abs_error_mw per_ic_report
     end
 end
