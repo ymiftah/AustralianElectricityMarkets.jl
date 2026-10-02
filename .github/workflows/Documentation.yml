@@ -10,6 +10,8 @@ on:
       - "*.toml"
       - ".github/workflows/Documentation.yml"
   pull_request:
+    branches:
+      - main
     paths:
       - "src/**"
       - "docs/**"
