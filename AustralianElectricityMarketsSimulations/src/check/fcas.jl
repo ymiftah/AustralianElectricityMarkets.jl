@@ -1,4 +1,19 @@
 """
+    _fcas_ramp_series_positive(device, bid_type) -> Bool
+
+Whether `device` carries a `"fcas_agc_ramp_rate_<bid_type>"` `PSY.SingleTimeSeries` with any
+positive value.
+
+# Returns
+`Bool`.
+"""
+function _fcas_ramp_series_positive(device::PSY.Device, bid_type::BidType)
+    name = "fcas_agc_ramp_rate_$(string(bid_type))"
+    PSY.has_time_series(device, PSY.SingleTimeSeries, name) || return false
+    return any(>(0.0), PSY.get_time_series_values(PSY.SingleTimeSeries, device, name))
+end
+
+"""
     check_fcas_services(sys, template)
 
 Verifies every available [`FCASService`](@ref) that `template` models under
@@ -6,8 +21,10 @@ Verifies every available [`FCASService`](@ref) that `template` models under
 `PSI.DeviceModel` whose formulation dispatches energy (not `PSI.FixedOutput`), the device
 carries exactly one direction of FCAS bid for that service's market (both directions only on a
 `PSY.Storage` device's regulation market), a decremental-only bid sits only on a `PSY.Storage`
-device, and no device contributes to more than one such `FCASService` of
-the same market.
+device, no device contributes to more than one such `FCASService` of the same market, and a
+regulation contributor with a positive AGC ramp rate also carries an `"initial_mw"` series (AEMO
+*FCAS Model in NEMDE* §6.1's joint ramping constraint needs both; a per-interval gap in
+`"initial_mw"` is skipped silently at build instead of failing the check).
 
 # Arguments
 - `sys`: system to read services and components from.
@@ -69,6 +86,15 @@ function check_fcas_services(sys::PSY.System, template::PSI.ProblemTemplate)
                     "FCASService \"$svc_name\": device \"$dname\" ($(typeof(device))) has only " *
                         "a decremental $(string(bid_type)) bid; scheduled-load FCAS capacity " *
                         "is not modeled.",
+                )
+            end
+            if _is_regulation_service(bid_type) && _fcas_ramp_series_positive(device, bid_type) &&
+                    !PSY.has_time_series(device, PSY.SingleTimeSeries, "initial_mw")
+                push!(
+                    problems,
+                    "FCASService \"$svc_name\": device \"$dname\" ($(typeof(device))) carries a " *
+                        "positive fcas_agc_ramp_rate_$(string(bid_type)) series but no " *
+                        "\"initial_mw\" series; AEMO §6.1's joint ramping constraint needs both.",
                 )
             end
         end
