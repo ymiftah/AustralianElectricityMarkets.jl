@@ -111,6 +111,29 @@ regulation [`FCASService`](@ref) against the device's SCADA ramping capability.
 struct FCASBDURampingConstraint <: PSI.ConstraintType end
 
 """
+    GenericConstraintSlackUp
+
+Variable type for the elastic slack absorbing a [`GenericConstraint`](@ref)'s left-hand side
+above its right-hand side limit, built only when [`LinearFactorLimit`](@ref)'s `sense` is `LE`
+or `EQ` and the owning `PSI.ServiceModel` has `use_slacks = true`. Merged into
+[`NEMConstraintLHS`](@ref) with multiplier `-1.0`.
+"""
+struct GenericConstraintSlackUp <: PSI.VariableType end
+
+"""
+    GenericConstraintSlackDown
+
+Variable type for the elastic slack absorbing a [`GenericConstraint`](@ref)'s left-hand side
+below its right-hand side limit, built only when [`LinearFactorLimit`](@ref)'s `sense` is `GE`
+or `EQ` and the owning `PSI.ServiceModel` has `use_slacks = true`. Merged into
+[`NEMConstraintLHS`](@ref) with multiplier `+1.0`.
+"""
+struct GenericConstraintSlackDown <: PSI.VariableType end
+
+PSI.convert_result_to_natural_units(::Type{GenericConstraintSlackUp}) = true
+PSI.convert_result_to_natural_units(::Type{GenericConstraintSlackDown}) = true
+
+"""
     FCASJointRampingConstraint
 
 Constraint type for AEMO *FCAS Model in NEMDE* §6.1's joint ramping constraint, bounding a
