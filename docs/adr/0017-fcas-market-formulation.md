@@ -75,10 +75,11 @@ is present alongside the lower-form's `LOWERREG` appearance in every lower servi
 container's `meta`), covering every service the same way regardless of direction. A regulation
 service's own two forms use only its own slope/target, matching §6.3's lack of a cross term.
 
-`RAISEREG`'s own target is *not* determined by either form in real dispatch — AEMO's §6.1 joint
-ramping constraint pins it, deferred to a later PR (see the Phase 2 plan, 2.9). The acceptance test
-fixes it to the published value directly, matching the literate example's own framing of it as a
-given input for this worked case, not a value this formulation derives.
+`RAISEREG`'s own target is not determined by either form alone in real dispatch: AEMO's §6.1
+joint ramping constraint (below) also binds it. The acceptance test's fixture carries no AGC ramp
+rate series, so §6.1 builds a placeholder row there; the test fixes the target to the published
+value directly, matching the literate example's own framing of it as a given input for this worked
+case, not a value this formulation derives.
 
 ### The joint LHS is an `ExpressionType`, not an ad hoc `JuMP` expression
 
@@ -313,9 +314,37 @@ interval. Raising both by the same amount leaves net output unchanged but moves 
 own trapezium slope, so a solve that circulates energy can enable regulation NEMDE would not. The
 real-data suite asserts that no battery charges and discharges in the same interval.
 
-**Not modelled: §6.1 joint ramping.** The unit's regulation target is still not bound by the
-telemetered AGC ramp rate against its *energy* dispatch (as opposed to §6.4's bound against the
-*other side's* regulation target) — tracked in the Phase 2 plan, unchanged by this revision.
+**§6.1 joint ramping** now bounds a unit's net energy dispatch combined with its
+`FCASUnitRegulationTarget` against `InitialMW` plus or minus its AGC ramp (§6.4 bounds a
+both-sided device's combined regulation target alone, with no energy term). It reads
+`DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE` (the "lesser of bid or telemetered rate"), not the
+telemetered SCADA rate itself, which MMSDM does not publish - the row can be tighter than
+NEMDE's when the bid rate of change is below the telemetered rate. It is hard until a later PR
+adds the §6.1 surplus/deficit terms (NEMDE's own rows are soft), and Table 3's fast-start
+exclusion (footnote 11) is not modelled. Under `NEMLookaheadDispatch` its own device ramp measures
+against the `DevicePower` initial condition at `t = 1`, not `"initial_mw"`; where they differ,
+§6.1 at a zero regulation target can conflict with the device's own ramp plus availability outside
+the replay objective this package targets.
+
+§6.1 departs from nempy twice, following AEMO. nempy's BDU row adds energy only for the dispatch
+types carrying a regulation bid (`fcas_constraints.py:6-43`), so a single-sided BDU gets its own
+side's energy; we use net energy for every `PSY.Storage` device, per §6.1's unit-level form (one
+signed `INITIALMW`, one rate). nempy also builds rows at a zero ramp rate; we follow AEMO's "rate
+greater than zero" condition.
+
+Real-data evidence (2026-06-04, 1 hour, 1520 built §6.1 rows over both regulation services),
+evaluated at NEMDE's published solution (`TOTALCLEARED`, published regulation targets, `INITIALMW`):
+
+- 10 rows are violated, all `LYA2` `LOWERREG` in consecutive intervals. In each, `TOTALCLEARED`
+  sits exactly at `INITIALMW − RAMPDOWNRATE·Δt` yet NEMDE enabled 5-10 MW of `LOWERREG`. This is
+  the ramp-rate departure above: NEMDE's energy ramp uses the bid-capped rate, its §6.1 row the
+  looser telemetered one. No battery zero-crossing and no AGC-off unit shows a violation. The
+  real-data suite asserts that every violation carries this signature.
+- Two-sided battery `RAISEREGACTUALAVAILABILITY` at `t = 1`, from §7's formula at the published
+  `TOTALCLEARED`: 31/42 match with the §6.1 term (5), 33/42 without it (the earlier bound-only
+  proxy matched 20/42). The two mismatches term (5) adds are not yet diagnosed; the ramp-rate
+  departure is the likely cause. `LOWERREG` matches 15/42
+  with or without term (5); its combined-trapezium mirroring is a rougher approximation.
 
 ## Decision
 
@@ -351,6 +380,13 @@ telemetered AGC ramp rate against its *energy* dispatch (as opposed to §6.4's b
 - `get_fcas_agc_status` (root) reads `"fcas_agc_status"` ([`set_fcas_scaling_inputs!`](@ref)).
 - `scale_trapezium` returns an `FCASTrapezium`; `EffectiveTrapezium` and the local
   `lower_slope_coeff`/`upper_slope_coeff` are removed from `AustralianElectricityMarketsSimulations`.
+- `FCASJointRampingConstraint` is built in its own `if is_regulation` block over every
+  contributing device (single- and both-sided), after the §6.2/§6.4 blocks: net energy
+  (`_fcas_net_energy_terms`, unit-level even for a single-sided `PSY.Storage` device, per AEMO's
+  unit-level form) plus `FCASUnitRegulationTarget` against `InitialMW` plus or minus the AGC ramp
+  capability (`_fcas_agc_ramp_caps`, generalised from the BDU-only `_fcas_bdu_ramp_caps` §6.4 also
+  now calls), gated to a vacuous row wherever the ramp capability is zero/absent, `InitialMW` is
+  unknown at that interval, or the device isn't enabled for the service at that interval.
 - Cross-checked against nempy (UNSW-CEEM/nempy, commit `2d3cef0`). The per-side model matches its
   `energy_and_regulation_capacity_constraints`, and its load-side energy sign flip
   (`spot_market_backend/variable_ids.py:160-172`). One difference: nempy's
@@ -366,13 +402,15 @@ telemetered AGC ramp rate against its *energy* dispatch (as opposed to §6.4's b
 - Per-band FCAS dispatch is not retrievable from a solved model's results — only the aggregate
   `FCASCapacityVariable`. Retrievable per-band detail can be added later without changing the cost
   arithmetic, by registering a real `PSI.VariableType` for the bands.
-- §6.1 joint ramping (regulation's own binding constraint against a unit's *energy* dispatch in
-  real dispatch) remains unimplemented; a `FCASMarket` build lets a regulation service's per-side
-  capacity rise as far as that side's own trapezium, `MAXAVAIL` and (for a both-sided device)
-  §6.4's ramping cap allow, which a `System` with no §6.1 ramping data will not further correct.
+- §6.1's joint ramping row is built for every contributing device of a regulation service, not
+  just a both-sided `PSY.Storage` device; a `System` with no `"fcas_agc_ramp_rate_*"` series
+  attached for a device builds a vacuous row there instead, leaving that device's regulation
+  capacity bounded only by its trapezium, `MAXAVAIL` and (for a both-sided device) §6.4's ramping
+  cap, same as before this row existed.
 - `FCASMarket` throws when built for recurrent solves (a `Simulation`), since it reads FCAS data
-  and the §5 gate once at build; records duals only for `FCASJointCapacityConstraint`, throwing on
-  any other requested type; and throws when a device contributes to more than one `FCASService`
+  and the §5 gate once at build; records duals only for `FCASJointCapacityConstraint` and
+  `FCASJointRampingConstraint`, throwing on any other requested type; and throws when a device
+  contributes to more than one `FCASService`
   of the same market, since each would carry its own `MaxAvail`-bounded capacity and only one
   regulation target could enter the §6.2 rows. `check_fcas_services` reports the same up front,
   scoped to the available services and devices the template models under `FCASMarket`.

@@ -99,10 +99,11 @@ front, so every group runs on its own.
 ## NEM correctness
 
 Any change to the optimisation model (a dispatch, FCAS, constraint or loss formulation in
-`…Simulations/src/`, or the NEM types, bids and limits it reads from `src/`) is validated against
-AEMO's official documentation through the `nem-expert` skill. Load it when planning the change
-and again when reviewing it; every variable bound, constraint and cost term needs a matching
-AEMO source. Where the code departs from AEMO, record the departure in an ADR.
+`…Simulations/src/`, or the NEM types, bids and limits it reads from `src/`) must be checked against
+AEMO's official documentation. Load the user-level `nem-expert` skill during planning and again when
+reviewing the change. It is installed in `~/.agents/skills/nem-expert/` and is shared across
+projects. Follow its source-routing guidance and cite the matching AEMO source for every variable
+bound, constraint and cost term. Record any departure from AEMO in an ADR.
 
 ## Gotchas
 

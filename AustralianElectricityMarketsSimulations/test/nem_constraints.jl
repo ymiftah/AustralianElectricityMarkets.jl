@@ -90,6 +90,34 @@ function _add_storage_constraint!(sys, params, rhs_mw::Float64)
 end
 
 """
+    _add_infeasible_energy_requirement!(sys, params, duid, rhs_mw)
+
+Attaches an extra `>=` `GenericConstraint` named `N_INFEASIBLE_MIN`, one ENERGY `UnitTerm` on
+`duid` with `rhs_mw` set above that unit's max capacity, genuinely unreachable under a hard
+bound. `rhs_mw` is natural MW; stored per-unit like every other [`GenericConstraint`](@ref).
+"""
+function _add_infeasible_energy_requirement!(sys, params, duid::AbstractString, rhs_mw::Float64)
+    base_power = get_base_power(sys)
+    rhs_pu = rhs_mw / base_power
+    times, n_raw = _raw_series_times(params)
+    gc = GenericConstraint(;
+        name = "N_INFEASIBLE_MIN",
+        sense = ConstraintSense.GE,
+        rhs = rhs_pu,
+        terms = ConstraintTerm[UnitTerm(duid, BidType.ENERGY, 1.0)],
+    )
+    add_service!(sys, gc, [get_component(ThermalStandard, sys, duid)])
+    add_time_series!(
+        sys, gc, SingleTimeSeries(; name = "rhs", data = TimeArray(times, fill(rhs_pu, n_raw))),
+    )
+    add_time_series!(
+        sys, gc,
+        SingleTimeSeries(; name = "invoked", data = TimeArray(times, fill(1.0, n_raw))),
+    )
+    return
+end
+
+"""
     _retime_gc_series!(sys, params, overrides_mw, invoked_overrides = Dict{String, Vector{Float64}}())
 
 Replaces every added [`GenericConstraint`](@ref)'s `"rhs"`/`"invoked"` `Deterministic` series
@@ -186,11 +214,16 @@ function _prune_unbuildable_constraints!(sys)
     return
 end
 
-function _nem_service_template()
+function _nem_service_template(; use_slacks::Bool = false, market_price_cap::Union{Nothing, Float64} = nothing)
     template = _area_balance_template()
+    attributes = isnothing(market_price_cap) ? Dict{String, Any}() :
+        Dict{String, Any}("market_price_cap" => market_price_cap)
     PSI.set_service_model!(
         template,
-        PSI.ServiceModel(GenericConstraint, AEMS.LinearFactorLimit; duals = [AEMS.NEMConstraintLimit]),
+        PSI.ServiceModel(
+            GenericConstraint, AEMS.LinearFactorLimit; duals = [AEMS.NEMConstraintLimit],
+            use_slacks = use_slacks, attributes = attributes,
+        ),
     )
     return template
 end
@@ -599,4 +632,86 @@ end
             if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit
     ]
     @test Set(k.meta for k in nem_keys) == Set(PSY.get_name.(buildable))
+end
+
+function _sys_with_infeasible_requirement()
+    sys = _prepared_system()
+    params = _native_forecast_params(sys)
+    # 10x TOY_CHEAP-equivalent max capacity on "Park City" - genuinely unreachable regardless of
+    # dispatch, mirroring the plan's TAS1 RAISE6SEC case (a real interval whose requirement
+    # wasn't met), not merely a tightened-but-satisfiable bound.
+    max_mw = get_max_active_power(get_component(ThermalStandard, sys, "Park City"))
+    _add_infeasible_energy_requirement!(sys, params, "Park City", max_mw * 10)
+    # _prepared_system() already ran transform_single_time_series! once; N_INFEASIBLE_MIN's raw
+    # SingleTimeSeries, added after, needs its own pass to become a DeterministicSingleTimeSeries.
+    transform_single_time_series!(sys, params.horizon, params.interval)
+    _prune_unbuildable_constraints!(sys)
+    for id in ("N_IC1_LIMIT", "N_PARTIAL")
+        remove_component!(sys, _gc(sys, id))
+    end
+    return sys
+end
+
+@testset "a genuinely violated interval is infeasible under a hard GenericConstraint, but builds and solves with a nonzero slack when elastic" begin
+    hard_sys = _sys_with_infeasible_requirement()
+    hard_model = PSI.DecisionModel(
+        _nem_service_template(; use_slacks = false), hard_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
+    )
+    @test PSI.build!(hard_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    PSI.solve!(hard_model)
+    @test PSI.get_run_status(hard_model) != PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+    # Same network template as the hard case above; only the GenericConstraint ServiceModel's
+    # use_slacks differs. This fixture's dates predate the published MPC table, so the test
+    # supplies its own market_price_cap override rather than the financial-year lookup.
+    test_mpc = 20_300.0
+    elastic_sys = _sys_with_infeasible_requirement()
+    elastic_model = PSI.DecisionModel(
+        _nem_service_template(; use_slacks = true, market_price_cap = test_mpc), elastic_sys;
+        optimizer = HiGHS.Optimizer, horizon = Hour(2),
+    )
+    @test PSI.build!(elastic_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    PSI.solve!(elastic_model)
+    @test PSI.get_run_status(elastic_model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+    # PSI.OptimizationProblemResults, not a direct JuMP.value on the container: after a full
+    # DecisionModel solve, the container's own JuMP model result cache is unreliable to read.
+    results = PSI.OptimizationProblemResults(elastic_model)
+    name = PSY.get_name(get_component(GenericConstraint, elastic_sys, "N_INFEASIBLE_MIN"))
+    slack_df = PSI.read_variable(results, "GenericConstraintSlackDown__GenericConstraint__$name")
+    energy_df = PSI.read_variable(results, "ActivePowerVariable__ThermalStandard")
+    park_city_mw = subset(energy_df, :name => ByRow(==("Park City"))).value
+    # with_units_base, not a bare get_max_active_power: PSI's own build/solve leaves elastic_sys
+    # in SYSTEM_BASE units, so an unguarded read here returns per-unit, not MW.
+    max_mw = PSY.with_units_base(
+        () -> get_max_active_power(get_component(ThermalStandard, elastic_sys, "Park City")),
+        elastic_sys, "NATURAL_UNITS",
+    )
+
+    @test all(v -> v >= 0.0, slack_df.value)
+    @test any(v -> v > 1.0e-6, slack_df.value)
+    # GE constraint minimized elastically binds exactly: slack = rhs - achieved dispatch.
+    @test slack_df.value .+ park_city_mw ≈ fill(max_mw * 10, length(slack_df.value)) atol = 1.0e-4
+
+    container = PSI.get_optimization_container(elastic_model)
+    @test !PSI.has_container_key(container, AEMS.GenericConstraintSlackUp, GenericConstraint, name)
+    @test PSI.get_objective_value(results) > 0.0
+
+    # PSI leaves a ConstraintType dual in $ per pu of RHS per interval: divide by base_power and
+    # the interval length for a $/MW rate.
+    dual_df = PSI.read_dual(results, "NEMConstraintLimit__GenericConstraint__$name")
+    resolution = PSI.get_resolution(container)
+    base_power = PSY.get_base_power(elastic_sys)
+    weight = get_constraint_weight(get_component(GenericConstraint, elastic_sys, "N_INFEASIBLE_MIN"))
+    @test abs.(dual_df.value) ./ (base_power * interval_hours(resolution)) ≈
+        fill(weight * test_mpc, nrow(dual_df)) rtol = 1.0e-6
+end
+
+@testset "Market Price Cap lookup covers only the published financial years" begin
+    @test AEMS._financial_year_mpc(DateTime(2025, 7, 1)) == 20_300.0
+    @test AEMS._financial_year_mpc(DateTime(2026, 6, 30, 23, 55)) == 20_300.0
+    @test AEMS._financial_year_mpc(DateTime(2026, 7, 1)) == 23_200.0
+    @test AEMS._financial_year_mpc(DateTime(2027, 6, 30, 23, 55)) == 23_200.0
+    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2025, 6, 30))
+    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2027, 7, 1))
 end

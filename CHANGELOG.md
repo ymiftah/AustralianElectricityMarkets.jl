@@ -75,6 +75,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Elastic `GenericConstraint`s under `LinearFactorLimit`** (`AustralianElectricityMarketsSimulations`):
+  `GenericConstraintSlackUp`/`GenericConstraintSlackDown` variables, built only for the side(s)
+  `get_sense(gc)` needs and only when the owning `PSI.ServiceModel` sets `use_slacks = true`,
+  merged into `NEMConstraintLHS` so a genuinely violated interval builds and solves with a nonzero
+  slack instead of an infeasible LP. `objective_function!` for `LinearFactorLimit` now prices each
+  slack at `GENERICCONSTRAINTWEIGHT * Market Price Cap` for the interval's financial year (a new
+  `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` table, overridable per `PSI.ServiceModel` via a
+  `"market_price_cap"` attribute), converted to an objective coefficient the same way every other
+  price in this package's objective is (`interval_cost_coefficient`, `base_power`). Years absent
+  from the published table throw instead of reusing an earlier year's cap.
+- **`FCASJointRampingConstraint`, AEMO *FCAS Model in NEMDE* §6.1's joint ramping constraint**
+  (`AustralianElectricityMarketsSimulations`): for every contributing device of a regulation
+  `FCASService`, bounds the device's net energy dispatch combined with its
+  `FCASUnitRegulationTarget` against `InitialMW` plus or minus its telemetered AGC ramp
+  (`get_fcas_agc_ramp_capability`, shared with §4.2 and §6.4 through the generalised
+  `_fcas_agc_ramp_caps`). Built over every contributing device regardless of bid direction, gated
+  to a vacuous row wherever the ramp capability is zero or absent, `InitialMW` is unknown at that
+  interval, or the device isn't enabled for the service. `check_fcas_services` now also reports a
+  regulation contributor that carries a positive AGC ramp rate but no `"initial_mw"` series.
 - **`NEMInterconnectorLoss`, the interconnector loss formulation** (`AustralianElectricityMarketsSimulations`):
   a `PSY.AreaInterchange` device formulation that reads Phase 1's `InterconnectorLossModel`
   `PSY.SupplementalAttribute` (root package's `attach_interconnector_losses!`) and linearises
