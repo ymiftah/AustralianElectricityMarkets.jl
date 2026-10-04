@@ -150,16 +150,21 @@ the focused real-data loss checks passed seven, and the interconnector-reader ch
 
 ## Construction support, 2026-10-02
 
-The formulation supports standalone `DecisionModel`s using `AreaBalancePowerModel` or
-`AreaPTDFPowerModel`. In the PTDF model, PSI's existing `LineFlowBoundConstraint` helper
-links each interchange variable to the signed sum of its physical boundary-branch flows.
-The static interchange limits and the loss equations therefore use the same transfer as the
-physical network, including reversed branch orientations in a meshed network. AEMO's
+The formulation supports standalone `DecisionModel`s using `AreaBalancePowerModel` only, and
+rejects every other network model with an `ArgumentError`. NEMDE balances energy per region with
+interconnectors as notional links; network physics enters through generic constraint equations,
+not a PTDF. AEMO's
 [Marginal Loss Factors FY2026-27](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2026-27/marginal-loss-factors-for-the-2026-27-financial-year.pdf),
 section 4, pp. 64-70, defines the loss equations in terms of the notional-link transfer.
-The boundary-flow equality is PSI's representation of this transfer consistency; AEMO does
-not prescribe PSI's constraint type or a PTDF network implementation. No new cost term or
-flow bound is introduced by this correction.
+
+`AreaPTDFPowerModel` was tried and removed. Equating each interchange flow to the signed sum of
+its PTDF boundary-branch flows (PSI's `LineFlowBoundConstraint`) forces the loss share to zero:
+losses enter only the area balances, so the nodal injections feeding the PTDF sum to the total
+loss and the reference bus absorbs it. With `loss_constant = 1.05` on a three-area mesh every
+interchange flow and loss solved to zero and the cheap area's generation was stranded; the same
+model was correct only for a lossless curve. Supporting PTDF would need each area's loss share
+injected as a nodal withdrawal, or the link made on sending-end and receiving-end flows. That is
+outside NEMDE's regional model and is not planned.
 
 Demand is snapshotted from available `PowerLoad`s at construction, with each forecast's
 scaling factor applied once. This matches the availability selection of PSI's
@@ -177,13 +182,6 @@ update machinery for a reused `Simulation` is deferred. This is an explicit impl
 restriction rather than an assertion that NEMDE holds demand constant between intervals.
 The existing choice of modeled regional demand and the negative weighted-price segment
 ordering limitation remain unchanged.
-
-Under `AreaPTDFPowerModel` the physical-branch link matters: on a three-area mesh with a
-lossless curve, `AreaBalancePowerModel` returns circulating interchange flows (AC 200 MW,
-BC -200 MW against AB -100 MW) that no network supports, while the PTDF model reproduces the
-2/3, 1/3, -1/3 split and the same dispatch as PSI's stock `StaticBranch` interchange. The test
-fixture removes every `PSY.ACTransmission`, not only `Line`s, since leftover transformers alter
-the PTDF.
 
 The loss variable stays unbounded above. The nonpositive weighted-price case cannot be rejected
 at build time because prices are an output of the solve, so `check_interconnector_loss_segments`

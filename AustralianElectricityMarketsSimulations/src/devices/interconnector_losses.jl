@@ -6,8 +6,8 @@
 
 Device formulation for `PSY.AreaInterchange` that apportions the attached
 [`InterconnectorLossModel`](@ref)'s segment losses between its two areas. Supports
-`PSI.AreaBalancePowerModel` and `PSI.AreaPTDFPowerModel`; missing or ambiguous loss models and
-concave curves throw `ArgumentError`. Recurrent solves are unsupported; rebuild the standalone
+`PSI.AreaBalancePowerModel` only, matching NEMDE's regional balance; other network models,
+missing or ambiguous loss models and concave curves throw `ArgumentError`. Recurrent solves are unsupported; rebuild the standalone
 `DecisionModel` when demand forecasts or load availability change.
 
 # Notes
@@ -275,7 +275,7 @@ function _add_flow_limit_constraint!(
         devices,
         device_model::PSI.DeviceModel{PSY.AreaInterchange, NEMInterconnectorLoss},
         ::PSI.NetworkModel{U},
-    ) where {U <: Union{PSI.AreaBalancePowerModel, PSI.AreaPTDFPowerModel}}
+    ) where {U <: PSI.AreaBalancePowerModel}
     time_steps = PSI.get_time_steps(container)
     device_names = PSY.get_name.(devices)
 
@@ -338,7 +338,7 @@ function PSI.construct_device!(
         ::PSI.ArgumentConstructStage,
         device_model::PSI.DeviceModel{PSY.AreaInterchange, NEMInterconnectorLoss},
         network_model::PSI.NetworkModel{U},
-    ) where {U <: Union{PSI.AreaBalancePowerModel, PSI.AreaPTDFPowerModel}}
+    ) where {U <: PSI.AreaBalancePowerModel}
     PSI.built_for_recurrent_solves(container) && throw(
         ArgumentError(
             "NEMInterconnectorLoss supports a standalone `DecisionModel` only: " *
@@ -394,16 +394,25 @@ function PSI.construct_device!(
         ::PSI.ModelConstructStage,
         device_model::PSI.DeviceModel{PSY.AreaInterchange, NEMInterconnectorLoss},
         network_model::PSI.NetworkModel{U},
-    ) where {U <: Union{PSI.AreaBalancePowerModel, PSI.AreaPTDFPowerModel}}
+    ) where {U <: PSI.AreaBalancePowerModel}
     devices = PSI.get_available_components(device_model, sys)
     isempty(devices) && return
     _add_flow_limit_constraint!(container, devices, device_model, network_model)
-    if U <: PSI.AreaPTDFPowerModel
-        PSI.add_constraints!(
-            container, PSI.LineFlowBoundConstraint, devices, device_model, network_model,
-            PSI._get_branch_map(network_model),
-        )
-    end
     PSI.add_feedforward_constraints!(container, device_model, devices)
+    return
+end
+
+function PSI.construct_device!(
+        ::PSI.OptimizationContainer,
+        ::PSY.System,
+        ::Union{PSI.ArgumentConstructStage, PSI.ModelConstructStage},
+        ::PSI.DeviceModel{PSY.AreaInterchange, NEMInterconnectorLoss},
+        ::PSI.NetworkModel{U},
+    ) where {U <: PM.AbstractPowerModel}
+    throw(
+        ArgumentError(
+            "NEMInterconnectorLoss supports PSI.AreaBalancePowerModel only, got $U",
+        ),
+    )
     return
 end

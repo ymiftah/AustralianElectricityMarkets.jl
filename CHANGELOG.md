@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `NEMInterconnectorLoss` now links `AreaPTDFPowerModel` interchange flows to signed physical
-  boundary-branch flows, so interchange limits also constrain the physical transfer.
+- `NEMInterconnectorLoss` throws an `ArgumentError` for any network model other than
+  `AreaBalancePowerModel`, the regional balance NEMDE uses.
 - Interconnector demand-dependent loss coefficients exclude unavailable `PowerLoad`s and retain
   forecast scaling. Recurrent solves now fail with a rebuild diagnostic; standalone
-  `DecisionModel`s with `AreaBalancePowerModel` or `AreaPTDFPowerModel` remain supported.
+  `DecisionModel`s with `AreaBalancePowerModel` remain supported.
 - `NEMInterconnectorLoss` rejects an available `PowerLoad` on a bus with no area with an
   `ArgumentError`, and builds without loss terms when no `AreaInterchange` is available.
 - `read_interconnectors` throws an `ArgumentError` naming `DISPATCHREGIONSUM` when that table is
