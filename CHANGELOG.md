@@ -66,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **"From NEM dispatch to PowerSimulations.jl" explanation page** (`docs/literate/intro_to_psi_nem.jl`): builds a two-region toy NEM (bid stacks, ramp limits from initial MW, regional balance, interconnector, RAISE6SEC FCAS trapezium, a generic constraint) first as a hand-written JuMP model, then as a PSY `System` plus a PSI template using `NEMReplayDispatch`, `FCASMarket` and `LinearFactorLimit`, and checks the two agree. The docs environment now depends on JuMP, `AustralianElectricityMarketsData` and `AustralianElectricityMarketsSimulations` (with the pinned PowerSimulations fork).
 - **`FCASJointRampingConstraint`, AEMO *FCAS Model in NEMDE* §6.1's joint ramping constraint**
   (`AustralianElectricityMarketsSimulations`): for every contributing device of a regulation
   `FCASService`, bounds the device's net energy dispatch combined with its
