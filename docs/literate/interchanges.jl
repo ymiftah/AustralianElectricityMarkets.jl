@@ -59,6 +59,17 @@ set_market_bids!(sys, db, date_range; resolution = interval)
 transform_single_time_series!(sys, horizon, interval);
 @show sys
 
+# ## Interconnector losses
+#
+# To include an attached `InterconnectorLossModel`, use
+# `AustralianElectricityMarketsSimulations.NEMInterconnectorLoss` for `AreaInterchange`.
+# It supports standalone `DecisionModel`s with `AreaBalancePowerModel` or
+# `AreaPTDFPowerModel`. The PTDF model links each interchange to the signed sum of its
+# physical boundary-branch flows, so its limits and loss curve describe the same transfer.
+# Demand-dependent loss coefficients use available `PowerLoad` forecasts at construction.
+# Rebuild the `DecisionModel` when demand forecasts or load availability change; recurrent
+# solves through a reused `Simulation` are rejected. Forecast scaling is applied once.
+#
 # ## Set up the problem
 
 begin

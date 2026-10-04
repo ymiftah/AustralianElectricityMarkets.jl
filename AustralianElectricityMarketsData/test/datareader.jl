@@ -49,6 +49,22 @@ let
         @test !("SNOWY_RETIRED" in vcat(df.REGIONFROM, df.REGIONTO))
     end
 
+    @testset "read_interconnectors requires a populated DISPATCHREGIONSUM" begin
+        bare_dir = mktempdir()
+        for table in ("INTERCONNECTOR", "INTERCONNECTORCONSTRAINT")
+            cp(joinpath(hive_dir, table), joinpath(bare_dir, table); force = true)
+        end
+        bare_db = aem_connect(HiveConfiguration(hive_location = bare_dir, filesystem = "file"))
+        err = try
+            read_interconnectors(bare_db)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("DISPATCHREGIONSUM", sprint(showerror, err))
+    end
+
     @testset "read_demand" begin
         df = read_demand(db)
         @test df isa DataFrame

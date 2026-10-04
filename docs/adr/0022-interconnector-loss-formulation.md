@@ -147,3 +147,44 @@ This removes an expected interpolation error that made the multi-segment toy tes
 its segment-order assertion passing. The toy test also checks a hand-derived chord formula,
 independently of the diagnostic. On 2026-10-01, the interconnector-loss group passed 23 assertions,
 the focused real-data loss checks passed seven, and the interconnector-reader checks passed five.
+
+## Construction support, 2026-10-02
+
+The formulation supports standalone `DecisionModel`s using `AreaBalancePowerModel` or
+`AreaPTDFPowerModel`. In the PTDF model, PSI's existing `LineFlowBoundConstraint` helper
+links each interchange variable to the signed sum of its physical boundary-branch flows.
+The static interchange limits and the loss equations therefore use the same transfer as the
+physical network, including reversed branch orientations in a meshed network. AEMO's
+[Marginal Loss Factors FY2026-27](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2026-27/marginal-loss-factors-for-the-2026-27-financial-year.pdf),
+section 4, pp. 64-70, defines the loss equations in terms of the notional-link transfer.
+The boundary-flow equality is PSI's representation of this transfer consistency; AEMO does
+not prescribe PSI's constraint type or a PTDF network implementation. No new cost term or
+flow bound is introduced by this correction.
+
+Demand is snapshotted from available `PowerLoad`s at construction, with each forecast's
+scaling factor applied once. This matches the availability selection of PSI's
+`StaticPowerLoad` regional balance. AEMO's section 4.1, p. 64, explicitly makes the QNI
+linear coefficient depend on NSW and Queensland demand; the
+[Electricity Data Model Report](https://visualisations.aemo.com.au/aemo/nemweb/MMSDataModelReport/),
+version 5.7.0, `LOSSFACTORMODEL`, pp. 408-409, defines `DEMANDCOEFFICIENT` as the coefficient
+applied to regional demand in calculating the interconnector loss factor.
+
+The loss-definition rows contain numeric demand-dependent coefficients. Recurrent solves
+are rejected at argument construction, matching the existing `FCASMarket` restriction.
+Callers must rebuild the `DecisionModel` after changing demand forecasts or load
+availability. Rebuilding is the supported interval-refresh path; parameter and coefficient
+update machinery for a reused `Simulation` is deferred. This is an explicit implementation
+restriction rather than an assertion that NEMDE holds demand constant between intervals.
+The existing choice of modeled regional demand and the negative weighted-price segment
+ordering limitation remain unchanged.
+
+Under `AreaPTDFPowerModel` the physical-branch link matters: on a three-area mesh with a
+lossless curve, `AreaBalancePowerModel` returns circulating interchange flows (AC 200 MW,
+BC -200 MW against AB -100 MW) that no network supports, while the PTDF model reproduces the
+2/3, 1/3, -1/3 split and the same dispatch as PSI's stock `StaticBranch` interchange. The test
+fixture removes every `PSY.ACTransmission`, not only `Line`s, since leftover transformers alter
+the PTDF.
+
+The loss variable stays unbounded above. The nonpositive weighted-price case cannot be rejected
+at build time because prices are an output of the solve, so `check_interconnector_loss_segments`
+reports the resulting gaps after the fact.

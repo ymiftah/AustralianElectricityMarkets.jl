@@ -246,3 +246,164 @@ end
     @test !isempty(gaps)
     @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
 end
+
+@testset "recurrent solves require rebuilding demand-dependent losses" begin
+    sys = _loss_test_system(; demand_coefficients = Dict("2" => 1.0e-4))
+    model = PSI.DecisionModel(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    container = PSI.get_optimization_container(model)
+    container.built_for_recurrent_solves = true
+    err = try
+        PSI.construct_device!(
+            container, sys, PSI.ArgumentConstructStage(),
+            PSI.DeviceModel(PSY.AreaInterchange, AEMS.NEMInterconnectorLoss),
+            PSI.NetworkModel(PSI.AreaBalancePowerModel),
+        )
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("rebuild", sprint(showerror, err))
+    @test occursin("demand", sprint(showerror, err))
+end
+
+@testset "rebuilt models refresh demand coefficients and exclude disabled loads" begin
+    # A linear loss curve makes this a closed-form check independent of interpolation.
+    for (multiplier, disable_load) in ((1.0, false), (2.0, false), (1.0, true))
+        sys = _loss_test_system(; demand_coefficients = Dict("2" => 1.0e-4))
+        area2_loads = collect(
+            PSY.get_components(
+                l -> PSY.get_name(PSY.get_area(PSY.get_bus(l))) == "2", PSY.PowerLoad, sys,
+            )
+        )
+        for load in area2_loads
+            PSY.set_max_active_power!(load, multiplier * PSY.get_max_active_power(load))
+        end
+        disable_load && PSY.set_available!(first(area2_loads), false)
+        expected_demand = sum(
+            PSY.get_max_active_power(l) for l in area2_loads if PSY.get_available(l); init = 0.0,
+        )
+        model = PSI.DecisionModel(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        container = PSI.get_optimization_container(model)
+        demand = AEMS._area_demand(container, sys)
+        base = PSY.get_base_power(sys)
+        @test get(demand, "2", zeros(2)) .* base ≈ fill(expected_demand, 2)
+        @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        res = PSI.OptimizationProblemResults(model)
+        flow_df = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
+        loss_df = PSI.read_variable(res, "InterconnectorLossVariable__AreaInterchange")
+        slope = 0.05 + 1.0e-4 * expected_demand
+        definitions = PSI.get_constraint(container, AEMS.InterconnectorLossDefinitionConstraint(), PSY.AreaInterchange)
+        segments = PSI.get_variable(container, AEMS.InterconnectorLossSegmentVariable(), PSY.AreaInterchange)
+        for (t, stamp) in enumerate(sort(unique(flow_df.DateTime)))
+            @test PSI.JuMP.normalized_coefficient(definitions["IC1", t], segments["IC1", "1", t]) ≈ -slope
+            flow = only(subset(flow_df, :DateTime => ByRow(==(stamp)), :name => ByRow(==("IC1")))).value
+            loss = only(subset(loss_df, :DateTime => ByRow(==(stamp)), :name => ByRow(==("IC1")))).value
+            @test flow ≈ expected_demand / (1.0 - 0.6 * slope) atol = 1.0e-6
+            @test loss ≈ slope * flow atol = 1.0e-6
+        end
+    end
+end
+
+function _meshed_loss_system(ab_limit)
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(200.0, [(200.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(200.0, [(200.0, 100.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        100.0,
+    )
+    area_a = PSY.get_component(PSY.Area, sys, "1")
+    area_b = PSY.Area(; name = "B")
+    area_c = PSY.Area(; name = "C")
+    PSY.add_component!(sys, area_b)
+    PSY.add_component!(sys, area_c)
+    buses = Dict(i => PSY.get_component(PSY.ACBus, sys, "bus$i") for i in 1:5)
+    PSY.set_area!(buses[2], area_b)
+    PSY.set_area!(buses[3], area_c)
+    PSY.set_bus!(PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE), buses[2])
+    PSY.set_bus!(PSY.get_component(PSY.PowerLoad, sys, "bus4"), buses[2])
+    for line in collect(PSY.get_components(PSY.ACTransmission, sys))
+        PSY.remove_component!(sys, line)
+    end
+    # Equal reactances give AB=2/3 of A's injection; BC is negative for A-to-B transfer.
+    for (name, f, t) in (("AB", 1, 2), ("AC", 1, 3), ("BC", 2, 3), ("A4", 1, 4), ("A5", 1, 5))
+        PSY.add_component!(
+            sys, PSY.Line(;
+                name, available = true, active_power_flow = 0.0, reactive_power_flow = 0.0,
+                arc = PSY.Arc(; from = buses[f], to = buses[t]), r = 0.0, x = 0.1,
+                b = (from = 0.0, to = 0.0), rating = 500.0 / PSY.get_base_power(sys),
+                angle_limits = (min = -pi, max = pi),
+            )
+        )
+    end
+    for (name, from_area, to_area) in (("AB", area_a, area_b), ("AC", area_a, area_c), ("BC", area_b, area_c))
+        limit = name == "AB" ? ab_limit : 200.0
+        ic = PSY.AreaInterchange(;
+            name, available = true, active_power_flow = 0.0, from_area, to_area,
+            flow_limits = (from_to = limit, to_from = limit),
+        )
+        PSY.add_component!(sys, ic)
+        PSY.set_flow_limits!(ic, (from_to = limit, to_from = limit))
+        PSY.add_supplemental_attribute!(
+            sys, ic, AEMS.InterconnectorLossModel(;
+                interconnector = name, from_region = PSY.get_name(from_area),
+                to_region = PSY.get_name(to_area), from_region_loss_share = 0.5,
+                loss_constant = 1.0, loss_flow_coefficient = 0.0,
+                demand_coefficients = Dict{String, Float64}(),
+                breakpoints = [-200.0, 200.0] ./ PSY.get_base_power(sys),
+            )
+        )
+    end
+    return sys
+end
+
+@testset "AreaPTDF losses link signed physical boundary flows and enforce interchange limits" begin
+    for (limit, cheap_dispatch) in ((200.0, 100.0), (20.0, 30.0))
+        sys = _meshed_loss_system(limit)
+        template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaPTDFPowerModel; use_slacks = false))
+        set_nem_dispatch_models!(template, sys)
+        PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+        PSI.set_device_model!(template, PSY.Line, PSI.StaticBranch)
+        PSI.set_device_model!(template, PSY.AreaInterchange, AEMS.NEMInterconnectorLoss)
+        model = PSI.DecisionModel(
+            template, sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
+            resolution = TOY_RESOLUTION, initial_time = TOY_START,
+        )
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        res = PSI.OptimizationProblemResults(model)
+        flow_df = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
+        generation_df = PSI.read_variable(res, "ActivePowerVariable__ThermalStandard")
+        cheap = only(subset(generation_df, :name => ByRow(==(TOY_CHEAP)))).value
+        @test cheap ≈ cheap_dispatch atol = 1.0e-6
+        for (name, fraction) in (("AB", 2 / 3), ("AC", 1 / 3), ("BC", -1 / 3))
+            flow = only(subset(flow_df, :name => ByRow(==(name)))).value
+            @test flow ≈ fraction * cheap_dispatch atol = 1.0e-6
+        end
+    end
+end
+
+@testset "area demand rejects a load on an area-less bus" begin
+    sys = _loss_test_system()
+    load = first(PSY.get_components(PSY.PowerLoad, sys))
+    PSY.set_area!(PSY.get_bus(load), nothing)
+    err = try
+        AEMS._area_demand(Dates.DateTime(2000, 1, 1), 2, sys)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin(PSY.get_name(load), sprint(showerror, err))
+end
+
+@testset "no available AreaInterchange builds without loss variables" begin
+    sys = _loss_test_system()
+    foreach(d -> PSY.set_available!(d, false), PSY.get_components(PSY.AreaInterchange, sys))
+    model = PSI.DecisionModel(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    @test !PSI.has_container_key(container, AEMS.InterconnectorLossVariable, PSY.AreaInterchange)
+end

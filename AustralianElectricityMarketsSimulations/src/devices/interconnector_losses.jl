@@ -7,7 +7,8 @@
 Device formulation for `PSY.AreaInterchange` that apportions the attached
 [`InterconnectorLossModel`](@ref)'s segment losses between its two areas. Supports
 `PSI.AreaBalancePowerModel` and `PSI.AreaPTDFPowerModel`; missing or ambiguous loss models and
-concave curves throw `ArgumentError`.
+concave curves throw `ArgumentError`. Recurrent solves are unsupported; rebuild the standalone
+`DecisionModel` when demand forecasts or load availability change.
 
 # Notes
 Loss matches the breakpoint interpolation when its weighted marginal price is positive; zero or
@@ -125,7 +126,7 @@ end
 """
     _area_demand(container, sys) -> Dict{String, Vector{Float64}}
 
-Total `PSY.PowerLoad` active power per area and dispatch timestep, in the system's current units.
+Total available `PSY.PowerLoad` active power per area and dispatch timestep, in the system's current units.
 Time-series scaling factors are applied once by `PSY.get_time_series_values`.
 
 # Returns
@@ -138,13 +139,26 @@ end
 function _area_demand(initial_time::Dates.DateTime, n_steps::Int, sys::PSY.System)
     time_steps = 1:n_steps
     demand = Dict{String, Vector{Float64}}()
-    for load in PSY.get_components(PSY.PowerLoad, sys)
-        area_name = PSY.get_name(PSY.get_area(PSY.get_bus(load)))
+    for load in PSY.get_components(PSY.get_available, PSY.PowerLoad, sys)
+        area = PSY.get_area(PSY.get_bus(load))
+        isnothing(area) && throw(
+            ArgumentError(
+                "PowerLoad $(PSY.get_name(load)) is on a bus with no area; " *
+                    "NEMInterconnectorLoss needs every available load assigned to an area",
+            ),
+        )
+        area_name = PSY.get_name(area)
         series = get!(() -> zeros(Float64, length(time_steps)), demand, area_name)
         if PSY.has_time_series(load, PSY.Deterministic, "max_active_power")
+            # A transformed forecast must be read over its full horizon, so slice afterwards.
             forecast = PSY.get_time_series_values(
-                PSY.Deterministic, load, "max_active_power";
-                start_time = initial_time, len = n_steps,
+                PSY.Deterministic, load, "max_active_power"; start_time = initial_time,
+            )
+            length(forecast) >= n_steps || throw(
+                ArgumentError(
+                    "PowerLoad $(PSY.get_name(load)) forecast has $(length(forecast)) steps; " *
+                        "the model needs $n_steps",
+                ),
             )
             for t in time_steps
                 series[t] += forecast[t]
@@ -179,6 +193,7 @@ function _add_loss_variables_and_constraints!(
         devices,
         loss_models::Dict{String, InterconnectorLossModel},
     )
+    isempty(devices) && return
     time_steps = PSI.get_time_steps(container)
     device_names = PSY.get_name.(devices)
     n_segments = Dict(
@@ -324,7 +339,16 @@ function PSI.construct_device!(
         device_model::PSI.DeviceModel{PSY.AreaInterchange, NEMInterconnectorLoss},
         network_model::PSI.NetworkModel{U},
     ) where {U <: Union{PSI.AreaBalancePowerModel, PSI.AreaPTDFPowerModel}}
+    PSI.built_for_recurrent_solves(container) && throw(
+        ArgumentError(
+            "NEMInterconnectorLoss supports a standalone `DecisionModel` only: " *
+                "demand-dependent loss coefficients are read once at construction. " *
+                "Recurrent solves would retain the first demand forecast; rebuild the " *
+                "`DecisionModel` when demand forecasts or load availability change.",
+        ),
+    )
     devices = PSI.get_available_components(device_model, sys)
+    isempty(devices) && return
     loss_models = Dict(PSY.get_name(d) => _loss_model(d) for d in devices)
     for d in devices
         _validate_convex_segments(PSY.get_name(d), loss_models[PSY.get_name(d)])
@@ -372,7 +396,14 @@ function PSI.construct_device!(
         network_model::PSI.NetworkModel{U},
     ) where {U <: Union{PSI.AreaBalancePowerModel, PSI.AreaPTDFPowerModel}}
     devices = PSI.get_available_components(device_model, sys)
+    isempty(devices) && return
     _add_flow_limit_constraint!(container, devices, device_model, network_model)
+    if U <: PSI.AreaPTDFPowerModel
+        PSI.add_constraints!(
+            container, PSI.LineFlowBoundConstraint, devices, device_model, network_model,
+            PSI._get_branch_map(network_model),
+        )
+    end
     PSI.add_feedforward_constraints!(container, device_model, devices)
     return
 end

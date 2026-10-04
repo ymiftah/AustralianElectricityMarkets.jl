@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `NEMInterconnectorLoss` now links `AreaPTDFPowerModel` interchange flows to signed physical
+  boundary-branch flows, so interchange limits also constrain the physical transfer.
+- Interconnector demand-dependent loss coefficients exclude unavailable `PowerLoad`s and retain
+  forecast scaling. Recurrent solves now fail with a rebuild diagnostic; standalone
+  `DecisionModel`s with `AreaBalancePowerModel` or `AreaPTDFPowerModel` remain supported.
+- `NEMInterconnectorLoss` rejects an available `PowerLoad` on a bus with no area with an
+  `ArgumentError`, and builds without loss terms when no `AreaInterchange` is available.
+- `read_interconnectors` throws an `ArgumentError` naming `DISPATCHREGIONSUM` when that table is
+  not cached, instead of a raw DuckDB error.
 - **`read_uigf` returned scheduled and non-scheduled units**: `DISPATCHLOAD` publishes
   `UIGF = 0` rather than `NULL` for them, so `set_fcas_scaling_inputs!` attached a zero
   `"fcas_uigf"` series to every scheduled unit and §4.3 scaling clamped its FCAS

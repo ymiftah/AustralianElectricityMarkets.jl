@@ -40,7 +40,9 @@ Reads and processes interconnector data from the database.
 - `db`: The database connection.
 
 # Returns
-A `DataFrame` containing the latest interconnector constraint data.
+A `DataFrame` containing the latest interconnector constraint data. Interconnectors with an
+endpoint region absent from the cached `DISPATCHREGIONSUM` are dropped with a warning, so that
+table must be populated; an `ArgumentError` is thrown when it is missing or empty.
 
 # Example
 ```julia
@@ -90,8 +92,23 @@ long-retired interconnectors (e.g. `SNOWY1`/`V-SN`, abolished 2008) that a naive
 `REGIONFROM`/`REGIONTO` union would otherwise resurrect as a phantom, zero-demand region.
 """
 function _current_regions(db)
-    table = read_hive(db, :DISPATCHREGIONSUM)
-    df = _query(db, "SELECT DISTINCT REGIONID FROM $table WHERE REGIONID IS NOT NULL")
+    df = try
+        table = read_hive(db, :DISPATCHREGIONSUM)
+        _query(db, "SELECT DISTINCT REGIONID FROM $table WHERE REGIONID IS NOT NULL")
+    catch err
+        throw(
+            ArgumentError(
+                "read_interconnectors needs a cached DISPATCHREGIONSUM to identify the active regions; " *
+                    "run `populate(db, :DISPATCHREGIONSUM, start_date, end_date)` first ($(sprint(showerror, err)))",
+            ),
+        )
+    end
+    isempty(df) && throw(
+        ArgumentError(
+            "read_interconnectors found no REGIONID in the cached DISPATCHREGIONSUM; " *
+                "populate it with `populate(db, :DISPATCHREGIONSUM, start_date, end_date)`",
+        ),
+    )
     return Set(df.REGIONID)
 end
 

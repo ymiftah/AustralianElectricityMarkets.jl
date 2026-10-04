@@ -7,7 +7,8 @@ wherever the segment allocation reproduces the loss curve's chord value at that 
 where the solver dissipated more than the curve at that flow.
 
 # Arguments
-- `results`: `PSI.OptimizationProblemResults` of a solved model using [`NEMInterconnectorLoss`](@ref).
+- `results`: `PSI.OptimizationProblemResults` of one solved standalone `DecisionModel` using
+  [`NEMInterconnectorLoss`](@ref); demand is read from the first result timestamp onward.
 - `sys`: the `System` the model was built from.
 
 # Returns
