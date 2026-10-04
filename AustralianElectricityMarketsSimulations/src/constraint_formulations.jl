@@ -141,3 +141,24 @@ contributing device's net energy dispatch combined with its [`FCASUnitRegulation
 one regulation [`FCASService`](@ref) against its telemetered AGC ramp from `InitialMW`.
 """
 struct FCASJointRampingConstraint <: PSI.ConstraintType end
+
+"""
+    FCASJointCapacitySlack
+
+Variable type for the elastic slack on a [`FCASJointCapacityConstraint`](@ref) row (AEMO
+`xxUpperDeficit`/`xxLowerSurplus`), built when the owning `PSI.ServiceModel` has
+`use_slacks = true`. Priced at [`FCAS_CAPACITY_CVP_FACTOR`](@ref) times the Market Price Cap.
+"""
+struct FCASJointCapacitySlack <: PSI.VariableType end
+
+"""
+    FCASJointRampingSlack
+
+Variable type for the elastic slack on a [`FCASJointRampingConstraint`](@ref) row (AEMO
+`R5REJointRampDeficit`/`L5REJointRampDeficit`), built when the owning `PSI.ServiceModel` has
+`use_slacks = true`. Priced at [`FCAS_RAMPING_CVP_FACTOR`](@ref) times the Market Price Cap.
+"""
+struct FCASJointRampingSlack <: PSI.VariableType end
+
+PSI.convert_result_to_natural_units(::Type{FCASJointCapacitySlack}) = true
+PSI.convert_result_to_natural_units(::Type{FCASJointRampingSlack}) = true

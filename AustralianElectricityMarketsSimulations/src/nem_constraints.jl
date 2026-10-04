@@ -16,9 +16,11 @@ PSI.get_multiplier_value(::NEMConstraintRHSParameter, ::GenericConstraint, ::Lin
     MARKET_PRICE_CAP_BY_FINANCIAL_YEAR
 
 Published Market Price Cap (`\$/MWh`), by the `Date` its financial year starts (1 July).
-Source: AEMC *Schedule of reliability settings — 2026-27 financial year*.
+Source: AEMC *Schedule of reliability settings — 2026-27 financial year* (FY2024-25: AEMC's
+2024-25 schedule).
 """
 const MARKET_PRICE_CAP_BY_FINANCIAL_YEAR = [
+    Date(2024, 7, 1) => 17_500.0,
     Date(2025, 7, 1) => 20_300.0,
     Date(2026, 7, 1) => 23_200.0,
 ]
@@ -32,14 +34,20 @@ The published Market Price Cap for the financial year containing `t`.
 A `\$/MWh` value.
 """
 function _financial_year_mpc(t::DateTime)
-    year_start = Date(year(t) - (month(t) < 7), 7, 1)
-    idx = findfirst(p -> p[1] == year_start, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR)
-    isnothing(idx) && throw(
+    rate = _published_mpc(t)
+    isnothing(rate) && throw(
         ArgumentError(
             "No published Market Price Cap covers $t; extend MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.",
         ),
     )
-    return MARKET_PRICE_CAP_BY_FINANCIAL_YEAR[idx][2]
+    return rate
+end
+
+"The table's Market Price Cap for the financial year containing `t`, or `nothing` if unpublished."
+function _published_mpc(t::DateTime)
+    year_start = Date(year(t) - (month(t) < 7), 7, 1)
+    idx = findfirst(p -> p[1] == year_start, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR)
+    return isnothing(idx) ? nothing : MARKET_PRICE_CAP_BY_FINANCIAL_YEAR[idx][2]
 end
 
 """
@@ -47,7 +55,7 @@ end
 
 The `"market_price_cap"` attribute of `model`, or [`_financial_year_mpc`](@ref)`(t)` if unset.
 """
-function _market_price_cap(model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit}, t::DateTime)
+function _market_price_cap(model::PSI.ServiceModel, t::DateTime)
     rate = PSI.get_attribute(model, "market_price_cap")
     return isnothing(rate) ? _financial_year_mpc(t) : rate
 end

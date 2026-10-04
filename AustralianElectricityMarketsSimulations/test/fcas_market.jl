@@ -177,7 +177,7 @@ end
 `NEMReplayDispatch`/`StaticPowerLoad` for the toy's devices, plus [`FCASMarket`](@ref) for each
 named [`FCASService`](@ref).
 """
-function fcas_toy_template(sys, service_names)
+function fcas_toy_template(sys, service_names; use_slacks = false)
     network = PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true)
     template = PSI.ProblemTemplate(network)
     set_nem_dispatch_models!(template, sys)
@@ -185,7 +185,7 @@ function fcas_toy_template(sys, service_names)
     for name in service_names
         PSI.set_service_model!(
             template, name,
-            PSI.ServiceModel(FCASService, FCASMarket, name; duals = [FCASJointCapacityConstraint]),
+            PSI.ServiceModel(FCASService, FCASMarket, name; duals = [FCASJointCapacityConstraint], use_slacks),
         )
     end
     return template
@@ -206,8 +206,8 @@ function fcas_energy_toy_system(energy_mw; mutate! = nothing)
 end
 
 "Builds a `steps`-interval `PSI.DecisionModel` for `sys`/`service_names` and returns its `PSI.OptimizationContainer`."
-function build_fcas(sys, service_names; steps = 1)
-    template = fcas_toy_template(sys, service_names)
+function build_fcas(sys, service_names; steps = 1, use_slacks = false)
+    template = fcas_toy_template(sys, service_names; use_slacks)
     model = PSI.DecisionModel(
         template, sys;
         optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
@@ -1736,4 +1736,51 @@ end
     msg = sprint(showerror, err)
     @test occursin(duid, msg)
     @test occursin("initial_mw", msg)
+end
+
+@testset "elastic FCAS rows (use_slacks)" begin
+    duid = TOY_CHEAP
+    # TOY_START is in FY2024-25, Market Price Cap $17,500/MWh.
+    mpc = 17_500.0
+
+    @testset "off by default: no slack variables" begin
+        container = build_fcas(joint_ramping_toy(450.0; raise_agc = 15.0), ["TAS1_RAISEREG"])
+        @test !PSI.has_container_key(container, FCASJointRampingSlack, FCASService, "TAS1_RAISEREG")
+    end
+
+    @testset "ramping slack absorbs a violated §6.1 row and is priced at 155 x MPC" begin
+        sys = joint_ramping_toy(450.0; raise_agc = 15.0, lower_agc = 10.0)
+        container = build_fcas(sys, ["TAS1_RAISEREG", "TAS1_LOWERREG"]; use_slacks = true)
+        base_power = PSI.get_base_power(container)
+        fix_energy!(container, duid, 475.0)  # 10 MW above the 465 MW joint ramp ceiling
+        jm = PSI.get_jump_model(container)
+        PSI.JuMP.optimize!(jm)
+        @test PSI.JuMP.termination_status(jm) == PSI.MOI.OPTIMAL
+        slack = PSI.get_variable(container, FCASJointRampingSlack(), FCASService, "TAS1_RAISEREG")[duid, 1]
+        @test PSI.JuMP.value(slack) * base_power ≈ 10.0 atol = FCAS_TOY_TOLERANCE
+        coefficient = PSI.JuMP.objective_function(jm).terms[slack]
+        @test coefficient ≈ base_power * interval_cost_coefficient(FCAS_RAMPING_CVP_FACTOR * mpc, TOY_RESOLUTION)
+    end
+
+    @testset "capacity slack is built per row and priced at 70 x MPC" begin
+        container = build_fcas(joint_ramping_toy(450.0; raise_agc = 15.0), ["TAS1_RAISEREG"]; use_slacks = true)
+        base_power = PSI.get_base_power(container)
+        jm = PSI.get_jump_model(container)
+        for side in ("upper", "lower")
+            slack = PSI.get_variable(
+                container, FCASJointCapacitySlack(), FCASService, "TAS1_RAISEREG_$side",
+            )[duid, 1]
+            @test PSI.JuMP.objective_function(jm).terms[slack] ≈
+                base_power * interval_cost_coefficient(FCAS_CAPACITY_CVP_FACTOR * mpc, TOY_RESOLUTION)
+        end
+    end
+end
+
+@testset "area-balance slack is priced at 150 x MPC" begin
+    container = build_fcas(joint_ramping_toy(450.0), String[]; use_slacks = false)
+    jm = PSI.get_jump_model(container)
+    up = PSI.get_variable(container, PSI.SystemBalanceSlackUp(), PSY.Area)
+    expected = PSI.get_base_power(container) *
+        interval_cost_coefficient(AREA_BALANCE_CVP_FACTOR * 17_500.0, TOY_RESOLUTION)
+    @test PSI.JuMP.objective_function(jm).terms[first(up)] ≈ expected
 end

@@ -712,6 +712,7 @@ end
     @test AEMS._financial_year_mpc(DateTime(2026, 6, 30, 23, 55)) == 20_300.0
     @test AEMS._financial_year_mpc(DateTime(2026, 7, 1)) == 23_200.0
     @test AEMS._financial_year_mpc(DateTime(2027, 6, 30, 23, 55)) == 23_200.0
-    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2025, 6, 30))
+    @test AEMS._financial_year_mpc(DateTime(2025, 6, 30)) == 17_500.0
+    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2024, 6, 30))
     @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2027, 7, 1))
 end

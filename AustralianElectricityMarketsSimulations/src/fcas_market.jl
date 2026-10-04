@@ -482,7 +482,73 @@ function _fcas_regulation_enabled_mask(
 end
 
 """
-    _add_fcas_joint_ramping_constraints!(container, jm, devices, directions, devices_template, bid_type, name, time_steps)
+    FCAS_CAPACITY_CVP_FACTOR
+
+CVP factor (70) of AEMO's FCAS EnablementMin/EnablementMax constraint, item 24 of the *Schedule of
+Constraint Violation Penalty Factors* v8.0. Prices [`FCASJointCapacitySlack`](@ref).
+"""
+const FCAS_CAPACITY_CVP_FACTOR = 70.0
+
+"""
+    FCAS_RAMPING_CVP_FACTOR
+
+CVP factor (155) of AEMO's FCAS Joint Ramping constraint, item 20 of the *Schedule of Constraint
+Violation Penalty Factors* v8.0. Prices [`FCASJointRampingSlack`](@ref).
+"""
+const FCAS_RAMPING_CVP_FACTOR = 155.0
+
+"""
+    _add_fcas_slack!(container, model, var_type, meta, names, time_steps, cvp_factor)
+
+When `PSI.get_use_slacks(model)`, builds a non-negative slack variable of `var_type` per
+`(name, t)` and prices it in the objective at `cvp_factor` times the Market Price Cap
+([`_market_price_cap`](@ref)) for the interval, in `\$/MW` per dispatch interval.
+
+# Returns
+The slack variable container, or `nothing` when `use_slacks` is `false`.
+"""
+function _add_fcas_slack!(
+        container::PSI.OptimizationContainer, model::PSI.ServiceModel, var_type, meta::AbstractString,
+        names, time_steps, cvp_factor::Real,
+    )
+    PSI.get_use_slacks(model) || return nothing
+    jm = PSI.get_jump_model(container)
+    resolution = PSI.get_resolution(container)
+    initial_time = PSI.get_initial_time(container)
+    base_power = PSI.get_base_power(container)
+    slack = PSI.add_variable_container!(container, var_type(), FCASService, names, time_steps; meta = meta)
+    for name in names, t in time_steps
+        slack[name, t] = JuMP.@variable(jm, base_name = "$(nameof(var_type))_$(meta)_{$name,$t}", lower_bound = 0.0)
+        mpc = _market_price_cap(model, initial_time + resolution * (t - 1))
+        coefficient = base_power * interval_cost_coefficient(cvp_factor * mpc, resolution)
+        PSI.add_to_objective_invariant_expression!(container, slack[name, t] * coefficient)
+    end
+    return slack
+end
+
+"""
+    _add_fcas_capacity_slack!(container, model, lhs, meta, names, time_steps, sign)
+
+Merges a [`FCASJointCapacitySlack`](@ref) into the [`FCASJointCapacityLHS`](@ref) expression `lhs`
+with multiplier `sign` (`-1.0` for an `<=` row, `+1.0` for a `>=` row). A no-op when the model has
+`use_slacks = false`.
+
+# Returns
+`nothing`.
+"""
+function _add_fcas_capacity_slack!(container, model, lhs, meta, names, time_steps, sign::Float64)
+    slack = _add_fcas_slack!(
+        container, model, FCASJointCapacitySlack, meta, names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
+    )
+    isnothing(slack) && return
+    for name in names, t in time_steps
+        JuMP.add_to_expression!(lhs[name, t], sign, slack[name, t])
+    end
+    return
+end
+
+"""
+    _add_fcas_joint_ramping_constraints!(container, model, jm, devices, directions, devices_template, bid_type, name, time_steps)
 
 Builds AEMO *FCAS Model in NEMDE* §6.1's [`FCASJointRampingConstraint`](@ref) for every
 contributing `device` of a regulation `FCASService` named `name`: the unit's net energy
@@ -496,7 +562,7 @@ is not enabled for this service at `t` ([`_fcas_regulation_enabled_mask`](@ref))
 `nothing`.
 """
 function _add_fcas_joint_ramping_constraints!(
-        container::PSI.OptimizationContainer, jm, devices, directions::Dict{String, Symbol}, devices_template,
+        container::PSI.OptimizationContainer, model::PSI.ServiceModel, jm, devices, directions::Dict{String, Symbol}, devices_template,
         bid_type::BidType, name::AbstractString, time_steps,
     )
     names = PSY.get_name.(devices)
@@ -504,6 +570,9 @@ function _add_fcas_joint_ramping_constraints!(
         container, FCASJointRampingConstraint(), FCASService, names, time_steps; meta = name,
     )
     target = PSI.get_expression(container, FCASUnitRegulationTarget(), FCASService, name)
+    slack = _add_fcas_slack!(
+        container, model, FCASJointRampingSlack, name, names, time_steps, FCAS_RAMPING_CVP_FACTOR,
+    )
     initial_time = PSI.get_initial_time(container)
     horizon = length(time_steps)
     for device in devices
@@ -519,10 +588,11 @@ function _add_fcas_joint_ramping_constraints!(
             end
             lhs = JuMP.AffExpr(0.0)
             _add_fcas_net_energy_terms!(container, lhs, device, dname, t)
+            deficit = isnothing(slack) ? 0.0 : slack[dname, t]
             con[dname, t] = if bid_type == BidType.RAISEREG
-                JuMP.@constraint(jm, lhs + target[dname, t] <= mw + caps[t])
+                JuMP.@constraint(jm, lhs + target[dname, t] - deficit <= mw + caps[t])
             else
-                JuMP.@constraint(jm, lhs - target[dname, t] >= mw - caps[t])
+                JuMP.@constraint(jm, lhs - target[dname, t] + deficit >= mw - caps[t])
             end
         end
     end
@@ -822,6 +892,8 @@ function PSI.construct_service!(
         upper_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_upper")
         lower_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_lower")
 
+        _add_fcas_capacity_slack!(container, model, upper_lhs, "$(name)_upper", single_names, time_steps, -1.0)
+        _add_fcas_capacity_slack!(container, model, lower_lhs, "$(name)_lower", single_names, time_steps, 1.0)
         con_upper = PSI.add_constraints_container!(
             container, FCASJointCapacityConstraint(), FCASService, single_names, time_steps; meta = "$(name)_upper",
         )
@@ -852,6 +924,12 @@ function PSI.construct_service!(
         load_upper_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_load_upper")
         load_lower_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_load_lower")
 
+        for (lhs, side, sign) in (
+                (gen_upper_lhs, "gen_upper", -1.0), (gen_lower_lhs, "gen_lower", 1.0),
+                (load_upper_lhs, "load_upper", -1.0), (load_lower_lhs, "load_lower", 1.0),
+            )
+            _add_fcas_capacity_slack!(container, model, lhs, "$(name)_$side", both_names, time_steps, sign)
+        end
         con_gen_upper = PSI.add_constraints_container!(
             container, FCASJointCapacityConstraint(), FCASService, both_names, time_steps; meta = "$(name)_gen_upper",
         )
@@ -905,7 +983,7 @@ function PSI.construct_service!(
     end
 
     if is_regulation
-        _add_fcas_joint_ramping_constraints!(container, jm, devices, directions, devices_template, bid_type, name, time_steps)
+        _add_fcas_joint_ramping_constraints!(container, model, jm, devices, directions, devices_template, bid_type, name, time_steps)
     end
 
     if FCASJointCapacityConstraint in PSI.get_duals(model)
