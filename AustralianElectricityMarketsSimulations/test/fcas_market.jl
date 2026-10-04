@@ -1949,3 +1949,19 @@ end
     @test occursin("F_TOY", sprint(showerror, err))
     @test occursin("FCASMarket", sprint(showerror, err))
 end
+
+@testset "an FCAS term naming a service absent from the System warns" begin
+    bid_type = BidType.RAISE6SEC
+    sys = fcas_requirement_toy_system(bid_type, UnitTerm(TOY_CHEAP, bid_type, 1.0), 5.0)
+    PSY.remove_component!(sys, PSY.get_component(FCASService, sys, "1_RAISE6SEC"))
+    template = fcas_toy_template(sys, String[])
+    PSI.set_service_model!(
+        template, "F_TOY", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_TOY"),
+    )
+    model = PSI.DecisionModel(
+        template, sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    PSI.set_output_dir!(model, mktempdir())
+    @test_logs (:warn, r"no FCASService \"1_RAISE6SEC\"") match_mode = :any PSI.build_impl!(model)
+end

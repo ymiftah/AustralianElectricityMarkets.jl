@@ -211,7 +211,7 @@ for a regulation service (one net target per unit, AEMO *FCAS Model in NEMDE* §
 `RegionTerm` sums this over the region's devices, AEMO *Constraint Formulation Guidelines* §5.3 and
 §5.4's "FCAS Requirement Region (Service)". The
 service is the one named `"<REGIONID>_<BIDTYPE>"` for the region of `device`'s own bus. Adds
-nothing when that service is absent, unavailable or has no variable for `device`, since an
+nothing when that service is absent (with a warning), unavailable or has no variable for `device`, since an
 unenabled unit contributes zero. Throws `ArgumentError` when the service exists but the template has no
 [`FCASMarket`](@ref) model for it.
 """
@@ -219,8 +219,9 @@ function _add_device_fcas_terms!(container, expr, sys, gc, device, bid_type::Bid
     region = PSY.get_name(PSY.get_area(PSY.get_bus(device)))
     svc_name = "$(region)_$(string(bid_type))"
     svc = PSY.get_component(FCASService, sys, svc_name)
-    (isnothing(svc) || !PSY.get_available(svc)) && return
     dname = PSY.get_name(device)
+    isnothing(svc) && @warn "GenericConstraint \"$(PSY.get_name(gc))\": no FCASService \"$svc_name\" in the System; term on \"$dname\" contributes zero." maxlog = 1 _id = Symbol(svc_name)
+    (isnothing(svc) || !PSY.get_available(svc)) && return
     regulation = bid_type in FCAS_REGULATION_MARKETS
     key_type = regulation ? FCASUnitRegulationTarget : FCASCapacityVariable
     PSI.has_container_key(container, key_type, FCASService, svc_name) || throw(
