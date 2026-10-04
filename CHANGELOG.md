@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `NEMInterconnectorLoss` throws an `ArgumentError` for any network model other than
+  `AreaBalancePowerModel`, the regional balance NEMDE uses.
+- Interconnector demand-dependent loss coefficients exclude unavailable `PowerLoad`s and retain
+  forecast scaling. Recurrent solves now fail with a rebuild diagnostic; standalone
+  `DecisionModel`s with `AreaBalancePowerModel` remain supported.
+- `NEMInterconnectorLoss` rejects an available `PowerLoad` on a bus with no area with an
+  `ArgumentError`, and builds without loss terms when no `AreaInterchange` is available.
+- `read_interconnectors` throws an `ArgumentError` naming `DISPATCHREGIONSUM` when that table is
+  not cached, instead of a raw DuckDB error.
 - **`read_uigf` returned scheduled and non-scheduled units**: `DISPATCHLOAD` publishes
   `UIGF = 0` rather than `NULL` for them, so `set_fcas_scaling_inputs!` attached a zero
   `"fcas_uigf"` series to every scheduled unit and §4.3 scaling clamped its FCAS
@@ -85,6 +94,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to a vacuous row wherever the ramp capability is zero or absent, `InitialMW` is unknown at that
   interval, or the device isn't enabled for the service. `check_fcas_services` now also reports a
   regulation contributor that carries a positive AGC ramp rate but no `"initial_mw"` series.
+- **`NEMInterconnectorLoss`, the interconnector loss formulation** (`AustralianElectricityMarketsSimulations`):
+  a `PSY.AreaInterchange` device formulation that reads Phase 1's `InterconnectorLossModel`
+  `PSY.SupplementalAttribute` (root package's `attach_interconnector_losses!`) and linearises
+  NEMDE's quadratic loss curve into the from/to regional power balance on the model's own
+  `LOSSMODEL` breakpoints, no SOS2/binary needed. Losses are apportioned by
+  `INTERCONNECTORCONSTRAINT.FROMREGIONLOSSSHARE`: the from-area bears `share * loss`, the to-area
+  the remainder, both as extra consumption on top of the ordinary lossless flow — matching both
+  AEMO's data model and `nempy`'s `set_interconnector_losses`. The loss curve is linearised as
+  bounded segments with nondecreasing chord slopes. Positive weighted marginal prices make cost
+  minimisation fill the cheapest segment first; zero or negative prices may permit excess loss.
+  `interconnector_loss_gaps(results, sys)` reports this excess against the breakpoint
+  interpolation in MW, and `check_interconnector_loss_segments` warns above a supplied tolerance.
 - **`FCASMarket`, the `FCASService` co-optimisation formulation** (`AustralianElectricityMarketsSimulations`):
   a `FCASCapacityVariable` per contributing device and interval, bounded above by the device's
   `MAXAVAIL` for that market, and both forms (upper and lower) of the joint capacity constraint

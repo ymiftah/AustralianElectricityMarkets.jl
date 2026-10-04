@@ -59,6 +59,7 @@ const TEST_GROUPS = [
     "nem_dispatch" => ("NEM dispatch formulation", "nem_dispatch.jl"),
     "nem_dispatch_toy" => ("NEM dispatch on a toy PSCB system", "nem_dispatch_toy.jl"),
     "fcas_market" => ("FCAS market", "fcas_market.jl"),
+    "interconnector_losses" => ("Interconnector losses", "interconnector_losses.jl"),
 ]
 
 const SELECTED_GROUPS = let known = first.(TEST_GROUPS)

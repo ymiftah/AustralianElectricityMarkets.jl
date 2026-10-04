@@ -40,7 +40,9 @@ Reads and processes interconnector data from the database.
 - `db`: The database connection.
 
 # Returns
-A `DataFrame` containing the latest interconnector constraint data.
+A `DataFrame` containing the latest interconnector constraint data. Interconnectors with an
+endpoint region absent from the cached `DISPATCHREGIONSUM` are dropped with a warning, so that
+table must be populated; an `ArgumentError` is thrown when it is missing or empty.
 
 # Example
 ```julia
@@ -69,7 +71,45 @@ function read_interconnectors(db)
             PARTITION BY c.INTERCONNECTORID ORDER BY c.EFFECTIVEDATE DESC, c.VERSIONNO DESC
         ) = 1
     """
-    return _query(db, sql)
+    df = _query(db, sql)
+    current_regions = _current_regions(db)
+    retired = filter(
+        row -> !(row.REGIONFROM in current_regions) || !(row.REGIONTO in current_regions), df,
+    )
+    isempty(retired) ||
+        @warn "read_interconnectors: dropping $(nrow(retired)) interconnector(s) with a retired endpoint region not present in DISPATCHREGIONSUM" interconnectors = retired.INTERCONNECTORID
+    return filter(
+        row -> row.REGIONFROM in current_regions && row.REGIONTO in current_regions, df,
+    )
+end
+
+"""
+    _current_regions(db) -> Set{String}
+
+Every `REGIONID` present in the cached `DISPATCHREGIONSUM`, the authoritative source of which
+regions are currently active - `INTERCONNECTOR`/`INTERCONNECTORCONSTRAINT` retain rows for
+long-retired interconnectors (e.g. `SNOWY1`/`V-SN`, abolished 2008) that a naive
+`REGIONFROM`/`REGIONTO` union would otherwise resurrect as a phantom, zero-demand region.
+"""
+function _current_regions(db)
+    df = try
+        table = read_hive(db, :DISPATCHREGIONSUM)
+        _query(db, "SELECT DISTINCT REGIONID FROM $table WHERE REGIONID IS NOT NULL")
+    catch err
+        throw(
+            ArgumentError(
+                "read_interconnectors needs a cached DISPATCHREGIONSUM to identify the active regions; " *
+                    "run `populate(db, :DISPATCHREGIONSUM, start_date, end_date)` first ($(sprint(showerror, err)))",
+            ),
+        )
+    end
+    isempty(df) && throw(
+        ArgumentError(
+            "read_interconnectors found no REGIONID in the cached DISPATCHREGIONSUM; " *
+                "populate it with `populate(db, :DISPATCHREGIONSUM, start_date, end_date)`",
+        ),
+    )
+    return Set(df.REGIONID)
 end
 
 """

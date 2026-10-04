@@ -12,6 +12,59 @@ let
         @test "INTERCONNECTORID" in names(df)
     end
 
+    @testset "read_interconnectors drops an interconnector with a retired endpoint region" begin
+        # A region absent from DISPATCHREGIONSUM (the authoritative "currently active" source)
+        # must never resurrect as a phantom, zero-demand area - see AustralianElectricityMarkets
+        # `get_bus_dataframe`, which builds its region set straight from this function's output.
+        retired_dir = mktempdir()
+        cp(joinpath(hive_dir, "INTERCONNECTORCONSTRAINT"), joinpath(retired_dir, "INTERCONNECTORCONSTRAINT"); force = true)
+        cp(joinpath(hive_dir, "DISPATCHREGIONSUM"), joinpath(retired_dir, "DISPATCHREGIONSUM"); force = true)
+        let ddb = DuckDB.DB(), conn = DuckDB.connect(ddb)
+            DuckDB.execute(conn, "SET preserve_identifier_case=true")
+            ic_table = joinpath(hive_dir, "INTERCONNECTOR", "archive_month=2025-01")
+            df_ic = DataFrame(DuckDB.execute(conn, "SELECT * FROM read_parquet('$ic_table/*.parquet')"))
+            push!(
+                df_ic,
+                (INTERCONNECTORID = "V-SN", REGIONFROM = "VIC1", REGIONTO = "SNOWY_RETIRED", archive_month = "2025-01"),
+            )
+            DuckDB.register_data_frame(conn, df_ic, "tmp_table")
+            table_dir = joinpath(retired_dir, "INTERCONNECTOR")
+            mkpath(table_dir)
+            DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+            DuckDB.execute(
+                conn,
+                """
+                COPY (SELECT 'V-SN' AS INTERCONNECTORID, DATE '2025-01-01' AS EFFECTIVEDATE, 1 AS VERSIONNO,
+                             500.0 AS MAXMWIN, 500.0 AS MAXMWOUT, 0.5 AS FROMREGIONLOSSSHARE,
+                             0.01 AS LOSSCONSTANT, 0.001 AS LOSSFLOWCOEFFICIENT, 'MNSP' AS ICTYPE,
+                             '2025-01' AS archive_month)
+                TO '$(joinpath(retired_dir, "INTERCONNECTORCONSTRAINT"))' (FORMAT 'PARQUET', PARTITION_BY (archive_month), APPEND)
+                """,
+            )
+        end
+        retired_config = HiveConfiguration(hive_location = retired_dir, filesystem = "file")
+        retired_db = aem_connect(retired_config)
+        df = read_interconnectors(retired_db)
+        @test !("V-SN" in df.INTERCONNECTORID)
+        @test !("SNOWY_RETIRED" in vcat(df.REGIONFROM, df.REGIONTO))
+    end
+
+    @testset "read_interconnectors requires a populated DISPATCHREGIONSUM" begin
+        bare_dir = mktempdir()
+        for table in ("INTERCONNECTOR", "INTERCONNECTORCONSTRAINT")
+            cp(joinpath(hive_dir, table), joinpath(bare_dir, table); force = true)
+        end
+        bare_db = aem_connect(HiveConfiguration(hive_location = bare_dir, filesystem = "file"))
+        err = try
+            read_interconnectors(bare_db)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("DISPATCHREGIONSUM", sprint(showerror, err))
+    end
+
     @testset "read_demand" begin
         df = read_demand(db)
         @test df isa DataFrame
