@@ -1,4 +1,4 @@
-# 0022. Elastic FCAS joint rows, and the area-balance slack at its own CVP rate
+# 0023. Elastic FCAS joint rows, and the area-balance slack at its own CVP rate
 
 ## Status
 
