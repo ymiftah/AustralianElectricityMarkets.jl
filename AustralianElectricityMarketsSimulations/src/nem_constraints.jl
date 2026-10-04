@@ -12,6 +12,46 @@ PSI.get_default_attributes(::Type{GenericConstraint}, ::Type{LinearFactorLimit})
 PSI.get_multiplier_value(::NEMConstraintRHSParameter, ::GenericConstraint, ::LinearFactorLimit) =
     1.0
 
+"""
+    MARKET_PRICE_CAP_BY_FINANCIAL_YEAR
+
+Published Market Price Cap (`\$/MWh`), by the `Date` its financial year starts (1 July).
+Source: AEMC *Schedule of reliability settings — 2026-27 financial year*.
+"""
+const MARKET_PRICE_CAP_BY_FINANCIAL_YEAR = [
+    Date(2025, 7, 1) => 20_300.0,
+    Date(2026, 7, 1) => 23_200.0,
+]
+
+"""
+    _financial_year_mpc(t::DateTime) -> Float64
+
+The published Market Price Cap for the financial year containing `t`.
+
+# Returns
+A `\$/MWh` value.
+"""
+function _financial_year_mpc(t::DateTime)
+    year_start = Date(year(t) - (month(t) < 7), 7, 1)
+    idx = findfirst(p -> p[1] == year_start, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR)
+    isnothing(idx) && throw(
+        ArgumentError(
+            "No published Market Price Cap covers $t; extend MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.",
+        ),
+    )
+    return MARKET_PRICE_CAP_BY_FINANCIAL_YEAR[idx][2]
+end
+
+"""
+    _market_price_cap(model, t::DateTime) -> Float64
+
+The `"market_price_cap"` attribute of `model`, or [`_financial_year_mpc`](@ref)`(t)` if unset.
+"""
+function _market_price_cap(model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit}, t::DateTime)
+    rate = PSI.get_attribute(model, "market_price_cap")
+    return isnothing(rate) ? _financial_year_mpc(t) : rate
+end
+
 # --- Term validation: fail loudly, never a partial LHS ---
 
 _term_bid_type(term::Union{UnitTerm, RegionTerm}) = get_bid_type(term)
@@ -217,6 +257,51 @@ function _add_gc_term_to_expression!(container, gc, term::InterconnectorTerm, sy
     return
 end
 
+"""
+    _add_gc_slack_variables!(container, gc, model)
+
+Builds [`GenericConstraintSlackUp`](@ref)/[`GenericConstraintSlackDown`](@ref) for `gc` when
+`PSI.get_use_slacks(model)`, one side per `get_sense(gc)` (`LE` → up only, `GE` → down only,
+`EQ` → both), and merges each into [`NEMConstraintLHS`](@ref): `-slack_up` on the `LE` side,
+`+slack_down` on the `GE` side, so `add_constraints!`'s stored bound becomes satisfiable by
+relaxing it rather than infeasible. A no-op when `use_slacks` is `false`.
+"""
+function _add_gc_slack_variables!(
+        container::PSI.OptimizationContainer, gc::GenericConstraint,
+        model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
+    )
+    PSI.get_use_slacks(model) || return
+    name = PSY.get_name(gc)
+    time_steps = PSI.get_time_steps(container)
+    expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
+    sense = get_sense(gc)
+    jm = PSI.get_jump_model(container)
+
+    if sense in (ConstraintSense.LE, ConstraintSense.EQ)
+        slack = PSI.add_variable_container!(
+            container, GenericConstraintSlackUp(), GenericConstraint, [name], time_steps; meta = name,
+        )
+        for t in time_steps
+            slack[name, t] = JuMP.@variable(
+                jm, base_name = "GenericConstraintSlackUp_{$name,$t}", lower_bound = 0.0,
+            )
+            JuMP.add_to_expression!(expr[name, t], -1.0, slack[name, t])
+        end
+    end
+    if sense in (ConstraintSense.GE, ConstraintSense.EQ)
+        slack = PSI.add_variable_container!(
+            container, GenericConstraintSlackDown(), GenericConstraint, [name], time_steps; meta = name,
+        )
+        for t in time_steps
+            slack[name, t] = JuMP.@variable(
+                jm, base_name = "GenericConstraintSlackDown_{$name,$t}", lower_bound = 0.0,
+            )
+            JuMP.add_to_expression!(expr[name, t], 1.0, slack[name, t])
+        end
+    end
+    return
+end
+
 # --- add_constraints!: sense dispatch, honouring the "invoked" series ---
 
 """
@@ -310,6 +395,9 @@ function PSI.construct_service!(
     for term in get_terms(gc)
         _add_gc_term_to_expression!(container, gc, term, sys)
     end
+    # Before add_constraints! reads NEMConstraintLHS: a slack must already be merged in for the
+    # constraint it relaxes to be built with it, not around it.
+    _add_gc_slack_variables!(container, gc, model)
 
     PSI.add_constraints!(container, NEMConstraintLimit, gc, model)
 
@@ -328,8 +416,36 @@ function PSI.construct_service!(
     return
 end
 
-# GenericConstraints carry no cost of their own.
-PSI.objective_function!(
-    ::PSI.OptimizationContainer, ::GenericConstraint,
-    ::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
-) = nothing
+"""
+    PSI.objective_function!(container, gc, model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit})
+
+Prices `gc`'s elastic slacks (built by [`_add_gc_slack_variables!`](@ref), a no-op unless
+`PSI.get_use_slacks(model)`) into the objective via `PSI.add_to_objective_invariant_expression!`.
+`GenericConstraint`s built without slacks carry no cost of their own.
+
+# Returns
+`nothing`.
+"""
+function PSI.objective_function!(
+        container::PSI.OptimizationContainer, gc::GenericConstraint,
+        model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
+    )
+    PSI.get_use_slacks(model) || return nothing
+    name = PSY.get_name(gc)
+    time_steps = PSI.get_time_steps(container)
+    resolution = PSI.get_resolution(container)
+    initial_time = PSI.get_initial_time(container)
+    base_power = PSI.get_base_power(container)
+    weight = get_constraint_weight(gc)
+    for var_type in (GenericConstraintSlackUp, GenericConstraintSlackDown)
+        PSI.has_container_key(container, var_type, GenericConstraint, name) || continue
+        slack = PSI.get_variable(container, var_type(), GenericConstraint, name)
+        for t in time_steps
+            ts = initial_time + resolution * (t - 1)
+            mpc = _market_price_cap(model, ts)
+            coefficient = base_power * interval_cost_coefficient(weight * mpc, resolution)
+            PSI.add_to_objective_invariant_expression!(container, slack[name, t] * coefficient)
+        end
+    end
+    return nothing
+end

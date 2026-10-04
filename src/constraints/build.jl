@@ -129,6 +129,7 @@ function add_nem_constraints!(
 
     added = String[]
     skipped = Dict{String, Symbol}()
+    missing_weight = String[]
     empty_region_terms = @NamedTuple{constraint_name::String, region::String, bid_type::BidType}[]
     staged = @NamedTuple{
         gc::GenericConstraint, contributing_devices::Vector{Device},
@@ -217,6 +218,7 @@ function add_nem_constraints!(
         # convention for every other power quantity on this System.
         rhs_series = rhs_series_mw ./ base_power
 
+        ismissing(def.GENERICCONSTRAINTWEIGHT) && push!(missing_weight, versioned_name)
         gc = GenericConstraint(;
             name = versioned_name,
             sense = sense,
@@ -266,6 +268,10 @@ function add_nem_constraints!(
             reason_counts[reason] = get(reason_counts, reason, 0) + 1
         end
         @warn "add_nem_constraints!: skipped $(length(skipped)) of $(nrow(gencon_versions)) invoked constraint versions" reason_counts
+    end
+
+    if !isempty(missing_weight)
+        @warn "add_nem_constraints!: $(length(missing_weight)) constraint(s) have a NULL GENERICCONSTRAINTWEIGHT and were given constraint_weight = 1.0: $missing_weight"
     end
 
     if !isempty(empty_region_terms)
