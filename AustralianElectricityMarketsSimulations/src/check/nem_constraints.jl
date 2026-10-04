@@ -5,14 +5,19 @@
 const _UNBUILDABLE_REASONS = (:unsupported_bid_type, :missing_component, :unmodeled_device_type)
 
 const _REASON_LABELS = Dict(
-    :unsupported_bid_type => "unsupported bid_type (LinearFactorLimit only builds ENERGY terms)",
+    :unsupported_bid_type => "unsupported bid_type (FCAS terms need an FCASMarket model in the template)",
     :missing_component => "missing component (named device not found in the System)",
     :unmodeled_device_type => "unmodeled device type (template does not model these device types)",
 )
 
+# FCASService counts as modeled when the template sets any FCASMarket model; FCAS terms need it.
 _modeled_device_types(template::PSI.ProblemTemplate) = DataType[
-    PSI.get_component_type(m) for
-        m in Iterators.flatten((values(PSI.get_device_models(template)), values(PSI.get_branch_models(template))))
+    PSI.get_component_type(m) for m in Iterators.flatten(
+            (
+                values(PSI.get_device_models(template)), values(PSI.get_branch_models(template)),
+                values(PSI.get_service_models(template)),
+            ),
+        )
 ]
 
 _interconnector_modeled(template::PSI.ProblemTemplate) = any(
@@ -23,7 +28,7 @@ _type_modeled(device::PSY.Device, modeled_types::Vector{DataType}) =
     any(t -> device isa t, modeled_types)
 
 function _term_failures(sys::PSY.System, term::UnitTerm, modeled_types::Vector{DataType}, ::Bool)
-    get_bid_type(term) == BidType.ENERGY ||
+    get_bid_type(term) == BidType.ENERGY || FCASService in modeled_types ||
         return Tuple{Symbol, Union{Nothing, DataType}}[(:unsupported_bid_type, nothing)]
     device = PSY.get_component(PSY.Device, sys, get_duid(term))
     isnothing(device) &&
@@ -33,7 +38,7 @@ function _term_failures(sys::PSY.System, term::UnitTerm, modeled_types::Vector{D
 end
 
 function _term_failures(sys::PSY.System, term::RegionTerm, modeled_types::Vector{DataType}, ::Bool)
-    get_bid_type(term) == BidType.ENERGY ||
+    get_bid_type(term) == BidType.ENERGY || FCASService in modeled_types ||
         return Tuple{Symbol, Union{Nothing, DataType}}[(:unsupported_bid_type, nothing)]
     failures = Tuple{Symbol, Union{Nothing, DataType}}[]
     for dname in get_devices(term)
@@ -100,7 +105,7 @@ end
 
 The [`GenericConstraint`](@ref)s in `sys` that `template` can build under
 [`LinearFactorLimit`](@ref). A constraint is unbuildable when a `UnitTerm`/`RegionTerm` has a
-non-`ENERGY` `bid_type`, a term's named component is missing from `sys`, or a device's type
+non-`ENERGY` `bid_type` and `template` has no [`FCASMarket`](@ref) model, a term's named component is missing from `sys`, or a device's type
 isn't modelled by any `DeviceModel`/branch model in `template` (an `InterconnectorTerm` needs
 `PSY.AreaInterchange` modelled as a branch). Constraints with `PSY.get_available(gc) == false`
 are skipped entirely.

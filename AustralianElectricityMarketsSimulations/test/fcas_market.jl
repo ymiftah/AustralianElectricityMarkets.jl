@@ -1863,3 +1863,89 @@ end
         @test PSI.JuMP.value(gen_upper["BAT1", 1]) * base_power ≈ 5.0 atol = FCAS_TOY_TOLERANCE
     end
 end
+
+# A toy system whose one unit bids `bid_type` at `price`, with a `>= rhs_mw` "F_TOY" GenericConstraint
+# governing region "1"'s price through `term`, in the form `add_nem_constraints!` produces.
+function fcas_requirement_toy_system(bid_type::BidType, term::ConstraintTerm, rhs_mw; price = 10.0)
+    return fcas_energy_toy_system(
+        2.0;
+        mutate! = (sys, stamps) -> begin
+            device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+            add_toy_fcas!(sys, device, stamps[1], length(stamps), bid_type, (0.0, 0.0, 100.0, 100.0, 20.0), [(20.0, price)])
+            PSY.add_service!(
+                sys, FCASService(; name = "1_$(string(bid_type))", region = "1", bid_type = bid_type), [device],
+            )
+            rhs_pu = rhs_mw / PSY.get_base_power(sys)
+            gc = GenericConstraint(;
+                name = "F_TOY", sense = ConstraintSense.GE, rhs = rhs_pu, terms = ConstraintTerm[term],
+                fcas_requirements = [FCASRequirement("1", bid_type)],
+            )
+            PSY.add_service!(sys, gc, [device])
+            for (name, value) in (("rhs", rhs_pu), ("invoked", 1.0))
+                PSY.add_time_series!(
+                    sys, gc,
+                    PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, fill(value, length(stamps)))),
+                )
+            end
+        end,
+    )
+end
+
+function solve_fcas_requirement(sys, bid_type::BidType; gc_template = true)
+    template = fcas_toy_template(sys, ["1_$(string(bid_type))"])
+    gc_template && PSI.set_service_model!(
+        template, "F_TOY",
+        PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_TOY"; duals = [NEMConstraintLimit]),
+    )
+    model = PSI.DecisionModel(
+        template, sys;
+        optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+        horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
+        initial_time = TOY_START, name = "fcas_req_toy", store_variable_names = true,
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    return PSI.OptimizationProblemResults(model), model
+end
+
+@testset "a UnitTerm/RegionTerm on FCAS enablement forces it and prices the region via the dual" begin
+    for (bid_type, term) in (
+            (BidType.RAISE6SEC, UnitTerm(TOY_CHEAP, BidType.RAISE6SEC, 1.0)),
+            (BidType.RAISEREG, RegionTerm("1", BidType.RAISEREG, 1.0, [TOY_CHEAP])),
+        )
+        sys = fcas_requirement_toy_system(bid_type, term, 5.0)
+        results, _ = solve_fcas_requirement(sys, bid_type)
+        service_name = "1_$(string(bid_type))"
+        enabled = PSI.read_variable(results, "FCASCapacityVariable__FCASService__$service_name")
+        @test only(enabled.value) * PSY.get_base_power(sys) ≈ 5.0 atol = FCAS_TOY_TOLERANCE
+        prices = compute_fcas_prices(results, sys)
+        @test prices.REGIONID == ["1"]
+        @test prices.BIDTYPE == [bid_type]
+        @test prices.RRP ≈ [10.0] atol = 1.0e-4
+    end
+end
+
+@testset "an FCAS term with no FCASMarket model for its service throws, naming the constraint" begin
+    bid_type = BidType.RAISE6SEC
+    sys = fcas_requirement_toy_system(bid_type, UnitTerm(TOY_CHEAP, bid_type, 1.0), 5.0)
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    set_nem_dispatch_models!(template, sys)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    PSI.set_service_model!(
+        template, "F_TOY", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_TOY"),
+    )
+    model = PSI.DecisionModel(
+        template, sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    PSI.set_output_dir!(model, mktempdir())
+    err = try
+        PSI.build_impl!(model)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("F_TOY", sprint(showerror, err))
+    @test occursin("FCASMarket", sprint(showerror, err))
+end

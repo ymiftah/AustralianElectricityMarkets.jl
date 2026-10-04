@@ -252,17 +252,21 @@ end
     @test Set(typeof.(devices)) == Set([ThermalStandard, AreaInterchange])
 end
 
-@testset "an unsupported bid_type throws, naming the constraint and the term" begin
+@testset "an FCAS term whose service the template doesn't model throws, naming the constraint and the term" begin
     sys = _prepared_system()
     for id in ("F_R2_LOWERREG", "N_HYDRO_LIMIT", "N_IC1_LIMIT", "N_PARTIAL")
         remove_component!(sys, _gc(sys, id))
     end
+    add_service!(
+        sys, FCASService(; name = "1_RAISE6SEC", region = "1", bid_type = BidType.RAISE6SEC),
+        get_contributing_devices(sys, _gc(sys, "F_R1_RAISE6SEC")),
+    )
     model = _decision_model(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     err = _build_error(model)
     @test err isa ArgumentError
     msg = sprint(showerror, err)
     @test occursin("F_R1_RAISE6SEC", msg)
-    @test occursin("bid_type", msg)
+    @test occursin("1_RAISE6SEC", msg)
 end
 
 @testset "a device type this template doesn't model throws, naming the constraint and the device" begin

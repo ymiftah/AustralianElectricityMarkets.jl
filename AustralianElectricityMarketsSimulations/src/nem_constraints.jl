@@ -1,7 +1,8 @@
 # `LinearFactorLimit` — the `GenericConstraint` `PSI.Service` formulation for energy terms
-# (`InterconnectorTerm`, and `UnitTerm`/`RegionTerm` with `bid_type == BidType.ENERGY`). FCAS
-# terms are a later formulation. Follows the `TransmissionInterface` extension pattern in
-# installed PSI (`services_models/transmission_interface.jl`).
+# (`InterconnectorTerm`, and `UnitTerm`/`RegionTerm` with `bid_type == BidType.ENERGY`) and FCAS
+# terms (`UnitTerm`/`RegionTerm` with an FCAS `bid_type`, read off `FCASMarket`'s variables).
+# Follows the `TransmissionInterface` extension pattern in installed PSI
+# (`services_models/transmission_interface.jl`).
 
 PSI.get_default_time_series_names(::Type{GenericConstraint}, ::Type{LinearFactorLimit}) =
     Dict{Type{<:PSI.TimeSeriesParameter}, String}(NEMConstraintRHSParameter => "rhs")
@@ -77,8 +78,6 @@ end
 
 # --- Term validation: fail loudly, never a partial LHS ---
 
-_term_bid_type(term::Union{UnitTerm, RegionTerm}) = get_bid_type(term)
-
 "A device's ENERGY variables and each one's multiplier in its net injection. `PSY.Storage` has no
 `ActivePowerVariable`: storage formulations split it into charge/discharge, which PSI's own
 nodal balance nets with variable multipliers of -1.0 and +1.0."
@@ -95,9 +94,8 @@ _energy_modeled(container::PSI.OptimizationContainer, device::PSY.Device) = all(
     _checked_device(container, sys, gc, term::UnitTerm) -> PSY.Device
 
 Resolves `term`'s device and confirms the template models its energy variables. Throws
-`ArgumentError` naming `gc`, `term` and the reason when the term's `bid_type` isn't
-`BidType.ENERGY`, its device is absent from `sys`, or the device's energy variables aren't in
-`container`.
+`ArgumentError` naming `gc`, `term` and the reason when its device is absent from `sys`, or the
+device's energy variables aren't in `container`.
 
 # Returns
 The resolved `PSY.Device`.
@@ -106,12 +104,6 @@ function _checked_device(
         container::PSI.OptimizationContainer, sys::PSY.System, gc::GenericConstraint, term::UnitTerm,
     )
     name = PSY.get_name(gc)
-    _term_bid_type(term) == BidType.ENERGY || throw(
-        ArgumentError(
-            "GenericConstraint \"$name\": UnitTerm on DUID \"$(get_duid(term))\" has bid_type " *
-                "$(get_bid_type(term)); LinearFactorLimit only builds ENERGY terms.",
-        ),
-    )
     device = PSY.get_component(PSY.Device, sys, get_duid(term))
     isnothing(device) && throw(
         ArgumentError(
@@ -134,8 +126,7 @@ end
 
 Resolves `term`'s already-attributed devices ([`get_devices`](@ref)) and confirms the template
 models each one's energy variables. Throws `ArgumentError` naming `gc`, `term` and the reason
-when the term's `bid_type` isn't `BidType.ENERGY`, a device is absent from `sys`, or a device's
-energy variables aren't in `container`.
+when a device is absent from `sys`, or a device's energy variables aren't in `container`.
 
 # Returns
 A `Vector{PSY.Device}`.
@@ -144,12 +135,6 @@ function _checked_devices(
         container::PSI.OptimizationContainer, sys::PSY.System, gc::GenericConstraint, term::RegionTerm,
     )
     name = PSY.get_name(gc)
-    _term_bid_type(term) == BidType.ENERGY || throw(
-        ArgumentError(
-            "GenericConstraint \"$name\": RegionTerm on region \"$(get_region(term))\" has " *
-                "bid_type $(get_bid_type(term)); LinearFactorLimit only builds ENERGY terms.",
-        ),
-    )
     devices = PSY.Device[]
     for dname in get_devices(term)
         device = PSY.get_component(PSY.Device, sys, dname)
@@ -217,6 +202,54 @@ function _add_device_energy_terms!(container, expr, name, device, factor)
     return
 end
 
+"""
+    _add_device_fcas_terms!(container, expr, sys, gc, device, bid_type, factor)
+
+Adds `factor` times `device`'s FCAS enablement for `bid_type` into `expr`: its
+[`FCASCapacityVariable`](@ref) for a contingency service, or its [`FCASUnitRegulationTarget`](@ref)
+for a regulation service (one net target per unit, AEMO *FCAS Model in NEMDE* §6.4). A
+`RegionTerm` sums this over the region's devices, AEMO *Constraint Formulation Guidelines* §5.3 and
+§5.4's "FCAS Requirement Region (Service)". The
+service is the one named `"<REGIONID>_<BIDTYPE>"` for the region of `device`'s own bus. Adds
+nothing when that service is absent, unavailable or has no variable for `device`, since an
+unenabled unit contributes zero. Throws `ArgumentError` when the service exists but the template has no
+[`FCASMarket`](@ref) model for it.
+"""
+function _add_device_fcas_terms!(container, expr, sys, gc, device, bid_type::BidType, factor)
+    region = PSY.get_name(PSY.get_area(PSY.get_bus(device)))
+    svc_name = "$(region)_$(string(bid_type))"
+    svc = PSY.get_component(FCASService, sys, svc_name)
+    (isnothing(svc) || !PSY.get_available(svc)) && return
+    dname = PSY.get_name(device)
+    regulation = bid_type in FCAS_REGULATION_MARKETS
+    key_type = regulation ? FCASUnitRegulationTarget : FCASCapacityVariable
+    PSI.has_container_key(container, key_type, FCASService, svc_name) || throw(
+        ArgumentError(
+            "GenericConstraint \"$(PSY.get_name(gc))\": term on \"$dname\" references FCASService " *
+                "\"$svc_name\", which has no $(nameof(key_type)) in this template; the template " *
+                "must set an FCASMarket model for it.",
+        ),
+    )
+    fcas = regulation ?
+        PSI.get_expression(container, FCASUnitRegulationTarget(), FCASService, svc_name) :
+        PSI.get_variable(container, FCASCapacityVariable(), FCASService, svc_name)
+    dname in axes(fcas, 1) || return
+    for t in PSI.get_time_steps(container)
+        JuMP.add_to_expression!(expr[PSY.get_name(gc), t], factor, fcas[dname, t])
+    end
+    return
+end
+
+"Adds `device`'s `bid_type` term to `expr`: its energy injection for `ENERGY`, else its FCAS enablement."
+function _add_device_terms!(container, expr, sys, gc, device, bid_type::BidType, factor)
+    if bid_type == BidType.ENERGY
+        _add_device_energy_terms!(container, expr, PSY.get_name(gc), device, factor)
+    else
+        _add_device_fcas_terms!(container, expr, sys, gc, device, bid_type, factor)
+    end
+    return
+end
+
 function PSI.add_to_expression!(
         container::PSI.OptimizationContainer,
         ::Type{NEMConstraintLHS},
@@ -228,7 +261,7 @@ function PSI.add_to_expression!(
     name = PSY.get_name(gc)
     expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
     device = _checked_device(container, sys, gc, term)
-    _add_device_energy_terms!(container, expr, name, device, get_factor(term))
+    _add_device_terms!(container, expr, sys, gc, device, get_bid_type(term), get_factor(term))
     return
 end
 
@@ -243,7 +276,7 @@ function PSI.add_to_expression!(
     name = PSY.get_name(gc)
     expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
     for device in _checked_devices(container, sys, gc, term)
-        _add_device_energy_terms!(container, expr, name, device, get_factor(term))
+        _add_device_terms!(container, expr, sys, gc, device, get_bid_type(term), get_factor(term))
     end
     return
 end
@@ -471,4 +504,45 @@ function PSI.objective_function!(
         end
     end
     return nothing
+end
+
+"""
+    compute_fcas_prices(results, sys; resolution = DISPATCH_INTERVAL) -> DataFrame
+
+Maps solved [`NEMConstraintLimit`](@ref) duals onto regional FCAS prices: each `(region, service)`
+price is the sum of the duals of every built [`GenericConstraint`](@ref) whose
+[`get_fcas_requirements`](@ref) names that pair, in `\$/MWh`. This mirrors AEMO's `ROP` as the sum
+of `DISPATCH_FCAS_REQ`'s `MARGINALVALUE` (see [`read_fcas_prices`](@ref)); `RRP` can differ under
+an administered price cap.
+
+# Arguments
+- `results`: `PSI.OptimizationProblemResults` of a model that recorded `NEMConstraintLimit` duals.
+- `sys`: the `System` the model was built from.
+- `resolution`: the model's interval length, converting per-interval duals to `\$/MWh`.
+
+# Returns
+A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `BIDTYPE` and `RRP`, like [`read_fcas_prices`](@ref).
+"""
+function compute_fcas_prices(
+        results::PSI.OptimizationProblemResults, sys::PSY.System; resolution::Dates.Period = DISPATCH_INTERVAL,
+    )
+    dual_keys = Dict(
+        k.meta => k for k in PSI.list_dual_keys(results) if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit
+    )
+    scale = PSY.get_base_power(sys) * interval_hours(resolution)
+    prices = Dict{Tuple{String, BidType}, DataFrame}()
+    for gc in PSY.get_components(GenericConstraint, sys)
+        haskey(dual_keys, PSY.get_name(gc)) || continue
+        dual = PSI.read_dual(results, dual_keys[PSY.get_name(gc)])
+        for req in get_fcas_requirements(gc)
+            id = (get_region(req), get_service(req))
+            term = DataFrame(; SETTLEMENTDATE = dual.DateTime, RRP = dual.value ./ scale)
+            haskey(prices, id) ? (prices[id].RRP .+= term.RRP) : (prices[id] = term)
+        end
+    end
+    out = DataFrame(; SETTLEMENTDATE = DateTime[], REGIONID = String[], BIDTYPE = BidType[], RRP = Float64[])
+    for ((region, service), df) in sort!(collect(prices); by = p -> (p[1][1], string(p[1][2])))
+        append!(out, DataFrame(; SETTLEMENTDATE = df.SETTLEMENTDATE, REGIONID = region, BIDTYPE = service, RRP = df.RRP))
+    end
+    return out
 end

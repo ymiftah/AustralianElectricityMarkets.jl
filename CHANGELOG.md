@@ -84,6 +84,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` (now including FY2024-25) or from a `"market_price_cap"`
   entry in `PSI.get_ext(PSI.get_settings(model))`, which every elastic slack falls back to; an
   unpublished year with no override throws.
+- **FCAS terms in generic constraints** (`AustralianElectricityMarketsSimulations`): `LinearFactorLimit`
+  now builds `UnitTerm`/`RegionTerm`s with an FCAS `bid_type` from `FCASMarket`'s capacity variables
+  (regulation reads the unit's net regulation target), resolving the service as `<REGIONID>_<BIDTYPE>`
+  from the device's own area. `compute_fcas_prices(results, sys)` maps `NEMConstraintLimit` duals
+  onto regional FCAS prices through each constraint's `fcas_requirements`.
+  `filter_buildable_generic_constraints` accepts FCAS terms when the template sets an
+  `FCASMarket` model.
 - **Elastic `GenericConstraint`s under `LinearFactorLimit`** (`AustralianElectricityMarketsSimulations`):
   `GenericConstraintSlackUp`/`GenericConstraintSlackDown` variables, built only for the side(s)
   `get_sense(gc)` needs and only when the owning `PSI.ServiceModel` sets `use_slacks = true`,
