@@ -406,7 +406,7 @@ end
         for name in fcas_registered
             PSI.set_service_model!(
                 fcas_template, name,
-                PSI.ServiceModel(FCASService, FCASMarket, name; duals = [FCASJointCapacityConstraint]),
+                PSI.ServiceModel(FCASService, FCASMarket, name; duals = [FCASJointCapacityConstraint], use_slacks = true),
             )
         end
         @test isnothing(check_fcas_services(sys, fcas_template))

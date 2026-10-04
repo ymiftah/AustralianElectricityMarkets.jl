@@ -517,35 +517,23 @@ function _add_fcas_slack!(
     initial_time = PSI.get_initial_time(container)
     base_power = PSI.get_base_power(container)
     slack = PSI.add_variable_container!(container, var_type(), FCASService, names, time_steps; meta = meta)
-    for name in names, t in time_steps
-        slack[name, t] = JuMP.@variable(jm, base_name = "$(nameof(var_type))_$(meta)_{$name,$t}", lower_bound = 0.0)
-        mpc = _market_price_cap(model, initial_time + resolution * (t - 1))
+    for t in time_steps
+        mpc = _market_price_cap(container, model, initial_time + resolution * (t - 1))
         coefficient = base_power * interval_cost_coefficient(cvp_factor * mpc, resolution)
-        PSI.add_to_objective_invariant_expression!(container, slack[name, t] * coefficient)
+        for name in names
+            slack[name, t] = JuMP.@variable(jm, base_name = "$(nameof(var_type))_$(meta)_{$name,$t}", lower_bound = 0.0)
+            PSI.add_to_objective_invariant_expression!(container, slack[name, t] * coefficient)
+        end
     end
     return slack
 end
 
 """
-    _add_fcas_capacity_slack!(container, model, lhs, meta, names, time_steps, sign)
+    _fcas_slack_term(slack, name, t)
 
-Merges a [`FCASJointCapacitySlack`](@ref) into the [`FCASJointCapacityLHS`](@ref) expression `lhs`
-with multiplier `sign` (`-1.0` for an `<=` row, `+1.0` for a `>=` row). A no-op when the model has
-`use_slacks = false`.
-
-# Returns
-`nothing`.
+The slack variable of `slack` at `(name, t)`, or `0.0` when `slack` is `nothing` (`use_slacks = false`).
 """
-function _add_fcas_capacity_slack!(container, model, lhs, meta, names, time_steps, sign::Float64)
-    slack = _add_fcas_slack!(
-        container, model, FCASJointCapacitySlack, meta, names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
-    )
-    isnothing(slack) && return
-    for name in names, t in time_steps
-        JuMP.add_to_expression!(lhs[name, t], sign, slack[name, t])
-    end
-    return
-end
+_fcas_slack_term(slack, name, t) = isnothing(slack) ? 0.0 : slack[name, t]
 
 """
     _add_fcas_joint_ramping_constraints!(container, model, jm, devices, directions, devices_template, bid_type, name, time_steps)
@@ -588,7 +576,7 @@ function _add_fcas_joint_ramping_constraints!(
             end
             lhs = JuMP.AffExpr(0.0)
             _add_fcas_net_energy_terms!(container, lhs, device, dname, t)
-            deficit = isnothing(slack) ? 0.0 : slack[dname, t]
+            deficit = _fcas_slack_term(slack, dname, t)
             con[dname, t] = if bid_type == BidType.RAISEREG
                 JuMP.@constraint(jm, lhs + target[dname, t] - deficit <= mw + caps[t])
             else
@@ -892,8 +880,12 @@ function PSI.construct_service!(
         upper_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_upper")
         lower_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_lower")
 
-        _add_fcas_capacity_slack!(container, model, upper_lhs, "$(name)_upper", single_names, time_steps, -1.0)
-        _add_fcas_capacity_slack!(container, model, lower_lhs, "$(name)_lower", single_names, time_steps, 1.0)
+        slack_upper = _add_fcas_slack!(
+            container, model, FCASJointCapacitySlack, "$(name)_upper", single_names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
+        )
+        slack_lower = _add_fcas_slack!(
+            container, model, FCASJointCapacitySlack, "$(name)_lower", single_names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
+        )
         con_upper = PSI.add_constraints_container!(
             container, FCASJointCapacityConstraint(), FCASService, single_names, time_steps; meta = "$(name)_upper",
         )
@@ -912,8 +904,12 @@ function PSI.construct_service!(
                     continue
                 end
                 trap = trapeziums[t]
-                con_upper[dname, t] = JuMP.@constraint(jm, upper_lhs[dname, t] <= get_enablement_max(trap))
-                con_lower[dname, t] = JuMP.@constraint(jm, lower_lhs[dname, t] >= get_enablement_min(trap))
+                con_upper[dname, t] = JuMP.@constraint(
+                    jm, upper_lhs[dname, t] - _fcas_slack_term(slack_upper, dname, t) <= get_enablement_max(trap),
+                )
+                con_lower[dname, t] = JuMP.@constraint(
+                    jm, lower_lhs[dname, t] + _fcas_slack_term(slack_lower, dname, t) >= get_enablement_min(trap),
+                )
             end
         end
     end
@@ -924,12 +920,11 @@ function PSI.construct_service!(
         load_upper_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_load_upper")
         load_lower_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_load_lower")
 
-        for (lhs, side, sign) in (
-                (gen_upper_lhs, "gen_upper", -1.0), (gen_lower_lhs, "gen_lower", 1.0),
-                (load_upper_lhs, "load_upper", -1.0), (load_lower_lhs, "load_lower", 1.0),
-            )
-            _add_fcas_capacity_slack!(container, model, lhs, "$(name)_$side", both_names, time_steps, sign)
-        end
+        gen_slack_upper, gen_slack_lower, load_slack_upper, load_slack_lower = (
+            _add_fcas_slack!(
+                container, model, FCASJointCapacitySlack, "$(name)_$side", both_names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
+            ) for side in ("gen_upper", "gen_lower", "load_upper", "load_lower")
+        )
         con_gen_upper = PSI.add_constraints_container!(
             container, FCASJointCapacityConstraint(), FCASService, both_names, time_steps; meta = "$(name)_gen_upper",
         )
@@ -952,16 +947,24 @@ function PSI.construct_service!(
                     con_gen_lower[dname, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
                 else
                     gen_trap = gen_traps[t]
-                    con_gen_upper[dname, t] = JuMP.@constraint(jm, gen_upper_lhs[dname, t] <= get_enablement_max(gen_trap))
-                    con_gen_lower[dname, t] = JuMP.@constraint(jm, gen_lower_lhs[dname, t] >= get_enablement_min(gen_trap))
+                    con_gen_upper[dname, t] = JuMP.@constraint(
+                        jm, gen_upper_lhs[dname, t] - _fcas_slack_term(gen_slack_upper, dname, t) <= get_enablement_max(gen_trap),
+                    )
+                    con_gen_lower[dname, t] = JuMP.@constraint(
+                        jm, gen_lower_lhs[dname, t] + _fcas_slack_term(gen_slack_lower, dname, t) >= get_enablement_min(gen_trap),
+                    )
                 end
                 if !load_enabled[t]
                     con_load_upper[dname, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
                     con_load_lower[dname, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
                 else
                     load_trap = load_traps[t]
-                    con_load_upper[dname, t] = JuMP.@constraint(jm, load_upper_lhs[dname, t] <= get_enablement_max(load_trap))
-                    con_load_lower[dname, t] = JuMP.@constraint(jm, load_lower_lhs[dname, t] >= get_enablement_min(load_trap))
+                    con_load_upper[dname, t] = JuMP.@constraint(
+                        jm, load_upper_lhs[dname, t] - _fcas_slack_term(load_slack_upper, dname, t) <= get_enablement_max(load_trap),
+                    )
+                    con_load_lower[dname, t] = JuMP.@constraint(
+                        jm, load_lower_lhs[dname, t] + _fcas_slack_term(load_slack_lower, dname, t) >= get_enablement_min(load_trap),
+                    )
                 end
             end
         end

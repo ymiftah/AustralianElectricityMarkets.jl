@@ -80,8 +80,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rows get a `FCASJointCapacitySlack` (CVP factor 70, AEMO item 24) and `FCASJointRampingConstraint`
   rows a `FCASJointRampingSlack` (factor 155, item 20), both priced at factor x Market Price Cap.
   PSI's `AreaBalancePowerModel` slack is now priced at 150 x Market Price Cap (items 22 and 23)
-  instead of the fixed `BALANCE_SLACK_COST`, for financial years in
-  `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` (now including FY2024-25).
+  instead of the fixed `BALANCE_SLACK_COST`. The Market Price Cap comes from
+  `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` (now including FY2024-25) or from a `"market_price_cap"`
+  entry in `PSI.get_ext(PSI.get_settings(model))`, which every elastic slack falls back to; an
+  unpublished year with no override throws.
 - **Elastic `GenericConstraint`s under `LinearFactorLimit`** (`AustralianElectricityMarketsSimulations`):
   `GenericConstraintSlackUp`/`GenericConstraintSlackDown` variables, built only for the side(s)
   `get_sense(gc)` needs and only when the owning `PSI.ServiceModel` sets `use_slacks = true`,

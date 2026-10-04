@@ -89,7 +89,7 @@ end
 
 @testset "missing/ambiguous InterconnectorLossModel throws" begin
     sys = augmented_pscb_system()
-    model = PSI.DecisionModel(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     PSI.set_output_dir!(model, mktempdir())
     err = try
         PSI.build_impl!(model)
@@ -104,7 +104,7 @@ end
 @testset "non-ascending segment slopes throw at construction" begin
     # A negative loss_flow_coefficient makes the quadratic concave: chord slopes descend.
     sys = _loss_test_system(; loss_flow_coefficient = -1.0e-3, breakpoints = [-100.0, 0.0, 100.0])
-    model = PSI.DecisionModel(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     PSI.set_output_dir!(model, mktempdir())
     err = try
         PSI.build_impl!(model)
@@ -122,7 +122,7 @@ end
     # the arithmetic below is closed-form, not just consistent with the LP's own segments.
     share = 0.4
     sys = _loss_test_system(; from_region_loss_share = share)
-    model = PSI.DecisionModel(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(model)
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
@@ -178,7 +178,7 @@ end
         loss_flow_coefficient = 2.0e-4, breakpoints = [-100.0, -25.0, 0.0, 25.0, 100.0],
         priced_supply_only = true,
     )
-    model = PSI.DecisionModel(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(model)
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
@@ -222,7 +222,7 @@ end
 
 @testset "FlowLimitConstraint bounds the flow from static flow_limits" begin
     sys = _loss_test_system()
-    model = PSI.DecisionModel(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
     con_ub = PSI.get_constraint(container, PSI.FlowLimitConstraint(), PSY.AreaInterchange, "ub")
@@ -236,7 +236,7 @@ end
     sys = _loss_test_system(;
         demand_coefficients = Dict("1" => 1.0e-4, "2" => -2.0e-4), pin_multiplier = true,
     )
-    model = PSI.DecisionModel(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(model)
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
@@ -249,7 +249,7 @@ end
 
 @testset "recurrent solves require rebuilding demand-dependent losses" begin
     sys = _loss_test_system(; demand_coefficients = Dict("2" => 1.0e-4))
-    model = PSI.DecisionModel(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     container = PSI.get_optimization_container(model)
     container.built_for_recurrent_solves = true
     err = try
@@ -283,7 +283,7 @@ end
         expected_demand = sum(
             PSY.get_max_active_power(l) for l in area2_loads if PSY.get_available(l); init = 0.0,
         )
-        model = PSI.DecisionModel(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+        model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
         container = PSI.get_optimization_container(model)
         demand = AEMS._area_demand(container, sys)
@@ -310,7 +310,7 @@ end
     sys = _loss_test_system()
     template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaPTDFPowerModel; use_slacks = false))
     PSI.set_device_model!(template, PSY.AreaInterchange, AEMS.NEMInterconnectorLoss)
-    model = PSI.DecisionModel(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
 end
 
@@ -331,7 +331,7 @@ end
 @testset "no available AreaInterchange builds without loss variables" begin
     sys = _loss_test_system()
     foreach(d -> PSY.set_available!(d, false), PSY.get_components(PSY.AreaInterchange, sys))
-    model = PSI.DecisionModel(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
     @test !PSI.has_container_key(container, AEMS.InterconnectorLossVariable, PSY.AreaInterchange)

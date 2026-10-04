@@ -257,7 +257,7 @@ end
     for id in ("F_R2_LOWERREG", "N_HYDRO_LIMIT", "N_IC1_LIMIT", "N_PARTIAL")
         remove_component!(sys, _gc(sys, id))
     end
-    model = PSI.DecisionModel(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     err = _build_error(model)
     @test err isa ArgumentError
     msg = sprint(showerror, err)
@@ -270,7 +270,7 @@ end
     for id in ("F_R1_RAISE6SEC", "F_R2_LOWERREG", "N_IC1_LIMIT", "N_PARTIAL")
         remove_component!(sys, _gc(sys, id))
     end
-    model = PSI.DecisionModel(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     err = _build_error(model)
     @test err isa ArgumentError
     msg = sprint(showerror, err)
@@ -283,7 +283,7 @@ end
     # (ParkCity + Sundance - IC1 flow) at the first time step.
     baseline_sys = _prepared_system()
     baseline_template = _area_balance_template()
-    baseline_model = PSI.DecisionModel(baseline_template, baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    baseline_model = _decision_model(baseline_template, baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(baseline_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(baseline_model)
     @test PSI.get_run_status(baseline_model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
@@ -304,7 +304,7 @@ end
     sys = _prepared_system(Dict("N_IC1_LIMIT" => tightened_rhs))
     _prune_unbuildable_constraints!(sys)
     template = _nem_service_template()
-    model = PSI.DecisionModel(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(model)
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
@@ -360,7 +360,7 @@ end
     # stale key (sparse, if the cell were mistakenly populated).
     baseline_sys = _prepared_system()
     baseline_template = _area_balance_template()
-    baseline_model = PSI.DecisionModel(baseline_template, baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    baseline_model = _decision_model(baseline_template, baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(baseline_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(baseline_model)
     @test PSI.get_run_status(baseline_model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
@@ -383,7 +383,7 @@ end
     )
     _prune_unbuildable_constraints!(sys)
     template = _nem_service_template()
-    model = PSI.DecisionModel(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(model)
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
@@ -514,7 +514,7 @@ end
     # Phase 1: a deliberately slack RHS, to learn BAT1's unconstrained net injection.
     baseline_sys = _prepared_system(; storage_constraint_rhs = 1.0e4)
     _prune_unbuildable_constraints!(baseline_sys)
-    baseline_model = PSI.DecisionModel(
+    baseline_model = _decision_model(
         _storage_template(), baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
     )
     @test PSI.build!(baseline_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
@@ -532,7 +532,7 @@ end
     tightened_rhs = unconstrained_net / 2
     sys = _prepared_system(; storage_constraint_rhs = tightened_rhs)
     _prune_unbuildable_constraints!(sys)
-    model = PSI.DecisionModel(
+    model = _decision_model(
         _storage_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
@@ -605,7 +605,7 @@ end
         aggregated_template,
         PSI.ServiceModel(GenericConstraint, AEMS.LinearFactorLimit; duals = [AEMS.NEMConstraintLimit]),
     )
-    aggregated_model = PSI.DecisionModel(
+    aggregated_model = _decision_model(
         aggregated_template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
     )
     @test _build_error(aggregated_model) isa ArgumentError
@@ -621,7 +621,7 @@ end
             ),
         )
     end
-    model = PSI.DecisionModel(filtered_template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(filtered_template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(model)
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
@@ -654,7 +654,7 @@ end
 
 @testset "a genuinely violated interval is infeasible under a hard GenericConstraint, but builds and solves with a nonzero slack when elastic" begin
     hard_sys = _sys_with_infeasible_requirement()
-    hard_model = PSI.DecisionModel(
+    hard_model = _decision_model(
         _nem_service_template(; use_slacks = false), hard_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
     )
     @test PSI.build!(hard_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
@@ -666,7 +666,7 @@ end
     # supplies its own market_price_cap override rather than the financial-year lookup.
     test_mpc = 20_300.0
     elastic_sys = _sys_with_infeasible_requirement()
-    elastic_model = PSI.DecisionModel(
+    elastic_model = _decision_model(
         _nem_service_template(; use_slacks = true, market_price_cap = test_mpc), elastic_sys;
         optimizer = HiGHS.Optimizer, horizon = Hour(2),
     )
@@ -715,4 +715,26 @@ end
     @test AEMS._financial_year_mpc(DateTime(2025, 6, 30)) == 17_500.0
     @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2024, 6, 30))
     @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2027, 7, 1))
+end
+
+@testset "area-balance slack Market Price Cap: unpublished year throws, settings entry overrides" begin
+    # _prepared_system() is dated 2020, outside MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.
+    pruned_system() = (sys = _prepared_system(); _prune_unbuildable_constraints!(sys); sys)
+    model = PSI.DecisionModel(_nem_service_template(), pruned_system(); optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    err = _build_error(model)
+    @test err isa ArgumentError
+    @test occursin("No published Market Price Cap", sprint(showerror, err))
+
+    model = _decision_model(
+        _nem_service_template(), pruned_system(); mpc = 10_000.0, optimizer = HiGHS.Optimizer, horizon = Hour(2),
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    objective_terms = PSI.JuMP.objective_function(PSI.get_jump_model(container)).terms
+    expected = PSI.get_base_power(container) *
+        interval_cost_coefficient(AEMS.AREA_BALANCE_CVP_FACTOR * 10_000.0, PSI.get_resolution(container))
+    for var_type in (PSI.SystemBalanceSlackUp, PSI.SystemBalanceSlackDown)
+        slack = PSI.get_variable(container, var_type(), PSY.Area)
+        @test all(v -> objective_terms[v] ≈ expected, slack)
+    end
 end

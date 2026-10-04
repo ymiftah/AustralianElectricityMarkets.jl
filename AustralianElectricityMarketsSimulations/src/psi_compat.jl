@@ -153,8 +153,10 @@ const AREA_BALANCE_CVP_FACTOR = 150.0
 Override of `PowerSimulations.jl` 0.38.4's `AreaBalancePowerModel` slack objective, which prices
 `SystemBalanceSlackUp`/`SystemBalanceSlackDown` at the fixed `BALANCE_SLACK_COST`. Prices each
 slack at [`AREA_BALANCE_CVP_FACTOR`](@ref) times the Market Price Cap of the interval's financial
-year ([`_published_mpc`](@ref)), in `\$/MW` per dispatch interval. An interval in a financial year
-absent from `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` keeps PSI's `BALANCE_SLACK_COST`.
+year, or the `"market_price_cap"` entry of the model's settings `ext`
+([`_container_market_price_cap`](@ref)), in `\$/MW` per dispatch interval. Throws for a financial
+year absent from `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` with no override. `AreaPTDFPowerModel` keeps
+PSI's flat `BALANCE_SLACK_COST`.
 
 # Returns
 `nothing`.
@@ -170,9 +172,8 @@ function PSI.objective_function!(
     initial_time = PSI.get_initial_time(container)
     base_power = PSI.get_base_power(container)
     for t in PSI.get_time_steps(container)
-        mpc = _published_mpc(initial_time + resolution * (t - 1))
-        coefficient = isnothing(mpc) ? PSI.BALANCE_SLACK_COST :
-            base_power * interval_cost_coefficient(AREA_BALANCE_CVP_FACTOR * mpc, resolution)
+        mpc = _container_market_price_cap(container, initial_time + resolution * (t - 1))
+        coefficient = base_power * interval_cost_coefficient(AREA_BALANCE_CVP_FACTOR * mpc, resolution)
         for n in areas
             PSI.add_to_objective_invariant_expression!(container, (variable_dn[n, t] + variable_up[n, t]) * coefficient)
         end
