@@ -94,8 +94,8 @@ _energy_modeled(container::PSI.OptimizationContainer, device::PSY.Device) = all(
     _checked_device(container, sys, gc, term::UnitTerm) -> PSY.Device
 
 Resolves `term`'s device and confirms the template models its energy variables. Throws
-`ArgumentError` naming `gc`, `term` and the reason when its device is absent from `sys`, or the
-an available device's energy variables aren't in `container`.
+`ArgumentError` naming `gc`, `term` and the reason when its device is absent from `sys`, or an
+available device's energy variables aren't in `container`.
 
 # Returns
 The resolved `PSY.Device`.
@@ -126,7 +126,7 @@ end
 
 Resolves `term`'s already-attributed devices ([`get_devices`](@ref)) and confirms the template
 models each one's energy variables. Throws `ArgumentError` naming `gc`, `term` and the reason
-when a device is absent from `sys`, or a an available device's energy variables aren't in `container`.
+when a device is absent from `sys`, or an available device's energy variables aren't in `container`.
 
 # Returns
 A `Vector{PSY.Device}`.
