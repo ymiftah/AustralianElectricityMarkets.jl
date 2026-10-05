@@ -157,6 +157,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lists the constraints the template cannot model, and
   `AustralianElectricityMarketsSimulations/scripts/diagnose_infeasible.jl` reports the solver
   status and conflicting constraint families for an interval that does not solve.
+- Validation harness: `validation_sample` (seeded, stratified interval sample from published data),
+  `run_validation` (tidy table of replicated against published outcomes, failures recorded per
+  interval), `complementary_slackness_table` (AEMO's own dispatch against its offers, no solve),
+  `validation_summary` (per-metric distributions) and `scripts/validate_month.jl`.
 - **Single-interval replication pipeline** (`AustralianElectricityMarketsSimulations`):
   `replicate_interval(db, settlement_date)` builds the constrained `System`
   (`replication_system`), solves it with `replication_template` (NEM dispatch devices,

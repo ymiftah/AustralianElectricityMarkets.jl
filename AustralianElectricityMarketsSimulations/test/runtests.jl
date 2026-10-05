@@ -66,6 +66,7 @@ const TEST_GROUPS = [
     "fcas_market" => ("FCAS market", "fcas_market.jl"),
     "interconnector_losses" => ("Interconnector losses", "interconnector_losses.jl"),
     "pipeline" => ("Replication pipeline", "pipeline.jl"),
+    "validation" => ("Validation harness", "validation.jl"),
 ]
 
 const SELECTED_GROUPS = let known = first.(TEST_GROUPS)

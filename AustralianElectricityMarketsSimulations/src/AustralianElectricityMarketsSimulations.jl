@@ -37,9 +37,13 @@ include("check/fcas.jl")
 include("replication/inputs.jl")
 include("replication/preprocessing.jl")
 include("replication/pipeline.jl")
+include("replication/validation.jl")
 
 export DISPATCH_INTERVAL_HOURS, DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
 export IntervalInputs, read_interval_inputs, read_published_interval
+export read_constraint_flags, read_complementary_slackness
+export VALIDATION_STRATA, VALIDATION_TOLERANCES, validation_sample, run_validation
+export complementary_slackness_table, validation_summary
 export replication_template, replication_system, replicate_interval
 export energy_bounds
 export scale_trapezium
