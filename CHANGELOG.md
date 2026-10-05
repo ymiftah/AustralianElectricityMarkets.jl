@@ -86,11 +86,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unpublished year with no override throws.
 - **FCAS terms in generic constraints** (`AustralianElectricityMarketsSimulations`): `LinearFactorLimit`
   now builds `UnitTerm`/`RegionTerm`s with an FCAS `bid_type` from `FCASMarket`'s capacity variables
-  (regulation reads the unit's net regulation target), resolving the service as `<REGIONID>_<BIDTYPE>`
-  from the device's own area. `compute_fcas_prices(results, sys)` maps `NEMConstraintLimit` duals
-  onto regional FCAS prices through each constraint's `fcas_requirements`.
-  `filter_buildable_generic_constraints` accepts FCAS terms when the template sets an
-  `FCASMarket` model.
+  (regulation reads the unit's net regulation target), resolving the service with the new
+  `fcas_service_name(device, bid_type)` (`<REGIONID>_<BIDTYPE>`, from the device's own area). A
+  service that is absent, unavailable or has no available devices contributes zero (one warning per
+  constraint for absent ones); a service with devices but no `FCASMarket` model throws.
+  `compute_fcas_prices(results, sys)` maps `NEMConstraintLimit` duals onto regional FCAS prices
+  (`SETTLEMENTDATE`, `REGIONID`, `BIDTYPE`, `ROP`) through each constraint's `fcas_requirements`,
+  reading the resolution from `results` and warning about constraints with no recorded dual.
+  `filter_buildable_generic_constraints` reports an FCAS term whose own service has devices but no
+  `FCASMarket` model as `:unmodeled_fcas_service` (replacing `:unsupported_bid_type`).
 - **Elastic `GenericConstraint`s under `LinearFactorLimit`** (`AustralianElectricityMarketsSimulations`):
   `GenericConstraintSlackUp`/`GenericConstraintSlackDown` variables, built only for the side(s)
   `get_sense(gc)` needs and only when the owning `PSI.ServiceModel` sets `use_slacks = true`,

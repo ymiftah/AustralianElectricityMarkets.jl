@@ -828,6 +828,7 @@ function _build_bdu_regulation(
         load_max_avail::Float64 = 10.0,
         solve::Bool = true,
         use_slacks::Bool = false,
+        requirement_mw::Union{Nothing, Float64} = nothing,
     )
     sys = augmented_pscb_system()
     _fix_thermal_floor!(sys)
@@ -877,6 +878,21 @@ function _build_bdu_regulation(
         )
     end
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG), [bat])
+    if !isnothing(requirement_mw)
+        rhs_pu = requirement_mw / get_base_power(sys)
+        gc = GenericConstraint(;
+            name = "F_BDU", sense = ConstraintSense.GE, rhs = rhs_pu,
+            terms = ConstraintTerm[UnitTerm("BAT1", BidType.RAISEREG, 1.0)],
+            fcas_requirements = [FCASRequirement("TAS1", BidType.RAISEREG)],
+        )
+        add_service!(sys, gc, [bat])
+        for (series, value) in (("rhs", rhs_pu), ("invoked", 1.0))
+            PSY.add_time_series!(
+                sys, gc,
+                PSY.SingleTimeSeries(; name = series, data = PSY.TimeSeries.TimeArray(stamps, fill(value, length(stamps)))),
+            )
+        end
+    end
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
     template = _area_balance_template()
@@ -884,6 +900,10 @@ function _build_bdu_regulation(
     PSI.set_service_model!(
         template, service_name,
         PSI.ServiceModel(FCASService, FCASMarket, service_name; duals = [FCASJointCapacityConstraint], use_slacks),
+    )
+    isnothing(requirement_mw) || PSI.set_service_model!(
+        template, "F_BDU",
+        PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_BDU"; duals = [NEMConstraintLimit]),
     )
 
     model = PSI.DecisionModel(
@@ -1864,83 +1884,171 @@ end
     end
 end
 
-# A toy system whose one unit bids `bid_type` at `price`, with a `>= rhs_mw` "F_TOY" GenericConstraint
-# governing region "1"'s price through `term`, in the form `add_nem_constraints!` produces.
-function fcas_requirement_toy_system(bid_type::BidType, term::ConstraintTerm, rhs_mw; price = 10.0)
+# A toy system whose one unit bids each `(bid_type, price)` in `bids` (flat 20 MW trapezium), with
+# a GenericConstraint per `(name, sense, rhs_mw, terms, requirements)` in `gcs`, in the form
+# `add_nem_constraints!` produces.
+function fcas_requirement_toy_system(bids, gcs)
     return fcas_energy_toy_system(
         2.0;
         mutate! = (sys, stamps) -> begin
             device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
-            add_toy_fcas!(sys, device, stamps[1], length(stamps), bid_type, (0.0, 0.0, 100.0, 100.0, 20.0), [(20.0, price)])
-            PSY.add_service!(
-                sys, FCASService(; name = "1_$(string(bid_type))", region = "1", bid_type = bid_type), [device],
-            )
-            rhs_pu = rhs_mw / PSY.get_base_power(sys)
-            gc = GenericConstraint(;
-                name = "F_TOY", sense = ConstraintSense.GE, rhs = rhs_pu, terms = ConstraintTerm[term],
-                fcas_requirements = [FCASRequirement("1", bid_type)],
-            )
-            PSY.add_service!(sys, gc, [device])
-            for (name, value) in (("rhs", rhs_pu), ("invoked", 1.0))
-                PSY.add_time_series!(
-                    sys, gc,
-                    PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, fill(value, length(stamps)))),
+            for (bid_type, price) in bids
+                add_toy_fcas!(sys, device, stamps[1], length(stamps), bid_type, (0.0, 0.0, 100.0, 100.0, 20.0), [(20.0, price)])
+                PSY.add_service!(
+                    sys, FCASService(; name = fcas_service_name(device, bid_type), region = "1", bid_type = bid_type), [device],
                 )
+            end
+            for (name, sense, rhs_mw, terms, requirements) in gcs
+                rhs_pu = rhs_mw / PSY.get_base_power(sys)
+                gc = GenericConstraint(;
+                    name = name, sense = sense, rhs = rhs_pu, terms = ConstraintTerm[terms...],
+                    fcas_requirements = [FCASRequirement("1", bt) for bt in requirements],
+                )
+                PSY.add_service!(sys, gc, [device])
+                for (series, value) in (("rhs", rhs_pu), ("invoked", 1.0))
+                    PSY.add_time_series!(
+                        sys, gc,
+                        PSY.SingleTimeSeries(; name = series, data = PSY.TimeSeries.TimeArray(stamps, fill(value, length(stamps)))),
+                    )
+                end
             end
         end,
     )
 end
 
-function solve_fcas_requirement(sys, bid_type::BidType; gc_template = true)
-    template = fcas_toy_template(sys, ["1_$(string(bid_type))"])
-    gc_template && PSI.set_service_model!(
-        template, "F_TOY",
-        PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_TOY"; duals = [NEMConstraintLimit]),
-    )
+function solve_fcas_requirement(sys, bid_types, gc_names; use_slacks = false, steps = 1, attributes = Dict{String, Any}())
+    device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+    template = fcas_toy_template(sys, [fcas_service_name(device, bt) for bt in bid_types])
+    for name in gc_names
+        PSI.set_service_model!(
+            template, name,
+            PSI.ServiceModel(
+                GenericConstraint, LinearFactorLimit, name; duals = [NEMConstraintLimit],
+                use_slacks = use_slacks, attributes = attributes,
+            ),
+        )
+    end
     model = PSI.DecisionModel(
         template, sys;
         optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
-        horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
+        horizon = steps * TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
         initial_time = TOY_START, name = "fcas_req_toy", store_variable_names = true,
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-    return PSI.OptimizationProblemResults(model), model
+    return PSI.OptimizationProblemResults(model)
 end
 
-@testset "a UnitTerm/RegionTerm on FCAS enablement forces it and prices the region via the dual" begin
-    for (bid_type, term) in (
-            (BidType.RAISE6SEC, UnitTerm(TOY_CHEAP, BidType.RAISE6SEC, 1.0)),
-            (BidType.RAISEREG, RegionTerm("1", BidType.RAISEREG, 1.0, [TOY_CHEAP])),
+fcas_enabled_mw(results, sys, service_name) =
+    only(PSI.read_variable(results, "FCASCapacityVariable__FCASService__$service_name").value) * PSY.get_base_power(sys)
+
+@testset "a UnitTerm/RegionTerm on a contingency or regulation service forces it and prices the region via the dual" begin
+    unit(bt) = UnitTerm(TOY_CHEAP, bt, 1.0)
+    region(bt) = RegionTerm("1", bt, 1.0, [TOY_CHEAP])
+    for (bid_type, make_term) in (
+            (BidType.RAISE6SEC, unit), (BidType.RAISE6SEC, region),
+            (BidType.RAISEREG, unit), (BidType.RAISEREG, region),
         )
-        sys = fcas_requirement_toy_system(bid_type, term, 5.0)
-        results, _ = solve_fcas_requirement(sys, bid_type)
+        gcs = [("F_TOY", ConstraintSense.GE, 5.0, [make_term(bid_type)], [bid_type])]
+        sys = fcas_requirement_toy_system([(bid_type, 10.0)], gcs)
+        # Two intervals, so the resolution is read from `results`.
+        results = solve_fcas_requirement(sys, [bid_type], ["F_TOY"]; steps = 2)
         service_name = "1_$(string(bid_type))"
         enabled = PSI.read_variable(results, "FCASCapacityVariable__FCASService__$service_name")
-        @test only(enabled.value) * PSY.get_base_power(sys) ≈ 5.0 atol = FCAS_TOY_TOLERANCE
+        @test enabled.value .* PSY.get_base_power(sys) ≈ [5.0, 5.0] atol = FCAS_TOY_TOLERANCE
         prices = compute_fcas_prices(results, sys)
-        @test prices.REGIONID == ["1"]
-        @test prices.BIDTYPE == [bid_type]
-        @test prices.RRP ≈ [10.0] atol = 1.0e-4
+        @test prices.REGIONID == ["1", "1"]
+        @test prices.BIDTYPE == [bid_type, bid_type]
+        @test prices.ROP ≈ [10.0, 10.0] atol = 1.0e-4
     end
 end
 
-@testset "an FCAS term with no FCASMarket model for its service throws, naming the constraint" begin
+@testset "a binding LE FCAS constraint carries a non-positive dual (the solver's sign)" begin
+    # A negative offer rewards capacity, so `<= 3 MW` binds; raising its right-hand side by 1 MW lowers cost by 10.
     bid_type = BidType.RAISE6SEC
-    sys = fcas_requirement_toy_system(bid_type, UnitTerm(TOY_CHEAP, bid_type, 1.0), 5.0)
-    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
-    set_nem_dispatch_models!(template, sys)
-    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
-    PSI.set_service_model!(
-        template, "F_TOY", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_TOY"),
+    gcs = [("F_TOY", ConstraintSense.LE, 3.0, [UnitTerm(TOY_CHEAP, bid_type, 1.0)], [bid_type])]
+    sys = fcas_requirement_toy_system([(bid_type, -10.0)], gcs)
+    results = solve_fcas_requirement(sys, [bid_type], ["F_TOY"])
+    @test fcas_enabled_mw(results, sys, "1_RAISE6SEC") ≈ 3.0 atol = FCAS_TOY_TOLERANCE
+    prices = compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
+    @test prices.ROP ≈ [-10.0] atol = 1.0e-4
+end
+
+@testset "constraints naming the same (region, service) sum, and one naming two services feeds both" begin
+    r6, r60 = BidType.RAISE6SEC, BidType.RAISE60SEC
+    gcs = [
+        ("F_ONE", ConstraintSense.GE, 5.0, [UnitTerm(TOY_CHEAP, r6, 1.0)], [r6]),
+        ("F_TWO", ConstraintSense.GE, 12.0, [UnitTerm(TOY_CHEAP, r6, 1.0), UnitTerm(TOY_CHEAP, r60, 1.0)], [r6, r60]),
+    ]
+    sys = fcas_requirement_toy_system([(r6, 10.0), (r60, 4.0)], gcs)
+    results = solve_fcas_requirement(sys, [r6, r60], ["F_ONE", "F_TWO"])
+    @test fcas_enabled_mw(results, sys, "1_RAISE6SEC") ≈ 5.0 atol = FCAS_TOY_TOLERANCE
+    @test fcas_enabled_mw(results, sys, "1_RAISE60SEC") ≈ 7.0 atol = FCAS_TOY_TOLERANCE
+    # F_ONE's dual is 10 - 4 = 6 and F_TWO's is 4: RAISE6SEC sums both, RAISE60SEC gets F_TWO's alone.
+    prices = compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
+    @test prices.BIDTYPE == [r60, r6]
+    @test prices.ROP ≈ [4.0, 10.0] atol = 1.0e-4
+end
+
+@testset "a violated requirement prices at its constraint violation penalty when elastic" begin
+    bid_type = BidType.RAISE6SEC
+    gcs = [("F_TOY", ConstraintSense.GE, 25.0, [UnitTerm(TOY_CHEAP, bid_type, 1.0)], [bid_type])]
+    sys = fcas_requirement_toy_system([(bid_type, 10.0)], gcs)
+    results = solve_fcas_requirement(
+        sys, [bid_type], ["F_TOY"]; use_slacks = true, attributes = Dict{String, Any}("market_price_cap" => 20_300.0),
     )
-    model = PSI.DecisionModel(
-        template, sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
-        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    weight = get_constraint_weight(get_component(GenericConstraint, sys, "F_TOY"))
+    @test fcas_enabled_mw(results, sys, "1_RAISE6SEC") ≈ 20.0 atol = FCAS_TOY_TOLERANCE
+    prices = compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
+    @test prices.ROP ≈ [weight * 20_300.0] rtol = 1.0e-6
+end
+
+@testset "a bidirectional Storage regulation unit enters a constraint through its net gen + load target" begin
+    service_name = fcas_service_name(get_component(EnergyReservoirStorage, augmented_pscb_system(), "BAT1"), BidType.RAISEREG)
+    # Each side holds at most 10 MW; the cheaper load side (12) takes 10 and the generation side (15) the last MW.
+    model = _build_bdu_regulation(service_name, 15.0, 15.0; agc_max_avail = 12.0, solve = false, requirement_mw = 11.0)
+    sys = PSI.get_system(model)
+    container = PSI.get_optimization_container(model)
+    base_power = PSY.get_base_power(sys)
+    out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), EnergyReservoirStorage)
+    in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)
+    PSI.JuMP.fix(out_var["BAT1", 1], 15.0 / base_power; force = true)
+    PSI.JuMP.fix(in_var["BAT1", 1], 15.0 / base_power; force = true)
+    @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    results = PSI.OptimizationProblemResults(model)
+    gen = PSI.read_variable(results, "FCASSideCapacityVariable__FCASService__$(service_name)_gen")
+    load = PSI.read_variable(results, "FCASSideCapacityVariable__FCASService__$(service_name)_load")
+    @test only(gen.value + load.value) * base_power ≈ 11.0 atol = FCAS_TOY_TOLERANCE
+    prices = compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
+    @test prices.ROP ≈ [15.0] atol = 1.0e-4
+end
+
+@testset "compute_fcas_prices needs a resolution for one interval, and warns on constraints without a dual" begin
+    bid_type = BidType.RAISE6SEC
+    gcs = [("F_TOY", ConstraintSense.GE, 5.0, [UnitTerm(TOY_CHEAP, bid_type, 1.0)], [bid_type])]
+    sys = fcas_requirement_toy_system([(bid_type, 10.0)], gcs)
+    results = solve_fcas_requirement(sys, [bid_type], ["F_TOY"])
+    @test_throws ArgumentError compute_fcas_prices(results, sys)
+    extra = GenericConstraint(;
+        name = "F_UNBUILT", sense = ConstraintSense.GE, rhs = 0.0,
+        fcas_requirements = [FCASRequirement("1", BidType.LOWER6SEC)],
     )
-    PSI.set_output_dir!(model, mktempdir())
+    PSY.add_component!(sys, extra)
+    prices = @test_logs (:warn, r"F_UNBUILT") compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
+    @test nrow(prices) == 1
+end
+
+@testset "an FCAS term's service must be modelled when it has devices; absent or empty services count as zero" begin
+    bid_type = BidType.RAISE6SEC
+    term = UnitTerm(TOY_CHEAP, bid_type, 1.0)
+    sys = fcas_requirement_toy_system([(bid_type, 10.0)], [("F_TOY", ConstraintSense.GE, 5.0, [term], [bid_type])])
+    device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+    # The template models a different FCAS service only, so the term's own service has no FCASMarket model.
+    PSY.add_service!(sys, FCASService(; name = "1_LOWER6SEC", region = "1", bid_type = BidType.LOWER6SEC), [device])
+    template = fcas_toy_template(sys, ["1_LOWER6SEC"])
+    PSI.set_service_model!(template, "F_TOY", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_TOY"))
     err = try
-        PSI.build_impl!(model)
+        filter_buildable_generic_constraints(sys, template)
         nothing
     catch e
         e
@@ -1948,20 +2056,27 @@ end
     @test err isa ArgumentError
     @test occursin("F_TOY", sprint(showerror, err))
     @test occursin("FCASMarket", sprint(showerror, err))
-end
-
-@testset "an FCAS term naming a service absent from the System warns" begin
-    bid_type = BidType.RAISE6SEC
-    sys = fcas_requirement_toy_system(bid_type, UnitTerm(TOY_CHEAP, bid_type, 1.0), 5.0)
-    PSY.remove_component!(sys, PSY.get_component(FCASService, sys, "1_RAISE6SEC"))
-    template = fcas_toy_template(sys, String[])
-    PSI.set_service_model!(
-        template, "F_TOY", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_TOY"),
-    )
+    # ...and the build throws on exactly that term.
     model = PSI.DecisionModel(
         template, sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
         resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
     )
     PSI.set_output_dir!(model, mktempdir())
-    @test_logs (:warn, r"no FCASService \"1_RAISE6SEC\"") match_mode = :any PSI.build_impl!(model)
+    build_err = try
+        PSI.build_impl!(model)
+        nothing
+    catch e
+        e
+    end
+    @test build_err isa ArgumentError
+    @test occursin("FCASMarket", sprint(showerror, build_err))
+
+    # Modelling the term's own service makes the filter accept it.
+    ok_template = fcas_toy_template(sys, ["1_RAISE6SEC"])
+    PSI.set_service_model!(ok_template, "F_TOY", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_TOY"))
+    @test PSY.get_name.(filter_buildable_generic_constraints(sys, ok_template)) == ["F_TOY"]
+
+    # A service whose devices are all unavailable is skipped by FCASMarket and counts as zero.
+    PSY.set_available!(device, false)
+    @test PSY.get_name.(filter_buildable_generic_constraints(sys, template)) == ["F_TOY"]
 end

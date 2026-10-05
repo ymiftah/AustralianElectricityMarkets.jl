@@ -87,9 +87,10 @@ function build_error(model)
     return nothing
 end
 
-function term_device_names(gc)
+function term_device_names(gc; energy_only::Bool = false)
     names = String[]
     for term in get_terms(gc)
+        energy_only && term isa Union{UnitTerm, RegionTerm} && get_bid_type(term) != BidType.ENERGY && continue
         term isa UnitTerm && push!(names, get_duid(term))
         term isa RegionTerm && append!(names, get_devices(term))
     end
@@ -189,17 +190,18 @@ end
         interconnector_modeled = AEMS._interconnector_modeled(template)
         buildable_names = Set(PSY.get_name.(buildable))
         diagnoses = [
-            AEMS._constraint_diagnosis(sys, gc, modeled, interconnector_modeled)
+            AEMS._constraint_diagnosis(sys, gc, modeled, interconnector_modeled, AEMS._modeled_fcas_services(template))
                 for gc in constraints if !(PSY.get_name(gc) in buildable_names)
         ]
 
         @testset "every constraint term names a device in the System" begin
-            @test issubset(Set(first.(diagnoses)), Set([:unsupported_bid_type, :unmodeled_device_type]))
+            @test issubset(Set(first.(diagnoses)), Set([:unmodeled_fcas_service, :unmodeled_device_type]))
         end
 
+        # An FCAS term on an unavailable device contributes zero, so only energy terms are checked.
         @testset "no buildable constraint names an unavailable device" begin
             @test all(buildable) do gc
-                all(term_device_names(gc)) do name
+                all(term_device_names(gc; energy_only = true)) do name
                     device = PSY.get_component(PSY.Device, sys, name)
                     return isnothing(device) || PSY.get_available(device)
                 end
@@ -396,17 +398,22 @@ end
         @test n_regulation_trapeziums_scaled > 0
 
         fcas_template = aemsim_template(sys)
-        for gc in buildable
-            name = PSY.get_name(gc)
-            PSI.set_service_model!(
-                fcas_template, name,
-                PSI.ServiceModel(GenericConstraint, LinearFactorLimit, name; duals = [NEMConstraintLimit]),
-            )
-        end
         for name in fcas_registered
             PSI.set_service_model!(
                 fcas_template, name,
                 PSI.ServiceModel(FCASService, FCASMarket, name; duals = [FCASJointCapacityConstraint], use_slacks = true),
+            )
+        end
+        # Buildable against this template, so constraints with FCAS terms are in play.
+        fcas_buildable = filter_buildable_generic_constraints(sys, fcas_template; allow_partial_coverage = true)
+        n_fcas_constraints = count(gc -> !isempty(get_fcas_requirements(gc)), fcas_buildable)
+        for gc in fcas_buildable
+            name = PSY.get_name(gc)
+            PSI.set_service_model!(
+                fcas_template, name,
+                PSI.ServiceModel(
+                    GenericConstraint, LinearFactorLimit, name; duals = [NEMConstraintLimit], use_slacks = true,
+                ),
             )
         end
         @test isnothing(check_fcas_services(sys, fcas_template))
@@ -536,6 +543,17 @@ end
         lowerreg_match_rate_no_term5 = lower_cmp4 > 0 ? lower_ok4 / lower_cmp4 : NaN
 
         @info "Real-data FCASMarket DecisionModel" build_time solve_time n_services = length(fcas_registered) n_enabled_pairs n_regulation_trapeziums_scaled n_regulation_trapeziums n_two_sided_pairs n_agc_disabled_pairs raise_cmp5 raise_ok5 raisereg_match_rate raisereg_match_rate_no_term5 lower_cmp5 lower_ok5 lowerreg_match_rate lowerreg_match_rate_no_term5
+
+        # Report-only: the FCAS prices this solve's constraint duals imply, against AEMO's published
+        # ROP (the sum of the requirement constraints' MARGINALVALUE) per (region, service, interval).
+        fcas_prices = compute_fcas_prices(PSI.OptimizationProblemResults(fcas_model), sys)
+        published_prices = AEM.read_fcas_prices(db, REAL_DATE_RANGE)
+        compared = innerjoin(fcas_prices, published_prices; on = [:SETTLEMENTDATE, :REGIONID, :BIDTYPE], makeunique = true)
+        n_price_cmp = nrow(compared)
+        n_price_ok = count(r -> isapprox(r.ROP, r.ROP_1; atol = 0.5, rtol = 0.01), eachrow(compared))
+        fcas_price_match_rate = n_price_cmp > 0 ? n_price_ok / n_price_cmp : NaN
+        @info "Real-data FCAS prices from constraint duals vs published ROP" n_fcas_constraints n_price_cmp n_price_ok fcas_price_match_rate
+        @test n_price_cmp > 0
 
         # AEMO §6.1 fidelity: evaluate every non-placeholder FCASJointRampingConstraint row this
         # build actually constructs (both RAISEREG and LOWERREG services, generators and

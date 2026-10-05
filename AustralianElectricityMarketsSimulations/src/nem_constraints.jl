@@ -205,32 +205,30 @@ end
 """
     _add_device_fcas_terms!(container, expr, sys, gc, device, bid_type, factor)
 
-Adds `factor` times `device`'s FCAS enablement for `bid_type` into `expr`: its
-[`FCASCapacityVariable`](@ref) for a contingency service, or its [`FCASUnitRegulationTarget`](@ref)
-for a regulation service (one net target per unit, AEMO *FCAS Model in NEMDE* §6.4). A
-`RegionTerm` sums this over the region's devices, AEMO *Constraint Formulation Guidelines* §5.3 and
-§5.4's "FCAS Requirement Region (Service)". The
-service is the one named `"<REGIONID>_<BIDTYPE>"` for the region of `device`'s own bus. Adds
-nothing when that service is absent (with a warning), unavailable or has no variable for `device`, since an
-unenabled unit contributes zero. Throws `ArgumentError` when the service exists but the template has no
-[`FCASMarket`](@ref) model for it.
+Adds `factor` times `device`'s enablement of its [`fcas_service_name`](@ref) service into `expr`:
+its [`FCASCapacityVariable`](@ref) for a contingency service, or its
+[`FCASUnitRegulationTarget`](@ref) for a regulation service (the net gen + load target, AEMO
+*FCAS Model in NEMDE* §2.4). Adds nothing when the service is absent, unavailable or has no
+available devices, or `device` has no variable in it. Throws `ArgumentError` when the service has
+devices but the template sets no [`FCASMarket`](@ref) model for it.
 """
 function _add_device_fcas_terms!(container, expr, sys, gc, device, bid_type::BidType, factor)
-    region = PSY.get_name(PSY.get_area(PSY.get_bus(device)))
-    svc_name = "$(region)_$(string(bid_type))"
+    svc_name = fcas_service_name(device, bid_type)
     svc = PSY.get_component(FCASService, sys, svc_name)
-    dname = PSY.get_name(device)
-    isnothing(svc) && @warn "GenericConstraint \"$(PSY.get_name(gc))\": no FCASService \"$svc_name\" in the System; term on \"$dname\" contributes zero." maxlog = 1 _id = Symbol(svc_name)
     (isnothing(svc) || !PSY.get_available(svc)) && return
+    dname = PSY.get_name(device)
     regulation = bid_type in FCAS_REGULATION_MARKETS
     key_type = regulation ? FCASUnitRegulationTarget : FCASCapacityVariable
-    PSI.has_container_key(container, key_type, FCASService, svc_name) || throw(
-        ArgumentError(
-            "GenericConstraint \"$(PSY.get_name(gc))\": term on \"$dname\" references FCASService " *
-                "\"$svc_name\", which has no $(nameof(key_type)) in this template; the template " *
-                "must set an FCASMarket model for it.",
-        ),
-    )
+    if !PSI.has_container_key(container, key_type, FCASService, svc_name)
+        any(PSY.get_available, PSY.get_contributing_devices(sys, svc)) || return
+        throw(
+            ArgumentError(
+                "GenericConstraint \"$(PSY.get_name(gc))\": term on \"$dname\" references FCASService " *
+                    "\"$svc_name\", which has no $(nameof(key_type)) in this template; the template " *
+                    "must set an FCASMarket model for it.",
+            ),
+        )
+    end
     fcas = regulation ?
         PSI.get_expression(container, FCASUnitRegulationTarget(), FCASService, svc_name) :
         PSI.get_variable(container, FCASCapacityVariable(), FCASService, svc_name)
@@ -238,6 +236,32 @@ function _add_device_fcas_terms!(container, expr, sys, gc, device, bid_type::Bid
     for t in PSI.get_time_steps(container)
         JuMP.add_to_expression!(expr[PSY.get_name(gc), t], factor, fcas[dname, t])
     end
+    return
+end
+
+"""
+    _warn_absent_fcas_services(sys, gc)
+
+Warns once for `gc`, naming every FCAS service its terms reference that is absent from `sys`
+(those terms contribute zero).
+"""
+function _warn_absent_fcas_services(sys::PSY.System, gc::GenericConstraint)
+    absent = Set{String}()
+    for term in get_terms(gc)
+        term isa Union{UnitTerm, RegionTerm} || continue
+        get_bid_type(term) == BidType.ENERGY && continue
+        names = term isa UnitTerm ? [get_duid(term)] : get_devices(term)
+        for dname in names
+            device = PSY.get_component(PSY.Device, sys, dname)
+            isnothing(device) && continue
+            svc_name = fcas_service_name(device, get_bid_type(term))
+            isnothing(PSY.get_component(FCASService, sys, svc_name)) && push!(absent, svc_name)
+        end
+    end
+    isempty(absent) || @warn(
+        "GenericConstraint \"$(PSY.get_name(gc))\": FCAS terms reference services absent from the " *
+            "System and contribute zero: $(join(sort!(collect(absent)), ", "))."
+    )
     return
 end
 
@@ -452,6 +476,7 @@ function PSI.construct_service!(
     for term in get_terms(gc)
         _add_gc_term_to_expression!(container, gc, term, sys)
     end
+    _warn_absent_fcas_services(sys, gc)
     # Before add_constraints! reads NEMConstraintLHS: a slack must already be merged in for the
     # constraint it relaxes to be built with it, not around it.
     _add_gc_slack_variables!(container, gc, model)
@@ -508,42 +533,62 @@ function PSI.objective_function!(
 end
 
 """
-    compute_fcas_prices(results, sys; resolution = DISPATCH_INTERVAL) -> DataFrame
+    compute_fcas_prices(results, sys; resolution = nothing) -> DataFrame
 
 Maps solved [`NEMConstraintLimit`](@ref) duals onto regional FCAS prices: each `(region, service)`
-price is the sum of the duals of every built [`GenericConstraint`](@ref) whose
-[`get_fcas_requirements`](@ref) names that pair, in `\$/MWh`. This mirrors AEMO's `ROP` as the sum
-of `DISPATCH_FCAS_REQ`'s `MARGINALVALUE` (see [`read_fcas_prices`](@ref)); `RRP` can differ under
-an administered price cap.
+`ROP` is the sum of the duals of every built [`GenericConstraint`](@ref) whose
+[`get_fcas_requirements`](@ref) names that pair, in `\$/MWh`. This mirrors the sum of
+`DISPATCH_FCAS_REQ`'s `MARGINALVALUE` (see [`read_fcas_prices`](@ref)). Duals keep the solver's
+sign (change in cost per unit increase of the right-hand side): non-negative for a binding `>=`
+constraint, non-positive for `<=`. Warns when a constraint with requirements has no recorded dual.
 
 # Arguments
 - `results`: `PSI.OptimizationProblemResults` of a model that recorded `NEMConstraintLimit` duals.
 - `sys`: the `System` the model was built from.
-- `resolution`: the model's interval length, converting per-interval duals to `\$/MWh`.
+- `resolution`: interval length converting per-interval duals to `\$/MWh`. Defaults to the
+  spacing of `results`' timestamps, which a single-interval solve lacks, so it is required then.
 
 # Returns
-A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `BIDTYPE` and `RRP`, like [`read_fcas_prices`](@ref).
+A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `BIDTYPE` and `ROP`, like [`read_fcas_prices`](@ref).
 """
 function compute_fcas_prices(
-        results::PSI.OptimizationProblemResults, sys::PSY.System; resolution::Dates.Period = DISPATCH_INTERVAL,
+        results::PSI.OptimizationProblemResults, sys::PSY.System;
+        resolution::Union{Nothing, Dates.Period} = nothing,
+    )
+    resolution = something(resolution, PSI.get_resolution(results), Some(nothing))
+    isnothing(resolution) && throw(
+        ArgumentError(
+            "compute_fcas_prices: `results` has a single timestamp, so pass `resolution` explicitly.",
+        ),
     )
     dual_keys = Dict(
         k.meta => k for k in PSI.list_dual_keys(results) if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit
     )
     scale = PSY.get_base_power(sys) * interval_hours(resolution)
     prices = Dict{Tuple{String, BidType}, DataFrame}()
+    unrecorded = String[]
     for gc in PSY.get_components(GenericConstraint, sys)
-        haskey(dual_keys, PSY.get_name(gc)) || continue
-        dual = PSI.read_dual(results, dual_keys[PSY.get_name(gc)])
+        isempty(get_fcas_requirements(gc)) && continue
+        name = PSY.get_name(gc)
+        if !haskey(dual_keys, name)
+            push!(unrecorded, name)
+            continue
+        end
+        dual = PSI.read_dual(results, dual_keys[name])
         for req in get_fcas_requirements(gc)
             id = (get_region(req), get_service(req))
-            term = DataFrame(; SETTLEMENTDATE = dual.DateTime, RRP = dual.value ./ scale)
-            haskey(prices, id) ? (prices[id].RRP .+= term.RRP) : (prices[id] = term)
+            term = DataFrame(; SETTLEMENTDATE = dual.DateTime, ROP = dual.value ./ scale)
+            haskey(prices, id) ? (prices[id].ROP .+= term.ROP) : (prices[id] = term)
         end
     end
-    out = DataFrame(; SETTLEMENTDATE = DateTime[], REGIONID = String[], BIDTYPE = BidType[], RRP = Float64[])
+    isempty(unrecorded) || @warn(
+        "compute_fcas_prices: $(length(unrecorded)) GenericConstraint(s) with FCAS requirements " *
+            "have no NEMConstraintLimit dual and are left out: $(join(first(sort!(unrecorded), 5), ", "))" *
+            (length(unrecorded) > 5 ? ", ..." : ".")
+    )
+    out = DataFrame(; SETTLEMENTDATE = DateTime[], REGIONID = String[], BIDTYPE = BidType[], ROP = Float64[])
     for ((region, service), df) in sort!(collect(prices); by = p -> (p[1][1], string(p[1][2])))
-        append!(out, DataFrame(; SETTLEMENTDATE = df.SETTLEMENTDATE, REGIONID = region, BIDTYPE = service, RRP = df.RRP))
+        append!(out, DataFrame(; SETTLEMENTDATE = df.SETTLEMENTDATE, REGIONID = region, BIDTYPE = service, ROP = df.ROP))
     end
     return out
 end
