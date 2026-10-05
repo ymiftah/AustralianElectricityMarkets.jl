@@ -154,3 +154,48 @@ function _read_interconnector_flows(db, settlement_date::DateTime, intervention:
     )
     return Dict{String, Float64}(row.INTERCONNECTORID => row.MWFLOW for row in eachrow(df) if !ismissing(row.MWFLOW))
 end
+
+"""
+    read_published_interval(db, settlement_date; intervention = 0)
+
+Reads AEMO's published outcome for one dispatch interval: the energy targets and the
+interconnector flows and losses.
+
+# Arguments
+- `db`: an `AEMDB` connection.
+- `settlement_date`: the `SETTLEMENTDATE` of the interval (`DateTime`).
+- `intervention`: 0 for the pricing run, 1 for the physical run.
+
+# Returns
+A `NamedTuple` with `dispatch` (`DUID`, `TOTALCLEARED`) and `interconnectors`
+(`INTERCONNECTORID`, `MWFLOW`, `MWLOSSES`), both `DataFrame`s with one row per `DUID` or
+interconnector.
+"""
+function read_published_interval(db, settlement_date::DateTime; intervention::Integer = 0)
+    return (;
+        dispatch = _read_published(db, :DISPATCHLOAD, "DUID", ("TOTALCLEARED",), settlement_date, intervention),
+        interconnectors = _read_published(
+            db, :DISPATCHINTERCONNECTORRES, "INTERCONNECTORID", ("MWFLOW", "MWLOSSES"),
+            settlement_date, intervention,
+        ),
+    )
+end
+
+# One row per `key` at `settlement_date`, deduplicating archive-month overlap.
+function _read_published(db, table_name::Symbol, key::String, columns, settlement_date::DateTime, intervention::Integer)
+    table = read_hive(db, table_name)
+    schema = names(AustralianElectricityMarkets._query(db, "SELECT * FROM $table LIMIT 0"))
+    params = Any[settlement_date]
+    AustralianElectricityMarkets._push_intervention!(params, schema, intervention)
+    select_list = join([key; ["TRY_CAST($c AS DOUBLE) AS $c" for c in columns]], ", ")
+    return AustralianElectricityMarkets._query(
+        db,
+        """
+        SELECT $select_list
+        FROM $table
+        WHERE SETTLEMENTDATE = ? $(AustralianElectricityMarkets._intervention_where(schema))
+        QUALIFY row_number() OVER (PARTITION BY $key ORDER BY archive_month DESC) = 1
+        """,
+        params,
+    )
+end

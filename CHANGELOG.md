@@ -75,6 +75,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Single-interval replication pipeline** (`AustralianElectricityMarketsSimulations`):
+  `replicate_interval(db, settlement_date)` builds the constrained `System`
+  (`replication_system`), solves it with `replication_template` (NEM dispatch devices,
+  `FCASMarket`, `LinearFactorLimit`, `NEMInterconnectorLoss`, `AreaBalancePowerModel` with
+  slacks) and returns solved against AEMO-published regional prices, `TOTALCLEARED`,
+  interconnector flows and losses, and FCAS prices. `read_published_interval` reads the
+  published dispatch and interconnector results. `scripts/replicate_interval.jl` prints the
+  comparison from the local hive cache.
 - **Elastic FCAS joint rows and area-balance CVP pricing** (`AustralianElectricityMarketsSimulations`):
   with `use_slacks = true` on an `FCASMarket` `PSI.ServiceModel`, `FCASJointCapacityConstraint`
   rows get a `FCASJointCapacitySlack` (CVP factor 70, AEMO item 24) and `FCASJointRampingConstraint`

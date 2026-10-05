@@ -6,6 +6,7 @@ using Chain
 using DataFrames
 using Dates
 using DuckDB
+using HiGHS
 using HydroPowerSimulations
 using JuMP
 using PowerSimulations
@@ -34,9 +35,11 @@ include("fcas_market.jl")
 include("check/fcas.jl")
 include("replication/inputs.jl")
 include("replication/preprocessing.jl")
+include("replication/pipeline.jl")
 
 export DISPATCH_INTERVAL_HOURS, DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
-export IntervalInputs, read_interval_inputs
+export IntervalInputs, read_interval_inputs, read_published_interval
+export replication_template, replication_system, replicate_interval
 export energy_bounds
 export scale_trapezium
 export AbstractNEMConstraintFormulation, NEMConstraintLHS, NEMConstraintLimit,
