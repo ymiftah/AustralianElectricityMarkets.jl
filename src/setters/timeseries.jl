@@ -4,7 +4,9 @@
 Adds load time series data to the system from the database.
 
 This function reads demand data for a specified date range, processes it into a time series,
-and attaches it to the `PowerLoad` components in the system.
+and attaches it to the `PowerLoad` components in the system. `TOTALDEMAND` becomes the
+`"max_active_power"` series; `INITIALSUPPLY + DEMANDFORECAST` becomes a second `"loss_demand"`
+series, the regional demand the interconnector loss equations are evaluated at.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
@@ -19,6 +21,12 @@ function set_demand!(sys, db, date_range; kwargs...)
         subset!(:SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
         _as_timearray(:SETTLEMENTDATE, :name, :TOTALDEMAND)
     end
+    loss_ts = @chain demand begin
+        transform!(:REGIONID => ByRow(x -> x * " Load") => :name)
+        subset!(:SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
+        _as_timearray(:SETTLEMENTDATE, :name, :LOSSDEMAND)
+    end
+    _add_demand_ts_to_components!(sys, loss_ts, PowerLoad; name = "loss_demand")
     return _add_demand_ts_to_components!(sys, ts, PowerLoad)
 end
 
@@ -92,28 +100,29 @@ function _as_timearray(df, index, col, value)
 end
 
 """
-    _add_demand_ts_to_components!(sys, ts, type)
+    _add_demand_ts_to_components!(sys, ts, type; name = "max_active_power")
 
-Adds demand time series data to the system components.
+Adds demand time series data to the system components under the series name `name`.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
 - `ts`: A `TimeArray` of demand data.
 - `type`: The type of component to add the time series to.
+- `name`: The time series name to attach it under.
 """
-function _add_demand_ts_to_components!(sys, ts, type)
+function _add_demand_ts_to_components!(sys, ts, type; name = "max_active_power")
     loads = colnames(ts)
     for component in get_components(type, sys)
-        name = Symbol(get_name(component))
-        if !in(name, loads)
-            @info "Setting loads to 0 for $name"
+        column = Symbol(get_name(component))
+        if !in(column, loads)
+            @info "Setting loads to 0 for $column"
             ts_component = ts[first(loads)] .* 0.0
         else
-            ts_component = ts[name]
+            ts_component = ts[column]
         end
         max_active_power = with_units_base(() -> get_max_active_power(component), sys, "NATURAL_UNITS")
         psy_ts = SingleTimeSeries(;
-            name = "max_active_power",
+            name = name,
             data = Float64.(ts_component ./ max_active_power),
             scaling_factor_multiplier = get_max_active_power,
         )

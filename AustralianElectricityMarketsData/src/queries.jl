@@ -129,6 +129,8 @@ Read and process regional demand data from the database.
 
 # Returns
 A `DataFrame` with demand and renewable availability data, aggregated by the specified resolution.
+`LOSSDEMAND` is `INITIALSUPPLY + DEMANDFORECAST`, the regional demand NEMDE feeds the interconnector
+loss equations; it falls back to `TOTALDEMAND` where either term is missing.
 
 # Example
 ```julia
@@ -150,7 +152,9 @@ function read_demand(db; resolution::Dates.Period = Dates.Minute(5))
     df = _query(
         db,
         """
-        SELECT SETTLEMENTDATE, REGIONID, TOTALDEMAND, SS_SOLAR_AVAILABILITY, SS_WIND_AVAILABILITY
+        SELECT SETTLEMENTDATE, REGIONID, TOTALDEMAND,
+               COALESCE(INITIALSUPPLY + DEMANDFORECAST, TOTALDEMAND) AS LOSSDEMAND,
+               SS_SOLAR_AVAILABILITY, SS_WIND_AVAILABILITY
         FROM $source
         WHERE SETTLEMENTDATE IS NOT NULL AND REGIONID IS NOT NULL
           AND TOTALDEMAND IS NOT NULL AND SS_SOLAR_AVAILABILITY IS NOT NULL AND SS_WIND_AVAILABILITY IS NOT NULL

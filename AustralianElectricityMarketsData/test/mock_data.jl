@@ -97,6 +97,8 @@ function create_mock_data(hive_root::String)
                 SETTLEMENTDATE = fill(t, n),
                 REGIONID = regions,
                 TOTALDEMAND = fill(1000.0 + 10 * i, n),
+                INITIALSUPPLY = fill(990.0 + 10 * i, n),
+                DEMANDFORECAST = fill(25.0, n),
                 SS_SOLAR_AVAILABILITY = fill(100.0 + i, n),
                 SS_WIND_AVAILABILITY = fill(200.0 - i, n),
                 archive_month = fill("2025-01", n)

@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   units with no `GENUNITS` row (scheduled loads) are kept with a `missing` technology.
   `get_generators_dataframe` excludes `DISPATCHTYPE = LOAD` units, so a load with a `GENUNITS` row
   (`PUMP2`) is not also built as a generator.
+- Interconnector loss equations are evaluated at `INITIALSUPPLY + DEMANDFORECAST` (new
+  `read_demand` column `LOSSDEMAND`, attached by `set_demand!` as a `loss_demand` series) instead
+  of `TOTALDEMAND`, matching the demand NEMDE feeds its loss model.
 - A `GenericConstraint` term on an unavailable device or `AreaInterchange` contributes zero
   instead of throwing a `KeyError` in `build!` (PSI creates variables only for available
   components); `UnitTerm`, `RegionTerm` and `InterconnectorTerm` now match FCAS terms.

@@ -95,6 +95,8 @@ let
         @test "REGIONID" in names(df)
         @test df.REGIONID[1] == "VIC1"
         @test df.TOTALDEMAND[1] == 1000.0
+        # Loss-equation demand is INITIALSUPPLY + DEMANDFORECAST (mock: 990 + 25).
+        @test df.LOSSDEMAND[1] == 1015.0
     end
 
     @testset "read_units" begin
