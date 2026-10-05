@@ -5,7 +5,8 @@
 #         AustralianElectricityMarketsSimulations/scripts/replicate_interval.jl \
 #         [2026-06-04T00:00:00] [hive_location]
 #
-# The interval defaults to 2026-06-04T00:00:00 and `hive_location` to `~/.nemdb_cache`.
+# The interval defaults to 2026-06-04T00:00:00 and `hive_location` to `~/.nemdb_cache`. The cache
+# must also hold the following five-minute interval.
 
 using AustralianElectricityMarketsData
 using AustralianElectricityMarketsSimulations
@@ -22,21 +23,27 @@ db = aem_connect(HiveConfiguration(hive_location = hive))
 optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
 comparison = replicate_interval(db, settlement_date; optimizer = optimizer).comparison
 
+# Mean and max absolute gap over the rows with both a solved and a published value.
 function report(title, df, solved, published)
-    gap = abs.(df[!, solved] .- df[!, published])
+    both = dropmissing(df[!, [solved, published]])
+    if isempty(both)
+        @printf("%-28s n = %4d   no rows with both values\n", title, nrow(both))
+        return nothing
+    end
+    gap = abs.(both[!, solved] .- both[!, published])
     @printf(
         "%-28s n = %4d   mean |gap| = %9.3f   max |gap| = %9.3f\n",
-        title, nrow(df), sum(gap) / length(gap), maximum(gap),
+        title, length(gap), sum(gap) / length(gap), maximum(gap),
     )
     return nothing
 end
 
 println("Interval $settlement_date\n")
-show(select(comparison.prices, :REGIONID, :RRP_solved, :RRP_published), allrows = true)
+show(select(comparison.prices, :REGIONID, :ROP_solved, :ROP_published, :RRP_published), allrows = true)
 println("\n")
 show(comparison.interconnectors, allrows = true)
 println("\n")
-report("Regional price RRP", comparison.prices, :RRP_solved, :RRP_published)
+report("Regional price ROP", comparison.prices, :ROP_solved, :ROP_published)
 report("Dispatch TOTALCLEARED (MW)", comparison.dispatch, :TOTALCLEARED_solved, :TOTALCLEARED_published)
 report("Interconnector MWFLOW", comparison.interconnectors, :MWFLOW_solved, :MWFLOW_published)
 report("Interconnector MWLOSSES", comparison.interconnectors, :MWLOSSES_solved, :MWLOSSES_published)

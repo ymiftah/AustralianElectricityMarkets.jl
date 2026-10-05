@@ -95,7 +95,7 @@ _energy_modeled(container::PSI.OptimizationContainer, device::PSY.Device) = all(
 
 Resolves `term`'s device and confirms the template models its energy variables. Throws
 `ArgumentError` naming `gc`, `term` and the reason when its device is absent from `sys`, or the
-device's energy variables aren't in `container`.
+an available device's energy variables aren't in `container`.
 
 # Returns
 The resolved `PSY.Device`.
@@ -111,7 +111,7 @@ function _checked_device(
                 "component in `sys`.",
         ),
     )
-    _energy_modeled(container, device) || throw(
+    PSY.get_available(device) && !_energy_modeled(container, device) && throw(
         ArgumentError(
             "GenericConstraint \"$name\": UnitTerm's device \"$(get_duid(term))\" " *
                 "($(typeof(device))) has no energy variables in this template; the template " *
@@ -126,7 +126,7 @@ end
 
 Resolves `term`'s already-attributed devices ([`get_devices`](@ref)) and confirms the template
 models each one's energy variables. Throws `ArgumentError` naming `gc`, `term` and the reason
-when a device is absent from `sys`, or a device's energy variables aren't in `container`.
+when a device is absent from `sys`, or a an available device's energy variables aren't in `container`.
 
 # Returns
 A `Vector{PSY.Device}`.
@@ -144,7 +144,7 @@ function _checked_devices(
                     "names device \"$dname\", which has no matching component in `sys`.",
             ),
         )
-        _energy_modeled(container, device) || throw(
+        PSY.get_available(device) && !_energy_modeled(container, device) && throw(
             ArgumentError(
                 "GenericConstraint \"$name\": RegionTerm on region \"$(get_region(term))\" " *
                     "device \"$dname\" ($(typeof(device))) has no energy variables in this " *
@@ -178,7 +178,7 @@ function _checked_interconnector(
                 "\"$(get_interconnector(term))\" has no matching component in `sys`.",
         ),
     )
-    PSI.has_container_key(container, PSI.FlowActivePowerVariable, PSY.AreaInterchange) || throw(
+    PSY.get_available(device) && !PSI.has_container_key(container, PSI.FlowActivePowerVariable, PSY.AreaInterchange) && throw(
         ArgumentError(
             "GenericConstraint \"$name\": InterconnectorTerm's interconnector " *
                 "\"$(get_interconnector(term))\" has no FlowActivePowerVariable in this " *
@@ -192,6 +192,7 @@ end
 
 "Adds `factor * device's net injection` into `expr`, over every variable `_energy_variables` names."
 function _add_device_energy_terms!(container, expr, name, device, factor)
+    PSY.get_available(device) || return  # unavailable devices have no variables: they contribute zero
     dname = PSY.get_name(device)
     for (var_type, multiplier) in _energy_variables(device)
         var = PSI.get_variable(container, var_type(), typeof(device))
@@ -317,6 +318,7 @@ function PSI.add_to_expression!(
     name = PSY.get_name(gc)
     expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
     device = _checked_interconnector(container, sys, gc, term)
+    PSY.get_available(device) || return  # no flow variable: contributes zero
     var = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
     dname = PSY.get_name(device)
     for t in PSI.get_time_steps(container)

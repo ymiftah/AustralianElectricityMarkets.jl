@@ -765,3 +765,12 @@ end
         @test all(v -> objective_terms[v] ≈ expected, slack)
     end
 end
+
+@testset "terms on an unavailable interconnector or unit contribute zero and build" begin
+    sys = _prepared_system()
+    _prune_unbuildable_constraints!(sys)
+    PSY.set_available!(PSY.get_component(PSY.AreaInterchange, sys, "IC1"), false)
+    PSY.set_available!(PSY.get_component(PSY.ThermalStandard, sys, "Sundance"), false)
+    model = _decision_model(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test isnothing(_build_error(model))
+end

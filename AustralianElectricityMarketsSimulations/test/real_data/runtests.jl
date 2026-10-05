@@ -197,16 +197,6 @@ end
         @testset "every constraint term names a device in the System" begin
             @test issubset(Set(first.(diagnoses)), Set([:unmodeled_fcas_service, :unmodeled_device_type]))
         end
-
-        # An FCAS term on an unavailable device contributes zero, so only energy terms are checked.
-        @testset "no buildable constraint names an unavailable device" begin
-            @test all(buildable) do gc
-                all(term_device_names(gc; energy_only = true)) do name
-                    device = PSY.get_component(PSY.Device, sys, name)
-                    return isnothing(device) || PSY.get_available(device)
-                end
-            end
-        end
     end
 
     @testset "the AEMSim template builds and solves a DecisionModel" begin
