@@ -5,6 +5,18 @@ import PowerSimulations as PSI
 import PowerSystems as PSY
 import HydroPowerSimulations
 
+"""
+    _decision_model(args...; mpc = 20_000.0, kwargs...)
+
+`PSI.DecisionModel` with the `"market_price_cap"` settings entry set, for PSCB fixtures dated outside
+`MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` whose area-balance slack still needs a Market Price Cap.
+"""
+function _decision_model(args...; mpc = 20_000.0, kwargs...)
+    model = PSI.DecisionModel(args...; kwargs...)
+    PSI.get_ext(PSI.get_settings(model))["market_price_cap"] = mpc
+    return model
+end
+
 "Per-area balances via `AreaBalancePowerModel`. Mirrors `docs/literate/interchanges.jl`."
 function _area_balance_template()
     template = PSI.ProblemTemplate()

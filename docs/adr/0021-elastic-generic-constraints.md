@@ -93,7 +93,7 @@ interval_cost_coefficient(weight * mpc, resolution)`.
   the corrected rate a Secure Network Limit Thermal-class constraint (CVP factor 30-35) now prices
   above the area-balance slack, while AEMO's own CVP ranking puts the area balance (factor 150,
   nem-expert `constraint-violation-penalty-factors/05-items-22-35.md`) above it. Reconciling the
-  two slack costs is recorded as a Phase 2 follow-up (2.8) in the plan file, not fixed here.
+  two slack costs is recorded as a Phase 2 follow-up (2.8) in the plan file; resolved in ADR 0023.
 
 ## Review follow-up, 2026-10-01
 

@@ -44,7 +44,8 @@ export AbstractNEMConstraintFormulation, NEMConstraintLHS, NEMConstraintLimit,
 export GenericConstraintSlackUp, GenericConstraintSlackDown, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR
 export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASJointCapacityLHS, FCASJointCapacityConstraint, FCASBDURampingConstraint,
-    FCASJointRampingConstraint
+    FCASJointRampingConstraint, FCASJointCapacitySlack, FCASJointRampingSlack,
+    FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR
 export filter_buildable_generic_constraints
 export check_fcas_services
 export AbstractNEMDispatch, NEMReplayDispatch, NEMLookaheadDispatch,

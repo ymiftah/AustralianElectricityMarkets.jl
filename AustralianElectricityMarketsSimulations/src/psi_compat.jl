@@ -138,3 +138,45 @@ function PSI._add_variable_cost_to_objective!(
     PSI.add_pwl_term!(true, container, component, cost_function, T(), V())
     return
 end
+
+"""
+    AREA_BALANCE_CVP_FACTOR
+
+CVP factor (150) of AEMO's Regional Energy Demand Supply Balance constraint (`DeficitGen` and
+`SurplusGen`), items 22 and 23 of the *Schedule of Constraint Violation Penalty Factors* v8.0.
+"""
+const AREA_BALANCE_CVP_FACTOR = 150.0
+
+"""
+    PSI.objective_function!(container, sys, network_model::PSI.NetworkModel{PSI.AreaBalancePowerModel})
+
+Override of `PowerSimulations.jl` 0.38.4's `AreaBalancePowerModel` slack objective, which prices
+`SystemBalanceSlackUp`/`SystemBalanceSlackDown` at the fixed `BALANCE_SLACK_COST`. Prices each
+slack at [`AREA_BALANCE_CVP_FACTOR`](@ref) times the Market Price Cap of the interval's financial
+year, or the `"market_price_cap"` entry of the model's settings `ext`
+([`_container_market_price_cap`](@ref)), in `\$/MW` per dispatch interval. Throws for a financial
+year absent from `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` with no override. `AreaPTDFPowerModel` keeps
+PSI's flat `BALANCE_SLACK_COST`.
+
+# Returns
+`nothing`.
+"""
+function PSI.objective_function!(
+        container::PSI.OptimizationContainer, sys::PSY.System,
+        network_model::PSI.NetworkModel{PSI.AreaBalancePowerModel},
+    )
+    variable_up = PSI.get_variable(container, PSI.SystemBalanceSlackUp(), PSY.Area)
+    variable_dn = PSI.get_variable(container, PSI.SystemBalanceSlackDown(), PSY.Area)
+    areas = PSY.get_name.(PSI.get_available_components(network_model, PSY.Area, sys))
+    resolution = PSI.get_resolution(container)
+    initial_time = PSI.get_initial_time(container)
+    base_power = PSI.get_base_power(container)
+    for t in PSI.get_time_steps(container)
+        mpc = _container_market_price_cap(container, initial_time + resolution * (t - 1))
+        coefficient = base_power * interval_cost_coefficient(AREA_BALANCE_CVP_FACTOR * mpc, resolution)
+        for n in areas
+            PSI.add_to_objective_invariant_expression!(container, (variable_dn[n, t] + variable_up[n, t]) * coefficient)
+        end
+    end
+    return nothing
+end

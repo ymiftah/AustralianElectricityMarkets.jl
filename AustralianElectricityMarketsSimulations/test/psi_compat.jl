@@ -25,6 +25,19 @@ const AEMS = AustralianElectricityMarketsSimulations
     @test occursin("AreaBalancePowerModel", string(m2.sig))
 end
 
+@testset "the area-balance slack objective resolves to this package's override, AreaPTDF keeps PSI's" begin
+    m = which(
+        PSI.objective_function!,
+        Tuple{PSI.OptimizationContainer, PSY.System, PSI.NetworkModel{PSI.AreaBalancePowerModel}},
+    )
+    @test m.module === AEMS
+    m_ptdf = which(
+        PSI.objective_function!,
+        Tuple{PSI.OptimizationContainer, PSY.System, PSI.NetworkModel{PSI.AreaPTDFPowerModel}},
+    )
+    @test m_ptdf.module === PSI
+end
+
 @testset "_modify_device_model! no-ops for LinearFactorLimit and FCASMarket" begin
     @test hasmethod(
         PSI._modify_device_model!,

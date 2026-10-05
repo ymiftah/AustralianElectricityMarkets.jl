@@ -16,9 +16,11 @@ PSI.get_multiplier_value(::NEMConstraintRHSParameter, ::GenericConstraint, ::Lin
     MARKET_PRICE_CAP_BY_FINANCIAL_YEAR
 
 Published Market Price Cap (`\$/MWh`), by the `Date` its financial year starts (1 July).
-Source: AEMC *Schedule of reliability settings — 2026-27 financial year*.
+Source: AEMC *Schedule of reliability settings, 2026-27 financial year* (FY2024-25: AEMC's
+2024-25 schedule).
 """
 const MARKET_PRICE_CAP_BY_FINANCIAL_YEAR = [
+    Date(2024, 7, 1) => 17_500.0,
     Date(2025, 7, 1) => 20_300.0,
     Date(2026, 7, 1) => 23_200.0,
 ]
@@ -36,20 +38,41 @@ function _financial_year_mpc(t::DateTime)
     idx = findfirst(p -> p[1] == year_start, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR)
     isnothing(idx) && throw(
         ArgumentError(
-            "No published Market Price Cap covers $t; extend MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.",
+            "No published Market Price Cap covers $t; extend MARKET_PRICE_CAP_BY_FINANCIAL_YEAR " *
+                "or set the \"market_price_cap\" entry of `PSI.get_ext(PSI.get_settings(model))`.",
         ),
     )
     return MARKET_PRICE_CAP_BY_FINANCIAL_YEAR[idx][2]
 end
 
 """
-    _market_price_cap(model, t::DateTime) -> Float64
+    _container_market_price_cap(container, t::DateTime) -> Float64
 
-The `"market_price_cap"` attribute of `model`, or [`_financial_year_mpc`](@ref)`(t)` if unset.
+The `"market_price_cap"` entry of the model's `PSI.get_ext(PSI.get_settings(model))`, or
+[`_financial_year_mpc`](@ref)`(t)` if unset. Prices PSI's own area-balance slack, and is the
+fallback of [`_market_price_cap`](@ref).
+
+# Arguments
+  - `container`: the `PSI.OptimizationContainer` being built.
+  - `t`: the interval's timestamp.
+
+# Returns
+A `\$/MWh` value.
 """
-function _market_price_cap(model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit}, t::DateTime)
-    rate = PSI.get_attribute(model, "market_price_cap")
+function _container_market_price_cap(container::PSI.OptimizationContainer, t::DateTime)
+    rate = get(PSI.get_ext(PSI.get_settings(container)), "market_price_cap", nothing)
     return isnothing(rate) ? _financial_year_mpc(t) : rate
+end
+
+"""
+    _market_price_cap(container, model, t::DateTime) -> Float64
+
+The `"market_price_cap"` attribute of `model`, or [`_container_market_price_cap`](@ref)`(container, t)`
+if unset.
+"""
+function _market_price_cap(container::PSI.OptimizationContainer, model::PSI.ServiceModel, t::DateTime)
+    rate = PSI.get_attribute(model, "market_price_cap")
+    return isnothing(rate) ? _container_market_price_cap(container, t) : rate
 end
 
 # --- Term validation: fail loudly, never a partial LHS ---
@@ -442,7 +465,7 @@ function PSI.objective_function!(
         slack = PSI.get_variable(container, var_type(), GenericConstraint, name)
         for t in time_steps
             ts = initial_time + resolution * (t - 1)
-            mpc = _market_price_cap(model, ts)
+            mpc = _market_price_cap(container, model, ts)
             coefficient = base_power * interval_cost_coefficient(weight * mpc, resolution)
             PSI.add_to_objective_invariant_expression!(container, slack[name, t] * coefficient)
         end
