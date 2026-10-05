@@ -63,22 +63,7 @@ Reads `DISPATCHLOAD.INITIALMW` for every `DUID` dispatched at `settlement_date`,
 archive-month overlap. One row per `DUID`.
 """
 function _read_dispatch_load(db, settlement_date::DateTime, intervention::Integer)
-    table = read_hive(db, :DISPATCHLOAD)
-    schema = names(AustralianElectricityMarkets._query(db, "SELECT * FROM $table LIMIT 0"))
-    params = Any[settlement_date]
-    AustralianElectricityMarkets._push_intervention!(params, schema, intervention)
-    return AustralianElectricityMarkets._query(
-        db,
-        """
-        SELECT DUID, TRY_CAST(INITIALMW AS DOUBLE) AS INITIALMW
-        FROM $table
-        WHERE SETTLEMENTDATE = ? $(AustralianElectricityMarkets._intervention_where(schema))
-        QUALIFY row_number() OVER (
-            PARTITION BY DUID ORDER BY archive_month DESC
-        ) = 1
-        """,
-        params,
-    )
+    return _read_published(db, :DISPATCHLOAD, "DUID", ("INITIALMW",), settlement_date, intervention)
 end
 
 """
@@ -88,22 +73,7 @@ Reads `DISPATCHREGIONSUM.TOTALDEMAND` for every `REGIONID` at `settlement_date`,
 archive-month overlap. One row per `REGIONID`.
 """
 function _read_region_sum(db, settlement_date::DateTime, intervention::Integer)
-    table = read_hive(db, :DISPATCHREGIONSUM)
-    schema = names(AustralianElectricityMarkets._query(db, "SELECT * FROM $table LIMIT 0"))
-    params = Any[settlement_date]
-    AustralianElectricityMarkets._push_intervention!(params, schema, intervention)
-    return AustralianElectricityMarkets._query(
-        db,
-        """
-        SELECT REGIONID, TRY_CAST(TOTALDEMAND AS DOUBLE) AS TOTALDEMAND
-        FROM $table
-        WHERE SETTLEMENTDATE = ? $(AustralianElectricityMarkets._intervention_where(schema))
-        QUALIFY row_number() OVER (
-            PARTITION BY REGIONID ORDER BY archive_month DESC
-        ) = 1
-        """,
-        params,
-    )
+    return _read_published(db, :DISPATCHREGIONSUM, "REGIONID", ("TOTALDEMAND",), settlement_date, intervention)
 end
 
 """
@@ -130,27 +100,63 @@ interconnector was genuinely at zero flow, which is the same failure class as
 tolerated partial cache.
 """
 function _read_interconnector_flows(db, settlement_date::DateTime, intervention::Integer)
-    AustralianElectricityMarkets._table_is_cached(db, :DISPATCHINTERCONNECTORRES) || throw(
-        ArgumentError(
-            "DISPATCHINTERCONNECTORRES is not cached for $settlement_date — run " *
-                "`populate(db, :DISPATCHINTERCONNECTORRES, <from>, <to>)` first.",
+    df = _read_published(
+        db, :DISPATCHINTERCONNECTORRES, "INTERCONNECTORID", ("MWFLOW",), settlement_date, intervention,
+    )
+    return Dict{String, Float64}(row.INTERCONNECTORID => row.MWFLOW for row in eachrow(df) if !ismissing(row.MWFLOW))
+end
+
+"""
+    read_published_interval(db, settlement_date; intervention = 0)
+
+Reads AEMO's published outcome for one dispatch interval.
+
+# Arguments
+- `db`: an `AEMDB` connection.
+- `settlement_date`: the `SETTLEMENTDATE` of the interval (`DateTime`).
+- `intervention`: 0 for the pricing run, 1 for the physical run.
+
+# Returns
+A `NamedTuple` of `DataFrame`s: `dispatch` (`DUID`, `TOTALCLEARED`), `interconnectors`
+(`INTERCONNECTORID`, `MWFLOW`, `MWLOSSES`), `prices` (`REGIONID`, `RRP`, `ROP`) and `fcas_prices`
+(`SETTLEMENTDATE`, `REGIONID`, `BIDTYPE`, `RRP`, `ROP`).
+"""
+function read_published_interval(db, settlement_date::DateTime; intervention::Integer = 0)
+    interval = settlement_date:DISPATCH_INTERVAL:(settlement_date + DISPATCH_INTERVAL)
+    return (;
+        dispatch = _read_published(db, :DISPATCHLOAD, "DUID", ("TOTALCLEARED",), settlement_date, intervention),
+        interconnectors = _read_published(
+            db, :DISPATCHINTERCONNECTORRES, "INTERCONNECTORID", ("MWFLOW", "MWLOSSES"),
+            settlement_date, intervention,
+        ),
+        prices = select(read_prices(db, interval; intervention = intervention), :REGIONID, :RRP, :ROP),
+        fcas_prices = select(
+            read_fcas_prices(db, interval; intervention = intervention), :SETTLEMENTDATE, :REGIONID, :BIDTYPE, :RRP, :ROP,
         ),
     )
-    table = read_hive(db, :DISPATCHINTERCONNECTORRES)
+end
+
+# One row per `key` at `settlement_date`, deduplicating archive-month overlap.
+function _read_published(db, table_name::Symbol, key::String, columns, settlement_date::DateTime, intervention::Integer)
+    AustralianElectricityMarkets._table_is_cached(db, table_name) || throw(
+        ArgumentError(
+            "$table_name is not cached for $settlement_date: run " *
+                "`populate(db, :$table_name, <from>, <to>)` first.",
+        ),
+    )
+    table = read_hive(db, table_name)
     schema = names(AustralianElectricityMarkets._query(db, "SELECT * FROM $table LIMIT 0"))
     params = Any[settlement_date]
     AustralianElectricityMarkets._push_intervention!(params, schema, intervention)
-    df = AustralianElectricityMarkets._query(
+    select_list = join([key; ["TRY_CAST($c AS DOUBLE) AS $c" for c in columns]], ", ")
+    return AustralianElectricityMarkets._query(
         db,
         """
-        SELECT INTERCONNECTORID, TRY_CAST(MWFLOW AS DOUBLE) AS MWFLOW
+        SELECT $select_list
         FROM $table
         WHERE SETTLEMENTDATE = ? $(AustralianElectricityMarkets._intervention_where(schema))
-        QUALIFY row_number() OVER (
-            PARTITION BY INTERCONNECTORID ORDER BY archive_month DESC
-        ) = 1
+        QUALIFY row_number() OVER (PARTITION BY $key ORDER BY archive_month DESC) = 1
         """,
         params,
     )
-    return Dict{String, Float64}(row.INTERCONNECTORID => row.MWFLOW for row in eachrow(df) if !ismissing(row.MWFLOW))
 end

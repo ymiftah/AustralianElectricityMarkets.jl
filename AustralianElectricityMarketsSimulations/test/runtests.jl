@@ -36,6 +36,7 @@ let
                 SETTLEMENTDATE = fill(t, length(interconnector_ids)),
                 INTERCONNECTORID = interconnector_ids,
                 MWFLOW = [100.0 * k + i for k in 1:length(interconnector_ids)],
+                MWLOSSES = [0.1 * k for k in 1:length(interconnector_ids)],
                 archive_month = fill("2025-01", length(interconnector_ids)),
             )
         )
@@ -60,6 +61,7 @@ const TEST_GROUPS = [
     "nem_dispatch_toy" => ("NEM dispatch on a toy PSCB system", "nem_dispatch_toy.jl"),
     "fcas_market" => ("FCAS market", "fcas_market.jl"),
     "interconnector_losses" => ("Interconnector losses", "interconnector_losses.jl"),
+    "pipeline" => ("Replication pipeline", "pipeline.jl"),
 ]
 
 const SELECTED_GROUPS = let known = first.(TEST_GROUPS)
