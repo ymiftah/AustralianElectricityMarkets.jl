@@ -252,17 +252,41 @@ end
     @test Set(typeof.(devices)) == Set([ThermalStandard, AreaInterchange])
 end
 
-@testset "an unsupported bid_type throws, naming the constraint and the term" begin
+"""
+    _add_fcas_services!(sys)
+
+Adds the [`FCASService`](@ref)s `F_R1_RAISE6SEC`/`F_R2_LOWERREG` reference, one per device area, each
+over the constraint's contributing devices in that area.
+"""
+function _add_fcas_services!(sys)
+    for (id, bid_type) in (("F_R1_RAISE6SEC", BidType.RAISE6SEC), ("F_R2_LOWERREG", BidType.LOWERREG))
+        by_name = Dict{String, Vector{Device}}()
+        for d in get_contributing_devices(sys, _gc(sys, id))
+            push!(get!(by_name, fcas_service_name(d, bid_type), Device[]), d)
+        end
+        for (name, devices) in by_name
+            region = get_name(get_area(get_bus(first(devices))))
+            add_service!(sys, FCASService(; name = name, region = region, bid_type = bid_type), devices)
+        end
+    end
+    return
+end
+
+@testset "an FCAS term whose service the template doesn't model throws, naming the constraint and the term" begin
     sys = _prepared_system()
     for id in ("F_R2_LOWERREG", "N_HYDRO_LIMIT", "N_IC1_LIMIT", "N_PARTIAL")
         remove_component!(sys, _gc(sys, id))
     end
+    add_service!(
+        sys, FCASService(; name = "1_RAISE6SEC", region = "1", bid_type = BidType.RAISE6SEC),
+        get_contributing_devices(sys, _gc(sys, "F_R1_RAISE6SEC")),
+    )
     model = _decision_model(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     err = _build_error(model)
     @test err isa ArgumentError
     msg = sprint(showerror, err)
     @test occursin("F_R1_RAISE6SEC", msg)
-    @test occursin("bid_type", msg)
+    @test occursin("1_RAISE6SEC", msg)
 end
 
 @testset "a device type this template doesn't model throws, naming the constraint and the device" begin
@@ -566,6 +590,7 @@ end
 
 @testset "filter_buildable_generic_constraints throws one aggregated ArgumentError naming every unbuildable constraint" begin
     sys = _prepared_system()
+    _add_fcas_services!(sys)
     template = _area_balance_template()
     err = try
         AEMS.filter_buildable_generic_constraints(sys, template)
@@ -578,7 +603,7 @@ end
     @test occursin("F_R1_RAISE6SEC", msg)
     @test occursin("F_R2_LOWERREG", msg)
     @test occursin("N_HYDRO_LIMIT", msg)
-    @test occursin("bid_type", msg)
+    @test occursin("FCASMarket", msg)
     @test occursin("allow_partial_coverage", msg)
     @test !occursin("N_IC1_LIMIT", msg)
     @test !occursin("N_PARTIAL", msg)
@@ -586,6 +611,7 @@ end
 
 @testset "filter_buildable_generic_constraints with allow_partial_coverage = true returns the buildable subset and warns once" begin
     sys = _prepared_system()
+    _add_fcas_services!(sys)
     template = _area_balance_template()
     result = @test_logs (:warn,) AEMS.filter_buildable_generic_constraints(
         sys, template; allow_partial_coverage = true,
@@ -597,6 +623,7 @@ end
 
 @testset "the buildable subset builds and solves under per-instance registration, where the aggregated registration throws" begin
     sys = _prepared_system()
+    _add_fcas_services!(sys)
     template = _area_balance_template()
     buildable = AEMS.filter_buildable_generic_constraints(sys, template; allow_partial_coverage = true)
 

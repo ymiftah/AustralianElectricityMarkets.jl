@@ -40,6 +40,26 @@ get_region(value::FCASService) = value.region
 get_bid_type(value::FCASService) = value.bid_type
 
 """
+    fcas_service_name(region, bid_type) -> String
+    fcas_service_name(device, bid_type) -> String
+
+The name `"<REGIONID>_<BIDTYPE>"` of the [`FCASService`](@ref) for `bid_type` in `region`, or in the
+area of `device`'s own bus.
+
+# Arguments
+- `region`: an `Area` name.
+- `device`: a device attached to a bus in an `Area`.
+- `bid_type`: the FCAS market.
+
+# Returns
+A `String`.
+"""
+fcas_service_name(region::AbstractString, bid_type::BidType) = "$(region)_$(string(bid_type))"
+function fcas_service_name(device::Device, bid_type::BidType)
+    return fcas_service_name(get_name(get_area(get_bus(device))), bid_type)
+end
+
+"""
     _fcas_bid_direction(device, bid_type) -> Symbol
 
 `:incremental`, `:decremental`, `:both` or `:none`, describing which `"fcas_trapezium_<bid_type>
@@ -102,7 +122,7 @@ function add_fcas_services!(sys)
     added = String[]
     excluded = Dict{String, Vector{String}}()
     for region in sort(get_name.(get_components(Area, sys))), bid_type in FCAS_BID_TYPES
-        name = "$(region)_$(string(bid_type))"
+        name = fcas_service_name(region, bid_type)
         isnothing(get_component(FCASService, sys, name)) || continue
         bidders = filter(get_available, _fcas_service_devices(sys, region, bid_type))
         devices = filter(d -> _fcas_bid_modeled(d, bid_type), bidders)
