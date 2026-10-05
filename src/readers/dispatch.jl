@@ -335,3 +335,52 @@ end
 function read_uigf(db, settlement_date::DateTime; intervention::Integer = 0)
     return _uigf_rows(db, "SETTLEMENTDATE = ?", Any[settlement_date], intervention)
 end
+
+"""
+    read_interconnector_limits(db, date_range; intervention = 0)
+
+Reads the per-interval interconnector limits and metered flow from `DISPATCHINTERCONNECTORRES`:
+one row per `(SETTLEMENTDATE, INTERCONNECTORID)` with `METEREDMWFLOW` (the SCADA flow, the
+interval's starting flow), `EXPORTLIMIT` and `IMPORTLIMIT` (the energy-only flow limits NEMDE
+applied, signed along the interconnector's from-to direction: `IMPORTLIMIT <= flow <= EXPORTLIMIT`).
+
+# Arguments
+- `db`: an `AEMDB` connection.
+- `date_range`: the dispatch intervals to read (half-open: `start <= t < stop`).
+- `intervention`: `0` for the pricing run, `1` for the physical run.
+
+# Returns
+A `DataFrame` with `SETTLEMENTDATE`, `INTERCONNECTORID`, `METEREDMWFLOW`, `EXPORTLIMIT`,
+`IMPORTLIMIT`.
+"""
+function read_interconnector_limits(db, date_range; intervention::Integer = 0)
+    start_date = first(date_range)
+    end_date = last(date_range)
+    sd = Date(start_date) - Day(1)
+    ed = Date(end_date) + Day(1)
+
+    _table_is_cached(db, :DISPATCHINTERCONNECTORRES) || throw(
+        ArgumentError(
+            "DISPATCHINTERCONNECTORRES is not cached — run `populate(db, :DISPATCHINTERCONNECTORRES, <from>, <to>)` first.",
+        ),
+    )
+    table = read_hive(db, :DISPATCHINTERCONNECTORRES)
+    schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
+    params = Any[sd, ed]
+    _push_intervention!(params, schema, intervention)
+    df = _query(
+        db,
+        """
+        SELECT SETTLEMENTDATE, INTERCONNECTORID,
+               $(_cast_double("METEREDMWFLOW")), $(_cast_double("EXPORTLIMIT")), $(_cast_double("IMPORTLIMIT"))
+        FROM $table
+        WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(schema))
+        QUALIFY row_number() OVER (
+            PARTITION BY SETTLEMENTDATE, INTERCONNECTORID ORDER BY archive_month DESC
+        ) = 1
+        """,
+        params,
+    )
+    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
+    return df
+end

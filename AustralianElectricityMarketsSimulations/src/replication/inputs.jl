@@ -9,7 +9,8 @@ Every field is a historical measurement for `settlement_date`.
 - `initial_mw`: `DUID -> INITIALMW`, the metered output at interval start (the ramp base).
 - `demand`: `REGIONID -> TOTALDEMAND`.
 - `uigf`: `DUID -> UIGF`, semi-scheduled weather forecast. Absent for scheduled units.
-- `interconnector_flows`: `INTERCONNECTORID -> MWFLOW` at interval start.
+- `interconnector_flows`: `INTERCONNECTORID -> MWFLOW`, the flow NEMDE targeted for the interval
+  (the metered flow at interval start is `METEREDMWFLOW`).
 - `intervention`: 0 for the pricing run, 1 for the physical run.
 """
 struct IntervalInputs
@@ -92,7 +93,7 @@ end
 """
     _read_interconnector_flows(db, settlement_date, intervention)
 
-Reads `DISPATCHINTERCONNECTORRES.MWFLOW` for every `INTERCONNECTORID` at `settlement_date`.
+Reads the target `DISPATCHINTERCONNECTORRES.MWFLOW` for every `INTERCONNECTORID` at `settlement_date`.
 Throws an `ArgumentError` when `DISPATCHINTERCONNECTORRES` isn't cached: a replicated
 interval silently missing every interconnector flow is indistinguishable from one where every
 interconnector was genuinely at zero flow, which is the same failure class as

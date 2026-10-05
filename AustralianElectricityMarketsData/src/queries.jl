@@ -32,15 +32,18 @@ _query(db::AEMDB, sql::String) = DataFrame(DuckDB.execute(db.db, sql))
 _query(db::AEMDB, sql::String, params) = DataFrame(DuckDB.execute(db.db, sql, params))
 
 """
-    read_interconnectors(db)
+    read_interconnectors(db; as_of = nothing)
 
 Reads and processes interconnector data from the database.
 
 # Arguments
 - `db`: The database connection.
+- `as_of`: when a `Date` or `DateTime`, resolves each `INTERCONNECTORCONSTRAINT` row as of that
+  instant (latest `EFFECTIVEDATE <= as_of`, then highest `VERSIONNO`). `nothing` keeps the latest
+  version in the cache.
 
 # Returns
-A `DataFrame` containing the latest interconnector constraint data. Interconnectors with an
+A `DataFrame` containing the interconnector constraint data, latest or as of `as_of`. Interconnectors with an
 endpoint region absent from the cached `DISPATCHREGIONSUM` are dropped with a warning, so that
 table must be populated; an `ArgumentError` is thrown when it is missing or empty.
 
@@ -51,27 +54,42 @@ interconnectors_df = read_interconnectors(db)
 println(interconnectors_df)
 ```
 """
-function read_interconnectors(db)
+function read_interconnectors(db; as_of::Union{Nothing, Date, DateTime} = nothing)
     t_interconnector = read_hive(db, :INTERCONNECTOR)
     t_interconnector_constraint = read_hive(db, :INTERCONNECTORCONSTRAINT)
 
-    sql = """
-        WITH ic AS (SELECT * FROM $t_interconnector),
-             latest_ic AS (
-                 SELECT INTERCONNECTORID, REGIONFROM, REGIONTO, archive_month
-                 FROM ic
-                 WHERE archive_month = (SELECT max(archive_month) FROM ic)
-             ),
-             icc AS (SELECT * FROM $t_interconnector_constraint)
-        SELECT c.* EXCLUDE (archive_month), l.REGIONFROM, l.REGIONTO
-        FROM icc c
-        INNER JOIN latest_ic l
-          ON c.INTERCONNECTORID = l.INTERCONNECTORID AND c.archive_month = l.archive_month
-        QUALIFY row_number() OVER (
-            PARTITION BY c.INTERCONNECTORID ORDER BY c.EFFECTIVEDATE DESC, c.VERSIONNO DESC
-        ) = 1
-    """
-    df = _query(db, sql)
+    sql = isnothing(as_of) ? """
+            WITH ic AS (SELECT * FROM $t_interconnector),
+                 latest_ic AS (
+                     SELECT INTERCONNECTORID, REGIONFROM, REGIONTO, archive_month
+                     FROM ic
+                     WHERE archive_month = (SELECT max(archive_month) FROM ic)
+                 ),
+                 icc AS (SELECT * FROM $t_interconnector_constraint)
+            SELECT c.* EXCLUDE (archive_month), l.REGIONFROM, l.REGIONTO
+            FROM icc c
+            INNER JOIN latest_ic l
+              ON c.INTERCONNECTORID = l.INTERCONNECTORID AND c.archive_month = l.archive_month
+            QUALIFY row_number() OVER (
+                PARTITION BY c.INTERCONNECTORID ORDER BY c.EFFECTIVEDATE DESC, c.VERSIONNO DESC
+            ) = 1
+        """ : """
+            WITH ic AS (SELECT * FROM $t_interconnector),
+                 latest_ic AS (
+                     SELECT INTERCONNECTORID, REGIONFROM, REGIONTO
+                     FROM ic
+                     WHERE archive_month = (SELECT max(archive_month) FROM ic)
+                 ),
+                 icc AS (SELECT * FROM $t_interconnector_constraint WHERE EFFECTIVEDATE <= ?)
+            SELECT c.* EXCLUDE (archive_month), l.REGIONFROM, l.REGIONTO
+            FROM icc c
+            INNER JOIN latest_ic l ON c.INTERCONNECTORID = l.INTERCONNECTORID
+            QUALIFY row_number() OVER (
+                PARTITION BY c.INTERCONNECTORID
+                ORDER BY c.EFFECTIVEDATE DESC, c.VERSIONNO DESC, c.archive_month DESC
+            ) = 1
+        """
+    df = isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of])
     current_regions = _current_regions(db)
     retired = filter(
         row -> !(row.REGIONFROM in current_regions) || !(row.REGIONTO in current_regions), df,
@@ -160,12 +178,16 @@ function read_demand(db; resolution::Dates.Period = Dates.Minute(5))
 end
 
 """
-    read_units(db)
+    read_units(db; as_of = nothing)
 
 Gathers and processes unit data from the database.
 
 # Arguments
 - `db`: The database connection.
+- `as_of`: when a `Date` or `DateTime`, resolves `DUDETAIL` (latest `EFFECTIVEDATE <= as_of`,
+  then highest `VERSIONNO`) and `DUDETAILSUMMARY` (the row with `START_DATE <= as_of < END_DATE`,
+  so the loss factors in force then) as of that instant; units with no such row are omitted.
+  `nothing` keeps the open, latest version in the cache.
 
 # Returns
 A `DataFrame` containing detailed information about each generation unit.
@@ -177,13 +199,28 @@ units_df = read_units(db)
 println(units_df)
 ```
 """
-function read_units(db)
+function read_units(db; as_of::Union{Nothing, Date, DateTime} = nothing)
     dudetail_table = read_hive(db, :DUDETAIL)
     summary_table = read_hive(db, :DUDETAILSUMMARY)
     op_status_table = read_hive(db, :STATIONOPERATINGSTATUS)
     station_table = read_hive(db, :STATION)
     gen_units_table = read_hive(db, :GENUNITS)
     dualloc_table = read_hive(db, :DUALLOC)
+
+    # `as_of` is a DuckDB-bound parameter; the three versioned CTEs differ only in this fragment.
+    dudetail_as_of = isnothing(as_of) ? "" : "WHERE EFFECTIVEDATE <= ?"
+    summary_filter = if isnothing(as_of)
+        """
+        WHERE archive_month = (SELECT max(archive_month) FROM sm_raw)
+          AND (END_DATE IS NULL OR year(END_DATE) = 2999)
+        QUALIFY row_number() OVER (PARTITION BY DUID ORDER BY START_DATE ASC) = 1
+        """
+    else
+        """
+        WHERE START_DATE <= ? AND (END_DATE IS NULL OR END_DATE > ?)
+        QUALIFY row_number() OVER (PARTITION BY DUID ORDER BY START_DATE DESC, archive_month DESC) = 1
+        """
+    end
 
     # All filtering, latest-partition/version resolution, and joins are pushed
     # into DuckDB via CTEs.
@@ -192,6 +229,7 @@ function read_units(db)
              dudetail AS (
                  SELECT * EXCLUDE (archive_month)
                  FROM dd_raw
+                 $dudetail_as_of
                  QUALIFY row_number() OVER (
                      PARTITION BY DUID ORDER BY EFFECTIVEDATE DESC, VERSIONNO DESC
                  ) = 1
@@ -200,9 +238,7 @@ function read_units(db)
              summary AS (
                  SELECT * EXCLUDE (archive_month)
                  FROM sm_raw
-                 WHERE archive_month = (SELECT max(archive_month) FROM sm_raw)
-                   AND (END_DATE IS NULL OR year(END_DATE) = 2999)
-                 QUALIFY row_number() OVER (PARTITION BY DUID ORDER BY START_DATE ASC) = 1
+                 $summary_filter
              ),
              op_raw AS (SELECT * FROM $op_status_table),
              st_raw AS (SELECT * FROM $station_table),
@@ -257,7 +293,7 @@ function read_units(db)
         WHERE op_status.STATUS = 'COMMISSIONED'
         ORDER BY dudetail.DUID
     """
-    dudetail = _query(db, sql)
+    dudetail = isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of, as_of, as_of])
     return dudetail
 end
 

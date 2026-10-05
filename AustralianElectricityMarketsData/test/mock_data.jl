@@ -705,3 +705,48 @@ function create_mock_data(hive_root::String)
 
     return DuckDB.disconnect(conn)
 end
+
+"""
+    create_versioned_static_data(src_dir, dst_dir)
+
+Copies the mock hive at `src_dir` to `dst_dir`, then adds a version effective 2025-07-01 to
+`INTERCONNECTORCONSTRAINT` (IC1: `MAXMWIN` 300 instead of 500) and `DUDETAILSUMMARY` (BW01:
+`CONNECTIONPOINTID` `CP_NEW` instead of `CP_BAYSW`, closing the old row at that date), so that
+"latest" and "as of 2025-03-01" resolve differently.
+"""
+function create_versioned_static_data(src_dir::String, dst_dir::String)
+    cp(src_dir, dst_dir; force = true)
+    ddb = DuckDB.DB()
+    conn = DuckDB.connect(ddb)
+    DuckDB.execute(conn, "SET preserve_identifier_case=true")
+    function rewrite(f, table)
+        table_dir = joinpath(dst_dir, table)
+        df = DataFrame(DuckDB.execute(conn, "SELECT * FROM read_parquet('$table_dir/**/*.parquet', hive_partitioning=true)"))
+        df = f(df)
+        rm(table_dir; recursive = true)
+        mkpath(table_dir)
+        DuckDB.register_data_frame(conn, df, "tmp_table")
+        DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+        return DuckDB.unregister_table(conn, "tmp_table")
+    end
+    effective = DateTime(2025, 7, 1)
+    rewrite("INTERCONNECTORCONSTRAINT") do df
+        new = df[df.INTERCONNECTORID .== "IC1", :]
+        new = copy(new)
+        new.EFFECTIVEDATE .= effective
+        new.MAXMWIN .= 300.0
+        return vcat(df, new)
+    end
+    rewrite("DUDETAILSUMMARY") do df
+        df = copy(df)
+        df.END_DATE = Union{DateTime, Missing}[x for x in df.END_DATE]
+        old = df.DUID .== "BW01"
+        new = df[old, :]
+        new = copy(new)
+        df.END_DATE[old] .= effective
+        new.START_DATE .= effective
+        new.CONNECTIONPOINTID .= "CP_NEW"
+        return vcat(df, new)
+    end
+    return DuckDB.disconnect(conn)
+end

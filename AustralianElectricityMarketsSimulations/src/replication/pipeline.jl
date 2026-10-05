@@ -52,7 +52,7 @@ const _REPLICATION_HORIZON = 2DISPATCH_INTERVAL
 
 Builds the `System` [`replicate_interval`](@ref) solves: the constrained system from
 `nem_system(db, ConstrainedNetworkConfiguration(); ...)` over the interval and the one after it,
-with demand, bids, FCAS scaling inputs and dispatch limits set and the time series transformed
+with demand, bids, FCAS scaling inputs, dispatch limits and per-interval interconnector flow limits set and the time series transformed
 into one forecast window.
 
 # Arguments
@@ -60,7 +60,7 @@ into one forecast window.
   `settlement_date + 5 minutes`, so the last cached interval cannot be replicated.
 - `settlement_date`: the `SETTLEMENTDATE` of the interval (`DateTime`).
 - `intervention`: 0 for the pricing run, 1 for the physical run. Applies to the constraint,
-  dispatch-limit and FCAS-scaling reads; demand and bids carry no intervention run.
+  dispatch-limit, interconnector-limit and FCAS-scaling reads; demand and bids carry no intervention run.
 
 # Returns
 A `PSY.System`.
@@ -75,6 +75,7 @@ function replication_system(db, settlement_date::DateTime; intervention::Integer
     set_market_bids!(sys, db, date_range; resolution = resolution)
     set_fcas_scaling_inputs!(sys, db, date_range; intervention = intervention)
     set_nem_dispatch_limits!(sys, db, date_range; intervention = intervention)
+    set_interconnector_flow_limits!(sys, db, date_range; intervention = intervention)
     PSY.transform_single_time_series!(sys, _REPLICATION_HORIZON, resolution)
     return sys
 end

@@ -368,6 +368,8 @@ Assembles a `PowerSystems.System` object from the database.
 
 # Arguments
 - `db`: The database connection.
+- `as_of`: a `Date` or `DateTime` to resolve the unit and interconnector tables as of (see
+  [`read_units`](@ref)); `nothing` (the default) uses the latest cached version.
 
 # Returns
 A `PowerSystems.System` object.
@@ -379,11 +381,11 @@ sys = nem_system(db)
 println(sys)
 ```
 """
-function nem_system(db; time_series_in_memory = true, kwargs...)
+function nem_system(db; time_series_in_memory = true, as_of = nothing, kwargs...)
     @info "parsing buses"
     bus_df = get_bus_dataframe(db)
-    interconnectors = read_interconnectors(db)
-    units = read_units(db)
+    interconnectors = read_interconnectors(db; as_of = as_of)
+    units = read_units(db; as_of = as_of)
     @info "parsing loads"
     loads_df = get_load_dataframe(bus_df)
     @info "parsing branches"

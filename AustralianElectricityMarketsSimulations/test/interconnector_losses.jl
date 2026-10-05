@@ -229,6 +229,32 @@ end
     @test !isnothing(con_ub)
 end
 
+@testset "per-interval flow-limit series bound the flow as a fraction of the static limit" begin
+    function solved_flow(ratio)
+        sys = _loss_test_system()
+        ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
+        grid = collect(timestamp(PSY.get_data(PSY.get_time_series(PSY.SingleTimeSeries, first(PSY.get_components(PSY.PowerLoad, sys)), "max_active_power"))))
+        for name in ("from_to_flow_limit", "to_from_flow_limit")
+            PSY.add_time_series!(
+                sys, ic1, PSY.SingleTimeSeries(; name = name, data = TimeArray(grid, fill(ratio, length(grid)))),
+            )
+        end
+        PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
+        model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        flow_df = PSI.read_variable(PSI.OptimizationProblemResults(model), "FlowActivePowerVariable__AreaInterchange")
+        static = PSY.with_units_base(() -> PSY.get_flow_limits(ic1).to_from, sys, "NATURAL_UNITS")
+        return maximum(abs, flow_df.value), static
+    end
+    full_flow, static = solved_flow(1.0)
+    @test full_flow > 0
+    @test full_flow <= static + 1.0e-6
+    # Halving the limit below the flow area 2 needs must cap the flow at that fraction.
+    capped_flow, _ = solved_flow(0.5 * full_flow / static)
+    @test capped_flow ≈ 0.5 * full_flow atol = 1.0e-4
+end
+
 @testset "scaling_factor_multiplier demand and nonzero demand_coefficients: LP loss matches the curve" begin
     # Regression for the double-scaling bug: area loads carry a real scaling_factor_multiplier
     # (PSY.get_max_active_power), and the loss model's demand_coefficients are nonzero, so
