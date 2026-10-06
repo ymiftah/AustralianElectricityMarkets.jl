@@ -226,9 +226,10 @@ function solve_toy(sys)
             dispatch_mw[row.name] = get(dispatch_mw, row.name, 0.0) - row.value
         end
     end
+    has_units = !isempty(PSY.get_components(PSY.ThermalStandard, sys))
     ramp_slack_mw = (;
-        up = sum(read_variable(results, "UnitRampUpSlack__ThermalStandard").value),
-        down = sum(read_variable(results, "UnitRampDownSlack__ThermalStandard").value),
+        up = has_units ? sum(read_variable(results, "UnitRampUpSlack__ThermalStandard").value) : 0.0,
+        down = has_units ? sum(read_variable(results, "UnitRampDownSlack__ThermalStandard").value) : 0.0,
     )
     nem_keys = [
         k for k in PSI.get_constraint_keys(container)

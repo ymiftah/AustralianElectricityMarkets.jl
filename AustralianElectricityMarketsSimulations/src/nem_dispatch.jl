@@ -330,6 +330,12 @@ at [`UNIT_RAMP_CVP_FACTOR`](@ref) times the Market Price Cap ([`_container_marke
 for the interval, in `\$/MW` per dispatch interval. The variable is in system-base per-unit, like
 the ramp row it relaxes.
 
+# Arguments
+- `container`: the `PSI.OptimizationContainer` being built.
+- `var_type`: [`UnitRampUpSlack`](@ref) or [`UnitRampDownSlack`](@ref).
+- `T`: the component type owning the ramp rows.
+- `names`, `time_steps`: the device names and time steps of the rows.
+
 # Returns
 The slack variable container.
 """
@@ -420,7 +426,9 @@ end
 "Per-unit slack allowed before a ramp-down floor above the availability ceiling is reported."
 const _RAMP_FLOOR_TOLERANCE = 1.0e-6
 
-# A ramp-down floor above the availability ceiling is infeasible; report it at build.
+# Reports a ramp-down floor above the availability ceiling at build. The elastic ramp row would
+# resolve the conflict, but NEMDE would break MaxAvail/UIGF before the unit ramp row, so the
+# conflict is surfaced instead of letting the model violate the ramp row.
 function _check_dispatch_envelope(container, devices, model)
     # Only the replay mode has a metered floor; the lookahead floor is a variable. The name check
     # is not redundant: the initial-conditions sub-model pairs this formulation with the parent

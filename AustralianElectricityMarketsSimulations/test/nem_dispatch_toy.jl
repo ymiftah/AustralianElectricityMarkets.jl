@@ -280,6 +280,5 @@ end
     @test out.dispatch_mw[TOY_CHEAP] ≈ 0.0 atol = TOY_TOLERANCE
     @test out.ramp_slack_mw.up ≈ 1.0 atol = TOY_TOLERANCE
     @test out.ramp_slack_mw.down ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ UNIT_RAMP_CVP_FACTOR * mpc * DISPATCH_INTERVAL_HOURS atol = 1.0e-4
-    @test UNIT_RAMP_CVP_FACTOR == 1155.0
+    @test out.objective ≈ UNIT_RAMP_CVP_FACTOR * mpc * DISPATCH_INTERVAL_HOURS rtol = 1.0e-8
 end

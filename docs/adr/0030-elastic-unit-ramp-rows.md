@@ -36,6 +36,16 @@ and Interconnector Capacity Limit.
 ## Consequences
 
 - The model is feasible whenever the bounds are, and the slack is zero whenever the hard row was
-  satisfiable. At 1155 x MPC the slack is priced above every offer and above the 150 x MPC
-  balance and 155 x MPC FCAS ramping slacks, so it is used only when no other relaxation exists.
+  satisfiable. Given the modelled CVPs, at 1155 x MPC the slack is priced above every offer and
+  above the 150 x MPC balance and 155 x MPC FCAS ramping slacks, so it is used only when no other
+  relaxation exists.
+- `replicate_interval` returns `ramp_violations` (DUID, interval, MW, direction) so a ramp
+  violation is never silent.
+- `_check_dispatch_envelope` is kept. A ramp-down floor above the availability ceiling would now
+  be resolved by the elastic down row, but NEMDE breaks MaxAvail (item 14) or UIGF (item 12)
+  before the unit ramp row (item 3, 1155), and availability is hard here, so the check reports a
+  conflict the model would otherwise resolve against AEMO's order.
+- Hard rows that remain: storage ramp rows, and the FCAS and generic-constraint rows when the
+  owning service model has `use_slacks = false`. Follow-up: a BDU with INITIALMW -50, a zero up
+  rate and its load MAXAVAIL rebid to 40 is infeasible on the hard storage ramp row.
 - Surplus and deficit slacks are reported per direction, not as one signed pair.

@@ -504,6 +504,13 @@ end
             )
             @test size(constraint, 2) == 1
             @test constraint_vars(constraint["ER02", 1]) == Set([power["ER02", 1]])
+            slack_type = meta == "up" ? AEMS.UnitRampUpSlack : AEMS.UnitRampDownSlack
+            other_type = meta == "up" ? AEMS.UnitRampDownSlack : AEMS.UnitRampUpSlack
+            func = JuMP.constraint_object(constraint["ER02", 1]).func
+            slack = PSI.get_variable(container, slack_type(), PSY.ThermalStandard)["ER02", 1]
+            other = PSI.get_variable(container, other_type(), PSY.ThermalStandard)["ER02", 1]
+            @test JuMP.coefficient(func, slack) == -1.0
+            @test JuMP.coefficient(func, other) == 0.0
         end
     end
 end

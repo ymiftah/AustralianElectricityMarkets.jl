@@ -100,7 +100,8 @@ A `NamedTuple` with the solved `model`, its `results`, and `comparison`, a `Name
 `DataFrame`s with one row per published key and `_solved` and `_published` columns, `missing`
 where the model has no solved value: `prices` (`REGIONID`; solved `ROP`, published `ROP` and
 `RRP`), `dispatch` (`DUID`, `TOTALCLEARED`), `interconnectors` (`INTERCONNECTORID`, `MWFLOW`,
-`MWLOSSES`) and `fcas_prices` (`REGIONID`, `BIDTYPE`, `ROP`). The solved balance dual is the
+`MWLOSSES`) and `fcas_prices` (`REGIONID`, `BIDTYPE`, `ROP`). `ramp_violations` lists every
+non-zero unit ramp slack of the model (`DUID`, `DateTime`, `MW`, `direction`). The solved balance dual is the
 unadjusted price, so it is compared with `ROP`; `RRP` differs only under an administered price.
 Throws if the model does not build or solve.
 """
@@ -132,8 +133,27 @@ function replicate_interval(
     return (;
         model, results,
         comparison = _compare_to_published(db, sys, results, settlement_date, intervention),
+        ramp_violations = _ramp_violations(results),
     )
 end
+
+# `DUID`, `DateTime`, `MW` and `direction` of every non-zero unit ramp slack, in every interval.
+function _ramp_violations(results::PSI.OptimizationProblemResults)
+    kinds = Dict(UnitRampUpSlack => "up", UnitRampDownSlack => "down")
+    rows = NamedTuple{(:DUID, :DateTime, :MW, :direction), Tuple{String, DateTime, Float64, String}}[]
+    for key in PSI.list_variable_keys(results)
+        direction = get(kinds, PSI.IS.Optimization.get_entry_type(key), nothing)
+        isnothing(direction) && continue
+        for r in eachrow(PSI.read_variable(results, key))
+            r.value > _RAMP_VIOLATION_TOLERANCE_MW &&
+                push!(rows, (; DUID = r.name, DateTime = r.DateTime, MW = r.value, direction))
+        end
+    end
+    return DataFrame(rows)
+end
+
+"MW of unit ramp slack below which a ramp row counts as satisfied."
+const _RAMP_VIOLATION_TOLERANCE_MW = 1.0e-6
 
 # `name => value` for the rows of a `read_variable`/`read_dual` frame at `settlement_date`.
 function _first_interval(df::DataFrame, settlement_date::DateTime)

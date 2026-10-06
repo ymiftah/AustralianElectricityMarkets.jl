@@ -240,8 +240,8 @@ end
     _add_storage_ramp_constraints!(container, devices, model)
 
 Holds each battery's net `Out - In` within its per-interval ramp rates of the base its
-formulation measures against, mirroring [`PSI.add_constraints!`](@ref)'s generator ramp
-constraint.
+formulation measures against. Unlike the generator ramp rows, these rows are hard: they carry
+no elastic slack.
 
 # Returns
 `nothing`.
