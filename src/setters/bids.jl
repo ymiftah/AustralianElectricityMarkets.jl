@@ -189,9 +189,10 @@ Reads each unit's connection-point loss factors from `DUDETAILSUMMARY`: the row 
 `START_DATE <= as_of < END_DATE` in the latest archive (`nothing` keeps the open row).
 
 # Returns
-A `DataFrame` with `DUID`, `GEN_LOSS_FACTOR` (`TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR`)
-and `LOAD_LOSS_FACTOR` (`SECONDARY_TLF * DISTRIBUTIONLOSSFACTOR` for a bidirectional unit that
-publishes a secondary factor, else `GEN_LOSS_FACTOR`). A missing, non-finite or non-positive
+A `DataFrame` with `DUID`, `LOAD_LOSS_FACTOR` (`TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR`,
+the factor for a load or a battery's charging side) and `GEN_LOSS_FACTOR` (`SECONDARY_TLF *
+DISTRIBUTIONLOSSFACTOR` for a bidirectional unit that publishes a secondary factor, else
+`LOAD_LOSS_FACTOR`). A missing, non-finite or non-positive
 factor is replaced by 1.0 and the affected `DUID`s are named in a warning. A cache without the
 loss-factor columns yields an empty `DataFrame` and a warning.
 """
@@ -215,9 +216,9 @@ function read_loss_factors(db; as_of::Union{Nothing, Date, DateTime} = nothing)
     raw = isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of, as_of])
     ok(x) = !ismissing(x) && isfinite(x) && x > 0
     dlf = [ok(d) ? Float64(d) : 1.0 for d in raw.dlf]
-    gen = [ok(t) ? Float64(t) * d : NaN for (t, d) in zip(raw.tlf, dlf)]
-    load = [ok(t2) ? Float64(t2) * d : g for (t2, d, g) in zip(raw.tlf2, dlf, gen)]
-    bad = raw.DUID[isnan.(gen)]
+    load = [ok(t) ? Float64(t) * d : NaN for (t, d) in zip(raw.tlf, dlf)]
+    gen = [ok(t2) ? Float64(t2) * d : l for (t2, d, l) in zip(raw.tlf2, dlf, load)]
+    bad = raw.DUID[isnan.(load)]
     isempty(bad) || @warn "Missing or non-positive transmission loss factor; using 1.0" duids = bad
     replace!(gen, NaN => 1.0)
     replace!(load, NaN => 1.0)

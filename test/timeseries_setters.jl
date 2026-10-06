@@ -1364,7 +1364,8 @@
         factors = read_loss_factors(ldb; as_of = start_date)
         row(d) = only(eachrow(subset(factors, :DUID => ByRow(==(d)))))
         @test row("ER01").GEN_LOSS_FACTOR == 0.9
-        @test row("BW01").LOAD_LOSS_FACTOR == 0.5
+        @test row("BW01").GEN_LOSS_FACTOR == 0.5
+        @test row("BW01").LOAD_LOSS_FACTOR == 0.8
         @test row("BW02").GEN_LOSS_FACTOR == 1.0
         @test row("ER02").GEN_LOSS_FACTOR == 1.0   # zero factor falls back to 1.0
 
@@ -1378,9 +1379,9 @@
                 @test raw_prices(sys_lf, "ER01") ≈ raw_prices(sys_raw, "ER01") ./ 0.9
                 @test raw_prices(sys_lf, "BW02") ≈ raw_prices(sys_raw, "BW02")
                 @test raw_prices(sys_lf, "ER02") ≈ raw_prices(sys_raw, "ER02")
-                @test raw_prices(sys_lf, "BW01") ≈ raw_prices(sys_raw, "BW01") ./ 0.8
+                @test raw_prices(sys_lf, "BW01") ≈ raw_prices(sys_raw, "BW01") ./ 0.5
                 @test raw_prices(sys_lf, "BW01", "decremental_variable_cost") ≈
-                    raw_prices(sys_raw, "BW01", "decremental_variable_cost") ./ 0.5
+                    raw_prices(sys_raw, "BW01", "decremental_variable_cost") ./ 0.8
             end
         end
         # MW breakpoints are not scaled.
