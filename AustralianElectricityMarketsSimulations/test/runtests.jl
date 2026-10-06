@@ -37,6 +37,10 @@ let
                 INTERCONNECTORID = interconnector_ids,
                 MWFLOW = [100.0 * k + i for k in 1:length(interconnector_ids)],
                 MWLOSSES = [0.1 * k for k in 1:length(interconnector_ids)],
+                METEREDMWFLOW = [100.0 * k + i for k in 1:length(interconnector_ids)],
+                # Equal to the mock's static 500 MW limits, so they do not tighten any flow.
+                EXPORTLIMIT = fill(500.0, length(interconnector_ids)),
+                IMPORTLIMIT = fill(-500.0, length(interconnector_ids)),
                 archive_month = fill("2025-01", length(interconnector_ids)),
             )
         )

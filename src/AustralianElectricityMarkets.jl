@@ -30,6 +30,7 @@ export get_storage_energy_max_avail
 export read_fcas_bids, set_fcas_bids!, read_fcas_requirements,
     read_fcas_prices, read_fcas_dispatch, read_prices, read_uigf
 export read_dispatch_limits, set_nem_dispatch_limits!, set_nem_initial_conditions!
+export read_interconnector_limits, set_interconnector_flow_limits!
 export get_initial_mw, get_energy_availability
 export read_invoked_constraints, read_constraint_definitions, read_constraint_terms,
     read_constraint_fcas_requirements, add_nem_constraints!
