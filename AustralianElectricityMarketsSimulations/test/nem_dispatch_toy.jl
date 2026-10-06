@@ -136,7 +136,9 @@ end
     @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
     @test out.battery_in_mw[TOY_BATTERY] ≈ 5.0 atol = TOY_TOLERANCE
     @test out.dispatch_mw[TOY_CHEAP] ≈ 5.0 atol = TOY_TOLERANCE
-    @test out.price ≈ 20.0 atol = TOY_TOLERANCE
+    # The battery's offer band ties with Alta's at 20, so the held-back band carries the
+    # tie-break slack penalty (1e-6) into the price.
+    @test out.price ≈ 20.0 atol = 10 * TIE_BREAK_CVP_FACTOR
     @test out.objective ≈ (5.0 * 20.0 - 5.0 * 30.0) * DISPATCH_INTERVAL_HOURS atol = TOY_TOLERANCE
 end
 
@@ -446,5 +448,58 @@ end
         )
         out = solve_toy(sys)
         @test isempty(AustralianElectricityMarketsSimulations._constraint_violations(out.results, sys))
+    end
+end
+
+@testset "price-tied bands clear pro rata to band MW" begin
+    third = "Solitude"
+    function tied_toy(prices; ramp_up = (100.0, 100.0, 100.0), load = 168.0)
+        return nem_toy_system(
+            [
+                TOY_CHEAP => toy_unit(168.0, [(168.0, prices[1])]; initial = 0.0, ramp_up = ramp_up[1]),
+                TOY_EXPENSIVE => toy_unit(46.0, [(46.0, prices[2])]; initial = 0.0, ramp_up = ramp_up[2]),
+                third => toy_unit(122.0, [(122.0, prices[3])]; initial = 0.0, ramp_up = ramp_up[3]),
+            ],
+            load,
+        )
+    end
+
+    @testset "three tied units share the load in proportion to band MW" begin
+        out = solve_toy(tied_toy((-984.5, -984.5, -984.5)))
+        @test out.dispatch_mw[TOY_CHEAP] ≈ 84.0 atol = 1.0e-5
+        @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 23.0 atol = 1.0e-5
+        @test out.dispatch_mw[third] ≈ 61.0 atol = 1.0e-5
+        @test out.price ≈ -984.5 atol = TOY_TOLERANCE
+        @test out.objective ≈ -984.5 * 168.0 * DISPATCH_INTERVAL_HOURS atol = 1.0e-6
+    end
+
+    @testset "prices within the tolerance are tied, prices beyond it are not" begin
+        near = solve_toy(tied_toy((10.0, 10.0 + 0.5 * TIE_BREAK_CVP_FACTOR, 10.0); load = 168.0))
+        @test near.dispatch_mw[TOY_CHEAP] ≈ 84.0 atol = 1.0e-5
+        @test near.dispatch_mw[third] ≈ 61.0 atol = 1.0e-5
+        apart = solve_toy(tied_toy((10.0, 20.0, 10.0); load = 168.0))
+        @test apart.dispatch_mw[TOY_EXPENSIVE] ≈ 0.0 atol = TOY_TOLERANCE
+        @test apart.dispatch_mw[TOY_CHEAP] ≈ 168.0 * 168.0 / 290.0 atol = 1.0e-5
+        @test apart.dispatch_mw[third] ≈ 168.0 * 122.0 / 290.0 atol = 1.0e-5
+    end
+
+    @testset "non-tied units keep merit order, price and objective" begin
+        out = solve_toy(tied_toy((10.0, 30.0, 20.0); load = 200.0))
+        @test out.dispatch_mw[TOY_CHEAP] ≈ 168.0 atol = TOY_TOLERANCE
+        @test out.dispatch_mw[third] ≈ 32.0 atol = TOY_TOLERANCE
+        @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 0.0 atol = TOY_TOLERANCE
+        @test out.price ≈ 20.0 atol = TOY_TOLERANCE
+        @test out.objective ≈ (168.0 * 10.0 + 32.0 * 20.0) * DISPATCH_INTERVAL_HOURS atol = TOY_TOLERANCE
+    end
+
+    @testset "a ramp-bound tied unit relaxes the tie without moving the price or objective" begin
+        # Cheap unit can reach only 5 * 8 = 40 MW; its fill fraction cannot match the others.
+        out = solve_toy(tied_toy((10.0, 10.0, 10.0); ramp_up = (8.0, 100.0, 100.0)))
+        @test out.dispatch_mw[TOY_CHEAP] ≤ 40.0 + TOY_TOLERANCE
+        @test sum(values(out.dispatch_mw)) ≈ 168.0 atol = TOY_TOLERANCE
+        @test out.price ≈ 10.0 atol = TOY_TOLERANCE
+        @test out.objective ≈ 10.0 * 168.0 * DISPATCH_INTERVAL_HOURS atol = 1.0e-4
+        # The two unconstrained units stay pro rata to each other.
+        @test out.dispatch_mw[TOY_EXPENSIVE] / 46.0 ≈ out.dispatch_mw[third] / 122.0 atol = 1.0e-4
     end
 end
