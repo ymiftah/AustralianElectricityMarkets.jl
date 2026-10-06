@@ -134,6 +134,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bidders, FCAS `RegionTerm`s reach a region's loads, and the decremental-bid-on-a-non-`Storage`
   throw is narrowed to devices that are neither storage nor loads. Scheduled loads' FCAS scaling
   inputs are not modelled.
+- `read_loss_factors` reads each unit's TLF x DLF (and a bidirectional unit's secondary factor)
+  from `DUDETAILSUMMARY`, as of a date.
 - Data package ingests the MNSP offer tables (`MNSP_DAYOFFER`, `MNSP_BIDOFFERPERIOD`,
   `MNSP_PEROFFER`, `DISPATCH_MNSPBIDTRK`), `DISPATCHLOAD.DISPATCHMODETIME` and
   `DISPATCHINTERCONNECTORRES.FCASEXPORTLIMIT`/`FCASIMPORTLIMIT`, with `read_mnsp_offers`
@@ -386,7 +388,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `set_market_bids!` divides energy bid prices by each unit's loss factor (`TRANSMISSIONLOSSFACTOR`
   x `DISTRIBUTIONLOSSFACTOR`, as of the start of `date_range`; `SECONDARY_TLF` for the discharge side of
   batteries), referring them to the regional reference node as NEMDE does. Pass
-  `loss_factors = false` for raw connection-point prices. New `read_loss_factors`.
+  `loss_factors = false` for raw connection-point prices.
 - `nem_system(db, ConstrainedNetworkConfiguration(); date_range)` resolves static unit and
   interconnector tables as of `first(date_range)` instead of the newest cached version; pass
   `as_of = nothing` for the previous behaviour.

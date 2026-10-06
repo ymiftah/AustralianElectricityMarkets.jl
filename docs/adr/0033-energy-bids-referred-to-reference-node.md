@@ -23,19 +23,27 @@ band, which the diagnosis of the June 2026 run attributed to about 100 of 216 un
   unchanged. `read_loss_factors(db; as_of)` supplies the factors from `DUDETAILSUMMARY`
   (`TRANSMISSIONLOSSFACTOR x DISTRIBUTIONLOSSFACTOR`), resolved as of `first(date_range)` with the
   same window as `read_units`.
-- **Both sides of a battery.** For a bidirectional unit that publishes `SECONDARY_TLF`, discharge
-  (`GEN`) bids use `SECONDARY_TLF x DLF` and charge (`LOAD`) bids use `TRANSMISSIONLOSSFACTOR x
-  DLF`. This was read off the data, not the documentation: every bidirectional unit in the June
-  2026 cache bids its market floor as -1000 times that factor on each side (KESSB1 GEN -1003.0 =
-  -1000 x 1.003, LOAD -970.4 = -1000 x 0.9704; GANNB1 GEN -1001.1 = -1000 x 1.0227 x 0.9789), so
-  that is the factor that refers the floor back to -1000 at the reference node. Units without a
-  secondary factor use `TRANSMISSIONLOSSFACTOR x DLF` on both sides. Scheduled loads use
-  `LOAD_LOSS_FACTOR` and divide their load-side prices the same way.
+- **Both sides of a battery.** The MMS Data Model defines `SECONDARY_TLF` as "the TLF for the
+  generation component of a BDU, when null the TRANSMISSIONLOSSFACTOR is used for both the load and
+  generation components", and `TRANSMISSIONLOSSFACTOR` as the load-component TLF where `DISPATCHTYPE`
+  is `BIDIRECTIONAL`. nempy (`units.py`, lines 568-573) applies `SECONDARY_TLF x DLF` only to the
+  generator direction of a `BIDIRECTIONAL` unit with a non-null secondary factor, and
+  `TRANSMISSIONLOSSFACTOR x DLF` otherwise. `read_loss_factors` does the same: `GEN_LOSS_FACTOR`
+  uses `SECONDARY_TLF` only when `DISPATCHTYPE = 'BIDIRECTIONAL'`, so a stray secondary factor on a
+  generator is ignored. The June 2026 cache agrees: every bidirectional unit bids its market floor
+  as -1000 times the factor on each side (KESSB1 GEN -1003.0 = -1000 x 1.003, LOAD -970.4 = -1000 x
+  0.9704; GANNB1 GEN -1001.1 = -1000 x 1.0227 x 0.9789). Scheduled loads divide their load-side
+  prices by `LOAD_LOSS_FACTOR` once the scheduled-load change merges.
 - **Not scaled.** FCAS prices (nempy scales only energy), scheduled capacity bounds (`MAXAVAIL`,
   `MINIMUMLOAD`) and `DAILYENERGYCONSTRAINT`.
 - **Missing or non-positive factors** default to 1.0 with a warning naming the units; a cache
-  without the columns leaves prices raw with a warning. A single factor is used for the whole
-  `date_range`, so builds spanning 1 July (when loss factors change) use the start-of-range value.
+  without the columns leaves prices raw with a warning. One factor per unit is used for the
+  whole `date_range`, resolved as of `first(date_range)`, and a warning fires when a `START_DATE`
+  falls in `(first, last]`. That timestamp is an interval end, so the interval ending at 00:00 on
+  1 July selects the new financial year's factors, as `read_units` does. None of the cited AEMO
+  documents says which side of that boundary NEMDE uses, so this stays unverified.
+- **Open rows** (`as_of = nothing`) keep the earliest `START_DATE`, the row `read_units` keeps, so
+  both readers agree.
 - **Optional.** `loss_factors = false` keeps raw connection-point prices. The default is on,
   since raw prices misorder units in every region, replication or not.
 
@@ -52,3 +60,5 @@ multiplier `RRP x MLF`. The regional balance therefore keeps connection-point MW
   reference-node price. The pricing of marginal units is unchanged as a shadow price: the RRP is
   still at the reference node.
 - Unit bids with equal reference-node prices remain tied; tie-breaking is a separate gap.
+- The loss-factor columns are `Float32` in the cache (`COLUMN_TYPES`), which limits referred prices
+  to about seven digits. Widening them to `Float64` needs a cache re-populate; left as a follow-up.

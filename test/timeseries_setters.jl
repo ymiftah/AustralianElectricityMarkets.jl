@@ -1338,56 +1338,107 @@
     end
     @testset "set_market_bids! refers energy bids to the reference node" begin
         using DuckDB
-        lf_dir = mktempdir()
-        cp(AEM_TEST_HIVE_DIR, lf_dir; force = true)
-        conn = DuckDB.connect(DuckDB.DB())
-        DuckDB.execute(conn, "SET preserve_identifier_case=true")
-        table_dir = joinpath(lf_dir, "DUDETAILSUMMARY")
-        df = DataFrame(DuckDB.execute(conn, "SELECT * FROM read_parquet('$table_dir/**/*.parquet', hive_partitioning=true)"))
-        df.TRANSMISSIONLOSSFACTOR = [d == "ER01" ? 0.9 : d == "BW01" ? 0.8 : d == "ER02" ? 0.0 : 1.0 for d in df.DUID]
-        df.DISTRIBUTIONLOSSFACTOR = [d == "ER01" ? 1.0 : 1.0 for d in df.DUID]
-        df.SECONDARY_TLF = Union{Float64, Missing}[d == "BW01" ? 0.5 : missing for d in df.DUID]
-        rm(table_dir; recursive = true)
-        mkpath(table_dir)
-        DuckDB.register_data_frame(conn, df, "tmp_table")
-        DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
-        ldb = aem_connect(HiveConfiguration(hive_location = lf_dir, filesystem = "file"))
-
+        # Copies the mock hive, rewriting DUDETAILSUMMARY with `f`.
+        function loss_factor_db(f)
+            dir = mktempdir()
+            cp(AEM_TEST_HIVE_DIR, dir; force = true)
+            conn = DuckDB.connect(DuckDB.DB())
+            DuckDB.execute(conn, "SET preserve_identifier_case=true")
+            table_dir = joinpath(dir, "DUDETAILSUMMARY")
+            df = DataFrame(DuckDB.execute(conn, "SELECT * FROM read_parquet('$table_dir/**/*.parquet', hive_partitioning=true)"))
+            df = f(df)
+            rm(table_dir; recursive = true)
+            mkpath(table_dir)
+            DuckDB.register_data_frame(conn, df, "tmp_table")
+            DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+            return aem_connect(HiveConfiguration(hive_location = dir, filesystem = "file"))
+        end
+        fy_change = DateTime(2025, 7, 1)
+        # Old financial year (closed at fy_change) and new one (open) for every DUID.
+        function two_years(df)
+            old = copy(df)
+            old.END_DATE = Union{DateTime, Missing}[fy_change for _ in 1:nrow(old)]
+            old.DISPATCHTYPE = [d in ("BW01", "BW04") ? "BIDIRECTIONAL" : "GENERATOR" for d in old.DUID]
+            old.TRANSMISSIONLOSSFACTOR = [d == "ER01" ? 0.9 : d == "BW01" ? 0.8 : d == "ER02" ? 0.0 : 1.0 for d in old.DUID]
+            old.DISTRIBUTIONLOSSFACTOR = Union{Float64, Missing}[d == "ER01" ? 0.97 : d == "BW03" ? missing : 1.0 for d in old.DUID]
+            old.SECONDARY_TLF = Union{Float64, Missing}[d == "BW01" ? 0.5 : d == "BW02" ? 0.7 : d == "BW04" ? -1.0 : missing for d in old.DUID]
+            new = copy(df)
+            new.START_DATE .= fy_change
+            new.TRANSMISSIONLOSSFACTOR = [d == "ER01" ? 0.8 : 1.0 for d in new.DUID]
+            new.DISTRIBUTIONLOSSFACTOR = fill(1.0, nrow(new))
+            new.SECONDARY_TLF = Union{Float64, Missing}[missing for _ in 1:nrow(new)]
+            return vcat(old, new)
+        end
+        ldb = loss_factor_db(two_years)
         start_date = DateTime(2025, 1, 1, 0, 0)
         date_range = start_date:Minute(5):(start_date + Hour(1))
-        raw_prices(sys, name, series = "variable_cost") = begin
-            gen = get_component(Device, sys, name)
-            ta = get_time_series_array(Deterministic, gen, series)
-            return get_y_coords(first(values(ta)))
-        end
+        factor(df, d, col) = only(df[df.DUID .== d, col])
 
-        factors = read_loss_factors(ldb; as_of = start_date)
-        row(d) = only(eachrow(subset(factors, :DUID => ByRow(==(d)))))
-        @test row("ER01").GEN_LOSS_FACTOR == 0.9
-        @test row("BW01").GEN_LOSS_FACTOR == 0.5
-        @test row("BW01").LOAD_LOSS_FACTOR == 0.8
-        @test row("BW02").GEN_LOSS_FACTOR == 1.0
-        @test row("ER02").GEN_LOSS_FACTOR == 1.0   # zero factor falls back to 1.0
+        @testset "read_loss_factors" begin
+            old = read_loss_factors(ldb; as_of = start_date)
+            @test factor(old, "ER01", :LOAD_LOSS_FACTOR) ≈ 0.9 * 0.97   # DLF is applied
+            @test factor(old, "ER01", :GEN_LOSS_FACTOR) ≈ 0.9 * 0.97
+            @test factor(old, "BW01", :GEN_LOSS_FACTOR) == 0.5            # BIDIRECTIONAL: secondary on GEN
+            @test factor(old, "BW01", :LOAD_LOSS_FACTOR) == 0.8
+            @test factor(old, "BW02", :GEN_LOSS_FACTOR) == 1.0            # SECONDARY_TLF ignored off a BDU
+            @test factor(old, "ER02", :LOAD_LOSS_FACTOR) == 1.0           # zero TLF
+            @test factor(old, "BW03", :LOAD_LOSS_FACTOR) == 1.0           # missing DLF
+            @test factor(old, "BW04", :GEN_LOSS_FACTOR) == 1.0            # invalid secondary falls back
+            new = read_loss_factors(ldb; as_of = DateTime(2025, 7, 2))
+            @test factor(new, "ER01", :LOAD_LOSS_FACTOR) == 0.8
+            @test factor(new, "BW01", :GEN_LOSS_FACTOR) == 1.0
+            # The new row starts at the boundary; a Date before it resolves the old one.
+            @test factor(read_loss_factors(ldb; as_of = fy_change - Minute(5)), "ER01", :LOAD_LOSS_FACTOR) ≈ 0.9 * 0.97
+            @test factor(read_loss_factors(ldb; as_of = fy_change), "ER01", :LOAD_LOSS_FACTOR) == 0.8
+            # No as_of keeps the open row.
+            @test factor(read_loss_factors(ldb), "ER01", :LOAD_LOSS_FACTOR) == 0.8
+            for pattern in (r"non-positive distribution", r"non-positive transmission", r"non-positive secondary")
+                @test_logs (:warn, pattern) match_mode = :any read_loss_factors(ldb; as_of = start_date)
+            end
+            @test_logs (:warn, r"change within the date range") match_mode = :any read_loss_factors(ldb; as_of = start_date, through = DateTime(2025, 7, 1, 1))
+        end
 
         sys_raw = nem_system(ldb, RegionalNetworkConfiguration())
         set_market_bids!(sys_raw, ldb, date_range; resolution = Minute(5), loss_factors = false)
         sys_lf = nem_system(ldb, RegionalNetworkConfiguration())
         set_market_bids!(sys_lf, ldb, date_range; resolution = Minute(5))
+        prices(sys, name, series = "variable_cost") = with_units_base(sys, "NATURAL_UNITS") do
+            ta = get_time_series_array(Deterministic, get_component(Device, sys, name), series)
+            return get_y_coords(first(values(ta)))
+        end
+        mw(sys, name) = with_units_base(sys, "NATURAL_UNITS") do
+            ta = get_time_series_array(Deterministic, get_component(Device, sys, name), "variable_cost")
+            return get_x_coords(first(values(ta)))
+        end
 
-        with_units_base(sys_raw, "NATURAL_UNITS") do
-            with_units_base(sys_lf, "NATURAL_UNITS") do
-                @test raw_prices(sys_lf, "ER01") ≈ raw_prices(sys_raw, "ER01") ./ 0.9
-                @test raw_prices(sys_lf, "BW02") ≈ raw_prices(sys_raw, "BW02")
-                @test raw_prices(sys_lf, "ER02") ≈ raw_prices(sys_raw, "ER02")
-                @test raw_prices(sys_lf, "BW01") ≈ raw_prices(sys_raw, "BW01") ./ 0.5
-                @test raw_prices(sys_lf, "BW01", "decremental_variable_cost") ≈
-                    raw_prices(sys_raw, "BW01", "decremental_variable_cost") ./ 0.8
-            end
+        @testset "prices are divided, MW is not" begin
+            @test prices(sys_lf, "ER01") ≈ prices(sys_raw, "ER01") ./ (0.9 * 0.97)
+            @test prices(sys_lf, "BW02") ≈ prices(sys_raw, "BW02")
+            @test prices(sys_lf, "ER02") ≈ prices(sys_raw, "ER02")
+            @test prices(sys_lf, "BW01") ≈ prices(sys_raw, "BW01") ./ 0.5
+            @test prices(sys_lf, "BW01", "decremental_variable_cost") ≈
+                prices(sys_raw, "BW01", "decremental_variable_cost") ./ 0.8
+            @test mw(sys_lf, "ER01") ≈ mw(sys_raw, "ER01")
         end
-        # MW breakpoints are not scaled.
-        mw(sys) = with_units_base(sys, "NATURAL_UNITS") do
-            get_x_coords(first(values(get_time_series_array(Deterministic, get_component(Device, sys, "ER01"), "variable_cost"))))
+
+        @testset "referred prices reorder a merit order" begin
+            # Raw prices rise with the band; ER01's referred price exceeds BW02's raw price.
+            @test last(prices(sys_raw, "ER01")) < last(prices(sys_raw, "BW02")) + 1.0
+            @test last(prices(sys_lf, "ER01")) > last(prices(sys_lf, "BW02"))
         end
-        @test mw(sys_lf) ≈ mw(sys_raw)
+
+        @testset "cache without the loss factor columns keeps raw prices" begin
+            bare = loss_factor_db(df -> select(df, Not(:TRANSMISSIONLOSSFACTOR, :DISTRIBUTIONLOSSFACTOR, :SECONDARY_TLF)))
+            sys_bare = nem_system(bare, RegionalNetworkConfiguration())
+            @test_logs (:warn, r"no loss factor columns") match_mode = :any set_market_bids!(sys_bare, bare, date_range; resolution = Minute(5))
+            @test prices(sys_bare, "ER01") ≈ prices(sys_raw, "ER01")
+        end
+
+        @testset "a unit without a DUDETAILSUMMARY row keeps raw prices and is named" begin
+            # BW02's only row starts after the range, so it has no factor at its start.
+            partial = loss_factor_db(df -> subset(two_years(df), [:DUID, :START_DATE] => ByRow((d, t) -> !(d == "BW02" && t < fy_change))))
+            sys_partial = nem_system(partial, RegionalNetworkConfiguration())
+            @test_logs (:warn, r"No loss factor for bid unit") match_mode = :any set_market_bids!(sys_partial, partial, date_range; resolution = Minute(5))
+        end
     end
 end
