@@ -35,13 +35,50 @@ function _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
 end
 
 """
+    _set_decremental_bid_cost!(sys, device, load_bids, start_date, resolution)
+
+Attaches the decremental (load-side) variable cost and initial input time series derived from
+`load_bids.piecewise_step_data` to `device`, whose operation cost must already be a `MarketBidCost`
+(set by `_set_incremental_bid_cost!` for a battery; a scheduled load's is replaced here). Shared by the
+battery and scheduled-load branches of `set_market_bids!`.
+"""
+function _set_decremental_bid_cost!(sys, device, load_bids, start_date, resolution)
+    set_available!(device, true)
+    device isa InterruptiblePowerLoad && set_operation_cost!(
+        device,
+        MarketBidCost(;
+            no_load_cost = 0.0,
+            start_up = (hot = 0.0, warm = 0.0, cold = 0.0),
+            shut_down = 0.0,
+        ),
+    )
+    psd = load_bids.piecewise_step_data
+    time_series_data = Deterministic(;
+        name = "decremental_variable_cost",
+        data = Dict(start_date => psd),
+        resolution = resolution,
+        interval = resolution,
+    )
+    set_decremental_variable_cost!(sys, device, time_series_data, UnitSystem.NATURAL_UNITS)
+    time_series_decremental_initial_input = Deterministic(;
+        name = "decremental_initial_input",
+        data = Dict(start_date => (first ∘ get_y_coords).(psd)),
+        resolution = resolution,
+        interval = resolution,
+    )
+    set_decremental_initial_input!(sys, device, time_series_decremental_initial_input)
+    return
+end
+
+"""
     set_market_bids!(sys, db, date_range; kwargs...)
 
 Adds market bid cost time series data to the system.
 
 This function reads energy and price bid data for a specified date range from the
 database, converts it into piecewise `MarketBidCost` variable cost time series, and
-attaches it to `Generator` and `EnergyReservoirStorage` components (the latter also
+attaches it to `Generator`, `InterruptiblePowerLoad` (decremental bid only) and
+`EnergyReservoirStorage` components (the latter also
 gets decremental/load-side bid costs, and each direction's energy `MAXAVAIL`, read back by
 [`get_storage_energy_max_avail`](@ref)).
 
@@ -72,6 +109,18 @@ function set_market_bids!(sys, db, date_range; kwargs...)
         end
     end
 
+    # Scheduled loads carry only a decremental (LOAD direction) offer.
+    foreach(get_components(InterruptiblePowerLoad, sys)) do load
+        load_id = get_name(load)
+        load_bids = subset(bids, :DUID => ByRow(==(load_id)), :DIRECTION => ByRow(==("LOAD")))
+        if DataFrames.isempty(load_bids)
+            @warn "No bid data for scheduled load $(load_id), setting to unavailable."
+            set_available!(load, false)
+        else
+            _set_decremental_bid_cost!(sys, load, load_bids, start_date, resolution)
+        end
+    end
+
     # Then sets the batteries
     return foreach(get_components(EnergyReservoirStorage, sys)) do gen
         gen_id = get_name(gen)
@@ -84,24 +133,7 @@ function set_market_bids!(sys, db, date_range; kwargs...)
         else
             _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
 
-            # Load bids as decremental inputs
-            psd = load_bids.piecewise_step_data
-            time_series_data = Deterministic(;
-                name = "decremental_variable_cost",
-                data = Dict(start_date => psd),
-                resolution = get(kwargs, :resolution, Minute(5)),
-                interval = get(kwargs, :resolution, Minute(5)),
-            )
-            set_decremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
-            time_series_decremental_initial_input = Deterministic(;
-                name = "decremental_initial_input",
-                data = Dict(
-                    start_date => (first ∘ get_y_coords).(psd)
-                ),
-                resolution = get(kwargs, :resolution, Minute(5)),
-                interval = get(kwargs, :resolution, Minute(5)),
-            )
-            set_decremental_initial_input!(sys, gen, time_series_decremental_initial_input)
+            _set_decremental_bid_cost!(sys, gen, load_bids, start_date, resolution)
 
             _set_storage_energy_max_avail!(sys, gen, gen_bids, "energy_max_avail", start_date, resolution)
             _set_storage_energy_max_avail!(sys, gen, load_bids, "energy_max_avail_decremental", start_date, resolution)

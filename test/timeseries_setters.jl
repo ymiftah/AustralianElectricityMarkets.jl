@@ -79,6 +79,16 @@
                     @test length(ta) == length(date_range) - 1
                 end
 
+                @testset "Scheduled loads" begin
+                    pump = get_component(InterruptiblePowerLoad, sys, "PUMP1")
+                    @test get_available(pump)
+                    ta = get_time_series_array(Deterministic, pump, "decremental_variable_cost")
+                    @test length(ta) == length(date_range) - 1
+                    @test !isempty(get_time_series_array(Deterministic, pump, "decremental_initial_input"))
+                    # A load has no incremental offer
+                    @test !has_time_series(pump, Deterministic, "variable_cost")
+                end
+
                 @testset "Batteries" begin
                     for bat in get_components(EnergyReservoirStorage, sys)
                         # GEN bids
@@ -429,6 +439,19 @@
             end
         end
 
+        @testset "attaches the full dispatch envelope to a scheduled load" begin
+            sys = deepcopy(sys_base)
+            set_nem_dispatch_limits!(sys, db, date_range)
+            pump = get_component(InterruptiblePowerLoad, sys, "PUMP1")
+            for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw", "max_active_power", "availability")
+                @test length(get_time_series_array(SingleTimeSeries, pump, name)) == length(date_range) - 1
+            end
+            rows = sort(subset(truth, :DUID => ByRow(==("PUMP1"))), :SETTLEMENTDATE)
+            @test isapprox(
+                get_time_series_values(SingleTimeSeries, pump, "initial_mw"), rows.INITIALMW ./ base_power; atol = 1.0e-8,
+            )
+        end
+
         @testset "attaches ramp/initial series to a battery, with no max_active_power" begin
             sys = deepcopy(sys_base)
             set_nem_dispatch_limits!(sys, db, date_range)
@@ -710,7 +733,7 @@
 
             short_range = start_date:resolution:(start_date + Minute(10))
             grid = collect(short_range)[1:(end - 1)]  # 3 intervals
-            duids = ["BW01", "BW02", "BW03", "BW04", "ER01", "ER02"]
+            duids = ["BW01", "BW02", "BW03", "BW04", "ER01", "ER02", "PUMP1"]
 
             rows = DataFrame(
                 SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
@@ -1162,7 +1185,7 @@
         start_date = DateTime(2025, 1, 1, 0, 0)
         short_range = start_date:resolution:(start_date + Minute(10))
         grid = collect(short_range)[1:(end - 1)]  # 3 intervals
-        duids = ["BW01", "BW02", "BW03", "BW04", "ER01", "ER02"]
+        duids = ["BW01", "BW02", "BW03", "BW04", "ER01", "ER02", "PUMP1"]
 
         rows = DataFrame(
             SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
@@ -1220,7 +1243,7 @@
         start_date = DateTime(2025, 1, 1, 0, 0)
         short_range = start_date:resolution:(start_date + Minute(10))
         grid = collect(short_range)[1:(end - 1)]  # 3 intervals
-        covered_duids = ["BW01", "BW02", "BW03", "BW04", "ER02"]  # every dispatch device except ER01
+        covered_duids = ["BW01", "BW02", "BW03", "BW04", "ER02", "PUMP1"]  # every dispatch device except ER01
 
         rows = DataFrame(
             SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],

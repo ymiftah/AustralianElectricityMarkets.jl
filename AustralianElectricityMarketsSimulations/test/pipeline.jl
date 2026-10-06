@@ -37,6 +37,10 @@
         @test any(!ismissing, comparison.interconnectors.MWFLOW_solved)
         @test all(isfinite, skipmissing(comparison.interconnectors.MWLOSSES_solved))
         @test any(!ismissing, comparison.fcas_prices.ROP_solved)
+        # The scheduled load PUMP1 is solved, as a non-negative consumed MW.
+        pump = only(filter(:DUID => ==("PUMP1"), comparison.dispatch))
+        @test !ismissing(pump.TOTALCLEARED_solved)
+        @test pump.TOTALCLEARED_solved >= 0
         # The unavailable IC6 has no solved flow.
         @test ismissing(only(filter(:INTERCONNECTORID => ==("IC6"), comparison.interconnectors)).MWFLOW_solved)
     end

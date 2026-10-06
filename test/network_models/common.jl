@@ -59,6 +59,30 @@
         @test df.base_power[1] == 100.0
     end
 
+    @testset "read_units keeps units without a GENUNITS row" begin
+        units = read_units(db)
+        # PUMP1 is a scheduled load: no GENUNITS/DUALLOC row, so no technology or fuel.
+        pump = only(eachrow(subset(units, :DUID => ByRow(==("PUMP1")))))
+        @test pump.DISPATCHTYPE == "LOAD"
+        @test ismissing(pump.TECHNOLOGY)
+        @test allunique(units.DUID)
+    end
+
+    @testset "get_scheduled_loads_dataframe" begin
+        bus_df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
+        df = AustralianElectricityMarkets.RegionModel.get_scheduled_loads_dataframe(bus_df, read_units(db))
+        @test df.name == ["PUMP1"]
+        @test df.region == ["NSW1"]
+        @test df.base_power == [100.0]
+        @test df.max_active_power == [1.0]
+        # Without the DISPATCHTYPE column no load can be identified
+        @test isempty(
+            AustralianElectricityMarkets.RegionModel.get_scheduled_loads_dataframe(
+                bus_df, select(read_units(db), Not(:DISPATCHTYPE)),
+            )
+        )
+    end
+
     @testset "get_interfaces_dataframe" begin
         df = AustralianElectricityMarkets.RegionModel.get_interfaces_dataframe(read_interconnectors(db))
         @test df isa DataFrame
@@ -105,6 +129,13 @@
         limits = get_ramp_limits(thermal)
         @test limits.up == 0.03 # 3.0 / 100.0
         @test limits.down == 0.07 # 7.0 / 100.0
+
+        # The scheduled load PUMP1 is a controllable load with a market bid slot, in NSW1.
+        pump = get_component(InterruptiblePowerLoad, system, "PUMP1")
+        @test !isnothing(pump)
+        @test get_name(get_area(get_bus(pump))) == "NSW1"
+        @test get_operation_cost(pump) isa LoadCost
+        @test length(get_components(InterruptiblePowerLoad, system)) == 1
 
         # Interconnectors/Interfaces
         @test length(get_components(AreaInterchange, system)) == 6

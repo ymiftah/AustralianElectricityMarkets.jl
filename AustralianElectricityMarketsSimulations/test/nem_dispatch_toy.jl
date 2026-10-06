@@ -282,3 +282,54 @@ end
     @test out.ramp_slack_mw.down ≈ 0.0 atol = TOY_TOLERANCE
     @test out.objective ≈ UNIT_RAMP_CVP_FACTOR * mpc * DISPATCH_INTERVAL_HOURS rtol = 1.0e-8
 end
+
+@testset "a scheduled load adds to the balance and clears when its bid is above the price" begin
+    # Alta's $20/MWh offer covers the 40 MW demand plus the pump's full 30 MW: its $50/MWh decremental
+    # bid values that consumption above Alta's cost, so the objective falls by (50 - 20) * 30 against
+    # the 40 * 20 baseline.
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 40.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        40.0;
+        loads = ["PUMP" => toy_load(30.0, 50.0; initial = 30.0, ramp_up = 100.0)],
+    )
+    @test PSY.get_max_active_power(PSY.get_component(PSY.InterruptiblePowerLoad, sys, "PUMP")) > 0
+    out = solve_toy(sys)
+
+    @test out.load_mw["PUMP"] ≈ 30.0 atol = TOY_TOLERANCE
+    @test out.dispatch_mw[TOY_CHEAP] ≈ 70.0 atol = TOY_TOLERANCE
+    @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 0.0 atol = TOY_TOLERANCE
+    @test out.price ≈ 20.0 atol = TOY_TOLERANCE
+    @test out.objective ≈ (70.0 * 20.0 - 30.0 * 50.0) * DISPATCH_INTERVAL_HOURS atol = TOY_TOLERANCE
+end
+
+@testset "a scheduled load does not clear when its bid is below the price" begin
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 40.0, ramp_up = 100.0)],
+        40.0;
+        loads = ["PUMP" => toy_load(30.0, 10.0; initial = 0.0, ramp_up = 100.0)],
+    )
+    out = solve_toy(sys)
+
+    @test out.load_mw["PUMP"] ≈ 0.0 atol = TOY_TOLERANCE
+    @test out.dispatch_mw[TOY_CHEAP] ≈ 40.0 atol = TOY_TOLERANCE
+end
+
+@testset "a scheduled load is limited by its availability and ramp rate" begin
+    function pump_toy(; availability, ramp_up)
+        return nem_toy_system(
+            [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 40.0, ramp_up = 100.0)],
+            40.0;
+            loads = ["PUMP" => toy_load(30.0, 50.0; initial = 5.0, ramp_up, availability)],
+        )
+    end
+    # 5 MW + 2 MW/min over 5 minutes caps the pump at 15 MW, below its 30 MW availability.
+    ramp_limited = solve_toy(pump_toy(; availability = 30.0, ramp_up = 2.0))
+    @test ramp_limited.load_mw["PUMP"] ≈ 15.0 atol = TOY_TOLERANCE
+    @test ramp_limited.dispatch_mw[TOY_CHEAP] ≈ 55.0 atol = TOY_TOLERANCE
+
+    availability_limited = solve_toy(pump_toy(; availability = 10.0, ramp_up = 100.0))
+    @test availability_limited.load_mw["PUMP"] ≈ 10.0 atol = TOY_TOLERANCE
+end

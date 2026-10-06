@@ -297,6 +297,11 @@ end
     @test get_ext(one_phantom)["dropped_terms"] == ["PHANTOM1"]
     @test get_ext(get_component(GenericConstraint, sys, vname("N_BAYSW_THERMAL")))["dropped_terms"] == String[]
 
+    # A term on a scheduled load resolves: loads are part of the System.
+    pump_gc = get_component(GenericConstraint, sys, vname("N_PUMP_THERMAL"))
+    @test only(get_terms(pump_gc)) == UnitTerm("PUMP1", BidType.ENERGY, -1.0)
+    @test isempty(get_ext(pump_gc)["dropped_terms"])
+
     @testset "unresolved_terms = :skip keeps the whole-constraint skip" begin
         sys_skip = nem_system(db, RegionalNetworkConfiguration())
         added_skip, skipped_skip = add_nem_constraints!(sys_skip, db, date_range; unresolved_terms = :skip)

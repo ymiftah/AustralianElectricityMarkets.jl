@@ -220,13 +220,24 @@ end
         participants = nem_dispatch_participants(sys)
         @test length(participants) >= 3
         @test PSY.EnergyReservoirStorage in participants
-        generator_participants = filter(!=(PSY.EnergyReservoirStorage), participants)
+        @test PSY.InterruptiblePowerLoad in participants
+        generator_participants = filter(!in((PSY.EnergyReservoirStorage, PSY.InterruptiblePowerLoad)), participants)
         variable_sets = [entry_types(component_keys(variable_keys, T)) for T in generator_participants]
         constraint_sets = [entry_types(component_keys(constraint_keys, T)) for T in generator_participants]
         @test allequal(variable_sets)
         @test allequal(constraint_sets)
         @test PSI.ActivePowerVariable in first(variable_sets)
         @test PSI.RampConstraint in first(constraint_sets)
+
+        @testset "a scheduled load gets the single-variable shape priced on its decremental offer" begin
+            load_variables = entry_types(component_keys(variable_keys, PSY.InterruptiblePowerLoad))
+            load_constraints = entry_types(component_keys(constraint_keys, PSY.InterruptiblePowerLoad))
+            @test PSI.ActivePowerVariable in load_variables
+            @test PSI.PiecewiseLinearBlockDecrementalOffer in load_variables
+            @test !(PSI.PiecewiseLinearBlockIncrementalOffer in load_variables)
+            @test PSI.RampConstraint in load_constraints
+            @test PSI.ActivePowerVariableTimeSeriesLimitsConstraint in load_constraints
+        end
 
         @testset "a battery gets the per-direction shape instead of a single ActivePowerVariable" begin
             battery_variables = entry_types(component_keys(variable_keys, PSY.EnergyReservoirStorage))

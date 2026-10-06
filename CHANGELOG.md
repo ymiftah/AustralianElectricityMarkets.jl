@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slightly negative `INITIALMW` and a zero ramp rate) no longer makes the interval infeasible. `replicate_interval` returns `ramp_violations` listing any non-zero ramp slack.
 - `IntervalInputs` documentation: `interconnector_flows` holds the target `MWFLOW`, not the flow
   at interval start.
+- **`read_units` dropped units whose `DUALLOC` GENSETID is also a DUID** (for example `OSB-AG`,
+  `PTSTAN1`): `DUALLOC` was deduplicated per `GENSETID` by `DUID DESC`, which kept the legacy
+  `OSB01` row over `OSB-AG`. It is now deduplicated per `DUID`, and units with no `GENUNITS` row
+  (scheduled loads) are kept with a `missing` technology.
 - A `GenericConstraint` term on an unavailable device or `AreaInterchange` contributes zero
   instead of throwing a `KeyError` in `build!` (PSI creates variables only for available
   components); `UnitTerm`, `RegionTerm` and `InterconnectorTerm` now match FCAS terms.
@@ -102,6 +106,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applies them as an opt-in diagnostic (they are post-solve results and pin flows to NEMDE).
 - `read_units`, `read_interconnectors` and `nem_system` accept `as_of`, resolving the static
   tables (loss factors, flow limits) as in force at that instant.
+- **Scheduled loads** (pumps and other `DISPATCHTYPE = LOAD`, `SCHEDULE_TYPE = SCHEDULED` units such as
+  `SHPUMP`, `PUMP2`, `SNOWYP`, `KIDSPHL1`) are built into the `System` as `InterruptiblePowerLoad`s
+  on their region's generator bus. `set_market_bids!` attaches their decremental (`LOAD`)
+  offer, `set_nem_dispatch_limits!` their ramp, `INITIALMW` and `AVAILABILITY` series, and under
+  `AbstractNEMDispatch` they are a consumed-MW variable withdrawn from the area balance and priced
+  on the decremental offer. The regional balance still clears at `TOTALDEMAND`
+  (demand less loads), so dispatched load adds to the generation required, and generic-constraint
+  terms on a load resolve. Loads offering FCAS are not modelled.
 - **Single-interval replication pipeline** (`AustralianElectricityMarketsSimulations`):
   `replicate_interval(db, settlement_date)` builds the constrained `System`
   (`replication_system`), solves it with `replication_template` (NEM dispatch devices,
