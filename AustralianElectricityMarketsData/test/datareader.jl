@@ -65,6 +65,29 @@ let
         @test occursin("DISPATCHREGIONSUM", sprint(showerror, err))
     end
 
+    @testset "static tables resolve as of the interval" begin
+        versioned_dir = mktempdir()
+        create_versioned_static_data(hive_dir, versioned_dir)
+        vdb = aem_connect(HiveConfiguration(hive_location = versioned_dir, filesystem = "file"))
+        early = DateTime(2025, 3, 1)
+
+        maxmwin(df) = only(df[df.INTERCONNECTORID .== "IC1", :MAXMWIN])
+        @test maxmwin(read_interconnectors(vdb)) == 300.0
+        @test maxmwin(read_interconnectors(vdb; as_of = early)) == 500.0
+        @test maxmwin(read_interconnectors(vdb; as_of = DateTime(2025, 8, 1))) == 300.0
+
+        cp_of(df) = only(df[df.DUID .== "BW01", :CONNECTIONPOINTID])
+        @test cp_of(read_units(vdb)) == "CP_NEW"
+        @test cp_of(read_units(vdb; as_of = early)) == "CP_BAYSW"
+        @test cp_of(read_units(vdb; as_of = DateTime(2025, 8, 1))) == "CP_NEW"
+        @test allunique(read_units(vdb; as_of = early).DUID)
+        # The older archive's stale open rows must not leak into either as-of read.
+        @test maxmwin(read_interconnectors(vdb; as_of = early)) != 111.0
+        @test only(read_units(vdb; as_of = early)[read_units(vdb; as_of = early).DUID .== "BW01", :REGISTEREDCAPACITY]) == 100.0
+        # A unit not yet registered as of the date is omitted.
+        @test isempty(read_units(vdb; as_of = DateTime(2019, 1, 1)))
+    end
+
     @testset "read_demand" begin
         df = read_demand(db)
         @test df isa DataFrame

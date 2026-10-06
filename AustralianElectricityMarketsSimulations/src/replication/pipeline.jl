@@ -60,12 +60,18 @@ into one forecast window.
   `settlement_date + 5 minutes`, so the last cached interval cannot be replicated.
 - `settlement_date`: the `SETTLEMENTDATE` of the interval (`DateTime`).
 - `intervention`: 0 for the pricing run, 1 for the physical run. Applies to the constraint,
-  dispatch-limit and FCAS-scaling reads; demand and bids carry no intervention run.
+  dispatch-limit, interconnector-limit and FCAS-scaling reads; demand and bids carry no intervention run.
+- `interval_flow_limits`: bound each interconnector's flow by the published per-interval
+  `IMPORTLIMIT`/`EXPORTLIMIT` ([`set_interconnector_flow_limits!`](@ref)). Those limits are
+  computed after NEMDE's solve, so this pins flows to NEMDE's answer: a diagnostic, not for
+  validating flows. Default `false` (static limits).
 
 # Returns
 A `PSY.System`.
 """
-function replication_system(db, settlement_date::DateTime; intervention::Integer = 0)
+function replication_system(
+        db, settlement_date::DateTime; intervention::Integer = 0, interval_flow_limits::Bool = false,
+    )
     resolution = DISPATCH_INTERVAL
     date_range = settlement_date:resolution:(settlement_date + _REPLICATION_HORIZON)
     sys = nem_system(
@@ -75,6 +81,8 @@ function replication_system(db, settlement_date::DateTime; intervention::Integer
     set_market_bids!(sys, db, date_range; resolution = resolution)
     set_fcas_scaling_inputs!(sys, db, date_range; intervention = intervention)
     set_nem_dispatch_limits!(sys, db, date_range; intervention = intervention)
+    interval_flow_limits &&
+        set_interconnector_flow_limits!(sys, db, date_range; intervention = intervention)
     PSY.transform_single_time_series!(sys, _REPLICATION_HORIZON, resolution)
     return sys
 end
@@ -93,6 +101,8 @@ The model spans the interval and the one after it; the first is reported.
   plus `DISPATCHINTERCONNECTORRES`, with data at `settlement_date` and the interval after it.
 - `settlement_date`: the `SETTLEMENTDATE` of the interval (`DateTime`).
 - `intervention`: 0 for the pricing run, 1 for the physical run.
+- `interval_flow_limits`: as in [`replication_system`](@ref); only the `replicate_interval(db, ...)`
+  method builds the system.
 - `optimizer`: the JuMP optimizer, e.g. `optimizer_with_attributes(HiGHS.Optimizer, ...)`.
 
 # Returns
@@ -100,12 +110,17 @@ A `NamedTuple` with the solved `model`, its `results`, and `comparison`, a `Name
 `DataFrame`s with one row per published key and `_solved` and `_published` columns, `missing`
 where the model has no solved value: `prices` (`REGIONID`; solved `ROP`, published `ROP` and
 `RRP`), `dispatch` (`DUID`, `TOTALCLEARED`), `interconnectors` (`INTERCONNECTORID`, `MWFLOW`,
-`MWLOSSES`) and `fcas_prices` (`REGIONID`, `BIDTYPE`, `ROP`). The solved balance dual is the
+`MWLOSSES`) and `fcas_prices` (`REGIONID`, `BIDTYPE`, `ROP`). `ramp_violations` lists every
+non-zero unit ramp slack of the model (`DUID`, `DateTime`, `MW`, `direction`). The solved balance dual is the
 unadjusted price, so it is compared with `ROP`; `RRP` differs only under an administered price.
 Throws if the model does not build or solve.
 """
-function replicate_interval(db, settlement_date::DateTime; intervention::Integer = 0, kwargs...)
-    sys = replication_system(db, settlement_date; intervention = intervention)
+function replicate_interval(
+        db, settlement_date::DateTime; intervention::Integer = 0, interval_flow_limits::Bool = false, kwargs...,
+    )
+    sys = replication_system(
+        db, settlement_date; intervention = intervention, interval_flow_limits = interval_flow_limits,
+    )
     return replicate_interval(sys, db, settlement_date; intervention = intervention, kwargs...)
 end
 
@@ -132,8 +147,27 @@ function replicate_interval(
     return (;
         model, results,
         comparison = _compare_to_published(db, sys, results, settlement_date, intervention),
+        ramp_violations = _ramp_violations(results),
     )
 end
+
+# `DUID`, `DateTime`, `MW` and `direction` of every non-zero unit ramp slack, in every interval.
+function _ramp_violations(results::PSI.OptimizationProblemResults)
+    kinds = Dict(UnitRampUpSlack => "up", UnitRampDownSlack => "down")
+    rows = NamedTuple{(:DUID, :DateTime, :MW, :direction), Tuple{String, DateTime, Float64, String}}[]
+    for key in PSI.list_variable_keys(results)
+        direction = get(kinds, PSI.IS.Optimization.get_entry_type(key), nothing)
+        isnothing(direction) && continue
+        for r in eachrow(PSI.read_variable(results, key))
+            r.value > _RAMP_VIOLATION_TOLERANCE_MW &&
+                push!(rows, (; DUID = r.name, DateTime = r.DateTime, MW = r.value, direction))
+        end
+    end
+    return DataFrame(rows)
+end
+
+"MW of unit ramp slack below which a ramp row counts as satisfied."
+const _RAMP_VIOLATION_TOLERANCE_MW = 1.0e-6
 
 # `name => value` for the rows of a `read_variable`/`read_dual` frame at `settlement_date`.
 function _first_interval(df::DataFrame, settlement_date::DateTime)
