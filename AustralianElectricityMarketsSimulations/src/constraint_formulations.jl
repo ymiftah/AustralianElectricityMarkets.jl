@@ -160,5 +160,32 @@ Variable type for the elastic slack on a [`FCASJointRampingConstraint`](@ref) ro
 """
 struct FCASJointRampingSlack <: PSI.VariableType end
 
+"""
+    UNIT_RAMP_CVP_FACTOR
+
+CVP factor (1155) of AEMO's Unit Ramp Rate constraint (`DeficitRampRate` and `SurplusRampRate`),
+item 3 of the *Schedule of Constraint Violation Penalty Factors* v8.0. Prices
+[`UnitRampUpSlack`](@ref) and [`UnitRampDownSlack`](@ref).
+"""
+const UNIT_RAMP_CVP_FACTOR = 1155.0
+
+"""
+    UnitRampUpSlack
+
+Variable type for the elastic slack on the up row of a `PSI.RampConstraint` (`meta = "up"`) under an
+[`AbstractNEMDispatch`](@ref) formulation, in the units of the active power variable.
+"""
+struct UnitRampUpSlack <: PSI.VariableType end
+
+"""
+    UnitRampDownSlack
+
+Variable type for the elastic slack on the down row of a `PSI.RampConstraint` (`meta = "down"`)
+under an [`AbstractNEMDispatch`](@ref) formulation, in the units of the active power variable.
+"""
+struct UnitRampDownSlack <: PSI.VariableType end
+
+PSI.convert_result_to_natural_units(::Type{UnitRampUpSlack}) = true
+PSI.convert_result_to_natural_units(::Type{UnitRampDownSlack}) = true
 PSI.convert_result_to_natural_units(::Type{FCASJointCapacitySlack}) = true
 PSI.convert_result_to_natural_units(::Type{FCASJointRampingSlack}) = true

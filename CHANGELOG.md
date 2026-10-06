@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Unit ramp rows of the `AbstractNEMDispatch` formulations are elastic: `UnitRampUpSlack` and
+  `UnitRampDownSlack`, priced at `UNIT_RAMP_CVP_FACTOR` (1155, AEMO CVP item 3) times the Market
+  Price Cap, so a ramp envelope that conflicts with the variable bounds (an offline unit with a
+  slightly negative `INITIALMW` and a zero ramp rate) no longer makes the interval infeasible. `replicate_interval` returns `ramp_violations` listing any non-zero ramp slack.
 - `IntervalInputs` documentation: `interconnector_flows` holds the target `MWFLOW`, not the flow
   at interval start.
 - A `GenericConstraint` term on an unavailable device or `AreaInterchange` contributes zero
