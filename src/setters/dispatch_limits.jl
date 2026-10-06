@@ -2,7 +2,7 @@
     _nem_dispatch_devices(sys)
 
 Collects every available `ThermalStandard`, `HydroDispatch`, `RenewableDispatch`,
-`InterruptiblePowerLoad` and `EnergyReservoirStorage` in `sys` — the device types that [`set_nem_dispatch_limits!`](@ref)
+`InterruptiblePowerLoad` and `EnergyReservoirStorage` in `sys`, the device types that [`set_nem_dispatch_limits!`](@ref)
 and [`set_nem_initial_conditions!`](@ref) apply to.
 
 # Arguments
@@ -61,9 +61,9 @@ Attaches per-device `SingleTimeSeries` from [`read_dispatch_limits`](@ref) to ev
 `EnergyReservoirStorage` in `sys`:
 `"ramp_up_rate"` and `"ramp_down_rate"` (from `RAMPUPRATE`/`RAMPDOWNRATE`) and `"initial_mw"`
 (from `INITIALMW`, net MW for a battery, consumed MW for a load). A `ThermalStandard`,
-`HydroDispatch`, `RenewableDispatch` or `InterruptiblePowerLoad` also gets `"max_active_power"` — the device's upper dispatch limit,
+`HydroDispatch`, `RenewableDispatch` or `InterruptiblePowerLoad` also gets `"max_active_power"`, the device's upper dispatch limit,
 `AVAILABILITY` raised to the ramp-down floor `INITIALMW - RAMPDOWNRATE × Δ` when that floor is
-higher, where Δ is the interval length in hours taken from `date_range`'s step — replacing any
+higher, where Δ is the interval length in hours taken from `date_range`'s step, replacing any
 `UIGF`- or bid-derived `"max_active_power"` series a device already carries - and
 `"availability"`, the raw `AVAILABILITY` (for a semi-scheduled unit, the lower of bid `MAXAVAIL`
 and `UIGF`), read back by [`get_energy_availability`](@ref). An

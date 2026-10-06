@@ -70,7 +70,10 @@
             end
 
             @testset "set_market_bids!" begin
-                set_market_bids!(sys, db, date_range; resolution = resolution)
+                # PUMP2 has no bid and WDR1 bids GEN: unavailable, one aggregated warning each.
+                @test_logs (:warn, r"WDR1") (:warn, r"PUMP2") match_mode = :any set_market_bids!(
+                    sys, db, date_range; resolution = resolution,
+                )
                 for gen in get_components(ThermalStandard, sys)
                     # Verify time series exists
                     ta = get_time_series_array(Deterministic, gen, "variable_cost")
@@ -80,6 +83,8 @@
                 end
 
                 @testset "Scheduled loads" begin
+                    @test !get_available(get_component(InterruptiblePowerLoad, sys, "PUMP2"))
+                    @test !get_available(get_component(InterruptiblePowerLoad, sys, "WDR1"))
                     pump = get_component(InterruptiblePowerLoad, sys, "PUMP1")
                     @test get_available(pump)
                     ta = get_time_series_array(Deterministic, pump, "decremental_variable_cost")
@@ -733,7 +738,7 @@
 
             short_range = start_date:resolution:(start_date + Minute(10))
             grid = collect(short_range)[1:(end - 1)]  # 3 intervals
-            duids = ["BW01", "BW02", "BW03", "BW04", "ER01", "ER02", "PUMP1"]
+            duids = ["BW01", "BW02", "BW03", "BW04", "ER01", "ER02", "PUMP1", "PUMP2", "WDR1"]
 
             rows = DataFrame(
                 SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
@@ -1185,7 +1190,7 @@
         start_date = DateTime(2025, 1, 1, 0, 0)
         short_range = start_date:resolution:(start_date + Minute(10))
         grid = collect(short_range)[1:(end - 1)]  # 3 intervals
-        duids = ["BW01", "BW02", "BW03", "BW04", "ER01", "ER02", "PUMP1"]
+        duids = ["BW01", "BW02", "BW03", "BW04", "ER01", "ER02", "PUMP1", "PUMP2", "WDR1"]
 
         rows = DataFrame(
             SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
@@ -1243,7 +1248,7 @@
         start_date = DateTime(2025, 1, 1, 0, 0)
         short_range = start_date:resolution:(start_date + Minute(10))
         grid = collect(short_range)[1:(end - 1)]  # 3 intervals
-        covered_duids = ["BW01", "BW02", "BW03", "BW04", "ER02", "PUMP1"]  # every dispatch device except ER01
+        covered_duids = ["BW01", "BW02", "BW03", "BW04", "ER02", "PUMP1", "PUMP2", "WDR1"]  # every dispatch device except ER01
 
         rows = DataFrame(
             SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],

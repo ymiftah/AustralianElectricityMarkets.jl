@@ -41,6 +41,16 @@ Attaches the decremental (load-side) variable cost and initial input time series
 `load_bids.piecewise_step_data` to `device`, whose operation cost must already be a `MarketBidCost`
 (set by `_set_incremental_bid_cost!` for a battery; a scheduled load's is replaced here). Shared by the
 battery and scheduled-load branches of `set_market_bids!`.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `device`: An `EnergyReservoirStorage` or `InterruptiblePowerLoad`.
+- `load_bids`: The device's `LOAD` direction rows from `_massage_bids`.
+- `start_date`: The first interval of the series.
+- `resolution`: The series resolution.
+
+# Returns
+`nothing`.
 """
 function _set_decremental_bid_cost!(sys, device, load_bids, start_date, resolution)
     set_available!(device, true)
@@ -77,7 +87,7 @@ Adds market bid cost time series data to the system.
 
 This function reads energy and price bid data for a specified date range from the
 database, converts it into piecewise `MarketBidCost` variable cost time series, and
-attaches it to `Generator`, `InterruptiblePowerLoad` (decremental bid only) and
+attaches it to `Generator`, `InterruptiblePowerLoad` (decremental bid only; a load that bids `GEN` is made unavailable) and
 `EnergyReservoirStorage` components (the latter also
 gets decremental/load-side bid costs, and each direction's energy `MAXAVAIL`, read back by
 [`get_storage_energy_max_avail`](@ref)).
@@ -109,17 +119,22 @@ function set_market_bids!(sys, db, date_range; kwargs...)
         end
     end
 
-    # Scheduled loads carry only a decremental (LOAD direction) offer.
+    # Scheduled loads carry only a decremental (LOAD direction) offer. A load that bids GEN
+    # (a wholesale demand response unit, whose response acts as supply) is not modelled.
+    unbid_loads = String[]
+    gen_bid_loads = String[]
     foreach(get_components(InterruptiblePowerLoad, sys)) do load
         load_id = get_name(load)
         load_bids = subset(bids, :DUID => ByRow(==(load_id)), :DIRECTION => ByRow(==("LOAD")))
         if DataFrames.isempty(load_bids)
-            @warn "No bid data for scheduled load $(load_id), setting to unavailable."
+            any(==(load_id), bids.DUID) ? push!(gen_bid_loads, load_id) : push!(unbid_loads, load_id)
             set_available!(load, false)
         else
             _set_decremental_bid_cost!(sys, load, load_bids, start_date, resolution)
         end
     end
+    isempty(gen_bid_loads) || @warn "set_market_bids!: $(length(gen_bid_loads)) scheduled load(s) bid GEN, not LOAD (wholesale demand response); setting to unavailable: $(join(gen_bid_loads, ", "))"
+    isempty(unbid_loads) || @warn "set_market_bids!: $(length(unbid_loads)) scheduled load(s) have no bid data; setting to unavailable: $(join(unbid_loads, ", "))"
 
     # Then sets the batteries
     return foreach(get_components(EnergyReservoirStorage, sys)) do gen

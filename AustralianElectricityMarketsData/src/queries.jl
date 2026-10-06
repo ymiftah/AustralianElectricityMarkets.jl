@@ -273,8 +273,8 @@ function read_units(db; as_of::Union{Nothing, Date, DateTime} = nothing)
              ),
              -- One row per DUID: DUALLOC lists legacy GENSETID-named DUIDs and multi-genset DUIDs.
              genunits AS (
-                 SELECT d.DUID, first(g.CO2E_ENERGY_SOURCE) AS CO2E_ENERGY_SOURCE,
-                        first(g.CO2E_EMISSIONS_FACTOR) AS CO2E_EMISSIONS_FACTOR
+                 SELECT d.DUID, first(g.CO2E_ENERGY_SOURCE ORDER BY g.GENSETID) AS CO2E_ENERGY_SOURCE,
+                        first(g.CO2E_EMISSIONS_FACTOR ORDER BY g.GENSETID) AS CO2E_EMISSIONS_FACTOR
                  FROM genunits_raw g
                  INNER JOIN dualloc d ON g.GENSETID = d.GENSETID
                  GROUP BY d.DUID

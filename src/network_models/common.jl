@@ -220,8 +220,11 @@ println(gen_df)
 """
 function get_generators_dataframe(bus_df, units)
     bus = select(bus_df, :bus_id, :name)
+    units = copy(units)
+    # Scheduled loads (some have a GENUNITS row) are built by `get_scheduled_loads_dataframe`.
+    "DISPATCHTYPE" in names(units) && subset!(units, :DISPATCHTYPE => ByRow(!isequal("LOAD")))
 
-    return @chain copy(units) begin
+    return @chain units begin
         select!(
             :REGIONID => ByRow(x -> x * GEN_SUFFIX) => :bus_name,
             :REGIONID => :region,
@@ -750,6 +753,13 @@ end
 Adds each scheduled load as an `InterruptiblePowerLoad` with a zero `LoadCost`;
 [`set_market_bids!`](@ref) replaces it with a decremental `MarketBidCost`, or marks the load
 unavailable when it has no bid.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `scheduled_loads_df`: A `DataFrame` as returned by `get_scheduled_loads_dataframe`.
+
+# Returns
+The result of `add_components!`.
 """
 function _add_scheduled_loads!(sys, scheduled_loads_df)
     loads = (

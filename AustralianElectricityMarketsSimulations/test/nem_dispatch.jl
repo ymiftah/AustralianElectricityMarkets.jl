@@ -323,7 +323,7 @@ end
         for T in nem_dispatch_participants(sys), meta in ("up", "down")
             constraint = PSI.get_constraint(container, PSI.RampConstraint(), T, meta)
             names, steps = axes(constraint)
-            @test length(names) == length(collect(PSY.get_components(T, sys)))
+            @test length(names) == length(collect(PSY.get_components(PSY.get_available, T, sys)))
             @test length(steps) == 12
         end
     end

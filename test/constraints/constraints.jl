@@ -294,13 +294,19 @@ end
     one_phantom = get_component(GenericConstraint, sys, vname("N_ONE_PHANTOM_TERM"))
     @test length(get_terms(one_phantom)) == 4  # CP_BAYSW's four DUIDs; PHANTOM1 dropped
     @test all(t -> get_duid(t) != "PHANTOM1", get_terms(one_phantom))
-    @test get_ext(one_phantom)["dropped_terms"] == ["PHANTOM1"]
-    @test get_ext(get_component(GenericConstraint, sys, vname("N_BAYSW_THERMAL")))["dropped_terms"] == String[]
+    @test only(get_ext(one_phantom)["dropped_terms"]) ==
+        Dict("kind" => "UNIT", "key" => "PHANTOM1", "bid_type" => "ENERGY", "factor" => 2.0)
+    @test isempty(get_ext(get_component(GenericConstraint, sys, vname("N_BAYSW_THERMAL")))["dropped_terms"])
+    dropped = get_dropped_terms(sys)
+    @test dropped.constraint == [vname("N_ONE_PHANTOM_TERM")]
+    @test (dropped.kind, dropped.key, dropped.bid_type, dropped.factor) == (["UNIT"], ["PHANTOM1"], ["ENERGY"], [2.0])
 
     # A term on a scheduled load resolves: loads are part of the System.
     pump_gc = get_component(GenericConstraint, sys, vname("N_PUMP_THERMAL"))
     @test only(get_terms(pump_gc)) == UnitTerm("PUMP1", BidType.ENERGY, -1.0)
     @test isempty(get_ext(pump_gc)["dropped_terms"])
+    # A load DUID names exactly one Device, also when it has a GENUNITS row (PUMP1).
+    @test get_component(Device, sys, "PUMP1") isa InterruptiblePowerLoad
 
     @testset "unresolved_terms = :skip keeps the whole-constraint skip" begin
         sys_skip = nem_system(db, RegionalNetworkConfiguration())

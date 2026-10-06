@@ -61,20 +61,26 @@
 
     @testset "read_units keeps units without a GENUNITS row" begin
         units = read_units(db)
-        # PUMP1 is a scheduled load: no GENUNITS/DUALLOC row, so no technology or fuel.
-        pump = only(eachrow(subset(units, :DUID => ByRow(==("PUMP1")))))
-        @test pump.DISPATCHTYPE == "LOAD"
-        @test ismissing(pump.TECHNOLOGY)
+        # PUMP2 is a scheduled load with no GENUNITS/DUALLOC row, so no technology or fuel.
+        pump2 = only(eachrow(subset(units, :DUID => ByRow(==("PUMP2")))))
+        @test pump2.DISPATCHTYPE == "LOAD"
+        @test ismissing(pump2.TECHNOLOGY)
         @test allunique(units.DUID)
+    end
+
+    @testset "read_units resolves a genset shared with a legacy DUALLOC DUID" begin
+        # PUMP1's genset also maps to PUMP1_OLD, which sorts after it (as OSB01 after OSB-AG).
+        pump1 = only(eachrow(subset(read_units(db), :DUID => ByRow(==("PUMP1")))))
+        @test pump1.TECHNOLOGY == PrimeMovers.HY
     end
 
     @testset "get_scheduled_loads_dataframe" begin
         bus_df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
         df = AustralianElectricityMarkets.RegionModel.get_scheduled_loads_dataframe(bus_df, read_units(db))
-        @test df.name == ["PUMP1"]
-        @test df.region == ["NSW1"]
-        @test df.base_power == [100.0]
-        @test df.max_active_power == [1.0]
+        @test sort(df.name) == ["PUMP1", "PUMP2", "WDR1"]
+        @test all(==("NSW1"), df.region)
+        @test all(==(100.0), df.base_power)
+        @test all(==(1.0), df.max_active_power)
         # Without the DISPATCHTYPE column no load can be identified
         @test isempty(
             AustralianElectricityMarkets.RegionModel.get_scheduled_loads_dataframe(
@@ -135,7 +141,10 @@
         @test !isnothing(pump)
         @test get_name(get_area(get_bus(pump))) == "NSW1"
         @test get_operation_cost(pump) isa LoadCost
-        @test length(get_components(InterruptiblePowerLoad, system)) == 1
+        @test length(get_components(InterruptiblePowerLoad, system)) == 3
+        # A load with a GENUNITS row is not also a generator: its DUID names exactly one Device.
+        @test get_component(Device, system, "PUMP1") isa InterruptiblePowerLoad
+        @test isnothing(get_component(HydroDispatch, system, "PUMP1"))
 
         # Interconnectors/Interfaces
         @test length(get_components(AreaInterchange, system)) == 6

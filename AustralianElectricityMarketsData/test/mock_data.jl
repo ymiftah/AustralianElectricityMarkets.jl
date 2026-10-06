@@ -106,9 +106,10 @@ function create_mock_data(hive_root::String)
     save_hive(df_demand, :DISPATCHREGIONSUM)
 
     # 4. DUDETAIL
-    # PUMP1: a scheduled load (DISPATCHTYPE LOAD) in NSW1. Like real scheduled loads it has no
-    # GENUNITS/DUALLOC row; it appears in DUDETAIL/DUDETAILSUMMARY/STATION, the LOAD-direction
-    # energy bids and DISPATCHLOAD only. Its rows are the last of each table.
+    # Scheduled loads (DISPATCHTYPE LOAD) in NSW1, their rows last in each table. PUMP1 has
+    # GENUNITS/DUALLOC rows (Hydro), like Wivenhoe's PUMP2 in real data, so it must not also be
+    # built as a generator; it bids LOAD and has DISPATCHLOAD rows. PUMP2 has no GENUNITS row and
+    # no bid, like most real scheduled loads. WDR1 bids GEN, like a wholesale demand response unit.
     save_hive(
         vcat(
             DataFrame(
@@ -129,12 +130,12 @@ function create_mock_data(hive_root::String)
                 STORAGEEXPORTEFFICIENCYFACTOR = fill(0.9, n),
                 archive_month = fill("2025-01", n)
             ), DataFrame(
-                DUID = ["PUMP1"], EFFECTIVEDATE = [base_datetime], VERSIONNO = [1],
-                STATIONID = ["PUMPST"], REGIONID = ["NSW1"], REGISTEREDCAPACITY = [100.0],
-                MINCAPACITY = [missing], MAXCAPACITY = [100.0],
-                MAXRATEOFCHANGEDOWN = [missing], MAXRATEOFCHANGEUP = [missing],
-                MAXSTORAGECAPACITY = [missing], STORAGEIMPORTEFFICIENCYFACTOR = [missing],
-                STORAGEEXPORTEFFICIENCYFACTOR = [missing], archive_month = ["2025-01"],
+                DUID = ["PUMP1", "PUMP2", "WDR1"], EFFECTIVEDATE = fill(base_datetime, 3), VERSIONNO = fill(1, 3),
+                STATIONID = fill("PUMPST", 3), REGIONID = fill("NSW1", 3), REGISTEREDCAPACITY = fill(100.0, 3),
+                MINCAPACITY = fill(missing, 3), MAXCAPACITY = fill(100.0, 3),
+                MAXRATEOFCHANGEDOWN = fill(missing, 3), MAXRATEOFCHANGEUP = fill(missing, 3),
+                MAXSTORAGECAPACITY = fill(missing, 3), STORAGEIMPORTEFFICIENCYFACTOR = fill(missing, 3),
+                STORAGEEXPORTEFFICIENCYFACTOR = fill(missing, 3), archive_month = fill("2025-01", 3),
             )
         ), :DUDETAIL
     )
@@ -171,15 +172,15 @@ function create_mock_data(hive_root::String)
                 archive_month = ["2025-01"]
             ),
             DataFrame(
-                DUID = ["PUMP1"],
-                START_DATE = [DateTime(2020, 1, 1)],
-                END_DATE = Union{DateTime, Missing}[missing],
-                STATIONID = ["PUMPST"],
-                CONNECTIONPOINTID = ["CP_PUMP"],
-                REGIONID = ["NSW1"],
-                SCHEDULE_TYPE = ["SCHEDULED"],
-                DISPATCHTYPE = ["LOAD"],
-                archive_month = ["2025-01"]
+                DUID = ["PUMP1", "PUMP2", "WDR1"],
+                START_DATE = fill(DateTime(2020, 1, 1), 3),
+                END_DATE = Union{DateTime, Missing}[missing, missing, missing],
+                STATIONID = fill("PUMPST", 3),
+                CONNECTIONPOINTID = ["CP_PUMP", "CP_PUMP2", "CP_WDR"],
+                REGIONID = fill("NSW1", 3),
+                SCHEDULE_TYPE = fill("SCHEDULED", 3),
+                DISPATCHTYPE = fill("LOAD", 3),
+                archive_month = fill("2025-01", 3)
             ),
         ), :DUDETAILSUMMARY
     )
@@ -225,21 +226,23 @@ function create_mock_data(hive_root::String)
     genset_ids = ["GEN$i" for i in 1:n]
     save_hive(
         DataFrame(
-            GENSETID = genset_ids,
-            CO2E_ENERGY_SOURCE = energy_sources,
-            CO2E_EMISSIONS_FACTOR = fill(0.5, n),
-            archive_month = fill("2025-01", n)
+            GENSETID = vcat(genset_ids, ["GENPUMP1"]),
+            CO2E_ENERGY_SOURCE = vcat(energy_sources, ["Hydro"]),
+            CO2E_EMISSIONS_FACTOR = fill(0.5, n + 1),
+            archive_month = fill("2025-01", n + 1)
         ), :GENUNITS
     )
 
     # 9. DUALLOC
     save_hive(
         DataFrame(
-            DUID = duids,
-            GENSETID = genset_ids,
-            LASTCHANGED = fill(base_datetime, n),
-            VERSIONNO = fill(1, n),
-            archive_month = fill("2025-01", n)
+            # PUMP1_OLD is a legacy DUALLOC row for PUMP1's genset whose DUID sorts after PUMP1,
+            # as OSB01 does after OSB-AG: read_units must still resolve PUMP1's genset.
+            DUID = vcat(duids, ["PUMP1", "PUMP1_OLD"]),
+            GENSETID = vcat(genset_ids, ["GENPUMP1", "GENPUMP1"]),
+            LASTCHANGED = fill(base_datetime, n + 2),
+            VERSIONNO = fill(1, n + 2),
+            archive_month = fill("2025-01", n + 2)
         ), :DUALLOC
     )
 
@@ -277,9 +280,9 @@ function create_mock_data(hive_root::String)
         )
         # PUMP1's LOAD bid (a scheduled load: decremental only)
         tmp_pump = DataFrame(
-            SETTLEMENTDATE = [test_date], BIDTYPE = ["ENERGY"], INTERVAL_DATETIME = [t],
-            VERSIONNO = [1], DUID = ["PUMP1"], DIRECTION = ["LOAD"], MAXAVAIL = [80.0],
-            archive_month = ["2025-01"],
+            SETTLEMENTDATE = fill(test_date, 2), BIDTYPE = fill("ENERGY", 2), INTERVAL_DATETIME = fill(t, 2),
+            VERSIONNO = fill(1, 2), DUID = ["PUMP1", "WDR1"], DIRECTION = ["LOAD", "GEN"], MAXAVAIL = fill(80.0, 2),
+            archive_month = fill("2025-01", 2),
         )
         tmp = vcat(tmp_gen, tmp_load, tmp_pump)
         for b in 1:10
@@ -399,8 +402,9 @@ function create_mock_data(hive_root::String)
         )
     end
     bid_day_offer_pump = DataFrame(
-        BIDTYPE = ["ENERGY"], SETTLEMENTDATE = [test_date], DUID = ["PUMP1"], DIRECTION = ["LOAD"],
-        MINIMUMLOAD = [0.0], DAILYENERGYCONSTRAINT = [1000.0], VERSIONNO = [1], archive_month = ["2025-01"],
+        BIDTYPE = fill("ENERGY", 2), SETTLEMENTDATE = fill(test_date, 2), DUID = ["PUMP1", "WDR1"],
+        DIRECTION = ["LOAD", "GEN"], MINIMUMLOAD = fill(0.0, 2), DAILYENERGYCONSTRAINT = fill(1000.0, 2),
+        VERSIONNO = fill(1, 2), archive_month = fill("2025-01", 2),
     )
     bid_day_offer = vcat(bid_day_offer_gen, bid_day_offer_load, bid_day_offer_pump, bid_day_offer_fcas, bid_day_offer_fcas_load)
     for i in 1:10
@@ -679,7 +683,7 @@ function create_mock_data(hive_root::String)
     # different formula entirely), so a test can prove set_nem_dispatch_limits! actually
     # overwrites the UIGF-derived "max_active_power" series rather than coinciding with it.
     uigf_for(duid, i) = duid == "BW03" ? 40.0 + i : (duid == "BW04" ? 70.0 - i : 0.0)
-    dl_duids = vcat(duids, ["PUMP1"])  # PUMP1 (a scheduled load) last, so no offset moves
+    dl_duids = vcat(duids, ["PUMP1", "PUMP2", "WDR1"])  # the loads last, so no offset moves
     m = length(dl_duids)
     duid_offset(duid) = findfirst(==(duid), dl_duids) - 1
     initial_mw_for(duid, i) = 40.0 + duid_offset(duid) + (i % 10)
