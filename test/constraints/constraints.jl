@@ -286,7 +286,24 @@ end
     @test vname("F_VIC1_RAISE6SEC") in added
     @test vname("N_BAYSW_THERMAL") in added
     @test vname("N_PHANTOM_TEST") ∉ added
-    @test skipped[vname("N_PHANTOM_TEST")] == :unknown_duid
+    @test skipped[vname("N_PHANTOM_TEST")] == :unknown_duid  # no term resolves at all
+
+    # One unresolvable term is dropped and recorded; the constraint is built from the rest.
+    @test vname("N_ONE_PHANTOM_TERM") in added
+    @test vname("N_ONE_PHANTOM_TERM") ∉ keys(skipped)
+    one_phantom = get_component(GenericConstraint, sys, vname("N_ONE_PHANTOM_TERM"))
+    @test length(get_terms(one_phantom)) == 4  # CP_BAYSW's four DUIDs; PHANTOM1 dropped
+    @test all(t -> get_duid(t) != "PHANTOM1", get_terms(one_phantom))
+    @test get_ext(one_phantom)["dropped_terms"] == ["PHANTOM1"]
+    @test get_ext(get_component(GenericConstraint, sys, vname("N_BAYSW_THERMAL")))["dropped_terms"] == String[]
+
+    @testset "unresolved_terms = :skip keeps the whole-constraint skip" begin
+        sys_skip = nem_system(db, RegionalNetworkConfiguration())
+        added_skip, skipped_skip = add_nem_constraints!(sys_skip, db, date_range; unresolved_terms = :skip)
+        @test vname("N_ONE_PHANTOM_TERM") ∉ added_skip
+        @test skipped_skip[vname("N_ONE_PHANTOM_TERM")] == :unknown_duid
+        @test_throws ArgumentError add_nem_constraints!(sys_skip, db, date_range; unresolved_terms = :bogus)
+    end
 
     # N_PARTIAL_COVERAGE is only invoked in DISPATCHCONSTRAINT for every other interval
     # (6 of 12 rows over this date_range) - it is added anyway, with its "rhs"/"lhs" padded

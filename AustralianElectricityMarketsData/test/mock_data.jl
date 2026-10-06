@@ -385,9 +385,10 @@ function create_mock_data(hive_root::String)
     # DUID, which is never built into a System component), and one partial-coverage
     # constraint (N_PARTIAL_COVERAGE, invoked in DISPATCHCONSTRAINT for only every other
     # interval - exercises add_nem_constraints!'s rhs-padding/"invoked"-mask path, see
-    # test/constraints/constraints.jl).
+    # test/constraints/constraints.jl), and one constraint with a resolvable term (CP_BAYSW)
+    # and an unresolvable one (CP_PHANTOM) - N_ONE_PHANTOM_TERM, built with the term dropped.
     gencon_ids = ["F_$(region)_$(bid_type)" for region in regions for bid_type in fcas_bid_types]
-    all_gencon_ids = vcat(gencon_ids, ["N_BAYSW_THERMAL", "N_PHANTOM_TEST", "N_PARTIAL_COVERAGE"])
+    all_gencon_ids = vcat(gencon_ids, ["N_BAYSW_THERMAL", "N_PHANTOM_TEST", "N_PARTIAL_COVERAGE", "N_ONE_PHANTOM_TERM"])
     n_all = length(all_gencon_ids)
     save_hive(
         DataFrame(
@@ -510,17 +511,17 @@ function create_mock_data(hive_root::String)
         end
         append!(
             df_constraint, DataFrame(
-                SETTLEMENTDATE = [t, t],
-                RUNNO = [1, 1],
-                INTERVENTION = [0, 0],
-                CONSTRAINTID = ["N_BAYSW_THERMAL", "N_PHANTOM_TEST"],
-                RHS = [200.0, 100.0],
-                LHS = [180.0, 90.0],
-                MARGINALVALUE = [0.0, 0.0],
-                GENCONID_EFFECTIVEDATE = [test_date, test_date],
-                GENCONID_VERSIONNO = [1, 1],
-                LASTCHANGED = [t, t],
-                archive_month = ["2025-01", "2025-01"]
+                SETTLEMENTDATE = [t, t, t],
+                RUNNO = [1, 1, 1],
+                INTERVENTION = [0, 0, 0],
+                CONSTRAINTID = ["N_BAYSW_THERMAL", "N_PHANTOM_TEST", "N_ONE_PHANTOM_TERM"],
+                RHS = [200.0, 100.0, 120.0],
+                LHS = [180.0, 90.0, 110.0],
+                MARGINALVALUE = [0.0, 0.0, 0.0],
+                GENCONID_EFFECTIVEDATE = [test_date, test_date, test_date],
+                GENCONID_VERSIONNO = [1, 1, 1],
+                LASTCHANGED = [t, t, t],
+                archive_month = ["2025-01", "2025-01", "2025-01"]
             )
         )
         if iseven(i)
@@ -578,6 +579,13 @@ function create_mock_data(hive_root::String)
                 EFFECTIVEDATE = [test_date], VERSIONNO = [1], GENCONID = ["N_PARTIAL_COVERAGE"],
                 PERIODID = [1], FACTOR = [1.0], BIDTYPE = ["ENERGY"],
                 LASTCHANGED = [base_datetime], archive_month = ["2025-01"]
+            ),
+            DataFrame(
+                CONNECTIONPOINTID = ["CP_BAYSW", "CP_PHANTOM"],
+                EFFECTIVEDATE = [test_date, test_date], VERSIONNO = [1, 1],
+                GENCONID = ["N_ONE_PHANTOM_TERM", "N_ONE_PHANTOM_TERM"],
+                PERIODID = [1, 1], FACTOR = [1.0, 2.0], BIDTYPE = ["ENERGY", "ENERGY"],
+                LASTCHANGED = [base_datetime, base_datetime], archive_month = ["2025-01", "2025-01"]
             ),
         ), :SPDCONNECTIONPOINTCONSTRAINT
     )

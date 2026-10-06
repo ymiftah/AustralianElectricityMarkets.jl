@@ -324,6 +324,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `nem_system(db, ConstrainedNetworkConfiguration(); date_range)` resolves static unit and
   interconnector tables as of `first(date_range)` instead of the newest cached version; pass
   `as_of = nothing` for the previous behaviour.
+- `add_nem_constraints!` builds a generic constraint without any term whose DUID, region or
+  interconnector is absent from the `System`, recording the dropped keys in the constraint's
+  `ext["dropped_terms"]`, instead of skipping the whole constraint. A constraint with no
+  resolvable term is still skipped. `unresolved_terms = :skip` restores the old behaviour; the
+  keyword is also accepted by `nem_system(db, ConstrainedNetworkConfiguration(); ...)`.
 - **`scale_trapezium` (`AustralianElectricityMarketsSimulations`) follows root's
   `scale_fcas_trapezium`**: a squeezed trapezium keeps the bid's slopes instead of having its
   breakpoints clamped, and an `agc_ramp_mw` of `0.0` applies no cap instead of capping

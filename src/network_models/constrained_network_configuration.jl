@@ -17,6 +17,9 @@
   takes effect after the dates replayed; pass `nothing` for the latest cached version.
 - `allow_empty_region_terms`: whether to proceed (with a warning) instead of throwing when a
   `RegionTerm`'s region has no matching device (default `false`).
+- `unresolved_terms`: `:drop` (default) builds a generic constraint without any term whose
+  component is absent from the system; `:skip` skips the whole constraint. See
+  [`add_nem_constraints!`](@ref).
 """
 struct ConstrainedNetworkConfiguration <: NetworkConfiguration end
 
@@ -49,7 +52,7 @@ function AustralianElectricityMarkets.nem_system(
         db, ::ConstrainedNetworkConfiguration; date_range = nothing,
         intervention::Integer = 0, include_solution::Bool = false,
         resolution::Union{Nothing, Dates.Period} = nothing,
-        allow_empty_region_terms::Bool = false,
+        allow_empty_region_terms::Bool = false, unresolved_terms::Symbol = :drop,
         as_of = isnothing(date_range) ? nothing : first(date_range),
         kwargs...,
     )
@@ -61,6 +64,7 @@ function AustralianElectricityMarkets.nem_system(
     add_nem_constraints!(
         sys, db, date_range; intervention = intervention, include_solution = include_solution,
         resolution = resolution, allow_empty_region_terms = allow_empty_region_terms,
+        unresolved_terms = unresolved_terms,
     )
     add_fcas_services!(sys)
     attach_interconnector_losses!(sys, db, first(date_range))
