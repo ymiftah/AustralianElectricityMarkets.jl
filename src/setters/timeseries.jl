@@ -6,7 +6,8 @@ Adds load time series data to the system from the database.
 This function reads demand data for a specified date range, processes it into a time series,
 and attaches it to the `PowerLoad` components in the system. `TOTALDEMAND` becomes the
 `"max_active_power"` series; `INITIALSUPPLY + DEMANDFORECAST` becomes a second `"loss_demand"`
-series, the regional demand the interconnector loss equations are evaluated at.
+series, the regional demand the interconnector loss equations are evaluated at (nempy's
+`loss_function_demand`).
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
@@ -16,16 +17,12 @@ series, the regional demand the interconnector loss equations are evaluated at.
 """
 function set_demand!(sys, db, date_range; kwargs...)
     demand = read_demand(db; kwargs...)
-    ts = @chain demand begin
+    demand = @chain demand begin
         transform!(:REGIONID => ByRow(x -> x * " Load") => :name)
         subset!(:SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
-        _as_timearray(:SETTLEMENTDATE, :name, :TOTALDEMAND)
     end
-    loss_ts = @chain demand begin
-        transform!(:REGIONID => ByRow(x -> x * " Load") => :name)
-        subset!(:SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
-        _as_timearray(:SETTLEMENTDATE, :name, :LOSSDEMAND)
-    end
+    ts = _as_timearray(demand, :SETTLEMENTDATE, :name, :TOTALDEMAND)
+    loss_ts = _as_timearray(demand, :SETTLEMENTDATE, :name, :LOSSDEMAND)
     _add_demand_ts_to_components!(sys, loss_ts, PowerLoad; name = "loss_demand")
     return _add_demand_ts_to_components!(sys, ts, PowerLoad)
 end

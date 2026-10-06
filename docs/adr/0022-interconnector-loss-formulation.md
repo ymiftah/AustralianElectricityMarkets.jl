@@ -186,3 +186,9 @@ ordering limitation remain unchanged.
 The loss variable stays unbounded above. The nonpositive weighted-price case cannot be rejected
 at build time because prices are an output of the solve, so `check_interconnector_loss_segments`
 reports the resulting gaps after the fact.
+
+## Follow-up: reported losses far above the curve
+
+Reported `MWLOSSES` far above the analytic loss at the solved flow (NSW1-QLD1 874 MW vs about
+20 MW) are hypothesised, from static reading only, to be this over-dissipation: units, base
+power and demand alignment were checked and found consistent. Unconfirmed on real data.

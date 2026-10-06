@@ -129,8 +129,8 @@ Read and process regional demand data from the database.
 
 # Returns
 A `DataFrame` with demand and renewable availability data, aggregated by the specified resolution.
-`LOSSDEMAND` is `INITIALSUPPLY + DEMANDFORECAST`, the regional demand NEMDE feeds the interconnector
-loss equations; it falls back to `TOTALDEMAND` where either term is missing.
+`LOSSDEMAND` is `INITIALSUPPLY + DEMANDFORECAST`, the regional demand the interconnector loss
+equations are evaluated at; it falls back to `TOTALDEMAND` where either term is missing.
 
 # Example
 ```julia
@@ -138,14 +138,8 @@ db = aem_connect()
 demand_df = read_demand(db; resolution=Dates.Hour(1))
 println(demand_df)
 ```
-   Row │ SETTLEMENTDATE       REGIONID  TOTALDEMAND  DISPATCHABLEGENERATION  DISPATCHABLELOAD  NETINTERCHANGE
-	   │ Dates.DateTime       String7   Float64      Float64                 Float64           Float64
-───────┼──────────────────────────────────────────────────────────────────────────────────────────────────────
-	 1 │ 2024-01-01T00:05:00  NSW1          6574.92                 6721.88               0.0          146.96
-	 2 │ 2024-01-01T00:05:00  QLD1          6228.31                 5713.21               0.0         -515.1
-	 3 │ 2024-01-01T00:05:00  SA1           1293.98                 1116.68               0.0         -177.3
-	 4 │ 2024-01-01T00:05:00  TAS1          1033.29                  580.29               0.0         -453.0
-	 5 │ 2024-01-01T00:05:00  VIC1          3977.1                  5071.17               0.0         1094.07
+   Row │ SETTLEMENTDATE       REGIONID  TOTALDEMAND  LOSSDEMAND  SS_SOLAR_AVAILABILITY  SS_WIND_AVAILABILITY
+       │ Dates.DateTime       String7   Float64      Float64     Float64                Float64
 """
 function read_demand(db; resolution::Dates.Period = Dates.Minute(5))
     source = read_hive(db, :DISPATCHREGIONSUM)

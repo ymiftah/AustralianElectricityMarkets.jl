@@ -140,8 +140,7 @@ end
     _area_demand(container, sys) -> Dict{String, Vector{Float64}}
 
 Regional demand the loss equations are evaluated at, per area and dispatch timestep, in the system's
-current units: each available `PSY.PowerLoad`'s `"loss_demand"` series (`INITIALSUPPLY + DEMANDFORECAST`)
-when it carries one, else its `"max_active_power"` series, else its static rating. Time-series scaling
+current units: each available `PSY.PowerLoad`'s `"loss_demand"` series when it carries one, else its `"max_active_power"` series, else its static rating. Time-series scaling
 factors are applied once by `PSY.get_time_series_values`.
 
 # Returns

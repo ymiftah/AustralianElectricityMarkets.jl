@@ -97,6 +97,9 @@ let
         @test df.TOTALDEMAND[1] == 1000.0
         # Loss-equation demand is INITIALSUPPLY + DEMANDFORECAST (mock: 990 + 25).
         @test df.LOSSDEMAND[1] == 1015.0
+        # Missing INITIALSUPPLY falls back to TOTALDEMAND.
+        last_rows = df[df.SETTLEMENTDATE .== maximum(df.SETTLEMENTDATE), :]
+        @test all(last_rows.LOSSDEMAND .== last_rows.TOTALDEMAND)
     end
 
     @testset "read_units" begin
