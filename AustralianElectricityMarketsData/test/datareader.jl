@@ -128,6 +128,27 @@ let
         @test "BW01" in df.DUID
     end
 
+    @testset "read_mnsp_offers" begin
+        # Interval ending 12:00 uses the second (rebid) offer, 11:55 the first; period = steps since 04:00.
+        range = DateTime(2025, 1, 1, 11, 55):Dates.Minute(5):DateTime(2025, 1, 1, 12, 5)
+        df = read_mnsp_offers(db, range)
+        @test nrow(df) == 4  # intervals 11:55 and 12:00, two links; the stop bound is exclusive
+        @test sort(unique(df.LINKID)) == ["BLNKTAS", "BLNKVIC"]
+        @test all(==("BASSLINK"), df.PARTICIPANTID)
+        before = df[(df.INTERVAL_DATETIME .== DateTime(2025, 1, 1, 11, 55)) .& (df.LINKID .== "BLNKTAS"), :]
+        after = df[(df.INTERVAL_DATETIME .== DateTime(2025, 1, 1, 12, 0)) .& (df.LINKID .== "BLNKTAS"), :]
+        @test only(before.MAXAVAIL) == 594
+        @test only(after.MAXAVAIL) == 400
+        @test only(before.PRICEBAND2) == 40
+        @test only(after.PRICEBAND2) == 80
+        @test only(after.BANDAVAIL2) == 100
+        @test ismissing(only(after.FIXEDLOAD))
+        # The last interval of the trading day ends at 04:00 the next calendar day.
+        edge = read_mnsp_offers(db, DateTime(2025, 1, 2, 3, 55):Dates.Minute(5):DateTime(2025, 1, 2, 4, 5))
+        @test nrow(edge) == 4
+        @test isempty(read_mnsp_offers(db, DateTime(2030, 1, 1):Dates.Minute(5):DateTime(2030, 1, 1, 1)))
+    end
+
     @testset "max-partition filtering excludes stale partitions" begin
         # All other mock tables only ever have a single archive_month value, so
         # the "keep only the max partition" query idiom used throughout queries.jl

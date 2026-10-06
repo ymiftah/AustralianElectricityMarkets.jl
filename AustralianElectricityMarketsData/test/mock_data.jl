@@ -703,6 +703,66 @@ function create_mock_data(hive_root::String)
     end
     save_hive(df_dispatchprice, :DISPATCHPRICE)
 
+    # 17. MNSP offer tables and dispatch bid tracking: Basslink (BASSLINK, links BLNKTAS and BLNKVIC)
+    # on trading day 2025-01-01. Two offer versions per link; the second (rebid, later OFFERDATE) is
+    # the one DISPATCH_MNSPBIDTRK names for the intervals after 12:00 AEST. The period table's
+    # OFFERDATETIME equals the day offer's OFFERDATE.
+    let links = ["BLNKTAS", "BLNKVIC"]
+        offer_dates = [DateTime(2024, 12, 31, 15, 6, 1), DateTime(2025, 1, 1, 8, 53, 38)]
+        day_rows = DataFrame()
+        period_rows = DataFrame()
+        for link in links, (v, od) in enumerate(offer_dates)
+            append!(
+                day_rows,
+                DataFrame(
+                    SETTLEMENTDATE = [DateTime(2025, 1, 1)], OFFERDATE = [od], VERSIONNO = [1],
+                    PARTICIPANTID = ["BASSLINK"], LINKID = [link],
+                    ENTRYTYPE = [v == 1 ? "DAILY" : "REBID"],
+                    PRICEBAND1 = [0.01], PRICEBAND2 = [40.0 * v], PRICEBAND3 = [61.0], PRICEBAND4 = [75.0],
+                    PRICEBAND5 = [89.0], PRICEBAND6 = [104.0], PRICEBAND7 = [114.0], PRICEBAND8 = [200.0],
+                    PRICEBAND9 = [450.0], PRICEBAND10 = [20300.0],
+                    LASTCHANGED = [od], MR_FACTOR = Union{Missing, Float64}[missing], archive_month = ["2025-01"],
+                );
+                promote = true,
+            )
+            append!(
+                period_rows,
+                DataFrame(
+                    TRADINGDATE = fill(Date(2025, 1, 1), 288), OFFERDATETIME = fill(od, 288),
+                    LINKID = fill(link, 288), PERIODID = 1:288,
+                    MAXAVAIL = fill(v == 1 ? 594.0 : 400.0, 288), FIXEDLOAD = Vector{Union{Missing, Float64}}(missing, 288),
+                    RAMPUPRATE = fill(200.0, 288),
+                    BANDAVAIL1 = fill(0.0, 288), BANDAVAIL2 = fill(100.0, 288), BANDAVAIL3 = fill(100.0, 288),
+                    BANDAVAIL4 = fill(100.0, 288), BANDAVAIL5 = fill(100.0, 288),
+                    BANDAVAIL6 = fill(v == 1 ? 94.0 : 0.0, 288), BANDAVAIL7 = fill(0.0, 288),
+                    BANDAVAIL8 = fill(0.0, 288), BANDAVAIL9 = fill(0.0, 288), BANDAVAIL10 = fill(0.0, 288),
+                    PASAAVAILABILITY = fill(594.0, 288), RECALL_PERIOD = fill(0.0, 288),
+                    archive_month = fill("2025-01", 288),
+                );
+                promote = true,
+            )
+        end
+        save_hive(day_rows, :MNSP_DAYOFFER)
+        save_hive(period_rows, :MNSP_BIDOFFERPERIOD)
+
+        # Dispatch intervals are labelled by their end: 04:05 on 2025-01-01 opens trading day period 1.
+        track = DataFrame()
+        for link in links, k in 1:288
+            t = DateTime(2025, 1, 1, 4, 0) + Minute(5k)
+            v = t >= DateTime(2025, 1, 1, 12, 0) ? 2 : 1
+            append!(
+                track,
+                DataFrame(
+                    SETTLEMENTDATE = [t], RUNNO = [1], PARTICIPANTID = ["BASSLINK"], LINKID = [link],
+                    OFFERSETTLEMENTDATE = [DateTime(2025, 1, 1)], OFFEREFFECTIVEDATE = [offer_dates[v]],
+                    OFFERVERSIONNO = [1], LASTCHANGED = [t], archive_month = ["2025-01"],
+                );
+                promote = true,
+            )
+        end
+        save_hive(track, :DISPATCH_MNSPBIDTRK)
+    end
+
     return DuckDB.disconnect(conn)
 end
 

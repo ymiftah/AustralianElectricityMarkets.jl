@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- NEMWEB timestamps with a millisecond fraction (`2026/05/05 15:06:01.000`) parse instead of
+  becoming `NULL`.
 - Unit ramp rows of the `AbstractNEMDispatch` formulations are elastic: `UnitRampUpSlack` and
   `UnitRampDownSlack`, priced at `UNIT_RAMP_CVP_FACTOR` (1155, AEMO CVP item 3) times the Market
   Price Cap, so a ramp envelope that conflicts with the variable bounds (an offline unit with a
@@ -84,6 +86,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Data package ingests the MNSP offer tables (`MNSP_DAYOFFER`, `MNSP_BIDOFFERPERIOD`,
+  `MNSP_PEROFFER`, `DISPATCH_MNSPBIDTRK`), `DISPATCHLOAD.DISPATCHMODETIME` and
+  `DISPATCHINTERCONNECTORRES.FCASEXPORTLIMIT`/`FCASIMPORTLIMIT`, with `read_mnsp_offers`
+  returning the offer NEMDE applied per link and interval. Re-populate cached `DISPATCHLOAD` and
+  `DISPATCHINTERCONNECTORRES` months with `force_new = true` to fill the new columns.
 - `read_interconnector_limits` and `set_interconnector_flow_limits!` read the per-interval
   `DISPATCHINTERCONNECTORRES` `EXPORTLIMIT`/`IMPORTLIMIT` and attach them as the flow-limit series
   `NEMInterconnectorLoss` bounds flow by; `replication_system(...; interval_flow_limits = true)`

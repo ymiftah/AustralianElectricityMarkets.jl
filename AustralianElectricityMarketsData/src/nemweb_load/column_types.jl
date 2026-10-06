@@ -242,4 +242,19 @@ const COLUMN_TYPES = Dict(
     "LOWER6SECAPCFLAG" => Int32, "LOWER1SECAPCFLAG" => Int32, "LOWER60SECAPCFLAG" => Int32,
     "LOWER5MINAPCFLAG" => Int32,
     "LOWERREGAPCFLAG" => Int32,
+    # MNSP offer tables, DISPATCH_MNSPBIDTRK and the FCAS interconnector limits. OFFERDATE is DATE in
+    # MNSP_PEROFFER but TIMESTAMP in MNSP_DAYOFFER, so it is read as DateTime in both.
+    "OFFERDATE" => DateTime,
+    "OFFERDATETIME" => DateTime,
+    "TRADINGDATE" => Date,
+    "OFFERSETTLEMENTDATE" => DateTime,
+    "OFFEREFFECTIVEDATE" => DateTime,
+    "OFFERVERSIONNO" => Int32,
+    "PASAAVAILABILITY" => Float32,
+    "MR_CAPACITY" => Float32,
+    "MR_FACTOR" => Float32,
+    "RECALL_PERIOD" => Float32,
+    "FCASEXPORTLIMIT" => Float32,
+    "FCASIMPORTLIMIT" => Float32,
+    "DISPATCHMODETIME" => Int32,
 )
