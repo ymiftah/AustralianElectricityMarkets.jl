@@ -31,6 +31,7 @@ const TEST_GROUPS = [
         ],
     ),
     "timeseries_setters" => ("Time series setter tests", ["timeseries_setters.jl"]),
+    "interval_inputs" => ("Per-interval inputs", ["interval_inputs.jl"]),
     "fcas" => ("FCAS types", ["fcas/fcas.jl"]),
     "fcas_scaling" => ("FCAS trapezium scaling", ["fcas/scaling.jl"]),
     "constraints" => ("Constraint types", ["constraints/constraints.jl"]),

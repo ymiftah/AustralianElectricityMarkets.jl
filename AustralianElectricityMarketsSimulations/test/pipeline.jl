@@ -40,4 +40,14 @@
         # The unavailable IC6 has no solved flow.
         @test ismissing(only(filter(:INTERCONNECTORID => ==("IC6"), comparison.interconnectors)).MWFLOW_solved)
     end
+
+    @testset "interval_flow_limits is opt-in" begin
+        has_limits(sys) = all(
+            has_time_series(d, SingleTimeSeries, "from_to_flow_limit") ||
+                has_time_series(d, DeterministicSingleTimeSeries, "from_to_flow_limit") for
+                d in get_components(AreaInterchange, sys)
+        )
+        @test !has_limits(replication_system(db, t))
+        @test has_limits(replication_system(db, t; interval_flow_limits = true))
+    end
 end
