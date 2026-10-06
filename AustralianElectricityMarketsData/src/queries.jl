@@ -32,15 +32,18 @@ _query(db::AEMDB, sql::String) = DataFrame(DuckDB.execute(db.db, sql))
 _query(db::AEMDB, sql::String, params) = DataFrame(DuckDB.execute(db.db, sql, params))
 
 """
-    read_interconnectors(db)
+    read_interconnectors(db; as_of = nothing)
 
 Reads and processes interconnector data from the database.
 
 # Arguments
 - `db`: The database connection.
+- `as_of`: when a `Date` or `DateTime`, resolves each `INTERCONNECTORCONSTRAINT` row as of that
+  instant (latest `EFFECTIVEDATE <= as_of`, then highest `VERSIONNO`). `nothing` keeps the latest
+  version in the cache.
 
 # Returns
-A `DataFrame` containing the latest interconnector constraint data. Interconnectors with an
+A `DataFrame` containing the interconnector constraint data, latest or as of `as_of`. Interconnectors with an
 endpoint region absent from the cached `DISPATCHREGIONSUM` are dropped with a warning, so that
 table must be populated; an `ArgumentError` is thrown when it is missing or empty.
 
@@ -51,10 +54,12 @@ interconnectors_df = read_interconnectors(db)
 println(interconnectors_df)
 ```
 """
-function read_interconnectors(db)
+function read_interconnectors(db; as_of::Union{Nothing, Date, DateTime} = nothing)
     t_interconnector = read_hive(db, :INTERCONNECTOR)
     t_interconnector_constraint = read_hive(db, :INTERCONNECTORCONSTRAINT)
 
+    # Each monthly archive holds the full history, so only the latest archive is read.
+    as_of_filter = isnothing(as_of) ? "" : "WHERE c.EFFECTIVEDATE <= ?"
     sql = """
         WITH ic AS (SELECT * FROM $t_interconnector),
              latest_ic AS (
@@ -67,11 +72,12 @@ function read_interconnectors(db)
         FROM icc c
         INNER JOIN latest_ic l
           ON c.INTERCONNECTORID = l.INTERCONNECTORID AND c.archive_month = l.archive_month
+        $as_of_filter
         QUALIFY row_number() OVER (
             PARTITION BY c.INTERCONNECTORID ORDER BY c.EFFECTIVEDATE DESC, c.VERSIONNO DESC
         ) = 1
     """
-    df = _query(db, sql)
+    df = isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of])
     current_regions = _current_regions(db)
     retired = filter(
         row -> !(row.REGIONFROM in current_regions) || !(row.REGIONTO in current_regions), df,
@@ -160,12 +166,16 @@ function read_demand(db; resolution::Dates.Period = Dates.Minute(5))
 end
 
 """
-    read_units(db)
+    read_units(db; as_of = nothing)
 
 Gathers and processes unit data from the database.
 
 # Arguments
 - `db`: The database connection.
+- `as_of`: when a `Date` or `DateTime`, resolves `DUDETAIL` (latest `EFFECTIVEDATE <= as_of`,
+  then highest `VERSIONNO`) and `DUDETAILSUMMARY` (the row with `START_DATE <= as_of < END_DATE`,
+  so the loss factors in force then) as of that instant; units with no such row are omitted.
+  `nothing` keeps the open, latest version in the cache.
 
 # Returns
 A `DataFrame` containing detailed information about each generation unit.
@@ -177,13 +187,34 @@ units_df = read_units(db)
 println(units_df)
 ```
 """
-function read_units(db)
+function read_units(db; as_of::Union{Nothing, Date, DateTime} = nothing)
     dudetail_table = read_hive(db, :DUDETAIL)
     summary_table = read_hive(db, :DUDETAILSUMMARY)
     op_status_table = read_hive(db, :STATIONOPERATINGSTATUS)
     station_table = read_hive(db, :STATION)
     gen_units_table = read_hive(db, :GENUNITS)
     dualloc_table = read_hive(db, :DUALLOC)
+
+    # `as_of` is a DuckDB-bound parameter. Each monthly archive holds the full history, so both
+    # as-of CTEs read the latest archive only; stale open rows live in older ones.
+    dudetail_as_of = if isnothing(as_of)
+        ""
+    else
+        "WHERE archive_month = (SELECT max(archive_month) FROM dd_raw) AND EFFECTIVEDATE <= ?"
+    end
+    summary_filter = if isnothing(as_of)
+        """
+        WHERE archive_month = (SELECT max(archive_month) FROM sm_raw)
+          AND (END_DATE IS NULL OR year(END_DATE) = 2999)
+        QUALIFY row_number() OVER (PARTITION BY DUID ORDER BY START_DATE ASC) = 1
+        """
+    else
+        """
+        WHERE archive_month = (SELECT max(archive_month) FROM sm_raw)
+          AND START_DATE <= ? AND (END_DATE IS NULL OR END_DATE > ?)
+        QUALIFY row_number() OVER (PARTITION BY DUID ORDER BY START_DATE DESC) = 1
+        """
+    end
 
     # All filtering, latest-partition/version resolution, and joins are pushed
     # into DuckDB via CTEs.
@@ -192,6 +223,7 @@ function read_units(db)
              dudetail AS (
                  SELECT * EXCLUDE (archive_month)
                  FROM dd_raw
+                 $dudetail_as_of
                  QUALIFY row_number() OVER (
                      PARTITION BY DUID ORDER BY EFFECTIVEDATE DESC, VERSIONNO DESC
                  ) = 1
@@ -200,9 +232,7 @@ function read_units(db)
              summary AS (
                  SELECT * EXCLUDE (archive_month)
                  FROM sm_raw
-                 WHERE archive_month = (SELECT max(archive_month) FROM sm_raw)
-                   AND (END_DATE IS NULL OR year(END_DATE) = 2999)
-                 QUALIFY row_number() OVER (PARTITION BY DUID ORDER BY START_DATE ASC) = 1
+                 $summary_filter
              ),
              op_raw AS (SELECT * FROM $op_status_table),
              st_raw AS (SELECT * FROM $station_table),
@@ -257,7 +287,20 @@ function read_units(db)
         WHERE op_status.STATUS = 'COMMISSIONED'
         ORDER BY dudetail.DUID
     """
-    dudetail = _query(db, sql)
+    dudetail = isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of, as_of, as_of])
+    if !isnothing(as_of)
+        current = _query(
+            db,
+            """
+            SELECT DISTINCT DUID FROM $summary_table
+            WHERE archive_month = (SELECT max(archive_month) FROM $summary_table)
+              AND (END_DATE IS NULL OR year(END_DATE) = 2999)
+            """,
+        ).DUID
+        dropped = setdiff(current, dudetail.DUID)
+        isempty(dropped) ||
+            @warn "read_units: $(length(dropped)) currently registered unit(s) are not in force as of $as_of and were omitted" first_dropped = first(dropped, 5)
+    end
     return dudetail
 end
 
@@ -299,4 +342,62 @@ function read_energy_bids(db, date_range; kwargs...)
         :INTERVAL_DATETIME => ByRow(x -> (start_datetime <= x < end_datetime))
     )
     return energy_bids
+end
+
+"""
+    read_mnsp_offers(db, date_range)
+
+Reads the MNSP link offers NEMDE applied in each dispatch interval of `date_range`.
+
+Each interval's offer is the one named by `DISPATCH_MNSPBIDTRK` (dispatch run 1), joined to its
+`MNSP_DAYOFFER` price bands and its `MNSP_BIDOFFERPERIOD` availability for that interval's
+five-minute period of the trading day. The tables cover trading days from the five-minute
+settlement start; earlier days live in `MNSP_PEROFFER`.
+
+# Arguments
+- `db`: The database connection.
+- `date_range`: Interval-ending timestamps; intervals `t` with `first(date_range) <= t < last(date_range)` are returned.
+
+# Returns
+A `DataFrame` with one row per `(INTERVAL_DATETIME, LINKID)`: `PARTICIPANTID`, `MAXAVAIL`,
+`FIXEDLOAD` (`missing` when no fixed load), `RAMPUPRATE`, `BANDAVAIL1`-`BANDAVAIL10` and
+`PRICEBAND1`-`PRICEBAND10`.
+
+# Example
+```julia
+db = aem_connect()
+offers = read_mnsp_offers(db, DateTime(2026, 6, 15, 12):Minute(5):DateTime(2026, 6, 15, 13))
+```
+"""
+function read_mnsp_offers(db, date_range)
+    band_cols = join(("o.PRICEBAND$i" for i in 1:10), ", ") * ", " *
+        join(("p.BANDAVAIL$i" for i in 1:10), ", ")
+    # Interval t ending at `t` belongs to the trading day starting 04:00 of CAST(t - 5 min - 4 h); its
+    # period is the number of five-minute steps since that 04:00.
+    df = _query(
+        db,
+        """
+        WITH trk AS (
+            SELECT SETTLEMENTDATE AS INTERVAL_DATETIME, LINKID, PARTICIPANTID, OFFERSETTLEMENTDATE,
+                   OFFEREFFECTIVEDATE, OFFERVERSIONNO,
+                   CAST(SETTLEMENTDATE - INTERVAL 5 MINUTE - INTERVAL 4 HOUR AS DATE) AS TRADINGDATE
+            FROM $(read_hive(db, :DISPATCH_MNSPBIDTRK))
+            WHERE RUNNO = 1 AND SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
+        )
+        SELECT trk.INTERVAL_DATETIME, trk.LINKID, trk.PARTICIPANTID, p.MAXAVAIL, p.FIXEDLOAD, p.RAMPUPRATE,
+               $band_cols
+        FROM trk
+        INNER JOIN $(read_hive(db, :MNSP_DAYOFFER)) AS o
+            ON o.SETTLEMENTDATE = trk.OFFERSETTLEMENTDATE AND o.LINKID = trk.LINKID
+           AND o.PARTICIPANTID = trk.PARTICIPANTID AND o.OFFERDATE = trk.OFFEREFFECTIVEDATE
+           AND o.VERSIONNO = trk.OFFERVERSIONNO
+        INNER JOIN $(read_hive(db, :MNSP_BIDOFFERPERIOD)) AS p
+            ON p.TRADINGDATE = trk.TRADINGDATE AND p.LINKID = trk.LINKID
+           AND p.OFFERDATETIME = trk.OFFEREFFECTIVEDATE
+           AND p.PERIODID = date_diff('minute', CAST(trk.TRADINGDATE AS TIMESTAMP) + INTERVAL 4 HOUR, trk.INTERVAL_DATETIME) / 5
+        ORDER BY trk.INTERVAL_DATETIME, trk.LINKID
+        """,
+        [first(date_range), last(date_range)],
+    )
+    return df
 end

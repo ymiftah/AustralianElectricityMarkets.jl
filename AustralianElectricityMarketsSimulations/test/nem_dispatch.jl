@@ -96,7 +96,10 @@ end
 entry_types(keys_) = Set(IS.Optimization.get_entry_type(k) for k in keys_)
 
 # The variables a constraint's affine expression actually references.
-constraint_vars(ref) = Set(keys(JuMP.constraint_object(ref).func.terms))
+# Power variables of a ramp row, ignoring its elastic slack.
+function constraint_vars(ref)
+    return Set(v for v in keys(JuMP.constraint_object(ref).func.terms) if !startswith(JuMP.name(v), "UnitRamp"))
+end
 
 component_keys(container_keys, ::Type{T}) where {T} =
     [k for k in container_keys if IS.Optimization.get_component_type(k) === T]
@@ -501,6 +504,13 @@ end
             )
             @test size(constraint, 2) == 1
             @test constraint_vars(constraint["ER02", 1]) == Set([power["ER02", 1]])
+            slack_type = meta == "up" ? AEMS.UnitRampUpSlack : AEMS.UnitRampDownSlack
+            other_type = meta == "up" ? AEMS.UnitRampDownSlack : AEMS.UnitRampUpSlack
+            func = JuMP.constraint_object(constraint["ER02", 1]).func
+            slack = PSI.get_variable(container, slack_type(), PSY.ThermalStandard)["ER02", 1]
+            other = PSI.get_variable(container, other_type(), PSY.ThermalStandard)["ER02", 1]
+            @test JuMP.coefficient(func, slack) == -1.0
+            @test JuMP.coefficient(func, other) == 0.0
         end
     end
 end

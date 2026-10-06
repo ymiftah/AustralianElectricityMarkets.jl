@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on steeper segments. Multi-segment interconnectors make the problem a MILP; duals are read from
   the LP with the indicators fixed. `replicate_interval` defaults to HiGHS with zero MIP gaps and
   raises on non-finite regional prices.
+- NEMWEB timestamps with a millisecond fraction (`2026/05/05 15:06:01.000`) parse instead of
+  becoming `NULL`.
+- Unit ramp rows of the `AbstractNEMDispatch` formulations are elastic: `UnitRampUpSlack` and
+  `UnitRampDownSlack`, priced at `UNIT_RAMP_CVP_FACTOR` (1155, AEMO CVP item 3) times the Market
+  Price Cap, so a ramp envelope that conflicts with the variable bounds (an offline unit with a
+  slightly negative `INITIALMW` and a zero ramp rate) no longer makes the interval infeasible. `replicate_interval` returns `ramp_violations` listing any non-zero ramp slack.
+- `IntervalInputs` documentation: `interconnector_flows` holds the target `MWFLOW`, not the flow
+  at interval start.
 - A `GenericConstraint` term on an unavailable device or `AreaInterchange` contributes zero
   instead of throwing a `KeyError` in `build!` (PSI creates variables only for available
   components); `UnitTerm`, `RegionTerm` and `InterconnectorTerm` now match FCAS terms.
@@ -83,6 +91,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Data package ingests the MNSP offer tables (`MNSP_DAYOFFER`, `MNSP_BIDOFFERPERIOD`,
+  `MNSP_PEROFFER`, `DISPATCH_MNSPBIDTRK`), `DISPATCHLOAD.DISPATCHMODETIME` and
+  `DISPATCHINTERCONNECTORRES.FCASEXPORTLIMIT`/`FCASIMPORTLIMIT`, with `read_mnsp_offers`
+  returning the offer NEMDE applied per link and interval. Re-populate cached `DISPATCHLOAD` and
+  `DISPATCHINTERCONNECTORRES` months with `force_new = true` to fill the new columns.
+- `read_interconnector_limits` and `set_interconnector_flow_limits!` read the per-interval
+  `DISPATCHINTERCONNECTORRES` `EXPORTLIMIT`/`IMPORTLIMIT` and attach them as the flow-limit series
+  `NEMInterconnectorLoss` bounds flow by; `replication_system(...; interval_flow_limits = true)`
+  applies them as an opt-in diagnostic (they are post-solve results and pin flows to NEMDE).
+- `read_units`, `read_interconnectors` and `nem_system` accept `as_of`, resolving the static
+  tables (loss factors, flow limits) as in force at that instant.
 - **Single-interval replication pipeline** (`AustralianElectricityMarketsSimulations`):
   `replicate_interval(db, settlement_date)` builds the constrained `System`
   (`replication_system`), solves it with `replication_template` (NEM dispatch devices,
@@ -302,6 +321,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `nem_system(db, ConstrainedNetworkConfiguration(); date_range)` resolves static unit and
+  interconnector tables as of `first(date_range)` instead of the newest cached version; pass
+  `as_of = nothing` for the previous behaviour.
 - **`scale_trapezium` (`AustralianElectricityMarketsSimulations`) follows root's
   `scale_fcas_trapezium`**: a squeezed trapezium keeps the bid's slopes instead of having its
   breakpoints clamped, and an `agc_ramp_mw` of `0.0` applies no cap instead of capping

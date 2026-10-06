@@ -703,5 +703,130 @@ function create_mock_data(hive_root::String)
     end
     save_hive(df_dispatchprice, :DISPATCHPRICE)
 
+    # 17. MNSP offer tables and dispatch bid tracking: Basslink (BASSLINK, links BLNKTAS and BLNKVIC)
+    # on trading day 2025-01-01. Two offer versions per link; the second (rebid, later OFFERDATE) is
+    # the one DISPATCH_MNSPBIDTRK names for the intervals after 12:00 AEST. The period table's
+    # OFFERDATETIME equals the day offer's OFFERDATE.
+    let links = ["BLNKTAS", "BLNKVIC"]
+        offer_dates = [DateTime(2024, 12, 31, 15, 6, 1), DateTime(2025, 1, 1, 8, 53, 38)]
+        day_rows = DataFrame()
+        period_rows = DataFrame()
+        for link in links, (v, od) in enumerate(offer_dates)
+            append!(
+                day_rows,
+                DataFrame(
+                    SETTLEMENTDATE = [DateTime(2025, 1, 1)], OFFERDATE = [od], VERSIONNO = [1],
+                    PARTICIPANTID = ["BASSLINK"], LINKID = [link],
+                    ENTRYTYPE = [v == 1 ? "DAILY" : "REBID"],
+                    PRICEBAND1 = [0.01], PRICEBAND2 = [40.0 * v], PRICEBAND3 = [61.0], PRICEBAND4 = [75.0],
+                    PRICEBAND5 = [89.0], PRICEBAND6 = [104.0], PRICEBAND7 = [114.0], PRICEBAND8 = [200.0],
+                    PRICEBAND9 = [450.0], PRICEBAND10 = [20300.0],
+                    LASTCHANGED = [od], MR_FACTOR = Union{Missing, Float64}[missing], archive_month = ["2025-01"],
+                );
+                promote = true,
+            )
+            append!(
+                period_rows,
+                DataFrame(
+                    TRADINGDATE = fill(Date(2025, 1, 1), 288), OFFERDATETIME = fill(od, 288),
+                    LINKID = fill(link, 288), PERIODID = 1:288,
+                    MAXAVAIL = fill(v == 1 ? 594.0 : 400.0, 288), FIXEDLOAD = Vector{Union{Missing, Float64}}(missing, 288),
+                    RAMPUPRATE = fill(200.0, 288),
+                    BANDAVAIL1 = fill(0.0, 288), BANDAVAIL2 = fill(100.0, 288), BANDAVAIL3 = fill(100.0, 288),
+                    BANDAVAIL4 = fill(100.0, 288), BANDAVAIL5 = fill(100.0, 288),
+                    BANDAVAIL6 = fill(v == 1 ? 94.0 : 0.0, 288), BANDAVAIL7 = fill(0.0, 288),
+                    BANDAVAIL8 = fill(0.0, 288), BANDAVAIL9 = fill(0.0, 288), BANDAVAIL10 = fill(0.0, 288),
+                    PASAAVAILABILITY = fill(594.0, 288), RECALL_PERIOD = fill(0.0, 288),
+                    archive_month = fill("2025-01", 288),
+                );
+                promote = true,
+            )
+        end
+        save_hive(day_rows, :MNSP_DAYOFFER)
+        save_hive(period_rows, :MNSP_BIDOFFERPERIOD)
+
+        # Dispatch intervals are labelled by their end: 04:05 on 2025-01-01 opens trading day period 1.
+        track = DataFrame()
+        for link in links, k in 1:288
+            t = DateTime(2025, 1, 1, 4, 0) + Minute(5k)
+            v = t >= DateTime(2025, 1, 1, 12, 0) ? 2 : 1
+            append!(
+                track,
+                DataFrame(
+                    SETTLEMENTDATE = [t], RUNNO = [1], PARTICIPANTID = ["BASSLINK"], LINKID = [link],
+                    OFFERSETTLEMENTDATE = [DateTime(2025, 1, 1)], OFFEREFFECTIVEDATE = [offer_dates[v]],
+                    OFFERVERSIONNO = [1], LASTCHANGED = [t], archive_month = ["2025-01"],
+                );
+                promote = true,
+            )
+        end
+        save_hive(track, :DISPATCH_MNSPBIDTRK)
+    end
+
+    return DuckDB.disconnect(conn)
+end
+
+"""
+    create_versioned_static_data(src_dir, dst_dir)
+
+Copies the mock hive at `src_dir` to `dst_dir`, then adds a version effective 2025-07-01 to
+`INTERCONNECTORCONSTRAINT` (IC1: `MAXMWIN` 300 instead of 500) and `DUDETAILSUMMARY` (BW01:
+`CONNECTIONPOINTID` `CP_NEW` instead of `CP_BAYSW`, closing the old row at that date), so that
+"latest" and "as of 2025-03-01" resolve differently. Each of the three tables also gets an
+older `2024-12` archive holding a stale, still-open version that the latest archive supersedes,
+so a read that does not restrict to the latest archive resolves it wrongly.
+"""
+function create_versioned_static_data(src_dir::String, dst_dir::String)
+    cp(src_dir, dst_dir; force = true)
+    ddb = DuckDB.DB()
+    conn = DuckDB.connect(ddb)
+    DuckDB.execute(conn, "SET preserve_identifier_case=true")
+    function rewrite(f, table)
+        table_dir = joinpath(dst_dir, table)
+        df = DataFrame(DuckDB.execute(conn, "SELECT * FROM read_parquet('$table_dir/**/*.parquet', hive_partitioning=true)"))
+        df = f(df)
+        rm(table_dir; recursive = true)
+        mkpath(table_dir)
+        DuckDB.register_data_frame(conn, df, "tmp_table")
+        DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+        return DuckDB.unregister_table(conn, "tmp_table")
+    end
+    effective = DateTime(2025, 7, 1)
+    rewrite("INTERCONNECTORCONSTRAINT") do df
+        new = df[df.INTERCONNECTORID .== "IC1", :]
+        new = copy(new)
+        new.EFFECTIVEDATE .= effective
+        new.MAXMWIN .= 300.0
+        stale = copy(new)
+        stale.EFFECTIVEDATE .= DateTime(2025, 2, 1)
+        stale.VERSIONNO .= 9
+        stale.MAXMWIN .= 111.0
+        stale.archive_month .= "2024-12"
+        return vcat(df, new, stale)
+    end
+    rewrite("DUDETAILSUMMARY") do df
+        df = copy(df)
+        df.END_DATE = Union{DateTime, Missing}[x for x in df.END_DATE]
+        old = df.DUID .== "BW01"
+        new = df[old, :]
+        new = copy(new)
+        df.END_DATE[old] .= effective
+        new.START_DATE .= effective
+        new.CONNECTIONPOINTID .= "CP_NEW"
+        stale = copy(df[old, :])
+        stale.START_DATE .= DateTime(2021, 1, 1)
+        stale.END_DATE .= missing
+        stale.CONNECTIONPOINTID .= "CP_STALE"
+        stale.archive_month .= "2024-12"
+        return vcat(df, new, stale)
+    end
+    rewrite("DUDETAIL") do df
+        stale = copy(df[df.DUID .== "BW01", :])
+        stale.EFFECTIVEDATE .= DateTime(2025, 2, 1)
+        stale.VERSIONNO .= 9
+        stale.REGISTEREDCAPACITY .= 1.0
+        stale.archive_month .= "2024-12"
+        return vcat(df, stale)
+    end
     return DuckDB.disconnect(conn)
 end

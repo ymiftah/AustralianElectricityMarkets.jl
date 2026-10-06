@@ -57,6 +57,11 @@ end
         @test tight.price ≈ 80.0 atol = TOY_TOLERANCE
     end
 
+    @testset "an ordinary ramp row leaves its slack at zero" begin
+        @test tight.ramp_slack_mw.up ≈ 0.0 atol = TOY_TOLERANCE
+        @test tight.ramp_slack_mw.down ≈ 0.0 atol = TOY_TOLERANCE
+    end
+
     @testset "with the ramp relaxed, merit order is restored" begin
         @test relaxed.dispatch_mw[TOY_CHEAP] ≈ 90.0 atol = TOY_TOLERANCE
         @test relaxed.dispatch_mw[TOY_EXPENSIVE] ≈ 0.0 atol = TOY_TOLERANCE
@@ -259,4 +264,21 @@ end
         @test out.price ≈ 80.0 atol = TOY_TOLERANCE
         @test out.constraint_price["N_TOY_LIMIT"] ≈ 0.0 atol = TOY_TOLERANCE
     end
+end
+
+@testset "a ramp-up ceiling below zero is violated at 1155 x the Market Price Cap" begin
+    # INITIALMW = -1 MW with a zero ramp rate gives x <= -1 against x >= 0, as for an offline
+    # hydro unit with a slightly negative reading. The ramp row is elastic, the bound is not:
+    # the unit stays at 0 MW and the 1 MW up slack is priced at 1155 x MPC for one interval.
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = -1.0, ramp_up = 0.0)],
+        0.0,
+    )
+    out = solve_toy(sys)
+    mpc = AustralianElectricityMarketsSimulations._financial_year_mpc(TOY_START)
+
+    @test out.dispatch_mw[TOY_CHEAP] ≈ 0.0 atol = TOY_TOLERANCE
+    @test out.ramp_slack_mw.up ≈ 1.0 atol = TOY_TOLERANCE
+    @test out.ramp_slack_mw.down ≈ 0.0 atol = TOY_TOLERANCE
+    @test out.objective ≈ UNIT_RAMP_CVP_FACTOR * mpc * DISPATCH_INTERVAL_HOURS rtol = 1.0e-8
 end
