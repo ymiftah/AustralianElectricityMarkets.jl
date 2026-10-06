@@ -251,7 +251,20 @@ end
     @test !isempty(gaps)
     @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
     prices = PSI.read_dual(res, PSI.CopperPlateBalanceConstraint, PSY.Area)
-    @test any(<(0.0), prices.value)
+    price = Dict((r.name, r.DateTime) => r.value for r in eachrow(prices))
+    share = 0.4
+    for stamp in unique(prices.DateTime)
+        @test share * price[("1", stamp)] + (1 - share) * price[("2", stamp)] < 0.0
+    end
+    @test PSI.is_milp(PSI.get_optimization_container(model))
+end
+
+@testset "single-segment loss models add no fill indicators" begin
+    sys = _loss_test_system()
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    @test !PSI.has_container_key(container, AEMS.InterconnectorLossSegmentFullVariable, PSY.AreaInterchange)
 end
 
 @testset "FlowLimitConstraint bounds the flow from static flow_limits" begin

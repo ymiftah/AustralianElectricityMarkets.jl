@@ -7,14 +7,15 @@
 Device formulation for `PSY.AreaInterchange` that apportions the attached
 [`InterconnectorLossModel`](@ref)'s segment losses between its two areas. Supports
 `PSI.AreaBalancePowerModel` only, matching NEMDE's regional balance; other network models,
-missing or ambiguous loss models and concave curves throw `ArgumentError`. Recurrent solves are unsupported; rebuild the standalone
-`DecisionModel` when demand forecasts or load availability change.
+missing or ambiguous loss models and concave curves throw `ArgumentError`. Recurrent solves are
+unsupported; rebuild the standalone `DecisionModel` when demand forecasts or load availability
+change.
 
 # Notes
-Loss matches the breakpoint interpolation at every price sign: segments fill contiguously from the
-first breakpoint, enforced by binary fill indicators on interconnectors with more than one
-segment. The breakpoint range also bounds flow, with a warning
-when it is narrower than the device's static flow limits.
+Loss follows the breakpoint interpolation at every price sign: segments fill contiguously from
+the first breakpoint, enforced by binary fill indicators when an interconnector has more than one
+segment. The breakpoint range also bounds flow, with a warning when it is narrower than the
+device's static flow limits.
 """
 struct NEMInterconnectorLoss <: PSI.AbstractBranchFormulation end
 
@@ -24,8 +25,7 @@ struct InterconnectorLossVariable <: PSI.VariableType end
 """
 One loss-curve segment's flow allocation for one interconnector at one timestep - MW, per-unit.
 Indexed `(interconnector name, segment label, t)`; the segment axis is sized to the largest
-interconnector's segment count, with a smaller interconnector's unused cells fixed to `0.0`
-(bounds `[0, 0]`) rather than left `#undef`, which would break read-back.
+interconnector's segment count, and a smaller interconnector's unused cells are fixed to `0.0`.
 """
 struct InterconnectorLossSegmentVariable <: PSI.VariableType end
 
@@ -37,8 +37,8 @@ struct InterconnectorLossDefinitionConstraint <: PSI.ConstraintType end
 
 """
 Binary: segment `s` of an interconnector's loss curve is completely filled at one timestep. Indexed
-`(interconnector name, segment label, t)`; cells beyond the interconnector's own `segments - 1`
-are unused and appear in no constraint (PSI needs a container of one variable kind).
+`(interconnector name, segment label, t)`, with labels `1:(max segments - 1)`; cells beyond an
+interconnector's own `segments - 1` appear in no constraint.
 """
 struct InterconnectorLossSegmentFullVariable <: PSI.VariableType end
 
@@ -195,10 +195,10 @@ _demand_at(demand::Dict{String, Vector{Float64}}, t::Int) =
 """
     _add_loss_variables_and_constraints!(container, sys, devices, loss_models)
 
-Adds the segment, fill-indicator and loss variables, their defining and ordering constraints, and the `-share * loss` and
-`-(1 - share) * loss` terms in the from and to area balances, for every device. The segment axis
-is sized to the largest interconnector; unused cells are fixed to zero. All quantities are
-per-unit of the system base.
+Adds the segment, fill-indicator and loss variables, their defining and ordering constraints, and
+the `-share * loss` and `-(1 - share) * loss` terms in the from and to area balances, for every
+device. The segment axis is sized to the largest interconnector; unused cells are fixed to zero.
+All quantities are per-unit of the system base.
 """
 function _add_loss_variables_and_constraints!(
         container::PSI.OptimizationContainer,
@@ -222,18 +222,23 @@ function _add_loss_variables_and_constraints!(
     loss_var = PSI.add_variable_container!(
         container, InterconnectorLossVariable(), PSY.AreaInterchange, device_names, time_steps,
     )
-    full_var = PSI.add_variable_container!(
-        container, InterconnectorLossSegmentFullVariable(), PSY.AreaInterchange,
-        device_names, segment_labels, time_steps,
-    )
-    order_ub = PSI.add_constraints_container!(
-        container, InterconnectorLossSegmentOrderConstraint(), PSY.AreaInterchange,
-        device_names, segment_labels, time_steps; meta = "ub",
-    )
-    order_lb = PSI.add_constraints_container!(
-        container, InterconnectorLossSegmentOrderConstraint(), PSY.AreaInterchange,
-        device_names, segment_labels, time_steps; meta = "lb",
-    )
+    # PSI cannot read back an empty container, so a model with only straight-line curves has none.
+    order_labels = segment_labels[1:(max_segments - 1)]
+    ordered = max_segments > 1
+    if ordered
+        full_var = PSI.add_variable_container!(
+            container, InterconnectorLossSegmentFullVariable(), PSY.AreaInterchange,
+            device_names, order_labels, time_steps,
+        )
+        order_ub = PSI.add_constraints_container!(
+            container, InterconnectorLossSegmentOrderConstraint(), PSY.AreaInterchange,
+            device_names, order_labels, time_steps; meta = "ub",
+        )
+        order_lb = PSI.add_constraints_container!(
+            container, InterconnectorLossSegmentOrderConstraint(), PSY.AreaInterchange,
+            device_names, order_labels, time_steps; meta = "lb",
+        )
+    end
     flow_seg_con = PSI.add_constraints_container!(
         container, InterconnectorFlowSegmentConstraint(), PSY.AreaInterchange,
         device_names, time_steps,
@@ -266,24 +271,26 @@ function _add_loss_variables_and_constraints!(
                     base_name = "InterconnectorLossSegmentVariable_{$name,$s,$t}",
                 )
             end
-            for s in 1:max_segments
-                full_var[name, segment_labels[s], t] = JuMP.@variable(
-                    jm, binary = true,
-                    base_name = "InterconnectorLossSegmentFullVariable_{$name,$s,$t}",
-                )
-            end
-            for s in 1:(n - 1)
-                lbl, next = segment_labels[s], segment_labels[s + 1]
-                order_ub[name, lbl, t] = JuMP.@constraint(
-                    jm,
-                    seg_var[name, next, t] <=
-                        (segments[s + 1].to_mw - segments[s + 1].from_mw) * full_var[name, lbl, t]
-                )
-                order_lb[name, lbl, t] = JuMP.@constraint(
-                    jm,
-                    seg_var[name, lbl, t] >=
-                        (segments[s].to_mw - segments[s].from_mw) * full_var[name, lbl, t]
-                )
+            if ordered
+                for s in 1:(max_segments - 1)
+                    full_var[name, order_labels[s], t] = JuMP.@variable(
+                        jm, binary = true,
+                        base_name = "InterconnectorLossSegmentFullVariable_{$name,$s,$t}",
+                    )
+                end
+                for s in 1:(n - 1)
+                    lbl, next = order_labels[s], segment_labels[s + 1]
+                    order_ub[name, lbl, t] = JuMP.@constraint(
+                        jm,
+                        seg_var[name, next, t] <=
+                            (segments[s + 1].to_mw - segments[s + 1].from_mw) * full_var[name, lbl, t]
+                    )
+                    order_lb[name, lbl, t] = JuMP.@constraint(
+                        jm,
+                        seg_var[name, lbl, t] >=
+                            (segments[s].to_mw - segments[s].from_mw) * full_var[name, lbl, t]
+                    )
+                end
             end
             loss_var[name, t] = JuMP.@variable(
                 jm, base_name = "InterconnectorLossVariable_{$name,$t}",
