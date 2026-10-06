@@ -761,6 +761,18 @@ function create_mock_data(hive_root::String)
             )
         end
         save_hive(track, :DISPATCH_MNSPBIDTRK)
+
+        # Link capacity and TLFs: both links ride IC2 (NSW1 to VIC1), BLNKTAS forward and BLNKVIC reverse.
+        save_hive(
+            DataFrame(
+                INTERCONNECTORID = ["IC2", "IC2"], LINKID = links,
+                EFFECTIVEDATE = fill(DateTime(2024, 7, 1), 2), VERSIONNO = [1, 1],
+                FROMREGION = ["NSW1", "VIC1"], TOREGION = ["VIC1", "NSW1"],
+                FROM_REGION_TLF = [1.0, 0.9907], TO_REGION_TLF = [0.9907, 1.0],
+                LHSFACTOR = [1.0, 1.0], MAXCAPACITY = [594, 478],
+                archive_month = ["2025-01", "2025-01"],
+            ), :MNSP_INTERCONNECTOR,
+        )
     end
 
     return DuckDB.disconnect(conn)

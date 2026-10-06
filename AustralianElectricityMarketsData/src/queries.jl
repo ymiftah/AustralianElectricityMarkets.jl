@@ -401,3 +401,35 @@ function read_mnsp_offers(db, date_range)
     )
     return df
 end
+
+"""
+    read_mnsp_links(db)
+
+Reads the registered MNSP links: the latest `MNSP_INTERCONNECTOR` version of each `LINKID`.
+
+# Arguments
+- `db`: The database connection.
+
+# Returns
+A `DataFrame` with one row per link: `LINKID`, `INTERCONNECTORID`, `FROMREGION`, `TOREGION`,
+`FROM_REGION_TLF`, `TO_REGION_TLF`, `LHSFACTOR` and `MAXCAPACITY`. A link's flow runs from
+`FROMREGION` to `TOREGION`.
+
+# Example
+```julia
+db = aem_connect()
+links = read_mnsp_links(db)
+```
+"""
+function read_mnsp_links(db)
+    return _query(
+        db,
+        """
+        SELECT LINKID, INTERCONNECTORID, FROMREGION, TOREGION, FROM_REGION_TLF, TO_REGION_TLF,
+               LHSFACTOR, MAXCAPACITY
+        FROM $(read_hive(db, :MNSP_INTERCONNECTOR))
+        QUALIFY row_number() OVER (PARTITION BY LINKID ORDER BY EFFECTIVEDATE DESC, VERSIONNO DESC) = 1
+        ORDER BY INTERCONNECTORID, LINKID
+        """,
+    )
+end

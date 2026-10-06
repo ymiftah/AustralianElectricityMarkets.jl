@@ -149,6 +149,15 @@ let
         @test isempty(read_mnsp_offers(db, DateTime(2030, 1, 1):Dates.Minute(5):DateTime(2030, 1, 1, 1)))
     end
 
+    @testset "read_mnsp_links" begin
+        links = read_mnsp_links(db)
+        @test sort(links.LINKID) == ["BLNKTAS", "BLNKVIC"]
+        tas = only(links[links.LINKID .== "BLNKTAS", :])
+        @test (tas.INTERCONNECTORID, tas.FROMREGION, tas.TOREGION) == ("IC2", "NSW1", "VIC1")
+        @test tas.TO_REGION_TLF == 0.9907
+        @test tas.MAXCAPACITY == 594
+    end
+
     @testset "max-partition filtering excludes stale partitions" begin
         # All other mock tables only ever have a single archive_month value, so
         # the "keep only the max partition" query idiom used throughout queries.jl
