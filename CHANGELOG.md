@@ -82,7 +82,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `read_interconnector_limits` and `set_interconnector_flow_limits!` read the per-interval
   `DISPATCHINTERCONNECTORRES` `EXPORTLIMIT`/`IMPORTLIMIT` and attach them as the flow-limit series
-  `NEMInterconnectorLoss` bounds flow by; `replication_system` applies them.
+  `NEMInterconnectorLoss` bounds flow by; `replication_system(...; interval_flow_limits = true)`
+  applies them as an opt-in diagnostic (they are post-solve results and pin flows to NEMDE).
 - `read_units`, `read_interconnectors` and `nem_system` accept `as_of`, resolving the static
   tables (loss factors, flow limits) as in force at that instant.
 - **Single-interval replication pipeline** (`AustralianElectricityMarketsSimulations`):

@@ -335,8 +335,13 @@ Attaches the per-interval flow limits of [`read_interconnector_limits`](@ref) to
 `PSY.AreaInterchange` in `sys` as the `"from_to_flow_limit"` and `"to_from_flow_limit"`
 `SingleTimeSeries` that `NEMInterconnectorLoss` reads: the flow is bounded below by `IMPORTLIMIT`
 and above by `EXPORTLIMIT`. Each series is the limit as a fraction of the interchange's static
-flow limit, which stays the outer envelope. An interval with no published row, a `missing`
-limit or crossed limits keeps the static limit, and one `@warn` counts them.
+flow limit. The lower bound is the smaller of the two limits and the upper bound the larger,
+each clamped into the static envelope `[-MAXMWIN, MAXMWOUT]`. An interval with no published row
+or a `missing` limit keeps the static limit, and one `@warn` counts them.
+
+The published limits are computed after NEMDE's solve (each binding constraint's right-hand side
+projected with the other terms held at the solved values), so bounding flow by them pins it to
+NEMDE's answer. Use them as a diagnostic, not when validating flows.
 
 # Arguments
 - `sys`: the `System` to add to.
@@ -355,8 +360,8 @@ function set_interconnector_flow_limits!(sys, db, date_range; kwargs...)
             (key, g) in pairs(groupby(rows, :INTERCONNECTORID))
     )
 
-    # Ratio of a signed limit to its static counterpart; 1.0 keeps the static limit.
-    ratio(limit, static) = static > 0 ? min(limit / static, 1.0) : 1.0
+    # Fraction of the static limit `static`; 1.0 keeps the static limit.
+    ratio(limit, static) = static > 0 ? limit / static : 1.0
     fallbacks = String[]
     series = Dict{String, NTuple{2, Vector{Float64}}}()
     for d in get_components(AreaInterchange, sys)
@@ -366,13 +371,15 @@ function set_interconnector_flow_limits!(sys, db, date_range; kwargs...)
         to_from = ones(length(full_grid))
         for (k, t) in enumerate(full_grid)
             row = get(get(by_ic, name, Dict{DateTime, Any}()), t, nothing)
-            if isnothing(row) || ismissing(row.EXPORTLIMIT) || ismissing(row.IMPORTLIMIT) ||
-                    row.IMPORTLIMIT > row.EXPORTLIMIT
+            if isnothing(row) || ismissing(row.EXPORTLIMIT) || ismissing(row.IMPORTLIMIT)
                 push!(fallbacks, "$name@$t")
                 continue
             end
-            from_to[k] = ratio(-row.IMPORTLIMIT, limits.from_to)
-            to_from[k] = ratio(row.EXPORTLIMIT, limits.to_from)
+            # Signed bounds, ordered and clamped into the static envelope [-MAXMWIN, MAXMWOUT].
+            lower = clamp(min(row.IMPORTLIMIT, row.EXPORTLIMIT), -limits.from_to, limits.to_from)
+            upper = clamp(max(row.IMPORTLIMIT, row.EXPORTLIMIT), -limits.from_to, limits.to_from)
+            from_to[k] = ratio(-lower, limits.from_to)
+            to_from[k] = ratio(upper, limits.to_from)
         end
         series[name] = (from_to, to_from)
     end

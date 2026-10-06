@@ -16,16 +16,17 @@
             DuckDB.execute(conn, "SET preserve_identifier_case=true")
             df = DataFrame()
             for (i, t) in enumerate(grid), k in 1:3
-                # IC2 is missing at the second interval, IC3 has crossed limits at the third.
+                # IC2 is missing at the second interval, IC3 has reversed limits at the third and IC2
+                # an export limit below -MAXMWIN at the fourth.
                 (k == 2 && i == 2) && continue
                 crossed = k == 3 && i == 3
                 append!(
                     df, DataFrame(
                         SETTLEMENTDATE = [t], INTERCONNECTORID = ["IC$k"], INTERVENTION = [0],
                         METEREDMWFLOW = [10.0 * k],
-                        EXPORTLIMIT = [crossed ? -300.0 : 400.0 - 10 * i],
+                        EXPORTLIMIT = [crossed ? -300.0 : (k == 2 && i == 4 ? -600.0 : 400.0 - 10 * i)],
                         # IC1 import limit exceeds the 500 MW static limit and is clipped to it.
-                        IMPORTLIMIT = [k == 1 && i == 4 ? -900.0 : (crossed ? -100.0 : -(300.0 + 10 * i))],
+                        IMPORTLIMIT = [k == 1 && i == 4 ? -900.0 : (crossed ? -100.0 : (k == 2 && i == 4 ? -700.0 : -(300.0 + 10 * i)))],
                         archive_month = ["2025-01"],
                     ),
                 )
@@ -49,9 +50,14 @@
         @test series("IC1", "from_to_flow_limit")[1:3] ≈ [310.0, 320.0, 330.0] ./ 500
         @test series("IC1", "to_from_flow_limit")[1:3] ≈ [390.0, 380.0, 370.0] ./ 500
         @test series("IC1", "from_to_flow_limit")[4] == 1.0  # clipped to the static limit
-        # Missing interval and crossed limits keep the static limit; so does an interconnector with no rows.
+        # A missing interval keeps the static limit; so does an interconnector with no rows.
         @test series("IC2", "to_from_flow_limit")[2] == 1.0
-        @test series("IC3", "from_to_flow_limit")[3] == 1.0
+        # Reversed limits are ordered: lower = -300, upper = -100.
+        @test series("IC3", "from_to_flow_limit")[3] ≈ 300 / 500
+        @test series("IC3", "to_from_flow_limit")[3] ≈ -100 / 500
+        # Both limits below -MAXMWIN clamp to the envelope's lower edge: flow pinned at -500.
+        @test series("IC2", "from_to_flow_limit")[4] == 1.0
+        @test series("IC2", "to_from_flow_limit")[4] == -1.0
         @test all(==(1.0), series("IC4", "to_from_flow_limit"))
         @test all(has_time_series(d) for d in get_components(AreaInterchange, sys))
 

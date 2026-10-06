@@ -361,7 +361,7 @@ function read_interconnector_limits(db, date_range; intervention::Integer = 0)
 
     _table_is_cached(db, :DISPATCHINTERCONNECTORRES) || throw(
         ArgumentError(
-            "DISPATCHINTERCONNECTORRES is not cached — run `populate(db, :DISPATCHINTERCONNECTORRES, <from>, <to>)` first.",
+            "DISPATCHINTERCONNECTORRES is not cached; run `populate(db, :DISPATCHINTERCONNECTORRES, <from>, <to>)` first.",
         ),
     )
     table = read_hive(db, :DISPATCHINTERCONNECTORRES)

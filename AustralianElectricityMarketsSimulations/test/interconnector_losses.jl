@@ -230,11 +230,24 @@ end
 end
 
 @testset "per-interval flow-limit series bound the flow as a fraction of the static limit" begin
-    function solved_flow(ratio)
+    # `negative` makes area 1 the deficient side (its loads tripled, area 2's supply restored), so
+    # the flow runs to-from-negative and the from_to series is the one that binds.
+    function solved_flow(; negative::Bool, from_to_static, to_from_static, from_to_ratio, to_from_ratio)
         sys = _loss_test_system()
+        if negative
+            PSY.set_available!(PSY.get_component(PSY.ThermalStandard, sys, "Solitude"), true)
+            PSY.set_available!(PSY.get_component(PSY.RenewableDispatch, sys, "SOLAR1"), true)
+            for load in PSY.get_components(l -> PSY.get_name(PSY.get_area(PSY.get_bus(l))) == "1", PSY.PowerLoad, sys)
+                PSY.set_max_active_power!(load, 3 * PSY.get_max_active_power(load))
+            end
+        end
         ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
-        grid = collect(timestamp(PSY.get_data(PSY.get_time_series(PSY.SingleTimeSeries, first(PSY.get_components(PSY.PowerLoad, sys)), "max_active_power"))))
-        for name in ("from_to_flow_limit", "to_from_flow_limit")
+        PSY.with_units_base(sys, "NATURAL_UNITS") do
+            PSY.set_flow_limits!(ic1, (from_to = from_to_static, to_from = to_from_static))
+        end
+        load = first(PSY.get_components(PSY.PowerLoad, sys))
+        grid = collect(timestamp(PSY.get_data(PSY.get_time_series(PSY.SingleTimeSeries, load, "max_active_power"))))
+        for (name, ratio) in (("from_to_flow_limit", from_to_ratio), ("to_from_flow_limit", to_from_ratio))
             PSY.add_time_series!(
                 sys, ic1, PSY.SingleTimeSeries(; name = name, data = TimeArray(grid, fill(ratio, length(grid)))),
             )
@@ -244,15 +257,27 @@ end
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
         @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
         flow_df = PSI.read_variable(PSI.OptimizationProblemResults(model), "FlowActivePowerVariable__AreaInterchange")
-        static = PSY.with_units_base(() -> PSY.get_flow_limits(ic1).to_from, sys, "NATURAL_UNITS")
-        return maximum(abs, flow_df.value), static
+        return flow_df.value[argmax(abs.(flow_df.value))]
     end
-    full_flow, static = solved_flow(1.0)
-    @test full_flow > 0
-    @test full_flow <= static + 1.0e-6
-    # Halving the limit below the flow area 2 needs must cap the flow at that fraction.
-    capped_flow, _ = solved_flow(0.5 * full_flow / static)
-    @test capped_flow ≈ 0.5 * full_flow atol = 1.0e-4
+    wide = 1.0e4
+    positive = solved_flow(; negative = false, from_to_static = wide, to_from_static = wide, from_to_ratio = 1.0, to_from_ratio = 1.0)
+    @test positive > 0
+    # Asymmetric statics (to_from 10x from_to): halving the to_from limit caps the positive flow.
+    capped = solved_flow(;
+        negative = false, from_to_static = wide / 10, to_from_static = wide,
+        from_to_ratio = 1.0, to_from_ratio = 0.5 * positive / wide,
+    )
+    @test capped ≈ 0.5 * positive atol = 1.0e-4
+
+    negative = solved_flow(; negative = true, from_to_static = wide, to_from_static = wide, from_to_ratio = 1.0, to_from_ratio = 1.0)
+    @test negative < 0
+    # Asymmetric statics (from_to 10x to_from): the from_to series caps the negative flow, and a
+    # swapped from_to/to_from convention would leave it free.
+    capped_negative = solved_flow(;
+        negative = true, from_to_static = wide, to_from_static = wide / 10,
+        from_to_ratio = 0.5 * abs(negative) / wide, to_from_ratio = 1.0,
+    )
+    @test capped_negative ≈ 0.5 * negative atol = 1.0e-4
 end
 
 @testset "scaling_factor_multiplier demand and nonzero demand_coefficients: LP loss matches the curve" begin

@@ -12,8 +12,9 @@
   `GenericConstraint` (default `false`).
 - `resolution`: the resolution for `GenericConstraint` time series; inferred from the data
   when `nothing` (default). FCAS bid series are unaffected and always use `Minute(5)`.
-- `as_of`: the instant the unit and interconnector tables are resolved as of (default
-  `first(date_range)`); `nothing` uses the latest cached version.
+- `as_of`: the instant the unit and interconnector tables (loss factors, flow limits) are
+  resolved as of. Defaults to `first(date_range)`, so a build no longer picks up a version that
+  takes effect after the dates replayed; pass `nothing` for the latest cached version.
 - `allow_empty_region_terms`: whether to proceed (with a warning) instead of throwing when a
   `RegionTerm`'s region has no matching device (default `false`).
 """

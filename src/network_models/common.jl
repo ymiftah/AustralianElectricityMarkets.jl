@@ -362,7 +362,7 @@ end
 
 
 """
-    nem_system(db)
+    nem_system(db; as_of = nothing)
 
 Assembles a `PowerSystems.System` object from the database.
 

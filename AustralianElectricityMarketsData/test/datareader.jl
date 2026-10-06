@@ -81,6 +81,9 @@ let
         @test cp_of(read_units(vdb; as_of = early)) == "CP_BAYSW"
         @test cp_of(read_units(vdb; as_of = DateTime(2025, 8, 1))) == "CP_NEW"
         @test allunique(read_units(vdb; as_of = early).DUID)
+        # The older archive's stale open rows must not leak into either as-of read.
+        @test maxmwin(read_interconnectors(vdb; as_of = early)) != 111.0
+        @test only(read_units(vdb; as_of = early)[read_units(vdb; as_of = early).DUID .== "BW01", :REGISTEREDCAPACITY]) == 100.0
         # A unit not yet registered as of the date is omitted.
         @test isempty(read_units(vdb; as_of = DateTime(2019, 1, 1)))
     end
