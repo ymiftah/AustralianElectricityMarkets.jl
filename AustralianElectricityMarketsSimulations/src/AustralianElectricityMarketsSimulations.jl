@@ -56,7 +56,8 @@ export AbstractNEMDispatch, NEMReplayDispatch, NEMLookaheadDispatch,
     InitialPowerTimeSeriesParameter
 export nem_dispatch_participants, set_nem_dispatch_models!
 export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegmentVariable,
-    InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint
+    InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint,
+    InterconnectorLossSegmentFullVariable, InterconnectorLossSegmentOrderConstraint
 export interconnector_loss_gaps, check_interconnector_loss_segments
 
 end
