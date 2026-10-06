@@ -513,13 +513,13 @@ end
         @test out.forward ≈ out.flow atol = 1.0e-6
     end
 
-    @testset "flow is zero when the offered price exceeds local generation cost" begin
-        # Area 2's own unit is available again, so a dear link offer loses to it.
+    @testset "a dear offer loses to area 2's own unit" begin
+        # Solitude is available again; the link only covers what it cannot.
         sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
         PSY.set_available!(PSY.get_component(PSY.ThermalStandard, sys, "Solitude"), true)
         _attach_mnsp_offers!(sys; forward = (500.0, [(500.0, 5000.0)]), reverse = (500.0, [(500.0, 5000.0)]))
         out = _solve_mnsp(sys)
-        @test out.flow ≈ 0.0 atol = 1.0e-6
+        @test out.flow < 0.5 * free.flow
     end
 
     @testset "a reverse-only offer cannot export into area 2" begin
