@@ -158,6 +158,9 @@ function create_mock_data(hive_root::String)
                 REGIONID = regions,
                 SCHEDULE_TYPE = [d in ("BW03", "BW04") ? "SEMI-SCHEDULED" : "SCHEDULED" for d in duids],
                 DISPATCHTYPE = fill("GENERATOR", n),
+                TRANSMISSIONLOSSFACTOR = fill(1.0, n),
+                DISTRIBUTIONLOSSFACTOR = fill(1.0, n),
+                SECONDARY_TLF = Union{Float64, Missing}[missing for i in 1:n],
                 archive_month = fill("2025-01", n)
             ),
             DataFrame(
@@ -169,6 +172,9 @@ function create_mock_data(hive_root::String)
                 REGIONID = ["VIC1"],
                 SCHEDULE_TYPE = ["SCHEDULED"],
                 DISPATCHTYPE = ["GENERATOR"],
+                TRANSMISSIONLOSSFACTOR = [1.0],
+                DISTRIBUTIONLOSSFACTOR = [1.0],
+                SECONDARY_TLF = Union{Float64, Missing}[missing],
                 archive_month = ["2025-01"]
             ),
             DataFrame(
@@ -180,6 +186,9 @@ function create_mock_data(hive_root::String)
                 REGIONID = fill("NSW1", 3),
                 SCHEDULE_TYPE = fill("SCHEDULED", 3),
                 DISPATCHTYPE = fill("LOAD", 3),
+                TRANSMISSIONLOSSFACTOR = fill(1.0, 3),
+                DISTRIBUTIONLOSSFACTOR = fill(1.0, 3),
+                SECONDARY_TLF = Union{Float64, Missing}[missing, missing, missing],
                 archive_month = fill("2025-01", 3)
             ),
         ), :DUDETAILSUMMARY

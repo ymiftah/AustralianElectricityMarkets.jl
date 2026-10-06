@@ -1,5 +1,5 @@
 """
-    replication_template(sys) -> PSI.ProblemTemplate
+    replication_template(sys; skipped = nothing) -> PSI.ProblemTemplate
 
 Builds the `ProblemTemplate` that replicates NEMDE on `sys`: [`AbstractNEMDispatch`](@ref) devices
 (via [`set_nem_dispatch_models!`](@ref)), `PSI.StaticPowerLoad` demand, [`NEMInterconnectorLoss`](@ref)
@@ -11,11 +11,13 @@ recorded as regional prices.
 # Arguments
 - `sys`: a `PSY.System` from `nem_system(db, ConstrainedNetworkConfiguration(); ...)`, after its
   demand, bids, FCAS scaling inputs and dispatch limits are set.
+- `skipped`: a vector that receives one `(constraint, reason, n_missing)` named tuple per generic
+  constraint left out of the template, or `nothing`.
 
 # Returns
 A `PSI.ProblemTemplate`.
 """
-function replication_template(sys::PSY.System)
+function replication_template(sys::PSY.System; skipped::Union{Nothing, AbstractVector} = nothing)
     template = PSI.ProblemTemplate(
         PSI.NetworkModel(
             PSI.AreaBalancePowerModel;
@@ -33,7 +35,9 @@ function replication_template(sys::PSY.System)
             PSI.ServiceModel(FCASService, FCASMarket, name; duals = [FCASJointCapacityConstraint], use_slacks = true),
         )
     end
-    for gc in filter_buildable_generic_constraints(sys, template; allow_partial_coverage = true)
+    for gc in filter_buildable_generic_constraints(
+            sys, template; allow_partial_coverage = true, skipped = skipped,
+        )
         name = PSY.get_name(gc)
         PSI.set_service_model!(
             template, name,

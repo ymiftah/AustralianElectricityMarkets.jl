@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `filter_buildable_generic_constraints` leaves out a generic constraint whose contributing devices
+  are all unavailable (for example wholesale demand response constraints once their units are
+  unavailable), which PSI cannot build, and reports it as `:no_available_device` through its new
+  `skipped` keyword (also accepted by `replication_template`).
 - `NEMInterconnectorLoss` fills loss segments contiguously through binary fill indicators, so the
   solved loss follows the loss curve at negative or zero weighted prices instead of burning energy
   on steeper segments. Multi-segment interconnectors make the problem a MILP; duals are read from
