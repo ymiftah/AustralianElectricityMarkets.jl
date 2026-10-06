@@ -60,7 +60,7 @@ export nem_dispatch_participants, set_nem_dispatch_models!
 export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegmentVariable,
     InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint,
     InterconnectorLossSegmentFullVariable, InterconnectorLossSegmentOrderConstraint
-export MNSPLinkFlowVariable, MNSPLinkFlowConstraint
+export MNSPLinkFlowVariable, MNSPLinkFlowConstraint, MNSPLinkDirectionVariable
 export interconnector_loss_gaps, check_interconnector_loss_segments
 
 end

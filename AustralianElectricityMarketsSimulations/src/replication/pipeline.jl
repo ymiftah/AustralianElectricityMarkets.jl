@@ -48,21 +48,6 @@ end
 const _REPLICATION_HORIZON = 2DISPATCH_INTERVAL
 
 """
-    _set_mnsp_offers_or_warn!(sys, db, date_range)
-
-Attaches MNSP link offers with [`set_mnsp_offers!`](@ref). When the MNSP tables are not cached the
-interconnectors keep their free-flow model and a warning says so.
-"""
-function _set_mnsp_offers_or_warn!(sys, db, date_range)
-    try
-        set_mnsp_offers!(sys, db, date_range)
-    catch err
-        @warn "MNSP offers unavailable; MNSP interconnectors keep the free-flow model" exception = (err, catch_backtrace())
-    end
-    return
-end
-
-"""
     replication_system(db, settlement_date; intervention = 0) -> PSY.System
 
 Builds the `System` [`replicate_interval`](@ref) solves: the constrained system from
@@ -96,7 +81,7 @@ function replication_system(
     set_market_bids!(sys, db, date_range; resolution = resolution)
     set_fcas_scaling_inputs!(sys, db, date_range; intervention = intervention)
     set_nem_dispatch_limits!(sys, db, date_range; intervention = intervention)
-    _set_mnsp_offers_or_warn!(sys, db, date_range)
+    set_mnsp_offers!(sys, db, date_range)
     interval_flow_limits &&
         set_interconnector_flow_limits!(sys, db, date_range; intervention = intervention)
     PSY.transform_single_time_series!(sys, _REPLICATION_HORIZON, resolution)

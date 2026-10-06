@@ -63,6 +63,8 @@ using .AustralianElectricityMarketsData: islocal, get_filesystem, _parse_hive_ro
 # situation below).
 @doc (@doc AustralianElectricityMarketsData.read_demand) read_demand
 @doc (@doc AustralianElectricityMarketsData.read_interconnectors) read_interconnectors
+@doc (@doc AustralianElectricityMarketsData.read_mnsp_offers) read_mnsp_offers
+@doc (@doc AustralianElectricityMarketsData.read_mnsp_links) read_mnsp_links
 
 # Modules
 include("bid_types.jl")

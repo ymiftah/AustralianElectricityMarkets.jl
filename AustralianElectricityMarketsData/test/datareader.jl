@@ -150,7 +150,8 @@ let
     end
 
     @testset "read_mnsp_links" begin
-        links = read_mnsp_links(db)
+        links = read_mnsp_links(db, DateTime(2025, 1, 1))
+        @test isempty(read_mnsp_links(db, DateTime(2020, 1, 1)))
         @test sort(links.LINKID) == ["BLNKTAS", "BLNKVIC"]
         tas = only(links[links.LINKID .== "BLNKTAS", :])
         @test (tas.INTERCONNECTORID, tas.FROMREGION, tas.TOREGION) == ("IC2", "NSW1", "VIC1")

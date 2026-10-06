@@ -742,6 +742,39 @@ function create_mock_data(hive_root::String)
                 promote = true,
             )
         end
+        # The previous trading day (2024-12-31) has one offer, tracked for the intervals 00:05 to 04:00
+        # on 2025-01-01 that the other mock tables cover.
+        early_offer = DateTime(2024, 12, 30, 15, 6, 1)
+        for link in links
+            append!(
+                day_rows,
+                DataFrame(
+                    SETTLEMENTDATE = [DateTime(2024, 12, 31)], OFFERDATE = [early_offer], VERSIONNO = [1],
+                    PARTICIPANTID = ["BASSLINK"], LINKID = [link], ENTRYTYPE = ["DAILY"],
+                    PRICEBAND1 = [0.01], PRICEBAND2 = [30.0], PRICEBAND3 = [61.0], PRICEBAND4 = [75.0],
+                    PRICEBAND5 = [89.0], PRICEBAND6 = [104.0], PRICEBAND7 = [114.0], PRICEBAND8 = [200.0],
+                    PRICEBAND9 = [450.0], PRICEBAND10 = [20300.0],
+                    LASTCHANGED = [early_offer], MR_FACTOR = Union{Missing, Float64}[missing], archive_month = ["2024-12"],
+                );
+                promote = true,
+            )
+            append!(
+                period_rows,
+                DataFrame(
+                    TRADINGDATE = fill(Date(2024, 12, 31), 288), OFFERDATETIME = fill(early_offer, 288),
+                    LINKID = fill(link, 288), PERIODID = 1:288,
+                    MAXAVAIL = fill(300.0, 288), FIXEDLOAD = Vector{Union{Missing, Float64}}(missing, 288),
+                    RAMPUPRATE = fill(200.0, 288),
+                    BANDAVAIL1 = fill(0.0, 288), BANDAVAIL2 = fill(100.0, 288), BANDAVAIL3 = fill(100.0, 288),
+                    BANDAVAIL4 = fill(100.0, 288), BANDAVAIL5 = fill(0.0, 288),
+                    BANDAVAIL6 = fill(0.0, 288), BANDAVAIL7 = fill(0.0, 288),
+                    BANDAVAIL8 = fill(0.0, 288), BANDAVAIL9 = fill(0.0, 288), BANDAVAIL10 = fill(0.0, 288),
+                    PASAAVAILABILITY = fill(300.0, 288), RECALL_PERIOD = fill(0.0, 288),
+                    archive_month = fill("2024-12", 288),
+                );
+                promote = true,
+            )
+        end
         save_hive(day_rows, :MNSP_DAYOFFER)
         save_hive(period_rows, :MNSP_BIDOFFERPERIOD)
 
@@ -755,6 +788,18 @@ function create_mock_data(hive_root::String)
                 DataFrame(
                     SETTLEMENTDATE = [t], RUNNO = [1], PARTICIPANTID = ["BASSLINK"], LINKID = [link],
                     OFFERSETTLEMENTDATE = [DateTime(2025, 1, 1)], OFFEREFFECTIVEDATE = [offer_dates[v]],
+                    OFFERVERSIONNO = [1], LASTCHANGED = [t], archive_month = ["2025-01"],
+                );
+                promote = true,
+            )
+        end
+        for link in links, k in 1:48
+            t = DateTime(2025, 1, 1) + Minute(5k)
+            append!(
+                track,
+                DataFrame(
+                    SETTLEMENTDATE = [t], RUNNO = [1], PARTICIPANTID = ["BASSLINK"], LINKID = [link],
+                    OFFERSETTLEMENTDATE = [DateTime(2024, 12, 31)], OFFEREFFECTIVEDATE = [early_offer],
                     OFFERVERSIONNO = [1], LASTCHANGED = [t], archive_month = ["2025-01"],
                 );
                 promote = true,

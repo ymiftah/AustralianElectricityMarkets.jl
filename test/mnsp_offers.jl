@@ -10,6 +10,7 @@
 
     @testset "offers attach to the link's interconnector with direction and TLFs" begin
         @test set_mnsp_offers!(sys, db, range) == ["IC2"]
+        @test set_mnsp_offers!(sys, db, range) == ["IC2"]  # idempotent: series are replaced
         ic = get_component(AreaInterchange, sys, "IC2")
         @test get_name(get_from_area(ic)) == "NSW1"
         # Interval 11:55 carries the first offer (MAXAVAIL 594), 12:00 the rebid (400).
