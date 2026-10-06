@@ -1336,4 +1336,57 @@
             @test occursin("ER01", err2.msg)
         end
     end
+    @testset "set_market_bids! refers energy bids to the reference node" begin
+        using DuckDB
+        lf_dir = mktempdir()
+        cp(AEM_TEST_HIVE_DIR, lf_dir; force = true)
+        conn = DuckDB.connect(DuckDB.DB())
+        DuckDB.execute(conn, "SET preserve_identifier_case=true")
+        table_dir = joinpath(lf_dir, "DUDETAILSUMMARY")
+        df = DataFrame(DuckDB.execute(conn, "SELECT * FROM read_parquet('$table_dir/**/*.parquet', hive_partitioning=true)"))
+        df.TRANSMISSIONLOSSFACTOR = [d == "ER01" ? 0.9 : d == "BW01" ? 0.8 : d == "ER02" ? 0.0 : 1.0 for d in df.DUID]
+        df.DISTRIBUTIONLOSSFACTOR = [d == "ER01" ? 1.0 : 1.0 for d in df.DUID]
+        df.SECONDARY_TLF = Union{Float64, Missing}[d == "BW01" ? 0.5 : missing for d in df.DUID]
+        rm(table_dir; recursive = true)
+        mkpath(table_dir)
+        DuckDB.register_data_frame(conn, df, "tmp_table")
+        DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+        ldb = aem_connect(HiveConfiguration(hive_location = lf_dir, filesystem = "file"))
+
+        start_date = DateTime(2025, 1, 1, 0, 0)
+        date_range = start_date:Minute(5):(start_date + Hour(1))
+        raw_prices(sys, name, series = "variable_cost") = begin
+            gen = get_component(Device, sys, name)
+            ta = get_time_series_array(Deterministic, gen, series)
+            return get_y_coords(first(values(ta)))
+        end
+
+        factors = read_loss_factors(ldb; as_of = start_date)
+        row(d) = only(eachrow(subset(factors, :DUID => ByRow(==(d)))))
+        @test row("ER01").GEN_LOSS_FACTOR == 0.9
+        @test row("BW01").LOAD_LOSS_FACTOR == 0.5
+        @test row("BW02").GEN_LOSS_FACTOR == 1.0
+        @test row("ER02").GEN_LOSS_FACTOR == 1.0   # zero factor falls back to 1.0
+
+        sys_raw = nem_system(ldb, RegionalNetworkConfiguration())
+        set_market_bids!(sys_raw, ldb, date_range; resolution = Minute(5), loss_factors = false)
+        sys_lf = nem_system(ldb, RegionalNetworkConfiguration())
+        set_market_bids!(sys_lf, ldb, date_range; resolution = Minute(5))
+
+        with_units_base(sys_raw, "NATURAL_UNITS") do
+            with_units_base(sys_lf, "NATURAL_UNITS") do
+                @test raw_prices(sys_lf, "ER01") ≈ raw_prices(sys_raw, "ER01") ./ 0.9
+                @test raw_prices(sys_lf, "BW02") ≈ raw_prices(sys_raw, "BW02")
+                @test raw_prices(sys_lf, "ER02") ≈ raw_prices(sys_raw, "ER02")
+                @test raw_prices(sys_lf, "BW01") ≈ raw_prices(sys_raw, "BW01") ./ 0.8
+                @test raw_prices(sys_lf, "BW01", "decremental_variable_cost") ≈
+                    raw_prices(sys_raw, "BW01", "decremental_variable_cost") ./ 0.5
+            end
+        end
+        # MW breakpoints are not scaled.
+        mw(sys) = with_units_base(sys, "NATURAL_UNITS") do
+            get_x_coords(first(values(get_time_series_array(Deterministic, get_component(Device, sys, "ER01"), "variable_cost"))))
+        end
+        @test mw(sys_lf) ≈ mw(sys_raw)
+    end
 end

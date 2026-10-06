@@ -97,9 +97,18 @@ gets decremental/load-side bid costs, and each direction's energy `MAXAVAIL`, re
 - `sys`: The `PowerSystems.System` object.
 - `db`: The database connection.
 - `date_range`: A range of dates for which to fetch the data.
-- `kwargs`: Additional keyword arguments passed to `_massage_bids` (e.g. `resolution`).
+- `kwargs`: Additional keyword arguments passed to `_massage_bids` (e.g. `resolution`), plus
+  `loss_factors::Bool = true`.
+
+# Loss factors
+Energy bid prices are connection-point prices. With `loss_factors = true` (the default) each
+price is divided by the unit's loss factor, resolved as of `first(date_range)` by
+[`read_loss_factors`](@ref), which refers the bid to the regional reference node as NEMDE does.
+The MW axis, FCAS bids and physical limits are untouched. A unit with no usable loss factor keeps
+its raw prices (factor 1.0) and a warning names it. Pass `loss_factors = false` to keep the raw
+connection-point prices.
 """
-function set_market_bids!(sys, db, date_range; kwargs...)
+function set_market_bids!(sys, db, date_range; loss_factors::Bool = true, kwargs...)
     start_date = first(date_range)
     end_date = last(date_range)
     resolution = get(kwargs, :resolution, Minute(5))
@@ -107,6 +116,7 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     energy_bids_table = read_hive(db, :BIDPEROFFER_D)
     pricebids_table = read_hive(db, :BIDDAYOFFER_D)
     bids = _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
+    loss_factors && _refer_bids_to_reference_node!(bids, read_loss_factors(db; as_of = start_date))
 
     # Sets all generator subtype first
     foreach(get_components(Generator, sys)) do gen
@@ -171,6 +181,69 @@ energy bid, and takes part in the market only through FCAS offers.
 `Bool`.
 """
 _is_non_scheduled_load(device) = device isa InterruptiblePowerLoad && get(get_ext(device), "non_scheduled", false) === true
+
+"""
+    read_loss_factors(db; as_of = nothing) -> DataFrame
+
+Reads each unit's connection-point loss factors from `DUDETAILSUMMARY`: the row with
+`START_DATE <= as_of < END_DATE` in the latest archive (`nothing` keeps the open row).
+
+# Returns
+A `DataFrame` with `DUID`, `GEN_LOSS_FACTOR` (`TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR`)
+and `LOAD_LOSS_FACTOR` (`SECONDARY_TLF * DISTRIBUTIONLOSSFACTOR` for a bidirectional unit that
+publishes a secondary factor, else `GEN_LOSS_FACTOR`). A missing, non-finite or non-positive
+factor is replaced by 1.0 and the affected `DUID`s are named in a warning. A cache without the
+loss-factor columns yields an empty `DataFrame` and a warning.
+"""
+function read_loss_factors(db; as_of::Union{Nothing, Date, DateTime} = nothing)
+    empty_df = DataFrame(DUID = String[], GEN_LOSS_FACTOR = Float64[], LOAD_LOSS_FACTOR = Float64[])
+    _table_is_cached(db, :DUDETAILSUMMARY) || return empty_df
+    source = read_hive(db, :DUDETAILSUMMARY)
+    schema = names(_query(db, "SELECT * FROM $source LIMIT 0"))
+    if !all(in(schema), ("TRANSMISSIONLOSSFACTOR", "DISTRIBUTIONLOSSFACTOR"))
+        @warn "DUDETAILSUMMARY has no loss factor columns; bids stay at connection-point prices. Re-populate it with `force_new = true`."
+        return empty_df
+    end
+    secondary = "SECONDARY_TLF" in schema ? "SECONDARY_TLF" : "NULL"
+    window = isnothing(as_of) ? "(END_DATE IS NULL OR year(END_DATE) = 2999)" : "START_DATE <= ? AND (END_DATE IS NULL OR END_DATE > ?)"
+    sql = """
+        SELECT DUID, TRANSMISSIONLOSSFACTOR AS tlf, DISTRIBUTIONLOSSFACTOR AS dlf, $secondary AS tlf2
+        FROM $source
+        WHERE archive_month = (SELECT max(archive_month) FROM $source) AND $window
+        QUALIFY row_number() OVER (PARTITION BY DUID ORDER BY START_DATE DESC) = 1
+    """
+    raw = isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of, as_of])
+    ok(x) = !ismissing(x) && isfinite(x) && x > 0
+    dlf = [ok(d) ? Float64(d) : 1.0 for d in raw.dlf]
+    gen = [ok(t) ? Float64(t) * d : NaN for (t, d) in zip(raw.tlf, dlf)]
+    load = [ok(t2) ? Float64(t2) * d : g for (t2, d, g) in zip(raw.tlf2, dlf, gen)]
+    bad = raw.DUID[isnan.(gen)]
+    isempty(bad) || @warn "Missing or non-positive transmission loss factor; using 1.0" duids = bad
+    replace!(gen, NaN => 1.0)
+    replace!(load, NaN => 1.0)
+    return DataFrame(DUID = raw.DUID, GEN_LOSS_FACTOR = gen, LOAD_LOSS_FACTOR = load)
+end
+
+"""
+    _refer_bids_to_reference_node!(bids, factors)
+
+Divides every price of `bids.piecewise_step_data` by its unit's loss factor from `factors` (the
+output of [`read_loss_factors`](@ref); `GEN_LOSS_FACTOR` for `GEN` rows, `LOAD_LOSS_FACTOR` for
+`LOAD` rows). The MW breakpoints are unchanged. Units absent from `factors` keep their prices and
+are named in a warning.
+"""
+function _refer_bids_to_reference_node!(bids, factors)
+    lookup = Dict(r.DUID => (gen = r.GEN_LOSS_FACTOR, load = r.LOAD_LOSS_FACTOR) for r in eachrow(factors))
+    unknown = setdiff(unique(bids.DUID), keys(lookup))
+    isempty(unknown) || @warn "No loss factor for bid unit(s); keeping connection-point prices" duids = unknown
+    bids.piecewise_step_data = map(eachrow(bids)) do row
+        haskey(lookup, row.DUID) || return row.piecewise_step_data
+        factor = row.DIRECTION == "LOAD" ? lookup[row.DUID].load : lookup[row.DUID].gen
+        psd = row.piecewise_step_data
+        return PiecewiseStepData(get_x_coords(psd), get_y_coords(psd) ./ factor)
+    end
+    return bids
+end
 
 """
     _set_storage_energy_max_avail!(sys, storage, bids, name, start_date, resolution)

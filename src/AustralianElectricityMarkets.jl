@@ -21,7 +21,7 @@ export RegionalNetworkConfiguration, ConstrainedNetworkConfiguration
 
 export read_hive
 export read_mnsp_offers, read_mnsp_links, set_mnsp_offers!
-export read_interconnectors, read_units, read_demand, read_bids, read_energy_bids
+export read_interconnectors, read_units, read_demand, read_bids, read_energy_bids, read_loss_factors
 export read_affine_heatrates,
     read_coal_prices, read_gas_prices, read_biomass_prices, read_isp_thermal_costs_parameters,
     read_isp_renewable_costs_parameters,
