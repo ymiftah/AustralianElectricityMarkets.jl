@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- NEMWEB timestamps with a millisecond fraction (`2026/05/05 15:06:01.000`) parse instead of
+  becoming `NULL`.
 - A `GenericConstraint` term on an unavailable device or `AreaInterchange` contributes zero
   instead of throwing a `KeyError` in `build!` (PSI creates variables only for available
   components); `UnitTerm`, `RegionTerm` and `InterconnectorTerm` now match FCAS terms.
@@ -78,6 +80,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Data package ingests the MNSP offer tables (`MNSP_DAYOFFER`, `MNSP_BIDOFFERPERIOD`,
+  `MNSP_PEROFFER`, `DISPATCH_MNSPBIDTRK`), `DISPATCHLOAD.DISPATCHMODETIME` and
+  `DISPATCHINTERCONNECTORRES.FCASEXPORTLIMIT`/`FCASIMPORTLIMIT`, with `read_mnsp_offers`
+  returning the offer NEMDE applied per link and interval. Re-populate cached `DISPATCHLOAD` and
+  `DISPATCHINTERCONNECTORRES` months with `force_new = true` to fill the new columns.
 - **Single-interval replication pipeline** (`AustralianElectricityMarketsSimulations`):
   `replicate_interval(db, settlement_date)` builds the constrained `System`
   (`replication_system`), solves it with `replication_template` (NEM dispatch devices,
