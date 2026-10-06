@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `NEMInterconnectorLoss` fills loss segments contiguously through binary fill indicators, so the
+  solved loss follows the loss curve at negative or zero weighted prices instead of burning energy
+  on steeper segments. Multi-segment interconnectors make the problem a MILP; duals are read from
+  the LP with the indicators fixed. `replicate_interval` defaults to HiGHS with zero MIP gaps and
+  raises on non-finite regional prices.
 - NEMWEB timestamps with a millisecond fraction (`2026/05/05 15:06:01.000`) parse instead of
   becoming `NULL`.
 - Unit ramp rows of the `AbstractNEMDispatch` formulations are elastic: `UnitRampUpSlack` and

@@ -32,6 +32,7 @@ function _loss_test_system(;
         demand_coefficients::Dict{String, Float64} = Dict{String, Float64}(),
         pin_multiplier::Bool = true,
         priced_supply_only::Bool = false,
+        negative_cost::Bool = false,
     )
     sys = augmented_pscb_system()
     for gen in PSY.get_components(PSY.ThermalStandard, sys)
@@ -43,6 +44,20 @@ function _loss_test_system(;
     # Zero-cost hydro makes every marginal price zero, so the LP is indifferent to how loss
     # segments fill; thermal units carry a positive cost.
     priced_supply_only && foreach(h -> PSY.set_available!(h, false), PSY.get_components(PSY.HydroDispatch, sys))
+
+    if negative_cost
+        # Surplus supply with negative cost drives the receiving region's price below zero.
+        foreach(h -> PSY.set_available!(h, false), PSY.get_components(PSY.HydroDispatch, sys))
+        for gen in PSY.get_components(PSY.ThermalStandard, sys)
+            PSY.set_operation_cost!(
+                gen,
+                PSY.ThermalGenerationCost(;
+                    variable = PSY.CostCurve(PSY.LinearCurve(-50.0)), fixed = 0.0,
+                    start_up = 0.0, shut_down = 0.0,
+                ),
+            )
+        end
+    end
 
     for load in PSY.get_components(PSY.PowerLoad, sys)
         raw = PSY.get_time_series(PSY.SingleTimeSeries, load, "max_active_power")
@@ -218,6 +233,38 @@ end
     if !isnothing(first_not_full)
         @test all(isapprox(segment_values[i], 0.0; atol = 1.0e-6) for i in (first_not_full + 1):4)
     end
+end
+
+@testset "negative weighted price cannot burn energy on out-of-order segments" begin
+    # Negative-cost supply makes extra loss profitable, so only the segment encoding keeps
+    # the solved loss on the curve at the solved flow.
+    sys = _loss_test_system(;
+        loss_flow_coefficient = 2.0e-4, breakpoints = [-100.0, -25.0, 0.0, 25.0, 100.0],
+        negative_cost = true,
+    )
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    PSI.solve!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    res = PSI.OptimizationProblemResults(model)
+    gaps = interconnector_loss_gaps(res, sys)
+    @test !isempty(gaps)
+    @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
+    prices = PSI.read_dual(res, PSI.CopperPlateBalanceConstraint, PSY.Area)
+    price = Dict((r.name, r.DateTime) => r.value for r in eachrow(prices))
+    share = 0.4
+    for stamp in unique(prices.DateTime)
+        @test share * price[("1", stamp)] + (1 - share) * price[("2", stamp)] < 0.0
+    end
+    @test PSI.is_milp(PSI.get_optimization_container(model))
+end
+
+@testset "single-segment loss models add no fill indicators" begin
+    sys = _loss_test_system()
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    @test !PSI.has_container_key(container, AEMS.InterconnectorLossSegmentFullVariable, PSY.AreaInterchange)
 end
 
 @testset "FlowLimitConstraint bounds the flow from static flow_limits" begin

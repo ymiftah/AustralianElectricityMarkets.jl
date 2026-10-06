@@ -87,6 +87,33 @@ function replication_system(
     return sys
 end
 
+# Zero gap tolerances: the loss encoding makes the problem a MILP, and HiGHS' default relative gap
+# lets dispatch stop short of the optimum.
+const _DEFAULT_OPTIMIZER = JuMP.optimizer_with_attributes(
+    HiGHS.Optimizer, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10,
+)
+
+# Drops PSI's per-container "resulted in a MILP" warning, emitted once per dual container.
+struct _DropMILPWarning <: Base.CoreLogging.AbstractLogger
+    inner::Base.CoreLogging.AbstractLogger
+end
+_DropMILPWarning() = _DropMILPWarning(Base.CoreLogging.current_logger())
+Base.CoreLogging.min_enabled_level(l::_DropMILPWarning) = Base.CoreLogging.min_enabled_level(l.inner)
+Base.CoreLogging.shouldlog(l::_DropMILPWarning, args...) = Base.CoreLogging.shouldlog(l.inner, args...)
+Base.CoreLogging.catch_exceptions(l::_DropMILPWarning) = Base.CoreLogging.catch_exceptions(l.inner)
+function Base.CoreLogging.handle_message(l::_DropMILPWarning, level, message, args...; kwargs...)
+    occursin("resulted in a MILP", string(message)) && return nothing
+    return Base.CoreLogging.handle_message(l.inner, level, message, args...; kwargs...)
+end
+
+# PSI ignores a failed dual LP and leaves the duals NaN, so check them before reporting prices.
+function _check_prices_finite(results::PSI.OptimizationProblemResults, settlement_date::DateTime)
+    duals = PSI.read_dual(results, PSI.CopperPlateBalanceConstraint, PSY.Area)
+    all(isfinite, duals.value) ||
+        error("Interval $settlement_date has non-finite regional price duals; the dual pass failed.")
+    return nothing
+end
+
 """
     replicate_interval(db, settlement_date; intervention = 0, optimizer = HiGHS.Optimizer)
     replicate_interval(sys, db, settlement_date; intervention = 0, optimizer = HiGHS.Optimizer)
@@ -101,9 +128,10 @@ The model spans the interval and the one after it; the first is reported.
   plus `DISPATCHINTERCONNECTORRES`, with data at `settlement_date` and the interval after it.
 - `settlement_date`: the `SETTLEMENTDATE` of the interval (`DateTime`).
 - `intervention`: 0 for the pricing run, 1 for the physical run.
+- `optimizer`: the JuMP optimizer, e.g. `optimizer_with_attributes(HiGHS.Optimizer, ...)`. Defaults
+  to HiGHS with `mip_rel_gap = 0` and `mip_abs_gap = 1e-10`, since the interconnector loss encoding is a MILP.
 - `interval_flow_limits`: as in [`replication_system`](@ref); only the `replicate_interval(db, ...)`
   method builds the system.
-- `optimizer`: the JuMP optimizer, e.g. `optimizer_with_attributes(HiGHS.Optimizer, ...)`.
 
 # Returns
 A `NamedTuple` with the solved `model`, its `results`, and `comparison`, a `NamedTuple` of
@@ -126,7 +154,7 @@ end
 
 function replicate_interval(
         sys::PSY.System, db, settlement_date::DateTime;
-        intervention::Integer = 0, optimizer = HiGHS.Optimizer,
+        intervention::Integer = 0, optimizer = _DEFAULT_OPTIMIZER,
     )
     resolution = DISPATCH_INTERVAL
     template = replication_template(sys)
@@ -137,13 +165,14 @@ function replicate_interval(
         interval = resolution, initial_time = settlement_date, name = "replication",
     )
     output_dir = mktempdir()
-    status = PSI.build!(model; output_dir = output_dir)
+    status = Base.CoreLogging.with_logger(() -> PSI.build!(model; output_dir = output_dir), _DropMILPWarning())
     status == PSI.ModelBuildStatus.BUILT ||
         error("Interval $settlement_date failed to build ($status); see the PSI error log and $output_dir.")
     run_status = PSI.solve!(model)
     run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED ||
         error("Interval $settlement_date failed to solve: $run_status")
     results = PSI.OptimizationProblemResults(model)
+    _check_prices_finite(results, settlement_date)
     return (;
         model, results,
         comparison = _compare_to_published(db, sys, results, settlement_date, intervention),

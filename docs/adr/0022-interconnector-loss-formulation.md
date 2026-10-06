@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted. The over-dissipation gap described below is closed by 0031.
 
 ## Context
 

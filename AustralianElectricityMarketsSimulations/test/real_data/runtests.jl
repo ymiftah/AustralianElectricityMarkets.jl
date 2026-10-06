@@ -282,14 +282,16 @@ end
         end
     end
 
-    @testset "interconnector over-dissipation gap and regional price signs" begin
-        # NEMInterconnectorLoss in place of the main model's lossless StaticBranch, so the LP
-        # Compare solved loss with the breakpoint interpolation at the same solved flow.
+    @testset "interconnector loss gap and regional price signs" begin
+        # NEMInterconnectorLoss in place of the main model's lossless StaticBranch; the solved loss
+        # is compared with the breakpoint interpolation at the same solved flow.
         loss_template = aemsim_template(sys)
         PSI.set_device_model!(loss_template, PSY.AreaInterchange, NEMInterconnectorLoss)
         loss_model = PSI.DecisionModel(
             loss_template, sys;
-            optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+            optimizer = optimizer_with_attributes(
+                HiGHS.Optimizer, "output_flag" => false, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10,
+            ),
             horizon = REAL_SPAN,
             resolution = REAL_RESOLUTION,
             interval = REAL_RESOLUTION,
@@ -310,7 +312,7 @@ end
         timestamps = collect(REAL_DATE_RANGE)[1:(end - 1)]
 
         # Weighted marginal price of a unit of loss: share * price_from + (1 - share) * price_to.
-        # The segment encoding is exact whenever this is positive.
+        # The contiguous-fill encoding is exact at any sign of this price.
         dual_df = PSI.read_dual(loss_res, "CopperPlateBalanceConstraint__Area")
         price = Dict((r.name, r.DateTime) => r.value for r in eachrow(dual_df))
         weighted_price = Dict{Tuple{String, Int}, Float64}()
@@ -326,10 +328,9 @@ end
             end
         end
 
-        exact_pairs = [k for (k, wp) in weighted_price if wp > 1.0e-6 && haskey(gaps, k)]
-        @test !isempty(exact_pairs)
-        # Wherever the weighted price is positive, the LP has no incentive to over-dissipate.
-        @test all(abs(gaps[k]) < 1.0e-3 for k in exact_pairs)
+        @test !isempty(gaps)
+        # Negative weighted prices included, loss must stay on the curve at the solved flow.
+        @test all(abs(gap) < 1.0e-3 for gap in values(gaps))
 
         names = sort(unique(first.(keys(gaps))))
         report = join(
