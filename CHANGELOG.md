@@ -91,6 +91,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **MNSP link offers**: `read_mnsp_links` reads the link table, and `set_mnsp_offers!` attaches
+  each interconnector's two link offers (availability, price bands, link loss factors) to its
+  `AreaInterchange`. Under `NEMInterconnectorLoss` such an interconnector's flow splits into a
+  forward and a reverse `MNSPLinkFlowVariable`, each bounded by `MAXAVAIL` and the offered bands and
+  priced at offer price over the link's from-end loss factor, so Basslink, Murraylink and Terranora no
+  longer flow freely. An interconnector without offers keeps the free-flow model.
+
 - Data package ingests the MNSP offer tables (`MNSP_DAYOFFER`, `MNSP_BIDOFFERPERIOD`,
   `MNSP_PEROFFER`, `DISPATCH_MNSPBIDTRK`), `DISPATCHLOAD.DISPATCHMODETIME` and
   `DISPATCHINTERCONNECTORRES.FCASEXPORTLIMIT`/`FCASIMPORTLIMIT`, with `read_mnsp_offers`

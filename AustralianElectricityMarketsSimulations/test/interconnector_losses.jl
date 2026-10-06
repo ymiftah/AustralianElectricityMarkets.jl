@@ -434,3 +434,107 @@ end
     container = PSI.get_optimization_container(model)
     @test !PSI.has_container_key(container, AEMS.InterconnectorLossVariable, PSY.AreaInterchange)
 end
+
+"""
+    _attach_mnsp_offers!(sys; forward, reverse, forward_tlf = 1.0, reverse_tlf = 1.0)
+
+Gives `IC1` (area `"1"` to `"2"`) an MNSP offer per link, constant over the model horizon. `forward` and
+`reverse` are `(max_avail_mw, [(band_mw, price), ...])`.
+"""
+function _attach_mnsp_offers!(
+        sys; forward, reverse, forward_tlf::Float64 = 1.0, reverse_tlf::Float64 = 1.0,
+    )
+    ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
+    t0 = first(PSY.get_forecast_initial_times(sys))
+    interval = PSY.get_forecast_interval(sys)
+    windows = PSY.get_forecast_window_count(sys)
+    resolution = only(PSY.get_time_series_resolutions(sys))
+    n_steps = Int(Dates.value(PSY.get_forecast_horizon(sys)) ÷ Dates.value(resolution))
+    for (dir, (max_avail, bands), tlf) in (
+            ("forward", forward, forward_tlf), ("reverse", reverse, reverse_tlf),
+        )
+        x = [0.0; cumsum(Float64[b[1] for b in bands])]
+        curve = PSY.PiecewiseStepData(x, Float64[b[2] for b in bands])
+        for (name, values) in (
+                ("mnsp_$(dir)_offer", fill(curve, n_steps)), ("mnsp_$(dir)_max_avail", fill(Float64(max_avail), n_steps)),
+            )
+            PSY.add_time_series!(
+                sys, ic,
+                PSY.Deterministic(;
+                    name = name, data = Dict(t0 + (k - 1) * interval => values for k in 1:windows), resolution = resolution,
+                    interval = interval,
+                ),
+            )
+        end
+        PSY.get_ext(ic)["mnsp_$dir"] = Dict{String, Any}("from_region_tlf" => tlf, "to_region_tlf" => 1.0)
+    end
+    return ic
+end
+
+"Solves `sys` under the loss template and returns `(flow, forward, reverse, slack)` at the first timestep, in MW."
+function _solve_mnsp(sys)
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    PSI.solve!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    res = PSI.OptimizationProblemResults(model)
+    first_value(df) = begin
+        t1 = minimum(df.DateTime)
+        sum(subset(df, :DateTime => ByRow(==(t1))).value)
+    end
+    flow = first_value(PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange"))
+    PSI.has_container_key(PSI.get_optimization_container(model), MNSPLinkFlowVariable, PSY.AreaInterchange) ||
+        return (flow = flow, forward = missing, reverse = missing)
+    links = PSI.read_variable(res, "MNSPLinkFlowVariable__AreaInterchange")
+    t1 = minimum(links.DateTime)
+    link(dir) = only(subset(links, :DateTime => ByRow(==(t1)), :name2 => ByRow(==(dir)))).value
+    return (flow = flow, forward = link("forward"), reverse = link("reverse"))
+end
+
+@testset "MNSP link offers bound and price the interconnector flow" begin
+    free = _solve_mnsp(_loss_test_system(; breakpoints = [-1000.0, 1000.0]))
+    @test ismissing(free.forward)  # no offers: no link variables, the free-flow model
+    @test free.flow > 40.0  # free-flow baseline: area 2's demand is served through IC1
+
+    @testset "flow is limited by the link's MAXAVAIL" begin
+        sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+        _attach_mnsp_offers!(sys; forward = (30.0, [(100.0, 10.0)]), reverse = (30.0, [(100.0, 10.0)]))
+        out = _solve_mnsp(sys)
+        @test out.flow ≈ 30.0 atol = 1.0e-6
+        @test out.forward ≈ 30.0 atol = 1.0e-6
+        @test out.reverse ≈ 0.0 atol = 1.0e-6
+    end
+
+    @testset "flow follows the offered bands when availability exceeds demand" begin
+        sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+        _attach_mnsp_offers!(sys; forward = (500.0, [(500.0, 10.0)]), reverse = (500.0, [(500.0, 10.0)]))
+        out = _solve_mnsp(sys)
+        @test out.flow ≈ free.flow atol = 1.0e-6
+        @test out.forward ≈ out.flow atol = 1.0e-6
+    end
+
+    @testset "flow is zero when the offered price exceeds local generation cost" begin
+        # Area 2's own unit is available again, so a dear link offer loses to it.
+        sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+        PSY.set_available!(PSY.get_component(PSY.ThermalStandard, sys, "Solitude"), true)
+        _attach_mnsp_offers!(sys; forward = (500.0, [(500.0, 5000.0)]), reverse = (500.0, [(500.0, 5000.0)]))
+        out = _solve_mnsp(sys)
+        @test out.flow ≈ 0.0 atol = 1.0e-6
+    end
+
+    @testset "a reverse-only offer cannot export into area 2" begin
+        sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+        _attach_mnsp_offers!(sys; forward = (0.0, [(100.0, 10.0)]), reverse = (500.0, [(500.0, 10.0)]))
+        out = _solve_mnsp(sys)
+        @test out.flow ≈ 0.0 atol = 1.0e-6
+        @test out.forward ≈ 0.0 atol = 1.0e-6
+    end
+
+    @testset "negative offers on both links do not circulate" begin
+        sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+        _attach_mnsp_offers!(sys; forward = (500.0, [(500.0, -50.0)]), reverse = (500.0, [(500.0, -50.0)]))
+        out = _solve_mnsp(sys)
+        @test out.flow ≈ free.flow atol = 1.0e-6
+        @test min(out.forward, out.reverse) ≈ 0.0 atol = 1.0e-6
+    end
+end

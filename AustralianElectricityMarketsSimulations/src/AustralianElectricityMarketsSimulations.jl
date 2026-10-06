@@ -29,6 +29,7 @@ include("check/nem_constraints.jl")
 include("nem_dispatch.jl")
 include("nem_dispatch_storage.jl")
 include("devices/interconnector_losses.jl")
+include("devices/mnsp_links.jl")
 include("check/interconnector_losses.jl")
 include("psi_compat.jl")
 include("fcas_market.jl")
@@ -59,6 +60,7 @@ export nem_dispatch_participants, set_nem_dispatch_models!
 export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegmentVariable,
     InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint,
     InterconnectorLossSegmentFullVariable, InterconnectorLossSegmentOrderConstraint
+export MNSPLinkFlowVariable, MNSPLinkFlowConstraint
 export interconnector_loss_gaps, check_interconnector_loss_segments
 
 end
