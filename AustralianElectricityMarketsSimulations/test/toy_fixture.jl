@@ -226,6 +226,10 @@ function solve_toy(sys)
             dispatch_mw[row.name] = get(dispatch_mw, row.name, 0.0) - row.value
         end
     end
+    ramp_slack_mw = (;
+        up = sum(read_variable(results, "UnitRampUpSlack__ThermalStandard").value),
+        down = sum(read_variable(results, "UnitRampDownSlack__ThermalStandard").value),
+    )
     nem_keys = [
         k for k in PSI.get_constraint_keys(container)
             if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit
@@ -234,6 +238,7 @@ function solve_toy(sys)
         dispatch_mw = dispatch_mw,
         battery_out_mw = battery_out_mw,
         battery_in_mw = battery_in_mw,
+        ramp_slack_mw = ramp_slack_mw,
         band_mw = Dict(
             (name, band) => PSI.JuMP.value(v) * base_power
                 for ((name, band, _), v) in pairs(offers.data)

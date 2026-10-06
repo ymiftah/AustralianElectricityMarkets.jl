@@ -96,7 +96,10 @@ end
 entry_types(keys_) = Set(IS.Optimization.get_entry_type(k) for k in keys_)
 
 # The variables a constraint's affine expression actually references.
-constraint_vars(ref) = Set(keys(JuMP.constraint_object(ref).func.terms))
+# Power variables of a ramp row, ignoring its elastic slack.
+function constraint_vars(ref)
+    return Set(v for v in keys(JuMP.constraint_object(ref).func.terms) if !startswith(JuMP.name(v), "UnitRamp"))
+end
 
 component_keys(container_keys, ::Type{T}) where {T} =
     [k for k in container_keys if IS.Optimization.get_component_type(k) === T]
