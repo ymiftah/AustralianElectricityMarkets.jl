@@ -826,6 +826,7 @@ function _build_bdu_regulation(
         agc_enablement_min::Union{Nothing, Float64} = nothing,
         agc_enablement_max::Union{Nothing, Float64} = nothing,
         load_max_avail::Float64 = 10.0,
+        band_mw::Float64 = 10.0,
         solve::Bool = true,
         use_slacks::Bool = false,
         requirement_mw::Union{Nothing, Float64} = nothing,
@@ -856,11 +857,11 @@ function _build_bdu_regulation(
     end
     add_toy_fcas!(
         sys, bat, stamps[1], length(stamps), BidType.RAISEREG,
-        (0.0, 5.0, 20.0, 25.0, 10.0), [(10.0, 15.0)],
+        (0.0, 5.0, 20.0, 25.0, 10.0), [(band_mw, 15.0)],
     )
     add_toy_fcas!(
         sys, bat, stamps[1], length(stamps), BidType.RAISEREG,
-        (-25.0, -20.0, -5.0, 0.0, load_max_avail), [(10.0, 12.0)]; decremental = true,
+        (-25.0, -20.0, -5.0, 0.0, load_max_avail), [(band_mw, 12.0)]; decremental = true,
     )
     if !isnothing(agc_status)
         add_toy_fcas_agc_status!(sys, bat, stamps[1], length(stamps), agc_status)
@@ -1794,6 +1795,110 @@ end
             @test PSI.JuMP.objective_function(jm).terms[slack] ≈
                 base_power * interval_cost_coefficient(FCAS_CAPACITY_CVP_FACTOR * mpc, TOY_RESOLUTION)
         end
+    end
+end
+
+@testset "elastic FCAS MaxAvail and BDU SCADA rows (items 19 and 21, 155 x MPC)" begin
+    duid = TOY_CHEAP
+    mpc = 17_500.0
+
+    # The 6 MW offer band exceeds the 4 MW MaxAvail, so MaxAvail is the only cap on the capacity.
+    function lower6sec_container(; use_slacks)
+        sys = nem_toy_system(
+            [
+                duid => toy_unit(
+                    100.0, [(100.0, 20.0)]; initial = 20.0, ramp_up = 100.0, ramp_down = 100.0,
+                    availability = 100.0,
+                ),
+            ],
+            20.0;
+            mutate! = (sys, stamps) -> begin
+                device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+                add_toy_fcas!(
+                    sys, device, stamps[1], length(stamps), BidType.LOWER6SEC,
+                    (1.0, 5.0, 26.0, 27.0, 4.0), [(6.0, 10.0)],
+                )
+                PSY.add_service!(
+                    sys, FCASService(; name = "TAS1_LOWER6SEC", region = "TAS1", bid_type = BidType.LOWER6SEC),
+                    [device],
+                )
+            end,
+        )
+        return build_fcas(sys, ["TAS1_LOWER6SEC"]; use_slacks)
+    end
+
+    @testset "without slacks MaxAvail stays the variable's upper bound" begin
+        container = lower6sec_container(; use_slacks = false)
+        var = PSI.get_variable(container, FCASCapacityVariable(), FCASService, "TAS1_LOWER6SEC")[duid, 1]
+        @test PSI.JuMP.has_upper_bound(var)
+        @test !PSI.has_container_key(container, FCASMaxAvailSlack, FCASService, "TAS1_LOWER6SEC_maxavail")
+    end
+
+    @testset "with slacks MaxAvail is a priced row, and an excess is absorbed by exactly that excess" begin
+        container = lower6sec_container(; use_slacks = true)
+        base_power = PSI.get_base_power(container)
+        var = PSI.get_variable(container, FCASCapacityVariable(), FCASService, "TAS1_LOWER6SEC")[duid, 1]
+        @test !PSI.JuMP.has_upper_bound(var)
+        slack = PSI.get_variable(container, FCASMaxAvailSlack(), FCASService, "TAS1_LOWER6SEC_maxavail")[duid, 1]
+        jm = PSI.get_jump_model(container)
+        @test PSI.JuMP.objective_function(jm).terms[slack] ≈
+            base_power * interval_cost_coefficient(FCAS_MAXAVAIL_CVP_FACTOR * mpc, TOY_RESOLUTION)
+
+        fix_energy!(container, duid, 10.0)
+        PSI.JuMP.fix(var, 4.5 / base_power; force = true)  # 0.5 MW above the 4 MW MaxAvail
+        PSI.JuMP.optimize!(jm)
+        @test PSI.JuMP.termination_status(jm) == PSI.MOI.OPTIMAL
+        @test PSI.JuMP.value(slack) * base_power ≈ 0.5 atol = FCAS_TOY_TOLERANCE
+    end
+
+    @testset "an ordinary solve leaves the MaxAvail slack at zero" begin
+        container = lower6sec_container(; use_slacks = true)
+        fix_energy!(container, duid, 10.0)
+        jm = PSI.get_jump_model(container)
+        PSI.JuMP.optimize!(jm)
+        slack = PSI.get_variable(container, FCASMaxAvailSlack(), FCASService, "TAS1_LOWER6SEC_maxavail")[duid, 1]
+        @test PSI.JuMP.value(slack) ≈ 0.0 atol = FCAS_TOY_TOLERANCE
+    end
+
+    @testset "a BDU's per-side MaxAvail rows each absorb their own excess" begin
+        service_name = "TAS1_RAISEREG_BDU_MAXAVAIL"
+        model = _build_bdu_regulation(service_name, 15.0, 15.0; agc_max_avail = 100.0, band_mw = 20.0, solve = false, use_slacks = true)
+        container = PSI.get_optimization_container(model)
+        base_power = PSI.get_base_power(container)
+        jm = PSI.get_jump_model(container)
+        # Each side's MaxAvail is 10 MW against 20 MW offer bands; fix the sides at 12 and 13 MW.
+        for (side, mw) in (("gen", 12.0), ("load", 13.0))
+            cap = PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "$(service_name)_$side")["BAT1", 1]
+            @test !PSI.JuMP.has_upper_bound(cap)
+            PSI.JuMP.fix(cap, mw / base_power; force = true)
+        end
+        PSI.JuMP.optimize!(jm)
+        @test PSI.JuMP.termination_status(jm) == PSI.MOI.OPTIMAL
+        for (side, excess) in (("gen", 2.0), ("load", 3.0))
+            slack = PSI.get_variable(container, FCASMaxAvailSlack(), FCASService, "$(service_name)_$(side)_maxavail")["BAT1", 1]
+            @test PSI.JuMP.value(slack) * base_power ≈ excess atol = FCAS_TOY_TOLERANCE
+            @test PSI.JuMP.objective_function(jm).terms[slack] ≈
+                base_power * interval_cost_coefficient(FCAS_MAXAVAIL_CVP_FACTOR * mpc, TOY_RESOLUTION)
+        end
+    end
+
+    @testset "a BDU's SCADA ramping row is priced at 155 x MPC and its slack absorbs an excess" begin
+        service_name = "TAS1_RAISEREG_BDU_SCADA"
+        model = _build_bdu_regulation(service_name, 15.0, 15.0; agc_max_avail = 12.0, solve = false, use_slacks = true)
+        container = PSI.get_optimization_container(model)
+        base_power = PSI.get_base_power(container)
+        jm = PSI.get_jump_model(container)
+        slack = PSI.get_variable(container, FCASBDURampingSlack(), FCASService, service_name)["BAT1", 1]
+        @test PSI.JuMP.objective_function(jm).terms[slack] ≈
+            base_power * interval_cost_coefficient(FCAS_BDU_RAMPING_CVP_FACTOR * mpc, TOY_RESOLUTION)
+        # Fix each side's capacity at its 10 MW MaxAvail: 20 MW against the 12 MW SCADA cap.
+        for side in ("gen", "load")
+            cap = PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "$(service_name)_$side")["BAT1", 1]
+            PSI.JuMP.fix(cap, 10.0 / base_power; force = true)
+        end
+        PSI.JuMP.optimize!(jm)
+        @test PSI.JuMP.termination_status(jm) == PSI.MOI.OPTIMAL
+        @test PSI.JuMP.value(slack) * base_power ≈ 8.0 atol = FCAS_TOY_TOLERANCE
     end
 end
 

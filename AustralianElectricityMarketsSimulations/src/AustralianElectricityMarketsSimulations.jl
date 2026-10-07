@@ -49,8 +49,11 @@ export GenericConstraintSlackUp, GenericConstraintSlackDown, MARKET_PRICE_CAP_BY
 export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASJointCapacityLHS, FCASJointCapacityConstraint, FCASBDURampingConstraint,
     FCASJointRampingConstraint, FCASJointCapacitySlack, FCASJointRampingSlack,
-    FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR,
-    UNIT_RAMP_CVP_FACTOR, UnitRampUpSlack, UnitRampDownSlack
+    FCASMaxAvailConstraint, FCASMaxAvailSlack, FCASBDURampingSlack,
+    FCAS_MAXAVAIL_CVP_FACTOR, FCAS_BDU_RAMPING_CVP_FACTOR, FCAS_CAPACITY_CVP_FACTOR,
+    FCAS_RAMPING_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR,
+    UNIT_RAMP_CVP_FACTOR, UnitRampUpSlack, UnitRampDownSlack,
+    INTERCONNECTOR_FLOW_CVP_FACTOR, InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack
 export filter_buildable_generic_constraints, compute_fcas_prices
 export check_fcas_services
 export AbstractNEMDispatch, NEMReplayDispatch, NEMLookaheadDispatch,

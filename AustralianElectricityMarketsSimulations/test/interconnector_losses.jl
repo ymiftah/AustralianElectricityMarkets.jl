@@ -327,6 +327,81 @@ end
     @test capped_negative ≈ 0.5 * negative atol = 1.0e-4
 end
 
+@testset "conflicting flow limits are violated at 1150 x the Market Price Cap" begin
+    # Flow >= 10 MW (from-to limit of -10) against flow <= 5 MW: infeasible as hard rows. Both
+    # rows are elastic, so the 5 MW gap is split between the two slacks at the item 5 penalty.
+    sys = _loss_test_system()
+    ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
+    PSY.set_flow_limits!(ic1, (from_to = -10.0, to_from = 5.0))
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+    res = PSI.OptimizationProblemResults(model)
+    surplus = PSI.read_variable(res, "InterconnectorFlowSurplusSlack__AreaInterchange")
+    deficit = PSI.read_variable(res, "InterconnectorFlowDeficitSlack__AreaInterchange")
+    @test all(isapprox.(surplus.value .+ deficit.value, 5.0; atol = 1.0e-6))
+
+    container = PSI.get_optimization_container(model)
+    slack = PSI.get_variable(container, AEMS.InterconnectorFlowSurplusSlack(), PSY.AreaInterchange)["IC1", 1]
+    mpc = AEMS._container_market_price_cap(container, PSI.get_initial_time(container))
+    expected = PSY.get_base_power(sys) *
+        AEMS.interval_cost_coefficient(AEMS.INTERCONNECTOR_FLOW_CVP_FACTOR * mpc, PSI.get_resolution(container))
+    @test PSI.JuMP.objective_function(PSI.get_jump_model(container)).terms[slack] ≈ expected
+end
+
+@testset "the area balance (150) breaks before a binding flow limit (1150)" begin
+    # Area 2 is served only through IC1, capped at 5 MW: the rest of its demand is left unserved
+    # at 150 x MPC instead of violating the flow limit at 1150 x MPC.
+    sys = _loss_test_system()
+    ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
+    PSY.set_flow_limits!(ic1, (from_to = 100.0, to_from = 5.0))
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    res = PSI.OptimizationProblemResults(model)
+    @test all(abs.(PSI.read_variable(res, "InterconnectorFlowSurplusSlack__AreaInterchange").value) .< 1.0e-6)
+    @test all(isapprox.(PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange").value, 5.0; atol = 1.0e-6))
+    unserved = PSI.read_variable(res, "SystemBalanceSlackUp__Area")
+    @test sum(unserved.value) > 0
+end
+
+@testset "conflicting per-interval flow-limit series are violated on the parameter rows" begin
+    # Static limits of 100 MW both ways, scaled by series: a to-from ratio of 0.05 caps the flow
+    # at 5 MW and a from-to ratio of -0.1 floors it at 10 MW. The parameter rows relax by 5 MW.
+    sys = _loss_test_system()
+    ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
+    PSY.with_units_base(sys, "NATURAL_UNITS") do
+        PSY.set_flow_limits!(ic1, (from_to = 100.0, to_from = 100.0))
+    end
+    load = first(PSY.get_components(PSY.PowerLoad, sys))
+    grid = collect(timestamp(PSY.get_data(PSY.get_time_series(PSY.SingleTimeSeries, load, "max_active_power"))))
+    for (name, ratio) in (("from_to_flow_limit", -0.1), ("to_from_flow_limit", 0.05))
+        PSY.add_time_series!(
+            sys, ic1, PSY.SingleTimeSeries(; name = name, data = TimeArray(grid, fill(ratio, length(grid)))),
+        )
+    end
+    PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    res = PSI.OptimizationProblemResults(model)
+    surplus = PSI.read_variable(res, "InterconnectorFlowSurplusSlack__AreaInterchange")
+    deficit = PSI.read_variable(res, "InterconnectorFlowDeficitSlack__AreaInterchange")
+    @test all(isapprox.(surplus.value .+ deficit.value, 5.0; atol = 1.0e-4))
+end
+
+@testset "an ordinary flow limit leaves both flow slacks at zero" begin
+    sys = _loss_test_system()
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    res = PSI.OptimizationProblemResults(model)
+    for key in ("InterconnectorFlowSurplusSlack__AreaInterchange", "InterconnectorFlowDeficitSlack__AreaInterchange")
+        @test all(abs.(PSI.read_variable(res, key).value) .< 1.0e-6)
+    end
+end
+
 @testset "scaling_factor_multiplier demand and nonzero demand_coefficients: LP loss matches the curve" begin
     # Regression for the double-scaling bug: area loads carry a real scaling_factor_multiplier
     # (PSY.get_max_active_power), and the loss model's demand_coefficients are nonzero, so

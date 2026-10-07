@@ -105,6 +105,10 @@ device's own physical rating, not the raised availability ceiling, so a `MAXAVAI
 nameplate capacity — which NEMDE tolerates — is not mistaken for the one case that is genuinely
 infeasible: a ramp floor/ceiling the device's own rating cannot reach.
 
+Superseded in part by ADR 0037: `_check_storage_dispatch_envelope` is removed. The rating's
+variable upper bound is raised to the ramp floor, as the generator `max_active_power` series is,
+and the ramp row itself is elastic.
+
 ## Consequences
 
 - Every ramp band computed by the formulation is 60 times narrower than before this fix. Any

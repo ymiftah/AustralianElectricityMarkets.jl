@@ -150,7 +150,12 @@ unresolved DUIDs, regions or interconnectors; empty at the `:template` stage). `
 where the model has no solved value: `prices` (`REGIONID`; solved `ROP`, published `ROP` and
 `RRP`), `dispatch` (`DUID`, `TOTALCLEARED`), `interconnectors` (`INTERCONNECTORID`, `MWFLOW`,
 `MWLOSSES`) and `fcas_prices` (`REGIONID`, `BIDTYPE`, `ROP`). `ramp_violations` lists every
-non-zero unit ramp slack of the model (`DUID`, `DateTime`, `MW`, `direction`). The solved balance dual is the
+non-zero unit ramp slack of the model (`DUID`, `DateTime`, `MW`, `direction`), and
+`constraint_violations` lists every non-zero slack of every elastic family (`family`, `name`,
+`DateTime`, `MW`, `direction`, `variable`), where `family` is one of `"unit_ramp"`,
+`"interconnector_flow"`, `"fcas_max_avail"`, `"fcas_bdu_ramping"`, `"fcas_joint_ramping"`,
+`"fcas_enablement"`, `"generic_constraint"` and `"area_balance"`. `direction` is `"up"` for a
+slack relaxing a `<=` row and `"down"` for one relaxing a `>=` row. The solved balance dual is the
 unadjusted price, so it is compared with `ROP`; `RRP` differs only under an administered price.
 Throws if the model does not build or solve, after logging `skipped_constraints`.
 """
@@ -184,9 +189,9 @@ function replicate_interval(
         model, results, skipped_constraints,
         comparison = _compare_to_published(db, sys, results, settlement_date, intervention),
         ramp_violations = _ramp_violations(results),
+        constraint_violations = _constraint_violations(results),
     )
 end
-
 # The model `replicate_interval` solves: template, FCAS check, `DecisionModel` and its build.
 function _replication_model(
         sys::PSY.System, settlement_date::DateTime; optimizer = _DEFAULT_OPTIMIZER, name = "replication",
@@ -227,23 +232,62 @@ function _skipped_constraints_table(sys::PSY.System, template_skipped)
     return select(vcat(build, template), :constraint, :stage, :reason, :n_missing, :missing_keys)
 end
 
-# `DUID`, `DateTime`, `MW` and `direction` of every non-zero unit ramp slack, in every interval.
-function _ramp_violations(results::PSI.OptimizationProblemResults)
-    kinds = Dict(UnitRampUpSlack => "up", UnitRampDownSlack => "down")
-    rows = NamedTuple{(:DUID, :DateTime, :MW, :direction), Tuple{String, DateTime, Float64, String}}[]
+# Every elastic slack family, as `slack variable type => (family, direction)`. `direction` is
+# `"up"` for a slack that relaxes a `<=` row and `"down"` for one that relaxes a `>=` row; the
+# FCAS families whose rows have both senses refine it per key in `_violation_direction`.
+const _VIOLATION_FAMILIES = (
+    UnitRampUpSlack => ("unit_ramp", "up"),
+    UnitRampDownSlack => ("unit_ramp", "down"),
+    InterconnectorFlowSurplusSlack => ("interconnector_flow", "up"),
+    InterconnectorFlowDeficitSlack => ("interconnector_flow", "down"),
+    FCASMaxAvailSlack => ("fcas_max_avail", "up"),
+    FCASBDURampingSlack => ("fcas_bdu_ramping", "up"),
+    FCASJointRampingSlack => ("fcas_joint_ramping", "up"),
+    FCASJointCapacitySlack => ("fcas_enablement", "up"),
+    GenericConstraintSlackUp => ("generic_constraint", "up"),
+    GenericConstraintSlackDown => ("generic_constraint", "down"),
+    PSI.SystemBalanceSlackUp => ("area_balance", "up"),
+    PSI.SystemBalanceSlackDown => ("area_balance", "down"),
+)
+
+# `FCASJointCapacitySlack` keys end in `_lower` for the `>=` EnablementMin rows, and a
+# `FCASJointRampingSlack` of a `LOWERREG` service relaxes the `>=` lower ramping form.
+function _violation_direction(type, meta::AbstractString, default::AbstractString)
+    type === FCASJointCapacitySlack && return endswith(meta, "_lower") ? "down" : "up"
+    type === FCASJointRampingSlack && return endswith(meta, "LOWERREG") ? "down" : "up"
+    return default
+end
+
+# `family`, `name`, `DateTime`, `MW`, `direction` and `variable` (the slack variable's key) of
+# every slack above the tolerance, in every interval and every family of `_VIOLATION_FAMILIES`.
+function _constraint_violations(results::PSI.OptimizationProblemResults)
+    kinds = Dict(_VIOLATION_FAMILIES)
+    rows = NamedTuple{
+        (:family, :name, :DateTime, :MW, :direction, :variable),
+        Tuple{String, String, DateTime, Float64, String, String},
+    }[]
     for key in PSI.list_variable_keys(results)
-        direction = get(kinds, PSI.IS.Optimization.get_entry_type(key), nothing)
-        isnothing(direction) && continue
+        type = PSI.IS.Optimization.get_entry_type(key)
+        kind = get(kinds, type, nothing)
+        isnothing(kind) && continue
+        direction = _violation_direction(type, key.meta, kind[2])
         for r in eachrow(PSI.read_variable(results, key))
-            r.value > _RAMP_VIOLATION_TOLERANCE_MW &&
-                push!(rows, (; DUID = r.name, DateTime = r.DateTime, MW = r.value, direction))
+            r.value > _VIOLATION_TOLERANCE_MW &&
+                push!(rows, (; family = kind[1], name = r.name, DateTime = r.DateTime, MW = r.value, direction, variable = string(key)))
         end
     end
     return DataFrame(rows)
 end
 
-"MW of unit ramp slack below which a ramp row counts as satisfied."
-const _RAMP_VIOLATION_TOLERANCE_MW = 1.0e-6
+# `DUID`, `DateTime`, `MW` and `direction` of every non-zero unit ramp slack.
+function _ramp_violations(results::PSI.OptimizationProblemResults)
+    violations = _constraint_violations(results)
+    ramp = violations[violations.family .== "unit_ramp", :]
+    return DataFrame(DUID = ramp.name, DateTime = ramp.DateTime, MW = ramp.MW, direction = ramp.direction)
+end
+
+"MW of slack below which a constraint row counts as satisfied."
+const _VIOLATION_TOLERANCE_MW = 1.0e-6
 
 # `name => value` for the rows of a `read_variable`/`read_dual` frame at `settlement_date`.
 function _first_interval(df::DataFrame, settlement_date::DateTime)
