@@ -1358,10 +1358,10 @@
         function two_years(df)
             old = copy(df)
             old.END_DATE = Union{DateTime, Missing}[fy_change for _ in 1:nrow(old)]
-            old.DISPATCHTYPE = [d in ("BW01", "BW04") ? "BIDIRECTIONAL" : "GENERATOR" for d in old.DUID]
-            old.TRANSMISSIONLOSSFACTOR = [d == "ER01" ? 0.9 : d == "BW01" ? 0.8 : d == "ER02" ? 0.0 : 1.0 for d in old.DUID]
-            old.DISTRIBUTIONLOSSFACTOR = Union{Float64, Missing}[d == "ER01" ? 0.97 : d == "BW03" ? missing : 1.0 for d in old.DUID]
-            old.SECONDARY_TLF = Union{Float64, Missing}[d == "BW01" ? 0.5 : d == "BW02" ? 0.7 : d == "BW04" ? -1.0 : missing for d in old.DUID]
+            old.DISPATCHTYPE = [d == "BW01" ? "BIDIRECTIONAL" : "GENERATOR" for d in old.DUID]
+            old.TRANSMISSIONLOSSFACTOR = [d == "ER01" ? 0.9 : d == "BW01" ? 0.8 : 1.0 for d in old.DUID]
+            old.DISTRIBUTIONLOSSFACTOR = [d == "ER01" ? 0.97 : 1.0 for d in old.DUID]
+            old.SECONDARY_TLF = Union{Float64, Missing}[d == "BW01" ? 0.5 : d == "BW02" ? 0.7 : missing for d in old.DUID]
             new = copy(df)
             new.START_DATE .= fy_change
             new.TRANSMISSIONLOSSFACTOR = [d == "ER01" ? 0.8 : 1.0 for d in new.DUID]
@@ -1381,9 +1381,6 @@
             @test factor(old, "BW01", :GEN_LOSS_FACTOR) == 0.5            # BIDIRECTIONAL: secondary on GEN
             @test factor(old, "BW01", :LOAD_LOSS_FACTOR) == 0.8
             @test factor(old, "BW02", :GEN_LOSS_FACTOR) == 1.0            # SECONDARY_TLF ignored off a BDU
-            @test factor(old, "ER02", :LOAD_LOSS_FACTOR) == 1.0           # zero TLF
-            @test factor(old, "BW03", :LOAD_LOSS_FACTOR) == 1.0           # missing DLF
-            @test factor(old, "BW04", :GEN_LOSS_FACTOR) == 1.0            # invalid secondary falls back
             new = read_loss_factors(ldb; as_of = DateTime(2025, 7, 2))
             @test factor(new, "ER01", :LOAD_LOSS_FACTOR) == 0.8
             @test factor(new, "BW01", :GEN_LOSS_FACTOR) == 1.0
@@ -1392,9 +1389,6 @@
             @test factor(read_loss_factors(ldb; as_of = fy_change), "ER01", :LOAD_LOSS_FACTOR) == 0.8
             # No as_of keeps the open row.
             @test factor(read_loss_factors(ldb), "ER01", :LOAD_LOSS_FACTOR) == 0.8
-            for pattern in (r"non-positive distribution", r"non-positive transmission", r"non-positive secondary")
-                @test_logs (:warn, pattern) match_mode = :any read_loss_factors(ldb; as_of = start_date)
-            end
             @test_logs (:warn, r"change within the date range") match_mode = :any read_loss_factors(ldb; as_of = start_date, through = DateTime(2025, 7, 1, 1))
         end
 
@@ -1414,7 +1408,6 @@
         @testset "prices are divided, MW is not" begin
             @test prices(sys_lf, "ER01") ≈ prices(sys_raw, "ER01") ./ (0.9 * 0.97)
             @test prices(sys_lf, "BW02") ≈ prices(sys_raw, "BW02")
-            @test prices(sys_lf, "ER02") ≈ prices(sys_raw, "ER02")
             @test prices(sys_lf, "BW01") ≈ prices(sys_raw, "BW01") ./ 0.5
             @test prices(sys_lf, "BW01", "decremental_variable_cost") ≈
                 prices(sys_raw, "BW01", "decremental_variable_cost") ./ 0.8
@@ -1427,18 +1420,11 @@
             @test last(prices(sys_lf, "ER01")) > last(prices(sys_lf, "BW02"))
         end
 
-        @testset "cache without the loss factor columns keeps raw prices" begin
-            bare = loss_factor_db(df -> select(df, Not(:TRANSMISSIONLOSSFACTOR, :DISTRIBUTIONLOSSFACTOR, :SECONDARY_TLF)))
-            sys_bare = nem_system(bare, RegionalNetworkConfiguration())
-            @test_logs (:warn, r"no loss factor columns") match_mode = :any set_market_bids!(sys_bare, bare, date_range; resolution = Minute(5))
-            @test prices(sys_bare, "ER01") ≈ prices(sys_raw, "ER01")
-        end
-
-        @testset "a unit without a DUDETAILSUMMARY row keeps raw prices and is named" begin
+        @testset "a bidding unit without a DUDETAILSUMMARY row in force is an error" begin
             # BW02's only row starts after the range, so it has no factor at its start.
             partial = loss_factor_db(df -> subset(two_years(df), [:DUID, :START_DATE] => ByRow((d, t) -> !(d == "BW02" && t < fy_change))))
             sys_partial = nem_system(partial, RegionalNetworkConfiguration())
-            @test_logs (:warn, r"No loss factor for bid unit") match_mode = :any set_market_bids!(sys_partial, partial, date_range; resolution = Minute(5))
+            @test_throws ArgumentError set_market_bids!(sys_partial, partial, date_range; resolution = Minute(5))
         end
     end
 end

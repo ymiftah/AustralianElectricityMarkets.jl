@@ -105,8 +105,8 @@ Energy bid prices are connection-point prices. With `loss_factors = true` (the d
 price is divided by the unit's loss factor, resolved as of `first(date_range)` by
 [`read_loss_factors`](@ref) (one factor per unit for the whole range; a warning flags a change
 inside it), which refers the bid to the regional reference node as NEMDE does.
-The MW axis, FCAS bids and physical limits are untouched. A unit with no usable loss factor keeps
-its raw prices and a warning names it. Pass `loss_factors = false` to keep the raw
+The MW axis, FCAS bids and physical limits are untouched. A bidding unit of `sys` with no
+`DUDETAILSUMMARY` row in force throws an `ArgumentError`. Pass `loss_factors = false` to keep the raw
 connection-point prices.
 """
 function set_market_bids!(sys, db, date_range; loss_factors::Bool = true, kwargs...)
@@ -120,7 +120,7 @@ function set_market_bids!(sys, db, date_range; loss_factors::Bool = true, kwargs
     if loss_factors
         sys_units = Set(get_name.(vcat(collect(get_components(Generator, sys)), collect(get_components(EnergyReservoirStorage, sys)))))
         factors = read_loss_factors(db; as_of = start_date, through = end_date)
-        _refer_bids_to_reference_node!(bids, factors; units = sys_units)
+        _refer_bids_to_reference_node!(subset!(bids, :DUID => ByRow(in(sys_units))), factors)
     end
 
     # Sets all generator subtype first
@@ -204,38 +204,28 @@ Reads each unit's connection-point loss factors from `DUDETAILSUMMARY`: the row 
 A `DataFrame` with `DUID`, `LOAD_LOSS_FACTOR` (`TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR`,
 the factor for a load or a battery's charging side) and `GEN_LOSS_FACTOR` (`SECONDARY_TLF *
 DISTRIBUTIONLOSSFACTOR` for a `BIDIRECTIONAL` unit that publishes a secondary factor, else
-`LOAD_LOSS_FACTOR`). A missing, non-finite or non-positive `DISTRIBUTIONLOSSFACTOR` or
-`TRANSMISSIONLOSSFACTOR` is replaced by 1.0, and an invalid `SECONDARY_TLF` by the load factor;
-each case names its `DUID`s in a warning. A cache without `DUDETAILSUMMARY` or its loss-factor
-columns yields an empty `DataFrame` and a warning.
+`LOAD_LOSS_FACTOR`). Requires the cached `DUDETAILSUMMARY` to hold the loss-factor columns;
+re-populate it with `force_new = true` otherwise.
 """
 function read_loss_factors(
         db; as_of::Union{Nothing, Date, DateTime} = nothing,
         through::Union{Nothing, Date, DateTime} = nothing,
     )
-    empty_df = DataFrame(DUID = String[], GEN_LOSS_FACTOR = Float64[], LOAD_LOSS_FACTOR = Float64[])
-    if !_table_is_cached(db, :DUDETAILSUMMARY)
-        @warn "DUDETAILSUMMARY is not cached; bids stay at connection-point prices."
-        return empty_df
-    end
     source = read_hive(db, :DUDETAILSUMMARY)
-    schema = names(_query(db, "SELECT * FROM $source LIMIT 0"))
-    if !all(in(schema), ("TRANSMISSIONLOSSFACTOR", "DISTRIBUTIONLOSSFACTOR"))
-        @warn "DUDETAILSUMMARY has no loss factor columns; bids stay at connection-point prices. Re-populate it with `force_new = true`."
-        return empty_df
-    end
-    secondary = all(in(schema), ("SECONDARY_TLF", "DISPATCHTYPE")) ?
-        "CASE WHEN DISPATCHTYPE = 'BIDIRECTIONAL' THEN SECONDARY_TLF END" : "NULL"
     window = isnothing(as_of) ? "(END_DATE IS NULL OR year(END_DATE) = 2999)" : "START_DATE <= ? AND (END_DATE IS NULL OR END_DATE > ?)"
     # Open rows keep the earliest START_DATE, as read_units does, so both readers pick the same row.
     order = isnothing(as_of) ? "ASC" : "DESC"
     sql = """
-        SELECT DUID, TRANSMISSIONLOSSFACTOR AS tlf, DISTRIBUTIONLOSSFACTOR AS dlf, $secondary AS tlf2
+        SELECT DUID,
+            TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR AS LOAD_LOSS_FACTOR,
+            CASE WHEN DISPATCHTYPE = 'BIDIRECTIONAL' AND SECONDARY_TLF IS NOT NULL
+                 THEN SECONDARY_TLF * DISTRIBUTIONLOSSFACTOR
+                 ELSE TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR END AS GEN_LOSS_FACTOR
         FROM $source
         WHERE archive_month = (SELECT max(archive_month) FROM $source) AND $window
         QUALIFY row_number() OVER (PARTITION BY DUID ORDER BY START_DATE $order) = 1
     """
-    raw = isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of, as_of])
+    factors = isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of, as_of])
     if !isnothing(as_of) && !isnothing(through) && through > as_of
         changed = _query(
             db,
@@ -248,46 +238,29 @@ function read_loss_factors(
         isempty(changed) ||
             @warn "Loss factors change within the date range; the factors in force at its start are used throughout" as_of through first_changed = first(changed, 5)
     end
-    ok(x) = !ismissing(x) && isfinite(x) && x > 0
-    dlf = [ok(d) ? Float64(d) : 1.0 for d in raw.dlf]
-    load = [ok(t) ? Float64(t) * d : NaN for (t, d) in zip(raw.tlf, dlf)]
-    gen = [ok(t2) ? Float64(t2) * d : l for (t2, d, l) in zip(raw.tlf2, dlf, load)]
-    for (what, bad) in (
-            "distribution loss factor (using 1.0)" => .!ok.(raw.dlf),
-            "transmission loss factor (using 1.0)" => isnan.(load),
-            "secondary loss factor (using the load factor)" => .!ismissing.(raw.tlf2) .& .!ok.(raw.tlf2),
-        )
-        any(bad) && @warn "Missing or non-positive $what" duids = raw.DUID[bad]
-    end
-    replace!(gen, NaN => 1.0)
-    replace!(load, NaN => 1.0)
-    return DataFrame(DUID = raw.DUID, GEN_LOSS_FACTOR = gen, LOAD_LOSS_FACTOR = load)
+    return select(factors, :DUID, :GEN_LOSS_FACTOR, :LOAD_LOSS_FACTOR)
 end
 
 """
-    _refer_bids_to_reference_node!(bids, factors; units = nothing) -> bids
+    _refer_bids_to_reference_node!(bids, factors) -> bids
 
 Divides every price of `bids.piecewise_step_data` by its unit's loss factor, leaving the MW
-breakpoints unchanged. Units absent from `factors` keep their prices; those in `units` are named
-in a warning.
+breakpoints unchanged.
 
 # Arguments
 - `bids`: the `DataFrame` from `_massage_bids`, modified in place.
 - `factors`: the output of [`read_loss_factors`](@ref); `GEN_LOSS_FACTOR` applies to `GEN` rows and
-  `LOAD_LOSS_FACTOR` to `LOAD` rows. An empty `factors` leaves `bids` unchanged without a warning.
-- `units`: the `DUID`s whose absence from `factors` is worth a warning, or `nothing` for all.
+  `LOAD_LOSS_FACTOR` to `LOAD` rows. Throws an `ArgumentError` naming any bid `DUID` it lacks.
 
 # Returns
 `bids`.
 """
-function _refer_bids_to_reference_node!(bids, factors; units = nothing)
-    isempty(factors) && return bids
+function _refer_bids_to_reference_node!(bids, factors)
     lookup = Dict(r.DUID => (gen = r.GEN_LOSS_FACTOR, load = r.LOAD_LOSS_FACTOR) for r in eachrow(factors))
     unknown = setdiff(unique(bids.DUID), keys(lookup))
-    isnothing(units) || (unknown = filter(in(units), unknown))
-    isempty(unknown) || @warn "No loss factor for bid unit(s); keeping connection-point prices" duids = unknown
+    isempty(unknown) ||
+        throw(ArgumentError("No DUDETAILSUMMARY loss factor for bid unit(s) $(join(unknown, ", "))."))
     bids.piecewise_step_data = map(eachrow(bids)) do row
-        haskey(lookup, row.DUID) || return row.piecewise_step_data
         factor = row.DIRECTION == "LOAD" ? lookup[row.DUID].load : lookup[row.DUID].gen
         psd = row.piecewise_step_data
         return PiecewiseStepData(get_x_coords(psd), get_y_coords(psd) ./ factor)

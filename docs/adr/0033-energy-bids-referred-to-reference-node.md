@@ -36,8 +36,11 @@ band, which the diagnosis of the June 2026 run attributed to about 100 of 216 un
   prices by `LOAD_LOSS_FACTOR` once the scheduled-load change merges.
 - **Not scaled.** FCAS prices (nempy scales only energy), scheduled capacity bounds (`MAXAVAIL`,
   `MINIMUMLOAD`) and `DAILYENERGYCONSTRAINT`.
-- **Missing or non-positive factors** default to 1.0 with a warning naming the units; a cache
-  without the columns leaves prices raw with a warning. One factor per unit is used for the
+- **No defensive paths.** The June 2026 cache has no null or non-positive loss factor in force,
+  no `SECONDARY_TLF` on a non-bidirectional unit, and a row for every one of the 503 bidding units,
+  so `read_loss_factors` does not replace or tolerate any of those. A bidding unit of the `System`
+  without a row in force throws an `ArgumentError`. A cache without the columns fails in DuckDB:
+  re-populate `DUDETAILSUMMARY` with `force_new = true` after upgrading. One factor per unit is used for the
   whole `date_range`, resolved as of `first(date_range)`, and a warning fires when a `START_DATE`
   falls in `(first, last]`. That timestamp is an interval end, so the interval ending at 00:00 on
   1 July selects the new financial year's factors, as `read_units` does. None of the cited AEMO
@@ -60,5 +63,6 @@ multiplier `RRP x MLF`. The regional balance therefore keeps connection-point MW
   reference-node price. The pricing of marginal units is unchanged as a shadow price: the RRP is
   still at the reference node.
 - Unit bids with equal reference-node prices remain tied; tie-breaking is a separate gap.
-- The loss-factor columns are `Float32` in the cache (`COLUMN_TYPES`), which limits referred prices
-  to about seven digits. Widening them to `Float64` needs a cache re-populate; left as a follow-up.
+- The three loss-factor columns are `Float64` in `COLUMN_TYPES` (they were `Float32`, which turns a
+  floor bid of -973.1 over a factor of 0.9731 into -999.99999 and perturbs ties). Re-populate
+  `DUDETAILSUMMARY` with `force_new = true`. The `BIDDAYOFFER_D` price bands stay `Float32`.
