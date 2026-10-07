@@ -91,6 +91,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `add_nem_constraints!` builds the Interconnector Zero constraints `SVML_ZERO`, `VSML_ZERO`, `VT_ZERO` and
+  `TV_ZERO`, which `GENCONDATA` and the `SPD*` tables do not define, from a built-in definition
+  (`zero_flow_constraint_definitions`): a one-term `<=` constraint on the `V-S-MNSP1` or `T-V-MNSP1`
+  flow with right-hand side 0 and CVP factor 1160. A Murraylink or Basslink outage now holds the
+  interconnector at zero in the replica instead of leaving the constraint skipped as `no_definition`.
+
 - Data package ingests the MNSP offer tables (`MNSP_DAYOFFER`, `MNSP_BIDOFFERPERIOD`,
   `MNSP_PEROFFER`, `DISPATCH_MNSPBIDTRK`), `DISPATCHLOAD.DISPATCHMODETIME` and
   `DISPATCHINTERCONNECTORRES.FCASEXPORTLIMIT`/`FCASIMPORTLIMIT`, with `read_mnsp_offers`

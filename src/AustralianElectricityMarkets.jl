@@ -33,7 +33,7 @@ export read_dispatch_limits, set_nem_dispatch_limits!, set_nem_initial_condition
 export read_interconnector_limits, set_interconnector_flow_limits!
 export get_initial_mw, get_energy_availability
 export read_invoked_constraints, read_constraint_definitions, read_constraint_terms,
-    read_constraint_fcas_requirements, add_nem_constraints!
+    read_constraint_fcas_requirements, add_nem_constraints!, zero_flow_constraint_definitions
 export fcas_service_name
 export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS
 export BidType
@@ -91,6 +91,7 @@ include("constraints/generic_constraint.jl")
 include("constraints/read.jl")
 include("constraints/resolve.jl")
 include("fcas/service.jl")
+include("constraints/zero_flow.jl")
 include("constraints/build.jl")
 include("interconnector_losses.jl")
 

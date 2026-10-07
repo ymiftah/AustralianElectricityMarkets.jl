@@ -536,6 +536,73 @@ end
         @test inferred == Minute(5)
     end
 
+    @testset "Interconnector Zero constraints have a built-in definition" begin
+        # Copy the mock hive, add Murraylink to INTERCONNECTOR/INTERCONNECTORCONSTRAINT and
+        # invoke SVML_ZERO and VSML_ZERO (no GENCONDATA or SPD* row) plus an unrecognised
+        # version of VT_ZERO, in every interval.
+        zero_hive = mktempdir()
+        create_mock_data(zero_hive)
+        zero_conn = DuckDB.connect(DuckDB.DB())
+        DuckDB.execute(zero_conn, "SET preserve_identifier_case=true")
+        append_rows(table, select_sql) = begin
+            dir = joinpath(zero_hive, table)
+            tmp = dir * "_new"
+            DuckDB.execute(
+                zero_conn,
+                "COPY (SELECT * FROM read_parquet('$(dir)/**/*.parquet', hive_partitioning=true) " *
+                    "UNION ALL BY NAME $select_sql) TO '$tmp' (FORMAT 'PARQUET', PARTITION_BY (archive_month))",
+            )
+            rm(dir; recursive = true)
+            mv(tmp, dir)
+            return nothing
+        end
+        append_rows(
+            "INTERCONNECTOR",
+            "SELECT 'V-S-MNSP1' AS INTERCONNECTORID, 'VIC1' AS REGIONFROM, 'SA1' AS REGIONTO, '2025-01' AS archive_month",
+        )
+        append_rows(
+            "INTERCONNECTORCONSTRAINT",
+            "SELECT 'V-S-MNSP1' AS INTERCONNECTORID, TIMESTAMP '2025-01-01 00:00:00' AS EFFECTIVEDATE, " *
+                "1 AS VERSIONNO, 200.0 AS MAXMWIN, 200.0 AS MAXMWOUT, 0.1 AS FROMREGIONLOSSSHARE, " *
+                "0.01 AS LOSSCONSTANT, 0.001 AS LOSSFLOWCOEFFICIENT, 'MNSP' AS ICTYPE, '2025-01' AS archive_month",
+        )
+        for (id, eff, ver) in (
+                ("SVML_ZERO", "2013-08-21", 1), ("VSML_ZERO", "2013-08-21", 1), ("VT_ZERO", "2013-08-21", 2),
+            )
+            append_rows(
+                "DISPATCHCONSTRAINT",
+                "SELECT t AS SETTLEMENTDATE, 1 AS RUNNO, 0 AS INTERVENTION, '$id' AS CONSTRAINTID, " *
+                    "0.0 AS RHS, 0.0 AS LHS, $(id == "SVML_ZERO" ? -23548000.0 : 0.0) AS MARGINALVALUE, " *
+                    "DATE '$eff' AS GENCONID_EFFECTIVEDATE, $ver AS GENCONID_VERSIONNO, t AS LASTCHANGED, " *
+                    "'2025-01' AS archive_month FROM (SELECT unnest(generate_series(" *
+                    "TIMESTAMP '2025-01-01 00:00:00', TIMESTAMP '2025-01-01 00:55:00', INTERVAL 5 MINUTE)) AS t)",
+            )
+        end
+
+        zero_db = aem_connect(HiveConfiguration(hive_location = zero_hive, filesystem = "file"))
+        zero_sys = nem_system(zero_db, RegionalNetworkConfiguration())
+        added_z, skipped_z = add_nem_constraints!(zero_sys, zero_db, date_range)
+
+        zname(id, eff = "2013-08-21", ver = 1) = "$id@$eff#$ver"
+        @test zname("SVML_ZERO") in added_z
+        @test zname("VSML_ZERO") in added_z
+        @test skipped_z[zname("VT_ZERO", "2013-08-21", 2)] == :no_definition
+
+        svml = get_component(GenericConstraint, zero_sys, zname("SVML_ZERO"))
+        @test get_sense(svml) == ConstraintSense.LE
+        @test get_rhs(svml) == 0.0
+        @test get_constraint_weight(svml) == 1160.0
+        @test get_limit_type(svml) == "Interconnector Zero"
+        term = only(get_terms(svml))
+        @test term isa InterconnectorTerm
+        @test get_interconnector(term) == "V-S-MNSP1"
+        @test get_factor(term) == -1.0
+        vsml = get_component(GenericConstraint, zero_sys, zname("VSML_ZERO"))
+        @test get_factor(only(get_terms(vsml))) == 1.0
+        rhs_z = first(values(get_data(get_time_series(Deterministic, svml, "rhs"))))
+        @test all(==(0.0), rhs_z)
+    end
+
     @testset "throws when DISPATCHCONSTRAINT is not cached" begin
         empty_db = aem_connect(HiveConfiguration(hive_location = mktempdir(), filesystem = "file"))
         empty_sys = nem_system(db, RegionalNetworkConfiguration())
