@@ -37,6 +37,10 @@
         @test any(!ismissing, comparison.interconnectors.MWFLOW_solved)
         @test all(isfinite, skipmissing(comparison.interconnectors.MWLOSSES_solved))
         @test any(!ismissing, comparison.fcas_prices.ROP_solved)
+        # The scheduled load PUMP1 is solved, as a non-negative consumed MW.
+        pump = only(filter(:DUID => ==("PUMP1"), comparison.dispatch))
+        @test !ismissing(pump.TOTALCLEARED_solved)
+        @test pump.TOTALCLEARED_solved >= 0
         # The unavailable IC6 has no solved flow.
         @test ismissing(only(filter(:INTERCONNECTORID => ==("IC6"), comparison.interconnectors)).MWFLOW_solved)
     end
@@ -49,5 +53,19 @@
         )
         @test !has_limits(replication_system(db, t))
         @test has_limits(replication_system(db, t; interval_flow_limits = true))
+    end
+
+    @testset "MNSP offers reach a built model through the single-window path" begin
+        # The mock offers Basslink-like links on IC2 (300 MW available) for the intervals up to 04:00.
+        t_mnsp = t
+        sys = replication_system(db, t_mnsp)
+        ic2 = get_component(AreaInterchange, sys, "IC2")
+        @test has_time_series(ic2, Deterministic, "mnsp_forward_max_avail")
+        result = replicate_interval(sys, db, t_mnsp)
+        @test PSI.has_container_key(
+            PSI.get_optimization_container(result.model), MNSPLinkFlowVariable, PSY.AreaInterchange,
+        )
+        flow = only(filter(:INTERCONNECTORID => ==("IC2"), result.comparison.interconnectors)).MWFLOW_solved
+        @test abs(flow) <= 300.0 + 1.0e-6
     end
 end

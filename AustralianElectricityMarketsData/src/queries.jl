@@ -168,7 +168,8 @@ end
 """
     read_units(db; as_of = nothing)
 
-Gathers and processes unit data from the database.
+Gathers and processes unit data from the database: one row per commissioned `DUID`, including
+scheduled loads, which have no `GENUNITS` row, so their `CO2E_ENERGY_SOURCE` is `missing`.
 
 # Arguments
 - `db`: The database connection.
@@ -266,22 +267,22 @@ function read_units(db; as_of::Union{Nothing, Date, DateTime} = nothing)
              ),
              dl_raw AS (SELECT * FROM $dualloc_table),
              dualloc AS (
-                 SELECT GENSETID, DUID
+                 SELECT DISTINCT GENSETID, DUID
                  FROM dl_raw
                  WHERE archive_month = (SELECT max(archive_month) FROM dl_raw)
-                 QUALIFY row_number() OVER (
-                     PARTITION BY GENSETID ORDER BY DUID DESC, LASTCHANGED DESC, VERSIONNO DESC
-                 ) = 1
              ),
+             -- One row per DUID: DUALLOC lists legacy GENSETID-named DUIDs and multi-genset DUIDs.
              genunits AS (
-                 SELECT d.DUID, g.CO2E_ENERGY_SOURCE, g.CO2E_EMISSIONS_FACTOR
+                 SELECT d.DUID, first(g.CO2E_ENERGY_SOURCE ORDER BY g.GENSETID) AS CO2E_ENERGY_SOURCE,
+                        first(g.CO2E_EMISSIONS_FACTOR ORDER BY g.GENSETID) AS CO2E_EMISSIONS_FACTOR
                  FROM genunits_raw g
                  INNER JOIN dualloc d ON g.GENSETID = d.GENSETID
+                 GROUP BY d.DUID
              )
         SELECT dudetail.*, summary.* EXCLUDE (DUID), op_status.* EXCLUDE (STATIONID),
                genunits.CO2E_ENERGY_SOURCE, genunits.CO2E_EMISSIONS_FACTOR
         FROM dudetail
-        INNER JOIN genunits ON dudetail.DUID = genunits.DUID
+        LEFT JOIN genunits ON dudetail.DUID = genunits.DUID
         INNER JOIN summary ON dudetail.DUID = summary.DUID
         INNER JOIN op_status ON summary.STATIONID = op_status.STATIONID
         WHERE op_status.STATUS = 'COMMISSIONED'
@@ -400,4 +401,43 @@ function read_mnsp_offers(db, date_range)
         [first(date_range), last(date_range)],
     )
     return df
+end
+
+"""
+    read_mnsp_links(db, as_of)
+
+Reads the registered MNSP links as of `as_of`: the latest `MNSP_INTERCONNECTOR` version of each
+`LINKID` whose `EFFECTIVEDATE` is on or before `as_of`.
+
+The table still carries superseded rows for interconnectors that are no longer MNSPs, so a caller
+pairs it with [`read_mnsp_offers`](@ref), which names the links that offer in an interval.
+
+# Arguments
+- `db`: The database connection.
+- `as_of`: A `Date` or `DateTime`.
+
+# Returns
+A `DataFrame` with one row per link: `LINKID`, `INTERCONNECTORID`, `FROMREGION`, `TOREGION`,
+`FROM_REGION_TLF`, `TO_REGION_TLF`, `LHSFACTOR` and `MAXCAPACITY`. A link's flow runs from
+`FROMREGION` to `TOREGION`.
+
+# Example
+```julia
+db = aem_connect()
+links = read_mnsp_links(db, DateTime(2026, 6, 15))
+```
+"""
+function read_mnsp_links(db, as_of::Union{Date, DateTime})
+    return _query(
+        db,
+        """
+        SELECT LINKID, INTERCONNECTORID, FROMREGION, TOREGION, FROM_REGION_TLF, TO_REGION_TLF,
+               LHSFACTOR, MAXCAPACITY
+        FROM $(read_hive(db, :MNSP_INTERCONNECTOR))
+        WHERE EFFECTIVEDATE <= ?
+        QUALIFY row_number() OVER (PARTITION BY LINKID ORDER BY EFFECTIVEDATE DESC, VERSIONNO DESC) = 1
+        ORDER BY INTERCONNECTORID, LINKID
+        """,
+        [as_of],
+    )
 end

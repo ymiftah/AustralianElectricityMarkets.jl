@@ -2,7 +2,9 @@
     AbstractNEMDispatch
 
 Supertype for the NEM dispatch device formulations: a per-band bid stack, a per-interval ramp
-limit, and the upper dispatch limit, applied to one active power variable per device.
+limit, and the upper dispatch limit, applied to one active power variable per device. A scheduled
+load (`PowerSystems.ControllableLoad`) uses the same variable as consumed MW, priced on its
+decremental offer and withdrawn from the area balance.
 
 Methods are defined over `PowerSystems.StaticInjection`; a `PowerSimulations.ProblemTemplate`
 selects the component types they apply to. Subtypes differ only in what the ramp constraint
@@ -53,6 +55,9 @@ PSI.requires_initialization(::NEMLookaheadDispatch) = true
 
 PSI.get_variable_binary(::PSI.ActivePowerVariable, ::Type{<:PSY.StaticInjection}, ::AbstractNEMDispatch) = false
 PSI.get_variable_multiplier(::PSI.ActivePowerVariable, ::Type{<:PSY.StaticInjection}, ::AbstractNEMDispatch) = 1.0
+# A scheduled load's ActivePowerVariable is its consumed MW (as DISPATCHLOAD and constraint terms
+# report it); it enters the area balance as a withdrawal.
+PSI.get_variable_multiplier(::PSI.ActivePowerVariable, ::Type{<:PSY.ControllableLoad}, ::AbstractNEMDispatch) = -1.0
 PSI.get_variable_lower_bound(::PSI.ActivePowerVariable, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 0.0
 PSI.get_variable_upper_bound(::PSI.ActivePowerVariable, d::PSY.StaticInjection, ::AbstractNEMDispatch) = PSY.get_max_active_power(d)
 
@@ -145,6 +150,12 @@ function PSI.get_initial_conditions_device_model(
     return PSI.DeviceModel(T, NEMReplayDispatch)
 end
 
+# Generators bid an incremental curve; a scheduled load bids only a decremental one.
+_process_market_bid_parameters!(container, devices, model) =
+    PSI.process_market_bid_parameters!(container, devices, model)
+_process_market_bid_parameters!(container, devices::IS.FlattenIteratorWrapper{<:PSY.ControllableLoad}, model) =
+    PSI.process_market_bid_parameters!(container, devices, model, false, true)
+
 """
     PSI.construct_device!(container, sys, ::PSI.ArgumentConstructStage, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
 
@@ -181,7 +192,7 @@ function PSI.construct_device!(
     PSI.requires_initialization(D()) &&
         PSI.add_initial_condition!(container, devices, D(), PSI.DevicePower())
 
-    PSI.process_market_bid_parameters!(container, devices, model)
+    _process_market_bid_parameters!(container, devices, model)
     PSI.add_cost_expressions!(container, devices, model)
 
     PSI.add_to_expression!(

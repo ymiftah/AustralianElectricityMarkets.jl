@@ -661,6 +661,31 @@ end
     @test Set(k.meta for k in nem_keys) == Set(PSY.get_name.(buildable))
 end
 
+@testset "a constraint whose contributing devices are all unavailable is left out, recorded, and the rest builds" begin
+    sys = _prepared_system()
+    left_out = _gc(sys, "N_PARTIAL")
+    PSY.set_available!.(PSY.get_contributing_devices(sys, left_out), false)
+    # Not a failure: no error even without allow_partial_coverage for this reason.
+    skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
+    template = _area_balance_template()
+    buildable = AEMS.filter_buildable_generic_constraints(
+        sys, template; allow_partial_coverage = true, skipped = skipped,
+    )
+    @test filter(r -> r.reason == :no_available_device, skipped) ==
+        [(constraint = PSY.get_name(left_out), reason = :no_available_device, n_missing = 0)]
+    @test PSY.get_name(left_out) ∉ PSY.get_name.(buildable)
+
+    for gc in buildable
+        name = PSY.get_name(gc)
+        PSI.set_service_model!(
+            template, name,
+            PSI.ServiceModel(GenericConstraint, AEMS.LinearFactorLimit, name; duals = [AEMS.NEMConstraintLimit]),
+        )
+    end
+    model = _decision_model(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+end
+
 function _sys_with_infeasible_requirement()
     sys = _prepared_system()
     params = _native_forecast_params(sys)

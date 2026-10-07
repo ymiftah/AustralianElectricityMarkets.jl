@@ -86,6 +86,7 @@ breakpoint contributes no minimum-generation offset, so no `OnVariable` is requi
 PSI._include_min_gen_power_in_constraint(::PSY.StaticInjection, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = false
 PSI._include_min_gen_power_in_constraint(::PSY.Generator, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = false
 PSI._include_min_gen_power_in_constraint(::PSY.RenewableDispatch, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = false
+PSI._include_min_gen_power_in_constraint(::PSY.ControllableLoad, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = false
 
 """
     PSI._include_constant_min_gen_power_in_constraint(::PSY.StaticInjection, ::PSI.ActivePowerVariable, ::AbstractNEMDispatch)
@@ -136,6 +137,46 @@ function PSI._add_variable_cost_to_objective!(
         ::V,
     ) where {T <: PSI.ActivePowerInVariable, V <: AbstractNEMDispatch}
     PSI.add_pwl_term!(true, container, component, cost_function, T(), V())
+    return
+end
+
+"""
+    PSI._add_variable_cost_to_objective!(container, ::PSI.ActivePowerVariable, component::PSY.ControllableLoad, cost_function::PSY.MarketBidCost, ::AbstractNEMDispatch)
+
+Override of `PowerSimulations.jl` 0.38.4's private market-bid hook: prices a scheduled load's
+consumption on its decremental (`"decremental_variable_cost"`) offer curve, so a cleared load band
+lowers the objective.
+
+# Returns
+`nothing`.
+"""
+function PSI._add_variable_cost_to_objective!(
+        container::PSI.OptimizationContainer,
+        ::T,
+        component::PSY.ControllableLoad,
+        cost_function::PSY.MarketBidCost,
+        ::V,
+    ) where {T <: PSI.ActivePowerVariable, V <: AbstractNEMDispatch}
+    PSI.add_pwl_term!(true, container, component, cost_function, T(), V())
+    return
+end
+
+"""
+    PSI._add_vom_cost_to_objective!(container, ::PSI.ActivePowerVariable, component::PSY.ControllableLoad, op_cost::PSY.MarketBidCost, ::AbstractNEMDispatch)
+
+Override of `PowerSimulations.jl` 0.38.4's private market-bid hook: a scheduled load has no
+incremental offer curve to read a variable O&M cost from, so none is added.
+
+# Returns
+`nothing`.
+"""
+function PSI._add_vom_cost_to_objective!(
+        ::PSI.OptimizationContainer,
+        ::PSI.ActivePowerVariable,
+        ::PSY.ControllableLoad,
+        ::PSY.MarketBidCost,
+        ::AbstractNEMDispatch,
+    )
     return
 end
 

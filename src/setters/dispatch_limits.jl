@@ -1,8 +1,8 @@
 """
     _nem_dispatch_devices(sys)
 
-Collects every available `ThermalStandard`, `HydroDispatch`, `RenewableDispatch` and
-`EnergyReservoirStorage` in `sys` — the device types that [`set_nem_dispatch_limits!`](@ref)
+Collects every available `ThermalStandard`, `HydroDispatch`, `RenewableDispatch`,
+`InterruptiblePowerLoad` and `EnergyReservoirStorage` in `sys`, the device types that [`set_nem_dispatch_limits!`](@ref)
 and [`set_nem_initial_conditions!`](@ref) apply to.
 
 # Arguments
@@ -16,6 +16,7 @@ function _nem_dispatch_devices(sys)
     append!(devices, collect(get_components(get_available, ThermalStandard, sys)))
     append!(devices, collect(get_components(get_available, HydroDispatch, sys)))
     append!(devices, collect(get_components(get_available, RenewableDispatch, sys)))
+    append!(devices, collect(get_components(get_available, InterruptiblePowerLoad, sys)))
     append!(devices, collect(get_components(get_available, EnergyReservoirStorage, sys)))
     return devices
 end
@@ -56,12 +57,13 @@ end
     set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates = false, kwargs...)
 
 Attaches per-device `SingleTimeSeries` from [`read_dispatch_limits`](@ref) to every available
-`ThermalStandard`, `HydroDispatch`, `RenewableDispatch` and `EnergyReservoirStorage` in `sys`:
+`ThermalStandard`, `HydroDispatch`, `RenewableDispatch`, `InterruptiblePowerLoad` and
+`EnergyReservoirStorage` in `sys`:
 `"ramp_up_rate"` and `"ramp_down_rate"` (from `RAMPUPRATE`/`RAMPDOWNRATE`) and `"initial_mw"`
-(from `INITIALMW`, net MW for a battery). A `ThermalStandard`, `HydroDispatch` or
-`RenewableDispatch` also gets `"max_active_power"` — the device's upper dispatch limit,
+(from `INITIALMW`, net MW for a battery, consumed MW for a load). A `ThermalStandard`,
+`HydroDispatch`, `RenewableDispatch` or `InterruptiblePowerLoad` also gets `"max_active_power"`, the device's upper dispatch limit,
 `AVAILABILITY` raised to the ramp-down floor `INITIALMW - RAMPDOWNRATE × Δ` when that floor is
-higher, where Δ is the interval length in hours taken from `date_range`'s step — replacing any
+higher, where Δ is the interval length in hours taken from `date_range`'s step, replacing any
 `UIGF`- or bid-derived `"max_active_power"` series a device already carries - and
 `"availability"`, the raw `AVAILABILITY` (for a semi-scheduled unit, the lower of bid `MAXAVAIL`
 and `UIGF`), read back by [`get_energy_availability`](@ref). An

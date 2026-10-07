@@ -434,3 +434,152 @@ end
     container = PSI.get_optimization_container(model)
     @test !PSI.has_container_key(container, AEMS.InterconnectorLossVariable, PSY.AreaInterchange)
 end
+
+"""
+    _attach_mnsp_offers!(sys; forward, reverse, forward_tlf = 1.0, reverse_tlf = 1.0)
+
+Gives `IC1` (area `"1"` to `"2"`) an MNSP offer per link, constant over the model horizon. `forward` and
+`reverse` are `(max_avail_mw, [(band_mw, price), ...])`.
+"""
+function _attach_mnsp_offers!(
+        sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0),
+    )
+    ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
+    t0 = first(PSY.get_forecast_initial_times(sys))
+    interval = PSY.get_forecast_interval(sys)
+    windows = PSY.get_forecast_window_count(sys)
+    resolution = only(PSY.get_time_series_resolutions(sys))
+    n_steps = Int(Dates.value(PSY.get_forecast_horizon(sys)) ÷ Dates.value(resolution))
+    for (dir, (max_avail, bands), tlfs) in (
+            ("forward", forward, forward_tlfs), ("reverse", reverse, reverse_tlfs),
+        )
+        x = [0.0; cumsum(Float64[b[1] for b in bands])]
+        curve = PSY.PiecewiseStepData(x, Float64[b[2] for b in bands])
+        for (name, values) in (
+                ("mnsp_$(dir)_offer", fill(curve, n_steps)), ("mnsp_$(dir)_max_avail", fill(Float64(max_avail), n_steps)),
+            )
+            PSY.add_time_series!(
+                sys, ic,
+                PSY.Deterministic(;
+                    name = name, data = Dict(t0 + (k - 1) * interval => values for k in 1:windows), resolution = resolution,
+                    interval = interval,
+                ),
+            )
+        end
+        PSY.get_ext(ic)["mnsp_$dir"] = Dict{String, Any}("from_region_tlf" => tlfs[1], "to_region_tlf" => tlfs[2])
+    end
+    return ic
+end
+
+"Solves `sys` under the loss template and returns `(flow, forward, reverse, slack)` at the first timestep, in MW."
+function _solve_mnsp(sys; zero_flow::Bool = false)
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    if zero_flow  # a zero-flow generic constraint on the interconnector's net flow
+        container = PSI.get_optimization_container(model)
+        flow_var = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
+        for t in PSI.get_time_steps(container)
+            PSI.JuMP.@constraint(PSI.get_jump_model(container), flow_var["IC1", t] == 0.0)
+        end
+    end
+    PSI.solve!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    res = PSI.OptimizationProblemResults(model)
+    first_value(df) = begin
+        t1 = minimum(df.DateTime)
+        sum(subset(df, :DateTime => ByRow(==(t1))).value)
+    end
+    flow = first_value(PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange"))
+    duals = PSI.read_dual(res, PSI.CopperPlateBalanceConstraint, PSY.Area)
+    t_first = minimum(duals.DateTime)
+    dual(area) = only(subset(duals, :DateTime => ByRow(==(t_first)), :name => ByRow(==(area)))).value
+    PSI.has_container_key(PSI.get_optimization_container(model), MNSPLinkFlowVariable, PSY.AreaInterchange) ||
+        return (flow = flow, forward = missing, reverse = missing, dual1 = dual("1"), dual2 = dual("2"))
+    links = PSI.read_variable(res, "MNSPLinkFlowVariable__AreaInterchange")
+    t1 = minimum(links.DateTime)
+    link(dir) = only(subset(links, :DateTime => ByRow(==(t1)), :name2 => ByRow(==(dir)))).value
+    return (flow = flow, forward = link("forward"), reverse = link("reverse"), dual1 = dual("1"), dual2 = dual("2"))
+end
+
+@testset "MNSP link offers bound and price the interconnector flow" begin
+    free = _solve_mnsp(_loss_test_system(; breakpoints = [-1000.0, 1000.0]))
+    @test ismissing(free.forward)  # no offers: no link variables, the free-flow model
+    @test free.flow > 40.0  # free-flow baseline: area 2's demand is served through IC1
+
+    @testset "flow is limited by the link's MAXAVAIL" begin
+        sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+        _attach_mnsp_offers!(sys; forward = (30.0, [(100.0, 10.0)]), reverse = (30.0, [(100.0, 10.0)]))
+        out = _solve_mnsp(sys)
+        @test out.flow ≈ 30.0 atol = 1.0e-6
+        @test out.forward ≈ 30.0 atol = 1.0e-6
+        @test out.reverse ≈ 0.0 atol = 1.0e-6
+    end
+
+    @testset "flow follows the offered bands when availability exceeds demand" begin
+        sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+        _attach_mnsp_offers!(sys; forward = (500.0, [(500.0, 10.0)]), reverse = (500.0, [(500.0, 10.0)]))
+        out = _solve_mnsp(sys)
+        @test out.flow ≈ free.flow atol = 1.0e-6
+        @test out.forward ≈ out.flow atol = 1.0e-6
+    end
+
+    @testset "a dear offer loses to area 2's own unit" begin
+        # Solitude is available again; the link only covers what it cannot.
+        sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+        PSY.set_available!(PSY.get_component(PSY.ThermalStandard, sys, "Solitude"), true)
+        _attach_mnsp_offers!(sys; forward = (500.0, [(500.0, 5000.0)]), reverse = (500.0, [(500.0, 5000.0)]))
+        out = _solve_mnsp(sys)
+        @test out.flow < 0.5 * free.flow
+    end
+
+    @testset "a reverse-only offer cannot export into area 2" begin
+        sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+        _attach_mnsp_offers!(sys; forward = (0.0, [(100.0, 10.0)]), reverse = (500.0, [(500.0, 10.0)]))
+        out = _solve_mnsp(sys)
+        @test out.flow ≈ 0.0 atol = 1.0e-6
+        @test out.forward ≈ 0.0 atol = 1.0e-6
+    end
+
+    @testset "negative offers on both links do not circulate" begin
+        sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+        _attach_mnsp_offers!(sys; forward = (500.0, [(500.0, -50.0)]), reverse = (500.0, [(500.0, -50.0)]))
+        out = _solve_mnsp(sys)
+        @test out.flow ≈ free.flow atol = 1.0e-6
+        @test min(out.forward, out.reverse) ≈ 0.0 atol = 1.0e-6
+    end
+    @testset "link loss factors scale the delivered MW and the dispatch condition holds" begin
+        sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+        _attach_mnsp_offers!(
+            sys; forward = (500.0, [(500.0, 10.0)]), reverse = (500.0, [(500.0, 10.0)]),
+            forward_tlfs = (1.0, 0.9907), reverse_tlfs = (0.9907, 1.0),
+        )
+        out = _solve_mnsp(sys)
+        # Linear loss 0.05 * flow, share 0.4: area 2 balance is TLF * q - 0.6 * loss = load.
+        load2 = free.flow * (1 - 0.6 * 0.05)
+        @test out.forward * 0.9907 - 0.6 * 0.05 * out.forward ≈ load2 atol = 1.0e-6
+        # The offer is inframarginal, so its reduced cost is zero: offer price = to_tlf * price_to - from_tlf *
+        # price_from less the loss charge (slope 0.05, share 0.4). Duals are per-unit objective values of an
+        # hourly interval.
+        marginal = 0.9907 * out.dual2 - 1.0 * out.dual1 - 0.05 * (0.4 * out.dual1 + 0.6 * out.dual2)
+        @test marginal ≈ PSY.get_base_power(sys) * 10.0 rtol = 1.0e-6
+    end
+
+    @testset "a zero net flow zeroes both links even when circulation would create energy" begin
+        sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+        # Reverse link with to_tlf > from_tlf: circulating both links delivers free energy at both ends.
+        _attach_mnsp_offers!(
+            sys; forward = (500.0, [(500.0, 0.01)]), reverse = (500.0, [(500.0, 0.01)]),
+            forward_tlfs = (1.0, 1.0), reverse_tlfs = (0.9, 1.1),
+        )
+        out = _solve_mnsp(sys; zero_flow = true)
+        @test out.forward ≈ 0.0 atol = 1.0e-6
+        @test out.reverse ≈ 0.0 atol = 1.0e-6
+    end
+
+    @testset "negative offers on both links still give finite balance duals" begin
+        sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+        _attach_mnsp_offers!(sys; forward = (500.0, [(500.0, -50.0)]), reverse = (500.0, [(500.0, -50.0)]))
+        out = _solve_mnsp(sys)
+        @test isfinite(out.dual1) && isfinite(out.dual2)
+    end
+end

@@ -3,7 +3,7 @@ using DataFrames
 """
     read_units(db; as_of = nothing)
 
-Read commissioned generating unit metadata, mapping each unit's raw AEMO fuel/technology
+Read commissioned unit metadata, mapping each unit's raw AEMO fuel/technology
 source to `PowerSystems.PrimeMovers` (`TECHNOLOGY`) and `PowerSystems.ThermalFuels`
 (`FUELTYPE`) values.
 
