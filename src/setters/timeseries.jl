@@ -5,9 +5,8 @@ Adds load time series data to the system from the database.
 
 This function reads demand data for a specified date range, processes it into a time series,
 and attaches it to the `PowerLoad` components in the system. `TOTALDEMAND` becomes the
-`"max_active_power"` series; `INITIALSUPPLY + DEMANDFORECAST` becomes a second `"loss_demand"`
-series, the regional demand the interconnector loss equations are evaluated at (nempy's
-`loss_function_demand`).
+`"max_active_power"` series and `LOSSDEMAND` (see [`read_demand`](@ref)) a second `"loss_demand"`
+series.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.

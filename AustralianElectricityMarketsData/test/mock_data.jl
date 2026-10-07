@@ -97,14 +97,12 @@ function create_mock_data(hive_root::String)
                 SETTLEMENTDATE = fill(t, n),
                 REGIONID = regions,
                 TOTALDEMAND = fill(1000.0 + 10 * i, n),
-                # The last interval has no INITIALSUPPLY, exercising read_demand's COALESCE.
-                INITIALSUPPLY = fill(i == last(intervals) ? missing : 990.0 + 10 * i, n),
+                INITIALSUPPLY = fill(990.0 + 10 * i, n),
                 DEMANDFORECAST = fill(25.0, n),
                 SS_SOLAR_AVAILABILITY = fill(100.0 + i, n),
                 SS_WIND_AVAILABILITY = fill(200.0 - i, n),
                 archive_month = fill("2025-01", n)
-            );
-            promote = true,
+            )
         )
     end
     save_hive(df_demand, :DISPATCHREGIONSUM)
@@ -162,7 +160,8 @@ function create_mock_data(hive_root::String)
                 CONNECTIONPOINTID = connection_points,
                 REGIONID = regions,
                 SCHEDULE_TYPE = [d in ("BW03", "BW04") ? "SEMI-SCHEDULED" : "SCHEDULED" for d in duids],
-                DISPATCHTYPE = fill("GENERATOR", n),
+                # BW01 is a battery (BIDIRECTIONAL); it charges (negative INITIALMW) in the last interval.
+                DISPATCHTYPE = [d == "BW01" ? "BIDIRECTIONAL" : "GENERATOR" for d in duids],
                 TRANSMISSIONLOSSFACTOR = fill(1.0, n),
                 DISTRIBUTIONLOSSFACTOR = fill(1.0, n),
                 SECONDARY_TLF = Union{Float64, Missing}[missing for i in 1:n],
@@ -704,7 +703,7 @@ function create_mock_data(hive_root::String)
     # Non-scheduled loads have no availability, ramp rates or scheduled energy. ASLOAD1 reports a
     # small metered INITIALMW (as KEPBL1 does in real data), which the dispatch limits must pin to 0.
     nonscheduled = ("ASLOAD1", "ASLOAD2")
-    initial_mw_for(duid, i) = duid == "ASLOAD1" ? 0.1 : duid in nonscheduled ? 0.0 : 40.0 + duid_offset(duid) + (i % 10)
+    initial_mw_for(duid, i) = duid == "BW01" && i == last(intervals) ? -30.0 : duid == "ASLOAD1" ? 0.1 : duid in nonscheduled ? 0.0 : 40.0 + duid_offset(duid) + (i % 10)
     ramp_up_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 4.0 + duid_offset(duid) + (i % 5)
     ramp_down_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 3.0 + duid_offset(duid) + (i % 5)
     availability_for(duid, i) = duid in nonscheduled ? 0.0 : 90.0 - 3 * duid_offset(duid) + (i % 6)

@@ -93,13 +93,14 @@ let
         @test df isa DataFrame
         @test nrow(df) > 0
         @test "REGIONID" in names(df)
-        @test df.REGIONID[1] == "VIC1"
-        @test df.TOTALDEMAND[1] == 1000.0
-        # Loss-equation demand is INITIALSUPPLY + DEMANDFORECAST (mock: 990 + 25).
-        @test df.LOSSDEMAND[1] == 1015.0
-        # Missing INITIALSUPPLY falls back to TOTALDEMAND.
+        first_vic = df[(df.REGIONID .== "VIC1") .& (df.SETTLEMENTDATE .== minimum(df.SETTLEMENTDATE)), :]
+        @test only(first_vic.TOTALDEMAND) == 1000.0
+        # Loss-equation demand is INITIALSUPPLY + DEMANDFORECAST (mock: 990 + 10 i + 25) plus the
+        # initial charging of BIDIRECTIONAL units (BW01, VIC1, INITIALMW -30 in the last interval).
+        @test only(first_vic.LOSSDEMAND) == 1015.0
         last_rows = df[df.SETTLEMENTDATE .== maximum(df.SETTLEMENTDATE), :]
-        @test all(last_rows.LOSSDEMAND .== last_rows.TOTALDEMAND)
+        @test only(last_rows[last_rows.REGIONID .== "VIC1", :LOSSDEMAND]) == 990.0 + 480 + 25 - 30
+        @test all(last_rows[last_rows.REGIONID .!= "VIC1", :LOSSDEMAND] .== 990.0 + 480 + 25)
     end
 
     @testset "read_units" begin
