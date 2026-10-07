@@ -220,8 +220,11 @@ println(gen_df)
 """
 function get_generators_dataframe(bus_df, units)
     bus = select(bus_df, :bus_id, :name)
+    units = copy(units)
+    # Scheduled loads (some have a GENUNITS row) are built by `get_scheduled_loads_dataframe`.
+    "DISPATCHTYPE" in names(units) && subset!(units, :DISPATCHTYPE => ByRow(!isequal("LOAD")))
 
-    return @chain copy(units) begin
+    return @chain units begin
         select!(
             :REGIONID => ByRow(x -> x * GEN_SUFFIX) => :bus_name,
             :REGIONID => :region,
@@ -324,6 +327,47 @@ end
 
 
 """
+    get_scheduled_loads_dataframe(bus_df, units)
+
+Generates a DataFrame of scheduled loads (pumps and other `DISPATCHTYPE = LOAD`,
+`SCHEDULE_TYPE = SCHEDULED` units), each on its region's generator bus. Empty when `units` has no
+`DISPATCHTYPE` column.
+
+# Arguments
+- `bus_df`: A `DataFrame` of bus data, as returned by `get_bus_dataframe`.
+- `units`: A `DataFrame` of unit data, as returned by `read_units`.
+
+# Returns
+A `DataFrame` with `name`, `bus_id`, `region`, `base_power`, `max_active_power` (per-unit of
+`base_power`) and `available`.
+"""
+function get_scheduled_loads_dataframe(bus_df, units)
+    bus = select(bus_df, :bus_id, :name)
+    columns = (:DISPATCHTYPE, :SCHEDULE_TYPE, :REGISTEREDCAPACITY, :MAXCAPACITY)
+    all(c -> c in propertynames(units), columns) ||
+        return DataFrame(name = String[], bus_id = Int[], region = String[], base_power = Float64[], max_active_power = Float64[], available = Bool[])
+    loads = @chain units begin
+        subset(
+            :DISPATCHTYPE => ByRow(isequal("LOAD")), :SCHEDULE_TYPE => ByRow(isequal("SCHEDULED")),
+            :REGISTEREDCAPACITY => ByRow(x -> !ismissing(x) && x > 0),
+        )
+        select(
+            :DUID => :name,
+            :REGIONID => ByRow(x -> x * GEN_SUFFIX) => :bus_name,
+            :REGIONID => :region,
+            :REGISTEREDCAPACITY => (x -> Float64.(x)) => :base_power,
+            [:MAXCAPACITY, :REGISTEREDCAPACITY] =>
+                ByRow((m, r) -> ismissing(m) ? 1.0 : Float64(m / r)) => :max_active_power,
+            :STATUS => ByRow(==("COMMISSIONED")) => :available,
+        )
+        leftjoin(bus; on = :bus_name => :name)
+        select(Not(:bus_name))
+        unique(:name)
+    end
+    return loads
+end
+
+"""
     get_interfaces_dataframe(interconnectors)
 
 Generates a DataFrame of Interfaces information.
@@ -394,6 +438,8 @@ function nem_system(db; time_series_in_memory = true, as_of = nothing, kwargs...
     gen_df = get_generators_dataframe(bus_df, units)
     @info "parsing batteries"
     batteries_df = get_batteries_dataframe(bus_df, units)
+    @info "parsing scheduled loads"
+    scheduled_loads_df = get_scheduled_loads_dataframe(bus_df, units)
 
     @info "parsing interconnectors/area interchanges / transmission interface"
     interfaces_df = get_interfaces_dataframe(interconnectors)
@@ -404,6 +450,7 @@ function nem_system(db; time_series_in_memory = true, as_of = nothing, kwargs...
     _add_generation!(sys, gen_df)
     _add_branches!(sys, branch_df)
     _add_batteries!(sys, batteries_df)
+    _add_scheduled_loads!(sys, scheduled_loads_df)
     _add_area_interfaces!(sys, interfaces_df)
 
     return sys
@@ -698,6 +745,37 @@ function _add_batteries!(sys, batteries_df)
         ) for row in eachrow(batteries_df)
     )
     return add_components!(sys, battery_components)
+end
+
+"""
+    _add_scheduled_loads!(sys, scheduled_loads_df)
+
+Adds each scheduled load as an `InterruptiblePowerLoad` with a zero `LoadCost`;
+[`set_market_bids!`](@ref) replaces it with a decremental `MarketBidCost`, or marks the load
+unavailable when it has no bid.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `scheduled_loads_df`: A `DataFrame` as returned by `get_scheduled_loads_dataframe`.
+
+# Returns
+The result of `add_components!`.
+"""
+function _add_scheduled_loads!(sys, scheduled_loads_df)
+    loads = (
+        InterruptiblePowerLoad(;
+            name = row[:name],
+            available = row[:available],
+            bus = get_bus(sys, row[:bus_id]),
+            active_power = 0.0,
+            reactive_power = 0.0,
+            max_active_power = row[:max_active_power],
+            max_reactive_power = 0.0,
+            base_power = row[:base_power],
+            operation_cost = LoadCost(; variable = CostCurve(LinearCurve(0.0)), fixed = 0.0),
+        ) for row in eachrow(scheduled_loads_df)
+    )
+    return add_components!(sys, loads)
 end
 
 function _add_area_interfaces!(sys, interconnectors)

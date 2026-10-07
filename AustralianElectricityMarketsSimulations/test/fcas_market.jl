@@ -2076,7 +2076,11 @@ end
     PSI.set_service_model!(ok_template, "F_TOY", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_TOY"))
     @test PSY.get_name.(filter_buildable_generic_constraints(sys, ok_template)) == ["F_TOY"]
 
-    # A service whose devices are all unavailable is skipped by FCASMarket and counts as zero.
+    # A service whose devices are all unavailable is skipped by FCASMarket and counts as zero; the
+    # constraint, left with no available contributing device, is left out of the template rather
+    # than reported as a failure.
     PSY.set_available!(device, false)
-    @test PSY.get_name.(filter_buildable_generic_constraints(sys, template)) == ["F_TOY"]
+    left_out = []
+    @test isempty(filter_buildable_generic_constraints(sys, template; skipped = left_out))
+    @test only(left_out).reason == :no_available_device
 end

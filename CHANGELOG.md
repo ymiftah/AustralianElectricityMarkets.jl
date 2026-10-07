@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `filter_buildable_generic_constraints` leaves out a generic constraint whose contributing devices
+  are all unavailable (for example wholesale demand response constraints once their units are
+  unavailable), which PSI cannot build, and reports it as `:no_available_device` through its new
+  `skipped` keyword (also accepted by `replication_template`).
 - `NEMInterconnectorLoss` fills loss segments contiguously through binary fill indicators, so the
   solved loss follows the loss curve at negative or zero weighted prices instead of burning energy
   on steeper segments. Multi-segment interconnectors make the problem a MILP; duals are read from
@@ -22,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slightly negative `INITIALMW` and a zero ramp rate) no longer makes the interval infeasible. `replicate_interval` returns `ramp_violations` listing any non-zero ramp slack.
 - `IntervalInputs` documentation: `interconnector_flows` holds the target `MWFLOW`, not the flow
   at interval start.
+- **`read_units` dropped units whose `DUALLOC` GENSETID is also a DUID** (for example `OSB-AG`,
+  `PTSTAN1`): `DUALLOC` was deduplicated per `GENSETID` by `DUID DESC`, which kept the legacy
+  `OSB01` row over `OSB-AG`. It is now deduplicated per `DUID` (first genset by `GENSETID`), and
+  units with no `GENUNITS` row (scheduled loads) are kept with a `missing` technology.
+  `get_generators_dataframe` excludes `DISPATCHTYPE = LOAD` units, so a load with a `GENUNITS` row
+  (`PUMP2`) is not also built as a generator.
 - A `GenericConstraint` term on an unavailable device or `AreaInterchange` contributes zero
   instead of throwing a `KeyError` in `build!` (PSI creates variables only for available
   components); `UnitTerm`, `RegionTerm` and `InterconnectorTerm` now match FCAS terms.
@@ -102,6 +112,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applies them as an opt-in diagnostic (they are post-solve results and pin flows to NEMDE).
 - `read_units`, `read_interconnectors` and `nem_system` accept `as_of`, resolving the static
   tables (loss factors, flow limits) as in force at that instant.
+- **Scheduled loads** (pumps and other `DISPATCHTYPE = LOAD`, `SCHEDULE_TYPE = SCHEDULED` units such as
+  `SHPUMP`, `PUMP2`, `SNOWYP`, `KIDSPHL1`) are built into the `System` as `InterruptiblePowerLoad`s
+  on their region's generator bus. `set_market_bids!` attaches their decremental (`LOAD`)
+  offer (a load that bids `GEN`, a wholesale demand response unit, is made unavailable with one
+  aggregated warning and is not modelled), `set_nem_dispatch_limits!` their ramp, `INITIALMW` and `AVAILABILITY` series, and under
+  `AbstractNEMDispatch` they are a consumed-MW variable withdrawn from the area balance and priced
+  on the decremental offer. The regional balance still clears at `TOTALDEMAND`
+  (demand less loads), so dispatched load adds to the generation required, and generic-constraint
+  terms on a load resolve. Loads offering FCAS are not modelled.
 - **Single-interval replication pipeline** (`AustralianElectricityMarketsSimulations`):
   `replicate_interval(db, settlement_date)` builds the constrained `System`
   (`replication_system`), solves it with `replication_template` (NEM dispatch devices,
@@ -324,6 +343,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `nem_system(db, ConstrainedNetworkConfiguration(); date_range)` resolves static unit and
   interconnector tables as of `first(date_range)` instead of the newest cached version; pass
   `as_of = nothing` for the previous behaviour.
+- `add_nem_constraints!` builds a generic constraint without any term whose DUID, region or
+  interconnector is absent from the `System`, recording the dropped keys in the constraint's
+  `ext["dropped_terms"]`, instead of skipping the whole constraint. A constraint with no
+  resolvable term is still skipped. `unresolved_terms = :skip` restores the old behaviour; the
+  keyword is also accepted by `nem_system(db, ConstrainedNetworkConfiguration(); ...)`.
+- `add_nem_constraints!` builds a generic constraint without a unit term whose DUID is absent from
+  the `System`, instead of skipping the whole constraint. The dropped terms (kind, key, `BIDTYPE`,
+  factor) are recorded in the constraint's `ext["dropped_terms"]` and returned by the new
+  `get_dropped_terms(sys)`. An unresolved region or interconnector term, or a constraint with no
+  resolvable term, is still skipped. `unresolved_terms = :skip` restores the old behaviour for unit
+  terms; the keyword is also accepted by `nem_system(db, ConstrainedNetworkConfiguration(); ...)`.
 - **`scale_trapezium` (`AustralianElectricityMarketsSimulations`) follows root's
   `scale_fcas_trapezium`**: a squeezed trapezium keeps the bid's slopes instead of having its
   breakpoints clamped, and an `agc_ramp_mw` of `0.0` applies no cap instead of capping

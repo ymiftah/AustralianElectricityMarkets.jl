@@ -118,7 +118,7 @@ function _aggregated_message(grouped::Dict{Symbol, Vector{Tuple{String, Vector{D
 end
 
 """
-    filter_buildable_generic_constraints(sys, template; allow_partial_coverage = false) -> Vector{GenericConstraint}
+    filter_buildable_generic_constraints(sys, template; allow_partial_coverage = false, skipped = nothing) -> Vector{GenericConstraint}
 
 The [`GenericConstraint`](@ref)s in `sys` that `template` can build under
 [`LinearFactorLimit`](@ref). A constraint is unbuildable when a `UnitTerm`/`RegionTerm` has a
@@ -126,7 +126,8 @@ FCAS term's service (see [`fcas_service_name`](@ref)) exists with available devi
 [`FCASMarket`](@ref) model in `template`, a term's named component is missing from `sys`, or a
 device's type isn't modelled by any `DeviceModel`/branch model in `template` (an
 `InterconnectorTerm` needs `PSY.AreaInterchange` modelled as a branch). Constraints with `PSY.get_available(gc) == false`
-are skipped entirely.
+are skipped entirely. A constraint whose contributing devices are all unavailable is left out
+without being a failure.
 
 # Arguments
 - `sys`: system to read constraints and components from.
@@ -134,12 +135,16 @@ are skipped entirely.
 - `allow_partial_coverage`: when `false` (default), throws a single aggregated `ArgumentError`
   naming every unbuildable constraint and its reason if any exist. When `true`, returns the
   buildable subset and emits one summary `@warn` with counts by reason.
+- `skipped`: a vector to which one `(constraint, reason, n_missing)` named tuple is appended per
+  constraint left out because all its contributing devices are unavailable (`reason =
+  :no_available_device`), or `nothing`.
 
 # Returns
 A `Vector{GenericConstraint}`, sorted by name.
 """
 function filter_buildable_generic_constraints(
         sys::PSY.System, template::PSI.ProblemTemplate; allow_partial_coverage::Bool = false,
+        skipped::Union{Nothing, AbstractVector} = nothing,
     )
     modeled_types = _modeled_device_types(template)
     interconnector_modeled = _interconnector_modeled(template)
@@ -150,6 +155,13 @@ function filter_buildable_generic_constraints(
     grouped = Dict{Symbol, Vector{Tuple{String, Vector{DataType}}}}()
     for gc in gcs
         PSY.get_available(gc) || continue
+        # PSI cannot build a service whose contributing devices are all unavailable; such a
+        # constraint has no variable to bind, so it is left out rather than reported as a failure.
+        devices = PSY.get_contributing_devices(sys, gc)
+        if !isempty(devices) && !any(PSY.get_available, devices)
+            isnothing(skipped) || push!(skipped, (constraint = PSY.get_name(gc), reason = :no_available_device, n_missing = 0))
+            continue
+        end
         diagnosis = _constraint_diagnosis(sys, gc, modeled_types, interconnector_modeled, fcas_modeled)
         if isnothing(diagnosis)
             push!(buildable, gc)
