@@ -1948,6 +1948,8 @@ fcas_enabled_mw(results, sys, service_name) =
     for (bid_type, make_term) in (
             (BidType.RAISE6SEC, unit), (BidType.RAISE6SEC, region),
             (BidType.RAISEREG, unit), (BidType.RAISEREG, region),
+            (BidType.RAISE1SEC, unit), (BidType.RAISE1SEC, region),
+            (BidType.LOWER1SEC, unit), (BidType.LOWER1SEC, region),
         )
         gcs = [("F_TOY", ConstraintSense.GE, 5.0, [make_term(bid_type)], [bid_type])]
         sys = fcas_requirement_toy_system([(bid_type, 10.0)], gcs)
@@ -2296,4 +2298,39 @@ end
     @test fcas_mw(container, "TAS1_RAISE6SEC", "ASLOAD") ≈ 20.0 atol = FCAS_TOY_TOLERANCE
     var = PSI.get_variable(container, PSI.ActivePowerVariable(), PSY.InterruptiblePowerLoad)
     @test PSI.JuMP.value(var["ASLOAD", 1]) ≈ 0.0 atol = FCAS_TOY_TOLERANCE
+end
+
+@testset "a 1-second raise requirement is met by a battery on the net-MW axis, and priced" begin
+    service_name = "TAS1_RAISE1SEC"
+    # Net-MW trapezium: UpperSlopeCoeff = (20 - 5) / 10 = 1.5, so net 12 MW leaves
+    # (20 - 12) / 1.5 = 5.33 MW of the 10 MW MaxAvail; the lower slope (1.0) is not binding.
+    model, sys = storage_fcas_toy_model(service_name, BidType.RAISE1SEC, (-8.0, 2.0, 5.0, 20.0, 10.0))
+    base_power = get_base_power(sys)
+    container = PSI.get_optimization_container(model)
+    out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), EnergyReservoirStorage)
+    in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)
+    PSI.JuMP.fix(out_var["BAT1", 1], 12.0 / base_power; force = true)
+    PSI.JuMP.fix(in_var["BAT1", 1], 0.0; force = true)
+    maximize_and_solve!(container) do container
+        fcas_capacity(container, service_name)["BAT1", 1]
+    end
+    @test fcas_mw(container, service_name, "BAT1") ≈ 16.0 / 3.0 atol = FCAS_TOY_TOLERANCE
+end
+
+@testset "a 1-second requirement row is satisfiable and its price is the 1-second offer" begin
+    r1, r6 = BidType.RAISE1SEC, BidType.RAISE6SEC
+    # F_ONE_R1 needs 8 MW of RAISE1SEC (offered at 3); F_ONE_R6 needs 5 MW of RAISE6SEC (offered at 10).
+    gcs = [
+        ("F_ONE_R1", ConstraintSense.GE, 8.0, [UnitTerm(TOY_CHEAP, r1, 1.0)], [r1]),
+        ("F_ONE_R6", ConstraintSense.GE, 5.0, [UnitTerm(TOY_CHEAP, r6, 1.0)], [r6]),
+    ]
+    sys = fcas_requirement_toy_system([(r1, 3.0), (r6, 10.0)], gcs)
+    results = solve_fcas_requirement(sys, [r1, r6], ["F_ONE_R1", "F_ONE_R6"]; use_slacks = true)
+    @test fcas_enabled_mw(results, sys, "1_RAISE1SEC") ≈ 8.0 atol = FCAS_TOY_TOLERANCE
+    @test fcas_enabled_mw(results, sys, "1_RAISE6SEC") ≈ 5.0 atol = FCAS_TOY_TOLERANCE
+    prices = compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
+    @test Dict(prices.BIDTYPE .=> prices.ROP)[r1] ≈ 3.0 atol = 1.0e-4
+    @test Dict(prices.BIDTYPE .=> prices.ROP)[r6] ≈ 10.0 atol = 1.0e-4
+    # Satisfiable: the elastic rows carry no violation, so neither price is a violation penalty.
+    @test all(<(1.0e3), prices.ROP)
 end

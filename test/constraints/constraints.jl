@@ -225,6 +225,8 @@ end
         @test nrow(raise6sec_nsw1) == 1
         @test only(raise6sec_nsw1.REGIONID) == "NSW1"
         @test only(raise6sec_nsw1.BIDTYPE) == BidType.RAISE6SEC
+        raise1sec_nsw1 = subset(reqs, :GENCONID => ByRow(==("F_NSW1_RAISE1SEC")))
+        @test only(raise1sec_nsw1.BIDTYPE) == BidType.RAISE1SEC
     end
 
     @testset "read_constraint_fcas_requirements spans the DISPATCH_FCAS_REQ split" begin

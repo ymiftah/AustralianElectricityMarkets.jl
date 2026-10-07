@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are all unavailable (for example wholesale demand response constraints once their units are
   unavailable), which PSI cannot build, and reports it as `:no_available_device` through its new
   `skipped` keyword (also accepted by `replication_template`).
+- The 1-second FCAS markets (`RAISE1SEC`, `LOWER1SEC`) are modelled as contingency services: they
+  are part of `FCAS_CONTINGENCY_MARKETS`/`FCAS_BID_TYPES`, so their bids, requirements, prices and
+  dispatch outcomes are read, `add_fcas_services!` creates their services, and `FCASMarket` and
+  `compute_fcas_prices` handle them. The `F_*_R1`/`F_*_L1` generic constraints are no longer built
+  without their 1-second terms as always-violated rows priced at the constraint violation penalty,
+  which had forced Basslink import and TAS1 price gaps.
 - `NEMInterconnectorLoss` fills loss segments contiguously through binary fill indicators, so the
   solved loss follows the loss curve at negative or zero weighted prices instead of burning energy
   on steeper segments. Multi-segment interconnectors make the problem a MILP; duals are read from

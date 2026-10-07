@@ -119,8 +119,7 @@ function read_fcas_requirements(db, date_range; intervention::Integer = 0)
         params,
     )
     subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
-    # Restrict to the 8 in-scope FCAS markets (see FCAS_BID_TYPES) - DISPATCH_FCAS_REQ also
-    # carries the deferred RAISE1SEC/LOWER1SEC 1-second markets.
+    # Keep the FCAS markets (see FCAS_BID_TYPES), dropping any other BIDTYPE the table carries.
     subset!(df, :BIDTYPE => ByRow(in(string.(FCAS_BID_TYPES))))
     transform!(df, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
     return df
