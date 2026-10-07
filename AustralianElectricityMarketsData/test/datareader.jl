@@ -105,8 +105,8 @@ let
         @test "CO2E_ENERGY_SOURCE" in names(df)
         @test !("TECHNOLOGY" in names(df))
         @test !("FUELTYPE" in names(df))
-        @test df.DUID[1] == "BW01"
-        @test df.CO2E_ENERGY_SOURCE[1] == "Battery Storage"
+        @test "BW01" in df.DUID
+        @test only(df.CO2E_ENERGY_SOURCE[df.DUID .== "BW01"]) == "Battery Storage"
 
         # BAYSW (station for BW01-BW04) is renamed in a later STATION archive_month
         # partition (mock_data.jl). read_units() must resolve one name per DUID —
