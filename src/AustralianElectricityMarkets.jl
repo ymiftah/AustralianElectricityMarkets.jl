@@ -20,6 +20,7 @@ export nem_system
 export RegionalNetworkConfiguration, ConstrainedNetworkConfiguration
 
 export read_hive
+export read_mnsp_offers, read_mnsp_links, set_mnsp_offers!
 export read_interconnectors, read_units, read_demand, read_bids, read_energy_bids
 export read_affine_heatrates,
     read_coal_prices, read_gas_prices, read_biomass_prices, read_isp_thermal_costs_parameters,
@@ -51,6 +52,7 @@ using .AustralianElectricityMarketsData: read_affine_heatrates,
     read_isp_renewable_costs_parameters, read_isp_fixed_opex, read_isp_variable_opex
 using .AustralianElectricityMarketsData: HiveConfiguration, AEMDB, aem_connect
 using .AustralianElectricityMarketsData: read_hive, read_interconnectors, read_demand, read_energy_bids
+using .AustralianElectricityMarketsData: read_mnsp_offers, read_mnsp_links
 using .AustralianElectricityMarketsData: _query
 using .AustralianElectricityMarketsData: islocal, get_filesystem, _parse_hive_root
 
@@ -61,6 +63,8 @@ using .AustralianElectricityMarketsData: islocal, get_filesystem, _parse_hive_ro
 # situation below).
 @doc (@doc AustralianElectricityMarketsData.read_demand) read_demand
 @doc (@doc AustralianElectricityMarketsData.read_interconnectors) read_interconnectors
+@doc (@doc AustralianElectricityMarketsData.read_mnsp_offers) read_mnsp_offers
+@doc (@doc AustralianElectricityMarketsData.read_mnsp_links) read_mnsp_links
 
 # Modules
 include("bid_types.jl")
@@ -71,6 +75,7 @@ include("setters/timeseries.jl")
 include("setters/bids.jl")
 include("setters/dispatch_limits.jl")
 include("setters/fcas_scaling.jl")
+include("setters/mnsp.jl")
 include("fcas/bid_parser.jl")
 include("fcas/requirements.jl")
 

@@ -402,3 +402,42 @@ function read_mnsp_offers(db, date_range)
     )
     return df
 end
+
+"""
+    read_mnsp_links(db, as_of)
+
+Reads the registered MNSP links as of `as_of`: the latest `MNSP_INTERCONNECTOR` version of each
+`LINKID` whose `EFFECTIVEDATE` is on or before `as_of`.
+
+The table still carries superseded rows for interconnectors that are no longer MNSPs, so a caller
+pairs it with [`read_mnsp_offers`](@ref), which names the links that offer in an interval.
+
+# Arguments
+- `db`: The database connection.
+- `as_of`: A `Date` or `DateTime`.
+
+# Returns
+A `DataFrame` with one row per link: `LINKID`, `INTERCONNECTORID`, `FROMREGION`, `TOREGION`,
+`FROM_REGION_TLF`, `TO_REGION_TLF`, `LHSFACTOR` and `MAXCAPACITY`. A link's flow runs from
+`FROMREGION` to `TOREGION`.
+
+# Example
+```julia
+db = aem_connect()
+links = read_mnsp_links(db, DateTime(2026, 6, 15))
+```
+"""
+function read_mnsp_links(db, as_of::Union{Date, DateTime})
+    return _query(
+        db,
+        """
+        SELECT LINKID, INTERCONNECTORID, FROMREGION, TOREGION, FROM_REGION_TLF, TO_REGION_TLF,
+               LHSFACTOR, MAXCAPACITY
+        FROM $(read_hive(db, :MNSP_INTERCONNECTOR))
+        WHERE EFFECTIVEDATE <= ?
+        QUALIFY row_number() OVER (PARTITION BY LINKID ORDER BY EFFECTIVEDATE DESC, VERSIONNO DESC) = 1
+        ORDER BY INTERCONNECTORID, LINKID
+        """,
+        [as_of],
+    )
+end

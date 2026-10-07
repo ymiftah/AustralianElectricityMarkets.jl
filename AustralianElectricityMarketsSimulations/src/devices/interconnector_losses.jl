@@ -112,7 +112,7 @@ narrower than their static `PSY.get_flow_limits`. Both are per-unit of the syste
 function _narrow_breakpoint_interconnectors(devices, loss_models::Dict{String, InterconnectorLossModel})
     narrow = String[]
     for d in devices
-        PSY.has_time_series(d) && continue
+        _has_flow_limit_series(d) && continue
         name = PSY.get_name(d)
         bps = loss_models[name].breakpoints
         limits = PSY.get_flow_limits(d)
@@ -341,7 +341,7 @@ function _add_flow_limit_constraint!(
     var_array = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
     jm = PSI.get_jump_model(container)
 
-    if !all(PSY.has_time_series.(devices))
+    if !all(_has_flow_limit_series.(devices))
         for device in devices
             name = PSY.get_name(device)
             to_from_limit = PSY.get_flow_limits(device).to_from
@@ -407,7 +407,7 @@ function PSI.construct_device!(
     narrow = _narrow_breakpoint_interconnectors(devices, loss_models)
     _warn_narrow_breakpoints(narrow)
 
-    has_ts = PSY.has_time_series.(devices)
+    has_ts = _has_flow_limit_series.(devices)
     if any(has_ts) && !all(has_ts)
         error(
             "Not all AreaInterchange devices have time series. Check data to complete (or remove) time series.",
@@ -423,7 +423,7 @@ function PSI.construct_device!(
     if all(has_ts)
         for device in devices
             name = PSY.get_name(device)
-            num_ts = length(unique(PSY.get_name.(PSY.get_time_series_keys(device))))
+            num_ts = length(unique(filter(!startswith("mnsp_"), PSY.get_name.(PSY.get_time_series_keys(device)))))
             if num_ts < 2
                 error(
                     "AreaInterchange $name has less than two time series. It is required to add both from_to and to_from time series.",
@@ -436,6 +436,7 @@ function PSI.construct_device!(
     PSI.add_feedforward_arguments!(container, device_model, devices)
 
     _add_loss_variables_and_constraints!(container, sys, devices, loss_models)
+    _add_mnsp_link_flows!(container, devices)
     return
 end
 

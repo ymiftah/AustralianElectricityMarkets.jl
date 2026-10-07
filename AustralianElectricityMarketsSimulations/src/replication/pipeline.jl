@@ -64,7 +64,7 @@ into one forecast window.
   `settlement_date + 5 minutes`, so the last cached interval cannot be replicated.
 - `settlement_date`: the `SETTLEMENTDATE` of the interval (`DateTime`).
 - `intervention`: 0 for the pricing run, 1 for the physical run. Applies to the constraint,
-  dispatch-limit, interconnector-limit and FCAS-scaling reads; demand and bids carry no intervention run.
+  dispatch-limit, interconnector-limit and FCAS-scaling reads; demand, bids and MNSP offers carry no intervention run.
 - `interval_flow_limits`: bound each interconnector's flow by the published per-interval
   `IMPORTLIMIT`/`EXPORTLIMIT` ([`set_interconnector_flow_limits!`](@ref)). Those limits are
   computed after NEMDE's solve, so this pins flows to NEMDE's answer: a diagnostic, not for
@@ -85,6 +85,7 @@ function replication_system(
     set_market_bids!(sys, db, date_range; resolution = resolution)
     set_fcas_scaling_inputs!(sys, db, date_range; intervention = intervention)
     set_nem_dispatch_limits!(sys, db, date_range; intervention = intervention)
+    set_mnsp_offers!(sys, db, date_range)
     interval_flow_limits &&
         set_interconnector_flow_limits!(sys, db, date_range; intervention = intervention)
     PSY.transform_single_time_series!(sys, _REPLICATION_HORIZON, resolution)

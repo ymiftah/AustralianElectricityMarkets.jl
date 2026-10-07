@@ -101,6 +101,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **MNSP link offers**: `read_mnsp_links(db, as_of)` reads the link table, and `set_mnsp_offers!`
+  attaches the two link offers (availability, price bands, link loss factors) of every interconnector
+  that offers in the date range to its `AreaInterchange`. Under `NEMInterconnectorLoss` such an
+  interconnector's flow splits into a forward and a reverse `MNSPLinkFlowVariable`, each bounded by
+  `MAXAVAIL` and the offered bands, priced at the offered price, and entering the regional balances
+  through the link's own loss factors. Circulating flow is excluded by a registered binary
+  (`MNSPLinkDirectionVariable`), so a zero net flow gives zero link flows. An interconnector
+  without offers keeps the free-flow model. The loss share of `T-V-MNSP1` is fixed at 1.0, as in nempy.
+
 - Data package ingests the MNSP offer tables (`MNSP_DAYOFFER`, `MNSP_BIDOFFERPERIOD`,
   `MNSP_PEROFFER`, `DISPATCH_MNSPBIDTRK`), `DISPATCHLOAD.DISPATCHMODETIME` and
   `DISPATCHINTERCONNECTORRES.FCASEXPORTLIMIT`/`FCASIMPORTLIMIT`, with `read_mnsp_offers`
