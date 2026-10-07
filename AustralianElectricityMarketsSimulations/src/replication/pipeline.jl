@@ -139,14 +139,20 @@ The model spans the interval and the one after it; the first is reported.
   method builds the system.
 
 # Returns
-A `NamedTuple` with the solved `model`, its `results`, and `comparison`, a `NamedTuple` of
+A `NamedTuple` with the solved `model`, its `results`, `skipped_constraints` and `comparison`.
+`skipped_constraints` is a `DataFrame` with one row per invoked constraint left out of the model:
+`constraint`, `stage` (`:build` when [`add_nem_constraints!`](@ref) could not resolve a term,
+`:template` when the template cannot model it), `reason`, `n_missing` (unresolved keys at the
+`:build` stage, failing terms or devices at the `:template` stage) and `missing_keys` (the
+unresolved DUIDs, regions or interconnectors; empty at the `:template` stage). `comparison` is a
+`NamedTuple` of
 `DataFrame`s with one row per published key and `_solved` and `_published` columns, `missing`
 where the model has no solved value: `prices` (`REGIONID`; solved `ROP`, published `ROP` and
 `RRP`), `dispatch` (`DUID`, `TOTALCLEARED`), `interconnectors` (`INTERCONNECTORID`, `MWFLOW`,
 `MWLOSSES`) and `fcas_prices` (`REGIONID`, `BIDTYPE`, `ROP`). `ramp_violations` lists every
 non-zero unit ramp slack of the model (`DUID`, `DateTime`, `MW`, `direction`). The solved balance dual is the
 unadjusted price, so it is compared with `ROP`; `RRP` differs only under an administered price.
-Throws if the model does not build or solve.
+Throws if the model does not build or solve, after logging `skipped_constraints`.
 """
 function replicate_interval(
         db, settlement_date::DateTime; intervention::Integer = 0, interval_flow_limits::Bool = false, kwargs...,
@@ -161,28 +167,64 @@ function replicate_interval(
         sys::PSY.System, db, settlement_date::DateTime;
         intervention::Integer = 0, optimizer = _DEFAULT_OPTIMIZER,
     )
-    resolution = DISPATCH_INTERVAL
-    template = replication_template(sys)
-    check_fcas_services(sys, template)
-    model = PSI.DecisionModel(
-        template, sys;
-        optimizer = optimizer, horizon = _REPLICATION_HORIZON, resolution = resolution,
-        interval = resolution, initial_time = settlement_date, name = "replication",
-    )
-    output_dir = mktempdir()
-    status = Base.CoreLogging.with_logger(() -> PSI.build!(model; output_dir = output_dir), _DropMILPWarning())
-    status == PSI.ModelBuildStatus.BUILT ||
+    (; model, skipped_constraints, status, output_dir) =
+        _replication_model(sys, settlement_date; optimizer = optimizer)
+    status == PSI.ModelBuildStatus.BUILT || begin
+        _log_skipped_constraints(skipped_constraints)
         error("Interval $settlement_date failed to build ($status); see the PSI error log and $output_dir.")
+    end
     run_status = PSI.solve!(model)
-    run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED ||
+    run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED || begin
+        _log_skipped_constraints(skipped_constraints)
         error("Interval $settlement_date failed to solve: $run_status")
+    end
     results = PSI.OptimizationProblemResults(model)
     _check_prices_finite(results, settlement_date)
     return (;
-        model, results,
+        model, results, skipped_constraints,
         comparison = _compare_to_published(db, sys, results, settlement_date, intervention),
         ramp_violations = _ramp_violations(results),
     )
+end
+
+# The model `replicate_interval` solves: template, FCAS check, `DecisionModel` and its build.
+function _replication_model(
+        sys::PSY.System, settlement_date::DateTime; optimizer = _DEFAULT_OPTIMIZER, name = "replication",
+    )
+    template_skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
+    template = replication_template(sys; skipped = template_skipped)
+    skipped_constraints = _skipped_constraints_table(sys, template_skipped)
+    check_fcas_services(sys, template)
+    model = PSI.DecisionModel(
+        template, sys;
+        optimizer = optimizer, horizon = _REPLICATION_HORIZON, resolution = DISPATCH_INTERVAL,
+        interval = DISPATCH_INTERVAL, initial_time = settlement_date, name = name,
+    )
+    output_dir = mktempdir()
+    status = Base.CoreLogging.with_logger(() -> PSI.build!(model; output_dir = output_dir), _DropMILPWarning())
+    return (; model, skipped_constraints, status, output_dir)
+end
+
+# Logs the skipped-constraint count by reason and the table, for a build or solve that failed.
+function _log_skipped_constraints(skipped::DataFrame)
+    by_reason = combine(groupby(skipped, :reason), nrow => :n)
+    counts = join(("$(r.reason)=$(r.n)" for r in eachrow(sort(by_reason, :reason))), ", ")
+    @error "Skipped constraints at failure: $(nrow(skipped)) ($counts)" skipped
+    return
+end
+
+# Build-stage and template-stage skipped constraints as one table.
+function _skipped_constraints_table(sys::PSY.System, template_skipped)
+    build = get_skipped_constraints(sys)
+    build.stage .= :build
+    template = DataFrame(;
+        constraint = String[r.constraint for r in template_skipped],
+        reason = Symbol[r.reason for r in template_skipped],
+        n_missing = Int[r.n_missing for r in template_skipped],
+        missing_keys = [String[] for _ in template_skipped],
+        stage = fill(:template, length(template_skipped)),
+    )
+    return select(vcat(build, template), :constraint, :stage, :reason, :n_missing, :missing_keys)
 end
 
 # `DUID`, `DateTime`, `MW` and `direction` of every non-zero unit ramp slack, in every interval.

@@ -20,6 +20,13 @@
     @testset "replicate_interval builds, solves and compares" begin
         result = replicate_interval(db, t)
         @test result.model isa PSI.DecisionModel
+        skipped = result.skipped_constraints
+        @test names(skipped) == ["constraint", "stage", "reason", "n_missing", "missing_keys"]
+        @test all(in((:build, :template)), skipped.stage)
+        phantom = only(filter(:constraint => contains("N_PHANTOM_TEST"), skipped))
+        @test phantom.stage == :build
+        @test phantom.reason == :unknown_duid
+        @test phantom.missing_keys == ["PHANTOM1"]
         comparison = result.comparison
         published = read_published_interval(db, t)
 

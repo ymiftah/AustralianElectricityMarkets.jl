@@ -34,7 +34,7 @@ export read_dispatch_limits, set_nem_dispatch_limits!, set_nem_initial_condition
 export read_interconnector_limits, set_interconnector_flow_limits!
 export get_initial_mw, get_energy_availability
 export read_invoked_constraints, read_constraint_definitions, read_constraint_terms,
-    read_constraint_fcas_requirements, add_nem_constraints!, get_dropped_terms
+    read_constraint_fcas_requirements, add_nem_constraints!, get_skipped_constraints, get_dropped_terms
 export fcas_service_name
 export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS
 export BidType

@@ -316,6 +316,30 @@ end
         @test_throws ArgumentError add_nem_constraints!(sys_skip, db, date_range; unresolved_terms = :bogus)
     end
 
+    skipped_table = get_skipped_constraints(sys)
+    @test Set(skipped_table.constraint) == Set(keys(skipped))
+    phantom = only(filter(:constraint => ==(vname("N_PHANTOM_TEST")), skipped_table))
+    @test phantom.reason == :unknown_duid
+    @test phantom.missing_keys == ["PHANTOM1"]
+    @test phantom.n_missing == 1
+
+    @testset "skipped table lists every unresolved key and survives a JSON round trip" begin
+        sys_two = nem_system(db, RegionalNetworkConfiguration())
+        for duid in ("BW01", "BW02")
+            remove_component!(sys_two, get_component(Device, sys_two, duid))
+        end
+        add_nem_constraints!(sys_two, db, date_range; unresolved_terms = :skip, allow_empty_region_terms = true)
+        two = get_skipped_constraints(sys_two)
+        baysw = only(filter(:constraint => ==(vname("N_BAYSW_THERMAL")), two))
+        @test baysw.reason == :unknown_duid
+        @test Set(baysw.missing_keys) == Set(["BW01", "BW02"])
+        @test all(r -> r.n_missing == length(r.missing_keys), eachrow(two))
+
+        json_path = joinpath(mktempdir(), "sys.json")
+        to_json(sys_two, json_path; force = true)
+        @test get_skipped_constraints(System(json_path)) == two
+    end
+
     # N_PARTIAL_COVERAGE is only invoked in DISPATCHCONSTRAINT for every other interval
     # (6 of 12 rows over this date_range) - it is added anyway, with its "rhs"/"lhs" padded
     # to the full 12-interval grid (carrying the last known value forward) and an "invoked"
