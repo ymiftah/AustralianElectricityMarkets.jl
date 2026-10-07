@@ -96,6 +96,7 @@ include("constraints/generic_constraint.jl")
 include("constraints/read.jl")
 include("constraints/resolve.jl")
 include("fcas/service.jl")
+include("constraints/zero_flow.jl")
 include("constraints/build.jl")
 include("interconnector_losses.jl")
 

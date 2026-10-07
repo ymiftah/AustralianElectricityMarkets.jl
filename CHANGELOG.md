@@ -101,6 +101,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `add_nem_constraints!` builds the Interconnector Zero constraints `SVML_ZERO`, `VSML_ZERO`, `VT_ZERO` and
+  `TV_ZERO`, which `GENCONDATA` and the `SPD*` tables do not define, from a built-in definition: a
+  one-term `<=` constraint on the `V-S-MNSP1` or `T-V-MNSP1` flow with right-hand side 0 and CVP
+  factor 1160, applied only to version 2013-08-21 #1 (any other version warns and is skipped). An
+  invoked pair constrains the interconnector's net flow to zero, elastic at 1160 times the Market
+  Price Cap, instead of being skipped as `no_definition`.
 - **MNSP link offers**: `read_mnsp_links(db, as_of)` reads the link table, and `set_mnsp_offers!`
   attaches the two link offers (availability, price bands, link loss factors) of every interconnector
   that offers in the date range to its `AreaInterchange`. Under `NEMInterconnectorLoss` such an

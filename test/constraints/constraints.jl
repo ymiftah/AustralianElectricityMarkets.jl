@@ -564,6 +564,109 @@ end
         @test inferred == Minute(5)
     end
 
+    @testset "Interconnector Zero constraints have a built-in definition" begin
+        # Copy the mock hive, add Murraylink and Basslink to INTERCONNECTOR/INTERCONNECTORCONSTRAINT
+        # and invoke all four zero constraints at 2013-08-21 #1 (no GENCONDATA or SPD* row),
+        # TV_ZERO also at an unrecognised version, in every interval. VSML_ZERO additionally gets
+        # a published GENCONDATA and SPDINTERCONNECTORCONSTRAINT row, which must win.
+        zero_hive = mktempdir()
+        create_mock_data(zero_hive)
+        zero_conn = DuckDB.connect(DuckDB.DB())
+        DuckDB.execute(zero_conn, "SET preserve_identifier_case=true")
+        append_rows(table, select_sql) = begin
+            dir = joinpath(zero_hive, table)
+            tmp = dir * "_new"
+            DuckDB.execute(
+                zero_conn,
+                "COPY (SELECT * FROM read_parquet('$(dir)/**/*.parquet', hive_partitioning=true) " *
+                    "UNION ALL BY NAME $select_sql) TO '$tmp' (FORMAT 'PARQUET', PARTITION_BY (archive_month))",
+            )
+            rm(dir; recursive = true)
+            mv(tmp, dir)
+            return nothing
+        end
+        for (id, from, to) in (("V-S-MNSP1", "VIC1", "SA1"), ("T-V-MNSP1", "TAS1", "VIC1"))
+            append_rows(
+                "INTERCONNECTOR",
+                "SELECT '$id' AS INTERCONNECTORID, '$from' AS REGIONFROM, '$to' AS REGIONTO, '2025-01' AS archive_month",
+            )
+            append_rows(
+                "INTERCONNECTORCONSTRAINT",
+                "SELECT '$id' AS INTERCONNECTORID, TIMESTAMP '2025-01-01 00:00:00' AS EFFECTIVEDATE, " *
+                    "1 AS VERSIONNO, 200.0 AS MAXMWIN, 200.0 AS MAXMWOUT, 0.1 AS FROMREGIONLOSSSHARE, " *
+                    "0.01 AS LOSSCONSTANT, 0.001 AS LOSSFLOWCOEFFICIENT, 'MNSP' AS ICTYPE, '2025-01' AS archive_month",
+            )
+        end
+        # (id, version, first minute, last minute): the invoked version of one id is unique per
+        # interval, so TV_ZERO switches to the unrecognised version halfway.
+        for (id, ver, first_minute, last_minute) in (
+                ("SVML_ZERO", 1, 0, 55), ("VSML_ZERO", 1, 0, 55), ("VT_ZERO", 1, 0, 55),
+                ("TV_ZERO", 1, 0, 25), ("TV_ZERO", 2, 30, 55),
+            )
+            append_rows(
+                "DISPATCHCONSTRAINT",
+                "SELECT t AS SETTLEMENTDATE, 1 AS RUNNO, 0 AS INTERVENTION, '$id' AS CONSTRAINTID, " *
+                    "0.0 AS RHS, 0.0 AS LHS, 0.0 AS MARGINALVALUE, " *
+                    "DATE '2013-08-21' AS GENCONID_EFFECTIVEDATE, $ver AS GENCONID_VERSIONNO, t AS LASTCHANGED, " *
+                    "'2025-01' AS archive_month FROM (SELECT unnest(generate_series(" *
+                    "TIMESTAMP '2025-01-01 00:$(lpad(first_minute, 2, '0')):00', " *
+                    "TIMESTAMP '2025-01-01 00:$(lpad(last_minute, 2, '0')):00', INTERVAL 5 MINUTE)) AS t)",
+            )
+        end
+        append_rows(
+            "GENCONDATA",
+            "SELECT 'VSML_ZERO' AS GENCONID, DATE '2013-08-21' AS EFFECTIVEDATE, 1 AS VERSIONNO, " *
+                "'published' AS DESCRIPTION, '>=' AS CONSTRAINTTYPE, TIMESTAMP '2025-01-01' AS LASTCHANGED, " *
+                "5.0 AS GENERICCONSTRAINTWEIGHT, 0.0 AS CONSTRAINTVALUE, 0 AS DYNAMICRHS, " *
+                "'published limit' AS LIMITTYPE, 'mock' AS SOURCE, '2025-01' AS archive_month",
+        )
+        append_rows(
+            "SPDINTERCONNECTORCONSTRAINT",
+            "SELECT 'IC1' AS INTERCONNECTORID, DATE '2013-08-21' AS EFFECTIVEDATE, 1 AS VERSIONNO, " *
+                "'VSML_ZERO' AS GENCONID, 2.0 AS FACTOR, TIMESTAMP '2025-01-01' AS LASTCHANGED, " *
+                "'2025-01' AS archive_month",
+        )
+
+        zero_db = aem_connect(HiveConfiguration(hive_location = zero_hive, filesystem = "file"))
+        zero_sys = nem_system(zero_db, RegionalNetworkConfiguration())
+        added_z, skipped_z = nothing, nothing
+        @test_logs (:warn, r"TV_ZERO is invoked at an unrecognised version") match_mode = :any begin
+            added_z, skipped_z = add_nem_constraints!(zero_sys, zero_db, date_range)
+        end
+
+        zname(id, ver = 1) = "$id@2013-08-21#$ver"
+        for id in ("SVML_ZERO", "VSML_ZERO", "VT_ZERO", "TV_ZERO")
+            @test zname(id) in added_z
+        end
+        @test skipped_z[zname("TV_ZERO", 2)] == :no_definition
+
+        # (id, interconnector, factor) of the four built-in rows; VSML_ZERO is checked separately.
+        for (id, interconnector, factor) in (
+                ("SVML_ZERO", "V-S-MNSP1", -1.0), ("VT_ZERO", "T-V-MNSP1", -1.0), ("TV_ZERO", "T-V-MNSP1", 1.0),
+            )
+            gc = get_component(GenericConstraint, zero_sys, zname(id))
+            @test get_sense(gc) == ConstraintSense.LE
+            @test get_rhs(gc) == 0.0
+            @test get_constraint_weight(gc) == 1160.0
+            @test get_limit_type(gc) == "Interconnector Zero"
+            term = only(get_terms(gc))
+            @test term isa InterconnectorTerm
+            @test get_interconnector(term) == interconnector
+            @test get_factor(term) == factor
+            rhs_z = first(values(get_data(get_time_series(Deterministic, gc, "rhs"))))
+            @test all(==(0.0), rhs_z)
+        end
+
+        # A published GENCONDATA row and SPD* term win over the built-in definition.
+        published = get_component(GenericConstraint, zero_sys, zname("VSML_ZERO"))
+        @test get_sense(published) == ConstraintSense.GE
+        @test get_constraint_weight(published) == 5.0
+        @test get_limit_type(published) == "published limit"
+        published_term = only(get_terms(published))
+        @test get_interconnector(published_term) == "IC1"
+        @test get_factor(published_term) == 2.0
+    end
+
     @testset "throws when DISPATCHCONSTRAINT is not cached" begin
         empty_db = aem_connect(HiveConfiguration(hive_location = mktempdir(), filesystem = "file"))
         empty_sys = nem_system(db, RegionalNetworkConfiguration())

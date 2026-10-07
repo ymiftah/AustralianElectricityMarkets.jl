@@ -154,6 +154,18 @@ function add_nem_constraints!(
     def_by_version = Dict((row.GENCONID, row.EFFECTIVEDATE, row.VERSIONNO) => row for row in eachrow(definitions))
 
     terms_long = read_constraint_terms(db, gencon_versions, date_range)
+
+    # Only versions GENCONDATA does not define: a published definition always wins.
+    undefined = antijoin(
+        gencon_versions, definitions;
+        on = [:GENCONID, :GENCONID_EFFECTIVEDATE => :EFFECTIVEDATE, :GENCONID_VERSIONNO => :VERSIONNO],
+    )
+    zero_definitions, zero_terms = _zero_flow_constraint_definitions(undefined)
+    if !isempty(zero_definitions)
+        definitions = vcat(definitions, zero_definitions; cols = :union)
+        terms_long = vcat(terms_long, zero_terms; cols = :union)
+        def_by_version = Dict((row.GENCONID, row.EFFECTIVEDATE, row.VERSIONNO) => row for row in eachrow(definitions))
+    end
     terms_by_version = groupby(terms_long, [:GENCONID, :EFFECTIVEDATE, :VERSIONNO])
 
     # Deliberately GENCONID alone, not the triple above: DISPATCH_FCAS_REQ_CONSTRAINT carries
