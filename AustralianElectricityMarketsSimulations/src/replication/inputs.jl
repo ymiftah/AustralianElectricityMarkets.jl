@@ -161,3 +161,155 @@ function _read_published(db, table_name::Symbol, key::String, columns, settlemen
         params,
     )
 end
+
+"""
+    read_constraint_flags(db, interval_range; intervention = 0)
+
+Reads, per dispatch interval, whether a network generic constraint bound and whether any
+constraint was violated, from `DISPATCHCONSTRAINT`. FCAS requirement constraints (`F_` ids) do
+not count as binding.
+
+# Arguments
+- `db`: an `AEMDB` connection.
+- `interval_range`: the `SETTLEMENTDATE`s to read, as a `StepRange{DateTime}`.
+- `intervention`: 0 for the pricing run, 1 for the physical run.
+
+# Returns
+A `DataFrame` with columns `SETTLEMENTDATE`, `binding` and `violated`, one row per interval that
+has any constraint row.
+"""
+function read_constraint_flags(db, interval_range::StepRange{DateTime}; intervention::Integer = 0)
+    table = read_hive(db, :DISPATCHCONSTRAINT)
+    schema = names(AustralianElectricityMarkets._query(db, "SELECT * FROM $table LIMIT 0"))
+    params = Any[first(interval_range), last(interval_range)]
+    AustralianElectricityMarkets._push_intervention!(params, schema, intervention)
+    return AustralianElectricityMarkets._query(
+        db,
+        """
+        SELECT SETTLEMENTDATE,
+               COALESCE(bool_or(TRY_CAST(MARGINALVALUE AS DOUBLE) <> 0 AND NOT starts_with(CONSTRAINTID, 'F_')), false) AS binding,
+               $("VIOLATIONDEGREE" in schema ? "COALESCE(bool_or(TRY_CAST(VIOLATIONDEGREE AS DOUBLE) > 0), false)" : "false") AS violated
+        FROM $table
+        WHERE SETTLEMENTDATE BETWEEN ? AND ? $(AustralianElectricityMarkets._intervention_where(schema))
+        GROUP BY SETTLEMENTDATE
+        ORDER BY SETTLEMENTDATE
+        """,
+        params,
+    )
+end
+
+"""
+    read_complementary_slackness(db, interval_range; intervention = 0, price_tolerance = 0.05,
+                                 mw_tolerance = 1.0)
+
+Checks AEMO's published energy dispatch against each unit's own offer. A band priced below
+`RRP x MLF` should be fully cleared and a band priced above it uncleared, so the price-implied
+dispatch (strictly-below and at-or-below bands, clipped to availability, the semi-scheduled
+ceiling and the five-minute ramp window) should bracket `TOTALCLEARED`. Generation offers of
+units with ramp rates are checked; fast-start units (`DISPATCHMODE = 2`) are skipped. A unit
+outside the bracket is held on or off by something other than price.
+
+# Arguments
+- `db`: an `AEMDB` connection with `DISPATCHLOAD`, `DISPATCHPRICE`, `DUDETAILSUMMARY`,
+  `BIDPEROFFER_D` and `BIDDAYOFFER_D` cached.
+- `interval_range`: the `SETTLEMENTDATE`s to check, as a `StepRange{DateTime}`.
+- `intervention`: 0 for the pricing run, 1 for the physical run.
+- `price_tolerance`: dollars per MWh of band around `RRP x MLF` treated as marginal.
+- `mw_tolerance`: MW outside the bracket above which a unit counts as violating.
+
+# Returns
+A `DataFrame` with one row per `(SETTLEMENTDATE, REGIONID)`: `n_units` checked, `n_violating`
+units, `violation_mw` (sum of the distances outside the bracket) and `cleared_mw`.
+"""
+function read_complementary_slackness(
+        db, interval_range::StepRange{DateTime};
+        intervention::Integer = 0, price_tolerance::Real = 0.05, mw_tolerance::Real = 1.0,
+    )
+    aem = AustralianElectricityMarkets
+    load = read_hive(db, :DISPATCHLOAD)
+    load_schema = names(aem._query(db, "SELECT * FROM $load LIMIT 0"))
+    price = read_hive(db, :DISPATCHPRICE)
+    price_schema = names(aem._query(db, "SELECT * FROM $price LIMIT 0"))
+    summary_table = read_hive(db, :DUDETAILSUMMARY)
+    summary_schema = names(aem._query(db, "SELECT * FROM $summary_table LIMIT 0"))
+    loss_factor(col) = col in summary_schema ? "COALESCE(TRY_CAST($col AS DOUBLE), 1.0)" : "1.0"
+    mlf = "$(loss_factor("TRANSMISSIONLOSSFACTOR")) * $(loss_factor("DISTRIBUTIONLOSSFACTOR"))"
+    first_t, last_t = first(interval_range), last(interval_range)
+    params = Any[first_t, last_t]
+    aem._push_intervention!(params, load_schema, intervention)
+    append!(params, Any[first_t, last_t])
+    aem._push_intervention!(params, price_schema, intervention)
+    bid_days = (Date(first_t) - Day(1), Date(last_t) + Day(1))
+    append!(params, Any[bid_days..., first_t, last_t, bid_days...])
+    bands = 1:10
+    price_bands = join(("TRY_CAST(PRICEBAND$k AS DOUBLE) AS PRICEBAND$k" for k in bands), ", ")
+    band_avail = join(("TRY_CAST(BANDAVAIL$k AS DOUBLE) AS BANDAVAIL$k" for k in bands), ", ")
+    strict = join(("CASE WHEN b.PRICEBAND$k < thr - $price_tolerance THEN o.BANDAVAIL$k ELSE 0 END" for k in bands), " + ")
+    inclusive = join(("CASE WHEN b.PRICEBAND$k <= thr + $price_tolerance THEN o.BANDAVAIL$k ELSE 0 END" for k in bands), " + ")
+    return aem._query(
+        db,
+        """
+        WITH dl AS (
+            SELECT SETTLEMENTDATE, DUID, TRY_CAST(INITIALMW AS DOUBLE) AS im, TRY_CAST(TOTALCLEARED AS DOUBLE) AS tc,
+                   TRY_CAST(RAMPUPRATE AS DOUBLE) AS ru, TRY_CAST(RAMPDOWNRATE AS DOUBLE) AS rd,
+                   TRY_CAST(AVAILABILITY AS DOUBLE) AS av, TRY_CAST(UIGF AS DOUBLE) AS uigf,
+                   $("DISPATCHMODE" in load_schema ? "TRY_CAST(DISPATCHMODE AS INTEGER)" : "0") AS dm
+            FROM $load
+            WHERE SETTLEMENTDATE BETWEEN ? AND ? $(aem._intervention_where(load_schema))
+            QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, DUID ORDER BY archive_month DESC) = 1
+        ),
+        pr AS (
+            SELECT SETTLEMENTDATE, REGIONID, TRY_CAST(RRP AS DOUBLE) AS rrp
+            FROM $price
+            WHERE SETTLEMENTDATE BETWEEN ? AND ? $(aem._intervention_where(price_schema))
+            QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, REGIONID ORDER BY archive_month DESC) = 1
+        ),
+        du AS (
+            SELECT DUID, REGIONID,
+                   $mlf AS mlf
+            FROM $summary_table
+            QUALIFY row_number() OVER (PARTITION BY DUID ORDER BY archive_month DESC, START_DATE DESC) = 1
+        ),
+        base AS (
+            SELECT dl.*, du.REGIONID, pr.rrp * du.mlf AS thr
+            FROM dl JOIN du USING (DUID) JOIN pr ON pr.SETTLEMENTDATE = dl.SETTLEMENTDATE AND pr.REGIONID = du.REGIONID
+            WHERE dl.ru IS NOT NULL AND dl.rd IS NOT NULL AND dl.tc IS NOT NULL AND COALESCE(dl.dm, 0) <> 2
+        ),
+        offer AS (
+            SELECT DUID, SETTLEMENTDATE AS bid_day, INTERVAL_DATETIME, VERSIONNO, TRY_CAST(MAXAVAIL AS DOUBLE) AS maxavail,
+                   $band_avail
+            FROM $(read_hive(db, :BIDPEROFFER_D))
+            WHERE BIDTYPE = 'ENERGY' AND DIRECTION = 'GEN' AND SETTLEMENTDATE BETWEEN ? AND ?
+              AND INTERVAL_DATETIME BETWEEN ? AND ?
+            QUALIFY row_number() OVER (PARTITION BY DUID, INTERVAL_DATETIME ORDER BY VERSIONNO DESC, archive_month DESC) = 1
+        ),
+        day AS (
+            SELECT DUID, SETTLEMENTDATE, VERSIONNO, $price_bands
+            FROM $(read_hive(db, :BIDDAYOFFER_D))
+            WHERE BIDTYPE = 'ENERGY' AND DIRECTION = 'GEN' AND SETTLEMENTDATE BETWEEN ? AND ?
+            QUALIFY row_number() OVER (PARTITION BY DUID, SETTLEMENTDATE, VERSIONNO ORDER BY archive_month DESC) = 1
+        ),
+        checked AS (
+            SELECT base.SETTLEMENTDATE, base.REGIONID, base.tc, base.im, base.ru, base.rd,
+                   LEAST(base.av, o.maxavail, COALESCE(base.uigf, 1e9)) AS cap,
+                   $strict AS strict_mw, $inclusive AS incl_mw
+            FROM base
+            JOIN offer o ON o.DUID = base.DUID AND o.INTERVAL_DATETIME = base.SETTLEMENTDATE
+            JOIN day b ON b.DUID = o.DUID AND b.SETTLEMENTDATE = o.bid_day AND b.VERSIONNO = o.VERSIONNO
+        ),
+        windowed AS (
+            SELECT SETTLEMENTDATE, REGIONID, tc,
+                   GREATEST(im - rd / 12.0, LEAST(im + ru / 12.0, LEAST(strict_mw, cap))) AS lo,
+                   GREATEST(im - rd / 12.0, LEAST(im + ru / 12.0, LEAST(incl_mw, cap))) AS hi
+            FROM checked
+        )
+        SELECT SETTLEMENTDATE, REGIONID, count(*) AS n_units,
+               sum((GREATEST(lo - tc, tc - hi, 0) > $mw_tolerance)::INT) AS n_violating,
+               sum(GREATEST(lo - tc, tc - hi, 0)) AS violation_mw, sum(tc) AS cleared_mw
+        FROM windowed
+        GROUP BY SETTLEMENTDATE, REGIONID
+        ORDER BY SETTLEMENTDATE, REGIONID
+        """,
+        params,
+    )
+end
