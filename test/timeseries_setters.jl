@@ -1359,7 +1359,7 @@
             old = copy(df)
             old.END_DATE = Union{DateTime, Missing}[fy_change for _ in 1:nrow(old)]
             old.DISPATCHTYPE = [d == "BW01" ? "BIDIRECTIONAL" : "GENERATOR" for d in old.DUID]
-            old.TRANSMISSIONLOSSFACTOR = [d == "ER01" ? 0.9 : d == "BW01" ? 0.8 : 1.0 for d in old.DUID]
+            old.TRANSMISSIONLOSSFACTOR = [d == "ER01" ? 0.9 : d in ("BW01", "PUMP1") ? 0.8 : 1.0 for d in old.DUID]
             old.DISTRIBUTIONLOSSFACTOR = [d == "ER01" ? 0.97 : 1.0 for d in old.DUID]
             old.SECONDARY_TLF = Union{Float64, Missing}[d == "BW01" ? 0.5 : d == "BW02" ? 0.7 : missing for d in old.DUID]
             new = copy(df)
@@ -1412,6 +1412,12 @@
             @test prices(sys_lf, "BW01", "decremental_variable_cost") ≈
                 prices(sys_raw, "BW01", "decremental_variable_cost") ./ 0.8
             @test mw(sys_lf, "ER01") ≈ mw(sys_raw, "ER01")
+        end
+
+        @testset "a scheduled load's decremental bid uses its load loss factor" begin
+            @test get_available(get_component(InterruptiblePowerLoad, sys_lf, "PUMP1"))
+            @test prices(sys_lf, "PUMP1", "decremental_variable_cost") ≈
+                prices(sys_raw, "PUMP1", "decremental_variable_cost") ./ 0.8
         end
 
         @testset "referred prices reorder a merit order" begin

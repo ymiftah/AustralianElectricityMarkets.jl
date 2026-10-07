@@ -105,7 +105,7 @@ Energy bid prices are connection-point prices. With `loss_factors = true` (the d
 price is divided by the unit's loss factor, resolved as of `first(date_range)` by
 [`read_loss_factors`](@ref) (one factor per unit for the whole range; a warning flags a change
 inside it), which refers the bid to the regional reference node as NEMDE does.
-The MW axis, FCAS bids and physical limits are untouched. A bidding unit of `sys` with no
+The MW axis, FCAS bids and physical limits are untouched. A bidding generator, scheduled load or battery of `sys` with no
 `DUDETAILSUMMARY` row in force throws an `ArgumentError`. Pass `loss_factors = false` to keep the raw
 connection-point prices.
 """
@@ -118,7 +118,7 @@ function set_market_bids!(sys, db, date_range; loss_factors::Bool = true, kwargs
     pricebids_table = read_hive(db, :BIDDAYOFFER_D)
     bids = _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
     if loss_factors
-        sys_units = Set(get_name.(vcat(collect(get_components(Generator, sys)), collect(get_components(EnergyReservoirStorage, sys)))))
+        sys_units = Set(get_name(c) for T in (Generator, InterruptiblePowerLoad, EnergyReservoirStorage) for c in get_components(T, sys))
         factors = read_loss_factors(db; as_of = start_date, through = end_date)
         _refer_bids_to_reference_node!(subset!(bids, :DUID => ByRow(in(sys_units))), factors)
     end
