@@ -329,8 +329,10 @@ end
 """
     get_scheduled_loads_dataframe(bus_df, units)
 
-Generates a DataFrame of scheduled loads (pumps and other `DISPATCHTYPE = LOAD`,
-`SCHEDULE_TYPE = SCHEDULED` units), each on its region's generator bus. Empty when `units` has no
+Generates a DataFrame of loads (`DISPATCHTYPE = LOAD` units, scheduled pumps and the
+non-scheduled ancillary-service and demand-response loads alike), each on its region's generator
+bus. A non-scheduled load starts unavailable: it carries no energy bid, and
+[`set_fcas_bids!`](@ref) makes it available only when it offers FCAS. Empty when `units` has no
 `DISPATCHTYPE` column.
 
 # Arguments
@@ -339,16 +341,16 @@ Generates a DataFrame of scheduled loads (pumps and other `DISPATCHTYPE = LOAD`,
 
 # Returns
 A `DataFrame` with `name`, `bus_id`, `region`, `base_power`, `max_active_power` (per-unit of
-`base_power`) and `available`.
+`base_power`), `available`, `scheduled` and `commissioned`.
 """
 function get_scheduled_loads_dataframe(bus_df, units)
     bus = select(bus_df, :bus_id, :name)
     columns = (:DISPATCHTYPE, :SCHEDULE_TYPE, :REGISTEREDCAPACITY, :MAXCAPACITY)
     all(c -> c in propertynames(units), columns) ||
-        return DataFrame(name = String[], bus_id = Int[], region = String[], base_power = Float64[], max_active_power = Float64[], available = Bool[])
+        return DataFrame(name = String[], bus_id = Int[], region = String[], base_power = Float64[], max_active_power = Float64[], available = Bool[], scheduled = Bool[], commissioned = Bool[])
     loads = @chain units begin
         subset(
-            :DISPATCHTYPE => ByRow(isequal("LOAD")), :SCHEDULE_TYPE => ByRow(isequal("SCHEDULED")),
+            :DISPATCHTYPE => ByRow(isequal("LOAD")), :SCHEDULE_TYPE => ByRow(in(("SCHEDULED", "NON-SCHEDULED"))),
             :REGISTEREDCAPACITY => ByRow(x -> !ismissing(x) && x > 0),
         )
         select(
@@ -358,7 +360,9 @@ function get_scheduled_loads_dataframe(bus_df, units)
             :REGISTEREDCAPACITY => (x -> Float64.(x)) => :base_power,
             [:MAXCAPACITY, :REGISTEREDCAPACITY] =>
                 ByRow((m, r) -> ismissing(m) ? 1.0 : Float64(m / r)) => :max_active_power,
-            :STATUS => ByRow(==("COMMISSIONED")) => :available,
+            [:STATUS, :SCHEDULE_TYPE] => ByRow((s, t) -> s == "COMMISSIONED" && t == "SCHEDULED") => :available,
+            :SCHEDULE_TYPE => ByRow(==("SCHEDULED")) => :scheduled,
+            :STATUS => ByRow(==("COMMISSIONED")) => :commissioned,
         )
         leftjoin(bus; on = :bus_name => :name)
         select(Not(:bus_name))
@@ -750,9 +754,12 @@ end
 """
     _add_scheduled_loads!(sys, scheduled_loads_df)
 
-Adds each scheduled load as an `InterruptiblePowerLoad` with a zero `LoadCost`;
-[`set_market_bids!`](@ref) replaces it with a decremental `MarketBidCost`, or marks the load
-unavailable when it has no bid.
+Adds each load as an `InterruptiblePowerLoad` with a zero `LoadCost`;
+[`set_market_bids!`](@ref) replaces a scheduled load's with a decremental `MarketBidCost`, or marks
+it unavailable when it has no bid. A non-scheduled load (`scheduled = false`) is tagged
+`ext["non_scheduled"] = true` (and `ext["commissioned"]`) and starts unavailable; it keeps the zero
+cost, and [`set_nem_dispatch_limits!`](@ref) fixes its energy at zero. Despite the name, this builds
+every `DISPATCHTYPE = LOAD` unit of the data frame.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
@@ -773,6 +780,8 @@ function _add_scheduled_loads!(sys, scheduled_loads_df)
             max_reactive_power = 0.0,
             base_power = row[:base_power],
             operation_cost = LoadCost(; variable = CostCurve(LinearCurve(0.0)), fixed = 0.0),
+            ext = row[:scheduled] ? Dict{String, Any}() :
+                Dict{String, Any}("non_scheduled" => true, "commissioned" => row[:commissioned]),
         ) for row in eachrow(scheduled_loads_df)
     )
     return add_components!(sys, loads)

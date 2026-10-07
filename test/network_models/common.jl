@@ -77,7 +77,15 @@
     @testset "get_scheduled_loads_dataframe" begin
         bus_df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
         df = AustralianElectricityMarkets.RegionModel.get_scheduled_loads_dataframe(bus_df, read_units(db))
-        @test sort(df.name) == ["PUMP1", "PUMP2", "WDR1"]
+        @test sort(df.name) == ["ASLOAD1", "ASLOAD2", "PUMP1", "PUMP2", "WDR1"]
+        # Non-scheduled loads are built unavailable: they carry no energy bid and are only
+        # switched on by an FCAS offer.
+        @test Dict(df.name .=> df.scheduled) == Dict(
+            "PUMP1" => true, "PUMP2" => true, "WDR1" => true, "ASLOAD1" => false, "ASLOAD2" => false,
+        )
+        @test Dict(df.name .=> df.available) == Dict(
+            "PUMP1" => true, "PUMP2" => true, "WDR1" => true, "ASLOAD1" => false, "ASLOAD2" => false,
+        )
         @test all(==("NSW1"), df.region)
         @test all(==(100.0), df.base_power)
         @test all(==(1.0), df.max_active_power)
@@ -141,7 +149,11 @@
         @test !isnothing(pump)
         @test get_name(get_area(get_bus(pump))) == "NSW1"
         @test get_operation_cost(pump) isa LoadCost
-        @test length(get_components(InterruptiblePowerLoad, system)) == 3
+        @test length(get_components(InterruptiblePowerLoad, system)) == 5
+        asload = get_component(InterruptiblePowerLoad, system, "ASLOAD1")
+        @test !get_available(asload)
+        @test get_ext(asload)["non_scheduled"] === true
+        @test !haskey(get_ext(pump), "non_scheduled")
         # A load with a GENUNITS row is not also a generator: its DUID names exactly one Device.
         @test get_component(Device, system, "PUMP1") isa InterruptiblePowerLoad
         @test isnothing(get_component(HydroDispatch, system, "PUMP1"))

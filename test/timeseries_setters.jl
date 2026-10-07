@@ -457,6 +457,18 @@
             )
         end
 
+        @testset "pins a non-scheduled load's energy to zero whatever DISPATCHLOAD meters" begin
+            sys = deepcopy(sys_base)
+            set_fcas_bids!(sys, db, date_range)
+            @test all(>(0.0), subset(truth, :DUID => ByRow(==("ASLOAD1"))).INITIALMW)
+            set_nem_dispatch_limits!(sys, db, date_range)
+            asload = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
+            @test get_available(asload)
+            for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw", "max_active_power", "availability")
+                @test all(==(0.0), get_time_series_values(SingleTimeSeries, asload, name))
+            end
+        end
+
         @testset "attaches ramp/initial series to a battery, with no max_active_power" begin
             sys = deepcopy(sys_base)
             set_nem_dispatch_limits!(sys, db, date_range)

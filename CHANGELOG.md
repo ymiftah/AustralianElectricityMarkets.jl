@@ -116,6 +116,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`MNSPLinkDirectionVariable`), so a zero net flow gives zero link flows. An interconnector
   without offers keeps the free-flow model. The loss share of `T-V-MNSP1` is fixed at 1.0, as in nempy.
 
+- Loads offer FCAS. `set_fcas_bids!` attaches `LOAD`-direction FCAS bids to `InterruptiblePowerLoad`
+  components, `nem_system` builds non-scheduled loads (ancillary-service and demand-response loads
+  with no energy bid) unavailable and `set_fcas_bids!` makes the ones that offer FCAS available, with
+  zero energy. `FCASMarket` models a load on its consumed MW with AEMO's scheduled-load joint
+  capacity and ramping rows (the regulation targets swap sides), `add_fcas_services!` includes load
+  bidders, FCAS `RegionTerm`s reach a region's loads, and the decremental-bid-on-a-non-`Storage`
+  throw is narrowed to devices that are neither storage nor loads. Scheduled loads' FCAS scaling
+  inputs are not modelled.
 - Data package ingests the MNSP offer tables (`MNSP_DAYOFFER`, `MNSP_BIDOFFERPERIOD`,
   `MNSP_PEROFFER`, `DISPATCH_MNSPBIDTRK`), `DISPATCHLOAD.DISPATCHMODETIME` and
   `DISPATCHINTERCONNECTORRES.FCASEXPORTLIMIT`/`FCASIMPORTLIMIT`, with `read_mnsp_offers`

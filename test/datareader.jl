@@ -19,9 +19,9 @@ let
         @test "DUID" in names(df)
         @test "TECHNOLOGY" in names(df)
         @test "FUELTYPE" in names(df)
-        @test df.DUID[1] == "BW01"
-        # Verify technology mapping from mock data "Battery Storage" (first unit)
-        @test df.TECHNOLOGY[1] == PrimeMovers.BA
+        @test "BW01" in df.DUID
+        # Verify technology mapping from mock data "Battery Storage" (BW01)
+        @test only(df.TECHNOLOGY[df.DUID .== "BW01"]) == PrimeMovers.BA
 
         # BAYSW (station for BW01-BW04) is renamed in a later STATION archive_month
         # partition (mock_data.jl). read_units() must resolve one name per DUID —

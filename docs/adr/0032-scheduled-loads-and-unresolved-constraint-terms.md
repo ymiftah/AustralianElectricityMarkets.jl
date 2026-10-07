@@ -67,5 +67,5 @@ on scheduled loads (pumps). Separately `TOTALDEMAND` is "demand (less loads)" in
   (Constraint Implementation Guidelines 2.2); the constraint's own factor carries the sign
   (3.2.2, "the generator's factor multiplied by -1"). A load term therefore uses the consumed-MW
   variable with multiplier +1. A `RegionTerm` still aggregates only generators and storage.
-- **Not modelled.** Load FCAS offers (G8). A load without FCAS bids is simply not a contributor.
+- **Not modelled.** Load FCAS offers are modelled by ADR 0038. A load without FCAS bids is simply not a contributor.
   Ramp floors above availability are checked as for generators.

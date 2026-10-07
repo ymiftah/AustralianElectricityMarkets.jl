@@ -77,6 +77,11 @@ axis when its dispatch model is built.
 normalised by the device's own static `max_active_power` (read under `NATURAL_UNITS`), with
 `scaling_factor_multiplier = get_max_active_power`.
 
+A non-scheduled load (see [`set_fcas_bids!`](@ref)) gets zero `"initial_mw"`, ramp rates, `"availability"`
+and `"max_active_power"` whatever `DISPATCHLOAD` meters: its consumption is already in regional demand
+and is not dispatched. This function must run after [`set_fcas_bids!`](@ref), which makes such a load
+available; a load made available later has no ramp or limit series.
+
 A device with no `DISPATCHLOAD` rows in `date_range`, missing intervals, a `missing` rate or
 `INITIALMW`, or a negative `RAMPUPRATE`/`RAMPDOWNRATE` is a problem; for a `ThermalStandard`,
 `HydroDispatch` or `RenewableDispatch`, a `missing` or negative `AVAILABILITY`, or a
@@ -155,8 +160,19 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
         max_active_power = is_storage ? nothing : Float64[]
         availability = is_storage ? nothing : Float64[]
         reason = nothing
+        pinned = _is_non_scheduled_load(device)
         for t in full_grid
             row = by_time[t]
+            if pinned
+                # A non-scheduled load's consumption is already in regional demand and is not
+                # dispatched: its energy is fixed at zero whatever DISPATCHLOAD meters.
+                push!(initial_mw, 0.0)
+                push!(ramp_up_rate, 0.0)
+                push!(ramp_down_rate, 0.0)
+                push!(max_active_power, 0.0)
+                push!(availability, 0.0)
+                continue
+            end
             if ismissing(row.INITIALMW) || ismissing(row.RAMPUPRATE) || ismissing(row.RAMPDOWNRATE) ||
                     (!is_storage && ismissing(row.AVAILABILITY))
                 reason = "missing INITIALMW/RAMPUPRATE/RAMPDOWNRATE" * (is_storage ? "" : "/AVAILABILITY") * " at $t"
