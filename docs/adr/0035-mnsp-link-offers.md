@@ -64,10 +64,13 @@ equations are known only by their CVP schedule descriptions.
 - **Loss factors.** Nempy's convention is followed: the link loss factors, not the DC-leg loss model,
   carry the AC-leg loss. AEMO publishes no rule for referring an offer price by a loss factor, so none
   is applied.
-- **Circulation.** Where the two links' lowest offers sum below zero, circulating both links is
-  profitable. Those timesteps restrict flow to one direction through `MNSPLinkDirectionVariable`, a
-  PSI variable container so the dual pass fixes it and balance duals stay available. Other cells are
-  unconstrained binaries.
+- **Circulation.** The two links never flow at once: `MNSPLinkDirectionVariable` is a binary per
+  interconnector and timestep that gates one link or the other, and it is a PSI variable container so
+  the dual pass fixes it and balance duals stay available. It is imposed always, not only when the
+  cheapest offers sum below zero: with `flow = forward - reverse`, a zero net flow (a zero-flow
+  generic constraint such as VT_ZERO or TV_ZERO) would otherwise still allow `forward = reverse > 0`,
+  and because each link injects `(tlf - 1) q` at both ends that circulation can create or destroy
+  energy whenever regional prices exceed the summed band prices.
 - **Basslink loss share.** `FROMREGIONLOSSSHARE` is 0.0 in AEMO's data for T-V-MNSP1. Following nempy,
   `interconnector_loss_models` sets it to 1.0. This is an empirical departure from the data, kept to
   replicate NEMDE outcomes, not a documented AEMO rule.

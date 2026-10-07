@@ -21,8 +21,7 @@ struct MNSPLinkFlowConstraint <: PSI.ConstraintType end
     MNSPLinkDirectionVariable
 
 Binary per interconnector and timestep, `1` when only the forward link may flow and `0` when only
-the reverse link may. It restricts the links only at timesteps where circulating flow would
-otherwise be profitable; elsewhere it is unconstrained.
+the reverse link may, so the two links never flow at once.
 """
 struct MNSPLinkDirectionVariable <: PSI.VariableType end
 
@@ -80,8 +79,8 @@ area and `+to_tlf * q` in its receiving area, on top of the interconnector's own
 Devices without offers are untouched and keep their free-flow model. Quantities are per-unit of the
 system base.
 
-Where the lowest offered prices of the two links sum below zero, a registered binary per timestep
-allows only one direction to flow.
+A registered binary per timestep allows only one direction to flow, so a zero net flow gives zero
+link flows.
 """
 function _add_mnsp_link_flows!(container::PSI.OptimizationContainer, devices)
     mnsp = filter(_has_mnsp_offers, collect(devices))
@@ -123,14 +122,11 @@ function _add_mnsp_link_flows!(container::PSI.OptimizationContainer, devices)
         end
         for t in time_steps
             upper = Dict{String, Float64}()
-            lowest_price = Dict{String, Float64}()
             for dir in _MNSP_DIRECTIONS
                 x = PSY.get_x_coords(curves[dir][t])
                 y = PSY.get_y_coords(curves[dir][t])
                 widths = diff(x)
                 upper[dir] = min(avail[dir][t], sum(widths)) / base_power
-                first_band = findfirst(>(0), widths)
-                lowest_price[dir] = isnothing(first_band) ? Inf : y[first_band]
                 q = JuMP.@variable(
                     jm, lower_bound = 0.0, upper_bound = upper[dir],
                     base_name = "MNSPLinkFlowVariable_{$name,$dir,$t}",
@@ -155,10 +151,8 @@ function _add_mnsp_link_flows!(container::PSI.OptimizationContainer, devices)
             )
             forward_on = JuMP.@variable(jm, binary = true, base_name = "MNSPLinkDirectionVariable_{$name,$t}")
             direction_var[name, t] = forward_on
-            if lowest_price["forward"] + lowest_price["reverse"] < 0
-                JuMP.@constraint(jm, link_var[name, "forward", t] <= upper["forward"] * forward_on)
-                JuMP.@constraint(jm, link_var[name, "reverse", t] <= upper["reverse"] * (1 - forward_on))
-            end
+            JuMP.@constraint(jm, link_var[name, "forward", t] <= upper["forward"] * forward_on)
+            JuMP.@constraint(jm, link_var[name, "reverse", t] <= upper["reverse"] * (1 - forward_on))
         end
     end
     return

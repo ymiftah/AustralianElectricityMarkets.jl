@@ -472,9 +472,16 @@ function _attach_mnsp_offers!(
 end
 
 "Solves `sys` under the loss template and returns `(flow, forward, reverse, slack)` at the first timestep, in MW."
-function _solve_mnsp(sys)
+function _solve_mnsp(sys; zero_flow::Bool = false)
     model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    if zero_flow  # a zero-flow generic constraint on the interconnector's net flow
+        container = PSI.get_optimization_container(model)
+        flow_var = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
+        for t in PSI.get_time_steps(container)
+            PSI.JuMP.@constraint(PSI.get_jump_model(container), flow_var["IC1", t] == 0.0)
+        end
+    end
     PSI.solve!(model)
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     res = PSI.OptimizationProblemResults(model)
@@ -555,6 +562,18 @@ end
         # hourly interval.
         marginal = 0.9907 * out.dual2 - 1.0 * out.dual1 - 0.05 * (0.4 * out.dual1 + 0.6 * out.dual2)
         @test marginal ≈ PSY.get_base_power(sys) * 10.0 rtol = 1.0e-6
+    end
+
+    @testset "a zero net flow zeroes both links even when circulation would create energy" begin
+        sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+        # Reverse link with to_tlf > from_tlf: circulating both links delivers free energy at both ends.
+        _attach_mnsp_offers!(
+            sys; forward = (500.0, [(500.0, 0.01)]), reverse = (500.0, [(500.0, 0.01)]),
+            forward_tlfs = (1.0, 1.0), reverse_tlfs = (0.9, 1.1),
+        )
+        out = _solve_mnsp(sys; zero_flow = true)
+        @test out.forward ≈ 0.0 atol = 1.0e-6
+        @test out.reverse ≈ 0.0 atol = 1.0e-6
     end
 
     @testset "negative offers on both links still give finite balance duals" begin
