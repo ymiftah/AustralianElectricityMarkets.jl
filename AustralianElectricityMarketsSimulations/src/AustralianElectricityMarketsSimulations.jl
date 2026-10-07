@@ -61,7 +61,7 @@ export AbstractNEMDispatch, NEMReplayDispatch, NEMLookaheadDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter
 export nem_dispatch_participants, set_nem_dispatch_models!
-export add_tie_break_constraints!, TIE_BREAK_CVP_FACTOR
+export TIE_BREAK_CVP_FACTOR
 export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegmentVariable,
     InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint,
     InterconnectorLossSegmentFullVariable, InterconnectorLossSegmentOrderConstraint

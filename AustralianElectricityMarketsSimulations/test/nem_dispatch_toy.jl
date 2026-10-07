@@ -138,7 +138,7 @@ end
     @test out.dispatch_mw[TOY_CHEAP] ≈ 5.0 atol = TOY_TOLERANCE
     # The battery's offer band ties with Alta's at 20, so the held-back band carries the
     # tie-break slack penalty (1e-6) into the price.
-    @test out.price ≈ 20.0 atol = 10 * TIE_BREAK_CVP_FACTOR
+    @test out.price ≈ 20.0 atol = TOY_TOLERANCE
     @test out.objective ≈ (5.0 * 20.0 - 5.0 * 30.0) * DISPATCH_INTERVAL_HOURS atol = TOY_TOLERANCE
 end
 
@@ -474,7 +474,7 @@ end
     end
 
     @testset "prices within the tolerance are tied, prices beyond it are not" begin
-        near = solve_toy(tied_toy((10.0, 10.0 + 0.5 * TIE_BREAK_CVP_FACTOR, 10.0); load = 168.0))
+        near = solve_toy(tied_toy((10.0, 10.0 + 0.01 * TIE_BREAK_CVP_FACTOR, 10.0); load = 168.0))
         @test near.dispatch_mw[TOY_CHEAP] ≈ 84.0 atol = 1.0e-5
         @test near.dispatch_mw[third] ≈ 61.0 atol = 1.0e-5
         apart = solve_toy(tied_toy((10.0, 20.0, 10.0); load = 168.0))
@@ -502,4 +502,51 @@ end
         # The two unconstrained units stay pro rata to each other.
         @test out.dispatch_mw[TOY_EXPENSIVE] / 46.0 ≈ out.dispatch_mw[third] / 122.0 atol = 1.0e-4
     end
+
+    @testset "a held-back unit in the middle of the sort order does not skew the others" begin
+        # Park City sorts between Alta and Solitude; its 2 MW/min ramp caps it at 10 MW.
+        out = solve_toy(tied_toy((10.0, 10.0, 10.0); ramp_up = (100.0, 2.0, 100.0)))
+        @test out.dispatch_mw[TOY_EXPENSIVE] ≤ 10.0 + TOY_TOLERANCE
+        @test sum(values(out.dispatch_mw)) ≈ 168.0 atol = TOY_TOLERANCE
+        @test out.dispatch_mw[TOY_CHEAP] / 168.0 ≈ out.dispatch_mw[third] / 122.0 atol = 1.0e-4
+    end
+
+    @testset "a battery offer band ties with a thermal band across device types" begin
+        sys = nem_toy_system(
+            [TOY_CHEAP => toy_unit(100.0, [(100.0, 10.0)]; initial = 0.0, ramp_up = 100.0)],
+            100.0;
+            batteries = [TOY_BATTERY => toy_battery(100.0, 10.0, 50.0, 1.0; initial = 0.0, ramp_up = 100.0)],
+        )
+        out = solve_toy(sys)
+        @test out.dispatch_mw[TOY_CHEAP] ≈ 50.0 atol = 1.0e-5
+        @test out.battery_out_mw[TOY_BATTERY] ≈ 50.0 atol = 1.0e-5
+    end
+
+    @testset "tied load bids of two batteries clear pro rata" begin
+        sys = nem_toy_system(
+            [TOY_CHEAP => toy_unit(50.0, [(50.0, 5.0)]; initial = 0.0, ramp_up = 100.0)],
+            0.0;
+            batteries = [
+                "batt1" => toy_battery(10.0, 1000.0, 60.0, 50.0; initial = 0.0, ramp_up = 100.0),
+                "batt2" => toy_battery(10.0, 1000.0, 40.0, 50.0; initial = 0.0, ramp_up = 100.0),
+            ],
+        )
+        out = solve_toy(sys)
+        @test out.battery_in_mw["batt1"] ≈ 30.0 atol = 1.0e-5
+        @test out.battery_in_mw["batt2"] ≈ 20.0 atol = 1.0e-5
+    end
+end
+
+@testset "tie detection pairs" begin
+    band(price, width, name, band = 1) = (; price, width, name, band)
+    tol = TIE_BREAK_CVP_FACTOR
+    pairs = AustralianElectricityMarketsSimulations._tied_pairs
+    @test pairs([band(5.0, 1.0, "a"), band(5.0, 2.0, "b"), band(5.0, 3.0, "c")]) == [(1, 2), (1, 3), (2, 3)]
+    # Same-unit bands and zero-width bands are never paired.
+    @test pairs([band(5.0, 1.0, "a", 1), band(5.0, 1.0, "a", 2), band(5.0, 1.0, "b")]) == [(1, 3), (2, 3)]
+    @test pairs([band(5.0, 0.0, "a"), band(5.0, 1.0, "b")]) == []
+    # Different prices beyond the tolerance stay separate; within it they tie, transitively.
+    @test pairs([band(5.0, 1.0, "a"), band(5.0 + 2tol, 1.0, "b")]) == []
+    @test pairs([band(5.0, 1.0, "a"), band(5.0 + 0.8tol, 1.0, "b"), band(5.0 + 1.6tol, 1.0, "c")]) ==
+        [(1, 2), (1, 3), (2, 3)]
 end

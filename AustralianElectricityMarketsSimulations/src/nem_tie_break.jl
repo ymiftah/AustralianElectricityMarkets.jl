@@ -8,8 +8,16 @@ price-tied.
 """
 const TIE_BREAK_CVP_FACTOR = 1.0e-6
 
-_fixed_value(x::Real) = Float64(x)
-_fixed_value(x) = JuMP.value(x)
+# Build-time value of a bid slope or breakpoint, which is a parameter reference when the offers
+# are time-variant. Recurrent solves hold unfixed parameters and are rejected.
+function _fixed_value(x)
+    value = try
+        PSI.jump_fixed_value(x)
+    catch
+        throw(ArgumentError("tie-break: bid data must be fixed at build, as in a standalone `DecisionModel`"))
+    end
+    return Float64(value)
+end
 
 # One energy band of a device at a time step: its price at the reference node in $/MWh, its
 # width in system-base per-unit and its PSI block variable.
@@ -45,36 +53,57 @@ function _tie_break_bands(container::PSI.OptimizationContainer, sys::PSY.System)
     return groups
 end
 
+# Index pairs (i, j) of bands of different units that are price-tied. Bands are tied when
+# consecutive sorted prices differ by at most `TIE_BREAK_CVP_FACTOR`, so a run of bands each within
+# the tolerance of the next ties transitively. Zero-width bands are ignored.
+function _tied_pairs(bands)
+    order = sort!(
+        [i for i in eachindex(bands) if bands[i].width > 1.0e-9];
+        by = i -> (bands[i].price, bands[i].name, bands[i].band),
+    )
+    pairs = Tuple{Int, Int}[]
+    start = 1
+    for k in 1:length(order)
+        if k == length(order) || bands[order[k + 1]].price - bands[order[k]].price > TIE_BREAK_CVP_FACTOR
+            group = order[start:k]
+            for a in 1:(length(group) - 1), b in (a + 1):length(group)
+                bands[group[a]].name == bands[group[b]].name || push!(pairs, (group[a], group[b]))
+            end
+            start = k + 1
+        end
+    end
+    return pairs
+end
+
 """
     add_tie_break_constraints!(container, sys)
 
 Dispatches price-tied energy bands in proportion to their size. Within each region, direction
 (offer or load bid) and time step, bands whose prices at the reference node are within
-[`TIE_BREAK_CVP_FACTOR`](@ref) of one another form a tie group, and consecutive bands of a group
-are constrained to equal fill fractions (cleared MW divided by band MW). Each link carries an
-up and a down slack priced at [`TIE_BREAK_CVP_FACTOR`](@ref) per unit of fill fraction in `\$`
-per dispatch interval per MW of system base, so a band held back by a ramp or availability limit
-relaxes the link instead of changing the dispatch of other units. Bands of zero width are
-ignored, and FCAS bands are not tied. Reads the band prices and widths the market-bid objective
-was built from, so it must run after every device model's objective.
+[`TIE_BREAK_CVP_FACTOR`](@ref) of one another form a tie group, and every pair of bands of
+different units in a group is constrained to equal fill fractions (cleared MW divided by band MW).
+Each pair carries an up and a down slack on the fill fraction, priced at
+[`TIE_BREAK_CVP_FACTOR`](@ref) in `\$` per dispatch interval, so a band held back by a ramp or
+availability limit relaxes its pairs instead of changing the dispatch of other units. FCAS bands
+are not tied, and bands of zero width are ignored. Reads the band prices and widths the market-bid
+objective was built from, so it must run after every device model's objective, and it requires
+bid data fixed at build. The slack penalty is below default MIP gap tolerances, so a model with
+binary variables solved with default optimizer gaps may ignore ties.
 
 # Arguments
 - `container`: the `PowerSimulations.OptimizationContainer` holding the built bid variables.
 - `sys`: the `PowerSystems.System` the container was built from.
 
 # Returns
-The number of links added, as an `Int`.
+The number of pairs added, as an `Int`.
 """
 function add_tie_break_constraints!(container::PSI.OptimizationContainer, sys::PSY.System)
     jm = PSI.get_jump_model(container)
-    resolution = PSI.get_resolution(container)
-    coefficient = PSI.get_base_power(container) * interval_cost_coefficient(TIE_BREAK_CVP_FACTOR, resolution)
+    coefficient = interval_cost_coefficient(TIE_BREAK_CVP_FACTOR, PSI.get_resolution(container))
     links = 0
     for ((decremental, region, t), bands) in _tie_break_bands(container, sys)
-        bands = sort!(filter(b -> b.width > 1.0e-9, bands); by = b -> (b.price, b.name, b.band))
-        for k in 2:length(bands)
-            a, b = bands[k - 1], bands[k]
-            b.price - a.price <= TIE_BREAK_CVP_FACTOR || continue
+        for (i, j) in _tied_pairs(bands)
+            a, b = bands[i], bands[j]
             up = JuMP.@variable(jm, base_name = "TieBreakSlackUp_{$region,$t,$links}", lower_bound = 0.0)
             down = JuMP.@variable(jm, base_name = "TieBreakSlackDown_{$region,$t,$links}", lower_bound = 0.0)
             JuMP.@constraint(jm, a.var / a.width - b.var / b.width + up - down == 0.0)

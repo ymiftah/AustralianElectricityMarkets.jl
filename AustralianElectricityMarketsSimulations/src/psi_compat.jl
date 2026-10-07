@@ -199,7 +199,8 @@ year, or the `"market_price_cap"` entry of the model's settings `ext`
 year absent from `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` with no override. `AreaPTDFPowerModel` keeps
 PSI's flat `BALANCE_SLACK_COST`. Also adds the energy tie-break links
 ([`add_tie_break_constraints!`](@ref)), the one network-stage hook that runs after every device's
-bid objective, so they exist only when the network model has `use_slacks = true`.
+bid objective, so they exist only when the network model has `use_slacks = true`; other network
+models, and bid blocks created by branch or service models, get arbitrary tie vertices.
 
 # Returns
 `nothing`.
