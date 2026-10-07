@@ -48,6 +48,12 @@
         pump = only(filter(:DUID => ==("PUMP1"), comparison.dispatch))
         @test !ismissing(pump.TOTALCLEARED_solved)
         @test pump.TOTALCLEARED_solved >= 0
+        # The 1-second markets are published, modelled and compared like the other FCAS markets.
+        for bid_type in (BidType.RAISE1SEC, BidType.LOWER1SEC)
+            rows = filter(:BIDTYPE => ==(bid_type), comparison.fcas_prices)
+            @test !isempty(rows)
+            @test any(!ismissing, rows.ROP_solved)
+        end
         # The unavailable IC6 has no solved flow.
         @test ismissing(only(filter(:INTERCONNECTORID => ==("IC6"), comparison.interconnectors)).MWFLOW_solved)
     end

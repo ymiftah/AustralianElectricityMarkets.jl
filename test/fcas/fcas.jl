@@ -277,6 +277,29 @@
         @test all(!ismissing, req.DESCRIPTION)
     end
 
+    @testset "the 1-second markets are read as FCAS markets" begin
+        req = read_fcas_requirements(db, date_range)
+        for bid_type in (BidType.RAISE1SEC, BidType.LOWER1SEC)
+            @test bid_type in FCAS_BID_TYPES && bid_type in FCAS_CONTINGENCY_MARKETS
+            rows = subset(req, :BIDTYPE => ByRow(==(bid_type)))
+            @test !isempty(rows)
+            @test all(==(5.5), rows.MARGINALVALUE)
+        end
+        prices = read_fcas_prices(db, date_range)
+        @test BidType.RAISE1SEC in prices.BIDTYPE && BidType.LOWER1SEC in prices.BIDTYPE
+        dispatch = read_fcas_dispatch(db, date_range)
+        raise1sec = subset(dispatch, :BIDTYPE => ByRow(==(BidType.RAISE1SEC)))
+        @test !isempty(raise1sec)
+        @test all(==(5.0), raise1sec.ACTUALAVAILABILITY)
+        bids = read_fcas_bids(db, date_range, BidType.RAISE1SEC)
+        @test !isempty(bids)
+        sys = nem_system(db, RegionalNetworkConfiguration())
+        set_fcas_bids!(sys, db, date_range)
+        @test any(
+            g -> has_time_series(g, Deterministic, "fcas_trapezium_RAISE1SEC"), get_components(Generator, sys),
+        )
+    end
+
     @testset "read_fcas_requirements spans the DISPATCH_FCAS_REQ split" begin
         # Past interval 24 only DISPATCH_FCAS_REQ_CONSTRAINT has rows (mock_data.jl step 13).
         new_only_range = (start_date + Minute(5 * 30)):Minute(5):(start_date + Minute(5 * 40))

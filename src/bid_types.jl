@@ -3,10 +3,6 @@
 # catches a typo'd bid type at construction time instead of it silently becoming a WHERE
 # clause that matches zero rows.
 #
-# RAISE1SEC/LOWER1SEC are included so the enum doesn't need a breaking change when the
-# deferred 1-second markets are picked up later - no function in this initial pass
-# constructs or accepts them.
-#
 # A docstring can't be attached directly above this call: `@scoped_enum` expands to an
 # `Expr(:toplevel, ...)`, which Julia's docsystem cannot document.
 IS.@scoped_enum(
@@ -20,27 +16,23 @@ IS.@scoped_enum(
     LOWER5MIN = 7,
     RAISEREG = 8,
     LOWERREG = 9,
-    RAISE1SEC = 10,  # deferred 1-second market, unused for now
-    LOWER1SEC = 11,  # deferred 1-second market, unused for now
+    RAISE1SEC = 10,
+    LOWER1SEC = 11,
 )
 
 @doc """
     BidType
 
-AEMO's `BIDTYPE` values this repo's bid-reading functions accept: `ENERGY`, and the eight
-in-scope FCAS markets (`RAISE6SEC`, `LOWER6SEC`, `RAISE60SEC`, `LOWER60SEC`, `RAISE5MIN`,
-`LOWER5MIN`, `RAISEREG`, `LOWERREG`). `RAISE1SEC`/`LOWER1SEC` are also defined (AEMO's newer
-1-second markets), but deferred - no function in this package constructs or accepts them
-yet. Construct from a string with `BidType("RAISE6SEC")`; convert back with `string(x)`
-(not `"\$x"` - see the note below on `@scoped_enum` and `Base.show`).
+AEMO's `BIDTYPE` values this repo's bid-reading functions accept: `ENERGY`, and the ten FCAS
+markets (`RAISE1SEC`, `LOWER1SEC`, `RAISE6SEC`, `LOWER6SEC`, `RAISE60SEC`, `LOWER60SEC`,
+`RAISE5MIN`, `LOWER5MIN`, `RAISEREG`, `LOWERREG`). Construct from a string with
+`BidType("RAISE6SEC")`; convert back with `string(x)` (not `"\$x"` - see the note below on
+`@scoped_enum` and `Base.show`).
 """ BidType
 
-# The 6 in-scope contingency FCAS markets. Was a `Dict{BidType, FCASResponseTime}` keyed dict
-# (response-time band per market); the `FCASResponseTime`-based `Reserve` API that was its
-# only consumer is gone (see `GenericConstraint`/`FCASBid` types design,
-# docs/superpowers/specs/2026-08-16-*), so this is now just the plain tuple of markets.
+# The 8 contingency FCAS markets: very fast (1 s), fast (6 s), slow (60 s) and delayed (5 min), raise and lower.
 const FCAS_CONTINGENCY_MARKETS = (
-    BidType.RAISE6SEC, BidType.LOWER6SEC, BidType.RAISE60SEC,
+    BidType.RAISE1SEC, BidType.LOWER1SEC, BidType.RAISE6SEC, BidType.LOWER6SEC, BidType.RAISE60SEC,
     BidType.LOWER60SEC, BidType.RAISE5MIN, BidType.LOWER5MIN,
 )
 

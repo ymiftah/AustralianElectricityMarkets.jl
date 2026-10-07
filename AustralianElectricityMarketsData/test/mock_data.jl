@@ -257,9 +257,9 @@ function create_mock_data(hive_root::String)
     )
 
     # 10. BIDPEROFFER_D (49 intervals)
-    fcas_bid_types = ["RAISE6SEC", "LOWER6SEC", "RAISE60SEC", "LOWER60SEC", "RAISE5MIN", "LOWER5MIN", "RAISEREG", "LOWERREG"]
+    fcas_bid_types = ["RAISE1SEC", "LOWER1SEC", "RAISE6SEC", "LOWER6SEC", "RAISE60SEC", "LOWER60SEC", "RAISE5MIN", "LOWER5MIN", "RAISEREG", "LOWERREG"]
     trapezium_cols = ["ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN"]
-    contingency_types = ["RAISE6SEC", "LOWER6SEC", "RAISE60SEC", "LOWER60SEC", "RAISE5MIN", "LOWER5MIN"]
+    contingency_types = ["RAISE1SEC", "LOWER1SEC", "RAISE6SEC", "LOWER6SEC", "RAISE60SEC", "LOWER60SEC", "RAISE5MIN", "LOWER5MIN"]
     regulation_types = ["RAISEREG", "LOWERREG"]
     requirement_mw(bid_type) = bid_type in regulation_types ? 30.0 : 50.0
     marginal_value(bid_type) = bid_type in regulation_types ? 2.25 : 5.5
