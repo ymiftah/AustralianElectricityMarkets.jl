@@ -121,6 +121,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the decremental offer. The regional balance still clears at `TOTALDEMAND`
   (demand less loads), so dispatched load adds to the generation required, and generic-constraint
   terms on a load resolve. Loads offering FCAS are not modelled.
+- **Skipped generic constraints are observable**: `get_skipped_constraints(sys)` returns a table
+  (constraint, reason, number and list of unresolved DUIDs, regions or interconnectors) of the
+  invoked constraint versions `add_nem_constraints!` did not build, and the skip warning carries
+  the count by reason. `replicate_interval` returns a `skipped_constraints` table that also
+  lists the constraints the template cannot model, and
+  `AustralianElectricityMarketsSimulations/scripts/diagnose_infeasible.jl` reports the solver
+  status and conflicting constraint families for an interval that does not solve.
 - **Single-interval replication pipeline** (`AustralianElectricityMarketsSimulations`):
   `replicate_interval(db, settlement_date)` builds the constrained `System`
   (`replication_system`), solves it with `replication_template` (NEM dispatch devices,

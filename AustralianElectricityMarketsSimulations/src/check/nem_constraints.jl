@@ -80,10 +80,10 @@ function _term_failures(
 end
 
 """
-    _constraint_diagnosis(sys, gc, modeled_types, interconnector_modeled, fcas_modeled) -> Union{Nothing, Tuple{Symbol, Vector{DataType}}}
+    _constraint_diagnosis(sys, gc, modeled_types, interconnector_modeled, fcas_modeled) -> Union{Nothing, Tuple{Symbol, Vector{DataType}, Int}}
 
 The first unbuildable reason found across `gc`'s terms, and every device type responsible for
-that reason, or `nothing` if every term is buildable.
+that reason with the number of failing terms or devices, or `nothing` if every term is buildable.
 """
 function _constraint_diagnosis(
         sys::PSY.System, gc::GenericConstraint, modeled_types::Vector{DataType},
@@ -96,7 +96,7 @@ function _constraint_diagnosis(
     isempty(failures) && return nothing
     reason = first(failures)[1]
     types = unique(DataType[t for (r, t) in failures if r == reason && !isnothing(t)])
-    return (reason, types)
+    return (reason, types, count(f -> f[1] == reason, failures))
 end
 
 "A `name => types` line for the aggregated message/warning, capped to the first 20 per reason."
@@ -132,12 +132,15 @@ without being a failure.
 # Arguments
 - `sys`: system to read constraints and components from.
 - `template`: `PSI.ProblemTemplate` to check device and branch coverage against.
+- `skipped`: a vector to which one `(constraint, reason, n_missing)` named tuple per unbuildable
+  constraint is appended, or `nothing`.
 - `allow_partial_coverage`: when `false` (default), throws a single aggregated `ArgumentError`
   naming every unbuildable constraint and its reason if any exist. When `true`, returns the
   buildable subset and emits one summary `@warn` with counts by reason.
 - `skipped`: a vector to which one `(constraint, reason, n_missing)` named tuple is appended per
-  constraint left out because all its contributing devices are unavailable (`reason =
-  :no_available_device`), or `nothing`.
+  constraint left out: `reason = :no_available_device` when all its contributing devices are
+  unavailable, else the unbuildable reason with `n_missing` the number of failing terms or devices.
+  `nothing` records nothing.
 
 # Returns
 A `Vector{GenericConstraint}`, sorted by name.
@@ -153,6 +156,7 @@ function filter_buildable_generic_constraints(
     gcs = sort(collect(PSY.get_components(GenericConstraint, sys)); by = PSY.get_name)
     buildable = GenericConstraint[]
     grouped = Dict{Symbol, Vector{Tuple{String, Vector{DataType}}}}()
+    skipped_rows = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
     for gc in gcs
         PSY.get_available(gc) || continue
         # PSI cannot build a service whose contributing devices are all unavailable; such a
@@ -166,11 +170,13 @@ function filter_buildable_generic_constraints(
         if isnothing(diagnosis)
             push!(buildable, gc)
         else
-            reason, types = diagnosis
+            reason, types, n_failed = diagnosis
+            push!(skipped_rows, (constraint = PSY.get_name(gc), reason = reason, n_missing = n_failed))
             push!(get!(grouped, reason, Tuple{String, Vector{DataType}}[]), (PSY.get_name(gc), types))
         end
     end
 
+    isnothing(skipped) || append!(skipped, skipped_rows)
     isempty(grouped) && return buildable
 
     if allow_partial_coverage

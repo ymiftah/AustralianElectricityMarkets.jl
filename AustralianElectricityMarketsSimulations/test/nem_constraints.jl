@@ -619,6 +619,14 @@ end
     expected = Set(PSY.get_name(_gc(sys, id)) for id in ("N_IC1_LIMIT", "N_PARTIAL"))
     @test Set(PSY.get_name.(result)) == expected
     @test issorted(PSY.get_name.(result))
+
+    skipped = []
+    @test_logs (:warn,) AEMS.filter_buildable_generic_constraints(
+        sys, template; allow_partial_coverage = true, skipped = skipped,
+    )
+    all_names = Set(PSY.get_name.(PSY.get_components(GenericConstraint, sys)))
+    @test Set(r.constraint for r in skipped) == setdiff(all_names, expected)
+    @test all(r -> r.n_missing >= 1, skipped)
 end
 
 @testset "the buildable subset builds and solves under per-instance registration, where the aggregated registration throws" begin
