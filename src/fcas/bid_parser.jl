@@ -104,10 +104,11 @@ end
 Attaches the two per-`(component, FCAS market)` `Deterministic` series - `"fcas_curve_\$
 series_suffix"` and `"fcas_trapezium_\$series_suffix"` - from `gdf` (a `DUID`-grouped bids
 `DataFrame`) if `duid` has a group in it. No-op otherwise, so callers can probe a component
-against several `DIRECTION` groupings without checking `haskey` themselves.
+against several `DIRECTION` groupings without checking `haskey` themselves. Returns whether
+the series were attached.
 """
 function _attach_fcas_bid_series!(sys, component, gdf, duid::AbstractString, series_suffix::AbstractString, start_date, resolution)
-    (isnothing(gdf) || !haskey(gdf, (duid,))) && return
+    (isnothing(gdf) || !haskey(gdf, (duid,))) && return false
     rows = gdf[(duid,)]
     # rows.curve_data/.trapezium_row are SubArray views into the grouped DataFrame -
     # Deterministic's convert_data only accepts a plain Vector.
@@ -125,7 +126,7 @@ function _attach_fcas_bid_series!(sys, component, gdf, duid::AbstractString, ser
         interval = resolution,
     )
     add_time_series!(sys, component, trapezium_ts)
-    return
+    return true
 end
 
 """
@@ -147,7 +148,9 @@ GEN/LOAD split: `GEN` and `BIDIRECTIONAL` rows are both capability offered while
 dispatches normally (a `BIDIRECTIONAL` bid doesn't distinguish charge/discharge, so it's
 attached under the plain `<SERVICE>` name alongside `GEN`), attached to every matching
 `Generator` and `EnergyReservoirStorage`; `LOAD` rows are decremental capability, attached
-only to `EnergyReservoirStorage` under `"<SERVICE>_decremental"`. Dropping `LOAD`/
+to `EnergyReservoirStorage` and `InterruptiblePowerLoad` under `"<SERVICE>_decremental"`. A
+non-scheduled load (no energy bid) that gets a series is made available; one without any FCAS bid
+stays unavailable. Dropping `LOAD`/
 `BIDIRECTIONAL` rows entirely (as an earlier version of this function did) silently loses a
 large share of real FCAS providers - measured on 2 Jan 2025 `BIDPEROFFER_D`, `LOAD` and
 `BIDIRECTIONAL` rows together outnumber `GEN` rows for several contingency markets.
@@ -198,6 +201,12 @@ function set_fcas_bids!(sys, db, date_range; kwargs...)
             duid = get_name(stor)
             _attach_fcas_bid_series!(sys, stor, gdf_inc, duid, bid_type_str, start_date, resolution)
             _attach_fcas_bid_series!(sys, stor, gdf_dec, duid, "$(bid_type_str)_decremental", start_date, resolution)
+        end
+        foreach(get_components(InterruptiblePowerLoad, sys)) do load
+            attached = _attach_fcas_bid_series!(
+                sys, load, gdf_dec, get_name(load), "$(bid_type_str)_decremental", start_date, resolution,
+            )
+            attached && _is_non_scheduled_load(load) && set_available!(load, true)
         end
     end
     return

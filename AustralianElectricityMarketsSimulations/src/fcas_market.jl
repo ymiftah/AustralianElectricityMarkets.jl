@@ -9,9 +9,11 @@ _is_regulation_service(bid_type::BidType) = bid_type in FCAS_REGULATION_MARKETS
     _fcas_direction(device, bid_type) -> Symbol
 
 Which of `bid_type`'s `"fcas_trapezium_<bid_type>[_decremental]"` series `device` carries.
-Throws `ArgumentError` if neither series is attached, or if both are attached on a device other
+Throws `ArgumentError` if neither series is attached, if both are attached on a device other
 than a `PSY.Storage` regulation bid (bidirectional FCAS capacity is modeled only for a
-`PSY.Storage` device's generation-side and load-side regulation bids).
+`PSY.Storage` device's generation-side and load-side regulation bids), or if a
+`PSY.ControllableLoad` carries an incremental series (a load offers FCAS on its decremental
+series only).
 
 # Returns
 `:incremental`, `:decremental`, or `:both`.
@@ -30,6 +32,12 @@ function _fcas_direction(device, bid_type::BidType)
             ),
         )
     end
+    has_inc && device isa PSY.ControllableLoad && throw(
+        ArgumentError(
+            "FCASMarket: load \"$(PSY.get_name(device))\" carries an incremental $bid_type_str " *
+                "bid; a load offers FCAS on its decremental (`LOAD`-direction) series only.",
+        ),
+    )
     has_inc && return :incremental
     has_dec && return :decremental
     throw(
@@ -45,7 +53,7 @@ end
 
 The `PSI.VariableType`s (and their sign) making up `device`'s unit-level "Energy Dispatch
 Target": the net `ActivePowerOutVariable - ActivePowerInVariable` for a `PSY.Storage` device,
-`ActivePowerVariable` otherwise. Used wherever AEMO's formulation reads a single, signed
+`ActivePowerVariable` otherwise (a `PSY.ControllableLoad`'s is its consumed MW). Used wherever AEMO's formulation reads a single, signed
 unit-level energy term rather than one bid side's own energy - AEMO *FCAS Model in NEMDE* §6.1's
 joint ramping constraint and a `PSY.Storage` device's contingency FCAS.
 
@@ -58,13 +66,38 @@ function _fcas_net_energy_terms(device::PSY.Device)
 end
 
 """
+    _fcas_upper_regulation_service(device) -> BidType
+
+The regulation service whose target enters `device`'s upper-slope (`<= EnablementMax`) FCAS rows:
+`BidType.RAISEREG` for a generating unit, `BidType.LOWERREG` for a `PSY.ControllableLoad`, whose
+energy axis is consumption so raising consumption lowers frequency (AEMO *FCAS Model in NEMDE*
+§6.1, §6.2). The other regulation service enters the lower-slope rows.
+"""
+_fcas_upper_regulation_service(device::PSY.Device) =
+    device isa PSY.ControllableLoad ? BidType.LOWERREG : BidType.RAISEREG
+
+"""
+    _fcas_ramp_rate_service(device, bid_type) -> BidType
+
+The regulation service whose AGC ramp-rate series bounds `device`'s joint ramping row for
+`bid_type`: `bid_type` itself for a generating unit (`RAISEREG` reads the ramp-up rate, `LOWERREG`
+the ramp-down rate), and the other service for a `PSY.ControllableLoad`, whose `LowerReg` row is
+bounded by the SCADA ramp-up rate and `RaiseReg` row by the ramp-down rate (§6.1).
+"""
+function _fcas_ramp_rate_service(device::PSY.Device, bid_type::BidType)
+    device isa PSY.ControllableLoad || return bid_type
+    return bid_type == BidType.RAISEREG ? BidType.LOWERREG : BidType.RAISEREG
+end
+
+"""
     _fcas_energy_terms(device, is_regulation, decremental) -> Vector{Tuple{DataType, Float64}}
 
 The `PSI.VariableType`s (and their sign) making up `device`'s FCAS "Energy Dispatch Target": for a
 `PSY.Storage` device, the bid side's own energy on regulation (`ActivePowerOutVariable` for a
 generation-side bid, `-ActivePowerInVariable` for a load-side one) and the net
-([`_fcas_net_energy_terms`](@ref)) on contingency; `ActivePowerVariable` otherwise.
-Throws `ArgumentError` for a decremental (`LOAD`-direction) bid on a non-`Storage` device.
+([`_fcas_net_energy_terms`](@ref)) on contingency; `ActivePowerVariable` otherwise, which for a
+`PSY.ControllableLoad` is its consumed MW. Throws `ArgumentError` for a decremental
+(`LOAD`-direction) bid on a device that is neither `PSY.Storage` nor a `PSY.ControllableLoad`.
 
 # Returns
 `Vector{Tuple{DataType, Float64}}` of `(VariableType, multiplier)` pairs.
@@ -74,10 +107,10 @@ function _fcas_energy_terms(device::PSY.Device, is_regulation::Bool, decremental
         is_regulation || return _fcas_net_energy_terms(device)
         return decremental ? [(PSI.ActivePowerInVariable, -1.0)] : [(PSI.ActivePowerOutVariable, 1.0)]
     end
-    decremental && throw(
+    decremental && !(device isa PSY.ControllableLoad) && throw(
         ArgumentError(
             "FCASMarket: \"$(PSY.get_name(device))\" ($(typeof(device))) has a decremental FCAS " *
-                "bid but is not a `PSY.Storage` device; scheduled-load FCAS capacity is not modeled.",
+                "bid but is neither a `PSY.Storage` device nor a `PSY.ControllableLoad`.",
         ),
     )
     return _fcas_net_energy_terms(device)
@@ -542,7 +575,7 @@ Builds AEMO *FCAS Model in NEMDE* §6.1's [`FCASJointRampingConstraint`](@ref) f
 contributing `device` of a regulation `FCASService` named `name`: the unit's net energy
 ([`_fcas_net_energy_terms`](@ref)) combined with its [`FCASUnitRegulationTarget`](@ref) against
 `InitialMW` plus or minus its AGC ramp capability ([`_fcas_agc_ramp_caps`](@ref)) - the upper
-(`RAISEREG`) or lower (`LOWERREG`) form depending on `bid_type`. Builds a vacuous `0 <= 1` row at
+or lower form depending on `bid_type` ([`_fcas_upper_regulation_service`](@ref)). Builds a vacuous `0 <= 1` row at
 `(dname, t)` wherever the ramp capability is zero, `InitialMW` is unknown at `t`, or the device
 is not enabled for this service at `t` ([`_fcas_regulation_enabled_mask`](@ref)).
 
@@ -565,7 +598,7 @@ function _add_fcas_joint_ramping_constraints!(
     horizon = length(time_steps)
     for device in devices
         dname = PSY.get_name(device)
-        caps = _fcas_agc_ramp_caps(container, devices_template, device, bid_type)
+        caps = _fcas_agc_ramp_caps(container, devices_template, device, _fcas_ramp_rate_service(device, bid_type))
         initial_mw = get_initial_mw(device, initial_time, horizon)
         enabled = _fcas_regulation_enabled_mask(container, devices_template, device, bid_type, directions[dname])
         for t in time_steps
@@ -577,7 +610,7 @@ function _add_fcas_joint_ramping_constraints!(
             lhs = JuMP.AffExpr(0.0)
             _add_fcas_net_energy_terms!(container, lhs, device, dname, t)
             deficit = _fcas_slack_term(slack, dname, t)
-            con[dname, t] = if bid_type == BidType.RAISEREG
+            con[dname, t] = if bid_type == _fcas_upper_regulation_service(device)
                 JuMP.@constraint(jm, lhs + target[dname, t] - deficit <= mw + caps[t])
             else
                 JuMP.@constraint(jm, lhs - target[dname, t] + deficit >= mw - caps[t])
@@ -861,16 +894,19 @@ function PSI.construct_service!(
     single_names = PSY.get_name.(single_devices)
     both_names = PSY.get_name.(both_devices)
 
-    # Contingency services carry the regulation targets: `RaiseReg` upper, `LowerReg` lower.
+    # Contingency services carry the regulation targets: `RaiseReg` upper, `LowerReg` lower
+    # (swapped for a load).
     if !is_regulation && !isempty(single_names)
         upper_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_upper")
         lower_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_lower")
         for device in single_devices
             dname = PSY.get_name(device)
             for t in time_steps
-                raise_reg = _device_regulation_target(container, device, BidType.RAISEREG, t)
-                isnothing(raise_reg) || JuMP.add_to_expression!(upper_lhs[dname, t], 1.0, raise_reg)
-                lower_reg = _device_regulation_target(container, device, BidType.LOWERREG, t)
+                upper_service = _fcas_upper_regulation_service(device)
+                lower_service = upper_service == BidType.RAISEREG ? BidType.LOWERREG : BidType.RAISEREG
+                upper_reg = _device_regulation_target(container, device, upper_service, t)
+                isnothing(upper_reg) || JuMP.add_to_expression!(upper_lhs[dname, t], 1.0, upper_reg)
+                lower_reg = _device_regulation_target(container, device, lower_service, t)
                 isnothing(lower_reg) || JuMP.add_to_expression!(lower_lhs[dname, t], -1.0, lower_reg)
             end
         end

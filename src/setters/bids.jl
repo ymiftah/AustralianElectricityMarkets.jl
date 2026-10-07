@@ -87,7 +87,7 @@ Adds market bid cost time series data to the system.
 
 This function reads energy and price bid data for a specified date range from the
 database, converts it into piecewise `MarketBidCost` variable cost time series, and
-attaches it to `Generator`, `InterruptiblePowerLoad` (decremental bid only; a load that bids `GEN` is made unavailable) and
+attaches it to `Generator`, scheduled `InterruptiblePowerLoad` (decremental bid only; a load that bids `GEN` is made unavailable; a non-scheduled load is left as built) and
 `EnergyReservoirStorage` components (the latter also
 gets decremental/load-side bid costs, and each direction's energy `MAXAVAIL`, read back by
 [`get_storage_energy_max_avail`](@ref)).
@@ -124,6 +124,7 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     unbid_loads = String[]
     gen_bid_loads = String[]
     foreach(get_components(InterruptiblePowerLoad, sys)) do load
+        _is_non_scheduled_load(load) && return
         load_id = get_name(load)
         load_bids = subset(bids, :DUID => ByRow(==(load_id)), :DIRECTION => ByRow(==("LOAD")))
         if DataFrames.isempty(load_bids)
@@ -155,6 +156,14 @@ function set_market_bids!(sys, db, date_range; kwargs...)
         end
     end
 end
+
+"""
+    _is_non_scheduled_load(device) -> Bool
+
+Whether `device` is a non-scheduled load ([`get_scheduled_loads_dataframe`](@ref)): it has no
+energy bid, and takes part in the market only through FCAS offers.
+"""
+_is_non_scheduled_load(device) = device isa InterruptiblePowerLoad && get(get_ext(device), "non_scheduled", false) === true
 
 """
     _set_storage_energy_max_avail!(sys, storage, bids, name, start_date, resolution)

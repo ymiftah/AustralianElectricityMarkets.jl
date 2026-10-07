@@ -243,7 +243,7 @@ function add_nem_constraints!(
                 # Not a name-based re-lookup: `Device` is ambiguous by name across concrete
                 # types (e.g. an interconnector's own `AreaInterchange` vs. a same-named
                 # `Line`), so this reuses `_region_devices`'s own typed result directly.
-                append!(contributing_devices, _region_devices(sys, row.KEY))
+                append!(contributing_devices, _region_devices(sys, row.KEY; loads = bid_type != BidType.ENERGY))
             else
                 term = InterconnectorTerm(row.KEY, row.FACTOR)
                 names = resolve_term_devices(sys, term)

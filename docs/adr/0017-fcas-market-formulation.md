@@ -120,6 +120,8 @@ trapezium on `[0, EnablementMax]` forbids charging outright even at `R = 0`.
 
 ### The sign-swapped §6.2 form is unreachable — no scheduled-load device type exists yet
 
+Superseded by ADR 0038: loads are `InterruptiblePowerLoad` devices and offer FCAS in the swapped form.
+
 §6.2 states a second, sign-swapped constraint pair (`+LowerReg`/`−RaiseReg`) for **scheduled
 loads** specifically — a `PowerLoad`-like participant bidding FCAS while consuming, distinct from
 a bidirectional unit. `set_fcas_bids!` never attaches a decremental series to anything but

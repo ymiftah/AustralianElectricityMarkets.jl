@@ -79,13 +79,13 @@ end
     _fcas_bid_modeled(device, bid_type) -> Bool
 
 Whether `device`'s `bid_type` FCAS bid has a direction the FCAS market formulation models: an
-incremental bid on any device, a decremental-only bid on a `Storage` device, or a `Storage`
-device's regulation bid on both sides.
+incremental bid on any device but a load, a decremental-only bid on a `Storage` device or a
+`ControllableLoad`, or a `Storage` device's regulation bid on both sides.
 """
 function _fcas_bid_modeled(device, bid_type::BidType)
     direction = _fcas_bid_direction(device, bid_type)
-    direction == :incremental && return true
-    direction == :decremental && return device isa Storage
+    direction == :incremental && return !(device isa ControllableLoad)
+    direction == :decremental && return device isa Storage || device isa ControllableLoad
     direction == :both && return device isa Storage && bid_type in FCAS_REGULATION_MARKETS
     return false
 end
@@ -95,7 +95,7 @@ end
 function _fcas_service_devices(sys, region::AbstractString, bid_type::BidType)
     inc_name = _fcas_series_name("fcas_curve", bid_type, false)
     dec_name = _fcas_series_name("fcas_curve", bid_type, true)
-    return filter(_region_devices(sys, region)) do d
+    return filter(_region_devices(sys, region; loads = true)) do d
         has_time_series(d, Deterministic, inc_name) || has_time_series(d, Deterministic, dec_name)
     end
 end
@@ -106,7 +106,7 @@ end
 Adds one [`FCASService`](@ref) named `"<REGIONID>_<BIDTYPE>"` for every region and FCAS market
 with at least one available device bidding it, attached via `add_service!` to those devices
 whose bid direction the FCAS market formulation models (an incremental bid, a decremental-only
-bid on a `Storage` device, or a `Storage` device's regulation bid on both sides). A service already in `sys` under that name is left
+bid on a `Storage` device or a load, or a `Storage` device's regulation bid on both sides). A service already in `sys` under that name is left
 as is. Devices bidding a market in a direction the formulation does not model are left out and
 reported.
 

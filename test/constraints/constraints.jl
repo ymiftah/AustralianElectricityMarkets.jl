@@ -415,6 +415,14 @@ end
         @test !isempty(nsw1_names)
         expected_nsw1 = get_name.(AustralianElectricityMarkets._region_devices(sys, "NSW1"))
         @test Set(nsw1_names) == Set(expected_nsw1)
+
+        # An FCAS term also reaches the region's loads that offer FCAS; an ENERGY term does not.
+        fcas_sys = nem_system(db, RegionalNetworkConfiguration())
+        set_fcas_bids!(fcas_sys, db, date_range)
+        fcas_names = resolve_term_devices(fcas_sys, RegionTerm("NSW1", BidType.RAISE6SEC, 1.0))
+        generator_names = get_name.(AustralianElectricityMarkets._region_devices(fcas_sys, "NSW1"))
+        @test Set(fcas_names) == Set(generator_names) ∪ Set(["ASLOAD1"])
+        @test !("ASLOAD1" in resolve_term_devices(fcas_sys, RegionTerm("NSW1", BidType.ENERGY, 1.0)))
     end
 
     @testset "empty RegionTerm devices: default throws, allow_empty_region_terms=true warns" begin
