@@ -79,13 +79,13 @@ end
     _fcas_bid_modeled(device, bid_type) -> Bool
 
 Whether `device`'s `bid_type` FCAS bid has a direction the FCAS market formulation models: an
-incremental bid on any device but a load, a decremental-only bid on a `Storage` device or a
-`ControllableLoad`, or a `Storage` device's regulation bid on both sides.
+incremental bid on any device but a load, a decremental-only bid on a `Storage` device or an
+`InterruptiblePowerLoad`, or a `Storage` device's regulation bid on both sides.
 """
 function _fcas_bid_modeled(device, bid_type::BidType)
     direction = _fcas_bid_direction(device, bid_type)
-    direction == :incremental && return !(device isa ControllableLoad)
-    direction == :decremental && return device isa Storage || device isa ControllableLoad
+    direction == :incremental && return !(device isa InterruptiblePowerLoad)
+    direction == :decremental && return device isa Storage || device isa InterruptiblePowerLoad
     direction == :both && return device isa Storage && bid_type in FCAS_REGULATION_MARKETS
     return false
 end
@@ -106,8 +106,8 @@ end
 Adds one [`FCASService`](@ref) named `"<REGIONID>_<BIDTYPE>"` for every region and FCAS market
 with at least one available device bidding it, attached via `add_service!` to those devices
 whose bid direction the FCAS market formulation models (an incremental bid, a decremental-only
-bid on a `Storage` device or a load, or a `Storage` device's regulation bid on both sides). A service already in `sys` under that name is left
-as is. Devices bidding a market in a direction the formulation does not model are left out and
+bid on a `Storage` device or a load, or a `Storage` device's regulation bid on both sides). A
+service already in `sys` under that name is left as is. Devices bidding a market in a direction the formulation does not model are left out and
 reported.
 
 # Arguments

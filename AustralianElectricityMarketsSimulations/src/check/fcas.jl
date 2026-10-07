@@ -21,8 +21,8 @@ Verifies every available [`FCASService`](@ref) that `template` models under
 `PSI.DeviceModel` whose formulation dispatches energy (not `PSI.FixedOutput`), the device
 carries exactly one direction of FCAS bid for that service's market (both directions only on a
 `PSY.Storage` device's regulation market), a decremental-only bid sits only on a `PSY.Storage`
-device or a load (which offers no other direction), no device contributes to more than one such `FCASService` of the same market, and a
-regulation contributor with a positive AGC ramp rate also carries an `"initial_mw"` series (AEMO
+device or a load (which offers no other direction), no device contributes to more than one such
+`FCASService` of the same market, and a regulation contributor with a positive AGC ramp rate also carries an `"initial_mw"` series (AEMO
 *FCAS Model in NEMDE* §6.1's joint ramping constraint needs both; a per-interval gap in
 `"initial_mw"` is skipped silently at build instead of failing the check).
 

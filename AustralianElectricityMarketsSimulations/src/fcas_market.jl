@@ -53,9 +53,10 @@ end
 
 The `PSI.VariableType`s (and their sign) making up `device`'s unit-level "Energy Dispatch
 Target": the net `ActivePowerOutVariable - ActivePowerInVariable` for a `PSY.Storage` device,
-`ActivePowerVariable` otherwise (a `PSY.ControllableLoad`'s is its consumed MW). Used wherever AEMO's formulation reads a single, signed
-unit-level energy term rather than one bid side's own energy - AEMO *FCAS Model in NEMDE* §6.1's
-joint ramping constraint and a `PSY.Storage` device's contingency FCAS.
+`ActivePowerVariable` otherwise (a `PSY.ControllableLoad`'s is its consumed MW). Used wherever
+AEMO's formulation reads a single, signed unit-level energy term rather than one bid side's own
+energy - AEMO *FCAS Model in NEMDE* §6.1's joint ramping constraint and a `PSY.Storage` device's
+contingency FCAS.
 
 # Returns
 `Vector{Tuple{DataType, Float64}}` of `(VariableType, multiplier)` pairs.
@@ -72,6 +73,9 @@ The regulation service whose target enters `device`'s upper-slope (`<= Enablemen
 `BidType.RAISEREG` for a generating unit, `BidType.LOWERREG` for a `PSY.ControllableLoad`, whose
 energy axis is consumption so raising consumption lowers frequency (AEMO *FCAS Model in NEMDE*
 §6.1, §6.2). The other regulation service enters the lower-slope rows.
+
+# Returns
+`BidType.RAISEREG` or `BidType.LOWERREG`.
 """
 _fcas_upper_regulation_service(device::PSY.Device) =
     device isa PSY.ControllableLoad ? BidType.LOWERREG : BidType.RAISEREG
@@ -83,6 +87,9 @@ The regulation service whose AGC ramp-rate series bounds `device`'s joint rampin
 `bid_type`: `bid_type` itself for a generating unit (`RAISEREG` reads the ramp-up rate, `LOWERREG`
 the ramp-down rate), and the other service for a `PSY.ControllableLoad`, whose `LowerReg` row is
 bounded by the SCADA ramp-up rate and `RaiseReg` row by the ramp-down rate (§6.1).
+
+# Returns
+`BidType.RAISEREG` or `BidType.LOWERREG`.
 """
 function _fcas_ramp_rate_service(device::PSY.Device, bid_type::BidType)
     device isa PSY.ControllableLoad || return bid_type

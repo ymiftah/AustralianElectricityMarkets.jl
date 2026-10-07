@@ -697,10 +697,13 @@ function create_mock_data(hive_root::String)
     dl_duids = vcat(duids, ["PUMP1", "PUMP2", "WDR1", "ASLOAD1", "ASLOAD2"])  # the loads last, so no offset moves
     m = length(dl_duids)
     duid_offset(duid) = findfirst(==(duid), dl_duids) - 1
-    initial_mw_for(duid, i) = 40.0 + duid_offset(duid) + (i % 10)
-    ramp_up_rate_for(duid, i) = 4.0 + duid_offset(duid) + (i % 5)
-    ramp_down_rate_for(duid, i) = 3.0 + duid_offset(duid) + (i % 5)
-    availability_for(duid, i) = 90.0 - 3 * duid_offset(duid) + (i % 6)
+    # Non-scheduled loads have no availability, ramp rates or scheduled energy. ASLOAD1 reports a
+    # small metered INITIALMW (as KEPBL1 does in real data), which the dispatch limits must pin to 0.
+    nonscheduled = ("ASLOAD1", "ASLOAD2")
+    initial_mw_for(duid, i) = duid == "ASLOAD1" ? 0.1 : duid in nonscheduled ? 0.0 : 40.0 + duid_offset(duid) + (i % 10)
+    ramp_up_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 4.0 + duid_offset(duid) + (i % 5)
+    ramp_down_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 3.0 + duid_offset(duid) + (i % 5)
+    availability_for(duid, i) = duid in nonscheduled ? 0.0 : 90.0 - 3 * duid_offset(duid) + (i % 6)
     # AEMO *FCAS Model in NEMDE* §4.1 telemetered AGC enablement limits - strictly inside the
     # BIDPEROFFER_D RAISEREG/LOWERREG trapezium's own [20.0, 100.0] enablement span (see
     # BIDPEROFFER_D above), so set_fcas_scaling_inputs! + scale_fcas_trapezium's shrinkage is

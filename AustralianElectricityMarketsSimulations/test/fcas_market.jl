@@ -2268,6 +2268,18 @@ end
         loads = ["ASLOAD" => toy_load(1.0, 0.0; initial = 0.0, ramp_up = 0.0, ramp_down = 0.0, availability = 0.0)],
         mutate! = (sys, stamps) -> begin
             load = PSY.get_component(PSY.InterruptiblePowerLoad, sys, "ASLOAD")
+            # The built form of a non-scheduled load: zero `LoadCost`, no energy bid.
+            for key in collect(PSY.get_time_series_keys(load))
+                PSY.remove_time_series!(sys, PSY.get_time_series_type(key), load, PSY.get_name(key))
+            end
+            PSY.set_operation_cost!(load, PSY.LoadCost(; variable = PSY.CostCurve(PSY.LinearCurve(0.0)), fixed = 0.0))
+            PSY.get_ext(load)["non_scheduled"] = true
+            for name in ("max_active_power", "ramp_up_rate", "ramp_down_rate", "initial_mw", "availability")
+                PSY.add_time_series!(
+                    sys, load,
+                    PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, zeros(length(stamps)))),
+                )
+            end
             add_toy_fcas!(
                 sys, load, stamps[1], length(stamps), BidType.RAISE6SEC, (0.0, 0.0, 0.0, 0.0, 20.0), [(20.0, 3.0)];
                 decremental = true,

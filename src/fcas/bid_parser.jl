@@ -149,8 +149,10 @@ dispatches normally (a `BIDIRECTIONAL` bid doesn't distinguish charge/discharge,
 attached under the plain `<SERVICE>` name alongside `GEN`), attached to every matching
 `Generator` and `EnergyReservoirStorage`; `LOAD` rows are decremental capability, attached
 to `EnergyReservoirStorage` and `InterruptiblePowerLoad` under `"<SERVICE>_decremental"`. A
-non-scheduled load (no energy bid) that gets a series is made available; one without any FCAS bid
-stays unavailable. Dropping `LOAD`/
+non-scheduled load (no energy bid) that gets a series is made available if its unit is
+commissioned; one without any FCAS bid stays unavailable. Run this before
+[`set_nem_dispatch_limits!`](@ref), which attaches the ramp and limit series a newly available load
+needs. Dropping `LOAD`/
 `BIDIRECTIONAL` rows entirely (as an earlier version of this function did) silently loses a
 large share of real FCAS providers - measured on 2 Jan 2025 `BIDPEROFFER_D`, `LOAD` and
 `BIDIRECTIONAL` rows together outnumber `GEN` rows for several contingency markets.
@@ -206,7 +208,8 @@ function set_fcas_bids!(sys, db, date_range; kwargs...)
             attached = _attach_fcas_bid_series!(
                 sys, load, gdf_dec, get_name(load), "$(bid_type_str)_decremental", start_date, resolution,
             )
-            attached && _is_non_scheduled_load(load) && set_available!(load, true)
+            attached && _is_non_scheduled_load(load) && get(get_ext(load), "commissioned", true) === true &&
+                set_available!(load, true)
         end
     end
     return

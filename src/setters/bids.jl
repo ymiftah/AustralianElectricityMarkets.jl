@@ -87,8 +87,9 @@ Adds market bid cost time series data to the system.
 
 This function reads energy and price bid data for a specified date range from the
 database, converts it into piecewise `MarketBidCost` variable cost time series, and
-attaches it to `Generator`, scheduled `InterruptiblePowerLoad` (decremental bid only; a load that bids `GEN` is made unavailable; a non-scheduled load is left as built) and
-`EnergyReservoirStorage` components (the latter also
+attaches it to `Generator`, scheduled `InterruptiblePowerLoad` (decremental bid only; a load that
+bids `GEN` is made unavailable; a non-scheduled load is left as built) and `EnergyReservoirStorage`
+components (the latter also
 gets decremental/load-side bid costs, and each direction's energy `MAXAVAIL`, read back by
 [`get_storage_energy_max_avail`](@ref)).
 
@@ -162,6 +163,12 @@ end
 
 Whether `device` is a non-scheduled load ([`get_scheduled_loads_dataframe`](@ref)): it has no
 energy bid, and takes part in the market only through FCAS offers.
+
+# Arguments
+- `device`: any component.
+
+# Returns
+`Bool`.
 """
 _is_non_scheduled_load(device) = device isa InterruptiblePowerLoad && get(get_ext(device), "non_scheduled", false) === true
 
