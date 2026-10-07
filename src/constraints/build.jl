@@ -126,7 +126,7 @@ function add_nem_constraints!(
         gencon_versions, definitions;
         on = [:GENCONID, :GENCONID_EFFECTIVEDATE => :EFFECTIVEDATE, :GENCONID_VERSIONNO => :VERSIONNO],
     )
-    zero_definitions, zero_terms = zero_flow_constraint_definitions(undefined)
+    zero_definitions, zero_terms = _zero_flow_constraint_definitions(undefined)
     if !isempty(zero_definitions)
         definitions = vcat(definitions, zero_definitions; cols = :union)
         terms_long = vcat(terms_long, zero_terms; cols = :union)

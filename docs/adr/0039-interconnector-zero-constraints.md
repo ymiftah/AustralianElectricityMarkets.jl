@@ -11,7 +11,9 @@ Accepted
 cache there is no `GENCONDATA`, `SPDREGIONCONSTRAINT`, `SPDINTERCONNECTORCONSTRAINT` or
 `SPDCONNECTIONPOINTCONSTRAINT` row for any of them. They appear in `GENCONSET` (members of
 `I-MURRAYLINK` and `I-BL_ZERO`), `GENCONSETINVOKE` and `DISPATCHCONSTRAINT`, always at one version
-(`GENCONID_EFFECTIVEDATE` 2013-08-21, `GENCONID_VERSIONNO` 1, `RHS` 0). `add_nem_constraints!`
+(`GENCONID_EFFECTIVEDATE` 2013-08-21, `GENCONID_VERSIONNO` 1, `RHS` 0). The pairs are not always invoked
+together: `VSML_ZERO` alone is invoked for 79 intervals in 2020 (2020-02-16 11:50 to 2020-03-02
+16:50, `INTERVENTION` 0), so one-sided invocation happens and each constraint is built on its own. `add_nem_constraints!`
 therefore skipped them as `no_definition`.
 
 They are the "Unit and Interconnector Zero constraint" of the constraint violation penalty factors
@@ -38,7 +40,8 @@ with its `LHSFactorCollection`:
 | `TV_ZERO` | LE | +1 x `T-V-MNSP1` | 0 | 23,548,000 | `I-BL_ZERO` |
 
 The case-file version (`20130821000000_1`, effective 2013-08-21) is the version `DISPATCHCONSTRAINT`
-reports, in every cached month from 2015-02 to 2026-09. Each constraint is a one-term inequality on an
+reports whenever it is invoked: `SVML_ZERO` and `VSML_ZERO` from 2015-02-03 to 2026-09-01, `VT_ZERO`
+and `TV_ZERO` from 2015-01-07 to 2026-07-02. None of the four is invoked in every month. Each constraint is a one-term inequality on an
 interconnector flow, and an invoked pair pins the flow to zero. The XML needs no new ingest path:
 the term set is one fixed fact per constraint, constant for the 11 years in the cache.
 
@@ -66,10 +69,26 @@ Rejected:
 
 - Murraylink and Basslink outages are modelled from the data the cache holds, with no use of solved
   quantities.
-- The pair acts on the interconnector flow; when an MNSP is represented per link the
-  `InterconnectorTerm` resolves to the same interconnector as any other generic constraint on it.
+- A built-in definition is applied only to version 2013-08-21 #1. A known identifier invoked at any
+  other version logs a warning naming it and stays `no_definition`, so a revised AEMO definition is
+  noticed rather than silently dropped.
+- The term constrains the interconnector's net flow. With per-link MNSP modelling (PR #175) the
+  `InterconnectorTerm` resolves to `FlowActivePowerVariable[AreaInterchange]`, forward minus reverse.
+  A zero net flow therefore does not zero Basslink's link variables: the circulation binary only
+  bites when the two links' lowest offers sum below zero, so forward = reverse = q > 0 stays
+  feasible and creates or destroys (tlf_r.to + tlf_f.to - tlf_f.from - tlf_r.from) q MW of energy.
+  Murraylink is a regulated DC interconnector and is unaffected.
+- The constraint is a hard-zero in NEMDE's own terms (CVP factor 1160, above the unit ramp and
+  offer CVPs), so in the replica it is elastic at 1160 times the Market Price Cap like any other
+  generic constraint.
 - Only these four identifiers are recognised. The other `_ZERO` identifiers with no definition are
   unit constraints (below); they are not covered.
+
+## Follow-up
+
+- Fix on the PR #175 side: force the direction binary of an MNSP whenever a zero constraint names
+  its interconnector, so that an out-of-service link carries no flow in either direction. Until
+  then Basslink's `VT_ZERO`/`TV_ZERO` replicate NEMDE's net flow, not its link variables.
 
 ## Remaining constraints without a definition that bind
 

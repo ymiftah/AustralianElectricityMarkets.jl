@@ -13,32 +13,31 @@ const _ZERO_FLOW_VERSIONNO = 1
 const _ZERO_FLOW_CVP_FACTOR = 1160.0
 
 """
-    zero_flow_constraint_definitions(gencon_versions)
+    _zero_flow_constraint_definitions(gencon_versions) -> (definitions, terms)
 
-Synthesises the definition and terms of the Interconnector Zero constraints (`SVML_ZERO`,
-`VSML_ZERO`, `VT_ZERO`, `TV_ZERO`) for the versions in `gencon_versions`. `GENCONDATA` and the
-`SPD*` tables carry no row for them, although `DISPATCHCONSTRAINT` reports them whenever
-Murraylink or Basslink is out of service. Each constrains one interconnector flow, `factor *
-flow <= 0` with factor `-1` or `1`, so an active pair pins the flow to zero. Only version
-`2013-08-21 #1` is recognised; any other version of these identifiers gets no definition.
+Definition and term rows of the Interconnector Zero constraints (`SVML_ZERO`, `VSML_ZERO`,
+`VT_ZERO`, `TV_ZERO`) for the versions in `gencon_versions`, shaped like the results of
+[`read_constraint_definitions`](@ref) and [`read_constraint_terms`](@ref). Each constrains
+one interconnector flow, `factor * flow <= 0` with factor `-1` or `1`. Only version
+`2013-08-21 #1` is recognised; another version of these identifiers warns and gets no rows.
 
 # Arguments
 - `gencon_versions`: `DataFrame` with `GENCONID`, `GENCONID_EFFECTIVEDATE`, `GENCONID_VERSIONNO`
   (see [`read_invoked_constraints`](@ref)).
 
 # Returns
-`(definitions, terms)`: `DataFrame`s shaped like the results of
-[`read_constraint_definitions`](@ref) and [`read_constraint_terms`](@ref), with one row per
-recognised version (and one `INTERCONNECTOR` term row per definition).
+`(definitions, terms)`: one definition row and one `INTERCONNECTOR` term row per recognised
+version.
 """
-function zero_flow_constraint_definitions(gencon_versions)
-    recognised = filter(
-        r -> haskey(_ZERO_FLOW_CONSTRAINTS, r.GENCONID) &&
-            !ismissing(r.GENCONID_EFFECTIVEDATE) && !ismissing(r.GENCONID_VERSIONNO) &&
-            Date(r.GENCONID_EFFECTIVEDATE) == _ZERO_FLOW_EFFECTIVEDATE &&
-            r.GENCONID_VERSIONNO == _ZERO_FLOW_VERSIONNO,
-        unique(select(gencon_versions, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO)),
-    )
+function _zero_flow_constraint_definitions(gencon_versions)
+    known = filter(r -> haskey(_ZERO_FLOW_CONSTRAINTS, r.GENCONID), unique(gencon_versions))
+    is_recognised(r) = !ismissing(r.GENCONID_EFFECTIVEDATE) && !ismissing(r.GENCONID_VERSIONNO) &&
+        Date(r.GENCONID_EFFECTIVEDATE) == _ZERO_FLOW_EFFECTIVEDATE &&
+        r.GENCONID_VERSIONNO == _ZERO_FLOW_VERSIONNO
+    for r in eachrow(known)
+        is_recognised(r) || @warn "Interconnector Zero constraint $(r.GENCONID) is invoked at an unrecognised version ($(r.GENCONID_EFFECTIVEDATE) #$(r.GENCONID_VERSIONNO)); it has no definition and is skipped"
+    end
+    recognised = filter(is_recognised, known)
     definitions = DataFrame(
         GENCONID = recognised.GENCONID,
         EFFECTIVEDATE = recognised.GENCONID_EFFECTIVEDATE,

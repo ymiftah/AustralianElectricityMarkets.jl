@@ -774,3 +774,73 @@ end
     model = _decision_model(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test isnothing(_build_error(model))
 end
+
+"""
+    _add_zero_flow_pair!(sys, params, interconnector, weight)
+
+Attaches the two `<=` [`GenericConstraint`](@ref)s of an Interconnector Zero pair on `interconnector`
+(`-flow <= 0` and `flow <= 0`, right-hand side 0, `weight` the CVP factor), the shape
+`add_nem_constraints!` builds from its built-in definition. Added before the retime, as for
+[`_add_storage_constraint!`](@ref).
+"""
+function _add_zero_flow_pair!(sys, params, interconnector::AbstractString, weight::Float64)
+    times, n_raw = _raw_series_times(params)
+    for (name, factor) in (("ZERO_NEG", -1.0), ("ZERO_POS", 1.0))
+        gc = GenericConstraint(;
+            name = name, sense = ConstraintSense.LE, rhs = 0.0, constraint_weight = weight,
+            terms = ConstraintTerm[InterconnectorTerm(interconnector, factor)],
+        )
+        add_service!(sys, gc, [get_component(AreaInterchange, sys, interconnector)])
+        add_time_series!(sys, gc, SingleTimeSeries(; name = "rhs", data = TimeArray(times, zeros(n_raw))))
+        add_time_series!(sys, gc, SingleTimeSeries(; name = "invoked", data = TimeArray(times, ones(n_raw))))
+    end
+    return
+end
+
+@testset "an invoked Interconnector Zero pair holds the net flow at zero, elastic at 1160 x MPC" begin
+    # Unconstrained, IC1 carries a non-zero flow.
+    baseline_sys = _prepared_system()
+    baseline_model = _decision_model(
+        _area_balance_template(), baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
+    )
+    @test PSI.build!(baseline_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    PSI.solve!(baseline_model)
+    baseline_flow = PSI.read_variable(
+        PSI.OptimizationProblemResults(baseline_model), "FlowActivePowerVariable__AreaInterchange",
+    )
+    @test any(v -> abs(v) > 1.0e-3, subset(baseline_flow, :name => ByRow(==("IC1"))).value)
+
+    sys = augmented_pscb_system()
+    _fix_thermal_floor!(sys)
+    add_nem_constraints!(sys, NEM_CONSTRAINTS_DB, NEM_CONSTRAINTS_DATE_RANGE)
+    _remove_unused_pscb_constraints!(sys)
+    params = _native_forecast_params(sys)
+    weight = 1160.0
+    _add_zero_flow_pair!(sys, params, "IC1", weight)
+    _retime_gc_series!(sys, params, Dict{String, Float64}())
+    _prune_unbuildable_constraints!(sys)
+
+    test_mpc = 20_300.0
+    model = _decision_model(
+        _nem_service_template(; use_slacks = true, market_price_cap = test_mpc), sys;
+        optimizer = HiGHS.Optimizer, horizon = Hour(2),
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    PSI.solve!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+    results = PSI.OptimizationProblemResults(model)
+    flow = PSI.read_variable(results, "FlowActivePowerVariable__AreaInterchange")
+    @test all(v -> abs(v) < 1.0e-6, subset(flow, :name => ByRow(==("IC1"))).value)
+
+    # Each row's slack is priced at weight x MPC per MW, in the objective's per-unit scale.
+    container = PSI.get_optimization_container(model)
+    objective_terms = PSI.JuMP.objective_function(PSI.get_jump_model(container)).terms
+    expected = PSI.get_base_power(container) *
+        interval_cost_coefficient(weight * test_mpc, PSI.get_resolution(container))
+    for name in ("ZERO_NEG", "ZERO_POS")
+        slack = PSI.get_variable(container, AEMS.GenericConstraintSlackUp(), GenericConstraint, name)
+        @test all(t -> objective_terms[slack[name, t]] ≈ expected, PSI.get_time_steps(container))
+        @test !PSI.has_container_key(container, AEMS.GenericConstraintSlackDown, GenericConstraint, name)
+    end
+end
