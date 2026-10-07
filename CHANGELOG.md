@@ -370,6 +370,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- All floating-point NEMWEB columns are now `Float64` (`DOUBLE` in the parquet cache) instead of
+  `Float32`. Re-populate every cached table with `populate(...; force_new = true)`; partitions
+  written earlier keep single precision.
 - `nem_system(db, ConstrainedNetworkConfiguration(); date_range)` resolves static unit and
   interconnector tables as of `first(date_range)` instead of the newest cached version; pass
   `as_of = nothing` for the previous behaviour.

@@ -407,7 +407,7 @@ end
         df = _read_parquet_file(tmpdir)
         @test "RRP" in names(df)
         @test ismissing(df.RRP[1])
-        @test eltype(df.RRP) <: Union{Missing, Float32}
+        @test eltype(df.RRP) <: Union{Missing, Float64}
     finally
         isfile(csv_path) && rm(csv_path)
     end
@@ -446,7 +446,7 @@ end
         df = _read_parquet_file(tmpdir)
         @test nrow(df) == 2
         @test all(ismissing, df.RRP)
-        @test eltype(df.RRP) <: Union{Missing, Float32}
+        @test eltype(df.RRP) <: Union{Missing, Float64}
     finally
         isfile(csv_path) && rm(csv_path)
     end
