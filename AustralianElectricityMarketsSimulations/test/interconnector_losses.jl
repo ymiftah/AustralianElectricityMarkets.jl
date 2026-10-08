@@ -32,6 +32,7 @@ function _loss_test_system(;
         demand_coefficients::Dict{String, Float64} = Dict{String, Float64}(),
         pin_multiplier::Bool = true,
         priced_supply_only::Bool = false,
+        loss_demand_scale::Union{Nothing, Float64} = nothing,
         negative_cost::Bool = false,
     )
     sys = augmented_pscb_system()
@@ -72,6 +73,15 @@ function _loss_test_system(;
             sys, load,
             PSY.SingleTimeSeries(; name = "max_active_power", data = data, scaling_factor_multiplier = multiplier),
         )
+        if !isnothing(loss_demand_scale)
+            PSY.add_time_series!(
+                sys, load,
+                PSY.SingleTimeSeries(;
+                    name = "loss_demand", data = TimeArray(stamps, fill(loss_demand_scale, length(stamps))),
+                    scaling_factor_multiplier = multiplier,
+                ),
+            )
+        end
     end
     # Regenerate the Deterministic views removed above, on the fixture's own hourly grid; PSI
     # finds no load parameter to add when no PowerLoad carries one.
@@ -476,6 +486,29 @@ end
             @test flow ≈ expected_demand / (1.0 - 0.6 * slope) atol = 1.0e-6
             @test loss ≈ slope * flow atol = 1.0e-6
         end
+    end
+end
+
+@testset "loss equations use the loss_demand series when a load carries one" begin
+    # `loss_demand` is 1.5x the dispatch `max_active_power` series: the loss slope must follow it.
+    sys = _loss_test_system(;
+        demand_coefficients = Dict("2" => 1.0e-4), loss_demand_scale = 1.5,
+    )
+    area2_loads = [
+        l for l in PSY.get_components(PSY.PowerLoad, sys)
+            if PSY.get_name(PSY.get_area(PSY.get_bus(l))) == "2"
+    ]
+    rating = PSY.with_units_base(() -> sum(PSY.get_max_active_power.(area2_loads)), sys, "NATURAL_UNITS")
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    demand = AEMS._area_demand(container, sys)
+    @test demand["2"] .* PSY.get_base_power(sys) ≈ fill(1.5 * rating, 2)
+    slope = 0.05 + 1.0e-4 * 1.5 * rating
+    definitions = PSI.get_constraint(container, AEMS.InterconnectorLossDefinitionConstraint(), PSY.AreaInterchange)
+    segments = PSI.get_variable(container, AEMS.InterconnectorLossSegmentVariable(), PSY.AreaInterchange)
+    for t in 1:2
+        @test PSI.JuMP.normalized_coefficient(definitions["IC1", t], segments["IC1", "1", t]) ≈ -slope
     end
 end
 

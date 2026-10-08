@@ -139,8 +139,10 @@ end
 """
     _area_demand(container, sys) -> Dict{String, Vector{Float64}}
 
-Total available `PSY.PowerLoad` active power per area and dispatch timestep, in the system's current units.
-Time-series scaling factors are applied once by `PSY.get_time_series_values`.
+Regional demand the loss equations are evaluated at, per area and dispatch timestep, in the system's
+current units: each available `PSY.PowerLoad`'s `"loss_demand"` series when present, else its
+`"max_active_power"` series, else its static rating. Time-series scaling factors are applied once
+by `PSY.get_time_series_values`.
 
 # Returns
 A dictionary of area names to demand vectors; areas without loads are omitted.
@@ -162,10 +164,12 @@ function _area_demand(initial_time::Dates.DateTime, n_steps::Int, sys::PSY.Syste
         )
         area_name = PSY.get_name(area)
         series = get!(() -> zeros(Float64, length(time_steps)), demand, area_name)
-        if PSY.has_time_series(load, PSY.Deterministic, "max_active_power")
+        has_loss_demand = PSY.has_time_series(load, PSY.Deterministic, "loss_demand")
+        series_name = has_loss_demand ? "loss_demand" : "max_active_power"
+        if has_loss_demand || PSY.has_time_series(load, PSY.Deterministic, "max_active_power")
             # A transformed forecast must be read over its full horizon, so slice afterwards.
             forecast = PSY.get_time_series_values(
-                PSY.Deterministic, load, "max_active_power"; start_time = initial_time,
+                PSY.Deterministic, load, series_name; start_time = initial_time,
             )
             length(forecast) >= n_steps || throw(
                 ArgumentError(

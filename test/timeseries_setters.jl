@@ -154,6 +154,20 @@
             end
         end
 
+        @testset "set_demand! attaches loss_demand = INITIALSUPPLY + DEMANDFORECAST (NATURAL_UNITS)" begin
+            for load in get_components(PowerLoad, sys)
+                region_id = replace(get_name(load), " Load" => "")
+                region_demand = @chain demand_df begin
+                    subset(:REGIONID => ByRow(==(region_id)))
+                    sort(:SETTLEMENTDATE)
+                end
+                isempty(region_demand) && continue
+                reconstructed = get_time_series_values(SingleTimeSeries, load, "loss_demand")
+                @test isapprox(reconstructed, region_demand.LOSSDEMAND; atol = 1.0e-6)
+                @test !isapprox(reconstructed, region_demand.TOTALDEMAND; atol = 1.0e-6)
+            end
+        end
+
         @testset "set_demand! matches true TOTALDEMAND / base_power (SYSTEM_BASE, pu)" begin
             set_units_base_system!(sys, "SYSTEM_BASE")
             base_power = get_base_power(sys)
