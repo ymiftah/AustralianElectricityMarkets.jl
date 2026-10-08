@@ -187,13 +187,14 @@ end
 function add_toy_generic_constraint!(sys, stamps, duid, rhs_mw)
     base_power = PSY.get_base_power(sys)
     rhs_pu = rhs_mw / base_power
+    duids = duid isa AbstractString ? [duid] : collect(duid)
     gc = GenericConstraint(;
         name = "N_TOY_LIMIT",
         sense = ConstraintSense.LE,
         rhs = rhs_pu,
-        terms = ConstraintTerm[UnitTerm(duid, BidType.ENERGY, 1.0)],
+        terms = ConstraintTerm[UnitTerm(d, BidType.ENERGY, 1.0) for d in duids],
     )
-    PSY.add_service!(sys, gc, [PSY.get_component(PSY.ThermalStandard, sys, duid)])
+    PSY.add_service!(sys, gc, [PSY.get_component(PSY.ThermalStandard, sys, d) for d in duids])
     PSY.add_time_series!(
         sys, gc,
         PSY.SingleTimeSeries(; name = "rhs", data = PSY.TimeSeries.TimeArray(stamps, fill(rhs_pu, length(stamps)))),
@@ -209,7 +210,9 @@ end
 # MW, the area price in $/MWh, the objective in $, and each `GenericConstraint`'s shadow price in
 # $/MWh, keyed by name (empty if `sys` carries none). Any `GenericConstraint` in `sys` is registered
 # under `LinearFactorLimit`.
-function solve_toy(sys)
+function solve_toy(
+        sys; optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+    )
     network = PSI.NetworkModel(
         PSI.AreaBalancePowerModel;
         use_slacks = true,
@@ -226,7 +229,7 @@ function solve_toy(sys)
     end
     model = PSI.DecisionModel(
         template, sys;
-        optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+        optimizer = optimizer,
         horizon = TOY_RESOLUTION,
         resolution = TOY_RESOLUTION,
         interval = TOY_RESOLUTION,

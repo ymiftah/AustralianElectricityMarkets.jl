@@ -511,6 +511,34 @@ end
         @test out.dispatch_mw[TOY_CHEAP] / 168.0 ≈ out.dispatch_mw[third] / 122.0 atol = 1.0e-4
     end
 
+    @testset "a group-limited tied set stays pro rata beside held-back tied bands, at production solver settings" begin
+        # Alta, Park City and Solitude share a 168 MW group limit; Sundance and Brighton bid the
+        # same price in three bands each and sit far below them (ramp), so every tied pair with
+        # them is violated.
+        group = (TOY_CHEAP, TOY_EXPENSIVE, third)
+        mutate! = (sys, stamps) -> add_toy_generic_constraint!(sys, stamps, group, 168.0)
+        sys = nem_toy_system(
+            [
+                TOY_CHEAP => toy_unit(168.0, [(168.0, -984.5)]; initial = 0.0, ramp_up = 100.0),
+                TOY_EXPENSIVE => toy_unit(46.0, [(46.0, -984.5)]; initial = 0.0, ramp_up = 100.0),
+                third => toy_unit(122.0, [(122.0, -984.5)]; initial = 0.0, ramp_up = 100.0),
+                "Sundance" => toy_unit(300.0, fill((100.0, -984.5), 3); initial = 0.0, ramp_up = 4.0),
+                "Brighton" => toy_unit(300.0, fill((100.0, -984.5), 3); initial = 0.0, ramp_up = 6.0),
+            ],
+            218.0;
+            mutate!,
+        )
+        production = optimizer_with_attributes(
+            HiGHS.Optimizer, "output_flag" => false, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10,
+        )
+        out = solve_toy(sys; optimizer = production)
+        @test out.dispatch_mw["Sundance"] ≈ 20.0 atol = 1.0e-4
+        @test out.dispatch_mw["Brighton"] ≈ 30.0 atol = 1.0e-4
+        @test out.dispatch_mw[TOY_CHEAP] ≈ 84.0 atol = 1.0e-3
+        @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 23.0 atol = 1.0e-3
+        @test out.dispatch_mw[third] ≈ 61.0 atol = 1.0e-3
+    end
+
     @testset "a battery offer band ties with a thermal band across device types" begin
         sys = nem_toy_system(
             [TOY_CHEAP => toy_unit(100.0, [(100.0, 10.0)]; initial = 0.0, ramp_up = 100.0)],
@@ -541,12 +569,12 @@ end
     band(price, width, name, band = 1) = (; price, width, name, band)
     tol = TIE_BREAK_CVP_FACTOR
     pairs = AustralianElectricityMarketsSimulations._tied_pairs
-    @test pairs([band(5.0, 1.0, "a"), band(5.0, 2.0, "b"), band(5.0, 3.0, "c")]) == [(1, 2), (1, 3), (2, 3)]
+    @test pairs([band(5.0, 1.0, "a"), band(5.0, 2.0, "b"), band(5.0, 3.0, "c")]) == [(1, 2, 3.0), (1, 3, 3.0), (2, 3, 3.0)]
     # Same-unit bands and zero-width bands are never paired.
-    @test pairs([band(5.0, 1.0, "a", 1), band(5.0, 1.0, "a", 2), band(5.0, 1.0, "b")]) == [(1, 3), (2, 3)]
+    @test pairs([band(5.0, 1.0, "a", 1), band(5.0, 1.0, "a", 2), band(5.0, 1.0, "b")]) == [(1, 3, 1.0), (2, 3, 1.0)]
     @test pairs([band(5.0, 0.0, "a"), band(5.0, 1.0, "b")]) == []
     # Different prices beyond the tolerance stay separate; within it they tie, transitively.
     @test pairs([band(5.0, 1.0, "a"), band(5.0 + 2tol, 1.0, "b")]) == []
     @test pairs([band(5.0, 1.0, "a"), band(5.0 + 0.8tol, 1.0, "b"), band(5.0 + 1.6tol, 1.0, "c")]) ==
-        [(1, 2), (1, 3), (2, 3)]
+        [(1, 2, 1.0), (1, 3, 1.0), (2, 3, 1.0)]
 end

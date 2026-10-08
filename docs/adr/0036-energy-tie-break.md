@@ -30,18 +30,38 @@ elastic (`make_constraints_elastic('tie_break', violation_cost=cost)`, form
 - **Constraints, not an objective perturbation.** AEMO and nempy both use equality rows on fill
   fractions. A tiny price perturbation would not reproduce the proportional split (it would pick a
   vertex again), so it is not used.
-- **Elastic pairs, as AEMO and nempy.** Each pair is `x_a/w_a - x_b/w_b + up - down = 0` with
-  both slacks, in fill fraction, priced at `TIE_BREAK_CVP_FACTOR` (1e-6) per dispatch interval (the
-  same scale as nempy's `cost`; no system-base factor, since the slacks are dimensionless). The
-  penalty is far below any bid price difference, so a tie never displaces a competitively priced
-  band. A band held back by a ramp or availability limit relaxes its pairs.
+- **Elastic pairs, as AEMO and nempy.** A band held back by a ramp, availability or group limit
+  relaxes its rows through an up and a down slack instead of making the model infeasible.
+- **Rows in MW, not in fill fraction.** Each pair of bands a, b of different units gets
+  `(x_a w_b - x_b w_a) / w_ref + up - down = 0`, with `x` the cleared MW, `w` the band width and
+  `w_ref` the widest band of the tie group, so the slacks are system-base per-unit MW priced at
+  `TIE_BREAK_CVP_FACTOR` ($/MWh, 1e-6, times the base and the interval hours). This is the same
+  equality as nempy's `x_a/w_a - x_b/w_b = 0` (a multiple of it) and the same proportionality
+  AEMO states, but the multiple matters once rows are violated. With fraction rows the penalty on
+  band i against a held-back band k is `|f_i - f_k|`, so the cost per MW of band i is `1/w_i`: when
+  most of a large tie group is held back at other fractions (36 floor-priced bands in VIC1, most of
+  them coal at ramp limits and wind at UIGF), the LP prefers to load the narrowest band of a
+  group-limited subset first and the split is an arbitrary vertex. With the rows above the cost per
+  MW of band i against band k is `w_k / w_ref` whatever i is, so the held-back bands add the same
+  marginal cost to every member of a limited subset and its split is set by its own rows alone,
+  proportional to band MW. The toy test reproduces the failure (151/5/12 MW instead of 84/23/61
+  under the fraction form) and the replay of DUNDWF1/2/3 confirms it (below).
+- **Penalty size.** The 1e-6 CVP factor is kept, as AEMO and nempy, but as $/MWh of violation
+  rather than per unit of fill fraction. A fraction slack at 1e-6 per interval hour is 8.3e-8 per
+  fraction, below HiGHS' dual feasibility tolerance (1e-7), and the solver then treats the slack
+  as free; the earlier fraction form at that price regressed the DUNDWF splits on 2026-06-09 and
+  2026-06-12. In per-unit MW the slack column costs 8.3e-6, 80 times the tolerance, and the
+  summed effect on any band's marginal cost (a few dozen rows of at most 8.3e-8 $/MW) is far below
+  the cent resolution of bid prices. This deviates from AEMO's absolute unit, which the schedule
+  does not state; nempy's `cost` is likewise applied to its own slack units. Tightening the
+  optimizer tolerance does not help (a 1e-10 dual tolerance moved 2026-06-03 to 66/29/73), so the
+  scaling is the fix. The penalty is not MPC-scaled (the XML case uses 1e-6 literally).
 - **All pairs, not a chain.** Every pair of bands of different units in a tie group gets a row,
   as nempy and FAQ 3.19 ("for that pair of price-tied bands"): n(n-1)/2 rows and as many slack
-  pairs. A chain was tried first and is wrong: when one band is held back, the chain's total slack
-  is linear in the other fills, so the LP fills one band to 1 first and the answer depends on the
-  DUID sort order; with all pairs the held-back band's neighbours are also tied to each other
-  (`|fA - fC|`), so they stay pro rata. Groups are small (worst case about 100 bands, about 5000
-  rows).
+  pairs. A chain depends on the DUID sort order once a band is held back, and a hub with a free
+  common fill is not neutral either (a limited subset again fills its narrowest band first), so
+  neither is used. The all-pairs rows are what make the held-back bands cost-neutral across a
+  limited subset.
 - **Detection.** Per (direction, region, time step): offer bands and load-bid bands are separate
   groups; the region is the area of the device's bus; prices are the market-bid slopes divided by
   the system base, which are already referred to the reference node by the bid setter. Sorted
@@ -57,26 +77,37 @@ elastic (`make_constraints_elastic('tie_break', violation_cost=cost)`, form
 
 ## Consequences
 
-- LP size grows by n(n-1)/2 rows and twice as many columns per tie group and interval; groups are
-  small except for the market-floor bids of wind and solar in one region.
-- A feasible tie adds zero cost. Prices differing by less than the tolerance still have an
-  economic effect when the saved cost exceeds the slack penalty: the penalty per fill fraction is
-  about 8e-8 $ (1e-6 over twelve intervals per hour), so a band 0.5e-6 dearer is simply not
-  dispatched. Tied bands in real data are equal to rounding, so this does not arise there.
-- When a tied band is held back by a ramp or availability limit its pairs are violated and the
-  balance dual can carry the penalty, below 1e-6 $/MWh in the toy tests. The slack rows and
-  variables are plain JuMP objects, not registered PSI keys, so violated pairs cannot be read from
-  results.
+- LP size: on 2026-06-03T15:00 the VIC1/NEM tie groups add 10,899 rows and 21,798 slack columns to
+  a model of 58,000 variables; 2026-06-09T15:00 adds 10,947 and 2026-06-12T23:55 adds 10,568. A
+  warm replay (build and solve) takes 80 to 110 s.
+- Replay of DUNDWF1/2/3 (published 84/23/61), with referred prices rounded to cents:
+
+  | interval | fraction rows, 8.3e-8 | MW rows, this decision |
+  | --- | --- | --- |
+  | 2026-06-03T15:00 | 66.2 / 28.7 / 73.1 | 84 / 23 / 61 |
+  | 2026-06-09T15:00 | 55.0 / 32.0 / 81.0 | 84 / 23 / 61 |
+  | 2026-06-12T23:55 | 32.4 / 43.1 / 92.5 | 84 / 23 / 61 |
+
+  The cent rounding of referred prices makes all floor-priced bands tie exactly, which enlarges
+  the tie group to 36 bands; by itself it does not restore the splits. Regional prices are
+  unchanged by the rows (VIC1 -2.23, -2.29 and -12.1 with and without them).
+- A feasible tie adds zero cost. Prices that differ by less than the tolerance still have an
+  economic effect when the saved cost exceeds the slack penalty, so a band 0.5e-6 dearer is simply
+  not dispatched. Bid prices are cents, so this does not arise in real data.
+- When a tied band is held back its rows are violated and the balance dual can carry the
+  penalty, below 1e-6 $/MWh in the toy tests. The slack rows and variables are plain JuMP objects,
+  not registered PSI keys, so violated rows cannot be read from results.
 - The 2026-06-09 TAS1 LOWERREG price moved by +1.0 in an earlier run (3.08 with the tie-break
-  against 2.08 without, published 1.56): a degenerate-dual sensitivity to re-check after the slack
-  scaling was corrected.
+  against 2.08 without, published 1.56): a degenerate-dual sensitivity to re-check against the
+  corrected scaling.
 - **Hook placement.** The links are added from the `AreaBalancePowerModel` objective hook, the only
   network-stage hook that runs after every device model. Models built with another network model,
   or `use_slacks = false`, get arbitrary tie vertices, and bid blocks created by branch or service
   models are never tied; the `set_nem_dispatch_models!` and `replication_template` docstrings say
   so. `add_tie_break_constraints!` is not exported.
-- A model with binary variables solved with default optimizer MIP gaps may ignore the tie
-  penalty, which is below those tolerances.
+- The replication optimizer sets zero MIP gaps (`mip_rel_gap = 0`, `mip_abs_gap = 1e-10`). Any
+  other optimizer with default gaps and binary variables present may stop before the tie penalty
+  is resolved.
 - Bid data must be fixed at build: slopes and breakpoints are read with `PSI.jump_fixed_value`,
   and a recurrent (`Simulation`) build throws an `ArgumentError`. The replication path rebuilds
   per interval.
