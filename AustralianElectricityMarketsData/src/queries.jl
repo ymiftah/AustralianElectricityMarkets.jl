@@ -129,6 +129,9 @@ Read and process regional demand data from the database.
 
 # Returns
 A `DataFrame` with demand and renewable availability data, aggregated by the specified resolution.
+`LOSSDEMAND` is `INITIALSUPPLY + DEMANDFORECAST` plus the initial charging load of the region's
+`BIDIRECTIONAL` units (`DISPATCHLOAD.INITIALMW` where negative), with unit type and region resolved
+as of the interval.
 
 # Example
 ```julia
@@ -136,24 +139,43 @@ db = aem_connect()
 demand_df = read_demand(db; resolution=Dates.Hour(1))
 println(demand_df)
 ```
-   Row │ SETTLEMENTDATE       REGIONID  TOTALDEMAND  DISPATCHABLEGENERATION  DISPATCHABLELOAD  NETINTERCHANGE
-	   │ Dates.DateTime       String7   Float64      Float64                 Float64           Float64
-───────┼──────────────────────────────────────────────────────────────────────────────────────────────────────
-	 1 │ 2024-01-01T00:05:00  NSW1          6574.92                 6721.88               0.0          146.96
-	 2 │ 2024-01-01T00:05:00  QLD1          6228.31                 5713.21               0.0         -515.1
-	 3 │ 2024-01-01T00:05:00  SA1           1293.98                 1116.68               0.0         -177.3
-	 4 │ 2024-01-01T00:05:00  TAS1          1033.29                  580.29               0.0         -453.0
-	 5 │ 2024-01-01T00:05:00  VIC1          3977.1                  5071.17               0.0         1094.07
 """
 function read_demand(db; resolution::Dates.Period = Dates.Minute(5))
     source = read_hive(db, :DISPATCHREGIONSUM)
+    dispatchload = read_hive(db, :DISPATCHLOAD)
+    summary = read_hive(db, :DUDETAILSUMMARY)
     df = _query(
         db,
         """
-        SELECT SETTLEMENTDATE, REGIONID, TOTALDEMAND, SS_SOLAR_AVAILABILITY, SS_WIND_AVAILABILITY
-        FROM $source
-        WHERE SETTLEMENTDATE IS NOT NULL AND REGIONID IS NOT NULL
-          AND TOTALDEMAND IS NOT NULL AND SS_SOLAR_AVAILABILITY IS NOT NULL AND SS_WIND_AVAILABILITY IS NOT NULL
+        WITH sm_raw AS (SELECT * FROM $summary),
+             bdu AS (
+                 SELECT DUID, REGIONID, START_DATE, END_DATE
+                 FROM sm_raw
+                 WHERE DISPATCHTYPE = 'BIDIRECTIONAL'
+                   AND archive_month = (SELECT max(archive_month) FROM sm_raw)
+             ),
+             charging AS (
+                 SELECT d.SETTLEMENTDATE, bdu.REGIONID, sum(least(d.INITIALMW, 0.0)) AS INITIALCHARGE
+                 FROM (
+                     SELECT DUID, SETTLEMENTDATE, INITIALMW
+                     FROM $dispatchload
+                     WHERE INTERVENTION = 0
+                     QUALIFY row_number() OVER (
+                         PARTITION BY DUID, SETTLEMENTDATE ORDER BY archive_month DESC
+                     ) = 1
+                 ) d
+                 JOIN bdu ON d.DUID = bdu.DUID
+                     AND bdu.START_DATE <= d.SETTLEMENTDATE
+                     AND (bdu.END_DATE IS NULL OR bdu.END_DATE > d.SETTLEMENTDATE)
+                 GROUP BY ALL
+             )
+        SELECT r.SETTLEMENTDATE, r.REGIONID, r.TOTALDEMAND,
+               r.INITIALSUPPLY + r.DEMANDFORECAST + COALESCE(c.INITIALCHARGE, 0.0) AS LOSSDEMAND,
+               r.SS_SOLAR_AVAILABILITY, r.SS_WIND_AVAILABILITY
+        FROM $source r
+        LEFT JOIN charging c ON c.SETTLEMENTDATE = r.SETTLEMENTDATE AND c.REGIONID = r.REGIONID
+        WHERE r.SETTLEMENTDATE IS NOT NULL AND r.REGIONID IS NOT NULL
+          AND r.TOTALDEMAND IS NOT NULL AND r.SS_SOLAR_AVAILABILITY IS NOT NULL AND r.SS_WIND_AVAILABILITY IS NOT NULL
         """
     )
     # df[!, :TOTALDEMAND] .+= df[!, :DISPATCHABLELOAD]  # Adds the dispatchable load to the total demand to get the actual native demand
