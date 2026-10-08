@@ -139,7 +139,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Market Price Cap: a battery whose net ramp envelope exceeds its rating (the rating's upper bound
   is raised to the `NEMReplayDispatch` ramp floor, as for generators), or conflicting flow limits,
   no longer make the interval infeasible. The FCAS rows are elastic under `use_slacks`.
-  `replicate_interval` also returns `constraint_violations`, every non-zero slack by family and
+  `replicate_interval` also returns `constraint_violations`, every non-zero slack of the elastic families, by family and
   direction; `ramp_violations` keeps working.
 - Data package ingests the MNSP offer tables (`MNSP_DAYOFFER`, `MNSP_BIDOFFERPERIOD`,
   `MNSP_PEROFFER`, `DISPATCH_MNSPBIDTRK`), `DISPATCHLOAD.DISPATCHMODETIME` and

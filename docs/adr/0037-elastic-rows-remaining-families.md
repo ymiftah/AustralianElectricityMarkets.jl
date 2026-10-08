@@ -55,7 +55,11 @@ ramping (155) before interconnector flow (1150) before unit ramp (1155).
 - `replicate_interval` returns `constraint_violations`, one row per non-zero slack of every
   elastic family (`family`, `name`, `DateTime`, `MW`, `direction`, `variable`), so no relaxation
   is silent. `direction` is `up` for a slack relaxing a `<=` row and `down` for one relaxing a
-  `>=` row, refined per key for the FCAS enablement (`_lower` keys) and `LOWERREG` ramping slacks.
+  `>=` row, refined for the FCAS enablement slacks (`_lower` keys) and for joint ramping slacks, whose
+  sense depends on the device (a load's `LOWERREG` row is the `<=` form). Area balance rows are
+  equalities: `up` is a deficit (demand unserved) and `down` a surplus. The table covers the
+  PowerSimulations slack containers of these families only; slacks built as bare JuMP variables
+  (the tie-break terms) are not listed.
   Interconnector slacks are built whatever the device model's `use_slacks`, as NEMDE's limit is
   always soft; the FCAS slacks follow the service model's `use_slacks`. A `FCASMaxAvailSlack`
   is created for disabled `(device, t)` as well, with a vacuous row; it is never active. `ramp_violations` is kept as the unit-ramp view of the same table.
@@ -81,6 +85,9 @@ is kept for the same reason as in ADR 0030: it only fires on data that bypassed 
   with slacks, FCAS MaxAvail and SCADA rows. Slacks are zero in ordinary solves (tested).
 - Hard rows that remain: availability and UIGF bounds (above), the loss breakpoint range, and the FCAS and generic-constraint rows when the owning service
   model has `use_slacks = false`.
+- The flow-limit and storage ramp slacks are built whatever `use_slacks` is, so a build needs a
+  Market Price Cap for every interval: builds dated before 2024-07-01 throw unless the model's
+  `"market_price_cap"` setting supplies one.
 - Objective scaling: the largest implemented slack factor is 1155. At the 2026-27 Market Price
   Cap of $23,200/MWh and a system base of 100 MW, a unit ramp slack coefficient is about
   2.2e8 per per-unit, against offer coefficients of about 0.08 to 8 per per-unit, a spread of 1e9

@@ -370,13 +370,26 @@ end
 
 @testset "constraint_violations directions follow the relaxed row's sense" begin
     direction = AustralianElectricityMarketsSimulations._violation_direction
-    @test direction(FCASJointCapacitySlack, "TAS1_RAISEREG_upper", "up") == "up"
-    @test direction(FCASJointCapacitySlack, "TAS1_RAISEREG_lower", "up") == "down"
-    @test direction(FCASJointCapacitySlack, "BDU_gen_lower", "up") == "down"
-    @test direction(FCASJointCapacitySlack, "BDU_load_upper", "up") == "up"
-    @test direction(FCASJointRampingSlack, "TAS1_RAISEREG", "up") == "up"
-    @test direction(FCASJointRampingSlack, "TAS1_LOWERREG", "up") == "down"
-    @test direction(UnitRampDownSlack, "", "down") == "down"
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 40.0, ramp_up = 100.0)],
+        40.0;
+        loads = ["PUMP" => toy_load(30.0, 50.0; initial = 5.0, ramp_up = 100.0)],
+    )
+    for (name, bid_type) in (("S_RAISEREG", BidType.RAISEREG), ("S_LOWERREG", BidType.LOWERREG))
+        service = FCASService(; name, region = "1", bid_type = bid_type)
+        PSY.add_service!(sys, service, [PSY.get_component(PSY.StaticInjection, sys, n) for n in (TOY_CHEAP, "PUMP")])
+    end
+    # Capacity rows: the sense follows the `_lower` suffix whatever the device.
+    @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_upper", TOY_CHEAP, "up") == "up"
+    @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_lower", TOY_CHEAP, "up") == "down"
+    @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_gen_lower", "PUMP", "up") == "down"
+    @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_load_upper", "PUMP", "up") == "up"
+    # Joint ramping: a generator's RAISEREG row is the `<=` form, a load's LOWERREG row is.
+    @test direction(sys, FCASJointRampingSlack, "S_RAISEREG", TOY_CHEAP, "up") == "up"
+    @test direction(sys, FCASJointRampingSlack, "S_LOWERREG", TOY_CHEAP, "up") == "down"
+    @test direction(sys, FCASJointRampingSlack, "S_LOWERREG", "PUMP", "up") == "up"
+    @test direction(sys, FCASJointRampingSlack, "S_RAISEREG", "PUMP", "up") == "down"
+    @test direction(sys, UnitRampDownSlack, "", TOY_CHEAP, "down") == "down"
 end
 
 @testset "penalty ordering is strictly increasing across the CVP schedule" begin
@@ -400,11 +413,13 @@ end
             100.0,
         )
         out = solve_toy(sys)
-        violations = AustralianElectricityMarketsSimulations._constraint_violations(out.results)
+        violations = AustralianElectricityMarketsSimulations._constraint_violations(out.results, sys)
 
         @test out.dispatch_mw[TOY_CHEAP] ≈ 5.0 atol = TOY_TOLERANCE
         @test out.ramp_slack_mw.up ≈ 0.0 atol = TOY_TOLERANCE
         @test violations.family == ["area_balance"]
+        # An equality row: the slack that adds supply (demand left unserved) is the "up" deficit.
+        @test violations.direction == ["up"]
         @test only(violations.MW) ≈ 95.0 atol = TOY_TOLERANCE
         @test out.objective ≈
             (5.0 * 20.0 + 95.0 * AREA_BALANCE_CVP_FACTOR * mpc) * DISPATCH_INTERVAL_HOURS rtol = 1.0e-8
@@ -418,7 +433,7 @@ end
             0.0,
         )
         out = solve_toy(sys)
-        violations = AustralianElectricityMarketsSimulations._constraint_violations(out.results)
+        violations = AustralianElectricityMarketsSimulations._constraint_violations(out.results, sys)
 
         @test violations.family == ["unit_ramp"]
         @test only(violations.MW) ≈ 1.0 atol = TOY_TOLERANCE
@@ -430,6 +445,6 @@ end
             40.0,
         )
         out = solve_toy(sys)
-        @test isempty(AustralianElectricityMarketsSimulations._constraint_violations(out.results))
+        @test isempty(AustralianElectricityMarketsSimulations._constraint_violations(out.results, sys))
     end
 end
