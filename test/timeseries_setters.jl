@@ -1392,10 +1392,14 @@
             @test_logs (:warn, r"change within the date range") match_mode = :any read_loss_factors(ldb; as_of = start_date, through = DateTime(2025, 7, 1, 1))
         end
 
-        sys_raw = nem_system(ldb, RegionalNetworkConfiguration())
-        set_market_bids!(sys_raw, ldb, date_range; resolution = Minute(5), loss_factors = false)
         sys_lf = nem_system(ldb, RegionalNetworkConfiguration())
         set_market_bids!(sys_lf, ldb, date_range; resolution = Minute(5))
+
+        # Read raw bids (unscaled by loss factors) to compare
+        raw_bids = read_bids(ldb, date_range; resolution = Minute(5))
+        raw_price(duid, direction) = get_y_coords(first(raw_bids[(raw_bids.DUID .== duid) .& (raw_bids.DIRECTION .== direction), :piecewise_step_data]))
+        raw_mw(duid, direction) = get_x_coords(first(raw_bids[(raw_bids.DUID .== duid) .& (raw_bids.DIRECTION .== direction), :piecewise_step_data]))
+
         prices(sys, name, series = "variable_cost") = with_units_base(sys, "NATURAL_UNITS") do
             ta = get_time_series_array(Deterministic, get_component(Device, sys, name), series)
             return get_y_coords(first(values(ta)))
@@ -1406,23 +1410,23 @@
         end
 
         @testset "prices are divided, MW is not" begin
-            @test prices(sys_lf, "ER01") ≈ round.(prices(sys_raw, "ER01") ./ (0.9 * 0.97); digits = 2)
-            @test prices(sys_lf, "BW02") ≈ prices(sys_raw, "BW02")
-            @test prices(sys_lf, "BW01") ≈ round.(prices(sys_raw, "BW01") ./ 0.5; digits = 2)
+            @test prices(sys_lf, "ER01") ≈ round.(raw_price("ER01", "GEN") ./ (0.9 * 0.97); digits = 2)
+            @test prices(sys_lf, "BW02") ≈ raw_price("BW02", "GEN")
+            @test prices(sys_lf, "BW01") ≈ round.(raw_price("BW01", "GEN") ./ 0.5; digits = 2)
             @test prices(sys_lf, "BW01", "decremental_variable_cost") ≈
-                round.(prices(sys_raw, "BW01", "decremental_variable_cost") ./ 0.8; digits = 2)
-            @test mw(sys_lf, "ER01") ≈ mw(sys_raw, "ER01")
+                round.(raw_price("BW01", "LOAD") ./ 0.8; digits = 2)
+            @test mw(sys_lf, "ER01") ≈ raw_mw("ER01", "GEN")
         end
 
         @testset "a scheduled load's decremental bid uses its load loss factor" begin
             @test get_available(get_component(InterruptiblePowerLoad, sys_lf, "PUMP1"))
             @test prices(sys_lf, "PUMP1", "decremental_variable_cost") ≈
-                prices(sys_raw, "PUMP1", "decremental_variable_cost") ./ 0.8
+                round.(raw_price("PUMP1", "LOAD") ./ 0.8; digits = 2)
         end
 
         @testset "referred prices reorder a merit order" begin
             # Raw prices rise with the band; ER01's referred price exceeds BW02's raw price.
-            @test last(prices(sys_raw, "ER01")) < last(prices(sys_raw, "BW02")) + 1.0
+            @test last(raw_price("ER01", "GEN")) < last(raw_price("BW02", "GEN")) + 1.0
             @test last(prices(sys_lf, "ER01")) > last(prices(sys_lf, "BW02"))
         end
 

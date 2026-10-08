@@ -97,19 +97,17 @@ gets decremental/load-side bid costs, and each direction's energy `MAXAVAIL`, re
 - `sys`: The `PowerSystems.System` object.
 - `db`: The database connection.
 - `date_range`: A range of dates for which to fetch the data.
-- `loss_factors`: refer energy bid prices to the reference node (see below). Default `true`.
 - `kwargs`: Additional keyword arguments passed to `_massage_bids` (e.g. `resolution`).
 
 # Loss factors
-Energy bid prices are connection-point prices. With `loss_factors = true` (the default) each
-price is divided by the unit's loss factor, resolved as of `first(date_range)` by
-[`read_loss_factors`](@ref) (one factor per unit for the whole range; a warning flags a change
-inside it), which refers the bid to the regional reference node as NEMDE does.
-The MW axis, FCAS bids and physical limits are untouched. A bidding generator, scheduled load or battery of `sys` with no
-`DUDETAILSUMMARY` row in force throws an `ArgumentError`. Pass `loss_factors = false` to keep the raw
-connection-point prices.
+Energy bid prices are connection-point prices and are always divided by the unit's loss factor,
+resolved as of `first(date_range)` by [`read_loss_factors`](@ref) (one factor per unit for
+the whole range; a warning flags a change inside it), which refers the bids to the regional
+reference node as NEMDE does. The MW axis, FCAS bids and physical limits are untouched. A bidding
+generator, scheduled load or battery of `sys` with no `DUDETAILSUMMARY` row in force throws an
+`ArgumentError`.
 """
-function set_market_bids!(sys, db, date_range; loss_factors::Bool = true, kwargs...)
+function set_market_bids!(sys, db, date_range; kwargs...)
     start_date = first(date_range)
     end_date = last(date_range)
     resolution = get(kwargs, :resolution, Minute(5))
@@ -117,11 +115,9 @@ function set_market_bids!(sys, db, date_range; loss_factors::Bool = true, kwargs
     energy_bids_table = read_hive(db, :BIDPEROFFER_D)
     pricebids_table = read_hive(db, :BIDDAYOFFER_D)
     bids = _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
-    if loss_factors
-        sys_units = Set(get_name(c) for T in (Generator, InterruptiblePowerLoad, EnergyReservoirStorage) for c in get_components(T, sys))
-        factors = read_loss_factors(db; as_of = start_date, through = end_date)
-        _refer_bids_to_reference_node!(subset!(bids, :DUID => ByRow(in(sys_units))), factors)
-    end
+    sys_units = Set(get_name(c) for T in (Generator, InterruptiblePowerLoad, EnergyReservoirStorage) for c in get_components(T, sys))
+    factors = read_loss_factors(db; as_of = start_date, through = end_date)
+    _refer_bids_to_reference_node!(subset!(bids, :DUID => ByRow(in(sys_units))), factors)
 
     # Sets all generator subtype first
     foreach(get_components(Generator, sys)) do gen

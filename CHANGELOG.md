@@ -385,10 +385,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All floating-point NEMWEB columns are now `Float64` (`DOUBLE` in the parquet cache) instead of
   `Float32`. Re-populate every cached table with `populate(...; force_new = true)`; partitions
   written earlier keep single precision.
-- `set_market_bids!` divides energy bid prices by each unit's loss factor (`TRANSMISSIONLOSSFACTOR`
+- `set_market_bids!` always divides energy bid prices by each unit's loss factor (`TRANSMISSIONLOSSFACTOR`
   x `DISTRIBUTIONLOSSFACTOR`, as of the start of `date_range`; `SECONDARY_TLF` for the discharge side of
-  batteries), referring them to the regional reference node as NEMDE does. Pass
-  `loss_factors = false` for raw connection-point prices. A bidding unit without a loss factor
+  batteries), referring them to the regional reference node as NEMDE does. A bidding unit without a loss factor
   throws. Referred prices are rounded to cents.
 - `nem_system(db, ConstrainedNetworkConfiguration(); date_range)` resolves static unit and
   interconnector tables as of `first(date_range)` instead of the newest cached version; pass

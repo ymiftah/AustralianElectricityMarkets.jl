@@ -47,8 +47,8 @@ band, which the diagnosis of the June 2026 run attributed to about 100 of 216 un
   documents says which side of that boundary NEMDE uses, so this stays unverified.
 - **Open rows** (`as_of = nothing`) keep the earliest `START_DATE`, the row `read_units` keeps, so
   both readers agree.
-- **Optional.** `loss_factors = false` keeps raw connection-point prices. The default is on,
-  since raw prices misorder units in every region, replication or not.
+- **Always applied.** Loss factors are always applied; raw connection-point prices are not
+  used since they misorder units in every region.
 
 ## Balance
 
