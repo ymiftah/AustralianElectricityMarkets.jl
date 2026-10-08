@@ -199,6 +199,7 @@ function add_nem_constraints!(
     undefined = antijoin(
         gencon_versions, definitions;
         on = [:GENCONID, :GENCONID_EFFECTIVEDATE => :EFFECTIVEDATE, :GENCONID_VERSIONNO => :VERSIONNO],
+        matchmissing = :notequal,
     )
     zero_definitions, zero_terms = _zero_flow_constraint_definitions(undefined)
     if !isempty(zero_definitions)

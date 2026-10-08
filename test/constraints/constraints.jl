@@ -701,6 +701,35 @@ end
         @test get_factor(published_term) == 2.0
     end
 
+    @testset "antijoin with missing key values uses matchmissing = :notequal" begin
+        # Regression test for: invoked versions with NULL GENCONID_EFFECTIVEDATE would throw
+        # "Missing values in key columns" in antijoin unless matchmissing = :notequal.
+        # Direct test of the join logic: a version with missing EFFECTIVEDATE should be kept
+        # by antijoin (treated as "no definition found").
+        gencon_versions = DataFrame(
+            GENCONID = ["TEST1", "TEST1", "TEST2"],
+            GENCONID_EFFECTIVEDATE = [DateTime(2025, 1, 1), missing, DateTime(2025, 1, 1)],
+            GENCONID_VERSIONNO = [1, 1, 1],
+        )
+        definitions = DataFrame(
+            GENCONID = ["TEST1"],
+            EFFECTIVEDATE = [DateTime(2025, 1, 1)],
+            VERSIONNO = [1],
+        )
+        # Without matchmissing = :notequal, this would throw "Missing values in key columns"
+        undefined = antijoin(
+            gencon_versions, definitions;
+            on = [:GENCONID, :GENCONID_EFFECTIVEDATE => :EFFECTIVEDATE, :GENCONID_VERSIONNO => :VERSIONNO],
+            matchmissing = :notequal,
+        )
+        # Should have 2 rows: TEST1 with missing EFFECTIVEDATE and TEST2
+        @test nrow(undefined) == 2
+        @test undefined.GENCONID == ["TEST1", "TEST2"]
+        # Verify the missing EFFECTIVEDATE is preserved
+        @test ismissing(undefined.GENCONID_EFFECTIVEDATE[1])
+        @test undefined.GENCONID_EFFECTIVEDATE[2] == DateTime(2025, 1, 1)
+    end
+
     @testset "throws when DISPATCHCONSTRAINT is not cached" begin
         empty_db = aem_connect(HiveConfiguration(hive_location = mktempdir(), filesystem = "file"))
         empty_sys = nem_system(db, RegionalNetworkConfiguration())
