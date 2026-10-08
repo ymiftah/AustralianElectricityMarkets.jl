@@ -333,3 +333,118 @@ end
     availability_limited = solve_toy(pump_toy(; availability = 10.0, ramp_up = 100.0))
     @test availability_limited.load_mw["PUMP"] ≈ 10.0 atol = TOY_TOLERANCE
 end
+
+@testset "a battery's ramp floor above its rating raises the rating, and its ramp row is priced" begin
+    # INITIALMW = -50 (charging) with a zero up rate pins net <= -50, above the battery's 40 MW
+    # input rating. NEMDE breaks MaxAvail and the rating before the ramp row, so the input
+    # variable's upper bound is raised to 50 and the ramp slack stays zero. On the base branch
+    # this build fails at the storage envelope check.
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
+        0.0;
+        batteries = [
+            TOY_BATTERY => toy_battery(
+                10.0, 1000.0, 50.0, 0.0; initial = -50.0, ramp_up = 0.0, gen_avail = 0.0, load_avail = 40.0,
+            ),
+        ],
+        mutate! = function (s, _)
+            battery = PSY.get_component(PSY.EnergyReservoirStorage, s, TOY_BATTERY)
+            PSY.set_input_active_power_limits!(battery, (min = 0.0, max = 40.0))
+            return
+        end,
+    )
+    out = solve_toy(sys)
+    mpc = AustralianElectricityMarketsSimulations._financial_year_mpc(TOY_START)
+
+    @test out.battery_in_mw[TOY_BATTERY] ≈ 50.0 atol = TOY_TOLERANCE
+    @test out.storage_ramp_slack_mw.up ≈ 0.0 atol = TOY_TOLERANCE
+    @test out.objective ≈ 50.0 * 20.0 * DISPATCH_INTERVAL_HOURS rtol = 1.0e-8
+
+    @testset "the storage ramp slack is priced at 1155 x MPC" begin
+        slack = PSI.get_variable(out.container, UnitRampUpSlack(), PSY.EnergyReservoirStorage)[TOY_BATTERY, 1]
+        coefficient = PSI.JuMP.objective_function(PSI.get_jump_model(out.container)).terms[slack]
+        @test coefficient ≈
+            PSY.get_base_power(sys) * interval_cost_coefficient(UNIT_RAMP_CVP_FACTOR * mpc, TOY_RESOLUTION)
+    end
+end
+
+@testset "constraint_violations directions follow the relaxed row's sense" begin
+    direction = AustralianElectricityMarketsSimulations._violation_direction
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 40.0, ramp_up = 100.0)],
+        40.0;
+        loads = ["PUMP" => toy_load(30.0, 50.0; initial = 5.0, ramp_up = 100.0)],
+    )
+    for (name, bid_type) in (("S_RAISEREG", BidType.RAISEREG), ("S_LOWERREG", BidType.LOWERREG))
+        service = FCASService(; name, region = "1", bid_type = bid_type)
+        PSY.add_service!(sys, service, [PSY.get_component(PSY.StaticInjection, sys, n) for n in (TOY_CHEAP, "PUMP")])
+    end
+    # Capacity rows: the sense follows the `_lower` suffix whatever the device.
+    @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_upper", TOY_CHEAP, "up") == "up"
+    @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_lower", TOY_CHEAP, "up") == "down"
+    @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_gen_lower", "PUMP", "up") == "down"
+    @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_load_upper", "PUMP", "up") == "up"
+    # Joint ramping: a generator's RAISEREG row is the `<=` form, a load's LOWERREG row is.
+    @test direction(sys, FCASJointRampingSlack, "S_RAISEREG", TOY_CHEAP, "up") == "up"
+    @test direction(sys, FCASJointRampingSlack, "S_LOWERREG", TOY_CHEAP, "up") == "down"
+    @test direction(sys, FCASJointRampingSlack, "S_LOWERREG", "PUMP", "up") == "up"
+    @test direction(sys, FCASJointRampingSlack, "S_RAISEREG", "PUMP", "up") == "down"
+    @test direction(sys, UnitRampDownSlack, "", TOY_CHEAP, "down") == "down"
+end
+
+@testset "penalty ordering is strictly increasing across the CVP schedule" begin
+    # AEMO CVP schedule v8.0: area balance 150, FCAS 155, interconnector flow 1150, unit ramp 1155.
+    factors = [
+        AREA_BALANCE_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR, INTERCONNECTOR_FLOW_CVP_FACTOR, UNIT_RAMP_CVP_FACTOR,
+    ]
+    @test factors == [150.0, 155.0, 1150.0, 1155.0]
+    @test issorted(factors; lt = <)
+    @test FCAS_BDU_RAMPING_CVP_FACTOR == FCAS_RAMPING_CVP_FACTOR == FCAS_MAXAVAIL_CVP_FACTOR
+end
+
+@testset "penalty ordering: a lower CVP row breaks before a higher one" begin
+    mpc = AustralianElectricityMarketsSimulations._financial_year_mpc(TOY_START)
+
+    @testset "the area balance (150) breaks before the unit ramp (1155)" begin
+        # A 100 MW load against a unit that can climb 5 MW from 0: the 95 MW shortfall is cheaper
+        # to leave unserved at 150 x MPC than to buy with a ramp violation at 1155 x MPC.
+        sys = nem_toy_system(
+            [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 1.0)],
+            100.0,
+        )
+        out = solve_toy(sys)
+        violations = AustralianElectricityMarketsSimulations._constraint_violations(out.results, sys)
+
+        @test out.dispatch_mw[TOY_CHEAP] ≈ 5.0 atol = TOY_TOLERANCE
+        @test out.ramp_slack_mw.up ≈ 0.0 atol = TOY_TOLERANCE
+        @test violations.family == ["area_balance"]
+        # An equality row: the slack that adds supply (demand left unserved) is the "up" deficit.
+        @test violations.direction == ["up"]
+        @test only(violations.MW) ≈ 95.0 atol = TOY_TOLERANCE
+        @test out.objective ≈
+            (5.0 * 20.0 + 95.0 * AREA_BALANCE_CVP_FACTOR * mpc) * DISPATCH_INTERVAL_HOURS rtol = 1.0e-8
+    end
+
+    @testset "the unit ramp (1155) is reported when it is the only relaxation" begin
+        # The ramp row is infeasible against the zero bound (INITIALMW -1, zero rate) with no load:
+        # the ramp slack is the only relaxation, and it is reported.
+        sys = nem_toy_system(
+            [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = -1.0, ramp_up = 0.0)],
+            0.0,
+        )
+        out = solve_toy(sys)
+        violations = AustralianElectricityMarketsSimulations._constraint_violations(out.results, sys)
+
+        @test violations.family == ["unit_ramp"]
+        @test only(violations.MW) ≈ 1.0 atol = TOY_TOLERANCE
+    end
+
+    @testset "an ordinary interval reports no violation" begin
+        sys = nem_toy_system(
+            [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
+            40.0,
+        )
+        out = solve_toy(sys)
+        @test isempty(AustralianElectricityMarketsSimulations._constraint_violations(out.results, sys))
+    end
+end

@@ -136,6 +136,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inputs are not modelled.
 - `read_loss_factors` reads each unit's TLF x DLF (and a bidirectional unit's secondary factor)
   from `DUDETAILSUMMARY`, as of a date.
+- Storage ramp rows, FCAS MaxAvail rows (item 19, 155) and BDU SCADA ramping rows (item 21, 155),
+  and interconnector flow limit rows (item 5, 1150) are elastic at their CVP factor times the
+  Market Price Cap: a battery whose net ramp envelope exceeds its rating (the rating's upper bound
+  is raised to the `NEMReplayDispatch` ramp floor, as for generators), or conflicting flow limits,
+  no longer make the interval infeasible. The FCAS rows are elastic under `use_slacks`.
+  `replicate_interval` also returns `constraint_violations`, every non-zero slack of the elastic families, by family and
+  direction; `ramp_violations` keeps working.
 - Data package ingests the MNSP offer tables (`MNSP_DAYOFFER`, `MNSP_BIDOFFERPERIOD`,
   `MNSP_PEROFFER`, `DISPATCH_MNSPBIDTRK`), `DISPATCHLOAD.DISPATCHMODETIME` and
   `DISPATCHINTERCONNECTORRES.FCASEXPORTLIMIT`/`FCASIMPORTLIMIT`, with `read_mnsp_offers`

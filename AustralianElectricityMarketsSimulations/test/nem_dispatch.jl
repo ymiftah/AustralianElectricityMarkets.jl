@@ -393,10 +393,10 @@ end
     @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
 end
 
-@testset "the envelope check names a battery whose raised ceiling exceeds its own rating" begin
+@testset "a battery whose raised ceiling exceeds its own rating builds, with the ramp row elastic" begin
     # A net ramp-down floor above generation availability raises the generation ceiling, but the
-    # battery's own output rating is lowered below that floor first, so the raise itself is
-    # inconsistent with the device.
+    # battery's own output rating is lowered below that floor first. The rating is a hard bound,
+    # so the ramp row relaxes instead of the build failing.
     sys = nem_dispatch_system(;
         mutate! = function (s)
             battery = PSY.get_component(PSY.EnergyReservoirStorage, s, "BW01")
@@ -407,7 +407,7 @@ end
         end,
     )
     model = nem_dispatch_model(sys)
-    @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
+    @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
 end
 
 @testset "skip_uncovered excludes a device with no rates instead of failing the build" begin
