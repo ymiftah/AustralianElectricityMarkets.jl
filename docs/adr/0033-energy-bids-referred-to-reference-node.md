@@ -33,7 +33,7 @@ band, which the diagnosis of the June 2026 run attributed to about 100 of 216 un
   generator is ignored. The June 2026 cache agrees: every bidirectional unit bids its market floor
   as -1000 times the factor on each side (KESSB1 GEN -1003.0 = -1000 x 1.003, LOAD -970.4 = -1000 x
   0.9704; GANNB1 GEN -1001.1 = -1000 x 1.0227 x 0.9789). Scheduled loads divide their load-side
-  prices by `LOAD_LOSS_FACTOR` once the scheduled-load change merges.
+  prices by `LOAD_LOSS_FACTOR` (merged in PR #168).
 - **Not scaled.** FCAS prices (nempy scales only energy), scheduled capacity bounds (`MAXAVAIL`,
   `MINIMUMLOAD`) and `DAILYENERGYCONSTRAINT`.
 - **No defensive paths.** The June 2026 cache has no null or non-positive loss factor in force,
@@ -63,6 +63,4 @@ multiplier `RRP x MLF`. The regional balance therefore keeps connection-point MW
   reference-node price. The pricing of marginal units is unchanged as a shadow price: the RRP is
   still at the reference node.
 - Unit bids with equal reference-node prices remain tied; tie-breaking is a separate gap.
-- The three loss-factor columns are `Float64` in `COLUMN_TYPES` (they were `Float32`, which turns a
-  floor bid of -973.1 over a factor of 0.9731 into -999.99999 and perturbs ties). Re-populate
-  `DUDETAILSUMMARY` with `force_new = true`. The `BIDDAYOFFER_D` price bands stay `Float32`.
+- Referred prices are rounded to cents because NEMDE's case files carry rounded prices; for example 356 floor bands on 2026-06-03 round to -1000.00 and tie exactly.

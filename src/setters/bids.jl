@@ -227,7 +227,7 @@ function read_loss_factors(
     """
     factors = isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of, as_of])
     if !isnothing(as_of) && !isnothing(through) && through > as_of
-        changed = _query(
+        changed_all = _query(
             db,
             """
             SELECT DISTINCT DUID FROM $source
@@ -235,6 +235,7 @@ function read_loss_factors(
             """,
             [as_of, through],
         ).DUID
+        changed = intersect(changed_all, factors.DUID)
         isempty(changed) ||
             @warn "Loss factors change within the date range; the factors in force at its start are used throughout" as_of through first_changed = first(changed, 5)
     end
@@ -245,7 +246,7 @@ end
     _refer_bids_to_reference_node!(bids, factors) -> bids
 
 Divides every price of `bids.piecewise_step_data` by its unit's loss factor, leaving the MW
-breakpoints unchanged.
+breakpoints unchanged. Referred prices are rounded to whole cents, as in NEMDE's case files.
 
 # Arguments
 - `bids`: the `DataFrame` from `_massage_bids`, modified in place.
@@ -263,7 +264,7 @@ function _refer_bids_to_reference_node!(bids, factors)
     bids.piecewise_step_data = map(eachrow(bids)) do row
         factor = row.DIRECTION == "LOAD" ? lookup[row.DUID].load : lookup[row.DUID].gen
         psd = row.piecewise_step_data
-        return PiecewiseStepData(get_x_coords(psd), get_y_coords(psd) ./ factor)
+        return PiecewiseStepData(get_x_coords(psd), round.(get_y_coords(psd) ./ factor; digits = 2))
     end
     return bids
 end

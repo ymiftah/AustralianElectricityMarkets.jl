@@ -1406,11 +1406,11 @@
         end
 
         @testset "prices are divided, MW is not" begin
-            @test prices(sys_lf, "ER01") ≈ prices(sys_raw, "ER01") ./ (0.9 * 0.97)
+            @test prices(sys_lf, "ER01") ≈ round.(prices(sys_raw, "ER01") ./ (0.9 * 0.97); digits = 2)
             @test prices(sys_lf, "BW02") ≈ prices(sys_raw, "BW02")
-            @test prices(sys_lf, "BW01") ≈ prices(sys_raw, "BW01") ./ 0.5
+            @test prices(sys_lf, "BW01") ≈ round.(prices(sys_raw, "BW01") ./ 0.5; digits = 2)
             @test prices(sys_lf, "BW01", "decremental_variable_cost") ≈
-                prices(sys_raw, "BW01", "decremental_variable_cost") ./ 0.8
+                round.(prices(sys_raw, "BW01", "decremental_variable_cost") ./ 0.8; digits = 2)
             @test mw(sys_lf, "ER01") ≈ mw(sys_raw, "ER01")
         end
 
@@ -1424,6 +1424,14 @@
             # Raw prices rise with the band; ER01's referred price exceeds BW02's raw price.
             @test last(prices(sys_raw, "ER01")) < last(prices(sys_raw, "BW02")) + 1.0
             @test last(prices(sys_lf, "ER01")) > last(prices(sys_lf, "BW02"))
+        end
+
+        @testset "referred prices are rounded to cents" begin
+            # Verify that prices divided by loss factors are rounded to cents.
+            # Example 1: -963.7 / 0.9637 = -1000.0 (exactly) when rounded to cents
+            @test round(-963.7 / 0.9637; digits = 2) == -1000.0
+            # Example 2: -450 / 1.03502 = -434.7761... ≈ -434.77 when rounded to cents
+            @test round(-450.0 / 1.03502; digits = 2) == -434.77
         end
 
         @testset "a bidding unit without a DUDETAILSUMMARY row in force is an error" begin
