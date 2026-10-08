@@ -9,14 +9,16 @@ price-tied.
 const TIE_BREAK_CVP_FACTOR = 1.0e-6
 
 # Build-time value of a bid slope or breakpoint, which is a parameter reference when the offers
-# are time-variant. Recurrent solves hold unfixed parameters and are rejected.
+# are time-variant. Recurrent solves leave the parameter unfixed and are rejected.
+_is_fixed(x::Number) = true
+_is_fixed(x::JuMP.VariableRef) = JuMP.is_fixed(x)
+_is_fixed(x::JuMP.AffExpr) = all(_is_fixed(v) for (_, v) in JuMP.linear_terms(x))
+
 function _fixed_value(x)
-    value = try
-        PSI.jump_fixed_value(x)
-    catch
-        throw(ArgumentError("tie-break: bid data must be fixed at build, as in a standalone `DecisionModel`"))
-    end
-    return Float64(value)
+    _is_fixed(x) || throw(
+        ArgumentError("tie-break: bid data must be fixed at build, as in a standalone `DecisionModel`"),
+    )
+    return Float64(PSI.jump_fixed_value(x))
 end
 
 # One energy band of a device at a time step: its price at the reference node in $/MWh, its
