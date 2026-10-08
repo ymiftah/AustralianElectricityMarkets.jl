@@ -38,12 +38,18 @@ include("replication/inputs.jl")
 include("replication/preprocessing.jl")
 include("replication/pipeline.jl")
 include("replication/validation.jl")
+include("replication/comparison.jl")
 
 export DISPATCH_INTERVAL_HOURS, DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
 export IntervalInputs, read_interval_inputs, read_published_interval
 export read_constraint_flags, read_complementary_slackness
 export VALIDATION_STRATA, VALIDATION_TOLERANCES, validation_sample, run_validation
 export complementary_slackness_table, validation_summary
+export COMPARISON_GROUPS, COMPARISON_TOLERANCES, NEMDE_DAY_ZIP_MB
+export comparison_intervals, comparison_sample, comparison_download_mb
+export aemsim_long, read_nempy_interval, nempy_stamp, nempy_tag, comparison_long
+export comparison_summary, comparison_classify, comparison_worst, comparison_markdown
+export read_comparison_csv, write_comparison_csv
 export replication_template, replication_system, replicate_interval
 export energy_bounds
 export scale_trapezium
