@@ -111,6 +111,35 @@ regulation [`FCASService`](@ref) against the device's SCADA ramping capability.
 struct FCASBDURampingConstraint <: PSI.ConstraintType end
 
 """
+    FCASMaxAvailConstraint
+
+Constraint type for AEMO's FCAS MaxAvail limit (the offered `MaxAvail` of a service's trapezium),
+built as a row on [`FCASCapacityVariable`](@ref) or [`FCASSideCapacityVariable`](@ref) per
+`(device, t)` when the owning `PSI.ServiceModel` has `use_slacks = true`, named
+`"<service>_maxavail"` or `"<service>_gen_maxavail"`/`"<service>_load_maxavail"` in its
+container key. Without slacks the same limit is the variable's upper bound.
+"""
+struct FCASMaxAvailConstraint <: PSI.ConstraintType end
+
+"""
+    FCASMaxAvailSlack
+
+Variable type for the elastic slack on an [`FCASMaxAvailConstraint`](@ref) row, built only when
+the owning `PSI.ServiceModel` has `use_slacks = true`. Priced at
+[`FCAS_MAXAVAIL_CVP_FACTOR`](@ref) times the Market Price Cap.
+"""
+struct FCASMaxAvailSlack <: PSI.VariableType end
+
+"""
+    FCASBDURampingSlack
+
+Variable type for the elastic slack on a [`FCASBDURampingConstraint`](@ref) row, built only when
+the owning `PSI.ServiceModel` has `use_slacks = true`. Priced at
+[`FCAS_BDU_RAMPING_CVP_FACTOR`](@ref) times the Market Price Cap.
+"""
+struct FCASBDURampingSlack <: PSI.VariableType end
+
+"""
     GenericConstraintSlackUp
 
 Variable type for the elastic slack absorbing a [`GenericConstraint`](@ref)'s left-hand side
@@ -185,7 +214,38 @@ under an [`AbstractNEMDispatch`](@ref) formulation, in the units of the active p
 """
 struct UnitRampDownSlack <: PSI.VariableType end
 
+"""
+    INTERCONNECTOR_FLOW_CVP_FACTOR
+
+CVP factor (1150) of AEMO's Interconnector Capacity Limit constraint, item 5 of the *Schedule of
+Constraint Violation Penalty Factors* v8.0. Prices [`InterconnectorFlowSurplusSlack`](@ref) and
+[`InterconnectorFlowDeficitSlack`](@ref).
+"""
+const INTERCONNECTOR_FLOW_CVP_FACTOR = 1150.0
+
+"""
+    InterconnectorFlowSurplusSlack
+
+Variable type for the elastic slack on an interconnector's upper flow limit (AEMO's
+`FlowSurplus`), per `(interconnector, t)` in MW per-unit of the system base. Priced at
+[`INTERCONNECTOR_FLOW_CVP_FACTOR`](@ref) times the Market Price Cap.
+"""
+struct InterconnectorFlowSurplusSlack <: PSI.VariableType end
+
+"""
+    InterconnectorFlowDeficitSlack
+
+Variable type for the elastic slack on an interconnector's lower flow limit (AEMO's
+`FlowDeficit`), per `(interconnector, t)` in MW per-unit of the system base. Priced at
+[`INTERCONNECTOR_FLOW_CVP_FACTOR`](@ref) times the Market Price Cap.
+"""
+struct InterconnectorFlowDeficitSlack <: PSI.VariableType end
+
+PSI.convert_result_to_natural_units(::Type{InterconnectorFlowSurplusSlack}) = true
+PSI.convert_result_to_natural_units(::Type{InterconnectorFlowDeficitSlack}) = true
 PSI.convert_result_to_natural_units(::Type{UnitRampUpSlack}) = true
 PSI.convert_result_to_natural_units(::Type{UnitRampDownSlack}) = true
 PSI.convert_result_to_natural_units(::Type{FCASJointCapacitySlack}) = true
 PSI.convert_result_to_natural_units(::Type{FCASJointRampingSlack}) = true
+PSI.convert_result_to_natural_units(::Type{FCASMaxAvailSlack}) = true
+PSI.convert_result_to_natural_units(::Type{FCASBDURampingSlack}) = true

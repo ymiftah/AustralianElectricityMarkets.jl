@@ -351,6 +351,27 @@ the ramp row it relaxes.
 The slack variable container.
 """
 function _add_unit_ramp_slack!(container::PSI.OptimizationContainer, var_type, ::Type{T}, names, time_steps) where {T}
+    return _add_cvp_slack!(container, var_type, T, names, time_steps, UNIT_RAMP_CVP_FACTOR)
+end
+
+"""
+    _add_cvp_slack!(container, var_type, T, names, time_steps, cvp_factor)
+
+Builds a non-negative slack variable of `var_type` per `(name, t)` and prices it in the objective
+at `cvp_factor` times the Market Price Cap ([`_container_market_price_cap`](@ref)) for the
+interval, in `\$/MW` per dispatch interval. The variable is in system-base per-unit.
+
+# Arguments
+- `container`: the `PSI.OptimizationContainer` being built.
+- `var_type`: the slack `PSI.VariableType`.
+- `T`: the component type owning the relaxed rows.
+- `names`, `time_steps`: the device names and time steps of the rows.
+- `cvp_factor`: the AEMO CVP factor the slack is priced at, times the Market Price Cap.
+
+# Returns
+The slack variable container.
+"""
+function _add_cvp_slack!(container::PSI.OptimizationContainer, var_type, ::Type{T}, names, time_steps, cvp_factor::Real) where {T}
     jm = PSI.get_jump_model(container)
     resolution = PSI.get_resolution(container)
     initial_time = PSI.get_initial_time(container)
@@ -358,7 +379,7 @@ function _add_unit_ramp_slack!(container::PSI.OptimizationContainer, var_type, :
     slack = PSI.add_variable_container!(container, var_type(), T, names, time_steps)
     for t in time_steps
         mpc = _container_market_price_cap(container, initial_time + resolution * (t - 1))
-        coefficient = base_power * interval_cost_coefficient(UNIT_RAMP_CVP_FACTOR * mpc, resolution)
+        coefficient = base_power * interval_cost_coefficient(cvp_factor * mpc, resolution)
         for name in names
             slack[name, t] = JuMP.@variable(jm, base_name = "$(nameof(var_type))_{$name,$t}", lower_bound = 0.0)
             PSI.add_to_objective_invariant_expression!(container, slack[name, t] * coefficient)

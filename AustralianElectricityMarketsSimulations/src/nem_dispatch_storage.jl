@@ -125,7 +125,6 @@ function PSI.construct_device!(
     ) where {T <: PSY.Storage, D <: AbstractNEMDispatch}
     devices = PSI.get_available_components(model, sys)
 
-    _check_storage_dispatch_envelope(container, devices, model)
     _add_storage_availability_constraints!(container, devices, model)
     _add_storage_ramp_constraints!(container, devices, model)
 
@@ -166,8 +165,9 @@ the generation ceiling raises it to that floor; a net ramp-up ceiling below the 
 ceiling raises the load ceiling to match.
 
 # Returns
-A `Dict{String}` mapping each covered device name to a `(gen, load)` `NamedTuple` of
-`Vector{Float64}`. A battery with no `MAXAVAIL` series attached is left out.
+A `Dict{String}` mapping each covered device name to a `(gen, load, gen_floor, load_floor)`
+`NamedTuple` of `Vector{Float64}`: the ceilings, and the ramp floor and negated ramp ceiling they
+were raised to (`-Inf` where the ramp envelope is not read). A battery with no `MAXAVAIL` series attached is left out.
 """
 function _storage_dispatch_ceilings(container, devices, model::PSI.DeviceModel{T}) where {T}
     time_steps = PSI.get_time_steps(container)
@@ -181,22 +181,26 @@ function _storage_dispatch_ceilings(container, devices, model::PSI.DeviceModel{T
     down_rate, down_covered = is_replay ? _ts_parameter_accessor(container, RampDownRateTimeSeriesParameter, T) : (nothing, Set{String}())
     up_rate, up_covered = is_replay ? _ts_parameter_accessor(container, RampUpRateTimeSeriesParameter, T) : (nothing, Set{String}())
 
-    ceilings = Dict{String, @NamedTuple{gen::Vector{Float64}, load::Vector{Float64}}}()
+    ceilings = Dict{String, @NamedTuple{gen::Vector{Float64}, load::Vector{Float64}, gen_floor::Vector{Float64}, load_floor::Vector{Float64}}}()
     for d in devices
         avail = get_storage_energy_max_avail(d, initial_time, horizon)
         isnothing(avail) && continue
         name = PSY.get_name(d)
         gen = copy(avail.gen)
         load = copy(avail.load)
+        gen_floor = fill(-Inf, horizon)
+        load_floor = fill(-Inf, horizon)
         if is_replay && name in initial_covered && name in down_covered && name in up_covered
             for t in time_steps
                 floor_mw = JuMP.value(initial(name, t)) - JuMP.value(down_rate(name, t)) * minutes
                 ceiling_mw = JuMP.value(initial(name, t)) + JuMP.value(up_rate(name, t)) * minutes
+                gen_floor[t] = floor_mw
+                load_floor[t] = -ceiling_mw
                 gen[t] = max(gen[t], floor_mw)
                 load[t] = max(load[t], -ceiling_mw)
             end
         end
-        ceilings[name] = (gen = gen, load = load)
+        ceilings[name] = (gen = gen, load = load, gen_floor = gen_floor, load_floor = load_floor)
     end
     return ceilings
 end
@@ -207,7 +211,9 @@ end
 Bounds each battery's `PowerSimulations.ActivePowerOutVariable`/`ActivePowerInVariable` above
 by [`_storage_dispatch_ceilings`](@ref)'s per-direction ceilings, read once at build over the
 model's own window. A battery with no `MAXAVAIL` series attached is left unconstrained on both
-sides.
+sides. Where a `NEMReplayDispatch` ramp floor (or negated ramp ceiling) lies above the device's
+rating, the variable's upper bound is raised to it, so the rating gives way before the ramp row
+does, as generators' `max_active_power` series does.
 
 # Returns
 `nothing`.
@@ -230,6 +236,10 @@ function _add_storage_availability_constraints!(container, devices, model::PSI.D
         container, PSI.ActivePowerVariableLimitsConstraint(), T, names, time_steps; meta = "in",
     )
     for name in names, t in time_steps
+        for (variable, floor_mw) in ((out[name, t], ceilings[name].gen_floor[t]), (in_[name, t], ceilings[name].load_floor[t]))
+            JuMP.has_upper_bound(variable) && floor_mw > JuMP.upper_bound(variable) &&
+                JuMP.set_upper_bound(variable, floor_mw)
+        end
         con_out[name, t] = JuMP.@constraint(jump_model, out[name, t] <= ceilings[name].gen[t])
         con_in[name, t] = JuMP.@constraint(jump_model, in_[name, t] <= ceilings[name].load[t])
     end
@@ -240,8 +250,10 @@ end
     _add_storage_ramp_constraints!(container, devices, model)
 
 Holds each battery's net `Out - In` within its per-interval ramp rates of the base its
-formulation measures against. Unlike the generator ramp rows, these rows are hard: they carry
-no elastic slack.
+formulation measures against. Each row carries a [`UnitRampUpSlack`](@ref) or
+[`UnitRampDownSlack`](@ref) priced at [`UNIT_RAMP_CVP_FACTOR`](@ref) times the Market Price Cap,
+as for the generator ramp rows, so a net ramp envelope that conflicts with the per-direction
+bounds is violated at that price instead of making the model infeasible.
 
 # Returns
 `nothing`.
@@ -269,12 +281,15 @@ function _add_storage_ramp_constraints!(container, devices, model::PSI.DeviceMod
         container, PSI.RampConstraint(), T, names, time_steps; meta = "down",
     )
 
+    slack_up = _add_unit_ramp_slack!(container, UnitRampUpSlack, T, names, time_steps)
+    slack_dn = _add_unit_ramp_slack!(container, UnitRampDownSlack, T, names, time_steps)
+
     base_at = _storage_ramp_base_accessor(container, D, T, names, out, in_)
     for name in names, t in time_steps
         base = base_at(name, t)
         net = out[name, t] - in_[name, t]
-        con_up[name, t] = JuMP.@constraint(jump_model, net - base <= up_rate(name, t) * minutes)
-        con_dn[name, t] = JuMP.@constraint(jump_model, base - net <= down_rate(name, t) * minutes)
+        con_up[name, t] = JuMP.@constraint(jump_model, net - base - slack_up[name, t] <= up_rate(name, t) * minutes)
+        con_dn[name, t] = JuMP.@constraint(jump_model, base - net - slack_dn[name, t] <= down_rate(name, t) * minutes)
     end
     return
 end
@@ -296,50 +311,4 @@ function _storage_ramp_base_accessor(container, ::Type{NEMLookaheadDispatch}, ::
         keys(out_ic), keys(in_ic),
     )
     return (name, t) -> t > 1 ? out[name, t - 1] - in_[name, t - 1] : out_ic[name] - in_ic[name]
-end
-
-# The net ramp floor/ceiling [`_storage_dispatch_ceilings`](@ref) raises the availability
-# envelope to can still exceed the device's own physical rating, independently of whatever the
-# submitted `MAXAVAIL` bid says; that combination is infeasible and is reported here, at build.
-function _check_storage_dispatch_envelope(container, devices, model)
-    PSI.get_formulation(model) === NEMReplayDispatch || return
-    haskey(PSI.get_time_series_names(model), InitialPowerTimeSeriesParameter) || return
-    isempty(devices) && return
-    T = typeof(first(devices))
-    time_steps = PSI.get_time_steps(container)
-    minutes = PSI._get_minutes_per_period(container)
-    initial, initial_covered = _ts_parameter_accessor(container, InitialPowerTimeSeriesParameter, T)
-    down_rate, down_covered = _ts_parameter_accessor(container, RampDownRateTimeSeriesParameter, T)
-    up_rate, up_covered = _ts_parameter_accessor(container, RampUpRateTimeSeriesParameter, T)
-    problems = String[]
-    for d in devices
-        name = PSY.get_name(d)
-        all(name in c for c in (initial_covered, down_covered, up_covered)) || continue
-        gen_max = PSY.get_output_active_power_limits(d).max
-        load_max = PSY.get_input_active_power_limits(d).max
-        for t in time_steps
-            floor_mw = JuMP.value(initial(name, t)) - JuMP.value(down_rate(name, t)) * minutes
-            ceiling_mw = JuMP.value(initial(name, t)) + JuMP.value(up_rate(name, t)) * minutes
-            if floor_mw > gen_max + _RAMP_FLOOR_TOLERANCE
-                push!(
-                    problems,
-                    "$name at interval $t: ramp-down floor $floor_mw exceeds the generation rating $gen_max",
-                )
-                break
-            elseif -ceiling_mw > load_max + _RAMP_FLOOR_TOLERANCE
-                push!(
-                    problems,
-                    "$name at interval $t: negative ramp-up ceiling $(-ceiling_mw) exceeds the load rating $load_max",
-                )
-                break
-            end
-        end
-    end
-    isempty(problems) && return
-    throw(
-        ArgumentError(
-            "NEMDispatch: inconsistent dispatch envelope for $(length(problems)) device(s):\n  " *
-                join(problems, "\n  "),
-        ),
-    )
 end

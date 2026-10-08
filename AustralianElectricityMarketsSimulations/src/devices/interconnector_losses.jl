@@ -323,7 +323,15 @@ end
     _add_flow_limit_constraint!(container, devices, device_model, network_model)
 
 Bounds `PSI.FlowActivePowerVariable` by the static `flow_limits`, or by the from-to and to-from
-flow-limit parameters when every device carries those time series.
+flow-limit parameters when every device carries those time series. Each row carries an
+[`InterconnectorFlowSurplusSlack`](@ref) (upper) or [`InterconnectorFlowDeficitSlack`](@ref)
+(lower) priced at [`INTERCONNECTOR_FLOW_CVP_FACTOR`](@ref) times the Market Price Cap, always,
+whatever the device model's `use_slacks`, as NEMDE's limit is always soft, so
+limits that conflict with each other or with the loss breakpoint range are violated at that price
+instead of making the model infeasible. The breakpoint range itself stays a hard bound. Because
+the slacks are priced from the Market Price Cap, building requires a cap for every interval,
+whether the cap comes from `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` (from FY2024-25) or from the
+`"market_price_cap"` entry of the model's settings, even when `use_slacks` is `false`.
 """
 function _add_flow_limit_constraint!(
         container::PSI.OptimizationContainer,
@@ -344,6 +352,14 @@ function _add_flow_limit_constraint!(
     )
     var_array = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
     jm = PSI.get_jump_model(container)
+    surplus = _add_cvp_slack!(
+        container, InterconnectorFlowSurplusSlack, PSY.AreaInterchange, device_names, time_steps,
+        INTERCONNECTOR_FLOW_CVP_FACTOR,
+    )
+    deficit = _add_cvp_slack!(
+        container, InterconnectorFlowDeficitSlack, PSY.AreaInterchange, device_names, time_steps,
+        INTERCONNECTOR_FLOW_CVP_FACTOR,
+    )
 
     if !all(_has_flow_limit_series.(devices))
         for device in devices
@@ -351,8 +367,8 @@ function _add_flow_limit_constraint!(
             to_from_limit = PSY.get_flow_limits(device).to_from
             from_to_limit = PSY.get_flow_limits(device).from_to
             for t in time_steps
-                con_lb[name, t] = JuMP.@constraint(jm, var_array[name, t] >= -1.0 * from_to_limit)
-                con_ub[name, t] = JuMP.@constraint(jm, var_array[name, t] <= to_from_limit)
+                con_lb[name, t] = JuMP.@constraint(jm, var_array[name, t] + deficit[name, t] >= -1.0 * from_to_limit)
+                con_ub[name, t] = JuMP.@constraint(jm, var_array[name, t] - surplus[name, t] <= to_from_limit)
             end
         end
     else
@@ -374,10 +390,10 @@ function _add_flow_limit_constraint!(
             refs_to_from = PSI.get_parameter_column_refs(param_to_from, name)
             for t in time_steps
                 con_lb[name, t] = JuMP.@constraint(
-                    jm, var_array[name, t] >= mult_from_to[name, t] * refs_from_to[t]
+                    jm, var_array[name, t] + deficit[name, t] >= mult_from_to[name, t] * refs_from_to[t]
                 )
                 con_ub[name, t] = JuMP.@constraint(
-                    jm, var_array[name, t] <= mult_to_from[name, t] * refs_to_from[t]
+                    jm, var_array[name, t] - surplus[name, t] <= mult_to_from[name, t] * refs_to_from[t]
                 )
             end
         end

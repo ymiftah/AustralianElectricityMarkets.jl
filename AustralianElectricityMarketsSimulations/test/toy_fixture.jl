@@ -269,6 +269,11 @@ function solve_toy(sys)
             load_mw[row.name] = row.value
         end
     end
+    has_batteries = !isempty(PSY.get_components(PSY.EnergyReservoirStorage, sys))
+    storage_ramp_slack_mw = (;
+        up = has_batteries ? sum(read_variable(results, "UnitRampUpSlack__EnergyReservoirStorage").value) : 0.0,
+        down = has_batteries ? sum(read_variable(results, "UnitRampDownSlack__EnergyReservoirStorage").value) : 0.0,
+    )
     nem_keys = [
         k for k in PSI.get_constraint_keys(container)
             if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit
@@ -279,6 +284,9 @@ function solve_toy(sys)
         battery_in_mw = battery_in_mw,
         ramp_slack_mw = ramp_slack_mw,
         load_mw = load_mw,
+        results = results,
+        container = container,
+        storage_ramp_slack_mw = storage_ramp_slack_mw,
         band_mw = Dict(
             (name, band) => PSI.JuMP.value(v) * base_power
                 for ((name, band, _), v) in pairs(offers.data)
