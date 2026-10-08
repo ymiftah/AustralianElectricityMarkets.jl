@@ -116,6 +116,28 @@ function get_dropped_terms(sys)
 end
 
 """
+    _versions_without_definition(invoked, definitions) -> DataFrame
+
+Returns invoked constraint versions that do not have a published definition in GENCONDATA.
+Rows with a missing `GENCONID_EFFECTIVEDATE` are treated as having no definition.
+
+# Arguments
+- `invoked`: DataFrame with columns `GENCONID`, `GENCONID_EFFECTIVEDATE`, `GENCONID_VERSIONNO`.
+- `definitions`: DataFrame with columns `GENCONID`, `EFFECTIVEDATE`, `VERSIONNO`.
+
+# Returns
+A DataFrame (subset of `invoked`) containing only versions without a matching definition.
+"""
+function _versions_without_definition(invoked, definitions)
+    undefined = antijoin(
+        invoked, definitions;
+        on = [:GENCONID, :GENCONID_EFFECTIVEDATE => :EFFECTIVEDATE, :GENCONID_VERSIONNO => :VERSIONNO],
+        matchmissing = :notequal,
+    )
+    return undefined
+end
+
+"""
     add_nem_constraints!(sys, db, date_range; intervention = 0, include_solution = false, resolution = nothing, allow_empty_region_terms = false, unresolved_terms = :drop)
 
 Adds one [`GenericConstraint`](@ref) per exact `(GENCONID, EFFECTIVEDATE, VERSIONNO)` invoked
@@ -196,10 +218,7 @@ function add_nem_constraints!(
     terms_long = read_constraint_terms(db, gencon_versions, date_range)
 
     # Only versions GENCONDATA does not define: a published definition always wins.
-    undefined = antijoin(
-        gencon_versions, definitions;
-        on = [:GENCONID, :GENCONID_EFFECTIVEDATE => :EFFECTIVEDATE, :GENCONID_VERSIONNO => :VERSIONNO],
-    )
+    undefined = _versions_without_definition(gencon_versions, definitions)
     zero_definitions, zero_terms = _zero_flow_constraint_definitions(undefined)
     if !isempty(zero_definitions)
         definitions = vcat(definitions, zero_definitions; cols = :union)

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Invoked generic constraint versions with a missing effective date no longer abort the build (they are
+  treated as having no definition).
 - `filter_buildable_generic_constraints` leaves out a generic constraint whose contributing devices
   are all unavailable (for example wholesale demand response constraints once their units are
   unavailable), which PSI cannot build, and reports it as `:no_available_device` through its new
