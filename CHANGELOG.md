@@ -107,6 +107,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scripts/compare_dispatch.jl` (Simulations) compares AEMSim (`replicate_interval`), stock nempy
+  and NEMDE's published dispatch for N seeded random intervals (drawn from K random market days to
+  bound the NEMDE downloads) or for a whole date range. It resumes, records failed intervals and
+  writes `comparison_long.csv` and a `summary.md` with the headline metrics, the three-way
+  classification and the worst rows. The nempy harness is in `scripts/nempy/`. The pure functions
+  (`comparison_sample`, `comparison_intervals`, `comparison_long`, `comparison_summary`,
+  `comparison_classify`, `comparison_worst`, `comparison_markdown`) are exported by
+  `AustralianElectricityMarketsSimulations`.
 - `add_nem_constraints!` builds the Interconnector Zero constraints `SVML_ZERO`, `VSML_ZERO`, `VT_ZERO` and
   `TV_ZERO`, which `GENCONDATA` and the `SPD*` tables do not define, from a built-in definition: a
   one-term `<=` constraint on the `V-S-MNSP1` or `T-V-MNSP1` flow with right-hand side 0 and CVP
