@@ -198,6 +198,7 @@ function run_aemsim(opts, intervals, out)
         before = Set(readdir(opts["tmp-dir"]))
         started = time()
         message = missing
+        state = "failed"
         n_skipped, n_ramp, max_ramp = missing, missing, missing
         try
             result = replicate_interval(db, t; intervention = intervention, optimizer = optimizer)
@@ -216,7 +217,6 @@ function run_aemsim(opts, intervals, out)
             state = "ok"
         catch err
             message = first(split(sprint(showerror, err), '\n'))
-            state = "failed"
         end
         seconds = time() - started
         write_comparison_csv(
