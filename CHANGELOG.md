@@ -154,6 +154,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DISPATCHINTERCONNECTORRES.FCASEXPORTLIMIT`/`FCASIMPORTLIMIT`, with `read_mnsp_offers`
   returning the offer NEMDE applied per link and interval. Re-populate cached `DISPATCHLOAD` and
   `DISPATCHINTERCONNECTORRES` months with `force_new = true` to fill the new columns.
+- Energy tie-break: price-tied energy bands of a region (offers and load bids separately, FCAS
+  excluded) are dispatched in proportion to band MW through pairwise MW-proportion rows with elastic
+  slacks priced at `TIE_BREAK_CVP_FACTOR` (1e-6 $/MWh), as in NEMDE's tie-break constraint. Added from the
+  `AreaBalancePowerModel` objective hook, so it needs `use_slacks = true`.
 - `read_interconnector_limits` and `set_interconnector_flow_limits!` read the per-interval
   `DISPATCHINTERCONNECTORRES` `EXPORTLIMIT`/`IMPORTLIMIT` and attach them as the flow-limit series
   `NEMInterconnectorLoss` bounds flow by; `replication_system(...; interval_flow_limits = true)`

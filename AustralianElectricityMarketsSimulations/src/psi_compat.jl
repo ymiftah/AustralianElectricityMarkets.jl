@@ -197,7 +197,10 @@ slack at [`AREA_BALANCE_CVP_FACTOR`](@ref) times the Market Price Cap of the int
 year, or the `"market_price_cap"` entry of the model's settings `ext`
 ([`_container_market_price_cap`](@ref)), in `\$/MW` per dispatch interval. Throws for a financial
 year absent from `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` with no override. `AreaPTDFPowerModel` keeps
-PSI's flat `BALANCE_SLACK_COST`.
+PSI's flat `BALANCE_SLACK_COST`. Also adds the energy tie-break links
+([`add_tie_break_constraints!`](@ref)), the one network-stage hook that runs after every device's
+bid objective, so they exist only when the network model has `use_slacks = true`; other network
+models, and bid blocks created by branch or service models, get arbitrary tie vertices.
 
 # Returns
 `nothing`.
@@ -219,5 +222,6 @@ function PSI.objective_function!(
             PSI.add_to_objective_invariant_expression!(container, (variable_dn[n, t] + variable_up[n, t]) * coefficient)
         end
     end
+    add_tie_break_constraints!(container, sys)
     return nothing
 end

@@ -28,6 +28,7 @@ include("nem_constraints.jl")
 include("check/nem_constraints.jl")
 include("nem_dispatch.jl")
 include("nem_dispatch_storage.jl")
+include("nem_tie_break.jl")
 include("devices/interconnector_losses.jl")
 include("devices/mnsp_links.jl")
 include("check/interconnector_losses.jl")
@@ -60,6 +61,7 @@ export AbstractNEMDispatch, NEMReplayDispatch, NEMLookaheadDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter
 export nem_dispatch_participants, set_nem_dispatch_models!
+export TIE_BREAK_CVP_FACTOR
 export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegmentVariable,
     InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint,
     InterconnectorLossSegmentFullVariable, InterconnectorLossSegmentOrderConstraint

@@ -6,7 +6,8 @@ Builds the `ProblemTemplate` that replicates NEMDE on `sys`: [`AbstractNEMDispat
 on every `PSY.AreaInterchange`, an [`FCASMarket`](@ref) per registered `FCASService`, and a
 [`LinearFactorLimit`](@ref) per `GenericConstraint` whose terms the template can model.
 Regions balance through `PSI.AreaBalancePowerModel` with slacks, and the balance duals are
-recorded as regional prices.
+recorded as regional prices. Price-tied energy bands are dispatched pro rata
+([`add_tie_break_constraints!`](@ref)).
 
 # Arguments
 - `sys`: a `PSY.System` from `nem_system(db, ConstrainedNetworkConfiguration(); ...)`, after its

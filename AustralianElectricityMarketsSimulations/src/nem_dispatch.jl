@@ -535,7 +535,10 @@ end
 """
     set_nem_dispatch_models!(template, sys; formulation = NEMReplayDispatch)
 
-Sets `formulation` as the device model for every dispatch participant in `sys`.
+Sets `formulation` as the device model for every dispatch participant in `sys`. Price-tied energy
+bands are dispatched pro rata ([`add_tie_break_constraints!`](@ref)) only when the template's
+network model is `PSI.AreaBalancePowerModel` with `use_slacks = true`; otherwise ties resolve to an
+arbitrary solver vertex.
 
 # Arguments
 - `template`: the `PowerSimulations.ProblemTemplate` to mutate.
