@@ -209,14 +209,14 @@ end
 # MW, the area price in $/MWh, the objective in $, and each `GenericConstraint`'s shadow price in
 # $/MWh, keyed by name (empty if `sys` carries none). Any `GenericConstraint` in `sys` is registered
 # under `LinearFactorLimit`.
-function solve_toy(sys)
+function solve_toy(sys; formulation = NEMReplayDispatch)
     network = PSI.NetworkModel(
         PSI.AreaBalancePowerModel;
         use_slacks = true,
         duals = [PSI.CopperPlateBalanceConstraint],
     )
     template = PSI.ProblemTemplate(network)
-    set_nem_dispatch_models!(template, sys)
+    set_nem_dispatch_models!(template, sys; formulation = formulation)
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     if !isempty(PSY.get_components(GenericConstraint, sys))
         PSI.set_service_model!(
