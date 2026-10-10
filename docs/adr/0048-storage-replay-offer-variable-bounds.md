@@ -1,4 +1,4 @@
-# 0048. Storage replay variable bounds follow directional energy offers
+# 0048. Storage variable bounds follow directional energy offers
 
 ## Status
 
@@ -21,26 +21,26 @@ storage bound alone explains the observed regional price difference.
 
 ## Decision
 
-For `NEMReplayDispatch`, each storage power variable with a finite directional ceiling from
-`_storage_dispatch_ceilings` also receives that ceiling as its JuMP upper bound. The generation
-variable uses `gen`; the charging variable uses `load`. These are separate values. Because the
-helper already raises a directional ceiling when the replay net ramp floor requires it, the
-existing ramp-floor priority is retained in the variable bound as well as the availability row.
+For every `AbstractNEMDispatch` formulation, each storage power variable with a finite directional
+ceiling from `_storage_dispatch_ceilings` also receives that ceiling as its JuMP upper bound. The
+generation variable uses `gen`; the charging variable uses `load`. These are separate values. The
+helper raises a directional ceiling when the replay net ramp floor requires it, retaining the
+existing ramp-floor priority in the variable bound as well as the availability row. Lookahead keeps
+its chained optimized-power ramp rows; it does not use the replay metered-floor calculation.
 
 When no energy `MAXAVAIL` series covers a storage device, its static variable bounds remain and no
 availability rows are added. A non-finite direction ceiling retains that direction's static bound,
-subject to the existing ramp-floor exception. `NEMLookaheadDispatch` retains its current static
-variable bounds and availability-row behavior. The change adds no new dispatch constraint or cost
+subject to the existing ramp-floor exception. The change adds no new dispatch constraint or cost
 term.
 
 ## Consequences
 
-- Replay dispatch may exceed a storage component's static directional limit when a finite
-  direction-specific energy offer permits it.
+- Replay and lookahead dispatch may exceed a storage component's static directional limit when a
+  finite direction-specific energy offer permits it.
 - A finite offer ceiling continues to bound dispatch even when it is below the static limit.
 - The change follows the MMSDM distinction between registered bid-validation capacity and
-  interval energy offer availability. The replay result still depends on all other active model
-  constraints and costs; this decision alone makes no claim about a price outcome.
+  interval energy offer availability. Dispatch still depends on all other active model constraints
+  and costs; this decision alone makes no claim about a price outcome.
 
 ## Sources
 

@@ -274,57 +274,61 @@ end
         @test out.storage_ramp_slack_mw.up ≈ 0.0 atol = TOY_TOLERANCE
     end
 
-    @testset "generation and load availability stay independent" begin
-        for (gen_avail, load_avail) in ((20.0, 100.0), (100.0, 20.0))
+    @testset "generation and load availability stay independent in both formulations" begin
+        for formulation in (NEMReplayDispatch, NEMLookaheadDispatch)
+            for (gen_avail, load_avail) in ((20.0, 100.0), (100.0, 20.0))
+                sys = nem_toy_system(
+                    [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
+                    0.0;
+                    batteries = [
+                        TOY_BATTERY => toy_battery(
+                            100.0, 1.0, 100.0, 1000.0;
+                            initial = 0.0, ramp_up = 100.0, gen_avail = gen_avail, load_avail = load_avail,
+                        ),
+                    ],
+                    mutate! = set_static_limits!,
+                )
+                out = solve_toy(sys; formulation = formulation)
+
+                @test storage_bound(out, sys, PSI.ActivePowerOutVariable) ≈ gen_avail atol = TOY_TOLERANCE
+                @test storage_bound(out, sys, PSI.ActivePowerInVariable) ≈ load_avail atol = TOY_TOLERANCE
+            end
+        end
+    end
+
+    @testset "missing offer series keeps the static fallback in both formulations" begin
+        for formulation in (NEMReplayDispatch, NEMLookaheadDispatch)
             sys = nem_toy_system(
                 [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
                 0.0;
                 batteries = [
                     TOY_BATTERY => toy_battery(
                         100.0, 1.0, 100.0, 1000.0;
-                        initial = 0.0, ramp_up = 100.0, gen_avail = gen_avail, load_avail = load_avail,
+                        initial = 0.0, ramp_up = 100.0, gen_avail = 100.0, load_avail = 100.0,
                     ),
                 ],
-                mutate! = set_static_limits!,
+                mutate! = function (s, _)
+                    battery = PSY.get_component(PSY.EnergyReservoirStorage, s, TOY_BATTERY)
+                    PSY.remove_time_series!(s, PSY.Deterministic, battery, "energy_max_avail")
+                    PSY.remove_time_series!(s, PSY.Deterministic, battery, "energy_max_avail_decremental")
+                    set_static_limits!(s; input_mw = 50.0)
+                    return
+                end,
             )
-            out = solve_toy(sys)
+            out = solve_toy(sys; formulation = formulation)
 
-            @test storage_bound(out, sys, PSI.ActivePowerOutVariable) ≈ gen_avail atol = TOY_TOLERANCE
-            @test storage_bound(out, sys, PSI.ActivePowerInVariable) ≈ load_avail atol = TOY_TOLERANCE
+            @test storage_bound(out, sys, PSI.ActivePowerInVariable) ≈ 50.0 atol = TOY_TOLERANCE
         end
     end
 
-    @testset "missing offer series keeps the static fallback" begin
+    @testset "lookahead storage bounds follow directional energy offers" begin
         sys = nem_toy_system(
             [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
             0.0;
             batteries = [
                 TOY_BATTERY => toy_battery(
                     100.0, 1.0, 100.0, 1000.0;
-                    initial = 0.0, ramp_up = 100.0, gen_avail = 100.0, load_avail = 100.0,
-                ),
-            ],
-            mutate! = function (s, _)
-                battery = PSY.get_component(PSY.EnergyReservoirStorage, s, TOY_BATTERY)
-                PSY.remove_time_series!(s, PSY.Deterministic, battery, "energy_max_avail")
-                PSY.remove_time_series!(s, PSY.Deterministic, battery, "energy_max_avail_decremental")
-                set_static_limits!(s; input_mw = 50.0)
-                return
-            end,
-        )
-        out = solve_toy(sys)
-
-        @test storage_bound(out, sys, PSI.ActivePowerInVariable) ≈ 50.0 atol = TOY_TOLERANCE
-    end
-
-    @testset "lookahead keeps the static variable bound" begin
-        sys = nem_toy_system(
-            [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
-            0.0;
-            batteries = [
-                TOY_BATTERY => toy_battery(
-                    100.0, 1.0, 100.0, 1000.0;
-                    initial = 0.0, ramp_up = 100.0, gen_avail = 100.0, load_avail = 100.0,
+                    initial = 0.0, ramp_up = 100.0, gen_avail = 0.0, load_avail = 100.0,
                 ),
             ],
             mutate! = function (s, _)
@@ -334,7 +338,10 @@ end
         )
         out = solve_toy(sys; formulation = NEMLookaheadDispatch)
 
-        @test storage_bound(out, sys, PSI.ActivePowerInVariable) ≈ 50.0 atol = TOY_TOLERANCE
+        @test storage_bound(out, sys, PSI.ActivePowerInVariable) ≈ 100.0 atol = TOY_TOLERANCE
+        @test out.battery_in_mw[TOY_BATTERY] ≈ 100.0 atol = TOY_TOLERANCE
+        @test out.battery_in_mw[TOY_BATTERY] > 50.0
+        @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
     end
 end
 

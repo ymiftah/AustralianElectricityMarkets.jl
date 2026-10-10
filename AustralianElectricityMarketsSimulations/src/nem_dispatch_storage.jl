@@ -210,11 +210,11 @@ end
 
 Bounds each battery's `PowerSimulations.ActivePowerOutVariable`/`ActivePowerInVariable` above
 by [`_storage_dispatch_ceilings`](@ref)'s per-direction ceilings, read once at build over the
-model's own window. Under [`NEMReplayDispatch`](@ref), each finite directional ceiling also sets
-the corresponding variable's upper bound, including any existing ramp-floor adjustment. A
-non-finite ceiling retains the static bound, subject to the existing ramp-floor exception. A
-battery with no `MAXAVAIL` series attached keeps its static bounds and receives no availability
-rows. [`NEMLookaheadDispatch`](@ref) retains its static variable bounds.
+model's own window. Each finite directional ceiling also sets the corresponding variable's upper
+bound, including any replay ramp-floor adjustment. A non-finite ceiling retains the static bound,
+subject to the existing ramp-floor exception. A battery with no `MAXAVAIL` series attached keeps
+its static bounds and receives no availability rows. Lookahead retains its chained optimized-power
+ramp semantics.
 
 # Returns
 `nothing`.
@@ -225,8 +225,6 @@ function _add_storage_availability_constraints!(container, devices, model::PSI.D
     jump_model = PSI.get_jump_model(container)
     out = PSI.get_variable(container, PSI.ActivePowerOutVariable(), T)
     in_ = PSI.get_variable(container, PSI.ActivePowerInVariable(), T)
-    is_replay = PSI.get_formulation(model) === NEMReplayDispatch
-
     ceilings = _storage_dispatch_ceilings(container, devices, model)
     names = collect(keys(ceilings))
     isempty(names) && return
@@ -242,7 +240,7 @@ function _add_storage_availability_constraints!(container, devices, model::PSI.D
                 (out[name, t], ceilings[name].gen[t], ceilings[name].gen_floor[t]),
                 (in_[name, t], ceilings[name].load[t], ceilings[name].load_floor[t]),
             )
-            if is_replay && isfinite(ceiling_mw)
+            if isfinite(ceiling_mw)
                 JuMP.set_upper_bound(variable, ceiling_mw)
             elseif JuMP.has_upper_bound(variable) && floor_mw > JuMP.upper_bound(variable)
                 JuMP.set_upper_bound(variable, floor_mw)
