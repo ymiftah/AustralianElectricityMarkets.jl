@@ -610,7 +610,14 @@ function _solve_mnsp(sys; zero_flow::Bool = false)
 end
 
 @testset "MNSP link offers bound and price the interconnector flow" begin
-    free = _solve_mnsp(_loss_test_system(; breakpoints = [-1000.0, 1000.0]))
+    free_sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+    free = _solve_mnsp(free_sys)
+    load2 = PSY.with_units_base(free_sys, "NATURAL_UNITS") do
+        sum(
+            PSY.get_max_active_power(l) for l in PSY.get_components(PSY.PowerLoad, free_sys)
+                if PSY.get_name(PSY.get_area(PSY.get_bus(l))) == "2"
+        )
+    end
     @test ismissing(free.forward)  # no offers: no link variables, the free-flow model
     @test free.flow > 40.0  # free-flow baseline: area 2's demand is served through IC1
 
@@ -627,7 +634,7 @@ end
         sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
         _attach_mnsp_offers!(sys; forward = (500.0, [(500.0, 10.0)]), reverse = (500.0, [(500.0, 10.0)]))
         out = _solve_mnsp(sys)
-        @test out.flow ≈ free.flow atol = 1.0e-6
+        @test out.flow ≈ load2 atol = 1.0e-6
         @test out.forward ≈ out.flow atol = 1.0e-6
     end
 
@@ -652,7 +659,7 @@ end
         sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
         _attach_mnsp_offers!(sys; forward = (500.0, [(500.0, -50.0)]), reverse = (500.0, [(500.0, -50.0)]))
         out = _solve_mnsp(sys)
-        @test out.flow ≈ free.flow atol = 1.0e-6
+        @test out.flow ≈ load2 atol = 1.0e-6
         @test min(out.forward, out.reverse) ≈ 0.0 atol = 1.0e-6
     end
     @testset "link loss factors scale the delivered MW and the dispatch condition holds" begin
@@ -662,14 +669,34 @@ end
             forward_tlfs = (1.0, 0.9907), reverse_tlfs = (0.9907, 1.0),
         )
         out = _solve_mnsp(sys)
-        # Linear loss 0.05 * flow, share 0.4: area 2 balance is TLF * q - 0.6 * loss = load.
-        load2 = free.flow * (1 - 0.6 * 0.05)
-        @test out.forward * 0.9907 - 0.6 * 0.05 * out.forward ≈ load2 atol = 1.0e-6
-        # The offer is inframarginal, so its reduced cost is zero: offer price = to_tlf * price_to - from_tlf *
-        # price_from less the loss charge (slope 0.05, share 0.4). Duals are per-unit objective values of an
-        # hourly interval.
-        marginal = 0.9907 * out.dual2 - 1.0 * out.dual1 - 0.05 * (0.4 * out.dual1 + 0.6 * out.dual2)
+        @test out.forward * 0.9907 ≈ load2 atol = 1.0e-6
+        # Receiving-end flow delivers q * to_tlf; the sender supplies q plus DC losses.
+        marginal = 0.9907 * out.dual2 - 1.05 * out.dual1
         @test marginal ≈ PSY.get_base_power(sys) * 10.0 rtol = 1.0e-6
+    end
+
+    @testset "DC losses follow the sending end in either direction" begin
+        for reverse in (false, true)
+            sys = _loss_test_system(;
+                loss_constant = 1.0, loss_flow_coefficient = 0.0001,
+                breakpoints = [-1000.0, 0.0, 1000.0], priced_supply_only = true,
+            )
+            ic = _attach_mnsp_offers!(
+                sys; forward = (500.0, [(500.0, 10.0)]), reverse = (500.0, [(500.0, 10.0)]),
+                forward_tlfs = (1.1, 0.9), reverse_tlfs = (1.1, 0.9),
+            )
+            if reverse
+                from, to = PSY.get_from_area(ic), PSY.get_to_area(ic)
+                PSY.set_from_area!(ic, to)
+                PSY.set_to_area!(ic, from)
+            end
+            out = _solve_mnsp(sys)
+            @test out.flow ≈ (reverse ? -1 : 1) * load2 / 0.9 atol = 1.0e-6
+            @test min(out.forward, out.reverse) ≈ 0.0 atol = 1.0e-6
+            # On either side of zero, the chord loss is 0.05 times the magnitude of flow.
+            marginal = 0.9 * out.dual2 - 1.1 * 1.05 * out.dual1
+            @test marginal ≈ PSY.get_base_power(sys) * 10.0 rtol = 1.0e-6
+        end
     end
 
     @testset "a zero net flow zeroes both links even when circulation would create energy" begin
@@ -690,4 +717,107 @@ end
         out = _solve_mnsp(sys)
         @test isfinite(out.dual1) && isfinite(out.dual2)
     end
+end
+
+@testset "piecewise loss vertices are referenced to zero flow" begin
+    function curve_model(; scale = 1.0, breakpoints = [-17.0, 17.0], b = 0.00017965, c = 1.0)
+        return AEMS.InterconnectorLossModel(
+            ; interconnector = "TEST", from_region = "1", to_region = "2",
+            from_region_loss_share = 0.4, loss_constant = c,
+            loss_flow_coefficient = b * scale,
+            demand_coefficients = Dict("2" => 0.0003 * scale),
+            breakpoints = breakpoints ./ scale,
+        )
+    end
+
+    demand = Dict("2" => 23.0)
+    model = curve_model()
+    corrected = AEMS._loss_curve_vertex_values(model, demand)
+    # Subtract the chord's zero-flow intercept from both vertices, preserving its slope.
+    offset = 0.00017965 * 17.0^2 / 2
+    expected = [interconnector_losses(model, bp, demand) - offset for bp in (-17.0, 17.0)]
+    @test corrected ≈ expected atol = 1.0e-12
+    @test corrected[1] < 0 < corrected[2]
+    @test corrected[1] ≈ -corrected[2] atol = 1.0e-12
+    @test only(diff(corrected)) / 34.0 ≈ loss_segments(model, demand)[1].slope atol = 1.0e-12
+
+    # The nonzero demand changes the linear term, but cannot move the zero-flow reference.
+    no_demand_model = curve_model(; c = 1.0)
+    @test AEMS._loss_curve_vertex_values(no_demand_model, Dict{String, Float64}()) .-
+        AEMS._loss_curve_vertex_values(no_demand_model, demand) ≈ [0.0003 * 23.0 * 17.0, -0.0003 * 23.0 * 17.0] atol = 1.0e-12
+
+    # Attached models use per-unit values but represent the same physical curve.
+    base = 100.0
+    pu_model = curve_model(; scale = base, breakpoints = [-17.0, 17.0], b = 0.00017965)
+    pu_values = AEMS._loss_curve_vertex_values(pu_model, Dict("2" => 23.0 / base))
+    @test pu_values .* base ≈ corrected atol = 1.0e-12
+
+    # A zero breakpoint anchors the curve; one-sided ranges retain their existing values.
+    with_zero = curve_model(; breakpoints = [-17.0, 0.0, 17.0])
+    @test AEMS._loss_curve_vertex_values(with_zero, demand) ≈
+        [interconnector_losses(with_zero, bp, demand) for bp in with_zero.breakpoints] atol = 1.0e-12
+    linear = curve_model(; b = 0.0)
+    @test AEMS._loss_curve_vertex_values(linear, demand) ≈
+        [interconnector_losses(linear, bp, demand) for bp in linear.breakpoints] atol = 1.0e-12
+    one_sided = curve_model(; breakpoints = [3.0, 17.0])
+    @test AEMS._loss_curve_vertex_values(one_sided, demand) ≈
+        [interconnector_losses(one_sided, bp, demand) for bp in one_sided.breakpoints] atol = 1.0e-12
+end
+
+@testset "directional MNSP loss bounds use signed zero-referenced vertices" begin
+    # Unequal endpoints produce opposite-signed normalized vertices for both directional vars.
+    a, z = -44.0, 3.0
+    b = 0.00015761
+    sys = _loss_test_system(;
+        loss_constant = 1.0, loss_flow_coefficient = b,
+        breakpoints = [a, z], priced_supply_only = true,
+    )
+    _attach_mnsp_offers!(sys; forward = (500.0, [(500.0, 10.0)]), reverse = (500.0, [(500.0, 10.0)]))
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    loss_variables = PSI.get_variable(container, AEMS.MNSPLinkLossVariable(), PSY.AreaInterchange)
+    vertex_values = [0.5 * b * (x^2 + a * z) for x in (a, z)]
+    expected_lower = min(0.0, minimum(vertex_values))
+    expected_upper = max(0.0, maximum(vertex_values))
+    for direction in ("forward", "reverse")
+        variable = loss_variables["IC1", direction, 1]
+        @test PSI.JuMP.lower_bound(variable) * PSY.get_base_power(sys) ≈ expected_lower atol = 1.0e-10
+        @test PSI.JuMP.upper_bound(variable) * PSY.get_base_power(sys) ≈ expected_upper atol = 1.0e-10
+    end
+end
+
+@testset "zero-referenced quadratic losses solve without a gap" begin
+    # This range crosses zero without placing a breakpoint there. The analytical offset is
+    # hand-computed from the chord endpoints; demand affects its linear term only.
+    breakpoints = [-1000.0, 1000.0]
+    b = 0.00017965
+    sys = _loss_test_system(;
+        loss_constant = 1.0, loss_flow_coefficient = b,
+        demand_coefficients = Dict("2" => 0.0003), breakpoints = breakpoints,
+        priced_supply_only = true,
+    )
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    PSI.solve!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    res = PSI.OptimizationProblemResults(model)
+    gaps = interconnector_loss_gaps(res, sys)
+    @test !isempty(gaps)
+    @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
+
+    flow_df = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
+    loss_df = PSI.read_variable(res, "InterconnectorLossVariable__AreaInterchange")
+    flow = flow_df.value[findfirst(==("IC1"), flow_df.name)]
+    loss = loss_df.value[findfirst(==("IC1"), loss_df.name)]
+    @test flow > 0
+    demand2 = PSY.with_units_base(sys, "NATURAL_UNITS") do
+        sum(
+            PSY.get_max_active_power(l) for l in PSY.get_components(PSY.PowerLoad, sys)
+                if PSY.get_name(PSY.get_area(PSY.get_bus(l))) == "2"
+        )
+    end
+    # Symmetric endpoints cancel the quadratic chord slope after zero normalization.
+    expected = 0.0003 * demand2 * flow
+    @test loss ≈ expected atol = 1.0e-5
 end

@@ -9,7 +9,8 @@ Device formulation for `PSY.AreaInterchange` that apportions the attached
 `PSI.AreaBalancePowerModel` only, matching NEMDE's regional balance; other network models,
 missing or ambiguous loss models and concave curves throw `ArgumentError`. Recurrent solves are
 unsupported; rebuild the standalone `DecisionModel` when demand forecasts or load availability
-change.
+change. Devices without directional MNSP offers use the configured static loss share; devices
+carrying those offers supply losses at the sending area.
 
 # Notes
 Loss follows the breakpoint interpolation at every price sign: segments fill contiguously from
@@ -47,6 +48,31 @@ Contiguous segment fill: segment `s + 1` may carry flow only when segment `s` is
 (`meta = "ub"`), and segment `s` is full when its fill indicator is on (`meta = "lb"`).
 """
 struct InterconnectorLossSegmentOrderConstraint <: PSI.ConstraintType end
+
+"""
+    _loss_curve_vertex_values(model, demand) -> Vector{Float64}
+
+Returns the piecewise loss values at `model.breakpoints`. When one segment strictly brackets zero,
+subtracts its interpolated zero-flow value from every vertex; one-sided ranges retain their current
+anchoring because they do not identify a zero-flow reference.
+
+# Arguments
+- `model`: Interconnector loss model, in its own units.
+- `demand`: Regional demand values in the same units as `model`.
+
+# Returns
+Corrected loss values corresponding to `model.breakpoints`.
+"""
+function _loss_curve_vertex_values(model::InterconnectorLossModel, demand::AbstractDict)
+    breakpoints = model.breakpoints
+    values = [interconnector_losses(model, bp, demand) for bp in breakpoints]
+    crossing = findfirst(i -> breakpoints[i] < 0.0 < breakpoints[i + 1], 1:(length(breakpoints) - 1))
+    isnothing(crossing) && return values
+
+    a, z = breakpoints[crossing:(crossing + 1)]
+    offset = -model.loss_flow_coefficient * a * z / 2
+    return values .- offset
+end
 
 PSI.convert_result_to_natural_units(::Type{InterconnectorLossVariable}) = true
 PSI.convert_result_to_natural_units(::Type{InterconnectorLossSegmentVariable}) = true
@@ -200,9 +226,10 @@ _demand_at(demand::Dict{String, Vector{Float64}}, t::Int) =
     _add_loss_variables_and_constraints!(container, sys, devices, loss_models)
 
 Adds the segment, fill-indicator and loss variables, their defining and ordering constraints, and
-the `-share * loss` and `-(1 - share) * loss` terms in the from and to area balances, for every
-device. The segment axis is sized to the largest interconnector; unused cells are fixed to zero.
-All quantities are per-unit of the system base.
+the loss terms in the area balances. Devices without directional MNSP offers use the configured
+static loss share; devices carrying those offers supply losses at the sending area. The segment
+axis is sized to the largest interconnector; unused cells are fixed to zero. All quantities are
+per-unit of the system base.
 """
 function _add_loss_variables_and_constraints!(
         container::PSI.OptimizationContainer,
@@ -304,14 +331,16 @@ function _add_loss_variables_and_constraints!(
                 flow_var[name, t] ==
                     bp1 + sum(seg_var[name, segment_labels[s], t] for s in 1:max_segments)
             )
-            base_loss = interconnector_losses(model, bp1, demand_t)
+            base_loss = first(_loss_curve_vertex_values(model, demand_t))
             loss_def_con[name, t] = JuMP.@constraint(
                 jm,
                 loss_var[name, t] == base_loss +
                     sum(segments[s].slope * seg_var[name, segment_labels[s], t] for s in 1:n)
             )
-            JuMP.add_to_expression!(expr[from_area, t], -share, loss_var[name, t])
-            JuMP.add_to_expression!(expr[to_area, t], -(1.0 - share), loss_var[name, t])
+            if !_has_mnsp_offers(d)
+                JuMP.add_to_expression!(expr[from_area, t], -share, loss_var[name, t])
+                JuMP.add_to_expression!(expr[to_area, t], -(1.0 - share), loss_var[name, t])
+            end
         end
     end
     return
@@ -456,7 +485,7 @@ function PSI.construct_device!(
     PSI.add_feedforward_arguments!(container, device_model, devices)
 
     _add_loss_variables_and_constraints!(container, sys, devices, loss_models)
-    _add_mnsp_link_flows!(container, devices)
+    _add_mnsp_link_flows!(container, sys, devices)
     return
 end
 
