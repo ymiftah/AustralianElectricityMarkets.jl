@@ -201,6 +201,11 @@ end
 Throws an `ArgumentError` when `LOSSFACTORMODEL` isn't cached at all.
 """
 function read_interconnector_demand_coefficients(db, as_of::Union{Date, DateTime})
+    coefficients = _read_interconnector_demand_coefficients_with_version(db, as_of)
+    return select(coefficients, :INTERCONNECTORID, :REGIONID, :DEMANDCOEFFICIENT)
+end
+
+function _read_interconnector_demand_coefficients_with_version(db, as_of::Union{Date, DateTime})
     _table_is_cached(db, :LOSSFACTORMODEL) || throw(
         ArgumentError(
             "LOSSFACTORMODEL is not cached — run " *
@@ -224,7 +229,7 @@ function read_interconnector_demand_coefficients(db, as_of::Union{Date, DateTime
                    max_by(VERSIONNO, (EFFECTIVEDATE, VERSIONNO)) AS VERSIONNO
             FROM raw GROUP BY INTERCONNECTORID
         )
-        SELECT r.INTERCONNECTORID, r.REGIONID,
+        SELECT r.INTERCONNECTORID, r.EFFECTIVEDATE, r.VERSIONNO, r.REGIONID,
                TRY_CAST(r.DEMANDCOEFFICIENT AS DOUBLE) AS DEMANDCOEFFICIENT
         FROM raw r
         INNER JOIN latest l
@@ -235,6 +240,60 @@ function read_interconnector_demand_coefficients(db, as_of::Union{Date, DateTime
         """,
         [as_of],
     )
+end
+
+# The report applies this term for FY2025-26; raw LOSSFACTORMODEL changes from the 2025-07-01 row to a 2026-07-01 successor.
+const _HEYWOOD_NSW_COEFFICIENT_START = Date(2025, 7, 1)
+const _HEYWOOD_NSW_COEFFICIENT_END = Date(2026, 7, 1)
+const _HEYWOOD_NSW_COEFFICIENT = 1.6981e-6
+
+function _interconnector_demand_coefficients_by_id(coefficients, params, as_of::Union{Date, DateTime})
+    demand_coefficients = Dict{String, Dict{String, Float64}}()
+    for row in eachrow(coefficients)
+        d = get!(demand_coefficients, row.INTERCONNECTORID, Dict{String, Float64}())
+        d[row.REGIONID] = row.DEMANDCOEFFICIENT
+    end
+
+    as_of_date = Date(as_of)
+    if as_of_date < _HEYWOOD_NSW_COEFFICIENT_START || as_of_date >= _HEYWOOD_NSW_COEFFICIENT_END
+        return demand_coefficients
+    end
+
+    vsa_params = params[params.INTERCONNECTORID .== "V-SA", :]
+    nrow(vsa_params) == 1 || return demand_coefficients
+    param = only(eachrow(vsa_params))
+    ismissing(param.EFFECTIVEDATE) && return demand_coefficients
+    DateTime(param.EFFECTIVEDATE) == DateTime(_HEYWOOD_NSW_COEFFICIENT_START) ||
+        return demand_coefficients
+    ismissing(param.VERSIONNO) && return demand_coefficients
+    param.VERSIONNO == 1 || return demand_coefficients
+    ismissing(param.LOSSCONSTANT) && return demand_coefficients
+    isapprox(param.LOSSCONSTANT, 0.9721; atol = 1.0e-12, rtol = 0.0) || return demand_coefficients
+    ismissing(param.LOSSFLOWCOEFFICIENT) && return demand_coefficients
+    isapprox(param.LOSSFLOWCOEFFICIENT, 0.00026801; atol = 1.0e-12, rtol = 0.0) ||
+        return demand_coefficients
+
+    vsa_coefficients = coefficients[coefficients.INTERCONNECTORID .== "V-SA", :]
+    all(
+        !ismissing(row.EFFECTIVEDATE) &&
+            DateTime(row.EFFECTIVEDATE) == DateTime(_HEYWOOD_NSW_COEFFICIENT_START) for
+            row in eachrow(vsa_coefficients)
+    ) ||
+        return demand_coefficients
+    all(!ismissing(row.VERSIONNO) && row.VERSIONNO == 1 for row in eachrow(vsa_coefficients)) ||
+        return demand_coefficients
+
+    vsa = get(demand_coefficients, "V-SA", Dict{String, Float64}())
+    haskey(vsa, "NSW1") && return demand_coefficients
+    haskey(vsa, "VIC1") || return demand_coefficients
+    haskey(vsa, "SA1") || return demand_coefficients
+    isapprox(vsa["VIC1"], -1.4896e-5; atol = 1.0e-12, rtol = 0.0) || return demand_coefficients
+    isapprox(vsa["SA1"], 5.108e-5; atol = 1.0e-12, rtol = 0.0) || return demand_coefficients
+
+    # AEMO's FY2025-26 report, §3 p. 56, footnote 11, supplies this additional NSW demand term:
+    # https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2025-26-marginal-loss-factors/marginal-loss-factors-for-the-2025-26-fin-year.pdf?rev=87a79a393a1a40c7a7e0738908fe8b1e&sc_lang=en
+    demand_coefficients["V-SA"]["NSW1"] = _HEYWOOD_NSW_COEFFICIENT
+    return demand_coefficients
 end
 
 """
@@ -249,6 +308,20 @@ Differs from [`read_interconnectors`](@ref), which resolves to the latest versio
 Throws `ArgumentError` when either table isn't cached.
 """
 function read_interconnector_loss_parameters(db, as_of::Union{Date, DateTime})
+    params = _read_interconnector_loss_parameters_with_version(db, as_of)
+    return select(
+        params,
+        :INTERCONNECTORID,
+        :REGIONFROM,
+        :REGIONTO,
+        :FROMREGIONLOSSSHARE,
+        :LOSSCONSTANT,
+        :LOSSFLOWCOEFFICIENT,
+        :ICTYPE,
+    )
+end
+
+function _read_interconnector_loss_parameters_with_version(db, as_of::Union{Date, DateTime})
     for table in (:INTERCONNECTORCONSTRAINT, :INTERCONNECTOR)
         _table_is_cached(db, table) || throw(
             ArgumentError(
@@ -280,7 +353,7 @@ function read_interconnector_loss_parameters(db, as_of::Union{Date, DateTime})
                 PARTITION BY INTERCONNECTORID ORDER BY archive_month DESC
             ) = 1
         )
-        SELECT r.INTERCONNECTORID, ic.REGIONFROM, ic.REGIONTO,
+        SELECT r.INTERCONNECTORID, r.EFFECTIVEDATE, r.VERSIONNO, ic.REGIONFROM, ic.REGIONTO,
                TRY_CAST(r.FROMREGIONLOSSSHARE AS DOUBLE) AS FROMREGIONLOSSSHARE,
                TRY_CAST(r.LOSSCONSTANT AS DOUBLE) AS LOSSCONSTANT,
                TRY_CAST(r.LOSSFLOWCOEFFICIENT AS DOUBLE) AS LOSSFLOWCOEFFICIENT,
@@ -308,24 +381,21 @@ An interconnector with loss parameters but no `LOSSMODEL` breakpoints is skipped
 one summary `@warn`.
 
 The loss share of `T-V-MNSP1` (Basslink) is fixed at `1.0`, as in nempy, because AEMO's published
-value is not well defined.
+value is not well defined. V-SA's missing NSW1 coefficient is filled from AEMO's
+[FY2025-26 MLF report](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2025-26-marginal-loss-factors/marginal-loss-factors-for-the-2025-26-fin-year.pdf?rev=87a79a393a1a40c7a7e0738908fe8b1e&sc_lang=en), §3 p. 56, footnote 11, only when `as_of` is from 2025-07-01 inclusive to 2026-07-01 exclusive and the matching version is selected.
 
 Throws `ArgumentError` when no interconnector survives.
 """
 function interconnector_loss_models(db, as_of::Union{Date, DateTime})
-    params = read_interconnector_loss_parameters(db, as_of)
-    coefficients = read_interconnector_demand_coefficients(db, as_of)
+    params = _read_interconnector_loss_parameters_with_version(db, as_of)
+    coefficients = _read_interconnector_demand_coefficients_with_version(db, as_of)
     breakpoints = read_interconnector_loss_breakpoints(db, as_of)
 
     by_interconnector = Dict{String, Vector{Float64}}()
     for row in eachrow(breakpoints)
         push!(get!(by_interconnector, row.INTERCONNECTORID, Float64[]), row.MWBREAKPOINT)
     end
-    demand_coefficients = Dict{String, Dict{String, Float64}}()
-    for row in eachrow(coefficients)
-        d = get!(demand_coefficients, row.INTERCONNECTORID, Dict{String, Float64}())
-        d[row.REGIONID] = row.DEMANDCOEFFICIENT
-    end
+    demand_coefficients = _interconnector_demand_coefficients_by_id(coefficients, params, as_of)
 
     models = Dict{String, InterconnectorLossModel}()
     skipped = String[]

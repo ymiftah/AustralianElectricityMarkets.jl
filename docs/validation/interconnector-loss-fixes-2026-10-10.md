@@ -19,7 +19,7 @@ For a quadratic coefficient `b` and adjacent breakpoints `a < 0 < z`, the chord'
 
 ## Historical combined pilot
 
-The production comparison driver solved seven selected intervals with the loss-curve fixes, directional MNSP allocation, and a Heywood NSW coefficient override that has since been withdrawn. These results do not validate the current branch changes in isolation. The runs used neither supplemental XML constraint definitions nor published flow limits. Over common original/pilot rows:
+The production comparison driver solved seven selected intervals with the loss-curve fixes, directional MNSP allocation, and the report's Heywood NSW coefficient for FY2025-26. That coefficient is now bounded by the matching 2025-07-01/version-1 model through the published 2026-07-01 successor boundary. These combined results do not isolate the contribution of each fix. The runs used neither supplemental XML constraint definitions nor published flow limits. Over common original/pilot rows:
 
 | Metric | Original | Loss-fix pilot |
 | --- | ---: | ---: |
@@ -27,7 +27,7 @@ The production comparison driver solved seven selected intervals with the loss-c
 | Interconnector flow mean absolute gap, MW (42 rows) | 10.60437581 | 7.06980695 |
 | Interconnector loss mean absolute gap, MW (42 rows) | 1.93485 | 1.18536 |
 
-At 6 June 2026 17:40, the combined pilot's Heywood loss was 12.713372 MW against NEMDE's 12.713370 MW, compared with 9.676971 MW in the original run. This is historical evidence for a run containing the withdrawn override, not validation of current Heywood modeling. At 9 June 2026 15:00, the reverse-Basslink maximum flow gap fell from 86.03755 MW to below 0.000008 MW. These observations check selected cases; they do not establish full-sample fidelity or explain unrelated dispatch differences.
+At 6 June 2026 17:40, the combined pilot's Heywood loss was 12.713372 MW against NEMDE's 12.713370 MW, compared with 9.676971 MW in the original run. This selected interval falls within the documented FY2025-26 coefficient window. At 9 June 2026 15:00, the reverse-Basslink maximum flow gap fell from 86.03755 MW to below 0.000008 MW. These observations check selected cases; they do not establish full-sample fidelity or explain unrelated dispatch differences.
 
 ## Limits
 

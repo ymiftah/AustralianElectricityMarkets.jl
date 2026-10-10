@@ -1,5 +1,23 @@
 using DataFrames: DataFrame, nrow
 
+function _append_test_hive_rows(hive_root::String, table::Symbol, rows::DataFrame)
+    conn = DuckDB.connect(DuckDB.DB())
+    DuckDB.register_data_frame(conn, rows, "test_rows")
+    table_dir = joinpath(hive_root, string(table))
+    for archive_month in unique(rows.archive_month)
+        partition_dir = joinpath(table_dir, "archive_month=$archive_month")
+        mkpath(partition_dir)
+        output_path = joinpath(partition_dir, "heywood_fixture.parquet")
+        DuckDB.execute(
+            conn,
+            "COPY (SELECT * EXCLUDE (archive_month) FROM test_rows WHERE archive_month = '$archive_month') TO '$output_path' (FORMAT PARQUET)",
+        )
+    end
+    DuckDB.unregister_table(conn, "test_rows")
+    DuckDB.disconnect(conn)
+    return nothing
+end
+
 # A hand-built model with realistic NEMDE magnitudes: LOSSCONSTANT is a loss *factor*, so it sits
 # near 1.0, and the mock hive's 0.01 is deliberately not reused here - the closed forms below are
 # checked against numbers a real interconnector would carry.
@@ -17,6 +35,207 @@ const TEST_DEMAND = Dict("VIC1" => 4000.0, "NSW1" => 7000.0)
     @test loss_factor(TEST_LOSS_MODEL, 500.0, TEST_DEMAND) ≈ 1.02
     # A region with a coefficient but no demand entry contributes nothing rather than erroring.
     @test loss_factor(TEST_LOSS_MODEL, 0.0, Dict("VIC1" => 4000.0)) ≈ 1.06
+end
+
+@testset "documented Heywood NSW demand coefficient" begin
+    function coefficient_rows(; date = DateTime(2025, 7, 1), version = 1, regions = ["VIC1", "SA1"], values = [-1.4896e-5, 5.108e-5])
+        return DataFrame(
+            INTERCONNECTORID = fill("V-SA", length(regions)),
+            EFFECTIVEDATE = fill(date, length(regions)),
+            VERSIONNO = fill(version, length(regions)),
+            REGIONID = regions,
+            DEMANDCOEFFICIENT = values,
+        )
+    end
+
+    function parameter_rows(; date = DateTime(2025, 7, 1), version = 1, interconnector = "V-SA", loss_constant = 0.9721, loss_flow_coefficient = 0.00026801)
+        return DataFrame(
+            INTERCONNECTORID = [interconnector], EFFECTIVEDATE = [date], VERSIONNO = [version],
+            LOSSCONSTANT = [loss_constant], LOSSFLOWCOEFFICIENT = [loss_flow_coefficient],
+        )
+    end
+
+    documented_coefficients = coefficient_rows()
+    documented_parameters = parameter_rows()
+
+    before_start = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(
+        documented_coefficients,
+        documented_parameters,
+        Date(2025, 6, 30),
+    )
+    @test !haskey(before_start["V-SA"], "NSW1")
+
+    at_start = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(
+        documented_coefficients,
+        documented_parameters,
+        Date(2025, 7, 1),
+    )
+    @test at_start["V-SA"]["NSW1"] == 1.6981e-6
+
+    at_start_instant = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(
+        documented_coefficients,
+        documented_parameters,
+        DateTime(2025, 7, 1, 0, 0, 0),
+    )
+    @test at_start_instant["V-SA"]["NSW1"] == 1.6981e-6
+
+    last_active_day = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(
+        documented_coefficients,
+        documented_parameters,
+        Date(2026, 6, 30),
+    )
+    @test last_active_day["V-SA"]["NSW1"] == 1.6981e-6
+
+    last_active_instant = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(
+        documented_coefficients,
+        documented_parameters,
+        DateTime(2026, 6, 30, 23, 59, 59),
+    )
+    @test last_active_instant["V-SA"]["NSW1"] == 1.6981e-6
+
+    stale_after_end = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(
+        documented_coefficients,
+        documented_parameters,
+        Date(2026, 7, 1),
+    )
+    @test !haskey(stale_after_end["V-SA"], "NSW1")
+
+    stale_at_end_instant = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(
+        documented_coefficients,
+        documented_parameters,
+        DateTime(2026, 7, 1, 0, 0, 0),
+    )
+    @test !haskey(stale_at_end_instant["V-SA"], "NSW1")
+
+    wrong_version = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(
+        coefficient_rows(; version = 2),
+        parameter_rows(; version = 2),
+        Date(2025, 7, 1),
+    )
+    @test !haskey(wrong_version["V-SA"], "NSW1")
+
+    wrong_parameter_version = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(
+        documented_coefficients,
+        parameter_rows(; version = 2),
+        Date(2025, 7, 1),
+    )
+    @test !haskey(wrong_parameter_version["V-SA"], "NSW1")
+
+    wrong_interconnector = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(
+        DataFrame(
+            INTERCONNECTORID = replace.(documented_coefficients.INTERCONNECTORID, "V-SA" => "OTHER"),
+            EFFECTIVEDATE = documented_coefficients.EFFECTIVEDATE,
+            VERSIONNO = documented_coefficients.VERSIONNO,
+            REGIONID = documented_coefficients.REGIONID,
+            DEMANDCOEFFICIENT = documented_coefficients.DEMANDCOEFFICIENT,
+        ),
+        parameter_rows(; interconnector = "OTHER"),
+        Date(2025, 7, 1),
+    )
+    @test !haskey(wrong_interconnector["OTHER"], "NSW1")
+
+    wrong_parameters = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(
+        documented_coefficients,
+        parameter_rows(; loss_constant = 0.9722),
+        Date(2025, 7, 1),
+    )
+    @test !haskey(wrong_parameters["V-SA"], "NSW1")
+
+    wrong_flow_coefficient = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(
+        documented_coefficients,
+        parameter_rows(; loss_flow_coefficient = 0.00026802),
+        Date(2025, 7, 1),
+    )
+    @test !haskey(wrong_flow_coefficient["V-SA"], "NSW1")
+
+    intraday_parameters = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(
+        documented_coefficients,
+        parameter_rows(; date = DateTime(2025, 7, 1, 0, 5, 0)),
+        Date(2025, 7, 1),
+    )
+    @test !haskey(intraday_parameters["V-SA"], "NSW1")
+
+    wrong_regional_coefficients = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(
+        coefficient_rows(; values = [-1.0e-5, 5.108e-5]),
+        documented_parameters,
+        Date(2025, 7, 1),
+    )
+    @test !haskey(wrong_regional_coefficients["V-SA"], "NSW1")
+
+    explicit_zero = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(
+        coefficient_rows(; regions = ["VIC1", "SA1", "NSW1"], values = [-1.4896e-5, 5.108e-5, 0.0]),
+        documented_parameters,
+        Date(2025, 7, 1),
+    )
+    @test explicit_zero["V-SA"]["NSW1"] == 0.0
+
+    explicit_value = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(
+        coefficient_rows(; regions = ["VIC1", "SA1", "NSW1"], values = [-1.4896e-5, 5.108e-5, 7.5e-7]),
+        documented_parameters,
+        Date(2025, 7, 1),
+    )
+    @test explicit_value["V-SA"]["NSW1"] == 7.5e-7
+
+    hive_root = mktempdir()
+    create_mock_data(hive_root)
+    _append_test_hive_rows(
+        hive_root,
+        :INTERCONNECTOR,
+        DataFrame(
+            INTERCONNECTORID = ["V-SA"], REGIONFROM = ["VIC1"], REGIONTO = ["SA1"],
+            archive_month = ["2025-07"],
+        ),
+    )
+    _append_test_hive_rows(
+        hive_root,
+        :INTERCONNECTORCONSTRAINT,
+        DataFrame(
+            INTERCONNECTORID = ["V-SA", "V-SA"],
+            EFFECTIVEDATE = [DateTime(2025, 7, 1), DateTime(2026, 7, 1)], VERSIONNO = [1, 1],
+            FROMREGIONLOSSSHARE = [0.8192, 0.8192], LOSSCONSTANT = [0.9721, 0.9742],
+            LOSSFLOWCOEFFICIENT = [0.00026801, 0.000229], ICTYPE = ["AC", "AC"],
+            archive_month = ["2025-07", "2026-06"],
+        ),
+    )
+    _append_test_hive_rows(
+        hive_root,
+        :LOSSMODEL,
+        DataFrame(
+            INTERCONNECTORID = fill("V-SA", 6),
+            EFFECTIVEDATE = vcat(fill(DateTime(2025, 7, 1), 3), fill(DateTime(2026, 7, 1), 3)),
+            VERSIONNO = ones(Int, 6), LOSSSEGMENT = vcat(collect(1:3), collect(1:3)),
+            MWBREAKPOINT = repeat([-500.0, 0.0, 500.0], 2),
+            archive_month = vcat(fill("2025-07", 3), fill("2026-06", 3)),
+        ),
+    )
+    vsa_2025_coefficients = copy(documented_coefficients)
+    vsa_2025_coefficients.archive_month = fill("2025-07", nrow(vsa_2025_coefficients))
+    _append_test_hive_rows(hive_root, :LOSSFACTORMODEL, vsa_2025_coefficients)
+    _append_test_hive_rows(
+        hive_root,
+        :LOSSFACTORMODEL,
+        DataFrame(
+            INTERCONNECTORID = fill("V-SA", 3), EFFECTIVEDATE = fill(DateTime(2026, 7, 1), 3),
+            VERSIONNO = ones(Int, 3), REGIONID = ["VIC1", "SA1", "NSW1"],
+            DEMANDCOEFFICIENT = [-1.09e-5, 6.63e-5, -2.22e-6],
+            archive_month = fill("2026-06", 3),
+        ),
+    )
+    db = aem_connect(HiveConfiguration(hive_location = hive_root, filesystem = "file"))
+
+    public_rows = read_interconnector_demand_coefficients(db, Date(2025, 7, 1))
+    @test Set(names(public_rows)) == Set(["INTERCONNECTORID", "REGIONID", "DEMANDCOEFFICIENT"])
+    @test !any((public_rows.INTERCONNECTORID .== "V-SA") .& (public_rows.REGIONID .== "NSW1"))
+
+    model_2025 = interconnector_loss_models(db, Date(2025, 7, 1))["V-SA"]
+    @test model_2025.loss_constant == 0.9721
+    @test model_2025.loss_flow_coefficient == 0.00026801
+    @test model_2025.demand_coefficients["NSW1"] == 1.6981e-6
+    @test loss_factor(model_2025, 0.0, Dict("NSW1" => 10_000.0)) ≈ 0.9721 + 0.016981
+
+    model_2026 = interconnector_loss_models(db, Date(2026, 7, 1))["V-SA"]
+    @test model_2026.demand_coefficients["NSW1"] == -2.22e-6
+    @test model_2026.loss_constant == 0.9742
 end
 
 @testset "interconnector_losses" begin
