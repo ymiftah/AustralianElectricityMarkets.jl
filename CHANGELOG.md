@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The V-SA loss model supplies the AEMO FY2025-26 NSW demand coefficient only for the matching
+  2025-07-01/version-1 model, through the published 2026-07-01 successor boundary.
 - Interconnector loss chords that span zero flow are normalized to zero there, preserving their
   marginal slopes in total losses, directional MNSP loss bounds, and loss-gap diagnostics.
 - MNSP DC losses follow the selected sending direction and its sending terminal loss factor.
