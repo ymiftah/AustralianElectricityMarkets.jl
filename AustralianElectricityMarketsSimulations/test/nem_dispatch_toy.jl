@@ -239,7 +239,7 @@ end
         variable = PSI.get_variable(out.container, variable_type(), PSY.EnergyReservoirStorage)
         return PSI.JuMP.upper_bound(variable[TOY_BATTERY, 1]) * PSY.get_base_power(sys)
     end
-    set_static_limits! = function (sys, _ = nothing; output_mw = 50.0, input_mw = 50.0)
+    set_static_limits! = function (sys, dispatch_context = nothing; output_mw = 50.0, input_mw = 50.0)
         battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
         PSY.set_output_active_power_limits!(battery, (min = 0.0, max = output_mw))
         PSY.set_input_active_power_limits!(battery, (min = 0.0, max = input_mw))
