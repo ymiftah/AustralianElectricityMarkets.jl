@@ -17,10 +17,13 @@ import AustralianElectricityMarketsSimulations as AEMSim
 
 # # From NEM dispatch to PowerSimulations.jl
 #
-# A NEM dispatch interval is, mathematically, one linear programme: AEMO's NEM Dispatch Engine
-# (NEMDE) picks the energy and frequency-control (FCAS) quantities that minimise the total cost
+# The National Electricity Market is managed by AEMO (Australian Electricity Market Operator),
+# and the market clearing process is run every 5 minutes by solving a large optimisation problem.
+# The NEM Dispatch Engine (NEMDE) picks the energy and frequency-control (FCAS) quantities that minimise the total cost
 # of the offers participants submitted, subject to the physical limits of the units and the
-# network. This page builds that linear programme twice, on the same small market:
+# network.
+#
+# This page builds that linear programme twice, on the same small market:
 #
 # 1. **By hand in JuMP**, one concept at a time, so every NEM modelling idea (bid stack,
 #    ramping from the previous dispatch, regional balance, interconnector limits, the FCAS
@@ -30,10 +33,6 @@ import AustralianElectricityMarketsSimulations as AEMSim
 #    data) and a PSI `ProblemTemplate` (the formulation), then checked against the hand-written
 #    model.
 #
-# By the end you will know which part of the NEM is described by data that
-# `AustralianElectricityMarkets` (AEM) attaches to a `System`, which part is a formulation that
-# `AustralianElectricityMarketsSimulations` (AEMSim) adds to PSI, and how the two meet in
-# a build.
 #
 # !!! warning "AEMSim is a work in progress"
 #     The PSI extension is being built in stages. This page uses what is merged today:
@@ -86,7 +85,7 @@ units = (
 demand = (NSW1 = 450.0, VIC1 = 380.0)    # MW
 interconnector = (from = "NSW1", to = "VIC1", max_from = 100.0, max_to = 120.0)  # MW
 
-DataFrame(
+@show DataFrame(
     unit = collect(String.(keys(units))),
     region = [u.region for u in units],
     availability_MW = [u.avail for u in units],
@@ -104,8 +103,8 @@ DataFrame(
 #
 # NEMDE does not see a cost function, it sees *offers*: each band is a quantity a participant
 # is willing to supply at or above a price. Because bands are priced in increasing order, the
-# cheapest MW is always taken first, so a unit's dispatch is the sum of its band quantities
-# and each band variable is bounded by the band width:
+# cheapest MW is always taken first (except when network constraints apply as we will see further down),
+# so a unit's dispatch is the sum of its band quantities and each band variable is bounded by the band width:
 #
 # ```math
 # p_u = \sum_b q_{u,b}, \qquad 0 \le q_{u,b} \le Q_{u,b}, \qquad
@@ -114,19 +113,7 @@ DataFrame(
 #
 # where ``\Delta`` is the interval length in hours (offers are in $/MWh).
 
-model = JuMP.Model(HiGHS.Optimizer)
-set_silent(model)
-
 unit_names = collect(keys(units))
-@variable(model, band[u in unit_names, b in eachindex(units[u].bands)] >= 0)
-for u in unit_names, b in eachindex(units[u].bands)
-    set_upper_bound(band[u, b], units[u].bands[b][1])
-end
-@expression(model, dispatch[u in unit_names], sum(band[u, b] for b in eachindex(units[u].bands)))
-energy_cost = sum(
-    units[u].bands[b][2] * band[u, b] * INTERVAL_H for u in unit_names for b in eachindex(units[u].bands)
-)
-@objective(model, Min, energy_cost)
 
 # The same offers drawn as a merit order per region: the supply curve the market clears
 # against. Wind offers at \$0 (drawn as a thin bar), coal climbs through four bands, gas starts at \$70.
@@ -156,21 +143,37 @@ function plot_merit_order!(ax, region; requirement = nothing, price = nothing)
     return colors
 end
 
-fig = Figure(size = (900, 320))
-for (i, region) in enumerate(("NSW1", "VIC1"))
-    ax = Axis(
-        fig[1, i]; title = region, xlabel = "Cumulative offered MW", ylabel = "Offer price (\$/MWh)",
+let
+    fig = Figure(size = (900, 320))
+    for (i, region) in enumerate(("NSW1", "VIC1"))
+        ax = Axis(
+            fig[1, i]; title = region, xlabel = "Cumulative offered MW", ylabel = "Offer price (\$/MWh)",
+        )
+        plot_merit_order!(ax, region)
+        ylims!(ax, 0, 260)
+    end
+    colors = Dict(String(u) => c for (u, c) in zip(unit_names, Makie.wong_colors()))
+    Legend(
+        fig[2, 1:2],
+        [PolyElement(color = colors[String(u)]) for u in unit_names], String.(unit_names);
+        orientation = :horizontal, tellheight = true,
     )
-    plot_merit_order!(ax, region)
-    ylims!(ax, 0, 260)
+    fig
 end
-colors = Dict(String(u) => c for (u, c) in zip(unit_names, Makie.wong_colors()))
-Legend(
-    fig[2, 1:2],
-    [PolyElement(color = colors[String(u)]) for u in unit_names], String.(unit_names);
-    orientation = :horizontal, tellheight = true,
+
+# ### The JuMP model
+
+model = JuMP.Model(HiGHS.Optimizer)
+set_silent(model)
+
+@variable(model, units[u].bands[b][1] >= band[u in unit_names, b in eachindex(units[u].bands)] >= 0)
+
+@expression(model, dispatch[u in unit_names], sum(band[u, b] for b in eachindex(units[u].bands)))
+energy_cost = sum(
+    units[u].bands[b][2] * band[u, b] * INTERVAL_H for u in unit_names for b in eachindex(units[u].bands)
 )
-fig
+@objective(model, Min, energy_cost)
+
 
 # ### The unit's dispatchable envelope
 #
@@ -187,15 +190,20 @@ fig
 # *initial conditions for the ramping constraints* of this page: nothing in the market is
 # carried over from the previous interval but this one number per unit.
 
-@constraint(model, availability[u in unit_names], dispatch[u] <= units[u].avail)
-@constraint(model, ramp_up[u in unit_names], dispatch[u] - units[u].initial <= units[u].ramp_mwh * INTERVAL_H)
-@constraint(model, ramp_down[u in unit_names], units[u].initial - dispatch[u] <= units[u].ramp_mwh * INTERVAL_H)
 
 envelope = DataFrame(
     unit = String.(unit_names),
     floor_MW = [max(0.0, units[u].initial - units[u].ramp_mwh * INTERVAL_H) for u in unit_names],
     ceiling_MW = [min(units[u].avail, units[u].initial + units[u].ramp_mwh * INTERVAL_H) for u in unit_names],
 )
+
+# TODO add a figure illustrating the envelope and the dispatch point for an interval.
+# The range of possible loads is bounded by the ramps. the up and down ramps may be different.
+
+@constraint(model, availability[u in unit_names], dispatch[u] <= units[u].avail)
+@constraint(model, ramp_up[u in unit_names], dispatch[u] - units[u].initial <= units[u].ramp_mwh * INTERVAL_H)
+@constraint(model, ramp_down[u in unit_names], units[u].initial - dispatch[u] <= units[u].ramp_mwh * INTERVAL_H)
+
 
 # ### Regional balance and the interconnector
 #
