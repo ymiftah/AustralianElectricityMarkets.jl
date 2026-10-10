@@ -35,13 +35,61 @@ function _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
 end
 
 """
+    _set_decremental_bid_cost!(sys, device, load_bids, start_date, resolution)
+
+Attaches the decremental (load-side) variable cost and initial input time series derived from
+`load_bids.piecewise_step_data` to `device`, whose operation cost must already be a `MarketBidCost`
+(set by `_set_incremental_bid_cost!` for a battery; a scheduled load's is replaced here). Shared by the
+battery and scheduled-load branches of `set_market_bids!`.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `device`: An `EnergyReservoirStorage` or `InterruptiblePowerLoad`.
+- `load_bids`: The device's `LOAD` direction rows from `_massage_bids`.
+- `start_date`: The first interval of the series.
+- `resolution`: The series resolution.
+
+# Returns
+`nothing`.
+"""
+function _set_decremental_bid_cost!(sys, device, load_bids, start_date, resolution)
+    set_available!(device, true)
+    device isa InterruptiblePowerLoad && set_operation_cost!(
+        device,
+        MarketBidCost(;
+            no_load_cost = 0.0,
+            start_up = (hot = 0.0, warm = 0.0, cold = 0.0),
+            shut_down = 0.0,
+        ),
+    )
+    psd = load_bids.piecewise_step_data
+    time_series_data = Deterministic(;
+        name = "decremental_variable_cost",
+        data = Dict(start_date => psd),
+        resolution = resolution,
+        interval = resolution,
+    )
+    set_decremental_variable_cost!(sys, device, time_series_data, UnitSystem.NATURAL_UNITS)
+    time_series_decremental_initial_input = Deterministic(;
+        name = "decremental_initial_input",
+        data = Dict(start_date => (first ∘ get_y_coords).(psd)),
+        resolution = resolution,
+        interval = resolution,
+    )
+    set_decremental_initial_input!(sys, device, time_series_decremental_initial_input)
+    return
+end
+
+"""
     set_market_bids!(sys, db, date_range; kwargs...)
 
 Adds market bid cost time series data to the system.
 
 This function reads energy and price bid data for a specified date range from the
 database, converts it into piecewise `MarketBidCost` variable cost time series, and
-attaches it to `Generator` and `EnergyReservoirStorage` components (the latter also
+attaches it to `Generator`, scheduled `InterruptiblePowerLoad` (decremental bid only; a load that
+bids `GEN` is made unavailable; a non-scheduled load is left as built) and `EnergyReservoirStorage`
+components (the latter also
 gets decremental/load-side bid costs, and each direction's energy `MAXAVAIL`, read back by
 [`get_storage_energy_max_avail`](@ref)).
 
@@ -50,6 +98,14 @@ gets decremental/load-side bid costs, and each direction's energy `MAXAVAIL`, re
 - `db`: The database connection.
 - `date_range`: A range of dates for which to fetch the data.
 - `kwargs`: Additional keyword arguments passed to `_massage_bids` (e.g. `resolution`).
+
+# Loss factors
+Energy bid prices are connection-point prices and are always divided by the unit's loss factor,
+resolved as of `first(date_range)` by [`read_loss_factors`](@ref) (one factor per unit for
+the whole range; a warning flags a change inside it), which refers the bids to the regional
+reference node as NEMDE does. The MW axis, FCAS bids and physical limits are untouched. A bidding
+generator, scheduled load or battery of `sys` with no `DUDETAILSUMMARY` row in force throws an
+`ArgumentError`.
 """
 function set_market_bids!(sys, db, date_range; kwargs...)
     start_date = first(date_range)
@@ -59,6 +115,9 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     energy_bids_table = read_hive(db, :BIDPEROFFER_D)
     pricebids_table = read_hive(db, :BIDDAYOFFER_D)
     bids = _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
+    sys_units = Set(get_name(c) for T in (Generator, InterruptiblePowerLoad, EnergyReservoirStorage) for c in get_components(T, sys))
+    factors = read_loss_factors(db; as_of = start_date, through = end_date)
+    _refer_bids_to_reference_node!(subset!(bids, :DUID => ByRow(in(sys_units))), factors)
 
     # Sets all generator subtype first
     foreach(get_components(Generator, sys)) do gen
@@ -72,6 +131,24 @@ function set_market_bids!(sys, db, date_range; kwargs...)
         end
     end
 
+    # Scheduled loads carry only a decremental (LOAD direction) offer. A load that bids GEN
+    # (a wholesale demand response unit, whose response acts as supply) is not modelled.
+    unbid_loads = String[]
+    gen_bid_loads = String[]
+    foreach(get_components(InterruptiblePowerLoad, sys)) do load
+        _is_non_scheduled_load(load) && return
+        load_id = get_name(load)
+        load_bids = subset(bids, :DUID => ByRow(==(load_id)), :DIRECTION => ByRow(==("LOAD")))
+        if DataFrames.isempty(load_bids)
+            any(==(load_id), bids.DUID) ? push!(gen_bid_loads, load_id) : push!(unbid_loads, load_id)
+            set_available!(load, false)
+        else
+            _set_decremental_bid_cost!(sys, load, load_bids, start_date, resolution)
+        end
+    end
+    isempty(gen_bid_loads) || @warn "set_market_bids!: $(length(gen_bid_loads)) scheduled load(s) bid GEN, not LOAD (wholesale demand response); setting to unavailable: $(join(gen_bid_loads, ", "))"
+    isempty(unbid_loads) || @warn "set_market_bids!: $(length(unbid_loads)) scheduled load(s) have no bid data; setting to unavailable: $(join(unbid_loads, ", "))"
+
     # Then sets the batteries
     return foreach(get_components(EnergyReservoirStorage, sys)) do gen
         gen_id = get_name(gen)
@@ -84,29 +161,108 @@ function set_market_bids!(sys, db, date_range; kwargs...)
         else
             _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
 
-            # Load bids as decremental inputs
-            psd = load_bids.piecewise_step_data
-            time_series_data = Deterministic(;
-                name = "decremental_variable_cost",
-                data = Dict(start_date => psd),
-                resolution = get(kwargs, :resolution, Minute(5)),
-                interval = get(kwargs, :resolution, Minute(5)),
-            )
-            set_decremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
-            time_series_decremental_initial_input = Deterministic(;
-                name = "decremental_initial_input",
-                data = Dict(
-                    start_date => (first ∘ get_y_coords).(psd)
-                ),
-                resolution = get(kwargs, :resolution, Minute(5)),
-                interval = get(kwargs, :resolution, Minute(5)),
-            )
-            set_decremental_initial_input!(sys, gen, time_series_decremental_initial_input)
+            _set_decremental_bid_cost!(sys, gen, load_bids, start_date, resolution)
 
             _set_storage_energy_max_avail!(sys, gen, gen_bids, "energy_max_avail", start_date, resolution)
             _set_storage_energy_max_avail!(sys, gen, load_bids, "energy_max_avail_decremental", start_date, resolution)
         end
     end
+end
+
+"""
+    _is_non_scheduled_load(device) -> Bool
+
+Whether `device` is a non-scheduled load ([`get_scheduled_loads_dataframe`](@ref)): it has no
+energy bid, and takes part in the market only through FCAS offers.
+
+# Arguments
+- `device`: any component.
+
+# Returns
+`Bool`.
+"""
+_is_non_scheduled_load(device) = device isa InterruptiblePowerLoad && get(get_ext(device), "non_scheduled", false) === true
+
+"""
+    read_loss_factors(db; as_of = nothing, through = nothing) -> DataFrame
+
+Reads each unit's connection-point loss factors from `DUDETAILSUMMARY`: the row with
+`START_DATE <= as_of < END_DATE` in the latest archive.
+
+# Arguments
+- `db`: the database connection.
+- `as_of`: a `Date` or `DateTime` to resolve the factors as of. `nothing` keeps each unit's open row
+  (earliest `START_DATE`, the row [`read_units`](@ref) keeps).
+- `through`: when a `Date` or `DateTime` after `as_of`, warns if any unit's factors change
+  in `(as_of, through]`, since the result holds one factor per unit.
+
+# Returns
+A `DataFrame` with `DUID`, `LOAD_LOSS_FACTOR` (`TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR`,
+the factor for a load or a battery's charging side) and `GEN_LOSS_FACTOR` (`SECONDARY_TLF *
+DISTRIBUTIONLOSSFACTOR` for a `BIDIRECTIONAL` unit that publishes a secondary factor, else
+`LOAD_LOSS_FACTOR`). Requires the cached `DUDETAILSUMMARY` to hold the loss-factor columns;
+re-populate it with `force_new = true` otherwise.
+"""
+function read_loss_factors(
+        db; as_of::Union{Nothing, Date, DateTime} = nothing,
+        through::Union{Nothing, Date, DateTime} = nothing,
+    )
+    source = read_hive(db, :DUDETAILSUMMARY)
+    window = isnothing(as_of) ? "(END_DATE IS NULL OR year(END_DATE) = 2999)" : "START_DATE <= ? AND (END_DATE IS NULL OR END_DATE > ?)"
+    # Open rows keep the earliest START_DATE, as read_units does, so both readers pick the same row.
+    order = isnothing(as_of) ? "ASC" : "DESC"
+    sql = """
+        SELECT DUID,
+            TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR AS LOAD_LOSS_FACTOR,
+            CASE WHEN DISPATCHTYPE = 'BIDIRECTIONAL' AND SECONDARY_TLF IS NOT NULL
+                 THEN SECONDARY_TLF * DISTRIBUTIONLOSSFACTOR
+                 ELSE TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR END AS GEN_LOSS_FACTOR
+        FROM $source
+        WHERE archive_month = (SELECT max(archive_month) FROM $source) AND $window
+        QUALIFY row_number() OVER (PARTITION BY DUID ORDER BY START_DATE $order) = 1
+    """
+    factors = isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of, as_of])
+    if !isnothing(as_of) && !isnothing(through) && through > as_of
+        changed_all = _query(
+            db,
+            """
+            SELECT DISTINCT DUID FROM $source
+            WHERE archive_month = (SELECT max(archive_month) FROM $source) AND START_DATE > ? AND START_DATE <= ?
+            """,
+            [as_of, through],
+        ).DUID
+        changed = intersect(changed_all, factors.DUID)
+        isempty(changed) ||
+            @warn "Loss factors change within the date range; the factors in force at its start are used throughout" as_of through first_changed = first(changed, 5)
+    end
+    return select(factors, :DUID, :GEN_LOSS_FACTOR, :LOAD_LOSS_FACTOR)
+end
+
+"""
+    _refer_bids_to_reference_node!(bids, factors) -> bids
+
+Divides every price of `bids.piecewise_step_data` by its unit's loss factor, leaving the MW
+breakpoints unchanged. Referred prices are rounded to whole cents, as in NEMDE's case files.
+
+# Arguments
+- `bids`: the `DataFrame` from `_massage_bids`, modified in place.
+- `factors`: the output of [`read_loss_factors`](@ref); `GEN_LOSS_FACTOR` applies to `GEN` rows and
+  `LOAD_LOSS_FACTOR` to `LOAD` rows. Throws an `ArgumentError` naming any bid `DUID` it lacks.
+
+# Returns
+`bids`.
+"""
+function _refer_bids_to_reference_node!(bids, factors)
+    lookup = Dict(r.DUID => (gen = r.GEN_LOSS_FACTOR, load = r.LOAD_LOSS_FACTOR) for r in eachrow(factors))
+    unknown = setdiff(unique(bids.DUID), keys(lookup))
+    isempty(unknown) ||
+        throw(ArgumentError("No DUDETAILSUMMARY loss factor for bid unit(s) $(join(unknown, ", "))."))
+    bids.piecewise_step_data = map(eachrow(bids)) do row
+        factor = row.DIRECTION == "LOAD" ? lookup[row.DUID].load : lookup[row.DUID].gen
+        psd = row.piecewise_step_data
+        return PiecewiseStepData(get_x_coords(psd), round.(get_y_coords(psd) ./ factor; digits = 2))
+    end
+    return bids
 end
 
 """
@@ -156,7 +312,8 @@ end
 
 Reads energy offers from `BIDPEROFFER_D`/`BIDDAYOFFER_D` and returns one row per
 `(SETTLEMENTDATE, DUID, DIRECTION, INTERVAL_DATETIME)` with the 10-band offer curve
-collapsed into a `piecewise_step_data` column, plus `MAXAVAIL` (`BIDPEROFFER_D`) and
+collapsed into a `piecewise_step_data` column of connection-point prices (not referred to the
+reference node, unlike [`set_market_bids!`](@ref)), plus `MAXAVAIL` (`BIDPEROFFER_D`) and
 `MINIMUMLOAD`/`DAILYENERGYCONSTRAINT` (`BIDDAYOFFER_D`) - the physical bounds a caller needs
 to clip dispatch to, not just the priced curve. See [`read_fcas_bids`](@ref) for the
 FCAS-market equivalent.

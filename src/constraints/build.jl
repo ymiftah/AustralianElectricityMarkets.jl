@@ -54,8 +54,91 @@ function _canonical_period(ms::Millisecond)
     end
 end
 
+# One JSON-serializable row of `get_skipped_constraints`.
+function _skipped_row(name::String, reason::Symbol, missing_keys::Vector{String})
+    return Dict{String, Any}(
+        "constraint" => name, "reason" => String(reason), "missing" => missing_keys,
+    )
+end
+
+# Whether a term row's key is absent from `sys`; keyed on `TERM_KIND` only, never builds a term.
+function _key_missing(sys, row)
+    type = row.TERM_KIND == "UNIT" ? Device : row.TERM_KIND == "REGION" ? Area : AreaInterchange
+    return isnothing(get_component(type, sys, row.KEY))
+end
+
 """
-    add_nem_constraints!(sys, db, date_range; intervention = 0, include_solution = false, resolution = nothing, allow_empty_region_terms = false)
+    get_skipped_constraints(sys) -> DataFrame
+
+The invoked constraint versions [`add_nem_constraints!`](@ref) did not build into `sys`.
+
+# Arguments
+- `sys`: a `System` that `add_nem_constraints!` ran on.
+
+# Returns
+A `DataFrame` with `constraint` (versioned name), `reason` (`:no_definition`, `:no_terms`,
+`:unknown_duid`, `:unknown_region` or `:unknown_interconnector`, the kind of the first
+unresolved term), `n_missing` (number of unresolved term keys of any kind) and `missing_keys`
+(those keys). Empty when nothing was skipped or `add_nem_constraints!` has not run.
+"""
+function get_skipped_constraints(sys)
+    rows = get(get_ext(sys), "skipped_constraints", Dict{String, Any}[])
+    return DataFrame(;
+        constraint = String[r["constraint"] for r in rows],
+        reason = Symbol[Symbol(r["reason"]) for r in rows],
+        n_missing = Int[length(r["missing"]) for r in rows],
+        missing_keys = Vector{String}[String[k for k in r["missing"]] for r in rows],
+    )
+end
+
+"""
+    get_dropped_terms(sys) -> DataFrame
+
+The unit terms [`add_nem_constraints!`](@ref) dropped from built constraints because their DUID is
+absent from `sys`.
+
+# Arguments
+- `sys`: a `System` that `add_nem_constraints!` ran on.
+
+# Returns
+A `DataFrame` with `constraint` (versioned name), `kind`, `key`, `bid_type` and `factor`, one row
+per dropped term. Empty when nothing was dropped or `add_nem_constraints!` has not run.
+"""
+function get_dropped_terms(sys)
+    rows = get(get_ext(sys), "dropped_terms", Dict{String, Any}[])
+    return DataFrame(;
+        constraint = String[r["constraint"] for r in rows],
+        kind = String[r["kind"] for r in rows],
+        key = String[r["key"] for r in rows],
+        bid_type = String[r["bid_type"] for r in rows],
+        factor = Float64[r["factor"] for r in rows],
+    )
+end
+
+"""
+    _versions_without_definition(invoked, definitions) -> DataFrame
+
+Returns invoked constraint versions that do not have a published definition in GENCONDATA.
+Rows with a missing `GENCONID_EFFECTIVEDATE` are treated as having no definition.
+
+# Arguments
+- `invoked`: DataFrame with columns `GENCONID`, `GENCONID_EFFECTIVEDATE`, `GENCONID_VERSIONNO`.
+- `definitions`: DataFrame with columns `GENCONID`, `EFFECTIVEDATE`, `VERSIONNO`.
+
+# Returns
+A DataFrame (subset of `invoked`) containing only versions without a matching definition.
+"""
+function _versions_without_definition(invoked, definitions)
+    undefined = antijoin(
+        invoked, definitions;
+        on = [:GENCONID, :GENCONID_EFFECTIVEDATE => :EFFECTIVEDATE, :GENCONID_VERSIONNO => :VERSIONNO],
+        matchmissing = :notequal,
+    )
+    return undefined
+end
+
+"""
+    add_nem_constraints!(sys, db, date_range; intervention = 0, include_solution = false, resolution = nothing, allow_empty_region_terms = false, unresolved_terms = :drop)
 
 Adds one [`GenericConstraint`](@ref) per exact `(GENCONID, EFFECTIVEDATE, VERSIONNO)` invoked
 in `date_range`, named `GENCONID@EFFECTIVEDATE#VERSIONNO` and attached via `add_service!` to
@@ -71,11 +154,20 @@ its contributing devices.
   `nothing`.
 - `allow_empty_region_terms`: default `false` throws on an empty `RegionTerm`; `true` warns and
   proceeds.
+- `unresolved_terms`: what to do with a term whose DUID, region or interconnector is absent from
+  `sys`. `:drop` (default) builds the constraint without an unresolved *unit* term, as nempy does
+  for a unit that is not in the dispatch, and records its kind, key, `BIDTYPE` and factor in the
+  constraint's `ext["dropped_terms"]` and in [`get_dropped_terms`](@ref). An unresolved region or
+  interconnector term, or a constraint with no resolvable term, still skips the constraint.
+  `:skip` skips the constraint for any unresolved term.
 
 # Returns
 `(added, skipped)`: `added::Vector{String}` of component names, `skipped::Dict{String, Symbol}`
 mapping a skipped name to `:no_definition`, `:no_terms`, `:unknown_duid`, `:unknown_region`, or
-`:unknown_interconnector`.
+`:unknown_interconnector` (the kind of the first unresolved term). Dropped unit terms are read back
+with [`get_dropped_terms`](@ref).
+
+Each skipped version is also recorded on `sys`; read it with [`get_skipped_constraints`](@ref).
 
 Throws `ArgumentError` when `DISPATCHCONSTRAINT` is not cached, or when an empty `RegionTerm` is
 found and `allow_empty_region_terms = false`; either throw leaves `sys` unmodified.
@@ -83,7 +175,10 @@ found and `allow_empty_region_terms = false`; either throw leaves `sys` unmodifi
 function add_nem_constraints!(
         sys, db, date_range; intervention::Integer = 0, include_solution::Bool = false,
         resolution::Union{Nothing, Dates.Period} = nothing,
-        allow_empty_region_terms::Bool = false,
+        allow_empty_region_terms::Bool = false, unresolved_terms::Symbol = :drop,
+    )
+    unresolved_terms in (:drop, :skip) || throw(
+        ArgumentError("unresolved_terms must be :drop or :skip, got :$unresolved_terms"),
     )
     start_date = first(date_range)
     base_power = get_base_power(sys)
@@ -97,6 +192,7 @@ function add_nem_constraints!(
 
     invoked = read_invoked_constraints(db, date_range; intervention = intervention)
     if DataFrames.isempty(invoked)
+        get_ext(sys)["skipped_constraints"] = Dict{String, Any}[]
         @warn "No constraints invoked over $date_range; nothing added."
         return String[], Dict{String, Symbol}()
     end
@@ -120,6 +216,15 @@ function add_nem_constraints!(
     def_by_version = Dict((row.GENCONID, row.EFFECTIVEDATE, row.VERSIONNO) => row for row in eachrow(definitions))
 
     terms_long = read_constraint_terms(db, gencon_versions, date_range)
+
+    # Only versions GENCONDATA does not define: a published definition always wins.
+    undefined = _versions_without_definition(gencon_versions, definitions)
+    zero_definitions, zero_terms = _zero_flow_constraint_definitions(undefined)
+    if !isempty(zero_definitions)
+        definitions = vcat(definitions, zero_definitions; cols = :union)
+        terms_long = vcat(terms_long, zero_terms; cols = :union)
+        def_by_version = Dict((row.GENCONID, row.EFFECTIVEDATE, row.VERSIONNO) => row for row in eachrow(definitions))
+    end
     terms_by_version = groupby(terms_long, [:GENCONID, :EFFECTIVEDATE, :VERSIONNO])
 
     # Deliberately GENCONID alone, not the triple above: DISPATCH_FCAS_REQ_CONSTRAINT carries
@@ -129,6 +234,9 @@ function add_nem_constraints!(
 
     added = String[]
     skipped = Dict{String, Symbol}()
+    skipped_detail = Dict{String, Any}[]
+    dropped = Dict{String, Vector{Dict{String, Any}}}()
+    missing_weight = String[]
     empty_region_terms = @NamedTuple{constraint_name::String, region::String, bid_type::BidType}[]
     staged = @NamedTuple{
         gc::GenericConstraint, contributing_devices::Vector{Device},
@@ -146,10 +254,12 @@ function add_nem_constraints!(
 
         if !haskey(def_by_version, version_key)
             skipped[versioned_name] = :no_definition
+            push!(skipped_detail, _skipped_row(versioned_name, :no_definition, String[]))
             continue
         end
         if !haskey(terms_by_version, version_key)
             skipped[versioned_name] = :no_terms
+            push!(skipped_detail, _skipped_row(versioned_name, :no_terms, String[]))
             continue
         end
         def = def_by_version[version_key]
@@ -157,14 +267,33 @@ function add_nem_constraints!(
 
         resolved_terms = ConstraintTerm[]
         contributing_devices = Device[]
-        skip_reason = nothing
+        skip_reason = nothing  # the kind of the first unresolved term
+        missing_keys = String[]
+        dropped_terms = Dict{String, Any}[]
+        unskippable = false  # an unresolved term that forces a skip
         for row in eachrow(term_rows)
+            # Once the constraint is bound to be skipped, keep scanning only to list every missing key.
+            if unskippable
+                _key_missing(sys, row) && push!(missing_keys, row.KEY)
+                continue
+            end
             if row.TERM_KIND == "UNIT"
                 term = UnitTerm(row.KEY, BidType(row.BIDTYPE), row.FACTOR)
                 names = resolve_term_devices(sys, term)
                 if isnothing(names)
-                    skip_reason = :unknown_duid
-                    break
+                    isnothing(skip_reason) && (skip_reason = :unknown_duid)
+                    push!(missing_keys, row.KEY)
+                    if unresolved_terms == :skip
+                        unskippable = true
+                    else
+                        push!(
+                            dropped_terms,
+                            Dict{String, Any}(
+                                "kind" => "UNIT", "key" => row.KEY, "bid_type" => row.BIDTYPE, "factor" => row.FACTOR,
+                            ),
+                        )
+                    end
+                    continue
                 end
                 push!(resolved_terms, term)
                 push!(contributing_devices, get_component(Device, sys, only(names)))
@@ -172,8 +301,10 @@ function add_nem_constraints!(
                 bid_type = BidType(row.BIDTYPE)
                 names = resolve_term_devices(sys, RegionTerm(row.KEY, bid_type, row.FACTOR))
                 if isnothing(names)
-                    skip_reason = :unknown_region
-                    break
+                    isnothing(skip_reason) && (skip_reason = :unknown_region)
+                    push!(missing_keys, row.KEY)
+                    unskippable = true  # a region aggregate is never zero, so its term cannot be dropped
+                    continue
                 end
                 isempty(names) && push!(
                     empty_region_terms, (constraint_name = versioned_name, region = row.KEY, bid_type = bid_type),
@@ -182,22 +313,27 @@ function add_nem_constraints!(
                 # Not a name-based re-lookup: `Device` is ambiguous by name across concrete
                 # types (e.g. an interconnector's own `AreaInterchange` vs. a same-named
                 # `Line`), so this reuses `_region_devices`'s own typed result directly.
-                append!(contributing_devices, _region_devices(sys, row.KEY))
+                append!(contributing_devices, _region_devices(sys, row.KEY; loads = bid_type != BidType.ENERGY))
             else
                 term = InterconnectorTerm(row.KEY, row.FACTOR)
                 names = resolve_term_devices(sys, term)
                 if isnothing(names)
-                    skip_reason = :unknown_interconnector
-                    break
+                    isnothing(skip_reason) && (skip_reason = :unknown_interconnector)
+                    push!(missing_keys, row.KEY)
+                    unskippable = true  # a flow is not zero when unmodelled, so its term cannot be dropped
+                    continue
                 end
                 push!(resolved_terms, term)
                 push!(contributing_devices, get_component(AreaInterchange, sys, only(names)))
             end
         end
-        if !isnothing(skip_reason)
+        # Under :drop only unit terms are dropped, and a constraint left with no term is skipped.
+        if unskippable || (!isnothing(skip_reason) && isempty(resolved_terms))
             skipped[versioned_name] = skip_reason
+            push!(skipped_detail, _skipped_row(versioned_name, skip_reason, unique(missing_keys)))
             continue
         end
+        isempty(dropped_terms) || (dropped[versioned_name] = dropped_terms)
 
         sense = def.CONSTRAINTTYPE == "<=" ? ConstraintSense.LE :
             def.CONSTRAINTTYPE == ">=" ? ConstraintSense.GE : ConstraintSense.EQ
@@ -217,6 +353,7 @@ function add_nem_constraints!(
         # convention for every other power quantity on this System.
         rhs_series = rhs_series_mw ./ base_power
 
+        ismissing(def.GENERICCONSTRAINTWEIGHT) && push!(missing_weight, versioned_name)
         gc = GenericConstraint(;
             name = versioned_name,
             sense = sense,
@@ -231,6 +368,7 @@ function add_nem_constraints!(
                 "source" => def.SOURCE,
                 "effective_date" => string(def.EFFECTIVEDATE),
                 "version_no" => def.VERSIONNO,
+                "dropped_terms" => get(dropped, versioned_name, Dict{String, Any}[]),
             ),
         )
 
@@ -265,7 +403,15 @@ function add_nem_constraints!(
         for reason in values(skipped)
             reason_counts[reason] = get(reason_counts, reason, 0) + 1
         end
-        @warn "add_nem_constraints!: skipped $(length(skipped)) of $(nrow(gencon_versions)) invoked constraint versions" reason_counts
+        @warn "add_nem_constraints!: skipped $(length(skipped)) of $(nrow(gencon_versions)) invoked constraint versions (by reason: $(join(("$r=$n" for (r, n) in sort(collect(reason_counts))), ", "))); see get_skipped_constraints" reason_counts
+    end
+
+    if !isempty(dropped)
+        @warn "add_nem_constraints!: built $(length(dropped)) constraint(s) without $(sum(length, values(dropped))) unit term(s) whose DUID is absent from sys (unresolved_terms = :drop); see get_dropped_terms"
+    end
+
+    if !isempty(missing_weight)
+        @warn "add_nem_constraints!: $(length(missing_weight)) constraint(s) have a NULL GENERICCONSTRAINTWEIGHT and were given constraint_weight = 1.0: $missing_weight"
     end
 
     if !isempty(empty_region_terms)
@@ -288,8 +434,14 @@ function add_nem_constraints!(
         end
     end
 
+    get_ext(sys)["skipped_constraints"] = skipped_detail
+
     # sys is mutated only past this point - every throw above leaves it untouched, so a caller
     # retrying with allow_empty_region_terms=true on the same sys never double-adds anything.
+    get_ext(sys)["dropped_terms"] = Dict{String, Any}[
+        merge(term, Dict{String, Any}("constraint" => name)) for (name, terms) in sort!(collect(dropped); by = first)
+            for term in terms
+    ]
     for entry in staged
         add_service!(sys, entry.gc, entry.contributing_devices)
         add_time_series!(

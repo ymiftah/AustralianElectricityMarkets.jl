@@ -2,7 +2,9 @@
     AbstractNEMDispatch
 
 Supertype for the NEM dispatch device formulations: a per-band bid stack, a per-interval ramp
-limit, and the upper dispatch limit, applied to one active power variable per device.
+limit, and the upper dispatch limit, applied to one active power variable per device. A scheduled
+load (`PowerSystems.ControllableLoad`) uses the same variable as consumed MW, priced on its
+decremental offer and withdrawn from the area balance.
 
 Methods are defined over `PowerSystems.StaticInjection`; a `PowerSimulations.ProblemTemplate`
 selects the component types they apply to. Subtypes differ only in what the ramp constraint
@@ -53,6 +55,9 @@ PSI.requires_initialization(::NEMLookaheadDispatch) = true
 
 PSI.get_variable_binary(::PSI.ActivePowerVariable, ::Type{<:PSY.StaticInjection}, ::AbstractNEMDispatch) = false
 PSI.get_variable_multiplier(::PSI.ActivePowerVariable, ::Type{<:PSY.StaticInjection}, ::AbstractNEMDispatch) = 1.0
+# A scheduled load's ActivePowerVariable is its consumed MW (as DISPATCHLOAD and constraint terms
+# report it); it enters the area balance as a withdrawal.
+PSI.get_variable_multiplier(::PSI.ActivePowerVariable, ::Type{<:PSY.ControllableLoad}, ::AbstractNEMDispatch) = -1.0
 PSI.get_variable_lower_bound(::PSI.ActivePowerVariable, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 0.0
 PSI.get_variable_upper_bound(::PSI.ActivePowerVariable, d::PSY.StaticInjection, ::AbstractNEMDispatch) = PSY.get_max_active_power(d)
 
@@ -145,6 +150,12 @@ function PSI.get_initial_conditions_device_model(
     return PSI.DeviceModel(T, NEMReplayDispatch)
 end
 
+# Generators bid an incremental curve; a scheduled load bids only a decremental one.
+_process_market_bid_parameters!(container, devices, model) =
+    PSI.process_market_bid_parameters!(container, devices, model)
+_process_market_bid_parameters!(container, devices::IS.FlattenIteratorWrapper{<:PSY.ControllableLoad}, model) =
+    PSI.process_market_bid_parameters!(container, devices, model, false, true)
+
 """
     PSI.construct_device!(container, sys, ::PSI.ArgumentConstructStage, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
 
@@ -181,7 +192,7 @@ function PSI.construct_device!(
     PSI.requires_initialization(D()) &&
         PSI.add_initial_condition!(container, devices, D(), PSI.DevicePower())
 
-    PSI.process_market_bid_parameters!(container, devices, model)
+    _process_market_bid_parameters!(container, devices, model)
     PSI.add_cost_expressions!(container, devices, model)
 
     PSI.add_to_expression!(
@@ -269,7 +280,10 @@ end
 
 Holds each device's active power within its per-interval ramp rates of the base its formulation
 measures against. Rates are read from the `"ramp_up_rate"` and `"ramp_down_rate"` parameters in
-system-base per-unit per minute and multiplied by the interval length in minutes.
+system-base per-unit per minute and multiplied by the interval length in minutes. Each row carries
+a [`UnitRampUpSlack`](@ref) or [`UnitRampDownSlack`](@ref) priced at [`UNIT_RAMP_CVP_FACTOR`](@ref)
+times the Market Price Cap, so a ramp envelope that conflicts with the variable bounds is violated
+at that price instead of making the model infeasible; the variable bounds stay hard.
 
 # Returns
 `nothing`.
@@ -303,17 +317,75 @@ function PSI.add_constraints!(
         container, PSI.RampConstraint(), T, names, time_steps; meta = "down",
     )
 
+    slack_up = _add_unit_ramp_slack!(container, UnitRampUpSlack, T, names, time_steps)
+    slack_dn = _add_unit_ramp_slack!(container, UnitRampDownSlack, T, names, time_steps)
+
     base_at = _ramp_base_accessor(container, D, T, names, power)
     for name in names, t in time_steps
         base = base_at(name, t)
         con_up[name, t] = JuMP.@constraint(
-            jump_model, power[name, t] - base <= up_rate(name, t) * minutes,
+            jump_model, power[name, t] - base - slack_up[name, t] <= up_rate(name, t) * minutes,
         )
         con_dn[name, t] = JuMP.@constraint(
-            jump_model, base - power[name, t] <= down_rate(name, t) * minutes,
+            jump_model, base - power[name, t] - slack_dn[name, t] <= down_rate(name, t) * minutes,
         )
     end
     return
+end
+
+"""
+    _add_unit_ramp_slack!(container, var_type, T, names, time_steps)
+
+Builds a non-negative slack variable of `var_type` per `(name, t)` and prices it in the objective
+at [`UNIT_RAMP_CVP_FACTOR`](@ref) times the Market Price Cap ([`_container_market_price_cap`](@ref))
+for the interval, in `\$/MW` per dispatch interval. The variable is in system-base per-unit, like
+the ramp row it relaxes.
+
+# Arguments
+- `container`: the `PSI.OptimizationContainer` being built.
+- `var_type`: [`UnitRampUpSlack`](@ref) or [`UnitRampDownSlack`](@ref).
+- `T`: the component type owning the ramp rows.
+- `names`, `time_steps`: the device names and time steps of the rows.
+
+# Returns
+The slack variable container.
+"""
+function _add_unit_ramp_slack!(container::PSI.OptimizationContainer, var_type, ::Type{T}, names, time_steps) where {T}
+    return _add_cvp_slack!(container, var_type, T, names, time_steps, UNIT_RAMP_CVP_FACTOR)
+end
+
+"""
+    _add_cvp_slack!(container, var_type, T, names, time_steps, cvp_factor)
+
+Builds a non-negative slack variable of `var_type` per `(name, t)` and prices it in the objective
+at `cvp_factor` times the Market Price Cap ([`_container_market_price_cap`](@ref)) for the
+interval, in `\$/MW` per dispatch interval. The variable is in system-base per-unit.
+
+# Arguments
+- `container`: the `PSI.OptimizationContainer` being built.
+- `var_type`: the slack `PSI.VariableType`.
+- `T`: the component type owning the relaxed rows.
+- `names`, `time_steps`: the device names and time steps of the rows.
+- `cvp_factor`: the AEMO CVP factor the slack is priced at, times the Market Price Cap.
+
+# Returns
+The slack variable container.
+"""
+function _add_cvp_slack!(container::PSI.OptimizationContainer, var_type, ::Type{T}, names, time_steps, cvp_factor::Real) where {T}
+    jm = PSI.get_jump_model(container)
+    resolution = PSI.get_resolution(container)
+    initial_time = PSI.get_initial_time(container)
+    base_power = PSI.get_base_power(container)
+    slack = PSI.add_variable_container!(container, var_type(), T, names, time_steps)
+    for t in time_steps
+        mpc = _container_market_price_cap(container, initial_time + resolution * (t - 1))
+        coefficient = base_power * interval_cost_coefficient(cvp_factor * mpc, resolution)
+        for name in names
+            slack[name, t] = JuMP.@variable(jm, base_name = "$(nameof(var_type))_{$name,$t}", lower_bound = 0.0)
+            PSI.add_to_objective_invariant_expression!(container, slack[name, t] * coefficient)
+        end
+    end
+    return slack
 end
 
 # Parameter arrays are keyed by time-series UUID, not device name.
@@ -386,7 +458,9 @@ end
 "Per-unit slack allowed before a ramp-down floor above the availability ceiling is reported."
 const _RAMP_FLOOR_TOLERANCE = 1.0e-6
 
-# A ramp-down floor above the availability ceiling is infeasible; report it at build.
+# Reports a ramp-down floor above the availability ceiling at build. The elastic ramp row would
+# resolve the conflict, but NEMDE would break MaxAvail/UIGF before the unit ramp row, so the
+# conflict is surfaced instead of letting the model violate the ramp row.
 function _check_dispatch_envelope(container, devices, model)
     # Only the replay mode has a metered floor; the lookahead floor is a variable. The name check
     # is not redundant: the initial-conditions sub-model pairs this formulation with the parent
@@ -461,7 +535,10 @@ end
 """
     set_nem_dispatch_models!(template, sys; formulation = NEMReplayDispatch)
 
-Sets `formulation` as the device model for every dispatch participant in `sys`.
+Sets `formulation` as the device model for every dispatch participant in `sys`. Price-tied energy
+bands are dispatched pro rata ([`add_tie_break_constraints!`](@ref)) only when the template's
+network model is `PSI.AreaBalancePowerModel` with `use_slacks = true`; otherwise ties resolve to an
+arbitrary solver vertex.
 
 # Arguments
 - `template`: the `PowerSimulations.ProblemTemplate` to mutate.

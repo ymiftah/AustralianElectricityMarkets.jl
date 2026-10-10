@@ -97,6 +97,8 @@ function create_mock_data(hive_root::String)
                 SETTLEMENTDATE = fill(t, n),
                 REGIONID = regions,
                 TOTALDEMAND = fill(1000.0 + 10 * i, n),
+                INITIALSUPPLY = fill(990.0 + 10 * i, n),
+                DEMANDFORECAST = fill(25.0, n),
                 SS_SOLAR_AVAILABILITY = fill(100.0 + i, n),
                 SS_WIND_AVAILABILITY = fill(200.0 - i, n),
                 archive_month = fill("2025-01", n)
@@ -106,24 +108,38 @@ function create_mock_data(hive_root::String)
     save_hive(df_demand, :DISPATCHREGIONSUM)
 
     # 4. DUDETAIL
+    # Scheduled loads (DISPATCHTYPE LOAD) in NSW1, their rows last in each table. PUMP1 has
+    # GENUNITS/DUALLOC rows (Hydro), like Wivenhoe's PUMP2 in real data, so it must not also be
+    # built as a generator; it bids LOAD and has DISPATCHLOAD rows. PUMP2 has no GENUNITS row and
+    # no bid, like most real scheduled loads. WDR1 bids GEN, like a wholesale demand response unit.
+    # ASLOAD1 and ASLOAD2 are non-scheduled loads (no energy bid); only ASLOAD1 offers FCAS.
     save_hive(
-        DataFrame(
-            DUID = duids,
-            EFFECTIVEDATE = fill(base_datetime, n),
-            VERSIONNO = fill(1, n),
-            STATIONID = station_ids,
-            REGIONID = regions,
-            REGISTEREDCAPACITY = fill(100.0, n),
-            MINCAPACITY = fill(10.0, n),
-            MAXCAPACITY = fill(100.0, n),
-            # ER01 (index 5) carries deliberately asymmetric ramp rates - guards against
-            # up/down being crossed when mapped into PSY ramp_limits (see test/network_models/common.jl).
-            MAXRATEOFCHANGEDOWN = [1.0, 1.0, 1.0, 1.0, 7.0, 1.0],
-            MAXRATEOFCHANGEUP = [1.0, 1.0, 1.0, 1.0, 3.0, 1.0],
-            MAXSTORAGECAPACITY = fill(200.0, n),
-            STORAGEIMPORTEFFICIENCYFACTOR = fill(0.9, n),
-            STORAGEEXPORTEFFICIENCYFACTOR = fill(0.9, n),
-            archive_month = fill("2025-01", n)
+        vcat(
+            DataFrame(
+                DUID = duids,
+                EFFECTIVEDATE = fill(base_datetime, n),
+                VERSIONNO = fill(1, n),
+                STATIONID = station_ids,
+                REGIONID = regions,
+                REGISTEREDCAPACITY = fill(100.0, n),
+                MINCAPACITY = fill(10.0, n),
+                MAXCAPACITY = fill(100.0, n),
+                # ER01 (index 5) carries deliberately asymmetric ramp rates - guards against
+                # up/down being crossed when mapped into PSY ramp_limits (see test/network_models/common.jl).
+                MAXRATEOFCHANGEDOWN = [1.0, 1.0, 1.0, 1.0, 7.0, 1.0],
+                MAXRATEOFCHANGEUP = [1.0, 1.0, 1.0, 1.0, 3.0, 1.0],
+                MAXSTORAGECAPACITY = fill(200.0, n),
+                STORAGEIMPORTEFFICIENCYFACTOR = fill(0.9, n),
+                STORAGEEXPORTEFFICIENCYFACTOR = fill(0.9, n),
+                archive_month = fill("2025-01", n)
+            ), DataFrame(
+                DUID = ["PUMP1", "PUMP2", "WDR1", "ASLOAD1", "ASLOAD2"], EFFECTIVEDATE = fill(base_datetime, 5), VERSIONNO = fill(1, 5),
+                STATIONID = fill("PUMPST", 5), REGIONID = fill("NSW1", 5), REGISTEREDCAPACITY = fill(100.0, 5),
+                MINCAPACITY = fill(missing, 5), MAXCAPACITY = fill(100.0, 5),
+                MAXRATEOFCHANGEDOWN = fill(missing, 5), MAXRATEOFCHANGEUP = fill(missing, 5),
+                MAXSTORAGECAPACITY = fill(missing, 5), STORAGEIMPORTEFFICIENCYFACTOR = fill(missing, 5),
+                STORAGEEXPORTEFFICIENCYFACTOR = fill(missing, 5), archive_month = fill("2025-01", 5),
+            )
         ), :DUDETAIL
     )
 
@@ -144,6 +160,11 @@ function create_mock_data(hive_root::String)
                 CONNECTIONPOINTID = connection_points,
                 REGIONID = regions,
                 SCHEDULE_TYPE = [d in ("BW03", "BW04") ? "SEMI-SCHEDULED" : "SCHEDULED" for d in duids],
+                # BW01 is a battery (BIDIRECTIONAL); it charges (negative INITIALMW) in the last interval.
+                DISPATCHTYPE = [d == "BW01" ? "BIDIRECTIONAL" : "GENERATOR" for d in duids],
+                TRANSMISSIONLOSSFACTOR = fill(1.0, n),
+                DISTRIBUTIONLOSSFACTOR = fill(1.0, n),
+                SECONDARY_TLF = Union{Float64, Missing}[missing for i in 1:n],
                 archive_month = fill("2025-01", n)
             ),
             DataFrame(
@@ -154,7 +175,25 @@ function create_mock_data(hive_root::String)
                 CONNECTIONPOINTID = ["CP_PHANTOM"],
                 REGIONID = ["VIC1"],
                 SCHEDULE_TYPE = ["SCHEDULED"],
+                DISPATCHTYPE = ["GENERATOR"],
+                TRANSMISSIONLOSSFACTOR = [1.0],
+                DISTRIBUTIONLOSSFACTOR = [1.0],
+                SECONDARY_TLF = Union{Float64, Missing}[missing],
                 archive_month = ["2025-01"]
+            ),
+            DataFrame(
+                DUID = ["PUMP1", "PUMP2", "WDR1", "ASLOAD1", "ASLOAD2"],
+                START_DATE = fill(DateTime(2020, 1, 1), 5),
+                END_DATE = Union{DateTime, Missing}[missing, missing, missing, missing, missing],
+                STATIONID = fill("PUMPST", 5),
+                CONNECTIONPOINTID = ["CP_PUMP", "CP_PUMP2", "CP_WDR", "CP_ASLOAD1", "CP_ASLOAD2"],
+                REGIONID = fill("NSW1", 5),
+                SCHEDULE_TYPE = ["SCHEDULED", "SCHEDULED", "SCHEDULED", "NON-SCHEDULED", "NON-SCHEDULED"],
+                DISPATCHTYPE = fill("LOAD", 5),
+                TRANSMISSIONLOSSFACTOR = fill(1.0, 5),
+                DISTRIBUTIONLOSSFACTOR = fill(1.0, 5),
+                SECONDARY_TLF = Union{Float64, Missing}[missing, missing, missing, missing, missing],
+                archive_month = fill("2025-01", 5)
             ),
         ), :DUDETAILSUMMARY
     )
@@ -166,10 +205,10 @@ function create_mock_data(hive_root::String)
     save_hive(
         vcat(
             DataFrame(
-                STATIONID = ["BAYSW", "ERARING", "ST3", "ST4", "ST5", "ST6"],
-                STATIONNAME = ["Bayswater", "Eraring", "Station 3", "Station 4", "Station 5", "Station 6"],
-                POSTCODE = fill("3000", n),
-                archive_month = fill("2025-01", n)
+                STATIONID = ["BAYSW", "ERARING", "ST3", "ST4", "ST5", "ST6", "PUMPST"],
+                STATIONNAME = ["Bayswater", "Eraring", "Station 3", "Station 4", "Station 5", "Station 6", "Pump Station"],
+                POSTCODE = fill("3000", n + 1),
+                archive_month = fill("2025-01", n + 1)
             ),
             DataFrame(
                 STATIONID = ["BAYSW"],
@@ -183,11 +222,11 @@ function create_mock_data(hive_root::String)
     # 7. STATIONOPERATINGSTATUS
     save_hive(
         DataFrame(
-            STATUS = fill("COMMISSIONED", n),
-            STATIONID = ["BAYSW", "ERARING", "ST3", "ST4", "ST5", "ST6"],
-            EFFECTIVEDATE = fill(base_datetime, n),
-            VERSIONNO = fill(1, n),
-            archive_month = fill("2025-01", n)
+            STATUS = fill("COMMISSIONED", n + 1),
+            STATIONID = ["BAYSW", "ERARING", "ST3", "ST4", "ST5", "ST6", "PUMPST"],
+            EFFECTIVEDATE = fill(base_datetime, n + 1),
+            VERSIONNO = fill(1, n + 1),
+            archive_month = fill("2025-01", n + 1)
         ), :STATIONOPERATINGSTATUS
     )
 
@@ -200,28 +239,30 @@ function create_mock_data(hive_root::String)
     genset_ids = ["GEN$i" for i in 1:n]
     save_hive(
         DataFrame(
-            GENSETID = genset_ids,
-            CO2E_ENERGY_SOURCE = energy_sources,
-            CO2E_EMISSIONS_FACTOR = fill(0.5, n),
-            archive_month = fill("2025-01", n)
+            GENSETID = vcat(genset_ids, ["GENPUMP1"]),
+            CO2E_ENERGY_SOURCE = vcat(energy_sources, ["Hydro"]),
+            CO2E_EMISSIONS_FACTOR = fill(0.5, n + 1),
+            archive_month = fill("2025-01", n + 1)
         ), :GENUNITS
     )
 
     # 9. DUALLOC
     save_hive(
         DataFrame(
-            DUID = duids,
-            GENSETID = genset_ids,
-            LASTCHANGED = fill(base_datetime, n),
-            VERSIONNO = fill(1, n),
-            archive_month = fill("2025-01", n)
+            # PUMP1_OLD is a legacy DUALLOC row for PUMP1's genset whose DUID sorts after PUMP1,
+            # as OSB01 does after OSB-AG: read_units must still resolve PUMP1's genset.
+            DUID = vcat(duids, ["PUMP1", "PUMP1_OLD"]),
+            GENSETID = vcat(genset_ids, ["GENPUMP1", "GENPUMP1"]),
+            LASTCHANGED = fill(base_datetime, n + 2),
+            VERSIONNO = fill(1, n + 2),
+            archive_month = fill("2025-01", n + 2)
         ), :DUALLOC
     )
 
     # 10. BIDPEROFFER_D (49 intervals)
-    fcas_bid_types = ["RAISE6SEC", "LOWER6SEC", "RAISE60SEC", "LOWER60SEC", "RAISE5MIN", "LOWER5MIN", "RAISEREG", "LOWERREG"]
+    fcas_bid_types = ["RAISE1SEC", "LOWER1SEC", "RAISE6SEC", "LOWER6SEC", "RAISE60SEC", "LOWER60SEC", "RAISE5MIN", "LOWER5MIN", "RAISEREG", "LOWERREG"]
     trapezium_cols = ["ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN"]
-    contingency_types = ["RAISE6SEC", "LOWER6SEC", "RAISE60SEC", "LOWER60SEC", "RAISE5MIN", "LOWER5MIN"]
+    contingency_types = ["RAISE1SEC", "LOWER1SEC", "RAISE6SEC", "LOWER6SEC", "RAISE60SEC", "LOWER60SEC", "RAISE5MIN", "LOWER5MIN"]
     regulation_types = ["RAISEREG", "LOWERREG"]
     requirement_mw(bid_type) = bid_type in regulation_types ? 30.0 : 50.0
     marginal_value(bid_type) = bid_type in regulation_types ? 2.25 : 5.5
@@ -250,7 +291,13 @@ function create_mock_data(hive_root::String)
             MAXAVAIL = [100.0 + i],
             archive_month = ["2025-01"]
         )
-        tmp = vcat(tmp_gen, tmp_load)
+        # PUMP1's LOAD bid (a scheduled load: decremental only)
+        tmp_pump = DataFrame(
+            SETTLEMENTDATE = fill(test_date, 2), BIDTYPE = fill("ENERGY", 2), INTERVAL_DATETIME = fill(t, 2),
+            VERSIONNO = fill(1, 2), DUID = ["PUMP1", "WDR1"], DIRECTION = ["LOAD", "GEN"], MAXAVAIL = fill(80.0, 2),
+            archive_month = fill("2025-01", 2),
+        )
+        tmp = vcat(tmp_gen, tmp_load, tmp_pump)
         for b in 1:10
             tmp[!, "BANDAVAIL$b"] = fill(10.0, nrow(tmp))
         end
@@ -286,23 +333,24 @@ function create_mock_data(hive_root::String)
         # FCAS LOAD bids for the battery (BW01) - exercises set_fcas_bids!'s decremental path,
         # real NEMWEB data has substantial LOAD/BIDIRECTIONAL FCAS bid volume that an
         # earlier version of set_fcas_bids! silently dropped.
+        # ASLOAD1, a non-scheduled load, offers the same markets on the point trapezium (0, 0, 0, 0).
         tmp_fcas_load = DataFrame()
         for bid_type in fcas_bid_types
             block = DataFrame(
-                SETTLEMENTDATE = [test_date],
-                BIDTYPE = [bid_type],
-                INTERVAL_DATETIME = [t],
-                VERSIONNO = [1],
-                DUID = ["BW01"],
-                DIRECTION = ["LOAD"],
-                MAXAVAIL = [20.0 + i],
-                archive_month = ["2025-01"],
-                ENABLEMENTMIN = [20.0],
-                LOWBREAKPOINT = [30.0],
-                HIGHBREAKPOINT = [90.0],
-                ENABLEMENTMAX = [100.0],
-                ROCUP = [bid_type in ("RAISEREG", "LOWERREG") ? 1.0 : missing],
-                ROCDOWN = [bid_type in ("RAISEREG", "LOWERREG") ? 1.0 : missing],
+                SETTLEMENTDATE = fill(test_date, 2),
+                BIDTYPE = fill(bid_type, 2),
+                INTERVAL_DATETIME = fill(t, 2),
+                VERSIONNO = fill(1, 2),
+                DUID = ["BW01", "ASLOAD1"],
+                DIRECTION = fill("LOAD", 2),
+                MAXAVAIL = [20.0 + i, 15.0],
+                archive_month = fill("2025-01", 2),
+                ENABLEMENTMIN = [20.0, 0.0],
+                LOWBREAKPOINT = [30.0, 0.0],
+                HIGHBREAKPOINT = [90.0, 0.0],
+                ENABLEMENTMAX = [100.0, 0.0],
+                ROCUP = fill(bid_type in ("RAISEREG", "LOWERREG") ? 1.0 : missing, 2),
+                ROCDOWN = fill(bid_type in ("RAISEREG", "LOWERREG") ? 1.0 : missing, 2),
             )
             for b in 1:10
                 block[!, "BANDAVAIL$b"] = fill(10.0, nrow(block))
@@ -356,18 +404,23 @@ function create_mock_data(hive_root::String)
     for bid_type in fcas_bid_types
         append!(
             bid_day_offer_fcas_load, DataFrame(
-                BIDTYPE = [bid_type],
-                SETTLEMENTDATE = [test_date],
-                DUID = ["BW01"],
-                DIRECTION = ["LOAD"],
-                MINIMUMLOAD = [0.0],
-                DAILYENERGYCONSTRAINT = [1000.0],
-                VERSIONNO = [1],
-                archive_month = ["2025-01"]
+                BIDTYPE = fill(bid_type, 2),
+                SETTLEMENTDATE = fill(test_date, 2),
+                DUID = ["BW01", "ASLOAD1"],
+                DIRECTION = fill("LOAD", 2),
+                MINIMUMLOAD = fill(0.0, 2),
+                DAILYENERGYCONSTRAINT = fill(1000.0, 2),
+                VERSIONNO = fill(1, 2),
+                archive_month = fill("2025-01", 2)
             )
         )
     end
-    bid_day_offer = vcat(bid_day_offer_gen, bid_day_offer_load, bid_day_offer_fcas, bid_day_offer_fcas_load)
+    bid_day_offer_pump = DataFrame(
+        BIDTYPE = fill("ENERGY", 2), SETTLEMENTDATE = fill(test_date, 2), DUID = ["PUMP1", "WDR1"],
+        DIRECTION = ["LOAD", "GEN"], MINIMUMLOAD = fill(0.0, 2), DAILYENERGYCONSTRAINT = fill(1000.0, 2),
+        VERSIONNO = fill(1, 2), archive_month = fill("2025-01", 2),
+    )
+    bid_day_offer = vcat(bid_day_offer_gen, bid_day_offer_load, bid_day_offer_pump, bid_day_offer_fcas, bid_day_offer_fcas_load)
     for i in 1:10
         bid_day_offer[!, "PRICEBAND$i"] = fill(50.0 + i, nrow(bid_day_offer))
     end
@@ -385,9 +438,10 @@ function create_mock_data(hive_root::String)
     # DUID, which is never built into a System component), and one partial-coverage
     # constraint (N_PARTIAL_COVERAGE, invoked in DISPATCHCONSTRAINT for only every other
     # interval - exercises add_nem_constraints!'s rhs-padding/"invoked"-mask path, see
-    # test/constraints/constraints.jl).
+    # test/constraints/constraints.jl), and one constraint with a resolvable term (CP_BAYSW)
+    # and an unresolvable one (CP_PHANTOM) - N_ONE_PHANTOM_TERM, built with the term dropped.
     gencon_ids = ["F_$(region)_$(bid_type)" for region in regions for bid_type in fcas_bid_types]
-    all_gencon_ids = vcat(gencon_ids, ["N_BAYSW_THERMAL", "N_PHANTOM_TEST", "N_PARTIAL_COVERAGE"])
+    all_gencon_ids = vcat(gencon_ids, ["N_BAYSW_THERMAL", "N_PHANTOM_TEST", "N_PARTIAL_COVERAGE", "N_ONE_PHANTOM_TERM", "N_PUMP_THERMAL"])
     n_all = length(all_gencon_ids)
     save_hive(
         DataFrame(
@@ -510,17 +564,17 @@ function create_mock_data(hive_root::String)
         end
         append!(
             df_constraint, DataFrame(
-                SETTLEMENTDATE = [t, t],
-                RUNNO = [1, 1],
-                INTERVENTION = [0, 0],
-                CONSTRAINTID = ["N_BAYSW_THERMAL", "N_PHANTOM_TEST"],
-                RHS = [200.0, 100.0],
-                LHS = [180.0, 90.0],
-                MARGINALVALUE = [0.0, 0.0],
-                GENCONID_EFFECTIVEDATE = [test_date, test_date],
-                GENCONID_VERSIONNO = [1, 1],
-                LASTCHANGED = [t, t],
-                archive_month = ["2025-01", "2025-01"]
+                SETTLEMENTDATE = fill(t, 4),
+                RUNNO = fill(1, 4),
+                INTERVENTION = fill(0, 4),
+                CONSTRAINTID = ["N_BAYSW_THERMAL", "N_PHANTOM_TEST", "N_ONE_PHANTOM_TERM", "N_PUMP_THERMAL"],
+                RHS = [200.0, 100.0, 120.0, 60.0],
+                LHS = [180.0, 90.0, 110.0, 50.0],
+                MARGINALVALUE = [0.0, 0.0, 0.0, 0.0],
+                GENCONID_EFFECTIVEDATE = fill(test_date, 4),
+                GENCONID_VERSIONNO = fill(1, 4),
+                LASTCHANGED = fill(t, 4),
+                archive_month = fill("2025-01", 4)
             )
         )
         if iseven(i)
@@ -579,6 +633,19 @@ function create_mock_data(hive_root::String)
                 PERIODID = [1], FACTOR = [1.0], BIDTYPE = ["ENERGY"],
                 LASTCHANGED = [base_datetime], archive_month = ["2025-01"]
             ),
+            DataFrame(
+                CONNECTIONPOINTID = ["CP_PUMP"],
+                EFFECTIVEDATE = [test_date], VERSIONNO = [1], GENCONID = ["N_PUMP_THERMAL"],
+                PERIODID = [1], FACTOR = [-1.0], BIDTYPE = ["ENERGY"],
+                LASTCHANGED = [base_datetime], archive_month = ["2025-01"]
+            ),
+            DataFrame(
+                CONNECTIONPOINTID = ["CP_BAYSW", "CP_PHANTOM"],
+                EFFECTIVEDATE = [test_date, test_date], VERSIONNO = [1, 1],
+                GENCONID = ["N_ONE_PHANTOM_TERM", "N_ONE_PHANTOM_TERM"],
+                PERIODID = [1, 1], FACTOR = [1.0, 2.0], BIDTYPE = ["ENERGY", "ENERGY"],
+                LASTCHANGED = [base_datetime, base_datetime], archive_month = ["2025-01", "2025-01"]
+            ),
         ), :SPDCONNECTIONPOINTCONSTRAINT
     )
 
@@ -630,11 +697,16 @@ function create_mock_data(hive_root::String)
     # different formula entirely), so a test can prove set_nem_dispatch_limits! actually
     # overwrites the UIGF-derived "max_active_power" series rather than coinciding with it.
     uigf_for(duid, i) = duid == "BW03" ? 40.0 + i : (duid == "BW04" ? 70.0 - i : 0.0)
-    duid_offset(duid) = findfirst(==(duid), duids) - 1
-    initial_mw_for(duid, i) = 40.0 + duid_offset(duid) + (i % 10)
-    ramp_up_rate_for(duid, i) = 4.0 + duid_offset(duid) + (i % 5)
-    ramp_down_rate_for(duid, i) = 3.0 + duid_offset(duid) + (i % 5)
-    availability_for(duid, i) = 90.0 - 3 * duid_offset(duid) + (i % 6)
+    dl_duids = vcat(duids, ["PUMP1", "PUMP2", "WDR1", "ASLOAD1", "ASLOAD2"])  # the loads last, so no offset moves
+    m = length(dl_duids)
+    duid_offset(duid) = findfirst(==(duid), dl_duids) - 1
+    # Non-scheduled loads have no availability, ramp rates or scheduled energy. ASLOAD1 reports a
+    # small metered INITIALMW (as KEPBL1 does in real data), which the dispatch limits must pin to 0.
+    nonscheduled = ("ASLOAD1", "ASLOAD2")
+    initial_mw_for(duid, i) = duid == "BW01" && i == last(intervals) ? -30.0 : duid == "ASLOAD1" ? 0.1 : duid in nonscheduled ? 0.0 : 40.0 + duid_offset(duid) + (i % 10)
+    ramp_up_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 4.0 + duid_offset(duid) + (i % 5)
+    ramp_down_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 3.0 + duid_offset(duid) + (i % 5)
+    availability_for(duid, i) = duid in nonscheduled ? 0.0 : 90.0 - 3 * duid_offset(duid) + (i % 6)
     # AEMO *FCAS Model in NEMDE* §4.1 telemetered AGC enablement limits - strictly inside the
     # BIDPEROFFER_D RAISEREG/LOWERREG trapezium's own [20.0, 100.0] enablement span (see
     # BIDPEROFFER_D above), so set_fcas_scaling_inputs! + scale_fcas_trapezium's shrinkage is
@@ -647,31 +719,31 @@ function create_mock_data(hive_root::String)
     for i in intervals
         t = base_datetime + Minute(5 * i)
         block = DataFrame(
-            SETTLEMENTDATE = fill(t, n),
-            RUNNO = fill(1, n),
-            INTERVENTION = fill(0, n),
-            DUID = duids,
-            INITIALMW = [initial_mw_for(d, i) for d in duids],
-            RAMPUPRATE = [ramp_up_rate_for(d, i) for d in duids],
-            RAMPDOWNRATE = [ramp_down_rate_for(d, i) for d in duids],
-            TOTALCLEARED = fill(50.0, n),
-            AVAILABILITY = [availability_for(d, i) for d in duids],
-            AGCSTATUS = fill(1, n),
-            RAISEREGAVAILABILITY = fill(3.0, n),
-            LOWERREGAVAILABILITY = fill(3.0, n),
-            RAISEREGENABLEMENTMIN = [raise_reg_enablement_min_for(d, i) for d in duids],
-            RAISEREGENABLEMENTMAX = [raise_reg_enablement_max_for(d, i) for d in duids],
-            LOWERREGENABLEMENTMIN = [lower_reg_enablement_min_for(d, i) for d in duids],
-            LOWERREGENABLEMENTMAX = [lower_reg_enablement_max_for(d, i) for d in duids],
-            UIGF = Union{Float64, Missing}[uigf_for(d, i) for d in duids],
-            archive_month = fill("2025-01", n),
+            SETTLEMENTDATE = fill(t, m),
+            RUNNO = fill(1, m),
+            INTERVENTION = fill(0, m),
+            DUID = dl_duids,
+            INITIALMW = [initial_mw_for(d, i) for d in dl_duids],
+            RAMPUPRATE = [ramp_up_rate_for(d, i) for d in dl_duids],
+            RAMPDOWNRATE = [ramp_down_rate_for(d, i) for d in dl_duids],
+            TOTALCLEARED = fill(50.0, m),
+            AVAILABILITY = [availability_for(d, i) for d in dl_duids],
+            AGCSTATUS = fill(1, m),
+            RAISEREGAVAILABILITY = fill(3.0, m),
+            LOWERREGAVAILABILITY = fill(3.0, m),
+            RAISEREGENABLEMENTMIN = [raise_reg_enablement_min_for(d, i) for d in dl_duids],
+            RAISEREGENABLEMENTMAX = [raise_reg_enablement_max_for(d, i) for d in dl_duids],
+            LOWERREGENABLEMENTMIN = [lower_reg_enablement_min_for(d, i) for d in dl_duids],
+            LOWERREGENABLEMENTMAX = [lower_reg_enablement_max_for(d, i) for d in dl_duids],
+            UIGF = Union{Float64, Missing}[uigf_for(d, i) for d in dl_duids],
+            archive_month = fill("2025-01", m),
         )
         for bid_type in contingency_types
-            block[!, bid_type] = fill(5.0, n)
-            block[!, "$(bid_type)ACTUALAVAILABILITY"] = fill(5.0, n)
+            block[!, bid_type] = fill(5.0, m)
+            block[!, "$(bid_type)ACTUALAVAILABILITY"] = fill(5.0, m)
         end
         for bid_type in regulation_types
-            block[!, bid_type] = fill(3.0, n)
+            block[!, bid_type] = fill(3.0, m)
         end
         append!(df_dispatchload, block; promote = true)
     end
@@ -703,5 +775,187 @@ function create_mock_data(hive_root::String)
     end
     save_hive(df_dispatchprice, :DISPATCHPRICE)
 
+    # 17. MNSP offer tables and dispatch bid tracking: Basslink (BASSLINK, links BLNKTAS and BLNKVIC)
+    # on trading day 2025-01-01. Two offer versions per link; the second (rebid, later OFFERDATE) is
+    # the one DISPATCH_MNSPBIDTRK names for the intervals after 12:00 AEST. The period table's
+    # OFFERDATETIME equals the day offer's OFFERDATE.
+    let links = ["BLNKTAS", "BLNKVIC"]
+        offer_dates = [DateTime(2024, 12, 31, 15, 6, 1), DateTime(2025, 1, 1, 8, 53, 38)]
+        day_rows = DataFrame()
+        period_rows = DataFrame()
+        for link in links, (v, od) in enumerate(offer_dates)
+            append!(
+                day_rows,
+                DataFrame(
+                    SETTLEMENTDATE = [DateTime(2025, 1, 1)], OFFERDATE = [od], VERSIONNO = [1],
+                    PARTICIPANTID = ["BASSLINK"], LINKID = [link],
+                    ENTRYTYPE = [v == 1 ? "DAILY" : "REBID"],
+                    PRICEBAND1 = [0.01], PRICEBAND2 = [40.0 * v], PRICEBAND3 = [61.0], PRICEBAND4 = [75.0],
+                    PRICEBAND5 = [89.0], PRICEBAND6 = [104.0], PRICEBAND7 = [114.0], PRICEBAND8 = [200.0],
+                    PRICEBAND9 = [450.0], PRICEBAND10 = [20300.0],
+                    LASTCHANGED = [od], MR_FACTOR = Union{Missing, Float64}[missing], archive_month = ["2025-01"],
+                );
+                promote = true,
+            )
+            append!(
+                period_rows,
+                DataFrame(
+                    TRADINGDATE = fill(Date(2025, 1, 1), 288), OFFERDATETIME = fill(od, 288),
+                    LINKID = fill(link, 288), PERIODID = 1:288,
+                    MAXAVAIL = fill(v == 1 ? 594.0 : 400.0, 288), FIXEDLOAD = Vector{Union{Missing, Float64}}(missing, 288),
+                    RAMPUPRATE = fill(200.0, 288),
+                    BANDAVAIL1 = fill(0.0, 288), BANDAVAIL2 = fill(100.0, 288), BANDAVAIL3 = fill(100.0, 288),
+                    BANDAVAIL4 = fill(100.0, 288), BANDAVAIL5 = fill(100.0, 288),
+                    BANDAVAIL6 = fill(v == 1 ? 94.0 : 0.0, 288), BANDAVAIL7 = fill(0.0, 288),
+                    BANDAVAIL8 = fill(0.0, 288), BANDAVAIL9 = fill(0.0, 288), BANDAVAIL10 = fill(0.0, 288),
+                    PASAAVAILABILITY = fill(594.0, 288), RECALL_PERIOD = fill(0.0, 288),
+                    archive_month = fill("2025-01", 288),
+                );
+                promote = true,
+            )
+        end
+        # The previous trading day (2024-12-31) has one offer, tracked for the intervals 00:05 to 04:00
+        # on 2025-01-01 that the other mock tables cover.
+        early_offer = DateTime(2024, 12, 30, 15, 6, 1)
+        for link in links
+            append!(
+                day_rows,
+                DataFrame(
+                    SETTLEMENTDATE = [DateTime(2024, 12, 31)], OFFERDATE = [early_offer], VERSIONNO = [1],
+                    PARTICIPANTID = ["BASSLINK"], LINKID = [link], ENTRYTYPE = ["DAILY"],
+                    PRICEBAND1 = [0.01], PRICEBAND2 = [30.0], PRICEBAND3 = [61.0], PRICEBAND4 = [75.0],
+                    PRICEBAND5 = [89.0], PRICEBAND6 = [104.0], PRICEBAND7 = [114.0], PRICEBAND8 = [200.0],
+                    PRICEBAND9 = [450.0], PRICEBAND10 = [20300.0],
+                    LASTCHANGED = [early_offer], MR_FACTOR = Union{Missing, Float64}[missing], archive_month = ["2024-12"],
+                );
+                promote = true,
+            )
+            append!(
+                period_rows,
+                DataFrame(
+                    TRADINGDATE = fill(Date(2024, 12, 31), 288), OFFERDATETIME = fill(early_offer, 288),
+                    LINKID = fill(link, 288), PERIODID = 1:288,
+                    MAXAVAIL = fill(300.0, 288), FIXEDLOAD = Vector{Union{Missing, Float64}}(missing, 288),
+                    RAMPUPRATE = fill(200.0, 288),
+                    BANDAVAIL1 = fill(0.0, 288), BANDAVAIL2 = fill(100.0, 288), BANDAVAIL3 = fill(100.0, 288),
+                    BANDAVAIL4 = fill(100.0, 288), BANDAVAIL5 = fill(0.0, 288),
+                    BANDAVAIL6 = fill(0.0, 288), BANDAVAIL7 = fill(0.0, 288),
+                    BANDAVAIL8 = fill(0.0, 288), BANDAVAIL9 = fill(0.0, 288), BANDAVAIL10 = fill(0.0, 288),
+                    PASAAVAILABILITY = fill(300.0, 288), RECALL_PERIOD = fill(0.0, 288),
+                    archive_month = fill("2024-12", 288),
+                );
+                promote = true,
+            )
+        end
+        save_hive(day_rows, :MNSP_DAYOFFER)
+        save_hive(period_rows, :MNSP_BIDOFFERPERIOD)
+
+        # Dispatch intervals are labelled by their end: 04:05 on 2025-01-01 opens trading day period 1.
+        track = DataFrame()
+        for link in links, k in 1:288
+            t = DateTime(2025, 1, 1, 4, 0) + Minute(5k)
+            v = t >= DateTime(2025, 1, 1, 12, 0) ? 2 : 1
+            append!(
+                track,
+                DataFrame(
+                    SETTLEMENTDATE = [t], RUNNO = [1], PARTICIPANTID = ["BASSLINK"], LINKID = [link],
+                    OFFERSETTLEMENTDATE = [DateTime(2025, 1, 1)], OFFEREFFECTIVEDATE = [offer_dates[v]],
+                    OFFERVERSIONNO = [1], LASTCHANGED = [t], archive_month = ["2025-01"],
+                );
+                promote = true,
+            )
+        end
+        for link in links, k in 1:48
+            t = DateTime(2025, 1, 1) + Minute(5k)
+            append!(
+                track,
+                DataFrame(
+                    SETTLEMENTDATE = [t], RUNNO = [1], PARTICIPANTID = ["BASSLINK"], LINKID = [link],
+                    OFFERSETTLEMENTDATE = [DateTime(2024, 12, 31)], OFFEREFFECTIVEDATE = [early_offer],
+                    OFFERVERSIONNO = [1], LASTCHANGED = [t], archive_month = ["2025-01"],
+                );
+                promote = true,
+            )
+        end
+        save_hive(track, :DISPATCH_MNSPBIDTRK)
+
+        # Link capacity and TLFs: both links ride IC2 (NSW1 to VIC1), BLNKTAS forward and BLNKVIC reverse.
+        save_hive(
+            DataFrame(
+                INTERCONNECTORID = ["IC2", "IC2"], LINKID = links,
+                EFFECTIVEDATE = fill(DateTime(2024, 7, 1), 2), VERSIONNO = [1, 1],
+                FROMREGION = ["NSW1", "VIC1"], TOREGION = ["VIC1", "NSW1"],
+                FROM_REGION_TLF = [1.0, 0.9907], TO_REGION_TLF = [0.9907, 1.0],
+                LHSFACTOR = [1.0, 1.0], MAXCAPACITY = [594, 478],
+                archive_month = ["2025-01", "2025-01"],
+            ), :MNSP_INTERCONNECTOR,
+        )
+    end
+
+    return DuckDB.disconnect(conn)
+end
+
+"""
+    create_versioned_static_data(src_dir, dst_dir)
+
+Copies the mock hive at `src_dir` to `dst_dir`, then adds a version effective 2025-07-01 to
+`INTERCONNECTORCONSTRAINT` (IC1: `MAXMWIN` 300 instead of 500) and `DUDETAILSUMMARY` (BW01:
+`CONNECTIONPOINTID` `CP_NEW` instead of `CP_BAYSW`, closing the old row at that date), so that
+"latest" and "as of 2025-03-01" resolve differently. Each of the three tables also gets an
+older `2024-12` archive holding a stale, still-open version that the latest archive supersedes,
+so a read that does not restrict to the latest archive resolves it wrongly.
+"""
+function create_versioned_static_data(src_dir::String, dst_dir::String)
+    cp(src_dir, dst_dir; force = true)
+    ddb = DuckDB.DB()
+    conn = DuckDB.connect(ddb)
+    DuckDB.execute(conn, "SET preserve_identifier_case=true")
+    function rewrite(f, table)
+        table_dir = joinpath(dst_dir, table)
+        df = DataFrame(DuckDB.execute(conn, "SELECT * FROM read_parquet('$table_dir/**/*.parquet', hive_partitioning=true)"))
+        df = f(df)
+        rm(table_dir; recursive = true)
+        mkpath(table_dir)
+        DuckDB.register_data_frame(conn, df, "tmp_table")
+        DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+        return DuckDB.unregister_table(conn, "tmp_table")
+    end
+    effective = DateTime(2025, 7, 1)
+    rewrite("INTERCONNECTORCONSTRAINT") do df
+        new = df[df.INTERCONNECTORID .== "IC1", :]
+        new = copy(new)
+        new.EFFECTIVEDATE .= effective
+        new.MAXMWIN .= 300.0
+        stale = copy(new)
+        stale.EFFECTIVEDATE .= DateTime(2025, 2, 1)
+        stale.VERSIONNO .= 9
+        stale.MAXMWIN .= 111.0
+        stale.archive_month .= "2024-12"
+        return vcat(df, new, stale)
+    end
+    rewrite("DUDETAILSUMMARY") do df
+        df = copy(df)
+        df.END_DATE = Union{DateTime, Missing}[x for x in df.END_DATE]
+        old = df.DUID .== "BW01"
+        new = df[old, :]
+        new = copy(new)
+        df.END_DATE[old] .= effective
+        new.START_DATE .= effective
+        new.CONNECTIONPOINTID .= "CP_NEW"
+        stale = copy(df[old, :])
+        stale.START_DATE .= DateTime(2021, 1, 1)
+        stale.END_DATE .= missing
+        stale.CONNECTIONPOINTID .= "CP_STALE"
+        stale.archive_month .= "2024-12"
+        return vcat(df, new, stale)
+    end
+    rewrite("DUDETAIL") do df
+        stale = copy(df[df.DUID .== "BW01", :])
+        stale.EFFECTIVEDATE .= DateTime(2025, 2, 1)
+        stale.VERSIONNO .= 9
+        stale.REGISTEREDCAPACITY .= 1.0
+        stale.archive_month .= "2024-12"
+        return vcat(df, stale)
+    end
     return DuckDB.disconnect(conn)
 end

@@ -40,6 +40,26 @@ get_region(value::FCASService) = value.region
 get_bid_type(value::FCASService) = value.bid_type
 
 """
+    fcas_service_name(region, bid_type) -> String
+    fcas_service_name(device, bid_type) -> String
+
+The name `"<REGIONID>_<BIDTYPE>"` of the [`FCASService`](@ref) for `bid_type` in `region`, or in the
+area of `device`'s own bus.
+
+# Arguments
+- `region`: an `Area` name.
+- `device`: a device attached to a bus in an `Area`.
+- `bid_type`: the FCAS market.
+
+# Returns
+A `String`.
+"""
+fcas_service_name(region::AbstractString, bid_type::BidType) = "$(region)_$(string(bid_type))"
+function fcas_service_name(device::Device, bid_type::BidType)
+    return fcas_service_name(get_name(get_area(get_bus(device))), bid_type)
+end
+
+"""
     _fcas_bid_direction(device, bid_type) -> Symbol
 
 `:incremental`, `:decremental`, `:both` or `:none`, describing which `"fcas_trapezium_<bid_type>
@@ -59,13 +79,13 @@ end
     _fcas_bid_modeled(device, bid_type) -> Bool
 
 Whether `device`'s `bid_type` FCAS bid has a direction the FCAS market formulation models: an
-incremental bid on any device, a decremental-only bid on a `Storage` device, or a `Storage`
-device's regulation bid on both sides.
+incremental bid on any device but a load, a decremental-only bid on a `Storage` device or an
+`InterruptiblePowerLoad`, or a `Storage` device's regulation bid on both sides.
 """
 function _fcas_bid_modeled(device, bid_type::BidType)
     direction = _fcas_bid_direction(device, bid_type)
-    direction == :incremental && return true
-    direction == :decremental && return device isa Storage
+    direction == :incremental && return !(device isa InterruptiblePowerLoad)
+    direction == :decremental && return device isa Storage || device isa InterruptiblePowerLoad
     direction == :both && return device isa Storage && bid_type in FCAS_REGULATION_MARKETS
     return false
 end
@@ -75,7 +95,7 @@ end
 function _fcas_service_devices(sys, region::AbstractString, bid_type::BidType)
     inc_name = _fcas_series_name("fcas_curve", bid_type, false)
     dec_name = _fcas_series_name("fcas_curve", bid_type, true)
-    return filter(_region_devices(sys, region)) do d
+    return filter(_region_devices(sys, region; loads = true)) do d
         has_time_series(d, Deterministic, inc_name) || has_time_series(d, Deterministic, dec_name)
     end
 end
@@ -86,8 +106,8 @@ end
 Adds one [`FCASService`](@ref) named `"<REGIONID>_<BIDTYPE>"` for every region and FCAS market
 with at least one available device bidding it, attached via `add_service!` to those devices
 whose bid direction the FCAS market formulation models (an incremental bid, a decremental-only
-bid on a `Storage` device, or a `Storage` device's regulation bid on both sides). A service already in `sys` under that name is left
-as is. Devices bidding a market in a direction the formulation does not model are left out and
+bid on a `Storage` device or a load, or a `Storage` device's regulation bid on both sides). A
+service already in `sys` under that name is left as is. Devices bidding a market in a direction the formulation does not model are left out and
 reported.
 
 # Arguments
@@ -102,7 +122,7 @@ function add_fcas_services!(sys)
     added = String[]
     excluded = Dict{String, Vector{String}}()
     for region in sort(get_name.(get_components(Area, sys))), bid_type in FCAS_BID_TYPES
-        name = "$(region)_$(string(bid_type))"
+        name = fcas_service_name(region, bid_type)
         isnothing(get_component(FCASService, sys, name)) || continue
         bidders = filter(get_available, _fcas_service_devices(sys, region, bid_type))
         devices = filter(d -> _fcas_bid_modeled(d, bid_type), bidders)

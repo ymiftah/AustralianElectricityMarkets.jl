@@ -90,6 +90,34 @@ function _add_storage_constraint!(sys, params, rhs_mw::Float64)
 end
 
 """
+    _add_infeasible_energy_requirement!(sys, params, duid, rhs_mw)
+
+Attaches an extra `>=` `GenericConstraint` named `N_INFEASIBLE_MIN`, one ENERGY `UnitTerm` on
+`duid` with `rhs_mw` set above that unit's max capacity, genuinely unreachable under a hard
+bound. `rhs_mw` is natural MW; stored per-unit like every other [`GenericConstraint`](@ref).
+"""
+function _add_infeasible_energy_requirement!(sys, params, duid::AbstractString, rhs_mw::Float64)
+    base_power = get_base_power(sys)
+    rhs_pu = rhs_mw / base_power
+    times, n_raw = _raw_series_times(params)
+    gc = GenericConstraint(;
+        name = "N_INFEASIBLE_MIN",
+        sense = ConstraintSense.GE,
+        rhs = rhs_pu,
+        terms = ConstraintTerm[UnitTerm(duid, BidType.ENERGY, 1.0)],
+    )
+    add_service!(sys, gc, [get_component(ThermalStandard, sys, duid)])
+    add_time_series!(
+        sys, gc, SingleTimeSeries(; name = "rhs", data = TimeArray(times, fill(rhs_pu, n_raw))),
+    )
+    add_time_series!(
+        sys, gc,
+        SingleTimeSeries(; name = "invoked", data = TimeArray(times, fill(1.0, n_raw))),
+    )
+    return
+end
+
+"""
     _retime_gc_series!(sys, params, overrides_mw, invoked_overrides = Dict{String, Vector{Float64}}())
 
 Replaces every added [`GenericConstraint`](@ref)'s `"rhs"`/`"invoked"` `Deterministic` series
@@ -186,11 +214,16 @@ function _prune_unbuildable_constraints!(sys)
     return
 end
 
-function _nem_service_template()
+function _nem_service_template(; use_slacks::Bool = false, market_price_cap::Union{Nothing, Float64} = nothing)
     template = _area_balance_template()
+    attributes = isnothing(market_price_cap) ? Dict{String, Any}() :
+        Dict{String, Any}("market_price_cap" => market_price_cap)
     PSI.set_service_model!(
         template,
-        PSI.ServiceModel(GenericConstraint, AEMS.LinearFactorLimit; duals = [AEMS.NEMConstraintLimit]),
+        PSI.ServiceModel(
+            GenericConstraint, AEMS.LinearFactorLimit; duals = [AEMS.NEMConstraintLimit],
+            use_slacks = use_slacks, attributes = attributes,
+        ),
     )
     return template
 end
@@ -219,17 +252,41 @@ end
     @test Set(typeof.(devices)) == Set([ThermalStandard, AreaInterchange])
 end
 
-@testset "an unsupported bid_type throws, naming the constraint and the term" begin
+"""
+    _add_fcas_services!(sys)
+
+Adds the [`FCASService`](@ref)s `F_R1_RAISE6SEC`/`F_R2_LOWERREG` reference, one per device area, each
+over the constraint's contributing devices in that area.
+"""
+function _add_fcas_services!(sys)
+    for (id, bid_type) in (("F_R1_RAISE6SEC", BidType.RAISE6SEC), ("F_R2_LOWERREG", BidType.LOWERREG))
+        by_name = Dict{String, Vector{Device}}()
+        for d in get_contributing_devices(sys, _gc(sys, id))
+            push!(get!(by_name, fcas_service_name(d, bid_type), Device[]), d)
+        end
+        for (name, devices) in by_name
+            region = get_name(get_area(get_bus(first(devices))))
+            add_service!(sys, FCASService(; name = name, region = region, bid_type = bid_type), devices)
+        end
+    end
+    return
+end
+
+@testset "an FCAS term whose service the template doesn't model throws, naming the constraint and the term" begin
     sys = _prepared_system()
     for id in ("F_R2_LOWERREG", "N_HYDRO_LIMIT", "N_IC1_LIMIT", "N_PARTIAL")
         remove_component!(sys, _gc(sys, id))
     end
-    model = PSI.DecisionModel(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    add_service!(
+        sys, FCASService(; name = "1_RAISE6SEC", region = "1", bid_type = BidType.RAISE6SEC),
+        get_contributing_devices(sys, _gc(sys, "F_R1_RAISE6SEC")),
+    )
+    model = _decision_model(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     err = _build_error(model)
     @test err isa ArgumentError
     msg = sprint(showerror, err)
     @test occursin("F_R1_RAISE6SEC", msg)
-    @test occursin("bid_type", msg)
+    @test occursin("1_RAISE6SEC", msg)
 end
 
 @testset "a device type this template doesn't model throws, naming the constraint and the device" begin
@@ -237,7 +294,7 @@ end
     for id in ("F_R1_RAISE6SEC", "F_R2_LOWERREG", "N_IC1_LIMIT", "N_PARTIAL")
         remove_component!(sys, _gc(sys, id))
     end
-    model = PSI.DecisionModel(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     err = _build_error(model)
     @test err isa ArgumentError
     msg = sprint(showerror, err)
@@ -250,7 +307,7 @@ end
     # (ParkCity + Sundance - IC1 flow) at the first time step.
     baseline_sys = _prepared_system()
     baseline_template = _area_balance_template()
-    baseline_model = PSI.DecisionModel(baseline_template, baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    baseline_model = _decision_model(baseline_template, baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(baseline_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(baseline_model)
     @test PSI.get_run_status(baseline_model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
@@ -271,7 +328,7 @@ end
     sys = _prepared_system(Dict("N_IC1_LIMIT" => tightened_rhs))
     _prune_unbuildable_constraints!(sys)
     template = _nem_service_template()
-    model = PSI.DecisionModel(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(model)
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
@@ -327,7 +384,7 @@ end
     # stale key (sparse, if the cell were mistakenly populated).
     baseline_sys = _prepared_system()
     baseline_template = _area_balance_template()
-    baseline_model = PSI.DecisionModel(baseline_template, baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    baseline_model = _decision_model(baseline_template, baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(baseline_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(baseline_model)
     @test PSI.get_run_status(baseline_model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
@@ -350,7 +407,7 @@ end
     )
     _prune_unbuildable_constraints!(sys)
     template = _nem_service_template()
-    model = PSI.DecisionModel(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(model)
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
@@ -481,7 +538,7 @@ end
     # Phase 1: a deliberately slack RHS, to learn BAT1's unconstrained net injection.
     baseline_sys = _prepared_system(; storage_constraint_rhs = 1.0e4)
     _prune_unbuildable_constraints!(baseline_sys)
-    baseline_model = PSI.DecisionModel(
+    baseline_model = _decision_model(
         _storage_template(), baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
     )
     @test PSI.build!(baseline_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
@@ -499,7 +556,7 @@ end
     tightened_rhs = unconstrained_net / 2
     sys = _prepared_system(; storage_constraint_rhs = tightened_rhs)
     _prune_unbuildable_constraints!(sys)
-    model = PSI.DecisionModel(
+    model = _decision_model(
         _storage_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
@@ -533,6 +590,7 @@ end
 
 @testset "filter_buildable_generic_constraints throws one aggregated ArgumentError naming every unbuildable constraint" begin
     sys = _prepared_system()
+    _add_fcas_services!(sys)
     template = _area_balance_template()
     err = try
         AEMS.filter_buildable_generic_constraints(sys, template)
@@ -545,7 +603,7 @@ end
     @test occursin("F_R1_RAISE6SEC", msg)
     @test occursin("F_R2_LOWERREG", msg)
     @test occursin("N_HYDRO_LIMIT", msg)
-    @test occursin("bid_type", msg)
+    @test occursin("FCASMarket", msg)
     @test occursin("allow_partial_coverage", msg)
     @test !occursin("N_IC1_LIMIT", msg)
     @test !occursin("N_PARTIAL", msg)
@@ -553,6 +611,7 @@ end
 
 @testset "filter_buildable_generic_constraints with allow_partial_coverage = true returns the buildable subset and warns once" begin
     sys = _prepared_system()
+    _add_fcas_services!(sys)
     template = _area_balance_template()
     result = @test_logs (:warn,) AEMS.filter_buildable_generic_constraints(
         sys, template; allow_partial_coverage = true,
@@ -560,10 +619,19 @@ end
     expected = Set(PSY.get_name(_gc(sys, id)) for id in ("N_IC1_LIMIT", "N_PARTIAL"))
     @test Set(PSY.get_name.(result)) == expected
     @test issorted(PSY.get_name.(result))
+
+    skipped = []
+    @test_logs (:warn,) AEMS.filter_buildable_generic_constraints(
+        sys, template; allow_partial_coverage = true, skipped = skipped,
+    )
+    all_names = Set(PSY.get_name.(PSY.get_components(GenericConstraint, sys)))
+    @test Set(r.constraint for r in skipped) == setdiff(all_names, expected)
+    @test all(r -> r.n_missing >= 1, skipped)
 end
 
 @testset "the buildable subset builds and solves under per-instance registration, where the aggregated registration throws" begin
     sys = _prepared_system()
+    _add_fcas_services!(sys)
     template = _area_balance_template()
     buildable = AEMS.filter_buildable_generic_constraints(sys, template; allow_partial_coverage = true)
 
@@ -572,7 +640,7 @@ end
         aggregated_template,
         PSI.ServiceModel(GenericConstraint, AEMS.LinearFactorLimit; duals = [AEMS.NEMConstraintLimit]),
     )
-    aggregated_model = PSI.DecisionModel(
+    aggregated_model = _decision_model(
         aggregated_template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
     )
     @test _build_error(aggregated_model) isa ArgumentError
@@ -588,7 +656,7 @@ end
             ),
         )
     end
-    model = PSI.DecisionModel(filtered_template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(filtered_template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(model)
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
@@ -599,4 +667,213 @@ end
             if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit
     ]
     @test Set(k.meta for k in nem_keys) == Set(PSY.get_name.(buildable))
+end
+
+@testset "a constraint whose contributing devices are all unavailable is left out, recorded, and the rest builds" begin
+    sys = _prepared_system()
+    left_out = _gc(sys, "N_PARTIAL")
+    PSY.set_available!.(PSY.get_contributing_devices(sys, left_out), false)
+    # Not a failure: no error even without allow_partial_coverage for this reason.
+    skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
+    template = _area_balance_template()
+    buildable = AEMS.filter_buildable_generic_constraints(
+        sys, template; allow_partial_coverage = true, skipped = skipped,
+    )
+    @test filter(r -> r.reason == :no_available_device, skipped) ==
+        [(constraint = PSY.get_name(left_out), reason = :no_available_device, n_missing = 0)]
+    @test PSY.get_name(left_out) ∉ PSY.get_name.(buildable)
+
+    for gc in buildable
+        name = PSY.get_name(gc)
+        PSI.set_service_model!(
+            template, name,
+            PSI.ServiceModel(GenericConstraint, AEMS.LinearFactorLimit, name; duals = [AEMS.NEMConstraintLimit]),
+        )
+    end
+    model = _decision_model(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+end
+
+function _sys_with_infeasible_requirement()
+    sys = _prepared_system()
+    params = _native_forecast_params(sys)
+    # 10x TOY_CHEAP-equivalent max capacity on "Park City" - genuinely unreachable regardless of
+    # dispatch, mirroring the plan's TAS1 RAISE6SEC case (a real interval whose requirement
+    # wasn't met), not merely a tightened-but-satisfiable bound.
+    max_mw = get_max_active_power(get_component(ThermalStandard, sys, "Park City"))
+    _add_infeasible_energy_requirement!(sys, params, "Park City", max_mw * 10)
+    # _prepared_system() already ran transform_single_time_series! once; N_INFEASIBLE_MIN's raw
+    # SingleTimeSeries, added after, needs its own pass to become a DeterministicSingleTimeSeries.
+    transform_single_time_series!(sys, params.horizon, params.interval)
+    _prune_unbuildable_constraints!(sys)
+    for id in ("N_IC1_LIMIT", "N_PARTIAL")
+        remove_component!(sys, _gc(sys, id))
+    end
+    return sys
+end
+
+@testset "a genuinely violated interval is infeasible under a hard GenericConstraint, but builds and solves with a nonzero slack when elastic" begin
+    hard_sys = _sys_with_infeasible_requirement()
+    hard_model = _decision_model(
+        _nem_service_template(; use_slacks = false), hard_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
+    )
+    @test PSI.build!(hard_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    PSI.solve!(hard_model)
+    @test PSI.get_run_status(hard_model) != PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+    # Same network template as the hard case above; only the GenericConstraint ServiceModel's
+    # use_slacks differs. This fixture's dates predate the published MPC table, so the test
+    # supplies its own market_price_cap override rather than the financial-year lookup.
+    test_mpc = 20_300.0
+    elastic_sys = _sys_with_infeasible_requirement()
+    elastic_model = _decision_model(
+        _nem_service_template(; use_slacks = true, market_price_cap = test_mpc), elastic_sys;
+        optimizer = HiGHS.Optimizer, horizon = Hour(2),
+    )
+    @test PSI.build!(elastic_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    PSI.solve!(elastic_model)
+    @test PSI.get_run_status(elastic_model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+    # PSI.OptimizationProblemResults, not a direct JuMP.value on the container: after a full
+    # DecisionModel solve, the container's own JuMP model result cache is unreliable to read.
+    results = PSI.OptimizationProblemResults(elastic_model)
+    name = PSY.get_name(get_component(GenericConstraint, elastic_sys, "N_INFEASIBLE_MIN"))
+    slack_df = PSI.read_variable(results, "GenericConstraintSlackDown__GenericConstraint__$name")
+    energy_df = PSI.read_variable(results, "ActivePowerVariable__ThermalStandard")
+    park_city_mw = subset(energy_df, :name => ByRow(==("Park City"))).value
+    # with_units_base, not a bare get_max_active_power: PSI's own build/solve leaves elastic_sys
+    # in SYSTEM_BASE units, so an unguarded read here returns per-unit, not MW.
+    max_mw = PSY.with_units_base(
+        () -> get_max_active_power(get_component(ThermalStandard, elastic_sys, "Park City")),
+        elastic_sys, "NATURAL_UNITS",
+    )
+
+    @test all(v -> v >= 0.0, slack_df.value)
+    @test any(v -> v > 1.0e-6, slack_df.value)
+    # GE constraint minimized elastically binds exactly: slack = rhs - achieved dispatch.
+    @test slack_df.value .+ park_city_mw ≈ fill(max_mw * 10, length(slack_df.value)) atol = 1.0e-4
+
+    container = PSI.get_optimization_container(elastic_model)
+    @test !PSI.has_container_key(container, AEMS.GenericConstraintSlackUp, GenericConstraint, name)
+    @test PSI.get_objective_value(results) > 0.0
+
+    # PSI leaves a ConstraintType dual in $ per pu of RHS per interval: divide by base_power and
+    # the interval length for a $/MW rate.
+    dual_df = PSI.read_dual(results, "NEMConstraintLimit__GenericConstraint__$name")
+    resolution = PSI.get_resolution(container)
+    base_power = PSY.get_base_power(elastic_sys)
+    weight = get_constraint_weight(get_component(GenericConstraint, elastic_sys, "N_INFEASIBLE_MIN"))
+    @test abs.(dual_df.value) ./ (base_power * interval_hours(resolution)) ≈
+        fill(weight * test_mpc, nrow(dual_df)) rtol = 1.0e-6
+end
+
+@testset "Market Price Cap lookup covers only the published financial years" begin
+    @test AEMS._financial_year_mpc(DateTime(2025, 7, 1)) == 20_300.0
+    @test AEMS._financial_year_mpc(DateTime(2026, 6, 30, 23, 55)) == 20_300.0
+    @test AEMS._financial_year_mpc(DateTime(2026, 7, 1)) == 23_200.0
+    @test AEMS._financial_year_mpc(DateTime(2027, 6, 30, 23, 55)) == 23_200.0
+    @test AEMS._financial_year_mpc(DateTime(2025, 6, 30)) == 17_500.0
+    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2024, 6, 30))
+    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2027, 7, 1))
+end
+
+@testset "area-balance slack Market Price Cap: unpublished year throws, settings entry overrides" begin
+    # _prepared_system() is dated 2020, outside MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.
+    pruned_system() = (sys = _prepared_system(); _prune_unbuildable_constraints!(sys); sys)
+    model = PSI.DecisionModel(_nem_service_template(), pruned_system(); optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    err = _build_error(model)
+    @test err isa ArgumentError
+    @test occursin("No published Market Price Cap", sprint(showerror, err))
+
+    model = _decision_model(
+        _nem_service_template(), pruned_system(); mpc = 10_000.0, optimizer = HiGHS.Optimizer, horizon = Hour(2),
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    objective_terms = PSI.JuMP.objective_function(PSI.get_jump_model(container)).terms
+    expected = PSI.get_base_power(container) *
+        interval_cost_coefficient(AEMS.AREA_BALANCE_CVP_FACTOR * 10_000.0, PSI.get_resolution(container))
+    for var_type in (PSI.SystemBalanceSlackUp, PSI.SystemBalanceSlackDown)
+        slack = PSI.get_variable(container, var_type(), PSY.Area)
+        @test all(v -> objective_terms[v] ≈ expected, slack)
+    end
+end
+
+@testset "terms on an unavailable interconnector or unit contribute zero and build" begin
+    sys = _prepared_system()
+    _prune_unbuildable_constraints!(sys)
+    PSY.set_available!(PSY.get_component(PSY.AreaInterchange, sys, "IC1"), false)
+    PSY.set_available!(PSY.get_component(PSY.ThermalStandard, sys, "Sundance"), false)
+    model = _decision_model(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test isnothing(_build_error(model))
+end
+
+"""
+    _add_zero_flow_pair!(sys, params, interconnector, weight)
+
+Attaches the two `<=` [`GenericConstraint`](@ref)s of an Interconnector Zero pair on `interconnector`
+(`-flow <= 0` and `flow <= 0`, right-hand side 0, `weight` the CVP factor), the shape
+`add_nem_constraints!` builds from its built-in definition. Added before the retime, as for
+[`_add_storage_constraint!`](@ref).
+"""
+function _add_zero_flow_pair!(sys, params, interconnector::AbstractString, weight::Float64)
+    times, n_raw = _raw_series_times(params)
+    for (name, factor) in (("ZERO_NEG", -1.0), ("ZERO_POS", 1.0))
+        gc = GenericConstraint(;
+            name = name, sense = ConstraintSense.LE, rhs = 0.0, constraint_weight = weight,
+            terms = ConstraintTerm[InterconnectorTerm(interconnector, factor)],
+        )
+        add_service!(sys, gc, [get_component(AreaInterchange, sys, interconnector)])
+        add_time_series!(sys, gc, SingleTimeSeries(; name = "rhs", data = TimeArray(times, zeros(n_raw))))
+        add_time_series!(sys, gc, SingleTimeSeries(; name = "invoked", data = TimeArray(times, ones(n_raw))))
+    end
+    return
+end
+
+@testset "an invoked Interconnector Zero pair holds the net flow at zero, elastic at 1160 x MPC" begin
+    # Unconstrained, IC1 carries a non-zero flow.
+    baseline_sys = _prepared_system()
+    baseline_model = _decision_model(
+        _area_balance_template(), baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
+    )
+    @test PSI.build!(baseline_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    PSI.solve!(baseline_model)
+    baseline_flow = PSI.read_variable(
+        PSI.OptimizationProblemResults(baseline_model), "FlowActivePowerVariable__AreaInterchange",
+    )
+    @test any(v -> abs(v) > 1.0e-3, subset(baseline_flow, :name => ByRow(==("IC1"))).value)
+
+    sys = augmented_pscb_system()
+    _fix_thermal_floor!(sys)
+    add_nem_constraints!(sys, NEM_CONSTRAINTS_DB, NEM_CONSTRAINTS_DATE_RANGE)
+    _remove_unused_pscb_constraints!(sys)
+    params = _native_forecast_params(sys)
+    weight = 1160.0
+    _add_zero_flow_pair!(sys, params, "IC1", weight)
+    _retime_gc_series!(sys, params, Dict{String, Float64}())
+    _prune_unbuildable_constraints!(sys)
+
+    test_mpc = 20_300.0
+    model = _decision_model(
+        _nem_service_template(; use_slacks = true, market_price_cap = test_mpc), sys;
+        optimizer = HiGHS.Optimizer, horizon = Hour(2),
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    PSI.solve!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+
+    results = PSI.OptimizationProblemResults(model)
+    flow = PSI.read_variable(results, "FlowActivePowerVariable__AreaInterchange")
+    @test all(v -> abs(v) < 1.0e-6, subset(flow, :name => ByRow(==("IC1"))).value)
+
+    # Each row's slack is priced at weight x MPC per MW, in the objective's per-unit scale.
+    container = PSI.get_optimization_container(model)
+    objective_terms = PSI.JuMP.objective_function(PSI.get_jump_model(container)).terms
+    expected = PSI.get_base_power(container) *
+        interval_cost_coefficient(weight * test_mpc, PSI.get_resolution(container))
+    for name in ("ZERO_NEG", "ZERO_POS")
+        slack = PSI.get_variable(container, AEMS.GenericConstraintSlackUp(), GenericConstraint, name)
+        @test all(t -> objective_terms[slack[name, t]] ≈ expected, PSI.get_time_steps(container))
+        @test !PSI.has_container_key(container, AEMS.GenericConstraintSlackDown, GenericConstraint, name)
+    end
 end

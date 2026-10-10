@@ -407,7 +407,7 @@ end
         df = _read_parquet_file(tmpdir)
         @test "RRP" in names(df)
         @test ismissing(df.RRP[1])
-        @test eltype(df.RRP) <: Union{Missing, Float32}
+        @test eltype(df.RRP) <: Union{Missing, Float64}
     finally
         isfile(csv_path) && rm(csv_path)
     end
@@ -446,7 +446,7 @@ end
         df = _read_parquet_file(tmpdir)
         @test nrow(df) == 2
         @test all(ismissing, df.RRP)
-        @test eltype(df.RRP) <: Union{Missing, Float32}
+        @test eltype(df.RRP) <: Union{Missing, Float64}
     finally
         isfile(csv_path) && rm(csv_path)
     end
@@ -707,6 +707,42 @@ end
         @test source isa DataSource
         @test source.table_name == spec.name
         @test source.path == joinpath(tmpdir, spec.name)
+    end
+end
+
+@testset "MNSP and fast-start table specs: every non-key text column is typed explicitly" begin
+    text_columns = Set(["PARTICIPANTID", "LINKID", "ENTRYTYPE", "INTERCONNECTORID", "DUID"])
+    for name in ("MNSP_DAYOFFER", "MNSP_PEROFFER", "MNSP_BIDOFFERPERIOD", "DISPATCH_MNSPBIDTRK")
+        spec = only(filter(s -> s.name == name, _TABLE_SPECS))
+        for col in spec.columns
+            col in text_columns && continue
+            @test haskey(AustralianElectricityMarketsData.COLUMN_TYPES, col)
+        end
+        @test issubset(spec.sort_by, spec.columns)
+    end
+    for (table, cols) in (
+            "DISPATCHINTERCONNECTORRES" => ["FCASEXPORTLIMIT", "FCASIMPORTLIMIT"],
+            "DISPATCHLOAD" => ["DISPATCHMODETIME"],
+        )
+        spec = only(filter(s -> s.name == table, _TABLE_SPECS))
+        @test issubset(cols, spec.columns)
+        @test all(c -> AustralianElectricityMarketsData.COLUMN_TYPES[c] != String, cols)
+    end
+end
+
+@testset "_csv_to_parquet: timestamps with a millisecond fraction parse like plain ones" begin
+    csv_path = make_nemweb_csv(
+        "MNSP_DAYOFFER",
+        ["SETTLEMENTDATE", "OFFERDATE", "LINKID"],
+        [("2026/06/01 00:00:00", "2026/05/05 15:06:01.000", "BLNKVIC"), ("2026/06/01 00:00:00", "2026/05/31 08:53:38", "BLNKTAS")],
+    )
+    tmpdir = mktempdir()
+    try
+        _run_csv_to_parquet(csv_path, ["SETTLEMENTDATE", "OFFERDATE", "LINKID"], tmpdir)
+        df = sort(_read_parquet_file(tmpdir), :LINKID)
+        @test df.OFFERDATE == [DateTime(2026, 5, 31, 8, 53, 38), DateTime(2026, 5, 5, 15, 6, 1)]
+    finally
+        isfile(csv_path) && rm(csv_path)
     end
 end
 

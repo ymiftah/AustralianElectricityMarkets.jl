@@ -96,7 +96,10 @@ end
 entry_types(keys_) = Set(IS.Optimization.get_entry_type(k) for k in keys_)
 
 # The variables a constraint's affine expression actually references.
-constraint_vars(ref) = Set(keys(JuMP.constraint_object(ref).func.terms))
+# Power variables of a ramp row, ignoring its elastic slack.
+function constraint_vars(ref)
+    return Set(v for v in keys(JuMP.constraint_object(ref).func.terms) if !startswith(JuMP.name(v), "UnitRamp"))
+end
 
 component_keys(container_keys, ::Type{T}) where {T} =
     [k for k in container_keys if IS.Optimization.get_component_type(k) === T]
@@ -217,13 +220,24 @@ end
         participants = nem_dispatch_participants(sys)
         @test length(participants) >= 3
         @test PSY.EnergyReservoirStorage in participants
-        generator_participants = filter(!=(PSY.EnergyReservoirStorage), participants)
+        @test PSY.InterruptiblePowerLoad in participants
+        generator_participants = filter(!in((PSY.EnergyReservoirStorage, PSY.InterruptiblePowerLoad)), participants)
         variable_sets = [entry_types(component_keys(variable_keys, T)) for T in generator_participants]
         constraint_sets = [entry_types(component_keys(constraint_keys, T)) for T in generator_participants]
         @test allequal(variable_sets)
         @test allequal(constraint_sets)
         @test PSI.ActivePowerVariable in first(variable_sets)
         @test PSI.RampConstraint in first(constraint_sets)
+
+        @testset "a scheduled load gets the single-variable shape priced on its decremental offer" begin
+            load_variables = entry_types(component_keys(variable_keys, PSY.InterruptiblePowerLoad))
+            load_constraints = entry_types(component_keys(constraint_keys, PSY.InterruptiblePowerLoad))
+            @test PSI.ActivePowerVariable in load_variables
+            @test PSI.PiecewiseLinearBlockDecrementalOffer in load_variables
+            @test !(PSI.PiecewiseLinearBlockIncrementalOffer in load_variables)
+            @test PSI.RampConstraint in load_constraints
+            @test PSI.ActivePowerVariableTimeSeriesLimitsConstraint in load_constraints
+        end
 
         @testset "a battery gets the per-direction shape instead of a single ActivePowerVariable" begin
             battery_variables = entry_types(component_keys(variable_keys, PSY.EnergyReservoirStorage))
@@ -309,7 +323,7 @@ end
         for T in nem_dispatch_participants(sys), meta in ("up", "down")
             constraint = PSI.get_constraint(container, PSI.RampConstraint(), T, meta)
             names, steps = axes(constraint)
-            @test length(names) == length(collect(PSY.get_components(T, sys)))
+            @test length(names) == length(collect(PSY.get_components(PSY.get_available, T, sys)))
             @test length(steps) == 12
         end
     end
@@ -379,10 +393,10 @@ end
     @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
 end
 
-@testset "the envelope check names a battery whose raised ceiling exceeds its own rating" begin
+@testset "a battery whose raised ceiling exceeds its own rating builds, with the ramp row elastic" begin
     # A net ramp-down floor above generation availability raises the generation ceiling, but the
-    # battery's own output rating is lowered below that floor first, so the raise itself is
-    # inconsistent with the device.
+    # battery's own output rating is lowered below that floor first. The rating is a hard bound,
+    # so the ramp row relaxes instead of the build failing.
     sys = nem_dispatch_system(;
         mutate! = function (s)
             battery = PSY.get_component(PSY.EnergyReservoirStorage, s, "BW01")
@@ -393,7 +407,7 @@ end
         end,
     )
     model = nem_dispatch_model(sys)
-    @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
+    @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
 end
 
 @testset "skip_uncovered excludes a device with no rates instead of failing the build" begin
@@ -501,6 +515,13 @@ end
             )
             @test size(constraint, 2) == 1
             @test constraint_vars(constraint["ER02", 1]) == Set([power["ER02", 1]])
+            slack_type = meta == "up" ? AEMS.UnitRampUpSlack : AEMS.UnitRampDownSlack
+            other_type = meta == "up" ? AEMS.UnitRampDownSlack : AEMS.UnitRampUpSlack
+            func = JuMP.constraint_object(constraint["ER02", 1]).func
+            slack = PSI.get_variable(container, slack_type(), PSY.ThermalStandard)["ER02", 1]
+            other = PSI.get_variable(container, other_type(), PSY.ThermalStandard)["ER02", 1]
+            @test JuMP.coefficient(func, slack) == -1.0
+            @test JuMP.coefficient(func, other) == 0.0
         end
     end
 end

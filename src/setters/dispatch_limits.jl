@@ -1,8 +1,8 @@
 """
     _nem_dispatch_devices(sys)
 
-Collects every available `ThermalStandard`, `HydroDispatch`, `RenewableDispatch` and
-`EnergyReservoirStorage` in `sys` — the device types that [`set_nem_dispatch_limits!`](@ref)
+Collects every available `ThermalStandard`, `HydroDispatch`, `RenewableDispatch`,
+`InterruptiblePowerLoad` and `EnergyReservoirStorage` in `sys`, the device types that [`set_nem_dispatch_limits!`](@ref)
 and [`set_nem_initial_conditions!`](@ref) apply to.
 
 # Arguments
@@ -16,6 +16,7 @@ function _nem_dispatch_devices(sys)
     append!(devices, collect(get_components(get_available, ThermalStandard, sys)))
     append!(devices, collect(get_components(get_available, HydroDispatch, sys)))
     append!(devices, collect(get_components(get_available, RenewableDispatch, sys)))
+    append!(devices, collect(get_components(get_available, InterruptiblePowerLoad, sys)))
     append!(devices, collect(get_components(get_available, EnergyReservoirStorage, sys)))
     return devices
 end
@@ -56,12 +57,13 @@ end
     set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates = false, kwargs...)
 
 Attaches per-device `SingleTimeSeries` from [`read_dispatch_limits`](@ref) to every available
-`ThermalStandard`, `HydroDispatch`, `RenewableDispatch` and `EnergyReservoirStorage` in `sys`:
+`ThermalStandard`, `HydroDispatch`, `RenewableDispatch`, `InterruptiblePowerLoad` and
+`EnergyReservoirStorage` in `sys`:
 `"ramp_up_rate"` and `"ramp_down_rate"` (from `RAMPUPRATE`/`RAMPDOWNRATE`) and `"initial_mw"`
-(from `INITIALMW`, net MW for a battery). A `ThermalStandard`, `HydroDispatch` or
-`RenewableDispatch` also gets `"max_active_power"` — the device's upper dispatch limit,
+(from `INITIALMW`, net MW for a battery, consumed MW for a load). A `ThermalStandard`,
+`HydroDispatch`, `RenewableDispatch` or `InterruptiblePowerLoad` also gets `"max_active_power"`, the device's upper dispatch limit,
 `AVAILABILITY` raised to the ramp-down floor `INITIALMW - RAMPDOWNRATE × Δ` when that floor is
-higher, where Δ is the interval length in hours taken from `date_range`'s step — replacing any
+higher, where Δ is the interval length in hours taken from `date_range`'s step, replacing any
 `UIGF`- or bid-derived `"max_active_power"` series a device already carries - and
 `"availability"`, the raw `AVAILABILITY` (for a semi-scheduled unit, the lower of bid `MAXAVAIL`
 and `UIGF`), read back by [`get_energy_availability`](@ref). An
@@ -74,6 +76,11 @@ axis when its dispatch model is built.
 `sys`'s system base, rates per minute. `"max_active_power"` follows PSY's native convention instead: data
 normalised by the device's own static `max_active_power` (read under `NATURAL_UNITS`), with
 `scaling_factor_multiplier = get_max_active_power`.
+
+A non-scheduled load (see [`set_fcas_bids!`](@ref)) gets zero `"initial_mw"`, ramp rates, `"availability"`
+and `"max_active_power"` whatever `DISPATCHLOAD` meters: its consumption is already in regional demand
+and is not dispatched. This function must run after [`set_fcas_bids!`](@ref), which makes such a load
+available; a load made available later has no ramp or limit series.
 
 A device with no `DISPATCHLOAD` rows in `date_range`, missing intervals, a `missing` rate or
 `INITIALMW`, or a negative `RAMPUPRATE`/`RAMPDOWNRATE` is a problem; for a `ThermalStandard`,
@@ -153,8 +160,19 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
         max_active_power = is_storage ? nothing : Float64[]
         availability = is_storage ? nothing : Float64[]
         reason = nothing
+        pinned = _is_non_scheduled_load(device)
         for t in full_grid
             row = by_time[t]
+            if pinned
+                # A non-scheduled load's consumption is already in regional demand and is not
+                # dispatched: its energy is fixed at zero whatever DISPATCHLOAD meters.
+                push!(initial_mw, 0.0)
+                push!(ramp_up_rate, 0.0)
+                push!(ramp_down_rate, 0.0)
+                push!(max_active_power, 0.0)
+                push!(availability, 0.0)
+                continue
+            end
             if ismissing(row.INITIALMW) || ismissing(row.RAMPUPRATE) || ismissing(row.RAMPDOWNRATE) ||
                     (!is_storage && ismissing(row.AVAILABILITY))
                 reason = "missing INITIALMW/RAMPUPRATE/RAMPDOWNRATE" * (is_storage ? "" : "/AVAILABILITY") * " at $t"
@@ -324,6 +342,72 @@ function set_nem_initial_conditions!(sys, db, interval::DateTime; allow_missing_
             set_active_power!(device, initial_mw[duid])
             return
         end
+    end
+    return
+end
+
+"""
+    set_interconnector_flow_limits!(sys, db, date_range; kwargs...)
+
+Attaches the per-interval flow limits of [`read_interconnector_limits`](@ref) to every
+`PSY.AreaInterchange` in `sys` as the `"from_to_flow_limit"` and `"to_from_flow_limit"`
+`SingleTimeSeries` that `NEMInterconnectorLoss` reads: the flow is bounded below by `IMPORTLIMIT`
+and above by `EXPORTLIMIT`. Each series is the limit as a fraction of the interchange's static
+flow limit. The lower bound is the smaller of the two limits and the upper bound the larger,
+each clamped into the static envelope `[-MAXMWIN, MAXMWOUT]`. An interval with no published row
+or a `missing` limit keeps the static limit, and one `@warn` counts them.
+
+The published limits are computed after NEMDE's solve (each binding constraint's right-hand side
+projected with the other terms held at the solved values), so bounding flow by them pins it to
+NEMDE's answer. Use them as a diagnostic, not when validating flows.
+
+# Arguments
+- `sys`: the `System` to add to.
+- `db`: an `AEMDB` connection.
+- `date_range`: the dispatch intervals to replay.
+- `kwargs`: passed to [`read_interconnector_limits`](@ref) (e.g. `intervention`).
+
+# Returns
+`nothing`.
+"""
+function set_interconnector_flow_limits!(sys, db, date_range; kwargs...)
+    full_grid = collect(date_range)[1:(end - 1)]
+    rows = read_interconnector_limits(db, date_range; kwargs...)
+    by_ic = Dict(
+        key.INTERCONNECTORID => Dict(r.SETTLEMENTDATE => r for r in eachrow(g)) for
+            (key, g) in pairs(groupby(rows, :INTERCONNECTORID))
+    )
+
+    # Fraction of the static limit `static`; 1.0 keeps the static limit.
+    ratio(limit, static) = static > 0 ? limit / static : 1.0
+    fallbacks = String[]
+    series = Dict{String, NTuple{2, Vector{Float64}}}()
+    for d in get_components(AreaInterchange, sys)
+        name = get_name(d)
+        limits = with_units_base(() -> get_flow_limits(d), sys, "NATURAL_UNITS")
+        from_to = ones(length(full_grid))
+        to_from = ones(length(full_grid))
+        for (k, t) in enumerate(full_grid)
+            row = get(get(by_ic, name, Dict{DateTime, Any}()), t, nothing)
+            if isnothing(row) || ismissing(row.EXPORTLIMIT) || ismissing(row.IMPORTLIMIT)
+                push!(fallbacks, "$name@$t")
+                continue
+            end
+            # Signed bounds, ordered and clamped into the static envelope [-MAXMWIN, MAXMWOUT].
+            lower = clamp(min(row.IMPORTLIMIT, row.EXPORTLIMIT), -limits.from_to, limits.to_from)
+            upper = clamp(max(row.IMPORTLIMIT, row.EXPORTLIMIT), -limits.from_to, limits.to_from)
+            from_to[k] = ratio(-lower, limits.from_to)
+            to_from[k] = ratio(upper, limits.to_from)
+        end
+        series[name] = (from_to, to_from)
+    end
+    isempty(fallbacks) ||
+        @warn "set_interconnector_flow_limits!: $(length(fallbacks)) interconnector interval(s) kept the static flow limit (no usable published limits)" first_fallbacks = first(fallbacks, 5)
+
+    for d in get_components(AreaInterchange, sys)
+        from_to, to_from = series[get_name(d)]
+        add_time_series!(sys, d, SingleTimeSeries(; name = "from_to_flow_limit", data = TimeArray(full_grid, from_to)))
+        add_time_series!(sys, d, SingleTimeSeries(; name = "to_from_flow_limit", data = TimeArray(full_grid, to_from)))
     end
     return
 end

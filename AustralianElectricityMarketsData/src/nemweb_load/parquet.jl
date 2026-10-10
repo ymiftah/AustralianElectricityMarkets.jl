@@ -177,7 +177,12 @@ function _extract_d_lines(
     return combined_path, available_cols
 end
 
-_datetime_parse_expr(col::String) = "try_strptime(\"$col\", '%Y/%m/%d %H:%M:%S')"
+# TIMESTAMP(3) columns (e.g. MNSP_DAYOFFER.OFFERDATE) carry a ".000" fraction the plain format rejects.
+function _datetime_parse_expr(col::String)
+    plain = "try_strptime(\"$col\", '%Y/%m/%d %H:%M:%S')"
+    fractional = "try_strptime(\"$col\", '%Y/%m/%d %H:%M:%S.%g')"
+    return "COALESCE($plain, $fractional)"
+end
 _cast_expr(col::String) = _cast_expr(col, get(COLUMN_TYPES, col, String))
 _cast_expr(col::String, ::Type{DateTime}) = "$(_datetime_parse_expr(col)) AS \"$col\""
 _cast_expr(col::String, ::Type{Date}) = "CAST($(_datetime_parse_expr(col)) AS DATE) AS \"$col\""

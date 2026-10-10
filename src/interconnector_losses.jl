@@ -293,6 +293,9 @@ function read_interconnector_loss_parameters(db, as_of::Union{Date, DateTime})
     )
 end
 
+# AEMO's `FROMREGIONLOSSSHARE` for Basslink is not well defined; nempy sets it to 1 to best match NEMDE.
+const _LOSS_SHARE_OVERRIDES = Dict("T-V-MNSP1" => 1.0)
+
 """
     interconnector_loss_models(db, as_of) -> Dict{String, InterconnectorLossModel}
 
@@ -303,6 +306,9 @@ Every interconnector's [`InterconnectorLossModel`](@ref), assembled from
 
 An interconnector with loss parameters but no `LOSSMODEL` breakpoints is skipped, reported in
 one summary `@warn`.
+
+The loss share of `T-V-MNSP1` (Basslink) is fixed at `1.0`, as in nempy, because AEMO's published
+value is not well defined.
 
 Throws `ArgumentError` when no interconnector survives.
 """
@@ -334,7 +340,7 @@ function interconnector_loss_models(db, as_of::Union{Date, DateTime})
             interconnector = id,
             from_region = row.REGIONFROM,
             to_region = row.REGIONTO,
-            from_region_loss_share = coalesce(row.FROMREGIONLOSSSHARE, 0.5),
+            from_region_loss_share = get(_LOSS_SHARE_OVERRIDES, id, coalesce(row.FROMREGIONLOSSSHARE, 0.5)),
             loss_constant = coalesce(row.LOSSCONSTANT, 1.0),
             loss_flow_coefficient = coalesce(row.LOSSFLOWCOEFFICIENT, 0.0),
             demand_coefficients = get(demand_coefficients, id, Dict{String, Float64}()),

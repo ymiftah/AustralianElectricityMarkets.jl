@@ -70,13 +70,28 @@
             end
 
             @testset "set_market_bids!" begin
-                set_market_bids!(sys, db, date_range; resolution = resolution)
+                # PUMP2 has no bid and WDR1 bids GEN: unavailable, one aggregated warning each.
+                @test_logs (:warn, r"WDR1") (:warn, r"PUMP2") match_mode = :any set_market_bids!(
+                    sys, db, date_range; resolution = resolution,
+                )
                 for gen in get_components(ThermalStandard, sys)
                     # Verify time series exists
                     ta = get_time_series_array(Deterministic, gen, "variable_cost")
                     # In set_market_bids!, Deterministic TS is created with one forecast
                     # at first(date_range). ta contains the values of that forecast.
                     @test length(ta) == length(date_range) - 1
+                end
+
+                @testset "Scheduled loads" begin
+                    @test !get_available(get_component(InterruptiblePowerLoad, sys, "PUMP2"))
+                    @test !get_available(get_component(InterruptiblePowerLoad, sys, "WDR1"))
+                    pump = get_component(InterruptiblePowerLoad, sys, "PUMP1")
+                    @test get_available(pump)
+                    ta = get_time_series_array(Deterministic, pump, "decremental_variable_cost")
+                    @test length(ta) == length(date_range) - 1
+                    @test !isempty(get_time_series_array(Deterministic, pump, "decremental_initial_input"))
+                    # A load has no incremental offer
+                    @test !has_time_series(pump, Deterministic, "variable_cost")
                 end
 
                 @testset "Batteries" begin
@@ -136,6 +151,20 @@
                 isempty(region_demand) && continue
                 reconstructed = get_time_series_values(SingleTimeSeries, load, "max_active_power")
                 @test isapprox(reconstructed, region_demand.TOTALDEMAND; atol = 1.0e-6)
+            end
+        end
+
+        @testset "set_demand! attaches loss_demand = INITIALSUPPLY + DEMANDFORECAST (NATURAL_UNITS)" begin
+            for load in get_components(PowerLoad, sys)
+                region_id = replace(get_name(load), " Load" => "")
+                region_demand = @chain demand_df begin
+                    subset(:REGIONID => ByRow(==(region_id)))
+                    sort(:SETTLEMENTDATE)
+                end
+                isempty(region_demand) && continue
+                reconstructed = get_time_series_values(SingleTimeSeries, load, "loss_demand")
+                @test isapprox(reconstructed, region_demand.LOSSDEMAND; atol = 1.0e-6)
+                @test !isapprox(reconstructed, region_demand.TOTALDEMAND; atol = 1.0e-6)
             end
         end
 
@@ -429,6 +458,31 @@
             end
         end
 
+        @testset "attaches the full dispatch envelope to a scheduled load" begin
+            sys = deepcopy(sys_base)
+            set_nem_dispatch_limits!(sys, db, date_range)
+            pump = get_component(InterruptiblePowerLoad, sys, "PUMP1")
+            for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw", "max_active_power", "availability")
+                @test length(get_time_series_array(SingleTimeSeries, pump, name)) == length(date_range) - 1
+            end
+            rows = sort(subset(truth, :DUID => ByRow(==("PUMP1"))), :SETTLEMENTDATE)
+            @test isapprox(
+                get_time_series_values(SingleTimeSeries, pump, "initial_mw"), rows.INITIALMW ./ base_power; atol = 1.0e-8,
+            )
+        end
+
+        @testset "pins a non-scheduled load's energy to zero whatever DISPATCHLOAD meters" begin
+            sys = deepcopy(sys_base)
+            set_fcas_bids!(sys, db, date_range)
+            @test all(>(0.0), subset(truth, :DUID => ByRow(==("ASLOAD1"))).INITIALMW)
+            set_nem_dispatch_limits!(sys, db, date_range)
+            asload = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
+            @test get_available(asload)
+            for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw", "max_active_power", "availability")
+                @test all(==(0.0), get_time_series_values(SingleTimeSeries, asload, name))
+            end
+        end
+
         @testset "attaches ramp/initial series to a battery, with no max_active_power" begin
             sys = deepcopy(sys_base)
             set_nem_dispatch_limits!(sys, db, date_range)
@@ -710,7 +764,7 @@
 
             short_range = start_date:resolution:(start_date + Minute(10))
             grid = collect(short_range)[1:(end - 1)]  # 3 intervals
-            duids = ["BW01", "BW02", "BW03", "BW04", "ER01", "ER02"]
+            duids = ["BW01", "BW02", "BW03", "BW04", "ER01", "ER02", "PUMP1", "PUMP2", "WDR1"]
 
             rows = DataFrame(
                 SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
@@ -1162,7 +1216,7 @@
         start_date = DateTime(2025, 1, 1, 0, 0)
         short_range = start_date:resolution:(start_date + Minute(10))
         grid = collect(short_range)[1:(end - 1)]  # 3 intervals
-        duids = ["BW01", "BW02", "BW03", "BW04", "ER01", "ER02"]
+        duids = ["BW01", "BW02", "BW03", "BW04", "ER01", "ER02", "PUMP1", "PUMP2", "WDR1"]
 
         rows = DataFrame(
             SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
@@ -1220,7 +1274,7 @@
         start_date = DateTime(2025, 1, 1, 0, 0)
         short_range = start_date:resolution:(start_date + Minute(10))
         grid = collect(short_range)[1:(end - 1)]  # 3 intervals
-        covered_duids = ["BW01", "BW02", "BW03", "BW04", "ER02"]  # every dispatch device except ER01
+        covered_duids = ["BW01", "BW02", "BW03", "BW04", "ER02", "PUMP1", "PUMP2", "WDR1"]  # every dispatch device except ER01
 
         rows = DataFrame(
             SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
@@ -1280,6 +1334,115 @@
             end
             @test err2 isa ArgumentError
             @test occursin("ER01", err2.msg)
+        end
+    end
+    @testset "set_market_bids! refers energy bids to the reference node" begin
+        using DuckDB
+        # Copies the mock hive, rewriting DUDETAILSUMMARY with `f`.
+        function loss_factor_db(f)
+            dir = mktempdir()
+            cp(AEM_TEST_HIVE_DIR, dir; force = true)
+            conn = DuckDB.connect(DuckDB.DB())
+            DuckDB.execute(conn, "SET preserve_identifier_case=true")
+            table_dir = joinpath(dir, "DUDETAILSUMMARY")
+            df = DataFrame(DuckDB.execute(conn, "SELECT * FROM read_parquet('$table_dir/**/*.parquet', hive_partitioning=true)"))
+            df = f(df)
+            rm(table_dir; recursive = true)
+            mkpath(table_dir)
+            DuckDB.register_data_frame(conn, df, "tmp_table")
+            DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+            return aem_connect(HiveConfiguration(hive_location = dir, filesystem = "file"))
+        end
+        fy_change = DateTime(2025, 7, 1)
+        # Old financial year (closed at fy_change) and new one (open) for every DUID.
+        function two_years(df)
+            old = copy(df)
+            old.END_DATE = Union{DateTime, Missing}[fy_change for _ in 1:nrow(old)]
+            old.DISPATCHTYPE = [d == "BW01" ? "BIDIRECTIONAL" : "GENERATOR" for d in old.DUID]
+            old.TRANSMISSIONLOSSFACTOR = [d == "ER01" ? 0.9 : d in ("BW01", "PUMP1") ? 0.8 : 1.0 for d in old.DUID]
+            old.DISTRIBUTIONLOSSFACTOR = [d == "ER01" ? 0.97 : 1.0 for d in old.DUID]
+            old.SECONDARY_TLF = Union{Float64, Missing}[d == "BW01" ? 0.5 : d == "BW02" ? 0.7 : missing for d in old.DUID]
+            new = copy(df)
+            new.START_DATE .= fy_change
+            new.TRANSMISSIONLOSSFACTOR = [d == "ER01" ? 0.8 : 1.0 for d in new.DUID]
+            new.DISTRIBUTIONLOSSFACTOR = fill(1.0, nrow(new))
+            new.SECONDARY_TLF = Union{Float64, Missing}[missing for _ in 1:nrow(new)]
+            return vcat(old, new)
+        end
+        ldb = loss_factor_db(two_years)
+        start_date = DateTime(2025, 1, 1, 0, 0)
+        date_range = start_date:Minute(5):(start_date + Hour(1))
+        factor(df, d, col) = only(df[df.DUID .== d, col])
+
+        @testset "read_loss_factors" begin
+            old = read_loss_factors(ldb; as_of = start_date)
+            @test factor(old, "ER01", :LOAD_LOSS_FACTOR) ≈ 0.9 * 0.97   # DLF is applied
+            @test factor(old, "ER01", :GEN_LOSS_FACTOR) ≈ 0.9 * 0.97
+            @test factor(old, "BW01", :GEN_LOSS_FACTOR) == 0.5            # BIDIRECTIONAL: secondary on GEN
+            @test factor(old, "BW01", :LOAD_LOSS_FACTOR) == 0.8
+            @test factor(old, "BW02", :GEN_LOSS_FACTOR) == 1.0            # SECONDARY_TLF ignored off a BDU
+            new = read_loss_factors(ldb; as_of = DateTime(2025, 7, 2))
+            @test factor(new, "ER01", :LOAD_LOSS_FACTOR) == 0.8
+            @test factor(new, "BW01", :GEN_LOSS_FACTOR) == 1.0
+            # The new row starts at the boundary; a Date before it resolves the old one.
+            @test factor(read_loss_factors(ldb; as_of = fy_change - Minute(5)), "ER01", :LOAD_LOSS_FACTOR) ≈ 0.9 * 0.97
+            @test factor(read_loss_factors(ldb; as_of = fy_change), "ER01", :LOAD_LOSS_FACTOR) == 0.8
+            # No as_of keeps the open row.
+            @test factor(read_loss_factors(ldb), "ER01", :LOAD_LOSS_FACTOR) == 0.8
+            @test_logs (:warn, r"change within the date range") match_mode = :any read_loss_factors(ldb; as_of = start_date, through = DateTime(2025, 7, 1, 1))
+        end
+
+        sys_lf = nem_system(ldb, RegionalNetworkConfiguration())
+        set_market_bids!(sys_lf, ldb, date_range; resolution = Minute(5))
+
+        # Read raw bids (unscaled by loss factors) to compare
+        raw_bids = read_bids(ldb, date_range; resolution = Minute(5))
+        raw_price(duid, direction) = get_y_coords(first(raw_bids[(raw_bids.DUID .== duid) .& (raw_bids.DIRECTION .== direction), :piecewise_step_data]))
+        raw_mw(duid, direction) = get_x_coords(first(raw_bids[(raw_bids.DUID .== duid) .& (raw_bids.DIRECTION .== direction), :piecewise_step_data]))
+
+        prices(sys, name, series = "variable_cost") = with_units_base(sys, "NATURAL_UNITS") do
+            ta = get_time_series_array(Deterministic, get_component(Device, sys, name), series)
+            return get_y_coords(first(values(ta)))
+        end
+        mw(sys, name) = with_units_base(sys, "NATURAL_UNITS") do
+            ta = get_time_series_array(Deterministic, get_component(Device, sys, name), "variable_cost")
+            return get_x_coords(first(values(ta)))
+        end
+
+        @testset "prices are divided, MW is not" begin
+            @test prices(sys_lf, "ER01") ≈ round.(raw_price("ER01", "GEN") ./ (0.9 * 0.97); digits = 2)
+            @test prices(sys_lf, "BW02") ≈ raw_price("BW02", "GEN")
+            @test prices(sys_lf, "BW01") ≈ round.(raw_price("BW01", "GEN") ./ 0.5; digits = 2)
+            @test prices(sys_lf, "BW01", "decremental_variable_cost") ≈
+                round.(raw_price("BW01", "LOAD") ./ 0.8; digits = 2)
+            @test mw(sys_lf, "ER01") ≈ raw_mw("ER01", "GEN")
+        end
+
+        @testset "a scheduled load's decremental bid uses its load loss factor" begin
+            @test get_available(get_component(InterruptiblePowerLoad, sys_lf, "PUMP1"))
+            @test prices(sys_lf, "PUMP1", "decremental_variable_cost") ≈
+                round.(raw_price("PUMP1", "LOAD") ./ 0.8; digits = 2)
+        end
+
+        @testset "referred prices reorder a merit order" begin
+            # Raw prices rise with the band; ER01's referred price exceeds BW02's raw price.
+            @test last(raw_price("ER01", "GEN")) < last(raw_price("BW02", "GEN")) + 1.0
+            @test last(prices(sys_lf, "ER01")) > last(prices(sys_lf, "BW02"))
+        end
+
+        @testset "referred prices are rounded to cents" begin
+            # Verify that prices divided by loss factors are rounded to cents.
+            # Example 1: -963.7 / 0.9637 = -1000.0 (exactly) when rounded to cents
+            @test round(-963.7 / 0.9637; digits = 2) == -1000.0
+            # Example 2: -450 / 1.03502 = -434.7761... ≈ -434.77 when rounded to cents
+            @test round(-450.0 / 1.03502; digits = 2) == -434.77
+        end
+
+        @testset "a bidding unit without a DUDETAILSUMMARY row in force is an error" begin
+            # BW02's only row starts after the range, so it has no factor at its start.
+            partial = loss_factor_db(df -> subset(two_years(df), [:DUID, :START_DATE] => ByRow((d, t) -> !(d == "BW02" && t < fy_change))))
+            sys_partial = nem_system(partial, RegionalNetworkConfiguration())
+            @test_throws ArgumentError set_market_bids!(sys_partial, partial, date_range; resolution = Minute(5))
         end
     end
 end

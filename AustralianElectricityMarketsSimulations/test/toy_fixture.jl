@@ -37,6 +37,12 @@ function toy_battery(
     )
 end
 
+# A scheduled load's one-band decremental offer and dispatch limits, in MW, MW/min and $/MWh.
+# `initial` is `INITIALMW` (consumed MW, positive); `availability` is the load-side `MAXAVAIL`.
+function toy_load(capacity, price; initial, ramp_up, ramp_down = 100.0, availability = capacity)
+    return (; capacity, price, initial, ramp_up, ramp_down, availability)
+end
+
 # `5_bus_hydro_ed_sys` reduced to one area, the load on bus4 and the given `ThermalStandard`
 # units, each carrying its bid stack and the four dispatch-limit series over two 5-minute
 # intervals. `batteries` is a vector of `name => toy_battery(...)` pairs, each built as an
@@ -44,7 +50,7 @@ end
 # an incremental/decremental offer curve, and the ramp/initial/energy-availability series.
 # `mutate!(sys, stamps)`, when given, runs just before the fixture's
 # `transform_single_time_series!`, so it can attach raw two-timestamp series of its own.
-function nem_toy_system(units, load_mw; batteries = Pair{String, Any}[], mutate! = nothing)
+function nem_toy_system(units, load_mw; batteries = Pair{String, Any}[], loads = Pair{String, Any}[], mutate! = nothing)
     sys = PSB.build_system(PSISystems, "5_bus_hydro_ed_sys")
     PSY.clear_time_series!(sys)
     PSY.set_units_base_system!(sys, "NATURAL_UNITS")
@@ -142,6 +148,32 @@ function nem_toy_system(units, load_mw; batteries = Pair{String, Any}[], mutate!
         add_series!(battery, "initial_mw", bat.initial / base_power)
     end
 
+    # Scheduled loads (`InterruptiblePowerLoad`) on bus1, priced on their decremental offer only.
+    for (name, ld) in loads
+        scheduled = PSY.InterruptiblePowerLoad(;
+            name = name, available = true, bus = bus1, active_power = ld.initial / base_power,
+            reactive_power = 0.0, max_active_power = ld.capacity / base_power,
+            max_reactive_power = 0.0, base_power = base_power,
+            operation_cost = PSY.MarketBidCost(;
+                no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0,
+            ),
+        )
+        PSY.add_component!(sys, scheduled)
+        offer = PSY.PiecewiseStepData([0.0, ld.capacity], [ld.price])
+        AustralianElectricityMarkets._set_decremental_bid_cost!(
+            sys, scheduled, (piecewise_step_data = fill(offer, length(stamps)),),
+            TOY_START, TOY_RESOLUTION,
+        )
+        add_series!(
+            scheduled, "max_active_power", ld.availability / ld.capacity;
+            multiplier = PSY.get_max_active_power,
+        )
+        add_series!(scheduled, "ramp_up_rate", ld.ramp_up / base_power)
+        add_series!(scheduled, "ramp_down_rate", ld.ramp_down / base_power)
+        add_series!(scheduled, "initial_mw", ld.initial / base_power)
+        add_series!(scheduled, "availability", ld.availability / base_power)
+    end
+
     isnothing(mutate!) || mutate!(sys, stamps)
 
     # One two-interval window, matching the single window the bid forecast carries.
@@ -155,13 +187,14 @@ end
 function add_toy_generic_constraint!(sys, stamps, duid, rhs_mw)
     base_power = PSY.get_base_power(sys)
     rhs_pu = rhs_mw / base_power
+    duids = duid isa AbstractString ? [duid] : collect(duid)
     gc = GenericConstraint(;
         name = "N_TOY_LIMIT",
         sense = ConstraintSense.LE,
         rhs = rhs_pu,
-        terms = ConstraintTerm[UnitTerm(duid, BidType.ENERGY, 1.0)],
+        terms = ConstraintTerm[UnitTerm(d, BidType.ENERGY, 1.0) for d in duids],
     )
-    PSY.add_service!(sys, gc, [PSY.get_component(PSY.ThermalStandard, sys, duid)])
+    PSY.add_service!(sys, gc, [PSY.get_component(PSY.ThermalStandard, sys, d) for d in duids])
     PSY.add_time_series!(
         sys, gc,
         PSY.SingleTimeSeries(; name = "rhs", data = PSY.TimeSeries.TimeArray(stamps, fill(rhs_pu, length(stamps)))),
@@ -177,7 +210,9 @@ end
 # MW, the area price in $/MWh, the objective in $, and each `GenericConstraint`'s shadow price in
 # $/MWh, keyed by name (empty if `sys` carries none). Any `GenericConstraint` in `sys` is registered
 # under `LinearFactorLimit`.
-function solve_toy(sys)
+function solve_toy(
+        sys; optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+    )
     network = PSI.NetworkModel(
         PSI.AreaBalancePowerModel;
         use_slacks = true,
@@ -194,7 +229,7 @@ function solve_toy(sys)
     end
     model = PSI.DecisionModel(
         template, sys;
-        optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+        optimizer = optimizer,
         horizon = TOY_RESOLUTION,
         resolution = TOY_RESOLUTION,
         interval = TOY_RESOLUTION,
@@ -226,6 +261,22 @@ function solve_toy(sys)
             dispatch_mw[row.name] = get(dispatch_mw, row.name, 0.0) - row.value
         end
     end
+    has_units = !isempty(PSY.get_components(PSY.ThermalStandard, sys))
+    ramp_slack_mw = (;
+        up = has_units ? sum(read_variable(results, "UnitRampUpSlack__ThermalStandard").value) : 0.0,
+        down = has_units ? sum(read_variable(results, "UnitRampDownSlack__ThermalStandard").value) : 0.0,
+    )
+    load_mw = Dict{String, Float64}()
+    if !isempty(PSY.get_components(PSY.InterruptiblePowerLoad, sys))
+        for row in eachrow(read_variable(results, "ActivePowerVariable__InterruptiblePowerLoad"))
+            load_mw[row.name] = row.value
+        end
+    end
+    has_batteries = !isempty(PSY.get_components(PSY.EnergyReservoirStorage, sys))
+    storage_ramp_slack_mw = (;
+        up = has_batteries ? sum(read_variable(results, "UnitRampUpSlack__EnergyReservoirStorage").value) : 0.0,
+        down = has_batteries ? sum(read_variable(results, "UnitRampDownSlack__EnergyReservoirStorage").value) : 0.0,
+    )
     nem_keys = [
         k for k in PSI.get_constraint_keys(container)
             if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit
@@ -234,6 +285,11 @@ function solve_toy(sys)
         dispatch_mw = dispatch_mw,
         battery_out_mw = battery_out_mw,
         battery_in_mw = battery_in_mw,
+        ramp_slack_mw = ramp_slack_mw,
+        load_mw = load_mw,
+        results = results,
+        container = container,
+        storage_ramp_slack_mw = storage_ramp_slack_mw,
         band_mw = Dict(
             (name, band) => PSI.JuMP.value(v) * base_power
                 for ((name, band, _), v) in pairs(offers.data)

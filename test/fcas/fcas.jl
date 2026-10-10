@@ -189,8 +189,12 @@
     @testset "read_fcas_bids" begin
         bids = read_fcas_bids(db, date_range, BidType.RAISE6SEC)
         @test !isempty(bids)
-        @test all(==(20.0), bids.ENABLEMENTMIN)
-        @test all(==(100.0), bids.ENABLEMENTMAX)
+        # ASLOAD1, a non-scheduled load, bids the point trapezium (0, 0, 0, 0).
+        asload = bids.DUID .== "ASLOAD1"
+        @test any(asload)
+        @test all(==(20.0), bids.ENABLEMENTMIN[.!asload])
+        @test all(==(100.0), bids.ENABLEMENTMAX[.!asload])
+        @test all(==(0.0), bids.ENABLEMENTMAX[asload])
         @test "piecewise_step_data" in names(bids)
 
         reg_bids = read_fcas_bids(db, date_range, BidType.RAISEREG)
@@ -232,6 +236,30 @@
         @test !isnothing(bw01)
         @test has_time_series(bw01, Deterministic, "fcas_curve_RAISE6SEC_decremental")
         @test has_time_series(bw01, Deterministic, "fcas_trapezium_RAISE6SEC_decremental")
+
+        # A non-scheduled load (no energy bid) that offers FCAS gets the decremental series and
+        # becomes available; one with no FCAS bid stays unavailable. Scheduled loads are untouched.
+        asload1 = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
+        @test get_available(asload1)
+        @test has_time_series(asload1, Deterministic, "fcas_curve_RAISE6SEC_decremental")
+        @test !has_time_series(asload1, Deterministic, "fcas_trapezium_RAISE6SEC")
+        trap = get_fcas_trapezium(asload1, BidType.RAISE6SEC, first(date_range), 3; decremental = true)
+        @test all(t -> get_enablement_max(t) == 0.0 && get_max_avail(t) ≈ 15.0 / base_power, trap)
+        @test !get_available(get_component(InterruptiblePowerLoad, sys, "ASLOAD2"))
+        @test !has_time_series(get_component(InterruptiblePowerLoad, sys, "PUMP1"), Deterministic, "fcas_curve_RAISE6SEC_decremental")
+    end
+
+    @testset "a non-scheduled load offering FCAS joins its region's services" begin
+        sys = nem_system(db, RegionalNetworkConfiguration())
+        set_fcas_bids!(sys, db, date_range)
+        added, excluded = add_fcas_services!(sys)
+        asload1 = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
+        @test "NSW1_RAISE6SEC" in added
+        svc = get_component(FCASService, sys, "NSW1_RAISE6SEC")
+        @test has_service(asload1, svc)
+        other_loads = filter(l -> get_name(l) != "ASLOAD1", collect(get_components(InterruptiblePowerLoad, sys)))
+        @test !any(l -> has_service(l, svc), other_loads)
+        @test !haskey(excluded, "NSW1_RAISE6SEC") || !("ASLOAD1" in excluded["NSW1_RAISE6SEC"])
     end
 
     @testset "read_fcas_requirements" begin
@@ -247,6 +275,29 @@
         raise6sec_nsw = sort(subset(req, :REGIONID => ByRow(==("NSW1")), :BIDTYPE => ByRow(==(BidType.RAISE6SEC))), :SETTLEMENTDATE)
         @test raise6sec_nsw.REQUIREMENT ≈ [50.0 + 0.1 * i for i in 0:(nrow(raise6sec_nsw) - 1)]
         @test all(!ismissing, req.DESCRIPTION)
+    end
+
+    @testset "the 1-second markets are read as FCAS markets" begin
+        req = read_fcas_requirements(db, date_range)
+        for bid_type in (BidType.RAISE1SEC, BidType.LOWER1SEC)
+            @test bid_type in FCAS_BID_TYPES && bid_type in FCAS_CONTINGENCY_MARKETS
+            rows = subset(req, :BIDTYPE => ByRow(==(bid_type)))
+            @test !isempty(rows)
+            @test all(==(5.5), rows.MARGINALVALUE)
+        end
+        prices = read_fcas_prices(db, date_range)
+        @test BidType.RAISE1SEC in prices.BIDTYPE && BidType.LOWER1SEC in prices.BIDTYPE
+        dispatch = read_fcas_dispatch(db, date_range)
+        raise1sec = subset(dispatch, :BIDTYPE => ByRow(==(BidType.RAISE1SEC)))
+        @test !isempty(raise1sec)
+        @test all(==(5.0), raise1sec.ACTUALAVAILABILITY)
+        bids = read_fcas_bids(db, date_range, BidType.RAISE1SEC)
+        @test !isempty(bids)
+        sys = nem_system(db, RegionalNetworkConfiguration())
+        set_fcas_bids!(sys, db, date_range)
+        @test any(
+            g -> has_time_series(g, Deterministic, "fcas_trapezium_RAISE1SEC"), get_components(Generator, sys),
+        )
     end
 
     @testset "read_fcas_requirements spans the DISPATCH_FCAS_REQ split" begin

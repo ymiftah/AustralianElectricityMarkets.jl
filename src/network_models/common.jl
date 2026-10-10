@@ -220,8 +220,11 @@ println(gen_df)
 """
 function get_generators_dataframe(bus_df, units)
     bus = select(bus_df, :bus_id, :name)
+    units = copy(units)
+    # Scheduled loads (some have a GENUNITS row) are built by `get_scheduled_loads_dataframe`.
+    "DISPATCHTYPE" in names(units) && subset!(units, :DISPATCHTYPE => ByRow(!isequal("LOAD")))
 
-    return @chain copy(units) begin
+    return @chain units begin
         select!(
             :REGIONID => ByRow(x -> x * GEN_SUFFIX) => :bus_name,
             :REGIONID => :region,
@@ -324,6 +327,51 @@ end
 
 
 """
+    get_scheduled_loads_dataframe(bus_df, units)
+
+Generates a DataFrame of loads (`DISPATCHTYPE = LOAD` units, scheduled pumps and the
+non-scheduled ancillary-service and demand-response loads alike), each on its region's generator
+bus. A non-scheduled load starts unavailable: it carries no energy bid, and
+[`set_fcas_bids!`](@ref) makes it available only when it offers FCAS. Empty when `units` has no
+`DISPATCHTYPE` column.
+
+# Arguments
+- `bus_df`: A `DataFrame` of bus data, as returned by `get_bus_dataframe`.
+- `units`: A `DataFrame` of unit data, as returned by `read_units`.
+
+# Returns
+A `DataFrame` with `name`, `bus_id`, `region`, `base_power`, `max_active_power` (per-unit of
+`base_power`), `available`, `scheduled` and `commissioned`.
+"""
+function get_scheduled_loads_dataframe(bus_df, units)
+    bus = select(bus_df, :bus_id, :name)
+    columns = (:DISPATCHTYPE, :SCHEDULE_TYPE, :REGISTEREDCAPACITY, :MAXCAPACITY)
+    all(c -> c in propertynames(units), columns) ||
+        return DataFrame(name = String[], bus_id = Int[], region = String[], base_power = Float64[], max_active_power = Float64[], available = Bool[], scheduled = Bool[], commissioned = Bool[])
+    loads = @chain units begin
+        subset(
+            :DISPATCHTYPE => ByRow(isequal("LOAD")), :SCHEDULE_TYPE => ByRow(in(("SCHEDULED", "NON-SCHEDULED"))),
+            :REGISTEREDCAPACITY => ByRow(x -> !ismissing(x) && x > 0),
+        )
+        select(
+            :DUID => :name,
+            :REGIONID => ByRow(x -> x * GEN_SUFFIX) => :bus_name,
+            :REGIONID => :region,
+            :REGISTEREDCAPACITY => (x -> Float64.(x)) => :base_power,
+            [:MAXCAPACITY, :REGISTEREDCAPACITY] =>
+                ByRow((m, r) -> ismissing(m) ? 1.0 : Float64(m / r)) => :max_active_power,
+            [:STATUS, :SCHEDULE_TYPE] => ByRow((s, t) -> s == "COMMISSIONED" && t == "SCHEDULED") => :available,
+            :SCHEDULE_TYPE => ByRow(==("SCHEDULED")) => :scheduled,
+            :STATUS => ByRow(==("COMMISSIONED")) => :commissioned,
+        )
+        leftjoin(bus; on = :bus_name => :name)
+        select(Not(:bus_name))
+        unique(:name)
+    end
+    return loads
+end
+
+"""
     get_interfaces_dataframe(interconnectors)
 
 Generates a DataFrame of Interfaces information.
@@ -362,12 +410,14 @@ end
 
 
 """
-    nem_system(db)
+    nem_system(db; as_of = nothing)
 
 Assembles a `PowerSystems.System` object from the database.
 
 # Arguments
 - `db`: The database connection.
+- `as_of`: a `Date` or `DateTime` to resolve the unit and interconnector tables as of (see
+  [`read_units`](@ref)); `nothing` (the default) uses the latest cached version.
 
 # Returns
 A `PowerSystems.System` object.
@@ -379,11 +429,11 @@ sys = nem_system(db)
 println(sys)
 ```
 """
-function nem_system(db; time_series_in_memory = true, kwargs...)
+function nem_system(db; time_series_in_memory = true, as_of = nothing, kwargs...)
     @info "parsing buses"
     bus_df = get_bus_dataframe(db)
-    interconnectors = read_interconnectors(db)
-    units = read_units(db)
+    interconnectors = read_interconnectors(db; as_of = as_of)
+    units = read_units(db; as_of = as_of)
     @info "parsing loads"
     loads_df = get_load_dataframe(bus_df)
     @info "parsing branches"
@@ -392,6 +442,8 @@ function nem_system(db; time_series_in_memory = true, kwargs...)
     gen_df = get_generators_dataframe(bus_df, units)
     @info "parsing batteries"
     batteries_df = get_batteries_dataframe(bus_df, units)
+    @info "parsing scheduled loads"
+    scheduled_loads_df = get_scheduled_loads_dataframe(bus_df, units)
 
     @info "parsing interconnectors/area interchanges / transmission interface"
     interfaces_df = get_interfaces_dataframe(interconnectors)
@@ -402,6 +454,7 @@ function nem_system(db; time_series_in_memory = true, kwargs...)
     _add_generation!(sys, gen_df)
     _add_branches!(sys, branch_df)
     _add_batteries!(sys, batteries_df)
+    _add_scheduled_loads!(sys, scheduled_loads_df)
     _add_area_interfaces!(sys, interfaces_df)
 
     return sys
@@ -696,6 +749,42 @@ function _add_batteries!(sys, batteries_df)
         ) for row in eachrow(batteries_df)
     )
     return add_components!(sys, battery_components)
+end
+
+"""
+    _add_scheduled_loads!(sys, scheduled_loads_df)
+
+Adds each load as an `InterruptiblePowerLoad` with a zero `LoadCost`;
+[`set_market_bids!`](@ref) replaces a scheduled load's with a decremental `MarketBidCost`, or marks
+it unavailable when it has no bid. A non-scheduled load (`scheduled = false`) is tagged
+`ext["non_scheduled"] = true` (and `ext["commissioned"]`) and starts unavailable; it keeps the zero
+cost, and [`set_nem_dispatch_limits!`](@ref) fixes its energy at zero. Despite the name, this builds
+every `DISPATCHTYPE = LOAD` unit of the data frame.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `scheduled_loads_df`: A `DataFrame` as returned by `get_scheduled_loads_dataframe`.
+
+# Returns
+The result of `add_components!`.
+"""
+function _add_scheduled_loads!(sys, scheduled_loads_df)
+    loads = (
+        InterruptiblePowerLoad(;
+            name = row[:name],
+            available = row[:available],
+            bus = get_bus(sys, row[:bus_id]),
+            active_power = 0.0,
+            reactive_power = 0.0,
+            max_active_power = row[:max_active_power],
+            max_reactive_power = 0.0,
+            base_power = row[:base_power],
+            operation_cost = LoadCost(; variable = CostCurve(LinearCurve(0.0)), fixed = 0.0),
+            ext = row[:scheduled] ? Dict{String, Any}() :
+                Dict{String, Any}("non_scheduled" => true, "commissioned" => row[:commissioned]),
+        ) for row in eachrow(scheduled_loads_df)
+    )
+    return add_components!(sys, loads)
 end
 
 function _add_area_interfaces!(sys, interconnectors)

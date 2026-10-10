@@ -9,9 +9,11 @@ _is_regulation_service(bid_type::BidType) = bid_type in FCAS_REGULATION_MARKETS
     _fcas_direction(device, bid_type) -> Symbol
 
 Which of `bid_type`'s `"fcas_trapezium_<bid_type>[_decremental]"` series `device` carries.
-Throws `ArgumentError` if neither series is attached, or if both are attached on a device other
+Throws `ArgumentError` if neither series is attached, if both are attached on a device other
 than a `PSY.Storage` regulation bid (bidirectional FCAS capacity is modeled only for a
-`PSY.Storage` device's generation-side and load-side regulation bids).
+`PSY.Storage` device's generation-side and load-side regulation bids), or if a
+`PSY.ControllableLoad` carries an incremental series (a load offers FCAS on its decremental
+series only).
 
 # Returns
 `:incremental`, `:decremental`, or `:both`.
@@ -30,6 +32,12 @@ function _fcas_direction(device, bid_type::BidType)
             ),
         )
     end
+    has_inc && device isa PSY.ControllableLoad && throw(
+        ArgumentError(
+            "FCASMarket: load \"$(PSY.get_name(device))\" carries an incremental $bid_type_str " *
+                "bid; a load offers FCAS on its decremental (`LOAD`-direction) series only.",
+        ),
+    )
     has_inc && return :incremental
     has_dec && return :decremental
     throw(
@@ -45,9 +53,10 @@ end
 
 The `PSI.VariableType`s (and their sign) making up `device`'s unit-level "Energy Dispatch
 Target": the net `ActivePowerOutVariable - ActivePowerInVariable` for a `PSY.Storage` device,
-`ActivePowerVariable` otherwise. Used wherever AEMO's formulation reads a single, signed
-unit-level energy term rather than one bid side's own energy - AEMO *FCAS Model in NEMDE* §6.1's
-joint ramping constraint and a `PSY.Storage` device's contingency FCAS.
+`ActivePowerVariable` otherwise (a `PSY.ControllableLoad`'s is its consumed MW). Used wherever
+AEMO's formulation reads a single, signed unit-level energy term rather than one bid side's own
+energy - AEMO *FCAS Model in NEMDE* §6.1's joint ramping constraint and a `PSY.Storage` device's
+contingency FCAS.
 
 # Returns
 `Vector{Tuple{DataType, Float64}}` of `(VariableType, multiplier)` pairs.
@@ -58,13 +67,44 @@ function _fcas_net_energy_terms(device::PSY.Device)
 end
 
 """
+    _fcas_upper_regulation_service(device) -> BidType
+
+The regulation service whose target enters `device`'s upper-slope (`<= EnablementMax`) FCAS rows:
+`BidType.RAISEREG` for a generating unit, `BidType.LOWERREG` for a `PSY.ControllableLoad`, whose
+energy axis is consumption so raising consumption lowers frequency (AEMO *FCAS Model in NEMDE*
+§6.1, §6.2). The other regulation service enters the lower-slope rows.
+
+# Returns
+`BidType.RAISEREG` or `BidType.LOWERREG`.
+"""
+_fcas_upper_regulation_service(device::PSY.Device) =
+    device isa PSY.ControllableLoad ? BidType.LOWERREG : BidType.RAISEREG
+
+"""
+    _fcas_ramp_rate_service(device, bid_type) -> BidType
+
+The regulation service whose AGC ramp-rate series bounds `device`'s joint ramping row for
+`bid_type`: `bid_type` itself for a generating unit (`RAISEREG` reads the ramp-up rate, `LOWERREG`
+the ramp-down rate), and the other service for a `PSY.ControllableLoad`, whose `LowerReg` row is
+bounded by the SCADA ramp-up rate and `RaiseReg` row by the ramp-down rate (§6.1).
+
+# Returns
+`BidType.RAISEREG` or `BidType.LOWERREG`.
+"""
+function _fcas_ramp_rate_service(device::PSY.Device, bid_type::BidType)
+    device isa PSY.ControllableLoad || return bid_type
+    return bid_type == BidType.RAISEREG ? BidType.LOWERREG : BidType.RAISEREG
+end
+
+"""
     _fcas_energy_terms(device, is_regulation, decremental) -> Vector{Tuple{DataType, Float64}}
 
 The `PSI.VariableType`s (and their sign) making up `device`'s FCAS "Energy Dispatch Target": for a
 `PSY.Storage` device, the bid side's own energy on regulation (`ActivePowerOutVariable` for a
 generation-side bid, `-ActivePowerInVariable` for a load-side one) and the net
-([`_fcas_net_energy_terms`](@ref)) on contingency; `ActivePowerVariable` otherwise.
-Throws `ArgumentError` for a decremental (`LOAD`-direction) bid on a non-`Storage` device.
+([`_fcas_net_energy_terms`](@ref)) on contingency; `ActivePowerVariable` otherwise, which for a
+`PSY.ControllableLoad` is its consumed MW. Throws `ArgumentError` for a decremental
+(`LOAD`-direction) bid on a device that is neither `PSY.Storage` nor a `PSY.ControllableLoad`.
 
 # Returns
 `Vector{Tuple{DataType, Float64}}` of `(VariableType, multiplier)` pairs.
@@ -74,10 +114,10 @@ function _fcas_energy_terms(device::PSY.Device, is_regulation::Bool, decremental
         is_regulation || return _fcas_net_energy_terms(device)
         return decremental ? [(PSI.ActivePowerInVariable, -1.0)] : [(PSI.ActivePowerOutVariable, 1.0)]
     end
-    decremental && throw(
+    decremental && !(device isa PSY.ControllableLoad) && throw(
         ArgumentError(
             "FCASMarket: \"$(PSY.get_name(device))\" ($(typeof(device))) has a decremental FCAS " *
-                "bid but is not a `PSY.Storage` device; scheduled-load FCAS capacity is not modeled.",
+                "bid but is neither a `PSY.Storage` device nor a `PSY.ControllableLoad`.",
         ),
     )
     return _fcas_net_energy_terms(device)
@@ -482,13 +522,125 @@ function _fcas_regulation_enabled_mask(
 end
 
 """
-    _add_fcas_joint_ramping_constraints!(container, jm, devices, directions, devices_template, bid_type, name, time_steps)
+    FCAS_CAPACITY_CVP_FACTOR
+
+CVP factor (70) of AEMO's FCAS EnablementMin/EnablementMax constraint, item 24 of the *Schedule of
+Constraint Violation Penalty Factors* v8.0. Prices [`FCASJointCapacitySlack`](@ref).
+"""
+const FCAS_CAPACITY_CVP_FACTOR = 70.0
+
+"""
+    FCAS_RAMPING_CVP_FACTOR
+
+CVP factor (155) of AEMO's FCAS Joint Ramping constraint, item 20 of the *Schedule of Constraint
+Violation Penalty Factors* v8.0. Prices [`FCASJointRampingSlack`](@ref).
+"""
+const FCAS_RAMPING_CVP_FACTOR = 155.0
+
+"""
+    FCAS_MAXAVAIL_CVP_FACTOR
+
+CVP factor (155) of AEMO's FCAS MaxAvail constraint, item 19 of the *Schedule of Constraint
+Violation Penalty Factors* v8.0. Prices [`FCASMaxAvailSlack`](@ref).
+"""
+const FCAS_MAXAVAIL_CVP_FACTOR = 155.0
+
+"""
+    FCAS_BDU_RAMPING_CVP_FACTOR
+
+CVP factor (155) of AEMO's BDU Regulation FCAS SCADA Ramping constraint, item 21 of the
+*Schedule of Constraint Violation Penalty Factors* v8.0. Prices [`FCASBDURampingSlack`](@ref).
+"""
+const FCAS_BDU_RAMPING_CVP_FACTOR = 155.0
+
+"""
+    _add_fcas_slack!(container, model, var_type, meta, names, time_steps, cvp_factor)
+
+When `PSI.get_use_slacks(model)`, builds a non-negative slack variable of `var_type` per
+`(name, t)` and prices it in the objective at `cvp_factor` times the Market Price Cap
+([`_market_price_cap`](@ref)) for the interval, in `\$/MW` per dispatch interval.
+
+# Returns
+The slack variable container, or `nothing` when `use_slacks` is `false`.
+"""
+function _add_fcas_slack!(
+        container::PSI.OptimizationContainer, model::PSI.ServiceModel, var_type, meta::AbstractString,
+        names, time_steps, cvp_factor::Real,
+    )
+    PSI.get_use_slacks(model) || return nothing
+    jm = PSI.get_jump_model(container)
+    resolution = PSI.get_resolution(container)
+    initial_time = PSI.get_initial_time(container)
+    base_power = PSI.get_base_power(container)
+    slack = PSI.add_variable_container!(container, var_type(), FCASService, names, time_steps; meta = meta)
+    for t in time_steps
+        mpc = _market_price_cap(container, model, initial_time + resolution * (t - 1))
+        coefficient = base_power * interval_cost_coefficient(cvp_factor * mpc, resolution)
+        for name in names
+            slack[name, t] = JuMP.@variable(jm, base_name = "$(nameof(var_type))_$(meta)_{$name,$t}", lower_bound = 0.0)
+            PSI.add_to_objective_invariant_expression!(container, slack[name, t] * coefficient)
+        end
+    end
+    return slack
+end
+
+# An enabled capacity variable keeps MaxAvail as a hard upper bound only without slacks; with
+# slacks it is an elastic row built at the model stage. A disabled one is pinned to zero.
+function _set_fcas_max_avail_bound!(model::PSI.ServiceModel, variable, enabled::Bool, max_avail::Real)
+    enabled && PSI.get_use_slacks(model) && return
+    JuMP.set_upper_bound(variable, enabled ? max_avail : 0.0)
+    return
+end
+
+"""
+    _add_fcas_max_avail_row!(jm, variable, slack, con, dname, t, max_avail)
+
+Stores `variable - slack <= max_avail` in `con[dname, t]`: the elastic MaxAvail limit of an
+enabled capacity variable, or the vacuous `0 <= 1` when `max_avail` is `nothing` (a disabled
+device). A no-op when `slack` is `nothing`, where the limit is the variable's bound.
+
+# Arguments
+- `jm`: the JuMP model.
+- `variable`, `slack`: the capacity variable and the slack container of [`FCASMaxAvailSlack`](@ref).
+- `con`: the [`FCASMaxAvailConstraint`](@ref) container the row is stored in, at `[dname, t]`.
+- `max_avail`: the offered MaxAvail in per-unit, or `nothing` for a disabled device.
+
+# Returns
+`nothing`.
+"""
+function _add_fcas_max_avail_row!(jm, variable, slack, con, dname, t, max_avail)
+    isnothing(slack) && return
+    con[dname, t] = if isnothing(max_avail)
+        JuMP.@constraint(jm, 0.0 <= 1.0)
+    else
+        JuMP.@constraint(jm, variable - slack[dname, t] <= max_avail)
+    end
+    return
+end
+
+# Container for the MaxAvail rows, built only when the service model has slacks.
+function _fcas_max_avail_container(container, model, names, time_steps, meta)
+    PSI.get_use_slacks(model) || return nothing
+    return PSI.add_constraints_container!(
+        container, FCASMaxAvailConstraint(), FCASService, names, time_steps; meta = meta,
+    )
+end
+
+"""
+    _fcas_slack_term(slack, name, t)
+
+The slack variable of `slack` at `(name, t)`, or `0.0` when `slack` is `nothing` (`use_slacks = false`).
+"""
+_fcas_slack_term(slack, name, t) = isnothing(slack) ? 0.0 : slack[name, t]
+
+"""
+    _add_fcas_joint_ramping_constraints!(container, model, jm, devices, directions, devices_template, bid_type, name, time_steps)
 
 Builds AEMO *FCAS Model in NEMDE* §6.1's [`FCASJointRampingConstraint`](@ref) for every
 contributing `device` of a regulation `FCASService` named `name`: the unit's net energy
 ([`_fcas_net_energy_terms`](@ref)) combined with its [`FCASUnitRegulationTarget`](@ref) against
 `InitialMW` plus or minus its AGC ramp capability ([`_fcas_agc_ramp_caps`](@ref)) - the upper
-(`RAISEREG`) or lower (`LOWERREG`) form depending on `bid_type`. Builds a vacuous `0 <= 1` row at
+or lower form depending on `bid_type` ([`_fcas_upper_regulation_service`](@ref)). Builds a vacuous `0 <= 1` row at
 `(dname, t)` wherever the ramp capability is zero, `InitialMW` is unknown at `t`, or the device
 is not enabled for this service at `t` ([`_fcas_regulation_enabled_mask`](@ref)).
 
@@ -496,7 +648,7 @@ is not enabled for this service at `t` ([`_fcas_regulation_enabled_mask`](@ref))
 `nothing`.
 """
 function _add_fcas_joint_ramping_constraints!(
-        container::PSI.OptimizationContainer, jm, devices, directions::Dict{String, Symbol}, devices_template,
+        container::PSI.OptimizationContainer, model::PSI.ServiceModel, jm, devices, directions::Dict{String, Symbol}, devices_template,
         bid_type::BidType, name::AbstractString, time_steps,
     )
     names = PSY.get_name.(devices)
@@ -504,11 +656,14 @@ function _add_fcas_joint_ramping_constraints!(
         container, FCASJointRampingConstraint(), FCASService, names, time_steps; meta = name,
     )
     target = PSI.get_expression(container, FCASUnitRegulationTarget(), FCASService, name)
+    slack = _add_fcas_slack!(
+        container, model, FCASJointRampingSlack, name, names, time_steps, FCAS_RAMPING_CVP_FACTOR,
+    )
     initial_time = PSI.get_initial_time(container)
     horizon = length(time_steps)
     for device in devices
         dname = PSY.get_name(device)
-        caps = _fcas_agc_ramp_caps(container, devices_template, device, bid_type)
+        caps = _fcas_agc_ramp_caps(container, devices_template, device, _fcas_ramp_rate_service(device, bid_type))
         initial_mw = get_initial_mw(device, initial_time, horizon)
         enabled = _fcas_regulation_enabled_mask(container, devices_template, device, bid_type, directions[dname])
         for t in time_steps
@@ -519,10 +674,11 @@ function _add_fcas_joint_ramping_constraints!(
             end
             lhs = JuMP.AffExpr(0.0)
             _add_fcas_net_energy_terms!(container, lhs, device, dname, t)
-            con[dname, t] = if bid_type == BidType.RAISEREG
-                JuMP.@constraint(jm, lhs + target[dname, t] <= mw + caps[t])
+            deficit = _fcas_slack_term(slack, dname, t)
+            con[dname, t] = if bid_type == _fcas_upper_regulation_service(device)
+                JuMP.@constraint(jm, lhs + target[dname, t] - deficit <= mw + caps[t])
             else
-                JuMP.@constraint(jm, lhs - target[dname, t] >= mw - caps[t])
+                JuMP.@constraint(jm, lhs - target[dname, t] + deficit >= mw - caps[t])
             end
         end
     end
@@ -620,7 +776,7 @@ function PSI.construct_service!(
                 var[dname, t] = JuMP.@variable(
                     jm, base_name = "FCASCapacityVariable_FCASService_$(name)_{$dname, $t}", lower_bound = 0.0,
                 )
-                JuMP.set_upper_bound(var[dname, t], enabled[t] ? get_max_avail(trap) : 0.0)
+                _set_fcas_max_avail_bound!(model, var[dname, t], enabled[t], get_max_avail(trap))
 
                 _add_fcas_energy_terms!(container, upper_lhs[dname, t], device, is_regulation, decremental, dname, t)
                 JuMP.add_to_expression!(upper_lhs[dname, t], get_upper_slope_coeff(trap), var[dname, t])
@@ -655,17 +811,15 @@ function PSI.construct_service!(
             gen_enabled, load_enabled = _fcas_both_sides_enabled_mask(container, devices_template, device, bid_type)
             for t in time_steps
                 gen_trap, load_trap = gen_traps[t], load_traps[t]
-                gen_bound = gen_enabled[t] ? get_max_avail(gen_trap) : 0.0
-                load_bound = load_enabled[t] ? get_max_avail(load_trap) : 0.0
 
                 gen_var[dname, t] = JuMP.@variable(
                     jm, base_name = "FCASSideCapacityVariable_FCASService_$(name)_gen_{$dname, $t}", lower_bound = 0.0,
                 )
-                JuMP.set_upper_bound(gen_var[dname, t], gen_bound)
+                _set_fcas_max_avail_bound!(model, gen_var[dname, t], gen_enabled[t], get_max_avail(gen_trap))
                 load_var[dname, t] = JuMP.@variable(
                     jm, base_name = "FCASSideCapacityVariable_FCASService_$(name)_load_{$dname, $t}", lower_bound = 0.0,
                 )
-                JuMP.set_upper_bound(load_var[dname, t], load_bound)
+                _set_fcas_max_avail_bound!(model, load_var[dname, t], load_enabled[t], get_max_avail(load_trap))
 
                 _add_fcas_side_energy_terms!(container, gen_upper_lhs[dname, t], device, :gen, dname, t)
                 JuMP.add_to_expression!(gen_upper_lhs[dname, t], get_upper_slope_coeff(gen_trap), gen_var[dname, t])
@@ -803,16 +957,19 @@ function PSI.construct_service!(
     single_names = PSY.get_name.(single_devices)
     both_names = PSY.get_name.(both_devices)
 
-    # Contingency services carry the regulation targets: `RaiseReg` upper, `LowerReg` lower.
+    # Contingency services carry the regulation targets: `RaiseReg` upper, `LowerReg` lower
+    # (swapped for a load).
     if !is_regulation && !isempty(single_names)
         upper_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_upper")
         lower_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_lower")
         for device in single_devices
             dname = PSY.get_name(device)
             for t in time_steps
-                raise_reg = _device_regulation_target(container, device, BidType.RAISEREG, t)
-                isnothing(raise_reg) || JuMP.add_to_expression!(upper_lhs[dname, t], 1.0, raise_reg)
-                lower_reg = _device_regulation_target(container, device, BidType.LOWERREG, t)
+                upper_service = _fcas_upper_regulation_service(device)
+                lower_service = upper_service == BidType.RAISEREG ? BidType.LOWERREG : BidType.RAISEREG
+                upper_reg = _device_regulation_target(container, device, upper_service, t)
+                isnothing(upper_reg) || JuMP.add_to_expression!(upper_lhs[dname, t], 1.0, upper_reg)
+                lower_reg = _device_regulation_target(container, device, lower_service, t)
                 isnothing(lower_reg) || JuMP.add_to_expression!(lower_lhs[dname, t], -1.0, lower_reg)
             end
         end
@@ -822,12 +979,23 @@ function PSI.construct_service!(
         upper_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_upper")
         lower_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_lower")
 
+        slack_upper = _add_fcas_slack!(
+            container, model, FCASJointCapacitySlack, "$(name)_upper", single_names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
+        )
+        slack_lower = _add_fcas_slack!(
+            container, model, FCASJointCapacitySlack, "$(name)_lower", single_names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
+        )
         con_upper = PSI.add_constraints_container!(
             container, FCASJointCapacityConstraint(), FCASService, single_names, time_steps; meta = "$(name)_upper",
         )
         con_lower = PSI.add_constraints_container!(
             container, FCASJointCapacityConstraint(), FCASService, single_names, time_steps; meta = "$(name)_lower",
         )
+        slack_max = _add_fcas_slack!(
+            container, model, FCASMaxAvailSlack, "$(name)_maxavail", single_names, time_steps, FCAS_MAXAVAIL_CVP_FACTOR,
+        )
+        con_max = _fcas_max_avail_container(container, model, single_names, time_steps, "$(name)_maxavail")
+        cap_var = PSI.get_variable(container, FCASCapacityVariable(), FCASService, name)
         for device in single_devices
             dname = PSY.get_name(device)
             decremental = directions[dname] == :decremental
@@ -835,13 +1003,19 @@ function PSI.construct_service!(
             enabled = _fcas_enabled_mask(container, devices_template, device, bid_type, decremental)
             for t in time_steps
                 if !enabled[t]
+                    _add_fcas_max_avail_row!(jm, nothing, slack_max, con_max, dname, t, nothing)
                     con_upper[dname, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
                     con_lower[dname, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
                     continue
                 end
                 trap = trapeziums[t]
-                con_upper[dname, t] = JuMP.@constraint(jm, upper_lhs[dname, t] <= get_enablement_max(trap))
-                con_lower[dname, t] = JuMP.@constraint(jm, lower_lhs[dname, t] >= get_enablement_min(trap))
+                _add_fcas_max_avail_row!(jm, cap_var[dname, t], slack_max, con_max, dname, t, get_max_avail(trap))
+                con_upper[dname, t] = JuMP.@constraint(
+                    jm, upper_lhs[dname, t] - _fcas_slack_term(slack_upper, dname, t) <= get_enablement_max(trap),
+                )
+                con_lower[dname, t] = JuMP.@constraint(
+                    jm, lower_lhs[dname, t] + _fcas_slack_term(slack_lower, dname, t) >= get_enablement_min(trap),
+                )
             end
         end
     end
@@ -852,6 +1026,20 @@ function PSI.construct_service!(
         load_upper_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_load_upper")
         load_lower_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_load_lower")
 
+        gen_slack_upper, gen_slack_lower, load_slack_upper, load_slack_lower = (
+            _add_fcas_slack!(
+                container, model, FCASJointCapacitySlack, "$(name)_$side", both_names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
+            ) for side in ("gen_upper", "gen_lower", "load_upper", "load_lower")
+        )
+        gen_slack_max, load_slack_max = (
+            _add_fcas_slack!(
+                container, model, FCASMaxAvailSlack, "$(name)_$(side)_maxavail", both_names, time_steps, FCAS_MAXAVAIL_CVP_FACTOR,
+            ) for side in ("gen", "load")
+        )
+        con_gen_max = _fcas_max_avail_container(container, model, both_names, time_steps, "$(name)_gen_maxavail")
+        con_load_max = _fcas_max_avail_container(container, model, both_names, time_steps, "$(name)_load_maxavail")
+        gen_cap = PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "$(name)_gen")
+        load_cap = PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "$(name)_load")
         con_gen_upper = PSI.add_constraints_container!(
             container, FCASJointCapacityConstraint(), FCASService, both_names, time_steps; meta = "$(name)_gen_upper",
         )
@@ -870,20 +1058,32 @@ function PSI.construct_service!(
             gen_enabled, load_enabled = _fcas_both_sides_enabled_mask(container, devices_template, device, bid_type)
             for t in time_steps
                 if !gen_enabled[t]
+                    _add_fcas_max_avail_row!(jm, nothing, gen_slack_max, con_gen_max, dname, t, nothing)
                     con_gen_upper[dname, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
                     con_gen_lower[dname, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
                 else
                     gen_trap = gen_traps[t]
-                    con_gen_upper[dname, t] = JuMP.@constraint(jm, gen_upper_lhs[dname, t] <= get_enablement_max(gen_trap))
-                    con_gen_lower[dname, t] = JuMP.@constraint(jm, gen_lower_lhs[dname, t] >= get_enablement_min(gen_trap))
+                    _add_fcas_max_avail_row!(jm, gen_cap[dname, t], gen_slack_max, con_gen_max, dname, t, get_max_avail(gen_trap))
+                    con_gen_upper[dname, t] = JuMP.@constraint(
+                        jm, gen_upper_lhs[dname, t] - _fcas_slack_term(gen_slack_upper, dname, t) <= get_enablement_max(gen_trap),
+                    )
+                    con_gen_lower[dname, t] = JuMP.@constraint(
+                        jm, gen_lower_lhs[dname, t] + _fcas_slack_term(gen_slack_lower, dname, t) >= get_enablement_min(gen_trap),
+                    )
                 end
                 if !load_enabled[t]
+                    _add_fcas_max_avail_row!(jm, nothing, load_slack_max, con_load_max, dname, t, nothing)
                     con_load_upper[dname, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
                     con_load_lower[dname, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
                 else
                     load_trap = load_traps[t]
-                    con_load_upper[dname, t] = JuMP.@constraint(jm, load_upper_lhs[dname, t] <= get_enablement_max(load_trap))
-                    con_load_lower[dname, t] = JuMP.@constraint(jm, load_lower_lhs[dname, t] >= get_enablement_min(load_trap))
+                    _add_fcas_max_avail_row!(jm, load_cap[dname, t], load_slack_max, con_load_max, dname, t, get_max_avail(load_trap))
+                    con_load_upper[dname, t] = JuMP.@constraint(
+                        jm, load_upper_lhs[dname, t] - _fcas_slack_term(load_slack_upper, dname, t) <= get_enablement_max(load_trap),
+                    )
+                    con_load_lower[dname, t] = JuMP.@constraint(
+                        jm, load_lower_lhs[dname, t] + _fcas_slack_term(load_slack_lower, dname, t) >= get_enablement_min(load_trap),
+                    )
                 end
             end
         end
@@ -893,19 +1093,23 @@ function PSI.construct_service!(
             con_ramp = PSI.add_constraints_container!(
                 container, FCASBDURampingConstraint(), FCASService, both_names, time_steps; meta = name,
             )
+            slack_ramp = _add_fcas_slack!(
+                container, model, FCASBDURampingSlack, name, both_names, time_steps, FCAS_BDU_RAMPING_CVP_FACTOR,
+            )
             for device in both_devices
                 dname = PSY.get_name(device)
                 caps = _fcas_agc_ramp_caps(container, devices_template, device, bid_type)
                 for t in time_steps
                     con_ramp[dname, t] = iszero(caps[t]) ?
-                        JuMP.@constraint(jm, 0.0 <= 1.0) : JuMP.@constraint(jm, target[dname, t] <= caps[t])
+                        JuMP.@constraint(jm, 0.0 <= 1.0) :
+                        JuMP.@constraint(jm, target[dname, t] - _fcas_slack_term(slack_ramp, dname, t) <= caps[t])
                 end
             end
         end
     end
 
     if is_regulation
-        _add_fcas_joint_ramping_constraints!(container, jm, devices, directions, devices_template, bid_type, name, time_steps)
+        _add_fcas_joint_ramping_constraints!(container, model, jm, devices, directions, devices_template, bid_type, name, time_steps)
     end
 
     if FCASJointCapacityConstraint in PSI.get_duals(model)

@@ -12,8 +12,14 @@
   `GenericConstraint` (default `false`).
 - `resolution`: the resolution for `GenericConstraint` time series; inferred from the data
   when `nothing` (default). FCAS bid series are unaffected and always use `Minute(5)`.
+- `as_of`: the instant the unit and interconnector tables (loss factors, flow limits) are
+  resolved as of. Defaults to `first(date_range)`, so a build no longer picks up a version that
+  takes effect after the dates replayed; pass `nothing` for the latest cached version.
 - `allow_empty_region_terms`: whether to proceed (with a warning) instead of throwing when a
   `RegionTerm`'s region has no matching device (default `false`).
+- `unresolved_terms`: `:drop` (default) builds a generic constraint without any term whose
+  component is absent from the system; `:skip` skips the whole constraint. See
+  [`add_nem_constraints!`](@ref).
 """
 struct ConstrainedNetworkConfiguration <: NetworkConfiguration end
 
@@ -46,17 +52,19 @@ function AustralianElectricityMarkets.nem_system(
         db, ::ConstrainedNetworkConfiguration; date_range = nothing,
         intervention::Integer = 0, include_solution::Bool = false,
         resolution::Union{Nothing, Dates.Period} = nothing,
-        allow_empty_region_terms::Bool = false,
+        allow_empty_region_terms::Bool = false, unresolved_terms::Symbol = :drop,
+        as_of = isnothing(date_range) ? nothing : first(date_range),
         kwargs...,
     )
     if isnothing(date_range)
         error("ConstrainedNetworkConfiguration requires a `date_range` keyword argument (e.g. `nem_system(db, ConstrainedNetworkConfiguration(); date_range = start:Minute(5):stop)`).")
     end
-    sys = nem_system(db; kwargs...)
+    sys = nem_system(db; as_of = as_of, kwargs...)
     set_fcas_bids!(sys, db, date_range)
     add_nem_constraints!(
         sys, db, date_range; intervention = intervention, include_solution = include_solution,
         resolution = resolution, allow_empty_region_terms = allow_empty_region_terms,
+        unresolved_terms = unresolved_terms,
     )
     add_fcas_services!(sys)
     attach_interconnector_losses!(sys, db, first(date_range))
