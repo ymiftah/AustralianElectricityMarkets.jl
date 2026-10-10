@@ -201,11 +201,6 @@ end
 Throws an `ArgumentError` when `LOSSFACTORMODEL` isn't cached at all.
 """
 function read_interconnector_demand_coefficients(db, as_of::Union{Date, DateTime})
-    coefficients = _read_interconnector_demand_coefficients_with_version(db, as_of)
-    return select(coefficients, :INTERCONNECTORID, :REGIONID, :DEMANDCOEFFICIENT)
-end
-
-function _read_interconnector_demand_coefficients_with_version(db, as_of::Union{Date, DateTime})
     _table_is_cached(db, :LOSSFACTORMODEL) || throw(
         ArgumentError(
             "LOSSFACTORMODEL is not cached — run " *
@@ -229,7 +224,7 @@ function _read_interconnector_demand_coefficients_with_version(db, as_of::Union{
                    max_by(VERSIONNO, (EFFECTIVEDATE, VERSIONNO)) AS VERSIONNO
             FROM raw GROUP BY INTERCONNECTORID
         )
-        SELECT r.INTERCONNECTORID, r.EFFECTIVEDATE, r.VERSIONNO, r.REGIONID,
+        SELECT r.INTERCONNECTORID, r.REGIONID,
                TRY_CAST(r.DEMANDCOEFFICIENT AS DOUBLE) AS DEMANDCOEFFICIENT
         FROM raw r
         INNER JOIN latest l
@@ -240,23 +235,6 @@ function _read_interconnector_demand_coefficients_with_version(db, as_of::Union{
         """,
         [as_of],
     )
-end
-
-function _interconnector_demand_coefficients_by_id(coefficients)
-    demand_coefficients = Dict{String, Dict{String, Float64}}()
-    for row in eachrow(coefficients)
-        d = get!(demand_coefficients, row.INTERCONNECTORID, Dict{String, Float64}())
-        d[row.REGIONID] = row.DEMANDCOEFFICIENT
-    end
-    if !haskey(get(demand_coefficients, "V-SA", Dict{String, Float64}()), "NSW1") && any(
-            (coefficients.INTERCONNECTORID .== "V-SA") .&
-                (coefficients.EFFECTIVEDATE .== DateTime(2025, 7, 1)) .&
-                (coefficients.VERSIONNO .== 1),
-        )
-        # AEMO's 2025-26 report includes this V-SA term, omitted from the matching published rows.
-        demand_coefficients["V-SA"]["NSW1"] = 1.6981e-6
-    end
-    return demand_coefficients
 end
 
 """
@@ -336,15 +314,18 @@ Throws `ArgumentError` when no interconnector survives.
 """
 function interconnector_loss_models(db, as_of::Union{Date, DateTime})
     params = read_interconnector_loss_parameters(db, as_of)
+    coefficients = read_interconnector_demand_coefficients(db, as_of)
     breakpoints = read_interconnector_loss_breakpoints(db, as_of)
 
     by_interconnector = Dict{String, Vector{Float64}}()
     for row in eachrow(breakpoints)
         push!(get!(by_interconnector, row.INTERCONNECTORID, Float64[]), row.MWBREAKPOINT)
     end
-    demand_coefficients = _interconnector_demand_coefficients_by_id(
-        _read_interconnector_demand_coefficients_with_version(db, as_of),
-    )
+    demand_coefficients = Dict{String, Dict{String, Float64}}()
+    for row in eachrow(coefficients)
+        d = get!(demand_coefficients, row.INTERCONNECTORID, Dict{String, Float64}())
+        d[row.REGIONID] = row.DEMANDCOEFFICIENT
+    end
 
     models = Dict{String, InterconnectorLossModel}()
     skipped = String[]

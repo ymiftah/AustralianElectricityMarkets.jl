@@ -1,6 +1,6 @@
 # Interconnector loss fixes: validation evidence, 10 October 2026
 
-This note records the loss-specific evidence for ADRs [0044](../adr/0044-heywood-missing-nsw-demand-coefficient.md), [0045](../adr/0045-zero-reference-interconnector-loss-chords.md), and [0047](../adr/0047-directional-mnsp-dc-loss-allocation.md). The pilot figures below are from seven selected intervals. They are not a full-sample fidelity claim.
+This note records evidence for ADRs [0044](../adr/0044-heywood-missing-nsw-demand-coefficient.md), [0045](../adr/0045-zero-reference-interconnector-loss-chords.md), and [0047](../adr/0047-directional-mnsp-dc-loss-allocation.md). The pilot figures below are historical results from seven selected intervals, not a full-sample fidelity claim.
 
 ## Piecewise loss curves
 
@@ -17,13 +17,9 @@ Integrating the cached NEMDE XML segment factors from zero flow reproduces all 6
 
 For a quadratic coefficient `b` and adjacent breakpoints `a < 0 < z`, the chord's zero-flow intercept is `-b*a*z/2`. The sampled QNI chord (`a = -17 MW`, `z = 17 MW`, `b = 0.00017965`) has a 0.025959425 MW intercept. The VIC-NSW chord (`a = -44 MW`, `z = 3 MW`, `b = 0.00015761`) has a 0.01040226 MW intercept. Removing these offsets preserves the segment slopes. AEMO describes loss equations as the integral of `(MLF - 1)` from zero flow; the XML segment factors supply the sampled discrete curve. AEMO's publication does not specify the internal piecewise interpolation algorithm.
 
-## Heywood demand coefficient
+## Historical combined pilot
 
-AEMO's 2025-26 report gives the V-SA equation with an NSW demand coefficient of `1.6981e-6`. The cached `LOSSFACTORMODEL` rows effective 2025-07-01, version 1 omit NSW1. The model assembly applies the report value only for that exact V-SA version and only when the NSW1 row is absent. The public data reader continues to return the published rows unchanged. A July 2026 version has a separately published NSW1 value and is not replaced.
-
-## Seven-interval loss-fix pilot
-
-The production comparison driver solved seven selected intervals with the loss fixes and directional MNSP allocation. The runs used neither supplemental XML constraint definitions nor published flow limits. Over common original/pilot rows:
+The production comparison driver solved seven selected intervals with the loss-curve fixes, directional MNSP allocation, and a Heywood NSW coefficient override that has since been withdrawn. These results do not validate the current branch changes in isolation. The runs used neither supplemental XML constraint definitions nor published flow limits. Over common original/pilot rows:
 
 | Metric | Original | Loss-fix pilot |
 | --- | ---: | ---: |
@@ -31,7 +27,7 @@ The production comparison driver solved seven selected intervals with the loss f
 | Interconnector flow mean absolute gap, MW (42 rows) | 10.60437581 | 7.06980695 |
 | Interconnector loss mean absolute gap, MW (42 rows) | 1.93485 | 1.18536 |
 
-At 6 June 2026 17:40, the Heywood loss is 12.713372 MW against NEMDE's 12.713370 MW, compared with 9.676971 MW in the original run. At 9 June 2026 15:00, the reverse-Basslink maximum flow gap falls from 86.03755 MW to below 0.000008 MW. These observations check selected cases; they do not establish full-sample fidelity or explain unrelated dispatch differences.
+At 6 June 2026 17:40, the combined pilot's Heywood loss was 12.713372 MW against NEMDE's 12.713370 MW, compared with 9.676971 MW in the original run. This is historical evidence for a run containing the withdrawn override, not validation of current Heywood modeling. At 9 June 2026 15:00, the reverse-Basslink maximum flow gap fell from 86.03755 MW to below 0.000008 MW. These observations check selected cases; they do not establish full-sample fidelity or explain unrelated dispatch differences.
 
 ## Limits
 
