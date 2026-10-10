@@ -234,6 +234,117 @@ end
     end
 end
 
+@testset "storage replay variable bounds follow directional energy offers" begin
+    storage_bound = function (out, sys, variable_type)
+        variable = PSI.get_variable(out.container, variable_type(), PSY.EnergyReservoirStorage)
+        return PSI.JuMP.upper_bound(variable[TOY_BATTERY, 1]) * PSY.get_base_power(sys)
+    end
+    set_static_limits! = function (sys, dispatch_context = nothing; output_mw = 50.0, input_mw = 50.0)
+        battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
+        PSY.set_output_active_power_limits!(battery, (min = 0.0, max = output_mw))
+        PSY.set_input_active_power_limits!(battery, (min = 0.0, max = input_mw))
+        @test PSY.get_output_active_power_limits(battery).max ≈ output_mw atol = TOY_TOLERANCE
+        @test PSY.get_input_active_power_limits(battery).max ≈ input_mw atol = TOY_TOLERANCE
+        return
+    end
+
+    @testset "a load offer above the registered input limit can clear" begin
+        sys = nem_toy_system(
+            [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
+            0.0;
+            batteries = [
+                TOY_BATTERY => toy_battery(
+                    50.0, 1000.0, 100.0, 1000.0;
+                    initial = 0.0, ramp_up = 100.0, gen_avail = 0.0, load_avail = 100.0,
+                ),
+            ],
+            mutate! = function (s, _)
+                set_static_limits!(s; input_mw = 50.0)
+                return
+            end,
+        )
+        out = solve_toy(sys)
+        in_variable = PSI.get_variable(out.container, PSI.ActivePowerInVariable(), PSY.EnergyReservoirStorage)
+        actual_bound_mw = PSI.JuMP.upper_bound(in_variable[TOY_BATTERY, 1]) * PSY.get_base_power(sys)
+
+        @test actual_bound_mw ≈ 100.0 atol = TOY_TOLERANCE
+        @test out.battery_in_mw[TOY_BATTERY] ≈ 100.0 atol = TOY_TOLERANCE
+        @test out.battery_in_mw[TOY_BATTERY] > 50.0
+        @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
+        @test out.storage_ramp_slack_mw.up ≈ 0.0 atol = TOY_TOLERANCE
+    end
+
+    @testset "generation and load availability stay independent in both formulations" begin
+        for formulation in (NEMReplayDispatch, NEMLookaheadDispatch)
+            for (gen_avail, load_avail) in ((20.0, 100.0), (100.0, 20.0))
+                sys = nem_toy_system(
+                    [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
+                    0.0;
+                    batteries = [
+                        TOY_BATTERY => toy_battery(
+                            100.0, 1.0, 100.0, 1000.0;
+                            initial = 0.0, ramp_up = 100.0, gen_avail = gen_avail, load_avail = load_avail,
+                        ),
+                    ],
+                    mutate! = set_static_limits!,
+                )
+                out = solve_toy(sys; formulation = formulation)
+
+                @test storage_bound(out, sys, PSI.ActivePowerOutVariable) ≈ gen_avail atol = TOY_TOLERANCE
+                @test storage_bound(out, sys, PSI.ActivePowerInVariable) ≈ load_avail atol = TOY_TOLERANCE
+            end
+        end
+    end
+
+    @testset "missing offer series keeps the static fallback in both formulations" begin
+        for formulation in (NEMReplayDispatch, NEMLookaheadDispatch)
+            sys = nem_toy_system(
+                [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
+                0.0;
+                batteries = [
+                    TOY_BATTERY => toy_battery(
+                        100.0, 1.0, 100.0, 1000.0;
+                        initial = 0.0, ramp_up = 100.0, gen_avail = 100.0, load_avail = 100.0,
+                    ),
+                ],
+                mutate! = function (s, _)
+                    battery = PSY.get_component(PSY.EnergyReservoirStorage, s, TOY_BATTERY)
+                    PSY.remove_time_series!(s, PSY.Deterministic, battery, "energy_max_avail")
+                    PSY.remove_time_series!(s, PSY.Deterministic, battery, "energy_max_avail_decremental")
+                    set_static_limits!(s; input_mw = 50.0)
+                    return
+                end,
+            )
+            out = solve_toy(sys; formulation = formulation)
+
+            @test storage_bound(out, sys, PSI.ActivePowerInVariable) ≈ 50.0 atol = TOY_TOLERANCE
+        end
+    end
+
+    @testset "lookahead storage bounds follow directional energy offers" begin
+        sys = nem_toy_system(
+            [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
+            0.0;
+            batteries = [
+                TOY_BATTERY => toy_battery(
+                    100.0, 1.0, 100.0, 1000.0;
+                    initial = 0.0, ramp_up = 100.0, gen_avail = 0.0, load_avail = 100.0,
+                ),
+            ],
+            mutate! = function (s, _)
+                set_static_limits!(s; input_mw = 50.0)
+                return
+            end,
+        )
+        out = solve_toy(sys; formulation = NEMLookaheadDispatch)
+
+        @test storage_bound(out, sys, PSI.ActivePowerInVariable) ≈ 100.0 atol = TOY_TOLERANCE
+        @test out.battery_in_mw[TOY_BATTERY] ≈ 100.0 atol = TOY_TOLERANCE
+        @test out.battery_in_mw[TOY_BATTERY] > 50.0
+        @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
+    end
+end
+
 @testset "a generic constraint binds against NEMReplayDispatch" begin
     function constrained_toy(rhs_mw)
         return nem_toy_system(
@@ -357,8 +468,10 @@ end
     )
     out = solve_toy(sys)
     mpc = AustralianElectricityMarketsSimulations._financial_year_mpc(TOY_START)
+    input_variable = PSI.get_variable(out.container, PSI.ActivePowerInVariable(), PSY.EnergyReservoirStorage)
 
     @test out.battery_in_mw[TOY_BATTERY] ≈ 50.0 atol = TOY_TOLERANCE
+    @test PSI.JuMP.upper_bound(input_variable[TOY_BATTERY, 1]) * PSY.get_base_power(sys) ≈ 50.0 atol = TOY_TOLERANCE
     @test out.storage_ramp_slack_mw.up ≈ 0.0 atol = TOY_TOLERANCE
     @test out.objective ≈ 50.0 * 20.0 * DISPATCH_INTERVAL_HOURS rtol = 1.0e-8
 

@@ -211,7 +211,9 @@ end
 # $/MWh, keyed by name (empty if `sys` carries none). Any `GenericConstraint` in `sys` is registered
 # under `LinearFactorLimit`.
 function solve_toy(
-        sys; optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+        sys;
+        formulation = NEMReplayDispatch,
+        optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
     )
     network = PSI.NetworkModel(
         PSI.AreaBalancePowerModel;
@@ -219,7 +221,7 @@ function solve_toy(
         duals = [PSI.CopperPlateBalanceConstraint],
     )
     template = PSI.ProblemTemplate(network)
-    set_nem_dispatch_models!(template, sys)
+    set_nem_dispatch_models!(template, sys; formulation = formulation)
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     if !isempty(PSY.get_components(GenericConstraint, sys))
         PSI.set_service_model!(

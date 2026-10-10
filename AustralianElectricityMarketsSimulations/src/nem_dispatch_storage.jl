@@ -210,10 +210,11 @@ end
 
 Bounds each battery's `PowerSimulations.ActivePowerOutVariable`/`ActivePowerInVariable` above
 by [`_storage_dispatch_ceilings`](@ref)'s per-direction ceilings, read once at build over the
-model's own window. A battery with no `MAXAVAIL` series attached is left unconstrained on both
-sides. Where a `NEMReplayDispatch` ramp floor (or negated ramp ceiling) lies above the device's
-rating, the variable's upper bound is raised to it, so the rating gives way before the ramp row
-does, as generators' `max_active_power` series does.
+model's own window. Each finite directional ceiling also sets the corresponding variable's upper
+bound, including any replay ramp-floor adjustment. A non-finite ceiling retains the static bound,
+subject to the existing ramp-floor exception. A battery with no `MAXAVAIL` series attached keeps
+its static bounds and receives no availability rows. Lookahead retains its chained optimized-power
+ramp semantics.
 
 # Returns
 `nothing`.
@@ -224,7 +225,6 @@ function _add_storage_availability_constraints!(container, devices, model::PSI.D
     jump_model = PSI.get_jump_model(container)
     out = PSI.get_variable(container, PSI.ActivePowerOutVariable(), T)
     in_ = PSI.get_variable(container, PSI.ActivePowerInVariable(), T)
-
     ceilings = _storage_dispatch_ceilings(container, devices, model)
     names = collect(keys(ceilings))
     isempty(names) && return
@@ -236,9 +236,15 @@ function _add_storage_availability_constraints!(container, devices, model::PSI.D
         container, PSI.ActivePowerVariableLimitsConstraint(), T, names, time_steps; meta = "in",
     )
     for name in names, t in time_steps
-        for (variable, floor_mw) in ((out[name, t], ceilings[name].gen_floor[t]), (in_[name, t], ceilings[name].load_floor[t]))
-            JuMP.has_upper_bound(variable) && floor_mw > JuMP.upper_bound(variable) &&
+        for (variable, ceiling_mw, floor_mw) in (
+                (out[name, t], ceilings[name].gen[t], ceilings[name].gen_floor[t]),
+                (in_[name, t], ceilings[name].load[t], ceilings[name].load_floor[t]),
+            )
+            if isfinite(ceiling_mw)
+                JuMP.set_upper_bound(variable, ceiling_mw)
+            elseif JuMP.has_upper_bound(variable) && floor_mw > JuMP.upper_bound(variable)
                 JuMP.set_upper_bound(variable, floor_mw)
+            end
         end
         con_out[name, t] = JuMP.@constraint(jump_model, out[name, t] <= ceilings[name].gen[t])
         con_in[name, t] = JuMP.@constraint(jump_model, in_[name, t] <= ceilings[name].load[t])

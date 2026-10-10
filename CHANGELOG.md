@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- In both `NEMReplayDispatch` and `NEMLookaheadDispatch`, each storage power variable now uses its
+  finite direction-specific energy offer `MAXAVAIL` as an upper bound, including the existing
+  ramp-floor adjustment.
+  Missing or non-finite availability retains the static bound subject to the existing ramp-floor
+  exception. Lookahead retains its existing chained optimized-power ramp semantics.
 - Invoked generic constraint versions with a missing effective date no longer abort the build (they are
   treated as having no definition).
 - `filter_buildable_generic_constraints` leaves out a generic constraint whose contributing devices
