@@ -16,7 +16,7 @@ DocMeta.setdocmeta!(
 set_theme!(theme_dark())
 
 ## Generate Literate examples
-for name in ["nem", "fcas", "build_system", "economic_dispatch", "market_bids", "interchanges", "clearing-with-batteries"]
+for name in ["nem", "fcas", "intro_to_psi_nem", "build_system", "economic_dispatch", "market_bids", "interchanges", "clearing-with-batteries"]
     Literate.markdown(
         joinpath(@__DIR__, "literate", "$name.jl"),
         joinpath(@__DIR__, "src", "examples");
@@ -48,6 +48,7 @@ makedocs(;
         "Explanation" => [
             "The National Electricity Market" => "examples/nem.md",
             "FCAS in the NEM" => "examples/fcas.md",
+            "From NEM dispatch to PowerSimulations.jl" => "examples/intro_to_psi_nem.md",
         ],
         "How-to" => [
             "Gather data" => "examples/gather_data.md",
