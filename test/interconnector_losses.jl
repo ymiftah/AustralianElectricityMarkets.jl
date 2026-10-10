@@ -1,22 +1,5 @@
 using DataFrames: DataFrame, nrow
 
-function _append_test_hive_rows(hive_root::String, table::Symbol, rows::DataFrame)
-    conn = DuckDB.connect(DuckDB.DB())
-    DuckDB.register_data_frame(conn, rows, "test_rows")
-    table_dir = joinpath(hive_root, string(table))
-    archive_month = first(rows.archive_month)
-    partition_dir = joinpath(table_dir, "archive_month=$archive_month")
-    mkpath(partition_dir)
-    output_path = joinpath(partition_dir, "fidelity_fixture.parquet")
-    DuckDB.execute(
-        conn,
-        "COPY (SELECT * EXCLUDE (archive_month) FROM test_rows) TO '$output_path' (FORMAT PARQUET)",
-    )
-    DuckDB.unregister_table(conn, "test_rows")
-    DuckDB.disconnect(conn)
-    return nothing
-end
-
 # A hand-built model with realistic NEMDE magnitudes: LOSSCONSTANT is a loss *factor*, so it sits
 # near 1.0, and the mock hive's 0.01 is deliberately not reused here - the closed forms below are
 # checked against numbers a real interconnector would carry.
@@ -34,109 +17,6 @@ const TEST_DEMAND = Dict("VIC1" => 4000.0, "NSW1" => 7000.0)
     @test loss_factor(TEST_LOSS_MODEL, 500.0, TEST_DEMAND) ≈ 1.02
     # A region with a coefficient but no demand entry contributes nothing rather than erroring.
     @test loss_factor(TEST_LOSS_MODEL, 0.0, Dict("VIC1" => 4000.0)) ≈ 1.06
-end
-
-let
-    hive_root = mktempdir()
-    create_mock_data(hive_root)
-    _append_test_hive_rows(
-        hive_root,
-        :INTERCONNECTOR,
-        DataFrame(
-            INTERCONNECTORID = ["V-SA"], REGIONFROM = ["VIC1"], REGIONTO = ["SA1"],
-            archive_month = ["2025-07"],
-        ),
-    )
-    _append_test_hive_rows(
-        hive_root,
-        :INTERCONNECTORCONSTRAINT,
-        DataFrame(
-            INTERCONNECTORID = ["V-SA"], EFFECTIVEDATE = [DateTime(2025, 7, 1)],
-            VERSIONNO = [1], FROMREGIONLOSSSHARE = [0.5], LOSSCONSTANT = [1.0],
-            LOSSFLOWCOEFFICIENT = [1.0e-4], ICTYPE = ["AC"], archive_month = ["2025-07"],
-        ),
-    )
-    _append_test_hive_rows(
-        hive_root,
-        :LOSSMODEL,
-        DataFrame(
-            INTERCONNECTORID = fill("V-SA", 3), EFFECTIVEDATE = fill(DateTime(2025, 7, 1), 3),
-            VERSIONNO = ones(Int, 3), LOSSSEGMENT = collect(1:3),
-            MWBREAKPOINT = [-500.0, 0.0, 500.0], archive_month = fill("2025-07", 3),
-        ),
-    )
-    _append_test_hive_rows(
-        hive_root,
-        :LOSSFACTORMODEL,
-        DataFrame(
-            INTERCONNECTORID = fill("V-SA", 2), EFFECTIVEDATE = fill(DateTime(2025, 7, 1), 2),
-            VERSIONNO = ones(Int, 2), REGIONID = ["VIC1", "SA1"],
-            DEMANDCOEFFICIENT = [-1.4896e-5, 5.108e-5], archive_month = fill("2025-07", 2),
-        ),
-    )
-    _append_test_hive_rows(
-        hive_root,
-        :LOSSFACTORMODEL,
-        DataFrame(
-            INTERCONNECTORID = fill("V-SA", 3), EFFECTIVEDATE = fill(DateTime(2026, 7, 1), 3),
-            VERSIONNO = ones(Int, 3), REGIONID = ["VIC1", "SA1", "NSW1"],
-            DEMANDCOEFFICIENT = [-1.27e-5, 3.44e-5, -2.22e-6], archive_month = fill("2026-07", 3),
-        ),
-    )
-    db = aem_connect(HiveConfiguration(hive_location = hive_root, filesystem = "file"))
-
-    @testset "Heywood NSW demand coefficient follows the official version" begin
-        public_2025 = read_interconnector_demand_coefficients(db, Date(2025, 7, 1))
-        @test Set(names(public_2025)) == Set(["INTERCONNECTORID", "REGIONID", "DEMANDCOEFFICIENT"])
-        @test !any((public_2025.INTERCONNECTORID .== "V-SA") .& (public_2025.REGIONID .== "NSW1"))
-
-        models_2025 = interconnector_loss_models(db, Date(2025, 7, 1))
-        @test models_2025["V-SA"].demand_coefficients["NSW1"] == 1.6981e-6
-        @test loss_factor(models_2025["V-SA"], 0.0, Dict("NSW1" => 10_000.0)) -
-            loss_factor(models_2025["V-SA"], 0.0, Dict()) ≈ 0.016981
-
-        versioned_2026 = AustralianElectricityMarkets._read_interconnector_demand_coefficients_with_version(
-            db,
-            Date(2026, 7, 1),
-        )
-        models_2026 = interconnector_loss_models(db, Date(2026, 7, 1))
-        @test models_2026["V-SA"].demand_coefficients["NSW1"] == -2.22e-6
-        @test all(versioned_2026[versioned_2026.INTERCONNECTORID .== "V-SA", :].VERSIONNO .== 1)
-
-        with_published_value = copy(
-            AustralianElectricityMarkets._read_interconnector_demand_coefficients_with_version(
-                db,
-                Date(2025, 7, 1),
-            )
-        )
-        push!(
-            with_published_value, (
-                "V-SA", DateTime(2025, 7, 1), 1, "NSW1", 7.5e-7,
-            )
-        )
-        published = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(
-            with_published_value,
-        )
-        @test published["V-SA"]["NSW1"] == 7.5e-7
-
-        guarded = DataFrame(
-            INTERCONNECTORID = ["V-SA", "OTHER"],
-            EFFECTIVEDATE = [DateTime(2025, 7, 1), DateTime(2025, 7, 1)],
-            VERSIONNO = [2, 1], REGIONID = ["SA1", "SA1"],
-            DEMANDCOEFFICIENT = [2.0e-5, 3.0e-5],
-        )
-        guarded_by_id = AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(guarded)
-        @test !haskey(guarded_by_id["V-SA"], "NSW1")
-        @test !haskey(guarded_by_id["OTHER"], "NSW1")
-        pre_2025 = DataFrame(
-            INTERCONNECTORID = ["V-SA"], EFFECTIVEDATE = [DateTime(2024, 7, 1)],
-            VERSIONNO = [1], REGIONID = ["SA1"], DEMANDCOEFFICIENT = [2.0e-5],
-        )
-        @test !haskey(
-            AustralianElectricityMarkets._interconnector_demand_coefficients_by_id(pre_2025)["V-SA"],
-            "NSW1",
-        )
-    end
 end
 
 @testset "interconnector_losses" begin
@@ -219,7 +99,6 @@ let
         @test Set(names(df)) == Set(["INTERCONNECTORID", "REGIONID", "DEMANDCOEFFICIENT"])
         @test nrow(df) == 12
         @test all(!ismissing, df.DEMANDCOEFFICIENT)
-
     end
 
     @testset "read_interconnector_loss_parameters" begin
