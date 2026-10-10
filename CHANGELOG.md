@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The V-SA loss model restores the AEMO 2025-26 report's NSW demand coefficient only when the
+  2025-07-01/version-1 rows omit NSW1; raw published rows and later versions remain unchanged.
+- Interconnector loss chords that span zero flow are normalized to zero there, preserving their
+  marginal slopes in total losses, directional MNSP loss bounds, and loss-gap diagnostics.
+- MNSP DC losses follow the selected sending direction and its sending terminal loss factor.
 - Invoked generic constraint versions with a missing effective date no longer abort the build (they are
   treated as having no definition).
 - `filter_buildable_generic_constraints` leaves out a generic constraint whose contributing devices

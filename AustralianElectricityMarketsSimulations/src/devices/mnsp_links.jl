@@ -27,6 +27,11 @@ struct MNSPLinkDirectionVariable <: PSI.VariableType end
 
 PSI.convert_result_to_natural_units(::Type{MNSPLinkFlowVariable}) = true
 
+"DC losses supplied by one directional MNSP link's sending region, per-unit of base power."
+struct MNSPLinkLossVariable <: PSI.VariableType end
+
+PSI.convert_result_to_natural_units(::Type{MNSPLinkLossVariable}) = true
+
 const _MNSP_DIRECTIONS = ("forward", "reverse")
 
 """
@@ -69,20 +74,20 @@ function _mnsp_link_tlfs(device::PSY.AreaInterchange, direction::AbstractString)
 end
 
 """
-    _add_mnsp_link_flows!(container, devices)
+    _add_mnsp_link_flows!(container, sys, devices)
 
 For every device in `devices` carrying MNSP offers, adds one non-negative link flow per direction and
 timestep, bounded by the link's `MAXAVAIL` and its offered bands, and ties it to the interconnector
 flow as `flow = forward - reverse`. Each link's bands enter the objective at the offered price. A
-link's flow `q` also enters the regional balances at the link's ends: `-from_tlf * q` in its sending
-area and `+to_tlf * q` in its receiving area, on top of the interconnector's own `flow` terms.
+link's receiving-end flow `q` and DC losses `loss` enter the regional balances as
+`-from_tlf * (q + loss)` in its sending area and `+to_tlf * q` in its receiving area.
 Devices without offers are untouched and keep their free-flow model. Quantities are per-unit of the
 system base.
 
 A registered binary per timestep allows only one direction to flow, so a zero net flow gives zero
 link flows.
 """
-function _add_mnsp_link_flows!(container::PSI.OptimizationContainer, devices)
+function _add_mnsp_link_flows!(container::PSI.OptimizationContainer, sys::PSY.System, devices)
     mnsp = filter(_has_mnsp_offers, collect(devices))
     isempty(mnsp) && return
     time_steps = PSI.get_time_steps(container)
@@ -92,6 +97,7 @@ function _add_mnsp_link_flows!(container::PSI.OptimizationContainer, devices)
     initial_time = PSI.get_initial_time(container)
     n_steps = length(time_steps)
     jm = PSI.get_jump_model(container)
+    area_demand = _area_demand(container, sys)
 
     link_var = PSI.add_variable_container!(
         container, MNSPLinkFlowVariable(), PSY.AreaInterchange, names, collect(_MNSP_DIRECTIONS), time_steps,
@@ -99,14 +105,19 @@ function _add_mnsp_link_flows!(container::PSI.OptimizationContainer, devices)
     direction_var = PSI.add_variable_container!(
         container, MNSPLinkDirectionVariable(), PSY.AreaInterchange, names, time_steps,
     )
+    link_loss = PSI.add_variable_container!(
+        container, MNSPLinkLossVariable(), PSY.AreaInterchange, names, collect(_MNSP_DIRECTIONS), time_steps,
+    )
     link_con = PSI.add_constraints_container!(
         container, MNSPLinkFlowConstraint(), PSY.AreaInterchange, names, time_steps,
     )
     expr = PSI.get_expression(container, PSI.ActivePowerBalance(), PSY.Area)
     flow_var = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
+    loss_var = PSI.get_variable(container, InterconnectorLossVariable(), PSY.AreaInterchange)
 
     for d in mnsp
         name = PSY.get_name(d)
+        loss_model = _loss_model(d)
         curves = Dict{String, Vector{PSY.PiecewiseStepData}}()
         avail = Dict{String, Vector{Float64}}()
         tlf = Dict(dir => _mnsp_link_tlfs(d, dir) for dir in _MNSP_DIRECTIONS)
@@ -153,6 +164,22 @@ function _add_mnsp_link_flows!(container::PSI.OptimizationContainer, devices)
             direction_var[name, t] = forward_on
             JuMP.@constraint(jm, link_var[name, "forward", t] <= upper["forward"] * forward_on)
             JuMP.@constraint(jm, link_var[name, "reverse", t] <= upper["reverse"] * (1 - forward_on))
+            demand = _demand_at(area_demand, t)
+            vertex_losses = _loss_curve_vertex_values(loss_model, demand)
+            lower_loss, upper_loss = min(0.0, minimum(vertex_losses)), max(0.0, maximum(vertex_losses))
+            for dir in _MNSP_DIRECTIONS
+                on = dir == "forward" ? forward_on : 1 - forward_on
+                loss = JuMP.@variable(
+                    jm, lower_bound = lower_loss, upper_bound = upper_loss,
+                    base_name = "MNSPLinkLossVariable_{$name,$dir,$t}",
+                )
+                link_loss[name, dir, t] = loss
+                JuMP.@constraint(jm, loss >= lower_loss * on)
+                JuMP.@constraint(jm, loss <= upper_loss * on)
+                sender = getproperty(area, Symbol(dir))
+                JuMP.add_to_expression!(expr[sender, t], -tlf[dir].from, loss)
+            end
+            JuMP.@constraint(jm, link_loss[name, "forward", t] + link_loss[name, "reverse", t] == loss_var[name, t])
         end
     end
     return
