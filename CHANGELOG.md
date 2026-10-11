@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- The single "From NEM dispatch to PowerSimulations.jl" page is replaced by a four-page NEMDE
+  walkthrough: the NEMDE model (equations and charts), the same model as a JuMP script on a toy
+  market, how PowerSimulations.jl builds it phase by phase, and the AEM / AEMSim formulations that
+  rebuild it (interconnector losses, FCAS requirements as generic constraints and elastic
+  constraints included, checked against the JuMP model). The toy market is shared through
+  `docs/literate/toy_market.jl`.
+
 ### Fixed
 
 - The AGC ramp rate that caps regulation and joint ramping is the larger of `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE` and the regulation availability spread over the interval, instead of the bid-capped ramp rate alone. Regulation caps now match NEMDE's; joint ramping can be tighter than NEMDE's, because the telemetered rate is not published.
