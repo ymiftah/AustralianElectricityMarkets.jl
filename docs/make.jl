@@ -6,6 +6,8 @@ using DocumenterVitepress
 using Literate
 using CairoMakie
 
+include(joinpath(@__DIR__, "literate", "inline_source.jl"))
+
 DocMeta.setdocmeta!(
     AustralianElectricityMarkets,
     :DocTestSetup,
@@ -18,12 +20,13 @@ DocMeta.setdocmeta!(
 set_theme!(theme_dark())
 
 ## Generate Literate examples
-for name in ["nem", "fcas", "intro_to_psi_nem", "build_system", "economic_dispatch", "market_bids", "interchanges", "clearing-with-batteries"]
+for name in ["nem", "fcas", "nemde_model", "nemde_jump", "nemde_psi", "nemde_aem", "build_system", "economic_dispatch", "market_bids", "interchanges", "clearing-with-batteries"]
     Literate.markdown(
         joinpath(@__DIR__, "literate", "$name.jl"),
         joinpath(@__DIR__, "src", "examples");
         execute = true,
         credit = false,
+        preprocess = inline_toy_source,
     )
 end
 
@@ -51,9 +54,15 @@ makedocs(;
     pages = [
         "Home" => "index.md",
         "Explanation" => [
-            "The National Electricity Market" => "examples/nem.md",
-            "FCAS in the NEM" => "examples/fcas.md",
-            "From NEM dispatch to PowerSimulations.jl" => "examples/intro_to_psi_nem.md",
+            "The National Electricity Market" => [
+                "Overview" => "examples/nem.md",
+                "FCAS in the NEM" => "examples/fcas.md",
+            ],
+            "Introduction to PowerSimulations.jl" => [
+                "NEMDE as a JuMP model" => "examples/nemde_jump.md",
+                "From JuMP to PowerSimulations.jl" => "examples/nemde_psi.md",
+                "Building it with AEM and AEMSim" => "examples/nemde_aem.md",
+            ],
         ],
         "How-to" => [
             "Gather data" => "examples/gather_data.md",
