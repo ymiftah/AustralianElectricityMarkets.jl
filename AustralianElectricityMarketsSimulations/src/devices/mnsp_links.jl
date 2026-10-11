@@ -165,7 +165,7 @@ function _add_mnsp_link_flows!(container::PSI.OptimizationContainer, sys::PSY.Sy
             JuMP.@constraint(jm, link_var[name, "forward", t] <= upper["forward"] * forward_on)
             JuMP.@constraint(jm, link_var[name, "reverse", t] <= upper["reverse"] * (1 - forward_on))
             demand = _demand_at(area_demand, t)
-            vertex_losses = _loss_curve_vertex_values(loss_model, demand)
+            vertex_losses = loss_curve_vertex_values(loss_model, demand)
             lower_loss, upper_loss = min(0.0, minimum(vertex_losses)), max(0.0, maximum(vertex_losses))
             for dir in _MNSP_DIRECTIONS
                 on = dir == "forward" ? forward_on : 1 - forward_on

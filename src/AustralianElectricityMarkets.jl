@@ -99,8 +99,10 @@ include("fcas/service.jl")
 include("constraints/zero_flow.jl")
 include("constraints/build.jl")
 include("interconnector_losses.jl")
+include("interconnector_loss_assumptions.jl")
 
 export InterconnectorLossModel, loss_factor, interconnector_losses, loss_segments
+export interconnector_loss_assumptions, loss_curve_vertex_values, interconnector_loss_allocation, get_loss_model_provenance
 export read_interconnector_loss_breakpoints, read_interconnector_demand_coefficients,
     read_interconnector_loss_parameters, interconnector_loss_models, attach_interconnector_losses!
 

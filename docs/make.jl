@@ -48,6 +48,7 @@ makedocs(;
         "Explanation" => [
             "The National Electricity Market" => "examples/nem.md",
             "FCAS in the NEM" => "examples/fcas.md",
+            "Interconnector loss inputs and assumptions" => "interconnector-losses.md",
         ],
         "How-to" => [
             "Gather data" => "examples/gather_data.md",

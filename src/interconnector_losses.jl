@@ -109,9 +109,9 @@ end
     loss_segments(model, demand) -> Vector{NamedTuple}
 
 `model`'s quadratic loss curve linearised on its own `MWBREAKPOINT`s, as
-`(; from_mw, to_mw, slope)` per segment, ascending. `slope` is the average MW of loss per MW of
-flow across the segment — the chord of [`interconnector_losses`](@ref), which is exact at every
-breakpoint and is what NEMDE's LP sees.
+`(; from_mw, to_mw, slope)` per segment, ascending. The chord slopes of
+[`interconnector_losses`](@ref) also apply to the zero-referenced dispatch vertices returned by
+[`loss_curve_vertex_values`](@ref).
 
 Throws `ArgumentError` when `model` carries fewer than two breakpoints or has duplicate adjacent breakpoints.
 """
@@ -157,6 +157,11 @@ highest `VERSIONNO`, never on `archive_month`.
 Throws an `ArgumentError` when `LOSSMODEL` isn't cached at all.
 """
 function read_interconnector_loss_breakpoints(db, as_of::Union{Date, DateTime})
+    breakpoints = _read_interconnector_loss_breakpoints_with_version(db, as_of)
+    return select(breakpoints, :INTERCONNECTORID, :LOSSSEGMENT, :MWBREAKPOINT)
+end
+
+function _read_interconnector_loss_breakpoints_with_version(db, as_of::Union{Date, DateTime})
     _table_is_cached(db, :LOSSMODEL) || throw(
         ArgumentError(
             "LOSSMODEL is not cached — run `populate(db, :LOSSMODEL, <from>, <to>)` first.",
@@ -179,7 +184,7 @@ function read_interconnector_loss_breakpoints(db, as_of::Union{Date, DateTime})
                    max_by(VERSIONNO, (EFFECTIVEDATE, VERSIONNO)) AS VERSIONNO
             FROM raw GROUP BY INTERCONNECTORID
         )
-        SELECT r.INTERCONNECTORID, r.LOSSSEGMENT, TRY_CAST(r.MWBREAKPOINT AS DOUBLE) AS MWBREAKPOINT
+        SELECT r.INTERCONNECTORID, r.EFFECTIVEDATE, r.VERSIONNO, r.LOSSSEGMENT, TRY_CAST(r.MWBREAKPOINT AS DOUBLE) AS MWBREAKPOINT
         FROM raw r
         INNER JOIN latest l
           ON r.INTERCONNECTORID = l.INTERCONNECTORID
@@ -240,60 +245,6 @@ function _read_interconnector_demand_coefficients_with_version(db, as_of::Union{
         """,
         [as_of],
     )
-end
-
-# The report applies this term for FY2025-26; raw LOSSFACTORMODEL changes from the 2025-07-01 row to a 2026-07-01 successor.
-const _HEYWOOD_NSW_COEFFICIENT_START = Date(2025, 7, 1)
-const _HEYWOOD_NSW_COEFFICIENT_END = Date(2026, 7, 1)
-const _HEYWOOD_NSW_COEFFICIENT = 1.6981e-6
-
-function _interconnector_demand_coefficients_by_id(coefficients, params, as_of::Union{Date, DateTime})
-    demand_coefficients = Dict{String, Dict{String, Float64}}()
-    for row in eachrow(coefficients)
-        d = get!(demand_coefficients, row.INTERCONNECTORID, Dict{String, Float64}())
-        d[row.REGIONID] = row.DEMANDCOEFFICIENT
-    end
-
-    as_of_date = Date(as_of)
-    if as_of_date < _HEYWOOD_NSW_COEFFICIENT_START || as_of_date >= _HEYWOOD_NSW_COEFFICIENT_END
-        return demand_coefficients
-    end
-
-    vsa_params = params[params.INTERCONNECTORID .== "V-SA", :]
-    nrow(vsa_params) == 1 || return demand_coefficients
-    param = only(eachrow(vsa_params))
-    ismissing(param.EFFECTIVEDATE) && return demand_coefficients
-    DateTime(param.EFFECTIVEDATE) == DateTime(_HEYWOOD_NSW_COEFFICIENT_START) ||
-        return demand_coefficients
-    ismissing(param.VERSIONNO) && return demand_coefficients
-    param.VERSIONNO == 1 || return demand_coefficients
-    ismissing(param.LOSSCONSTANT) && return demand_coefficients
-    isapprox(param.LOSSCONSTANT, 0.9721; atol = 1.0e-12, rtol = 0.0) || return demand_coefficients
-    ismissing(param.LOSSFLOWCOEFFICIENT) && return demand_coefficients
-    isapprox(param.LOSSFLOWCOEFFICIENT, 0.00026801; atol = 1.0e-12, rtol = 0.0) ||
-        return demand_coefficients
-
-    vsa_coefficients = coefficients[coefficients.INTERCONNECTORID .== "V-SA", :]
-    all(
-        !ismissing(row.EFFECTIVEDATE) &&
-            DateTime(row.EFFECTIVEDATE) == DateTime(_HEYWOOD_NSW_COEFFICIENT_START) for
-            row in eachrow(vsa_coefficients)
-    ) ||
-        return demand_coefficients
-    all(!ismissing(row.VERSIONNO) && row.VERSIONNO == 1 for row in eachrow(vsa_coefficients)) ||
-        return demand_coefficients
-
-    vsa = get(demand_coefficients, "V-SA", Dict{String, Float64}())
-    haskey(vsa, "NSW1") && return demand_coefficients
-    haskey(vsa, "VIC1") || return demand_coefficients
-    haskey(vsa, "SA1") || return demand_coefficients
-    isapprox(vsa["VIC1"], -1.4896e-5; atol = 1.0e-12, rtol = 0.0) || return demand_coefficients
-    isapprox(vsa["SA1"], 5.108e-5; atol = 1.0e-12, rtol = 0.0) || return demand_coefficients
-
-    # AEMO's FY2025-26 report, §3 p. 56, footnote 11, supplies this additional NSW demand term:
-    # https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2025-26-marginal-loss-factors/marginal-loss-factors-for-the-2025-26-fin-year.pdf?rev=87a79a393a1a40c7a7e0738908fe8b1e&sc_lang=en
-    demand_coefficients["V-SA"]["NSW1"] = _HEYWOOD_NSW_COEFFICIENT
-    return demand_coefficients
 end
 
 """
@@ -366,36 +317,31 @@ function _read_interconnector_loss_parameters_with_version(db, as_of::Union{Date
     )
 end
 
-# AEMO's `FROMREGIONLOSSSHARE` for Basslink is not well defined; nempy sets it to 1 to best match NEMDE.
-const _LOSS_SHARE_OVERRIDES = Dict("T-V-MNSP1" => 1.0)
 
 """
     interconnector_loss_models(db, as_of) -> Dict{String, InterconnectorLossModel}
 
-Every interconnector's [`InterconnectorLossModel`](@ref), assembled from
-[`read_interconnector_loss_parameters`](@ref),
-[`read_interconnector_demand_coefficients`](@ref) and
-[`read_interconnector_loss_breakpoints`](@ref) as of `as_of`.
+Assembles version-resolved loss models, applying the matching records from
+[`interconnector_loss_assumptions`](@ref) and recording sources in [`get_loss_model_provenance`](@ref).
 
-An interconnector with loss parameters but no `LOSSMODEL` breakpoints is skipped, reported in
-one summary `@warn`.
+# Arguments
+- `db`: The database containing the loss configuration tables.
+- `as_of`: A `Date` or `DateTime` selecting effective source versions.
 
-The loss share of `T-V-MNSP1` (Basslink) is fixed at `1.0`, as in nempy, because AEMO's published
-value is not well defined. V-SA's missing NSW1 coefficient is filled from AEMO's
-[FY2025-26 MLF report](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2025-26-marginal-loss-factors/marginal-loss-factors-for-the-2025-26-fin-year.pdf?rev=87a79a393a1a40c7a7e0738908fe8b1e&sc_lang=en), §3 p. 56, footnote 11, only when `as_of` is from 2025-07-01 inclusive to 2026-07-01 exclusive and the matching version is selected.
-
-Throws `ArgumentError` when no interconnector survives.
+# Returns
+Models keyed by interconnector ID. Missing breakpoint models are skipped with a warning;
+throws `ArgumentError` if no complete model survives. Basslink's static loss-share fallback is 1.0.
 """
 function interconnector_loss_models(db, as_of::Union{Date, DateTime})
     params = _read_interconnector_loss_parameters_with_version(db, as_of)
     coefficients = _read_interconnector_demand_coefficients_with_version(db, as_of)
-    breakpoints = read_interconnector_loss_breakpoints(db, as_of)
+    breakpoints = _read_interconnector_loss_breakpoints_with_version(db, as_of)
 
     by_interconnector = Dict{String, Vector{Float64}}()
     for row in eachrow(breakpoints)
         push!(get!(by_interconnector, row.INTERCONNECTORID, Float64[]), row.MWBREAKPOINT)
     end
-    demand_coefficients = _interconnector_demand_coefficients_by_id(coefficients, params, as_of)
+    demand_coefficients, corrections = _resolve_interconnector_demand_coefficients(coefficients, params, as_of)
 
     models = Dict{String, InterconnectorLossModel}()
     skipped = String[]
@@ -410,12 +356,13 @@ function interconnector_loss_models(db, as_of::Union{Date, DateTime})
             interconnector = id,
             from_region = row.REGIONFROM,
             to_region = row.REGIONTO,
-            from_region_loss_share = get(_LOSS_SHARE_OVERRIDES, id, coalesce(row.FROMREGIONLOSSSHARE, 0.5)),
-            loss_constant = coalesce(row.LOSSCONSTANT, 1.0),
-            loss_flow_coefficient = coalesce(row.LOSSFLOWCOEFFICIENT, 0.0),
+            from_region_loss_share = get(_LOSS_SHARE_OVERRIDES, id, coalesce(row.FROMREGIONLOSSSHARE, _INTERCONNECTOR_LOSS_DEFAULTS.from_region_loss_share)),
+            loss_constant = coalesce(row.LOSSCONSTANT, _INTERCONNECTOR_LOSS_DEFAULTS.loss_constant),
+            loss_flow_coefficient = coalesce(row.LOSSFLOWCOEFFICIENT, _INTERCONNECTOR_LOSS_DEFAULTS.loss_flow_coefficient),
             demand_coefficients = get(demand_coefficients, id, Dict{String, Float64}()),
             breakpoints = bps,
         )
+        _record_loss_model_provenance!(models[id], as_of, params, coefficients, breakpoints, corrections)
     end
     isempty(skipped) ||
         @warn "interconnector_loss_models: $(length(skipped)) interconnector(s) have no LOSSMODEL breakpoints as of $as_of; skipped" skipped
@@ -437,7 +384,7 @@ Rescales `model`'s MW-based fields to per-unit of `base_power`. `breakpoints` di
 `base_power`; `loss_constant` and `from_region_loss_share` are dimensionless and unchanged.
 """
 function _to_pu(model::InterconnectorLossModel, base_power::Real)
-    return InterconnectorLossModel(;
+    converted = InterconnectorLossModel(;
         interconnector = model.interconnector,
         from_region = model.from_region,
         to_region = model.to_region,
@@ -447,6 +394,8 @@ function _to_pu(model::InterconnectorLossModel, base_power::Real)
         demand_coefficients = Dict(k => v * base_power for (k, v) in model.demand_coefficients),
         breakpoints = model.breakpoints ./ base_power,
     )
+    merge!(IS.get_ext(converted.internal), deepcopy(IS.get_ext(model.internal)))
+    return converted
 end
 
 """

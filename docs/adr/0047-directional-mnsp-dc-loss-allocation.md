@@ -45,3 +45,8 @@ fixed-load and elastic priority behavior remains incomplete. The loss-only pilot
 evidence and these limitations are recorded in
 [`interconnector-loss-fixes-2026-10-10.md`](../validation/interconnector-loss-fixes-2026-10-10.md).
 The June sample does not validate the separate regulated-Basslink treatment from July 2026.
+
+## Implementation boundary
+
+AEM declares the allocation convention through `interconnector_loss_allocation`. AEMSim
+constructs the directional constraints and balance terms. See ADR 0048 for the source boundary.

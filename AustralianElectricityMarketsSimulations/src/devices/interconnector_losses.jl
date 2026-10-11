@@ -49,31 +49,6 @@ Contiguous segment fill: segment `s + 1` may carry flow only when segment `s` is
 """
 struct InterconnectorLossSegmentOrderConstraint <: PSI.ConstraintType end
 
-"""
-    _loss_curve_vertex_values(model, demand) -> Vector{Float64}
-
-Returns the piecewise loss values at `model.breakpoints`. When one segment strictly brackets zero,
-subtracts its interpolated zero-flow value from every vertex; one-sided ranges retain their current
-anchoring because they do not identify a zero-flow reference.
-
-# Arguments
-- `model`: Interconnector loss model, in its own units.
-- `demand`: Regional demand values in the same units as `model`.
-
-# Returns
-Corrected loss values corresponding to `model.breakpoints`.
-"""
-function _loss_curve_vertex_values(model::InterconnectorLossModel, demand::AbstractDict)
-    breakpoints = model.breakpoints
-    values = [interconnector_losses(model, bp, demand) for bp in breakpoints]
-    crossing = findfirst(i -> breakpoints[i] < 0.0 < breakpoints[i + 1], 1:(length(breakpoints) - 1))
-    isnothing(crossing) && return values
-
-    a, z = breakpoints[crossing:(crossing + 1)]
-    offset = -model.loss_flow_coefficient * a * z / 2
-    return values .- offset
-end
-
 PSI.convert_result_to_natural_units(::Type{InterconnectorLossVariable}) = true
 PSI.convert_result_to_natural_units(::Type{InterconnectorLossSegmentVariable}) = true
 
@@ -291,6 +266,7 @@ function _add_loss_variables_and_constraints!(
         from_area = PSY.get_name(PSY.get_from_area(d))
         to_area = PSY.get_name(PSY.get_to_area(d))
         share = model.from_region_loss_share
+        allocation = interconnector_loss_allocation(model; directional_offers = _has_mnsp_offers(d))
 
         for t in time_steps
             demand_t = _demand_at(area_demand, t)
@@ -331,13 +307,13 @@ function _add_loss_variables_and_constraints!(
                 flow_var[name, t] ==
                     bp1 + sum(seg_var[name, segment_labels[s], t] for s in 1:max_segments)
             )
-            base_loss = first(_loss_curve_vertex_values(model, demand_t))
+            base_loss = first(loss_curve_vertex_values(model, demand_t))
             loss_def_con[name, t] = JuMP.@constraint(
                 jm,
                 loss_var[name, t] == base_loss +
                     sum(segments[s].slope * seg_var[name, segment_labels[s], t] for s in 1:n)
             )
-            if !_has_mnsp_offers(d)
+            if allocation == :static_share
                 JuMP.add_to_expression!(expr[from_area, t], -share, loss_var[name, t])
                 JuMP.add_to_expression!(expr[to_area, t], -(1.0 - share), loss_var[name, t])
             end

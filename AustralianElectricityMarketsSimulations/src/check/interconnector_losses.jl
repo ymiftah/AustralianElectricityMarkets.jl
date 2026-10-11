@@ -34,7 +34,7 @@ function interconnector_loss_gaps(results::PSI.OptimizationProblemResults, sys::
             haskey(flows, (name, stamp)) || continue
             flow_pu = flows[(name, stamp)] / base_power
             demand_t = _demand_at(demand, t)
-            vertex_losses = _loss_curve_vertex_values(model, demand_t)
+            vertex_losses = loss_curve_vertex_values(model, demand_t)
             segment = clamp(searchsortedlast(model.breakpoints, flow_pu), 1, length(model.breakpoints) - 1)
             lo, hi = model.breakpoints[segment:(segment + 1)]
             loss_lo = vertex_losses[segment]

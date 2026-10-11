@@ -719,51 +719,6 @@ end
     end
 end
 
-@testset "piecewise loss vertices are referenced to zero flow" begin
-    function curve_model(; scale = 1.0, breakpoints = [-17.0, 17.0], b = 0.00017965, c = 1.0)
-        return AEMS.InterconnectorLossModel(
-            ; interconnector = "TEST", from_region = "1", to_region = "2",
-            from_region_loss_share = 0.4, loss_constant = c,
-            loss_flow_coefficient = b * scale,
-            demand_coefficients = Dict("2" => 0.0003 * scale),
-            breakpoints = breakpoints ./ scale,
-        )
-    end
-
-    demand = Dict("2" => 23.0)
-    model = curve_model()
-    corrected = AEMS._loss_curve_vertex_values(model, demand)
-    # Subtract the chord's zero-flow intercept from both vertices, preserving its slope.
-    offset = 0.00017965 * 17.0^2 / 2
-    expected = [interconnector_losses(model, bp, demand) - offset for bp in (-17.0, 17.0)]
-    @test corrected ≈ expected atol = 1.0e-12
-    @test corrected[1] < 0 < corrected[2]
-    @test corrected[1] ≈ -corrected[2] atol = 1.0e-12
-    @test only(diff(corrected)) / 34.0 ≈ loss_segments(model, demand)[1].slope atol = 1.0e-12
-
-    # The nonzero demand changes the linear term, but cannot move the zero-flow reference.
-    no_demand_model = curve_model(; c = 1.0)
-    @test AEMS._loss_curve_vertex_values(no_demand_model, Dict{String, Float64}()) .-
-        AEMS._loss_curve_vertex_values(no_demand_model, demand) ≈ [0.0003 * 23.0 * 17.0, -0.0003 * 23.0 * 17.0] atol = 1.0e-12
-
-    # Attached models use per-unit values but represent the same physical curve.
-    base = 100.0
-    pu_model = curve_model(; scale = base, breakpoints = [-17.0, 17.0], b = 0.00017965)
-    pu_values = AEMS._loss_curve_vertex_values(pu_model, Dict("2" => 23.0 / base))
-    @test pu_values .* base ≈ corrected atol = 1.0e-12
-
-    # A zero breakpoint anchors the curve; one-sided ranges retain their existing values.
-    with_zero = curve_model(; breakpoints = [-17.0, 0.0, 17.0])
-    @test AEMS._loss_curve_vertex_values(with_zero, demand) ≈
-        [interconnector_losses(with_zero, bp, demand) for bp in with_zero.breakpoints] atol = 1.0e-12
-    linear = curve_model(; b = 0.0)
-    @test AEMS._loss_curve_vertex_values(linear, demand) ≈
-        [interconnector_losses(linear, bp, demand) for bp in linear.breakpoints] atol = 1.0e-12
-    one_sided = curve_model(; breakpoints = [3.0, 17.0])
-    @test AEMS._loss_curve_vertex_values(one_sided, demand) ≈
-        [interconnector_losses(one_sided, bp, demand) for bp in one_sided.breakpoints] atol = 1.0e-12
-end
-
 @testset "directional MNSP loss bounds use signed zero-referenced vertices" begin
     # Unequal endpoints produce opposite-signed normalized vertices for both directional vars.
     a, z = -44.0, 3.0

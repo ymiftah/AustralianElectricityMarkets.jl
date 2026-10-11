@@ -41,3 +41,8 @@ The piecewise model agrees with the zero-integrated analytic loss reference at z
 changing marginal slopes. QNI's `[-17, 17]` MW chord has a 0.025959425 MW intercept, and VIC-NSW's
 `[-44, 3]` MW chord has a 0.01040226 MW intercept. These values are removed from the piecewise
 vertices only; analytic loss calculations keep their established meaning.
+
+## Implementation boundary
+
+AEM owns the dispatch vertex convention through `loss_curve_vertex_values`; AEMSim consumes
+those vertices for construction and diagnostics. See ADR 0048 for the source-provenance boundary.

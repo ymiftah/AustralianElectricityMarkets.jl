@@ -65,3 +65,9 @@ infer another version or change raw query results.
 - AEMO, [June 2026 `LOSSMODEL` archive](https://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2026/MMSDM_2026_06/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23LOSSMODEL%23FILE01%23202606010000.zip) and [June 2026 `INTERCONNECTORCONSTRAINT` archive](https://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/2026/MMSDM_2026_06/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23INTERCONNECTORCONSTRAINT%23FILE01%23202606010000.zip).
 - AEMO, [*Marginal Loss Factors: Financial Year 2026-27*](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2026-27/marginal-loss-factors-for-the-2026-27-financial-year.pdf?rev=22b27d2eb0094634a424924bf8fc7675&sc_lang=en), §3.3.1.
 - AEMO, [*Electricity Data Model Report*](https://visualisations.aemo.com.au/aemo/nemweb/MMSDataModelReport/), v5.7.0, effective 23 April 2026, `LOSSFACTORMODEL`, `LOSSMODEL`, and `INTERCONNECTORCONSTRAINT`.
+
+## Implementation boundary
+
+The correction is declared as a versioned AEM record in `interconnector_loss_assumptions.jl`.
+Model assembly records its source and applicability alongside the selected MMSDM versions.
+The multi-year policy and package boundary are described in ADR 0048.

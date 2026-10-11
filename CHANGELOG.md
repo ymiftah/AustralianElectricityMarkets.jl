@@ -123,6 +123,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- AEM APIs for interconnector loss assumptions, dispatch curve vertices, allocation conventions
+  and source provenance, preserved through per-unit conversion and System serialization.
+- Public interconnector loss documentation covering FY2024-25 through FY2026-27, report/MMSDM
+  precedence, and PEC Stage 1 and Stage 2 applicability.
+
 - `add_nem_constraints!` builds the Interconnector Zero constraints `SVML_ZERO`, `VSML_ZERO`, `VT_ZERO` and
   `TV_ZERO`, which `GENCONDATA` and the `SPD*` tables do not define, from a built-in definition: a
   one-term `<=` constraint on the `V-S-MNSP1` or `T-V-MNSP1` flow with right-hand side 0 and CVP

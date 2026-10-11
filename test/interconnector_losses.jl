@@ -29,6 +29,31 @@ const TEST_LOSS_MODEL = InterconnectorLossModel(;
 )
 const TEST_DEMAND = Dict("VIC1" => 4000.0, "NSW1" => 7000.0)
 
+@testset "AEM owns loss assumptions" begin
+    for (date, year) in ((Date(2024, 7, 1), 2024), (Date(2025, 7, 1), 2025), (Date(2026, 7, 1), 2026))
+        assumptions = interconnector_loss_assumptions(date)
+        @test assumptions.financial_year == year
+        @test occursin("$(year)-", assumptions.report.url)
+        @test assumptions.curve_reference == :zero_flow
+        @test assumptions.directional_allocation == :sending_terminal
+    end
+    @test interconnector_loss_assumptions(Date(2025, 6, 30)).financial_year == 2024
+    @test interconnector_loss_assumptions(Date(2027, 7, 1)).report === nothing
+    @test isempty(interconnector_loss_assumptions(Date(2027, 7, 1)).corrections)
+    @test length(interconnector_loss_assumptions(Date(2025, 7, 1)).corrections) == 1
+    @test isempty(interconnector_loss_assumptions(Date(2026, 7, 1)).corrections)
+    @test interconnector_loss_allocation(TEST_LOSS_MODEL) == :static_share
+    @test interconnector_loss_allocation(TEST_LOSS_MODEL; directional_offers = true) == :sending_terminal
+    @test isempty(get_loss_model_provenance(TEST_LOSS_MODEL))
+
+    model = InterconnectorLossModel(;
+        interconnector = "QNI", from_region = "NSW1", to_region = "QLD1",
+        from_region_loss_share = 0.5, loss_constant = 1.0, loss_flow_coefficient = 0.00017965,
+        demand_coefficients = Dict{String, Float64}(), breakpoints = [-17.0, 17.0],
+    )
+    @test loss_curve_vertex_values(model, Dict()) ≈ [0.0, 0.0] atol = 1.0e-12
+end
+
 @testset "loss_factor" begin
     # 1.02 + 2e-4 * flow + (1e-5 * 4000 + -2e-5 * 7000) = 1.02 + 2e-4 * flow - 0.1
     @test loss_factor(TEST_LOSS_MODEL, 0.0, TEST_DEMAND) ≈ 0.92
@@ -190,22 +215,30 @@ end
         hive_root,
         :INTERCONNECTORCONSTRAINT,
         DataFrame(
-            INTERCONNECTORID = ["V-SA", "V-SA"],
-            EFFECTIVEDATE = [DateTime(2025, 7, 1), DateTime(2026, 7, 1)], VERSIONNO = [1, 1],
-            FROMREGIONLOSSSHARE = [0.8192, 0.8192], LOSSCONSTANT = [0.9721, 0.9742],
-            LOSSFLOWCOEFFICIENT = [0.00026801, 0.000229], ICTYPE = ["AC", "AC"],
-            archive_month = ["2025-07", "2026-06"],
+            INTERCONNECTORID = fill("V-SA", 3),
+            EFFECTIVEDATE = [DateTime(2024, 7, 1), DateTime(2025, 7, 1), DateTime(2026, 7, 1)], VERSIONNO = [1, 1, 1],
+            FROMREGIONLOSSSHARE = fill(0.8192, 3), LOSSCONSTANT = [0.9936, 0.9721, 0.9742],
+            LOSSFLOWCOEFFICIENT = [0.00022992, 0.00026801, 0.000229], ICTYPE = fill("AC", 3),
+            archive_month = ["2024-07", "2025-07", "2026-06"],
         ),
     )
     _append_test_hive_rows(
         hive_root,
         :LOSSMODEL,
         DataFrame(
-            INTERCONNECTORID = fill("V-SA", 6),
-            EFFECTIVEDATE = vcat(fill(DateTime(2025, 7, 1), 3), fill(DateTime(2026, 7, 1), 3)),
-            VERSIONNO = ones(Int, 6), LOSSSEGMENT = vcat(collect(1:3), collect(1:3)),
-            MWBREAKPOINT = repeat([-500.0, 0.0, 500.0], 2),
-            archive_month = vcat(fill("2025-07", 3), fill("2026-06", 3)),
+            INTERCONNECTORID = fill("V-SA", 9),
+            EFFECTIVEDATE = repeat([DateTime(2024, 7, 1), DateTime(2025, 7, 1), DateTime(2026, 7, 1)]; inner = 3),
+            VERSIONNO = ones(Int, 9), LOSSSEGMENT = repeat(collect(1:3), 3),
+            MWBREAKPOINT = repeat([-500.0, 0.0, 500.0], 3),
+            archive_month = repeat(["2024-07", "2025-07", "2026-06"]; inner = 3),
+        ),
+    )
+    _append_test_hive_rows(
+        hive_root, :LOSSFACTORMODEL,
+        DataFrame(
+            INTERCONNECTORID = fill("V-SA", 2), EFFECTIVEDATE = fill(DateTime(2024, 7, 1), 2),
+            VERSIONNO = ones(Int, 2), REGIONID = ["VIC1", "SA1"],
+            DEMANDCOEFFICIENT = [-1.6267e-5, 6.2183e-5], archive_month = fill("2024-07", 2),
         ),
     )
     vsa_2025_coefficients = copy(documented_coefficients)
@@ -223,19 +256,66 @@ end
     )
     db = aem_connect(HiveConfiguration(hive_location = hive_root, filesystem = "file"))
 
+    model_2024 = interconnector_loss_models(db, Date(2024, 7, 1))["V-SA"]
+    @test model_2024.loss_constant == 0.9936
+    @test model_2024.loss_flow_coefficient == 0.00022992
+    @test model_2024.demand_coefficients == Dict("VIC1" => -1.6267e-5, "SA1" => 6.2183e-5)
+    @test isempty(get_loss_model_provenance(model_2024)["corrections"])
+    @test interconnector_loss_models(db, Date(2025, 6, 30))["V-SA"].demand_coefficients == model_2024.demand_coefficients
+
     public_rows = read_interconnector_demand_coefficients(db, Date(2025, 7, 1))
     @test Set(names(public_rows)) == Set(["INTERCONNECTORID", "REGIONID", "DEMANDCOEFFICIENT"])
     @test !any((public_rows.INTERCONNECTORID .== "V-SA") .& (public_rows.REGIONID .== "NSW1"))
 
     model_2025 = interconnector_loss_models(db, Date(2025, 7, 1))["V-SA"]
+    provenance = get_loss_model_provenance(model_2025)
+    @test provenance["financial_year"] == 2025
+    @test provenance["tables"]["LOSSFACTORMODEL"]["effective_date"] == "2025-07-01T00:00:00"
+    @test provenance["tables"]["LOSSMODEL"]["version_no"] == 1
+    @test only(provenance["corrections"])["region"] == "NSW1"
+    @test only(provenance["corrections"])["value"] == 1.6981e-6
+    @test occursin("2025-26", only(provenance["corrections"])["source"])
+    pu_model = AustralianElectricityMarkets._to_pu(model_2025, 100.0)
+    @test get_loss_model_provenance(pu_model) == provenance
+    provenance["financial_year"] = 0
+    @test get_loss_model_provenance(model_2025)["financial_year"] == 2025
     @test model_2025.loss_constant == 0.9721
     @test model_2025.loss_flow_coefficient == 0.00026801
     @test model_2025.demand_coefficients["NSW1"] == 1.6981e-6
     @test loss_factor(model_2025, 0.0, Dict("NSW1" => 10_000.0)) ≈ 0.9721 + 0.016981
 
     model_2026 = interconnector_loss_models(db, Date(2026, 7, 1))["V-SA"]
+    @test isempty(get_loss_model_provenance(model_2026)["corrections"])
     @test model_2026.demand_coefficients["NSW1"] == -2.22e-6
     @test model_2026.loss_constant == 0.9742
+    @test interconnector_loss_models(db, Date(2026, 10, 1))["V-SA"].loss_constant == 0.9742
+
+    # This synthetic effective date deliberately differs from the report's anticipated October transition.
+    transition = DateTime(2026, 11, 15)
+    _append_test_hive_rows(
+        hive_root, :INTERCONNECTORCONSTRAINT,
+        DataFrame(
+            INTERCONNECTORID = ["V-SA"], EFFECTIVEDATE = [transition], VERSIONNO = [2],
+            FROMREGIONLOSSSHARE = [0.8192], LOSSCONSTANT = [1.0288], LOSSFLOWCOEFFICIENT = [0.000257],
+            ICTYPE = ["AC"], archive_month = ["2026-11"],
+        ),
+    )
+    _append_test_hive_rows(
+        hive_root, :LOSSFACTORMODEL,
+        DataFrame(
+            INTERCONNECTORID = fill("V-SA", 3), EFFECTIVEDATE = fill(transition, 3), VERSIONNO = fill(2, 3),
+            REGIONID = ["VIC1", "SA1", "NSW1"], DEMANDCOEFFICIENT = [-1.27e-5, 3.44e-5, 1.0e-7],
+            archive_month = fill("2026-11", 3),
+        ),
+    )
+    before_transition = interconnector_loss_models(db, transition - Second(1))["V-SA"]
+    after_transition = interconnector_loss_models(db, transition)["V-SA"]
+    @test before_transition.loss_constant == 0.9742
+    @test after_transition.loss_constant == 1.0288
+    @test after_transition.demand_coefficients["NSW1"] == 1.0e-7
+    @test isempty(get_loss_model_provenance(after_transition)["corrections"])
+    @test get_loss_model_provenance(after_transition)["tables"]["INTERCONNECTORCONSTRAINT"]["version_no"] == 2
+    @test get_loss_model_provenance(after_transition)["tables"]["LOSSMODEL"]["version_no"] == 1
 end
 
 @testset "interconnector_losses" begin
@@ -399,6 +479,8 @@ let
         @test model.breakpoints == [-500.0, -250.0, 0.0, 250.0, 500.0] ./ base_power
         @test model.demand_coefficients isa Dict{String, Float64}
         @test Set(keys(model.demand_coefficients)) == Set(["VIC1", "SNOWY1"])
+        source_model = only(get_supplemental_attributes(InterconnectorLossModel, get_component(AreaInterchange, sys, "IC1")))
+        @test get_loss_model_provenance(model) == get_loss_model_provenance(source_model)
     end
 
     @testset "per-unit conversion preserves physical losses" begin
@@ -421,4 +503,49 @@ let
             @test pu.slope ≈ mw.slope
         end
     end
+end
+
+@testset "piecewise loss vertices are referenced to zero flow" begin
+    function curve_model(; scale = 1.0, breakpoints = [-17.0, 17.0], b = 0.00017965, c = 1.0)
+        return InterconnectorLossModel(
+            ; interconnector = "TEST", from_region = "1", to_region = "2",
+            from_region_loss_share = 0.4, loss_constant = c,
+            loss_flow_coefficient = b * scale,
+            demand_coefficients = Dict("2" => 0.0003 * scale),
+            breakpoints = breakpoints ./ scale,
+        )
+    end
+
+    demand = Dict("2" => 23.0)
+    model = curve_model()
+    corrected = loss_curve_vertex_values(model, demand)
+    # Subtract the chord's zero-flow intercept from both vertices, preserving its slope.
+    offset = 0.00017965 * 17.0^2 / 2
+    expected = [interconnector_losses(model, bp, demand) - offset for bp in (-17.0, 17.0)]
+    @test corrected ≈ expected atol = 1.0e-12
+    @test corrected[1] < 0 < corrected[2]
+    @test corrected[1] ≈ -corrected[2] atol = 1.0e-12
+    @test only(diff(corrected)) / 34.0 ≈ loss_segments(model, demand)[1].slope atol = 1.0e-12
+
+    # The nonzero demand changes the linear term, but cannot move the zero-flow reference.
+    no_demand_model = curve_model(; c = 1.0)
+    @test loss_curve_vertex_values(no_demand_model, Dict{String, Float64}()) .-
+        loss_curve_vertex_values(no_demand_model, demand) ≈ [0.0003 * 23.0 * 17.0, -0.0003 * 23.0 * 17.0] atol = 1.0e-12
+
+    # Attached models use per-unit values but represent the same physical curve.
+    base = 100.0
+    pu_model = curve_model(; scale = base, breakpoints = [-17.0, 17.0], b = 0.00017965)
+    pu_values = loss_curve_vertex_values(pu_model, Dict("2" => 23.0 / base))
+    @test pu_values .* base ≈ corrected atol = 1.0e-12
+
+    # A zero breakpoint anchors the curve; one-sided ranges retain their existing values.
+    with_zero = curve_model(; breakpoints = [-17.0, 0.0, 17.0])
+    @test loss_curve_vertex_values(with_zero, demand) ≈
+        [interconnector_losses(with_zero, bp, demand) for bp in with_zero.breakpoints] atol = 1.0e-12
+    linear = curve_model(; b = 0.0)
+    @test loss_curve_vertex_values(linear, demand) ≈
+        [interconnector_losses(linear, bp, demand) for bp in linear.breakpoints] atol = 1.0e-12
+    one_sided = curve_model(; breakpoints = [3.0, 17.0])
+    @test loss_curve_vertex_values(one_sided, demand) ≈
+        [interconnector_losses(one_sided, bp, demand) for bp in one_sided.breakpoints] atol = 1.0e-12
 end
