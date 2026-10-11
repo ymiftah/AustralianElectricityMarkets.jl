@@ -40,11 +40,17 @@ demand-term row contributes zero; it does not imply that the entire source table
 
 ## Financial years and V-SA
 
+Report references cover calendar dates from 1 January 2022 through FY2026-27, including FY2021-22
+for January through June 2022. Each financial year runs from 1 July through 30 June.
+
 The following V-SA loss-factor equations illustrate why annual applicability matters. Coefficients
 multiply flow `f` and regional demands `Vd`, `Sd`, `Nd`, all in MW.
 
 | Financial year / configuration | Constant | Flow | VIC demand | SA demand | NSW demand | Report |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 2021-22 | 1.0121 | 3.5511e-4 | -4.5341e-7 | -6.1623e-6 | Absent | [§3 p. 50, Table 21 p. 52](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2021-22/marginal-loss-factors-for-the-2021-22-financial-year.pdf?rev=f5097f1dc1b14c649aa9541e8c8edb30&sc_lang=en) |
+| 2022-23 | 1.0181 | 3.5925e-4 | -3.4191e-6 | 1.8182e-8 | Absent | [§3 p. 49, Table 21 p. 52](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2022-23/marginal-loss-factors-for-the-2022-23-financial-year.pdf?rev=a057c7f9c36b48f09e59dd283906db4f&sc_lang=en) |
+| 2023-24 | 1.0166 | 3.4263e-4 | -1.2753e-6 | -1.5712e-6 | Absent | [§3 p. 53, Table 22 p. 56](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2023-24/marginal-loss-factors-for-the-2023-24-financia-year-pdf.pdf?rev=6e56696685cc4cc482f8c981502d72c5&sc_lang=en) |
 | 2024-25 | 0.9936 | 2.2992e-4 | -1.6267e-5 | 6.2183e-5 | Absent | [§3 p. 54, Table 26 p. 57](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2024-25-financial-year/mlfs-for-the-2024-25-financial-year.pdf?la=en) |
 | 2025-26 | 0.9721 | 2.6801e-4 | -1.4896e-5 | 5.1080e-5 | 1.6981e-6 | [§3 p. 56, Table 25 p. 59](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2025-26-marginal-loss-factors/marginal-loss-factors-for-the-2025-26-fin-year.pdf?la=en) |
 | 2026-27 before NSW1-SA1 market establishment | 0.9742 | 2.29e-4 | -1.09e-5 | 6.63e-5 | -2.22e-6 | [§3.3.1 pp. 61-62](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2026-27/marginal-loss-factors-for-the-2026-27-financial-year.pdf) |

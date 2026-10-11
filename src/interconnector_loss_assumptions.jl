@@ -1,4 +1,16 @@
 const _INTERCONNECTOR_LOSS_REPORTS = Dict(
+    2021 => (
+        url = "https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2021-22/marginal-loss-factors-for-the-2021-22-financial-year.pdf?rev=f5097f1dc1b14c649aa9541e8c8edb30&sc_lang=en",
+        sections = "§3 pp. 50-52; §4 p. 53; §5.1 p. 56",
+    ),
+    2022 => (
+        url = "https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2022-23/marginal-loss-factors-for-the-2022-23-financial-year.pdf?rev=a057c7f9c36b48f09e59dd283906db4f&sc_lang=en",
+        sections = "§3 pp. 49-52; §4 p. 53; §5.1 p. 56",
+    ),
+    2023 => (
+        url = "https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2023-24/marginal-loss-factors-for-the-2023-24-financia-year-pdf.pdf?rev=6e56696685cc4cc482f8c981502d72c5&sc_lang=en",
+        sections = "§3 pp. 53-56; §4 p. 57; §5.1 p. 60",
+    ),
     2024 => (
         url = "https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2024-25-financial-year/mlfs-for-the-2024-25-financial-year.pdf?la=en",
         sections = "§3 pp. 54-57; §4 p. 58; §5.1 p. 61",

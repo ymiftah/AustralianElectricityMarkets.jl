@@ -125,7 +125,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - AEM APIs for interconnector loss assumptions, dispatch curve vertices, allocation conventions
   and source provenance, preserved through per-unit conversion and System serialization.
-- Public interconnector loss documentation covering FY2024-25 through FY2026-27, report/MMSDM
+- Public interconnector loss documentation covering calendar 2022 onward (FY2021-22 through FY2026-27), report/MMSDM
   precedence, and PEC Stage 1 and Stage 2 applicability.
 
 - `add_nem_constraints!` builds the Interconnector Zero constraints `SVML_ZERO`, `VSML_ZERO`, `VT_ZERO` and

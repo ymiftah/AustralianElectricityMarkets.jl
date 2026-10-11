@@ -30,12 +30,18 @@ const TEST_LOSS_MODEL = InterconnectorLossModel(;
 const TEST_DEMAND = Dict("VIC1" => 4000.0, "NSW1" => 7000.0)
 
 @testset "AEM owns loss assumptions" begin
-    for (date, year) in ((Date(2024, 7, 1), 2024), (Date(2025, 7, 1), 2025), (Date(2026, 7, 1), 2026))
+    for year in 2021:2026
+        date = Date(year, 7, 1)
         assumptions = interconnector_loss_assumptions(date)
         @test assumptions.financial_year == year
         @test occursin("$(year)-", assumptions.report.url)
         @test assumptions.curve_reference == :zero_flow
         @test assumptions.directional_allocation == :sending_terminal
+    end
+    @test interconnector_loss_assumptions(Date(2022, 1, 1)).financial_year == 2021
+    @test interconnector_loss_assumptions(Date(2022, 1, 1)).report !== nothing
+    for year in 2022:2026
+        @test interconnector_loss_assumptions(Date(year, 6, 30)).financial_year == year - 1
     end
     @test interconnector_loss_assumptions(Date(2025, 6, 30)).financial_year == 2024
     @test interconnector_loss_assumptions(Date(2027, 7, 1)).report === nothing
@@ -241,6 +247,40 @@ end
             DEMANDCOEFFICIENT = [-1.6267e-5, 6.2183e-5], archive_month = fill("2024-07", 2),
         ),
     )
+    # Annual equations from AEMO's FY2021-22, FY2022-23 and FY2023-24 MLF reports, §3.
+    historical_equations = (
+        (2021, 1.0121, 3.5511e-4, -4.5341e-7, -6.1623e-6),
+        (2022, 1.0181, 3.5925e-4, -3.4191e-6, 1.8182e-8),
+        (2023, 1.0166, 3.4263e-4, -1.2753e-6, -1.5712e-6),
+    )
+    for (year, constant, flow, vic, sa) in historical_equations
+        effective_date = DateTime(year, 7, 1)
+        archive_month = "$(year)-07"
+        _append_test_hive_rows(
+            hive_root, :INTERCONNECTORCONSTRAINT,
+            DataFrame(
+                INTERCONNECTORID = ["V-SA"], EFFECTIVEDATE = [effective_date], VERSIONNO = [1],
+                FROMREGIONLOSSSHARE = [0.8192], LOSSCONSTANT = [constant],
+                LOSSFLOWCOEFFICIENT = [flow], ICTYPE = ["AC"], archive_month = [archive_month],
+            ),
+        )
+        _append_test_hive_rows(
+            hive_root, :LOSSMODEL,
+            DataFrame(
+                INTERCONNECTORID = fill("V-SA", 3), EFFECTIVEDATE = fill(effective_date, 3),
+                VERSIONNO = ones(Int, 3), LOSSSEGMENT = collect(1:3),
+                MWBREAKPOINT = [-500.0, 0.0, 500.0], archive_month = fill(archive_month, 3),
+            ),
+        )
+        _append_test_hive_rows(
+            hive_root, :LOSSFACTORMODEL,
+            DataFrame(
+                INTERCONNECTORID = fill("V-SA", 2), EFFECTIVEDATE = fill(effective_date, 2),
+                VERSIONNO = ones(Int, 2), REGIONID = ["VIC1", "SA1"],
+                DEMANDCOEFFICIENT = [vic, sa], archive_month = fill(archive_month, 2),
+            ),
+        )
+    end
     vsa_2025_coefficients = copy(documented_coefficients)
     vsa_2025_coefficients.archive_month = fill("2025-07", nrow(vsa_2025_coefficients))
     _append_test_hive_rows(hive_root, :LOSSFACTORMODEL, vsa_2025_coefficients)
@@ -255,6 +295,20 @@ end
         ),
     )
     db = aem_connect(HiveConfiguration(hive_location = hive_root, filesystem = "file"))
+
+    for (year, constant, flow, vic, sa) in historical_equations
+        first_date = year == 2021 ? Date(2022, 1, 1) : Date(year, 7, 1)
+        for date in (first_date, Date(year + 1, 6, 30))
+            model = interconnector_loss_models(db, date)["V-SA"]
+            @test model.loss_constant == constant
+            @test model.loss_flow_coefficient == flow
+            @test model.demand_coefficients == Dict("VIC1" => vic, "SA1" => sa)
+            provenance = get_loss_model_provenance(model)
+            @test provenance["financial_year"] == year
+            @test isempty(provenance["corrections"])
+            @test occursin("$(year)-", provenance["report"]["url"])
+        end
+    end
 
     model_2024 = interconnector_loss_models(db, Date(2024, 7, 1))["V-SA"]
     @test model_2024.loss_constant == 0.9936
