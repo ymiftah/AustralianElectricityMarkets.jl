@@ -69,18 +69,23 @@ A `Dict{String, FastStartInput}` keyed by DUID.
 """
 function read_fast_start_inputs(db, settlement_date::DateTime; intervention::Integer = 0)
     date_range = settlement_date:DISPATCH_INTERVAL:(settlement_date + DISPATCH_INTERVAL)
-    dispatch = read_dispatch_limits(db, date_range; intervention = intervention)
     bids = read_bids(db, date_range; resolution = DISPATCH_INTERVAL)
+    fast_start_bids = filter(bids) do row
+        row.DIRECTION == "GEN" && !all(
+            ismissing(x) || iszero(x) for x in (row.T1, row.T2, row.T3, row.T4)
+        )
+    end
+    isempty(fast_start_bids) && return Dict{String, FastStartInput}()
+
+    dispatch = read_dispatch_limits(db, date_range; intervention = intervention)
     previous = _read_previous_fast_start_state(db, settlement_date - DISPATCH_INTERVAL, intervention)
     dispatch_by_duid = Dict(row.DUID => row for row in eachrow(dispatch))
     previous_by_duid = Dict(row.DUID => row for row in eachrow(previous))
     inputs = Dict{String, FastStartInput}()
 
-    for row in eachrow(bids)
-        row.DIRECTION == "GEN" || continue
+    for row in eachrow(fast_start_bids)
         duid = row.DUID
         timings = (row.T1, row.T2, row.T3, row.T4)
-        all(x -> ismissing(x) || iszero(x), timings) && continue
         limits = dispatch_by_duid[duid]
         prior = previous_by_duid[duid]
         profile = FastStartProfile(

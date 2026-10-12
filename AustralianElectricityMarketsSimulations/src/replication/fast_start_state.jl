@@ -66,8 +66,10 @@ function _time_to_minimum_load(input::FastStartInput)
     return max(0.0, profile.t2_minutes - state.elapsed_minutes)
 end
 
-function plan_fast_start(input::FastStartInput, candidate_mw::Real; interval_minutes::Real = 5.0)
-    input = preprocess_fast_start(input)
+function plan_fast_start(
+        input::FastStartInput, candidate_mw::Real; interval_minutes::Real = 5.0, _preprocessed::Bool = false,
+    )
+    input = _preprocessed ? input : preprocess_fast_start(input)
     starting_mode = input.state.mode
     if starting_mode == 0
         state = candidate_mw > 0.005 ? FastStartState(1, 0.0) : FastStartState(0, 0.0)

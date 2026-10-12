@@ -20,6 +20,8 @@
     @testset "replicate_interval builds, solves and compares" begin
         result = replicate_interval(db, t)
         @test result.model isa PSI.DecisionModel
+        @test isempty(result.fast_start_diagnostics)
+        @test length(unique(PSI.read_variable(result.results, "ActivePowerVariable__ThermalStandard").DateTime)) == 1
         skipped = result.skipped_constraints
         @test names(skipped) == ["constraint", "stage", "reason", "n_missing", "missing_keys"]
         @test all(in((:build, :template)), skipped.stage)

@@ -115,8 +115,13 @@ end
 # PSI ignores a failed dual LP and leaves the duals NaN, so check them before reporting prices.
 function _check_prices_finite(results::PSI.OptimizationProblemResults, settlement_date::DateTime)
     duals = PSI.read_dual(results, PSI.CopperPlateBalanceConstraint, PSY.Area)
-    all(isfinite, duals.value) ||
-        error("Interval $settlement_date has non-finite regional price duals; the dual pass failed.")
+    _check_prices_finite(duals.value, settlement_date)
+    return nothing
+end
+
+function _check_prices_finite(duals::AbstractVector, settlement_date::DateTime; pass = "final dispatch")
+    all(isfinite, duals) ||
+        error("Interval $settlement_date has non-finite regional price duals in the $pass pass; the dual pass failed.")
     return nothing
 end
 
@@ -125,8 +130,9 @@ end
     replicate_interval(sys, db, settlement_date; intervention = 0, optimizer = HiGHS.Optimizer)
 
 Solves one historical NEM dispatch interval with [`replication_template`](@ref) on `sys` (by
-default [`replication_system`](@ref)) and compares the solution with AEMO's published outcome.
-The model spans the interval and the one after it; the first is reported.
+default [`replication_system`](@ref)) and compares the final solution with AEMO's published outcome.
+Supported fast-start profiles use a flexible commitment solve followed by a profile-constrained
+dispatch solve; other intervals use one solve.
 
 # Arguments
 - `sys`: the `PSY.System` to solve, as built by [`replication_system`](@ref).
@@ -140,7 +146,8 @@ The model spans the interval and the one after it; the first is reported.
   method builds the system.
 
 # Returns
-A `NamedTuple` with the solved `model`, its `results`, `skipped_constraints` and `comparison`.
+A `NamedTuple` with the final `model`, its `results`, `skipped_constraints`, `comparison` and
+`fast_start_diagnostics`.
 `skipped_constraints` is a `DataFrame` with one row per invoked constraint left out of the model:
 `constraint`, `stage` (`:build` when [`add_nem_constraints!`](@ref) could not resolve a term,
 `:template` when the template cannot model it), `reason`, `n_missing` (unresolved keys at the
@@ -155,12 +162,16 @@ non-zero unit ramp slack of the model (`DUID`, `DateTime`, `MW`, `direction`), a
 `constraint_violations` lists every non-zero slack of the families below (`family`, `name`,
 `DateTime`, `MW`, `direction`, `variable`), where `family` is one of `"unit_ramp"`,
 `"interconnector_flow"`, `"fcas_max_avail"`, `"fcas_bdu_ramping"`, `"fcas_joint_ramping"`,
-`"fcas_enablement"`, `"generic_constraint"` and `"area_balance"`. `direction` is `"up"` for a
+`"fcas_enablement"`, `"fast_start_profile"`, `"thermal_availability"`, `"thermal_offer"`,
+`"generic_constraint"` and `"area_balance"`. `direction` is `"up"` for a
 slack relaxing a `<=` row and `"down"` for one relaxing a `>=` row. For `"area_balance"`, whose
 row is an equality, `"up"` is a deficit (demand left unserved) and `"down"` a surplus (excess
 generation). Slacks built outside PowerSimulations containers (the tie-break terms) are not listed. The solved balance dual is the
 unadjusted price, so it is compared with `ROP`; `RRP` differs only under an administered price.
-Throws if the model does not build or solve, after logging `skipped_constraints`.
+`fast_start_diagnostics` has one row per supported fast-start DUID, with its starting mode and
+elapsed time, flexible candidate MW, planned and final mode, final MW, profile bounds, and energy
+ramp anchor and duration. It is empty when no supported profile is active. Throws if either model
+does not build or solve, after logging `skipped_constraints`.
 """
 function replicate_interval(
         db, settlement_date::DateTime; intervention::Integer = 0, interval_flow_limits::Bool = false, kwargs...,
@@ -175,37 +186,147 @@ function replicate_interval(
         sys::PSY.System, db, settlement_date::DateTime;
         intervention::Integer = 0, optimizer = _DEFAULT_OPTIMIZER,
     )
-    (; model, skipped_constraints, status, output_dir) =
-        _replication_model(sys, settlement_date; optimizer = optimizer)
-    status == PSI.ModelBuildStatus.BUILT || begin
-        _log_skipped_constraints(skipped_constraints)
-        error("Interval $settlement_date failed to build ($status); see the PSI error log and $output_dir.")
-    end
-    run_status = PSI.solve!(model)
-    run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED || begin
-        _log_skipped_constraints(skipped_constraints)
-        error("Interval $settlement_date failed to solve: $run_status")
-    end
-    results = PSI.OptimizationProblemResults(model)
-    _check_prices_finite(results, settlement_date)
+    inputs = read_fast_start_inputs(db, settlement_date; intervention = intervention)
+    (; model, results, skipped_constraints, fast_start_diagnostics) = _solve_fast_start_replay(
+        sys, inputs, settlement_date; optimizer = optimizer,
+    )
     return (;
         model, results, skipped_constraints,
         comparison = _compare_to_published(db, sys, results, settlement_date, intervention),
         ramp_violations = _ramp_violations(results, sys),
         constraint_violations = _constraint_violations(results, sys),
+        fast_start_diagnostics,
     )
+end
+
+function _solve_fast_start_replay(sys::PSY.System, inputs, settlement_date::DateTime; optimizer = _DEFAULT_OPTIMIZER)
+    prepared = _prepare_fast_start_inputs(sys, inputs, settlement_date)
+    if isempty(prepared)
+        (; model, results, skipped_constraints) = _solve_replication_pass(
+            sys, settlement_date; optimizer = optimizer, pass = :final_dispatch,
+        )
+        return (; model, results, skipped_constraints, fast_start_diagnostics = _empty_fast_start_diagnostics())
+    end
+
+    commitment_context = (; pass = :commitment, inputs = prepared, envelopes = Dict())
+    commitment = _solve_replication_pass(
+        sys, settlement_date; optimizer = optimizer, pass = :commitment,
+        fast_start_context = commitment_context,
+    )
+    candidates = _solved_dispatch(commitment.results, settlement_date)
+    envelopes = Dict{String, Any}()
+    for (duid, input) in prepared
+        candidate_mw = get(candidates, duid, NaN)
+        isfinite(candidate_mw) || error("Interval $settlement_date commitment pass has no finite solved MW for fast-start DUID $duid.")
+        envelopes[duid] = plan_fast_start(input, candidate_mw; _preprocessed = true)
+    end
+
+    dispatch_context = (; pass = :dispatch, inputs = prepared, envelopes)
+    final = _solve_replication_pass(
+        sys, settlement_date; optimizer = optimizer, pass = :final_dispatch,
+        fast_start_context = dispatch_context,
+    )
+    diagnostics = _fast_start_diagnostics(prepared, candidates, envelopes, final.results, settlement_date)
+    return (; model = final.model, results = final.results, skipped_constraints = final.skipped_constraints, fast_start_diagnostics = diagnostics)
+end
+
+function _prepare_fast_start_inputs(sys::PSY.System, inputs, settlement_date::DateTime)
+    thermal = Dict(PSY.get_name(d) => d for d in PSY.get_components(PSY.ThermalStandard, sys))
+    injections = Dict(PSY.get_name(d) => d for d in PSY.get_components(PSY.StaticInjection, sys))
+    prepared = Dict{String, FastStartInput}()
+    for (duid, input) in inputs
+        profile = input.profile
+        all(iszero, (profile.t1_minutes, profile.t2_minutes, profile.t3_minutes, profile.t4_minutes)) && continue
+        device = get(injections, duid, nothing)
+        (isnothing(device) || !PSY.get_available(device)) && continue
+        if !haskey(thermal, duid)
+            error("Interval $settlement_date has an active fast-start profile for unsupported non-thermal device $duid.")
+        end
+        missing = String[]
+        _has_nem_dispatch_limits(device, NEMReplayDispatch) || push!(missing, "NEM dispatch limits")
+        PSY.has_time_series(device, PSY.SingleTimeSeries, "availability") || push!(missing, "availability")
+        isempty(missing) || error("Interval $settlement_date fast-start profile coverage for $duid is missing $(join(missing, ", ")).")
+        prepared[duid] = preprocess_fast_start(input)
+    end
+    return prepared
+end
+
+function _empty_fast_start_diagnostics()
+    return DataFrame(
+        DUID = String[], DateTime = DateTime[], start_mode = Int[], start_elapsed_minutes = Float64[],
+        candidate_mw = Float64[], target_mode = Int[], target_elapsed_minutes = Float64[],
+        final_mode = Int[], final_elapsed_minutes = Float64[], profile_lower_mw = Float64[],
+        profile_upper_mw = Union{Missing, Float64}[], ramp_initial_mw = Float64[],
+        ramp_minutes = Union{Missing, Float64}[], final_mw = Float64[],
+    )
+end
+
+function _fast_start_diagnostics(inputs, candidates, envelopes, results, settlement_date::DateTime)
+    final_mw = _solved_dispatch(results, settlement_date)
+    rows = NamedTuple[]
+    for (duid, input) in inputs
+        envelope = envelopes[duid]
+        dispatch_mw = get(final_mw, duid, NaN)
+        isfinite(dispatch_mw) || error("Interval $settlement_date final dispatch pass has no finite solved MW for fast-start DUID $duid.")
+        final_state = finalize_fast_start_state(envelope, dispatch_mw)
+        push!(
+            rows, (
+                DUID = duid, DateTime = settlement_date, start_mode = input.state.mode,
+                start_elapsed_minutes = input.state.elapsed_minutes, candidate_mw = candidates[duid],
+                target_mode = envelope.state.mode, target_elapsed_minutes = envelope.state.elapsed_minutes,
+                final_mode = final_state.mode, final_elapsed_minutes = final_state.elapsed_minutes,
+                profile_lower_mw = envelope.profile_lower_mw,
+                profile_upper_mw = envelope.profile_upper_mw,
+                ramp_initial_mw = envelope.ramp_initial_mw, ramp_minutes = envelope.ramp_minutes,
+                final_mw = dispatch_mw,
+            )
+        )
+    end
+    return isempty(rows) ? _empty_fast_start_diagnostics() : DataFrame(rows)
+end
+
+function _solve_replication_pass(
+        sys::PSY.System, settlement_date::DateTime; optimizer, pass::Symbol, fast_start_context = nothing,
+    )
+    (; model, skipped_constraints, status, output_dir) = _replication_model(
+        sys, settlement_date; optimizer = optimizer, name = "replication_$pass",
+        fast_start_context = fast_start_context,
+    )
+    if status != PSI.ModelBuildStatus.BUILT
+        _log_skipped_constraints(skipped_constraints)
+        _require_replication_status(status, PSI.ModelBuildStatus.BUILT, pass, :build, settlement_date)
+        error("Interval $settlement_date failed to build in the $pass pass; see the PSI error log and $output_dir.")
+    end
+    run_status = PSI.solve!(model)
+    if run_status != PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        _log_skipped_constraints(skipped_constraints)
+        _require_replication_status(run_status, PSI.RunStatus.SUCCESSFULLY_FINALIZED, pass, :solve, settlement_date)
+    end
+    results = PSI.OptimizationProblemResults(model)
+    pass == :final_dispatch && _check_prices_finite(results, settlement_date)
+    return (; model, results, skipped_constraints)
+end
+
+function _require_replication_status(status, expected, pass::Symbol, stage::Symbol, settlement_date::DateTime)
+    status == expected || error("Interval $settlement_date failed to $stage in the $pass pass: $status")
+    return nothing
 end
 # The model `replicate_interval` solves: template, FCAS check, `DecisionModel` and its build.
 function _replication_model(
         sys::PSY.System, settlement_date::DateTime; optimizer = _DEFAULT_OPTIMIZER, name = "replication",
+        fast_start_context = nothing,
     )
     template_skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
     template = replication_template(sys; skipped = template_skipped)
     skipped_constraints = _skipped_constraints_table(sys, template_skipped)
     check_fcas_services(sys, template)
+    if !isnothing(fast_start_context)
+        thermal_model = get(PSI.get_device_models(template), :ThermalStandard, nothing)
+        !isnothing(thermal_model) && (PSI.get_attributes(thermal_model)["fast_start"] = fast_start_context)
+    end
     model = PSI.DecisionModel(
         template, sys;
-        optimizer = optimizer, horizon = _REPLICATION_HORIZON, resolution = DISPATCH_INTERVAL,
+        optimizer = optimizer, horizon = DISPATCH_INTERVAL, resolution = DISPATCH_INTERVAL,
         interval = DISPATCH_INTERVAL, initial_time = settlement_date, name = name,
     )
     output_dir = mktempdir()
@@ -247,6 +368,10 @@ const _VIOLATION_FAMILIES = (
     FCASBDURampingSlack => ("fcas_bdu_ramping", "up"),
     FCASJointRampingSlack => ("fcas_joint_ramping", "up"),
     FCASJointCapacitySlack => ("fcas_enablement", "up"),
+    FastStartProfileDeficitSlack => ("fast_start_profile", "down"),
+    FastStartProfileSurplusSlack => ("fast_start_profile", "up"),
+    AvailabilitySurplusSlack => ("thermal_availability", "up"),
+    OfferSurplusSlack => ("thermal_offer", "up"),
     GenericConstraintSlackUp => ("generic_constraint", "up"),
     GenericConstraintSlackDown => ("generic_constraint", "down"),
     PSI.SystemBalanceSlackUp => ("area_balance", "up"),

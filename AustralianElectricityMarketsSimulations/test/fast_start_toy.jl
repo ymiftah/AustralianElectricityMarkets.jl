@@ -15,6 +15,121 @@ function toy_slack_mw(out, name)
 end
 
 @testset "fast-start energy profile and thermal elasticity" begin
+    @testset "historical replay commits flexibly then dispatches the selected startup profile" begin
+        sys = nem_toy_system(
+            [
+                TOY_CHEAP => toy_unit(100.0, [(100.0, 10.0)]; initial = 0.0, ramp_up = 0.0),
+                TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 50.0)]; initial = 0.0, ramp_up = 100.0),
+            ],
+            20.0,
+        )
+        input = AEMS.FastStartInput(
+            AEMS.FastStartProfile(20.0, 0.0, 10.0, 10.0, 10.0),
+            AEMS.FastStartState(0, 0.0), 0.0, 0.0, 100.0, 100.0, 70.0,
+        )
+
+        replay = AEMS._solve_fast_start_replay(sys, Dict(TOY_CHEAP => input), TOY_START; optimizer = HiGHS.Optimizer)
+        diagnostics = only(replay.fast_start_diagnostics)
+        final = AEMS._solved_dispatch(replay.results, TOY_START)
+        dual = only(PSI.read_dual(replay.results, PSI.CopperPlateBalanceConstraint, PSY.Area).value)
+        price = dual / (PSY.get_base_power(sys) * AEMS.interval_hours(DISPATCH_INTERVAL))
+
+        @test diagnostics.candidate_mw ≈ 20.0 atol = TOY_TOLERANCE
+        @test final[TOY_CHEAP] ≈ 10.0 atol = TOY_TOLERANCE
+        @test final[TOY_EXPENSIVE] ≈ 10.0 atol = TOY_TOLERANCE
+        @test diagnostics.final_mw ≈ final[TOY_CHEAP] atol = TOY_TOLERANCE
+        @test diagnostics.target_mode == 2
+        @test price ≈ 50.0 atol = TOY_TOLERANCE
+        @test length(unique(row.DateTime for row in eachrow(PSI.read_variable(replay.results, "ActivePowerVariable__ThermalStandard")))) == 1
+
+        future_mutation! = function (future_sys, stamps)
+            load = PSY.get_component(PSY.PowerLoad, future_sys, "bus4")
+            PSY.remove_time_series!(future_sys, PSY.SingleTimeSeries, load, "max_active_power")
+            PSY.add_time_series!(
+                future_sys, load,
+                PSY.SingleTimeSeries(
+                    name = "max_active_power",
+                    data = PSY.TimeSeries.TimeArray(stamps, [1.0, 10.0]),
+                    scaling_factor_multiplier = PSY.get_max_active_power,
+                ),
+            )
+            return future_sys
+        end
+        future_sys = nem_toy_system(
+            [
+                TOY_CHEAP => toy_unit(100.0, [(100.0, 10.0)]; initial = 0.0, ramp_up = 0.0),
+                TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 50.0)]; initial = 0.0, ramp_up = 100.0),
+            ],
+            20.0;
+            mutate! = future_mutation!,
+        )
+        future_replay = AEMS._solve_fast_start_replay(
+            future_sys, Dict(TOY_CHEAP => input), TOY_START; optimizer = HiGHS.Optimizer,
+        )
+        future_final = AEMS._solved_dispatch(future_replay.results, TOY_START)
+        @test only(future_replay.fast_start_diagnostics.candidate_mw) ≈ diagnostics.candidate_mw atol = TOY_TOLERANCE
+        @test future_final[TOY_CHEAP] ≈ final[TOY_CHEAP] atol = TOY_TOLERANCE
+        @test future_final[TOY_EXPENSIVE] ≈ final[TOY_EXPENSIVE] atol = TOY_TOLERANCE
+
+        mode2_sys = nem_toy_system(
+            [TOY_CHEAP => toy_unit(100.0, [(100.0, 10.0)]; initial = 20.0, ramp_up = 100.0)], 20.0,
+        )
+        mode2_input = AEMS.FastStartInput(
+            AEMS.FastStartProfile(20.0, 0.0, 2.0, 10.0, 10.0),
+            AEMS.FastStartState(2, 1.0), 20.0, 100.0, 100.0, 100.0, 20.0,
+        )
+        mode2_replay = AEMS._solve_fast_start_replay(
+            mode2_sys, Dict(TOY_CHEAP => mode2_input), TOY_START; optimizer = HiGHS.Optimizer,
+        )
+        mode2_diagnostic = only(mode2_replay.fast_start_diagnostics)
+        @test mode2_diagnostic.start_mode == 2
+        @test mode2_diagnostic.target_mode == 3
+        @test mode2_diagnostic.final_mode == 3
+        @test !AEMS._fast_start_joint_ramping_applies((; inputs = Dict(TOY_CHEAP => mode2_input)), TOY_CHEAP, TOY_START)
+    end
+
+    @testset "replay pass failures and profile coverage name the interval" begin
+        for pass in (:commitment, :final_dispatch)
+            err = try
+                AEMS._require_replication_status(:failed, :success, pass, :solve, TOY_START)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ErrorException
+            @test occursin("$TOY_START", sprint(showerror, err))
+            @test occursin("$pass pass", sprint(showerror, err))
+        end
+
+        dual_error = try
+            AEMS._check_prices_finite([NaN], TOY_START)
+            nothing
+        catch e
+            e
+        end
+        @test dual_error isa ErrorException
+        @test occursin("final dispatch pass", sprint(showerror, dual_error))
+        @test occursin("$TOY_START", sprint(showerror, dual_error))
+
+        sys = nem_toy_system(
+            [TOY_CHEAP => toy_unit(100.0, [(100.0, 10.0)]; initial = 0.0, ramp_up = 100.0)], 10.0,
+        )
+        PSY.clear_time_series!(sys)
+        input = AEMS.FastStartInput(
+            AEMS.FastStartProfile(20.0, 0.0, 10.0, 10.0, 10.0),
+            AEMS.FastStartState(0, 0.0), 0.0, 100.0, 100.0, 100.0, 0.0,
+        )
+        coverage_error = try
+            AEMS._prepare_fast_start_inputs(sys, Dict(TOY_CHEAP => input), TOY_START)
+            nothing
+        catch e
+            e
+        end
+        @test coverage_error isa ErrorException
+        @test occursin("NEM dispatch limits", sprint(showerror, coverage_error))
+        @test occursin("$TOY_START", sprint(showerror, coverage_error))
+    end
+
     @testset "profile ramp envelopes preserve exact endpoints and startup anchors" begin
         mode2_input = AEMS.FastStartInput(
             AEMS.FastStartProfile(20.0, 0.0, 2.0, 10.0, 10.0),
