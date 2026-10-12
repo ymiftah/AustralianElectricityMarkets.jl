@@ -98,3 +98,151 @@ end
     @test AEMS.read_fast_start_inputs(altered_db, t)["FS1"] == fs
 
 end
+
+function fast_start_input(;
+        profile = AEMS.FastStartProfile(20.0, 2.0, 3.0, 4.0, 5.0), mode = 0,
+        elapsed = 0.0, initial_mw = 0.0, ramp_up = 60.0, ramp_down = 60.0,
+        max_avail = 100.0, previous_total_cleared = 0.0
+    )
+    return AEMS.FastStartInput(
+        profile, AEMS.FastStartState(mode, elapsed), initial_mw, ramp_up, ramp_down, max_avail,
+        previous_total_cleared,
+    )
+end
+
+@testset "Fast-start state transitions and envelopes" begin
+    @testset "Mode 0 commitment threshold" begin
+        for (candidate, expected_mode) in ((0.004, 0), (0.005, 0), (0.006, 3))
+            input = fast_start_input()
+            envelope = AEMS.plan_fast_start(input, candidate; interval_minutes = 5.0)
+            @test envelope.state == AEMS.FastStartState(expected_mode, 0.0)
+            if candidate > 0.005
+                @test envelope.ramp_minutes == 0.0
+            end
+        end
+    end
+
+    @testset "Profile segments and fixed versus lower bounds" begin
+        cases = [
+            (AEMS.FastStartState(0, 0.0), 0.0, 0.0, 0.0),
+            (AEMS.FastStartState(1, 1.0), 0.0, 0.0, 0.0),
+            (AEMS.FastStartState(2, 1.5), 0.0, 10.0, 10.0),
+            (AEMS.FastStartState(3, 0.0), 0.0, 20.0, nothing),
+            (AEMS.FastStartState(4, 2.0), 0.0, 12.0, nothing),
+        ]
+        for (state, minutes, lower, upper) in cases
+            input = fast_start_input(; mode = state.mode, elapsed = state.elapsed_minutes)
+            envelope = AEMS.plan_fast_start(input, 10.0; interval_minutes = minutes)
+            @test envelope.profile_lower_mw == lower
+            @test envelope.profile_upper_mw == upper
+            if state.mode <= 2
+                @test envelope.ramp_minutes === nothing
+            end
+        end
+        mode3 = AEMS.plan_fast_start(fast_start_input(; mode = 3), 10.0; interval_minutes = 0.0)
+        @test mode3.profile_lower_mw == 20.0
+        @test mode3.profile_upper_mw === nothing
+    end
+
+    @testset "Transitions cross zero and multiple segments exactly" begin
+        ordinary_profile = AEMS.FastStartProfile(20.0, 2.0, 3.0, 4.0, 5.0)
+        ordinary_cases = [
+            (AEMS.FastStartState(1, 0.0), 2.0, AEMS.FastStartState(2, 0.0)),
+            (AEMS.FastStartState(2, 1.0), 2.0, AEMS.FastStartState(3, 0.0)),
+            (AEMS.FastStartState(3, 3.0), 1.0, AEMS.FastStartState(4, 0.0)),
+        ]
+        for (state, minutes, expected) in ordinary_cases
+            input = fast_start_input(; profile = ordinary_profile, mode = state.mode, elapsed = state.elapsed_minutes)
+            @test AEMS.plan_fast_start(input, 10.0; interval_minutes = minutes).state == expected
+        end
+
+        profile = AEMS.FastStartProfile(20.0, 0.0, 2.0, 0.0, 3.0)
+        cases = [
+            (AEMS.FastStartState(1, 0.0), 2.0, AEMS.FastStartState(4, 0.0)),
+            (AEMS.FastStartState(1, 0.0), 5.0, AEMS.FastStartState(4, 3.0)),
+            (AEMS.FastStartState(2, 1.0), 1.0, AEMS.FastStartState(4, 0.0)),
+        ]
+        for (state, minutes, expected) in cases
+            input = fast_start_input(; profile, mode = state.mode, elapsed = state.elapsed_minutes)
+            envelope = AEMS.plan_fast_start(input, 10.0; interval_minutes = minutes)
+            @test envelope.state == expected
+        end
+        zero_segments = AEMS.FastStartProfile(20.0, 0.0, 0.0, 0.0, 5.0)
+        envelope = AEMS.plan_fast_start(fast_start_input(; profile = zero_segments), 1.0)
+        @test envelope.state == AEMS.FastStartState(4, 5.0)
+        zero_t2 = AEMS.FastStartProfile(20.0, 1.0, 0.0, 1.0, 1.0)
+        @test AEMS.plan_fast_start(
+            fast_start_input(; profile = zero_t2, mode = 1), 1.0; interval_minutes = 1.0,
+        ).state == AEMS.FastStartState(3, 0.0)
+        zero_t4 = AEMS.FastStartProfile(20.0, 1.0, 1.0, 1.0, 0.0)
+        @test AEMS.plan_fast_start(
+            fast_start_input(; profile = zero_t4, mode = 4), 1.0; interval_minutes = 1.0,
+        ).profile_lower_mw == 0.0
+    end
+
+    @testset "RTD preprocessing uses meter and prior target as specified" begin
+        profile = AEMS.FastStartProfile(20.0, 2.0, 3.0, 4.0, 5.0)
+        cases = [
+            (0.999, 10.0, 0, 100.0, AEMS.FastStartState(0, 0.0)),
+            (1.0, 10.0, 0, 100.0, AEMS.FastStartState(4, 5.0)),
+            (1.001, 10.0, 0, 100.0, AEMS.FastStartState(4, 5.0)),
+            (0.999, 0.0, 0, 100.0, AEMS.FastStartState(0, 0.0)),
+            (1.0, 0.0, 0, 0.0, AEMS.FastStartState(4, 5.0)),
+            (1.001, 0.0, 0, 0.0, AEMS.FastStartState(4, 5.0)),
+            (0.5, 10.0, 2, 0.0, AEMS.FastStartState(4, 5.0)),
+            (0.5, 10.0, 0, 0.0, AEMS.FastStartState(0, 0.0)),
+        ]
+        for (meter, prior_target, mode, max_avail, expected) in cases
+            input = fast_start_input(
+                ; profile, mode, initial_mw = meter, max_avail,
+                previous_total_cleared = prior_target,
+            )
+            @test AEMS.preprocess_fast_start(input).state == expected
+        end
+    end
+
+    @testset "Startup crossing uses profile anchor and full residual time" begin
+        profile = AEMS.FastStartProfile(20.0, 10.0, 2.0, 40.0, 7.0)
+        input = fast_start_input(; profile, mode = 1, elapsed = 10.0, initial_mw = 17.0, ramp_up = 780.0)
+        envelope = AEMS.plan_fast_start(input, 0.0)
+        @test envelope.state == AEMS.FastStartState(3, 3.0)
+        @test envelope.ramp_initial_mw == 20.0
+        @test envelope.ramp_minutes == 3.0
+        @test envelope.ramp_initial_mw + envelope.ramp_minutes * input.ramp_up_rate / 60 == 59.0
+        @test envelope.profile_lower_mw == 20.0
+        @test envelope.profile_upper_mw === nothing
+
+        beyond_t3 = fast_start_input(
+            ; profile = AEMS.FastStartProfile(20.0, 1.0, 1.0, 1.0, 10.0),
+            mode = 1, initial_mw = 17.0, ramp_up = 780.0,
+        )
+        crossed_t3 = AEMS.plan_fast_start(beyond_t3, 0.0)
+        @test crossed_t3.state == AEMS.FastStartState(4, 2.0)
+        @test crossed_t3.ramp_minutes == 3.0
+
+        meter_mismatch = fast_start_input(; mode = 3, initial_mw = 17.0)
+        ordinary = AEMS.plan_fast_start(meter_mismatch, 0.0)
+        @test ordinary.ramp_initial_mw == 17.0
+        @test ordinary.ramp_minutes == 5.0
+
+        continuation = AEMS.plan_fast_start(fast_start_input(; mode = 3), 0.0)
+        @test continuation.state.mode == 4
+    end
+
+    @testset "Mode 4 shutdown waits for profile and ramp down" begin
+        profile = AEMS.FastStartProfile(20.0, 1.0, 1.0, 1.0, 2.0)
+        input = fast_start_input(; profile, mode = 4, elapsed = 0.0, initial_mw = 5.0, ramp_down = 150.0)
+        before_t4 = AEMS.plan_fast_start(input, 0.0; interval_minutes = 1.0)
+        @test !before_t4.can_shutdown
+        @test AEMS.finalize_fast_start_state(before_t4, 0.0) == AEMS.FastStartState(4, 1.0)
+        after_t4 = AEMS.plan_fast_start(input, 0.0; interval_minutes = 2.0)
+        @test after_t4.can_shutdown
+        @test AEMS.finalize_fast_start_state(after_t4, 0.005) == AEMS.FastStartState(0, 0.0)
+        @test AEMS.finalize_fast_start_state(after_t4, 0.006) == AEMS.FastStartState(4, 2.0)
+
+        slow_ramp = fast_start_input(; profile, mode = 4, initial_mw = 5.0, ramp_down = 60.0)
+        ramp_limited = AEMS.plan_fast_start(slow_ramp, 0.0; interval_minutes = 2.0)
+        @test !ramp_limited.can_shutdown
+        @test AEMS.finalize_fast_start_state(ramp_limited, 0.0) == AEMS.FastStartState(4, 2.0)
+    end
+end
