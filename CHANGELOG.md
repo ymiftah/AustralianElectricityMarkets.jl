@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Expanded the NEMDE formulation into linked energy, FCAS, interconnector, fast-start and pricing
+  chapters, with equations, MMSDM input maps, executable figures and explicit pending-PR coverage.
+  Consolidated the FCAS introduction and worked interval, and added a local Literate review renderer.
 - The single "From NEM dispatch to PowerSimulations.jl" page is replaced by a four-page NEMDE
   walkthrough: the NEMDE model (equations and charts), the same model as a JuMP script on a toy
   market, how PowerSimulations.jl builds it phase by phase, and the AEM / AEMSim formulations that

@@ -11,10 +11,14 @@ include(joinpath(@__DIR__, "..", "..", "literate", "toy_jump.jl"));
 
 # # [NEMDE as a JuMP model](@id nemde-jump)
 #
-# The [previous page](@ref nemde-model) described the equations NEMDE solves. This page turns
-# them into running code: a [JuMP](https://jump.dev) model of a small market, solved with
+# The [formulation overview](@ref nemde-model) introduces the full model. This page turns
+# a deliberately reduced subset into running code: a [JuMP](https://jump.dev) model of a small market, solved with
 # [HiGHS](https://highs.dev). Nothing here depends on `PowerSystems.jl` or `PowerSimulations.jl`;
 # the next two pages show how those packages assemble the same model.
+#
+# This teaching model omits scheduled consumption, batteries, detailed regulation scaling,
+# fast-start passes and the full price-processing pipeline. Its loss construction is a toy
+# approximation; the package formulation and pending corrections are documented separately.
 #
 # ## The toy market
 #

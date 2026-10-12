@@ -514,7 +514,8 @@ check_interconnector_loss_segments(results, sys)
 #   `"initial_mw"`; `NEMLookaheadDispatch` chains intervals, and `NEMInterconnectorLoss` and
 #   `FCASMarket` support a standalone `DecisionModel` only.
 # - **Fast start.** The fast-start profile inputs are read from NEMWEB, but no formulation
-#   enforces the inflexibility profile yet.
+#   enforces the inflexibility profile on this branch. Pending #184 adds thermal two-pass
+#   replay and separate profile, availability and offer slacks; see [Fast-start dispatch](@ref nemde-fast-start).
 
 # ## [References](@id nemde-aem-references)
 #
