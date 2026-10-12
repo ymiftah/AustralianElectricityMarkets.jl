@@ -264,8 +264,8 @@ end
 #
 # ### Network constraints
 #
-# Everything the explicit model does not capture, mainly the transmission network, is expressed
-# as **generic constraints** (also called constraint equations): a linear inequality over unit
+# AEMO needs to dispatch the units while preserving the integrity of the transmission network. It does so by
+# introducing **generic constraints** that describe the network limits. A **generic constraint** (also called constraint equations) is a linear inequality over unit
 # outputs, FCAS enablements and interconnector flows,
 #
 # ```math
