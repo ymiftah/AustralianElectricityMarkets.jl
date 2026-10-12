@@ -226,11 +226,8 @@ function solve_toy(
     template = PSI.ProblemTemplate(network)
     set_nem_dispatch_models!(template, sys; formulation = formulation)
     if !isnothing(fast_start_context)
-        PSI.set_device_model!(
-            template, PSI.DeviceModel(
-                PSY.ThermalStandard, formulation; attributes = Dict("fast_start" => fast_start_context),
-            )
-        )
+        thermal_model = PSI.get_model(template, PSY.ThermalStandard)
+        PSI.get_attributes(thermal_model)["fast_start"] = fast_start_context
     end
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     if !isempty(PSY.get_components(GenericConstraint, sys))

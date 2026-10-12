@@ -5,6 +5,10 @@ function toy_fast_start_context(mode, lower; upper = nothing, ramp_initial = low
     return (; pass = :dispatch, inputs = Dict(TOY_CHEAP => input), envelopes = Dict(TOY_CHEAP => envelope))
 end
 
+function toy_planned_fast_start_context(input, envelope)
+    return (; pass = :dispatch, inputs = Dict(TOY_CHEAP => input), envelopes = Dict(TOY_CHEAP => envelope))
+end
+
 function toy_slack_mw(out, name)
     values = read_variable(out.results, "$(name)__ThermalStandard")
     return isempty(values) ? 0.0 : sum(values.value)
@@ -23,6 +27,29 @@ end
         @test crossed.state == AEMS.FastStartState(4, 3.0)
         @test crossed.ramp_initial_mw == 20.0
         @test crossed.ramp_minutes == 5.0
+
+        partial_profile = AEMS.FastStartProfile(20.0, 10.0, 2.0, 2.0, 2.0)
+        partial_input = AEMS.FastStartInput(
+            partial_profile, AEMS.FastStartState(1, 10.0), 17.0, 780.0, 780.0, 100.0, 0.0,
+        )
+        partial_envelope = AEMS.plan_fast_start(partial_input, 0.0)
+        @test partial_envelope.state == AEMS.FastStartState(4, 1.0)
+        @test partial_envelope.ramp_initial_mw == 20.0
+        @test partial_envelope.ramp_minutes == 3.0
+
+        partial = solve_toy(
+            nem_toy_system(
+                [
+                    TOY_CHEAP => toy_unit(100.0, [(100.0, 10.0)]; initial = 17.0, ramp_up = 13.0),
+                    TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 50.0)]; initial = 0.0, ramp_up = 100.0),
+                ], 80.0,
+            );
+            fast_start_context = toy_planned_fast_start_context(partial_input, partial_envelope),
+            use_slacks = false,
+        )
+        @test partial.dispatch_mw[TOY_CHEAP] ≈ 59.0 atol = TOY_TOLERANCE
+        @test partial.dispatch_mw[TOY_EXPENSIVE] ≈ 21.0 atol = TOY_TOLERANCE
+        @test toy_slack_mw(partial, "UnitRampUpSlack") ≈ 0.0 atol = TOY_TOLERANCE
     end
 
     @testset "commitment pass omits starting-profile energy ramps" begin
@@ -40,14 +67,21 @@ end
         @test toy_slack_mw(out, "UnitRampUpSlack") ≈ 0.0 atol = TOY_TOLERANCE
     end
 
-    @testset "mode 2 fixed output and mode 3 minimum permit the profile target" begin
+    @testset "profile rows discriminate fixed targets and minimum-output modes" begin
         fixed = solve_toy(
-            nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0)], 20.0);
+            nem_toy_system(
+                [
+                    TOY_CHEAP => toy_unit(100.0, [(100.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+                    TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+                ], 30.0,
+            );
             fast_start_context = toy_fast_start_context(2, 20.0; upper = 20.0),
         )
         @test fixed.dispatch_mw[TOY_CHEAP] ≈ 20.0 atol = TOY_TOLERANCE
+        @test fixed.dispatch_mw[TOY_EXPENSIVE] ≈ 10.0 atol = TOY_TOLERANCE
         @test toy_slack_mw(fixed, "FastStartProfileDeficitSlack") ≈ 0.0 atol = TOY_TOLERANCE
         @test toy_slack_mw(fixed, "FastStartProfileSurplusSlack") ≈ 0.0 atol = TOY_TOLERANCE
+        @test fixed.objective ≈ (20.0 * 10.0 + 10.0 * 20.0) * DISPATCH_INTERVAL_HOURS atol = TOY_TOLERANCE
 
         minimum = solve_toy(
             nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 40.0, ramp_up = 100.0)], 40.0);
@@ -56,10 +90,18 @@ end
         @test minimum.dispatch_mw[TOY_CHEAP] ≈ 40.0 atol = TOY_TOLERANCE
 
         declining = solve_toy(
-            nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 10.0, ramp_up = 100.0)], 10.0);
+            nem_toy_system(
+                [
+                    TOY_CHEAP => toy_unit(100.0, [(100.0, 30.0)]; initial = 0.0, ramp_up = 100.0),
+                    TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+                ], 20.0,
+            );
             fast_start_context = toy_fast_start_context(4, 10.0),
         )
         @test declining.dispatch_mw[TOY_CHEAP] ≈ 10.0 atol = TOY_TOLERANCE
+        @test declining.dispatch_mw[TOY_EXPENSIVE] ≈ 10.0 atol = TOY_TOLERANCE
+        @test toy_slack_mw(declining, "FastStartProfileDeficitSlack") ≈ 0.0 atol = TOY_TOLERANCE
+        @test declining.objective ≈ (10.0 * 30.0 + 10.0 * 20.0) * DISPATCH_INTERVAL_HOURS atol = TOY_TOLERANCE
 
         ordinary = solve_toy(
             nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 20.0, ramp_up = 100.0)], 20.0),
@@ -94,14 +136,22 @@ end
         ) == -1.0
 
         profile_availability = solve_toy(
-            nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 20.0, ramp_up = 100.0, availability = 10.0)], 20.0);
+            nem_toy_system(
+                [
+                    TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 20.0, ramp_up = 100.0, availability = 10.0),
+                    TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 30.0)]; initial = 0.0, ramp_up = 100.0),
+                ], 20.0,
+            );
             fast_start_context = toy_fast_start_context(2, 20.0; upper = 20.0),
             use_slacks = false,
         )
         @test profile_availability.dispatch_mw[TOY_CHEAP] ≈ 20.0 atol = TOY_TOLERANCE
+        @test profile_availability.dispatch_mw[TOY_EXPENSIVE] ≈ 0.0 atol = TOY_TOLERANCE
         @test toy_slack_mw(profile_availability, "AvailabilitySurplusSlack") ≈ 10.0 atol = TOY_TOLERANCE
         @test toy_slack_mw(profile_availability, "FastStartProfileDeficitSlack") ≈ 0.0 atol = TOY_TOLERANCE
         @test toy_slack_mw(profile_availability, "FastStartProfileSurplusSlack") ≈ 0.0 atol = TOY_TOLERANCE
+        mpc = last(first(AEMS.MARKET_PRICE_CAP_BY_FINANCIAL_YEAR))
+        @test profile_availability.objective ≈ (20.0 * 20.0 + 10.0 * 370.0 * mpc) * DISPATCH_INTERVAL_HOURS rtol = 1.0e-8
 
         offer = solve_toy(
             nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(10.0, 20.0)]; initial = 20.0, ramp_up = 100.0)], 20.0);
@@ -112,14 +162,22 @@ end
         @test toy_slack_mw(offer, "OfferSurplusSlack") ≈ 10.0 atol = TOY_TOLERANCE
 
         offered_profile = solve_toy(
-            nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(10.0, 20.0)]; initial = 20.0, ramp_up = 100.0)], 20.0);
+            nem_toy_system(
+                [
+                    TOY_CHEAP => toy_unit(100.0, [(10.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+                    TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 30.0)]; initial = 0.0, ramp_up = 100.0),
+                ], 20.0,
+            );
             fast_start_context = toy_fast_start_context(2, 20.0; upper = 20.0),
             use_slacks = false,
         )
-        @test offered_profile.dispatch_mw[TOY_CHEAP] ≈ 20.0 atol = TOY_TOLERANCE
-        @test toy_slack_mw(offered_profile, "OfferSurplusSlack") ≈ 10.0 atol = TOY_TOLERANCE
-        @test toy_slack_mw(offered_profile, "FastStartProfileDeficitSlack") ≈ 0.0 atol = TOY_TOLERANCE
+        @test offered_profile.dispatch_mw[TOY_CHEAP] ≈ 10.0 atol = TOY_TOLERANCE
+        @test offered_profile.dispatch_mw[TOY_EXPENSIVE] ≈ 10.0 atol = TOY_TOLERANCE
+        @test toy_slack_mw(offered_profile, "OfferSurplusSlack") ≈ 0.0 atol = TOY_TOLERANCE
+        @test toy_slack_mw(offered_profile, "FastStartProfileDeficitSlack") ≈ 10.0 atol = TOY_TOLERANCE
         @test toy_slack_mw(offered_profile, "FastStartProfileSurplusSlack") ≈ 0.0 atol = TOY_TOLERANCE
+        mpc = last(first(AEMS.MARKET_PRICE_CAP_BY_FINANCIAL_YEAR))
+        @test offered_profile.objective ≈ (10.0 * 20.0 + 10.0 * 30.0 + 10.0 * 1130.0 * mpc) * DISPATCH_INTERVAL_HOURS rtol = 1.0e-8
     end
 
     @testset "profile deficit is preferred to the higher-cost ramp violation" begin
@@ -137,6 +195,8 @@ end
         @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 10.0 atol = TOY_TOLERANCE
         @test toy_slack_mw(out, "FastStartProfileDeficitSlack") ≈ 20.0 atol = TOY_TOLERANCE
         @test toy_slack_mw(out, "UnitRampUpSlack") ≈ 0.0 atol = TOY_TOLERANCE
+        mpc = last(first(AEMS.MARKET_PRICE_CAP_BY_FINANCIAL_YEAR))
+        @test out.objective ≈ (10.0 * 5_000.0 + 20.0 * 1130.0 * mpc) * DISPATCH_INTERVAL_HOURS rtol = 1.0e-8
     end
 
     @testset "one MW of availability violation costs factor times MPC per interval" begin

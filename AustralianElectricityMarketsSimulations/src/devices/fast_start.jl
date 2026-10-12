@@ -7,18 +7,9 @@ PSI.convert_result_to_natural_units(::Type{FastStartProfileSurplusSlack}) = true
 PSI.convert_result_to_natural_units(::Type{AvailabilitySurplusSlack}) = true
 PSI.convert_result_to_natural_units(::Type{OfferSurplusSlack}) = true
 
-function _fast_start_context(model)
-    return PSI.get_attribute(model, "fast_start")
-end
-
-function _fast_start_envelope(context, duid, _)
-    return get(context.envelopes, duid, nothing)
-end
-
 function _fast_start_energy_ramp_envelope(context, duid, t)
-    context.pass === :commitment && haskey(context.inputs, duid) && context.inputs[duid].state.mode <= 2 && return nothing
     context.pass === :dispatch || return nothing
-    return _fast_start_envelope(context, duid, t)
+    return get(context.envelopes, duid, nothing)
 end
 
 function _add_fast_start_profile_constraints!(container, devices, context)::Nothing
