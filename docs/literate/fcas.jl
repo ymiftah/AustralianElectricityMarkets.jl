@@ -260,6 +260,348 @@ end
 #     unit's *telemetered* AGC ramp rate. That telemetry isn't published in MMSDM, so it
 #     can't be reproduced from public data the way the contingency figures above can.
 
+# ## [The cases in AEMO's FCAS model](@id fcas-cases)
+#
+# AEMO's *FCAS Model in NEMDE* describes the trapezium through a sequence of cases, and this
+# section follows that document's order (the section numbers below are AEMO's): the trapezium
+# of each type of participant (§2), where the energy target falls on it (§3), how NEMDE scales
+# the bid before the optimisation (§4), the pre-conditions for enabling a service (§5), the
+# constraints that couple energy and FCAS on a unit (§6) and how the availability that AEMO
+# publishes is calculated (§7). The charts use illustrative numbers, not market data, so every
+# case can be seen on its own.
+
+const FCAS_COLORS = Makie.wong_colors()
+
+function trapezoid(t)
+    emin, low, high, emax, fmax = t
+    return Point2f[(emin, 0), (low, fmax), (high, fmax), (emax, 0)]
+end
+
+function draw_trapezium!(ax, t; color = FCAS_COLORS[1], filled = true, linestyle = :solid)
+    poly!(
+        ax, trapezoid(t);
+        color = filled ? (color, 0.25) : :transparent, strokecolor = color, strokewidth = 2, linestyle,
+    )
+    return nothing
+end
+
+# ### [The trapezium of each type of participant (§2)](@id fcas-cases-participants)
+#
+# An FCAS bid always has ten price bands and the same five technical limits. What changes with
+# the type of participant is what the horizontal axis means and the signs the limits may take:
+#
+# | Participant | Horizontal axis | Limits | AEMO figure |
+# | --- | --- | --- | --- |
+# | Scheduled or semi-scheduled generating unit | generation (MW) | all positive | 1, 2 |
+# | Scheduled load | consumption (MW) | all positive | 3 |
+# | Wholesale demand response unit | load reduction (MW), equivalent to generation | all positive | 4 |
+# | Bidirectional unit (BDU), contingency service | net injection, consumption to the left of 0 and generation to the right | Max Availability positive; the other limits may be positive or negative, and Enablement Max always allows generation | 5 |
+# | BDU, regulation service, generation side only | generation (MW) | non-negative, as a generator | 6 |
+# | BDU, regulation service, load side only | consumption (MW) | all non-positive | 7 |
+# | BDU, regulation service, both sides | the two bids are optimised individually but amalgamated for validation, the enablement pre-condition, the "trapped" test and the availability calculation | contiguous at 0 (see below) | 8, 9 |
+# | FCAS-only unit | none: the unit has no energy dispatch | a vertical line at 0 up to Max Availability | 10 |
+#
+# A BDU's contingency bid is for the whole unit and is a single trapezium straddling zero. A
+# regulation bid may be on either side or on both, and when it is on both sides the rules are:
+#
+# - the bids are contiguous: Enablement Max (load) = 0 = Enablement Min (generation);
+# - both trapeziums have the same upper angle and the same lower angle;
+# - if the upper angle is below 90 degrees, the generation side is a triangle
+#   (High Breakpoint = Low Breakpoint = 0);
+# - if the lower angle is below 90 degrees, the load side is a triangle
+#   (High Breakpoint = Low Breakpoint = 0).
+
+let
+    fig = Figure(size = (1000, 520))
+    panels = [
+        ("Generator, load, demand response (Figs 1-4)", [(150, 200, 350, 450, 60)], "Energy (MW)"),
+        ("BDU contingency (Fig 5)", [(-80, -30, 100, 200, 50)], "Net injection (MW)"),
+        ("BDU regulation, generation side (Fig 6)", [(0, 30, 90, 130, 30)], "Generation (MW)"),
+        ("BDU regulation, load side (Fig 7)", [(-130, -90, -30, 0, 30)], "Net injection (MW, load side)"),
+    ]
+    for (i, (title, ts, xlabel)) in enumerate(panels)
+        ax = Axis(fig[1, i]; title, titlesize = 11, xlabel, ylabel = i == 1 ? "FCAS (MW)" : "")
+        foreach(t -> draw_trapezium!(ax, t), ts)
+        vlines!(ax, 0; color = (:gray, 0.5), linestyle = :dot)
+    end
+    ## Figs 8-9: amalgamated regulation trapezium of a BDU bidding on both sides.
+    ax = Axis(fig[2, 1]; title = "BDU regulation, both sides, amalgamated I (Fig 8)", titlesize = 11, xlabel = "Net injection (MW)", ylabel = "FCAS (MW)")
+    poly!(ax, Point2f[(-60, 0), (-60, 30), (100, 0)]; color = (FCAS_COLORS[2], 0.25), strokecolor = FCAS_COLORS[2], strokewidth = 2)
+    vlines!(ax, 0; color = (:gray, 0.5), linestyle = :dot)
+    ax = Axis(fig[2, 2]; title = "BDU regulation, both sides, amalgamated II (Fig 9)", titlesize = 11, xlabel = "Net injection (MW)")
+    poly!(ax, Point2f[(-60, 0), (-60, 30), (30, 30), (100, 0)]; color = (FCAS_COLORS[2], 0.25), strokecolor = FCAS_COLORS[2], strokewidth = 2)
+    vlines!(ax, 0; color = (:gray, 0.5), linestyle = :dot)
+    ax = Axis(fig[2, 3]; title = "FCAS-only unit (Fig 10)", titlesize = 11, xlabel = "Energy (MW)")
+    lines!(ax, [0, 0], [0, 40]; color = FCAS_COLORS[3], linewidth = 4)
+    xlims!(ax, -50, 50)
+    Label(
+        fig[2, 4], "Figs 8 and 9 show the amalgamated\ntrapezium (right-hand panels of\nAEMO's figures). The two sides\nare optimised individually.";
+        fontsize = 11, tellwidth = false,
+    )
+    fig
+end
+
+# ### [Where the energy target falls (§3)](@id fcas-cases-application)
+#
+# The FCAS a unit can deliver is read off the trapezium at its energy dispatch target. There
+# are exactly four cases (Figures 11 to 13 and the closing paragraph of §3):
+#
+# | Energy target | Available FCAS |
+# | --- | --- |
+# | between Low and High Breakpoint | `MaxAvailability` |
+# | between Enablement Min and Low Breakpoint | `MaxAvailability × (Energy − EnablementMin) / (LowBreakpoint − EnablementMin)` |
+# | between High Breakpoint and Enablement Max | `MaxAvailability × (EnablementMax − Energy) / (EnablementMax − HighBreakpoint)` |
+# | below Enablement Min or above Enablement Max | zero |
+#
+# For a scheduled load the roles of the lower and upper slopes are swapped, because its axis
+# is consumption.
+
+let
+    t = (150.0, 200.0, 350.0, 450.0, 60.0)
+    emin, low, high, emax, fmax = t
+    available(x) = x < emin || x > emax ? 0.0 :
+        x < low ? fmax * (x - emin) / (low - emin) : x <= high ? fmax : fmax * (emax - x) / (emax - high)
+    targets = [("below Emin", 120.0), ("lower slope", 170.0), ("plateau", 280.0), ("upper slope", 410.0), ("above Emax", 480.0)]
+    fig = Figure(size = (900, 340))
+    ax = Axis(fig[1, 1]; xlabel = "Energy dispatch target (MW)", ylabel = "FCAS (MW)", title = "Available FCAS in each case")
+    draw_trapezium!(ax, t)
+    for (i, (label, x)) in enumerate(targets)
+        color = FCAS_COLORS[mod1(i + 1, 7)]
+        lines!(ax, [x, x], [0, available(x)]; color, linewidth = 4)
+        scatter!(ax, x, available(x); color, markersize = 10)
+        text!(ax, x, 66; text = label, align = (:center, :bottom), fontsize = 11, color)
+    end
+    ylims!(ax, -3, 80)
+    fig
+end
+
+# ### [Scaling the bid within technical limits (§4)](@id fcas-cases-scaling)
+#
+# Before optimising, NEMDE can shrink the bid trapezium to what the unit can currently do. There
+# are three cases, and all of them keep the *angles* of the slopes, so the breakpoints slide
+# along with the limit that moved:
+#
+# | Scaling | Applies to | Effective trapezium |
+# | --- | --- | --- |
+# | **AGC enablement limits** (§4.1, Fig. 14) | regulation services | the telemetered AGC Enablement Min and Max replace the bid's when more restrictive; the breakpoints slide to keep the angles. No scaling if the AGC limit is zero or absent. |
+# | **AGC ramp rates** (§4.2, Fig. 15) | regulation services | Max Availability becomes `AGC ramp rate × time period` (for example 5 MW/min × 5 min = 25 MW) when more restrictive; the breakpoints slide to keep the angles. No scaling if the ramp rate is zero or absent. |
+# | **UIGF** (§4.3, Fig. 16) | every service of a semi-scheduled unit | Enablement Max becomes the UIGF when more restrictive; the high breakpoint slides to keep the upper angle. |
+#
+# The three can combine (Figure 17), and scaling can only shrink the trapezium. No AGC scaling
+# applies to contingency services, and a scheduled unit's contingency bid is not scaled at all:
+# if the unit lowers its energy availability below the bid's Enablement Max, NEMDE does not move
+# that limit.
+
+function scale_agc_enablement(t, agc_min, agc_max)
+    emin, low, high, emax, fmax = t
+    new_min, new_max = max(emin, agc_min), min(emax, agc_max)
+    return (new_min, new_min + (low - emin), new_max - (emax - high), new_max, fmax)
+end
+function scale_agc_ramp(t, capability)
+    emin, low, high, emax, fmax = t
+    new_fmax = min(fmax, capability)
+    k = new_fmax / fmax
+    return (emin, emin + (low - emin) * k, emax - (emax - high) * k, emax, new_fmax)
+end
+function scale_uigf(t, uigf)
+    emin, low, high, emax, fmax = t
+    new_max = min(emax, uigf)
+    return (emin, low, new_max - (emax - high), new_max, fmax)
+end
+
+let
+    bid = (100.0, 160.0, 340.0, 400.0, 30.0)
+    cases = [
+        ("AGC enablement limits (Fig 14)", scale_agc_enablement(bid, 130.0, 370.0)),
+        ("AGC ramp rate (Fig 15)", scale_agc_ramp(bid, 18.0)),
+        ("UIGF (Fig 16)", scale_uigf(bid, 330.0)),
+        ("All three (Fig 17)", scale_uigf(scale_agc_ramp(scale_agc_enablement(bid, 130.0, 370.0), 18.0), 330.0)),
+    ]
+    fig = Figure(size = (1000, 300))
+    for (i, (title, effective)) in enumerate(cases)
+        ax = Axis(fig[1, i]; title, titlesize = 11, xlabel = "Energy (MW)", ylabel = i == 1 ? "FCAS (MW)" : "")
+        draw_trapezium!(ax, bid; color = :gray, filled = false)
+        draw_trapezium!(ax, effective; color = FCAS_COLORS[6])
+        ylims!(ax, -2, 36)
+    end
+    Legend(
+        fig[2, 1:4], [PolyElement(color = :gray), PolyElement(color = FCAS_COLORS[6])],
+        ["bid trapezium", "effective trapezium"]; orientation = :horizontal, tellheight = true,
+    )
+    fig
+end
+
+# Which scaling is applied depends on the process (Table 1 of AEMO's document):
+#
+# | | Dispatch | 5-minute pre-dispatch | Pre-dispatch |
+# | --- | --- | --- | --- |
+# | AGC enablement limits | all intervals | first | first |
+# | AGC ramp rates | all intervals | first | none |
+# | UIGF | all intervals | all intervals | all intervals |
+#
+# ### [Pre-conditions for enabling a service (§5)](@id fcas-cases-preconditions)
+#
+# After scaling, a unit is considered for a service only if every one of these holds:
+#
+# | Pre-condition | Test | Exceptions |
+# | --- | --- | --- |
+# | Positive availability | `Max Availability > 0` | |
+# | Offered quantity | at least one price band has a capacity above zero | |
+# | Sign of the limits | `Enablement Max ≥ 0` | regulation on the load side of a BDU requires `Enablement Min (load) ≤ 0`; contingency from a BDU may have any sign |
+# | Energy can reach the trapezium | `Energy Max Availability ≥ Enablement Min` | semi-scheduled: `min(Energy Max Availability, UIGF) ≥ Enablement Min`; BDU load side: `−Energy Max Availability (load) ≤ Enablement Max (load)`; BDU generation side: as above on the generation side; BDU contingency: both |
+# | Operating inside the trapezium at the start | `Enablement Min ≤ max(Initial MW, 0) ≤ Enablement Max` | BDU with regulation on both sides: `Enablement Min (load) ≤ Initial MW ≤ Enablement Max (gen)`; other BDU bids: `Enablement Min ≤ Initial MW ≤ Enablement Max` |
+#
+# A unit that fails any of them cannot be enabled for that service, and its availability for it
+# is zero.
+#
+# ### [Joint energy and FCAS constraints (§6)](@id fcas-cases-joint)
+#
+# A trapezium describes the capability of a unit for *one* service. If the unit provides several
+# at once, NEMDE adds four families of constraints, together called the *unit FCAS constraints*,
+# so that the unit can physically deliver everything it is dispatched and enabled for:
+#
+# | Constraint | Regulation service | Contingency service | Dispatch | 5-min pre-dispatch | Pre-dispatch |
+# | --- | --- | --- | --- | --- | --- |
+# | Joint ramping (§6.1) | applied | not applied | all | first | none |
+# | Joint capacity (§6.2) | applied | applied | all | all | all |
+# | Energy and regulating FCAS capacity (§6.3) | applied | not applied | all | all | all |
+# | BDU regulating FCAS SCADA ramping (§6.4) | applied, BDUs only | not applied | all | first | none |
+#
+# **Joint ramping.** The combined change of energy and a regulation service has to fit the
+# unit's telemetered AGC ramp rate over the time period (5 minutes). For a generating unit, BDU
+# or demand response unit:
+#
+# ```math
+# \text{Energy} + \text{RaiseReg} \le \text{InitialMW} + R^{\uparrow}_{\text{SCADA}}\, T, \qquad
+# \text{Energy} - \text{LowerReg} \ge \text{InitialMW} - R^{\downarrow}_{\text{SCADA}}\, T
+# ```
+#
+# and for a scheduled load the raise and lower services swap places. Graphically the first row
+# cuts a wedge off the *upper* slope of the regulation-raise trapezium and the second off the
+# *lower* slope of regulation lower (Figures 18 and 19).
+
+let
+    initial, ramp = 300.0, 30.0
+    raise = (200.0, 230.0, 330.0, 360.0, 30.0)     # a 45 degree upper slope
+    lower = (240.0, 270.0, 370.0, 400.0, 30.0)     # a 45 degree lower slope
+    fig = Figure(size = (900, 320))
+    ax = Axis(fig[1, 1]; title = "Regulation raise (Fig 18)", titlesize = 12, xlabel = "Energy (MW)", ylabel = "FCAS (MW)")
+    draw_trapezium!(ax, raise; color = :gray, filled = false)
+    draw_trapezium!(ax, (raise[1], raise[2], initial, initial + ramp, ramp); color = FCAS_COLORS[6])
+    lines!(ax, [initial, initial + ramp], [ramp, 0]; color = :tomato, linewidth = 3, label = "joint ramping")
+    vlines!(ax, initial; color = (:white, 0.6), linestyle = :dot)
+    text!(ax, initial, 33; text = "InitialMW", align = (:center, :bottom), fontsize = 11)
+    axislegend(ax; position = :lb)
+    ylims!(ax, -2, 40)
+    ax = Axis(fig[1, 2]; title = "Regulation lower (Fig 19)", titlesize = 12, xlabel = "Energy (MW)")
+    draw_trapezium!(ax, lower; color = :gray, filled = false)
+    draw_trapezium!(ax, (initial - ramp, initial, lower[3], lower[4], ramp); color = FCAS_COLORS[6])
+    lines!(ax, [initial - ramp, initial], [0, ramp]; color = :tomato, linewidth = 3)
+    vlines!(ax, initial; color = (:white, 0.6), linestyle = :dot)
+    text!(ax, initial, 33; text = "InitialMW", align = (:center, :bottom), fontsize = 11)
+    ylims!(ax, -2, 40)
+    fig
+end
+
+# **Joint capacity.** For every contingency service the unit is enabled for, energy plus the
+# contingency service scaled by the slope, plus any enabled regulation, has to stay inside the
+# enablement limits (the constraint used for Tungatinah above). For a generating unit, BDU or
+# demand response unit:
+#
+# ```math
+# \begin{aligned}
+# \text{Energy} + \text{UpperSlope}\cdot\text{Contingency} + [\text{RaiseRegEnabled}]\,\text{RaiseReg} &\le \text{EnablementMax} \\
+# \text{Energy} - \text{LowerSlope}\cdot\text{Contingency} - [\text{LowerRegEnabled}]\,\text{LowerReg} &\ge \text{EnablementMin}
+# \end{aligned}
+# ```
+#
+# with `UpperSlope = (EnablementMax − HighBreakpoint) / MaxAvail` and `LowerSlope =
+# (LowBreakpoint − EnablementMin) / MaxAvail`. For a scheduled load the two regulation terms
+# swap. Because energy and regulation trade one-for-one (a megawatt less energy frees a megawatt
+# of raise regulation), AEMO draws the three-dimensional relation in two dimensions: enabling
+# regulation *shifts* the sloped edge of the contingency trapezium towards the energy target
+# (Figures 21 to 24). One consequence is that a unit enabled for any contingency service is
+# *trapped*: its energy dispatch must stay within Enablement Min and Max.
+
+let
+    t = (150.0, 200.0, 350.0, 450.0, 60.0)
+    emin, low, high, emax, fmax = t
+    reg = 20.0
+    fig = Figure(size = (900, 330))
+    ax = Axis(fig[1, 1]; title = "With regulation raise enabled (Figs 21, 23)", titlesize = 12, xlabel = "Energy (MW)", ylabel = "Contingency FCAS (MW)")
+    draw_trapezium!(ax, t; color = :gray, filled = false)
+    draw_trapezium!(ax, (emin, low, high - reg, emax - reg, fmax); color = FCAS_COLORS[6])
+    text!(ax, emax - reg - 4, 8; text = "upper edge shifted\nleft by RaiseReg", align = (:right, :bottom), fontsize = 11)
+    ylims!(ax, -2, 70)
+    ax = Axis(fig[1, 2]; title = "With regulation lower enabled (Figs 22, 24)", titlesize = 12, xlabel = "Energy (MW)")
+    draw_trapezium!(ax, t; color = :gray, filled = false)
+    draw_trapezium!(ax, (emin + reg, low + reg, high, emax, fmax); color = FCAS_COLORS[6])
+    text!(ax, emin + reg + 4, 8; text = "lower edge shifted\nright by LowerReg", align = (:left, :bottom), fontsize = 11)
+    ylims!(ax, -2, 70)
+    fig
+end
+
+# **Energy and regulating FCAS capacity.** The same idea applied to a regulation service on its
+# own: energy plus the slope times the regulation target stays under Enablement Max, and
+# energy minus the slope times the target stays over Enablement Min (Figure 25). The two
+# constraints lie exactly on the slopes of the regulation trapezium, so a unit enabled for
+# regulation is also *trapped*.
+#
+# ```math
+# \text{Energy} + \text{UpperSlope}\cdot\text{Reg} \le \text{EnablementMax}, \qquad
+# \text{Energy} - \text{LowerSlope}\cdot\text{Reg} \ge \text{EnablementMin}
+# ```
+#
+# **BDU regulating FCAS SCADA ramping.** A BDU may bid regulation on both sides, and each side
+# is scaled by the unit's SCADA ramp rate. To avoid counting that rate twice, the unit as a
+# whole is held to it: `RaiseReg ≤ R↑ × T` and `LowerReg ≤ R↓ × T` (§6.4).
+#
+# ### [How the published availability is calculated (§7)](@id fcas-cases-availability)
+#
+# The availability AEMO publishes is not the quantity bid, but the quantity that the unit can
+# deliver at its energy target while delivering everything else it is enabled for. It is the
+# smallest of five limits, evaluated on the effective (scaled) trapezium (Figure 26):
+#
+# 1. the trapezium's Max Availability,
+# 2. the upper slope,
+# 3. the lower slope,
+# 4. the joint capacity constraint (one per enabled contingency service, when computing a
+#    regulation service's availability),
+# 5. the joint ramping constraint (regulation only).
+#
+# If the unit's Initial MW is outside its enablement limits, or it fails a pre-condition, the
+# availability is zero.
+
+let
+    t = (100.0, 120.0, 380.0, 420.0, 40.0)
+    emin, low, high, emax, fmax = t
+    x, initial, ramp, contingency, upper = 390.0, 380.0, 30.0, 10.0, 1.5
+    limits = [
+        ("1 Max Availability", fmax),
+        ("2 upper slope", fmax * (emax - x) / (emax - high)),
+        ("3 lower slope", fmax * (x - emin) / (low - emin)),
+        ("4 joint capacity", emax - x - upper * contingency),
+        ("5 joint ramping", initial + ramp - x),
+    ]
+    fig = Figure(size = (900, 320))
+    ax = Axis(fig[1, 1]; title = "Regulation raise availability at an energy target of $(Int(x)) MW", titlesize = 12, xlabel = "Energy (MW)", ylabel = "FCAS (MW)")
+    draw_trapezium!(ax, t)
+    xs = range(300, 440; length = 2)
+    lines!(ax, xs, fill(fmax, 2); color = FCAS_COLORS[2], label = limits[1][1])
+    lines!(ax, xs, fmax .* (emax .- xs) ./ (emax - high); color = FCAS_COLORS[3], label = limits[2][1])
+    lines!(ax, xs, emax .- xs .- upper * contingency; color = FCAS_COLORS[4], label = limits[4][1])
+    lines!(ax, xs, initial + ramp .- xs; color = FCAS_COLORS[5], label = limits[5][1])
+    vlines!(ax, x; color = (:white, 0.6), linestyle = :dot)
+    availability = minimum(last, limits)
+    scatter!(ax, x, availability; color = :tomato, markersize = 14, label = "availability = $(round(availability; digits = 1)) MW")
+    xlims!(ax, 300, 440)
+    ylims!(ax, -2, 60)
+    axislegend(ax; position = :rt, labelsize = 11)
+    fig
+end
+
+# The joint capacity constraint (4) is the smallest here, so it sets the availability.
+#
 # ## [Pricing](@id fcas-pricing)
 #
 # Each FCAS market's regional price is the sum of the marginal values of every constraint
