@@ -49,6 +49,15 @@ Time-series parameter for a device's `"initial_mw"` series, in system-base per-u
 """
 struct InitialPowerTimeSeriesParameter <: PSI.TimeSeriesParameter end
 
+struct AvailabilityTimeSeriesParameter <: PSI.TimeSeriesParameter end
+
+struct FastStartProfileDeficitSlack <: PSI.VariableType end
+struct FastStartProfileSurplusSlack <: PSI.VariableType end
+struct AvailabilitySurplusSlack <: PSI.VariableType end
+struct OfferSurplusSlack <: PSI.VariableType end
+struct FastStartProfileConstraint <: PSI.ConstraintType end
+struct AvailabilityConstraint <: PSI.ConstraintType end
+
 #! format: off
 PSI.requires_initialization(::NEMReplayDispatch) = false
 PSI.requires_initialization(::NEMLookaheadDispatch) = true
@@ -60,6 +69,7 @@ PSI.get_variable_multiplier(::PSI.ActivePowerVariable, ::Type{<:PSY.StaticInject
 PSI.get_variable_multiplier(::PSI.ActivePowerVariable, ::Type{<:PSY.ControllableLoad}, ::AbstractNEMDispatch) = -1.0
 PSI.get_variable_lower_bound(::PSI.ActivePowerVariable, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 0.0
 PSI.get_variable_upper_bound(::PSI.ActivePowerVariable, d::PSY.StaticInjection, ::AbstractNEMDispatch) = PSY.get_max_active_power(d)
+PSI.get_variable_upper_bound(::PSI.ActivePowerVariable, ::PSY.ThermalStandard, ::NEMReplayDispatch) = nothing
 
 # "max_active_power" is stored normalised by the static rating; the dispatch-limit series are
 # stored as absolute system-base per-unit.
@@ -67,9 +77,11 @@ PSI.get_multiplier_value(::PSI.ActivePowerTimeSeriesParameter, d::PSY.StaticInje
 PSI.get_multiplier_value(::RampUpRateTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
 PSI.get_multiplier_value(::RampDownRateTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
 PSI.get_multiplier_value(::InitialPowerTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
+PSI.get_multiplier_value(::AvailabilityTimeSeriesParameter, ::PSY.ThermalStandard, ::AbstractNEMDispatch) = 1.0
 PSI.get_multiplier_value(::PSI.AbstractPiecewiseLinearBreakpointParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
 
 PSI.get_min_max_limits(d::PSY.StaticInjection, ::Type{PSI.ActivePowerVariableLimitsConstraint}, ::Type{<:AbstractNEMDispatch}) = (min = 0.0, max = PSY.get_max_active_power(d))
+PSI.get_min_max_limits(::PSY.ThermalStandard, ::Type{PSI.ActivePowerVariableLimitsConstraint}, ::Type{NEMReplayDispatch}) = (min = 0.0, max = Inf)
 
 PSI.objective_function_multiplier(::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = PSI.OBJECTIVE_FUNCTION_POSITIVE
 PSI.variable_cost(cost::PSY.OperationalCost, ::PSI.ActivePowerVariable, ::PSY.StaticInjection, ::AbstractNEMDispatch) = PSY.get_variable(cost)
@@ -97,6 +109,16 @@ function PSI.get_default_time_series_names(
         RampUpRateTimeSeriesParameter => "ramp_up_rate",
         RampDownRateTimeSeriesParameter => "ramp_down_rate",
         InitialPowerTimeSeriesParameter => "initial_mw",
+    )
+end
+
+function PSI.get_default_time_series_names(::Type{PSY.ThermalStandard}, ::Type{<:AbstractNEMDispatch})
+    return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
+        PSI.ActivePowerTimeSeriesParameter => "max_active_power",
+        RampUpRateTimeSeriesParameter => "ramp_up_rate",
+        RampDownRateTimeSeriesParameter => "ramp_down_rate",
+        InitialPowerTimeSeriesParameter => "initial_mw",
+        AvailabilityTimeSeriesParameter => "availability",
     )
 end
 
@@ -186,6 +208,9 @@ function PSI.construct_device!(
         haskey(PSI.get_time_series_names(model), param) || continue
         PSI.add_parameters!(container, param, devices, model)
     end
+    if T <: PSY.ThermalStandard && haskey(PSI.get_time_series_names(model), AvailabilityTimeSeriesParameter)
+        PSI.add_parameters!(container, AvailabilityTimeSeriesParameter, devices, model)
+    end
 
     # The chained base measures interval 1 against a DevicePower initial condition, which has to
     # be declared here for PowerSimulations to populate it from the initialisation sub-solve.
@@ -226,7 +251,7 @@ function PSI.construct_device!(
     ) where {T <: PSY.StaticInjection, D <: AbstractNEMDispatch}
     devices = PSI.get_available_components(model, sys)
 
-    _check_dispatch_envelope(container, devices, model)
+    !(D === NEMReplayDispatch && T <: PSY.ThermalStandard) && _check_dispatch_envelope(container, devices, model)
 
     PSI.add_constraints!(
         container,
@@ -241,6 +266,12 @@ function PSI.construct_device!(
 
     PSI.add_feedforward_constraints!(container, model, devices)
     PSI.objective_function!(container, devices, model, PSI.get_network_formulation(network_model))
+    if D === NEMReplayDispatch && T <: PSY.ThermalStandard
+        _add_thermal_offer_excess!(container, devices)
+        _add_thermal_availability_constraints!(container, devices)
+    end
+    context = get(PSI.get_attributes(model), "fast_start", nothing)
+    !isnothing(context) && T <: PSY.ThermalStandard && _add_fast_start_profile_constraints!(container, devices, context)
     PSI.add_constraint_dual!(container, sys, model)
     return
 end
@@ -263,6 +294,9 @@ function PSI.add_constraints!(
         model::PSI.DeviceModel{T, D},
         ::PSI.NetworkModel{X},
     ) where {T <: PSY.StaticInjection, D <: AbstractNEMDispatch, X <: PM.AbstractPowerModel}
+    if T <: PSY.ThermalStandard && D === NEMReplayDispatch
+        return
+    end
     PSI.add_parameterized_upper_bound_range_constraints(
         container,
         PSI.ActivePowerVariableTimeSeriesLimitsConstraint,
@@ -321,13 +355,35 @@ function PSI.add_constraints!(
     slack_dn = _add_unit_ramp_slack!(container, UnitRampDownSlack, T, names, time_steps)
 
     base_at = _ramp_base_accessor(container, D, T, names, power)
+    context = get(PSI.get_attributes(model), "fast_start", nothing)
     for name in names, t in time_steps
-        base = base_at(name, t)
+        if !isnothing(context) && T <: PSY.ThermalStandard
+            if context.pass === :commitment && haskey(context.inputs, name) && context.inputs[name].state.mode <= 2
+                con_up[name, t] = JuMP.@constraint(jump_model, 0.0 <= 0.0)
+                con_dn[name, t] = JuMP.@constraint(jump_model, 0.0 <= 0.0)
+                continue
+            elseif context.pass === :dispatch && haskey(context.inputs, name)
+                envelope = _fast_start_energy_ramp_envelope(context, name, t)
+                if isnothing(envelope) || isnothing(envelope.ramp_minutes)
+                    con_up[name, t] = JuMP.@constraint(jump_model, 0.0 <= 0.0)
+                    con_dn[name, t] = JuMP.@constraint(jump_model, 0.0 <= 0.0)
+                    continue
+                end
+                base = envelope.ramp_initial_mw / PSI.get_base_power(container)
+                ramp_minutes = envelope.ramp_minutes
+            else
+                base = base_at(name, t)
+                ramp_minutes = minutes
+            end
+        else
+            base = base_at(name, t)
+            ramp_minutes = minutes
+        end
         con_up[name, t] = JuMP.@constraint(
-            jump_model, power[name, t] - base - slack_up[name, t] <= up_rate(name, t) * minutes,
+            jump_model, power[name, t] - base - slack_up[name, t] <= up_rate(name, t) * ramp_minutes,
         )
         con_dn[name, t] = JuMP.@constraint(
-            jump_model, base - power[name, t] - slack_dn[name, t] <= down_rate(name, t) * minutes,
+            jump_model, base - power[name, t] - slack_dn[name, t] <= down_rate(name, t) * ramp_minutes,
         )
     end
     return

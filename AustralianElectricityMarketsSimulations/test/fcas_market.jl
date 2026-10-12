@@ -177,10 +177,14 @@ end
 `NEMReplayDispatch`/`StaticPowerLoad` for the toy's devices, plus [`FCASMarket`](@ref) for each
 named [`FCASService`](@ref).
 """
-function fcas_toy_template(sys, service_names; use_slacks = false)
+function fcas_toy_template(sys, service_names; use_slacks = false, fast_start_context = nothing)
     network = PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true)
     template = PSI.ProblemTemplate(network)
     set_nem_dispatch_models!(template, sys)
+    if !isnothing(fast_start_context)
+        thermal_model = PSI.get_model(template, PSY.ThermalStandard)
+        PSI.get_attributes(thermal_model)["fast_start"] = fast_start_context
+    end
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     for name in service_names
         PSI.set_service_model!(
@@ -206,8 +210,8 @@ function fcas_energy_toy_system(energy_mw; mutate! = nothing)
 end
 
 "Builds a `steps`-interval `PSI.DecisionModel` for `sys`/`service_names` and returns its `PSI.OptimizationContainer`."
-function build_fcas(sys, service_names; steps = 1, use_slacks = false)
-    template = fcas_toy_template(sys, service_names; use_slacks)
+function build_fcas(sys, service_names; steps = 1, use_slacks = false, fast_start_context = nothing)
+    template = fcas_toy_template(sys, service_names; use_slacks, fast_start_context)
     model = PSI.DecisionModel(
         template, sys;
         optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
@@ -1484,7 +1488,7 @@ resolution interval when given, for AEMO *FCAS Model in NEMDE* §6.1 joint rampi
 """
 function joint_ramping_toy(
         initial_mw; capacity = 1000.0, raise_agc::Union{Nothing, Float64} = nothing,
-        lower_agc::Union{Nothing, Float64} = nothing, extra! = nothing,
+        lower_agc::Union{Nothing, Float64} = nothing, trap = (0.0, 0.0, capacity, capacity, capacity), extra! = nothing,
     )
     return nem_toy_system(
         [
@@ -1497,7 +1501,6 @@ function joint_ramping_toy(
         mutate! = (sys, stamps) -> begin
             device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
             n = length(stamps)
-            trap = (0.0, 0.0, capacity, capacity, capacity)
             add_toy_fcas!(sys, device, stamps[1], n, BidType.RAISEREG, trap, [(capacity, 10.0)])
             add_toy_fcas!(sys, device, stamps[1], n, BidType.LOWERREG, trap, [(capacity, 10.0)])
             isnothing(raise_agc) ||
@@ -1509,6 +1512,16 @@ function joint_ramping_toy(
             isnothing(extra!) || extra!(sys, device, stamps)
         end,
     )
+end
+
+function toy_fcas_fast_start_context(mode, pass; target_mode = mode)
+    elapsed = mode == 2 && target_mode == 3 ? 2.0 : 0.0
+    input = AEMS.FastStartInput(
+        AEMS.FastStartProfile(20.0, 0.0, 2.0, 10.0, 10.0),
+        AEMS.FastStartState(mode, elapsed), 450.0, 100.0, 100.0, 1000.0, 0.0,
+    )
+    envelope = AEMS.plan_fast_start(input, mode <= 2 ? 20.0 : 450.0)
+    return (; pass, inputs = Dict(TOY_CHEAP => input), envelopes = Dict(TOY_CHEAP => envelope))
 end
 
 "Whether `row` (a `JuMP.constraint_object`) is the gated placeholder `0.0 <= 1.0` row."
@@ -1692,6 +1705,49 @@ _is_placeholder_row(row) = isempty(row.func.terms) && row.set == PSI.MOI.LessTha
             @test gapped[1] == 450.0
             @test isnan(gapped[2])
         end
+    end
+
+    @testset "initial fast-start mode gates joint ramping in both dispatch passes" begin
+        for pass in (:commitment, :dispatch), mode in 0:4
+            target_mode = mode == 2 ? 3 : mode
+            context = toy_fcas_fast_start_context(mode, pass; target_mode)
+            container = build_fcas(
+                joint_ramping_toy(450.0; raise_agc = 15.0), ["TAS1_RAISEREG"]; fast_start_context = context,
+            )
+            row = PSI.JuMP.constraint_object(
+                PSI.get_constraint(container, FCASJointRampingConstraint(), FCASService, "TAS1_RAISEREG")[duid, 1],
+            )
+            @test _is_placeholder_row(row) == (mode <= 2)
+            if mode == 2
+                @test context.envelopes[duid].state.mode == 3
+            end
+        end
+
+        # Exemption removes §6.1 only: §6.3 caps regulation and §6.2 caps contingency FCAS.
+        context = toy_fcas_fast_start_context(2, :dispatch; target_mode = 3)
+        sys = joint_ramping_toy(
+            450.0; capacity = 470.0, raise_agc = 15.0, trap = (0.0, 0.0, 0.0, 470.0, 470.0),
+            extra! = (sys, device, stamps) -> begin
+                add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISE6SEC, (0.0, 0.0, 0.0, 480.0, 480.0), [(15.0, 10.0)])
+                PSY.add_service!(sys, FCASService(; name = "TAS1_RAISE6SEC", region = "TAS1", bid_type = BidType.RAISE6SEC), [device])
+            end,
+        )
+        container = build_fcas(sys, ["TAS1_RAISEREG", "TAS1_RAISE6SEC"]; fast_start_context = context)
+        fixed_energy = PSI.get_variable(container, PSI.ActivePowerVariable(), PSY.ThermalStandard)[duid, 1]
+        PSI.JuMP.fix(fixed_energy, 460.0 / PSI.get_base_power(container); force = true)
+        ramp_row = PSI.get_constraint(container, FCASJointRampingConstraint(), FCASService, "TAS1_RAISEREG")[duid, 1]
+        regulation_capacity_row = PSI.get_constraint(container, FCASJointCapacityConstraint(), FCASService, "TAS1_RAISEREG_upper")[duid, 1]
+        joint_capacity_row = PSI.get_constraint(container, FCASJointCapacityConstraint(), FCASService, "TAS1_RAISE6SEC_upper")[duid, 1]
+        regulation_target = fcas_capacity(container, "TAS1_RAISEREG")[duid, 1]
+        PSI.JuMP.fix(regulation_target, 10.0 / PSI.get_base_power(container); force = true)
+        @test _is_placeholder_row(PSI.JuMP.constraint_object(ramp_row))
+        @test !isempty(PSI.JuMP.constraint_object(regulation_capacity_row).func.terms)
+        @test !isempty(PSI.JuMP.constraint_object(joint_capacity_row).func.terms)
+        maximize_and_solve!(container) do container
+            fcas_capacity(container, "TAS1_RAISE6SEC")[duid, 1]
+        end
+        @test fcas_mw(container, "TAS1_RAISEREG", duid) ≈ 10.0 atol = FCAS_TOY_TOLERANCE
+        @test fcas_mw(container, "TAS1_RAISE6SEC", duid) ≈ 10.0 atol = FCAS_TOY_TOLERANCE
     end
 
     @testset "duals: requesting FCASJointRampingConstraint builds and populates the container" begin

@@ -314,9 +314,9 @@ Reads energy offers from `BIDPEROFFER_D`/`BIDDAYOFFER_D` and returns one row per
 `(SETTLEMENTDATE, DUID, DIRECTION, INTERVAL_DATETIME)` with the 10-band offer curve
 collapsed into a `piecewise_step_data` column of connection-point prices (not referred to the
 reference node, unlike [`set_market_bids!`](@ref)), plus `MAXAVAIL` (`BIDPEROFFER_D`) and
-`MINIMUMLOAD`/`DAILYENERGYCONSTRAINT` (`BIDDAYOFFER_D`) - the physical bounds a caller needs
-to clip dispatch to, not just the priced curve. See [`read_fcas_bids`](@ref) for the
-FCAS-market equivalent.
+`MINIMUMLOAD`, `DAILYENERGYCONSTRAINT` and fast-start timings `T1`-`T4` (`BIDDAYOFFER_D`) -
+the physical bounds and profile a caller needs, not just the priced curve. See
+[`read_fcas_bids`](@ref) for the FCAS-market equivalent.
 """
 function read_bids(db, date_range; kwargs...)
     energy_bids_table = read_hive(db, :BIDPEROFFER_D)
@@ -373,7 +373,7 @@ function _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_d
     pricebids = _query(
         db,
         """
-        SELECT SETTLEMENTDATE, DUID, DIRECTION, MINIMUMLOAD, DAILYENERGYCONSTRAINT, $priceband_cols
+        SELECT SETTLEMENTDATE, DUID, DIRECTION, MINIMUMLOAD, DAILYENERGYCONSTRAINT, T1, T2, T3, T4, $priceband_cols
         FROM $pricebids_table
         WHERE BIDTYPE = ? AND SETTLEMENTDATE BETWEEN ? AND ?
         QUALIFY row_number() OVER (
@@ -407,7 +407,7 @@ function _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_d
         )
         select(
             :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME, :PRICEBANDARRAY, :BANDAVAILARRAY,
-            :MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT,
+            :MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT, :T1, :T2, :T3, :T4,
             AsTable(:) => ByRow(_extract_power_bids) => :piecewise_step_data
         )
     end

@@ -421,6 +421,9 @@ function create_mock_data(hive_root::String)
         VERSIONNO = fill(1, 2), archive_month = fill("2025-01", 2),
     )
     bid_day_offer = vcat(bid_day_offer_gen, bid_day_offer_load, bid_day_offer_pump, bid_day_offer_fcas, bid_day_offer_fcas_load)
+    for col in ("T1", "T2", "T3", "T4")
+        bid_day_offer[!, col] = zeros(nrow(bid_day_offer))
+    end
     for i in 1:10
         bid_day_offer[!, "PRICEBAND$i"] = fill(50.0 + i, nrow(bid_day_offer))
     end

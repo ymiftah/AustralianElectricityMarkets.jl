@@ -50,10 +50,11 @@ end
 # an incremental/decremental offer curve, and the ramp/initial/energy-availability series.
 # `mutate!(sys, stamps)`, when given, runs just before the fixture's
 # `transform_single_time_series!`, so it can attach raw two-timestamp series of its own.
-function nem_toy_system(units, load_mw; batteries = Pair{String, Any}[], loads = Pair{String, Any}[], mutate! = nothing)
+function nem_toy_system(units, load_mw; batteries = Pair{String, Any}[], loads = Pair{String, Any}[], mutate! = nothing, base_power = 100.0)
     sys = PSB.build_system(PSISystems, "5_bus_hydro_ed_sys")
     PSY.clear_time_series!(sys)
     PSY.set_units_base_system!(sys, "NATURAL_UNITS")
+    sys.units_settings.base_value = base_power
 
     area = PSY.get_component(PSY.Area, sys, "1")
     foreach(bus -> PSY.set_area!(bus, area), PSY.get_components(PSY.ACBus, sys))
@@ -213,15 +214,21 @@ end
 function solve_toy(
         sys;
         formulation = NEMReplayDispatch,
+        fast_start_context = nothing,
+        use_slacks = true,
         optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
     )
     network = PSI.NetworkModel(
         PSI.AreaBalancePowerModel;
-        use_slacks = true,
+        use_slacks = use_slacks,
         duals = [PSI.CopperPlateBalanceConstraint],
     )
     template = PSI.ProblemTemplate(network)
     set_nem_dispatch_models!(template, sys; formulation = formulation)
+    if !isnothing(fast_start_context)
+        thermal_model = PSI.get_model(template, PSY.ThermalStandard)
+        PSI.get_attributes(thermal_model)["fast_start"] = fast_start_context
+    end
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     if !isempty(PSY.get_components(GenericConstraint, sys))
         PSI.set_service_model!(
