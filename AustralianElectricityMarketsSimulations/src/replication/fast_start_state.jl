@@ -19,19 +19,22 @@ function _advance_fast_start(profile::FastStartProfile, state::FastStartState, i
     remaining = Float64(interval_minutes)
     while 1 <= mode <= 3
         duration = mode == 1 ? profile.t1_minutes : mode == 2 ? profile.t2_minutes : profile.t3_minutes
-        segment_remaining = duration - elapsed
-        if segment_remaining > 0 && remaining == 0
+        if iszero(duration)
+            mode += 1
+            elapsed = 0.0
+        elseif remaining == 0
             break
-        elseif segment_remaining <= 0
-            mode += 1
-            elapsed = 0.0
-        elseif remaining >= segment_remaining
-            remaining -= segment_remaining
-            mode += 1
-            elapsed = 0.0
         else
-            elapsed += remaining
-            break
+            segment_remaining = duration - elapsed
+            if remaining <= segment_remaining
+                elapsed += remaining
+                remaining = 0.0
+                break
+            else
+                remaining -= segment_remaining
+                mode += 1
+                elapsed = 0.0
+            end
         end
     end
     if mode == 4
