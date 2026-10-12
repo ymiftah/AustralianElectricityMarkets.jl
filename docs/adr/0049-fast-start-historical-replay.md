@@ -17,11 +17,13 @@ All-zero/null timing offers are slow-start. Apply the §3 slow-start-to-fast-sta
 
 ## Profile and ramp rows
 
-With minimum load `M`, target mode `n` and target elapsed time `b`, the profile is zero in modes 0–1, `M*b/T2` in mode 2, `M` in mode 3, and `M*max(0, 1-b/T4)` in mode 4. Zero-duration segments are skipped. Modes 0–2 have a fixed profile target; modes 3–4 have a lower bound. Profile deficit/surplus is penalized separately from energy ramp violations.
+With minimum load `M`, target mode `n` and target elapsed time `b`, the profile is zero in modes 0–1, `M*b/T2` in mode 2, `M` in mode 3, and `M*max(0, 1-b/T4)` in mode 4. Zero-duration segments are skipped. Nonzero segments retain their mode at the exact endpoint and advance only when elapsed time passes the duration. Modes 0–2 have a fixed profile target; modes 3–4 have a lower bound. Profile deficit/surplus is penalized separately from energy ramp violations.
 
 The commitment pass omits profiles and energy ramps for starting modes 0–2. In the dispatch pass, target modes 0–2 omit ordinary energy ramps. Initial modes 3–4 use the actual meter and a full five minutes, including crossings of T3/T4.
 
 For startup crossing T2, use minimum load as the energy ramp anchor and the remaining time after completing T2. This is a derivation from profile continuity and ordinary post-start ramping, corroborated by the MORTLK11 observation; public AEMO material does not expose the complete transition equation. Do not reset the ramp clock when T3 is crossed and do not substitute an invented `max(INITIALMW, M)` anchor. Independent real dispatch comparisons must establish the coverage of this derivation.
+
+Independent June 2026 cached AEMO rows confirm endpoint states: MORTLK11 is still mode 1/time 10 at T1=10 and QPS5 is still mode 2/time 8 at T2=8. An interval ending exactly at T2 therefore keeps the fixed profile and omits ordinary energy ramps; the following interval can use the full time after T2. This corrects the initial immediate-boundary-advance assumption.
 
 Example: starting mode 1/time 10, profile 10/2/40/7 minutes and minimum 20 MW leaves three minutes after T2. At 780 MW/h, the derived upper bound is `20 + 780/60*3 = 59 MW`; the previous ordinary-meter calculation gave `17 + 780/60*5 = 82 MW`. This arithmetic is supporting evidence, not proof of every transition case.
 
