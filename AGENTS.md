@@ -42,7 +42,9 @@ julia --project=AustralianElectricityMarketsSimulations/test \
     AustralianElectricityMarketsSimulations/test/real_data/runtests.jl [hive_location]
 ```
 
-All four suites run on generated mock parquet data and never hit the network; CI runs all four.
+All four suites run on generated mock parquet data and never hit the network. CI selects affected
+packages and their consumers, runs suites independently, and tests all packages for dependency or
+test CI changes, tags and manual runs. See the README's continuous integration section.
 
 **Run only the test groups your change touches.** The root and Simulations runners take group
 names (listed in `TEST_GROUPS` at the top of each `runtests.jl`; no arguments runs everything):

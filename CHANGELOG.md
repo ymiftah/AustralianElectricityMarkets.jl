@@ -400,6 +400,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- CI selects affected package test suites and their consumers from changed files,
+  runs packages independently, and collects coverage only on Julia 1.11. Tags and
+  manual workflow runs retain full monorepo testing.
 - Organized AEM source into `types/`, `readers/`, `system/` and `accessors/`.
   Type-specific calculations live with their types, and system construction and
   setters share one folder. Market calculations and SQL results are unchanged.

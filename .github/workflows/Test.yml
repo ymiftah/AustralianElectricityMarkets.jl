@@ -4,35 +4,36 @@ on:
     branches:
       - main
     tags: ["*"]
-    paths:
-      - "src/**"
-      - "test/**"
-      - "AustralianElectricityMarketsData/**"
-      - "AustralianElectricityMarketsCache/**"
-      - "data/**"
-      - "AustralianElectricityMarketsSimulations/**"
-      - "*.toml"
-      - ".github/workflows/Test.yml"
   pull_request:
-    paths:
-      - "src/**"
-      - "test/**"
-      - "AustralianElectricityMarketsData/**"
-      - "AustralianElectricityMarketsCache/**"
-      - "data/**"
-      - "AustralianElectricityMarketsSimulations/**"
-      - "*.toml"
-      - ".github/workflows/Test.yml"
   workflow_dispatch:
 concurrency:
   # Skip intermediate builds: always.
   # Cancel intermediate builds: only if it is a pull request build.
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+permissions:
+  contents: read
 jobs:
+  changes:
+    name: Select test suites
+    runs-on: ubuntu-latest
+    outputs:
+      projects: ${{ steps.select.outputs.projects }}
+      has_tests: ${{ steps.select.outputs.has_tests }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Test suite selection
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+      - name: Select affected packages
+        id: select
+        run: python3 .github/scripts/select_test_packages.py --event-file "$GITHUB_EVENT_PATH"
   test:
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
-    runs-on: ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.has_tests == 'true'
+    name: ${{ matrix.package.package }} - Julia ${{ matrix.version }}
+    runs-on: ubuntu-latest
     permissions:
       actions: write # needed to allow julia-actions/cache to proactively delete old caches that it has created
       contents: read
@@ -43,40 +44,48 @@ jobs:
           - "1.11"
           - "1.12"
           - "pre"
-        os:
-          - ubuntu-latest
-        arch:
-          - x64
+        package: ${{ fromJSON(needs.changes.outputs.projects) }}
     steps:
       - uses: actions/checkout@v6
       - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
-          arch: ${{ matrix.arch }}
+          arch: x64
       - name: Use Julia cache
         uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@v1
+        with:
+          project: ${{ matrix.package.project }}
       - uses: julia-actions/julia-runtest@v1
-      # Workspace subpackages carry their own test suites, which the root
-      # `Pkg.test()` above never runs. Without these steps a PR can turn every check green
-      # while its own subpackage suite is red.
-      - name: Test AustralianElectricityMarketsCache
-        uses: julia-actions/julia-runtest@v1
         with:
-          project: AustralianElectricityMarketsCache
-      - name: Test AustralianElectricityMarketsData
-        uses: julia-actions/julia-runtest@v1
-        with:
-          project: AustralianElectricityMarketsData
-      - name: Test AustralianElectricityMarketsSimulations
-        uses: julia-actions/julia-runtest@v1
-        with:
-          project: AustralianElectricityMarketsSimulations
+          project: ${{ matrix.package.project }}
+          coverage: ${{ matrix.version == '1.11' }}
       - uses: julia-actions/julia-processcoverage@v1
         if: matrix.version == '1.11'
+        with:
+          directories: ${{ matrix.package.project }}/src
       - uses: codecov/codecov-action@v5
         if: matrix.version == '1.11'
         with:
           files: lcov.info
+          flags: ${{ matrix.package.package }}
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
+  result:
+    name: Test suites
+    needs: [changes, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check selected suites
+        env:
+          SELECTION_RESULT: ${{ needs.changes.result }}
+          HAS_TESTS: ${{ needs.changes.outputs.has_tests }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          test "$SELECTION_RESULT" = success
+          if [ "$HAS_TESTS" = true ]; then
+            test "$TEST_RESULT" = success
+          else
+            test "$TEST_RESULT" = skipped
+          fi

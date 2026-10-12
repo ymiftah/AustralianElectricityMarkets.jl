@@ -79,6 +79,25 @@ readers (`readers/`), system construction and modification (`system/`), and atta
 component data lookup (`accessors/`). Domain categories appear as filenames within
 these folders.
 
+## Continuous integration
+
+Pull requests and pushes to `main` run affected package suites independently on
+Julia 1.11, 1.12 and `pre`. Source changes also test consumers: Cache changes select
+all four packages, AEM changes select AEM and Simulations, and Data changes select
+Data and AEM, whose package-boundary tests exercise Data. Changes confined to a package's tests select
+that package, except shared fixtures, which select the suites that use them.
+
+Workspace dependency files and test CI changes select all packages. Documentation
+and other unrelated changes skip Julia tests. Tags and manual workflow runs test
+all packages. Coverage is collected only on Julia 1.11, separately for each package.
+The stable `Test suites` check reports whether all selected jobs passed and can be
+used as the required check in branch protection.
+
+The selection rules live in `.github/scripts/select_test_packages.py`. Run their
+checks without Julia using
+`python3 -m unittest discover -s .github/scripts -p 'test_*.py'`.
+Test workflow customizations must be preserved when updating the Bestie template.
+
 ## Data Sources
 
 This package primarily interfaces with data from the [Australian Energy Market Operator (AEMO)](https://aemo.com.au/). It relies on the [NEMWEB](https://www.aemo.com.au/energy-systems/electricity/national-electricity-market-nem/data-nem/market-data-nemweb) data archives and data models.
