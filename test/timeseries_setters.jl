@@ -383,6 +383,11 @@
                     # bucket width - including the partial first bucket.
                     @test isapprox(sum(row.BANDAVAILARRAY), 100.0; atol = 1.0e-8)
                 end
+                @test all(iszero, gen_bids.T1)
+                @test all(iszero, gen_bids.T2)
+                @test all(iszero, gen_bids.T3)
+                @test all(iszero, gen_bids.T4)
+                @test all(==("GEN"), gen_bids.DIRECTION)
             end
         end
     end

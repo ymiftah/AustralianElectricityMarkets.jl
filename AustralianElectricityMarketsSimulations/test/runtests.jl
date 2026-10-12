@@ -57,6 +57,7 @@ end
 const TEST_GROUPS = [
     "time_basis" => ("Time basis", "time_basis.jl"),
     "inputs" => ("Interval inputs", "inputs.jl"),
+    "fast_start" => ("Fast-start inputs", "fast_start.jl"),
     "preprocessing" => ("Preprocessing", "preprocessing.jl"),
     "constraint_formulations" => ("Constraint formulations", "constraint_formulations.jl"),
     "psi_compat" => ("PSI compat", "psi_compat.jl"),

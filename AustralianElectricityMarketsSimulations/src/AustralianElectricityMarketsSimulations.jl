@@ -36,6 +36,7 @@ include("psi_compat.jl")
 include("fcas_market.jl")
 include("check/fcas.jl")
 include("replication/inputs.jl")
+include("replication/fast_start_inputs.jl")
 include("replication/preprocessing.jl")
 include("replication/pipeline.jl")
 
