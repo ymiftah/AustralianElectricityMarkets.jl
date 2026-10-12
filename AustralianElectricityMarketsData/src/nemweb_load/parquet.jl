@@ -1,37 +1,3 @@
-"""
-    _local_tmp_dir() -> String
-
-Shared scratch directory, under the system tempdir, for DuckDB's spill files
-and the pipeline's own downloaded/extracted files.
-"""
-function _local_tmp_dir()
-    dir = joinpath(tempdir(), "aem_nemweb")
-    mkpath(dir)
-    return dir
-end
-
-"""
-    _new_duckdb_connection(filesystem::String = "file") -> DuckDB.DB
-
-Open a DuckDB connection configured to spill to disk once memory use crosses
-a conservative bound, rather than growing unbounded. Loads the `httpfs`
-extension when `filesystem` is remote (`"s3"`/`"gs"`), so subsequent
-`COPY`/`glob()` calls can reach it.
-"""
-function _new_duckdb_connection(filesystem::String = "file")
-    conn = DuckDB.DB()
-    if !islocal(filesystem)
-        # Two separate calls, not one "INSTALL httpfs; LOAD httpfs;" string —
-        # DuckDB.jl 1.5.2 raises "Cannot prepare multiple statements at once!"
-        # on a semicolon-joined multi-statement string (confirmed directly).
-        DuckDB.execute(conn, "INSTALL httpfs;")
-        DuckDB.execute(conn, "LOAD httpfs;")
-    end
-    DBInterface.execute(conn, "SET memory_limit='4GB'")
-    DBInterface.execute(conn, "SET temp_directory='$(_local_tmp_dir())'")
-    return conn
-end
-
 # ── CSV → Parquet, entirely inside DuckDB ────────────────────────────────────
 #
 # NEMWEB CSVs mix three record types on one file, identified by the first
@@ -51,7 +17,9 @@ const _DUCKDB_TYPE_NAMES = Dict{DataType, String}(
     Float32 => "FLOAT", Float64 => "DOUBLE", Int8 => "TINYINT", Int32 => "INTEGER",
     Bool => "BOOLEAN", String => "VARCHAR", DateTime => "TIMESTAMP", Date => "DATE",
 )
+
 _duckdb_type(T::DataType) = get(_DUCKDB_TYPE_NAMES, T, "VARCHAR")
+
 
 """
     _month_filter_bounds(year::Int, month::Int) -> (String, String)
@@ -69,6 +37,7 @@ function _month_filter_bounds(year::Int, month::Int)::Tuple{String, String}
     hi = "$next_year/$(lpad(next_month, 2, '0'))/01 00:00:00"
     return lo, hi
 end
+
 
 """
     _write_d_lines(out::IO, zip_path::String;
@@ -122,6 +91,7 @@ function _write_d_lines(
     return available_cols
 end
 
+
 """
     _extract_d_lines(zip_path::String;
                      month_filter_column=nothing, lo=nothing, hi=nothing) -> (String, Vector{String})
@@ -146,6 +116,7 @@ function _extract_d_lines(
     end
     return d_path, available_cols
 end
+
 
 """
     _extract_d_lines(zip_paths::Vector{String};
@@ -177,17 +148,24 @@ function _extract_d_lines(
     return combined_path, available_cols
 end
 
+
 # TIMESTAMP(3) columns (e.g. MNSP_DAYOFFER.OFFERDATE) carry a ".000" fraction the plain format rejects.
 function _datetime_parse_expr(col::String)
     plain = "try_strptime(\"$col\", '%Y/%m/%d %H:%M:%S')"
     fractional = "try_strptime(\"$col\", '%Y/%m/%d %H:%M:%S.%g')"
     return "COALESCE($plain, $fractional)"
 end
+
 _cast_expr(col::String) = _cast_expr(col, get(COLUMN_TYPES, col, String))
+
 _cast_expr(col::String, ::Type{DateTime}) = "$(_datetime_parse_expr(col)) AS \"$col\""
+
 _cast_expr(col::String, ::Type{Date}) = "CAST($(_datetime_parse_expr(col)) AS DATE) AS \"$col\""
+
 _cast_expr(col::String, ::Type{String}) = "\"$col\" AS \"$col\""
+
 _cast_expr(col::String, T::DataType) = "TRY_CAST(\"$col\" AS $(_duckdb_type(T))) AS \"$col\""
+
 
 """
     _csv_to_parquet(conn, csv_path, available_cols, table_columns, path, partitions, sort_by, year, month;

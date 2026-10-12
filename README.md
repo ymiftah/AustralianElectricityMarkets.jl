@@ -20,7 +20,7 @@ To install the package, open the Julia REPL and run:
 
 ```julia
 using Pkg
-Pkg.add("AustralianElectricityMarkets")
+Pkg.add(["AustralianElectricityMarkets", "AustralianElectricityMarketsData"])
 ```
 
 ## Usage
@@ -29,6 +29,8 @@ Here is a basic example of how to use the package to read demand data:
 
 ```julia
 using AustralianElectricityMarkets
+using AustralianElectricityMarketsData: populate
+using Dates
 
 # Establish a database connection
 db = aem_connect();
@@ -62,6 +64,20 @@ println(sys)
   * Regional demand
   * Generation unit details
 * **PowerSystems.jl Integration:** Parse AEMO data into `PowerSystems.jl` models for simulation.
+
+## Package organization
+
+`AustralianElectricityMarketsData` populates the Hive cache.
+`AustralianElectricityMarkets.Readers` reads cached market data and ISP inputs;
+its public readers are also available directly from `AustralianElectricityMarkets`.
+Both packages share connection and configuration types from
+`AustralianElectricityMarketsCache`, without depending on each other.
+`AustralianElectricityMarketsSimulations` depends on `AustralianElectricityMarkets`.
+
+The root source folders separate types and their methods (`types/`), external-data
+readers (`readers/`), system construction and modification (`system/`), and attached
+component data lookup (`accessors/`). Domain categories appear as filenames within
+these folders.
 
 ## Data Sources
 

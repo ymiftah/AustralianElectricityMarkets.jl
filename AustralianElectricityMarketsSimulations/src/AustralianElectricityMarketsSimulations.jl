@@ -1,7 +1,6 @@
 module AustralianElectricityMarketsSimulations
 
 using AustralianElectricityMarkets
-using AustralianElectricityMarketsData
 using Chain
 using DataFrames
 using Dates
@@ -21,23 +20,36 @@ import PowerSystems as PSY
 const IS = PSY.IS
 const PM = PSI.PM
 
-include("errors.jl")
+include("types/errors.jl")
 include("time_basis.jl")
-include("constraint_formulations.jl")
-include("nem_constraints.jl")
-include("check/nem_constraints.jl")
-include("nem_dispatch.jl")
-include("nem_dispatch_storage.jl")
-include("nem_tie_break.jl")
-include("devices/interconnector_losses.jl")
-include("devices/mnsp_links.jl")
-include("check/interconnector_losses.jl")
+
+include("types/constraint_formulations.jl")
+include("types/dispatch.jl")
+include("types/storage.jl")
+include("types/tie_break.jl")
+include("types/interconnector_losses.jl")
+include("types/mnsp.jl")
+include("types/logging.jl")
+
+include("formulations/constraint_formulations.jl")
+include("formulations/generic_constraints.jl")
+include("checks/nem_constraints.jl")
+include("formulations/dispatch.jl")
+include("formulations/storage.jl")
+include("formulations/tie_break.jl")
+include("formulations/interconnector_losses.jl")
+include("formulations/mnsp.jl")
+include("checks/interconnector_losses.jl")
 include("psi_compat.jl")
-include("fcas_market.jl")
-include("check/fcas.jl")
-include("replication/inputs.jl")
-include("replication/preprocessing.jl")
-include("replication/pipeline.jl")
+include("formulations/fcas.jl")
+include("checks/fcas.jl")
+include("preprocessing/inputs.jl")
+include("execution/replication.jl")
+
+using AustralianElectricityMarkets.Readers: read_uigf_as_dict
+@doc (@doc AustralianElectricityMarkets.IntervalInputs) IntervalInputs
+@doc (@doc AustralianElectricityMarkets.Readers.read_interval_inputs) read_interval_inputs
+@doc (@doc AustralianElectricityMarkets.Readers.read_published_interval) read_published_interval
 
 export DISPATCH_INTERVAL_HOURS, DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
 export IntervalInputs, read_interval_inputs, read_published_interval

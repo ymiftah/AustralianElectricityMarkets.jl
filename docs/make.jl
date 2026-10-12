@@ -1,4 +1,6 @@
 using AustralianElectricityMarkets
+using AustralianElectricityMarketsData
+using AustralianElectricityMarketsCache
 using Documenter
 using DocumenterVitepress
 using Literate
@@ -28,6 +30,9 @@ end
 makedocs(;
     modules = [
         AustralianElectricityMarkets,
+        AustralianElectricityMarkets.Readers,
+        AustralianElectricityMarketsData,
+        AustralianElectricityMarketsCache,
         AustralianElectricityMarkets.RegionModel,
         AustralianElectricityMarkets.BidTypeModule,
     ],

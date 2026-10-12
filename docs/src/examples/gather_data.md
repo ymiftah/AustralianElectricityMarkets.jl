@@ -1,6 +1,7 @@
 # Gathering Data
 
-`AustralianElectricityMarkets.jl` downloads and caches data from the AEMO NEMWEB data archive, and queries it with DuckDB.
+`AustralianElectricityMarketsData.jl` downloads and caches NEMWEB data.
+`AustralianElectricityMarkets.Readers` queries the cache with DuckDB.
 
 ## How it Works
 
@@ -35,6 +36,7 @@ You can download and populate the cache for a specific table over a given date r
 
 ```julia
 using Dates
+using AustralianElectricityMarketsData: populate
 
 # Download dispatch data for early 2024
 populate(db, :DISPATCHREGIONSUM, Date(2024, 1, 1), Date(2024, 1, 2))
@@ -56,10 +58,11 @@ table_requirements(RegionalNetworkConfiguration())
 
 ## Reading the Data
 
-Once the data is cached, you can load it for analysis. The package provides high-level functions to parse this raw data into structured DataFrames, backed by DuckDB.
+Once the data is cached, use `AustralianElectricityMarkets.Readers` to load it for
+analysis. Public readers are also re-exported from `AustralianElectricityMarkets`.
 
 ```julia
-using AustralianElectricityMarkets, DuckDB
+using AustralianElectricityMarkets, DuckDB, DataFrames
 
 # Connect to a local DuckDB instance
 db = aem_connect()

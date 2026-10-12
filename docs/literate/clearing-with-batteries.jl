@@ -1,5 +1,6 @@
 begin
     using AustralianElectricityMarkets
+    using AustralianElectricityMarketsData: populate
     import AustralianElectricityMarkets.RegionModel as RM
     using PowerSystems
     using PowerSimulations

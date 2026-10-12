@@ -1,4 +1,7 @@
 @testset "IntervalInputs assembly" begin
+    @test AEMS.IntervalInputs === AustralianElectricityMarkets.IntervalInputs
+    @test AEMS.read_interval_inputs === AustralianElectricityMarkets.Readers.read_interval_inputs
+    @test AEMS.read_published_interval === AustralianElectricityMarkets.Readers.read_published_interval
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
     t = DateTime(2025, 1, 1, 0, 5, 0)
     inputs = read_interval_inputs(db, t)
@@ -28,7 +31,7 @@ end
     empty_db = aem_connect(HiveConfiguration(hive_location = mktempdir(), filesystem = "file"))
     t = DateTime(2025, 1, 1, 0, 5, 0)
     err = try
-        AustralianElectricityMarketsSimulations._read_interconnector_flows(empty_db, t, 0)
+        AustralianElectricityMarkets.Readers._read_interconnector_flows(empty_db, t, 0)
         nothing
     catch e
         e

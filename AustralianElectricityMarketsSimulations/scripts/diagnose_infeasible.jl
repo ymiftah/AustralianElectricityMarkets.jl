@@ -1,7 +1,7 @@
 # Diagnoses one interval that does not solve: JuMP statuses, then the HiGHS conflict (or a penalty
 # relaxation). Usage: julia --project=.../test diagnose_infeasible.jl 2026-06-13T04:15:00 [hive]
 
-using AustralianElectricityMarketsData
+using AustralianElectricityMarkets
 using AustralianElectricityMarketsSimulations
 using DataFrames: nrow
 using Dates

@@ -21,7 +21,7 @@ To install the package, open the Julia REPL and run:
 
 ```julia
 using Pkg
-Pkg.add("AustralianElectricityMarkets")
+Pkg.add(["AustralianElectricityMarkets", "AustralianElectricityMarketsData"])
 ```
 
 ## Usage
@@ -30,6 +30,8 @@ Here is a basic example of how to use the package to read demand data:
 
 ```julia
 using AustralianElectricityMarkets
+using AustralianElectricityMarketsData: populate
+using Dates
 
 # Establish a database connection
 db = aem_connect();

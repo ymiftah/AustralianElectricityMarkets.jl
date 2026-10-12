@@ -5,10 +5,10 @@ using Test
 using Dates
 using DuckDB
 using Chain
-using DataFrames: nrow
+using DataFrames: nrow, DataFrame
 using PowerSystems
 
-include(joinpath(@__DIR__, "..", "AustralianElectricityMarketsData", "test", "mock_data.jl"))
+include("fixtures/mock_data.jl")
 # Create mock data in a temporary directory for the duration of the test session
 const AEM_TEST_HIVE_DIR = mktempdir()
 create_mock_data(AEM_TEST_HIVE_DIR)
@@ -21,6 +21,9 @@ create_pscb_nemweb_data(AEM_TEST_PSCB_HIVE_DIR)
 # Test groups, in run order: name => (testset title, files). Pass group names as test arguments
 # to run only those, e.g. `Pkg.test(; test_args = ["fcas", "timeseries_setters"])`.
 const TEST_GROUPS = [
+    "package_boundaries" => ("Package boundaries", ["package_boundaries.jl"]),
+    "raw_readers" => ("Raw reader tests", ["readers/raw.jl"]),
+    "isp" => ("ISP reader tests", ["readers/isp.jl"]),
     "datareader" => ("Data reader tests", ["datareader.jl"]),
     "network_models" => (
         "Network models",

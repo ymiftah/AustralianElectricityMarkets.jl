@@ -1,81 +1,4 @@
 """
-    read_fcas_dispatch(db, date_range; intervention = 0)
-
-Reads per-interval, per-unit FCAS dispatch outcomes from `DISPATCHLOAD`, long-format: one
-row per `(SETTLEMENTDATE, DUID, BIDTYPE::BidType, TARGET, ACTUALAVAILABILITY)`, plus the
-unit's energy context columns `INITIALMW`, `TOTALCLEARED`, `AVAILABILITY`, `AGCSTATUS`. This
-is the cleared counterpart to [`read_fcas_bids`](@ref)'s offered trapezium - comparing
-`TARGET`/`ACTUALAVAILABILITY` against the offer's trapezium shows how much of what a unit
-offered was actually deliverable at its dispatched energy level (see [`FCASTrapezium`](@ref)).
-
-`ACTUALAVAILABILITY` is `missing` for the two regulation markets (`RAISEREG`/`LOWERREG`) -
-AEMO does not publish a trapezium-adjusted availability for regulation, only the raw offer
-availability (`RAISEREGAVAILABILITY`/`LOWERREGAVAILABILITY`).
-
-`intervention` selects the dispatch run: `0` is the normal (non-intervention) run
-(`INTERVENTION` is compared via `COALESCE(INTERVENTION, 0)` for partitions predating that
-column - see [`read_fcas_requirements`](@ref)).
-"""
-function read_fcas_dispatch(db, date_range; intervention::Integer = 0)
-    start_date = first(date_range)
-    end_date = last(date_range)
-    sd = Date(start_date) - Day(1)
-    ed = Date(end_date) + Day(1)
-    table = read_hive(db, :DISPATCHLOAD)
-    dispatch_schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
-    params = Any[sd, ed]
-    _push_intervention!(params, dispatch_schema, intervention)
-
-    bidtype_cols = String[]
-    for bid_type in FCAS_BID_TYPES
-        bid_type_str = string(bid_type)
-        bid_type_str in dispatch_schema || continue
-        push!(bidtype_cols, _cast_double(bid_type_str))
-        avail_col = "$(bid_type_str)ACTUALAVAILABILITY"
-        avail_col in dispatch_schema && push!(bidtype_cols, _cast_double(avail_col))
-    end
-    select_list = join(
-        [
-            "SETTLEMENTDATE", "DUID",
-            _cast_double("INITIALMW"), _cast_double("TOTALCLEARED"), _cast_double("AVAILABILITY"),
-            "TRY_CAST(AGCSTATUS AS INTEGER) AS AGCSTATUS",
-            bidtype_cols...,
-        ],
-        ", ",
-    )
-    df = _query(
-        db,
-        """
-        SELECT $select_list
-        FROM $table
-        WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(dispatch_schema))
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, DUID ORDER BY archive_month DESC
-        ) = 1
-        """,
-        params,
-    )
-    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
-
-    long = DataFrame()
-    for bid_type in FCAS_BID_TYPES
-        bid_type_str = string(bid_type)
-        target_col = bid_type_str
-        avail_col = "$(bid_type_str)ACTUALAVAILABILITY"
-        target_col in names(df) || continue
-        block = select(
-            df,
-            :SETTLEMENTDATE, :DUID, :INITIALMW, :TOTALCLEARED, :AVAILABILITY, :AGCSTATUS,
-            target_col => :TARGET,
-        )
-        block[!, :ACTUALAVAILABILITY] = avail_col in names(df) ? df[!, avail_col] : fill(missing, nrow(block))
-        block[!, :BIDTYPE] = fill(bid_type, nrow(block))
-        append!(long, block; promote = true)
-    end
-    return long
-end
-
-"""
     read_dispatch_limits(db, date_range; intervention = 0)
 
 Reads per-interval, per-unit dispatch limits from `DISPATCHLOAD`: one row per
@@ -142,74 +65,6 @@ function read_dispatch_limits(db, date_range; intervention::Integer = 0)
     return df
 end
 
-"""
-    read_fcas_scaling_inputs(db, date_range; intervention = 0)
-
-Reads per-interval, per-unit AEMO *FCAS Model in NEMDE* §4.1/§4.2/§5 scaling and pre-condition
-inputs from `DISPATCHLOAD`: one row per `(SETTLEMENTDATE, DUID)` with `RAISEREGENABLEMENTMIN/MAX`,
-`LOWERREGENABLEMENTMIN/MAX` (the telemetered AGC enablement limits, already the more
-restrictive of bid and telemetered per AEMO's data model), `RAMPUPRATE`/`RAMPDOWNRATE`
-(the telemetered AGC ramp rate, MW/h - the same column [`read_dispatch_limits`](@ref) reads
-for energy ramping), and `AGCSTATUS` (`1` while the unit is under AGC control, `0` otherwise).
-
-`intervention` selects the dispatch run: `0` is the normal (non-intervention) run
-(`INTERVENTION` is compared via `COALESCE(INTERVENTION, 0)` for partitions predating that
-column - see [`read_fcas_requirements`](@ref)).
-
-# Arguments
-- `db`: an `AEMDB` connection.
-- `date_range`: the dispatch intervals to read (half-open: `start <= t < stop`).
-- `intervention`: `0` for the pricing run, `1` for the physical run.
-
-# Returns
-A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `RAISEREGENABLEMENTMIN`, `RAISEREGENABLEMENTMAX`,
-`LOWERREGENABLEMENTMIN`, `LOWERREGENABLEMENTMAX`, `RAMPUPRATE`, `RAMPDOWNRATE`, `AGCSTATUS`.
-"""
-function read_fcas_scaling_inputs(db, date_range; intervention::Integer = 0)
-    start_date = first(date_range)
-    end_date = last(date_range)
-    sd = Date(start_date) - Day(1)
-    ed = Date(end_date) + Day(1)
-
-    _table_is_cached(db, :DISPATCHLOAD) || throw(
-        ArgumentError(
-            "DISPATCHLOAD is not cached — run `populate(db, :DISPATCHLOAD, <from>, <to>)` first.",
-        ),
-    )
-    table = read_hive(db, :DISPATCHLOAD)
-    schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
-    scaling_cols = (
-        "RAISEREGENABLEMENTMIN", "RAISEREGENABLEMENTMAX",
-        "LOWERREGENABLEMENTMIN", "LOWERREGENABLEMENTMAX", "RAMPUPRATE", "RAMPDOWNRATE", "AGCSTATUS",
-    )
-    for col in scaling_cols
-        col in schema || throw(
-            ArgumentError(
-                "DISPATCHLOAD's cached partitions have no $col column at all — they predate " *
-                    "AEMO publishing it. Run `populate(db, :DISPATCHLOAD, <from>, <to>; force_new = true)` " *
-                    "to re-download.",
-            ),
-        )
-    end
-
-    params = Any[sd, ed]
-    _push_intervention!(params, schema, intervention)
-    select_list = join(["SETTLEMENTDATE", "DUID", (_cast_double(c) for c in scaling_cols)...], ", ")
-    df = _query(
-        db,
-        """
-        SELECT $select_list
-        FROM $table
-        WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(schema))
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, DUID ORDER BY archive_month DESC
-        ) = 1
-        """,
-        params,
-    )
-    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
-    return df
-end
 
 """
     _uigf_rows(db, where_sql, params, intervention)
@@ -277,6 +132,7 @@ function _uigf_rows(db, where_sql::AbstractString, params::Vector{Any}, interven
     return df
 end
 
+
 """
     read_uigf(db, date_range; resolution = Minute(5), intervention = 0)
     read_uigf(db, settlement_date::DateTime; intervention = 0)
@@ -332,55 +188,7 @@ function read_uigf(db, date_range; resolution::Dates.Period = Minute(5), interve
     end
 end
 
+
 function read_uigf(db, settlement_date::DateTime; intervention::Integer = 0)
     return _uigf_rows(db, "SETTLEMENTDATE = ?", Any[settlement_date], intervention)
-end
-
-"""
-    read_interconnector_limits(db, date_range; intervention = 0)
-
-Reads the per-interval interconnector limits and metered flow from `DISPATCHINTERCONNECTORRES`:
-one row per `(SETTLEMENTDATE, INTERCONNECTORID)` with `METEREDMWFLOW` (the SCADA flow, the
-interval's starting flow), `EXPORTLIMIT` and `IMPORTLIMIT` (the energy-only flow limits NEMDE
-applied, signed along the interconnector's from-to direction: `IMPORTLIMIT <= flow <= EXPORTLIMIT`).
-
-# Arguments
-- `db`: an `AEMDB` connection.
-- `date_range`: the dispatch intervals to read (half-open: `start <= t < stop`).
-- `intervention`: `0` for the pricing run, `1` for the physical run.
-
-# Returns
-A `DataFrame` with `SETTLEMENTDATE`, `INTERCONNECTORID`, `METEREDMWFLOW`, `EXPORTLIMIT`,
-`IMPORTLIMIT`.
-"""
-function read_interconnector_limits(db, date_range; intervention::Integer = 0)
-    start_date = first(date_range)
-    end_date = last(date_range)
-    sd = Date(start_date) - Day(1)
-    ed = Date(end_date) + Day(1)
-
-    _table_is_cached(db, :DISPATCHINTERCONNECTORRES) || throw(
-        ArgumentError(
-            "DISPATCHINTERCONNECTORRES is not cached; run `populate(db, :DISPATCHINTERCONNECTORRES, <from>, <to>)` first.",
-        ),
-    )
-    table = read_hive(db, :DISPATCHINTERCONNECTORRES)
-    schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
-    params = Any[sd, ed]
-    _push_intervention!(params, schema, intervention)
-    df = _query(
-        db,
-        """
-        SELECT SETTLEMENTDATE, INTERCONNECTORID,
-               $(_cast_double("METEREDMWFLOW")), $(_cast_double("EXPORTLIMIT")), $(_cast_double("IMPORTLIMIT"))
-        FROM $table
-        WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(schema))
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, INTERCONNECTORID ORDER BY archive_month DESC
-        ) = 1
-        """,
-        params,
-    )
-    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
-    return df
 end

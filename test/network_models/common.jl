@@ -163,7 +163,7 @@
     end
 
     @testset "ISP technology coverage in PM_MAPPING" begin
-        # AustralianElectricityMarketsData.read_isp_variable_opex/read_isp_fixed_opex return
+        # The ISP readers return
         # raw isp_technology strings (that package does not depend on PowerSystems); the
         # PM_MAPPING lookup, used by RegionModel._map_primemover!, must have an entry for
         # every isp_technology value present in the bundled ISP2025 data.

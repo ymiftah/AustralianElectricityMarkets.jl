@@ -8,7 +8,7 @@
 # The interval defaults to 2026-06-04T00:00:00 and `hive_location` to `~/.nemdb_cache`. The cache
 # must also hold the following five-minute interval.
 
-using AustralianElectricityMarketsData
+using AustralianElectricityMarkets
 using AustralianElectricityMarketsSimulations
 using DataFrames
 using Dates
