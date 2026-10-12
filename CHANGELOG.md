@@ -400,6 +400,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Organized AEM source into `types/`, `readers/`, `system/` and `accessors/`.
+  Type-specific calculations live with their types, and system construction and
+  setters share one folder. Market calculations and SQL results are unchanged.
+- Moved market and ISP readers from AEMData, and interval readers from AEMSim,
+  into `AustralianElectricityMarkets.Readers`. Public AEM reader names and AEMSim
+  interval-reader names remain re-exports. `IntervalInputs` is now defined in AEM.
+- Extracted shared connection types and cache metadata into
+  `AustralianElectricityMarketsCache`. AEM and AEMData are independent; AEMSim
+  depends on AEM. Import `populate` explicitly from AEMData.
+- Organized AEMSim source into types, formulations, checks, preprocessing and
+  execution folders, and moved the shared mock fixture to `test/fixtures/`.
+
 - All floating-point NEMWEB columns are now `Float64` (`DOUBLE` in the parquet cache) instead of
   `Float32`. Re-populate every cached table with `populate(...; force_new = true)`; partitions
   written earlier keep single precision.

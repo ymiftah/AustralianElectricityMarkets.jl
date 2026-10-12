@@ -1,6 +1,5 @@
 using AustralianElectricityMarketsSimulations
 using AustralianElectricityMarkets
-using AustralianElectricityMarketsData
 using DataFrames
 using Dates
 using DuckDB
@@ -9,7 +8,7 @@ using Test
 
 const AEMS = AustralianElectricityMarketsSimulations
 
-include(joinpath(@__DIR__, "..", "..", "AustralianElectricityMarketsData", "test", "mock_data.jl"))
+include(joinpath(@__DIR__, "..", "..", "test", "fixtures", "mock_data.jl"))
 include(joinpath(@__DIR__, "..", "..", "test", "integration", "pscb_fixture.jl"))
 include(joinpath(@__DIR__, "..", "..", "test", "integration", "pscb_nemweb_data.jl"))
 include(joinpath(@__DIR__, "template_helpers.jl"))
@@ -18,10 +17,7 @@ include(joinpath(@__DIR__, "toy_fixture.jl"))
 const AEM_TEST_HIVE_DIR = mktempdir()
 create_mock_data(AEM_TEST_HIVE_DIR)
 
-# mock_data.jl (shared with the root/Data test suites, not modified here - see this repo's
-# task notes) never wrote DISPATCHINTERCONNECTORRES. Add it directly so
-# `_read_interconnector_flows` (used by `read_interval_inputs`) has data to read, now that a
-# missing table is a hard error rather than a silently empty Dict.
+# Add interconnector results needed by the interval readers to the shared fixture.
 let
     ddb = DuckDB.DB()
     conn = DuckDB.connect(ddb)

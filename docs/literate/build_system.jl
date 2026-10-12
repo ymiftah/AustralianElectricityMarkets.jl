@@ -19,6 +19,7 @@
 # parquet files.
 
 using AustralianElectricityMarkets
+using AustralianElectricityMarketsData: populate
 using Dates
 using PowerSystems
 using DataFrames

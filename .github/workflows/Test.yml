@@ -8,6 +8,8 @@ on:
       - "src/**"
       - "test/**"
       - "AustralianElectricityMarketsData/**"
+      - "AustralianElectricityMarketsCache/**"
+      - "data/**"
       - "AustralianElectricityMarketsSimulations/**"
       - "*.toml"
       - ".github/workflows/Test.yml"
@@ -16,6 +18,8 @@ on:
       - "src/**"
       - "test/**"
       - "AustralianElectricityMarketsData/**"
+      - "AustralianElectricityMarketsCache/**"
+      - "data/**"
       - "AustralianElectricityMarketsSimulations/**"
       - "*.toml"
       - ".github/workflows/Test.yml"
@@ -53,9 +57,13 @@ jobs:
         uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
-      # The two workspace subpackages carry their own test suites, which the root
+      # Workspace subpackages carry their own test suites, which the root
       # `Pkg.test()` above never runs. Without these steps a PR can turn every check green
       # while its own subpackage suite is red.
+      - name: Test AustralianElectricityMarketsCache
+        uses: julia-actions/julia-runtest@v1
+        with:
+          project: AustralianElectricityMarketsCache
       - name: Test AustralianElectricityMarketsData
         uses: julia-actions/julia-runtest@v1
         with:

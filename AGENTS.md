@@ -2,17 +2,22 @@
 
 Julia monorepo that turns AEMO **NEMWEB (MMSDM)** market data into **PowerSystems.jl** `System`s and
 solves NEM dispatch replicas of them with **PowerSimulations.jl**. It is a Julia 1.11 workspace of
-three packages sharing the root `Manifest.toml`; each builds on the one above it:
+four packages sharing the root `Manifest.toml`:
 
 | Package | Path | Responsible for |
 | --- | --- | --- |
-| `AustralianElectricityMarketsData` | `AustralianElectricityMarketsData/` | NEMWEB download, Hive-partitioned parquet cache, DuckDB connection and raw queries, ISP inputs. No PowerSystems dependency. |
-| `AustralianElectricityMarkets` | repo root (`src/`) | Builds the PSY `System`: network configurations, readers, time-series/bid/limit setters, NEM-specific FCAS reserve and offer types, generic constraints, interconnector losses. Re-exports the Data package's API. |
+| `AustralianElectricityMarketsCache` | `AustralianElectricityMarketsCache/` | Shared configuration, DuckDB connections, cache metadata and partition inspection. No market readers or population pipeline. |
+| `AustralianElectricityMarketsData` | `AustralianElectricityMarketsData/` | NEMWEB download and Hive-partitioned parquet population. Depends on Cache, with no AEM, AEMSim or PowerSystems dependency. |
+| `AustralianElectricityMarkets` | repo root (`src/`) | Domain types, Readers submodule, PSY system construction and modification, and attached-data accessors. Depends on Cache, with no Data or Simulations dependency. |
 | `AustralianElectricityMarketsSimulations` | `AustralianElectricityMarketsSimulations/` | NEMDE replication in PSI: `AbstractNEMDispatch` device formulations (batteries included), FCAS market and trapezium formulations, NEM constraint formulations, per-interval inputs and preprocessing, pre-flight checks. |
 
 ## Quick start
 
 ```julia
+using AustralianElectricityMarkets
+using AustralianElectricityMarketsData: populate
+using Dates
+
 db = aem_connect()                                    # AEMDB wrapper over DuckDB.DB
 populate(db, :DISPATCHPRICE, Date(2025, 1, 1), Date(2025, 1, 3))
 sys = nem_system(db, RegionalNetworkConfiguration())  # energy-only regional system
@@ -27,6 +32,7 @@ via the `HiveConfiguration` struct (`filesystem = "file" | "s3" | "gs"`) — no 
 
 ```bash
 julia --project -e 'using Pkg; Pkg.test()'                                         # root suite
+julia --project=AustralianElectricityMarketsCache -e 'using Pkg; Pkg.test()'       # Cache suite
 julia --project=AustralianElectricityMarketsData -e 'using Pkg; Pkg.test()'        # Data suite
 julia --project=AustralianElectricityMarketsSimulations -e 'using Pkg; Pkg.test()' # Simulations suite
 julia --project=docs docs/make.jl            # Literate + Documenter/Vitepress
@@ -36,7 +42,7 @@ julia --project=AustralianElectricityMarketsSimulations/test \
     AustralianElectricityMarketsSimulations/test/real_data/runtests.jl [hive_location]
 ```
 
-All three suites run on generated mock parquet data and never hit the network; CI runs all three.
+All four suites run on generated mock parquet data and never hit the network; CI runs all four.
 
 **Run only the test groups your change touches.** The root and Simulations runners take group
 names (listed in `TEST_GROUPS` at the top of each `runtests.jl`; no arguments runs everything):
@@ -47,11 +53,11 @@ julia --project=AustralianElectricityMarketsSimulations/test \
     AustralianElectricityMarketsSimulations/test/runtests.jl fcas_market preprocessing
 ```
 
-Pick the groups whose test file covers the source you edited (e.g. `src/fcas/` → `fcas`,
-`fcas_scaling`, `fcas_service`; `…Simulations/src/fcas_market.jl` → `fcas_market`). Run the full
+Pick the groups whose test file covers the source you edited (e.g. `src/types/fcas.jl` → `fcas`,
+`fcas_scaling`, `fcas_service`; `…Simulations/src/formulations/fcas.jl` → `fcas_market`). Run the full
 suites only for cross-cutting changes (shared fixtures, runner, dependencies, a change in one
 package that the next one consumes) or before opening a PR. Use absolute paths when launching Julia
-from a backgrounded subshell. Shared fixtures: `AustralianElectricityMarketsData/test/mock_data.jl`
+from a backgrounded subshell. Shared fixtures: `test/fixtures/mock_data.jl`
 (all three suites), `test/integration/pscb_*.jl` (root and Simulations), and
 `…Simulations/test/toy_fixture.jl` / `template_helpers.jl`; each runner loads its fixtures up
 front, so every group runs on its own.
@@ -60,13 +66,15 @@ front, so every group runs on its own.
 
 | Path | Role |
 | --- | --- |
-| `…Data/src/nemweb_load/tables.jl` | `_TABLE_SPECS` — one entry per NEMWEB table |
+| `…Cache/src/tables.jl` | `_TABLE_SPECS`, table lookup and supported-table metadata |
 | `…Data/src/nemweb_load/column_types.jl` | `COLUMN_TYPES`; unlisted columns silently become `VARCHAR` |
-| `src/AustralianElectricityMarkets.jl` | exports, includes, `@doc` re-binding of Data/`RegionModel` names |
-| `src/network_models/` | `NetworkConfiguration` interface; `RegionModel` submodule builds the `System` |
-| `src/fcas/`, `src/constraints/` | FCAS types/bids/scaling/`FCASService`; `GenericConstraint` and its terms |
-| `…Simulations/src/nem_dispatch*.jl` | `AbstractNEMDispatch` formulations and `set_nem_dispatch_models!` |
-| `…Simulations/src/check/<what_is_checked>.jl` | pre-flight checks run before a build |
+| `src/AustralianElectricityMarkets.jl` | exports, includes, `@doc` re-binding of Readers/Cache/RegionModel names |
+| `src/types/` | Domain types, constructors, field accessors and type-specific calculations |
+| `src/readers/` | Readers submodule; one file per external-data category |
+| `src/system/` | System construction and modification; RegionModel submodule |
+| `src/accessors/` | Attached component data and time-series lookup |
+| `…Simulations/src/types/`, `…Simulations/src/formulations/` | PSI types and dispatch, FCAS, constraint and loss formulations |
+| `…Simulations/src/checks/<what_is_checked>.jl` | pre-flight checks run before a build |
 | `…Simulations/src/psi_compat.jl` | shims over the pinned PowerSimulations fork |
 | `docs/adr/` | architecture decisions — design rationale goes here |
 | `docs/superpowers/plans/` | implementation plans; follow-up work is recorded here or in an ADR |
@@ -86,7 +94,7 @@ front, so every group runs on its own.
   non-obvious thing is.
 - Naming: NEMWEB tables/columns stay `SCREAMING_CASE`; Julia API is `snake_case`; private helpers
   are `_`-prefixed; mutating functions take `!`.
-- Names exported from the Data package or the `RegionModel` submodule are re-exported at the top
+- Names exported from Cache or the Readers/RegionModel submodules are re-exported at the top
   level with `@doc (@doc Sub.f) f` so Documenter resolves the docstring from the top-level name.
 - DataFrame work uses `@chain`. Parquet access goes through **DuckDB.jl** — `read_hive` returns a
   SQL source fragment you query with `DuckDB.execute`.

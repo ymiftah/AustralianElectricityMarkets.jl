@@ -13,7 +13,6 @@ using DuckDB
 using HiGHS
 using PowerSimulations
 using AustralianElectricityMarkets
-using AustralianElectricityMarketsData
 using AustralianElectricityMarketsSimulations
 import PowerSimulations as PSI
 import PowerSystems as PSY
@@ -38,7 +37,7 @@ const FCAS_REQ_TABLES = (:DISPATCH_FCAS_REQ, :DISPATCH_FCAS_REQ_CONSTRAINT)
 const db = aem_connect(HiveConfiguration(hive_location = REAL_HIVE))
 
 function month_cached(table)
-    root = AustralianElectricityMarketsData._parse_hive_root(db.config)
+    root = AEM._parse_hive_root(db.config)
     glob = "$root/$table/archive_month=$REAL_MONTH/*.parquet"
     return only(DataFrame(DuckDB.execute(db.db, "SELECT COUNT(*) AS n FROM glob('$glob')")).n) > 0
 end
@@ -263,7 +262,7 @@ end
 
             # AEMO's own record of which constraints were actually violated over this window
             # (VIOLATIONDEGREE > 0 <=> MARGINALVALUE priced at a CVP rate, not a market price).
-            dc_table = AustralianElectricityMarketsData.read_hive(db, :DISPATCHCONSTRAINT)
+            dc_table = AustralianElectricityMarkets.Readers.read_hive(db, :DISPATCHCONSTRAINT)
             violated = DataFrame(
                 DuckDB.execute(
                     db.db,
@@ -690,7 +689,7 @@ end
     results = PSI.OptimizationProblemResults(model)
     base_power = PSY.get_base_power(sys)
 
-    dc_table = AustralianElectricityMarketsData.read_hive(db, :DISPATCHCONSTRAINT)
+    dc_table = AustralianElectricityMarkets.Readers.read_hive(db, :DISPATCHCONSTRAINT)
     for gc in gcs
         name = PSY.get_name(gc)
         gencon_id = get_gencon_id(gc)

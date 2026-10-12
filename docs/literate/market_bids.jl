@@ -1,4 +1,5 @@
 using AustralianElectricityMarkets
+using AustralianElectricityMarketsData: populate
 using PowerSystems
 using PowerSimulations
 using HydroPowerSimulations
