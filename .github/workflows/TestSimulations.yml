@@ -14,6 +14,7 @@ on:
       - "test/integration/pscb_fixture.jl"
       - "test/integration/pscb_nemweb_data.jl"
       - "**/*.toml"
+      - "codecov.yml"
       - ".github/workflows/Test*.yml"
   pull_request:
     paths:
@@ -26,6 +27,7 @@ on:
       - "test/integration/pscb_fixture.jl"
       - "test/integration/pscb_nemweb_data.jl"
       - "**/*.toml"
+      - "codecov.yml"
       - ".github/workflows/Test*.yml"
   workflow_dispatch:
 concurrency:

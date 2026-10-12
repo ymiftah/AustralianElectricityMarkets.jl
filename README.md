@@ -89,10 +89,12 @@ packages, AEM changes run AEM and Simulations, and Data changes run Data and AEM
 whose package-boundary tests exercise Data. Changes confined to a package's tests
 run that package, except shared fixtures, which trigger the suites that use them.
 
-Workspace dependency files and test CI changes select all packages. Documentation
+Workspace dependency files, coverage configuration and test CI changes select all packages. Documentation
 and other unrelated changes skip Julia tests. Tags test all packages.
 Manual runs test the package belonging to the dispatched workflow.
 Coverage is collected only on Julia 1.11, separately for each package.
+Codecov carries forward the last uploaded coverage for packages whose workflows
+were skipped. All four packages must upload coverage once to establish a baseline.
 
 Test workflow customizations must be preserved when updating the Bestie template.
 

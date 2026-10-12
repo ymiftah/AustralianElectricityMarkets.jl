@@ -11,6 +11,7 @@ on:
       - "AustralianElectricityMarketsData/src/**"
       - "data/**"
       - "**/*.toml"
+      - "codecov.yml"
       - ".github/workflows/Test*.yml"
   pull_request:
     paths:
@@ -20,6 +21,7 @@ on:
       - "AustralianElectricityMarketsData/src/**"
       - "data/**"
       - "**/*.toml"
+      - "codecov.yml"
       - ".github/workflows/Test*.yml"
   workflow_dispatch:
 concurrency:

@@ -8,12 +8,14 @@ on:
       - "AustralianElectricityMarketsCache/src/**"
       - "AustralianElectricityMarketsCache/test/**"
       - "**/*.toml"
+      - "codecov.yml"
       - ".github/workflows/Test*.yml"
   pull_request:
     paths:
       - "AustralianElectricityMarketsCache/src/**"
       - "AustralianElectricityMarketsCache/test/**"
       - "**/*.toml"
+      - "codecov.yml"
       - ".github/workflows/Test*.yml"
   workflow_dispatch:
 concurrency:

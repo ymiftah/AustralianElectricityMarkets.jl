@@ -8,3 +8,20 @@ coverage:
       default:
         target: 80%
   range: "80...90" # Yellow within this range
+flags:
+  AustralianElectricityMarkets:
+    paths:
+      - src/
+    carryforward: true
+  AustralianElectricityMarketsCache:
+    paths:
+      - AustralianElectricityMarketsCache/src/
+    carryforward: true
+  AustralianElectricityMarketsData:
+    paths:
+      - AustralianElectricityMarketsData/src/
+    carryforward: true
+  AustralianElectricityMarketsSimulations:
+    paths:
+      - AustralianElectricityMarketsSimulations/src/
+    carryforward: true

@@ -10,6 +10,7 @@ on:
       - "AustralianElectricityMarketsCache/src/**"
       - "test/fixtures/**"
       - "**/*.toml"
+      - "codecov.yml"
       - ".github/workflows/Test*.yml"
   pull_request:
     paths:
@@ -18,6 +19,7 @@ on:
       - "AustralianElectricityMarketsCache/src/**"
       - "test/fixtures/**"
       - "**/*.toml"
+      - "codecov.yml"
       - ".github/workflows/Test*.yml"
   workflow_dispatch:
 concurrency:
