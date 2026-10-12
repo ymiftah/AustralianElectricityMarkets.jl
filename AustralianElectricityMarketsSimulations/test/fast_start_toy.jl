@@ -16,6 +16,14 @@ end
 
 @testset "fast-start energy profile and thermal elasticity" begin
     @testset "profile ramp envelopes preserve exact endpoints and startup anchors" begin
+        mode2_input = AEMS.FastStartInput(
+            AEMS.FastStartProfile(20.0, 0.0, 2.0, 10.0, 10.0),
+            AEMS.FastStartState(2, 2.0), 20.0, 100.0, 100.0, 100.0, 0.0,
+        )
+        mode3_envelope = AEMS.plan_fast_start(mode2_input, 20.0)
+        @test mode2_input.state.mode == 2
+        @test mode3_envelope.state.mode == 3
+
         profile = AEMS.FastStartProfile(20.0, 1.0, 4.0, 2.0, 2.0)
         at_t2 = AEMS.FastStartInput(profile, AEMS.FastStartState(1, 0.0), 8.0, 60.0, 60.0, 100.0, 0.0)
         exact = AEMS.plan_fast_start(at_t2, 20.0)

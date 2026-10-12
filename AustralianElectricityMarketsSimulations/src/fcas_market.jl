@@ -663,12 +663,18 @@ function _add_fcas_joint_ramping_constraints!(
     horizon = length(time_steps)
     for device in devices
         dname = PSY.get_name(device)
+        fast_start_context = if device isa PSY.ThermalStandard
+            thermal_model = get(devices_template, :ThermalStandard, nothing)
+            isnothing(thermal_model) ? nothing : get(PSI.get_attributes(thermal_model), "fast_start", nothing)
+        else
+            nothing
+        end
         caps = _fcas_agc_ramp_caps(container, devices_template, device, _fcas_ramp_rate_service(device, bid_type))
         initial_mw = get_initial_mw(device, initial_time, horizon)
         enabled = _fcas_regulation_enabled_mask(container, devices_template, device, bid_type, directions[dname])
         for t in time_steps
             mw = isnothing(initial_mw) ? NaN : initial_mw[t]
-            if iszero(caps[t]) || isnan(mw) || !enabled[t]
+            if !_fast_start_joint_ramping_applies(fast_start_context, dname, t) || iszero(caps[t]) || isnan(mw) || !enabled[t]
                 con[dname, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
                 continue
             end
@@ -683,6 +689,12 @@ function _add_fcas_joint_ramping_constraints!(
         end
     end
     return
+end
+
+function _fast_start_joint_ramping_applies(context, duid, t)::Bool
+    isnothing(context) && return true
+    input = get(context.inputs, duid, nothing)
+    return isnothing(input) || input.state.mode > 2
 end
 
 """
