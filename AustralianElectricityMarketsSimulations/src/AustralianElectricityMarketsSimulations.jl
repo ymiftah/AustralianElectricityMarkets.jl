@@ -38,6 +38,7 @@ include("check/fcas.jl")
 include("replication/inputs.jl")
 include("replication/fast_start_inputs.jl")
 include("replication/fast_start_state.jl")
+include("devices/fast_start.jl")
 include("replication/preprocessing.jl")
 include("replication/pipeline.jl")
 

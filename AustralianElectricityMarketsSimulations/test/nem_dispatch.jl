@@ -216,18 +216,24 @@ end
         @test !(PSI.OnVariable in entry_types(variable_keys))
     end
 
-    @testset "every generator participant gets identical variable and constraint entry types" begin
+    @testset "generator participant entry types retain shared basics and thermal elastic rows" begin
         participants = nem_dispatch_participants(sys)
         @test length(participants) >= 3
         @test PSY.EnergyReservoirStorage in participants
         @test PSY.InterruptiblePowerLoad in participants
         generator_participants = filter(!in((PSY.EnergyReservoirStorage, PSY.InterruptiblePowerLoad)), participants)
-        variable_sets = [entry_types(component_keys(variable_keys, T)) for T in generator_participants]
-        constraint_sets = [entry_types(component_keys(constraint_keys, T)) for T in generator_participants]
-        @test allequal(variable_sets)
-        @test allequal(constraint_sets)
-        @test PSI.ActivePowerVariable in first(variable_sets)
-        @test PSI.RampConstraint in first(constraint_sets)
+        variable_sets = Dict(T => entry_types(component_keys(variable_keys, T)) for T in generator_participants)
+        constraint_sets = Dict(T => entry_types(component_keys(constraint_keys, T)) for T in generator_participants)
+        for T in generator_participants
+            @test PSI.ActivePowerVariable in variable_sets[T]
+            @test PSI.RampConstraint in constraint_sets[T]
+        end
+        thermal_variables = variable_sets[PSY.ThermalStandard]
+        thermal_constraints = constraint_sets[PSY.ThermalStandard]
+        @test AEMS.AvailabilitySurplusSlack in thermal_variables
+        @test AEMS.OfferSurplusSlack in thermal_variables
+        @test AEMS.AvailabilityConstraint in thermal_constraints
+        @test !(PSI.ActivePowerVariableTimeSeriesLimitsConstraint in thermal_constraints)
 
         @testset "a scheduled load gets the single-variable shape priced on its decremental offer" begin
             load_variables = entry_types(component_keys(variable_keys, PSY.InterruptiblePowerLoad))
@@ -254,8 +260,9 @@ end
         @test PSI.PiecewiseLinearBlockIncrementalOfferConstraint in entry_types(constraint_keys)
     end
 
-    @testset "the availability envelope bounds active power" begin
-        @test PSI.ActivePowerVariableTimeSeriesLimitsConstraint in entry_types(constraint_keys)
+    @testset "raw thermal availability uses an elastic limit row" begin
+        @test AEMS.AvailabilityConstraint in entry_types(constraint_keys)
+        @test !(PSI.ActivePowerVariableTimeSeriesLimitsConstraint in entry_types(component_keys(constraint_keys, PSY.ThermalStandard)))
     end
 
     @testset "the objective is non-trivial" begin
@@ -365,17 +372,17 @@ end
     end
 end
 
-@testset "an inconsistent envelope is reported at build, not left to the solver" begin
-    # Zero availability with a positive INITIALMW and a tiny down rate: an unmeetable floor.
+@testset "a thermal ramp floor can violate raw availability without failing the build" begin
+    # The sourced availability row is elastic, so a positive metered floor remains buildable.
     sys = nem_dispatch_system(;
         mutate! = function (s)
             flatten_series!(s, "ER02", "ramp_down_rate", 0.0)
-            flatten_series!(s, "ER02", "max_active_power", 0.0)
+            flatten_series!(s, "ER02", "availability", 0.0)
             return s
         end,
     )
     model = nem_dispatch_model(sys)
-    @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
+    @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
 end
 
 @testset "a net ramp-down floor above a battery's generation availability raises the ceiling instead of failing the build" begin
