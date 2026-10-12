@@ -79,6 +79,25 @@ readers (`readers/`), system construction and modification (`system/`), and atta
 component data lookup (`accessors/`). Domain categories appear as filenames within
 these folders.
 
+## Continuous integration
+
+Each package has its own GitHub Actions workflow with native `paths` filters:
+`Test.yml` (AEM), `TestCache.yml`, `TestData.yml` and `TestSimulations.yml`.
+Matching pull requests and pushes to `main` run that package's suite on Julia
+1.11, 1.12 and `pre`. Filters include source consumers: Cache changes run all four
+packages, AEM changes run AEM and Simulations, and Data changes run Data and AEM,
+whose package-boundary tests exercise Data. Changes confined to a package's tests
+run that package, except shared fixtures, which trigger the suites that use them.
+
+Workspace dependency files, coverage configuration and test CI changes select all packages. Documentation
+and other unrelated changes skip Julia tests. Tags test all packages.
+Manual runs test the package belonging to the dispatched workflow.
+Coverage is collected only on Julia 1.11, separately for each package.
+Codecov carries forward the last uploaded coverage for packages whose workflows
+were skipped. All four packages must upload coverage once to establish a baseline.
+
+Test workflow customizations must be preserved when updating the Bestie template.
+
 ## Data Sources
 
 This package primarily interfaces with data from the [Australian Energy Market Operator (AEMO)](https://aemo.com.au/). It relies on the [NEMWEB](https://www.aemo.com.au/energy-systems/electricity/national-electricity-market-nem/data-nem/market-data-nemweb) data archives and data models.

@@ -400,6 +400,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Each package has a separate CI workflow using native path filters for its tests,
+  dependencies and shared fixtures. Coverage is collected only on Julia 1.11, and
+  Codecov carries forward coverage for packages whose workflows were skipped.
 - Organized AEM source into `types/`, `readers/`, `system/` and `accessors/`.
   Type-specific calculations live with their types, and system construction and
   setters share one folder. Market calculations and SQL results are unchanged.

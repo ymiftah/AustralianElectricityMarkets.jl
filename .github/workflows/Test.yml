@@ -1,4 +1,4 @@
-name: Test
+name: Test AustralianElectricityMarkets
 on:
   push:
     branches:
@@ -7,32 +7,30 @@ on:
     paths:
       - "src/**"
       - "test/**"
-      - "AustralianElectricityMarketsData/**"
-      - "AustralianElectricityMarketsCache/**"
+      - "AustralianElectricityMarketsCache/src/**"
+      - "AustralianElectricityMarketsData/src/**"
       - "data/**"
-      - "AustralianElectricityMarketsSimulations/**"
-      - "*.toml"
-      - ".github/workflows/Test.yml"
+      - "**/*.toml"
+      - "codecov.yml"
+      - ".github/workflows/Test*.yml"
   pull_request:
     paths:
       - "src/**"
       - "test/**"
-      - "AustralianElectricityMarketsData/**"
-      - "AustralianElectricityMarketsCache/**"
+      - "AustralianElectricityMarketsCache/src/**"
+      - "AustralianElectricityMarketsData/src/**"
       - "data/**"
-      - "AustralianElectricityMarketsSimulations/**"
-      - "*.toml"
-      - ".github/workflows/Test.yml"
+      - "**/*.toml"
+      - "codecov.yml"
+      - ".github/workflows/Test*.yml"
   workflow_dispatch:
 concurrency:
-  # Skip intermediate builds: always.
-  # Cancel intermediate builds: only if it is a pull request build.
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 jobs:
   test:
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
-    runs-on: ${{ matrix.os }}
+    name: AustralianElectricityMarkets - Julia ${{ matrix.version }}
+    runs-on: ubuntu-latest
     permissions:
       actions: write # needed to allow julia-actions/cache to proactively delete old caches that it has created
       contents: read
@@ -43,40 +41,29 @@ jobs:
           - "1.11"
           - "1.12"
           - "pre"
-        os:
-          - ubuntu-latest
-        arch:
-          - x64
     steps:
       - uses: actions/checkout@v6
       - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
-          arch: ${{ matrix.arch }}
+          arch: x64
       - name: Use Julia cache
         uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@v1
+        with:
+          project: .
       - uses: julia-actions/julia-runtest@v1
-      # Workspace subpackages carry their own test suites, which the root
-      # `Pkg.test()` above never runs. Without these steps a PR can turn every check green
-      # while its own subpackage suite is red.
-      - name: Test AustralianElectricityMarketsCache
-        uses: julia-actions/julia-runtest@v1
         with:
-          project: AustralianElectricityMarketsCache
-      - name: Test AustralianElectricityMarketsData
-        uses: julia-actions/julia-runtest@v1
-        with:
-          project: AustralianElectricityMarketsData
-      - name: Test AustralianElectricityMarketsSimulations
-        uses: julia-actions/julia-runtest@v1
-        with:
-          project: AustralianElectricityMarketsSimulations
+          project: .
+          coverage: ${{ matrix.version == '1.11' }}
       - uses: julia-actions/julia-processcoverage@v1
         if: matrix.version == '1.11'
+        with:
+          directories: ./src
       - uses: codecov/codecov-action@v5
         if: matrix.version == '1.11'
         with:
           files: lcov.info
+          flags: AustralianElectricityMarkets
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
