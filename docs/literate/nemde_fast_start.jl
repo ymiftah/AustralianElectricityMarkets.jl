@@ -4,16 +4,20 @@ using CairoMakie #hide
 #
 # Fast-start inflexibility profiles constrain a unit after a commitment decision. They are
 # not an ordinary minimum-generation bound or a price-based classification of observed targets.
-# **The equations in this chapter describe pending PR #184.** The current branch reads profile
-# fields but does not enforce this two-pass formulation. The proposed implementation supports
-# `ThermalStandard` with `NEMReplayDispatch`; it does not add multi-interval unit commitment.
+# The profile and commitment process described below follow AEMO’s published fast-start
+# procedure. They distinguish a commitment decision from the final dispatch target.
+#
+# !!! note "Fast-start coverage"
+#     Fast-start profile transitions and the two-pass commitment procedure are not included
+#     in the dispatch reconstruction available here. Ordinary ramp limits alone do not
+#     reproduce the profile restrictions described in this chapter.
 #
 # ## Profile modes and interval-end output
 #
 # A profile has minimum load ``M`` (MW) and four durations ``T_1,\ldots,T_4`` (minutes).
 # Its state is a mode and elapsed minutes in that mode. Following AEMO's
 # [Fast Start Unit Inflexibility Profile, §§2-5, pp. 5-14](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fast-start-unit-inflexibility-profile.pdf),
-# the proposed replay advances this state to the dispatch interval's end:
+# the restrictions depend on the state at the dispatch interval’s end:
 #
 # | Mode | Meaning | Profile restriction at elapsed time ``\tau`` |
 # | --- | --- | --- |
@@ -25,9 +29,8 @@ using CairoMakie #hide
 #
 # Mode 4 does not force a shutdown: output can remain above this declining lower bound.
 # Completing ``T_4`` alone does not return the unit to mode 0. Zero-duration segments are
-# skipped, avoiding division by zero. Units with all four timings zero are treated as
-# ordinary units. The package preserves a positive-duration mode at its exact endpoint;
-# it enters the next mode when the elapsed interval crosses that endpoint.
+# skipped. If all four timing parameters are zero or null, the unit is treated as
+# slow-start without a fast-start inflexibility profile.
 #
 # With interval-end profile ``\phi_u`` and nonnegative slacks, the dispatch pass builds
 #
@@ -59,22 +62,23 @@ end #hide
 #
 # The first, commitment pass solves energy and FCAS without profile rows. For units initially
 # in modes 0, 1 or 2, it also omits ordinary energy ramps and joint FCAS ramp rows. An initially
-# offline unit with candidate energy above the package's 0.005 MW threshold is committed.
-# Existing active profiles continue irrespective of that candidate. The proposed pipeline
-# advances each profile by five minutes and rebuilds a second, dispatch pass with its envelope.
+# offline unit is committed when the first-pass target exceeds 0.005 MW. AEMO uses the
+# initial state and this candidate target to determine the interval-end mode. The second pass
+# enforces that profile and produces final targets and prices.
 #
 # If a unit starts in modes 0-2 and reaches mode 3 or 4 during the interval, define ``t_M``
 # as minutes from the initial state to minimum load. Remaining ramp minutes are
-# ``\delta=\max(0,5-t_M)``. The second pass energy ramps are
+# ``\delta=\max(0,5-t_M)``. An illustrative second-pass ramp envelope is
 #
 # ```math
 # p_u-M-s_u^{up}\le R_u^{up}\delta/60,\qquad
 # M-p_u-s_u^{down}\le R_u^{down}\delta/60.
 # ```
 #
-# The minimum-load anchor and remaining-time algebra are a project derivation from AEMO
-# explanatory material, corroborated by inspected replay examples. AEMO does not expose the
-# complete transition equation; this is not a claim of exact reproduction of its internal rows.
+# !!! note "Illustrative ramp envelope"
+#     The remaining-time equation illustrates ramping after minimum load is reached. AEMO’s
+#     public description does not specify every transition equation, so this expression
+#     does not establish the exact NEMDE ramp envelope during a mode transition.
 #
 # Initially operating units in modes 3-4 instead ramp from metered ``p^0`` for all five minutes.
 # Units ending before minimum load have their fixed profile rows and no ordinary energy ramps.
@@ -84,13 +88,13 @@ end #hide
 # [FCAS model in NEMDE, §6](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf)
 # and the fast-start two-pass description above.
 #
-# A completed mode-4 unit is marked offline only if the final target is at most 0.005 MW
-# and ``p^0-R^{down}(5/60)\le0.005`` MW. The proposed state cache carries the final state to
-# the next replay interval; the commitment pass is an intermediate solve, not a reported dispatch.
+# After ``T_4``, a unit can be decommitted once its target is at most 0.005 MW; it returns
+# to offline status after ramping to zero. The commitment result is intermediate, whereas
+# the second pass supplies the reported dispatch target.
 #
 # ## Availability and offers remain separate constraints
 #
-# PR #184 adds these elastic rows for **all thermal replay units**, including ordinary units:
+# Availability and total offered MW are distinct restrictions. An illustrative elastic form is:
 #
 # ```math
 # p_u-s_u^{avail}\le A_u,\qquad
@@ -101,10 +105,8 @@ end #hide
 # 1135. Excess MW receives the offer penalty rather than an invented price band. Profile, energy
 # ramp (1155), offer and availability penalties are additive. These priorities follow the
 # [CVP schedule v8.0](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/congestion-information/2025/schedule-of-constraint-violation-penalty-factors.pdf).
-# This differs from raising the hard availability ceiling to the ramp-down floor on the current
-# branch. It does not soften renewable UIGF, scheduled load or battery limits.
 #
-# ## Input map and preprocessing
+# ## Input map and initial conditions
 #
 # | Input | MMSDM source | Timing |
 # | --- | --- | --- |
@@ -112,11 +114,10 @@ end #hide
 # | ``p^0,R^{up},R^{down},A`` | `DISPATCHLOAD.INITIALMW`, `RAMPUPRATE`, `RAMPDOWNRATE`; `BIDPEROFFER_D.MAXAVAIL` | Current interval inputs |
 # | Initial mode and elapsed time | `DISPATCHLOAD.DISPATCHMODE`, `DISPATCHMODETIME` | Previous five-minute interval, matching intervention run |
 # | Previous target | `DISPATCHLOAD.TOTALCLEARED` | Previous interval only, for preprocessing |
-# | Final mode, elapsed time, target | Replay state and second-pass solution | Outputs, then next interval's state |
+# | Final mode, elapsed time, target | Final dispatch state and target | Outputs; initial state for subsequent intervals |
 #
 # Current-interval published `TOTALCLEARED` or `DISPATCHMODE` must not be fed back as the
-# commitment decision. That would reveal the dispatch result being replicated. The new reader
-# `read_fast_start_inputs` separates current inputs from previous-interval state.
+# commitment decision when reconstructing an interval: those fields reveal the outcome.
 #
 # Preprocessing handles inconsistent telemetry. If the preceding target is positive while the
 # reported initial mode is offline and availability is positive, an initial meter below 1 MW
@@ -125,10 +126,3 @@ end #hide
 # These are documented input corrections from AEMO's fast-start preprocessing description,
 # not inference of the current target from price or actual output.
 #
-# ## Coverage
-#
-# The pending pipeline prepares inputs, performs the commitment solve, applies profile and ramp
-# envelopes, solves dispatch, and finalises state. A thermal replay build without prepared
-# inputs must be diagnosed before treating it as fast-start replay. No eligible fast-start
-# inputs require no commitment solve. Lookahead, nonthermal profiles, market price adjustments,
-# and a full reproduction of AEMO's internal commitment algorithm remain outside this change.

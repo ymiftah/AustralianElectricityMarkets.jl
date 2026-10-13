@@ -9,15 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Revised the NEMDE chapters and tutorials for users: removed development history and internal
+  implementation descriptions, and distinguished NEM rules from reconstruction assumptions.
 - Expanded the NEMDE formulation into linked energy, FCAS, interconnector, fast-start and pricing
-  chapters, with equations, MMSDM input maps, executable figures and explicit pending-PR coverage.
+  chapters, with equations, MMSDM input maps, executable figures and notes on known gaps and reconstruction assumptions.
   Consolidated the FCAS introduction and worked interval, and added a local Literate review renderer.
-- The single "From NEM dispatch to PowerSimulations.jl" page is replaced by a four-page NEMDE
-  walkthrough: the NEMDE model (equations and charts), the same model as a JuMP script on a toy
-  market, how PowerSimulations.jl builds it phase by phase, and the AEM / AEMSim formulations that
-  rebuild it (interconnector losses, FCAS requirements as generic constraints and elastic
-  constraints included, checked against the JuMP model). The toy market is shared through
-  `docs/literate/toy_market.jl`.
+- Added toy-market walkthroughs using JuMP, PowerSimulations.jl and AEM / AEMSim, with
+  dispatch and price comparisons for the examples' stated scope.
 
 ### Fixed
 

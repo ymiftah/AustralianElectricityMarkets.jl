@@ -6,19 +6,20 @@ begin
     using Markdown
 end;
 
-include(joinpath(@__DIR__, "..", "..", "literate", "toy_market.jl"))  # @__DIR__ is docs/src/examples when Literate executes
-include(joinpath(@__DIR__, "..", "..", "literate", "toy_jump.jl"));
+include(joinpath(@__DIR__, "..", "..", "literate", "toy_market.jl")) #hide
+include(joinpath(@__DIR__, "..", "..", "literate", "toy_jump.jl")); #hide
 
 # # [NEMDE as a JuMP model](@id nemde-jump)
 #
 # The [formulation overview](@ref nemde-model) introduces the full model. This page turns
 # a deliberately reduced subset into running code: a [JuMP](https://jump.dev) model of a small market, solved with
 # [HiGHS](https://highs.dev). Nothing here depends on `PowerSystems.jl` or `PowerSimulations.jl`;
-# the next two pages show how those packages assemble the same model.
+# the next two pages show how to solve the toy market with those packages.
 #
-# This teaching model omits scheduled consumption, batteries, detailed regulation scaling,
-# fast-start passes and the full price-processing pipeline. Its loss construction is a toy
-# approximation; the package formulation and pending corrections are documented separately.
+# !!! note "Example scope"
+#     This teaching model omits scheduled consumption, batteries, regulation FCAS scaling,
+#     fast-start profiles and price processing. Its piecewise loss curve is a toy approximation.
+#     See the [formulation overview](@ref nemde-model) for the wider market formulation.
 #
 # ## The toy market
 #
@@ -28,21 +29,7 @@ include(joinpath(@__DIR__, "..", "..", "literate", "toy_jump.jl"));
 # stability limit on `COAL1` and one `RAISE6SEC` requirement per region. A single 5-minute
 # dispatch interval is cleared.
 #
-# The data lives in small types with accessor functions, so that the model below reads like the
-# equations: `bid(unit, j)` instead of `unit.bids[j]`.
-
-# A bid is a quantity and a price; a unit carries its bids, availability, initial MW and ramp rates:
-
-#@source types
-
-# The accessors hide the representation (and apply the NEM rules that are not data, such as the
-# `UIGF` cap on availability and the conversion of a ramp rate in MW/h to MW per interval):
-
-#@source accessors
-
-# And the market itself:
-
-#@source market
+# The table shows each unit's availability, metered initial output, ramp capability and offers.
 
 DataFrame(
     unit = [String(unit_name(u)) for u in market.units],
@@ -138,16 +125,10 @@ set_silent(model)
 # breakpoint plus each segment's slope times its flow, and a binary per segment boundary forces the
 # segments to fill in order, so the solved loss follows the curve.
 #
-# The toy uses 5 segments. AEMO's loss models use many more: the current `LOSSMODEL` of the
-# regulated interconnectors has between 60 and 120 breakpoints each (one every few MW).
-#
-# The binaries are there because the loss curve is convex, so its slopes ascend. When losses
-# cost something (the price of a loss, the average of the two regional prices weighted by the loss share, is positive) the solver fills the
-# cheap, shallow segments first by itself and the binaries are redundant. When that weighted price is
-# zero or negative, which happens in the NEM, a loss is no longer costly: the solver would prefer
-# to fill the steepest segment first and "burn" energy, and an exact encoding of the curve needs
-# integrality (binaries or SOS2 weights). AEMO does not publish whether NEMDE itself uses
-# binaries for this.
+# !!! note "Toy loss curve"
+#     This example uses five segments and binary variables to keep the solved flow and loss
+#     on the chosen curve, including at negative prices. This construction is specific to the
+#     example; it does not describe NEMDE's loss solution procedure.
 
 ic = market.interconnector
 segments = linearised_losses(ic)
@@ -266,10 +247,10 @@ set_objective_function(model, objective_function(model) + fcas_cost)
 #
 # Both the `RAISE6SEC` requirements and the network limit are *generic constraints*: a linear
 # combination of unit energy, unit FCAS and interconnector flow, a sense and a right-hand side.
-# NEMDE never lets a generic constraint make the problem infeasible: each carries a violation
-# variable, paid at its penalty factor times the Market Price Cap, so a conflicting constraint
-# is broken at that price instead of stopping the dispatch. The dual of a requirement is the
-# FCAS price.
+# Each toy constraint carries a violation variable, paid at its penalty factor times the
+# Market Price Cap. This follows the violation-priority principle in AEMO's *Schedule of
+# Constraint Violation Penalty Factors* (§1, pp. 3-4). For each independent, unit-coefficient
+# FCAS requirement here, the dual divided by the interval duration gives its FCAS price.
 
 model[:generic] = Dict{String, ConstraintRef}()
 model[:violation] = Dict{String, VariableRef}()
@@ -394,13 +375,12 @@ let
     fig
 end
 
-# This is the complete NEMDE model for the toy market: an offer-cost objective, unit envelopes,
+# This completes the dispatch model for the toy market: an offer-cost objective, unit envelopes,
 # regional balance with a lossy interconnector, the FCAS trapezium and generic constraints with
-# violation penalties. The [next page](@ref nemde-psi) shows how PowerSimulations.jl organises the
-# construction of exactly these pieces.
+# violation penalties. The [next page](@ref nemde-psi) solves the energy-only, lossless
+# version using PowerSimulations.jl.
 
-# The step-by-step model above is the same program as the single function used by the following
-# pages; check that the two agree:
+# Compare the dispatch and prices with the reference toy solution:
 
 reference = solve_toy_jump(market)
 @assert maximum(abs, [constrained.dispatch[u] - reference.dispatch[u] for u in keys(reference.dispatch)]) < 1.0e-6

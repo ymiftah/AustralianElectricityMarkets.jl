@@ -15,8 +15,7 @@ using CairoMakie #hide
 # ```
 #
 # The flow-limit slacks have factor 1150 in the
-# [CVP schedule v8.0, item 2](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/congestion-information/2025/schedule-of-constraint-violation-penalty-factors.pdf).
-# The loss model also imposes a hard breakpoint span; flow-limit slack cannot extend it.
+# [CVP schedule v8.0, item 5](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/congestion-information/2025/schedule-of-constraint-violation-penalty-factors.pdf).
 #
 # With regional demand inputs ``D_r``, the resolved loss-factor equation and its integral are
 #
@@ -29,43 +28,27 @@ using CairoMakie #hide
 # integral in [FY2025-26 Marginal Loss Factors, §4, p. 60](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2025-26-marginal-loss-factors/marginal-loss-factors-for-the-2025-26-fin-year.pdf?la=en).
 # These are inter-regional loss equations, distinct from a unit's energy-bid loss-factor referral.
 #
-# ## Exact piecewise interpolation in AEMSim
+# ## Piecewise loss curves
 #
-# Let sorted breakpoints be ``B_0,\ldots,B_n``, vertex losses ``V_j``, segment widths
-# ``W_j=B_j-B_{j-1}`` and chord slopes ``m_j=(V_j-V_{j-1})/W_j``. AEMSim builds
-#
-# ```math
-# x=B_0+\sum_{j=1}^nz_j,\qquad
-# L=V_0+\sum_{j=1}^nm_jz_j,\qquad0\le z_j\le W_j.
-# ```
-#
-# For each adjacent pair it additionally requires
+# AEMO publishes flow breakpoints in `LOSSMODEL` for the linear-programming representation
+# of interconnector losses ([Electricity Data Model Report](https://visualisations.aemo.com.au/aemo/nemweb/MMSDataModelReport/)).
+# For adjacent breakpoints ``B_{j-1}`` and ``B_j`` with losses ``V_{j-1}`` and ``V_j``,
+# the chord is
 #
 # ```math
-# z_{j+1}\le W_{j+1}y_j,\qquad z_j\ge W_jy_j,\qquad y_j\in\{0,1\}.
+# L^{chord}(x)=V_{j-1}+\frac{V_j-V_{j-1}}{B_j-B_{j-1}}(x-B_{j-1}),
+# \qquad B_{j-1}\le x\le B_j.
 # ```
 #
-# These rows force contiguous filling from the first breakpoint, even at negative prices.
-# Convexity alone would not ensure a loss *equality*: with an epigraph, a negative-priced system
-# could prefer inflated losses. The binaries make this package formulation a MILP. It is an
-# explicit reconstruction, not a claim that AEMO implements these same binary variables.
-# `NEMInterconnectorLoss` rejects concave curves and unsupported network models; its inputs are
-# fixed when a standalone decision model is built.
+# Chord slopes approximate marginal losses. Interpolating analytic losses at breakpoints
+# need not preserve zero loss at zero flow when a segment spans zero.
 #
-# ### Pending PR #183: zero-flow anchoring
+# !!! note "Discrete curve anchoring"
+#     Shifting all vertices by ``-L^{chord}(0)`` preserves slopes and anchors the chord
+#     at zero flow. This is a reconstruction assumption: the annual integration rule
+#     does not specify the interpolation procedure. The replica does not apply this
+#     discrete zero-flow correction, so a chord spanning zero can retain a loss offset.
 #
-# On the current branch ``V_j=L^{analytic}(B_j,D)``. When a chord strictly brackets zero, its
-# interpolated value at zero can differ from the analytic integral's zero value. PR #183 uses
-#
-# ```math
-# V_j=L^{analytic}(B_j,D)-L^{chord}(0,D).
-# ```
-#
-# This shifts every vertex equally, preserving all slopes and making the *dispatch* chord
-# pass through zero. A zero breakpoint needs no shift; a range wholly on one side retains its
-# analytic anchoring. This discrete anchoring is a reconstruction assumption, supported by
-# sampled NEMDE XML segment factors, rather than specified by the annual report's integration rule.
-
 let #hide
     xs = range(-100, 200; length = 301) #hide
     analytic = 0.0005 .* xs .^ 2 #hide
@@ -84,7 +67,7 @@ end #hide
 # *Constructed coefficients: the chord from -100 to 100 MW has a 5 MW intercept. Subtracting
 # it from all vertices changes the loss level while retaining the chord slopes.*
 #
-# ## Static regional loss sharing
+# ## Regional loss sharing
 #
 # With configured from-region loss share ``\sigma_i``, injections are
 #
@@ -101,71 +84,51 @@ end #hide
 #
 # ## MNSP directional offers
 #
-# AEMSim represents paired offers with nonnegative receiving-end flows and bounded bands:
+# Directional offers specify prices, band capacities and available transfer capacity.
+# For receiving-end flow ``q^d`` in direction ``d``, an offer-band representation is
 #
 # ```math
-# x=q^{forward}-q^{reverse},\qquad
 # q^d=\sum_bq_b^d,\qquad0\le q_b^d\le Q_b^d,\qquad q^d\le A^d.
 # ```
 #
-# Their cost is ``h\sum_{d,b}c_b^dq_b^d``. These link prices use the directional offer
-# convention and are not passed through unit energy-price referral. A direction binary prevents
-# simultaneous opposing transfer:
+# Offer cost over an interval of ``h`` hours is ``h\sum_{d,b}c_b^dq_b^d``. Receiving-end
+# flow excludes DC losses: the sender supplies ``q+L`` and the receiver receives ``q``.
+# Terminal loss factors refer these transfers to the regional reference nodes:
 #
 # ```math
-# q^{forward}\le U^{forward}y,\qquad
-# q^{reverse}\le U^{reverse}(1-y),\qquad y\in\{0,1\},
+# I_{sender}=-\mathrm{TLF}_{from}(q+L),\qquad
+# I_{receiver}=\mathrm{TLF}_{to}q.
 # ```
 #
-# where ``U^d=\min(A^d,\sum_bQ_b^d)``. Zero net flow therefore means both link flows are zero.
-# Terminal factors modify each active link's transfer terms to ``-\mathrm{TLF}_{from}q`` at
-# the sender and ``+\mathrm{TLF}_{to}q`` at the receiver. On the current branch losses are
-# additionally assigned by the configured static share.
-#
-# ### Pending PR #183: directional loss allocation
-#
-# With paired MNSP offers, #183 instead assigns loss to the active sender. Its split uses
-# signed vertex bounds ``L_{min}\le0\le L_{max}``:
-#
-# ```math
-# \ell^{forward}+\ell^{reverse}=L,\qquad
-# L_{min}y\le\ell^{forward}\le L_{max}y,\qquad
-# L_{min}(1-y)\le\ell^{reverse}\le L_{max}(1-y).
-# ```
-#
-# The active sender contributes ``-\mathrm{TLF}_{from}(q+\ell)`` and the receiver
-# ``+\mathrm{TLF}_{to}q``. There is no separate loss offer cost; losses change the energy
-# needed to meet demand. The receiving-end convention is described in
+# This convention is described in
 # [FY2025-26 Marginal Loss Factors, §5.1, p. 63](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2025-26-marginal-loss-factors/marginal-loss-factors-for-the-2025-26-fin-year.pdf?la=en).
-# Signed bounds are necessary because resolved loss vertices need not all be positive.
+# Losses change the energy required to supply the transfer; they are not a separate offer.
+# The MNSP convention applies to the configuration for the period being studied.
 #
 # ## Input map and annual applicability
 #
-# | Input | MMSDM tables and fields | Package path |
-# | --- | --- | --- |
-# | Region pair | `INTERCONNECTOR.REGIONFROM`, `REGIONTO` | System interchange construction |
-# | ``c_i,m_i,\sigma_i`` | `INTERCONNECTORCONSTRAINT.LOSSCONSTANT`, `LOSSFLOWCOEFFICIENT`, `FROMREGIONLOSSSHARE` | `interconnector_loss_models` |
-# | Demand coefficients | `LOSSFACTORMODEL.REGIONID`, `DEMANDCOEFFICIENT` | `read_interconnector_demand_coefficients` |
-# | Breakpoints | `LOSSMODEL.LOSSSEGMENT`, `MWBREAKPOINT` | `read_interconnector_loss_breakpoints` |
-# | Loss-equation demand | `DISPATCHREGIONSUM.INITIALSUPPLY + DEMANDFORECAST`, plus negative BDU `DISPATCHLOAD.INITIALMW` | Build-time curve evaluation |
-# | Published transfer limits | `DISPATCHINTERCONNECTORRES.EXPORTLIMIT`, `IMPORTLIMIT` | `set_interconnector_limits!` |
-# | Directional bands | `MNSP_DAYOFFER.PRICEBAND1` to `PRICEBAND10`; `MNSP_BIDOFFERPERIOD.BANDAVAIL1` to `BANDAVAIL10`, `MAXAVAIL` | `set_mnsp_offers!` |
-# | Direction and terminal factors | `MNSP_INTERCONNECTOR.LINKID`, `INTERCONNECTORID`, region endpoints, `FROM_REGION_TLF`, `TO_REGION_TLF` | Directional offer metadata |
+# | Input | MMSDM tables and fields |
+# | --- | --- |
+# | Region pair | `INTERCONNECTOR.REGIONFROM`, `REGIONTO` |
+# | Equation and loss share | `INTERCONNECTORCONSTRAINT.LOSSCONSTANT`, `LOSSFLOWCOEFFICIENT`, `FROMREGIONLOSSSHARE` |
+# | Demand coefficients | `LOSSFACTORMODEL.REGIONID`, `DEMANDCOEFFICIENT` |
+# | Breakpoints | `LOSSMODEL.LOSSSEGMENT`, `MWBREAKPOINT` |
+# | Transfer limits | `DISPATCHINTERCONNECTORRES.EXPORTLIMIT`, `IMPORTLIMIT` |
+# | Directional prices | `MNSP_DAYOFFER.PRICEBAND1` to `PRICEBAND10` |
+# | Directional quantities | `MNSP_BIDOFFERPERIOD.BANDAVAIL1` to `BANDAVAIL10`, `MAXAVAIL` |
+# | Terminal factors | `MNSP_INTERCONNECTOR.FROM_REGION_TLF`, `TO_REGION_TLF` |
 #
-# `set_demand!` attaches this loss-equation demand as `"loss_demand"`, separately from
-# balance `TOTALDEMAND`. Directional applied offers are tracked by `DISPATCH_MNSPBIDTRK`.
-# Each loss-source table resolves effective dates and versions independently; archive month
-# is not the model applicability date. #183 also supplies a missing V-SA NSW demand term only
-# for FY2025-26 and only when its exact source versions and remaining coefficients match the
-# annual report. An explicit published coefficient, including zero, takes precedence.
-# See [Loss inputs and assumptions](../interconnector-losses.md) for annual coefficients,
-# provenance, defaults and the narrowly gated correction.
+# Field definitions are in AEMO's
+# [Electricity Data Model Report](https://visualisations.aemo.com.au/aemo/nemweb/MMSDataModelReport/).
+# Effective dates and versions determine applicable inputs. Archive months identify storage
+# partitions, not the applicability of loss equations. See
+# [Loss inputs and assumptions](../interconnector-losses.md) for annual equations and configuration changes.
 #
-# ## Coverage and limitations
-#
-# The current model supports regional losses and paired MNSP bids. MNSP offer availability and
-# band bounds remain hard; ramp, fixed-load and elastic-offer behavior are incomplete. Basslink
-# fixed converter losses and its no-go zone are omitted. A loss breakpoint range is always a
-# hard modelling limit. Rebuild the standalone decision model when demands or loss inputs change.
-# The pending PR does not infer a new interconnector topology from an annual report's forecast date.
-# Unmodelled network definitions and unsupported curves must be inspected before claiming fidelity.
+# !!! note "Replication coverage"
+#     The replica's breakpoint span is a hard flow boundary, even when a published flow
+#     limit has a violation allowance. Direction-dependent MNSP loss allocation is not
+#     represented; the replica uses static regional shares instead. MNSP ramp, fixed-load
+#     and elastic-offer behavior remain incomplete. Basslink fixed converter losses and
+#     its no-go zone are omitted;
+#     regulated Basslink treatment requires separate validation. These gaps affect
+#     comparisons with historical dispatch.
