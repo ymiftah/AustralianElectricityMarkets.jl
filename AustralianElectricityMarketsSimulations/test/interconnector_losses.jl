@@ -610,7 +610,14 @@ function _solve_mnsp(sys; zero_flow::Bool = false)
 end
 
 @testset "MNSP link offers bound and price the interconnector flow" begin
-    free = _solve_mnsp(_loss_test_system(; breakpoints = [-1000.0, 1000.0]))
+    free_sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+    free = _solve_mnsp(free_sys)
+    load2 = PSY.with_units_base(free_sys, "NATURAL_UNITS") do
+        sum(
+            PSY.get_max_active_power(l) for l in PSY.get_components(PSY.PowerLoad, free_sys)
+                if PSY.get_name(PSY.get_area(PSY.get_bus(l))) == "2"
+        )
+    end
     @test ismissing(free.forward)  # no offers: no link variables, the free-flow model
     @test free.flow > 40.0  # free-flow baseline: area 2's demand is served through IC1
 
@@ -627,7 +634,7 @@ end
         sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
         _attach_mnsp_offers!(sys; forward = (500.0, [(500.0, 10.0)]), reverse = (500.0, [(500.0, 10.0)]))
         out = _solve_mnsp(sys)
-        @test out.flow ≈ free.flow atol = 1.0e-6
+        @test out.flow ≈ load2 atol = 1.0e-6
         @test out.forward ≈ out.flow atol = 1.0e-6
     end
 
@@ -652,7 +659,7 @@ end
         sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
         _attach_mnsp_offers!(sys; forward = (500.0, [(500.0, -50.0)]), reverse = (500.0, [(500.0, -50.0)]))
         out = _solve_mnsp(sys)
-        @test out.flow ≈ free.flow atol = 1.0e-6
+        @test out.flow ≈ load2 atol = 1.0e-6
         @test min(out.forward, out.reverse) ≈ 0.0 atol = 1.0e-6
     end
     @testset "link loss factors scale the delivered MW and the dispatch condition holds" begin
@@ -662,14 +669,34 @@ end
             forward_tlfs = (1.0, 0.9907), reverse_tlfs = (0.9907, 1.0),
         )
         out = _solve_mnsp(sys)
-        # Linear loss 0.05 * flow, share 0.4: area 2 balance is TLF * q - 0.6 * loss = load.
-        load2 = free.flow * (1 - 0.6 * 0.05)
-        @test out.forward * 0.9907 - 0.6 * 0.05 * out.forward ≈ load2 atol = 1.0e-6
-        # The offer is inframarginal, so its reduced cost is zero: offer price = to_tlf * price_to - from_tlf *
-        # price_from less the loss charge (slope 0.05, share 0.4). Duals are per-unit objective values of an
-        # hourly interval.
-        marginal = 0.9907 * out.dual2 - 1.0 * out.dual1 - 0.05 * (0.4 * out.dual1 + 0.6 * out.dual2)
+        @test out.forward * 0.9907 ≈ load2 atol = 1.0e-6
+        # Receiving-end flow delivers q * to_tlf; the sender supplies q plus DC losses.
+        marginal = 0.9907 * out.dual2 - 1.05 * out.dual1
         @test marginal ≈ PSY.get_base_power(sys) * 10.0 rtol = 1.0e-6
+    end
+
+    @testset "DC losses follow the sending end in either direction" begin
+        for reverse in (false, true)
+            sys = _loss_test_system(;
+                loss_constant = 1.0, loss_flow_coefficient = 0.0001,
+                breakpoints = [-1000.0, 0.0, 1000.0], priced_supply_only = true,
+            )
+            ic = _attach_mnsp_offers!(
+                sys; forward = (500.0, [(500.0, 10.0)]), reverse = (500.0, [(500.0, 10.0)]),
+                forward_tlfs = (1.1, 0.9), reverse_tlfs = (1.1, 0.9),
+            )
+            if reverse
+                from, to = PSY.get_from_area(ic), PSY.get_to_area(ic)
+                PSY.set_from_area!(ic, to)
+                PSY.set_to_area!(ic, from)
+            end
+            out = _solve_mnsp(sys)
+            @test out.flow ≈ (reverse ? -1 : 1) * load2 / 0.9 atol = 1.0e-6
+            @test min(out.forward, out.reverse) ≈ 0.0 atol = 1.0e-6
+            # On either side of zero, the chord loss is 0.05 times the magnitude of flow.
+            marginal = 0.9 * out.dual2 - 1.1 * 1.05 * out.dual1
+            @test marginal ≈ PSY.get_base_power(sys) * 10.0 rtol = 1.0e-6
+        end
     end
 
     @testset "a zero net flow zeroes both links even when circulation would create energy" begin

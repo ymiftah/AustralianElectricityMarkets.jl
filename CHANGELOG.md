@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- For interconnectors carrying paired directional MNSP offers, DC losses are supplied by the active
+  sending area (`-from_tlf * (q + loss)`) using its terminal loss factor, instead of the static
+  regional loss share. New `MNSPLinkLossVariable`. Interconnectors without directional offers keep
+  static sharing.
+
 - Piecewise interconnector loss curves are referenced to zero flow: when a chord brackets zero, the
   new `loss_curve_vertex_values` subtracts its zero-flow intercept from every vertex, so modelled
   loss is zero at zero flow and marginal slopes are unchanged. The loss equation and
