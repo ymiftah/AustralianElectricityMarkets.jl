@@ -25,7 +25,7 @@ export add_nem_constraints!, get_skipped_constraints, get_dropped_terms
 export fcas_service_name
 export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS, BidType
 export InterconnectorLossModel, loss_factor, interconnector_losses, loss_segments,
-    attach_interconnector_losses!
+    loss_curve_vertex_values, attach_interconnector_losses!
 export FCASTrapezium, FCASBid,
     get_enablement_min, get_low_breakpoint, get_high_breakpoint, get_enablement_max,
     get_max_avail, get_ramp_up_rate, get_ramp_down_rate, get_lower_slope_coeff, get_upper_slope_coeff,

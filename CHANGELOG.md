@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Piecewise interconnector loss curves are referenced to zero flow: when a chord brackets zero, the
+  new `loss_curve_vertex_values` subtracts its zero-flow intercept from every vertex, so modelled
+  loss is zero at zero flow and marginal slopes are unchanged. The loss equation and
+  `interconnector_loss_gaps` use it.
+
 - `interconnector_loss_models` fills the V-SA `NSW1` demand coefficient (`1.6981e-6`) that AEMO's
   2025-26 report publishes but MMSDM `LOSSFACTORMODEL` omits, for 2025-07-01 to 2026-06-30. A value
   present in the table is never overridden.

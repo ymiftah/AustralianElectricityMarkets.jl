@@ -264,7 +264,7 @@ function _add_loss_variables_and_constraints!(
                 flow_var[name, t] ==
                     bp1 + sum(seg_var[name, segment_labels[s], t] for s in 1:max_segments)
             )
-            base_loss = interconnector_losses(model, bp1, demand_t)
+            base_loss = first(loss_curve_vertex_values(model, demand_t))
             loss_def_con[name, t] = JuMP.@constraint(
                 jm,
                 loss_var[name, t] == base_loss +

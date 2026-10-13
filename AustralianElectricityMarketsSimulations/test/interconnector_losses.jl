@@ -691,3 +691,38 @@ end
         @test isfinite(out.dual1) && isfinite(out.dual2)
     end
 end
+
+@testset "zero-referenced quadratic losses solve without a gap" begin
+    # This range crosses zero without placing a breakpoint there. The analytical offset is
+    # hand-computed from the chord endpoints; demand affects its linear term only.
+    breakpoints = [-1000.0, 1000.0]
+    b = 0.00017965
+    sys = _loss_test_system(;
+        loss_constant = 1.0, loss_flow_coefficient = b,
+        demand_coefficients = Dict("2" => 0.0003), breakpoints = breakpoints,
+        priced_supply_only = true,
+    )
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    PSI.solve!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    res = PSI.OptimizationProblemResults(model)
+    gaps = interconnector_loss_gaps(res, sys)
+    @test !isempty(gaps)
+    @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
+
+    flow_df = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
+    loss_df = PSI.read_variable(res, "InterconnectorLossVariable__AreaInterchange")
+    flow = flow_df.value[findfirst(==("IC1"), flow_df.name)]
+    loss = loss_df.value[findfirst(==("IC1"), loss_df.name)]
+    @test flow > 0
+    demand2 = PSY.with_units_base(sys, "NATURAL_UNITS") do
+        sum(
+            PSY.get_max_active_power(l) for l in PSY.get_components(PSY.PowerLoad, sys)
+                if PSY.get_name(PSY.get_area(PSY.get_bus(l))) == "2"
+        )
+    end
+    # Symmetric endpoints cancel the quadratic chord slope after zero normalization.
+    expected = 0.0003 * demand2 * flow
+    @test loss ≈ expected atol = 1.0e-5
+end
