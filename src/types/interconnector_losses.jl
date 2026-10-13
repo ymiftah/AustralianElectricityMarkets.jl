@@ -111,6 +111,30 @@ end
 
 
 """
+    loss_curve_vertex_values(model, demand) -> Vector{Float64}
+
+`model`'s dispatch loss at each of `model.breakpoints`, referenced to zero flow. When a chord
+strictly brackets zero, its interpolated zero-flow value is subtracted from every vertex, so the
+piecewise curve is zero at zero flow and keeps the slopes of [`loss_segments`](@ref). Other
+ranges return [`interconnector_losses`](@ref) unchanged.
+
+# Arguments
+- `model`: An [`InterconnectorLossModel`](@ref).
+- `demand`: Regional demand values in the same units as `model`.
+
+# Returns
+Vertex losses in `model`'s units.
+"""
+function loss_curve_vertex_values(model::InterconnectorLossModel, demand::AbstractDict)
+    breakpoints = model.breakpoints
+    values = [interconnector_losses(model, bp, demand) for bp in breakpoints]
+    crossing = findfirst(i -> breakpoints[i] < 0.0 < breakpoints[i + 1], 1:(length(breakpoints) - 1))
+    isnothing(crossing) && return values
+    a, z = breakpoints[crossing:(crossing + 1)]
+    return values .+ model.loss_flow_coefficient * a * z / 2
+end
+
+"""
     loss_segments(model, demand) -> Vector{NamedTuple}
 
 `model`'s quadratic loss curve linearised on its own `MWBREAKPOINT`s, as
