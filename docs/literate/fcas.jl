@@ -1,61 +1,71 @@
-# # FCAS in the NEM
+# # [Inspect an FCAS interval](@id fcas-requirement-reading)
 #
-# The FCAS market introduction, capability diagrams, co-optimisation equations and MMSDM
-# walkthrough are now together in [FCAS capability and co-optimisation](@ref nemde-fcas).
-# Start there for the ten services, input maps, scaling, eligibility, joint constraints,
-# availability, prices and the worked Tasmanian interval.
-
-# ## Existing section links
+# This page reads the offers, requirements, enablement and prices of one dispatch interval
+# from the cache. For what the quantities mean, see
+# [FCAS capability and co-optimisation](@ref nemde-fcas); for the tables behind each reader,
+# see [Where the data lives](@ref fcas-types-mapping).
 #
-# <a id="fcas-requirement-reading"></a>
+# The example is the interval ending 16:30 on 13 January 2025 in Tasmania. It needs a cache
+# holding the bid, dispatch and constraint tables for that month, and the earlier months in
+# which the constraint definitions were published.
 #
-# [Worked interval](@ref fcas-requirement-reading) is in the combined chapter.
+# ## Offers and outcomes of one unit
 #
-# <a id="fcas-trapezium"></a>
+# ```julia
+# using AustralianElectricityMarkets, Dates, DataFrames
 #
-# [Offers and trapezia](@ref fcas-trapezium) is in the combined chapter.
+# db = aem_connect()
+# interval = DateTime(2025, 1, 13, 16, 30)
+# window = interval:Minute(5):(interval + Minute(5))
 #
-# <a id="fcas-cooptimisation"></a>
+# bids = read_fcas_bids(db, window, BidType.LOWER6SEC)
+# unit_bid = subset(bids, :DUID => ByRow(==("TUNGATIN")))
 #
-# [Co-optimisation](@ref fcas-cooptimisation) is in the combined chapter.
+# outcomes = read_fcas_dispatch(db, window; intervention = 0)
+# unit_outcomes = subset(outcomes, :DUID => ByRow(==("TUNGATIN")))
+# ```
 #
-# <a id="fcas-cases"></a>
+# `unit_bid` holds the five trapezium parameters and the band quantities. `unit_outcomes`
+# holds the unit's enablement in each service. To check an enablement against the trapezium,
+# apply the joint capacity constraints of
+# [Energy and FCAS together](@ref fcas-cooptimisation) at the unit's energy target, with its
+# regulation enablement from the same row.
 #
-# [Participant cases](@ref fcas-cases) is in the combined chapter.
+# ## Requirements and prices of a region
 #
-# <a id="fcas-cases-participants"></a>
+# ```julia
+# requirements = read_fcas_requirements(db, window; intervention = 0)
+# tas_requirements = subset(requirements, :REGIONID => ByRow(==("TAS1")))
+# prices = read_fcas_prices(db, window; intervention = 0)
+# ```
 #
-# [Participant coordinates](@ref fcas-cases-participants) is in the combined chapter.
+# `tas_requirements` lists every requirement that covers Tasmania, per service, with its
+# marginal value. Several usually apply to one service. Their marginal values sum to the
+# price in `prices`, as described in [FCAS prices](@ref fcas-pricing).
 #
-# <a id="fcas-cases-application"></a>
+# ## The definition of a requirement
 #
-# [Energy target and envelope](@ref fcas-cases-application) is in the combined chapter.
+# A requirement's name and right-hand side do not say what it requires. Its sense and its
+# terms do.
 #
-# <a id="fcas-cases-scaling"></a>
+# ```julia
+# invoked = read_invoked_constraints(db, window; intervention = 0)
+# definitions = read_constraint_definitions(db, invoked)
+# terms = read_constraint_terms(db, invoked, window)
+# ```
 #
-# [Scaling](@ref fcas-cases-scaling) is in the combined chapter.
+# `definitions` gives the sense (`<=`, `>=` or `=`) and the penalty factor of each
+# constraint in force. `terms` gives its coefficients. For a `>=` requirement with a
+# right-hand side of 137.5 MW and a left-hand side of 129.65 MW, the shortfall is 7.85 MW.
+# The same numbers under a `<=` sense would mean the constraint is slack.
 #
-# <a id="fcas-cases-preconditions"></a>
+# ## Who was enabled
 #
-# [Eligibility](@ref fcas-cases-preconditions) is in the combined chapter.
+# ```julia
+# providers = subset(outcomes, :BIDTYPE => ByRow(==(BidType.RAISE6SEC)), :TARGET => ByRow(>(0)))
+# units = read_units(db)  # join on DUID to keep the providers of one region
+# ```
 #
-# <a id="fcas-cases-joint"></a>
-#
-# [Joint capacity and ramping](@ref fcas-cases-joint) is in the combined chapter.
-#
-# <a id="fcas-cases-availability"></a>
-#
-# [Actual availability](@ref fcas-cases-availability) is in the combined chapter.
-#
-# <a id="fcas-pricing"></a>
-#
-# [Pricing](@ref fcas-pricing) is in the combined chapter.
-#
-# <a id="fcas-types-mapping"></a>
-#
-# [MMSDM input map](@ref fcas-types-mapping) is in the combined chapter.
-#
-# <a id="fcas-references"></a>
-#
-# [References](@ref fcas-references) is in the combined chapter.
-#
+# The published enablement shows which units were used. The offers alone do not: a cheaper
+# unit can be left out because it is stranded, or because its energy target leaves it no
+# headroom.

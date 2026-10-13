@@ -4,16 +4,16 @@ const FORMULATION_PAGES = [
 ]
 
 const FORMULATION_FIGURE_DESCRIPTIONS = Dict(
-    "nemde_energy" => ["Directional battery capacity and net five-minute ramp envelope"],
+    "nemde_energy" => ["Battery availability in each direction and the range reachable by ramping"],
     "nemde_fcas" => [
-        "FCAS allocation with shared and local procurement requirements",
-        "FCAS trapezium with five technical limits and three operating points",
-        "Submitted and effective FCAS envelopes under AGC limits, ramp scaling and UIGF",
-        "Contingency capability after enabling raise or lower regulation",
-        "Offered, scaled, available and enabled FCAS quantities",
+        "FCAS enablement with a market-wide requirement and with an added local requirement",
+        "FCAS trapezium with its five parameters and three energy targets",
+        "Offered and adjusted FCAS trapeziums under AGC limits, AGC ramp rate and UIGF",
+        "Contingency trapezium after enabling raise or lower regulation",
+        "Offered, scaled, actually available and enabled FCAS quantities",
     ],
-    "nemde_interconnectors" => ["Analytic loss integral and unshifted versus zero-anchored dispatch chords"],
-    "nemde_fast_start" => ["Fast-start fixed-output segments and declining minimum-load bound"],
+    "nemde_interconnectors" => ["Quadratic loss curve with its chords, as placed and shifted to zero at zero flow"],
+    "nemde_fast_start" => ["Fast-start inflexibility profile with fixed output in modes 1 and 2 and a floor in modes 3 and 4"],
 )
 
 function formulation_figure_descriptions(content, name)

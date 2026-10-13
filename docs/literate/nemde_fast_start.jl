@@ -2,127 +2,165 @@ using CairoMakie #hide
 
 # # [Fast-start dispatch](@id nemde-fast-start)
 #
-# Fast-start inflexibility profiles constrain a unit after a commitment decision. They are
-# not an ordinary minimum-generation bound or a price-based classification of observed targets.
-# The profile and commitment process described below follow AEMO’s published fast-start
-# procedure. They distinguish a commitment decision from the final dispatch target.
+# The NEM has no central unit commitment. A participant decides for itself when to start a
+# slow plant, and offers it into dispatch once it is running. The exception is the
+# **fast-start unit**: a generator, typically a gas turbine or a hydro unit, that can
+# synchronise and reach its minimum load within minutes. Such a unit can ask NEMDE to start
+# it when the price justifies it. In return NEMDE must respect the shape of its start-up,
+# which the unit declares as a **dispatch inflexibility profile**.
 #
-# !!! note "Fast-start coverage"
-#     Fast-start profile transitions and the two-pass commitment procedure are not included
-#     in the dispatch reconstruction available here. Ordinary ramp limits alone do not
-#     reproduce the profile restrictions described in this chapter.
+# This chapter explains the profile, the constraints it adds to dispatch, and the two solves
+# NEMDE uses to decide which units to start. It follows AEMO's
+# [Fast Start Unit Inflexibility Profile](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fast-start-unit-inflexibility-profile.pdf).
+# Symbols follow the [notation table](@ref nemde-notation).
 #
-# ## Profile modes and interval-end output
+# ## The inflexibility profile
 #
-# A profile has minimum load ``M`` (MW) and four durations ``T_1,\ldots,T_4`` (minutes).
-# Its state is a mode and elapsed minutes in that mode. Following AEMO's
-# [Fast Start Unit Inflexibility Profile, §§2-5, pp. 5-14](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fast-start-unit-inflexibility-profile.pdf),
-# the restrictions depend on the state at the dispatch interval’s end:
+# A profile has a minimum load ``M`` in MW and four durations in minutes, submitted with the
+# unit's daily energy offer.
 #
-# | Mode | Meaning | Profile restriction at elapsed time ``\tau`` |
-# | --- | --- | --- |
-# | 0 | Offline, available for commitment | Fixed zero |
-# | 1 | Synchronising | Fixed zero for ``T_1`` minutes |
-# | 2 | Ramping to minimum load | Fixed ``M\tau/T_2`` |
-# | 3 | Minimum-load hold | At least ``M`` for ``T_3`` minutes |
-# | 4 | Release of minimum-load restriction | At least ``M\max(0,1-\tau/T_4)`` |
+# | Parameter | Meaning |
+# | --- | --- |
+# | ``T_1`` | Time to synchronise after the instruction to start. Output is zero |
+# | ``T_2`` | Time to ramp from zero to minimum load |
+# | ``T_3`` | Time the unit must stay at or above minimum load |
+# | ``T_4`` | Time to shut down from minimum load |
 #
-# Mode 4 does not force a shutdown: output can remain above this declining lower bound.
-# Completing ``T_4`` alone does not return the unit to mode 0. Zero-duration segments are
-# skipped. If all four timing parameters are zero or null, the unit is treated as
-# slow-start without a fast-start inflexibility profile.
+# The four durations are non-negative, at least one is positive, and they sum to less than
+# 60 minutes. A unit that offers all four as zero is dispatched as an ordinary unit.
 #
-# With interval-end profile ``\phi_u`` and nonnegative slacks, the dispatch pass builds
+# The position of a unit on its profile is its **mode**, together with the minutes ``\tau``
+# it has spent in that mode. NEMDE receives both at the start of each interval.
 #
-# ```math
-# p_u+s_u^{profile,def}\ge\phi_u,\qquad
-# p_u-s_u^{profile,sur}\le\phi_u\quad\text{only in modes 0, 1, 2}.
-# ```
+# | Mode | AEMO's name | Lasts | Output at the end of the interval |
+# | --- | --- | --- | --- |
+# | 0 | Offline | Until committed | Zero |
+# | 1 | Synchronising | ``T_1`` | Zero |
+# | 2 | Start up | ``T_2`` | Exactly ``M\,\tau/T_2`` |
+# | 3 | Minimum loading | ``T_3`` | At least ``M`` |
+# | 4 | Normal operation, first ``T_4`` minutes | ``T_4`` | At least ``M\,(1-\tau/T_4)`` |
+# | 4 | Normal operation, after ``T_4`` | Until the target reaches zero | Unrestricted by the profile |
 #
-# Modes 3 and 4 have only the lower row. Both profile slacks have CVP factor 1130; they
-# preserve the distinction between a profile violation and a ramp or availability violation.
+# In modes 1 and 2 the output is fixed: the unit follows its start-up and cannot be
+# dispatched up or down. In modes 3 and 4 the profile is only a floor, and the unit can be
+# dispatched anywhere above it. The floor in mode 4 falls from ``M`` to zero over ``T_4``
+# minutes, which lets the unit shut down no faster than it declared. A segment with zero
+# duration is skipped.
 
 let #hide
     minutes = [0.0, 2, 6, 9, 13, 16] #hide
     lower = [0.0, 0, 40, 40, 0, 0] #hide
     fig = Figure(size = (800, 340)) #hide
-    ax = Axis(fig[1, 1]; xlabel = "Minutes since commitment", ylabel = "Profile output (MW)", title = "Illustrative fast-start minimum-load profile") #hide
-    lines!(ax, minutes, lower; linewidth = 3, color = :steelblue, label = "Profile lower bound") #hide
-    lines!(ax, [0, 2, 6], [0, 0, 40]; linewidth = 6, color = (:darkorange, 0.5), label = "Fixed-output modes 1 and 2") #hide
+    ax = Axis(fig[1, 1]; xlabel = "Minutes since the instruction to start", ylabel = "Profile (MW)", title = "Illustrative inflexibility profile") #hide
+    lines!(ax, minutes, lower; linewidth = 3, color = :steelblue, label = "Floor in modes 3 and 4") #hide
+    lines!(ax, [0, 2, 6], [0, 0, 40]; linewidth = 6, color = (:darkorange, 0.5), label = "Fixed output in modes 1 and 2") #hide
     vlines!(ax, [2, 6, 9, 13]; linestyle = :dash, color = (:black, 0.25)) #hide
     axislegend(ax; position = :rt, labelsize = 12) #hide
     fig #hide
 end #hide
 
-# *Constructed profile: ``M=40`` MW and ``(T_1,T_2,T_3,T_4)=(2,4,3,4)`` minutes.
-# From an offline start, a five-minute dispatch interval ends in mode 2 at 30 MW. Mode 4
-# releases the floor from 40 to zero; the actual target need not trace that decline.*
+# *Constructed profile with ``M=40`` MW and ``(T_1,T_2,T_3,T_4)=(2,4,3,4)`` minutes. The
+# dashed lines mark the changes of mode at 2, 6, 9 and 13 minutes.*
 #
-# ## Two passes and available ramp time
+# ## The constraints the profile adds
 #
-# The first, commitment pass solves energy and FCAS without profile rows. For units initially
-# in modes 0, 1 or 2, it also omits ordinary energy ramps and joint FCAS ramp rows. An initially
-# offline unit is committed when the first-pass target exceeds 0.005 MW. AEMO uses the
-# initial state and this candidate target to determine the interval-end mode. The second pass
-# enforces that profile and produces final targets and prices.
-#
-# If a unit starts in modes 0-2 and reaches mode 3 or 4 during the interval, define ``t_M``
-# as minutes from the initial state to minimum load. Remaining ramp minutes are
-# ``\delta=\max(0,5-t_M)``. An illustrative second-pass ramp envelope is
+# Write ``\phi_u`` for the profile value at the end of the interval, from the table above.
+# The unit's target ``p_u`` must satisfy:
 #
 # ```math
-# p_u-M-s_u^{up}\le R_u^{up}\delta/60,\qquad
-# M-p_u-s_u^{down}\le R_u^{down}\delta/60.
+# p_u+\sigma_u^{\mathrm{def}}\ge\phi_u\quad\text{in every mode},\qquad
+# p_u-\sigma_u^{\mathrm{sur}}\le\phi_u\quad\text{in modes 0, 1 and 2}.
 # ```
 #
-# !!! note "Illustrative ramp envelope"
-#     The remaining-time equation illustrates ramping after minimum load is reached. AEMO’s
-#     public description does not specify every transition equation, so this expression
-#     does not establish the exact NEMDE ramp envelope during a mode transition.
+# The first constraint is the floor. The second, present only while the output is fixed,
+# turns the floor into an equality. Both slacks have a penalty factor of 1130, item 10 of
+# AEMO's [Schedule of Constraint Violation Penalty Factors, v8.0](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/congestion-information/2025/schedule-of-constraint-violation-penalty-factors.pdf).
+# That is below the ramp-rate factor of 1155 and above the availability factor of 370, so a
+# unit on its profile is held there even above its declared availability.
 #
-# Initially operating units in modes 3-4 instead ramp from metered ``p^0`` for all five minutes.
-# Units ending before minimum load have their fixed profile rows and no ordinary energy ramps.
-# The joint FCAS ramp exception depends on the **initial** mode: initial modes 0-2 omit those
-# rows in both passes, even if the interval ends in mode 3. Capacity, trapezium and procurement
-# rows still apply. AEMO describes this separation in the
-# [FCAS model in NEMDE, §6](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf)
-# and the fast-start two-pass description above.
+# ## Deciding which units to start: two solves
 #
-# After ``T_4``, a unit can be decommitted once its target is at most 0.005 MW; it returns
-# to offline status after ramping to zero. The commitment result is intermediate, whereas
-# the second pass supplies the reported dispatch target.
+# A start is a yes-or-no decision, which a linear programme cannot take. If the profiles were
+# simply enforced, NEMDE could not tell whether starting a unit is worthwhile. AEMO resolves
+# this with two solves in every interval.
 #
-# ## Availability and offers remain separate constraints
+# 1. **First solve, without profiles.** All profile constraints are ignored. Units that
+#    start the interval in modes 0, 1 or 2 are also freed from their energy ramp rates and
+#    from the joint energy and FCAS ramping constraints. The solve shows how much each
+#    fast-start unit would produce if it were fully flexible.
+# 2. **Commitment.** Each unit's mode at the end of the interval is set from its mode at the
+#    start and its first-solve result.
+#    - An offline unit is **started** if its first-solve target exceeds 0.005 MW. It then
+#      moves along its profile; if ``T_1+T_2`` is under five minutes it is already in mode 3
+#      by the end of the interval.
+#    - A unit already on its profile **continues** along it.
+#    - A unit that has completed ``T_4`` is **shut down** the first time its target is
+#      0.005 MW or less. It returns to mode 0 once it has ramped down to zero.
+# 3. **Second solve, with profiles.** The profile constraints are enforced for the modes
+#    found in step 2. This solve produces the published targets and prices.
 #
-# Availability and total offered MW are distinct restrictions. An illustrative elastic form is:
+# In mode 4, before ``T_4`` has elapsed, the unit's lower limit is the tighter of its
+# ramp-down limit and the falling profile floor. Units that begin the interval in modes 0, 1
+# or 2 have no joint energy and FCAS ramping constraints in either solve
+# ([FCAS Model in NEMDE, §6.5, p. 28](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf)).
 #
-# ```math
-# p_u-s_u^{avail}\le A_u,\qquad
-# p_u=\sum_bq_{u,b}+s_u^{offer},\qquad0\le q_{u,b}\le Q_{u,b}.
-# ```
+# ## Correcting the starting mode
 #
-# ``A_u`` remains the published availability. Its slack has factor 370; offer excess has factor
-# 1135. Excess MW receives the offer penalty rather than an invented price band. Profile, energy
-# ramp (1155), offer and availability penalties are additive. These priorities follow the
-# [CVP schedule v8.0](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/congestion-information/2025/schedule-of-constraint-violation-penalty-factors.pdf).
+# Before the first solve AEMO corrects the starting mode in two cases, using the unit's
+# metered output ``p^0_u``.
 #
-# ## Input map and initial conditions
-#
-# | Input | MMSDM source | Timing |
+# | Case | Condition | Mode passed to NEMDE |
 # | --- | --- | --- |
-# | ``M,T_1,T_2,T_3,T_4`` | `BIDDAYOFFER_D.MINIMUMLOAD`, `T1`, `T2`, `T3`, `T4`, generation ENERGY offer | Applied offer for this interval |
-# | ``p^0,R^{up},R^{down},A`` | `DISPATCHLOAD.INITIALMW`, `RAMPUPRATE`, `RAMPDOWNRATE`; `BIDPEROFFER_D.MAXAVAIL` | Current interval inputs |
-# | Initial mode and elapsed time | `DISPATCHLOAD.DISPATCHMODE`, `DISPATCHMODETIME` | Previous five-minute interval, matching intervention run |
-# | Previous target | `DISPATCHLOAD.TOTALCLEARED` | Previous interval only, for preprocessing |
-# | Final mode, elapsed time, target | Final dispatch state and target | Outputs; initial state for subsequent intervals |
+# | The unit was running outside any profile, and now offers one | It had a positive target in the previous interval, was in mode 0, and is offered available | Mode 0 if ``p^0_u`` is below 1 MW; otherwise mode 4 with ``T_4`` completed |
+# | The unit is on its profile and is now offered unavailable | Availability is zero | Mode 0 if it was in mode 0 and ``p^0_u`` is below 1 MW; otherwise mode 4 with ``T_4`` completed |
 #
-# Current-interval published `TOTALCLEARED` or `DISPATCHMODE` must not be fed back as the
-# commitment decision when reconstructing an interval: those fields reveal the outcome.
+# In both cases, mode 4 with ``T_4`` completed means the unit is treated as an ordinary
+# running unit that can be ramped down and shut down.
 #
-# Preprocessing handles inconsistent telemetry. If the preceding target is positive while the
-# reported initial mode is offline and availability is positive, an initial meter below 1 MW
-# resets to mode 0/time 0; otherwise it resets to mode 4/time ``T_4``. With zero availability,
-# an offline unit metering below 1 MW stays offline, while other states reset to completed mode 4.
-# These are documented input corrections from AEMO's fast-start preprocessing description,
-# not inference of the current target from price or actual output.
+# ## A worked example
 #
+# Take the profile in the figure: ``M=40`` MW and durations of 2, 4, 3 and 4 minutes. The
+# unit is offline, and the first solve gives it a target of 25 MW. That exceeds 0.005 MW, so
+# the unit is started.
+#
+# | Interval end | Minutes since start | Mode | Constraint on the target |
+# | --- | --- | --- | --- |
+# | First | 5 | 2, with ``\tau=3`` | Exactly ``40\times3/4`` = 30 MW |
+# | Second | 10 | 4, with ``\tau=1`` | At least ``40\times(1-1/4)`` = 30 MW |
+# | Third | 15 | 4, ``T_4`` completed | None from the profile |
+#
+# The unit spends minutes 6 to 9 in mode 3, entirely inside the second interval. In the first
+# interval it produces 30 MW whatever the price turns out to be. The cost of those fixed MW
+# is the risk the two-solve scheme is designed to weigh.
+#
+# !!! note "Deviation in AustralianElectricityMarketsSimulations"
+#     **AEMO:** fast-start units follow their inflexibility profile, and commitment is
+#     decided by the two solves above. **This package:** profiles are not modelled and there
+#     is one solve. A fast-start unit is dispatched as an ordinary unit, limited by its
+#     offer, availability and ramp rates. Its modelled target can therefore differ from the
+#     published one while the unit is starting up or held at minimum load.
+#
+# ## References
+#
+# - AEMO, [Fast Start Unit Inflexibility Profile](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fast-start-unit-inflexibility-profile.pdf), §§2-5, pp. 5-11: profile, modes, corrections and the two solves.
+# - AEMO, [FCAS Model in NEMDE](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf), §6.5, p. 28: joint ramping exception.
+# - AEMO, [Schedule of Constraint Violation Penalty Factors, v8.0](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/congestion-information/2025/schedule-of-constraint-violation-penalty-factors.pdf), item 10.
+#
+# ## [Where the data lives](@id nemde-fast-start-data)
+#
+# The **Table** column is the MMSDM table and the cache directory; see
+# [the cache layout](@ref nemde-data).
+#
+# | Symbol | Quantity | Table | Columns | Time key | Role |
+# | --- | --- | --- | --- | --- | --- |
+# | ``M`` | Minimum load | `BIDDAYOFFER_D` | `MINIMUMLOAD`, with `BIDTYPE = ENERGY` | Trading day | Input |
+# | ``T_1`` to ``T_4`` | Profile durations, minutes | `BIDDAYOFFER_D` | `T1`, `T2`, `T3`, `T4` | Trading day | Input |
+# | | Availability | `BIDPEROFFER_D` | `MAXAVAIL` | Trading day and interval end | Input |
+# | ``p^0_u`` | Metered starting output | `DISPATCHLOAD` | `INITIALMW` | Interval end | Input |
+# | | Mode and minutes in mode at the start | `DISPATCHLOAD` | `DISPATCHMODE`, `DISPATCHMODETIME` | Interval end of the **previous** interval | Input |
+# | | Target of the previous interval | `DISPATCHLOAD` | `TOTALCLEARED` | Interval end of the previous interval | Input |
+# | | Mode and minutes in mode at the end | `DISPATCHLOAD` | `DISPATCHMODE`, `DISPATCHMODETIME` | Interval end | Result |
+# | ``p_u`` | Energy target | `DISPATCHLOAD` | `TOTALCLEARED` | Interval end | Result |
+#
+# `DISPATCHMODE` and `DISPATCHMODETIME` are results of the interval they are stamped with.
+# The starting state of an interval is therefore read from the row of the interval before it.
