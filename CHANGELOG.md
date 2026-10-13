@@ -419,6 +419,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `read_demand(db, date_range)` bounds regional demand and initial battery charging reads to the
+  intervals contributing to the requested aggregate timestamps. `set_demand!` uses this bounded
+  read instead of processing the full cached history, while preserving complete aggregation bins.
+
 - Each package has a separate CI workflow using native path filters for its tests,
   dependencies and shared fixtures. Coverage is collected only on Julia 1.11, and
   Codecov carries forward coverage for packages whose workflows were skipped.
