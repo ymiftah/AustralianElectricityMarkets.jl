@@ -26,3 +26,15 @@ Binary per interconnector and timestep, `1` when only the forward link may flow 
 the reverse link may, so the two links never flow at once.
 """
 struct MNSPLinkDirectionVariable <: PSI.VariableType end
+
+
+"""
+    MNSPLinkLossVariable
+
+DC losses supplied by one directional MNSP link's sending area, per-unit of the system base.
+Indexed `(interconnector name, "forward" | "reverse", t)`; the two directions sum to the
+interconnector's total loss, and only the active direction is nonzero.
+"""
+struct MNSPLinkLossVariable <: PSI.VariableType end
+
+PSI.convert_result_to_natural_units(::Type{MNSPLinkLossVariable}) = true

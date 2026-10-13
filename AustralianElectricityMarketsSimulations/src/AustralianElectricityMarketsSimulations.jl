@@ -77,7 +77,8 @@ export TIE_BREAK_CVP_FACTOR
 export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegmentVariable,
     InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint,
     InterconnectorLossSegmentFullVariable, InterconnectorLossSegmentOrderConstraint
-export MNSPLinkFlowVariable, MNSPLinkFlowConstraint, MNSPLinkDirectionVariable
+export MNSPLinkFlowVariable, MNSPLinkFlowConstraint, MNSPLinkDirectionVariable,
+    MNSPLinkLossVariable
 export interconnector_loss_gaps, check_interconnector_loss_segments
 
 end

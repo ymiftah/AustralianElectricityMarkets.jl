@@ -160,9 +160,9 @@ _demand_at(demand::Dict{String, Vector{Float64}}, t::Int) =
     _add_loss_variables_and_constraints!(container, sys, devices, loss_models)
 
 Adds the segment, fill-indicator and loss variables, their defining and ordering constraints, and
-the `-share * loss` and `-(1 - share) * loss` terms in the from and to area balances, for every
-device. The segment axis is sized to the largest interconnector; unused cells are fixed to zero.
-All quantities are per-unit of the system base.
+the `-share * loss` and `-(1 - share) * loss` terms in the from and to area balances. Devices
+carrying directional MNSP offers omit those terms: their losses are supplied at the sending area. The segment axis is sized
+to the largest interconnector; unused cells are fixed to zero. All quantities are per-unit of the system base.
 """
 function _add_loss_variables_and_constraints!(
         container::PSI.OptimizationContainer,
@@ -224,6 +224,7 @@ function _add_loss_variables_and_constraints!(
         from_area = PSY.get_name(PSY.get_from_area(d))
         to_area = PSY.get_name(PSY.get_to_area(d))
         share = model.from_region_loss_share
+        offered = _has_mnsp_offers(d)
 
         for t in time_steps
             demand_t = _demand_at(area_demand, t)
@@ -270,8 +271,10 @@ function _add_loss_variables_and_constraints!(
                 loss_var[name, t] == base_loss +
                     sum(segments[s].slope * seg_var[name, segment_labels[s], t] for s in 1:n)
             )
-            JuMP.add_to_expression!(expr[from_area, t], -share, loss_var[name, t])
-            JuMP.add_to_expression!(expr[to_area, t], -(1.0 - share), loss_var[name, t])
+            if !offered
+                JuMP.add_to_expression!(expr[from_area, t], -share, loss_var[name, t])
+                JuMP.add_to_expression!(expr[to_area, t], -(1.0 - share), loss_var[name, t])
+            end
         end
     end
     return
@@ -418,7 +421,7 @@ function PSI.construct_device!(
     PSI.add_feedforward_arguments!(container, device_model, devices)
 
     _add_loss_variables_and_constraints!(container, sys, devices, loss_models)
-    _add_mnsp_link_flows!(container, devices)
+    _add_mnsp_link_flows!(container, sys, devices)
     return
 end
 
