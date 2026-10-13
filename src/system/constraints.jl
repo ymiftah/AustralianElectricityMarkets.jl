@@ -323,6 +323,7 @@ function add_nem_constraints!(
     reqs_long = read_constraint_fcas_requirements(db, date_range; intervention = intervention)
     req_by_id = groupby(reqs_long, :GENCONID)
 
+    region_cache = Dict{Tuple{String, Bool}, Vector{Device}}()  # `_region_devices` scans every device
     added = String[]
     skipped = Dict{String, Symbol}()
     skipped_detail = Dict{String, Any}[]
@@ -390,7 +391,9 @@ function add_nem_constraints!(
                 push!(contributing_devices, get_component(Device, sys, only(names)))
             elseif row.TERM_KIND == "REGION"
                 bid_type = BidType(row.BIDTYPE)
-                names = resolve_term_devices(sys, RegionTerm(row.KEY, bid_type, row.FACTOR))
+                region_devices = isnothing(get_component(Area, sys, row.KEY)) ? nothing :
+                    get!(() -> _region_devices(sys, row.KEY; loads = bid_type != BidType.ENERGY), region_cache, (row.KEY, bid_type != BidType.ENERGY))
+                names = isnothing(region_devices) ? nothing : String[get_name(d) for d in region_devices]
                 if isnothing(names)
                     isnothing(skip_reason) && (skip_reason = :unknown_region)
                     push!(missing_keys, row.KEY)
@@ -404,7 +407,7 @@ function add_nem_constraints!(
                 # Not a name-based re-lookup: `Device` is ambiguous by name across concrete
                 # types (e.g. an interconnector's own `AreaInterchange` vs. a same-named
                 # `Line`), so this reuses `_region_devices`'s own typed result directly.
-                append!(contributing_devices, _region_devices(sys, row.KEY; loads = bid_type != BidType.ENERGY))
+                append!(contributing_devices, region_devices)
             else
                 term = InterconnectorTerm(row.KEY, row.FACTOR)
                 names = resolve_term_devices(sys, term)

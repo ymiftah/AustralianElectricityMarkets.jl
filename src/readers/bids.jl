@@ -165,25 +165,28 @@ function _extract_power_bids(row)
 end
 
 
-function _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_date; resolution = nothing, bid_type::BidType = BidType.ENERGY)
+function _massage_bids(
+        db, energy_bids_table, pricebids_table, start_date, end_date;
+        resolution = nothing, bid_types::AbstractVector{BidType} = [BidType.ENERGY], keep_bid_type::Bool = false,
+    )
     sd = Date(start_date) - Day(1)
     ed = Date(end_date) + Day(1)
-    bid_type_str = string(bid_type)
+    bid_type_list = join(("'$(string(bt))'" for bt in bid_types), ", ")
 
     energy_schema = names(_query(db, "SELECT * FROM $energy_bids_table LIMIT 0"))
     energy_band_cols = join(filter(startswith("BANDAVAIL"), energy_schema), ", ")
     energy_bids = _query(
         db,
         """
-        SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, MAXAVAIL, $energy_band_cols
+        SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE, MAXAVAIL, $energy_band_cols
         FROM $energy_bids_table
-        WHERE BIDTYPE = ? AND SETTLEMENTDATE BETWEEN ? AND ?
+        WHERE BIDTYPE IN ($bid_type_list) AND SETTLEMENTDATE BETWEEN ? AND ?
         QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION ORDER BY VERSIONNO DESC
+            PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
         ) = 1
         ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME
         """,
-        [bid_type_str, sd, ed],
+        [sd, ed],
     )
 
     priceband_schema = names(_query(db, "SELECT * FROM $pricebids_table LIMIT 0"))
@@ -191,21 +194,21 @@ function _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_d
     pricebids = _query(
         db,
         """
-        SELECT SETTLEMENTDATE, DUID, DIRECTION, MINIMUMLOAD, DAILYENERGYCONSTRAINT, $priceband_cols
+        SELECT SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE, MINIMUMLOAD, DAILYENERGYCONSTRAINT, $priceband_cols
         FROM $pricebids_table
-        WHERE BIDTYPE = ? AND SETTLEMENTDATE BETWEEN ? AND ?
+        WHERE BIDTYPE IN ($bid_type_list) AND SETTLEMENTDATE BETWEEN ? AND ?
         QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, DUID, DIRECTION ORDER BY VERSIONNO DESC
+            PARTITION BY SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
         ) = 1
         ORDER BY SETTLEMENTDATE
         """,
-        [bid_type_str, sd, ed],
+        [sd, ed],
     )
 
     if !isnothing(resolution)
         energy_bids = @chain energy_bids begin
             transform(:INTERVAL_DATETIME => ByRow(x -> ceil.(x, resolution)); renamecols = false)
-            groupby([:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION])
+            groupby([:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION, :BIDTYPE])
             combine(
                 _,
                 :MAXAVAIL => mean ∘ skipmissing,
@@ -216,7 +219,7 @@ function _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_d
         end
     end
 
-    all_bids = innerjoin(pricebids, energy_bids, on = [:SETTLEMENTDATE, :DUID, :DIRECTION])
+    all_bids = innerjoin(pricebids, energy_bids, on = [:SETTLEMENTDATE, :DUID, :DIRECTION, :BIDTYPE])
     prep_for_psy = @chain all_bids begin
         subset!(:INTERVAL_DATETIME => ByRow(x -> start_date <= x < end_date))
         transform(
@@ -225,7 +228,7 @@ function _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_d
         )
         select(
             :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME, :PRICEBANDARRAY, :BANDAVAILARRAY,
-            :MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT,
+            :MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT, (keep_bid_type ? [:BIDTYPE] : [])...,
             AsTable(:) => ByRow(_extract_power_bids) => :piecewise_step_data
         )
     end

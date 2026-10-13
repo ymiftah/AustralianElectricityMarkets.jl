@@ -127,6 +127,7 @@ end
 
 """
     read_fcas_bids(db, date_range, bid_type::BidType; kwargs...)
+    read_fcas_bids(db, date_range, bid_types::AbstractVector{BidType}; kwargs...)
 
 Like [`read_bids`](@ref), but for an AEMO FCAS `bid_type` (e.g. `BidType.RAISE6SEC`,
 `BidType.RAISEREG` — see `FCAS_BID_TYPES`). Reuses `_massage_bids` for the 10-band offer
@@ -134,8 +135,15 @@ curve (same shape as the energy bid path), and additionally reads the AEMO FCAS 
 columns from `BIDPEROFFER_D` (`ENABLEMENTMIN/MAX`, `LOWBREAKPOINT`, `HIGHBREAKPOINT`,
 `ROCUP`, `ROCDOWN` — already present in that table, just never selected by the
 energy-only bid path).
+
+With a vector of `bid_types` the tables are read once for all of them and the result carries
+an extra `BIDTYPE` column (`BidType`).
 """
 function read_fcas_bids(db, date_range, bid_type::BidType; kwargs...)
+    return select!(read_fcas_bids(db, date_range, [bid_type]; kwargs...), Not(:BIDTYPE))
+end
+
+function read_fcas_bids(db, date_range, bid_types::AbstractVector{BidType}; kwargs...)
     start_date = first(date_range)
     end_date = last(date_range)
     energy_bids_table = read_hive(db, :BIDPEROFFER_D)
@@ -143,42 +151,44 @@ function read_fcas_bids(db, date_range, bid_type::BidType; kwargs...)
 
     bids = _massage_bids(
         db, energy_bids_table, pricebids_table, start_date, end_date;
-        bid_type = bid_type, resolution = get(kwargs, :resolution, nothing),
+        bid_types = bid_types, keep_bid_type = true, resolution = get(kwargs, :resolution, nothing),
     )
-    trapezium = _read_fcas_trapezium(db, energy_bids_table, bid_type, start_date, end_date)
-    return innerjoin(
-        bids, trapezium; on = [:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION],
+    trapezium = _read_fcas_trapezium(db, energy_bids_table, bid_types, start_date, end_date)
+    joined = innerjoin(
+        bids, trapezium; on = [:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION, :BIDTYPE],
     )
+    transform!(joined, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
+    return joined
 end
 
 
 """
-    _read_fcas_trapezium(db, energy_bids_table, bid_type::BidType, start_date, end_date)
+    _read_fcas_trapezium(db, energy_bids_table, bid_types, start_date, end_date)
 
 Reads the FCAS trapezium columns (`ENABLEMENTMIN/MAX`, `LOWBREAKPOINT`, `HIGHBREAKPOINT`,
-`ROCUP`, `ROCDOWN`) from `BIDPEROFFER_D` for `bid_type`, latest-`VERSIONNO` resolved per
-`(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)`. Does not select `MAXAVAIL` - `bids`
+`ROCUP`, `ROCDOWN`) from `BIDPEROFFER_D` for `bid_types`, latest-`VERSIONNO` resolved per
+`(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE)`. Does not select `MAXAVAIL` - `bids`
 already carries it from the same table/filter via [`_massage_bids`](@ref), and duplicating it
 here would force `read_fcas_bids`'s join to rename one copy out from under `_extract_fcas_bid`.
 """
-function _read_fcas_trapezium(db, energy_bids_table, bid_type::BidType, start_date, end_date)
+function _read_fcas_trapezium(db, energy_bids_table, bid_types::AbstractVector{BidType}, start_date, end_date)
     sd = Date(start_date) - Day(1)
     ed = Date(end_date) + Day(1)
-    bid_type_str = string(bid_type)
+    bid_type_list = join(("'$(string(bt))'" for bt in bid_types), ", ")
     trapezium = _query(
         db,
         """
-        SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION,
+        SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE,
                ENABLEMENTMIN, LOWBREAKPOINT, HIGHBREAKPOINT, ENABLEMENTMAX,
                ROCUP, ROCDOWN
         FROM $energy_bids_table
-        WHERE BIDTYPE = ? AND SETTLEMENTDATE BETWEEN ? AND ?
+        WHERE BIDTYPE IN ($bid_type_list) AND SETTLEMENTDATE BETWEEN ? AND ?
         QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION ORDER BY VERSIONNO DESC
+            PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
         ) = 1
         ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME
         """,
-        [bid_type_str, sd, ed],
+        [sd, ed],
     )
     subset!(trapezium, :INTERVAL_DATETIME => ByRow(x -> start_date <= x < end_date))
     return trapezium
