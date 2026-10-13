@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- Rewrote the six NEMDE formulation chapters for readers who know electricity markets but not the
+  NEM: a five-minute dispatch walk-through, glossary and one notation on the overview, a worked
+  example per chapter, and no code. Package behaviour appears only in notes titled "Deviation in
+  AustralianElectricityMarketsSimulations". Each chapter ends with a "Where the data lives" table
+  mapping its symbols to MMSDM tables, columns, cache directories and time keys. The Julia FCAS
+  walkthrough moved to a new how-to page, "Inspect an FCAS interval". Removed two notes that the
+  zero-flow loss reference and directional MNSP losses had made out of date.
+- Revised the NEMDE chapters and tutorials for users: removed development history and internal
+  implementation descriptions, and distinguished NEM rules from reconstruction assumptions.
+- Expanded the NEMDE formulation into linked energy, FCAS, interconnector, fast-start and pricing
+  chapters, with equations, MMSDM input maps, executable figures and notes on known gaps and reconstruction assumptions.
+  Consolidated the FCAS introduction and worked interval, and added a local Literate review renderer.
+- Added toy-market walkthroughs using JuMP, PowerSimulations.jl and AEM / AEMSim, with
+  dispatch and price comparisons for the examples' stated scope.
+
 ### Fixed
 
 - For interconnectors carrying paired directional MNSP offers, DC losses are supplied by the active
@@ -137,6 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   four generic-constraint definition tables, so constraints last revised before 2015 (for example
   `N_NIL_TE_B`, `N_MBTE1_B`, the `*_ZERO` interconnector constraints) get a definition.
 
+- **"From NEM dispatch to PowerSimulations.jl" explanation page** (`docs/literate/intro_to_psi_nem.jl`): builds a two-region toy NEM (bid stacks, ramp limits from initial MW, regional balance, interconnector, RAISE6SEC FCAS trapezium, a generic constraint) first as a hand-written JuMP model, then as a PSY `System` plus a PSI template using `NEMReplayDispatch`, `FCASMarket` and `LinearFactorLimit`, and checks the two agree. The docs environment now depends on JuMP, `AustralianElectricityMarketsData` and `AustralianElectricityMarketsSimulations` (with the pinned PowerSimulations fork).
 - `add_nem_constraints!` builds the Interconnector Zero constraints `SVML_ZERO`, `VSML_ZERO`, `VT_ZERO` and
   `TV_ZERO`, which `GENCONDATA` and the `SPD*` tables do not define, from a built-in definition: a
   one-term `<=` constraint on the `V-S-MNSP1` or `T-V-MNSP1` flow with right-hand side 0 and CVP

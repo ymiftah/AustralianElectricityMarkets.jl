@@ -30,7 +30,7 @@ end
 # that, together, specify almost everything on this page.
 #
 # This page introduces the NEM's institutions, market design, and dispatch process, then
-# contrasts it's design with other electricity markets. [FCAS in the NEM](@ref) picks up one part of
+# contrasts it's design with other electricity markets. [FCAS capability and co-optimisation](@ref nemde-fcas) picks up one part of
 # the NEM's specificity - frequency control - in much greater depth.
 #
 # !!! note "References"
@@ -112,7 +112,7 @@ nothing #hide
 #    solves a security-constrained economic dispatch: minimise the cost of meeting forecast
 #    demand in every region, subject to each unit's offered bands, ramp rates, and several
 #    hundred network and system-security constraints, jointly with the FCAS markets (see
-#    [FCAS in the NEM](@ref)).
+#    [FCAS capability and co-optimisation](@ref nemde-fcas)).
 #
 # **Bidding.** Each unit submits up to **ten price bands** per market per trading day via
 # `BIDDAYOFFER_D` (read by [`read_bids`](@ref) for energy) - these prices are fixed once
@@ -230,7 +230,7 @@ get_component(Area, sys, "TAS1")
 # The readers used on this page - [`read_prices`](@ref), and elsewhere in this package
 # [`read_demand`](@ref), [`read_bids`](@ref), [`read_interconnectors`](@ref) - all read
 # directly from the AEMO tables described above, keyed by the same five region codes. From
-# here, [FCAS in the NEM](@ref) covers the ancillary-services markets co-optimised alongside
+# here, [FCAS capability and co-optimisation](@ref nemde-fcas) covers the ancillary-services markets co-optimised alongside
 # the energy dispatch described here.
 
 # ## [References](@id nem-references)
