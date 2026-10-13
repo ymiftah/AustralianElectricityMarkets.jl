@@ -179,4 +179,28 @@
         @test get_ramp_up_rate(eff) == 60.0
         @test get_ramp_down_rate(eff) == 30.0
     end
+    @testset "Prepared scaling preserves process timing without rereading series" begin
+        bid = FCASTrapezium(;
+            enablement_min = 0.0, low_breakpoint = 0.0, high_breakpoint = 100.0,
+            enablement_max = 100.0, max_avail = 25.0,
+        )
+        for (first_only, ramp, expected_max, expected_cap) in (
+                (false, [2.0, 2.0], [50.0, 50.0], [2.0, 2.0]),
+                (true, [2.0, 2.0], [50.0, 100.0], [2.0, 25.0]),
+                (true, nothing, [50.0, 100.0], [25.0, 25.0]),
+            )
+            traps = AustralianElectricityMarkets._scale_fcas_trapezium_series(
+                [bid, bid]; agc_enablement_max = [50.0, 50.0], agc_max_avail = ramp,
+                is_regulation = true, agc_first_interval_only = first_only,
+            )
+            @test get_enablement_max.(traps) == expected_max
+            @test get_max_avail.(traps) == expected_cap
+            @test get_enablement_max(bid) == 100.0
+        end
+        traps = AustralianElectricityMarkets._scale_fcas_trapezium_series(
+            [bid, bid]; uigf = [0.0, NaN], is_regulation = false,
+        )
+        @test get_enablement_max.(traps) == [0.0, 100.0]
+    end
+
 end

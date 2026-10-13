@@ -419,6 +419,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `FCASMarket` prepares scaled bids, shared telemetry, enablement and ramp limits once per
+  model build for use by variable, constraint and cost construction. FCAS system setters
+  reuse component lists and regional device groupings within each call.
+
 - `read_demand(db, date_range)` bounds regional demand and initial battery charging reads to the
   intervals contributing to the requested aggregate timestamps. `set_demand!` uses this bounded
   read instead of processing the full cached history, while preserving complete aggregation bins.

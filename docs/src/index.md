@@ -62,6 +62,10 @@ sys = nem_system(db, RegionalNetworkConfiguration())
 println(sys)
 ```
 
+When using `AustralianElectricityMarketsSimulations.FCASMarket`, system preparation attaches
+offered bids and telemetry. Each model build derives scaled FCAS bids and enablement for its
+horizon, resolution and dispatch formulation. Rebuild the model after replacing those inputs.
+
 ## Features
 
 * **Data Fetching:** Fetch data from AEMO's NEMWEB data source for specified time ranges.

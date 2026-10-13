@@ -49,6 +49,8 @@ struct LinearFactorLimit <: AbstractNEMConstraintFormulation end
     FCASMarket
 
 Formulation for an [`FCASService`](@ref), co-optimising FCAS capacity alongside energy.
+Bid scaling and enablement are prepared for the model's horizon and dispatch process; rebuild
+the model after replacing bid or telemetry series.
 """
 struct FCASMarket <: PSI.AbstractServiceFormulation end
 

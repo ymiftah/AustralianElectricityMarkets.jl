@@ -253,6 +253,51 @@ fcas_unit_target(container, service_name) =
 fcas_unit_mw(container, service_name, duid) =
     PSI.JuMP.value(fcas_unit_target(container, service_name)[duid, 1]) * PSI.get_base_power(container)
 
+@testset "FCAS preparation is shared by construction and refreshed on rebuild" begin
+    name = "TAS1_RAISEREG"
+    sys = fcas_energy_toy_system(
+        2.0; mutate! = (sys, stamps) -> begin
+            device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+            add_toy_fcas!(
+                sys, device, stamps[1], length(stamps), BidType.RAISEREG,
+                (0.0, 0.0, 100.0, 100.0, 25.0), [(25.0, 10.0)],
+            )
+            add_toy_fcas_scaling!(
+                sys, device, stamps[1], length(stamps), BidType.RAISEREG;
+                agc_max_avail = 2.0, agc_enablement_max = 50.0,
+            )
+            PSY.add_service!(sys, FCASService(; name, region = "TAS1", bid_type = BidType.RAISEREG), [device])
+        end,
+    )
+    model = PSI.DecisionModel(
+        fcas_toy_template(sys, [name]), sys;
+        optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+        horizon = 2 * TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
+        initial_time = TOY_START, name = "fcas_preparation", store_variable_names = true,
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    prepared = AEMS._fcas_service_inputs(container, name)
+    bid = prepared.bids[TOY_CHEAP].incremental
+    base = PSY.get_base_power(sys)
+    @test get_max_avail.(bid.trapeziums) .* base ≈ [2.0, 2.0]
+    @test get_enablement_max.(bid.trapeziums) .* base ≈ [50.0, 50.0]
+    @test bid.enabled == [true, true]
+    @test [PSI.JuMP.upper_bound(fcas_capacity(container, name)[TOY_CHEAP, t]) * base for t in 1:2] ≈ [2.0, 2.0]
+
+    # Replacing telemetry must affect a rebuilt model without changing an existing build's inputs.
+    device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+    PSY.remove_time_series!(sys, PSY.IS.DeterministicSingleTimeSeries, device, "fcas_agc_ramp_rate_RAISEREG")
+    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, "fcas_agc_ramp_rate_RAISEREG")
+    add_toy_fcas_scaling!(sys, device, TOY_START, 2, BidType.RAISEREG; agc_max_avail = 6.0)
+    PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    fresh = PSI.get_optimization_container(model)
+    @test get_max_avail.(AEMS._fcas_service_inputs(fresh, name).bids[TOY_CHEAP].incremental.trapeziums) .* base ≈ [6.0, 6.0]
+    @test get_max_avail.(bid.trapeziums) .* base ≈ [2.0, 2.0]
+    @test [PSI.JuMP.upper_bound(fcas_capacity(fresh, name)[TOY_CHEAP, t]) * base for t in 1:2] ≈ [6.0, 6.0]
+end
+
 @testset "FCASMarket reproduces docs/literate/fcas.jl's published Tungatinah/TAS1 numbers" begin
     # BIDPEROFFER_D trapeziums for DUID TUNGATIN, 2025-01-13 16:30, one row per market.
     duid = TOY_CHEAP

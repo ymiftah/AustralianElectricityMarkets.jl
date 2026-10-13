@@ -671,24 +671,21 @@ _fcas_slack_term(slack, name, t) = isnothing(slack) ? 0.0 : slack[name, t]
 
 
 """
-    _add_fcas_joint_ramping_constraints!(container, model, jm, devices, directions, devices_template, bid_type, name, time_steps)
+    _add_fcas_joint_ramping_constraints!(container, model, jm, prepared, bid_type, name, time_steps)
 
-Builds AEMO *FCAS Model in NEMDE* §6.1's [`FCASJointRampingConstraint`](@ref) for every
-contributing `device` of a regulation `FCASService` named `name`: the unit's net energy
-([`_fcas_net_energy_terms`](@ref)) combined with its [`FCASUnitRegulationTarget`](@ref) against
-`InitialMW` plus or minus its AGC ramp capability ([`_fcas_agc_ramp_caps`](@ref)) - the upper
-or lower form depending on `bid_type` ([`_fcas_upper_regulation_service`](@ref)). Builds a vacuous `0 <= 1` row at
-`(dname, t)` wherever the ramp capability is zero, `InitialMW` is unknown at `t`, or the device
-is not enabled for this service at `t` ([`_fcas_regulation_enabled_mask`](@ref)).
+Build AEMO *FCAS Model in NEMDE* §6.1's [`FCASJointRampingConstraint`](@ref) using prepared
+initial MW, ramp capabilities and enablement for the regulation service named `name`.
+Use a vacuous `0 <= 1` row where the capability is zero, initial MW is unknown or the device
+is disabled.
 
 # Returns
 `nothing`.
 """
 function _add_fcas_joint_ramping_constraints!(
-        container::PSI.OptimizationContainer, model::PSI.ServiceModel, jm, devices, directions::Dict{String, Symbol}, devices_template,
+        container::PSI.OptimizationContainer, model::PSI.ServiceModel, jm, prepared::_FCASServiceInputs,
         bid_type::BidType, name::AbstractString, time_steps,
     )
-    names = PSY.get_name.(devices)
+    names = PSY.get_name.(prepared.devices)
     con = PSI.add_constraints_container!(
         container, FCASJointRampingConstraint(), FCASService, names, time_steps; meta = name,
     )
@@ -696,16 +693,13 @@ function _add_fcas_joint_ramping_constraints!(
     slack = _add_fcas_slack!(
         container, model, FCASJointRampingSlack, name, names, time_steps, FCAS_RAMPING_CVP_FACTOR,
     )
-    initial_time = PSI.get_initial_time(container)
-    horizon = length(time_steps)
-    for device in devices
+    for device in prepared.devices
         dname = PSY.get_name(device)
-        caps = _fcas_agc_ramp_caps(container, devices_template, device, _fcas_ramp_rate_service(device, bid_type))
-        initial_mw = get_initial_mw(device, initial_time, horizon)
-        enabled = _fcas_regulation_enabled_mask(container, devices_template, device, bid_type, directions[dname])
+        inputs = prepared.bids[dname]
+        caps, initial_mw, enabled = inputs.ramp_caps, inputs.telemetry.initial_mw, inputs.enabled
         for t in time_steps
-            mw = isnothing(initial_mw) ? NaN : initial_mw[t]
-            if iszero(caps[t]) || isnan(mw) || !enabled[t]
+            mw = initial_mw[t]
+            if iszero(caps[t]) || isnothing(mw) || isnan(mw) || !enabled[t]
                 con[dname, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
                 continue
             end
@@ -789,11 +783,9 @@ function PSI.construct_service!(
     time_steps = PSI.get_time_steps(container)
     jm = PSI.get_jump_model(container)
 
-    directions = Dict(PSY.get_name(d) => _fcas_direction(d, bid_type) for d in devices)
-    both_devices = filter(d -> directions[PSY.get_name(d)] == :both, devices)
-    single_devices = filter(d -> directions[PSY.get_name(d)] != :both, devices)
-    single_names = PSY.get_name.(single_devices)
-    both_names = PSY.get_name.(both_devices)
+    prepared = _prepare_fcas_service_inputs!(container, svc, devices, devices_template)
+    both_devices, single_devices = prepared.both_devices, prepared.single_devices
+    single_names, both_names = prepared.single_names, prepared.both_names
 
     if !isempty(single_names)
         var = PSI.add_variable_container!(
@@ -807,9 +799,10 @@ function PSI.construct_service!(
         )
         for device in single_devices
             dname = PSY.get_name(device)
-            decremental = directions[dname] == :decremental
-            trapeziums, _ = _fcas_series(container, devices_template, device, bid_type, decremental)
-            enabled = _fcas_enabled_mask(container, devices_template, device, bid_type, decremental)
+            inputs = prepared.bids[dname]
+            decremental = inputs.direction == :decremental
+            bid = decremental ? inputs.decremental : inputs.incremental
+            trapeziums, enabled = bid.trapeziums, bid.enabled
             for t in time_steps
                 trap = trapeziums[t]
                 var[dname, t] = JuMP.@variable(
@@ -846,8 +839,9 @@ function PSI.construct_service!(
         )
         for device in both_devices
             dname = PSY.get_name(device)
-            gen_traps, _, load_traps, _ = _fcas_regulation_sides(container, devices_template, device, bid_type)
-            gen_enabled, load_enabled = _fcas_both_sides_enabled_mask(container, devices_template, device, bid_type)
+            inputs = prepared.bids[dname]
+            gen_traps, load_traps = inputs.incremental.trapeziums, inputs.decremental.trapeziums
+            gen_enabled, load_enabled = inputs.incremental.enabled, inputs.decremental.enabled
             for t in time_steps
                 gen_trap, load_trap = gen_traps[t], load_traps[t]
 
@@ -948,14 +942,15 @@ function PSI.objective_function!(
     name = PSY.get_name(svc)
     devices = PSI.get_contributing_devices(model)
     isempty(devices) && return
-    bid_type = get_bid_type(svc)
+    prepared = _fcas_service_inputs(container, name)
     time_steps = PSI.get_time_steps(container)
     for device in devices
         dname = PSY.get_name(device)
-        direction = _fcas_direction(device, bid_type)
+        inputs = prepared.bids[dname]
+        direction = inputs.direction
         if direction == :both
-            gen_curves = _fcas_offer_curves(container, device, bid_type, false)
-            load_curves = _fcas_offer_curves(container, device, bid_type, true)
+            gen_curves = inputs.incremental.curves
+            load_curves = inputs.decremental.curves
             gen_var = PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "$(name)_gen")
             load_var = PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "$(name)_load")
             for t in time_steps
@@ -963,7 +958,7 @@ function PSI.objective_function!(
                 _add_fcas_offer_cost!(container, "$(name)_load", dname, t, load_var[dname, t], load_curves[t])
             end
         else
-            curves = _fcas_offer_curves(container, device, bid_type, direction == :decremental)
+            curves = (direction == :decremental ? inputs.decremental : inputs.incremental).curves
             fcas_var = PSI.get_variable(container, FCASCapacityVariable(), FCASService, name)
             for t in time_steps
                 _add_fcas_offer_cost!(container, name, dname, t, fcas_var[dname, t], curves[t])
@@ -993,11 +988,9 @@ function PSI.construct_service!(
     time_steps = PSI.get_time_steps(container)
     jm = PSI.get_jump_model(container)
 
-    directions = Dict(PSY.get_name(d) => _fcas_direction(d, bid_type) for d in devices)
-    both_devices = filter(d -> directions[PSY.get_name(d)] == :both, devices)
-    single_devices = filter(d -> directions[PSY.get_name(d)] != :both, devices)
-    single_names = PSY.get_name.(single_devices)
-    both_names = PSY.get_name.(both_devices)
+    prepared = _fcas_service_inputs(container, name)
+    both_devices, single_devices = prepared.both_devices, prepared.single_devices
+    single_names, both_names = prepared.single_names, prepared.both_names
 
     # Contingency services carry the regulation targets: `RaiseReg` upper, `LowerReg` lower
     # (swapped for a load).
@@ -1040,9 +1033,10 @@ function PSI.construct_service!(
         cap_var = PSI.get_variable(container, FCASCapacityVariable(), FCASService, name)
         for device in single_devices
             dname = PSY.get_name(device)
-            decremental = directions[dname] == :decremental
-            trapeziums, _ = _fcas_series(container, devices_template, device, bid_type, decremental)
-            enabled = _fcas_enabled_mask(container, devices_template, device, bid_type, decremental)
+            inputs = prepared.bids[dname]
+            decremental = inputs.direction == :decremental
+            bid = decremental ? inputs.decremental : inputs.incremental
+            trapeziums, enabled = bid.trapeziums, bid.enabled
             for t in time_steps
                 if !enabled[t]
                     _add_fcas_max_avail_row!(jm, nothing, slack_max, con_max, dname, t, nothing)
@@ -1096,8 +1090,9 @@ function PSI.construct_service!(
         )
         for device in both_devices
             dname = PSY.get_name(device)
-            gen_traps, _, load_traps, _ = _fcas_regulation_sides(container, devices_template, device, bid_type)
-            gen_enabled, load_enabled = _fcas_both_sides_enabled_mask(container, devices_template, device, bid_type)
+            inputs = prepared.bids[dname]
+            gen_traps, load_traps = inputs.incremental.trapeziums, inputs.decremental.trapeziums
+            gen_enabled, load_enabled = inputs.incremental.enabled, inputs.decremental.enabled
             for t in time_steps
                 if !gen_enabled[t]
                     _add_fcas_max_avail_row!(jm, nothing, gen_slack_max, con_gen_max, dname, t, nothing)
@@ -1140,7 +1135,7 @@ function PSI.construct_service!(
             )
             for device in both_devices
                 dname = PSY.get_name(device)
-                caps = _fcas_agc_ramp_caps(container, devices_template, device, bid_type)
+                caps = prepared.bids[dname].ramp_caps
                 for t in time_steps
                     con_ramp[dname, t] = iszero(caps[t]) ?
                         JuMP.@constraint(jm, 0.0 <= 1.0) :
@@ -1151,7 +1146,7 @@ function PSI.construct_service!(
     end
 
     if is_regulation
-        _add_fcas_joint_ramping_constraints!(container, model, jm, devices, directions, devices_template, bid_type, name, time_steps)
+        _add_fcas_joint_ramping_constraints!(container, model, jm, prepared, bid_type, name, time_steps)
     end
 
     if FCASJointCapacityConstraint in PSI.get_duals(model)

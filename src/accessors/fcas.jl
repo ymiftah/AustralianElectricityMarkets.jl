@@ -108,10 +108,31 @@ function get_scaled_fcas_trapezium(
         _read_optional_fcas_scaling_series(component, "fcas_agc_enablement_max_$service_str", initial_time, horizon) : nothing
     agc_max_avail = is_regulation && agc_ramp_scaling ?
         get_fcas_agc_ramp_capability(component, service, initial_time, horizon; resolution = resolution) : nothing
+    uigf = _read_optional_fcas_scaling_series(component, "fcas_uigf", initial_time, horizon)
+    return _scale_fcas_trapezium_series(
+        trapeziums; agc_enablement_min, agc_enablement_max, agc_max_avail, uigf,
+        is_regulation, agc_first_interval_only,
+    )
+end
+
+
+"""
+    _scale_fcas_trapezium_series(trapeziums; kwargs...) -> Vector{FCASTrapezium}
+
+Scale offered trapeziums using already-read AGC limits, ramp capabilities and UIGF series.
+Missing series or `NaN` entries provide no limit; `agc_first_interval_only` restricts AGC
+inputs to the first step.
+
+# Returns
+One scaled trapezium per offered step, without modifying the inputs.
+"""
+function _scale_fcas_trapezium_series(
+        trapeziums; agc_enablement_min = nothing, agc_enablement_max = nothing,
+        agc_max_avail = nothing, uigf = nothing, is_regulation::Bool = false,
+        agc_first_interval_only::Bool = false,
+    )
     input_at(series, i) = (isnothing(series) || isnan(series[i])) ? nothing : series[i]
     agc_at(series, i) = (agc_first_interval_only && i > 1) ? nothing : input_at(series, i)
-    uigf = _read_optional_fcas_scaling_series(component, "fcas_uigf", initial_time, horizon)
-
     return [
         scale_fcas_trapezium(
             trapeziums[i];

@@ -33,10 +33,10 @@ end
 
 # A device bids a (region, bid_type) market if it carries either direction's curve series - a
 # storage device can provide the market while charging or discharging.
-function _fcas_service_devices(sys, region::AbstractString, bid_type::BidType)
+function _fcas_service_devices(devices, bid_type::BidType)
     inc_name = _fcas_series_name("fcas_curve", bid_type, false)
     dec_name = _fcas_series_name("fcas_curve", bid_type, true)
-    return filter(_region_devices(sys, region; loads = true)) do d
+    return filter(devices) do d
         has_time_series(d, Deterministic, inc_name) || has_time_series(d, Deterministic, dec_name)
     end
 end
@@ -63,16 +63,19 @@ it.
 function add_fcas_services!(sys)
     added = String[]
     excluded = Dict{String, Vector{String}}()
-    for region in sort(get_name.(get_components(Area, sys))), bid_type in FCAS_BID_TYPES
-        name = fcas_service_name(region, bid_type)
-        isnothing(get_component(FCASService, sys, name)) || continue
-        bidders = filter(get_available, _fcas_service_devices(sys, region, bid_type))
-        devices = filter(d -> _fcas_bid_modeled(d, bid_type), bidders)
-        left_out = setdiff(get_name.(bidders), get_name.(devices))
-        isempty(left_out) || (excluded[name] = sort(left_out))
-        isempty(devices) && continue
-        add_service!(sys, FCASService(; name = name, region = region, bid_type = bid_type), devices)
-        push!(added, name)
+    for region in sort(get_name.(get_components(Area, sys)))
+        region_devices = filter(get_available, _region_devices(sys, region; loads = true))
+        for bid_type in FCAS_BID_TYPES
+            name = fcas_service_name(region, bid_type)
+            isnothing(get_component(FCASService, sys, name)) || continue
+            bidders = _fcas_service_devices(region_devices, bid_type)
+            devices = filter(d -> _fcas_bid_modeled(d, bid_type), bidders)
+            left_out = setdiff(get_name.(bidders), get_name.(devices))
+            isempty(left_out) || (excluded[name] = sort(left_out))
+            isempty(devices) && continue
+            add_service!(sys, FCASService(; name = name, region = region, bid_type = bid_type), devices)
+            push!(added, name)
+        end
     end
     if !isempty(excluded)
         @warn "add_fcas_services!: left $(sum(length, values(excluded))) device(s) out of $(length(excluded)) FCAS market(s) - their bid direction is not modeled" excluded
@@ -160,6 +163,9 @@ function set_fcas_bids!(sys, db, date_range; kwargs...)
     start_date = first(date_range)
     resolution = get(kwargs, :resolution, Minute(5))
     base_power = get_base_power(sys)
+    generators = collect(get_components(Generator, sys))
+    storages = collect(get_components(EnergyReservoirStorage, sys))
+    loads = collect(get_components(InterruptiblePowerLoad, sys))
 
     for bid_type in FCAS_BID_TYPES
         bids = read_fcas_bids(db, date_range, bid_type; kwargs...)
@@ -180,15 +186,15 @@ function set_fcas_bids!(sys, db, date_range; kwargs...)
         gdf_inc = DataFrames.isempty(incremental) ? nothing : groupby(incremental, :DUID)
         gdf_dec = DataFrames.isempty(decremental) ? nothing : groupby(decremental, :DUID)
 
-        foreach(get_components(Generator, sys)) do gen
+        foreach(generators) do gen
             _attach_fcas_bid_series!(sys, gen, gdf_inc, get_name(gen), bid_type_str, start_date, resolution)
         end
-        foreach(get_components(EnergyReservoirStorage, sys)) do stor
+        foreach(storages) do stor
             duid = get_name(stor)
             _attach_fcas_bid_series!(sys, stor, gdf_inc, duid, bid_type_str, start_date, resolution)
             _attach_fcas_bid_series!(sys, stor, gdf_dec, duid, "$(bid_type_str)_decremental", start_date, resolution)
         end
-        foreach(get_components(InterruptiblePowerLoad, sys)) do load
+        foreach(loads) do load
             attached = _attach_fcas_bid_series!(
                 sys, load, gdf_dec, get_name(load), "$(bid_type_str)_decremental", start_date, resolution,
             )
