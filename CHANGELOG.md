@@ -132,6 +132,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `populate_legacy_archive` fills the cache for months before 2015, when NEMWEB hosts one monolithic
+  `MMSDM_<yyyy>_<mm>.zip` per month. It range-reads only the requested tables' entries, defaulting to the
+  four generic-constraint definition tables, so constraints last revised before 2015 (for example
+  `N_NIL_TE_B`, `N_MBTE1_B`, the `*_ZERO` interconnector constraints) get a definition.
+
 - `add_nem_constraints!` builds the Interconnector Zero constraints `SVML_ZERO`, `VSML_ZERO`, `VT_ZERO` and
   `TV_ZERO`, which `GENCONDATA` and the `SPD*` tables do not define, from a built-in definition: a
   one-term `<=` constraint on the `V-S-MNSP1` or `T-V-MNSP1` flow with right-hand side 0 and CVP

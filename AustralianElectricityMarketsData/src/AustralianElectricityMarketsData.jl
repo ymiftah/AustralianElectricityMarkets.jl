@@ -7,7 +7,7 @@ import AustralianElectricityMarketsCache: DataSource, get_filesystem, islocal,
     _parse_hive_root, _local_tmp_dir, _new_duckdb_connection, _partition_has_data,
     _partition_dir_names, cached_date_range, _TABLE_SPECS, _TABLE_SPECS_BY_NAME
 
-export populate, get_table, list_available_tables
+export populate, populate_legacy_archive, get_table, list_available_tables
 export ARCHIVE_MONTH_PARTITION
 export HiveConfiguration, AEMDB, aem_connect
 
@@ -19,6 +19,7 @@ include("nemweb_load/column_types.jl")
 include("nemweb_load/parquet.jl")
 include("nemweb_load/download.jl")
 include("nemweb_load/populate.jl")
+include("nemweb_load/legacy.jl")
 
 @doc (@doc AustralianElectricityMarketsCache.HiveConfiguration) HiveConfiguration
 @doc (@doc AustralianElectricityMarketsCache.AEMDB) AEMDB

@@ -110,15 +110,15 @@ _is_transient_status(status::Integer) =
 
 
 """
-    _download_and_cache(url::String, cache_path::String)
+    _fetch_with_retry(url::String; headers = Pair{String, String}[], ok = (200,)) -> HTTP.Response
 
-Download `url` to `cache_path`, retrying transient failures with exponential backoff.
+GET `url`, retrying transient failures with exponential backoff.
 
-Throws [`MissingDataError`](@ref) on a 404 (and any other non-transient non-200), or
-[`TransientDownloadError`](@ref) if a transient failure - see [`_is_transient_status`](@ref)
-\\- persists across [`_DOWNLOAD_MAX_ATTEMPTS`](@ref) attempts.
+Returns the response when its status is in `ok`. Throws [`MissingDataError`](@ref) on any other
+non-transient status (404 included), or [`TransientDownloadError`](@ref) if a transient failure
+- see [`_is_transient_status`](@ref) \\- persists across [`_DOWNLOAD_MAX_ATTEMPTS`](@ref) attempts.
 """
-function _download_and_cache(url::String, cache_path::String)
+function _fetch_with_retry(url::String; headers = Pair{String, String}[], ok = (200,))
     last_reason = "unknown"
     for attempt in 1:_DOWNLOAD_MAX_ATTEMPTS
         transient = false
@@ -129,7 +129,7 @@ function _download_and_cache(url::String, cache_path::String)
             # The timeouts turn a wedged socket into a retryable failure instead of an
             # indefinite hang (see _DOWNLOAD_READ_TIMEOUT_S).
             response = HTTP.get(
-                url; status_exception = false, retry = false,
+                url; headers, status_exception = false, retry = false,
                 readtimeout = _DOWNLOAD_READ_TIMEOUT_S,
                 connect_timeout = _DOWNLOAD_CONNECT_TIMEOUT_S,
             )
@@ -142,9 +142,8 @@ function _download_and_cache(url::String, cache_path::String)
         end
 
         if !isnothing(response)
-            if response.status == 200
-                mkpath(dirname(cache_path))
-                return write(cache_path, response.body)
+            if response.status in ok
+                return response
             elseif _is_transient_status(response.status)
                 transient = true
                 last_reason = "HTTP $(response.status)"
@@ -165,4 +164,16 @@ function _download_and_cache(url::String, cache_path::String)
                 "NEMWEB is likely rate-limiting. This is NOT a missing month - re-run to gap-fill."
         )
     )
+end
+
+
+"""
+    _download_and_cache(url::String, cache_path::String)
+
+Download `url` to `cache_path` through [`_fetch_with_retry`](@ref).
+"""
+function _download_and_cache(url::String, cache_path::String)
+    response = _fetch_with_retry(url)
+    mkpath(dirname(cache_path))
+    return write(cache_path, response.body)
 end

@@ -20,6 +20,7 @@ Modules = [AustralianElectricityMarkets]
 
 ```@docs
 AustralianElectricityMarketsData.populate
+AustralianElectricityMarketsData.populate_legacy_archive
 AustralianElectricityMarketsCache.AEMDB
 AustralianElectricityMarketsCache.DataSource
 AustralianElectricityMarketsCache.get_table
