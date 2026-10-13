@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `interconnector_loss_models` fills the V-SA `NSW1` demand coefficient (`1.6981e-6`) that AEMO's
+  2025-26 report publishes but MMSDM `LOSSFACTORMODEL` omits, for 2025-07-01 to 2026-06-30. A value
+  present in the table is never overridden.
+
 - In both `NEMReplayDispatch` and `NEMLookaheadDispatch`, each storage power variable now uses its
   finite direction-specific energy offer `MAXAVAIL` as an upper bound, including the existing
   ramp-floor adjustment.

@@ -212,6 +212,23 @@ end
 # AEMO's `FROMREGIONLOSSSHARE` for Basslink is not well defined; nempy sets it to 1 to best match NEMDE.
 const _LOSS_SHARE_OVERRIDES = Dict("T-V-MNSP1" => 1.0)
 
+# Demand coefficients AEMO publishes but MMSDM LOSSFACTORMODEL omits, as
+# (interconnector, region) => (value, valid_from, valid_until). Used only where the table has no
+# value for that pair. V-SA NSW1 for FY2025-26: AEMO, 2025-26 Marginal Loss Factors report,
+# section 3 p. 56 and Table 25 p. 59.
+const _DEMAND_COEFFICIENT_PATCHES = Dict(
+    ("V-SA", "NSW1") => (value = 1.6981e-6, valid_from = Date(2025, 7, 1), valid_until = Date(2026, 7, 1)),
+)
+
+function _apply_demand_coefficient_patches!(demand_coefficients, as_of)
+    for ((id, region), p) in _DEMAND_COEFFICIENT_PATCHES
+        p.valid_from <= Date(as_of) < p.valid_until || continue
+        haskey(demand_coefficients, id) || continue
+        get!(demand_coefficients[id], region, p.value)
+    end
+    return demand_coefficients
+end
+
 
 """
     interconnector_loss_models(db, as_of) -> Dict{String, InterconnectorLossModel}
@@ -226,6 +243,9 @@ one summary `@warn`.
 
 The loss share of `T-V-MNSP1` (Basslink) is fixed at `1.0`, as in nempy, because AEMO's published
 value is not well defined.
+
+Demand coefficients missing from `LOSSFACTORMODEL` but published by AEMO (V-SA `NSW1` for
+FY2025-26) are filled in; a value present in the table is never overridden.
 
 Throws `ArgumentError` when no interconnector survives.
 """
@@ -243,6 +263,7 @@ function interconnector_loss_models(db, as_of::Union{Date, DateTime})
         d = get!(demand_coefficients, row.INTERCONNECTORID, Dict{String, Float64}())
         d[row.REGIONID] = row.DEMANDCOEFFICIENT
     end
+    _apply_demand_coefficient_patches!(demand_coefficients, as_of)
 
     models = Dict{String, InterconnectorLossModel}()
     skipped = String[]
