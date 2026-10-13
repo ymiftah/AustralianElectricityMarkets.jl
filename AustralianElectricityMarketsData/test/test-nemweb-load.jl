@@ -967,3 +967,79 @@ if _gs_test_reachable()
         end
     end
 end
+
+# ══════════════════════════════════════════════════════════════════════════════
+# G. Pre-2015 monolithic monthly archives
+# ══════════════════════════════════════════════════════════════════════════════
+
+using AustralianElectricityMarketsData: _RemoteBytes, _get_legacy_archive, populate_legacy_archive,
+    LEGACY_ARCHIVE_FIRST_MONTH, AEMDB, aem_connect
+
+# A monthly archive: outer ZIP whose entries mimic MMSDM_<yyyy>_<mm>.zip, each table's own ZIP nested inside.
+function make_monthly_archive(year, month, tables)
+    mm = lpad(month, 2, '0')
+    inner = Dict(
+        t => make_zip_with_csv(make_nemweb_csv(t, ["GENCONID", "EFFECTIVEDATE"], [["X$t", "$year/$mm/04 00:00:00"]]))
+            for t in tables
+    )
+    outer = IOBuffer()
+    w = ZipFile.Writer(outer)
+    f = ZipFile.addfile(w, "$mm/MMSDM_Historical_Data_SQLLoader/CTL/readme.txt")
+    write(f, "ignored\n")
+    for t in tables
+        f = ZipFile.addfile(w, "$mm/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_$(t)_$year$(mm)010000.zip")
+        write(f, read(inner[t]))
+    end
+    close(w)
+    return take!(outer)
+end
+
+@testset "_RemoteBytes: indexes like the underlying bytes and fetches each block once" begin
+    data = rand(UInt8, 3 * AustralianElectricityMarketsData._REMOTE_BLOCK_BYTES + 17)
+    requests = Tuple{Int, Int}[]
+    remote = _RemoteBytes(length(data)) do lo, hi
+        push!(requests, (lo, hi))
+        return data[(lo + 1):(hi + 1)]
+    end
+    @test length(remote) == length(data)
+    @test remote[1] == data[1] && remote[end] == data[end]
+    @test collect(remote[(end - 5):end]) == data[(end - 5):end]
+    @test length(requests) == 2                       # first and last block only
+    @test remote[2] == data[2] && length(requests) == 2
+end
+
+@testset "_get_legacy_archive: extracts only the requested table's nested ZIP" begin
+    archive = make_monthly_archive(2013, 8, ["GENCONDATA", "SPDREGIONCONSTRAINT"])
+    paths = _get_legacy_archive("GENCONDATA", 2013, 8; open_archive = (y, m) -> archive)
+    try
+        @test length(paths) == 1
+        lines = readlines(IOBuffer(first(_extract_d_lines(paths)) |> read))
+        @test any(startswith("D,TEST,GENCONDATA"), lines)
+        @test !any(contains("SPDREGIONCONSTRAINT"), lines)
+    finally
+        foreach(rm, paths)
+    end
+end
+
+@testset "_get_legacy_archive: a table absent from the archive is a MissingDataError" begin
+    archive = make_monthly_archive(2013, 8, ["GENCONDATA"])
+    @test_throws MissingDataError _get_legacy_archive("SPDREGIONCONSTRAINT", 2013, 8; open_archive = (y, m) -> archive)
+end
+
+@testset "populate with a custom fetch_archive writes the Hive partition" begin
+    tmpdir = mktempdir()
+    source = DataSource(
+        "GENCONDATA", ["GENCONID", "EFFECTIVEDATE"], HiveConfiguration(hive_location = tmpdir),
+    )
+    archive = make_monthly_archive(2013, 8, ["GENCONDATA"])
+    fetch_archive(t, y, m) = _get_legacy_archive(t, y, m; open_archive = (yy, mm) -> archive)
+    populate(source, Date(2013, 8, 1):Month(1):Date(2013, 8, 1); fetch_archive)
+    df = _read_parquet_file(joinpath(source.path, "archive_month=2013-08-01", "*.parquet"))
+    @test df.GENCONID == ["XGENCONDATA"]
+end
+
+@testset "populate_legacy_archive: rejects months outside the monolithic-archive window" begin
+    db = aem_connect(HiveConfiguration(hive_location = mktempdir()))
+    @test_throws ArgumentError populate_legacy_archive(db, :GENCONDATA, Date(2015, 1, 1), Date(2015, 1, 1))
+    @test_throws ArgumentError populate_legacy_archive(db, :GENCONDATA, Date(2009, 6, 1), Date(2009, 6, 1))
+end

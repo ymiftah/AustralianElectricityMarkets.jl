@@ -18,18 +18,19 @@ end
 
 
 """
-    _add_data(source::DataSource, year::Int, month::Int)
+    _add_data(source::DataSource, year::Int, month::Int; fetch_archive = _get_archive)
 
 Download the NEMWEB archive for the given month and write it to the
-Hive-partitioned parquet cache.
+Hive-partitioned parquet cache. `fetch_archive(table_name, year, month)` returns the
+downloaded ZIP path(s).
 """
-function _add_data(source::DataSource, year::Int, month::Int)
+function _add_data(source::DataSource, year::Int, month::Int; fetch_archive = _get_archive)
     partition_dir = joinpath(source.path, "$ARCHIVE_MONTH_PARTITION=$(Date(year, month, 1))")
     _clear_local_partition(source, partition_dir)
 
     return try
         @info "Fetching data" table = source.table_name year month
-        zip_paths = _get_archive(source.table_name, year, month)
+        zip_paths = fetch_archive(source.table_name, year, month)
         lo, hi = isnothing(source.month_filter_column) ? (nothing, nothing) : _month_filter_bounds(year, month)
         d_only_path, available_cols = try
             _extract_d_lines(zip_paths; month_filter_column = source.month_filter_column, lo, hi)
@@ -61,7 +62,7 @@ function _add_data(source::DataSource, year::Int, month::Int)
             # 404 under every known URL pattern: AEMO does not publish this month, so
             # skipping is correct. A TransientDownloadError is NOT caught here - it must
             # abort rather than leave a silent hole (see errors.jl).
-            @error "No data available (HTTP 404 - not published by AEMO)" table = source.table_name year month
+            @error "No data available (not published by AEMO)" table = source.table_name year month
         else
             rethrow(e)
         end
@@ -70,11 +71,14 @@ end
 
 
 """
-    populate(source::DataSource, date_range::StepRange{Date}; force_new::Bool=false)
+    populate(source::DataSource, date_range::StepRange{Date}; force_new::Bool=false, fetch_archive=_get_archive)
 
 Populate table with data from a date range.
 """
-function populate(source::DataSource, date_range::StepRange{Date}; force_new::Bool = false)
+function populate(
+        source::DataSource, date_range::StepRange{Date};
+        force_new::Bool = false, fetch_archive = _get_archive,
+    )
     start = first(date_range)
     stop = last(date_range)
     @info "Populating table" table = source.table_name start = start stop = stop
@@ -91,7 +95,7 @@ function populate(source::DataSource, date_range::StepRange{Date}; force_new::Bo
         end
 
         if !data_exists
-            _add_data(source, year, month)
+            _add_data(source, year, month; fetch_archive)
         else
             @info "Data already exists, skipping" table = source.table_name year month
         end

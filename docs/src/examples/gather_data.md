@@ -50,6 +50,15 @@ To download data for **all** supported tables for a specific period:
 populate(db, Date(2024, 1, 1), Date(2024, 1, 2))
 ```
 
+Constraint definitions revised before 2015 exist only in NEMWEB's monolithic pre-2015 archives. Backfill them
+with `populate_legacy_archive`, which reads only the definition tables out of each monthly archive:
+
+```julia
+using AustralianElectricityMarketsData: populate_legacy_archive
+
+populate_legacy_archive(db)  # GENCONDATA and SPD*CONSTRAINT, 2009-07 to 2014-12
+```
+
 To display the data requirements for specific network configurations:
 
 ```julia
