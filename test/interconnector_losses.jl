@@ -129,6 +129,18 @@ let
         @test length(loss_segments(ic1, Dict("VIC1" => 4000.0, "SNOWY1" => 100.0))) == 4
     end
 
+    @testset "demand coefficient patch" begin
+        patch = AustralianElectricityMarkets.Readers._apply_demand_coefficient_patches!
+        fresh() = Dict("V-SA" => Dict("VIC1" => -1.0e-5, "SA1" => 5.0e-5))
+        @test patch(fresh(), Date(2025, 7, 1))["V-SA"]["NSW1"] == 1.6981e-6
+        @test patch(fresh(), DateTime(2026, 6, 30, 23, 55))["V-SA"]["NSW1"] == 1.6981e-6
+        @test !haskey(patch(fresh(), Date(2025, 6, 30))["V-SA"], "NSW1")
+        @test !haskey(patch(fresh(), Date(2026, 7, 1))["V-SA"], "NSW1")
+        explicit = Dict("V-SA" => Dict("NSW1" => 0.0))
+        @test patch(explicit, Date(2025, 8, 1))["V-SA"]["NSW1"] == 0.0
+        @test isempty(patch(Dict{String, Dict{String, Float64}}(), Date(2025, 8, 1)))
+    end
+
     @testset "uncached tables throw, never return empty" begin
         empty_db = aem_connect(
             HiveConfiguration(hive_location = mktempdir(), filesystem = "file"),
