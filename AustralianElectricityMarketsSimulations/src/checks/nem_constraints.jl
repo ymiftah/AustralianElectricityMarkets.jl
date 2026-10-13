@@ -38,6 +38,18 @@ function _fcas_failures(sys::PSY.System, device::PSY.Device, bid_type::BidType, 
 end
 
 
+# Devices attached to each service, by service UUID, in one pass over the devices.
+function _service_device_index(sys::PSY.System)
+    index = Dict{Base.UUID, Vector{PSY.Device}}()
+    for device in PSY.get_components(PSY.supports_services, PSY.Device, sys)
+        for service in PSY.get_services(device)
+            push!(get!(index, IS.get_uuid(service), PSY.Device[]), device)
+        end
+    end
+    return index
+end
+
+
 _interconnector_modeled(template::PSI.ProblemTemplate) = any(
     m -> PSI.get_component_type(m) == PSY.AreaInterchange, values(PSI.get_branch_models(template)),
 )
@@ -167,6 +179,7 @@ function filter_buildable_generic_constraints(
     fcas_modeled = _modeled_fcas_services(template)
 
     gcs = sort(collect(PSY.get_components(GenericConstraint, sys)); by = PSY.get_name)
+    contributing = _service_device_index(sys)
     buildable = GenericConstraint[]
     grouped = Dict{Symbol, Vector{Tuple{String, Vector{DataType}}}}()
     skipped_rows = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
@@ -174,7 +187,7 @@ function filter_buildable_generic_constraints(
         PSY.get_available(gc) || continue
         # PSI cannot build a service whose contributing devices are all unavailable; such a
         # constraint has no variable to bind, so it is left out rather than reported as a failure.
-        devices = PSY.get_contributing_devices(sys, gc)
+        devices = get(contributing, IS.get_uuid(gc), PSY.Device[])
         if !isempty(devices) && !any(PSY.get_available, devices)
             isnothing(skipped) || push!(skipped, (constraint = PSY.get_name(gc), reason = :no_available_device, n_missing = 0))
             continue

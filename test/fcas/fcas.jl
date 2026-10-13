@@ -200,6 +200,11 @@
         reg_bids = read_fcas_bids(db, date_range, BidType.RAISEREG)
         @test !isempty(reg_bids)
         @test all(==(1.0), reg_bids.ROCUP)
+
+        both = read_fcas_bids(db, date_range, [BidType.RAISE6SEC, BidType.RAISEREG])
+        @test all(b -> b isa BidType, both.BIDTYPE)
+        @test isequal(select(subset(both, :BIDTYPE => ByRow(==(BidType.RAISE6SEC))), Not(:BIDTYPE)), bids)
+        @test isequal(select(subset(both, :BIDTYPE => ByRow(==(BidType.RAISEREG))), Not(:BIDTYPE)), reg_bids)
     end
 
     @testset "set_fcas_bids!" begin

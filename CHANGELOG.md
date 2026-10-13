@@ -419,6 +419,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Replication builds are faster: a warm interval's system construction, model build and solve fall
+  from about 60 s to about 24 s. `read_fcas_bids` accepts a vector of bid types and reads the bid
+  tables once for all of them (`set_fcas_bids!` uses it), `add_nem_constraints!` resolves each
+  region's devices once, and the generic-constraint buildability check indexes devices by service.
+  Template finalisation uses a one-pass contributing-device mapping from the pinned
+  PowerSimulations revision.
+
 - `read_demand(db, date_range)` bounds regional demand and initial battery charging reads to the
   intervals contributing to the requested aggregate timestamps. `set_demand!` uses this bounded
   read instead of processing the full cached history, while preserving complete aggregation bins.

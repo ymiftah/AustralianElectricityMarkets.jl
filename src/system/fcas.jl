@@ -161,9 +161,10 @@ function set_fcas_bids!(sys, db, date_range; kwargs...)
     resolution = get(kwargs, :resolution, Minute(5))
     base_power = get_base_power(sys)
 
+    all_bids = groupby(read_fcas_bids(db, date_range, collect(FCAS_BID_TYPES); kwargs...), :BIDTYPE)
     for bid_type in FCAS_BID_TYPES
-        bids = read_fcas_bids(db, date_range, bid_type; kwargs...)
-        DataFrames.isempty(bids) && continue
+        haskey(all_bids, (bid_type,)) || continue
+        bids = DataFrame(all_bids[(bid_type,)])
         transform!(bids, AsTable(:) => ByRow(_extract_fcas_bid) => [:curve_data, :trapezium_row])
         # Per-unitize quantities (offer curve x_coords, trapezium MW/ramp-rate fields), not
         # prices (curve y_coords); component accessors convert back on read.
