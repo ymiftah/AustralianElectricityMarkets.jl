@@ -15,10 +15,9 @@ series.
 - `kwargs`: Additional keyword arguments passed to `read_demand`.
 """
 function set_demand!(sys, db, date_range; kwargs...)
-    demand = read_demand(db; kwargs...)
+    demand = read_demand(db, date_range; kwargs...)
     demand = @chain demand begin
         transform!(:REGIONID => ByRow(x -> x * " Load") => :name)
-        subset!(:SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
     end
     ts = _as_timearray(demand, :SETTLEMENTDATE, :name, :TOTALDEMAND)
     loss_ts = _as_timearray(demand, :SETTLEMENTDATE, :name, :LOSSDEMAND)

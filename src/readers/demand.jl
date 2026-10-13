@@ -30,12 +30,15 @@ end
 
 """
     read_demand(db; resolution::Dates.Period=Dates.Minute(5))
+    read_demand(db, date_range; resolution::Dates.Period=Dates.Minute(5))
 
-Read and process regional demand data from the database.
+Read regional demand and aggregate it at `resolution`. When `date_range` is provided,
+read only the raw intervals contributing to aggregate timestamps in `[first(date_range), last(date_range))`.
 
 # Arguments
 - `db`: The database connection.
-- `resolution::Dates.Period`: The time resolution to which the data should be floored. Defaults to 5 minutes.
+- `date_range`: Optional range of aggregate timestamps, with an inclusive start and exclusive end.
+- `resolution::Dates.Period`: The time resolution to which timestamps are rounded up. Defaults to 5 minutes.
 
 # Returns
 A `DataFrame` with demand and renewable availability data, aggregated by the specified resolution.
@@ -50,10 +53,21 @@ demand_df = read_demand(db; resolution=Dates.Hour(1))
 println(demand_df)
 ```
 """
-function read_demand(db; resolution::Dates.Period = Dates.Minute(5))
+function read_demand(db, date_range = nothing; resolution::Dates.Period = Dates.Minute(5))
     source = read_hive(db, :DISPATCHREGIONSUM)
     dispatchload = read_hive(db, :DISPATCHLOAD)
     summary = read_hive(db, :DUDETAILSUMMARY)
+    demand_where = ""
+    charging_where = ""
+    params = Any[]
+    if !isnothing(date_range)
+        # Each rounded-up timestamp includes the raw bin ending at it, even before the requested start.
+        lower = ceil(DateTime(first(date_range)), resolution) - resolution
+        upper = ceil(DateTime(last(date_range)), resolution) - resolution
+        charging_where = "AND SETTLEMENTDATE > ? AND SETTLEMENTDATE <= ?"
+        demand_where = "AND r.SETTLEMENTDATE > ? AND r.SETTLEMENTDATE <= ?"
+        append!(params, (lower, upper, lower, upper))
+    end
     df = _query(
         db,
         """
@@ -69,7 +83,7 @@ function read_demand(db; resolution::Dates.Period = Dates.Minute(5))
                  FROM (
                      SELECT DUID, SETTLEMENTDATE, INITIALMW
                      FROM $dispatchload
-                     WHERE INTERVENTION = 0
+                     WHERE INTERVENTION = 0 $charging_where
                      QUALIFY row_number() OVER (
                          PARTITION BY DUID, SETTLEMENTDATE ORDER BY archive_month DESC
                      ) = 1
@@ -86,13 +100,19 @@ function read_demand(db; resolution::Dates.Period = Dates.Minute(5))
         LEFT JOIN charging c ON c.SETTLEMENTDATE = r.SETTLEMENTDATE AND c.REGIONID = r.REGIONID
         WHERE r.SETTLEMENTDATE IS NOT NULL AND r.REGIONID IS NOT NULL
           AND r.TOTALDEMAND IS NOT NULL AND r.SS_SOLAR_AVAILABILITY IS NOT NULL AND r.SS_WIND_AVAILABILITY IS NOT NULL
-        """
+          $demand_where
+        """,
+        params,
     )
     # df[!, :TOTALDEMAND] .+= df[!, :DISPATCHABLELOAD]  # Adds the dispatchable load to the total demand to get the actual native demand
     df[!, :SETTLEMENTDATE] = ceil.(df[!, :SETTLEMENTDATE], resolution)
     sort!(df, :SETTLEMENTDATE)
-    return @chain df begin
+    demand = @chain df begin
         groupby([:SETTLEMENTDATE, :REGIONID])
         combine(_, valuecols(_) .=> mean ∘ skipmissing; renamecols = false)
     end
+    if !isnothing(date_range)
+        subset!(demand, :SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
+    end
+    return demand
 end

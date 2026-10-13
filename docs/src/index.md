@@ -44,9 +44,14 @@ populate(
     tables = table_requirements(RegionalNetworkConfiguration()),
 )
 
-demand_df = read_demand(db)
+date_range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 2)
+demand_df = read_demand(db, date_range)
 println(demand_df)
 ```
+
+`read_demand(db, date_range)` returns aggregate timestamps from the start of the range up to,
+but excluding, its end. With a coarser `resolution`, it reads complete bins before averaging.
+Omit `date_range` to read all cached demand.
 
 And parsing the data into `PowerSystems.jl`
 
