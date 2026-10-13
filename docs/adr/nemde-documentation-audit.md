@@ -339,3 +339,34 @@ Verification completed through Kaimon: all six Literate chapters rendered with e
 figures, and a focused Documenter HTML build resolved their math, chapter references and legacy
 FCAS landing links. Runic and Markdown lint passed. The local build uses Julia 1.13.1; the complete
 site and its historical-data tutorials were not rebuilt or deployed.
+
+## Reader review, 14 October 2026
+
+The six formulation chapters were reviewed for a reader who knows electricity markets but not the
+NEM, after rebasing on `v0.2` at `a7aae2b`, and rewritten. Decisions taken:
+
+- **No code in the formulation chapters.** They describe AEMO's dispatch. The Julia walkthrough of
+  the Tasmanian interval moved to the how-to page `docs/literate/fcas.jl`.
+- **One callout form for package behaviour.** A note titled "Deviation in
+  AustralianElectricityMarketsSimulations", written as "AEMO: ... This package: ...", beside the
+  equation it affects, with a summary table on the overview. Words such as "replica" and
+  "reconstruction" are no longer used in these chapters.
+- **One notation**, defined on the overview: `u, r, i, b` indices, `j` FCAS service, `g` generic
+  constraint, `p` energy, `f` FCAS enablement, `q/Q` cleared and offered band MW, `x, L` flow and
+  loss, `h` interval hours, `sigma` slack, `v` CVP factor, `lambda`/`mu` marginal values. Ramp rates
+  are MW per hour throughout. Trapezium parameters are `E^min, B^lo, B^hi, E^max, F`.
+- **Every chapter ends with "Where the data lives"**: symbol, quantity, MMSDM table (also the cache
+  directory), columns, time key, and whether the row is an input or a result.
+- **The fast-start ramp envelope derived for #184 was removed.** AEMO does not publish it, and the
+  chapter now states only what the Fast Start Inflexibility Profile document says.
+
+Deviation notes were checked against the ADRs and `v0.2` sources: 0016 and 0037 (availability and
+UIGF as raised hard limits), 0020 (battery directions), 0027 (loss-equation demand), 0031 (ordered
+loss segments by integer variables, prices at fixed integers), 0032 (dropped unit terms, wholesale
+demand response), 0035 (MNSP hard bounds, direction binary, Basslink loss share), 0036 (tie-break
+penalty without the market price cap), 0038 (no scaling or joint ramping for scheduled loads), 0003
+(published right-hand sides replayed), and #188 and #189 (zero-referenced loss vertices, directional
+MNSP losses). Fast-start profiles remain unimplemented on `v0.2`.
+
+Not verified: the Basslink converter-loss and no-go-zone statements, which are carried over from
+the previous text.

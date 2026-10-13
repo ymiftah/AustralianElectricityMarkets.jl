@@ -79,9 +79,8 @@ to flow. A linear loss-factor equation gives a quadratic loss curve, anchored at
 !!! note "Discrete curve anchoring"
     Interpolating analytic values at breakpoints can give a nonzero chord value at zero flow.
     Shifting all vertices by that value preserves slopes and anchors the chord at zero.
-    This is a reconstruction assumption. The annual reports do not specify the
-    interpolation procedure. The replica does not apply this discrete zero-flow
-    correction, so a chord spanning zero can retain a loss offset.
+    The annual reports do not specify the interpolation procedure. The package applies
+    this shift when a chord spans zero flow, so its piecewise curve is zero at zero flow.
 
 AEMO apportions regulated inter-regional losses between the associated regions using static
 proportioning factors ([FY2026-27 §6 p. 78](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2026-27/marginal-loss-factors-for-the-2026-27-financial-year.pdf)).
@@ -92,8 +91,8 @@ Directional terminal factors refer these transfers to their regional reference n
 !!! note "Basslink and MNSP coverage"
     Without directional offers, the replica assigns all Basslink losses to its configured
     from region. This is a reconstruction assumption, not an annual terminal factor.
-    Direction-dependent MNSP sender loss allocation is not represented; static regional
-    shares are used instead. Basslink fixed converter losses and its no-go zone are
-    omitted. MNSP ramp, fixed-load and elastic-offer behavior remain incomplete.
+    With directional offers, the sending region supplies the whole loss and each end is
+    referred by its terminal loss factor. Basslink fixed converter losses and its no-go
+    zone are omitted. MNSP ramp, fixed-load and elastic-offer behavior remain incomplete.
     FY2026-27 regulated Basslink treatment
     needs separate validation against the applicable configuration and published inputs.

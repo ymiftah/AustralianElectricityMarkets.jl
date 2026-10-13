@@ -83,6 +83,7 @@ makedocs(;
             "Market clearing" => "examples/market_bids.md",
             "Market clearing with interchanges" => "examples/interchanges.md",
             "Market clearing with batteries" => "examples/clearing-with-batteries.md",
+            "Inspect an FCAS interval" => "examples/fcas.md",
         ],
         "Roadmap" => "roadmap.md",
         "Reference" => [

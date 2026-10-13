@@ -5,7 +5,11 @@ include(joinpath(@__DIR__, "formulation_pages.jl"))
 set_theme!()
 
 function formulation_review_links()
-    links = Dict("nemde-jump" => "../../docs/literate/nemde_jump.jl")
+    links = Dict(
+        "nemde-jump" => "../../docs/literate/nemde_jump.jl",
+        "nem-dispatch" => "../../docs/literate/nem.jl",
+        "fcas-requirement-reading" => "../../docs/literate/fcas.jl",
+    )
     for name in FORMULATION_PAGES
         source = read(joinpath(@__DIR__, "literate", "$name.jl"), String)
         for matched in eachmatch(r"\(@id ([^)]+)\)", source)
@@ -58,7 +62,7 @@ function render_formulation_review(output = joinpath(@__DIR__, "..", "docs-revie
         "Overview", "Energy bids and participants", "FCAS capability and co-optimisation",
         "Interconnectors and losses", "Fast-start dispatch", "Violations, tie-breaking and prices",
     ]
-    index = "# NEMDE formulation review\n\nGenerated from Literate sources with executed CairoMakie figures.\nKnown gaps and reconstruction assumptions are labelled in notes.\n\n"
+    index = "# NEMDE formulation review\n\nGenerated from Literate sources with executed CairoMakie figures.\nDeviations of the package from AEMO's dispatch are labelled in notes.\n\n"
     for (name, title) in zip(FORMULATION_PAGES, titles)
         index *= "- [$title]($name.md)\n"
     end

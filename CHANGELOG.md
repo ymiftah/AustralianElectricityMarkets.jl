@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Rewrote the six NEMDE formulation chapters for readers who know electricity markets but not the
+  NEM: a five-minute dispatch walk-through, glossary and one notation on the overview, a worked
+  example per chapter, and no code. Package behaviour appears only in notes titled "Deviation in
+  AustralianElectricityMarketsSimulations". Each chapter ends with a "Where the data lives" table
+  mapping its symbols to MMSDM tables, columns, cache directories and time keys. The Julia FCAS
+  walkthrough moved to a new how-to page, "Inspect an FCAS interval". Removed two notes that the
+  zero-flow loss reference and directional MNSP losses had made out of date.
 - Revised the NEMDE chapters and tutorials for users: removed development history and internal
   implementation descriptions, and distinguished NEM rules from reconstruction assumptions.
 - Expanded the NEMDE formulation into linked energy, FCAS, interconnector, fast-start and pricing
