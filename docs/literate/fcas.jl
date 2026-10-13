@@ -3,7 +3,7 @@
 # The FCAS market introduction, capability diagrams, co-optimisation equations and MMSDM
 # walkthrough are now together in [FCAS capability and co-optimisation](@ref nemde-fcas).
 # Start there for the ten services, input maps, scaling, eligibility, joint constraints,
-# availability, price recovery and the worked Tasmanian interval.
+# availability, prices and the worked Tasmanian interval.
 
 # ## Existing section links
 #

@@ -129,134 +129,113 @@ end #hide
 # enablement: the offers, regional requirements and unit capability constraints must be solved
 # together. AEMO describes this joint choice in [FCAS Model in NEMDE, §1.1, p. 4](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf).
 #
-# ### How this appears in AEM and AEMSim
+# ### Interpreting published requirements
 #
-# AEMSim models all ten services. An `FCASService` groups the providers for one region and
-# service; `FCASMarket` constructs their enabled-capacity variables, offer costs and capability
-# rows. The procurement requirements are separate `GenericConstraint`s under `LinearFactorLimit`.
-# A service is therefore not itself a single regional requirement row.
+# Published FCAS requirement mappings identify the constraints governing each regional service.
+# A service can have several governing equations, and an equation can govern several regions.
+# The solved left-hand side, right-hand side and marginal value describe the dispatch outcome;
+# they do not prescribe the energy targets or FCAS enablements for another optimisation.
 #
-# `read_fcas_requirements` returns the published requirement mapping with one row per governing
-# constraint, region, service and interval. It joins `DISPATCHCONSTRAINT` for the solved left-hand
-# side and right-hand side. Those values are useful for interpreting an outcome. In replay,
-# `add_nem_constraints!` supplies the published right-hand side and resolved coefficients;
-# AEMSim builds a new left-hand side from its own decision variables. Published enabled targets,
-# solved left-hand sides and prices are comparison outputs, not prescribed dispatch decisions.
-#
-# A missing definition in the local cache does not justify assuming a constraint sense or
-# reconstructing coefficients from its name. In particular, a negative right-hand side alone
-# neither proves a deficit nor proves that a requirement is inactive. Interpretation requires
-# the equation's terms, sense and invocation status.
+# !!! note "A requirement needs its complete equation"
+#     A missing constraint definition prevents a reliable interpretation of the requirement.
+#     A negative right-hand side alone neither proves a deficit nor shows that a requirement
+#     is inactive. Read the coefficients, constraint sense and invocation status together.
 
 # ## [Mapping the formulation inputs to MMSDM](@id fcas-types-mapping)
 #
-# An FCAS replay needs the submitted offers, the published operating limits, and the complete
-# generic constraints that procure the service. The following maps describe the data used by
-# AEM and AEMSim. Column definitions are documented in AEMO's
-# [MMS Data Model Report](https://visualisations.aemo.com.au/aemo/nemweb/MMSDataModelReport/Electricity/MMS%20Data%20Model%20Report_files/MMS%20Data%20Model%20Report_toc.htm);
-# the tables below identify the particular columns used by this implementation.
+# An FCAS dispatch analysis needs offers, operating limits and the complete generic equations
+# that procure each service. Column definitions and record keys are documented in AEMO's
+# [MMS Data Model Report](https://visualisations.aemo.com.au/aemo/nemweb/MMSDataModelReport/Electricity/MMS%20Data%20Model%20Report_files/MMS%20Data%20Model%20Report_toc.htm).
 #
 # ### Submitted offers and participant identity
 #
-# | Model input | MMSDM source | Package representation |
+# | Quantity | MMSDM source | Meaning |
 # | --- | --- | --- |
-# | Band prices ``c_{u,k,b}`` | `BIDDAYOFFER_D.PRICEBAND1` to `PRICEBAND10`, filtered by FCAS `BIDTYPE` | Offer curve returned by `read_fcas_bids`; attached by `set_fcas_bids!` |
-# | Band MW ``q_{u,k,b}`` | `BIDPEROFFER_D.BANDAVAIL1` to `BANDAVAIL10`, same `BIDTYPE` | Cumulative MW coordinates of `fcas_curve_<SERVICE>` |
-# | ``E_{\min},L,H,E_{\max},F`` | `BIDPEROFFER_D.ENABLEMENTMIN`, `LOWBREAKPOINT`, `HIGHBREAKPOINT`, `ENABLEMENTMAX`, `MAXAVAIL` | `FCASTrapezium`, stored in `fcas_trapezium_<SERVICE>` |
-# | Bid side | `DIRECTION` in both bid tables: `GEN`, `LOAD`, `BIDIRECTIONAL` | `LOAD` uses the `_decremental` series suffix; `GEN` and whole-unit `BIDIRECTIONAL` use the plain name |
-# | Unit, connection point and region | `DUDETAILSUMMARY.DUID`, `CONNECTIONPOINTID`, `REGIONID`, with applicable `START_DATE`/`END_DATE` | Device identity, region membership and connection-point term resolution |
-# | Scheduled/semi-scheduled classification | `DUDETAILSUMMARY.SCHEDULE_TYPE` | Determines whether `read_uigf` returns a weather ceiling for the unit |
+# | Band prices ``c_{u,k,b}`` | `BIDDAYOFFER_D.PRICEBAND1` to `PRICEBAND10`, for the service's `BIDTYPE` | Price offered for each band, in \$/MWh |
+# | Band MW ``q_{u,k,b}`` | `BIDPEROFFER_D.BANDAVAIL1` to `BANDAVAIL10`, for the same `BIDTYPE` | Response capability offered in each band |
+# | ``E_{\min},L,H,E_{\max},F`` | `BIDPEROFFER_D.ENABLEMENTMIN`, `LOWBREAKPOINT`, `HIGHBREAKPOINT`, `ENABLEMENTMAX`, `MAXAVAIL` | The five technical limits of the capability trapezium |
+# | Bid side | Bid-table `DIRECTION`: `GEN`, `LOAD`, `BIDIRECTIONAL` | Distinguishes generation-side, load-side and whole-unit offers |
+# | Provider and location | `DUDETAILSUMMARY.DUID`, `CONNECTIONPOINTID`, `REGIONID`, `START_DATE`, `END_DATE` | Unit identity and location for the applicable date |
+# | Scheduling classification | `DUDETAILSUMMARY.SCHEDULE_TYPE` | Identifies semi-scheduled units, whose FCAS capability is also limited by UIGF |
 #
-# `read_fcas_bids` selects one service at a time. Within that service it resolves the highest
-# `VERSIONNO` per daily `(SETTLEMENTDATE, DUID, DIRECTION)` price row and per interval
-# `(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)` quantity/trapezium row. It joins the
-# daily and interval offers on market date, unit and direction. Retaining `DIRECTION` is
-# necessary to preserve both battery regulation offers.
-#
+# Match the daily prices and interval quantities by service, market day, unit and direction.
+# Retaining `DIRECTION` preserves both regulation offers from a bidirectional unit.
 # Bid `SETTLEMENTDATE` identifies the market day; `INTERVAL_DATETIME` identifies the dispatch
 # interval. Dispatch-table `SETTLEMENTDATE` identifies the interval instead. NEM timestamps
-# use fixed AEST, and a dispatch timestamp denotes the interval end. Do not join a daily bid
-# date directly to the dispatch timestamp. The public `_D` bid tables describe offers applied
-# in dispatch; this path does not reconstruct every submitted rebid from the private bid tables.
+# use fixed AEST, and a dispatch timestamp denotes the interval end.
 #
-# `BIDPEROFFER_D.ROCUP`/`ROCDOWN` are energy-bid ramp fields in AEMO's schema. Although the
-# FCAS parser retains them when present, `FCASMarket` obtains its AGC ramp capability from the
-# dispatch-limit series below. They must not be substituted for AGC telemetry.
+# !!! note "Offers applied in dispatch"
+#     The public `_D` bid tables describe the offers applied in dispatch. They do not provide
+#     a complete submission history for every rebid. Daily bid dates must be matched to the
+#     market day, rather than joined directly to dispatch timestamps.
 #
 # ### Operating limits, scaling and eligibility
 #
-# | Model input | MMSDM source | Reader and attached series |
+# | Quantity | MMSDM source | Meaning |
 # | --- | --- | --- |
-# | Initial energy ``e_0`` | `DISPATCHLOAD.INITIALMW` | `read_dispatch_limits` → `set_nem_dispatch_limits!` → `initial_mw` |
-# | Non-battery energy reachability | `DISPATCHLOAD.AVAILABILITY` | Same path → `availability`; for semi-scheduled units this is already the lower of energy bid availability and UIGF |
-# | Battery generation/load reachability | `BIDPEROFFER_D.MAXAVAIL` for `BIDTYPE = ENERGY`, separately for `GEN` and `LOAD` | `set_market_bids!` → `energy_max_avail` and `energy_max_avail_decremental`; static ratings are the fallback if those series are unavailable |
-# | Raise-regulation energy limits | `DISPATCHLOAD.RAISEREGENABLEMENTMIN`, `RAISEREGENABLEMENTMAX` | `read_fcas_scaling_inputs` → `set_fcas_scaling_inputs!` → `fcas_agc_enablement_min_RAISEREG` / `fcas_agc_enablement_max_RAISEREG` |
-# | Lower-regulation energy limits | `DISPATCHLOAD.LOWERREGENABLEMENTMIN`, `LOWERREGENABLEMENTMAX` | Same path, with `LOWERREG` suffix |
-# | Upward/downward ramp capability | `DISPATCHLOAD.RAMPUPRATE`, `RAMPDOWNRATE` | Same path → `fcas_agc_ramp_rate_RAISEREG` / `fcas_agc_ramp_rate_LOWERREG`; rate multiplied by interval hours |
-# | AGC eligibility | `DISPATCHLOAD.AGCSTATUS` | Same path → `fcas_agc_status`, retaining the raw 0/1 flag |
-# | Weather ceiling | `DISPATCHLOAD.UIGF`, restricted to semi-scheduled units using `DUDETAILSUMMARY` | `read_uigf` → `set_fcas_scaling_inputs!` → `fcas_uigf` |
+# | Initial operating point ``e_0`` | `DISPATCHLOAD.INITIALMW` | Metered MW at the start of the interval |
+# | Energy availability | `DISPATCHLOAD.AVAILABILITY` | Bid maximum availability for scheduled units; the lower of bid availability and UIGF for semi-scheduled units |
+# | Bidirectional energy availability | `BIDPEROFFER_D.MAXAVAIL` for `BIDTYPE = ENERGY`, separately for `GEN` and `LOAD` | Reachable generation and consumption limits |
+# | Raise-regulation energy limits | `DISPATCHLOAD.RAISEREGENABLEMENTMIN`, `RAISEREGENABLEMENTMAX` | More restrictive of bid and telemetered enablement limits |
+# | Lower-regulation energy limits | `DISPATCHLOAD.LOWERREGENABLEMENTMIN`, `LOWERREGENABLEMENTMAX` | Corresponding lower-regulation enablement limits |
+# | Ramp rates | `DISPATCHLOAD.RAMPUPRATE`, `RAMPDOWNRATE` | Rates used in dispatch, taking the lesser of bid and telemetered rates |
+# | AGC status | `DISPATCHLOAD.AGCSTATUS` | 1 means on AGC; 0 means off AGC |
+# | Weather ceiling | `DISPATCHLOAD.UIGF` | Unconstrained intermittent generation forecast supplied to NEMDE for a semi-scheduled unit |
 #
-# These are published dispatch inputs, rather than a separate raw-SCADA feed. The regulation
-# enablement minimum is already the greater of bid and telemetered limits; the maximum is the
-# lesser. The ramp fields report rates used in dispatch, combining bid and telemetered limits.
-# AEMSim uses those published rates for both energy-ramp inputs and FCAS ramp capability.
-# This is a replay convention, not evidence that the archive exposes independent raw AGC rates.
-# The UIGF reader uses the value published for the dispatch interval in `DISPATCHLOAD`, rather
-# than selecting another forecast run from `INTERMITTENT_DS_RUN`.
+# `BIDPEROFFER_D.ROCUP` and `ROCDOWN` describe energy-bid ramp rates. They are not independent
+# AGC telemetry. Rates and interval durations must use matching units: MW/min multiplied
+# by minutes, or MW/h multiplied by hours, yields MW of ramp capability.
 #
-# MW quantities and MW/h ramp rates are stored per-unit of the system base; prices and AGC
-# status retain their original units. An absent scaling observation is stored as `NaN` and
-# treated as unknown on read. It must not be confused with a genuine zero UIGF. The
-# dispatch readers select `INTERVENTION` consistently where available. During intervention,
-# pricing-run inputs and physical-run inputs need to be compared with their matching outputs.
+# !!! note "Published limits and missing telemetry"
+#     Published dispatch limits combine bid and telemetered values. Using those limits to
+#     reconstruct FCAS capability does not recover independent raw AGC rates. An absent
+#     observation is unknown, whereas a genuine zero UIGF is a binding weather ceiling.
+#     During intervention, compare physical dispatch and pricing-run records with their
+#     corresponding outputs.
 #
 # ### Procurement equations
 #
-# | Required part of equation ``g`` | MMSDM source | How it enters the model |
+# | Part of equation ``g`` | MMSDM source | Meaning |
 # | --- | --- | --- |
-# | Invoked equation and exact definition version | `DISPATCHCONSTRAINT.CONSTRAINTID`, `GENCONID_EFFECTIVEDATE`, `GENCONID_VERSIONNO` | `read_invoked_constraints` selects the rows replayed by `add_nem_constraints!` |
-# | Interval bound ``\mathrm{RHS}_g`` | `DISPATCHCONSTRAINT.RHS` | Attached `rhs` series; AEMSim replays this value rather than recomputing it from live SCADA |
-# | Sense and violation weighting | Matching `GENCONDATA.CONSTRAINTTYPE`, `GENERICCONSTRAINTWEIGHT` | `GenericConstraint` definition |
-# | Unit energy/FCAS coefficients | `SPDCONNECTIONPOINTCONSTRAINT.CONNECTIONPOINTID`, `BIDTYPE`, `FACTOR` | Joined through `DUDETAILSUMMARY` to a `DUID`; resolved as unit terms |
-# | Regional energy/FCAS coefficients | `SPDREGIONCONSTRAINT.REGIONID`, `BIDTYPE`, `FACTOR` | Regional terms over the corresponding devices/service |
-# | Interconnector coefficients | `SPDINTERCONNECTORCONSTRAINT.INTERCONNECTORID`, `FACTOR` | Terms on signed interconnector flow |
-# | Governing regional service mapping | `DISPATCH_FCAS_REQ` or `DISPATCH_FCAS_REQ_CONSTRAINT`: region, service and constraint identifier | `read_fcas_requirements` / `read_constraint_fcas_requirements`; tags the regional services governed by each equation |
+# | Invoked equation and definition version | `DISPATCHCONSTRAINT.CONSTRAINTID`, `GENCONID_EFFECTIVEDATE`, `GENCONID_VERSIONNO` | Identifies the exact equation used in the interval |
+# | Bound ``\mathrm{RHS}_g`` | `DISPATCHCONSTRAINT.RHS` | Published interval right-hand side |
+# | Sense and violation weighting | `GENCONDATA.CONSTRAINTTYPE`, `GENERICCONSTRAINTWEIGHT` | Inequality or equality sense and relative violation penalty |
+# | Unit energy/FCAS coefficients | `SPDCONNECTIONPOINTCONSTRAINT.CONNECTIONPOINTID`, `BIDTYPE`, `FACTOR` | Contribution of energy or FCAS at a connection point |
+# | Regional coefficients | `SPDREGIONCONSTRAINT.REGIONID`, `BIDTYPE`, `FACTOR` | Contribution of regional energy or a regional service |
+# | Interconnector coefficients | `SPDINTERCONNECTORCONSTRAINT.INTERCONNECTORID`, `FACTOR` | Contribution of signed interconnector flow |
+# | Regional service mapping | `DISPATCH_FCAS_REQ` or `DISPATCH_FCAS_REQ_CONSTRAINT` | Identifies which region and service a requirement equation governs |
 #
-# Constraint definitions and all coefficient rows are matched to the exact invoked
-# `(GENCONID, EFFECTIVEDATE, VERSIONNO)` triple. These change-only tables may require archive
-# months preceding the replay window. A region/service requirement mapping alone supplies
-# neither the coefficients nor the constraint sense.
+# Match the definition and coefficient records to the invoked
+# `(GENCONID, EFFECTIVEDATE, VERSIONNO)` triple. Change-only definition tables may require
+# records from months preceding the dispatch interval. A regional service mapping alone
+# supplies neither coefficients nor constraint sense.
 #
-# The requirement reader supports the archive transition from `DISPATCH_FCAS_REQ` through
-# May 2025 to `DISPATCH_FCAS_REQ_CONSTRAINT` from June 2025. It normalises the successor's
-# `CONSTRAINTID` to `GENCONID` and `INTERVAL_DATETIME` to `SETTLEMENTDATE`. The successor
-# has no `INTERVENTION` or definition-version fields, and may contain several processor runs;
-# the mapping reader does not provide a raw run-by-run reconstruction. The exact model
-# definition version still comes from `DISPATCHCONSTRAINT`, not from a latest-version guess
-# in the requirement mapping.
+# !!! note "Requirement mapping and run identity"
+#     Historical archives use `DISPATCH_FCAS_REQ`; newer archives use
+#     `DISPATCH_FCAS_REQ_CONSTRAINT`. The latter uses `CONSTRAINTID` and `INTERVAL_DATETIME`,
+#     and can contain several processor runs. It has no `INTERVENTION` or definition-version
+#     fields. Obtain the invoked definition version from `DISPATCHCONSTRAINT`, and check
+#     run identity before comparing requirement mappings and solved outcomes.
 #
 # ### Published outcomes used for comparison
 #
-# | Outcome | MMSDM source | Reader |
+# | Outcome | MMSDM source | Meaning |
 # | --- | --- | --- |
-# | Unit FCAS targets | `DISPATCHLOAD.<SERVICE>`, such as `RAISE6SEC` or `RAISEREG` | `read_fcas_dispatch`, returned as `TARGET` |
-# | Published service availability | `DISPATCHLOAD.<SERVICE>ACTUALAVAILABILITY`, where present | Same reader, returned as `ACTUALAVAILABILITY` |
-# | Unit energy target | `DISPATCHLOAD.TOTALCLEARED` | Energy context in `read_fcas_dispatch` |
-# | Solved equation value and shadow price | `DISPATCHCONSTRAINT.LHS`, `MARGINALVALUE` | Constraint comparison data; requirement readers also expose marginal values |
-# | Regional service prices | `DISPATCHPRICE.<SERVICE>RRP`, `<SERVICE>ROP`, `<SERVICE>APCFLAG` | `read_fcas_prices` |
+# | Unit FCAS targets | `DISPATCHLOAD.<SERVICE>`, such as `RAISE6SEC` or `RAISEREG` | MW enabled for the service |
+# | Actual service availability | `DISPATCHLOAD.<SERVICE>ACTUALAVAILABILITY`, where present | Capability at the dispatched operating point after allowing for other enabled services |
+# | Unit energy target | `DISPATCHLOAD.TOTALCLEARED` | Dispatched energy operating point |
+# | Solved equation and marginal value | `DISPATCHCONSTRAINT.LHS`, `MARGINALVALUE` | Achieved left-hand side and the value associated with relaxing the constraint |
+# | Regional service prices | `DISPATCHPRICE.<SERVICE>RRP`, `<SERVICE>ROP`, `<SERVICE>APCFLAG` | Regional price, original price and administered price cap flag |
 #
-# These quantities are results to compare with a new solve. They do not prescribe its unit
-# energy or FCAS decisions. In particular, `<SERVICE>ACTUALAVAILABILITY` and regulation
-# `RAISEREGAVAILABILITY`/`LOWERREGAVAILABILITY` must not replace the submitted bid `MAXAVAIL`:
-# they describe different stages of the capability calculation. The current reader checks
-# which actual-availability columns exist in the cached schema and returns missing values
-# where they are absent.
+# Targets, actual availability and prices are dispatch outputs. Actual availability and
+# regulation `RAISEREGAVAILABILITY`/`LOWERREGAVAILABILITY` must not replace submitted bid
+# `MAXAVAIL`: they describe different stages of the capability calculation.
 #
 # ## [Guide to AEMO's participant cases](@id fcas-cases)
 #
 # The FCAS Model in NEMDE distinguishes participant coordinates, the energy operating point,
 # scaling, eligibility, joint constraints and post-dispatch availability. The sections below
-# follow those cases, with the package's implementation coverage stated alongside each.
+# explain these stages for generators, scheduled loads and bidirectional units.
 #
 # ## [Offers and capability trapezia](@id fcas-trapezium)
 #
@@ -278,11 +257,8 @@ end #hide
 # the interval, even if no frequency event occurs. The offer structure and joint least-cost
 # choice are described in [FCAS Model in NEMDE, §§1.1-2, pp. 4-6](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf).
 #
-# AEMSim represents the curve with `FCASBid` and `PiecewiseStepData`. Its bounded band
-# variables sum to the capacity variable. Quantities are internally in per-unit, so the
-# objective also multiplies by the system base power to recover the MW-based cost above.
-# The offered band total and the technical maximum are separate limits: neither replaces
-# the other.
+# The offered band total and the technical maximum are separate limits. Available band
+# quantities do not guarantee that the unit can deliver their sum at its energy target.
 #
 # ### The five technical limits
 #
@@ -315,8 +291,7 @@ end #hide
 #
 # These coefficients measure horizontal movement per MW of FCAS, the reciprocal of the
 # sloping edge's rise-over-run. A zero coefficient represents a vertical edge and needs no
-# division by an energy-axis width. A zero-availability offer is disabled before building
-# its capability rows. See [FCAS Model in NEMDE, §§2-3, pp. 6-13](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf).
+# division by an energy-axis width. A zero-availability offer cannot be enabled. See [FCAS Model in NEMDE, §§2-3, pp. 6-13](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf).
 
 function fcas_review_envelope(e, emin, emax, fmax, lower, upper) #hide
     left = iszero(lower) ? (e >= emin ? Inf : 0.0) : (e - emin) / lower #hide
@@ -351,15 +326,18 @@ end #hide
 # positive consumption, even though its contribution to regional net injection is negative.
 # Consequently, increasing consumption provides lower response, and reducing consumption
 # provides raise response. A battery's contingency coordinate is signed net injection.
-# These conventions follow [FCAS Model in NEMDE, §§2.1-2.4, pp. 7-10](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf)
-# and are used by `FCASMarket` when it selects the energy variable in each row.
+# These conventions follow [FCAS Model in NEMDE, §§2.1-2.4, pp. 7-10](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf).
+# The energy coordinate must be interpreted consistently in every capability equation.
 #
 # ### [Applying the envelope at the energy target](@id fcas-cases-application)
 #
-# In the current AEMSim formulation, passing the eligibility checks causes the energy-envelope
-# rows to be built even if the optimiser selects zero FCAS. Those rows then keep the energy
-# coordinate within the effective enablement limits. Eligibility is determined before the
-# solve; it is not a binary decision that switches these rows off when the target is zero.
+# The trapezium limits capability at the selected energy target. On its plateau, up to
+# ``F`` MW is available; on either slope, available capability falls towards zero.
+# Joint capacity constraints also account for regulation delivered at the same time.
+# AEMO describes a unit subject to these energy-envelope limits as trapped within its
+# FCAS trapezium. Eligibility at the initial operating point is a separate condition:
+# a unit initially outside its range can be stranded and unavailable for that service.
+# See [FCAS Model in NEMDE, §§3, 5-6, pp. 12-13, 18-28](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf).
 #
 # ## Scaling and eligibility before optimisation
 #
@@ -410,18 +388,14 @@ end #hide
 # *Each panel applies one scaling input to the preceding constructed bid. Scaling can also
 # act in combination. The sloped edges retain their energy-per-FCAS coefficients.*
 #
-# `scale_fcas_trapezium` implements these transformations; `get_scaled_fcas_trapezium`
-# supplies the interval series consumed by `FCASMarket`. Effective breakpoints are not
-# clamped into their submitted order. If ``L'>H'``, the two slopes intersect below ``F'``;
-# the same linear inequalities describe that reduced peak. If ``E'_{\max}<E'_{\min}``,
-# the service is ineligible.
-# The package stores AGC ramp rates in MW/h (or the corresponding per-unit rate); its accessors
-# multiply by interval hours. The equations above use MW/min and interval minutes for clarity.
+# If ``L'>H'``, the two slopes intersect below ``F'``; the linear inequalities then
+# describe a reduced peak rather than a full-height plateau. If
+# ``E'_{\max}<E'_{\min}``, there is no feasible enablement range.
 #
 # ### [Eligibility is an input check](@id fcas-cases-preconditions)
 #
 # Eligibility determines whether the optimiser may select a service. It does not imply
-# a positive enablement. AEMSim checks the following after scaling, based on
+# a positive enablement. AEMO specifies the following conditions after scaling in
 # [FCAS Model in NEMDE, §5, pp. 18-19](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf).
 #
 # | Check | Ordinary generator or scheduled load | Battery exception |
@@ -430,41 +404,41 @@ end #hide
 # | Nonempty range and sign | ``E'_{\min}\le E'_{\max}``, ``E'_{\max}\ge0`` | Load-side regulation requires ``E'_{\min}\le0``; contingency has no sign restriction |
 # | Reachable energy range | Energy availability reaches ``E'_{\min}`` | Generation availability reaches the left edge; negative load availability reaches the right edge, as applicable |
 # | Initial operating point | ``E'_{\min}\le\max(\mathrm{INITIALMW},0)\le E'_{\max}`` | Signed initial MW; combined load-to-generation range when both regulation sides qualify |
-# | AGC status for regulation | Known off-AGC status disables the service | Same rule |
+# | AGC status for regulation | Must be on AGC in dispatch and the first pre-dispatch interval | Same rule |
 #
 # For semi-scheduled generation, energy reachability also uses the UIGF ceiling. `INITIALMW`
 # is the metered initial operating point, rather than the preceding dispatch target.
-# AEMSim fixes an ineligible capacity variable to zero and omits its energy-envelope rows,
-# so an unavailable FCAS bid cannot force an energy target into its trapezium.
-# Missing telemetry leaves the corresponding computable check unapplied. The daily/profiled
-# energy eligibility checks in AEMO §5 are not implemented because the required inputs are
-# unavailable; this limits equivalence with those pre-dispatch cases.
 #
-# Telemetry timing also matters for a lookahead model. The implemented schedule follows
+# !!! note "Pre-dispatch energy eligibility"
+#     AEMO also specifies daily energy and profiled storage eligibility conditions for
+#     30-minute pre-dispatch. Those conditions are not covered by this reconstruction;
+#     interval capability alone cannot establish energy feasibility over that horizon.
+#
+# Telemetry treatment depends on the dispatch process. AEMO specifies the timing in
 # [FCAS Model in NEMDE, §4.4 and §6.5, pp. 17, 28](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf):
 #
-# | Input or constraint | Dispatch replay | 5-minute lookahead | Longer-resolution lookahead |
+# | Scaling or constraint | Dispatch | 5-minute pre-dispatch | 30-minute pre-dispatch |
 # | --- | --- | --- | --- |
-# | AGC enablement limits and initial eligibility telemetry | Every interval | First interval | First interval |
-# | AGC ramp scaling and joint/BDU SCADA ramping | Every interval | First interval | None |
-# | UIGF scaling and capacity envelopes | Every interval | Every interval | Every interval |
+# | AGC enablement-limit scaling | Every interval | First interval | First interval |
+# | AGC ramp-rate scaling | Every interval | First interval | None |
+# | Joint ramping and BDU SCADA ramping | Every interval | First interval | None |
+# | UIGF scaling and capacity constraints | Every interval | Every interval | Every interval |
 #
-# `NEMLookaheadDispatch` selects the lookahead timing; other NEM dispatch formulations use
-# dispatch timing. A horizon by itself does not select pre-dispatch treatment.
-# AEMO's Table 3 additionally excludes joint ramping for fast-start units initially in modes
-# 0, 1 or 2 during the commitment and final dispatch passes. The current `FCASMarket` timing
-# logic does not implement that fast-start exception.
-# Pending PR #184 adds it for thermal replay, based on the preprocessed initial mode in both
-# passes. See [Fast-start dispatch](@ref nemde-fast-start).
+# AEMO also excludes joint ramping for fast-start units initially in modes 0, 1 or 2 in
+# the commitment and final dispatch passes. See [Fast-start dispatch](@ref nemde-fast-start).
+#
+# !!! note "Fast-start coverage"
+#     The initial-mode exception to joint ramping for fast-start units is not covered by
+#     this reconstruction. Results for those units can differ from AEMO's commitment and
+#     final dispatch passes. See [Fast-start dispatch](@ref nemde-fast-start).
 #
 # ## [Joint energy and FCAS constraints](@id fcas-cooptimisation)
 #
 # ### [Capacity and ramping together](@id fcas-cases-joint)
 #
 # The envelope for one service is insufficient when a unit supplies several services.
-# The following rows are the hard, unviolated forms. AEMSim can add nonnegative violation
-# slack when service slacks are enabled; that changes feasibility and adds a penalty to the
-# objective, but does not change the physical meaning of these limits.
+# The following equations describe capability without constraint violations. A relaxation
+# penalises departure from a limit; it does not represent additional physical capability.
 #
 # ### Contingency and regulation share energy headroom
 #
@@ -532,8 +506,8 @@ end #hide
 # For example, with ``e_0=150`` MW and 30 MW of upward ramp capability, a generator target
 # of 170 MW leaves only 10 MW for raise regulation, even if its scaled trapezium allows more.
 # Scaling caps regulation alone; joint ramping accounts for energy moving in the same interval.
-# AEMSim omits a joint-ramping row when the rate is zero/unknown, the initial MW is unknown,
-# the service is ineligible, or the process timing excludes that interval.
+# Joint ramping applies when the unit is eligible, the relevant rate is nonzero and known,
+# and the process timing requires it. An absent initial MW prevents reconstruction of this limit.
 #
 # ### Batteries: side-specific regulation, unit-level delivery
 #
@@ -544,7 +518,7 @@ end #hide
 # Their capacity rows use ``p^{\mathrm{out}}`` and ``-p^{\mathrm{in}}`` respectively.
 # AEMO describes these bids in [FCAS Model in NEMDE, §2.4, pp. 8-10](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf).
 #
-# AEMSim adds their enablements into a unit total for each regulation service:
+# The unit total for each regulation service is the sum of its side-specific enablements:
 #
 # ```math
 # r^+=r^+_{\mathrm{gen}}+r^+_{\mathrm{load}},\qquad
@@ -563,17 +537,6 @@ end #hide
 # See [FCAS Model in NEMDE, §6.4, p. 27](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf).
 # The combined range used for initial-point eligibility does not merge the two priced
 # regulation offers into one optimisation curve.
-#
-# ### Where to inspect these rows
-#
-# | Mathematical role | AEMSim container |
-# | --- | --- |
-# | Single-sided or whole-unit enabled capacity | `FCASCapacityVariable` |
-# | Two-sided battery regulation capacity | `FCASSideCapacityVariable` |
-# | Unit regulation total | `FCASUnitRegulationTarget` |
-# | Sloped capacity rows, including contingency/regulation coupling | `FCASJointCapacityConstraint` |
-# | Energy plus regulation against initial MW and AGC ramp | `FCASJointRampingConstraint` |
-# | Shared battery regulation SCADA capability | `FCASBDURampingConstraint` |
 #
 # These rows describe feasible enablements. AEMO's published actual FCAS availability is a
 # post-dispatch calculation at the selected energy target, accounting for the other enabled
@@ -602,10 +565,11 @@ end #hide
 # Scheduled-load directions swap as above. This follows
 # [FCAS Model in NEMDE, §7.1, pp. 29-32](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf).
 #
-# AEMSim builds feasibility rows but does not implement AEMO's complete post-dispatch availability
-# calculation for every participant and service. `read_fcas_dispatch` reads published availability
-# where the cached schema supplies it. Inspect violation slacks before interpreting an enabled
-# target above the hard envelope.
+# !!! note "Actual availability and feasible enablement"
+#     These equations explain the capability limits; they do not reproduce AEMO's complete
+#     post-dispatch availability calculation for every participant and service. Use the
+#     published availability where available, and check constraint violations before
+#     interpreting a target above the unviolated capability envelope.
 
 let #hide
     fig = Figure(size = (850, 300)) #hide
@@ -623,19 +587,14 @@ end #hide
 #
 # ## [Prices and binding requirements](@id fcas-pricing)
 #
-# A regional FCAS price can contain several local/shared equation contributions. Let
-# ``\mathcal G_{r,k}`` be the built generic constraints tagged as governing region ``r`` and
-# service ``k``. For raw solver dual ``\mu_g`` on a per-unit RHS, AEMSim reports
-#
-# ```math
-# \mathrm{ROP}_{r,k}=\frac{1}{S\Delta h}\sum_{g\in\mathcal G_{r,k}}\mu_g,
-# ```
-#
-# where ``S`` is base power in MW. `compute_fcas_prices` performs the mapping and warns when a
-# governing constraint has no recorded dual. It retains solver signs: a binding `>=` row in a
-# minimisation problem typically has a positive dual; a binding `<=` row has a negative dual.
-# A unit capability-row dual is not itself a regional FCAS price. AEMO's requirement mechanism
-# is described in the [Constraint Formulation Guidelines, §5](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/congestion-information/2025/constraint-formulation-guidelines.pdf).
+# A regional FCAS price reflects the marginal cost of meeting its service requirements.
+# Several local and shared equations can contribute to that price. An extra MW of local
+# requirement can require a different, more expensive allocation even when the shared
+# requirement is already satisfied. The constraint's marginal value measures that change
+# in the least-cost dispatch outcome; a unit capability constraint's marginal value is
+# not itself the regional service price.
+# AEMO describes FCAS requirement equations in the
+# [Constraint Formulation Guidelines, §5](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/congestion-information/2025/constraint-formulation-guidelines.pdf).
 #
 # In the three-provider example the shared requirement's marginal MW costs \$5/MWh. With the
 # local row binding, replacing one MW of B with C costs another \$4/MWh. The local price has
@@ -646,15 +605,18 @@ end #hide
 # shadow price then describes the cost of relaxing a row, rather than a provider's offered price.
 # Published requirement marginal values may already reflect regional attribution; check that
 # mapping before substituting raw `DISPATCHCONSTRAINT.MARGINALVALUE` for each contribution.
-# Compare the unadjusted model price with `DISPATCHPRICE.<SERVICE>ROP`. `RRP` includes applicable
-# administered adjustments, which AEMSim does not reproduce. See
-# [Violations, tie-breaking and prices](@ref nemde-prices) for scaling and integer pricing.
+# `DISPATCHPRICE.<SERVICE>ROP` reports the original regional price; `<SERVICE>RRP` includes
+# applicable price adjustments. See [Violations, tie-breaking and prices](@ref nemde-prices).
+#
+# !!! note "Price comparison"
+#     This reconstruction does not reproduce administered price adjustments. Compare its
+#     unadjusted prices with original prices, and match the dispatch interval, service,
+#     region and intervention run before attributing any difference to capability limits.
 #
 # ## [Worked interval: Tasmania, 13 January 2025](@id fcas-requirement-reading)
 #
-# This walkthrough retains the original *FCAS in the NEM* interval: 16:30 AEST on 13 January
-# 2025. The queries are runnable against a cache containing the bid, dispatch and historical
-# constraint-definition tables above. The documentation build does not require that cache.
+# The following queries examine 16:30 AEST on 13 January 2025 using a cache containing
+# the bid, dispatch and historical constraint-definition tables listed above.
 #
 # ```julia
 # using AustralianElectricityMarkets, Dates, DataFrames
@@ -670,11 +632,12 @@ end #hide
 # prices = read_fcas_prices(db, window; intervention = 0)
 # ```
 #
-# The previously inspected Tungatinah offer had ``E_{\min}=1``, ``L=5`` and ``F=4`` MW,
-# with energy target 2 MW and no lower regulation. Its lower-side limit is
+# For a lower-side capability calculation, consider an offer with ``E_{\min}=1``,
+# ``L=5`` and ``F=4`` MW, at an energy target of 2 MW with no lower regulation. Its lower-side limit is
 # ``2-((5-1)/4)f_{\mathrm{LOWER6SEC}}\ge1``, giving 1 MW capability. Verify all five bid
 # parameters and other enabled services before treating this as the full availability.
-# Its 9 MW raise-regulation target reduced upper contingency headroom:
+# With 9 MW of raise regulation, the following upper-side examples illustrate reduced
+# contingency headroom:
 #
 # | Service | Submitted upper coefficient | Upper-row capability at 2 MW energy and 9 MW raise regulation |
 # | --- | --- | --- |
@@ -682,14 +645,16 @@ end #hide
 # | `RAISE60SEC` | ``(27-6)/21`` | 16 MW |
 # | `RAISE5MIN` | ``(26-2)/26`` | 16.25 MW |
 #
-# These are arithmetic reconstructions from previously inspected records, not AEMSim solve
-# results generated during this documentation build. Compare them with `unit_outcomes`.
-# Inspect requirement variants `F_T+NIL_MG_R6` and `F_T++NIL_MG_R6` across the surrounding hour.
-# Original records included a row with RHS 137.5 MW and LHS about 129.65 MW at 16:30. **If its
-# resolved sense is `>=`**, the deficit is about 7.85 MW. Establish the sense and coefficients
-# from the exact invoked definition; missing definitions do not justify assuming every FCAS
-# row is a lower bound. A very negative RHS can make an invoked variant nonbinding, rather
-# than represent negative physical demand. Invocation and economic binding are different.
+# !!! note "Illustrative arithmetic"
+#     These calculations illustrate the equations and are not verified outcomes from the
+#     queries above. Check the interval's complete offer, effective limits and other enabled
+#     services before comparing them with published availability.
+#
+# Requirement variants such as `F_T+NIL_MG_R6` and `F_T++NIL_MG_R6` must be interpreted
+# from their exact invoked definitions. For a row with RHS 137.5 MW and LHS 129.65 MW,
+# the shortfall is 7.85 MW **if the sense is `>=`**. A very negative RHS can make an invoked
+# variant nonbinding; it need not represent negative physical demand. Invocation and
+# economic binding are different.
 #
 # ```julia
 # invoked = read_invoked_constraints(db, window; intervention = 0)
@@ -705,15 +670,18 @@ end #hide
 # `read_fcas_requirements` with the corresponding `ROP` in `read_fcas_prices`. Neither price
 # becomes an optimisation input. Published targets show what was enabled; offers alone do not.
 #
-# ## [Replay coverage and references](@id fcas-references)
+# ## [Scope and references](@id fcas-references)
 #
-# AEMSim enforces all ten service curves, effective trapezium rows, contingency/regulation
-# coupling, joint ramping and two-sided battery regulation when their inputs and timing apply.
-# Complete generic definitions can represent mainland/local requirement combinations.
-# FCAS cost recovery, live-SCADA RHS reconstruction, complete post-dispatch availability and
-# daily/profiled energy eligibility are outside this formulation. `set_fcas_scaling_inputs!`
-# currently attaches inputs to generators and storage; load scaling/status series need separate
-# provision and are not attached by that setter.
+# The equations above cover ten service offers, capability trapezia, contingency/regulation
+# coupling, joint ramping and side-specific bidirectional regulation. Complete requirement
+# equations are needed to represent shared and local procurement together.
+#
+# !!! note "Reconstruction coverage"
+#     FCAS cost recovery, live-SCADA reconstruction of requirement right-hand sides, complete
+#     post-dispatch availability and daily/profiled pre-dispatch energy eligibility are outside
+#     this formulation. Published operating limits supply the interval inputs. Generator and
+#     storage scaling/status inputs are available through the standard data workflow;
+#     scheduled-load scaling/status inputs require separate provision.
 #
 # Official sources are [FCAS Model in NEMDE v3.0](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf),
 # [Guide to Frequency Control Ancillary Services v4.0](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/ancillary_services/guide-to-frequency-control-ancillary-services.pdf)
