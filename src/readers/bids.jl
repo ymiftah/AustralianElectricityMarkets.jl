@@ -9,22 +9,26 @@ function read_energy_bids(db, date_range; kwargs...)
     schema = names(_query(db, "SELECT * FROM $source LIMIT 0"))
     band_cols = join(filter(startswith("BANDAVAIL"), schema), ", ")
 
+    # Rows are bounded in SQL before the window: a row ceiled into the range has its raw
+    # INTERVAL_DATETIME in [start - resolution, end), so this loses none of them.
+    resolution = get(kwargs, :resolution, nothing)
+    lower = isnothing(resolution) ? start_datetime : start_datetime - resolution
     energy_bids = _query(
         db,
         """
         SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, MAXAVAIL, $band_cols
         FROM $source
         WHERE BIDTYPE = 'ENERGY' AND SETTLEMENTDATE BETWEEN ? AND ?
+          AND INTERVAL_DATETIME >= ? AND INTERVAL_DATETIME < ?
         QUALIFY row_number() OVER (
             PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION ORDER BY VERSIONNO DESC
         ) = 1
         ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME
         """,
-        [sd, ed],
+        [sd, ed, lower, end_datetime],
     )
 
-    if :resolution in keys(kwargs)
-        resolution = get(kwargs, :resolution, Minute(5))
+    if !isnothing(resolution)
         energy_bids[!, :INTERVAL_DATETIME] = ceil.(energy_bids[!, :INTERVAL_DATETIME], resolution)
         energy_bids = @chain energy_bids begin
             groupby([:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION])
@@ -175,18 +179,22 @@ function _massage_bids(
 
     energy_schema = names(_query(db, "SELECT * FROM $energy_bids_table LIMIT 0"))
     energy_band_cols = join(filter(startswith("BANDAVAIL"), energy_schema), ", ")
+    # Same bound as read_energy_bids: the ceil and the final range filter keep rows in
+    # [start - resolution, end) only.
+    lower = isnothing(resolution) ? start_date : start_date - resolution
     energy_bids = _query(
         db,
         """
         SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE, MAXAVAIL, $energy_band_cols
         FROM $energy_bids_table
         WHERE BIDTYPE IN ($bid_type_list) AND SETTLEMENTDATE BETWEEN ? AND ?
+          AND INTERVAL_DATETIME >= ? AND INTERVAL_DATETIME < ?
         QUALIFY row_number() OVER (
             PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
         ) = 1
         ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME
         """,
-        [sd, ed],
+        [sd, ed, lower, end_date],
     )
 
     priceband_schema = names(_query(db, "SELECT * FROM $pricebids_table LIMIT 0"))
