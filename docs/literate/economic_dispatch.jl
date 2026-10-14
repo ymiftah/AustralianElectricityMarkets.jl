@@ -1,4 +1,5 @@
 using AustralianElectricityMarkets
+using AustralianElectricityMarketsData: populate
 using PowerSystems
 using PowerSimulations
 using HydroPowerSimulations
@@ -25,10 +26,10 @@ using HiGHS
 #     in parquet files.
 #
 # ```julia
-# tables = table_requirements(RegionalNetworkConfiguration())
-# map(tables) do table
-#     fetch_table_data(table, date_range)
-# end;
+# populate(
+#     db, Date(2025, 1, 2), Date(2025, 1, 3);
+#     tables = table_requirements(RegionalNetworkConfiguration()),
+# )
 # ```
 #
 # Only the data requirements for a `RegionalNetworkConfiguration` are downloaded.
