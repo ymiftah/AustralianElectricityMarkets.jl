@@ -419,6 +419,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The replication model solves one dispatch interval instead of two (the second was only
+  reported as absent). Mean solve time over 42 validation intervals fell from 37 s to 24 s;
+  regional prices are unchanged, dispatch differs at four of the 42 intervals.
+- `add_fcas_services!` looks up each region's devices once instead of once per bid type.
 - `read_energy_bids`, `read_bids` and `read_fcas_bids`, and `read_invoked_constraints`, filter their
   interval window in SQL instead of reading a day either side and trimming in Julia. Results are
   unchanged; for one interval, a warm read of the bids and invoked constraints dropped from 6.2 s to

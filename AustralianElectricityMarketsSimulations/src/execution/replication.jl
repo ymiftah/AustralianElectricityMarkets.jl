@@ -118,7 +118,7 @@ end
 
 Solves one historical NEM dispatch interval with [`replication_template`](@ref) on `sys` (by
 default [`replication_system`](@ref)) and compares the solution with AEMO's published outcome.
-The model spans the interval and the one after it; the first is reported.
+The model solves the interval alone, starting from its published `INITIALMW`.
 
 # Arguments
 - `sys`: the `PSY.System` to solve, as built by [`replication_system`](@ref).
@@ -181,11 +181,12 @@ function replicate_interval(
     end
     results = PSI.OptimizationProblemResults(model)
     _check_prices_finite(results, settlement_date)
+    violations = _constraint_violations(results, sys)
     return (;
         model, results, skipped_constraints,
         comparison = _compare_to_published(db, sys, results, settlement_date, intervention),
-        ramp_violations = _ramp_violations(results, sys),
-        constraint_violations = _constraint_violations(results, sys),
+        ramp_violations = _ramp_violations(violations),
+        constraint_violations = violations,
     )
 end
 
@@ -199,7 +200,7 @@ function _replication_model(
     check_fcas_services(sys, template)
     model = PSI.DecisionModel(
         template, sys;
-        optimizer = optimizer, horizon = _REPLICATION_HORIZON, resolution = DISPATCH_INTERVAL,
+        optimizer = optimizer, horizon = DISPATCH_INTERVAL, resolution = DISPATCH_INTERVAL,
         interval = DISPATCH_INTERVAL, initial_time = settlement_date, name = name,
     )
     output_dir = mktempdir()
@@ -288,9 +289,9 @@ function _constraint_violations(results::PSI.OptimizationProblemResults, sys::PS
 end
 
 
-# `DUID`, `DateTime`, `MW` and `direction` of every non-zero unit ramp slack.
-function _ramp_violations(results::PSI.OptimizationProblemResults, sys::PSY.System)
-    violations = _constraint_violations(results, sys)
+# `DUID`, `DateTime`, `MW` and `direction` of every non-zero unit ramp slack, from the
+# `_constraint_violations` table.
+function _ramp_violations(violations::DataFrame)
     ramp = violations[violations.family .== "unit_ramp", :]
     return DataFrame(DUID = ramp.name, DateTime = ramp.DateTime, MW = ramp.MW, direction = ramp.direction)
 end

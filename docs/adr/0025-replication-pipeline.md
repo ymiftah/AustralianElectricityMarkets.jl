@@ -12,7 +12,9 @@ reproducible entry point that wires both together and reads the published result
 
 ## Decision
 
-- **Two-interval window.** `replication_system` builds the interval and the one after it. PSY
+- **Two-interval window (superseded in part by [0052](0052-one-step-replication-horizon.md)).**
+  `replication_system` builds the interval and the one after it, but the model solves only the
+  interval. PSY
   rejects a single-point `Deterministic` forecast ("Forecast arrays must have a length of at
   least 2"), so a one-interval range cannot be built. Only the first interval is reported, and
   the cache must hold data one interval past `settlement_date`.

@@ -33,10 +33,13 @@ end
 
 # A device bids a (region, bid_type) market if it carries either direction's curve series - a
 # storage device can provide the market while charging or discharging.
-function _fcas_service_devices(sys, region::AbstractString, bid_type::BidType)
+function _fcas_service_devices(
+        sys, region::AbstractString, bid_type::BidType;
+        candidates = _region_devices(sys, region; loads = true),
+    )
     inc_name = _fcas_series_name("fcas_curve", bid_type, false)
     dec_name = _fcas_series_name("fcas_curve", bid_type, true)
-    return filter(_region_devices(sys, region; loads = true)) do d
+    return filter(candidates) do d
         has_time_series(d, Deterministic, inc_name) || has_time_series(d, Deterministic, dec_name)
     end
 end
@@ -63,21 +66,30 @@ it.
 function add_fcas_services!(sys)
     added = String[]
     excluded = Dict{String, Vector{String}}()
-    for region in sort(get_name.(get_components(Area, sys))), bid_type in FCAS_BID_TYPES
-        name = fcas_service_name(region, bid_type)
-        isnothing(get_component(FCASService, sys, name)) || continue
-        bidders = filter(get_available, _fcas_service_devices(sys, region, bid_type))
-        devices = filter(d -> _fcas_bid_modeled(d, bid_type), bidders)
-        left_out = setdiff(get_name.(bidders), get_name.(devices))
-        isempty(left_out) || (excluded[name] = sort(left_out))
-        isempty(devices) && continue
-        add_service!(sys, FCASService(; name = name, region = region, bid_type = bid_type), devices)
-        push!(added, name)
+    for region in sort(get_name.(get_components(Area, sys)))
+        # The region's devices are the same for every bid type; only the series filter differs.
+        candidates = _region_devices(sys, region; loads = true)
+        for bid_type in FCAS_BID_TYPES
+            _add_fcas_service!(sys, region, bid_type, candidates, added, excluded)
+        end
     end
     if !isempty(excluded)
         @warn "add_fcas_services!: left $(sum(length, values(excluded))) device(s) out of $(length(excluded)) FCAS market(s) - their bid direction is not modeled" excluded
     end
     return added, excluded
+end
+
+function _add_fcas_service!(sys, region, bid_type, candidates, added, excluded)
+    name = fcas_service_name(region, bid_type)
+    isnothing(get_component(FCASService, sys, name)) || return
+    bidders = filter(get_available, _fcas_service_devices(sys, region, bid_type; candidates = candidates))
+    devices = filter(d -> _fcas_bid_modeled(d, bid_type), bidders)
+    left_out = setdiff(get_name.(bidders), get_name.(devices))
+    isempty(left_out) || (excluded[name] = sort(left_out))
+    isempty(devices) && return
+    add_service!(sys, FCASService(; name = name, region = region, bid_type = bid_type), devices)
+    push!(added, name)
+    return
 end
 
 
