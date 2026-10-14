@@ -9,11 +9,11 @@ of "NEMDE actually enforced this constraint" — see [`add_nem_constraints!`](@r
 function read_invoked_constraints(db, date_range; intervention::Integer = 0)
     start_date = first(date_range)
     end_date = last(date_range)
-    sd = Date(start_date) - Day(1)
-    ed = Date(end_date) + Day(1)
     table = read_hive(db, :DISPATCHCONSTRAINT)
     schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
-    params = Any[sd, ed]
+    # SETTLEMENTDATE is the interval end itself, so the window is exact; the window function
+    # partitions on it, so bounding it first changes no kept row.
+    params = Any[start_date, end_date]
     _push_intervention!(params, schema, intervention)
     df = _query(
         db,
@@ -22,7 +22,7 @@ function read_invoked_constraints(db, date_range; intervention::Integer = 0)
                $(_cast_double("RHS")), $(_cast_double("LHS")), $(_cast_double("MARGINALVALUE")),
                GENCONID_EFFECTIVEDATE, GENCONID_VERSIONNO
         FROM $table
-        WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(schema))
+        WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ? $(_intervention_where(schema))
         QUALIFY row_number() OVER (
             PARTITION BY SETTLEMENTDATE, CONSTRAINTID ORDER BY archive_month DESC
         ) = 1

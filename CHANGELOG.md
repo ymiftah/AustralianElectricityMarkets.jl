@@ -419,6 +419,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `read_energy_bids`, `read_bids` and `read_fcas_bids`, and `read_invoked_constraints`, filter their
+  interval window in SQL instead of reading a day either side and trimming in Julia. Results are
+  unchanged; for one interval, a warm read of the bids and invoked constraints dropped from 6.2 s to
+  1.5 s.
+
 - Replication builds are faster: a warm interval's system construction, model build and solve fall
   from about 60 s to about 24 s. `read_fcas_bids` accepts a vector of bid types and reads the bid
   tables once for all of them (`set_fcas_bids!` uses it), `add_nem_constraints!` resolves each
