@@ -26,7 +26,7 @@ end
     add_toy_fcas!(sys, device, initial_timestamp, n, bid_type, trapezium_mw, bands_mw_price; decremental = false)
 
 Attaches `"fcas_trapezium_<bid_type>[_decremental]"`/`"fcas_curve_<bid_type>[_decremental]"`
-`Deterministic` series on `device`, one window of `n` steps at `initial_timestamp`, flat over
+`SingleTimeSeries` series on `device`, `n` steps from `initial_timestamp`, flat over
 the horizon, mirroring [`set_fcas_bids!`](@ref)'s shape and per-unit convention.
 """
 function add_toy_fcas!(
@@ -42,17 +42,11 @@ function add_toy_fcas!(
     )
     PSY.add_time_series!(
         sys, device,
-        PSY.Deterministic(;
-            name = "fcas_trapezium_$suffix", data = Dict(initial_timestamp => fill(trap_tuple, n)),
-            resolution = resolution, interval = interval,
-        ),
+        AustralianElectricityMarkets._single_series("fcas_trapezium_$suffix", initial_timestamp, fill(trap_tuple, n), resolution),
     )
     PSY.add_time_series!(
         sys, device,
-        PSY.Deterministic(;
-            name = "fcas_curve_$suffix", data = Dict(initial_timestamp => fill(curve, n)),
-            resolution = resolution, interval = interval,
-        ),
+        AustralianElectricityMarkets._single_series("fcas_curve_$suffix", initial_timestamp, fill(curve, n), resolution),
     )
     return
 end
@@ -693,14 +687,12 @@ function storage_fcas_toy_model(
         for (name, mw) in zip(("energy_max_avail", "energy_max_avail_decremental"), energy_max_avail_mw)
             PSY.add_time_series!(
                 sys, bat,
-                PSY.Deterministic(;
-                    name = name, data = Dict(stamps[1] => fill(mw / get_base_power(sys), length(stamps))),
-                    resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
-                ),
+                AustralianElectricityMarkets._single_series(name, stamps[1], fill(mw / get_base_power(sys), length(stamps)), TOY_RESOLUTION),
             )
         end
     end
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = bid_type), [bat])
+    set_storage_dispatch_ceilings!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
     template = _area_balance_template()

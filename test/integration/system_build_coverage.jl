@@ -31,8 +31,8 @@
             @test !isnothing(gc_v1)
             @test !isnothing(gc_v2)
             for gc in (gc_v1, gc_v2)
-                rhs_series = first(values(get_data(get_time_series(Deterministic, gc, "rhs"))))
-                invoked_series = first(values(get_data(get_time_series(Deterministic, gc, "invoked"))))
+                rhs_series = get_time_series_values(SingleTimeSeries, gc, "rhs")
+                invoked_series = get_time_series_values(SingleTimeSeries, gc, "invoked")
                 @test length(rhs_series) == length(date_range) - 1
                 @test length(invoked_series) == length(date_range) - 1
             end

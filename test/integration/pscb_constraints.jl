@@ -75,8 +75,8 @@
         @testset "N_PARTIAL padding" begin
             gc = get_component(GenericConstraint, sys, vname("N_PARTIAL"))
             base_power = get_base_power(sys)
-            invoked_series = first(values(get_data(get_time_series(Deterministic, gc, "invoked"))))
-            rhs_series = first(values(get_data(get_time_series(Deterministic, gc, "rhs"))))
+            invoked_series = get_time_series_values(SingleTimeSeries, gc, "invoked")
+            rhs_series = get_time_series_values(SingleTimeSeries, gc, "rhs")
 
             @test length(invoked_series) == length(rhs_series) == 25  # full 0:24 grid
             @test invoked_series[1:10] == fill(0.0, 10)   # intervals 0..9: not yet invoked
@@ -91,7 +91,7 @@
         @testset "rhs varies across intervals for a fully-covered constraint" begin
             gc = get_component(GenericConstraint, sys, vname("F_R1_RAISE6SEC"))
             base_power = get_base_power(sys)
-            rhs_series = first(values(get_data(get_time_series(Deterministic, gc, "rhs"))))
+            rhs_series = get_time_series_values(SingleTimeSeries, gc, "rhs")
             @test length(rhs_series) == 25
             @test rhs_series ≈ [(30.0 + 0.1 * i) / base_power for i in 0:24]
             @test issorted(rhs_series)  # confirms it isn't flat
@@ -119,8 +119,8 @@
 
             # "invoked" series are complementary: exactly one version is 1.0 at every interval,
             # switching at PSCB_VERSION_SWITCH_FROM, never both at once.
-            invoked_v1 = first(values(get_data(get_time_series(Deterministic, gc_v1, "invoked"))))
-            invoked_v2 = first(values(get_data(get_time_series(Deterministic, gc_v2, "invoked"))))
+            invoked_v1 = get_time_series_values(SingleTimeSeries, gc_v1, "invoked")
+            invoked_v2 = get_time_series_values(SingleTimeSeries, gc_v2, "invoked")
             @test length(invoked_v1) == length(invoked_v2) == 25
             @test all(==(1.0), invoked_v1 .+ invoked_v2)  # exactly one is 1.0 at every interval
             @test invoked_v1 == [i < PSCB_VERSION_SWITCH_FROM ? 1.0 : 0.0 for i in 0:24]
@@ -145,28 +145,28 @@
 
         @testset "thermal unit gets curve and trapezium series" begin
             gen = get_component(ThermalStandard, sys, "Alta")
-            @test has_time_series(gen, Deterministic, "fcas_curve_RAISE6SEC")
-            @test has_time_series(gen, Deterministic, "fcas_trapezium_RAISE6SEC")
+            @test has_time_series(gen, SingleTimeSeries, "fcas_curve_RAISE6SEC")
+            @test has_time_series(gen, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")
         end
 
         @testset "SOLAR1 (RenewableDispatch) gets curve and trapezium series" begin
             solar = get_component(RenewableDispatch, sys, "SOLAR1")
-            @test has_time_series(solar, Deterministic, "fcas_curve_RAISE6SEC")
-            @test has_time_series(solar, Deterministic, "fcas_trapezium_RAISE6SEC")
+            @test has_time_series(solar, SingleTimeSeries, "fcas_curve_RAISE6SEC")
+            @test has_time_series(solar, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")
         end
 
         @testset "BAT1 gets both incremental and decremental series" begin
             bat = get_component(EnergyReservoirStorage, sys, "BAT1")
-            @test has_time_series(bat, Deterministic, "fcas_curve_RAISEREG")
-            @test has_time_series(bat, Deterministic, "fcas_trapezium_RAISEREG")
-            @test has_time_series(bat, Deterministic, "fcas_curve_RAISEREG_decremental")
-            @test has_time_series(bat, Deterministic, "fcas_trapezium_RAISEREG_decremental")
+            @test has_time_series(bat, SingleTimeSeries, "fcas_curve_RAISEREG")
+            @test has_time_series(bat, SingleTimeSeries, "fcas_trapezium_RAISEREG")
+            @test has_time_series(bat, SingleTimeSeries, "fcas_curve_RAISEREG_decremental")
+            @test has_time_series(bat, SingleTimeSeries, "fcas_trapezium_RAISEREG_decremental")
         end
 
         @testset "decremental series is storage-only" begin
             gen = get_component(ThermalStandard, sys, "Alta")
-            @test !has_time_series(gen, Deterministic, "fcas_curve_RAISEREG_decremental")
-            @test !has_time_series(gen, Deterministic, "fcas_trapezium_RAISEREG_decremental")
+            @test !has_time_series(gen, SingleTimeSeries, "fcas_curve_RAISEREG_decremental")
+            @test !has_time_series(gen, SingleTimeSeries, "fcas_trapezium_RAISEREG_decremental")
         end
     end
 
@@ -255,8 +255,8 @@
         @testset "N_PARTIAL rhs/invoked series survive exactly" begin
             gc2 = get_component(GenericConstraint, sys2, vname("N_PARTIAL"))
             base_power = get_base_power(sys2)
-            invoked_series = first(values(get_data(get_time_series(Deterministic, gc2, "invoked"))))
-            rhs_series = first(values(get_data(get_time_series(Deterministic, gc2, "rhs"))))
+            invoked_series = get_time_series_values(SingleTimeSeries, gc2, "invoked")
+            rhs_series = get_time_series_values(SingleTimeSeries, gc2, "rhs")
             @test length(invoked_series) == length(rhs_series) == 25
             @test invoked_series[1:10] == fill(0.0, 10)
             @test invoked_series[11:25] == fill(1.0, 15)
@@ -266,10 +266,10 @@
 
         @testset "BAT1 FCAS bid series, including decremental, survive" begin
             bat2 = get_component(EnergyReservoirStorage, sys2, "BAT1")
-            @test has_time_series(bat2, Deterministic, "fcas_curve_RAISEREG")
-            @test has_time_series(bat2, Deterministic, "fcas_trapezium_RAISEREG")
-            @test has_time_series(bat2, Deterministic, "fcas_curve_RAISEREG_decremental")
-            @test has_time_series(bat2, Deterministic, "fcas_trapezium_RAISEREG_decremental")
+            @test has_time_series(bat2, SingleTimeSeries, "fcas_curve_RAISEREG")
+            @test has_time_series(bat2, SingleTimeSeries, "fcas_trapezium_RAISEREG")
+            @test has_time_series(bat2, SingleTimeSeries, "fcas_curve_RAISEREG_decremental")
+            @test has_time_series(bat2, SingleTimeSeries, "fcas_trapezium_RAISEREG_decremental")
         end
     end
 end

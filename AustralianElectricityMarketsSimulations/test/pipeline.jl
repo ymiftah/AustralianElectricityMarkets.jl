@@ -73,7 +73,7 @@
         t_mnsp = t
         sys = replication_system(db, t_mnsp)
         ic2 = get_component(AreaInterchange, sys, "IC2")
-        @test has_time_series(ic2, Deterministic, "mnsp_forward_max_avail")
+        @test has_time_series(ic2, SingleTimeSeries, "mnsp_forward_max_avail")
         result = replicate_interval(sys, db, t_mnsp)
         @test PSI.has_container_key(
             PSI.get_optimization_container(result.model), MNSPLinkFlowVariable, PSY.AreaInterchange,

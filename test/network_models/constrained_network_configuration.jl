@@ -26,7 +26,7 @@
         # ArgumentError, rather than returning nothing, for an owner with no metadata
         # registered at all - confirmed directly, same as "set_fcas_bids!" above. Series
         # name is "fcas_curve_<SERVICE>" per set_fcas_bids!, not "fcas_bid_<SERVICE>".
-        has_time_series(gen, Deterministic, "fcas_curve_RAISE6SEC") || continue
+        has_time_series(gen, SingleTimeSeries, "fcas_curve_RAISE6SEC") || continue
         found = true
     end
     @test found
@@ -48,13 +48,13 @@
             db, ConstrainedNetworkConfiguration(); date_range = date_range, include_solution = true,
         )
         gc_solution = first(get_components(GenericConstraint, sys_solution))
-        @test has_time_series(gc_solution, Deterministic, "lhs")
+        @test has_time_series(gc_solution, SingleTimeSeries, "lhs")
 
         sys_res = nem_system(
             db, ConstrainedNetworkConfiguration(); date_range = date_range, resolution = Minute(30),
         )
         gc_res = first(get_components(GenericConstraint, sys_res))
-        @test get_resolution(get_time_series(Deterministic, gc_res, "rhs")) == Minute(30)
+        @test get_resolution(get_time_series(SingleTimeSeries, gc_res, "rhs")) == Minute(30)
     end
 
 end
