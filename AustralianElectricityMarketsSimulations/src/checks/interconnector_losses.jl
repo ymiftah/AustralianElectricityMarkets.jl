@@ -8,7 +8,8 @@ where the solver dissipated more than the curve at that flow.
 
 # Arguments
 - `results`: `PSI.OptimizationProblemResults` of one solved standalone `DecisionModel` using
-  [`NEMInterconnectorLoss`](@ref); demand is read from the first result timestamp onward.
+  [`NEMInterconnectorLoss`](@ref); the loss curve at each result timestamp takes its demand term
+  from the interchange's `"loss_demand_coefficient"` series.
 - `sys`: the `System` the model was built from.
 
 # Returns
@@ -21,20 +22,20 @@ function interconnector_loss_gaps(results::PSI.OptimizationProblemResults, sys::
     base_power = PSY.get_base_power(sys)
     flows = Dict((r.name, r.DateTime) => r.value for r in eachrow(flow_df))
     losses = Dict((r.name, r.DateTime) => r.value for r in eachrow(loss_df))
-    demand = PSY.with_units_base(sys, "SYSTEM_BASE") do
-        _area_demand(first(stamps), length(stamps), sys)
-    end
     gaps = Dict{Tuple{String, Int}, Float64}()
     for d in PSY.get_components(PSY.AreaInterchange, sys)
         name = PSY.get_name(d)
         models = PSY.get_supplemental_attributes(InterconnectorLossModel, d)
         length(models) == 1 || continue
         model = only(models)
+        at_zero = loss_curve_vertex_values(model, Dict{String, Float64}())
+        coefficients = PSY.get_time_series_values(
+            PSY.SingleTimeSeries, d, "loss_demand_coefficient"; start_time = first(stamps), len = length(stamps),
+        )
         for (t, stamp) in enumerate(stamps)
             haskey(flows, (name, stamp)) || continue
             flow_pu = flows[(name, stamp)] / base_power
-            demand_t = _demand_at(demand, t)
-            vertex_losses = loss_curve_vertex_values(model, demand_t)
+            vertex_losses = at_zero .+ coefficients[t] .* model.breakpoints
             segment = clamp(searchsortedlast(model.breakpoints, flow_pu), 1, length(model.breakpoints) - 1)
             lo, hi = model.breakpoints[segment:(segment + 1)]
             loss_lo, loss_hi = vertex_losses[segment], vertex_losses[segment + 1]

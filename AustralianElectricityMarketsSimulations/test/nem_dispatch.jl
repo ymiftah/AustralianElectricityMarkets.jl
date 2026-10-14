@@ -14,8 +14,7 @@ const NEM_DISPATCH_RESOLUTION = Minute(5)
 const NEM_DISPATCH_START = DateTime(2025, 1, 1, 0, 0)
 const NEM_DISPATCH_HORIZON = Hour(1)
 
-# The bid series is a `Deterministic` and the dispatch limits are `SingleTimeSeries`, so the
-# transform must produce the one forecast window the bids already have.
+# The bid and dispatch-limit series are all `SingleTimeSeries`; the transform builds their forecast windows.
 function nem_dispatch_system(; mutate! = identity, data_span = NEM_DISPATCH_HORIZON)
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
     sys = nem_system(db, RegionalNetworkConfiguration())
@@ -24,7 +23,8 @@ function nem_dispatch_system(; mutate! = identity, data_span = NEM_DISPATCH_HORI
     set_market_bids!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_nem_dispatch_limits!(sys, db, date_range)
     mutate!(sys)
-    # One window spanning the whole span, matching the single window the bid forecast carries.
+    set_storage_dispatch_ceilings!(sys)
+    # One window spanning the whole span.
     PSY.transform_single_time_series!(sys, data_span, NEM_DISPATCH_RESOLUTION)
     return sys
 end
@@ -48,20 +48,15 @@ function flatten_series!(sys, ::Type{T}, duid, name, value) where {T}
 end
 flatten_series!(sys, duid, name, value) = flatten_series!(sys, PSY.ThermalStandard, duid, name, value)
 
-# Overwrites one battery's per-direction energy-availability `Deterministic` series with a flat
-# value, mirroring `flatten_series!` for the `SingleTimeSeries` ramp/initial series.
+# Overwrites one battery's per-direction energy-availability series with a flat value, mirroring
+# `flatten_series!`.
 function flatten_storage_avail!(sys, duid, name, value)
     device = PSY.get_component(PSY.EnergyReservoirStorage, sys, duid)
-    stamps = PSY.get_time_series_timestamps(PSY.Deterministic, device, name)
-    PSY.remove_time_series!(sys, PSY.Deterministic, device, name)
+    stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name)
+    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, name)
     PSY.add_time_series!(
         sys, device,
-        PSY.Deterministic(;
-            name = name,
-            data = Dict(first(stamps) => fill(value, length(stamps))),
-            resolution = NEM_DISPATCH_RESOLUTION,
-            interval = NEM_DISPATCH_RESOLUTION,
-        ),
+        AustralianElectricityMarkets._single_series(name, first(stamps), fill(value, length(stamps)), NEM_DISPATCH_RESOLUTION),
     )
     return sys
 end
@@ -459,6 +454,7 @@ end
     set_demand!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_market_bids!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_nem_dispatch_limits!(sys, db, date_range)
+    set_storage_dispatch_ceilings!(sys)
 
     # Strip one device's rates after the template is derived, so the type is still a
     # participant but that device has nothing to read.

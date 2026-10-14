@@ -120,7 +120,7 @@ end
 """
     _retime_gc_series!(sys, params, overrides_mw, invoked_overrides = Dict{String, Vector{Float64}}())
 
-Replaces every added [`GenericConstraint`](@ref)'s `"rhs"`/`"invoked"` `Deterministic` series
+Replaces every added [`GenericConstraint`](@ref)'s `"rhs"`/`"invoked"` `SingleTimeSeries`
 with one anchored to the fixture's own native forecast window (`params`, from
 [`_native_forecast_params`](@ref)) instead of NEMWEB's 2025 dates - the only way both can be
 fed into the same `DecisionModel`. `overrides_mw` maps a `GENCONID` to a replacement constant
@@ -141,11 +141,11 @@ function _retime_gc_series!(
         rhs_value = if haskey(overrides_mw, name)
             overrides_mw[name] / base_power
         else
-            first(values(get_data(get_time_series(Deterministic, gc, "rhs"))))[1]
+            get_time_series_values(SingleTimeSeries, gc, "rhs")[1]
         end
         invoked_values = get(invoked_overrides, name, fill(1.0, n_raw))
-        remove_time_series!(sys, Deterministic, gc, "rhs")
-        remove_time_series!(sys, Deterministic, gc, "invoked")
+        remove_time_series!(sys, SingleTimeSeries, gc, "rhs")
+        remove_time_series!(sys, SingleTimeSeries, gc, "invoked")
         add_time_series!(sys, gc, SingleTimeSeries(; name = "rhs", data = TimeArray(times, fill(rhs_value, n_raw))))
         add_time_series!(sys, gc, SingleTimeSeries(; name = "invoked", data = TimeArray(times, invoked_values)))
     end
@@ -376,7 +376,7 @@ function _lhs(thermal, flow, t)
     return park_city + sundance - ic1_flow
 end
 
-@testset "Step 4: an un-invoked interval reads a dual of 0.0 and never phantom-enforces" begin
+@testset "Step 4: an un-invoked interval reads a dual of 0.0 and never phantom-enforces, with and without slacks" begin
     # The fixture's own retimed grid has exactly 2 (hourly) time steps - see
     # `_native_forecast_params`. Mixing `invoked = 0.0` at the first step and `1.0` at the
     # second exercises the exact branch `add_constraints!` treats specially: without it, PSI's
@@ -401,44 +401,52 @@ end
     n_raw = probe_params.count + Int(probe_params.horizon / probe_params.interval) - 1
     invoked_vec = vcat([0.0], fill(1.0, n_raw - 1))  # t1: not invoked; t2 onward: invoked
 
-    tightened_rhs = unconstrained_lhs_t2 / 2
-    sys = _prepared_system(
-        Dict("N_IC1_LIMIT" => tightened_rhs), Dict("N_IC1_LIMIT" => invoked_vec),
-    )
-    _prune_unbuildable_constraints!(sys)
-    template = _nem_service_template()
-    model = _decision_model(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    PSI.solve!(model)
-    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    for use_slacks in (false, true)
+        tightened_rhs = unconstrained_lhs_t2 / 2
+        sys = _prepared_system(
+            Dict("N_IC1_LIMIT" => tightened_rhs), Dict("N_IC1_LIMIT" => invoked_vec),
+        )
+        _prune_unbuildable_constraints!(sys)
+        template = _nem_service_template(; use_slacks = use_slacks)
+        model = _decision_model(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        PSI.solve!(model)
+        @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
 
-    container = PSI.get_optimization_container(model)
-    ic1_name = PSY.get_name(_gc(sys, "N_IC1_LIMIT"))
-    nem_keys = [
-        k for k in PSI.get_constraint_keys(container)
-            if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit
-    ]
-    dual_key = only(k for k in nem_keys if k.meta == ic1_name)
-    dual_df = PSI.read_dual(PSI.OptimizationProblemResults(model), dual_key)
-    dual_t1 = only(subset(dual_df, :DateTime => ByRow(==(t1)))).value
-    dual_t2 = only(subset(dual_df, :DateTime => ByRow(==(t2)))).value
+        container = PSI.get_optimization_container(model)
+        ic1_name = PSY.get_name(_gc(sys, "N_IC1_LIMIT"))
+        nem_keys = [
+            k for k in PSI.get_constraint_keys(container)
+                if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit
+        ]
+        dual_key = only(k for k in nem_keys if k.meta == ic1_name)
+        dual_df = PSI.read_dual(PSI.OptimizationProblemResults(model), dual_key)
+        dual_t1 = only(subset(dual_df, :DateTime => ByRow(==(t1)))).value
+        dual_t2 = only(subset(dual_df, :DateTime => ByRow(==(t2)))).value
 
-    res = PSI.OptimizationProblemResults(model)
-    flow = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
-    thermal = PSI.read_variable(res, "ActivePowerVariable__ThermalStandard")
-    lhs_t1 = _lhs(thermal, flow, t1)
-    lhs_t2 = _lhs(thermal, flow, t2)
+        res = PSI.OptimizationProblemResults(model)
+        flow = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
+        thermal = PSI.read_variable(res, "ActivePowerVariable__ThermalStandard")
+        lhs_t1 = _lhs(thermal, flow, t1)
+        lhs_t2 = _lhs(thermal, flow, t2)
 
-    # Not invoked at t1: the vacuous placeholder constraint reads back a dual of exactly 0.0,
-    # and the LHS is free to exceed the RHS that would otherwise bound it - proof the RHS was
-    # never actually enforced there, not a coincidence.
-    @test isapprox(dual_t1, 0.0; atol = 1.0e-6)
-    @test lhs_t1 > tightened_rhs + 1.0e-3
+        # Not invoked at t1: the vacuous placeholder constraint reads back a dual of exactly 0.0,
+        # and the LHS is free to exceed the RHS that would otherwise bound it - proof the RHS was
+        # never actually enforced there, not a coincidence.
+        @test isapprox(dual_t1, 0.0; atol = 1.0e-6)
+        @test lhs_t1 > tightened_rhs + 1.0e-3
+        if use_slacks
+            # The row exists and is violated; its free slack makes it vacuous with a dual of zero.
+            @test abs(dual_t1) <= 1.0e-9
+            slack_t1 = only(subset(PSI.read_variable(res, "GenericConstraintSlackUp__GenericConstraint__$ic1_name"), :DateTime => ByRow(==(t1)))).value
+            @test slack_t1 >= lhs_t1 - tightened_rhs - 1.0e-3
+        end
 
-    # Invoked at t2: binds exactly like Step 1's single-interval case.
-    @test isapprox(lhs_t2, tightened_rhs; atol = 1.0e-3)
-    @test isfinite(dual_t2)
-    @test !isapprox(dual_t2, 0.0; atol = 1.0e-6)
+        # Invoked at t2: binds exactly like Step 1's single-interval case.
+        @test isapprox(lhs_t2, tightened_rhs; atol = 1.0e-3)
+        @test isfinite(dual_t2)
+        @test !isapprox(dual_t2, 0.0; atol = 1.0e-6)
+    end
 end
 
 """
@@ -459,21 +467,14 @@ function _storage_template()
 end
 
 """
-    _matching_deterministic(params, name, value)
+    _flat_single_series(params, name, value)
 
-A `Deterministic` `name` filled with the constant `value` at every timestep of every window
-`params` (from [`_native_forecast_params`](@ref)) defines, so it coexists with every other
-`Forecast` in the `System` it's attached to.
+A `SingleTimeSeries` `name` filled with the constant `value` on the raw grid of `params` (from
+[`_native_forecast_params`](@ref)), as [`_raw_series_times`](@ref) defines it.
 """
-function _matching_deterministic(params, name::AbstractString, value)
-    horizon_steps = Int(params.horizon / params.interval)
-    window_starts = params.initial_timestamp:params.interval:(params.initial_timestamp + params.interval * (params.count - 1))
-    return Deterministic(;
-        name = name,
-        data = Dict(t => fill(value, horizon_steps) for t in window_starts),
-        resolution = params.interval,
-        interval = params.interval,
-    )
+function _flat_single_series(params, name::AbstractString, value)
+    times, n_raw = _raw_series_times(params)
+    return SingleTimeSeries(; name = name, data = TimeArray(times, fill(value, n_raw)))
 end
 
 """
@@ -485,10 +486,8 @@ offer prices what charging is *worth*, not what it costs, so a low value - not a
 what keeps it unattractive), generous `"energy_max_avail"`/`"energy_max_avail_decremental"`
 (never the binding limit -
 [`GenericConstraint`](@ref) `N_BAT_LIMIT` is), and generous ramp rates from a zero net
-`"initial_mw"`. The bid/availability series are genuine `Deterministic`s matching `params`'s
-native shape ([`get_storage_energy_max_avail`](@ref) only recognizes that type); the ramp/initial
-series are raw `SingleTimeSeries`, folded into the same shape by
-[`_retime_gc_series!`](@ref)'s trailing `transform_single_time_series!`.
+`"initial_mw"`. Every series is a raw `SingleTimeSeries` on the grid of `params`
+([`_raw_series_times`](@ref)).
 """
 function _add_battery_dispatch_data!(sys, params)
     battery = get_component(EnergyReservoirStorage, sys, "BAT1")
@@ -501,14 +500,14 @@ function _add_battery_dispatch_data!(sys, params)
     gen_offer = PiecewiseStepData([0.0, rating], [1.0])
     load_offer = PiecewiseStepData([0.0, rating], [0.0])
 
-    set_incremental_variable_cost!(sys, battery, _matching_deterministic(params, "variable_cost", gen_offer), UnitSystem.NATURAL_UNITS)
-    set_incremental_initial_input!(sys, battery, _matching_deterministic(params, "incremental_initial_input", 0.0))
-    set_decremental_variable_cost!(sys, battery, _matching_deterministic(params, "decremental_variable_cost", load_offer), UnitSystem.NATURAL_UNITS)
-    set_decremental_initial_input!(sys, battery, _matching_deterministic(params, "decremental_initial_input", 0.0))
+    set_incremental_variable_cost!(sys, battery, _flat_single_series(params, "variable_cost", gen_offer), UnitSystem.NATURAL_UNITS)
+    set_incremental_initial_input!(sys, battery, _flat_single_series(params, "incremental_initial_input", 0.0))
+    set_decremental_variable_cost!(sys, battery, _flat_single_series(params, "decremental_variable_cost", load_offer), UnitSystem.NATURAL_UNITS)
+    set_decremental_initial_input!(sys, battery, _flat_single_series(params, "decremental_initial_input", 0.0))
 
     base_power = get_base_power(sys)
-    add_time_series!(sys, battery, _matching_deterministic(params, "energy_max_avail", rating / base_power))
-    add_time_series!(sys, battery, _matching_deterministic(params, "energy_max_avail_decremental", rating / base_power))
+    add_time_series!(sys, battery, _flat_single_series(params, "energy_max_avail", rating / base_power))
+    add_time_series!(sys, battery, _flat_single_series(params, "energy_max_avail_decremental", rating / base_power))
 
     times, n_raw = _raw_series_times(params)
     add_time_series!(
@@ -520,6 +519,7 @@ function _add_battery_dispatch_data!(sys, params)
     add_time_series!(
         sys, battery, SingleTimeSeries(; name = "initial_mw", data = TimeArray(times, fill(0.0, n_raw))),
     )
+    set_storage_dispatch_ceilings!(sys)
     return
 end
 
@@ -768,13 +768,15 @@ end
 end
 
 @testset "Market Price Cap lookup covers only the published financial years" begin
-    @test AEMS._financial_year_mpc(DateTime(2025, 7, 1)) == 20_300.0
-    @test AEMS._financial_year_mpc(DateTime(2026, 6, 30, 23, 55)) == 20_300.0
-    @test AEMS._financial_year_mpc(DateTime(2026, 7, 1)) == 23_200.0
-    @test AEMS._financial_year_mpc(DateTime(2027, 6, 30, 23, 55)) == 23_200.0
     @test AEMS._financial_year_mpc(DateTime(2025, 6, 30)) == 17_500.0
-    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2024, 6, 30))
-    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2027, 7, 1))
+    @test AEMS._financial_year_mpc(DateTime(2025, 7, 1)) == 17_500.0  # 23:55-00:00 on 30 June
+    @test AEMS._financial_year_mpc(DateTime(2025, 7, 1, 0, 5)) == 20_300.0
+    @test AEMS._financial_year_mpc(DateTime(2026, 6, 30, 23, 55)) == 20_300.0
+    @test AEMS._financial_year_mpc(DateTime(2026, 7, 1)) == 20_300.0
+    @test AEMS._financial_year_mpc(DateTime(2026, 7, 1, 0, 5)) == 23_200.0
+    @test AEMS._financial_year_mpc(DateTime(2027, 7, 1)) == 23_200.0
+    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2024, 7, 1))
+    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2027, 7, 1, 0, 5))
 end
 
 @testset "area-balance slack Market Price Cap: unpublished year throws, settings entry overrides" begin

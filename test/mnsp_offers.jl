@@ -14,9 +14,9 @@
         ic = get_component(AreaInterchange, sys, "IC2")
         @test get_name(get_from_area(ic)) == "NSW1"
         # Interval 11:55 carries the first offer (MAXAVAIL 594), 12:00 the rebid (400).
-        avail = get_time_series_values(Deterministic, ic, "mnsp_forward_max_avail"; start_time = first(range))
+        avail = get_time_series_values(SingleTimeSeries, ic, "mnsp_forward_max_avail"; start_time = first(range))
         @test avail == [594.0, 400.0]
-        curves = get_time_series_values(Deterministic, ic, "mnsp_forward_offer"; start_time = first(range))
+        curves = get_time_series_values(SingleTimeSeries, ic, "mnsp_forward_offer"; start_time = first(range))
         @test get_x_coords(curves[1]) == [0.0, 100.0, 200.0, 300.0, 400.0, 494.0]
         @test get_y_coords(curves[2]) == [80.0, 61.0, 75.0, 89.0]
         info = get_ext(ic)

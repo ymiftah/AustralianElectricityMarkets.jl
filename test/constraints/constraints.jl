@@ -350,8 +350,8 @@ end
     @test vname("N_PARTIAL_COVERAGE") in added
     partial_gc = get_component(GenericConstraint, sys, vname("N_PARTIAL_COVERAGE"))
     base_power = get_base_power(sys)
-    partial_rhs = first(values(get_data(get_time_series(Deterministic, partial_gc, "rhs"))))
-    partial_invoked = first(values(get_data(get_time_series(Deterministic, partial_gc, "invoked"))))
+    partial_rhs = get_time_series_values(SingleTimeSeries, partial_gc, "rhs")
+    partial_invoked = get_time_series_values(SingleTimeSeries, partial_gc, "invoked")
     @test length(partial_rhs) == 12
     @test length(partial_rhs) == length(date_range) - 1  # grid spans date_range, not invocations
     @test all(==(150.0 / base_power), partial_rhs)  # constant RHS - forward-fill is a no-op here
@@ -384,12 +384,12 @@ end
     nsw1_raise6sec = get_component(GenericConstraint, sys, vname("F_NSW1_RAISE6SEC"))
     @test any(t -> t isa InterconnectorTerm && get_interconnector(t) == "IC1", get_terms(nsw1_raise6sec))
 
-    rhs_ts = get_time_series(Deterministic, gc, "rhs")
+    rhs_ts = get_time_series(SingleTimeSeries, gc, "rhs")
     @test !isnothing(rhs_ts)
-    rhs_values = first(values(get_data(rhs_ts)))
+    rhs_values = get_time_series_values(SingleTimeSeries, gc, "rhs")
     @test issorted(rhs_values)  # RHS = 50.0 + 0.1*i, confirmed time-varying in Task 8
 
-    @test !has_time_series(gc, Deterministic, "lhs")  # include_solution defaults false
+    @test !has_time_series(gc, SingleTimeSeries, "lhs")  # include_solution defaults false
 
     added2, _ = add_nem_constraints!(nem_system(db, RegionalNetworkConfiguration()), db, date_range; include_solution = true)
     @test vname("F_VIC1_RAISE6SEC") in added2
@@ -527,7 +527,7 @@ end
         gap_sys = nem_system(gap_db, RegionalNetworkConfiguration())
         add_nem_constraints!(gap_sys, gap_db, date_range)
         gap_gc = get_component(GenericConstraint, gap_sys, vname("N_BAYSW_THERMAL"))
-        rhs_len = length(first(values(get_data(get_time_series(Deterministic, gap_gc, "rhs")))))
+        rhs_len = length(get_time_series_values(SingleTimeSeries, gap_gc, "rhs"))
         @test rhs_len == length(date_range) - 1
         @test rhs_len != length(unique(invoked_gap.SETTLEMENTDATE))
     end
@@ -566,18 +566,18 @@ end
         sys_default = nem_system(db, RegionalNetworkConfiguration())
         add_nem_constraints!(sys_default, db, date_range)
         gc_default = get_component(GenericConstraint, sys_default, vname("N_BAYSW_THERMAL"))
-        rhs_ts_default = get_time_series(Deterministic, gc_default, "rhs")
+        rhs_ts_default = get_time_series(SingleTimeSeries, gc_default, "rhs")
         @test get_resolution(rhs_ts_default) == Minute(5)
 
         # Explicit resolution is honoured as given, with no inference or validation.
         sys_explicit = nem_system(db, RegionalNetworkConfiguration())
         add_nem_constraints!(sys_explicit, db, date_range; resolution = Minute(30))
         gc_explicit = get_component(GenericConstraint, sys_explicit, vname("N_BAYSW_THERMAL"))
-        rhs_ts_explicit = get_time_series(Deterministic, gc_explicit, "rhs")
+        rhs_ts_explicit = get_time_series(SingleTimeSeries, gc_explicit, "rhs")
         @test get_resolution(rhs_ts_explicit) == Minute(30)
 
         # A single-interval grid can't be exercised end-to-end through add_nem_constraints!:
-        # PSY's Deterministic itself requires forecast arrays of length >= 2 (InfrastructureSystems
+        # The series are inferred from at least two timestamps (InfrastructureSystems
         # _check_forecast_data), independent of resolution - so a 1-point full_grid always errors
         # before resolution matters. _infer_resolution is unit-tested directly instead, contrasted
         # with the genuine multi-interval inference above (which is not just matching the fallback
@@ -687,7 +687,7 @@ end
             @test term isa InterconnectorTerm
             @test get_interconnector(term) == interconnector
             @test get_factor(term) == factor
-            rhs_z = first(values(get_data(get_time_series(Deterministic, gc, "rhs"))))
+            rhs_z = get_time_series_values(SingleTimeSeries, gc, "rhs")
             @test all(==(0.0), rhs_z)
         end
 

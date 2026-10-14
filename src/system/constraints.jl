@@ -1,6 +1,6 @@
 "Whether `load` carries a decremental FCAS trapezium series for any FCAS market."
 _offers_fcas(load) = any(
-    bt -> has_time_series(load, Deterministic, "fcas_trapezium_$(string(bt))_decremental"), FCAS_BID_TYPES,
+    bt -> has_time_series(load, SingleTimeSeries, "fcas_trapezium_$(string(bt))_decremental"), FCAS_BID_TYPES,
 )
 
 
@@ -540,20 +540,20 @@ function add_nem_constraints!(
         add_service!(sys, entry.gc, entry.contributing_devices)
         add_time_series!(
             sys, entry.gc,
-            Deterministic(; name = "rhs", data = Dict(start_date => entry.rhs_series), resolution = resolution, interval = resolution),
+            _single_series("rhs", start_date, entry.rhs_series, resolution),
         )
         add_time_series!(
             sys, entry.gc,
-            Deterministic(; name = "invoked", data = Dict(start_date => entry.invoked_series), resolution = resolution, interval = resolution),
+            _single_series("invoked", start_date, entry.invoked_series, resolution),
         )
         if include_solution
             add_time_series!(
                 sys, entry.gc,
-                Deterministic(; name = "lhs", data = Dict(start_date => entry.lhs_series), resolution = resolution, interval = resolution),
+                _single_series("lhs", start_date, entry.lhs_series, resolution),
             )
             add_time_series!(
                 sys, entry.gc,
-                Deterministic(; name = "marginal_value", data = Dict(start_date => entry.marginal_value_series), resolution = resolution, interval = resolution),
+                _single_series("marginal_value", start_date, entry.marginal_value_series, resolution),
             )
         end
     end

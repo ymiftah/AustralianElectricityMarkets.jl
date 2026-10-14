@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The dispatch interval ending 00:00 on 1 July (23:55-00:00 on 30 June) takes the previous financial year's Market Price Cap in every CVP slack cost; it took the new year's.
 - For interconnectors carrying paired directional MNSP offers, DC losses are supplied by the active
   sending area (`-from_tlf * (q + loss)`) using its terminal loss factor, instead of the static
   regional loss share. New `MNSPLinkLossVariable`. Interconnectors without directional offers keep
@@ -97,8 +98,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   availability, so a unit `set_market_bids!` had already marked unavailable for having no bids
   made the strict setter throw. Both setters now only require data for available devices.
 - **A battery's net ramp floor/ceiling could exceed its per-direction availability**: mirroring
-  the generator fix above, `_storage_dispatch_ceilings`
-  (`AustralianElectricityMarketsSimulations/src/nem_dispatch_storage.jl`) now raises the
+  the generator fix above, `set_storage_dispatch_ceilings!`
+  (`src/system/dispatch_limits.jl`) now raises the
   generation-side ceiling to a net ramp-down floor above it, and the load-side ceiling to match a
   net ramp-up ceiling below its negative, instead of leaving the two inconsistent and the model
   infeasible.
@@ -132,6 +133,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `replicate_range(db, start, stop)` replays consecutive dispatch intervals as one
+  PowerSimulations `Simulation` of a one-interval model built once, and compares each interval
+  with the published outcome. It models energy dispatch (with batteries, interconnector losses and
+  MNSP offers; no FCAS or tie-breaks) and the generic constraints invoked in the range.
+  `check_dispatch_envelope` checks the dispatch envelope from the system's series before a
+  build. `replication_template` takes `parts` (see `REPLICATION_PARTS`), and
+  `replication_system` accepts a 5-minute date range.
+- `set_storage_dispatch_ceilings!(sys)` attaches each battery's per-direction dispatch ceilings,
+  its energy offer `MAXAVAIL` raised to the net ramp envelope, as `"storage_gen_ceiling"` and
+  `"storage_load_ceiling"` series. `replication_system` calls it; other pipelines that model
+  batteries under `NEMReplayDispatch` or `NEMLookaheadDispatch` must call it after `set_market_bids!`
+  and `set_nem_dispatch_limits!`, or the build fails naming it.
+- `set_loss_demand_coefficients!(sys)` attaches each interconnector's per-interval loss-factor demand
+  term `Σ demand coefficient × regional demand` as a `"loss_demand_coefficient"` series.
+  `replication_system` calls it; other pipelines using `NEMInterconnectorLoss` must call it after
+  `set_demand!`, or the build fails naming it.
 - `populate_legacy_archive` fills the cache for months before 2015, when NEMWEB hosts one monolithic
   `MMSDM_<yyyy>_<mm>.zip` per month. It range-reads only the requested tables' entries, defaulting to the
   four generic-constraint definition tables, so constraints last revised before 2015 (for example
@@ -419,6 +436,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `NEMInterconnectorLoss` evaluates segment slopes and the first-breakpoint loss at zero demand and
+  carries the demand term as the flow's coefficient in the loss definition (`LossDemandCoefficientParameter`,
+  a PowerSimulations constraint-coefficient parameter); the result is identical and the formulation
+  now runs in recurrent simulations. MNSP band widths, `MAXAVAIL` and prices are parameters
+  (`MNSPBandWidthParameter`, `MNSPMaxAvailParameter`, `MNSPBandPriceParameter`), bands are
+  `MNSPLinkBandVariable`s, and the link direction big-M and link-loss bounds are fixed over the
+  system's series. `replicate_range` models interconnector losses and MNSP offers and reports solved
+  `MWFLOW` and `MWLOSSES`.
+- Under `NEMReplayDispatch` a battery's availability rows read its ceiling series through `ActivePowerOutTimeSeriesParameter`/`ActivePowerInTimeSeriesParameter` (constraints `ActivePowerOutVariableTimeSeriesLimitsConstraint`/`ActivePowerInVariableTimeSeriesLimitsConstraint`, meta `ub`, replacing `ActivePowerVariableLimitsConstraint` `out`/`in`), and its variable upper bound is the maximum of that series. `replicate_range` models batteries.
+- With `use_slacks = true`, `LinearFactorLimit` builds a generic constraint's row in every interval and prices its slacks at the constraint weight times the Market Price Cap only where it is invoked, through the new objective parameter `GenericConstraintSlackCostParameter`; elsewhere the slack is free, the row vacuous and its dual 0. Without slacks a non-invoked interval keeps the vacuous row, and a recurrent build throws. `replicate_range` now models every generic constraint invoked in at least one interval of the range, and `constraint_violations` ignores the slack of a non-invoked interval.
+- Per-interval inputs attached by `set_market_bids!`, `set_fcas_bids!`, `add_nem_constraints!` and
+  `set_mnsp_offers!` (bid curves, FCAS curves and trapeziums, generic-constraint `rhs`/`invoked`/
+  `lhs`/`marginal_value`, MNSP offers, storage `energy_max_avail`) are now `SingleTimeSeries`
+  instead of single-window `Deterministic` forecasts, so they transform with the rest of the
+  system. Code reading them with `get_time_series(Deterministic, ...)` on an untransformed system
+  must read `SingleTimeSeries`.
 - The replication model solves one dispatch interval instead of two (the second was only
   reported as absent). Mean solve time over 42 validation intervals fell from 37 s to 24 s;
   regional prices are unchanged, dispatch differs at four of the 42 intervals.

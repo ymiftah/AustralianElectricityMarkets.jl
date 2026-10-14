@@ -96,7 +96,7 @@ the other units: the penalty slope in each band's MW depends only on the other b
 the split among the remaining bands is set by their own rows and is proportional to band MW. FCAS
 bands are not tied, and bands of zero width are ignored. Reads the band prices and widths the
 market-bid objective was built from, so it must run after every device model's objective, and it
-requires bid data fixed at build.
+requires bid data fixed at build. Throws in a model built for recurrent solves.
 
 # Arguments
 - `container`: the `PowerSimulations.OptimizationContainer` holding the built bid variables.
@@ -106,6 +106,7 @@ requires bid data fixed at build.
 The number of pairs added, as an `Int`.
 """
 function add_tie_break_constraints!(container::PSI.OptimizationContainer, sys::PSY.System)
+    PSI.built_for_recurrent_solves(container) && throw(ArgumentError("add_tie_break_constraints!: band widths are read at build, so a recurrent build cannot carry tie-breaks."))
     jm = PSI.get_jump_model(container)
     coefficient = PSI.get_base_power(container) *
         interval_cost_coefficient(TIE_BREAK_CVP_FACTOR, PSI.get_resolution(container))

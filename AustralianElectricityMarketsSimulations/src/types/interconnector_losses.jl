@@ -7,9 +7,10 @@
 Device formulation for `PSY.AreaInterchange` that apportions the attached
 [`InterconnectorLossModel`](@ref)'s segment losses between its two areas. Supports
 `PSI.AreaBalancePowerModel` only, matching NEMDE's regional balance; other network models,
-missing or ambiguous loss models and concave curves throw `ArgumentError`. Recurrent solves are
-unsupported; rebuild the standalone `DecisionModel` when demand forecasts or load availability
-change.
+missing or ambiguous loss models and concave curves throw `ArgumentError`. The demand term of each
+interval's loss factor is read from the interchange's `"loss_demand_coefficient"` series
+(`set_loss_demand_coefficients!`) as a [`LossDemandCoefficientParameter`](@ref), so the formulation
+also runs in recurrent simulations.
 
 # Notes
 Loss follows the breakpoint interpolation at every price sign: segments fill contiguously from
@@ -36,7 +37,11 @@ struct InterconnectorLossSegmentVariable <: PSI.VariableType end
 struct InterconnectorFlowSegmentConstraint <: PSI.ConstraintType end
 
 
-"`loss[ic,t] == losses at the first breakpoint + sum(segment slope * segment flow)`, per-unit."
+"""
+`loss[ic,t] == losses at the first breakpoint + sum(segment slope * segment flow) + k[t] * flow[ic,t]`,
+per-unit, with segment slopes and first-breakpoint losses at zero demand and `k[t]` the
+[`LossDemandCoefficientParameter`](@ref).
+"""
 struct InterconnectorLossDefinitionConstraint <: PSI.ConstraintType end
 
 
@@ -53,3 +58,13 @@ Contiguous segment fill: segment `s + 1` may carry flow only when segment `s` is
 (`meta = "ub"`), and segment `s` is full when its fill indicator is on (`meta = "lb"`).
 """
 struct InterconnectorLossSegmentOrderConstraint <: PSI.ConstraintType end
+
+
+"""
+    LossDemandCoefficientParameter
+
+Coefficient of an interconnector's flow in its [`InterconnectorLossDefinitionConstraint`](@ref) at
+each interval: the demand term `Σ_r demand_coefficients[r] × demand[r]` of its loss factor, read
+from the `"loss_demand_coefficient"` series that `set_loss_demand_coefficients!` attaches.
+"""
+struct LossDemandCoefficientParameter <: PSI.ConstraintCoefficientParameter end
