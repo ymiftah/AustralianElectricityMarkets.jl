@@ -71,11 +71,11 @@ end
 # `transform_single_time_series!`, so it can attach raw two-timestamp series of its own.
 # Unit fields except `capacity`, and `load_mw`, take a scalar or one value per stamp;
 # `horizon` is the transform horizon. With `ceilings` (default), the batteries' dispatch ceilings
-# are attached after `mutate!`. `interchange` (a `toy_interchange`) keeps area 2 and joins it to
+# are attached after `mutate!`, and with `tie_break_scales` (default) the tie-break scales. `interchange` (a `toy_interchange`) keeps area 2 and joins it to
 # area 1 through `TOY_INTERCHANGE`, whose loss demand coefficients are attached after `mutate!`.
 function nem_toy_system(
         units, load_mw; batteries = Pair{String, Any}[], loads = Pair{String, Any}[], mutate! = nothing,
-        horizon = 2 * TOY_RESOLUTION, ceilings = true, interchange = nothing,
+        horizon = 2 * TOY_RESOLUTION, ceilings = true, interchange = nothing, tie_break_scales = true,
     )
     sys = PSB.build_system(PSISystems, "5_bus_hydro_ed_sys")
     PSY.clear_time_series!(sys)
@@ -201,6 +201,8 @@ function nem_toy_system(
     isnothing(mutate!) || mutate!(sys, stamps)
     ceilings && set_storage_dispatch_ceilings!(sys)
     isnothing(interchange) || set_loss_demand_coefficients!(sys)
+    set_fcas_effective_offers!(sys)
+    tie_break_scales && set_tie_break_scales!(sys)
 
     # One window per `horizon`.
     PSY.transform_single_time_series!(sys, horizon, TOY_RESOLUTION)
@@ -386,5 +388,83 @@ function solve_toy(
             k.meta => only(read_dual(results, k).value) / (base_power * DISPATCH_INTERVAL_HOURS)
                 for k in nem_keys
         ),
+    )
+end
+
+# --- FCAS on the toy system: one `(MW, ...)` value or band list per stamp. ---
+
+# Attaches `device`'s `"fcas_trapezium_*"`/`"fcas_curve_*"` series: `trapeziums` are
+# `(EnablementMin, LowBreakpoint, HighBreakpoint, EnablementMax, MaxAvail)` in MW, `bands` `(MW, price)` lists.
+function add_toy_fcas_offer!(sys, device, stamps, bid_type, trapeziums, bands; decremental = false)
+    base_power = PSY.get_base_power(sys)
+    suffix = decremental ? "$(string(bid_type))_decremental" : string(bid_type)
+    traps = [
+        Tuple(FCASTrapezium(; enablement_min = a / base_power, low_breakpoint = b / base_power, high_breakpoint = c / base_power, enablement_max = d / base_power, max_avail = e / base_power))
+            for (a, b, c, d, e) in trapeziums
+    ]
+    curves = [PSY.PiecewiseStepData([0.0; cumsum(first.(bs))] ./ base_power, last.(bs)) for bs in bands]
+    for (name, values) in (("fcas_trapezium_$suffix", traps), ("fcas_curve_$suffix", curves))
+        PSY.add_time_series!(sys, device, AustralianElectricityMarkets._single_series(name, stamps[1], values, TOY_RESOLUTION))
+    end
+    return
+end
+# Attaches a per-stamp `SingleTimeSeries` `name`, per-unitised unless `scale` says otherwise.
+function add_toy_series!(sys, component, stamps, name, values; scale = 1 / PSY.get_base_power(sys))
+    PSY.add_time_series!(sys, component, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(stamps, Float64.(values) .* scale)))
+    return
+end
+# An `FCASService` `"1_<BIDTYPE>"` over `duids` and its GE requirement `name` of `rhs_mw` per stamp.
+function add_toy_fcas_market!(sys, stamps, bid_type, duids, name, rhs_mw)
+    base_power = PSY.get_base_power(sys)
+    devices = [PSY.get_component(PSY.Device, sys, d) for d in duids]
+    PSY.add_service!(sys, FCASService(; name = "1_$(string(bid_type))", region = "1", bid_type), devices)
+    gc = GenericConstraint(;
+        name, sense = ConstraintSense.GE, rhs = rhs_mw[1] / base_power,
+        terms = ConstraintTerm[UnitTerm(d, bid_type, 1.0) for d in duids], fcas_requirements = [FCASRequirement("1", bid_type)],
+    )
+    PSY.add_service!(sys, gc, devices)
+    add_toy_series!(sys, gc, stamps, "rhs", rhs_mw)
+    add_toy_series!(sys, gc, stamps, "invoked", [1.0, 1.0]; scale = 1.0)
+    return
+end
+# Alta and Park City offer RAISE6SEC, Alta also RAISEREG and LOWERREG, `TOY_BATTERY` RAISEREG on both
+# sides and RAISE6SEC, the scheduled load "pump" LOWER6SEC; each market has a requirement.
+function fcas_toy_system(;
+        reverse_order = false, alta_reg_avail = [15.0, 8.0], alta_agc = [1, 1], park_initial = [40.0, 40.0],
+        batt_initial = [5.0, 5.0], batt_ramp = [240.0, 240.0], reg_req = [20.0, 20.0], r6_req = [30.0, 30.0],
+        alta_ramp = [240.0, 240.0], agc_emax = [90.0, 90.0], horizon = TOY_RESOLUTION,
+    )
+    r(x) = reverse_order ? reverse(x) : x
+    units = [
+        TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0, ramp_down = 100.0),
+        TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = r(park_initial), ramp_up = 100.0, ramp_down = 100.0),
+    ]
+    batteries = [TOY_BATTERY => toy_battery(50.0, 30.0, 50.0, 0.0; initial = r(batt_initial), ramp_up = 100.0)]
+    loads = ["pump" => toy_load(40.0, 300.0; initial = 20.0, ramp_up = 100.0)]
+    return nem_toy_system(
+        units, r([60.0, 80.0]); batteries, loads, horizon, mutate! = (sys, stamps) -> begin
+            alta = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+            park = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
+            bat = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
+            pump = PSY.get_component(PSY.InterruptiblePowerLoad, sys, "pump")
+            add_toy_fcas_offer!(sys, alta, stamps, BidType.RAISEREG, r([(10.0, 20.0, 80.0, 95.0, a) for a in alta_reg_avail]), fill([(10.0, 5.0), (10.0, 12.0)], 2))
+            add_toy_fcas_offer!(sys, alta, stamps, BidType.LOWERREG, fill((10.0, 20.0, 80.0, 95.0, 10.0), 2), fill([(10.0, 6.0)], 2))
+            add_toy_fcas_offer!(sys, alta, stamps, BidType.RAISE6SEC, fill((5.0, 10.0, 70.0, 100.0, 20.0), 2), fill([(20.0, 3.0)], 2))
+            add_toy_fcas_offer!(sys, park, stamps, BidType.RAISE6SEC, fill((5.0, 10.0, 90.0, 100.0, 25.0), 2), fill([(15.0, 1.0), (10.0, 9.0)], 2))
+            add_toy_fcas_offer!(sys, bat, stamps, BidType.RAISEREG, fill((0.0, 5.0, 20.0, 25.0, 10.0), 2), fill([(10.0, 15.0)], 2))
+            add_toy_fcas_offer!(sys, bat, stamps, BidType.RAISEREG, fill((-25.0, -20.0, -5.0, 0.0, 10.0), 2), fill([(10.0, 12.0)], 2); decremental = true)
+            add_toy_fcas_offer!(sys, bat, stamps, BidType.RAISE6SEC, fill((-50.0, -40.0, 40.0, 50.0, 20.0), 2), fill([(20.0, 2.0)], 2))
+            add_toy_fcas_offer!(sys, pump, stamps, BidType.LOWER6SEC, fill((0.0, 5.0, 35.0, 40.0, 10.0), 2), fill([(10.0, 4.0)], 2); decremental = true)
+            add_toy_series!(sys, alta, stamps, "fcas_agc_ramp_rate_RAISEREG", r(alta_ramp))
+            add_toy_series!(sys, alta, stamps, "fcas_agc_ramp_rate_LOWERREG", [240.0, 240.0])
+            add_toy_series!(sys, alta, stamps, "fcas_agc_enablement_max_RAISEREG", r(agc_emax))
+            add_toy_series!(sys, alta, stamps, "fcas_agc_status", r(alta_agc); scale = 1.0)
+            add_toy_series!(sys, bat, stamps, "fcas_agc_ramp_rate_RAISEREG", r(batt_ramp))
+            add_toy_series!(sys, bat, stamps, "fcas_agc_status", [1, 1]; scale = 1.0)
+            add_toy_fcas_market!(sys, stamps, BidType.RAISEREG, [TOY_CHEAP, TOY_BATTERY], "F_REG", r(reg_req))
+            add_toy_fcas_market!(sys, stamps, BidType.RAISE6SEC, [TOY_CHEAP, TOY_EXPENSIVE, TOY_BATTERY], "F_R6", r(r6_req))
+            add_toy_fcas_market!(sys, stamps, BidType.LOWER6SEC, ["pump"], "F_L6", [5.0, 5.0])
+            PSY.add_service!(sys, FCASService(; name = "1_LOWERREG", region = "1", bid_type = BidType.LOWERREG), [alta])
+        end,
     )
 end

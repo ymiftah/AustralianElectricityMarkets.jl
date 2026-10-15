@@ -124,6 +124,8 @@ end
         @test begin
             set_nem_dispatch_limits!(sys, db, REAL_DATE_RANGE)
             set_storage_dispatch_ceilings!(sys)
+            set_fcas_effective_offers!(sys)
+            set_tie_break_scales!(sys)
             true
         end
 
@@ -654,6 +656,8 @@ end
     set_market_bids!(sys, db, VIOLATION_DATE_RANGE; resolution = REAL_RESOLUTION)
     set_nem_dispatch_limits!(sys, db, VIOLATION_DATE_RANGE)
     set_storage_dispatch_ceilings!(sys)
+    set_fcas_effective_offers!(sys)
+    set_tie_break_scales!(sys)
     PSY.transform_single_time_series!(sys, VIOLATION_SPAN, REAL_RESOLUTION)
 
     target_gencon_ids = ("Q_STR_ALDSF_ZERO", "Q_BRDDSF01_1INV")

@@ -60,6 +60,7 @@ const TEST_GROUPS = [
     "nem_dispatch" => ("NEM dispatch formulation", "nem_dispatch.jl"),
     "nem_dispatch_toy" => ("NEM dispatch on a toy PSCB system", "nem_dispatch_toy.jl"),
     "fcas_market" => ("FCAS market", "fcas_market.jl"),
+    "fcas_preprocessing" => ("FCAS preprocessing", "fcas_preprocessing.jl"),
     "interconnector_losses" => ("Interconnector losses", "interconnector_losses.jl"),
     "pipeline" => ("Replication pipeline", "pipeline.jl"),
     "stock_simulation" => ("Stock simulation replay", "stock_simulation.jl"),

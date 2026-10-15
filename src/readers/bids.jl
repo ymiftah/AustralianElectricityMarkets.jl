@@ -149,13 +149,14 @@ end
 
 
 """
-    _extract_power_bids(row)
+    _extract_power_bids(row; keep_empty_bands = false)
 
 Builds a `PiecewiseStepData` offer curve from a row's `PRICEBANDARRAY`/`BANDAVAILARRAY`
 columns, reversing band order for `DIRECTION == "LOAD"` rows so the resulting curve stays
-concave.
+concave. Bands of zero availability are dropped unless `keep_empty_bands`, in which case every
+band is a segment and segment `k` is always the same price band.
 """
-function _extract_power_bids(row)
+function _extract_power_bids(row; keep_empty_bands::Bool = false)
     price_band_array = copy(row.PRICEBANDARRAY)
     bandavail_array = copy(row.BANDAVAILARRAY)
     if row.DIRECTION == "LOAD"
@@ -163,8 +164,9 @@ function _extract_power_bids(row)
         reverse!(price_band_array)
         reverse!(bandavail_array)
     end
-    a = price_band_array[bandavail_array .> 0]
-    b = [zero(eltype(price_band_array)); bandavail_array[bandavail_array .> 0] |> cumsum]
+    kept = keep_empty_bands ? trues(length(bandavail_array)) : bandavail_array .> 0
+    a = price_band_array[kept]
+    b = [zero(eltype(price_band_array)); bandavail_array[kept] |> cumsum]
     return PiecewiseStepData(b, a)
 end
 
@@ -172,6 +174,7 @@ end
 function _massage_bids(
         db, energy_bids_table, pricebids_table, start_date, end_date;
         resolution = nothing, bid_types::AbstractVector{BidType} = [BidType.ENERGY], keep_bid_type::Bool = false,
+        keep_empty_bands::Bool = false,
     )
     sd = Date(start_date) - Day(1)
     ed = Date(end_date) + Day(1)
@@ -237,7 +240,7 @@ function _massage_bids(
         select(
             :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME, :PRICEBANDARRAY, :BANDAVAILARRAY,
             :MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT, (keep_bid_type ? [:BIDTYPE] : [])...,
-            AsTable(:) => ByRow(_extract_power_bids) => :piecewise_step_data
+            AsTable(:) => ByRow(r -> _extract_power_bids(r; keep_empty_bands)) => :piecewise_step_data
         )
     end
     return prep_for_psy

@@ -44,6 +44,9 @@ include("checks/interconnector_losses.jl")
 include("psi_compat.jl")
 include("formulations/fcas.jl")
 include("checks/fcas.jl")
+include("preprocessing/fcas.jl")
+include("preprocessing/tie_break.jl")
+include("checks/tie_break.jl")
 include("preprocessing/inputs.jl")
 include("execution/replication.jl")
 include("execution/simulation.jl")
@@ -65,6 +68,9 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASJointCapacityLHS, FCASJointCapacityConstraint, FCASBDURampingConstraint,
     FCASJointRampingConstraint, FCASJointCapacitySlack, FCASJointRampingSlack,
     FCASMaxAvailConstraint, FCASMaxAvailSlack, FCASBDURampingSlack,
+    FCASOfferBandVariable, FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter,
+    FCASLowerSlopeParameter, FCASRampingLimitParameter, FCASBandPriceParameter,
+    FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, set_fcas_effective_offers!,
     FCAS_MAXAVAIL_CVP_FACTOR, FCAS_BDU_RAMPING_CVP_FACTOR, FCAS_CAPACITY_CVP_FACTOR,
     FCAS_RAMPING_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR,
     UNIT_RAMP_CVP_FACTOR, UnitRampUpSlack, UnitRampDownSlack,
@@ -75,7 +81,7 @@ export AbstractNEMDispatch, NEMReplayDispatch, NEMLookaheadDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter
 export nem_dispatch_participants, set_nem_dispatch_models!
-export TIE_BREAK_CVP_FACTOR
+export TIE_BREAK_CVP_FACTOR, TieBreakScaleParameter, set_tie_break_scales!, check_tie_break_pairs
 export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegmentVariable,
     InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint,
     InterconnectorLossSegmentFullVariable, InterconnectorLossSegmentOrderConstraint,

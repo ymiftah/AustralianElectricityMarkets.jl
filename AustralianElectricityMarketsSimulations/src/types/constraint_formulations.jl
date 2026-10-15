@@ -94,10 +94,88 @@ Expression type for one side (named `"<service>_upper"`/`"<service>_lower"` in i
 key, or `"<service>_gen_upper"`/`"<service>_gen_lower"`/`"<service>_load_upper"`/
 `"<service>_load_lower"` for a `PSY.Storage` device bidding a regulation market on both sides)
 of the AEMO *FCAS Model in NEMDE* §6.2/§6.3 joint capacity constraint's left-hand side, per
-`(device, t)`: energy dispatch, the service's own trapezium slope term, and any matching
-regulation term.
+`(device, t)`: energy dispatch and any matching regulation term. The service's own trapezium slope
+term is added in the [`FCASJointCapacityConstraint`](@ref) row, with its coefficient driven by
+[`FCASUpperSlopeParameter`](@ref) or [`FCASLowerSlopeParameter`](@ref).
 """
 struct FCASJointCapacityLHS <: PSI.ExpressionType end
+
+
+"""
+    FCASOfferBandVariable
+
+One band of a contributing device's FCAS offer at one timestep, non-negative and per-unit of the
+system base. Indexed `(device name, band label, t)` with the meta of the capacity variable it sums
+to: the service name, or `"<service>_gen"`/`"<service>_load"` for a `PSY.Storage` device's two
+regulation sides. The band axis is sized to the most bands any of those offers has over the
+system's series; a band an offer does not have at an interval has zero width.
+"""
+struct FCASOfferBandVariable <: PSI.VariableType end
+
+
+"""
+    FCASOfferLimitParameter
+
+Time-series parameter of a device's effective FCAS offer limits for one market and side, read from
+its `"fcas_effective_<BIDTYPE>[_decremental]"` series ([`set_fcas_effective_offers!`](@ref)), per-unit
+of the system base, with a field axis `"max_avail"`, `"enablement_min"`, `"enablement_max"`. Keyed by
+device type with meta `"<BIDTYPE>[_decremental]"`.
+"""
+struct FCASOfferLimitParameter <: PSI.TimeSeriesParameter end
+
+
+"""
+    FCASBandWidthParameter
+
+Time-series parameter of a device's effective FCAS offer band widths for one market and side, read
+from its `"fcas_effective_<BIDTYPE>[_decremental]"` series, per-unit of the system base, with a band
+axis `"1"` to `"10"` ([`FCAS_BAND_COUNT`](@ref)). Keyed by device type with meta `"<BIDTYPE>[_decremental]"`.
+"""
+struct FCASBandWidthParameter <: PSI.TimeSeriesParameter end
+
+
+"""
+    FCASUpperSlopeParameter
+
+Constraint-coefficient parameter of a device's effective FCAS `UpperSlopeCoeff` for one market and
+side, the coefficient of its FCAS capacity in the upper [`FCASJointCapacityConstraint`](@ref) row,
+read from its `"fcas_effective_<BIDTYPE>[_decremental]"` series. Keyed by device type with meta
+`"<BIDTYPE>[_decremental]"`.
+"""
+struct FCASUpperSlopeParameter <: PSI.ConstraintCoefficientParameter end
+
+
+"""
+    FCASLowerSlopeParameter
+
+Constraint-coefficient parameter of a device's effective FCAS `LowerSlopeCoeff` for one market and
+side, the negated coefficient of its FCAS capacity in the lower [`FCASJointCapacityConstraint`](@ref)
+row, read from its `"fcas_effective_<BIDTYPE>[_decremental]"` series. Keyed by device type with meta
+`"<BIDTYPE>[_decremental]"`.
+"""
+struct FCASLowerSlopeParameter <: PSI.ConstraintCoefficientParameter end
+
+
+"""
+    FCASRampingLimitParameter
+
+Time-series parameter of a device's regulation ramping limits for one regulation market, read from
+its `"fcas_ramping_limits_<BIDTYPE>"` series ([`set_fcas_effective_offers!`](@ref)), per-unit of the
+system base, with a field axis `"joint_ramping"` ([`FCASJointRampingConstraint`](@ref) right-hand
+side) and `"bdu_ramping"` ([`FCASBDURampingConstraint`](@ref) right-hand side). Keyed by device type
+with meta `"<BIDTYPE>"`.
+"""
+struct FCASRampingLimitParameter <: PSI.TimeSeriesParameter end
+
+
+"""
+    FCASBandPriceParameter
+
+Objective-function parameter pricing [`FCASOfferBandVariable`](@ref)s: its value is each band's
+offer price in `\$/MW` per hour (`0.0` for a band not offered) and its multiplier the system base
+power times the interval length in hours. Same meta as the band variables it prices.
+"""
+struct FCASBandPriceParameter <: PSI.ObjectiveFunctionParameter end
 
 
 """
@@ -125,11 +203,11 @@ struct FCASBDURampingConstraint <: PSI.ConstraintType end
 """
     FCASMaxAvailConstraint
 
-Constraint type for AEMO's FCAS MaxAvail limit (the offered `MaxAvail` of a service's trapezium),
-built as a row on [`FCASCapacityVariable`](@ref) or [`FCASSideCapacityVariable`](@ref) per
-`(device, t)` when the owning `PSI.ServiceModel` has `use_slacks = true`, named
-`"<service>_maxavail"` or `"<service>_gen_maxavail"`/`"<service>_load_maxavail"` in its
-container key. Without slacks the same limit is the variable's upper bound.
+Constraint type for AEMO's FCAS MaxAvail limit (the effective `MaxAvail` of a service's trapezium,
+[`FCASOfferLimitParameter`](@ref)), built as a row on [`FCASCapacityVariable`](@ref) or
+[`FCASSideCapacityVariable`](@ref) per `(device, t)`, named `"<service>_maxavail"` or
+`"<service>_gen_maxavail"`/`"<service>_load_maxavail"` in its container key. The row is elastic
+when the owning `PSI.ServiceModel` has `use_slacks = true`.
 """
 struct FCASMaxAvailConstraint <: PSI.ConstraintType end
 

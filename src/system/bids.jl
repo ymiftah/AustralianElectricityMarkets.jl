@@ -73,7 +73,8 @@ attaches it to `Generator`, scheduled `InterruptiblePowerLoad` (decremental bid 
 bids `GEN` is made unavailable; a non-scheduled load is left as built) and `EnergyReservoirStorage`
 components (the latter also
 gets decremental/load-side bid costs, and each direction's energy `MAXAVAIL`, read back by
-[`get_storage_energy_max_avail`](@ref)).
+[`get_storage_energy_max_avail`](@ref)). Every curve has one segment per price band, in band order
+(reversed for `LOAD`), bands of zero availability included as zero-width segments.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
@@ -96,7 +97,10 @@ function set_market_bids!(sys, db, date_range; kwargs...)
 
     energy_bids_table = read_hive(db, :BIDPEROFFER_D)
     pricebids_table = read_hive(db, :BIDDAYOFFER_D)
-    bids = _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
+    bids = _massage_bids(
+        db, energy_bids_table, pricebids_table, start_date, end_date;
+        resolution = get(kwargs, :resolution, nothing), keep_empty_bands = true,
+    )
     sys_units = Set(get_name(c) for T in (Generator, InterruptiblePowerLoad, EnergyReservoirStorage) for c in get_components(T, sys))
     factors = read_loss_factors(db; as_of = start_date, through = end_date)
     _refer_bids_to_reference_node!(subset!(bids, :DUID => ByRow(in(sys_units))), factors)

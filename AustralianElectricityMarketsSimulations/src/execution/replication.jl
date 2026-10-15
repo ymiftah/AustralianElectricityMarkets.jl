@@ -91,7 +91,8 @@ const _REPLICATION_HORIZON = 2DISPATCH_INTERVAL
 
 Builds the `System` [`replicate_interval`](@ref) solves: the constrained system from
 `nem_system(db, ConstrainedNetworkConfiguration(); ...)` over the interval and the one after it,
-with demand, interconnector loss demand coefficients, bids, FCAS scaling inputs, dispatch limits and battery dispatch ceilings set and the time series transformed
+with demand, interconnector loss demand coefficients, bids, FCAS scaling inputs, dispatch limits,
+battery dispatch ceilings, effective FCAS offers and tie-break scales set and the time series transformed
 into one-interval windows. The `date_range` method builds over exactly that 5-minute range, one window per timestamp.
 
 # Arguments
@@ -124,6 +125,8 @@ function replication_system(
     set_fcas_scaling_inputs!(sys, db, date_range; intervention = intervention)
     set_nem_dispatch_limits!(sys, db, date_range; intervention = intervention)
     set_storage_dispatch_ceilings!(sys)
+    set_fcas_effective_offers!(sys)
+    set_tie_break_scales!(sys)
     set_mnsp_offers!(sys, db, date_range)
     interval_flow_limits &&
         set_interconnector_flow_limits!(sys, db, date_range; intervention = intervention)
@@ -327,9 +330,18 @@ end
 
 
 # `family`, `name`, `DateTime`, `MW`, `direction` and `variable` (the slack variable's key) of
+# One slack variable's long-format frame; simulation results are read by the key's encoded name.
+_read_violation_frame(results::PSI.OptimizationProblemResults, key) = PSI.read_variable(results, key)
+_read_violation_frame(results::PSI.SimulationProblemResults, key) =
+    reduce(vcat, values(PSI.read_variable(results, PSI.IS.Optimization.encode_key_as_string(key))))
+
+
 # every slack above the tolerance, in every interval and every family of `_VIOLATION_FAMILIES`; a
-# generic constraint's slack counts only where it is invoked.
-function _constraint_violations(results::PSI.OptimizationProblemResults, sys::PSY.System)
+# generic constraint's slack counts only where it is invoked. Accepts the results of a
+# `DecisionModel` or of one decision problem of a `PSI.Simulation`.
+function _constraint_violations(
+        results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}, sys::PSY.System,
+    )
     kinds = Dict(_VIOLATION_FAMILIES)
     rows = NamedTuple{
         (:family, :name, :DateTime, :MW, :direction, :variable),
@@ -339,7 +351,7 @@ function _constraint_violations(results::PSI.OptimizationProblemResults, sys::PS
         type = PSI.IS.Optimization.get_entry_type(key)
         kind = get(kinds, type, nothing)
         isnothing(kind) && continue
-        for r in eachrow(PSI.read_variable(results, key))
+        for r in eachrow(_read_violation_frame(results, key))
             r.value > _VIOLATION_TOLERANCE_MW || continue
             kind[1] == "generic_constraint" && !_gc_invoked(sys, r.name, r.DateTime) && continue
             direction = _violation_direction(sys, type, key.meta, r.name, kind[2])
@@ -396,8 +408,8 @@ end
 function _solved_fcas_prices(results::PSI.OptimizationProblemResults, sys)
     return compute_fcas_prices(results, sys; resolution = DISPATCH_INTERVAL)
 end
-function _solved_fcas_prices(::PSI.SimulationProblemResults, _)
-    return _empty_fcas_prices()
+function _solved_fcas_prices(results::PSI.SimulationProblemResults, sys)
+    return compute_fcas_prices(results, sys; resolution = DISPATCH_INTERVAL)
 end
 # Solved values of every interval: `balance_duals`, `variables` (key => `_by_interval` frames, for
 # `_SOLVED_VARIABLES`) and `fcas_prices` (`compute_fcas_prices` columns, by interval). With `losses`,

@@ -183,7 +183,7 @@ end
     # The interval ending 00:00 on 1 July is the previous financial year's.
     @test isnothing(AEMS._check_single_market_price_cap(DateTime(2025, 6, 30, 23, 55):TOY_RESOLUTION:DateTime(2025, 7, 1)))
     @test_throws ArgumentError AEMS._check_single_market_price_cap(DateTime(2025, 7, 1):TOY_RESOLUTION:DateTime(2025, 7, 1, 0, 5))
-    @test_throws ArgumentError AEMS._replication_simulation(sentinel_system(), STOCK_STEPS; parts = (:fcas,))
+    @test_throws ArgumentError AEMS._replication_simulation(sentinel_system(), STOCK_STEPS; parts = (:nonsense,))
     @test_throws ArgumentError replication_template(sentinel_system(); parts = (:nonsense,))
 end
 
@@ -341,11 +341,11 @@ end
     end
     @test all(isfinite, skipmissing(c.prices.ROP_solved)) && any(!ismissing, c.prices.ROP_solved)
     @test any(!ismissing, c.dispatch.TOTALCLEARED_solved)
-    # Interchanges are modeled (the unavailable IC6 is not); FCAS is not.
+    # Interchanges are modeled (the unavailable IC6 is not), and so is FCAS.
     @test any(!ismissing, c.interconnectors.MWFLOW_solved)
     @test all(isfinite, skipmissing(c.interconnectors.MWLOSSES_solved))
     @test all(ismissing, filter(:INTERCONNECTORID => ==("IC6"), c.interconnectors).MWFLOW_solved)
-    @test all(ismissing, c.fcas_prices.ROP_solved)
+    @test any(!ismissing, c.fcas_prices.ROP_solved) && all(isfinite, skipmissing(c.fcas_prices.ROP_solved))
     # Invoked at 00:10 only over BW01-BW04: modeled now that batteries are, and masked at 00:05.
     @test !any(startswith("N_PARTIAL_COVERAGE"), result.skipped_constraints.constraint)
     duals = stock_gc_duals(result.results)
@@ -355,7 +355,19 @@ end
     # The MNSP IC2 is modeled with its link offers in both steps.
     links = only(values(PSI.read_realized_variables(result.results, ["MNSPLinkFlowVariable__AreaInterchange"])))
     @test Set(links.DateTime) == Set([t1, t2]) && all(>=(-1.0e-9), links.value)
+    @test names(result.ramp_violations) == ["DUID", "DateTime", "MW", "direction"]
+    @test issubset(Set(result.constraint_violations.DateTime), Set([t1, t2]))
     @test_throws ArgumentError replicate_range(db, t1, t1 - Minute(5))
+end
+
+@testset "a requirement that cannot be met in step 2 only is reported in step 2 only" begin
+    sys = fcas_toy_system(; reg_req = [20.0, 80.0])
+    out = AEMS._replication_simulation(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    v = AEMS._constraint_violations(out.results, sys)
+    @test !isempty(v)
+    @test all(==(STOCK_STEPS[2]), v.DateTime)
+    @test any(v.name .== "F_REG") && all(v.MW .> 0)
+    @test isempty(AEMS._ramp_violations(v)) || all(==(STOCK_STEPS[2]), AEMS._ramp_violations(v).DateTime)
 end
 
 # A battery whose net ramp-down floor raises its generation ceiling in step 1 only.
@@ -627,4 +639,364 @@ end
         @test stock_loss(rev.solved[k]) ≈ stock_loss(sim.solved[3 - k]) atol = TOY_TOLERANCE
         @test stock_flow(rev.solved[k]) ≈ stock_flow(sim.solved[3 - k]) atol = TOY_TOLERANCE
     end
+end
+
+# FCAS solved values of one interval: each capacity variable cell by `"<meta> <device>"`, in MW (100 MW base).
+function stock_fcas_capacities(results, t)
+    out = Dict{String, Float64}()
+    for key in PSI.list_variable_keys(results)
+        PSI.IS.Optimization.get_entry_type(key) in (FCASCapacityVariable, FCASSideCapacityVariable) || continue
+        df = results isa PSI.SimulationProblemResults ? only(values(PSI.read_realized_variables(results, [key]))) : PSI.read_variable(results, key)
+        for row in eachrow(filter(:DateTime => ==(t), df))
+            out["$(key.meta) $(row.name)"] = row.value * 100.0
+        end
+    end
+    return out
+end
+# FCAS prices of one interval by `(REGIONID, BIDTYPE)`, in $/MWh.
+stock_fcas_prices(results, sys, t) = Dict(
+    (r.REGIONID, r.BIDTYPE) => r.ROP for r in eachrow(compute_fcas_prices(results, sys; resolution = DISPATCH_INTERVAL)) if r.SETTLEMENTDATE == t
+)
+function stock_fcas_standalone(sys, t)
+    template = replication_template(sys; parts = STOCK_PARTS)
+    model = AEMS._replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "standalone", parts = STOCK_PARTS)
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    results = PSI.OptimizationProblemResults(model)
+    return (;
+        objective = PSI.JuMP.objective_value(PSI.get_jump_model(model)),
+        solved = AEMS._solved_interval(AEMS._solved_frames(results, sys; losses = false), sys, t),
+        capacities = stock_fcas_capacities(results, t),
+        prices = stock_fcas_prices(results, sys, t),
+    )
+end
+# Step 2 changes Alta's RAISEREG MaxAvail (15 -> 8 MW), turns its AGC off (RAISEREG disabled),
+# strands Park City below its RAISE6SEC EnablementMin and moves the battery from 5 MW to -15 MW net.
+const FCAS_CHANGES = (alta_reg_avail = [15.0, 8.0], alta_agc = [1, 0], park_initial = [40.0, 2.0], batt_initial = [5.0, -15.0])
+
+@testset "FCAS trapezium, enablement and AGC status change between steps: simulation equals standalone solves" begin
+    sim = stock_simulate(fcas_toy_system(; FCAS_CHANGES...))
+    @test PSI.has_container_key(PSI.get_optimization_container(sim.model), FCASSideCapacityVariable, FCASService, "1_RAISEREG_gen")
+    capacities = [stock_fcas_capacities(sim.results, t) for t in STOCK_STEPS]
+    prices = [stock_fcas_prices(sim.results, fcas_toy_system(; FCAS_CHANGES...), t) for t in STOCK_STEPS]
+    for (k, t) in enumerate(STOCK_STEPS)
+        ref = stock_fcas_standalone(fcas_toy_system(; FCAS_CHANGES...), t)
+        @test sim.objectives[k] ≈ ref.objective atol = TOY_TOLERANCE
+        @test stock_price(sim.solved[k]) ≈ stock_price(ref.solved) atol = TOY_TOLERANCE
+        for duid in ref.solved.dispatch.DUID
+            @test stock_mw(sim.solved[k], duid) ≈ stock_mw(ref.solved, duid) atol = TOY_TOLERANCE
+        end
+        @test keys(capacities[k]) == keys(ref.capacities)
+        for (cell, mw) in ref.capacities
+            @test capacities[k][cell] ≈ mw atol = TOY_TOLERANCE
+        end
+        @test keys(prices[k]) == keys(ref.prices)
+        for (market, rop) in ref.prices
+            @test prices[k][market] ≈ rop atol = TOY_TOLERANCE
+        end
+    end
+    # Step 2 reads step-2 data: Alta's RAISEREG is disabled and Park City's RAISE6SEC stranded.
+    @test capacities[1]["1_RAISEREG $TOY_CHEAP"] > 1.0
+    @test capacities[2]["1_RAISEREG $TOY_CHEAP"] ≈ 0.0 atol = TOY_TOLERANCE
+    @test capacities[1]["1_RAISE6SEC $TOY_EXPENSIVE"] > 1.0
+    @test capacities[2]["1_RAISE6SEC $TOY_EXPENSIVE"] ≈ 0.0 atol = TOY_TOLERANCE
+    @test capacities[2]["1_RAISEREG_gen $TOY_BATTERY"] + capacities[2]["1_RAISEREG_load $TOY_BATTERY"] ≈ 20.0 atol = TOY_TOLERANCE
+
+    rev = stock_simulate(fcas_toy_system(; reverse_order = true, FCAS_CHANGES...))
+    for k in 1:2
+        @test rev.objectives[k] ≈ sim.objectives[3 - k] atol = TOY_TOLERANCE
+        reversed = stock_fcas_capacities(rev.results, STOCK_STEPS[k])
+        for (cell, mw) in capacities[3 - k]
+            @test reversed[cell] ≈ mw atol = TOY_TOLERANCE
+        end
+    end
+end
+
+@testset "a recurrent FCAS build updates the slope coefficients and stores the offer parameters" begin
+    sim = stock_simulate(fcas_toy_system(; alta_reg_avail = [15.0, 8.0]))
+    container = PSI.get_optimization_container(sim.model)
+    con = PSI.get_constraint(container, FCASJointCapacityConstraint(), FCASService, "1_RAISEREG_upper")
+    cap = PSI.get_variable(container, FCASCapacityVariable(), FCASService, "1_RAISEREG")
+    # Alta's RAISEREG UpperSlopeCoeff after step 2: (95 - 80) / 8, not step 1's (95 - 80) / 15.
+    @test PSI.JuMP.normalized_coefficient(con[TOY_CHEAP, 1], cap[TOY_CHEAP, 1]) ≈ 15.0 / 8.0
+    slope = only(values(PSI.read_realized_parameters(sim.results, ["FCASUpperSlopeParameter__ThermalStandard__RAISEREG"])))
+    @test sort(filter(:name => ==(TOY_CHEAP), slope), :DateTime).value ≈ [15.0 / 15.0, 15.0 / 8.0]
+end
+
+# Price-tied $10 bands of Alta (100 then 40 MW), Park City (50 MW) and Solitude (80 then 0 MW) behind
+# Brighton's 60 MW at $5, for 150 then 120 MW of load. `park_price` is Park City's band price per step.
+const TIE_THIRD = "Solitude"
+function tie_sentinel_system(; reverse_order = false, park_price = [10.0, 10.0])
+    r(x) = reverse_order ? reverse(x) : x
+    units = [
+        TOY_CHEAP => toy_unit(100.0, r([[(100.0, 10.0)], [(40.0, 10.0)]]); initial = 0.0, ramp_up = 100.0),
+        TOY_EXPENSIVE => toy_unit(50.0, r([[(50.0, p)] for p in park_price]); initial = 0.0, ramp_up = 100.0),
+        TIE_THIRD => toy_unit(80.0, r([[(80.0, 10.0)], [(0.0, 10.0)]]); initial = 0.0, ramp_up = 100.0),
+        BINDING_MID => toy_unit(60.0, [(60.0, 5.0)]; initial = 0.0, ramp_up = 100.0),
+    ]
+    return nem_toy_system(units, r([150.0, 120.0]); horizon = TOY_RESOLUTION)
+end
+
+@testset "tie-break widths change between steps, one band empty in step 2: simulation equals standalone solves" begin
+    sim = stock_simulate(tie_sentinel_system())
+    expected = [
+        (cheap = 90.0 * 100.0 / 230.0, park = 90.0 * 50.0 / 230.0, third = 90.0 * 80.0 / 230.0, objective = 100.0),
+        (cheap = 60.0 * 40.0 / 90.0, park = 60.0 * 50.0 / 90.0, third = 0.0, objective = 75.0),
+    ]
+    for (k, t) in enumerate(STOCK_STEPS)
+        ref = stock_standalone(tie_sentinel_system(), t)
+        @test sim.objectives[k] ≈ ref.objective atol = TOY_TOLERANCE
+        @test stock_price(sim.solved[k]) ≈ stock_price(ref.solved) atol = TOY_TOLERANCE
+        for duid in ref.solved.dispatch.DUID
+            @test stock_mw(sim.solved[k], duid) ≈ stock_mw(ref.solved, duid) atol = 1.0e-5
+        end
+        e = expected[k]
+        @test stock_mw(sim.solved[k], TOY_CHEAP) ≈ e.cheap atol = 1.0e-5
+        @test stock_mw(sim.solved[k], TOY_EXPENSIVE) ≈ e.park atol = 1.0e-5
+        @test stock_mw(sim.solved[k], TIE_THIRD) ≈ e.third atol = 1.0e-5
+        @test stock_mw(sim.solved[k], BINDING_MID) ≈ 60.0 atol = 1.0e-5
+        @test stock_price(sim.solved[k]) ≈ 10.0 atol = TOY_TOLERANCE
+        @test sim.objectives[k] ≈ e.objective atol = 1.0e-4
+    end
+    scales = only(values(PSI.read_realized_parameters(sim.results, ["TieBreakScaleParameter__ThermalStandard__1"])))
+    scale(name) = sort(filter(:name => ==(name), scales), :DateTime).value
+    @test scale(TOY_CHEAP) ≈ [1.0, 0.8]
+    @test scale(TOY_EXPENSIVE) ≈ [0.5, 1.0]
+    @test scale(TIE_THIRD) ≈ [0.8, 0.0]
+
+    rev = stock_simulate(tie_sentinel_system(; reverse_order = true))
+    for k in 1:2, d in (TOY_CHEAP, TOY_EXPENSIVE, TIE_THIRD)
+        @test stock_mw(rev.solved[k], d) ≈ stock_mw(sim.solved[3 - k], d) atol = 1.0e-5
+    end
+end
+
+@testset "the tie-break pre-flight check" begin
+    moved = tie_sentinel_system(; park_price = [10.0, 12.0])
+    @test_throws ArgumentError check_tie_break_pairs(moved, STOCK_STEPS)
+    @test_throws ArgumentError AEMS._replication_simulation(moved, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    @test isnothing(check_tie_break_pairs(tie_sentinel_system(), STOCK_STEPS))
+    # Prices change between steps, but no band is ever tied.
+    @test isnothing(check_tie_break_pairs(sentinel_system(), STOCK_STEPS))
+end
+
+# Alta ($20, 100 MW) and Park City ($80, 100 MW) offer RAISEREG on rectangles: Alta 25 MW at $5, Park City 20 MW at $10.
+# Alta's AGC ramp rate is `alta_ramp` MW/h (360 MW/h is 30 MW per interval); `F_REG` requires `reg_req` MW.
+function reg_ramp_system(;
+        alta_initial = [60.0, 40.0], load_mw = [50.0, 60.0], alta_ramp = [360.0, 360.0], reg_req = [20.0, 20.0], weight = 1.0,
+    )
+    units = [
+        TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = alta_initial, ramp_up = 100.0),
+        TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 0.0, ramp_up = 100.0),
+    ]
+    return nem_toy_system(
+        units, load_mw; horizon = TOY_RESOLUTION, mutate! = (sys, stamps) -> begin
+            alta = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+            park = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
+            add_toy_fcas_offer!(sys, alta, stamps, BidType.RAISEREG, fill((0.0, 0.0, 100.0, 100.0, 25.0), 2), fill([(25.0, 5.0)], 2))
+            add_toy_fcas_offer!(sys, park, stamps, BidType.RAISEREG, fill((0.0, 0.0, 100.0, 100.0, 20.0), 2), fill([(20.0, 10.0)], 2))
+            add_toy_series!(sys, alta, stamps, "fcas_agc_ramp_rate_RAISEREG", alta_ramp)
+            add_toy_fcas_market!(sys, stamps, BidType.RAISEREG, [TOY_CHEAP, TOY_EXPENSIVE], "F_REG", reg_req)
+            set_constraint_weight!(PSY.get_component(GenericConstraint, sys, "F_REG"), weight)
+        end,
+    )
+end
+
+# Alta ($20) meets a 50 MW load; the battery offers RAISEREG on both sides (10 MW at $3 generation, 10 MW at $4 load) and Park City 20 MW at $10.
+# Energy offers are 50 MW at `batt_gen_price` (MAXAVAIL `gen_avail`) and 50 MW at $0 (MAXAVAIL `load_avail`); `batt_ramp` is the AGC ramp rate in MW/h.
+function bdu_reg_system(;
+        batt_initial = 10.0, batt_gen_price = 30.0, gen_avail = 50.0, load_avail = 50.0,
+        gen_trap = fill((0.0, 0.0, 50.0, 50.0, 10.0), 2), load_trap = fill((-50.0, -50.0, 0.0, 0.0, 10.0), 2),
+        batt_ramp = nothing, reg_req = [18.0, 18.0], alta_initial = 50.0,
+    )
+    units = [
+        TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = alta_initial, ramp_up = 100.0),
+        TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 0.0, ramp_up = 100.0),
+    ]
+    batteries = [
+        TOY_BATTERY => toy_battery(
+            50.0, batt_gen_price, 50.0, 0.0; initial = batt_initial, ramp_up = 100.0, gen_avail = gen_avail, load_avail = load_avail,
+        ),
+    ]
+    return nem_toy_system(
+        units, 50.0; batteries, horizon = TOY_RESOLUTION, mutate! = (sys, stamps) -> begin
+            park = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
+            bat = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
+            add_toy_fcas_offer!(sys, park, stamps, BidType.RAISEREG, fill((0.0, 0.0, 100.0, 100.0, 20.0), 2), fill([(20.0, 10.0)], 2))
+            add_toy_fcas_offer!(sys, bat, stamps, BidType.RAISEREG, gen_trap, fill([(10.0, 3.0)], 2))
+            add_toy_fcas_offer!(sys, bat, stamps, BidType.RAISEREG, load_trap, fill([(10.0, 4.0)], 2); decremental = true)
+            isnothing(batt_ramp) || add_toy_series!(sys, bat, stamps, "fcas_agc_ramp_rate_RAISEREG", batt_ramp)
+            add_toy_fcas_market!(sys, stamps, BidType.RAISEREG, [TOY_EXPENSIVE, TOY_BATTERY], "F_REG", reg_req)
+        end,
+    )
+end
+
+# The battery generates its 5 MW GEN MAXAVAIL at $10; its load side is enabled in step 1 only (LOAD MAXAVAIL `load_avail`).
+# Generation trapezium (0, Low, 40, 50, 10) with Low `gen_low` gives LowerSlopeCoeff `Low / 10`; the step-2 load trapezium is unreachable.
+function bdu_stranded_system(; gen_low = [10.0, 6.25], load_avail = [50.0, 5.0])
+    return bdu_reg_system(;
+        batt_initial = 5.0, batt_gen_price = 10.0, gen_avail = 5.0, load_avail, alta_initial = 45.0, reg_req = [12.0, 12.0],
+        gen_trap = [(0.0, low, 40.0, 50.0, 10.0) for low in gen_low],
+        load_trap = [(-50.0, -50.0, 0.0, 0.0, 10.0), (-50.0, -50.0, -10.0, -10.0, 10.0)],
+    )
+end
+
+# Realized values of a simulation parameter (`field` for a field axis) or variable for `name`, in step
+# order, times `scale` (100 MW base for MW quantities).
+function stock_realized(results, key, name; field = nothing, scale = 100.0, parameter = true)
+    frames = parameter ? PSI.read_realized_parameters(results, [key]) : PSI.read_realized_variables(results, [key])
+    df = filter(r -> r.name == name && (isnothing(field) || r.name2 == field), only(values(frames)))
+    return sort(df, :DateTime).value .* scale
+end
+
+# Checks `build()` run as a two-step simulation and as two standalone solves against `expected[k]` in each step.
+# Fields: `objective` ($ per interval), `price`, `mw` (DUID => MW), `cap` (capacity cell => MW), `fcas` (RAISEREG price).
+function stock_fcas_case(build, expected)
+    sys = build()
+    sim = stock_simulate(sys)
+    @test PSI.built_for_recurrent_solves(PSI.get_optimization_container(sim.model))
+    for (k, t) in enumerate(STOCK_STEPS)
+        e = expected[k]
+        ref = stock_fcas_standalone(build(), t)
+        run_sim = (;
+            objective = sim.objectives[k], solved = sim.solved[k],
+            capacities = stock_fcas_capacities(sim.results, t), prices = stock_fcas_prices(sim.results, sys, t),
+        )
+        for run in (run_sim, ref)
+            @test run.objective ≈ e.objective atol = TOY_TOLERANCE
+            @test stock_price(run.solved) ≈ e.price atol = TOY_TOLERANCE
+            for (duid, mw) in e.mw
+                @test stock_mw(run.solved, duid) ≈ mw atol = TOY_TOLERANCE
+            end
+            for (cell, mw) in e.cap
+                @test run.capacities[cell] ≈ mw atol = TOY_TOLERANCE
+            end
+            @test run.prices[("1", BidType.RAISEREG)] ≈ e.fcas atol = TOY_TOLERANCE
+        end
+    end
+    return sim, sys
+end
+
+@testset "FCAS joint ramping (§6.1) binds in step 2 only: simulation equals standalone solves" begin
+    # Joint ramping RHS = InitialMW + 30 MW: 60 + 30 = 90 in step 1, 40 + 30 = 70 in step 2.
+    expected = [
+        (
+            objective = 1100 / 12, price = 20.0, fcas = 5.0, mw = [TOY_CHEAP => 50.0, TOY_EXPENSIVE => 0.0],
+            cap = ["1_RAISEREG $TOY_CHEAP" => 20.0, "1_RAISEREG $TOY_EXPENSIVE" => 0.0],
+        ),
+        (
+            objective = 1350 / 12, price = 25.0, fcas = 10.0, mw = [TOY_CHEAP => 60.0, TOY_EXPENSIVE => 0.0],
+            cap = ["1_RAISEREG $TOY_CHEAP" => 10.0, "1_RAISEREG $TOY_EXPENSIVE" => 10.0],
+        ),
+    ]
+    sim, _ = stock_fcas_case(reg_ramp_system, expected)
+    rhs = stock_realized(sim.results, "FCASRampingLimitParameter__ThermalStandard__RAISEREG", TOY_CHEAP; field = "joint_ramping")
+    @test rhs ≈ [90.0, 70.0] atol = TOY_TOLERANCE
+    # Energy + RaiseReg is 70 MW in both steps: slack in step 1, at the RHS in step 2.
+    @test rhs[1] - (50.0 + 20.0) ≈ 20.0 atol = TOY_TOLERANCE
+    @test rhs[2] - (60.0 + 10.0) ≈ 0.0 atol = TOY_TOLERANCE
+    slack = stock_realized(sim.results, "FCASJointRampingSlack__FCASService__1_RAISEREG", TOY_CHEAP; parameter = false)
+    @test all(abs.(slack) .<= TOY_TOLERANCE)
+    # Step 2 with step 1's InitialMW (a stale RHS of 90 MW) gives Alta all 20 MW at $5.
+    stale = stock_fcas_standalone(reg_ramp_system(; alta_initial = [60.0, 60.0]), STOCK_STEPS[2])
+    @test stale.objective ≈ 1300 / 12 atol = TOY_TOLERANCE
+    @test stale.prices[("1", BidType.RAISEREG)] ≈ 5.0 atol = TOY_TOLERANCE
+    @test stock_price(stale.solved) ≈ 20.0 atol = TOY_TOLERANCE
+end
+
+@testset "BDU SCADA ramping (§6.4) binds in step 2 only: simulation equals standalone solves" begin
+    # AGC ramp 360 then 180 MW/h: BDU RHS 30 then 15 MW; each side's MaxAvail stays 10 MW.
+    expected = [
+        (
+            objective = 1062 / 12, price = 20.0, fcas = 4.0, mw = [TOY_CHEAP => 50.0, TOY_BATTERY => 0.0, TOY_EXPENSIVE => 0.0],
+            cap = ["1_RAISEREG_gen $TOY_BATTERY" => 10.0, "1_RAISEREG_load $TOY_BATTERY" => 8.0, "1_RAISEREG $TOY_EXPENSIVE" => 0.0],
+        ),
+        (
+            objective = 1080 / 12, price = 20.0, fcas = 10.0, mw = [TOY_CHEAP => 50.0, TOY_BATTERY => 0.0, TOY_EXPENSIVE => 0.0],
+            cap = ["1_RAISEREG_gen $TOY_BATTERY" => 10.0, "1_RAISEREG_load $TOY_BATTERY" => 5.0, "1_RAISEREG $TOY_EXPENSIVE" => 3.0],
+        ),
+    ]
+    build() = bdu_reg_system(; batt_ramp = [360.0, 180.0])
+    sim, _ = stock_fcas_case(build, expected)
+    key = "FCASRampingLimitParameter__EnergyReservoirStorage__RAISEREG"
+    @test stock_realized(sim.results, key, TOY_BATTERY; field = "bdu_ramping") ≈ [30.0, 15.0] atol = TOY_TOLERANCE
+    # §6.1 for the battery: InitialMW 10 + 30, then 10 + 15; never binding (net energy 0).
+    @test stock_realized(sim.results, key, TOY_BATTERY; field = "joint_ramping") ≈ [40.0, 25.0] atol = TOY_TOLERANCE
+    for name in ("FCASBDURampingSlack__FCASService__1_RAISEREG", "FCASJointRampingSlack__FCASService__1_RAISEREG")
+        @test all(abs.(stock_realized(sim.results, name, TOY_BATTERY; parameter = false)) .<= TOY_TOLERANCE)
+    end
+    # Step 2 with step 1's 30 MW BDU RHS repeats step 1's dispatch.
+    stale = stock_fcas_standalone(bdu_reg_system(; batt_ramp = [360.0, 360.0]), STOCK_STEPS[2])
+    @test stale.objective ≈ 1062 / 12 atol = TOY_TOLERANCE
+    @test stale.prices[("1", BidType.RAISEREG)] ≈ 4.0 atol = TOY_TOLERANCE
+    @test stale.capacities["1_RAISEREG_load $TOY_BATTERY"] ≈ 8.0 atol = TOY_TOLERANCE
+end
+
+@testset "a both-sided battery loses its load side in step 2: the lower slope enters as -LowerSlopeCoeff" begin
+    # Generation-side EnablementMin row: 5 - LowerSlopeCoeff x RaiseRegGen >= 0, binding in both steps.
+    expected = [
+        (
+            objective = 993 / 12, price = 20.0, fcas = 4.0, mw = [TOY_CHEAP => 45.0, TOY_BATTERY => 5.0, TOY_EXPENSIVE => 0.0],
+            cap = ["1_RAISEREG_gen $TOY_BATTERY" => 5.0, "1_RAISEREG_load $TOY_BATTERY" => 7.0, "1_RAISEREG $TOY_EXPENSIVE" => 0.0],
+        ),
+        (
+            objective = 1014 / 12, price = 20.0, fcas = 10.0, mw = [TOY_CHEAP => 45.0, TOY_BATTERY => 5.0, TOY_EXPENSIVE => 0.0],
+            cap = ["1_RAISEREG_gen $TOY_BATTERY" => 8.0, "1_RAISEREG_load $TOY_BATTERY" => 0.0, "1_RAISEREG $TOY_EXPENSIVE" => 4.0],
+        ),
+    ]
+    sim, _ = stock_fcas_case(bdu_stranded_system, expected)
+    gen_slope = stock_realized(sim.results, "FCASLowerSlopeParameter__EnergyReservoirStorage__RAISEREG", TOY_BATTERY; scale = 1.0)
+    @test gen_slope ≈ [1.0, 0.625] atol = TOY_TOLERANCE
+    limits = "FCASOfferLimitParameter__EnergyReservoirStorage__RAISEREG_decremental"
+    @test stock_realized(sim.results, limits, TOY_BATTERY; field = "max_avail") ≈ [10.0, 0.0] atol = TOY_TOLERANCE
+    @test stock_realized(sim.results, limits, TOY_BATTERY; field = "enablement_min") ≈ [-50.0, -FCAS_INACTIVE_LIMIT_MW] atol = TOY_TOLERANCE
+    # After step 2: the generation side's capacity enters its EnablementMin row at -0.625, the disabled load side's at 0.
+    container = PSI.get_optimization_container(sim.model)
+    coefficient(side) = PSI.JuMP.normalized_coefficient(
+        PSI.get_constraint(container, FCASJointCapacityConstraint(), FCASService, "1_RAISEREG_$(side)_lower")[TOY_BATTERY, 1],
+        PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "1_RAISEREG_$side")[TOY_BATTERY, 1],
+    )
+    @test coefficient("gen") ≈ -0.625 atol = TOY_TOLERANCE
+    @test coefficient("load") ≈ 0.0 atol = TOY_TOLERANCE
+    for (k, cap) in enumerate((5.0, 8.0))
+        @test 5.0 - gen_slope[k] * cap ≈ 0.0 atol = TOY_TOLERANCE
+    end
+    # Stale step-2 inputs: step 1's slope 1 caps the generation side at 5 MW; step 1's enablement
+    # keeps the load side, trapped at -10 MW, so the battery charges 10 MW.
+    slope_stale = stock_fcas_standalone(bdu_stranded_system(; gen_low = [10.0, 10.0]), STOCK_STEPS[2])
+    @test slope_stale.objective ≈ 1035 / 12 atol = TOY_TOLERANCE
+    @test slope_stale.capacities["1_RAISEREG $TOY_EXPENSIVE"] ≈ 7.0 atol = TOY_TOLERANCE
+    enable_stale = stock_fcas_standalone(bdu_stranded_system(; load_avail = [50.0, 50.0]), STOCK_STEPS[2])
+    @test enable_stale.objective ≈ 1190 / 12 atol = TOY_TOLERANCE
+    @test enable_stale.prices[("1", BidType.RAISEREG)] ≈ 4.0 atol = TOY_TOLERANCE
+    @test stock_mw(enable_stale.solved, TOY_BATTERY) ≈ -5.0 atol = TOY_TOLERANCE
+end
+
+@testset "an FCAS requirement short in step 2 only is priced at its CVP and reported in step 2 only" begin
+    # F_REG weight 10 (RREG requirement CVP factor) x MPC $17,500 = $175,000/MW; 60 MW asked, 45 MW offered.
+    build() = reg_ramp_system(; alta_initial = [50.0, 50.0], load_mw = [50.0, 50.0], reg_req = [20.0, 60.0], weight = 10.0)
+    expected = [
+        (
+            objective = 1100 / 12, price = 20.0, fcas = 5.0, mw = [TOY_CHEAP => 50.0, TOY_EXPENSIVE => 0.0],
+            cap = ["1_RAISEREG $TOY_CHEAP" => 20.0, "1_RAISEREG $TOY_EXPENSIVE" => 0.0],
+        ),
+        (
+            objective = 2_626_325 / 12, price = 20.0, fcas = 175_000.0, mw = [TOY_CHEAP => 50.0, TOY_EXPENSIVE => 0.0],
+            cap = ["1_RAISEREG $TOY_CHEAP" => 25.0, "1_RAISEREG $TOY_EXPENSIVE" => 20.0],
+        ),
+    ]
+    sim, sys = stock_fcas_case(build, expected)
+    # The stored generic constraint slack is already in MW.
+    slack = stock_realized(sim.results, "GenericConstraintSlackDown__GenericConstraint__F_REG", "F_REG"; parameter = false, scale = 1.0)
+    @test slack ≈ [0.0, 15.0] atol = TOY_TOLERANCE
+    v = AEMS._constraint_violations(sim.results, sys)
+    @test nrow(v) == 1
+    row = only(eachrow(v))
+    @test (row.family, row.name, row.DateTime, row.direction) == ("generic_constraint", "F_REG", STOCK_STEPS[2], "down")
+    @test row.MW ≈ 15.0 atol = TOY_TOLERANCE
+    # The unit FCAS slacks (CVP 70 to 155) stay at zero.
+    @test !any(startswith("fcas_"), v.family)
+    # Step 2 with step 1's 20 MW requirement has no violation and repeats step 1.
+    stale = stock_fcas_standalone(reg_ramp_system(; alta_initial = [50.0, 50.0], load_mw = [50.0, 50.0], weight = 10.0), STOCK_STEPS[2])
+    @test stale.objective ≈ 1100 / 12 atol = TOY_TOLERANCE
+    @test stale.prices[("1", BidType.RAISEREG)] ≈ 5.0 atol = TOY_TOLERANCE
 end

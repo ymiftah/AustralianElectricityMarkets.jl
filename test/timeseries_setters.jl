@@ -1478,3 +1478,16 @@
         end
     end
 end
+
+@testset "energy curves keep zero-width bands" begin
+    row = (; DIRECTION = "GEN", PRICEBANDARRAY = [-1000.0, 0.0, 50.0], BANDAVAILARRAY = [10.0, 0.0, 5.0])
+    full = AustralianElectricityMarkets._extract_power_bids(row; keep_empty_bands = true)
+    @test get_x_coords(full) == [0.0, 10.0, 10.0, 15.0]
+    @test get_y_coords(full) == [-1000.0, 0.0, 50.0]
+    compressed = AustralianElectricityMarkets._extract_power_bids(row)
+    @test get_x_coords(compressed) == [0.0, 10.0, 15.0]
+    @test get_y_coords(compressed) == [-1000.0, 50.0]
+    load = AustralianElectricityMarkets._extract_power_bids((; row..., DIRECTION = "LOAD"); keep_empty_bands = true)
+    @test get_x_coords(load) == [0.0, 5.0, 5.0, 15.0]
+    @test get_y_coords(load) == [50.0, 0.0, -1000.0]
+end

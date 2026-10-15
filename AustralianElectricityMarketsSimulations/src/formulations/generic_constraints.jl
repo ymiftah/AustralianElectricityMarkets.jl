@@ -623,6 +623,12 @@ function PSI.handle_variable_cost_parameter(
 end
 
 
+# One dual's long-format frame (`DateTime`, `value`): solved values, or realized ones of a simulation.
+_read_dual_frame(results::PSI.OptimizationProblemResults, key) = PSI.read_dual(results, key)
+_read_dual_frame(results::PSI.SimulationProblemResults, key) = only(values(PSI.read_realized_duals(results, [key])))
+_results_resolution(results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}) = PSI.get_resolution(results)
+
+
 """
     compute_fcas_prices(results, sys; resolution = nothing) -> DataFrame
 
@@ -634,22 +640,23 @@ sign (change in cost per unit increase of the right-hand side): non-negative for
 constraint, non-positive for `<=`. Warns when a constraint with requirements has no recorded dual.
 
 # Arguments
-- `results`: `PSI.OptimizationProblemResults` of a model that recorded `NEMConstraintLimit` duals.
+- `results`: `PSI.OptimizationProblemResults` of a model, or `PSI.SimulationProblemResults` of a
+  simulation (its realized duals), that recorded `NEMConstraintLimit` duals.
 - `sys`: the `System` the model was built from.
 - `resolution`: interval length converting per-interval duals to `\$/MWh`. Defaults to the
-  spacing of `results`' timestamps, which a single-interval solve lacks, so it is required then.
+  resolution the results record, which a single-interval solve does not; required then.
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `BIDTYPE` and `ROP`, like [`read_fcas_prices`](@ref).
 """
 function compute_fcas_prices(
-        results::PSI.OptimizationProblemResults, sys::PSY.System;
+        results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}, sys::PSY.System;
         resolution::Union{Nothing, Dates.Period} = nothing,
     )
-    resolution = something(resolution, PSI.get_resolution(results), Some(nothing))
+    resolution = something(resolution, _results_resolution(results), Some(nothing))
     isnothing(resolution) && throw(
         ArgumentError(
-            "compute_fcas_prices: `results` has a single timestamp, so pass `resolution` explicitly.",
+            "compute_fcas_prices: `results` do not record a resolution (a single-interval model), so pass `resolution` explicitly.",
         ),
     )
     dual_keys = Dict(
@@ -665,7 +672,7 @@ function compute_fcas_prices(
             push!(unrecorded, name)
             continue
         end
-        dual = PSI.read_dual(results, dual_keys[name])
+        dual = _read_dual_frame(results, dual_keys[name])
         for req in get_fcas_requirements(gc)
             id = (get_region(req), get_service(req))
             term = DataFrame(; SETTLEMENTDATE = dual.DateTime, ROP = dual.value ./ scale)
