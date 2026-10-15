@@ -1118,6 +1118,20 @@ end
     @test isempty(AEMS._read_violation_frames(out.results, PSI.OptimizationContainerKey[]))
 end
 
+@testset "the batched dual read equals the per-key read for the FCAS requirement duals" begin
+    sys = fcas_toy_system(; FCAS_CHANGES...)
+    sim = stock_simulate(sys)
+    keys = [k for k in PSI.list_dual_keys(sim.results) if PSI.IS.Optimization.get_entry_type(k) === AEMS.NEMConstraintLimit]
+    @test length(keys) >= 3
+    batched = AEMS._read_dual_frames(sim.results, keys)
+    @test Set(Base.keys(batched)) == Set(keys)
+    # The per-key read: one `read_realized_duals` per key, each reopening the store.
+    for key in keys
+        @test batched[key] == only(values(PSI.read_realized_duals(sim.results, [key])))
+    end
+    @test isempty(AEMS._read_dual_frames(sim.results, PSI.OptimizationContainerKey[]))
+end
+
 include(joinpath(@__DIR__, "..", "scripts", "measure_replicate_range.jl"))
 
 @testset "the measurement script runs on the mock cache" begin

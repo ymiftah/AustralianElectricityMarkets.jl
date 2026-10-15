@@ -623,9 +623,14 @@ function PSI.handle_variable_cost_parameter(
 end
 
 
-# One dual's long-format frame (`DateTime`, `value`): solved values, or realized ones of a simulation.
-_read_dual_frame(results::PSI.OptimizationProblemResults, key) = PSI.read_dual(results, key)
-_read_dual_frame(results::PSI.SimulationProblemResults, key) = only(values(PSI.read_realized_duals(results, [key])))
+# Each key's long-format frame (`DateTime`, `value`): solved values, or realized ones of a simulation.
+_read_dual_frames(results::PSI.OptimizationProblemResults, keys) = Dict(key => PSI.read_dual(results, key) for key in keys)
+# Opens the simulation store once for all `keys`, over the window `read_realized_duals` reads.
+function _read_dual_frames(results::PSI.SimulationProblemResults, keys)
+    isempty(keys) && return Dict{PSI.OptimizationContainerKey, DataFrame}()
+    vals = PSI.read_realized_duals(results, collect(keys))
+    return Dict(key => vals[PSI.IS.Optimization.encode_key_as_string(key)] for key in keys)
+end
 _results_resolution(results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}) = PSI.get_resolution(results)
 
 
@@ -664,15 +669,12 @@ function compute_fcas_prices(
     )
     scale = PSY.get_base_power(sys) * interval_hours(resolution)
     prices = Dict{Tuple{String, BidType}, DataFrame}()
-    unrecorded = String[]
-    for gc in PSY.get_components(GenericConstraint, sys)
-        isempty(get_fcas_requirements(gc)) && continue
-        name = PSY.get_name(gc)
-        if !haskey(dual_keys, name)
-            push!(unrecorded, name)
-            continue
-        end
-        dual = _read_dual_frame(results, dual_keys[name])
+    constrained = [gc for gc in PSY.get_components(GenericConstraint, sys) if !isempty(get_fcas_requirements(gc))]
+    unrecorded = [PSY.get_name(gc) for gc in constrained if !haskey(dual_keys, PSY.get_name(gc))]
+    recorded = [gc for gc in constrained if haskey(dual_keys, PSY.get_name(gc))]
+    duals = _read_dual_frames(results, [dual_keys[PSY.get_name(gc)] for gc in recorded])
+    for gc in recorded
+        dual = duals[dual_keys[PSY.get_name(gc)]]
         for req in get_fcas_requirements(gc)
             id = (get_region(req), get_service(req))
             term = DataFrame(; SETTLEMENTDATE = dual.DateTime, ROP = dual.value ./ scale)
