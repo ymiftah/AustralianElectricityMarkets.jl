@@ -139,7 +139,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   limits as `"fcas_ramping_limits_<BIDTYPE>"`. `replication_system` calls it; other pipelines using
   `FCASMarket` must call it before `transform_single_time_series!`, or the build fails naming it.
 - `replicate_range(db, start, stop)` replays consecutive dispatch intervals as one
-  PowerSimulations `Simulation` of a one-interval model built once, and compares each interval
+  PowerSimulations `Simulation` of a one-interval model built once per chunk, and compares each interval
   with the published outcome. It models energy dispatch (with batteries, FCAS, interconnector losses,
   MNSP offers and tie-breaks) and the generic constraints invoked in the range.
   `check_dispatch_envelope` checks the dispatch envelope from the system's series before a
@@ -437,6 +437,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `set_tie_break_scales!(sys)` (`AustralianElectricityMarketsSimulations`): attaches each price-tied energy band's scale, its MW relative to the widest band of its tie group, as a sparse scalar series `"tie_break_scale_<k>[_decremental]"` on the unit's offer or load-bid curve. `replication_system` and `nem_toy_system` call it after `set_fcas_effective_offers!`; other pipelines with energy tie-breaks must call it, or the build fails naming it. Every unit carrying a scale must be modelled: a battery whose bands tie needs `:batteries` in the replication `parts`, or the build fails. A unit with a fixed offer curve takes the scale series over the timestamps of the time-varying curves.
 - `TieBreakScaleParameter` (`AustralianElectricityMarketsSimulations`): the parameter that feeds those scales into the pairwise tie-break rows, so each row follows its bands' widths as they change between intervals.
 - `check_tie_break_pairs(sys, steps)` (`AustralianElectricityMarketsSimulations`): throws an `ArgumentError` when the price-tied band pairs differ between intervals of a range. `replicate_range` runs it by default, so a range that crosses the 04:05 start of a trading day fails with a message to start the range at 04:05.
+- `read_published_interval(db, steps::StepRange{DateTime})` reads the published dispatch, interconnector,
+  price and FCAS price outcomes of a range in one query per table, with a leading `SETTLEMENTDATE` column.
+- `replication_system` and `replicate_range` accept `time_series_in_memory` and `time_series_directory`,
+  which control where the system's time series are kept.
+- `replicate_range` accepts `chunk` (`:trading_day` by default, or a `Dates.Period` that is a positive
+  multiple of 5 minutes), `output_dir` (a directory on disk for the chunk folders), `cache_size_mib` (the
+  simulation store's write cache) and `store_parameters` (whether the store keeps the replication model's
+  time-series parameters; `true` by default).
 
 ### Removed
 
@@ -568,8 +576,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constraint.
 - **`add_nem_constraints!`'s `"rhs"`/`"invoked"` grid is now derived from `date_range` directly**, not `unique(invoked.SETTLEMENTDATE)` (whichever intervals *any* constraint happened to be invoked at). The old derivation silently shrank the grid the moment real data had an interval NEMDE genuinely dispatched through with nothing bound, producing a `GenericConstraint` series shorter than every other time series on the same `System` and tripping `PowerSystems.jl`'s cross-component horizon check the moment `ConstrainedNetworkConfiguration` was combined with a wide, real multi-interval `date_range`. The grid now drops `date_range`'s own last point to match `read_fcas_bids`/`set_demand!`'s half-open (`start <= x < stop`) convention.
 - **`set_market_bids!` energy curves keep zero-width bands**: each curve has one segment per price band, in band order (reversed for `LOAD`), with bands of zero availability as zero-width segments, so segment `k` is always the same price band across intervals. `read_bids` and the FCAS readers still drop empty bands.
-- **Energy tie-breaks run in recurrent `replicate_range` simulations**: the `:tie_breaks` part is in the default `parts`, and the pre-flight check above guards the trading-day boundary. Splitting a range by trading day is not yet implemented.
+- **Energy tie-breaks run in recurrent `replicate_range` simulations**: the `:tie_breaks` part is in the default `parts`. A range is split at each trading day (see `replicate_range`'s `chunk`), so the pre-flight check never sees a crossing.
 - **Transitive price ties throw**: tie groups are formed over every band, zero-width ones included, and a run of bands whose prices spread beyond `TIE_BREAK_CVP_FACTOR` throws an `ArgumentError` instead of being grouped through an intermediate band. Cent-rounded referred prices do not chain, so real data is unaffected.
+- `replicate_range` splits a range into chunks at each trading day (04:05) and at 00:05 on 1 July, and solves
+  each chunk as its own `Simulation`, whose system and simulation are released once the chunk is compared.
+  It returns `chunks` (one row per chunk), `results` (one `SimulationProblemResults` per chunk, reopened from
+  its folder) and `solver_stats` (the objective and solver times of each interval). It no longer returns
+  `simulation`.
+- `replicate_range` models the full `replication_template` by default (`parts = REPLICATION_PARTS`); the
+  recurrent-only restriction on `parts` is removed.
 
 ## [0.1.3] - 2026-03-09
 

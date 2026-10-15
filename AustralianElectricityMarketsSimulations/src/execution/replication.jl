@@ -106,18 +106,25 @@ into one-interval windows. The `date_range` method builds over exactly that 5-mi
   `IMPORTLIMIT`/`EXPORTLIMIT` ([`set_interconnector_flow_limits!`](@ref)). Those limits are
   computed after NEMDE's solve, so this pins flows to NEMDE's answer: a diagnostic, not for
   validating flows. Default `false` (static limits).
+- `time_series_in_memory`: keep the time series in memory (`true`) or in a file under
+  `time_series_directory`.
+- `time_series_directory`: the directory of the time-series file when `time_series_in_memory` is `false`;
+  `nothing` uses PowerSystems' default.
 
 # Returns
 A `PSY.System`.
 """
 function replication_system(
         db, date_range::StepRange{DateTime}; intervention::Integer = 0, interval_flow_limits::Bool = false,
+        time_series_in_memory::Bool = true, time_series_directory::Union{Nothing, AbstractString} = nothing,
     )
     step(date_range) == DISPATCH_INTERVAL ||
         throw(ArgumentError("replication_system: the date range must step by $DISPATCH_INTERVAL, got $(step(date_range))."))
     resolution = DISPATCH_INTERVAL
+    storage = isnothing(time_series_directory) ? (;) : (; time_series_directory = time_series_directory)
     sys = nem_system(
         db, ConstrainedNetworkConfiguration(); date_range = date_range, intervention = intervention,
+        time_series_in_memory = time_series_in_memory, storage...,
     )
     set_demand!(sys, db, date_range; resolution = resolution)
     set_loss_demand_coefficients!(sys)
