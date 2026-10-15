@@ -1087,6 +1087,37 @@ end
     @test stale.prices[("1", BidType.RAISEREG)] ≈ 5.0 atol = TOY_TOLERANCE
 end
 
+# Thirty generic constraints on one unit: even ones are slack-free; odd ones require 150 MW of a 100 MW
+# unit (GE), so their down slack carries the violation in both steps.
+@testset "the batched slack read equals the per-key read on a result with many slack keys" begin
+    n = 30
+    add_constraint!(sys, stamps, i) = isodd(i) ?
+        add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, 150.0; sense = ConstraintSense.GE, name = "N_MANY_$i") :
+        add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, 200.0; name = "N_MANY_$i")
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        [100.0, 120.0]; horizon = TOY_RESOLUTION,
+        mutate! = (sys, stamps) -> foreach(i -> add_constraint!(sys, stamps, i), 1:n),
+    )
+    out = AEMS._replication_simulation(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    slack_families = Dict(AEMS._VIOLATION_FAMILIES)
+    keys = [k for k in PSI.list_variable_keys(out.results) if haskey(slack_families, PSI.IS.Optimization.get_entry_type(k))]
+    @test length(keys) >= n
+    batched = AEMS._read_violation_frames(out.results, keys)
+    @test Set(Base.keys(batched)) == Set(keys)
+    # The old per-key read: one `read_variable` per encoded name, each reopening the store.
+    per_key(key) = reduce(vcat, values(PSI.read_variable(out.results, PSI.IS.Optimization.encode_key_as_string(key))))
+    for key in keys[[1, cld(length(keys), 2), length(keys)]]
+        @test batched[key] == per_key(key)
+    end
+    violated = [k for k in keys if any(>(AEMS._VIOLATION_TOLERANCE_MW), batched[k].value)]
+    @test length(violated) == n ÷ 2
+    @test isempty(AEMS._read_violation_frames(out.results, PSI.OptimizationContainerKey[]))
+end
+
 include(joinpath(@__DIR__, "..", "scripts", "measure_replicate_range.jl"))
 
 @testset "the measurement script runs on the mock cache" begin

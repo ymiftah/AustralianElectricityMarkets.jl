@@ -336,11 +336,17 @@ function _gc_invoked(sys::PSY.System, name::AbstractString, t::DateTime)
 end
 
 
-# `family`, `name`, `DateTime`, `MW`, `direction` and `variable` (the slack variable's key) of
-# One slack variable's long-format frame; simulation results are read by the key's encoded name.
-_read_violation_frame(results::PSI.OptimizationProblemResults, key) = PSI.read_variable(results, key)
-_read_violation_frame(results::PSI.SimulationProblemResults, key) =
-    reduce(vcat, values(PSI.read_variable(results, PSI.IS.Optimization.encode_key_as_string(key))))
+# Each key's long-format frame (`DateTime`, `name`, `value`), read in one call per results object.
+function _read_violation_frames(results::PSI.OptimizationProblemResults, keys)
+    return Dict(key => PSI.read_variable(results, key) for key in keys)
+end
+# Opens the simulation store once and reads every key over the timestamps `read_variable` uses.
+function _read_violation_frames(results::PSI.SimulationProblemResults, keys)
+    isempty(keys) && return Dict{PSI.OptimizationContainerKey, DataFrame}()
+    timestamps = PSI._process_timestamps(results, nothing, nothing)
+    vals = PSI._read_results(results, keys, timestamps, nothing)
+    return Dict(key => reduce(vcat, values(PSI.make_dataframes(vals[key]; table_format = PSI.TableFormat.LONG))) for key in keys)
+end
 
 
 # every slack above the tolerance, in every interval and every family of `_VIOLATION_FAMILIES`; a
@@ -354,11 +360,12 @@ function _constraint_violations(
         (:family, :name, :DateTime, :MW, :direction, :variable),
         Tuple{String, String, DateTime, Float64, String, String},
     }[]
-    for key in PSI.list_variable_keys(results)
+    slack_keys = [key for key in PSI.list_variable_keys(results) if haskey(kinds, PSI.IS.Optimization.get_entry_type(key))]
+    frames = _read_violation_frames(results, slack_keys)
+    for key in slack_keys
         type = PSI.IS.Optimization.get_entry_type(key)
-        kind = get(kinds, type, nothing)
-        isnothing(kind) && continue
-        for r in eachrow(_read_violation_frame(results, key))
+        kind = kinds[type]
+        for r in eachrow(frames[key])
             r.value > _VIOLATION_TOLERANCE_MW || continue
             kind[1] == "generic_constraint" && !_gc_invoked(sys, r.name, r.DateTime) && continue
             direction = _violation_direction(sys, type, key.meta, r.name, kind[2])

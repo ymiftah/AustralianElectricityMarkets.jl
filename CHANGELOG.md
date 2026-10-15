@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reading constraint violations from a simulation opens its store once for all slack keys instead of once per key, so the cost of `replicate_range` grows linearly rather than quadratically with the number of slack keys.
 - The dispatch interval ending 00:00 on 1 July (23:55-00:00 on 30 June) takes the previous financial year's Market Price Cap in every CVP slack cost; it took the new year's.
 - For interconnectors carrying paired directional MNSP offers, DC losses are supplied by the active
   sending area (`-from_tlf * (q + loss)`) using its terminal loss factor, instead of the static
