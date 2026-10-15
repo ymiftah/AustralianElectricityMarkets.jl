@@ -69,7 +69,10 @@ hand with `AustralianElectricityMarketsSimulations/scripts/measure_replicate_ran
 the peak resident size and the store size of one chunk. The keywords that trade memory for time are:
 
 - `time_series_in_memory` (default `true`) and `time_series_directory`: keep the system's time series
-  in memory, or write them to a directory on disk.
+  in memory, or write them to a file on disk. Without a `time_series_directory`, each chunk writes its
+  file under `<chunk folder>/time_series`, which lies in the system temporary directory when
+  `output_dir` is `nothing`. A time-series file is deleted only when the Julia process exits, so the
+  files of every chunk stay on disk until then.
 - `cache_size_mib`: the write cache of the simulation store.
 - `store_parameters` (default `true`): whether the store keeps the replication model's own
   time-series parameters. The results of the comparison do not depend on it.

@@ -168,10 +168,12 @@ function _replicate_chunk(
         time_series_in_memory::Bool, time_series_directory, cache_size_mib,
     )
     t0 = time()
+    ts_directory = something(time_series_directory, joinpath(folder, "time_series"))
+    time_series_in_memory || mkpath(ts_directory)
     sys = replication_system(
         db, first(steps):DISPATCH_INTERVAL:(last(steps) + DISPATCH_INTERVAL);
         intervention = intervention, time_series_in_memory = time_series_in_memory,
-        time_series_directory = time_series_directory,
+        time_series_directory = ts_directory,
     )
     system_build_s = time() - t0
     t1 = time()
@@ -211,30 +213,22 @@ end
         chunk = :trading_day, output_dir = nothing, time_series_in_memory = true,
         time_series_directory = nothing, cache_size_mib = nothing, store_parameters = true) -> NamedTuple
 
-Replays the dispatch intervals `start:5 minutes:stop` by solving them as `PowerSimulations.Simulation`s,
-one per chunk, and compares each interval with AEMO's published outcome. Each chunk is built on a
-[`replication_system`](@ref) over its own intervals and solved by a one-interval
-[`replication_template`](@ref) model that is built once per chunk and whose parameters update at each step.
-The full template is modeled by default; `parts` leaves families out for diagnosis. Each generic
-constraint invoked at no interval is left out, and a constraint invoked at some intervals is modeled
-at every interval and relaxed at no cost where it is not invoked.
-
-A chunk always starts at `start`, at every 04:05 interval (the start of a trading day, where
-[`check_tie_break_pairs`](@ref) requires the same tie pairs) and at 00:05 on 1 July (the start of a
-Market Price Cap year). With a `Dates.Period` `chunk`, a chunk also starts every `chunk` after its own
-start. Each chunk's pre-flight checks run before its build; a failing chunk logs the folders of the
-chunks already solved and rethrows. Once a chunk is solved its system and simulation are released, and
-its results are reopened from its folder.
+Replays the dispatch intervals `start:5 minutes:stop` as one `PowerSimulations.Simulation` per chunk,
+each a one-interval [`replication_template`](@ref) model on a [`replication_system`](@ref) whose
+parameters update at each step, and compares each interval with AEMO's published outcome. A chunk
+starts at `start`, at every 04:05 trading-day start, at 00:05 on 1 July and, with a `Dates.Period`
+`chunk`, every `chunk` after its own start; each chunk's results are reopened from its folder.
 
 # Arguments
 - `db`: an `AEMDB` connection whose cache holds data from `start` to `stop + 5 minutes`.
-- `start`, `stop`: `DateTime`s a whole number of 5-minute intervals apart, within one Market Price Cap year.
+- `start`, `stop`: `DateTime`s a whole number of 5-minute intervals apart.
 - `intervention`: 0 for the pricing run, 1 for the physical run.
 - `optimizer`: the JuMP optimizer, e.g. `optimizer_with_attributes(HiGHS.Optimizer, ...)`.
 - `parts`: the [`REPLICATION_PARTS`](@ref) to model; default all.
 - `chunk`: `:trading_day` or a `Dates.Period` that is a positive multiple of 5 minutes.
 - `output_dir`: a directory on disk for the chunk folders `chunk_<k>`; `nothing` uses a fresh `mktempdir()` per chunk.
-- `time_series_in_memory`, `time_series_directory`: passed to [`replication_system`](@ref).
+- `time_series_in_memory`, `time_series_directory`: passed to [`replication_system`](@ref);
+  `time_series_directory = nothing` writes each chunk's time-series file under `<chunk folder>/time_series`.
 - `cache_size_mib`: the simulation store's write cache in MiB; `nothing` keeps PowerSimulations' default.
 - `store_parameters`: whether the simulation stores keep the replication model's own time-series
   parameters (the `NEMConstraintRHSParameter`, FCAS, tie-break, loss, MNSP and ramp parameters).

@@ -34,11 +34,13 @@ const _RVI_TABLES = (
     (table = "loss", source = :interconnectors, key = r -> string(r.INTERCONNECTORID), value = :MWLOSSES_solved, tolerance = RANGE_TOLERANCES.mw),
 )
 
-# `key => value` of one comparison table, `missing` where the table has no solved value.
+# `key => value` of one comparison table, `missing` where the table has no solved value; throws on a repeated key.
 function _rvi_values(df::AbstractDataFrame, spec)
     values = Dict{String, Union{Missing, Float64}}()
     for r in eachrow(df)
-        values[spec.key(r)] = r[spec.value]
+        key = spec.key(r)
+        haskey(values, key) && error("_rvi_values: key $key appears twice in the $(spec.table) table.")
+        values[key] = r[spec.value]
     end
     return values
 end
@@ -83,13 +85,15 @@ end
     range_vs_interval_long(range_out, intervals) -> DataFrame
 
 One row per interval, table and key present in either replay: the range's and the interval's solved
-values, their difference `gap` (`missing` if either is missing), the table's tolerance and whether
-the two agree within it (`within`; two missing values agree).
+values, their difference `gap` (`missing` if either is missing), the table's tolerance, whether the
+key or its value is on one side only (`one_sided`) and whether the two agree within the tolerance
+(`within`; two missing values agree, and a one-sided row never does).
 """
 function range_vs_interval_long(range_out, intervals::AbstractDict{DateTime, <:NamedTuple})
     rows = DataFrame(
         SETTLEMENTDATE = DateTime[], table = String[], key = String[], range = Union{Missing, Float64}[],
-        interval = Union{Missing, Float64}[], gap = Union{Missing, Float64}[], tolerance = Float64[], within = Bool[],
+        interval = Union{Missing, Float64}[], gap = Union{Missing, Float64}[], tolerance = Float64[],
+        one_sided = Bool[], within = Bool[],
     )
     for t in sort!(collect(keys(intervals)))
         for spec in _RVI_TABLES
@@ -99,8 +103,9 @@ function range_vs_interval_long(range_out, intervals::AbstractDict{DateTime, <:N
                 r = get(range_side, key, missing)
                 i = get(interval_side, key, missing)
                 gap = ismissing(r) || ismissing(i) ? missing : r - i
-                within = (ismissing(r) && ismissing(i)) || (!ismissing(gap) && abs(gap) <= spec.tolerance)
-                push!(rows, (t, spec.table, key, r, i, gap, spec.tolerance, within))
+                one_sided = !haskey(range_side, key) || !haskey(interval_side, key) || ismissing(r) ⊻ ismissing(i)
+                within = !one_sided && ((ismissing(r) && ismissing(i)) || (!ismissing(gap) && abs(gap) <= spec.tolerance))
+                push!(rows, (t, spec.table, key, r, i, gap, spec.tolerance, one_sided, within))
             end
         end
     end
@@ -111,7 +116,7 @@ end
     range_vs_interval_summary(long, range_out, interval_objectives) -> DataFrame
 
 One row per interval: the two objectives and their relative gap, the largest absolute gap of each
-table, the number of rows outside tolerance and of one-sided missing rows, and `status`: `MATCH`
+table, the number of rows outside tolerance and of one-sided rows, and `status`: `MATCH`
 when every row is within tolerance and the objectives agree, `ALT_OPTIMUM` when some rows differ
 but the objectives agree and no row is one-sided, and `FAIL` otherwise.
 """
@@ -131,7 +136,7 @@ function range_vs_interval_summary(long::DataFrame, range_out, interval_objectiv
             isempty(gaps) ? 0.0 : maximum(gaps)
         end
         n_outside = count(!, at_t.within)
-        n_one_sided = count(ismissing.(at_t.range) .⊻ ismissing.(at_t.interval))
+        n_one_sided = count(at_t.one_sided)
         status = if n_outside == 0 && rel <= RANGE_TOLERANCES.objective_rtol
             "MATCH"
         elseif n_outside > 0 && n_one_sided == 0 && rel <= RANGE_TOLERANCES.objective_rtol

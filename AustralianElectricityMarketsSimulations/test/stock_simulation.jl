@@ -409,8 +409,16 @@ end
     @test nrow(two.chunks) == 2 && length(two.results) == 2
     @test two.chunks.n_steps == [2, 2]
     @test same_comparison(one.comparison, two.comparison)
-    @test sort(one.solver_stats.objective_value) ≈ sort(two.solver_stats.objective_value) atol = 1.0e-6
     @test nrow(one.solver_stats) == nrow(two.solver_stats) == 4
+    @test one.solver_stats.SETTLEMENTDATE == two.solver_stats.SETTLEMENTDATE
+    @test one.solver_stats.objective_value ≈ two.solver_stats.objective_value atol = 1.0e-6
+    @test two.solver_stats.chunk == [1, 1, 2, 2]
+    # Each chunk's reopened results hold its own intervals only.
+    t_mid = DateTime(2025, 1, 1, 0, 15)
+    @test collect(PSI.get_timestamps(two.results[1])) == collect(t1:Minute(5):(t_mid - Minute(5)))
+    @test collect(PSI.get_timestamps(two.results[2])) == collect(t_mid:Minute(5):t2)
+    @test PSI.read_optimizer_stats(two.results[2]).objective_value ≈
+        filter(:SETTLEMENTDATE => >=(t_mid), one.solver_stats).objective_value atol = 1.0e-6
 
     # A reopened chunk reads the same constraint violations as the live solve, and needs no system.
     sys2 = replication_system(db, DateTime(2025, 1, 1, 0, 15):Minute(5):DateTime(2025, 1, 1, 0, 25))
@@ -422,6 +430,10 @@ end
     d = mktempdir()
     replicate_range(db, t1, DateTime(2025, 1, 1, 0, 10); output_dir = d)
     @test isdir(joinpath(d, "chunk_1")) && any(f -> f == "simulation_store.h5", (f for (_, _, fs) in walkdir(joinpath(d, "chunk_1")) for f in fs))
+    # On-disk time series default to a directory inside each chunk folder.
+    d = mktempdir()
+    replicate_range(db, t1, DateTime(2025, 1, 1, 0, 20); output_dir = d, chunk = Minute(10), time_series_in_memory = false)
+    @test all(k -> !isempty(readdir(joinpath(d, "chunk_$k", "time_series"))), 1:2)
 
     # The parameter storage switch changes no comparison, and is restored after a call that throws.
     default_run = replicate_range(db, t1, DateTime(2025, 1, 1, 0, 10))
@@ -430,7 +442,7 @@ end
     @test same_comparison(default_run.comparison, no_params.comparison; atol = 1.0e-9)
     stored = [PSI.IS.Optimization.get_entry_type(k) for k in PSI.list_parameter_keys(no_params.results[1])]
     @test !any(T -> T <: AEMS._REPLICATION_PARAMETER_TYPES, stored)
-    @test_throws ArgumentError replicate_range(db, DateTime(2025, 1, 1, 0, 10), t1; store_parameters = false)
+    @test_throws ArgumentError replicate_range(db, t1, DateTime(2025, 1, 1, 0, 10); parts = (:nonsense,), store_parameters = false)
     @test AEMS._STORE_REPLICATION_PARAMETERS[]
 end
 

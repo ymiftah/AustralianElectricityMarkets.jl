@@ -70,13 +70,14 @@ function _measure_update_probe(simulation, model)
     return (; times, update_objective_s = t_obj)
 end
 
-# Phases a-c (system, build, update probe) on `steps` in `dir`, for the warm-up run.
-function _measure_build(db, steps, dir; time_series_in_memory, optimizer)
+# Every phase (system, build, update probe, execute) on `steps` in `dir`, for the warm-up run.
+function _measure_warmup(db, steps, dir; time_series_in_memory, optimizer, cache_size_mib)
     mkpath(dir)
     ts_dir = time_series_in_memory ? nothing : mkpath(joinpath(dir, "ts"))
     sys = replication_system(db, first(steps):Minute(5):(last(steps) + Minute(5)); time_series_in_memory, time_series_directory = ts_dir)
     built = AEM_MEASURE._build_range_simulation(sys, steps; optimizer, folder = mkpath(joinpath(dir, "sim")))
     _measure_update_probe(built.simulation, built.model)
+    AEM_MEASURE._execute_range_simulation(built.simulation; cache_size_mib)
     return nothing
 end
 
@@ -86,7 +87,7 @@ end
 
 Solves the trading-day chunk `steps` in phases, timing each, and writes `metrics.csv`, `phases.csv`,
 `steps.csv`, `update_by_family.csv`, `skipped_constraints.csv`, `timer_build.txt` and `timer_run.txt`
-to `out_dir`. The `warmup` run compiles the phases on the first two intervals before the measured run.
+to `out_dir`. The `warmup` run compiles every phase, execution included, on the first two intervals before the measured run.
 
 # Arguments
 - `db`: an `AEMDB` connection holding the data for `steps` and the interval after the last.
@@ -94,7 +95,7 @@ to `out_dir`. The `warmup` run compiles the phases on the first two intervals be
 - `out_dir`: the output directory, on disk.
 - `time_series_in_memory`: as [`replication_system`](@ref); `false` keeps the time series under `out_dir/ts`.
 - `cache_size_mib`: the simulation store's write cache.
-- `warmup`: whether to run the build and update phases on two intervals first.
+- `warmup`: whether to run every phase on two intervals first.
 - `optimizer`: the JuMP optimizer.
 
 # Returns
@@ -109,9 +110,9 @@ function measure_replicate_range(
         throw(ArgumentError("steps cross a trading day or 1 July"))
     mkpath(out_dir)
     if warmup
-        _measure_build(
+        _measure_warmup(
             db, first(steps):Minute(5):(first(steps) + Minute(5)), joinpath(out_dir, "warmup");
-            time_series_in_memory, optimizer,
+            time_series_in_memory, optimizer, cache_size_mib,
         )
         GC.gc()
     end

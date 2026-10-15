@@ -436,7 +436,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`DISPATCH_INTERVAL_HOURS`/`interval_cost_coefficient`** (`AustralianElectricityMarketsSimulations`): documented the dispatch-interval-length constant and added `interval_cost_coefficient`, converting a `$/MWh` bid price into an objective coefficient for one dispatch interval.
 - `set_tie_break_scales!(sys)` (`AustralianElectricityMarketsSimulations`): attaches each price-tied energy band's scale, its MW relative to the widest band of its tie group, as a sparse scalar series `"tie_break_scale_<k>[_decremental]"` on the unit's offer or load-bid curve. `replication_system` and `nem_toy_system` call it after `set_fcas_effective_offers!`; other pipelines with energy tie-breaks must call it, or the build fails naming it. Every unit carrying a scale must be modelled: a battery whose bands tie needs `:batteries` in the replication `parts`, or the build fails. A unit with a fixed offer curve takes the scale series over the timestamps of the time-varying curves.
 - `TieBreakScaleParameter` (`AustralianElectricityMarketsSimulations`): the parameter that feeds those scales into the pairwise tie-break rows, so each row follows its bands' widths as they change between intervals.
-- `check_tie_break_pairs(sys, steps)` (`AustralianElectricityMarketsSimulations`): throws an `ArgumentError` when the price-tied band pairs differ between intervals of a range. `replicate_range` runs it by default, so a range that crosses the 04:05 start of a trading day fails with a message to start the range at 04:05.
+- `check_tie_break_pairs(sys, steps)` (`AustralianElectricityMarketsSimulations`): throws an `ArgumentError` when the price-tied band pairs differ between intervals of a range. `replicate_range` runs it on each chunk, and splits a range at every 04:05 trading-day start so that no chunk crosses one.
 - `read_published_interval(db, steps::StepRange{DateTime})` reads the published dispatch, interconnector,
   price and FCAS price outcomes of a range in one query per table, with a leading `SETTLEMENTDATE` column.
 - `replication_system` and `replicate_range` accept `time_series_in_memory` and `time_series_directory`,
@@ -585,6 +585,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `simulation`.
 - `replicate_range` models the full `replication_template` by default (`parts = REPLICATION_PARTS`); the
   recurrent-only restriction on `parts` is removed.
+- `replicate_range` with `time_series_in_memory = false` and no `time_series_directory` writes each chunk's
+  time-series file under `<chunk folder>/time_series` instead of the system temporary directory.
 
 ## [0.1.3] - 2026-03-09
 
