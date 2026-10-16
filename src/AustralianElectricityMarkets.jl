@@ -75,6 +75,7 @@ include("system/mnsp.jl")
 include("system/constraints.jl")
 include("system/interconnectors.jl")
 include("system/RegionModel.jl")
+include("mock_hive.jl")
 
 using .RegionModel: RegionalNetworkConfiguration, ConstrainedNetworkConfiguration
 

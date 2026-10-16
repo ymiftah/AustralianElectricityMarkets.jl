@@ -8,9 +8,11 @@ using DuckDB
 using HiGHS
 using HydroPowerSimulations
 using JuMP
+import Logging
 using PowerSimulations
 using PowerSystems
 using Statistics
+using PrecompileTools: @setup_workload, @compile_workload
 
 import PowerSimulations as PSI
 import PowerSystems as PSY
@@ -50,6 +52,7 @@ include("checks/tie_break.jl")
 include("preprocessing/inputs.jl")
 include("execution/replication.jl")
 include("execution/simulation.jl")
+include("precompile.jl")
 
 using AustralianElectricityMarkets.Readers: read_uigf_as_dict
 @doc (@doc AustralianElectricityMarkets.IntervalInputs) IntervalInputs

@@ -447,6 +447,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multiple of 5 minutes), `output_dir` (a directory on disk for the chunk folders), `cache_size_mib` (the
   simulation store's write cache) and `store_parameters` (whether the store keeps the replication model's
   time-series parameters; `true` by default).
+- The first `replicate_range` or `replicate_interval` call in a fresh Julia session no longer pays the full JIT cost:
+  `AustralianElectricityMarketsSimulations` precompiles a small workload that runs both on a generated mock hive
+  (a 12-step chunk drops from about 390 s to about 105 s in a fresh process). Precompilation takes about 5.5 minutes
+  and about 10 GiB of memory; set `precompile_workload = false` under `[AustralianElectricityMarketsSimulations]` in
+  `LocalPreferences.toml` to skip it.
 
 ### Removed
 
