@@ -32,4 +32,4 @@ julia = "1.11"
 
 [sources]
 AustralianElectricityMarkets = {path = ".."}
-PowerSimulations = {url = "https://github.com/ymiftah/PowerSimulations.jl.git", rev = "91a8018db9b9f3793d6b7385e64ec8597412ad98"}
+PowerSimulations = {url = "https://github.com/ymiftah/PowerSimulations.jl.git", rev = "fc30a298afb314d563488db852387e145ec97f9a"}
