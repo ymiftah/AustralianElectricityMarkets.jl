@@ -701,6 +701,81 @@ end
         @test get_factor(published_term) == 2.0
     end
 
+    @testset "Energy Inflexible Offer constraints are built from FIXEDLOAD" begin
+        # BW01 (GEN) is fixed at 30 MW for 00:10 to 00:20, BW02 at 40 MW but with a fast-start
+        # profile (T1 > 0), BW03 has a zero fixed load. DISPATCHCONSTRAINT carries `$` rows
+        # without a version for BW01, BW02 and an unknown unit; only BW01's is modelled.
+        fixed_hive = mktempdir()
+        create_mock_data(fixed_hive)
+        fixed_conn = DuckDB.connect(DuckDB.DB())
+        DuckDB.execute(fixed_conn, "SET preserve_identifier_case=true")
+        rewrite(table, select_sql) = begin
+            dir = joinpath(fixed_hive, table)
+            tmp = dir * "_new"
+            DuckDB.execute(
+                fixed_conn,
+                "COPY (SELECT $select_sql FROM read_parquet('$(dir)/**/*.parquet', hive_partitioning=true)) " *
+                    "TO '$tmp' (FORMAT 'PARQUET', PARTITION_BY (archive_month))",
+            )
+            rm(dir; recursive = true)
+            mv(tmp, dir)
+            return nothing
+        end
+        rewrite(
+            "BIDPEROFFER_D",
+            "* REPLACE (CASE WHEN BIDTYPE = 'ENERGY' AND DIRECTION = 'GEN' AND INTERVAL_DATETIME BETWEEN " *
+                "TIMESTAMP '2025-01-01 00:10:00' AND TIMESTAMP '2025-01-01 00:20:00' THEN " *
+                "CASE DUID WHEN 'BW01' THEN 30.0 WHEN 'BW02' THEN 40.0 ELSE 0.0 END ELSE 0.0 END AS FIXEDLOAD)",
+        )
+        rewrite("BIDDAYOFFER_D", "* REPLACE (CASE WHEN DUID = 'BW02' THEN 6.0 ELSE NULL END AS T1)")
+        dc_dir = joinpath(fixed_hive, "DISPATCHCONSTRAINT")
+        tmp = dc_dir * "_new"
+        DuckDB.execute(
+            fixed_conn,
+            "COPY (SELECT * FROM read_parquet('$(dc_dir)/**/*.parquet', hive_partitioning=true) UNION ALL BY NAME " *
+                "SELECT t AS SETTLEMENTDATE, 1 AS RUNNO, 0 AS INTERVENTION, id AS CONSTRAINTID, 30.0 AS RHS, " *
+                "30.0 AS LHS, 99.0 AS MARGINALVALUE, t AS LASTCHANGED, '2025-01' AS archive_month " *
+                "FROM (SELECT unnest(generate_series(TIMESTAMP '2025-01-01 00:10:00', TIMESTAMP '2025-01-01 00:20:00', " *
+                "INTERVAL 5 MINUTE)) AS t), (VALUES ('\$BW01'), ('\$BW02'), ('\$NOSUCH1')) AS ids(id)) " *
+                "TO '$tmp' (FORMAT 'PARQUET', PARTITION_BY (archive_month))",
+        )
+        rm(dc_dir; recursive = true)
+        mv(tmp, dc_dir)
+
+        fixed_db = aem_connect(HiveConfiguration(hive_location = fixed_hive, filesystem = "file"))
+        fixed_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 1, 0)
+
+        loads = read_fixed_loads(fixed_db, fixed_range)
+        @test Set(loads.DUID) == Set(["BW01"])  # BW02 is fast-start, the rest are zero
+        @test sort(loads.INTERVAL_DATETIME) == DateTime(2025, 1, 1, 0, 10):Minute(5):DateTime(2025, 1, 1, 0, 20)
+        @test all(==(30.0), loads.FIXEDLOAD)
+
+        fixed_sys = nem_system(fixed_db, RegionalNetworkConfiguration())
+        added_f, skipped_f = nothing, nothing
+        @test_logs (:warn, r"skipped") match_mode = :any begin
+            added_f, skipped_f = add_nem_constraints!(fixed_sys, fixed_db, fixed_range; include_solution = true)
+        end
+        @test "\$BW01" in added_f
+        @test "\$BW02" ∉ added_f
+        skipped_names = get_skipped_constraints(fixed_sys).constraint
+        @test !any(startswith("\$BW01"), skipped_names)
+        @test any(startswith("\$BW02"), skipped_names)  # fast-start: still reported
+        @test any(startswith("\$NOSUCH1"), skipped_names)
+
+        gc = get_component(GenericConstraint, fixed_sys, "\$BW01")
+        @test get_sense(gc) == ConstraintSense.EQ
+        @test get_constraint_weight(gc) == 380.0
+        term = only(get_terms(gc))
+        @test term isa UnitTerm && get_duid(term) == "BW01" && get_bid_type(term) == BidType.ENERGY
+        base = get_base_power(fixed_sys)
+        series(name) = get_time_series_values(SingleTimeSeries, gc, name)
+        invoked_mask = series("invoked")
+        @test findall(==(1.0), invoked_mask) == 3:5  # intervals 00:10, 00:15, 00:20
+        @test series("rhs")[3:5] == fill(30.0 / base, 3)
+        @test series("marginal_value")[3:5] == fill(99.0, 3)
+        @test has_service(get_component(Device, fixed_sys, "BW01"), gc)
+    end
+
     @testset "_versions_without_definition handles missing effective date" begin
         # Regression test for: invoked versions with NULL GENCONID_EFFECTIVEDATE would throw
         # "Missing values in key columns" in _versions_without_definition unless

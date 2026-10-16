@@ -12,7 +12,7 @@ for 2025-01-01 00:00 to 04:00 at 5-minute resolution, under `hive_root`.
 # Returns
 `nothing`.
 """
-function _write_mock_hive(hive_root::String)
+function _write_mock_hive(hive_root::String; complete_inputs::Bool = false)
     db = DuckDB.DB()
     conn = DuckDB.connect(db)
     DuckDB.execute(conn, "SET preserve_identifier_case=true")
@@ -56,7 +56,7 @@ function _write_mock_hive(hive_root::String)
             FROMREGIONLOSSSHARE = fill(0.1, n),
             LOSSCONSTANT = fill(0.01, n),
             LOSSFLOWCOEFFICIENT = fill(0.001, n),
-            ICTYPE = fill("MNSP", n),
+            ICTYPE = [i == 2 ? "MNSP" : "REGULATED" for i in 1:n],
             archive_month = fill("2025-01", n)
         ), :INTERCONNECTORCONSTRAINT
     )
@@ -370,6 +370,7 @@ function _write_mock_hive(hive_root::String)
 
         append!(df_bid_per_offer, vcat(tmp, tmp_fcas, tmp_fcas_load); promote = true)
     end
+    df_bid_per_offer.FIXEDLOAD = zeros(nrow(df_bid_per_offer))
     save_hive(df_bid_per_offer, :BIDPEROFFER_D)
 
     # 11. BIDDAYOFFER_D (Daily)
@@ -434,6 +435,7 @@ function _write_mock_hive(hive_root::String)
     for i in 1:10
         bid_day_offer[!, "PRICEBAND$i"] = fill(50.0 + i, nrow(bid_day_offer))
     end
+    bid_day_offer.T1 = zeros(nrow(bid_day_offer))
     save_hive(bid_day_offer, :BIDDAYOFFER_D)
 
     # FCAS requirements are generic-constraint-based (RESERVE has been unpopulated by AEMO
@@ -757,6 +759,12 @@ function _write_mock_hive(hive_root::String)
         end
         append!(df_dispatchload, block; promote = true)
     end
+    if complete_inputs
+        inactive = df_dispatchload.DUID .== "PUMP2"
+        df_dispatchload.AVAILABILITY[inactive] .= 0.0
+        df_dispatchload.INITIALMW[inactive] .= 0.0
+        df_dispatchload.TOTALCLEARED[inactive] .= 0.0
+    end
     save_hive(df_dispatchload, :DISPATCHLOAD)
 
     # 16. DISPATCHPRICE (regional FCAS clearing prices - RRP/ROP set equal to the mock's
@@ -902,6 +910,12 @@ function _write_mock_hive(hive_root::String)
         )
     end
 
+    if complete_inputs
+        path = joinpath(hive_root, "DISPATCHCONSTRAINT")
+        DuckDB.execute(conn, "CREATE TABLE complete_constraints AS SELECT * FROM read_parquet('$path/**/*.parquet', hive_partitioning = true) WHERE CONSTRAINTID NOT IN ('N_PHANTOM_TEST', 'N_ONE_PHANTOM_TERM')")
+        rm(path; recursive = true)
+        DuckDB.execute(conn, "COPY complete_constraints TO '$path' (FORMAT PARQUET, PARTITION_BY (archive_month))")
+    end
     DuckDB.disconnect(conn)
     DuckDB.close(db)
     return

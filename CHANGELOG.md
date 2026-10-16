@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Historical dispatch now rejects missing MNSP input tables, incomplete directional offer grids,
+  invalid offer values and missing terminal factors instead of switching an MNSP to free flow.
+  MNSP status is resolved from the interval's standing data. Replay rejects skipped constraint
+  definitions, dropped terms, defaulted penalty weights and unsupported constraint coverage.
+  Missing energy bids or regional demand raise input errors before participants or regions can
+  disappear from the model.
+- Participant fixed-loading constraints are reconstructed from submitted energy fixed-load offers,
+  including their penalty factor and invocation mask, instead of being omitted from replay.
+
 - Reading constraint violations from a simulation opens its store once for all slack keys instead of once per key, so the cost of `replicate_range` grows linearly rather than quadratically with the number of slack keys.
 - `compute_fcas_prices` reads a simulation's NEMConstraintLimit duals in one batched call instead of reopening its store once per dual, which took most of the FCAS price time of a `replicate_range` chunk. The output is unchanged.
 - The dispatch interval ending 00:00 on 1 July (23:55-00:00 on 30 June) takes the previous financial year's Market Price Cap in every CVP slack cost; it took the new year's.

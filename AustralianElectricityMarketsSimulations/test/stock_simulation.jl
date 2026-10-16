@@ -330,7 +330,7 @@ end
 end
 
 @testset "replicate_range on the mock cache" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)
     result = replicate_range(db, t1, t2)
     @test nrow(result.chunks) == 1 && length(result.results) == 1
@@ -361,7 +361,7 @@ end
 end
 
 @testset "replicate_range models every family by default" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)
     result = replicate_range(db, t1, t2)
     @test !any(in(("unmodeled_fcas_service", "unmodeled_device_type")), string.(result.skipped_constraints.reason))
@@ -386,7 +386,7 @@ function same_comparison(x, y; atol = 1.0e-6)
 end
 
 @testset "replicate_range chunks" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     chunks = AEMS._range_chunks
     @test chunks(DateTime(2026, 1, 1, 3, 55):Minute(5):DateTime(2026, 1, 1, 4, 15), :trading_day) ==
         [DateTime(2026, 1, 1, 3, 55):Minute(5):DateTime(2026, 1, 1, 4, 0), DateTime(2026, 1, 1, 4, 5):Minute(5):DateTime(2026, 1, 1, 4, 15)]
@@ -1135,7 +1135,7 @@ end
 include(joinpath(@__DIR__, "..", "scripts", "measure_replicate_range.jl"))
 
 @testset "the measurement script runs on the mock cache" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     out = mktempdir()
     m = measure_replicate_range(db, DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 15), out; warmup = false)
     @test m["n_steps"] == 3
@@ -1150,7 +1150,7 @@ end
 include(joinpath(@__DIR__, "..", "scripts", "range_vs_interval.jl"))
 
 @testset "replicate_range matches replicate_interval on the mock cache" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     steps = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 10)
     out = run_range_vs_interval(db, steps; optimizer = STOCK_OPTIMIZER, output_dir = mktempdir())
     long = range_vs_interval_long(out.range, out.intervals)

@@ -19,12 +19,16 @@ create_mock_data(AEM_TEST_HIVE_DIR)
 
 # Add interconnector results needed by the interval readers to the shared fixture.
 _write_mock_interconnector_results(AEM_TEST_HIVE_DIR)
+const AEM_TEST_REPLAY_HIVE_DIR = mktempdir()
+AustralianElectricityMarkets._write_mock_hive(AEM_TEST_REPLAY_HIVE_DIR; complete_inputs = true)
+_write_mock_interconnector_results(AEM_TEST_REPLAY_HIVE_DIR)
 
 # Test groups, in run order: name => (testset title, file). Pass group names as arguments to run
 # only those, e.g. `julia --project=test test/runtests.jl fcas_market preprocessing`.
 const TEST_GROUPS = [
     "time_basis" => ("Time basis", "time_basis.jl"),
     "inputs" => ("Interval inputs", "inputs.jl"),
+    "replication_inputs" => ("Required replay inputs", "replication_inputs.jl"),
     "preprocessing" => ("Preprocessing", "preprocessing.jl"),
     "constraint_formulations" => ("Constraint formulations", "constraint_formulations.jl"),
     "psi_compat" => ("PSI compat", "psi_compat.jl"),

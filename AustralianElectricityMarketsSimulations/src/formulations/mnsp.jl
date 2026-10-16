@@ -14,10 +14,15 @@ const _FLOW_LIMIT_SERIES = ("from_to_flow_limit", "to_from_flow_limit")
 Whether `device` carries both links' offer and availability series from `set_mnsp_offers!`.
 """
 function _has_mnsp_offers(device::PSY.AreaInterchange)
-    return all(
+    present = [
         PSY.has_time_series(device, PSY.SingleTimeSeries, "mnsp_$(dir)_$(kind)")
             for dir in _MNSP_DIRECTIONS, kind in ("offer", "max_avail")
-    )
+    ]
+    required = get(PSY.get_ext(device), "ic_type", nothing) == "MNSP"
+    if (required || any(present)) && !all(present)
+        throw(ArgumentError("AreaInterchange $(PSY.get_name(device)) is an MNSP with incomplete directional offer inputs; call set_mnsp_offers! with complete data before dispatch"))
+    end
+    return all(present)
 end
 
 

@@ -4,7 +4,7 @@
     @compile_workload begin
         mktempdir() do dir
             hive = joinpath(dir, "hive")
-            AustralianElectricityMarkets._write_mock_hive(hive)
+            AustralianElectricityMarkets._write_mock_hive(hive; complete_inputs = true)
             AustralianElectricityMarkets._write_mock_interconnector_results(hive)
             db = aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
             Logging.with_logger(Logging.NullLogger()) do

@@ -18,6 +18,8 @@ Regions balance through `PSI.AreaBalancePowerModel` with slacks, and the balance
 recorded as regional prices. Price-tied energy bands are dispatched pro rata
 ([`add_tie_break_constraints!`](@ref)). `parts` selects the [`REPLICATION_PARTS`](@ref) to model;
 without `:losses` no `PSY.AreaInterchange` is modeled and the regions are uncoupled.
+Missing dispatch inputs, skipped constraints, dropped terms and defaulted penalty weights throw
+`ArgumentError` before model construction.
 
 # Arguments
 - `sys`: a `PSY.System` from `nem_system(db, ConstrainedNetworkConfiguration(); ...)`, after its
@@ -36,6 +38,47 @@ function replication_template(
         sys::PSY.System; skipped::Union{Nothing, AbstractVector} = nothing,
         parts = REPLICATION_PARTS, exclude_constraints = Dict{String, Symbol}(),
     )
+    if :generic_constraints in parts
+        missing_intervals = get(PSY.get_ext(sys), "missing_constraint_intervals", DateTime[])
+        isempty(missing_intervals) || throw(
+            ArgumentError(
+                "replication_template: missing dispatch constraint intervals: $(join(string.(missing_intervals), ", ")); populate DISPATCHCONSTRAINT for the requested range",
+            )
+        )
+        skipped_inputs = get_skipped_constraints(sys)
+        dropped_inputs = get_dropped_terms(sys)
+        defaulted_weights = get(PSY.get_ext(sys), "defaulted_constraint_weights", String[])
+        isempty(defaulted_weights) || throw(
+            ArgumentError(
+                "replication_template: incomplete constraint weights: $(join(defaulted_weights, ", "))",
+            )
+        )
+        isempty(skipped_inputs) || throw(
+            ArgumentError(
+                "replication_template: incomplete constraint inputs: $(join(skipped_inputs.constraint, ", "))",
+            )
+        )
+        isempty(dropped_inputs) || throw(
+            ArgumentError(
+                "replication_template: incomplete constraint terms: $(join(dropped_inputs.constraint .* ": " .* dropped_inputs.key, ", "))",
+            )
+        )
+    end
+    uncovered = String[]
+    for device in AustralianElectricityMarkets._nem_dispatch_devices(sys)
+        device isa PSY.Storage && !(:batteries in parts) && continue
+        _has_nem_dispatch_limits(device, NEMReplayDispatch) || push!(uncovered, PSY.get_name(device))
+    end
+    isempty(uncovered) || throw(
+        ArgumentError(
+            "replication_template: incomplete dispatch inputs for $(join(sort!(uncovered), ", ")); attach every dispatch-limit series before replay",
+        )
+    )
+    if :losses in parts
+        for device in PSY.get_components(PSY.get_available, PSY.AreaInterchange, sys)
+            _has_mnsp_offers(device)
+        end
+    end
     unknown = setdiff(parts, REPLICATION_PARTS)
     isempty(unknown) || throw(ArgumentError("replication_template: unknown parts $(Tuple(unknown)); choose from $REPLICATION_PARTS."))
     template = PSI.ProblemTemplate(
@@ -65,7 +108,7 @@ function replication_template(
         end
     end
     :generic_constraints in parts || return template
-    for gc in filter_buildable_generic_constraints(sys, template; allow_partial_coverage = true, skipped = skipped)
+    for gc in filter_buildable_generic_constraints(sys, template; skipped = skipped)
         name = PSY.get_name(gc)
         if haskey(exclude_constraints, name)
             isnothing(skipped) || push!(skipped, (constraint = name, reason = exclude_constraints[name], n_missing = 0))
@@ -79,6 +122,56 @@ function replication_template(
         )
     end
     return template
+end
+
+
+# Period offers identify bidders independently of whether their price join succeeds.
+function _check_replay_energy_bid_coverage(sys, db, date_range; intervention::Integer = 0)
+    bids = read_energy_bids(db, date_range)
+    dispatch = read_dispatch_limits(db, date_range; intervention = intervention)
+    units = read_units(db; as_of = first(date_range))
+    demand = read_demand(db, date_range)
+    demand_stamps = Set(zip(demand.REGIONID, demand.SETTLEMENTDATE))
+    grid = collect(date_range)[1:(end - 1)]
+    missing_demand = [(region, t) for region in sort!(unique(units.REGIONID)), t in grid if !((region, t) in demand_stamps)]
+    isempty(missing_demand) || throw(
+        ArgumentError("missing regional demand inputs: $(join(string.(first(missing_demand, 5)), ", "))"),
+    )
+    non_scheduled = Set(r.DUID for r in eachrow(units) if isequal(r.SCHEDULE_TYPE, "NON-SCHEDULED"))
+    required_names = Set(bids.DUID)
+    for row in eachrow(dispatch)
+        available = !ismissing(row.AVAILABILITY) && row.AVAILABILITY > 0
+        metered = !ismissing(row.INITIALMW) && !iszero(row.INITIALMW)
+        (available || metered) && push!(required_names, row.DUID)
+    end
+    coverage = Dict{Tuple{String, String}, Set{DateTime}}()
+    for row in eachrow(bids)
+        push!(get!(coverage, (row.DUID, row.DIRECTION), Set{DateTime}()), row.INTERVAL_DATETIME)
+        row.MAXAVAIL isa Real && isfinite(row.MAXAVAIL) && row.MAXAVAIL >= 0 ||
+            throw(ArgumentError("incomplete energy bid MAXAVAIL for $(row.DUID) $(row.DIRECTION) at $(row.INTERVAL_DATETIME)"))
+    end
+    for T in (PSY.Generator, PSY.InterruptiblePowerLoad, PSY.EnergyReservoirStorage), device in PSY.get_components(T, sys)
+        name = PSY.get_name(device)
+        name in required_names && !(name in non_scheduled) || continue
+        device isa PSY.InterruptiblePowerLoad && AustralianElectricityMarkets._is_non_scheduled_load(device) && continue
+        directions = if device isa PSY.Storage
+            ("GEN", "LOAD")
+        elseif device isa PSY.InterruptiblePowerLoad
+            haskey(coverage, (name, "GEN")) ? ("GEN",) : ("LOAD",)
+        else
+            ("GEN",)
+        end
+        for direction in directions
+            stamps = get(coverage, (name, direction), Set{DateTime}())
+            missing_intervals = setdiff(grid, stamps)
+            isempty(missing_intervals) || throw(
+                ArgumentError(
+                    "incomplete energy bid inputs for $name $direction: missing $(length(missing_intervals)) intervals, including $(first(missing_intervals))",
+                )
+            )
+        end
+    end
+    return
 end
 
 
@@ -126,6 +219,7 @@ function replication_system(
         db, ConstrainedNetworkConfiguration(); date_range = date_range, intervention = intervention,
         time_series_in_memory = time_series_in_memory, storage...,
     )
+    _check_replay_energy_bid_coverage(sys, db, date_range; intervention = intervention)
     set_demand!(sys, db, date_range; resolution = resolution)
     set_loss_demand_coefficients!(sys)
     set_market_bids!(sys, db, date_range; resolution = resolution)

@@ -25,6 +25,29 @@ out = replicate_range(
 )
 ```
 
+## Required inputs
+
+Replay rejects missing dispatch inputs, skipped constraint definitions, dropped constraint terms
+and missing penalty weights before constructing the optimisation model. Populate the cache for
+the requested intervals and the effective dates and offer dates they reference.
+
+`INTERCONNECTORCONSTRAINT.ICTYPE` at the replay date determines whether each interconnector is
+regulated or an MNSP. An MNSP requires both registered links, terminal loss factors, and complete
+price bands, quantities and availability for every interval. Missing MNSP data raises an error;
+it never changes the interconnector to a free-flow model. An interconnector explicitly registered
+as regulated needs no MNSP offers.
+
+For the first trading day of a month, offers referenced by `DISPATCH_MNSPBIDTRK` can be stored in
+the preceding month's `MNSP_DAYOFFER` and `MNSP_BIDOFFERPERIOD` partitions. For example:
+
+```julia
+using AustralianElectricityMarketsData: populate
+
+for table in (:MNSP_DAYOFFER, :MNSP_BIDOFFERPERIOD, :DISPATCH_MNSPBIDTRK)
+    populate(db, table, Date(2025, 12, 1), Date(2026, 1, 1))
+end
+```
+
 ## Chunks
 
 The range is split into chunks, each solved as its own `Simulation` with its own system and

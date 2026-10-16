@@ -338,6 +338,7 @@ function create_pscb_nemweb_data(hive_root::String)
                     ENABLEMENTMAX = fill(bt == "ENERGY" ? missing : 100.0, nd),
                     ROCUP = fill(bt in PSCB_REGULATION_TYPES ? 1.0 : missing, nd),
                     ROCDOWN = fill(bt in PSCB_REGULATION_TYPES ? 1.0 : missing, nd),
+                    FIXEDLOAD = fill(0.0, nd),
                 )
                 for b in 1:10
                     block[!, "BANDAVAIL$b"] = fill(10.0, nd)
@@ -362,6 +363,7 @@ function create_pscb_nemweb_data(hive_root::String)
                     DIRECTION = fill(direction, nd),
                     MINIMUMLOAD = fill(0.0, nd),
                     DAILYENERGYCONSTRAINT = fill(1000.0, nd),
+                    T1 = Vector{Union{Missing, Float64}}(missing, nd),
                     VERSIONNO = fill(1, nd),
                     archive_month = fill(am, nd),
                 )
