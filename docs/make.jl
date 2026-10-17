@@ -61,6 +61,7 @@ makedocs(;
             "Market clearing" => "examples/market_bids.md",
             "Market clearing with interchanges" => "examples/interchanges.md",
             "Market clearing with batteries" => "examples/clearing-with-batteries.md",
+            "Replay a range of dispatch intervals" => "replay.md",
         ],
         "Roadmap" => "roadmap.md",
         "Reference" => "95-reference.md",

@@ -14,9 +14,9 @@
         ic = get_component(AreaInterchange, sys, "IC2")
         @test get_name(get_from_area(ic)) == "NSW1"
         # Interval 11:55 carries the first offer (MAXAVAIL 594), 12:00 the rebid (400).
-        avail = get_time_series_values(Deterministic, ic, "mnsp_forward_max_avail"; start_time = first(range))
+        avail = get_time_series_values(SingleTimeSeries, ic, "mnsp_forward_max_avail"; start_time = first(range))
         @test avail == [594.0, 400.0]
-        curves = get_time_series_values(Deterministic, ic, "mnsp_forward_offer"; start_time = first(range))
+        curves = get_time_series_values(SingleTimeSeries, ic, "mnsp_forward_offer"; start_time = first(range))
         @test get_x_coords(curves[1]) == [0.0, 100.0, 200.0, 300.0, 400.0, 494.0]
         @test get_y_coords(curves[2]) == [80.0, 61.0, 75.0, 89.0]
         info = get_ext(ic)
@@ -25,12 +25,80 @@
         @test info["mnsp_reverse"]["from_region_tlf"] == 0.9907
     end
 
-    @testset "an interconnector without a complete offer pair keeps its free-flow model" begin
+    @testset "an MNSP without offers fails instead of changing its formulation" begin
         sys2 = nem_system(db, RegionalNetworkConfiguration())
         later = DateTime(2030, 1, 1):Minute(5):DateTime(2030, 1, 1, 0, 10)
-        @test_logs (:warn, r"free-flow") match_mode = :any @test isempty(set_mnsp_offers!(sys2, db, later))
+        @test_throws ArgumentError set_mnsp_offers!(sys2, db, later)
         @test !has_time_series(get_component(AreaInterchange, sys2, "IC2"))
     end
 
     @test_throws ArgumentError set_mnsp_offers!(sys, db, DateTime(2025, 1, 1):Minute(30):DateTime(2025, 1, 1, 2))
+end
+
+# Each damaged cache is private to its test; the source fixture stays intact.
+function _mnsp_damaged_cache(table, query)
+    hive = joinpath(mktempdir(), "hive")
+    cp(AEM_TEST_HIVE_DIR, hive)
+    path = joinpath(hive, string(table))
+    conn = DuckDB.DB()
+    DuckDB.execute(conn, "CREATE TABLE input AS SELECT * FROM read_parquet('$path/**/*.parquet', hive_partitioning = true)")
+    DuckDB.execute(conn, query)
+    rm(path; recursive = true)
+    DuckDB.execute(conn, "COPY input TO '$path' (FORMAT PARQUET, PARTITION_BY (archive_month))")
+    DuckDB.close(conn)
+    return aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
+end
+
+@testset "MNSP input completeness" begin
+    range = DateTime(2025, 1, 1, 11, 55):Minute(5):DateTime(2025, 1, 1, 12, 5)
+    good_db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+
+    for table in (:MNSP_DAYOFFER, :MNSP_BIDOFFERPERIOD, :DISPATCH_MNSPBIDTRK, :MNSP_INTERCONNECTOR)
+        @testset "missing $table" begin
+            hive = joinpath(mktempdir(), "hive")
+            cp(AEM_TEST_HIVE_DIR, hive)
+            rm(joinpath(hive, string(table)); recursive = true)
+            db = aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
+            sys = nem_system(good_db, RegionalNetworkConfiguration())
+            @test_throws ArgumentError set_mnsp_offers!(sys, db, range)
+            @test !has_time_series(get_component(AreaInterchange, sys, "IC2"))
+        end
+    end
+
+    cases = [
+        (:DISPATCH_MNSPBIDTRK, "DELETE FROM input WHERE LINKID = 'BLNKVIC'"),
+        (:DISPATCH_MNSPBIDTRK, "DELETE FROM input WHERE SETTLEMENTDATE = TIMESTAMP '2025-01-01 12:00'"),
+        (:DISPATCH_MNSPBIDTRK, "DELETE FROM input"),
+        (:MNSP_DAYOFFER, "UPDATE input SET PRICEBAND1 = NULL"),
+        (:MNSP_BIDOFFERPERIOD, "UPDATE input SET MAXAVAIL = NULL"),
+        (:MNSP_BIDOFFERPERIOD, "UPDATE input SET BANDAVAIL1 = NULL"),
+        (:MNSP_BIDOFFERPERIOD, "UPDATE input SET BANDAVAIL1 = -1"),
+        (:MNSP_INTERCONNECTOR, "UPDATE input SET FROM_REGION_TLF = NULL"),
+        (:MNSP_INTERCONNECTOR, "UPDATE input SET TO_REGION_TLF = 0"),
+        (:MNSP_INTERCONNECTOR, "DELETE FROM input WHERE LINKID = 'BLNKVIC'"),
+    ]
+    for (table, query) in cases
+        @testset "$query" begin
+            db = _mnsp_damaged_cache(table, query)
+            sys = nem_system(good_db, RegionalNetworkConfiguration())
+            @test_throws ArgumentError set_mnsp_offers!(sys, db, range)
+            @test !has_time_series(get_component(AreaInterchange, sys, "IC2"))
+        end
+    end
+
+    @testset "a failed refresh preserves existing offers" begin
+        sys = nem_system(good_db, RegionalNetworkConfiguration())
+        set_mnsp_offers!(sys, good_db, range)
+        db = _mnsp_damaged_cache(:DISPATCH_MNSPBIDTRK, "DELETE FROM input WHERE LINKID = 'BLNKVIC'")
+        @test_throws ArgumentError set_mnsp_offers!(sys, db, range)
+        ic = get_component(AreaInterchange, sys, "IC2")
+        @test get_time_series_values(SingleTimeSeries, ic, "mnsp_forward_max_avail") == [594.0, 400.0]
+    end
+
+    @testset "regulated standing data needs no MNSP bids" begin
+        db = _mnsp_damaged_cache(:INTERCONNECTORCONSTRAINT, "UPDATE input SET ICTYPE = 'REGULATED'")
+        sys = nem_system(db, RegionalNetworkConfiguration())
+        @test isempty(set_mnsp_offers!(sys, db, range))
+        @test !has_time_series(get_component(AreaInterchange, sys, "IC2"))
+    end
 end

@@ -174,6 +174,39 @@ let
         @test attached.breakpoints == [-500.0, -250.0, 0.0, 250.0, 500.0] ./ base_power
     end
 
+    @testset "set_loss_demand_coefficients! evaluates each loss model's demand term per interval" begin
+        sys = nem_system(db, RegionalNetworkConfiguration())
+        @test_logs (:warn, r"no resolvable loss model") match_mode = :any attach_interconnector_losses!(sys, db, as_of)
+        # No demand series yet: nothing to evaluate the loss factor at.
+        @test_throws ArgumentError set_loss_demand_coefficients!(sys)
+        date_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 1, 0)
+        set_demand!(sys, db, date_range; resolution = Minute(5))
+        set_loss_demand_coefficients!(sys)
+        base_power = get_base_power(sys)
+        ic1 = get_component(AreaInterchange, sys, "IC1")
+        model = only(get_supplemental_attributes(InterconnectorLossModel, ic1))
+        loss_demand_mw(region) = with_units_base(sys, "NATURAL_UNITS") do
+            get_time_series_values(SingleTimeSeries, get_component(PowerLoad, sys, "$region Load"), "loss_demand")
+        end
+        # Per-unit coefficient times per-unit demand equals the MW coefficient times MW demand.
+        expected = sum(c / base_power .* loss_demand_mw(r) for (r, c) in model.demand_coefficients)
+        coefficient = get_time_series_values(SingleTimeSeries, ic1, "loss_demand_coefficient")
+        @test coefficient ≈ expected
+        @test any(!iszero, coefficient)
+        @test get_time_series_timestamps(SingleTimeSeries, ic1, "loss_demand_coefficient") ==
+            get_time_series_timestamps(SingleTimeSeries, get_component(PowerLoad, sys, "VIC1 Load"), "loss_demand")
+        @test !has_time_series(get_component(AreaInterchange, sys, "IC6"), SingleTimeSeries, "loss_demand_coefficient")
+
+        # An unavailable load drops out of its region's demand, and re-running replaces the series.
+        set_available!(get_component(PowerLoad, sys, "VIC1 Load"), false)
+        set_loss_demand_coefficients!(sys)
+        without_vic = sum(
+            (c / base_power .* loss_demand_mw(r) for (r, c) in model.demand_coefficients if r != "VIC1");
+            init = zeros(length(coefficient)),
+        )
+        @test get_time_series_values(SingleTimeSeries, ic1, "loss_demand_coefficient") ≈ without_vic
+    end
+
     @testset "InterconnectorLossModel JSON round-trip" begin
         sys = nem_system(db, RegionalNetworkConfiguration())
         base_power = get_base_power(sys)

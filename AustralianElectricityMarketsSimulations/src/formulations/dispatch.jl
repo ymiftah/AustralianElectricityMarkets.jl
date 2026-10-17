@@ -86,19 +86,24 @@ end
 """
     _has_nem_dispatch_limits(device, formulation)
 
-Whether `device` carries every time series `formulation` reads as a parameter.
+Whether `device` carries every time series `formulation` reads as a parameter, except the
+dispatch-ceiling series of a battery, whose absence the replay argument stage reports.
 
 # Arguments
 - `device`: the `PowerSystems.Component` to inspect.
 - `formulation`: an [`AbstractNEMDispatch`](@ref) subtype.
 
 # Returns
-`true` when every registered series is attached, `false` otherwise.
+`true` when every registered series other than the dispatch ceilings is attached, `false` otherwise.
 """
 function _has_nem_dispatch_limits(device, formulation::Type{<:AbstractNEMDispatch})
     names = PSI.get_default_time_series_names(typeof(device), formulation)
+    required = (
+        name for (param, name) in names
+            if param !== PSI.ActivePowerOutTimeSeriesParameter && param !== PSI.ActivePowerInTimeSeriesParameter
+    )
     return all(
-        PSY.has_time_series(device, PSY.SingleTimeSeries, name) for name in values(names)
+        PSY.has_time_series(device, PSY.SingleTimeSeries, name) for name in required
     )
 end
 
@@ -453,6 +458,8 @@ function _check_dispatch_envelope(container, devices, model)
     PSI.get_formulation(model) === NEMReplayDispatch || return
     haskey(PSI.get_time_series_names(model), InitialPowerTimeSeriesParameter) || return
     isempty(devices) && return
+    # Recurrent parameters have no value before a solve; `check_dispatch_envelope` runs before build instead.
+    PSI.built_for_recurrent_solves(container) && return
     T = typeof(first(devices))
     time_steps = PSI.get_time_steps(container)
     minutes = PSI._get_minutes_per_period(container)
@@ -463,25 +470,12 @@ function _check_dispatch_envelope(container, devices, model)
     for d in devices
         name = PSY.get_name(d)
         all(name in c for c in (initial_covered, down_covered, ceiling_covered)) || continue
-        for t in time_steps
-            floor_mw = JuMP.value(initial(name, t)) - JuMP.value(down_rate(name, t)) * minutes
-            ceiling_mw = JuMP.value(ceiling(name, t))
-            if floor_mw > ceiling_mw + _RAMP_FLOOR_TOLERANCE
-                push!(
-                    problems,
-                    "$name at interval $t: ramp-down floor $floor_mw exceeds availability $ceiling_mw",
-                )
-                break
-            end
-        end
+        values_of(accessor) = [JuMP.value(accessor(name, t)) for t in time_steps]
+        hit = _first_envelope_violation(values_of(initial), values_of(down_rate), values_of(ceiling), minutes)
+        isnothing(hit) || push!(problems, _envelope_problem(name, hit...))
     end
-    isempty(problems) && return
-    throw(
-        ArgumentError(
-            "NEMDispatch: inconsistent dispatch envelope for $(length(problems)) device(s):\n  " *
-                join(problems, "\n  "),
-        ),
-    )
+    _throw_envelope_problems(problems)
+    return
 end
 
 

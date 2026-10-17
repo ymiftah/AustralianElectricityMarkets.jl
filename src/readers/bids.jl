@@ -44,6 +44,65 @@ end
 
 
 """
+    read_fixed_loads(db, date_range) -> DataFrame
+
+Reads participant-entered energy fixed loadings from `BIDPEROFFER_D`: one row per
+`(INTERVAL_DATETIME, DUID, DIRECTION)` whose latest offer version carries `FIXEDLOAD > 0`
+(zero means no fixed load). Units with a fast-start inflexibility profile (`BIDDAYOFFER_D.T1 > 0`
+on the trading day) are excluded, because the profile overrides a fixed loading in modes 1 to 3
+and the profile is not replayed.
+
+# Arguments
+- `db`: an `AEMDB` connection.
+- `date_range`: the dispatch interval labels; rows with `first <= INTERVAL_DATETIME < last` are kept.
+
+# Returns
+A `DataFrame` with `INTERVAL_DATETIME`, `DUID`, `DIRECTION` (`GEN` or `LOAD`) and `FIXEDLOAD` (MW,
+positive).
+"""
+function read_fixed_loads(db, date_range)
+    start_datetime = first(date_range)
+    end_datetime = last(date_range)
+    sd = Date(start_datetime) - Day(1)
+    ed = Date(end_datetime) + Day(1)
+    offers = read_hive(db, :BIDPEROFFER_D)
+    day_offers = read_hive(db, :BIDDAYOFFER_D)
+    fixed_loads = _query(
+        db,
+        """
+        WITH latest AS (
+            SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, FIXEDLOAD
+            FROM $offers
+            WHERE BIDTYPE = 'ENERGY' AND SETTLEMENTDATE BETWEEN ? AND ?
+            QUALIFY row_number() OVER (
+                PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION ORDER BY VERSIONNO DESC
+            ) = 1
+        ),
+        fast_start AS (
+            SELECT DISTINCT SETTLEMENTDATE, DUID
+            FROM (
+                SELECT SETTLEMENTDATE, DUID, T1
+                FROM $day_offers
+                WHERE BIDTYPE = 'ENERGY' AND SETTLEMENTDATE BETWEEN ? AND ?
+                QUALIFY row_number() OVER (
+                    PARTITION BY SETTLEMENTDATE, DUID, DIRECTION ORDER BY VERSIONNO DESC
+                ) = 1
+            )
+            WHERE T1 > 0
+        )
+        SELECT l.INTERVAL_DATETIME, l.DUID, l.DIRECTION, l.FIXEDLOAD
+        FROM latest l
+        ANTI JOIN fast_start f ON f.SETTLEMENTDATE = l.SETTLEMENTDATE AND f.DUID = l.DUID
+        WHERE l.FIXEDLOAD > 0 AND l.INTERVAL_DATETIME >= ? AND l.INTERVAL_DATETIME < ?
+        ORDER BY l.INTERVAL_DATETIME, l.DUID, l.DIRECTION
+        """,
+        [sd, ed, sd, ed, start_datetime, end_datetime],
+    )
+    return fixed_loads
+end
+
+
+"""
     read_loss_factors(db; as_of = nothing, through = nothing) -> DataFrame
 
 Reads each unit's connection-point loss factors from `DUDETAILSUMMARY`: the row with
@@ -149,13 +208,14 @@ end
 
 
 """
-    _extract_power_bids(row)
+    _extract_power_bids(row; keep_empty_bands = false)
 
 Builds a `PiecewiseStepData` offer curve from a row's `PRICEBANDARRAY`/`BANDAVAILARRAY`
 columns, reversing band order for `DIRECTION == "LOAD"` rows so the resulting curve stays
-concave.
+concave. Bands of zero availability are dropped unless `keep_empty_bands`, in which case every
+band is a segment and segment `k` is always the same price band.
 """
-function _extract_power_bids(row)
+function _extract_power_bids(row; keep_empty_bands::Bool = false)
     price_band_array = copy(row.PRICEBANDARRAY)
     bandavail_array = copy(row.BANDAVAILARRAY)
     if row.DIRECTION == "LOAD"
@@ -163,8 +223,9 @@ function _extract_power_bids(row)
         reverse!(price_band_array)
         reverse!(bandavail_array)
     end
-    a = price_band_array[bandavail_array .> 0]
-    b = [zero(eltype(price_band_array)); bandavail_array[bandavail_array .> 0] |> cumsum]
+    kept = keep_empty_bands ? trues(length(bandavail_array)) : bandavail_array .> 0
+    a = price_band_array[kept]
+    b = [zero(eltype(price_band_array)); bandavail_array[kept] |> cumsum]
     return PiecewiseStepData(b, a)
 end
 
@@ -172,6 +233,7 @@ end
 function _massage_bids(
         db, energy_bids_table, pricebids_table, start_date, end_date;
         resolution = nothing, bid_types::AbstractVector{BidType} = [BidType.ENERGY], keep_bid_type::Bool = false,
+        keep_empty_bands::Bool = false,
     )
     sd = Date(start_date) - Day(1)
     ed = Date(end_date) + Day(1)
@@ -227,7 +289,15 @@ function _massage_bids(
         end
     end
 
-    all_bids = innerjoin(pricebids, energy_bids, on = [:SETTLEMENTDATE, :DUID, :DIRECTION, :BIDTYPE])
+    join_keys = [:SETTLEMENTDATE, :DUID, :DIRECTION, :BIDTYPE]
+    required = subset(energy_bids, :INTERVAL_DATETIME => ByRow(t -> start_date <= t < end_date))
+    missing_prices = antijoin(required, pricebids; on = join_keys)
+    isempty(missing_prices) || throw(
+        ArgumentError(
+            "missing price bids for period offers: $(join(sort!(unique(missing_prices.DUID)), ", ")); populate BIDDAYOFFER_D for the referenced trading days",
+        )
+    )
+    all_bids = innerjoin(pricebids, energy_bids, on = join_keys)
     prep_for_psy = @chain all_bids begin
         subset!(:INTERVAL_DATETIME => ByRow(x -> start_date <= x < end_date))
         transform(
@@ -237,7 +307,7 @@ function _massage_bids(
         select(
             :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME, :PRICEBANDARRAY, :BANDAVAILARRAY,
             :MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT, (keep_bid_type ? [:BIDTYPE] : [])...,
-            AsTable(:) => ByRow(_extract_power_bids) => :piecewise_step_data
+            AsTable(:) => ByRow(r -> _extract_power_bids(r; keep_empty_bands)) => :piecewise_step_data
         )
     end
     return prep_for_psy

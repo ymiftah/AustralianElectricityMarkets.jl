@@ -77,3 +77,41 @@
         @test from_to(constrained) == 500.0
     end
 end
+
+@testset "read_published_interval over a range matches the single intervals" begin
+    using DataFrames
+    # A copy of the shared mock hive with the interconnector results the interval readers need.
+    hive = joinpath(mktempdir(), "hive")
+    cp(AEM_TEST_HIVE_DIR, hive)
+    ids = ["IC$i" for i in 1:3]
+    base = DateTime(2025, 1, 1, 0, 0)
+    df = DataFrame(
+        SETTLEMENTDATE = repeat([base + Minute(5i) for i in 0:6]; inner = length(ids)),
+        INTERCONNECTORID = repeat(ids; outer = 7),
+        MWFLOW = collect(1.0:21.0),
+        MWLOSSES = collect(0.1:0.1:2.1),
+        archive_month = fill("2025-01", 21),
+    )
+    conn = DuckDB.connect(DuckDB.DB())
+    DuckDB.execute(conn, "SET preserve_identifier_case=true")
+    DuckDB.register_data_frame(conn, df, "tmp_table")
+    table_dir = joinpath(hive, "DISPATCHINTERCONNECTORRES")
+    mkpath(table_dir)
+    DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+    DuckDB.unregister_table(conn, "tmp_table")
+
+    db = aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
+    steps = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 30)
+    range = read_published_interval(db, steps)
+    for t in steps
+        single = read_published_interval(db, t)
+        for (table, key) in ((:dispatch, :DUID), (:interconnectors, :INTERCONNECTORID), (:prices, :REGIONID))
+            at_t = select(filter(:SETTLEMENTDATE => ==(t), getproperty(range, table)), Not(:SETTLEMENTDATE))
+            @test sort(at_t, key) == sort(getproperty(single, table), key)
+        end
+        fcas_at_t = filter(:SETTLEMENTDATE => ==(t), range.fcas_prices)
+        @test sort(fcas_at_t, [:REGIONID, :BIDTYPE]) == sort(single.fcas_prices, [:REGIONID, :BIDTYPE])
+    end
+    @test all(in(Set(steps)), range.prices.SETTLEMENTDATE)
+    @test all(in(Set(steps)), range.dispatch.SETTLEMENTDATE)
+end

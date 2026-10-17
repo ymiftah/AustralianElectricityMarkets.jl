@@ -1,5 +1,5 @@
 @testset "Single-interval replication pipeline" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     t = DateTime(2025, 1, 1, 0, 5, 0)
 
     @testset "published interval" begin
@@ -23,10 +23,6 @@
         skipped = result.skipped_constraints
         @test names(skipped) == ["constraint", "stage", "reason", "n_missing", "missing_keys"]
         @test all(in((:build, :template)), skipped.stage)
-        phantom = only(filter(:constraint => contains("N_PHANTOM_TEST"), skipped))
-        @test phantom.stage == :build
-        @test phantom.reason == :unknown_duid
-        @test phantom.missing_keys == ["PHANTOM1"]
         comparison = result.comparison
         published = read_published_interval(db, t)
 
@@ -73,7 +69,7 @@
         t_mnsp = t
         sys = replication_system(db, t_mnsp)
         ic2 = get_component(AreaInterchange, sys, "IC2")
-        @test has_time_series(ic2, Deterministic, "mnsp_forward_max_avail")
+        @test has_time_series(ic2, SingleTimeSeries, "mnsp_forward_max_avail")
         result = replicate_interval(sys, db, t_mnsp)
         @test PSI.has_container_key(
             PSI.get_optimization_container(result.model), MNSPLinkFlowVariable, PSY.AreaInterchange,

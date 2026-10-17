@@ -350,8 +350,8 @@ end
     @test vname("N_PARTIAL_COVERAGE") in added
     partial_gc = get_component(GenericConstraint, sys, vname("N_PARTIAL_COVERAGE"))
     base_power = get_base_power(sys)
-    partial_rhs = first(values(get_data(get_time_series(Deterministic, partial_gc, "rhs"))))
-    partial_invoked = first(values(get_data(get_time_series(Deterministic, partial_gc, "invoked"))))
+    partial_rhs = get_time_series_values(SingleTimeSeries, partial_gc, "rhs")
+    partial_invoked = get_time_series_values(SingleTimeSeries, partial_gc, "invoked")
     @test length(partial_rhs) == 12
     @test length(partial_rhs) == length(date_range) - 1  # grid spans date_range, not invocations
     @test all(==(150.0 / base_power), partial_rhs)  # constant RHS - forward-fill is a no-op here
@@ -384,12 +384,12 @@ end
     nsw1_raise6sec = get_component(GenericConstraint, sys, vname("F_NSW1_RAISE6SEC"))
     @test any(t -> t isa InterconnectorTerm && get_interconnector(t) == "IC1", get_terms(nsw1_raise6sec))
 
-    rhs_ts = get_time_series(Deterministic, gc, "rhs")
+    rhs_ts = get_time_series(SingleTimeSeries, gc, "rhs")
     @test !isnothing(rhs_ts)
-    rhs_values = first(values(get_data(rhs_ts)))
+    rhs_values = get_time_series_values(SingleTimeSeries, gc, "rhs")
     @test issorted(rhs_values)  # RHS = 50.0 + 0.1*i, confirmed time-varying in Task 8
 
-    @test !has_time_series(gc, Deterministic, "lhs")  # include_solution defaults false
+    @test !has_time_series(gc, SingleTimeSeries, "lhs")  # include_solution defaults false
 
     added2, _ = add_nem_constraints!(nem_system(db, RegionalNetworkConfiguration()), db, date_range; include_solution = true)
     @test vname("F_VIC1_RAISE6SEC") in added2
@@ -527,7 +527,7 @@ end
         gap_sys = nem_system(gap_db, RegionalNetworkConfiguration())
         add_nem_constraints!(gap_sys, gap_db, date_range)
         gap_gc = get_component(GenericConstraint, gap_sys, vname("N_BAYSW_THERMAL"))
-        rhs_len = length(first(values(get_data(get_time_series(Deterministic, gap_gc, "rhs")))))
+        rhs_len = length(get_time_series_values(SingleTimeSeries, gap_gc, "rhs"))
         @test rhs_len == length(date_range) - 1
         @test rhs_len != length(unique(invoked_gap.SETTLEMENTDATE))
     end
@@ -566,18 +566,18 @@ end
         sys_default = nem_system(db, RegionalNetworkConfiguration())
         add_nem_constraints!(sys_default, db, date_range)
         gc_default = get_component(GenericConstraint, sys_default, vname("N_BAYSW_THERMAL"))
-        rhs_ts_default = get_time_series(Deterministic, gc_default, "rhs")
+        rhs_ts_default = get_time_series(SingleTimeSeries, gc_default, "rhs")
         @test get_resolution(rhs_ts_default) == Minute(5)
 
         # Explicit resolution is honoured as given, with no inference or validation.
         sys_explicit = nem_system(db, RegionalNetworkConfiguration())
         add_nem_constraints!(sys_explicit, db, date_range; resolution = Minute(30))
         gc_explicit = get_component(GenericConstraint, sys_explicit, vname("N_BAYSW_THERMAL"))
-        rhs_ts_explicit = get_time_series(Deterministic, gc_explicit, "rhs")
+        rhs_ts_explicit = get_time_series(SingleTimeSeries, gc_explicit, "rhs")
         @test get_resolution(rhs_ts_explicit) == Minute(30)
 
         # A single-interval grid can't be exercised end-to-end through add_nem_constraints!:
-        # PSY's Deterministic itself requires forecast arrays of length >= 2 (InfrastructureSystems
+        # The series are inferred from at least two timestamps (InfrastructureSystems
         # _check_forecast_data), independent of resolution - so a 1-point full_grid always errors
         # before resolution matters. _infer_resolution is unit-tested directly instead, contrasted
         # with the genuine multi-interval inference above (which is not just matching the fallback
@@ -687,7 +687,7 @@ end
             @test term isa InterconnectorTerm
             @test get_interconnector(term) == interconnector
             @test get_factor(term) == factor
-            rhs_z = first(values(get_data(get_time_series(Deterministic, gc, "rhs"))))
+            rhs_z = get_time_series_values(SingleTimeSeries, gc, "rhs")
             @test all(==(0.0), rhs_z)
         end
 
@@ -699,6 +699,81 @@ end
         published_term = only(get_terms(published))
         @test get_interconnector(published_term) == "IC1"
         @test get_factor(published_term) == 2.0
+    end
+
+    @testset "Energy Inflexible Offer constraints are built from FIXEDLOAD" begin
+        # BW01 (GEN) is fixed at 30 MW for 00:10 to 00:20, BW02 at 40 MW but with a fast-start
+        # profile (T1 > 0), BW03 has a zero fixed load. DISPATCHCONSTRAINT carries `$` rows
+        # without a version for BW01, BW02 and an unknown unit; only BW01's is modelled.
+        fixed_hive = mktempdir()
+        create_mock_data(fixed_hive)
+        fixed_conn = DuckDB.connect(DuckDB.DB())
+        DuckDB.execute(fixed_conn, "SET preserve_identifier_case=true")
+        rewrite(table, select_sql) = begin
+            dir = joinpath(fixed_hive, table)
+            tmp = dir * "_new"
+            DuckDB.execute(
+                fixed_conn,
+                "COPY (SELECT $select_sql FROM read_parquet('$(dir)/**/*.parquet', hive_partitioning=true)) " *
+                    "TO '$tmp' (FORMAT 'PARQUET', PARTITION_BY (archive_month))",
+            )
+            rm(dir; recursive = true)
+            mv(tmp, dir)
+            return nothing
+        end
+        rewrite(
+            "BIDPEROFFER_D",
+            "* REPLACE (CASE WHEN BIDTYPE = 'ENERGY' AND DIRECTION = 'GEN' AND INTERVAL_DATETIME BETWEEN " *
+                "TIMESTAMP '2025-01-01 00:10:00' AND TIMESTAMP '2025-01-01 00:20:00' THEN " *
+                "CASE DUID WHEN 'BW01' THEN 30.0 WHEN 'BW02' THEN 40.0 ELSE 0.0 END ELSE 0.0 END AS FIXEDLOAD)",
+        )
+        rewrite("BIDDAYOFFER_D", "* REPLACE (CASE WHEN DUID = 'BW02' THEN 6.0 ELSE NULL END AS T1)")
+        dc_dir = joinpath(fixed_hive, "DISPATCHCONSTRAINT")
+        tmp = dc_dir * "_new"
+        DuckDB.execute(
+            fixed_conn,
+            "COPY (SELECT * FROM read_parquet('$(dc_dir)/**/*.parquet', hive_partitioning=true) UNION ALL BY NAME " *
+                "SELECT t AS SETTLEMENTDATE, 1 AS RUNNO, 0 AS INTERVENTION, id AS CONSTRAINTID, 30.0 AS RHS, " *
+                "30.0 AS LHS, 99.0 AS MARGINALVALUE, t AS LASTCHANGED, '2025-01' AS archive_month " *
+                "FROM (SELECT unnest(generate_series(TIMESTAMP '2025-01-01 00:10:00', TIMESTAMP '2025-01-01 00:20:00', " *
+                "INTERVAL 5 MINUTE)) AS t), (VALUES ('\$BW01'), ('\$BW02'), ('\$NOSUCH1')) AS ids(id)) " *
+                "TO '$tmp' (FORMAT 'PARQUET', PARTITION_BY (archive_month))",
+        )
+        rm(dc_dir; recursive = true)
+        mv(tmp, dc_dir)
+
+        fixed_db = aem_connect(HiveConfiguration(hive_location = fixed_hive, filesystem = "file"))
+        fixed_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 1, 0)
+
+        loads = read_fixed_loads(fixed_db, fixed_range)
+        @test Set(loads.DUID) == Set(["BW01"])  # BW02 is fast-start, the rest are zero
+        @test sort(loads.INTERVAL_DATETIME) == DateTime(2025, 1, 1, 0, 10):Minute(5):DateTime(2025, 1, 1, 0, 20)
+        @test all(==(30.0), loads.FIXEDLOAD)
+
+        fixed_sys = nem_system(fixed_db, RegionalNetworkConfiguration())
+        added_f, skipped_f = nothing, nothing
+        @test_logs (:warn, r"skipped") match_mode = :any begin
+            added_f, skipped_f = add_nem_constraints!(fixed_sys, fixed_db, fixed_range; include_solution = true)
+        end
+        @test "\$BW01" in added_f
+        @test "\$BW02" ∉ added_f
+        skipped_names = get_skipped_constraints(fixed_sys).constraint
+        @test !any(startswith("\$BW01"), skipped_names)
+        @test any(startswith("\$BW02"), skipped_names)  # fast-start: still reported
+        @test any(startswith("\$NOSUCH1"), skipped_names)
+
+        gc = get_component(GenericConstraint, fixed_sys, "\$BW01")
+        @test get_sense(gc) == ConstraintSense.EQ
+        @test get_constraint_weight(gc) == 380.0
+        term = only(get_terms(gc))
+        @test term isa UnitTerm && get_duid(term) == "BW01" && get_bid_type(term) == BidType.ENERGY
+        base = get_base_power(fixed_sys)
+        series(name) = get_time_series_values(SingleTimeSeries, gc, name)
+        invoked_mask = series("invoked")
+        @test findall(==(1.0), invoked_mask) == 3:5  # intervals 00:10, 00:15, 00:20
+        @test series("rhs")[3:5] == fill(30.0 / base, 3)
+        @test series("marginal_value")[3:5] == fill(99.0, 3)
+        @test has_service(get_component(Device, fixed_sys, "BW01"), gc)
     end
 
     @testset "_versions_without_definition handles missing effective date" begin

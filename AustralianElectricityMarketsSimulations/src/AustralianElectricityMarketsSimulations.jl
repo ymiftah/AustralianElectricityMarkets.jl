@@ -8,9 +8,11 @@ using DuckDB
 using HiGHS
 using HydroPowerSimulations
 using JuMP
+import Logging
 using PowerSimulations
 using PowerSystems
 using Statistics
+using PrecompileTools: @setup_workload, @compile_workload
 
 import PowerSimulations as PSI
 import PowerSystems as PSY
@@ -35,6 +37,7 @@ include("formulations/constraint_formulations.jl")
 include("formulations/generic_constraints.jl")
 include("checks/nem_constraints.jl")
 include("formulations/dispatch.jl")
+include("checks/dispatch_envelope.jl")
 include("formulations/storage.jl")
 include("formulations/tie_break.jl")
 include("formulations/interconnector_losses.jl")
@@ -43,8 +46,13 @@ include("checks/interconnector_losses.jl")
 include("psi_compat.jl")
 include("formulations/fcas.jl")
 include("checks/fcas.jl")
+include("preprocessing/fcas.jl")
+include("preprocessing/tie_break.jl")
+include("checks/tie_break.jl")
 include("preprocessing/inputs.jl")
 include("execution/replication.jl")
+include("execution/simulation.jl")
+include("precompile.jl")
 
 using AustralianElectricityMarkets.Readers: read_uigf_as_dict
 @doc (@doc AustralianElectricityMarkets.IntervalInputs) IntervalInputs
@@ -53,32 +61,38 @@ using AustralianElectricityMarkets.Readers: read_uigf_as_dict
 
 export DISPATCH_INTERVAL_HOURS, DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
 export IntervalInputs, read_interval_inputs, read_published_interval
-export replication_template, replication_system, replicate_interval
+export replication_template, replication_system, replicate_interval, replicate_range, REPLICATION_PARTS
 export energy_bounds
 export scale_trapezium
 export AbstractNEMConstraintFormulation, NEMConstraintLHS, NEMConstraintLimit,
     NEMConstraintRHSParameter, LinearFactorLimit, FCASMarket
-export GenericConstraintSlackUp, GenericConstraintSlackDown, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR
+export GenericConstraintSlackUp, GenericConstraintSlackDown, GenericConstraintSlackCostParameter, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR
 export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASJointCapacityLHS, FCASJointCapacityConstraint, FCASBDURampingConstraint,
     FCASJointRampingConstraint, FCASJointCapacitySlack, FCASJointRampingSlack,
     FCASMaxAvailConstraint, FCASMaxAvailSlack, FCASBDURampingSlack,
+    FCASOfferBandVariable, FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter,
+    FCASLowerSlopeParameter, FCASRampingLimitParameter, FCASBandPriceParameter,
+    FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, set_fcas_effective_offers!,
     FCAS_MAXAVAIL_CVP_FACTOR, FCAS_BDU_RAMPING_CVP_FACTOR, FCAS_CAPACITY_CVP_FACTOR,
     FCAS_RAMPING_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR,
     UNIT_RAMP_CVP_FACTOR, UnitRampUpSlack, UnitRampDownSlack,
     INTERCONNECTOR_FLOW_CVP_FACTOR, InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack
 export filter_buildable_generic_constraints, compute_fcas_prices
-export check_fcas_services
+export check_fcas_services, check_dispatch_envelope
 export AbstractNEMDispatch, NEMReplayDispatch, NEMLookaheadDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter
 export nem_dispatch_participants, set_nem_dispatch_models!
-export TIE_BREAK_CVP_FACTOR
+export TIE_BREAK_CVP_FACTOR, TieBreakScaleParameter, set_tie_break_scales!, check_tie_break_pairs
 export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegmentVariable,
     InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint,
-    InterconnectorLossSegmentFullVariable, InterconnectorLossSegmentOrderConstraint
+    InterconnectorLossSegmentFullVariable, InterconnectorLossSegmentOrderConstraint,
+    LossDemandCoefficientParameter
 export MNSPLinkFlowVariable, MNSPLinkFlowConstraint, MNSPLinkDirectionVariable,
-    MNSPLinkLossVariable
+    MNSPLinkLossVariable, MNSPLinkBandVariable, MNSPBandWidthParameter, MNSPForwardBandWidthParameter,
+    MNSPReverseBandWidthParameter, MNSPMaxAvailParameter, MNSPForwardMaxAvailParameter,
+    MNSPReverseMaxAvailParameter, MNSPBandPriceParameter
 export interconnector_loss_gaps, check_interconnector_loss_segments
 
 end

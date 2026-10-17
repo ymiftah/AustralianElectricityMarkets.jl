@@ -1,5 +1,14 @@
 """
-    replication_template(sys; skipped = nothing) -> PSI.ProblemTemplate
+The optional families of [`replication_template`](@ref) that its `parts` argument selects:
+`:batteries` (storage devices as [`AbstractNEMDispatch`](@ref)), `:fcas` (an [`FCASMarket`](@ref) per
+`FCASService`), `:losses` ([`NEMInterconnectorLoss`](@ref) on each interchange), `:tie_breaks`
+(energy tie-break links, carried by the model settings) and `:generic_constraints`.
+"""
+const REPLICATION_PARTS = (:batteries, :fcas, :losses, :tie_breaks, :generic_constraints)
+
+
+"""
+    replication_template(sys; skipped = nothing, parts = REPLICATION_PARTS, exclude_constraints = ()) -> PSI.ProblemTemplate
 
 Builds the `ProblemTemplate` that replicates NEMDE on `sys`: [`AbstractNEMDispatch`](@ref) devices
 (via [`set_nem_dispatch_models!`](@ref)), `PSI.StaticPowerLoad` demand, [`NEMInterconnectorLoss`](@ref)
@@ -7,18 +16,71 @@ on every `PSY.AreaInterchange`, an [`FCASMarket`](@ref) per registered `FCASServ
 [`LinearFactorLimit`](@ref) per `GenericConstraint` whose terms the template can model.
 Regions balance through `PSI.AreaBalancePowerModel` with slacks, and the balance duals are
 recorded as regional prices. Price-tied energy bands are dispatched pro rata
-([`add_tie_break_constraints!`](@ref)).
+([`add_tie_break_constraints!`](@ref)). `parts` selects the [`REPLICATION_PARTS`](@ref) to model;
+without `:losses` no `PSY.AreaInterchange` is modeled and the regions are uncoupled.
+Missing dispatch inputs, skipped constraints, dropped terms and defaulted penalty weights throw
+`ArgumentError` before model construction.
 
 # Arguments
 - `sys`: a `PSY.System` from `nem_system(db, ConstrainedNetworkConfiguration(); ...)`, after its
   demand, bids, FCAS scaling inputs and dispatch limits are set.
 - `skipped`: a vector that receives one `(constraint, reason, n_missing)` named tuple per generic
   constraint left out of the template, or `nothing`.
+- `parts`: the [`REPLICATION_PARTS`](@ref) to model; default all. `:tie_breaks` acts through the
+  model settings, not the template.
+- `exclude_constraints`: a `Dict` from the names of generic constraints to leave out to the `reason`
+  each is recorded with in `skipped`.
 
 # Returns
 A `PSI.ProblemTemplate`.
 """
-function replication_template(sys::PSY.System; skipped::Union{Nothing, AbstractVector} = nothing)
+function replication_template(
+        sys::PSY.System; skipped::Union{Nothing, AbstractVector} = nothing,
+        parts = REPLICATION_PARTS, exclude_constraints = Dict{String, Symbol}(),
+    )
+    if :generic_constraints in parts
+        missing_intervals = get(PSY.get_ext(sys), "missing_constraint_intervals", DateTime[])
+        isempty(missing_intervals) || throw(
+            ArgumentError(
+                "replication_template: missing dispatch constraint intervals: $(join(string.(missing_intervals), ", ")); populate DISPATCHCONSTRAINT for the requested range",
+            )
+        )
+        skipped_inputs = get_skipped_constraints(sys)
+        dropped_inputs = get_dropped_terms(sys)
+        defaulted_weights = get(PSY.get_ext(sys), "defaulted_constraint_weights", String[])
+        isempty(defaulted_weights) || throw(
+            ArgumentError(
+                "replication_template: incomplete constraint weights: $(join(defaulted_weights, ", "))",
+            )
+        )
+        isempty(skipped_inputs) || throw(
+            ArgumentError(
+                "replication_template: incomplete constraint inputs: $(join(skipped_inputs.constraint, ", "))",
+            )
+        )
+        isempty(dropped_inputs) || throw(
+            ArgumentError(
+                "replication_template: incomplete constraint terms: $(join(dropped_inputs.constraint .* ": " .* dropped_inputs.key, ", "))",
+            )
+        )
+    end
+    uncovered = String[]
+    for device in AustralianElectricityMarkets._nem_dispatch_devices(sys)
+        device isa PSY.Storage && !(:batteries in parts) && continue
+        _has_nem_dispatch_limits(device, NEMReplayDispatch) || push!(uncovered, PSY.get_name(device))
+    end
+    isempty(uncovered) || throw(
+        ArgumentError(
+            "replication_template: incomplete dispatch inputs for $(join(sort!(uncovered), ", ")); attach every dispatch-limit series before replay",
+        )
+    )
+    if :losses in parts
+        for device in PSY.get_components(PSY.get_available, PSY.AreaInterchange, sys)
+            _has_mnsp_offers(device)
+        end
+    end
+    unknown = setdiff(parts, REPLICATION_PARTS)
+    isempty(unknown) || throw(ArgumentError("replication_template: unknown parts $(Tuple(unknown)); choose from $REPLICATION_PARTS."))
     template = PSI.ProblemTemplate(
         PSI.NetworkModel(
             PSI.AreaBalancePowerModel;
@@ -26,20 +88,32 @@ function replication_template(sys::PSY.System; skipped::Union{Nothing, AbstractV
             duals = [PSI.CopperPlateBalanceConstraint],
         ),
     )
-    set_nem_dispatch_models!(template, sys)
-    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
-    PSI.set_device_model!(template, PSY.AreaInterchange, NEMInterconnectorLoss)
-    for svc in PSY.get_components(FCASService, sys)
-        name = PSY.get_name(svc)
-        PSI.set_service_model!(
-            template, name,
-            PSI.ServiceModel(FCASService, FCASMarket, name; duals = [FCASJointCapacityConstraint], use_slacks = true),
-        )
+    if :batteries in parts
+        set_nem_dispatch_models!(template, sys)
+    else
+        for T in nem_dispatch_participants(sys)
+            T <: PSY.Storage || PSI.set_device_model!(template, T, NEMReplayDispatch)
+        end
     end
-    for gc in filter_buildable_generic_constraints(
-            sys, template; allow_partial_coverage = true, skipped = skipped,
-        )
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    # Without `:losses` no interchange is modeled, so the regions are uncoupled.
+    :losses in parts && PSI.set_device_model!(template, PSY.AreaInterchange, NEMInterconnectorLoss)
+    if :fcas in parts
+        for svc in PSY.get_components(FCASService, sys)
+            name = PSY.get_name(svc)
+            PSI.set_service_model!(
+                template, name,
+                PSI.ServiceModel(FCASService, FCASMarket, name; duals = [FCASJointCapacityConstraint], use_slacks = true),
+            )
+        end
+    end
+    :generic_constraints in parts || return template
+    for gc in filter_buildable_generic_constraints(sys, template; skipped = skipped)
         name = PSY.get_name(gc)
+        if haskey(exclude_constraints, name)
+            isnothing(skipped) || push!(skipped, (constraint = name, reason = exclude_constraints[name], n_missing = 0))
+            continue
+        end
         PSI.set_service_model!(
             template, name,
             PSI.ServiceModel(
@@ -51,48 +125,119 @@ function replication_template(sys::PSY.System; skipped::Union{Nothing, AbstractV
 end
 
 
+# Period offers identify bidders independently of whether their price join succeeds.
+function _check_replay_energy_bid_coverage(sys, db, date_range; intervention::Integer = 0)
+    bids = read_energy_bids(db, date_range)
+    dispatch = read_dispatch_limits(db, date_range; intervention = intervention)
+    units = read_units(db; as_of = first(date_range))
+    demand = read_demand(db, date_range)
+    demand_stamps = Set(zip(demand.REGIONID, demand.SETTLEMENTDATE))
+    grid = collect(date_range)[1:(end - 1)]
+    missing_demand = [(region, t) for region in sort!(unique(units.REGIONID)), t in grid if !((region, t) in demand_stamps)]
+    isempty(missing_demand) || throw(
+        ArgumentError("missing regional demand inputs: $(join(string.(first(missing_demand, 5)), ", "))"),
+    )
+    non_scheduled = Set(r.DUID for r in eachrow(units) if isequal(r.SCHEDULE_TYPE, "NON-SCHEDULED"))
+    required_names = Set(bids.DUID)
+    for row in eachrow(dispatch)
+        available = !ismissing(row.AVAILABILITY) && row.AVAILABILITY > 0
+        metered = !ismissing(row.INITIALMW) && !iszero(row.INITIALMW)
+        (available || metered) && push!(required_names, row.DUID)
+    end
+    coverage = Dict{Tuple{String, String}, Set{DateTime}}()
+    for row in eachrow(bids)
+        push!(get!(coverage, (row.DUID, row.DIRECTION), Set{DateTime}()), row.INTERVAL_DATETIME)
+        row.MAXAVAIL isa Real && isfinite(row.MAXAVAIL) && row.MAXAVAIL >= 0 ||
+            throw(ArgumentError("incomplete energy bid MAXAVAIL for $(row.DUID) $(row.DIRECTION) at $(row.INTERVAL_DATETIME)"))
+    end
+    for T in (PSY.Generator, PSY.InterruptiblePowerLoad, PSY.EnergyReservoirStorage), device in PSY.get_components(T, sys)
+        name = PSY.get_name(device)
+        name in required_names && !(name in non_scheduled) || continue
+        device isa PSY.InterruptiblePowerLoad && AustralianElectricityMarkets._is_non_scheduled_load(device) && continue
+        directions = if device isa PSY.Storage
+            ("GEN", "LOAD")
+        elseif device isa PSY.InterruptiblePowerLoad
+            haskey(coverage, (name, "GEN")) ? ("GEN",) : ("LOAD",)
+        else
+            ("GEN",)
+        end
+        for direction in directions
+            stamps = get(coverage, (name, direction), Set{DateTime}())
+            missing_intervals = setdiff(grid, stamps)
+            isempty(missing_intervals) || throw(
+                ArgumentError(
+                    "incomplete energy bid inputs for $name $direction: missing $(length(missing_intervals)) intervals, including $(first(missing_intervals))",
+                )
+            )
+        end
+    end
+    return
+end
+
+
 const _REPLICATION_HORIZON = 2DISPATCH_INTERVAL
 
 
 """
     replication_system(db, settlement_date; intervention = 0) -> PSY.System
+    replication_system(db, date_range; intervention = 0) -> PSY.System
 
 Builds the `System` [`replicate_interval`](@ref) solves: the constrained system from
 `nem_system(db, ConstrainedNetworkConfiguration(); ...)` over the interval and the one after it,
-with demand, bids, FCAS scaling inputs and dispatch limits set and the time series transformed
-into one forecast window.
+with demand, interconnector loss demand coefficients, bids, FCAS scaling inputs, dispatch limits,
+battery dispatch ceilings, effective FCAS offers and tie-break scales set and the time series transformed
+into one-interval windows. The `date_range` method builds over exactly that 5-minute range, one window per timestamp.
 
 # Arguments
 - `db`: an `AEMDB` connection. Its cache must hold data at `settlement_date` and at
   `settlement_date + 5 minutes`, so the last cached interval cannot be replicated.
 - `settlement_date`: the `SETTLEMENTDATE` of the interval (`DateTime`).
+- `date_range`: a `StepRange{DateTime}` stepping by 5 minutes.
 - `intervention`: 0 for the pricing run, 1 for the physical run. Applies to the constraint,
   dispatch-limit, interconnector-limit and FCAS-scaling reads; demand, bids and MNSP offers carry no intervention run.
 - `interval_flow_limits`: bound each interconnector's flow by the published per-interval
   `IMPORTLIMIT`/`EXPORTLIMIT` ([`set_interconnector_flow_limits!`](@ref)). Those limits are
   computed after NEMDE's solve, so this pins flows to NEMDE's answer: a diagnostic, not for
   validating flows. Default `false` (static limits).
+- `time_series_in_memory`: keep the time series in memory (`true`) or in a file under
+  `time_series_directory`.
+- `time_series_directory`: the directory of the time-series file when `time_series_in_memory` is `false`;
+  `nothing` uses PowerSystems' default.
 
 # Returns
 A `PSY.System`.
 """
 function replication_system(
-        db, settlement_date::DateTime; intervention::Integer = 0, interval_flow_limits::Bool = false,
+        db, date_range::StepRange{DateTime}; intervention::Integer = 0, interval_flow_limits::Bool = false,
+        time_series_in_memory::Bool = true, time_series_directory::Union{Nothing, AbstractString} = nothing,
     )
+    step(date_range) == DISPATCH_INTERVAL ||
+        throw(ArgumentError("replication_system: the date range must step by $DISPATCH_INTERVAL, got $(step(date_range))."))
     resolution = DISPATCH_INTERVAL
-    date_range = settlement_date:resolution:(settlement_date + _REPLICATION_HORIZON)
+    storage = isnothing(time_series_directory) ? (;) : (; time_series_directory = time_series_directory)
     sys = nem_system(
         db, ConstrainedNetworkConfiguration(); date_range = date_range, intervention = intervention,
+        time_series_in_memory = time_series_in_memory, storage...,
     )
+    _check_replay_energy_bid_coverage(sys, db, date_range; intervention = intervention)
     set_demand!(sys, db, date_range; resolution = resolution)
+    set_loss_demand_coefficients!(sys)
     set_market_bids!(sys, db, date_range; resolution = resolution)
     set_fcas_scaling_inputs!(sys, db, date_range; intervention = intervention)
     set_nem_dispatch_limits!(sys, db, date_range; intervention = intervention)
+    set_storage_dispatch_ceilings!(sys)
+    set_fcas_effective_offers!(sys)
+    set_tie_break_scales!(sys)
     set_mnsp_offers!(sys, db, date_range)
     interval_flow_limits &&
         set_interconnector_flow_limits!(sys, db, date_range; intervention = intervention)
-    PSY.transform_single_time_series!(sys, _REPLICATION_HORIZON, resolution)
+    PSY.transform_single_time_series!(sys, DISPATCH_INTERVAL, resolution)
     return sys
+end
+function replication_system(db, settlement_date::DateTime; kwargs...)
+    return replication_system(
+        db, settlement_date:DISPATCH_INTERVAL:(settlement_date + _REPLICATION_HORIZON); kwargs...,
+    )
 end
 
 
@@ -103,12 +248,27 @@ const _DEFAULT_OPTIMIZER = JuMP.optimizer_with_attributes(
 )
 
 
+# A one-interval `DecisionModel` of `template` from `initial_time`; the settings `ext` entry
+# "tie_breaks" records whether `parts` includes `:tie_breaks`.
+function _replication_decision_model(
+        template::PSI.ProblemTemplate, sys::PSY.System, initial_time::DateTime;
+        optimizer = _DEFAULT_OPTIMIZER, name = "replication", parts = REPLICATION_PARTS,
+    )
+    model = PSI.DecisionModel(
+        template, sys; optimizer = optimizer, horizon = DISPATCH_INTERVAL,
+        resolution = DISPATCH_INTERVAL, interval = DISPATCH_INTERVAL, initial_time = initial_time, name = name,
+    )
+    PSI.get_ext(PSI.get_settings(model))["tie_breaks"] = :tie_breaks in parts
+    return model
+end
+
+
 # PSI ignores a failed dual LP and leaves the duals NaN, so check them before reporting prices.
-function _check_prices_finite(results::PSI.OptimizationProblemResults, settlement_date::DateTime)
-    duals = PSI.read_dual(results, PSI.CopperPlateBalanceConstraint, PSY.Area)
-    all(isfinite, duals.value) ||
-        error("Interval $settlement_date has non-finite regional price duals; the dual pass failed.")
-    return nothing
+function _check_prices_finite(duals::AbstractDict{DateTime})
+    for t in sort!(collect(keys(duals)))
+        all(isfinite, duals[t].value) || error("Interval $t has non-finite regional price duals; the dual pass failed.")
+    end
+    return
 end
 
 
@@ -144,7 +304,7 @@ where the model has no solved value: `prices` (`REGIONID`; solved `ROP`, publish
 `RRP`), `dispatch` (`DUID`, `TOTALCLEARED`), `interconnectors` (`INTERCONNECTORID`, `MWFLOW`,
 `MWLOSSES`) and `fcas_prices` (`REGIONID`, `BIDTYPE`, `ROP`). `ramp_violations` lists every
 non-zero unit ramp slack of the model (`DUID`, `DateTime`, `MW`, `direction`), and
-`constraint_violations` lists every non-zero slack of the families below (`family`, `name`,
+`constraint_violations` lists every non-zero slack of the families below (for a generic constraint, at an interval where it is invoked) (`family`, `name`,
 `DateTime`, `MW`, `direction`, `variable`), where `family` is one of `"unit_ramp"`,
 `"interconnector_flow"`, `"fcas_max_avail"`, `"fcas_bdu_ramping"`, `"fcas_joint_ramping"`,
 `"fcas_enablement"`, `"generic_constraint"` and `"area_balance"`. `direction` is `"up"` for a
@@ -180,13 +340,13 @@ function replicate_interval(
         error("Interval $settlement_date failed to solve: $run_status")
     end
     results = PSI.OptimizationProblemResults(model)
-    _check_prices_finite(results, settlement_date)
+    _check_prices_finite(_by_interval(PSI.read_dual(results, PSI.CopperPlateBalanceConstraint, PSY.Area)))
     violations = _constraint_violations(results, sys)
+    solved = _solved_interval(_solved_frames(results, sys; losses = true), sys, settlement_date)
+    published = read_published_interval(db, settlement_date; intervention = intervention)
     return (;
-        model, results, skipped_constraints,
-        comparison = _compare_to_published(db, sys, results, settlement_date, intervention),
-        ramp_violations = _ramp_violations(violations),
-        constraint_violations = violations,
+        model, results, skipped_constraints, comparison = _compare_to_published(published, solved),
+        ramp_violations = _ramp_violations(violations), constraint_violations = violations,
     )
 end
 
@@ -198,11 +358,7 @@ function _replication_model(
     template = replication_template(sys; skipped = template_skipped)
     skipped_constraints = _skipped_constraints_table(sys, template_skipped)
     check_fcas_services(sys, template)
-    model = PSI.DecisionModel(
-        template, sys;
-        optimizer = optimizer, horizon = DISPATCH_INTERVAL, resolution = DISPATCH_INTERVAL,
-        interval = DISPATCH_INTERVAL, initial_time = settlement_date, name = name,
-    )
+    model = _replication_decision_model(template, sys, settlement_date; optimizer = optimizer, name = name)
     output_dir = mktempdir()
     status = Base.CoreLogging.with_logger(() -> PSI.build!(model; output_dir = output_dir), _DropMILPWarning())
     return (; model, skipped_constraints, status, output_dir)
@@ -267,20 +423,45 @@ function _violation_direction(sys::PSY.System, type, meta::AbstractString, name:
 end
 
 
-# `family`, `name`, `DateTime`, `MW`, `direction` and `variable` (the slack variable's key) of
-# every slack above the tolerance, in every interval and every family of `_VIOLATION_FAMILIES`.
-function _constraint_violations(results::PSI.OptimizationProblemResults, sys::PSY.System)
+# Whether `sys`'s generic constraint `name` is invoked at `t`.
+function _gc_invoked(sys::PSY.System, name::AbstractString, t::DateTime)
+    gc = PSY.get_component(GenericConstraint, sys, name)
+    return only(PSY.get_time_series_values(PSY.SingleTimeSeries, gc, "invoked"; start_time = t, len = 1)) != 0.0
+end
+
+
+# Each key's long-format frame (`DateTime`, `name`, `value`), read in one call per results object.
+function _read_violation_frames(results::PSI.OptimizationProblemResults, keys)
+    return Dict(key => PSI.read_variable(results, key) for key in keys)
+end
+# Opens the simulation store once and reads every key over the timestamps `read_variable` uses.
+function _read_violation_frames(results::PSI.SimulationProblemResults, keys)
+    isempty(keys) && return Dict{PSI.OptimizationContainerKey, DataFrame}()
+    timestamps = PSI._process_timestamps(results, nothing, nothing)
+    vals = PSI._read_results(results, keys, timestamps, nothing)
+    return Dict(key => reduce(vcat, values(PSI.make_dataframes(vals[key]; table_format = PSI.TableFormat.LONG))) for key in keys)
+end
+
+
+# every slack above the tolerance, in every interval and every family of `_VIOLATION_FAMILIES`; a
+# generic constraint's slack counts only where it is invoked. Accepts the results of a
+# `DecisionModel` or of one decision problem of a `PSI.Simulation`.
+function _constraint_violations(
+        results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}, sys::PSY.System,
+    )
     kinds = Dict(_VIOLATION_FAMILIES)
     rows = NamedTuple{
         (:family, :name, :DateTime, :MW, :direction, :variable),
         Tuple{String, String, DateTime, Float64, String, String},
     }[]
-    for key in PSI.list_variable_keys(results)
+    slack_keys = [key for key in PSI.list_variable_keys(results) if haskey(kinds, PSI.IS.Optimization.get_entry_type(key))]
+    frames = _read_violation_frames(results, slack_keys)
+    for key in slack_keys
         type = PSI.IS.Optimization.get_entry_type(key)
-        kind = get(kinds, type, nothing)
-        isnothing(kind) && continue
-        for r in eachrow(PSI.read_variable(results, key))
+        kind = kinds[type]
+        for r in eachrow(frames[key])
             r.value > _VIOLATION_TOLERANCE_MW || continue
+            kind[1] == "generic_constraint" && !_gc_invoked(sys, r.name, r.DateTime) && continue
             direction = _violation_direction(sys, type, key.meta, r.name, kind[2])
             push!(rows, (; family = kind[1], name = r.name, DateTime = r.DateTime, MW = r.value, direction, variable = string(key)))
         end
@@ -301,68 +482,108 @@ end
 const _VIOLATION_TOLERANCE_MW = 1.0e-6
 
 
-# `name => value` for the rows of a `read_variable`/`read_dual` frame at `settlement_date`.
-function _first_interval(df::DataFrame, settlement_date::DateTime)
-    return Dict(r.name => r.value for r in eachrow(df) if r.DateTime == settlement_date)
+# `df` split into one frame per value of its `col` column, keyed by that value.
+function _by_interval(df::DataFrame, col::Symbol = :DateTime)
+    return Dict{DateTime, SubDataFrame}(k[1] => sub for (k, sub) in pairs(groupby(df, col)))
 end
-
-
-# Solved net MW per DUID: generation (or discharge) minus charge.
-function _solved_dispatch(results::PSI.OptimizationProblemResults, settlement_date::DateTime)
-    signs = Dict(
-        PSI.ActivePowerVariable => 1.0, PSI.ActivePowerOutVariable => 1.0, PSI.ActivePowerInVariable => -1.0,
+# `name => value` for the rows of interval `t` in `by_interval`, empty if the interval has none.
+function _first_interval(by_interval::AbstractDict, t::DateTime)
+    rows = get(by_interval, t, nothing)
+    isnothing(rows) && return Dict{String, Float64}()
+    return Dict{String, Float64}(r.name => r.value for r in eachrow(rows))
+end
+# Variables `_solved_interval` reads, and each dispatch variable's sign in net MW.
+const _SOLVED_VARIABLES = (
+    PSI.ActivePowerVariable, PSI.ActivePowerOutVariable, PSI.ActivePowerInVariable,
+    PSI.FlowActivePowerVariable, InterconnectorLossVariable,
+)
+const _DISPATCH_SIGNS = Dict(PSI.ActivePowerVariable => 1.0, PSI.ActivePowerOutVariable => 1.0, PSI.ActivePowerInVariable => -1.0)
+function _read_variable_frame(results::PSI.OptimizationProblemResults, key)
+    return PSI.read_variable(results, key)
+end
+function _read_variable_frame(results::PSI.SimulationProblemResults, key)
+    return only(values(PSI.read_realized_variables(results, [key])))
+end
+function _balance_duals(results::PSI.OptimizationProblemResults)
+    return PSI.read_dual(results, PSI.CopperPlateBalanceConstraint, PSY.Area)
+end
+function _balance_duals(results::PSI.SimulationProblemResults)
+    return only(values(PSI.read_realized_duals(results, ["CopperPlateBalanceConstraint__Area"])))
+end
+function _empty_fcas_prices()
+    return DataFrame(; SETTLEMENTDATE = DateTime[], REGIONID = String[], BIDTYPE = BidType[], ROP = Float64[])
+end
+function _solved_fcas_prices(results::PSI.OptimizationProblemResults, sys)
+    return compute_fcas_prices(results, sys; resolution = DISPATCH_INTERVAL)
+end
+function _solved_fcas_prices(results::PSI.SimulationProblemResults, sys)
+    return compute_fcas_prices(results, sys; resolution = DISPATCH_INTERVAL)
+end
+# Solved values of every interval: `balance_duals`, `variables` (key => `_by_interval` frames, for
+# `_SOLVED_VARIABLES`) and `fcas_prices` (`compute_fcas_prices` columns, by interval). With `losses`,
+# the AreaInterchange flow and loss variables must be in `results` when `sys` has interchanges.
+function _solved_frames(results, sys::PSY.System; losses::Bool)
+    variables = Dict(
+        key => _by_interval(_read_variable_frame(results, key)) for key in PSI.list_variable_keys(results)
+            if PSI.IS.Optimization.get_entry_type(key) in _SOLVED_VARIABLES
     )
-    net = Dict{String, Float64}()
-    for key in PSI.list_variable_keys(results)
-        sign = get(signs, PSI.IS.Optimization.get_entry_type(key), nothing)
-        isnothing(sign) && continue
-        for (duid, mw) in _first_interval(PSI.read_variable(results, key), settlement_date)
-            net[duid] = get(net, duid, 0.0) + sign * mw
+    if losses && !isempty(PSY.get_components(PSY.AreaInterchange, sys))
+        for T in (PSI.FlowActivePowerVariable, InterconnectorLossVariable)
+            found = any(
+                k -> PSI.IS.Optimization.get_entry_type(k) === T &&
+                    PSI.IS.Optimization.get_component_type(k) === PSY.AreaInterchange,
+                keys(variables),
+            )
+            found || error("Losses are modeled but the results lack $T on AreaInterchange.")
         end
     end
-    return net
+    return (;
+        balance_duals = _by_interval(_balance_duals(results)),
+        variables,
+        fcas_prices = _by_interval(_solved_fcas_prices(results, sys), :SETTLEMENTDATE),
+    )
 end
-
-
-function _compare_to_published(db, sys, results, settlement_date::DateTime, intervention::Integer)
-    resolution = DISPATCH_INTERVAL
-    published = read_published_interval(db, settlement_date; intervention = intervention)
-    # Every published row is kept; `missing` marks a key the model did not solve.
-    compare(published, solved, on) = leftjoin(
-        published, solved; on = on, renamecols = "_published" => "_solved",
-    )
-
+# One interval of `_solved_frames` as the solved side of `_compare_to_published`.
+function _solved_interval(frames, sys::PSY.System, settlement_date::DateTime)
     # A balance dual is per per-unit-interval; dividing gives $/MWh.
-    scale = PSY.get_base_power(sys) * interval_hours(resolution)
-    duals = _first_interval(PSI.read_dual(results, PSI.CopperPlateBalanceConstraint, PSY.Area), settlement_date)
-    prices = compare(
-        published.prices,
-        DataFrame(; REGIONID = collect(keys(duals)), ROP = collect(values(duals)) ./ scale),
-        :REGIONID,
-    )
-
-    net = _solved_dispatch(results, settlement_date)
-    dispatch = compare(
-        published.dispatch,
-        DataFrame(; DUID = collect(keys(net)), TOTALCLEARED = collect(values(net))),
-        :DUID,
-    )
-
-    flows = _first_interval(PSI.read_variable(results, PSI.FlowActivePowerVariable, PSY.AreaInterchange), settlement_date)
-    losses = _first_interval(PSI.read_variable(results, InterconnectorLossVariable, PSY.AreaInterchange), settlement_date)
-    interconnectors = compare(
-        published.interconnectors,
-        DataFrame(;
-            INTERCONNECTORID = collect(keys(flows)), MWFLOW = collect(values(flows)),
-            MWLOSSES = [get(losses, id, missing) for id in keys(flows)],
+    scale = PSY.get_base_power(sys) * interval_hours(DISPATCH_INTERVAL)
+    duals = _first_interval(frames.balance_duals, settlement_date)
+    net, flows, losses = Dict{String, Float64}(), Dict{String, Float64}(), Dict{String, Float64}()
+    for (key, by_interval) in frames.variables
+        type, component = PSI.IS.Optimization.get_entry_type(key), PSI.IS.Optimization.get_component_type(key)
+        at = _first_interval(by_interval, settlement_date)
+        if haskey(_DISPATCH_SIGNS, type)
+            for (duid, mw) in at
+                net[duid] = get(net, duid, 0.0) + _DISPATCH_SIGNS[type] * mw
+            end
+        elseif type === PSI.FlowActivePowerVariable && component === PSY.AreaInterchange
+            merge!(flows, at)
+        elseif type === InterconnectorLossVariable && component === PSY.AreaInterchange
+            merge!(losses, at)
+        end
+    end
+    ids = collect(keys(flows))
+    fcas = get(frames.fcas_prices, settlement_date, nothing)
+    return (;
+        prices = DataFrame(; REGIONID = collect(keys(duals)), ROP = collect(values(duals)) ./ scale),
+        dispatch = DataFrame(; DUID = collect(keys(net)), TOTALCLEARED = collect(values(net))),
+        interconnectors = DataFrame(;
+            INTERCONNECTORID = ids, MWFLOW = [flows[id] for id in ids],
+            MWLOSSES = Union{Missing, Float64}[get(losses, id, missing) for id in ids],
         ),
-        :INTERCONNECTORID,
+        fcas_prices = isnothing(fcas) ? _empty_fcas_prices() : DataFrame(fcas),
     )
-
-    fcas_prices = compare(
-        select(published.fcas_prices, :SETTLEMENTDATE, :REGIONID, :BIDTYPE, :ROP),
-        compute_fcas_prices(results, sys; resolution = resolution),
-        [:SETTLEMENTDATE, :REGIONID, :BIDTYPE],
+end
+# Every published row with its solved value, `missing` where the model has none.
+function _compare_to_published(published, solved)
+    compare(p, s, on) = leftjoin(p, s; on = on, renamecols = "_published" => "_solved")
+    return (;
+        prices = compare(published.prices, solved.prices, :REGIONID),
+        dispatch = compare(published.dispatch, solved.dispatch, :DUID),
+        interconnectors = compare(published.interconnectors, solved.interconnectors, :INTERCONNECTORID),
+        fcas_prices = compare(
+            select(published.fcas_prices, :SETTLEMENTDATE, :REGIONID, :BIDTYPE, :ROP),
+            solved.fcas_prices, [:SETTLEMENTDATE, :REGIONID, :BIDTYPE],
+        ),
     )
-    return (; prices, dispatch, interconnectors, fcas_prices)
 end

@@ -90,18 +90,22 @@ end
 
 """
     read_published_interval(db, settlement_date; intervention = 0)
+    read_published_interval(db, steps::StepRange{DateTime}; intervention = 0)
 
-Reads AEMO's published outcome for one dispatch interval.
+Reads AEMO's published outcome for one dispatch interval, or for every interval of `steps` in one
+query per table.
 
 # Arguments
 - `db`: an `AEMDB` connection.
 - `settlement_date`: the `SETTLEMENTDATE` of the interval (`DateTime`).
+- `steps`: the `SETTLEMENTDATE`s of consecutive intervals, stepping by 5 minutes.
 - `intervention`: 0 for the pricing run, 1 for the physical run.
 
 # Returns
 A `NamedTuple` of `DataFrame`s: `dispatch` (`DUID`, `TOTALCLEARED`), `interconnectors`
 (`INTERCONNECTORID`, `MWFLOW`, `MWLOSSES`), `prices` (`REGIONID`, `RRP`, `ROP`) and `fcas_prices`
-(`SETTLEMENTDATE`, `REGIONID`, `BIDTYPE`, `RRP`, `ROP`).
+(`SETTLEMENTDATE`, `REGIONID`, `BIDTYPE`, `RRP`, `ROP`). For `steps`, every table has a leading
+`SETTLEMENTDATE` column, and the rows at each interval are those of the single-interval method.
 """
 function read_published_interval(db, settlement_date::DateTime; intervention::Integer = 0)
     interval = settlement_date:Minute(5):(settlement_date + Minute(5))
@@ -118,27 +122,52 @@ function read_published_interval(db, settlement_date::DateTime; intervention::In
     )
 end
 
+function read_published_interval(db, steps::StepRange{DateTime}; intervention::Integer = 0)
+    first_t, last_t = first(steps), last(steps)
+    interval = first_t:Minute(5):(last_t + Minute(5))
+    return (;
+        dispatch = _read_published_range(db, :DISPATCHLOAD, "DUID", ("TOTALCLEARED",), first_t, last_t, intervention),
+        interconnectors = _read_published_range(
+            db, :DISPATCHINTERCONNECTORRES, "INTERCONNECTORID", ("MWFLOW", "MWLOSSES"),
+            first_t, last_t, intervention,
+        ),
+        prices = select(read_prices(db, interval; intervention = intervention), :SETTLEMENTDATE, :REGIONID, :RRP, :ROP),
+        fcas_prices = select(
+            read_fcas_prices(db, interval; intervention = intervention), :SETTLEMENTDATE, :REGIONID, :BIDTYPE, :RRP, :ROP,
+        ),
+    )
+end
+
 
 # One row per `key` at `settlement_date`, deduplicating archive-month overlap.
 function _read_published(db, table_name::Symbol, key::String, columns, settlement_date::DateTime, intervention::Integer)
+    df = _read_published_range(db, table_name, key, columns, settlement_date, settlement_date, intervention)
+    return select(df, Not(:SETTLEMENTDATE))
+end
+
+
+# One row per `SETTLEMENTDATE` and `key` between `first_t` and `last_t`, deduplicating archive-month overlap.
+function _read_published_range(
+        db, table_name::Symbol, key::String, columns, first_t::DateTime, last_t::DateTime, intervention::Integer,
+    )
     _table_is_cached(db, table_name) || throw(
         ArgumentError(
-            "$table_name is not cached for $settlement_date: run " *
+            "$table_name is not cached for $first_t: run " *
                 "`populate(db, :$table_name, <from>, <to>)` first.",
         ),
     )
     table = read_hive(db, table_name)
     schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
-    params = Any[settlement_date]
+    params = Any[first_t, last_t]
     _push_intervention!(params, schema, intervention)
-    select_list = join([key; ["TRY_CAST($c AS DOUBLE) AS $c" for c in columns]], ", ")
+    select_list = join(["SETTLEMENTDATE", key, ["TRY_CAST($c AS DOUBLE) AS $c" for c in columns]...], ", ")
     return _query(
         db,
         """
         SELECT $select_list
         FROM $table
-        WHERE SETTLEMENTDATE = ? $(_intervention_where(schema))
-        QUALIFY row_number() OVER (PARTITION BY $key ORDER BY archive_month DESC) = 1
+        WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(schema))
+        QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, $key ORDER BY archive_month DESC) = 1
         """,
         params,
     )

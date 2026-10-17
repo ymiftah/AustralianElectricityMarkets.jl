@@ -17,8 +17,8 @@
             get_available(d) || continue
             region = get_name(get_area(get_bus(d)))
             for bid_type in FCAS_BID_TYPES
-                inc = has_time_series(d, Deterministic, "fcas_trapezium_$(string(bid_type))")
-                dec = has_time_series(d, Deterministic, "fcas_trapezium_$(string(bid_type))_decremental")
+                inc = has_time_series(d, SingleTimeSeries, "fcas_trapezium_$(string(bid_type))")
+                dec = has_time_series(d, SingleTimeSeries, "fcas_trapezium_$(string(bid_type))_decremental")
                 (inc || dec) || continue
                 name = "$(region)_$(string(bid_type))"
                 modeled = (inc && !dec) || (dec && !inc && d isa Storage) ||
@@ -78,19 +78,14 @@
         bat = get_component(EnergyReservoirStorage, sys, "BAT1")
         add_time_series!(
             sys, bat,
-            Deterministic(;
-                name = "fcas_curve_RAISE6SEC_decremental",
-                # Deterministic requires at least 2 points per forecast window.
-                data = Dict(start_date => fill(PiecewiseStepData([0.0, 5.0], [10.0]), 2)),
-                resolution = Minute(5), interval = Minute(5),
+            AustralianElectricityMarkets._single_series(
+                "fcas_curve_RAISE6SEC_decremental", start_date, fill(PiecewiseStepData([0.0, 5.0], [10.0]), 2), Minute(5),
             ),
         )
         add_time_series!(
             sys, bat,
-            Deterministic(;
-                name = "fcas_trapezium_RAISE6SEC_decremental",
-                data = Dict(start_date => fill((0.0, 0.0, 5.0, 5.0, 5.0, NaN, NaN), 2)),
-                resolution = Minute(5), interval = Minute(5),
+            AustralianElectricityMarkets._single_series(
+                "fcas_trapezium_RAISE6SEC_decremental", start_date, fill((0.0, 0.0, 5.0, 5.0, 5.0, NaN, NaN), 2), Minute(5),
             ),
         )
 

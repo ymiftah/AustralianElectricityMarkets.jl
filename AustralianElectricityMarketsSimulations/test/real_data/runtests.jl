@@ -109,6 +109,7 @@ end
     end
 
     set_demand!(sys, db, REAL_DATE_RANGE; resolution = REAL_RESOLUTION)
+    set_loss_demand_coefficients!(sys)
     set_market_bids!(sys, db, REAL_DATE_RANGE; resolution = REAL_RESOLUTION)
     set_fcas_scaling_inputs!(sys, db, REAL_DATE_RANGE)
     limits = read_dispatch_limits(db, REAL_DATE_RANGE)
@@ -122,6 +123,9 @@ end
 
         @test begin
             set_nem_dispatch_limits!(sys, db, REAL_DATE_RANGE)
+            set_storage_dispatch_ceilings!(sys)
+            set_fcas_effective_offers!(sys)
+            set_tie_break_scales!(sys)
             true
         end
 
@@ -648,8 +652,12 @@ end
 @testset "Elastic GenericConstraint slack matches AEMO's published violation, $(Date(VIOLATION_START))" begin
     sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = VIOLATION_DATE_RANGE)
     set_demand!(sys, db, VIOLATION_DATE_RANGE; resolution = REAL_RESOLUTION)
+    set_loss_demand_coefficients!(sys)
     set_market_bids!(sys, db, VIOLATION_DATE_RANGE; resolution = REAL_RESOLUTION)
     set_nem_dispatch_limits!(sys, db, VIOLATION_DATE_RANGE)
+    set_storage_dispatch_ceilings!(sys)
+    set_fcas_effective_offers!(sys)
+    set_tie_break_scales!(sys)
     PSY.transform_single_time_series!(sys, VIOLATION_SPAN, REAL_RESOLUTION)
 
     target_gencon_ids = ("Q_STR_ALDSF_ZERO", "Q_BRDDSF01_1INV")
@@ -697,11 +705,11 @@ end
         slack_df = PSI.read_variable(results, "$(var_type)__GenericConstraint__$name")
         dual_df = PSI.read_dual(results, "NEMConstraintLimit__GenericConstraint__$name")
         invoked_timestamps = PSY.get_time_series_timestamps(
-            PSY.Deterministic, gc, "invoked";
+            PSY.SingleTimeSeries, gc, "invoked";
             start_time = VIOLATION_START, len = nrow(slack_df),
         )
         invoked_values = PSY.get_time_series_values(
-            PSY.Deterministic, gc, "invoked";
+            PSY.SingleTimeSeries, gc, "invoked";
             start_time = VIOLATION_START, len = nrow(slack_df),
         )
         @test length(invoked_values) == nrow(slack_df)

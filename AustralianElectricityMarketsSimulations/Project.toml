@@ -12,8 +12,10 @@ DuckDB = "d2f5444f-75bc-4fdf-ac35-56f514c445e1"
 HiGHS = "87dc4568-4c63-4d18-b0c0-bb2238e4078b"
 HydroPowerSimulations = "fc1677e0-6ad7-4515-bf3a-bd6bf20a0b1b"
 JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 PowerSimulations = "e690365d-45e2-57bb-ac84-44ba829e73c4"
 PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
 [compat]
@@ -25,11 +27,13 @@ DuckDB = "1"
 HiGHS = "1"
 HydroPowerSimulations = "0.19"
 JuMP = "1"
+Logging = "1"
 PowerSimulations = "0.38"
 PowerSystems = "5.10.0"
+PrecompileTools = "1"
 Statistics = "1"
 julia = "1.11"
 
 [sources]
 AustralianElectricityMarkets = {path = ".."}
-PowerSimulations = {url = "https://github.com/ymiftah/PowerSimulations.jl.git", rev = "380751dedc4058fbbf3702e46f02cb803965a98f"}
+PowerSimulations = {url = "https://github.com/ymiftah/PowerSimulations.jl.git", rev = "fc30a298afb314d563488db852387e145ec97f9a"}

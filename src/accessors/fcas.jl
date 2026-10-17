@@ -31,7 +31,7 @@ end
 
 
 function _read_fcas_series(kind::AbstractString, component, name::AbstractString, service::BidType, decremental::Bool, initial_time, horizon::Integer)
-    if !has_time_series(component, Deterministic, name)
+    if !has_time_series(component, SingleTimeSeries, name)
         throw(
             ArgumentError(
                 "No FCAS $kind series \"$name\" attached to component \"$(get_name(component))\" " *
@@ -40,7 +40,7 @@ function _read_fcas_series(kind::AbstractString, component, name::AbstractString
             ),
         )
     end
-    return get_time_series_values(Deterministic, component, name; start_time = initial_time, len = horizon)
+    return get_time_series_values(SingleTimeSeries, component, name; start_time = initial_time, len = horizon)
 end
 
 

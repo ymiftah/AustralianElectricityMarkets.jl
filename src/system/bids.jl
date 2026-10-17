@@ -17,19 +17,9 @@ function _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
         )
     )
     psd = gen_bids.piecewise_step_data
-    time_series_data = Deterministic(;
-        name = "variable_cost",
-        data = Dict(start_date => psd),
-        resolution = resolution,
-        interval = resolution
-    )
+    time_series_data = _single_series("variable_cost", start_date, psd, resolution)
     set_incremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
-    time_series_incremental_initial_input = Deterministic(;
-        name = "incremental_initial_input",
-        data = Dict(start_date => zeros(size(psd))),
-        resolution = resolution,
-        interval = resolution
-    )
+    time_series_incremental_initial_input = _single_series("incremental_initial_input", start_date, zeros(size(psd)), resolution)
     set_incremental_initial_input!(sys, gen, time_series_incremental_initial_input)
     return
 end
@@ -64,19 +54,9 @@ function _set_decremental_bid_cost!(sys, device, load_bids, start_date, resoluti
         ),
     )
     psd = load_bids.piecewise_step_data
-    time_series_data = Deterministic(;
-        name = "decremental_variable_cost",
-        data = Dict(start_date => psd),
-        resolution = resolution,
-        interval = resolution,
-    )
+    time_series_data = _single_series("decremental_variable_cost", start_date, psd, resolution)
     set_decremental_variable_cost!(sys, device, time_series_data, UnitSystem.NATURAL_UNITS)
-    time_series_decremental_initial_input = Deterministic(;
-        name = "decremental_initial_input",
-        data = Dict(start_date => (first ∘ get_y_coords).(psd)),
-        resolution = resolution,
-        interval = resolution,
-    )
+    time_series_decremental_initial_input = _single_series("decremental_initial_input", start_date, (first ∘ get_y_coords).(psd), resolution)
     set_decremental_initial_input!(sys, device, time_series_decremental_initial_input)
     return
 end
@@ -93,7 +73,8 @@ attaches it to `Generator`, scheduled `InterruptiblePowerLoad` (decremental bid 
 bids `GEN` is made unavailable; a non-scheduled load is left as built) and `EnergyReservoirStorage`
 components (the latter also
 gets decremental/load-side bid costs, and each direction's energy `MAXAVAIL`, read back by
-[`get_storage_energy_max_avail`](@ref)).
+[`get_storage_energy_max_avail`](@ref)). Every curve has one segment per price band, in band order
+(reversed for `LOAD`), bands of zero availability included as zero-width segments.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
@@ -116,7 +97,10 @@ function set_market_bids!(sys, db, date_range; kwargs...)
 
     energy_bids_table = read_hive(db, :BIDPEROFFER_D)
     pricebids_table = read_hive(db, :BIDDAYOFFER_D)
-    bids = _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
+    bids = _massage_bids(
+        db, energy_bids_table, pricebids_table, start_date, end_date;
+        resolution = get(kwargs, :resolution, nothing), keep_empty_bands = true,
+    )
     sys_units = Set(get_name(c) for T in (Generator, InterruptiblePowerLoad, EnergyReservoirStorage) for c in get_components(T, sys))
     factors = read_loss_factors(db; as_of = start_date, through = end_date)
     _refer_bids_to_reference_node!(subset!(bids, :DUID => ByRow(in(sys_units))), factors)
@@ -175,7 +159,7 @@ end
 """
     _set_storage_energy_max_avail!(sys, storage, bids, name, start_date, resolution)
 
-Attaches `bids.MAXAVAIL` to `storage` as a `Deterministic` series `name`, per-unit of `sys`'s
+Attaches `bids.MAXAVAIL` to `storage` as a `SingleTimeSeries` named `name`, per-unit of `sys`'s
 system base. No-op if any interval's `MAXAVAIL` is missing or not finite.
 
 # Returns
@@ -185,12 +169,7 @@ function _set_storage_energy_max_avail!(sys, storage, bids, name::AbstractString
     all(x -> !ismissing(x) && isfinite(x), bids.MAXAVAIL) || return
     add_time_series!(
         sys, storage,
-        Deterministic(;
-            name = name,
-            data = Dict(start_date => Float64.(bids.MAXAVAIL) ./ get_base_power(sys)),
-            resolution = resolution,
-            interval = resolution,
-        ),
+        _single_series(name, start_date, Float64.(bids.MAXAVAIL) ./ get_base_power(sys), resolution),
     )
     return
 end

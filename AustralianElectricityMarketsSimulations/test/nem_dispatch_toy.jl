@@ -1,3 +1,10 @@
+# Builds `model` and returns its status with the text of the build log, which records any error.
+function _toy_build_log(model)
+    dir = mktempdir()
+    status = PSI.build!(model; output_dir = dir)
+    return status, join((read(joinpath(dir, f), String) for f in readdir(dir)), "\n")
+end
+
 @testset "merit order: the cheaper unit is filled first" begin
     sys = nem_toy_system(
         [
@@ -309,8 +316,8 @@ end
                 ],
                 mutate! = function (s, _)
                     battery = PSY.get_component(PSY.EnergyReservoirStorage, s, TOY_BATTERY)
-                    PSY.remove_time_series!(s, PSY.Deterministic, battery, "energy_max_avail")
-                    PSY.remove_time_series!(s, PSY.Deterministic, battery, "energy_max_avail_decremental")
+                    PSY.remove_time_series!(s, PSY.SingleTimeSeries, battery, "energy_max_avail")
+                    PSY.remove_time_series!(s, PSY.SingleTimeSeries, battery, "energy_max_avail_decremental")
                     set_static_limits!(s; input_mw = 50.0)
                     return
                 end,
@@ -318,6 +325,31 @@ end
             out = solve_toy(sys; formulation = formulation)
 
             @test storage_bound(out, sys, PSI.ActivePowerInVariable) ≈ 50.0 atol = TOY_TOLERANCE
+        end
+    end
+
+    @testset "a single-direction energy offer keeps the static fallback in both formulations" begin
+        for formulation in (NEMReplayDispatch, NEMLookaheadDispatch)
+            sys = nem_toy_system(
+                [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
+                0.0;
+                batteries = [
+                    TOY_BATTERY => toy_battery(
+                        100.0, 1.0, 100.0, 1000.0;
+                        initial = 0.0, ramp_up = 100.0, gen_avail = 30.0, load_avail = 100.0,
+                    ),
+                ],
+                mutate! = function (s, _)
+                    battery = PSY.get_component(PSY.EnergyReservoirStorage, s, TOY_BATTERY)
+                    PSY.remove_time_series!(s, PSY.SingleTimeSeries, battery, "energy_max_avail_decremental")
+                    set_static_limits!(s; input_mw = 50.0)
+                    return
+                end,
+            )
+            out = solve_toy(sys; formulation = formulation)
+
+            @test storage_bound(out, sys, PSI.ActivePowerInVariable) ≈ 50.0 atol = TOY_TOLERANCE
+            @test out.battery_in_mw[TOY_BATTERY] <= 50.0 + TOY_TOLERANCE
         end
     end
 
@@ -342,6 +374,33 @@ end
         @test out.battery_in_mw[TOY_BATTERY] ≈ 100.0 atol = TOY_TOLERANCE
         @test out.battery_in_mw[TOY_BATTERY] > 50.0
         @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
+    end
+
+    @testset "a lookahead battery with an energy offer needs its ceiling series" begin
+        units = [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)]
+        batteries = [
+            TOY_BATTERY => toy_battery(
+                100.0, 1.0, 100.0, 1000.0; initial = 0.0, ramp_up = 100.0, gen_avail = 30.0, load_avail = 100.0,
+            ),
+        ]
+        bare = nem_toy_system(units, 0.0; batteries = batteries, ceilings = false)
+        template = PSI.ProblemTemplate(
+            PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true, duals = [PSI.CopperPlateBalanceConstraint]),
+        )
+        set_nem_dispatch_models!(template, bare; formulation = NEMLookaheadDispatch)
+        PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+        model = PSI.DecisionModel(
+            template, bare;
+            optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+            horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
+            initial_time = TOY_START, name = "nem_toy_bare", store_variable_names = true,
+        )
+        folder = mktempdir()
+        @test PSI.build!(model; output_dir = folder) == PSI.ModelBuildStatus.FAILED
+        @test any(f -> occursin("set_storage_dispatch_ceilings!", read(f, String)), readdir(folder; join = true))
+
+        out = solve_toy(nem_toy_system(units, 0.0; batteries = batteries); formulation = NEMLookaheadDispatch)
+        @test out.battery_out_mw[TOY_BATTERY] <= 30.0 + TOY_TOLERANCE
     end
 end
 
@@ -678,16 +737,112 @@ end
     end
 end
 
-@testset "tie detection pairs" begin
-    band(price, width, name, band = 1) = (; price, width, name, band)
+@testset "tie groups" begin
+    band(price, name, band = 1) = (; price, name, band)
     tol = TIE_BREAK_CVP_FACTOR
-    pairs = AustralianElectricityMarketsSimulations._tied_pairs
-    @test pairs([band(5.0, 1.0, "a"), band(5.0, 2.0, "b"), band(5.0, 3.0, "c")]) == [(1, 2, 3.0), (1, 3, 3.0), (2, 3, 3.0)]
-    # Same-unit bands and zero-width bands are never paired.
-    @test pairs([band(5.0, 1.0, "a", 1), band(5.0, 1.0, "a", 2), band(5.0, 1.0, "b")]) == [(1, 3, 1.0), (2, 3, 1.0)]
-    @test pairs([band(5.0, 0.0, "a"), band(5.0, 1.0, "b")]) == []
-    # Different prices beyond the tolerance stay separate; within it they tie, transitively.
-    @test pairs([band(5.0, 1.0, "a"), band(5.0 + 2tol, 1.0, "b")]) == []
-    @test pairs([band(5.0, 1.0, "a"), band(5.0 + 0.8tol, 1.0, "b"), band(5.0 + 1.6tol, 1.0, "c")]) ==
-        [(1, 2, 1.0), (1, 3, 1.0), (2, 3, 1.0)]
+    groups = AustralianElectricityMarketsSimulations._tie_groups
+    @test groups([band(5.0, "a"), band(5.0, "b"), band(5.0, "c")]) == [[1, 2, 3]]
+    # A run of one unit's bands is no group; zero-width bands are grouped like any other.
+    @test groups([band(5.0, "a", 1), band(5.0, "a", 2), band(7.0, "b")]) == Vector{Int}[]
+    @test groups([band(5.0, "a", 2), band(5.0, "a", 1), band(5.0, "b")]) == [[2, 1, 3]]
+    # Prices beyond the tolerance stay separate, within it they tie; a transitive chain throws.
+    @test groups([band(5.0, "a"), band(5.0 + 2tol, "b")]) == Vector{Int}[]
+    @test groups([band(5.0, "a"), band(5.0 + 0.5tol, "b")]) == [[1, 2]]
+    @test_throws ArgumentError groups([band(5.0, "a"), band(5.0 + 0.8tol, "b"), band(5.0 + 1.6tol, "c")])
+end
+
+@testset "tie-break scale series" begin
+    third = "Solitude"
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(168.0, [(168.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(46.0, [(46.0, 10.0), (10.0, 30.0)]; initial = 0.0, ramp_up = 100.0),
+            third => toy_unit(122.0, [(122.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        168.0,
+    )
+    scale(name, k) = PSY.get_time_series_values(
+        PSY.SingleTimeSeries, PSY.get_component(PSY.ThermalStandard, sys, name), "tie_break_scale_$k",
+    )
+    @test scale(TOY_CHEAP, 1) ≈ [1.0, 1.0]
+    @test scale(TOY_EXPENSIVE, 1) ≈ fill(46.0 / 168.0, 2)
+    @test scale(third, 1) ≈ fill(122.0 / 168.0, 2)
+    # Park City's $30 band ties with no other unit, so it carries no scale.
+    @test !PSY.has_time_series(PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE), PSY.SingleTimeSeries, "tie_break_scale_2")
+
+    # A tied unit without its scale series fails the build.
+    unscaled = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(100.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        100.0;
+        tie_break_scales = false,
+    )
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    set_nem_dispatch_models!(template, unscaled)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    model = PSI.DecisionModel(
+        template, unscaled; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    status, log = _toy_build_log(model)
+    @test status == PSI.ModelBuildStatus.FAILED
+    @test occursin("tie-break: 2 unit(s) with price-tied bands carry no tie-break scale forecast: Alta, Park City.", log)
+    @test occursin("Call set_tie_break_scales!(sys) before transform_single_time_series!.", log)
+end
+
+@testset "a unit carrying tie-break scales must be modelled" begin
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(100.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        100.0,
+    )
+    # No ThermalStandard model: the tied units carry scales but have no block variables.
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    model = PSI.DecisionModel(
+        template, sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    status, log = _toy_build_log(model)
+    @test status == PSI.ModelBuildStatus.FAILED
+    @test occursin("tie-break: 2 unit(s) carry tie-break scales but have no market-bid variables in the model: Alta, Park City.", log)
+end
+
+@testset "a fixed-curve unit ties with time-varying units" begin
+    third = "Solitude"
+    # Replaces the expensive unit's time-varying offer with a fixed curve of the same band.
+    function fix_offer!(sys, _)
+        gen = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
+        PSY.remove_time_series!(sys, PSY.SingleTimeSeries, gen, "variable_cost")
+        PSY.remove_time_series!(sys, PSY.SingleTimeSeries, gen, "incremental_initial_input")
+        PSY.set_operation_cost!(
+            gen,
+            PSY.MarketBidCost(;
+                no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0,
+                incremental_offer_curves = PSY.CostCurve(PSY.PiecewiseIncrementalCurve(0.0, [0.0, 46.0], [10.0])),
+            ),
+        )
+        return
+    end
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(168.0, [(168.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(46.0, [(46.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+            third => toy_unit(122.0, [(122.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        168.0;
+        mutate! = fix_offer!,
+    )
+    gen = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
+    @test PSY.get_time_series_values(PSY.SingleTimeSeries, gen, "tie_break_scale_1") ≈ fill(46.0 / 168.0, 2)
+
+    out = solve_toy(sys)
+    @test out.dispatch_mw[TOY_CHEAP] ≈ 84.0 atol = 1.0e-5
+    @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 23.0 atol = 1.0e-5
+    @test out.dispatch_mw[third] ≈ 61.0 atol = 1.0e-5
+    @test out.price ≈ 10.0 atol = TOY_TOLERANCE
 end

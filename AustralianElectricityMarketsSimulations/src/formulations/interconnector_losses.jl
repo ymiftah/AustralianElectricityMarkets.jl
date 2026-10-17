@@ -3,8 +3,21 @@ PSI.convert_result_to_natural_units(::Type{InterconnectorLossVariable}) = true
 PSI.convert_result_to_natural_units(::Type{InterconnectorLossSegmentVariable}) = true
 
 
-# `AreaInterchange`'s default attributes and time-series names are inherited from PSI's generic
-# `AbstractBranchFormulation` methods.
+# PSI's flow-limit series names for `AreaInterchange`, plus the loss-factor demand coefficient.
+function PSI.get_default_time_series_names(::Type{PSY.AreaInterchange}, ::Type{NEMInterconnectorLoss})
+    return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
+        PSI.FromToFlowLimitParameter => "from_to_flow_limit",
+        PSI.ToFromFlowLimitParameter => "to_from_flow_limit",
+        LossDemandCoefficientParameter => "loss_demand_coefficient",
+        MNSPForwardBandWidthParameter => "mnsp_forward_offer",
+        MNSPReverseBandWidthParameter => "mnsp_reverse_offer",
+        MNSPForwardMaxAvailParameter => "mnsp_forward_max_avail",
+        MNSPReverseMaxAvailParameter => "mnsp_reverse_max_avail",
+    )
+end
+
+
+PSI.get_multiplier_value(::LossDemandCoefficientParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss) = 1.0
 
 # --- attached `InterconnectorLossModel` + per-interconnector validation ---
 
@@ -91,82 +104,65 @@ function _warn_narrow_breakpoints(narrow::Vector{String})
 end
 
 
-# --- regional demand ---
+# --- loss-factor demand coefficient ---
 
 """
-    _area_demand(container, sys) -> Dict{String, Vector{Float64}}
+    _check_loss_demand_coefficients(container, devices, device_model)
 
-Regional demand the loss equations are evaluated at, per area and dispatch timestep, in the system's
-current units: each available `PSY.PowerLoad`'s `"loss_demand"` series when present, else its
-`"max_active_power"` series, else its static rating. Time-series scaling factors are applied once
-by `PSY.get_time_series_values`.
+Throws `ArgumentError` naming every interconnector in `devices` without a forecast of the model's
+[`LossDemandCoefficientParameter`](@ref) series.
+
+# Arguments
+- `container`: the optimization container of the model being built.
+- `devices`: the `PSY.AreaInterchange` devices of the formulation.
+- `device_model`: the `PSI.DeviceModel` supplying the series name.
 
 # Returns
-A dictionary of area names to demand vectors; areas without loads are omitted.
+`nothing`.
 """
-function _area_demand(container::PSI.OptimizationContainer, sys::PSY.System)
-    return _area_demand(PSI.get_initial_time(container), length(PSI.get_time_steps(container)), sys)
+function _check_loss_demand_coefficients(container::PSI.OptimizationContainer, devices, device_model)
+    name = PSI.get_time_series_names(device_model)[LossDemandCoefficientParameter]
+    ts_type = PSI.get_default_time_series_type(container)
+    uncovered = [PSY.get_name(d) for d in devices if !PSY.has_time_series(d, ts_type, name)]
+    isempty(uncovered) || throw(
+        ArgumentError(
+            "NEMInterconnectorLoss: $(length(uncovered)) interconnector(s) carry no \"$name\" forecast: " *
+                "$(join(uncovered, ", ")). Call set_loss_demand_coefficients!(sys) before transform_single_time_series!.",
+        ),
+    )
+    return
 end
 
 
-function _area_demand(initial_time::Dates.DateTime, n_steps::Int, sys::PSY.System)
-    time_steps = 1:n_steps
-    demand = Dict{String, Vector{Float64}}()
-    for load in PSY.get_components(PSY.get_available, PSY.PowerLoad, sys)
-        area = PSY.get_area(PSY.get_bus(load))
-        isnothing(area) && throw(
-            ArgumentError(
-                "PowerLoad $(PSY.get_name(load)) is on a bus with no area; " *
-                    "NEMInterconnectorLoss needs every available load assigned to an area",
-            ),
-        )
-        area_name = PSY.get_name(area)
-        series = get!(() -> zeros(Float64, length(time_steps)), demand, area_name)
-        has_loss_demand = PSY.has_time_series(load, PSY.Deterministic, "loss_demand")
-        series_name = has_loss_demand ? "loss_demand" : "max_active_power"
-        if has_loss_demand || PSY.has_time_series(load, PSY.Deterministic, "max_active_power")
-            # A transformed forecast must be read over its full horizon, so slice afterwards.
-            forecast = PSY.get_time_series_values(
-                PSY.Deterministic, load, series_name; start_time = initial_time,
-            )
-            length(forecast) >= n_steps || throw(
-                ArgumentError(
-                    "PowerLoad $(PSY.get_name(load)) forecast has $(length(forecast)) steps; " *
-                        "the model needs $n_steps",
-                ),
-            )
-            for t in time_steps
-                series[t] += forecast[t]
-            end
-        else
-            peak = PSY.get_max_active_power(load)
-            for t in time_steps
-                series[t] += peak
-            end
-        end
-    end
-    return demand
+"""
+    _loss_range(device, model) -> Tuple{Float64, Float64}
+
+The smallest and largest zero-referenced vertex loss of `model` over every value of `device`'s
+`"loss_demand_coefficient"` series, widened to include `0.0`, per-unit of the system base.
+"""
+function _loss_range(device::PSY.AreaInterchange, model::InterconnectorLossModel)
+    coefficients = PSY.get_time_series_values(PSY.SingleTimeSeries, device, "loss_demand_coefficient")
+    at_zero = loss_curve_vertex_values(model, Dict{String, Float64}())
+    vertex = [v + k * bp for k in coefficients for (v, bp) in zip(at_zero, model.breakpoints)]
+    return min(0.0, minimum(vertex)), max(0.0, maximum(vertex))
 end
-
-
-"`demand`'s per-timestep slice at `t` - `REGIONID => MW`, [`loss_factor`](@ref)'s own input shape."
-_demand_at(demand::Dict{String, Vector{Float64}}, t::Int) =
-    Dict(area => series[t] for (area, series) in demand)
 
 
 # --- loss variables/constraints + area balance terms ---
 
 """
-    _add_loss_variables_and_constraints!(container, sys, devices, loss_models)
+    _add_loss_variables_and_constraints!(container, devices, loss_models)
 
 Adds the segment, fill-indicator and loss variables, their defining and ordering constraints, and
-the `-share * loss` and `-(1 - share) * loss` terms in the from and to area balances. Devices
-carrying directional MNSP offers omit those terms: their losses are supplied at the sending area. The segment axis is sized
-to the largest interconnector; unused cells are fixed to zero. All quantities are per-unit of the system base.
+the `-share * loss` and `-(1 - share) * loss` terms in the from and to area balances. Segment
+widths, slopes and the first-breakpoint loss are those at zero demand; the demand term enters as
+the flow's coefficient in the loss definition, driven by [`LossDemandCoefficientParameter`](@ref).
+Devices carrying directional MNSP offers omit the balance terms: their losses are supplied at the
+sending area. The segment axis is sized to the largest interconnector; unused cells are fixed to
+zero. All quantities are per-unit of the system base.
 """
 function _add_loss_variables_and_constraints!(
         container::PSI.OptimizationContainer,
-        sys::PSY.System,
         devices,
         loss_models::Dict{String, InterconnectorLossModel},
     )
@@ -214,7 +210,7 @@ function _add_loss_variables_and_constraints!(
     flow_var = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
     expr = PSI.get_expression(container, PSI.ActivePowerBalance(), PSY.Area)
     jm = PSI.get_jump_model(container)
-    area_demand = _area_demand(container, sys)
+    coefficient_key = PSI.ParameterKey(LossDemandCoefficientParameter, PSY.AreaInterchange)
 
     for d in devices
         name = PSY.get_name(d)
@@ -225,10 +221,10 @@ function _add_loss_variables_and_constraints!(
         to_area = PSY.get_name(PSY.get_to_area(d))
         share = model.from_region_loss_share
         offered = _has_mnsp_offers(d)
+        segments = loss_segments(model, Dict{String, Float64}())
+        base_loss = first(loss_curve_vertex_values(model, Dict{String, Float64}()))
 
         for t in time_steps
-            demand_t = _demand_at(area_demand, t)
-            segments = loss_segments(model, demand_t)
             for s in 1:max_segments
                 width = s <= n ? (segments[s].to_mw - segments[s].from_mw) : 0.0
                 seg_var[name, segment_labels[s], t] = JuMP.@variable(
@@ -265,12 +261,14 @@ function _add_loss_variables_and_constraints!(
                 flow_var[name, t] ==
                     bp1 + sum(seg_var[name, segment_labels[s], t] for s in 1:max_segments)
             )
-            base_loss = first(loss_curve_vertex_values(model, demand_t))
+            # The flow term's coefficient is the demand coefficient, set by the target below.
             loss_def_con[name, t] = JuMP.@constraint(
                 jm,
                 loss_var[name, t] == base_loss +
-                    sum(segments[s].slope * seg_var[name, segment_labels[s], t] for s in 1:n)
+                    sum(segments[s].slope * seg_var[name, segment_labels[s], t] for s in 1:n) +
+                    flow_var[name, t]
             )
+            PSI.add_coefficient_target!(container, coefficient_key, name, t, loss_def_con[name, t], flow_var[name, t], -1.0)
             if !offered
                 JuMP.add_to_expression!(expr[from_area, t], -share, loss_var[name, t])
                 JuMP.add_to_expression!(expr[to_area, t], -(1.0 - share), loss_var[name, t])
@@ -375,14 +373,6 @@ function PSI.construct_device!(
         device_model::PSI.DeviceModel{PSY.AreaInterchange, NEMInterconnectorLoss},
         network_model::PSI.NetworkModel{U},
     ) where {U <: PSI.AreaBalancePowerModel}
-    PSI.built_for_recurrent_solves(container) && throw(
-        ArgumentError(
-            "NEMInterconnectorLoss supports a standalone `DecisionModel` only: " *
-                "demand-dependent loss coefficients are read once at construction. " *
-                "Recurrent solves would retain the first demand forecast; rebuild the " *
-                "`DecisionModel` when demand forecasts or load availability change.",
-        ),
-    )
     devices = PSI.get_available_components(device_model, sys)
     isempty(devices) && return
     loss_models = Dict(PSY.get_name(d) => _loss_model(d) for d in devices)
@@ -408,8 +398,7 @@ function PSI.construct_device!(
     if all(has_ts)
         for device in devices
             name = PSY.get_name(device)
-            num_ts = length(unique(filter(!startswith("mnsp_"), PSY.get_name.(PSY.get_time_series_keys(device)))))
-            if num_ts < 2
+            if !all(series -> PSY.has_time_series(device, PSY.SingleTimeSeries, series), _FLOW_LIMIT_SERIES)
                 error(
                     "AreaInterchange $name has less than two time series. It is required to add both from_to and to_from time series.",
                 )
@@ -420,8 +409,10 @@ function PSI.construct_device!(
     end
     PSI.add_feedforward_arguments!(container, device_model, devices)
 
-    _add_loss_variables_and_constraints!(container, sys, devices, loss_models)
-    _add_mnsp_link_flows!(container, sys, devices)
+    _check_loss_demand_coefficients(container, devices, device_model)
+    PSI.add_parameters!(container, LossDemandCoefficientParameter, devices, device_model)
+    _add_loss_variables_and_constraints!(container, devices, loss_models)
+    _add_mnsp_link_flows!(container, devices, device_model)
     return
 end
 
