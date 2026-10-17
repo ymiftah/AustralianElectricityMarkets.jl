@@ -74,6 +74,10 @@ the energy bid `MAXAVAIL` series [`set_market_bids!`](@ref) attaches, read back 
 [`get_storage_energy_max_avail`](@ref); [`set_storage_dispatch_ceilings!`](@ref) applies the same
 ramp-floor rule to it on the net axis.
 
+NEM dispatch uses the separate bid availability and UIGF series attached by
+[`set_nem_energy_limits!`](@ref) for its energy constraints. This function retains the
+combined availability series for FCAS preconditions and the native PSY envelope.
+
 `"ramp_up_rate"`, `"ramp_down_rate"`, `"initial_mw"` and `"availability"` are stored per-unit of
 `sys`'s system base, rates per minute. `"max_active_power"` follows PSY's native convention instead: data
 normalised by the device's own static `max_active_power` (read under `NATURAL_UNITS`), with

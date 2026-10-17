@@ -31,6 +31,22 @@ Replay rejects missing dispatch inputs, skipped constraint definitions, dropped 
 and missing penalty weights before constructing the optimisation model. Populate the cache for
 the requested intervals and the effective dates and offer dates they reference.
 
+Energy dispatch requires each unit's bid `MAXAVAIL`, effective schedule type, and a complete
+`UIGF` forecast for semi-scheduled units. Zero is a valid forecast. Missing or invalid inputs
+raise an error. A range crossing a unit's schedule-type change must be split at that change.
+
+`replication_system` attaches these inputs automatically. When assembling a system manually,
+call `set_nem_energy_limits!(sys, db, date_range)` after attaching bids and FCAS participants,
+before transforming time series or constructing the NEM dispatch model. The existing
+`set_nem_dispatch_limits!` still attaches ramping, initial conditions and FCAS availability.
+
+Energy bid availability and UIGF are separate elastic constraints. Their surplus variables
+are priced at their respective AEMO CVP factors, so a higher-priority non-conformance or ramp
+constraint can require output above them. Such violations appear in `constraint_violations`
+as `energy_max_avail` and `energy_uigf`, in MW. Ordinary intervals retain their bid and forecast
+limits. Non-scheduled FCAS-only loads remain fixed at zero energy dispatch. Storage retains
+its existing separate direction limits.
+
 `INTERCONNECTORCONSTRAINT.ICTYPE` at the replay date determines whether each interconnector is
 regulated or an MNSP. An MNSP requires both registered links, terminal loss factors, and complete
 price bands, quantities and availability for every interval. Missing MNSP data raises an error;

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- NEM dispatch models energy bid availability and semi-scheduled UIGF as distinct elastic constraints with AEMO violation penalties. Higher-priority non-conformance targets can exceed the forecast, and violations are reported in MW. Complete separate inputs are required before a build.
+
 - Historical dispatch now rejects missing MNSP input tables, incomplete directional offer grids,
   invalid offer values and missing terminal factors instead of switching an MNSP to free flow.
   MNSP status is resolved from the interval's standing data. Replay rejects skipped constraint
@@ -143,6 +145,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`get_generators_dataframe` swapped `MAXRATEOFCHANGEUP`/`MAXRATEOFCHANGEDOWN`**: `DUDETAIL`'s ramp-up rate fed `:max_ramp_down` and its ramp-down rate fed `:max_ramp_up`, so any unit with asymmetric registered ramp rates got `ThermalStandard`/`HydroDispatch.ramp_limits` crossed; the mock hive's equal up/down rates hid it. Mapping is now direct, and one mock `DUDETAIL` unit carries distinct up/down rates to catch a regression.
 
 ### Added
+
+- A [Snowtown interval investigation](docs/validation/snowtown-uigf.md) confirms the hard UIGF ceiling conflicts with higher-priority non-conformance constraints and records two validated diagnostic corrections.
 
 - A [development note](docs/validation/2026-10-17-development-note.md) consolidates the complete-input replay validation, runtime profiling, solver experiments and follow-up priorities.
 

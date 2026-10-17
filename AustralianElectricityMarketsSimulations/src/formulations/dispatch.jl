@@ -14,7 +14,7 @@ PSI.get_variable_multiplier(::PSI.ActivePowerVariable, ::Type{<:PSY.Controllable
 
 PSI.get_variable_lower_bound(::PSI.ActivePowerVariable, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 0.0
 
-PSI.get_variable_upper_bound(::PSI.ActivePowerVariable, d::PSY.StaticInjection, ::AbstractNEMDispatch) = PSY.get_max_active_power(d)
+PSI.get_variable_upper_bound(::PSI.ActivePowerVariable, ::PSY.StaticInjection, ::AbstractNEMDispatch) = nothing
 
 
 # "max_active_power" is stored normalised by the static rating; the dispatch-limit series are
@@ -26,6 +26,10 @@ PSI.get_multiplier_value(::RampUpRateTimeSeriesParameter, ::PSY.StaticInjection,
 PSI.get_multiplier_value(::RampDownRateTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
 
 PSI.get_multiplier_value(::InitialPowerTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
+
+PSI.get_multiplier_value(::EnergyMaxAvailTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
+
+PSI.get_multiplier_value(::EnergyUIGFTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
 
 PSI.get_multiplier_value(::PSI.AbstractPiecewiseLinearBreakpointParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
 
@@ -63,6 +67,8 @@ function PSI.get_default_time_series_names(
         RampUpRateTimeSeriesParameter => "ramp_up_rate",
         RampDownRateTimeSeriesParameter => "ramp_down_rate",
         InitialPowerTimeSeriesParameter => "initial_mw",
+        EnergyMaxAvailTimeSeriesParameter => "energy_max_avail",
+        EnergyUIGFTimeSeriesParameter => "energy_uigf",
     )
 end
 
@@ -97,10 +103,14 @@ dispatch-ceiling series of a battery, whose absence the replay argument stage re
 `true` when every registered series other than the dispatch ceilings is attached, `false` otherwise.
 """
 function _has_nem_dispatch_limits(device, formulation::Type{<:AbstractNEMDispatch})
+    if !(device isa PSY.Storage)
+        get(PSY.get_ext(device), "nem_semi_scheduled", nothing) isa Bool || return false
+    end
     names = PSI.get_default_time_series_names(typeof(device), formulation)
     required = (
         name for (param, name) in names
-            if param !== PSI.ActivePowerOutTimeSeriesParameter && param !== PSI.ActivePowerInTimeSeriesParameter
+            if param !== PSI.ActivePowerOutTimeSeriesParameter && param !== PSI.ActivePowerInTimeSeriesParameter &&
+            (param !== EnergyUIGFTimeSeriesParameter || PSY.get_ext(device)["nem_semi_scheduled"])
     )
     return all(
         PSY.has_time_series(device, PSY.SingleTimeSeries, name) for name in required
@@ -152,6 +162,8 @@ function PSI.construct_device!(
     ) where {T <: PSY.StaticInjection, D <: AbstractNEMDispatch}
     devices = PSI.get_available_components(model, sys)
 
+    _check_energy_limit_series(sys, model, PSI.get_initial_time(container), length(PSI.get_time_steps(container)))
+
     PSI.add_variables!(container, PSI.ActivePowerVariable, devices, D())
 
     for param in (
@@ -159,10 +171,13 @@ function PSI.construct_device!(
             RampUpRateTimeSeriesParameter,
             RampDownRateTimeSeriesParameter,
             InitialPowerTimeSeriesParameter,
+            EnergyMaxAvailTimeSeriesParameter,
         )
         haskey(PSI.get_time_series_names(model), param) || continue
         PSI.add_parameters!(container, param, devices, model)
     end
+    any(d -> PSY.get_ext(d)["nem_semi_scheduled"], devices) &&
+        PSI.add_parameters!(container, EnergyUIGFTimeSeriesParameter, devices, model)
 
     # The chained base measures interval 1 against a DevicePower initial condition, which has to
     # be declared here for PowerSimulations to populate it from the initialisation sub-solve.
@@ -204,8 +219,6 @@ function PSI.construct_device!(
     ) where {T <: PSY.StaticInjection, D <: AbstractNEMDispatch}
     devices = PSI.get_available_components(model, sys)
 
-    _check_dispatch_envelope(container, devices, model)
-
     PSI.add_constraints!(
         container,
         PSI.ActivePowerVariableLimitsConstraint,
@@ -227,9 +240,8 @@ end
 """
     PSI.add_constraints!(container, ::Type{PSI.ActivePowerVariableLimitsConstraint}, U, devices, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
 
-Bounds an [`AbstractNEMDispatch`](@ref) device's active power above by its
-`PowerSimulations.ActivePowerTimeSeriesParameter`, which carries the device's upper dispatch
-limit: `AVAILABILITY`, raised to the ramp-down floor when that is higher.
+Constrains energy dispatch by separate bid availability and semi-scheduled UIGF parameters,
+with non-negative violation variables priced at their respective CVP factors.
 
 # Returns
 `nothing`.
@@ -242,15 +254,32 @@ function PSI.add_constraints!(
         model::PSI.DeviceModel{T, D},
         ::PSI.NetworkModel{X},
     ) where {T <: PSY.StaticInjection, D <: AbstractNEMDispatch, X <: PM.AbstractPowerModel}
-    PSI.add_parameterized_upper_bound_range_constraints(
-        container,
-        PSI.ActivePowerVariableTimeSeriesLimitsConstraint,
-        U,
-        PSI.ActivePowerTimeSeriesParameter,
-        devices,
-        model,
-        X,
-    )
+    _add_energy_limit_rows!(container, devices, T, EnergyMaxAvailTimeSeriesParameter, EnergyMaxAvailConstraint, EnergyMaxAvailSlack, ENERGY_MAX_AVAIL_CVP_FACTOR)
+    semi = [d for d in devices if PSY.get_ext(d)["nem_semi_scheduled"]]
+    isempty(semi) || _add_energy_limit_rows!(container, semi, T, EnergyUIGFTimeSeriesParameter, EnergyUIGFConstraint, EnergyUIGFSlack, ENERGY_UIGF_CVP_FACTOR)
+    power = PSI.get_variable(container, U(), T)
+    for d in devices
+        AustralianElectricityMarkets._is_non_scheduled_load(d) || continue
+        for t in PSI.get_time_steps(container)
+            JuMP.fix(power[PSY.get_name(d), t], 0.0; force = true)
+        end
+    end
+    return
+end
+
+function _add_energy_limit_rows!(container, devices, ::Type{T}, parameter, constraint_type, slack_type, factor) where {T}
+    names = PSY.get_name.(collect(devices))
+    isempty(names) && return
+    steps = PSI.get_time_steps(container)
+    limit, covered = _ts_parameter_accessor(container, parameter, T)
+    _require_coverage(names, "missing energy-limit series", "Call set_nem_energy_limits! first.", covered)
+    power = PSI.get_variable(container, PSI.ActivePowerVariable(), T)
+    rows = PSI.add_constraints_container!(container, constraint_type(), T, names, steps)
+    slack = _add_cvp_slack!(container, slack_type, T, names, steps, factor)
+    jm = PSI.get_jump_model(container)
+    for name in names, t in steps
+        rows[name, t] = JuMP.@constraint(jm, power[name, t] - slack[name, t] <= limit(name, t))
+    end
     return
 end
 
@@ -262,8 +291,8 @@ Holds each device's active power within its per-interval ramp rates of the base 
 measures against. Rates are read from the `"ramp_up_rate"` and `"ramp_down_rate"` parameters in
 system-base per-unit per minute and multiplied by the interval length in minutes. Each row carries
 a [`UnitRampUpSlack`](@ref) or [`UnitRampDownSlack`](@ref) priced at [`UNIT_RAMP_CVP_FACTOR`](@ref)
-times the Market Price Cap, so a ramp envelope that conflicts with the variable bounds is violated
-at that price instead of making the model infeasible; the variable bounds stay hard.
+times the Market Price Cap. Conflicts with energy availability and UIGF are resolved through
+the competing violation costs.
 
 # Returns
 `nothing`.
@@ -444,41 +473,6 @@ function PSI.objective_function!(
 end
 
 
-"Per-unit slack allowed before a ramp-down floor above the availability ceiling is reported."
-const _RAMP_FLOOR_TOLERANCE = 1.0e-6
-
-
-# Reports a ramp-down floor above the availability ceiling at build. The elastic ramp row would
-# resolve the conflict, but NEMDE would break MaxAvail/UIGF before the unit ramp row, so the
-# conflict is surfaced instead of letting the model violate the ramp row.
-function _check_dispatch_envelope(container, devices, model)
-    # Only the replay mode has a metered floor; the lookahead floor is a variable. The name check
-    # is not redundant: the initial-conditions sub-model pairs this formulation with the parent
-    # model's registered names.
-    PSI.get_formulation(model) === NEMReplayDispatch || return
-    haskey(PSI.get_time_series_names(model), InitialPowerTimeSeriesParameter) || return
-    isempty(devices) && return
-    # Recurrent parameters have no value before a solve; `check_dispatch_envelope` runs before build instead.
-    PSI.built_for_recurrent_solves(container) && return
-    T = typeof(first(devices))
-    time_steps = PSI.get_time_steps(container)
-    minutes = PSI._get_minutes_per_period(container)
-    initial, initial_covered = _ts_parameter_accessor(container, InitialPowerTimeSeriesParameter, T)
-    down_rate, down_covered = _ts_parameter_accessor(container, RampDownRateTimeSeriesParameter, T)
-    ceiling, ceiling_covered = _ts_parameter_accessor(container, PSI.ActivePowerTimeSeriesParameter, T)
-    problems = String[]
-    for d in devices
-        name = PSY.get_name(d)
-        all(name in c for c in (initial_covered, down_covered, ceiling_covered)) || continue
-        values_of(accessor) = [JuMP.value(accessor(name, t)) for t in time_steps]
-        hit = _first_envelope_violation(values_of(initial), values_of(down_rate), values_of(ceiling), minutes)
-        isnothing(hit) || push!(problems, _envelope_problem(name, hit...))
-    end
-    _throw_envelope_problems(problems)
-    return
-end
-
-
 """
     nem_dispatch_participants(sys)
 
@@ -541,7 +535,7 @@ function set_nem_dispatch_models!(
     isempty(types) && throw(
         ArgumentError(
             "no dispatch participants in this System: call set_nem_dispatch_limits! over the " *
-                "model's date range first",
+                "model's date range and set_nem_energy_limits! first",
         ),
     )
     if skip_uncovered

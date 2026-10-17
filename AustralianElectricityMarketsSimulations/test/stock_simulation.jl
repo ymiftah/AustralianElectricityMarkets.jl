@@ -143,27 +143,16 @@ end
     end
 end
 
-@testset "the envelope pre-flight check" begin
-    # Interval 2: Alta floor 55 MW above availability 0 MW.
-    bad = sentinel_system(; alta_availability = [100.0, 0.0], alta_initial = [60.0, 60.0], alta_ramp_down = [1.0, 1.0])
-    template = replication_template(bad; parts = STOCK_PARTS)
-    @test isnothing(check_dispatch_envelope(bad, template, TOY_START, 1))
-    err = @test_throws ArgumentError check_dispatch_envelope(bad, template, TOY_START, 2)
-    @test occursin("$(TOY_CHEAP) at interval 2", err.value.msg)
-    @test !occursin(TOY_EXPENSIVE, err.value.msg)
-    failure = try
-        AEMS._replication_simulation(bad, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
-    catch e
-        e
-    end
-    @test failure isa ArgumentError && occursin("at interval 2", sprint(showerror, failure))
-    # A standalone build keeps the build-time check.
-    model = AEMS._replication_decision_model(
-        template, bad, TOY_START + TOY_RESOLUTION; optimizer = STOCK_OPTIMIZER, name = "bad", parts = STOCK_PARTS,
-    )
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
-    @test AEMS._first_envelope_violation([1.0, 1.0], [0.0, 0.0], [2.0, 0.5], 5) == (2, 1.0, 0.5) &&
-        isnothing(AEMS._first_envelope_violation([1.0], [0.1], [0.5], 5))
+@testset "availability conflicts remain feasible and are reported" begin
+    sys = sentinel_system(; alta_availability = [100.0, 0.0], alta_initial = [60.0, 60.0], alta_ramp_down = [1.0, 1.0])
+    template = replication_template(sys; parts = STOCK_PARTS)
+    @test isnothing(check_dispatch_envelope(sys, template, TOY_START, 2))
+    out = AEMS._replication_simulation(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    violations = AEMS._constraint_violations(out.results, sys)
+    availability = filter(r -> r.family == "energy_max_avail" && r.name == TOY_CHEAP, violations)
+    @test only(availability.MW) ≈ 55.0 atol = TOY_TOLERANCE
+    @test only(availability.DateTime) == TOY_START + TOY_RESOLUTION
+    @test !any(==("unit_ramp"), violations.family)
 end
 
 @testset "a constraint invoked at no step is left out and reported with its reason" begin

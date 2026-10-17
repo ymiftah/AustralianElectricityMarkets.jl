@@ -126,6 +126,8 @@ function nem_toy_system(
         add_series!(gen, "ramp_down_rate", unit.ramp_down ./ base_power)
         add_series!(gen, "initial_mw", unit.initial ./ base_power)
         add_series!(gen, "availability", unit.availability ./ base_power)
+        add_series!(gen, "energy_max_avail", unit.availability ./ base_power)
+        PSY.get_ext(gen)["nem_semi_scheduled"] = false
     end
 
     load = PSY.get_component(PSY.PowerLoad, sys, "bus4")
@@ -195,6 +197,8 @@ function nem_toy_system(
         add_series!(scheduled, "ramp_down_rate", ld.ramp_down / base_power)
         add_series!(scheduled, "initial_mw", ld.initial / base_power)
         add_series!(scheduled, "availability", ld.availability / base_power)
+        add_series!(scheduled, "energy_max_avail", ld.availability / base_power)
+        PSY.get_ext(scheduled)["nem_semi_scheduled"] = false
     end
 
     isnothing(interchange) || add_toy_interchange!(sys, stamps, interchange)

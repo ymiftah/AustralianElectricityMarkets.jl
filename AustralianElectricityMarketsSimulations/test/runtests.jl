@@ -33,6 +33,7 @@ const TEST_GROUPS = [
     "constraint_formulations" => ("Constraint formulations", "constraint_formulations.jl"),
     "psi_compat" => ("PSI compat", "psi_compat.jl"),
     "nem_constraints" => ("NEM constraints", "nem_constraints.jl"),
+    "energy_limits" => ("Elastic energy limits", "energy_limits.jl"),
     "nem_dispatch" => ("NEM dispatch formulation", "nem_dispatch.jl"),
     "nem_dispatch_toy" => ("NEM dispatch on a toy PSCB system", "nem_dispatch_toy.jl"),
     "fcas_market" => ("FCAS market", "fcas_market.jl"),

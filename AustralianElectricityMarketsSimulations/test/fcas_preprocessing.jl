@@ -19,7 +19,7 @@ function build_time_offer(device, bid_type, direction, decremental, t)
 end
 
 @testset "effective FCAS offers equal the build-time values on every mock interval" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     start = DateTime(2025, 1, 1, 0, 5)
     sys = replication_system(db, start:DISPATCH_INTERVAL:(start + 6 * DISPATCH_INTERVAL))
     inactive = FCAS_INACTIVE_LIMIT_MW / PSY.get_base_power(sys)
@@ -85,7 +85,7 @@ end
 end
 
 @testset "joint and BDU ramping limits equal the hand-derived mock values" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     start = DateTime(2025, 1, 1, 0, 5)
     sys = replication_system(db, start:DISPATCH_INTERVAL:(start + 6 * DISPATCH_INTERVAL))
     ramping(name, bid_type) = PSY.get_time_series_values(
