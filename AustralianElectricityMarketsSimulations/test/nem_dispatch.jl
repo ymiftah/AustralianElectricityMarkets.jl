@@ -22,6 +22,7 @@ function nem_dispatch_system(; mutate! = identity, data_span = NEM_DISPATCH_HORI
     set_demand!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_market_bids!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_nem_dispatch_limits!(sys, db, date_range)
+    set_nem_energy_limits!(sys, db, date_range)
     mutate!(sys)
     set_storage_dispatch_ceilings!(sys)
     # One window spanning the whole span.
@@ -217,8 +218,8 @@ end
         @test PSY.EnergyReservoirStorage in participants
         @test PSY.InterruptiblePowerLoad in participants
         generator_participants = filter(!in((PSY.EnergyReservoirStorage, PSY.InterruptiblePowerLoad)), participants)
-        variable_sets = [entry_types(component_keys(variable_keys, T)) for T in generator_participants]
-        constraint_sets = [entry_types(component_keys(constraint_keys, T)) for T in generator_participants]
+        variable_sets = [setdiff(entry_types(component_keys(variable_keys, T)), [EnergyUIGFSlack]) for T in generator_participants]
+        constraint_sets = [setdiff(entry_types(component_keys(constraint_keys, T)), [EnergyUIGFConstraint]) for T in generator_participants]
         @test allequal(variable_sets)
         @test allequal(constraint_sets)
         @test PSI.ActivePowerVariable in first(variable_sets)
@@ -231,7 +232,7 @@ end
             @test PSI.PiecewiseLinearBlockDecrementalOffer in load_variables
             @test !(PSI.PiecewiseLinearBlockIncrementalOffer in load_variables)
             @test PSI.RampConstraint in load_constraints
-            @test PSI.ActivePowerVariableTimeSeriesLimitsConstraint in load_constraints
+            @test EnergyMaxAvailConstraint in load_constraints
         end
 
         @testset "a battery gets the per-direction shape instead of a single ActivePowerVariable" begin
@@ -250,7 +251,7 @@ end
     end
 
     @testset "the availability envelope bounds active power" begin
-        @test PSI.ActivePowerVariableTimeSeriesLimitsConstraint in entry_types(constraint_keys)
+        @test EnergyMaxAvailConstraint in entry_types(constraint_keys)
     end
 
     @testset "the objective is non-trivial" begin
@@ -360,18 +361,24 @@ end
     end
 end
 
-@testset "an inconsistent envelope is reported at build, not left to the solver" begin
-    # Zero availability with a positive INITIALMW and a tiny down rate: an unmeetable floor.
+@testset "ramp conflicts use the lower-priority availability slack" begin
     sys = nem_dispatch_system(;
         mutate! = function (s)
             flatten_series!(s, "ER02", "ramp_down_rate", 0.0)
-            flatten_series!(s, "ER02", "max_active_power", 0.0)
+            flatten_series!(s, "ER02", "energy_max_avail", 0.0)
             return s
         end,
     )
     model = nem_dispatch_model(sys)
-    @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
+    @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    @test solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    results = PSI.OptimizationProblemResults(model)
+    availability = filter(:name => ==("ER02"), read_variable(results, "EnergyMaxAvailSlack__ThermalStandard"))
+    down = filter(:name => ==("ER02"), read_variable(results, "UnitRampDownSlack__ThermalStandard"))
+    @test all(>(0.0), availability.value)
+    @test all(iszero, down.value)
 end
+
 
 @testset "a net ramp-down floor above a battery's generation availability raises the ceiling instead of failing the build" begin
     # Zero generation availability with a positive net INITIALMW and a zero down rate: the net
@@ -454,6 +461,7 @@ end
     set_demand!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_market_bids!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_nem_dispatch_limits!(sys, db, date_range)
+    set_nem_energy_limits!(sys, db, date_range)
     set_storage_dispatch_ceilings!(sys)
 
     # Strip one device's rates after the template is derived, so the type is still a

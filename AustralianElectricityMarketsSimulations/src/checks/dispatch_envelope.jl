@@ -1,73 +1,40 @@
-# First `(t, floor, ceiling)` whose ramp-down floor `initial - down_rate * minutes` is above the ceiling, or `nothing`.
-function _first_envelope_violation(initial, down_rate, ceiling, minutes)
-    for t in eachindex(initial)
-        floor_pu = initial[t] - down_rate[t] * minutes
-        floor_pu > ceiling[t] + _RAMP_FLOOR_TOLERANCE && return (t, floor_pu, ceiling[t])
-    end
-    return nothing
-end
-
-
-function _envelope_problem(name, t, floor_pu, ceiling_pu)
-    return "$name at interval $t: ramp-down floor $floor_pu exceeds availability $ceiling_pu"
-end
-
-
-function _throw_envelope_problems(problems::Vector{String})
-    if !isempty(problems)
-        throw(
-            ArgumentError(
-                "NEMDispatch: inconsistent dispatch envelope for $(length(problems)) device(s):\n  " *
-                    join(problems, "\n  "),
-            ),
-        )
+function _check_energy_limit_series(sys, model, initial_time, n_intervals)
+    PSI.get_component_type(model) <: PSY.Storage && return
+    for d in PSI.get_available_components(model, sys)
+        name = PSY.get_name(d)
+        semi = get(PSY.get_ext(d), "nem_semi_scheduled", nothing)
+        semi isa Bool || throw(ArgumentError("$name: missing schedule classification; call set_nem_energy_limits!"))
+        series = semi ? ("energy_max_avail", "energy_uigf") : ("energy_max_avail",)
+        for key in series
+            PSY.has_time_series(d, PSY.SingleTimeSeries, key) || throw(ArgumentError("$name: missing $key; call set_nem_energy_limits!"))
+            values = PSY.get_time_series_values(PSY.SingleTimeSeries, d, key; start_time = initial_time, len = n_intervals, ignore_scaling_factors = true)
+            bad = findfirst(v -> !isfinite(v) || v < 0, values)
+            isnothing(bad) || throw(ArgumentError("$name at interval $bad: invalid $key"))
+        end
     end
     return
 end
 
-
 """
     check_dispatch_envelope(sys, template, initial_time, n_intervals) -> Nothing
 
-Verifies that no available device `template` models under [`NEMReplayDispatch`](@ref), batteries
-excepted, has a ramp-down floor (`"initial_mw"` minus `"ramp_down_rate"` times the interval) above its
-`"max_active_power"` availability in any of the `n_intervals` intervals from `initial_time`, reading the
-`SingleTimeSeries` of `sys` in system-base per-unit.
+Validates complete, finite, non-negative separate energy availability and UIGF inputs for
+non-storage NEM dispatch devices over the requested intervals. Conflicts with ramping are
+resolved by the model's priced violation variables.
 
 # Arguments
-- `sys`: the `PSY.System` whose series are read.
-- `template`: the `PSI.ProblemTemplate` whose `NEMReplayDispatch` device models are checked.
-- `initial_time`: the first interval of the simulation.
-- `n_intervals`: the number of intervals to check from `initial_time`.
+- `sys`: the system whose time series are checked.
+- `template`: the dispatch template.
+- `initial_time`: the first interval timestamp.
+- `n_intervals`: the number of intervals to check.
 
 # Returns
-`nothing`; throws `ArgumentError` naming each inconsistent device and its first interval.
+`nothing`; invalid or missing energy inputs raise `ArgumentError`.
 """
 function check_dispatch_envelope(sys::PSY.System, template::PSI.ProblemTemplate, initial_time::DateTime, n_intervals::Integer)
-    minutes = Dates.value(Dates.Minute(DISPATCH_INTERVAL))
-    params = (InitialPowerTimeSeriesParameter, RampDownRateTimeSeriesParameter, PSI.ActivePowerTimeSeriesParameter)
-    problems = String[]
-    PSY.with_units_base(sys, PSY.UnitSystem.SYSTEM_BASE) do
-        for model in values(PSI.get_device_models(template))
-            PSI.get_formulation(model) === NEMReplayDispatch || continue
-            PSI.get_component_type(model) <: PSY.Storage && continue
-            names = PSI.get_time_series_names(model)
-            haskey(names, InitialPowerTimeSeriesParameter) || continue
-            for d in PSI.get_available_components(model, sys)
-                all(P -> PSY.has_time_series(d, PSY.SingleTimeSeries, names[P]), params) || continue
-                initial, down_rate, ceiling = (
-                    PSY.get_time_series_values(
-                        PSY.SingleTimeSeries, d, names[P]; start_time = initial_time,
-                        len = n_intervals, ignore_scaling_factors = true,
-                    ) .* PSI.get_multiplier_value(P(), d, NEMReplayDispatch())
-                        for P in params
-                )
-                hit = _first_envelope_violation(initial, down_rate, ceiling, minutes)
-                isnothing(hit) || push!(problems, _envelope_problem(PSY.get_name(d), hit...))
-            end
-        end
-        return
+    for model in values(PSI.get_device_models(template))
+        PSI.get_formulation(model) <: AbstractNEMDispatch || continue
+        _check_energy_limit_series(sys, model, initial_time, n_intervals)
     end
-    _throw_envelope_problems(problems)
     return
 end

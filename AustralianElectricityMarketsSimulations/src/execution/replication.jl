@@ -225,6 +225,7 @@ function replication_system(
     set_market_bids!(sys, db, date_range; resolution = resolution)
     set_fcas_scaling_inputs!(sys, db, date_range; intervention = intervention)
     set_nem_dispatch_limits!(sys, db, date_range; intervention = intervention)
+    set_nem_energy_limits!(sys, db, date_range; intervention = intervention)
     set_storage_dispatch_ceilings!(sys)
     set_fcas_effective_offers!(sys)
     set_tie_break_scales!(sys)
@@ -305,7 +306,7 @@ where the model has no solved value: `prices` (`REGIONID`; solved `ROP`, publish
 `MWLOSSES`) and `fcas_prices` (`REGIONID`, `BIDTYPE`, `ROP`). `ramp_violations` lists every
 non-zero unit ramp slack of the model (`DUID`, `DateTime`, `MW`, `direction`), and
 `constraint_violations` lists every non-zero slack of the families below (for a generic constraint, at an interval where it is invoked) (`family`, `name`,
-`DateTime`, `MW`, `direction`, `variable`), where `family` is one of `"unit_ramp"`,
+`DateTime`, `MW`, `direction`, `variable`), where `family` is one of `"energy_max_avail"`, `"energy_uigf"`, `"unit_ramp"`,
 `"interconnector_flow"`, `"fcas_max_avail"`, `"fcas_bdu_ramping"`, `"fcas_joint_ramping"`,
 `"fcas_enablement"`, `"generic_constraint"` and `"area_balance"`. `direction` is `"up"` for a
 slack relaxing a `<=` row and `"down"` for one relaxing a `>=` row. For `"area_balance"`, whose
@@ -393,6 +394,8 @@ end
 # `"up"` for a slack that relaxes a `<=` row and `"down"` for one that relaxes a `>=` row; the
 # FCAS families whose rows have both senses refine it per key in `_violation_direction`.
 const _VIOLATION_FAMILIES = (
+    EnergyMaxAvailSlack => ("energy_max_avail", "up"),
+    EnergyUIGFSlack => ("energy_uigf", "up"),
     UnitRampUpSlack => ("unit_ramp", "up"),
     UnitRampDownSlack => ("unit_ramp", "down"),
     InterconnectorFlowSurplusSlack => ("interconnector_flow", "up"),

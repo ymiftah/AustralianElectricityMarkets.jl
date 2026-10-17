@@ -29,6 +29,14 @@ PSI.convert_result_to_natural_units(::Type{InterconnectorFlowDeficitSlack}) = tr
 
 PSI.convert_result_to_natural_units(::Type{UnitRampUpSlack}) = true
 
+PSI.convert_result_to_natural_units(::Type{EnergyMaxAvailSlack}) = true
+
+PSI.convert_result_to_natural_units(::Type{EnergyUIGFSlack}) = true
+
+PSI.convert_result_to_natural_units(::Type{EnergyMaxAvailTimeSeriesParameter}) = true
+
+PSI.convert_result_to_natural_units(::Type{EnergyUIGFTimeSeriesParameter}) = true
+
 PSI.convert_result_to_natural_units(::Type{UnitRampDownSlack}) = true
 
 PSI.convert_result_to_natural_units(::Type{FCASJointCapacitySlack}) = true

@@ -21,6 +21,7 @@ export get_storage_energy_max_avail
 export set_fcas_bids!, set_fcas_scaling_inputs!
 export set_nem_dispatch_limits!, set_nem_initial_conditions!, set_interconnector_flow_limits!, set_storage_dispatch_ceilings!, set_loss_demand_coefficients!
 export get_initial_mw, get_energy_availability
+export set_nem_energy_limits!
 export add_nem_constraints!, get_skipped_constraints, get_dropped_terms
 export fcas_service_name
 export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS, BidType
@@ -70,6 +71,7 @@ include("system/demand.jl")
 include("system/renewables.jl")
 include("system/bids.jl")
 include("system/dispatch_limits.jl")
+include("system/energy_limits.jl")
 include("system/fcas.jl")
 include("system/mnsp.jl")
 include("system/constraints.jl")
