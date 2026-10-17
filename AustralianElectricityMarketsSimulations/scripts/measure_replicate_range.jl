@@ -71,11 +71,12 @@ function _measure_update_probe(simulation, model)
 end
 
 # Every phase (system, build, update probe, execute) on `steps` in `dir`, for the warm-up run.
-function _measure_warmup(db, steps, dir; time_series_in_memory, optimizer, cache_size_mib)
+function _measure_warmup(db, steps, dir; time_series_in_memory, optimizer, cache_size_mib, model_hook = nothing)
     mkpath(dir)
     ts_dir = time_series_in_memory ? nothing : mkpath(joinpath(dir, "ts"))
     sys = replication_system(db, first(steps):Minute(5):(last(steps) + Minute(5)); time_series_in_memory, time_series_directory = ts_dir)
     built = AEM_MEASURE._build_range_simulation(sys, steps; optimizer, folder = mkpath(joinpath(dir, "sim")))
+    isnothing(model_hook) || model_hook(built.model)
     _measure_update_probe(built.simulation, built.model)
     AEM_MEASURE._execute_range_simulation(built.simulation; cache_size_mib)
     return nothing
@@ -83,7 +84,8 @@ end
 
 """
     measure_replicate_range(db, steps::StepRange{DateTime}, out_dir; time_series_in_memory = true,
-        cache_size_mib = 1024, warmup = true, optimizer = _MEASURE_OPTIMIZER) -> Dict{String, Float64}
+        cache_size_mib = 1024, warmup = true, optimizer = _MEASURE_OPTIMIZER,
+        solver_log = false, model_hook = nothing) -> Dict{String, Float64}
 
 Solves the trading-day chunk `steps` in phases, timing each, and writes `metrics.csv`, `phases.csv`,
 `steps.csv`, `update_by_family.csv`, `skipped_constraints.csv`, `timer_build.txt` and `timer_run.txt`
@@ -97,6 +99,8 @@ to `out_dir`. The `warmup` run compiles every phase, execution included, on the 
 - `cache_size_mib`: the simulation store's write cache.
 - `warmup`: whether to run every phase on two intervals first.
 - `optimizer`: the JuMP optimizer.
+- `solver_log`: whether to enable solver output; configure its destination in `optimizer`.
+- `model_hook`: an optional callback on each built decision model before execution.
 
 # Returns
 The metrics as a `Dict` from name to value.
@@ -104,7 +108,7 @@ The metrics as a `Dict` from name to value.
 function measure_replicate_range(
         db, steps::StepRange{DateTime}, out_dir::AbstractString;
         time_series_in_memory::Bool = true, cache_size_mib::Int = 1024, warmup::Bool = true,
-        optimizer = _MEASURE_OPTIMIZER,
+        optimizer = _MEASURE_OPTIMIZER, solver_log::Bool = false, model_hook = nothing,
     )
     length(AEM_MEASURE._range_chunks(steps, :trading_day)) == 1 ||
         throw(ArgumentError("steps cross a trading day or 1 July"))
@@ -112,7 +116,7 @@ function measure_replicate_range(
     if warmup
         _measure_warmup(
             db, first(steps):Minute(5):(first(steps) + Minute(5)), joinpath(out_dir, "warmup");
-            time_series_in_memory, optimizer, cache_size_mib,
+            time_series_in_memory, optimizer, cache_size_mib, model_hook,
         )
         GC.gc()
     end
@@ -133,6 +137,7 @@ function measure_replicate_range(
     probe("system", system_s)
     simulation_build_s = @elapsed built = AEM_MEASURE._build_range_simulation(sys, steps; optimizer, folder = sim_dir)
     (; simulation, model, skipped_constraints) = built
+    isnothing(model_hook) || model_hook(model)
     probe("simulation_build", simulation_build_s)
     build_timer = PSI.BUILD_PROBLEMS_TIMER["Build Simulation"]
     write(joinpath(out_dir, "timer_build.txt"), sprint(show, PSI.BUILD_PROBLEMS_TIMER))
@@ -156,6 +161,7 @@ function measure_replicate_range(
         family_seconds[family] = get(family_seconds, family, 0.0) + t
     end
 
+    solver_log && PSI.JuMP.unset_silent(PSI.get_jump_model(container))
     execute_s = @elapsed results = AEM_MEASURE._execute_range_simulation(simulation; cache_size_mib)
     probe("execute", execute_s)
     write(joinpath(out_dir, "timer_run.txt"), sprint(show, PSI.RUN_SIMULATION_TIMER))

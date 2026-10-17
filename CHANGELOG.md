@@ -144,6 +144,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A [development note](docs/validation/2026-10-17-development-note.md) consolidates the complete-input replay validation, runtime profiling, solver experiments and follow-up priorities.
+
+- An isolated cached-data benchmark compares SCIP, CBC and HiGHS dispatch with a shared HiGHS pricing LP. See [the solver comparison](docs/validation/solver-comparison.md).
+
+- A cached-data HiGHS benchmark records dispatch and pricing timings, solver phase logs and output comparisons for explicit thread settings, heuristic effort and MIP gaps. See [the profiling results](docs/validation/highs-performance.md).
 - `set_fcas_effective_offers!(sys)` attaches each FCAS offer's per-interval effective trapezium
   limits, slope coefficients and band widths (AEMO *FCAS Model in NEMDE* §4 scaling, §5 enablement)
   as `"fcas_effective_<BIDTYPE>[_decremental]"`, and each regulation market's joint and BDU ramping
