@@ -33,6 +33,10 @@ PSI.convert_result_to_natural_units(::Type{EnergyMaxAvailSlack}) = true
 
 PSI.convert_result_to_natural_units(::Type{EnergyUIGFSlack}) = true
 
+PSI.convert_result_to_natural_units(::Type{EnergyOfferSurplusSlack}) = true
+
+PSI.convert_result_to_natural_units(::Type{EnergyOfferDeficitSlack}) = true
+
 PSI.convert_result_to_natural_units(::Type{EnergyMaxAvailTimeSeriesParameter}) = true
 
 PSI.convert_result_to_natural_units(::Type{EnergyUIGFTimeSeriesParameter}) = true

@@ -78,3 +78,12 @@ const ENERGY_MAX_AVAIL_CVP_FACTOR = 370.0
 
 "UIGF CVP factor from AEMO's Schedule v8.0, Table 1 item 12."
 const ENERGY_UIGF_CVP_FACTOR = 385.0
+
+"Non-negative dispatch above the sum of cleared energy bands, in system-base per-unit."
+struct EnergyOfferSurplusSlack <: PSI.VariableType end
+
+"Non-negative dispatch below the sum of cleared energy bands, in system-base per-unit."
+struct EnergyOfferDeficitSlack <: PSI.VariableType end
+
+"Total energy-band offer CVP factor from AEMO's Schedule v8.0, Table 1 item 8."
+const ENERGY_OFFER_CVP_FACTOR = 1135.0

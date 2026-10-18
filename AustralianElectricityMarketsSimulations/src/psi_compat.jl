@@ -2,6 +2,65 @@
 # version it was written against. Re-check this file on every PSI upgrade.
 
 """
+    PSI._add_pwl_constraint!(container, component, variable, formulation, breakpoints, period, band_type, constraint_type)
+
+Override of the pinned PowerSimulations 0.38.4 market-bid hook for NEM dispatch. Keeps
+individual offered-band bounds and links dispatch to cleared bands with priced total-offer
+violations. Breakpoint parameters remain live for recurrent updates.
+
+# Returns
+`nothing`.
+"""
+function PSI._add_pwl_constraint!(
+        container::PSI.OptimizationContainer, component::T, ::U, ::D,
+        breakpoints::Vector{<:PSI.JuMPOrFloat}, period::Int, ::Type{V}, ::Type{W},
+    ) where {
+        T <: PSY.StaticInjection, U <: PSI.VariableType, D <: AbstractNEMDispatch,
+        V <: PSI.AbstractPiecewiseLinearBlockOffer, W <: PSI.AbstractPiecewiseLinearBlockOfferConstraint,
+    }
+    jm = PSI.get_jump_model(container)
+    power = PSI.get_variable(container, U(), T)
+    bands = PSI.get_variable(container, V(), T)
+    name = PSY.get_name(component)
+    rows = PSI.lazy_container_addition!(container, W(), T, axes(power)...)
+    meta = V === PSI.PiecewiseLinearBlockIncrementalOffer ? "gen" : "load"
+    surplus = _energy_offer_slack!(container, EnergyOfferSurplusSlack, T, name, period, axes(power), meta)
+    deficit = _energy_offer_slack!(container, EnergyOfferDeficitSlack, T, name, period, axes(power), meta)
+    offered = sum(bands[name, k, period] for k in 1:(length(breakpoints) - 1))
+    if PSI._include_constant_min_gen_power_in_constraint(component, U(), D())
+        offered += PSI.jump_fixed_value(first(breakpoints))::Float64
+    elseif PSI._include_min_gen_power_in_constraint(component, U(), D())
+        on = PSI.get_variable(container, PSI.OnVariable(), T)
+        offered += (PSI.jump_fixed_value(first(breakpoints))::Float64) * on[name, period]
+    end
+    rows[name, period] = JuMP.@constraint(jm, power[name, period] == offered + surplus - deficit)
+    for k in 1:(length(breakpoints) - 1)
+        JuMP.@constraint(jm, bands[name, k, period] <= breakpoints[k + 1] - breakpoints[k])
+    end
+    return
+end
+
+
+function _energy_offer_slack!(container, type, ::Type{T}, name, period, axis_sets, meta) where {T}
+    variables = if PSI.has_container_key(container, type, T, meta)
+        PSI.get_variable(container, type(), T, meta)
+    else
+        sparse = PSI.add_variable_container!(container, type(), T, axis_sets...; meta, sparse = true)
+        # Only devices with this offer direction receive slacks.
+        empty!(sparse.data)
+        sparse
+    end
+    slack = variables[name, period] = JuMP.@variable(
+        PSI.get_jump_model(container), base_name = "$(nameof(type))_$(meta){$name,$period}", lower_bound = 0.0,
+    )
+    resolution = PSI.get_resolution(container)
+    time = PSI.get_initial_time(container) + (period - 1) * resolution
+    coefficient = PSI.get_base_power(container) * interval_cost_coefficient(ENERGY_OFFER_CVP_FACTOR * _container_market_price_cap(container, time), resolution)
+    PSI.add_to_objective_invariant_expression!(container, coefficient * slack)
+    return slack
+end
+
+"""
     PSI._modify_device_model!(devices_template, ::PSI.ServiceModel{GenericConstraint, LinearFactorLimit}, contributing_devices)
 
 No-op override of `PowerSimulations.jl` 0.38.4's private `_modify_device_model!` hook, called

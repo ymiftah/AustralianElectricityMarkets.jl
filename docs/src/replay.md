@@ -47,6 +47,11 @@ as `energy_max_avail` and `energy_uigf`, in MW. Ordinary intervals retain their 
 limits. Non-scheduled FCAS-only loads remain fixed at zero energy dispatch. Storage retains
 its existing separate direction limits.
 
+Total offered energy bands have separate priced violations at CVP1135. Dispatch beyond
+the offered quantity appears as `energy_offer` in `constraint_violations`, in MW.
+Exceeding both an availability limit and the total bands incurs both penalties. The
+submitted band quantities and prices are retained.
+
 `INTERCONNECTORCONSTRAINT.ICTYPE` at the replay date determines whether each interconnector is
 regulated or an MNSP. An MNSP requires both registered links, terminal loss factors, and complete
 price bands, quantities and availability for every interval. Missing MNSP data raises an error;
