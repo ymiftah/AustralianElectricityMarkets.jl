@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- NEM energy dispatch can exceed the total offered price-band quantity through explicit AEMO CVP1135 violations, reported in MW. Individual band bounds and prices remain unchanged, including recurrent offer updates.
+
 - NEM dispatch models energy bid availability and semi-scheduled UIGF as distinct elastic constraints with AEMO violation penalties. Higher-priority non-conformance targets can exceed the forecast, and violations are reported in MW. Complete separate inputs are required before a build.
 
 - Historical dispatch now rejects missing MNSP input tables, incomplete directional offer grids,
