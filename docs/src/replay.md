@@ -44,8 +44,11 @@ Energy bid availability and UIGF are separate elastic constraints. Their surplus
 are priced at their respective AEMO CVP factors, so a higher-priority non-conformance or ramp
 constraint can require output above them. Such violations appear in `constraint_violations`
 as `energy_max_avail` and `energy_uigf`, in MW. Ordinary intervals retain their bid and forecast
-limits. Non-scheduled FCAS-only loads remain fixed at zero energy dispatch. Storage retains
-its existing separate direction limits.
+limits. Non-scheduled FCAS-only loads remain fixed at zero energy dispatch. Storage uses separate elastic generation and consumption `MAXAVAIL` limits at CVP370.
+Both raw offer series are required; neither a static rating nor a pre-raised ramp ceiling
+replaces a missing input. Storage exceedances also appear as `energy_max_avail`, with
+`up` for generation and `down` for consumption. `set_storage_dispatch_ceilings!` is not
+required by the NEM dispatch formulation.
 
 `INTERCONNECTORCONSTRAINT.ICTYPE` at the replay date determines whether each interconnector is
 regulated or an MNSP. An MNSP requires both registered links, terminal loss factors, and complete

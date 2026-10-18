@@ -1,12 +1,16 @@
 function _check_energy_limit_series(sys, model, initial_time, n_intervals)
-    PSI.get_component_type(model) <: PSY.Storage && return
     for d in PSI.get_available_components(model, sys)
         name = PSY.get_name(d)
-        semi = get(PSY.get_ext(d), "nem_semi_scheduled", nothing)
-        semi isa Bool || throw(ArgumentError("$name: missing schedule classification; call set_nem_energy_limits!"))
-        series = semi ? ("energy_max_avail", "energy_uigf") : ("energy_max_avail",)
+        series = if d isa PSY.Storage
+            ("energy_max_avail", "energy_max_avail_decremental")
+        else
+            semi = get(PSY.get_ext(d), "nem_semi_scheduled", nothing)
+            semi isa Bool || throw(ArgumentError("$name: missing schedule classification; call set_nem_energy_limits!"))
+            semi ? ("energy_max_avail", "energy_uigf") : ("energy_max_avail",)
+        end
         for key in series
-            PSY.has_time_series(d, PSY.SingleTimeSeries, key) || throw(ArgumentError("$name: missing $key; call set_nem_energy_limits!"))
+            remedy = d isa PSY.Storage ? "set_market_bids! for both directions" : "set_nem_energy_limits!"
+            PSY.has_time_series(d, PSY.SingleTimeSeries, key) || throw(ArgumentError("$name: missing $key; call $remedy"))
             values = PSY.get_time_series_values(PSY.SingleTimeSeries, d, key; start_time = initial_time, len = n_intervals, ignore_scaling_factors = true)
             bad = findfirst(v -> !isfinite(v) || v < 0, values)
             isnothing(bad) || throw(ArgumentError("$name at interval $bad: invalid $key"))
@@ -19,7 +23,7 @@ end
     check_dispatch_envelope(sys, template, initial_time, n_intervals) -> Nothing
 
 Validates complete, finite, non-negative separate energy availability and UIGF inputs for
-non-storage NEM dispatch devices over the requested intervals. Conflicts with ramping are
+NEM dispatch devices, including both storage offer directions over the requested intervals. Conflicts with ramping are
 resolved by the model's priced violation variables.
 
 # Arguments

@@ -457,36 +457,30 @@ function battery_sentinel_system(; reverse_order = false, ceilings = true)
     return nem_toy_system(units, 40.0; batteries = batteries, horizon = TOY_RESOLUTION, ceilings = ceilings)
 end
 
-@testset "a replay battery's rows read its ceiling series and its bound is the chunk maximum" begin
+@testset "a replay battery reads raw availability without hard ceilings" begin
     sys = battery_sentinel_system()
-    battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
-    @test PSY.get_time_series_values(PSY.SingleTimeSeries, battery, "storage_gen_ceiling") ≈ [0.15, 0.1] atol = TOY_TOLERANCE
-    for (t, gen_mw) in zip(STOCK_STEPS, (15.0, 10.0))
+    for t in STOCK_STEPS
         template = replication_template(sys; parts = STOCK_PARTS)
-        model = AEMS._replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "ceilings", parts = STOCK_PARTS)
+        model = AEMS._replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "availability", parts = STOCK_PARTS)
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
         container = PSI.get_optimization_container(model)
-        row_mw(C) = PSI.JuMP.normalized_rhs(PSI.get_constraint(container, C(), PSY.EnergyReservoirStorage, "ub")[TOY_BATTERY, 1]) * 100.0
-        bound_mw(V) = PSI.JuMP.upper_bound(PSI.get_variable(container, V(), PSY.EnergyReservoirStorage)[TOY_BATTERY, 1]) * 100.0
-        @test row_mw(PSI.ActivePowerOutVariableTimeSeriesLimitsConstraint) ≈ gen_mw atol = TOY_TOLERANCE
-        @test row_mw(PSI.ActivePowerInVariableTimeSeriesLimitsConstraint) ≈ 100.0 atol = TOY_TOLERANCE
-        @test bound_mw(PSI.ActivePowerOutVariable) ≈ 15.0 atol = TOY_TOLERANCE
-        @test bound_mw(PSI.ActivePowerInVariable) ≈ 100.0 atol = TOY_TOLERANCE
-        @test !PSI.has_container_key(container, PSI.ActivePowerVariableLimitsConstraint, PSY.EnergyReservoirStorage, "out")
+        row_mw(meta) = PSI.JuMP.normalized_rhs(PSI.get_constraint(container, EnergyMaxAvailConstraint(), PSY.EnergyReservoirStorage, meta)[TOY_BATTERY, 1]) * 100.0
+        @test row_mw("gen") ≈ 10.0 atol = TOY_TOLERANCE
+        @test row_mw("load") ≈ -100.0 atol = TOY_TOLERANCE
+        for V in (PSI.ActivePowerOutVariable, PSI.ActivePowerInVariable)
+            @test !PSI.JuMP.has_upper_bound(PSI.get_variable(container, V(), PSY.EnergyReservoirStorage)[TOY_BATTERY, 1])
+        end
     end
-    # Without the ceiling series a replay build fails, and the logged error names set_storage_dispatch_ceilings!.
     bare = battery_sentinel_system(; ceilings = false)
     model = AEMS._replication_decision_model(
         replication_template(bare; parts = STOCK_PARTS), bare, TOY_START; optimizer = STOCK_OPTIMIZER, name = "bare", parts = STOCK_PARTS,
     )
-    folder = mktempdir()
-    @test PSI.build!(model; output_dir = folder) == PSI.ModelBuildStatus.FAILED
-    @test any(f -> occursin("set_storage_dispatch_ceilings!", read(f, String)), readdir(folder; join = true))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
 end
 
 @testset "a battery's ramp floor binds in step 1 only: simulation equals standalone solves" begin
     expected = [
-        (battery = 15.0, alta = 25.0, price = 50.0, objective = 1325 / 12),
+        (battery = 15.0, alta = 25.0, price = 50.0, objective = (1325 + 5.0 * ENERGY_MAX_AVAIL_CVP_FACTOR * AEMS._financial_year_mpc(TOY_START)) / 12),
         (battery = 10.0, alta = 30.0, price = 50.0, objective = 1550 / 12),
     ]
     sim = stock_simulate(battery_sentinel_system())

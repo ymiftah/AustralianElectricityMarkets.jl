@@ -93,14 +93,14 @@ end
     _has_nem_dispatch_limits(device, formulation)
 
 Whether `device` carries every time series `formulation` reads as a parameter, except the
-dispatch-ceiling series of a battery, whose absence the replay argument stage reports.
+raw availability series of a battery, whose coverage the argument stage validates.
 
 # Arguments
 - `device`: the `PowerSystems.Component` to inspect.
 - `formulation`: an [`AbstractNEMDispatch`](@ref) subtype.
 
 # Returns
-`true` when every registered series other than the dispatch ceilings is attached, `false` otherwise.
+`true` when every registered series other than the storage availability series is attached, `false` otherwise.
 """
 function _has_nem_dispatch_limits(device, formulation::Type{<:AbstractNEMDispatch})
     if !(device isa PSY.Storage)
@@ -382,17 +382,17 @@ interval, in `\$/MW` per dispatch interval. The variable is in system-base per-u
 # Returns
 The slack variable container.
 """
-function _add_cvp_slack!(container::PSI.OptimizationContainer, var_type, ::Type{T}, names, time_steps, cvp_factor::Real) where {T}
+function _add_cvp_slack!(container::PSI.OptimizationContainer, var_type, ::Type{T}, names, time_steps, cvp_factor::Real; meta::String = "") where {T}
     jm = PSI.get_jump_model(container)
     resolution = PSI.get_resolution(container)
     initial_time = PSI.get_initial_time(container)
     base_power = PSI.get_base_power(container)
-    slack = PSI.add_variable_container!(container, var_type(), T, names, time_steps)
+    slack = PSI.add_variable_container!(container, var_type(), T, names, time_steps; meta)
     for t in time_steps
         mpc = _container_market_price_cap(container, initial_time + resolution * (t - 1))
         coefficient = base_power * interval_cost_coefficient(cvp_factor * mpc, resolution)
         for name in names
-            slack[name, t] = JuMP.@variable(jm, base_name = "$(nameof(var_type))_{$name,$t}", lower_bound = 0.0)
+            slack[name, t] = JuMP.@variable(jm, base_name = "$(nameof(var_type))_$(meta){$name,$t}", lower_bound = 0.0)
             PSI.add_to_objective_invariant_expression!(container, slack[name, t] * coefficient)
         end
     end

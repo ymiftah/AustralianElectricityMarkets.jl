@@ -416,6 +416,7 @@ const _VIOLATION_FAMILIES = (
 # `_fcas_upper_regulation_service` names and the lower (`>=`) form for the other, so the sense is
 # resolved per device from the service's bid type.
 function _violation_direction(sys::PSY.System, type, meta::AbstractString, name::AbstractString, default::AbstractString)
+    type === EnergyMaxAvailSlack && meta == "load" && return "down"
     type === FCASJointCapacitySlack && return endswith(meta, "_lower") ? "down" : "up"
     if type === FCASJointRampingSlack
         service = PSY.get_component(FCASService, sys, meta)
