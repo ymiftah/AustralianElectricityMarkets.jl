@@ -429,6 +429,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Generic-constraint slack costs are a `GenericConstraintSlackCostParameter` driven by the
+  `"invoked"` series, so a recurrent build prices a slack only at invoked intervals and keeps a
+  non-invoked row vacuous. `compute_fcas_prices` also accepts simulation results.
+- The Market Price Cap of a dispatch interval is that of the financial year the interval starts in:
+  the interval ending 00:00 on 1 July takes the earlier year's cap.
+- The Simulations package pins PowerSimulations to a fork revision with updatable constraint
+  coefficients, a cached `is_milp`, and escaped `/` in simulation store names.
 - `set_mnsp_offers!` requires complete, valid inputs for every `MNSP` interconnector (named by
   `INTERCONNECTORCONSTRAINT.ICTYPE`) and throws before changing the system, instead of warning and
   leaving the interconnector on the free-flow model. `REGULATED` interconnectors need no offers.
