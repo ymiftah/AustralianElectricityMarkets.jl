@@ -1,4 +1,6 @@
 """
+    EnergyTieBreak(; name, available = true, ext = Dict{String, Any}(), internal = InfrastructureSystemsInternal())
+
 The anchor of the energy tie-break rows: the `add_service!` join between the tie-break and the units
 whose price-tied energy bands it dispatches pro rata. Carries no time series of its own; each unit's
 band scales live on the unit.

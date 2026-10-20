@@ -64,8 +64,9 @@ elastic (`make_constraints_elastic('tie_break', violation_cost=cost)`, form
   neither is used. The all-pairs rows are what make the held-back bands cost-neutral across a
   limited subset.
 - **Detection.** Per (direction, region, time step): offer bands and load-bid bands are separate
-  groups; the region is the area of the device's bus; prices are the market-bid slopes divided by
-  the system base, which are already referred to the reference node by the bid setter. Sorted
+  groups; the region is the area of the device's bus; prices are the y-coordinates of the units'
+  offer curves (`PiecewiseStepData`, natural units) at each time step, which the bid setter has
+  already referred to the reference node. Sorted
   prices are grouped while consecutive prices differ by at most 1e-6 $/MWh. Segments that are empty
   at every timestamp of the offer series are skipped (an unused top band at the price cap would
   only add vacuous rows); a segment empty at some timestamps stays in its group with a zero scale,
@@ -85,7 +86,7 @@ elastic (`make_constraints_elastic('tie_break', violation_cost=cost)`, form
   the build-time checks still run when nothing ties. `set_nem_dispatch_models!` registers the
   service model whenever the system carries the service (`tie_breaks = false` leaves it out). The
   argument stage is a no-op; the model stage (step 7 of PSI's build order, after every device's bid
-  objective) reads the PSI block variables, breakpoints and slopes, so it crosses device types (wind
+  objective) reads the PSI block variables and the units' offer curves, so it crosses device types (wind
   against solar in a region is the common case) and works under any network model. Slacks are
   registered as `TieBreakSlackUp`/`TieBreakSlackDown` (`SparseVariableType`, keyed `(label, pair,
   t)` with `label = "<region>_offer"` or `"<region>_bid"`, not written to results like PSI's own
@@ -138,3 +139,22 @@ elastic (`make_constraints_elastic('tie_break', violation_cost=cost)`, form
   follow the offers per step. The replication path may also rebuild per interval.
 - Not tested by a solve: two regions with equal prices staying separate (the toy has one area).
   The grouping key includes the region.
+- A fixed-curve unit in a direction where no unit has a time-varying curve gets no scale from
+  `set_tie_break_scales!` (there is no stamp grid to put it on). If its bands tie, the build fails
+  with an error naming that cause, rather than leaving the tie unbroken.
+- A contributor excluded by its device model's `"filter_function"` (as
+  `set_nem_dispatch_models!(...; skip_uncovered = true)` installs) is treated as PSI treats it: not
+  modelled, and exempt from the "unmodelled unit carrying scales" check. The pro-rata split of the
+  modelled bands is unchanged, since a row's ratio `w_b / w_a` does not depend on `w_ref`.
+- `TieBreakMarket` registers no duals; a `ServiceModel` requesting them fails the build by name.
+
+## Follow-ups
+
+- Call `check_tie_break_pairs` from the multi-step `Simulation` path, so a recurrent build whose
+  tied pairs change over its range (across a trading day) fails rather than writing the new day's
+  scales onto the old pairs. Deferred to the replay core PR, which introduces that path.
+- Test that the scales follow the offers across a `Simulation` step (the `TieBreakScaleParameter`
+  update). Deferred to the replay core PR with the multi-step path.
+- The constraint container is built as the dense `labels x pairs x time_steps` product and then
+  filtered to the rows; building it from the row keys would avoid the allocation for large tie
+  groups.

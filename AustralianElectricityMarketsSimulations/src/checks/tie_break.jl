@@ -1,10 +1,13 @@
-# Pairs `(name_a, band_a, name_b, band_b)` of price-tied bands of different units at stamp `i`.
+# Pairs `(name_a, band_a, name_b, band_b)` of price-tied bands of different units at stamp `i`, the
+# `(name, band)` of `a` ordered before that of `b`.
 function _tie_break_pairs(offers, i::Int, active, decremental::Bool)
     bands = _tie_break_stamp_bands(offers, i, active, decremental)
     pairs = Set{Tuple{String, Int, String, Int}}()
     for group in _tie_groups(bands), x in 1:(length(group) - 1), y in (x + 1):length(group)
         a, b = bands[group[x]], bands[group[y]]
-        a.name == b.name || push!(pairs, (a.name, a.band, b.name, b.band))
+        a.name == b.name && continue
+        lo, hi = minmax((a.name, a.band), (b.name, b.band))
+        push!(pairs, (lo..., hi...))
     end
     return pairs
 end

@@ -1041,5 +1041,100 @@ end
     )
     status, log = _toy_build_log(model)
     @test status == PSI.ModelBuildStatus.FAILED
-    @test occursin("carry no tie-break scale forecast", log)
+    @test occursin(
+        "tie-break: 2 unit(s) with fixed offer curves have price-tied bands in a direction where no unit has a " *
+            "time-varying offer curve, so set_tie_break_scales! cannot scale them: Alta, Park City.",
+        log,
+    )
+    @test !occursin("Call set_tie_break_scales!(sys)", log)
+end
+
+@testset "a tied unit excluded by skip_uncovered is left out of the tie-break check" begin
+    third = "Solitude"
+    # Strips the third unit's dispatch limits, so skip_uncovered filters it out of the build.
+    function strip_limits!(sys, _)
+        gen = PSY.get_component(PSY.ThermalStandard, sys, third)
+        for (param, name) in PSI.get_default_time_series_names(PSY.ThermalStandard, NEMReplayDispatch)
+            param in (PSI.ActivePowerOutTimeSeriesParameter, PSI.ActivePowerInTimeSeriesParameter) && continue
+            PSY.has_time_series(gen, PSY.SingleTimeSeries, name) && PSY.remove_time_series!(sys, PSY.SingleTimeSeries, gen, name)
+        end
+        return
+    end
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(168.0, [(168.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(46.0, [(46.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+            third => toy_unit(122.0, [(122.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        107.0;
+        mutate! = strip_limits!,
+    )
+    @test PSY.has_time_series(PSY.get_component(PSY.ThermalStandard, sys, third), PSY.SingleTimeSeries, "tie_break_scale_1")
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    @test_logs (:warn, r"Solitude") set_nem_dispatch_models!(template, sys; skip_uncovered = true)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    model = PSI.DecisionModel(
+        template, sys; optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+        horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    dispatch = read_variable(PSI.OptimizationProblemResults(model), "ActivePowerVariable__ThermalStandard")
+    mw = Dict(row.name => row.value for row in eachrow(dispatch))
+    @test !haskey(mw, third)
+    # The modelled tied bands still share the load pro rata to their 168 and 46 MW widths.
+    @test mw[TOY_CHEAP] ≈ 107.0 * 168.0 / 214.0 atol = 1.0e-5
+    @test mw[TOY_EXPENSIVE] ≈ 107.0 * 46.0 / 214.0 atol = 1.0e-5
+end
+
+@testset "duals requested on the tie-break service model fail the build" begin
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(60.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(40.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        50.0,
+    )
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    set_nem_dispatch_models!(template, sys; tie_breaks = false)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    PSI.set_service_model!(
+        template, TIE_BREAK_SERVICE_NAME,
+        PSI.ServiceModel(EnergyTieBreak, TieBreakMarket, TIE_BREAK_SERVICE_NAME; duals = [TieBreakConstraint]),
+    )
+    model = PSI.DecisionModel(
+        template, sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    status, log = _toy_build_log(model)
+    @test status == PSI.ModelBuildStatus.FAILED
+    @test occursin("requests duals TieBreakConstraint, which it does not register", log)
+end
+
+@testset "tie-break row coefficients follow the scales over a two-interval horizon" begin
+    # Alta's 50 band is empty at the first interval and 30 MW at the second; Park City's is 40 MW.
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [[(60.0, 20.0), (0.0, 50.0)], [(60.0, 20.0), (30.0, 50.0)]]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(40.0, 20.0), (40.0, 50.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        60.0,
+    )
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    set_nem_dispatch_models!(template, sys)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    model = PSI.DecisionModel(
+        template, sys; optimizer = HiGHS.Optimizer, horizon = 2 * TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    rows = PSI.get_constraint(container, TieBreakConstraint(), EnergyTieBreak, TIE_BREAK_SERVICE_NAME)
+    x = PSI.get_variable(container, PSI.PiecewiseLinearBlockIncrementalOffer(), PSY.ThermalStandard)
+    # Pair 2 ties the 50 bands: s_ParkCity x_Alta - s_Alta x_ParkCity, with s_Alta = 0 then 0.75.
+    coef(t, name) = PSI.JuMP.normalized_coefficient(rows["1_offer", 2, t], x[name, 2, t])
+    @test coef(1, TOY_CHEAP) ≈ 1.0
+    @test coef(1, TOY_EXPENSIVE) ≈ 0.0 atol = 1.0e-12
+    @test coef(2, TOY_CHEAP) ≈ 1.0
+    @test coef(2, TOY_EXPENSIVE) ≈ -30.0 / 40.0
 end

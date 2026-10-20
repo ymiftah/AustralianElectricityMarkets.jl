@@ -110,8 +110,8 @@ end
 
 Attaches each price-tied energy band's tie-break scale `w / w_ref` (its width over the widest band of its
 tie group at that interval, 0 when the band is untied or the group has no width) as the `SingleTimeSeries`
-`"tie_break_scale_<k>[_decremental]"` of its unit, where `k` is the band's segment index. Series left by an earlier call on the visited
-units are removed first. Replaces any [`EnergyTieBreak`](@ref) named [`TIE_BREAK_SERVICE_NAME`](@ref)
+`"tie_break_scale_<k>[_decremental]"` of its unit, where `k` is the band's segment index. Series left by an earlier call
+on any `StaticInjection` are removed first. Replaces any [`EnergyTieBreak`](@ref) named [`TIE_BREAK_SERVICE_NAME`](@ref)
 with one whose contributing devices are every available unit priced on a `MarketBidCost`, or leaves none
 when there is no such unit. Call it after [`set_market_bids!`](@ref) and before
 `transform_single_time_series!`. Every contributor carrying a scale must be modelled in the build, or the
@@ -125,7 +125,7 @@ build fails.
 """
 function set_tie_break_scales!(sys::PSY.System)
     all_offers = _tie_break_offers(sys)
-    for (_, (; offers)) in all_offers, (device, _) in offers, key in collect(PSY.get_time_series_keys(device))
+    for device in PSY.get_components(PSY.StaticInjection, sys), key in collect(PSY.get_time_series_keys(device))
         name = IS.get_name(key)
         startswith(name, "tie_break_scale_") && PSY.has_time_series(device, PSY.SingleTimeSeries, name) &&
             PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, name)

@@ -155,7 +155,7 @@ non-zero unit ramp slack of the model (`DUID`, `DateTime`, `MW`, `direction`), a
 `"fcas_enablement"`, `"generic_constraint"` and `"area_balance"`. `direction` is `"up"` for a
 slack relaxing a `<=` row and `"down"` for one relaxing a `>=` row. For `"area_balance"`, whose
 row is an equality, `"up"` is a deficit (demand left unserved) and `"down"` a surplus (excess
-generation). Slacks built outside PowerSimulations containers (the tie-break terms) are not listed. The solved balance dual is the
+generation). The tie-break slacks (`TieBreakSlackUp`, `TieBreakSlackDown`) are not listed. The solved balance dual is the
 unadjusted price, so it is compared with `ROP`; `RRP` differs only under an administered price.
 Throws if the model does not build or solve, after logging `skipped_constraints`.
 """
