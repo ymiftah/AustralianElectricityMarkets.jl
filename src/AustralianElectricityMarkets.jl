@@ -21,7 +21,8 @@ export get_storage_energy_max_avail
 export set_fcas_bids!, set_fcas_scaling_inputs!
 export set_nem_dispatch_limits!, set_nem_initial_conditions!, set_interconnector_flow_limits!, set_storage_dispatch_ceilings!, set_loss_demand_coefficients!
 export get_initial_mw, get_energy_availability
-export add_nem_constraints!, get_skipped_constraints, get_dropped_terms
+export add_nem_constraints!, get_skipped_constraints, get_dropped_terms,
+    get_missing_constraint_intervals, get_defaulted_constraint_weights
 export fcas_service_name
 export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS, BidType
 export InterconnectorLossModel, loss_factor, interconnector_losses, loss_segments,

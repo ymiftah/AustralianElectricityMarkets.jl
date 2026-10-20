@@ -132,6 +132,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `get_missing_constraint_intervals` and `get_defaulted_constraint_weights` report what
+  `add_nem_constraints!` could not take from the cache: dispatch intervals with no invoked
+  constraint, and constraints built with the default weight 1.0 for a NULL
+  `GENERICCONSTRAINTWEIGHT`. Both survive a `System` JSON round-trip, and a run with no invoked
+  constraint resets them along with the skipped constraints and dropped terms.
 - `set_fcas_effective_offers!` precomputes each FCAS offer's enablement-masked `MaxAvail`,
   enablement limits, slope coefficients, band widths and regulation ramping limits as per-interval
   series, with the `FCASOfferBandVariable` and the `FCAS*Parameter` types `FCASMarket` reads them
