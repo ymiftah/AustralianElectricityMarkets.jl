@@ -20,7 +20,8 @@ one trading day passes.
 
 # Arguments
 - `sys`: the system whose offer curves are checked.
-- `steps`: the interval timestamps of the simulation.
+- `steps`: the interval timestamps the simulation solves, including the lookahead timestamps when
+  its horizon is longer than one interval.
 
 # Returns
 `nothing`. Throws `ArgumentError` naming the first interval whose pairs differ and up to five of

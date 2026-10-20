@@ -748,7 +748,7 @@ end
     # Prices beyond the tolerance stay separate, within it they tie; a transitive chain throws.
     @test groups([band(5.0, "a"), band(5.0 + 2tol, "b")]) == Vector{Int}[]
     @test groups([band(5.0, "a"), band(5.0 + 0.5tol, "b")]) == [[1, 2]]
-    @test_throws ArgumentError groups([band(5.0, "a"), band(5.0 + 0.8tol, "b"), band(5.0 + 1.6tol, "c")])
+    @test_throws r"transitive ties are not supported" groups([band(5.0, "a"), band(5.0 + 0.8tol, "b"), band(5.0 + 1.6tol, "c")])
 end
 
 @testset "tie-break scale series" begin
@@ -865,4 +865,113 @@ end
     # The tied first bands share the 50 MW pro rata to their 60 and 40 MW widths.
     @test out.dispatch_mw[TOY_CHEAP] ≈ 30.0 atol = TOY_TOLERANCE
     @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 20.0 atol = TOY_TOLERANCE
+end
+
+@testset "a band empty at the first interval but not later keeps its tie and a zero scale" begin
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [[(60.0, 20.0), (0.0, 50.0)], [(60.0, 20.0), (30.0, 50.0)]]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(40.0, 20.0), (40.0, 50.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        60.0,
+    )
+    scale(name, k) = PSY.get_time_series_values(
+        PSY.SingleTimeSeries, PSY.get_component(PSY.ThermalStandard, sys, name), "tie_break_scale_$k",
+    )
+    @test scale(TOY_CHEAP, 2) ≈ [0.0, 30.0 / 40.0]
+    @test scale(TOY_EXPENSIVE, 2) ≈ [1.0, 1.0]
+end
+
+@testset "set_tie_break_scales! removes scales left by an earlier call" begin
+    # The fixture attaches a stale scale in `mutate!` and runs the setter afterwards.
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(60.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(40.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        50.0;
+        mutate! = (sys, stamps) -> PSY.add_time_series!(
+            sys, PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP),
+            AustralianElectricityMarkets._single_series("tie_break_scale_7", TOY_START, fill(0.5, length(stamps)), TOY_RESOLUTION),
+        ),
+    )
+    alta = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+    @test !PSY.has_time_series(alta, PSY.SingleTimeSeries, "tie_break_scale_7")
+    @test PSY.has_time_series(alta, PSY.SingleTimeSeries, "tie_break_scale_1")
+end
+
+@testset "check_tie_break_pairs compares the tied pairs across the steps" begin
+    steps = [TOY_START, TOY_START + TOY_RESOLUTION]
+    # The two first bands tie at the first interval only.
+    moving = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [[(60.0, 20.0)], [(60.0, 25.0)]]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(40.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        50.0,
+    )
+    @test isnothing(check_tie_break_pairs(moving, steps[1:1]))
+    @test_throws r"differ from those at" check_tie_break_pairs(moving, steps)
+    @test_throws r"is not on the offer curve timestamps" check_tie_break_pairs(moving, [TOY_START + Hour(5)])
+    steady = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(60.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(40.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        50.0,
+    )
+    @test isnothing(check_tie_break_pairs(steady, steps))
+end
+
+@testset "the tie_breaks settings entry switches the rows off" begin
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(60.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(40.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        50.0;
+        tie_break_scales = false,
+    )
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    set_nem_dispatch_models!(template, sys)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    model = PSI.DecisionModel(
+        template, sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    PSI.get_ext(PSI.get_settings(model))["tie_breaks"] = false
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    jm = PSI.get_jump_model(PSI.get_optimization_container(model))
+    @test !any(v -> occursin("TieBreakSlack", PSI.JuMP.name(v)), PSI.JuMP.all_variables(jm))
+end
+
+@testset "tied fixed-curve units with no time-varying curve in their direction fail the build" begin
+    fixed(sys, stamps) = for name in (TOY_CHEAP, TOY_EXPENSIVE)
+        gen = PSY.get_component(PSY.ThermalStandard, sys, name)
+        PSY.set_operation_cost!(
+            gen,
+            PSY.MarketBidCost(;
+                no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0,
+                incremental_offer_curves = PSY.CostCurve(PSY.PiecewiseIncrementalCurve(0.0, [0.0, 50.0], [20.0])),
+            ),
+        )
+    end
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(50.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(50.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        50.0;
+        mutate! = fixed,
+    )
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    set_nem_dispatch_models!(template, sys)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    model = PSI.DecisionModel(
+        template, sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    status, log = _toy_build_log(model)
+    @test status == PSI.ModelBuildStatus.FAILED
+    @test occursin("carry no tie-break scale forecast", log)
 end

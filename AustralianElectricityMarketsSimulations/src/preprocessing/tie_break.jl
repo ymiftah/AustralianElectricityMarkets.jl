@@ -95,9 +95,9 @@ end
 
 Attaches each price-tied energy band's tie-break scale `w / w_ref` (its width over the widest band of its
 tie group at that interval, 0 when the band is untied or the group has no width) as the `SingleTimeSeries`
-`"tie_break_scale_<k>[_decremental]"` of its unit, where `k` is the band's segment index. Call it after
-[`set_market_bids!`](@ref) and before `transform_single_time_series!`. Every unit carrying a scale must be
-modelled in the build: a battery needs `:batteries` in the replication `parts`, or the build fails.
+`"tie_break_scale_<k>[_decremental]"` of its unit, where `k` is the band's segment index. Series left by an earlier call on the visited
+units are removed first. Call it after [`set_market_bids!`](@ref) and before
+`transform_single_time_series!`. Every unit carrying a scale must be modelled in the build, or the build fails.
 
 # Arguments
 - `sys`: the `System` to add to.
@@ -107,6 +107,11 @@ modelled in the build: a battery needs `:batteries` in the replication `parts`, 
 """
 function set_tie_break_scales!(sys::PSY.System)
     all_offers = _tie_break_offers(sys)
+    for (_, (; offers)) in all_offers, (device, _) in offers, key in collect(PSY.get_time_series_keys(device))
+        name = IS.get_name(key)
+        startswith(name, "tie_break_scale_") && PSY.has_time_series(device, PSY.SingleTimeSeries, name) &&
+            PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, name)
+    end
     active = _tie_break_active_bands(all_offers)
     for ((decremental, _), (; stamps, resolution, offers)) in all_offers
         scales = Dict{Tuple{PSY.Component, Int}, Vector{Float64}}()
@@ -123,7 +128,6 @@ function set_tie_break_scales!(sys::PSY.System)
         end
         for ((device, band), values) in scales
             name = _tie_break_series_name(band, decremental)
-            PSY.has_time_series(device, PSY.SingleTimeSeries, name) && PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, name)
             PSY.add_time_series!(sys, device, AustralianElectricityMarkets._single_series(name, first(stamps), values, resolution))
         end
     end

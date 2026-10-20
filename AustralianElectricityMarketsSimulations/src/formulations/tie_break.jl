@@ -65,7 +65,9 @@ end
 
 # Bands of every PSI market-bid block variable in `container`, grouped by
 # (direction, region, time step). Segments PSI pads beyond a unit's offer curve, and segments empty
-# throughout the offer series, are left out.
+# throughout the offer series, are left out. A unit absent from the offer series (a fixed curve in a
+# direction where no unit has a time-varying one) keeps all its bands, so a tie it takes part in
+# fails the build for want of scales.
 function _tie_break_bands(container::PSI.OptimizationContainer, sys::PSY.System)
     active = _tie_break_active_bands(_tie_break_offers(sys))
     groups = Dict{Tuple{Bool, String, Int}, Vector{_TieBand}}()
@@ -84,7 +86,7 @@ function _tie_break_bands(container::PSI.OptimizationContainer, sys::PSY.System)
             curves = _tie_break_curves(container, device, decremental)
             for (band, t, var) in cells
                 prices = PSY.get_y_coords(curves[t])
-                band <= length(prices) && band in get(active, (decremental, name), ()) || continue
+                band <= length(prices) && (!haskey(active, (decremental, name)) || band in active[(decremental, name)]) || continue
                 push!(get!(groups, (decremental, region, t), _TieBand[]), (; price = prices[band], var, name, band, type = T))
             end
         end
@@ -170,7 +172,7 @@ function _check_tie_break_series(container::PSI.OptimizationContainer, sys::PSY.
     isempty(unmodeled) || throw(
         ArgumentError(
             "tie-break: $(length(unmodeled)) unit(s) carry tie-break scales but have no market-bid variables in the model: " *
-                "$(join(sort!(unmodeled), ", ")). Their bands set the widest band of a tie group; model them or drop :tie_breaks.",
+                "$(join(sort!(unmodeled), ", ")). Their bands set the widest band of a tie group; model them or set the model settings \"tie_breaks\" entry to false.",
         ),
     )
     return

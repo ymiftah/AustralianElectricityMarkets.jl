@@ -65,10 +65,18 @@ elastic (`make_constraints_elastic('tie_break', violation_cost=cost)`, form
 - **Detection.** Per (direction, region, time step): offer bands and load-bid bands are separate
   groups; the region is the area of the device's bus; prices are the market-bid slopes divided by
   the system base, which are already referred to the reference node by the bid setter. Sorted
-  prices are grouped while consecutive prices differ by at most 1e-6 $/MWh. Zero-width bands are
-  skipped. Pairs of the same unit are excluded, as nempy does. Tolerance is applied between
+  prices are grouped while consecutive prices differ by at most 1e-6 $/MWh. Segments that are empty
+  at every timestamp of the offer series are skipped (an unused top band at the price cap would
+  only add vacuous rows); a segment empty at some timestamps stays in its group with a zero scale,
+  so the tied pairs are the same at every step. Pairs of the same unit are excluded, as nempy does. Tolerance is applied between
   consecutive sorted prices, so a run of prices each within 1e-6 of the next ties transitively.
 - **Energy only.** FCAS offers are not tied, as in the FAQ and item 53.
+- **Scales are parameters.** The rows are built once with unit placeholder coefficients; the scale
+  `w / w_ref` of each band is a constraint-coefficient parameter read from the unit's
+  `"tie_break_scale_<k>"` series, so a recurrent simulation updates it per step. Offer curves keep
+  every price band as a segment (zero width when empty), so segment `k` is always the same price
+  band. The tied pairs are fixed at build; `check_tie_break_pairs` rejects a range over which they
+  change, which only happens between trading days.
 - **Where it lives.** `add_tie_break_constraints!` reads the PSI block variables, breakpoints and
   slopes after every device's bid objective, so it crosses device types (wind against solar in a
   region is the common case). It is called from the `AreaBalancePowerModel` objective hook, the
@@ -108,8 +116,8 @@ elastic (`make_constraints_elastic('tie_break', violation_cost=cost)`, form
 - The replication optimizer sets zero MIP gaps (`mip_rel_gap = 0`, `mip_abs_gap = 1e-10`). Any
   other optimizer with default gaps and binary variables present may stop before the tie penalty
   is resolved.
-- Bid data must be fixed at build: slopes and breakpoints are read with `PSI.jump_fixed_value`,
-  and a recurrent (`Simulation`) build throws an `ArgumentError`. The replication path rebuilds
-  per interval.
+- The tied pairs are fixed at build, from the offer prices. A recurrent (`Simulation`) build is
+  supported when the pairs stay the same over the range (`check_tie_break_pairs`); the scales
+  follow the offers per step. The replication path may also rebuild per interval.
 - Not tested by a solve: two regions with equal prices staying separate (the toy has one area).
   The grouping key includes the region.
