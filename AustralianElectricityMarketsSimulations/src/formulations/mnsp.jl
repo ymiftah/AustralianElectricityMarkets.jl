@@ -8,23 +8,23 @@ const _MNSP_DIRECTIONS = ("forward", "reverse")
 const _FLOW_LIMIT_SERIES = ("from_to_flow_limit", "to_from_flow_limit")
 
 
-"""
-    _has_mnsp_offers(device) -> Bool
-
-Whether `device` carries both links' offer and availability series from `set_mnsp_offers!`. Throws
-`ArgumentError` when `device` is an MNSP (`ext["ic_type"] == "MNSP"`), or carries only some of the four
-series, since a partial set cannot be modelled.
-"""
-function _has_mnsp_offers(device::PSY.AreaInterchange)
-    present = [
+# Whether each of `device`'s four MNSP offer and availability series is attached.
+function _mnsp_offer_series_present(device::PSY.AreaInterchange)
+    return [
         PSY.has_time_series(device, PSY.SingleTimeSeries, "mnsp_$(dir)_$(kind)")
             for dir in _MNSP_DIRECTIONS, kind in ("offer", "max_avail")
     ]
-    required = get(PSY.get_ext(device), "ic_type", nothing) == "MNSP"
-    if (required || any(present)) && !all(present)
-        throw(ArgumentError("AreaInterchange $(PSY.get_name(device)) is an MNSP with incomplete directional offer inputs; call set_mnsp_offers! with complete data before dispatch"))
-    end
-    return all(present)
+end
+
+
+"""
+    _has_mnsp_offers(device) -> Bool
+
+Whether `device` carries both links' offer and availability series from `set_mnsp_offers!`.
+`_check_mnsp_offers` rejects a partial set.
+"""
+function _has_mnsp_offers(device::PSY.AreaInterchange)
+    return all(_mnsp_offer_series_present(device))
 end
 
 
@@ -208,6 +208,7 @@ enter the regional balances at the link's ends, and the two directional losses a
 `nothing`.
 """
 function _add_mnsp_link_flows!(container::PSI.OptimizationContainer, devices, device_model)
+    foreach(_check_mnsp_offers, devices)
     mnsp = filter(_has_mnsp_offers, collect(devices))
     isempty(mnsp) && return
     time_steps = PSI.get_time_steps(container)

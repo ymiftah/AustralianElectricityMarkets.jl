@@ -595,13 +595,15 @@ function _solve_mnsp(sys; zero_flow::Bool = false)
     return (flow = flow, forward = link("forward"), reverse = link("reverse"), dual1 = dual("1"), dual2 = dual("2"))
 end
 
-@testset "_has_mnsp_offers requires complete inputs for an MNSP or a partial offer set" begin
+@testset "_check_mnsp_offers requires complete inputs for an MNSP or a partial offer set" begin
     sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
     ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
     @test !AEMS._has_mnsp_offers(ic)  # no offers and not an MNSP: the free-flow model
+    @test isnothing(AEMS._check_mnsp_offers(ic))
 
     PSY.get_ext(ic)["ic_type"] = "MNSP"
-    @test_throws r"is an MNSP with incomplete directional offer inputs" AEMS._has_mnsp_offers(ic)
+    @test !AEMS._has_mnsp_offers(ic)
+    @test_throws r"is an MNSP with incomplete directional offer inputs" AEMS._check_mnsp_offers(ic)
 
     delete!(PSY.get_ext(ic), "ic_type")
     partial = _loss_test_system(;
@@ -614,7 +616,7 @@ end
             )
         end
     )
-    @test_throws r"incomplete directional offer inputs" AEMS._has_mnsp_offers(PSY.get_component(PSY.AreaInterchange, partial, "IC1"))
+    @test_throws r"incomplete directional offer inputs" AEMS._check_mnsp_offers(PSY.get_component(PSY.AreaInterchange, partial, "IC1"))
 end
 
 @testset "the MNSP band price update re-reads the offer window and re-prices the bands" begin

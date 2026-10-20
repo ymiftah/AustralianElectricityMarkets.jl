@@ -47,6 +47,7 @@ include("checks/fcas.jl")
 include("preprocessing/fcas.jl")
 include("preprocessing/tie_break.jl")
 include("checks/tie_break.jl")
+include("checks/replay_inputs.jl")
 include("preprocessing/inputs.jl")
 include("execution/replication.jl")
 

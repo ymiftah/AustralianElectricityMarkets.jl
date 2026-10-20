@@ -4,7 +4,7 @@
 Builds the `ProblemTemplate` that replicates NEMDE on `sys`: [`AbstractNEMDispatch`](@ref) devices
 (via [`set_nem_dispatch_models!`](@ref)), `PSI.StaticPowerLoad` demand, [`NEMInterconnectorLoss`](@ref)
 on every `PSY.AreaInterchange`, an [`FCASMarket`](@ref) per registered `FCASService`, and a
-[`LinearFactorLimit`](@ref) per `GenericConstraint` whose terms the template can model.
+[`LinearFactorLimit`](@ref) per `GenericConstraint` with an available contributing device.
 Regions balance through `PSI.AreaBalancePowerModel` with slacks, and the balance duals are
 recorded as regional prices. Price-tied energy bands are dispatched pro rata by the
 [`TieBreakMarket`](@ref) service model when `sys` carries the [`EnergyTieBreak`](@ref) of
@@ -13,13 +13,17 @@ recorded as regional prices. Price-tied energy bands are dispatched pro rata by 
 # Arguments
 - `sys`: a `PSY.System` from `nem_system(db, ConstrainedNetworkConfiguration(); ...)`, after its
   demand, bids, FCAS scaling inputs and dispatch limits are set.
-- `skipped`: a vector that receives one `(constraint, reason, n_missing)` named tuple per generic
-  constraint left out of the template, or `nothing`.
+- `skipped`: a vector that receives one `(constraint, reason, n_missing)` named tuple, with
+  `reason = :no_available_device` and `n_missing = 0`, per generic constraint left out because
+  all its contributing devices are unavailable, or `nothing`.
 
 # Returns
-A `PSI.ProblemTemplate`.
+A `PSI.ProblemTemplate`. Missing dispatch constraint intervals, skipped constraints, dropped terms,
+defaulted penalty weights, missing dispatch-limit series, incomplete MNSP offers and a generic
+constraint the template cannot model throw `ArgumentError` before model construction.
 """
 function replication_template(sys::PSY.System; skipped::Union{Nothing, AbstractVector} = nothing)
+    _check_replay_system_inputs(sys)
     template = PSI.ProblemTemplate(
         PSI.NetworkModel(
             PSI.AreaBalancePowerModel;
@@ -37,9 +41,7 @@ function replication_template(sys::PSY.System; skipped::Union{Nothing, AbstractV
             PSI.ServiceModel(FCASService, FCASMarket, name; duals = [FCASJointCapacityConstraint], use_slacks = true),
         )
     end
-    for gc in filter_buildable_generic_constraints(
-            sys, template; allow_partial_coverage = true, skipped = skipped,
-        )
+    for gc in filter_buildable_generic_constraints(sys, template; skipped = skipped)
         name = PSY.get_name(gc)
         PSI.set_service_model!(
             template, name,
@@ -75,7 +77,8 @@ into one forecast window.
   validating flows. Default `false` (static limits).
 
 # Returns
-A `PSY.System`.
+A `PSY.System`. Throws an `ArgumentError` before setting any input when a scheduled unit of the
+system lacks an energy offer, or a region its demand, at an interval of the range.
 """
 function replication_system(
         db, settlement_date::DateTime; intervention::Integer = 0, interval_flow_limits::Bool = false,
@@ -85,6 +88,7 @@ function replication_system(
     sys = nem_system(
         db, ConstrainedNetworkConfiguration(); date_range = date_range, intervention = intervention,
     )
+    _check_replay_energy_bid_coverage(sys, db, date_range; intervention = intervention)
     set_demand!(sys, db, date_range; resolution = resolution)
     set_loss_demand_coefficients!(sys)
     set_market_bids!(sys, db, date_range; resolution = resolution)
@@ -138,12 +142,9 @@ The model solves the interval alone, starting from its published `INITIALMW`.
 
 # Returns
 A `NamedTuple` with the solved `model`, its `results`, `skipped_constraints` and `comparison`.
-`skipped_constraints` is a `DataFrame` with one row per invoked constraint left out of the model:
-`constraint`, `stage` (`:build` when [`add_nem_constraints!`](@ref) could not resolve a term,
-`:template` when the template cannot model it), `reason`, `n_missing` (unresolved keys at the
-`:build` stage, failing terms or devices at the `:template` stage) and `missing_keys` (the
-unresolved DUIDs, regions or interconnectors; empty at the `:template` stage). `comparison` is a
-`NamedTuple` of
+`skipped_constraints` is a `DataFrame` with one row per invoked constraint left out of the model
+because all its contributing devices are unavailable: `constraint`, `reason`
+(`:no_available_device`) and `n_missing` (0). `comparison` is a `NamedTuple` of
 `DataFrame`s with one row per published key and `_solved` and `_published` columns, `missing`
 where the model has no solved value: `prices` (`REGIONID`; solved `ROP`, published `ROP` and
 `RRP`), `dispatch` (`DUID`, `TOTALCLEARED`), `interconnectors` (`INTERCONNECTORID`, `MWFLOW`,
@@ -201,7 +202,7 @@ function _replication_model(
     )
     template_skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
     template = replication_template(sys; skipped = template_skipped)
-    skipped_constraints = _skipped_constraints_table(sys, template_skipped)
+    skipped_constraints = DataFrame(template_skipped)
     check_fcas_services(sys, template)
     model = PSI.DecisionModel(
         template, sys;
@@ -220,21 +221,6 @@ function _log_skipped_constraints(skipped::DataFrame)
     counts = join(("$(r.reason)=$(r.n)" for r in eachrow(sort(by_reason, :reason))), ", ")
     @error "Skipped constraints at failure: $(nrow(skipped)) ($counts)" skipped
     return
-end
-
-
-# Build-stage and template-stage skipped constraints as one table.
-function _skipped_constraints_table(sys::PSY.System, template_skipped)
-    build = get_skipped_constraints(sys)
-    build.stage .= :build
-    template = DataFrame(;
-        constraint = String[r.constraint for r in template_skipped],
-        reason = Symbol[r.reason for r in template_skipped],
-        n_missing = Int[r.n_missing for r in template_skipped],
-        missing_keys = [String[] for _ in template_skipped],
-        stage = fill(:template, length(template_skipped)),
-    )
-    return select(vcat(build, template), :constraint, :stage, :reason, :n_missing, :missing_keys)
 end
 
 

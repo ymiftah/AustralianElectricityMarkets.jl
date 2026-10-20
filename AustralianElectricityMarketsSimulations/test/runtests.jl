@@ -17,8 +17,8 @@ include(joinpath(@__DIR__, "toy_fixture.jl"))
 const AEM_TEST_HIVE_DIR = mktempdir()
 create_mock_data(AEM_TEST_HIVE_DIR)
 
-# Add interconnector results needed by the interval readers to the shared fixture.
-let
+# The interconnector results the interval readers need, added to a mock hive.
+function write_mock_interconnector_results(hive_root::String)
     ddb = DuckDB.DB()
     conn = DuckDB.connect(ddb)
     DuckDB.execute(conn, "SET preserve_identifier_case=true")
@@ -42,11 +42,20 @@ let
         )
     end
     DuckDB.register_data_frame(conn, df, "tmp_table")
-    table_dir = joinpath(AEM_TEST_HIVE_DIR, "DISPATCHINTERCONNECTORRES")
+    table_dir = joinpath(hive_root, "DISPATCHINTERCONNECTORRES")
     mkpath(table_dir)
     DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
     DuckDB.unregister_table(conn, "tmp_table")
+    DuckDB.disconnect(conn)
+    DuckDB.close(ddb)
+    return
 end
+write_mock_interconnector_results(AEM_TEST_HIVE_DIR)
+
+# A second hive whose invoked constraints and dispatch rows are all complete, for strict replay.
+const AEM_TEST_REPLAY_HIVE_DIR = mktempdir()
+create_mock_data(AEM_TEST_REPLAY_HIVE_DIR; complete_inputs = true)
+write_mock_interconnector_results(AEM_TEST_REPLAY_HIVE_DIR)
 
 # Test groups, in run order: name => (testset title, file). Pass group names as arguments to run
 # only those, e.g. `julia --project=test test/runtests.jl fcas_market preprocessing`.
@@ -62,6 +71,7 @@ const TEST_GROUPS = [
     "fcas_preprocessing" => ("FCAS preprocessing", "fcas_preprocessing.jl"),
     "fcas_market" => ("FCAS market", "fcas_market.jl"),
     "interconnector_losses" => ("Interconnector losses", "interconnector_losses.jl"),
+    "replication_inputs" => ("Required replay inputs", "replication_inputs.jl"),
     "pipeline" => ("Replication pipeline", "pipeline.jl"),
 ]
 
