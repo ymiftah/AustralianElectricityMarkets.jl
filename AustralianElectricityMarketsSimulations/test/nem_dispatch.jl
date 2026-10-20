@@ -374,6 +374,33 @@ end
     @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
 end
 
+@testset "check_dispatch_envelope reads the system's series before a build" begin
+    function envelope_template(sys)
+        template = ProblemTemplate(NetworkModel(AreaBalancePowerModel; use_slacks = true))
+        set_nem_dispatch_models!(template, sys; formulation = NEMReplayDispatch)
+        return template
+    end
+    consistent = nem_dispatch_system()
+    @test isnothing(check_dispatch_envelope(consistent, envelope_template(consistent), NEM_DISPATCH_START, 6))
+
+    inconsistent = nem_dispatch_system(;
+        mutate! = function (s)
+            flatten_series!(s, "ER02", "ramp_down_rate", 0.0)
+            flatten_series!(s, "ER02", "max_active_power", 0.0)
+            return s
+        end,
+    )
+    err = try
+        check_dispatch_envelope(inconsistent, envelope_template(inconsistent), NEM_DISPATCH_START, 6)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("ER02 at interval 1: ramp-down floor", err.msg)
+    @test occursin("inconsistent dispatch envelope for 1 device(s)", err.msg)
+end
+
 @testset "a net ramp-down floor above a battery's generation availability raises the ceiling instead of failing the build" begin
     # Zero generation availability with a positive net INITIALMW and a zero down rate: the net
     # ramp-down floor equals INITIALMW, above the zeroed generation availability. The generation
