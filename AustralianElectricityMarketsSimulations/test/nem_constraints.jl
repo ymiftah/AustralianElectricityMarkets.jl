@@ -471,10 +471,19 @@ end
     initial_time = PSI.get_initial_time(container)
     values[name, 1] = 5.0
     values[name, 2] = 5.0
+    PSI.reset_variant_terms(PSI.get_objective_expression(container))
     PSI.handle_variable_cost_parameter(
         AEMS.GenericConstraintSlackCostParameter(), gc, name, values, penalties, nothing, container, initial_time, 2,
     )
     @test [values[name, t] for t in 1:2] == [0.0, 1.0]
+    # The rebuilt cost: no term at the non-invoked step, exactly the penalty at the invoked one.
+    variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
+    for slack_type in (AEMS.GenericConstraintSlackUp, AEMS.GenericConstraintSlackDown)
+        PSI.has_container_key(container, slack_type, GenericConstraint, name) || continue
+        slack = PSI.get_variable(container, slack_type(), GenericConstraint, name)
+        @test PSI.JuMP.coefficient(variant, slack[name, 1]) == 0.0
+        @test PSI.JuMP.coefficient(variant, slack[name, 2]) == penalties[name, 2]
+    end
 
     # A recurrent build masks non-invoked intervals with zero-cost slacks, so it needs use_slacks.
     bare = _decision_model(_nem_service_template(; use_slacks = false), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
@@ -824,8 +833,8 @@ end
     @test AEMS._financial_year_mpc(DateTime(2026, 7, 1)) == 20_300.0
     @test AEMS._financial_year_mpc(DateTime(2026, 7, 1, 0, 5)) == 23_200.0
     @test AEMS._financial_year_mpc(DateTime(2027, 7, 1)) == 23_200.0
-    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2024, 7, 1))
-    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2027, 7, 1, 0, 5))
+    @test_throws r"No published Market Price Cap" AEMS._financial_year_mpc(DateTime(2024, 7, 1))
+    @test_throws r"No published Market Price Cap" AEMS._financial_year_mpc(DateTime(2027, 7, 1, 0, 5))
 end
 
 @testset "area-balance slack Market Price Cap: unpublished year throws, settings entry overrides" begin

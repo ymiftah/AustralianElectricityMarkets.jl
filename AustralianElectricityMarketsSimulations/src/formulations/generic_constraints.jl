@@ -631,7 +631,6 @@ function _read_dual_frames(results::PSI.SimulationProblemResults, keys)
     vals = PSI.read_realized_duals(results, collect(keys))
     return Dict(key => vals[PSI.IS.Optimization.encode_key_as_string(key)] for key in keys)
 end
-_results_resolution(results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}) = PSI.get_resolution(results)
 
 
 """
@@ -658,7 +657,7 @@ function compute_fcas_prices(
         results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}, sys::PSY.System;
         resolution::Union{Nothing, Dates.Period} = nothing,
     )
-    resolution = something(resolution, _results_resolution(results), Some(nothing))
+    resolution = something(resolution, PSI.get_resolution(results), Some(nothing))
     isnothing(resolution) && throw(
         ArgumentError(
             "compute_fcas_prices: `results` do not record a resolution (a single-interval model), so pass `resolution` explicitly.",
