@@ -46,3 +46,38 @@ function get_dropped_terms(sys)
         factor = Float64[r["factor"] for r in rows],
     )
 end
+
+
+"""
+    get_missing_constraint_intervals(sys) -> Vector{DateTime}
+
+The dispatch intervals of the range [`add_nem_constraints!`](@ref) ran over that had no invoked
+constraint in `DISPATCHCONSTRAINT`, so their generic constraints are absent from `sys`.
+
+# Arguments
+- `sys`: a `System` that `add_nem_constraints!` ran on.
+
+# Returns
+A `Vector{DateTime}`, empty when every interval had invoked constraints or `add_nem_constraints!`
+has not run.
+"""
+function get_missing_constraint_intervals(sys)
+    return collect(DateTime, get(get_ext(sys), "missing_constraint_intervals", DateTime[]))
+end
+
+
+"""
+    get_defaulted_constraint_weights(sys) -> Vector{String}
+
+The versioned names of the constraints [`add_nem_constraints!`](@ref) built with the default
+`constraint_weight` of 1.0 because `GENCONDATA.GENERICCONSTRAINTWEIGHT` was NULL.
+
+# Arguments
+- `sys`: a `System` that `add_nem_constraints!` ran on.
+
+# Returns
+A `Vector{String}`, empty when no weight was defaulted or `add_nem_constraints!` has not run.
+"""
+function get_defaulted_constraint_weights(sys)
+    return collect(String, get(get_ext(sys), "defaulted_constraint_weights", String[]))
+end

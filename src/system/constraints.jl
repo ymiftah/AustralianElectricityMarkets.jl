@@ -350,7 +350,10 @@ units excluded) also gets a `\$<DUID>` constraint: an equality on the unit's net
 loading, weight 380, invoked at the intervals that carry one. Its `DISPATCHCONSTRAINT` row is not
 reported as skipped.
 
-Each skipped version is also recorded on `sys`; read it with [`get_skipped_constraints`](@ref).
+Each skipped version is also recorded on `sys`; read it with [`get_skipped_constraints`](@ref). The
+intervals of `date_range` with no invoked constraint ([`get_missing_constraint_intervals`](@ref)) and
+the constraints given the default weight 1.0 for a NULL `GENERICCONSTRAINTWEIGHT`
+([`get_defaulted_constraint_weights`](@ref)) are recorded the same way.
 
 Throws `ArgumentError` when `DISPATCHCONSTRAINT`, `BIDPEROFFER_D` or `BIDDAYOFFER_D` is not cached, or when an empty `RegionTerm` is
 found and `allow_empty_region_terms = false`; either throw leaves `sys` unmodified.
@@ -383,11 +386,13 @@ function add_nem_constraints!(
     end
 
     invoked_all = read_invoked_constraints(db, date_range; intervention = intervention)
+    missing_intervals = setdiff(collect(date_range)[1:(end - 1)], invoked_all.SETTLEMENTDATE)
     # Energy Inflexible Offer constraints are built from the bids; their DISPATCHCONSTRAINT rows
     # (no definition tables) are used only for the optional solution series.
     fixed_loads = _fixed_load_series(sys, read_fixed_loads(db, date_range))
     if DataFrames.isempty(invoked_all) && isempty(fixed_loads)
         get_ext(sys)["skipped_constraints"] = Dict{String, Any}[]
+        get_ext(sys)["missing_constraint_intervals"] = missing_intervals
         @warn "No constraints invoked over $date_range; nothing added."
         return String[], Dict{String, Symbol}()
     end
@@ -647,6 +652,8 @@ function add_nem_constraints!(
     end
 
     get_ext(sys)["skipped_constraints"] = skipped_detail
+    get_ext(sys)["defaulted_constraint_weights"] = missing_weight
+    get_ext(sys)["missing_constraint_intervals"] = missing_intervals
 
     # sys is mutated only past this point - every throw above leaves it untouched, so a caller
     # retrying with allow_empty_region_terms=true on the same sys never double-adds anything.

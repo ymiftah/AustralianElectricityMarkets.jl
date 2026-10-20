@@ -299,6 +299,8 @@ end
     @test only(get_ext(one_phantom)["dropped_terms"]) ==
         Dict("kind" => "UNIT", "key" => "PHANTOM1", "bid_type" => "ENERGY", "factor" => 2.0)
     @test isempty(get_ext(get_component(GenericConstraint, sys, vname("N_BAYSW_THERMAL")))["dropped_terms"])
+    @test isempty(get_missing_constraint_intervals(sys))
+    @test isempty(get_defaulted_constraint_weights(sys))
     dropped = get_dropped_terms(sys)
     @test dropped.constraint == [vname("N_ONE_PHANTOM_TERM")]
     @test (dropped.kind, dropped.key, dropped.bid_type, dropped.factor) == (["UNIT"], ["PHANTOM1"], ["ENERGY"], [2.0])
@@ -866,5 +868,39 @@ end
         end
         @test added_far == String[]
         @test skipped_far == Dict{String, Symbol}()
+    end
+
+    @testset "intervals without invoked constraints and defaulted weights are recorded" begin
+        # The mock constraints cover 00:00 to 04:00, so the last two hours of this range have none.
+        late = DateTime(2025, 1, 1, 3, 0)
+        late_range = late:Minute(5):(late + Hour(3))
+        late_sys = nem_system(db, RegionalNetworkConfiguration())
+        add_nem_constraints!(late_sys, db, late_range)
+        missing_intervals = get_missing_constraint_intervals(late_sys)
+        @test !isempty(missing_intervals)
+        @test all(t -> t > DateTime(2025, 1, 1, 4, 0), missing_intervals)
+        @test issorted(missing_intervals)
+
+        # A range wholly outside the cache records every interval.
+        none = DateTime(2030, 1, 1):Minute(5):DateTime(2030, 1, 1, 0, 15)
+        none_sys = nem_system(db, RegionalNetworkConfiguration())
+        add_nem_constraints!(none_sys, db, none)
+        @test get_missing_constraint_intervals(none_sys) == collect(none)[1:(end - 1)]
+
+        # A NULL GENERICCONSTRAINTWEIGHT builds with weight 1.0 and is recorded.
+        hive = joinpath(mktempdir(), "hive")
+        cp(AEM_TEST_HIVE_DIR, hive)
+        path = joinpath(hive, "GENCONDATA")
+        conn = DuckDB.DB()
+        DuckDB.execute(conn, "CREATE TABLE input AS SELECT * FROM read_parquet('$path/**/*.parquet', hive_partitioning = true)")
+        DuckDB.execute(conn, "UPDATE input SET GENERICCONSTRAINTWEIGHT = NULL WHERE GENCONID = 'N_BAYSW_THERMAL'")
+        rm(path; recursive = true)
+        DuckDB.execute(conn, "COPY input TO '$path' (FORMAT PARQUET, PARTITION_BY (archive_month))")
+        DuckDB.close(conn)
+        weight_db = aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
+        weight_sys = nem_system(weight_db, RegionalNetworkConfiguration())
+        @test_logs (:warn, r"NULL GENERICCONSTRAINTWEIGHT") match_mode = :any add_nem_constraints!(weight_sys, weight_db, date_range)
+        @test get_defaulted_constraint_weights(weight_sys) == [vname("N_BAYSW_THERMAL")]
+        @test get_constraint_weight(get_component(GenericConstraint, weight_sys, vname("N_BAYSW_THERMAL"))) == 1.0
     end
 end
