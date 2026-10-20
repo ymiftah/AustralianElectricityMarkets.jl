@@ -24,6 +24,7 @@ function nem_dispatch_system(; mutate! = identity, data_span = NEM_DISPATCH_HORI
     set_market_bids!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_nem_dispatch_limits!(sys, db, date_range)
     mutate!(sys)
+    set_storage_dispatch_ceilings!(sys)
     # One window spanning the whole span, matching the single window the bid forecast carries.
     PSY.transform_single_time_series!(sys, data_span, NEM_DISPATCH_RESOLUTION)
     return sys
@@ -373,6 +374,33 @@ end
     @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
 end
 
+@testset "check_dispatch_envelope reads the system's series before a build" begin
+    function envelope_template(sys)
+        template = ProblemTemplate(NetworkModel(AreaBalancePowerModel; use_slacks = true))
+        set_nem_dispatch_models!(template, sys; formulation = NEMReplayDispatch)
+        return template
+    end
+    consistent = nem_dispatch_system()
+    @test isnothing(check_dispatch_envelope(consistent, envelope_template(consistent), NEM_DISPATCH_START, 6))
+
+    inconsistent = nem_dispatch_system(;
+        mutate! = function (s)
+            flatten_series!(s, "ER02", "ramp_down_rate", 0.0)
+            flatten_series!(s, "ER02", "max_active_power", 0.0)
+            return s
+        end,
+    )
+    err = try
+        check_dispatch_envelope(inconsistent, envelope_template(inconsistent), NEM_DISPATCH_START, 6)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("ER02 at interval 1: ramp-down floor", err.msg)
+    @test occursin("inconsistent dispatch envelope for 1 device(s)", err.msg)
+end
+
 @testset "a net ramp-down floor above a battery's generation availability raises the ceiling instead of failing the build" begin
     # Zero generation availability with a positive net INITIALMW and a zero down rate: the net
     # ramp-down floor equals INITIALMW, above the zeroed generation availability. The generation
@@ -454,6 +482,7 @@ end
     set_demand!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_market_bids!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_nem_dispatch_limits!(sys, db, date_range)
+    set_storage_dispatch_ceilings!(sys)
 
     # Strip one device's rates after the template is derived, so the type is still a
     # participant but that device has nothing to read.

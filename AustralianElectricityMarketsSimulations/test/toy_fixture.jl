@@ -49,8 +49,11 @@ end
 # `EnergyReservoirStorage` on bus1 with a generous static rating (never the binding limit),
 # an incremental/decremental offer curve, and the ramp/initial/energy-availability series.
 # `mutate!(sys, stamps)`, when given, runs just before the fixture's
-# `transform_single_time_series!`, so it can attach raw two-timestamp series of its own.
-function nem_toy_system(units, load_mw; batteries = Pair{String, Any}[], loads = Pair{String, Any}[], mutate! = nothing)
+# `transform_single_time_series!`, so it can attach raw two-timestamp series of its own. With
+# `ceilings` (default), the batteries' dispatch ceilings are attached after `mutate!`.
+function nem_toy_system(
+        units, load_mw; batteries = Pair{String, Any}[], loads = Pair{String, Any}[], mutate! = nothing, ceilings = true,
+    )
     sys = PSB.build_system(PSISystems, "5_bus_hydro_ed_sys")
     PSY.clear_time_series!(sys)
     PSY.set_units_base_system!(sys, "NATURAL_UNITS")
@@ -166,6 +169,7 @@ function nem_toy_system(units, load_mw; batteries = Pair{String, Any}[], loads =
     end
 
     isnothing(mutate!) || mutate!(sys, stamps)
+    ceilings && set_storage_dispatch_ceilings!(sys)
 
     # One two-interval window, matching the single window the bid forecast carries.
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)

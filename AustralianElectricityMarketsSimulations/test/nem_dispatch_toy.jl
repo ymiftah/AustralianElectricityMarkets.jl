@@ -321,6 +321,31 @@ end
         end
     end
 
+    @testset "a single-direction energy offer keeps the static fallback in both formulations" begin
+        for formulation in (NEMReplayDispatch, NEMLookaheadDispatch)
+            sys = nem_toy_system(
+                [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
+                0.0;
+                batteries = [
+                    TOY_BATTERY => toy_battery(
+                        100.0, 1.0, 100.0, 1000.0;
+                        initial = 0.0, ramp_up = 100.0, gen_avail = 30.0, load_avail = 100.0,
+                    ),
+                ],
+                mutate! = function (s, _)
+                    battery = PSY.get_component(PSY.EnergyReservoirStorage, s, TOY_BATTERY)
+                    PSY.remove_time_series!(s, PSY.SingleTimeSeries, battery, "energy_max_avail_decremental")
+                    set_static_limits!(s; input_mw = 50.0)
+                    return
+                end,
+            )
+            out = solve_toy(sys; formulation = formulation)
+
+            @test storage_bound(out, sys, PSI.ActivePowerInVariable) ≈ 50.0 atol = TOY_TOLERANCE
+            @test out.battery_in_mw[TOY_BATTERY] <= 50.0 + TOY_TOLERANCE
+        end
+    end
+
     @testset "lookahead storage bounds follow directional energy offers" begin
         sys = nem_toy_system(
             [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
@@ -342,6 +367,33 @@ end
         @test out.battery_in_mw[TOY_BATTERY] ≈ 100.0 atol = TOY_TOLERANCE
         @test out.battery_in_mw[TOY_BATTERY] > 50.0
         @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
+    end
+
+    @testset "a lookahead battery with an energy offer needs its ceiling series" begin
+        units = [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)]
+        batteries = [
+            TOY_BATTERY => toy_battery(
+                100.0, 1.0, 100.0, 1000.0; initial = 0.0, ramp_up = 100.0, gen_avail = 30.0, load_avail = 100.0,
+            ),
+        ]
+        bare = nem_toy_system(units, 0.0; batteries = batteries, ceilings = false)
+        template = PSI.ProblemTemplate(
+            PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true, duals = [PSI.CopperPlateBalanceConstraint]),
+        )
+        set_nem_dispatch_models!(template, bare; formulation = NEMLookaheadDispatch)
+        PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+        model = PSI.DecisionModel(
+            template, bare;
+            optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+            horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
+            initial_time = TOY_START, name = "nem_toy_bare", store_variable_names = true,
+        )
+        folder = mktempdir()
+        @test PSI.build!(model; output_dir = folder) == PSI.ModelBuildStatus.FAILED
+        @test any(f -> occursin("set_storage_dispatch_ceilings!", read(f, String)), readdir(folder; join = true))
+
+        out = solve_toy(nem_toy_system(units, 0.0; batteries = batteries); formulation = NEMLookaheadDispatch)
+        @test out.battery_out_mw[TOY_BATTERY] <= 30.0 + TOY_TOLERANCE
     end
 end
 

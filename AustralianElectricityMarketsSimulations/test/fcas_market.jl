@@ -692,6 +692,7 @@ function storage_fcas_toy_model(
         end
     end
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = bid_type), [bat])
+    set_storage_dispatch_ceilings!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
     template = _area_balance_template()

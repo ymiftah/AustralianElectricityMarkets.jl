@@ -132,6 +132,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `set_storage_dispatch_ceilings!` attaches each battery's per-direction dispatch ceilings
+  (`"storage_gen_ceiling"`, `"storage_load_ceiling"`): its energy offer `MAXAVAIL`, raised on the
+  net axis to the ramp envelope. `NEMReplayDispatch` bounds a battery with them as time-series
+  parameters, so the bounds update between simulation steps. `check_dispatch_envelope` verifies a
+  replay's ramp floors against availability before a build.
 - `add_nem_constraints!` builds an Energy Inflexible Offer constraint `\$<DUID>` for each available
   device with a participant fixed loading (`BIDPEROFFER_D.FIXEDLOAD > 0`, fast-start units
   excluded): a net-energy equality at the fixed loading, weight 380, invoked at the intervals that
