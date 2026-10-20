@@ -462,6 +462,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- NEM storage dispatch uses raw GEN/LOAD MAXAVAIL with separate CVP370 violations and
+  live directional parameters, replacing competing static and ramp-adjusted hard ceilings.
+
 - NEM non-storage dispatch models raw bid MAXAVAIL and semi-scheduled UIGF as separate
   elastic limits at CVP370 and CVP385, with typed PSI surplus variables, constraints and costs.
 

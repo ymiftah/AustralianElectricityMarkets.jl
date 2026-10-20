@@ -73,7 +73,7 @@ function PSI.add_constraints!(
     slack = PSI.get_variable(container, _energy_limit_slack(C)(), T)
     rows = PSI.add_constraints_container!(container, C(), T, names, steps)
     for name in names, t in steps
-        rows[name, t] = JuMP.@constraint(PSI.get_jump_model(container), power[name, t] - slack[name, t] <= limit(name, t))
+        rows[name, t] = _energy_limit_row!(container, C, power[name, t], slack[name, t], limit(name, t))
     end
     return
 end
@@ -104,4 +104,32 @@ function PSI.add_proportional_cost!(
         end
     end
     return
+end
+
+function _energy_limit_parameter(::Type{EnergyMaxAvailOutConstraint})
+    return PSI.ActivePowerOutTimeSeriesParameter
+end
+
+function _energy_limit_parameter(::Type{EnergyMaxAvailInConstraint})
+    return PSI.ActivePowerInTimeSeriesParameter
+end
+
+function _energy_limit_slack(::Type{EnergyMaxAvailOutConstraint})
+    return EnergyMaxAvailOutSlack
+end
+
+function _energy_limit_slack(::Type{EnergyMaxAvailInConstraint})
+    return EnergyMaxAvailInSlack
+end
+
+function _energy_limit_cvp(::Union{EnergyMaxAvailOutSlack, EnergyMaxAvailInSlack})
+    return ENERGY_MAX_AVAIL_CVP_FACTOR
+end
+
+function _energy_limit_row!(container, ::Type{<:AbstractEnergyLimitConstraint}, power, slack, limit)
+    return JuMP.@constraint(PSI.get_jump_model(container), power - slack <= limit)
+end
+
+function _energy_limit_row!(container, ::Type{EnergyMaxAvailInConstraint}, power, slack, limit)
+    return JuMP.@constraint(PSI.get_jump_model(container), -power + slack >= -limit)
 end

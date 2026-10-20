@@ -209,7 +209,6 @@ function replication_system(
     set_fcas_scaling_inputs!(sys, db, date_range; intervention = intervention)
     set_nem_dispatch_limits!(sys, db, date_range; intervention = intervention)
     set_nem_energy_limits!(sys, db, date_range; intervention = intervention)
-    set_storage_dispatch_ceilings!(sys)
     set_fcas_effective_offers!(sys)
     set_tie_break_scales!(sys)
     set_mnsp_offers!(sys, db, date_range)
@@ -263,6 +262,8 @@ end
 # `"up"` for a slack that relaxes a `<=` row and `"down"` for one that relaxes a `>=` row; the
 # FCAS families whose rows have both senses refine it per key in `_violation_direction`.
 const _VIOLATION_FAMILIES = (
+    EnergyMaxAvailOutSlack => ("energy_max_avail", "up"),
+    EnergyMaxAvailInSlack => ("energy_max_avail", "down"),
     EnergyMaxAvailSlack => ("energy_max_avail", "up"),
     EnergyUIGFSlack => ("energy_uigf", "up"),
     UnitRampUpSlack => ("unit_ramp", "up"),

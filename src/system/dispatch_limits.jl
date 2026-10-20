@@ -261,9 +261,8 @@ direction's `MAXAVAIL`, raised on the net axis to the ramp envelope of the `"ini
 component carries all three: the generation ceiling to `initial_mw - ramp_down_rate × Δ`, the load
 ceiling to `-(initial_mw + ramp_up_rate × Δ)`, Δ being the series resolution in minutes. A component
 without both `MAXAVAIL` series gets none; existing ceiling series are replaced. Call it after both
-setters, and after any change to their series, before `transform_single_time_series!`. Both
-[`NEMReplayDispatch`](@ref) and [`NEMLookaheadDispatch`](@ref) require these series for a battery
-with a `MAXAVAIL` offer: the lookahead's initial-conditions sub-model replays it.
+setters, and after any change to their series, before `transform_single_time_series!`. These derived series are
+independent of the raw directional availability consumed by NEM dispatch formulations.
 
 # Arguments
 - `sys`: the `System` to add to.

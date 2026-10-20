@@ -25,7 +25,7 @@ end
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR))
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 15)
     sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = interval)
-    @test_throws r"incomplete dispatch inputs for .*; call set_nem_dispatch_limits!" replication_template(sys)
+    @test_throws r"incomplete dispatch inputs for .*; call set_market_bids!, set_nem_dispatch_limits! and set_nem_energy_limits!" replication_template(sys)
 end
 
 @testset "an MNSP cannot enter the regulated formulation without its offers" begin

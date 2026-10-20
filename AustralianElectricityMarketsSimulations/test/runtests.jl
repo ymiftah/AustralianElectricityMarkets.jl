@@ -72,6 +72,7 @@ const TEST_GROUPS = [
     "fcas_market" => ("FCAS market", "fcas_market.jl"),
     "interconnector_losses" => ("Interconnector losses", "interconnector_losses.jl"),
     "replication_inputs" => ("Required replay inputs", "replication_inputs.jl"),
+    "storage_availability" => ("Elastic storage availability", "storage_availability.jl"),
     "energy_limits" => ("Elastic energy limits", "energy_limits.jl"),
     "pipeline" => ("Replication pipeline", "pipeline.jl"),
     "stock_simulation" => ("Stock simulation replay", "stock_simulation.jl"),

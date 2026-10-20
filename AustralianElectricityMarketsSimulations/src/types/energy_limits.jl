@@ -27,3 +27,15 @@ const ENERGY_MAX_AVAIL_CVP_FACTOR = 370.0
 
 "UIGF CVP, AEMO Schedule v8.0 item 12, pp. 13-17."
 const ENERGY_UIGF_CVP_FACTOR = 385.0
+
+"Storage generation MAXAVAIL constraint."
+struct EnergyMaxAvailOutConstraint <: AbstractEnergyLimitConstraint end
+
+"Storage charging MAXAVAIL constraint."
+struct EnergyMaxAvailInConstraint <: AbstractEnergyLimitConstraint end
+
+"Non-negative storage generation above raw GEN MAXAVAIL."
+struct EnergyMaxAvailOutSlack <: AbstractEnergyLimitSlack end
+
+"Non-negative storage charging above raw LOAD MAXAVAIL."
+struct EnergyMaxAvailInSlack <: AbstractEnergyLimitSlack end
