@@ -27,7 +27,7 @@ function _check_replay_system_inputs(sys::PSY.System, parts)
     isempty(uncovered) || throw(
         ArgumentError(
             "replication_template: incomplete dispatch inputs for $(join(sort!(uncovered), ", ")); " *
-                "call set_nem_dispatch_limits! and set_nem_energy_limits! over the replay range before replay",
+                "call set_market_bids!, set_nem_dispatch_limits! and set_nem_energy_limits! over the replay range before replay",
         ),
     )
     :losses in parts && foreach(_check_mnsp_offers, PSY.get_components(PSY.get_available, PSY.AreaInterchange, sys))

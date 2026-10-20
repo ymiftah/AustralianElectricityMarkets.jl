@@ -311,6 +311,7 @@ end
 function solve_toy(
         sys;
         formulation = NEMReplayDispatch,
+        generic_slacks = false,
         optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
     )
     network = PSI.NetworkModel(
@@ -324,7 +325,7 @@ function solve_toy(
     if !isempty(PSY.get_components(GenericConstraint, sys))
         PSI.set_service_model!(
             template,
-            PSI.ServiceModel(GenericConstraint, LinearFactorLimit; duals = [NEMConstraintLimit]),
+            PSI.ServiceModel(GenericConstraint, LinearFactorLimit; duals = [NEMConstraintLimit], use_slacks = generic_slacks),
         )
     end
     model = PSI.DecisionModel(

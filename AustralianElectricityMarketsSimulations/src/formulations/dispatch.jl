@@ -92,15 +92,15 @@ end
 """
     _has_nem_dispatch_limits(device, formulation)
 
-Whether `device` carries every time series `formulation` reads as a parameter, except the
-dispatch-ceiling series of a battery, whose absence the replay argument stage reports.
+Whether `device` carries every time series `formulation` reads as a parameter, including raw directional
+availability for storage and UIGF only for semi-scheduled units.
 
 # Arguments
 - `device`: the `PowerSystems.Component` to inspect.
 - `formulation`: an [`AbstractNEMDispatch`](@ref) subtype.
 
 # Returns
-`true` when every registered series other than the dispatch ceilings is attached, `false` otherwise.
+`true` when every required registered series is attached, `false` otherwise.
 """
 function _has_nem_dispatch_limits(device, formulation::Type{<:AbstractNEMDispatch})
     if !(device isa PSY.Storage)
@@ -109,8 +109,7 @@ function _has_nem_dispatch_limits(device, formulation::Type{<:AbstractNEMDispatc
     names = PSI.get_default_time_series_names(typeof(device), formulation)
     required = (
         name for (param, name) in names
-            if param !== PSI.ActivePowerOutTimeSeriesParameter && param !== PSI.ActivePowerInTimeSeriesParameter &&
-            (param !== EnergyUIGFTimeSeriesParameter || PSY.get_ext(device)["nem_semi_scheduled"])
+            if param !== EnergyUIGFTimeSeriesParameter || PSY.get_ext(device)["nem_semi_scheduled"]
     )
     return all(
         PSY.has_time_series(device, PSY.SingleTimeSeries, name) for name in required
@@ -493,7 +492,7 @@ function set_nem_dispatch_models!(
     types = nem_dispatch_participants(sys, formulation)
     isempty(types) && throw(
         ArgumentError(
-            "no dispatch participants in this System: call set_nem_dispatch_limits! and set_nem_energy_limits! over the " *
+            "no dispatch participants in this System: call set_market_bids!, set_nem_dispatch_limits! and set_nem_energy_limits! over the " *
                 "model's date range first",
         ),
     )
