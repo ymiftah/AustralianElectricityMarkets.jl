@@ -595,6 +595,51 @@ function _solve_mnsp(sys; zero_flow::Bool = false)
     return (flow = flow, forward = link("forward"), reverse = link("reverse"), dual1 = dual("1"), dual2 = dual("2"))
 end
 
+@testset "_has_mnsp_offers requires complete inputs for an MNSP or a partial offer set" begin
+    sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+    ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
+    @test !AEMS._has_mnsp_offers(ic)  # no offers and not an MNSP: the free-flow model
+
+    PSY.get_ext(ic)["ic_type"] = "MNSP"
+    @test_throws r"is an MNSP with incomplete directional offer inputs" AEMS._has_mnsp_offers(ic)
+
+    delete!(PSY.get_ext(ic), "ic_type")
+    partial = _loss_test_system(;
+        breakpoints = [-1000.0, 1000.0], mutate! = sys -> begin
+            ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
+            load = first(PSY.get_components(PSY.PowerLoad, sys))
+            grid = collect(timestamp(PSY.get_data(PSY.get_time_series(PSY.SingleTimeSeries, load, "max_active_power"))))
+            PSY.add_time_series!(
+                sys, ic, PSY.SingleTimeSeries(; name = "mnsp_forward_max_avail", data = TimeArray(grid, fill(10.0, length(grid)))),
+            )
+        end
+    )
+    @test_throws r"incomplete directional offer inputs" AEMS._has_mnsp_offers(PSY.get_component(PSY.AreaInterchange, partial, "IC1"))
+end
+
+@testset "the MNSP band price update re-reads the offer window and re-prices the bands" begin
+    sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
+    _attach_mnsp_offers!(sys; forward = (500.0, [(200.0, 10.0), (300.0, 25.0)]), reverse = (500.0, [(500.0, 10.0)]))
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    key = PSI.ParameterKey(AEMS.MNSPBandPriceParameter, PSY.AreaInterchange, "forward")
+    prices = PSI.get_parameter_array(container, key)
+    multiplier = PSI.get_parameter_multiplier_array(container, key)
+    device = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
+    @test [prices["IC1", b, 1] for b in axes(prices)[2][1:2]] == [10.0, 25.0]
+
+    prices.data .= -1.0
+    PSI.reset_variant_terms(PSI.get_objective_expression(container))
+    AEMS._set_mnsp_band_prices!(container, prices, multiplier, device, "forward", PSI.get_initial_time(container) + Hour(1))
+    labels = axes(prices)[2]
+    @test [prices["IC1", b, 1] for b in labels[1:2]] == [10.0, 25.0]
+    @test all(==(0.0), [prices["IC1", b, 1] for b in labels[3:end]])
+    bands = PSI.get_variable(container, AEMS.MNSPLinkBandVariable(), PSY.AreaInterchange, "forward")
+    variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
+    @test PSI.JuMP.coefficient(variant, bands["IC1", labels[2], 1]) == 25.0 * multiplier["IC1", labels[2], 1]
+end
+
 @testset "MNSP link offers bound and price the interconnector flow" begin
     free_sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
     free = _solve_mnsp(free_sys)

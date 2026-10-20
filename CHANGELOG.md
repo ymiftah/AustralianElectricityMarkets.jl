@@ -436,13 +436,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MNSP link flows are modelled per offer band (`MNSPLinkBandVariable`) with band widths,
   availability and prices read from the `"mnsp_<direction>_*"` series as parameters, so offers can
   update between simulation steps.
-- `NEMInterconnectorLoss` takes the demand term of each interval's loss factor as the flow's
-  coefficient in the loss definition, driven by a `LossDemandCoefficientParameter` read from the
-  `"loss_demand_coefficient"` series, so it builds in recurrent simulations. `replication_system`
-  calls `set_loss_demand_coefficients!`; a model without that series fails to build.
-- MNSP link flows are modelled per offer band (`MNSPLinkBandVariable`) with band widths,
-  availability and prices read from the `"mnsp_<direction>_*"` series as parameters, so offers can
-  update between simulation steps.
 - Generic-constraint slack costs are a `GenericConstraintSlackCostParameter` driven by the
   `"invoked"` series, so a recurrent build prices a slack only at invoked intervals and keeps a
   non-invoked row vacuous. `compute_fcas_prices` also accepts simulation results.

@@ -11,7 +11,9 @@ const _FLOW_LIMIT_SERIES = ("from_to_flow_limit", "to_from_flow_limit")
 """
     _has_mnsp_offers(device) -> Bool
 
-Whether `device` carries both links' offer and availability series from `set_mnsp_offers!`.
+Whether `device` carries both links' offer and availability series from `set_mnsp_offers!`. Throws
+`ArgumentError` when `device` is an MNSP (`ext["ic_type"] == "MNSP"`), or carries only some of the four
+series, since a partial set cannot be modelled.
 """
 function _has_mnsp_offers(device::PSY.AreaInterchange)
     present = [
