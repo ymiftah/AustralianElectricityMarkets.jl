@@ -4,7 +4,7 @@
 Builds the `ProblemTemplate` that replicates NEMDE on `sys`: [`AbstractNEMDispatch`](@ref) devices
 (via [`set_nem_dispatch_models!`](@ref)), `PSI.StaticPowerLoad` demand, [`NEMInterconnectorLoss`](@ref)
 on every `PSY.AreaInterchange`, an [`FCASMarket`](@ref) per registered `FCASService`, and a
-[`LinearFactorLimit`](@ref) per `GenericConstraint` whose terms the template can model.
+[`LinearFactorLimit`](@ref) per `GenericConstraint` with an available contributing device.
 Regions balance through `PSI.AreaBalancePowerModel` with slacks, and the balance duals are
 recorded as regional prices. Price-tied energy bands are dispatched pro rata by the
 [`TieBreakMarket`](@ref) service model when `sys` carries the [`EnergyTieBreak`](@ref) of
@@ -13,47 +13,17 @@ recorded as regional prices. Price-tied energy bands are dispatched pro rata by 
 # Arguments
 - `sys`: a `PSY.System` from `nem_system(db, ConstrainedNetworkConfiguration(); ...)`, after its
   demand, bids, FCAS scaling inputs and dispatch limits are set.
-- `skipped`: a vector that receives one `(constraint, reason, n_missing)` named tuple per generic
-  constraint left out of the template, or `nothing`.
+- `skipped`: a vector that receives one `(constraint, reason, n_missing)` named tuple, with
+  `reason = :no_available_device` and `n_missing = 0`, per generic constraint left out because
+  all its contributing devices are unavailable, or `nothing`.
 
 # Returns
 A `PSI.ProblemTemplate`. Missing dispatch constraint intervals, skipped constraints, dropped terms,
-defaulted penalty weights, missing dispatch-limit series and incomplete MNSP offers throw
-`ArgumentError` before model construction.
+defaulted penalty weights, missing dispatch-limit series, incomplete MNSP offers and a generic
+constraint the template cannot model throw `ArgumentError` before model construction.
 """
 function replication_template(sys::PSY.System; skipped::Union{Nothing, AbstractVector} = nothing)
-    missing_intervals = get_missing_constraint_intervals(sys)
-    isempty(missing_intervals) || throw(
-        ArgumentError(
-            "replication_template: missing dispatch constraint intervals: $(join(string.(missing_intervals), ", ")); populate DISPATCHCONSTRAINT for the requested range",
-        ),
-    )
-    defaulted_weights = get_defaulted_constraint_weights(sys)
-    isempty(defaulted_weights) || throw(
-        ArgumentError("replication_template: incomplete constraint weights: $(join(defaulted_weights, ", "))"),
-    )
-    skipped_inputs = get_skipped_constraints(sys)
-    isempty(skipped_inputs) || throw(
-        ArgumentError("replication_template: incomplete constraint inputs: $(join(skipped_inputs.constraint, ", "))"),
-    )
-    dropped_inputs = get_dropped_terms(sys)
-    isempty(dropped_inputs) || throw(
-        ArgumentError(
-            "replication_template: incomplete constraint terms: $(join(dropped_inputs.constraint .* ": " .* dropped_inputs.key, ", "))",
-        ),
-    )
-    uncovered = [
-        PSY.get_name(device) for device in AustralianElectricityMarkets._nem_dispatch_devices(sys)
-            if !_has_nem_dispatch_limits(device, NEMReplayDispatch)
-    ]
-    isempty(uncovered) || throw(
-        ArgumentError(
-            "replication_template: incomplete dispatch inputs for $(join(sort!(uncovered), ", ")); attach every dispatch-limit series before replay",
-        ),
-    )
-    for device in PSY.get_components(PSY.get_available, PSY.AreaInterchange, sys)
-        _has_mnsp_offers(device)
-    end
+    _check_replay_system_inputs(sys)
     template = PSI.ProblemTemplate(
         PSI.NetworkModel(
             PSI.AreaBalancePowerModel;
@@ -84,56 +54,6 @@ function replication_template(sys::PSY.System; skipped::Union{Nothing, AbstractV
 end
 
 
-# Period offers identify bidders independently of whether their price join succeeds.
-function _check_replay_energy_bid_coverage(sys, db, date_range; intervention::Integer = 0)
-    bids = read_energy_bids(db, date_range)
-    dispatch = read_dispatch_limits(db, date_range; intervention = intervention)
-    units = read_units(db; as_of = first(date_range))
-    demand = read_demand(db, date_range)
-    demand_stamps = Set(zip(demand.REGIONID, demand.SETTLEMENTDATE))
-    grid = collect(date_range)[1:(end - 1)]
-    missing_demand = [(region, t) for region in sort!(unique(units.REGIONID)), t in grid if !((region, t) in demand_stamps)]
-    isempty(missing_demand) || throw(
-        ArgumentError("missing regional demand inputs: $(join(string.(first(missing_demand, 5)), ", "))"),
-    )
-    non_scheduled = Set(r.DUID for r in eachrow(units) if isequal(r.SCHEDULE_TYPE, "NON-SCHEDULED"))
-    required_names = Set(bids.DUID)
-    for row in eachrow(dispatch)
-        available = !ismissing(row.AVAILABILITY) && row.AVAILABILITY > 0
-        metered = !ismissing(row.INITIALMW) && !iszero(row.INITIALMW)
-        (available || metered) && push!(required_names, row.DUID)
-    end
-    coverage = Dict{Tuple{String, String}, Set{DateTime}}()
-    for row in eachrow(bids)
-        push!(get!(coverage, (row.DUID, row.DIRECTION), Set{DateTime}()), row.INTERVAL_DATETIME)
-        row.MAXAVAIL isa Real && isfinite(row.MAXAVAIL) && row.MAXAVAIL >= 0 ||
-            throw(ArgumentError("incomplete energy bid MAXAVAIL for $(row.DUID) $(row.DIRECTION) at $(row.INTERVAL_DATETIME)"))
-    end
-    for T in (PSY.Generator, PSY.InterruptiblePowerLoad, PSY.EnergyReservoirStorage), device in PSY.get_components(T, sys)
-        name = PSY.get_name(device)
-        name in required_names && !(name in non_scheduled) || continue
-        device isa PSY.InterruptiblePowerLoad && AustralianElectricityMarkets._is_non_scheduled_load(device) && continue
-        directions = if device isa PSY.Storage
-            ("GEN", "LOAD")
-        elseif device isa PSY.InterruptiblePowerLoad
-            haskey(coverage, (name, "GEN")) ? ("GEN",) : ("LOAD",)
-        else
-            ("GEN",)
-        end
-        for direction in directions
-            stamps = get(coverage, (name, direction), Set{DateTime}())
-            missing_intervals = setdiff(grid, stamps)
-            isempty(missing_intervals) || throw(
-                ArgumentError(
-                    "incomplete energy bid inputs for $name $direction: missing $(length(missing_intervals)) intervals, including $(first(missing_intervals))",
-                )
-            )
-        end
-    end
-    return
-end
-
-
 const _REPLICATION_HORIZON = 2DISPATCH_INTERVAL
 
 
@@ -157,7 +77,8 @@ into one forecast window.
   validating flows. Default `false` (static limits).
 
 # Returns
-A `PSY.System`.
+A `PSY.System`. Throws an `ArgumentError` before setting any input when a scheduled unit of the
+system lacks an energy offer, or a region its demand, at an interval of the range.
 """
 function replication_system(
         db, settlement_date::DateTime; intervention::Integer = 0, interval_flow_limits::Bool = false,
@@ -221,12 +142,9 @@ The model solves the interval alone, starting from its published `INITIALMW`.
 
 # Returns
 A `NamedTuple` with the solved `model`, its `results`, `skipped_constraints` and `comparison`.
-`skipped_constraints` is a `DataFrame` with one row per invoked constraint left out of the model:
-`constraint`, `stage` (`:build` when [`add_nem_constraints!`](@ref) could not resolve a term,
-`:template` when the template cannot model it), `reason`, `n_missing` (unresolved keys at the
-`:build` stage, failing terms or devices at the `:template` stage) and `missing_keys` (the
-unresolved DUIDs, regions or interconnectors; empty at the `:template` stage). `comparison` is a
-`NamedTuple` of
+`skipped_constraints` is a `DataFrame` with one row per invoked constraint left out of the model
+because all its contributing devices are unavailable: `constraint`, `reason`
+(`:no_available_device`) and `n_missing` (0). `comparison` is a `NamedTuple` of
 `DataFrame`s with one row per published key and `_solved` and `_published` columns, `missing`
 where the model has no solved value: `prices` (`REGIONID`; solved `ROP`, published `ROP` and
 `RRP`), `dispatch` (`DUID`, `TOTALCLEARED`), `interconnectors` (`INTERCONNECTORID`, `MWFLOW`,
@@ -284,7 +202,7 @@ function _replication_model(
     )
     template_skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
     template = replication_template(sys; skipped = template_skipped)
-    skipped_constraints = _skipped_constraints_table(sys, template_skipped)
+    skipped_constraints = DataFrame(template_skipped)
     check_fcas_services(sys, template)
     model = PSI.DecisionModel(
         template, sys;
@@ -303,21 +221,6 @@ function _log_skipped_constraints(skipped::DataFrame)
     counts = join(("$(r.reason)=$(r.n)" for r in eachrow(sort(by_reason, :reason))), ", ")
     @error "Skipped constraints at failure: $(nrow(skipped)) ($counts)" skipped
     return
-end
-
-
-# Build-stage and template-stage skipped constraints as one table.
-function _skipped_constraints_table(sys::PSY.System, template_skipped)
-    build = get_skipped_constraints(sys)
-    build.stage .= :build
-    template = DataFrame(;
-        constraint = String[r.constraint for r in template_skipped],
-        reason = Symbol[r.reason for r in template_skipped],
-        n_missing = Int[r.n_missing for r in template_skipped],
-        missing_keys = [String[] for _ in template_skipped],
-        stage = fill(:template, length(template_skipped)),
-    )
-    return select(vcat(build, template), :constraint, :stage, :reason, :n_missing, :missing_keys)
 end
 
 

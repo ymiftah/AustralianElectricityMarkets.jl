@@ -220,6 +220,7 @@ function _add_loss_variables_and_constraints!(
         from_area = PSY.get_name(PSY.get_from_area(d))
         to_area = PSY.get_name(PSY.get_to_area(d))
         share = model.from_region_loss_share
+        _check_mnsp_offers(d)
         offered = _has_mnsp_offers(d)
         segments = loss_segments(model, Dict{String, Float64}())
         base_loss = first(loss_curve_vertex_values(model, Dict{String, Float64}()))

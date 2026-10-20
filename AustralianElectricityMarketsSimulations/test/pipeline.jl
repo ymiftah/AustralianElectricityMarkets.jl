@@ -21,8 +21,8 @@
         result = replicate_interval(db, t)
         @test result.model isa PSI.DecisionModel
         skipped = result.skipped_constraints
-        @test names(skipped) == ["constraint", "stage", "reason", "n_missing", "missing_keys"]
-        @test all(in((:build, :template)), skipped.stage)
+        @test names(skipped) == ["constraint", "reason", "n_missing"]
+        @test all(==(:no_available_device), skipped.reason)
         comparison = result.comparison
         published = read_published_interval(db, t)
 
