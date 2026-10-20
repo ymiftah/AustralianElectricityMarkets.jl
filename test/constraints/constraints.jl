@@ -723,9 +723,10 @@ end
         end
         rewrite(
             "BIDPEROFFER_D",
-            "* REPLACE (CASE WHEN BIDTYPE = 'ENERGY' AND DIRECTION = 'GEN' AND INTERVAL_DATETIME BETWEEN " *
+            "* REPLACE (CASE WHEN BIDTYPE = 'ENERGY' AND INTERVAL_DATETIME BETWEEN " *
                 "TIMESTAMP '2025-01-01 00:10:00' AND TIMESTAMP '2025-01-01 00:20:00' THEN " *
-                "CASE DUID WHEN 'BW01' THEN 30.0 WHEN 'BW02' THEN 40.0 ELSE 0.0 END ELSE 0.0 END AS FIXEDLOAD)",
+                "CASE WHEN DIRECTION = 'GEN' THEN CASE DUID WHEN 'BW01' THEN 30.0 WHEN 'BW02' THEN 40.0 ELSE 0.0 END " *
+                "WHEN DUID = 'BW01' THEN 20.0 ELSE 0.0 END ELSE 0.0 END AS FIXEDLOAD)",
         )
         rewrite("BIDDAYOFFER_D", "* REPLACE (CASE WHEN DUID = 'BW02' THEN 6.0 ELSE NULL END AS T1)")
         dc_dir = joinpath(fixed_hive, "DISPATCHCONSTRAINT")
@@ -747,8 +748,12 @@ end
 
         loads = read_fixed_loads(fixed_db, fixed_range)
         @test Set(loads.DUID) == Set(["BW01"])  # BW02 is fast-start, the rest are zero
-        @test sort(loads.INTERVAL_DATETIME) == DateTime(2025, 1, 1, 0, 10):Minute(5):DateTime(2025, 1, 1, 0, 20)
-        @test all(==(30.0), loads.FIXEDLOAD)
+        @test Set(loads.DIRECTION) == Set(["GEN", "LOAD"])
+        for (direction, mw) in (("GEN", 30.0), ("LOAD", 20.0))
+            rows = filter(:DIRECTION => ==(direction), loads)
+            @test sort(rows.INTERVAL_DATETIME) == DateTime(2025, 1, 1, 0, 10):Minute(5):DateTime(2025, 1, 1, 0, 20)
+            @test all(==(mw), rows.FIXEDLOAD)
+        end
 
         fixed_sys = nem_system(fixed_db, RegionalNetworkConfiguration())
         added_f, skipped_f = nothing, nothing
@@ -771,9 +776,36 @@ end
         series(name) = get_time_series_values(SingleTimeSeries, gc, name)
         invoked_mask = series("invoked")
         @test findall(==(1.0), invoked_mask) == 3:5  # intervals 00:10, 00:15, 00:20
-        @test series("rhs")[3:5] == fill(30.0 / base, 3)
+        # BW01 is a battery: its 30 MW generation and 20 MW charging targets net to 10 MW injection.
+        @test series("rhs")[3:5] == fill(10.0 / base, 3)
         @test series("marginal_value")[3:5] == fill(99.0, 3)
         @test has_service(get_component(Device, fixed_sys, "BW01"), gc)
+
+        # Fixed-load constraints do not depend on any DISPATCHCONSTRAINT row being invoked.
+        no_invoked_hive = mktempdir()
+        cp(fixed_hive, no_invoked_hive; force = true)
+        let dir = joinpath(no_invoked_hive, "DISPATCHCONSTRAINT")
+            DuckDB.execute(
+                fixed_conn,
+                "COPY (SELECT * FROM read_parquet('$(dir)/**/*.parquet', hive_partitioning=true) WHERE SETTLEMENTDATE >= TIMESTAMP '2025-01-01 02:00:00') " *
+                    "TO '$(dir)_new' (FORMAT 'PARQUET', PARTITION_BY (archive_month))",
+            )
+            rm(dir; recursive = true)
+            mv(dir * "_new", dir; force = true)
+        end
+        no_invoked_db = aem_connect(HiveConfiguration(hive_location = no_invoked_hive, filesystem = "file"))
+        no_invoked_sys = nem_system(no_invoked_db, RegionalNetworkConfiguration())
+        added_n, _ = add_nem_constraints!(no_invoked_sys, no_invoked_db, fixed_range)
+        @test added_n == ["\$BW01"]
+
+        # A missing bid table fails with the documented error.
+        missing_bids_hive = mktempdir()
+        cp(fixed_hive, missing_bids_hive; force = true)
+        rm(joinpath(missing_bids_hive, "BIDDAYOFFER_D"); recursive = true)
+        missing_bids_db = aem_connect(HiveConfiguration(hive_location = missing_bids_hive, filesystem = "file"))
+        @test_throws r"BIDDAYOFFER_D is not cached" add_nem_constraints!(
+            nem_system(missing_bids_db, RegionalNetworkConfiguration()), missing_bids_db, fixed_range,
+        )
 
         # An unavailable unit's fixed loading is ignored; its `$` row is then reported as skipped.
         unavailable_sys = nem_system(fixed_db, RegionalNetworkConfiguration())

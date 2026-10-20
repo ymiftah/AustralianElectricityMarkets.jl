@@ -352,7 +352,7 @@ reported as skipped.
 
 Each skipped version is also recorded on `sys`; read it with [`get_skipped_constraints`](@ref).
 
-Throws `ArgumentError` when `DISPATCHCONSTRAINT` is not cached, or when an empty `RegionTerm` is
+Throws `ArgumentError` when `DISPATCHCONSTRAINT`, `BIDPEROFFER_D` or `BIDDAYOFFER_D` is not cached, or when an empty `RegionTerm` is
 found and `allow_empty_region_terms = false`; either throw leaves `sys` unmodified.
 """
 function add_nem_constraints!(
@@ -373,15 +373,24 @@ function add_nem_constraints!(
         ),
     )
 
+    for table in (:BIDPEROFFER_D, :BIDDAYOFFER_D)
+        _table_is_cached(db, table) || throw(
+            ArgumentError(
+                "$table is not cached for $date_range: run `populate(db, :$table, <from>, <to>)` first. " *
+                    "add_nem_constraints! reads FIXEDLOAD and T1 from it.",
+            ),
+        )
+    end
+
     invoked_all = read_invoked_constraints(db, date_range; intervention = intervention)
-    if DataFrames.isempty(invoked_all)
+    # Energy Inflexible Offer constraints are built from the bids; their DISPATCHCONSTRAINT rows
+    # (no definition tables) are used only for the optional solution series.
+    fixed_loads = _fixed_load_series(sys, read_fixed_loads(db, date_range))
+    if DataFrames.isempty(invoked_all) && isempty(fixed_loads)
         get_ext(sys)["skipped_constraints"] = Dict{String, Any}[]
         @warn "No constraints invoked over $date_range; nothing added."
         return String[], Dict{String, Symbol}()
     end
-    # Energy Inflexible Offer constraints are built from the bids; their DISPATCHCONSTRAINT rows
-    # (no definition tables) are used only for the optional solution series.
-    fixed_loads = _fixed_load_series(sys, read_fixed_loads(db, date_range))
     invoked = filter(r -> !_is_modelled_fixed_load(r.GENCONID, fixed_loads, r.SETTLEMENTDATE), invoked_all)
     # Grouped by the full (GENCONID, EFFECTIVEDATE, VERSIONNO) triple, not GENCONID alone: two
     # versions must never be merged into one "invoked"/"rhs" series.

@@ -135,7 +135,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `add_nem_constraints!` builds an Energy Inflexible Offer constraint `\$<DUID>` for each available
   device with a participant fixed loading (`BIDPEROFFER_D.FIXEDLOAD > 0`, fast-start units
   excluded): a net-energy equality at the fixed loading, weight 380, invoked at the intervals that
-  carry one. Fixed loadings of units outside the system are ignored.
+  carry one. Fixed loadings of units outside the system are ignored. It now also requires
+  `BIDPEROFFER_D` (`FIXEDLOAD`) and `BIDDAYOFFER_D` (`T1`) to be cached.
 - `set_loss_demand_coefficients!` attaches each loss-modelled `AreaInterchange` a
   `"loss_demand_coefficient"` series: the demand term of its loss factor at every interval.
 - `read_fixed_loads` reads participant-entered energy fixed loadings from `BIDPEROFFER_D`, skipping
