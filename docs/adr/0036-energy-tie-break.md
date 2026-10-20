@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted. Amended: the rows moved from the network objective hook to a registered PSI service
+model (see "Where it lives").
 
 ## Context
 
@@ -77,11 +78,28 @@ elastic (`make_constraints_elastic('tie_break', violation_cost=cost)`, form
   every price band as a segment (zero width when empty), so segment `k` is always the same price
   band. The tied pairs are fixed at build; `check_tie_break_pairs` rejects a range over which they
   change, which only happens between trading days.
-- **Where it lives.** `add_tie_break_constraints!` reads the PSI block variables, breakpoints and
-  slopes after every device's bid objective, so it crosses device types (wind against solar in a
-  region is the common case). It is called from the `AreaBalancePowerModel` objective hook, the
-  only network-stage hook that runs after all device models, and therefore exists only with
-  `use_slacks = true`, which the replication template always sets.
+- **Where it lives.** The rows are a PSI service model, `ServiceModel(EnergyTieBreak,
+  TieBreakMarket, "energy_tie_break")`. `EnergyTieBreak <: PSY.Service` lives in the top-level
+  package so `System` JSON round-trips; `set_tie_break_scales!` replaces it on every call with one
+  whose contributors are all available `MarketBidCost` units, whether or not they carry scales, so
+  the build-time checks still run when nothing ties. `set_nem_dispatch_models!` registers the
+  service model whenever the system carries the service (`tie_breaks = false` leaves it out). The
+  argument stage is a no-op; the model stage (step 7 of PSI's build order, after every device's bid
+  objective) reads the PSI block variables, breakpoints and slopes, so it crosses device types (wind
+  against solar in a region is the common case) and works under any network model. Slacks are
+  registered as `TieBreakSlackUp`/`TieBreakSlackDown` (`SparseVariableType`, keyed `(label, pair,
+  t)` with `label = "<region>_offer"` or `"<region>_bid"`, not written to results like PSI's own
+  piecewise variables) and rows as `TieBreakConstraint`, all keyed by `EnergyTieBreak` with the
+  service name as meta. No container is added when nothing ties: PSI's MILP dual pass
+  (`process_duals`) reads the first element of every variable container and fails on an empty one.
+  The "unmodelled unit carrying scales" check iterates the service's
+  contributing devices from the system, not PSI's filtered contributor map, so a contributor whose
+  type has no device model is still reported; when no contributor type is modelled at all, PSI
+  itself rejects the template ("contributing devices ... is empty"). PSI skips a service model whose
+  service is absent from the system without error, which is why the setter always attaches it.
+  Earlier the rows were plain JuMP objects added from the `AreaBalancePowerModel` objective hook
+  behind a settings `ext` switch, which tied them to `use_slacks = true`, could not be read back and
+  was not visible in the template.
 
 ## Consequences
 
@@ -103,16 +121,15 @@ elastic (`make_constraints_elastic('tie_break', violation_cost=cost)`, form
   economic effect when the saved cost exceeds the slack penalty, so a band 0.5e-6 dearer is simply
   not dispatched. Bid prices are cents, so this does not arise in real data.
 - When a tied band is held back its rows are violated and the balance dual can carry the
-  penalty, below 1e-6 $/MWh in the toy tests. The slack rows and variables are plain JuMP objects,
-  not registered PSI keys, so violated rows cannot be read from results.
+  penalty, below 1e-6 $/MWh in the toy tests. The slacks are registered PSI keys but are not
+  written to results; violated rows are read from the container.
 - The 2026-06-09 TAS1 LOWERREG price moved by +1.0 in an earlier run (3.08 with the tie-break
   against 2.08 without, published 1.56): a degenerate-dual sensitivity to re-check against the
   corrected scaling.
-- **Hook placement.** The links are added from the `AreaBalancePowerModel` objective hook, the only
-  network-stage hook that runs after every device model. Models built with another network model,
-  or `use_slacks = false`, get arbitrary tie vertices, and bid blocks created by branch or service
-  models are never tied; the `set_nem_dispatch_models!` and `replication_template` docstrings say
-  so. `add_tie_break_constraints!` is not exported.
+- **Service placement.** A template without the `TieBreakMarket` service model (hand-built, or
+  `set_nem_dispatch_models!(...; tie_breaks = false)`), or a system on which
+  `set_tie_break_scales!` was never called, gets arbitrary tie vertices. Bid blocks created by
+  another service model's model stage after this one would not be tied; none exist today.
 - The replication optimizer sets zero MIP gaps (`mip_rel_gap = 0`, `mip_abs_gap = 1e-10`). Any
   other optimizer with default gaps and binary variables present may stop before the tie penalty
   is resolved.

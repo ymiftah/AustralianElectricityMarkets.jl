@@ -13,7 +13,7 @@ end
 """
     check_tie_break_pairs(sys, steps)
 
-Verifies that the price-tied energy band pairs of `sys` ([`add_tie_break_constraints!`](@ref)) are
+Verifies that the price-tied energy band pairs of `sys` ([`TieBreakMarket`](@ref)) are
 the same at every interval of `steps`, for every region and direction, as a model built once and
 stepped through `steps` requires. Band prices change only between trading days, so a range inside
 one trading day passes.

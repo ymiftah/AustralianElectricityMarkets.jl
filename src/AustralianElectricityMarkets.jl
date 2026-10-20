@@ -39,11 +39,13 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
     get_limit_type, get_source, get_effective_date, get_version_no, get_gencon_id,
     get_terms, set_terms!, get_fcas_requirements, set_fcas_requirements!, resolve_term_devices
 export FCASService, add_fcas_services!, IntervalInputs, Readers
+export EnergyTieBreak
 
 include("constants.jl")
 include("types/bid_types.jl")
 include("types/network_configuration.jl")
 include("types/fcas.jl")
+include("types/tie_break.jl")
 include("types/generic_constraints.jl")
 include("types/interconnector_losses.jl")
 include("types/interval_inputs.jl")

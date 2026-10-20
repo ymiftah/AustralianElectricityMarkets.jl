@@ -143,9 +143,9 @@ function _add_tie_break_parameter!(
 end
 
 
-# Throws unless every price-tied band carries its scale series and every device carrying a scale
-# series is modeled with market-bid block variables.
-function _check_tie_break_series(container::PSI.OptimizationContainer, sys::PSY.System, groups)
+# Throws unless every price-tied band carries its scale series and every contributor of `service`
+# carrying a scale series is modelled with market-bid block variables.
+function _check_tie_break_series(container::PSI.OptimizationContainer, sys::PSY.System, groups, service::EnergyTieBreak)
     ts_type = PSI.get_default_time_series_type(container)
     missing_series = Set{String}()
     modeled = Set{Tuple{DataType, String}}()
@@ -164,7 +164,8 @@ function _check_tie_break_series(container::PSI.OptimizationContainer, sys::PSY.
         ),
     )
     unmodeled = String[]
-    for device in PSY.get_available_components(PSY.StaticInjection, sys)
+    for device in PSY.get_contributing_devices(sys, service)
+        PSY.get_available(device) || continue
         (typeof(device), PSY.get_name(device)) in modeled && continue
         any(k -> startswith(IS.get_name(k), "tie_break_scale_"), IS.get_time_series_keys(device)) &&
             push!(unmodeled, PSY.get_name(device))
@@ -172,63 +173,128 @@ function _check_tie_break_series(container::PSI.OptimizationContainer, sys::PSY.
     isempty(unmodeled) || throw(
         ArgumentError(
             "tie-break: $(length(unmodeled)) unit(s) carry tie-break scales but have no market-bid variables in the model: " *
-                "$(join(sort!(unmodeled), ", ")). Their bands set the widest band of a tie group; model them or set the model settings \"tie_breaks\" entry to false.",
+                "$(join(sort!(unmodeled), ", ")). Their bands set the widest band of a tie group; model them or leave " *
+                "the EnergyTieBreak service model out of the template.",
         ),
     )
     return
 end
 
 
+# Row label of a region and direction in the tie-break containers.
+function _tie_break_label(region::AbstractString, decremental::Bool)
+    return region * (decremental ? "_bid" : "_offer")
+end
+
+
+PSI.get_default_time_series_names(::Type{EnergyTieBreak}, ::Type{TieBreakMarket}) =
+    Dict{Type{<:PSI.TimeSeriesParameter}, String}()
+
+
+PSI.get_default_attributes(::Type{EnergyTieBreak}, ::Type{TieBreakMarket}) = Dict{String, Any}()
+
+
 """
-    add_tie_break_constraints!(container, sys)
+    PSI.construct_service!(container, sys, ::PSI.ArgumentConstructStage, model::PSI.ServiceModel{EnergyTieBreak, TieBreakMarket}, devices_template, incompatible_device_types, network_model)
 
-Dispatches price-tied energy bands in proportion to their size. Within each region, direction
-(offer or load bid) and time step, bands whose prices at the reference node are within
-[`TIE_BREAK_CVP_FACTOR`](@ref) of one another form a tie group. Every pair of bands of different
-units in a group gets the row `s_b x_a - s_a x_b + up - down = 0`, where `x` is the cleared MW of a
-band and `s = w / w_ref` its [`TieBreakScaleParameter`](@ref), `w` being its width and `w_ref` the
-widest band of the group at that interval, so the slack is in system-base per-unit MW. The slacks are
-priced at [`TIE_BREAK_CVP_FACTOR`](@ref) `\$/MWh`. A band held back by a ramp, availability or group
-limit relaxes its rows instead of moving the dispatch of the other units: the penalty slope in each
-band's MW depends only on the other band's width, so the split among the remaining bands is set by
-their own rows and is proportional to band MW. A band of zero width has scale 0, which makes its rows
-vacuous. FCAS bands are not tied. Groups are read from the offer prices at build, and the scales
-are updated by simulation steps, so a recurrent build requires the same groups at every step
-([`check_tie_break_pairs`](@ref)). Must run after every device model's objective; throws unless
-[`set_tie_break_scales!`](@ref) covered exactly the modeled units.
-
-# Arguments
-- `container`: the `PowerSimulations.OptimizationContainer` holding the built bid variables.
-- `sys`: the `PowerSystems.System` the container was built from.
+Argument stage for [`TieBreakMarket`](@ref): adds nothing, as the rows read the market-bid block
+variables that the device models create at their model stage.
 
 # Returns
-The number of pairs added, as an `Int`.
+`nothing`.
 """
-function add_tie_break_constraints!(container::PSI.OptimizationContainer, sys::PSY.System)
-    jm = PSI.get_jump_model(container)
-    coefficient = PSI.get_base_power(container) *
-        interval_cost_coefficient(TIE_BREAK_CVP_FACTOR, PSI.get_resolution(container))
+function PSI.construct_service!(
+        ::PSI.OptimizationContainer,
+        ::PSY.System,
+        ::PSI.ArgumentConstructStage,
+        ::PSI.ServiceModel{EnergyTieBreak, TieBreakMarket},
+        ::Dict{Symbol, PSI.DeviceModel},
+        ::Set{<:DataType},
+        ::PSI.NetworkModel,
+    )
+    return
+end
+
+
+"""
+    PSI.construct_service!(container, sys, ::PSI.ModelConstructStage, model::PSI.ServiceModel{EnergyTieBreak, TieBreakMarket}, devices_template, incompatible_device_types, network_model)
+
+Model stage for [`TieBreakMarket`](@ref): dispatches price-tied energy bands in proportion to their
+size. Within each region, direction (offer or load bid) and time step, the market-bid block bands
+whose prices at the reference node are within [`TIE_BREAK_CVP_FACTOR`](@ref) of one another form a
+tie group. Every pair of bands of different units in a group gets the [`TieBreakConstraint`](@ref)
+row `s_b x_a - s_a x_b + up - down = 0`, where `x` is the cleared MW of a band and `s = w / w_ref`
+its [`TieBreakScaleParameter`](@ref), `w` being its width and `w_ref` the widest band of the group at
+that interval, so the [`TieBreakSlackUp`](@ref) and [`TieBreakSlackDown`](@ref) slacks are in
+system-base per-unit MW. The slacks are priced at [`TIE_BREAK_CVP_FACTOR`](@ref) `\$/MWh`. A band
+held back by a ramp, availability or group limit relaxes its rows instead of moving the dispatch of
+the other units, and a band of zero width has scale 0, which makes its rows vacuous. FCAS bands are
+not tied. Groups are read from the offer prices at build and the scales are updated by simulation
+steps, so a recurrent build requires the same groups at every step ([`check_tie_break_pairs`](@ref)).
+Containers are keyed by [`EnergyTieBreak`](@ref) with the service name as meta, and are not added
+when no band is tied. Throws unless
+[`set_tie_break_scales!`](@ref) covered every tied band and every contributor carrying a scale is
+modelled.
+
+# Returns
+`nothing`.
+"""
+function PSI.construct_service!(
+        container::PSI.OptimizationContainer,
+        sys::PSY.System,
+        ::PSI.ModelConstructStage,
+        model::PSI.ServiceModel{EnergyTieBreak, TieBreakMarket},
+        ::Dict{Symbol, PSI.DeviceModel},
+        ::Set{<:DataType},
+        ::PSI.NetworkModel,
+    )
+    name = PSI.get_service_name(model)
+    service = PSY.get_component(EnergyTieBreak, sys, name)
+    PSY.get_available(service) || return
     groups = _tie_break_bands(container, sys)
-    _check_tie_break_series(container, sys, groups)
-    key(b, decremental) = PSI.ParameterKey(TieBreakScaleParameter, b.type, _tie_break_meta(b.band, decremental))
-    links = 0
+    _check_tie_break_series(container, sys, groups, service)
+
+    rows = Tuple{String, Int, Int, Bool, _TieBand, _TieBand}[]
     for (decremental, region, t) in sort!(collect(keys(groups)))
         bands = groups[(decremental, region, t)]
+        label = _tie_break_label(region, decremental)
+        pair = 0
         for group in _tie_groups(bands)
             foreach(i -> _add_tie_break_parameter!(container, bands[i].type, sys, decremental, bands[i].band), group)
             for i in 1:(length(group) - 1), j in (i + 1):length(group)
                 a, b = bands[group[i]], bands[group[j]]
                 a.name == b.name && continue
-                up = JuMP.@variable(jm, base_name = "TieBreakSlackUp_{$region,$t,$links}", lower_bound = 0.0)
-                down = JuMP.@variable(jm, base_name = "TieBreakSlackDown_{$region,$t,$links}", lower_bound = 0.0)
-                # Unit placeholder coefficients; the scale parameters set both.
-                row = JuMP.@constraint(jm, a.var + b.var + up - down == 0.0)
-                PSI.add_coefficient_target!(container, key(b, decremental), b.name, t, row, a.var, 1.0)
-                PSI.add_coefficient_target!(container, key(a, decremental), a.name, t, row, b.var, -1.0)
-                PSI.add_to_objective_invariant_expression!(container, coefficient * (up + down))
-                links += 1
+                pair += 1
+                push!(rows, (label, pair, t, decremental, a, b))
             end
         end
     end
-    return links
+
+    # PSI's MILP dual pass cannot read an empty variable container, so a model with no ties has none.
+    isempty(rows) && return
+    time_steps = PSI.get_time_steps(container)
+    labels = unique(first.(rows))
+    pairs = 1:maximum(r[2] for r in rows)
+    up = PSI.add_variable_container!(container, TieBreakSlackUp(), EnergyTieBreak; meta = name)
+    down = PSI.add_variable_container!(container, TieBreakSlackDown(), EnergyTieBreak; meta = name)
+    con = PSI.add_constraints_container!(
+        container, TieBreakConstraint(), EnergyTieBreak, labels, pairs, time_steps; sparse = true, meta = name,
+    )
+    jm = PSI.get_jump_model(container)
+    coefficient = PSI.get_base_power(container) *
+        interval_cost_coefficient(TIE_BREAK_CVP_FACTOR, PSI.get_resolution(container))
+    key(b, decremental) = PSI.ParameterKey(TieBreakScaleParameter, b.type, _tie_break_meta(b.band, decremental))
+    for (label, pair, t, decremental, a, b) in rows
+        up[label, pair, t] = JuMP.@variable(jm, base_name = "TieBreakSlackUp_{$label,$pair,$t}", lower_bound = 0.0)
+        down[label, pair, t] = JuMP.@variable(jm, base_name = "TieBreakSlackDown_{$label,$pair,$t}", lower_bound = 0.0)
+        # Unit placeholder coefficients; the scale parameters set both.
+        row = JuMP.@constraint(jm, a.var + b.var + up[label, pair, t] - down[label, pair, t] == 0.0)
+        con[label, pair, t] = row
+        PSI.add_coefficient_target!(container, key(b, decremental), b.name, t, row, a.var, 1.0)
+        PSI.add_coefficient_target!(container, key(a, decremental), a.name, t, row, b.var, -1.0)
+        PSI.add_to_objective_invariant_expression!(container, coefficient * (up[label, pair, t] + down[label, pair, t]))
+    end
+    # Drops the cells of the label x pair x time product that hold no row.
+    filter!(cell -> !isnothing(last(cell)), con.data)
+    return
 end

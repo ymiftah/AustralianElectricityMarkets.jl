@@ -1,4 +1,19 @@
 """
+    TIE_BREAK_SERVICE_NAME
+
+Name of the [`EnergyTieBreak`](@ref) service [`set_tie_break_scales!`](@ref) attaches, and of the
+`PowerSimulations.ServiceModel` [`set_nem_dispatch_models!`](@ref) registers for it.
+"""
+const TIE_BREAK_SERVICE_NAME = "energy_tie_break"
+
+
+# Whether `device` is priced on a `MarketBidCost`.
+function _has_market_bid(device::PSY.Component)
+    return hasmethod(PSY.get_operation_cost, Tuple{typeof(device)}) && PSY.get_operation_cost(device) isa PSY.MarketBidCost
+end
+
+
+"""
     _tie_break_offers(sys) -> Dict
 
 Every available component's energy offer curves, grouped by (direction, region):
@@ -15,7 +30,7 @@ function _tie_break_offers(sys::PSY.System)
     offers = Dict{Tuple{Bool, String}, Any}()
     fixed = Tuple{Bool, String, PSY.Component, PSY.PiecewiseStepData}[]
     for device in PSY.get_available_components(PSY.StaticInjection, sys)
-        hasmethod(PSY.get_operation_cost, Tuple{typeof(device)}) && PSY.get_operation_cost(device) isa PSY.MarketBidCost || continue
+        _has_market_bid(device) || continue
         region = PSY.get_name(PSY.get_area(PSY.get_bus(device)))
         for decremental in (false, true)
             key = PSI.get_offer_curves_maybe_decremental(Val(decremental), device)
@@ -96,8 +111,11 @@ end
 Attaches each price-tied energy band's tie-break scale `w / w_ref` (its width over the widest band of its
 tie group at that interval, 0 when the band is untied or the group has no width) as the `SingleTimeSeries`
 `"tie_break_scale_<k>[_decremental]"` of its unit, where `k` is the band's segment index. Series left by an earlier call on the visited
-units are removed first. Call it after [`set_market_bids!`](@ref) and before
-`transform_single_time_series!`. Every unit carrying a scale must be modelled in the build, or the build fails.
+units are removed first. Replaces any [`EnergyTieBreak`](@ref) named [`TIE_BREAK_SERVICE_NAME`](@ref)
+with one whose contributing devices are every available unit priced on a `MarketBidCost`, or leaves none
+when there is no such unit. Call it after [`set_market_bids!`](@ref) and before
+`transform_single_time_series!`. Every contributor carrying a scale must be modelled in the build, or the
+build fails.
 
 # Arguments
 - `sys`: the `System` to add to.
@@ -131,5 +149,9 @@ function set_tie_break_scales!(sys::PSY.System)
             PSY.add_time_series!(sys, device, AustralianElectricityMarkets._single_series(name, first(stamps), values, resolution))
         end
     end
+    existing = PSY.get_component(EnergyTieBreak, sys, TIE_BREAK_SERVICE_NAME)
+    isnothing(existing) || PSY.remove_component!(sys, existing)
+    devices = [d for d in PSY.get_available_components(PSY.StaticInjection, sys) if _has_market_bid(d)]
+    isempty(devices) || PSY.add_service!(sys, EnergyTieBreak(; name = TIE_BREAK_SERVICE_NAME), devices)
     return
 end

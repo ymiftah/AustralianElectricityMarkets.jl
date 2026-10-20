@@ -515,11 +515,11 @@ end
 
 
 """
-    set_nem_dispatch_models!(template, sys; formulation = NEMReplayDispatch)
+    set_nem_dispatch_models!(template, sys; formulation = NEMReplayDispatch, skip_uncovered = false, tie_breaks = true)
 
-Sets `formulation` as the device model for every dispatch participant in `sys`. Price-tied energy
-bands are dispatched pro rata ([`add_tie_break_constraints!`](@ref)) only when the template's
-network model is `PSI.AreaBalancePowerModel` with `use_slacks = true`; otherwise ties resolve to an
+Sets `formulation` as the device model for every dispatch participant in `sys`, and, when `sys`
+carries the [`EnergyTieBreak`](@ref) of [`set_tie_break_scales!`](@ref), its [`TieBreakMarket`](@ref)
+service model, which dispatches price-tied energy bands pro rata. Without it ties resolve to an
 arbitrary solver vertex.
 
 # Arguments
@@ -530,12 +530,13 @@ arbitrary solver vertex.
 - `skip_uncovered`: when `true`, each device model carries a `"filter_function"` attribute
   excluding components that fail [`_has_nem_dispatch_limits`](@ref), and the excluded names are
   warned about. When `false` such a component fails the build by name.
+- `tie_breaks`: when `false`, no tie-break service model is set.
 
 # Returns
 The types the formulation was set for, as a `Vector`.
 """
 function set_nem_dispatch_models!(
-        template, sys; formulation = NEMReplayDispatch, skip_uncovered::Bool = false,
+        template, sys; formulation = NEMReplayDispatch, skip_uncovered::Bool = false, tie_breaks::Bool = true,
     )
     types = nem_dispatch_participants(sys, formulation)
     isempty(types) && throw(
@@ -560,10 +561,13 @@ function set_nem_dispatch_models!(
                 ),
             )
         end
-        return types
+    else
+        foreach(T -> PSI.set_device_model!(template, T, formulation), types)
     end
-    for T in types
-        PSI.set_device_model!(template, T, formulation)
+    if tie_breaks && !isnothing(PSY.get_component(EnergyTieBreak, sys, TIE_BREAK_SERVICE_NAME))
+        PSI.set_service_model!(
+            template, TIE_BREAK_SERVICE_NAME, PSI.ServiceModel(EnergyTieBreak, TieBreakMarket, TIE_BREAK_SERVICE_NAME),
+        )
     end
     return types
 end

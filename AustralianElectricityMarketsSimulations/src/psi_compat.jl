@@ -70,6 +70,39 @@ function PSI.get_initial_conditions_service_model(
     return PSI.ServiceModel(FCASService, FCASMarket)
 end
 
+"""
+    PSI._modify_device_model!(devices_template, ::PSI.ServiceModel{EnergyTieBreak, TieBreakMarket}, contributing_devices)
+
+No-op override of `PowerSimulations.jl` 0.38.4's private `_modify_device_model!` hook, called
+unconditionally when registering a service model with contributing devices. [`TieBreakMarket`](@ref)
+adds no device-side range expressions, so it has nothing to fold into the device models.
+
+# Returns
+`nothing`.
+"""
+function PSI._modify_device_model!(
+        ::Dict{Symbol, PSI.DeviceModel},
+        ::PSI.ServiceModel{EnergyTieBreak, TieBreakMarket},
+        ::Vector,
+    )
+    return nothing
+end
+
+"""
+    PSI.get_initial_conditions_service_model(model, service_model::PSI.ServiceModel{EnergyTieBreak, TieBreakMarket})
+
+The service model PSI's initial-conditions sub-model uses for an [`EnergyTieBreak`](@ref).
+
+# Returns
+`PSI.ServiceModel(EnergyTieBreak, TieBreakMarket)`.
+"""
+function PSI.get_initial_conditions_service_model(
+        ::PSI.OperationModel,
+        ::PSI.ServiceModel{EnergyTieBreak, TieBreakMarket},
+    )
+    return PSI.ServiceModel(EnergyTieBreak, TieBreakMarket)
+end
+
 # PSI 0.38.4 keys these on the device type with a bare `AbstractDeviceFormulation`, so the
 # `PSY.StaticInjection` method below is ambiguous for a `PSY.Generator`; the two narrower methods
 # break the tie.
@@ -197,10 +230,7 @@ slack at [`AREA_BALANCE_CVP_FACTOR`](@ref) times the Market Price Cap of the int
 year, or the `"market_price_cap"` entry of the model's settings `ext`
 ([`_container_market_price_cap`](@ref)), in `\$/MW` per dispatch interval. Throws for a financial
 year absent from `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` with no override. `AreaPTDFPowerModel` keeps
-PSI's flat `BALANCE_SLACK_COST`. Unless the model settings `ext` entry "tie_breaks" is `false`, also adds the energy tie-break links
-([`add_tie_break_constraints!`](@ref)), the one network-stage hook that runs after every device's
-bid objective, so they exist only when the network model has `use_slacks = true`; other network
-models, and bid blocks created by branch or service models, get arbitrary tie vertices.
+PSI's flat `BALANCE_SLACK_COST`.
 
 # Returns
 `nothing`.
@@ -222,6 +252,5 @@ function PSI.objective_function!(
             PSI.add_to_objective_invariant_expression!(container, (variable_dn[n, t] + variable_up[n, t]) * coefficient)
         end
     end
-    get(PSI.get_ext(PSI.get_settings(container)), "tie_breaks", true) && add_tie_break_constraints!(container, sys)
     return nothing
 end
