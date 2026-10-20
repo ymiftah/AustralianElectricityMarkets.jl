@@ -15,6 +15,20 @@
     # Base system for testing
     sys_base = nem_system(db, RegionalNetworkConfiguration())
 
+    @testset "set_demand! rejects incomplete regional demand" begin
+        # The mock hive holds demand to 04:00; a window running to 06:00 has no rows for the last two hours.
+        start_date = DateTime(2025, 1, 1, 3, 0)
+        late_range = start_date:Minute(5):(start_date + Hour(3))
+        err = try
+            set_demand!(deepcopy(sys_base), db, late_range; resolution = Minute(5))
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("missing regional demand inputs", err.msg)
+    end
+
     # Test with different resolutions
     for resolution in [Minute(5), Minute(30)]
         @testset "Resolution: $resolution" begin

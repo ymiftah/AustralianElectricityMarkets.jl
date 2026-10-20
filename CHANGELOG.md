@@ -422,6 +422,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `set_demand!` throws when an available load or area lacks a demand row for any interval of the
+  range, or a demand value is not finite, instead of leaving a gap in the series.
 - `read_bids` throws when a period offer has no matching `BIDDAYOFFER_D` price-band row, instead of
   dropping the unit silently.
 - The replication model solves one dispatch interval instead of two (the second was only
