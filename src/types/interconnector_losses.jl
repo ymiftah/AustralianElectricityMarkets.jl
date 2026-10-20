@@ -83,11 +83,18 @@ IS.get_internal(model::InterconnectorLossModel) = model.internal
 `model.demand_coefficients` but absent from `demand` contributes nothing.
 """
 function loss_factor(model::InterconnectorLossModel, flow::Real, demand::AbstractDict)
-    offset = sum(
-        (c * get(demand, r, 0.0) for (r, c) in model.demand_coefficients);
-        init = 0.0,
-    )
-    return model.loss_constant + model.loss_flow_coefficient * flow + offset
+    return model.loss_constant + model.loss_flow_coefficient * flow + _demand_offset(model, demand)
+end
+
+
+"""
+    _demand_offset(model, demand) -> Float64
+
+The demand term of [`loss_factor`](@ref), `Σ_r demand_coefficients[r] × demand[r]`. A region in
+`model.demand_coefficients` but absent from `demand` contributes nothing.
+"""
+function _demand_offset(model::InterconnectorLossModel, demand::AbstractDict)
+    return sum((c * get(demand, r, 0.0) for (r, c) in model.demand_coefficients); init = 0.0)
 end
 
 
