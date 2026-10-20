@@ -30,7 +30,7 @@ end
     check_dispatch_envelope(sys, template, initial_time, n_intervals) -> Nothing
 
 Verifies that no available device `template` models under [`NEMReplayDispatch`](@ref), batteries
-excepted, has a ramp-down floor (`"initial_mw"` minus `"ramp_down_rate"` times the interval) above its
+excepted, has a ramp-down floor (`"initial_mw"` minus `"ramp_down_rate"` times the series resolution) above its
 `"max_active_power"` availability in any of the `n_intervals` intervals from `initial_time`, reading the
 `SingleTimeSeries` of `sys` in system-base per-unit.
 
@@ -44,7 +44,6 @@ excepted, has a ramp-down floor (`"initial_mw"` minus `"ramp_down_rate"` times t
 `nothing`; throws `ArgumentError` naming each inconsistent device and its first interval.
 """
 function check_dispatch_envelope(sys::PSY.System, template::PSI.ProblemTemplate, initial_time::DateTime, n_intervals::Integer)
-    minutes = Dates.value(Dates.Minute(DISPATCH_INTERVAL))
     params = (InitialPowerTimeSeriesParameter, RampDownRateTimeSeriesParameter, PSI.ActivePowerTimeSeriesParameter)
     problems = String[]
     PSY.with_units_base(sys, PSY.UnitSystem.SYSTEM_BASE) do
@@ -62,6 +61,8 @@ function check_dispatch_envelope(sys::PSY.System, template::PSI.ProblemTemplate,
                     ) .* PSI.get_multiplier_value(P(), d, NEMReplayDispatch())
                         for P in params
                 )
+                resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, d, names[InitialPowerTimeSeriesParameter]))
+                minutes = Dates.value(Dates.Minute(resolution))
                 hit = _first_envelope_violation(initial, down_rate, ceiling, minutes)
                 isnothing(hit) || push!(problems, _envelope_problem(PSY.get_name(d), hit...))
             end

@@ -458,7 +458,7 @@ function _check_dispatch_envelope(container, devices, model)
     PSI.get_formulation(model) === NEMReplayDispatch || return
     haskey(PSI.get_time_series_names(model), InitialPowerTimeSeriesParameter) || return
     isempty(devices) && return
-    # Recurrent parameters have no value before a solve; `check_dispatch_envelope` runs before build instead.
+    # Recurrent parameters have no value before a solve; callers run `check_dispatch_envelope` on the system before building one.
     PSI.built_for_recurrent_solves(container) && return
     T = typeof(first(devices))
     time_steps = PSI.get_time_steps(container)

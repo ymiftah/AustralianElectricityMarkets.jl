@@ -549,6 +549,19 @@
             set_nem_dispatch_limits!(bare, db, date_range)
             set_storage_dispatch_ceilings!(bare)
             @test !has_time_series(get_component(EnergyReservoirStorage, bare, "BW01"), SingleTimeSeries, "storage_gen_ceiling")
+
+            # A series on a different grid from "energy_max_avail" is rejected.
+            shifted = deepcopy(sys_base)
+            set_market_bids!(shifted, db, date_range; resolution = resolution)
+            set_nem_dispatch_limits!(shifted, db, date_range)
+            battery = get_component(EnergyReservoirStorage, shifted, "BW01")
+            stamps = get_time_series_timestamps(SingleTimeSeries, battery, "energy_max_avail")
+            remove_time_series!(shifted, SingleTimeSeries, battery, "ramp_down_rate")
+            add_time_series!(
+                shifted, battery,
+                SingleTimeSeries(; name = "ramp_down_rate", data = TimeSeries.TimeArray(stamps .+ resolution, zeros(length(stamps))), resolution = resolution),
+            )
+            @test_throws r"\"ramp_down_rate\" series is not on its" set_storage_dispatch_ceilings!(shifted)
         end
 
         @testset "ramp rates convert MW/h to MW/min and per-unitise; initial_mw matches DISPATCHLOAD exactly, per-unitised" begin
