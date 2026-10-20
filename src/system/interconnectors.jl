@@ -117,18 +117,18 @@ const _LOSS_DEMAND_COEFFICIENT = "loss_demand_coefficient"
 Attaches to each `PSY.AreaInterchange` carrying exactly one [`InterconnectorLossModel`](@ref) a
 `SingleTimeSeries` `"loss_demand_coefficient"`: at each interval, the demand term of its
 [`loss_factor`](@ref), `Σ_r demand_coefficients[r] × demand[r]`. `demand[r]` is the summed demand of
-the available `PowerLoad`s in area `r`, per-unit of the system base: a load's `"loss_demand"` series
-from [`set_demand!`](@ref) when it carries one, else its `"max_active_power"` series, else its static
-maximum active power. The series sits on the timestamps of the loads' demand series and replaces an
-existing one. Call it after `set_demand!` and after any change to the loads or loss models, before
+the available `PowerLoad`s in area `r`, per-unit of the system base, from each load's
+`"loss_demand"` series set by [`set_demand!`](@ref). The series sits on the timestamps of those
+series and replaces an existing one. Call it after `set_demand!` and after any change to the loads or loss models, before
 `transform_single_time_series!`.
 
 # Arguments
 - `sys`: the `System` to add to.
 
 # Returns
-`nothing`. Throws `ArgumentError` when an available load is on a bus with no area, when no available
-load carries a demand series, or when two loads' demand series have different timestamps.
+`nothing`. Throws `ArgumentError` when the system has no available load, when an available load is
+on a bus with no area or has no `"loss_demand"` series, or when two loads' series have different
+timestamps.
 """
 function set_loss_demand_coefficients!(sys)
     stamps, resolution, demand = _area_loss_demand(sys)
@@ -161,30 +161,29 @@ function _area_loss_demand(sys)
             ),
         )
     end
-    series_name(load) = has_time_series(load, SingleTimeSeries, "loss_demand") ? "loss_demand" : "max_active_power"
-    has_series(load) = has_time_series(load, SingleTimeSeries, series_name(load))
-    index = findfirst(has_series, loads)
-    isnothing(index) && throw(
-        ArgumentError("set_loss_demand_coefficients!: no available PowerLoad carries a \"loss_demand\" or \"max_active_power\" series."),
-    )
-    stamps = PSY.get_time_series_timestamps(SingleTimeSeries, loads[index], series_name(loads[index]))
-    resolution = IS.get_resolution(PSY.get_time_series(SingleTimeSeries, loads[index], series_name(loads[index])))
+    isempty(loads) && throw(ArgumentError("set_loss_demand_coefficients!: the system has no available PowerLoad."))
+    for load in loads
+        has_time_series(load, SingleTimeSeries, "loss_demand") || throw(
+            ArgumentError(
+                "set_loss_demand_coefficients!: PowerLoad $(get_name(load)) has no \"loss_demand\" series; " *
+                    "call set_demand! after the loads are added and before set_loss_demand_coefficients!",
+            ),
+        )
+    end
+    reference = first(loads)
+    stamps = PSY.get_time_series_timestamps(SingleTimeSeries, reference, "loss_demand")
+    resolution = IS.get_resolution(PSY.get_time_series(SingleTimeSeries, reference, "loss_demand"))
     demand = Dict{String, Vector{Float64}}()
     with_units_base(sys, "SYSTEM_BASE") do
         for load in loads
+            PSY.get_time_series_timestamps(SingleTimeSeries, load, "loss_demand") == stamps || throw(
+                ArgumentError(
+                    "set_loss_demand_coefficients!: PowerLoad $(get_name(load))'s \"loss_demand\" series is not on " *
+                        "the timestamps of $(get_name(reference))'s.",
+                ),
+            )
             total = get!(() -> zeros(Float64, length(stamps)), demand, get_name(get_area(get_bus(load))))
-            if has_series(load)
-                name = series_name(load)
-                PSY.get_time_series_timestamps(SingleTimeSeries, load, name) == stamps || throw(
-                    ArgumentError(
-                        "set_loss_demand_coefficients!: PowerLoad $(get_name(load))'s \"$name\" series is not on " *
-                            "the timestamps of $(get_name(loads[index]))'s.",
-                    ),
-                )
-                total .+= get_time_series_values(SingleTimeSeries, load, name)
-            else
-                total .+= get_max_active_power(load)
-            end
+            total .+= get_time_series_values(SingleTimeSeries, load, "loss_demand")
         end
     end
     return stamps, resolution, demand

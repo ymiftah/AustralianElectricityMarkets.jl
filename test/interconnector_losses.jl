@@ -178,7 +178,7 @@ let
         sys = nem_system(db, RegionalNetworkConfiguration())
         @test_logs (:warn, r"no resolvable loss model") match_mode = :any attach_interconnector_losses!(sys, db, as_of)
         # No demand series yet: nothing to evaluate the loss factor at.
-        @test_throws ArgumentError set_loss_demand_coefficients!(sys)
+        @test_throws r"no \"loss_demand\" series" set_loss_demand_coefficients!(sys)
         date_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 1, 0)
         set_demand!(sys, db, date_range; resolution = Minute(5))
         set_loss_demand_coefficients!(sys)
@@ -205,6 +205,33 @@ let
             init = zeros(length(coefficient)),
         )
         @test get_time_series_values(SingleTimeSeries, ic1, "loss_demand_coefficient") ≈ without_vic
+    end
+
+    @testset "set_loss_demand_coefficients! rejects inconsistent loads" begin
+        date_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 1, 0)
+        fresh() = begin
+            sys = nem_system(db, RegionalNetworkConfiguration())
+            @test_logs (:warn, r"no resolvable loss model") match_mode = :any attach_interconnector_losses!(sys, db, as_of)
+            set_demand!(sys, db, date_range; resolution = Minute(5))
+            sys
+        end
+
+        sys = fresh()
+        load = get_component(PowerLoad, sys, "VIC1 Load")
+        set_area!(get_bus(load), nothing)
+        @test_throws r"on a bus with no area" set_loss_demand_coefficients!(sys)
+
+        sys = fresh()
+        load = get_component(PowerLoad, sys, "VIC1 Load")
+        original = get_time_series(SingleTimeSeries, load, "loss_demand")
+        stamps = get_time_series_timestamps(SingleTimeSeries, load, "loss_demand")
+        values = get_time_series_values(SingleTimeSeries, load, "loss_demand")
+        remove_time_series!(sys, SingleTimeSeries, load, "loss_demand")
+        add_time_series!(
+            sys, load,
+            AustralianElectricityMarkets._single_series("loss_demand", first(stamps) + Minute(5), values, get_resolution(original)),
+        )
+        @test_throws r"is not on the timestamps" set_loss_demand_coefficients!(sys)
     end
 
     @testset "InterconnectorLossModel JSON round-trip" begin
