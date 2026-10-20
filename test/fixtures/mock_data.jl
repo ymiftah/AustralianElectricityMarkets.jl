@@ -46,7 +46,7 @@ function create_mock_data(hive_root::String)
             FROMREGIONLOSSSHARE = fill(0.1, n),
             LOSSCONSTANT = fill(0.01, n),
             LOSSFLOWCOEFFICIENT = fill(0.001, n),
-            ICTYPE = fill("MNSP", n),
+            ICTYPE = [i == 2 ? "MNSP" : "REGULATED" for i in 1:n],
             archive_month = fill("2025-01", n)
         ), :INTERCONNECTORCONSTRAINT
     )

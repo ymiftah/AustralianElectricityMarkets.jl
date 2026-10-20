@@ -424,6 +424,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `set_mnsp_offers!` requires complete, valid inputs for every `MNSP` interconnector (named by
+  `INTERCONNECTORCONSTRAINT.ICTYPE`) and throws before changing the system, instead of warning and
+  leaving the interconnector on the free-flow model. `REGULATED` interconnectors need no offers.
 - Bids, FCAS bids and curves, MNSP offers and generic-constraint series are attached as
   `SingleTimeSeries` instead of one-window `Deterministic` forecasts, so a model can start at any
   interval of the range after `transform_single_time_series!`.
