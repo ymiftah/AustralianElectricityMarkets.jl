@@ -876,10 +876,13 @@ end
         late_range = late:Minute(5):(late + Hour(3))
         late_sys = nem_system(db, RegionalNetworkConfiguration())
         add_nem_constraints!(late_sys, db, late_range)
-        missing_intervals = get_missing_constraint_intervals(late_sys)
-        @test !isempty(missing_intervals)
-        @test all(t -> t > DateTime(2025, 1, 1, 4, 0), missing_intervals)
-        @test issorted(missing_intervals)
+        expected = collect(DateTime(2025, 1, 1, 4, 5):Minute(5):DateTime(2025, 1, 1, 5, 55))
+        @test get_missing_constraint_intervals(late_sys) == expected
+
+        # The intervals survive a System JSON round-trip.
+        json_path = joinpath(mktempdir(), "sys.json")
+        to_json(late_sys, json_path)
+        @test get_missing_constraint_intervals(System(json_path)) == expected
 
         # A range wholly outside the cache records every interval.
         none = DateTime(2030, 1, 1):Minute(5):DateTime(2030, 1, 1, 0, 15)
@@ -902,5 +905,12 @@ end
         @test_logs (:warn, r"NULL GENERICCONSTRAINTWEIGHT") match_mode = :any add_nem_constraints!(weight_sys, weight_db, date_range)
         @test get_defaulted_constraint_weights(weight_sys) == [vname("N_BAYSW_THERMAL")]
         @test get_constraint_weight(get_component(GenericConstraint, weight_sys, vname("N_BAYSW_THERMAL"))) == 1.0
+
+        # A later run with no invoked constraint resets every record of the earlier one.
+        @test_logs (:warn, r"No constraints invoked") match_mode = :any add_nem_constraints!(weight_sys, weight_db, none)
+        @test isempty(get_defaulted_constraint_weights(weight_sys))
+        @test isempty(get_skipped_constraints(weight_sys))
+        @test isempty(get_dropped_terms(weight_sys))
+        @test get_missing_constraint_intervals(weight_sys) == collect(none)[1:(end - 1)]
     end
 end

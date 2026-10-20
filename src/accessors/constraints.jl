@@ -52,7 +52,8 @@ end
     get_missing_constraint_intervals(sys) -> Vector{DateTime}
 
 The dispatch intervals of the range [`add_nem_constraints!`](@ref) ran over that had no invoked
-constraint in `DISPATCHCONSTRAINT`, so their generic constraints are absent from `sys`.
+constraint in `DISPATCHCONSTRAINT`, so their generic constraints are absent from `sys`. They are
+stored in `ext` as ISO 8601 strings, so they survive a `System` JSON round-trip.
 
 # Arguments
 - `sys`: a `System` that `add_nem_constraints!` ran on.
@@ -62,7 +63,7 @@ A `Vector{DateTime}`, empty when every interval had invoked constraints or `add_
 has not run.
 """
 function get_missing_constraint_intervals(sys)
-    return collect(DateTime, get(get_ext(sys), "missing_constraint_intervals", DateTime[]))
+    return DateTime[DateTime(String(t)) for t in get(get_ext(sys), "missing_constraint_intervals", String[])]
 end
 
 

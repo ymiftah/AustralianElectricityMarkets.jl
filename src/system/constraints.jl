@@ -392,7 +392,9 @@ function add_nem_constraints!(
     fixed_loads = _fixed_load_series(sys, read_fixed_loads(db, date_range))
     if DataFrames.isempty(invoked_all) && isempty(fixed_loads)
         get_ext(sys)["skipped_constraints"] = Dict{String, Any}[]
-        get_ext(sys)["missing_constraint_intervals"] = missing_intervals
+        get_ext(sys)["defaulted_constraint_weights"] = String[]
+        get_ext(sys)["dropped_terms"] = Dict{String, Any}[]
+        get_ext(sys)["missing_constraint_intervals"] = string.(missing_intervals)
         @warn "No constraints invoked over $date_range; nothing added."
         return String[], Dict{String, Symbol}()
     end
@@ -653,7 +655,7 @@ function add_nem_constraints!(
 
     get_ext(sys)["skipped_constraints"] = skipped_detail
     get_ext(sys)["defaulted_constraint_weights"] = missing_weight
-    get_ext(sys)["missing_constraint_intervals"] = missing_intervals
+    get_ext(sys)["missing_constraint_intervals"] = string.(missing_intervals)
 
     # sys is mutated only past this point - every throw above leaves it untouched, so a caller
     # retrying with allow_empty_region_terms=true on the same sys never double-adds anything.
