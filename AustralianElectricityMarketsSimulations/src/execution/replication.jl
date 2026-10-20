@@ -262,6 +262,10 @@ end
 # `"up"` for a slack that relaxes a `<=` row and `"down"` for one that relaxes a `>=` row; the
 # FCAS families whose rows have both senses refine it per key in `_violation_direction`.
 const _VIOLATION_FAMILIES = (
+    EnergyOfferSurplusSlack => ("energy_offer", "up"),
+    EnergyOfferDeficitSlack => ("energy_offer", "down"),
+    EnergyDecrementalOfferSurplusSlack => ("energy_offer", "up"),
+    EnergyDecrementalOfferDeficitSlack => ("energy_offer", "down"),
     EnergyMaxAvailOutSlack => ("energy_max_avail", "up"),
     EnergyMaxAvailInSlack => ("energy_max_avail", "down"),
     EnergyMaxAvailSlack => ("energy_max_avail", "up"),

@@ -193,6 +193,9 @@ function PSI.construct_device!(
         PSI.add_initial_condition!(container, devices, D(), PSI.DevicePower())
 
     _process_market_bid_parameters!(container, devices, model)
+    for S in _ENERGY_OFFER_SLACK_TYPES
+        PSI.add_variables!(container, S, devices, D())
+    end
     PSI.add_cost_expressions!(container, devices, model)
 
     PSI.add_to_expression!(
@@ -426,6 +429,9 @@ function PSI.objective_function!(
     PSI.add_variable_cost!(container, PSI.ActivePowerVariable(), devices, D())
     PSI.add_proportional_cost!(container, EnergyMaxAvailSlack(), devices, D())
     PSI.add_proportional_cost!(container, EnergyUIGFSlack(), _semi_scheduled_devices(devices), D())
+    for S in _ENERGY_OFFER_SLACK_TYPES
+        PSI.add_proportional_cost!(container, S(), devices, D())
+    end
     return
 end
 

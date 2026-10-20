@@ -2,6 +2,27 @@
 # version it was written against. Re-check this file on every PSI upgrade.
 
 """
+    PSI._add_pwl_constraint!(container, component, variable, formulation, breakpoints, period, band_type, constraint_type)
+
+Override of the pinned PowerSimulations 0.38.4 market-bid hook for NEM dispatch. Delegates
+energy dispatch-to-band constraints to the typed elastic-offer formulation.
+
+# Returns
+`nothing`.
+"""
+function PSI._add_pwl_constraint!(
+        container::PSI.OptimizationContainer, component::T, variable::U, formulation::D,
+        breakpoints::Vector{<:PSI.JuMPOrFloat}, period::Int, ::Type{V}, ::Type{W},
+    ) where {
+        T <: PSY.StaticInjection, U <: PSI.VariableType, D <: AbstractNEMDispatch,
+        V <: PSI.AbstractPiecewiseLinearBlockOffer, W <: PSI.AbstractPiecewiseLinearBlockOfferConstraint,
+    }
+    PSI.add_constraints!(container, W, component, variable, formulation, breakpoints, period, V)
+    return
+end
+
+
+"""
     PSI._modify_device_model!(devices_template, ::PSI.ServiceModel{GenericConstraint, LinearFactorLimit}, contributing_devices)
 
 No-op override of `PowerSimulations.jl` 0.38.4's private `_modify_device_model!` hook, called
