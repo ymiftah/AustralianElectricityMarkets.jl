@@ -71,10 +71,10 @@ end
 # `transform_single_time_series!`, so it can attach raw two-timestamp series of its own.
 # Unit fields except `capacity`, and `load_mw`, take a scalar or one value per stamp;
 # `horizon` is the transform horizon. With `ceilings` (default), the batteries' dispatch ceilings
-# are attached after `mutate!`.
+# are attached after `mutate!`, and with `tie_break_scales` (default) the tie-break scales.
 function nem_toy_system(
         units, load_mw; batteries = Pair{String, Any}[], loads = Pair{String, Any}[], mutate! = nothing,
-        horizon = 2 * TOY_RESOLUTION, ceilings = true,
+        horizon = 2 * TOY_RESOLUTION, ceilings = true, tie_break_scales = true,
     )
     sys = PSB.build_system(PSISystems, "5_bus_hydro_ed_sys")
     PSY.clear_time_series!(sys)
@@ -197,6 +197,7 @@ function nem_toy_system(
     isnothing(mutate!) || mutate!(sys, stamps)
     ceilings && set_storage_dispatch_ceilings!(sys)
     set_fcas_effective_offers!(sys)
+    tie_break_scales && set_tie_break_scales!(sys)
 
     # One window per `horizon`.
     PSY.transform_single_time_series!(sys, horizon, TOY_RESOLUTION)
