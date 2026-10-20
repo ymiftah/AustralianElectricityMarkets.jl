@@ -32,7 +32,7 @@ the horizon, mirroring [`set_fcas_bids!`](@ref)'s shape and per-unit convention.
 function add_toy_fcas!(
         sys, device, initial_timestamp, n::Integer, bid_type::BidType,
         trapezium_mw::NTuple{5, Float64}, bands_mw_price::Vector{Tuple{Float64, Float64}};
-        decremental::Bool = false, resolution = TOY_RESOLUTION, interval = resolution,
+        decremental::Bool = false, resolution = TOY_RESOLUTION,
     )
     base_power = PSY.get_base_power(sys)
     suffix = decremental ? "$(string(bid_type))_decremental" : string(bid_type)
@@ -1483,6 +1483,76 @@ end
     @test occursin("set_fcas_effective_offers!", err.msg)
 end
 
+@testset "FCASMarket builds for a recurrent simulation under NEMReplayDispatch only" begin
+    service_name = "TAS1_RAISE6SEC"
+    function recurrent_status(formulation)
+        sys = fcas_energy_toy_system(
+            2.0;
+            mutate! = (sys, stamps) -> begin
+                device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+                add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISE6SEC, (0.0, 0.0, 100.0, 100.0, 10.0), [(10.0, 10.0)])
+                PSY.add_service!(
+                    sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC), [device],
+                )
+            end,
+        )
+        template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+        set_nem_dispatch_models!(template, sys; formulation = formulation)
+        PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+        PSI.set_service_model!(
+            template, service_name,
+            PSI.ServiceModel(FCASService, FCASMarket, service_name; duals = [FCASJointCapacityConstraint]),
+        )
+        model = PSI.DecisionModel(
+            template, sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
+            resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+        )
+        PSI.set_output_dir!(model, mktempdir())
+        PSI.get_optimization_container(model).built_for_recurrent_solves = true
+        return try
+            PSI.build_impl!(model)
+            nothing
+        catch e
+            e
+        end
+    end
+    @test isnothing(recurrent_status(NEMReplayDispatch))
+    err = recurrent_status(NEMLookaheadDispatch)
+    @test err isa ArgumentError
+    @test occursin("a recurrent simulation supports NEMReplayDispatch only", err.msg)
+end
+
+@testset "FCAS band price step update and price meta parsing" begin
+    sys = fcas_toy_system()
+    svc = PSY.get_component(FCASService, sys, "1_RAISEREG")
+    @test AEMS._fcas_price_meta_service(sys, "1_RAISEREG") == (svc, nothing)
+    @test AEMS._fcas_price_meta_service(sys, "1_RAISEREG_gen") == (svc, "gen")
+    @test AEMS._fcas_price_meta_service(sys, "1_RAISEREG_load") == (svc, "load")
+    @test_throws r"No FCASService for the FCASBandPriceParameter meta \"1_NOSUCH_load\"" AEMS._fcas_price_meta_service(sys, "1_NOSUCH_load")
+
+    container = build_fcas(sys, ["1_RAISEREG"])
+    battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
+    for (meta, decremental) in (("1_RAISEREG_gen", false), ("1_RAISEREG_load", true))
+        key = PSI.ParameterKey(FCASBandPriceParameter, FCASService, meta)
+        prices = PSI.get_parameter_array(container, key)
+        multiplier = PSI.get_parameter_multiplier_array(container, key)
+        expected = copy(prices.data)
+        prices.data .= -1.0
+        PSI.reset_variant_terms(PSI.get_objective_expression(container))
+        AEMS._set_fcas_band_prices!(
+            container, prices, multiplier, meta, [(battery, decremental)], BidType.RAISEREG, TOY_START,
+        )
+        @test prices.data == expected
+        labels = axes(prices)[2]
+        bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, meta)
+        variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
+        priced = findfirst(label -> prices[TOY_BATTERY, label, 1] > 0.0, labels)
+        @test !isnothing(priced)
+        @test PSI.JuMP.coefficient(variant, bands[TOY_BATTERY, labels[priced], 1]) ==
+            prices[TOY_BATTERY, labels[priced], 1] * multiplier[TOY_BATTERY, labels[priced], 1]
+    end
+end
+
 """
     joint_ramping_toy(initial_mw; capacity = 1000.0, raise_agc = nothing, lower_agc = nothing, extra! = nothing)
 
@@ -1520,8 +1590,11 @@ function joint_ramping_toy(
     )
 end
 
-"Whether `row` (a `JuMP.constraint_object` of the 100 MW-base toy) has the inactive right-hand side `FCAS_INACTIVE_LIMIT_MW`."
-_is_placeholder_row(row) = row.set == PSI.MOI.LessThan(FCAS_INACTIVE_LIMIT_MW / 100.0)
+"Whether `row` (a `JuMP.constraint_object`) has the inactive right-hand side `FCAS_INACTIVE_LIMIT_MW`, upper or lower form, at `base_power`."
+function _is_placeholder_row(row; base_power = 100.0)
+    inactive = FCAS_INACTIVE_LIMIT_MW / base_power
+    return row.set == PSI.MOI.LessThan(inactive) || row.set == PSI.MOI.GreaterThan(-inactive)
+end
 
 @testset "AEMO §6.1 joint ramping constraint" begin
     duid = TOY_CHEAP

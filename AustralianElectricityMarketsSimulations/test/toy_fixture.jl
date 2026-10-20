@@ -71,21 +71,18 @@ end
 # `transform_single_time_series!`, so it can attach raw two-timestamp series of its own.
 # Unit fields except `capacity`, and `load_mw`, take a scalar or one value per stamp;
 # `horizon` is the transform horizon. With `ceilings` (default), the batteries' dispatch ceilings
-# are attached after `mutate!`, and with `tie_break_scales` (default off) the tie-break scales. `interchange` (a `toy_interchange`) keeps area 2 and joins it to
-# area 1 through `TOY_INTERCHANGE`, whose loss demand coefficients are attached after `mutate!`.
+# are attached after `mutate!`.
 function nem_toy_system(
         units, load_mw; batteries = Pair{String, Any}[], loads = Pair{String, Any}[], mutate! = nothing,
-        horizon = 2 * TOY_RESOLUTION, ceilings = true, interchange = nothing, tie_break_scales = false,
+        horizon = 2 * TOY_RESOLUTION, ceilings = true,
     )
     sys = PSB.build_system(PSISystems, "5_bus_hydro_ed_sys")
     PSY.clear_time_series!(sys)
     PSY.set_units_base_system!(sys, "NATURAL_UNITS")
 
-    if isnothing(interchange)
-        area = PSY.get_component(PSY.Area, sys, "1")
-        foreach(bus -> PSY.set_area!(bus, area), PSY.get_components(PSY.ACBus, sys))
-        PSY.remove_component!(sys, PSY.get_component(PSY.Area, sys, "2"))
-    end
+    area = PSY.get_component(PSY.Area, sys, "1")
+    foreach(bus -> PSY.set_area!(bus, area), PSY.get_components(PSY.ACBus, sys))
+    PSY.remove_component!(sys, PSY.get_component(PSY.Area, sys, "2"))
     for T in (PSY.ThermalStandard, PSY.HydroDispatch, PSY.HydroTurbine, PSY.PowerLoad)
         foreach(c -> PSY.set_available!(c, false), PSY.get_components(T, sys))
     end
@@ -197,71 +194,13 @@ function nem_toy_system(
         add_series!(scheduled, "availability", ld.availability / base_power)
     end
 
-    isnothing(interchange) || add_toy_interchange!(sys, stamps, interchange)
     isnothing(mutate!) || mutate!(sys, stamps)
     ceilings && set_storage_dispatch_ceilings!(sys)
-    isnothing(interchange) || set_loss_demand_coefficients!(sys)
     set_fcas_effective_offers!(sys)
-    tie_break_scales && set_tie_break_scales!(sys)
 
     # One window per `horizon`.
     PSY.transform_single_time_series!(sys, horizon, TOY_RESOLUTION)
     return sys
-end
-
-# `interchange` for `nem_toy_system`: area 2 (bus2, bus3) keeps its own load `load_mw` on bus3 and is
-# joined to area 1 by `TOY_INTERCHANGE` (1000 MW each way) with a loss model of `breakpoints` (MW),
-# zero loss constant, `loss_flow_coefficient` (1/MW), `demand_coefficient` (1/MW) on area 2's
-# demand and from-area loss `share`. `mnsp`, when given, is `(forward, reverse)`, each
-# `(max_avail_mw, [(band_mw, price), ...])` for all stamps or one such tuple per stamp, with unit
-# link loss factors.
-function toy_interchange(;
-        load_mw, demand_coefficient = 0.0, share = 1.0, breakpoints = [-1000.0, 0.0, 1000.0],
-        loss_flow_coefficient = 0.0, loss_constant = 1.0, mnsp = nothing,
-        mnsp_tlfs = ((1.0, 1.0), (1.0, 1.0)),
-    )
-    return (; load_mw, demand_coefficient, share, breakpoints, loss_flow_coefficient, loss_constant, mnsp, mnsp_tlfs)
-end
-const TOY_INTERCHANGE = "IC1"
-function add_toy_interchange!(sys, stamps, ic)
-    base_power = PSY.get_base_power(sys)
-    load = PSY.get_component(PSY.PowerLoad, sys, "bus3")
-    PSY.set_available!(load, true)
-    peak = maximum(ic.load_mw)
-    PSY.set_max_active_power!(load, peak)
-    PSY.set_active_power!(load, first(ic.load_mw))
-    PSY.add_time_series!(
-        sys, load,
-        PSY.SingleTimeSeries(;
-            name = "max_active_power", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(ic.load_mw ./ peak, length(stamps))),
-            scaling_factor_multiplier = PSY.get_max_active_power,
-        ),
-    )
-    area1, area2 = PSY.get_component(PSY.Area, sys, "1"), PSY.get_component(PSY.Area, sys, "2")
-    interchange = PSY.AreaInterchange(;
-        name = TOY_INTERCHANGE, available = true, active_power_flow = 0.0, from_area = area1, to_area = area2,
-        flow_limits = (from_to = 1000.0, to_from = 1000.0),
-    )
-    PSY.add_component!(sys, interchange)
-    PSY.add_supplemental_attribute!(
-        sys, interchange,
-        InterconnectorLossModel(;
-            interconnector = TOY_INTERCHANGE, from_region = "1", to_region = "2", from_region_loss_share = ic.share,
-            loss_constant = ic.loss_constant, loss_flow_coefficient = ic.loss_flow_coefficient * base_power,
-            demand_coefficients = Dict("2" => ic.demand_coefficient * base_power), breakpoints = ic.breakpoints ./ base_power,
-        ),
-    )
-    isnothing(ic.mnsp) && return
-    for (dir, offer, tlfs) in zip(("forward", "reverse"), ic.mnsp, ic.mnsp_tlfs)
-        per_stamp = first(offer) isa Tuple ? collect(offer) : fill(offer, length(stamps))
-        curves = [_toy_offer(bands) for (_, bands) in per_stamp]
-        avail = [Float64(max_avail) for (max_avail, _) in per_stamp]
-        for (name, values) in (("mnsp_$(dir)_offer", curves), ("mnsp_$(dir)_max_avail", avail))
-            PSY.add_time_series!(sys, interchange, AustralianElectricityMarkets._single_series(name, TOY_START, values, TOY_RESOLUTION))
-        end
-        PSY.get_ext(interchange)["mnsp_$dir"] = Dict{String, Any}("from_region_tlf" => tlfs[1], "to_region_tlf" => tlfs[2])
-    end
-    return
 end
 
 # A single ENERGY `UnitTerm` `GenericConstraint` `name` of `sense` on `duid`'s ENERGY output at
