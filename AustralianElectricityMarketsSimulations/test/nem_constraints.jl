@@ -376,7 +376,7 @@ function _lhs(thermal, flow, t)
     return park_city + sundance - ic1_flow
 end
 
-@testset "Step 4: an un-invoked interval reads a dual of 0.0 and never phantom-enforces" begin
+@testset "Step 4: an un-invoked interval reads a dual of 0.0 and never phantom-enforces, with and without slacks" begin
     # The fixture's own retimed grid has exactly 2 (hourly) time steps - see
     # `_native_forecast_params`. Mixing `invoked = 0.0` at the first step and `1.0` at the
     # second exercises the exact branch `add_constraints!` treats specially: without it, PSI's
@@ -401,44 +401,52 @@ end
     n_raw = probe_params.count + Int(probe_params.horizon / probe_params.interval) - 1
     invoked_vec = vcat([0.0], fill(1.0, n_raw - 1))  # t1: not invoked; t2 onward: invoked
 
-    tightened_rhs = unconstrained_lhs_t2 / 2
-    sys = _prepared_system(
-        Dict("N_IC1_LIMIT" => tightened_rhs), Dict("N_IC1_LIMIT" => invoked_vec),
-    )
-    _prune_unbuildable_constraints!(sys)
-    template = _nem_service_template()
-    model = _decision_model(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    PSI.solve!(model)
-    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    for use_slacks in (false, true)
+        tightened_rhs = unconstrained_lhs_t2 / 2
+        sys = _prepared_system(
+            Dict("N_IC1_LIMIT" => tightened_rhs), Dict("N_IC1_LIMIT" => invoked_vec),
+        )
+        _prune_unbuildable_constraints!(sys)
+        template = _nem_service_template(; use_slacks = use_slacks)
+        model = _decision_model(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        PSI.solve!(model)
+        @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
 
-    container = PSI.get_optimization_container(model)
-    ic1_name = PSY.get_name(_gc(sys, "N_IC1_LIMIT"))
-    nem_keys = [
-        k for k in PSI.get_constraint_keys(container)
-            if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit
-    ]
-    dual_key = only(k for k in nem_keys if k.meta == ic1_name)
-    dual_df = PSI.read_dual(PSI.OptimizationProblemResults(model), dual_key)
-    dual_t1 = only(subset(dual_df, :DateTime => ByRow(==(t1)))).value
-    dual_t2 = only(subset(dual_df, :DateTime => ByRow(==(t2)))).value
+        container = PSI.get_optimization_container(model)
+        ic1_name = PSY.get_name(_gc(sys, "N_IC1_LIMIT"))
+        nem_keys = [
+            k for k in PSI.get_constraint_keys(container)
+                if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit
+        ]
+        dual_key = only(k for k in nem_keys if k.meta == ic1_name)
+        dual_df = PSI.read_dual(PSI.OptimizationProblemResults(model), dual_key)
+        dual_t1 = only(subset(dual_df, :DateTime => ByRow(==(t1)))).value
+        dual_t2 = only(subset(dual_df, :DateTime => ByRow(==(t2)))).value
 
-    res = PSI.OptimizationProblemResults(model)
-    flow = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
-    thermal = PSI.read_variable(res, "ActivePowerVariable__ThermalStandard")
-    lhs_t1 = _lhs(thermal, flow, t1)
-    lhs_t2 = _lhs(thermal, flow, t2)
+        res = PSI.OptimizationProblemResults(model)
+        flow = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
+        thermal = PSI.read_variable(res, "ActivePowerVariable__ThermalStandard")
+        lhs_t1 = _lhs(thermal, flow, t1)
+        lhs_t2 = _lhs(thermal, flow, t2)
 
-    # Not invoked at t1: the vacuous placeholder constraint reads back a dual of exactly 0.0,
-    # and the LHS is free to exceed the RHS that would otherwise bound it - proof the RHS was
-    # never actually enforced there, not a coincidence.
-    @test isapprox(dual_t1, 0.0; atol = 1.0e-6)
-    @test lhs_t1 > tightened_rhs + 1.0e-3
+        # Not invoked at t1: the vacuous placeholder constraint reads back a dual of exactly 0.0,
+        # and the LHS is free to exceed the RHS that would otherwise bound it - proof the RHS was
+        # never actually enforced there, not a coincidence.
+        @test isapprox(dual_t1, 0.0; atol = 1.0e-6)
+        @test lhs_t1 > tightened_rhs + 1.0e-3
+        if use_slacks
+            # The row exists and is violated; its free slack makes it vacuous with a dual of zero.
+            @test abs(dual_t1) <= 1.0e-9
+            slack_t1 = only(subset(PSI.read_variable(res, "GenericConstraintSlackUp__GenericConstraint__$ic1_name"), :DateTime => ByRow(==(t1)))).value
+            @test slack_t1 >= lhs_t1 - tightened_rhs - 1.0e-3
+        end
 
-    # Invoked at t2: binds exactly like Step 1's single-interval case.
-    @test isapprox(lhs_t2, tightened_rhs; atol = 1.0e-3)
-    @test isfinite(dual_t2)
-    @test !isapprox(dual_t2, 0.0; atol = 1.0e-6)
+        # Invoked at t2: binds exactly like Step 1's single-interval case.
+        @test isapprox(lhs_t2, tightened_rhs; atol = 1.0e-3)
+        @test isfinite(dual_t2)
+        @test !isapprox(dual_t2, 0.0; atol = 1.0e-6)
+    end
 end
 
 """
@@ -764,13 +772,15 @@ end
 end
 
 @testset "Market Price Cap lookup covers only the published financial years" begin
-    @test AEMS._financial_year_mpc(DateTime(2025, 7, 1)) == 20_300.0
-    @test AEMS._financial_year_mpc(DateTime(2026, 6, 30, 23, 55)) == 20_300.0
-    @test AEMS._financial_year_mpc(DateTime(2026, 7, 1)) == 23_200.0
-    @test AEMS._financial_year_mpc(DateTime(2027, 6, 30, 23, 55)) == 23_200.0
     @test AEMS._financial_year_mpc(DateTime(2025, 6, 30)) == 17_500.0
-    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2024, 6, 30))
-    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2027, 7, 1))
+    @test AEMS._financial_year_mpc(DateTime(2025, 7, 1)) == 17_500.0  # interval 23:55-00:00 on 30 June
+    @test AEMS._financial_year_mpc(DateTime(2025, 7, 1, 0, 5)) == 20_300.0
+    @test AEMS._financial_year_mpc(DateTime(2026, 6, 30, 23, 55)) == 20_300.0
+    @test AEMS._financial_year_mpc(DateTime(2026, 7, 1)) == 20_300.0
+    @test AEMS._financial_year_mpc(DateTime(2026, 7, 1, 0, 5)) == 23_200.0
+    @test AEMS._financial_year_mpc(DateTime(2027, 7, 1)) == 23_200.0
+    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2024, 7, 1))
+    @test_throws ArgumentError AEMS._financial_year_mpc(DateTime(2027, 7, 1, 0, 5))
 end
 
 @testset "area-balance slack Market Price Cap: unpublished year throws, settings entry overrides" begin
