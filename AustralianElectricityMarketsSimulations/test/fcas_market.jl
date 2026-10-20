@@ -1530,18 +1530,26 @@ end
     @test AEMS._fcas_price_meta_service(sys, "1_RAISEREG_load") == (svc, "load")
     @test_throws r"No FCASService for the FCASBandPriceParameter meta \"1_NOSUCH_load\"" AEMS._fcas_price_meta_service(sys, "1_NOSUCH_load")
 
-    container = build_fcas(sys, ["1_RAISEREG"])
-    battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
-    for (meta, decremental) in (("1_RAISEREG_gen", false), ("1_RAISEREG_load", true))
+    model = PSI.DecisionModel(
+        fcas_toy_template(sys, ["1_RAISEREG"]), sys;
+        optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+        horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
+        initial_time = TOY_START, name = "fcas_toy_update", store_variable_names = true,
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    for meta in ("1_RAISEREG_gen", "1_RAISEREG_load")
         key = PSI.ParameterKey(FCASBandPriceParameter, FCASService, meta)
         prices = PSI.get_parameter_array(container, key)
         multiplier = PSI.get_parameter_multiplier_array(container, key)
         expected = copy(prices.data)
         prices.data .= -1.0
+        # The second window, as the model's current time after one execution.
+        PSI.set_execution_count!(model, 1)
+        PSI.cost_function_unsynch(container)
         PSI.reset_variant_terms(PSI.get_objective_expression(container))
-        AEMS._set_fcas_band_prices!(
-            container, prices, multiplier, meta, [(battery, decremental)], BidType.RAISEREG, TOY_START,
-        )
+        PSI.update_container_parameter_values!(container, model, key, PSI.DatasetContainer{PSI.InMemoryDataset}())
+        PSI.set_execution_count!(model, 0)
         @test prices.data == expected
         labels = axes(prices)[2]
         bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, meta)
@@ -1550,6 +1558,11 @@ end
         @test !isnothing(priced)
         @test PSI.JuMP.coefficient(variant, bands[TOY_BATTERY, labels[priced], 1]) ==
             prices[TOY_BATTERY, labels[priced], 1] * multiplier[TOY_BATTERY, labels[priced], 1]
+        # A synchronized container would add the band costs twice.
+        PSI.set_synchronized_status!(PSI.get_objective_expression(container), true)
+        @test_throws r"synchronized container" PSI.update_container_parameter_values!(
+            container, model, key, PSI.DatasetContainer{PSI.InMemoryDataset}(),
+        )
     end
 end
 

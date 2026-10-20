@@ -888,17 +888,18 @@ _fixed_value(x::JuMP.VariableRef) = JuMP.fix_value(x)
 
 
 """
-    _fcas_capacity_bound(container, device, meta) -> Float64
+    _fcas_capacity_bound(container, device, bid_type, decremental) -> Float64
 
-The largest effective `MaxAvail` of `device`'s offer `meta`, per-unit: over its whole
+The largest effective `MaxAvail` of `device`'s `bid_type` offer on one side, per-unit: over its whole
 `"fcas_effective_..."` series and the model's current [`FCASOfferLimitParameter`](@ref) values,
 which differ from the series only under [`NEMLookaheadDispatch`](@ref).
 
 # Returns
 `Float64`.
 """
-function _fcas_capacity_bound(container::PSI.OptimizationContainer, device::PSY.Device, meta::String)
-    series = PSY.get_time_series_values(PSY.SingleTimeSeries, device, "fcas_effective_$meta")
+function _fcas_capacity_bound(container::PSI.OptimizationContainer, device::PSY.Device, bid_type::BidType, decremental::Bool)
+    meta = _fcas_offer_meta(bid_type, decremental)
+    series = PSY.get_time_series_values(PSY.SingleTimeSeries, device, _fcas_effective_series_name(bid_type, decremental))
     limits, _ = _fcas_parameter_refs(container, FCASOfferLimitParameter, device, meta)
     window = maximum(_fixed_value(limits["max_avail", t]) for t in PSI.get_time_steps(container))
     return max(maximum(first, series), window)
@@ -1177,7 +1178,7 @@ function PSI.construct_service!(
         for device in single_devices
             dname = PSY.get_name(device)
             decremental = directions[dname] == :decremental
-            bound = _fcas_capacity_bound(container, device, _fcas_offer_meta(bid_type, decremental))
+            bound = _fcas_capacity_bound(container, device, bid_type, decremental)
             for t in time_steps
                 var[dname, t] = JuMP.@variable(
                     jm, base_name = "FCASCapacityVariable_FCASService_$(name)_{$dname, $t}", lower_bound = 0.0,
@@ -1203,8 +1204,8 @@ function PSI.construct_service!(
         )
         for device in both_devices
             dname = PSY.get_name(device)
-            gen_bound = _fcas_capacity_bound(container, device, _fcas_offer_meta(bid_type, false))
-            load_bound = _fcas_capacity_bound(container, device, _fcas_offer_meta(bid_type, true))
+            gen_bound = _fcas_capacity_bound(container, device, bid_type, false)
+            load_bound = _fcas_capacity_bound(container, device, bid_type, true)
             for t in time_steps
                 gen_var[dname, t] = JuMP.@variable(
                     jm, base_name = "FCASSideCapacityVariable_FCASService_$(name)_gen_{$dname, $t}", lower_bound = 0.0,
