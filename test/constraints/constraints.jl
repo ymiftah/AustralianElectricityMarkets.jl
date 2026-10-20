@@ -386,7 +386,7 @@ end
 
     rhs_ts = get_time_series(SingleTimeSeries, gc, "rhs")
     @test !isnothing(rhs_ts)
-    rhs_values = first(values(get_data(rhs_ts)))
+    rhs_values = get_time_series_values(SingleTimeSeries, gc, "rhs")
     @test issorted(rhs_values)  # RHS = 50.0 + 0.1*i, confirmed time-varying in Task 8
 
     @test !has_time_series(gc, SingleTimeSeries, "lhs")  # include_solution defaults false
@@ -577,9 +577,9 @@ end
         @test get_resolution(rhs_ts_explicit) == Minute(30)
 
         # A single-interval grid can't be exercised end-to-end through add_nem_constraints!:
-        # PSY's SingleTimeSeries itself requires forecast arrays of length >= 2 (InfrastructureSystems
-        # _check_forecast_data), independent of resolution - so a 1-point full_grid always errors
-        # before resolution matters. _infer_resolution is unit-tested directly instead, contrasted
+        # InfrastructureSystems rejects a one-point SingleTimeSeries ("data array length must be at
+        # least 2"), independent of resolution - so a 1-point full_grid always errors before
+        # resolution matters. _infer_resolution is unit-tested directly instead, contrasted
         # with the genuine multi-interval inference above (which is not just matching the fallback
         # by coincidence, since it uses a non-5-minute spacing).
         @test AustralianElectricityMarkets._infer_resolution(DateTime[]) == Minute(5)

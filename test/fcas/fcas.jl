@@ -225,7 +225,7 @@
             trapezium_ts = get_time_series(SingleTimeSeries, gen, "fcas_trapezium_RAISE6SEC")
             @test !isnothing(curve_ts)
             @test !isnothing(trapezium_ts)
-            trap_rows = first(values(get_data(trapezium_ts)))
+            trap_rows = get_time_series_values(SingleTimeSeries, gen, "fcas_trapezium_RAISE6SEC")
             # Raw stored series is per-unit of sys's base power - get_fcas_trapezium (tested
             # above) is what converts back to MW.
             @test first(trap_rows)[1] == 20.0 / base_power
@@ -408,7 +408,7 @@
             trapezium_ts = get_time_series(SingleTimeSeries, gen, "fcas_trapezium_RAISE6SEC")
             @test !isnothing(curve_ts)
             @test !isnothing(trapezium_ts)
-            trap_rows = first(values(get_data(trapezium_ts)))
+            trap_rows = get_time_series_values(SingleTimeSeries, gen, "fcas_trapezium_RAISE6SEC")
             @test first(trap_rows)[1] == 20.0 / base_power
         end
         @test found

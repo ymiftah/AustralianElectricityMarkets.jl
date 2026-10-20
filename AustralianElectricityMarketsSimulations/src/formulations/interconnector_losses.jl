@@ -125,18 +125,18 @@ function _area_demand(initial_time::Dates.DateTime, n_steps::Int, sys::PSY.Syste
         has_loss_demand = PSY.has_time_series(load, PSY.SingleTimeSeries, "loss_demand")
         series_name = has_loss_demand ? "loss_demand" : "max_active_power"
         if has_loss_demand || PSY.has_time_series(load, PSY.SingleTimeSeries, "max_active_power")
-            # A transformed forecast must be read over its full horizon, so slice afterwards.
-            forecast = PSY.get_time_series_values(
+            # Read from `initial_time` to the end of the series, then index by time step.
+            demand_values = PSY.get_time_series_values(
                 PSY.SingleTimeSeries, load, series_name; start_time = initial_time,
             )
-            length(forecast) >= n_steps || throw(
+            length(demand_values) >= n_steps || throw(
                 ArgumentError(
-                    "PowerLoad $(PSY.get_name(load)) forecast has $(length(forecast)) steps; " *
+                    "PowerLoad $(PSY.get_name(load)) demand series has $(length(demand_values)) steps; " *
                         "the model needs $n_steps",
                 ),
             )
             for t in time_steps
-                series[t] += forecast[t]
+                series[t] += demand_values[t]
             end
         else
             peak = PSY.get_max_active_power(load)

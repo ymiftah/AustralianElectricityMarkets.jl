@@ -32,7 +32,7 @@ _gc(sys, gencon_id::AbstractString) =
 """
     _native_forecast_params(sys)
 
-`augmented_pscb_system()`'s own baked-in `SingleTimeSeries` forecast shape - PSY requires every
+`augmented_pscb_system()`'s own baked-in forecast shape (read from its `DeterministicSingleTimeSeries`) - PSY requires every
 `Forecast`-derived time series in a `System` to share one `(initial_timestamp, resolution,
 interval, count, horizon)`, so a `GenericConstraint`'s `"rhs"`/`"invoked"` series (added by
 `add_nem_constraints!` on a 2025 NEMWEB grid) can't coexist with the fixture's own 2020-dated
@@ -459,13 +459,14 @@ function _storage_template()
 end
 
 """
-    _matching_deterministic(params, name, value)
+    _matching_series(params, name, value)
 
-A `SingleTimeSeries` `name` filled with the constant `value` at every timestep of every window
-`params` (from [`_native_forecast_params`](@ref)) defines, so it coexists with every other
-`Forecast` in the `System` it's attached to.
+A `SingleTimeSeries` `name` filled with the constant `value`, long enough to cover every window
+`params` (from [`_native_forecast_params`](@ref)) defines. `params.interval` is both its resolution
+and the window spacing. After `transform_single_time_series!` it yields the same forecast shape as
+the rest of the `System`.
 """
-function _matching_deterministic(params, name::AbstractString, value)
+function _matching_series(params, name::AbstractString, value)
     horizon_steps = Int(params.horizon / params.interval)
     return AustralianElectricityMarkets._single_series(
         name, params.initial_timestamp, fill(value, horizon_steps + params.count - 1), params.interval,
@@ -481,9 +482,8 @@ offer prices what charging is *worth*, not what it costs, so a low value - not a
 what keeps it unattractive), generous `"energy_max_avail"`/`"energy_max_avail_decremental"`
 (never the binding limit -
 [`GenericConstraint`](@ref) `N_BAT_LIMIT` is), and generous ramp rates from a zero net
-`"initial_mw"`. The bid/availability series are genuine `SingleTimeSeries`s matching `params`'s
-native shape ([`get_storage_energy_max_avail`](@ref) only recognizes that type); the ramp/initial
-series are raw `SingleTimeSeries`, folded into the same shape by
+`"initial_mw"`. The bid/availability series are built to match `params`'s native shape; the ramp/initial series
+are raw `SingleTimeSeries`. All are folded into the same forecast shape by
 [`_retime_gc_series!`](@ref)'s trailing `transform_single_time_series!`.
 """
 function _add_battery_dispatch_data!(sys, params)
@@ -497,14 +497,14 @@ function _add_battery_dispatch_data!(sys, params)
     gen_offer = PiecewiseStepData([0.0, rating], [1.0])
     load_offer = PiecewiseStepData([0.0, rating], [0.0])
 
-    set_incremental_variable_cost!(sys, battery, _matching_deterministic(params, "variable_cost", gen_offer), UnitSystem.NATURAL_UNITS)
-    set_incremental_initial_input!(sys, battery, _matching_deterministic(params, "incremental_initial_input", 0.0))
-    set_decremental_variable_cost!(sys, battery, _matching_deterministic(params, "decremental_variable_cost", load_offer), UnitSystem.NATURAL_UNITS)
-    set_decremental_initial_input!(sys, battery, _matching_deterministic(params, "decremental_initial_input", 0.0))
+    set_incremental_variable_cost!(sys, battery, _matching_series(params, "variable_cost", gen_offer), UnitSystem.NATURAL_UNITS)
+    set_incremental_initial_input!(sys, battery, _matching_series(params, "incremental_initial_input", 0.0))
+    set_decremental_variable_cost!(sys, battery, _matching_series(params, "decremental_variable_cost", load_offer), UnitSystem.NATURAL_UNITS)
+    set_decremental_initial_input!(sys, battery, _matching_series(params, "decremental_initial_input", 0.0))
 
     base_power = get_base_power(sys)
-    add_time_series!(sys, battery, _matching_deterministic(params, "energy_max_avail", rating / base_power))
-    add_time_series!(sys, battery, _matching_deterministic(params, "energy_max_avail_decremental", rating / base_power))
+    add_time_series!(sys, battery, _matching_series(params, "energy_max_avail", rating / base_power))
+    add_time_series!(sys, battery, _matching_series(params, "energy_max_avail_decremental", rating / base_power))
 
     times, n_raw = _raw_series_times(params)
     add_time_series!(

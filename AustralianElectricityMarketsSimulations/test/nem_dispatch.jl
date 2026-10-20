@@ -14,8 +14,8 @@ const NEM_DISPATCH_RESOLUTION = Minute(5)
 const NEM_DISPATCH_START = DateTime(2025, 1, 1, 0, 0)
 const NEM_DISPATCH_HORIZON = Hour(1)
 
-# The bid series is a `SingleTimeSeries` and the dispatch limits are `SingleTimeSeries`, so the
-# transform must produce the one forecast window the bids already have.
+# Bids and dispatch limits are all `SingleTimeSeries`; the transform below turns them into the
+# forecast windows the model reads.
 function nem_dispatch_system(; mutate! = identity, data_span = NEM_DISPATCH_HORIZON)
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
     sys = nem_system(db, RegionalNetworkConfiguration())

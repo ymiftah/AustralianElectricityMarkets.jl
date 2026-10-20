@@ -32,7 +32,7 @@ the horizon, mirroring [`set_fcas_bids!`](@ref)'s shape and per-unit convention.
 function add_toy_fcas!(
         sys, device, initial_timestamp, n::Integer, bid_type::BidType,
         trapezium_mw::NTuple{5, Float64}, bands_mw_price::Vector{Tuple{Float64, Float64}};
-        decremental::Bool = false, resolution = TOY_RESOLUTION, interval = resolution,
+        decremental::Bool = false, resolution = TOY_RESOLUTION,
     )
     base_power = PSY.get_base_power(sys)
     suffix = decremental ? "$(string(bid_type))_decremental" : string(bid_type)

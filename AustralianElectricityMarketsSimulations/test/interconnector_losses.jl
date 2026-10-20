@@ -554,7 +554,6 @@ function _attach_mnsp_offers!(
     )
     ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
     t0 = first(PSY.get_forecast_initial_times(sys))
-    interval = PSY.get_forecast_interval(sys)
     windows = PSY.get_forecast_window_count(sys)
     resolution = only(PSY.get_time_series_resolutions(sys))
     n_steps = Int(Dates.value(PSY.get_forecast_horizon(sys)) ÷ Dates.value(resolution))
