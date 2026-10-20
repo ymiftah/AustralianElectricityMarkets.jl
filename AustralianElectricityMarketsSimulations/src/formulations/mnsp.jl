@@ -11,7 +11,7 @@ Whether `device` carries both links' offer and availability series from `set_mns
 """
 function _has_mnsp_offers(device::PSY.AreaInterchange)
     return all(
-        PSY.has_time_series(device, PSY.Deterministic, "mnsp_$(dir)_$(kind)")
+        PSY.has_time_series(device, PSY.SingleTimeSeries, "mnsp_$(dir)_$(kind)")
             for dir in _MNSP_DIRECTIONS, kind in ("offer", "max_avail")
     )
 end
@@ -101,10 +101,10 @@ function _add_mnsp_link_flows!(container::PSI.OptimizationContainer, sys::PSY.Sy
         other = (forward = area.reverse, reverse = area.forward)
         for dir in _MNSP_DIRECTIONS
             curves[dir] = PSY.get_time_series_values(
-                PSY.Deterministic, d, "mnsp_$(dir)_offer"; start_time = initial_time, len = n_steps,
+                PSY.SingleTimeSeries, d, "mnsp_$(dir)_offer"; start_time = initial_time, len = n_steps,
             )
             avail[dir] = PSY.get_time_series_values(
-                PSY.Deterministic, d, "mnsp_$(dir)_max_avail"; start_time = initial_time, len = n_steps,
+                PSY.SingleTimeSeries, d, "mnsp_$(dir)_max_avail"; start_time = initial_time, len = n_steps,
             )
         end
         for t in time_steps

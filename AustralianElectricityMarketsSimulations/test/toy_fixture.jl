@@ -78,10 +78,7 @@ function nem_toy_system(units, load_mw; batteries = Pair{String, Any}[], loads =
     function add_forecast!(component, name, value)
         PSY.add_time_series!(
             sys, component,
-            PSY.Deterministic(;
-                name, data = Dict(TOY_START => fill(value, length(stamps))),
-                resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
-            ),
+            AustralianElectricityMarkets._single_series(name, TOY_START, fill(value, length(stamps)), TOY_RESOLUTION),
         )
         return
     end
@@ -130,15 +127,9 @@ function nem_toy_system(units, load_mw; batteries = Pair{String, Any}[], loads =
             TOY_START, TOY_RESOLUTION,
         )
         load_offer = PSY.PiecewiseStepData([0.0, bat.load_capacity], [bat.load_price])
-        decr = PSY.Deterministic(;
-            name = "decremental_variable_cost", data = Dict(TOY_START => fill(load_offer, length(stamps))),
-            resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
-        )
+        decr = AustralianElectricityMarkets._single_series("decremental_variable_cost", TOY_START, fill(load_offer, length(stamps)), TOY_RESOLUTION)
         PSY.set_decremental_variable_cost!(sys, battery, decr, PSY.UnitSystem.NATURAL_UNITS)
-        decr_init = PSY.Deterministic(;
-            name = "decremental_initial_input", data = Dict(TOY_START => fill(0.0, length(stamps))),
-            resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
-        )
+        decr_init = AustralianElectricityMarkets._single_series("decremental_initial_input", TOY_START, fill(0.0, length(stamps)), TOY_RESOLUTION)
         PSY.set_decremental_initial_input!(sys, battery, decr_init)
 
         add_forecast!(battery, "energy_max_avail", bat.gen_avail / base_power)

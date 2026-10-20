@@ -3,7 +3,7 @@
 
 Attaches each MNSP link's offer to the `PSY.AreaInterchange` of its interconnector. For a link
 whose `FROMREGION` is the interconnector's from area (the forward link) the series are
-`"mnsp_forward_offer"`, a `Deterministic` of `PSY.PiecewiseStepData` (cumulative MW, `\$/MWh`, one
+`"mnsp_forward_offer"`, a `SingleTimeSeries` of `PSY.PiecewiseStepData` (cumulative MW, `\$/MWh`, one
 step per band with a positive `BANDAVAIL`), and `"mnsp_forward_max_avail"`, the link's `MAXAVAIL` in
 MW; the other link gets `"mnsp_reverse_offer"` and `"mnsp_reverse_max_avail"`. The interconnector's
 `ext` records `"mnsp_forward"` and `"mnsp_reverse"` with the link's `link_id`, `from_region_tlf`,
@@ -71,14 +71,11 @@ function set_mnsp_offers!(sys, db, date_range)
             max_avail = [ismissing(row.MAXAVAIL) ? last(get_x_coords(c)) : Float64(row.MAXAVAIL) for (row, c) in zip(eachrow(rows), curves)]
             for (series, values) in (("offer", curves), ("max_avail", max_avail))
                 series_name = "mnsp_$(direction)_$series"
-                has_time_series(device, Deterministic, series_name) &&
-                    remove_time_series!(sys, Deterministic, device, series_name)
+                has_time_series(device, SingleTimeSeries, series_name) &&
+                    remove_time_series!(sys, SingleTimeSeries, device, series_name)
                 add_time_series!(
                     sys, device,
-                    Deterministic(;
-                        name = series_name, data = Dict(start_date => values),
-                        resolution = Minute(5), interval = Minute(5),
-                    ),
+                    _single_series(series_name, start_date, values, Minute(5)),
                 )
             end
             get_ext(device)["mnsp_$direction"] = Dict{String, Any}(

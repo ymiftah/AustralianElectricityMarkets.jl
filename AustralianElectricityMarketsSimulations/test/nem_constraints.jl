@@ -32,7 +32,7 @@ _gc(sys, gencon_id::AbstractString) =
 """
     _native_forecast_params(sys)
 
-`augmented_pscb_system()`'s own baked-in `Deterministic` forecast shape - PSY requires every
+`augmented_pscb_system()`'s own baked-in `SingleTimeSeries` forecast shape - PSY requires every
 `Forecast`-derived time series in a `System` to share one `(initial_timestamp, resolution,
 interval, count, horizon)`, so a `GenericConstraint`'s `"rhs"`/`"invoked"` series (added by
 `add_nem_constraints!` on a 2025 NEMWEB grid) can't coexist with the fixture's own 2020-dated
@@ -120,7 +120,7 @@ end
 """
     _retime_gc_series!(sys, params, overrides_mw, invoked_overrides = Dict{String, Vector{Float64}}())
 
-Replaces every added [`GenericConstraint`](@ref)'s `"rhs"`/`"invoked"` `Deterministic` series
+Replaces every added [`GenericConstraint`](@ref)'s `"rhs"`/`"invoked"` `SingleTimeSeries` series
 with one anchored to the fixture's own native forecast window (`params`, from
 [`_native_forecast_params`](@ref)) instead of NEMWEB's 2025 dates - the only way both can be
 fed into the same `DecisionModel`. `overrides_mw` maps a `GENCONID` to a replacement constant
@@ -141,11 +141,11 @@ function _retime_gc_series!(
         rhs_value = if haskey(overrides_mw, name)
             overrides_mw[name] / base_power
         else
-            first(values(get_data(get_time_series(Deterministic, gc, "rhs"))))[1]
+            get_time_series_values(SingleTimeSeries, gc, "rhs")[1]
         end
         invoked_values = get(invoked_overrides, name, fill(1.0, n_raw))
-        remove_time_series!(sys, Deterministic, gc, "rhs")
-        remove_time_series!(sys, Deterministic, gc, "invoked")
+        remove_time_series!(sys, SingleTimeSeries, gc, "rhs")
+        remove_time_series!(sys, SingleTimeSeries, gc, "invoked")
         add_time_series!(sys, gc, SingleTimeSeries(; name = "rhs", data = TimeArray(times, fill(rhs_value, n_raw))))
         add_time_series!(sys, gc, SingleTimeSeries(; name = "invoked", data = TimeArray(times, invoked_values)))
     end
@@ -461,18 +461,14 @@ end
 """
     _matching_deterministic(params, name, value)
 
-A `Deterministic` `name` filled with the constant `value` at every timestep of every window
+A `SingleTimeSeries` `name` filled with the constant `value` at every timestep of every window
 `params` (from [`_native_forecast_params`](@ref)) defines, so it coexists with every other
 `Forecast` in the `System` it's attached to.
 """
 function _matching_deterministic(params, name::AbstractString, value)
     horizon_steps = Int(params.horizon / params.interval)
-    window_starts = params.initial_timestamp:params.interval:(params.initial_timestamp + params.interval * (params.count - 1))
-    return Deterministic(;
-        name = name,
-        data = Dict(t => fill(value, horizon_steps) for t in window_starts),
-        resolution = params.interval,
-        interval = params.interval,
+    return AustralianElectricityMarkets._single_series(
+        name, params.initial_timestamp, fill(value, horizon_steps + params.count - 1), params.interval,
     )
 end
 
@@ -485,7 +481,7 @@ offer prices what charging is *worth*, not what it costs, so a low value - not a
 what keeps it unattractive), generous `"energy_max_avail"`/`"energy_max_avail_decremental"`
 (never the binding limit -
 [`GenericConstraint`](@ref) `N_BAT_LIMIT` is), and generous ramp rates from a zero net
-`"initial_mw"`. The bid/availability series are genuine `Deterministic`s matching `params`'s
+`"initial_mw"`. The bid/availability series are genuine `SingleTimeSeries`s matching `params`'s
 native shape ([`get_storage_energy_max_avail`](@ref) only recognizes that type); the ramp/initial
 series are raw `SingleTimeSeries`, folded into the same shape by
 [`_retime_gc_series!`](@ref)'s trailing `transform_single_time_series!`.

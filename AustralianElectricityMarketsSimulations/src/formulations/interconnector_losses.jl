@@ -122,12 +122,12 @@ function _area_demand(initial_time::Dates.DateTime, n_steps::Int, sys::PSY.Syste
         )
         area_name = PSY.get_name(area)
         series = get!(() -> zeros(Float64, length(time_steps)), demand, area_name)
-        has_loss_demand = PSY.has_time_series(load, PSY.Deterministic, "loss_demand")
+        has_loss_demand = PSY.has_time_series(load, PSY.SingleTimeSeries, "loss_demand")
         series_name = has_loss_demand ? "loss_demand" : "max_active_power"
-        if has_loss_demand || PSY.has_time_series(load, PSY.Deterministic, "max_active_power")
+        if has_loss_demand || PSY.has_time_series(load, PSY.SingleTimeSeries, "max_active_power")
             # A transformed forecast must be read over its full horizon, so slice afterwards.
             forecast = PSY.get_time_series_values(
-                PSY.Deterministic, load, series_name; start_time = initial_time,
+                PSY.SingleTimeSeries, load, series_name; start_time = initial_time,
             )
             length(forecast) >= n_steps || throw(
                 ArgumentError(
