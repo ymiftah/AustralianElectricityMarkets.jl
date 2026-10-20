@@ -90,9 +90,8 @@
                 )
                 for gen in get_components(ThermalStandard, sys)
                     # Verify time series exists
-                    ta = get_time_series_array(Deterministic, gen, "variable_cost")
-                    # In set_market_bids!, Deterministic TS is created with one forecast
-                    # at first(date_range). ta contains the values of that forecast.
+                    ta = get_time_series_array(SingleTimeSeries, gen, "variable_cost")
+                    # set_market_bids! creates one value per bid interval of date_range.
                     @test length(ta) == length(date_range) - 1
                 end
 
@@ -101,26 +100,26 @@
                     @test !get_available(get_component(InterruptiblePowerLoad, sys, "WDR1"))
                     pump = get_component(InterruptiblePowerLoad, sys, "PUMP1")
                     @test get_available(pump)
-                    ta = get_time_series_array(Deterministic, pump, "decremental_variable_cost")
+                    ta = get_time_series_array(SingleTimeSeries, pump, "decremental_variable_cost")
                     @test length(ta) == length(date_range) - 1
-                    @test !isempty(get_time_series_array(Deterministic, pump, "decremental_initial_input"))
+                    @test !isempty(get_time_series_array(SingleTimeSeries, pump, "decremental_initial_input"))
                     # A load has no incremental offer
-                    @test !has_time_series(pump, Deterministic, "variable_cost")
+                    @test !has_time_series(pump, SingleTimeSeries, "variable_cost")
                 end
 
                 @testset "Batteries" begin
                     for bat in get_components(EnergyReservoirStorage, sys)
                         # GEN bids
-                        ta_gen = get_time_series_array(Deterministic, bat, "variable_cost")
+                        ta_gen = get_time_series_array(SingleTimeSeries, bat, "variable_cost")
                         @test length(ta_gen) == length(date_range) - 1
 
                         # LOAD bids (decremental)
-                        ta_load = get_time_series_array(Deterministic, bat, "decremental_variable_cost")
+                        ta_load = get_time_series_array(SingleTimeSeries, bat, "decremental_variable_cost")
                         @test length(ta_load) == length(date_range) - 1
 
                         # Initial inputs
-                        @test !isempty(get_time_series_array(Deterministic, bat, "incremental_initial_input"))
-                        @test !isempty(get_time_series_array(Deterministic, bat, "decremental_initial_input"))
+                        @test !isempty(get_time_series_array(SingleTimeSeries, bat, "incremental_initial_input"))
+                        @test !isempty(get_time_series_array(SingleTimeSeries, bat, "decremental_initial_input"))
 
                         # Energy MAXAVAIL per direction; the mock bids 100 + i MW on both sides,
                         # rising with the interval index i.
@@ -1415,11 +1414,11 @@
         raw_mw(duid, direction) = get_x_coords(first(raw_bids[(raw_bids.DUID .== duid) .& (raw_bids.DIRECTION .== direction), :piecewise_step_data]))
 
         prices(sys, name, series = "variable_cost") = with_units_base(sys, "NATURAL_UNITS") do
-            ta = get_time_series_array(Deterministic, get_component(Device, sys, name), series)
+            ta = get_time_series_array(SingleTimeSeries, get_component(Device, sys, name), series)
             return get_y_coords(first(values(ta)))
         end
         mw(sys, name) = with_units_base(sys, "NATURAL_UNITS") do
-            ta = get_time_series_array(Deterministic, get_component(Device, sys, name), "variable_cost")
+            ta = get_time_series_array(SingleTimeSeries, get_component(Device, sys, name), "variable_cost")
             return get_x_coords(first(values(ta)))
         end
 

@@ -10,9 +10,9 @@ current display units.
 series are attached.
 """
 function get_storage_energy_max_avail(component, initial_time, horizon::Integer)
-    has_time_series(component, Deterministic, "energy_max_avail") || return nothing
-    has_time_series(component, Deterministic, "energy_max_avail_decremental") || return nothing
+    has_time_series(component, SingleTimeSeries, "energy_max_avail") || return nothing
+    has_time_series(component, SingleTimeSeries, "energy_max_avail_decremental") || return nothing
     multiplier = _fcas_units_multiplier(component)
-    read(name) = get_time_series_values(Deterministic, component, name; start_time = initial_time, len = horizon) .* multiplier
+    read(name) = get_time_series_values(SingleTimeSeries, component, name; start_time = initial_time, len = horizon) .* multiplier
     return (gen = read("energy_max_avail"), load = read("energy_max_avail_decremental"))
 end

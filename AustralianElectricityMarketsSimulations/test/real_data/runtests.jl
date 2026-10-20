@@ -697,11 +697,11 @@ end
         slack_df = PSI.read_variable(results, "$(var_type)__GenericConstraint__$name")
         dual_df = PSI.read_dual(results, "NEMConstraintLimit__GenericConstraint__$name")
         invoked_timestamps = PSY.get_time_series_timestamps(
-            PSY.Deterministic, gc, "invoked";
+            PSY.SingleTimeSeries, gc, "invoked";
             start_time = VIOLATION_START, len = nrow(slack_df),
         )
         invoked_values = PSY.get_time_series_values(
-            PSY.Deterministic, gc, "invoked";
+            PSY.SingleTimeSeries, gc, "invoked";
             start_time = VIOLATION_START, len = nrow(slack_df),
         )
         @test length(invoked_values) == nrow(slack_df)

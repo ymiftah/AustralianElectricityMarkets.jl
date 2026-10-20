@@ -65,7 +65,7 @@ function _loss_test_system(;
         stamps = timestamp(PSY.get_data(raw))
         data = TimeArray(stamps, ones(length(stamps)))
         # The DeterministicSingleTimeSeries view must go first: PSY refuses to remove a
-        # SingleTimeSeries a Deterministic view still depends on.
+        # SingleTimeSeries a view still depends on.
         PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, load, "max_active_power")
         PSY.remove_time_series!(sys, PSY.SingleTimeSeries, load, "max_active_power")
         multiplier = pin_multiplier ? PSY.get_max_active_power : nothing
@@ -83,7 +83,7 @@ function _loss_test_system(;
             )
         end
     end
-    # Regenerate the Deterministic views removed above, on the fixture's own hourly grid; PSI
+    # Regenerate the forecast views removed above, on the fixture's own hourly grid; PSI
     # finds no load parameter to add when no PowerLoad carries one.
     PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
 
@@ -554,7 +554,6 @@ function _attach_mnsp_offers!(
     )
     ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
     t0 = first(PSY.get_forecast_initial_times(sys))
-    interval = PSY.get_forecast_interval(sys)
     windows = PSY.get_forecast_window_count(sys)
     resolution = only(PSY.get_time_series_resolutions(sys))
     n_steps = Int(Dates.value(PSY.get_forecast_horizon(sys)) ÷ Dates.value(resolution))
@@ -568,10 +567,7 @@ function _attach_mnsp_offers!(
             )
             PSY.add_time_series!(
                 sys, ic,
-                PSY.Deterministic(;
-                    name = name, data = Dict(t0 + (k - 1) * interval => values for k in 1:windows), resolution = resolution,
-                    interval = interval,
-                ),
+                AustralianElectricityMarkets._single_series(name, t0, fill(first(values), n_steps + windows - 1), resolution),
             )
         end
         PSY.get_ext(ic)["mnsp_$dir"] = Dict{String, Any}("from_region_tlf" => tlfs[1], "to_region_tlf" => tlfs[2])

@@ -6,8 +6,8 @@
 """
 function _fcas_bid_direction(device, bid_type::BidType)
     bid_type_str = string(bid_type)
-    has_inc = has_time_series(device, Deterministic, "fcas_trapezium_$bid_type_str")
-    has_dec = has_time_series(device, Deterministic, "fcas_trapezium_$(bid_type_str)_decremental")
+    has_inc = has_time_series(device, SingleTimeSeries, "fcas_trapezium_$bid_type_str")
+    has_dec = has_time_series(device, SingleTimeSeries, "fcas_trapezium_$(bid_type_str)_decremental")
     has_inc && has_dec && return :both
     has_inc && return :incremental
     has_dec && return :decremental
@@ -40,7 +40,7 @@ function _fcas_service_devices(
     inc_name = _fcas_series_name("fcas_curve", bid_type, false)
     dec_name = _fcas_series_name("fcas_curve", bid_type, true)
     return filter(candidates) do d
-        has_time_series(d, Deterministic, inc_name) || has_time_series(d, Deterministic, dec_name)
+        has_time_series(d, SingleTimeSeries, inc_name) || has_time_series(d, SingleTimeSeries, dec_name)
     end
 end
 
@@ -96,7 +96,7 @@ end
 """
     _attach_fcas_bid_series!(sys, component, gdf, duid, series_suffix, start_date, resolution)
 
-Attaches the two per-`(component, FCAS market)` `Deterministic` series - `"fcas_curve_\$
+Attaches the two per-`(component, FCAS market)` `SingleTimeSeries` series - `"fcas_curve_\$
 series_suffix"` and `"fcas_trapezium_\$series_suffix"` - from `gdf` (a `DUID`-grouped bids
 `DataFrame`) if `duid` has a group in it. No-op otherwise, so callers can probe a component
 against several `DIRECTION` groupings without checking `haskey` themselves. Returns whether
@@ -106,20 +106,10 @@ function _attach_fcas_bid_series!(sys, component, gdf, duid::AbstractString, ser
     (isnothing(gdf) || !haskey(gdf, (duid,))) && return false
     rows = gdf[(duid,)]
     # rows.curve_data/.trapezium_row are SubArray views into the grouped DataFrame -
-    # Deterministic's convert_data only accepts a plain Vector.
-    curve_ts = Deterministic(;
-        name = "fcas_curve_$(series_suffix)",
-        data = Dict(start_date => collect(rows.curve_data)),
-        resolution = resolution,
-        interval = resolution,
-    )
+    # the series needs plain Vectors.
+    curve_ts = _single_series("fcas_curve_$(series_suffix)", start_date, collect(rows.curve_data), resolution)
     add_time_series!(sys, component, curve_ts)
-    trapezium_ts = Deterministic(;
-        name = "fcas_trapezium_$(series_suffix)",
-        data = Dict(start_date => collect(rows.trapezium_row)),
-        resolution = resolution,
-        interval = resolution,
-    )
+    trapezium_ts = _single_series("fcas_trapezium_$(series_suffix)", start_date, collect(rows.trapezium_row), resolution)
     add_time_series!(sys, component, trapezium_ts)
     return true
 end
@@ -128,7 +118,7 @@ end
 """
     set_fcas_bids!(sys, db, date_range; kwargs...)
 
-Attaches FCAS bid data to the system as two `Deterministic` time series per `(component,
+Attaches FCAS bid data to the system as two `SingleTimeSeries` time series per `(component,
 FCAS market)` with bid data in `date_range`:
 - `"fcas_curve_<SERVICE>"` (e.g. `"fcas_curve_RAISE6SEC"`), a `Vector{PiecewiseStepData}` -
   the priced 10-band offer curve per interval;
@@ -153,10 +143,8 @@ needs. Dropping `LOAD`/
 large share of real FCAS providers - measured on 2 Jan 2025 `BIDPEROFFER_D`, `LOAD` and
 `BIDIRECTIONAL` rows together outnumber `GEN` rows for several contingency markets.
 
-Two series, not one carrying [`FCASBid`](@ref)/[`FCASTrapezium`](@ref) objects directly:
-confirmed directly that `Deterministic` rejects those (and bare `Vector{Float64}`) as a
-per-step element type - see `test/fcas/fcas.jl`'s `"FCASBid time series round-trip"` testset for
-the proven shape this mirrors. Does not require or create any `Reserve`/service - FCAS
+Two series, not one carrying [`FCASBid`](@ref)/[`FCASTrapezium`](@ref) objects directly, so each
+element is a plain `PiecewiseStepData` or `NTuple{7,Float64}`. Does not require or create any `Reserve`/service - FCAS
 requirements are [`GenericConstraint`](@ref)s built separately by
 [`add_nem_constraints!`](@ref).
 

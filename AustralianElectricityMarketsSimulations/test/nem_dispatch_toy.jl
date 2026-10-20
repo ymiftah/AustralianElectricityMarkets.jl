@@ -309,8 +309,8 @@ end
                 ],
                 mutate! = function (s, _)
                     battery = PSY.get_component(PSY.EnergyReservoirStorage, s, TOY_BATTERY)
-                    PSY.remove_time_series!(s, PSY.Deterministic, battery, "energy_max_avail")
-                    PSY.remove_time_series!(s, PSY.Deterministic, battery, "energy_max_avail_decremental")
+                    PSY.remove_time_series!(s, PSY.SingleTimeSeries, battery, "energy_max_avail")
+                    PSY.remove_time_series!(s, PSY.SingleTimeSeries, battery, "energy_max_avail_decremental")
                     set_static_limits!(s; input_mw = 50.0)
                     return
                 end,

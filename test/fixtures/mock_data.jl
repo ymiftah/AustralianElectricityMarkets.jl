@@ -543,7 +543,7 @@ function create_mock_data(hive_root::String)
     save_hive(df_fcas_req_run, :DISPATCH_FCAS_REQ_RUN)
 
     # 14. DISPATCHCONSTRAINT. RHS varies per interval (requirement_mw + 0.1*i) to exercise
-    # the "rhs" Deterministic time series, not just a flat default. GENCONID_EFFECTIVEDATE/
+    # the "rhs" SingleTimeSeries time series, not just a flat default. GENCONID_EFFECTIVEDATE/
     # GENCONID_VERSIONNO pin the exact GENCONDATA version, matching test_date/1 above -
     # AEMO's own mechanism for exact-equality constraint-term joins (no date-window
     # heuristic). N_BAYSW_THERMAL and N_PHANTOM_TEST are invoked here too, so they're

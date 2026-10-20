@@ -23,8 +23,8 @@ series only).
 """
 function _fcas_direction(device, bid_type::BidType)
     bid_type_str = string(bid_type)
-    has_inc = PSY.has_time_series(device, PSY.Deterministic, "fcas_trapezium_$bid_type_str")
-    has_dec = PSY.has_time_series(device, PSY.Deterministic, "fcas_trapezium_$(bid_type_str)_decremental")
+    has_inc = PSY.has_time_series(device, PSY.SingleTimeSeries, "fcas_trapezium_$bid_type_str")
+    has_dec = PSY.has_time_series(device, PSY.SingleTimeSeries, "fcas_trapezium_$(bid_type_str)_decremental")
     if has_inc && has_dec
         device isa PSY.Storage && _is_regulation_service(bid_type) && return :both
         throw(

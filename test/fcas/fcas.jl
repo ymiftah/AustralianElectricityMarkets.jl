@@ -208,10 +208,8 @@
     end
 
     @testset "set_fcas_bids!" begin
-        # Two Deterministic series per (component, market), not a Reserve/service and not a
-        # single-object FCASBid series: confirmed directly that Deterministic rejects
-        # FCASBid/bare Vector{Float64} as a per-step element type (see "FCASBid time series
-        # round-trip" below).
+        # Two SingleTimeSeries per (component, market), not a Reserve/service and not a
+        # single-object FCASBid series (see "FCASBid time series round-trip" below).
         sys = nem_system(db, RegionalNetworkConfiguration())
         set_fcas_bids!(sys, db, date_range)
         base_power = get_base_power(sys)
@@ -220,14 +218,14 @@
         for gen in get_components(Generator, sys)
             # has_time_series (not get_time_series + isnothing): get_time_series throws
             # ArgumentError, rather than returning nothing, for an owner with no metadata
-            # registered at all for (Deterministic, name) - confirmed directly.
-            has_time_series(gen, Deterministic, "fcas_curve_RAISE6SEC") || continue
+            # registered at all for (SingleTimeSeries, name) - confirmed directly.
+            has_time_series(gen, SingleTimeSeries, "fcas_curve_RAISE6SEC") || continue
             found = true
-            curve_ts = get_time_series(Deterministic, gen, "fcas_curve_RAISE6SEC")
-            trapezium_ts = get_time_series(Deterministic, gen, "fcas_trapezium_RAISE6SEC")
+            curve_ts = get_time_series(SingleTimeSeries, gen, "fcas_curve_RAISE6SEC")
+            trapezium_ts = get_time_series(SingleTimeSeries, gen, "fcas_trapezium_RAISE6SEC")
             @test !isnothing(curve_ts)
             @test !isnothing(trapezium_ts)
-            trap_rows = first(values(get_data(trapezium_ts)))
+            trap_rows = get_time_series_values(SingleTimeSeries, gen, "fcas_trapezium_RAISE6SEC")
             # Raw stored series is per-unit of sys's base power - get_fcas_trapezium (tested
             # above) is what converts back to MW.
             @test first(trap_rows)[1] == 20.0 / base_power
@@ -239,19 +237,19 @@
         # set_fcas_bids! dropped every non-GEN DIRECTION row.
         bw01 = get_component(EnergyReservoirStorage, sys, "BW01")
         @test !isnothing(bw01)
-        @test has_time_series(bw01, Deterministic, "fcas_curve_RAISE6SEC_decremental")
-        @test has_time_series(bw01, Deterministic, "fcas_trapezium_RAISE6SEC_decremental")
+        @test has_time_series(bw01, SingleTimeSeries, "fcas_curve_RAISE6SEC_decremental")
+        @test has_time_series(bw01, SingleTimeSeries, "fcas_trapezium_RAISE6SEC_decremental")
 
         # A non-scheduled load (no energy bid) that offers FCAS gets the decremental series and
         # becomes available; one with no FCAS bid stays unavailable. Scheduled loads are untouched.
         asload1 = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
         @test get_available(asload1)
-        @test has_time_series(asload1, Deterministic, "fcas_curve_RAISE6SEC_decremental")
-        @test !has_time_series(asload1, Deterministic, "fcas_trapezium_RAISE6SEC")
+        @test has_time_series(asload1, SingleTimeSeries, "fcas_curve_RAISE6SEC_decremental")
+        @test !has_time_series(asload1, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")
         trap = get_fcas_trapezium(asload1, BidType.RAISE6SEC, first(date_range), 3; decremental = true)
         @test all(t -> get_enablement_max(t) == 0.0 && get_max_avail(t) ≈ 15.0 / base_power, trap)
         @test !get_available(get_component(InterruptiblePowerLoad, sys, "ASLOAD2"))
-        @test !has_time_series(get_component(InterruptiblePowerLoad, sys, "PUMP1"), Deterministic, "fcas_curve_RAISE6SEC_decremental")
+        @test !has_time_series(get_component(InterruptiblePowerLoad, sys, "PUMP1"), SingleTimeSeries, "fcas_curve_RAISE6SEC_decremental")
     end
 
     @testset "a non-scheduled load offering FCAS joins its region's services" begin
@@ -301,7 +299,7 @@
         sys = nem_system(db, RegionalNetworkConfiguration())
         set_fcas_bids!(sys, db, date_range)
         @test any(
-            g -> has_time_series(g, Deterministic, "fcas_trapezium_RAISE1SEC"), get_components(Generator, sys),
+            g -> has_time_series(g, SingleTimeSeries, "fcas_trapezium_RAISE1SEC"), get_components(Generator, sys),
         )
     end
 
@@ -404,21 +402,20 @@
 
         found = false
         for gen in get_components(Generator, sys2)
-            has_time_series(gen, Deterministic, "fcas_curve_RAISE6SEC") || continue
+            has_time_series(gen, SingleTimeSeries, "fcas_curve_RAISE6SEC") || continue
             found = true
-            curve_ts = get_time_series(Deterministic, gen, "fcas_curve_RAISE6SEC")
-            trapezium_ts = get_time_series(Deterministic, gen, "fcas_trapezium_RAISE6SEC")
+            curve_ts = get_time_series(SingleTimeSeries, gen, "fcas_curve_RAISE6SEC")
+            trapezium_ts = get_time_series(SingleTimeSeries, gen, "fcas_trapezium_RAISE6SEC")
             @test !isnothing(curve_ts)
             @test !isnothing(trapezium_ts)
-            trap_rows = first(values(get_data(trapezium_ts)))
+            trap_rows = get_time_series_values(SingleTimeSeries, gen, "fcas_trapezium_RAISE6SEC")
             @test first(trap_rows)[1] == 20.0 / base_power
         end
         @test found
     end
 
     @testset "FCASBid time series round-trip" begin
-        # Deterministic rejects FCASBid and bare Vector{Float64} as per-step element types;
-        # use NTuple{7,Float64} (see task-4-report.md).
+        # Each element is a plain NTuple{7,Float64} or PiecewiseStepData, not an FCASBid.
         sys = System(100.0)
         bus = ACBus(; number = 1, name = "b1", available = true, bustype = ACBusTypes.REF, angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1), base_voltage = 130.0)
         add_component!(sys, bus)
@@ -444,15 +441,9 @@
         )
 
         start_date = DateTime(2025, 1, 1)
-        curve_ts = Deterministic(;
-            name = "fcas_curve_RAISE6SEC", data = Dict(start_date => [psd, psd]),
-            resolution = Minute(5), interval = Minute(5),
-        )
+        curve_ts = AustralianElectricityMarkets._single_series("fcas_curve_RAISE6SEC", start_date, [psd, psd], Minute(5))
         add_time_series!(sys, gen, curve_ts)
-        trapezium_ts = Deterministic(;
-            name = "fcas_trapezium_RAISE6SEC", data = Dict(start_date => [trap_row, trap_row]),
-            resolution = Minute(5), interval = Minute(5),
-        )
+        trapezium_ts = AustralianElectricityMarkets._single_series("fcas_trapezium_RAISE6SEC", start_date, [trap_row, trap_row], Minute(5))
         add_time_series!(sys, gen, trapezium_ts)
 
         mktpath = mktempdir()
@@ -461,18 +452,18 @@
         sys2 = System(json_path)
         gen2 = get_component(ThermalStandard, sys2, "G1")
 
-        curve_ts2 = get_time_series(Deterministic, gen2, "fcas_curve_RAISE6SEC")
-        trapezium_ts2 = get_time_series(Deterministic, gen2, "fcas_trapezium_RAISE6SEC")
+        curve_ts2 = get_time_series(SingleTimeSeries, gen2, "fcas_curve_RAISE6SEC")
+        trapezium_ts2 = get_time_series(SingleTimeSeries, gen2, "fcas_trapezium_RAISE6SEC")
         @test !isnothing(curve_ts2)
         @test !isnothing(trapezium_ts2)
 
-        curve_data2 = only(values(get_data(curve_ts2)))
+        curve_data2 = vec(values(get_data(curve_ts2)))
         @test curve_data2 isa Vector{PiecewiseStepData}
         @test length(curve_data2) == 2
         @test get_x_coords(curve_data2[1]) == [0.0, 5.0]
         @test get_y_coords(curve_data2[1]) == [50.0]
 
-        trapezium_data2 = only(values(get_data(trapezium_ts2)))
+        trapezium_data2 = vec(values(get_data(trapezium_ts2)))
         @test length(trapezium_data2) == 2
         row2 = trapezium_data2[1]
         @test collect(row2[1:5]) == [20.0, 30.0, 90.0, 100.0, 10.0]

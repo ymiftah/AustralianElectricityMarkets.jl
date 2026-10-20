@@ -159,7 +159,7 @@ end
 
 begin
     ren = get_component(RenewableDispatch, sys, "COLEASF1")
-    ts = get_time_series_array(Deterministic, ren, "max_active_power") |> DataFrame
+    ts = get_time_series_array(SingleTimeSeries, ren, "max_active_power") |> DataFrame
     index, values = ts.timestamp, ts.NSW1 * 100
     fig = Figure()
     ax = Axis(fig[1, 1], xlabel = "timestamp", title = "Max active power [MW]", ylabel = "MW")

@@ -424,6 +424,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Bids, FCAS bids and curves, MNSP offers and generic-constraint series are attached as
+  `SingleTimeSeries` instead of one-window `Deterministic` forecasts, so a model can start at any
+  interval of the range after `transform_single_time_series!`.
+  Setters that replace a series (`set_mnsp_offers!`) must run before `transform_single_time_series!`.
 - `set_demand!` throws when an available load or area lacks a demand row for any interval of the
   range, or a demand value is not finite, instead of leaving a gap in the series.
 - `read_bids` throws when a period offer has no matching `BIDDAYOFFER_D` price-band row, instead of

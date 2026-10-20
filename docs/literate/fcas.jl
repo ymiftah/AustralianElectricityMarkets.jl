@@ -359,7 +359,7 @@ end
 #   regional `(service, region)` price its shadow price feeds - see
 #   [`add_nem_constraints!`](@ref).
 # - [`FCASTrapezium`](@ref)/[`FCASBid`](@ref) - a device's offered trapezium and priced
-#   10-band offer curve for one FCAS market, attached as a `Deterministic` time series via
+#   10-band offer curve for one FCAS market, attached as a `SingleTimeSeries` time series via
 #   [`set_fcas_bids!`](@ref).
 # - [`ConstrainedNetworkConfiguration`](@ref) - a [`nem_system`](@ref) configuration that
 #   pulls in all the tables this page reads and builds both the bids and the constraints
