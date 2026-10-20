@@ -132,6 +132,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `read_energy_limits` and `set_nem_energy_limits!` retain separate energy bid `MAXAVAIL`,
+  semi-scheduled `UIGF` and effective schedule classification, validating required inputs before
+  attaching system-base time series.
+
 - `replicate_range(db, start, stop; parts, chunk, ...)` replays a range of dispatch intervals as one
   stock PowerSimulations `Simulation` per chunk, stepping a one-interval replication model whose
   parameters update between intervals. Chunks break at every trading-day start (04:05), at 00:05 on
