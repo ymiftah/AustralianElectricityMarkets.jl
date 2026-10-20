@@ -132,6 +132,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `set_loss_demand_coefficients!` attaches each loss-modelled `AreaInterchange` a
+  `"loss_demand_coefficient"` series: the demand term of its loss factor at every interval.
 - `read_fixed_loads` reads participant-entered energy fixed loadings from `BIDPEROFFER_D`, skipping
   units with a fast-start inflexibility profile.
 - `read_published_interval` accepts a range of dispatch intervals and reads each table once.
