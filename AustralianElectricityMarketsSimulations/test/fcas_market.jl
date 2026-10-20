@@ -26,13 +26,13 @@ end
     add_toy_fcas!(sys, device, initial_timestamp, n, bid_type, trapezium_mw, bands_mw_price; decremental = false)
 
 Attaches `"fcas_trapezium_<bid_type>[_decremental]"`/`"fcas_curve_<bid_type>[_decremental]"`
-`SingleTimeSeries` series on `device`, one window of `n` steps at `initial_timestamp`, flat over
+`SingleTimeSeries` series on `device`, `n` steps from `initial_timestamp`, flat over
 the horizon, mirroring [`set_fcas_bids!`](@ref)'s shape and per-unit convention.
 """
 function add_toy_fcas!(
         sys, device, initial_timestamp, n::Integer, bid_type::BidType,
         trapezium_mw::NTuple{5, Float64}, bands_mw_price::Vector{Tuple{Float64, Float64}};
-        decremental::Bool = false, resolution = TOY_RESOLUTION,
+        decremental::Bool = false, resolution = TOY_RESOLUTION, interval = resolution,
     )
     base_power = PSY.get_base_power(sys)
     suffix = decremental ? "$(string(bid_type))_decremental" : string(bid_type)
@@ -524,24 +524,23 @@ end
 @testset "a malformed offered trapezium is rejected before the build" begin
     duid = TOY_CHEAP
     service_name = "TAS1_RAISE6SEC"
-    sys = fcas_energy_toy_system(
-        2.0;
-        mutate! = (sys, stamps) -> begin
-            device = PSY.get_component(PSY.ThermalStandard, sys, duid)
-            # HighBreakpoint (110) above EnablementMax (100).
-            add_toy_fcas!(
-                sys, device, stamps[1], length(stamps), BidType.RAISE6SEC,
-                (0.0, 0.0, 110.0, 100.0, 10.0), [(10.0, 10.0)],
-            )
-            PSY.add_service!(
-                sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC),
-                [device],
-            )
-        end,
-    )
-    device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+    # set_fcas_effective_offers!, which the toy system runs, reads every trapezium.
     err = try
-        get_fcas_trapezium(device, BidType.RAISE6SEC, TOY_START, 1)
+        fcas_energy_toy_system(
+            2.0;
+            mutate! = (sys, stamps) -> begin
+                device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+                # HighBreakpoint (110) above EnablementMax (100).
+                add_toy_fcas!(
+                    sys, device, stamps[1], length(stamps), BidType.RAISE6SEC,
+                    (0.0, 0.0, 110.0, 100.0, 10.0), [(10.0, 10.0)],
+                )
+                PSY.add_service!(
+                    sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC),
+                    [device],
+                )
+            end,
+        )
         nothing
     catch e
         e
@@ -591,16 +590,15 @@ end
     @test (o2 - o0) ≈ interval_cost_coefficient(10.0) * 2.0 atol = FCAS_TOY_TOLERANCE
     @test (o3 - o2) ≈ interval_cost_coefficient(30.0) * 1.0 atol = FCAS_TOY_TOLERANCE
 
-    # The band cost follows the container's resolution, not a fixed 5 minutes.
+    # Each band is priced at its offer price times the base power and the interval in hours.
     container = build_fcas(sys, [service_name])
-    PSI.set_resolution!(container.settings, Minute(30))
-    jm = PSI.get_jump_model(container)
-    capacity = PSI.JuMP.@variable(jm)
-    curve = PSY.PiecewiseStepData([0.0, 2.0 / base_power], [10.0])
-    AustralianElectricityMarketsSimulations._add_fcas_offer_cost!(container, service_name, duid, 1, capacity, curve)
-    band_var = last(PSI.JuMP.all_variables(jm))
-    invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
-    @test PSI.JuMP.coefficient(invariant, band_var) ≈ base_power * 10.0 * 0.5
+    price = PSI.get_parameter(container, FCASBandPriceParameter(), FCASService, service_name)
+    @test PSI.get_parameter_array(price)[duid, :, 1].data == [10.0, 30.0]
+    @test all(==(base_power * interval_hours(TOY_RESOLUTION)), PSI.get_multiplier_array(price).data)
+    bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, service_name)
+    variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
+    @test PSI.JuMP.coefficient(variant, bands[duid, "2", 1]) ≈ base_power * 30.0 / 12
+
 end
 
 """
@@ -693,6 +691,7 @@ function storage_fcas_toy_model(
     end
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = bid_type), [bat])
     set_storage_dispatch_ceilings!(sys)
+    set_fcas_effective_offers!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
     template = _area_balance_template()
@@ -886,6 +885,7 @@ function _build_bdu_regulation(
             )
         end
     end
+    set_fcas_effective_offers!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
     template = _area_balance_template()
@@ -1211,11 +1211,15 @@ end
         @test !isempty(joint_row(container, "lower").func.terms)
     end
 
-    @testset "MaxAvail = 0: disabled, vacuous joint rows" begin
+    @testset "MaxAvail = 0: disabled, inactive joint rows with a zero slope" begin
         container = gated_container((5.0, 10.0, 90.0, 100.0, 0.0), bands)
         @test capacity_bound_mw(container) == 0.0
-        @test isempty(joint_row(container, "upper").func.terms)
-        @test isempty(joint_row(container, "lower").func.terms)
+        inactive = FCAS_INACTIVE_LIMIT_MW / PSI.get_base_power(container)
+        cap = fcas_capacity(container, service_name)[TOY_CHEAP, 1]
+        @test joint_row(container, "upper").set == PSI.MOI.LessThan(inactive)
+        @test joint_row(container, "lower").set == PSI.MOI.GreaterThan(-inactive)
+        @test get(joint_row(container, "upper").func.terms, cap, 0.0) == 0.0
+        @test get(joint_row(container, "lower").func.terms, cap, 0.0) == 0.0
     end
 
     @testset "no band with quantity: disabled" begin
@@ -1431,7 +1435,7 @@ end
     end
 end
 
-@testset "FCASMarket refuses unsupported duals and recurrent-solve containers" begin
+@testset "FCASMarket refuses unsupported duals and devices without effective offers" begin
     service_name = "TAS1_RAISE6SEC"
     sys = fcas_energy_toy_system(
         2.0;
@@ -1460,10 +1464,23 @@ end
     @test err isa ArgumentError
     @test occursin("FCASJointCapacityConstraint and FCASJointRampingConstraint only", err.msg)
 
-    container.built_for_recurrent_solves = true
-    err = construct_error(PSI.ServiceModel(FCASService, FCASMarket, service_name))
+    # Without its effective offer forecast the device cannot be built, and the error names the setter.
+    device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+    PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, device, "fcas_effective_RAISE6SEC")
+    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, "fcas_effective_RAISE6SEC")
+    model = PSI.DecisionModel(
+        fcas_toy_template(sys, [service_name]), sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    PSI.set_output_dir!(model, mktempdir())
+    err = try
+        PSI.build_impl!(model)
+        nothing
+    catch e
+        e
+    end
     @test err isa ArgumentError
-    @test occursin("DecisionModel", err.msg)
+    @test occursin("set_fcas_effective_offers!", err.msg)
 end
 
 """
@@ -1503,8 +1520,8 @@ function joint_ramping_toy(
     )
 end
 
-"Whether `row` (a `JuMP.constraint_object`) is the gated placeholder `0.0 <= 1.0` row."
-_is_placeholder_row(row) = isempty(row.func.terms) && row.set == PSI.MOI.LessThan(1.0)
+"Whether `row` (a `JuMP.constraint_object` of the 100 MW-base toy) has the inactive right-hand side `FCAS_INACTIVE_LIMIT_MW`."
+_is_placeholder_row(row) = row.set == PSI.MOI.LessThan(FCAS_INACTIVE_LIMIT_MW / 100.0)
 
 @testset "AEMO §6.1 joint ramping constraint" begin
     duid = TOY_CHEAP
@@ -1600,7 +1617,7 @@ _is_placeholder_row(row) = isempty(row.func.terms) && row.set == PSI.MOI.LessTha
         @test row.func.terms[in_var] == -1.0
     end
 
-    @testset "gating: a placeholder row where §6.1 doesn't apply" begin
+    @testset "gating: an inactive row where §6.1 doesn't apply" begin
         @testset "no AGC ramp rate series attached" begin
             sys = joint_ramping_toy(450.0)
             container = build_fcas(sys, ["TAS1_RAISEREG"])

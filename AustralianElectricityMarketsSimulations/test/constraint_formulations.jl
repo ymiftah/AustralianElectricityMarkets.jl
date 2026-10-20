@@ -14,6 +14,7 @@ end
     @test AEMS.NEMConstraintLHS <: PSI.ExpressionType
     @test AEMS.NEMConstraintLimit <: PSI.ConstraintType
     @test AEMS.NEMConstraintRHSParameter <: PSI.TimeSeriesParameter
+    @test AEMS.GenericConstraintSlackCostParameter <: PSI.ObjectiveFunctionParameter
 end
 
 @testset "GenericConstraintSlackUp/SlackDown are PSI.VariableTypes" begin

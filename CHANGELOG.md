@@ -434,6 +434,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `FCASMarket` reads each device's effective offer from per-interval series attached by
+  `set_fcas_effective_offers!` (enablement-masked `MaxAvail`, enablement limits, slope coefficients,
+  band widths and regulation ramping limits) as time-series and constraint-coefficient parameters,
+  and prices offer bands through `FCASBandPriceParameter`. A model builds in recurrent simulations,
+  and a device without the series fails the build, naming the setter. A disabled offer keeps an
+  inactive joint row (`FCAS_INACTIVE_LIMIT_MW`) in place of a vacuous placeholder.
 - `NEMInterconnectorLoss` takes the demand term of each interval's loss factor as the flow's
   coefficient in the loss definition, driven by a `LossDemandCoefficientParameter` read from the
   `"loss_demand_coefficient"` series, so it builds in recurrent simulations. `replication_system`
