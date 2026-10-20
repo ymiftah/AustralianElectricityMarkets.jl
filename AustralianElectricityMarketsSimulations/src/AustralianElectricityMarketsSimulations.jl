@@ -26,6 +26,7 @@ include("time_basis.jl")
 include("types/constraint_formulations.jl")
 include("types/dispatch.jl")
 include("types/energy_limits.jl")
+include("types/energy_offers.jl")
 include("types/storage.jl")
 include("types/tie_break.jl")
 include("types/interconnector_losses.jl")
@@ -37,6 +38,7 @@ include("formulations/generic_constraints.jl")
 include("checks/nem_constraints.jl")
 include("formulations/dispatch.jl")
 include("formulations/energy_limits.jl")
+include("formulations/energy_offers.jl")
 include("checks/dispatch_envelope.jl")
 include("formulations/storage.jl")
 include("formulations/tie_break.jl")
@@ -62,6 +64,8 @@ using AustralianElectricityMarkets.Readers: read_uigf_as_dict
 export DISPATCH_INTERVAL_HOURS, DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
 export IntervalInputs, read_interval_inputs, read_published_interval
 export REPLICATION_PARTS, replication_template, replication_system, replicate_range
+export ENERGY_OFFER_CVP_FACTOR, EnergyOfferSurplusSlack, EnergyOfferDeficitSlack,
+    EnergyDecrementalOfferSurplusSlack, EnergyDecrementalOfferDeficitSlack
 export EnergyMaxAvailOutConstraint, EnergyMaxAvailInConstraint, EnergyMaxAvailOutSlack, EnergyMaxAvailInSlack
 export EnergyMaxAvailTimeSeriesParameter, EnergyUIGFTimeSeriesParameter,
     EnergyMaxAvailConstraint, EnergyUIGFConstraint, EnergyMaxAvailSlack, EnergyUIGFSlack,
