@@ -76,9 +76,12 @@ export nem_dispatch_participants, set_nem_dispatch_models!
 export TIE_BREAK_CVP_FACTOR
 export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegmentVariable,
     InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint,
-    InterconnectorLossSegmentFullVariable, InterconnectorLossSegmentOrderConstraint
+    InterconnectorLossSegmentFullVariable, InterconnectorLossSegmentOrderConstraint,
+    LossDemandCoefficientParameter
 export MNSPLinkFlowVariable, MNSPLinkFlowConstraint, MNSPLinkDirectionVariable,
-    MNSPLinkLossVariable
+    MNSPLinkLossVariable, MNSPLinkBandVariable, MNSPBandWidthParameter, MNSPForwardBandWidthParameter,
+    MNSPReverseBandWidthParameter, MNSPMaxAvailParameter, MNSPForwardMaxAvailParameter,
+    MNSPReverseMaxAvailParameter, MNSPBandPriceParameter
 export interconnector_loss_gaps, check_interconnector_loss_segments
 
 end

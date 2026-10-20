@@ -38,3 +38,59 @@ interconnector's total loss, and only the active direction is nonzero.
 struct MNSPLinkLossVariable <: PSI.VariableType end
 
 PSI.convert_result_to_natural_units(::Type{MNSPLinkLossVariable}) = true
+
+
+"""
+    MNSPLinkBandVariable
+
+One MNSP link's flow in one offer band at one timestep, non-negative and per-unit of the system
+base. Indexed `(interconnector name, band label, t)` with meta `"forward"` or `"reverse"`; the band
+axis is sized to the most bands any link offers over the system's series, and a band a link does
+not offer at an interval has zero width.
+"""
+struct MNSPLinkBandVariable <: PSI.VariableType end
+
+PSI.convert_result_to_natural_units(::Type{MNSPLinkBandVariable}) = true
+
+
+"""
+    MNSPBandWidthParameter
+
+Time-series parameter of an MNSP link's offered band widths, in MW, read from its
+`"mnsp_<direction>_offer"` series with a band axis; bands beyond an interval's offer have width
+`0.0`. [`MNSPForwardBandWidthParameter`](@ref) and [`MNSPReverseBandWidthParameter`](@ref) are the
+two links.
+"""
+abstract type MNSPBandWidthParameter <: PSI.TimeSeriesParameter end
+
+"[`MNSPBandWidthParameter`](@ref) of the forward link."
+struct MNSPForwardBandWidthParameter <: MNSPBandWidthParameter end
+
+"[`MNSPBandWidthParameter`](@ref) of the reverse link."
+struct MNSPReverseBandWidthParameter <: MNSPBandWidthParameter end
+
+
+"""
+    MNSPMaxAvailParameter
+
+Time-series parameter of an MNSP link's `MAXAVAIL`, in MW, read from its
+`"mnsp_<direction>_max_avail"` series. [`MNSPForwardMaxAvailParameter`](@ref) and
+[`MNSPReverseMaxAvailParameter`](@ref) are the two links.
+"""
+abstract type MNSPMaxAvailParameter <: PSI.TimeSeriesParameter end
+
+"[`MNSPMaxAvailParameter`](@ref) of the forward link."
+struct MNSPForwardMaxAvailParameter <: MNSPMaxAvailParameter end
+
+"[`MNSPMaxAvailParameter`](@ref) of the reverse link."
+struct MNSPReverseMaxAvailParameter <: MNSPMaxAvailParameter end
+
+
+"""
+    MNSPBandPriceParameter
+
+Objective-function parameter pricing an MNSP link's [`MNSPLinkBandVariable`](@ref)s: its value is
+each band's offer price in `\$/MWh` per interval (`0.0` for a band not offered) and its multiplier
+the system base power times the interval length in hours. Meta `"forward"` or `"reverse"`.
+"""
+struct MNSPBandPriceParameter <: PSI.ObjectiveFunctionParameter end
