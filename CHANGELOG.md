@@ -132,6 +132,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `set_fcas_effective_offers!` precomputes each FCAS offer's enablement-masked `MaxAvail`,
+  enablement limits, slope coefficients, band widths and regulation ramping limits as per-interval
+  series, with the `FCASOfferBandVariable` and the `FCAS*Parameter` types `FCASMarket` reads them
+  through.
 - `set_storage_dispatch_ceilings!` attaches each battery's per-direction dispatch ceilings
   (`"storage_gen_ceiling"`, `"storage_load_ceiling"`): its energy offer `MAXAVAIL`, raised on the
   net axis to the ramp envelope. `NEMReplayDispatch` bounds a battery with them as time-series
@@ -434,6 +438,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `FCASMarket` reads each device's effective offer as time-series and constraint-coefficient
+  parameters, and prices offer bands through `FCASBandPriceParameter`, so a model builds in
+  recurrent simulations. A device without the series fails the build, naming the setter. A
+  disabled offer keeps an inactive joint row (`FCAS_INACTIVE_LIMIT_MW`) in place of a vacuous
+  placeholder.
 - `NEMInterconnectorLoss` takes the demand term of each interval's loss factor as the flow's
   coefficient in the loss definition, driven by a `LossDemandCoefficientParameter` read from the
   `"loss_demand_coefficient"` series, so it builds in recurrent simulations. `replication_system`
