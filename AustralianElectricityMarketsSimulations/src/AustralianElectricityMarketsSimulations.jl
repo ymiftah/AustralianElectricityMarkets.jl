@@ -45,6 +45,8 @@ include("psi_compat.jl")
 include("formulations/fcas.jl")
 include("checks/fcas.jl")
 include("preprocessing/fcas.jl")
+include("preprocessing/tie_break.jl")
+include("checks/tie_break.jl")
 include("preprocessing/inputs.jl")
 include("execution/replication.jl")
 
@@ -78,7 +80,8 @@ export AbstractNEMDispatch, NEMReplayDispatch, NEMLookaheadDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter
 export nem_dispatch_participants, set_nem_dispatch_models!
-export TIE_BREAK_CVP_FACTOR
+export TIE_BREAK_CVP_FACTOR, TIE_BREAK_SERVICE_NAME, TieBreakScaleParameter, TieBreakMarket, TieBreakSlackUp,
+    TieBreakSlackDown, TieBreakConstraint, set_tie_break_scales!, check_tie_break_pairs
 export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegmentVariable,
     InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint,
     InterconnectorLossSegmentFullVariable, InterconnectorLossSegmentOrderConstraint,

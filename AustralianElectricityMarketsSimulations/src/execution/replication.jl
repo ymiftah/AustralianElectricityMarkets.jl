@@ -6,8 +6,9 @@ Builds the `ProblemTemplate` that replicates NEMDE on `sys`: [`AbstractNEMDispat
 on every `PSY.AreaInterchange`, an [`FCASMarket`](@ref) per registered `FCASService`, and a
 [`LinearFactorLimit`](@ref) per `GenericConstraint` whose terms the template can model.
 Regions balance through `PSI.AreaBalancePowerModel` with slacks, and the balance duals are
-recorded as regional prices. Price-tied energy bands are dispatched pro rata
-([`add_tie_break_constraints!`](@ref)).
+recorded as regional prices. Price-tied energy bands are dispatched pro rata by the
+[`TieBreakMarket`](@ref) service model when `sys` carries the [`EnergyTieBreak`](@ref) of
+[`set_tie_break_scales!`](@ref).
 
 # Arguments
 - `sys`: a `PSY.System` from `nem_system(db, ConstrainedNetworkConfiguration(); ...)`, after its
@@ -91,6 +92,7 @@ function replication_system(
     set_nem_dispatch_limits!(sys, db, date_range; intervention = intervention)
     set_storage_dispatch_ceilings!(sys)
     set_fcas_effective_offers!(sys)
+    set_tie_break_scales!(sys)
     set_mnsp_offers!(sys, db, date_range)
     interval_flow_limits &&
         set_interconnector_flow_limits!(sys, db, date_range; intervention = intervention)
@@ -153,7 +155,7 @@ non-zero unit ramp slack of the model (`DUID`, `DateTime`, `MW`, `direction`), a
 `"fcas_enablement"`, `"generic_constraint"` and `"area_balance"`. `direction` is `"up"` for a
 slack relaxing a `<=` row and `"down"` for one relaxing a `>=` row. For `"area_balance"`, whose
 row is an equality, `"up"` is a deficit (demand left unserved) and `"down"` a surplus (excess
-generation). Slacks built outside PowerSimulations containers (the tie-break terms) are not listed. The solved balance dual is the
+generation). The tie-break slacks (`TieBreakSlackUp`, `TieBreakSlackDown`) are not listed. The solved balance dual is the
 unadjusted price, so it is compared with `ROP`; `RRP` differs only under an administered price.
 Throws if the model does not build or solve, after logging `skipped_constraints`.
 """

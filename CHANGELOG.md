@@ -438,6 +438,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Price-tied energy bands are dispatched in proportion to their size by a tie-break row per pair
+  whose coefficients are `TieBreakScaleParameter`s read from the `"tie_break_scale_<k>"` series of
+  `set_tie_break_scales!`, so the rows follow offers between simulation steps. The rows are the
+  `TieBreakMarket` formulation of a new `EnergyTieBreak` service (`TIE_BREAK_SERVICE_NAME`), which
+  `set_tie_break_scales!` attaches over every available market-bid unit and
+  `set_nem_dispatch_models!` models unless `tie_breaks = false`; slacks and rows are registered as
+  `TieBreakSlackUp`, `TieBreakSlackDown` and `TieBreakConstraint`. Segments empty throughout the
+  offer series never form ties. `check_tie_break_pairs` verifies that a range keeps the same tied
+  pairs. A contributor carrying scales must be modelled, unless its device model's
+  `"filter_function"` excludes it (`set_nem_dispatch_models!(...; skip_uncovered = true)`). Tied
+  fixed-curve units in a direction with no time-varying curve, and duals requested on the
+  `TieBreakMarket` service model, fail the build by name.
+- `set_market_bids!` keeps every price band as a segment of the offer curve, with zero-width segments
+  for empty bands, so segment `k` is always the same price band.
 - `FCASMarket` reads each device's effective offer as time-series and constraint-coefficient
   parameters, and prices offer bands through `FCASBandPriceParameter`, so a model builds in
   recurrent simulations. A device without the series fails the build, naming the setter. A
