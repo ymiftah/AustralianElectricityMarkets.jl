@@ -134,6 +134,46 @@ let
         @test "BW01" in df.DUID
     end
 
+    @testset "read_bids rejects period offers without a price-band row" begin
+        partial = mktempdir()
+        for table in ("BIDPEROFFER_D", "BIDDAYOFFER_D")
+            cp(joinpath(hive_dir, table), joinpath(partial, table))
+        end
+        let ddb = DuckDB.DB(), conn = DuckDB.connect(ddb)
+            DuckDB.execute(conn, "SET preserve_identifier_case=true")
+            table_dir = joinpath(partial, "BIDDAYOFFER_D")
+            kept = DataFrame(DuckDB.execute(conn, "SELECT * FROM read_parquet('$table_dir/**/*.parquet', hive_partitioning=true)"))
+            subset!(kept, :DUID => ByRow(!=("BW03")))
+            rm(table_dir; recursive = true)
+            DuckDB.register_data_frame(conn, kept, "tmp_table")
+            DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+            DuckDB.disconnect(conn)
+            DuckDB.close(ddb)
+        end
+        partial_db = aem_connect(HiveConfiguration(hive_location = partial, filesystem = "file"))
+        date_range = DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 1, 0)
+        err = try
+            read_bids(partial_db, date_range)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("BW03", err.msg)
+    end
+
+    @testset "read_fixed_loads" begin
+        date_range = DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 1, 0)
+        df = read_fixed_loads(db, date_range)
+        @test names(df) == ["INTERVAL_DATETIME", "DUID", "DIRECTION", "FIXEDLOAD"]
+        @test nrow(df) == 2
+        @test all(==("BW02"), df.DUID)
+        @test df.INTERVAL_DATETIME == [DateTime(2025, 1, 1, 0, 10), DateTime(2025, 1, 1, 0, 15)]
+        @test all(==(50.0), df.FIXEDLOAD)
+        # The stop bound is exclusive.
+        @test nrow(read_fixed_loads(db, DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 0, 15))) == 1
+    end
+
     @testset "read_mnsp_offers" begin
         # Interval ending 12:00 uses the second (rebid) offer, 11:55 the first; period = steps since 04:00.
         range = DateTime(2025, 1, 1, 11, 55):Dates.Minute(5):DateTime(2025, 1, 1, 12, 5)

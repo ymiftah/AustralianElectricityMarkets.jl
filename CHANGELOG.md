@@ -132,6 +132,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `read_fixed_loads` reads participant-entered energy fixed loadings from `BIDPEROFFER_D`, skipping
+  units with a fast-start inflexibility profile.
+- `read_published_interval` accepts a range of dispatch intervals and reads each table once.
 - `populate_legacy_archive` fills the cache for months before 2015, when NEMWEB hosts one monolithic
   `MMSDM_<yyyy>_<mm>.zip` per month. It range-reads only the requested tables' entries, defaulting to the
   four generic-constraint definition tables, so constraints last revised before 2015 (for example
@@ -419,6 +422,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `read_bids` throws when a period offer has no matching `BIDDAYOFFER_D` price-band row, instead of
+  dropping the unit silently.
 - The replication model solves one dispatch interval instead of two (the second was only
   reported as absent). Mean solve time over 42 validation intervals fell from 37 s to 24 s;
   regional prices are unchanged, dispatch differs at four of the 42 intervals.

@@ -20,7 +20,7 @@ import ..AustralianElectricityMarkets: BidType, FCAS_BID_TYPES,
     ConstraintSense, InterconnectorLossModel, IntervalInputs,
     AEMO_PM_MAPPING, AEMO_FUEL_MAPPING, _validate_fcas_trapezium
 
-export read_hive, read_units, read_demand, read_energy_bids, read_bids, read_loss_factors
+export read_hive, read_units, read_demand, read_energy_bids, read_fixed_loads, read_bids, read_loss_factors
 export read_fcas_bids, read_fcas_requirements, read_fcas_prices, read_fcas_dispatch,
     read_fcas_scaling_inputs
 export read_invoked_constraints, read_constraint_definitions, read_constraint_terms,
