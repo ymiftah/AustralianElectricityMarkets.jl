@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted. Supersedes the two-interval window in [0025](0025-replication-pipeline.md).
+Accepted. Supersedes the two-interval window in [0025](0025-replication-pipeline.md). Amended by
+[0061](0061-replay-core-stock-simulation.md): the forecast windows are one interval long.
 
 ## Context
 
@@ -20,7 +21,9 @@ NEMDE solves one interval at a time, so a one-step model is the closer compariso
 - The `DecisionModel` horizon is one dispatch interval. The model starts from the interval's
   published `initial_mw` (`INITIALMW`) as each unit's ramp base, as before.
 - `replication_system` still builds two points of forecast data, because PSY needs at least two.
-  Only the first is solved.
+  Only the first is solved. *Amended:* the windows are now one interval long, one per stamp. A
+  `PSI.Simulation` step reads a window of exactly the model horizon, and a one-point window builds
+  and solves with the pinned PSY. The system still reads the two stamps after the interval.
 
 ## Consequences
 

@@ -73,6 +73,7 @@ const TEST_GROUPS = [
     "interconnector_losses" => ("Interconnector losses", "interconnector_losses.jl"),
     "replication_inputs" => ("Required replay inputs", "replication_inputs.jl"),
     "pipeline" => ("Replication pipeline", "pipeline.jl"),
+    "stock_simulation" => ("Stock simulation replay", "stock_simulation.jl"),
 ]
 
 const SELECTED_GROUPS = let known = first.(TEST_GROUPS)

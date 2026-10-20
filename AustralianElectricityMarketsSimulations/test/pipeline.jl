@@ -1,4 +1,4 @@
-@testset "Single-interval replication pipeline" begin
+@testset "Replication pipeline" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     t = DateTime(2025, 1, 1, 0, 5, 0)
 
@@ -17,16 +17,17 @@
         @test all(isempty, (physical.dispatch, physical.prices, physical.fcas_prices))
     end
 
-    @testset "replicate_interval builds, solves and compares" begin
-        result = replicate_interval(db, t)
-        @test result.model isa PSI.DecisionModel
+    @testset "replicate_range replays one interval, solves and compares" begin
+        result = replicate_range(db, t, t)
+        @test only(result.results) isa PSI.SimulationProblemResults
         skipped = result.skipped_constraints
-        @test names(skipped) == ["constraint", "reason", "n_missing"]
-        @test all(==(:no_available_device), skipped.reason)
+        @test names(skipped) == ["chunk", "constraint", "reason", "n_missing"]
+        @test all(in((:no_available_device, :never_invoked)), skipped.reason)
         comparison = result.comparison
         published = read_published_interval(db, t)
 
         # One row per published key, so nothing is dropped silently.
+        @test all(==(t), comparison.prices.SETTLEMENTDATE)
         @test nrow(comparison.prices) == nrow(published.prices)
         @test nrow(comparison.dispatch) == nrow(published.dispatch)
         @test nrow(comparison.interconnectors) == nrow(published.interconnectors)
@@ -60,19 +61,20 @@
                 has_time_series(d, DeterministicSingleTimeSeries, "from_to_flow_limit") for
                 d in get_components(AreaInterchange, sys)
         )
-        @test !has_limits(replication_system(db, t))
-        @test has_limits(replication_system(db, t; interval_flow_limits = true))
+        range = t:Minute(5):(t + Minute(10))
+        @test !has_limits(replication_system(db, range))
+        @test has_limits(replication_system(db, range; interval_flow_limits = true))
     end
 
-    @testset "MNSP offers reach a built model through the single-window path" begin
+    @testset "MNSP offers reach the replay model" begin
         # The mock offers Basslink-like links on IC2 (300 MW available) for the intervals up to 04:00.
-        t_mnsp = t
-        sys = replication_system(db, t_mnsp)
+        sys = replication_system(db, t:Minute(5):(t + Minute(10)))
         ic2 = get_component(AreaInterchange, sys, "IC2")
         @test has_time_series(ic2, SingleTimeSeries, "mnsp_forward_max_avail")
-        result = replicate_interval(sys, db, t_mnsp)
-        @test PSI.has_container_key(
-            PSI.get_optimization_container(result.model), MNSPLinkFlowVariable, PSY.AreaInterchange,
+        result = replicate_range(db, t, t; interval_flow_limits = true)
+        @test any(
+            k -> PSI.IS.Optimization.get_entry_type(k) === MNSPLinkFlowVariable,
+            PSI.list_variable_keys(only(result.results)),
         )
         flow = only(filter(:INTERCONNECTORID => ==("IC2"), result.comparison.interconnectors)).MWFLOW_solved
         @test abs(flow) <= 300.0 + 1.0e-6

@@ -396,6 +396,28 @@ evaluated at NEMDE's published solution (`TOTALCLEARED`, published regulation ta
   form (`spot_market_backend/fcas_constraints.py:298-301`). Here the lower form subtracts the whole
   unit `LowerRegTarget`, as §6.2 states.
 
+### Amendment: a disabled offer is held at zero by the elastic MaxAvail row
+
+Since the FCAS offers became updatable parameters (`set_fcas_effective_offers!`), the §5 gate no
+longer bounds a capacity variable to zero or builds a vacuous row: a bound fixed at build cannot
+follow the steps of a recurrent simulation. A `(device, t)` that fails §5 instead gets an effective
+offer with zero `MaxAvail`, zero slopes and band widths, and enablement limits of
+`∓FCAS_INACTIVE_LIMIT_MW`. The `MaxAvail` row then holds its capacity at zero.
+
+**Departure from FCAS Model in NEMDE §5.** AEMO's §5 (v3.0, pp. 18-19) does not consider a unit for
+enablement when a pre-condition fails, so NEMDE has no capacity variable to dispatch. Here, with
+the service model's `use_slacks = true`, the zero `MaxAvail` row is elastic through
+`FCASMaxAvailSlack`, priced at `FCAS_MAXAVAIL_CVP_FACTOR` (155) times the Market Price Cap, as AEMO
+prices the MaxAvail row of an enabled offer (*Schedule of Constraint Violation Penalty Factors*
+v8.0, item 19, pp. 13-17). The solver can therefore clear FCAS on a disabled offer only by paying
+that penalty. Item 19 ranks the MaxAvail CVP above the associated FCAS requirement CVP and above
+the energy supply-demand balance CVP, so a requirement deficit or a regional deficit is always
+cheaper than dispatching a disabled offer, and the dispatch matches §5 whenever those rows can
+absorb the shortfall. A disabled offer with a non-zero cleared value is reported as an
+`"fcas_max_avail"` violation by `replicate_range`. The rows of a disabled
+offer stay in the model with inactive limits rather than being left out, which keeps the dense
+containers valid across steps.
+
 ## Consequences
 
 - FCAS data does not participate in `PowerSimulations.jl`'s parameter-update path; a rolling

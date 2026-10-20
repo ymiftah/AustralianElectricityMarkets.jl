@@ -82,7 +82,7 @@ end
             (:DISPATCHREGIONSUM, "DELETE FROM input WHERE SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:10'", r"missing regional demand"),
         ]
         db = _replay_damaged_cache(table, query)
-        @test_throws expected replication_system(db, first(interval))
+        @test_throws expected replication_system(db, interval)
     end
 end
 
@@ -90,5 +90,5 @@ end
     missing_bids = _replay_damaged_cache(:BIDPEROFFER_D, "DELETE FROM input WHERE BIDTYPE = 'ENERGY' AND DUID = 'BW02'")
     db = _replay_damaged_cache(:DISPATCHLOAD, "UPDATE input SET AVAILABILITY = 0 WHERE DUID = 'BW02'"; source = missing_bids.config.hive_location)
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 15)
-    @test_throws r"BW02 GEN" replication_system(db, first(interval))
+    @test_throws r"BW02 GEN" replication_system(db, interval)
 end

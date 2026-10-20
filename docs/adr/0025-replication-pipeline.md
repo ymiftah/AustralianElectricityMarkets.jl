@@ -27,7 +27,9 @@ reproducible entry point that wires both together and reads the published result
   reads stay in `replication/inputs.jl`. A thin script in `scripts/` prints the comparison.
 - **Public API.** `replication_system`, `replication_template`, `replicate_interval` and
   `read_published_interval` are exported: they are the supported way to run one interval, and
-  validation tooling outside the package builds on them.
+  validation tooling outside the package builds on them. *Amended by
+  [0061](0061-replay-core-stock-simulation.md):* `replicate_interval` is removed; `replicate_range`
+  replays any range, one interval included, through a model built once and stepped.
 - **Unavailable components in constraints.** A generic constraint term on an unavailable device
   or interconnector contributes zero, as FCAS terms already do, because PSI creates variables
   only for available components.

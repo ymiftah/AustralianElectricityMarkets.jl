@@ -1,12 +1,12 @@
-# Replicates one historical NEM dispatch interval from the local hive cache and prints the
+# Replays a range of historical NEM dispatch intervals from the local hive cache and prints the
 # solved outcome against AEMO's published one. From the repository root:
 #
 #     julia --project=AustralianElectricityMarketsSimulations/test \
-#         AustralianElectricityMarketsSimulations/scripts/replicate_interval.jl \
-#         [2026-06-04T00:00:00] [hive_location]
+#         AustralianElectricityMarketsSimulations/scripts/replicate_range.jl \
+#         [2026-06-04T00:00:00] [2026-06-04T00:00:00] [hive_location]
 #
-# The interval defaults to 2026-06-04T00:00:00 and `hive_location` to `~/.nemdb_cache`. The cache
-# must also hold the following five-minute interval.
+# The range defaults to the one interval 2026-06-04T00:00:00 and `hive_location` to
+# `~/.nemdb_cache`. The cache must also hold the two five-minute intervals after the range.
 
 using AustralianElectricityMarkets
 using AustralianElectricityMarketsSimulations
@@ -16,12 +16,13 @@ using HiGHS
 using PowerSimulations: optimizer_with_attributes
 using Printf
 
-settlement_date = DateTime(isempty(ARGS) ? "2026-06-04T00:00:00" : ARGS[1])
-hive = length(ARGS) >= 2 ? ARGS[2] : joinpath(homedir(), ".nemdb_cache")
+start = DateTime(isempty(ARGS) ? "2026-06-04T00:00:00" : ARGS[1])
+stop = length(ARGS) >= 2 ? DateTime(ARGS[2]) : start
+hive = length(ARGS) >= 3 ? ARGS[3] : joinpath(homedir(), ".nemdb_cache")
 db = aem_connect(HiveConfiguration(hive_location = hive))
 
-optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
-comparison = replicate_interval(db, settlement_date; optimizer = optimizer).comparison
+optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false, "mip_rel_gap" => 0.0)
+comparison = replicate_range(db, start, stop; optimizer = optimizer).comparison
 
 # Mean and max absolute gap over the rows with both a solved and a published value.
 function report(title, df, solved, published)
@@ -38,8 +39,8 @@ function report(title, df, solved, published)
     return nothing
 end
 
-println("Interval $settlement_date\n")
-show(select(comparison.prices, :REGIONID, :ROP_solved, :ROP_published, :RRP_published), allrows = true)
+println("Intervals $start to $stop\n")
+show(select(comparison.prices, :SETTLEMENTDATE, :REGIONID, :ROP_solved, :ROP_published, :RRP_published), allrows = true)
 println("\n")
 show(comparison.interconnectors, allrows = true)
 println("\n")
