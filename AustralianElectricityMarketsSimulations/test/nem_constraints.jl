@@ -449,6 +449,51 @@ end
     end
 end
 
+@testset "the slack cost parameter follows the invoked mask and a recurrent build needs slacks" begin
+    n_raw = let p = _native_forecast_params(augmented_pscb_system())
+        p.count + Int(p.horizon / p.interval) - 1
+    end
+    invoked_vec = vcat([0.0], fill(1.0, n_raw - 1))
+    sys = _prepared_system(Dict("N_IC1_LIMIT" => 100.0), Dict("N_IC1_LIMIT" => invoked_vec))
+    _prune_unbuildable_constraints!(sys)
+    model = _decision_model(_nem_service_template(; use_slacks = true), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    gc = _gc(sys, "N_IC1_LIMIT")
+    name = PSY.get_name(gc)
+    param = PSI.get_parameter(container, AEMS.GenericConstraintSlackCostParameter(), GenericConstraint, name)
+    values = PSI.get_parameter_array(param)
+    penalties = PSI.get_multiplier_array(param)
+    @test [values[name, t] for t in 1:2] == [0.0, 1.0]
+    @test penalties[name, 1] == penalties[name, 2] > 0.0
+
+    # A simulation step re-reads the mask for its own window and re-prices the slacks.
+    initial_time = PSI.get_initial_time(container)
+    values[name, 1] = 5.0
+    values[name, 2] = 5.0
+    PSI.handle_variable_cost_parameter(
+        AEMS.GenericConstraintSlackCostParameter(), gc, name, values, penalties, nothing, container, initial_time, 2,
+    )
+    @test [values[name, t] for t in 1:2] == [0.0, 1.0]
+
+    # A recurrent build masks non-invoked intervals with zero-cost slacks, so it needs use_slacks.
+    bare = _decision_model(_nem_service_template(; use_slacks = false), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(bare; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    bare_container = PSI.get_optimization_container(bare)
+    bare_container.built_for_recurrent_solves = true
+    err = try
+        PSI.add_constraints!(
+            bare_container, NEMConstraintLimit, gc,
+            PSI.ServiceModel(GenericConstraint, LinearFactorLimit; use_slacks = false),
+        )
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("use_slacks = true", err.msg)
+end
+
 """
     _storage_template()
 
