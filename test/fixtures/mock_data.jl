@@ -360,6 +360,13 @@ function create_mock_data(hive_root::String)
 
         append!(df_bid_per_offer, vcat(tmp, tmp_fcas, tmp_fcas_load); promote = true)
     end
+    # FIXEDLOAD is zero (none) except BW02 and BW04 at 00:10 and 00:15, which carry 50 MW.
+    df_bid_per_offer.FIXEDLOAD = zeros(nrow(df_bid_per_offer))
+    fixed = (df_bid_per_offer.DUID .∈ Ref(["BW02", "BW04"])) .& (df_bid_per_offer.DIRECTION .== "GEN") .&
+        (df_bid_per_offer.BIDTYPE .== "ENERGY") .&
+        (df_bid_per_offer.INTERVAL_DATETIME .>= DateTime(2025, 1, 1, 0, 10)) .&
+        (df_bid_per_offer.INTERVAL_DATETIME .<= DateTime(2025, 1, 1, 0, 15))
+    df_bid_per_offer.FIXEDLOAD[fixed] .= 50.0
     save_hive(df_bid_per_offer, :BIDPEROFFER_D)
 
     # 11. BIDDAYOFFER_D (Daily)
@@ -424,6 +431,8 @@ function create_mock_data(hive_root::String)
     for i in 1:10
         bid_day_offer[!, "PRICEBAND$i"] = fill(50.0 + i, nrow(bid_day_offer))
     end
+    # T1 > 0 marks a fast-start inflexibility profile; only BW04 has one.
+    bid_day_offer.T1 = Float64.(bid_day_offer.DUID .== "BW04") .* 10.0
     save_hive(bid_day_offer, :BIDDAYOFFER_D)
 
     # FCAS requirements are generic-constraint-based (RESERVE has been unpopulated by AEMO
