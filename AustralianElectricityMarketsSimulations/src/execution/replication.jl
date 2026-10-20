@@ -85,6 +85,7 @@ function replication_system(
         db, ConstrainedNetworkConfiguration(); date_range = date_range, intervention = intervention,
     )
     set_demand!(sys, db, date_range; resolution = resolution)
+    set_loss_demand_coefficients!(sys)
     set_market_bids!(sys, db, date_range; resolution = resolution)
     set_fcas_scaling_inputs!(sys, db, date_range; intervention = intervention)
     set_nem_dispatch_limits!(sys, db, date_range; intervention = intervention)
