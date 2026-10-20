@@ -462,6 +462,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- NEM non-storage dispatch models raw bid MAXAVAIL and semi-scheduled UIGF as separate
+  elastic limits at CVP370 and CVP385, with typed PSI surplus variables, constraints and costs.
+
 - Replay goes through `replicate_range` only, one interval included (`start == stop`): a model
   built once per chunk and stepped. It reports a generic-constraint slack as a violation only at
   intervals where the constraint is invoked. `replication_system` takes the replay `date_range`

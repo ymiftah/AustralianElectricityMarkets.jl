@@ -2,7 +2,7 @@
     AbstractNEMDispatch
 
 Supertype for the NEM dispatch device formulations: a per-band bid stack, a per-interval ramp
-limit, and the upper dispatch limit, applied to one active power variable per device. A scheduled
+limit, and separately priced energy availability limits, applied to one active power variable per device. A scheduled
 load (`PowerSystems.ControllableLoad`) uses the same variable as consumed MW, priced on its
 decremental offer and withdrawn from the area balance.
 

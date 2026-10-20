@@ -2476,7 +2476,8 @@ end
             end
             PSY.set_operation_cost!(load, PSY.LoadCost(; variable = PSY.CostCurve(PSY.LinearCurve(0.0)), fixed = 0.0))
             PSY.get_ext(load)["non_scheduled"] = true
-            for name in ("max_active_power", "ramp_up_rate", "ramp_down_rate", "initial_mw", "availability")
+            PSY.get_ext(load)["nem_semi_scheduled"] = false
+            for name in ("max_active_power", "energy_max_avail", "ramp_up_rate", "ramp_down_rate", "initial_mw", "availability")
                 PSY.add_time_series!(
                     sys, load,
                     PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, zeros(length(stamps)))),
