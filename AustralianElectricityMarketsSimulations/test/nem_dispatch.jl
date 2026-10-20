@@ -24,6 +24,7 @@ function nem_dispatch_system(; mutate! = identity, data_span = NEM_DISPATCH_HORI
     set_market_bids!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_nem_dispatch_limits!(sys, db, date_range)
     mutate!(sys)
+    set_storage_dispatch_ceilings!(sys)
     # One window spanning the whole span, matching the single window the bid forecast carries.
     PSY.transform_single_time_series!(sys, data_span, NEM_DISPATCH_RESOLUTION)
     return sys
@@ -454,6 +455,7 @@ end
     set_demand!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_market_bids!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_nem_dispatch_limits!(sys, db, date_range)
+    set_storage_dispatch_ceilings!(sys)
 
     # Strip one device's rates after the template is derived, so the type is still a
     # participant but that device has nothing to read.

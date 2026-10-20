@@ -35,6 +35,7 @@ include("formulations/constraint_formulations.jl")
 include("formulations/generic_constraints.jl")
 include("checks/nem_constraints.jl")
 include("formulations/dispatch.jl")
+include("checks/dispatch_envelope.jl")
 include("formulations/storage.jl")
 include("formulations/tie_break.jl")
 include("formulations/interconnector_losses.jl")
@@ -68,7 +69,7 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     UNIT_RAMP_CVP_FACTOR, UnitRampUpSlack, UnitRampDownSlack,
     INTERCONNECTOR_FLOW_CVP_FACTOR, InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack
 export filter_buildable_generic_constraints, compute_fcas_prices
-export check_fcas_services
+export check_fcas_services, check_dispatch_envelope
 export AbstractNEMDispatch, NEMReplayDispatch, NEMLookaheadDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter

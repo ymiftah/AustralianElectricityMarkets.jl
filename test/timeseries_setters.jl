@@ -518,6 +518,39 @@
             @test isapprox(got_init, rows.INITIALMW ./ base_power; atol = 1.0e-8)
         end
 
+        @testset "set_storage_dispatch_ceilings! raises each direction's MAXAVAIL to the net ramp envelope" begin
+            sys = deepcopy(sys_base)
+            set_market_bids!(sys, db, date_range; resolution = resolution)
+            set_nem_dispatch_limits!(sys, db, date_range)
+            set_storage_dispatch_ceilings!(sys)
+            battery = get_component(EnergyReservoirStorage, sys, "BW01")
+            series(name) = get_time_series_values(SingleTimeSeries, battery, name)
+            floor_pu = series("initial_mw") .- series("ramp_down_rate") .* 5
+            roof_pu = series("initial_mw") .+ series("ramp_up_rate") .* 5
+            @test series("storage_gen_ceiling") == max.(series("energy_max_avail"), floor_pu)
+            @test series("storage_load_ceiling") == max.(series("energy_max_avail_decremental"), .-roof_pu)
+            @test get_time_series_timestamps(SingleTimeSeries, battery, "storage_gen_ceiling") ==
+                get_time_series_timestamps(SingleTimeSeries, battery, "energy_max_avail")
+
+            # A zero MAXAVAIL and down rate leave the floor at INITIALMW, and re-running replaces the series.
+            stamps = get_time_series_timestamps(SingleTimeSeries, battery, "energy_max_avail")
+            for name in ("energy_max_avail", "ramp_down_rate")
+                remove_time_series!(sys, SingleTimeSeries, battery, name)
+                add_time_series!(
+                    sys, battery,
+                    SingleTimeSeries(; name = name, data = TimeSeries.TimeArray(stamps, zeros(length(stamps))), resolution = resolution),
+                )
+            end
+            set_storage_dispatch_ceilings!(sys)
+            @test series("storage_gen_ceiling") == max.(0.0, series("initial_mw"))
+            @test any(>(0.0), series("storage_gen_ceiling"))
+
+            bare = deepcopy(sys_base)
+            set_nem_dispatch_limits!(bare, db, date_range)
+            set_storage_dispatch_ceilings!(bare)
+            @test !has_time_series(get_component(EnergyReservoirStorage, bare, "BW01"), SingleTimeSeries, "storage_gen_ceiling")
+        end
+
         @testset "ramp rates convert MW/h to MW/min and per-unitise; initial_mw matches DISPATCHLOAD exactly, per-unitised" begin
             sys = deepcopy(sys_base)
             set_nem_dispatch_limits!(sys, db, date_range)
