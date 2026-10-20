@@ -2,7 +2,14 @@ using DataFrames
 using Dates
 using DuckDB
 
-function create_mock_data(hive_root::String)
+"""
+    create_mock_data(hive_root::String; complete_inputs = false)
+
+Writes the mock Hive-partitioned cache under `hive_root`. With `complete_inputs`, the invoked
+constraints whose terms cannot all resolve (`N_PHANTOM_TEST`, `N_ONE_PHANTOM_TERM`) are removed and
+`PUMP2` is inactive in `DISPATCHLOAD`, so a strict replay can run on it.
+"""
+function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     db = DuckDB.DB()
     conn = DuckDB.connect(db)
     DuckDB.execute(conn, "SET preserve_identifier_case=true")
@@ -756,6 +763,12 @@ function create_mock_data(hive_root::String)
         end
         append!(df_dispatchload, block; promote = true)
     end
+    if complete_inputs
+        inactive = df_dispatchload.DUID .== "PUMP2"
+        df_dispatchload.AVAILABILITY[inactive] .= 0.0
+        df_dispatchload.INITIALMW[inactive] .= 0.0
+        df_dispatchload.TOTALCLEARED[inactive] .= 0.0
+    end
     save_hive(df_dispatchload, :DISPATCHLOAD)
 
     # 16. DISPATCHPRICE (regional FCAS clearing prices - RRP/ROP set equal to the mock's
@@ -901,6 +914,12 @@ function create_mock_data(hive_root::String)
         )
     end
 
+    if complete_inputs
+        path = joinpath(hive_root, "DISPATCHCONSTRAINT")
+        DuckDB.execute(conn, "CREATE TABLE complete_constraints AS SELECT * FROM read_parquet('$path/**/*.parquet', hive_partitioning = true) WHERE CONSTRAINTID NOT IN ('N_PHANTOM_TEST', 'N_ONE_PHANTOM_TERM')")
+        rm(path; recursive = true)
+        DuckDB.execute(conn, "COPY complete_constraints TO '$path' (FORMAT PARQUET, PARTITION_BY (archive_month))")
+    end
     return DuckDB.disconnect(conn)
 end
 

@@ -443,6 +443,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `replication_template` throws, before building, on dispatch constraint intervals missing from the
+  cache, skipped constraints, dropped unit terms, defaulted constraint weights, devices without
+  dispatch-limit series and incomplete MNSP offers, instead of replaying a partial model.
+  `replication_system` first checks that every scheduled unit has an energy offer, and every region
+  demand, for each interval.
 - Price-tied energy bands are dispatched in proportion to their size by a tie-break row per pair
   whose coefficients are `TieBreakScaleParameter`s read from the `"tie_break_scale_<k>"` series of
   `set_tie_break_scales!`, so the rows follow offers between simulation steps. The rows are the
