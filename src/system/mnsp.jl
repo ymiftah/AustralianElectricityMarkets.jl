@@ -3,8 +3,17 @@
 
 Attaches both directional offers and availability series to each available MNSP interconnector.
 Standing `INTERCONNECTORCONSTRAINT.ICTYPE` data determines which interconnectors require offers.
+For the forward link, whose `FROMREGION` and `TOREGION` are the interconnector's from and to areas,
+the series are `"mnsp_forward_offer"`, a `SingleTimeSeries` of `PSY.PiecewiseStepData` (cumulative
+MW, `\$/MWh`, one step per band with a positive `BANDAVAIL`), and `"mnsp_forward_max_avail"`, the
+link's `MAXAVAIL` in MW; the opposite link gets `"mnsp_reverse_offer"` and
+`"mnsp_reverse_max_avail"`. The interconnector's `ext` records `"mnsp_forward"` and `"mnsp_reverse"`
+with the link's `link_id`, `from_region_tlf`, `to_region_tlf`, `lhs_factor` and `max_capacity`.
+
 Every link must have complete, valid inputs on the five-minute interval grid; missing or invalid
-inputs throw `ArgumentError` before any offers in `sys` are changed.
+inputs, or an `ICTYPE` that differs between the first and last interval, throw `ArgumentError`
+before any offers in `sys` are changed. Calling it again replaces earlier series, which requires
+`transform_single_time_series!` not to have run yet.
 
 # Arguments
 - `sys`: the `PSY.System` to add to.
@@ -31,7 +40,7 @@ function set_mnsp_offers!(sys, db, date_range)
     end_parameters = read_interconnector_loss_parameters(db, last(intervals))
     end_types = Dict(r.INTERCONNECTORID => r.ICTYPE for r in eachrow(end_parameters))
     all(name -> isequal(types[name], get(end_types, name, missing)), keys(devices)) ||
-        throw(ArgumentError("set_mnsp_offers!: ICTYPE changes within the range; split the replay at the change"))
+        throw(ArgumentError("set_mnsp_offers!: ICTYPE differs between the first and last interval; split the replay at the change"))
     required = sort!([name for name in keys(devices) if types[name] == "MNSP"])
     isempty(required) && return String[]
     tables = (:MNSP_INTERCONNECTOR, :MNSP_DAYOFFER, :MNSP_BIDOFFERPERIOD, :DISPATCH_MNSPBIDTRK)

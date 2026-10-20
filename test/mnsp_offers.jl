@@ -28,7 +28,7 @@
     @testset "an MNSP without offers fails instead of changing its formulation" begin
         sys2 = nem_system(db, RegionalNetworkConfiguration())
         later = DateTime(2030, 1, 1):Minute(5):DateTime(2030, 1, 1, 0, 10)
-        @test_throws ArgumentError set_mnsp_offers!(sys2, db, later)
+        @test_throws r"requires exactly one offer for every interval" set_mnsp_offers!(sys2, db, later)
         @test !has_time_series(get_component(AreaInterchange, sys2, "IC2"))
     end
 
@@ -60,28 +60,36 @@ end
             rm(joinpath(hive, string(table)); recursive = true)
             db = aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
             sys = nem_system(good_db, RegionalNetworkConfiguration())
-            @test_throws ArgumentError set_mnsp_offers!(sys, db, range)
+            @test_throws r"not cached" set_mnsp_offers!(sys, db, range)
             @test !has_time_series(get_component(AreaInterchange, sys, "IC2"))
         end
     end
 
     cases = [
-        (:DISPATCH_MNSPBIDTRK, "DELETE FROM input WHERE LINKID = 'BLNKVIC'"),
-        (:DISPATCH_MNSPBIDTRK, "DELETE FROM input WHERE SETTLEMENTDATE = TIMESTAMP '2025-01-01 12:00'"),
-        (:DISPATCH_MNSPBIDTRK, "DELETE FROM input"),
-        (:MNSP_DAYOFFER, "UPDATE input SET PRICEBAND1 = NULL"),
-        (:MNSP_BIDOFFERPERIOD, "UPDATE input SET MAXAVAIL = NULL"),
-        (:MNSP_BIDOFFERPERIOD, "UPDATE input SET BANDAVAIL1 = NULL"),
-        (:MNSP_BIDOFFERPERIOD, "UPDATE input SET BANDAVAIL1 = -1"),
-        (:MNSP_INTERCONNECTOR, "UPDATE input SET FROM_REGION_TLF = NULL"),
-        (:MNSP_INTERCONNECTOR, "UPDATE input SET TO_REGION_TLF = 0"),
-        (:MNSP_INTERCONNECTOR, "DELETE FROM input WHERE LINKID = 'BLNKVIC'"),
+        (:DISPATCH_MNSPBIDTRK, "DELETE FROM input WHERE LINKID = 'BLNKVIC'", r"requires exactly one offer for every interval"),
+        (:DISPATCH_MNSPBIDTRK, "DELETE FROM input WHERE SETTLEMENTDATE = TIMESTAMP '2025-01-01 12:00'", r"requires exactly one offer for every interval"),
+        (:DISPATCH_MNSPBIDTRK, "DELETE FROM input", r"DISPATCH_MNSPBIDTRK"),
+        (:MNSP_DAYOFFER, "UPDATE input SET PRICEBAND1 = NULL", r"invalid PRICEBAND1"),
+        (:MNSP_BIDOFFERPERIOD, "UPDATE input SET MAXAVAIL = NULL", r"invalid MAXAVAIL"),
+        (:MNSP_BIDOFFERPERIOD, "UPDATE input SET BANDAVAIL1 = NULL", r"invalid BANDAVAIL1"),
+        (:MNSP_BIDOFFERPERIOD, "UPDATE input SET BANDAVAIL1 = -1", r"invalid BANDAVAIL1"),
+        (:MNSP_INTERCONNECTOR, "UPDATE input SET FROM_REGION_TLF = NULL", r"invalid FROM_REGION_TLF"),
+        (:MNSP_INTERCONNECTOR, "UPDATE input SET TO_REGION_TLF = 0", r"invalid TO_REGION_TLF"),
+        (:MNSP_INTERCONNECTOR, "DELETE FROM input WHERE LINKID = 'BLNKVIC'", r"requires two registered directional links"),
+        (:INTERCONNECTORCONSTRAINT, "UPDATE input SET ICTYPE = NULL WHERE INTERCONNECTORID = 'IC2'", r"IC2 has no valid ICTYPE"),
+        (:INTERCONNECTORCONSTRAINT, "UPDATE input SET ICTYPE = 'OTHER' WHERE INTERCONNECTORID = 'IC2'", r"IC2 has no valid ICTYPE"),
+        (
+            :INTERCONNECTORCONSTRAINT,
+            "INSERT INTO input SELECT * REPLACE (TIMESTAMP '2025-01-01 12:00:00' AS EFFECTIVEDATE, 2 AS VERSIONNO, 'REGULATED' AS ICTYPE) " *
+                "FROM input WHERE INTERCONNECTORID = 'IC2'",
+            r"ICTYPE differs between the first and last interval",
+        ),
     ]
-    for (table, query) in cases
+    for (table, query, message) in cases
         @testset "$query" begin
             db = _mnsp_damaged_cache(table, query)
             sys = nem_system(good_db, RegionalNetworkConfiguration())
-            @test_throws ArgumentError set_mnsp_offers!(sys, db, range)
+            @test_throws message set_mnsp_offers!(sys, db, range)
             @test !has_time_series(get_component(AreaInterchange, sys, "IC2"))
         end
     end
@@ -90,7 +98,7 @@ end
         sys = nem_system(good_db, RegionalNetworkConfiguration())
         set_mnsp_offers!(sys, good_db, range)
         db = _mnsp_damaged_cache(:DISPATCH_MNSPBIDTRK, "DELETE FROM input WHERE LINKID = 'BLNKVIC'")
-        @test_throws ArgumentError set_mnsp_offers!(sys, db, range)
+        @test_throws r"requires exactly one offer for every interval" set_mnsp_offers!(sys, db, range)
         ic = get_component(AreaInterchange, sys, "IC2")
         @test get_time_series_values(SingleTimeSeries, ic, "mnsp_forward_max_avail") == [594.0, 400.0]
     end
@@ -100,5 +108,12 @@ end
         sys = nem_system(db, RegionalNetworkConfiguration())
         @test isempty(set_mnsp_offers!(sys, db, range))
         @test !has_time_series(get_component(AreaInterchange, sys, "IC2"))
+    end
+
+    @testset "regulated standing data needs no MNSP tables" begin
+        db = _mnsp_damaged_cache(:INTERCONNECTORCONSTRAINT, "UPDATE input SET ICTYPE = 'REGULATED'")
+        rm(joinpath(db.config.hive_location, "MNSP_DAYOFFER"); recursive = true)
+        sys = nem_system(good_db, RegionalNetworkConfiguration())
+        @test isempty(set_mnsp_offers!(sys, db, range))
     end
 end
