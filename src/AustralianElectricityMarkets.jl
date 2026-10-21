@@ -14,7 +14,7 @@ import InfrastructureSystems as IS
 
 export HiveConfiguration, list_available_tables, aem_connect
 export NetworkConfiguration, table_requirements, nem_system
-export RegionalNetworkConfiguration, ConstrainedNetworkConfiguration
+export RegionalNetworkConfiguration, ConstrainedNetworkConfiguration, ReplayNetworkConfiguration
 export set_mnsp_offers!, set_demand!, set_renewable_pv!, set_renewable_wind!,
     set_market_bids!, set_hydro_limits!
 export get_storage_energy_max_avail
@@ -81,7 +81,7 @@ include("system/constraints.jl")
 include("system/interconnectors.jl")
 include("system/RegionModel.jl")
 
-using .RegionModel: RegionalNetworkConfiguration, ConstrainedNetworkConfiguration
+using .RegionModel: RegionalNetworkConfiguration, ConstrainedNetworkConfiguration, ReplayNetworkConfiguration
 
 @doc (@doc AustralianElectricityMarketsCache.HiveConfiguration) HiveConfiguration
 @doc (@doc AustralianElectricityMarketsCache.aem_connect) aem_connect
@@ -89,5 +89,6 @@ using .RegionModel: RegionalNetworkConfiguration, ConstrainedNetworkConfiguratio
 @doc (@doc RegionModel.nem_system) nem_system
 @doc (@doc RegionModel.RegionalNetworkConfiguration) RegionalNetworkConfiguration
 @doc (@doc RegionModel.ConstrainedNetworkConfiguration) ConstrainedNetworkConfiguration
+@doc (@doc RegionModel.ReplayNetworkConfiguration) ReplayNetworkConfiguration
 
 end
