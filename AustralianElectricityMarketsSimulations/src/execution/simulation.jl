@@ -83,15 +83,14 @@ end
 
 
 # One range per chunk of `steps`: a chunk starts at the first step, at every 04:05 trading-day
-# start, at 00:05 on 1 July and, with a `Dates.Period` `chunk`, every `chunk` after its own start.
+# start and, with a `Dates.Period` `chunk`, every `chunk` after its own start.
 function _range_chunks(steps::StepRange{DateTime}, chunk::Union{Symbol, Dates.Period})
     _check_chunk(chunk)
     starts = DateTime[]
     for t in steps
         starts_trading_day = Time(t) == Time(4, 5)
-        starts_financial_year = month(t) == 7 && day(t) == 1 && Time(t) == Time(0, 5)
         periodic = chunk isa Dates.Period && !isempty(starts) && t - last(starts) >= chunk
-        (isempty(starts) || starts_trading_day || starts_financial_year || periodic) && push!(starts, t)
+        (isempty(starts) || starts_trading_day || periodic) && push!(starts, t)
     end
     stops = [starts[2:end] .- DISPATCH_INTERVAL; last(steps)]
     return [a:DISPATCH_INTERVAL:b for (a, b) in zip(starts, stops)]
@@ -171,8 +170,8 @@ Replays the historical NEM dispatch intervals `start:5 minutes:stop` and compare
 published outcome. Each chunk of the range is one `PowerSimulations.Simulation`: a one-interval
 [`replication_template`](@ref) model is built once on a [`replication_system`](@ref) over the chunk
 and stepped through its intervals, its parameters updating at each step, and every step starts from
-the interval's published `INITIALMW`. A chunk starts at `start`, at every 04:05 trading-day start, at
-00:05 on 1 July and, with a `Dates.Period` `chunk`, every `chunk` after its own start. Each chunk
+the interval's published `INITIALMW`. A chunk starts at `start`, at every 04:05 trading-day start and,
+with a `Dates.Period` `chunk`, every `chunk` after its own start. Each chunk
 leaves out the generic constraints invoked at none of its intervals, prices every violation at each
 interval's own Market Price Cap, and checks before its build
 that its intervals share the same price-tied band pairs

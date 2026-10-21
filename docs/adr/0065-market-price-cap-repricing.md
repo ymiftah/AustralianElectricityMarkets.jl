@@ -31,9 +31,10 @@ were re-priced per step, and only for their `invoked` mask.
 - PSI 0.38.4 looks up a device model for the parameter's component type, and `PSY.Area` has none.
   `psi_compat.jl` overrides the private `_update_parameter_values!` for `PSY.Area` and this
   parameter only.
-- `replicate_range` no longer rejects a chunk that crosses a Market Price Cap change. It still
-  starts a new chunk at 00:05 on 1 July, because loss factors, and with them the price-tied band
-  pairs, change with the financial year (0061).
+- `replicate_range` no longer rejects a chunk that crosses a Market Price Cap change, and no longer
+  starts a chunk at 00:05 on 1 July (0061): chunks start only at trading-day starts (the interval
+  ending 04:05), every `chunk` period, and at the first step. A chunk whose price-tied band pairs
+  differ between steps still fails `check_tie_break_pairs`.
 
 ## Consequences
 
