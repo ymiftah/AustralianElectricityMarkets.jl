@@ -1,4 +1,4 @@
-# 0065. AEM owns database-backed system construction
+# 0066. AEM owns database-backed system construction
 
 ## Status
 
@@ -35,7 +35,7 @@ cache access in coverage checks and the range runner, making the package boundar
 ## Model behaviour
 
 This is an ownership refactor. Dispatch, FCAS, loss, energy-limit, storage and offer-band
-formulations are unchanged, including their bounds, penalty factors, units and initial-condition
+formulations from the existing stack, including #218 repricing, are preserved, including their bounds, penalty factors, units and initial-condition
 semantics. The same AEM setters populate the same source data in the same order. Preparing a
 system uses the existing effective-offer and tie-break calculations and one-interval windows.
 There is no new departure from AEMO's model.
@@ -53,4 +53,13 @@ selection and optional flow limits. Existing toy-system recurrent solves and the
 script comparisons retain their coverage, including chunk splitting and missing solved values.
 
 The API change is intentional: no database-taking forwarding shim remains in AEMSim. This
-change is stacked above #217 and does not rewrite #213 through #217.
+change is stacked above #218 and does not rewrite #213 through #218.
+
+## Stack integration
+
+The #218 branch was based on the earlier #217 history. This integration retains the later
+exclusion, FCAS omission and positive-MPC validation fixes and their regressions while keeping
+the per-step repricing from #218. AEMSim no longer requires one MPC across a simulation range.
+Repository scripts still split at the financial year because their AEM constructor attaches
+static loss metadata as of the chunk's first timestamp; dynamic penalty repricing does not
+refresh that system data.

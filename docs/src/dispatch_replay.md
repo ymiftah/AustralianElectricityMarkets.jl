@@ -52,7 +52,7 @@ data and transforms single time series into five-minute forecast windows. Call i
 system with at least two input timestamps. `replication_simulation` returns an unbuilt
 `PSI.Simulation`; the caller controls building, execution and result access.
 
-The constructor checks input coverage, compatible tie-break pairs, one Market Price Cap,
+The constructor checks input coverage, compatible tie-break pairs,
 FCAS services and dispatch envelopes. Its `parts` keyword selects from `REPLICATION_PARTS`.
 Pass a vector through `skipped` to collect constraints omitted from the template.
 

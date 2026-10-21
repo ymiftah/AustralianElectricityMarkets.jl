@@ -58,8 +58,8 @@ end
     _container_market_price_cap(container, t::DateTime) -> Float64
 
 The `"market_price_cap"` entry of the model's `PSI.get_ext(PSI.get_settings(model))`, or
-[`_financial_year_mpc`](@ref)`(t)` if unset. Prices PSI's own area-balance slack, and is the
-fallback of [`_market_price_cap`](@ref).
+[`_financial_year_mpc`](@ref)`(t)` if unset. The cap of every penalty priced by
+[`_add_mpc_penalty!`](@ref), and the fallback of [`_service_market_price_cap`](@ref).
 
 # Arguments
   - `container`: the `PSI.OptimizationContainer` being built.
@@ -71,18 +71,6 @@ A finite, strictly positive `\$/MWh` value; invalid overrides throw `ArgumentErr
 function _container_market_price_cap(container::PSI.OptimizationContainer, t::DateTime)
     rate = get(PSI.get_ext(PSI.get_settings(container)), "market_price_cap", nothing)
     return _checked_market_price_cap(isnothing(rate) ? _financial_year_mpc(t) : rate)
-end
-
-
-"""
-    _market_price_cap(container, model, t::DateTime) -> Float64
-
-The `"market_price_cap"` attribute of `model`, or [`_container_market_price_cap`](@ref)`(container, t)`
-if unset. Invalid overrides throw `ArgumentError`.
-"""
-function _market_price_cap(container::PSI.OptimizationContainer, model::PSI.ServiceModel, t::DateTime)
-    rate = PSI.get_attribute(model, "market_price_cap")
-    return isnothing(rate) ? _container_market_price_cap(container, t) : _checked_market_price_cap(rate)
 end
 
 
@@ -583,11 +571,12 @@ function PSI.objective_function!(
     invoked_values = PSI.get_parameter_array(param)
     penalties = PSI.get_multiplier_array(param)
     invoked = _invoked_mask(container, gc)
+    _set_service_mpc_rate!(container, name, PSI.get_attribute(model, "market_price_cap"))
     for t in time_steps
-        mpc = _market_price_cap(container, model, initial_time + resolution * (t - 1))
-        penalties[name, t] = base_power * interval_cost_coefficient(weight * mpc, resolution)
+        penalties[name, t] = base_power * interval_cost_coefficient(weight, resolution)
         invoked_values[name, t] = invoked[t]
-        _add_gc_slack_costs!(container, gc, invoked_values, penalties, t)
+        mpc = _service_market_price_cap(container, name, initial_time + resolution * (t - 1))
+        _add_gc_slack_costs!(container, gc, invoked_values, penalties, t, mpc)
     end
     return
 end
@@ -595,9 +584,9 @@ end
 
 # Adds `gc`'s slacks at step `t` to the variant objective at `invoked x penalty` per unit; nothing
 # when that is zero, which leaves the row vacuous.
-function _add_gc_slack_costs!(container::PSI.OptimizationContainer, gc::GenericConstraint, invoked_values, penalties, t::Int)
+function _add_gc_slack_costs!(container::PSI.OptimizationContainer, gc::GenericConstraint, invoked_values, penalties, t::Int, mpc::Real)
     name = PSY.get_name(gc)
-    cost = invoked_values[name, t] * penalties[name, t]
+    cost = invoked_values[name, t] * penalties[name, t] * mpc
     iszero(cost) && return
     for var_type in (GenericConstraintSlackUp, GenericConstraintSlackDown)
         PSI.has_container_key(container, var_type, GenericConstraint, name) || continue
@@ -624,9 +613,11 @@ function PSI.handle_variable_cost_parameter(
         initial_forecast_time::DateTime, horizon::Int,
     )
     invoked = _invoked_mask(container, gc, initial_forecast_time)
+    resolution = PSI.get_resolution(container)
     for t in 1:horizon
         parameter_array[name, t] = invoked[t]
-        _add_gc_slack_costs!(container, gc, parameter_array, parameter_multiplier, t)
+        mpc = _service_market_price_cap(container, name, initial_forecast_time + resolution * (t - 1))
+        _add_gc_slack_costs!(container, gc, parameter_array, parameter_multiplier, t, mpc)
     end
     return
 end

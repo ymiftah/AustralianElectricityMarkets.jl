@@ -305,7 +305,7 @@ end
     _add_unit_ramp_slack!(container, var_type, T, names, time_steps)
 
 Builds a non-negative slack variable of `var_type` per `(name, t)` and prices it in the objective
-at [`UNIT_RAMP_CVP_FACTOR`](@ref) times the Market Price Cap ([`_container_market_price_cap`](@ref))
+at [`UNIT_RAMP_CVP_FACTOR`](@ref) times the Market Price Cap ([`_add_mpc_penalty!`](@ref))
 for the interval, in `\$/MW` per dispatch interval. The variable is in system-base per-unit, like
 the ramp row it relaxes.
 
@@ -327,7 +327,7 @@ end
     _add_cvp_slack!(container, var_type, T, names, time_steps, cvp_factor)
 
 Builds a non-negative slack variable of `var_type` per `(name, t)` and prices it in the objective
-at `cvp_factor` times the Market Price Cap ([`_container_market_price_cap`](@ref)) for the
+at `cvp_factor` times the Market Price Cap ([`_add_mpc_penalty!`](@ref)) for the
 interval, in `\$/MW` per dispatch interval. The variable is in system-base per-unit.
 
 # Arguments
@@ -342,18 +342,11 @@ The slack variable container.
 """
 function _add_cvp_slack!(container::PSI.OptimizationContainer, var_type, ::Type{T}, names, time_steps, cvp_factor::Real) where {T}
     jm = PSI.get_jump_model(container)
-    resolution = PSI.get_resolution(container)
-    initial_time = PSI.get_initial_time(container)
-    base_power = PSI.get_base_power(container)
     slack = PSI.add_variable_container!(container, var_type(), T, names, time_steps)
-    for t in time_steps
-        mpc = _container_market_price_cap(container, initial_time + resolution * (t - 1))
-        coefficient = base_power * interval_cost_coefficient(cvp_factor * mpc, resolution)
-        for name in names
-            slack[name, t] = JuMP.@variable(jm, base_name = "$(nameof(var_type))_{$name,$t}", lower_bound = 0.0)
-            PSI.add_to_objective_invariant_expression!(container, slack[name, t] * coefficient)
-        end
+    for t in time_steps, name in names
+        slack[name, t] = JuMP.@variable(jm, base_name = "$(nameof(var_type))_{$name,$t}", lower_bound = 0.0)
     end
+    _add_mpc_penalty!(container, slack, names, time_steps, cvp_factor)
     return slack
 end
 

@@ -130,17 +130,11 @@ end
     for cap in (0.0, -1.0, Inf, -Inf, NaN)
         settings["market_price_cap"] = cap
         @test_throws ArgumentError AEMS._container_market_price_cap(container, TOY_START)
-        service_model = PSI.ServiceModel(
-            GenericConstraint, LinearFactorLimit, "N_CAP";
-            attributes = Dict{String, Any}("market_price_cap" => cap),
-        )
-        @test_throws ArgumentError AEMS._market_price_cap(container, service_model, TOY_START)
+        @test_throws ArgumentError AEMS._set_service_mpc_rate!(container, "N_CAP", cap)
+        @test_throws ArgumentError AEMS._add_mpc_penalty!(container, zeros(0, 1), String[], 1:1, 155.0; rate = cap)
     end
     settings["market_price_cap"] = 12345.0
     @test AEMS._container_market_price_cap(container, TOY_START) == 12345.0
-    service_model = PSI.ServiceModel(
-        GenericConstraint, LinearFactorLimit, "N_CAP";
-        attributes = Dict{String, Any}("market_price_cap" => 23456.0),
-    )
-    @test AEMS._market_price_cap(container, service_model, TOY_START) == 23456.0
+    AEMS._set_service_mpc_rate!(container, "N_CAP", 23456.0)
+    @test AEMS._service_market_price_cap(container, "N_CAP", TOY_START) == 23456.0
 end

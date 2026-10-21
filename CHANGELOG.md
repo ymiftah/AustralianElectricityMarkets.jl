@@ -133,6 +133,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Violation penalties are repriced at each simulation step's Market Price Cap through
+  `MarketPriceCapPenaltyParameter`, preserving per-service overrides. System-only simulations
+  may cross a cap change; repository replay scripts still rebuild at static-data boundaries.
 - `ReplayNetworkConfiguration` builds fully populated replay systems through AEM's `nem_system`.
   AEMSim's `prepare_replication!`, `replication_simulation` and `replication_results` consume built
   systems and expose the standard PSI build, execute and results lifecycle.
@@ -143,7 +146,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stock PowerSimulations `Simulation` per chunk, stepping a one-interval replication model whose
   parameters update between intervals. Chunks break at every trading-day start (04:05), at 00:05 on
   1 July and every `chunk` period; each chunk leaves out the generic constraints it never invokes
-  and runs `check_tie_break_pairs`, a single-Market-Price-Cap check, `check_fcas_services` and
+  and runs `check_tie_break_pairs`, `check_fcas_services` and
   `check_dispatch_envelope` before its build. It returns the per-interval comparison with the
   published outcome, constraint violations, solver statistics and each chunk's reopened results.
   `scripts/replicate_range.jl` prints the comparison for a range.

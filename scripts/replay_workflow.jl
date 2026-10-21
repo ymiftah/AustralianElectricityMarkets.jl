@@ -154,8 +154,8 @@ published outcome. Each chunk of the range is one `PowerSimulations.Simulation`:
 and stepped through its intervals, its parameters updating at each step, and every step starts from
 the interval's published `INITIALMW`. A chunk starts at `start`, at every 04:05 trading-day start, at
 00:05 on 1 July and, with a `Dates.Period` `chunk`, every `chunk` after its own start. Each chunk
-leaves out the generic constraints invoked at none of its intervals, and checks before its build
-that its intervals share one Market Price Cap, the same price-tied band pairs
+leaves out the generic constraints invoked at none of its intervals, prices violations at each
+interval's Market Price Cap, and checks before its build that its intervals share the same price-tied band pairs
 ([`check_tie_break_pairs`](@ref)) and a feasible dispatch envelope ([`check_dispatch_envelope`](@ref)).
 
 # Arguments

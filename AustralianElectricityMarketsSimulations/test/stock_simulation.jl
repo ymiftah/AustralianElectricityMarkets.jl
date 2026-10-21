@@ -165,10 +165,6 @@ end
 end
 
 @testset "argument checks" begin
-    # The 2024-25 and 2025-26 Market Price Caps are 17,500 and 20,300.
-    # The interval ending 00:00 on 1 July is the previous financial year's.
-    @test isnothing(AEMS._check_single_market_price_cap(DateTime(2025, 6, 30, 23, 55):TOY_RESOLUTION:DateTime(2025, 7, 1)))
-    @test_throws ArgumentError AEMS._check_single_market_price_cap(DateTime(2025, 7, 1):TOY_RESOLUTION:DateTime(2025, 7, 1, 0, 5))
     @test_throws ArgumentError AEMS._replication_simulation(sentinel_system(), STOCK_STEPS; parts = (:nonsense,))
     @test_throws ArgumentError replication_template(sentinel_system(); parts = (:nonsense,))
 end
