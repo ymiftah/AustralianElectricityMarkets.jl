@@ -31,7 +31,8 @@ recorded as regional prices. Price-tied energy bands are dispatched pro rata by 
   `:unmodeled_device_type`.
 - `parts`: the [`REPLICATION_PARTS`](@ref) to model; default all.
 - `exclude_constraints`: a `Dict` from the names of `GenericConstraint`s of `sys` to leave out to
-  the `reason` each is recorded with in `skipped`; default empty.
+  the `reason` each is recorded with in `skipped`; default empty. These constraints are excluded
+  before term buildability is checked.
 
 # Returns
 A `PSI.ProblemTemplate`. Throws `ArgumentError` before model construction on an unknown part, an
@@ -58,6 +59,10 @@ function replication_template(
     :losses in parts && PSI.set_device_model!(template, PSY.AreaInterchange, NEMInterconnectorLoss)
     if :fcas in parts
         for svc in PSY.get_components(FCASService, sys)
+            if !(:batteries in parts)
+                devices = filter(PSY.get_available, PSY.get_contributing_devices(sys, svc))
+                !isempty(devices) && all(d -> d isa PSY.Storage, devices) && continue
+            end
             name = PSY.get_name(svc)
             PSI.set_service_model!(
                 template, name,
@@ -129,7 +134,21 @@ function _set_generic_constraint_models!(
     )
     tolerated = _left_out_part_reasons(parts)
     rows = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
-    buildable = filter_buildable_generic_constraints(sys, template; allow_partial_coverage = !isempty(tolerated), skipped = rows)
+    excluded = similar(rows, 0)
+    candidates = GenericConstraint[]
+    for gc in PSY.get_components(GenericConstraint, sys)
+        PSY.get_available(gc) || continue
+        name = PSY.get_name(gc)
+        if haskey(exclude_constraints, name)
+            push!(excluded, (constraint = name, reason = exclude_constraints[name], n_missing = 0))
+        else
+            push!(candidates, gc)
+        end
+    end
+    buildable = _filter_buildable_generic_constraints(
+        sys, template, candidates; allow_partial_coverage = !isempty(tolerated), skipped = rows,
+        tolerated_reasons = tolerated,
+    )
     blocking = [r for r in rows if r.reason != :no_available_device && !(r.reason in tolerated)]
     isempty(blocking) || throw(
         ArgumentError(
@@ -137,13 +156,11 @@ function _set_generic_constraint_models!(
                 "$(join(("$(r.constraint) ($(r.reason))" for r in blocking), ", ")).",
         ),
     )
+    append!(rows, excluded)
+    sort!(rows; by = r -> r.constraint)
     isnothing(skipped) || append!(skipped, rows)
     for gc in buildable
         name = PSY.get_name(gc)
-        if haskey(exclude_constraints, name)
-            isnothing(skipped) || push!(skipped, (constraint = name, reason = exclude_constraints[name], n_missing = 0))
-            continue
-        end
         PSI.set_service_model!(
             template, name,
             PSI.ServiceModel(

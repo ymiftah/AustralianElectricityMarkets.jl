@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Replay excludes explicitly omitted and never-invoked generic constraints before checking their
+  buildability, preserves their skip reasons, and reports missing components even when another
+  term uses an omitted model family. FCAS pre-flight checks respect omitted battery models.
+- Market Price Cap overrides at model and service level must be finite and strictly positive,
+  preventing zero-cost violation slacks and negative unbounded violation costs.
+
 - For interconnectors carrying paired directional MNSP offers, DC losses are supplied by the active
   sending area (`-from_tlf * (q + loss)`) using its terminal loss factor, instead of the static
   regional loss share. New `MNSPLinkLossVariable`. Interconnectors without directional offers keep

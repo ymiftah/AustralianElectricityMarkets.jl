@@ -48,7 +48,7 @@ function _build_range_simulation(
     exclude = :generic_constraints in parts ? _never_invoked_constraints(sys, steps) : Dict{String, Symbol}()
     template = replication_template(sys; skipped = template_skipped, parts = parts, exclude_constraints = exclude)
     skipped_constraints = DataFrame(template_skipped)
-    check_fcas_services(sys, template)
+    check_fcas_services(sys, template; excluded_device_types = :batteries in parts ? () : (PSY.Storage,))
     check_dispatch_envelope(sys, template, first(steps), length(steps))
     model = _replication_decision_model(template, sys, first(steps); optimizer = optimizer, name = name)
     models = PSI.SimulationModels(; decision_models = [model])
@@ -130,7 +130,7 @@ function _replicate_chunk(
         time_series_in_memory::Bool, time_series_directory, cache_size_mib,
     )
     t0 = time()
-    ts_directory = something(time_series_directory, joinpath(folder, "time_series"))
+    ts_directory = time_series_in_memory ? nothing : something(time_series_directory, joinpath(folder, "time_series"))
     time_series_in_memory || mkpath(ts_directory)
     sys = replication_system(
         db, first(steps):DISPATCH_INTERVAL:(last(steps) + _REPLICATION_HORIZON);

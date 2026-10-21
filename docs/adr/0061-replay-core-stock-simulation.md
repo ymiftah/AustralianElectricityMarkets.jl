@@ -59,7 +59,17 @@ Some model structure is fixed at build and cannot follow a step:
   `:batteries` throws when a battery carries tie-break scales, since the scales of a tie group are
   relative to its widest band, which may be the battery's.
 - `exclude_constraints` defaults to an empty `Dict`, and a name that is not a generic constraint of
-  the system throws.
+  the system throws. Exclusions are applied before term checks and preserve their requested skip
+  reason. Among remaining constraints, a failure outside the omitted families takes precedence
+  over a tolerated failure, independently of term order. FCAS pre-flight checks exclude storage
+  contributors only when `parts` deliberately omits batteries; standalone checks remain strict.
+  A battery-only FCAS service is omitted with them, and its constraint references are diagnosed
+  through the omitted contributor types rather than as a missing FCAS model.
+- Model-level and service-level Market Price Cap overrides must be finite and strictly positive.
+  This keeps every active violation penalty positive without changing the published cap schedule
+  or the linear formulation. AEMC's *Schedule of reliability settings, 2026-27 financial year*
+  (27 February 2026, p. 1) publishes positive caps of $20,300/MWh for 2025-26 and $23,200/MWh for
+  2026-27. This is configuration validation, with no departure from the published cost terms.
 - **No per-run parameter-storage switch.** PSI decides which parameters a simulation store keeps
   through the type-level `should_write_resulting_value`, so a per-call switch needs process-global
   state, which #196 used and review rejected. The replay keeps PSI's default (time-series
