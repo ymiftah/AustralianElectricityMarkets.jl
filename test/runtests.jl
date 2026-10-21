@@ -22,7 +22,7 @@ create_pscb_nemweb_data(AEM_TEST_PSCB_HIVE_DIR)
 # to run only those, e.g. `Pkg.test(; test_args = ["fcas", "timeseries_setters"])`.
 const TEST_GROUPS = [
     "package_boundaries" => ("Package boundaries", ["package_boundaries.jl"]),
-    "raw_readers" => ("Raw reader tests", ["readers/raw.jl"]),
+    "raw_readers" => ("Raw reader tests", ["readers/raw.jl", "readers/intervals.jl"]),
     "isp" => ("ISP reader tests", ["readers/isp.jl"]),
     "datareader" => ("Data reader tests", ["datareader.jl"]),
     "network_models" => (

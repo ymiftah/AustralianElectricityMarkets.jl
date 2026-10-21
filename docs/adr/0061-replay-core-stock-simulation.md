@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted. Package ownership and replay entry points are superseded by
+[0065](0065-replay-system-package-boundary.md). Other model and execution decisions remain in force.
 
 ## Context
 

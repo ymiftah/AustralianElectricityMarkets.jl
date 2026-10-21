@@ -1,10 +1,19 @@
 module AustralianElectricityMarketsSimulations
 
-using AustralianElectricityMarkets
+import AustralianElectricityMarkets
+using AustralianElectricityMarkets: BidType, ConstraintSense, EnergyTieBreak, FCASService, FCASTrapezium,
+    FCAS_REGULATION_MARKETS, GenericConstraint, InterconnectorLossModel, InterconnectorTerm,
+    IntervalInputs, RegionTerm, UnitTerm, fcas_service_name, get_bid_type, get_constraint_weight,
+    get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_enablement_max,
+    get_enablement_min, get_energy_availability, get_factor, get_fcas_agc_ramp_capability,
+    get_fcas_agc_status, get_fcas_offer_curve, get_fcas_requirements, get_initial_mw, get_interconnector,
+    get_lower_slope_coeff, get_max_avail, get_missing_constraint_intervals, get_region,
+    get_scaled_fcas_trapezium, get_sense, get_service, get_skipped_constraints,
+    get_storage_energy_max_avail, get_terms, get_upper_slope_coeff, loss_curve_vertex_values,
+    loss_segments, scale_fcas_trapezium
 using Chain
 using DataFrames
 using Dates
-using DuckDB
 using HiGHS
 using HydroPowerSimulations
 using JuMP
@@ -53,17 +62,16 @@ include("preprocessing/tie_break.jl")
 include("checks/tie_break.jl")
 include("checks/replay_inputs.jl")
 include("preprocessing/inputs.jl")
+include("preprocessing/replication.jl")
 include("execution/replication.jl")
 include("execution/simulation.jl")
 
-using AustralianElectricityMarkets.Readers: read_uigf_as_dict
 @doc (@doc AustralianElectricityMarkets.IntervalInputs) IntervalInputs
-@doc (@doc AustralianElectricityMarkets.Readers.read_interval_inputs) read_interval_inputs
-@doc (@doc AustralianElectricityMarkets.Readers.read_published_interval) read_published_interval
 
 export DISPATCH_INTERVAL_HOURS, DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
-export IntervalInputs, read_interval_inputs, read_published_interval
-export REPLICATION_PARTS, replication_template, replication_system, replicate_range
+export IntervalInputs
+export REPLICATION_PARTS, replication_template
+export prepare_replication!, replication_simulation, replication_results
 export ENERGY_OFFER_CVP_FACTOR, EnergyOfferSurplusSlack, EnergyOfferDeficitSlack,
     EnergyDecrementalOfferSurplusSlack, EnergyDecrementalOfferDeficitSlack
 export EnergyMaxAvailOutConstraint, EnergyMaxAvailInConstraint, EnergyMaxAvailOutSlack, EnergyMaxAvailInSlack

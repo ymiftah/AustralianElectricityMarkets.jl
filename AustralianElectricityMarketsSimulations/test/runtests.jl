@@ -28,7 +28,6 @@ write_mock_interconnector_results(AEM_TEST_REPLAY_HIVE_DIR)
 # only those, e.g. `julia --project=test test/runtests.jl fcas_market preprocessing`.
 const TEST_GROUPS = [
     "time_basis" => ("Time basis", "time_basis.jl"),
-    "inputs" => ("Interval inputs", "inputs.jl"),
     "preprocessing" => ("Preprocessing", "preprocessing.jl"),
     "constraint_formulations" => ("Constraint formulations", "constraint_formulations.jl"),
     "psi_compat" => ("PSI compat", "psi_compat.jl"),
@@ -45,6 +44,7 @@ const TEST_GROUPS = [
     "energy_limits" => ("Elastic energy limits", "energy_limits.jl"),
     "pipeline" => ("Replication pipeline", "pipeline.jl"),
     "stock_simulation" => ("Stock simulation replay", "stock_simulation.jl"),
+    "replay_scripts" => ("Repository replay workflow", "../../test/scripts/replay_workflow.jl"),
 ]
 
 const SELECTED_GROUPS = let known = first.(TEST_GROUPS)

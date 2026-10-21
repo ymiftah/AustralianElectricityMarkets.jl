@@ -22,8 +22,8 @@ recorded as regional prices. Price-tied energy bands are dispatched pro rata by 
 `:losses` no `PSY.AreaInterchange` is modeled and the regions are uncoupled.
 
 # Arguments
-- `sys`: a `PSY.System` from `nem_system(db, ConstrainedNetworkConfiguration(); ...)`, after its
-  demand, bids, FCAS scaling inputs, dispatch limits and separate energy limits are set.
+- `sys`: a populated `PSY.System` with attached replay inputs, such as one created through
+  `ReplayNetworkConfiguration` and prepared with [`prepare_replication!`](@ref).
 - `skipped`: a vector that receives one `(constraint, reason, n_missing)` named tuple per generic
   constraint left out of the template, or `nothing`. `reason` is `:no_available_device` when all
   its contributing devices are unavailable, the `exclude_constraints` reason, or, when `parts`
@@ -169,70 +169,6 @@ function _set_generic_constraint_models!(
         )
     end
     return
-end
-
-
-# The span `replication_system` reads after the last interval it is built for.
-const _REPLICATION_HORIZON = 2DISPATCH_INTERVAL
-
-
-"""
-    replication_system(db, date_range; intervention = 0, interval_flow_limits = false,
-        time_series_in_memory = true, time_series_directory = nothing) -> PSY.System
-
-Builds the `System` [`replicate_range`](@ref) steps through: the constrained system from
-`nem_system(db, ConstrainedNetworkConfiguration(); ...)` over `date_range`, with demand,
-interconnector loss demand coefficients, bids, FCAS scaling inputs, dispatch limits, battery
-dispatch ceilings, effective FCAS offers, tie-break scales and MNSP offers set and the time series
-transformed into one-interval forecast windows, one per stamp of `date_range`.
-
-# Arguments
-- `db`: an `AEMDB` connection whose cache holds data over `date_range`.
-- `date_range`: a `StepRange{DateTime}` stepping by 5 minutes over at least two stamps.
-- `intervention`: 0 for the pricing run, 1 for the physical run. Applies to the constraint,
-  dispatch-limit, interconnector-limit and FCAS-scaling reads; demand, bids and MNSP offers carry no intervention run.
-- `interval_flow_limits`: bound each interconnector's flow by the published per-interval
-  `IMPORTLIMIT`/`EXPORTLIMIT` ([`set_interconnector_flow_limits!`](@ref)). Those limits are
-  computed after NEMDE's solve, so this pins flows to NEMDE's answer: a diagnostic, not for
-  validating flows. Default `false` (static limits).
-- `time_series_in_memory`: keep the time series in memory (`true`) or in a file.
-- `time_series_directory`: the directory of that file when `time_series_in_memory` is `false`;
-  `nothing` uses PowerSystems' default.
-
-# Returns
-A `PSY.System`. Throws an `ArgumentError` on a `date_range` that does not step by 5 minutes over
-at least two stamps, and before setting any input when a scheduled unit of the system lacks an
-energy offer, or a region its demand, at an interval of the range.
-"""
-function replication_system(
-        db, date_range::StepRange{DateTime}; intervention::Integer = 0, interval_flow_limits::Bool = false,
-        time_series_in_memory::Bool = true, time_series_directory::Union{Nothing, AbstractString} = nothing,
-    )
-    (step(date_range) == DISPATCH_INTERVAL && length(date_range) >= 2) || throw(
-        ArgumentError(
-            "replication_system: the date range must step by $DISPATCH_INTERVAL over at least two stamps, got $date_range.",
-        ),
-    )
-    resolution = DISPATCH_INTERVAL
-    storage = isnothing(time_series_directory) ? (;) : (; time_series_directory = time_series_directory)
-    sys = nem_system(
-        db, ConstrainedNetworkConfiguration(); date_range = date_range, intervention = intervention,
-        time_series_in_memory = time_series_in_memory, storage...,
-    )
-    _check_replay_energy_bid_coverage(sys, db, date_range; intervention = intervention)
-    set_demand!(sys, db, date_range; resolution = resolution)
-    set_loss_demand_coefficients!(sys)
-    set_market_bids!(sys, db, date_range; resolution = resolution)
-    set_fcas_scaling_inputs!(sys, db, date_range; intervention = intervention)
-    set_nem_dispatch_limits!(sys, db, date_range; intervention = intervention)
-    set_nem_energy_limits!(sys, db, date_range; intervention = intervention)
-    set_fcas_effective_offers!(sys)
-    set_tie_break_scales!(sys)
-    set_mnsp_offers!(sys, db, date_range)
-    interval_flow_limits &&
-        set_interconnector_flow_limits!(sys, db, date_range; intervention = intervention)
-    PSY.transform_single_time_series!(sys, DISPATCH_INTERVAL, resolution)
-    return sys
 end
 
 
@@ -393,7 +329,7 @@ function _read_balance_duals(results::PSI.SimulationProblemResults)
 end
 
 
-# The solved side of `_compare_to_published`, over every interval of `results`: `prices`
+# Solved output tables over every interval of `results`: `prices`
 # (`SETTLEMENTDATE`, `REGIONID`, `ROP`), `dispatch` (`DUID`, net `TOTALCLEARED`), `interconnectors`
 # (`INTERCONNECTORID`, `MWFLOW`, `MWLOSSES`) and `fcas_prices` ([`compute_fcas_prices`](@ref)).
 # With `:losses` in `parts`, the interchange flow and loss variables must be in `results`.
@@ -434,21 +370,25 @@ function _solved_tables(results, sys::PSY.System, parts)
 end
 
 
-# Every published row of `steps` with its solved value, `missing` where the model has none. Every
-# table is keyed by `SETTLEMENTDATE` and its own key column.
-function _compare_to_published(published, solved, steps)
-    at_steps(df) = filter(:SETTLEMENTDATE => in(Set(steps)), df)
-    compare(table, on) = leftjoin(
-        at_steps(published[table]), at_steps(solved[table]);
-        on = [:SETTLEMENTDATE, on], renamecols = "_published" => "_solved",
-    )
-    return (;
-        prices = compare(:prices, :REGIONID),
-        dispatch = compare(:dispatch, :DUID),
-        interconnectors = compare(:interconnectors, :INTERCONNECTORID),
-        fcas_prices = leftjoin(
-            at_steps(select(published.fcas_prices, :SETTLEMENTDATE, :REGIONID, :BIDTYPE, :ROP)),
-            at_steps(solved.fcas_prices); on = [:SETTLEMENTDATE, :REGIONID, :BIDTYPE], renamecols = "_published" => "_solved",
-        ),
-    )
+"""
+    replication_results(results, sys::PSY.System; parts = REPLICATION_PARTS) -> NamedTuple
+
+Extracts solved dispatch, prices, interconnector flows and constraint violations from PSI
+results using the system's attached component metadata.
+
+# Arguments
+- `results`: PSI optimisation or simulation problem results.
+- `sys`: the system used by the model.
+- `parts`: the [`REPLICATION_PARTS`](@ref) used by the model.
+
+# Returns
+A named tuple of `solved` tables, `constraint_violations` and `ramp_violations`.
+Throws when required model outputs are missing or regional price duals are non-finite.
+"""
+function replication_results(results, sys::PSY.System; parts = REPLICATION_PARTS)
+    _check_replication_parts(parts)
+    solved = _solved_tables(results, sys, parts)
+    _check_prices_finite(solved.prices)
+    constraint_violations = _constraint_violations(results, sys)
+    return (; solved, constraint_violations, ramp_violations = _ramp_violations(constraint_violations))
 end
