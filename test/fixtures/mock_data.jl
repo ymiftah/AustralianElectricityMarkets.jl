@@ -987,3 +987,38 @@ function create_versioned_static_data(src_dir::String, dst_dir::String)
     end
     return DuckDB.disconnect(conn)
 end
+
+
+# The interconnector results the interval readers need, added to a mock hive.
+function write_mock_interconnector_results(hive_root::String)
+    ddb = DuckDB.DB()
+    conn = DuckDB.connect(ddb)
+    DuckDB.execute(conn, "SET preserve_identifier_case=true")
+    interconnector_ids = ["IC$i" for i in 1:6]
+    base_datetime = DateTime(2025, 1, 1, 0, 0)
+    df = DataFrame()
+    for i in 0:48
+        t = base_datetime + Minute(5 * i)
+        append!(
+            df, DataFrame(
+                SETTLEMENTDATE = fill(t, length(interconnector_ids)),
+                INTERCONNECTORID = interconnector_ids,
+                MWFLOW = [100.0 * k + i for k in 1:length(interconnector_ids)],
+                MWLOSSES = [0.1 * k for k in 1:length(interconnector_ids)],
+                METEREDMWFLOW = [100.0 * k + i for k in 1:length(interconnector_ids)],
+                # Equal to the mock's static 500 MW limits, so they do not tighten any flow.
+                EXPORTLIMIT = fill(500.0, length(interconnector_ids)),
+                IMPORTLIMIT = fill(-500.0, length(interconnector_ids)),
+                archive_month = fill("2025-01", length(interconnector_ids)),
+            )
+        )
+    end
+    DuckDB.register_data_frame(conn, df, "tmp_table")
+    table_dir = joinpath(hive_root, "DISPATCHINTERCONNECTORRES")
+    mkpath(table_dir)
+    DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+    DuckDB.unregister_table(conn, "tmp_table")
+    DuckDB.disconnect(conn)
+    DuckDB.close(ddb)
+    return
+end

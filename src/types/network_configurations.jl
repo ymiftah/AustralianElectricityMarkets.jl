@@ -28,3 +28,17 @@ struct RegionalNetworkConfiguration <: NetworkConfiguration end
   [`add_nem_constraints!`](@ref).
 """
 struct ConstrainedNetworkConfiguration <: NetworkConfiguration end
+
+
+"""
+    ReplayNetworkConfiguration()
+
+Constructs a constrained network with the demand, bids, dispatch inputs and loss data needed
+for historical dispatch simulation. Pass `date_range` to [`nem_system`](@ref).
+
+# Example
+```julia
+sys = nem_system(db, ReplayNetworkConfiguration(); date_range = start:Minute(5):stop)
+```
+"""
+struct ReplayNetworkConfiguration <: NetworkConfiguration end
