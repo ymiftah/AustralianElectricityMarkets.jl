@@ -1,11 +1,11 @@
 # A 60 MW conformance target competes with separate 40 MW bid and 45 MW forecast limits.
-function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, weight = 1160.0, initial = 60.0, down = 100.0, price = 20.0, rating = 100.0)
+function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, weight = 1160.0, initial = 60.0, down = 100.0, price = 20.0, rating = 100.0, start = TOY_START)
     return nem_toy_system(
         [
             TOY_CHEAP => toy_unit(100.0, [(100.0, price)]; initial, ramp_up = 100.0, ramp_down = down, availability = 45.0),
             TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 20.0, ramp_up = 100.0),
         ],
-        80.0; horizon = TOY_RESOLUTION,
+        80.0; horizon = TOY_RESOLUTION, start,
         mutate! = function (sys, stamps)
             cheap = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
             PSY.set_active_power_limits!(cheap, (min = 0.0, max = rating))
@@ -110,4 +110,21 @@ end
     template = replication_template(invalid)
     @test isnothing(check_dispatch_envelope(invalid, template, TOY_START, 1))
     @test_throws ArgumentError check_dispatch_envelope(invalid, template, TOY_START, 2)
+end
+
+@testset "penalty costs follow each interval's Market Price Cap across 1 July" begin
+    # The interval ending 00:00 on 1 July is the 2024-25 cap (17,500), the next the 2025-26 cap (20,300).
+    start = DateTime(2025, 7, 1)
+    steps = start:TOY_RESOLUTION:(start + TOY_RESOLUTION)
+    optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
+    sys = energy_limit_system(; max_avail = 40.0, start)
+    out = AEMS._replication_simulation(sys, steps; optimizer)
+    objectives = PSI.read_optimizer_stats(out.results).objective_value
+    for (i, t) in enumerate(steps)
+        model = AEMS._replication_decision_model(replication_template(sys), sys, t; optimizer)
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        @test objectives[i] ≈ only(PSI.read_optimizer_stats(PSI.OptimizationProblemResults(model)).objective_value) rtol = 1.0e-9
+    end
+    @test objectives[2] > objectives[1]
 end

@@ -92,17 +92,10 @@ function PSI.add_proportional_cost!(
         devices::Union{Vector{T}, IS.FlattenIteratorWrapper{T}}, ::AbstractNEMDispatch,
     ) where {S <: AbstractEnergyLimitSlack, T <: PSY.StaticInjection}
     isempty(devices) && return
-    variables = PSI.get_variable(container, slack, T)
-    resolution = PSI.get_resolution(container)
-    for t in PSI.get_time_steps(container)
-        time = PSI.get_initial_time(container) + (t - 1) * resolution
-        cost = PSI.get_base_power(container) * interval_cost_coefficient(
-            _energy_limit_cvp(slack) * _container_market_price_cap(container, time), resolution,
-        )
-        for d in devices
-            PSI.add_to_objective_invariant_expression!(container, variables[PSY.get_name(d), t] * cost)
-        end
-    end
+    _add_mpc_penalty!(
+        container, PSI.get_variable(container, slack, T), [PSY.get_name(d) for d in devices],
+        PSI.get_time_steps(container), _energy_limit_cvp(slack),
+    )
     return
 end
 
