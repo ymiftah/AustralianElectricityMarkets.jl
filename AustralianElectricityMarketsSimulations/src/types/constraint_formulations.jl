@@ -266,6 +266,17 @@ struct GenericConstraintSlackCostParameter <: PSI.ObjectiveFunctionParameter end
 
 
 """
+    MarketPriceCapPenaltyParameter
+
+Objective-function parameter that re-prices every Market Price Cap penalty slack recorded by
+`_add_mpc_penalty!` at each simulation step, each interval at its own Market Price Cap, so a
+model built once follows the cap across a financial year boundary. Registered on the `PSY.Area`
+components of the area balance.
+"""
+struct MarketPriceCapPenaltyParameter <: PSI.ObjectiveFunctionParameter end
+
+
+"""
     FCASJointRampingConstraint
 
 Constraint type for AEMO *FCAS Model in NEMDE* §6.1's joint ramping constraint, bounding a

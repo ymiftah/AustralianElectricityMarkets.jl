@@ -263,15 +263,34 @@ function PSI.objective_function!(
     variable_up = PSI.get_variable(container, PSI.SystemBalanceSlackUp(), PSY.Area)
     variable_dn = PSI.get_variable(container, PSI.SystemBalanceSlackDown(), PSY.Area)
     areas = PSY.get_name.(PSI.get_available_components(network_model, PSY.Area, sys))
-    resolution = PSI.get_resolution(container)
-    initial_time = PSI.get_initial_time(container)
-    base_power = PSI.get_base_power(container)
-    for t in PSI.get_time_steps(container)
-        mpc = _container_market_price_cap(container, initial_time + resolution * (t - 1))
-        coefficient = base_power * interval_cost_coefficient(AREA_BALANCE_CVP_FACTOR * mpc, resolution)
-        for n in areas
-            PSI.add_to_objective_invariant_expression!(container, (variable_dn[n, t] + variable_up[n, t]) * coefficient)
-        end
-    end
+    time_steps = PSI.get_time_steps(container)
+    _add_mpc_penalty!(container, variable_dn, areas, time_steps, AREA_BALANCE_CVP_FACTOR)
+    _add_mpc_penalty!(container, variable_up, areas, time_steps, AREA_BALANCE_CVP_FACTOR)
+    _register_mpc_repricing!(container, areas, time_steps)
     return nothing
+end
+
+
+"""
+    PSI._update_parameter_values!(parameter_array, ::MarketPriceCapPenaltyParameter, parameter_multiplier, attributes, ::Type{PSY.Area}, model, input)
+
+Override of `PowerSimulations.jl` 0.38.4's private objective-parameter update for the
+[`MarketPriceCapPenaltyParameter`](@ref) registered on `PSY.Area`, which has no device model for
+the generic method to look up. Re-prices every Market Price Cap penalty slack of the model for the
+step's window.
+
+# Returns
+`nothing`.
+"""
+function PSI._update_parameter_values!(
+        ::PSI.DenseAxisArray, ::MarketPriceCapPenaltyParameter, ::PSI.JuMPFloatArray,
+        ::PSI.CostFunctionAttributes, ::Type{PSY.Area}, model::PSI.DecisionModel,
+        ::PSI.DatasetContainer{PSI.InMemoryDataset},
+    )
+    container = PSI.get_optimization_container(model)
+    PSI.is_synchronized(container) && error(
+        "Cannot update MarketPriceCapPenaltyParameter on a synchronized container; objective expressions would be double-counted",
+    )
+    _reprice_mpc_penalties!(container, PSI.get_current_time(model), last(PSI.get_time_steps(container)))
+    return
 end

@@ -476,13 +476,14 @@ end
         AEMS.GenericConstraintSlackCostParameter(), gc, name, values, penalties, nothing, container, initial_time, 2,
     )
     @test [values[name, t] for t in 1:2] == [0.0, 1.0]
-    # The rebuilt cost: no term at the non-invoked step, exactly the penalty at the invoked one.
+    # The rebuilt cost: no term at the non-invoked step, the penalty per cap times that step's Market Price Cap at the invoked one.
+    mpc = AEMS._container_market_price_cap(container, initial_time + PSI.get_resolution(container))
     variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
     for slack_type in (AEMS.GenericConstraintSlackUp, AEMS.GenericConstraintSlackDown)
         PSI.has_container_key(container, slack_type, GenericConstraint, name) || continue
         slack = PSI.get_variable(container, slack_type(), GenericConstraint, name)
         @test PSI.JuMP.coefficient(variant, slack[name, 1]) == 0.0
-        @test PSI.JuMP.coefficient(variant, slack[name, 2]) == penalties[name, 2]
+        @test PSI.JuMP.coefficient(variant, slack[name, 2]) ≈ penalties[name, 2] * mpc
     end
 
     # A recurrent build masks non-invoked intervals with zero-cost slacks, so it needs use_slacks.

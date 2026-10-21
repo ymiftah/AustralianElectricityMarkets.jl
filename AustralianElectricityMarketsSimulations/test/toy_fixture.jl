@@ -70,12 +70,13 @@ end
 # `mutate!(sys, stamps)`, when given, runs just before the fixture's
 # `transform_single_time_series!`, so it can attach raw two-timestamp series of its own.
 # Unit fields except `capacity`, and `load_mw`, take a scalar or one value per stamp;
-# `horizon` is the transform horizon. With `ceilings` (default), the batteries' dispatch ceilings
+# `horizon` is the transform horizon and `start` the first of the two stamps. With `ceilings` (default), the batteries' dispatch ceilings
 # are attached after `mutate!`, and with `tie_break_scales` (default) the tie-break scales. `interchange` (a `toy_interchange`) keeps area 2 and joins it to
 # area 1 through `TOY_INTERCHANGE`, whose loss demand coefficients are attached after `mutate!`.
 function nem_toy_system(
         units, load_mw; batteries = Pair{String, Any}[], loads = Pair{String, Any}[], mutate! = nothing,
         horizon = 2 * TOY_RESOLUTION, ceilings = true, interchange = nothing, tie_break_scales = true,
+        start = TOY_START,
     )
     sys = PSB.build_system(PSISystems, "5_bus_hydro_ed_sys")
     PSY.clear_time_series!(sys)
@@ -91,7 +92,7 @@ function nem_toy_system(
     end
 
     base_power = PSY.get_base_power(sys)
-    stamps = [TOY_START, TOY_START + TOY_RESOLUTION]
+    stamps = [start, start + TOY_RESOLUTION]
     function add_series!(component, name, value; multiplier = nothing)
         PSY.add_time_series!(
             sys, component,
@@ -106,7 +107,7 @@ function nem_toy_system(
     function add_forecast!(component, name, value)
         PSY.add_time_series!(
             sys, component,
-            AustralianElectricityMarkets._single_series(name, TOY_START, _toy_values(value, length(stamps)), TOY_RESOLUTION),
+            AustralianElectricityMarkets._single_series(name, start, _toy_values(value, length(stamps)), TOY_RESOLUTION),
         )
         return
     end
@@ -116,7 +117,7 @@ function nem_toy_system(
         PSY.set_active_power_limits!(gen, (min = 0.0, max = unit.capacity))
         AustralianElectricityMarkets._set_incremental_bid_cost!(
             sys, gen, (piecewise_step_data = _toy_offers(unit.bands, length(stamps)),),
-            TOY_START, TOY_RESOLUTION,
+            start, TOY_RESOLUTION,
         )
         add_series!(
             gen, "max_active_power", unit.availability ./ unit.capacity;
@@ -154,15 +155,15 @@ function nem_toy_system(
         gen_offer = PSY.PiecewiseStepData([0.0, bat.gen_capacity], [bat.gen_price])
         AustralianElectricityMarkets._set_incremental_bid_cost!(
             sys, battery, (piecewise_step_data = fill(gen_offer, length(stamps)),),
-            TOY_START, TOY_RESOLUTION,
+            start, TOY_RESOLUTION,
         )
         load_offer = PSY.PiecewiseStepData([0.0, bat.load_capacity], [bat.load_price])
         decr = AustralianElectricityMarkets._single_series(
-            "decremental_variable_cost", TOY_START, fill(load_offer, length(stamps)), TOY_RESOLUTION,
+            "decremental_variable_cost", start, fill(load_offer, length(stamps)), TOY_RESOLUTION,
         )
         PSY.set_decremental_variable_cost!(sys, battery, decr, PSY.UnitSystem.NATURAL_UNITS)
         decr_init = AustralianElectricityMarkets._single_series(
-            "decremental_initial_input", TOY_START, fill(0.0, length(stamps)), TOY_RESOLUTION,
+            "decremental_initial_input", start, fill(0.0, length(stamps)), TOY_RESOLUTION,
         )
         PSY.set_decremental_initial_input!(sys, battery, decr_init)
 
@@ -187,7 +188,7 @@ function nem_toy_system(
         offer = PSY.PiecewiseStepData([0.0, ld.capacity], [ld.price])
         AustralianElectricityMarkets._set_decremental_bid_cost!(
             sys, scheduled, (piecewise_step_data = fill(offer, length(stamps)),),
-            TOY_START, TOY_RESOLUTION,
+            start, TOY_RESOLUTION,
         )
         add_series!(
             scheduled, "max_active_power", ld.availability / ld.capacity;

@@ -956,7 +956,7 @@ const FCAS_BDU_RAMPING_CVP_FACTOR = 155.0
 
 When `PSI.get_use_slacks(model)`, builds a non-negative slack variable of `var_type` per
 `(name, t)` and prices it in the objective at `cvp_factor` times the Market Price Cap
-([`_market_price_cap`](@ref)) for the interval, in `\$/MW` per dispatch interval.
+([`_add_mpc_penalty!`](@ref)) for the interval, in `\$/MW` per dispatch interval.
 
 # Returns
 The slack variable container, or `nothing` when `use_slacks` is `false`.
@@ -967,18 +967,11 @@ function _add_fcas_slack!(
     )
     PSI.get_use_slacks(model) || return nothing
     jm = PSI.get_jump_model(container)
-    resolution = PSI.get_resolution(container)
-    initial_time = PSI.get_initial_time(container)
-    base_power = PSI.get_base_power(container)
     slack = PSI.add_variable_container!(container, var_type(), FCASService, names, time_steps; meta = meta)
-    for t in time_steps
-        mpc = _market_price_cap(container, model, initial_time + resolution * (t - 1))
-        coefficient = base_power * interval_cost_coefficient(cvp_factor * mpc, resolution)
-        for name in names
-            slack[name, t] = JuMP.@variable(jm, base_name = "$(nameof(var_type))_$(meta)_{$name,$t}", lower_bound = 0.0)
-            PSI.add_to_objective_invariant_expression!(container, slack[name, t] * coefficient)
-        end
+    for t in time_steps, name in names
+        slack[name, t] = JuMP.@variable(jm, base_name = "$(nameof(var_type))_$(meta)_{$name,$t}", lower_bound = 0.0)
     end
+    _add_mpc_penalty!(container, slack, names, time_steps, cvp_factor; rate = PSI.get_attribute(model, "market_price_cap"))
     return slack
 end
 

@@ -462,6 +462,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Violation penalties (unit ramp, energy availability and UIGF, storage availability, total energy
+  offer bands, FCAS, interconnector flow, area balance and generic constraints) are re-priced at each
+  simulation step from that interval's Market Price Cap, so `replicate_range` no longer rejects a
+  chunk that crosses a Market Price Cap change.
+
 - NEM energy dispatch can exceed total offered band MW through CVP1135 surplus/deficit
   variables, preserving submitted band prices, live widths and directional availability costs.
 
