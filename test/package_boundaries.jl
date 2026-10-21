@@ -24,6 +24,9 @@ using Logging
     data_deps = TOML.parsefile(joinpath(root, "AustralianElectricityMarketsData", "Project.toml"))["deps"]
     sim_deps = TOML.parsefile(joinpath(root, "AustralianElectricityMarketsSimulations", "Project.toml"))["deps"]
     @test !haskey(aem_deps, "AustralianElectricityMarketsData")
+    @test !haskey(aem_deps, "AustralianElectricityMarketsSimulations")
+    @test !haskey(aem_deps, "PowerSimulations")
+    @test !haskey(sim_deps, "DuckDB")
     @test !haskey(data_deps, "AustralianElectricityMarkets")
     @test !haskey(data_deps, "AustralianElectricityMarketsSimulations")
     @test !haskey(sim_deps, "AustralianElectricityMarketsData")

@@ -140,10 +140,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ReplayNetworkConfiguration` builds fully populated replay systems through AEM's `nem_system`.
+  AEMSim's `prepare_replication!`, `replication_simulation` and `replication_results` consume built
+  systems and expose the standard PSI build, execute and results lifecycle.
 - `read_energy_limits` and `set_nem_energy_limits!` retain separate energy bid `MAXAVAIL`,
   semi-scheduled `UIGF` and effective schedule classification, validating required inputs before
   attaching system-base time series.
-- `replicate_range(db, start, stop; parts, chunk, ...)` replays a range of dispatch intervals as one
+- The repository script helper `replicate_range(db, start, stop; parts, chunk, ...)` replays a range of dispatch intervals as one
   stock PowerSimulations `Simulation` per chunk, stepping a one-interval replication model whose
   parameters update between intervals. Chunks break at every trading-day start (04:05), at 00:05 on
   1 July and every `chunk` period; each chunk leaves out the generic constraints it never invokes
@@ -227,7 +230,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AreaBalancePowerModel` objective hook, so it needs `use_slacks = true`.
 - `read_interconnector_limits` and `set_interconnector_flow_limits!` read the per-interval
   `DISPATCHINTERCONNECTORRES` `EXPORTLIMIT`/`IMPORTLIMIT` and attach them as the flow-limit series
-  `NEMInterconnectorLoss` bounds flow by; `replication_system(...; interval_flow_limits = true)`
+  `NEMInterconnectorLoss` bounds flow by; `nem_system(db, ReplayNetworkConfiguration(); interval_flow_limits = true, ...)`
   applies them as an opt-in diagnostic (they are post-solve results and pin flows to NEMDE).
 - `read_units`, `read_interconnectors` and `nem_system` accept `as_of`, resolving the static
   tables (loss factors, flow limits) as in force at that instant.
@@ -245,16 +248,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   invoked constraint versions `add_nem_constraints!` did not build, and the skip warning carries
   the count by reason. `replicate_interval` returns a `skipped_constraints` table that also
   lists the constraints the template cannot model, and
-  `AustralianElectricityMarketsSimulations/scripts/diagnose_infeasible.jl` reports the solver
+  `scripts/diagnose_infeasible.jl` reports the solver
   status and conflicting constraint families for an interval that does not solve.
-- **Single-interval replication pipeline** (`AustralianElectricityMarketsSimulations`):
-  `replicate_interval(db, settlement_date)` builds the constrained `System`
-  (`replication_system`), solves it with `replication_template` (NEM dispatch devices,
-  `FCASMarket`, `LinearFactorLimit`, `NEMInterconnectorLoss`, `AreaBalancePowerModel` with
-  slacks) and returns solved against AEMO-published regional `ROP` (with `RRP`), `TOTALCLEARED`,
-  interconnector flows and losses, and FCAS prices, keeping every published row. `read_published_interval` reads the
-  published dispatch and interconnector results. `scripts/replicate_interval.jl` prints the
-  comparison from the local hive cache.
+- **Dispatch simulation and comparison:** AEM constructs the populated system through
+  `ReplayNetworkConfiguration`. AEMSim supplies `replication_template` and system-only simulation
+  utilities using NEM dispatch devices, `FCASMarket`, `LinearFactorLimit`, `NEMInterconnectorLoss`
+  and `AreaBalancePowerModel` with slacks. The repository workflow compares solved regional `ROP`
+  (with published `RRP`), `TOTALCLEARED`, interconnector flows and losses, and FCAS prices, keeping
+  every published row. AEM's `read_published_interval` reads the published outcomes;
+  `scripts/replicate_range.jl` prints the comparison from the local hive cache.
 - **Elastic FCAS joint rows and area-balance CVP pricing** (`AustralianElectricityMarketsSimulations`):
   with `use_slacks = true` on an `FCASMarket` `PSI.ServiceModel`, `FCASJointCapacityConstraint`
   rows get a `FCASJointCapacitySlack` (CVP factor 70, AEMO item 24) and `FCASJointRampingConstraint`
@@ -442,7 +444,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   downstream re-resolves. `_region_devices` moved from `src/constraints/build.jl` to the new
   `src/constraints/resolve.jl` alongside it.
 
-- **`IntervalInputs`/`read_interval_inputs`** (new `AustralianElectricityMarketsSimulations` package): Reads every NEMWEB input needed to reconstruct one historical dispatch interval in isolation — `DISPATCHLOAD.INITIALMW`/`UIGF`, `DISPATCHREGIONSUM.TOTALDEMAND`, rebid-resolved energy and FCAS bids, and `DISPATCHINTERCONNECTORRES.MWFLOW` — the foundation for the dispatch-replication harness that validates how closely `PowerSimulations.jl` reproduces NEMDE.
+- **`IntervalInputs`/`read_interval_inputs`** (`AustralianElectricityMarkets`): Reads every NEMWEB input needed to reconstruct one historical dispatch interval in isolation — `DISPATCHLOAD.INITIALMW`/`UIGF`, `DISPATCHREGIONSUM.TOTALDEMAND`, rebid-resolved energy and FCAS bids, and `DISPATCHINTERCONNECTORRES.MWFLOW` — the foundation for the dispatch-replication harness that validates how closely `PowerSimulations.jl` reproduces NEMDE.
 - **NEM constraint formulation scaffolding** (`AustralianElectricityMarketsSimulations`): `AbstractNEMConstraintFormulation`, `NEMConstraintLHS`/`NEMConstraintLimit`/`NEMConstraintRHSParameter`, `LinearFactorLimit`, and `FCASMarket` — the `PowerSimulations.jl` service-formulation types that later PRs drive `GenericConstraint`/`FCASService` through. No formulation logic yet.
 - **`LinearFactorLimit` formulation** (`AustralianElectricityMarketsSimulations/src/nem_constraints.jl`): drives a `GenericConstraint` through PSI's `ServiceModel` machinery for its energy terms (`InterconnectorTerm`, and `UnitTerm`/`RegionTerm` with `bid_type == BidType.ENERGY`) — assembling `NEMConstraintLHS` from the constraint's own stored terms in the `ModelConstructStage` and bounding it against the replayed `"rhs"` series with a sense-dispatching `NEMConstraintLimit`.
   A term whose `bid_type` isn't `ENERGY`, whose device is missing from the `System`, or whose device type the template doesn't model throws an `ArgumentError` naming the constraint and the reason, rather than silently dropping the constraint. An interval where the `"invoked"` series is `0.0` is never enforced: the cell holds a vacuous placeholder constraint instead, so it stays readable for PSI's dual read-back and its dual reads back as exactly `0.0`.
@@ -463,6 +465,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - `set_storage_dispatch_ceilings!` and the toy fixture's `ceilings` option: replay dispatch reads raw directional storage availability, so nothing consumes the derived `"storage_gen_ceiling"` and `"storage_load_ceiling"` series.
+- AEMSim's database-taking `replication_system` and `replicate_range` APIs, database-reader
+  re-exports and DuckDB runtime dependency. Construct systems through AEM and use top-level
+  repository scripts for cache orchestration and NEMDE comparisons.
 - `replicate_interval` (both methods) and `replication_system(db, settlement_date)`: every replay
   builds its model once and steps it through `replicate_range`. `scripts/replicate_interval.jl` is
   replaced by `scripts/replicate_range.jl`.
@@ -484,14 +489,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - NEM non-storage dispatch models raw bid MAXAVAIL and semi-scheduled UIGF as separate
   elastic limits at CVP370 and CVP385, with typed PSI surplus variables, constraints and costs.
 
-- Replay goes through `replicate_range` only, one interval included (`start == stop`): a model
-  built once per chunk and stepped. It reports a generic-constraint slack as a violation only at
-  intervals where the constraint is invoked. `replication_system` takes the replay `date_range`
-  and transforms its series into one-interval windows.
+- The repository replay workflow uses `replicate_range`, one interval included (`start == stop`):
+  a model built once per chunk and stepped. It reports a generic-constraint slack as a violation
+  only where the constraint is invoked. AEM's replay configuration takes the input `date_range`;
+  AEMSim's `prepare_replication!` transforms its attached series into one-interval windows.
 - `replication_template` throws, before building, on dispatch constraint intervals missing from the
   cache, skipped constraints, dropped unit terms, defaulted constraint weights, devices without
   dispatch-limit series and incomplete MNSP offers, instead of replaying a partial model.
-  `replication_system` first checks that every scheduled unit has an energy offer, and every region
+  AEM's replay configuration first checks that every scheduled unit has an energy offer, and every region
   demand, for each interval. Each error names the input to repopulate or the setter to call.
   `replicate_interval`'s `skipped_constraints` now has only `constraint`, `reason` and `n_missing`
   columns, since the only constraints left out are those with no available device.
@@ -516,7 +521,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   placeholder.
 - `NEMInterconnectorLoss` takes the demand term of each interval's loss factor as the flow's
   coefficient in the loss definition, driven by a `LossDemandCoefficientParameter` read from the
-  `"loss_demand_coefficient"` series, so it builds in recurrent simulations. `replication_system`
+  `"loss_demand_coefficient"` series, so it builds in recurrent simulations. AEM's replay constructor
   calls `set_loss_demand_coefficients!`; a model without that series fails to build.
 - MNSP link flows are modelled per offer band (`MNSPLinkBandVariable`) with band widths,
   availability and prices read from the `"mnsp_<direction>_*"` series as parameters, so offers can

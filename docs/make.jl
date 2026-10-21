@@ -58,6 +58,7 @@ makedocs(;
             "Gather data" => "examples/gather_data.md",
             "Build the system" => "examples/build_system.md",
             "Economic dispatch" => "examples/economic_dispatch.md",
+            "Dispatch replay" => "dispatch_replay.md",
             "Market clearing" => "examples/market_bids.md",
             "Market clearing with interchanges" => "examples/interchanges.md",
             "Market clearing with batteries" => "examples/clearing-with-batteries.md",

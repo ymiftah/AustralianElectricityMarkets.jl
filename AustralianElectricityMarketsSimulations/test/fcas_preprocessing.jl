@@ -18,7 +18,7 @@ function build_time_offer(device, bid_type, direction, decremental, t)
     return (; enabled, trap, widths)
 end
 
-# The replay system over `date_range`, built with the setters `replication_system` runs.
+# A populated system over `date_range`, using the AEM setters for the preprocessing tests.
 function fcas_replay_system(db, date_range)
     sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = date_range)
     set_demand!(sys, db, date_range; resolution = DISPATCH_INTERVAL)

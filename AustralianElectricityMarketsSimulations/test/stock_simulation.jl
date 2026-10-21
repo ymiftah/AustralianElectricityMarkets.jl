@@ -1,4 +1,4 @@
-# Recurrent replay of `replicate_range`; expected values are hand-derived on the toy fixture (100 MW base power).
+# Recurrent dispatch simulation; expected values are hand-derived on the toy fixture (100 MW base power).
 # The toy systems are one area unless built with an `interchange`.
 
 # Zero MIP gaps: the loss and MNSP encodings are MILPs, and a default gap can stop short of the optimum.
@@ -165,9 +165,10 @@ end
 end
 
 @testset "argument checks" begin
-    @test_throws ArgumentError AEMS._range_steps(TOY_START, TOY_START - TOY_RESOLUTION)
-    @test_throws ArgumentError AEMS._range_steps(TOY_START, TOY_START + Minute(7))
-    @test AEMS._range_steps(TOY_START, TOY_START) == TOY_START:TOY_RESOLUTION:TOY_START
+    # The 2024-25 and 2025-26 Market Price Caps are 17,500 and 20,300.
+    # The interval ending 00:00 on 1 July is the previous financial year's.
+    @test isnothing(AEMS._check_single_market_price_cap(DateTime(2025, 6, 30, 23, 55):TOY_RESOLUTION:DateTime(2025, 7, 1)))
+    @test_throws ArgumentError AEMS._check_single_market_price_cap(DateTime(2025, 7, 1):TOY_RESOLUTION:DateTime(2025, 7, 1, 0, 5))
     @test_throws ArgumentError AEMS._replication_simulation(sentinel_system(), STOCK_STEPS; parts = (:nonsense,))
     @test_throws ArgumentError replication_template(sentinel_system(); parts = (:nonsense,))
 end
@@ -184,14 +185,6 @@ function masked_system(sense, duid, rhs_mw; invoked = [1.0, 0.0], reverse_order 
     return nem_toy_system(
         units, 100.0; horizon = TOY_RESOLUTION,
         mutate! = (sys, stamps) -> add_toy_generic_constraint!(sys, stamps, duid, rhs_mw; invoked = mask, sense = sense),
-    )
-end
-# `name => (DateTime => raw dual)` of every `NEMConstraintLimit` in `results`.
-function stock_gc_duals(results)
-    read(k) = results isa PSI.SimulationProblemResults ? only(values(PSI.read_realized_duals(results, [k]))) : PSI.read_dual(results, k)
-    return Dict(
-        k.meta => Dict(r.DateTime => r.value for r in eachrow(read(k)))
-            for k in PSI.list_dual_keys(results) if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit
     )
 end
 stock_gc_price(raw) = raw / (100.0 * DISPATCH_INTERVAL_HOURS)
@@ -314,119 +307,6 @@ end
     @test_throws ArgumentError PSI.build!(sim; store_systems_in_results = false)
 end
 
-@testset "replicate_range on the mock cache" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
-    t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)
-    result = replicate_range(db, t1, t2)
-    @test nrow(result.chunks) == 1 && length(result.results) == 1
-    c = result.comparison
-    for table in (:prices, :dispatch, :interconnectors)
-        @test first(names(c[table])) == "SETTLEMENTDATE" && Set(c[table].SETTLEMENTDATE) == Set([t1, t2])
-        @test nrow(c[table]) == sum(nrow(read_published_interval(db, t)[table]) for t in (t1, t2))
-    end
-    @test all(isfinite, skipmissing(c.prices.ROP_solved)) && any(!ismissing, c.prices.ROP_solved)
-    @test any(!ismissing, c.dispatch.TOTALCLEARED_solved)
-    # Interchanges are modeled (the unavailable IC6 is not), and so is FCAS.
-    @test any(!ismissing, c.interconnectors.MWFLOW_solved)
-    @test all(isfinite, skipmissing(c.interconnectors.MWLOSSES_solved))
-    @test all(ismissing, filter(:INTERCONNECTORID => ==("IC6"), c.interconnectors).MWFLOW_solved)
-    @test any(!ismissing, c.fcas_prices.ROP_solved) && all(isfinite, skipmissing(c.fcas_prices.ROP_solved))
-    # Invoked at 00:10 only over BW01-BW04: modeled now that batteries are, and masked at 00:05.
-    @test !any(startswith("N_PARTIAL_COVERAGE"), result.skipped_constraints.constraint)
-    duals = stock_gc_duals(result.results[1])
-    partial = only(k for k in keys(duals) if startswith(k, "N_PARTIAL_COVERAGE"))
-    @test duals[partial][t1] == 0.0
-    @test any(!ismissing, c.dispatch.TOTALCLEARED_solved[c.dispatch.DUID .== "BW01"])
-    # The MNSP IC2 is modeled with its link offers in both steps.
-    links = only(values(PSI.read_realized_variables(result.results[1], ["MNSPLinkFlowVariable__AreaInterchange"])))
-    @test Set(links.DateTime) == Set([t1, t2]) && all(>=(-1.0e-9), links.value)
-    @test names(result.ramp_violations) == ["DUID", "DateTime", "MW", "direction"]
-    @test issubset(Set(result.constraint_violations.DateTime), Set([t1, t2]))
-    @test_throws ArgumentError replicate_range(db, t1, t1 - Minute(5))
-end
-
-@testset "replicate_range models every family by default" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
-    t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)
-    result = replicate_range(db, t1, t2)
-    @test !any(in(("unmodeled_fcas_service", "unmodeled_device_type")), string.(result.skipped_constraints.reason))
-    keys = PSI.list_variable_keys(result.results[1])
-    entry_and_component(k) = (PSI.IS.Optimization.get_entry_type(k), PSI.IS.Optimization.get_component_type(k))
-    @test any(k -> entry_and_component(k)[1] === FCASCapacityVariable, keys)
-    @test any(k -> entry_and_component(k) == (InterconnectorLossVariable, PSY.AreaInterchange), keys)
-    @test any(k -> entry_and_component(k) == (ActivePowerOutVariable, PSY.EnergyReservoirStorage), keys)
-end
-
-# Whether two stacked comparison NamedTuples hold the same rows (sorted by key) and equal numbers, `missing` included.
-function same_comparison(x, y; atol = 1.0e-6)
-    same(u, v) = (ismissing(u) && ismissing(v)) || (!ismissing(u) && !ismissing(v) && isapprox(u, v; atol = atol))
-    keyed(df) = sort(df, [n for n in names(df) if eltype(df[!, n]) <: Union{Missing, AbstractString, DateTime}])
-    return keys(x) == keys(y) && all(keys(x)) do name
-        a, b = keyed(getproperty(x, name)), keyed(getproperty(y, name))
-        names(a) == names(b) && nrow(a) == nrow(b) && all(
-            col -> eltype(a[!, col]) <: Union{Missing, Real} ? all(same.(a[!, col], b[!, col])) : isequal(a[!, col], b[!, col]),
-            names(a),
-        )
-    end
-end
-
-@testset "replicate_range chunks" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
-    chunks = AEMS._range_chunks
-    @test chunks(DateTime(2026, 1, 1, 3, 55):Minute(5):DateTime(2026, 1, 1, 4, 15), :trading_day) ==
-        [DateTime(2026, 1, 1, 3, 55):Minute(5):DateTime(2026, 1, 1, 4, 0), DateTime(2026, 1, 1, 4, 5):Minute(5):DateTime(2026, 1, 1, 4, 15)]
-    @test chunks(DateTime(2026, 1, 1, 4, 5):Minute(5):DateTime(2026, 1, 2, 4, 0), :trading_day) ==
-        [DateTime(2026, 1, 1, 4, 5):Minute(5):DateTime(2026, 1, 2, 4, 0)]
-    # Loss factors change on 1 July, so the default trading-day chunks also break at 00:05 on 1 July.
-    @test chunks(DateTime(2026, 6, 30, 23, 50):Minute(5):DateTime(2026, 7, 1, 0, 15), :trading_day) ==
-        [DateTime(2026, 6, 30, 23, 50):Minute(5):DateTime(2026, 7, 1, 0, 0), DateTime(2026, 7, 1, 0, 5):Minute(5):DateTime(2026, 7, 1, 0, 15)]
-    @test chunks(DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20), Minute(10)) ==
-        [DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 10), DateTime(2025, 1, 1, 0, 15):Minute(5):DateTime(2025, 1, 1, 0, 20)]
-    steps = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 10)
-    @test_throws ArgumentError chunks(steps, Minute(7))
-    @test_throws ArgumentError chunks(steps, Minute(0))
-    @test_throws ArgumentError chunks(steps, :calendar_day)
-    @test_throws ArgumentError chunks(steps, Month(1))
-
-    # Chunks are a partition of the range; two chunks solve the same intervals as one.
-    t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 20)
-    one = replicate_range(db, t1, t2)
-    two = replicate_range(db, t1, t2; chunk = Minute(10))
-    @test nrow(two.chunks) == 2 && length(two.results) == 2
-    @test two.chunks.n_steps == [2, 2]
-    @test same_comparison(one.comparison, two.comparison)
-    @test nrow(one.solver_stats) == nrow(two.solver_stats) == 4
-    @test one.solver_stats.SETTLEMENTDATE == two.solver_stats.SETTLEMENTDATE
-    @test one.solver_stats.objective_value ≈ two.solver_stats.objective_value atol = 1.0e-6
-    @test two.solver_stats.chunk == [1, 1, 2, 2]
-    # Each chunk's reopened results hold its own intervals only.
-    t_mid = DateTime(2025, 1, 1, 0, 15)
-    @test collect(PSI.get_timestamps(two.results[1])) == collect(t1:Minute(5):(t_mid - Minute(5)))
-    @test collect(PSI.get_timestamps(two.results[2])) == collect(t_mid:Minute(5):t2)
-    @test PSI.read_optimizer_stats(two.results[2]).objective_value ≈
-        filter(:SETTLEMENTDATE => >=(t_mid), one.solver_stats).objective_value atol = 1.0e-6
-
-    # A reopened chunk reads the same constraint violations as the live solve, and needs no system.
-    sys2 = replication_system(db, DateTime(2025, 1, 1, 0, 15):Minute(5):DateTime(2025, 1, 1, 0, 25))
-    reopened = AEMS._constraint_violations(two.results[2], sys2)
-    at_chunk2 = filter(:DateTime => t -> t >= DateTime(2025, 1, 1, 0, 15), two.constraint_violations)
-    @test sort(reopened, [:DateTime, :name]) == sort(at_chunk2, [:DateTime, :name])
-
-    # The folders hold the stores of each chunk on disk.
-    d = mktempdir()
-    replicate_range(db, t1, DateTime(2025, 1, 1, 0, 10); output_dir = d)
-    @test isdir(joinpath(d, "chunk_1")) && any(f -> f == "simulation_store.h5", (f for (_, _, fs) in walkdir(joinpath(d, "chunk_1")) for f in fs))
-    # On-disk time series default to a directory inside each chunk folder.
-    d = mktempdir()
-    replicate_range(db, t1, DateTime(2025, 1, 1, 0, 20); output_dir = d, chunk = Minute(10), time_series_in_memory = false)
-    @test all(k -> !isempty(readdir(joinpath(d, "chunk_$k", "time_series"))), 1:2)
-
-    # Every replication time-series parameter is stored, as PowerSimulations stores right-hand-side parameters.
-    stored = Set(PSI.IS.Optimization.get_entry_type(k) for k in PSI.list_parameter_keys(one.results[1]))
-    @test NEMConstraintRHSParameter in stored
-    @test_throws ArgumentError replicate_range(db, t1, DateTime(2025, 1, 1, 0, 10); parts = (:nonsense,))
-end
-
 @testset "a requirement that cannot be met in step 2 only is reported in step 2 only" begin
     sys = fcas_toy_system(; reg_req = [20.0, 80.0])
     out = AEMS._replication_simulation(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
@@ -438,7 +318,7 @@ end
 end
 
 # A battery whose net ramp-down floor exceeds raw generation availability in step 1 only.
-function battery_sentinel_system(; reverse_order = false)
+function battery_sentinel_system(; reverse_order = false, ceilings = true)
     r(x) = reverse_order ? reverse(x) : x
     units = [TOY_CHEAP => toy_unit(100.0, [(100.0, 50.0)]; initial = 30.0, ramp_up = 100.0)]
     batteries = [
@@ -446,11 +326,11 @@ function battery_sentinel_system(; reverse_order = false)
             100.0, 5.0, 100.0, 1.0; initial = r([20.0, 0.0]), ramp_up = 100.0, ramp_down = 1.0, gen_avail = 10.0,
         ),
     ]
-    return nem_toy_system(units, 40.0; batteries = batteries, horizon = TOY_RESOLUTION)
+    return nem_toy_system(units, 40.0; batteries = batteries, horizon = TOY_RESOLUTION, ceilings = ceilings)
 end
 
 @testset "storage availability uses raw limits without competing hard ceilings" begin
-    sys = battery_sentinel_system()
+    sys = battery_sentinel_system(; ceilings = false)
     template = replication_template(sys; parts = REPLICATION_PARTS)
     model = AEMS._replication_decision_model(template, sys, TOY_START; optimizer = STOCK_OPTIMIZER)
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
@@ -1114,19 +994,6 @@ end
     @test any(((name, _),) -> name == TIE_BREAK_SERVICE_NAME, keys(PSI.get_service_models(replication_template(sys; parts = (:batteries, :tie_breaks)))))
 end
 
-@testset "replicate_range respects parts on the mock cache" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
-    t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)
-    result = replicate_range(db, t1, t2; parts = (:generic_constraints,))
-    types = Set(PSI.IS.Optimization.get_component_type(k) for k in PSI.list_variable_keys(only(result.results)))
-    @test !(PSY.EnergyReservoirStorage in types) && !(PSY.AreaInterchange in types)
-    @test !any(k -> PSI.IS.Optimization.get_entry_type(k) === FCASCapacityVariable, PSI.list_variable_keys(only(result.results)))
-    @test all(ismissing, result.comparison.interconnectors.MWFLOW_solved)
-    @test all(ismissing, result.comparison.fcas_prices.ROP_solved)
-    @test any(in((:unmodeled_fcas_service, :unmodeled_device_type)), result.skipped_constraints.reason)
-    @test any(!ismissing, result.comparison.dispatch.TOTALCLEARED_solved)
-end
-
 @testset "named errors of the replay core" begin
     # A constraint on a unit absent from the system blocks a partial template; a left-out family does not.
     ghost = nem_toy_system(
@@ -1149,10 +1016,4 @@ end
     @test_throws r"non-finite regional price" AEMS._check_prices_finite(
         DataFrame(SETTLEMENTDATE = [TOY_START], REGIONID = ["1"], ROP = [NaN]),
     )
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
-    @test_throws r"at least two stamps" replication_system(db, TOY_START:Minute(5):TOY_START)
-    @test_throws r"must step by" replication_system(db, TOY_START:Minute(10):(TOY_START + Minute(20)))
-    # A write cache size reaches the simulation store.
-    small = replicate_range(db, DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 5); cache_size_mib = 16)
-    @test small.chunks.n_steps == [1] && nrow(small.solver_stats) == 1
 end
