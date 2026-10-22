@@ -1,19 +1,3 @@
-function PSI.get_variable_binary(::AbstractEnergyOfferSlack, ::Type{<:PSY.StaticInjection}, ::AbstractNEMDispatch)
-    return false
-end
-
-function PSI.get_variable_lower_bound(::AbstractEnergyOfferSlack, ::PSY.StaticInjection, ::AbstractNEMDispatch)
-    return 0.0
-end
-
-function PSI.get_variable_upper_bound(::AbstractEnergyOfferSlack, ::PSY.StaticInjection, ::AbstractNEMDispatch)
-    return nothing
-end
-
-function PSI.convert_result_to_natural_units(::Type{<:AbstractEnergyOfferSlack})
-    return true
-end
-
 function _energy_offer_curve(::Type{<:Union{EnergyOfferSurplusSlack, EnergyOfferDeficitSlack}})
     return PSY.get_incremental_offer_curves
 end

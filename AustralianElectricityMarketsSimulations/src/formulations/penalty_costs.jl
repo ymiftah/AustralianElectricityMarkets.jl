@@ -124,3 +124,108 @@ A `\$/MWh` value.
 function _service_market_price_cap(container::PSI.OptimizationContainer, name::AbstractString, t::DateTime)
     return get(() -> _container_market_price_cap(container, t), _mpc_record(container).service_rates, String(name))
 end
+
+
+"""
+    _financial_year_mpc(t::DateTime) -> Float64
+
+The published Market Price Cap for the financial year of the dispatch interval ending at `t` (a
+`SETTLEMENTDATE`). The interval ending 00:00 on 1 July runs 23:55-00:00 on 30 June, so it takes the
+earlier year's cap.
+
+# Returns
+A `\$/MWh` value.
+"""
+function _financial_year_mpc(t::DateTime)
+    start = t - DISPATCH_INTERVAL
+    year_start = Date(year(start) - (month(start) < 7), 7, 1)
+    idx = findfirst(p -> p[1] == year_start, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR)
+    isnothing(idx) && throw(
+        ArgumentError(
+            "No published Market Price Cap covers $t; extend MARKET_PRICE_CAP_BY_FINANCIAL_YEAR " *
+                "or set the \"market_price_cap\" entry of `PSI.get_ext(PSI.get_settings(model))`.",
+        ),
+    )
+    return MARKET_PRICE_CAP_BY_FINANCIAL_YEAR[idx][2]
+end
+
+
+"""
+    _container_market_price_cap(container, t::DateTime) -> Float64
+
+The `"market_price_cap"` entry of the model's `PSI.get_ext(PSI.get_settings(model))`, or
+[`_financial_year_mpc`](@ref)`(t)` if unset. The cap of every penalty priced by
+[`_add_mpc_penalty!`](@ref), and the fallback of [`_service_market_price_cap`](@ref).
+
+# Arguments
+  - `container`: the `PSI.OptimizationContainer` being built.
+  - `t`: the interval's timestamp.
+
+# Returns
+A finite, strictly positive `\$/MWh` value; invalid overrides throw `ArgumentError`.
+"""
+function _container_market_price_cap(container::PSI.OptimizationContainer, t::DateTime)
+    rate = get(PSI.get_ext(PSI.get_settings(container)), "market_price_cap", nothing)
+    return _checked_market_price_cap(isnothing(rate) ? _financial_year_mpc(t) : rate)
+end
+
+
+function _checked_market_price_cap(rate)
+    value = rate isa Real ? Float64(rate) : NaN
+    isfinite(value) && value > 0.0 ||
+        throw(ArgumentError("market_price_cap must be finite and strictly positive, got $rate."))
+    return value
+end
+
+
+"""
+    PSI.objective_function!(container, sys, network_model::PSI.NetworkModel{PSI.AreaBalancePowerModel})
+
+Override of `PowerSimulations.jl`'s `AreaBalancePowerModel` slack objective, which prices
+`SystemBalanceSlackUp`/`SystemBalanceSlackDown` at the fixed `BALANCE_SLACK_COST`. Prices each
+slack at [`AREA_BALANCE_CVP_FACTOR`](@ref) times the Market Price Cap of the interval's financial
+year, or the `"market_price_cap"` entry of the model's settings `ext`
+([`_container_market_price_cap`](@ref)), in `\$/MW` per dispatch interval. Throws for a financial
+year absent from `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` with no override. `AreaPTDFPowerModel` keeps
+PSI's flat `BALANCE_SLACK_COST`.
+
+# Returns
+`nothing`.
+"""
+function PSI.objective_function!(
+        container::PSI.OptimizationContainer, sys::PSY.System,
+        network_model::PSI.NetworkModel{PSI.AreaBalancePowerModel},
+    )
+    variable_up = PSI.get_variable(container, PSI.SystemBalanceSlackUp(), PSY.Area)
+    variable_dn = PSI.get_variable(container, PSI.SystemBalanceSlackDown(), PSY.Area)
+    areas = PSY.get_name.(PSI.get_available_components(network_model, PSY.Area, sys))
+    time_steps = PSI.get_time_steps(container)
+    _add_mpc_penalty!(container, variable_dn, areas, time_steps, AREA_BALANCE_CVP_FACTOR)
+    _add_mpc_penalty!(container, variable_up, areas, time_steps, AREA_BALANCE_CVP_FACTOR)
+    return nothing
+end
+
+
+"""
+    PSI._update_parameter_values!(parameter_array, ::MarketPriceCapPenaltyParameter, parameter_multiplier, attributes, ::Type{PSY.Area}, model, input)
+
+Override of `PowerSimulations.jl`'s private objective-parameter update for the
+[`MarketPriceCapPenaltyParameter`](@ref) registered on `PSY.Area`, which has no device model for
+the generic method to look up. Re-prices every Market Price Cap penalty slack of the model for the
+step's window.
+
+# Returns
+`nothing`.
+"""
+function PSI._update_parameter_values!(
+        ::PSI.DenseAxisArray, ::MarketPriceCapPenaltyParameter, ::PSI.JuMPFloatArray,
+        ::PSI.CostFunctionAttributes, ::Type{PSY.Area}, model::PSI.DecisionModel,
+        ::PSI.DatasetContainer{PSI.InMemoryDataset},
+    )
+    container = PSI.get_optimization_container(model)
+    PSI.is_synchronized(container) && error(
+        "Cannot update MarketPriceCapPenaltyParameter on a synchronized container; objective expressions would be double-counted",
+    )
+    _reprice_mpc_penalties!(container, PSI.get_current_time(model), last(PSI.get_time_steps(container)))
+    return
+end
