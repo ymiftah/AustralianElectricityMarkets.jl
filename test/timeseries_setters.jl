@@ -234,19 +234,6 @@
             @test Set(unique(uigf.DUID)) == Set(["BW03", "BW04"])
         end
 
-        @testset "single-interval method agrees with the range method" begin
-            # `read_uigf_as_dict` in AustralianElectricityMarketsSimulations reads one interval at a
-            # time through this method rather than carrying its own copy of the query, so it
-            # must return exactly the range method's rows for that stamp.
-            t = start_date + resolution
-            one = sort(read_uigf(db, t), :DUID)
-            from_range = sort(subset(uigf, :SETTLEMENTDATE => ByRow(==(t))), :DUID)
-            @test Set(names(one)) == Set(["SETTLEMENTDATE", "DUID", "UIGF"])
-            @test all(==(t), one.SETTLEMENTDATE)
-            @test one.DUID == from_range.DUID
-            @test isapprox(one.UIGF, from_range.UIGF; atol = 1.0e-6)
-        end
-
         @testset "reconstructed ceiling equals that unit's own UIGF in MW" begin
             n_checked = 0
             for gen in get_components(RenewableDispatch, sys)

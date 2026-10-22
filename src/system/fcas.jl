@@ -1,4 +1,48 @@
 """
+    _require_fcas_float(row, field::Symbol)
+
+`Float64(getproperty(row, field))`, or an actionable `ArgumentError` naming `field` and the
+row's `DUID` if the value is `missing`.
+"""
+function _require_fcas_float(row, field::Symbol)
+    value = getproperty(row, field)
+    ismissing(value) && throw(
+        ArgumentError(
+            "BIDPEROFFER_D.$field is missing for DUID $(row.DUID) - cannot build an " *
+                "FCASTrapezium without it.",
+        ),
+    )
+    return Float64(value)
+end
+
+
+"""
+    _extract_fcas_bid(row)
+
+Mirrors [`_extract_power_bids`](@ref), also building the FCAS trapezium.
+
+# Returns
+`(curve_data, trapezium_row)`: a `PiecewiseStepData` and the `NTuple{7,Float64}` wire form
+of an [`FCASTrapezium`](@ref).
+"""
+function _extract_fcas_bid(row)
+    curve_data = _extract_power_bids(row)
+    trapezium = FCASTrapezium(;
+        enablement_min = _require_fcas_float(row, :ENABLEMENTMIN),
+        low_breakpoint = _require_fcas_float(row, :LOWBREAKPOINT),
+        high_breakpoint = _require_fcas_float(row, :HIGHBREAKPOINT),
+        enablement_max = _require_fcas_float(row, :ENABLEMENTMAX),
+        max_avail = _require_fcas_float(row, :MAXAVAIL),
+        ramp_up_rate = ismissing(row.ROCUP) ? nothing : Float64(row.ROCUP),
+        ramp_down_rate = ismissing(row.ROCDOWN) ? nothing : Float64(row.ROCDOWN),
+    )
+    interval = hasproperty(row, :INTERVAL_DATETIME) ? " at $(row.INTERVAL_DATETIME)" : ""
+    _validate_fcas_trapezium(trapezium, "BIDPEROFFER_D DUID $(row.DUID) ($(row.DIRECTION))$interval")
+    return curve_data, Tuple(trapezium)
+end
+
+
+"""
     _fcas_bid_direction(device, bid_type) -> Symbol
 
 `:incremental`, `:decremental`, `:both` or `:none`, describing which `"fcas_trapezium_<bid_type>
@@ -161,7 +205,7 @@ function set_fcas_bids!(sys, db, date_range; kwargs...)
     resolution = get(kwargs, :resolution, Minute(5))
     base_power = get_base_power(sys)
 
-    all_bids = groupby(read_fcas_bids(db, date_range, collect(FCAS_BID_TYPES); kwargs...), :BIDTYPE)
+    all_bids = groupby(read_fcas_bids(db, date_range, collect(FCAS_BID_TYPES); resolution = get(kwargs, :resolution, nothing)), :BIDTYPE)
     for bid_type in FCAS_BID_TYPES
         haskey(all_bids, (bid_type,)) || continue
         bids = DataFrame(all_bids[(bid_type,)])

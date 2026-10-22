@@ -1,25 +1,8 @@
 """
-    read_units(db; as_of = nothing)
+    _read_units(db; as_of = nothing)
 
-Gathers and processes unit data from the database: one row per commissioned `DUID`, including
-scheduled loads, which have no `GENUNITS` row, so their `CO2E_ENERGY_SOURCE` is `missing`.
-
-# Arguments
-- `db`: The database connection.
-- `as_of`: when a `Date` or `DateTime`, resolves `DUDETAIL` (latest `EFFECTIVEDATE <= as_of`,
-  then highest `VERSIONNO`) and `DUDETAILSUMMARY` (the row with `START_DATE <= as_of < END_DATE`,
-  so the loss factors in force then) as of that instant; units with no such row are omitted.
-  `nothing` keeps the open, latest version in the cache.
-
-# Returns
-A `DataFrame` containing detailed information about each generation unit.
-
-# Example
-```julia
-db = aem_connect()
-units_df = read_units(db)
-println(units_df)
-```
+Reads the raw commissioned unit table behind [`read_units`](@ref), one row per `DUID`, without the
+`TECHNOLOGY`/`FUELTYPE` mapping.
 """
 function _read_units(db; as_of::Union{Nothing, Date, DateTime} = nothing)
     dudetail_table = read_hive(db, :DUDETAIL)
@@ -138,25 +121,29 @@ function _read_units(db; as_of::Union{Nothing, Date, DateTime} = nothing)
     return dudetail
 end
 
-using DataFrames
-
-
 """
     read_units(db; as_of = nothing)
 
-Read commissioned unit metadata, mapping each unit's raw AEMO fuel/technology
-source to `PowerSystems.PrimeMovers` (`TECHNOLOGY`) and `PowerSystems.ThermalFuels`
-(`FUELTYPE`) values.
-
-Includes the raw `CO2E_ENERGY_SOURCE` column alongside the mapped enum columns.
+Reads commissioned unit metadata, one row per `DUID` including scheduled loads, mapping each unit's
+raw AEMO `CO2E_ENERGY_SOURCE` to `PowerSystems.PrimeMovers` (`TECHNOLOGY`) and
+`PowerSystems.ThermalFuels` (`FUELTYPE`). Scheduled loads have no `GENUNITS` row, so their
+`CO2E_ENERGY_SOURCE` is `missing`.
 
 # Arguments
 - `db`: the database connection.
-- `as_of`: a `Date` or `DateTime` to resolve the static unit tables as of (loss factors in force
-  then), or `nothing` for the latest cached version.
+- `as_of`: when a `Date` or `DateTime`, resolves `DUDETAIL` (latest `EFFECTIVEDATE <= as_of`, then
+  highest `VERSIONNO`) and `DUDETAILSUMMARY` (the row with `START_DATE <= as_of < END_DATE`) as of
+  that instant, omitting units with no such row. `nothing` keeps the open, latest cached version.
 
 # Returns
-- `DataFrame`: one row per commissioned `DUID`, including `TECHNOLOGY` and `FUELTYPE` columns.
+A `DataFrame` with one row per commissioned `DUID`, including `CO2E_ENERGY_SOURCE`, `TECHNOLOGY`
+and `FUELTYPE`.
+
+# Example
+```julia
+db = aem_connect()
+units_df = read_units(db)
+```
 """
 function read_units(db; as_of = nothing)
     dudetail = _read_units(db; as_of = as_of)

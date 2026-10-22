@@ -130,7 +130,7 @@ let
     end
 
     @testset "demand coefficient patch" begin
-        patch = AustralianElectricityMarkets.Readers._apply_demand_coefficient_patches!
+        patch = AustralianElectricityMarkets._apply_demand_coefficient_patches!
         fresh() = Dict("V-SA" => Dict("VIC1" => -1.0e-5, "SA1" => 5.0e-5))
         @test patch(fresh(), Date(2025, 7, 1))["V-SA"]["NSW1"] == 1.6981e-6
         @test patch(fresh(), DateTime(2026, 6, 30, 23, 55))["V-SA"]["NSW1"] == 1.6981e-6
