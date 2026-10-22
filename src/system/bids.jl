@@ -1,4 +1,32 @@
 """
+    _refer_bids_to_reference_node!(bids, factors) -> bids
+
+Divides every price of `bids.piecewise_step_data` by its unit's loss factor, leaving the MW
+breakpoints unchanged. Referred prices are rounded to whole cents, as in NEMDE's case files.
+
+# Arguments
+- `bids`: the `DataFrame` from `_massage_bids`, modified in place.
+- `factors`: the output of [`read_loss_factors`](@ref); `GEN_LOSS_FACTOR` applies to `GEN` rows and
+  `LOAD_LOSS_FACTOR` to `LOAD` rows. Throws an `ArgumentError` naming any bid `DUID` it lacks.
+
+# Returns
+`bids`.
+"""
+function _refer_bids_to_reference_node!(bids, factors)
+    lookup = Dict(r.DUID => (gen = r.GEN_LOSS_FACTOR, load = r.LOAD_LOSS_FACTOR) for r in eachrow(factors))
+    unknown = setdiff(unique(bids.DUID), keys(lookup))
+    isempty(unknown) ||
+        throw(ArgumentError("No DUDETAILSUMMARY loss factor for bid unit(s) $(join(unknown, ", "))."))
+    bids.piecewise_step_data = map(eachrow(bids)) do row
+        factor = row.DIRECTION == "LOAD" ? lookup[row.DUID].load : lookup[row.DUID].gen
+        psd = row.piecewise_step_data
+        return PiecewiseStepData(get_x_coords(psd), round.(get_y_coords(psd) ./ factor; digits = 2))
+    end
+    return bids
+end
+
+
+"""
     _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
 
 Sets `gen` available with a `MarketBidCost` and attaches its incremental
@@ -95,11 +123,8 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     end_date = last(date_range)
     resolution = get(kwargs, :resolution, Minute(5))
 
-    energy_bids_table = read_hive(db, :BIDPEROFFER_D)
-    pricebids_table = read_hive(db, :BIDDAYOFFER_D)
     bids = _massage_bids(
-        db, energy_bids_table, pricebids_table, start_date, end_date;
-        resolution = get(kwargs, :resolution, nothing), keep_empty_bands = true,
+        db, start_date, end_date; resolution = get(kwargs, :resolution, nothing), keep_empty_bands = true,
     )
     sys_units = Set(get_name(c) for T in (Generator, InterruptiblePowerLoad, EnergyReservoirStorage) for c in get_components(T, sys))
     factors = read_loss_factors(db; as_of = start_date, through = end_date)

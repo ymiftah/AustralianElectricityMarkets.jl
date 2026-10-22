@@ -369,20 +369,9 @@ function add_nem_constraints!(
     start_date = first(date_range)
     base_power = get_base_power(sys)
 
-    _table_is_cached(db, :DISPATCHCONSTRAINT) || throw(
-        ArgumentError(
-            "DISPATCHCONSTRAINT is not cached for $date_range — run " *
-                "`populate(db, :DISPATCHCONSTRAINT, <from>, <to>)` first.",
-        ),
-    )
-
+    _require_cached(db, :DISPATCHCONSTRAINT)
     for table in (:BIDPEROFFER_D, :BIDDAYOFFER_D)
-        _table_is_cached(db, table) || throw(
-            ArgumentError(
-                "$table is not cached for $date_range: run `populate(db, :$table, <from>, <to>)` first. " *
-                    "add_nem_constraints! reads FIXEDLOAD and T1 from it.",
-            ),
-        )
+        _require_cached(db, table; context = "add_nem_constraints! reads FIXEDLOAD and T1 from it.")
     end
 
     invoked_all = read_invoked_constraints(db, date_range; intervention = intervention)

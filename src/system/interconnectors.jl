@@ -1,3 +1,92 @@
+# AEMO's `FROMREGIONLOSSSHARE` for Basslink is not well defined; nempy sets it to 1 to best match NEMDE.
+const _LOSS_SHARE_OVERRIDES = Dict("T-V-MNSP1" => 1.0)
+
+# Demand coefficients AEMO publishes but MMSDM LOSSFACTORMODEL omits, as
+# (interconnector, region) => (value, valid_from, valid_until). Used only where the table has no
+# value for that pair. V-SA NSW1 for FY2025-26: AEMO, 2025-26 Marginal Loss Factors report,
+# section 3 p. 56 and Table 25 p. 59.
+const _DEMAND_COEFFICIENT_PATCHES = Dict(
+    ("V-SA", "NSW1") => (value = 1.6981e-6, valid_from = Date(2025, 7, 1), valid_until = Date(2026, 7, 1)),
+)
+
+function _apply_demand_coefficient_patches!(demand_coefficients, as_of)
+    for ((id, region), p) in _DEMAND_COEFFICIENT_PATCHES
+        p.valid_from <= Date(as_of) < p.valid_until || continue
+        haskey(demand_coefficients, id) || continue
+        get!(demand_coefficients[id], region, p.value)
+    end
+    return demand_coefficients
+end
+
+
+"""
+    interconnector_loss_models(db, as_of) -> Dict{String, InterconnectorLossModel}
+
+Every interconnector's [`InterconnectorLossModel`](@ref), assembled from
+[`read_interconnector_loss_parameters`](@ref),
+[`read_interconnector_demand_coefficients`](@ref) and
+[`read_interconnector_loss_breakpoints`](@ref) as of `as_of`.
+
+An interconnector with loss parameters but no `LOSSMODEL` breakpoints is skipped, reported in
+one summary `@warn`.
+
+The loss share of `T-V-MNSP1` (Basslink) is fixed at `1.0`, as in nempy, because AEMO's published
+value is not well defined.
+
+Demand coefficients missing from `LOSSFACTORMODEL` but published by AEMO (V-SA `NSW1` for
+FY2025-26) are filled in; a value present in the table is never overridden.
+
+Throws `ArgumentError` when no interconnector survives.
+"""
+function interconnector_loss_models(db, as_of::Union{Date, DateTime})
+    params = read_interconnector_loss_parameters(db, as_of)
+    coefficients = read_interconnector_demand_coefficients(db, as_of)
+    breakpoints = read_interconnector_loss_breakpoints(db, as_of)
+
+    by_interconnector = Dict{String, Vector{Float64}}()
+    for row in eachrow(breakpoints)
+        push!(get!(by_interconnector, row.INTERCONNECTORID, Float64[]), row.MWBREAKPOINT)
+    end
+    demand_coefficients = Dict{String, Dict{String, Float64}}()
+    for row in eachrow(coefficients)
+        d = get!(demand_coefficients, row.INTERCONNECTORID, Dict{String, Float64}())
+        d[row.REGIONID] = row.DEMANDCOEFFICIENT
+    end
+    _apply_demand_coefficient_patches!(demand_coefficients, as_of)
+
+    models = Dict{String, InterconnectorLossModel}()
+    skipped = String[]
+    for row in eachrow(params)
+        id = row.INTERCONNECTORID
+        bps = sort(get(by_interconnector, id, Float64[]))
+        if length(bps) < 2
+            push!(skipped, id)
+            continue
+        end
+        models[id] = InterconnectorLossModel(;
+            interconnector = id,
+            from_region = row.REGIONFROM,
+            to_region = row.REGIONTO,
+            from_region_loss_share = get(_LOSS_SHARE_OVERRIDES, id, coalesce(row.FROMREGIONLOSSSHARE, 0.5)),
+            loss_constant = coalesce(row.LOSSCONSTANT, 1.0),
+            loss_flow_coefficient = coalesce(row.LOSSFLOWCOEFFICIENT, 0.0),
+            demand_coefficients = get(demand_coefficients, id, Dict{String, Float64}()),
+            breakpoints = bps,
+        )
+    end
+    isempty(skipped) ||
+        @warn "interconnector_loss_models: $(length(skipped)) interconnector(s) have no LOSSMODEL breakpoints as of $as_of; skipped" skipped
+    isempty(models) && throw(
+        ArgumentError(
+            "no interconnector has a complete loss model as of $as_of. Check that " *
+                "LOSSMODEL/LOSSFACTORMODEL/INTERCONNECTORCONSTRAINT are cached and that their " *
+                "EFFECTIVEDATEs precede $as_of.",
+        ),
+    )
+    return models
+end
+
+
 """
     attach_interconnector_losses!(sys, db, as_of) -> (added, skipped)
 
