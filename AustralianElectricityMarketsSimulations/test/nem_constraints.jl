@@ -578,7 +578,6 @@ function _add_battery_dispatch_data!(sys, params)
     add_time_series!(
         sys, battery, SingleTimeSeries(; name = "initial_mw", data = TimeArray(times, fill(0.0, n_raw))),
     )
-    set_storage_dispatch_ceilings!(sys)
     return
 end
 
