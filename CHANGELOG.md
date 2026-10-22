@@ -462,6 +462,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `set_storage_dispatch_ceilings!` and the toy fixture's `ceilings` option: replay dispatch reads raw directional storage availability, so nothing consumes the derived `"storage_gen_ceiling"` and `"storage_load_ceiling"` series.
 - `replicate_interval` (both methods) and `replication_system(db, settlement_date)`: every replay
   builds its model once and steps it through `replicate_range`. `scripts/replicate_interval.jl` is
   replaced by `scripts/replicate_range.jl`.

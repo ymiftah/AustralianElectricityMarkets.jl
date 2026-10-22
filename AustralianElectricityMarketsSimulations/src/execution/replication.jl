@@ -192,9 +192,8 @@ const _REPLICATION_HORIZON = 2DISPATCH_INTERVAL
 
 Builds the `System` [`replicate_range`](@ref) steps through: the constrained system from
 `nem_system(db, ConstrainedNetworkConfiguration(); ...)` over `date_range`, with demand,
-interconnector loss demand coefficients, bids, FCAS scaling inputs, dispatch limits, battery
-dispatch ceilings, effective FCAS offers, tie-break scales and MNSP offers set and the time series
-transformed into one-interval forecast windows, one per stamp of `date_range`.
+interconnector loss demand coefficients, bids, FCAS scaling inputs, dispatch limits,
+effective FCAS offers, tie-break scales and MNSP offers set and the time series transformed into one-interval forecast windows, one per stamp of `date_range`.
 
 # Arguments
 - `db`: an `AEMDB` connection whose cache holds data over `date_range`.

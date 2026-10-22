@@ -71,8 +71,7 @@ higher, where Δ is the interval length in hours taken from `date_range`'s step,
 and `UIGF`), read back by [`get_energy_availability`](@ref). An
 `EnergyReservoirStorage` gets no `"max_active_power"` series: its per-direction availability is
 the energy bid `MAXAVAIL` series [`set_market_bids!`](@ref) attaches, read back by
-[`get_storage_energy_max_avail`](@ref); [`set_storage_dispatch_ceilings!`](@ref) applies the same
-ramp-floor rule to it on the net axis.
+[`get_storage_energy_max_avail`](@ref).
 
 `"ramp_up_rate"`, `"ramp_down_rate"`, `"initial_mw"` and `"availability"` are stored per-unit of
 `sys`'s system base, rates per minute. `"max_active_power"` follows PSY's native convention instead: data
@@ -245,60 +244,6 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
                 scaling_factor_multiplier = get_max_active_power,
             ),
         )
-    end
-    return
-end
-
-
-"""
-    set_storage_dispatch_ceilings!(sys)
-
-Attaches each `Storage` component's per-direction dispatch ceilings as `SingleTimeSeries`
-`"storage_gen_ceiling"` and `"storage_load_ceiling"`, per-unit of the system base, on the timestamps
-of its energy offer `MAXAVAIL` series from [`set_market_bids!`](@ref). Each ceiling is that
-direction's `MAXAVAIL`, raised on the net axis to the ramp envelope of the `"initial_mw"`,
-`"ramp_up_rate"` and `"ramp_down_rate"` series from [`set_nem_dispatch_limits!`](@ref) when the
-component carries all three: the generation ceiling to `initial_mw - ramp_down_rate × Δ`, the load
-ceiling to `-(initial_mw + ramp_up_rate × Δ)`, Δ being the series resolution in minutes. A component
-without both `MAXAVAIL` series gets none; existing ceiling series are replaced. Call it after both
-setters, and after any change to their series, before `transform_single_time_series!`. These derived series are
-independent of the raw directional availability consumed by NEM dispatch formulations.
-
-# Arguments
-- `sys`: the `System` to add to.
-
-# Returns
-`nothing`. Throws `ArgumentError` when a component's series are not on its `"energy_max_avail"`
-timestamps.
-"""
-function set_storage_dispatch_ceilings!(sys)
-    for storage in get_components(Storage, sys)
-        offers = ("energy_max_avail", "energy_max_avail_decremental")
-        all(name -> has_time_series(storage, SingleTimeSeries, name), offers) || continue
-        values_of(name) = get_time_series_values(SingleTimeSeries, storage, name; ignore_scaling_factors = true)
-        stamps = PSY.get_time_series_timestamps(SingleTimeSeries, storage, first(offers))
-        resolution = IS.get_resolution(PSY.get_time_series(SingleTimeSeries, storage, first(offers)))
-        ramp = ("initial_mw", "ramp_up_rate", "ramp_down_rate")
-        floored = all(name -> has_time_series(storage, SingleTimeSeries, name), ramp)
-        for name in (last(offers), (floored ? ramp : ())...)
-            PSY.get_time_series_timestamps(SingleTimeSeries, storage, name) == stamps || throw(
-                ArgumentError(
-                    "set_storage_dispatch_ceilings!: \"$(get_name(storage))\"'s \"$name\" series is not on its " *
-                        "\"energy_max_avail\" timestamps.",
-                ),
-            )
-        end
-        gen, load = values_of.(offers)
-        if floored
-            minutes = Dates.value(Minute(resolution))
-            initial, up, down = values_of.(ramp)
-            gen = max.(gen, initial .- down .* minutes)
-            load = max.(load, .-(initial .+ up .* minutes))
-        end
-        for (name, values) in (("storage_gen_ceiling", gen), ("storage_load_ceiling", load))
-            has_time_series(storage, SingleTimeSeries, name) && remove_time_series!(sys, SingleTimeSeries, storage, name)
-            add_time_series!(sys, storage, _single_series(name, first(stamps), values, resolution))
-        end
     end
     return
 end

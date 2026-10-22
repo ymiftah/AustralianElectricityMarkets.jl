@@ -248,7 +248,6 @@ end
                         initial = 0.0, ramp_up = 100.0, gen_avail = gen, load_avail = load
                     ),
                 ],
-                ceilings = false,
                 mutate! = function (sys, _)
                     battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
                     PSY.set_input_active_power_limits!(battery, (min = 0.0, max = 5.0))
