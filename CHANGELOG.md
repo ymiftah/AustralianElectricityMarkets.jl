@@ -467,6 +467,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- Single-interval input readers `read_interval_inputs` and `read_uigf_as_dict`, and the
+  `read_uigf(db, ::DateTime)` method: replay reads every interval through the range readers.
+  `IntervalInputs` stays, re-exported by AustralianElectricityMarketsSimulations.
+- Unused `FUEL_MAPPING` and `FUEL_PRICES` constants.
 - `set_storage_dispatch_ceilings!` and the toy fixture's `ceilings` option: replay dispatch reads raw directional storage availability, so nothing consumes the derived `"storage_gen_ceiling"` and `"storage_load_ceiling"` series.
 - AEMSim's database-taking `replication_system` and `replicate_range` APIs, database-reader
   re-exports and DuckDB runtime dependency. Construct systems through AEM and use top-level
@@ -484,6 +488,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   builder; unit ramp, interconnector flow and generic constraint slacks share one variable builder;
   the slack variable hooks and the no-op service model hooks are single `Union` methods; and the CVP
   factors and the Market Price Cap table live in one file. Dispatch results are unchanged.
+- `interconnector_loss_models` and the bid conversion helpers moved from `Readers` to system
+  construction; `interconnector_loss_models` is still exported from `AustralianElectricityMarkets`.
+- `read_bids`, `read_energy_bids` and `read_fcas_bids` take an explicit `resolution` keyword and
+  reject unknown keywords.
+- Per-interval dispatch readers (`read_prices`, `read_fcas_prices`, `read_fcas_dispatch`,
+  `read_invoked_constraints`, `read_interconnector_limits`, `read_published_interval`) share one
+  query and throw an `ArgumentError` naming the `populate` call when their table is not cached.
 - Violation penalties (unit ramp, energy availability and UIGF, storage availability, total energy
   offer bands, FCAS, interconnector flow, area balance and generic constraints) are re-priced at each
   simulation step from that interval's Market Price Cap, so `replicate_range` no longer rejects a

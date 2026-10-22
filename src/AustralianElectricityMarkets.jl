@@ -7,7 +7,7 @@ using DataFrames
 using Chain
 using Statistics
 using AustralianElectricityMarketsCache
-import AustralianElectricityMarketsCache: islocal, get_filesystem, _parse_hive_root
+import AustralianElectricityMarketsCache: _parse_hive_root
 import TimeSeries: TimeArray, colnames
 import PowerSystems as PSY
 import InfrastructureSystems as IS
@@ -26,7 +26,7 @@ export add_nem_constraints!, get_skipped_constraints, get_dropped_terms,
     get_missing_constraint_intervals, get_defaulted_constraint_weights
 export fcas_service_name
 export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS, BidType
-export InterconnectorLossModel, loss_factor, interconnector_losses, loss_segments,
+export InterconnectorLossModel, interconnector_loss_models, loss_factor, interconnector_losses, loss_segments,
     loss_curve_vertex_values, attach_interconnector_losses!
 export FCASTrapezium, FCASBid,
     get_enablement_min, get_low_breakpoint, get_high_breakpoint, get_enablement_max,
@@ -54,10 +54,7 @@ include("types/interval_inputs.jl")
 
 include("readers/Readers.jl")
 using .Readers
-using .Readers: _query, _current_regions, _intervention_where, _push_intervention!,
-    _cast_double, _table_is_cached, _effective_date_bound, _fcas_req_union_sql,
-    _expand_fcas_req_params, _require_fcas_float, _extract_fcas_bid,
-    _refer_bids_to_reference_node!, _massage_bids, _extract_power_bids
+using .Readers: _query, _table_is_cached, _require_cached, _massage_bids, _extract_power_bids
 
 for name in names(Readers)
     name === :Readers && continue

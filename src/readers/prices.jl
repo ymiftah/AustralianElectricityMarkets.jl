@@ -1,44 +1,73 @@
+# `DISPATCHPRICE` columns `<prefix>RRP`, `<prefix>ROP` and, when cached, `<prefix>APCFLAG`.
+function _price_columns(schema, prefix::AbstractString)
+    rrp, rop, apc = "$(prefix)RRP", "$(prefix)ROP", "$(prefix)APCFLAG"
+    cols = [_cast_double(rrp), _cast_double(rop)]
+    apc in schema && push!(cols, "TRY_CAST($apc AS INTEGER) AS $apc")
+    return cols
+end
+
+
+# One market's `SETTLEMENTDATE`, `REGIONID`, `RRP`, `ROP`, `APCFLAG` (`missing` when not cached).
+function _price_block(df, prefix::AbstractString)
+    apc = "$(prefix)APCFLAG"
+    block = select(df, :SETTLEMENTDATE, :REGIONID, "$(prefix)RRP" => :RRP, "$(prefix)ROP" => :ROP)
+    block[!, :APCFLAG] = apc in names(df) ? df[!, apc] : fill(missing, nrow(block))
+    return block
+end
+
+
 """
     read_prices(db, date_range; intervention = 0)
 
 Reads per-interval, per-region **energy** spot prices from `DISPATCHPRICE`: one row per
-`(SETTLEMENTDATE, REGIONID)` with `RRP`, `ROP`, `APCFLAG`.
+`(SETTLEMENTDATE, REGIONID)` with `RRP`, `ROP`, `APCFLAG`. `RRP` is the settlement price and `ROP`
+the price before scaling, capping or VoLL override; they differ exactly when `APCFLAG != 0` (an
+administered price cap event). See [`read_fcas_prices`](@ref) for the FCAS markets.
 
-`RRP` is the settlement price; `ROP` is the price before scaling, capping, or VoLL
-override - they differ exactly when `APCFLAG != 0` (an administered price cap event). See
-[`read_fcas_prices`](@ref) for the FCAS-market equivalent.
+# Arguments
+- `db`: an `AEMDB` connection.
+- `date_range`: the dispatch intervals to read (half-open: `start <= t < stop`).
+- `intervention`: `0` for the pricing run, `1` for the physical run.
 
-`intervention` selects the dispatch run: `0` is the normal (non-intervention) run.
-
-`APCFLAG` is `missing` for cached partitions that predate its addition to `_TABLE_SPECS`
-(and `INTERVENTION` is compared via `COALESCE(INTERVENTION, 0)` for the same reason).
+# Returns
+A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `RRP`, `ROP` and `APCFLAG` (`missing` for cached
+partitions without the column).
 """
 function read_prices(db, date_range; intervention::Integer = 0)
-    start_date = first(date_range)
-    end_date = last(date_range)
-    sd = Date(start_date) - Day(1)
-    ed = Date(end_date) + Day(1)
-    table = read_hive(db, :DISPATCHPRICE)
-    schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
-    params = Any[sd, ed]
-    _push_intervention!(params, schema, intervention)
+    df = _read_dispatch_table(schema -> _price_columns(schema, ""), db, :DISPATCHPRICE, "REGIONID", date_range; intervention)
+    return _price_block(df, "")
+end
 
-    select_cols = ["SETTLEMENTDATE", "REGIONID", _cast_double("RRP"), _cast_double("ROP")]
-    "APCFLAG" in schema && push!(select_cols, "TRY_CAST(APCFLAG AS INTEGER) AS APCFLAG")
-    select_list = join(select_cols, ", ")
-    df = _query(
-        db,
-        """
-        SELECT $select_list
-        FROM $table
-        WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(schema))
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, REGIONID ORDER BY archive_month DESC
-        ) = 1
-        """,
-        params,
-    )
-    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
-    "APCFLAG" in names(df) || (df[!, :APCFLAG] = fill(missing, nrow(df)))
-    return df
+
+"""
+    read_fcas_prices(db, date_range; intervention = 0)
+
+Reads per-interval, per-region FCAS clearing prices from `DISPATCHPRICE`, long-format: one row per
+`(SETTLEMENTDATE, REGIONID, BIDTYPE::BidType)` with `RRP`, `ROP`, `APCFLAG`. Summing
+[`read_fcas_requirements`](@ref)'s `MARGINALVALUE` per `(REGIONID, BIDTYPE)` reproduces `ROP` for
+that interval (not `RRP`, which may additionally be capped).
+
+# Arguments
+- `db`: an `AEMDB` connection.
+- `date_range`: the dispatch intervals to read (half-open: `start <= t < stop`).
+- `intervention`: `0` for the pricing run, `1` for the physical run.
+
+# Returns
+A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `RRP`, `ROP`, `APCFLAG` and `BIDTYPE`. Markets
+without cached price columns are absent; `APCFLAG` is `missing` where its column is not cached.
+"""
+function read_fcas_prices(db, date_range; intervention::Integer = 0)
+    markets = string.(FCAS_BID_TYPES)
+    cached(schema, market) = all(in(schema), ("$(market)RRP", "$(market)ROP"))
+    df = _read_dispatch_table(db, :DISPATCHPRICE, "REGIONID", date_range; intervention) do schema
+        return reduce(vcat, (_price_columns(schema, m) for m in markets if cached(schema, m)); init = String[])
+    end
+    long = DataFrame()
+    for (bid_type, market) in zip(FCAS_BID_TYPES, markets)
+        "$(market)RRP" in names(df) || continue
+        block = _price_block(df, market)
+        block[!, :BIDTYPE] = fill(bid_type, nrow(block))
+        append!(long, block; promote = true)
+    end
+    return long
 end

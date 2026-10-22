@@ -104,7 +104,6 @@ function read_demand(db, date_range = nothing; resolution::Dates.Period = Dates.
         """,
         params,
     )
-    # df[!, :TOTALDEMAND] .+= df[!, :DISPATCHABLELOAD]  # Adds the dispatchable load to the total demand to get the actual native demand
     df[!, :SETTLEMENTDATE] = ceil.(df[!, :SETTLEMENTDATE], resolution)
     sort!(df, :SETTLEMENTDATE)
     demand = @chain df begin
