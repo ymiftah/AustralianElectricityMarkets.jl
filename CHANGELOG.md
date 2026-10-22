@@ -482,6 +482,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   builds its model once and steps it through `replicate_range`. `scripts/replicate_interval.jl` is
   replaced by `scripts/replicate_range.jl`.
 - **`GENCONDATA.DYNAMICRHS` is no longer read or interpreted**: `read_constraint_definitions` no longer selects it, and `add_nem_constraints!` no longer puts it on `GenericConstraint.ext`. AEMO documents the column as "Not used"; the raw NEMWEB ingestion column list is untouched.
+- `AustralianElectricityMarketsSimulations.MissingCacheError`, which nothing threw, and the unused
+  `Statistics` dependency of `AustralianElectricityMarketsSimulations`.
 
 ### Changed
 
@@ -490,6 +492,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   load fails at build with the message `check_fcas_services` reports. Interconnector flow-limit
   series and MNSP band-axis errors are `ArgumentError`s. Dispatch results are unchanged.
 
+- `AustralianElectricityMarketsSimulations` internals: generator and battery ramp rows share one
+  builder; unit ramp, interconnector flow and generic constraint slacks share one variable builder;
+  the slack variable hooks and the no-op service model hooks are single `Union` methods; and the CVP
+  factors and the Market Price Cap table live in one file. Dispatch results are unchanged.
 - `interconnector_loss_models` and the bid conversion helpers moved from `Readers` to system
   construction; `interconnector_loss_models` is still exported from `AustralianElectricityMarkets`.
 - `read_bids`, `read_energy_bids` and `read_fcas_bids` take an explicit `resolution` keyword and

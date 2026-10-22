@@ -22,12 +22,6 @@ struct EnergyMaxAvailSlack <: AbstractEnergyLimitSlack end
 "Non-negative dispatch above a semi-scheduled UIGF."
 struct EnergyUIGFSlack <: AbstractEnergyLimitSlack end
 
-"Unit MaxAvail CVP, AEMO Schedule v8.0 item 14, pp. 13-17."
-const ENERGY_MAX_AVAIL_CVP_FACTOR = 370.0
-
-"UIGF CVP, AEMO Schedule v8.0 item 12, pp. 13-17."
-const ENERGY_UIGF_CVP_FACTOR = 385.0
-
 "Storage generation MAXAVAIL constraint."
 struct EnergyMaxAvailOutConstraint <: AbstractEnergyLimitConstraint end
 

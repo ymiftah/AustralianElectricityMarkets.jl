@@ -187,47 +187,20 @@ _storage_parameters(::Type{<:AbstractNEMDispatch}) = (
     _add_storage_ramp_constraints!(container, devices, model)
 
 Holds each battery's net `Out - In` within its per-interval ramp rates of the base its
-formulation measures against. Each row carries a [`UnitRampUpSlack`](@ref) or
-[`UnitRampDownSlack`](@ref) priced at [`UNIT_RAMP_CVP_FACTOR`](@ref) times the Market Price Cap,
-as for the generator ramp rows, so a net ramp envelope that conflicts with the per-direction
-bounds is violated at that price instead of making the model infeasible.
+formulation measures against, through [`_add_nem_ramp_constraints!`](@ref), so a net ramp
+envelope that conflicts with the per-direction bounds is violated at the unit ramp CVP instead of
+making the model infeasible.
 
 # Returns
 `nothing`.
 """
 function _add_storage_ramp_constraints!(container, devices, model::PSI.DeviceModel{T, D}) where {T <: PSY.Storage, D <: AbstractNEMDispatch}
-    time_steps = PSI.get_time_steps(container)
-    jump_model = PSI.get_jump_model(container)
-    minutes = PSI._get_minutes_per_period(container)
     out = PSI.get_variable(container, PSI.ActivePowerOutVariable(), T)
     in_ = PSI.get_variable(container, PSI.ActivePowerInVariable(), T)
-
-    names = [PSY.get_name(d) for d in devices]
-    isempty(names) && return
-
-    up_rate, up_covered = _ts_parameter_accessor(container, RampUpRateTimeSeriesParameter, T)
-    down_rate, down_covered = _ts_parameter_accessor(container, RampDownRateTimeSeriesParameter, T)
-    _require_coverage(
-        names, "no ramp rate time series", _SETTER_REMEDY, up_covered, down_covered,
+    _add_nem_ramp_constraints!(
+        container, T, devices, (name, t) -> out[name, t] - in_[name, t],
+        names -> _storage_ramp_base_accessor(container, D, T, names, out, in_),
     )
-
-    con_up = PSI.add_constraints_container!(
-        container, PSI.RampConstraint(), T, names, time_steps; meta = "up",
-    )
-    con_dn = PSI.add_constraints_container!(
-        container, PSI.RampConstraint(), T, names, time_steps; meta = "down",
-    )
-
-    slack_up = _add_unit_ramp_slack!(container, UnitRampUpSlack, T, names, time_steps)
-    slack_dn = _add_unit_ramp_slack!(container, UnitRampDownSlack, T, names, time_steps)
-
-    base_at = _storage_ramp_base_accessor(container, D, T, names, out, in_)
-    for name in names, t in time_steps
-        base = base_at(name, t)
-        net = out[name, t] - in_[name, t]
-        con_up[name, t] = JuMP.@constraint(jump_model, net - base - slack_up[name, t] <= up_rate(name, t) * minutes)
-        con_dn[name, t] = JuMP.@constraint(jump_model, base - net - slack_dn[name, t] <= down_rate(name, t) * minutes)
-    end
     return
 end
 
