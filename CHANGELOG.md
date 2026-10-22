@@ -470,6 +470,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- NEM energy dispatch can exceed total offered band MW through CVP1135 surplus/deficit
+  variables, preserving submitted band prices, live widths and directional availability costs.
+
 - NEM storage dispatch uses raw GEN/LOAD MAXAVAIL with separate CVP370 violations and
   live directional parameters, replacing competing static and ramp-adjusted hard ceilings.
 
