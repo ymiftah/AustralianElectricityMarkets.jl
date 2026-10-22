@@ -999,3 +999,18 @@ end
     @test coef(2, TOY_CHEAP) ≈ 1.0
     @test coef(2, TOY_EXPENSIVE) ≈ -30.0 / 40.0
 end
+
+@testset "Market Price Cap re-pricing is registered on a non-area-balance network model" begin
+    sys = nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0)], 50.0)
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaPTDFPowerModel; use_slacks = false))
+    set_nem_dispatch_models!(template, sys)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    model = PSI.DecisionModel(
+        template, sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    @test !isempty(AEMS._mpc_penalties(container))
+    @test haskey(PSI.get_parameters(container), PSI.ParameterKey(AEMS.MarketPriceCapPenaltyParameter, PSY.Area))
+end

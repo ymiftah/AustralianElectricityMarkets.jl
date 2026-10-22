@@ -147,7 +147,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stock PowerSimulations `Simulation` per chunk, stepping a one-interval replication model whose
   parameters update between intervals. Chunks break at every trading-day start (04:05), at 00:05 on
   1 July and every `chunk` period; each chunk leaves out the generic constraints it never invokes
-  and runs `check_tie_break_pairs`, a single-Market-Price-Cap check, `check_fcas_services` and
+  and runs `check_tie_break_pairs`, `check_fcas_services` and
   `check_dispatch_envelope` before its build. It returns the per-interval comparison with the
   published outcome, constraint violations, solver statistics and each chunk's reopened results.
   `scripts/replicate_range.jl` prints the comparison for a range.
@@ -469,6 +469,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`GENCONDATA.DYNAMICRHS` is no longer read or interpreted**: `read_constraint_definitions` no longer selects it, and `add_nem_constraints!` no longer puts it on `GenericConstraint.ext`. AEMO documents the column as "Not used"; the raw NEMWEB ingestion column list is untouched.
 
 ### Changed
+
+- Violation penalties (unit ramp, energy availability and UIGF, storage availability, total energy
+  offer bands, FCAS, interconnector flow, area balance and generic constraints) are re-priced at each
+  simulation step from that interval's Market Price Cap, so `replicate_range` no longer rejects a
+  chunk that crosses a Market Price Cap change.
 
 - NEM energy dispatch can exceed total offered band MW through CVP1135 surplus/deficit
   variables, preserving submitted band prices, live widths and directional availability costs.

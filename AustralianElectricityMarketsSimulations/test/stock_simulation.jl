@@ -165,13 +165,9 @@ end
 end
 
 @testset "argument checks" begin
-    # The 2024-25 and 2025-26 Market Price Caps are 17,500 and 20,300.
     @test_throws ArgumentError AEMS._range_steps(TOY_START, TOY_START - TOY_RESOLUTION)
     @test_throws ArgumentError AEMS._range_steps(TOY_START, TOY_START + Minute(7))
     @test AEMS._range_steps(TOY_START, TOY_START) == TOY_START:TOY_RESOLUTION:TOY_START
-    # The interval ending 00:00 on 1 July is the previous financial year's.
-    @test isnothing(AEMS._check_single_market_price_cap(DateTime(2025, 6, 30, 23, 55):TOY_RESOLUTION:DateTime(2025, 7, 1)))
-    @test_throws ArgumentError AEMS._check_single_market_price_cap(DateTime(2025, 7, 1):TOY_RESOLUTION:DateTime(2025, 7, 1, 0, 5))
     @test_throws ArgumentError AEMS._replication_simulation(sentinel_system(), STOCK_STEPS; parts = (:nonsense,))
     @test_throws ArgumentError replication_template(sentinel_system(); parts = (:nonsense,))
 end
@@ -381,6 +377,7 @@ end
         [DateTime(2026, 1, 1, 3, 55):Minute(5):DateTime(2026, 1, 1, 4, 0), DateTime(2026, 1, 1, 4, 5):Minute(5):DateTime(2026, 1, 1, 4, 15)]
     @test chunks(DateTime(2026, 1, 1, 4, 5):Minute(5):DateTime(2026, 1, 2, 4, 0), :trading_day) ==
         [DateTime(2026, 1, 1, 4, 5):Minute(5):DateTime(2026, 1, 2, 4, 0)]
+    # Loss factors change on 1 July, so the default trading-day chunks also break at 00:05 on 1 July.
     @test chunks(DateTime(2026, 6, 30, 23, 50):Minute(5):DateTime(2026, 7, 1, 0, 15), :trading_day) ==
         [DateTime(2026, 6, 30, 23, 50):Minute(5):DateTime(2026, 7, 1, 0, 0), DateTime(2026, 7, 1, 0, 5):Minute(5):DateTime(2026, 7, 1, 0, 15)]
     @test chunks(DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20), Minute(10)) ==

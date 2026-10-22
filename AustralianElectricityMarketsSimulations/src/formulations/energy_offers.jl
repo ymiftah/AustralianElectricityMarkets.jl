@@ -106,16 +106,9 @@ function PSI.add_proportional_cost!(
     ) where {S <: AbstractEnergyOfferSlack, T <: PSY.StaticInjection}
     selected = _energy_offer_devices(devices, S)
     isempty(selected) && return
-    variables = PSI.get_variable(container, slack, T)
-    resolution = PSI.get_resolution(container)
-    for t in PSI.get_time_steps(container)
-        time = PSI.get_initial_time(container) + (t - 1) * resolution
-        cost = PSI.get_base_power(container) * interval_cost_coefficient(
-            ENERGY_OFFER_CVP_FACTOR * _container_market_price_cap(container, time), resolution,
-        )
-        for d in selected
-            PSI.add_to_objective_invariant_expression!(container, variables[PSY.get_name(d), t] * cost)
-        end
-    end
+    _add_mpc_penalty!(
+        container, PSI.get_variable(container, slack, T), [PSY.get_name(d) for d in selected],
+        PSI.get_time_steps(container), ENERGY_OFFER_CVP_FACTOR,
+    )
     return
 end

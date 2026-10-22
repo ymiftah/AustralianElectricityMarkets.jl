@@ -35,6 +35,7 @@ include("types/logging.jl")
 
 include("formulations/constraint_formulations.jl")
 include("formulations/generic_constraints.jl")
+include("formulations/penalty_costs.jl")
 include("checks/nem_constraints.jl")
 include("formulations/dispatch.jl")
 include("formulations/energy_limits.jl")

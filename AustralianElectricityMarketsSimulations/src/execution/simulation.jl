@@ -10,18 +10,6 @@ function _range_steps(start::DateTime, stop::DateTime)
 end
 
 
-# Penalty multipliers and every CVP cost are fixed at build, so the steps must sit under one Market Price Cap.
-function _check_single_market_price_cap(steps)
-    _financial_year_mpc(first(steps)) == _financial_year_mpc(last(steps)) || throw(
-        ArgumentError(
-            "replicate_range: the intervals ending $(first(steps)) and $(last(steps)) fall under different " *
-                "Market Price Caps; split the range so that the interval ending 00:05 on 1 July starts a chunk.",
-        ),
-    )
-    return
-end
-
-
 # Available `GenericConstraint`s invoked at none of `steps`, each mapped to `:never_invoked`.
 function _never_invoked_constraints(sys::PSY.System, steps)
     reasons = Dict{String, Symbol}()
@@ -37,12 +25,11 @@ end
 
 # Pre-flight checks, template and built `PSI.Simulation` of a one-interval `DecisionModel` stepping
 # through `steps`: the template keeps the constraints invoked at some step, and a model built once
-# requires one Market Price Cap, the same tied band pairs and a feasible dispatch envelope at every step.
+# requires the same tied band pairs and a feasible dispatch envelope at every step.
 function _build_range_simulation(
         sys::PSY.System, steps; optimizer = _DEFAULT_OPTIMIZER, parts = REPLICATION_PARTS,
         folder::AbstractString = mktempdir(), name = "dispatch",
     )
-    _check_single_market_price_cap(steps)
     :tie_breaks in parts && check_tie_break_pairs(sys, steps)
     template_skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
     exclude = :generic_constraints in parts ? _never_invoked_constraints(sys, steps) : Dict{String, Symbol}()
@@ -96,7 +83,8 @@ end
 
 
 # One range per chunk of `steps`: a chunk starts at the first step, at every 04:05 trading-day
-# start, at 00:05 on 1 July and, with a `Dates.Period` `chunk`, every `chunk` after its own start.
+# start, at 00:05 on 1 July (loss factors change with the financial year) and, with a `Dates.Period`
+# `chunk`, every `chunk` after its own start.
 function _range_chunks(steps::StepRange{DateTime}, chunk::Union{Symbol, Dates.Period})
     _check_chunk(chunk)
     starts = DateTime[]
@@ -186,8 +174,9 @@ published outcome. Each chunk of the range is one `PowerSimulations.Simulation`:
 and stepped through its intervals, its parameters updating at each step, and every step starts from
 the interval's published `INITIALMW`. A chunk starts at `start`, at every 04:05 trading-day start, at
 00:05 on 1 July and, with a `Dates.Period` `chunk`, every `chunk` after its own start. Each chunk
-leaves out the generic constraints invoked at none of its intervals, and checks before its build
-that its intervals share one Market Price Cap, the same price-tied band pairs
+leaves out the generic constraints invoked at none of its intervals, prices every violation at each
+interval's own Market Price Cap, and checks before its build
+that its intervals share the same price-tied band pairs
 ([`check_tie_break_pairs`](@ref)) and a feasible dispatch envelope ([`check_dispatch_envelope`](@ref)).
 
 # Arguments
