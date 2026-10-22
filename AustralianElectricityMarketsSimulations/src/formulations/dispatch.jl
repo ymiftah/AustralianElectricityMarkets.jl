@@ -17,10 +17,7 @@ PSI.get_variable_lower_bound(::PSI.ActivePowerVariable, ::PSY.StaticInjection, :
 PSI.get_variable_upper_bound(::PSI.ActivePowerVariable, ::PSY.StaticInjection, ::AbstractNEMDispatch) = nothing
 
 
-# "max_active_power" is stored normalised by the static rating; the dispatch-limit series are
-# stored as absolute system-base per-unit.
-PSI.get_multiplier_value(::PSI.ActivePowerTimeSeriesParameter, d::PSY.StaticInjection, ::AbstractNEMDispatch) = PSY.get_max_active_power(d)
-
+# The dispatch-limit series are stored as absolute system-base per-unit.
 PSI.get_multiplier_value(::RampUpRateTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
 
 PSI.get_multiplier_value(::RampDownRateTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
@@ -32,9 +29,6 @@ PSI.get_multiplier_value(::EnergyMaxAvailTimeSeriesParameter, ::PSY.StaticInject
 PSI.get_multiplier_value(::EnergyUIGFTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
 
 PSI.get_multiplier_value(::PSI.AbstractPiecewiseLinearBreakpointParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
-
-
-PSI.get_min_max_limits(d::PSY.StaticInjection, ::Type{PSI.ActivePowerVariableLimitsConstraint}, ::Type{<:AbstractNEMDispatch}) = (min = 0.0, max = PSY.get_max_active_power(d))
 
 
 PSI.objective_function_multiplier(::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = PSI.OBJECTIVE_FUNCTION_POSITIVE
@@ -63,7 +57,6 @@ function PSI.get_default_time_series_names(
         ::Type{<:AbstractNEMDispatch},
     )
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
-        PSI.ActivePowerTimeSeriesParameter => "max_active_power",
         RampUpRateTimeSeriesParameter => "ramp_up_rate",
         RampDownRateTimeSeriesParameter => "ramp_down_rate",
         InitialPowerTimeSeriesParameter => "initial_mw",
@@ -165,6 +158,8 @@ function PSI.construct_device!(
     _check_energy_limit_series(sys, model, PSI.get_initial_time(container), length(PSI.get_time_steps(container)))
 
     PSI.add_variables!(container, PSI.ActivePowerVariable, devices, D())
+    # A non-scheduled load has no energy offer and is never dispatched for energy (it only offers
+    # FCAS), so its energy is held at 0 MW rather than left to the elastic MaxAvail row.
     for d in devices
         AustralianElectricityMarkets._is_non_scheduled_load(d) || continue
         for t in PSI.get_time_steps(container)
@@ -176,7 +171,6 @@ function PSI.construct_device!(
     isempty(semi) || PSI.add_variables!(container, EnergyUIGFSlack, semi, D())
 
     for param in (
-            PSI.ActivePowerTimeSeriesParameter,
             RampUpRateTimeSeriesParameter,
             RampDownRateTimeSeriesParameter,
             InitialPowerTimeSeriesParameter,

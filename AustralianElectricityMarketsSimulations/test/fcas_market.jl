@@ -2461,6 +2461,32 @@ end
     @test occursin("incremental", sprint(showerror, err))
 end
 
+"Turns the toy `ASLOAD` into the built form of a non-scheduled load offering RAISE6SEC."
+function make_non_scheduled_fcas_load!(sys, stamps)
+    load = PSY.get_component(PSY.InterruptiblePowerLoad, sys, "ASLOAD")
+    # The built form of a non-scheduled load: zero `LoadCost`, no energy bid.
+    for key in collect(PSY.get_time_series_keys(load))
+        PSY.remove_time_series!(sys, PSY.get_time_series_type(key), load, PSY.get_name(key))
+    end
+    PSY.set_operation_cost!(load, PSY.LoadCost(; variable = PSY.CostCurve(PSY.LinearCurve(0.0)), fixed = 0.0))
+    PSY.get_ext(load)["non_scheduled"] = true
+    PSY.get_ext(load)["nem_semi_scheduled"] = false
+    for name in ("max_active_power", "energy_max_avail", "ramp_up_rate", "ramp_down_rate", "initial_mw", "availability")
+        PSY.add_time_series!(
+            sys, load,
+            PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, zeros(length(stamps)))),
+        )
+    end
+    add_toy_fcas!(
+        sys, load, stamps[1], length(stamps), BidType.RAISE6SEC, (0.0, 0.0, 0.0, 0.0, 20.0), [(20.0, 3.0)];
+        decremental = true,
+    )
+    PSY.add_service!(
+        sys, FCASService(; name = "TAS1_RAISE6SEC", region = "TAS1", bid_type = BidType.RAISE6SEC), [load],
+    )
+    return
+end
+
 @testset "a non-scheduled load with zero energy offers FCAS" begin
     # No energy bid and zero availability: the FCAS trapezium is the point (0, 0, 0, 0) with the
     # full MaxAvail offered.
@@ -2469,27 +2495,7 @@ end
         40.0;
         loads = ["ASLOAD" => toy_load(1.0, 0.0; initial = 0.0, ramp_up = 0.0, ramp_down = 0.0, availability = 0.0)],
         mutate! = (sys, stamps) -> begin
-            load = PSY.get_component(PSY.InterruptiblePowerLoad, sys, "ASLOAD")
-            # The built form of a non-scheduled load: zero `LoadCost`, no energy bid.
-            for key in collect(PSY.get_time_series_keys(load))
-                PSY.remove_time_series!(sys, PSY.get_time_series_type(key), load, PSY.get_name(key))
-            end
-            PSY.set_operation_cost!(load, PSY.LoadCost(; variable = PSY.CostCurve(PSY.LinearCurve(0.0)), fixed = 0.0))
-            PSY.get_ext(load)["non_scheduled"] = true
-            PSY.get_ext(load)["nem_semi_scheduled"] = false
-            for name in ("max_active_power", "energy_max_avail", "ramp_up_rate", "ramp_down_rate", "initial_mw", "availability")
-                PSY.add_time_series!(
-                    sys, load,
-                    PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, zeros(length(stamps)))),
-                )
-            end
-            add_toy_fcas!(
-                sys, load, stamps[1], length(stamps), BidType.RAISE6SEC, (0.0, 0.0, 0.0, 0.0, 20.0), [(20.0, 3.0)];
-                decremental = true,
-            )
-            PSY.add_service!(
-                sys, FCASService(; name = "TAS1_RAISE6SEC", region = "TAS1", bid_type = BidType.RAISE6SEC), [load],
-            )
+            make_non_scheduled_fcas_load!(sys, stamps)
         end,
     )
     container = build_fcas(sys, ["TAS1_RAISE6SEC"])
@@ -2497,6 +2503,48 @@ end
         fcas_capacity(container, "TAS1_RAISE6SEC")["ASLOAD", 1]
     end
     @test fcas_mw(container, "TAS1_RAISE6SEC", "ASLOAD") ≈ 20.0 atol = FCAS_TOY_TOLERANCE
+    var = PSI.get_variable(container, PSI.ActivePowerVariable(), PSY.InterruptiblePowerLoad)
+    @test PSI.JuMP.value(var["ASLOAD", 1]) ≈ 0.0 atol = FCAS_TOY_TOLERANCE
+end
+
+@testset "a violation-priced constraint cannot dispatch a non-scheduled load for energy" begin
+    # A GE row demanding 5 MW of ASLOAD energy is violable at the constraint violation price, which
+    # dwarfs the load's elastic zero MaxAvail row; only the fixed energy variable keeps it at 0 MW.
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 1.0e4, ramp_down = 1.0e4)],
+        40.0;
+        loads = ["ASLOAD" => toy_load(1.0, 0.0; initial = 0.0, ramp_up = 0.0, ramp_down = 0.0, availability = 0.0)],
+        mutate! = (sys, stamps) -> begin
+            make_non_scheduled_fcas_load!(sys, stamps)
+            load = PSY.get_component(PSY.InterruptiblePowerLoad, sys, "ASLOAD")
+            rhs_pu = 5.0 / PSY.get_base_power(sys)
+            gc = GenericConstraint(;
+                name = "PULL_LOAD", sense = ConstraintSense.GE, rhs = rhs_pu,
+                terms = ConstraintTerm[UnitTerm("ASLOAD", BidType.ENERGY, 1.0)],
+            )
+            PSY.add_service!(sys, gc, [load])
+            for (series, value) in (("rhs", rhs_pu), ("invoked", 1.0))
+                PSY.add_time_series!(
+                    sys, gc,
+                    PSY.SingleTimeSeries(; name = series, data = PSY.TimeSeries.TimeArray(stamps, fill(value, length(stamps)))),
+                )
+            end
+        end,
+    )
+    template = fcas_toy_template(sys, ["TAS1_RAISE6SEC"])
+    PSI.set_service_model!(
+        template, "PULL_LOAD",
+        PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "PULL_LOAD"; use_slacks = true),
+    )
+    model = PSI.DecisionModel(
+        template, sys;
+        optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+        horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
+        initial_time = TOY_START, name = "non_scheduled_pull", store_variable_names = true,
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    container = PSI.get_optimization_container(model)
     var = PSI.get_variable(container, PSI.ActivePowerVariable(), PSY.InterruptiblePowerLoad)
     @test PSI.JuMP.value(var["ASLOAD", 1]) ≈ 0.0 atol = FCAS_TOY_TOLERANCE
 end
