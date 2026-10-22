@@ -62,6 +62,7 @@ using AustralianElectricityMarkets.Readers: read_uigf_as_dict
 export DISPATCH_INTERVAL_HOURS, DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
 export IntervalInputs, read_interval_inputs, read_published_interval
 export REPLICATION_PARTS, replication_template, replication_system, replicate_range
+export EnergyMaxAvailOutConstraint, EnergyMaxAvailInConstraint, EnergyMaxAvailOutSlack, EnergyMaxAvailInSlack
 export EnergyMaxAvailTimeSeriesParameter, EnergyUIGFTimeSeriesParameter,
     EnergyMaxAvailConstraint, EnergyUIGFConstraint, EnergyMaxAvailSlack, EnergyUIGFSlack,
     ENERGY_MAX_AVAIL_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR

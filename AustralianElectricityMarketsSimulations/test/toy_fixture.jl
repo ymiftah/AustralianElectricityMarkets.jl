@@ -70,12 +70,11 @@ end
 # `mutate!(sys, stamps)`, when given, runs just before the fixture's
 # `transform_single_time_series!`, so it can attach raw two-timestamp series of its own.
 # Unit fields except `capacity`, and `load_mw`, take a scalar or one value per stamp;
-# `horizon` is the transform horizon. With `ceilings` (default), the batteries' dispatch ceilings
-# are attached after `mutate!`, and with `tie_break_scales` (default) the tie-break scales. `interchange` (a `toy_interchange`) keeps area 2 and joins it to
+# `horizon` is the transform horizon. With `tie_break_scales` (default), the tie-break scales are attached after `mutate!`. `interchange` (a `toy_interchange`) keeps area 2 and joins it to
 # area 1 through `TOY_INTERCHANGE`, whose loss demand coefficients are attached after `mutate!`.
 function nem_toy_system(
         units, load_mw; batteries = Pair{String, Any}[], loads = Pair{String, Any}[], mutate! = nothing,
-        horizon = 2 * TOY_RESOLUTION, ceilings = true, interchange = nothing, tie_break_scales = true,
+        horizon = 2 * TOY_RESOLUTION, interchange = nothing, tie_break_scales = true,
     )
     sys = PSB.build_system(PSISystems, "5_bus_hydro_ed_sys")
     PSY.clear_time_series!(sys)
@@ -203,7 +202,6 @@ function nem_toy_system(
 
     isnothing(interchange) || add_toy_interchange!(sys, stamps, interchange)
     isnothing(mutate!) || mutate!(sys, stamps)
-    ceilings && set_storage_dispatch_ceilings!(sys)
     isnothing(interchange) || set_loss_demand_coefficients!(sys)
     set_fcas_effective_offers!(sys)
     tie_break_scales && set_tie_break_scales!(sys)
@@ -311,6 +309,7 @@ end
 function solve_toy(
         sys;
         formulation = NEMReplayDispatch,
+        generic_slacks = false,
         optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
     )
     network = PSI.NetworkModel(
@@ -324,7 +323,7 @@ function solve_toy(
     if !isempty(PSY.get_components(GenericConstraint, sys))
         PSI.set_service_model!(
             template,
-            PSI.ServiceModel(GenericConstraint, LinearFactorLimit; duals = [NEMConstraintLimit]),
+            PSI.ServiceModel(GenericConstraint, LinearFactorLimit; duals = [NEMConstraintLimit], use_slacks = generic_slacks),
         )
     end
     model = PSI.DecisionModel(

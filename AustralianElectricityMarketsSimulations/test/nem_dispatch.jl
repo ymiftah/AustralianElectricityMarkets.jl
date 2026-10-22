@@ -25,7 +25,6 @@ function nem_dispatch_system(; mutate! = identity, data_span = NEM_DISPATCH_HORI
     set_nem_dispatch_limits!(sys, db, date_range)
     set_nem_energy_limits!(sys, db, date_range)
     mutate!(sys)
-    set_storage_dispatch_ceilings!(sys)
     # One window spanning the whole span, matching the single window the bid forecast carries.
     PSY.transform_single_time_series!(sys, data_span, NEM_DISPATCH_RESOLUTION)
     return sys
@@ -389,10 +388,8 @@ end
 end
 
 
-@testset "a net ramp-down floor above a battery's generation availability raises the ceiling instead of failing the build" begin
-    # Zero generation availability with a positive net INITIALMW and a zero down rate: the net
-    # ramp-down floor equals INITIALMW, above the zeroed generation availability. The generation
-    # ceiling is raised to the floor, so the build succeeds instead of failing.
+@testset "a battery ramp floor may exceed raw generation availability" begin
+    # A positive ramp floor can exceed zero availability through a priced surplus.
     sys = nem_dispatch_system(;
         mutate! = function (s)
             flatten_series!(s, PSY.EnergyReservoirStorage, "BW01", "ramp_down_rate", 0.0)
@@ -404,7 +401,7 @@ end
     @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
 end
 
-@testset "a battery whose raised ceiling exceeds its own rating builds, with the ramp row elastic" begin
+@testset "a battery may exceed its static rating through a priced availability violation" begin
     # A net ramp-down floor above generation availability raises the generation ceiling, but the
     # battery's own output rating is lowered below that floor first. The rating is a hard bound,
     # so the ramp row relaxes instead of the build failing.
@@ -471,7 +468,6 @@ end
     set_market_bids!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_nem_dispatch_limits!(sys, db, date_range)
     set_nem_energy_limits!(sys, db, date_range)
-    set_storage_dispatch_ceilings!(sys)
 
     # Strip one device's rates after the template is derived, so the type is still a
     # participant but that device has nothing to read.

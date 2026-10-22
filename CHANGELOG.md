@@ -36,11 +36,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2025-26 report publishes but MMSDM `LOSSFACTORMODEL` omits, for 2025-07-01 to 2026-06-30. A value
   present in the table is never overridden.
 
-- In both `NEMReplayDispatch` and `NEMLookaheadDispatch`, each storage power variable now uses its
-  finite direction-specific energy offer `MAXAVAIL` as an upper bound, including the existing
-  ramp-floor adjustment.
-  Missing or non-finite availability retains the static bound subject to the existing ramp-floor
-  exception. Lookahead retains its existing chained optimized-power ramp semantics.
 - Invoked generic constraint versions with a missing effective date no longer abort the build (they are
   treated as having no definition).
 - `filter_buildable_generic_constraints` leaves out a generic constraint whose contributing devices
@@ -467,12 +462,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `set_storage_dispatch_ceilings!` and the toy fixture's `ceilings` option: replay dispatch reads raw directional storage availability, so nothing consumes the derived `"storage_gen_ceiling"` and `"storage_load_ceiling"` series.
 - `replicate_interval` (both methods) and `replication_system(db, settlement_date)`: every replay
   builds its model once and steps it through `replicate_range`. `scripts/replicate_interval.jl` is
   replaced by `scripts/replicate_range.jl`.
 - **`GENCONDATA.DYNAMICRHS` is no longer read or interpreted**: `read_constraint_definitions` no longer selects it, and `add_nem_constraints!` no longer puts it on `GenericConstraint.ext`. AEMO documents the column as "Not used"; the raw NEMWEB ingestion column list is untouched.
 
 ### Changed
+
+- NEM storage dispatch uses raw GEN/LOAD MAXAVAIL with separate CVP370 violations and
+  live directional parameters, replacing competing static and ramp-adjusted hard ceilings.
 
 - NEM non-storage dispatch models raw bid MAXAVAIL and semi-scheduled UIGF as separate
   elastic limits at CVP370 and CVP385, with typed PSI surplus variables, constraints and costs.

@@ -149,11 +149,9 @@ end
     @test out.objective ≈ (5.0 * 20.0 - 5.0 * 30.0) * DISPATCH_INTERVAL_HOURS atol = TOY_TOLERANCE
 end
 
-@testset "a net ramp-down floor above generation availability raises the generation ceiling" begin
-    # INITIALMW = 20 (discharging); ramp_down = 1 MW/min over the 5-minute interval gives a net
-    # ramp-down floor of 20 - 5 = 15, above the battery's own 10 MW generation availability. The
-    # generation ceiling is raised to the floor, so the battery covers the full 15 MW load at its
-    # $5/MWh offer instead of being capped at 10 MW.
+@testset "a net ramp-down floor can violate generation availability at its price" begin
+    # Ramping holds net generation at 15 MW despite 10 MW availability, incurring 5 MW
+    # of availability violation rather than relaxing the higher-priority ramp row.
     sys = nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 100.0)]; initial = 0.0, ramp_up = 100.0)],
         15.0;
@@ -169,14 +167,12 @@ end
     @test out.battery_out_mw[TOY_BATTERY] ≈ 15.0 atol = TOY_TOLERANCE
     @test out.battery_in_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
     @test out.dispatch_mw[TOY_CHEAP] ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ 15.0 * 5.0 * DISPATCH_INTERVAL_HOURS atol = TOY_TOLERANCE
+    @test out.objective ≈ (15.0 * 5.0 + 5.0 * ENERGY_MAX_AVAIL_CVP_FACTOR * AEMS._financial_year_mpc(TOY_START)) * DISPATCH_INTERVAL_HOURS atol = 1.0e-4
 end
 
-@testset "a net ramp-up ceiling below negative load availability raises the load ceiling" begin
-    # INITIALMW = -20 (charging); ramp_up = 1 MW/min over the 5-minute interval gives a net
-    # ramp-up ceiling of -20 + 5 = -15, below the negative of the battery's own 10 MW load
-    # availability (-10). The load ceiling is raised to 15, so the battery charges the full 15 MW
-    # its $1000/MWh load bid values, off Alta's $20/MWh supply, instead of being capped at 10 MW.
+@testset "a net ramp-up ceiling can violate load availability at its price" begin
+    # Ramping holds net consumption at 15 MW despite 10 MW availability, incurring 5 MW
+    # of availability violation at the raw offer limit.
     sys = nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
         0.0;
@@ -192,7 +188,7 @@ end
     @test out.battery_in_mw[TOY_BATTERY] ≈ 15.0 atol = TOY_TOLERANCE
     @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
     @test out.dispatch_mw[TOY_CHEAP] ≈ 15.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ (15.0 * 20.0 - 15.0 * 1000.0) * DISPATCH_INTERVAL_HOURS atol = TOY_TOLERANCE
+    @test out.objective ≈ (15.0 * 20.0 - 15.0 * 1000.0 + 5.0 * ENERGY_MAX_AVAIL_CVP_FACTOR * AEMS._financial_year_mpc(TOY_START)) * DISPATCH_INTERVAL_HOURS atol = 1.0e-4
 end
 
 @testset "a per-direction availability binding" begin
@@ -241,166 +237,32 @@ end
     end
 end
 
-@testset "storage replay variable bounds follow directional energy offers" begin
-    storage_bound = function (out, sys, variable_type)
-        variable = PSI.get_variable(out.container, variable_type(), PSY.EnergyReservoirStorage)
-        return PSI.JuMP.upper_bound(variable[TOY_BATTERY, 1]) * PSY.get_base_power(sys)
-    end
-    set_static_limits! = function (sys, dispatch_context = nothing; output_mw = 50.0, input_mw = 50.0)
-        battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
-        PSY.set_output_active_power_limits!(battery, (min = 0.0, max = output_mw))
-        PSY.set_input_active_power_limits!(battery, (min = 0.0, max = input_mw))
-        @test PSY.get_output_active_power_limits(battery).max ≈ output_mw atol = TOY_TOLERANCE
-        @test PSY.get_input_active_power_limits(battery).max ≈ input_mw atol = TOY_TOLERANCE
-        return
-    end
-
-    @testset "a load offer above the registered input limit can clear" begin
-        sys = nem_toy_system(
-            [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
-            0.0;
-            batteries = [
-                TOY_BATTERY => toy_battery(
-                    50.0, 1000.0, 100.0, 1000.0;
-                    initial = 0.0, ramp_up = 100.0, gen_avail = 0.0, load_avail = 100.0,
-                ),
-            ],
-            mutate! = function (s, _)
-                set_static_limits!(s; input_mw = 50.0)
-                return
-            end,
-        )
-        out = solve_toy(sys)
-        in_variable = PSI.get_variable(out.container, PSI.ActivePowerInVariable(), PSY.EnergyReservoirStorage)
-        actual_bound_mw = PSI.JuMP.upper_bound(in_variable[TOY_BATTERY, 1]) * PSY.get_base_power(sys)
-
-        @test actual_bound_mw ≈ 100.0 atol = TOY_TOLERANCE
-        @test out.battery_in_mw[TOY_BATTERY] ≈ 100.0 atol = TOY_TOLERANCE
-        @test out.battery_in_mw[TOY_BATTERY] > 50.0
-        @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
-        @test out.storage_ramp_slack_mw.up ≈ 0.0 atol = TOY_TOLERANCE
-    end
-
-    @testset "generation and load availability stay independent in both formulations" begin
-        for formulation in (NEMReplayDispatch, NEMLookaheadDispatch)
-            for (gen_avail, load_avail) in ((20.0, 100.0), (100.0, 20.0))
-                sys = nem_toy_system(
-                    [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
-                    0.0;
-                    batteries = [
-                        TOY_BATTERY => toy_battery(
-                            100.0, 1.0, 100.0, 1000.0;
-                            initial = 0.0, ramp_up = 100.0, gen_avail = gen_avail, load_avail = load_avail,
-                        ),
-                    ],
-                    mutate! = set_static_limits!,
-                )
-                out = solve_toy(sys; formulation = formulation)
-
-                @test storage_bound(out, sys, PSI.ActivePowerOutVariable) ≈ gen_avail atol = TOY_TOLERANCE
-                @test storage_bound(out, sys, PSI.ActivePowerInVariable) ≈ load_avail atol = TOY_TOLERANCE
+@testset "storage availability is elastic without a static or derived ceiling" begin
+    for formulation in (NEMReplayDispatch, NEMLookaheadDispatch)
+        for (gen, load) in ((20.0, 100.0), (100.0, 20.0))
+            sys = nem_toy_system(
+                [TOY_CHEAP => toy_unit(200.0, [(200.0, 20.0)]; initial = 60.0, ramp_up = 100.0)], 0.0;
+                batteries = [
+                    TOY_BATTERY => toy_battery(
+                        100.0, 1000.0, 100.0, 50.0;
+                        initial = 0.0, ramp_up = 100.0, gen_avail = gen, load_avail = load
+                    ),
+                ],
+                mutate! = function (sys, _)
+                    battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
+                    PSY.set_input_active_power_limits!(battery, (min = 0.0, max = 5.0))
+                    PSY.set_output_active_power_limits!(battery, (min = 0.0, max = 5.0))
+                    return
+                end,
+            )
+            out = solve_toy(sys; formulation)
+            @test out.battery_in_mw[TOY_BATTERY] ≈ load atol = TOY_TOLERANCE
+            @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
+            for variable_type in (PSI.ActivePowerOutVariable, PSI.ActivePowerInVariable)
+                variables = PSI.get_variable(out.container, variable_type(), PSY.EnergyReservoirStorage)
+                @test !PSI.JuMP.has_upper_bound(variables[TOY_BATTERY, 1])
             end
         end
-    end
-
-    @testset "missing offer series keeps the static fallback in both formulations" begin
-        for formulation in (NEMReplayDispatch, NEMLookaheadDispatch)
-            sys = nem_toy_system(
-                [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
-                0.0;
-                batteries = [
-                    TOY_BATTERY => toy_battery(
-                        100.0, 1.0, 100.0, 1000.0;
-                        initial = 0.0, ramp_up = 100.0, gen_avail = 100.0, load_avail = 100.0,
-                    ),
-                ],
-                mutate! = function (s, _)
-                    battery = PSY.get_component(PSY.EnergyReservoirStorage, s, TOY_BATTERY)
-                    PSY.remove_time_series!(s, PSY.SingleTimeSeries, battery, "energy_max_avail")
-                    PSY.remove_time_series!(s, PSY.SingleTimeSeries, battery, "energy_max_avail_decremental")
-                    set_static_limits!(s; input_mw = 50.0)
-                    return
-                end,
-            )
-            out = solve_toy(sys; formulation = formulation)
-
-            @test storage_bound(out, sys, PSI.ActivePowerInVariable) ≈ 50.0 atol = TOY_TOLERANCE
-        end
-    end
-
-    @testset "a single-direction energy offer keeps the static fallback in both formulations" begin
-        for formulation in (NEMReplayDispatch, NEMLookaheadDispatch)
-            sys = nem_toy_system(
-                [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
-                0.0;
-                batteries = [
-                    TOY_BATTERY => toy_battery(
-                        100.0, 1.0, 100.0, 1000.0;
-                        initial = 0.0, ramp_up = 100.0, gen_avail = 30.0, load_avail = 100.0,
-                    ),
-                ],
-                mutate! = function (s, _)
-                    battery = PSY.get_component(PSY.EnergyReservoirStorage, s, TOY_BATTERY)
-                    PSY.remove_time_series!(s, PSY.SingleTimeSeries, battery, "energy_max_avail_decremental")
-                    set_static_limits!(s; input_mw = 50.0)
-                    return
-                end,
-            )
-            out = solve_toy(sys; formulation = formulation)
-
-            @test storage_bound(out, sys, PSI.ActivePowerInVariable) ≈ 50.0 atol = TOY_TOLERANCE
-            @test out.battery_in_mw[TOY_BATTERY] <= 50.0 + TOY_TOLERANCE
-        end
-    end
-
-    @testset "lookahead storage bounds follow directional energy offers" begin
-        sys = nem_toy_system(
-            [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
-            0.0;
-            batteries = [
-                TOY_BATTERY => toy_battery(
-                    100.0, 1.0, 100.0, 1000.0;
-                    initial = 0.0, ramp_up = 100.0, gen_avail = 0.0, load_avail = 100.0,
-                ),
-            ],
-            mutate! = function (s, _)
-                set_static_limits!(s; input_mw = 50.0)
-                return
-            end,
-        )
-        out = solve_toy(sys; formulation = NEMLookaheadDispatch)
-
-        @test storage_bound(out, sys, PSI.ActivePowerInVariable) ≈ 100.0 atol = TOY_TOLERANCE
-        @test out.battery_in_mw[TOY_BATTERY] ≈ 100.0 atol = TOY_TOLERANCE
-        @test out.battery_in_mw[TOY_BATTERY] > 50.0
-        @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
-    end
-
-    @testset "a lookahead battery with an energy offer needs its ceiling series" begin
-        units = [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)]
-        batteries = [
-            TOY_BATTERY => toy_battery(
-                100.0, 1.0, 100.0, 1000.0; initial = 0.0, ramp_up = 100.0, gen_avail = 30.0, load_avail = 100.0,
-            ),
-        ]
-        bare = nem_toy_system(units, 0.0; batteries = batteries, ceilings = false)
-        template = PSI.ProblemTemplate(
-            PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true, duals = [PSI.CopperPlateBalanceConstraint]),
-        )
-        set_nem_dispatch_models!(template, bare; formulation = NEMLookaheadDispatch)
-        PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
-        model = PSI.DecisionModel(
-            template, bare;
-            optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
-            horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
-            initial_time = TOY_START, name = "nem_toy_bare", store_variable_names = true,
-        )
-        folder = mktempdir()
-        @test PSI.build!(model; output_dir = folder) == PSI.ModelBuildStatus.FAILED
-        @test any(f -> occursin("set_storage_dispatch_ceilings!", read(f, String)), readdir(folder; join = true))
-
-        out = solve_toy(nem_toy_system(units, 0.0; batteries = batteries); formulation = NEMLookaheadDispatch)
-        @test out.battery_out_mw[TOY_BATTERY] <= 30.0 + TOY_TOLERANCE
     end
 end
 
@@ -506,11 +368,10 @@ end
     @test availability_limited.load_mw["PUMP"] ≈ 10.0 atol = TOY_TOLERANCE
 end
 
-@testset "a battery's ramp floor above its rating raises the rating, and its ramp row is priced" begin
+@testset "a battery's ramp floor can exceed its rating with priced availability" begin
     # INITIALMW = -50 (charging) with a zero up rate pins net <= -50, above the battery's 40 MW
     # input rating. NEMDE breaks MaxAvail and the rating before the ramp row, so the input
-    # variable's upper bound is raised to 50 and the ramp slack stays zero. On the base branch
-    # this build fails at the storage envelope check.
+    # Availability absorbs the 10 MW conflict; static ratings do not impose another hard bound.
     sys = nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)],
         0.0;
@@ -530,9 +391,9 @@ end
     input_variable = PSI.get_variable(out.container, PSI.ActivePowerInVariable(), PSY.EnergyReservoirStorage)
 
     @test out.battery_in_mw[TOY_BATTERY] ≈ 50.0 atol = TOY_TOLERANCE
-    @test PSI.JuMP.upper_bound(input_variable[TOY_BATTERY, 1]) * PSY.get_base_power(sys) ≈ 50.0 atol = TOY_TOLERANCE
+    @test !PSI.JuMP.has_upper_bound(input_variable[TOY_BATTERY, 1])
     @test out.storage_ramp_slack_mw.up ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ 50.0 * 20.0 * DISPATCH_INTERVAL_HOURS rtol = 1.0e-8
+    @test out.objective ≈ (50.0 * 20.0 + 10.0 * ENERGY_MAX_AVAIL_CVP_FACTOR * mpc) * DISPATCH_INTERVAL_HOURS rtol = 1.0e-8
 
     @testset "the storage ramp slack is priced at 1155 x MPC" begin
         slack = PSI.get_variable(out.container, UnitRampUpSlack(), PSY.EnergyReservoirStorage)[TOY_BATTERY, 1]

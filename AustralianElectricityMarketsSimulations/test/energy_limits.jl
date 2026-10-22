@@ -31,7 +31,7 @@ function energy_limit_solve(sys)
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
     dispatch = PSI.read_variable(results, "ActivePowerVariable__ThermalStandard")
-    return (; results, power = only(r.value for r in eachrow(dispatch) if r.name == TOY_CHEAP), violations = AEMS._constraint_violations(results, sys))
+    return (; results, objective = PSI.JuMP.objective_value(PSI.get_jump_model(PSI.get_optimization_container(model))), power = only(r.value for r in eachrow(dispatch) if r.name == TOY_CHEAP), violations = AEMS._constraint_violations(results, sys))
 end
 
 function energy_slack(out, type)
@@ -53,6 +53,7 @@ end
     @test only(filter(:family => ==("energy_max_avail"), out.violations).MW) ≈ 20.0 atol = 1.0e-6
     @test only(filter(:family => ==("energy_uigf"), out.violations).MW) ≈ 15.0 atol = 1.0e-6
     @test !any(==("generic_constraint"), out.violations.family)
+    @test out.objective ≈ 19213775.0 atol = 1.0e-4
 end
 
 @testset "fixed loading beats MaxAvail but does not beat UIGF" begin
