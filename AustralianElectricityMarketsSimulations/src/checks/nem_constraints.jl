@@ -108,24 +108,29 @@ end
 
 
 """
-    _constraint_diagnosis(sys, gc, modeled_types, interconnector_modeled, fcas_modeled; tolerated_reasons = Set{Symbol}()) -> Union{Nothing, Tuple{Symbol, Vector{DataType}, Int}}
+    _constraint_diagnosis(sys, gc, modeled_types, interconnector_modeled, fcas_modeled; tolerated_reasons = Set{Symbol}(), tolerated_types = DataType[]) -> Union{Nothing, Tuple{Symbol, Vector{DataType}, Int, Bool}}
 
-The first failure outside `tolerated_reasons`, or the first failure when all are tolerated,
-with its device types and failure count. Returns `nothing` when every term is buildable.
+The first failure that is not tolerated, or the first failure when all are tolerated, with its
+device types, failure count and whether it is blocking. A failure is tolerated when its reason is
+in `tolerated_reasons`, or, for `:unmodeled_device_type`, when its device type is a subtype of one
+of `tolerated_types`. Returns `nothing` when every term is buildable.
 """
 function _constraint_diagnosis(
         sys::PSY.System, gc::GenericConstraint, modeled_types::Vector{DataType},
-        interconnector_modeled::Bool, fcas_modeled::Set{String}; tolerated_reasons = Set{Symbol}(),
+        interconnector_modeled::Bool, fcas_modeled::Set{String};
+        tolerated_reasons = Set{Symbol}(), tolerated_types = DataType[],
     )
     failures = Tuple{Symbol, Union{Nothing, DataType}}[]
     for term in get_terms(gc)
         append!(failures, _term_failures(sys, term, modeled_types, interconnector_modeled, fcas_modeled))
     end
     isempty(failures) && return nothing
-    blocking = findfirst(f -> !(f[1] in tolerated_reasons), failures)
+    tolerated(f) = f[1] == :unmodeled_device_type ?
+        (!isnothing(f[2]) && any(t -> f[2] <: t, tolerated_types)) : f[1] in tolerated_reasons
+    blocking = findfirst(!tolerated, failures)
     reason = failures[something(blocking, 1)][1]
     types = unique(DataType[t for (r, t) in failures if r == reason && !isnothing(t)])
-    return (reason, types, count(f -> f[1] == reason, failures))
+    return (reason, types, count(f -> f[1] == reason, failures), !isnothing(blocking))
 end
 
 
@@ -190,6 +195,7 @@ end
 function _filter_buildable_generic_constraints(
         sys::PSY.System, template::PSI.ProblemTemplate, constraints; allow_partial_coverage::Bool = false,
         skipped::Union{Nothing, AbstractVector} = nothing, tolerated_reasons = Set{Symbol}(),
+        tolerated_types = DataType[], blocked::Union{Nothing, AbstractVector} = nothing,
     )
     modeled_types = _modeled_device_types(template)
     interconnector_modeled = _interconnector_modeled(template)
@@ -209,11 +215,12 @@ function _filter_buildable_generic_constraints(
             isnothing(skipped) || push!(skipped, (constraint = PSY.get_name(gc), reason = :no_available_device, n_missing = 0))
             continue
         end
-        diagnosis = _constraint_diagnosis(sys, gc, modeled_types, interconnector_modeled, fcas_modeled; tolerated_reasons)
+        diagnosis = _constraint_diagnosis(sys, gc, modeled_types, interconnector_modeled, fcas_modeled; tolerated_reasons, tolerated_types)
         if isnothing(diagnosis)
             push!(buildable, gc)
         else
-            reason, types, n_failed = diagnosis
+            reason, types, n_failed, is_blocking = diagnosis
+            is_blocking && !isnothing(blocked) && push!(blocked, (constraint = PSY.get_name(gc), reason = reason))
             push!(skipped_rows, (constraint = PSY.get_name(gc), reason = reason, n_missing = n_failed))
             push!(get!(grouped, reason, Tuple{String, Vector{DataType}}[]), (PSY.get_name(gc), types))
         end

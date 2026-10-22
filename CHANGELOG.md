@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `replication_template` tolerates unmodeled device types in generic constraints only for the left-out
+  part: storage without `:batteries`, `AreaInterchange` without `:losses`. Other unmodeled types throw.
+- `read_energy_limits` raises on a cached `DISPATCHLOAD` without a `UIGF` column instead of
+  filling `NULL`; repopulate with `force_new = true`.
+- NEM dispatch no longer registers or updates the unused `"max_active_power"` parameter; dispatch
+  limits come from the energy availability and UIGF series. Non-scheduled loads stay fixed at 0 MW
+  for energy because they carry no energy offer.
 - Replay excludes explicitly omitted and never-invoked generic constraints before checking their
   buildability, preserves their skip reasons, and reports missing components even when another
   term uses an omitted model family. FCAS pre-flight checks respect omitted battery models.
