@@ -1561,14 +1561,82 @@ end
         @test all(!has_time_series(g, SingleTimeSeries, "energy_max_avail") && !haskey(get_ext(g), "nem_semi_scheduled") for g in get_components(Generator, untouched) if get_available(g))
         close(bad.db)
     end
-    old_schema = invalid_energy_cache(:DISPATCHLOAD, frame -> select!(frame, Not(:UIGF)))
-    scheduled = energy_test_system(db)
-    for device in get_components(RenewableDispatch, scheduled)
-        set_available!(device, false)
+    @testset "a cached DISPATCHLOAD without UIGF is an error" begin
+        old_schema = invalid_energy_cache(:DISPATCHLOAD, frame -> select!(frame, Not(:UIGF)))
+        @test_throws Exception read_energy_limits(old_schema, range)
+        @test_throws Exception set_nem_energy_limits!(energy_test_system(db), old_schema, range)
+        close(old_schema.db)
     end
-    @test isnothing(set_nem_energy_limits!(scheduled, old_schema, range))
-    @test get_ext(get_component(ThermalStandard, scheduled, "ER01"))["nem_semi_scheduled"] === false
-    @test_throws ArgumentError set_nem_energy_limits!(energy_test_system(db), old_schema, range)
-    close(old_schema.db)
+
+    @testset "invalid or missing MAXAVAIL is an error" begin
+        for bad_value in (missing, -1.0)
+            bad = invalid_energy_cache(
+                :BIDPEROFFER_D, function (frame)
+                    frame.MAXAVAIL = Union{Float64, Missing}[r.DUID == "BW03" && r.BIDTYPE == "ENERGY" && r.INTERVAL_DATETIME == range[2] ? bad_value : r.MAXAVAIL for r in eachrow(frame)]
+                    return
+                end
+            )
+            @test_throws ArgumentError set_nem_energy_limits!(energy_test_system(db), bad, range)
+            close(bad.db)
+        end
+    end
+
+    @testset "a schedule type changing mid-range is an error" begin
+        bad = invalid_energy_cache(
+            :DUDETAILSUMMARY, function (frame)
+                changed = frame[frame.DUID .== "BW03", :][1:1, :]
+                changed.START_DATE .= range[2]
+                changed.SCHEDULE_TYPE .= "SCHEDULED"
+                append!(frame, changed)
+                return
+            end
+        )
+        @test_throws ArgumentError set_nem_energy_limits!(energy_test_system(db), bad, range)
+        close(bad.db)
+    end
+
+    @testset "non-scheduled loads receive zero availability" begin
+        fcas_sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = range)
+        set_market_bids!(fcas_sys, db, range)
+        set_nem_energy_limits!(fcas_sys, db, range)
+        loads = [l for l in get_components(ControllableLoad, fcas_sys) if get_available(l) && startswith(get_name(l), "ASLOAD")]
+        @test !isempty(loads)
+        for load in loads
+            @test get_ext(load)["nem_semi_scheduled"] === false
+            @test all(iszero, get_time_series_values(SingleTimeSeries, load, "energy_max_avail"; ignore_scaling_factors = true))
+            @test !has_time_series(load, SingleTimeSeries, "energy_uigf")
+        end
+    end
+
+    @testset "a repeated call replaces series after a classification change" begin
+        again = energy_test_system(db)
+        set_nem_energy_limits!(again, db, range)
+        gen = get_component(RenewableDispatch, again, "BW03")
+        @test has_time_series(gen, SingleTimeSeries, "energy_uigf")
+        reclassified = invalid_energy_cache(
+            :DUDETAILSUMMARY, function (frame)
+                frame.SCHEDULE_TYPE = Union{String, Missing}[r.DUID == "BW03" ? "SCHEDULED" : r.SCHEDULE_TYPE for r in eachrow(frame)]
+                return
+            end
+        )
+        set_nem_energy_limits!(again, reclassified, range)
+        @test get_ext(gen)["nem_semi_scheduled"] === false
+        @test !has_time_series(gen, SingleTimeSeries, "energy_uigf")
+        @test get_time_series_values(SingleTimeSeries, gen, "energy_max_avail"; ignore_scaling_factors = true) .* get_base_power(again) ≈ [100.0, 101.0]
+        set_nem_energy_limits!(again, db, range)
+        @test get_ext(gen)["nem_semi_scheduled"] === true
+        @test get_time_series_values(SingleTimeSeries, gen, "energy_uigf"; ignore_scaling_factors = true) .* get_base_power(again) ≈ [40.0, 41.0]
+        close(reclassified.db)
+    end
+
+    @testset "read_energy_limits returns offers, UIGF and schedule type" begin
+        rows = read_energy_limits(db, range)
+        bw03 = sort(rows[(rows.DUID .== "BW03") .& (rows.DIRECTION .== "GEN"), :], :SETTLEMENTDATE)
+        @test bw03.SETTLEMENTDATE == collect(range)[1:2]
+        @test bw03.MAXAVAIL ≈ [100.0, 101.0]
+        @test bw03.UIGF ≈ [40.0, 41.0]
+        @test all(==("SEMI-SCHEDULED"), bw03.SCHEDULE_TYPE)
+        @test all(r -> r.SETTLEMENTDATE < last(range), eachrow(rows))
+    end
     close(db.db)
 end

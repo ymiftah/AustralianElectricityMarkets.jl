@@ -11,14 +11,14 @@ for each offered unit, direction and interval in the half-open `date_range`.
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `DIRECTION`, `MAXAVAIL`, `UIGF` and
-`SCHEDULE_TYPE`. Unmatched dispatch or registration data remain `missing`.
+`SCHEDULE_TYPE`. Unmatched dispatch or registration data remain `missing`. A cached `DISPATCHLOAD` without
+a `UIGF` column raises an error.
 """
 function read_energy_limits(db, date_range; intervention::Integer = 0)
     offers = select(read_energy_bids(db, date_range), :INTERVAL_DATETIME, :DUID, :DIRECTION, :MAXAVAIL)
     dispatch = read_hive(db, :DISPATCHLOAD)
     summary = read_hive(db, :DUDETAILSUMMARY)
     schema = names(_query(db, "SELECT * FROM $dispatch LIMIT 0"))
-    forecast = "UIGF" in schema ? "TRY_CAST(UIGF AS DOUBLE)" : "CAST(NULL AS DOUBLE)"
     params = Any[first(date_range), last(date_range)]
     _push_intervention!(params, schema, intervention)
     DuckDB.register_data_frame(db.db, offers, "nem_energy_offers")
@@ -27,7 +27,7 @@ function read_energy_limits(db, date_range; intervention::Integer = 0)
             db,
             """
             WITH dl AS (
-                SELECT SETTLEMENTDATE, DUID, $forecast AS UIGF
+                SELECT SETTLEMENTDATE, DUID, TRY_CAST(UIGF AS DOUBLE) AS UIGF
                 FROM $dispatch
                 WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ? $(_intervention_where(schema))
                 QUALIFY row_number() OVER (
