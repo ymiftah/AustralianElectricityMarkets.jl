@@ -33,7 +33,8 @@ re-prices it at each simulation step. The cap of interval `t` is `rate` when giv
 `nothing`.
 """
 function _add_mpc_penalty!(container::PSI.OptimizationContainer, slack, names, time_steps, cvp_factor::Real; rate = nothing)
-    penalty = (; slack, names = collect(names), cvp_factor = Float64(cvp_factor), rate)
+    checked_rate = isnothing(rate) ? nothing : _checked_market_price_cap(rate)
+    penalty = (; slack, names = collect(names), cvp_factor = Float64(cvp_factor), rate = checked_rate)
     push!(_mpc_penalties(container), penalty)
     _register_mpc_repricing!(container, time_steps)
     _price_mpc_penalty!(container, penalty, PSI.get_initial_time(container), time_steps)
@@ -100,13 +101,13 @@ end
 """
     _set_service_mpc_rate!(container, name, rate)
 
-Records the Market Price Cap `rate` that replaces the dated cap for the service `name`, when it is not `nothing`.
+Records a finite, strictly positive Market Price Cap `rate` for the service `name`, when it is not `nothing`.
 
 # Returns
 `nothing`.
 """
 function _set_service_mpc_rate!(container::PSI.OptimizationContainer, name::AbstractString, rate)
-    isnothing(rate) || (_mpc_record(container).service_rates[String(name)] = rate)
+    isnothing(rate) || (_mpc_record(container).service_rates[String(name)] = _checked_market_price_cap(rate))
     return
 end
 
