@@ -20,13 +20,16 @@
             @test_throws ArgumentError replication_simulation(sys, t:Minute(10):(t + Minute(10)))
             @test_throws ArgumentError replication_simulation(sys, t:Minute(5):(t - Minute(5)))
             skipped = NamedTuple[]
-            simulation = replication_simulation(sys, steps; name = "custom_dispatch", skipped)
+            folder = mktempdir()
+            simulation = replication_simulation(sys, steps; name = "custom_dispatch", simulation_name = "custom_run", skipped, folder)
             @test simulation isa PSI.Simulation
             @test isnothing(simulation.internal)
             @test PSI.get_steps(simulation) == 2
             @test PSI.build!(simulation; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT
             @test PSI.execute!(simulation) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
             results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), "custom_dispatch")
+            reopened = PSI.get_decision_problem_results(PSI.SimulationResults(folder, "custom_run"), "custom_dispatch")
+            @test PSI.read_optimizer_stats(reopened).objective_value == PSI.read_optimizer_stats(results).objective_value
             out = replication_results(results, sys)
             # The mock includes SNOWY1 alongside the five current regions.
             @test nrow(out.solved.prices) == 12

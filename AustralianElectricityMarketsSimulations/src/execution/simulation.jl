@@ -42,7 +42,7 @@ end
 # Constructs the simulation and retains its model and skipped-constraint report for internal callers.
 function _range_simulation(
         sys::PSY.System, steps::StepRange{DateTime}; optimizer = _DEFAULT_OPTIMIZER, parts = REPLICATION_PARTS,
-        folder::AbstractString = mktempdir(), name = "dispatch", skipped = nothing,
+        folder::AbstractString = mktempdir(), name = "dispatch", simulation_name = "replication", skipped = nothing,
     )
     _check_replication_steps(sys, steps)
     _check_single_market_price_cap(steps)
@@ -58,7 +58,7 @@ function _range_simulation(
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models = models, ini_cond_chronology = PSI.InterProblemChronology())
     simulation = PSI.Simulation(;
-        name = "replicate_range", steps = length(steps), models = models,
+        name = simulation_name, steps = length(steps), models = models,
         sequence = sequence, simulation_folder = folder, initial_time = first(steps),
     )
     return (; simulation, model, skipped_constraints)
@@ -67,7 +67,8 @@ end
 
 """
     replication_simulation(sys::PSY.System, steps; optimizer, parts = REPLICATION_PARTS,
-        folder = mktempdir(), name = "dispatch", skipped = nothing) -> PSI.Simulation
+        folder = mktempdir(), name = "dispatch", simulation_name = "replication",
+        skipped = nothing) -> PSI.Simulation
 
 Constructs an unbuilt PSI simulation over `steps` from a prepared system. Runs the replay
 pre-flight checks and selects constraints invoked in at least one requested interval.
@@ -79,6 +80,7 @@ pre-flight checks and selects constraints invoked in at least one requested inte
 - `parts`: the [`REPLICATION_PARTS`](@ref) included in the model.
 - `folder`: the simulation output directory.
 - `name`: the decision problem name used to retrieve PSI results.
+- `simulation_name`: the PSI simulation name, used to reopen results with `PSI.SimulationResults(folder, simulation_name)`.
 - `skipped`: an optional vector receiving `(constraint, reason, n_missing)` records.
 
 # Returns

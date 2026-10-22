@@ -10,6 +10,7 @@ import PowerSimulations as PSI
 export replicate_range
 
 const _REPLICATION_HORIZON = 2DISPATCH_INTERVAL
+const _SIMULATION_NAME = "replay_workflow"
 const _DEFAULT_OPTIMIZER = PSI.optimizer_with_attributes(
     HiGHS.Optimizer, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10,
 )
@@ -100,7 +101,7 @@ function _replicate_chunk(
     system_build_s = time() - t0
     t1 = time()
     skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
-    simulation = replication_simulation(sys, steps; optimizer, parts, folder, skipped)
+    simulation = replication_simulation(sys, steps; optimizer, parts, folder, skipped, simulation_name = _SIMULATION_NAME)
     skipped_constraints = DataFrame(skipped)
     status = PSI.build!(simulation; store_systems_in_results = false)
     status == PSI.SimulationBuildStatus.BUILT || begin
@@ -134,7 +135,7 @@ function _replicate_chunk(
         termination_status = stats.termination_status,
     )
     compare_s = time() - t3
-    reopened = PSI.get_decision_problem_results(PSI.SimulationResults(folder, "replicate_range"), "dispatch")
+    reopened = PSI.get_decision_problem_results(PSI.SimulationResults(folder, _SIMULATION_NAME), "dispatch")
     return (;
         timings = (; system_build_s, simulation_build_s, execute_s, compare_s), results = reopened,
         comparison, skipped_constraints = insertcols(skipped_constraints, 1, :chunk => fill(k, nrow(skipped_constraints))),

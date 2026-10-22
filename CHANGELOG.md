@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - NEM dispatch no longer registers or updates the unused `"max_active_power"` parameter; dispatch
   limits come from the energy availability and UIGF series. Non-scheduled loads stay fixed at 0 MW
   for energy because they carry no energy offer.
+- `replication_simulation` accepts a documented `simulation_name` keyword (default `"replication"`) for reopening results with
+  `PSI.SimulationResults(folder, simulation_name)`; the replay script passes its own name.
+
 - Replay excludes explicitly omitted and never-invoked generic constraints before checking their
   buildability, preserves their skip reasons, and reports missing components even when another
   term uses an omitted model family. FCAS pre-flight checks respect omitted battery models.
