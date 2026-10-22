@@ -16,73 +16,6 @@ PSI.get_multiplier_value(::NEMConstraintRHSParameter, ::GenericConstraint, ::Lin
     1.0
 
 
-"""
-    MARKET_PRICE_CAP_BY_FINANCIAL_YEAR
-
-Published Market Price Cap (`\$/MWh`), by the `Date` its financial year starts (1 July).
-Source: AEMC *Schedule of reliability settings, 2026-27 financial year* (FY2024-25: AEMC's
-2024-25 schedule).
-"""
-const MARKET_PRICE_CAP_BY_FINANCIAL_YEAR = [
-    Date(2024, 7, 1) => 17_500.0,
-    Date(2025, 7, 1) => 20_300.0,
-    Date(2026, 7, 1) => 23_200.0,
-]
-
-
-"""
-    _financial_year_mpc(t::DateTime) -> Float64
-
-The published Market Price Cap for the financial year of the dispatch interval ending at `t` (a
-`SETTLEMENTDATE`). The interval ending 00:00 on 1 July runs 23:55-00:00 on 30 June, so it takes the
-earlier year's cap.
-
-# Returns
-A `\$/MWh` value.
-"""
-function _financial_year_mpc(t::DateTime)
-    start = t - DISPATCH_INTERVAL
-    year_start = Date(year(start) - (month(start) < 7), 7, 1)
-    idx = findfirst(p -> p[1] == year_start, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR)
-    isnothing(idx) && throw(
-        ArgumentError(
-            "No published Market Price Cap covers $t; extend MARKET_PRICE_CAP_BY_FINANCIAL_YEAR " *
-                "or set the \"market_price_cap\" entry of `PSI.get_ext(PSI.get_settings(model))`.",
-        ),
-    )
-    return MARKET_PRICE_CAP_BY_FINANCIAL_YEAR[idx][2]
-end
-
-
-"""
-    _container_market_price_cap(container, t::DateTime) -> Float64
-
-The `"market_price_cap"` entry of the model's `PSI.get_ext(PSI.get_settings(model))`, or
-[`_financial_year_mpc`](@ref)`(t)` if unset. The cap of every penalty priced by
-[`_add_mpc_penalty!`](@ref), and the fallback of [`_service_market_price_cap`](@ref).
-
-# Arguments
-  - `container`: the `PSI.OptimizationContainer` being built.
-  - `t`: the interval's timestamp.
-
-# Returns
-A finite, strictly positive `\$/MWh` value; invalid overrides throw `ArgumentError`.
-"""
-function _container_market_price_cap(container::PSI.OptimizationContainer, t::DateTime)
-    rate = get(PSI.get_ext(PSI.get_settings(container)), "market_price_cap", nothing)
-    return _checked_market_price_cap(isnothing(rate) ? _financial_year_mpc(t) : rate)
-end
-
-
-function _checked_market_price_cap(rate)
-    rate isa Real || throw(ArgumentError("market_price_cap must be finite and strictly positive, got $rate."))
-    value = Float64(rate)
-    isfinite(value) && value > 0.0 ||
-        throw(ArgumentError("market_price_cap must be finite and strictly positive, got $rate."))
-    return value
-end
-
-
 # --- Term validation: fail loudly, never a partial LHS ---
 
 "A device's ENERGY variables and each one's multiplier in its net injection. `PSY.Storage` has no
@@ -381,28 +314,14 @@ function _add_gc_slack_variables!(
     time_steps = PSI.get_time_steps(container)
     expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
     sense = get_sense(gc)
-    jm = PSI.get_jump_model(container)
-
-    if sense in (ConstraintSense.LE, ConstraintSense.EQ)
-        slack = PSI.add_variable_container!(
-            container, GenericConstraintSlackUp(), GenericConstraint, [name], time_steps; meta = name,
+    for (var_type, side, coefficient) in (
+            (GenericConstraintSlackUp, ConstraintSense.LE, -1.0),
+            (GenericConstraintSlackDown, ConstraintSense.GE, 1.0),
         )
+        sense in (side, ConstraintSense.EQ) || continue
+        slack = _add_slack_variables!(container, var_type, GenericConstraint, [name], time_steps; meta = name)
         for t in time_steps
-            slack[name, t] = JuMP.@variable(
-                jm, base_name = "GenericConstraintSlackUp_{$name,$t}", lower_bound = 0.0,
-            )
-            JuMP.add_to_expression!(expr[name, t], -1.0, slack[name, t])
-        end
-    end
-    if sense in (ConstraintSense.GE, ConstraintSense.EQ)
-        slack = PSI.add_variable_container!(
-            container, GenericConstraintSlackDown(), GenericConstraint, [name], time_steps; meta = name,
-        )
-        for t in time_steps
-            slack[name, t] = JuMP.@variable(
-                jm, base_name = "GenericConstraintSlackDown_{$name,$t}", lower_bound = 0.0,
-            )
-            JuMP.add_to_expression!(expr[name, t], 1.0, slack[name, t])
+            JuMP.add_to_expression!(expr[name, t], coefficient, slack[name, t])
         end
     end
     return

@@ -19,7 +19,6 @@ using HydroPowerSimulations
 using JuMP
 using PowerSimulations
 using PowerSystems
-using Statistics
 
 import PowerSimulations as PSI
 import PowerSystems as PSY
@@ -29,8 +28,8 @@ import PowerSystems as PSY
 const IS = PSY.IS
 const PM = PSI.PM
 
-include("types/errors.jl")
 include("time_basis.jl")
+include("cvp_factors.jl")
 
 include("types/constraint_formulations.jl")
 include("types/dispatch.jl")
@@ -42,7 +41,7 @@ include("types/interconnector_losses.jl")
 include("types/mnsp.jl")
 include("types/logging.jl")
 
-include("formulations/constraint_formulations.jl")
+include("formulations/slacks.jl")
 include("formulations/generic_constraints.jl")
 include("formulations/penalty_costs.jl")
 include("checks/nem_constraints.jl")

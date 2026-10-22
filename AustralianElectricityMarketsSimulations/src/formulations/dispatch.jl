@@ -236,15 +236,14 @@ function PSI.construct_device!(
 end
 
 
+const _SETTER_REMEDY = "Call set_nem_dispatch_limits! over the model's date range first."
+
+
 """
     PSI.add_constraints!(container, ::Type{PSI.RampConstraint}, ::Type{PSI.ActivePowerVariable}, devices, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
 
 Holds each device's active power within its per-interval ramp rates of the base its formulation
-measures against. Rates are read from the `"ramp_up_rate"` and `"ramp_down_rate"` parameters in
-system-base per-unit per minute and multiplied by the interval length in minutes. Each row carries
-a [`UnitRampUpSlack`](@ref) or [`UnitRampDownSlack`](@ref) priced at [`UNIT_RAMP_CVP_FACTOR`](@ref)
-times the Market Price Cap. Conflicts with energy availability and UIGF are resolved through
-the competing violation costs.
+measures against, through [`_add_nem_ramp_constraints!`](@ref).
 
 # Returns
 `nothing`.
@@ -257,10 +256,39 @@ function PSI.add_constraints!(
         model::PSI.DeviceModel{T, D},
         ::PSI.NetworkModel{<:PM.AbstractPowerModel},
     ) where {T <: PSY.StaticInjection, D <: AbstractNEMDispatch}
+    power = PSI.get_variable(container, PSI.ActivePowerVariable(), T)
+    _add_nem_ramp_constraints!(
+        container, T, devices, (name, t) -> power[name, t],
+        names -> _ramp_base_accessor(container, D, T, names, power),
+    )
+    return
+end
+
+
+"""
+    _add_nem_ramp_constraints!(container, T, devices, net_at, base_accessor)
+
+Holds each device's dispatch `net_at(name, t)` within its per-interval ramp rates of its base.
+Rates are read from the `"ramp_up_rate"` and `"ramp_down_rate"` parameters in system-base per-unit
+per minute and multiplied by the interval length in minutes. Each `PSI.RampConstraint` row carries a
+[`UnitRampUpSlack`](@ref) or [`UnitRampDownSlack`](@ref) priced at [`UNIT_RAMP_CVP_FACTOR`](@ref)
+times the Market Price Cap, so conflicts with the availability limits are resolved through the
+competing violation costs.
+
+# Arguments
+- `container`: the `PSI.OptimizationContainer` being built.
+- `T`: the component type of `devices`.
+- `devices`: the devices whose rows are added.
+- `net_at`: `(name, t) ->` the device's dispatch expression at interval `t`.
+- `base_accessor`: `names ->` a `(name, t) ->` accessor of the base each row measures against.
+
+# Returns
+`nothing`.
+"""
+function _add_nem_ramp_constraints!(container::PSI.OptimizationContainer, ::Type{T}, devices, net_at, base_accessor) where {T}
     time_steps = PSI.get_time_steps(container)
     jump_model = PSI.get_jump_model(container)
     minutes = PSI._get_minutes_per_period(container)
-    power = PSI.get_variable(container, PSI.ActivePowerVariable(), T)
 
     names = [PSY.get_name(d) for d in devices]
     isempty(names) && return
@@ -278,70 +306,17 @@ function PSI.add_constraints!(
         container, PSI.RampConstraint(), T, names, time_steps; meta = "down",
     )
 
-    slack_up = _add_unit_ramp_slack!(container, UnitRampUpSlack, T, names, time_steps)
-    slack_dn = _add_unit_ramp_slack!(container, UnitRampDownSlack, T, names, time_steps)
+    slack_up = _add_cvp_slack!(container, UnitRampUpSlack, T, names, time_steps, UNIT_RAMP_CVP_FACTOR)
+    slack_dn = _add_cvp_slack!(container, UnitRampDownSlack, T, names, time_steps, UNIT_RAMP_CVP_FACTOR)
 
-    base_at = _ramp_base_accessor(container, D, T, names, power)
+    base_at = base_accessor(names)
     for name in names, t in time_steps
         base = base_at(name, t)
-        con_up[name, t] = JuMP.@constraint(
-            jump_model, power[name, t] - base - slack_up[name, t] <= up_rate(name, t) * minutes,
-        )
-        con_dn[name, t] = JuMP.@constraint(
-            jump_model, base - power[name, t] - slack_dn[name, t] <= down_rate(name, t) * minutes,
-        )
+        net = net_at(name, t)
+        con_up[name, t] = JuMP.@constraint(jump_model, net - base - slack_up[name, t] <= up_rate(name, t) * minutes)
+        con_dn[name, t] = JuMP.@constraint(jump_model, base - net - slack_dn[name, t] <= down_rate(name, t) * minutes)
     end
     return
-end
-
-
-"""
-    _add_unit_ramp_slack!(container, var_type, T, names, time_steps)
-
-Builds a non-negative slack variable of `var_type` per `(name, t)` and prices it in the objective
-at [`UNIT_RAMP_CVP_FACTOR`](@ref) times the Market Price Cap ([`_add_mpc_penalty!`](@ref))
-for the interval, in `\$/MW` per dispatch interval. The variable is in system-base per-unit, like
-the ramp row it relaxes.
-
-# Arguments
-- `container`: the `PSI.OptimizationContainer` being built.
-- `var_type`: [`UnitRampUpSlack`](@ref) or [`UnitRampDownSlack`](@ref).
-- `T`: the component type owning the ramp rows.
-- `names`, `time_steps`: the device names and time steps of the rows.
-
-# Returns
-The slack variable container.
-"""
-function _add_unit_ramp_slack!(container::PSI.OptimizationContainer, var_type, ::Type{T}, names, time_steps) where {T}
-    return _add_cvp_slack!(container, var_type, T, names, time_steps, UNIT_RAMP_CVP_FACTOR)
-end
-
-
-"""
-    _add_cvp_slack!(container, var_type, T, names, time_steps, cvp_factor)
-
-Builds a non-negative slack variable of `var_type` per `(name, t)` and prices it in the objective
-at `cvp_factor` times the Market Price Cap ([`_add_mpc_penalty!`](@ref)) for the
-interval, in `\$/MW` per dispatch interval. The variable is in system-base per-unit.
-
-# Arguments
-- `container`: the `PSI.OptimizationContainer` being built.
-- `var_type`: the slack `PSI.VariableType`.
-- `T`: the component type owning the relaxed rows.
-- `names`, `time_steps`: the device names and time steps of the rows.
-- `cvp_factor`: the AEMO CVP factor the slack is priced at, times the Market Price Cap.
-
-# Returns
-The slack variable container.
-"""
-function _add_cvp_slack!(container::PSI.OptimizationContainer, var_type, ::Type{T}, names, time_steps, cvp_factor::Real) where {T}
-    jm = PSI.get_jump_model(container)
-    slack = PSI.add_variable_container!(container, var_type(), T, names, time_steps)
-    for t in time_steps, name in names
-        slack[name, t] = JuMP.@variable(jm, base_name = "$(nameof(var_type))_{$name,$t}", lower_bound = 0.0)
-    end
-    _add_mpc_penalty!(container, slack, names, time_steps, cvp_factor)
-    return slack
 end
 
 
@@ -381,9 +356,6 @@ function _ramp_base_accessor(container, ::Type{NEMLookaheadDispatch}, ::Type{T},
     )
     return (name, t) -> t > 1 ? power[name, t - 1] : ic_power[name]
 end
-
-
-const _SETTER_REMEDY = "Call set_nem_dispatch_limits! over the model's date range first."
 
 
 # Names every uncovered device up front, before the constraint loop reaches an internal key.

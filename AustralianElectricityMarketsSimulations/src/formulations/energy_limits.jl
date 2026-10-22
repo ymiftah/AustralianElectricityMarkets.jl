@@ -1,24 +1,4 @@
-function PSI.get_variable_binary(::AbstractEnergyLimitSlack, ::Type{<:PSY.StaticInjection}, ::AbstractNEMDispatch)
-    return false
-end
-
-function PSI.get_variable_lower_bound(::AbstractEnergyLimitSlack, ::PSY.StaticInjection, ::AbstractNEMDispatch)
-    return 0.0
-end
-
-function PSI.get_variable_upper_bound(::AbstractEnergyLimitSlack, ::PSY.StaticInjection, ::AbstractNEMDispatch)
-    return nothing
-end
-
-function PSI.convert_result_to_natural_units(::Type{<:AbstractEnergyLimitSlack})
-    return true
-end
-
-function PSI.convert_result_to_natural_units(::Type{EnergyMaxAvailTimeSeriesParameter})
-    return true
-end
-
-function PSI.convert_result_to_natural_units(::Type{EnergyUIGFTimeSeriesParameter})
+function PSI.convert_result_to_natural_units(::Type{<:Union{EnergyMaxAvailTimeSeriesParameter, EnergyUIGFTimeSeriesParameter}})
     return true
 end
 
