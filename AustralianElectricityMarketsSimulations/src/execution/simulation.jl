@@ -1,15 +1,3 @@
-# Penalty multipliers and every CVP cost are fixed at build, so the steps must sit under one Market Price Cap.
-function _check_single_market_price_cap(steps)
-    _financial_year_mpc(first(steps)) == _financial_year_mpc(last(steps)) || throw(
-        ArgumentError(
-            "replication_simulation: the intervals ending $(first(steps)) and $(last(steps)) fall under different " *
-                "Market Price Caps; split the range so that the interval ending 00:05 on 1 July starts a chunk.",
-        ),
-    )
-    return
-end
-
-
 # Available `GenericConstraint`s invoked at none of `steps`, each mapped to `:never_invoked`.
 function _never_invoked_constraints(sys::PSY.System, steps)
     reasons = Dict{String, Symbol}()
@@ -45,7 +33,6 @@ function _range_simulation(
         folder::AbstractString = mktempdir(), name = "dispatch", simulation_name = "replication", skipped = nothing,
     )
     _check_replication_steps(sys, steps)
-    _check_single_market_price_cap(steps)
     :tie_breaks in parts && check_tie_break_pairs(sys, steps)
     template_skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
     exclude = :generic_constraints in parts ? _never_invoked_constraints(sys, steps) : Dict{String, Symbol}()
