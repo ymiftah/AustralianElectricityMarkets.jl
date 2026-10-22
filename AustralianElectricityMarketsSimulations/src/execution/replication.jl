@@ -114,12 +114,20 @@ function _set_replication_device_models!(template::PSI.ProblemTemplate, sys::PSY
 end
 
 
-# The unbuildable reasons a left-out part causes: FCAS terms without `:fcas`, storage or interchange terms without `:batteries` or `:losses`.
+# Unbuildable reasons a left-out part causes: FCAS terms without `:fcas`.
 function _left_out_part_reasons(parts)
     reasons = Set{Symbol}()
     :fcas in parts || push!(reasons, :unmodeled_fcas_service)
-    (:batteries in parts && :losses in parts) || push!(reasons, :unmodeled_device_type)
     return reasons
+end
+
+
+# Device types whose terms a left-out part makes unmodeled: storage without `:batteries`, interchange without `:losses`.
+function _left_out_part_types(parts)
+    types = DataType[]
+    :batteries in parts || push!(types, PSY.Storage)
+    :losses in parts || push!(types, PSY.AreaInterchange)
+    return types
 end
 
 
@@ -133,6 +141,8 @@ function _set_generic_constraint_models!(
         ),
     )
     tolerated = _left_out_part_reasons(parts)
+    tolerated_types = _left_out_part_types(parts)
+    blocked = @NamedTuple{constraint::String, reason::Symbol}[]
     rows = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
     excluded = similar(rows, 0)
     candidates = GenericConstraint[]
@@ -146,10 +156,10 @@ function _set_generic_constraint_models!(
         end
     end
     buildable = _filter_buildable_generic_constraints(
-        sys, template, candidates; allow_partial_coverage = !isempty(tolerated), skipped = rows,
-        tolerated_reasons = tolerated,
+        sys, template, candidates; allow_partial_coverage = !isempty(tolerated) || !isempty(tolerated_types),
+        skipped = rows, tolerated_reasons = tolerated, tolerated_types = tolerated_types, blocked = blocked,
     )
-    blocking = [r for r in rows if r.reason != :no_available_device && !(r.reason in tolerated)]
+    blocking = blocked
     isempty(blocking) || throw(
         ArgumentError(
             "replication_template: generic constraints the template cannot model: " *

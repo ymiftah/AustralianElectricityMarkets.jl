@@ -318,7 +318,7 @@ end
 end
 
 # A battery whose net ramp-down floor exceeds raw generation availability in step 1 only.
-function battery_sentinel_system(; reverse_order = false, ceilings = true)
+function battery_sentinel_system(; reverse_order = false)
     r(x) = reverse_order ? reverse(x) : x
     units = [TOY_CHEAP => toy_unit(100.0, [(100.0, 50.0)]; initial = 30.0, ramp_up = 100.0)]
     batteries = [
@@ -326,11 +326,11 @@ function battery_sentinel_system(; reverse_order = false, ceilings = true)
             100.0, 5.0, 100.0, 1.0; initial = r([20.0, 0.0]), ramp_up = 100.0, ramp_down = 1.0, gen_avail = 10.0,
         ),
     ]
-    return nem_toy_system(units, 40.0; batteries = batteries, horizon = TOY_RESOLUTION, ceilings = ceilings)
+    return nem_toy_system(units, 40.0; batteries = batteries, horizon = TOY_RESOLUTION)
 end
 
 @testset "storage availability uses raw limits without competing hard ceilings" begin
-    sys = battery_sentinel_system(; ceilings = false)
+    sys = battery_sentinel_system()
     template = replication_template(sys; parts = REPLICATION_PARTS)
     model = AEMS._replication_decision_model(template, sys, TOY_START; optimizer = STOCK_OPTIMIZER)
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
