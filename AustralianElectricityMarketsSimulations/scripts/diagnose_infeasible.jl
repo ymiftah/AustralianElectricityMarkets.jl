@@ -53,14 +53,13 @@ function _family(con)
 end
 
 println("Interval $settlement_date")
-sys = AEMS.replication_system(db, settlement_date)
+# The replay path over this one interval: the simulation built once, then stepped.
+steps = settlement_date:Minute(5):settlement_date
+sys = AEMS.replication_system(db, settlement_date:Minute(5):(settlement_date + Minute(10)))
 optimizer = JuMP.optimizer_with_attributes(HiGHS.Optimizer, "threads" => 2)
-(; model, skipped_constraints, status) = AEMS._replication_model(sys, settlement_date; optimizer = optimizer)
-build_status = status
+(; simulation, model, skipped_constraints) = AEMS._build_range_simulation(sys, steps; optimizer = optimizer)
 println("skipped constraints: $(nrow(skipped_constraints))")
-println("build status: $build_status")
-build_status == PSI.ModelBuildStatus.BUILT || exit(1)
-run_status = PSI.solve!(model)
+run_status = PSI.execute!(simulation)
 container = PSI.get_optimization_container(model)
 jm = PSI.get_jump_model(container)
 var_labels = _variable_labels(container)

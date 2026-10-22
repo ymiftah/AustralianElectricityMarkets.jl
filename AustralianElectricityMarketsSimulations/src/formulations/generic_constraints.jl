@@ -66,11 +66,11 @@ fallback of [`_market_price_cap`](@ref).
   - `t`: the interval's timestamp.
 
 # Returns
-A `\$/MWh` value.
+A finite, strictly positive `\$/MWh` value; invalid overrides throw `ArgumentError`.
 """
 function _container_market_price_cap(container::PSI.OptimizationContainer, t::DateTime)
     rate = get(PSI.get_ext(PSI.get_settings(container)), "market_price_cap", nothing)
-    return isnothing(rate) ? _financial_year_mpc(t) : rate
+    return _checked_market_price_cap(isnothing(rate) ? _financial_year_mpc(t) : rate)
 end
 
 
@@ -78,11 +78,20 @@ end
     _market_price_cap(container, model, t::DateTime) -> Float64
 
 The `"market_price_cap"` attribute of `model`, or [`_container_market_price_cap`](@ref)`(container, t)`
-if unset.
+if unset. Invalid overrides throw `ArgumentError`.
 """
 function _market_price_cap(container::PSI.OptimizationContainer, model::PSI.ServiceModel, t::DateTime)
     rate = PSI.get_attribute(model, "market_price_cap")
-    return isnothing(rate) ? _container_market_price_cap(container, t) : rate
+    return isnothing(rate) ? _container_market_price_cap(container, t) : _checked_market_price_cap(rate)
+end
+
+
+function _checked_market_price_cap(rate)
+    rate isa Real || throw(ArgumentError("market_price_cap must be finite and strictly positive, got $rate."))
+    value = Float64(rate)
+    isfinite(value) && value > 0.0 ||
+        throw(ArgumentError("market_price_cap must be finite and strictly positive, got $rate."))
+    return value
 end
 
 

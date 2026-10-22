@@ -50,6 +50,7 @@ include("checks/tie_break.jl")
 include("checks/replay_inputs.jl")
 include("preprocessing/inputs.jl")
 include("execution/replication.jl")
+include("execution/simulation.jl")
 
 using AustralianElectricityMarkets.Readers: read_uigf_as_dict
 @doc (@doc AustralianElectricityMarkets.IntervalInputs) IntervalInputs
@@ -58,7 +59,7 @@ using AustralianElectricityMarkets.Readers: read_uigf_as_dict
 
 export DISPATCH_INTERVAL_HOURS, DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
 export IntervalInputs, read_interval_inputs, read_published_interval
-export replication_template, replication_system, replicate_interval
+export REPLICATION_PARTS, replication_template, replication_system, replicate_range
 export energy_bounds
 export scale_trapezium
 export AbstractNEMConstraintFormulation, NEMConstraintLHS, NEMConstraintLimit,

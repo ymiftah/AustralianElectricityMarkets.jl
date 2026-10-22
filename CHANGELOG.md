@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `replication_template` tolerates unmodeled device types in generic constraints only for the left-out
+  part: storage without `:batteries`, `AreaInterchange` without `:losses`. Other unmodeled types throw.
+- Replay excludes explicitly omitted and never-invoked generic constraints before checking their
+  buildability, preserves their skip reasons, and reports missing components even when another
+  term uses an omitted model family. FCAS pre-flight checks respect omitted battery models.
+- Market Price Cap overrides at model and service level must be finite and strictly positive,
+  preventing zero-cost violation slacks and negative unbounded violation costs.
+
 - For interconnectors carrying paired directional MNSP offers, DC losses are supplied by the active
   sending area (`-from_tlf * (q + loss)`) using its terminal loss factor, instead of the static
   regional loss share. New `MNSPLinkLossVariable`. Interconnectors without directional offers keep
@@ -132,6 +140,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `replicate_range(db, start, stop; parts, chunk, ...)` replays a range of dispatch intervals as one
+  stock PowerSimulations `Simulation` per chunk, stepping a one-interval replication model whose
+  parameters update between intervals. Chunks break at every trading-day start (04:05), at 00:05 on
+  1 July and every `chunk` period; each chunk leaves out the generic constraints it never invokes
+  and runs `check_tie_break_pairs`, a single-Market-Price-Cap check, `check_fcas_services` and
+  `check_dispatch_envelope` before its build. It returns the per-interval comparison with the
+  published outcome, constraint violations, solver statistics and each chunk's reopened results.
+  `scripts/replicate_range.jl` prints the comparison for a range.
+- `REPLICATION_PARTS` and the `parts` and `exclude_constraints` keywords of `replication_template`
+  select the modelled families (batteries, FCAS, losses, tie-breaks, generic constraints) and leave
+  out named generic constraints. The input checks follow `parts`, and a generic constraint that
+  needs a left-out family is reported in `skipped` instead of failing the build.
 - `get_missing_constraint_intervals` and `get_defaulted_constraint_weights` report what
   `add_nem_constraints!` could not take from the cache: dispatch intervals with no invoked
   constraint, and constraints built with the default weight 1.0 for a NULL
@@ -439,10 +459,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `replicate_interval` (both methods) and `replication_system(db, settlement_date)`: every replay
+  builds its model once and steps it through `replicate_range`. `scripts/replicate_interval.jl` is
+  replaced by `scripts/replicate_range.jl`.
 - **`GENCONDATA.DYNAMICRHS` is no longer read or interpreted**: `read_constraint_definitions` no longer selects it, and `add_nem_constraints!` no longer puts it on `GenericConstraint.ext`. AEMO documents the column as "Not used"; the raw NEMWEB ingestion column list is untouched.
 
 ### Changed
 
+- Replay goes through `replicate_range` only, one interval included (`start == stop`): a model
+  built once per chunk and stepped. It reports a generic-constraint slack as a violation only at
+  intervals where the constraint is invoked. `replication_system` takes the replay `date_range`
+  and transforms its series into one-interval windows.
 - `replication_template` throws, before building, on dispatch constraint intervals missing from the
   cache, skipped constraints, dropped unit terms, defaulted constraint weights, devices without
   dispatch-limit series and incomplete MNSP offers, instead of replaying a partial model.
