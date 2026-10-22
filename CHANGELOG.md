@@ -145,8 +145,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attaching system-base time series.
 - `replicate_range(db, start, stop; parts, chunk, ...)` replays a range of dispatch intervals as one
   stock PowerSimulations `Simulation` per chunk, stepping a one-interval replication model whose
-  parameters update between intervals. Chunks break at every trading-day start (04:05) and every
-  `chunk` period; each chunk leaves out the generic constraints it never invokes
+  parameters update between intervals. Chunks break at every trading-day start (04:05), at 00:05 on
+  1 July and every `chunk` period; each chunk leaves out the generic constraints it never invokes
   and runs `check_tie_break_pairs`, `check_fcas_services` and
   `check_dispatch_envelope` before its build. It returns the per-interval comparison with the
   published outcome, constraint violations, solver statistics and each chunk's reopened results.

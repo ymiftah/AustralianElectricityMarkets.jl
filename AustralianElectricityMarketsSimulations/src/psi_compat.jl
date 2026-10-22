@@ -266,7 +266,6 @@ function PSI.objective_function!(
     time_steps = PSI.get_time_steps(container)
     _add_mpc_penalty!(container, variable_dn, areas, time_steps, AREA_BALANCE_CVP_FACTOR)
     _add_mpc_penalty!(container, variable_up, areas, time_steps, AREA_BALANCE_CVP_FACTOR)
-    _register_mpc_repricing!(container, areas, time_steps)
     return nothing
 end
 

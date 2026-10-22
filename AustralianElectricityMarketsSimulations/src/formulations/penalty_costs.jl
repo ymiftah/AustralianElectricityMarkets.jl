@@ -35,6 +35,7 @@ re-prices it at each simulation step. The cap of interval `t` is `rate` when giv
 function _add_mpc_penalty!(container::PSI.OptimizationContainer, slack, names, time_steps, cvp_factor::Real; rate = nothing)
     penalty = (; slack, names = collect(names), cvp_factor = Float64(cvp_factor), rate)
     push!(_mpc_penalties(container), penalty)
+    _register_mpc_repricing!(container, time_steps)
     _price_mpc_penalty!(container, penalty, PSI.get_initial_time(container), time_steps)
     return
 end
@@ -73,19 +74,21 @@ end
 
 
 """
-    _register_mpc_repricing!(container, areas, time_steps)
+    _register_mpc_repricing!(container, time_steps)
 
-Registers the [`MarketPriceCapPenaltyParameter`](@ref) that triggers
-[`_reprice_mpc_penalties!`](@ref) at each simulation step, on the `PSY.Area` components `areas`.
+Registers, once per container, the [`MarketPriceCapPenaltyParameter`](@ref) that triggers
+[`_reprice_mpc_penalties!`](@ref) at each simulation step. Called by [`_add_mpc_penalty!`](@ref),
+so any network model that records a penalty gets re-priced at every step.
 
 # Returns
 `nothing`.
 """
-function _register_mpc_repricing!(container::PSI.OptimizationContainer, areas, time_steps)
+function _register_mpc_repricing!(container::PSI.OptimizationContainer, time_steps)
+    haskey(PSI.get_parameters(container), PSI.ParameterKey(MarketPriceCapPenaltyParameter, PSY.Area)) && return
     param = PSI.add_param_container!(
         container, MarketPriceCapPenaltyParameter(), PSY.Area,
         (PSI.SystemBalanceSlackUp, PSI.SystemBalanceSlackDown), PSI.SOSStatusVariable.NO_VARIABLE,
-        false, Float64, collect(areas), time_steps,
+        false, Float64, ["market_price_cap"], time_steps,
     )
     # The container only triggers the update; PSI requires every cell to hold a value.
     PSI.get_parameter_array(param) .= 0.0
