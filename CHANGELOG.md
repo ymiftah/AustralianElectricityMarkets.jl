@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `replication_template` tolerates unmodeled device types in generic constraints only for the left-out
   part: storage without `:batteries`, `AreaInterchange` without `:losses`. Other unmodeled types throw.
+- `read_energy_limits` raises on a cached `DISPATCHLOAD` without a `UIGF` column instead of
+  filling `NULL`; repopulate with `force_new = true`.
 - Replay excludes explicitly omitted and never-invoked generic constraints before checking their
   buildability, preserves their skip reasons, and reports missing components even when another
   term uses an omitted model family. FCAS pre-flight checks respect omitted battery models.
@@ -140,6 +142,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `read_energy_limits` and `set_nem_energy_limits!` retain separate energy bid `MAXAVAIL`,
+  semi-scheduled `UIGF` and effective schedule classification, validating required inputs before
+  attaching system-base time series.
 - `replicate_range(db, start, stop; parts, chunk, ...)` replays a range of dispatch intervals as one
   stock PowerSimulations `Simulation` per chunk, stepping a one-interval replication model whose
   parameters update between intervals. Chunks break at every trading-day start (04:05), at 00:05 on

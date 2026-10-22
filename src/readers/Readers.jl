@@ -29,7 +29,7 @@ export read_interconnectors, read_interconnector_limits,
     read_interconnector_loss_breakpoints, read_interconnector_demand_coefficients,
     read_interconnector_loss_parameters, interconnector_loss_models
 export read_mnsp_offers, read_mnsp_links
-export read_dispatch_limits, read_uigf, read_prices
+export read_dispatch_limits, read_energy_limits, read_uigf, read_prices
 export read_interval_inputs, read_published_interval, read_uigf_as_dict
 export read_affine_heatrates, read_coal_prices, read_gas_prices, read_biomass_prices,
     read_isp_thermal_costs_parameters, read_isp_renewable_costs_parameters,
@@ -40,6 +40,7 @@ include("query_helpers.jl")
 include("units.jl")
 include("demand.jl")
 include("bids.jl")
+include("energy_limits.jl")
 include("constraints.jl")
 include("fcas.jl")
 include("interconnectors.jl")
