@@ -144,3 +144,28 @@ end
     )
     @test AEMS._market_price_cap(container, service_model, TOY_START) == 23456.0
 end
+
+@testset "a left-out part tolerates only its own device types in generic constraints" begin
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0;
+        batteries = [TOY_BATTERY => toy_battery(50.0, 30.0, 50.0, 0.0; initial = 0.0, ramp_up = 100.0)],
+        horizon = TOY_RESOLUTION,
+    )
+    @test AEMS._left_out_part_types((:fcas, :losses, :tie_breaks, :generic_constraints)) == [PSY.Storage]
+    @test AEMS._left_out_part_types(AEMS.REPLICATION_PARTS) == DataType[]
+    gc = GenericConstraint(; name = "MIXED", sense = ConstraintSense.LE, rhs = 1.0, terms = ConstraintTerm[])
+    modeled = DataType[]
+    tolerated_types = [PSY.Storage]
+    diagnose(terms) = (
+        empty!(get_terms(gc)); append!(get_terms(gc), terms);
+        AEMS._constraint_diagnosis(sys, gc, modeled, false, Set{String}(); tolerated_types)
+    )
+    battery_only = diagnose(ConstraintTerm[UnitTerm(TOY_BATTERY, BidType.ENERGY, 1.0)])
+    @test battery_only[1] == :unmodeled_device_type && !battery_only[4]
+    other = diagnose(ConstraintTerm[UnitTerm(TOY_CHEAP, BidType.ENERGY, 1.0)])
+    @test other[1] == :unmodeled_device_type && other[4]
+    mixed = diagnose(
+        ConstraintTerm[UnitTerm(TOY_BATTERY, BidType.ENERGY, 1.0), UnitTerm(TOY_CHEAP, BidType.ENERGY, 1.0)],
+    )
+    @test mixed[4] && typeof(PSY.get_component(PSY.Device, sys, TOY_CHEAP)) in mixed[2]
+end
