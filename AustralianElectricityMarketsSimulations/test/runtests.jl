@@ -1,0 +1,96 @@
+using AustralianElectricityMarketsSimulations
+using AustralianElectricityMarkets
+using DataFrames
+using Dates
+using DuckDB
+using PowerSystems
+using Test
+
+const AEMS = AustralianElectricityMarketsSimulations
+
+include(joinpath(@__DIR__, "..", "..", "test", "fixtures", "mock_data.jl"))
+include(joinpath(@__DIR__, "..", "..", "test", "integration", "pscb_fixture.jl"))
+include(joinpath(@__DIR__, "..", "..", "test", "integration", "pscb_nemweb_data.jl"))
+include(joinpath(@__DIR__, "template_helpers.jl"))
+include(joinpath(@__DIR__, "toy_fixture.jl"))
+
+const AEM_TEST_HIVE_DIR = mktempdir()
+create_mock_data(AEM_TEST_HIVE_DIR)
+
+# The interconnector results the interval readers need, added to a mock hive.
+function write_mock_interconnector_results(hive_root::String)
+    ddb = DuckDB.DB()
+    conn = DuckDB.connect(ddb)
+    DuckDB.execute(conn, "SET preserve_identifier_case=true")
+    interconnector_ids = ["IC$i" for i in 1:6]
+    base_datetime = DateTime(2025, 1, 1, 0, 0)
+    df = DataFrame()
+    for i in 0:48
+        t = base_datetime + Minute(5 * i)
+        append!(
+            df, DataFrame(
+                SETTLEMENTDATE = fill(t, length(interconnector_ids)),
+                INTERCONNECTORID = interconnector_ids,
+                MWFLOW = [100.0 * k + i for k in 1:length(interconnector_ids)],
+                MWLOSSES = [0.1 * k for k in 1:length(interconnector_ids)],
+                METEREDMWFLOW = [100.0 * k + i for k in 1:length(interconnector_ids)],
+                # Equal to the mock's static 500 MW limits, so they do not tighten any flow.
+                EXPORTLIMIT = fill(500.0, length(interconnector_ids)),
+                IMPORTLIMIT = fill(-500.0, length(interconnector_ids)),
+                archive_month = fill("2025-01", length(interconnector_ids)),
+            )
+        )
+    end
+    DuckDB.register_data_frame(conn, df, "tmp_table")
+    table_dir = joinpath(hive_root, "DISPATCHINTERCONNECTORRES")
+    mkpath(table_dir)
+    DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+    DuckDB.unregister_table(conn, "tmp_table")
+    DuckDB.disconnect(conn)
+    DuckDB.close(ddb)
+    return
+end
+write_mock_interconnector_results(AEM_TEST_HIVE_DIR)
+
+# A second hive whose invoked constraints and dispatch rows are all complete, for strict replay.
+const AEM_TEST_REPLAY_HIVE_DIR = mktempdir()
+create_mock_data(AEM_TEST_REPLAY_HIVE_DIR; complete_inputs = true)
+write_mock_interconnector_results(AEM_TEST_REPLAY_HIVE_DIR)
+
+# Test groups, in run order: name => (testset title, file). Pass group names as arguments to run
+# only those, e.g. `julia --project=test test/runtests.jl fcas_market preprocessing`.
+const TEST_GROUPS = [
+    "time_basis" => ("Time basis", "time_basis.jl"),
+    "inputs" => ("Interval inputs", "inputs.jl"),
+    "preprocessing" => ("Preprocessing", "preprocessing.jl"),
+    "constraint_formulations" => ("Constraint formulations", "constraint_formulations.jl"),
+    "psi_compat" => ("PSI compat", "psi_compat.jl"),
+    "nem_constraints" => ("NEM constraints", "nem_constraints.jl"),
+    "nem_dispatch" => ("NEM dispatch formulation", "nem_dispatch.jl"),
+    "nem_dispatch_toy" => ("NEM dispatch on a toy PSCB system", "nem_dispatch_toy.jl"),
+    "fcas_preprocessing" => ("FCAS preprocessing", "fcas_preprocessing.jl"),
+    "fcas_market" => ("FCAS market", "fcas_market.jl"),
+    "interconnector_losses" => ("Interconnector losses", "interconnector_losses.jl"),
+    "replay_validation" => ("Replay validation regressions", "replay_validation.jl"),
+    "replication_inputs" => ("Required replay inputs", "replication_inputs.jl"),
+    "storage_availability" => ("Elastic storage availability", "storage_availability.jl"),
+    "energy_offer_violations" => ("Elastic energy offer totals", "energy_offer_violations.jl"),
+    "energy_limits" => ("Elastic energy limits", "energy_limits.jl"),
+    "pipeline" => ("Replication pipeline", "pipeline.jl"),
+    "stock_simulation" => ("Stock simulation replay", "stock_simulation.jl"),
+]
+
+const SELECTED_GROUPS = let known = first.(TEST_GROUPS)
+    unknown = setdiff(ARGS, known)
+    isempty(unknown) || error("Unknown test group(s) $(unknown); choose from $(known).")
+    isempty(ARGS) ? known : ARGS
+end
+
+@testset "AustralianElectricityMarketsSimulations" begin
+    for (name, (title, file)) in TEST_GROUPS
+        name in SELECTED_GROUPS || continue
+        @testset "$title" begin
+            include(file)
+        end
+    end
+end

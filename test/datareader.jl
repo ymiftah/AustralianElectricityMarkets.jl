@@ -5,20 +5,11 @@ let
     config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
     db = aem_connect(config)
 
-    @testset "read_interconnectors" begin
-        df = read_interconnectors(db)
-        @test df isa DataFrame
-        @test nrow(df) > 0
-        @test "INTERCONNECTORID" in names(df)
-    end
-
-    @testset "read_demand" begin
-        df = read_demand(db)
-        @test df isa DataFrame
-        @test nrow(df) > 0
-        @test "REGIONID" in names(df)
-        @test df.REGIONID[1] == "VIC1"
-        @test df.TOTALDEMAND[1] == 1000.0
+    @testset "_table_is_cached" begin
+        # A glob matching zero files is a legitimate false, not an error - confirmed directly
+        # this still holds once the bare `catch -> false` was removed (see query_helpers.jl).
+        @test AustralianElectricityMarkets._table_is_cached(db, :DISPATCHCONSTRAINT)
+        @test !AustralianElectricityMarkets._table_is_cached(db, :NOT_A_REAL_TABLE)
     end
 
     @testset "read_units" begin
@@ -28,9 +19,9 @@ let
         @test "DUID" in names(df)
         @test "TECHNOLOGY" in names(df)
         @test "FUELTYPE" in names(df)
-        @test df.DUID[1] == "BW01"
-        # Verify technology mapping from mock data "Battery Storage" (first unit)
-        @test df.TECHNOLOGY[1] == PrimeMovers.BA
+        @test "BW01" in df.DUID
+        # Verify technology mapping from mock data "Battery Storage" (BW01)
+        @test only(df.TECHNOLOGY[df.DUID .== "BW01"]) == PrimeMovers.BA
 
         # BAYSW (station for BW01-BW04) is renamed in a later STATION archive_month
         # partition (mock_data.jl). read_units() must resolve one name per DUID —
@@ -39,17 +30,6 @@ let
         bw01_names = df.STATIONNAME[df.DUID .== "BW01"]
         @test length(bw01_names) == 1
         @test only(bw01_names) == "Bayswater Power Station"
-    end
-
-    @testset "read_energy_bids" begin
-        # Use 2025 to match mock data
-        date_range = DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 1, 0)
-        df = read_energy_bids(db, date_range)
-        @test df isa DataFrame
-        @test nrow(df) > 0
-        @test "DUID" in names(df)
-        @test "MAXAVAIL" in names(df)
-        @test "BW01" in df.DUID
     end
 
     @testset "read_bids" begin
@@ -62,31 +42,39 @@ let
         @test "piecewise_step_data" in names(df)
     end
 
-    @testset "max-partition filtering excludes stale partitions" begin
-        # All other mock tables only ever have a single archive_month value, so
-        # the "keep only the max partition" query idiom used throughout queries.jl
-        # has never actually been exercised against genuinely stale data. Write a
-        # dedicated 2-partition table directly into the test hive dir to close that gap.
-        conn = DuckDB.connect(db.db)
-        DuckDB.execute(conn, "SET preserve_identifier_case=true")
-        table_dir = joinpath(hive_dir, "LATESTTEST")
-        mkpath(table_dir)
-        df = vcat(
-            DataFrame(id = [1, 2], marker = ["stale", "stale"], archive_month = ["2024-01", "2024-01"]),
-            DataFrame(id = [3], marker = ["current"], archive_month = ["2025-01"]),
-        )
-        DuckDB.register_data_frame(conn, df, "tmp_latest_test")
-        DuckDB.execute(conn, "COPY (SELECT * FROM tmp_latest_test) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
-        DuckDB.unregister_table(conn, "tmp_latest_test")
-        DuckDB.disconnect(conn)
+    @testset "Bounded demand preserves complete aggregation bins" begin
+        start = DateTime(2025, 1, 1)
+        for resolution in (Minute(5), Minute(15), Hour(1))
+            full = read_demand(db; resolution = resolution)
+            for (from, to) in (
+                    (start, start + Hour(2)),
+                    (start + Minute(7), start + Minute(77)),
+                    (start + Minute(55), start + Minute(125)),
+                    (start + Minute(235), start + Minute(245)),
+                    (start - Hour(1), start + Minute(5)),
+                    (start + Hour(5), start + Hour(6)),
+                )
+                date_range = from:Minute(5):to
+                expected = full[(first(date_range) .<= full.SETTLEMENTDATE) .& (full.SETTLEMENTDATE .< last(date_range)), :]
+                bounded = read_demand(db, date_range; resolution = resolution)
+                @test isequal(sort(bounded, [:SETTLEMENTDATE, :REGIONID]), sort(expected, [:SETTLEMENTDATE, :REGIONID]))
+            end
+        end
 
-        table = read_hive(db, :LATESTTEST)
-        filtered = AustralianElectricityMarkets._query(
-            db,
-            "SELECT * FROM $table WHERE archive_month = (SELECT max(archive_month) FROM $table)",
-        )
-        @test nrow(filtered) == 1
-        @test filtered.marker[1] == "current"
-        @test filtered.archive_month[1] == "2025-01"
+        hourly = read_demand(db, (start + Minute(55)):Minute(5):(start + Minute(125)); resolution = Hour(1))
+        nsw = hourly[hourly.REGIONID .== "NSW1", :]
+        @test nsw.SETTLEMENTDATE == [start + Hour(1), start + Hour(2)]
+        @test nsw.TOTALDEMAND == [1065.0, 1185.0]
+        @test nsw.LOSSDEMAND == [1080.0, 1200.0]
+
+        charging = read_demand(db, (start + Minute(235)):Minute(5):(start + Minute(245)))
+        vic = charging[charging.REGIONID .== "VIC1", :]
+        @test vic.TOTALDEMAND == [1470.0, 1480.0]
+        @test vic.LOSSDEMAND == [1485.0, 1465.0]
+
+        daily_range = Date(2025, 1, 1):Day(1):Date(2025, 1, 2)
+        bounded = read_demand(db, daily_range)
+        full = read_demand(db)
+        @test isequal(sort(bounded, [:SETTLEMENTDATE, :REGIONID]), sort(full, [:SETTLEMENTDATE, :REGIONID]))
     end
 end

@@ -1,4 +1,5 @@
 using AustralianElectricityMarkets
+using AustralianElectricityMarketsData: populate
 using Dates
 
 # Define the date range required for tests and documentation examples
