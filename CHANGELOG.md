@@ -467,6 +467,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `AbstractNEMConstraintFormulation`: `LinearFactorLimit` subtypes
+  `PowerSimulations.AbstractServiceFormulation` directly, as no method dispatched on the abstract
+  type and it had no other subtype.
 - Single-interval input readers `read_interval_inputs` and `read_uigf_as_dict`, and the
   `read_uigf(db, ::DateTime)` method: replay reads every interval through the range readers.
   `IntervalInputs` stays, re-exported by AustralianElectricityMarketsSimulations.
@@ -483,6 +486,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Statistics` dependency of `AustralianElectricityMarketsSimulations`.
 
 ### Changed
+
+- `FCASMarket` and `check_fcas_services` apply one FCAS bid direction rule with one message per
+  violation, so a decremental-only FCAS bid on a device that is neither storage nor a controllable
+  load fails at build with the message `check_fcas_services` reports. Interconnector flow-limit
+  series and MNSP band-axis errors are `ArgumentError`s. Dispatch results are unchanged.
 
 - `AustralianElectricityMarketsSimulations` internals: generator and battery ramp rows share one
   builder; unit ramp, interconnector flow and generic constraint slacks share one variable builder;

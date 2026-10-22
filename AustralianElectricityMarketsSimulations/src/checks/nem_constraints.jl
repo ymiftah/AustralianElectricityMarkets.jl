@@ -1,8 +1,10 @@
-# Pre-flight buildability check for `GenericConstraint`s against a `PSI.ProblemTemplate`,
-# reusing the reason vocabulary `nem_constraints.jl`'s `_checked_device`/`_checked_devices`/
-# `_checked_interconnector` throw with, but reading only already-resolved data.
+# Pre-flight buildability check for `GenericConstraint`s against a `PSI.ProblemTemplate`.
 
 const _UNBUILDABLE_REASONS = (:unmodeled_fcas_service, :missing_component, :unmodeled_device_type)
+
+
+# Term failures, each a reason and, for `:unmodeled_device_type`, the device type.
+const _TermFailures = Vector{Tuple{Symbol, Union{Nothing, DataType}}}
 
 
 const _REASON_LABELS = Dict(
@@ -12,17 +14,19 @@ const _REASON_LABELS = Dict(
 )
 
 
-_modeled_device_types(template::PSI.ProblemTemplate) = DataType[
-    PSI.get_component_type(m) for
-        m in Iterators.flatten((values(PSI.get_device_models(template)), values(PSI.get_branch_models(template))))
-]
+function _modeled_device_types(template::PSI.ProblemTemplate)
+    models = Iterators.flatten((values(PSI.get_device_models(template)), values(PSI.get_branch_models(template))))
+    return DataType[PSI.get_component_type(m) for m in models]
+end
 
 
-# Names of the FCASServices the template models under FCASMarket, as `check_fcas_services` reads them.
-_modeled_fcas_services(template::PSI.ProblemTemplate) = Set(
-    name for ((name, _), model) in PSI.get_service_models(template)
-        if PSI.get_component_type(model) == FCASService && PSI.get_formulation(model) == FCASMarket
-)
+# Names of the FCASServices the template models under FCASMarket.
+function _modeled_fcas_services(template::PSI.ProblemTemplate)
+    return Set(
+        name for ((name, _), model) in PSI.get_service_models(template)
+            if PSI.get_component_type(model) == FCASService && PSI.get_formulation(model) == FCASMarket
+    )
+end
 
 
 # An FCAS term needs its device's service modelled; an absent, unavailable or deviceless service
@@ -34,13 +38,13 @@ function _fcas_failures(
     name = fcas_service_name(device, bid_type)
     svc = bid_type == BidType.ENERGY ? nothing : PSY.get_component(FCASService, sys, name)
     (isnothing(svc) || !PSY.get_available(svc) || name in fcas_modeled) &&
-        return Tuple{Symbol, Union{Nothing, DataType}}[]
+        return _TermFailures()
     devices = filter(PSY.get_available, PSY.get_contributing_devices(sys, svc))
-    isempty(devices) && return Tuple{Symbol, Union{Nothing, DataType}}[]
+    isempty(devices) && return _TermFailures()
     if !any(d -> _type_modeled(d, modeled_types), devices)
-        return Tuple{Symbol, Union{Nothing, DataType}}[(:unmodeled_device_type, typeof(d)) for d in devices]
+        return _TermFailures([(:unmodeled_device_type, typeof(d)) for d in devices])
     end
-    return Tuple{Symbol, Union{Nothing, DataType}}[(:unmodeled_fcas_service, nothing)]
+    return _TermFailures([(:unmodeled_fcas_service, nothing)])
 end
 
 
@@ -56,13 +60,14 @@ function _service_device_index(sys::PSY.System)
 end
 
 
-_interconnector_modeled(template::PSI.ProblemTemplate) = any(
-    m -> PSI.get_component_type(m) == PSY.AreaInterchange, values(PSI.get_branch_models(template)),
-)
+function _interconnector_modeled(template::PSI.ProblemTemplate)
+    return any(m -> PSI.get_component_type(m) == PSY.AreaInterchange, values(PSI.get_branch_models(template)))
+end
 
 
-_type_modeled(device::PSY.Device, modeled_types::Vector{DataType}) =
-    any(t -> device isa t, modeled_types)
+function _type_modeled(device::PSY.Device, modeled_types::Vector{DataType})
+    return any(t -> device isa t, modeled_types)
+end
 
 
 function _term_failures(
@@ -70,9 +75,9 @@ function _term_failures(
     )
     device = PSY.get_component(PSY.Device, sys, get_duid(term))
     isnothing(device) &&
-        return Tuple{Symbol, Union{Nothing, DataType}}[(:missing_component, nothing)]
+        return _TermFailures([(:missing_component, nothing)])
     _type_modeled(device, modeled_types) ||
-        return Tuple{Symbol, Union{Nothing, DataType}}[(:unmodeled_device_type, typeof(device))]
+        return _TermFailures([(:unmodeled_device_type, typeof(device))])
     return _fcas_failures(sys, device, get_bid_type(term), fcas_modeled, modeled_types)
 end
 
@@ -80,7 +85,7 @@ end
 function _term_failures(
         sys::PSY.System, term::RegionTerm, modeled_types::Vector{DataType}, ::Bool, fcas_modeled::Set{String},
     )
-    failures = Tuple{Symbol, Union{Nothing, DataType}}[]
+    failures = _TermFailures()
     for dname in get_devices(term)
         device = PSY.get_component(PSY.Device, sys, dname)
         if isnothing(device)
@@ -101,9 +106,9 @@ function _term_failures(
     )
     device = PSY.get_component(PSY.AreaInterchange, sys, get_interconnector(term))
     isnothing(device) &&
-        return Tuple{Symbol, Union{Nothing, DataType}}[(:missing_component, nothing)]
-    interconnector_modeled && return Tuple{Symbol, Union{Nothing, DataType}}[]
-    return Tuple{Symbol, Union{Nothing, DataType}}[(:unmodeled_device_type, PSY.AreaInterchange)]
+        return _TermFailures([(:missing_component, nothing)])
+    interconnector_modeled && return _TermFailures()
+    return _TermFailures([(:unmodeled_device_type, PSY.AreaInterchange)])
 end
 
 
@@ -120,7 +125,7 @@ function _constraint_diagnosis(
         interconnector_modeled::Bool, fcas_modeled::Set{String};
         tolerated_reasons = Set{Symbol}(), tolerated_types = DataType[],
     )
-    failures = Tuple{Symbol, Union{Nothing, DataType}}[]
+    failures = _TermFailures()
     for term in get_terms(gc)
         append!(failures, _term_failures(sys, term, modeled_types, interconnector_modeled, fcas_modeled))
     end
@@ -158,19 +163,16 @@ end
     filter_buildable_generic_constraints(sys, template; allow_partial_coverage = false, skipped = nothing) -> Vector{GenericConstraint}
 
 The [`GenericConstraint`](@ref)s in `sys` that `template` can build under
-[`LinearFactorLimit`](@ref). A constraint is unbuildable when a `UnitTerm`/`RegionTerm` has a
-FCAS term's service (see [`fcas_service_name`](@ref)) exists with available devices but has no
-[`FCASMarket`](@ref) model in `template`, a term's named component is missing from `sys`, or a
-device's type isn't modelled by any `DeviceModel`/branch model in `template` (an
-`InterconnectorTerm` needs `PSY.AreaInterchange` modelled as a branch). Constraints with `PSY.get_available(gc) == false`
-are skipped entirely. A constraint whose contributing devices are all unavailable is left out
-without being a failure.
+[`LinearFactorLimit`](@ref). A constraint is unbuildable when the service of one of its FCAS terms
+([`fcas_service_name`](@ref)) has available devices but no [`FCASMarket`](@ref) model in
+`template`, a term's named component is missing from `sys`, or a device's type is not modelled by
+any `DeviceModel` or branch model in `template` (an `InterconnectorTerm` needs `PSY.AreaInterchange`
+modelled as a branch). Unavailable constraints are skipped, and a constraint whose contributing
+devices are all unavailable is left out without being a failure.
 
 # Arguments
 - `sys`: system to read constraints and components from.
 - `template`: `PSI.ProblemTemplate` to check device and branch coverage against.
-- `skipped`: a vector to which one `(constraint, reason, n_missing)` named tuple per unbuildable
-  constraint is appended, or `nothing`.
 - `allow_partial_coverage`: when `false` (default), throws a single aggregated `ArgumentError`
   naming every unbuildable constraint and its reason if any exist. When `true`, returns the
   buildable subset and emits one summary `@warn` with counts by reason.

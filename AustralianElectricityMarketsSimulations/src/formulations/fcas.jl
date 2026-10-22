@@ -1,54 +1,73 @@
-PSI.get_default_time_series_names(::Type{FCASService}, ::Type{FCASMarket}) =
-    Dict{Type{<:PSI.TimeSeriesParameter}, String}()
+function PSI.get_default_time_series_names(::Type{FCASService}, ::Type{FCASMarket})
+    return Dict{Type{<:PSI.TimeSeriesParameter}, String}()
+end
 
 
-PSI.get_default_attributes(::Type{FCASService}, ::Type{FCASMarket}) = Dict{String, Any}()
+function PSI.get_default_attributes(::Type{FCASService}, ::Type{FCASMarket})
+    return Dict{String, Any}()
+end
 
 
-_is_regulation_service(bid_type::BidType) = bid_type in FCAS_REGULATION_MARKETS
+"""
+    _fcas_direction_problem(device, bid_type, direction) -> Union{Nothing, String}
+
+Why [`FCASMarket`](@ref) cannot model `device`'s `bid_type` bid in `direction` (as returned by
+`AustralianElectricityMarkets._fcas_bid_direction`), or `nothing` when it can. Modeled directions
+are an incremental bid on any device but a `PSY.ControllableLoad`, a decremental bid on a
+`PSY.Storage` device or a `PSY.ControllableLoad`, and both directions on a `PSY.Storage` device's
+regulation bid.
+
+# Returns
+`Union{Nothing, String}`, the reason phrased to follow the device name.
+"""
+function _fcas_direction_problem(device::PSY.Device, bid_type::BidType, direction::Symbol)
+    bid = string(bid_type)
+    direction === :none && return "carries neither an incremental nor a decremental $bid bid; call set_fcas_bids! first"
+    direction === :both && !(device isa PSY.Storage && bid_type in FCAS_REGULATION_MARKETS) &&
+        return "carries both an incremental and a decremental $bid bid; bidirectional FCAS capacity is modeled " *
+        "only for a `PSY.Storage` device's regulation markets"
+    direction === :decremental && !(device isa PSY.Storage || device isa PSY.ControllableLoad) &&
+        return "($(typeof(device))) has only a decremental $bid bid; that direction is modeled only for a " *
+        "`PSY.Storage` device or a `PSY.ControllableLoad`"
+    direction === :incremental && device isa PSY.ControllableLoad &&
+        return "is a load with an incremental $bid bid; a load offers FCAS on its decremental " *
+        "(`LOAD`-direction) series only"
+    return nothing
+end
 
 
 """
     _fcas_direction(device, bid_type) -> Symbol
 
-Which of `bid_type`'s `"fcas_trapezium_<bid_type>[_decremental]"` series `device` carries.
-Throws `ArgumentError` if neither series is attached, if both are attached on a device other
-than a `PSY.Storage` regulation bid (bidirectional FCAS capacity is modeled only for a
-`PSY.Storage` device's generation-side and load-side regulation bids), or if a
-`PSY.ControllableLoad` carries an incremental series (a load offers FCAS on its decremental
-series only).
+Which of `bid_type`'s `"fcas_trapezium_<bid_type>[_decremental]"` series `device` carries. Throws
+an `ArgumentError` when [`FCASMarket`](@ref) does not model that direction
+([`_fcas_direction_problem`](@ref)).
 
 # Returns
 `:incremental`, `:decremental`, or `:both`.
 """
-function _fcas_direction(device, bid_type::BidType)
-    bid_type_str = string(bid_type)
-    has_inc = PSY.has_time_series(device, PSY.SingleTimeSeries, "fcas_trapezium_$bid_type_str")
-    has_dec = PSY.has_time_series(device, PSY.SingleTimeSeries, "fcas_trapezium_$(bid_type_str)_decremental")
-    if has_inc && has_dec
-        device isa PSY.Storage && _is_regulation_service(bid_type) && return :both
-        throw(
-            ArgumentError(
-                "FCASMarket: \"$(PSY.get_name(device))\" carries both an incremental and a " *
-                    "decremental $bid_type_str bid; bidirectional FCAS capacity is modeled only " *
-                    "for a `PSY.Storage` device's regulation markets.",
-            ),
-        )
-    end
-    has_inc && device isa PSY.ControllableLoad && throw(
-        ArgumentError(
-            "FCASMarket: load \"$(PSY.get_name(device))\" carries an incremental $bid_type_str " *
-                "bid; a load offers FCAS on its decremental (`LOAD`-direction) series only.",
-        ),
-    )
-    has_inc && return :incremental
-    has_dec && return :decremental
-    throw(
-        ArgumentError(
-            "FCASMarket: \"$(PSY.get_name(device))\" carries neither an incremental nor a " *
-                "decremental $bid_type_str trapezium series - call set_fcas_bids! first.",
-        ),
-    )
+function _fcas_direction(device::PSY.Device, bid_type::BidType)
+    direction = AustralianElectricityMarkets._fcas_bid_direction(device, bid_type)
+    problem = _fcas_direction_problem(device, bid_type, direction)
+    isnothing(problem) || throw(ArgumentError("FCASMarket: \"$(PSY.get_name(device))\" $problem."))
+    return direction
+end
+
+
+"""
+    _fcas_direction_groups(devices, bid_type) -> (directions, single_devices, both_devices)
+
+Each of `devices`' [`_fcas_direction`](@ref) for `bid_type`, keyed by name, and `devices` split
+into those bidding one direction and the `PSY.Storage` devices bidding both, in their order.
+
+# Returns
+`(directions::Dict{String, Symbol}, single_devices, both_devices)`.
+"""
+function _fcas_direction_groups(devices, bid_type::BidType)
+    directions = Dict(PSY.get_name(d) => _fcas_direction(d, bid_type) for d in devices)
+    both_devices = filter(d -> directions[PSY.get_name(d)] == :both, devices)
+    single_devices = filter(d -> directions[PSY.get_name(d)] != :both, devices)
+    return directions, single_devices, both_devices
 end
 
 
@@ -57,10 +76,8 @@ end
 
 The `PSI.VariableType`s (and their sign) making up `device`'s unit-level "Energy Dispatch
 Target": the net `ActivePowerOutVariable - ActivePowerInVariable` for a `PSY.Storage` device,
-`ActivePowerVariable` otherwise (a `PSY.ControllableLoad`'s is its consumed MW). Used wherever
-AEMO's formulation reads a single, signed unit-level energy term rather than one bid side's own
-energy - AEMO *FCAS Model in NEMDE* §6.1's joint ramping constraint and a `PSY.Storage` device's
-contingency FCAS.
+`ActivePowerVariable` otherwise (a `PSY.ControllableLoad`'s is its consumed MW). Read by AEMO *FCAS
+Model in NEMDE* §6.1's joint ramping constraint and by a `PSY.Storage` device's contingency FCAS.
 
 # Returns
 `Vector{Tuple{DataType, Float64}}` of `(VariableType, multiplier)` pairs.
@@ -82,8 +99,9 @@ energy axis is consumption so raising consumption lowers frequency (AEMO *FCAS M
 # Returns
 `BidType.RAISEREG` or `BidType.LOWERREG`.
 """
-_fcas_upper_regulation_service(device::PSY.Device) =
-    device isa PSY.ControllableLoad ? BidType.LOWERREG : BidType.RAISEREG
+function _fcas_upper_regulation_service(device::PSY.Device)
+    return device isa PSY.ControllableLoad ? BidType.LOWERREG : BidType.RAISEREG
+end
 
 
 """
@@ -110,8 +128,7 @@ The `PSI.VariableType`s (and their sign) making up `device`'s FCAS "Energy Dispa
 `PSY.Storage` device, the bid side's own energy on regulation (`ActivePowerOutVariable` for a
 generation-side bid, `-ActivePowerInVariable` for a load-side one) and the net
 ([`_fcas_net_energy_terms`](@ref)) on contingency; `ActivePowerVariable` otherwise, which for a
-`PSY.ControllableLoad` is its consumed MW. Throws `ArgumentError` for a decremental
-(`LOAD`-direction) bid on a device that is neither `PSY.Storage` nor a `PSY.ControllableLoad`.
+`PSY.ControllableLoad` is its consumed MW.
 
 # Returns
 `Vector{Tuple{DataType, Float64}}` of `(VariableType, multiplier)` pairs.
@@ -121,12 +138,6 @@ function _fcas_energy_terms(device::PSY.Device, is_regulation::Bool, decremental
         is_regulation || return _fcas_net_energy_terms(device)
         return decremental ? [(PSI.ActivePowerInVariable, -1.0)] : [(PSI.ActivePowerOutVariable, 1.0)]
     end
-    decremental && !(device isa PSY.ControllableLoad) && throw(
-        ArgumentError(
-            "FCASMarket: \"$(PSY.get_name(device))\" ($(typeof(device))) has a decremental FCAS " *
-                "bid but is neither a `PSY.Storage` device nor a `PSY.ControllableLoad`.",
-        ),
-    )
     return _fcas_net_energy_terms(device)
 end
 
@@ -234,23 +245,44 @@ the first in 5-minute pre-dispatch, none in 30-minute pre-dispatch.
 # Returns
 `Bool`.
 """
-_fcas_agc_ramp_applies(process::Symbol, t::Int) = process === :dispatch || (process === :p5min && t == 1)
+function _fcas_agc_ramp_applies(process::Symbol, t::Int)
+    return process === :dispatch || (process === :p5min && t == 1)
+end
 
 
 """
-    _fcas_window(container, devices_template, device) -> NamedTuple
+    _FCASWindow(initial_time, horizon, resolution, process)
 
-The intervals `device`'s FCAS inputs are read over in `container`: `(initial_time, horizon,
-resolution, process)`, `horizon` being the number of time steps and `process` the
-[`_fcas_process`](@ref) of `device`'s formulation.
+The intervals a device's FCAS inputs are read over: `horizon` intervals of `resolution` from
+`initial_time`, under the central dispatch `process` ([`_fcas_process`](@ref)).
+
+# Fields
+- `initial_time::DateTime`: the first interval.
+- `horizon::Int`: the number of intervals.
+- `resolution::R`: the interval length.
+- `process::Symbol`: `:dispatch`, `:p5min` or `:predispatch`.
+"""
+struct _FCASWindow{R <: Dates.Period}
+    initial_time::DateTime
+    horizon::Int
+    resolution::R
+    process::Symbol
+end
+
+
+"""
+    _fcas_window(container, devices_template, device) -> _FCASWindow
+
+The [`_FCASWindow`](@ref) `device`'s FCAS inputs are read over in `container`: its time steps,
+under the [`_fcas_process`](@ref) of `device`'s formulation.
 
 # Returns
-`NamedTuple{(:initial_time, :horizon, :resolution, :process)}`.
+`_FCASWindow`.
 """
 function _fcas_window(container::PSI.OptimizationContainer, devices_template, device::PSY.Device)
-    return (
-        initial_time = PSI.get_initial_time(container), horizon = length(PSI.get_time_steps(container)),
-        resolution = PSI.get_resolution(container), process = _fcas_process(container, devices_template, device),
+    return _FCASWindow(
+        PSI.get_initial_time(container), length(PSI.get_time_steps(container)), PSI.get_resolution(container),
+        _fcas_process(container, devices_template, device),
     )
 end
 
@@ -272,7 +304,7 @@ trapezium unscaled.
 # Returns
 `(trapeziums::Vector{FCASTrapezium}, curves::Vector{PSY.PiecewiseStepData})`.
 """
-function _fcas_series(window::NamedTuple, device, bid_type::BidType, decremental::Bool)
+function _fcas_series(window::_FCASWindow, device, bid_type::BidType, decremental::Bool)
     trapeziums = get_scaled_fcas_trapezium(
         device, bid_type, window.initial_time, window.horizon; decremental = decremental,
         resolution = window.resolution, agc_first_interval_only = window.process !== :dispatch,
@@ -288,7 +320,7 @@ end
 
 
 "`device`'s FCAS offer curves for `bid_type`, one per interval of `window` ([`get_fcas_offer_curve`](@ref))."
-function _fcas_offer_curves(window::NamedTuple, device, bid_type::BidType, decremental::Bool)
+function _fcas_offer_curves(window::_FCASWindow, device, bid_type::BidType, decremental::Bool)
     return get_fcas_offer_curve(device, bid_type, window.initial_time, window.horizon; decremental = decremental)
 end
 
@@ -302,7 +334,7 @@ A `PSY.Storage` device's generation-side and load-side trapezium and offer-curve
 # Returns
 `(gen_trapeziums::Vector{FCASTrapezium}, gen_curves::Vector{PSY.PiecewiseStepData}, load_trapeziums::Vector{FCASTrapezium}, load_curves::Vector{PSY.PiecewiseStepData})`.
 """
-function _fcas_regulation_sides(window::NamedTuple, device, bid_type::BidType)
+function _fcas_regulation_sides(window::_FCASWindow, device, bid_type::BidType)
     gen_trapeziums, gen_curves = _fcas_series(window, device, bid_type, false)
     load_trapeziums, load_curves = _fcas_series(window, device, bid_type, true)
     return gen_trapeziums, gen_curves, load_trapeziums, load_curves
@@ -373,8 +405,8 @@ positive; at least one priced band with positive quantity; `EnablementMax` at or
 pre-condition ([`_fcas_energy_max_avail_ok`](@ref)); when `check_stranded` and `initial_mw` is
 known, the "stranded" pre-condition (`initial_mw` for a `PSY.Storage` device, `Max[initial_mw,
 0]` otherwise, inside `[EnablementMin, EnablementMax]`); and, for a regulation service, `1 ==
-agc_status` whenever `agc_status` is known. The daily/profiled-energy pre-condition is not
-checked - it reads data this package does not have.
+agc_status` whenever `agc_status` is known. The daily or profiled energy pre-condition is not
+checked.
 
 # Returns
 `Bool`.
@@ -409,7 +441,9 @@ or `nothing` when `avail` is `nothing`.
 # Returns
 `Union{Nothing, NamedTuple{(:gen, :load), Tuple{Float64, Float64}}}`.
 """
-_storage_energy_max_avail_at(avail, t::Int) = isnothing(avail) ? nothing : (gen = avail.gen[t], load = avail.load[t])
+function _storage_energy_max_avail_at(avail, t::Int)
+    return isnothing(avail) ? nothing : (gen = avail.gen[t], load = avail.load[t])
+end
 
 
 """
@@ -456,7 +490,7 @@ unknown. Outside dispatch `InitialMW` and AGC status are known in the first inte
 # Returns
 `(initial_mw::Function, availability::Function, agc_status::Function)`.
 """
-function _fcas_enablement_inputs(window::NamedTuple, device::PSY.Device)
+function _fcas_enablement_inputs(window::_FCASWindow, device::PSY.Device)
     first_only = window.process !== :dispatch
     initial_mw = get_initial_mw(device, window.initial_time, window.horizon)
     agc_status = get_fcas_agc_status(device, window.initial_time, window.horizon)
@@ -485,8 +519,8 @@ Per-interval [`_fcas_enabled`](@ref) for `device`'s one-directional `bid_type` b
 # Returns
 `Vector{Bool}`, one entry per interval of `window`.
 """
-function _fcas_enabled_mask(window::NamedTuple, device::PSY.Device, bid_type::BidType, decremental::Bool)
-    is_regulation = _is_regulation_service(bid_type)
+function _fcas_enabled_mask(window::_FCASWindow, device::PSY.Device, bid_type::BidType, decremental::Bool)
+    is_regulation = bid_type in FCAS_REGULATION_MARKETS
     trapeziums, curves = _fcas_series(window, device, bid_type, decremental)
     initial_mw, availability, agc_status = _fcas_enablement_inputs(window, device)
     return map(1:window.horizon) do t
@@ -511,7 +545,7 @@ Per-interval [`_fcas_both_sides_enabled`](@ref) for a `PSY.Storage` device biddi
 # Returns
 `(gen_enabled::Vector{Bool}, load_enabled::Vector{Bool})`.
 """
-function _fcas_both_sides_enabled_mask(window::NamedTuple, device::PSY.Device, bid_type::BidType)
+function _fcas_both_sides_enabled_mask(window::_FCASWindow, device::PSY.Device, bid_type::BidType)
     gen_traps, gen_curves, load_traps, load_curves = _fcas_regulation_sides(window, device, bid_type)
     initial_mw, availability, agc_status = _fcas_enablement_inputs(window, device)
     flags = map(1:window.horizon) do t
@@ -536,7 +570,7 @@ device) and §6.4's BDU SCADA ramping constraint (a `PSY.Storage` device bidding
 # Returns
 `Vector{Float64}`.
 """
-function _fcas_agc_ramp_caps(window::NamedTuple, device::PSY.Device, bid_type::BidType)
+function _fcas_agc_ramp_caps(window::_FCASWindow, device::PSY.Device, bid_type::BidType)
     ramp_cap = get_fcas_agc_ramp_capability(
         device, bid_type, window.initial_time, window.horizon; resolution = window.resolution,
     )
@@ -561,7 +595,7 @@ for `direction == :both` (a `PSY.Storage` device bidding both sides), either sid
 # Returns
 `Vector{Bool}`, one entry per interval of `window`.
 """
-function _fcas_regulation_enabled_mask(window::NamedTuple, device::PSY.Device, bid_type::BidType, direction::Symbol)
+function _fcas_regulation_enabled_mask(window::_FCASWindow, device::PSY.Device, bid_type::BidType, direction::Symbol)
     if direction == :both
         gen_enabled, load_enabled = _fcas_both_sides_enabled_mask(window, device, bid_type)
         return gen_enabled .| load_enabled
@@ -590,16 +624,21 @@ const FCAS_INACTIVE_LIMIT_MW = 1.0e5
 
 
 "`\"fcas_effective_<BIDTYPE>[_decremental]\"`, the [`set_fcas_effective_offers!`](@ref) series of one FCAS offer."
-_fcas_effective_series_name(bid_type::BidType, decremental::Bool) =
-    AustralianElectricityMarkets._fcas_series_name("fcas_effective", bid_type, decremental)
+function _fcas_effective_series_name(bid_type::BidType, decremental::Bool)
+    return AustralianElectricityMarkets._fcas_series_name("fcas_effective", bid_type, decremental)
+end
 
 
 "`\"fcas_ramping_limits_<BIDTYPE>\"`, the [`set_fcas_effective_offers!`](@ref) series of one regulation market."
-_fcas_ramping_series_name(bid_type::BidType) = "fcas_ramping_limits_$(string(bid_type))"
+function _fcas_ramping_series_name(bid_type::BidType)
+    return "fcas_ramping_limits_$(string(bid_type))"
+end
 
 
 "The meta of an FCAS offer's parameters: `\"<BIDTYPE>\"`, or `\"<BIDTYPE>_decremental\"` for a decremental offer."
-_fcas_offer_meta(bid_type::BidType, decremental::Bool) = decremental ? "$(string(bid_type))_decremental" : string(bid_type)
+function _fcas_offer_meta(bid_type::BidType, decremental::Bool)
+    return decremental ? "$(string(bid_type))_decremental" : string(bid_type)
+end
 
 
 "The `decremental` flag of each offer a device bidding in `direction` makes: one, or two for `:both`."
@@ -651,7 +690,7 @@ for any other device.
 # Returns
 `Vector{NTuple{2, Float64}}`, one entry per interval of `window`.
 """
-function _fcas_effective_ramping(window::NamedTuple, device::PSY.Device, bid_type::BidType, direction::Symbol, inactive::Float64)
+function _fcas_effective_ramping(window::_FCASWindow, device::PSY.Device, bid_type::BidType, direction::Symbol, inactive::Float64)
     caps = _fcas_agc_ramp_caps(window, device, _fcas_ramp_rate_service(device, bid_type))
     initial_mw = get_initial_mw(device, window.initial_time, window.horizon)
     enabled = _fcas_regulation_enabled_mask(window, device, bid_type, direction)
@@ -682,8 +721,9 @@ regulation market, `nothing` otherwise.
 # Returns
 `(offers::Dict{Bool, Vector{NTuple{15, Float64}}}, ramping::Union{Nothing, Vector{NTuple{2, Float64}}})`.
 """
-function _fcas_effective_values(window::NamedTuple, device::PSY.Device, bid_type::BidType, direction::Symbol, inactive::Float64)
-    enabled = if direction == :both && device isa PSY.Storage && _is_regulation_service(bid_type)
+function _fcas_effective_values(window::_FCASWindow, device::PSY.Device, bid_type::BidType, direction::Symbol, inactive::Float64)
+    regulation = bid_type in FCAS_REGULATION_MARKETS
+    enabled = if direction == :both && device isa PSY.Storage && regulation
         gen, load = _fcas_both_sides_enabled_mask(window, device, bid_type)
         Dict(false => gen, true => load)
     else
@@ -694,7 +734,7 @@ function _fcas_effective_values(window::NamedTuple, device::PSY.Device, bid_type
         trapeziums, curves = _fcas_series(window, device, bid_type, decremental)
         offers[decremental] = [_fcas_effective_offer(trapeziums[t], curves[t], mask[t], inactive) for t in 1:window.horizon]
     end
-    _is_regulation_service(bid_type) || return offers, nothing
+    regulation || return offers, nothing
     return offers, _fcas_effective_ramping(window, device, bid_type, direction, inactive)
 end
 
@@ -705,16 +745,34 @@ const _FCAS_RAMPING_FIELDS = ["joint_ramping", "bdu_ramping"]
 const _FCAS_BAND_LABELS = string.(1:FCAS_BAND_COUNT)
 const _FCAS_OFFER_PARAMETERS = (FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter, FCASLowerSlopeParameter)
 
-_fcas_parameter_axes(::FCASOfferLimitParameter) = (_FCAS_LIMIT_FIELDS,)
-_fcas_parameter_axes(::FCASBandWidthParameter) = (_FCAS_BAND_LABELS,)
-_fcas_parameter_axes(::FCASRampingLimitParameter) = (_FCAS_RAMPING_FIELDS,)
-_fcas_parameter_axes(::Union{FCASUpperSlopeParameter, FCASLowerSlopeParameter}) = ()
+function _fcas_parameter_axes(::FCASOfferLimitParameter)
+    return (_FCAS_LIMIT_FIELDS,)
+end
+function _fcas_parameter_axes(::FCASBandWidthParameter)
+    return (_FCAS_BAND_LABELS,)
+end
+function _fcas_parameter_axes(::FCASRampingLimitParameter)
+    return (_FCAS_RAMPING_FIELDS,)
+end
+function _fcas_parameter_axes(::Union{FCASUpperSlopeParameter, FCASLowerSlopeParameter})
+    return ()
+end
 
-PSI._unwrap_for_param(::FCASOfferLimitParameter, v::NTuple{15, Float64}, _) = [v[1], v[2], v[3]]
-PSI._unwrap_for_param(::FCASUpperSlopeParameter, v::NTuple{15, Float64}, _) = v[4]
-PSI._unwrap_for_param(::FCASLowerSlopeParameter, v::NTuple{15, Float64}, _) = v[5]
-PSI._unwrap_for_param(::FCASBandWidthParameter, v::NTuple{15, Float64}, _) = collect(v[6:15])
-PSI._unwrap_for_param(::FCASRampingLimitParameter, v::NTuple{2, Float64}, _) = [v[1], v[2]]
+function PSI._unwrap_for_param(::FCASOfferLimitParameter, v::NTuple{15, Float64}, _)
+    return [v[1], v[2], v[3]]
+end
+function PSI._unwrap_for_param(::FCASUpperSlopeParameter, v::NTuple{15, Float64}, _)
+    return v[4]
+end
+function PSI._unwrap_for_param(::FCASLowerSlopeParameter, v::NTuple{15, Float64}, _)
+    return v[5]
+end
+function PSI._unwrap_for_param(::FCASBandWidthParameter, v::NTuple{15, Float64}, _)
+    return collect(v[6:15])
+end
+function PSI._unwrap_for_param(::FCASRampingLimitParameter, v::NTuple{2, Float64}, _)
+    return [v[1], v[2]]
+end
 
 
 "`devices_template`'s `PSI.DeviceModel` for component type `D`."
@@ -730,9 +788,8 @@ end
     _add_fcas_parameter!(container, param, model, sys, ts_name, meta)
 
 Adds `param`, keyed by `model`'s component type and `meta`, unless it exists: one row per available
-component of `model` carrying a `ts_name` forecast, which is exactly the set PowerSimulations'
-time-series parameter update visits. Values are `PowerSimulations._unwrap_for_param` of each
-interval's series element; multipliers are `1.0`.
+component of `model` carrying a `ts_name` forecast, the set PowerSimulations' time-series parameter
+update visits ([`_add_series_parameter!`](@ref)), on the axes of [`_fcas_parameter_axes`](@ref).
 
 # Returns
 `nothing`.
@@ -745,34 +802,8 @@ function _add_fcas_parameter!(
     ts_type = PSI.get_default_time_series_type(container)
     devices = [d for d in PSI.get_available_components(model, sys) if PSY.has_time_series(d, ts_type, ts_name)]
     isempty(devices) && return
-    settings = PSI.get_settings(container)
-    interval, resolution = PSI.get_interval(settings), PSI.get_resolution(settings)
-    names = PSY.get_name.(devices)
-    uuids = [
-        string(
-            IS.get_time_series_uuid(
-                ts_type, d, ts_name; resolution = PSI._to_is_resolution(resolution), interval = PSI._to_is_interval(interval),
-            ),
-        ) for d in devices
-    ]
-    axes = _fcas_parameter_axes(param)
-    time_steps = PSI.get_time_steps(container)
-    param_container = PSI.add_param_container!(
-        container, param, D, ts_type, ts_name, uuids, names, axes, time_steps; meta = meta,
-    )
-    attributes = PSI.get_attributes(param_container)
-    PSI.set_subsystem!(attributes, PSI.get_subsystem(model))
-    jm = PSI.get_jump_model(container)
-    values = PSI.get_parameter_array_data(param_container)
-    multipliers = PSI.get_multiplier_array_data(param_container)
-    for (i, d) in enumerate(devices)
-        raw = PSI.get_time_series_initial_values!(container, ts_type, d, ts_name; interval = interval, resolution = resolution)
-        for t in time_steps
-            PSI._set_parameter_at!(values, jm, PSI._unwrap_for_param(param, raw[t], axes), i, t)
-        end
-        PSI._set_multiplier_at!(multipliers, 1.0, i)
-        PSI.add_component_name!(attributes, names[i], uuids[i])
-    end
+    param_container = _add_series_parameter!(container, param, D, devices, ts_name, meta; axes = _fcas_parameter_axes(param))
+    PSI.set_subsystem!(PSI.get_attributes(param_container), PSI.get_subsystem(model))
     return
 end
 
@@ -810,7 +841,7 @@ function _check_fcas_effective_series(container::PSI.OptimizationContainer, devi
     for d in devices
         dname = PSY.get_name(d)
         names = [_fcas_effective_series_name(bid_type, dec) for dec in _fcas_offer_sides(directions[dname])]
-        _is_regulation_service(bid_type) && push!(names, _fcas_ramping_series_name(bid_type))
+        bid_type in FCAS_REGULATION_MARKETS && push!(names, _fcas_ramping_series_name(bid_type))
         all(n -> PSY.has_time_series(d, ts_type, n), names) || push!(uncovered, dname)
     end
     isempty(uncovered) || throw(
@@ -839,7 +870,7 @@ has its rows overwritten with the effective values of its own process over the m
 function _add_fcas_offer_parameters!(
         container::PSI.OptimizationContainer, sys::PSY.System, devices_template, devices, bid_type::BidType, directions,
     )
-    regulation = _is_regulation_service(bid_type)
+    regulation = bid_type in FCAS_REGULATION_MARKETS
     for device in devices
         model = _fcas_device_model(devices_template, typeof(device))
         for decremental in _fcas_offer_sides(directions[PSY.get_name(device)])
@@ -883,8 +914,12 @@ end
 
 
 # A parameter cell's value: the number itself, or the fixed value of a recurrent build's JuMP parameter.
-_fixed_value(x::Float64) = x
-_fixed_value(x::JuMP.VariableRef) = JuMP.fix_value(x)
+function _fixed_value(x::Float64)
+    return x
+end
+function _fixed_value(x::JuMP.VariableRef)
+    return JuMP.fix_value(x)
+end
 
 
 """
@@ -1002,7 +1037,9 @@ end
 
 The slack variable of `slack` at `(name, t)`, or `0.0` when `slack` is `nothing` (`use_slacks = false`).
 """
-_fcas_slack_term(slack, name, t) = isnothing(slack) ? 0.0 : slack[name, t]
+function _fcas_slack_term(slack, name, t)
+    return isnothing(slack) ? 0.0 : slack[name, t]
+end
 
 
 """
@@ -1047,12 +1084,68 @@ end
 
 
 """
+    _add_fcas_capacity_constraints!(container, model, devices, label, capacity, metas)
+
+Builds the MaxAvail and joint capacity rows ([`_add_fcas_capacity_rows!`](@ref)) of each of
+`devices` at every time step, on its `capacity` variable and the [`FCASJointCapacityLHS`](@ref)
+expressions of meta `"<label>_upper"` and `"<label>_lower"`. The [`FCASMaxAvailConstraint`](@ref)
+and [`FCASJointCapacityConstraint`](@ref) containers and their slacks take the metas
+`"<label>_maxavail"`, `"<label>_upper"` and `"<label>_lower"`.
+
+# Arguments
+- `devices`: the devices sharing the capacity variable container `capacity`.
+- `label`: the service name, suffixed with the side for a `PSY.Storage` device bidding both sides.
+- `metas`: each device's offer meta ([`_fcas_offer_meta`](@ref)), in the order of `devices`.
+
+# Returns
+`nothing`.
+"""
+function _add_fcas_capacity_constraints!(
+        container::PSI.OptimizationContainer, model::PSI.ServiceModel, devices, label::String, capacity,
+        metas::Vector{String},
+    )
+    names = PSY.get_name.(devices)
+    time_steps = PSI.get_time_steps(container)
+    upper_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(label)_upper")
+    lower_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(label)_lower")
+    slacks = (
+        max = _add_fcas_slack!(
+            container, model, FCASMaxAvailSlack, "$(label)_maxavail", names, time_steps, FCAS_MAXAVAIL_CVP_FACTOR,
+        ),
+        upper = _add_fcas_slack!(
+            container, model, FCASJointCapacitySlack, "$(label)_upper", names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
+        ),
+        lower = _add_fcas_slack!(
+            container, model, FCASJointCapacitySlack, "$(label)_lower", names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
+        ),
+    )
+    cons = (
+        max = PSI.add_constraints_container!(
+            container, FCASMaxAvailConstraint(), FCASService, names, time_steps; meta = "$(label)_maxavail",
+        ),
+        upper = PSI.add_constraints_container!(
+            container, FCASJointCapacityConstraint(), FCASService, names, time_steps; meta = "$(label)_upper",
+        ),
+        lower = PSI.add_constraints_container!(
+            container, FCASJointCapacityConstraint(), FCASService, names, time_steps; meta = "$(label)_lower",
+        ),
+    )
+    for (device, dname, meta) in zip(devices, names, metas), t in time_steps
+        _add_fcas_capacity_rows!(
+            container, device, meta, capacity[dname, t], upper_lhs[dname, t], lower_lhs[dname, t], slacks, cons, dname, t,
+        )
+    end
+    return
+end
+
+
+"""
     _add_fcas_joint_ramping_constraints!(container, model, jm, devices, bid_type, name, time_steps)
 
 Builds AEMO *FCAS Model in NEMDE* §6.1's [`FCASJointRampingConstraint`](@ref) for every
 contributing `device` of a regulation `FCASService` named `name`: the unit's net energy
 ([`_fcas_net_energy_terms`](@ref)) combined with its [`FCASUnitRegulationTarget`](@ref) against
-the `"joint_ramping"` field of its [`FCASRampingLimitParameter`](@ref) - the upper or lower form
+the `"joint_ramping"` field of its [`FCASRampingLimitParameter`](@ref), in the upper or lower form
 depending on `bid_type` ([`_fcas_upper_regulation_service`](@ref)). Where §6.1 does not apply, the
 parameter holds [`FCAS_INACTIVE_LIMIT_MW`](@ref) and the row never binds.
 
@@ -1104,7 +1197,7 @@ service, or that service wasn't built under [`FCASMarket`](@ref) this run. Throw
 """
 function _device_regulation_target(container::PSI.OptimizationContainer, device::PSY.Device, reg_bid_type::BidType, t::Int)
     dname = PSY.get_name(device)
-    targets = []
+    targets = JuMP.AffExpr[]
     for svc in PSY.get_services(device)
         svc isa FCASService || continue
         get_bid_type(svc) == reg_bid_type || continue
@@ -1146,15 +1239,13 @@ function PSI.construct_service!(
     devices = PSI.get_contributing_devices(model)
     isempty(devices) && return
     bid_type = get_bid_type(svc)
-    is_regulation = _is_regulation_service(bid_type)
+    is_regulation = bid_type in FCAS_REGULATION_MARKETS
     time_steps = PSI.get_time_steps(container)
     jm = PSI.get_jump_model(container)
 
-    directions = Dict(PSY.get_name(d) => _fcas_direction(d, bid_type) for d in devices)
+    directions, single_devices, both_devices = _fcas_direction_groups(devices, bid_type)
     _check_fcas_effective_series(container, devices, bid_type, directions)
     _add_fcas_offer_parameters!(container, sys, devices_template, devices, bid_type, directions)
-    both_devices = filter(d -> directions[PSY.get_name(d)] == :both, devices)
-    single_devices = filter(d -> directions[PSY.get_name(d)] != :both, devices)
     single_names = PSY.get_name.(single_devices)
     both_names = PSY.get_name.(both_devices)
 
@@ -1251,9 +1342,8 @@ bidding both sides of a regulation market has one offer in each of `"<name>_gen"
 `Vector{NamedTuple{(:meta, :variable, :offers)}}`.
 """
 function _fcas_offer_groups(name::AbstractString, devices, bid_type::BidType)
-    directions = Dict(PSY.get_name(d) => _fcas_direction(d, bid_type) for d in devices)
-    single = [(d, directions[PSY.get_name(d)] == :decremental) for d in devices if directions[PSY.get_name(d)] != :both]
-    both = [d for d in devices if directions[PSY.get_name(d)] == :both]
+    directions, single_devices, both = _fcas_direction_groups(devices, bid_type)
+    single = [(d, directions[PSY.get_name(d)] == :decremental) for d in single_devices]
     groups = NamedTuple[]
     isempty(single) || push!(groups, (meta = String(name), variable = FCASCapacityVariable(), offers = single))
     if !isempty(both)
@@ -1445,18 +1535,15 @@ function PSI.construct_service!(
     devices = PSI.get_contributing_devices(model)
     isempty(devices) && return
     bid_type = get_bid_type(svc)
-    is_regulation = _is_regulation_service(bid_type)
+    is_regulation = bid_type in FCAS_REGULATION_MARKETS
     time_steps = PSI.get_time_steps(container)
     jm = PSI.get_jump_model(container)
 
-    directions = Dict(PSY.get_name(d) => _fcas_direction(d, bid_type) for d in devices)
-    both_devices = filter(d -> directions[PSY.get_name(d)] == :both, devices)
-    single_devices = filter(d -> directions[PSY.get_name(d)] != :both, devices)
+    directions, single_devices, both_devices = _fcas_direction_groups(devices, bid_type)
     single_names = PSY.get_name.(single_devices)
     both_names = PSY.get_name.(both_devices)
 
-    # Contingency services carry the regulation targets: `RaiseReg` upper, `LowerReg` lower
-    # (swapped for a load).
+    # Contingency services carry the regulation targets: `RaiseReg` upper, `LowerReg` lower, swapped for a load.
     if !is_regulation && !isempty(single_names)
         upper_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_upper")
         lower_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_lower")
@@ -1474,76 +1561,16 @@ function PSI.construct_service!(
     end
 
     if !isempty(single_names)
-        upper_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_upper")
-        lower_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_lower")
-        slacks = (
-            max = _add_fcas_slack!(
-                container, model, FCASMaxAvailSlack, "$(name)_maxavail", single_names, time_steps, FCAS_MAXAVAIL_CVP_FACTOR,
-            ),
-            upper = _add_fcas_slack!(
-                container, model, FCASJointCapacitySlack, "$(name)_upper", single_names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
-            ),
-            lower = _add_fcas_slack!(
-                container, model, FCASJointCapacitySlack, "$(name)_lower", single_names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
-            ),
-        )
-        cons = (
-            max = PSI.add_constraints_container!(
-                container, FCASMaxAvailConstraint(), FCASService, single_names, time_steps; meta = "$(name)_maxavail",
-            ),
-            upper = PSI.add_constraints_container!(
-                container, FCASJointCapacityConstraint(), FCASService, single_names, time_steps; meta = "$(name)_upper",
-            ),
-            lower = PSI.add_constraints_container!(
-                container, FCASJointCapacityConstraint(), FCASService, single_names, time_steps; meta = "$(name)_lower",
-            ),
-        )
-        cap_var = PSI.get_variable(container, FCASCapacityVariable(), FCASService, name)
-        for device in single_devices
-            dname = PSY.get_name(device)
-            meta = _fcas_offer_meta(bid_type, directions[dname] == :decremental)
-            for t in time_steps
-                _add_fcas_capacity_rows!(
-                    container, device, meta, cap_var[dname, t], upper_lhs[dname, t], lower_lhs[dname, t], slacks, cons, dname, t,
-                )
-            end
-        end
+        metas = [_fcas_offer_meta(bid_type, directions[dname] == :decremental) for dname in single_names]
+        capacity = PSI.get_variable(container, FCASCapacityVariable(), FCASService, name)
+        _add_fcas_capacity_constraints!(container, model, single_devices, name, capacity, metas)
     end
 
     if !isempty(both_names)
         for (side, decremental) in (("gen", false), ("load", true))
-            upper_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_$(side)_upper")
-            lower_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_$(side)_lower")
-            slacks = (
-                max = _add_fcas_slack!(
-                    container, model, FCASMaxAvailSlack, "$(name)_$(side)_maxavail", both_names, time_steps, FCAS_MAXAVAIL_CVP_FACTOR,
-                ),
-                upper = _add_fcas_slack!(
-                    container, model, FCASJointCapacitySlack, "$(name)_$(side)_upper", both_names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
-                ),
-                lower = _add_fcas_slack!(
-                    container, model, FCASJointCapacitySlack, "$(name)_$(side)_lower", both_names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
-                ),
-            )
-            cons = (
-                max = PSI.add_constraints_container!(
-                    container, FCASMaxAvailConstraint(), FCASService, both_names, time_steps; meta = "$(name)_$(side)_maxavail",
-                ),
-                upper = PSI.add_constraints_container!(
-                    container, FCASJointCapacityConstraint(), FCASService, both_names, time_steps; meta = "$(name)_$(side)_upper",
-                ),
-                lower = PSI.add_constraints_container!(
-                    container, FCASJointCapacityConstraint(), FCASService, both_names, time_steps; meta = "$(name)_$(side)_lower",
-                ),
-            )
-            cap_var = PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "$(name)_$side")
-            meta = _fcas_offer_meta(bid_type, decremental)
-            for device in both_devices, t in time_steps
-                dname = PSY.get_name(device)
-                _add_fcas_capacity_rows!(
-                    container, device, meta, cap_var[dname, t], upper_lhs[dname, t], lower_lhs[dname, t], slacks, cons, dname, t,
-                )
-            end
+            capacity = PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "$(name)_$side")
+            metas = fill(_fcas_offer_meta(bid_type, decremental), length(both_names))
+            _add_fcas_capacity_constraints!(container, model, both_devices, "$(name)_$side", capacity, metas)
         end
 
         if is_regulation

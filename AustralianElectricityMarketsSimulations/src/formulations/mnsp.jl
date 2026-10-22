@@ -1,4 +1,6 @@
-PSI.convert_result_to_natural_units(::Type{MNSPLinkFlowVariable}) = true
+function PSI.convert_result_to_natural_units(::Type{MNSPLinkFlowVariable})
+    return true
+end
 
 
 const _MNSP_DIRECTIONS = ("forward", "reverse")
@@ -65,10 +67,14 @@ const _MNSP_PARAMETERS = (
 )
 
 
-PSI.get_multiplier_value(::MNSPBandWidthParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss) = 1.0
+function PSI.get_multiplier_value(::MNSPBandWidthParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss)
+    return 1.0
+end
 
 
-PSI.get_multiplier_value(::MNSPMaxAvailParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss) = 1.0
+function PSI.get_multiplier_value(::MNSPMaxAvailParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss)
+    return 1.0
+end
 
 
 # A band-width parameter's band axis: `_mnsp_band_labels` of the links carrying the series.
@@ -85,7 +91,7 @@ end
 function PSI._unwrap_for_param(::MNSPBandWidthParameter, curve::IS.PiecewiseStepData, expected_axs)
     widths = diff(PSY.get_x_coords(curve))
     n = length(only(expected_axs))
-    length(widths) <= n || error("MNSP offer has $(length(widths)) bands, more than the band axis' $n.")
+    length(widths) <= n || throw(ArgumentError("MNSP offer has $(length(widths)) bands, more than the band axis' $n."))
     return vcat(widths, zeros(n - length(widths)))
 end
 
@@ -127,12 +133,7 @@ end
 container's default forecast type.
 """
 function _mnsp_offer_window(container::PSI.OptimizationContainer, device::PSY.AreaInterchange, direction::AbstractString, start_time::DateTime)
-    ts_type = PSI.get_default_time_series_type(container)
-    forecast = IS.get_time_series(ts_type, device, "mnsp_$(direction)_offer"; start_time = start_time, count = 1)
-    return IS.get_time_series_values(
-        device, forecast; start_time = start_time, len = length(PSI.get_time_steps(container)),
-        ignore_scaling_factors = true,
-    )
+    return _forecast_window_values(container, device, "mnsp_$(direction)_offer", start_time)
 end
 
 
@@ -237,22 +238,24 @@ function _add_mnsp_link_flows!(container::PSI.OptimizationContainer, devices, de
     expr = PSI.get_expression(container, PSI.ActivePowerBalance(), PSY.Area)
     flow_var = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
     loss_var = PSI.get_variable(container, InterconnectorLossVariable(), PSY.AreaInterchange)
-    band_var = Dict{String, Any}()
-    width = Dict{String, Any}()
-    max_avail = Dict{String, Any}()
-    for dir in _MNSP_DIRECTIONS
-        band_var[dir] = PSI.add_variable_container!(
+    band_var = Dict(
+        dir => PSI.add_variable_container!(
             container, MNSPLinkBandVariable(), PSY.AreaInterchange, names, labels, time_steps; meta = dir,
+        ) for dir in _MNSP_DIRECTIONS
+    )
+    for dir in _MNSP_DIRECTIONS, name in names, label in labels, t in time_steps
+        band_var[dir][name, label, t] = JuMP.@variable(
+            jm, lower_bound = 0.0, base_name = "MNSPLinkBandVariable_{$name,$dir,$label,$t}",
         )
-        for name in names, label in labels, t in time_steps
-            band_var[dir][name, label, t] = JuMP.@variable(
-                jm, lower_bound = 0.0, base_name = "MNSPLinkBandVariable_{$name,$dir,$label,$t}",
-            )
-        end
-        params = _MNSP_PARAMETERS[Symbol(dir)]
-        width[dir] = PSI.get_parameter(container, params.width(), PSY.AreaInterchange)
-        max_avail[dir] = PSI.get_parameter(container, params.max_avail(), PSY.AreaInterchange)
     end
+    width = Dict(
+        dir => PSI.get_parameter(container, _MNSP_PARAMETERS[Symbol(dir)].width(), PSY.AreaInterchange)
+            for dir in _MNSP_DIRECTIONS
+    )
+    max_avail = Dict(
+        dir => PSI.get_parameter(container, _MNSP_PARAMETERS[Symbol(dir)].max_avail(), PSY.AreaInterchange)
+            for dir in _MNSP_DIRECTIONS
+    )
 
     for d in mnsp
         name = PSY.get_name(d)

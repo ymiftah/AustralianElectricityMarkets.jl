@@ -19,13 +19,12 @@ end
 
 Verifies every available [`FCASService`](@ref) that `template` models under
 [`FCASMarket`](@ref) is buildable: each available contributing device's type is modeled by a
-`PSI.DeviceModel` whose formulation dispatches energy (not `PSI.FixedOutput`), the device
-carries exactly one direction of FCAS bid for that service's market (both directions only on a
-`PSY.Storage` device's regulation market), a decremental-only bid sits only on a `PSY.Storage`
-device or a load (which offers no other direction), no device contributes to more than one such
-`FCASService` of the same market, and a regulation contributor with a positive AGC ramp rate also carries an `"initial_mw"` series (AEMO
-*FCAS Model in NEMDE* §6.1's joint ramping constraint needs both; a per-interval gap in
-`"initial_mw"` is skipped silently at build instead of failing the check).
+`PSI.DeviceModel` whose formulation dispatches energy (not `PSI.FixedOutput`), the device's FCAS
+bid direction is one [`FCASMarket`](@ref) models (incremental on any device but a load, decremental
+on a `PSY.Storage` device or a load, both only on a `PSY.Storage` device's regulation market), no device
+contributes to more than one such `FCASService` of the same market, and a regulation contributor
+with a positive AGC ramp rate also carries an `"initial_mw"` series, which AEMO *FCAS Model in
+NEMDE* §6.1's joint ramping constraint needs. A per-interval gap in `"initial_mw"` is not checked.
 
 # Arguments
 - `sys`: system to read services and components from.
@@ -38,10 +37,7 @@ device or a load (which offers no other direction), no device contributes to mor
 """
 function check_fcas_services(sys::PSY.System, template::PSI.ProblemTemplate; excluded_device_types = ())
     device_models = collect(values(PSI.get_device_models(template)))
-    fcas_market_services = Set(
-        name for ((name, _), model) in PSI.get_service_models(template)
-            if PSI.get_component_type(model) == FCASService && PSI.get_formulation(model) == FCASMarket
-    )
+    fcas_market_services = _modeled_fcas_services(template)
     problems = String[]
     services_by_market = Dict{Tuple{String, BidType}, Vector{String}}()
     for svc in PSY.get_components(FCASService, sys)
@@ -70,36 +66,9 @@ function check_fcas_services(sys::PSY.System, template::PSI.ProblemTemplate; exc
                 )
             end
             direction = AustralianElectricityMarkets._fcas_bid_direction(device, bid_type)
-            if direction == :none
-                push!(
-                    problems,
-                    "FCASService \"$svc_name\": device \"$dname\" carries neither an " *
-                        "incremental nor a decremental $(string(bid_type)) bid.",
-                )
-            elseif direction == :both && !(device isa PSY.Storage && _is_regulation_service(bid_type))
-                push!(
-                    problems,
-                    "FCASService \"$svc_name\": device \"$dname\" carries both an incremental " *
-                        "and a decremental $(string(bid_type)) bid; bidirectional FCAS " *
-                        "capacity is modeled only for a `PSY.Storage` device's regulation " *
-                        "markets.",
-                )
-            elseif direction == :decremental && !(device isa PSY.Storage || device isa PSY.ControllableLoad)
-                push!(
-                    problems,
-                    "FCASService \"$svc_name\": device \"$dname\" ($(typeof(device))) has only " *
-                        "a decremental $(string(bid_type)) bid; that direction is modeled only " *
-                        "for a `PSY.Storage` device or a `PSY.ControllableLoad`.",
-                )
-            elseif direction == :incremental && device isa PSY.ControllableLoad
-                push!(
-                    problems,
-                    "FCASService \"$svc_name\": load \"$dname\" has an incremental " *
-                        "$(string(bid_type)) bid; a load offers FCAS on its decremental " *
-                        "(`LOAD`-direction) series only.",
-                )
-            end
-            if _is_regulation_service(bid_type) && _fcas_ramp_series_positive(device, bid_type) &&
+            problem = _fcas_direction_problem(device, bid_type, direction)
+            isnothing(problem) || push!(problems, "FCASService \"$svc_name\": device \"$dname\" $problem.")
+            if bid_type in FCAS_REGULATION_MARKETS && _fcas_ramp_series_positive(device, bid_type) &&
                     !PSY.has_time_series(device, PSY.SingleTimeSeries, "initial_mw")
                 push!(
                     problems,

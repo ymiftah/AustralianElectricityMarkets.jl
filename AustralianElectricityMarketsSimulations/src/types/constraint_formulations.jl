@@ -1,14 +1,4 @@
 """
-    AbstractNEMConstraintFormulation
-
-Shared trait ancestor for formulations that drive a [`GenericConstraint`](@ref) through
-`PowerSimulations.jl`'s `ServiceModel` machinery, mirroring `PowerSimulations.jl`'s own
-`AbstractReservesFormulation`.
-"""
-abstract type AbstractNEMConstraintFormulation <: PSI.AbstractServiceFormulation end
-
-
-"""
     NEMConstraintLHS
 
 Expression type for a [`GenericConstraint`](@ref)'s accumulated affine left-hand side,
@@ -42,7 +32,7 @@ Formulation for a [`GenericConstraint`](@ref): assembles [`NEMConstraintLHS`](@r
 constraint's own stored terms and bounds it against [`NEMConstraintRHSParameter`](@ref) with a
 [`NEMConstraintLimit`](@ref).
 """
-struct LinearFactorLimit <: AbstractNEMConstraintFormulation end
+struct LinearFactorLimit <: PSI.AbstractServiceFormulation end
 
 
 """

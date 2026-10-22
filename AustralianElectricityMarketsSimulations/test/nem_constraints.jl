@@ -241,10 +241,6 @@ function _build_error(model)
     return nothing
 end
 
-@testset "LinearFactorLimit sits under AbstractNEMConstraintFormulation, under PSI's own formulation type" begin
-    @test AEMS.LinearFactorLimit <: AEMS.AbstractNEMConstraintFormulation <: PSI.AbstractServiceFormulation
-end
-
 @testset "add_nem_constraints! attaches them as Services with resolved contributing devices" begin
     sys = _prepared_system()
     gc = _gc(sys, "N_IC1_LIMIT")

@@ -1,6 +1,10 @@
-PSI.convert_result_to_natural_units(::Type{InterconnectorLossVariable}) = true
+function PSI.convert_result_to_natural_units(::Type{InterconnectorLossVariable})
+    return true
+end
 
-PSI.convert_result_to_natural_units(::Type{InterconnectorLossSegmentVariable}) = true
+function PSI.convert_result_to_natural_units(::Type{InterconnectorLossSegmentVariable})
+    return true
+end
 
 
 # PSI's flow-limit series names for `AreaInterchange`, plus the loss-factor demand coefficient.
@@ -17,23 +21,26 @@ function PSI.get_default_time_series_names(::Type{PSY.AreaInterchange}, ::Type{N
 end
 
 
-PSI.get_multiplier_value(::LossDemandCoefficientParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss) = 1.0
+function PSI.get_multiplier_value(::LossDemandCoefficientParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss)
+    return 1.0
+end
 
 # --- attached `InterconnectorLossModel` + per-interconnector validation ---
 
 """
     _missing_loss_model_error(name, n) -> ArgumentError
 
-Names `name` (an `AreaInterchange`) and how many `InterconnectorLossModel`s (`n`) it actually
-carries - [`NEMInterconnectorLoss`](@ref) never silently treats a missing or ambiguous loss model
-as lossless.
+The `ArgumentError` naming `name`, an `AreaInterchange` that carries `n` rather than exactly one
+`InterconnectorLossModel`.
 """
-_missing_loss_model_error(name::AbstractString, n::Int) = ArgumentError(
-    "AreaInterchange \"$name\" carries $n InterconnectorLossModel supplemental attribute(s); " *
-        "NEMInterconnectorLoss requires exactly one. Attach it with " *
-        "`attach_interconnector_losses!(sys, db, as_of)` (root package), or give \"$name\" a " *
-        "lossless formulation such as `PSI.StaticBranch`.",
-)
+function _missing_loss_model_error(name::AbstractString, n::Int)
+    return ArgumentError(
+        "AreaInterchange \"$name\" carries $n InterconnectorLossModel supplemental attribute(s); " *
+            "NEMInterconnectorLoss requires exactly one. Attach it with " *
+            "`attach_interconnector_losses!(sys, db, as_of)` (root package), or give \"$name\" a " *
+            "lossless formulation such as `PSI.StaticBranch`.",
+    )
+end
 
 
 """
@@ -63,7 +70,7 @@ function _validate_convex_segments(name::AbstractString, model::InterconnectorLo
         ArgumentError(
             "AreaInterchange \"$name\"'s InterconnectorLossModel has non-ascending loss " *
                 "segment slopes (loss_flow_coefficient = $(model.loss_flow_coefficient) makes " *
-                "the loss curve concave, not convex) - NEMInterconnectorLoss's contiguous " *
+                "the loss curve concave, not convex); NEMInterconnectorLoss's contiguous " *
                 "segment fill requires a convex curve.",
         ),
     )
@@ -99,7 +106,7 @@ Emits one `@warn` naming every interconnector in `narrow`; silent when `narrow` 
 """
 function _warn_narrow_breakpoints(narrow::Vector{String})
     isempty(narrow) ||
-        @warn "NEMInterconnectorLoss: $(length(narrow)) interconnector(s) have a loss-model breakpoint range narrower than their own flow limits - dispatch is silently tightened to the breakpoint range" narrow
+        @warn "NEMInterconnectorLoss: $(length(narrow)) interconnector(s) have a loss-model breakpoint range narrower than their own flow limits; dispatch is tightened to the breakpoint range" narrow
     return nothing
 end
 
@@ -385,8 +392,10 @@ function PSI.construct_device!(
 
     has_ts = _has_flow_limit_series.(devices)
     if any(has_ts) && !all(has_ts)
-        error(
-            "Not all AreaInterchange devices have time series. Check data to complete (or remove) time series.",
+        throw(
+            ArgumentError(
+                "Not all AreaInterchange devices have time series. Check data to complete (or remove) time series.",
+            ),
         )
     end
     PSI.add_variables!(
@@ -400,8 +409,10 @@ function PSI.construct_device!(
         for device in devices
             name = PSY.get_name(device)
             if !all(series -> PSY.has_time_series(device, PSY.SingleTimeSeries, series), _FLOW_LIMIT_SERIES)
-                error(
-                    "AreaInterchange $name has less than two time series. It is required to add both from_to and to_from time series.",
+                throw(
+                    ArgumentError(
+                        "AreaInterchange $name has less than two time series. It is required to add both from_to and to_from time series.",
+                    ),
                 )
             end
         end
@@ -440,10 +451,5 @@ function PSI.construct_device!(
         ::PSI.DeviceModel{PSY.AreaInterchange, NEMInterconnectorLoss},
         ::PSI.NetworkModel{U},
     ) where {U <: PM.AbstractPowerModel}
-    throw(
-        ArgumentError(
-            "NEMInterconnectorLoss supports PSI.AreaBalancePowerModel only, got $U",
-        ),
-    )
-    return
+    throw(ArgumentError("NEMInterconnectorLoss supports PSI.AreaBalancePowerModel only, got $U"))
 end
