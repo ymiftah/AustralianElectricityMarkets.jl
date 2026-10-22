@@ -1,24 +1,30 @@
+# SQL list literal of `bid_types`, e.g. `'RAISE6SEC', 'LOWER6SEC'`.
+_bid_type_list(bid_types) = join(("'$(string(bt))'" for bt in bid_types), ", ")
+
+# The trading days (`SETTLEMENTDATE`) whose offers can cover intervals from `start_date` to `end_date`.
+_offer_days(start_date, end_date) = [Date(start_date) - Day(1), Date(end_date) + Day(1)]
+
+
 # Latest-version `BIDPEROFFER_D` rows of `bid_types` with `start - resolution <= INTERVAL_DATETIME < end`
 # (`start` when `resolution` is `nothing`): the rows a ceil onto `resolution` can bring into the range.
-function _read_period_offers(db, bid_types::AbstractVector{BidType}, start_date, end_date, resolution)
+# `columns` defaults to `MAXAVAIL` and every cached `BANDAVAIL` column.
+function _read_period_offers(db, bid_types::AbstractVector{BidType}, start_date, end_date, resolution; columns = nothing)
     source = read_hive(db, :BIDPEROFFER_D)
-    # The number of bid bands is discovered from the cached schema.
-    band_cols = join(filter(startswith("BANDAVAIL"), _table_schema(db, source)), ", ")
-    bid_type_list = join(("'$(string(bt))'" for bt in bid_types), ", ")
+    selected = isnothing(columns) ? ["MAXAVAIL"; filter(startswith("BANDAVAIL"), _table_schema(db, source))] : columns
     lower = isnothing(resolution) ? start_date : start_date - resolution
     return _query(
         db,
         """
-        SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE, MAXAVAIL, $band_cols
+        SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE, $(join(selected, ", "))
         FROM $source
-        WHERE BIDTYPE IN ($bid_type_list) AND SETTLEMENTDATE BETWEEN ? AND ?
+        WHERE BIDTYPE IN ($(_bid_type_list(bid_types))) AND SETTLEMENTDATE BETWEEN ? AND ?
           AND INTERVAL_DATETIME >= ? AND INTERVAL_DATETIME < ?
         QUALIFY row_number() OVER (
             PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
         ) = 1
         ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME
         """,
-        [Date(start_date) - Day(1), Date(end_date) + Day(1), lower, end_date],
+        [_offer_days(start_date, end_date); lower; end_date],
     )
 end
 
@@ -81,8 +87,7 @@ positive).
 function read_fixed_loads(db, date_range)
     start_datetime = first(date_range)
     end_datetime = last(date_range)
-    sd = Date(start_datetime) - Day(1)
-    ed = Date(end_datetime) + Day(1)
+    days = _offer_days(start_datetime, end_datetime)
     offers = read_hive(db, :BIDPEROFFER_D)
     day_offers = read_hive(db, :BIDDAYOFFER_D)
     fixed_loads = _query(
@@ -114,7 +119,7 @@ function read_fixed_loads(db, date_range)
         WHERE l.FIXEDLOAD > 0 AND l.INTERVAL_DATETIME >= ? AND l.INTERVAL_DATETIME < ?
         ORDER BY l.INTERVAL_DATETIME, l.DUID, l.DIRECTION
         """,
-        [sd, ed, sd, ed, start_datetime, end_datetime],
+        [days; days; start_datetime; end_datetime],
     )
     return fixed_loads
 end
@@ -212,9 +217,6 @@ function _massage_bids(
         resolution::Union{Nothing, Dates.Period} = nothing, bid_types::AbstractVector{BidType} = [BidType.ENERGY],
         keep_bid_type::Bool = false,
     )
-    sd = Date(start_date) - Day(1)
-    ed = Date(end_date) + Day(1)
-    bid_type_list = join(("'$(string(bt))'" for bt in bid_types), ", ")
     energy_bids = _read_period_offers(db, bid_types, start_date, end_date, resolution)
 
     pricebids_table = read_hive(db, :BIDDAYOFFER_D)
@@ -224,18 +226,18 @@ function _massage_bids(
         """
         SELECT SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE, MINIMUMLOAD, DAILYENERGYCONSTRAINT, $priceband_cols
         FROM $pricebids_table
-        WHERE BIDTYPE IN ($bid_type_list) AND SETTLEMENTDATE BETWEEN ? AND ?
+        WHERE BIDTYPE IN ($(_bid_type_list(bid_types))) AND SETTLEMENTDATE BETWEEN ? AND ?
         QUALIFY row_number() OVER (
             PARTITION BY SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
         ) = 1
         ORDER BY SETTLEMENTDATE
         """,
-        [sd, ed],
+        _offer_days(start_date, end_date),
     )
 
     if !isnothing(resolution)
         energy_bids = @chain energy_bids begin
-            transform(:INTERVAL_DATETIME => ByRow(x -> ceil.(x, resolution)); renamecols = false)
+            transform(:INTERVAL_DATETIME => ByRow(x -> ceil(x, resolution)); renamecols = false)
             groupby([:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION, :BIDTYPE])
             combine(
                 _,

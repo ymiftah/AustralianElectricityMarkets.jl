@@ -47,8 +47,7 @@ function read_fcas_requirements(db, date_range; intervention::Integer = 0)
     constraint_table = read_hive(db, :DISPATCHCONSTRAINT)
     gencon_table = read_hive(db, :GENCONDATA)
     constraint_schema = _table_schema(db, constraint_table)
-    req_union_sql, req_param_spec = _fcas_req_union_sql(db, intervention)
-    params = _expand_fcas_req_params(req_param_spec, start_date, end_date)
+    req_union_sql, params = _fcas_req_union_sql(db, start_date, end_date, intervention)
     append!(params, [start_date, end_date])
     _push_intervention!(params, constraint_schema, intervention)
     df = _query(
@@ -138,7 +137,7 @@ function read_fcas_bids(
     start_date = first(date_range)
     end_date = last(date_range)
     bids = _massage_bids(db, start_date, end_date; bid_types, keep_bid_type = true, resolution)
-    trapezium = _read_fcas_trapezium(db, bid_types, start_date, end_date)
+    trapezium = _read_period_offers(db, bid_types, start_date, end_date, nothing; columns = _FCAS_TRAPEZIUM_COLUMNS)
     joined = innerjoin(
         bids, trapezium; on = [:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION, :BIDTYPE],
     )
@@ -147,38 +146,8 @@ function read_fcas_bids(
 end
 
 
-"""
-    _read_fcas_trapezium(db, bid_types, start_date, end_date)
-
-Reads the FCAS trapezium columns (`ENABLEMENTMIN/MAX`, `LOWBREAKPOINT`, `HIGHBREAKPOINT`,
-`ROCUP`, `ROCDOWN`) from `BIDPEROFFER_D` for `bid_types`, latest-`VERSIONNO` resolved per
-`(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE)`. Does not select `MAXAVAIL` - `bids`
-already carries it from the same table/filter via [`_massage_bids`](@ref), and duplicating it
-here would force `read_fcas_bids`'s join to rename one copy.
-"""
-function _read_fcas_trapezium(db, bid_types::AbstractVector{BidType}, start_date, end_date)
-    energy_bids_table = read_hive(db, :BIDPEROFFER_D)
-    sd = Date(start_date) - Day(1)
-    ed = Date(end_date) + Day(1)
-    bid_type_list = join(("'$(string(bt))'" for bt in bid_types), ", ")
-    trapezium = _query(
-        db,
-        """
-        SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE,
-               ENABLEMENTMIN, LOWBREAKPOINT, HIGHBREAKPOINT, ENABLEMENTMAX,
-               ROCUP, ROCDOWN
-        FROM $energy_bids_table
-        WHERE BIDTYPE IN ($bid_type_list) AND SETTLEMENTDATE BETWEEN ? AND ?
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
-        ) = 1
-        ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME
-        """,
-        [sd, ed],
-    )
-    subset!(trapezium, :INTERVAL_DATETIME => ByRow(x -> start_date <= x < end_date))
-    return trapezium
-end
+# The FCAS trapezium columns of `BIDPEROFFER_D`; `MAXAVAIL` comes with the offer bands instead.
+const _FCAS_TRAPEZIUM_COLUMNS = ["ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN"]
 
 
 """

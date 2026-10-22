@@ -62,7 +62,7 @@ function stock_standalone(sys, t; parts = REPLICATION_PARTS, template = replicat
 end
 # The simulation, its per-step objectives and solved tables.
 function stock_simulate(sys; kwargs...)
-    out = AEMS._replication_simulation(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER, kwargs...)
+    out = run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER, kwargs...)
     tables = AEMS._solved_tables(out.results, sys, REPLICATION_PARTS)
     return (;
         out...,
@@ -146,7 +146,7 @@ end
     sys = sentinel_system(; alta_availability = [100.0, 0.0], alta_initial = [60.0, 60.0], alta_ramp_down = [1.0, 1.0])
     template = replication_template(sys; parts = REPLICATION_PARTS)
     @test isnothing(check_dispatch_envelope(sys, template, TOY_START, 2))
-    out = AEMS._replication_simulation(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    out = run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     violations = AEMS._constraint_violations(out.results, sys)
     availability = filter(r -> r.family == "energy_max_avail" && r.name == TOY_CHEAP, violations)
     @test only(availability.MW) ≈ 55.0 atol = TOY_TOLERANCE
@@ -159,13 +159,13 @@ end
     never = sentinel_system(; invoked = [0.0, 0.0])
     @test AEMS._never_invoked_constraints(never, STOCK_STEPS) == Dict("N_TOY_LIMIT" => :never_invoked)
     @test AEMS._never_invoked_constraints(sentinel_system(; invoked = [1.0, 0.0]), STOCK_STEPS) == Dict{String, Symbol}()
-    out_never = AEMS._replication_simulation(never, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    out_never = run_replication(never, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     row_never = only(filter(:constraint => ==("N_TOY_LIMIT"), out_never.skipped_constraints))
     @test (row_never.reason, row_never.n_missing) == (:never_invoked, 0)
 end
 
 @testset "argument checks" begin
-    @test_throws ArgumentError AEMS._replication_simulation(sentinel_system(), STOCK_STEPS; parts = (:nonsense,))
+    @test_throws ArgumentError run_replication(sentinel_system(), STOCK_STEPS; parts = (:nonsense,))
     @test_throws ArgumentError replication_template(sentinel_system(); parts = (:nonsense,))
 end
 
@@ -305,7 +305,7 @@ end
 
 @testset "a requirement that cannot be met in step 2 only is reported in step 2 only" begin
     sys = fcas_toy_system(; reg_req = [20.0, 80.0])
-    out = AEMS._replication_simulation(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    out = run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     v = AEMS._constraint_violations(out.results, sys)
     @test !isempty(v)
     @test all(==(STOCK_STEPS[2]), v.DateTime)
@@ -684,7 +684,7 @@ end
 @testset "the tie-break pre-flight check" begin
     moved = tie_sentinel_system(; park_price = [10.0, 12.0])
     @test_throws ArgumentError check_tie_break_pairs(moved, STOCK_STEPS)
-    @test_throws ArgumentError AEMS._replication_simulation(moved, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    @test_throws ArgumentError run_replication(moved, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     @test isnothing(check_tie_break_pairs(tie_sentinel_system(), STOCK_STEPS))
     # Prices change between steps, but no band is ever tied.
     @test isnothing(check_tie_break_pairs(sentinel_system(), STOCK_STEPS))
@@ -927,7 +927,7 @@ end
         [100.0, 120.0]; horizon = TOY_RESOLUTION,
         mutate! = (sys, stamps) -> foreach(i -> add_constraint!(sys, stamps, i), 1:n),
     )
-    out = AEMS._replication_simulation(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    out = run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     slack_families = Dict(AEMS._VIOLATION_FAMILIES)
     keys = [k for k in PSI.list_variable_keys(out.results) if haskey(slack_families, PSI.IS.Optimization.get_entry_type(k))]
     @test length(keys) >= n

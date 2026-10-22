@@ -56,9 +56,7 @@ and `"fcas_trapezium_<bid_type>_decremental"` series ([`fcas_series_name`](@ref)
 `:incremental`, `:decremental`, `:both` or `:none`.
 """
 function fcas_bid_direction(device, bid_type::BidType)
-    bid_type_str = string(bid_type)
-    has_inc = has_time_series(device, SingleTimeSeries, "fcas_trapezium_$bid_type_str")
-    has_dec = has_time_series(device, SingleTimeSeries, "fcas_trapezium_$(bid_type_str)_decremental")
+    has_inc, has_dec = (has_time_series(device, SingleTimeSeries, fcas_series_name("fcas_trapezium", bid_type, dec)) for dec in (false, true))
     has_inc && has_dec && return :both
     has_inc && return :incremental
     has_dec && return :decremental
@@ -292,9 +290,7 @@ function _attach_fcas_scaling_series!(
         push!(values, absent ? NaN : row[col] * scale / base_power)
     end
     all(isnan, values) && return nothing
-    add_time_series!(
-        sys, device, SingleTimeSeries(; name = name, data = TimeArray(full_grid, values)),
-    )
+    add_time_series!(sys, device, single_series(name, full_grid, values))
     return nothing
 end
 

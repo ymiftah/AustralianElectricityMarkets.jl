@@ -182,9 +182,13 @@ function _set_generic_constraint_models!(
 end
 
 
-# Zero gap tolerances: the loss encoding makes the problem a MILP, and HiGHS' default relative gap
-# lets dispatch stop short of the optimum.
-const _DEFAULT_OPTIMIZER = JuMP.optimizer_with_attributes(
+"""
+    REPLICATION_OPTIMIZER
+
+The default replay optimizer: HiGHS with zero MIP gap tolerances, since the interconnector loss
+encoding makes each interval a MILP.
+"""
+const REPLICATION_OPTIMIZER = JuMP.optimizer_with_attributes(
     HiGHS.Optimizer, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10,
 )
 
@@ -192,7 +196,7 @@ const _DEFAULT_OPTIMIZER = JuMP.optimizer_with_attributes(
 # A one-interval `DecisionModel` of `template` on `sys` from `initial_time`.
 function _replication_decision_model(
         template::PSI.ProblemTemplate, sys::PSY.System, initial_time::DateTime;
-        optimizer = _DEFAULT_OPTIMIZER, name = "replication",
+        optimizer = REPLICATION_OPTIMIZER, name = "replication",
     )
     return PSI.DecisionModel(
         template, sys;

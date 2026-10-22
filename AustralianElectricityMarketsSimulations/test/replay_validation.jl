@@ -56,7 +56,7 @@ end
     template = replication_template(sys; parts)
     @test_throws ArgumentError check_fcas_services(sys, template)
     result = try
-        AEMS._replication_simulation(
+        run_replication(
             sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); parts,
             optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
         )
@@ -91,7 +91,7 @@ end
     @test !any(k -> first(k) == "1_RAISE6SEC", keys(PSI.get_service_models(template)))
     @test only(skipped) == (constraint = "F_BAT_ONLY", reason = :unmodeled_device_type, n_missing = 1)
     result = try
-        AEMS._replication_simulation(
+        run_replication(
             sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); parts,
             optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
         )
@@ -107,7 +107,7 @@ end
         empty!(get_terms(gc))
         push!(get_terms(gc), RegionTerm("1", BidType.RAISE6SEC, 1.0, devices))
         result = try
-            AEMS._replication_simulation(
+            run_replication(
                 sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); parts,
                 optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
             )

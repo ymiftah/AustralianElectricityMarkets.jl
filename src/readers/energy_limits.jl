@@ -16,30 +16,20 @@ a `UIGF` column raises an error.
 """
 function read_energy_limits(db, date_range; intervention::Integer = 0)
     offers = select(read_energy_bids(db, date_range), :INTERVAL_DATETIME, :DUID, :DIRECTION, :MAXAVAIL)
-    dispatch = read_hive(db, :DISPATCHLOAD)
+    uigf = _read_dispatch_table([_cast_double("UIGF")], db, :DISPATCHLOAD, "DUID", date_range; intervention)
+    leftjoin!(offers, uigf; on = [:INTERVAL_DATETIME => :SETTLEMENTDATE, :DUID])
     summary = read_hive(db, :DUDETAILSUMMARY)
-    schema = _table_schema(db, dispatch)
-    params = Any[first(date_range), last(date_range)]
-    _push_intervention!(params, schema, intervention)
     return _with_registered(db, offers, "nem_energy_offers") do
         return _query(
             db,
             """
-            WITH dl AS (
-                SELECT SETTLEMENTDATE, DUID, TRY_CAST(UIGF AS DOUBLE) AS UIGF
-                FROM $dispatch
-                WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ? $(_intervention_where(schema))
-                QUALIFY row_number() OVER (
-                    PARTITION BY SETTLEMENTDATE, DUID ORDER BY archive_month DESC
-                ) = 1
-            ), sm AS (
+            WITH sm AS (
                 SELECT * FROM $summary
                 WHERE archive_month = (SELECT max(archive_month) FROM $summary)
             )
             SELECT o.INTERVAL_DATETIME AS SETTLEMENTDATE, o.DUID, o.DIRECTION,
-                   TRY_CAST(o.MAXAVAIL AS DOUBLE) AS MAXAVAIL, dl.UIGF, sm_at.SCHEDULE_TYPE
+                   TRY_CAST(o.MAXAVAIL AS DOUBLE) AS MAXAVAIL, o.UIGF, sm_at.SCHEDULE_TYPE
             FROM nem_energy_offers o
-            LEFT JOIN dl ON dl.DUID = o.DUID AND dl.SETTLEMENTDATE = o.INTERVAL_DATETIME
             LEFT JOIN LATERAL (
                 SELECT SCHEDULE_TYPE FROM sm
                 WHERE sm.DUID = o.DUID AND sm.START_DATE <= o.INTERVAL_DATETIME
@@ -47,7 +37,7 @@ function read_energy_limits(db, date_range; intervention::Integer = 0)
                 ORDER BY START_DATE DESC LIMIT 1
             ) sm_at ON true
             ORDER BY o.DUID, o.DIRECTION, o.INTERVAL_DATETIME
-            """, params,
+            """,
         )
     end
 end

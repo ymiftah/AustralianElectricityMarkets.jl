@@ -57,7 +57,7 @@ end
     for reversed in (false, true)
         order(x) = reversed ? reverse(x) : x
         sys = storage_availability_system(; target = order([60.0, -50.0]), gen = order([40.0, 80.0]), load = order([70.0, 30.0]))
-        out = AEMS._replication_simulation(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
+        out = run_replication(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
         rows = filter(r -> r.family == "energy_max_avail" && r.name == TOY_BATTERY, AEMS._constraint_violations(out.results, sys))
         sort!(rows, :DateTime)
         @test rows.MW ≈ [20.0, 20.0] atol = 1.0e-6

@@ -63,12 +63,13 @@ function _add_uigf_ts_to_components!(sys, uigf, prime_mover)
         rows = sort(DataFrame(by_duid[(DUID = name,)]), :SETTLEMENTDATE)
         nrow(rows) > 1 || continue
         max_active_power = with_units_base(() -> get_max_active_power(component), sys, "NATURAL_UNITS")
-        psy_ts = SingleTimeSeries(;
-            name = "max_active_power",
-            data = TimeArray(rows.SETTLEMENTDATE, Float64.(rows.UIGF ./ max_active_power)),
-            scaling_factor_multiplier = get_max_active_power,
+        add_time_series!(
+            sys, component,
+            single_series(
+                "max_active_power", rows.SETTLEMENTDATE, Float64.(rows.UIGF ./ max_active_power);
+                scaling_factor_multiplier = get_max_active_power,
+            ),
         )
-        add_time_series!(sys, component, psy_ts)
     end
     return
 end

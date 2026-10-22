@@ -35,10 +35,18 @@ AEM/AEMSim/Readers boundaries:
   generator and battery frames. `read_bids` and `read_fcas_bids` return the raw band arrays and
   the bid setters build the curves. Readers no longer loads PowerSystems.
 
+- `run_replication` is the one public build-and-execute path over `replication_simulation`, so
+  repository scripts no longer copy the package's build, execute and failure-logging code. This
+  narrows 0065's "callers use PSI's build and execute APIs": `replication_simulation` still returns
+  an unbuilt simulation for callers that need PSI directly.
+
 ## Model behaviour
 
 Ownership refactor only. Every slack is priced at the same factor as before; the Interconnector
-Zero solve regression now takes its factor from AEMSim. No new departure from AEMO.
+Zero solve regression now takes its factor from AEMSim. The FCAS argument stage now creates each
+offer group's capacity variables in turn (the generation-side variables of every bidirectional
+storage device before its load-side ones), which changes JuMP variable order but not the model.
+No new departure from AEMO.
 
 ## Consequences
 

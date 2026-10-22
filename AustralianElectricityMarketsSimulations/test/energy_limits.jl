@@ -87,7 +87,7 @@ end
     for reverse_order in (false, true)
         r(x) = reverse_order ? reverse(x) : x
         sys = energy_limit_system(; max_avail = r([100.0, 35.0]), uigf = r([45.0, 25.0]), target = r([60.0, 20.0]))
-        out = AEMS._replication_simulation(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
+        out = run_replication(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
         dispatch = AEMS._solved_tables(out.results, sys, ()).dispatch
         sort!(dispatch, :SETTLEMENTDATE)
         power = filter(:DUID => ==(TOY_CHEAP), dispatch).TOTALCLEARED
@@ -118,7 +118,7 @@ end
     steps = start:TOY_RESOLUTION:(start + TOY_RESOLUTION)
     optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
     sys = energy_limit_system(; max_avail = 40.0, start)
-    out = AEMS._replication_simulation(sys, steps; optimizer)
+    out = run_replication(sys, steps; optimizer)
     objectives = PSI.read_optimizer_stats(out.results).objective_value
     for (i, t) in enumerate(steps)
         model = AEMS._replication_decision_model(replication_template(sys), sys, t; optimizer)

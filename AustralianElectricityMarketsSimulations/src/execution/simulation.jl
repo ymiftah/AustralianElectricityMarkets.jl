@@ -29,7 +29,7 @@ end
 
 # Constructs the simulation and retains its model and skipped-constraint report for internal callers.
 function _range_simulation(
-        sys::PSY.System, steps::StepRange{DateTime}; optimizer = _DEFAULT_OPTIMIZER, parts = REPLICATION_PARTS,
+        sys::PSY.System, steps::StepRange{DateTime}; optimizer = REPLICATION_OPTIMIZER, parts = REPLICATION_PARTS,
         folder::AbstractString = mktempdir(), name = "dispatch", simulation_name = "replication", skipped = nothing,
     )
     _check_replication_steps(sys, steps)
@@ -79,42 +79,49 @@ function replication_simulation(sys::PSY.System, steps::StepRange{DateTime}; kwa
 end
 
 
-# Builds a system-only simulation for internal callers that also need its model and skip report.
-function _build_range_simulation(sys::PSY.System, steps::StepRange{DateTime}; kwargs...)
-    out = _range_simulation(sys, steps; kwargs...)
-    status = Base.CoreLogging.with_logger(
-        () -> PSI.build!(out.simulation; store_systems_in_results = false), _DropMILPWarning(),
+"""
+    run_replication(sys::PSY.System, steps; name = "dispatch", cache_size_mib = nothing, kwargs...) -> NamedTuple
+
+Builds and executes the [`replication_simulation`](@ref) of `sys` over `steps`, logging the
+skipped constraints when the build or execution fails.
+
+# Arguments
+- `sys`, `steps`: as for [`replication_simulation`](@ref).
+- `name`: the decision problem name, whose results are returned.
+- `cache_size_mib`: the PSI results cache size, or `nothing` for PSI's default.
+- `kwargs`: the other [`replication_simulation`](@ref) keywords.
+
+# Returns
+`(; simulation, model, results, skipped_constraints, timings)`: the executed `PSI.Simulation`, its
+`DecisionModel`, the decision problem's `PSI.SimulationProblemResults`, the skipped constraints as a
+`DataFrame`, and `(; build_s, execute_s)` wall-clock seconds, `build_s` including construction. Throws when the build or execution
+does not succeed.
+"""
+function run_replication(
+        sys::PSY.System, steps::StepRange{DateTime}; name = "dispatch", cache_size_mib = nothing, kwargs...,
     )
-    status == PSI.SimulationBuildStatus.BUILT || begin
-        _log_skipped_constraints(out.skipped_constraints)
+    t0 = time()
+    (; simulation, model, skipped_constraints) = _range_simulation(sys, steps; name = name, kwargs...)
+    status = Base.CoreLogging.with_logger(
+        () -> PSI.build!(simulation; store_systems_in_results = false), _DropMILPWarning(),
+    )
+    build_s = time() - t0
+    if status != PSI.SimulationBuildStatus.BUILT
+        _log_skipped_constraints(skipped_constraints)
         error("Range from $(first(steps)) failed to build ($status); see the simulation logs.")
     end
-    return out
-end
-
-
-# Executes a built simulation and returns the results of its decision problem `name`.
-function _execute_range_simulation(simulation::PSI.Simulation; name = "dispatch", cache_size_mib = nothing)
-    kwargs = isnothing(cache_size_mib) ? (;) : (; cache_size_mib = cache_size_mib)
-    status = PSI.execute!(simulation; kwargs...)
-    status == PSI.RunStatus.SUCCESSFULLY_FINALIZED ||
-        error("Range from $(PSI.get_initial_time(simulation)) failed to execute ($status); see the simulation logs.")
-    return PSI.get_decision_problem_results(PSI.SimulationResults(simulation), name)
-end
-
-
-# Builds and executes one `PSI.Simulation` of a one-interval `DecisionModel` over `steps`.
-function _replication_simulation(
-        sys::PSY.System, steps; optimizer = _DEFAULT_OPTIMIZER, parts = REPLICATION_PARTS,
-        folder::AbstractString = mktempdir(), cache_size_mib = nothing,
-    )
-    (; simulation, model, skipped_constraints) =
-        _build_range_simulation(sys, steps; optimizer = optimizer, parts = parts, folder = folder)
-    results = try
-        _execute_range_simulation(simulation; cache_size_mib = cache_size_mib)
+    t1 = time()
+    status = try
+        PSI.execute!(simulation; (isnothing(cache_size_mib) ? (;) : (; cache_size_mib))...)
     catch
         _log_skipped_constraints(skipped_constraints)
         rethrow()
     end
-    return (; simulation, model, results, skipped_constraints)
+    execute_s = time() - t1
+    if status != PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        _log_skipped_constraints(skipped_constraints)
+        error("Range from $(first(steps)) failed to execute ($status); see the simulation logs.")
+    end
+    results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), name)
+    return (; simulation, model, results, skipped_constraints, timings = (; build_s, execute_s))
 end

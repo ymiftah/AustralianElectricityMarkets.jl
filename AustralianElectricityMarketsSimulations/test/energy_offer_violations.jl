@@ -76,7 +76,7 @@ end
     for reversed in (false, true)
         order(x) = reversed ? reverse(x) : x
         sys = offered_band_system(; bands = order([[(40.0, 20.0)], [(80.0, 20.0)]]))
-        out = AEMS._replication_simulation(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
+        out = run_replication(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
         rows = filter(:family => ==("energy_offer"), AEMS._constraint_violations(out.results, sys))
         @test nrow(rows) == 1
         @test only(rows.MW) ≈ 20.0 atol = 1.0e-6

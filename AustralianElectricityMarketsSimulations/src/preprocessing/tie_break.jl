@@ -129,8 +129,7 @@ function set_tie_break_scales!(sys::PSY.System)
     all_offers = _tie_break_offers(sys)
     for device in PSY.get_components(PSY.StaticInjection, sys), key in collect(PSY.get_time_series_keys(device))
         name = IS.get_name(key)
-        startswith(name, "tie_break_scale_") && PSY.has_time_series(device, PSY.SingleTimeSeries, name) &&
-            PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, name)
+        startswith(name, "tie_break_scale_") && remove_single_series!(sys, device, name)
     end
     active = _tie_break_active_bands(all_offers)
     for ((decremental, _), (; stamps, resolution, offers)) in all_offers

@@ -4,23 +4,12 @@ using AustralianElectricityMarkets
 using AustralianElectricityMarketsSimulations
 using DataFrames
 using Dates
-using HiGHS
 import PowerSimulations as PSI
 
 export replicate_range
 
 const _REPLICATION_HORIZON = 2DISPATCH_INTERVAL
 const _SIMULATION_NAME = "replay_workflow"
-const _DEFAULT_OPTIMIZER = PSI.optimizer_with_attributes(
-    HiGHS.Optimizer, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10,
-)
-
-function _log_skipped_constraints(skipped::DataFrame)
-    by_reason = combine(groupby(skipped, :reason), nrow => :n)
-    counts = join(("$(r.reason)=$(r.n)" for r in eachrow(sort(by_reason, :reason))), ", ")
-    @error "Skipped constraints at failure: $(nrow(skipped)) ($counts)" skipped
-    return
-end
 
 
 # `start:5 min:stop`; throws unless `stop` is `start` plus a whole number of intervals.
@@ -99,27 +88,9 @@ function _replicate_chunk(
     )
     prepare_replication!(sys)
     system_build_s = time() - t0
-    t1 = time()
-    skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
-    simulation = replication_simulation(sys, steps; optimizer, parts, folder, skipped, simulation_name = _SIMULATION_NAME)
-    skipped_constraints = DataFrame(skipped)
-    status = PSI.build!(simulation; store_systems_in_results = false)
-    status == PSI.SimulationBuildStatus.BUILT || begin
-        _log_skipped_constraints(skipped_constraints)
-        error("Range from $(first(steps)) failed to build ($status); see the logs in $folder.")
-    end
-    simulation_build_s = time() - t1
-    t2 = time()
-    live = try
-        kwargs = isnothing(cache_size_mib) ? (;) : (; cache_size_mib)
-        status = PSI.execute!(simulation; kwargs...)
-        status == PSI.RunStatus.SUCCESSFULLY_FINALIZED || error("Range from $(first(steps)) failed to execute ($status); see the logs in $folder.")
-        PSI.get_decision_problem_results(PSI.SimulationResults(simulation), "dispatch")
-    catch
-        _log_skipped_constraints(skipped_constraints)
-        rethrow()
-    end
-    execute_s = time() - t2
+    run = run_replication(sys, steps; optimizer, parts, folder, simulation_name = _SIMULATION_NAME, cache_size_mib)
+    live = run.results
+    simulation_build_s, execute_s = run.timings
     t3 = time()
     report = replication_results(live, sys; parts)
     solved = report.solved
@@ -138,14 +109,14 @@ function _replicate_chunk(
     reopened = PSI.get_decision_problem_results(PSI.SimulationResults(folder, _SIMULATION_NAME), "dispatch")
     return (;
         timings = (; system_build_s, simulation_build_s, execute_s, compare_s), results = reopened,
-        comparison, skipped_constraints = insertcols(skipped_constraints, 1, :chunk => fill(k, nrow(skipped_constraints))),
+        comparison, skipped_constraints = insertcols(run.skipped_constraints, 1, :chunk => fill(k, nrow(run.skipped_constraints))),
         constraint_violations = violations, ramp_violations = report.ramp_violations, solver_stats,
     )
 end
 
 
 """
-    replicate_range(db, start, stop; intervention = 0, optimizer = _DEFAULT_OPTIMIZER, parts = REPLICATION_PARTS,
+    replicate_range(db, start, stop; intervention = 0, optimizer = REPLICATION_OPTIMIZER, parts = REPLICATION_PARTS,
         chunk = :trading_day, interval_flow_limits = false, output_dir = nothing, time_series_in_memory = true,
         time_series_directory = nothing, cache_size_mib = nothing) -> NamedTuple
 
@@ -208,7 +179,7 @@ execute after logging its skipped constraints and the folders of the chunks alre
 """
 function replicate_range(
         db, start::DateTime, stop::DateTime; intervention::Integer = 0,
-        optimizer = _DEFAULT_OPTIMIZER, parts = REPLICATION_PARTS, chunk = :trading_day,
+        optimizer = REPLICATION_OPTIMIZER, parts = REPLICATION_PARTS, chunk = :trading_day,
         interval_flow_limits::Bool = false, output_dir::Union{Nothing, AbstractString} = nothing, time_series_in_memory::Bool = true,
         time_series_directory::Union{Nothing, AbstractString} = nothing,
         cache_size_mib::Union{Nothing, Integer} = nothing,

@@ -213,36 +213,15 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
         duid = get_name(device)
         haskey(buildable, duid) || continue
         d = buildable[duid]
-        add_time_series!(
-            sys, device,
-            SingleTimeSeries(; name = "ramp_up_rate", data = TimeArray(full_grid, d.ramp_up_rate ./ 60 ./ base_power)),
-        )
-        add_time_series!(
-            sys, device,
-            SingleTimeSeries(; name = "ramp_down_rate", data = TimeArray(full_grid, d.ramp_down_rate ./ 60 ./ base_power)),
-        )
-        add_time_series!(
-            sys, device,
-            SingleTimeSeries(; name = "initial_mw", data = TimeArray(full_grid, d.initial_mw ./ base_power)),
-        )
+        add_time_series!(sys, device, single_series("ramp_up_rate", full_grid, d.ramp_up_rate ./ 60 ./ base_power))
+        add_time_series!(sys, device, single_series("ramp_down_rate", full_grid, d.ramp_down_rate ./ 60 ./ base_power))
+        add_time_series!(sys, device, single_series("initial_mw", full_grid, d.initial_mw ./ base_power))
         isnothing(d.max_active_power) && continue
-        add_time_series!(
+        add_time_series!(sys, device, single_series("availability", full_grid, d.availability ./ base_power))
+        # Overwrites a "max_active_power" series set by set_renewable_pv!/set_renewable_wind!/set_hydro_limits!.
+        replace_single_series!(
             sys, device,
-            SingleTimeSeries(; name = "availability", data = TimeArray(full_grid, d.availability ./ base_power)),
-        )
-        # RenewableDispatch/HydroDispatch may already carry a "max_active_power" series from
-        # set_renewable_pv!/set_renewable_wind!/set_hydro_limits! - add_time_series! throws on a
-        # duplicate name, so the existing series is removed first, deterministically overwriting
-        # it regardless of call order.
-        has_time_series(device, SingleTimeSeries, "max_active_power") &&
-            remove_time_series!(sys, SingleTimeSeries, device, "max_active_power")
-        add_time_series!(
-            sys, device,
-            SingleTimeSeries(;
-                name = "max_active_power",
-                data = TimeArray(full_grid, d.max_active_power),
-                scaling_factor_multiplier = get_max_active_power,
-            ),
+            single_series("max_active_power", full_grid, d.max_active_power; scaling_factor_multiplier = get_max_active_power),
         )
     end
     return

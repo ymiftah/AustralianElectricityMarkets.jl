@@ -489,6 +489,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `fcas_series_name`, `fcas_bid_direction`, `nem_dispatch_devices`, `is_non_scheduled_load` and
   `single_series` are public AEM API, used by AEMSim to read the systems AEM builds.
+- New `single_series(name, timestamps, values; kwargs...)`, `remove_single_series!` and
+  `replace_single_series!` replace the hand-built and remove-then-add time series code in the setters.
+- New `run_replication(sys, steps; ...)` builds and executes a `replication_simulation` and returns its
+  results, skipped constraints and timings; `REPLICATION_OPTIMIZER` is the exported default optimizer.
+  The replay script uses both instead of its own copies.
 - CVP factors of the built-in Interconnector Zero (1160) and Energy Inflexible Offer (380) generic
   constraints move to AEMSim as `INTERCONNECTOR_ZERO_CVP_FACTOR` and `FIXED_LOADING_CVP_FACTOR`.
   AEM builds those constraints with weight 1.0, and AEMSim prices every generic constraint through

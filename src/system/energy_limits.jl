@@ -66,11 +66,8 @@ function set_nem_energy_limits!(sys, db, date_range; intervention::Integer = 0)
     isempty(problems) || throw(ArgumentError("set_nem_energy_limits!: " * join(problems, "; ")))
     base = get_base_power(sys)
     for data in staged
-        has_time_series(data.device, SingleTimeSeries, "energy_max_avail") &&
-            remove_time_series!(sys, SingleTimeSeries, data.device, "energy_max_avail")
-        has_time_series(data.device, SingleTimeSeries, "energy_uigf") &&
-            remove_time_series!(sys, SingleTimeSeries, data.device, "energy_uigf")
-        add_time_series!(sys, data.device, single_series("energy_max_avail", first(grid), data.availability ./ base, step(date_range)))
+        remove_single_series!(sys, data.device, "energy_uigf")
+        replace_single_series!(sys, data.device, single_series("energy_max_avail", first(grid), data.availability ./ base, step(date_range)))
         if data.semi
             add_time_series!(sys, data.device, single_series("energy_uigf", first(grid), data.forecast ./ base, step(date_range)))
         end

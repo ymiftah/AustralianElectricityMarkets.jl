@@ -65,16 +65,8 @@ function _attach_fcas_effective_series!(sys::PSY.System, device::PSY.Device, bid
     window = _FCASWindow(first(stamps), length(stamps), resolution, :dispatch)
     offers, ramping = _fcas_effective_values(window, device, bid_type, direction, inactive)
     for (decremental, values) in offers
-        _replace_fcas_series!(sys, device, _fcas_effective_series_name(bid_type, decremental), stamps, values, resolution)
+        replace_single_series!(sys, device, single_series(_fcas_effective_series_name(bid_type, decremental), first(stamps), values, resolution))
     end
-    isnothing(ramping) || _replace_fcas_series!(sys, device, _fcas_ramping_series_name(bid_type), stamps, ramping, resolution)
-    return
-end
-
-
-# Attaches `values` on `stamps` as `device`'s `name` series, replacing an existing one.
-function _replace_fcas_series!(sys::PSY.System, device::PSY.Device, name::String, stamps, values, resolution)
-    PSY.has_time_series(device, PSY.SingleTimeSeries, name) && PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, name)
-    PSY.add_time_series!(sys, device, single_series(name, first(stamps), values, resolution))
+    isnothing(ramping) || replace_single_series!(sys, device, single_series(_fcas_ramping_series_name(bid_type), first(stamps), ramping, resolution))
     return
 end

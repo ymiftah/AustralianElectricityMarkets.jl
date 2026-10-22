@@ -168,7 +168,7 @@ end
 
 
 """
-    _fcas_req_union_sql(db, intervention) -> (sql_fragment, params_for_fragment)
+    _fcas_req_union_sql(db, start_date, end_date, intervention) -> (sql_fragment, params)
 
 A `SELECT`-able fragment presenting AEMO's two generations of the dispatch FCAS requirement
 table under the **old** column names — `SETTLEMENTDATE`, `GENCONID`, `REGIONID`, `BIDTYPE`,
@@ -188,7 +188,7 @@ filters the old side only, and post-cut rows are whatever runs AEMO published.
 Either table may be absent from the cache; a missing one contributes no rows, so a cache covering
 only one side of the cut still works. Throws an `ArgumentError` when neither is cached.
 """
-function _fcas_req_union_sql(db, intervention::Integer)
+function _fcas_req_union_sql(db, start_date, end_date, intervention::Integer)
     branches = String[]
     params = Any[]
 
@@ -205,8 +205,8 @@ function _fcas_req_union_sql(db, intervention::Integer)
             WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(schema))
             """,
         )
-        push!(params, :dates)
-        _intervention_where(schema) == "" || push!(params, intervention)
+        push!(params, start_date, end_date)
+        _push_intervention!(params, schema, intervention)
     end
 
     if _table_is_cached(db, :DISPATCH_FCAS_REQ_CONSTRAINT)
@@ -223,7 +223,7 @@ function _fcas_req_union_sql(db, intervention::Integer)
             WHERE INTERVAL_DATETIME BETWEEN ? AND ?
             """,
         )
-        push!(params, :dates)
+        push!(params, start_date, end_date)
     end
 
     isempty(branches) && throw(
@@ -234,26 +234,6 @@ function _fcas_req_union_sql(db, intervention::Integer)
         ),
     )
     return join(branches, "\nUNION ALL\n"), params
-end
-
-
-"""
-    _expand_fcas_req_params(param_spec, start_date, end_date) -> Vector{Any}
-
-Substitutes each `:dates` placeholder from [`_fcas_req_union_sql`](@ref) with the
-`start_date`/`end_date` pair, keeping positional `?` binding aligned across a variable number of `UNION ALL`
-branches.
-"""
-function _expand_fcas_req_params(param_spec, start_date, end_date)
-    out = Any[]
-    for p in param_spec
-        if p === :dates
-            push!(out, start_date, end_date)
-        else
-            push!(out, p)
-        end
-    end
-    return out
 end
 
 
@@ -270,14 +250,14 @@ Long-format `DataFrame`. Throws `ArgumentError` when neither `DISPATCH_FCAS_REQ`
 function read_constraint_fcas_requirements(db, date_range; intervention::Integer = 0)
     start_date = first(date_range)
     end_date = last(date_range)
-    union_sql, param_spec = _fcas_req_union_sql(db, intervention)
+    union_sql, params = _fcas_req_union_sql(db, start_date, end_date, intervention)
     df = _query(
         db,
         """
         SELECT DISTINCT SETTLEMENTDATE, GENCONID, REGIONID, BIDTYPE
         FROM ($union_sql)
         """,
-        _expand_fcas_req_params(param_spec, start_date, end_date),
+        params,
     )
     subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
     subset!(df, :BIDTYPE => ByRow(in(string.(FCAS_BID_TYPES))))

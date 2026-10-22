@@ -41,7 +41,8 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
     get_limit_type, get_source, get_effective_date, get_version_no, get_gencon_id,
     get_terms, set_terms!, get_fcas_requirements, set_fcas_requirements!, resolve_term_devices
 export FCASService, add_fcas_services!, Readers
-export fcas_series_name, fcas_bid_direction, single_series, nem_dispatch_devices, is_non_scheduled_load
+export fcas_series_name, fcas_bid_direction, single_series, remove_single_series!, replace_single_series!,
+    nem_dispatch_devices, is_non_scheduled_load
 
 include("constants.jl")
 include("types/bid_types.jl")
