@@ -180,9 +180,10 @@ end
     read_bids(db, date_range; resolution = nothing)
 
 Reads energy offers from `BIDPEROFFER_D`/`BIDDAYOFFER_D` and returns one row per
-`(SETTLEMENTDATE, DUID, DIRECTION, INTERVAL_DATETIME)` with the 10-band offer curve
-collapsed into a `piecewise_step_data` column of connection-point prices (not referred to the
-reference node, unlike [`set_market_bids!`](@ref AustralianElectricityMarkets.set_market_bids!)), plus `MAXAVAIL` (`BIDPEROFFER_D`) and
+`(SETTLEMENTDATE, DUID, DIRECTION, INTERVAL_DATETIME)` with the 10-band offer as
+`PRICEBANDARRAY` connection-point prices (not referred to the reference node, unlike
+[`set_market_bids!`](@ref AustralianElectricityMarkets.set_market_bids!)) and `BANDAVAILARRAY`
+MW, plus `MAXAVAIL` (`BIDPEROFFER_D`) and
 `MINIMUMLOAD`/`DAILYENERGYCONSTRAINT` (`BIDDAYOFFER_D`) - the physical bounds a caller needs
 to clip dispatch to, not just the priced curve. See [`read_fcas_bids`](@ref) for the
 FCAS-market equivalent.
@@ -193,30 +194,7 @@ end
 
 
 """
-    _extract_power_bids(row; keep_empty_bands = false)
-
-Builds a `PiecewiseStepData` offer curve from a row's `PRICEBANDARRAY`/`BANDAVAILARRAY`
-columns, reversing band order for `DIRECTION == "LOAD"` rows so the resulting curve stays
-concave. Bands of zero availability are dropped unless `keep_empty_bands`, in which case every
-band is a segment and segment `k` is always the same price band.
-"""
-function _extract_power_bids(row; keep_empty_bands::Bool = false)
-    price_band_array = copy(row.PRICEBANDARRAY)
-    bandavail_array = copy(row.BANDAVAILARRAY)
-    if row.DIRECTION == "LOAD"
-        # Reverse the order for loads, so the decremental curves are concave
-        reverse!(price_band_array)
-        reverse!(bandavail_array)
-    end
-    kept = keep_empty_bands ? trues(length(bandavail_array)) : bandavail_array .> 0
-    a = price_band_array[kept]
-    b = [zero(eltype(price_band_array)); bandavail_array[kept] |> cumsum]
-    return PiecewiseStepData(b, a)
-end
-
-
-"""
-    _massage_bids(db, start_date, end_date; resolution = nothing, bid_types = [BidType.ENERGY], keep_bid_type = false, keep_empty_bands = false)
+    _massage_bids(db, start_date, end_date; resolution = nothing, bid_types = [BidType.ENERGY], keep_bid_type = false)
 
 Joins the latest `BIDPEROFFER_D` period offers of `bid_types` to their `BIDDAYOFFER_D` price bands,
 one row per `(SETTLEMENTDATE, DUID, DIRECTION, INTERVAL_DATETIME)` with
@@ -226,13 +204,13 @@ bands.
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `DIRECTION`, `INTERVAL_DATETIME`, `PRICEBANDARRAY`,
-`BANDAVAILARRAY`, `MAXAVAIL`, `MINIMUMLOAD`, `DAILYENERGYCONSTRAINT`, `BIDTYPE` when
-`keep_bid_type`, and `piecewise_step_data` built by [`_extract_power_bids`](@ref).
+`BANDAVAILARRAY`, `MAXAVAIL`, `MINIMUMLOAD`, `DAILYENERGYCONSTRAINT`, and `BIDTYPE` when
+`keep_bid_type`.
 """
 function _massage_bids(
         db, start_date, end_date;
         resolution::Union{Nothing, Dates.Period} = nothing, bid_types::AbstractVector{BidType} = [BidType.ENERGY],
-        keep_bid_type::Bool = false, keep_empty_bands::Bool = false,
+        keep_bid_type::Bool = false,
     )
     sd = Date(start_date) - Day(1)
     ed = Date(end_date) + Day(1)
@@ -287,7 +265,6 @@ function _massage_bids(
         select(
             :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME, :PRICEBANDARRAY, :BANDAVAILARRAY,
             :MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT, (keep_bid_type ? [:BIDTYPE] : [])...,
-            AsTable(:) => ByRow(r -> _extract_power_bids(r; keep_empty_bands)) => :piecewise_step_data
         )
     end
     return prep_for_psy

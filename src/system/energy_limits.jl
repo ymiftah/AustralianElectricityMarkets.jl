@@ -23,13 +23,13 @@ function set_nem_energy_limits!(sys, db, date_range; intervention::Integer = 0)
     by_offer = Dict((r.DUID, r.DIRECTION, r.SETTLEMENTDATE) => r for r in eachrow(rows))
     staged = NamedTuple[]
     problems = String[]
-    for device in _nem_dispatch_devices(sys)
+    for device in nem_dispatch_devices(sys)
         device isa PSY.Storage && continue
         name = get_name(device)
         availability = Float64[]
         forecast = Float64[]
         modes = String[]
-        if _is_non_scheduled_load(device)
+        if is_non_scheduled_load(device)
             availability = zeros(length(grid))
             push!(modes, "NON-SCHEDULED")
         else
@@ -70,9 +70,9 @@ function set_nem_energy_limits!(sys, db, date_range; intervention::Integer = 0)
             remove_time_series!(sys, SingleTimeSeries, data.device, "energy_max_avail")
         has_time_series(data.device, SingleTimeSeries, "energy_uigf") &&
             remove_time_series!(sys, SingleTimeSeries, data.device, "energy_uigf")
-        add_time_series!(sys, data.device, _single_series("energy_max_avail", first(grid), data.availability ./ base, step(date_range)))
+        add_time_series!(sys, data.device, single_series("energy_max_avail", first(grid), data.availability ./ base, step(date_range)))
         if data.semi
-            add_time_series!(sys, data.device, _single_series("energy_uigf", first(grid), data.forecast ./ base, step(date_range)))
+            add_time_series!(sys, data.device, single_series("energy_uigf", first(grid), data.forecast ./ base, step(date_range)))
         end
         get_ext(data.device)["nem_semi_scheduled"] = data.semi
     end

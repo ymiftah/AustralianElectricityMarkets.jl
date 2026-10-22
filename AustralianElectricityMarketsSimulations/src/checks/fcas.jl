@@ -65,7 +65,7 @@ function check_fcas_services(sys::PSY.System, template::PSI.ProblemTemplate; exc
                         "for the FCAS joint capacity constraints.",
                 )
             end
-            direction = AustralianElectricityMarkets._fcas_bid_direction(device, bid_type)
+            direction = fcas_bid_direction(device, bid_type)
             problem = _fcas_direction_problem(device, bid_type, direction)
             isnothing(problem) || push!(problems, "FCASService \"$svc_name\": device \"$dname\" $problem.")
             if bid_type in FCAS_REGULATION_MARKETS && _fcas_ramp_series_positive(device, bid_type) &&

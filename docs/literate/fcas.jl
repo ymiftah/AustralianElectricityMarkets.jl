@@ -160,7 +160,7 @@ tungatin_bid = subset(
     :DUID => ByRow(==("TUNGATIN")),
     :INTERVAL_DATETIME => ByRow(==(DateTime(2025, 1, 13, 16, 30))),
 )
-select(tungatin_bid, :ENABLEMENTMIN, :LOWBREAKPOINT, :HIGHBREAKPOINT, :ENABLEMENTMAX, :MAXAVAIL, :piecewise_step_data)
+select(tungatin_bid, :ENABLEMENTMIN, :LOWBREAKPOINT, :HIGHBREAKPOINT, :ENABLEMENTMAX, :MAXAVAIL, :PRICEBANDARRAY, :BANDAVAILARRAY)
 
 # ## [The trapezium](@id fcas-trapezium)
 #

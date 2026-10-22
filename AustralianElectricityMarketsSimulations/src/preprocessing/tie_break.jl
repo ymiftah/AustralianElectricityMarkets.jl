@@ -148,7 +148,7 @@ function set_tie_break_scales!(sys::PSY.System)
         end
         for ((device, band), values) in scales
             name = _tie_break_series_name(band, decremental)
-            PSY.add_time_series!(sys, device, AustralianElectricityMarkets._single_series(name, first(stamps), values, resolution))
+            PSY.add_time_series!(sys, device, single_series(name, first(stamps), values, resolution))
         end
     end
     existing = PSY.get_component(EnergyTieBreak, sys, TIE_BREAK_SERVICE_NAME)

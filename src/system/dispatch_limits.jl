@@ -1,5 +1,5 @@
 """
-    _nem_dispatch_devices(sys)
+    nem_dispatch_devices(sys) -> Vector{Device}
 
 Collects every available `ThermalStandard`, `HydroDispatch`, `RenewableDispatch`,
 `InterruptiblePowerLoad` and `EnergyReservoirStorage` in `sys`, the device types that [`set_nem_dispatch_limits!`](@ref)
@@ -11,7 +11,7 @@ and [`set_nem_initial_conditions!`](@ref) apply to.
 # Returns
 A `Vector{Device}`.
 """
-function _nem_dispatch_devices(sys)
+function nem_dispatch_devices(sys)
     devices = Device[]
     append!(devices, collect(get_components(get_available, ThermalStandard, sys)))
     append!(devices, collect(get_components(get_available, HydroDispatch, sys)))
@@ -112,7 +112,7 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
     rows = read_dispatch_limits(db, date_range; kwargs...)
     by_duid = DataFrames.isempty(rows) ? nothing : groupby(rows, :DUID)
 
-    devices = _nem_dispatch_devices(sys)
+    devices = nem_dispatch_devices(sys)
 
     problems = String[]
     buildable = Dict{
@@ -161,7 +161,7 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
         max_active_power = is_storage ? nothing : Float64[]
         availability = is_storage ? nothing : Float64[]
         reason = nothing
-        pinned = _is_non_scheduled_load(device)
+        pinned = is_non_scheduled_load(device)
         for t in full_grid
             row = by_time[t]
             if pinned
@@ -279,7 +279,7 @@ function set_nem_initial_conditions!(sys, db, interval::DateTime; allow_missing_
     rows = read_dispatch_limits(db, [interval, interval + Minute(1)]; kwargs...)
     by_duid = DataFrames.isempty(rows) ? nothing : groupby(rows, :DUID)
 
-    devices = _nem_dispatch_devices(sys)
+    devices = nem_dispatch_devices(sys)
 
     problems = String[]
     initial_mw = Dict{String, Float64}()

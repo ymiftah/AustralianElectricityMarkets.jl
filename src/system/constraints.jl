@@ -78,9 +78,6 @@ const _ZERO_FLOW_EFFECTIVEDATE = Date(2013, 8, 21)
 
 const _ZERO_FLOW_VERSIONNO = 1
 
-# CVP factor of the Unit and Interconnector Zero constraint type, applied to the Market Price Cap.
-const _ZERO_FLOW_CVP_FACTOR = 1160.0
-
 
 """
     _zero_flow_constraint_definitions(gencon_versions) -> (definitions, terms)
@@ -113,7 +110,7 @@ function _zero_flow_constraint_definitions(gencon_versions)
         EFFECTIVEDATE = recognised.GENCONID_EFFECTIVEDATE,
         VERSIONNO = recognised.GENCONID_VERSIONNO,
         CONSTRAINTTYPE = fill("<=", nrow(recognised)),
-        GENERICCONSTRAINTWEIGHT = fill(_ZERO_FLOW_CVP_FACTOR, nrow(recognised)),
+        GENERICCONSTRAINTWEIGHT = fill(1.0, nrow(recognised)),
         CONSTRAINTVALUE = fill(0.0, nrow(recognised)),
         DESCRIPTION = ["Interconnector Zero: $(_ZERO_FLOW_CONSTRAINTS[id][1]) flow" for id in recognised.GENCONID],
         LIMITTYPE = fill("Interconnector Zero", nrow(recognised)),
@@ -130,10 +127,6 @@ function _zero_flow_constraint_definitions(gencon_versions)
     )
     return definitions, terms
 end
-
-# CVP factor of the Energy Inflexible Offer (participant fixed loading) constraint.
-const _FIXED_LOAD_CVP_FACTOR = 380.0
-
 
 function _empty_definitions()
     return DataFrame(
@@ -182,7 +175,7 @@ end
     _fixed_load_constraint(sys, duid, series, grid, base_power; solution = nothing)
 
 The staged `\$<duid>` [`GenericConstraint`](@ref): a net-injection equality (`EQ`) on `duid`'s
-energy at its fixed loading, weight 380 (CVP item 13), invoked only at the intervals in `series`.
+energy at its fixed loading, invoked only at the intervals in `series`.
 `solution` is the unit's `DISPATCHCONSTRAINT` rows, used to fill `lhs`/`marginal_value` series.
 """
 function _fixed_load_constraint(sys, duid, series, grid, base_power; solution = nothing)
@@ -194,7 +187,6 @@ function _fixed_load_constraint(sys, duid, series, grid, base_power; solution = 
         name = name,
         sense = ConstraintSense.EQ,
         rhs = first_mw / base_power,
-        constraint_weight = _FIXED_LOAD_CVP_FACTOR,
         description = "Energy Inflexible Offer: $duid fixed loading",
         terms = ConstraintTerm[UnitTerm(duid, BidType.ENERGY, 1.0)],
         ext = Dict{String, Any}(
@@ -347,7 +339,7 @@ with [`get_dropped_terms`](@ref).
 
 Each device in `sys` with a participant fixed loading (`BIDPEROFFER_D.FIXEDLOAD > 0`, fast-start
 units excluded) also gets a `\$<DUID>` constraint: an equality on the unit's net energy at its fixed
-loading, weight 380, invoked at the intervals that carry one. Its `DISPATCHCONSTRAINT` row is not
+loading, invoked at the intervals that carry one. Its `DISPATCHCONSTRAINT` row is not
 reported as skipped.
 
 Each skipped version is also recorded on `sys`; read it with [`get_skipped_constraints`](@ref). The
@@ -656,20 +648,20 @@ function add_nem_constraints!(
         add_service!(sys, entry.gc, entry.contributing_devices)
         add_time_series!(
             sys, entry.gc,
-            _single_series("rhs", start_date, entry.rhs_series, resolution),
+            single_series("rhs", start_date, entry.rhs_series, resolution),
         )
         add_time_series!(
             sys, entry.gc,
-            _single_series("invoked", start_date, entry.invoked_series, resolution),
+            single_series("invoked", start_date, entry.invoked_series, resolution),
         )
         if include_solution
             add_time_series!(
                 sys, entry.gc,
-                _single_series("lhs", start_date, entry.lhs_series, resolution),
+                single_series("lhs", start_date, entry.lhs_series, resolution),
             )
             add_time_series!(
                 sys, entry.gc,
-                _single_series("marginal_value", start_date, entry.marginal_value_series, resolution),
+                single_series("marginal_value", start_date, entry.marginal_value_series, resolution),
             )
         end
     end

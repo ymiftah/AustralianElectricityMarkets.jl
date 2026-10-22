@@ -1,4 +1,27 @@
 """
+    _extract_power_bids(row; keep_empty_bands = false)
+
+Builds a `PiecewiseStepData` offer curve from a row's `PRICEBANDARRAY`/`BANDAVAILARRAY`
+columns, reversing band order for `DIRECTION == "LOAD"` rows so the resulting curve stays
+concave. Bands of zero availability are dropped unless `keep_empty_bands`, in which case every
+band is a segment and segment `k` is always the same price band.
+"""
+function _extract_power_bids(row; keep_empty_bands::Bool = false)
+    price_band_array = copy(row.PRICEBANDARRAY)
+    bandavail_array = copy(row.BANDAVAILARRAY)
+    if row.DIRECTION == "LOAD"
+        # Reverse the order for loads, so the decremental curves are concave
+        reverse!(price_band_array)
+        reverse!(bandavail_array)
+    end
+    kept = keep_empty_bands ? trues(length(bandavail_array)) : bandavail_array .> 0
+    a = price_band_array[kept]
+    b = [zero(eltype(price_band_array)); bandavail_array[kept] |> cumsum]
+    return PiecewiseStepData(b, a)
+end
+
+
+"""
     _refer_bids_to_reference_node!(bids, factors) -> bids
 
 Divides every price of `bids.piecewise_step_data` by its unit's loss factor, leaving the MW
@@ -45,9 +68,9 @@ function _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
         )
     )
     psd = gen_bids.piecewise_step_data
-    time_series_data = _single_series("variable_cost", start_date, psd, resolution)
+    time_series_data = single_series("variable_cost", start_date, psd, resolution)
     set_incremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
-    time_series_incremental_initial_input = _single_series("incremental_initial_input", start_date, zeros(size(psd)), resolution)
+    time_series_incremental_initial_input = single_series("incremental_initial_input", start_date, zeros(size(psd)), resolution)
     set_incremental_initial_input!(sys, gen, time_series_incremental_initial_input)
     return
 end
@@ -82,9 +105,9 @@ function _set_decremental_bid_cost!(sys, device, load_bids, start_date, resoluti
         ),
     )
     psd = load_bids.piecewise_step_data
-    time_series_data = _single_series("decremental_variable_cost", start_date, psd, resolution)
+    time_series_data = single_series("decremental_variable_cost", start_date, psd, resolution)
     set_decremental_variable_cost!(sys, device, time_series_data, UnitSystem.NATURAL_UNITS)
-    time_series_decremental_initial_input = _single_series("decremental_initial_input", start_date, (first ∘ get_y_coords).(psd), resolution)
+    time_series_decremental_initial_input = single_series("decremental_initial_input", start_date, (first ∘ get_y_coords).(psd), resolution)
     set_decremental_initial_input!(sys, device, time_series_decremental_initial_input)
     return
 end
@@ -123,9 +146,8 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     end_date = last(date_range)
     resolution = get(kwargs, :resolution, Minute(5))
 
-    bids = _massage_bids(
-        db, start_date, end_date; resolution = get(kwargs, :resolution, nothing), keep_empty_bands = true,
-    )
+    bids = _massage_bids(db, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
+    transform!(bids, AsTable(:) => ByRow(r -> _extract_power_bids(r; keep_empty_bands = true)) => :piecewise_step_data)
     sys_units = Set(get_name(c) for T in (Generator, InterruptiblePowerLoad, EnergyReservoirStorage) for c in get_components(T, sys))
     factors = read_loss_factors(db; as_of = start_date, through = end_date)
     _refer_bids_to_reference_node!(subset!(bids, :DUID => ByRow(in(sys_units))), factors)
@@ -147,7 +169,7 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     unbid_loads = String[]
     gen_bid_loads = String[]
     foreach(get_components(InterruptiblePowerLoad, sys)) do load
-        _is_non_scheduled_load(load) && return
+        is_non_scheduled_load(load) && return
         load_id = get_name(load)
         load_bids = subset(bids, :DUID => ByRow(==(load_id)), :DIRECTION => ByRow(==("LOAD")))
         if DataFrames.isempty(load_bids)
@@ -194,12 +216,12 @@ function _set_storage_energy_max_avail!(sys, storage, bids, name::AbstractString
     all(x -> !ismissing(x) && isfinite(x), bids.MAXAVAIL) || return
     add_time_series!(
         sys, storage,
-        _single_series(name, start_date, Float64.(bids.MAXAVAIL) ./ get_base_power(sys), resolution),
+        single_series(name, start_date, Float64.(bids.MAXAVAIL) ./ get_base_power(sys), resolution),
     )
     return
 end
 """
-    _is_non_scheduled_load(device) -> Bool
+    is_non_scheduled_load(device) -> Bool
 
 Whether `device` is a non-scheduled load ([`get_scheduled_loads_dataframe`](@ref)): it has no
 energy bid, and takes part in the market only through FCAS offers.
@@ -210,4 +232,4 @@ energy bid, and takes part in the market only through FCAS offers.
 # Returns
 `Bool`.
 """
-_is_non_scheduled_load(device) = device isa InterruptiblePowerLoad && get(get_ext(device), "non_scheduled", false) === true
+is_non_scheduled_load(device) = device isa InterruptiblePowerLoad && get(get_ext(device), "non_scheduled", false) === true

@@ -1,7 +1,4 @@
 @testset "EnergyTieBreak" begin
-    using AustralianElectricityMarkets
-    using PowerSystems
-
     @testset "keyword constructor and accessors" begin
         service = EnergyTieBreak(; name = "energy_tie_break")
         @test get_name(service) == "energy_tie_break"

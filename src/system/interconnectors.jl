@@ -228,7 +228,7 @@ function set_loss_demand_coefficients!(sys)
         values = [_demand_offset(model, Dict(area => series[t] for (area, series) in demand)) for t in eachindex(stamps)]
         has_time_series(ic, SingleTimeSeries, _LOSS_DEMAND_COEFFICIENT) &&
             remove_time_series!(sys, SingleTimeSeries, ic, _LOSS_DEMAND_COEFFICIENT)
-        add_time_series!(sys, ic, _single_series(_LOSS_DEMAND_COEFFICIENT, first(stamps), values, resolution))
+        add_time_series!(sys, ic, single_series(_LOSS_DEMAND_COEFFICIENT, first(stamps), values, resolution))
     end
     return
 end

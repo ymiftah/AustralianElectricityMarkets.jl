@@ -683,7 +683,7 @@ end
             gc = get_component(GenericConstraint, zero_sys, zname(id))
             @test get_sense(gc) == ConstraintSense.LE
             @test get_rhs(gc) == 0.0
-            @test get_constraint_weight(gc) == 1160.0
+            @test get_source(gc) == "built-in"
             @test get_limit_type(gc) == "Interconnector Zero"
             term = only(get_terms(gc))
             @test term isa InterconnectorTerm
@@ -771,7 +771,8 @@ end
 
         gc = get_component(GenericConstraint, fixed_sys, "\$BW01")
         @test get_sense(gc) == ConstraintSense.EQ
-        @test get_constraint_weight(gc) == 380.0
+        @test get_source(gc) == "built-in"
+        @test get_limit_type(gc) == "Energy Inflexible Offer"
         term = only(get_terms(gc))
         @test term isa UnitTerm && get_duid(term) == "BW01" && get_bid_type(term) == BidType.ENERGY
         base = get_base_power(fixed_sys)

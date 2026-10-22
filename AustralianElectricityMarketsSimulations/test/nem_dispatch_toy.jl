@@ -774,7 +774,7 @@ end
         50.0;
         mutate! = (sys, stamps) -> PSY.add_time_series!(
             sys, PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP),
-            AustralianElectricityMarkets._single_series("tie_break_scale_7", TOY_START, fill(0.5, length(stamps)), TOY_RESOLUTION),
+            AustralianElectricityMarkets.single_series("tie_break_scale_7", TOY_START, fill(0.5, length(stamps)), TOY_RESOLUTION),
         ),
     )
     alta = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)

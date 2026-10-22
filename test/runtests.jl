@@ -38,7 +38,6 @@ const TEST_GROUPS = [
     "interval_inputs" => ("Per-interval inputs", ["interval_inputs.jl"]),
     "mnsp" => ("MNSP offers", ["mnsp_offers.jl"]),
     "fcas" => ("FCAS types", ["fcas/fcas.jl"]),
-    "tie_break" => ("Energy tie-break service", ["tie_break.jl"]),
     "fcas_scaling" => ("FCAS trapezium scaling", ["fcas/scaling.jl"]),
     "constraints" => ("Constraint types", ["constraints/constraints.jl"]),
     "interconnector_losses" => ("Interconnector losses", ["interconnector_losses.jl"]),

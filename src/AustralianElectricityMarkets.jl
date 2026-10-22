@@ -40,21 +40,19 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
     get_sense, set_sense!, get_rhs, set_rhs!, get_constraint_weight, set_constraint_weight!,
     get_limit_type, get_source, get_effective_date, get_version_no, get_gencon_id,
     get_terms, set_terms!, get_fcas_requirements, set_fcas_requirements!, resolve_term_devices
-export FCASService, add_fcas_services!, IntervalInputs, Readers
-export EnergyTieBreak
+export FCASService, add_fcas_services!, Readers
+export fcas_series_name, fcas_bid_direction, single_series, nem_dispatch_devices, is_non_scheduled_load
 
 include("constants.jl")
 include("types/bid_types.jl")
 include("types/network_configuration.jl")
 include("types/fcas.jl")
-include("types/tie_break.jl")
 include("types/generic_constraints.jl")
 include("types/interconnector_losses.jl")
-include("types/interval_inputs.jl")
 
 include("readers/Readers.jl")
 using .Readers
-using .Readers: _query, _table_is_cached, _require_cached, _massage_bids, _extract_power_bids
+using .Readers: _query, _table_is_cached, _require_cached, _massage_bids
 
 for name in names(Readers)
     name === :Readers && continue

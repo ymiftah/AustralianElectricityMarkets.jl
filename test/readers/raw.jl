@@ -77,15 +77,15 @@ let
         @test maxmwin(read_interconnectors(vdb; as_of = DateTime(2025, 8, 1))) == 300.0
 
         cp_of(df) = only(df[df.DUID .== "BW01", :CONNECTIONPOINTID])
-        @test cp_of(AustralianElectricityMarkets.Readers._read_units(vdb)) == "CP_NEW"
-        @test cp_of(AustralianElectricityMarkets.Readers._read_units(vdb; as_of = early)) == "CP_BAYSW"
-        @test cp_of(AustralianElectricityMarkets.Readers._read_units(vdb; as_of = DateTime(2025, 8, 1))) == "CP_NEW"
-        @test allunique(AustralianElectricityMarkets.Readers._read_units(vdb; as_of = early).DUID)
+        @test cp_of(read_units(vdb)) == "CP_NEW"
+        @test cp_of(read_units(vdb; as_of = early)) == "CP_BAYSW"
+        @test cp_of(read_units(vdb; as_of = DateTime(2025, 8, 1))) == "CP_NEW"
+        @test allunique(read_units(vdb; as_of = early).DUID)
         # The older archive's stale open rows must not leak into either as-of read.
         @test maxmwin(read_interconnectors(vdb; as_of = early)) != 111.0
-        @test only(AustralianElectricityMarkets.Readers._read_units(vdb; as_of = early)[AustralianElectricityMarkets.Readers._read_units(vdb; as_of = early).DUID .== "BW01", :REGISTEREDCAPACITY]) == 100.0
+        @test only(read_units(vdb; as_of = early)[read_units(vdb; as_of = early).DUID .== "BW01", :REGISTEREDCAPACITY]) == 100.0
         # A unit not yet registered as of the date is omitted.
-        @test isempty(AustralianElectricityMarkets.Readers._read_units(vdb; as_of = DateTime(2019, 1, 1)))
+        @test isempty(read_units(vdb; as_of = DateTime(2019, 1, 1)))
     end
 
     @testset "read_demand" begin
@@ -104,7 +104,7 @@ let
     end
 
     @testset "read_units" begin
-        df = AustralianElectricityMarkets.Readers._read_units(db)
+        df = read_units(db)
         @test df isa DataFrame
         @test nrow(df) > 0
         @test "DUID" in names(df)
@@ -115,7 +115,7 @@ let
         @test only(df.CO2E_ENERGY_SOURCE[df.DUID .== "BW01"]) == "Battery Storage"
 
         # BAYSW (station for BW01-BW04) is renamed in a later STATION archive_month
-        # partition (mock_data.jl). AustralianElectricityMarkets.Readers._read_units() must resolve one name per DUID —
+        # partition (mock_data.jl). read_units() must resolve one name per DUID —
         # not fan out into duplicate rows via the STATIONID -> STATIONNAME join.
         @test allunique(df.DUID)
         bw01_names = df.STATIONNAME[df.DUID .== "BW01"]

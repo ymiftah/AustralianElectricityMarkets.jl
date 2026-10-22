@@ -57,9 +57,9 @@ No-op for a device without a `bid_type` trapezium series.
 `nothing`.
 """
 function _attach_fcas_effective_series!(sys::PSY.System, device::PSY.Device, bid_type::BidType, inactive::Float64)
-    direction = AustralianElectricityMarkets._fcas_bid_direction(device, bid_type)
+    direction = fcas_bid_direction(device, bid_type)
     direction == :none && return
-    trapezium = AustralianElectricityMarkets._fcas_series_name("fcas_trapezium", bid_type, direction == :decremental)
+    trapezium = fcas_series_name("fcas_trapezium", bid_type, direction == :decremental)
     stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, trapezium)
     resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, trapezium))
     window = _FCASWindow(first(stamps), length(stamps), resolution, :dispatch)
@@ -75,6 +75,6 @@ end
 # Attaches `values` on `stamps` as `device`'s `name` series, replacing an existing one.
 function _replace_fcas_series!(sys::PSY.System, device::PSY.Device, name::String, stamps, values, resolution)
     PSY.has_time_series(device, PSY.SingleTimeSeries, name) && PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, name)
-    PSY.add_time_series!(sys, device, AustralianElectricityMarkets._single_series(name, first(stamps), values, resolution))
+    PSY.add_time_series!(sys, device, single_series(name, first(stamps), values, resolution))
     return
 end

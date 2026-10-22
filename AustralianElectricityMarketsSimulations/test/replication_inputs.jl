@@ -34,7 +34,7 @@ end
     @test !AEMS._has_mnsp_offers(ic)
     @test_throws r"IC2.*MNSP" AEMS._check_mnsp_offers(ic)
     # With every dispatch device unavailable, the template reaches the MNSP check.
-    foreach(d -> set_available!(d, false), AustralianElectricityMarkets._nem_dispatch_devices(sys))
+    foreach(d -> set_available!(d, false), AustralianElectricityMarkets.nem_dispatch_devices(sys))
     @test_throws r"IC2.*MNSP" replication_template(sys)
     get_ext(ic)["ic_type"] = "REGULATED"
     @test isnothing(AEMS._check_mnsp_offers(ic))

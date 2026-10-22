@@ -1,16 +1,16 @@
 module AustralianElectricityMarketsSimulations
 
 import AustralianElectricityMarkets
-using AustralianElectricityMarkets: BidType, ConstraintSense, EnergyTieBreak, FCASService, FCASTrapezium,
+using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCASTrapezium,
     FCAS_REGULATION_MARKETS, GenericConstraint, InterconnectorLossModel, InterconnectorTerm,
-    IntervalInputs, RegionTerm, UnitTerm, fcas_service_name, get_bid_type, get_constraint_weight,
+    RegionTerm, UnitTerm, fcas_bid_direction, fcas_series_name, fcas_service_name, get_bid_type, get_constraint_weight,
     get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_enablement_max,
     get_enablement_min, get_energy_availability, get_factor, get_fcas_agc_ramp_capability,
     get_fcas_agc_status, get_fcas_offer_curve, get_fcas_requirements, get_initial_mw, get_interconnector,
-    get_lower_slope_coeff, get_max_avail, get_missing_constraint_intervals, get_region,
-    get_scaled_fcas_trapezium, get_sense, get_service, get_skipped_constraints,
+    get_limit_type, get_lower_slope_coeff, get_max_avail, get_missing_constraint_intervals, get_region,
+    get_scaled_fcas_trapezium, get_sense, get_service, get_skipped_constraints, get_source,
     get_storage_energy_max_avail, get_terms, get_upper_slope_coeff, loss_curve_vertex_values,
-    loss_segments, scale_fcas_trapezium
+    is_non_scheduled_load, loss_segments, nem_dispatch_devices, scale_fcas_trapezium, single_series
 using Chain
 using DataFrames
 using Dates
@@ -67,10 +67,8 @@ include("execution/replication.jl")
 include("execution/simulation.jl")
 include("execution/interconnector_loss_gaps.jl")
 
-@doc (@doc AustralianElectricityMarkets.IntervalInputs) IntervalInputs
 
 export DISPATCH_INTERVAL_HOURS, DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
-export IntervalInputs
 export REPLICATION_PARTS, replication_template
 export prepare_replication!, replication_simulation, replication_results
 export ENERGY_OFFER_CVP_FACTOR, EnergyOfferSurplusSlack, EnergyOfferDeficitSlack,
@@ -92,7 +90,8 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASLowerSlopeParameter, FCASRampingLimitParameter, FCASBandPriceParameter,
     FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, set_fcas_effective_offers!,
     FCAS_MAXAVAIL_CVP_FACTOR, FCAS_BDU_RAMPING_CVP_FACTOR, FCAS_CAPACITY_CVP_FACTOR,
-    FCAS_RAMPING_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR,
+    FCAS_RAMPING_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR, INTERCONNECTOR_ZERO_CVP_FACTOR, FIXED_LOADING_CVP_FACTOR,
+    constraint_cvp_factor,
     UNIT_RAMP_CVP_FACTOR, UnitRampUpSlack, UnitRampDownSlack,
     INTERCONNECTOR_FLOW_CVP_FACTOR, InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack
 export filter_buildable_generic_constraints, compute_fcas_prices
@@ -101,7 +100,7 @@ export AbstractNEMDispatch, NEMReplayDispatch, NEMLookaheadDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter
 export nem_dispatch_participants, set_nem_dispatch_models!
-export TIE_BREAK_CVP_FACTOR, TIE_BREAK_SERVICE_NAME, TieBreakScaleParameter, TieBreakMarket, TieBreakSlackUp,
+export EnergyTieBreak, TIE_BREAK_CVP_FACTOR, TIE_BREAK_SERVICE_NAME, TieBreakScaleParameter, TieBreakMarket, TieBreakSlackUp,
     TieBreakSlackDown, TieBreakConstraint, set_tie_break_scales!, check_tie_break_pairs
 export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegmentVariable,
     InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint,

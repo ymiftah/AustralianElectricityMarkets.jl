@@ -9,7 +9,7 @@ end
 
 
 """
-    _single_series(name, start_date, values, resolution) -> SingleTimeSeries
+    single_series(name, start_date, values, resolution) -> SingleTimeSeries
 
 Builds a `SingleTimeSeries` named `name` holding `values`, one per interval of `resolution`
 starting at `start_date`.
@@ -23,7 +23,7 @@ starting at `start_date`.
 # Returns
 A `SingleTimeSeries`.
 """
-function _single_series(name::AbstractString, start_date, values, resolution)
+function single_series(name::AbstractString, start_date, values, resolution)
     timestamps = [start_date + (k - 1) * resolution for k in 1:length(values)]
     return SingleTimeSeries(; name = name, data = TimeArray(timestamps, values), resolution = resolution)
 end

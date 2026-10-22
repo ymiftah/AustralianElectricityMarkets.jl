@@ -11,11 +11,10 @@ using Chain
 using DataFrames
 using Dates
 using DuckDB
-using PowerSystems
 using Statistics: median, mean
 using AustralianElectricityMarketsCache
 import AustralianElectricityMarketsCache: _parse_hive_root
-import ..AustralianElectricityMarkets: BidType, FCAS_BID_TYPES, AEMO_PM_MAPPING, AEMO_FUEL_MAPPING
+import ..AustralianElectricityMarkets: BidType, FCAS_BID_TYPES
 
 export read_hive, read_units, read_demand, read_energy_bids, read_fixed_loads, read_bids, read_loss_factors
 export read_fcas_bids, read_fcas_requirements, read_fcas_prices, read_fcas_dispatch,

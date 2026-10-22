@@ -1397,8 +1397,9 @@
 
         # Read raw bids (unscaled by loss factors) to compare
         raw_bids = read_bids(ldb, date_range; resolution = Minute(5))
-        raw_price(duid, direction) = get_y_coords(first(raw_bids[(raw_bids.DUID .== duid) .& (raw_bids.DIRECTION .== direction), :piecewise_step_data]))
-        raw_mw(duid, direction) = get_x_coords(first(raw_bids[(raw_bids.DUID .== duid) .& (raw_bids.DIRECTION .== direction), :piecewise_step_data]))
+        raw_curve(duid, direction) = AustralianElectricityMarkets._extract_power_bids(first(eachrow(raw_bids[(raw_bids.DUID .== duid) .& (raw_bids.DIRECTION .== direction), :])))
+        raw_price(duid, direction) = get_y_coords(raw_curve(duid, direction))
+        raw_mw(duid, direction) = get_x_coords(raw_curve(duid, direction))
 
         prices(sys, name, series = "variable_cost") = with_units_base(sys, "NATURAL_UNITS") do
             ta = get_time_series_array(SingleTimeSeries, get_component(Device, sys, name), series)

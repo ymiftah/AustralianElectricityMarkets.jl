@@ -43,12 +43,19 @@ end
 
 
 """
-    _fcas_bid_direction(device, bid_type) -> Symbol
+    fcas_bid_direction(device, bid_type) -> Symbol
 
-`:incremental`, `:decremental`, `:both` or `:none`, describing which `"fcas_trapezium_<bid_type>
-[_decremental]"` series `device` carries.
+Which sides of a `bid_type` FCAS bid `device` carries, read from its `"fcas_trapezium_<bid_type>"`
+and `"fcas_trapezium_<bid_type>_decremental"` series ([`fcas_series_name`](@ref)).
+
+# Arguments
+- `device`: any component.
+- `bid_type`: the FCAS [`BidType`](@ref).
+
+# Returns
+`:incremental`, `:decremental`, `:both` or `:none`.
 """
-function _fcas_bid_direction(device, bid_type::BidType)
+function fcas_bid_direction(device, bid_type::BidType)
     bid_type_str = string(bid_type)
     has_inc = has_time_series(device, SingleTimeSeries, "fcas_trapezium_$bid_type_str")
     has_dec = has_time_series(device, SingleTimeSeries, "fcas_trapezium_$(bid_type_str)_decremental")
@@ -67,7 +74,7 @@ incremental bid on any device but a load, a decremental-only bid on a `Storage` 
 `InterruptiblePowerLoad`, or a `Storage` device's regulation bid on both sides.
 """
 function _fcas_bid_modeled(device, bid_type::BidType)
-    direction = _fcas_bid_direction(device, bid_type)
+    direction = fcas_bid_direction(device, bid_type)
     direction == :incremental && return !(device isa InterruptiblePowerLoad)
     direction == :decremental && return device isa Storage || device isa InterruptiblePowerLoad
     direction == :both && return device isa Storage && bid_type in FCAS_REGULATION_MARKETS
@@ -81,8 +88,8 @@ function _fcas_service_devices(
         sys, region::AbstractString, bid_type::BidType;
         candidates = _region_devices(sys, region; loads = true),
     )
-    inc_name = _fcas_series_name("fcas_curve", bid_type, false)
-    dec_name = _fcas_series_name("fcas_curve", bid_type, true)
+    inc_name = fcas_series_name("fcas_curve", bid_type, false)
+    dec_name = fcas_series_name("fcas_curve", bid_type, true)
     return filter(candidates) do d
         has_time_series(d, SingleTimeSeries, inc_name) || has_time_series(d, SingleTimeSeries, dec_name)
     end
@@ -151,9 +158,9 @@ function _attach_fcas_bid_series!(sys, component, gdf, duid::AbstractString, ser
     rows = gdf[(duid,)]
     # rows.curve_data/.trapezium_row are SubArray views into the grouped DataFrame -
     # the series needs plain Vectors.
-    curve_ts = _single_series("fcas_curve_$(series_suffix)", start_date, collect(rows.curve_data), resolution)
+    curve_ts = single_series("fcas_curve_$(series_suffix)", start_date, collect(rows.curve_data), resolution)
     add_time_series!(sys, component, curve_ts)
-    trapezium_ts = _single_series("fcas_trapezium_$(series_suffix)", start_date, collect(rows.trapezium_row), resolution)
+    trapezium_ts = single_series("fcas_trapezium_$(series_suffix)", start_date, collect(rows.trapezium_row), resolution)
     add_time_series!(sys, component, trapezium_ts)
     return true
 end
@@ -237,7 +244,7 @@ function set_fcas_bids!(sys, db, date_range; kwargs...)
             attached = _attach_fcas_bid_series!(
                 sys, load, gdf_dec, get_name(load), "$(bid_type_str)_decremental", start_date, resolution,
             )
-            attached && _is_non_scheduled_load(load) && get(get_ext(load), "commissioned", true) === true &&
+            attached && is_non_scheduled_load(load) && get(get_ext(load), "commissioned", true) === true &&
                 set_available!(load, true)
         end
     end

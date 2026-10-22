@@ -111,7 +111,7 @@ function _check_replay_energy_bid_coverage(sys, db, date_range; intervention::In
     for T in (PSY.Generator, PSY.InterruptiblePowerLoad, PSY.EnergyReservoirStorage), device in PSY.get_components(T, sys)
         name = PSY.get_name(device)
         name in required_names && !(name in non_scheduled) || continue
-        device isa PSY.InterruptiblePowerLoad && AustralianElectricityMarkets._is_non_scheduled_load(device) && continue
+        device isa PSY.InterruptiblePowerLoad && AustralianElectricityMarkets.is_non_scheduled_load(device) && continue
         required[name] = if device isa PSY.Storage
             ("GEN", "LOAD")
         elseif device isa PSY.InterruptiblePowerLoad

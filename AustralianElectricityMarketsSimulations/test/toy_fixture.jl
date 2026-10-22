@@ -106,7 +106,7 @@ function nem_toy_system(
     function add_forecast!(component, name, value)
         PSY.add_time_series!(
             sys, component,
-            AustralianElectricityMarkets._single_series(name, start, _toy_values(value, length(stamps)), TOY_RESOLUTION),
+            AustralianElectricityMarkets.single_series(name, start, _toy_values(value, length(stamps)), TOY_RESOLUTION),
         )
         return
     end
@@ -157,11 +157,11 @@ function nem_toy_system(
             start, TOY_RESOLUTION,
         )
         load_offer = PSY.PiecewiseStepData([0.0, bat.load_capacity], [bat.load_price])
-        decr = AustralianElectricityMarkets._single_series(
+        decr = AustralianElectricityMarkets.single_series(
             "decremental_variable_cost", start, fill(load_offer, length(stamps)), TOY_RESOLUTION,
         )
         PSY.set_decremental_variable_cost!(sys, battery, decr, PSY.UnitSystem.NATURAL_UNITS)
-        decr_init = AustralianElectricityMarkets._single_series(
+        decr_init = AustralianElectricityMarkets.single_series(
             "decremental_initial_input", start, fill(0.0, length(stamps)), TOY_RESOLUTION,
         )
         PSY.set_decremental_initial_input!(sys, battery, decr_init)
@@ -268,7 +268,7 @@ function add_toy_interchange!(sys, stamps, ic)
         curves = [_toy_offer(bands) for (_, bands) in per_stamp]
         avail = [Float64(max_avail) for (max_avail, _) in per_stamp]
         for (name, values) in (("mnsp_$(dir)_offer", curves), ("mnsp_$(dir)_max_avail", avail))
-            PSY.add_time_series!(sys, interchange, AustralianElectricityMarkets._single_series(name, TOY_START, values, TOY_RESOLUTION))
+            PSY.add_time_series!(sys, interchange, AustralianElectricityMarkets.single_series(name, TOY_START, values, TOY_RESOLUTION))
         end
         PSY.get_ext(interchange)["mnsp_$dir"] = Dict{String, Any}("from_region_tlf" => tlfs[1], "to_region_tlf" => tlfs[2])
     end
@@ -416,7 +416,7 @@ function add_toy_fcas_offer!(sys, device, stamps, bid_type, trapeziums, bands; d
     ]
     curves = [PSY.PiecewiseStepData([0.0; cumsum(first.(bs))] ./ base_power, last.(bs)) for bs in bands]
     for (name, values) in (("fcas_trapezium_$suffix", traps), ("fcas_curve_$suffix", curves))
-        PSY.add_time_series!(sys, device, AustralianElectricityMarkets._single_series(name, stamps[1], values, TOY_RESOLUTION))
+        PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series(name, stamps[1], values, TOY_RESOLUTION))
     end
     return
 end

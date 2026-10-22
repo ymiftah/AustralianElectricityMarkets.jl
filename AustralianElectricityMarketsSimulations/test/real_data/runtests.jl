@@ -112,7 +112,7 @@ end
     set_market_bids!(sys, db, REAL_DATE_RANGE; resolution = REAL_RESOLUTION)
     set_fcas_scaling_inputs!(sys, db, REAL_DATE_RANGE)
     limits = read_dispatch_limits(db, REAL_DATE_RANGE)
-    devices = AEM._nem_dispatch_devices(sys)
+    devices = AEM.nem_dispatch_devices(sys)
 
     @testset "dispatch limits" begin
         dispatched = Set(limits.DUID)
@@ -366,7 +366,7 @@ end
             bid_type in AEM.FCAS_REGULATION_MARKETS || continue
             both_names = String[]
             for d in PSY.get_contributing_devices(sys, svc)
-                direction = AEM._fcas_bid_direction(d, bid_type)
+                direction = AEM.fcas_bid_direction(d, bid_type)
                 for decremental in (direction == :both ? (false, true) : (direction == :decremental,))
                     raw = get_fcas_trapezium(d, bid_type, REAL_START, horizon; decremental = decremental)
                     scaled = get_scaled_fcas_trapezium(d, bid_type, REAL_START, horizon; decremental = decremental)

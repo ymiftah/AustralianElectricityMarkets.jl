@@ -17,11 +17,13 @@ let
         @test df isa DataFrame
         @test nrow(df) > 0
         @test "DUID" in names(df)
-        @test "TECHNOLOGY" in names(df)
-        @test "FUELTYPE" in names(df)
+        @test !("TECHNOLOGY" in names(df))
+        @test !("FUELTYPE" in names(df))
         @test "BW01" in df.DUID
         # Verify technology mapping from mock data "Battery Storage" (BW01)
-        @test only(df.TECHNOLOGY[df.DUID .== "BW01"]) == PrimeMovers.BA
+        mapped = AustralianElectricityMarkets.RegionModel._map_unit_technology(df)
+        @test only(mapped.TECHNOLOGY[mapped.DUID .== "BW01"]) == PrimeMovers.BA
+        @test only(mapped.FUELTYPE[mapped.DUID .== "BW01"]) == ThermalFuels.OTHER
 
         # BAYSW (station for BW01-BW04) is renamed in a later STATION archive_month
         # partition (mock_data.jl). read_units() must resolve one name per DUID —
@@ -39,7 +41,8 @@ let
         @test df isa DataFrame
         @test nrow(df) > 0
         @test "DUID" in names(df)
-        @test "piecewise_step_data" in names(df)
+        @test "PRICEBANDARRAY" in names(df) && "BANDAVAILARRAY" in names(df)
+        @test !("piecewise_step_data" in names(df))
     end
 
     @testset "Bounded demand preserves complete aggregation bins" begin

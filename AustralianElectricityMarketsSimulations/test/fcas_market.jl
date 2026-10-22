@@ -42,11 +42,11 @@ function add_toy_fcas!(
     )
     PSY.add_time_series!(
         sys, device,
-        AustralianElectricityMarkets._single_series("fcas_trapezium_$suffix", initial_timestamp, fill(trap_tuple, n), resolution),
+        AustralianElectricityMarkets.single_series("fcas_trapezium_$suffix", initial_timestamp, fill(trap_tuple, n), resolution),
     )
     PSY.add_time_series!(
         sys, device,
-        AustralianElectricityMarkets._single_series("fcas_curve_$suffix", initial_timestamp, fill(curve, n), resolution),
+        AustralianElectricityMarkets.single_series("fcas_curve_$suffix", initial_timestamp, fill(curve, n), resolution),
     )
     return
 end
@@ -163,7 +163,7 @@ function _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
         sys, bat, PSY.SingleTimeSeries(; name = "initial_mw", data = PSY.TimeSeries.TimeArray(stamps, fill(0.0, length(stamps)))),
     )
     for (name, mw) in (("energy_max_avail", PSY.get_output_active_power_limits(bat).max), ("energy_max_avail_decremental", PSY.get_input_active_power_limits(bat).max))
-        PSY.add_time_series!(sys, bat, AustralianElectricityMarkets._single_series(name, stamps[1], fill(mw / base_power, length(stamps)), TOY_RESOLUTION))
+        PSY.add_time_series!(sys, bat, AustralianElectricityMarkets.single_series(name, stamps[1], fill(mw / base_power, length(stamps)), TOY_RESOLUTION))
     end
     return
 end
@@ -689,7 +689,7 @@ function storage_fcas_toy_model(
         for (name, mw) in zip(("energy_max_avail", "energy_max_avail_decremental"), availability)
             PSY.add_time_series!(
                 sys, bat,
-                AustralianElectricityMarkets._single_series(name, stamps[1], fill(mw / get_base_power(sys), length(stamps)), TOY_RESOLUTION),
+                AustralianElectricityMarkets.single_series(name, stamps[1], fill(mw / get_base_power(sys), length(stamps)), TOY_RESOLUTION),
             )
         end
     end

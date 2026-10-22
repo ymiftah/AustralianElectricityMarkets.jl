@@ -1,4 +1,18 @@
-_fcas_series_name(prefix::AbstractString, service::BidType, decremental::Bool) =
+"""
+    fcas_series_name(prefix, service, decremental) -> String
+
+Name of the per-device FCAS time series `"<prefix>_<service>"`, suffixed `"_decremental"` for the
+decremental side of a storage device's or load's bid.
+
+# Arguments
+- `prefix`: the series kind, such as `"fcas_trapezium"` or `"fcas_curve"`.
+- `service`: the FCAS [`BidType`](@ref).
+- `decremental`: whether the series is the decremental side.
+
+# Returns
+A `String`.
+"""
+fcas_series_name(prefix::AbstractString, service::BidType, decremental::Bool) =
     decremental ? "$(prefix)_$(string(service))_decremental" : "$(prefix)_$(string(service))"
 
 
@@ -54,7 +68,7 @@ per-unit of the system base under `SYSTEM_BASE`). `decremental` selects the stor
 step holds a malformed trapezium (out-of-order limits or a negative `MaxAvail`).
 """
 function get_fcas_trapezium(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
-    name = _fcas_series_name("fcas_trapezium", service, decremental)
+    name = fcas_series_name("fcas_trapezium", service, decremental)
     rows = _read_fcas_series("trapezium", component, name, service, decremental, initial_time, horizon)
     multiplier = _fcas_units_multiplier(component)
     return [
@@ -173,7 +187,7 @@ Full-series read of `component`'s FCAS offer curve for `service`, `horizon` step
 `DIRECTION == "LOAD"` series. Throws `ArgumentError` if the series isn't attached.
 """
 function get_fcas_offer_curve(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
-    name = _fcas_series_name("fcas_curve", service, decremental)
+    name = fcas_series_name("fcas_curve", service, decremental)
     rows = _read_fcas_series("curve", component, name, service, decremental, initial_time, horizon)
     multiplier = _fcas_units_multiplier(component)
     return [PSY.PiecewiseStepData(get_x_coords(c) .* multiplier, get_y_coords(c)) for c in rows]

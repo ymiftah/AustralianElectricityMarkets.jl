@@ -128,7 +128,8 @@ and FCAS requirements. Attached to its contributing devices as a `PSY.Service`.
 - `available`: whether it is enforced.
 - `sense`: `LE`, `GE` or `EQ`, from `GENCONDATA.CONSTRAINTTYPE`.
 - `rhs`: static default from `GENCONDATA.CONSTRAINTVALUE`, per-unit of the system base.
-- `constraint_weight`: `GENCONDATA.GENERICCONSTRAINTWEIGHT` verbatim.
+- `constraint_weight`: `GENCONDATA.GENERICCONSTRAINTWEIGHT` verbatim; 1.0 for a constraint whose
+  `source` is `"built-in"`, which has no `GENCONDATA` row.
 - `description`: human-readable, defaults to `""`.
 - `terms`: the LHS algebra, from the `SPD*` tables.
 - `fcas_requirements`: the `(region, service)` prices this constraint governs.

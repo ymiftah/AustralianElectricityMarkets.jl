@@ -12,7 +12,7 @@ end
     _fcas_direction_problem(device, bid_type, direction) -> Union{Nothing, String}
 
 Why [`FCASMarket`](@ref) cannot model `device`'s `bid_type` bid in `direction` (as returned by
-`AustralianElectricityMarkets._fcas_bid_direction`), or `nothing` when it can. Modeled directions
+`fcas_bid_direction`), or `nothing` when it can. Modeled directions
 are an incremental bid on any device but a `PSY.ControllableLoad`, a decremental bid on a
 `PSY.Storage` device or a `PSY.ControllableLoad`, and both directions on a `PSY.Storage` device's
 regulation bid.
@@ -47,7 +47,7 @@ an `ArgumentError` when [`FCASMarket`](@ref) does not model that direction
 `:incremental`, `:decremental`, or `:both`.
 """
 function _fcas_direction(device::PSY.Device, bid_type::BidType)
-    direction = AustralianElectricityMarkets._fcas_bid_direction(device, bid_type)
+    direction = fcas_bid_direction(device, bid_type)
     problem = _fcas_direction_problem(device, bid_type, direction)
     isnothing(problem) || throw(ArgumentError("FCASMarket: \"$(PSY.get_name(device))\" $problem."))
     return direction
@@ -625,7 +625,7 @@ const FCAS_INACTIVE_LIMIT_MW = 1.0e5
 
 "`\"fcas_effective_<BIDTYPE>[_decremental]\"`, the [`set_fcas_effective_offers!`](@ref) series of one FCAS offer."
 function _fcas_effective_series_name(bid_type::BidType, decremental::Bool)
-    return AustralianElectricityMarkets._fcas_series_name("fcas_effective", bid_type, decremental)
+    return fcas_series_name("fcas_effective", bid_type, decremental)
 end
 
 
@@ -1366,7 +1366,7 @@ Band labels `"1"` to `"n"`, `n` the most bands any offer in `offers` has over th
 function _fcas_band_labels(offers, bid_type::BidType)
     n = 1
     for (device, decremental) in offers
-        name = AustralianElectricityMarkets._fcas_series_name("fcas_curve", bid_type, decremental)
+        name = fcas_series_name("fcas_curve", bid_type, decremental)
         curves = PSY.get_time_series_values(PSY.SingleTimeSeries, device, name)
         n = max(n, maximum(c -> length(PSY.get_y_coords(c)), curves))
     end

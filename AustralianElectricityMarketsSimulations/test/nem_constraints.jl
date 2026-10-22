@@ -527,7 +527,7 @@ the rest of the `System`.
 """
 function _matching_series(params, name::AbstractString, value)
     horizon_steps = Int(params.horizon / params.interval)
-    return AustralianElectricityMarkets._single_series(
+    return AustralianElectricityMarkets.single_series(
         name, params.initial_timestamp, fill(value, horizon_steps + params.count - 1), params.interval,
     )
 end
@@ -866,19 +866,19 @@ end
 end
 
 """
-    _add_zero_flow_pair!(sys, params, interconnector, weight)
+    _add_zero_flow_pair!(sys, params, interconnector)
 
 Attaches the two `<=` [`GenericConstraint`](@ref)s of an Interconnector Zero pair on `interconnector`
-(`-flow <= 0` and `flow <= 0`, right-hand side 0, `weight` the CVP factor), the shape
-`add_nem_constraints!` builds from its built-in definition. Added before the retime, as for
-[`_add_storage_constraint!`](@ref).
+(`-flow <= 0` and `flow <= 0`, right-hand side 0), the built-in shape `add_nem_constraints!` builds
+with no weight of its own. Added before the retime, as for [`_add_storage_constraint!`](@ref).
 """
-function _add_zero_flow_pair!(sys, params, interconnector::AbstractString, weight::Float64)
+function _add_zero_flow_pair!(sys, params, interconnector::AbstractString)
     times, n_raw = _raw_series_times(params)
     for (name, factor) in (("ZERO_NEG", -1.0), ("ZERO_POS", 1.0))
         gc = GenericConstraint(;
-            name = name, sense = ConstraintSense.LE, rhs = 0.0, constraint_weight = weight,
+            name = name, sense = ConstraintSense.LE, rhs = 0.0,
             terms = ConstraintTerm[InterconnectorTerm(interconnector, factor)],
+            ext = Dict{String, Any}("limit_type" => "Interconnector Zero", "source" => "built-in"),
         )
         add_service!(sys, gc, [get_component(AreaInterchange, sys, interconnector)])
         add_time_series!(sys, gc, SingleTimeSeries(; name = "rhs", data = TimeArray(times, zeros(n_raw))))
@@ -905,8 +905,8 @@ end
     add_nem_constraints!(sys, NEM_CONSTRAINTS_DB, NEM_CONSTRAINTS_DATE_RANGE)
     _remove_unused_pscb_constraints!(sys)
     params = _native_forecast_params(sys)
-    weight = 1160.0
-    _add_zero_flow_pair!(sys, params, "IC1", weight)
+    weight = INTERCONNECTOR_ZERO_CVP_FACTOR
+    _add_zero_flow_pair!(sys, params, "IC1")
     _retime_gc_series!(sys, params, Dict{String, Float64}())
     _prune_unbuildable_constraints!(sys)
 
@@ -933,4 +933,19 @@ end
         @test all(t -> objective_terms[slack[name, t]] ≈ expected, PSI.get_time_steps(container))
         @test !PSI.has_container_key(container, AEMS.GenericConstraintSlackDown, GenericConstraint, name)
     end
+end
+
+@testset "constraint_cvp_factor prices built-in constraints by limit type, others by their GENCONDATA weight" begin
+    built_in(limit_type) = GenericConstraint(;
+        name = "B", sense = ConstraintSense.LE, rhs = 0.0, terms = ConstraintTerm[],
+        ext = Dict{String, Any}("limit_type" => limit_type, "source" => "built-in"),
+    )
+    @test constraint_cvp_factor(built_in("Interconnector Zero")) == INTERCONNECTOR_ZERO_CVP_FACTOR == 1160.0
+    @test constraint_cvp_factor(built_in("Energy Inflexible Offer")) == FIXED_LOADING_CVP_FACTOR == 380.0
+    @test_throws ArgumentError constraint_cvp_factor(built_in("Unknown"))
+    published = GenericConstraint(;
+        name = "P", sense = ConstraintSense.LE, rhs = 0.0, constraint_weight = 35.0, terms = ConstraintTerm[],
+        ext = Dict{String, Any}("limit_type" => "Interconnector Zero", "source" => "AEMO"),
+    )
+    @test constraint_cvp_factor(published) == 35.0
 end

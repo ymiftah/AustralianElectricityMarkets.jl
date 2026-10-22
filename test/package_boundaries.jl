@@ -11,7 +11,9 @@ using Logging
         @test read_fcas_bids === readers.read_fcas_bids
         @test parentmodule(read_units) === readers
         @test parentmodule(read_fcas_bids) === readers
+        @test !isdefined(readers, :PowerSystems)
     end
+    @test !isdefined(AustralianElectricityMarkets, :EnergyTieBreak)
 
     @test HiveConfiguration === AustralianElectricityMarketsData.HiveConfiguration
     @test aem_connect === AustralianElectricityMarketsData.aem_connect

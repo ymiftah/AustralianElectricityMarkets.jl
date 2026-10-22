@@ -229,7 +229,7 @@ let
         remove_time_series!(sys, SingleTimeSeries, load, "loss_demand")
         add_time_series!(
             sys, load,
-            AustralianElectricityMarkets._single_series("loss_demand", first(stamps) + Minute(5), values, get_resolution(original)),
+            AustralianElectricityMarkets.single_series("loss_demand", first(stamps) + Minute(5), values, get_resolution(original)),
         )
         @test_throws r"is not on the timestamps" set_loss_demand_coefficients!(sys)
     end

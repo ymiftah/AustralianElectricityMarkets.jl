@@ -472,7 +472,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   type and it had no other subtype.
 - Single-interval input readers `read_interval_inputs` and `read_uigf_as_dict`, and the
   `read_uigf(db, ::DateTime)` method: replay reads every interval through the range readers.
-  `IntervalInputs` stays, re-exported by AustralianElectricityMarketsSimulations.
+- `IntervalInputs`, which nothing constructed.
 - Unused `FUEL_MAPPING` and `FUEL_PRICES` constants.
 - `set_storage_dispatch_ceilings!` and the toy fixture's `ceilings` option: replay dispatch reads raw directional storage availability, so nothing consumes the derived `"storage_gen_ceiling"` and `"storage_load_ceiling"` series.
 - AEMSim's database-taking `replication_system` and `replicate_range` APIs, database-reader
@@ -486,6 +486,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Statistics` dependency of `AustralianElectricityMarketsSimulations`.
 
 ### Changed
+
+- `fcas_series_name`, `fcas_bid_direction`, `nem_dispatch_devices`, `is_non_scheduled_load` and
+  `single_series` are public AEM API, used by AEMSim to read the systems AEM builds.
+- CVP factors of the built-in Interconnector Zero (1160) and Energy Inflexible Offer (380) generic
+  constraints move to AEMSim as `INTERCONNECTOR_ZERO_CVP_FACTOR` and `FIXED_LOADING_CVP_FACTOR`.
+  AEM builds those constraints with weight 1.0, and AEMSim prices every generic constraint through
+  the new `constraint_cvp_factor`. Dispatch is unchanged.
+- `EnergyTieBreak` moves from AEM to AEMSim, which creates and models it.
+- `read_units` returns the raw unit columns without `TECHNOLOGY`/`FUELTYPE`; the PowerSystems
+  prime mover and fuel mapping happens in `get_generators_dataframe` and `get_batteries_dataframe`.
+  Readers no longer depends on PowerSystems.
+- `read_bids` and `read_fcas_bids` return the raw `PRICEBANDARRAY`/`BANDAVAILARRAY` columns
+  instead of a `piecewise_step_data` curve; `set_market_bids!` and the FCAS setters build the
+  `PiecewiseStepData` curves.
 
 - `FCASMarket` and `check_fcas_services` apply one FCAS bid direction rule with one message per
   violation, so a decremental-only FCAS bid on a device that is neither storage nor a controllable

@@ -120,7 +120,7 @@ end
 
 Like [`read_bids`](@ref), but for an AEMO FCAS `bid_type` (e.g. `BidType.RAISE6SEC`,
 `BidType.RAISEREG` — see `FCAS_BID_TYPES`). Reuses `_massage_bids` for the 10-band offer
-curve (same shape as the energy bid path), and additionally reads the AEMO FCAS trapezium
+(same columns as the energy bid path), and additionally reads the AEMO FCAS trapezium
 columns from `BIDPEROFFER_D` (`ENABLEMENTMIN/MAX`, `LOWBREAKPOINT`, `HIGHBREAKPOINT`,
 `ROCUP`, `ROCDOWN` — already present in that table, just never selected by the
 energy-only bid path).

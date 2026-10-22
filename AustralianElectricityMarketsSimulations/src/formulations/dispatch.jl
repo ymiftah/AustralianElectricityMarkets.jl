@@ -160,7 +160,7 @@ function PSI.construct_device!(
     # A non-scheduled load has no energy offer and is never dispatched for energy (it only offers
     # FCAS), so its energy is held at 0 MW rather than left to the elastic MaxAvail row.
     for d in devices
-        AustralianElectricityMarkets._is_non_scheduled_load(d) || continue
+        is_non_scheduled_load(d) || continue
         for t in PSI.get_time_steps(container)
             JuMP.fix(PSI.get_variable(container, PSI.ActivePowerVariable(), T)[PSY.get_name(d), t], 0.0; force = true)
         end

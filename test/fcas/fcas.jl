@@ -195,7 +195,7 @@
         @test all(==(20.0), bids.ENABLEMENTMIN[.!asload])
         @test all(==(100.0), bids.ENABLEMENTMAX[.!asload])
         @test all(==(0.0), bids.ENABLEMENTMAX[asload])
-        @test "piecewise_step_data" in names(bids)
+        @test "PRICEBANDARRAY" in names(bids) && "BANDAVAILARRAY" in names(bids)
 
         reg_bids = read_fcas_bids(db, date_range, BidType.RAISEREG)
         @test !isempty(reg_bids)
@@ -441,9 +441,9 @@
         )
 
         start_date = DateTime(2025, 1, 1)
-        curve_ts = AustralianElectricityMarkets._single_series("fcas_curve_RAISE6SEC", start_date, [psd, psd], Minute(5))
+        curve_ts = AustralianElectricityMarkets.single_series("fcas_curve_RAISE6SEC", start_date, [psd, psd], Minute(5))
         add_time_series!(sys, gen, curve_ts)
-        trapezium_ts = AustralianElectricityMarkets._single_series("fcas_trapezium_RAISE6SEC", start_date, [trap_row, trap_row], Minute(5))
+        trapezium_ts = AustralianElectricityMarkets.single_series("fcas_trapezium_RAISE6SEC", start_date, [trap_row, trap_row], Minute(5))
         add_time_series!(sys, gen, trapezium_ts)
 
         mktpath = mktempdir()

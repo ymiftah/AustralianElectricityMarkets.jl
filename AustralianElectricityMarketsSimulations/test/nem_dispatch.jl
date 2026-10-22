@@ -57,7 +57,7 @@ function flatten_storage_avail!(sys, duid, name, value)
     PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, name)
     PSY.add_time_series!(
         sys, device,
-        AustralianElectricityMarkets._single_series(name, first(stamps), fill(value, length(stamps)), NEM_DISPATCH_RESOLUTION),
+        AustralianElectricityMarkets.single_series(name, first(stamps), fill(value, length(stamps)), NEM_DISPATCH_RESOLUTION),
     )
     return sys
 end

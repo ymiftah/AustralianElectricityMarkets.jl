@@ -453,7 +453,7 @@ end
 
 Prices `gc`'s elastic slacks (built by [`_add_gc_slack_variables!`](@ref), a no-op unless
 `PSI.get_use_slacks(model)`) through a [`GenericConstraintSlackCostParameter`](@ref): each
-interval's coefficient is its `"invoked"` value times `GENERICCONSTRAINTWEIGHT` times the Market
+interval's coefficient is its `"invoked"` value times [`constraint_cvp_factor`](@ref) times the Market
 Price Cap per MW, so a non-invoked interval's slack is free and its row is vacuous.
 `GenericConstraint`s built without slacks carry no cost of their own.
 
@@ -470,7 +470,7 @@ function PSI.objective_function!(
     resolution = PSI.get_resolution(container)
     initial_time = PSI.get_initial_time(container)
     base_power = PSI.get_base_power(container)
-    weight = get_constraint_weight(gc)
+    weight = constraint_cvp_factor(gc)
     param = PSI.add_param_container!(
         container, GenericConstraintSlackCostParameter(), GenericConstraint,
         (GenericConstraintSlackUp, GenericConstraintSlackDown), PSI.SOSStatusVariable.NO_VARIABLE,

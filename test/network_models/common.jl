@@ -64,14 +64,14 @@
         # PUMP2 is a scheduled load with no GENUNITS/DUALLOC row, so no technology or fuel.
         pump2 = only(eachrow(subset(units, :DUID => ByRow(==("PUMP2")))))
         @test pump2.DISPATCHTYPE == "LOAD"
-        @test ismissing(pump2.TECHNOLOGY)
+        @test ismissing(pump2.CO2E_ENERGY_SOURCE)
         @test allunique(units.DUID)
     end
 
     @testset "read_units resolves a genset shared with a legacy DUALLOC DUID" begin
         # PUMP1's genset also maps to PUMP1_OLD, which sorts after it (as OSB01 after OSB-AG).
         pump1 = only(eachrow(subset(read_units(db), :DUID => ByRow(==("PUMP1")))))
-        @test pump1.TECHNOLOGY == PrimeMovers.HY
+        @test pump1.CO2E_ENERGY_SOURCE == "Hydro"
     end
 
     @testset "get_scheduled_loads_dataframe" begin

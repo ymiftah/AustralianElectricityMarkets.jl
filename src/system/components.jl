@@ -58,6 +58,22 @@ end
 
 
 """
+    _map_unit_technology(units) -> DataFrame
+
+Copy of a [`read_units`](@ref) DataFrame with `:TECHNOLOGY::PrimeMovers` and
+`:FUELTYPE::ThermalFuels` columns derived from its raw `:CO2E_ENERGY_SOURCE` via
+`AEMO_PM_MAPPING` and `AEMO_FUEL_MAPPING`; both are `missing` where the source is.
+"""
+function _map_unit_technology(units)
+    return transform(
+        units,
+        :CO2E_ENERGY_SOURCE => ByRow(x -> AustralianElectricityMarkets.AEMO_PM_MAPPING[x]) => :TECHNOLOGY,
+        :CO2E_ENERGY_SOURCE => ByRow(x -> AustralianElectricityMarkets.AEMO_FUEL_MAPPING[x]) => :FUELTYPE,
+    )
+end
+
+
+"""
     get_bus_dataframe(db)
 
 Generates a DataFrame of bus information.
@@ -226,7 +242,7 @@ println(gen_df)
 """
 function get_generators_dataframe(bus_df, units)
     bus = select(bus_df, :bus_id, :name)
-    units = copy(units)
+    units = _map_unit_technology(units)
     # Scheduled loads (some have a GENUNITS row) are built by `get_scheduled_loads_dataframe`.
     "DISPATCHTYPE" in names(units) && subset!(units, :DISPATCHTYPE => ByRow(!isequal("LOAD")))
 
@@ -298,7 +314,7 @@ println(branch_df)
 """
 function get_batteries_dataframe(bus_df, units)
     bus = select(bus_df, :bus_id, :name)
-    units = copy(units)
+    units = _map_unit_technology(units)
     dropmissing!(units, :TECHNOLOGY)  # TODO make assumptions when technology is missing ?
     dropmissing!(units, :STORAGEIMPORTEFFICIENCYFACTOR) # TODO make assumptions when efficiency is  missing ?
     subset!(units, :TECHNOLOGY => ByRow(==(PrimeMovers.BA)))

@@ -67,3 +67,52 @@ CVP factor (150) of AEMO's Regional Energy Demand Supply Balance constraint (`De
 `SurplusGen`), items 22 and 23 of the *Schedule of Constraint Violation Penalty Factors* v8.0.
 """
 const AREA_BALANCE_CVP_FACTOR = 150.0
+
+
+"""
+    INTERCONNECTOR_ZERO_CVP_FACTOR
+
+CVP factor (1160) of AEMO's Unit and Interconnector Zero constraint, item 1 of the *Schedule of
+Constraint Violation Penalty Factors* v8.0. Prices the built-in Interconnector Zero
+[`GenericConstraint`](@ref)s.
+"""
+const INTERCONNECTOR_ZERO_CVP_FACTOR = 1160.0
+
+
+"""
+    FIXED_LOADING_CVP_FACTOR
+
+CVP factor (380) of AEMO's Energy Inflexible Offer constraint, a unit held at its participant
+fixed loading, item 13 of the *Schedule of Constraint Violation Penalty Factors* v8.0. Prices the
+built-in `\$<DUID>` [`GenericConstraint`](@ref)s.
+"""
+const FIXED_LOADING_CVP_FACTOR = 380.0
+
+
+const _BUILT_IN_CVP_FACTORS = Dict(
+    "Interconnector Zero" => INTERCONNECTOR_ZERO_CVP_FACTOR,
+    "Energy Inflexible Offer" => FIXED_LOADING_CVP_FACTOR,
+)
+
+
+"""
+    constraint_cvp_factor(gc) -> Float64
+
+CVP factor that prices `gc`'s slacks: its `GENCONDATA` weight ([`get_constraint_weight`](@ref)),
+or, for a constraint whose `source` is `"built-in"`, the factor of its limit type
+([`INTERCONNECTOR_ZERO_CVP_FACTOR`](@ref), [`FIXED_LOADING_CVP_FACTOR`](@ref)).
+
+# Arguments
+- `gc`: a [`GenericConstraint`](@ref).
+
+# Returns
+A `Float64`. Throws an `ArgumentError` for a built-in constraint of an unknown limit type.
+"""
+function constraint_cvp_factor(gc::GenericConstraint)
+    get_source(gc) == "built-in" || return get_constraint_weight(gc)
+    limit_type = get_limit_type(gc)
+    haskey(_BUILT_IN_CVP_FACTORS, limit_type) || throw(
+        ArgumentError("built-in generic constraint $(PSY.get_name(gc)) has no CVP factor for limit type $(repr(limit_type))"),
+    )
+    return _BUILT_IN_CVP_FACTORS[limit_type]
+end
