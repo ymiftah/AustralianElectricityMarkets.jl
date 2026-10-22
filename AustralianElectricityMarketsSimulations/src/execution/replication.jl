@@ -23,7 +23,7 @@ recorded as regional prices. Price-tied energy bands are dispatched pro rata by 
 
 # Arguments
 - `sys`: a `PSY.System` from `nem_system(db, ConstrainedNetworkConfiguration(); ...)`, after its
-  demand, bids, FCAS scaling inputs and dispatch limits are set.
+  demand, bids, FCAS scaling inputs, dispatch limits and separate energy limits are set.
 - `skipped`: a vector that receives one `(constraint, reason, n_missing)` named tuple per generic
   constraint left out of the template, or `nothing`. `reason` is `:no_available_device` when all
   its contributing devices are unavailable, the `exclude_constraints` reason, or, when `parts`
@@ -235,6 +235,7 @@ function replication_system(
     set_market_bids!(sys, db, date_range; resolution = resolution)
     set_fcas_scaling_inputs!(sys, db, date_range; intervention = intervention)
     set_nem_dispatch_limits!(sys, db, date_range; intervention = intervention)
+    set_nem_energy_limits!(sys, db, date_range; intervention = intervention)
     set_storage_dispatch_ceilings!(sys)
     set_fcas_effective_offers!(sys)
     set_tie_break_scales!(sys)
@@ -289,6 +290,8 @@ end
 # `"up"` for a slack that relaxes a `<=` row and `"down"` for one that relaxes a `>=` row; the
 # FCAS families whose rows have both senses refine it per key in `_violation_direction`.
 const _VIOLATION_FAMILIES = (
+    EnergyMaxAvailSlack => ("energy_max_avail", "up"),
+    EnergyUIGFSlack => ("energy_uigf", "up"),
     UnitRampUpSlack => ("unit_ramp", "up"),
     UnitRampDownSlack => ("unit_ramp", "down"),
     InterconnectorFlowSurplusSlack => ("interconnector_flow", "up"),

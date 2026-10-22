@@ -1,0 +1,29 @@
+"Non-negative violations of a NEM energy availability limit, in system-base per-unit."
+abstract type AbstractEnergyLimitSlack <: PSI.VariableType end
+
+"A NEM energy availability constraint with an explicitly priced surplus."
+abstract type AbstractEnergyLimitConstraint <: PSI.ConstraintType end
+
+"Time-series parameter for raw bid MAXAVAIL in system-base per-unit."
+struct EnergyMaxAvailTimeSeriesParameter <: PSI.TimeSeriesParameter end
+
+"Time-series parameter for a semi-scheduled unit's UIGF in system-base per-unit."
+struct EnergyUIGFTimeSeriesParameter <: PSI.TimeSeriesParameter end
+
+"Raw energy bid availability constraint."
+struct EnergyMaxAvailConstraint <: AbstractEnergyLimitConstraint end
+
+"Semi-scheduled forecast availability constraint."
+struct EnergyUIGFConstraint <: AbstractEnergyLimitConstraint end
+
+"Non-negative dispatch above raw energy MAXAVAIL."
+struct EnergyMaxAvailSlack <: AbstractEnergyLimitSlack end
+
+"Non-negative dispatch above a semi-scheduled UIGF."
+struct EnergyUIGFSlack <: AbstractEnergyLimitSlack end
+
+"Unit MaxAvail CVP, AEMO Schedule v8.0 item 14, pp. 13-17."
+const ENERGY_MAX_AVAIL_CVP_FACTOR = 370.0
+
+"UIGF CVP, AEMO Schedule v8.0 item 12, pp. 13-17."
+const ENERGY_UIGF_CVP_FACTOR = 385.0
