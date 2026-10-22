@@ -1,33 +1,51 @@
-function read_energy_bids(db, date_range; kwargs...)
-    start_datetime = first(date_range)
-    end_datetime = last(date_range)
-    sd = Date(start_datetime) - Day(1)
-    ed = Date(end_datetime) + Day(1)
+# Latest-version `BIDPEROFFER_D` rows of `bid_types` with `start - resolution <= INTERVAL_DATETIME < end`
+# (`start` when `resolution` is `nothing`): the rows a ceil onto `resolution` can bring into the range.
+function _read_period_offers(db, bid_types::AbstractVector{BidType}, start_date, end_date, resolution)
     source = read_hive(db, :BIDPEROFFER_D)
-    # Discovered dynamically rather than hardcoded, since the number of bid bands
-    # isn't fixed in application code.
-    schema = names(_query(db, "SELECT * FROM $source LIMIT 0"))
-    band_cols = join(filter(startswith("BANDAVAIL"), schema), ", ")
-
-    # Rows are bounded in SQL before the window: a row ceiled into the range has its raw
-    # INTERVAL_DATETIME in [start - resolution, end), so this loses none of them.
-    resolution = get(kwargs, :resolution, nothing)
-    lower = isnothing(resolution) ? start_datetime : start_datetime - resolution
-    energy_bids = _query(
+    # The number of bid bands is discovered from the cached schema.
+    band_cols = join(filter(startswith("BANDAVAIL"), _table_schema(db, source)), ", ")
+    bid_type_list = join(("'$(string(bt))'" for bt in bid_types), ", ")
+    lower = isnothing(resolution) ? start_date : start_date - resolution
+    return _query(
         db,
         """
-        SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, MAXAVAIL, $band_cols
+        SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE, MAXAVAIL, $band_cols
         FROM $source
-        WHERE BIDTYPE = 'ENERGY' AND SETTLEMENTDATE BETWEEN ? AND ?
+        WHERE BIDTYPE IN ($bid_type_list) AND SETTLEMENTDATE BETWEEN ? AND ?
           AND INTERVAL_DATETIME >= ? AND INTERVAL_DATETIME < ?
         QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION ORDER BY VERSIONNO DESC
+            PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
         ) = 1
         ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME
         """,
-        [sd, ed, lower, end_datetime],
+        [Date(start_date) - Day(1), Date(end_date) + Day(1), lower, end_date],
     )
+end
 
+
+"""
+    read_energy_bids(db, date_range; resolution = nothing)
+
+Reads the latest energy period offers from `BIDPEROFFER_D`: one row per
+`(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION)` with `MAXAVAIL` and the `BANDAVAIL` columns.
+With a `resolution`, `INTERVAL_DATETIME` is ceiled onto it and each bucket keeps the maximum of every
+quantity.
+
+# Arguments
+- `db`: an `AEMDB` connection.
+- `date_range`: the intervals to read (half-open: `start <= INTERVAL_DATETIME < stop`).
+- `resolution`: a `Dates.Period` to aggregate onto, or `nothing` for the raw intervals.
+
+# Returns
+A `DataFrame` with `SETTLEMENTDATE`, `INTERVAL_DATETIME`, `DUID`, `DIRECTION`, `MAXAVAIL` and
+`BANDAVAIL1` to `BANDAVAIL10`.
+"""
+function read_energy_bids(db, date_range; resolution::Union{Nothing, Dates.Period} = nothing)
+    start_datetime = first(date_range)
+    end_datetime = last(date_range)
+    energy_bids = select!(
+        _read_period_offers(db, [BidType.ENERGY], start_datetime, end_datetime, resolution), Not(:BIDTYPE),
+    )
     if !isnothing(resolution)
         energy_bids[!, :INTERVAL_DATETIME] = ceil.(energy_bids[!, :INTERVAL_DATETIME], resolution)
         energy_bids = @chain energy_bids begin
@@ -159,35 +177,7 @@ end
 
 
 """
-    _refer_bids_to_reference_node!(bids, factors) -> bids
-
-Divides every price of `bids.piecewise_step_data` by its unit's loss factor, leaving the MW
-breakpoints unchanged. Referred prices are rounded to whole cents, as in NEMDE's case files.
-
-# Arguments
-- `bids`: the `DataFrame` from `_massage_bids`, modified in place.
-- `factors`: the output of [`read_loss_factors`](@ref); `GEN_LOSS_FACTOR` applies to `GEN` rows and
-  `LOAD_LOSS_FACTOR` to `LOAD` rows. Throws an `ArgumentError` naming any bid `DUID` it lacks.
-
-# Returns
-`bids`.
-"""
-function _refer_bids_to_reference_node!(bids, factors)
-    lookup = Dict(r.DUID => (gen = r.GEN_LOSS_FACTOR, load = r.LOAD_LOSS_FACTOR) for r in eachrow(factors))
-    unknown = setdiff(unique(bids.DUID), keys(lookup))
-    isempty(unknown) ||
-        throw(ArgumentError("No DUDETAILSUMMARY loss factor for bid unit(s) $(join(unknown, ", "))."))
-    bids.piecewise_step_data = map(eachrow(bids)) do row
-        factor = row.DIRECTION == "LOAD" ? lookup[row.DUID].load : lookup[row.DUID].gen
-        psd = row.piecewise_step_data
-        return PiecewiseStepData(get_x_coords(psd), round.(get_y_coords(psd) ./ factor; digits = 2))
-    end
-    return bids
-end
-
-
-"""
-    read_bids(db, date_range; kwargs...)
+    read_bids(db, date_range; resolution = nothing)
 
 Reads energy offers from `BIDPEROFFER_D`/`BIDDAYOFFER_D` and returns one row per
 `(SETTLEMENTDATE, DUID, DIRECTION, INTERVAL_DATETIME)` with the 10-band offer curve
@@ -197,13 +187,8 @@ reference node, unlike [`set_market_bids!`](@ref AustralianElectricityMarkets.se
 to clip dispatch to, not just the priced curve. See [`read_fcas_bids`](@ref) for the
 FCAS-market equivalent.
 """
-function read_bids(db, date_range; kwargs...)
-    energy_bids_table = read_hive(db, :BIDPEROFFER_D)
-    pricebids_table = read_hive(db, :BIDDAYOFFER_D)
-    start_date = first(date_range)
-    end_date = last(date_range)
-    bids = _massage_bids(db, energy_bids_table, pricebids_table, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
-    return bids
+function read_bids(db, date_range; resolution::Union{Nothing, Dates.Period} = nothing)
+    return _massage_bids(db, first(date_range), last(date_range); resolution)
 end
 
 
@@ -230,37 +215,32 @@ function _extract_power_bids(row; keep_empty_bands::Bool = false)
 end
 
 
+"""
+    _massage_bids(db, start_date, end_date; resolution = nothing, bid_types = [BidType.ENERGY], keep_bid_type = false, keep_empty_bands = false)
+
+Joins the latest `BIDPEROFFER_D` period offers of `bid_types` to their `BIDDAYOFFER_D` price bands,
+one row per `(SETTLEMENTDATE, DUID, DIRECTION, INTERVAL_DATETIME)` with
+`start_date <= INTERVAL_DATETIME < end_date`. With a `resolution`, quantities are averaged within
+each ceiled bucket. Throws an `ArgumentError` naming the units whose period offers have no price
+bands.
+
+# Returns
+A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `DIRECTION`, `INTERVAL_DATETIME`, `PRICEBANDARRAY`,
+`BANDAVAILARRAY`, `MAXAVAIL`, `MINIMUMLOAD`, `DAILYENERGYCONSTRAINT`, `BIDTYPE` when
+`keep_bid_type`, and `piecewise_step_data` built by [`_extract_power_bids`](@ref).
+"""
 function _massage_bids(
-        db, energy_bids_table, pricebids_table, start_date, end_date;
-        resolution = nothing, bid_types::AbstractVector{BidType} = [BidType.ENERGY], keep_bid_type::Bool = false,
-        keep_empty_bands::Bool = false,
+        db, start_date, end_date;
+        resolution::Union{Nothing, Dates.Period} = nothing, bid_types::AbstractVector{BidType} = [BidType.ENERGY],
+        keep_bid_type::Bool = false, keep_empty_bands::Bool = false,
     )
     sd = Date(start_date) - Day(1)
     ed = Date(end_date) + Day(1)
     bid_type_list = join(("'$(string(bt))'" for bt in bid_types), ", ")
+    energy_bids = _read_period_offers(db, bid_types, start_date, end_date, resolution)
 
-    energy_schema = names(_query(db, "SELECT * FROM $energy_bids_table LIMIT 0"))
-    energy_band_cols = join(filter(startswith("BANDAVAIL"), energy_schema), ", ")
-    # Same bound as read_energy_bids: the ceil and the final range filter keep rows in
-    # [start - resolution, end) only.
-    lower = isnothing(resolution) ? start_date : start_date - resolution
-    energy_bids = _query(
-        db,
-        """
-        SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE, MAXAVAIL, $energy_band_cols
-        FROM $energy_bids_table
-        WHERE BIDTYPE IN ($bid_type_list) AND SETTLEMENTDATE BETWEEN ? AND ?
-          AND INTERVAL_DATETIME >= ? AND INTERVAL_DATETIME < ?
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
-        ) = 1
-        ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME
-        """,
-        [sd, ed, lower, end_date],
-    )
-
-    priceband_schema = names(_query(db, "SELECT * FROM $pricebids_table LIMIT 0"))
-    priceband_cols = join(filter(startswith("PRICEBAND"), priceband_schema), ", ")
+    pricebids_table = read_hive(db, :BIDDAYOFFER_D)
+    priceband_cols = join(filter(startswith("PRICEBAND"), _table_schema(db, pricebids_table)), ", ")
     pricebids = _query(
         db,
         """

@@ -7,31 +7,12 @@ Reads `DISPATCHCONSTRAINT` over `date_range`: one row per `(SETTLEMENTDATE, GENC
 of "NEMDE actually enforced this constraint" — see [`add_nem_constraints!`](@ref AustralianElectricityMarkets.add_nem_constraints!).
 """
 function read_invoked_constraints(db, date_range; intervention::Integer = 0)
-    start_date = first(date_range)
-    end_date = last(date_range)
-    table = read_hive(db, :DISPATCHCONSTRAINT)
-    schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
-    # SETTLEMENTDATE is the interval end itself, so the window is exact; the window function
-    # partitions on it, so bounding it first changes no kept row.
-    params = Any[start_date, end_date]
-    _push_intervention!(params, schema, intervention)
-    df = _query(
-        db,
-        """
-        SELECT SETTLEMENTDATE, CONSTRAINTID AS GENCONID,
-               $(_cast_double("RHS")), $(_cast_double("LHS")), $(_cast_double("MARGINALVALUE")),
-               GENCONID_EFFECTIVEDATE, GENCONID_VERSIONNO
-        FROM $table
-        WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ? $(_intervention_where(schema))
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, CONSTRAINTID ORDER BY archive_month DESC
-        ) = 1
-        ORDER BY SETTLEMENTDATE, GENCONID
-        """,
-        params,
-    )
-    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
-    return df
+    columns = [
+        _cast_double("RHS"), _cast_double("LHS"), _cast_double("MARGINALVALUE"),
+        "GENCONID_EFFECTIVEDATE", "GENCONID_VERSIONNO",
+    ]
+    df = _read_dispatch_table(columns, db, :DISPATCHCONSTRAINT, "CONSTRAINTID", date_range; intervention, order = true)
+    return rename!(df, :CONSTRAINTID => :GENCONID)
 end
 
 
@@ -43,6 +24,18 @@ end
 function _effective_date_bound(wanted)
     bound = maximum(skipmissing(wanted.GENCONID_EFFECTIVEDATE); init = typemin(DateTime))
     return "CAST('$bound' AS TIMESTAMP)"
+end
+
+
+# An empty `gencon_versions` means `DISPATCHCONSTRAINT` is not cached over the range.
+function _require_invoked(gencon_versions)
+    DataFrames.isempty(gencon_versions) && throw(
+        ArgumentError(
+            "gencon_versions is empty: no constraint was invoked over the requested range. " *
+                "That means DISPATCHCONSTRAINT is not cached for it: run `populate(db, :DISPATCHCONSTRAINT, ...)` first.",
+        ),
+    )
+    return
 end
 
 
@@ -59,39 +52,33 @@ Throws an `ArgumentError` on an empty `gencon_versions`: nothing was invoked ove
 which means `DISPATCHCONSTRAINT` was never cached for it.
 """
 function read_constraint_definitions(db, gencon_versions)
-    DataFrames.isempty(gencon_versions) && throw(
-        ArgumentError(
-            "gencon_versions is empty: no constraint was invoked over the requested range. " *
-                "That means DISPATCHCONSTRAINT is not cached for it — run `populate(db, :DISPATCHCONSTRAINT, ...)` first.",
-        ),
-    )
+    _require_invoked(gencon_versions)
     wanted = unique(select(gencon_versions, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
-    DuckDB.register_data_frame(db.db, wanted, "wanted_gencon_versions")
     table = read_hive(db, :GENCONDATA)
-    df = _query(
-        db,
-        """
-        WITH gencon AS (
-            SELECT *
-            FROM $table
-            WHERE EFFECTIVEDATE <= $(_effective_date_bound(wanted))
-            QUALIFY row_number() OVER (
-                PARTITION BY GENCONID, EFFECTIVEDATE, VERSIONNO ORDER BY archive_month DESC
-            ) = 1
+    return _with_registered(db, wanted, "wanted_gencon_versions") do
+        return _query(
+            db,
+            """
+            WITH gencon AS (
+                SELECT *
+                FROM $table
+                WHERE EFFECTIVEDATE <= $(_effective_date_bound(wanted))
+                QUALIFY row_number() OVER (
+                    PARTITION BY GENCONID, EFFECTIVEDATE, VERSIONNO ORDER BY archive_month DESC
+                ) = 1
+            )
+            SELECT
+                g.GENCONID, g.EFFECTIVEDATE, g.VERSIONNO, g.CONSTRAINTTYPE,
+                TRY_CAST(g.GENERICCONSTRAINTWEIGHT AS DOUBLE) AS GENERICCONSTRAINTWEIGHT,
+                TRY_CAST(g.CONSTRAINTVALUE AS DOUBLE) AS CONSTRAINTVALUE,
+                g.DESCRIPTION, g.LIMITTYPE, g.SOURCE
+            FROM wanted_gencon_versions w
+            INNER JOIN gencon g
+                ON g.GENCONID = w.GENCONID AND g.EFFECTIVEDATE = w.GENCONID_EFFECTIVEDATE
+                   AND g.VERSIONNO = w.GENCONID_VERSIONNO
+            """,
         )
-        SELECT
-            g.GENCONID, g.EFFECTIVEDATE, g.VERSIONNO, g.CONSTRAINTTYPE,
-            TRY_CAST(g.GENERICCONSTRAINTWEIGHT AS DOUBLE) AS GENERICCONSTRAINTWEIGHT,
-            TRY_CAST(g.CONSTRAINTVALUE AS DOUBLE) AS CONSTRAINTVALUE,
-            g.DESCRIPTION, g.LIMITTYPE, g.SOURCE
-        FROM wanted_gencon_versions w
-        INNER JOIN gencon g
-            ON g.GENCONID = w.GENCONID AND g.EFFECTIVEDATE = w.GENCONID_EFFECTIVEDATE
-               AND g.VERSIONNO = w.GENCONID_VERSIONNO
-        """,
-    )
-    DuckDB.unregister_table(db.db, "wanted_gencon_versions")
-    return df
+    end
 end
 
 
@@ -106,83 +93,77 @@ Long-format `DataFrame`, one row per
 `ArgumentError` on an empty `gencon_versions`.
 """
 function read_constraint_terms(db, gencon_versions, date_range)
-    DataFrames.isempty(gencon_versions) && throw(
-        ArgumentError(
-            "gencon_versions is empty: no constraint was invoked over the requested range. " *
-                "That means DISPATCHCONSTRAINT is not cached for it — run `populate(db, :DISPATCHCONSTRAINT, ...)` first.",
-        ),
-    )
+    _require_invoked(gencon_versions)
     start_date = first(date_range)
     end_date = last(date_range)
     wanted = unique(select(gencon_versions, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
     eff_bound = _effective_date_bound(wanted)
-    DuckDB.register_data_frame(db.db, wanted, "wanted_gencon_versions")
 
     cp_table = read_hive(db, :SPDCONNECTIONPOINTCONSTRAINT)
     region_table = read_hive(db, :SPDREGIONCONSTRAINT)
     ic_table = read_hive(db, :SPDINTERCONNECTORCONSTRAINT)
     dudetailsummary_table = read_hive(db, :DUDETAILSUMMARY)
 
-    df = _query(
-        db,
-        """
-        WITH cp AS (
-            SELECT * FROM $cp_table
-            WHERE EFFECTIVEDATE <= $eff_bound
-            QUALIFY row_number() OVER (
-                PARTITION BY CONNECTIONPOINTID, EFFECTIVEDATE, VERSIONNO, GENCONID, BIDTYPE
-                ORDER BY archive_month DESC
-            ) = 1
-        ),
-        cp_matched AS (
-            SELECT cp.GENCONID, cp.EFFECTIVEDATE, cp.VERSIONNO, cp.CONNECTIONPOINTID, cp.BIDTYPE,
-                   TRY_CAST(cp.FACTOR AS DOUBLE) AS FACTOR
-            FROM cp
+    return _with_registered(db, wanted, "wanted_gencon_versions") do
+        return _query(
+            db,
+            """
+            WITH cp AS (
+                SELECT * FROM $cp_table
+                WHERE EFFECTIVEDATE <= $eff_bound
+                QUALIFY row_number() OVER (
+                    PARTITION BY CONNECTIONPOINTID, EFFECTIVEDATE, VERSIONNO, GENCONID, BIDTYPE
+                    ORDER BY archive_month DESC
+                ) = 1
+            ),
+            cp_matched AS (
+                SELECT cp.GENCONID, cp.EFFECTIVEDATE, cp.VERSIONNO, cp.CONNECTIONPOINTID, cp.BIDTYPE,
+                       TRY_CAST(cp.FACTOR AS DOUBLE) AS FACTOR
+                FROM cp
+                INNER JOIN wanted_gencon_versions w
+                    ON w.GENCONID = cp.GENCONID AND w.GENCONID_EFFECTIVEDATE = cp.EFFECTIVEDATE
+                       AND w.GENCONID_VERSIONNO = cp.VERSIONNO
+            ),
+            duids AS (
+                SELECT DISTINCT CONNECTIONPOINTID, DUID
+                FROM $dudetailsummary_table
+                WHERE START_DATE <= ? AND (END_DATE IS NULL OR END_DATE >= ?)
+            )
+            SELECT cp_matched.GENCONID, cp_matched.EFFECTIVEDATE, cp_matched.VERSIONNO,
+                   'UNIT' AS TERM_KIND, duids.DUID AS KEY, cp_matched.BIDTYPE, cp_matched.FACTOR
+            FROM cp_matched INNER JOIN duids ON duids.CONNECTIONPOINTID = cp_matched.CONNECTIONPOINTID
+
+            UNION ALL
+
+            SELECT r.GENCONID, r.EFFECTIVEDATE, r.VERSIONNO, 'REGION' AS TERM_KIND, r.REGIONID AS KEY,
+                   r.BIDTYPE, TRY_CAST(r.FACTOR AS DOUBLE) AS FACTOR
+            FROM (
+                SELECT * FROM $region_table
+                WHERE EFFECTIVEDATE <= $eff_bound
+                QUALIFY row_number() OVER (
+                    PARTITION BY REGIONID, EFFECTIVEDATE, VERSIONNO, GENCONID, BIDTYPE ORDER BY archive_month DESC
+                ) = 1
+            ) r
             INNER JOIN wanted_gencon_versions w
-                ON w.GENCONID = cp.GENCONID AND w.GENCONID_EFFECTIVEDATE = cp.EFFECTIVEDATE
-                   AND w.GENCONID_VERSIONNO = cp.VERSIONNO
-        ),
-        duids AS (
-            SELECT DISTINCT CONNECTIONPOINTID, DUID
-            FROM $dudetailsummary_table
-            WHERE START_DATE <= ? AND (END_DATE IS NULL OR END_DATE >= ?)
+                ON w.GENCONID = r.GENCONID AND w.GENCONID_EFFECTIVEDATE = r.EFFECTIVEDATE AND w.GENCONID_VERSIONNO = r.VERSIONNO
+
+            UNION ALL
+
+            SELECT i.GENCONID, i.EFFECTIVEDATE, i.VERSIONNO, 'INTERCONNECTOR' AS TERM_KIND,
+                   i.INTERCONNECTORID AS KEY, CAST(NULL AS VARCHAR) AS BIDTYPE, TRY_CAST(i.FACTOR AS DOUBLE) AS FACTOR
+            FROM (
+                SELECT * FROM $ic_table
+                WHERE EFFECTIVEDATE <= $eff_bound
+                QUALIFY row_number() OVER (
+                    PARTITION BY INTERCONNECTORID, EFFECTIVEDATE, VERSIONNO, GENCONID ORDER BY archive_month DESC
+                ) = 1
+            ) i
+            INNER JOIN wanted_gencon_versions w
+                ON w.GENCONID = i.GENCONID AND w.GENCONID_EFFECTIVEDATE = i.EFFECTIVEDATE AND w.GENCONID_VERSIONNO = i.VERSIONNO
+            """,
+            [end_date, start_date],
         )
-        SELECT cp_matched.GENCONID, cp_matched.EFFECTIVEDATE, cp_matched.VERSIONNO,
-               'UNIT' AS TERM_KIND, duids.DUID AS KEY, cp_matched.BIDTYPE, cp_matched.FACTOR
-        FROM cp_matched INNER JOIN duids ON duids.CONNECTIONPOINTID = cp_matched.CONNECTIONPOINTID
-
-        UNION ALL
-
-        SELECT r.GENCONID, r.EFFECTIVEDATE, r.VERSIONNO, 'REGION' AS TERM_KIND, r.REGIONID AS KEY,
-               r.BIDTYPE, TRY_CAST(r.FACTOR AS DOUBLE) AS FACTOR
-        FROM (
-            SELECT * FROM $region_table
-            WHERE EFFECTIVEDATE <= $eff_bound
-            QUALIFY row_number() OVER (
-                PARTITION BY REGIONID, EFFECTIVEDATE, VERSIONNO, GENCONID, BIDTYPE ORDER BY archive_month DESC
-            ) = 1
-        ) r
-        INNER JOIN wanted_gencon_versions w
-            ON w.GENCONID = r.GENCONID AND w.GENCONID_EFFECTIVEDATE = r.EFFECTIVEDATE AND w.GENCONID_VERSIONNO = r.VERSIONNO
-
-        UNION ALL
-
-        SELECT i.GENCONID, i.EFFECTIVEDATE, i.VERSIONNO, 'INTERCONNECTOR' AS TERM_KIND,
-               i.INTERCONNECTORID AS KEY, CAST(NULL AS VARCHAR) AS BIDTYPE, TRY_CAST(i.FACTOR AS DOUBLE) AS FACTOR
-        FROM (
-            SELECT * FROM $ic_table
-            WHERE EFFECTIVEDATE <= $eff_bound
-            QUALIFY row_number() OVER (
-                PARTITION BY INTERCONNECTORID, EFFECTIVEDATE, VERSIONNO, GENCONID ORDER BY archive_month DESC
-            ) = 1
-        ) i
-        INNER JOIN wanted_gencon_versions w
-            ON w.GENCONID = i.GENCONID AND w.GENCONID_EFFECTIVEDATE = i.EFFECTIVEDATE AND w.GENCONID_VERSIONNO = i.VERSIONNO
-        """,
-        [end_date, start_date],
-    )
-    DuckDB.unregister_table(db.db, "wanted_gencon_versions")
-    return df
+    end
 end
 
 
@@ -204,8 +185,8 @@ resolved by exact equality on the old side (see [`read_fcas_requirements`](@ref)
 fallback). The new table also drops `INTERVENTION` entirely — `intervention` therefore
 filters the old side only, and post-cut rows are whatever runs AEMO published.
 
-Either table may be absent from the cache; a missing one contributes no rows instead of
-raising, so a cache covering only one side of the cut still works.
+Either table may be absent from the cache; a missing one contributes no rows, so a cache covering
+only one side of the cut still works. Throws an `ArgumentError` when neither is cached.
 """
 function _fcas_req_union_sql(db, intervention::Integer)
     branches = String[]
@@ -213,7 +194,7 @@ function _fcas_req_union_sql(db, intervention::Integer)
 
     if _table_is_cached(db, :DISPATCH_FCAS_REQ)
         table = read_hive(db, :DISPATCH_FCAS_REQ)
-        schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
+        schema = _table_schema(db, table)
         push!(
             branches,
             """
@@ -245,23 +226,29 @@ function _fcas_req_union_sql(db, intervention::Integer)
         push!(params, :dates)
     end
 
-    isempty(branches) && return nothing, Any[]
+    isempty(branches) && throw(
+        ArgumentError(
+            "Neither DISPATCH_FCAS_REQ nor DISPATCH_FCAS_REQ_CONSTRAINT is cached: run " *
+                "`populate(db, :DISPATCH_FCAS_REQ, ...)` or `populate(db, :DISPATCH_FCAS_REQ_CONSTRAINT, ...)` " *
+                "first (AEMO switched tables at the 2025-05/2025-06 boundary; which one you need depends on the date range).",
+        ),
+    )
     return join(branches, "\nUNION ALL\n"), params
 end
 
 
 """
-    _expand_fcas_req_params(param_spec, sd, ed) -> Vector{Any}
+    _expand_fcas_req_params(param_spec, start_date, end_date) -> Vector{Any}
 
-Substitutes each `:dates` placeholder from [`_fcas_req_union_sql`](@ref) with the `sd`/`ed`
-pair, keeping positional `?` binding aligned across a variable number of `UNION ALL`
+Substitutes each `:dates` placeholder from [`_fcas_req_union_sql`](@ref) with the
+`start_date`/`end_date` pair, keeping positional `?` binding aligned across a variable number of `UNION ALL`
 branches.
 """
-function _expand_fcas_req_params(param_spec, sd, ed)
+function _expand_fcas_req_params(param_spec, start_date, end_date)
     out = Any[]
     for p in param_spec
         if p === :dates
-            push!(out, sd, ed)
+            push!(out, start_date, end_date)
         else
             push!(out, p)
         end
@@ -283,25 +270,14 @@ Long-format `DataFrame`. Throws `ArgumentError` when neither `DISPATCH_FCAS_REQ`
 function read_constraint_fcas_requirements(db, date_range; intervention::Integer = 0)
     start_date = first(date_range)
     end_date = last(date_range)
-    sd = Date(start_date) - Day(1)
-    ed = Date(end_date) + Day(1)
     union_sql, param_spec = _fcas_req_union_sql(db, intervention)
-    if isnothing(union_sql)
-        throw(
-            ArgumentError(
-                "Neither DISPATCH_FCAS_REQ nor DISPATCH_FCAS_REQ_CONSTRAINT is cached — run " *
-                    "`populate(db, :DISPATCH_FCAS_REQ, ...)` or `populate(db, :DISPATCH_FCAS_REQ_CONSTRAINT, ...)` " *
-                    "first (AEMO switched tables at the 2025-05/2025-06 boundary; which one you need depends on the date range).",
-            ),
-        )
-    end
     df = _query(
         db,
         """
         SELECT DISTINCT SETTLEMENTDATE, GENCONID, REGIONID, BIDTYPE
         FROM ($union_sql)
         """,
-        _expand_fcas_req_params(param_spec, sd, ed),
+        _expand_fcas_req_params(param_spec, start_date, end_date),
     )
     subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
     subset!(df, :BIDTYPE => ByRow(in(string.(FCAS_BID_TYPES))))

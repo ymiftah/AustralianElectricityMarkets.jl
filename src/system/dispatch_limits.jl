@@ -315,7 +315,7 @@ end
 
 
 function set_hydro_limits!(sys, db, date_range; kwargs...)
-    energy_bids = read_energy_bids(db, date_range; kwargs...)
+    energy_bids = read_energy_bids(db, date_range; resolution = get(kwargs, :resolution, nothing))
     ts = @chain energy_bids begin
         subset!(:DIRECTION => ByRow(==("GEN")))
         select!(:INTERVAL_DATETIME, :DUID, :MAXAVAIL)

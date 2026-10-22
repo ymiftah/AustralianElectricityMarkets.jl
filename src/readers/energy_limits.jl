@@ -18,11 +18,10 @@ function read_energy_limits(db, date_range; intervention::Integer = 0)
     offers = select(read_energy_bids(db, date_range), :INTERVAL_DATETIME, :DUID, :DIRECTION, :MAXAVAIL)
     dispatch = read_hive(db, :DISPATCHLOAD)
     summary = read_hive(db, :DUDETAILSUMMARY)
-    schema = names(_query(db, "SELECT * FROM $dispatch LIMIT 0"))
+    schema = _table_schema(db, dispatch)
     params = Any[first(date_range), last(date_range)]
     _push_intervention!(params, schema, intervention)
-    DuckDB.register_data_frame(db.db, offers, "nem_energy_offers")
-    try
+    return _with_registered(db, offers, "nem_energy_offers") do
         return _query(
             db,
             """
@@ -50,7 +49,5 @@ function read_energy_limits(db, date_range; intervention::Integer = 0)
             ORDER BY o.DUID, o.DIRECTION, o.INTERVAL_DATETIME
             """, params,
         )
-    finally
-        DuckDB.unregister_table(db.db, "nem_energy_offers")
     end
 end
