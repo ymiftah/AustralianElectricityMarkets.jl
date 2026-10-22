@@ -7,6 +7,12 @@ Name of the [`EnergyTieBreak`](@ref) service [`set_tie_break_scales!`](@ref) att
 const TIE_BREAK_SERVICE_NAME = "energy_tie_break"
 
 
+# The energy offers of one (direction, region): offer timestamps and resolution, and each unit's curves on them.
+const _TieOffers = @NamedTuple{
+    stamps::Vector{DateTime}, resolution::Dates.Period, offers::Vector{Tuple{PSY.Component, Vector{PSY.PiecewiseStepData}}},
+}
+
+
 # Whether `device` is priced on a `MarketBidCost`.
 function _has_market_bid(device::PSY.Component)
     return hasmethod(PSY.get_operation_cost, Tuple{typeof(device)}) && PSY.get_operation_cost(device) isa PSY.MarketBidCost
@@ -24,10 +30,10 @@ time-varying curve in that direction. Throws an `ArgumentError` when two time-va
 are on different timestamps.
 
 # Returns
-`Dict{Tuple{Bool, String}, NamedTuple}`.
+`Dict{Tuple{Bool, String}, _TieOffers}`.
 """
 function _tie_break_offers(sys::PSY.System)
-    offers = Dict{Tuple{Bool, String}, Any}()
+    offers = Dict{Tuple{Bool, String}, _TieOffers}()
     fixed = Tuple{Bool, String, PSY.Component, PSY.PiecewiseStepData}[]
     for device in PSY.get_available_components(PSY.StaticInjection, sys)
         _has_market_bid(device) || continue
@@ -39,8 +45,7 @@ function _tie_break_offers(sys::PSY.System)
                 series = PSY.get_time_series_array(device, ts)
                 stamps = PSY.TimeSeries.timestamp(series)
                 entry = get!(
-                    offers, (decremental, region),
-                    (; stamps, resolution = IS.get_resolution(ts), offers = Tuple{PSY.Component, Vector{PSY.PiecewiseStepData}}[]),
+                    () -> _TieOffers((stamps, IS.get_resolution(ts), [])), offers, (decremental, region),
                 )
                 entry.stamps == stamps || throw(
                     ArgumentError(
@@ -61,10 +66,7 @@ function _tie_break_offers(sys::PSY.System)
             isempty(donors) && continue
             grid = offers[first(donors)]
         end
-        entry = get!(
-            offers, (decremental, region),
-            (; stamps = grid.stamps, resolution = grid.resolution, offers = Tuple{PSY.Component, Vector{PSY.PiecewiseStepData}}[]),
-        )
+        entry = get!(() -> _TieOffers((grid.stamps, grid.resolution, [])), offers, (decremental, region))
         push!(entry.offers, (device, fill(curve, length(grid.stamps))))
     end
     return offers

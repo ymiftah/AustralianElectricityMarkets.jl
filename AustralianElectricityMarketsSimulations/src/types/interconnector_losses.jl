@@ -21,12 +21,12 @@ device's static flow limits.
 struct NEMInterconnectorLoss <: PSI.AbstractBranchFormulation end
 
 
-"An interconnector's total loss at one timestep - MW, per-unit of base power."
+"An interconnector's total loss at one timestep, in MW per-unit of base power."
 struct InterconnectorLossVariable <: PSI.VariableType end
 
 
 """
-One loss-curve segment's flow allocation for one interconnector at one timestep - MW, per-unit.
+One loss-curve segment's flow allocation for one interconnector at one timestep, in MW per-unit.
 Indexed `(interconnector name, segment label, t)`; the segment axis is sized to the largest
 interconnector's segment count, and a smaller interconnector's unused cells are fixed to `0.0`.
 """

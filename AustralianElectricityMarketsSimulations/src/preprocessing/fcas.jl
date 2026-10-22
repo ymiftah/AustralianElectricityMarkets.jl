@@ -62,7 +62,7 @@ function _attach_fcas_effective_series!(sys::PSY.System, device::PSY.Device, bid
     trapezium = AustralianElectricityMarkets._fcas_series_name("fcas_trapezium", bid_type, direction == :decremental)
     stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, trapezium)
     resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, trapezium))
-    window = (initial_time = first(stamps), horizon = length(stamps), resolution = resolution, process = :dispatch)
+    window = _FCASWindow(first(stamps), length(stamps), resolution, :dispatch)
     offers, ramping = _fcas_effective_values(window, device, bid_type, direction, inactive)
     for (decremental, values) in offers
         _replace_fcas_series!(sys, device, _fcas_effective_series_name(bid_type, decremental), stamps, values, resolution)

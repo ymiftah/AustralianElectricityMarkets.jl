@@ -43,6 +43,7 @@ include("types/mnsp.jl")
 include("types/logging.jl")
 
 include("formulations/constraint_formulations.jl")
+include("formulations/series_parameters.jl")
 include("formulations/generic_constraints.jl")
 include("formulations/penalty_costs.jl")
 include("checks/nem_constraints.jl")
@@ -54,7 +55,6 @@ include("formulations/storage.jl")
 include("formulations/tie_break.jl")
 include("formulations/interconnector_losses.jl")
 include("formulations/mnsp.jl")
-include("checks/interconnector_losses.jl")
 include("psi_compat.jl")
 include("formulations/fcas.jl")
 include("checks/fcas.jl")
@@ -66,6 +66,7 @@ include("preprocessing/inputs.jl")
 include("preprocessing/replication.jl")
 include("execution/replication.jl")
 include("execution/simulation.jl")
+include("execution/interconnector_loss_gaps.jl")
 
 @doc (@doc AustralianElectricityMarkets.IntervalInputs) IntervalInputs
 
@@ -81,7 +82,7 @@ export EnergyMaxAvailTimeSeriesParameter, EnergyUIGFTimeSeriesParameter,
     ENERGY_MAX_AVAIL_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR
 export energy_bounds
 export scale_trapezium
-export AbstractNEMConstraintFormulation, NEMConstraintLHS, NEMConstraintLimit,
+export NEMConstraintLHS, NEMConstraintLimit,
     NEMConstraintRHSParameter, LinearFactorLimit, FCASMarket
 export GenericConstraintSlackUp, GenericConstraintSlackDown, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR
 export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,

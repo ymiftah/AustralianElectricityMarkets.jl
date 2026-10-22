@@ -1050,7 +1050,7 @@ end
         e
     end
     @test err isa ArgumentError
-    @test occursin("neither a `PSY.Storage` device nor a `PSY.ControllableLoad`", sprint(showerror, err))
+    @test occursin("only for a `PSY.Storage` device or a `PSY.ControllableLoad`", sprint(showerror, err))
 end
 
 @testset "a device bidding both directions of the same service throws" begin

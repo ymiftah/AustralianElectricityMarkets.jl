@@ -1,8 +1,4 @@
-# `LinearFactorLimit` — the `GenericConstraint` `PSI.Service` formulation for energy terms
-# (`InterconnectorTerm`, and `UnitTerm`/`RegionTerm` with `bid_type == BidType.ENERGY`) and FCAS
-# terms (`UnitTerm`/`RegionTerm` with an FCAS `bid_type`, read off `FCASMarket`'s variables).
-# Follows the `TransmissionInterface` extension pattern in installed PSI
-# (`services_models/transmission_interface.jl`).
+# `LinearFactorLimit`, the `GenericConstraint` service formulation over energy and FCAS terms.
 
 PSI.get_default_time_series_names(::Type{GenericConstraint}, ::Type{LinearFactorLimit}) =
     Dict{Type{<:PSI.TimeSeriesParameter}, String}(NEMConstraintRHSParameter => "rhs")
@@ -424,12 +420,7 @@ function _invoked_mask(
         container::PSI.OptimizationContainer, gc::GenericConstraint,
         start_time::DateTime = PSI.get_initial_time(container),
     )
-    ts_type = PSI.get_default_time_series_type(container)
-    forecast = IS.get_time_series(ts_type, gc, "invoked"; start_time = start_time, count = 1)
-    return IS.get_time_series_values(
-        gc, forecast; start_time = start_time, len = length(PSI.get_time_steps(container)),
-        ignore_scaling_factors = true,
-    )
+    return _forecast_window_values(container, gc, "invoked", start_time)
 end
 
 
@@ -442,9 +433,7 @@ function PSI.add_constraints!(
     name = PSY.get_name(gc)
     expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
     time_steps = PSI.get_time_steps(container)
-    # Own container per constraint instance (`meta = name`): a `NEMConstraintLimit`/dual
-    # container shared across every `GenericConstraint` of this type would need every instance
-    # built, and this package builds one `ServiceModel` entry per `GenericConstraint`.
+    # One container per constraint (`meta = name`), as each `GenericConstraint` has its own `ServiceModel`.
     con = PSI.lazy_container_addition!(
         container, NEMConstraintLimit(), GenericConstraint, [name], time_steps; meta = name,
     )

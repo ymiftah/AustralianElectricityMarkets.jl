@@ -1,7 +1,7 @@
 # `set_fcas_effective_offers!` against the values the FCAS build reads over one-interval windows.
 
 # The one-interval window FCASMarket reads at `t` under NEMReplayDispatch.
-fcas_window(t) = (initial_time = t, horizon = 1, resolution = DISPATCH_INTERVAL, process = :dispatch)
+fcas_window(t) = AEMS._FCASWindow(t, 1, DISPATCH_INTERVAL, :dispatch)
 
 # The effective offer FCASMarket builds for one offer at `t`: `(enabled, MaxAvail, EnablementMin,
 # EnablementMax, UpperSlopeCoeff, LowerSlopeCoeff, widths)` from the build-time trapezium and masks.
@@ -58,7 +58,7 @@ end
                     end
                 end
             end
-            AEMS._is_regulation_service(bid_type) || continue
+            bid_type in FCAS_REGULATION_MARKETS || continue
             ramping = PSY.get_time_series_values(PSY.SingleTimeSeries, device, AEMS._fcas_ramping_series_name(bid_type))
             stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, AEMS._fcas_ramping_series_name(bid_type))
             for (t, v) in zip(stamps, ramping)

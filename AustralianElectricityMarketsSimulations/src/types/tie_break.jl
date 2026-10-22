@@ -1,6 +1,6 @@
 # One energy band in a tie-break group: its reference-node price, PSI block variable, unit name,
 # segment index on the unit's offer curve and component type.
-const _TieBand = @NamedTuple{price::Float64, var::JuMP.VariableRef, name::String, band::Int, type::DataType}
+const _TieBand = @NamedTuple{price::Float64, var::JuMP.VariableRef, name::String, band::Int, type::Type{<:PSY.Component}}
 
 
 """
@@ -43,9 +43,13 @@ Variable type for the downward slack of a tie-break row, keyed like [`TieBreakSl
 struct TieBreakSlackDown <: PSI.SparseVariableType end
 
 
-PSI.should_write_resulting_value(::Type{TieBreakSlackUp}) = false
+function PSI.should_write_resulting_value(::Type{TieBreakSlackUp})
+    return false
+end
 
-PSI.should_write_resulting_value(::Type{TieBreakSlackDown}) = false
+function PSI.should_write_resulting_value(::Type{TieBreakSlackDown})
+    return false
+end
 
 
 """

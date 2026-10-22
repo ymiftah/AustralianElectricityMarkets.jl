@@ -467,6 +467,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `AbstractNEMConstraintFormulation`: `LinearFactorLimit` subtypes
+  `PowerSimulations.AbstractServiceFormulation` directly, as no method dispatched on the abstract
+  type and it had no other subtype.
 - `set_storage_dispatch_ceilings!` and the toy fixture's `ceilings` option: replay dispatch reads raw directional storage availability, so nothing consumes the derived `"storage_gen_ceiling"` and `"storage_load_ceiling"` series.
 - AEMSim's database-taking `replication_system` and `replicate_range` APIs, database-reader
   re-exports and DuckDB runtime dependency. Construct systems through AEM and use top-level
@@ -477,6 +480,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`GENCONDATA.DYNAMICRHS` is no longer read or interpreted**: `read_constraint_definitions` no longer selects it, and `add_nem_constraints!` no longer puts it on `GenericConstraint.ext`. AEMO documents the column as "Not used"; the raw NEMWEB ingestion column list is untouched.
 
 ### Changed
+
+- `FCASMarket` and `check_fcas_services` apply one FCAS bid direction rule with one message per
+  violation, so a decremental-only FCAS bid on a device that is neither storage nor a controllable
+  load fails at build with the message `check_fcas_services` reports. Interconnector flow-limit
+  series and MNSP band-axis errors are `ArgumentError`s. Dispatch results are unchanged.
 
 - Violation penalties (unit ramp, energy availability and UIGF, storage availability, total energy
   offer bands, FCAS, interconnector flow, area balance and generic constraints) are re-priced at each
