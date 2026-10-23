@@ -487,6 +487,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The down row of a NEM unit's `PSI.RampConstraint` uses PSI's `"dn"` meta instead of `"down"`.
+- `NEMConstraintLimit` scales its RHS parameter by the parameter multiplier.
+- Interconnector and MNSP series names join the registry: `NEM_SERIES.from_to_flow_limit`,
+  `to_from_flow_limit`, `loss_demand_coefficient`, and `mnsp_series_name(direction, kind)`.
+- Battery ramp rows and fixed-loading rows are built through `PSI.add_constraints!` methods
+  (`RampConstraint` on `ActivePowerOutVariable`, `EnergyFixedLoadConstraint`).
 - Bid series names live in one registry: `OfferSide` (`GEN`/`LOAD`), `NEM_SERIES`,
   `energy_max_avail_series_name` and `fcas_series_name(prefix, service[, side])`. Typed accessors
   `is_semi_scheduled`, `has_schedule_classification`, `is_commissioned` and `energy_offer_sides`

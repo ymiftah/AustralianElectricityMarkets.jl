@@ -228,7 +228,7 @@ function PSI.construct_device!(
 
     PSI.add_constraints!(container, EnergyMaxAvailConstraint, PSI.ActivePowerVariable, devices, model, network_model)
     PSI.add_constraints!(container, EnergyUIGFConstraint, PSI.ActivePowerVariable, _semi_scheduled_devices(devices), model, network_model)
-    _add_fixed_load_constraints!(container, devices, T)
+    PSI.add_constraints!(container, EnergyFixedLoadConstraint, devices, model, network_model)
 
     PSI.add_constraints!(container, PSI.RampConstraint, PSI.ActivePowerVariable, devices, model, network_model)
 
@@ -306,7 +306,7 @@ function _add_nem_ramp_constraints!(container::PSI.OptimizationContainer, ::Type
         container, PSI.RampConstraint(), T, names, time_steps; meta = "up",
     )
     con_dn = PSI.add_constraints_container!(
-        container, PSI.RampConstraint(), T, names, time_steps; meta = "down",
+        container, PSI.RampConstraint(), T, names, time_steps; meta = "dn",
     )
 
     slack_up = _add_cvp_slack!(container, UnitRampUpSlack, T, names, time_steps, UNIT_RAMP_CVP_FACTOR)

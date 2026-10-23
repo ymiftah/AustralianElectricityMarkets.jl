@@ -98,7 +98,7 @@ function set_mnsp_offers!(sys, db, date_range)
     end
     for (; device, direction, link, rows, curves) in staged
         for (series, values) in (("offer", curves), ("max_avail", Float64.(rows.MAXAVAIL)))
-            series_name = "mnsp_$(direction)_$series"
+            series_name = mnsp_series_name(direction, series)
             replace_single_series!(sys, device, single_series(series_name, start_date, values, Minute(5)))
         end
         get_ext(device)["mnsp_$direction"] = Dict{String, Any}(

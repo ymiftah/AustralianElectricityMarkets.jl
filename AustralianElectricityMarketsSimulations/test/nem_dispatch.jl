@@ -316,7 +316,7 @@ end
         model2 = nem_dispatch_model(sys)
         build!(model2; output_dir = mktempdir())
         container = PSI.get_optimization_container(model2)
-        for T in nem_dispatch_participants(sys), meta in ("up", "down")
+        for T in nem_dispatch_participants(sys), meta in ("up", "dn")
             constraint = PSI.get_constraint(container, PSI.RampConstraint(), T, meta)
             names, steps = axes(constraint)
             @test length(names) == length(collect(PSY.get_components(PSY.get_available, T, sys)))
@@ -518,7 +518,7 @@ end
     end
 
     @testset "no interval is chained: the ramp references one variable only" begin
-        for meta in ("up", "down")
+        for meta in ("up", "dn")
             constraint = PSI.get_constraint(
                 container, PSI.RampConstraint(), PSY.ThermalStandard, meta,
             )
@@ -555,7 +555,7 @@ end
     end
 
     @testset "interval 1 measures against the initial condition, interval 2 against interval 1" begin
-        for meta in ("up", "down")
+        for meta in ("up", "dn")
             constraint = PSI.get_constraint(
                 container, PSI.RampConstraint(), PSY.ThermalStandard, meta,
             )

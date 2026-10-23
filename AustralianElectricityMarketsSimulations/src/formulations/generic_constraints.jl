@@ -276,22 +276,6 @@ function PSI.add_to_expression!(
 end
 
 
-function _add_gc_term_to_expression!(container, gc, term::UnitTerm, sys)
-    PSI.add_to_expression!(container, NEMConstraintLHS, UnitTerm, gc, term, sys)
-    return
-end
-
-function _add_gc_term_to_expression!(container, gc, term::RegionTerm, sys)
-    PSI.add_to_expression!(container, NEMConstraintLHS, RegionTerm, gc, term, sys)
-    return
-end
-
-function _add_gc_term_to_expression!(container, gc, term::InterconnectorTerm, sys)
-    PSI.add_to_expression!(container, NEMConstraintLHS, InterconnectorTerm, gc, term, sys)
-    return
-end
-
-
 """
     _add_gc_slack_variables!(container, gc, model)
 
@@ -358,6 +342,7 @@ function PSI.add_constraints!(
     )
     rhs_param = PSI.get_parameter(container, NEMConstraintRHSParameter(), GenericConstraint, name)
     rhs_refs = PSI.get_parameter_column_refs(rhs_param, name)
+    rhs_mult = PSI.get_multiplier_array(rhs_param)
     jm = PSI.get_jump_model(container)
     sense = get_sense(gc)
     slacks = PSI.get_use_slacks(model)
@@ -376,11 +361,11 @@ function PSI.add_constraints!(
             continue
         end
         con[name, t] = if sense == ConstraintSense.LE
-            JuMP.@constraint(jm, expr[name, t] <= rhs_refs[t])
+            JuMP.@constraint(jm, expr[name, t] <= rhs_refs[t] * rhs_mult[name, t])
         elseif sense == ConstraintSense.GE
-            JuMP.@constraint(jm, expr[name, t] >= rhs_refs[t])
+            JuMP.@constraint(jm, expr[name, t] >= rhs_refs[t] * rhs_mult[name, t])
         else
-            JuMP.@constraint(jm, expr[name, t] == rhs_refs[t])
+            JuMP.@constraint(jm, expr[name, t] == rhs_refs[t] * rhs_mult[name, t])
         end
     end
     return
@@ -423,7 +408,7 @@ function PSI.construct_service!(
     PSY.get_available(gc) || return
 
     for term in get_terms(gc)
-        _add_gc_term_to_expression!(container, gc, term, sys)
+        PSI.add_to_expression!(container, NEMConstraintLHS, typeof(term), gc, term, sys)
     end
     _warn_absent_fcas_services(sys, gc)
     # Before add_constraints! reads NEMConstraintLHS: a slack must already be merged in for the

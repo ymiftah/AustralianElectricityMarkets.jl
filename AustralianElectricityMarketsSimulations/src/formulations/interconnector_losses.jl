@@ -10,13 +10,13 @@ end
 # PSI's flow-limit series names for `AreaInterchange`, plus the loss-factor demand coefficient.
 function PSI.get_default_time_series_names(::Type{PSY.AreaInterchange}, ::Type{NEMInterconnectorLoss})
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
-        PSI.FromToFlowLimitParameter => "from_to_flow_limit",
-        PSI.ToFromFlowLimitParameter => "to_from_flow_limit",
-        LossDemandCoefficientParameter => "loss_demand_coefficient",
-        MNSPForwardBandWidthParameter => "mnsp_forward_offer",
-        MNSPReverseBandWidthParameter => "mnsp_reverse_offer",
-        MNSPForwardMaxAvailParameter => "mnsp_forward_max_avail",
-        MNSPReverseMaxAvailParameter => "mnsp_reverse_max_avail",
+        PSI.FromToFlowLimitParameter => NEM_SERIES.from_to_flow_limit,
+        PSI.ToFromFlowLimitParameter => NEM_SERIES.to_from_flow_limit,
+        LossDemandCoefficientParameter => NEM_SERIES.loss_demand_coefficient,
+        MNSPForwardBandWidthParameter => mnsp_series_name("forward", "offer"),
+        MNSPReverseBandWidthParameter => mnsp_series_name("reverse", "offer"),
+        MNSPForwardMaxAvailParameter => mnsp_series_name("forward", "max_avail"),
+        MNSPReverseMaxAvailParameter => mnsp_series_name("reverse", "max_avail"),
     )
 end
 
@@ -148,7 +148,7 @@ The smallest and largest zero-referenced vertex loss of `model` over every value
 `"loss_demand_coefficient"` series, widened to include `0.0`, per-unit of the system base.
 """
 function _loss_range(device::PSY.AreaInterchange, model::InterconnectorLossModel)
-    coefficients = PSY.get_time_series_values(PSY.SingleTimeSeries, device, "loss_demand_coefficient")
+    coefficients = PSY.get_time_series_values(PSY.SingleTimeSeries, device, NEM_SERIES.loss_demand_coefficient)
     at_zero = loss_curve_vertex_values(model, Dict{String, Float64}())
     vertex = [v + k * bp for k in coefficients for (v, bp) in zip(at_zero, model.breakpoints)]
     return min(0.0, minimum(vertex)), max(0.0, maximum(vertex))

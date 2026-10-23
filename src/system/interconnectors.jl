@@ -189,15 +189,11 @@ function set_interconnector_flow_limits!(sys, db, date_range; kwargs...)
 
     for d in get_components(AreaInterchange, sys)
         from_to, to_from = series[get_name(d)]
-        add_time_series!(sys, d, single_series("from_to_flow_limit", full_grid, from_to))
-        add_time_series!(sys, d, single_series("to_from_flow_limit", full_grid, to_from))
+        add_time_series!(sys, d, single_series(NEM_SERIES.from_to_flow_limit, full_grid, from_to))
+        add_time_series!(sys, d, single_series(NEM_SERIES.to_from_flow_limit, full_grid, to_from))
     end
     return
 end
-
-
-"Name of the series [`set_loss_demand_coefficients!`](@ref) attaches."
-const _LOSS_DEMAND_COEFFICIENT = "loss_demand_coefficient"
 
 
 """
@@ -226,7 +222,7 @@ function set_loss_demand_coefficients!(sys)
         length(models) == 1 || continue
         model = only(models)
         values = [_demand_offset(model, Dict(area => series[t] for (area, series) in demand)) for t in eachindex(stamps)]
-        replace_single_series!(sys, ic, single_series(_LOSS_DEMAND_COEFFICIENT, first(stamps), values, resolution))
+        replace_single_series!(sys, ic, single_series(NEM_SERIES.loss_demand_coefficient, first(stamps), values, resolution))
     end
     return
 end

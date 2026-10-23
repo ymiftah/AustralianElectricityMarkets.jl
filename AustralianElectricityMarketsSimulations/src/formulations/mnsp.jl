@@ -7,13 +7,13 @@ const _MNSP_DIRECTIONS = ("forward", "reverse")
 
 
 "Names of an interchange's per-interval flow-limit series, from `set_interconnector_flow_limits!`."
-const _FLOW_LIMIT_SERIES = ("from_to_flow_limit", "to_from_flow_limit")
+const _FLOW_LIMIT_SERIES = (NEM_SERIES.from_to_flow_limit, NEM_SERIES.to_from_flow_limit)
 
 
 # Whether each of `device`'s four MNSP offer and availability series is attached.
 function _mnsp_offer_series_present(device::PSY.AreaInterchange)
     return [
-        PSY.has_time_series(device, PSY.SingleTimeSeries, "mnsp_$(dir)_$(kind)")
+        PSY.has_time_series(device, PSY.SingleTimeSeries, mnsp_series_name(dir, kind))
             for dir in _MNSP_DIRECTIONS, kind in ("offer", "max_avail")
     ]
 end
@@ -106,7 +106,7 @@ function _mnsp_band_labels(devices)
     n = 1
     for d in devices, dir in _MNSP_DIRECTIONS
         _has_mnsp_offers(d) || continue
-        curves = PSY.get_time_series_values(PSY.SingleTimeSeries, d, "mnsp_$(dir)_offer")
+        curves = PSY.get_time_series_values(PSY.SingleTimeSeries, d, mnsp_series_name(dir, "offer"))
         n = max(n, maximum(c -> length(PSY.get_y_coords(c)), curves))
     end
     return string.(1:n)
@@ -120,8 +120,8 @@ The largest `min(MAXAVAIL, offered MW)` of `device`'s `direction` link over the 
 series, in MW.
 """
 function _mnsp_link_bound(device::PSY.AreaInterchange, direction::AbstractString)
-    curves = PSY.get_time_series_values(PSY.SingleTimeSeries, device, "mnsp_$(direction)_offer")
-    avail = PSY.get_time_series_values(PSY.SingleTimeSeries, device, "mnsp_$(direction)_max_avail")
+    curves = PSY.get_time_series_values(PSY.SingleTimeSeries, device, mnsp_series_name(direction, "offer"))
+    avail = PSY.get_time_series_values(PSY.SingleTimeSeries, device, mnsp_series_name(direction, "max_avail"))
     return maximum(min(a, sum(diff(PSY.get_x_coords(c)))) for (a, c) in zip(avail, curves))
 end
 
@@ -133,7 +133,7 @@ end
 container's default forecast type.
 """
 function _mnsp_offer_window(container::PSI.OptimizationContainer, device::PSY.AreaInterchange, direction::AbstractString, start_time::DateTime)
-    return _forecast_window_values(container, device, "mnsp_$(direction)_offer", start_time)
+    return _forecast_window_values(container, device, mnsp_series_name(direction, "offer"), start_time)
 end
 
 

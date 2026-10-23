@@ -308,7 +308,7 @@ struct UnitRampUpSlack <: PSI.VariableType end
 """
     UnitRampDownSlack
 
-Variable type for the elastic slack on the down row of a `PSI.RampConstraint` (`meta = "down"`)
+Variable type for the elastic slack on the down row of a `PSI.RampConstraint` (`meta = "dn"`)
 under an [`AbstractNEMDispatch`](@ref) formulation, in the units of the active power variable.
 """
 struct UnitRampDownSlack <: PSI.VariableType end
