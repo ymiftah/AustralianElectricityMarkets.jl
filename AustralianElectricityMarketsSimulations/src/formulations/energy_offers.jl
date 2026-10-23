@@ -90,9 +90,6 @@ function PSI.add_proportional_cost!(
     ) where {S <: AbstractEnergyOfferSlack, T <: PSY.StaticInjection}
     selected = _energy_offer_devices(devices, S)
     isempty(selected) && return
-    _add_mpc_penalty!(
-        container, PSI.get_variable(container, slack, T), [PSY.get_name(d) for d in selected],
-        PSI.get_time_steps(container), ENERGY_OFFER_CVP_FACTOR,
-    )
+    _add_mpc_penalty!(container, S, T, [PSY.get_name(d) for d in selected], ENERGY_OFFER_CVP_FACTOR)
     return
 end

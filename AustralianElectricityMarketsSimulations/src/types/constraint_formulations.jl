@@ -268,10 +268,11 @@ struct GenericConstraintSlackCostParameter <: PSI.ObjectiveFunctionParameter end
 """
     MarketPriceCapPenaltyParameter
 
-Objective-function parameter that re-prices every Market Price Cap penalty slack recorded by
-`_add_mpc_penalty!` at each simulation step, each interval at its own Market Price Cap, so a
-model built once follows the cap across a financial year boundary. Registered on the `PSY.Area`
-components of the area balance.
+Objective-function parameter pricing one penalty slack container at its CVP factor times the
+Market Price Cap: its value is each interval's cap and its multiplier the CVP factor per MW of one
+interval. Keyed by the slack's component type, with a meta naming the slack variable type and meta.
+Re-priced at each simulation step, so a model built once follows the cap across a financial year
+boundary.
 """
 struct MarketPriceCapPenaltyParameter <: PSI.ObjectiveFunctionParameter end
 

@@ -238,7 +238,7 @@ end
 end
 
 @testset "storage availability is elastic without a static or derived ceiling" begin
-    for formulation in (NEMReplayDispatch, NEMLookaheadDispatch)
+    for formulation in (NEMReplayDispatch,)
         for (gen, load) in ((20.0, 100.0), (100.0, 20.0))
             sys = nem_toy_system(
                 [TOY_CHEAP => toy_unit(200.0, [(200.0, 20.0)]; initial = 60.0, ramp_up = 100.0)], 0.0;
@@ -1020,7 +1020,7 @@ end
     @test coef(2, TOY_EXPENSIVE) ≈ -30.0 / 40.0
 end
 
-@testset "Market Price Cap re-pricing is registered on a non-area-balance network model" begin
+@testset "Market Price Cap penalties are re-priced on a non-area-balance network model" begin
     sys = nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0)], 50.0)
     template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaPTDFPowerModel; use_slacks = false))
     set_nem_dispatch_models!(template, sys)
@@ -1031,6 +1031,9 @@ end
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    @test !isempty(AEMS._mpc_penalties(container))
-    @test haskey(PSI.get_parameters(container), PSI.ParameterKey(AEMS.MarketPriceCapPenaltyParameter, PSY.Area))
+    @test haskey(
+        PSI.get_parameters(container),
+        PSI.ParameterKey(AEMS.MarketPriceCapPenaltyParameter, PSY.ThermalStandard, "UnitRampUpSlack"),
+    )
+    @test !haskey(PSI.get_parameters(container), PSI.ParameterKey(AEMS.MarketPriceCapPenaltyParameter, PSY.Area, "SystemBalanceSlackUp"))
 end

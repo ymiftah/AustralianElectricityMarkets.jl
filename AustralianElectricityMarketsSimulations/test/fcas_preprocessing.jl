@@ -1,7 +1,7 @@
 # `set_fcas_effective_offers!` against the values the FCAS build reads over one-interval windows.
 
 # The one-interval window FCASMarket reads at `t` under NEMReplayDispatch.
-fcas_window(t) = AEMS._FCASWindow(t, 1, DISPATCH_INTERVAL, :dispatch)
+fcas_window(t) = AEMS._FCASWindow(t, 1, DISPATCH_INTERVAL)
 
 # The effective offer FCASMarket builds for one offer at `t`: `(enabled, MaxAvail, EnablementMin,
 # EnablementMax, UpperSlopeCoeff, LowerSlopeCoeff, widths)` from the build-time trapezium and masks.

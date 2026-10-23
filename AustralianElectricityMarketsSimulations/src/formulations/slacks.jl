@@ -78,6 +78,6 @@ function _add_cvp_slack!(
         meta = IS.Optimization.CONTAINER_KEY_EMPTY_META, label = string(nameof(var_type)), rate = nothing,
     ) where {T}
     slack = _add_slack_variables!(container, var_type, T, names, time_steps; meta = meta, label = label)
-    _add_mpc_penalty!(container, slack, names, time_steps, cvp_factor; rate = rate)
+    _add_mpc_penalty!(container, var_type, T, names, cvp_factor; meta = meta, rate = rate)
     return slack
 end

@@ -37,7 +37,6 @@ include("types/dispatch.jl")
 include("types/energy_limits.jl")
 include("types/fixed_loads.jl")
 include("types/energy_offers.jl")
-include("types/storage.jl")
 include("types/tie_break.jl")
 include("types/interconnector_losses.jl")
 include("types/mnsp.jl")
@@ -101,7 +100,7 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     INTERCONNECTOR_FLOW_CVP_FACTOR, InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack
 export filter_buildable_generic_constraints, compute_fcas_prices
 export check_fcas_services, check_dispatch_envelope
-export AbstractNEMDispatch, NEMReplayDispatch, NEMLookaheadDispatch,
+export AbstractNEMDispatch, NEMReplayDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter
 export nem_dispatch_participants, set_nem_dispatch_models!

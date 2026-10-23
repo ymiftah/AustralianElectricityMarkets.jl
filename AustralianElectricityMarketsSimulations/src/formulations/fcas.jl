@@ -142,90 +142,47 @@ end
 
 
 """
-    _fcas_process(container, devices_template, device) -> Symbol
+    _FCASWindow(initial_time, horizon, resolution)
 
-The AEMO central dispatch process `device`'s FCAS telemetry timing follows: `:dispatch` unless
-its dispatch model is [`NEMLookaheadDispatch`](@ref), then `:p5min` (5-minute pre-dispatch) at a
-5-minute resolution and `:predispatch` (30-minute pre-dispatch) at a longer one. Telemetered
-inputs (`INITIALMW`, AGC limits and status) apply to every interval of `:dispatch` and to the
-first interval otherwise.
-
-# Returns
-`:dispatch`, `:p5min` or `:predispatch`.
-"""
-function _fcas_process(container::PSI.OptimizationContainer, devices_template, device::PSY.Device)
-    for model in values(devices_template)
-        PSI.get_component_type(model) == typeof(device) || continue
-        PSI.get_formulation(model) <: NEMLookaheadDispatch || return :dispatch
-        return PSI.get_resolution(container) > Minute(5) ? :predispatch : :p5min
-    end
-    return :dispatch
-end
-
-
-"""
-    _fcas_agc_ramp_applies(process, t) -> Bool
-
-Whether AEMO *FCAS Model in NEMDE* §4.2 AGC ramp scaling, §6.1 joint ramping and §6.4 BDU SCADA
-ramping apply at interval `t` of `process` ([`_fcas_process`](@ref)): every interval in dispatch,
-the first in 5-minute pre-dispatch, none in 30-minute pre-dispatch.
-
-# Returns
-`Bool`.
-"""
-function _fcas_agc_ramp_applies(process::Symbol, t::Int)
-    return process === :dispatch || (process === :p5min && t == 1)
-end
-
-
-"""
-    _FCASWindow(initial_time, horizon, resolution, process)
-
-The intervals a device's FCAS inputs are read over: `horizon` intervals of `resolution` from
-`initial_time`, under the central dispatch `process` ([`_fcas_process`](@ref)).
+The intervals a device's FCAS inputs are read over: `horizon` dispatch intervals of `resolution`
+from `initial_time`.
 
 # Fields
 - `initial_time::DateTime`: the first interval.
 - `horizon::Int`: the number of intervals.
 - `resolution::R`: the interval length.
-- `process::Symbol`: `:dispatch`, `:p5min` or `:predispatch`.
 """
 struct _FCASWindow{R <: Dates.Period}
     initial_time::DateTime
     horizon::Int
     resolution::R
-    process::Symbol
 end
 
 
 """
-    _fcas_window(container, devices_template, device) -> _FCASWindow
+    _fcas_window(container) -> _FCASWindow
 
-The [`_FCASWindow`](@ref) `device`'s FCAS inputs are read over in `container`: its time steps,
-under the [`_fcas_process`](@ref) of `device`'s formulation.
+The [`_FCASWindow`](@ref) of `container`'s time steps.
 
 # Returns
 `_FCASWindow`.
 """
-function _fcas_window(container::PSI.OptimizationContainer, devices_template, device::PSY.Device)
+function _fcas_window(container::PSI.OptimizationContainer)
     return _FCASWindow(
         PSI.get_initial_time(container), length(PSI.get_time_steps(container)), PSI.get_resolution(container),
-        _fcas_process(container, devices_template, device),
     )
 end
 
 
 """
     _fcas_offer(window, device, bid_type, side) -> NEMFCASOffer
-    _fcas_offer(container, devices_template, device, bid_type, side) -> NEMFCASOffer
+    _fcas_offer(container, device, bid_type, side) -> NEMFCASOffer
 
 `device`'s `bid_type` offer on `side` over `window` ([`_fcas_window`](@ref)), read via
 [`get_fcas_offer`](@ref). The trapezium is AEMO *FCAS Model in NEMDE* §4's scaled/effective
 trapezium wherever `device` carries the scaling input series ([`set_fcas_scaling_inputs!`](@ref)),
-with the AGC ramping capability taken over the window's resolution, following the window's process:
-every interval in dispatch; AGC enablement and ramp scaling on the first interval only in 5-minute
-pre-dispatch; AGC enablement scaling on the first interval only and no ramp scaling in 30-minute
-pre-dispatch. Otherwise it is the bid trapezium unscaled.
+with the AGC ramping capability taken over the window's resolution at every interval. Otherwise it
+is the bid trapezium unscaled.
 
 # Returns
 A `NEMFCASOffer`.
@@ -233,12 +190,11 @@ A `NEMFCASOffer`.
 function _fcas_offer(window::_FCASWindow, device, bid_type::BidType, side::OfferSide)
     return get_fcas_offer(
         device, bid_type, side, window.initial_time, window.horizon; scaled = true,
-        resolution = window.resolution, agc_first_interval_only = window.process !== :dispatch,
-        agc_ramp_scaling = window.process !== :predispatch,
+        resolution = window.resolution,
     )
 end
-function _fcas_offer(container::PSI.OptimizationContainer, devices_template, device, bid_type::BidType, side::OfferSide)
-    return _fcas_offer(_fcas_window(container, devices_template, device), device, bid_type, side)
+function _fcas_offer(container::PSI.OptimizationContainer, device, bid_type::BidType, side::OfferSide)
+    return _fcas_offer(_fcas_window(container), device, bid_type, side)
 end
 
 
@@ -385,30 +341,29 @@ end
 
 """
     _fcas_enablement_inputs(window, device) -> (initial_mw, availability, agc_status)
-    _fcas_enablement_inputs(container, devices_template, device) -> (initial_mw, availability, agc_status)
+    _fcas_enablement_inputs(container, device) -> (initial_mw, availability, agc_status)
 
 `device`'s per-interval §5 inputs over `window` ([`_fcas_window`](@ref)): `InitialMW`
 ([`get_initial_mw`](@ref)), energy availability ([`_fcas_availability`](@ref)) and AGC status ([`get_fcas_agc_status`](@ref)), each a function of `t` returning `nothing` where
-unknown. Outside dispatch `InitialMW` and AGC status are known in the first interval only.
+unknown.
 
 # Returns
 `(initial_mw::Function, availability::Function, agc_status::Function)`.
 """
 function _fcas_enablement_inputs(window::_FCASWindow, device::PSY.Device)
-    first_only = window.process !== :dispatch
     initial_mw = get_initial_mw(device, window.initial_time, window.horizon)
     agc_status = get_fcas_agc_status(device, window.initial_time, window.horizon)
-    telemetry(series, t) = (isnothing(series) || (first_only && t > 1)) ? nothing : series[t]
+    telemetry(series, t) = isnothing(series) ? nothing : series[t]
     return (t -> telemetry(initial_mw, t), _fcas_availability(window, device), t -> telemetry(agc_status, t))
 end
-function _fcas_enablement_inputs(container::PSI.OptimizationContainer, devices_template, device::PSY.Device)
-    return _fcas_enablement_inputs(_fcas_window(container, devices_template, device), device)
+function _fcas_enablement_inputs(container::PSI.OptimizationContainer, device::PSY.Device)
+    return _fcas_enablement_inputs(_fcas_window(container), device)
 end
 
 
 """
     _fcas_enabled_mask(window, device, bid_type, decremental) -> Vector{Bool}
-    _fcas_enabled_mask(container, devices_template, device, bid_type, decremental) -> Vector{Bool}
+    _fcas_enabled_mask(container, device, bid_type, decremental) -> Vector{Bool}
 
 Per-interval [`_fcas_enabled`](@ref) for `device`'s one-directional `bid_type` bid, on the
 [`_fcas_enablement_inputs`](@ref) over `window`.
@@ -427,9 +382,9 @@ function _fcas_enabled_mask(window::_FCASWindow, device::PSY.Device, bid_type::B
     end
 end
 function _fcas_enabled_mask(
-        container::PSI.OptimizationContainer, devices_template, device::PSY.Device, bid_type::BidType, decremental::Bool,
+        container::PSI.OptimizationContainer, device::PSY.Device, bid_type::BidType, decremental::Bool,
     )
-    return _fcas_enabled_mask(_fcas_window(container, devices_template, device), device, bid_type, decremental)
+    return _fcas_enabled_mask(_fcas_window(container), device, bid_type, decremental)
 end
 
 
@@ -456,12 +411,11 @@ end
 
 """
     _fcas_agc_ramp_caps(window, device, bid_type) -> Vector{Float64}
-    _fcas_agc_ramp_caps(container, devices_template, device, bid_type) -> Vector{Float64}
+    _fcas_agc_ramp_caps(container, device, bid_type) -> Vector{Float64}
 
 `device`'s AGC ramping capability on its regulation `bid_type` target, one entry per interval of
 `window`: the AGC ramping capability ([`get_fcas_agc_ramp_capability`](@ref)) over the window's
-resolution wherever [`_fcas_agc_ramp_applies`](@ref), `0.0` (no cap) elsewhere or where the ramp
-rate is zero or absent. Used by AEMO *FCAS Model in NEMDE* §6.1's joint ramping constraint (any
+resolution, or `0.0` (no cap) where the ramp rate is zero or absent. Used by AEMO *FCAS Model in NEMDE* §6.1's joint ramping constraint (any
 device) and §6.4's BDU SCADA ramping constraint (a `PSY.Storage` device bidding both sides).
 
 # Returns
@@ -472,12 +426,12 @@ function _fcas_agc_ramp_caps(window::_FCASWindow, device::PSY.Device, bid_type::
         device, bid_type, window.initial_time, window.horizon; resolution = window.resolution,
     )
     return [
-        (isnothing(ramp_cap) || isnan(ramp_cap[t]) || !_fcas_agc_ramp_applies(window.process, t)) ? 0.0 : ramp_cap[t]
+        (isnothing(ramp_cap) || isnan(ramp_cap[t])) ? 0.0 : ramp_cap[t]
             for t in 1:window.horizon
     ]
 end
-function _fcas_agc_ramp_caps(container::PSI.OptimizationContainer, devices_template, device::PSY.Device, bid_type::BidType)
-    return _fcas_agc_ramp_caps(_fcas_window(container, devices_template, device), device, bid_type)
+function _fcas_agc_ramp_caps(container::PSI.OptimizationContainer, device::PSY.Device, bid_type::BidType)
+    return _fcas_agc_ramp_caps(_fcas_window(container), device, bid_type)
 end
 
 
@@ -705,24 +659,6 @@ function _add_fcas_parameter!(
 end
 
 
-# Overwrites `name`'s row of the `param` container keyed `(D, meta)` with `values`, one series element per time step.
-function _overwrite_fcas_parameter!(container::PSI.OptimizationContainer, param, ::Type{D}, meta::String, name::String, values) where {D}
-    param_container = PSI.get_parameter(container, param, D, meta)
-    array = PSI.get_parameter_array(param_container)
-    row = array.lookup[1][PSI._get_ts_uuid(PSI.get_attributes(param_container), name)]
-    data = PSI.get_parameter_array_data(param_container)
-    axes = _fcas_parameter_axes(param)
-    for (t, value) in enumerate(values)
-        if isempty(axes)
-            data[row, t] = PSI._unwrap_for_param(param, value, axes)
-        else
-            data[row, :, t] .= PSI._unwrap_for_param(param, value, axes)
-        end
-    end
-    return
-end
-
-
 """
     _check_fcas_effective_series(container, devices, bid_type, directions)
 
@@ -757,9 +693,7 @@ end
 Adds the [`FCASOfferLimitParameter`](@ref), [`FCASBandWidthParameter`](@ref),
 [`FCASUpperSlopeParameter`](@ref) and [`FCASLowerSlopeParameter`](@ref) of every offer of `devices`
 in `bid_type`, and the [`FCASRampingLimitParameter`](@ref) of a regulation market, each keyed by
-device type and shared by every service of that market. A device under [`NEMLookaheadDispatch`](@ref)
-has its rows overwritten with the effective values of its own process over the model's window
-([`_fcas_effective_values`](@ref)); that is rejected in a recurrent build.
+device type and shared by every service of that market.
 
 # Returns
 `nothing`.
@@ -780,25 +714,6 @@ function _add_fcas_offer_parameters!(
             container, FCASRampingLimitParameter(), model, sys, _fcas_ramping_series_name(bid_type), string(bid_type),
         )
     end
-    inactive = FCAS_INACTIVE_LIMIT_MW / PSI.get_base_power(container)
-    for device in devices
-        dname = PSY.get_name(device)
-        window = _fcas_window(container, devices_template, device)
-        window.process === :dispatch && continue
-        PSI.built_for_recurrent_solves(container) && throw(
-            ArgumentError(
-                "FCASMarket: \"$dname\" is modeled under NEMLookaheadDispatch, whose FCAS inputs depend on the " *
-                    "interval's position in the horizon; a recurrent simulation supports NEMReplayDispatch only.",
-            ),
-        )
-        offers, ramping = _fcas_effective_values(window, device, bid_type, directions[dname], inactive)
-        for (decremental, values) in offers, P in _FCAS_OFFER_PARAMETERS
-            _overwrite_fcas_parameter!(container, P(), typeof(device), _fcas_offer_meta(bid_type, decremental), dname, values)
-        end
-        isnothing(ramping) || _overwrite_fcas_parameter!(
-            container, FCASRampingLimitParameter(), typeof(device), string(bid_type), dname, ramping,
-        )
-    end
     return
 end
 
@@ -810,31 +725,18 @@ function _fcas_parameter_refs(container::PSI.OptimizationContainer, ::Type{P}, d
 end
 
 
-# A parameter cell's value: the number itself, or the fixed value of a recurrent build's JuMP parameter.
-function _fixed_value(x::Float64)
-    return x
-end
-function _fixed_value(x::JuMP.VariableRef)
-    return JuMP.fix_value(x)
-end
-
-
 """
-    _fcas_capacity_bound(container, device, bid_type, decremental) -> Float64
+    _fcas_capacity_bound(device, bid_type, decremental) -> Float64
 
 The largest effective `MaxAvail` of `device`'s `bid_type` offer on one side, per-unit: over its whole
-`"fcas_effective_..."` series and the model's current [`FCASOfferLimitParameter`](@ref) values,
-which differ from the series only under [`NEMLookaheadDispatch`](@ref).
+`"fcas_effective_..."` series.
 
 # Returns
 `Float64`.
 """
-function _fcas_capacity_bound(container::PSI.OptimizationContainer, device::PSY.Device, bid_type::BidType, decremental::Bool)
-    meta = _fcas_offer_meta(bid_type, decremental)
+function _fcas_capacity_bound(device::PSY.Device, bid_type::BidType, decremental::Bool)
     series = PSY.get_time_series_values(PSY.SingleTimeSeries, device, _fcas_effective_series_name(bid_type, decremental))
-    limits, _ = _fcas_parameter_refs(container, FCASOfferLimitParameter, device, meta)
-    window = maximum(_fixed_value(limits["max_avail", t]) for t in PSI.get_time_steps(container))
-    return max(maximum(first, series), window)
+    return maximum(first, series)
 end
 
 
@@ -1154,7 +1056,7 @@ function PSI.construct_service!(
         label = "$(nameof(typeof(group.variable)))_FCASService_$(group.meta)"
         for (device, decremental) in group.offers
             dname = PSY.get_name(device)
-            bound = _fcas_capacity_bound(container, device, bid_type, decremental)
+            bound = _fcas_capacity_bound(device, bid_type, decremental)
             for t in time_steps
                 var[dname, t] = JuMP.@variable(jm, base_name = "$(label)_{$dname, $t}", lower_bound = 0.0)
                 _set_fcas_capacity_bound!(model, var[dname, t], bound)

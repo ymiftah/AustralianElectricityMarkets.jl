@@ -19,15 +19,6 @@ PSI.get_multiplier_value(::PSI.ActivePowerOutTimeSeriesParameter, ::PSY.Storage,
 
 PSI.get_multiplier_value(::PSI.ActivePowerInTimeSeriesParameter, ::PSY.Storage, ::AbstractNEMDispatch) = 1.0
 
-
-PSI.initial_condition_default(::PSI.DevicePower, d::PSY.Storage, ::AbstractNEMDispatch) = max(PSY.get_active_power(d), 0.0)
-
-PSI.initial_condition_variable(::PSI.DevicePower, ::PSY.Storage, ::AbstractNEMDispatch) = PSI.ActivePowerOutVariable()
-
-PSI.initial_condition_default(::StorageInputDevicePower, d::PSY.Storage, ::AbstractNEMDispatch) = max(-PSY.get_active_power(d), 0.0)
-
-PSI.initial_condition_variable(::StorageInputDevicePower, ::PSY.Storage, ::AbstractNEMDispatch) = PSI.ActivePowerInVariable()
-
 #! format: on
 
 """
@@ -60,8 +51,7 @@ end
 
 Argument stage for a battery under [`AbstractNEMDispatch`](@ref): the per-direction active
 power variables, the ramp parameters, the raw availability
-parameters, the initial conditions [`NEMLookaheadDispatch`](@ref)
-requires, the incremental and decremental market-bid parameters, and the device's net
+parameters, the incremental and decremental market-bid parameters, and the device's net
 contribution to the active power balance.
 
 # Returns
@@ -89,11 +79,6 @@ function PSI.construct_device!(
     end
 
     _add_fixed_load_arguments!(container, devices, model)
-
-    if PSI.requires_initialization(D())
-        PSI.add_initial_condition!(container, devices, D(), PSI.DevicePower())
-        PSI.add_initial_condition!(container, devices, D(), StorageInputDevicePower())
-    end
 
     PSI.process_market_bid_parameters!(container, devices, model, true, true)
     for S in _ENERGY_OFFER_SLACK_TYPES
@@ -219,20 +204,3 @@ end
 
 _storage_ramp_base_accessor(container, ::Type{NEMReplayDispatch}, ::Type{T}, names, out, in_) where {T <: PSY.Storage} =
     _ramp_base_accessor(container, NEMReplayDispatch, T, names, nothing)
-
-
-function _storage_ramp_base_accessor(container, ::Type{NEMLookaheadDispatch}, ::Type{T}, names, out, in_) where {T <: PSY.Storage}
-    out_ic = Dict(
-        PSI.get_component_name(ic) => PSI.get_value(ic)
-            for ic in PSI.get_initial_condition(container, PSI.DevicePower(), T)
-    )
-    in_ic = Dict(
-        PSI.get_component_name(ic) => PSI.get_value(ic)
-            for ic in PSI.get_initial_condition(container, StorageInputDevicePower(), T)
-    )
-    _require_coverage(
-        names, "no DevicePower initial condition", "The initial-conditions sub-model built none.",
-        keys(out_ic), keys(in_ic),
-    )
-    return (name, t) -> t > 1 ? out[name, t - 1] - in_[name, t - 1] : out_ic[name] - in_ic[name]
-end

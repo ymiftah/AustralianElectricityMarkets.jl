@@ -85,8 +85,8 @@ end
 function _add_fixed_load_costs!(container::PSI.OptimizationContainer, devices, ::Type{T}) where {T}
     names = PSY.get_name.(_fixed_load_devices(devices))
     isempty(names) && return
-    for slack in (EnergyFixedLoadSurplusSlack(), EnergyFixedLoadDeficitSlack())
-        _add_mpc_penalty!(container, PSI.get_variable(container, slack, T), names, PSI.get_time_steps(container), FIXED_LOADING_CVP_FACTOR)
+    for slack in (EnergyFixedLoadSurplusSlack, EnergyFixedLoadDeficitSlack)
+        _add_mpc_penalty!(container, slack, T, names, FIXED_LOADING_CVP_FACTOR)
     end
     return
 end

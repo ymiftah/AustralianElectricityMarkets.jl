@@ -103,20 +103,9 @@ component_keys(container_keys, ::Type{T}) where {T} =
 @testset "formulation types" begin
     @test AbstractNEMDispatch <: PSI.AbstractDeviceFormulation
     @test NEMReplayDispatch <: AbstractNEMDispatch
-    @test NEMLookaheadDispatch <: AbstractNEMDispatch
-
-    @testset "both modes are concrete, so a DeviceModel is buildable from either" begin
-        @test isconcretetype(NEMReplayDispatch) && isconcretetype(NEMLookaheadDispatch)
-        @test isabstracttype(AbstractNEMDispatch)
-        for F in (NEMReplayDispatch, NEMLookaheadDispatch)
-            @test PSI.get_formulation(PSI.DeviceModel(PSY.ThermalStandard, F)) === F
-        end
-    end
-
-    @testset "only the lookahead mode requires an initial-conditions sub-solve" begin
-        @test PSI.requires_initialization(NEMReplayDispatch()) == false
-        @test PSI.requires_initialization(NEMLookaheadDispatch()) == true
-    end
+    @test isconcretetype(NEMReplayDispatch) && isabstracttype(AbstractNEMDispatch)
+    @test PSI.get_formulation(PSI.DeviceModel(PSY.ThermalStandard, NEMReplayDispatch)) === NEMReplayDispatch
+    @test PSI.requires_initialization(NEMReplayDispatch()) == false
 end
 
 @testset "the formulation is not gated on device type" begin
@@ -150,14 +139,9 @@ end
         end
     end
 
-    @testset "both modes register initial_mw, for the initial-conditions sub-model" begin
-        # PSI copies the parent model's time_series_names onto the initial-conditions model,
-        # which runs NEMReplayDispatch and reads "initial_mw" whatever the parent was.
-        for F in (NEMReplayDispatch, NEMLookaheadDispatch)
-            names = PSI.get_default_time_series_names(PSY.ThermalStandard, F)
-            @test haskey(names, InitialPowerTimeSeriesParameter)
-            @test names[InitialPowerTimeSeriesParameter] == "initial_mw"
-        end
+    @testset "initial_mw is registered for the ramp base" begin
+        names = PSI.get_default_time_series_names(PSY.ThermalStandard, NEMReplayDispatch)
+        @test names[InitialPowerTimeSeriesParameter] == "initial_mw"
     end
 end
 
@@ -532,49 +516,5 @@ end
             @test JuMP.coefficient(func, slack) == -1.0
             @test JuMP.coefficient(func, other) == 0.0
         end
-    end
-end
-
-@testset "NEMLookaheadDispatch solves two chained dispatch intervals" begin
-    sys = nem_dispatch_system(; data_span = Minute(10))
-    model = nem_dispatch_model(sys; formulation = NEMLookaheadDispatch, horizon = Minute(10))
-
-    @test build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    container = PSI.get_optimization_container(model)
-    @test length(PSI.get_time_steps(container)) == 2
-
-    power = PSI.get_variable(container, PSI.ActivePowerVariable(), PSY.ThermalStandard)
-    @test size(power, 2) == 2
-    @test solve!(model) == IS.Simulation.RunStatus.SUCCESSFULLY_FINALIZED
-
-    @testset "the initialisation sub-solve populated a DevicePower condition per device" begin
-        ics = PSI.get_initial_condition(container, PSI.DevicePower(), PSY.ThermalStandard)
-        @test length(ics) == length(collect(PSY.get_components(PSY.ThermalStandard, sys)))
-        @test all(isfinite(PSI.get_value(ic)) for ic in ics)
-        @test "ER02" in [PSI.get_component_name(ic) for ic in ics]
-    end
-
-    @testset "interval 1 measures against the initial condition, interval 2 against interval 1" begin
-        for meta in ("up", "dn")
-            constraint = PSI.get_constraint(
-                container, PSI.RampConstraint(), PSY.ThermalStandard, meta,
-            )
-            @test size(constraint, 2) == 2
-            # t = 1: the initial condition is a number, folded into the RHS.
-            @test constraint_vars(constraint["ER02", 1]) == Set([power["ER02", 1]])
-            # t = 2: the base is the previous interval's variable, so both appear.
-            @test constraint_vars(constraint["ER02", 2]) ==
-                Set([power["ER02", 1], power["ER02", 2]])
-        end
-    end
-
-    @testset "the solved second interval is within its rates of the solved first" begin
-        solved = solved_pu(model, sys, "ER02")
-        @test length(solved) == 2
-        device = PSY.get_component(PSY.ThermalStandard, sys, "ER02")
-        up_rate = PSY.get_time_series_values(PSY.SingleTimeSeries, device, "ramp_up_rate"; len = 2)
-        down_rate = PSY.get_time_series_values(PSY.SingleTimeSeries, device, "ramp_down_rate"; len = 2)
-        @test solved[2] - solved[1] <= up_rate[2] * 5 + 1.0e-6
-        @test solved[1] - solved[2] <= down_rate[2] * 5 + 1.0e-6
     end
 end

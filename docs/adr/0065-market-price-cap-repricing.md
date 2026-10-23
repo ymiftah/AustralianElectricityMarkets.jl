@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted. The `ext` record and `PSY.Area` parameter mechanism is superseded by
+[0070](0070-per-slack-market-price-cap-parameters.md).
 
 ## Context
 

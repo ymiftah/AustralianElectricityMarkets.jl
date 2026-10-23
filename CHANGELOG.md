@@ -467,6 +467,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `NEMLookaheadDispatch` and `StorageInputDevicePower`, with the pre-dispatch FCAS timing (AGC
+  scaling and telemetry on the first interval only) that only it used. `NEMReplayDispatch` is the
+  one `AbstractNEMDispatch` formulation.
 - `AbstractNEMConstraintFormulation`: `LinearFactorLimit` subtypes
   `PowerSimulations.AbstractServiceFormulation` directly, as no method dispatched on the abstract
   type and it had no other subtype.
@@ -501,6 +504,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `FCASMarket` adds its offer band variables in the argument stage and their rows in the model
   stage; `objective_function!` only prices them. The band-sum-to-capacity rows are registered as
   the new `FCASOfferBandConstraint`.
+- Each Market Price Cap penalty slack is priced through its own `MarketPriceCapPenaltyParameter`,
+  keyed by the slack's component type and named by its variable type, and re-priced per key at each
+  step. Fixed-rate penalties are invariant costs. The settings `ext` penalty record, the placeholder
+  parameter on `PSY.Area` and the private `_update_parameter_values!` override are gone. The
+  generic-constraint slack cost updates through the same per-key method.
 - **Breaking:** `fcas_bid_direction` returns the new `FCASBidDirection` enum (`NONE`,
   `INCREMENTAL`, `DECREMENTAL`, `BOTH`) instead of a `Symbol`.
 - Bid series names live in one registry: `OfferSide` (`GEN`/`LOAD`), `NEM_SERIES`,

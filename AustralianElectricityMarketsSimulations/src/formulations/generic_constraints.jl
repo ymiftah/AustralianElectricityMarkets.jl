@@ -463,12 +463,21 @@ function PSI.objective_function!(
     )
     invoked_values = PSI.get_parameter_array(param)
     penalties = PSI.get_multiplier_array(param)
-    invoked = _invoked_mask(container, gc)
-    _set_service_mpc_rate!(container, name, PSI.get_attribute(model, "market_price_cap"))
-    for t in time_steps
-        penalties[name, t] = base_power * interval_cost_coefficient(weight, resolution)
+    fill!(penalties, base_power * interval_cost_coefficient(weight, resolution))
+    _price_gc_slacks!(container, gc, model, invoked_values, penalties, initial_time)
+    return
+end
+
+
+# Writes `gc`'s `"invoked"` values from `initial_time` into `invoked_values` and adds its slack costs
+# at each interval's Market Price Cap to the variant objective.
+function _price_gc_slacks!(container::PSI.OptimizationContainer, gc::GenericConstraint, model::PSI.ServiceModel, invoked_values, penalties, initial_time::DateTime)
+    name = PSY.get_name(gc)
+    resolution = PSI.get_resolution(container)
+    invoked = _invoked_mask(container, gc, initial_time)
+    for t in axes(invoked_values)[2]
         invoked_values[name, t] = invoked[t]
-        mpc = _service_market_price_cap(container, name, initial_time + resolution * (t - 1))
+        mpc = _service_market_price_cap(model, container, initial_time + resolution * (t - 1))
         _add_gc_slack_costs!(container, gc, invoked_values, penalties, t, mpc)
     end
     return
@@ -491,27 +500,32 @@ end
 
 
 """
-    PSI.handle_variable_cost_parameter(::GenericConstraintSlackCostParameter, gc::GenericConstraint, name, parameter_array, parameter_multiplier, attributes, container, initial_forecast_time, horizon)
+    PSI.update_container_parameter_values!(container, model, key::PSI.ParameterKey{GenericConstraintSlackCostParameter, GenericConstraint}, input)
 
-Simulation-step update of [`GenericConstraintSlackCostParameter`](@ref): reads `gc`'s `"invoked"`
-values for the window starting at `initial_forecast_time` into `parameter_array` and re-adds the
-slack costs (`invoked x` the build-time penalty in `parameter_multiplier`) to the variant objective.
+Simulation-step update of the [`GenericConstraintSlackCostParameter`](@ref) of the constraint
+`key.meta`: reads its `"invoked"` values for the window at the model's current time and re-adds the
+slack costs (`invoked x` the build-time penalty in the multiplier `x` the Market Price Cap of its
+service model) to the variant objective.
 
 # Returns
 `nothing`.
 """
-function PSI.handle_variable_cost_parameter(
-        ::GenericConstraintSlackCostParameter, gc::GenericConstraint, name::String,
-        parameter_array, parameter_multiplier, attributes, container::PSI.OptimizationContainer,
-        initial_forecast_time::DateTime, horizon::Int,
+function PSI.update_container_parameter_values!(
+        container::PSI.OptimizationContainer, model::PSI.OperationModel,
+        key::PSI.ParameterKey{GenericConstraintSlackCostParameter, GenericConstraint}, ::PSI.DatasetContainer{PSI.InMemoryDataset},
     )
-    invoked = _invoked_mask(container, gc, initial_forecast_time)
-    resolution = PSI.get_resolution(container)
-    for t in 1:horizon
-        parameter_array[name, t] = invoked[t]
-        mpc = _service_market_price_cap(container, name, initial_forecast_time + resolution * (t - 1))
-        _add_gc_slack_costs!(container, gc, parameter_array, parameter_multiplier, t, mpc)
-    end
+    PSI.is_synchronized(container) && error(
+        "Cannot update GenericConstraintSlackCostParameter on a synchronized container; the slack costs would be added twice.",
+    )
+    gc = PSY.get_component(GenericConstraint, PSI.get_system(model), key.meta)
+    service_model = only(
+        m for m in values(PSI.get_service_models(PSI.get_template(model)))
+            if PSI.get_component_type(m) === GenericConstraint && PSI.get_service_name(m) == key.meta
+    )
+    _price_gc_slacks!(
+        container, gc, service_model, PSI.get_parameter_array(container, key),
+        PSI.get_parameter_multiplier_array(container, key), PSI.get_current_time(model),
+    )
     return
 end
 
