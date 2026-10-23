@@ -4,8 +4,14 @@ updates:
   - package-ecosystem: "julia"
     directories:
       - "/"
+      - "/AustralianElectricityMarketsCache"
+      - "/AustralianElectricityMarketsData"
+      - "/AustralianElectricityMarketsSimulations"
     schedule:
       interval: "weekly"
     ignore:
-      # Ignore itself so `path = ".."` in subdir/Project.toml doesn't trigger it
+      # Sibling packages are linked by [sources] paths and released together
       - dependency-name: "AustralianElectricityMarkets"
+      - dependency-name: "AustralianElectricityMarketsCache"
+      - dependency-name: "AustralianElectricityMarketsData"
+      - dependency-name: "AustralianElectricityMarketsSimulations"
