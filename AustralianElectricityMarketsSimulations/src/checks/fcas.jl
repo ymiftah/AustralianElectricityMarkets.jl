@@ -8,7 +8,7 @@ positive value.
 `Bool`.
 """
 function _fcas_ramp_series_positive(device::PSY.Device, bid_type::BidType)
-    name = "fcas_agc_ramp_rate_$(string(bid_type))"
+    name = fcas_series_name("fcas_agc_ramp_rate", bid_type)
     PSY.has_time_series(device, PSY.SingleTimeSeries, name) || return false
     return any(>(0.0), PSY.get_time_series_values(PSY.SingleTimeSeries, device, name))
 end
@@ -69,7 +69,7 @@ function check_fcas_services(sys::PSY.System, template::PSI.ProblemTemplate; exc
             problem = _fcas_direction_problem(device, bid_type, direction)
             isnothing(problem) || push!(problems, "FCASService \"$svc_name\": device \"$dname\" $problem.")
             if bid_type in FCAS_REGULATION_MARKETS && _fcas_ramp_series_positive(device, bid_type) &&
-                    !PSY.has_time_series(device, PSY.SingleTimeSeries, "initial_mw")
+                    !PSY.has_time_series(device, PSY.SingleTimeSeries, NEM_SERIES.initial_mw)
                 push!(
                     problems,
                     "FCASService \"$svc_name\": device \"$dname\" ($(typeof(device))) carries a " *

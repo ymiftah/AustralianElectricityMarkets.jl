@@ -196,8 +196,8 @@ function set_market_bids!(sys, db, date_range; kwargs...)
 
             _set_decremental_bid_cost!(sys, gen, load_bids, start_date, resolution)
 
-            _set_storage_energy_max_avail!(sys, gen, gen_bids, "energy_max_avail", start_date, resolution)
-            _set_storage_energy_max_avail!(sys, gen, load_bids, "energy_max_avail_decremental", start_date, resolution)
+            _set_storage_energy_max_avail!(sys, gen, gen_bids, energy_max_avail_series_name(OfferSide.GEN), start_date, resolution)
+            _set_storage_energy_max_avail!(sys, gen, load_bids, energy_max_avail_series_name(OfferSide.LOAD), start_date, resolution)
         end
     end
 end

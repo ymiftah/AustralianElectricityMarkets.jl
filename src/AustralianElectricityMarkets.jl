@@ -41,6 +41,7 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
     get_limit_type, get_source, get_effective_date, get_version_no, get_gencon_id,
     get_terms, set_terms!, get_fcas_requirements, set_fcas_requirements!, resolve_term_devices
 export FCASService, add_fcas_services!, Readers
+export OfferSide, offer_side, side_suffix, NEM_SERIES, energy_max_avail_series_name
 export fcas_series_name, fcas_bid_direction, single_series, remove_single_series!, replace_single_series!,
     nem_dispatch_devices, is_non_scheduled_load
 
@@ -61,6 +62,7 @@ for name in names(Readers)
     @eval @doc (@doc Readers.$name) $name
 end
 
+include("accessors/series_names.jl")
 include("accessors/bids.jl")
 include("accessors/dispatch_limits.jl")
 include("accessors/fcas.jl")

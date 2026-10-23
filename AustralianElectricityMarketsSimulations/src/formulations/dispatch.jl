@@ -57,11 +57,11 @@ function PSI.get_default_time_series_names(
         ::Type{<:AbstractNEMDispatch},
     )
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
-        RampUpRateTimeSeriesParameter => "ramp_up_rate",
-        RampDownRateTimeSeriesParameter => "ramp_down_rate",
-        InitialPowerTimeSeriesParameter => "initial_mw",
-        EnergyMaxAvailTimeSeriesParameter => "energy_max_avail",
-        EnergyUIGFTimeSeriesParameter => "energy_uigf",
+        RampUpRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
+        RampDownRateTimeSeriesParameter => NEM_SERIES.ramp_down_rate,
+        InitialPowerTimeSeriesParameter => NEM_SERIES.initial_mw,
+        EnergyMaxAvailTimeSeriesParameter => energy_max_avail_series_name(OfferSide.GEN),
+        EnergyUIGFTimeSeriesParameter => NEM_SERIES.energy_uigf,
     )
 end
 

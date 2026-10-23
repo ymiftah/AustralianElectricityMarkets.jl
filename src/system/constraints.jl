@@ -1,6 +1,6 @@
 "Whether `load` carries a decremental FCAS trapezium series for any FCAS market."
 _offers_fcas(load) = any(
-    bt -> has_time_series(load, SingleTimeSeries, "fcas_trapezium_$(string(bt))_decremental"), FCAS_BID_TYPES,
+    bt -> has_time_series(load, SingleTimeSeries, fcas_series_name("fcas_trapezium", bt, OfferSide.LOAD)), FCAS_BID_TYPES,
 )
 
 

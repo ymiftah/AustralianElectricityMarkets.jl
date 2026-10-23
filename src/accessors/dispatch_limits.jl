@@ -9,7 +9,7 @@ Full-series read of `component`'s `"initial_mw"` series ([`set_nem_dispatch_limi
 `Union{Nothing, Vector{Float64}}`.
 """
 function get_initial_mw(component, initial_time, horizon::Integer)
-    return _read_dispatch_limit_series(component, "initial_mw", initial_time, horizon)
+    return _read_dispatch_limit_series(component, NEM_SERIES.initial_mw, initial_time, horizon)
 end
 
 
@@ -24,7 +24,7 @@ current display units. `nothing` if `component` carries no such series.
 `Union{Nothing, Vector{Float64}}`.
 """
 function get_energy_availability(component, initial_time, horizon::Integer)
-    return _read_dispatch_limit_series(component, "availability", initial_time, horizon)
+    return _read_dispatch_limit_series(component, NEM_SERIES.availability, initial_time, horizon)
 end
 
 

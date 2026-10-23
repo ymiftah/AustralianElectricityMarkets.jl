@@ -3,7 +3,7 @@ module AustralianElectricityMarketsSimulations
 import AustralianElectricityMarkets
 using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCASTrapezium,
     FCAS_REGULATION_MARKETS, GenericConstraint, InterconnectorLossModel, InterconnectorTerm,
-    RegionTerm, UnitTerm, fcas_bid_direction, fcas_series_name, fcas_service_name, get_bid_type, get_constraint_weight,
+    NEM_SERIES, OfferSide, RegionTerm, UnitTerm, energy_max_avail_series_name, offer_side, side_suffix, fcas_bid_direction, fcas_series_name, fcas_service_name, get_bid_type, get_constraint_weight,
     get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_enablement_max,
     get_enablement_min, get_energy_availability, get_factor, get_fcas_agc_ramp_capability,
     get_fcas_agc_status, get_fcas_offer_curve, get_fcas_requirements, get_initial_mw, get_interconnector,

@@ -143,22 +143,22 @@ end
 
 
 """
-    _attach_fcas_bid_series!(sys, component, gdf, duid, series_suffix, start_date, resolution)
+    _attach_fcas_bid_series!(sys, component, gdf, duid, bid_type, side, start_date, resolution)
 
-Attaches the two per-`(component, FCAS market)` `SingleTimeSeries` series - `"fcas_curve_\$
-series_suffix"` and `"fcas_trapezium_\$series_suffix"` - from `gdf` (a `DUID`-grouped bids
+Attaches the two per-`(component, FCAS market, side)` `SingleTimeSeries` series, `"fcas_curve_..."`
+and `"fcas_trapezium_..."` ([`fcas_series_name`](@ref)), from `gdf` (a `DUID`-grouped bids
 `DataFrame`) if `duid` has a group in it. No-op otherwise, so callers can probe a component
 against several `DIRECTION` groupings without checking `haskey` themselves. Returns whether
 the series were attached.
 """
-function _attach_fcas_bid_series!(sys, component, gdf, duid::AbstractString, series_suffix::AbstractString, start_date, resolution)
+function _attach_fcas_bid_series!(sys, component, gdf, duid::AbstractString, bid_type::BidType, side::OfferSide, start_date, resolution)
     (isnothing(gdf) || !haskey(gdf, (duid,))) && return false
     rows = gdf[(duid,)]
     # rows.curve_data/.trapezium_row are SubArray views into the grouped DataFrame -
     # the series needs plain Vectors.
-    curve_ts = single_series("fcas_curve_$(series_suffix)", start_date, collect(rows.curve_data), resolution)
+    curve_ts = single_series(fcas_series_name("fcas_curve", bid_type, side), start_date, collect(rows.curve_data), resolution)
     add_time_series!(sys, component, curve_ts)
-    trapezium_ts = single_series("fcas_trapezium_$(series_suffix)", start_date, collect(rows.trapezium_row), resolution)
+    trapezium_ts = single_series(fcas_series_name("fcas_trapezium", bid_type, side), start_date, collect(rows.trapezium_row), resolution)
     add_time_series!(sys, component, trapezium_ts)
     return true
 end
@@ -223,24 +223,22 @@ function set_fcas_bids!(sys, db, date_range; kwargs...)
             :trapezium_row => ByRow(t -> t ./ base_power) => :trapezium_row,
         )
         sort!(bids, :INTERVAL_DATETIME)
-        bid_type_str = string(bid_type)
-
         incremental = subset(bids, :DIRECTION => ByRow(in(("GEN", "BIDIRECTIONAL"))))
         decremental = subset(bids, :DIRECTION => ByRow(==("LOAD")))
         gdf_inc = DataFrames.isempty(incremental) ? nothing : groupby(incremental, :DUID)
         gdf_dec = DataFrames.isempty(decremental) ? nothing : groupby(decremental, :DUID)
 
         foreach(get_components(Generator, sys)) do gen
-            _attach_fcas_bid_series!(sys, gen, gdf_inc, get_name(gen), bid_type_str, start_date, resolution)
+            _attach_fcas_bid_series!(sys, gen, gdf_inc, get_name(gen), bid_type, OfferSide.GEN, start_date, resolution)
         end
         foreach(get_components(EnergyReservoirStorage, sys)) do stor
             duid = get_name(stor)
-            _attach_fcas_bid_series!(sys, stor, gdf_inc, duid, bid_type_str, start_date, resolution)
-            _attach_fcas_bid_series!(sys, stor, gdf_dec, duid, "$(bid_type_str)_decremental", start_date, resolution)
+            _attach_fcas_bid_series!(sys, stor, gdf_inc, duid, bid_type, OfferSide.GEN, start_date, resolution)
+            _attach_fcas_bid_series!(sys, stor, gdf_dec, duid, bid_type, OfferSide.LOAD, start_date, resolution)
         end
         foreach(get_components(InterruptiblePowerLoad, sys)) do load
             attached = _attach_fcas_bid_series!(
-                sys, load, gdf_dec, get_name(load), "$(bid_type_str)_decremental", start_date, resolution,
+                sys, load, gdf_dec, get_name(load), bid_type, OfferSide.LOAD, start_date, resolution,
             )
             attached && is_non_scheduled_load(load) && get(get_ext(load), "commissioned", true) === true &&
                 set_available!(load, true)
@@ -345,34 +343,34 @@ function set_fcas_scaling_inputs!(sys, db, date_range; kwargs...)
             by_time = Dict(zip(by_duid[(duid,)].SETTLEMENTDATE, eachrow(by_duid[(duid,)])))
             _attach_fcas_scaling_series!(
                 sys, device, by_time, full_grid, :RAISEREGENABLEMENTMIN,
-                "fcas_agc_enablement_min_RAISEREG", base_power,
+                fcas_series_name("fcas_agc_enablement_min", BidType.RAISEREG), base_power,
             )
             _attach_fcas_scaling_series!(
                 sys, device, by_time, full_grid, :RAISEREGENABLEMENTMAX,
-                "fcas_agc_enablement_max_RAISEREG", base_power,
+                fcas_series_name("fcas_agc_enablement_max", BidType.RAISEREG), base_power,
             )
             _attach_fcas_scaling_series!(
                 sys, device, by_time, full_grid, :LOWERREGENABLEMENTMIN,
-                "fcas_agc_enablement_min_LOWERREG", base_power,
+                fcas_series_name("fcas_agc_enablement_min", BidType.LOWERREG), base_power,
             )
             _attach_fcas_scaling_series!(
                 sys, device, by_time, full_grid, :LOWERREGENABLEMENTMAX,
-                "fcas_agc_enablement_max_LOWERREG", base_power,
+                fcas_series_name("fcas_agc_enablement_max", BidType.LOWERREG), base_power,
             )
             _attach_fcas_scaling_series!(
-                sys, device, by_time, full_grid, :RAMPUPRATE, "fcas_agc_ramp_rate_RAISEREG", base_power,
+                sys, device, by_time, full_grid, :RAMPUPRATE, fcas_series_name("fcas_agc_ramp_rate", BidType.RAISEREG), base_power,
             )
             _attach_fcas_scaling_series!(
-                sys, device, by_time, full_grid, :RAMPDOWNRATE, "fcas_agc_ramp_rate_LOWERREG", base_power,
+                sys, device, by_time, full_grid, :RAMPDOWNRATE, fcas_series_name("fcas_agc_ramp_rate", BidType.LOWERREG), base_power,
             )
             _attach_fcas_scaling_series!(
-                sys, device, by_time, full_grid, :AGCSTATUS, "fcas_agc_status", 1.0,
+                sys, device, by_time, full_grid, :AGCSTATUS, NEM_SERIES.fcas_agc_status, 1.0,
             )
         end
 
         if !isnothing(uigf_by_duid) && haskey(uigf_by_duid, (duid,))
             by_time = Dict(zip(uigf_by_duid[(duid,)].SETTLEMENTDATE, eachrow(uigf_by_duid[(duid,)])))
-            _attach_fcas_scaling_series!(sys, device, by_time, full_grid, :UIGF, "fcas_uigf", base_power)
+            _attach_fcas_scaling_series!(sys, device, by_time, full_grid, :UIGF, NEM_SERIES.fcas_uigf, base_power)
         end
     end
     return

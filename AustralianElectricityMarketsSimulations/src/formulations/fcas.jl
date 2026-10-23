@@ -555,13 +555,13 @@ end
 
 "`\"fcas_ramping_limits_<BIDTYPE>\"`, the [`set_fcas_effective_offers!`](@ref) series of one regulation market."
 function _fcas_ramping_series_name(bid_type::BidType)
-    return "fcas_ramping_limits_$(string(bid_type))"
+    return fcas_series_name("fcas_ramping_limits", bid_type)
 end
 
 
 "The meta of an FCAS offer's parameters: `\"<BIDTYPE>\"`, or `\"<BIDTYPE>_decremental\"` for a decremental offer."
 function _fcas_offer_meta(bid_type::BidType, decremental::Bool)
-    return decremental ? "$(string(bid_type))_decremental" : string(bid_type)
+    return string(bid_type) * side_suffix(offer_side(decremental))
 end
 
 

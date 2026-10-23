@@ -213,15 +213,15 @@ function set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates:
         duid = get_name(device)
         haskey(buildable, duid) || continue
         d = buildable[duid]
-        add_time_series!(sys, device, single_series("ramp_up_rate", full_grid, d.ramp_up_rate ./ 60 ./ base_power))
-        add_time_series!(sys, device, single_series("ramp_down_rate", full_grid, d.ramp_down_rate ./ 60 ./ base_power))
-        add_time_series!(sys, device, single_series("initial_mw", full_grid, d.initial_mw ./ base_power))
+        add_time_series!(sys, device, single_series(NEM_SERIES.ramp_up_rate, full_grid, d.ramp_up_rate ./ 60 ./ base_power))
+        add_time_series!(sys, device, single_series(NEM_SERIES.ramp_down_rate, full_grid, d.ramp_down_rate ./ 60 ./ base_power))
+        add_time_series!(sys, device, single_series(NEM_SERIES.initial_mw, full_grid, d.initial_mw ./ base_power))
         isnothing(d.max_active_power) && continue
-        add_time_series!(sys, device, single_series("availability", full_grid, d.availability ./ base_power))
+        add_time_series!(sys, device, single_series(NEM_SERIES.availability, full_grid, d.availability ./ base_power))
         # Overwrites a "max_active_power" series set by set_renewable_pv!/set_renewable_wind!/set_hydro_limits!.
         replace_single_series!(
             sys, device,
-            single_series("max_active_power", full_grid, d.max_active_power; scaling_factor_multiplier = get_max_active_power),
+            single_series(NEM_SERIES.max_active_power, full_grid, d.max_active_power; scaling_factor_multiplier = get_max_active_power),
         )
     end
     return

@@ -66,7 +66,7 @@ function _add_uigf_ts_to_components!(sys, uigf, prime_mover)
         add_time_series!(
             sys, component,
             single_series(
-                "max_active_power", rows.SETTLEMENTDATE, Float64.(rows.UIGF ./ max_active_power);
+                NEM_SERIES.max_active_power, rows.SETTLEMENTDATE, Float64.(rows.UIGF ./ max_active_power);
                 scaling_factor_multiplier = get_max_active_power,
             ),
         )

@@ -1,22 +1,4 @@
 """
-    fcas_series_name(prefix, service, decremental) -> String
-
-Name of the per-device FCAS time series `"<prefix>_<service>"`, suffixed `"_decremental"` for the
-decremental side of a storage device's or load's bid.
-
-# Arguments
-- `prefix`: the series kind, such as `"fcas_trapezium"` or `"fcas_curve"`.
-- `service`: the FCAS [`BidType`](@ref).
-- `decremental`: whether the series is the decremental side.
-
-# Returns
-A `String`.
-"""
-fcas_series_name(prefix::AbstractString, service::BidType, decremental::Bool) =
-    decremental ? "$(prefix)_$(string(service))_decremental" : "$(prefix)_$(string(service))"
-
-
-"""
     _fcas_units_multiplier(component) -> Float64
 
 Factor to bring a per-unit-of-system-base FCAS value stored on `component` into its
@@ -115,16 +97,15 @@ function get_scaled_fcas_trapezium(
     )
     trapeziums = get_fcas_trapezium(component, service, initial_time, horizon; decremental = decremental)
     is_regulation = service in FCAS_REGULATION_MARKETS
-    service_str = string(service)
     agc_enablement_min = is_regulation ?
-        _read_optional_fcas_scaling_series(component, "fcas_agc_enablement_min_$service_str", initial_time, horizon) : nothing
+        _read_optional_fcas_scaling_series(component, fcas_series_name("fcas_agc_enablement_min", service), initial_time, horizon) : nothing
     agc_enablement_max = is_regulation ?
-        _read_optional_fcas_scaling_series(component, "fcas_agc_enablement_max_$service_str", initial_time, horizon) : nothing
+        _read_optional_fcas_scaling_series(component, fcas_series_name("fcas_agc_enablement_max", service), initial_time, horizon) : nothing
     agc_max_avail = is_regulation && agc_ramp_scaling ?
         get_fcas_agc_ramp_capability(component, service, initial_time, horizon; resolution = resolution) : nothing
     input_at(series, i) = (isnothing(series) || isnan(series[i])) ? nothing : series[i]
     agc_at(series, i) = (agc_first_interval_only && i > 1) ? nothing : input_at(series, i)
-    uigf = _read_optional_fcas_scaling_series(component, "fcas_uigf", initial_time, horizon)
+    uigf = _read_optional_fcas_scaling_series(component, NEM_SERIES.fcas_uigf, initial_time, horizon)
 
     return [
         scale_fcas_trapezium(
@@ -153,7 +134,7 @@ units, `NaN` at an interval with no ramp rate. `nothing` if `component` carries 
 function get_fcas_agc_ramp_capability(
         component, service::BidType, initial_time, horizon::Integer; resolution::Dates.Period = Minute(5),
     )
-    rate = _read_optional_fcas_scaling_series(component, "fcas_agc_ramp_rate_$(string(service))", initial_time, horizon)
+    rate = _read_optional_fcas_scaling_series(component, fcas_series_name("fcas_agc_ramp_rate", service), initial_time, horizon)
     isnothing(rate) && return nothing
     return rate .* (Dates.value(Millisecond(resolution)) / 3_600_000)
 end
@@ -171,8 +152,8 @@ value. `nothing` if `component` carries no such series.
 `Union{Nothing, Vector{Union{Nothing, Int}}}`.
 """
 function get_fcas_agc_status(component, initial_time, horizon::Integer)
-    has_time_series(component, SingleTimeSeries, "fcas_agc_status") || return nothing
-    values = get_time_series_values(SingleTimeSeries, component, "fcas_agc_status"; start_time = initial_time, len = horizon)
+    has_time_series(component, SingleTimeSeries, NEM_SERIES.fcas_agc_status) || return nothing
+    values = get_time_series_values(SingleTimeSeries, component, NEM_SERIES.fcas_agc_status; start_time = initial_time, len = horizon)
     return Union{Nothing, Int}[isnan(v) ? nothing : round(Int, v) for v in values]
 end
 
