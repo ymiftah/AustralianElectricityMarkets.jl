@@ -34,7 +34,7 @@ end
         gen = get_component(RenewableDispatch, sys, "BW03")
         @test get_ext(gen)["nem_semi_scheduled"] === true
         @test get_time_series_values(SingleTimeSeries, gen, "energy_max_avail"; ignore_scaling_factors = true) .* get_base_power(sys) ≈ [101.0, 102.0, 103.0]
-        @test get_time_series_values(SingleTimeSeries, gen, "energy_uigf"; ignore_scaling_factors = true) .* get_base_power(sys) ≈ [41.0, 42.0, 43.0]
+        @test get_time_series_values(SingleTimeSeries, gen, "uigf"; ignore_scaling_factors = true) .* get_base_power(sys) ≈ [41.0, 42.0, 43.0]
         @test !has_time_series(gen, DeterministicSingleTimeSeries, "energy_max_avail")
         @test !isempty(collect(get_components(FCASService, sys)))
         ic = get_component(AreaInterchange, sys, "IC2")
@@ -45,7 +45,7 @@ end
         directory = mktempdir()
         on_disk = nem_system(db, config; date_range = interval, time_series_in_memory = false, time_series_directory = directory)
         @test !isempty(readdir(directory))
-        @test get_time_series_values(SingleTimeSeries, get_component(RenewableDispatch, on_disk, "BW03"), "energy_uigf"; ignore_scaling_factors = true) .* get_base_power(on_disk) ≈ [41.0, 42.0, 43.0]
+        @test get_time_series_values(SingleTimeSeries, get_component(RenewableDispatch, on_disk, "BW03"), "uigf"; ignore_scaling_factors = true) .* get_base_power(on_disk) ≈ [41.0, 42.0, 43.0]
         physical_db = _replay_damaged_cache(
             :DISPATCHLOAD,
             "INSERT INTO input SELECT * REPLACE (1 AS INTERVENTION, INITIALMW + CASE WHEN DUID = 'BW03' THEN 10 ELSE 0 END AS INITIALMW) FROM input WHERE INTERVENTION = 0"; source = hive

@@ -61,7 +61,7 @@ function PSI.get_default_time_series_names(
         RampDownRateTimeSeriesParameter => NEM_SERIES.ramp_down_rate,
         InitialPowerTimeSeriesParameter => NEM_SERIES.initial_mw,
         EnergyMaxAvailTimeSeriesParameter => energy_max_avail_series_name(OfferSide.GEN),
-        EnergyUIGFTimeSeriesParameter => NEM_SERIES.energy_uigf,
+        EnergyUIGFTimeSeriesParameter => NEM_SERIES.uigf,
     )
 end
 

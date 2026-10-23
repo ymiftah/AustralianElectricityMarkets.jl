@@ -19,14 +19,15 @@ end
 """
     _extract_fcas_bid(row)
 
-Mirrors [`_extract_power_bids`](@ref), also building the FCAS trapezium.
+Mirrors [`_extract_power_bids`](@ref), keeping every price band as energy offers do, and also builds
+the FCAS trapezium.
 
 # Returns
 `(curve_data, trapezium_row)`: a `PiecewiseStepData` and the `NTuple{7,Float64}` wire form
 of an [`FCASTrapezium`](@ref).
 """
 function _extract_fcas_bid(row)
-    curve_data = _extract_power_bids(row)
+    curve_data = _extract_power_bids(row; keep_empty_bands = true)
     trapezium = FCASTrapezium(;
         enablement_min = _require_fcas_float(row, :ENABLEMENTMIN),
         low_breakpoint = _require_fcas_float(row, :LOWBREAKPOINT),
@@ -288,7 +289,7 @@ function _attach_fcas_scaling_series!(
         push!(values, absent ? NaN : row[col] * scale / base_power)
     end
     all(isnan, values) && return nothing
-    add_time_series!(sys, device, single_series(name, full_grid, values))
+    replace_single_series!(sys, device, single_series(name, full_grid, values))
     return nothing
 end
 
@@ -309,7 +310,7 @@ NEMDE* §4) and the §5 AGC-status pre-condition input to every available `Gener
   length, applied on read);
 - `"fcas_agc_status"` from `AGCSTATUS` (§5: `1` while the unit is under AGC control, `0`
   otherwise), not per-unitized;
-- `"fcas_uigf"` from `UIGF`, for semi-scheduled units only (§4.3).
+- `"uigf"` from `UIGF`, for semi-scheduled units only (§4.3), shared with [`set_nem_energy_limits!`](@ref).
 
 Every series but `"fcas_agc_status"` is per-unit of `sys`'s system base, read back by
 [`get_scaled_fcas_trapezium`](@ref); `"fcas_agc_status"` carries AGCSTATUS's raw `0`/`1` value,
@@ -370,7 +371,7 @@ function set_fcas_scaling_inputs!(sys, db, date_range; kwargs...)
 
         if !isnothing(uigf_by_duid) && haskey(uigf_by_duid, (duid,))
             by_time = Dict(zip(uigf_by_duid[(duid,)].SETTLEMENTDATE, eachrow(uigf_by_duid[(duid,)])))
-            _attach_fcas_scaling_series!(sys, device, by_time, full_grid, :UIGF, NEM_SERIES.fcas_uigf, base_power)
+            _attach_fcas_scaling_series!(sys, device, by_time, full_grid, :UIGF, NEM_SERIES.uigf, base_power)
         end
     end
     return

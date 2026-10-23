@@ -82,7 +82,7 @@ Like [`get_fcas_trapezium`](@ref), but applies [`scale_fcas_trapezium`](@ref) at
 using `component`'s `"fcas_agc_enablement_min_<service>"`/`"fcas_agc_enablement_max_<service>"`
 series and its AGC ramping capability, `"fcas_agc_ramp_rate_<service>"` (MW/h) times
 `resolution` (regulation `service`s only, from [`set_fcas_scaling_inputs!`](@ref)), and its
-`"fcas_uigf"` series, when attached. A `NaN` entry applies no scaling at that step. With
+`"uigf"` series, when attached. A `NaN` entry applies no scaling at that step. With
 `agc_first_interval_only`, the AGC inputs apply to the first step only; with
 `agc_ramp_scaling = false`, the AGC ramping capability applies at no step. UIGF applies at every
 step. `decremental` selects the storage `DIRECTION == "LOAD"` trapezium series only - the AGC
@@ -105,7 +105,7 @@ function get_scaled_fcas_trapezium(
         get_fcas_agc_ramp_capability(component, service, initial_time, horizon; resolution = resolution) : nothing
     input_at(series, i) = (isnothing(series) || isnan(series[i])) ? nothing : series[i]
     agc_at(series, i) = (agc_first_interval_only && i > 1) ? nothing : input_at(series, i)
-    uigf = _read_optional_fcas_scaling_series(component, NEM_SERIES.fcas_uigf, initial_time, horizon)
+    uigf = _read_optional_fcas_scaling_series(component, NEM_SERIES.uigf, initial_time, horizon)
 
     return [
         scale_fcas_trapezium(

@@ -207,13 +207,19 @@ end
     _set_storage_energy_max_avail!(sys, storage, bids, name, start_date, resolution)
 
 Attaches `bids.MAXAVAIL` to `storage` as a `SingleTimeSeries` named `name`, per-unit of `sys`'s
-system base. No-op if any interval's `MAXAVAIL` is missing or not finite.
+system base. Throws an `ArgumentError` if any interval's `MAXAVAIL` is missing or not finite.
 
 # Returns
 `nothing`.
 """
 function _set_storage_energy_max_avail!(sys, storage, bids, name::AbstractString, start_date, resolution)
-    all(x -> !ismissing(x) && isfinite(x), bids.MAXAVAIL) || return
+    bad = findfirst(x -> ismissing(x) || !isfinite(x), bids.MAXAVAIL)
+    isnothing(bad) || throw(
+        ArgumentError(
+            "set_market_bids!: $(get_name(storage)) has no finite $name at $(bids.INTERVAL_DATETIME[bad]); " *
+                "repopulate BIDPEROFFER_D with populate(...; force_new = true)",
+        ),
+    )
     add_time_series!(
         sys, storage,
         single_series(name, start_date, Float64.(bids.MAXAVAIL) ./ get_base_power(sys), resolution),

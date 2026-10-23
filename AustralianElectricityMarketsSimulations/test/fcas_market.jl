@@ -56,7 +56,7 @@ end
         agc_enablement_max = nothing, agc_max_avail = nothing, uigf = nothing)
 
 Attaches [`set_fcas_scaling_inputs!`](@ref)'s per-device `"fcas_agc_enablement_min_<bid_type>"`/
-`"fcas_agc_enablement_max_<bid_type>"`/`"fcas_agc_ramp_rate_<bid_type>"`/`"fcas_uigf"`
+`"fcas_agc_enablement_max_<bid_type>"`/`"fcas_agc_ramp_rate_<bid_type>"`/`"uigf"`
 `SingleTimeSeries`, one flat window of `n` steps at `initial_timestamp`, mirroring its
 per-unit-of-system-base convention. `agc_max_avail` is the AGC ramping capability in MW over one
 `resolution` interval, stored as the equivalent MW/h ramp rate. A `nothing` keyword leaves the
@@ -77,7 +77,7 @@ function add_toy_fcas_scaling!(
             (agc_enablement_min, "fcas_agc_enablement_min_$bid_type_str"),
             (agc_enablement_max, "fcas_agc_enablement_max_$bid_type_str"),
             (isnothing(agc_max_avail) ? nothing : agc_max_avail / (Dates.value(Minute(resolution)) / 60), "fcas_agc_ramp_rate_$bid_type_str"),
-            (uigf, "fcas_uigf"),
+            (uigf, "uigf"),
         )
         isnothing(value) && continue
         PSY.add_time_series!(

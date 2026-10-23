@@ -47,5 +47,5 @@ end
 function _energy_limit_series(d)
     semi = is_semi_scheduled(d)
     max_avail = energy_max_avail_series_name(OfferSide.GEN)
-    return (semi ? (max_avail, NEM_SERIES.energy_uigf) : (max_avail,)), "call set_nem_energy_limits!"
+    return (semi ? (max_avail, NEM_SERIES.uigf) : (max_avail,)), "call set_nem_energy_limits!"
 end

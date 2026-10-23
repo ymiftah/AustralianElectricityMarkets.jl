@@ -14,7 +14,7 @@ function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, we
             PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "energy_max_avail", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(max_avail, 2) ./ base)))
             PSY.get_ext(cheap)["nem_semi_scheduled"] = !isnothing(uigf)
             if !isnothing(uigf)
-                PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "energy_uigf", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(uigf, 2) ./ base)))
+                PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "uigf", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(uigf, 2) ./ base)))
             end
             if !isnothing(target)
                 add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, target; sense = ConstraintSense.EQ)
@@ -103,8 +103,8 @@ end
 @testset "missing and non-finite forecasts are rejected before solving" begin
     sys = energy_limit_system()
     cheap = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
-    PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, cheap, "energy_uigf")
-    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, cheap, "energy_uigf")
+    PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, cheap, "uigf")
+    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, cheap, "uigf")
     @test_throws ArgumentError replication_template(sys)
     invalid = energy_limit_system(; uigf = [45.0, NaN])
     template = replication_template(invalid)

@@ -34,8 +34,8 @@ Names of the per-device `SingleTimeSeries` the setters attach, by field:
 - `ramp_up_rate`, `ramp_down_rate`: `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE`, system-base per-unit per minute.
 - `availability`: `DISPATCHLOAD.AVAILABILITY`, system-base per-unit.
 - `max_active_power`: the device's upper dispatch limit, a multiplier of its `max_active_power`.
-- `energy_uigf`: a semi-scheduled unit's `UIGF` for its energy limit, system-base per-unit.
-- `fcas_uigf`: a semi-scheduled unit's `UIGF` for FCAS trapezium scaling, system-base per-unit.
+- `uigf`: a semi-scheduled unit's `DISPATCHLOAD.UIGF`, read by its energy limit and FCAS trapezium
+  scaling, system-base per-unit.
 - `fcas_agc_status`: `DISPATCHLOAD.AGCSTATUS`, `0` or `1`.
 
 Offer-side series are named by [`energy_max_avail_series_name`](@ref) and
@@ -47,8 +47,7 @@ const NEM_SERIES = (
     ramp_down_rate = "ramp_down_rate",
     availability = "availability",
     max_active_power = "max_active_power",
-    energy_uigf = "energy_uigf",
-    fcas_uigf = "fcas_uigf",
+    uigf = "uigf",
     fcas_agc_status = "fcas_agc_status",
 )
 
