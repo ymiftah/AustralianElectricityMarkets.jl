@@ -8,7 +8,9 @@ decremental offer and withdrawn from the area balance.
 
 Methods are defined over `PowerSystems.StaticInjection`; a `PowerSimulations.ProblemTemplate`
 selects the component types they apply to. Subtypes differ only in what the ramp constraint
-measures against: [`NEMReplayDispatch`](@ref) and [`NEMLookaheadDispatch`](@ref).
+measures against: [`NEMReplayDispatch`](@ref) and [`NEMLookaheadDispatch`](@ref). Ramp,
+availability, offer-total and fixed-loading rows always carry priced slacks; the device model's
+`use_slacks` does not apply to them.
 """
 abstract type AbstractNEMDispatch <: PSI.AbstractDeviceFormulation end
 

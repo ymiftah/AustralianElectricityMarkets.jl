@@ -157,31 +157,31 @@ end
 
 # --- loss variables/constraints + area balance terms ---
 
-"""
-    _add_loss_variables_and_constraints!(container, devices, loss_models)
+# Segment counts per device and the shared segment and order axes, sized to the largest interconnector.
+function _loss_segment_axes(devices, loss_models::Dict{String, InterconnectorLossModel})
+    n_segments = Dict(PSY.get_name(d) => length(loss_models[PSY.get_name(d)].breakpoints) - 1 for d in devices)
+    segment_labels = string.(1:maximum(values(n_segments)))
+    return n_segments, segment_labels, segment_labels[1:(end - 1)]
+end
 
-Adds the segment, fill-indicator and loss variables, their defining and ordering constraints, and
-the `-share * loss` and `-(1 - share) * loss` terms in the from and to area balances. Segment
-widths, slopes and the first-breakpoint loss are those at zero demand; the demand term enters as
-the flow's coefficient in the loss definition, driven by [`LossDemandCoefficientParameter`](@ref).
-Devices carrying directional MNSP offers omit the balance terms: their losses are supplied at the
-sending area. The segment axis is sized to the largest interconnector; unused cells are fixed to
-zero. All quantities are per-unit of the system base.
+
 """
-function _add_loss_variables_and_constraints!(
+    _add_loss_variables!(container, devices, loss_models)
+
+Adds the segment, fill-indicator and loss variables, and the `-share * loss` and
+`-(1 - share) * loss` terms in the from and to area balances. Segment widths are those at zero
+demand. Devices carrying directional MNSP offers omit the balance terms: their losses are supplied
+at the sending area. The segment axis is sized to the largest interconnector; unused cells are
+fixed to zero. All quantities are per-unit of the system base.
+"""
+function _add_loss_variables!(
         container::PSI.OptimizationContainer,
         devices,
         loss_models::Dict{String, InterconnectorLossModel},
     )
-    isempty(devices) && return
     time_steps = PSI.get_time_steps(container)
     device_names = PSY.get_name.(devices)
-    n_segments = Dict(
-        name => length(loss_models[name].breakpoints) - 1 for name in device_names
-    )
-    max_segments = maximum(values(n_segments))
-    segment_labels = string.(1:max_segments)
-
+    n_segments, segment_labels, order_labels = _loss_segment_axes(devices, loss_models)
     seg_var = PSI.add_variable_container!(
         container, InterconnectorLossSegmentVariable(), PSY.AreaInterchange,
         device_names, segment_labels, time_steps,
@@ -190,13 +190,76 @@ function _add_loss_variables_and_constraints!(
         container, InterconnectorLossVariable(), PSY.AreaInterchange, device_names, time_steps,
     )
     # PSI cannot read back an empty container, so a model with only straight-line curves has none.
-    order_labels = segment_labels[1:(max_segments - 1)]
-    ordered = max_segments > 1
+    ordered = !isempty(order_labels)
     if ordered
         full_var = PSI.add_variable_container!(
             container, InterconnectorLossSegmentFullVariable(), PSY.AreaInterchange,
             device_names, order_labels, time_steps,
         )
+    end
+    expr = PSI.get_expression(container, PSI.ActivePowerBalance(), PSY.Area)
+    jm = PSI.get_jump_model(container)
+
+    for d in devices
+        name = PSY.get_name(d)
+        model = loss_models[name]
+        n = n_segments[name]
+        from_area = PSY.get_name(PSY.get_from_area(d))
+        to_area = PSY.get_name(PSY.get_to_area(d))
+        share = model.from_region_loss_share
+        _check_mnsp_offers(d)
+        offered = _has_mnsp_offers(d)
+        segments = loss_segments(model, Dict{String, Float64}())
+        for t in time_steps
+            for (s, label) in enumerate(segment_labels)
+                width = s <= n ? (segments[s].to_mw - segments[s].from_mw) : 0.0
+                seg_var[name, label, t] = JuMP.@variable(
+                    jm, lower_bound = 0.0, upper_bound = width,
+                    base_name = "InterconnectorLossSegmentVariable_{$name,$s,$t}",
+                )
+            end
+            if ordered
+                for (s, label) in enumerate(order_labels)
+                    full_var[name, label, t] = JuMP.@variable(
+                        jm, binary = true,
+                        base_name = "InterconnectorLossSegmentFullVariable_{$name,$s,$t}",
+                    )
+                end
+            end
+            loss_var[name, t] = JuMP.@variable(
+                jm, base_name = "InterconnectorLossVariable_{$name,$t}",
+            )
+            if !offered
+                JuMP.add_to_expression!(expr[from_area, t], -share, loss_var[name, t])
+                JuMP.add_to_expression!(expr[to_area, t], -(1.0 - share), loss_var[name, t])
+            end
+        end
+    end
+    return
+end
+
+
+"""
+    _add_loss_constraints!(container, devices, loss_models)
+
+Adds the segment-order, flow-segment and loss-definition constraints over the variables of
+[`_add_loss_variables!`](@ref). Segment widths, slopes and the first-breakpoint loss are those at
+zero demand; the demand term enters as the flow's coefficient in the loss definition, driven by
+[`LossDemandCoefficientParameter`](@ref).
+"""
+function _add_loss_constraints!(
+        container::PSI.OptimizationContainer,
+        devices,
+        loss_models::Dict{String, InterconnectorLossModel},
+    )
+    time_steps = PSI.get_time_steps(container)
+    device_names = PSY.get_name.(devices)
+    n_segments, segment_labels, order_labels = _loss_segment_axes(devices, loss_models)
+    seg_var = PSI.get_variable(container, InterconnectorLossSegmentVariable(), PSY.AreaInterchange)
+    loss_var = PSI.get_variable(container, InterconnectorLossVariable(), PSY.AreaInterchange)
+    ordered = !isempty(order_labels)
+    if ordered
+        full_var = PSI.get_variable(container, InterconnectorLossSegmentFullVariable(), PSY.AreaInterchange)
         order_ub = PSI.add_constraints_container!(
             container, InterconnectorLossSegmentOrderConstraint(), PSY.AreaInterchange,
             device_names, order_labels, time_steps; meta = "ub",
@@ -215,7 +278,6 @@ function _add_loss_variables_and_constraints!(
         device_names, time_steps,
     )
     flow_var = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
-    expr = PSI.get_expression(container, PSI.ActivePowerBalance(), PSY.Area)
     jm = PSI.get_jump_model(container)
     coefficient_key = PSI.ParameterKey(LossDemandCoefficientParameter, PSY.AreaInterchange)
 
@@ -224,29 +286,10 @@ function _add_loss_variables_and_constraints!(
         model = loss_models[name]
         n = n_segments[name]
         bp1 = model.breakpoints[1]
-        from_area = PSY.get_name(PSY.get_from_area(d))
-        to_area = PSY.get_name(PSY.get_to_area(d))
-        share = model.from_region_loss_share
-        _check_mnsp_offers(d)
-        offered = _has_mnsp_offers(d)
         segments = loss_segments(model, Dict{String, Float64}())
         base_loss = first(loss_curve_vertex_values(model, Dict{String, Float64}()))
-
         for t in time_steps
-            for s in 1:max_segments
-                width = s <= n ? (segments[s].to_mw - segments[s].from_mw) : 0.0
-                seg_var[name, segment_labels[s], t] = JuMP.@variable(
-                    jm, lower_bound = 0.0, upper_bound = width,
-                    base_name = "InterconnectorLossSegmentVariable_{$name,$s,$t}",
-                )
-            end
             if ordered
-                for s in 1:(max_segments - 1)
-                    full_var[name, order_labels[s], t] = JuMP.@variable(
-                        jm, binary = true,
-                        base_name = "InterconnectorLossSegmentFullVariable_{$name,$s,$t}",
-                    )
-                end
                 for s in 1:(n - 1)
                     lbl, next = order_labels[s], segment_labels[s + 1]
                     order_ub[name, lbl, t] = JuMP.@constraint(
@@ -261,13 +304,10 @@ function _add_loss_variables_and_constraints!(
                     )
                 end
             end
-            loss_var[name, t] = JuMP.@variable(
-                jm, base_name = "InterconnectorLossVariable_{$name,$t}",
-            )
             flow_seg_con[name, t] = JuMP.@constraint(
                 jm,
                 flow_var[name, t] ==
-                    bp1 + sum(seg_var[name, segment_labels[s], t] for s in 1:max_segments)
+                    bp1 + sum(seg_var[name, label, t] for label in segment_labels)
             )
             # The flow term's coefficient is the demand coefficient, set by the target below.
             loss_def_con[name, t] = JuMP.@constraint(
@@ -277,10 +317,6 @@ function _add_loss_variables_and_constraints!(
                     flow_var[name, t]
             )
             PSI.add_coefficient_target!(container, coefficient_key, name, t, loss_def_con[name, t], flow_var[name, t], -1.0)
-            if !offered
-                JuMP.add_to_expression!(expr[from_area, t], -share, loss_var[name, t])
-                JuMP.add_to_expression!(expr[to_area, t], -(1.0 - share), loss_var[name, t])
-            end
         end
     end
     return
@@ -423,8 +459,8 @@ function PSI.construct_device!(
 
     _check_loss_demand_coefficients(container, devices, device_model)
     PSI.add_parameters!(container, LossDemandCoefficientParameter, devices, device_model)
-    _add_loss_variables_and_constraints!(container, devices, loss_models)
-    _add_mnsp_link_flows!(container, devices, device_model)
+    _add_loss_variables!(container, devices, loss_models)
+    _add_mnsp_link_variables!(container, devices, device_model)
     return
 end
 
@@ -438,6 +474,10 @@ function PSI.construct_device!(
     ) where {U <: PSI.AreaBalancePowerModel}
     devices = PSI.get_available_components(device_model, sys)
     isempty(devices) && return
+    loss_models = Dict(PSY.get_name(d) => _loss_model(d) for d in devices)
+    _add_loss_constraints!(container, devices, loss_models)
+    _add_mnsp_link_constraints!(container, devices)
+    _add_mnsp_band_costs!(container, devices)
     _add_flow_limit_constraint!(container, devices, device_model, network_model)
     PSI.add_feedforward_constraints!(container, device_model, devices)
     return

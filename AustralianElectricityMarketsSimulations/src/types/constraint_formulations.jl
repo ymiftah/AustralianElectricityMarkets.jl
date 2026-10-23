@@ -104,6 +104,16 @@ struct FCASOfferBandVariable <: PSI.VariableType end
 
 
 """
+    FCASOfferBandConstraint
+
+`Σ bands == capacity` for one contributing device's FCAS offer: its [`FCASOfferBandVariable`](@ref)s
+sum to its [`FCASCapacityVariable`](@ref), or to its [`FCASSideCapacityVariable`](@ref) on one side
+of a `PSY.Storage` device's regulation offer. Indexed `(device name, t)` with the band variable's meta.
+"""
+struct FCASOfferBandConstraint <: PSI.ConstraintType end
+
+
+"""
     FCASOfferLimitParameter
 
 Time-series parameter of a device's effective FCAS offer limits for one market and side, read from

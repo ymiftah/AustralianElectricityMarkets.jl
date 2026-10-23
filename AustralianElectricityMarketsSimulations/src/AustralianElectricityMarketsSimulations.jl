@@ -91,7 +91,7 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASJointCapacityLHS, FCASJointCapacityConstraint, FCASBDURampingConstraint,
     FCASJointRampingConstraint, FCASJointCapacitySlack, FCASJointRampingSlack,
     FCASMaxAvailConstraint, FCASMaxAvailSlack, FCASBDURampingSlack,
-    FCASOfferBandVariable, FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter,
+    FCASOfferBandVariable, FCASOfferBandConstraint, FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter,
     FCASLowerSlopeParameter, FCASRampingLimitParameter, FCASBandPriceParameter,
     FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, set_fcas_effective_offers!,
     FCAS_MAXAVAIL_CVP_FACTOR, FCAS_BDU_RAMPING_CVP_FACTOR, FCAS_CAPACITY_CVP_FACTOR,
@@ -111,7 +111,8 @@ export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegm
     InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint,
     InterconnectorLossSegmentFullVariable, InterconnectorLossSegmentOrderConstraint,
     LossDemandCoefficientParameter
-export MNSPLinkFlowVariable, MNSPLinkFlowConstraint, MNSPLinkDirectionVariable,
+export MNSPLinkFlowVariable, MNSPLinkFlowConstraint, MNSPLinkBandConstraint, MNSPLinkMaxAvailConstraint,
+    MNSPLinkDirectionConstraint, MNSPLinkLossConstraint, MNSPLinkLossSplitConstraint, MNSPLinkDirectionVariable,
     MNSPLinkLossVariable, MNSPLinkBandVariable, MNSPBandWidthParameter, MNSPForwardBandWidthParameter,
     MNSPReverseBandWidthParameter, MNSPMaxAvailParameter, MNSPForwardMaxAvailParameter,
     MNSPReverseMaxAvailParameter, MNSPBandPriceParameter

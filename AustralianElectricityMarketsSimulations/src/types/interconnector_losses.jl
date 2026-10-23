@@ -16,7 +16,8 @@ also runs in recurrent simulations.
 Loss follows the breakpoint interpolation at every price sign: segments fill contiguously from
 the first breakpoint, enforced by binary fill indicators when an interconnector has more than one
 segment. The breakpoint range also bounds flow, with a warning when it is narrower than the
-device's static flow limits.
+device's static flow limits. Flow-limit rows always carry priced slacks; the device model's
+`use_slacks` does not apply to them.
 """
 struct NEMInterconnectorLoss <: PSI.AbstractBranchFormulation end
 

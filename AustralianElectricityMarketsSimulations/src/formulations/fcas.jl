@@ -1164,6 +1164,7 @@ function PSI.construct_service!(
                 isnothing(target) || JuMP.add_to_expression!(target[dname, t], var[dname, t])
             end
         end
+        _add_fcas_band_variables!(container, group, bid_type)
     end
     return
 end
@@ -1254,42 +1255,80 @@ end
 
 
 """
-    _add_fcas_offer_bands!(container, group, bid_type)
+    _add_fcas_band_variables!(container, group, bid_type)
 
 For an [`_fcas_offer_groups`](@ref) `group`, adds one [`FCASOfferBandVariable`](@ref) per offer,
-band and time step, each bounded by its [`FCASBandWidthParameter`](@ref) width, ties their sum to the
-group's capacity variable, and prices them through an [`FCASBandPriceParameter`](@ref) of meta
-`group.meta`. Band widths are per-unit of the system base and prices `\$/MW` per hour, so the price
-multiplier is the system base power times the interval length in hours.
+band and time step, of meta `group.meta`.
 
 # Returns
 `nothing`.
 """
-function _add_fcas_offer_bands!(container::PSI.OptimizationContainer, group, bid_type::BidType)
+function _add_fcas_band_variables!(container::PSI.OptimizationContainer, group, bid_type::BidType)
     names = [PSY.get_name(d) for (d, _) in group.offers]
     labels = _fcas_band_labels(group.offers, bid_type)
+    jm = PSI.get_jump_model(container)
+    bands = PSI.add_variable_container!(
+        container, FCASOfferBandVariable(), FCASService, names, labels, PSI.get_time_steps(container); meta = group.meta,
+    )
+    for name in names, label in labels, t in PSI.get_time_steps(container)
+        bands[name, label, t] = JuMP.@variable(
+            jm, lower_bound = 0.0, base_name = "FCASOfferBandVariable_$(group.meta)_{$name,$label,$t}",
+        )
+    end
+    return
+end
+
+
+"""
+    _add_fcas_band_constraints!(container, group, bid_type)
+
+For an [`_fcas_offer_groups`](@ref) `group`, bounds each [`FCASOfferBandVariable`](@ref) by its
+[`FCASBandWidthParameter`](@ref) width and ties the bands' sum to the group's capacity variable
+([`FCASOfferBandConstraint`](@ref), meta `group.meta`). Widths are per-unit of the system base.
+
+# Returns
+`nothing`.
+"""
+function _add_fcas_band_constraints!(container::PSI.OptimizationContainer, group, bid_type::BidType)
+    names = [PSY.get_name(d) for (d, _) in group.offers]
     time_steps = PSI.get_time_steps(container)
     jm = PSI.get_jump_model(container)
     capacity = PSI.get_variable(container, group.variable, FCASService, group.meta)
-    bands = PSI.add_variable_container!(
-        container, FCASOfferBandVariable(), FCASService, names, labels, time_steps; meta = group.meta,
+    bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, group.meta)
+    labels = axes(bands)[2]
+    con = PSI.add_constraints_container!(
+        container, FCASOfferBandConstraint(), FCASService, names, time_steps; meta = group.meta,
     )
     for (device, decremental) in group.offers
         dname = PSY.get_name(device)
         widths, multiplier = _fcas_parameter_refs(container, FCASBandWidthParameter, device, _fcas_offer_meta(bid_type, decremental))
         for t in time_steps
             for label in labels
-                bands[dname, label, t] = JuMP.@variable(
-                    jm, lower_bound = 0.0, base_name = "FCASOfferBandVariable_$(group.meta)_{$dname,$label,$t}",
-                )
                 JuMP.@constraint(jm, bands[dname, label, t] <= multiplier[dname, label, t] * widths[label, t])
             end
-            JuMP.@constraint(jm, sum(bands[dname, label, t] for label in labels) == capacity[dname, t])
+            con[dname, t] = JuMP.@constraint(jm, sum(bands[dname, label, t] for label in labels) == capacity[dname, t])
         end
     end
+    return
+end
+
+
+"""
+    _add_fcas_band_costs!(container, group, bid_type)
+
+Prices the [`FCASOfferBandVariable`](@ref)s of an [`_fcas_offer_groups`](@ref) `group` through an
+[`FCASBandPriceParameter`](@ref) of meta `group.meta`. Prices are `\$/MW` per hour, so the price
+multiplier is the system base power times the interval length in hours.
+
+# Returns
+`nothing`.
+"""
+function _add_fcas_band_costs!(container::PSI.OptimizationContainer, group, bid_type::BidType)
+    names = [PSY.get_name(d) for (d, _) in group.offers]
+    labels = axes(PSI.get_variable(container, FCASOfferBandVariable(), FCASService, group.meta))[2]
     price = PSI.add_param_container!(
         container, FCASBandPriceParameter(), FCASService, (FCASOfferBandVariable,),
-        PSI.SOSStatusVariable.NO_VARIABLE, false, Float64, names, labels, time_steps; meta = group.meta,
+        PSI.SOSStatusVariable.NO_VARIABLE, false, Float64, names, labels, PSI.get_time_steps(container); meta = group.meta,
     )
     prices, multiplier = PSI.get_parameter_array(price), PSI.get_multiplier_array(price)
     fill!(multiplier, PSI.get_base_power(container) * interval_hours(PSI.get_resolution(container)))
@@ -1301,8 +1340,8 @@ end
 """
     PSI.objective_function!(container, svc, model::PSI.ServiceModel{FCASService, FCASMarket})
 
-Adds every contributing device's FCAS offer bands and their cost ([`_add_fcas_offer_bands!`](@ref)):
-one offer per single-sided device, and one per side for a `PSY.Storage` device bidding both sides.
+Prices every contributing device's FCAS offer bands ([`_add_fcas_band_costs!`](@ref)): one offer
+per single-sided device, and one per side for a `PSY.Storage` device bidding both sides.
 
 # Returns
 `nothing`.
@@ -1315,7 +1354,7 @@ function PSI.objective_function!(
     devices = PSI.get_contributing_devices(model)
     isempty(devices) && return
     for group in _fcas_offer_groups(PSY.get_name(svc), devices, get_bid_type(svc))
-        _add_fcas_offer_bands!(container, group, get_bid_type(svc))
+        _add_fcas_band_costs!(container, group, get_bid_type(svc))
     end
     return
 end
@@ -1407,6 +1446,7 @@ function PSI.construct_service!(
         capacity = PSI.get_variable(container, group.variable, FCASService, group.meta)
         metas = [_fcas_offer_meta(bid_type, decremental) for (_, decremental) in group.offers]
         _add_fcas_capacity_constraints!(container, model, first.(group.offers), group.meta, capacity, metas)
+        _add_fcas_band_constraints!(container, group, bid_type)
     end
 
     both_devices = [d for group in groups if group.meta == "$(name)_gen" for (d, _) in group.offers]
