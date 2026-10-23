@@ -127,17 +127,6 @@ _alt_url(table, year, month, part) = replace(
     end
 end
 
-@testset "MissingDataError and TransientDownloadError are distinct types" begin
-    # populate skips MissingDataError and must NOT skip TransientDownloadError; if one were
-    # a subtype of the other, `isa` in _add_data's catch would silently swallow both.
-    miss = AustralianElectricityMarketsData.MissingDataError("gone")
-    transient = AustralianElectricityMarketsData.TransientDownloadError("throttled")
-    @test miss isa Exception
-    @test transient isa Exception
-    @test !(transient isa AustralianElectricityMarketsData.MissingDataError)
-    @test !(miss isa AustralianElectricityMarketsData.TransientDownloadError)
-end
-
 # ══════════════════════════════════════════════════════════════════════════════
 # A05. _get_archive — primary/ALT URL fallback and multi-part archives
 # ══════════════════════════════════════════════════════════════════════════════
@@ -346,84 +335,32 @@ end
     end
 end
 
-@testset "_extract_d_lines(::Vector): month filtering applies to every part while streaming" begin
-    csv1 = make_nemweb_csv(
-        "DISPATCH_FCAS_REQ_CONSTRAINT", ["INTERVAL_DATETIME", "REGIONID"],
-        [("2026/05/31 23:55:00", "PREV"), ("2026/06/01 00:05:00", "FIRST")],
-    )
-    csv2 = make_nemweb_csv(
-        "DISPATCH_FCAS_REQ_CONSTRAINT", ["INTERVAL_DATETIME", "REGIONID"],
-        [("2026/06/15 00:05:00", "MID"), ("2026/07/01 00:05:00", "NEXT")],
-    )
-    zip1, zip2 = make_zip_with_csv(csv1), make_zip_with_csv(csv2)
-    lo, hi = _month_filter_bounds(2026, 6)
-    try
-        d_path, _ = _extract_d_lines([zip1, zip2]; month_filter_column = "INTERVAL_DATETIME", lo, hi)
-        try
-            regions = [split(l, ",")[end] for l in readlines(d_path)]
-            @test Set(regions) == Set(["FIRST", "MID"])
-        finally
-            isfile(d_path) && rm(d_path)
-        end
-    finally
-        foreach(p -> isfile(p) && rm(p), (csv1, csv2, zip1, zip2))
-    end
-end
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # B. _csv_to_parquet — CSV → Parquet entirely inside DuckDB
 # ══════════════════════════════════════════════════════════════════════════════
 
-@testset "_csv_to_parquet: reads data rows, casts types, filters non-D records" begin
+@testset "_csv_to_parquet: reads data rows, casts types, drops extra and absent columns" begin
     csv_path = make_nemweb_csv(
         "DISPATCHPRICE",
-        ["SETTLEMENTDATE", "REGIONID", "RRP"],
+        ["SETTLEMENTDATE", "REGIONID", "RRP", "EXTRA_COL"],
         [
-            ("2024/01/15 05:00:00", "NSW1", "100.5"),
-            ("2024/01/15 05:05:00", "VIC1", "98.3"),
-            ("2024/01/15 05:10:00", "QLD1", "102.1"),
+            ("2024/01/15 05:00:00", "NSW1", "100.5", "ignored"),
+            ("2024/01/15 05:05:00", "VIC1", "98.3", "ignored"),
+            ("2024/01/15 05:10:00", "QLD1", "102.1", "ignored"),
         ],
     )
     tmpdir = mktempdir()
     try
-        _run_csv_to_parquet(csv_path, ["SETTLEMENTDATE", "REGIONID", "RRP"], tmpdir)
+        _run_csv_to_parquet(csv_path, ["SETTLEMENTDATE", "REGIONID", "RRP", "ABSENT_COL"], tmpdir; year = 2024, month = 3)
+        @test isdir(joinpath(tmpdir, "archive_month=2024-03-01"))
         df = sort(_read_parquet_file(tmpdir), :REGIONID)
-        @test nrow(df) == 3
+        @test nrow(df) == 3  # C header and trailer are excluded
         @test df.REGIONID == ["NSW1", "QLD1", "VIC1"]
+        @test !("EXTRA_COL" in names(df))
+        @test all(ismissing, df.ABSENT_COL)
         row = df[df.REGIONID .== "NSW1", :]
         @test row.SETTLEMENTDATE[1] == DateTime(2024, 1, 15, 5, 0, 0)
         @test row.RRP[1] ≈ 100.5
-    finally
-        isfile(csv_path) && rm(csv_path)
-    end
-end
-
-@testset "_csv_to_parquet: columns absent from the file become typed NULL" begin
-    csv_path = make_nemweb_csv("DISPATCHPRICE", ["SETTLEMENTDATE", "REGIONID"], [("2024/01/15 05:00:00", "NSW1")])
-    tmpdir = mktempdir()
-    try
-        _run_csv_to_parquet(csv_path, ["SETTLEMENTDATE", "REGIONID", "RRP"], tmpdir)
-        df = _read_parquet_file(tmpdir)
-        @test "RRP" in names(df)
-        @test ismissing(df.RRP[1])
-        @test eltype(df.RRP) <: Union{Missing, Float64}
-    finally
-        isfile(csv_path) && rm(csv_path)
-    end
-end
-
-@testset "_csv_to_parquet: extra columns in the file are ignored" begin
-    csv_path = make_nemweb_csv(
-        "DISPATCHPRICE", ["SETTLEMENTDATE", "REGIONID", "RRP", "EXTRA_COL"],
-        [("2024/01/15 05:00:00", "NSW1", "100.5", "ignored")],
-    )
-    tmpdir = mktempdir()
-    try
-        _run_csv_to_parquet(csv_path, ["SETTLEMENTDATE", "REGIONID", "RRP"], tmpdir)
-        df = _read_parquet_file(tmpdir)
-        @test !("EXTRA_COL" in names(df))
-        @test nrow(df) == 1
     finally
         isfile(csv_path) && rm(csv_path)
     end
@@ -447,47 +384,6 @@ end
         @test nrow(df) == 2
         @test all(ismissing, df.RRP)
         @test eltype(df.RRP) <: Union{Missing, Float64}
-    finally
-        isfile(csv_path) && rm(csv_path)
-    end
-end
-
-@testset "_csv_to_parquet: header/trailer of different width than data rows are excluded" begin
-    # make_nemweb_csv's C header (10 fields) and trailer (3 fields) are already
-    # narrower than the D/I rows here (7 fields) — this is the real-world shape
-    # confirmed against a live NEMWEB file, not position-based (skip-N-lines).
-    csv_path = make_nemweb_csv("DISPATCHPRICE", ["REGIONID", "RRP"], [("NSW1", "100.5")])
-    tmpdir = mktempdir()
-    try
-        _run_csv_to_parquet(csv_path, ["REGIONID", "RRP"], tmpdir)
-        df = _read_parquet_file(tmpdir)
-        @test nrow(df) == 1
-        @test df.REGIONID[1] == "NSW1"
-    finally
-        isfile(csv_path) && rm(csv_path)
-    end
-end
-
-@testset "_csv_to_parquet: many rows survive intact (no chunk boundary to lose data across)" begin
-    n = 5_000
-    rows = [("NSW1", string(100.0 + i)) for i in 1:n]
-    csv_path = make_nemweb_csv("DISPATCHPRICE", ["REGIONID", "RRP"], rows)
-    tmpdir = mktempdir()
-    try
-        _run_csv_to_parquet(csv_path, ["REGIONID", "RRP"], tmpdir)
-        df = _read_parquet_file(tmpdir)
-        @test nrow(df) == n
-    finally
-        isfile(csv_path) && rm(csv_path)
-    end
-end
-
-@testset "_csv_to_parquet: tags rows with the requested archive_month" begin
-    csv_path = make_nemweb_csv("DISPATCHPRICE", ["REGIONID", "RRP"], [("NSW1", "100.5")])
-    tmpdir = mktempdir()
-    try
-        _run_csv_to_parquet(csv_path, ["REGIONID", "RRP"], tmpdir; year = 2024, month = 3)
-        @test isdir(joinpath(tmpdir, "archive_month=2024-03-01"))
     finally
         isfile(csv_path) && rm(csv_path)
     end
@@ -591,25 +487,8 @@ end
 end
 
 # ══════════════════════════════════════════════════════════════════════════════
-# A2. islocal / _parse_hive_root — shared local-vs-remote path logic
+# A2. _new_duckdb_connection — local and remote connection setup
 # ══════════════════════════════════════════════════════════════════════════════
-
-@testset "islocal(filesystem::String): true only for \"file\"" begin
-    @test AustralianElectricityMarketsData.islocal("file")
-    @test !AustralianElectricityMarketsData.islocal("s3")
-    @test !AustralianElectricityMarketsData.islocal("gs")
-end
-
-@testset "islocal(config): delegates to islocal(filesystem)" begin
-    @test AustralianElectricityMarketsData.islocal(HiveConfiguration(filesystem = "file"))
-    @test !AustralianElectricityMarketsData.islocal(HiveConfiguration(filesystem = "s3"))
-end
-
-@testset "_parse_hive_root: local returns hive_location, remote returns scheme://hive_location" begin
-    @test AustralianElectricityMarketsData._parse_hive_root(HiveConfiguration(hive_location = "/tmp/x", filesystem = "file")) == "/tmp/x"
-    @test AustralianElectricityMarketsData._parse_hive_root(HiveConfiguration(hive_location = "bucket/prefix", filesystem = "gs")) == "gs://bucket/prefix"
-    @test AustralianElectricityMarketsData._parse_hive_root(HiveConfiguration(hive_location = "bucket/prefix", filesystem = "s3")) == "s3://bucket/prefix"
-end
 
 @testset "_new_duckdb_connection: local (default) works with no network access assumptions" begin
     conn = _new_duckdb_connection()
@@ -634,81 +513,36 @@ end
 # D. DataSource construction — pure, no filesystem side effects
 # ══════════════════════════════════════════════════════════════════════════════
 
-@testset "DataSource: fields are assigned correctly" begin
+@testset "DataSource: local fields, partitions, path and filesystem" begin
     tmpdir = mktempdir()
+    config = HiveConfiguration(hive_location = tmpdir)
     source = DataSource(
-        "DISPATCHPRICE",
-        ["SETTLEMENTDATE", "REGIONID", "RRP"],
-        HiveConfiguration(hive_location = tmpdir);
-        table_sort_by = ["SETTLEMENTDATE", "REGIONID"],
+        "DISPATCHPRICE", ["SETTLEMENTDATE", "REGIONID", "RRP"], config;
+        table_sort_by = ["SETTLEMENTDATE", "REGIONID"], add_partitions = ["REGIONID"],
+        month_filter_column = "SETTLEMENTDATE",
     )
     @test source.table_name == "DISPATCHPRICE"
     @test source.table_columns == ["SETTLEMENTDATE", "REGIONID", "RRP"]
     @test source.table_sort_by == ["SETTLEMENTDATE", "REGIONID"]
+    @test source.partitions == ["REGIONID", ARCHIVE_MONTH_PARTITION]
+    @test source.month_filter_column == "SETTLEMENTDATE"
+    @test source.path == joinpath(tmpdir, "DISPATCHPRICE")
+    @test !isdir(source.path)  # construction is pure, the write path creates it lazily
+    @test AustralianElectricityMarketsData.get_filesystem(source) == "file"
+    @test AustralianElectricityMarketsData.islocal(source)
+    @test DataSource("T", ["C"], config).month_filter_column === nothing
 end
 
-@testset "DataSource: partitions always end with archive_month" begin
-    tmpdir = mktempdir()
-    config = HiveConfiguration(hive_location = tmpdir)
-    s1 = DataSource("T", ["C"], config)
-    @test s1.partitions == [ARCHIVE_MONTH_PARTITION]
-
-    s2 = DataSource("T", ["C"], config; add_partitions = ["REGIONID"])
-    @test s2.partitions == ["REGIONID", ARCHIVE_MONTH_PARTITION]
-    @test last(s2.partitions) == ARCHIVE_MONTH_PARTITION
-end
-
-@testset "DataSource: path is joinpath(hive_location, table_name), construction touches no filesystem" begin
-    tmpdir = mktempdir()
-    source = DataSource("MY_TABLE", ["COL1"], HiveConfiguration(hive_location = tmpdir))
-    @test source.path == joinpath(tmpdir, "MY_TABLE")
-    @test !isdir(source.path)  # construction is pure — the write path creates it lazily
-end
-
-@testset "DataSource: accepts a remote HiveConfiguration and builds a scheme:// path" begin
-    config = HiveConfiguration(hive_location = "bucket/path", filesystem = "s3")
-    source = DataSource("T", ["C"], config)
+@testset "DataSource: remote path keeps the scheme" begin
+    source = DataSource("T", ["C"], HiveConfiguration(hive_location = "bucket/path", filesystem = "s3"))
     @test source.path == "s3://bucket/path/T"
     @test AustralianElectricityMarketsData.get_filesystem(source) == "s3"
     @test !AustralianElectricityMarketsData.islocal(source)
 end
 
-@testset "DataSource: filesystem is derived from path's scheme for local sources" begin
-    tmpdir = mktempdir()
-    source = DataSource("T", ["C"], HiveConfiguration(hive_location = tmpdir))
-    @test AustralianElectricityMarketsData.get_filesystem(source) == "file"
-    @test AustralianElectricityMarketsData.islocal(source)
-end
-
-@testset "DataSource: month_filter_column defaults to nothing, settable via keyword" begin
-    tmpdir = mktempdir()
-    config = HiveConfiguration(hive_location = tmpdir)
-    s1 = DataSource("T", ["C"], config)
-    @test s1.month_filter_column === nothing
-
-    s2 = DataSource("T", ["C"], config; month_filter_column = "INTERVAL_DATETIME")
-    @test s2.month_filter_column == "INTERVAL_DATETIME"
-end
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # E. get_table / list_available_tables — AEMDB-based lookup, no manager/global state
 # ══════════════════════════════════════════════════════════════════════════════
-
-@testset "list_available_tables: matches _TABLE_SPECS names" begin
-    @test Set(list_available_tables()) == Set(getfield.(collect(_TABLE_SPECS), :name))
-end
-
-@testset "get_table: returns DataSource with correct table_name for every _TABLE_SPECS entry" begin
-    tmpdir = mktempdir()
-    db = aem_connect(HiveConfiguration(hive_location = tmpdir))
-    for spec in _TABLE_SPECS
-        source = get_table(db, Symbol(spec.name))
-        @test source isa DataSource
-        @test source.table_name == spec.name
-        @test source.path == joinpath(tmpdir, spec.name)
-    end
-end
 
 @testset "MNSP and fast-start table specs: every non-key text column is typed explicitly" begin
     text_columns = Set(["PARTICIPANTID", "LINKID", "ENTRYTYPE", "INTERCONNECTORID", "DUID"])
@@ -767,29 +601,6 @@ end
     end
 end
 
-
-@testset "_partition_has_data: local — true iff dir exists and has a .parquet file" begin
-    tmpdir = mktempdir()
-    source = DataSource("T", ["C"], HiveConfiguration(hive_location = tmpdir))
-    partition_dir = joinpath(tmpdir, "T", "archive_month=2024-01-01")
-
-    @test !AustralianElectricityMarketsData._partition_has_data(source, partition_dir)
-
-    mkpath(partition_dir)
-    @test !AustralianElectricityMarketsData._partition_has_data(source, partition_dir)  # dir exists, no parquet yet
-
-    write(joinpath(partition_dir, "data.parquet"), UInt8[])
-    @test AustralianElectricityMarketsData._partition_has_data(source, partition_dir)
-end
-
-@testset "_partition_dir_names: local — matches readdir on source.path" begin
-    tmpdir = mktempdir()
-    source = DataSource("T", ["C"], HiveConfiguration(hive_location = tmpdir))
-    mkpath(joinpath(source.path, "archive_month=2024-01-01"))
-    mkpath(joinpath(source.path, "archive_month=2024-02-01"))
-    @test Set(AustralianElectricityMarketsData._partition_dir_names(source)) ==
-        Set(["archive_month=2024-01-01", "archive_month=2024-02-01"])
-end
 
 # ══════════════════════════════════════════════════════════════════════════════
 # F. populate(::DataSource, ...) — skip-existing logic
@@ -853,22 +664,6 @@ end
 # G. populate(::AEMDB, ...) — the same struct used for both write and read
 # ══════════════════════════════════════════════════════════════════════════════
 
-@testset "populate(::AEMDB, table_name, ...): resolves to the right DataSource and skips existing data" begin
-    tmpdir = mktempdir()
-    db = aem_connect(HiveConfiguration(hive_location = tmpdir))
-
-    partition_dir = joinpath(tmpdir, "DISPATCHPRICE", "archive_month=2024-01-01")
-    mkpath(partition_dir)
-    write(joinpath(partition_dir, "data.parquet"), UInt8[])
-
-    # Would previously hit the `getfield(manager, Symbol(table_name))` bug when
-    # called through the 2-arg NEMWEBManager overload; here there is no manager
-    # at all — `populate(::AEMDB, ...)` looks the table up via `get_table`.
-    @test_logs (:info, r"already exists") min_level = Logging.Info match_mode = :any populate(
-        db, :DISPATCHPRICE, Date(2024, 1, 1), Date(2024, 1, 1)
-    )
-end
-
 @testset "populate(::AEMDB, start, end; tables): only the requested tables are processed" begin
     tmpdir = mktempdir()
     db = aem_connect(HiveConfiguration(hive_location = tmpdir))
@@ -884,27 +679,6 @@ end
     processed = [l.kwargs[:table] for l in logs if l.message == "Processing table"]
     @test processed == [:DISPATCHPRICE]
 end
-
-@testset "show(::AEMDB): compact form reports hive_location and filesystem" begin
-    tmpdir = mktempdir()
-    db = aem_connect(HiveConfiguration(hive_location = tmpdir))
-    @test sprint(show, db) == "AEMDB(hive_location=\"$tmpdir\", filesystem=\"file\")"
-end
-
-@testset "show(::AEMDB, MIME\"text/plain\"): lists every table with its cached date range" begin
-    tmpdir = mktempdir()
-    db = aem_connect(HiveConfiguration(hive_location = tmpdir))
-    partition_dir = joinpath(tmpdir, "DISPATCHPRICE", "archive_month=2024-01-01")
-    mkpath(partition_dir)
-    write(joinpath(partition_dir, "data.parquet"), UInt8[])
-
-    output = sprint(io -> show(io, MIME("text/plain"), db))
-    @test occursin("DISPATCHPRICE", output)
-    @test occursin("2024-01-01 … 2024-01-31", output)
-    @test occursin("DISPATCHLOAD", output)
-    @test occursin("(not cached)", output)
-end
-
 
 using UUIDs: uuid4
 

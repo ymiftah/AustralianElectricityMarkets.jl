@@ -467,6 +467,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The table specs `DISPATCH_FCAS_REQ_RUN`, `DISPATCH_UNIT_SCADA`, `STADUALLOC`, `GENCONSET`,
+  `GENCONSETINVOKE`, `GENCONSETTRK`, `PARTICIPANT` and `STATIONOWNER`, which nothing read, are no
+  longer populated.
 - `NEMLookaheadDispatch` and `StorageInputDevicePower`, with the pre-dispatch FCAS timing (AGC
   scaling and telemetry on the first interval only) that only it used. `NEMReplayDispatch` is the
   one `AbstractNEMDispatch` formulation.

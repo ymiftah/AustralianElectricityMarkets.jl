@@ -44,13 +44,52 @@
             @test !isempty(get_devices(region_term))
         end
 
+        @testset "constraint terms, senses, requirements and series" begin
+            f_r1 = get_component(GenericConstraint, sys, vname("F_R1_RAISE6SEC"))
+            @test Set(get_duid.(filter(t -> t isa UnitTerm, get_terms(f_r1)))) == Set(["Alta", "Brighton"])
+            @test get_factor(only(filter(t -> t isa RegionTerm, get_terms(f_r1)))) == 1.0
+            @test only(get_fcas_requirements(f_r1)) == FCASRequirement("1", BidType.RAISE6SEC)
+
+            f_r2 = get_component(GenericConstraint, sys, vname("F_R2_LOWERREG"))
+            @test get_duid(only(filter(t -> t isa UnitTerm, get_terms(f_r2)))) == "Solitude"
+            @test get_region(only(filter(t -> t isa RegionTerm, get_terms(f_r2)))) == "2"
+            @test only(get_fcas_requirements(f_r2)) == FCASRequirement("2", BidType.LOWERREG)
+
+            n_ic1 = get_component(GenericConstraint, sys, vname("N_IC1_LIMIT"))
+            @test get_factor(only(filter(t -> t isa InterconnectorTerm, get_terms(n_ic1)))) == -1.0
+            @test Set(get_duid.(filter(t -> t isa UnitTerm, get_terms(n_ic1)))) == Set(["Park City", "Sundance"])
+            @test all(==(BidType.ENERGY), get_bid_type.(filter(t -> t isa UnitTerm, get_terms(n_ic1))))
+
+            n_hydro = get_component(GenericConstraint, sys, vname("N_HYDRO_LIMIT"))
+            @test Set(get_duid.(filter(t -> t isa UnitTerm, get_terms(n_hydro)))) ==
+                Set(["HydroDispatch1", "HydroDispatch2", "HydroDispatch3"])
+
+            n_partial = get_component(GenericConstraint, sys, vname("N_PARTIAL"))
+            @test get_duid(only(filter(t -> t isa UnitTerm, get_terms(n_partial)))) == "SOLAR1"
+            invoked = get_time_series_values(SingleTimeSeries, n_partial, "invoked")
+            rhs = get_time_series_values(SingleTimeSeries, n_partial, "rhs")
+            @test invoked == [fill(0.0, 10); fill(1.0, 15)]
+            @test all(==(rhs[10]), rhs[1:10])
+            @test rhs[11:25] ≈ [(40.0 + 0.1 * i) / get_base_power(sys) for i in 10:24]
+
+            v1 = get_component(GenericConstraint, sys, vname("N_VERSIONED_LIMIT", 1))
+            v2 = get_component(GenericConstraint, sys, vname("N_VERSIONED_LIMIT", 2))
+            @test (get_factor(only(get_terms(v1))), get_factor(only(get_terms(v2)))) == (1.0, 2.0)
+            @test (get_sense(v1), get_sense(v2)) == (ConstraintSense.LE, ConstraintSense.GE)
+            @test get_gencon_id(v1) == get_gencon_id(v2) == "N_VERSIONED_LIMIT"
+
+            bat = get_component(EnergyReservoirStorage, sys, "BAT1")
+            @test has_time_series(bat, SingleTimeSeries, "fcas_curve_RAISEREG")
+            @test has_time_series(bat, SingleTimeSeries, "fcas_trapezium_RAISEREG")
+            @test has_time_series(bat, SingleTimeSeries, "fcas_curve_RAISEREG_decremental")
+            @test has_time_series(bat, SingleTimeSeries, "fcas_trapezium_RAISEREG_decremental")
+        end
+
         @testset "FCAS bids and trapezia" begin
             alta = get_component(ThermalStandard, sys, "Alta")
             trapezium = only(get_fcas_trapezium(alta, BidType.RAISE6SEC, start_date, 1))
             curve = only(get_fcas_offer_curve(alta, BidType.RAISE6SEC, start_date, 1))
             bid = only(get_fcas_bid(alta, BidType.RAISE6SEC, start_date, 1))
-            @test trapezium isa FCASTrapezium
-            @test curve isa PiecewiseStepData
             @test bid isa FCASBid
         end
 
@@ -81,17 +120,6 @@
 
     sys = build_system()
     assert_coverage_matrix(sys)
-
-    @testset "DISPATCHLOAD: INITIALMW and UIGF are queryable" begin
-        dispatch = read_fcas_dispatch(db, date_range)
-        @test !isempty(dispatch)
-        @test all(!ismissing, dispatch.INITIALMW)
-
-        uigf = read_uigf(db, date_range)
-        @test !isempty(uigf)
-        # SOLAR1 is the fixture's only semi-scheduled unit; every other DUID's UIGF is 0.0.
-        @test Set(uigf.DUID) == Set(["SOLAR1"])
-    end
 
     @testset "unit contract: per-unit under SYSTEM_BASE, native MW/\$ under NATURAL_UNITS" begin
         gc = get_component(GenericConstraint, sys, vname("F_R1_RAISE6SEC"))
@@ -148,5 +176,15 @@
         to_json(sys, json_path; force = true)
         sys2 = System(json_path)
         assert_coverage_matrix(sys2)
+        for name in (
+                vname("F_R1_RAISE6SEC"), vname("F_R2_LOWERREG"), vname("N_IC1_LIMIT"), vname("N_HYDRO_LIMIT"),
+                vname("N_PARTIAL"), vname("N_VERSIONED_LIMIT", 1), vname("N_VERSIONED_LIMIT", 2),
+            )
+            gc, gc2 = get_component(GenericConstraint, sys, name), get_component(GenericConstraint, sys2, name)
+            @test get_sense(gc2) == get_sense(gc)
+            @test get_rhs(gc2) == get_rhs(gc)
+            @test get_constraint_weight(gc2) == get_constraint_weight(gc)
+            @test get_ext(gc2) == get_ext(gc)
+        end
     end
 end

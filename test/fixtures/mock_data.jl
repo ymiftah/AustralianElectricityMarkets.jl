@@ -513,15 +513,8 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     save_hive(df_fcas_req, :DISPATCH_FCAS_REQ)
 
     df_fcas_req_constraint = DataFrame()
-    df_fcas_req_run = DataFrame()
     for i in intervals
         t = base_datetime + Minute(5 * i)
-        append!(
-            df_fcas_req_run, DataFrame(
-                RUN_DATETIME = [t], RUNNO = [1], LASTCHANGED = [t],
-                archive_month = ["2025-01"]
-            )
-        )
         for bid_type in fcas_bid_types
             append!(
                 df_fcas_req_constraint, DataFrame(
@@ -547,7 +540,6 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
         end
     end
     save_hive(df_fcas_req_constraint, :DISPATCH_FCAS_REQ_CONSTRAINT)
-    save_hive(df_fcas_req_run, :DISPATCH_FCAS_REQ_RUN)
 
     # 14. DISPATCHCONSTRAINT. RHS varies per interval (requirement_mw + 0.1*i) to exercise
     # the "rhs" SingleTimeSeries time series, not just a flat default. GENCONID_EFFECTIVEDATE/

@@ -99,18 +99,14 @@ end
     @test names(result.ramp_violations) == ["DUID", "DateTime", "MW", "direction"]
     @test issubset(Set(result.constraint_violations.DateTime), Set([t1, t2]))
     @test_throws ArgumentError replicate_range(db, t1, t1 - Minute(5))
-end
 
-@testset "replicate_range models every family by default" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
-    t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)
-    result = replicate_range(db, t1, t2)
+    # Every family is modeled by default: no unmodeled skips, FCAS, interchange losses and storage variables.
     @test !any(in(("unmodeled_fcas_service", "unmodeled_device_type")), string.(result.skipped_constraints.reason))
-    keys = PSI.list_variable_keys(result.results[1])
+    var_keys = PSI.list_variable_keys(result.results[1])
     entry_and_component(k) = (PSI.IS.Optimization.get_entry_type(k), PSI.IS.Optimization.get_component_type(k))
-    @test any(k -> entry_and_component(k)[1] === FCASCapacityVariable, keys)
-    @test any(k -> entry_and_component(k) == (InterconnectorLossVariable, PSY.AreaInterchange), keys)
-    @test any(k -> entry_and_component(k) == (ActivePowerOutVariable, PSY.EnergyReservoirStorage), keys)
+    @test any(k -> entry_and_component(k)[1] === FCASCapacityVariable, var_keys)
+    @test any(k -> entry_and_component(k) == (InterconnectorLossVariable, PSY.AreaInterchange), var_keys)
+    @test any(k -> entry_and_component(k) == (ActivePowerOutVariable, PSY.EnergyReservoirStorage), var_keys)
 end
 
 # Whether two stacked comparison NamedTuples hold the same rows (sorted by key) and equal numbers, `missing` included.
@@ -172,8 +168,9 @@ end
 
     # The folders hold the stores of each chunk on disk.
     d = mktempdir()
-    replicate_range(db, t1, DateTime(2025, 1, 1, 0, 10); output_dir = d)
+    small = replicate_range(db, t1, DateTime(2025, 1, 1, 0, 10); output_dir = d, cache_size_mib = 16)
     @test isdir(joinpath(d, "chunk_1")) && any(f -> f == "simulation_store.h5", (f for (_, _, fs) in walkdir(joinpath(d, "chunk_1")) for f in fs))
+    @test small.chunks.n_steps == [2] && nrow(small.solver_stats) == 2
     # On-disk time series default to a directory inside each chunk folder.
     d = mktempdir()
     replicate_range(db, t1, DateTime(2025, 1, 1, 0, 20); output_dir = d, chunk = Minute(10), time_series_in_memory = false)
@@ -197,12 +194,4 @@ end
     @test all(ismissing, result.comparison.fcas_prices.ROP_solved)
     @test any(in((:unmodeled_fcas_service, :unmodeled_device_type)), result.skipped_constraints.reason)
     @test any(!ismissing, result.comparison.dispatch.TOTALCLEARED_solved)
-end
-
-
-@testset "bounded simulation write cache" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR))
-    t = DateTime(2025, 1, 1, 0, 5)
-    small = replicate_range(db, t, t; cache_size_mib = 16)
-    @test small.chunks.n_steps == [1] && nrow(small.solver_stats) == 1
 end

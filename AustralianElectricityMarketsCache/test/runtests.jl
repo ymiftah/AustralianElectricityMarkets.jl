@@ -17,6 +17,7 @@ const Cache = AustralianElectricityMarketsCache
     DuckDB.execute(db.db, "COPY (SELECT 1 AS value) TO '$(joinpath(partition, "data.parquet"))' (FORMAT PARQUET)")
     @test Cache.cached_date_range(source) == (Date(2025, 1, 1), Date(2025, 1, 31))
     @test occursin("DISPATCHPRICE", sprint(show, MIME"text/plain"(), db))
+    @test occursin("(not cached)", sprint(show, MIME"text/plain"(), db))
     @test occursin(root, sprint(show, db))
     @test Cache._parse_hive_root(HiveConfiguration(hive_location = "bucket/prefix", filesystem = "s3")) == "s3://bucket/prefix"
     @test Cache._parse_hive_root(HiveConfiguration(hive_location = "bucket/prefix", filesystem = "gs")) == "gs://bucket/prefix"
