@@ -37,6 +37,8 @@ Names of the per-device `SingleTimeSeries` the setters attach, by field:
 - `uigf`: a semi-scheduled unit's `DISPATCHLOAD.UIGF`, read by its energy limit and FCAS trapezium
   scaling, system-base per-unit.
 - `fcas_agc_status`: `DISPATCHLOAD.AGCSTATUS`, `0` or `1`.
+- `fixed_load`: a unit's participant fixed loading, net injection in system-base per-unit.
+- `fixed_load_invoked`: `1` at the intervals a fixed loading applies, `0` elsewhere.
 
 Offer-side series are named by [`energy_max_avail_series_name`](@ref) and
 [`fcas_series_name`](@ref).
@@ -49,6 +51,8 @@ const NEM_SERIES = (
     max_active_power = "max_active_power",
     uigf = "uigf",
     fcas_agc_status = "fcas_agc_status",
+    fixed_load = "fixed_load",
+    fixed_load_invoked = "fixed_load_invoked",
 )
 
 

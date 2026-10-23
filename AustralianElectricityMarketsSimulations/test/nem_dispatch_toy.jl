@@ -351,6 +351,26 @@ end
     @test out.dispatch_mw[TOY_CHEAP] ≈ 40.0 atol = TOY_TOLERANCE
 end
 
+@testset "a scheduled load's fixed loading holds its consumption against its bid" begin
+    # The pump's $10/MWh bid would not clear at Alta's $20/MWh, but a 20 MW fixed loading holds it there.
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 40.0, ramp_up = 100.0)],
+        40.0;
+        loads = ["PUMP" => toy_load(30.0, 10.0; initial = 0.0, ramp_up = 100.0)],
+        mutate! = function (sys, stamps)
+            pump = PSY.get_component(PSY.InterruptiblePowerLoad, sys, "PUMP")
+            base = PSY.get_base_power(sys)
+            PSY.add_time_series!(sys, pump, PSY.SingleTimeSeries(; name = "fixed_load", data = PSY.TimeSeries.TimeArray(stamps, fill(20.0 / base, 2))))
+            PSY.add_time_series!(sys, pump, PSY.SingleTimeSeries(; name = "fixed_load_invoked", data = PSY.TimeSeries.TimeArray(stamps, ones(2))))
+            return
+        end,
+    )
+    out = solve_toy(sys)
+
+    @test out.load_mw["PUMP"] ≈ 20.0 atol = TOY_TOLERANCE
+    @test out.dispatch_mw[TOY_CHEAP] ≈ 60.0 atol = TOY_TOLERANCE
+end
+
 @testset "a scheduled load is limited by its availability and ramp rate" begin
     function pump_toy(; availability, ramp_up)
         return nem_toy_system(

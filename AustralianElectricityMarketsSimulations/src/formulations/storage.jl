@@ -50,6 +50,7 @@ function PSI.get_default_time_series_names(
         InitialPowerTimeSeriesParameter => NEM_SERIES.initial_mw,
         PSI.ActivePowerOutTimeSeriesParameter => energy_max_avail_series_name(OfferSide.GEN),
         PSI.ActivePowerInTimeSeriesParameter => energy_max_avail_series_name(OfferSide.LOAD),
+        _FIXED_LOAD_SERIES...,
     )
 end
 
@@ -86,6 +87,8 @@ function PSI.construct_device!(
         haskey(PSI.get_time_series_names(model), param) || continue
         PSI.add_parameters!(container, param, devices, model)
     end
+
+    _add_fixed_load_arguments!(container, devices, model)
 
     if PSI.requires_initialization(D())
         PSI.add_initial_condition!(container, devices, D(), PSI.DevicePower())
@@ -141,6 +144,7 @@ function PSI.construct_device!(
     PSI.add_constraints!(container, EnergyMaxAvailOutConstraint, PSI.ActivePowerOutVariable, devices, model, network_model)
     PSI.add_constraints!(container, EnergyMaxAvailInConstraint, PSI.ActivePowerInVariable, devices, model, network_model)
     _add_storage_ramp_constraints!(container, devices, model)
+    _add_fixed_load_constraints!(container, devices, T)
 
     PSI.add_feedforward_constraints!(container, model, devices)
     PSI.objective_function!(container, devices, model, PSI.get_network_formulation(network_model))
@@ -169,6 +173,7 @@ function PSI.objective_function!(
     PSI.add_variable_cost!(container, PSI.ActivePowerInVariable(), devices, D())
     PSI.add_proportional_cost!(container, EnergyMaxAvailOutSlack(), devices, D())
     PSI.add_proportional_cost!(container, EnergyMaxAvailInSlack(), devices, D())
+    _add_fixed_load_costs!(container, devices, T)
     for S in _ENERGY_OFFER_SLACK_TYPES
         PSI.add_proportional_cost!(container, S(), devices, D())
     end

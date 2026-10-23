@@ -22,6 +22,7 @@ export set_fcas_bids!, set_fcas_scaling_inputs!
 export set_nem_dispatch_limits!, set_nem_initial_conditions!, set_interconnector_flow_limits!, set_loss_demand_coefficients!
 export get_initial_mw, get_energy_availability
 export set_nem_energy_limits!
+export set_nem_fixed_loads!
 export add_nem_constraints!, get_skipped_constraints, get_dropped_terms,
     get_missing_constraint_intervals, get_defaulted_constraint_weights
 export fcas_service_name
@@ -80,6 +81,7 @@ include("system/energy_limits.jl")
 include("system/fcas.jl")
 include("system/mnsp.jl")
 include("system/constraints.jl")
+include("system/fixed_loads.jl")
 include("system/interconnectors.jl")
 include("system/RegionModel.jl")
 

@@ -35,6 +35,7 @@ include("cvp_factors.jl")
 include("types/constraint_formulations.jl")
 include("types/dispatch.jl")
 include("types/energy_limits.jl")
+include("types/fixed_loads.jl")
 include("types/energy_offers.jl")
 include("types/storage.jl")
 include("types/tie_break.jl")
@@ -49,6 +50,7 @@ include("formulations/penalty_costs.jl")
 include("checks/nem_constraints.jl")
 include("formulations/dispatch.jl")
 include("formulations/energy_limits.jl")
+include("formulations/fixed_loads.jl")
 include("formulations/energy_offers.jl")
 include("checks/dispatch_envelope.jl")
 include("formulations/storage.jl")
@@ -78,6 +80,8 @@ export EnergyMaxAvailOutConstraint, EnergyMaxAvailInConstraint, EnergyMaxAvailOu
 export EnergyMaxAvailTimeSeriesParameter, EnergyUIGFTimeSeriesParameter,
     EnergyMaxAvailConstraint, EnergyUIGFConstraint, EnergyMaxAvailSlack, EnergyUIGFSlack,
     ENERGY_MAX_AVAIL_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR
+export FixedLoadTimeSeriesParameter, FixedLoadInvokedTimeSeriesParameter, EnergyFixedLoadConstraint,
+    EnergyFixedLoadSurplusSlack, EnergyFixedLoadDeficitSlack
 export energy_bounds
 export scale_trapezium
 export NEMConstraintLHS, NEMConstraintLimit,

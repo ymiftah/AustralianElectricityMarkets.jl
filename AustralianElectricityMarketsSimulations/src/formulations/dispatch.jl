@@ -62,6 +62,7 @@ function PSI.get_default_time_series_names(
         InitialPowerTimeSeriesParameter => NEM_SERIES.initial_mw,
         EnergyMaxAvailTimeSeriesParameter => energy_max_avail_series_name(OfferSide.GEN),
         EnergyUIGFTimeSeriesParameter => NEM_SERIES.uigf,
+        _FIXED_LOAD_SERIES...,
     )
 end
 
@@ -102,7 +103,7 @@ function _has_nem_dispatch_limits(device, formulation::Type{<:AbstractNEMDispatc
     names = PSI.get_default_time_series_names(typeof(device), formulation)
     required = (
         name for (param, name) in names
-            if param !== EnergyUIGFTimeSeriesParameter || is_semi_scheduled(device)
+            if !in(param, first.(_FIXED_LOAD_SERIES)) && (param !== EnergyUIGFTimeSeriesParameter || is_semi_scheduled(device))
     )
     return all(
         PSY.has_time_series(device, PSY.SingleTimeSeries, name) for name in required
@@ -180,6 +181,7 @@ function PSI.construct_device!(
     end
     any(is_semi_scheduled, devices) &&
         PSI.add_parameters!(container, EnergyUIGFTimeSeriesParameter, devices, model)
+    _add_fixed_load_arguments!(container, devices, model)
 
     # The chained base measures interval 1 against a DevicePower initial condition, which has to
     # be declared here for PowerSimulations to populate it from the initialisation sub-solve.
@@ -226,6 +228,7 @@ function PSI.construct_device!(
 
     PSI.add_constraints!(container, EnergyMaxAvailConstraint, PSI.ActivePowerVariable, devices, model, network_model)
     PSI.add_constraints!(container, EnergyUIGFConstraint, PSI.ActivePowerVariable, _semi_scheduled_devices(devices), model, network_model)
+    _add_fixed_load_constraints!(container, devices, T)
 
     PSI.add_constraints!(container, PSI.RampConstraint, PSI.ActivePowerVariable, devices, model, network_model)
 
@@ -388,6 +391,7 @@ function PSI.objective_function!(
     PSI.add_variable_cost!(container, PSI.ActivePowerVariable(), devices, D())
     PSI.add_proportional_cost!(container, EnergyMaxAvailSlack(), devices, D())
     PSI.add_proportional_cost!(container, EnergyUIGFSlack(), _semi_scheduled_devices(devices), D())
+    _add_fixed_load_costs!(container, devices, T)
     for S in _ENERGY_OFFER_SLACK_TYPES
         PSI.add_proportional_cost!(container, S(), devices, D())
     end

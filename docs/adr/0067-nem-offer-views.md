@@ -36,6 +36,14 @@ Bundling the offer into a PowerSystems type was rejected:
 - FCAS offer curves keep all ten bands, so band `k` is AEMO price band `k`, as for energy offers.
 - A storage device's energy `MAXAVAIL` that is missing or not finite throws instead of leaving the
   series off.
+- A participant fixed loading (AEMO's Energy Inflexible Offer, *Schedule of Constraint Violation
+  Penalty Factors* v8.0 item 13, "Unit = X MW", CVP 380) is unit offer data, not a generic
+  constraint. `set_nem_fixed_loads!` attaches `"fixed_load"` (net target) and
+  `"fixed_load_invoked"` to each unit that has one, and `AbstractNEMDispatch` holds the unit's net
+  energy at the target with an `EnergyFixedLoadConstraint` pair, elastic through
+  `EnergyFixedLoadSurplusSlack`/`EnergyFixedLoadDeficitSlack` at 380 times the Market Price Cap. At
+  an uninvoked interval both rows are relaxed by 10^5 MW. The `$DUID` generic constraint and its
+  `"Energy Inflexible Offer"` CVP lookup are gone, and the violation family is `"fixed_load"`.
 
 ## Kept on purpose
 
@@ -48,8 +56,22 @@ Bundling the offer into a PowerSystems type was rejected:
   which is what §5 requires (`min[MaxAvail, UIGF] >= EnablementMin`).
 - FCAS trapeziums are validated on every read as well as in `set_fcas_bids!`, because series can be
   attached outside the setter.
+- A storage device's `GEN` and `LOAD` fixed loadings net into one target, `GEN - LOAD`. NEMDE does
+  the same: in the 2025-03-04 case files (`NemSpdOutputs_20250304_loaded.zip`) `$ERB01` is one `EQ`
+  constraint with a single `TradeType="BDOF"` trader factor, and its solved RHS and `EnergyTarget`
+  are `-2` for a 2 MW `LOAD` fixed loading at 11:00 and `3` for a 3 MW `GEN` one at 11:15. `BDOF`
+  first appears in the trading day of 2024-07-03 (BHB1, WANDB1) and spreads unit by unit as
+  batteries register as bidirectional units; before that a battery's load side is a separate DUID
+  with `LDOF` terms, so its fixed loadings are already per device. nempy
+  (commit `2d3cef0`) has no fixed-loading logic of its own and nets every unit-level energy term of
+  a bidirectional unit, so it agrees but is no independent evidence.
 
 ## Model behaviour
+
+The fixed-loading rows price the same violation at the same CVP as the `$DUID` generic constraint
+did, so dispatch is unchanged. They are now unit rows: they apply whatever `parts` a replay
+includes, are no longer counted among generic constraints or their duals, and report under
+`"fixed_load"`. `DISPATCHCONSTRAINT` `MARGINALVALUE`s of `$DUID` rows are no longer attached.
 
 The FCAS band index and the storage `MAXAVAIL` check change inputs only for offers with empty bands
 and for incomplete cached data. Moving UIGF classification to an exclusive `END_DATE` changes the

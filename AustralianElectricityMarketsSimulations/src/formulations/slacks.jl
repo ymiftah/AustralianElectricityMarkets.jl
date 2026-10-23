@@ -1,5 +1,5 @@
 # Slack variables built per device through `PSI.add_variables!`, under an `AbstractNEMDispatch` model.
-const _DEVICE_SLACKS = Union{AbstractEnergyLimitSlack, AbstractEnergyOfferSlack}
+const _DEVICE_SLACKS = Union{AbstractEnergyLimitSlack, AbstractEnergyOfferSlack, AbstractFixedLoadSlack}
 
 # Slack variables whose results read back in MW rather than system-base per-unit.
 const _NATURAL_UNIT_SLACKS = Union{

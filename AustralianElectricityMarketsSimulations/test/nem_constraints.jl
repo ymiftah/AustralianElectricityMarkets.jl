@@ -941,7 +941,6 @@ end
         ext = Dict{String, Any}("limit_type" => limit_type, "source" => "built-in"),
     )
     @test constraint_cvp_factor(built_in("Interconnector Zero")) == INTERCONNECTOR_ZERO_CVP_FACTOR == 1160.0
-    @test constraint_cvp_factor(built_in("Energy Inflexible Offer")) == FIXED_LOADING_CVP_FACTOR == 380.0
     @test_throws ArgumentError constraint_cvp_factor(built_in("Unknown"))
     published = GenericConstraint(;
         name = "P", sense = ConstraintSense.LE, rhs = 0.0, constraint_weight = 35.0, terms = ConstraintTerm[],

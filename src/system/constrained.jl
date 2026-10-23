@@ -42,6 +42,7 @@ function AustralianElectricityMarkets.nem_system(
         resolution = resolution, allow_empty_region_terms = allow_empty_region_terms,
         unresolved_terms = unresolved_terms,
     )
+    set_nem_fixed_loads!(sys, db, date_range)
     add_fcas_services!(sys)
     attach_interconnector_losses!(sys, db, first(date_range))
     return sys
