@@ -36,27 +36,23 @@ function _tie_break_offers(sys::PSY.System)
     offers = Dict{Tuple{Bool, String}, _TieOffers}()
     fixed = Tuple{Bool, String, PSY.Component, PSY.PiecewiseStepData}[]
     for device in PSY.get_available_components(PSY.StaticInjection, sys)
-        _has_market_bid(device) || continue
         region = PSY.get_name(PSY.get_area(PSY.get_bus(device)))
-        for decremental in (false, true)
-            key = PSI.get_offer_curves_maybe_decremental(Val(decremental), device)
-            if PSI.is_time_variant(key)
-                ts = PSY.get_time_series(PSY.SingleTimeSeries, device, IS.get_name(key))
-                series = PSY.get_time_series_array(device, ts)
-                stamps = PSY.TimeSeries.timestamp(series)
-                entry = get!(
-                    () -> _TieOffers((stamps, IS.get_resolution(ts), [])), offers, (decremental, region),
-                )
-                entry.stamps == stamps || throw(
-                    ArgumentError(
-                        "tie-break: $(PSY.get_name(device))'s offer curves are on timestamps from $(first(stamps)), " *
-                            "unlike the other units of region $region from $(first(entry.stamps)).",
-                    ),
-                )
-                push!(entry.offers, (device, collect(values(series))))
-            elseif key isa PSY.CostCurve
-                push!(fixed, (decremental, region, device, PSY.get_function_data(PSY.get_value_curve(key))))
+        for side in (OfferSide.GEN, OfferSide.LOAD)
+            offer = get_energy_offer(device, side)
+            isnothing(offer) && continue
+            decremental = side == OfferSide.LOAD
+            if isnothing(offer.timestamps)
+                push!(fixed, (decremental, region, device, only(offer.curves)))
+                continue
             end
+            entry = get!(() -> _TieOffers((offer.timestamps, offer.resolution, [])), offers, (decremental, region))
+            entry.stamps == offer.timestamps || throw(
+                ArgumentError(
+                    "tie-break: $(PSY.get_name(device))'s offer curves are on timestamps from $(first(offer.timestamps)), " *
+                        "unlike the other units of region $region from $(first(entry.stamps)).",
+                ),
+            )
+            push!(entry.offers, (device, offer.curves))
         end
     end
     for (decremental, region, device, curve) in fixed

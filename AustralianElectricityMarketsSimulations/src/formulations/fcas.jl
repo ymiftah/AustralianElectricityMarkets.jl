@@ -216,56 +216,29 @@ end
 
 
 """
-    _fcas_series(window, device, bid_type, decremental) -> (trapeziums, curves)
-    _fcas_series(container, devices_template, device, bid_type, decremental) -> (trapeziums, curves)
+    _fcas_offer(window, device, bid_type, side) -> NEMFCASOffer
+    _fcas_offer(container, devices_template, device, bid_type, side) -> NEMFCASOffer
 
-`device`'s FCAS trapezium and offer-curve series for `bid_type`, one entry per interval of
-`window` ([`_fcas_window`](@ref)), read via
-[`get_scaled_fcas_trapezium`](@ref)/[`get_fcas_offer_curve`](@ref). The trapezium is AEMO
-*FCAS Model in NEMDE* §4's scaled/effective trapezium wherever `device` carries the scaling
-input series ([`set_fcas_scaling_inputs!`](@ref)), with the AGC ramping capability taken over the
-window's resolution, following the window's process: every interval in dispatch; AGC enablement
-and ramp scaling on the first interval only in 5-minute pre-dispatch; AGC enablement scaling on
-the first interval only and no ramp scaling in 30-minute pre-dispatch. Otherwise it is the bid
-trapezium unscaled.
+`device`'s `bid_type` offer on `side` over `window` ([`_fcas_window`](@ref)), read via
+[`get_fcas_offer`](@ref). The trapezium is AEMO *FCAS Model in NEMDE* §4's scaled/effective
+trapezium wherever `device` carries the scaling input series ([`set_fcas_scaling_inputs!`](@ref)),
+with the AGC ramping capability taken over the window's resolution, following the window's process:
+every interval in dispatch; AGC enablement and ramp scaling on the first interval only in 5-minute
+pre-dispatch; AGC enablement scaling on the first interval only and no ramp scaling in 30-minute
+pre-dispatch. Otherwise it is the bid trapezium unscaled.
 
 # Returns
-`(trapeziums::Vector{FCASTrapezium}, curves::Vector{PSY.PiecewiseStepData})`.
+A `NEMFCASOffer`.
 """
-function _fcas_series(window::_FCASWindow, device, bid_type::BidType, decremental::Bool)
-    trapeziums = get_scaled_fcas_trapezium(
-        device, bid_type, window.initial_time, window.horizon; decremental = decremental,
+function _fcas_offer(window::_FCASWindow, device, bid_type::BidType, side::OfferSide)
+    return get_fcas_offer(
+        device, bid_type, side, window.initial_time, window.horizon; scaled = true,
         resolution = window.resolution, agc_first_interval_only = window.process !== :dispatch,
         agc_ramp_scaling = window.process !== :predispatch,
     )
-    return trapeziums, _fcas_offer_curves(window, device, bid_type, decremental)
 end
-function _fcas_series(
-        container::PSI.OptimizationContainer, devices_template, device, bid_type::BidType, decremental::Bool,
-    )
-    return _fcas_series(_fcas_window(container, devices_template, device), device, bid_type, decremental)
-end
-
-
-"`device`'s FCAS offer curves for `bid_type`, one per interval of `window` ([`get_fcas_offer_curve`](@ref))."
-function _fcas_offer_curves(window::_FCASWindow, device, bid_type::BidType, decremental::Bool)
-    return get_fcas_offer_curve(device, bid_type, window.initial_time, window.horizon; decremental = decremental)
-end
-
-
-"""
-    _fcas_regulation_sides(window, device, bid_type) -> (gen_trapeziums, gen_curves, load_trapeziums, load_curves)
-
-A `PSY.Storage` device's generation-side and load-side trapezium and offer-curve series
-([`_fcas_series`](@ref)) for a regulation `bid_type` it bids on both sides.
-
-# Returns
-`(gen_trapeziums::Vector{FCASTrapezium}, gen_curves::Vector{PSY.PiecewiseStepData}, load_trapeziums::Vector{FCASTrapezium}, load_curves::Vector{PSY.PiecewiseStepData})`.
-"""
-function _fcas_regulation_sides(window::_FCASWindow, device, bid_type::BidType)
-    gen_trapeziums, gen_curves = _fcas_series(window, device, bid_type, false)
-    load_trapeziums, load_curves = _fcas_series(window, device, bid_type, true)
-    return gen_trapeziums, gen_curves, load_trapeziums, load_curves
+function _fcas_offer(container::PSI.OptimizationContainer, devices_template, device, bid_type::BidType, side::OfferSide)
+    return _fcas_offer(_fcas_window(container, devices_template, device), device, bid_type, side)
 end
 
 
@@ -445,7 +418,7 @@ Per-interval [`_fcas_enabled`](@ref) for `device`'s one-directional `bid_type` b
 """
 function _fcas_enabled_mask(window::_FCASWindow, device::PSY.Device, bid_type::BidType, decremental::Bool)
     is_regulation = bid_type in FCAS_REGULATION_MARKETS
-    trapeziums, curves = _fcas_series(window, device, bid_type, decremental)
+    (; trapeziums, curves) = _fcas_offer(window, device, bid_type, offer_side(decremental))
     initial_mw, availability, agc_status = _fcas_enablement_inputs(window, device)
     return map(1:window.horizon) do t
         _fcas_enabled(
@@ -470,11 +443,11 @@ Per-interval [`_fcas_both_sides_enabled`](@ref) for a `PSY.Storage` device biddi
 `(gen_enabled::Vector{Bool}, load_enabled::Vector{Bool})`.
 """
 function _fcas_both_sides_enabled_mask(window::_FCASWindow, device::PSY.Device, bid_type::BidType)
-    gen_traps, gen_curves, load_traps, load_curves = _fcas_regulation_sides(window, device, bid_type)
+    gen, load = (_fcas_offer(window, device, bid_type, side) for side in (OfferSide.GEN, OfferSide.LOAD))
     initial_mw, availability, agc_status = _fcas_enablement_inputs(window, device)
     flags = map(1:window.horizon) do t
         _fcas_both_sides_enabled(
-            device, gen_traps[t], gen_curves[t], load_traps[t], load_curves[t], agc_status(t), initial_mw(t), availability(t),
+            device, gen.trapeziums[t], gen.curves[t], load.trapeziums[t], load.curves[t], agc_status(t), initial_mw(t), availability(t),
         )
     end
     return first.(flags), last.(flags)
@@ -655,7 +628,7 @@ function _fcas_effective_values(window::_FCASWindow, device::PSY.Device, bid_typ
     end
     offers = Dict{Bool, Vector{NTuple{15, Float64}}}()
     for (decremental, mask) in enabled
-        trapeziums, curves = _fcas_series(window, device, bid_type, decremental)
+        (; trapeziums, curves) = _fcas_offer(window, device, bid_type, offer_side(decremental))
         offers[decremental] = [_fcas_effective_offer(trapeziums[t], curves[t], mask[t], inactive) for t in 1:window.horizon]
     end
     regulation || return offers, nothing

@@ -202,8 +202,6 @@ Full-series read of `component`'s FCAS bid for `service`, `horizon` steps from
 different lengths.
 """
 function get_fcas_bid(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
-    trapeziums = get_fcas_trapezium(component, service, initial_time, horizon; decremental = decremental)
-    curves = get_fcas_offer_curve(component, service, initial_time, horizon; decremental = decremental)
-    _require_equal_length(trapeziums, curves, service, component)
-    return [FCASBid(service, curve, trapezium) for (curve, trapezium) in zip(curves, trapeziums)]
+    offer = get_fcas_offer(component, service, offer_side(decremental), initial_time, horizon)
+    return [FCASBid(service, curve, trapezium) for (curve, trapezium) in zip(offer.curves, offer.trapeziums)]
 end

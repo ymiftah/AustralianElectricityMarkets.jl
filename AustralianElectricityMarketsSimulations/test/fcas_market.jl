@@ -362,7 +362,7 @@ end
         device = PSY.get_component(PSY.ThermalStandard, sys, duid)
         replay = Dict{Symbol, PSI.DeviceModel}(:ThermalStandard => PSI.DeviceModel(PSY.ThermalStandard, NEMReplayDispatch))
         max_avail_mw() = get_max_avail(
-            only(AustralianElectricityMarketsSimulations._fcas_series(container, replay, device, BidType.RAISEREG, false)[1]),
+            only(AustralianElectricityMarketsSimulations._fcas_offer(container, replay, device, BidType.RAISEREG, OfferSide.GEN).trapeziums),
         ) * PSI.get_base_power(container)
         @test max_avail_mw() ≈ 10.0  # 120 MW/h over 5 minutes
         PSI.set_resolution!(container.settings, Minute(10))
@@ -388,7 +388,7 @@ end
         lookahead = Dict{Symbol, PSI.DeviceModel}(:ThermalStandard => PSI.DeviceModel(PSY.ThermalStandard, NEMLookaheadDispatch))
         replay = Dict{Symbol, PSI.DeviceModel}(:ThermalStandard => PSI.DeviceModel(PSY.ThermalStandard, NEMReplayDispatch))
         base_power = PSI.get_base_power(container)
-        traps(template) = AustralianElectricityMarketsSimulations._fcas_series(container, template, device, BidType.RAISEREG, false)[1]
+        traps(template) = AustralianElectricityMarketsSimulations._fcas_offer(container, template, device, BidType.RAISEREG, OfferSide.GEN).trapeziums
 
         # Dispatch (Table 1): AGC enablement and ramp scaling at every interval.
         @test get_max_avail.(traps(replay)) .* base_power ≈ [2.0, 2.0]
@@ -1327,7 +1327,7 @@ end
     container = PSI.get_optimization_container(model)
     bat = get_component(EnergyReservoirStorage, sys, "BAT1")
     replay = Dict{Symbol, PSI.DeviceModel}(:EnergyReservoirStorage => PSI.DeviceModel(EnergyReservoirStorage, NEMReplayDispatch))
-    trap = only(AustralianElectricityMarketsSimulations._fcas_series(container, replay, bat, BidType.LOWERREG, true)[1])
+    trap = only(AustralianElectricityMarketsSimulations._fcas_offer(container, replay, bat, BidType.LOWERREG, OfferSide.LOAD).trapeziums)
     @test collect(Tuple(trap)[1:5]) .* PSI.get_base_power(container) ≈ [-10.0, -8.0, -2.0, 0.0, 4.0]
 end
 

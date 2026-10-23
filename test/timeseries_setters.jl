@@ -117,6 +117,12 @@
                         ta_load = get_time_series_array(SingleTimeSeries, bat, "decremental_variable_cost")
                         @test length(ta_load) == length(date_range) - 1
 
+                        # The offer views read the same curves, one per side.
+                        gen_offer, load_offer = get_energy_offer(bat, OfferSide.GEN), get_energy_offer(bat, OfferSide.LOAD)
+                        @test gen_offer.side == OfferSide.GEN && load_offer.side == OfferSide.LOAD
+                        @test gen_offer.timestamps == PowerSystems.TimeSeries.timestamp(ta_gen) && gen_offer.curves == values(ta_gen)
+                        @test load_offer.curves == values(ta_load)
+
                         # Initial inputs
                         @test !isempty(get_time_series_array(SingleTimeSeries, bat, "incremental_initial_input"))
                         @test !isempty(get_time_series_array(SingleTimeSeries, bat, "decremental_initial_input"))
@@ -134,6 +140,7 @@
                         @test avail.gen[end] > avail.gen[1]
                     end
                     @test isnothing(get_storage_energy_max_avail(first(get_components(ThermalStandard, sys)), first(date_range), 1))
+                    @test isnothing(get_energy_offer(first(get_components(PowerLoad, sys)), OfferSide.GEN))
                 end
             end
         end

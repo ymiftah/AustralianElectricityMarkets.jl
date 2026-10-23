@@ -13,7 +13,7 @@ function build_time_offer(device, bid_type, direction, decremental, t)
     else
         only(AEMS._fcas_enabled_mask(w, device, bid_type, decremental))
     end
-    trapeziums, curves = AEMS._fcas_series(w, device, bid_type, decremental)
+    (; trapeziums, curves) = AEMS._fcas_offer(w, device, bid_type, offer_side(decremental))
     trap, widths = only(trapeziums), diff(PSY.get_x_coords(only(curves)))
     return (; enabled, trap, widths)
 end
