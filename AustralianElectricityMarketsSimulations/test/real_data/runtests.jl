@@ -86,6 +86,19 @@ function build_error(model)
     return nothing
 end
 
+# Builds and solves `model`, asserting each reaches its terminal status; returns the build and solve times in seconds.
+function build_and_solve!(model)
+    build_time = @elapsed build_status = PSI.build!(model; output_dir = mktempdir())
+    if build_status != PSI.ModelBuildStatus.BUILT
+        err = build_error(model)
+        isnothing(err) || @error "build! did not reach BUILT" exception = err
+    end
+    @test build_status == PSI.ModelBuildStatus.BUILT
+    solve_time = @elapsed run_status = PSI.solve!(model)
+    @test run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    return (; build_time, solve_time)
+end
+
 function term_device_names(gc; energy_only::Bool = false)
     names = String[]
     for term in get_terms(gc)
@@ -126,7 +139,7 @@ end
         end
 
         @test all(
-            d -> !PSY.get_available(d) || AEMS._has_nem_dispatch_limits(d, NEMReplayDispatch),
+            d -> !PSY.get_available(d) || AEMS._has_nem_dispatch_limits(d),
             devices,
         )
 
@@ -144,7 +157,7 @@ end
             minutes = Dates.value(Minute(REAL_RESOLUTION))
             # The formulation multiplies the stored rate by the interval in minutes.
             @test stored * minutes ≈
-                row.RAMPUPRATE * DISPATCH_INTERVAL_HOURS / PSY.get_base_power(sys) rtol = 1.0e-9
+                row.RAMPUPRATE * interval_hours(DISPATCH_INTERVAL) / PSY.get_base_power(sys) rtol = 1.0e-9
         end
     end
 
@@ -166,7 +179,7 @@ end
             for (t, value) in zip(full_grid, series)
                 row = get(by_time, t, nothing)
                 isnothing(row) && continue
-                expected = max(row.AVAILABILITY, row.INITIALMW - row.RAMPDOWNRATE * DISPATCH_INTERVAL_HOURS)
+                expected = max(row.AVAILABILITY, row.INITIALMW - row.RAMPDOWNRATE * interval_hours(DISPATCH_INTERVAL))
                 checked += 1
                 isapprox(value * static_max_active_power, expected; atol = 1.0e-6) ||
                     push!(mismatches, "$duid at $t: $(value * static_max_active_power) vs $expected")
@@ -224,15 +237,7 @@ end
             name = "real_data",
         )
 
-        build_time = @elapsed build_status = PSI.build!(model; output_dir = mktempdir())
-        if build_status != PSI.ModelBuildStatus.BUILT
-            err = build_error(model)
-            isnothing(err) || @error "build! did not reach BUILT" exception = err
-        end
-        @test build_status == PSI.ModelBuildStatus.BUILT
-
-        solve_time = @elapsed run_status = PSI.solve!(model)
-        @test run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        build_time, solve_time = build_and_solve!(model)
 
         container = PSI.get_optimization_container(model)
         base_power = PSY.get_base_power(sys)
@@ -249,40 +254,6 @@ end
         total_area_slack_mw = sum(values(slack_mw); init = 0.0)
         @info "Real-data DecisionModel" build_time solve_time total_area_slack_mw
 
-        @testset "elastic GenericConstraint slacks against AEMO's own published violations" begin
-            base_power = PSY.get_base_power(sys)
-            gc_slack_mw = Dict{String, Float64}()
-            for var_type in (GenericConstraintSlackUp, GenericConstraintSlackDown)
-                for key in PSI.get_variable_keys(container)
-                    PSI.get_entry_type(key) === var_type && PSI.get_component_type(key) === GenericConstraint || continue
-                    var = PSI.get_variable(container, key)
-                    for name in axes(var, 1), t in axes(var, 2)
-                        v = PSI.JuMP.value(var[name, t]) * base_power
-                        gc_slack_mw[name] = get(gc_slack_mw, name, 0.0) + v
-                    end
-                end
-            end
-            nonzero_gc_slacks = Dict(n => v for (n, v) in gc_slack_mw if v > 1.0e-6)
-
-            # AEMO's own record of which constraints were actually violated over this window
-            # (VIOLATIONDEGREE > 0 <=> MARGINALVALUE priced at a CVP rate, not a market price).
-            dc_table = AustralianElectricityMarkets.Readers.read_hive(db, :DISPATCHCONSTRAINT)
-            violated = DataFrame(
-                DuckDB.execute(
-                    db.db,
-                    """
-                    SELECT DISTINCT CONSTRAINTID FROM $dc_table
-                    WHERE SETTLEMENTDATE BETWEEN ? AND ? AND VIOLATIONDEGREE > 0
-                    """,
-                    [REAL_START, REAL_START + REAL_SPAN],
-                ),
-            )
-            violated_ids = Set(violated.CONSTRAINTID)
-            nonzero_gencon_ids = Set(get_gencon_id(gc) for gc in buildable if PSY.get_name(gc) in keys(nonzero_gc_slacks))
-
-            @info "Elastic GenericConstraint slacks" n_nonzero_slacks = length(nonzero_gc_slacks) n_aemo_violated =
-                length(violated_ids) overlap = length(intersect(nonzero_gencon_ids, violated_ids)) nonzero_gc_slacks
-        end
     end
 
     @testset "interconnector loss gap and regional price signs" begin
@@ -301,14 +272,7 @@ end
             initial_time = REAL_START,
             name = "real_data_losses",
         )
-        build_status = PSI.build!(loss_model; output_dir = mktempdir())
-        if build_status != PSI.ModelBuildStatus.BUILT
-            err = build_error(loss_model)
-            isnothing(err) || @error "NEMInterconnectorLoss build! did not reach BUILT" exception = err
-        end
-        @test build_status == PSI.ModelBuildStatus.BUILT
-        run_status = PSI.solve!(loss_model)
-        @test run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        build_and_solve!(loss_model)
 
         loss_res = PSI.OptimizationProblemResults(loss_model)
         gaps = check_interconnector_loss_segments(loss_res, sys; tolerance = 1.0e-3)
@@ -353,22 +317,13 @@ end
         fcas_registered = PSY.get_name.(PSY.get_components(FCASService, sys))
         n_regulation_trapeziums = 0
         n_regulation_trapeziums_scaled = 0
-        n_two_sided_pairs = 0
-        n_agc_disabled_pairs = 0
-        both_names_by_service = Dict{BidType, Dict{String, Vector{String}}}(
-            BidType.RAISEREG => Dict{String, Vector{String}}(),
-            BidType.LOWERREG => Dict{String, Vector{String}}(),
-        )  # bid type -> service name -> two-sided DUIDs
         horizon = Int(REAL_SPAN / REAL_RESOLUTION)
         for svc in PSY.get_components(FCASService, sys)
             bid_type = get_bid_type(svc)
             name = PSY.get_name(svc)
             # Count how many (device, t) regulation trapeziums AEMO's §4 scaling actually
-            # narrowed - contingency bid types are never scaled for a scheduled unit. Also count
-            # two-sided battery (device, t) pairs and how many regulation (device, t) pairs
-            # AGCSTATUS = 0 disables.
+            # narrowed - contingency bid types are never scaled for a scheduled unit.
             bid_type in AEM.FCAS_REGULATION_MARKETS || continue
-            both_names = String[]
             for d in PSY.get_contributing_devices(sys, svc)
                 direction = AEM.fcas_bid_direction(d, bid_type)
                 for decremental in (direction == FCASBidDirection.BOTH ? (false, true) : (direction == FCASBidDirection.DECREMENTAL,))
@@ -379,12 +334,7 @@ end
                         i -> !isequal(Tuple(raw[i]), Tuple(scaled[i])), eachindex(raw),
                     )
                 end
-                direction == FCASBidDirection.BOTH && (n_two_sided_pairs += horizon; push!(both_names, PSY.get_name(d)))
-
-                status = get_fcas_agc_status(d, REAL_START, horizon)
-                isnothing(status) || (n_agc_disabled_pairs += count(==(0), status))
             end
-            both_names_by_service[bid_type][name] = both_names
         end
 
         @test !isempty(fcas_registered)
@@ -424,15 +374,7 @@ end
             name = "real_data_fcas",
         )
 
-        build_time = @elapsed build_status = PSI.build!(fcas_model; output_dir = mktempdir())
-        if build_status != PSI.ModelBuildStatus.BUILT
-            err = build_error(fcas_model)
-            isnothing(err) || @error "FCASMarket build! did not reach BUILT" exception = err
-        end
-        @test build_status == PSI.ModelBuildStatus.BUILT
-
-        solve_time = @elapsed run_status = PSI.solve!(fcas_model)
-        @test run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        build_time, solve_time = build_and_solve!(fcas_model)
 
         container = PSI.get_optimization_container(fcas_model)
         n_enabled_pairs = 0
@@ -463,82 +405,7 @@ end
         end
         @test n_circulating == 0
 
-        # Report-only sanity check (AEMO §7): at t=1, does AEMO's five-term FCAS availability
-        # formula, evaluated at the published signed TOTALCLEARED on the combined (amalgamated)
-        # two-sided trapezium for a BDU, match published RAISEREG/LOWERREGACTUALAVAILABILITY?
-        # Terms (1)-(3) and (5) follow §7.1 directly; term (4), the joint capacity constraint, is
-        # approximated here by this build's own implied side bound(s) (further capped by §6.4
-        # where attached) rather than AEMO's own per-contingency sum, since published contingency
-        # targets are not read by this harness. Reported both with and without term (5), to
-        # separate §6.1's own contribution from the change of metric versus the old side-bound
-        # proxy this replaced (RAISEREG: 20/42).
-        base_power = PSY.get_base_power(sys)
-
-        function regulation_availability_match(bid_type, both_names_by_svc, published_t1; include_term5::Bool)
-            n_cmp = 0
-            n_ok = 0
-            for (name, both_names) in both_names_by_svc
-                isempty(both_names) && continue
-                gen_var = PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "$(name)_gen")
-                load_var = PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "$(name)_load")
-                for duid in both_names
-                    duid in axes(gen_var, 1) || continue
-                    rows = filter(:DUID => ==(duid), published_t1)
-                    isempty(rows) && continue
-                    published = only(rows.ACTUALAVAILABILITY)
-                    ismissing(published) && continue
-                    energy_target = only(rows.TOTALCLEARED)
-                    ismissing(energy_target) && continue
-
-                    battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, duid)
-                    gen_trap = only(get_scaled_fcas_trapezium(battery, bid_type, REAL_START, 1))
-                    load_trap = only(get_scaled_fcas_trapezium(battery, bid_type, REAL_START, 1; decremental = true))
-                    term1 = (get_max_avail(gen_trap) + get_max_avail(load_trap)) * base_power
-                    # RAISEREG: upper slope on the generation side, lower slope on the load side.
-                    # LOWERREG mirrors this (§7.1's own Regulating Lower formula).
-                    upper_trap, lower_trap = bid_type == BidType.RAISEREG ? (gen_trap, load_trap) : (load_trap, gen_trap)
-                    upper_slope = get_upper_slope_coeff(upper_trap)
-                    term2 = upper_slope > 0.0 ?
-                        (get_enablement_max(upper_trap) * base_power - energy_target) / upper_slope : Inf
-                    lower_slope = get_lower_slope_coeff(lower_trap)
-                    term3 = lower_slope > 0.0 ?
-                        (energy_target - get_enablement_min(lower_trap) * base_power) / lower_slope : Inf
-                    term4 = (PSI.JuMP.upper_bound(gen_var[duid, 1]) + PSI.JuMP.upper_bound(load_var[duid, 1])) * base_power
-                    terms = Float64[term1, term2, term3, term4]
-                    if include_term5
-                        initial_mw = only(rows.INITIALMW)
-                        ramp_cap = get_fcas_agc_ramp_capability(battery, bid_type, REAL_START, 1)
-                        joint_ramp = (ismissing(initial_mw) || isnothing(ramp_cap) || isnan(ramp_cap[1])) ?
-                            nothing : bid_type == BidType.RAISEREG ?
-                            (initial_mw + ramp_cap[1]) * base_power : (initial_mw - ramp_cap[1]) * base_power
-                        term5 = isnothing(joint_ramp) ? Inf :
-                            (bid_type == BidType.RAISEREG ? joint_ramp - energy_target : energy_target - joint_ramp)
-                        push!(terms, term5)
-                    end
-                    availability = max(0.0, minimum(terms))
-                    n_cmp += 1
-                    isapprox(availability, published; atol = 1.0) && (n_ok += 1)
-                end
-            end
-            return n_cmp, n_ok
-        end
-
-        reg_dispatch = filter(:BIDTYPE => in(AEM.FCAS_REGULATION_MARKETS), AEM.read_fcas_dispatch(db, REAL_DATE_RANGE))
-        raisereg_t1 = filter([:SETTLEMENTDATE, :BIDTYPE] => (t, b) -> t == REAL_START && b == BidType.RAISEREG, reg_dispatch)
-        lowerreg_t1 = filter([:SETTLEMENTDATE, :BIDTYPE] => (t, b) -> t == REAL_START && b == BidType.LOWERREG, reg_dispatch)
-        raisereg_both_names = both_names_by_service[BidType.RAISEREG]
-        lowerreg_both_names = both_names_by_service[BidType.LOWERREG]
-
-        raise_cmp5, raise_ok5 = regulation_availability_match(BidType.RAISEREG, raisereg_both_names, raisereg_t1; include_term5 = true)
-        raise_cmp4, raise_ok4 = regulation_availability_match(BidType.RAISEREG, raisereg_both_names, raisereg_t1; include_term5 = false)
-        lower_cmp5, lower_ok5 = regulation_availability_match(BidType.LOWERREG, lowerreg_both_names, lowerreg_t1; include_term5 = true)
-        lower_cmp4, lower_ok4 = regulation_availability_match(BidType.LOWERREG, lowerreg_both_names, lowerreg_t1; include_term5 = false)
-        raisereg_match_rate = raise_cmp5 > 0 ? raise_ok5 / raise_cmp5 : NaN
-        raisereg_match_rate_no_term5 = raise_cmp4 > 0 ? raise_ok4 / raise_cmp4 : NaN
-        lowerreg_match_rate = lower_cmp5 > 0 ? lower_ok5 / lower_cmp5 : NaN
-        lowerreg_match_rate_no_term5 = lower_cmp4 > 0 ? lower_ok4 / lower_cmp4 : NaN
-
-        @info "Real-data FCASMarket DecisionModel" build_time solve_time n_services = length(fcas_registered) n_enabled_pairs n_regulation_trapeziums_scaled n_regulation_trapeziums n_two_sided_pairs n_agc_disabled_pairs raise_cmp5 raise_ok5 raisereg_match_rate raisereg_match_rate_no_term5 lower_cmp5 lower_ok5 lowerreg_match_rate lowerreg_match_rate_no_term5
+        @info "Real-data FCASMarket DecisionModel" build_time solve_time n_services = length(fcas_registered) n_enabled_pairs n_regulation_trapeziums_scaled n_regulation_trapeziums
 
         # Report-only: the FCAS prices this solve's constraint duals imply, against AEMO's published
         # ROP (the sum of the requirement constraints' MARGINALVALUE) per (region, service, interval).
@@ -550,6 +417,8 @@ end
         fcas_price_match_rate = n_price_cmp > 0 ? n_price_ok / n_price_cmp : NaN
         @info "Real-data FCAS prices from constraint duals vs published ROP" n_fcas_constraints n_price_cmp n_price_ok fcas_price_match_rate
         @test n_price_cmp > 0
+
+        reg_dispatch = filter(:BIDTYPE => in(AEM.FCAS_REGULATION_MARKETS), AEM.read_fcas_dispatch(db, REAL_DATE_RANGE))
 
         # AEMO §6.1 fidelity: evaluate every non-placeholder FCASJointRampingConstraint row this
         # build actually constructs (both RAISEREG and LOWERREG services, generators and
@@ -683,14 +552,7 @@ end
         name = "real_data_violation",
     )
 
-    build_status = PSI.build!(model; output_dir = mktempdir())
-    if build_status != PSI.ModelBuildStatus.BUILT
-        err = build_error(model)
-        @error "elastic GenericConstraint build did not reach BUILT" exception = err
-    end
-    @test build_status == PSI.ModelBuildStatus.BUILT
-    run_status = PSI.solve!(model)
-    @test run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    build_and_solve!(model)
 
     results = PSI.OptimizationProblemResults(model)
     base_power = PSY.get_base_power(sys)

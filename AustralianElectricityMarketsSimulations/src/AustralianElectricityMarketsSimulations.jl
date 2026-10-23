@@ -10,7 +10,7 @@ using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCAST
     get_limit_type, get_lower_slope_coeff, get_max_avail, get_missing_constraint_intervals, get_region,
     get_scaled_fcas_trapezium, get_sense, get_service, get_skipped_constraints, get_source,
     get_storage_energy_max_avail, get_terms, get_upper_slope_coeff, loss_curve_vertex_values,
-    is_non_scheduled_load, loss_segments, nem_dispatch_devices, remove_single_series!, replace_single_series!, scale_fcas_trapezium,
+    is_non_scheduled_load, loss_segments, nem_dispatch_devices, remove_single_series!, replace_single_series!,
     single_series
 using Chain
 using DataFrames
@@ -63,14 +63,13 @@ include("preprocessing/fcas.jl")
 include("preprocessing/tie_break.jl")
 include("checks/tie_break.jl")
 include("checks/replay_inputs.jl")
-include("preprocessing/inputs.jl")
 include("preprocessing/replication.jl")
 include("execution/replication.jl")
 include("execution/simulation.jl")
 include("execution/interconnector_loss_gaps.jl")
 
 
-export DISPATCH_INTERVAL_HOURS, DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
+export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
 export REPLICATION_PARTS, replication_template
 export prepare_replication!, replication_simulation, run_replication, replication_results, REPLICATION_OPTIMIZER
 export ENERGY_OFFER_CVP_FACTOR, EnergyOfferSurplusSlack, EnergyOfferDeficitSlack,
@@ -81,8 +80,6 @@ export EnergyMaxAvailTimeSeriesParameter, EnergyUIGFTimeSeriesParameter,
     ENERGY_MAX_AVAIL_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR
 export FixedLoadTimeSeriesParameter, FixedLoadInvokedTimeSeriesParameter, EnergyFixedLoadConstraint,
     EnergyFixedLoadSurplusSlack, EnergyFixedLoadDeficitSlack
-export energy_bounds
-export scale_trapezium
 export NEMConstraintLHS, NEMConstraintLimit,
     NEMConstraintRHSParameter, LinearFactorLimit, FCASMarket
 export GenericConstraintSlackUp, GenericConstraintSlackDown, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR

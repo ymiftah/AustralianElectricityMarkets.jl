@@ -513,6 +513,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `MNSP_PEROFFER` table spec. MNSP offer replays cover intervals from 1 October 2021, the start of
   five-minute settlement; earlier intervals are not supported.
 
+- `energy_bounds` and `scale_trapezium` (`AustralianElectricityMarketsSimulations`), which nothing in
+  the replication path called. Root's `scale_fcas_trapezium` is unchanged.
+- `DISPATCH_INTERVAL_HOURS` (`AustralianElectricityMarketsSimulations`). Use
+  `interval_hours(DISPATCH_INTERVAL)` instead.
+- The `formulation` keyword of `set_nem_dispatch_models!` and `nem_dispatch_participants`, which only
+  accepted `NEMReplayDispatch`, and the `skip_uncovered` keyword of `set_nem_dispatch_models!`. A
+  participant without its dispatch series now fails the build by name.
+
 ### Changed
 
 - The down row of a NEM unit's `PSI.RampConstraint` uses PSI's `"dn"` meta instead of `"down"`.
