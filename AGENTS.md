@@ -116,6 +116,16 @@ reviewing the change. It is installed in `~/.agents/skills/nem-expert/` and is s
 projects. Follow its source-routing guidance and cite the matching AEMO source for every variable
 bound, constraint and cost term. Record any departure from AEMO in an ADR.
 
+## Releasing
+
+- Packages are registered separately from their folders: `@JuliaRegistrator register subdir=<Folder>`, the root package without `subdir`.
+- Order: Cache, then AEMData and AEM, then AEMSim.
+- A version-bump PR bumps every changed package and the compat of its siblings together.
+- Registrator comment per package, in order, each after the previous merges in General.
+- Tags: root `vX.Y.Z`; subfolder packages `<PackageName>-vX.Y.Z` (TagBot).
+- `TestRegistered` (manual) strips `[sources]`, workspace and manifests, then tests each package against registered siblings.
+- AEMSim is blocked until the PowerSimulations fork changes are released upstream.
+
 ## Gotchas
 
 - `populate` is idempotent (skips months already cached); pass `force_new = true` after changing a

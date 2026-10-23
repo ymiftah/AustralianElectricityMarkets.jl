@@ -470,6 +470,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- TagBot, CompatHelper and Dependabot cover each package in the repository, and a manual
+  `TestRegistered` workflow tests each package against the registered versions of its siblings.
 - Violation penalties (unit ramp, energy availability and UIGF, storage availability, total energy
   offer bands, FCAS, interconnector flow, area balance and generic constraints) are re-priced at each
   simulation step from that interval's Market Price Cap, so `replicate_range` no longer rejects a
