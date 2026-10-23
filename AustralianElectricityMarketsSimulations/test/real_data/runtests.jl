@@ -367,7 +367,7 @@ end
             both_names = String[]
             for d in PSY.get_contributing_devices(sys, svc)
                 direction = AEM.fcas_bid_direction(d, bid_type)
-                for decremental in (direction == :both ? (false, true) : (direction == :decremental,))
+                for decremental in (direction == FCASBidDirection.BOTH ? (false, true) : (direction == FCASBidDirection.DECREMENTAL,))
                     raw = get_fcas_trapezium(d, bid_type, REAL_START, horizon; decremental = decremental)
                     scaled = get_scaled_fcas_trapezium(d, bid_type, REAL_START, horizon; decremental = decremental)
                     n_regulation_trapeziums += length(raw)
@@ -375,7 +375,7 @@ end
                         i -> !isequal(Tuple(raw[i]), Tuple(scaled[i])), eachindex(raw),
                     )
                 end
-                direction == :both && (n_two_sided_pairs += horizon; push!(both_names, PSY.get_name(d)))
+                direction == FCASBidDirection.BOTH && (n_two_sided_pairs += horizon; push!(both_names, PSY.get_name(d)))
 
                 status = get_fcas_agc_status(d, REAL_START, horizon)
                 isnothing(status) || (n_agc_disabled_pairs += count(==(0), status))

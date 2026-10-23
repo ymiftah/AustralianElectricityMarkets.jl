@@ -7,7 +7,7 @@ fcas_window(t) = AEMS._FCASWindow(t, 1, DISPATCH_INTERVAL, :dispatch)
 # EnablementMax, UpperSlopeCoeff, LowerSlopeCoeff, widths)` from the build-time trapezium and masks.
 function build_time_offer(device, bid_type, direction, decremental, t)
     w = fcas_window(t)
-    enabled = if direction == :both
+    enabled = if direction == FCASBidDirection.BOTH
         gen, load = AEMS._fcas_both_sides_enabled_mask(w, device, bid_type)
         only(decremental ? load : gen)
     else

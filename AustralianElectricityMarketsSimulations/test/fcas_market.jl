@@ -1525,12 +1525,12 @@ end
     @test occursin("a recurrent simulation supports NEMReplayDispatch only", err.msg)
 end
 
-@testset "FCAS band price step update and price meta parsing" begin
+@testset "FCAS band price step update and price meta lookup" begin
     sys = fcas_toy_system()
     svc = PSY.get_component(FCASService, sys, "1_RAISEREG")
     @test AEMS._fcas_price_meta_service(sys, "1_RAISEREG") == (svc, nothing)
-    @test AEMS._fcas_price_meta_service(sys, "1_RAISEREG_gen") == (svc, "gen")
-    @test AEMS._fcas_price_meta_service(sys, "1_RAISEREG_load") == (svc, "load")
+    @test AEMS._fcas_price_meta_service(sys, "1_RAISEREG_gen") == (svc, false)
+    @test AEMS._fcas_price_meta_service(sys, "1_RAISEREG_load") == (svc, true)
     @test_throws r"No FCASService for the FCASBandPriceParameter meta \"1_NOSUCH_load\"" AEMS._fcas_price_meta_service(sys, "1_NOSUCH_load")
 
     model = PSI.DecisionModel(

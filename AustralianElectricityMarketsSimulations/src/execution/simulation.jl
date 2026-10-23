@@ -72,7 +72,7 @@ pre-flight checks and selects constraints invoked in at least one requested inte
 
 # Returns
 A `PSI.Simulation` for `PSI.build!` and `PSI.execute!`. Throws `ArgumentError` for invalid ranges
-or missing inputs, changing Market Price Caps or incompatible tie-break pairs.
+or missing inputs, or incompatible tie-break pairs.
 """
 function replication_simulation(sys::PSY.System, steps::StepRange{DateTime}; kwargs...)
     return _range_simulation(sys, steps; kwargs...).simulation

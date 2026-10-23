@@ -20,16 +20,16 @@ regulation bid.
 # Returns
 `Union{Nothing, String}`, the reason phrased to follow the device name.
 """
-function _fcas_direction_problem(device::PSY.Device, bid_type::BidType, direction::Symbol)
+function _fcas_direction_problem(device::PSY.Device, bid_type::BidType, direction::FCASBidDirection)
     bid = string(bid_type)
-    direction === :none && return "carries neither an incremental nor a decremental $bid bid; call set_fcas_bids! first"
-    direction === :both && !(device isa PSY.Storage && bid_type in FCAS_REGULATION_MARKETS) &&
+    direction === FCASBidDirection.NONE && return "carries neither an incremental nor a decremental $bid bid; call set_fcas_bids! first"
+    direction === FCASBidDirection.BOTH && !(device isa PSY.Storage && bid_type in FCAS_REGULATION_MARKETS) &&
         return "carries both an incremental and a decremental $bid bid; bidirectional FCAS capacity is modeled " *
         "only for a `PSY.Storage` device's regulation markets"
-    direction === :decremental && !(device isa PSY.Storage || device isa PSY.ControllableLoad) &&
+    direction === FCASBidDirection.DECREMENTAL && !(device isa PSY.Storage || device isa PSY.ControllableLoad) &&
         return "($(typeof(device))) has only a decremental $bid bid; that direction is modeled only for a " *
         "`PSY.Storage` device or a `PSY.ControllableLoad`"
-    direction === :incremental && device isa PSY.ControllableLoad &&
+    direction === FCASBidDirection.INCREMENTAL && device isa PSY.ControllableLoad &&
         return "is a load with an incremental $bid bid; a load offers FCAS on its decremental " *
         "(`LOAD`-direction) series only"
     return nothing
@@ -37,14 +37,14 @@ end
 
 
 """
-    _fcas_direction(device, bid_type) -> Symbol
+    _fcas_direction(device, bid_type) -> FCASBidDirection
 
 Which of `bid_type`'s `"fcas_trapezium_<bid_type>[_decremental]"` series `device` carries. Throws
 an `ArgumentError` when [`FCASMarket`](@ref) does not model that direction
 ([`_fcas_direction_problem`](@ref)).
 
 # Returns
-`:incremental`, `:decremental`, or `:both`.
+`FCASBidDirection.INCREMENTAL`, `DECREMENTAL` or `BOTH`.
 """
 function _fcas_direction(device::PSY.Device, bid_type::BidType)
     direction = fcas_bid_direction(device, bid_type)
@@ -485,19 +485,19 @@ end
     _fcas_regulation_enabled_mask(window, device, bid_type, direction) -> Vector{Bool}
 
 `device`'s per-interval enablement for regulation `bid_type`, for the unit as a whole:
-[`_fcas_enabled_mask`](@ref) for a single-sided `direction` (`:incremental`/`:decremental`), or,
-for `direction == :both` (a `PSY.Storage` device bidding both sides), either side enabled
+[`_fcas_enabled_mask`](@ref) for a single-sided `direction` (`INCREMENTAL` or `DECREMENTAL`), or,
+for `direction == FCASBidDirection.BOTH` (a `PSY.Storage` device bidding both sides), either side enabled
 ([`_fcas_both_sides_enabled_mask`](@ref)).
 
 # Returns
 `Vector{Bool}`, one entry per interval of `window`.
 """
-function _fcas_regulation_enabled_mask(window::_FCASWindow, device::PSY.Device, bid_type::BidType, direction::Symbol)
-    if direction == :both
+function _fcas_regulation_enabled_mask(window::_FCASWindow, device::PSY.Device, bid_type::BidType, direction::FCASBidDirection)
+    if direction == FCASBidDirection.BOTH
         gen_enabled, load_enabled = _fcas_both_sides_enabled_mask(window, device, bid_type)
         return gen_enabled .| load_enabled
     end
-    return _fcas_enabled_mask(window, device, bid_type, direction == :decremental)
+    return _fcas_enabled_mask(window, device, bid_type, direction == FCASBidDirection.DECREMENTAL)
 end
 
 
@@ -538,10 +538,10 @@ function _fcas_offer_meta(bid_type::BidType, decremental::Bool)
 end
 
 
-"The `decremental` flag of each offer a device bidding in `direction` makes: one, or two for `:both`."
-function _fcas_offer_sides(direction::Symbol)
-    direction == :both && return (false, true)
-    return (direction == :decremental,)
+"The `decremental` flag of each offer a device bidding in `direction` makes: one, or two for `BOTH`."
+function _fcas_offer_sides(direction::FCASBidDirection)
+    direction == FCASBidDirection.BOTH && return (false, true)
+    return (direction == FCASBidDirection.DECREMENTAL,)
 end
 
 
@@ -587,12 +587,12 @@ for any other device.
 # Returns
 `Vector{NTuple{2, Float64}}`, one entry per interval of `window`.
 """
-function _fcas_effective_ramping(window::_FCASWindow, device::PSY.Device, bid_type::BidType, direction::Symbol, inactive::Float64)
+function _fcas_effective_ramping(window::_FCASWindow, device::PSY.Device, bid_type::BidType, direction::FCASBidDirection, inactive::Float64)
     caps = _fcas_agc_ramp_caps(window, device, _fcas_ramp_rate_service(device, bid_type))
     initial_mw = get_initial_mw(device, window.initial_time, window.horizon)
     enabled = _fcas_regulation_enabled_mask(window, device, bid_type, direction)
     upper = bid_type == _fcas_upper_regulation_service(device)
-    bdu_caps = direction == :both ? _fcas_agc_ramp_caps(window, device, bid_type) : nothing
+    bdu_caps = direction == FCASBidDirection.BOTH ? _fcas_agc_ramp_caps(window, device, bid_type) : nothing
     return map(1:window.horizon) do t
         mw = isnothing(initial_mw) ? NaN : initial_mw[t]
         joint = if iszero(caps[t]) || isnan(mw) || !enabled[t]
@@ -618,9 +618,9 @@ regulation market, `nothing` otherwise.
 # Returns
 `(offers::Dict{Bool, Vector{NTuple{15, Float64}}}, ramping::Union{Nothing, Vector{NTuple{2, Float64}}})`.
 """
-function _fcas_effective_values(window::_FCASWindow, device::PSY.Device, bid_type::BidType, direction::Symbol, inactive::Float64)
+function _fcas_effective_values(window::_FCASWindow, device::PSY.Device, bid_type::BidType, direction::FCASBidDirection, inactive::Float64)
     regulation = bid_type in FCAS_REGULATION_MARKETS
-    enabled = if direction == :both && device isa PSY.Storage && regulation
+    enabled = if direction == FCASBidDirection.BOTH && device isa PSY.Storage && regulation
         gen, load = _fcas_both_sides_enabled_mask(window, device, bid_type)
         Dict(false => gen, true => load)
     else
@@ -1184,17 +1184,22 @@ bidding both sides of a regulation market has one offer in each of `"<name>_gen"
 # Returns
 `Vector{NamedTuple{(:meta, :variable, :offers)}}`.
 """
+# The capacity-variable meta of one side of a `PSY.Storage` device's two-sided regulation offer.
+_fcas_side_meta(name::AbstractString, decremental::Bool) = decremental ? "$(name)_load" : "$(name)_gen"
+
+
 function _fcas_offer_groups(name::AbstractString, devices, bid_type::BidType)
     return _fcas_offer_groups(name, devices, Dict(PSY.get_name(d) => _fcas_direction(d, bid_type) for d in devices))
 end
 function _fcas_offer_groups(name::AbstractString, devices, directions::AbstractDict)
-    both = [d for d in devices if directions[PSY.get_name(d)] == :both]
-    single = [(d, directions[PSY.get_name(d)] == :decremental) for d in devices if directions[PSY.get_name(d)] != :both]
+    both = [d for d in devices if directions[PSY.get_name(d)] == FCASBidDirection.BOTH]
+    single = [(d, directions[PSY.get_name(d)] == FCASBidDirection.DECREMENTAL) for d in devices if directions[PSY.get_name(d)] != FCASBidDirection.BOTH]
     groups = NamedTuple[]
     isempty(single) || push!(groups, (meta = String(name), variable = FCASCapacityVariable(), offers = single))
     if !isempty(both)
-        push!(groups, (meta = "$(name)_gen", variable = FCASSideCapacityVariable(), offers = [(d, false) for d in both]))
-        push!(groups, (meta = "$(name)_load", variable = FCASSideCapacityVariable(), offers = [(d, true) for d in both]))
+        for decremental in (false, true)
+            push!(groups, (meta = _fcas_side_meta(name, decremental), variable = FCASSideCapacityVariable(), offers = [(d, decremental) for d in both]))
+        end
     end
     return groups
 end
@@ -1360,14 +1365,15 @@ function PSI.objective_function!(
 end
 
 
-# The `FCASService` and side (`nothing`, `"gen"` or `"load"`) of an `FCASBandPriceParameter` meta.
+# The `FCASService` and side (`nothing` for single-sided offers, else `decremental`) whose
+# `_fcas_offer_groups` meta is `meta`.
 function _fcas_price_meta_service(sys::PSY.System, meta::String)
-    svc = PSY.get_component(FCASService, sys, meta)
-    isnothing(svc) || return svc, nothing
-    for side in ("gen", "load")
-        endswith(meta, "_$side") || continue
-        svc = PSY.get_component(FCASService, sys, chopsuffix(meta, "_$side"))
-        isnothing(svc) || return svc, side
+    for svc in PSY.get_components(FCASService, sys)
+        name = PSY.get_name(svc)
+        meta == name && return svc, nothing
+        for decremental in (false, true)
+            meta == _fcas_side_meta(name, decremental) && return svc, decremental
+        end
     end
     throw(ArgumentError("No FCASService for the FCASBandPriceParameter meta \"$meta\"."))
 end
@@ -1397,7 +1403,7 @@ function PSI.update_container_parameter_values!(
     contributors = Dict(PSY.get_name(d) => d for d in PSY.get_contributing_devices(sys, svc))
     offers = map(axes(prices)[1]) do dname
         device = contributors[dname]
-        (device, isnothing(side) ? _fcas_direction(device, bid_type) == :decremental : side == "load")
+        (device, isnothing(side) ? _fcas_direction(device, bid_type) == FCASBidDirection.DECREMENTAL : side)
     end
     _set_fcas_band_prices!(container, prices, multiplier, key.meta, offers, bid_type, PSI.get_current_time(model))
     return
@@ -1449,7 +1455,7 @@ function PSI.construct_service!(
         _add_fcas_band_constraints!(container, group, bid_type)
     end
 
-    both_devices = [d for group in groups if group.meta == "$(name)_gen" for (d, _) in group.offers]
+    both_devices = [d for group in groups if group.meta == _fcas_side_meta(name, false) for (d, _) in group.offers]
     if !isempty(both_devices)
         both_names = PSY.get_name.(both_devices)
         target = PSI.get_expression(container, FCASUnitRegulationTarget(), FCASService, name)

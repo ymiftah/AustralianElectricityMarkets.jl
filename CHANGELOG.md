@@ -501,6 +501,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `FCASMarket` adds its offer band variables in the argument stage and their rows in the model
   stage; `objective_function!` only prices them. The band-sum-to-capacity rows are registered as
   the new `FCASOfferBandConstraint`.
+- **Breaking:** `fcas_bid_direction` returns the new `FCASBidDirection` enum (`NONE`,
+  `INCREMENTAL`, `DECREMENTAL`, `BOTH`) instead of a `Symbol`.
 - Bid series names live in one registry: `OfferSide` (`GEN`/`LOAD`), `NEM_SERIES`,
   `energy_max_avail_series_name` and `fcas_series_name(prefix, service[, side])`. Typed accessors
   `is_semi_scheduled`, `has_schedule_classification`, `is_commissioned` and `energy_offer_sides`
