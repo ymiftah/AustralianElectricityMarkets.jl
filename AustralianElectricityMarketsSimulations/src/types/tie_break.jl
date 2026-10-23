@@ -42,7 +42,7 @@ PSY.supports_time_series(::EnergyTieBreak) = false
 
 # One energy band in a tie-break group: its reference-node price, PSI block variable, unit name,
 # segment index on the unit's offer curve and component type.
-const _TieBand = @NamedTuple{price::Float64, var::JuMP.VariableRef, name::String, band::Int, type::Type{<:PSY.Component}}
+const _TieBand = @NamedTuple{price::Float64, var::JuMP.VariableRef, name::String, band::Int, type::DataType}
 
 
 """
