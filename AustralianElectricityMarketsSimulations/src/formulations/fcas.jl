@@ -609,23 +609,6 @@ function _fcas_parameter_axes(::Union{FCASUpperSlopeParameter, FCASLowerSlopePar
     return ()
 end
 
-function PSI._unwrap_for_param(::FCASOfferLimitParameter, v::NTuple{15, Float64}, _)
-    return [v[1], v[2], v[3]]
-end
-function PSI._unwrap_for_param(::FCASUpperSlopeParameter, v::NTuple{15, Float64}, _)
-    return v[4]
-end
-function PSI._unwrap_for_param(::FCASLowerSlopeParameter, v::NTuple{15, Float64}, _)
-    return v[5]
-end
-function PSI._unwrap_for_param(::FCASBandWidthParameter, v::NTuple{15, Float64}, _)
-    return collect(v[6:15])
-end
-function PSI._unwrap_for_param(::FCASRampingLimitParameter, v::NTuple{2, Float64}, _)
-    return [v[1], v[2]]
-end
-
-
 "`devices_template`'s `PSI.DeviceModel` for component type `D`."
 function _fcas_device_model(devices_template, ::Type{D}) where {D <: PSY.Device}
     for model in values(devices_template)
@@ -1131,7 +1114,7 @@ end
     _set_fcas_band_prices!(container, prices, multiplier, meta, offers, bid_type, start_time)
 
 Writes the band prices of each of `offers` (`(device, decremental)`) for `bid_type` from
-`start_time` into the [`FCASBandPriceParameter`](@ref) array `prices` (`0.0` beyond the offered
+`start_time`, read from the container's default forecast type, into the [`FCASBandPriceParameter`](@ref) array `prices` (`0.0` beyond the offered
 bands) and adds each band's cost, price times `multiplier` times its [`FCASOfferBandVariable`](@ref)
 of meta `meta`, to the variant objective.
 
@@ -1143,10 +1126,9 @@ function _set_fcas_band_prices!(
     )
     bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, meta)
     labels = axes(prices)[2]
-    horizon = length(PSI.get_time_steps(container))
     for (device, decremental) in offers
         dname = PSY.get_name(device)
-        curves = get_fcas_offer_curve(device, bid_type, start_time, horizon; decremental = decremental)
+        curves = _forecast_window_values(container, device, fcas_series_name("fcas_curve", bid_type, decremental), start_time)
         for (t, curve) in enumerate(curves)
             y = PSY.get_y_coords(curve)
             for (b, label) in enumerate(labels)

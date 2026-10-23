@@ -122,20 +122,16 @@ end
         @test PSI.get_variable_binary(PSI.ActivePowerVariable(), T, NEMReplayDispatch()) == false
     end
 
-    @testset "the market-bid hooks resolve to our override, for a non-Generator injector too" begin
-        # PSI defines no `Any` fallback, so a non-Generator participant would MethodError.
+    @testset "the market-bid constraint hook resolves to our override, for a non-Generator injector too" begin
         for T in (
                 PSY.ThermalStandard, PSY.ThermalMultiStart, PSY.HydroDispatch,
-                PSY.RenewableDispatch, PSY.EnergyReservoirStorage,
+                PSY.RenewableDispatch, PSY.EnergyReservoirStorage, PSY.InterruptiblePowerLoad,
             )
-            for hook in (
-                    PSI._include_min_gen_power_in_constraint,
-                    PSI._include_constant_min_gen_power_in_constraint,
-                )
-                signature = (T, PSI.ActivePowerVariable, NEMReplayDispatch)
-                @test hasmethod(hook, signature)
-                @test which(hook, signature).sig.parameters[4] <: AbstractNEMDispatch
-            end
+            signature = (
+                PSI.OptimizationContainer, T, PSI.ActivePowerVariable, NEMReplayDispatch, Vector{Float64}, Int,
+                Type{PSI.PiecewiseLinearBlockIncrementalOffer}, Type{PSI.PiecewiseLinearBlockIncrementalOfferConstraint},
+            )
+            @test which(PSI._add_pwl_constraint!, signature).module === AustralianElectricityMarketsSimulations
         end
     end
 

@@ -279,7 +279,7 @@ competing violation costs.
 function _add_nem_ramp_constraints!(container::PSI.OptimizationContainer, ::Type{T}, devices, net_at, base_accessor) where {T}
     time_steps = PSI.get_time_steps(container)
     jump_model = PSI.get_jump_model(container)
-    minutes = PSI._get_minutes_per_period(container)
+    minutes = 60 * interval_hours(PSI.get_resolution(container))
 
     names = [PSY.get_name(d) for d in devices]
     isempty(names) && return

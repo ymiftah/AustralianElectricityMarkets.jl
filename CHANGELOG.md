@@ -509,6 +509,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   step. Fixed-rate penalties are invariant costs. The settings `ext` penalty record, the placeholder
   parameter on `PSY.Area` and the private `_update_parameter_values!` override are gone. The
   generic-constraint slack cost updates through the same per-key method.
+- Every override of, or call into, a private PowerSimulations internal lives in `psi_compat.jl`.
+  The NEM energy-offer rows are built directly in the `_add_pwl_constraint!` override, which drops
+  the extra `add_constraints!` method and the `_include_min_gen_power_in_constraint` and
+  `_include_constant_min_gen_power_in_constraint` overrides.
+- FCAS band prices are read from the container's forecast window, as MNSP band prices and the
+  generic-constraint `"invoked"` mask are.
 - **Breaking:** `fcas_bid_direction` returns the new `FCASBidDirection` enum (`NONE`,
   `INCREMENTAL`, `DECREMENTAL`, `BOTH`) instead of a `Symbol`.
 - Bid series names live in one registry: `OfferSide` (`GEN`/`LOAD`), `NEM_SERIES`,

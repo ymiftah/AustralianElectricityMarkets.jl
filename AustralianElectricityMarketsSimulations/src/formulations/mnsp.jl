@@ -87,15 +87,6 @@ function PSI.calc_additional_axes(
 end
 
 
-# An offer curve's band widths in MW, padded with zero-width bands to the band axis.
-function PSI._unwrap_for_param(::MNSPBandWidthParameter, curve::IS.PiecewiseStepData, expected_axs)
-    widths = diff(PSY.get_x_coords(curve))
-    n = length(only(expected_axs))
-    length(widths) <= n || throw(ArgumentError("MNSP offer has $(length(widths)) bands, more than the band axis' $n."))
-    return vcat(widths, zeros(n - length(widths)))
-end
-
-
 """
     _mnsp_band_labels(devices) -> Vector{String}
 

@@ -38,44 +38,6 @@ function _energy_offer_slacks(::Type{PSI.PiecewiseLinearBlockDecrementalOffer})
 end
 
 """
-    PSI.add_constraints!(container, constraint_type, component, variable, formulation, breakpoints, period, band_type)
-
-Links dispatch to cleared energy bands with separately priced positive and negative mismatches.
-Preserves individual live band-width bounds and PSI's constant first-breakpoint offset.
-
-# Returns
-`nothing`.
-"""
-function PSI.add_constraints!(
-        container::PSI.OptimizationContainer, ::Type{W}, component::T, ::U, ::D,
-        breakpoints::Vector{<:PSI.JuMPOrFloat}, period::Int, ::Type{V},
-    ) where {
-        T <: PSY.StaticInjection, U <: PSI.VariableType, D <: AbstractNEMDispatch,
-        V <: PSI.AbstractPiecewiseLinearBlockOffer, W <: PSI.AbstractPiecewiseLinearBlockOfferConstraint,
-    }
-    jm = PSI.get_jump_model(container)
-    power = PSI.get_variable(container, U(), T)
-    bands = PSI.get_variable(container, V(), T)
-    name = PSY.get_name(component)
-    rows = PSI.lazy_container_addition!(container, W(), T, axes(power)...)
-    above_type, below_type = _energy_offer_slacks(V)
-    above = PSI.get_variable(container, above_type(), T)[name, period]
-    below = PSI.get_variable(container, below_type(), T)[name, period]
-    offered = sum(bands[name, k, period] for k in 1:(length(breakpoints) - 1))
-    if PSI._include_constant_min_gen_power_in_constraint(component, U(), D())
-        offered += PSI.jump_fixed_value(first(breakpoints))::Float64
-    elseif PSI._include_min_gen_power_in_constraint(component, U(), D())
-        on = PSI.get_variable(container, PSI.OnVariable(), T)
-        offered += (PSI.jump_fixed_value(first(breakpoints))::Float64) * on[name, period]
-    end
-    rows[name, period] = JuMP.@constraint(jm, power[name, period] == offered + above - below)
-    for k in 1:(length(breakpoints) - 1)
-        JuMP.@constraint(jm, bands[name, k, period] <= breakpoints[k + 1] - breakpoints[k])
-    end
-    return
-end
-
-"""
     PSI.add_proportional_cost!(container, slack, devices, formulation)
 
 Prices each total-offer mismatch at CVP1135 times the Market Price Cap, with system-base MW
