@@ -67,7 +67,7 @@ end
 
 `component`'s `service` offer on `side`, `horizon` steps from `initial_time`, in `component`'s
 `System`'s current display units: the [`get_scaled_fcas_trapezium`](@ref) trapeziums (`kwargs` are
-passed to it), paired with the offer curves of `get_fcas_offer_curve`.
+passed to it), paired with the offer curves of `_get_fcas_offer_curve`.
 Throws `ArgumentError` if either series isn't attached or they differ in length.
 
 # Returns
@@ -76,7 +76,7 @@ A [`NEMFCASOffer`](@ref).
 function get_fcas_offer(component, service::BidType, side::OfferSide, initial_time, horizon::Integer; kwargs...)
     decremental = side == OfferSide.LOAD
     trapeziums = get_scaled_fcas_trapezium(component, service, initial_time, horizon; decremental, kwargs...)
-    curves = get_fcas_offer_curve(component, service, initial_time, horizon; decremental)
+    curves = _get_fcas_offer_curve(component, service, initial_time, horizon; decremental)
     _require_equal_length(trapeziums, curves, service, component)
     return NEMFCASOffer(service, side, trapeziums, curves)
 end

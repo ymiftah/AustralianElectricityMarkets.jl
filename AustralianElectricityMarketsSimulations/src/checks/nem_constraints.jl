@@ -160,10 +160,10 @@ end
 
 
 """
-    filter_buildable_generic_constraints(sys, template; allow_partial_coverage = false, skipped = nothing) -> Vector{GenericConstraint}
+    _filter_buildable_generic_constraints(sys, template, constraints; allow_partial_coverage = false, skipped = nothing) -> Vector{GenericConstraint}
 
-The [`GenericConstraint`](@ref)s in `sys` that `template` can build under
-[`LinearFactorLimit`](@ref). A constraint is unbuildable when the service of one of its FCAS terms
+The `constraints` (the [`GenericConstraint`](@ref)s of `sys`, or a subset) that `template` can
+build under [`LinearFactorLimit`](@ref). A constraint is unbuildable when the service of one of its FCAS terms
 ([`fcas_service_name`](@ref)) has available devices but no [`FCASMarket`](@ref) model in
 `template`, a term's named component is missing from `sys`, or a device's type is not modelled by
 any `DeviceModel` or branch model in `template` (an `InterconnectorTerm` needs `PSY.AreaInterchange`
@@ -173,6 +173,7 @@ devices are all unavailable is left out without being a failure.
 # Arguments
 - `sys`: system to read constraints and components from.
 - `template`: `PSI.ProblemTemplate` to check device and branch coverage against.
+- `constraints`: the `GenericConstraint`s to check.
 - `allow_partial_coverage`: when `false` (default), throws a single aggregated `ArgumentError`
   naming every unbuildable constraint and its reason if any exist. When `true`, returns the
   buildable subset and emits one summary `@warn` with counts by reason.
@@ -184,16 +185,6 @@ devices are all unavailable is left out without being a failure.
 # Returns
 A `Vector{GenericConstraint}`, sorted by name.
 """
-function filter_buildable_generic_constraints(
-        sys::PSY.System, template::PSI.ProblemTemplate; allow_partial_coverage::Bool = false,
-        skipped::Union{Nothing, AbstractVector} = nothing,
-    )
-    return _filter_buildable_generic_constraints(
-        sys, template, PSY.get_components(GenericConstraint, sys); allow_partial_coverage, skipped,
-    )
-end
-
-
 function _filter_buildable_generic_constraints(
         sys::PSY.System, template::PSI.ProblemTemplate, constraints; allow_partial_coverage::Bool = false,
         skipped::Union{Nothing, AbstractVector} = nothing, tolerated_reasons = Set{Symbol}(),

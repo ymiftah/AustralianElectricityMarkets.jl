@@ -178,10 +178,14 @@ end
 
     template = aemsim_template(sys)
     constraints = collect(PSY.get_components(GenericConstraint, sys))
-    buildable = filter_buildable_generic_constraints(sys, template; allow_partial_coverage = true)
+    buildable = AEMS._filter_buildable_generic_constraints(
+        sys, template, constraints; allow_partial_coverage = true,
+    )
 
     @testset "the pre-flight constraint check" begin
-        @test_throws ArgumentError filter_buildable_generic_constraints(sys, template)
+        @test_throws ArgumentError AEMS._filter_buildable_generic_constraints(
+            sys, template, constraints,
+        )
         @test !isempty(buildable)
         @test issubset(Set(PSY.get_name.(buildable)), Set(PSY.get_name.(constraints)))
 
@@ -368,7 +372,7 @@ end
             for d in PSY.get_contributing_devices(sys, svc)
                 direction = AEM.fcas_bid_direction(d, bid_type)
                 for decremental in (direction == FCASBidDirection.BOTH ? (false, true) : (direction == FCASBidDirection.DECREMENTAL,))
-                    raw = AustralianElectricityMarkets.get_fcas_trapezium(d, bid_type, REAL_START, horizon; decremental = decremental)
+                    raw = AustralianElectricityMarkets._get_fcas_trapezium(d, bid_type, REAL_START, horizon; decremental = decremental)
                     scaled = get_scaled_fcas_trapezium(d, bid_type, REAL_START, horizon; decremental = decremental)
                     n_regulation_trapeziums += length(raw)
                     n_regulation_trapeziums_scaled += count(
@@ -395,7 +399,9 @@ end
             )
         end
         # Buildable against this template, so constraints with FCAS terms are in play.
-        fcas_buildable = filter_buildable_generic_constraints(sys, fcas_template; allow_partial_coverage = true)
+        fcas_buildable = AEMS._filter_buildable_generic_constraints(
+            sys, fcas_template, PSY.get_components(GenericConstraint, sys); allow_partial_coverage = true,
+        )
         n_fcas_constraints = count(gc -> !isempty(get_fcas_requirements(gc)), fcas_buildable)
         for gc in fcas_buildable
             name = PSY.get_name(gc)

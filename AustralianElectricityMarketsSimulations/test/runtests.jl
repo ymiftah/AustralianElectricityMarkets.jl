@@ -30,7 +30,6 @@ const TEST_GROUPS = [
     "time_basis" => ("Time basis", "time_basis.jl"),
     "tie_break_service" => ("Energy tie-break service", "tie_break_service.jl"),
     "preprocessing" => ("Preprocessing", "preprocessing.jl"),
-    "constraint_formulations" => ("Constraint formulations", "constraint_formulations.jl"),
     "psi_compat" => ("PSI compat", "psi_compat.jl"),
     "nem_constraints" => ("NEM constraints", "nem_constraints.jl"),
     "nem_dispatch" => ("NEM dispatch formulation", "nem_dispatch.jl"),

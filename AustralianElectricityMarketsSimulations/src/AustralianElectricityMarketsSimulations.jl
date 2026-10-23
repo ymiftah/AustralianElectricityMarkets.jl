@@ -98,7 +98,7 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     constraint_cvp_factor,
     UNIT_RAMP_CVP_FACTOR, UnitRampUpSlack, UnitRampDownSlack,
     INTERCONNECTOR_FLOW_CVP_FACTOR, InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack
-export filter_buildable_generic_constraints, compute_fcas_prices
+export compute_fcas_prices
 export check_fcas_services, check_dispatch_envelope
 export AbstractNEMDispatch, NEMReplayDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,

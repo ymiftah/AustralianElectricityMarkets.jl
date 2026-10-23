@@ -1,13 +1,12 @@
 """
     table_requirements(::ConstrainedNetworkConfiguration)
 
-`RegionalNetworkConfiguration`'s tables plus `:DISPATCHLOAD, :DISPATCHPRICE,
+`RegionalNetworkConfiguration`'s tables plus `:DISPATCHPRICE,
 :DISPATCH_FCAS_REQ, :DISPATCHCONSTRAINT, :GENCONDATA, :SPDCONNECTIONPOINTCONSTRAINT,
 :SPDREGIONCONSTRAINT, :SPDINTERCONNECTORCONSTRAINT`.
 """
 AustralianElectricityMarkets.table_requirements(::ConstrainedNetworkConfiguration) = [
     table_requirements(RegionalNetworkConfiguration())...,
-    :DISPATCHLOAD,
     :DISPATCHPRICE,
     # Both generations of the dispatch FCAS requirement table: DISPATCH_FCAS_REQ covers up
     # to the 2025-05 archive month, DISPATCH_FCAS_REQ_CONSTRAINT from 2025-06 on. A cache

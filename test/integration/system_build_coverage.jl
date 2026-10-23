@@ -98,8 +98,8 @@
             @test !isempty(devices(svc2))
             # RAISE6SEC is a contingency market: its trapezium carries no ramp rates (stored as NaN).
             alta = get_component(ThermalStandard, sys, "Alta")
-            @test isnothing(get_ramp_up_rate(only(AustralianElectricityMarkets.get_fcas_trapezium(alta, BidType.RAISE6SEC, start_date, 1))))
-            @test isnothing(get_ramp_down_rate(only(AustralianElectricityMarkets.get_fcas_trapezium(alta, BidType.RAISE6SEC, start_date, 1))))
+            @test isnothing(get_ramp_up_rate(only(AustralianElectricityMarkets._get_fcas_trapezium(alta, BidType.RAISE6SEC, start_date, 1))))
+            @test isnothing(get_ramp_down_rate(only(AustralianElectricityMarkets._get_fcas_trapezium(alta, BidType.RAISE6SEC, start_date, 1))))
         end
 
         @testset "interconnector losses" begin
@@ -127,7 +127,7 @@
         @test get_units_base(sys) == "NATURAL_UNITS"
         rhs_mw = get_rhs(gc)
         limits_mw = get_active_power_limits(sundance)
-        trapezium_mw = only(AustralianElectricityMarkets.get_fcas_trapezium(sundance, BidType.RAISE6SEC, start_date, 1))
+        trapezium_mw = only(AustralianElectricityMarkets._get_fcas_trapezium(sundance, BidType.RAISE6SEC, start_date, 1))
         @test 10.0 <= rhs_mw <= 200.0
         @test 10.0 <= limits_mw.max <= 500.0
         @test 10.0 <= get_max_avail(trapezium_mw) <= 500.0
@@ -140,7 +140,7 @@
             @test get_rhs(gc) ≈ rhs_mw / base_power
             limits_pu = get_active_power_limits(sundance)
             @test limits_pu.max ≈ limits_mw.max / base_power
-            trapezium_pu = only(AustralianElectricityMarkets.get_fcas_trapezium(sundance, BidType.RAISE6SEC, start_date, 1))
+            trapezium_pu = only(AustralianElectricityMarkets._get_fcas_trapezium(sundance, BidType.RAISE6SEC, start_date, 1))
             @test get_max_avail(trapezium_pu) ≈ get_max_avail(trapezium_mw) / base_power
         finally
             set_units_base_system!(sys, "NATURAL_UNITS")
@@ -156,13 +156,13 @@
         @test get_base_power(sundance) != base_power
         set_units_base_system!(sys, "DEVICE_BASE")
         try
-            @test_throws ArgumentError AustralianElectricityMarkets.get_fcas_trapezium(
+            @test_throws ArgumentError AustralianElectricityMarkets._get_fcas_trapezium(
                 sundance, BidType.RAISE6SEC, start_date, 1,
             )
         finally
             set_units_base_system!(sys, "NATURAL_UNITS")
         end
-        @test get_max_avail(only(AustralianElectricityMarkets.get_fcas_trapezium(sundance, BidType.RAISE6SEC, start_date, 1))) ==
+        @test get_max_avail(only(AustralianElectricityMarkets._get_fcas_trapezium(sundance, BidType.RAISE6SEC, start_date, 1))) ==
             get_max_avail(trapezium_mw)
     end
 

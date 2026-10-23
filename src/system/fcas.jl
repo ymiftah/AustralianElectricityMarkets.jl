@@ -187,7 +187,7 @@ FCAS market)` with bid data in `date_range`:
   interval, packed by [`_extract_fcas_bid`](@ref).
 
 Both series' MW quantities (curve `x_coords`, all trapezium fields but not prices) are stored
-per-unit of `sys`'s system base; [`get_fcas_trapezium`](@ref)/[`get_fcas_offer_curve`](@ref)
+per-unit of `sys`'s system base; `_get_fcas_trapezium`/`_get_fcas_offer_curve`
 convert back on read.
 
 `DIRECTION` routes and names the series, mirroring [`set_market_bids!`](@ref)'s energy-bid

@@ -78,6 +78,7 @@ AustralianElectricityMarkets.table_requirements(::RegionalNetworkConfiguration) 
     :DUALLOC,
     :BIDDAYOFFER_D,
     :BIDPEROFFER_D,
+    :DISPATCHLOAD,
 ]
 
 

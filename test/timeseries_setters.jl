@@ -643,7 +643,7 @@
 
             raw, scaled = with_units_base(sys, "NATURAL_UNITS") do
                 (
-                    AustralianElectricityMarkets.get_fcas_trapezium(device, BidType.RAISEREG, start_date, horizon),
+                    AustralianElectricityMarkets._get_fcas_trapezium(device, BidType.RAISEREG, start_date, horizon),
                     get_scaled_fcas_trapezium(device, BidType.RAISEREG, start_date, horizon),
                 )
             end
@@ -662,7 +662,7 @@
             initial_time = start_date
             horizon = length(date_range) - 1
 
-            raw = AustralianElectricityMarkets.get_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)
+            raw = AustralianElectricityMarkets._get_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)
             scaled = get_scaled_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)
             @test length(raw) == horizon
 
@@ -681,12 +681,12 @@
                         device, BidType.RAISEREG, initial_time, horizon; resolution = resolution_i,
                     )
                 end
-                raw_mw = with_units_base(() -> get_max_avail.(AustralianElectricityMarkets.get_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)), sys, "NATURAL_UNITS")
+                raw_mw = with_units_base(() -> get_max_avail.(AustralianElectricityMarkets._get_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)), sys, "NATURAL_UNITS")
                 @test isapprox(get_max_avail.(scaled_i), min.(raw_mw, rows.RAMPUPRATE .* hours); atol = 1.0e-6)
             end
 
             # A contingency market carries no AGC scaling input series at all: unscaled.
-            raw_contingency = AustralianElectricityMarkets.get_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
+            raw_contingency = AustralianElectricityMarkets._get_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
             scaled_contingency = get_scaled_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
             @test all(i -> isequal(Tuple(raw_contingency[i]), Tuple(scaled_contingency[i])), 1:horizon)
         end

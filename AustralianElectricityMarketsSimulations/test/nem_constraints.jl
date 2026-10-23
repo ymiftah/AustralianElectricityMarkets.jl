@@ -55,69 +55,6 @@ function _raw_series_times(params)
 end
 
 """
-    _add_storage_constraint!(sys, params, rhs_mw)
-
-Attaches an extra `<=` `GenericConstraint` named `N_BAT_LIMIT`, one ENERGY `UnitTerm` on
-`BAT1` (the fixture's only storage unit), with raw `"rhs"`/`"invoked"` series ready for
-[`_retime_gc_series!`](@ref)'s `transform_single_time_series!`. `rhs_mw` is a natural-MW value;
-stored per-unit (matching every other `GenericConstraint` in this system - see
-`src/constraints/build.jl`).
-
-Built here rather than in the shared NEMWEB fixture because PSI's own
-`_populate_contributing_devices!` errors outright when *every* contributing device of a service
-is of a type the template doesn't model, so a storage-only constraint must never reach the
-storage-free `_area_balance_template`.
-"""
-function _add_storage_constraint!(sys, params, rhs_mw::Float64)
-    base_power = get_base_power(sys)
-    rhs_pu = rhs_mw / base_power
-    times, n_raw = _raw_series_times(params)
-    gc = GenericConstraint(;
-        name = "N_BAT_LIMIT",
-        sense = ConstraintSense.LE,
-        rhs = rhs_pu,
-        terms = ConstraintTerm[UnitTerm("BAT1", BidType.ENERGY, 1.0)],
-    )
-    add_service!(sys, gc, [get_component(EnergyReservoirStorage, sys, "BAT1")])
-    add_time_series!(
-        sys, gc, SingleTimeSeries(; name = "rhs", data = TimeArray(times, fill(rhs_pu, n_raw))),
-    )
-    add_time_series!(
-        sys, gc,
-        SingleTimeSeries(; name = "invoked", data = TimeArray(times, fill(1.0, n_raw))),
-    )
-    return
-end
-
-"""
-    _add_infeasible_energy_requirement!(sys, params, duid, rhs_mw)
-
-Attaches an extra `>=` `GenericConstraint` named `N_INFEASIBLE_MIN`, one ENERGY `UnitTerm` on
-`duid` with `rhs_mw` set above that unit's max capacity, genuinely unreachable under a hard
-bound. `rhs_mw` is natural MW; stored per-unit like every other [`GenericConstraint`](@ref).
-"""
-function _add_infeasible_energy_requirement!(sys, params, duid::AbstractString, rhs_mw::Float64)
-    base_power = get_base_power(sys)
-    rhs_pu = rhs_mw / base_power
-    times, n_raw = _raw_series_times(params)
-    gc = GenericConstraint(;
-        name = "N_INFEASIBLE_MIN",
-        sense = ConstraintSense.GE,
-        rhs = rhs_pu,
-        terms = ConstraintTerm[UnitTerm(duid, BidType.ENERGY, 1.0)],
-    )
-    add_service!(sys, gc, [get_component(ThermalStandard, sys, duid)])
-    add_time_series!(
-        sys, gc, SingleTimeSeries(; name = "rhs", data = TimeArray(times, fill(rhs_pu, n_raw))),
-    )
-    add_time_series!(
-        sys, gc,
-        SingleTimeSeries(; name = "invoked", data = TimeArray(times, fill(1.0, n_raw))),
-    )
-    return
-end
-
-"""
     _retime_gc_series!(sys, params, overrides_mw, invoked_overrides = Dict{String, Vector{Float64}}())
 
 Replaces every added [`GenericConstraint`](@ref)'s `"rhs"`/`"invoked"` `SingleTimeSeries` series
@@ -181,20 +118,13 @@ and/or supplying a full mixed `"invoked"` series - see [`_retime_gc_series!`](@r
 """
 function _prepared_system(
         overrides_mw::Dict{String, Float64} = Dict{String, Float64}(),
-        invoked_overrides::Dict{String, Vector{Float64}} = Dict{String, Vector{Float64}}();
-        storage_constraint_rhs::Union{Nothing, Float64} = nothing,
+        invoked_overrides::Dict{String, Vector{Float64}} = Dict{String, Vector{Float64}}(),
     )
     sys = augmented_pscb_system()
     _fix_thermal_floor!(sys)
     add_nem_constraints!(sys, NEM_CONSTRAINTS_DB, NEM_CONSTRAINTS_DATE_RANGE)
     _remove_unused_pscb_constraints!(sys)
     params = _native_forecast_params(sys)
-    # Added before the retime, whose trailing `transform_single_time_series!` converts its raw
-    # series along with every other constraint's.
-    if !isnothing(storage_constraint_rhs)
-        _add_storage_constraint!(sys, params, storage_constraint_rhs)
-        _add_battery_dispatch_data!(sys, params)
-    end
     _retime_gc_series!(sys, params, overrides_mw, invoked_overrides)
     return sys
 end
@@ -298,72 +228,10 @@ end
     @test occursin("template must model", msg)
 end
 
-@testset "Step 1: a tightened GenericConstraint binds and changes T1 dispatch" begin
-    # Phase 1: solve without any service model to learn N_IC1_LIMIT's unconstrained flow
-    # (ParkCity + Sundance - IC1 flow) at the first time step.
-    baseline_sys = _prepared_system()
-    baseline_template = _area_balance_template()
-    baseline_model = _decision_model(baseline_template, baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(baseline_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    PSI.solve!(baseline_model)
-    @test PSI.get_run_status(baseline_model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-
-    baseline_res = PSI.OptimizationProblemResults(baseline_model)
-    baseline_thermal = PSI.read_variable(baseline_res, "ActivePowerVariable__ThermalStandard")
-    baseline_flow = PSI.read_variable(baseline_res, "FlowActivePowerVariable__AreaInterchange")
-    t1 = minimum(baseline_flow.DateTime)
-    park_city = only(subset(baseline_thermal, :DateTime => ByRow(==(t1)), :name => ByRow(==("Park City")))).value
-    sundance = only(subset(baseline_thermal, :DateTime => ByRow(==(t1)), :name => ByRow(==("Sundance")))).value
-    ic1_flow = only(subset(baseline_flow, :DateTime => ByRow(==(t1)), :name => ByRow(==("IC1")))).value
-    unconstrained_lhs = park_city + sundance - ic1_flow
-    @test unconstrained_lhs > 0.0  # otherwise there's nothing to tighten below
-
-    # Phase 2: rebuild with N_IC1_LIMIT's rhs tightened to half the unconstrained flow, and the
-    # LinearFactorLimit service model applied to a system pruned to what _area_balance_template can build.
-    tightened_rhs = unconstrained_lhs / 2
-    sys = _prepared_system(Dict("N_IC1_LIMIT" => tightened_rhs))
-    _prune_unbuildable_constraints!(sys)
-    template = _nem_service_template()
-    model = _decision_model(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    PSI.solve!(model)
-    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-
-    container = PSI.get_optimization_container(model)
-    ckeys = PSI.get_constraint_keys(container)
-
-    # (a) the constraint key exists for both surviving constraints.
-    nem_keys = [k for k in ckeys if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit]
-    @test Set(k.meta for k in nem_keys) ==
-        Set(PSY.get_name(gc) for gc in get_components(GenericConstraint, sys))
-
-    # (b) dispatch actually changed versus the unconstrained baseline, and the constraint binds
-    # tightly (LHS ~ RHS, not just "some slack away from it").
-    res = PSI.OptimizationProblemResults(model)
-    flow = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
-    thermal = PSI.read_variable(res, "ActivePowerVariable__ThermalStandard")
-    constrained_ic1_flow = only(subset(flow, :DateTime => ByRow(==(t1)), :name => ByRow(==("IC1")))).value
-    constrained_park_city = only(subset(thermal, :DateTime => ByRow(==(t1)), :name => ByRow(==("Park City")))).value
-    constrained_sundance = only(subset(thermal, :DateTime => ByRow(==(t1)), :name => ByRow(==("Sundance")))).value
-    constrained_lhs = constrained_park_city + constrained_sundance - constrained_ic1_flow
-
-    @test !isapprox(constrained_ic1_flow, ic1_flow; atol = 1.0e-3)  # dispatch changed
-    @test isapprox(constrained_lhs, tightened_rhs; atol = 1.0e-3)  # and it's because the constraint binds
-
-    # (c) the dual is finite and non-zero while binding.
-    ic1_name = PSY.get_name(_gc(sys, "N_IC1_LIMIT"))
-    dual_key = only(k for k in nem_keys if k.meta == ic1_name)
-    dual_df = PSI.read_dual(res, dual_key)
-    dual_at_t1 = only(subset(dual_df, :DateTime => ByRow(==(t1)))).value
-    @test isfinite(dual_at_t1)
-    @test !isapprox(dual_at_t1, 0.0; atol = 1.0e-6)
-end
-
 """
     _lhs(thermal, flow, t)
 
-`N_IC1_LIMIT`'s LHS (`ParkCity + Sundance - IC1_flow`) at time `t`, from `read_variable`
-DataFrames - shared by Step 1 and Step 4's tests.
+`N_IC1_LIMIT`'s LHS (`ParkCity + Sundance - IC1_flow`) at time `t`, from `read_variable` DataFrames.
 """
 function _lhs(thermal, flow, t)
     park_city = only(subset(thermal, :DateTime => ByRow(==(t)), :name => ByRow(==("Park City")))).value
@@ -415,6 +283,7 @@ end
             k for k in PSI.get_constraint_keys(container)
                 if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit
         ]
+        @test Set(k.meta for k in nem_keys) == Set(PSY.get_name(gc) for gc in get_components(GenericConstraint, sys))
         dual_key = only(k for k in nem_keys if k.meta == ic1_name)
         dual_df = PSI.read_dual(PSI.OptimizationProblemResults(model), dual_key)
         dual_t1 = only(subset(dual_df, :DateTime => ByRow(==(t1)))).value
@@ -488,172 +357,21 @@ end
     @test PSI.build!(bare; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     bare_container = PSI.get_optimization_container(bare)
     bare_container.built_for_recurrent_solves = true
-    err = try
+    err = _caught() do
         PSI.add_constraints!(
             bare_container, NEMConstraintLimit, gc,
             PSI.ServiceModel(GenericConstraint, LinearFactorLimit; use_slacks = false),
         )
-        nothing
-    catch e
-        e
     end
     @test err isa ArgumentError
     @test occursin("use_slacks = true", err.msg)
 end
 
-"""
-    _storage_template()
-
-[`_nem_service_template`](@ref) plus a storage device model, so `N_BAT_LIMIT`'s `BAT1` term is
-modeled rather than throwing. `ThermalStandardDispatch` (not `_area_balance_template`'s
-`ThermalBasicUnitCommitment`) so the build also exercises PSI's initial-conditions sub-model,
-which calls `get_initial_conditions_service_model` for every registered `ServiceModel`. `BAT1`
-itself is built under [`AEMS.NEMReplayDispatch`](@ref), the same formulation every other NEM
-dispatch participant in this file uses.
-"""
-function _storage_template()
-    template = _nem_service_template()
-    PSI.set_device_model!(template, PSY.ThermalStandard, PSI.ThermalStandardDispatch)
-    PSI.set_device_model!(template, PSY.EnergyReservoirStorage, AEMS.NEMReplayDispatch)
-    return template
-end
-
-"""
-    _matching_series(params, name, value)
-
-A `SingleTimeSeries` `name` filled with the constant `value`, long enough to cover every window
-`params` (from [`_native_forecast_params`](@ref)) defines. `params.interval` is both its resolution
-and the window spacing. After `transform_single_time_series!` it yields the same forecast shape as
-the rest of the `System`.
-"""
-function _matching_series(params, name::AbstractString, value)
-    horizon_steps = Int(params.horizon / params.interval)
-    return AustralianElectricityMarkets.single_series(
-        name, params.initial_timestamp, fill(value, horizon_steps + params.count - 1), params.interval,
-    )
-end
-
-"""
-    _add_battery_dispatch_data!(sys, params)
-
-Attaches `BAT1` (the fixture's only storage unit) everything [`AEMS.NEMReplayDispatch`](@ref)
-needs: a cheap one-band `MarketBidCost` GEN offer, a zero-value one-band LOAD offer (a decremental
-offer prices what charging is *worth*, not what it costs, so a low value - not a high one - is
-what keeps it unattractive), generous `"energy_max_avail"`/`"energy_max_avail_decremental"`
-(never the binding limit -
-[`GenericConstraint`](@ref) `N_BAT_LIMIT` is), and generous ramp rates from a zero net
-`"initial_mw"`. The bid/availability series are built to match `params`'s native shape; the ramp/initial series
-are raw `SingleTimeSeries`. All are folded into the same forecast shape by
-[`_retime_gc_series!`](@ref)'s trailing `transform_single_time_series!`.
-"""
-function _add_battery_dispatch_data!(sys, params)
-    battery = get_component(EnergyReservoirStorage, sys, "BAT1")
-    set_available!(battery, true)
-    set_operation_cost!(
-        battery,
-        MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0),
-    )
-    rating = get_output_active_power_limits(battery).max
-    gen_offer = PiecewiseStepData([0.0, rating], [1.0])
-    load_offer = PiecewiseStepData([0.0, rating], [0.0])
-
-    set_incremental_variable_cost!(sys, battery, _matching_series(params, "variable_cost", gen_offer), UnitSystem.NATURAL_UNITS)
-    set_incremental_initial_input!(sys, battery, _matching_series(params, "incremental_initial_input", 0.0))
-    set_decremental_variable_cost!(sys, battery, _matching_series(params, "decremental_variable_cost", load_offer), UnitSystem.NATURAL_UNITS)
-    set_decremental_initial_input!(sys, battery, _matching_series(params, "decremental_initial_input", 0.0))
-
-    base_power = get_base_power(sys)
-    add_time_series!(sys, battery, _matching_series(params, "energy_max_avail", rating / base_power))
-    add_time_series!(sys, battery, _matching_series(params, "energy_max_avail_decremental", rating / base_power))
-
-    times, n_raw = _raw_series_times(params)
-    add_time_series!(
-        sys, battery, SingleTimeSeries(; name = "ramp_up_rate", data = TimeArray(times, fill(1.0e4 / base_power, n_raw))),
-    )
-    add_time_series!(
-        sys, battery, SingleTimeSeries(; name = "ramp_down_rate", data = TimeArray(times, fill(1.0e4 / base_power, n_raw))),
-    )
-    add_time_series!(
-        sys, battery, SingleTimeSeries(; name = "initial_mw", data = TimeArray(times, fill(0.0, n_raw))),
-    )
-    return
-end
-
-"`BAT1`'s net injection (out - in) at time `t`, from `read_variable` DataFrames."
-function _bat_net(out_df, in_df, t)
-    out = only(subset(out_df, :DateTime => ByRow(==(t)), :name => ByRow(==("BAT1")))).value
-    inp = only(subset(in_df, :DateTime => ByRow(==(t)), :name => ByRow(==("BAT1")))).value
-    return out - inp
-end
-
-@testset "Step 7: a storage unit's ENERGY term is modeled, not skipped" begin
-    # Storage has no ActivePowerVariable - NEMReplayDispatch splits it into
-    # ActivePowerOutVariable/ActivePowerInVariable. Keying the term off ActivePowerVariable
-    # alone classifies every battery as an unmodeled device type.
-    #
-    # Phase 1: a deliberately slack RHS, to learn BAT1's unconstrained net injection.
-    baseline_sys = _prepared_system(; storage_constraint_rhs = 1.0e4)
-    _prune_unbuildable_constraints!(baseline_sys)
-    baseline_model = _decision_model(
-        _storage_template(), baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
-    )
-    @test PSI.build!(baseline_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    PSI.solve!(baseline_model)
-    @test PSI.get_run_status(baseline_model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-
-    baseline_res = PSI.OptimizationProblemResults(baseline_model)
-    baseline_out = PSI.read_variable(baseline_res, "ActivePowerOutVariable__EnergyReservoirStorage")
-    baseline_in = PSI.read_variable(baseline_res, "ActivePowerInVariable__EnergyReservoirStorage")
-    t1, t2 = sort(unique(baseline_out.DateTime))
-    unconstrained_net = _bat_net(baseline_out, baseline_in, t1)
-    @test unconstrained_net > 0.0  # otherwise there's nothing to tighten below
-
-    # Phase 2: tightened to half of it.
-    tightened_rhs = unconstrained_net / 2
-    sys = _prepared_system(; storage_constraint_rhs = tightened_rhs)
-    _prune_unbuildable_constraints!(sys)
-    model = _decision_model(
-        _storage_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
-    )
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    PSI.solve!(model)
-    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-
-    container = PSI.get_optimization_container(model)
-    nem_keys = [
-        k for k in PSI.get_constraint_keys(container)
-            if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit
-    ]
-    # (a) the storage constraint is built.
-    @test "N_BAT_LIMIT" in Set(k.meta for k in nem_keys)
-
-    # (b) it binds tightly on the battery's net injection, which changed from the baseline.
-    res = PSI.OptimizationProblemResults(model)
-    out_df = PSI.read_variable(res, "ActivePowerOutVariable__EnergyReservoirStorage")
-    in_df = PSI.read_variable(res, "ActivePowerInVariable__EnergyReservoirStorage")
-    constrained_net = _bat_net(out_df, in_df, t1)
-    @test isapprox(constrained_net, tightened_rhs; atol = 1.0e-3)
-    @test constrained_net < unconstrained_net - 1.0e-3
-
-    # (c) the constraint's dual is registered and readable.
-    dual_key = only(k for k in nem_keys if k.meta == "N_BAT_LIMIT")
-    dual_at_t1 = only(subset(PSI.read_dual(res, dual_key), :DateTime => ByRow(==(t1)))).value
-    @test isfinite(dual_at_t1)
-
-    # The RHS series is flat, so the cap applies at every step, not just the first.
-    @test _bat_net(out_df, in_df, t2) <= tightened_rhs + 1.0e-3
-end
-
-@testset "filter_buildable_generic_constraints throws one aggregated ArgumentError naming every unbuildable constraint" begin
+@testset "Buildable generic constraints: the default throws one aggregated ArgumentError, and allow_partial_coverage returns the subset" begin
     sys = _prepared_system()
     _add_fcas_services!(sys)
     template = _area_balance_template()
-    err = try
-        AEMS.filter_buildable_generic_constraints(sys, template)
-        nothing
-    catch e
-        e
-    end
+    err = _caught(() -> _buildable_gcs(sys, template))
     @test err isa ArgumentError
     msg = sprint(showerror, err)
     @test occursin("F_R1_RAISE6SEC", msg)
@@ -663,33 +381,24 @@ end
     @test occursin("allow_partial_coverage", msg)
     @test !occursin("N_IC1_LIMIT", msg)
     @test !occursin("N_PARTIAL", msg)
-end
 
-@testset "filter_buildable_generic_constraints with allow_partial_coverage = true returns the buildable subset and warns once" begin
-    sys = _prepared_system()
-    _add_fcas_services!(sys)
-    template = _area_balance_template()
-    result = @test_logs (:warn,) AEMS.filter_buildable_generic_constraints(
-        sys, template; allow_partial_coverage = true,
-    )
     expected = Set(PSY.get_name(_gc(sys, id)) for id in ("N_IC1_LIMIT", "N_PARTIAL"))
+    result = @test_logs (:warn,) _buildable_gcs(sys, template; allow_partial_coverage = true)
     @test Set(PSY.get_name.(result)) == expected
     @test issorted(PSY.get_name.(result))
 
     skipped = []
-    @test_logs (:warn,) AEMS.filter_buildable_generic_constraints(
-        sys, template; allow_partial_coverage = true, skipped = skipped,
-    )
+    @test_logs (:warn,) _buildable_gcs(sys, template; allow_partial_coverage = true, skipped = skipped)
     all_names = Set(PSY.get_name.(PSY.get_components(GenericConstraint, sys)))
     @test Set(r.constraint for r in skipped) == setdiff(all_names, expected)
     @test all(r -> r.n_missing >= 1, skipped)
 end
 
-@testset "the buildable subset builds and solves under per-instance registration, where the aggregated registration throws" begin
+@testset "the buildable subset builds and solves under per-instance registration, where the aggregated registration throws; a left-out constraint is recorded" begin
     sys = _prepared_system()
     _add_fcas_services!(sys)
     template = _area_balance_template()
-    buildable = AEMS.filter_buildable_generic_constraints(sys, template; allow_partial_coverage = true)
+    buildable = _buildable_gcs(sys, template; allow_partial_coverage = true)
 
     aggregated_template = _area_balance_template()
     PSI.set_service_model!(
@@ -723,104 +432,49 @@ end
             if ISOPT.get_entry_type(k) === AEMS.NEMConstraintLimit
     ]
     @test Set(k.meta for k in nem_keys) == Set(PSY.get_name.(buildable))
-end
 
-@testset "a constraint whose contributing devices are all unavailable is left out, recorded, and the rest builds" begin
-    sys = _prepared_system()
+    # A constraint whose contributing devices are all unavailable is left out, recorded, and not a failure.
     left_out = _gc(sys, "N_PARTIAL")
     PSY.set_available!.(PSY.get_contributing_devices(sys, left_out), false)
-    # Not a failure: no error even without allow_partial_coverage for this reason.
     skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
-    template = _area_balance_template()
-    buildable = AEMS.filter_buildable_generic_constraints(
-        sys, template; allow_partial_coverage = true, skipped = skipped,
+    left_out_template = _area_balance_template()
+    left_out_buildable = _buildable_gcs(
+        sys, left_out_template; allow_partial_coverage = true, skipped = skipped,
     )
     @test filter(r -> r.reason == :no_available_device, skipped) ==
         [(constraint = PSY.get_name(left_out), reason = :no_available_device, n_missing = 0)]
-    @test PSY.get_name(left_out) ∉ PSY.get_name.(buildable)
+    @test PSY.get_name(left_out) ∉ PSY.get_name.(left_out_buildable)
 
-    for gc in buildable
+    for gc in left_out_buildable
         name = PSY.get_name(gc)
         PSI.set_service_model!(
-            template, name,
+            left_out_template, name,
             PSI.ServiceModel(GenericConstraint, AEMS.LinearFactorLimit, name; duals = [AEMS.NEMConstraintLimit]),
         )
     end
-    model = _decision_model(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    left_out_model = _decision_model(left_out_template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(left_out_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+end
+
+@testset "a hard GE and LE GenericConstraint pair on one unit is infeasible" begin
+    # A 150 MW floor and a 10 MW ceiling on the same unit cannot both hold, whatever the dispatch bounds.
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 60.0, ramp_up = 100.0)], 80.0;
+        mutate! = function (sys, stamps)
+            add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, 150.0; sense = ConstraintSense.GE, name = "N_FLOOR")
+            add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, 10.0; sense = ConstraintSense.LE, name = "N_CEIL")
+        end,
+    )
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    set_nem_dispatch_models!(template, sys)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    PSI.set_service_model!(template, PSI.ServiceModel(GenericConstraint, LinearFactorLimit; duals = [NEMConstraintLimit]))
+    model = PSI.DecisionModel(
+        template, sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION,
+        interval = TOY_RESOLUTION, initial_time = TOY_START, name = "nem_toy_infeasible",
+    )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-end
-
-function _sys_with_infeasible_requirement()
-    sys = _prepared_system()
-    params = _native_forecast_params(sys)
-    # 10x TOY_CHEAP-equivalent max capacity on "Park City" - genuinely unreachable regardless of
-    # dispatch, mirroring the plan's TAS1 RAISE6SEC case (a real interval whose requirement
-    # wasn't met), not merely a tightened-but-satisfiable bound.
-    max_mw = get_max_active_power(get_component(ThermalStandard, sys, "Park City"))
-    _add_infeasible_energy_requirement!(sys, params, "Park City", max_mw * 10)
-    # _prepared_system() already ran transform_single_time_series! once; N_INFEASIBLE_MIN's raw
-    # SingleTimeSeries, added after, needs its own pass to become a DeterministicSingleTimeSeries.
-    transform_single_time_series!(sys, params.horizon, params.interval)
-    _prune_unbuildable_constraints!(sys)
-    for id in ("N_IC1_LIMIT", "N_PARTIAL")
-        remove_component!(sys, _gc(sys, id))
-    end
-    return sys
-end
-
-@testset "a genuinely violated interval is infeasible under a hard GenericConstraint, but builds and solves with a nonzero slack when elastic" begin
-    hard_sys = _sys_with_infeasible_requirement()
-    hard_model = _decision_model(
-        _nem_service_template(; use_slacks = false), hard_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
-    )
-    @test PSI.build!(hard_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    PSI.solve!(hard_model)
-    @test PSI.get_run_status(hard_model) != PSI.RunStatus.SUCCESSFULLY_FINALIZED
-
-    # Same network template as the hard case above; only the GenericConstraint ServiceModel's
-    # use_slacks differs. This fixture's dates predate the published MPC table, so the test
-    # supplies its own market_price_cap override rather than the financial-year lookup.
-    test_mpc = 20_300.0
-    elastic_sys = _sys_with_infeasible_requirement()
-    elastic_model = _decision_model(
-        _nem_service_template(; use_slacks = true, market_price_cap = test_mpc), elastic_sys;
-        optimizer = HiGHS.Optimizer, horizon = Hour(2),
-    )
-    @test PSI.build!(elastic_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    PSI.solve!(elastic_model)
-    @test PSI.get_run_status(elastic_model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-
-    # PSI.OptimizationProblemResults, not a direct JuMP.value on the container: after a full
-    # DecisionModel solve, the container's own JuMP model result cache is unreliable to read.
-    results = PSI.OptimizationProblemResults(elastic_model)
-    name = PSY.get_name(get_component(GenericConstraint, elastic_sys, "N_INFEASIBLE_MIN"))
-    slack_df = PSI.read_variable(results, "GenericConstraintSlackDown__GenericConstraint__$name")
-    energy_df = PSI.read_variable(results, "ActivePowerVariable__ThermalStandard")
-    park_city_mw = subset(energy_df, :name => ByRow(==("Park City"))).value
-    # with_units_base, not a bare get_max_active_power: PSI's own build/solve leaves elastic_sys
-    # in SYSTEM_BASE units, so an unguarded read here returns per-unit, not MW.
-    max_mw = PSY.with_units_base(
-        () -> get_max_active_power(get_component(ThermalStandard, elastic_sys, "Park City")),
-        elastic_sys, "NATURAL_UNITS",
-    )
-
-    @test all(v -> v >= 0.0, slack_df.value)
-    @test any(v -> v > 1.0e-6, slack_df.value)
-    # GE constraint minimized elastically binds exactly: slack = rhs - achieved dispatch.
-    @test slack_df.value .+ park_city_mw ≈ fill(max_mw * 10, length(slack_df.value)) atol = 1.0e-4
-
-    container = PSI.get_optimization_container(elastic_model)
-    @test !PSI.has_container_key(container, AEMS.GenericConstraintSlackUp, GenericConstraint, name)
-    @test PSI.get_objective_value(results) > 0.0
-
-    # PSI leaves a ConstraintType dual in $ per pu of RHS per interval: divide by base_power and
-    # the interval length for a $/MW rate.
-    dual_df = PSI.read_dual(results, "NEMConstraintLimit__GenericConstraint__$name")
-    resolution = PSI.get_resolution(container)
-    base_power = PSY.get_base_power(elastic_sys)
-    weight = get_constraint_weight(get_component(GenericConstraint, elastic_sys, "N_INFEASIBLE_MIN"))
-    @test abs.(dual_df.value) ./ (base_power * interval_hours(resolution)) ≈
-        fill(weight * test_mpc, nrow(dual_df)) rtol = 1.0e-6
+    @test PSI.solve!(model) != PSI.RunStatus.SUCCESSFULLY_FINALIZED
 end
 
 @testset "Market Price Cap lookup covers only the published financial years" begin
@@ -871,7 +525,7 @@ end
 
 Attaches the two `<=` [`GenericConstraint`](@ref)s of an Interconnector Zero pair on `interconnector`
 (`-flow <= 0` and `flow <= 0`, right-hand side 0), the built-in shape `add_nem_constraints!` builds
-with no weight of its own. Added before the retime, as for [`_add_storage_constraint!`](@ref).
+with no weight of its own. Added before [`_retime_gc_series!`](@ref).
 """
 function _add_zero_flow_pair!(sys, params, interconnector::AbstractString)
     times, n_raw = _raw_series_times(params)

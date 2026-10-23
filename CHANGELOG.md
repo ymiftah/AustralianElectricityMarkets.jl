@@ -467,6 +467,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The public `filter_buildable_generic_constraints` (`AustralianElectricityMarketsSimulations`).
+  The replication path runs the same buildability check internally.
 - The table specs `DISPATCH_FCAS_REQ_RUN`, `DISPATCH_UNIT_SCADA`, `STADUALLOC`, `GENCONSET`,
   `GENCONSETINVOKE`, `GENCONSETTRK`, `PARTICIPANT` and `STATIONOWNER`, which nothing read, are no
   longer populated.

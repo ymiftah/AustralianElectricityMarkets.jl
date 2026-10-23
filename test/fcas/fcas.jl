@@ -101,14 +101,14 @@
         end
     end
 
-    @testset "get_fcas_trapezium/get_fcas_offer_curve" begin
+    @testset "_get_fcas_trapezium/_get_fcas_offer_curve" begin
         sys = nem_system(db, RegionalNetworkConfiguration())
         set_fcas_bids!(sys, db, date_range)
         bw01 = get_component(EnergyReservoirStorage, sys, "BW01")
         horizon = length(date_range) - 1
 
-        trapeziums = AustralianElectricityMarkets.get_fcas_trapezium(bw01, BidType.RAISE6SEC, start_date, horizon)
-        curves = AustralianElectricityMarkets.get_fcas_offer_curve(bw01, BidType.RAISE6SEC, start_date, horizon)
+        trapeziums = AustralianElectricityMarkets._get_fcas_trapezium(bw01, BidType.RAISE6SEC, start_date, horizon)
+        curves = AustralianElectricityMarkets._get_fcas_offer_curve(bw01, BidType.RAISE6SEC, start_date, horizon)
         @test trapeziums isa Vector{FCASTrapezium}
         @test curves isa Vector{PiecewiseStepData}
         @test length(trapeziums) == length(curves) == horizon
@@ -116,15 +116,15 @@
         @test offer isa NEMFCASOffer && offer.service == BidType.RAISE6SEC && offer.side == OfferSide.GEN
         @test offer.trapeziums == trapeziums && offer.curves == curves
         load_offer = get_fcas_offer(bw01, BidType.RAISE6SEC, OfferSide.LOAD, start_date, horizon)
-        @test load_offer.trapeziums == AustralianElectricityMarkets.get_fcas_trapezium(bw01, BidType.RAISE6SEC, start_date, horizon; decremental = true)
+        @test load_offer.trapeziums == AustralianElectricityMarkets._get_fcas_trapezium(bw01, BidType.RAISE6SEC, start_date, horizon; decremental = true)
 
         # decremental = true reads a genuinely separate series: it succeeds for BW01 (which
         # has both directions attached) but throws for a Generator (incremental-only), proving
         # it isn't just re-reading the incremental series under a different name.
-        dec_trapeziums = AustralianElectricityMarkets.get_fcas_trapezium(bw01, BidType.RAISE6SEC, start_date, horizon; decremental = true)
+        dec_trapeziums = AustralianElectricityMarkets._get_fcas_trapezium(bw01, BidType.RAISE6SEC, start_date, horizon; decremental = true)
         @test dec_trapeziums isa Vector{FCASTrapezium}
         @test length(dec_trapeziums) == horizon
-        @test_throws ArgumentError AustralianElectricityMarkets.get_fcas_trapezium(
+        @test_throws ArgumentError AustralianElectricityMarkets._get_fcas_trapezium(
             first(get_components(Generator, sys)), BidType.RAISE6SEC, start_date, horizon; decremental = true,
         )
 
@@ -132,7 +132,7 @@
         no_bids_sys = nem_system(db, RegionalNetworkConfiguration())
         no_bids_gen = first(get_components(Generator, no_bids_sys))
         err = try
-            AustralianElectricityMarkets.get_fcas_trapezium(no_bids_gen, BidType.RAISE6SEC, start_date, horizon)
+            AustralianElectricityMarkets._get_fcas_trapezium(no_bids_gen, BidType.RAISE6SEC, start_date, horizon)
             nothing
         catch e
             e
@@ -205,7 +205,7 @@
             @test !isnothing(curve_ts)
             @test !isnothing(trapezium_ts)
             trap_rows = get_time_series_values(SingleTimeSeries, gen, "fcas_trapezium_RAISE6SEC")
-            # Raw stored series is per-unit of sys's base power - get_fcas_trapezium (tested
+            # Raw stored series is per-unit of sys's base power - _get_fcas_trapezium (tested
             # above) is what converts back to MW.
             @test first(trap_rows)[1] == 20.0 / base_power
         end
@@ -225,7 +225,7 @@
         @test get_available(asload1)
         @test has_time_series(asload1, SingleTimeSeries, "fcas_curve_RAISE6SEC_decremental")
         @test !has_time_series(asload1, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")
-        trap = AustralianElectricityMarkets.get_fcas_trapezium(asload1, BidType.RAISE6SEC, first(date_range), 3; decremental = true)
+        trap = AustralianElectricityMarkets._get_fcas_trapezium(asload1, BidType.RAISE6SEC, first(date_range), 3; decremental = true)
         @test all(t -> get_enablement_max(t) == 0.0 && get_max_avail(t) ≈ 15.0 / base_power, trap)
         @test !get_available(get_component(InterruptiblePowerLoad, sys, "ASLOAD2"))
         @test !has_time_series(get_component(InterruptiblePowerLoad, sys, "PUMP1"), SingleTimeSeries, "fcas_curve_RAISE6SEC_decremental")
