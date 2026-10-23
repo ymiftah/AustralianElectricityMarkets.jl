@@ -56,7 +56,7 @@ end
         agc_enablement_max = nothing, agc_max_avail = nothing, uigf = nothing)
 
 Attaches [`set_fcas_scaling_inputs!`](@ref)'s per-device `"fcas_agc_enablement_min_<bid_type>"`/
-`"fcas_agc_enablement_max_<bid_type>"`/`"fcas_agc_ramp_rate_<bid_type>"`/`"fcas_uigf"`
+`"fcas_agc_enablement_max_<bid_type>"`/`"fcas_agc_ramp_rate_<bid_type>"`/`"uigf"`
 `SingleTimeSeries`, one flat window of `n` steps at `initial_timestamp`, mirroring its
 per-unit-of-system-base convention. `agc_max_avail` is the AGC ramping capability in MW over one
 `resolution` interval, stored as the equivalent MW/h ramp rate. A `nothing` keyword leaves the
@@ -77,7 +77,7 @@ function add_toy_fcas_scaling!(
             (agc_enablement_min, "fcas_agc_enablement_min_$bid_type_str"),
             (agc_enablement_max, "fcas_agc_enablement_max_$bid_type_str"),
             (isnothing(agc_max_avail) ? nothing : agc_max_avail / (Dates.value(Minute(resolution)) / 60), "fcas_agc_ramp_rate_$bid_type_str"),
-            (uigf, "fcas_uigf"),
+            (uigf, "uigf"),
         )
         isnothing(value) && continue
         PSY.add_time_series!(
@@ -362,7 +362,7 @@ end
         device = PSY.get_component(PSY.ThermalStandard, sys, duid)
         replay = Dict{Symbol, PSI.DeviceModel}(:ThermalStandard => PSI.DeviceModel(PSY.ThermalStandard, NEMReplayDispatch))
         max_avail_mw() = get_max_avail(
-            only(AustralianElectricityMarketsSimulations._fcas_series(container, replay, device, BidType.RAISEREG, false)[1]),
+            only(AustralianElectricityMarketsSimulations._fcas_offer(container, replay, device, BidType.RAISEREG, OfferSide.GEN).trapeziums),
         ) * PSI.get_base_power(container)
         @test max_avail_mw() ≈ 10.0  # 120 MW/h over 5 minutes
         PSI.set_resolution!(container.settings, Minute(10))
@@ -388,7 +388,7 @@ end
         lookahead = Dict{Symbol, PSI.DeviceModel}(:ThermalStandard => PSI.DeviceModel(PSY.ThermalStandard, NEMLookaheadDispatch))
         replay = Dict{Symbol, PSI.DeviceModel}(:ThermalStandard => PSI.DeviceModel(PSY.ThermalStandard, NEMReplayDispatch))
         base_power = PSI.get_base_power(container)
-        traps(template) = AustralianElectricityMarketsSimulations._fcas_series(container, template, device, BidType.RAISEREG, false)[1]
+        traps(template) = AustralianElectricityMarketsSimulations._fcas_offer(container, template, device, BidType.RAISEREG, OfferSide.GEN).trapeziums
 
         # Dispatch (Table 1): AGC enablement and ramp scaling at every interval.
         @test get_max_avail.(traps(replay)) .* base_power ≈ [2.0, 2.0]
@@ -1327,7 +1327,7 @@ end
     container = PSI.get_optimization_container(model)
     bat = get_component(EnergyReservoirStorage, sys, "BAT1")
     replay = Dict{Symbol, PSI.DeviceModel}(:EnergyReservoirStorage => PSI.DeviceModel(EnergyReservoirStorage, NEMReplayDispatch))
-    trap = only(AustralianElectricityMarketsSimulations._fcas_series(container, replay, bat, BidType.LOWERREG, true)[1])
+    trap = only(AustralianElectricityMarketsSimulations._fcas_offer(container, replay, bat, BidType.LOWERREG, OfferSide.LOAD).trapeziums)
     @test collect(Tuple(trap)[1:5]) .* PSI.get_base_power(container) ≈ [-10.0, -8.0, -2.0, 0.0, 4.0]
 end
 

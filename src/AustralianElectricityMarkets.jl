@@ -8,7 +8,7 @@ using Chain
 using Statistics
 using AustralianElectricityMarketsCache
 import AustralianElectricityMarketsCache: _parse_hive_root
-import TimeSeries: TimeArray, colnames
+import TimeSeries: TimeArray, colnames, timestamp
 import PowerSystems as PSY
 import InfrastructureSystems as IS
 
@@ -22,6 +22,7 @@ export set_fcas_bids!, set_fcas_scaling_inputs!
 export set_nem_dispatch_limits!, set_nem_initial_conditions!, set_interconnector_flow_limits!, set_loss_demand_coefficients!
 export get_initial_mw, get_energy_availability
 export set_nem_energy_limits!
+export set_nem_fixed_loads!
 export add_nem_constraints!, get_skipped_constraints, get_dropped_terms,
     get_missing_constraint_intervals, get_defaulted_constraint_weights
 export fcas_service_name
@@ -41,8 +42,11 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
     get_limit_type, get_source, get_effective_date, get_version_no, get_gencon_id,
     get_terms, set_terms!, get_fcas_requirements, set_fcas_requirements!, resolve_term_devices
 export FCASService, add_fcas_services!, Readers
+export OfferSide, offer_side, side_suffix, NEM_SERIES, energy_max_avail_series_name
+export NEMEnergyOffer, get_energy_offer, NEMFCASOffer, get_fcas_offer
 export fcas_series_name, fcas_bid_direction, single_series, remove_single_series!, replace_single_series!,
-    nem_dispatch_devices, is_non_scheduled_load
+    nem_dispatch_devices, is_non_scheduled_load, is_commissioned, has_schedule_classification, is_semi_scheduled,
+    energy_offer_sides
 
 include("constants.jl")
 include("types/bid_types.jl")
@@ -61,10 +65,13 @@ for name in names(Readers)
     @eval @doc (@doc Readers.$name) $name
 end
 
+include("accessors/series_names.jl")
+include("accessors/device_flags.jl")
 include("accessors/bids.jl")
 include("accessors/dispatch_limits.jl")
 include("accessors/fcas.jl")
 include("accessors/constraints.jl")
+include("accessors/offers.jl")
 include("system/interface.jl")
 include("system/demand.jl")
 include("system/renewables.jl")
@@ -74,6 +81,7 @@ include("system/energy_limits.jl")
 include("system/fcas.jl")
 include("system/mnsp.jl")
 include("system/constraints.jl")
+include("system/fixed_loads.jl")
 include("system/interconnectors.jl")
 include("system/RegionModel.jl")
 

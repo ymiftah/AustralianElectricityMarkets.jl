@@ -487,6 +487,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Bid series names live in one registry: `OfferSide` (`GEN`/`LOAD`), `NEM_SERIES`,
+  `energy_max_avail_series_name` and `fcas_series_name(prefix, service[, side])`. Typed accessors
+  `is_semi_scheduled`, `has_schedule_classification`, `is_commissioned` and `energy_offer_sides`
+  replace raw `ext` reads. Offer views `NEMEnergyOffer`/`get_energy_offer` and
+  `NEMFCASOffer`/`get_fcas_offer` read one side of an offer as a bundle.
+- Energy limits and FCAS scaling share one `"uigf"` series (was `"energy_uigf"` and `"fcas_uigf"`),
+  and `read_uigf` treats `DUDETAILSUMMARY.END_DATE` as exclusive. FCAS offer curves keep all ten
+  price bands. A storage device's missing or non-finite energy `MAXAVAIL` throws in
+  `set_market_bids!`.
+- Participant fixed loadings are attached by the new `set_nem_fixed_loads!` as `"fixed_load"` and
+  `"fixed_load_invoked"` series and modelled as `EnergyFixedLoadConstraint` rows of the dispatch
+  formulation, elastic at CVP 380 (violation family `"fixed_load"`), instead of `$DUID` generic
+  constraints.
 - `fcas_series_name`, `fcas_bid_direction`, `nem_dispatch_devices`, `is_non_scheduled_load` and
   `single_series` are public AEM API, used by AEMSim to read the systems AEM builds.
 - New `single_series(name, timestamps, values; kwargs...)`, `remove_single_series!` and

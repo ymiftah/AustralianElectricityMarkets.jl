@@ -117,6 +117,12 @@
                         ta_load = get_time_series_array(SingleTimeSeries, bat, "decremental_variable_cost")
                         @test length(ta_load) == length(date_range) - 1
 
+                        # The offer views read the same curves, one per side.
+                        gen_offer, load_offer = get_energy_offer(bat, OfferSide.GEN), get_energy_offer(bat, OfferSide.LOAD)
+                        @test gen_offer.side == OfferSide.GEN && load_offer.side == OfferSide.LOAD
+                        @test gen_offer.timestamps == PowerSystems.TimeSeries.timestamp(ta_gen) && gen_offer.curves == values(ta_gen)
+                        @test load_offer.curves == values(ta_load)
+
                         # Initial inputs
                         @test !isempty(get_time_series_array(SingleTimeSeries, bat, "incremental_initial_input"))
                         @test !isempty(get_time_series_array(SingleTimeSeries, bat, "decremental_initial_input"))
@@ -134,6 +140,7 @@
                         @test avail.gen[end] > avail.gen[1]
                     end
                     @test isnothing(get_storage_energy_max_avail(first(get_components(ThermalStandard, sys)), first(date_range), 1))
+                    @test isnothing(get_energy_offer(first(get_components(PowerLoad, sys)), OfferSide.GEN))
                 end
             end
         end
@@ -957,10 +964,10 @@
             sys = deepcopy(sys_base)
             set_fcas_scaling_inputs!(sys, db, date_range)
 
-            @test has_time_series(get_component(RenewableDispatch, sys, "BW03"), SingleTimeSeries, "fcas_uigf")
-            @test has_time_series(get_component(RenewableDispatch, sys, "BW04"), SingleTimeSeries, "fcas_uigf")
-            @test !has_time_series(get_component(ThermalStandard, sys, "ER01"), SingleTimeSeries, "fcas_uigf")
-            @test !has_time_series(get_component(HydroDispatch, sys, "BW02"), SingleTimeSeries, "fcas_uigf")
+            @test has_time_series(get_component(RenewableDispatch, sys, "BW03"), SingleTimeSeries, "uigf")
+            @test has_time_series(get_component(RenewableDispatch, sys, "BW04"), SingleTimeSeries, "uigf")
+            @test !has_time_series(get_component(ThermalStandard, sys, "ER01"), SingleTimeSeries, "uigf")
+            @test !has_time_series(get_component(HydroDispatch, sys, "BW02"), SingleTimeSeries, "uigf")
         end
 
         @testset "an absent interval is stored as NaN; an all-absent column attaches nothing" begin
@@ -1463,11 +1470,11 @@ end
         gen = get_component(RenewableDispatch, sys, duid)
         @test get_ext(gen)["nem_semi_scheduled"] === true
         @test get_time_series_values(SingleTimeSeries, gen, "energy_max_avail"; ignore_scaling_factors = true) .* get_base_power(sys) ≈ [100.0, 101.0]
-        @test get_time_series_values(SingleTimeSeries, gen, "energy_uigf"; ignore_scaling_factors = true) .* get_base_power(sys) ≈ forecast
+        @test get_time_series_values(SingleTimeSeries, gen, "uigf"; ignore_scaling_factors = true) .* get_base_power(sys) ≈ forecast
     end
     coal = get_component(ThermalStandard, sys, "ER01")
     @test get_ext(coal)["nem_semi_scheduled"] === false
-    @test !has_time_series(coal, SingleTimeSeries, "energy_uigf")
+    @test !has_time_series(coal, SingleTimeSeries, "uigf")
     @test has_time_series(get_component(EnergyReservoirStorage, sys, "BW01"), SingleTimeSeries, "energy_max_avail")
 
     function invalid_energy_cache(table, transform!)
@@ -1546,7 +1553,7 @@ end
         for load in loads
             @test get_ext(load)["nem_semi_scheduled"] === false
             @test all(iszero, get_time_series_values(SingleTimeSeries, load, "energy_max_avail"; ignore_scaling_factors = true))
-            @test !has_time_series(load, SingleTimeSeries, "energy_uigf")
+            @test !has_time_series(load, SingleTimeSeries, "uigf")
         end
     end
 
@@ -1554,7 +1561,7 @@ end
         again = energy_test_system(db)
         set_nem_energy_limits!(again, db, range)
         gen = get_component(RenewableDispatch, again, "BW03")
-        @test has_time_series(gen, SingleTimeSeries, "energy_uigf")
+        @test has_time_series(gen, SingleTimeSeries, "uigf")
         reclassified = invalid_energy_cache(
             :DUDETAILSUMMARY, function (frame)
                 frame.SCHEDULE_TYPE = Union{String, Missing}[r.DUID == "BW03" ? "SCHEDULED" : r.SCHEDULE_TYPE for r in eachrow(frame)]
@@ -1563,11 +1570,11 @@ end
         )
         set_nem_energy_limits!(again, reclassified, range)
         @test get_ext(gen)["nem_semi_scheduled"] === false
-        @test !has_time_series(gen, SingleTimeSeries, "energy_uigf")
+        @test !has_time_series(gen, SingleTimeSeries, "uigf")
         @test get_time_series_values(SingleTimeSeries, gen, "energy_max_avail"; ignore_scaling_factors = true) .* get_base_power(again) ≈ [100.0, 101.0]
         set_nem_energy_limits!(again, db, range)
         @test get_ext(gen)["nem_semi_scheduled"] === true
-        @test get_time_series_values(SingleTimeSeries, gen, "energy_uigf"; ignore_scaling_factors = true) .* get_base_power(again) ≈ [40.0, 41.0]
+        @test get_time_series_values(SingleTimeSeries, gen, "uigf"; ignore_scaling_factors = true) .* get_base_power(again) ≈ [40.0, 41.0]
         close(reclassified.db)
     end
 

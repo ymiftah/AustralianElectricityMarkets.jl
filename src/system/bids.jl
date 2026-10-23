@@ -196,8 +196,8 @@ function set_market_bids!(sys, db, date_range; kwargs...)
 
             _set_decremental_bid_cost!(sys, gen, load_bids, start_date, resolution)
 
-            _set_storage_energy_max_avail!(sys, gen, gen_bids, "energy_max_avail", start_date, resolution)
-            _set_storage_energy_max_avail!(sys, gen, load_bids, "energy_max_avail_decremental", start_date, resolution)
+            _set_storage_energy_max_avail!(sys, gen, gen_bids, energy_max_avail_series_name(OfferSide.GEN), start_date, resolution)
+            _set_storage_energy_max_avail!(sys, gen, load_bids, energy_max_avail_series_name(OfferSide.LOAD), start_date, resolution)
         end
     end
 end
@@ -207,29 +207,22 @@ end
     _set_storage_energy_max_avail!(sys, storage, bids, name, start_date, resolution)
 
 Attaches `bids.MAXAVAIL` to `storage` as a `SingleTimeSeries` named `name`, per-unit of `sys`'s
-system base. No-op if any interval's `MAXAVAIL` is missing or not finite.
+system base. Throws an `ArgumentError` if any interval's `MAXAVAIL` is missing or not finite.
 
 # Returns
 `nothing`.
 """
 function _set_storage_energy_max_avail!(sys, storage, bids, name::AbstractString, start_date, resolution)
-    all(x -> !ismissing(x) && isfinite(x), bids.MAXAVAIL) || return
+    bad = findfirst(x -> ismissing(x) || !isfinite(x), bids.MAXAVAIL)
+    isnothing(bad) || throw(
+        ArgumentError(
+            "set_market_bids!: $(get_name(storage)) has no finite $name at $(bids.INTERVAL_DATETIME[bad]); " *
+                "repopulate BIDPEROFFER_D with populate(...; force_new = true)",
+        ),
+    )
     add_time_series!(
         sys, storage,
         single_series(name, start_date, Float64.(bids.MAXAVAIL) ./ get_base_power(sys), resolution),
     )
     return
 end
-"""
-    is_non_scheduled_load(device) -> Bool
-
-Whether `device` is a non-scheduled load ([`get_scheduled_loads_dataframe`](@ref)): it has no
-energy bid, and takes part in the market only through FCAS offers.
-
-# Arguments
-- `device`: any component.
-
-# Returns
-`Bool`.
-"""
-is_non_scheduled_load(device) = device isa InterruptiblePowerLoad && get(get_ext(device), "non_scheduled", false) === true

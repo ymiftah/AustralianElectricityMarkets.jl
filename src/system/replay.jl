@@ -63,6 +63,15 @@ function AustralianElectricityMarkets.nem_system(
 end
 
 
+# The `DIRECTION`s `device` must offer energy on ([`energy_offer_sides`](@ref)), given the offered
+# `(DUID, DIRECTION)` keys of `coverage`.
+_required_bid_directions(device, coverage) = string.(energy_offer_sides(device))
+# A wholesale demand response unit bids GEN only; every other scheduled load, including one with no
+# period offer at all, is required on LOAD.
+_required_bid_directions(device::PSY.InterruptiblePowerLoad, coverage) =
+    haskey(coverage, (PSY.get_name(device), "GEN")) ? ("GEN",) : string.(energy_offer_sides(device))
+
+
 """
     _check_replay_energy_bid_coverage(sys, db, date_range; intervention = 0)
 
@@ -111,16 +120,8 @@ function _check_replay_energy_bid_coverage(sys, db, date_range; intervention::In
     for T in (PSY.Generator, PSY.InterruptiblePowerLoad, PSY.EnergyReservoirStorage), device in PSY.get_components(T, sys)
         name = PSY.get_name(device)
         name in required_names && !(name in non_scheduled) || continue
-        device isa PSY.InterruptiblePowerLoad && AustralianElectricityMarkets.is_non_scheduled_load(device) && continue
-        required[name] = if device isa PSY.Storage
-            ("GEN", "LOAD")
-        elseif device isa PSY.InterruptiblePowerLoad
-            # A wholesale demand response unit bids GEN only; every other scheduled load,
-            # including one with no period offer at all, is required on LOAD.
-            haskey(coverage, (name, "GEN")) ? ("GEN",) : ("LOAD",)
-        else
-            ("GEN",)
-        end
+        is_non_scheduled_load(device) && continue
+        required[name] = _required_bid_directions(device, coverage)
     end
     for row in eachrow(bids)
         row.DIRECTION in get(required, row.DUID, ()) || continue

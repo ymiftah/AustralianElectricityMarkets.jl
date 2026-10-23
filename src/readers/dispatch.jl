@@ -71,7 +71,7 @@ function read_uigf(db, date_range; resolution::Dates.Period = Minute(5), interve
             SELECT 1 FROM $dudetailsummary AS dus
             WHERE dus.DUID = src.DUID AND dus.SCHEDULE_TYPE = 'SEMI-SCHEDULED'
               AND dus.START_DATE <= src.SETTLEMENTDATE
-              AND (dus.END_DATE IS NULL OR dus.END_DATE >= src.SETTLEMENTDATE)
+              AND (dus.END_DATE IS NULL OR dus.END_DATE > src.SETTLEMENTDATE)
         )
     """
     df = _read_dispatch_table(

@@ -137,6 +137,11 @@
         @test length(trapeziums) == length(curves) == length(bids) == horizon
         @test all(get_trapezium(b) == trapeziums[i] for (i, b) in enumerate(bids))
         @test all(get_offer_curve(b) == curves[i] for (i, b) in enumerate(bids))
+        offer = get_fcas_offer(bw01, BidType.RAISE6SEC, OfferSide.GEN, start_date, horizon)
+        @test offer isa NEMFCASOffer && offer.service == BidType.RAISE6SEC && offer.side == OfferSide.GEN
+        @test offer.trapeziums == trapeziums && offer.curves == curves
+        load_offer = get_fcas_offer(bw01, BidType.RAISE6SEC, OfferSide.LOAD, start_date, horizon)
+        @test load_offer.trapeziums == get_fcas_trapezium(bw01, BidType.RAISE6SEC, start_date, horizon; decremental = true)
 
         # decremental = true reads a genuinely separate series: it succeeds for BW01 (which
         # has both directions attached) but throws for a Generator (incremental-only), proving

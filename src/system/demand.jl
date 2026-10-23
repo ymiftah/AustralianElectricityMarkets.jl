@@ -60,7 +60,7 @@ end
 
 
 """
-    _add_demand_ts_to_components!(sys, ts, type; name = "max_active_power")
+    _add_demand_ts_to_components!(sys, ts, type; name = NEM_SERIES.max_active_power)
 
 Adds demand time series data to the system components under the series name `name`.
 
@@ -70,7 +70,7 @@ Adds demand time series data to the system components under the series name `nam
 - `type`: The type of component to add the time series to.
 - `name`: The time series name to attach it under.
 """
-function _add_demand_ts_to_components!(sys, ts, type; name = "max_active_power")
+function _add_demand_ts_to_components!(sys, ts, type; name = NEM_SERIES.max_active_power)
     loads = colnames(ts)
     for component in get_components(type, sys)
         column = Symbol(get_name(component))

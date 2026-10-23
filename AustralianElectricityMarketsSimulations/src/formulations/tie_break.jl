@@ -11,10 +11,10 @@ const TIE_BREAK_CVP_FACTOR = 1.0e-6
 
 # Name of the series and meta of the parameter holding segment `band`'s tie-break scale.
 function _tie_break_series_name(band::Int, decremental::Bool)
-    return "tie_break_scale_$(band)" * (decremental ? "_decremental" : "")
+    return "tie_break_scale_$(band)" * side_suffix(offer_side(decremental))
 end
 function _tie_break_meta(band::Int, decremental::Bool)
-    return string(band) * (decremental ? "_decremental" : "")
+    return string(band) * side_suffix(offer_side(decremental))
 end
 
 

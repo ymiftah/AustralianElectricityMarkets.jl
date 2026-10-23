@@ -41,11 +41,11 @@ end
 
 # The energy-limit series names a device's dispatch reads, and the setter that attaches them.
 function _energy_limit_series(d::PSY.Storage)
-    return ("energy_max_avail", "energy_max_avail_decremental"), "call set_market_bids! for both directions"
+    return energy_max_avail_series_name.((OfferSide.GEN, OfferSide.LOAD)), "call set_market_bids! for both directions"
 end
 
 function _energy_limit_series(d)
-    semi = get(PSY.get_ext(d), "nem_semi_scheduled", nothing)
-    semi isa Bool || throw(ArgumentError("$(PSY.get_name(d)): missing schedule classification; call set_nem_energy_limits!"))
-    return (semi ? ("energy_max_avail", "energy_uigf") : ("energy_max_avail",)), "call set_nem_energy_limits!"
+    semi = is_semi_scheduled(d)
+    max_avail = energy_max_avail_series_name(OfferSide.GEN)
+    return (semi ? (max_avail, NEM_SERIES.uigf) : (max_avail,)), "call set_nem_energy_limits!"
 end

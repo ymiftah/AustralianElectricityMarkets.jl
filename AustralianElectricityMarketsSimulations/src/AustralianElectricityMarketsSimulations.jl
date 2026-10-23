@@ -3,7 +3,7 @@ module AustralianElectricityMarketsSimulations
 import AustralianElectricityMarkets
 using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCASTrapezium,
     FCAS_REGULATION_MARKETS, GenericConstraint, InterconnectorLossModel, InterconnectorTerm,
-    RegionTerm, UnitTerm, fcas_bid_direction, fcas_series_name, fcas_service_name, get_bid_type, get_constraint_weight,
+    NEM_SERIES, OfferSide, RegionTerm, UnitTerm, energy_max_avail_series_name, offer_side, side_suffix, has_schedule_classification, is_semi_scheduled, get_energy_offer, get_fcas_offer, fcas_bid_direction, fcas_series_name, fcas_service_name, get_bid_type, get_constraint_weight,
     get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_enablement_max,
     get_enablement_min, get_energy_availability, get_factor, get_fcas_agc_ramp_capability,
     get_fcas_agc_status, get_fcas_offer_curve, get_fcas_requirements, get_initial_mw, get_interconnector,
@@ -35,6 +35,7 @@ include("cvp_factors.jl")
 include("types/constraint_formulations.jl")
 include("types/dispatch.jl")
 include("types/energy_limits.jl")
+include("types/fixed_loads.jl")
 include("types/energy_offers.jl")
 include("types/storage.jl")
 include("types/tie_break.jl")
@@ -49,6 +50,7 @@ include("formulations/penalty_costs.jl")
 include("checks/nem_constraints.jl")
 include("formulations/dispatch.jl")
 include("formulations/energy_limits.jl")
+include("formulations/fixed_loads.jl")
 include("formulations/energy_offers.jl")
 include("checks/dispatch_envelope.jl")
 include("formulations/storage.jl")
@@ -78,6 +80,8 @@ export EnergyMaxAvailOutConstraint, EnergyMaxAvailInConstraint, EnergyMaxAvailOu
 export EnergyMaxAvailTimeSeriesParameter, EnergyUIGFTimeSeriesParameter,
     EnergyMaxAvailConstraint, EnergyUIGFConstraint, EnergyMaxAvailSlack, EnergyUIGFSlack,
     ENERGY_MAX_AVAIL_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR
+export FixedLoadTimeSeriesParameter, FixedLoadInvokedTimeSeriesParameter, EnergyFixedLoadConstraint,
+    EnergyFixedLoadSurplusSlack, EnergyFixedLoadDeficitSlack
 export energy_bounds
 export scale_trapezium
 export NEMConstraintLHS, NEMConstraintLimit,

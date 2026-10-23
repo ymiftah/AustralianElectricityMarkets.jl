@@ -1,6 +1,6 @@
 "Whether `load` carries a decremental FCAS trapezium series for any FCAS market."
 _offers_fcas(load) = any(
-    bt -> has_time_series(load, SingleTimeSeries, "fcas_trapezium_$(string(bt))_decremental"), FCAS_BID_TYPES,
+    bt -> has_time_series(load, SingleTimeSeries, fcas_series_name("fcas_trapezium", bt, OfferSide.LOAD)), FCAS_BID_TYPES,
 )
 
 
@@ -145,68 +145,9 @@ function _empty_terms()
 end
 
 
-"""
-    _fixed_load_series(sys, fixed_loads) -> Dict{String, Dict{DateTime, Float64}}
-
-Fixed-loading targets on each available device's energy axis: scheduled-load consumption is
-positive, and a storage charging target is negative net injection. Rows for units that are not
-components of `sys`, or are unavailable, are ignored.
-"""
-function _fixed_load_series(sys, fixed_loads)
-    series = Dict{String, Dict{DateTime, Float64}}()
-    for row in eachrow(fixed_loads)
-        device = get_component(Device, sys, row.DUID)
-        (isnothing(device) || !get_available(device)) && continue
-        by_time = get!(series, row.DUID, Dict{DateTime, Float64}())
-        sign = device isa Storage && row.DIRECTION == "LOAD" ? -1.0 : 1.0
-        by_time[row.INTERVAL_DATETIME] = get(by_time, row.INTERVAL_DATETIME, 0.0) + sign * row.FIXEDLOAD
-    end
-    return series
-end
-
-
 # Whether a `$<DUID>` DISPATCHCONSTRAINT id is an Energy Inflexible Offer constraint built from bids.
 function _is_modelled_fixed_load(genconid::AbstractString, fixed_loads, interval::DateTime)
     return startswith(genconid, "\$") && haskey(fixed_loads, genconid[2:end]) && haskey(fixed_loads[genconid[2:end]], interval)
-end
-
-
-"""
-    _fixed_load_constraint(sys, duid, series, grid, base_power; solution = nothing)
-
-The staged `\$<duid>` [`GenericConstraint`](@ref): a net-injection equality (`EQ`) on `duid`'s
-energy at its fixed loading, invoked only at the intervals in `series`.
-`solution` is the unit's `DISPATCHCONSTRAINT` rows, used to fill `lhs`/`marginal_value` series.
-"""
-function _fixed_load_constraint(sys, duid, series, grid, base_power; solution = nothing)
-    rhs_mw = [get(series, t, 0.0) for t in grid]
-    invoked_series = [haskey(series, t) ? 1.0 : 0.0 for t in grid]
-    first_mw = rhs_mw[findfirst(==(1.0), invoked_series)]
-    name = "\$" * duid
-    gc = GenericConstraint(;
-        name = name,
-        sense = ConstraintSense.EQ,
-        rhs = first_mw / base_power,
-        description = "Energy Inflexible Offer: $duid fixed loading",
-        terms = ConstraintTerm[UnitTerm(duid, BidType.ENERGY, 1.0)],
-        ext = Dict{String, Any}(
-            "gencon_id" => name, "limit_type" => "Energy Inflexible Offer", "source" => "built-in",
-            "effective_date" => "", "version_no" => 0, "dropped_terms" => Dict{String, Any}[],
-        ),
-    )
-    lhs_series = nothing
-    marginal_value_series = nothing
-    if !isnothing(solution)
-        lhs_by_time = Dict(zip(solution.SETTLEMENTDATE, solution.LHS))
-        mv_by_time = Dict(zip(solution.SETTLEMENTDATE, solution.MARGINALVALUE))
-        lhs_series = [get(lhs_by_time, t, 0.0) for t in grid] ./ base_power
-        marginal_value_series = [get(mv_by_time, t, 0.0) for t in grid]
-    end
-    return (
-        gc = gc, contributing_devices = Device[get_component(Device, sys, duid)],
-        rhs_series = rhs_mw ./ base_power, invoked_series = invoked_series,
-        lhs_series = lhs_series, marginal_value_series = marginal_value_series,
-    )
 end
 
 
@@ -337,10 +278,9 @@ mapping a skipped name to `:no_definition`, `:no_terms`, `:unknown_duid`, `:unkn
 `:unknown_interconnector` (the kind of the first unresolved term). Dropped unit terms are read back
 with [`get_dropped_terms`](@ref).
 
-Each device in `sys` with a participant fixed loading (`BIDPEROFFER_D.FIXEDLOAD > 0`, fast-start
-units excluded) also gets a `\$<DUID>` constraint: an equality on the unit's net energy at its fixed
-loading, invoked at the intervals that carry one. Its `DISPATCHCONSTRAINT` row is not
-reported as skipped.
+A unit's participant fixed loading (`\$<DUID>`) is not a generic constraint: its
+`DISPATCHCONSTRAINT` row is neither added nor reported as skipped where [`set_nem_fixed_loads!`](@ref)
+attaches the loading to the unit.
 
 Each skipped version is also recorded on `sys`; read it with [`get_skipped_constraints`](@ref). The
 intervals of `date_range` with no invoked constraint ([`get_missing_constraint_intervals`](@ref)) and
@@ -368,8 +308,7 @@ function add_nem_constraints!(
 
     invoked_all = read_invoked_constraints(db, date_range; intervention = intervention)
     missing_intervals = setdiff(collect(date_range)[1:(end - 1)], invoked_all.SETTLEMENTDATE)
-    # Energy Inflexible Offer constraints are built from the bids; their DISPATCHCONSTRAINT rows
-    # (no definition tables) are used only for the optional solution series.
+    # Fixed loadings are unit offer data (set_nem_fixed_loads!), so their `$DUID` rows are not generic constraints.
     fixed_loads = _fixed_load_series(sys, read_fixed_loads(db, date_range))
     if DataFrames.isempty(invoked_all) && isempty(fixed_loads)
         get_ext(sys)["skipped_constraints"] = Dict{String, Any}[]
@@ -585,17 +524,6 @@ function add_nem_constraints!(
             ),
         )
         push!(added, versioned_name)
-    end
-
-    for (duid, series) in sort!(collect(fixed_loads); by = first)
-        push!(
-            staged,
-            _fixed_load_constraint(
-                sys, duid, series, full_grid, base_power;
-                solution = include_solution ? filter(r -> r.GENCONID == "\$" * duid, invoked_all) : nothing,
-            ),
-        )
-        push!(added, "\$" * duid)
     end
 
     if !isempty(skipped)

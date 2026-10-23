@@ -758,48 +758,27 @@ end
         end
 
         fixed_sys = nem_system(fixed_db, RegionalNetworkConfiguration())
-        added_f, skipped_f = nothing, nothing
+        added_f = nothing
         @test_logs (:warn, r"skipped") match_mode = :any begin
-            added_f, skipped_f = add_nem_constraints!(fixed_sys, fixed_db, fixed_range; include_solution = true)
+            added_f, _ = add_nem_constraints!(fixed_sys, fixed_db, fixed_range; include_solution = true)
         end
-        @test "\$BW01" in added_f
-        @test "\$BW02" ∉ added_f
+        # A modelled fixed loading is unit offer data, not a generic constraint.
+        @test !any(startswith("\$"), added_f)
+        @test isnothing(get_component(GenericConstraint, fixed_sys, "\$BW01"))
         skipped_names = get_skipped_constraints(fixed_sys).constraint
         @test !any(startswith("\$BW01"), skipped_names)
         @test any(startswith("\$BW02"), skipped_names)  # fast-start: still reported
         @test any(startswith("\$NOSUCH1"), skipped_names)
 
-        gc = get_component(GenericConstraint, fixed_sys, "\$BW01")
-        @test get_sense(gc) == ConstraintSense.EQ
-        @test get_source(gc) == "built-in"
-        @test get_limit_type(gc) == "Energy Inflexible Offer"
-        term = only(get_terms(gc))
-        @test term isa UnitTerm && get_duid(term) == "BW01" && get_bid_type(term) == BidType.ENERGY
+        set_nem_fixed_loads!(fixed_sys, fixed_db, fixed_range)
+        bw01 = get_component(Device, fixed_sys, "BW01")
         base = get_base_power(fixed_sys)
-        series(name) = get_time_series_values(SingleTimeSeries, gc, name)
-        invoked_mask = series("invoked")
-        @test findall(==(1.0), invoked_mask) == 3:5  # intervals 00:10, 00:15, 00:20
+        series(device, name) = get_time_series_values(SingleTimeSeries, device, name)
+        @test findall(isone, series(bw01, "fixed_load_invoked")) == 3:5  # intervals 00:10, 00:15, 00:20
         # BW01 is a battery: its 30 MW generation and 20 MW charging targets net to 10 MW injection.
-        @test series("rhs")[3:5] == fill(10.0 / base, 3)
-        @test series("marginal_value")[3:5] == fill(99.0, 3)
-        @test has_service(get_component(Device, fixed_sys, "BW01"), gc)
-
-        # Fixed-load constraints do not depend on any DISPATCHCONSTRAINT row being invoked.
-        no_invoked_hive = mktempdir()
-        cp(fixed_hive, no_invoked_hive; force = true)
-        let dir = joinpath(no_invoked_hive, "DISPATCHCONSTRAINT")
-            DuckDB.execute(
-                fixed_conn,
-                "COPY (SELECT * FROM read_parquet('$(dir)/**/*.parquet', hive_partitioning=true) WHERE SETTLEMENTDATE >= TIMESTAMP '2025-01-01 02:00:00') " *
-                    "TO '$(dir)_new' (FORMAT 'PARQUET', PARTITION_BY (archive_month))",
-            )
-            rm(dir; recursive = true)
-            mv(dir * "_new", dir; force = true)
-        end
-        no_invoked_db = aem_connect(HiveConfiguration(hive_location = no_invoked_hive, filesystem = "file"))
-        no_invoked_sys = nem_system(no_invoked_db, RegionalNetworkConfiguration())
-        added_n, _ = add_nem_constraints!(no_invoked_sys, no_invoked_db, fixed_range)
-        @test added_n == ["\$BW01"]
+        @test series(bw01, "fixed_load")[3:5] == fill(10.0 / base, 3)
+        @test all(iszero, series(bw01, "fixed_load")[[1, 2, 6]])
+        @test !has_time_series(get_component(Device, fixed_sys, "BW02"), SingleTimeSeries, "fixed_load")
 
         # A missing bid table fails with the documented error.
         missing_bids_hive = mktempdir()
@@ -813,9 +792,10 @@ end
         # An unavailable unit's fixed loading is ignored; its `$` row is then reported as skipped.
         unavailable_sys = nem_system(fixed_db, RegionalNetworkConfiguration())
         set_available!(get_component(Device, unavailable_sys, "BW01"), false)
-        added_u, _ = add_nem_constraints!(unavailable_sys, fixed_db, fixed_range; include_solution = true)
-        @test "\$BW01" ∉ added_u
+        add_nem_constraints!(unavailable_sys, fixed_db, fixed_range; include_solution = true)
         @test any(startswith("\$BW01"), get_skipped_constraints(unavailable_sys).constraint)
+        set_nem_fixed_loads!(unavailable_sys, fixed_db, fixed_range)
+        @test !has_time_series(get_component(Device, unavailable_sys, "BW01"), SingleTimeSeries, "fixed_load")
     end
 
     @testset "_versions_without_definition handles missing effective date" begin

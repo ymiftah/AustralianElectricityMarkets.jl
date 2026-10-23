@@ -1,5 +1,5 @@
 # A 60 MW conformance target competes with separate 40 MW bid and 45 MW forecast limits.
-function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, weight = 1160.0, initial = 60.0, down = 100.0, price = 20.0, rating = 100.0, start = TOY_START)
+function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, weight = 1160.0, fixed_load = nothing, fixed_invoked = 1.0, initial = 60.0, down = 100.0, price = 20.0, rating = 100.0, start = TOY_START)
     return nem_toy_system(
         [
             TOY_CHEAP => toy_unit(100.0, [(100.0, price)]; initial, ramp_up = 100.0, ramp_down = down, availability = 45.0),
@@ -14,7 +14,11 @@ function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, we
             PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "energy_max_avail", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(max_avail, 2) ./ base)))
             PSY.get_ext(cheap)["nem_semi_scheduled"] = !isnothing(uigf)
             if !isnothing(uigf)
-                PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "energy_uigf", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(uigf, 2) ./ base)))
+                PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "uigf", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(uigf, 2) ./ base)))
+            end
+            if !isnothing(fixed_load)
+                PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "fixed_load", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(fixed_load, 2) ./ base)))
+                PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "fixed_load_invoked", data = PSY.TimeSeries.TimeArray(stamps, fill(fixed_invoked, 2))))
             end
             if !isnothing(target)
                 add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, target; sense = ConstraintSense.EQ)
@@ -57,11 +61,19 @@ end
 end
 
 @testset "fixed loading beats MaxAvail but does not beat UIGF" begin
-    out = energy_limit_solve(energy_limit_system(; max_avail = 40.0, weight = 380.0))
+    out = energy_limit_solve(energy_limit_system(; max_avail = 40.0, target = nothing, fixed_load = 60.0))
     @test out.power ≈ 45.0 atol = 1.0e-6
     @test energy_slack(out, EnergyMaxAvailSlack) ≈ 5.0 atol = 1.0e-6
     @test energy_slack(out, EnergyUIGFSlack) ≈ 0.0 atol = 1.0e-6
-    @test only(filter(:family => ==("generic_constraint"), out.violations).MW) ≈ 15.0 atol = 1.0e-6
+    fixed = only(filter(:family => ==("fixed_load"), out.violations))
+    @test fixed.MW ≈ 15.0 atol = 1.0e-6
+    @test fixed.direction == "down"
+end
+
+@testset "an uninvoked fixed loading never binds" begin
+    out = energy_limit_solve(energy_limit_system(; max_avail = 40.0, target = nothing, fixed_load = 60.0, fixed_invoked = 0.0))
+    @test out.power ≈ 40.0 atol = 1.0e-6
+    @test !any(==("fixed_load"), out.violations.family)
 end
 
 @testset "ramping beats the combined availability and UIGF penalties" begin
@@ -103,8 +115,8 @@ end
 @testset "missing and non-finite forecasts are rejected before solving" begin
     sys = energy_limit_system()
     cheap = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
-    PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, cheap, "energy_uigf")
-    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, cheap, "energy_uigf")
+    PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, cheap, "uigf")
+    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, cheap, "uigf")
     @test_throws ArgumentError replication_template(sys)
     invalid = energy_limit_system(; uigf = [45.0, NaN])
     template = replication_template(invalid)
