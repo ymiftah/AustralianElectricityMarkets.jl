@@ -43,7 +43,8 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
 export FCASService, add_fcas_services!, Readers
 export OfferSide, offer_side, side_suffix, NEM_SERIES, energy_max_avail_series_name
 export fcas_series_name, fcas_bid_direction, single_series, remove_single_series!, replace_single_series!,
-    nem_dispatch_devices, is_non_scheduled_load
+    nem_dispatch_devices, is_non_scheduled_load, is_commissioned, has_schedule_classification, is_semi_scheduled,
+    energy_offer_sides
 
 include("constants.jl")
 include("types/bid_types.jl")
@@ -63,6 +64,7 @@ for name in names(Readers)
 end
 
 include("accessors/series_names.jl")
+include("accessors/device_flags.jl")
 include("accessors/bids.jl")
 include("accessors/dispatch_limits.jl")
 include("accessors/fcas.jl")

@@ -240,7 +240,7 @@ function set_fcas_bids!(sys, db, date_range; kwargs...)
             attached = _attach_fcas_bid_series!(
                 sys, load, gdf_dec, get_name(load), bid_type, OfferSide.LOAD, start_date, resolution,
             )
-            attached && is_non_scheduled_load(load) && get(get_ext(load), "commissioned", true) === true &&
+            attached && is_non_scheduled_load(load) && is_commissioned(load) &&
                 set_available!(load, true)
         end
     end

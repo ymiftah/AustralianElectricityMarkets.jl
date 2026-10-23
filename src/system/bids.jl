@@ -220,16 +220,3 @@ function _set_storage_energy_max_avail!(sys, storage, bids, name::AbstractString
     )
     return
 end
-"""
-    is_non_scheduled_load(device) -> Bool
-
-Whether `device` is a non-scheduled load ([`get_scheduled_loads_dataframe`](@ref)): it has no
-energy bid, and takes part in the market only through FCAS offers.
-
-# Arguments
-- `device`: any component.
-
-# Returns
-`Bool`.
-"""
-is_non_scheduled_load(device) = device isa InterruptiblePowerLoad && get(get_ext(device), "non_scheduled", false) === true

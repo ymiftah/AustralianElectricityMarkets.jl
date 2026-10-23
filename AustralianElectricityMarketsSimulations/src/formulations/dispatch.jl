@@ -97,12 +97,12 @@ availability for storage and UIGF only for semi-scheduled units.
 """
 function _has_nem_dispatch_limits(device, formulation::Type{<:AbstractNEMDispatch})
     if !(device isa PSY.Storage)
-        get(PSY.get_ext(device), "nem_semi_scheduled", nothing) isa Bool || return false
+        has_schedule_classification(device) || return false
     end
     names = PSI.get_default_time_series_names(typeof(device), formulation)
     required = (
         name for (param, name) in names
-            if param !== EnergyUIGFTimeSeriesParameter || PSY.get_ext(device)["nem_semi_scheduled"]
+            if param !== EnergyUIGFTimeSeriesParameter || is_semi_scheduled(device)
     )
     return all(
         PSY.has_time_series(device, PSY.SingleTimeSeries, name) for name in required
@@ -178,7 +178,7 @@ function PSI.construct_device!(
         haskey(PSI.get_time_series_names(model), param) || continue
         PSI.add_parameters!(container, param, devices, model)
     end
-    any(d -> PSY.get_ext(d)["nem_semi_scheduled"], devices) &&
+    any(is_semi_scheduled, devices) &&
         PSI.add_parameters!(container, EnergyUIGFTimeSeriesParameter, devices, model)
 
     # The chained base measures interval 1 against a DevicePower initial condition, which has to

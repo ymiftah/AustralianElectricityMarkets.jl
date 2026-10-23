@@ -27,7 +27,7 @@ function _energy_limit_cvp(::EnergyUIGFSlack)
 end
 
 function _semi_scheduled_devices(devices::Union{Vector{T}, IS.FlattenIteratorWrapper{T}}) where {T}
-    return T[d for d in devices if PSY.get_ext(d)["nem_semi_scheduled"]]
+    return T[d for d in devices if is_semi_scheduled(d)]
 end
 
 """
