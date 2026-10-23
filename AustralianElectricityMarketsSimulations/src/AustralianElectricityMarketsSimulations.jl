@@ -3,10 +3,10 @@ module AustralianElectricityMarketsSimulations
 import AustralianElectricityMarkets
 using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCASTrapezium,
     FCAS_REGULATION_MARKETS, GenericConstraint, InterconnectorLossModel, InterconnectorTerm,
-    NEM_SERIES, OfferSide, RegionTerm, UnitTerm, energy_max_avail_series_name, offer_side, side_suffix, has_schedule_classification, is_semi_scheduled, get_energy_offer, get_fcas_offer, fcas_bid_direction, fcas_series_name, fcas_service_name, get_bid_type, get_constraint_weight,
+    NEM_SERIES, OfferSide, RegionTerm, UnitTerm, energy_max_avail_series_name, offer_side, side_suffix, has_schedule_classification, is_semi_scheduled, get_energy_offer, get_fcas_offer, FCASBidDirection, fcas_bid_direction, fcas_series_name, mnsp_series_name, fcas_service_name, get_bid_type, get_constraint_weight,
     get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_enablement_max,
     get_enablement_min, get_energy_availability, get_factor, get_fcas_agc_ramp_capability,
-    get_fcas_agc_status, get_fcas_offer_curve, get_fcas_requirements, get_initial_mw, get_interconnector,
+    get_fcas_agc_status, get_fcas_requirements, get_initial_mw, get_interconnector,
     get_limit_type, get_lower_slope_coeff, get_max_avail, get_missing_constraint_intervals, get_region,
     get_scaled_fcas_trapezium, get_sense, get_service, get_skipped_constraints, get_source,
     get_storage_energy_max_avail, get_terms, get_upper_slope_coeff, loss_curve_vertex_values,
@@ -37,7 +37,6 @@ include("types/dispatch.jl")
 include("types/energy_limits.jl")
 include("types/fixed_loads.jl")
 include("types/energy_offers.jl")
-include("types/storage.jl")
 include("types/tie_break.jl")
 include("types/interconnector_losses.jl")
 include("types/mnsp.jl")
@@ -91,7 +90,7 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASJointCapacityLHS, FCASJointCapacityConstraint, FCASBDURampingConstraint,
     FCASJointRampingConstraint, FCASJointCapacitySlack, FCASJointRampingSlack,
     FCASMaxAvailConstraint, FCASMaxAvailSlack, FCASBDURampingSlack,
-    FCASOfferBandVariable, FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter,
+    FCASOfferBandVariable, FCASOfferBandConstraint, FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter,
     FCASLowerSlopeParameter, FCASRampingLimitParameter, FCASBandPriceParameter,
     FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, set_fcas_effective_offers!,
     FCAS_MAXAVAIL_CVP_FACTOR, FCAS_BDU_RAMPING_CVP_FACTOR, FCAS_CAPACITY_CVP_FACTOR,
@@ -101,7 +100,7 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     INTERCONNECTOR_FLOW_CVP_FACTOR, InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack
 export filter_buildable_generic_constraints, compute_fcas_prices
 export check_fcas_services, check_dispatch_envelope
-export AbstractNEMDispatch, NEMReplayDispatch, NEMLookaheadDispatch,
+export AbstractNEMDispatch, NEMReplayDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter
 export nem_dispatch_participants, set_nem_dispatch_models!
@@ -111,7 +110,8 @@ export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegm
     InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint,
     InterconnectorLossSegmentFullVariable, InterconnectorLossSegmentOrderConstraint,
     LossDemandCoefficientParameter
-export MNSPLinkFlowVariable, MNSPLinkFlowConstraint, MNSPLinkDirectionVariable,
+export MNSPLinkFlowVariable, MNSPLinkFlowConstraint, MNSPLinkBandConstraint, MNSPLinkMaxAvailConstraint,
+    MNSPLinkDirectionConstraint, MNSPLinkLossConstraint, MNSPLinkLossSplitConstraint, MNSPLinkDirectionVariable,
     MNSPLinkLossVariable, MNSPLinkBandVariable, MNSPBandWidthParameter, MNSPForwardBandWidthParameter,
     MNSPReverseBandWidthParameter, MNSPMaxAvailParameter, MNSPForwardMaxAvailParameter,
     MNSPReverseMaxAvailParameter, MNSPBandPriceParameter

@@ -58,11 +58,11 @@ No-op for a device without a `bid_type` trapezium series.
 """
 function _attach_fcas_effective_series!(sys::PSY.System, device::PSY.Device, bid_type::BidType, inactive::Float64)
     direction = fcas_bid_direction(device, bid_type)
-    direction == :none && return
-    trapezium = fcas_series_name("fcas_trapezium", bid_type, direction == :decremental)
+    direction == FCASBidDirection.NONE && return
+    trapezium = fcas_series_name("fcas_trapezium", bid_type, direction == FCASBidDirection.DECREMENTAL)
     stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, trapezium)
     resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, trapezium))
-    window = _FCASWindow(first(stamps), length(stamps), resolution, :dispatch)
+    window = _FCASWindow(first(stamps), length(stamps), resolution)
     offers, ramping = _fcas_effective_values(window, device, bid_type, direction, inactive)
     for (decremental, values) in offers
         replace_single_series!(sys, device, single_series(_fcas_effective_series_name(bid_type, decremental), first(stamps), values, resolution))

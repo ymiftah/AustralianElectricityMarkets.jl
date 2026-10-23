@@ -360,16 +360,15 @@ end
         )
         container = build_fcas(sys, [service_name])
         device = PSY.get_component(PSY.ThermalStandard, sys, duid)
-        replay = Dict{Symbol, PSI.DeviceModel}(:ThermalStandard => PSI.DeviceModel(PSY.ThermalStandard, NEMReplayDispatch))
         max_avail_mw() = get_max_avail(
-            only(AustralianElectricityMarketsSimulations._fcas_offer(container, replay, device, BidType.RAISEREG, OfferSide.GEN).trapeziums),
+            only(AustralianElectricityMarketsSimulations._fcas_offer(container, device, BidType.RAISEREG, OfferSide.GEN).trapeziums),
         ) * PSI.get_base_power(container)
         @test max_avail_mw() ≈ 10.0  # 120 MW/h over 5 minutes
         PSI.set_resolution!(container.settings, Minute(10))
         @test max_avail_mw() ≈ 20.0  # the same rate over 10 minutes
     end
 
-    @testset "under NEMLookaheadDispatch, AGC scaling follows AEMO's pre-dispatch timing" begin
+    @testset "AGC scaling applies at every dispatch interval" begin
         # 24 MW/h AGC ramp rate (2 MW per 5 minutes) and a 50 MW AGC EnablementMax.
         sys = fcas_energy_toy_system(
             2.0;
@@ -385,21 +384,12 @@ end
         )
         container = build_fcas(sys, [service_name]; steps = 2)
         device = PSY.get_component(PSY.ThermalStandard, sys, duid)
-        lookahead = Dict{Symbol, PSI.DeviceModel}(:ThermalStandard => PSI.DeviceModel(PSY.ThermalStandard, NEMLookaheadDispatch))
-        replay = Dict{Symbol, PSI.DeviceModel}(:ThermalStandard => PSI.DeviceModel(PSY.ThermalStandard, NEMReplayDispatch))
         base_power = PSI.get_base_power(container)
-        traps(template) = AustralianElectricityMarketsSimulations._fcas_offer(container, template, device, BidType.RAISEREG, OfferSide.GEN).trapeziums
+        traps() = AustralianElectricityMarketsSimulations._fcas_offer(container, device, BidType.RAISEREG, OfferSide.GEN).trapeziums
 
         # Dispatch (Table 1): AGC enablement and ramp scaling at every interval.
-        @test get_max_avail.(traps(replay)) .* base_power ≈ [2.0, 2.0]
-        @test get_enablement_max.(traps(replay)) .* base_power ≈ [50.0, 50.0]
-        # 5-minute pre-dispatch: both, first interval only.
-        @test get_max_avail.(traps(lookahead)) .* base_power ≈ [2.0, 25.0]
-        @test get_enablement_max.(traps(lookahead)) .* base_power ≈ [50.0, 100.0]
-        # 30-minute pre-dispatch: AGC enablement scaling first interval only, no ramp scaling.
-        PSI.set_resolution!(container.settings, Minute(30))
-        @test get_max_avail.(traps(lookahead)) .* base_power ≈ [25.0, 25.0]
-        @test get_enablement_max.(traps(lookahead)) .* base_power ≈ [50.0, 100.0]
+        @test get_max_avail.(traps()) .* base_power ≈ [2.0, 2.0]
+        @test get_enablement_max.(traps()) .* base_power ≈ [50.0, 50.0]
     end
 end
 
@@ -1003,21 +993,14 @@ end
         @test fcas_unit_mw(container, "TAS1_RAISEREG_BDU_ZERO_RAMP", "BAT1") ≈ 20.0 atol = FCAS_TOY_TOLERANCE
     end
 
-    @testset "§6.4: the SCADA ramping cap follows AEMO's Table 3 timing" begin
+    @testset "§6.4: the SCADA ramping cap applies in dispatch" begin
         model = _build_bdu_regulation("TAS1_RAISEREG_BDU_TIMING", 15.0, 15.0; agc_max_avail = 12.0, solve = false)
         container = PSI.get_optimization_container(model)
         bat = PSY.get_component(EnergyReservoirStorage, PSI.get_system(model), "BAT1")
-        model_for(formulation) = Dict{Symbol, PSI.DeviceModel}(
-            :EnergyReservoirStorage => PSI.DeviceModel(EnergyReservoirStorage, formulation),
-        )
-        caps_mw(formulation) = AustralianElectricityMarketsSimulations._fcas_agc_ramp_caps(
-            container, model_for(formulation), bat, BidType.RAISEREG,
+        caps_mw = AustralianElectricityMarketsSimulations._fcas_agc_ramp_caps(
+            container, bat, BidType.RAISEREG,
         ) .* PSI.get_base_power(container)
-        # Dispatch and 5-minute pre-dispatch apply it; 30-minute pre-dispatch does not.
-        @test caps_mw(NEMReplayDispatch) ≈ [12.0]
-        @test caps_mw(NEMLookaheadDispatch) ≈ [12.0]
-        PSI.set_resolution!(container.settings, Minute(30))
-        @test caps_mw(NEMLookaheadDispatch) == [0.0]
+        @test caps_mw ≈ [12.0]
     end
 end
 
@@ -1263,20 +1246,13 @@ end
     @test [bound(TOY_CHEAP, t) for t in 1:2] ≈ [10.0, 10.0]
     @test [bound(TOY_EXPENSIVE, t) for t in 1:2] == [0.0, 0.0]
 
-    @testset "under NEMLookaheadDispatch, only the first interval checks the metered InitialMW" begin
+    @testset "every interval checks the metered InitialMW and AGC status" begin
         device = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
-        lookahead = Dict{Symbol, PSI.DeviceModel}(:ThermalStandard => PSI.DeviceModel(PSY.ThermalStandard, NEMLookaheadDispatch))
-        replay = Dict{Symbol, PSI.DeviceModel}(:ThermalStandard => PSI.DeviceModel(PSY.ThermalStandard, NEMReplayDispatch))
         AEMS = AustralianElectricityMarketsSimulations
-        @test AEMS._fcas_enabled_mask(container, lookahead, device, BidType.RAISE6SEC, false) == [false, true]
-        @test AEMS._fcas_enabled_mask(container, replay, device, BidType.RAISE6SEC, false) == [false, false]
-
-        # AGC status is telemetry too: known in every interval under replay, the first only under lookahead.
+        @test AEMS._fcas_enabled_mask(container, device, BidType.RAISE6SEC, false) == [false, false]
         cheap = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
-        _, _, agc_lookahead = AEMS._fcas_enablement_inputs(container, lookahead, cheap)
-        _, _, agc_replay = AEMS._fcas_enablement_inputs(container, replay, cheap)
-        @test [agc_lookahead(t) for t in 1:2] == [0, nothing]
-        @test [agc_replay(t) for t in 1:2] == [0, 0]
+        _, _, agc_status = AEMS._fcas_enablement_inputs(container, cheap)
+        @test [agc_status(t) for t in 1:2] == [0, 0]
     end
 end
 
@@ -1326,8 +1302,7 @@ end
     )
     container = PSI.get_optimization_container(model)
     bat = get_component(EnergyReservoirStorage, sys, "BAT1")
-    replay = Dict{Symbol, PSI.DeviceModel}(:EnergyReservoirStorage => PSI.DeviceModel(EnergyReservoirStorage, NEMReplayDispatch))
-    trap = only(AustralianElectricityMarketsSimulations._fcas_offer(container, replay, bat, BidType.LOWERREG, OfferSide.LOAD).trapeziums)
+    trap = only(AustralianElectricityMarketsSimulations._fcas_offer(container, bat, BidType.LOWERREG, OfferSide.LOAD).trapeziums)
     @test collect(Tuple(trap)[1:5]) .* PSI.get_base_power(container) ≈ [-10.0, -8.0, -2.0, 0.0, 4.0]
 end
 
@@ -1486,7 +1461,7 @@ end
     @test occursin("set_fcas_effective_offers!", err.msg)
 end
 
-@testset "FCASMarket builds for a recurrent simulation under NEMReplayDispatch only" begin
+@testset "FCASMarket builds for a recurrent simulation" begin
     service_name = "TAS1_RAISE6SEC"
     function recurrent_status(formulation)
         sys = fcas_energy_toy_system(
@@ -1520,17 +1495,14 @@ end
         end
     end
     @test isnothing(recurrent_status(NEMReplayDispatch))
-    err = recurrent_status(NEMLookaheadDispatch)
-    @test err isa ArgumentError
-    @test occursin("a recurrent simulation supports NEMReplayDispatch only", err.msg)
 end
 
-@testset "FCAS band price step update and price meta parsing" begin
+@testset "FCAS band price step update and price meta lookup" begin
     sys = fcas_toy_system()
     svc = PSY.get_component(FCASService, sys, "1_RAISEREG")
     @test AEMS._fcas_price_meta_service(sys, "1_RAISEREG") == (svc, nothing)
-    @test AEMS._fcas_price_meta_service(sys, "1_RAISEREG_gen") == (svc, "gen")
-    @test AEMS._fcas_price_meta_service(sys, "1_RAISEREG_load") == (svc, "load")
+    @test AEMS._fcas_price_meta_service(sys, "1_RAISEREG_gen") == (svc, false)
+    @test AEMS._fcas_price_meta_service(sys, "1_RAISEREG_load") == (svc, true)
     @test_throws r"No FCASService for the FCASBandPriceParameter meta \"1_NOSUCH_load\"" AEMS._fcas_price_meta_service(sys, "1_NOSUCH_load")
 
     model = PSI.DecisionModel(
@@ -1737,34 +1709,10 @@ end
             @test _is_placeholder_row(row)
         end
 
-        @testset "5-minute pre-dispatch: only the first interval, 30-minute pre-dispatch: never" begin
-            sys = joint_ramping_toy(450.0; raise_agc = 15.0)
-            template = fcas_toy_template(sys, ["TAS1_RAISEREG"])
-            PSI.set_device_model!(template, PSY.ThermalStandard, NEMLookaheadDispatch)
-            model = PSI.DecisionModel(
-                template, sys;
-                optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
-                horizon = 2 * TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
-                initial_time = TOY_START, name = "fcas_toy_gating", store_variable_names = true,
-            )
-            @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-            container = PSI.get_optimization_container(model)
-            con = PSI.get_constraint(container, FCASJointRampingConstraint(), FCASService, "TAS1_RAISEREG")
-            @test !_is_placeholder_row(PSI.JuMP.constraint_object(con[duid, 1]))
-            @test _is_placeholder_row(PSI.JuMP.constraint_object(con[duid, 2]))
-
-            PSI.set_resolution!(container.settings, Minute(30))
-            # Rebuilding at a 30-minute resolution is out of scope here; §6.4's own Table 3 test
-            # ("the SCADA ramping cap follows AEMO's Table 3 timing") already covers the shared
-            # `_fcas_agc_ramp_caps` helper §6.1 reads, including the 30-minute predispatch case.
-        end
-
         @testset "InitialMW unknown at an interval" begin
-            # NEMReplayDispatch requires full "initial_mw" coverage for its own ramp constraint
-            # (and NEMLookaheadDispatch's initial-conditions sub-model is always built as
-            # NEMReplayDispatch - see `PSI.get_initial_conditions_device_model`), so a NaN gap
-            # cannot reach a full `DecisionModel` build; a real gap is a build-time throw either
-            # way, which `check_fcas_services` catches up front instead (next testset). Gate 3
+            # NEMReplayDispatch requires full "initial_mw" coverage for its own ramp constraint, so a
+            # NaN gap cannot reach a full `DecisionModel` build; a real gap is a build-time throw,
+            # which `check_fcas_services` catches up front instead (next testset). Gate 3
             # itself - `isnan(mw)` in `_add_fcas_joint_ramping_constraints!` - is exercised
             # directly against `get_initial_mw`'s documented `NaN`-at-a-gap behavior.
             sys = joint_ramping_toy(450.0; raise_agc = 15.0)

@@ -39,9 +39,12 @@ Names of the per-device `SingleTimeSeries` the setters attach, by field:
 - `fcas_agc_status`: `DISPATCHLOAD.AGCSTATUS`, `0` or `1`.
 - `fixed_load`: a unit's participant fixed loading, net injection in system-base per-unit.
 - `fixed_load_invoked`: `1` at the intervals a fixed loading applies, `0` elsewhere.
+- `from_to_flow_limit`, `to_from_flow_limit`: an interchange's per-interval flow limits, system-base
+  per-unit.
+- `loss_demand_coefficient`: an interchange's demand term of its loss factor.
 
 Offer-side series are named by [`energy_max_avail_series_name`](@ref) and
-[`fcas_series_name`](@ref).
+[`fcas_series_name`](@ref); MNSP link series by [`mnsp_series_name`](@ref).
 """
 const NEM_SERIES = (
     initial_mw = "initial_mw",
@@ -53,6 +56,9 @@ const NEM_SERIES = (
     fcas_agc_status = "fcas_agc_status",
     fixed_load = "fixed_load",
     fixed_load_invoked = "fixed_load_invoked",
+    from_to_flow_limit = "from_to_flow_limit",
+    to_from_flow_limit = "to_from_flow_limit",
+    loss_demand_coefficient = "loss_demand_coefficient",
 )
 
 
@@ -81,3 +87,18 @@ A `String`.
 fcas_series_name(prefix::AbstractString, service::BidType) = "$(prefix)_$(string(service))"
 fcas_series_name(prefix::AbstractString, service::BidType, side::OfferSide) = fcas_series_name(prefix, service) * side_suffix(side)
 fcas_series_name(prefix::AbstractString, service::BidType, decremental::Bool) = fcas_series_name(prefix, service, offer_side(decremental))
+
+
+"""
+    mnsp_series_name(direction, kind) -> String
+
+Name of an MNSP interchange's `"mnsp_<direction>_<kind>"` series.
+
+# Arguments
+- `direction`: the link, `"forward"` or `"reverse"`.
+- `kind`: `"offer"` for the band offer curves, `"max_avail"` for the link `MAXAVAIL` in MW.
+
+# Returns
+A `String`.
+"""
+mnsp_series_name(direction::AbstractString, kind::AbstractString) = "mnsp_$(direction)_$(kind)"

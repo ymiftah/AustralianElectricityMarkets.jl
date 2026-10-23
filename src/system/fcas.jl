@@ -43,8 +43,19 @@ function _extract_fcas_bid(row)
 end
 
 
+IS.@scoped_enum(FCASBidDirection, NONE = 0, INCREMENTAL = 1, DECREMENTAL = 2, BOTH = 3)
+
+
+@doc """
+    FCASBidDirection
+
+Which sides of an FCAS bid a device carries: `NONE`, `INCREMENTAL` (generation side),
+`DECREMENTAL` (load side) or `BOTH`. Returned by [`fcas_bid_direction`](@ref).
+""" FCASBidDirection
+
+
 """
-    fcas_bid_direction(device, bid_type) -> Symbol
+    fcas_bid_direction(device, bid_type) -> FCASBidDirection
 
 Which sides of a `bid_type` FCAS bid `device` carries, read from its `"fcas_trapezium_<bid_type>"`
 and `"fcas_trapezium_<bid_type>_decremental"` series ([`fcas_series_name`](@ref)).
@@ -54,14 +65,14 @@ and `"fcas_trapezium_<bid_type>_decremental"` series ([`fcas_series_name`](@ref)
 - `bid_type`: the FCAS [`BidType`](@ref).
 
 # Returns
-`:incremental`, `:decremental`, `:both` or `:none`.
+An [`FCASBidDirection`](@ref).
 """
 function fcas_bid_direction(device, bid_type::BidType)
     has_inc, has_dec = (has_time_series(device, SingleTimeSeries, fcas_series_name("fcas_trapezium", bid_type, dec)) for dec in (false, true))
-    has_inc && has_dec && return :both
-    has_inc && return :incremental
-    has_dec && return :decremental
-    return :none
+    has_inc && has_dec && return FCASBidDirection.BOTH
+    has_inc && return FCASBidDirection.INCREMENTAL
+    has_dec && return FCASBidDirection.DECREMENTAL
+    return FCASBidDirection.NONE
 end
 
 
@@ -74,9 +85,9 @@ incremental bid on any device but a load, a decremental-only bid on a `Storage` 
 """
 function _fcas_bid_modeled(device, bid_type::BidType)
     direction = fcas_bid_direction(device, bid_type)
-    direction == :incremental && return !(device isa InterruptiblePowerLoad)
-    direction == :decremental && return device isa Storage || device isa InterruptiblePowerLoad
-    direction == :both && return device isa Storage && bid_type in FCAS_REGULATION_MARKETS
+    direction == FCASBidDirection.INCREMENTAL && return !(device isa InterruptiblePowerLoad)
+    direction == FCASBidDirection.DECREMENTAL && return device isa Storage || device isa InterruptiblePowerLoad
+    direction == FCASBidDirection.BOTH && return device isa Storage && bid_type in FCAS_REGULATION_MARKETS
     return false
 end
 

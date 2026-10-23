@@ -30,7 +30,7 @@ function interconnector_loss_gaps(results::PSI.OptimizationProblemResults, sys::
         model = only(models)
         at_zero = loss_curve_vertex_values(model, Dict{String, Float64}())
         coefficients = PSY.get_time_series_values(
-            PSY.SingleTimeSeries, d, "loss_demand_coefficient"; start_time = first(stamps), len = length(stamps),
+            PSY.SingleTimeSeries, d, NEM_SERIES.loss_demand_coefficient; start_time = first(stamps), len = length(stamps),
         )
         for (t, stamp) in enumerate(stamps)
             haskey(flows, (name, stamp)) || continue

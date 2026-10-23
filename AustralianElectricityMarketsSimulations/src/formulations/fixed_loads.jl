@@ -40,7 +40,7 @@ end
 
 
 """
-    _add_fixed_load_constraints!(container, devices, ::Type{T})
+    PSI.add_constraints!(container, ::Type{EnergyFixedLoadConstraint}, devices, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
 
 Adds AEMO's Energy Inflexible Offer rows (*Schedule of Constraint Violation Penalty Factors* v8.0,
 item 13, "Unit = X MW") for the `devices` carrying a fixed loading: the device's net energy
@@ -51,7 +51,13 @@ its fixed loading. At an interval with no fixed loading both rows are relaxed by
 # Returns
 `nothing`.
 """
-function _add_fixed_load_constraints!(container::PSI.OptimizationContainer, devices, ::Type{T}) where {T}
+function PSI.add_constraints!(
+        container::PSI.OptimizationContainer,
+        ::Type{EnergyFixedLoadConstraint},
+        devices::IS.FlattenIteratorWrapper{T},
+        ::PSI.DeviceModel{T, <:AbstractNEMDispatch},
+        ::PSI.NetworkModel{<:PM.AbstractPowerModel},
+    ) where {T <: PSY.StaticInjection}
     fixed = _fixed_load_devices(devices)
     isempty(fixed) && return
     names = PSY.get_name.(fixed)
@@ -79,8 +85,8 @@ end
 function _add_fixed_load_costs!(container::PSI.OptimizationContainer, devices, ::Type{T}) where {T}
     names = PSY.get_name.(_fixed_load_devices(devices))
     isempty(names) && return
-    for slack in (EnergyFixedLoadSurplusSlack(), EnergyFixedLoadDeficitSlack())
-        _add_mpc_penalty!(container, PSI.get_variable(container, slack, T), names, PSI.get_time_steps(container), FIXED_LOADING_CVP_FACTOR)
+    for slack in (EnergyFixedLoadSurplusSlack, EnergyFixedLoadDeficitSlack)
+        _add_mpc_penalty!(container, slack, T, names, FIXED_LOADING_CVP_FACTOR)
     end
     return
 end

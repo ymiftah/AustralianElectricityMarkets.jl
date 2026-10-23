@@ -20,6 +20,49 @@ struct MNSPLinkFlowConstraint <: PSI.ConstraintType end
 
 
 """
+    MNSPLinkBandConstraint
+
+`Σ bands == link flow` for one MNSP link, per-unit. Indexed `(interconnector name, "forward" | "reverse", t)`.
+"""
+struct MNSPLinkBandConstraint <: PSI.ConstraintType end
+
+
+"""
+    MNSPLinkMaxAvailConstraint
+
+`link flow <= MAXAVAIL` for one MNSP link, per-unit. Indexed `(interconnector name, "forward" | "reverse", t)`.
+"""
+struct MNSPLinkMaxAvailConstraint <: PSI.ConstraintType end
+
+
+"""
+    MNSPLinkDirectionConstraint
+
+`link flow <= bound * on`, where `on` is [`MNSPLinkDirectionVariable`](@ref) for the forward link
+and its complement for the reverse link. Indexed `(interconnector name, "forward" | "reverse", t)`.
+"""
+struct MNSPLinkDirectionConstraint <: PSI.ConstraintType end
+
+
+"""
+    MNSPLinkLossConstraint
+
+Bounds one link's [`MNSPLinkLossVariable`](@ref) to zero when the link is inactive: `meta = "lb"`
+holds `loss >= lower * on` and `meta = "ub"` holds `loss <= upper * on`. Indexed
+`(interconnector name, "forward" | "reverse", t)`.
+"""
+struct MNSPLinkLossConstraint <: PSI.ConstraintType end
+
+
+"""
+    MNSPLinkLossSplitConstraint
+
+`forward loss + reverse loss == interconnector loss`, per-unit.
+"""
+struct MNSPLinkLossSplitConstraint <: PSI.ConstraintType end
+
+
+"""
     MNSPLinkDirectionVariable
 
 Binary per interconnector and timestep, `1` when only the forward link may flow and `0` when only

@@ -30,7 +30,8 @@ struct NEMConstraintRHSParameter <: PSI.TimeSeriesParameter end
 
 Formulation for a [`GenericConstraint`](@ref): assembles [`NEMConstraintLHS`](@ref) from the
 constraint's own stored terms and bounds it against [`NEMConstraintRHSParameter`](@ref) with a
-[`NEMConstraintLimit`](@ref).
+[`NEMConstraintLimit`](@ref). Slack penalties are objective terms only, not part of any
+PowerSimulations cost expression.
 """
 struct LinearFactorLimit <: PSI.AbstractServiceFormulation end
 
@@ -38,7 +39,8 @@ struct LinearFactorLimit <: PSI.AbstractServiceFormulation end
 """
     FCASMarket
 
-Formulation for an [`FCASService`](@ref), co-optimising FCAS capacity alongside energy.
+Formulation for an [`FCASService`](@ref), co-optimising FCAS capacity alongside energy. Band costs
+and slack penalties are objective terms only, not part of any PowerSimulations cost expression.
 """
 struct FCASMarket <: PSI.AbstractServiceFormulation end
 
@@ -101,6 +103,16 @@ regulation sides. The band axis is sized to the most bands any of those offers h
 system's series; a band an offer does not have at an interval has zero width.
 """
 struct FCASOfferBandVariable <: PSI.VariableType end
+
+
+"""
+    FCASOfferBandConstraint
+
+`Σ bands == capacity` for one contributing device's FCAS offer: its [`FCASOfferBandVariable`](@ref)s
+sum to its [`FCASCapacityVariable`](@ref), or to its [`FCASSideCapacityVariable`](@ref) on one side
+of a `PSY.Storage` device's regulation offer. Indexed `(device name, t)` with the band variable's meta.
+"""
+struct FCASOfferBandConstraint <: PSI.ConstraintType end
 
 
 """
@@ -258,10 +270,11 @@ struct GenericConstraintSlackCostParameter <: PSI.ObjectiveFunctionParameter end
 """
     MarketPriceCapPenaltyParameter
 
-Objective-function parameter that re-prices every Market Price Cap penalty slack recorded by
-`_add_mpc_penalty!` at each simulation step, each interval at its own Market Price Cap, so a
-model built once follows the cap across a financial year boundary. Registered on the `PSY.Area`
-components of the area balance.
+Objective-function parameter pricing one penalty slack container at its CVP factor times the
+Market Price Cap: its value is each interval's cap and its multiplier the CVP factor per MW of one
+interval. Keyed by the slack's component type, with a meta naming the slack variable type and meta.
+Re-priced at each simulation step, so a model built once follows the cap across a financial year
+boundary.
 """
 struct MarketPriceCapPenaltyParameter <: PSI.ObjectiveFunctionParameter end
 
@@ -308,7 +321,7 @@ struct UnitRampUpSlack <: PSI.VariableType end
 """
     UnitRampDownSlack
 
-Variable type for the elastic slack on the down row of a `PSI.RampConstraint` (`meta = "down"`)
+Variable type for the elastic slack on the down row of a `PSI.RampConstraint` (`meta = "dn"`)
 under an [`AbstractNEMDispatch`](@ref) formulation, in the units of the active power variable.
 """
 struct UnitRampDownSlack <: PSI.VariableType end

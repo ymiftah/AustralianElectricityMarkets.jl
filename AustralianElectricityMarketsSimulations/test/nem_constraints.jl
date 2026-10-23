@@ -468,9 +468,10 @@ end
     values[name, 1] = 5.0
     values[name, 2] = 5.0
     PSI.reset_variant_terms(PSI.get_objective_expression(container))
-    PSI.handle_variable_cost_parameter(
-        AEMS.GenericConstraintSlackCostParameter(), gc, name, values, penalties, nothing, container, initial_time, 2,
+    service_model = only(
+        m for m in Base.values(PSI.get_service_models(PSI.get_template(model))) if PSI.get_service_name(m) == name
     )
+    AEMS._price_gc_slacks!(container, gc, service_model, values, penalties, initial_time)
     @test [values[name, t] for t in 1:2] == [0.0, 1.0]
     # The rebuilt cost: no term at the non-invoked step, the penalty per cap times that step's Market Price Cap at the invoked one.
     mpc = AEMS._container_market_price_cap(container, initial_time + PSI.get_resolution(container))

@@ -467,6 +467,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `NEMLookaheadDispatch` and `StorageInputDevicePower`, with the pre-dispatch FCAS timing (AGC
+  scaling and telemetry on the first interval only) that only it used. `NEMReplayDispatch` is the
+  one `AbstractNEMDispatch` formulation.
 - `AbstractNEMConstraintFormulation`: `LinearFactorLimit` subtypes
   `PowerSimulations.AbstractServiceFormulation` directly, as no method dispatched on the abstract
   type and it had no other subtype.
@@ -487,6 +490,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The down row of a NEM unit's `PSI.RampConstraint` uses PSI's `"dn"` meta instead of `"down"`.
+- `NEMConstraintLimit` scales its RHS parameter by the parameter multiplier.
+- Interconnector and MNSP series names join the registry: `NEM_SERIES.from_to_flow_limit`,
+  `to_from_flow_limit`, `loss_demand_coefficient`, and `mnsp_series_name(direction, kind)`.
+- Battery ramp rows and fixed-loading rows are built through `PSI.add_constraints!` methods
+  (`RampConstraint` on `ActivePowerOutVariable`, `EnergyFixedLoadConstraint`).
+- `NEMInterconnectorLoss` builds its loss and MNSP variables and balance terms in the argument
+  stage, and their constraints and MNSP band costs in the model stage. The MNSP band-sum, MAXAVAIL,
+  direction, loss-bound and loss-split rows are registered as the new `MNSPLinkBandConstraint`,
+  `MNSPLinkMaxAvailConstraint`, `MNSPLinkDirectionConstraint`, `MNSPLinkLossConstraint` and
+  `MNSPLinkLossSplitConstraint`.
+- `FCASMarket` adds its offer band variables in the argument stage and their rows in the model
+  stage; `objective_function!` only prices them. The band-sum-to-capacity rows are registered as
+  the new `FCASOfferBandConstraint`.
+- Each Market Price Cap penalty slack is priced through its own `MarketPriceCapPenaltyParameter`,
+  keyed by the slack's component type and named by its variable type, and re-priced per key at each
+  step. Fixed-rate penalties are invariant costs. The settings `ext` penalty record, the placeholder
+  parameter on `PSY.Area` and the private `_update_parameter_values!` override are gone. The
+  generic-constraint slack cost updates through the same per-key method.
+- Every override of, or call into, a private PowerSimulations internal lives in `psi_compat.jl`.
+  The NEM energy-offer rows are built directly in the `_add_pwl_constraint!` override, which drops
+  the extra `add_constraints!` method and the `_include_min_gen_power_in_constraint` and
+  `_include_constant_min_gen_power_in_constraint` overrides.
+- FCAS band prices are read from the container's forecast window, as MNSP band prices and the
+  generic-constraint `"invoked"` mask are.
+- Formulation docstrings state which costs reach PowerSimulations' cost expressions: only energy
+  offer costs enter `ProductionCostExpression`; violation penalties and FCAS and MNSP band costs are
+  objective terms only.
+- **Breaking:** `fcas_bid_direction` returns the new `FCASBidDirection` enum (`NONE`,
+  `INCREMENTAL`, `DECREMENTAL`, `BOTH`) instead of a `Symbol`.
 - Bid series names live in one registry: `OfferSide` (`GEN`/`LOAD`), `NEM_SERIES`,
   `energy_max_avail_series_name` and `fcas_series_name(prefix, service[, side])`. Typed accessors
   `is_semi_scheduled`, `has_schedule_classification`, `is_commissioned` and `energy_offer_sides`

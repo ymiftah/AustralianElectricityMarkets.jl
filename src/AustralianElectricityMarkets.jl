@@ -44,7 +44,7 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
 export FCASService, add_fcas_services!, Readers
 export OfferSide, offer_side, side_suffix, NEM_SERIES, energy_max_avail_series_name
 export NEMEnergyOffer, get_energy_offer, NEMFCASOffer, get_fcas_offer
-export fcas_series_name, fcas_bid_direction, single_series, remove_single_series!, replace_single_series!,
+export fcas_series_name, mnsp_series_name, FCASBidDirection, fcas_bid_direction, single_series, remove_single_series!, replace_single_series!,
     nem_dispatch_devices, is_non_scheduled_load, is_commissioned, has_schedule_classification, is_semi_scheduled,
     energy_offer_sides
 

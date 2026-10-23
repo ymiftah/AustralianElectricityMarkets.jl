@@ -1,8 +1,6 @@
 #! format: off
 PSI.requires_initialization(::NEMReplayDispatch) = false
 
-PSI.requires_initialization(::NEMLookaheadDispatch) = true
-
 
 PSI.get_variable_binary(::PSI.ActivePowerVariable, ::Type{<:PSY.StaticInjection}, ::AbstractNEMDispatch) = false
 
@@ -34,11 +32,6 @@ PSI.get_multiplier_value(::PSI.AbstractPiecewiseLinearBreakpointParameter, ::PSY
 PSI.objective_function_multiplier(::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = PSI.OBJECTIVE_FUNCTION_POSITIVE
 
 PSI.variable_cost(cost::PSY.OperationalCost, ::PSI.ActivePowerVariable, ::PSY.StaticInjection, ::AbstractNEMDispatch) = PSY.get_variable(cost)
-
-
-PSI.initial_condition_default(::PSI.DevicePower, d::PSY.StaticInjection, ::AbstractNEMDispatch) = PSY.get_active_power(d)
-
-PSI.initial_condition_variable(::PSI.DevicePower, ::PSY.StaticInjection, ::AbstractNEMDispatch) = PSI.ActivePowerVariable()
 
 #! format: on
 
@@ -114,8 +107,8 @@ end
 """
     PSI.get_initial_conditions_device_model(::PSI.OperationModel, ::PSI.DeviceModel{T, <:AbstractNEMDispatch})
 
-Device model used to build the initial-conditions sub-model that [`NEMLookaheadDispatch`](@ref)
-requires.
+Device model PowerSimulations requires of every formulation for an initial-conditions sub-model;
+[`NEMReplayDispatch`](@ref) builds none.
 
 # Returns
 A `PowerSimulations.DeviceModel` over the same component type with [`NEMReplayDispatch`](@ref).
@@ -183,11 +176,6 @@ function PSI.construct_device!(
         PSI.add_parameters!(container, EnergyUIGFTimeSeriesParameter, devices, model)
     _add_fixed_load_arguments!(container, devices, model)
 
-    # The chained base measures interval 1 against a DevicePower initial condition, which has to
-    # be declared here for PowerSimulations to populate it from the initialisation sub-solve.
-    PSI.requires_initialization(D()) &&
-        PSI.add_initial_condition!(container, devices, D(), PSI.DevicePower())
-
     _process_market_bid_parameters!(container, devices, model)
     for S in _ENERGY_OFFER_SLACK_TYPES
         PSI.add_variables!(container, S, devices, D())
@@ -228,7 +216,7 @@ function PSI.construct_device!(
 
     PSI.add_constraints!(container, EnergyMaxAvailConstraint, PSI.ActivePowerVariable, devices, model, network_model)
     PSI.add_constraints!(container, EnergyUIGFConstraint, PSI.ActivePowerVariable, _semi_scheduled_devices(devices), model, network_model)
-    _add_fixed_load_constraints!(container, devices, T)
+    PSI.add_constraints!(container, EnergyFixedLoadConstraint, devices, model, network_model)
 
     PSI.add_constraints!(container, PSI.RampConstraint, PSI.ActivePowerVariable, devices, model, network_model)
 
@@ -291,7 +279,7 @@ competing violation costs.
 function _add_nem_ramp_constraints!(container::PSI.OptimizationContainer, ::Type{T}, devices, net_at, base_accessor) where {T}
     time_steps = PSI.get_time_steps(container)
     jump_model = PSI.get_jump_model(container)
-    minutes = PSI._get_minutes_per_period(container)
+    minutes = 60 * interval_hours(PSI.get_resolution(container))
 
     names = [PSY.get_name(d) for d in devices]
     isempty(names) && return
@@ -306,7 +294,7 @@ function _add_nem_ramp_constraints!(container::PSI.OptimizationContainer, ::Type
         container, PSI.RampConstraint(), T, names, time_steps; meta = "up",
     )
     con_dn = PSI.add_constraints_container!(
-        container, PSI.RampConstraint(), T, names, time_steps; meta = "down",
+        container, PSI.RampConstraint(), T, names, time_steps; meta = "dn",
     )
 
     slack_up = _add_cvp_slack!(container, UnitRampUpSlack, T, names, time_steps, UNIT_RAMP_CVP_FACTOR)
@@ -345,19 +333,6 @@ function _ramp_base_accessor(container, ::Type{NEMReplayDispatch}, ::Type{T}, na
     initial, covered = _ts_parameter_accessor(container, InitialPowerTimeSeriesParameter, T)
     _require_coverage(names, "no \"initial_mw\" time series", _SETTER_REMEDY, covered)
     return initial
-end
-
-
-function _ramp_base_accessor(container, ::Type{NEMLookaheadDispatch}, ::Type{T}, names, power) where {T}
-    ic_power = Dict(
-        PSI.get_component_name(ic) => PSI.get_value(ic)
-            for ic in PSI.get_initial_condition(container, PSI.DevicePower(), T)
-    )
-    _require_coverage(
-        names, "no DevicePower initial condition", "The initial-conditions sub-model built none.",
-        keys(ic_power),
-    )
-    return (name, t) -> t > 1 ? power[name, t - 1] : ic_power[name]
 end
 
 
@@ -446,7 +421,7 @@ arbitrary solver vertex.
 - `template`: the `PowerSimulations.ProblemTemplate` to mutate.
 - `sys`: the `PowerSystems.System` whose participants are read, via
   [`nem_dispatch_participants`](@ref).
-- `formulation`: [`NEMReplayDispatch`](@ref) or [`NEMLookaheadDispatch`](@ref).
+- `formulation`: the [`AbstractNEMDispatch`](@ref) formulation, [`NEMReplayDispatch`](@ref).
 - `skip_uncovered`: when `true`, each device model carries a `"filter_function"` attribute
   excluding components that fail [`_has_nem_dispatch_limits`](@ref), and the excluded names are
   warned about. When `false` such a component fails the build by name.
