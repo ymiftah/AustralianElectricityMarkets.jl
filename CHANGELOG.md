@@ -515,6 +515,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_include_constant_min_gen_power_in_constraint` overrides.
 - FCAS band prices are read from the container's forecast window, as MNSP band prices and the
   generic-constraint `"invoked"` mask are.
+- Formulation docstrings state which costs reach PowerSimulations' cost expressions: only energy
+  offer costs enter `ProductionCostExpression`; violation penalties and FCAS and MNSP band costs are
+  objective terms only.
 - **Breaking:** `fcas_bid_direction` returns the new `FCASBidDirection` enum (`NONE`,
   `INCREMENTAL`, `DECREMENTAL`, `BOTH`) instead of a `Symbol`.
 - Bid series names live in one registry: `OfferSide` (`GEN`/`LOAD`), `NEM_SERIES`,

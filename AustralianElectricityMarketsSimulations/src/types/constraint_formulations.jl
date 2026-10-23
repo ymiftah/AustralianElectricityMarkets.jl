@@ -30,7 +30,8 @@ struct NEMConstraintRHSParameter <: PSI.TimeSeriesParameter end
 
 Formulation for a [`GenericConstraint`](@ref): assembles [`NEMConstraintLHS`](@ref) from the
 constraint's own stored terms and bounds it against [`NEMConstraintRHSParameter`](@ref) with a
-[`NEMConstraintLimit`](@ref).
+[`NEMConstraintLimit`](@ref). Slack penalties are objective terms only, not part of any
+PowerSimulations cost expression.
 """
 struct LinearFactorLimit <: PSI.AbstractServiceFormulation end
 
@@ -38,7 +39,8 @@ struct LinearFactorLimit <: PSI.AbstractServiceFormulation end
 """
     FCASMarket
 
-Formulation for an [`FCASService`](@ref), co-optimising FCAS capacity alongside energy.
+Formulation for an [`FCASService`](@ref), co-optimising FCAS capacity alongside energy. Band costs
+and slack penalties are objective terms only, not part of any PowerSimulations cost expression.
 """
 struct FCASMarket <: PSI.AbstractServiceFormulation end
 

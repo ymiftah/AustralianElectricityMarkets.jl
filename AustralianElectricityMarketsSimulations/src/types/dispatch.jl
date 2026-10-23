@@ -10,7 +10,9 @@ Methods are defined over `PowerSystems.StaticInjection`; a `PowerSimulations.Pro
 selects the component types they apply to. Subtypes differ only in what the ramp constraint
 measures against; [`NEMReplayDispatch`](@ref) is the one subtype. Ramp,
 availability, offer-total and fixed-loading rows always carry priced slacks; the device model's
-`use_slacks` does not apply to them.
+`use_slacks` does not apply to them. Only the energy offer cost enters the device's
+`PowerSimulations.ProductionCostExpression`; slack penalties are objective terms only, reported by
+[`replication_results`](@ref)'s `constraint_violations`.
 """
 abstract type AbstractNEMDispatch <: PSI.AbstractDeviceFormulation end
 
