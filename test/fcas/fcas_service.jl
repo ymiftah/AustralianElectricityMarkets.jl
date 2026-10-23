@@ -95,9 +95,4 @@
         @test has_service(bat, svc)
     end
 
-    @testset "get_region/get_bid_type accessors" begin
-        svc = FCASService(; name = "1_RAISE6SEC", region = "1", bid_type = BidType.RAISE6SEC)
-        @test get_region(svc) == "1"
-        @test get_bid_type(svc) == BidType.RAISE6SEC
-    end
 end

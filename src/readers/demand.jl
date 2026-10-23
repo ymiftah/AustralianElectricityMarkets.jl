@@ -41,7 +41,7 @@ read only the raw intervals contributing to aggregate timestamps in `[first(date
 - `resolution::Dates.Period`: The time resolution to which timestamps are rounded up. Defaults to 5 minutes.
 
 # Returns
-A `DataFrame` with demand and renewable availability data, aggregated by the specified resolution.
+A `DataFrame` with regional demand, aggregated by the specified resolution.
 `LOSSDEMAND` is `INITIALSUPPLY + DEMANDFORECAST` plus the initial charging load of the region's
 `BIDIRECTIONAL` units (`DISPATCHLOAD.INITIALMW` where negative), with unit type and region resolved
 as of the interval.
@@ -94,12 +94,11 @@ function read_demand(db, date_range = nothing; resolution::Dates.Period = Dates.
                  GROUP BY ALL
              )
         SELECT r.SETTLEMENTDATE, r.REGIONID, r.TOTALDEMAND,
-               r.INITIALSUPPLY + r.DEMANDFORECAST + COALESCE(c.INITIALCHARGE, 0.0) AS LOSSDEMAND,
-               r.SS_SOLAR_AVAILABILITY, r.SS_WIND_AVAILABILITY
+               r.INITIALSUPPLY + r.DEMANDFORECAST + COALESCE(c.INITIALCHARGE, 0.0) AS LOSSDEMAND
         FROM $source r
         LEFT JOIN charging c ON c.SETTLEMENTDATE = r.SETTLEMENTDATE AND c.REGIONID = r.REGIONID
         WHERE r.SETTLEMENTDATE IS NOT NULL AND r.REGIONID IS NOT NULL
-          AND r.TOTALDEMAND IS NOT NULL AND r.SS_SOLAR_AVAILABILITY IS NOT NULL AND r.SS_WIND_AVAILABILITY IS NOT NULL
+          AND r.TOTALDEMAND IS NOT NULL
           $demand_where
         """,
         params,

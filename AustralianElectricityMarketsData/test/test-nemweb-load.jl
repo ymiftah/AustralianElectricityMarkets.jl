@@ -518,13 +518,12 @@ end
     config = HiveConfiguration(hive_location = tmpdir)
     source = DataSource(
         "DISPATCHPRICE", ["SETTLEMENTDATE", "REGIONID", "RRP"], config;
-        table_sort_by = ["SETTLEMENTDATE", "REGIONID"], add_partitions = ["REGIONID"],
-        month_filter_column = "SETTLEMENTDATE",
+        table_sort_by = ["SETTLEMENTDATE", "REGIONID"], month_filter_column = "SETTLEMENTDATE",
     )
     @test source.table_name == "DISPATCHPRICE"
     @test source.table_columns == ["SETTLEMENTDATE", "REGIONID", "RRP"]
     @test source.table_sort_by == ["SETTLEMENTDATE", "REGIONID"]
-    @test source.partitions == ["REGIONID", ARCHIVE_MONTH_PARTITION]
+    @test source.partitions == [ARCHIVE_MONTH_PARTITION]
     @test source.month_filter_column == "SETTLEMENTDATE"
     @test source.path == joinpath(tmpdir, "DISPATCHPRICE")
     @test !isdir(source.path)  # construction is pure, the write path creates it lazily
@@ -546,7 +545,7 @@ end
 
 @testset "MNSP and fast-start table specs: every non-key text column is typed explicitly" begin
     text_columns = Set(["PARTICIPANTID", "LINKID", "ENTRYTYPE", "INTERCONNECTORID", "DUID"])
-    for name in ("MNSP_DAYOFFER", "MNSP_PEROFFER", "MNSP_BIDOFFERPERIOD", "DISPATCH_MNSPBIDTRK")
+    for name in ("MNSP_DAYOFFER", "MNSP_BIDOFFERPERIOD", "DISPATCH_MNSPBIDTRK")
         spec = only(filter(s -> s.name == name, _TABLE_SPECS))
         for col in spec.columns
             col in text_columns && continue
@@ -714,28 +713,13 @@ if _gs_test_reachable()
             @test source.path == "gs://$test_prefix/DISPATCHPRICE"
             @test AustralianElectricityMarketsData.get_filesystem(source) == "gs"
 
-            # cached_date_range is not exported by either module — call it
-            # fully-qualified, same as _add_data/_partition_has_data elsewhere
-            # in this file.
-            cached_date_range = AustralianElectricityMarketsData.cached_date_range
-
-            # cached_date_range on a not-yet-written remote source: no data yet.
-            @test cached_date_range(source) === nothing
-
             # populate() with force_new will attempt a real NEMWEB download for a
             # known-good historical month, then write straight to GS via COPY.
             date_range = Date(2024, 1, 1):Month(1):Date(2024, 1, 1)
             populate(source, date_range)
 
-            # If NEMWEB had the file (network permitting), the partition should now
-            # be visible via the same remote existence-check path used by populate.
-            range = cached_date_range(source)
-            if range !== nothing
-                @test range == (Date(2024, 1, 1), Date(2024, 1, 31))
-
-                # populate again — should skip (data_exists) rather than re-fetch.
-                @test_logs (:info, r"already exists") min_level = Logging.Info match_mode = :any populate(source, date_range)
-            end
+            # populate again - should skip (data_exists) rather than re-fetch.
+            @test_logs (:info, r"already exists") min_level = Logging.Info match_mode = :any populate(source, date_range)
         finally
             run(`gcloud storage rm -r gs://$test_prefix`)
         end

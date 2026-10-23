@@ -189,8 +189,7 @@ A `NEMFCASOffer`.
 """
 function _fcas_offer(window::_FCASWindow, device, bid_type::BidType, side::OfferSide)
     return get_fcas_offer(
-        device, bid_type, side, window.initial_time, window.horizon; scaled = true,
-        resolution = window.resolution,
+        device, bid_type, side, window.initial_time, window.horizon; resolution = window.resolution,
     )
 end
 function _fcas_offer(container::PSI.OptimizationContainer, device, bid_type::BidType, side::OfferSide)

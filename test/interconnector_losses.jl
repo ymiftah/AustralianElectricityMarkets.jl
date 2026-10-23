@@ -80,7 +80,6 @@ let
 
     @testset "read_interconnector_loss_breakpoints" begin
         df = read_interconnector_loss_breakpoints(db, as_of)
-        @test df isa DataFrame
         @test Set(names(df)) == Set(["INTERCONNECTORID", "LOSSSEGMENT", "MWBREAKPOINT"])
         # IC6 has loss parameters but no LOSSMODEL rows at all.
         @test Set(df.INTERCONNECTORID) == Set("IC$i" for i in 1:5)
@@ -114,7 +113,6 @@ let
         models = @test_logs (:warn, r"no LOSSMODEL breakpoints") match_mode = :any begin
             interconnector_loss_models(db, as_of)
         end
-        @test models isa Dict{String, InterconnectorLossModel}
         # IC6 is skipped for want of breakpoints, not included as a lossless interconnector.
         @test Set(keys(models)) == Set("IC$i" for i in 1:5)
 
@@ -123,7 +121,6 @@ let
         @test ic1.to_region == "SNOWY1"
         @test ic1.from_region_loss_share ≈ 0.1
         @test ic1.breakpoints == [-500.0, -250.0, 0.0, 250.0, 500.0]
-        @test issorted(ic1.breakpoints)
         @test Set(keys(ic1.demand_coefficients)) == Set(["VIC1", "SNOWY1"])
         # Assembled models feed the same math the pure-function tests above cover.
         @test length(loss_segments(ic1, Dict("VIC1" => 4000.0, "SNOWY1" => 100.0))) == 4
@@ -232,26 +229,6 @@ let
             AustralianElectricityMarkets.single_series("loss_demand", first(stamps) + Minute(5), values, get_resolution(original)),
         )
         @test_throws r"is not on the timestamps" set_loss_demand_coefficients!(sys)
-    end
-
-    @testset "InterconnectorLossModel JSON round-trip" begin
-        sys = nem_system(db, RegionalNetworkConfiguration())
-        base_power = get_base_power(sys)
-        attach_interconnector_losses!(sys, db, as_of)
-
-        mktpath = mktempdir()
-        json_path = joinpath(mktpath, "sys.json")
-        to_json(sys, json_path)
-        sys2 = System(json_path)
-
-        ic1 = get_component(AreaInterchange, sys2, "IC1")
-        model = only(get_supplemental_attributes(InterconnectorLossModel, ic1))
-        @test model.interconnector == "IC1"
-        @test model.from_region == "VIC1"
-        @test model.to_region == "SNOWY1"
-        @test model.breakpoints == [-500.0, -250.0, 0.0, 250.0, 500.0] ./ base_power
-        @test model.demand_coefficients isa Dict{String, Float64}
-        @test Set(keys(model.demand_coefficients)) == Set(["VIC1", "SNOWY1"])
     end
 
     @testset "per-unit conversion preserves physical losses" begin

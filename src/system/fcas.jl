@@ -204,7 +204,7 @@ needs. Dropping `LOAD`/
 large share of real FCAS providers - measured on 2 Jan 2025 `BIDPEROFFER_D`, `LOAD` and
 `BIDIRECTIONAL` rows together outnumber `GEN` rows for several contingency markets.
 
-Two series, not one carrying [`FCASBid`](@ref)/[`FCASTrapezium`](@ref) objects directly, so each
+Two series, not one carrying [`FCASTrapezium`](@ref) objects directly, so each
 element is a plain `PiecewiseStepData` or `NTuple{7,Float64}`. Does not require or create any `Reserve`/service - FCAS
 requirements are [`GenericConstraint`](@ref)s built separately by
 [`add_nem_constraints!`](@ref).

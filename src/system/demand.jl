@@ -37,8 +37,8 @@ function set_demand!(sys, db, date_range; kwargs...)
         throw(ArgumentError("set_demand!: regional demand inputs must be finite"))
     ts = _as_timearray(demand, :SETTLEMENTDATE, :name, :TOTALDEMAND)
     loss_ts = _as_timearray(demand, :SETTLEMENTDATE, :name, :LOSSDEMAND)
-    _add_demand_ts_to_components!(sys, loss_ts, PowerLoad; name = "loss_demand")
-    return _add_demand_ts_to_components!(sys, ts, PowerLoad)
+    _add_demand_ts_to_components!(sys, loss_ts; name = "loss_demand")
+    return _add_demand_ts_to_components!(sys, ts)
 end
 
 
@@ -60,19 +60,18 @@ end
 
 
 """
-    _add_demand_ts_to_components!(sys, ts, type; name = NEM_SERIES.max_active_power)
+    _add_demand_ts_to_components!(sys, ts; name = NEM_SERIES.max_active_power)
 
-Adds demand time series data to the system components under the series name `name`.
+Adds each `PowerLoad`'s demand time series under the series name `name`.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
-- `ts`: A `TimeArray` of demand data.
-- `type`: The type of component to add the time series to.
+- `ts`: A `TimeArray` of demand data, one column per load name.
 - `name`: The time series name to attach it under.
 """
-function _add_demand_ts_to_components!(sys, ts, type; name = NEM_SERIES.max_active_power)
+function _add_demand_ts_to_components!(sys, ts; name = NEM_SERIES.max_active_power)
     loads = colnames(ts)
-    for component in get_components(type, sys)
+    for component in get_components(PowerLoad, sys)
         column = Symbol(get_name(component))
         if !in(column, loads)
             @info "Setting loads to 0 for $column"

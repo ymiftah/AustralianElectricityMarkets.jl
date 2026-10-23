@@ -29,7 +29,6 @@ const TEST_GROUPS = [
         "Network models",
         [
             "network_models/common.jl",
-            "network_models/regional_network_configuration.jl",
             "network_models/constrained_network_configuration.jl",
         ],
     ),

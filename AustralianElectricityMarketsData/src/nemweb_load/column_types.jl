@@ -222,8 +222,8 @@ const COLUMN_TYPES = Dict(
     "LOWER6SECAPCFLAG" => Int32, "LOWER1SECAPCFLAG" => Int32, "LOWER60SECAPCFLAG" => Int32,
     "LOWER5MINAPCFLAG" => Int32,
     "LOWERREGAPCFLAG" => Int32,
-    # MNSP offer tables, DISPATCH_MNSPBIDTRK and the FCAS interconnector limits. OFFERDATE is DATE in
-    # MNSP_PEROFFER but TIMESTAMP in MNSP_DAYOFFER, so it is read as DateTime in both.
+    # MNSP offer tables, DISPATCH_MNSPBIDTRK and the FCAS interconnector limits. OFFERDATE is read as
+    # DateTime, the type of MNSP_DAYOFFER's TIMESTAMP.
     "OFFERDATE" => DateTime,
     "OFFERDATETIME" => DateTime,
     "TRADINGDATE" => Date,

@@ -2,13 +2,13 @@
     read_invoked_constraints(db, date_range; intervention = 0)
 
 Reads `DISPATCHCONSTRAINT` over `date_range`: one row per `(SETTLEMENTDATE, GENCONID)` with
-`RHS`, `LHS`, `MARGINALVALUE`, and the exact constraint version NEMDE used that interval
+`RHS` and the exact constraint version NEMDE used that interval
 (`GENCONID_EFFECTIVEDATE`/`GENCONID_VERSIONNO`). Membership in this table is the definition
 of "NEMDE actually enforced this constraint" — see [`add_nem_constraints!`](@ref AustralianElectricityMarkets.add_nem_constraints!).
 """
 function read_invoked_constraints(db, date_range; intervention::Integer = 0)
     columns = [
-        _cast_double("RHS"), _cast_double("LHS"), _cast_double("MARGINALVALUE"),
+        _cast_double("RHS"),
         "GENCONID_EFFECTIVEDATE", "GENCONID_VERSIONNO",
     ]
     df = _read_dispatch_table(columns, db, :DISPATCHCONSTRAINT, "CONSTRAINTID", date_range; intervention, order = true)

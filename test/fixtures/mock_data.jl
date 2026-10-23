@@ -1014,3 +1014,19 @@ function write_mock_interconnector_results(hive_root::String)
     DuckDB.close(ddb)
     return
 end
+
+
+# Copies the hive at `source`, rewrites `table` through the SQL `query` (over the copy named `input`)
+# and returns a connection to the copy, so each damaged cache is private to its test.
+function damaged_cache(source, table, query)
+    hive = joinpath(mktempdir(), "hive")
+    cp(source, hive)
+    path = joinpath(hive, string(table))
+    conn = DuckDB.DB()
+    DuckDB.execute(conn, "CREATE TABLE input AS SELECT * FROM read_parquet('$path/**/*.parquet', hive_partitioning = true)")
+    DuckDB.execute(conn, query)
+    rm(path; recursive = true)
+    DuckDB.execute(conn, "COPY input TO '$path' (FORMAT PARQUET, PARTITION_BY (archive_month))")
+    DuckDB.close(conn)
+    return aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
+end

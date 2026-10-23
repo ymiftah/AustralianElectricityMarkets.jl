@@ -177,13 +177,9 @@ PSY.supports_time_series(::GenericConstraint) = true
 
 get_sense(value::GenericConstraint) = value.sense
 
-set_sense!(value::GenericConstraint, val) = value.sense = val
-
 # pu under SYSTEM_BASE, MW under NATURAL_UNITS - stamped by add_service! like any other
 # PSY.Component's units_info.
 get_rhs(value::GenericConstraint) = PSY.get_value(value, Val(:rhs), Val(:mva))
-
-set_rhs!(value::GenericConstraint, val) = value.rhs = PSY.set_value(value, Val(:rhs), val, Val(:mva))
 
 get_constraint_weight(value::GenericConstraint) = value.constraint_weight
 
@@ -195,11 +191,7 @@ PSY.set_description!(value::GenericConstraint, val) = value.description = val
 
 get_terms(value::GenericConstraint) = value.terms
 
-set_terms!(value::GenericConstraint, val) = value.terms = val
-
 get_fcas_requirements(value::GenericConstraint) = value.fcas_requirements
-
-set_fcas_requirements!(value::GenericConstraint, val) = value.fcas_requirements = val
 
 PSY.get_ext(value::GenericConstraint) = value.ext
 
@@ -220,22 +212,6 @@ get_limit_type(value::GenericConstraint) = coalesce(get(value.ext, "limit_type",
 `GENCONDATA.SOURCE`, or `nothing` if absent.
 """
 get_source(value::GenericConstraint) = coalesce(get(value.ext, "source", nothing), nothing)
-
-
-"""
-    get_effective_date(value::GenericConstraint) -> Union{String, Nothing}
-
-`GENCONDATA.EFFECTIVEDATE`, or `nothing` if absent.
-"""
-get_effective_date(value::GenericConstraint) = coalesce(get(value.ext, "effective_date", nothing), nothing)
-
-
-"""
-    get_version_no(value::GenericConstraint) -> Union{Int, Nothing}
-
-`GENCONDATA.VERSIONNO`, or `nothing` if absent.
-"""
-get_version_no(value::GenericConstraint) = coalesce(get(value.ext, "version_no", nothing), nothing)
 
 
 """

@@ -5,7 +5,7 @@ using DuckDB, DBInterface
 using AustralianElectricityMarketsCache
 import AustralianElectricityMarketsCache: DataSource, get_filesystem, islocal,
     _parse_hive_root, _local_tmp_dir, _new_duckdb_connection, _partition_has_data,
-    _partition_dir_names, cached_date_range, _TABLE_SPECS, _TABLE_SPECS_BY_NAME
+    _TABLE_SPECS, _TABLE_SPECS_BY_NAME
 
 export populate, populate_legacy_archive, get_table, list_available_tables
 export ARCHIVE_MONTH_PARTITION

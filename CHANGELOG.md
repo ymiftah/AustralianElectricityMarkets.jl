@@ -490,6 +490,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`GENCONDATA.DYNAMICRHS` is no longer read or interpreted**: `read_constraint_definitions` no longer selects it, and `add_nem_constraints!` no longer puts it on `GenericConstraint.ext`. AEMO documents the column as "Not used"; the raw NEMWEB ingestion column list is untouched.
 - `AustralianElectricityMarketsSimulations.MissingCacheError`, which nothing threw, and the unused
   `Statistics` dependency of `AustralianElectricityMarketsSimulations`.
+- Root renewable and hydro setters `set_renewable_pv!`, `set_renewable_wind!` and `set_hydro_limits!`:
+  `set_nem_dispatch_limits!` and `set_nem_energy_limits!` set the same device limits.
+- `set_nem_initial_conditions!`, and the `allow_missing_ramp_rates` keyword of
+  `set_nem_dispatch_limits!`: unusable `DISPATCHLOAD` data always throws.
+- `FCASBid`, `get_fcas_bid`, `get_offer_curve` and `get_trapezium`: `NEMFCASOffer` (from
+  `get_fcas_offer`) carries the same trapezium and curve pairing.
+- `get_fcas_offer`'s `scaled` keyword (offers are always scaled), the `agc_first_interval_only` and
+  `agc_ramp_scaling` keywords of `get_scaled_fcas_trapezium`, and the exports of
+  `get_fcas_trapezium` and `get_fcas_offer_curve`.
+- `add_nem_constraints!` and `ConstrainedNetworkConfiguration` keywords `include_solution`,
+  `resolution`, `allow_empty_region_terms` and `unresolved_terms`, and the `"lhs"` and
+  `"marginal_value"` series they attached. An unresolved unit term is always dropped and recorded
+  in `get_dropped_terms`.
+- `GenericConstraint` accessors `set_sense!`, `set_rhs!`, `set_terms!`, `set_fcas_requirements!`,
+  `get_effective_date` and `get_version_no`.
+- The root export of `list_available_tables`; it remains exported by `AustralianElectricityMarketsCache`
+  and `AustralianElectricityMarketsData`.
+- `show` methods of `AEMDB`, `cached_date_range`, and the `add_partitions` keyword of `DataSource`.
+- The `MNSP_PEROFFER` table spec. MNSP offer replays cover intervals from 1 October 2021, the start of
+  five-minute settlement; earlier intervals are not supported.
 
 ### Changed
 

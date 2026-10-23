@@ -106,24 +106,6 @@ end
 
 
 """
-One device's bid into one FCAS market for one interval: a 10-band offer curve plus the
-trapezium parameters for that market. Keyed by `service::BidType` (not a reserve name — FCAS
-requirements are [`GenericConstraint`](@ref)s, not `PowerSystems.Reserve`s).
-"""
-struct FCASBid <: PSY.DeviceParameter
-    service::BidType
-    offer_curve::PSY.PiecewiseStepData
-    trapezium::FCASTrapezium
-end
-
-
-get_service(value::FCASBid) = value.service
-
-get_offer_curve(value::FCASBid) = value.offer_curve
-
-get_trapezium(value::FCASBid) = value.trapezium
-
-"""
     scale_fcas_trapezium(trap; agc_enablement_min = nothing, agc_enablement_max = nothing,
         agc_max_avail = nothing, uigf = nothing, is_regulation) -> FCASTrapezium
 

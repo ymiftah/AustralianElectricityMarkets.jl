@@ -12,14 +12,13 @@ import TimeSeries: TimeArray, colnames, timestamp
 import PowerSystems as PSY
 import InfrastructureSystems as IS
 
-export HiveConfiguration, list_available_tables, aem_connect
+export HiveConfiguration, aem_connect
 export NetworkConfiguration, table_requirements, nem_system
 export RegionalNetworkConfiguration, ConstrainedNetworkConfiguration, ReplayNetworkConfiguration
-export set_mnsp_offers!, set_demand!, set_renewable_pv!, set_renewable_wind!,
-    set_market_bids!, set_hydro_limits!
+export set_mnsp_offers!, set_demand!, set_market_bids!
 export get_storage_energy_max_avail
 export set_fcas_bids!, set_fcas_scaling_inputs!
-export set_nem_dispatch_limits!, set_nem_initial_conditions!, set_interconnector_flow_limits!, set_loss_demand_coefficients!
+export set_nem_dispatch_limits!, set_interconnector_flow_limits!, set_loss_demand_coefficients!
 export get_initial_mw, get_energy_availability
 export set_nem_energy_limits!
 export set_nem_fixed_loads!
@@ -29,18 +28,18 @@ export fcas_service_name
 export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS, BidType
 export InterconnectorLossModel, interconnector_loss_models, loss_factor, interconnector_losses, loss_segments,
     loss_curve_vertex_values, attach_interconnector_losses!
-export FCASTrapezium, FCASBid,
+export FCASTrapezium,
     get_enablement_min, get_low_breakpoint, get_high_breakpoint, get_enablement_max,
     get_max_avail, get_ramp_up_rate, get_ramp_down_rate, get_lower_slope_coeff, get_upper_slope_coeff,
-    get_offer_curve, get_trapezium, scale_fcas_trapezium
-export get_fcas_trapezium, get_fcas_offer_curve, get_fcas_bid, get_scaled_fcas_trapezium,
+    scale_fcas_trapezium
+export get_scaled_fcas_trapezium,
     get_fcas_agc_ramp_capability, get_fcas_agc_status
 export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm, FCASRequirement,
     GenericConstraint,
     get_duid, get_bid_type, get_factor, get_interconnector, get_region, get_service, get_devices,
-    get_sense, set_sense!, get_rhs, set_rhs!, get_constraint_weight, set_constraint_weight!,
-    get_limit_type, get_source, get_effective_date, get_version_no, get_gencon_id,
-    get_terms, set_terms!, get_fcas_requirements, set_fcas_requirements!, resolve_term_devices
+    get_sense, get_rhs, get_constraint_weight, set_constraint_weight!,
+    get_limit_type, get_source, get_gencon_id,
+    get_terms, get_fcas_requirements, resolve_term_devices
 export FCASService, add_fcas_services!, Readers
 export OfferSide, offer_side, side_suffix, NEM_SERIES, energy_max_avail_series_name
 export NEMEnergyOffer, get_energy_offer, NEMFCASOffer, get_fcas_offer
@@ -74,7 +73,6 @@ include("accessors/constraints.jl")
 include("accessors/offers.jl")
 include("system/interface.jl")
 include("system/demand.jl")
-include("system/renewables.jl")
 include("system/bids.jl")
 include("system/dispatch_limits.jl")
 include("system/energy_limits.jl")
@@ -89,7 +87,6 @@ using .RegionModel: RegionalNetworkConfiguration, ConstrainedNetworkConfiguratio
 
 @doc (@doc AustralianElectricityMarketsCache.HiveConfiguration) HiveConfiguration
 @doc (@doc AustralianElectricityMarketsCache.aem_connect) aem_connect
-@doc (@doc AustralianElectricityMarketsCache.list_available_tables) list_available_tables
 @doc (@doc RegionModel.nem_system) nem_system
 @doc (@doc RegionModel.RegionalNetworkConfiguration) RegionalNetworkConfiguration
 @doc (@doc RegionModel.ConstrainedNetworkConfiguration) ConstrainedNetworkConfiguration
