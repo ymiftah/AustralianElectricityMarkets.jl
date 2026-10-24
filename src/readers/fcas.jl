@@ -44,23 +44,11 @@ is cached.
 function read_fcas_requirements(db, date_range; intervention::Integer = 0)
     start_date = first(date_range)
     end_date = last(date_range)
-    sd = Date(start_date) - Day(1)
-    ed = Date(end_date) + Day(1)
     constraint_table = read_hive(db, :DISPATCHCONSTRAINT)
     gencon_table = read_hive(db, :GENCONDATA)
-    constraint_schema = names(_query(db, "SELECT * FROM $constraint_table LIMIT 0"))
-    req_union_sql, req_param_spec = _fcas_req_union_sql(db, intervention)
-    if isnothing(req_union_sql)
-        throw(
-            ArgumentError(
-                "Neither DISPATCH_FCAS_REQ nor DISPATCH_FCAS_REQ_CONSTRAINT is cached — run " *
-                    "`populate(db, :DISPATCH_FCAS_REQ, ...)` or `populate(db, :DISPATCH_FCAS_REQ_CONSTRAINT, ...)` " *
-                    "first (AEMO switched tables at the 2025-05/2025-06 boundary; which one you need depends on the date range).",
-            ),
-        )
-    end
-    params = _expand_fcas_req_params(req_param_spec, sd, ed)
-    append!(params, [sd, ed])
+    constraint_schema = _table_schema(db, constraint_table)
+    req_union_sql, params = _fcas_req_union_sql(db, start_date, end_date, intervention)
+    append!(params, [start_date, end_date])
     _push_intervention!(params, constraint_schema, intervention)
     df = _query(
         db,
@@ -126,12 +114,12 @@ function read_fcas_requirements(db, date_range; intervention::Integer = 0)
 end
 
 """
-    read_fcas_bids(db, date_range, bid_type::BidType; kwargs...)
-    read_fcas_bids(db, date_range, bid_types::AbstractVector{BidType}; kwargs...)
+    read_fcas_bids(db, date_range, bid_type::BidType; resolution = nothing)
+    read_fcas_bids(db, date_range, bid_types::AbstractVector{BidType}; resolution = nothing)
 
 Like [`read_bids`](@ref), but for an AEMO FCAS `bid_type` (e.g. `BidType.RAISE6SEC`,
 `BidType.RAISEREG` — see `FCAS_BID_TYPES`). Reuses `_massage_bids` for the 10-band offer
-curve (same shape as the energy bid path), and additionally reads the AEMO FCAS trapezium
+(same columns as the energy bid path), and additionally reads the AEMO FCAS trapezium
 columns from `BIDPEROFFER_D` (`ENABLEMENTMIN/MAX`, `LOWBREAKPOINT`, `HIGHBREAKPOINT`,
 `ROCUP`, `ROCDOWN` — already present in that table, just never selected by the
 energy-only bid path).
@@ -139,21 +127,17 @@ energy-only bid path).
 With a vector of `bid_types` the tables are read once for all of them and the result carries
 an extra `BIDTYPE` column (`BidType`).
 """
-function read_fcas_bids(db, date_range, bid_type::BidType; kwargs...)
-    return select!(read_fcas_bids(db, date_range, [bid_type]; kwargs...), Not(:BIDTYPE))
+function read_fcas_bids(db, date_range, bid_type::BidType; resolution::Union{Nothing, Dates.Period} = nothing)
+    return select!(read_fcas_bids(db, date_range, [bid_type]; resolution), Not(:BIDTYPE))
 end
 
-function read_fcas_bids(db, date_range, bid_types::AbstractVector{BidType}; kwargs...)
+function read_fcas_bids(
+        db, date_range, bid_types::AbstractVector{BidType}; resolution::Union{Nothing, Dates.Period} = nothing,
+    )
     start_date = first(date_range)
     end_date = last(date_range)
-    energy_bids_table = read_hive(db, :BIDPEROFFER_D)
-    pricebids_table = read_hive(db, :BIDDAYOFFER_D)
-
-    bids = _massage_bids(
-        db, energy_bids_table, pricebids_table, start_date, end_date;
-        bid_types = bid_types, keep_bid_type = true, resolution = get(kwargs, :resolution, nothing),
-    )
-    trapezium = _read_fcas_trapezium(db, energy_bids_table, bid_types, start_date, end_date)
+    bids = _massage_bids(db, start_date, end_date; bid_types, keep_bid_type = true, resolution)
+    trapezium = _read_period_offers(db, bid_types, start_date, end_date, nothing; columns = _FCAS_TRAPEZIUM_COLUMNS)
     joined = innerjoin(
         bids, trapezium; on = [:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION, :BIDTYPE],
     )
@@ -162,146 +146,9 @@ function read_fcas_bids(db, date_range, bid_types::AbstractVector{BidType}; kwar
 end
 
 
-"""
-    _read_fcas_trapezium(db, energy_bids_table, bid_types, start_date, end_date)
+# The FCAS trapezium columns of `BIDPEROFFER_D`; `MAXAVAIL` comes with the offer bands instead.
+const _FCAS_TRAPEZIUM_COLUMNS = ["ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN"]
 
-Reads the FCAS trapezium columns (`ENABLEMENTMIN/MAX`, `LOWBREAKPOINT`, `HIGHBREAKPOINT`,
-`ROCUP`, `ROCDOWN`) from `BIDPEROFFER_D` for `bid_types`, latest-`VERSIONNO` resolved per
-`(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE)`. Does not select `MAXAVAIL` - `bids`
-already carries it from the same table/filter via [`_massage_bids`](@ref), and duplicating it
-here would force `read_fcas_bids`'s join to rename one copy out from under `_extract_fcas_bid`.
-"""
-function _read_fcas_trapezium(db, energy_bids_table, bid_types::AbstractVector{BidType}, start_date, end_date)
-    sd = Date(start_date) - Day(1)
-    ed = Date(end_date) + Day(1)
-    bid_type_list = join(("'$(string(bt))'" for bt in bid_types), ", ")
-    trapezium = _query(
-        db,
-        """
-        SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE,
-               ENABLEMENTMIN, LOWBREAKPOINT, HIGHBREAKPOINT, ENABLEMENTMAX,
-               ROCUP, ROCDOWN
-        FROM $energy_bids_table
-        WHERE BIDTYPE IN ($bid_type_list) AND SETTLEMENTDATE BETWEEN ? AND ?
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
-        ) = 1
-        ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME
-        """,
-        [sd, ed],
-    )
-    subset!(trapezium, :INTERVAL_DATETIME => ByRow(x -> start_date <= x < end_date))
-    return trapezium
-end
-
-
-"""
-    _require_fcas_float(row, field::Symbol)
-
-`Float64(getproperty(row, field))`, or an actionable `ArgumentError` naming `field` and the
-row's `DUID` if the value is `missing`.
-"""
-function _require_fcas_float(row, field::Symbol)
-    value = getproperty(row, field)
-    ismissing(value) && throw(
-        ArgumentError(
-            "BIDPEROFFER_D.$field is missing for DUID $(row.DUID) - cannot build an " *
-                "FCASTrapezium without it.",
-        ),
-    )
-    return Float64(value)
-end
-
-
-"""
-    _extract_fcas_bid(row)
-
-Mirrors [`_extract_power_bids`](@ref), also building the FCAS trapezium.
-
-# Returns
-`(curve_data, trapezium_row)`: a `PiecewiseStepData` and the `NTuple{7,Float64}` wire form
-of an [`FCASTrapezium`](@ref).
-"""
-function _extract_fcas_bid(row)
-    curve_data = _extract_power_bids(row)
-    trapezium = FCASTrapezium(;
-        enablement_min = _require_fcas_float(row, :ENABLEMENTMIN),
-        low_breakpoint = _require_fcas_float(row, :LOWBREAKPOINT),
-        high_breakpoint = _require_fcas_float(row, :HIGHBREAKPOINT),
-        enablement_max = _require_fcas_float(row, :ENABLEMENTMAX),
-        max_avail = _require_fcas_float(row, :MAXAVAIL),
-        ramp_up_rate = ismissing(row.ROCUP) ? nothing : Float64(row.ROCUP),
-        ramp_down_rate = ismissing(row.ROCDOWN) ? nothing : Float64(row.ROCDOWN),
-    )
-    interval = hasproperty(row, :INTERVAL_DATETIME) ? " at $(row.INTERVAL_DATETIME)" : ""
-    _validate_fcas_trapezium(trapezium, "BIDPEROFFER_D DUID $(row.DUID) ($(row.DIRECTION))$interval")
-    return curve_data, Tuple(trapezium)
-end
-
-
-"""
-    read_fcas_prices(db, date_range; intervention = 0)
-
-Reads per-interval, per-region FCAS clearing prices from `DISPATCHPRICE`, long-format: one
-row per `(SETTLEMENTDATE, REGIONID, BIDTYPE::BidType, RRP, ROP, APCFLAG)`.
-
-`RRP` is the settlement price; `ROP` is the price before scaling, capping, or VoLL
-override - they differ exactly when `APCFLAG != 0` (an administered price cap event).
-Summing [`read_fcas_requirements`](@ref)'s `MARGINALVALUE` per `(REGIONID, BIDTYPE)`
-reproduces `ROP` for that interval (not `RRP`, which may additionally be capped).
-
-`intervention` selects the dispatch run: `0` is the normal (non-intervention) run.
-
-`APCFLAG` is `missing` for cached partitions that predate its addition to `_TABLE_SPECS`
-(and `INTERVENTION` is compared via `COALESCE(INTERVENTION, 0)` for the same reason - see
-[`read_fcas_requirements`](@ref)).
-"""
-function read_fcas_prices(db, date_range; intervention::Integer = 0)
-    start_date = first(date_range)
-    end_date = last(date_range)
-    sd = Date(start_date) - Day(1)
-    ed = Date(end_date) + Day(1)
-    table = read_hive(db, :DISPATCHPRICE)
-    schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
-    params = Any[sd, ed]
-    _push_intervention!(params, schema, intervention)
-
-    price_cols = String[]
-    for bid_type in FCAS_BID_TYPES
-        bid_type_str = string(bid_type)
-        rrp_col, rop_col = "$(bid_type_str)RRP", "$(bid_type_str)ROP"
-        all(in(schema), (rrp_col, rop_col)) || continue
-        push!(price_cols, _cast_double(rrp_col), _cast_double(rop_col))
-        apc_col = "$(bid_type_str)APCFLAG"
-        apc_col in schema && push!(price_cols, "TRY_CAST($apc_col AS INTEGER) AS $apc_col")
-    end
-    select_list = join(["SETTLEMENTDATE", "REGIONID", price_cols...], ", ")
-    df = _query(
-        db,
-        """
-        SELECT $select_list
-        FROM $table
-        WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(schema))
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, REGIONID ORDER BY archive_month DESC
-        ) = 1
-        """,
-        params,
-    )
-    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
-
-    long = DataFrame()
-    for bid_type in FCAS_BID_TYPES
-        bid_type_str = string(bid_type)
-        rrp_col, rop_col, apc_col = "$(bid_type_str)RRP", "$(bid_type_str)ROP", "$(bid_type_str)APCFLAG"
-        rrp_col in names(df) || continue
-        block = select(df, :SETTLEMENTDATE, :REGIONID, rrp_col => :RRP, rop_col => :ROP)
-        block[!, :APCFLAG] = apc_col in names(df) ? df[!, apc_col] : fill(missing, nrow(block))
-        block[!, :BIDTYPE] = fill(bid_type, nrow(block))
-        append!(long, block; promote = true)
-    end
-    return long
-end
 
 """
     read_fcas_dispatch(db, date_range; intervention = 0)
@@ -322,45 +169,19 @@ availability (`RAISEREGAVAILABILITY`/`LOWERREGAVAILABILITY`).
 column - see [`read_fcas_requirements`](@ref)).
 """
 function read_fcas_dispatch(db, date_range; intervention::Integer = 0)
-    start_date = first(date_range)
-    end_date = last(date_range)
-    sd = Date(start_date) - Day(1)
-    ed = Date(end_date) + Day(1)
-    table = read_hive(db, :DISPATCHLOAD)
-    dispatch_schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
-    params = Any[sd, ed]
-    _push_intervention!(params, dispatch_schema, intervention)
-
-    bidtype_cols = String[]
-    for bid_type in FCAS_BID_TYPES
-        bid_type_str = string(bid_type)
-        bid_type_str in dispatch_schema || continue
-        push!(bidtype_cols, _cast_double(bid_type_str))
-        avail_col = "$(bid_type_str)ACTUALAVAILABILITY"
-        avail_col in dispatch_schema && push!(bidtype_cols, _cast_double(avail_col))
-    end
-    select_list = join(
-        [
-            "SETTLEMENTDATE", "DUID",
+    df = _read_dispatch_table(db, :DISPATCHLOAD, "DUID", date_range; intervention) do schema
+        cols = [
             _cast_double("INITIALMW"), _cast_double("TOTALCLEARED"), _cast_double("AVAILABILITY"),
             "TRY_CAST(AGCSTATUS AS INTEGER) AS AGCSTATUS",
-            bidtype_cols...,
-        ],
-        ", ",
-    )
-    df = _query(
-        db,
-        """
-        SELECT $select_list
-        FROM $table
-        WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(dispatch_schema))
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, DUID ORDER BY archive_month DESC
-        ) = 1
-        """,
-        params,
-    )
-    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
+        ]
+        for bid_type in string.(FCAS_BID_TYPES)
+            bid_type in schema || continue
+            push!(cols, _cast_double(bid_type))
+            avail_col = "$(bid_type)ACTUALAVAILABILITY"
+            avail_col in schema && push!(cols, _cast_double(avail_col))
+        end
+        return cols
+    end
 
     long = DataFrame()
     for bid_type in FCAS_BID_TYPES
@@ -405,47 +226,12 @@ A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `RAISEREGENABLEMENTMIN`, `RAISEREGE
 `LOWERREGENABLEMENTMIN`, `LOWERREGENABLEMENTMAX`, `RAMPUPRATE`, `RAMPDOWNRATE`, `AGCSTATUS`.
 """
 function read_fcas_scaling_inputs(db, date_range; intervention::Integer = 0)
-    start_date = first(date_range)
-    end_date = last(date_range)
-    sd = Date(start_date) - Day(1)
-    ed = Date(end_date) + Day(1)
-
-    _table_is_cached(db, :DISPATCHLOAD) || throw(
-        ArgumentError(
-            "DISPATCHLOAD is not cached — run `populate(db, :DISPATCHLOAD, <from>, <to>)` first.",
-        ),
-    )
-    table = read_hive(db, :DISPATCHLOAD)
-    schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
     scaling_cols = (
         "RAISEREGENABLEMENTMIN", "RAISEREGENABLEMENTMAX",
         "LOWERREGENABLEMENTMIN", "LOWERREGENABLEMENTMAX", "RAMPUPRATE", "RAMPDOWNRATE", "AGCSTATUS",
     )
-    for col in scaling_cols
-        col in schema || throw(
-            ArgumentError(
-                "DISPATCHLOAD's cached partitions have no $col column at all — they predate " *
-                    "AEMO publishing it. Run `populate(db, :DISPATCHLOAD, <from>, <to>; force_new = true)` " *
-                    "to re-download.",
-            ),
-        )
+    return _read_dispatch_table(db, :DISPATCHLOAD, "DUID", date_range; intervention) do schema
+        _require_columns(:DISPATCHLOAD, schema, scaling_cols)
+        return [_cast_double(c) for c in scaling_cols]
     end
-
-    params = Any[sd, ed]
-    _push_intervention!(params, schema, intervention)
-    select_list = join(["SETTLEMENTDATE", "DUID", (_cast_double(c) for c in scaling_cols)...], ", ")
-    df = _query(
-        db,
-        """
-        SELECT $select_list
-        FROM $table
-        WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(schema))
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, DUID ORDER BY archive_month DESC
-        ) = 1
-        """,
-        params,
-    )
-    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
-    return df
 end

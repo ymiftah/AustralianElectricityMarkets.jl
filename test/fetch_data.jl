@@ -1,20 +1,2 @@
-using AustralianElectricityMarkets
-using AustralianElectricityMarketsData: populate
-using Dates
-
-# Define the date range required for tests and documentation examples
-# Covers all dates used across the repository
-date_range = Date(2025, 1, 1):Date(2025, 1, 3)
-
-# Tables required for the RegionalNetworkConfiguration
-tables = table_requirements(RegionalNetworkConfiguration())
-
-println("Fetching data for tables: ", tables)
-println("Date range: ", date_range)
-
-db = aem_connect()
-for table in tables
-    populate(db, table, first(date_range), last(date_range))
-end
-
-println("Data fetching complete.")
+# Disabled: test inputs must be generated locally.
+# Tests must not download market data or contact external systems.

@@ -110,22 +110,19 @@ function _loss_template()
     return template
 end
 
-@testset "NEMInterconnectorLoss <: PSI.AbstractBranchFormulation" begin
-    @test AEMS.NEMInterconnectorLoss <: PSI.AbstractBranchFormulation
+# Builds and solves `sys` under `_loss_template()` over two hours; returns the model and its results.
+function _solve_loss(sys)
+    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    return model, PSI.OptimizationProblemResults(model)
 end
 
 @testset "missing/ambiguous InterconnectorLossModel throws" begin
     sys = augmented_pscb_system()
     model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     PSI.set_output_dir!(model, mktempdir())
-    err = try
-        PSI.build_impl!(model)
-        nothing
-    catch e
-        e
-    end
-    @test err isa ArgumentError
-    @test occursin("IC1", sprint(showerror, err))
+    @test_throws r"IC1" PSI.build_impl!(model)
 end
 
 @testset "non-ascending segment slopes throw at construction" begin
@@ -133,14 +130,7 @@ end
     sys = _loss_test_system(; loss_flow_coefficient = -1.0e-3, breakpoints = [-100.0, 0.0, 100.0])
     model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     PSI.set_output_dir!(model, mktempdir())
-    err = try
-        PSI.build_impl!(model)
-        nothing
-    catch e
-        e
-    end
-    @test err isa ArgumentError
-    @test occursin("concave", sprint(showerror, err))
+    @test_throws r"concave" PSI.build_impl!(model)
 end
 
 @testset "hand-computed loss for a known flow and a linear (single-segment) loss model" begin
@@ -149,10 +139,7 @@ end
     # the arithmetic below is closed-form, not just consistent with the LP's own segments.
     share = 0.4
     sys = _loss_test_system(; from_region_loss_share = share)
-    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    PSI.solve!(model)
-    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    model, res = _solve_loss(sys)
 
     res = PSI.OptimizationProblemResults(model)
     flow_df = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
@@ -177,6 +164,12 @@ end
         )
     end
     @test flow ≈ load2 + (1.0 - share) * loss atol = 1.0e-6
+
+    container = PSI.get_optimization_container(model)
+    @test !PSI.has_container_key(container, AEMS.InterconnectorLossSegmentFullVariable, PSY.AreaInterchange)
+    for key in ("InterconnectorFlowSurplusSlack__AreaInterchange", "InterconnectorFlowDeficitSlack__AreaInterchange")
+        @test all(abs.(PSI.read_variable(res, key).value) .< 1.0e-6)
+    end
 
     @testset "loss split balances the from-area: generation = load + flow + share * loss" begin
         # Every generator is on area 1 (Solitude/SOLAR1, area 2's own generation, are disabled),
@@ -205,10 +198,7 @@ end
         loss_flow_coefficient = 2.0e-4, breakpoints = [-100.0, -25.0, 0.0, 25.0, 100.0],
         priced_supply_only = true,
     )
-    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    PSI.solve!(model)
-    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    model, res = _solve_loss(sys)
 
     container = PSI.get_optimization_container(model)
     gaps = interconnector_loss_gaps(PSI.OptimizationProblemResults(model), sys)
@@ -254,11 +244,7 @@ end
         loss_flow_coefficient = 2.0e-4, breakpoints = [-100.0, -25.0, 0.0, 25.0, 100.0],
         negative_cost = true,
     )
-    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    PSI.solve!(model)
-    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-    res = PSI.OptimizationProblemResults(model)
+    model, res = _solve_loss(sys)
     gaps = interconnector_loss_gaps(res, sys)
     @test !isempty(gaps)
     @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
@@ -269,23 +255,6 @@ end
         @test share * price[("1", stamp)] + (1 - share) * price[("2", stamp)] < 0.0
     end
     @test PSI.is_milp(PSI.get_optimization_container(model))
-end
-
-@testset "single-segment loss models add no fill indicators" begin
-    sys = _loss_test_system()
-    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    container = PSI.get_optimization_container(model)
-    @test !PSI.has_container_key(container, AEMS.InterconnectorLossSegmentFullVariable, PSY.AreaInterchange)
-end
-
-@testset "FlowLimitConstraint bounds the flow from static flow_limits" begin
-    sys = _loss_test_system()
-    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    container = PSI.get_optimization_container(model)
-    con_ub = PSI.get_constraint(container, PSI.FlowLimitConstraint(), PSY.AreaInterchange, "ub")
-    @test !isnothing(con_ub)
 end
 
 @testset "per-interval flow-limit series bound the flow as a fraction of the static limit" begin
@@ -312,9 +281,7 @@ end
             )
         end
         PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
-        model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-        @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        model, res = _solve_loss(sys)
         flow_df = PSI.read_variable(PSI.OptimizationProblemResults(model), "FlowActivePowerVariable__AreaInterchange")
         return flow_df.value[argmax(abs.(flow_df.value))]
     end
@@ -345,9 +312,7 @@ end
     sys = _loss_test_system()
     ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
     PSY.set_flow_limits!(ic1, (from_to = -10.0, to_from = 5.0))
-    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    model, res = _solve_loss(sys)
 
     res = PSI.OptimizationProblemResults(model)
     surplus = PSI.read_variable(res, "InterconnectorFlowSurplusSlack__AreaInterchange")
@@ -368,10 +333,7 @@ end
     sys = _loss_test_system()
     ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
     PSY.set_flow_limits!(ic1, (from_to = 100.0, to_from = 5.0))
-    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-    res = PSI.OptimizationProblemResults(model)
+    model, res = _solve_loss(sys)
     @test all(abs.(PSI.read_variable(res, "InterconnectorFlowSurplusSlack__AreaInterchange").value) .< 1.0e-6)
     @test all(isapprox.(PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange").value, 5.0; atol = 1.0e-6))
     unserved = PSI.read_variable(res, "SystemBalanceSlackUp__Area")
@@ -394,24 +356,10 @@ end
         )
     end
     PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
-    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-    res = PSI.OptimizationProblemResults(model)
+    model, res = _solve_loss(sys)
     surplus = PSI.read_variable(res, "InterconnectorFlowSurplusSlack__AreaInterchange")
     deficit = PSI.read_variable(res, "InterconnectorFlowDeficitSlack__AreaInterchange")
     @test all(isapprox.(surplus.value .+ deficit.value, 5.0; atol = 1.0e-4))
-end
-
-@testset "an ordinary flow limit leaves both flow slacks at zero" begin
-    sys = _loss_test_system()
-    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-    res = PSI.OptimizationProblemResults(model)
-    for key in ("InterconnectorFlowSurplusSlack__AreaInterchange", "InterconnectorFlowDeficitSlack__AreaInterchange")
-        @test all(abs.(PSI.read_variable(res, key).value) .< 1.0e-6)
-    end
 end
 
 @testset "scaling_factor_multiplier demand and nonzero demand_coefficients: LP loss matches the curve" begin
@@ -421,10 +369,7 @@ end
     sys = _loss_test_system(;
         demand_coefficients = Dict("1" => 1.0e-4, "2" => -2.0e-4), pin_multiplier = true,
     )
-    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    PSI.solve!(model)
-    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    model, res = _solve_loss(sys)
 
     container = PSI.get_optimization_container(model)
     gaps = interconnector_loss_gaps(PSI.OptimizationProblemResults(model), sys)
@@ -518,12 +463,7 @@ end
     sys = _loss_test_system()
     load = first(PSY.get_components(PSY.PowerLoad, sys))
     PSY.set_area!(PSY.get_bus(load), nothing)
-    err = try
-        set_loss_demand_coefficients!(sys)
-        nothing
-    catch e
-        e
-    end
+    err = _caught(() -> set_loss_demand_coefficients!(sys))
     @test err isa ArgumentError
     @test occursin(PSY.get_name(load), sprint(showerror, err))
 end
@@ -762,11 +702,7 @@ end
         demand_coefficients = Dict("2" => 0.0003), breakpoints = breakpoints,
         priced_supply_only = true,
     )
-    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    PSI.solve!(model)
-    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-    res = PSI.OptimizationProblemResults(model)
+    model, res = _solve_loss(sys)
     gaps = interconnector_loss_gaps(res, sys)
     @test !isempty(gaps)
     @test all(abs(gap) < 1.0e-6 for gap in values(gaps))

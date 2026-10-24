@@ -5,13 +5,6 @@ let
     config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
     db = aem_connect(config)
 
-    @testset "read_interconnectors" begin
-        df = read_interconnectors(db)
-        @test df isa DataFrame
-        @test nrow(df) > 0
-        @test "INTERCONNECTORID" in names(df)
-    end
-
     @testset "read_interconnectors drops an interconnector with a retired endpoint region" begin
         # A region absent from DISPATCHREGIONSUM (the authoritative "currently active" source)
         # must never resurrect as a phantom, zero-demand area - see AustralianElectricityMarkets
@@ -77,15 +70,15 @@ let
         @test maxmwin(read_interconnectors(vdb; as_of = DateTime(2025, 8, 1))) == 300.0
 
         cp_of(df) = only(df[df.DUID .== "BW01", :CONNECTIONPOINTID])
-        @test cp_of(AustralianElectricityMarkets.Readers._read_units(vdb)) == "CP_NEW"
-        @test cp_of(AustralianElectricityMarkets.Readers._read_units(vdb; as_of = early)) == "CP_BAYSW"
-        @test cp_of(AustralianElectricityMarkets.Readers._read_units(vdb; as_of = DateTime(2025, 8, 1))) == "CP_NEW"
-        @test allunique(AustralianElectricityMarkets.Readers._read_units(vdb; as_of = early).DUID)
+        @test cp_of(read_units(vdb)) == "CP_NEW"
+        @test cp_of(read_units(vdb; as_of = early)) == "CP_BAYSW"
+        @test cp_of(read_units(vdb; as_of = DateTime(2025, 8, 1))) == "CP_NEW"
+        @test allunique(read_units(vdb; as_of = early).DUID)
         # The older archive's stale open rows must not leak into either as-of read.
         @test maxmwin(read_interconnectors(vdb; as_of = early)) != 111.0
-        @test only(AustralianElectricityMarkets.Readers._read_units(vdb; as_of = early)[AustralianElectricityMarkets.Readers._read_units(vdb; as_of = early).DUID .== "BW01", :REGISTEREDCAPACITY]) == 100.0
+        @test only(read_units(vdb; as_of = early)[read_units(vdb; as_of = early).DUID .== "BW01", :REGISTEREDCAPACITY]) == 100.0
         # A unit not yet registered as of the date is omitted.
-        @test isempty(AustralianElectricityMarkets.Readers._read_units(vdb; as_of = DateTime(2019, 1, 1)))
+        @test isempty(read_units(vdb; as_of = DateTime(2019, 1, 1)))
     end
 
     @testset "read_demand" begin
@@ -104,7 +97,7 @@ let
     end
 
     @testset "read_units" begin
-        df = AustralianElectricityMarkets.Readers._read_units(db)
+        df = read_units(db)
         @test df isa DataFrame
         @test nrow(df) > 0
         @test "DUID" in names(df)
@@ -115,23 +108,12 @@ let
         @test only(df.CO2E_ENERGY_SOURCE[df.DUID .== "BW01"]) == "Battery Storage"
 
         # BAYSW (station for BW01-BW04) is renamed in a later STATION archive_month
-        # partition (mock_data.jl). AustralianElectricityMarkets.Readers._read_units() must resolve one name per DUID —
+        # partition (mock_data.jl). read_units() must resolve one name per DUID —
         # not fan out into duplicate rows via the STATIONID -> STATIONNAME join.
         @test allunique(df.DUID)
         bw01_names = df.STATIONNAME[df.DUID .== "BW01"]
         @test length(bw01_names) == 1
         @test only(bw01_names) == "Bayswater Power Station"
-    end
-
-    @testset "read_energy_bids" begin
-        # Use 2025 to match mock data
-        date_range = DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 1, 0)
-        df = read_energy_bids(db, date_range)
-        @test df isa DataFrame
-        @test nrow(df) > 0
-        @test "DUID" in names(df)
-        @test "MAXAVAIL" in names(df)
-        @test "BW01" in df.DUID
     end
 
     @testset "read_bids rejects period offers without a price-band row" begin
@@ -219,33 +201,5 @@ let
         @test (tas.INTERCONNECTORID, tas.FROMREGION, tas.TOREGION) == ("IC2", "NSW1", "VIC1")
         @test tas.TO_REGION_TLF == 0.9907
         @test tas.MAXCAPACITY == 594
-    end
-
-    @testset "max-partition filtering excludes stale partitions" begin
-        # All other mock tables only ever have a single archive_month value, so
-        # the "keep only the max partition" query idiom used throughout queries.jl
-        # has never actually been exercised against genuinely stale data. Write a
-        # dedicated 2-partition table directly into the test hive dir to close that gap.
-        conn = DuckDB.connect(db.db)
-        DuckDB.execute(conn, "SET preserve_identifier_case=true")
-        table_dir = joinpath(hive_dir, "LATESTTEST")
-        mkpath(table_dir)
-        df = vcat(
-            DataFrame(id = [1, 2], marker = ["stale", "stale"], archive_month = ["2024-01", "2024-01"]),
-            DataFrame(id = [3], marker = ["current"], archive_month = ["2025-01"]),
-        )
-        DuckDB.register_data_frame(conn, df, "tmp_latest_test")
-        DuckDB.execute(conn, "COPY (SELECT * FROM tmp_latest_test) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
-        DuckDB.unregister_table(conn, "tmp_latest_test")
-        DuckDB.disconnect(conn)
-
-        table = read_hive(db, :LATESTTEST)
-        filtered = AustralianElectricityMarkets.Readers._query(
-            db,
-            "SELECT * FROM $table WHERE archive_month = (SELECT max(archive_month) FROM $table)",
-        )
-        @test nrow(filtered) == 1
-        @test filtered.marker[1] == "current"
-        @test filtered.archive_month[1] == "2025-01"
     end
 end

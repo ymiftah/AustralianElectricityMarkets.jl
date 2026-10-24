@@ -513,15 +513,8 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     save_hive(df_fcas_req, :DISPATCH_FCAS_REQ)
 
     df_fcas_req_constraint = DataFrame()
-    df_fcas_req_run = DataFrame()
     for i in intervals
         t = base_datetime + Minute(5 * i)
-        append!(
-            df_fcas_req_run, DataFrame(
-                RUN_DATETIME = [t], RUNNO = [1], LASTCHANGED = [t],
-                archive_month = ["2025-01"]
-            )
-        )
         for bid_type in fcas_bid_types
             append!(
                 df_fcas_req_constraint, DataFrame(
@@ -547,7 +540,6 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
         end
     end
     save_hive(df_fcas_req_constraint, :DISPATCH_FCAS_REQ_CONSTRAINT)
-    save_hive(df_fcas_req_run, :DISPATCH_FCAS_REQ_RUN)
 
     # 14. DISPATCHCONSTRAINT. RHS varies per interval (requirement_mw + 0.1*i) to exercise
     # the "rhs" SingleTimeSeries time series, not just a flat default. GENCONID_EFFECTIVEDATE/
@@ -986,4 +978,55 @@ function create_versioned_static_data(src_dir::String, dst_dir::String)
         return vcat(df, stale)
     end
     return DuckDB.disconnect(conn)
+end
+
+
+# The interconnector results the interval readers need, added to a mock hive.
+function write_mock_interconnector_results(hive_root::String)
+    ddb = DuckDB.DB()
+    conn = DuckDB.connect(ddb)
+    DuckDB.execute(conn, "SET preserve_identifier_case=true")
+    interconnector_ids = ["IC$i" for i in 1:6]
+    base_datetime = DateTime(2025, 1, 1, 0, 0)
+    df = DataFrame()
+    for i in 0:48
+        t = base_datetime + Minute(5 * i)
+        append!(
+            df, DataFrame(
+                SETTLEMENTDATE = fill(t, length(interconnector_ids)),
+                INTERCONNECTORID = interconnector_ids,
+                MWFLOW = [100.0 * k + i for k in 1:length(interconnector_ids)],
+                MWLOSSES = [0.1 * k for k in 1:length(interconnector_ids)],
+                METEREDMWFLOW = [100.0 * k + i for k in 1:length(interconnector_ids)],
+                # Equal to the mock's static 500 MW limits, so they do not tighten any flow.
+                EXPORTLIMIT = fill(500.0, length(interconnector_ids)),
+                IMPORTLIMIT = fill(-500.0, length(interconnector_ids)),
+                archive_month = fill("2025-01", length(interconnector_ids)),
+            )
+        )
+    end
+    DuckDB.register_data_frame(conn, df, "tmp_table")
+    table_dir = joinpath(hive_root, "DISPATCHINTERCONNECTORRES")
+    mkpath(table_dir)
+    DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+    DuckDB.unregister_table(conn, "tmp_table")
+    DuckDB.disconnect(conn)
+    DuckDB.close(ddb)
+    return
+end
+
+
+# Copies the hive at `source`, rewrites `table` through the SQL `query` (over the copy named `input`)
+# and returns a connection to the copy, so each damaged cache is private to its test.
+function damaged_cache(source, table, query)
+    hive = joinpath(mktempdir(), "hive")
+    cp(source, hive)
+    path = joinpath(hive, string(table))
+    conn = DuckDB.DB()
+    DuckDB.execute(conn, "CREATE TABLE input AS SELECT * FROM read_parquet('$path/**/*.parquet', hive_partitioning = true)")
+    DuckDB.execute(conn, query)
+    rm(path; recursive = true)
+    DuckDB.execute(conn, "COPY input TO '$path' (FORMAT PARQUET, PARTITION_BY (archive_month))")
+    DuckDB.close(conn)
+    return aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
 end

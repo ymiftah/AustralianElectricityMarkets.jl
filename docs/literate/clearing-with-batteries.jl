@@ -64,13 +64,11 @@ start_date = DateTime(2025, 1, 2, 4, 0)
 date_range = start_date:interval:(start_date + horizon)
 @show date_range
 
-# Set deterministic time series for demand, renewables, hydro, and market bids.
+# Set deterministic time series for demand, dispatch limits, and market bids.
 
 set_demand!(sys, db, date_range; resolution = interval)
-set_renewable_pv!(sys, db, date_range; resolution = interval)
-set_renewable_wind!(sys, db, date_range; resolution = interval)
-set_hydro_limits!(sys, db, date_range; resolution = interval)
 set_market_bids!(sys, db, date_range; resolution = interval)
+set_nem_dispatch_limits!(sys, db, date_range)
 
 # Derive forecasts from the deterministic time series.
 

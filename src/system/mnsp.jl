@@ -30,14 +30,14 @@ function set_mnsp_offers!(sys, db, date_range)
     isempty(intervals) && throw(ArgumentError("set_mnsp_offers!: the range contains no dispatch intervals"))
     start_date = first(date_range)
     devices = Dict(get_name(d) => d for d in get_components(get_available, AreaInterchange, sys))
-    parameters = read_interconnector_loss_parameters(db, start_date)
+    parameters = read_interconnector_loss_parameters(db; as_of = start_date)
     types = Dict(r.INTERCONNECTORID => r.ICTYPE for r in eachrow(parameters))
     for name in sort!(collect(keys(devices)))
         kind = get(types, name, missing)
         (kind in ("MNSP", "REGULATED")) === true ||
             throw(ArgumentError("set_mnsp_offers!: $name has no valid ICTYPE at $start_date"))
     end
-    end_parameters = read_interconnector_loss_parameters(db, last(intervals))
+    end_parameters = read_interconnector_loss_parameters(db; as_of = last(intervals))
     end_types = Dict(r.INTERCONNECTORID => r.ICTYPE for r in eachrow(end_parameters))
     all(name -> isequal(types[name], get(end_types, name, missing)), keys(devices)) ||
         throw(ArgumentError("set_mnsp_offers!: ICTYPE differs between the first and last interval; split the replay at the change"))
@@ -98,10 +98,8 @@ function set_mnsp_offers!(sys, db, date_range)
     end
     for (; device, direction, link, rows, curves) in staged
         for (series, values) in (("offer", curves), ("max_avail", Float64.(rows.MAXAVAIL)))
-            series_name = "mnsp_$(direction)_$series"
-            has_time_series(device, SingleTimeSeries, series_name) &&
-                remove_time_series!(sys, SingleTimeSeries, device, series_name)
-            add_time_series!(sys, device, _single_series(series_name, start_date, values, Minute(5)))
+            series_name = mnsp_series_name(direction, series)
+            replace_single_series!(sys, device, single_series(series_name, start_date, values, Minute(5)))
         end
         get_ext(device)["mnsp_$direction"] = Dict{String, Any}(
             "link_id" => link.LINKID, "from_region_tlf" => link.FROM_REGION_TLF,

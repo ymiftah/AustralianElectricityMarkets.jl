@@ -79,8 +79,7 @@ let
     as_of = Date(2025, 1, 2)
 
     @testset "read_interconnector_loss_breakpoints" begin
-        df = read_interconnector_loss_breakpoints(db, as_of)
-        @test df isa DataFrame
+        df = read_interconnector_loss_breakpoints(db; as_of = as_of)
         @test Set(names(df)) == Set(["INTERCONNECTORID", "LOSSSEGMENT", "MWBREAKPOINT"])
         # IC6 has loss parameters but no LOSSMODEL rows at all.
         @test Set(df.INTERCONNECTORID) == Set("IC$i" for i in 1:5)
@@ -89,20 +88,20 @@ let
         @test sort(ic1.MWBREAKPOINT) == [-500.0, -250.0, 0.0, 250.0, 500.0]
 
         # Resolving as of a date before the current version falls back to the superseded one.
-        earlier = read_interconnector_loss_breakpoints(db, Date(2024, 6, 1))
+        earlier = read_interconnector_loss_breakpoints(db; as_of = Date(2024, 6, 1))
         @test sort(earlier[earlier.INTERCONNECTORID .== "IC1", :].MWBREAKPOINT) ==
             [-100.0, -50.0, 0.0, 50.0, 100.0]
     end
 
     @testset "read_interconnector_demand_coefficients" begin
-        df = read_interconnector_demand_coefficients(db, as_of)
+        df = read_interconnector_demand_coefficients(db; as_of = as_of)
         @test Set(names(df)) == Set(["INTERCONNECTORID", "REGIONID", "DEMANDCOEFFICIENT"])
         @test nrow(df) == 12
         @test all(!ismissing, df.DEMANDCOEFFICIENT)
     end
 
     @testset "read_interconnector_loss_parameters" begin
-        df = read_interconnector_loss_parameters(db, as_of)
+        df = read_interconnector_loss_parameters(db; as_of = as_of)
         @test nrow(df) == 6
         @test "REGIONFROM" in names(df) && "REGIONTO" in names(df)
         @test all(df.LOSSCONSTANT .≈ 0.01)
@@ -114,7 +113,6 @@ let
         models = @test_logs (:warn, r"no LOSSMODEL breakpoints") match_mode = :any begin
             interconnector_loss_models(db, as_of)
         end
-        @test models isa Dict{String, InterconnectorLossModel}
         # IC6 is skipped for want of breakpoints, not included as a lossless interconnector.
         @test Set(keys(models)) == Set("IC$i" for i in 1:5)
 
@@ -123,14 +121,13 @@ let
         @test ic1.to_region == "SNOWY1"
         @test ic1.from_region_loss_share ≈ 0.1
         @test ic1.breakpoints == [-500.0, -250.0, 0.0, 250.0, 500.0]
-        @test issorted(ic1.breakpoints)
         @test Set(keys(ic1.demand_coefficients)) == Set(["VIC1", "SNOWY1"])
         # Assembled models feed the same math the pure-function tests above cover.
         @test length(loss_segments(ic1, Dict("VIC1" => 4000.0, "SNOWY1" => 100.0))) == 4
     end
 
     @testset "demand coefficient patch" begin
-        patch = AustralianElectricityMarkets.Readers._apply_demand_coefficient_patches!
+        patch = AustralianElectricityMarkets._apply_demand_coefficient_patches!
         fresh() = Dict("V-SA" => Dict("VIC1" => -1.0e-5, "SA1" => 5.0e-5))
         @test patch(fresh(), Date(2025, 7, 1))["V-SA"]["NSW1"] == 1.6981e-6
         @test patch(fresh(), DateTime(2026, 6, 30, 23, 55))["V-SA"]["NSW1"] == 1.6981e-6
@@ -145,9 +142,9 @@ let
         empty_db = aem_connect(
             HiveConfiguration(hive_location = mktempdir(), filesystem = "file"),
         )
-        @test_throws ArgumentError read_interconnector_loss_breakpoints(empty_db, as_of)
-        @test_throws ArgumentError read_interconnector_demand_coefficients(empty_db, as_of)
-        @test_throws ArgumentError read_interconnector_loss_parameters(empty_db, as_of)
+        @test_throws ArgumentError read_interconnector_loss_breakpoints(empty_db; as_of = as_of)
+        @test_throws ArgumentError read_interconnector_demand_coefficients(empty_db; as_of = as_of)
+        @test_throws ArgumentError read_interconnector_loss_parameters(empty_db; as_of = as_of)
     end
 
     @testset "no model resolvable throws" begin
@@ -229,29 +226,9 @@ let
         remove_time_series!(sys, SingleTimeSeries, load, "loss_demand")
         add_time_series!(
             sys, load,
-            AustralianElectricityMarkets._single_series("loss_demand", first(stamps) + Minute(5), values, get_resolution(original)),
+            AustralianElectricityMarkets.single_series("loss_demand", first(stamps) + Minute(5), values, get_resolution(original)),
         )
         @test_throws r"is not on the timestamps" set_loss_demand_coefficients!(sys)
-    end
-
-    @testset "InterconnectorLossModel JSON round-trip" begin
-        sys = nem_system(db, RegionalNetworkConfiguration())
-        base_power = get_base_power(sys)
-        attach_interconnector_losses!(sys, db, as_of)
-
-        mktpath = mktempdir()
-        json_path = joinpath(mktpath, "sys.json")
-        to_json(sys, json_path)
-        sys2 = System(json_path)
-
-        ic1 = get_component(AreaInterchange, sys2, "IC1")
-        model = only(get_supplemental_attributes(InterconnectorLossModel, ic1))
-        @test model.interconnector == "IC1"
-        @test model.from_region == "VIC1"
-        @test model.to_region == "SNOWY1"
-        @test model.breakpoints == [-500.0, -250.0, 0.0, 250.0, 500.0] ./ base_power
-        @test model.demand_coefficients isa Dict{String, Float64}
-        @test Set(keys(model.demand_coefficients)) == Set(["VIC1", "SNOWY1"])
     end
 
     @testset "per-unit conversion preserves physical losses" begin

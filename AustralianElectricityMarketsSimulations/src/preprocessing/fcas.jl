@@ -57,24 +57,16 @@ No-op for a device without a `bid_type` trapezium series.
 `nothing`.
 """
 function _attach_fcas_effective_series!(sys::PSY.System, device::PSY.Device, bid_type::BidType, inactive::Float64)
-    direction = AustralianElectricityMarkets._fcas_bid_direction(device, bid_type)
-    direction == :none && return
-    trapezium = AustralianElectricityMarkets._fcas_series_name("fcas_trapezium", bid_type, direction == :decremental)
+    direction = fcas_bid_direction(device, bid_type)
+    direction == FCASBidDirection.NONE && return
+    trapezium = fcas_series_name("fcas_trapezium", bid_type, direction == FCASBidDirection.DECREMENTAL)
     stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, trapezium)
     resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, trapezium))
-    window = (initial_time = first(stamps), horizon = length(stamps), resolution = resolution, process = :dispatch)
+    window = _FCASWindow(first(stamps), length(stamps), resolution)
     offers, ramping = _fcas_effective_values(window, device, bid_type, direction, inactive)
     for (decremental, values) in offers
-        _replace_fcas_series!(sys, device, _fcas_effective_series_name(bid_type, decremental), stamps, values, resolution)
+        replace_single_series!(sys, device, single_series(_fcas_effective_series_name(bid_type, decremental), first(stamps), values, resolution))
     end
-    isnothing(ramping) || _replace_fcas_series!(sys, device, _fcas_ramping_series_name(bid_type), stamps, ramping, resolution)
-    return
-end
-
-
-# Attaches `values` on `stamps` as `device`'s `name` series, replacing an existing one.
-function _replace_fcas_series!(sys::PSY.System, device::PSY.Device, name::String, stamps, values, resolution)
-    PSY.has_time_series(device, PSY.SingleTimeSeries, name) && PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, name)
-    PSY.add_time_series!(sys, device, AustralianElectricityMarkets._single_series(name, first(stamps), values, resolution))
+    isnothing(ramping) || replace_single_series!(sys, device, single_series(_fcas_ramping_series_name(bid_type), first(stamps), ramping, resolution))
     return
 end

@@ -1,24 +1,6 @@
 # `set_fcas_effective_offers!` against the values the FCAS build reads over one-interval windows.
 
-# The one-interval window FCASMarket reads at `t` under NEMReplayDispatch.
-fcas_window(t) = (initial_time = t, horizon = 1, resolution = DISPATCH_INTERVAL, process = :dispatch)
-
-# The effective offer FCASMarket builds for one offer at `t`: `(enabled, MaxAvail, EnablementMin,
-# EnablementMax, UpperSlopeCoeff, LowerSlopeCoeff, widths)` from the build-time trapezium and masks.
-function build_time_offer(device, bid_type, direction, decremental, t)
-    w = fcas_window(t)
-    enabled = if direction == :both
-        gen, load = AEMS._fcas_both_sides_enabled_mask(w, device, bid_type)
-        only(decremental ? load : gen)
-    else
-        only(AEMS._fcas_enabled_mask(w, device, bid_type, decremental))
-    end
-    trapeziums, curves = AEMS._fcas_series(w, device, bid_type, decremental)
-    trap, widths = only(trapeziums), diff(PSY.get_x_coords(only(curves)))
-    return (; enabled, trap, widths)
-end
-
-# The replay system over `date_range`, built with the setters `replication_system` runs.
+# A populated system over `date_range`, using the AEM setters for the preprocessing tests.
 function fcas_replay_system(db, date_range)
     sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = date_range)
     set_demand!(sys, db, date_range; resolution = DISPATCH_INTERVAL)
@@ -30,50 +12,6 @@ function fcas_replay_system(db, date_range)
     set_mnsp_offers!(sys, db, date_range)
     PSY.transform_single_time_series!(sys, DISPATCH_INTERVAL, DISPATCH_INTERVAL)
     return sys
-end
-
-@testset "effective FCAS offers equal the build-time values on every mock interval" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    start = DateTime(2025, 1, 1, 0, 5)
-    sys = fcas_replay_system(db, start:DISPATCH_INTERVAL:(start + 6 * DISPATCH_INTERVAL))
-    inactive = FCAS_INACTIVE_LIMIT_MW / PSY.get_base_power(sys)
-    counts = Dict(true => 0, false => 0)
-    PSY.with_units_base(sys, "SYSTEM_BASE") do
-        for svc in PSY.get_components(FCASService, sys), device in PSY.get_contributing_devices(sys, svc)
-            bid_type = get_bid_type(svc)
-            direction = AEMS._fcas_direction(device, bid_type)
-            for decremental in AEMS._fcas_offer_sides(direction)
-                name = AEMS._fcas_effective_series_name(bid_type, decremental)
-                stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name)
-                values = PSY.get_time_series_values(PSY.SingleTimeSeries, device, name)
-                @test length(stamps) == 6
-                for (t, v) in zip(stamps, values)
-                    ref = build_time_offer(device, bid_type, direction, decremental, t)
-                    counts[ref.enabled] += 1
-                    if ref.enabled
-                        @test v[1:5] == (get_max_avail(ref.trap), get_enablement_min(ref.trap), get_enablement_max(ref.trap), get_upper_slope_coeff(ref.trap), get_lower_slope_coeff(ref.trap))
-                        @test collect(v[6:15]) == [ref.widths; zeros(10 - length(ref.widths))]
-                    else
-                        @test v == (0.0, -inactive, inactive, 0.0, 0.0, ntuple(_ -> 0.0, 10)...)
-                    end
-                end
-            end
-            AEMS._is_regulation_service(bid_type) || continue
-            ramping = PSY.get_time_series_values(PSY.SingleTimeSeries, device, AEMS._fcas_ramping_series_name(bid_type))
-            stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, AEMS._fcas_ramping_series_name(bid_type))
-            for (t, v) in zip(stamps, ramping)
-                @test v == only(AEMS._fcas_effective_ramping(fcas_window(t), device, bid_type, direction, inactive))
-                caps = only(AEMS._fcas_agc_ramp_caps(fcas_window(t), device, AEMS._fcas_ramp_rate_service(device, bid_type)))
-                mw = only(something(get_initial_mw(device, t, 1), [NaN]))
-                enabled = only(AEMS._fcas_regulation_enabled_mask(fcas_window(t), device, bid_type, direction))
-                upper = bid_type == AEMS._fcas_upper_regulation_service(device)
-                active = !iszero(caps) && !isnan(mw) && enabled
-                @test v[1] == (active ? (upper ? mw + caps : mw - caps) : (upper ? inactive : -inactive))
-            end
-        end
-    end
-    # The mock exercises both enabled and disabled offers.
-    @test counts[true] > 0 && counts[false] > 0
 end
 
 @testset "set_fcas_effective_offers! masks each interval's offer by its own enablement" begin

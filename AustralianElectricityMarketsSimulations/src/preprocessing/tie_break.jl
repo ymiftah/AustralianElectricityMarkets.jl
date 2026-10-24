@@ -7,6 +7,12 @@ Name of the [`EnergyTieBreak`](@ref) service [`set_tie_break_scales!`](@ref) att
 const TIE_BREAK_SERVICE_NAME = "energy_tie_break"
 
 
+# The energy offers of one (direction, region): offer timestamps and resolution, and each unit's curves on them.
+const _TieOffers = @NamedTuple{
+    stamps::Vector{DateTime}, resolution::Dates.Period, offers::Vector{Tuple{PSY.Component, Vector{PSY.PiecewiseStepData}}},
+}
+
+
 # Whether `device` is priced on a `MarketBidCost`.
 function _has_market_bid(device::PSY.Component)
     return hasmethod(PSY.get_operation_cost, Tuple{typeof(device)}) && PSY.get_operation_cost(device) isa PSY.MarketBidCost
@@ -24,34 +30,29 @@ time-varying curve in that direction. Throws an `ArgumentError` when two time-va
 are on different timestamps.
 
 # Returns
-`Dict{Tuple{Bool, String}, NamedTuple}`.
+`Dict{Tuple{Bool, String}, _TieOffers}`.
 """
 function _tie_break_offers(sys::PSY.System)
-    offers = Dict{Tuple{Bool, String}, Any}()
+    offers = Dict{Tuple{Bool, String}, _TieOffers}()
     fixed = Tuple{Bool, String, PSY.Component, PSY.PiecewiseStepData}[]
     for device in PSY.get_available_components(PSY.StaticInjection, sys)
-        _has_market_bid(device) || continue
         region = PSY.get_name(PSY.get_area(PSY.get_bus(device)))
-        for decremental in (false, true)
-            key = PSI.get_offer_curves_maybe_decremental(Val(decremental), device)
-            if PSI.is_time_variant(key)
-                ts = PSY.get_time_series(PSY.SingleTimeSeries, device, IS.get_name(key))
-                series = PSY.get_time_series_array(device, ts)
-                stamps = PSY.TimeSeries.timestamp(series)
-                entry = get!(
-                    offers, (decremental, region),
-                    (; stamps, resolution = IS.get_resolution(ts), offers = Tuple{PSY.Component, Vector{PSY.PiecewiseStepData}}[]),
-                )
-                entry.stamps == stamps || throw(
-                    ArgumentError(
-                        "tie-break: $(PSY.get_name(device))'s offer curves are on timestamps from $(first(stamps)), " *
-                            "unlike the other units of region $region from $(first(entry.stamps)).",
-                    ),
-                )
-                push!(entry.offers, (device, collect(values(series))))
-            elseif key isa PSY.CostCurve
-                push!(fixed, (decremental, region, device, PSY.get_function_data(PSY.get_value_curve(key))))
+        for side in (OfferSide.GEN, OfferSide.LOAD)
+            offer = get_energy_offer(device, side)
+            isnothing(offer) && continue
+            decremental = side == OfferSide.LOAD
+            if isnothing(offer.timestamps)
+                push!(fixed, (decremental, region, device, only(offer.curves)))
+                continue
             end
+            entry = get!(() -> _TieOffers((offer.timestamps, offer.resolution, [])), offers, (decremental, region))
+            entry.stamps == offer.timestamps || throw(
+                ArgumentError(
+                    "tie-break: $(PSY.get_name(device))'s offer curves are on timestamps from $(first(offer.timestamps)), " *
+                        "unlike the other units of region $region from $(first(entry.stamps)).",
+                ),
+            )
+            push!(entry.offers, (device, offer.curves))
         end
     end
     for (decremental, region, device, curve) in fixed
@@ -61,10 +62,7 @@ function _tie_break_offers(sys::PSY.System)
             isempty(donors) && continue
             grid = offers[first(donors)]
         end
-        entry = get!(
-            offers, (decremental, region),
-            (; stamps = grid.stamps, resolution = grid.resolution, offers = Tuple{PSY.Component, Vector{PSY.PiecewiseStepData}}[]),
-        )
+        entry = get!(() -> _TieOffers((grid.stamps, grid.resolution, [])), offers, (decremental, region))
         push!(entry.offers, (device, fill(curve, length(grid.stamps))))
     end
     return offers
@@ -127,8 +125,7 @@ function set_tie_break_scales!(sys::PSY.System)
     all_offers = _tie_break_offers(sys)
     for device in PSY.get_components(PSY.StaticInjection, sys), key in collect(PSY.get_time_series_keys(device))
         name = IS.get_name(key)
-        startswith(name, "tie_break_scale_") && PSY.has_time_series(device, PSY.SingleTimeSeries, name) &&
-            PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, name)
+        startswith(name, "tie_break_scale_") && remove_single_series!(sys, device, name)
     end
     active = _tie_break_active_bands(all_offers)
     for ((decremental, _), (; stamps, resolution, offers)) in all_offers
@@ -146,7 +143,7 @@ function set_tie_break_scales!(sys::PSY.System)
         end
         for ((device, band), values) in scales
             name = _tie_break_series_name(band, decremental)
-            PSY.add_time_series!(sys, device, AustralianElectricityMarkets._single_series(name, first(stamps), values, resolution))
+            PSY.add_time_series!(sys, device, single_series(name, first(stamps), values, resolution))
         end
     end
     existing = PSY.get_component(EnergyTieBreak, sys, TIE_BREAK_SERVICE_NAME)

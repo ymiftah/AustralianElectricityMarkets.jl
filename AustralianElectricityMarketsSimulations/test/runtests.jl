@@ -17,39 +17,6 @@ include(joinpath(@__DIR__, "toy_fixture.jl"))
 const AEM_TEST_HIVE_DIR = mktempdir()
 create_mock_data(AEM_TEST_HIVE_DIR)
 
-# The interconnector results the interval readers need, added to a mock hive.
-function write_mock_interconnector_results(hive_root::String)
-    ddb = DuckDB.DB()
-    conn = DuckDB.connect(ddb)
-    DuckDB.execute(conn, "SET preserve_identifier_case=true")
-    interconnector_ids = ["IC$i" for i in 1:6]
-    base_datetime = DateTime(2025, 1, 1, 0, 0)
-    df = DataFrame()
-    for i in 0:48
-        t = base_datetime + Minute(5 * i)
-        append!(
-            df, DataFrame(
-                SETTLEMENTDATE = fill(t, length(interconnector_ids)),
-                INTERCONNECTORID = interconnector_ids,
-                MWFLOW = [100.0 * k + i for k in 1:length(interconnector_ids)],
-                MWLOSSES = [0.1 * k for k in 1:length(interconnector_ids)],
-                METEREDMWFLOW = [100.0 * k + i for k in 1:length(interconnector_ids)],
-                # Equal to the mock's static 500 MW limits, so they do not tighten any flow.
-                EXPORTLIMIT = fill(500.0, length(interconnector_ids)),
-                IMPORTLIMIT = fill(-500.0, length(interconnector_ids)),
-                archive_month = fill("2025-01", length(interconnector_ids)),
-            )
-        )
-    end
-    DuckDB.register_data_frame(conn, df, "tmp_table")
-    table_dir = joinpath(hive_root, "DISPATCHINTERCONNECTORRES")
-    mkpath(table_dir)
-    DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
-    DuckDB.unregister_table(conn, "tmp_table")
-    DuckDB.disconnect(conn)
-    DuckDB.close(ddb)
-    return
-end
 write_mock_interconnector_results(AEM_TEST_HIVE_DIR)
 
 # A second hive whose invoked constraints and dispatch rows are all complete, for strict replay.
@@ -58,12 +25,10 @@ create_mock_data(AEM_TEST_REPLAY_HIVE_DIR; complete_inputs = true)
 write_mock_interconnector_results(AEM_TEST_REPLAY_HIVE_DIR)
 
 # Test groups, in run order: name => (testset title, file). Pass group names as arguments to run
-# only those, e.g. `julia --project=test test/runtests.jl fcas_market preprocessing`.
+# only those, e.g. `julia --project=test test/runtests.jl fcas_market pipeline`.
 const TEST_GROUPS = [
     "time_basis" => ("Time basis", "time_basis.jl"),
-    "inputs" => ("Interval inputs", "inputs.jl"),
-    "preprocessing" => ("Preprocessing", "preprocessing.jl"),
-    "constraint_formulations" => ("Constraint formulations", "constraint_formulations.jl"),
+    "tie_break_service" => ("Energy tie-break service", "tie_break_service.jl"),
     "psi_compat" => ("PSI compat", "psi_compat.jl"),
     "nem_constraints" => ("NEM constraints", "nem_constraints.jl"),
     "nem_dispatch" => ("NEM dispatch formulation", "nem_dispatch.jl"),
@@ -78,6 +43,7 @@ const TEST_GROUPS = [
     "energy_limits" => ("Elastic energy limits", "energy_limits.jl"),
     "pipeline" => ("Replication pipeline", "pipeline.jl"),
     "stock_simulation" => ("Stock simulation replay", "stock_simulation.jl"),
+    "replay_scripts" => ("Repository replay workflow", "../../test/scripts/replay_workflow.jl"),
 ]
 
 const SELECTED_GROUPS = let known = first.(TEST_GROUPS)

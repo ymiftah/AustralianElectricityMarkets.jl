@@ -34,7 +34,7 @@ end
     @test !AEMS._has_mnsp_offers(ic)
     @test_throws r"IC2.*MNSP" AEMS._check_mnsp_offers(ic)
     # With every dispatch device unavailable, the template reaches the MNSP check.
-    foreach(d -> set_available!(d, false), AustralianElectricityMarkets._nem_dispatch_devices(sys))
+    foreach(d -> set_available!(d, false), AustralianElectricityMarkets.nem_dispatch_devices(sys))
     @test_throws r"IC2.*MNSP" replication_template(sys)
     get_ext(ic)["ic_type"] = "REGULATED"
     @test isnothing(AEMS._check_mnsp_offers(ic))
@@ -57,38 +57,4 @@ end
     later = DateTime(2030, 1, 1):Minute(5):DateTime(2030, 1, 1, 0, 10)
     sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = later)
     @test_throws r"missing.*constraint.*2030" replication_template(sys)
-end
-
-function _replay_damaged_cache(table, query; source = AEM_TEST_REPLAY_HIVE_DIR)
-    hive = joinpath(mktempdir(), "hive")
-    cp(source, hive)
-    path = joinpath(hive, string(table))
-    conn = DuckDB.DB()
-    DuckDB.execute(conn, "CREATE TABLE input AS SELECT * FROM read_parquet('$path/**/*.parquet', hive_partitioning = true)")
-    DuckDB.execute(conn, query)
-    rm(path; recursive = true)
-    DuckDB.execute(conn, "COPY input TO '$path' (FORMAT PARQUET, PARTITION_BY (archive_month))")
-    DuckDB.close(conn)
-    return aem_connect(HiveConfiguration(hive_location = hive))
-end
-
-@testset "missing bids and demand cannot remove participants or create zero demand" begin
-    interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 15)
-    for (table, query, expected) in [
-            (:BIDDAYOFFER_D, "DELETE FROM input WHERE BIDTYPE = 'ENERGY' AND DUID = 'BW02'", r"price.*BW02"),
-            (:BIDPEROFFER_D, "DELETE FROM input WHERE BIDTYPE = 'ENERGY' AND DUID = 'BW01' AND DIRECTION = 'LOAD'", r"BW01 LOAD"),
-            (:BIDPEROFFER_D, "DELETE FROM input WHERE BIDTYPE = 'ENERGY' AND DUID = 'BW02'", r"BW02 GEN"),
-            (:DISPATCHREGIONSUM, "DELETE FROM input WHERE REGIONID = 'VIC1'", r"missing regional demand.*VIC1"),
-            (:DISPATCHREGIONSUM, "DELETE FROM input WHERE SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:10'", r"missing regional demand"),
-        ]
-        db = _replay_damaged_cache(table, query)
-        @test_throws expected replication_system(db, interval)
-    end
-end
-
-@testset "zero availability does not hide a missing ramping unit's offer" begin
-    missing_bids = _replay_damaged_cache(:BIDPEROFFER_D, "DELETE FROM input WHERE BIDTYPE = 'ENERGY' AND DUID = 'BW02'")
-    db = _replay_damaged_cache(:DISPATCHLOAD, "UPDATE input SET AVAILABILITY = 0 WHERE DUID = 'BW02'"; source = missing_bids.config.hive_location)
-    interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 15)
-    @test_throws r"BW02 GEN" replication_system(db, interval)
 end

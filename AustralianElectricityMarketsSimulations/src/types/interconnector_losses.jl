@@ -16,17 +16,19 @@ also runs in recurrent simulations.
 Loss follows the breakpoint interpolation at every price sign: segments fill contiguously from
 the first breakpoint, enforced by binary fill indicators when an interconnector has more than one
 segment. The breakpoint range also bounds flow, with a warning when it is narrower than the
-device's static flow limits.
+device's static flow limits. Flow-limit rows always carry priced slacks; the device model's
+`use_slacks` does not apply to them. Slack penalties and MNSP band costs are objective terms only,
+not part of any PowerSimulations cost expression.
 """
 struct NEMInterconnectorLoss <: PSI.AbstractBranchFormulation end
 
 
-"An interconnector's total loss at one timestep - MW, per-unit of base power."
+"An interconnector's total loss at one timestep, in MW per-unit of base power."
 struct InterconnectorLossVariable <: PSI.VariableType end
 
 
 """
-One loss-curve segment's flow allocation for one interconnector at one timestep - MW, per-unit.
+One loss-curve segment's flow allocation for one interconnector at one timestep, in MW per-unit.
 Indexed `(interconnector name, segment label, t)`; the segment axis is sized to the largest
 interconnector's segment count, and a smaller interconnector's unused cells are fixed to `0.0`.
 """
