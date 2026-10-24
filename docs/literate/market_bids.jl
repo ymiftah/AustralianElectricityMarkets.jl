@@ -57,8 +57,8 @@ date_range = start_date:interval:(start_date + horizon)
 # Set deterministic time series.
 
 set_demand!(sys, db, date_range; resolution = interval)
-set_nem_dispatch_limits!(sys, db, date_range)
 set_market_bids!(sys, db, date_range; resolution = interval)
+set_nem_dispatch_limits!(sys, db, date_range)
 
 # Derive forecasts from the deterministic time series.
 

@@ -1,21 +1,3 @@
-# `DISPATCHPRICE` columns `<prefix>RRP`, `<prefix>ROP` and, when cached, `<prefix>APCFLAG`.
-function _price_columns(schema, prefix::AbstractString)
-    rrp, rop, apc = "$(prefix)RRP", "$(prefix)ROP", "$(prefix)APCFLAG"
-    cols = [_cast_double(rrp), _cast_double(rop)]
-    apc in schema && push!(cols, "TRY_CAST($apc AS INTEGER) AS $apc")
-    return cols
-end
-
-
-# One market's `SETTLEMENTDATE`, `REGIONID`, `RRP`, `ROP`, `APCFLAG` (`missing` when not cached).
-function _price_block(df, prefix::AbstractString)
-    apc = "$(prefix)APCFLAG"
-    block = select(df, :SETTLEMENTDATE, :REGIONID, "$(prefix)RRP" => :RRP, "$(prefix)ROP" => :ROP)
-    block[!, :APCFLAG] = apc in names(df) ? df[!, apc] : fill(missing, nrow(block))
-    return block
-end
-
-
 """
     read_prices(db, date_range; intervention = 0)
 
@@ -70,4 +52,22 @@ function read_fcas_prices(db, date_range; intervention::Integer = 0)
         append!(long, block; promote = true)
     end
     return long
+end
+
+
+# `DISPATCHPRICE` columns `<prefix>RRP`, `<prefix>ROP` and, when cached, `<prefix>APCFLAG`.
+function _price_columns(schema, prefix::AbstractString)
+    rrp, rop, apc = "$(prefix)RRP", "$(prefix)ROP", "$(prefix)APCFLAG"
+    cols = [_cast_double(rrp), _cast_double(rop)]
+    apc in schema && push!(cols, "TRY_CAST($apc AS INTEGER) AS $apc")
+    return cols
+end
+
+
+# One market's `SETTLEMENTDATE`, `REGIONID`, `RRP`, `ROP`, `APCFLAG` (`missing` when not cached).
+function _price_block(df, prefix::AbstractString)
+    apc = "$(prefix)APCFLAG"
+    block = select(df, :SETTLEMENTDATE, :REGIONID, "$(prefix)RRP" => :RRP, "$(prefix)ROP" => :ROP)
+    block[!, :APCFLAG] = apc in names(df) ? df[!, apc] : fill(missing, nrow(block))
+    return block
 end

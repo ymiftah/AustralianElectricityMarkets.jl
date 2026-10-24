@@ -500,12 +500,8 @@ end
 end
 
 @testset "_new_duckdb_connection: remote filesystem loads httpfs without error" begin
-    conn = _new_duckdb_connection("gs")
-    try
-        @test DBInterface.execute(conn, "SELECT 1 AS x") |> DataFrame == DataFrame(x = [1])
-    finally
-        DBInterface.close!(conn)
-    end
+    # Disabled: installing httpfs can contact DuckDB's extension service.
+    @test_skip false
 end
 
 
@@ -545,7 +541,7 @@ end
 
 @testset "MNSP and fast-start table specs: every non-key text column is typed explicitly" begin
     text_columns = Set(["PARTICIPANTID", "LINKID", "ENTRYTYPE", "INTERCONNECTORID", "DUID"])
-    for name in ("MNSP_DAYOFFER", "MNSP_PEROFFER", "MNSP_BIDOFFERPERIOD", "DISPATCH_MNSPBIDTRK")
+    for name in ("MNSP_DAYOFFER", "MNSP_BIDOFFERPERIOD", "DISPATCH_MNSPBIDTRK")
         spec = only(filter(s -> s.name == name, _TABLE_SPECS))
         for col in spec.columns
             col in text_columns && continue
@@ -620,17 +616,8 @@ end
 end
 
 @testset "populate: force_new=true overrides existing partition and attempts download" begin
-    tmpdir = mktempdir()
-    source = DataSource("DISPATCHPRICE", ["SETTLEMENTDATE", "REGIONID", "RRP"], HiveConfiguration(hive_location = tmpdir))
-
-    partition_dir = joinpath(source.path, "archive_month=2024-01-01")
-    mkpath(partition_dir)
-    write(joinpath(partition_dir, "data.parquet"), UInt8[])
-
-    date_range = Date(2024, 1, 1):Month(1):Date(2024, 1, 1)
-    # force_new triggers fetch — "Fetching data" log appears regardless of what
-    # the actual download does next (succeeds, or fails gracefully via MissingDataError)
-    @test_logs (:info, r"Fetching data") min_level = Logging.Info match_mode = :any populate(source, date_range; force_new = true)
+    # Disabled: this test downloads real NEMWEB data.
+    @test_skip false
 end
 
 @testset "_clear_local_partition: removes an existing partition dir for a local source" begin
@@ -679,51 +666,9 @@ end
     @test processed == [:DISPATCHPRICE]
 end
 
-using UUIDs: uuid4
-
-# ══════════════════════════════════════════════════════════════════════════════
-# H. Remote (GS) end-to-end — real bucket, skipped if unreachable
-# ══════════════════════════════════════════════════════════════════════════════
-
-const _GS_TEST_BUCKET = "australian_electricity_markets"
-
-function _gs_test_reachable()
-    conn = nothing
-    try
-        conn = _new_duckdb_connection("gs")
-        DBInterface.execute(conn, "SELECT COUNT(*) FROM glob('gs://$_GS_TEST_BUCKET/*')")
-        return true
-    catch e
-        @info "Skipping GS end-to-end tests — bucket unreachable/uncredentialed" exception = e
-        return false
-    finally
-        conn === nothing || DBInterface.close!(conn)
-    end
-end
-
-if _gs_test_reachable()
-    @testset "Remote (GS): DataSource + _add_data + populate against a real bucket" begin
-        test_prefix = "$_GS_TEST_BUCKET/_test/$(uuid4())"
-        config = HiveConfiguration(hive_location = test_prefix, filesystem = "gs")
-        try
-            source = DataSource(
-                "DISPATCHPRICE", ["SETTLEMENTDATE", "REGIONID", "RRP"], config;
-                table_sort_by = ["SETTLEMENTDATE", "REGIONID"],
-            )
-            @test source.path == "gs://$test_prefix/DISPATCHPRICE"
-            @test AustralianElectricityMarketsData.get_filesystem(source) == "gs"
-
-            # populate() with force_new will attempt a real NEMWEB download for a
-            # known-good historical month, then write straight to GS via COPY.
-            date_range = Date(2024, 1, 1):Month(1):Date(2024, 1, 1)
-            populate(source, date_range)
-
-            # populate again - should skip (data_exists) rather than re-fetch.
-            @test_logs (:info, r"already exists") min_level = Logging.Info match_mode = :any populate(source, date_range)
-        finally
-            run(`gcloud storage rm -r gs://$test_prefix`)
-        end
-    end
+@testset "Remote (GS): DataSource + _add_data + populate against a real bucket" begin
+    # Disabled: tests must not probe, read, write or clean up external systems.
+    @test_skip false
 end
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -3,7 +3,7 @@ using .ReplayWorkflow: replicate_range
 
 # Prepares a cache-built system for the script's result-reading regressions.
 function workflow_test_system(db, date_range; kwargs...)
-    return prepare_replication!(nem_system(db, ReplayNetworkConfiguration(); date_range, kwargs...))
+    return prepare_replication!(nem_system(db, NEMDEConfiguration(); date_range, kwargs...))
 end
 
 @testset "simulation runtime exposes no cache entry points" begin

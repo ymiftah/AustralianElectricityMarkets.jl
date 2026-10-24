@@ -59,10 +59,16 @@ cannot move, or cannot generate, in that interval. Every problem across every de
 collected and raised as one aggregated `ArgumentError` naming the affected `DUID`s, and `sys` is
 left unmodified.
 
+!!! warning
+    Coarse buckets aggregate the available rows without checking five-minute coverage. An
+    incomplete bucket can shift `INITIALMW` away from the period start and omit more restrictive
+    ramp rates or availability limits. Ensure the cache covers every five-minute interval.
+
 # Arguments
 - `sys`: the `System` to add to.
 - `db`: an `AEMDB` connection.
-- `date_range`: the dispatch intervals to replay.
+- `date_range`: the dispatch intervals to replay. Its step is the model resolution: `DISPATCHLOAD`
+  is aggregated onto it as [`read_dispatch_limits`](@ref) describes.
 - `kwargs`: passed to [`read_dispatch_limits`](@ref) (e.g. `intervention`).
 
 # Returns
@@ -73,7 +79,7 @@ function set_nem_dispatch_limits!(sys, db, date_range; kwargs...)
     full_grid = collect(date_range)[1:(end - 1)]
     interval_hours = Dates.value(Millisecond(step(date_range))) / (1000 * 60 * 60)
 
-    rows = read_dispatch_limits(db, date_range; kwargs...)
+    rows = read_dispatch_limits(db, date_range; resolution = step(date_range), kwargs...)
     by_duid = DataFrames.isempty(rows) ? nothing : groupby(rows, :DUID)
 
     devices = nem_dispatch_devices(sys)

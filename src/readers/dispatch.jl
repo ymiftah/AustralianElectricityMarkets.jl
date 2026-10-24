@@ -1,26 +1,54 @@
 """
-    read_dispatch_limits(db, date_range; intervention = 0)
+    read_dispatch_limits(db, date_range; intervention = 0, resolution = Minute(5))
 
-Reads per-interval, per-unit dispatch limits from `DISPATCHLOAD`: one row per
-`(SETTLEMENTDATE, DUID)` with `INITIALMW`, `RAMPUPRATE`, `RAMPDOWNRATE` and `AVAILABILITY`, the
-ramp rates and dispatch envelope NEMDE applied for that interval. `AVAILABILITY` is the `MAXAVAIL`
-bid availability of a scheduled unit, or the lower of `MAXAVAIL` and `UIGF` for a semi-scheduled
-unit.
+Reads per-unit dispatch limits from `DISPATCHLOAD`: `INITIALMW`, `RAMPUPRATE`, `RAMPDOWNRATE` and
+`AVAILABILITY`, the ramp rates and dispatch envelope NEMDE applied for each 5-minute interval.
+`AVAILABILITY` is the `MAXAVAIL` bid availability of a scheduled unit, or the lower of `MAXAVAIL`
+and `UIGF` for a semi-scheduled unit.
+
+With a `resolution` coarser than five minutes, the intervals are ceiled onto it and each bucket keeps
+the `INITIALMW` at its first interval (the metered MW at the start of the period) and the minimum of
+each ramp rate and `AVAILABILITY` across its intervals.
+
+!!! warning
+    Coarse buckets aggregate the available rows without checking five-minute coverage. An
+    incomplete bucket can shift `INITIALMW` away from the period start and omit more restrictive
+    ramp rates or availability limits. Ensure the cache covers every five-minute interval.
 
 # Arguments
 - `db`: an `AEMDB` connection.
 - `date_range`: the dispatch intervals to read (half-open: `start <= t < stop`).
 - `intervention`: `0` for the pricing run, `1` for the physical run.
+- `resolution`: the `Dates.Period` to aggregate onto. Defaults to 5 minutes.
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `INITIALMW`, `RAMPUPRATE`, `RAMPDOWNRATE`,
 `AVAILABILITY`. Throws an `ArgumentError` when `DISPATCHLOAD` is not cached or lacks a column.
 """
-function read_dispatch_limits(db, date_range; intervention::Integer = 0)
+function read_dispatch_limits(db, date_range; intervention::Integer = 0, resolution::Dates.Period = Minute(5))
     columns = ("INITIALMW", "RAMPUPRATE", "RAMPDOWNRATE", "AVAILABILITY")
-    return _read_dispatch_table(db, :DISPATCHLOAD, "DUID", date_range; intervention) do schema
+    start_date = first(date_range)
+    end_date = last(date_range)
+    # A row ceiled into the range has its raw stamp in [start - resolution, end).
+    df = _read_dispatch_table(
+        db, :DISPATCHLOAD, "DUID", (start_date - resolution, end_date); intervention,
+    ) do schema
         _require_columns(:DISPATCHLOAD, schema, columns[2:end])
         return [_cast_double(c) for c in columns]
+    end
+    isempty(df) && return df
+    sort!(df, [:DUID, :SETTLEMENTDATE])
+    df[!, :SETTLEMENTDATE] = ceil.(df[!, :SETTLEMENTDATE], resolution)
+    return @chain df begin
+        groupby([:SETTLEMENTDATE, :DUID])
+        combine(
+            :INITIALMW => first => :INITIALMW,
+            :RAMPUPRATE => minimum => :RAMPUPRATE,
+            :RAMPDOWNRATE => minimum => :RAMPDOWNRATE,
+            :AVAILABILITY => minimum => :AVAILABILITY,
+        )
+        subset(:SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
+        sort([:DUID, :SETTLEMENTDATE])
     end
 end
 
@@ -87,5 +115,48 @@ function read_uigf(db, date_range; resolution::Dates.Period = Minute(5), interve
         combine(:UIGF => mean => :UIGF)
         subset(:SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
         sort([:DUID, :SETTLEMENTDATE])
+    end
+end
+
+"""
+    read_energy_limits(db, date_range; intervention = 0) -> DataFrame
+
+Reads energy bid `MAXAVAIL`, the separate dispatch `UIGF`, and the effective schedule type
+for each offered unit, direction and interval in the half-open `date_range`.
+
+# Arguments
+- `db`: an `AEMDB` connection with energy offers, dispatch results and registration data.
+- `date_range`: the interval range, with an exclusive final timestamp.
+- `intervention`: the dispatch run used for UIGF.
+
+# Returns
+A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `DIRECTION`, `MAXAVAIL`, `UIGF` and
+`SCHEDULE_TYPE`. Unmatched dispatch or registration data remain `missing`.
+"""
+function read_energy_limits(db, date_range; intervention::Integer = 0)
+    offers = select(read_energy_bids(db, date_range), :INTERVAL_DATETIME, :DUID, :DIRECTION, :MAXAVAIL)
+    uigf = _read_dispatch_table([_cast_double("UIGF")], db, :DISPATCHLOAD, "DUID", date_range; intervention)
+    leftjoin!(offers, uigf; on = [:INTERVAL_DATETIME => :SETTLEMENTDATE, :DUID])
+    summary = read_hive(db, :DUDETAILSUMMARY)
+    return _with_registered(db, offers, "nem_energy_offers") do
+        return _query(
+            db,
+            """
+            WITH sm AS (
+                SELECT * FROM $summary
+                WHERE archive_month = (SELECT max(archive_month) FROM $summary)
+            )
+            SELECT o.INTERVAL_DATETIME AS SETTLEMENTDATE, o.DUID, o.DIRECTION,
+                   TRY_CAST(o.MAXAVAIL AS DOUBLE) AS MAXAVAIL, o.UIGF, sm_at.SCHEDULE_TYPE
+            FROM nem_energy_offers o
+            LEFT JOIN LATERAL (
+                SELECT SCHEDULE_TYPE FROM sm
+                WHERE sm.DUID = o.DUID AND sm.START_DATE <= o.INTERVAL_DATETIME
+                  AND (sm.END_DATE IS NULL OR sm.END_DATE > o.INTERVAL_DATETIME)
+                ORDER BY START_DATE DESC LIMIT 1
+            ) sm_at ON true
+            ORDER BY o.DUID, o.DIRECTION, o.INTERVAL_DATETIME
+            """,
+        )
     end
 end

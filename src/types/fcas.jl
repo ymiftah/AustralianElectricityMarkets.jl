@@ -106,10 +106,10 @@ end
 
 
 """
-    scale_fcas_trapezium(trap; agc_enablement_min = nothing, agc_enablement_max = nothing,
+    scale_fcas_trapezium(trapezium; agc_enablement_min = nothing, agc_enablement_max = nothing,
         agc_max_avail = nothing, uigf = nothing, is_regulation) -> FCASTrapezium
 
-Applies AEMO *FCAS Model in NEMDE* §4's trapezium scaling to the offered `trap`: the AGC
+Applies AEMO *FCAS Model in NEMDE* §4's trapezium scaling to the offered `trapezium`: the AGC
 enablement limits (§4.1) and AGC ramping capability (§4.2) for a regulation trapezium
 (`is_regulation`), and the UIGF ceiling (§4.3) for a semi-scheduled unit. Each bound is
 replaced only when the corresponding input is more restrictive than the bid's own value, and
@@ -119,36 +119,36 @@ never clamped, so a squeezed result can have `high_breakpoint < low_breakpoint` 
 peak lies below `max_avail`) or `enablement_max < enablement_min` (no feasible FCAS).
 
 A `nothing` or `0.0` `agc_enablement_min`, `agc_enablement_max` or `agc_max_avail` is treated
-as absent: no scaling on that leg. `uigf` has no such exemption — `0.0` clamps `enablement_max`
+as absent: no scaling on that leg. `uigf` has no such exemption: `0.0` clamps `enablement_max`
 to zero, matching a semi-scheduled unit's weather forecast of no output.
 
 # Arguments
-- `trap`: the offered `FCASTrapezium`.
-- `agc_enablement_min`, `agc_enablement_max`: telemetered AGC enablement limits, in `trap`'s
+- `trapezium`: the offered `FCASTrapezium`.
+- `agc_enablement_min`, `agc_enablement_max`: telemetered AGC enablement limits, in `trapezium`'s
   units. Regulation only.
 - `agc_max_avail`: telemetered AGC ramping capability (ramp rate × dispatch interval), in
-  `trap`'s units. Regulation only.
-- `uigf`: the semi-scheduled unit's weather ceiling, in `trap`'s units, or `nothing` for a
+  `trapezium`'s units. Regulation only.
+- `uigf`: the semi-scheduled unit's weather ceiling, in `trapezium`'s units, or `nothing` for a
   scheduled unit.
-- `is_regulation`: whether `trap` is a `RAISEREG`/`LOWERREG` trapezium.
+- `is_regulation`: whether `trapezium` is a `RAISEREG`/`LOWERREG` trapezium.
 
 # Returns
 An `FCASTrapezium`.
 """
 function scale_fcas_trapezium(
-        trap::FCASTrapezium;
+        trapezium::FCASTrapezium;
         agc_enablement_min::Union{Nothing, Float64} = nothing,
         agc_enablement_max::Union{Nothing, Float64} = nothing,
         agc_max_avail::Union{Nothing, Float64} = nothing,
         uigf::Union{Nothing, Float64} = nothing,
         is_regulation::Bool,
     )
-    lower_slope = get_lower_slope_coeff(trap)
-    upper_slope = get_upper_slope_coeff(trap)
+    lower_slope = get_lower_slope_coeff(trapezium)
+    upper_slope = get_upper_slope_coeff(trapezium)
 
-    new_enablement_min = get_enablement_min(trap)
-    new_enablement_max = get_enablement_max(trap)
-    new_max_avail = get_max_avail(trap)
+    new_enablement_min = get_enablement_min(trapezium)
+    new_enablement_max = get_enablement_max(trapezium)
+    new_max_avail = get_max_avail(trapezium)
 
     if is_regulation
         if !isnothing(agc_enablement_min) && !iszero(agc_enablement_min)
@@ -169,13 +169,12 @@ function scale_fcas_trapezium(
     return FCASTrapezium(;
         enablement_min = new_enablement_min, low_breakpoint = new_low_breakpoint,
         high_breakpoint = new_high_breakpoint, enablement_max = new_enablement_max,
-        max_avail = new_max_avail, ramp_up_rate = get_ramp_up_rate(trap), ramp_down_rate = get_ramp_down_rate(trap),
+        max_avail = new_max_avail, ramp_up_rate = get_ramp_up_rate(trapezium), ramp_down_rate = get_ramp_down_rate(trapezium),
     )
 end
 
 """
-A `(REGIONID, BIDTYPE)` FCAS market anchor — the `add_service!` join between a region's
-market and the devices contributing to it. Carries no requirement or time series of its own;
+A `(REGIONID, BIDTYPE)` FCAS market anchor. Carries no requirement or time series of its own;
 the regional RHS lives on the governing [`GenericConstraint`](@ref)'s own `"rhs"` series.
 
 # Fields
@@ -232,7 +231,6 @@ area of `device`'s own bus.
 
 # Arguments
 - `region`: an `Area` name.
-- `device`: a device attached to a bus in an `Area`.
 - `bid_type`: the FCAS market.
 
 # Returns

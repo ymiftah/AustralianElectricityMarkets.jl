@@ -23,7 +23,7 @@ recorded as regional prices. Price-tied energy bands are dispatched pro rata by 
 
 # Arguments
 - `sys`: a populated `PSY.System` with attached replay inputs, such as one created through
-  `ReplayNetworkConfiguration` and prepared with [`prepare_replication!`](@ref).
+  `NEMDEConfiguration` and prepared with [`prepare_replication!`](@ref).
 - `skipped`: a vector that receives one `(constraint, reason, n_missing)` named tuple per generic
   constraint left out of the template, or `nothing`. `reason` is `:no_available_device` when all
   its contributing devices are unavailable, the `exclude_constraints` reason, or, when `parts`

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Tests no longer contact NEMWEB, Google Storage or DuckDB extension servers: online tests are
+  explicitly skipped and the legacy test-data download helper is disabled.
+- Generic constraint field types are defined before use so the package loads, and interconnector
+  loss-demand preparation uses the restored shared demand-offset helper.
+- Market bid tutorials apply bids before strict dispatch limits so units without offers are
+  marked unavailable first. Dispatch-limit docstrings warn that coarse buckets accept incomplete
+  five-minute coverage.
+- `set_nem_dispatch_limits!` accepts a `date_range` with a step coarser than five minutes (for example
+  30 minutes): `read_dispatch_limits` aggregates `DISPATCHLOAD` onto it, keeping `INITIALMW` at the start
+  of each period and the minimum ramp rate and `AVAILABILITY` across it.
 - `replication_template` tolerates unmodeled device types in generic constraints only for the left-out
   part: storage without `:batteries`, `AreaInterchange` without `:losses`. Other unmodeled types throw.
 - `read_energy_limits` raises on a cached `DISPATCHLOAD` without a `UIGF` column instead of
@@ -143,7 +153,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `ReplayNetworkConfiguration` builds fully populated replay systems through AEM's `nem_system`.
+- `NEMDEConfiguration` builds fully populated replay systems through AEM's `nem_system`.
   AEMSim's `prepare_replication!`, `replication_simulation` and `replication_results` consume built
   systems and expose the standard PSI build, execute and results lifecycle.
 - `read_energy_limits` and `set_nem_energy_limits!` retain separate energy bid `MAXAVAIL`,
@@ -233,7 +243,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AreaBalancePowerModel` objective hook, so it needs `use_slacks = true`.
 - `read_interconnector_limits` and `set_interconnector_flow_limits!` read the per-interval
   `DISPATCHINTERCONNECTORRES` `EXPORTLIMIT`/`IMPORTLIMIT` and attach them as the flow-limit series
-  `NEMInterconnectorLoss` bounds flow by; `nem_system(db, ReplayNetworkConfiguration(); interval_flow_limits = true, ...)`
+  `NEMInterconnectorLoss` bounds flow by; `nem_system(db, NEMDEConfiguration(); interval_flow_limits = true, ...)`
   applies them as an opt-in diagnostic (they are post-solve results and pin flows to NEMDE).
 - `read_units`, `read_interconnectors` and `nem_system` accept `as_of`, resolving the static
   tables (loss factors, flow limits) as in force at that instant.
@@ -254,7 +264,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `scripts/diagnose_infeasible.jl` reports the solver
   status and conflicting constraint families for an interval that does not solve.
 - **Dispatch simulation and comparison:** AEM constructs the populated system through
-  `ReplayNetworkConfiguration`. AEMSim supplies `replication_template` and system-only simulation
+  `NEMDEConfiguration`. AEMSim supplies `replication_template` and system-only simulation
   utilities using NEM dispatch devices, `FCASMarket`, `LinearFactorLimit`, `NEMInterconnectorLoss`
   and `AreaBalancePowerModel` with slacks. The repository workflow compares solved regional `ROP`
   (with published `RRP`), `TOTALCLEARED`, interconnector flows and losses, and FCAS prices, keeping

@@ -3,7 +3,7 @@
     steps = t:Minute(5):(t + Minute(5))
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR))
     sys = nem_system(
-        db, ReplayNetworkConfiguration(); date_range = t:Minute(5):(t + Minute(15)),
+        db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(15)),
         time_series_in_memory = false, time_series_directory = mktempdir()
     )
     DuckDB.close(db.db)

@@ -1,34 +1,3 @@
-# SQL list literal of `bid_types`, e.g. `'RAISE6SEC', 'LOWER6SEC'`.
-_bid_type_list(bid_types) = join(("'$(string(bt))'" for bt in bid_types), ", ")
-
-# The trading days (`SETTLEMENTDATE`) whose offers can cover intervals from `start_date` to `end_date`.
-_offer_days(start_date, end_date) = [Date(start_date) - Day(1), Date(end_date) + Day(1)]
-
-
-# Latest-version `BIDPEROFFER_D` rows of `bid_types` with `start - resolution <= INTERVAL_DATETIME < end`
-# (`start` when `resolution` is `nothing`): the rows a ceil onto `resolution` can bring into the range.
-# `columns` defaults to `MAXAVAIL` and every cached `BANDAVAIL` column.
-function _read_period_offers(db, bid_types::AbstractVector{BidType}, start_date, end_date, resolution; columns = nothing)
-    source = read_hive(db, :BIDPEROFFER_D)
-    selected = isnothing(columns) ? ["MAXAVAIL"; filter(startswith("BANDAVAIL"), _table_schema(db, source))] : columns
-    lower = isnothing(resolution) ? start_date : start_date - resolution
-    return _query(
-        db,
-        """
-        SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE, $(join(selected, ", "))
-        FROM $source
-        WHERE BIDTYPE IN ($(_bid_type_list(bid_types))) AND SETTLEMENTDATE BETWEEN ? AND ?
-          AND INTERVAL_DATETIME >= ? AND INTERVAL_DATETIME < ?
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
-        ) = 1
-        ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME
-        """,
-        [_offer_days(start_date, end_date); lower; end_date],
-    )
-end
-
-
 """
     read_energy_bids(db, date_range; resolution = nothing)
 
@@ -198,6 +167,37 @@ function read_bids(db, date_range; resolution::Union{Nothing, Dates.Period} = no
 end
 
 
+# SQL list literal of `bid_types`, e.g. `'RAISE6SEC', 'LOWER6SEC'`.
+_bid_type_list(bid_types) = join(("'$(string(bt))'" for bt in bid_types), ", ")
+
+# The trading days (`SETTLEMENTDATE`) whose offers can cover intervals from `start_date` to `end_date`.
+_offer_days(start_date, end_date) = [Date(start_date) - Day(1), Date(end_date) + Day(1)]
+
+
+# Latest-version `BIDPEROFFER_D` rows of `bid_types` with `start - resolution <= INTERVAL_DATETIME < end`
+# (`start` when `resolution` is `nothing`): the rows a ceil onto `resolution` can bring into the range.
+# `columns` defaults to `MAXAVAIL` and every cached `BANDAVAIL` column.
+function _read_period_offers(db, bid_types::AbstractVector{BidType}, start_date, end_date, resolution; columns = nothing)
+    source = read_hive(db, :BIDPEROFFER_D)
+    selected = isnothing(columns) ? ["MAXAVAIL"; filter(startswith("BANDAVAIL"), _table_schema(db, source))] : columns
+    lower = isnothing(resolution) ? start_date : start_date - resolution
+    return _query(
+        db,
+        """
+        SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE, $(join(selected, ", "))
+        FROM $source
+        WHERE BIDTYPE IN ($(_bid_type_list(bid_types))) AND SETTLEMENTDATE BETWEEN ? AND ?
+          AND INTERVAL_DATETIME >= ? AND INTERVAL_DATETIME < ?
+        QUALIFY row_number() OVER (
+            PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
+        ) = 1
+        ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME
+        """,
+        [_offer_days(start_date, end_date); lower; end_date],
+    )
+end
+
+
 """
     _massage_bids(db, start_date, end_date; resolution = nothing, bid_types = [BidType.ENERGY], keep_bid_type = false)
 
@@ -235,6 +235,7 @@ function _massage_bids(
         _offer_days(start_date, end_date),
     )
 
+    # TODO Do this in duckdb
     if !isnothing(resolution)
         energy_bids = @chain energy_bids begin
             transform(:INTERVAL_DATETIME => ByRow(x -> ceil(x, resolution)); renamecols = false)
@@ -269,5 +270,6 @@ function _massage_bids(
             :MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT, (keep_bid_type ? [:BIDTYPE] : [])...,
         )
     end
+    # do all the above in duckdb
     return prep_for_psy
 end

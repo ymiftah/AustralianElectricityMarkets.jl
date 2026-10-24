@@ -371,6 +371,27 @@
             end
         end
 
+        @testset "aggregates DISPATCHLOAD onto a 30-minute step" begin
+            # The mock DISPATCHLOAD starts at `start_date`, so the first bucket is 00:30: its window is complete.
+            coarse = (start_date + Minute(30)):Minute(30):(start_date + Hour(2))
+            fine = truth
+            buckets = read_dispatch_limits(db, coarse; resolution = Minute(30))
+            got = subset(buckets, :DUID => ByRow(==("PUMP1")))
+            @test nrow(got) == length(coarse) - 1
+            rows = subset(fine, :DUID => ByRow(==("PUMP1")))
+            for b in eachrow(got)
+                window = sort(
+                    subset(rows, :SETTLEMENTDATE => ByRow(x -> b.SETTLEMENTDATE - Minute(30) < x <= b.SETTLEMENTDATE)),
+                    :SETTLEMENTDATE,
+                )
+                @test length(window.SETTLEMENTDATE) == 6
+                @test b.INITIALMW == first(window.INITIALMW)
+                @test b.RAMPUPRATE == minimum(window.RAMPUPRATE)
+                @test b.RAMPDOWNRATE == minimum(window.RAMPDOWNRATE)
+                @test b.AVAILABILITY == minimum(window.AVAILABILITY)
+            end
+        end
+
         @testset "attaches ramp/initial series to a battery, with no max_active_power" begin
             sys = deepcopy(sys_base)
             set_nem_dispatch_limits!(sys, db, date_range)

@@ -45,7 +45,7 @@ function read_interconnectors(db; as_of::Union{Nothing, Date, DateTime} = nothin
         ) = 1
     """
     df = isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of])
-    current_regions = _current_regions(db)
+    current_regions = _current_regions(db)  # TODO _current_regions needs an asof so we do not remove regions actives "asof"
     retired = filter(
         row -> !(row.REGIONFROM in current_regions) || !(row.REGIONTO in current_regions), df,
     )
@@ -56,6 +56,41 @@ function read_interconnectors(db; as_of::Union{Nothing, Date, DateTime} = nothin
     )
 end
 
+"""
+    read_interconnector_loss_breakpoints(db, as_of) -> DataFrame
+
+Reads `LOSSMODEL`'s segment breakpoints for each interconnector's latest version effective on or
+before `as_of`.
+
+# Arguments
+- `db`: an `AEMDB` connection.
+- `as_of`: a `Date` or `DateTime`.
+
+# Returns
+A `DataFrame` with `INTERCONNECTORID`, `LOSSSEGMENT` and `MWBREAKPOINT`, sorted by breakpoint
+within an interconnector. Throws an `ArgumentError` when `LOSSMODEL` is not cached.
+"""
+function read_interconnector_loss_breakpoints(db, as_of::Union{Date, DateTime})  # FIXME inconsistent use of as_of as kwarg vs arg (c.f. read_interconnectors)
+    return _read_loss_model_table(db, :LOSSMODEL, "LOSSSEGMENT", "MWBREAKPOINT", "MWBREAKPOINT", as_of)
+end
+
+"""
+    read_interconnector_demand_coefficients(db, as_of) -> DataFrame
+
+Reads `LOSSFACTORMODEL`'s per-region demand coefficients for each interconnector's latest version
+effective on or before `as_of`.
+
+# Arguments
+- `db`: an `AEMDB` connection.
+- `as_of`: a `Date` or `DateTime`.
+
+# Returns
+A `DataFrame` with `INTERCONNECTORID`, `REGIONID` and `DEMANDCOEFFICIENT`. Throws an
+`ArgumentError` when `LOSSFACTORMODEL` is not cached.
+"""
+function read_interconnector_demand_coefficients(db, as_of::Union{Date, DateTime}) # FIXME inconsistent use of as_of as kwarg vs arg (c.f. read_interconnectors)
+    return _read_loss_model_table(db, :LOSSFACTORMODEL, "REGIONID", "DEMANDCOEFFICIENT", "r.REGIONID", as_of)
+end
 
 # `INTERCONNECTORID`, `key` and non-null `value` of each interconnector's latest `table_name` version
 # effective on or before `as_of`, sorted by interconnector then `order_by`.
@@ -92,44 +127,6 @@ end
 
 
 """
-    read_interconnector_loss_breakpoints(db, as_of) -> DataFrame
-
-Reads `LOSSMODEL`'s segment breakpoints for each interconnector's latest version effective on or
-before `as_of`.
-
-# Arguments
-- `db`: an `AEMDB` connection.
-- `as_of`: a `Date` or `DateTime`.
-
-# Returns
-A `DataFrame` with `INTERCONNECTORID`, `LOSSSEGMENT` and `MWBREAKPOINT`, sorted by breakpoint
-within an interconnector. Throws an `ArgumentError` when `LOSSMODEL` is not cached.
-"""
-function read_interconnector_loss_breakpoints(db, as_of::Union{Date, DateTime})
-    return _read_loss_model_table(db, :LOSSMODEL, "LOSSSEGMENT", "MWBREAKPOINT", "MWBREAKPOINT", as_of)
-end
-
-
-"""
-    read_interconnector_demand_coefficients(db, as_of) -> DataFrame
-
-Reads `LOSSFACTORMODEL`'s per-region demand coefficients for each interconnector's latest version
-effective on or before `as_of`.
-
-# Arguments
-- `db`: an `AEMDB` connection.
-- `as_of`: a `Date` or `DateTime`.
-
-# Returns
-A `DataFrame` with `INTERCONNECTORID`, `REGIONID` and `DEMANDCOEFFICIENT`. Throws an
-`ArgumentError` when `LOSSFACTORMODEL` is not cached.
-"""
-function read_interconnector_demand_coefficients(db, as_of::Union{Date, DateTime})
-    return _read_loss_model_table(db, :LOSSFACTORMODEL, "REGIONID", "DEMANDCOEFFICIENT", "r.REGIONID", as_of)
-end
-
-
-"""
     read_interconnector_loss_parameters(db, as_of) -> DataFrame
 
 `INTERCONNECTORCONSTRAINT`'s loss parameters joined to `INTERCONNECTOR`'s region pair,
@@ -140,7 +137,7 @@ Differs from [`read_interconnectors`](@ref), which resolves to the latest versio
 
 Throws `ArgumentError` when either table isn't cached.
 """
-function read_interconnector_loss_parameters(db, as_of::Union{Date, DateTime})
+function read_interconnector_loss_parameters(db, as_of::Union{Date, DateTime})  # FIXME inconsistent use of as_of as kwarg vs arg (c.f. read_interconnectors)
     foreach(table -> _require_cached(db, table), (:INTERCONNECTORCONSTRAINT, :INTERCONNECTOR))
     icc_table = read_hive(db, :INTERCONNECTORCONSTRAINT)
     ic_table = read_hive(db, :INTERCONNECTOR)

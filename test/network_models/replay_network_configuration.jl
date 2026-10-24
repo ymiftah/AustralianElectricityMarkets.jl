@@ -1,10 +1,10 @@
-@testset "ReplayNetworkConfiguration" begin
+@testset "NEMDEConfiguration" begin
     hive = mktempdir()
     create_mock_data(hive; complete_inputs = true)
     write_mock_interconnector_results(hive)
     db = aem_connect(HiveConfiguration(hive_location = hive))
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
-    config = ReplayNetworkConfiguration()
+    config = NEMDEConfiguration()
     @test_throws ArgumentError nem_system(db, config; date_range = first(interval):Minute(10):last(interval))
     @test_throws ArgumentError nem_system(db, config; date_range = first(interval):Minute(5):first(interval))
     sys = nem_system(db, config; date_range = interval)
@@ -40,7 +40,7 @@
                 (:DISPATCHREGIONSUM, "DELETE FROM input WHERE SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:10'", r"missing regional demand"),
             ]
             db = damaged_cache(hive, table, query)
-            @test_throws expected nem_system(db, ReplayNetworkConfiguration(); date_range = interval)
+            @test_throws expected nem_system(db, NEMDEConfiguration(); date_range = interval)
         end
     end
 
@@ -48,7 +48,7 @@
         missing_bids = damaged_cache(hive, :BIDPEROFFER_D, "DELETE FROM input WHERE BIDTYPE = 'ENERGY' AND DUID = 'BW02'")
         db = damaged_cache(missing_bids.config.hive_location, :DISPATCHLOAD, "UPDATE input SET AVAILABILITY = 0 WHERE DUID = 'BW02'")
         interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 15)
-        @test_throws r"BW02 GEN" nem_system(db, ReplayNetworkConfiguration(); date_range = interval)
+        @test_throws r"BW02 GEN" nem_system(db, NEMDEConfiguration(); date_range = interval)
     end
 
 end

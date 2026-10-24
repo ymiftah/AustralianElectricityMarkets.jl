@@ -1,34 +1,4 @@
 """
-    _current_regions(db) -> Set{String}
-
-Every `REGIONID` present in the cached `DISPATCHREGIONSUM`, the authoritative source of which
-regions are currently active - `INTERCONNECTOR`/`INTERCONNECTORCONSTRAINT` retain rows for
-long-retired interconnectors (e.g. `SNOWY1`/`V-SN`, abolished 2008) that a naive
-`REGIONFROM`/`REGIONTO` union would otherwise resurrect as a phantom, zero-demand region.
-"""
-function _current_regions(db)
-    df = try
-        table = read_hive(db, :DISPATCHREGIONSUM)
-        _query(db, "SELECT DISTINCT REGIONID FROM $table WHERE REGIONID IS NOT NULL")
-    catch err
-        throw(
-            ArgumentError(
-                "read_interconnectors needs a cached DISPATCHREGIONSUM to identify the active regions; " *
-                    "run `populate(db, :DISPATCHREGIONSUM, start_date, end_date)` first ($(sprint(showerror, err)))",
-            ),
-        )
-    end
-    isempty(df) && throw(
-        ArgumentError(
-            "read_interconnectors found no REGIONID in the cached DISPATCHREGIONSUM; " *
-                "populate it with `populate(db, :DISPATCHREGIONSUM, start_date, end_date)`",
-        ),
-    )
-    return Set(df.REGIONID)
-end
-
-
-"""
     read_demand(db; resolution::Dates.Period=Dates.Minute(5))
     read_demand(db, date_range; resolution::Dates.Period=Dates.Minute(5))
 
@@ -103,6 +73,7 @@ function read_demand(db, date_range = nothing; resolution::Dates.Period = Dates.
         """,
         params,
     )
+    ## TODO do this aggregation in duckdb.
     df[!, :SETTLEMENTDATE] = ceil.(df[!, :SETTLEMENTDATE], resolution)
     sort!(df, :SETTLEMENTDATE)
     demand = @chain df begin
@@ -112,5 +83,35 @@ function read_demand(db, date_range = nothing; resolution::Dates.Period = Dates.
     if !isnothing(date_range)
         subset!(demand, :SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
     end
+    ## TODO END
     return demand
+end
+
+"""
+    _current_regions(db) -> Set{String}
+
+Every `REGIONID` present in the cached `DISPATCHREGIONSUM`, the authoritative source of which
+regions are currently active - `INTERCONNECTOR`/`INTERCONNECTORCONSTRAINT` retain rows for
+long-retired interconnectors (e.g. `SNOWY1`/`V-SN`, abolished 2008) that a naive
+`REGIONFROM`/`REGIONTO` union would otherwise resurrect as a phantom, zero-demand region.
+"""
+function _current_regions(db)
+    df = try
+        table = read_hive(db, :DISPATCHREGIONSUM)
+        _query(db, "SELECT DISTINCT REGIONID FROM $table WHERE REGIONID IS NOT NULL")
+    catch err
+        throw(
+            ArgumentError(
+                "read_interconnectors needs a cached DISPATCHREGIONSUM to identify the active regions; " *
+                    "run `populate(db, :DISPATCHREGIONSUM, start_date, end_date)` first ($(sprint(showerror, err)))",
+            ),
+        )
+    end
+    isempty(df) && throw(
+        ArgumentError(
+            "read_interconnectors found no REGIONID in the cached DISPATCHREGIONSUM; " *
+                "populate it with `populate(db, :DISPATCHREGIONSUM, start_date, end_date)`",
+        ),
+    )
+    return Set(df.REGIONID)
 end
