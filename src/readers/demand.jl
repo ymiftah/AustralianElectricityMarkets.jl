@@ -38,7 +38,10 @@ function read_demand(db, date_range = nothing; resolution::Dates.Period = Dates.
         demand_where = "AND r.SETTLEMENTDATE > ? AND r.SETTLEMENTDATE <= ?"
         append!(params, (lower, upper, lower, upper))
     end
-    df = _query(
+    bucket = _ceil_timestamp_sql("r.SETTLEMENTDATE", resolution)
+    bounds = isnothing(date_range) ? "" : "WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?"
+    isnothing(date_range) || append!(params, (first(date_range), last(date_range)))
+    return _query(
         db,
         """
         WITH sm_raw AS (SELECT * FROM $summary),
@@ -62,43 +65,46 @@ function read_demand(db, date_range = nothing; resolution::Dates.Period = Dates.
                      AND bdu.START_DATE <= d.SETTLEMENTDATE
                      AND (bdu.END_DATE IS NULL OR bdu.END_DATE > d.SETTLEMENTDATE)
                  GROUP BY ALL
+             ),
+             raw_demand AS (
+                 SELECT $bucket AS SETTLEMENTDATE, r.REGIONID, r.TOTALDEMAND,
+                        r.INITIALSUPPLY + r.DEMANDFORECAST + COALESCE(c.INITIALCHARGE, 0.0) AS LOSSDEMAND
+                 FROM $source r
+                 LEFT JOIN charging c ON c.SETTLEMENTDATE = r.SETTLEMENTDATE AND c.REGIONID = r.REGIONID
+                 WHERE r.SETTLEMENTDATE IS NOT NULL AND r.REGIONID IS NOT NULL
+                   AND r.TOTALDEMAND IS NOT NULL
+                   $demand_where
              )
-        SELECT r.SETTLEMENTDATE, r.REGIONID, r.TOTALDEMAND,
-               r.INITIALSUPPLY + r.DEMANDFORECAST + COALESCE(c.INITIALCHARGE, 0.0) AS LOSSDEMAND
-        FROM $source r
-        LEFT JOIN charging c ON c.SETTLEMENTDATE = r.SETTLEMENTDATE AND c.REGIONID = r.REGIONID
-        WHERE r.SETTLEMENTDATE IS NOT NULL AND r.REGIONID IS NOT NULL
-          AND r.TOTALDEMAND IS NOT NULL
-          $demand_where
+        SELECT SETTLEMENTDATE, REGIONID, avg(TOTALDEMAND) AS TOTALDEMAND,
+               COALESCE(avg(LOSSDEMAND), 'NaN'::DOUBLE) AS LOSSDEMAND
+        FROM raw_demand
+        $bounds
+        GROUP BY SETTLEMENTDATE, REGIONID
+        ORDER BY SETTLEMENTDATE, REGIONID
         """,
         params,
     )
-    ## TODO do this aggregation in duckdb.
-    df[!, :SETTLEMENTDATE] = ceil.(df[!, :SETTLEMENTDATE], resolution)
-    sort!(df, :SETTLEMENTDATE)
-    demand = @chain df begin
-        groupby([:SETTLEMENTDATE, :REGIONID])
-        combine(_, valuecols(_) .=> mean ∘ skipmissing; renamecols = false)
-    end
-    if !isnothing(date_range)
-        subset!(demand, :SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
-    end
-    ## TODO END
-    return demand
 end
 
 """
-    _current_regions(db) -> Set{String}
+    _current_regions(db; as_of = nothing) -> Set{String}
 
-Every `REGIONID` present in the cached `DISPATCHREGIONSUM`, the authoritative source of which
-regions are currently active - `INTERCONNECTOR`/`INTERCONNECTORCONSTRAINT` retain rows for
-long-retired interconnectors (e.g. `SNOWY1`/`V-SN`, abolished 2008) that a naive
-`REGIONFROM`/`REGIONTO` union would otherwise resurrect as a phantom, zero-demand region.
+Regions in the latest cached `DISPATCHREGIONSUM` snapshot at or before `as_of`.
+With `as_of = nothing`, uses the latest cached snapshot. Throws `ArgumentError` when no
+snapshot is available.
 """
-function _current_regions(db)
+function _current_regions(db; as_of::Union{Nothing, Date, DateTime} = nothing)
     df = try
         table = read_hive(db, :DISPATCHREGIONSUM)
-        _query(db, "SELECT DISTINCT REGIONID FROM $table WHERE REGIONID IS NOT NULL")
+        bound = isnothing(as_of) ? "" : "AND SETTLEMENTDATE <= ?"
+        sql = """
+        SELECT DISTINCT REGIONID FROM $table
+        WHERE REGIONID IS NOT NULL AND SETTLEMENTDATE = (
+            SELECT max(SETTLEMENTDATE) FROM $table
+            WHERE REGIONID IS NOT NULL $bound
+        )
+        """
+        isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of])
     catch err
         throw(
             ArgumentError(
@@ -109,8 +115,9 @@ function _current_regions(db)
     end
     isempty(df) && throw(
         ArgumentError(
-            "read_interconnectors found no REGIONID in the cached DISPATCHREGIONSUM; " *
-                "populate it with `populate(db, :DISPATCHREGIONSUM, start_date, end_date)`",
+            "read_interconnectors found no DISPATCHREGIONSUM snapshot" *
+                (isnothing(as_of) ? "" : " at or before $as_of") *
+                "; populate it with `populate(db, :DISPATCHREGIONSUM, start_date, end_date)`",
         ),
     )
     return Set(df.REGIONID)

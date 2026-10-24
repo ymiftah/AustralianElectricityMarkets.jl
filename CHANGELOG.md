@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Historical system construction uses one as-of interconnector result for buses and links, with
+  active regions taken from the latest cached demand snapshot at or before the requested time.
+- Demand aggregation and joined bid preparation run in DuckDB, preserving timestamp ceiling,
+  trading-day and direction keys, missing-value behavior and numerical band order.
+- Interconnector loss readers accept required `as_of` keywords; positional calls remain supported
+  with deprecation warnings.
 - Tests no longer contact NEMWEB, Google Storage or DuckDB extension servers: online tests are
   explicitly skipped and the legacy test-data download helper is disabled.
 - Generic constraint field types are defined before use so the package loads, and interconnector

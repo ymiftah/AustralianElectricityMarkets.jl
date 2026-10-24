@@ -39,9 +39,9 @@ FY2025-26) are filled in; a value present in the table is never overridden.
 Throws `ArgumentError` when no interconnector survives.
 """
 function interconnector_loss_models(db, as_of::Union{Date, DateTime})
-    params = read_interconnector_loss_parameters(db, as_of)
-    coefficients = read_interconnector_demand_coefficients(db, as_of)
-    breakpoints = read_interconnector_loss_breakpoints(db, as_of)
+    params = read_interconnector_loss_parameters(db; as_of = as_of)
+    coefficients = read_interconnector_demand_coefficients(db; as_of = as_of)
+    breakpoints = read_interconnector_loss_breakpoints(db; as_of = as_of)
 
     by_interconnector = Dict{String, Vector{Float64}}()
     for row in eachrow(breakpoints)

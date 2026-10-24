@@ -79,7 +79,7 @@ let
     as_of = Date(2025, 1, 2)
 
     @testset "read_interconnector_loss_breakpoints" begin
-        df = read_interconnector_loss_breakpoints(db, as_of)
+        df = read_interconnector_loss_breakpoints(db; as_of = as_of)
         @test Set(names(df)) == Set(["INTERCONNECTORID", "LOSSSEGMENT", "MWBREAKPOINT"])
         # IC6 has loss parameters but no LOSSMODEL rows at all.
         @test Set(df.INTERCONNECTORID) == Set("IC$i" for i in 1:5)
@@ -88,20 +88,20 @@ let
         @test sort(ic1.MWBREAKPOINT) == [-500.0, -250.0, 0.0, 250.0, 500.0]
 
         # Resolving as of a date before the current version falls back to the superseded one.
-        earlier = read_interconnector_loss_breakpoints(db, Date(2024, 6, 1))
+        earlier = read_interconnector_loss_breakpoints(db; as_of = Date(2024, 6, 1))
         @test sort(earlier[earlier.INTERCONNECTORID .== "IC1", :].MWBREAKPOINT) ==
             [-100.0, -50.0, 0.0, 50.0, 100.0]
     end
 
     @testset "read_interconnector_demand_coefficients" begin
-        df = read_interconnector_demand_coefficients(db, as_of)
+        df = read_interconnector_demand_coefficients(db; as_of = as_of)
         @test Set(names(df)) == Set(["INTERCONNECTORID", "REGIONID", "DEMANDCOEFFICIENT"])
         @test nrow(df) == 12
         @test all(!ismissing, df.DEMANDCOEFFICIENT)
     end
 
     @testset "read_interconnector_loss_parameters" begin
-        df = read_interconnector_loss_parameters(db, as_of)
+        df = read_interconnector_loss_parameters(db; as_of = as_of)
         @test nrow(df) == 6
         @test "REGIONFROM" in names(df) && "REGIONTO" in names(df)
         @test all(df.LOSSCONSTANT .≈ 0.01)
@@ -142,9 +142,9 @@ let
         empty_db = aem_connect(
             HiveConfiguration(hive_location = mktempdir(), filesystem = "file"),
         )
-        @test_throws ArgumentError read_interconnector_loss_breakpoints(empty_db, as_of)
-        @test_throws ArgumentError read_interconnector_demand_coefficients(empty_db, as_of)
-        @test_throws ArgumentError read_interconnector_loss_parameters(empty_db, as_of)
+        @test_throws ArgumentError read_interconnector_loss_breakpoints(empty_db; as_of = as_of)
+        @test_throws ArgumentError read_interconnector_demand_coefficients(empty_db; as_of = as_of)
+        @test_throws ArgumentError read_interconnector_loss_parameters(empty_db; as_of = as_of)
     end
 
     @testset "no model resolvable throws" begin
