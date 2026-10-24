@@ -469,9 +469,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The public `filter_buildable_generic_constraints` (`AustralianElectricityMarketsSimulations`).
   The replication path runs the same buildability check internally.
-- The table specs `DISPATCH_FCAS_REQ_RUN`, `DISPATCH_UNIT_SCADA`, `STADUALLOC`, `GENCONSET`,
-  `GENCONSETINVOKE`, `GENCONSETTRK`, `PARTICIPANT` and `STATIONOWNER`, which nothing read, are no
-  longer populated.
 - `NEMLookaheadDispatch` and `StorageInputDevicePower`, with the pre-dispatch FCAS timing (AGC
   scaling and telemetry on the first interval only) that only it used. `NEMReplayDispatch` is the
   one `AbstractNEMDispatch` formulation.
@@ -510,8 +507,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The root export of `list_available_tables`; it remains exported by `AustralianElectricityMarketsCache`
   and `AustralianElectricityMarketsData`.
 - `show` methods of `AEMDB`, `cached_date_range`, and the `add_partitions` keyword of `DataSource`.
-- The `MNSP_PEROFFER` table spec. MNSP offer replays cover intervals from 1 October 2021, the start of
-  five-minute settlement; earlier intervals are not supported.
 
 - `energy_bounds` and `scale_trapezium` (`AustralianElectricityMarketsSimulations`), which nothing in
   the replication path called. Root's `scale_fcas_trapezium` is unchanged.

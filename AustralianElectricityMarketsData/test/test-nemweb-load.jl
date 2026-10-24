@@ -545,7 +545,7 @@ end
 
 @testset "MNSP and fast-start table specs: every non-key text column is typed explicitly" begin
     text_columns = Set(["PARTICIPANTID", "LINKID", "ENTRYTYPE", "INTERCONNECTORID", "DUID"])
-    for name in ("MNSP_DAYOFFER", "MNSP_BIDOFFERPERIOD", "DISPATCH_MNSPBIDTRK")
+    for name in ("MNSP_DAYOFFER", "MNSP_PEROFFER", "MNSP_BIDOFFERPERIOD", "DISPATCH_MNSPBIDTRK")
         spec = only(filter(s -> s.name == name, _TABLE_SPECS))
         for col in spec.columns
             col in text_columns && continue

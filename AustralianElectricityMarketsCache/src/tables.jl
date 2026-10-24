@@ -79,6 +79,11 @@ const _TABLE_SPECS = [
         month_filter_column = "INTERVAL_DATETIME",
     ),
     (
+        name = "DISPATCH_FCAS_REQ_RUN",
+        columns = ["RUN_DATETIME", "RUNNO", "LASTCHANGED"],
+        sort_by = ["RUN_DATETIME", "RUNNO"],
+    ),
+    (
         name = "DUDETAILSUMMARY",
         columns = [
             "DUID", "START_DATE", "END_DATE", "DISPATCHTYPE", "CONNECTIONPOINTID",
@@ -198,6 +203,16 @@ const _TABLE_SPECS = [
         ],
     ),
     (
+        name = "DISPATCH_UNIT_SCADA",
+        columns = ["SETTLEMENTDATE", "DUID", "SCADAVALUE"],
+        sort_by = ["SETTLEMENTDATE", "DUID"],
+    ),
+    (
+        name = "STADUALLOC",
+        columns = ["DUID", "EFFECTIVEDATE", "STATIONID", "VERSIONNO"],
+        sort_by = ["DUID", "EFFECTIVEDATE", "STATIONID", "VERSIONNO"],
+    ),
+    (
         name = "SPDREGIONCONSTRAINT",
         columns = ["REGIONID", "EFFECTIVEDATE", "VERSIONNO", "GENCONID", "BIDTYPE", "FACTOR", "LASTCHANGED"],
         sort_by = ["REGIONID", "GENCONID", "EFFECTIVEDATE", "VERSIONNO", "BIDTYPE"],
@@ -206,6 +221,33 @@ const _TABLE_SPECS = [
         name = "SPDINTERCONNECTORCONSTRAINT",
         columns = ["INTERCONNECTORID", "EFFECTIVEDATE", "VERSIONNO", "GENCONID", "FACTOR", "LASTCHANGED"],
         sort_by = ["INTERCONNECTORID", "GENCONID", "EFFECTIVEDATE", "VERSIONNO"],
+    ),
+    (
+        name = "GENCONSET",
+        columns = [
+            "GENCONSETID", "EFFECTIVEDATE", "VERSIONNO", "GENCONID",
+            "GENCONEFFDATE", "GENCONVERSIONNO", "LASTCHANGED",
+        ],
+        sort_by = ["GENCONSETID", "EFFECTIVEDATE", "VERSIONNO", "GENCONID"],
+    ),
+    (
+        name = "GENCONSETINVOKE",
+        columns = [
+            "INVOCATION_ID", "STARTDATE", "STARTPERIOD", "GENCONSETID",
+            "ENDDATE", "ENDPERIOD", "STARTAUTHORISEDBY", "ENDAUTHORISEDBY",
+            "INTERVENTION", "ASCONSTRAINTTYPE", "LASTCHANGED",
+            "STARTINTERVALDATETIME", "ENDINTERVALDATETIME", "SYSTEMNORMAL",
+        ],
+        sort_by = ["INVOCATION_ID"],
+    ),
+    (
+        name = "GENCONSETTRK",
+        columns = [
+            "GENCONSETID", "EFFECTIVEDATE", "VERSIONNO", "DESCRIPTION",
+            "AUTHORISEDBY", "AUTHORISEDDATE", "LASTCHANGED",
+            "COVERAGE", "MODIFICATIONS", "SYSTEMNORMAL", "OUTAGE",
+        ],
+        sort_by = ["GENCONSETID", "EFFECTIVEDATE", "VERSIONNO"],
     ),
     (
         name = "INTERCONNECTOR",
@@ -251,6 +293,17 @@ const _TABLE_SPECS = [
         sort_by = ["SETTLEMENTDATE", "LINKID", "VERSIONNO", "OFFERDATE", "PARTICIPANTID"],
     ),
     (
+        name = "MNSP_PEROFFER",
+        columns = [
+            "SETTLEMENTDATE", "OFFERDATE", "VERSIONNO", "PARTICIPANTID", "LINKID",
+            "PERIODID", "MAXAVAIL", "BANDAVAIL1", "BANDAVAIL2", "BANDAVAIL3",
+            "BANDAVAIL4", "BANDAVAIL5", "BANDAVAIL6", "BANDAVAIL7", "BANDAVAIL8",
+            "BANDAVAIL9", "BANDAVAIL10", "LASTCHANGED", "FIXEDLOAD", "RAMPUPRATE",
+            "PASAAVAILABILITY", "MR_CAPACITY",
+        ],
+        sort_by = ["SETTLEMENTDATE", "LINKID", "VERSIONNO", "OFFERDATE", "PARTICIPANTID", "PERIODID"],
+    ),
+    (
         name = "MNSP_BIDOFFERPERIOD",
         columns = [
             "TRADINGDATE", "OFFERDATETIME", "LINKID", "PERIODID", "MAXAVAIL", "FIXEDLOAD",
@@ -269,9 +322,22 @@ const _TABLE_SPECS = [
         sort_by = ["SETTLEMENTDATE", "RUNNO", "LINKID", "PARTICIPANTID"],
     ),
     (
+        name = "PARTICIPANT",
+        columns = [
+            "PARTICIPANTID", "PARTICIPANTCLASSID", "NAME", "DESCRIPTION",
+            "ACN", "PRIMARYBUSINESS", "LASTCHANGED",
+        ],
+        sort_by = ["PARTICIPANTID"],
+    ),
+    (
         name = "STATIONOPERATINGSTATUS",
         columns = ["EFFECTIVEDATE", "STATIONID", "VERSIONNO", "STATUS"],
         sort_by = ["STATIONID", "EFFECTIVEDATE", "VERSIONNO"],
+    ),
+    (
+        name = "STATIONOWNER",
+        columns = ["EFFECTIVEDATE", "PARTICIPANTID", "STATIONID", "VERSIONNO"],
+        sort_by = ["STATIONID", "EFFECTIVEDATE", "VERSIONNO", "PARTICIPANTID"],
     ),
 ]
 
