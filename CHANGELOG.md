@@ -506,7 +506,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `get_effective_date` and `get_version_no`.
 - The root export of `list_available_tables`; it remains exported by `AustralianElectricityMarketsCache`
   and `AustralianElectricityMarketsData`.
-- `show` methods of `AEMDB`, `cached_date_range`, and the `add_partitions` keyword of `DataSource`.
+- The `add_partitions` keyword of `DataSource`.
 
 - `energy_bounds` and `scale_trapezium` (`AustralianElectricityMarketsSimulations`), which nothing in
   the replication path called. Root's `scale_fcas_trapezium` is unchanged.

@@ -17,5 +17,6 @@ include("types/data_source.jl")
 include("connection.jl")
 include("partitions.jl")
 include("tables.jl")
+include("display.jl")
 
 end
