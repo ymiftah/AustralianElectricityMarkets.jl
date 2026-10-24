@@ -513,15 +513,8 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     save_hive(df_fcas_req, :DISPATCH_FCAS_REQ)
 
     df_fcas_req_constraint = DataFrame()
-    df_fcas_req_run = DataFrame()
     for i in intervals
         t = base_datetime + Minute(5 * i)
-        append!(
-            df_fcas_req_run, DataFrame(
-                RUN_DATETIME = [t], RUNNO = [1], LASTCHANGED = [t],
-                archive_month = ["2025-01"]
-            )
-        )
         for bid_type in fcas_bid_types
             append!(
                 df_fcas_req_constraint, DataFrame(
@@ -547,7 +540,6 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
         end
     end
     save_hive(df_fcas_req_constraint, :DISPATCH_FCAS_REQ_CONSTRAINT)
-    save_hive(df_fcas_req_run, :DISPATCH_FCAS_REQ_RUN)
 
     # 14. DISPATCHCONSTRAINT. RHS varies per interval (requirement_mw + 0.1*i) to exercise
     # the "rhs" SingleTimeSeries time series, not just a flat default. GENCONID_EFFECTIVEDATE/
@@ -1021,4 +1013,20 @@ function write_mock_interconnector_results(hive_root::String)
     DuckDB.disconnect(conn)
     DuckDB.close(ddb)
     return
+end
+
+
+# Copies the hive at `source`, rewrites `table` through the SQL `query` (over the copy named `input`)
+# and returns a connection to the copy, so each damaged cache is private to its test.
+function damaged_cache(source, table, query)
+    hive = joinpath(mktempdir(), "hive")
+    cp(source, hive)
+    path = joinpath(hive, string(table))
+    conn = DuckDB.DB()
+    DuckDB.execute(conn, "CREATE TABLE input AS SELECT * FROM read_parquet('$path/**/*.parquet', hive_partitioning = true)")
+    DuckDB.execute(conn, query)
+    rm(path; recursive = true)
+    DuckDB.execute(conn, "COPY input TO '$path' (FORMAT PARQUET, PARTITION_BY (archive_month))")
+    DuckDB.close(conn)
+    return aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
 end

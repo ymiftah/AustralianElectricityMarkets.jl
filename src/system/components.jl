@@ -74,12 +74,13 @@ end
 
 
 """
-    get_bus_dataframe(db)
+    get_bus_dataframe(db; as_of = nothing)
 
 Generates a DataFrame of bus information.
 
 # Arguments
 - `db`: The database connection.
+- `as_of`: a `Date` or `DateTime` to resolve interconnectors and regions, or `nothing` for the latest snapshot.
 
 # Returns
 A `DataFrame` containing bus details.
@@ -91,8 +92,12 @@ bus_df = get_bus_dataframe(db)
 println(bus_df)
 ```
 """
-function get_bus_dataframe(db)
-    interconnectors = read_interconnectors(db)
+function get_bus_dataframe(db; as_of = nothing)
+    return _bus_dataframe(read_interconnectors(db; as_of))
+end
+
+
+function _bus_dataframe(interconnectors)
     regions = @chain interconnectors begin
         select(:REGIONFROM => :region)
         vcat(select(interconnectors, :REGIONTO => :region))

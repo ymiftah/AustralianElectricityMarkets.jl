@@ -7,7 +7,7 @@ NEMDE treats interconnector losses as a quadratic in flow whose linear coefficie
 regional demand: the *loss factor* at flow `f` is
 
 ```
-lf(f) = loss_constant + loss_flow_coefficient * f + Σ_r demand_coefficients[r] * demand[r]
+lf(f) = loss_constant + loss_flow_coefficient * f + Σ_{r∈regions} demand_coefficients[r] * demand[r]
 ```
 
 and the losses themselves are the integral of `lf(f) - 1` over `[0, f]` — see
@@ -90,8 +90,8 @@ end
 """
     _demand_offset(model, demand) -> Float64
 
-The demand term of [`loss_factor`](@ref), `Σ_r demand_coefficients[r] × demand[r]`. A region in
-`model.demand_coefficients` but absent from `demand` contributes nothing.
+The regional demand contribution to [`loss_factor`](@ref). Regions absent from `demand`
+contribute zero.
 """
 function _demand_offset(model::InterconnectorLossModel, demand::AbstractDict)
     return sum((c * get(demand, r, 0.0) for (r, c) in model.demand_coefficients); init = 0.0)
@@ -137,6 +137,7 @@ function loss_curve_vertex_values(model::InterconnectorLossModel, demand::Abstra
     values = [interconnector_losses(model, bp, demand) for bp in breakpoints]
     crossing = findfirst(i -> breakpoints[i] < 0.0 < breakpoints[i + 1], 1:(length(breakpoints) - 1))
     isnothing(crossing) && return values
+    # A chord is bracketting zero, we lift
     a, z = breakpoints[crossing:(crossing + 1)]
     return values .+ model.loss_flow_coefficient * a * z / 2
 end

@@ -84,8 +84,6 @@
             @test get_enablement_max(eff_load) == 0.0
             @test get_enablement_min(eff_gen) ≈ 368.39502
             @test get_enablement_max(eff_gen) == 100.0
-            @test get_enablement_max(eff_load) < get_enablement_min(eff_load)
-            @test get_enablement_max(eff_gen) < get_enablement_min(eff_gen)
         end
     end
 

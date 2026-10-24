@@ -14,7 +14,7 @@ cache access in coverage checks and the range runner, making the package boundar
 
 ## Decision
 
-- AEM owns cache readers and populated system construction. `ReplayNetworkConfiguration` follows
+- AEM owns cache readers and populated system construction. `NEMDEConfiguration` follows
   the existing `nem_system(db, configuration; ...)` type-dispatch interface. Its constructor owns
   source-data coverage checks and the database-backed setters previously called by the runner.
 - AEMSim accepts an existing `PSY.System`. `prepare_replication!` derives model-specific FCAS

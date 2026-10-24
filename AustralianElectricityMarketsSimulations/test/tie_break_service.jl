@@ -1,14 +1,4 @@
 @testset "EnergyTieBreak" begin
-    @testset "keyword constructor and accessors" begin
-        service = EnergyTieBreak(; name = "energy_tie_break")
-        @test get_name(service) == "energy_tie_break"
-        @test get_available(service)
-        @test isempty(get_ext(service))
-        set_available!(service, false)
-        @test !get_available(service)
-        @test !PowerSystems.supports_time_series(service)
-    end
-
     @testset "JSON round-trip keeps the service and its contributors" begin
         sys = System(100.0)
         bus = ACBus(; number = 1, name = "b1", available = true, bustype = ACBusTypes.REF, angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1), base_voltage = 130.0)

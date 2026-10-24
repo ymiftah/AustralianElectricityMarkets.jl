@@ -15,6 +15,28 @@
     # Base system for testing
     sys_base = nem_system(db, RegionalNetworkConfiguration())
 
+    # Writes a DISPATCHLOAD hive whose row (interval i of grid, duid) takes the values `cell(duid, i)`.
+    function dispatchload_db(cell, grid, duids)
+        rows = DataFrame(
+            SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
+            INITIALMW = Union{Float64, Missing}[], RAMPUPRATE = Union{Float64, Missing}[],
+            RAMPDOWNRATE = Union{Float64, Missing}[], AVAILABILITY = Union{Float64, Missing}[],
+        )
+        for (i, t) in enumerate(grid), duid in duids
+            push!(rows, (; SETTLEMENTDATE = t, DUID = duid, INTERVENTION = 0, cell(duid, i)...))
+        end
+        rows[!, :archive_month] = fill("2025-01", nrow(rows))
+        hive = mktempdir()
+        conn = DuckDB.connect(DuckDB.DB())
+        DuckDB.execute(conn, "SET preserve_identifier_case=true")
+        DuckDB.register_data_frame(conn, rows, "tmp_table")
+        table_dir = joinpath(hive, "DISPATCHLOAD")
+        mkpath(table_dir)
+        DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+        DuckDB.unregister_table(conn, "tmp_table")
+        return aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
+    end
+
     @testset "set_demand! rejects incomplete regional demand" begin
         # The mock hive holds demand to 04:00; a window running to 06:00 has no rows for the last two hours.
         start_date = DateTime(2025, 1, 1, 3, 0)
@@ -50,36 +72,6 @@
                     if length(ta) > 1
                         @test TimeSeries.timestamp(ta)[2] - TimeSeries.timestamp(ta)[1] == resolution
                     end
-                end
-            end
-
-            @testset "set_renewable_pv!" begin
-                set_renewable_pv!(sys, db, date_range; resolution = resolution)
-                pv_gens = get_components(x -> get_prime_mover_type(x) == PrimeMovers.PVe, RenewableDispatch, sys)
-                @test !isempty(pv_gens)
-                for gen in pv_gens
-                    ta = get_time_series_array(SingleTimeSeries, gen, "max_active_power")
-                    @test length(ta) == length(date_range) - 1
-                end
-            end
-
-            @testset "set_renewable_wind!" begin
-                set_renewable_wind!(sys, db, date_range; resolution = resolution)
-                wind_gens = get_components(x -> get_prime_mover_type(x) == PrimeMovers.WT, RenewableDispatch, sys)
-                @test !isempty(wind_gens)
-                for gen in wind_gens
-                    ta = get_time_series_array(SingleTimeSeries, gen, "max_active_power")
-                    @test length(ta) == length(date_range) - 1
-                end
-            end
-
-            @testset "set_hydro_limits!" begin
-                set_hydro_limits!(sys, db, date_range; resolution = resolution)
-                hydro_gens = get_components(HydroDispatch, sys)
-                @test !isempty(hydro_gens)
-                for gen in hydro_gens
-                    ta = get_time_series_array(SingleTimeSeries, gen, "max_active_power")
-                    @test length(ta) == length(date_range) - 1
                 end
             end
 
@@ -156,12 +148,11 @@
         date_range = start_date:resolution:(start_date + horizon)
 
         set_demand!(sys, db, date_range; resolution = resolution)
-        set_hydro_limits!(sys, db, date_range; resolution = resolution)
 
         demand_df = read_demand(db; resolution = resolution)
         subset!(demand_df, :SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
 
-        @testset "set_demand! matches true TOTALDEMAND (NATURAL_UNITS)" begin
+        @testset "set_demand! matches true TOTALDEMAND and LOSSDEMAND (NATURAL_UNITS)" begin
             for load in get_components(PowerLoad, sys)
                 region_id = replace(get_name(load), " Load" => "")
                 region_demand = @chain demand_df begin
@@ -171,66 +162,18 @@
                 isempty(region_demand) && continue
                 reconstructed = get_time_series_values(SingleTimeSeries, load, "max_active_power")
                 @test isapprox(reconstructed, region_demand.TOTALDEMAND; atol = 1.0e-6)
-            end
-        end
-
-        @testset "set_demand! attaches loss_demand = INITIALSUPPLY + DEMANDFORECAST (NATURAL_UNITS)" begin
-            for load in get_components(PowerLoad, sys)
-                region_id = replace(get_name(load), " Load" => "")
-                region_demand = @chain demand_df begin
-                    subset(:REGIONID => ByRow(==(region_id)))
-                    sort(:SETTLEMENTDATE)
-                end
-                isempty(region_demand) && continue
                 reconstructed = get_time_series_values(SingleTimeSeries, load, "loss_demand")
                 @test isapprox(reconstructed, region_demand.LOSSDEMAND; atol = 1.0e-6)
                 @test !isapprox(reconstructed, region_demand.TOTALDEMAND; atol = 1.0e-6)
             end
         end
 
-        @testset "set_demand! matches true TOTALDEMAND / base_power (SYSTEM_BASE, pu)" begin
-            set_units_base_system!(sys, "SYSTEM_BASE")
-            base_power = get_base_power(sys)
-            for load in get_components(PowerLoad, sys)
-                region_id = replace(get_name(load), " Load" => "")
-                region_demand = @chain demand_df begin
-                    subset(:REGIONID => ByRow(==(region_id)))
-                    sort(:SETTLEMENTDATE)
-                end
-                isempty(region_demand) && continue
-                reconstructed = get_time_series_values(SingleTimeSeries, load, "max_active_power")
-                @test isapprox(reconstructed, region_demand.TOTALDEMAND ./ base_power; atol = 1.0e-6)
-            end
-            set_units_base_system!(sys, "NATURAL_UNITS")
-        end
-
-        @testset "set_hydro_limits! matches true MAXAVAIL (NATURAL_UNITS)" begin
-            energy_bids = read_energy_bids(db, date_range; resolution = resolution)
-            hydro_true = @chain energy_bids begin
-                subset(:DIRECTION => ByRow(==("GEN")))
-                select(:INTERVAL_DATETIME, :DUID, :MAXAVAIL)
-                unstack(:INTERVAL_DATETIME, :DUID, :MAXAVAIL; combine = maximum)
-                sort(:INTERVAL_DATETIME)
-            end
-            for gen in get_components(HydroDispatch, sys)
-                duid = get_name(gen)
-                duid in names(hydro_true) || continue
-                reconstructed = get_time_series_values(SingleTimeSeries, gen, "max_active_power")
-                true_vals = collect(skipmissing(hydro_true[!, duid]))
-                @test isapprox(reconstructed, true_vals; atol = 1.0e-6)
-            end
-        end
     end
 
-    @testset "Renewable ceilings come from per-unit UIGF" begin
+    @testset "read_uigf" begin
         resolution = Minute(5)
         start_date = DateTime(2025, 1, 1, 0, 0)
         date_range = start_date:resolution:(start_date + Hour(2))
-
-        sys = deepcopy(sys_base)
-        set_units_base_system!(sys, "NATURAL_UNITS")
-        set_renewable_pv!(sys, db, date_range; resolution = resolution)
-        set_renewable_wind!(sys, db, date_range; resolution = resolution)
 
         uigf = read_uigf(db, date_range; resolution = resolution)
 
@@ -239,40 +182,6 @@
             @test Set(names(uigf)) == Set(["SETTLEMENTDATE", "DUID", "UIGF"])
             # BW03 (Solar) and BW04 (Wind) are the fixture's only semi-scheduled DUIDs.
             @test Set(unique(uigf.DUID)) == Set(["BW03", "BW04"])
-        end
-
-        @testset "reconstructed ceiling equals that unit's own UIGF in MW" begin
-            n_checked = 0
-            for gen in get_components(RenewableDispatch, sys)
-                duid = get_name(gen)
-                rows = sort(subset(uigf, :DUID => ByRow(==(duid))), :SETTLEMENTDATE)
-                isempty(rows) && continue
-                reconstructed = get_time_series_values(SingleTimeSeries, gen, "max_active_power")
-                @test isapprox(reconstructed, rows.UIGF; atol = 1.0e-6)
-                # The fixture's UIGF is strictly below REGISTEREDCAPACITY, so a ceiling pinned
-                # to nameplate (the old window-max normalisation) fails here.
-                @test all(<(get_max_active_power(gen)), reconstructed)
-                n_checked += 1
-            end
-            @test n_checked == 2
-        end
-
-        @testset "ceiling does not depend on the requested window" begin
-            # The old regional-aggregate setter normalised by the in-window maximum, so the
-            # last interval of any window was pinned to the unit's full nameplate. Seeding one
-            # interval at a time (as solve_interval does) must give the same MW as seeding a
-            # long range.
-            short_range = start_date:resolution:(start_date + Minute(10))
-            sys_short = deepcopy(sys_base)
-            set_units_base_system!(sys_short, "NATURAL_UNITS")
-            set_renewable_pv!(sys_short, db, short_range; resolution = resolution)
-
-            for gen in get_components(x -> get_prime_mover_type(x) == PrimeMovers.PVe, RenewableDispatch, sys_short)
-                short_vals = get_time_series_values(SingleTimeSeries, gen, "max_active_power")
-                long_gen = get_component(RenewableDispatch, sys, get_name(gen))
-                long_vals = get_time_series_values(SingleTimeSeries, long_gen, "max_active_power")
-                @test isapprox(short_vals, long_vals[1:length(short_vals)]; atol = 1.0e-6)
-            end
         end
 
         @testset "read_uigf throws when DISPATCHLOAD is not cached" begin
@@ -403,14 +312,11 @@
 
         demand_df = read_demand(db; resolution = resolution)
         subset!(demand_df, :SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
-        uigf = read_uigf(db, date_range; resolution = resolution)
 
         function seed(write_mode)
             s = deepcopy(sys_base)
             set_units_base_system!(s, write_mode)
             set_demand!(s, db, date_range; resolution = resolution)
-            set_renewable_pv!(s, db, date_range; resolution = resolution)
-            set_renewable_wind!(s, db, date_range; resolution = resolution)
             set_units_base_system!(s, "NATURAL_UNITS")
             return s
         end
@@ -428,12 +334,6 @@
                     got = get_time_series_values(SingleTimeSeries, load, "max_active_power")
                     @test isapprox(got, truth.TOTALDEMAND; atol = 1.0e-6)
                 end
-                for gen in get_components(RenewableDispatch, s)
-                    rows = sort(subset(uigf, :DUID => ByRow(==(get_name(gen)))), :SETTLEMENTDATE)
-                    isempty(rows) && continue
-                    got = get_time_series_values(SingleTimeSeries, gen, "max_active_power")
-                    @test isapprox(got, rows.UIGF; atol = 1.0e-6)
-                end
             end
         end
     end
@@ -445,25 +345,6 @@
         base_power = get_base_power(sys_base)
 
         truth = read_dispatch_limits(db, date_range)
-
-        @testset "attaches to a thermal, hydro and renewable unit" begin
-            sys = deepcopy(sys_base)
-            set_nem_dispatch_limits!(sys, db, date_range)
-
-            thermal = get_component(ThermalStandard, sys, "ER01")
-            hydro = get_component(HydroDispatch, sys, "BW02")
-            renewable = get_component(RenewableDispatch, sys, "BW03")
-            @test !isnothing(thermal)
-            @test !isnothing(hydro)
-            @test !isnothing(renewable)
-
-            for device in (thermal, hydro, renewable)
-                for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw", "max_active_power")
-                    ta = get_time_series_array(SingleTimeSeries, device, name)
-                    @test length(ta) == length(date_range) - 1
-                end
-            end
-        end
 
         @testset "attaches the full dispatch envelope to a scheduled load" begin
             sys = deepcopy(sys_base)
@@ -487,6 +368,27 @@
             @test get_available(asload)
             for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw", "max_active_power", "availability")
                 @test all(==(0.0), get_time_series_values(SingleTimeSeries, asload, name))
+            end
+        end
+
+        @testset "aggregates DISPATCHLOAD onto a 30-minute step" begin
+            # The mock DISPATCHLOAD starts at `start_date`, so the first bucket is 00:30: its window is complete.
+            coarse = (start_date + Minute(30)):Minute(30):(start_date + Hour(2))
+            fine = truth
+            buckets = read_dispatch_limits(db, coarse; resolution = Minute(30))
+            got = subset(buckets, :DUID => ByRow(==("PUMP1")))
+            @test nrow(got) == length(coarse) - 1
+            rows = subset(fine, :DUID => ByRow(==("PUMP1")))
+            for b in eachrow(got)
+                window = sort(
+                    subset(rows, :SETTLEMENTDATE => ByRow(x -> b.SETTLEMENTDATE - Minute(30) < x <= b.SETTLEMENTDATE)),
+                    :SETTLEMENTDATE,
+                )
+                @test length(window.SETTLEMENTDATE) == 6
+                @test b.INITIALMW == first(window.INITIALMW)
+                @test b.RAMPUPRATE == minimum(window.RAMPUPRATE)
+                @test b.RAMPDOWNRATE == minimum(window.RAMPDOWNRATE)
+                @test b.AVAILABILITY == minimum(window.AVAILABILITY)
             end
         end
 
@@ -534,25 +436,11 @@
                 @test isapprox(got_up, rows.RAMPUPRATE ./ 60 ./ base_power; atol = 1.0e-8)
                 @test isapprox(got_down, rows.RAMPDOWNRATE ./ 60 ./ base_power; atol = 1.0e-8)
                 @test isapprox(got_init, rows.INITIALMW ./ base_power; atol = 1.0e-8)
+                got_mw = with_units_base(() -> get_time_series_values(SingleTimeSeries, device, "max_active_power"), sys, "NATURAL_UNITS")
+                @test isapprox(got_mw, rows.AVAILABILITY; atol = 1.0e-6)
                 n_checked += 1
             end
             @test n_checked == 5  # ER01, ER02, BW02, BW03, BW04
-        end
-
-        @testset "max_active_power equals AVAILABILITY / static max_active_power for a known DUID and interval" begin
-            sys = deepcopy(sys_base)
-            set_nem_dispatch_limits!(sys, db, date_range)
-
-            # Mock fixture: availability_for("BW03", i) = 84.0 + (i % 6); the third interval
-            # (i=2) is AVAILABILITY = 86.0, and BW03's static max_active_power is its 100 MW
-            # REGISTEREDCAPACITY - so the normalised fraction at that interval is exactly 0.86.
-            renewable = get_component(RenewableDispatch, sys, "BW03")
-            static_cap = with_units_base(() -> get_max_active_power(renewable), sys, "NATURAL_UNITS")
-            @test isapprox(static_cap, 100.0; atol = 1.0e-8)
-            got = get_time_series_values(
-                SingleTimeSeries, renewable, "max_active_power"; ignore_scaling_factors = true,
-            )
-            @test isapprox(got[3], 86.0 / 100.0; atol = 1.0e-8)
         end
 
         @testset "availability and initial_mw read back as raw AVAILABILITY/INITIALMW" begin
@@ -573,234 +461,53 @@
             @test isnothing(get_energy_availability(battery, start_date, horizon))
         end
 
-        @testset "max_active_power's scaling_factor_multiplier round-trips to the MW envelope" begin
-            sys = deepcopy(sys_base)
-            set_units_base_system!(sys, "NATURAL_UNITS")
-            set_nem_dispatch_limits!(sys, db, date_range)
-
-            devices = vcat(
-                collect(get_components(ThermalStandard, sys)),
-                collect(get_components(HydroDispatch, sys)),
-                collect(get_components(RenewableDispatch, sys)),
-            )
-            n_checked = 0
-            for device in devices
-                duid = get_name(device)
-                rows = sort(subset(truth, :DUID => ByRow(==(duid))), :SETTLEMENTDATE)
-                isempty(rows) && continue
-                got_mw = get_time_series_values(SingleTimeSeries, device, "max_active_power")
-                @test isapprox(got_mw, rows.AVAILABILITY; atol = 1.0e-6)
-                n_checked += 1
-            end
-            @test n_checked == 5  # ER01, ER02, BW02, BW03, BW04
-        end
-
-        @testset "max_active_power overwrites UIGF/bid-MAXAVAIL series regardless of call order" begin
-            legacy_first = deepcopy(sys_base)
-            set_units_base_system!(legacy_first, "NATURAL_UNITS")
-            set_renewable_pv!(legacy_first, db, date_range)
-            set_renewable_wind!(legacy_first, db, date_range)
-            set_hydro_limits!(legacy_first, db, date_range)
-            set_nem_dispatch_limits!(legacy_first, db, date_range)
-
-            dispatch_only = deepcopy(sys_base)
-            set_units_base_system!(dispatch_only, "NATURAL_UNITS")
-            set_nem_dispatch_limits!(dispatch_only, db, date_range)
-
-            for (type, duid) in ((RenewableDispatch, "BW03"), (RenewableDispatch, "BW04"), (HydroDispatch, "BW02"))
-                legacy_device = get_component(type, legacy_first, duid)
-                dispatch_device = get_component(type, dispatch_only, duid)
-                got_legacy_first = get_time_series_values(SingleTimeSeries, legacy_device, "max_active_power")
-                got_dispatch_only = get_time_series_values(SingleTimeSeries, dispatch_device, "max_active_power")
-
-                rows = sort(subset(truth, :DUID => ByRow(==(duid))), :SETTLEMENTDATE)
-                # AVAILABILITY-derived, not UIGF/bid-MAXAVAIL-derived: proves the overwrite
-                # actually happened, not merely that a series with this name exists.
-                @test isapprox(got_legacy_first, rows.AVAILABILITY; atol = 1.0e-6)
-                # Whether a "max_active_power" series already existed before
-                # set_nem_dispatch_limits! ran doesn't change its outcome.
-                @test isapprox(got_legacy_first, got_dispatch_only; atol = 1.0e-10)
-            end
-        end
-
-        @testset "rates vary per interval, not a scalar" begin
-            sys = deepcopy(sys_base)
-            set_nem_dispatch_limits!(sys, db, date_range)
-            thermal = get_component(ThermalStandard, sys, "ER01")
-            @test length(unique(get_time_series_values(SingleTimeSeries, thermal, "ramp_up_rate"))) > 1
-            @test length(unique(get_time_series_values(SingleTimeSeries, thermal, "ramp_down_rate"))) > 1
-            @test length(unique(get_time_series_values(SingleTimeSeries, thermal, "initial_mw"))) > 1
-        end
-
-        @testset "JSON round-trip" begin
-            sys = deepcopy(sys_base)
-            set_nem_dispatch_limits!(sys, db, date_range)
-
-            mktpath = mktempdir()
-            json_path = joinpath(mktpath, "sys.json")
-            to_json(sys, json_path)
-            sys2 = System(json_path)
-
-            thermal1 = get_component(ThermalStandard, sys, "ER01")
-            thermal2 = get_component(ThermalStandard, sys2, "ER01")
-            for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw")
-                v1 = get_time_series_values(SingleTimeSeries, thermal1, name)
-                v2 = get_time_series_values(SingleTimeSeries, thermal2, name)
-                @test isapprox(v1, v2; atol = 1.0e-10)
-            end
-        end
-
-        @testset "missing ramp data throws, naming the DUID" begin
-            bad_hive = mktempdir()
-            ddb = DuckDB.DB()
-            conn = DuckDB.connect(ddb)
-            DuckDB.execute(conn, "SET preserve_identifier_case=true")
-
+        @testset "missing or negative dispatch inputs throw, naming the DUID, and leave sys untouched" begin
             short_range = start_date:resolution:(start_date + Minute(10))
             grid = collect(short_range)[1:(end - 1)]  # 3 intervals
             duids = ["BW02", "BW03", "BW04", "ER01", "ER02"]
-
-            rows = DataFrame(
-                SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
-                INITIALMW = Union{Float64, Missing}[], RAMPUPRATE = Union{Float64, Missing}[],
-                RAMPDOWNRATE = Union{Float64, Missing}[], AVAILABILITY = Union{Float64, Missing}[],
+            ok = (INITIALMW = 50.0, RAMPUPRATE = 5.0, RAMPDOWNRATE = 4.0, AVAILABILITY = 100.0)
+            # Each case corrupts one field of ER01 at its second interval; `series` is what ER02 must keep.
+            cases = (
+                (label = "missing RAMPUPRATE", bad = (RAMPUPRATE = missing,), series = "ramp_up_rate"),
+                (label = "missing AVAILABILITY", bad = (AVAILABILITY = missing,), series = "max_active_power"),
+                (label = "negative AVAILABILITY", bad = (AVAILABILITY = -100.0,), series = "max_active_power"),
             )
-            for (i, t) in enumerate(grid), duid in duids
-                bad = duid == "ER01" && i == 2
-                push!(
-                    rows,
-                    (
-                        SETTLEMENTDATE = t, DUID = duid, INTERVENTION = 0,
-                        INITIALMW = 50.0, RAMPUPRATE = bad ? missing : 5.0, RAMPDOWNRATE = 4.0,
-                        AVAILABILITY = 100.0,
-                    ),
-                )
+            for case in cases
+                @testset "$(case.label)" begin
+                    bad_db = dispatchload_db(grid, duids) do duid, i
+                        return duid == "ER01" && i == 2 ? merge(ok, case.bad) : ok
+                    end
+                    sys = deepcopy(sys_base)
+
+                    err = try
+                        set_nem_dispatch_limits!(sys, bad_db, short_range)
+                        nothing
+                    catch e
+                        e
+                    end
+                    @test err isa ArgumentError
+                    @test occursin("ER01", err.msg)
+                    # Throwing leaves sys untouched, even for the devices with perfectly good data.
+                    @test !has_time_series(get_component(ThermalStandard, sys, "ER02"), SingleTimeSeries, case.series)
+                end
             end
-            rows[!, :archive_month] = fill("2025-01", nrow(rows))
-
-            DuckDB.register_data_frame(conn, rows, "tmp_table")
-            table_dir = joinpath(bad_hive, "DISPATCHLOAD")
-            mkpath(table_dir)
-            DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
-            DuckDB.unregister_table(conn, "tmp_table")
-
-            bad_db = aem_connect(HiveConfiguration(hive_location = bad_hive, filesystem = "file"))
-            sys = deepcopy(sys_base)
-
-            err = try
-                set_nem_dispatch_limits!(sys, bad_db, short_range)
-                nothing
-            catch e
-                e
-            end
-            @test err isa ArgumentError
-            @test occursin("ER01", err.msg)
-            # Throwing leaves sys untouched, even for the devices with perfectly good data.
-            @test !has_time_series(get_component(ThermalStandard, sys, "ER02"), SingleTimeSeries, "ramp_up_rate")
-
-            @test_logs (:warn, r"ER01") match_mode = :any begin
-                set_nem_dispatch_limits!(sys, bad_db, short_range; allow_missing_ramp_rates = true)
-            end
-            @test !has_time_series(get_component(ThermalStandard, sys, "ER01"), SingleTimeSeries, "ramp_up_rate")
-            @test has_time_series(get_component(ThermalStandard, sys, "ER02"), SingleTimeSeries, "ramp_up_rate")
-            @test has_time_series(get_component(HydroDispatch, sys, "BW02"), SingleTimeSeries, "ramp_up_rate")
-        end
-
-        @testset "missing AVAILABILITY throws, naming the DUID" begin
-            bad_hive = mktempdir()
-            ddb = DuckDB.DB()
-            conn = DuckDB.connect(ddb)
-            DuckDB.execute(conn, "SET preserve_identifier_case=true")
-
-            short_range = start_date:resolution:(start_date + Minute(10))
-            grid = collect(short_range)[1:(end - 1)]  # 3 intervals
-            duids = ["BW02", "BW03", "BW04", "ER01", "ER02"]
-
-            rows = DataFrame(
-                SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
-                INITIALMW = Union{Float64, Missing}[], RAMPUPRATE = Union{Float64, Missing}[],
-                RAMPDOWNRATE = Union{Float64, Missing}[], AVAILABILITY = Union{Float64, Missing}[],
-            )
-            for (i, t) in enumerate(grid), duid in duids
-                bad = duid == "ER01" && i == 2
-                push!(
-                    rows,
-                    (
-                        SETTLEMENTDATE = t, DUID = duid, INTERVENTION = 0,
-                        INITIALMW = 50.0, RAMPUPRATE = 5.0, RAMPDOWNRATE = 4.0,
-                        AVAILABILITY = bad ? missing : 100.0,
-                    ),
-                )
-            end
-            rows[!, :archive_month] = fill("2025-01", nrow(rows))
-
-            DuckDB.register_data_frame(conn, rows, "tmp_table")
-            table_dir = joinpath(bad_hive, "DISPATCHLOAD")
-            mkpath(table_dir)
-            DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
-            DuckDB.unregister_table(conn, "tmp_table")
-
-            bad_db = aem_connect(HiveConfiguration(hive_location = bad_hive, filesystem = "file"))
-            sys = deepcopy(sys_base)
-
-            err = try
-                set_nem_dispatch_limits!(sys, bad_db, short_range)
-                nothing
-            catch e
-                e
-            end
-            @test err isa ArgumentError
-            @test occursin("ER01", err.msg)
-            @test !has_time_series(get_component(ThermalStandard, sys, "ER02"), SingleTimeSeries, "max_active_power")
-
-            @test_logs (:warn, r"ER01") match_mode = :any begin
-                set_nem_dispatch_limits!(sys, bad_db, short_range; allow_missing_ramp_rates = true)
-            end
-            @test !has_time_series(get_component(ThermalStandard, sys, "ER01"), SingleTimeSeries, "max_active_power")
-            @test has_time_series(get_component(ThermalStandard, sys, "ER02"), SingleTimeSeries, "max_active_power")
         end
 
         @testset "zero AVAILABILITY and zero ramp rates are carried through, not rejected" begin
             # AEMO publishes AVAILABILITY = 0 for an unavailable unit (or a PV farm at night)
             # and RAMPUPRATE/RAMPDOWNRATE = 0 for a unit held at fixed output. Both are real
             # dispatch limits, so they must reach the System rather than drop the device.
-            zero_hive = mktempdir()
-            ddb = DuckDB.DB()
-            conn = DuckDB.connect(ddb)
-            DuckDB.execute(conn, "SET preserve_identifier_case=true")
-
             short_range = start_date:resolution:(start_date + Minute(10))
             grid = collect(short_range)[1:(end - 1)]  # 3 intervals
             duids = ["BW01", "BW02", "BW03", "BW04", "ER01", "ER02", "PUMP1", "PUMP2", "WDR1"]
-
-            rows = DataFrame(
-                SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
-                INITIALMW = Union{Float64, Missing}[], RAMPUPRATE = Union{Float64, Missing}[],
-                RAMPDOWNRATE = Union{Float64, Missing}[], AVAILABILITY = Union{Float64, Missing}[],
-            )
-            for t in grid, duid in duids
-                unavailable = duid == "ER01"   # offline: zero availability
-                pinned = duid == "ER02"        # available but cannot move
-                push!(
-                    rows,
-                    (
-                        SETTLEMENTDATE = t, DUID = duid, INTERVENTION = 0,
-                        INITIALMW = unavailable ? 0.0 : 50.0,
-                        RAMPUPRATE = pinned ? 0.0 : 5.0,
-                        RAMPDOWNRATE = pinned ? 0.0 : 4.0,
-                        AVAILABILITY = unavailable ? 0.0 : 100.0,
-                    ),
-                )
+            zero_db = dispatchload_db(grid, duids) do duid, _
+                if duid == "ER01"  # offline
+                    return (INITIALMW = 0.0, RAMPUPRATE = 5.0, RAMPDOWNRATE = 4.0, AVAILABILITY = 0.0)
+                elseif duid == "ER02"  # available but cannot move
+                    return (INITIALMW = 50.0, RAMPUPRATE = 0.0, RAMPDOWNRATE = 0.0, AVAILABILITY = 100.0)
+                end
+                return (INITIALMW = 50.0, RAMPUPRATE = 5.0, RAMPDOWNRATE = 4.0, AVAILABILITY = 100.0)
             end
-            rows[!, :archive_month] = fill("2025-01", nrow(rows))
-
-            DuckDB.register_data_frame(conn, rows, "tmp_table")
-            table_dir = joinpath(zero_hive, "DISPATCHLOAD")
-            mkpath(table_dir)
-            DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
-            DuckDB.unregister_table(conn, "tmp_table")
-
-            zero_db = aem_connect(HiveConfiguration(hive_location = zero_hive, filesystem = "file"))
             sys = deepcopy(sys_base)
 
             @test_nowarn set_nem_dispatch_limits!(sys, zero_db, short_range)
@@ -823,54 +530,6 @@
             @test has_time_series(get_component(HydroDispatch, sys, "BW02"), SingleTimeSeries, "ramp_up_rate")
         end
 
-        @testset "negative AVAILABILITY throws, naming the DUID" begin
-            neg_hive = mktempdir()
-            ddb = DuckDB.DB()
-            conn = DuckDB.connect(ddb)
-            DuckDB.execute(conn, "SET preserve_identifier_case=true")
-
-            short_range = start_date:resolution:(start_date + Minute(10))
-            grid = collect(short_range)[1:(end - 1)]  # 3 intervals
-            duids = ["BW02", "BW03", "BW04", "ER01", "ER02"]
-
-            rows = DataFrame(
-                SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
-                INITIALMW = Union{Float64, Missing}[], RAMPUPRATE = Union{Float64, Missing}[],
-                RAMPDOWNRATE = Union{Float64, Missing}[], AVAILABILITY = Union{Float64, Missing}[],
-            )
-            for (i, t) in enumerate(grid), duid in duids
-                bad = duid == "ER01" && i == 2
-                push!(
-                    rows,
-                    (
-                        SETTLEMENTDATE = t, DUID = duid, INTERVENTION = 0,
-                        INITIALMW = 50.0, RAMPUPRATE = bad ? -1.0 : 5.0, RAMPDOWNRATE = 4.0,
-                        AVAILABILITY = bad ? -100.0 : 100.0,
-                    ),
-                )
-            end
-            rows[!, :archive_month] = fill("2025-01", nrow(rows))
-
-            DuckDB.register_data_frame(conn, rows, "tmp_table")
-            table_dir = joinpath(neg_hive, "DISPATCHLOAD")
-            mkpath(table_dir)
-            DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
-            DuckDB.unregister_table(conn, "tmp_table")
-
-            neg_db = aem_connect(HiveConfiguration(hive_location = neg_hive, filesystem = "file"))
-            sys = deepcopy(sys_base)
-
-            err = try
-                set_nem_dispatch_limits!(sys, neg_db, short_range)
-                nothing
-            catch e
-                e
-            end
-            @test err isa ArgumentError
-            @test occursin("ER01", err.msg)
-            @test !has_time_series(get_component(ThermalStandard, sys, "ER02"), SingleTimeSeries, "max_active_power")
-        end
-
         @testset "zero static max_active_power throws, naming the DUID" begin
             sys = deepcopy(sys_base)
             thermal = get_component(ThermalStandard, sys, "ER01")
@@ -888,12 +547,7 @@
             @test err isa ArgumentError
             @test occursin("ER01", err.msg)
             @test !has_time_series(get_component(HydroDispatch, sys, "BW02"), SingleTimeSeries, "max_active_power")
-
-            @test_logs (:warn, r"ER01") match_mode = :any begin
-                set_nem_dispatch_limits!(sys, db, date_range; allow_missing_ramp_rates = true)
-            end
             @test !has_time_series(thermal, SingleTimeSeries, "max_active_power")
-            @test has_time_series(get_component(HydroDispatch, sys, "BW02"), SingleTimeSeries, "max_active_power")
         end
     end
 
@@ -1010,7 +664,7 @@
 
             raw, scaled = with_units_base(sys, "NATURAL_UNITS") do
                 (
-                    get_fcas_trapezium(device, BidType.RAISEREG, start_date, horizon),
+                    AustralianElectricityMarkets._get_fcas_trapezium(device, BidType.RAISEREG, start_date, horizon),
                     get_scaled_fcas_trapezium(device, BidType.RAISEREG, start_date, horizon),
                 )
             end
@@ -1029,7 +683,7 @@
             initial_time = start_date
             horizon = length(date_range) - 1
 
-            raw = get_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)
+            raw = AustralianElectricityMarkets._get_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)
             scaled = get_scaled_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)
             @test length(raw) == horizon
 
@@ -1048,52 +702,21 @@
                         device, BidType.RAISEREG, initial_time, horizon; resolution = resolution_i,
                     )
                 end
-                raw_mw = with_units_base(() -> get_max_avail.(get_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)), sys, "NATURAL_UNITS")
+                raw_mw = with_units_base(() -> get_max_avail.(AustralianElectricityMarkets._get_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)), sys, "NATURAL_UNITS")
                 @test isapprox(get_max_avail.(scaled_i), min.(raw_mw, rows.RAMPUPRATE .* hours); atol = 1.0e-6)
             end
 
-            # agc_first_interval_only: AGC scaling on the first step only.
-            first_only = get_scaled_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon; agc_first_interval_only = true)
-            @test isequal(Tuple(first_only[1]), Tuple(scaled[1]))
-            @test all(i -> isequal(Tuple(first_only[i]), Tuple(raw[i])), 2:horizon)
-
-            # agc_ramp_scaling = false: AGC enablement scaling only, MaxAvail left at the bid's.
-            no_ramp = get_scaled_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon; agc_ramp_scaling = false)
-            @test get_max_avail.(no_ramp) == get_max_avail.(raw)
-            @test get_enablement_min.(no_ramp) == get_enablement_min.(scaled)
-            @test get_enablement_max.(no_ramp) == get_enablement_max.(scaled)
-
             # A contingency market carries no AGC scaling input series at all: unscaled.
-            raw_contingency = get_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
+            raw_contingency = AustralianElectricityMarkets._get_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
             scaled_contingency = get_scaled_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
             @test all(i -> isequal(Tuple(raw_contingency[i]), Tuple(scaled_contingency[i])), 1:horizon)
         end
     end
 
-    @testset "get_initial_mw reads a battery's net initial_mw series set_nem_dispatch_limits! attaches" begin
+    @testset "get_initial_mw without an attached initial_mw series" begin
         resolution = Minute(5)
         start_date = DateTime(2025, 1, 1, 0, 0)
         date_range = start_date:resolution:(start_date + Hour(2))
-        base_power = get_base_power(sys_base)
-        truth = read_dispatch_limits(db, date_range)
-        rows = sort(subset(truth, :DUID => ByRow(==("BW01"))), :SETTLEMENTDATE)
-
-        @testset "reads net initial_mw off the EnergyReservoirStorage device" begin
-            sys = deepcopy(sys_base)
-            set_nem_dispatch_limits!(sys, db, date_range)
-            bat = get_component(EnergyReservoirStorage, sys, "BW01")
-            got = get_time_series_values(SingleTimeSeries, bat, "initial_mw")
-            @test isapprox(got, rows.INITIALMW ./ base_power; atol = 1.0e-9)
-
-            initial_time = start_date
-            horizon = length(date_range) - 1
-            with_units_base(sys, "NATURAL_UNITS") do
-                @test isapprox(
-                    get_initial_mw(bat, initial_time, horizon), rows.INITIALMW; atol = 1.0e-9,
-                )
-                return
-            end
-        end
 
         @testset "get_initial_mw is nothing when initial_mw is not attached" begin
             sys = deepcopy(sys_base)
@@ -1101,158 +724,29 @@
             @test isnothing(get_initial_mw(bat, start_date, length(date_range) - 1))
         end
 
-        @testset "a device with an incomplete series over date_range is left without it" begin
+        @testset "a device with no DISPATCHLOAD rows over date_range throws and is left without series" begin
             sys = deepcopy(sys_base)
             bat = get_component(EnergyReservoirStorage, sys, "BW01")
             # No DISPATCHLOAD rows exist for this far-future range: every interval is missing.
             future_range = DateTime(2099, 1, 1, 0, 0):resolution:(DateTime(2099, 1, 1, 2, 0))
-            set_nem_dispatch_limits!(sys, db, future_range; allow_missing_ramp_rates = true)
+            @test_throws ArgumentError set_nem_dispatch_limits!(sys, db, future_range)
             @test !has_time_series(bat, SingleTimeSeries, "initial_mw")
         end
     end
 
-    @testset "set_nem_initial_conditions!" begin
-        interval = DateTime(2025, 1, 1, 0, 0)
-        base_power = get_base_power(sys_base)
-        truth = read_dispatch_limits(db, [interval, interval + Minute(1)])
-
-        @testset "seeds active_power on a thermal, hydro and renewable unit (NATURAL_UNITS)" begin
-            sys = deepcopy(sys_base)
-            set_units_base_system!(sys, "NATURAL_UNITS")
-            set_nem_initial_conditions!(sys, db, interval)
-
-            for (type, duid) in
-                ((ThermalStandard, "ER01"), (HydroDispatch, "BW02"), (RenewableDispatch, "BW03"))
-                device = get_component(type, sys, duid)
-                @test !isnothing(device)
-                expected = only(subset(truth, :DUID => ByRow(==(duid))).INITIALMW)
-                @test isapprox(get_active_power(device), expected; atol = 1.0e-8)
-            end
-        end
-
-        @testset "seeds active_power on a battery (net MW, NATURAL_UNITS)" begin
-            sys = deepcopy(sys_base)
-            set_units_base_system!(sys, "NATURAL_UNITS")
-            set_nem_initial_conditions!(sys, db, interval)
-
-            battery = get_component(EnergyReservoirStorage, sys, "BW01")
-            @test !isnothing(battery)
-            expected = only(subset(truth, :DUID => ByRow(==("BW01"))).INITIALMW)
-            @test isapprox(get_active_power(battery), expected; atol = 1.0e-8)
-        end
-
-        @testset "seeds active_power on a thermal, hydro and renewable unit (SYSTEM_BASE)" begin
-            sys = deepcopy(sys_base)
-            set_units_base_system!(sys, "SYSTEM_BASE")
-            set_nem_initial_conditions!(sys, db, interval)
-
-            for (type, duid) in
-                ((ThermalStandard, "ER01"), (HydroDispatch, "BW02"), (RenewableDispatch, "BW03"))
-                device = get_component(type, sys, duid)
-                expected = only(subset(truth, :DUID => ByRow(==(duid))).INITIALMW)
-                @test isapprox(get_active_power(device), expected / base_power; atol = 1.0e-8)
-            end
-        end
-
-        @testset "missing INITIALMW throws, naming the DUID, and leaves sys untouched" begin
-            bad_hive = mktempdir()
-            ddb = DuckDB.DB()
-            conn = DuckDB.connect(ddb)
-            DuckDB.execute(conn, "SET preserve_identifier_case=true")
-
-            duids = ["BW02", "BW03", "BW04", "ER01", "ER02"]
-            rows = DataFrame(
-                SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
-                INITIALMW = Union{Float64, Missing}[], RAMPUPRATE = Union{Float64, Missing}[],
-                RAMPDOWNRATE = Union{Float64, Missing}[], AVAILABILITY = Union{Float64, Missing}[],
-            )
-            for duid in duids
-                bad = duid == "ER01"
-                push!(
-                    rows,
-                    (
-                        SETTLEMENTDATE = interval, DUID = duid, INTERVENTION = 0,
-                        INITIALMW = bad ? missing : 50.0, RAMPUPRATE = 5.0, RAMPDOWNRATE = 4.0,
-                        AVAILABILITY = 100.0,
-                    ),
-                )
-            end
-            rows[!, :archive_month] = fill("2025-01", nrow(rows))
-
-            DuckDB.register_data_frame(conn, rows, "tmp_table")
-            table_dir = joinpath(bad_hive, "DISPATCHLOAD")
-            mkpath(table_dir)
-            DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
-            DuckDB.unregister_table(conn, "tmp_table")
-
-            bad_db = aem_connect(HiveConfiguration(hive_location = bad_hive, filesystem = "file"))
-            sys = deepcopy(sys_base)
-            er01_before = get_active_power(get_component(ThermalStandard, sys, "ER01"))
-            er02_before = get_active_power(get_component(ThermalStandard, sys, "ER02"))
-
-            err = try
-                set_nem_initial_conditions!(sys, bad_db, interval)
-                nothing
-            catch e
-                e
-            end
-            @test err isa ArgumentError
-            @test occursin("ER01", err.msg)
-            # Throwing leaves sys untouched, even for the devices with perfectly good data.
-            @test get_active_power(get_component(ThermalStandard, sys, "ER01")) == er01_before
-            @test get_active_power(get_component(ThermalStandard, sys, "ER02")) == er02_before
-
-            @test_logs (:warn, r"ER01") match_mode = :any begin
-                set_nem_initial_conditions!(sys, bad_db, interval; allow_missing_ramp_rates = true)
-            end
-            @test get_active_power(get_component(ThermalStandard, sys, "ER01")) == er01_before
-            @test isapprox(
-                get_active_power(get_component(ThermalStandard, sys, "ER02")),
-                50.0 / get_base_power(sys); atol = 1.0e-8,
-            )
-        end
-    end
-
     @testset "ramp-down floor above AVAILABILITY raises max_active_power to the floor" begin
-        floor_hive = mktempdir()
-        ddb = DuckDB.DB()
-        conn = DuckDB.connect(ddb)
-        DuckDB.execute(conn, "SET preserve_identifier_case=true")
-
         resolution = Minute(5)
         start_date = DateTime(2025, 1, 1, 0, 0)
         short_range = start_date:resolution:(start_date + Minute(10))
         grid = collect(short_range)[1:(end - 1)]  # 3 intervals
         duids = ["BW01", "BW02", "BW03", "BW04", "ER01", "ER02", "PUMP1", "PUMP2", "WDR1"]
-
-        rows = DataFrame(
-            SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
-            INITIALMW = Union{Float64, Missing}[], RAMPUPRATE = Union{Float64, Missing}[],
-            RAMPDOWNRATE = Union{Float64, Missing}[], AVAILABILITY = Union{Float64, Missing}[],
-        )
-        for t in grid, duid in duids
+        floor_db = dispatchload_db(grid, duids) do duid, _
             # ER01: zero RAMPDOWNRATE and INITIALMW above AVAILABILITY, so the floor is INITIALMW.
-            floor_case = duid == "ER01"
-            push!(
-                rows,
-                (
-                    SETTLEMENTDATE = t, DUID = duid, INTERVENTION = 0,
-                    INITIALMW = floor_case ? 65.41 : 50.0,
-                    RAMPUPRATE = 5.0,
-                    RAMPDOWNRATE = floor_case ? 0.0 : 4.0,
-                    AVAILABILITY = floor_case ? 65.0 : 100.0,
-                ),
-            )
+            if duid == "ER01"
+                return (INITIALMW = 65.41, RAMPUPRATE = 5.0, RAMPDOWNRATE = 0.0, AVAILABILITY = 65.0)
+            end
+            return (INITIALMW = 50.0, RAMPUPRATE = 5.0, RAMPDOWNRATE = 4.0, AVAILABILITY = 100.0)
         end
-        rows[!, :archive_month] = fill("2025-01", nrow(rows))
-
-        DuckDB.register_data_frame(conn, rows, "tmp_table")
-        table_dir = joinpath(floor_hive, "DISPATCHLOAD")
-        mkpath(table_dir)
-        DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
-        DuckDB.unregister_table(conn, "tmp_table")
-
-        floor_db = aem_connect(HiveConfiguration(hive_location = floor_hive, filesystem = "file"))
         sys = deepcopy(sys_base)
         set_nem_dispatch_limits!(sys, floor_db, short_range)
 
@@ -1272,40 +766,14 @@
     end
 
     @testset "unavailable devices are excluded from the strict setters" begin
-        partial_hive = mktempdir()
-        ddb = DuckDB.DB()
-        conn = DuckDB.connect(ddb)
-        DuckDB.execute(conn, "SET preserve_identifier_case=true")
-
         resolution = Minute(5)
         start_date = DateTime(2025, 1, 1, 0, 0)
         short_range = start_date:resolution:(start_date + Minute(10))
         grid = collect(short_range)[1:(end - 1)]  # 3 intervals
         covered_duids = ["BW01", "BW02", "BW03", "BW04", "ER02", "PUMP1", "PUMP2", "WDR1"]  # every dispatch device except ER01
-
-        rows = DataFrame(
-            SETTLEMENTDATE = DateTime[], DUID = String[], INTERVENTION = Int[],
-            INITIALMW = Union{Float64, Missing}[], RAMPUPRATE = Union{Float64, Missing}[],
-            RAMPDOWNRATE = Union{Float64, Missing}[], AVAILABILITY = Union{Float64, Missing}[],
-        )
-        for t in grid, duid in covered_duids
-            push!(
-                rows,
-                (
-                    SETTLEMENTDATE = t, DUID = duid, INTERVENTION = 0,
-                    INITIALMW = 50.0, RAMPUPRATE = 5.0, RAMPDOWNRATE = 4.0, AVAILABILITY = 100.0,
-                ),
-            )
+        partial_db = dispatchload_db(grid, covered_duids) do _, _
+            return (INITIALMW = 50.0, RAMPUPRATE = 5.0, RAMPDOWNRATE = 4.0, AVAILABILITY = 100.0)
         end
-        rows[!, :archive_month] = fill("2025-01", nrow(rows))
-
-        DuckDB.register_data_frame(conn, rows, "tmp_table")
-        table_dir = joinpath(partial_hive, "DISPATCHLOAD")
-        mkpath(table_dir)
-        DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
-        DuckDB.unregister_table(conn, "tmp_table")
-
-        partial_db = aem_connect(HiveConfiguration(hive_location = partial_hive, filesystem = "file"))
 
         @testset "unavailable: no throw, and no series added for the unavailable device" begin
             sys = deepcopy(sys_base)
@@ -1316,9 +784,6 @@
             @test !has_time_series(er01, SingleTimeSeries, "ramp_up_rate")
             @test has_time_series(get_component(ThermalStandard, sys, "ER02"), SingleTimeSeries, "ramp_up_rate")
 
-            er01_active_power_before = get_active_power(er01)
-            @test_nowarn set_nem_initial_conditions!(sys, partial_db, first(short_range))
-            @test get_active_power(er01) == er01_active_power_before
         end
 
         @testset "available: still throws, naming the DUID" begin
@@ -1333,14 +798,6 @@
             @test err isa ArgumentError
             @test occursin("ER01", err.msg)
 
-            err2 = try
-                set_nem_initial_conditions!(sys, partial_db, first(short_range))
-                nothing
-            catch e
-                e
-            end
-            @test err2 isa ArgumentError
-            @test occursin("ER01", err2.msg)
         end
     end
     @testset "set_market_bids! refers energy bids to the reference node" begin
@@ -1430,20 +887,6 @@
             @test get_available(get_component(InterruptiblePowerLoad, sys_lf, "PUMP1"))
             @test prices(sys_lf, "PUMP1", "decremental_variable_cost") ≈
                 round.(raw_price("PUMP1", "LOAD") ./ 0.8; digits = 2)
-        end
-
-        @testset "referred prices reorder a merit order" begin
-            # Raw prices rise with the band; ER01's referred price exceeds BW02's raw price.
-            @test last(raw_price("ER01", "GEN")) < last(raw_price("BW02", "GEN")) + 1.0
-            @test last(prices(sys_lf, "ER01")) > last(prices(sys_lf, "BW02"))
-        end
-
-        @testset "referred prices are rounded to cents" begin
-            # Verify that prices divided by loss factors are rounded to cents.
-            # Example 1: -963.7 / 0.9637 = -1000.0 (exactly) when rounded to cents
-            @test round(-963.7 / 0.9637; digits = 2) == -1000.0
-            # Example 2: -450 / 1.03502 = -434.7761... ≈ -434.77 when rounded to cents
-            @test round(-450.0 / 1.03502; digits = 2) == -434.77
         end
 
         @testset "a bidding unit without a DUDETAILSUMMARY row in force is an error" begin

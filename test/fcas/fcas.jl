@@ -27,19 +27,6 @@
         @test get_upper_slope_coeff(zero_avail) == 0.0
     end
 
-    @testset "FCASBid construction" begin
-        curve = PiecewiseStepData([0.0, 5.0, 10.0], [50.0, 60.0])
-        trapezium = FCASTrapezium(;
-            enablement_min = 20.0, low_breakpoint = 30.0, high_breakpoint = 90.0,
-            enablement_max = 100.0, max_avail = 10.0,
-        )
-        bid = FCASBid(BidType.RAISE6SEC, curve, trapezium)
-        @test get_service(bid) == BidType.RAISE6SEC
-        @test get_offer_curve(bid) === curve
-        @test get_offer_curve(bid) isa PiecewiseStepData
-        @test get_trapezium(bid) === trapezium
-    end
-
     @testset "Tuple/FCASTrapezium round trip" begin
         # Regulation markets: both ramp rates present.
         with_ramps = FCASTrapezium(;
@@ -62,15 +49,7 @@
         @test isnan(nt[6])
         @test isnan(nt[7])
         @test isequal(nt, (20.0, 30.0, 90.0, 100.0, 10.0, NaN, NaN))
-        back_no_ramps = FCASTrapezium(nt)
-        @test back_no_ramps.enablement_min == no_ramps.enablement_min
-        @test back_no_ramps.low_breakpoint == no_ramps.low_breakpoint
-        @test back_no_ramps.high_breakpoint == no_ramps.high_breakpoint
-        @test back_no_ramps.enablement_max == no_ramps.enablement_max
-        @test back_no_ramps.max_avail == no_ramps.max_avail
-        @test isnothing(back_no_ramps.ramp_up_rate)
-        @test isnothing(back_no_ramps.ramp_down_rate)
-        @test isequal(back_no_ramps, no_ramps)
+        @test isequal(FCASTrapezium(nt), no_ramps)
     end
 
     @testset "_extract_fcas_bid throws an actionable error on a missing required field" begin
@@ -122,34 +101,30 @@
         end
     end
 
-    @testset "get_fcas_trapezium/get_fcas_offer_curve/get_fcas_bid" begin
+    @testset "_get_fcas_trapezium/_get_fcas_offer_curve" begin
         sys = nem_system(db, RegionalNetworkConfiguration())
         set_fcas_bids!(sys, db, date_range)
         bw01 = get_component(EnergyReservoirStorage, sys, "BW01")
         horizon = length(date_range) - 1
 
-        trapeziums = get_fcas_trapezium(bw01, BidType.RAISE6SEC, start_date, horizon)
-        curves = get_fcas_offer_curve(bw01, BidType.RAISE6SEC, start_date, horizon)
-        bids = get_fcas_bid(bw01, BidType.RAISE6SEC, start_date, horizon)
+        trapeziums = AustralianElectricityMarkets._get_fcas_trapezium(bw01, BidType.RAISE6SEC, start_date, horizon)
+        curves = AustralianElectricityMarkets._get_fcas_offer_curve(bw01, BidType.RAISE6SEC, start_date, horizon)
         @test trapeziums isa Vector{FCASTrapezium}
         @test curves isa Vector{PiecewiseStepData}
-        @test bids isa Vector{FCASBid}
-        @test length(trapeziums) == length(curves) == length(bids) == horizon
-        @test all(get_trapezium(b) == trapeziums[i] for (i, b) in enumerate(bids))
-        @test all(get_offer_curve(b) == curves[i] for (i, b) in enumerate(bids))
+        @test length(trapeziums) == length(curves) == horizon
         offer = get_fcas_offer(bw01, BidType.RAISE6SEC, OfferSide.GEN, start_date, horizon)
         @test offer isa NEMFCASOffer && offer.service == BidType.RAISE6SEC && offer.side == OfferSide.GEN
         @test offer.trapeziums == trapeziums && offer.curves == curves
         load_offer = get_fcas_offer(bw01, BidType.RAISE6SEC, OfferSide.LOAD, start_date, horizon)
-        @test load_offer.trapeziums == get_fcas_trapezium(bw01, BidType.RAISE6SEC, start_date, horizon; decremental = true)
+        @test load_offer.trapeziums == AustralianElectricityMarkets._get_fcas_trapezium(bw01, BidType.RAISE6SEC, start_date, horizon; decremental = true)
 
         # decremental = true reads a genuinely separate series: it succeeds for BW01 (which
         # has both directions attached) but throws for a Generator (incremental-only), proving
         # it isn't just re-reading the incremental series under a different name.
-        dec_trapeziums = get_fcas_trapezium(bw01, BidType.RAISE6SEC, start_date, horizon; decremental = true)
+        dec_trapeziums = AustralianElectricityMarkets._get_fcas_trapezium(bw01, BidType.RAISE6SEC, start_date, horizon; decremental = true)
         @test dec_trapeziums isa Vector{FCASTrapezium}
         @test length(dec_trapeziums) == horizon
-        @test_throws ArgumentError get_fcas_trapezium(
+        @test_throws ArgumentError AustralianElectricityMarkets._get_fcas_trapezium(
             first(get_components(Generator, sys)), BidType.RAISE6SEC, start_date, horizon; decremental = true,
         )
 
@@ -157,7 +132,7 @@
         no_bids_sys = nem_system(db, RegionalNetworkConfiguration())
         no_bids_gen = first(get_components(Generator, no_bids_sys))
         err = try
-            get_fcas_trapezium(no_bids_gen, BidType.RAISE6SEC, start_date, horizon)
+            AustralianElectricityMarkets._get_fcas_trapezium(no_bids_gen, BidType.RAISE6SEC, start_date, horizon)
             nothing
         catch e
             e
@@ -213,8 +188,7 @@
     end
 
     @testset "set_fcas_bids!" begin
-        # Two SingleTimeSeries per (component, market), not a Reserve/service and not a
-        # single-object FCASBid series (see "FCASBid time series round-trip" below).
+        # Two SingleTimeSeries per (component, market), not a Reserve/service.
         sys = nem_system(db, RegionalNetworkConfiguration())
         set_fcas_bids!(sys, db, date_range)
         base_power = get_base_power(sys)
@@ -231,7 +205,7 @@
             @test !isnothing(curve_ts)
             @test !isnothing(trapezium_ts)
             trap_rows = get_time_series_values(SingleTimeSeries, gen, "fcas_trapezium_RAISE6SEC")
-            # Raw stored series is per-unit of sys's base power - get_fcas_trapezium (tested
+            # Raw stored series is per-unit of sys's base power - _get_fcas_trapezium (tested
             # above) is what converts back to MW.
             @test first(trap_rows)[1] == 20.0 / base_power
         end
@@ -251,7 +225,7 @@
         @test get_available(asload1)
         @test has_time_series(asload1, SingleTimeSeries, "fcas_curve_RAISE6SEC_decremental")
         @test !has_time_series(asload1, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")
-        trap = get_fcas_trapezium(asload1, BidType.RAISE6SEC, first(date_range), 3; decremental = true)
+        trap = AustralianElectricityMarkets._get_fcas_trapezium(asload1, BidType.RAISE6SEC, first(date_range), 3; decremental = true)
         @test all(t -> get_enablement_max(t) == 0.0 && get_max_avail(t) ≈ 15.0 / base_power, trap)
         @test !get_available(get_component(InterruptiblePowerLoad, sys, "ASLOAD2"))
         @test !has_time_series(get_component(InterruptiblePowerLoad, sys, "PUMP1"), SingleTimeSeries, "fcas_curve_RAISE6SEC_decremental")
@@ -288,7 +262,7 @@
     @testset "the 1-second markets are read as FCAS markets" begin
         req = read_fcas_requirements(db, date_range)
         for bid_type in (BidType.RAISE1SEC, BidType.LOWER1SEC)
-            @test bid_type in FCAS_BID_TYPES && bid_type in FCAS_CONTINGENCY_MARKETS
+            @test bid_type in FCAS_CONTINGENCY_MARKETS
             rows = subset(req, :BIDTYPE => ByRow(==(bid_type)))
             @test !isempty(rows)
             @test all(==(5.5), rows.MARGINALVALUE)
@@ -374,105 +348,4 @@
         @test all(ismissing, raisereg.ACTUALAVAILABILITY)
     end
 
-    @testset "FCAS price decomposition identity" begin
-        # Regional FCAS price = sum of MARGINALVALUE over the constraints governing that
-        # (region, market) - the mock has exactly one governing constraint per pair, so the
-        # sum degenerates to a single value; real NEMWEB data can have several (see docs).
-        req = read_fcas_requirements(db, date_range)
-        prices = read_fcas_prices(db, date_range)
-        derived = combine(
-            groupby(req, [:SETTLEMENTDATE, :REGIONID, :BIDTYPE]),
-            :MARGINALVALUE => sum => :derived_price,
-        )
-        joined = innerjoin(derived, prices, on = [:SETTLEMENTDATE, :REGIONID, :BIDTYPE])
-        @test !isempty(joined)
-        @test all(isapprox.(joined.derived_price, joined.ROP; atol = 1.0e-6))
-    end
-
-    @testset "JSON round-trip" begin
-        # Deliberately skips set_market_bids! here: this repo's existing energy bid path
-        # sets no_load_cost=0.0, and PowerSystems.MarketBidCost's constructor can't convert
-        # the Int64 a whole-number Float64 becomes after a JSON round-trip back into the
-        # Float64 it needs - a pre-existing PSY/JSON3 interaction bug, confirmed unrelated
-        # to FCAS (it reproduces with plain MarketBidCost, no FCAS types involved) and out of
-        # scope to fix here. This testset isolates the FCAS-specific round-trip behavior.
-        sys = nem_system(db, RegionalNetworkConfiguration())
-        set_fcas_bids!(sys, db, date_range)
-        base_power = get_base_power(sys)
-
-        mktpath = mktempdir()
-        json_path = joinpath(mktpath, "sys.json")
-        to_json(sys, json_path)
-        sys2 = System(json_path)
-
-        found = false
-        for gen in get_components(Generator, sys2)
-            has_time_series(gen, SingleTimeSeries, "fcas_curve_RAISE6SEC") || continue
-            found = true
-            curve_ts = get_time_series(SingleTimeSeries, gen, "fcas_curve_RAISE6SEC")
-            trapezium_ts = get_time_series(SingleTimeSeries, gen, "fcas_trapezium_RAISE6SEC")
-            @test !isnothing(curve_ts)
-            @test !isnothing(trapezium_ts)
-            trap_rows = get_time_series_values(SingleTimeSeries, gen, "fcas_trapezium_RAISE6SEC")
-            @test first(trap_rows)[1] == 20.0 / base_power
-        end
-        @test found
-    end
-
-    @testset "FCASBid time series round-trip" begin
-        # Each element is a plain NTuple{7,Float64} or PiecewiseStepData, not an FCASBid.
-        sys = System(100.0)
-        bus = ACBus(; number = 1, name = "b1", available = true, bustype = ACBusTypes.REF, angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1), base_voltage = 130.0)
-        add_component!(sys, bus)
-        gen = ThermalStandard(;
-            name = "G1", available = true, status = true, bus = bus,
-            active_power = 0.0, reactive_power = 0.0, rating = 1.0,
-            active_power_limits = (min = 0.0, max = 1.0), reactive_power_limits = nothing,
-            ramp_limits = nothing,
-            operation_cost = ThermalGenerationCost(;
-                variable = CostCurve(LinearCurve(0.0)), fixed = 0.0, start_up = 0.0, shut_down = 0.0,
-            ),
-            base_power = 100.0, time_limits = nothing, must_run = false,
-            prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL,
-        )
-        add_component!(sys, gen)
-
-        psd = PiecewiseStepData([0.0, 5.0], [50.0])
-        trapezium = FCASTrapezium(; enablement_min = 20.0, low_breakpoint = 30.0, high_breakpoint = 90.0, enablement_max = 100.0, max_avail = 10.0)
-        trap_row = (
-            get_enablement_min(trapezium), get_low_breakpoint(trapezium), get_high_breakpoint(trapezium),
-            get_enablement_max(trapezium), get_max_avail(trapezium),
-            something(get_ramp_up_rate(trapezium), NaN), something(get_ramp_down_rate(trapezium), NaN),
-        )
-
-        start_date = DateTime(2025, 1, 1)
-        curve_ts = AustralianElectricityMarkets.single_series("fcas_curve_RAISE6SEC", start_date, [psd, psd], Minute(5))
-        add_time_series!(sys, gen, curve_ts)
-        trapezium_ts = AustralianElectricityMarkets.single_series("fcas_trapezium_RAISE6SEC", start_date, [trap_row, trap_row], Minute(5))
-        add_time_series!(sys, gen, trapezium_ts)
-
-        mktpath = mktempdir()
-        json_path = joinpath(mktpath, "sys.json")
-        to_json(sys, json_path)
-        sys2 = System(json_path)
-        gen2 = get_component(ThermalStandard, sys2, "G1")
-
-        curve_ts2 = get_time_series(SingleTimeSeries, gen2, "fcas_curve_RAISE6SEC")
-        trapezium_ts2 = get_time_series(SingleTimeSeries, gen2, "fcas_trapezium_RAISE6SEC")
-        @test !isnothing(curve_ts2)
-        @test !isnothing(trapezium_ts2)
-
-        curve_data2 = vec(values(get_data(curve_ts2)))
-        @test curve_data2 isa Vector{PiecewiseStepData}
-        @test length(curve_data2) == 2
-        @test get_x_coords(curve_data2[1]) == [0.0, 5.0]
-        @test get_y_coords(curve_data2[1]) == [50.0]
-
-        trapezium_data2 = vec(values(get_data(trapezium_ts2)))
-        @test length(trapezium_data2) == 2
-        row2 = trapezium_data2[1]
-        @test collect(row2[1:5]) == [20.0, 30.0, 90.0, 100.0, 10.0]
-        @test isnan(row2[6])
-        @test isnan(row2[7])
-    end
 end

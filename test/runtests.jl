@@ -25,11 +25,11 @@ const TEST_GROUPS = [
     "raw_readers" => ("Raw reader tests", ["readers/raw.jl", "readers/intervals.jl"]),
     "isp" => ("ISP reader tests", ["readers/isp.jl"]),
     "datareader" => ("Data reader tests", ["datareader.jl"]),
+    "reader_aggregation" => ("Reader aggregation and historical regions", ["readers/aggregation.jl"]),
     "network_models" => (
         "Network models",
         [
             "network_models/common.jl",
-            "network_models/regional_network_configuration.jl",
             "network_models/constrained_network_configuration.jl",
         ],
     ),

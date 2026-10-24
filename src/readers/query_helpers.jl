@@ -139,3 +139,25 @@ function _with_registered(f, db, df, name::AbstractString)
         DuckDB.unregister_table(db.db, name)
     end
 end
+
+
+"""
+    _ceil_timestamp_sql(column, resolution) -> String
+
+A DuckDB timestamp expression rounding `column` up to a positive `Dates.Period`, with the
+same epoch as `Dates.ceil` on `DateTime`.
+"""
+function _ceil_timestamp_sql(column::AbstractString, resolution::Dates.Period)
+    if resolution isa Union{Month, Quarter, Year}
+        width = Dates.value(Month(resolution))
+        unit = "months"
+    else
+        width = Dates.value(Millisecond(resolution))
+        unit = "milliseconds"
+    end
+    width > 0 || throw(ArgumentError("resolution must be positive, got $resolution"))
+    origin = resolution isa Week ? "0000-01-03" : "0000-01-01"
+    interval = "INTERVAL '$width $unit'"
+    bucket = "time_bucket($interval, $column, TIMESTAMP '$origin')"
+    return "CASE WHEN $column = $bucket THEN $column ELSE $bucket + $interval END"
+end

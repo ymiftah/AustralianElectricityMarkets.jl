@@ -1,5 +1,5 @@
 """
-    table_requirements(::ReplayNetworkConfiguration)
+    table_requirements(::NEMDEConfiguration)
 
 Returns the constrained network tables plus the interconnector loss and MNSP offer tables
 needed to populate a replay system. Optional interval flow limits also require
@@ -8,7 +8,7 @@ needed to populate a replay system. Optional interval flow limits also require
 # Returns
 A vector of NEMWEB table symbols.
 """
-function AustralianElectricityMarkets.table_requirements(::ReplayNetworkConfiguration)
+function AustralianElectricityMarkets.table_requirements(::NEMDEConfiguration)
     return [
         table_requirements(ConstrainedNetworkConfiguration())...,
         :LOSSMODEL, :LOSSFACTORMODEL, :MNSP_INTERCONNECTOR, :MNSP_DAYOFFER,
@@ -18,7 +18,7 @@ end
 
 
 """
-    nem_system(db, ::ReplayNetworkConfiguration; date_range, intervention = 0,
+    nem_system(db, ::NEMDEConfiguration; date_range, intervention = 0,
         interval_flow_limits = false, time_series_in_memory = true, time_series_directory = nothing)
 
 Builds a constrained system populated with demand, energy and FCAS bids, scaling and dispatch
@@ -37,12 +37,12 @@ inputs, energy limits, interconnector losses and MNSP offers as single time seri
 A populated `PSY.System`. Throws `ArgumentError` for an invalid range or incomplete required inputs.
 """
 function AustralianElectricityMarkets.nem_system(
-        db, ::ReplayNetworkConfiguration; date_range::StepRange{DateTime}, intervention::Integer = 0,
+        db, ::NEMDEConfiguration; date_range::StepRange{DateTime}, intervention::Integer = 0,
         interval_flow_limits::Bool = false, time_series_in_memory::Bool = true,
         time_series_directory::Union{Nothing, AbstractString} = nothing,
     )
     (step(date_range) == Minute(5) && length(date_range) >= 2) || throw(
-        ArgumentError("ReplayNetworkConfiguration: the date range must step by 5 minutes over at least two stamps, got $date_range."),
+        ArgumentError("NEMDEConfiguration: the date range must step by 5 minutes over at least two stamps, got $date_range."),
     )
     resolution = Minute(5)
     storage = isnothing(time_series_directory) ? (;) : (; time_series_directory)
@@ -145,4 +145,4 @@ function _check_replay_energy_bid_coverage(sys, db, date_range; intervention::In
 end
 
 
-export ReplayNetworkConfiguration
+export NEMDEConfiguration

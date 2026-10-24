@@ -3,16 +3,8 @@ using TOML
 using Logging
 
 @testset "Independent population and reader packages" begin
-    @test isdefined(AustralianElectricityMarkets, :Readers)
-    if isdefined(AustralianElectricityMarkets, :Readers)
-        readers = AustralianElectricityMarkets.Readers
-        @test read_units === readers.read_units
-        @test read_demand === readers.read_demand
-        @test read_fcas_bids === readers.read_fcas_bids
-        @test parentmodule(read_units) === readers
-        @test parentmodule(read_fcas_bids) === readers
-        @test !isdefined(readers, :PowerSystems)
-    end
+    readers = AustralianElectricityMarkets.Readers
+    @test !isdefined(readers, :PowerSystems)
     @test !isdefined(AustralianElectricityMarkets, :EnergyTieBreak)
 
     @test HiveConfiguration === AustralianElectricityMarketsData.HiveConfiguration

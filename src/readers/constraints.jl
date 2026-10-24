@@ -2,42 +2,18 @@
     read_invoked_constraints(db, date_range; intervention = 0)
 
 Reads `DISPATCHCONSTRAINT` over `date_range`: one row per `(SETTLEMENTDATE, GENCONID)` with
-`RHS`, `LHS`, `MARGINALVALUE`, and the exact constraint version NEMDE used that interval
+`RHS` and the exact constraint version NEMDE used that interval
 (`GENCONID_EFFECTIVEDATE`/`GENCONID_VERSIONNO`). Membership in this table is the definition
-of "NEMDE actually enforced this constraint" — see [`add_nem_constraints!`](@ref AustralianElectricityMarkets.add_nem_constraints!).
+of "NEMDE actually enforced this constraint" c.f. [`add_nem_constraints!`](@ref AustralianElectricityMarkets.add_nem_constraints!).
 """
 function read_invoked_constraints(db, date_range; intervention::Integer = 0)
     columns = [
-        _cast_double("RHS"), _cast_double("LHS"), _cast_double("MARGINALVALUE"),
+        _cast_double("RHS"),
         "GENCONID_EFFECTIVEDATE", "GENCONID_VERSIONNO",
     ]
     df = _read_dispatch_table(columns, db, :DISPATCHCONSTRAINT, "CONSTRAINTID", date_range; intervention, order = true)
     return rename!(df, :CONSTRAINTID => :GENCONID)
 end
-
-
-# Upper bound for pruning the versioned reference tables. A version effective *after* the
-# newest one NEMDE invoked can never satisfy the exact-equality join, and because each
-# archive month only holds the versions that became effective in it, DuckDB turns this into
-# partition pruning. Bounding below is not valid: a constraint invoked today can be on a
-# version effective years earlier, whose rows live only in that old month's partition.
-function _effective_date_bound(wanted)
-    bound = maximum(skipmissing(wanted.GENCONID_EFFECTIVEDATE); init = typemin(DateTime))
-    return "CAST('$bound' AS TIMESTAMP)"
-end
-
-
-# An empty `gencon_versions` means `DISPATCHCONSTRAINT` is not cached over the range.
-function _require_invoked(gencon_versions)
-    DataFrames.isempty(gencon_versions) && throw(
-        ArgumentError(
-            "gencon_versions is empty: no constraint was invoked over the requested range. " *
-                "That means DISPATCHCONSTRAINT is not cached for it: run `populate(db, :DISPATCHCONSTRAINT, ...)` first.",
-        ),
-    )
-    return
-end
-
 
 """
     read_constraint_definitions(db, gencon_versions)
@@ -166,6 +142,66 @@ function read_constraint_terms(db, gencon_versions, date_range)
     end
 end
 
+"""
+    read_constraint_fcas_requirements(db, date_range; intervention = 0)
+
+Reads the dispatch FCAS requirement table's `GENCONID -> (REGIONID, BIDTYPE)` mapping over
+`date_range`. Keyed by bare `GENCONID`.
+
+# Returns
+Long-format `DataFrame`. Throws `ArgumentError` when neither `DISPATCH_FCAS_REQ` nor
+`DISPATCH_FCAS_REQ_CONSTRAINT` is cached.
+"""
+function read_constraint_fcas_requirements(db, date_range; intervention::Integer = 0)
+    start_date = first(date_range)
+    end_date = last(date_range)
+    union_sql, params = _fcas_req_union_sql(db, start_date, end_date, intervention)
+    df = _query(
+        db,
+        """
+        SELECT DISTINCT SETTLEMENTDATE, GENCONID, REGIONID, BIDTYPE
+        FROM ($union_sql)
+        """,
+        params,
+    )
+    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
+    subset!(df, :BIDTYPE => ByRow(in(string.(FCAS_BID_TYPES))))
+
+    for sub in groupby(df, :GENCONID)
+        pair_sets = combine(
+            groupby(sub, :SETTLEMENTDATE),
+            [:REGIONID, :BIDTYPE] => ((r, b) -> [Set(zip(r, b))]) => :pairs,
+        ).pairs
+        allequal(pair_sets) || @warn "GENCONID $(sub.GENCONID[1]) governs a different (REGIONID, BIDTYPE) set at different intervals in this range; using the union." pair_sets
+    end
+
+    result = unique(select(df, :GENCONID, :REGIONID, :BIDTYPE))
+    transform!(result, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
+    return result
+end
+
+
+# Upper bound for pruning the versioned reference tables. A version effective *after* the
+# newest one NEMDE invoked can never satisfy the exact-equality join, and because each
+# archive month only holds the versions that became effective in it, DuckDB turns this into
+# partition pruning. Bounding below is not valid: a constraint invoked today can be on a
+# version effective years earlier, whose rows live only in that old month's partition.
+function _effective_date_bound(wanted)
+    bound = maximum(skipmissing(wanted.GENCONID_EFFECTIVEDATE); init = typemin(DateTime))
+    return "CAST('$bound' AS TIMESTAMP)"
+end
+
+
+# An empty `gencon_versions` means `DISPATCHCONSTRAINT` is not cached over the range.
+function _require_invoked(gencon_versions)
+    DataFrames.isempty(gencon_versions) && throw(
+        ArgumentError(
+            "gencon_versions is empty: no constraint was invoked over the requested range. " *
+                "That means DISPATCHCONSTRAINT is not cached for it: run `populate(db, :DISPATCHCONSTRAINT, ...)` first.",
+        ),
+    )
+    return
+end
 
 """
     _fcas_req_union_sql(db, start_date, end_date, intervention) -> (sql_fragment, params)
@@ -234,43 +270,4 @@ function _fcas_req_union_sql(db, start_date, end_date, intervention::Integer)
         ),
     )
     return join(branches, "\nUNION ALL\n"), params
-end
-
-
-"""
-    read_constraint_fcas_requirements(db, date_range; intervention = 0)
-
-Reads the dispatch FCAS requirement table's `GENCONID -> (REGIONID, BIDTYPE)` mapping over
-`date_range`. Keyed by bare `GENCONID`.
-
-# Returns
-Long-format `DataFrame`. Throws `ArgumentError` when neither `DISPATCH_FCAS_REQ` nor
-`DISPATCH_FCAS_REQ_CONSTRAINT` is cached.
-"""
-function read_constraint_fcas_requirements(db, date_range; intervention::Integer = 0)
-    start_date = first(date_range)
-    end_date = last(date_range)
-    union_sql, params = _fcas_req_union_sql(db, start_date, end_date, intervention)
-    df = _query(
-        db,
-        """
-        SELECT DISTINCT SETTLEMENTDATE, GENCONID, REGIONID, BIDTYPE
-        FROM ($union_sql)
-        """,
-        params,
-    )
-    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
-    subset!(df, :BIDTYPE => ByRow(in(string.(FCAS_BID_TYPES))))
-
-    for sub in groupby(df, :GENCONID)
-        pair_sets = combine(
-            groupby(sub, :SETTLEMENTDATE),
-            [:REGIONID, :BIDTYPE] => ((r, b) -> [Set(zip(r, b))]) => :pairs,
-        ).pairs
-        allequal(pair_sets) || @warn "GENCONID $(sub.GENCONID[1]) governs a different (REGIONID, BIDTYPE) set at different intervals in this range; using the union." pair_sets
-    end
-
-    result = unique(select(df, :GENCONID, :REGIONID, :BIDTYPE))
-    transform!(result, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
-    return result
 end

@@ -19,4 +19,13 @@
         @test all(isempty, (physical.dispatch, physical.prices, physical.fcas_prices))
     end
 
+    @testset "published steps have the rows of their single intervals" begin
+        steps = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 10)
+        range = read_published_interval(db, steps)
+        singles = [read_published_interval(db, s) for s in steps]
+        @test nrow(range.dispatch) == sum(nrow(x.dispatch) for x in singles)
+        @test nrow(range.interconnectors) == sum(nrow(x.interconnectors) for x in singles)
+        @test nrow(range.prices) == sum(nrow(x.prices) for x in singles)
+    end
+
 end

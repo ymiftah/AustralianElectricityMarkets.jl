@@ -1,34 +1,3 @@
-# SQL list literal of `bid_types`, e.g. `'RAISE6SEC', 'LOWER6SEC'`.
-_bid_type_list(bid_types) = join(("'$(string(bt))'" for bt in bid_types), ", ")
-
-# The trading days (`SETTLEMENTDATE`) whose offers can cover intervals from `start_date` to `end_date`.
-_offer_days(start_date, end_date) = [Date(start_date) - Day(1), Date(end_date) + Day(1)]
-
-
-# Latest-version `BIDPEROFFER_D` rows of `bid_types` with `start - resolution <= INTERVAL_DATETIME < end`
-# (`start` when `resolution` is `nothing`): the rows a ceil onto `resolution` can bring into the range.
-# `columns` defaults to `MAXAVAIL` and every cached `BANDAVAIL` column.
-function _read_period_offers(db, bid_types::AbstractVector{BidType}, start_date, end_date, resolution; columns = nothing)
-    source = read_hive(db, :BIDPEROFFER_D)
-    selected = isnothing(columns) ? ["MAXAVAIL"; filter(startswith("BANDAVAIL"), _table_schema(db, source))] : columns
-    lower = isnothing(resolution) ? start_date : start_date - resolution
-    return _query(
-        db,
-        """
-        SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE, $(join(selected, ", "))
-        FROM $source
-        WHERE BIDTYPE IN ($(_bid_type_list(bid_types))) AND SETTLEMENTDATE BETWEEN ? AND ?
-          AND INTERVAL_DATETIME >= ? AND INTERVAL_DATETIME < ?
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
-        ) = 1
-        ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME
-        """,
-        [_offer_days(start_date, end_date); lower; end_date],
-    )
-end
-
-
 """
     read_energy_bids(db, date_range; resolution = nothing)
 
@@ -198,6 +167,46 @@ function read_bids(db, date_range; resolution::Union{Nothing, Dates.Period} = no
 end
 
 
+# SQL list literal of `bid_types`, e.g. `'RAISE6SEC', 'LOWER6SEC'`.
+_bid_type_list(bid_types) = join(("'$(string(bt))'" for bt in bid_types), ", ")
+
+# The trading days (`SETTLEMENTDATE`) whose offers can cover intervals from `start_date` to `end_date`.
+_offer_days(start_date, end_date) = [Date(start_date) - Day(1), Date(end_date) + Day(1)]
+
+
+# Latest-version `BIDPEROFFER_D` rows of `bid_types` with `start - resolution <= INTERVAL_DATETIME < end`
+# (`start` when `resolution` is `nothing`): the rows a ceil onto `resolution` can bring into the range.
+# `columns` defaults to `MAXAVAIL` and every cached `BANDAVAIL` column.
+function _read_period_offers(db, bid_types::AbstractVector{BidType}, start_date, end_date, resolution; columns = nothing)
+    sql, params = _period_offers_sql(db, bid_types, start_date, end_date, resolution; columns)
+    return _query(db, sql, params)
+end
+
+
+# Numbered bands are ordered numerically, independent of parquet column order.
+function _band_columns(schema, prefix)
+    return sort(filter(c -> occursin(Regex("^$(prefix)[0-9]+\$"), c), schema); by = c -> parse(Int, c[(length(prefix) + 1):end]))
+end
+
+
+function _period_offers_sql(db, bid_types, start_date, end_date, resolution; columns = nothing)
+    source = read_hive(db, :BIDPEROFFER_D)
+    selected = isnothing(columns) ? ["MAXAVAIL"; _band_columns(_table_schema(db, source), "BANDAVAIL")] : columns
+    lower = isnothing(resolution) ? start_date : start_date - resolution
+    sql = """
+    SELECT SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE, $(join(selected, ", "))
+    FROM $source
+    WHERE BIDTYPE IN ($(_bid_type_list(bid_types))) AND SETTLEMENTDATE BETWEEN ? AND ?
+      AND INTERVAL_DATETIME >= ? AND INTERVAL_DATETIME < ?
+    QUALIFY row_number() OVER (
+        PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
+    ) = 1
+    ORDER BY SETTLEMENTDATE, INTERVAL_DATETIME
+    """
+    return sql, [_offer_days(start_date, end_date); lower; end_date]
+end
+
+
 """
     _massage_bids(db, start_date, end_date; resolution = nothing, bid_types = [BidType.ENERGY], keep_bid_type = false)
 
@@ -217,57 +226,57 @@ function _massage_bids(
         resolution::Union{Nothing, Dates.Period} = nothing, bid_types::AbstractVector{BidType} = [BidType.ENERGY],
         keep_bid_type::Bool = false,
     )
-    energy_bids = _read_period_offers(db, bid_types, start_date, end_date, resolution)
-
-    pricebids_table = read_hive(db, :BIDDAYOFFER_D)
-    priceband_cols = join(filter(startswith("PRICEBAND"), _table_schema(db, pricebids_table)), ", ")
-    pricebids = _query(
+    period_source = read_hive(db, :BIDPEROFFER_D)
+    band_columns = _band_columns(_table_schema(db, period_source), "BANDAVAIL")
+    quantities = ["MAXAVAIL"; band_columns]
+    period_sql, params = _period_offers_sql(db, bid_types, start_date, end_date, resolution; columns = quantities)
+    bucket = isnothing(resolution) ? "INTERVAL_DATETIME" : _ceil_timestamp_sql("INTERVAL_DATETIME", resolution)
+    period = if isnothing(resolution)
+        "SELECT * FROM latest_period"
+    else
+        averages = join(("COALESCE(avg($c), 'NaN'::DOUBLE) AS $c" for c in quantities), ", ")
+        """
+        SELECT SETTLEMENTDATE, $bucket AS INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE, $averages
+        FROM latest_period GROUP BY ALL
+        """
+    end
+    price_source = read_hive(db, :BIDDAYOFFER_D)
+    price_columns = _band_columns(_table_schema(db, price_source), "PRICEBAND")
+    price_array = join(("d.$c" for c in price_columns), ", ")
+    band_array = join(("p.$c" for c in band_columns), ", ")
+    bid_type_column = keep_bid_type ? ", p.BIDTYPE" : ""
+    append!(params, _offer_days(start_date, end_date))
+    append!(params, (start_date, end_date))
+    bids = _query(
         db,
         """
-        SELECT SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE, MINIMUMLOAD, DAILYENERGYCONSTRAINT, $priceband_cols
-        FROM $pricebids_table
-        WHERE BIDTYPE IN ($(_bid_type_list(bid_types))) AND SETTLEMENTDATE BETWEEN ? AND ?
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
-        ) = 1
-        ORDER BY SETTLEMENTDATE
+        WITH latest_period AS ($period_sql),
+             period AS ($period),
+             prices AS (
+                 SELECT SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE, MINIMUMLOAD, DAILYENERGYCONSTRAINT,
+                        $(join(price_columns, ", "))
+                 FROM $price_source
+                 WHERE BIDTYPE IN ($(_bid_type_list(bid_types))) AND SETTLEMENTDATE BETWEEN ? AND ?
+                 QUALIFY row_number() OVER (
+                     PARTITION BY SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
+                 ) = 1
+             )
+        SELECT p.SETTLEMENTDATE, p.DUID, p.DIRECTION, p.INTERVAL_DATETIME,
+               list_value($price_array) AS PRICEBANDARRAY, list_value($band_array) AS BANDAVAILARRAY,
+               p.MAXAVAIL, d.MINIMUMLOAD, d.DAILYENERGYCONSTRAINT $bid_type_column,
+               d.DUID IS NULL AS MISSING_PRICE
+        FROM period p
+        LEFT JOIN prices d USING (SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE)
+        WHERE p.INTERVAL_DATETIME >= ? AND p.INTERVAL_DATETIME < ?
+        ORDER BY p.SETTLEMENTDATE, p.INTERVAL_DATETIME, p.DUID, p.DIRECTION, p.BIDTYPE
         """,
-        _offer_days(start_date, end_date),
+        params,
     )
-
-    if !isnothing(resolution)
-        energy_bids = @chain energy_bids begin
-            transform(:INTERVAL_DATETIME => ByRow(x -> ceil(x, resolution)); renamecols = false)
-            groupby([:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION, :BIDTYPE])
-            combine(
-                _,
-                :MAXAVAIL => mean ∘ skipmissing,
-                Cols(r"^BANDAVAIL") .=> mean ∘ skipmissing,
-                ;
-                renamecols = false
-            )
-        end
-    end
-
-    join_keys = [:SETTLEMENTDATE, :DUID, :DIRECTION, :BIDTYPE]
-    required = subset(energy_bids, :INTERVAL_DATETIME => ByRow(t -> start_date <= t < end_date))
-    missing_prices = antijoin(required, pricebids; on = join_keys)
-    isempty(missing_prices) || throw(
+    missing_duids = sort!(unique(bids.DUID[bids.MISSING_PRICE]))
+    isempty(missing_duids) || throw(
         ArgumentError(
-            "missing price bids for period offers: $(join(sort!(unique(missing_prices.DUID)), ", ")); populate BIDDAYOFFER_D for the referenced trading days",
-        )
+            "missing price bids for period offers: $(join(missing_duids, ", ")); populate BIDDAYOFFER_D for the referenced trading days",
+        ),
     )
-    all_bids = innerjoin(pricebids, energy_bids, on = join_keys)
-    prep_for_psy = @chain all_bids begin
-        subset!(:INTERVAL_DATETIME => ByRow(x -> start_date <= x < end_date))
-        transform(
-            AsTable(r"^PRICEBAND") => ByRow(collect) => :PRICEBANDARRAY,
-            AsTable(r"^BANDAVAIL") => ByRow(collect) => :BANDAVAILARRAY,
-        )
-        select(
-            :SETTLEMENTDATE, :DUID, :DIRECTION, :INTERVAL_DATETIME, :PRICEBANDARRAY, :BANDAVAILARRAY,
-            :MAXAVAIL, :MINIMUMLOAD, :DAILYENERGYCONSTRAINT, (keep_bid_type ? [:BIDTYPE] : [])...,
-        )
-    end
-    return prep_for_psy
+    return select!(bids, Not(:MISSING_PRICE))
 end

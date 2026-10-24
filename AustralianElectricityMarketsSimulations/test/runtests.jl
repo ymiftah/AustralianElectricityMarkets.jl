@@ -25,12 +25,10 @@ create_mock_data(AEM_TEST_REPLAY_HIVE_DIR; complete_inputs = true)
 write_mock_interconnector_results(AEM_TEST_REPLAY_HIVE_DIR)
 
 # Test groups, in run order: name => (testset title, file). Pass group names as arguments to run
-# only those, e.g. `julia --project=test test/runtests.jl fcas_market preprocessing`.
+# only those, e.g. `julia --project=test test/runtests.jl fcas_market pipeline`.
 const TEST_GROUPS = [
     "time_basis" => ("Time basis", "time_basis.jl"),
     "tie_break_service" => ("Energy tie-break service", "tie_break_service.jl"),
-    "preprocessing" => ("Preprocessing", "preprocessing.jl"),
-    "constraint_formulations" => ("Constraint formulations", "constraint_formulations.jl"),
     "psi_compat" => ("PSI compat", "psi_compat.jl"),
     "nem_constraints" => ("NEM constraints", "nem_constraints.jl"),
     "nem_dispatch" => ("NEM dispatch formulation", "nem_dispatch.jl"),

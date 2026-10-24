@@ -77,23 +77,22 @@ end
 
 
 """
-    _has_nem_dispatch_limits(device, formulation)
+    _has_nem_dispatch_limits(device)
 
-Whether `device` carries every time series `formulation` reads as a parameter, including raw directional
-availability for storage and UIGF only for semi-scheduled units.
+Whether `device` carries every time series [`NEMReplayDispatch`](@ref) reads as a parameter, including raw
+directional availability for storage and UIGF only for semi-scheduled units.
 
 # Arguments
 - `device`: the `PowerSystems.Component` to inspect.
-- `formulation`: an [`AbstractNEMDispatch`](@ref) subtype.
 
 # Returns
 `true` when every required registered series is attached, `false` otherwise.
 """
-function _has_nem_dispatch_limits(device, formulation::Type{<:AbstractNEMDispatch})
+function _has_nem_dispatch_limits(device)
     if !(device isa PSY.Storage)
         has_schedule_classification(device) || return false
     end
-    names = PSI.get_default_time_series_names(typeof(device), formulation)
+    names = PSI.get_default_time_series_names(typeof(device), NEMReplayDispatch)
     required = (
         name for (param, name) in names
             if !in(param, first.(_FIXED_LOAD_SERIES)) && (param !== EnergyUIGFTimeSeriesParameter || is_semi_scheduled(device))
@@ -379,86 +378,50 @@ end
 
 The component types in `sys` that participate in a NEM dispatch: any
 `PowerSystems.StaticInjection` with at least one component satisfying
-[`_has_nem_dispatch_limits`](@ref) for `formulation`.
+[`_has_nem_dispatch_limits`](@ref) for [`NEMReplayDispatch`](@ref).
 
 # Arguments
 - `sys`: the `PowerSystems.System` to inspect.
-- `formulation`: the [`AbstractNEMDispatch`](@ref) subtype whose series set decides membership.
 
 # Returns
 A sorted `Vector` of component types.
 """
-function nem_dispatch_participants(sys, formulation::Type{<:AbstractNEMDispatch} = NEMReplayDispatch)
+function nem_dispatch_participants(sys)
     types = Set{DataType}()
     for device in PSY.get_components(PSY.StaticInjection, sys)
-        _has_nem_dispatch_limits(device, formulation) || continue
+        _has_nem_dispatch_limits(device) || continue
         push!(types, typeof(device))
     end
     return sort!(collect(types); by = string)
 end
 
 
-function _uncovered_names(sys, types, formulation)
-    names = String[]
-    for T in types, device in PSY.get_components(T, sys)
-        PSY.get_available(device) || continue
-        _has_nem_dispatch_limits(device, formulation) && continue
-        push!(names, PSY.get_name(device))
-    end
-    return names
-end
-
-
 """
-    set_nem_dispatch_models!(template, sys; formulation = NEMReplayDispatch, skip_uncovered = false, tie_breaks = true)
+    set_nem_dispatch_models!(template, sys; tie_breaks = true)
 
-Sets `formulation` as the device model for every dispatch participant in `sys`, and, when `sys`
-carries the [`EnergyTieBreak`](@ref) of [`set_tie_break_scales!`](@ref), its [`TieBreakMarket`](@ref)
-service model, which dispatches price-tied energy bands pro rata. Without it ties resolve to an
-arbitrary solver vertex.
+Sets [`NEMReplayDispatch`](@ref) as the device model for every dispatch participant in `sys`, and, when
+`sys` carries the [`EnergyTieBreak`](@ref) of [`set_tie_break_scales!`](@ref), its
+[`TieBreakMarket`](@ref) service model, which dispatches price-tied energy bands pro rata. Without it
+ties resolve to an arbitrary solver vertex.
 
 # Arguments
 - `template`: the `PowerSimulations.ProblemTemplate` to mutate.
 - `sys`: the `PowerSystems.System` whose participants are read, via
-  [`nem_dispatch_participants`](@ref).
-- `formulation`: the [`AbstractNEMDispatch`](@ref) formulation, [`NEMReplayDispatch`](@ref).
-- `skip_uncovered`: when `true`, each device model carries a `"filter_function"` attribute
-  excluding components that fail [`_has_nem_dispatch_limits`](@ref), and the excluded names are
-  warned about. When `false` such a component fails the build by name.
+  [`nem_dispatch_participants`](@ref). A participant without its dispatch series fails the build by name.
 - `tie_breaks`: when `false`, no tie-break service model is set.
 
 # Returns
 The types the formulation was set for, as a `Vector`.
 """
-function set_nem_dispatch_models!(
-        template, sys; formulation = NEMReplayDispatch, skip_uncovered::Bool = false, tie_breaks::Bool = true,
-    )
-    types = nem_dispatch_participants(sys, formulation)
+function set_nem_dispatch_models!(template, sys; tie_breaks::Bool = true)
+    types = nem_dispatch_participants(sys)
     isempty(types) && throw(
         ArgumentError(
             "no dispatch participants in this System: call set_market_bids!, set_nem_dispatch_limits! and set_nem_energy_limits! over the " *
                 "model's date range first",
         ),
     )
-    if skip_uncovered
-        uncovered = _uncovered_names(sys, types, formulation)
-        isempty(uncovered) || @warn "set_nem_dispatch_models!: excluding " *
-            "$(length(uncovered)) component(s) with no $formulation time series: " *
-            "$(join(uncovered, ", "))"
-        for T in types
-            PSI.set_device_model!(
-                template,
-                PSI.DeviceModel(
-                    T, formulation;
-                    attributes = Dict{String, Any}(
-                        "filter_function" => d -> _has_nem_dispatch_limits(d, formulation),
-                    ),
-                ),
-            )
-        end
-    else
-        foreach(T -> PSI.set_device_model!(template, T, formulation), types)
-    end
+    foreach(T -> PSI.set_device_model!(template, T, NEMReplayDispatch), types)
     if tie_breaks && !isnothing(PSY.get_component(EnergyTieBreak, sys, TIE_BREAK_SERVICE_NAME))
         PSI.set_service_model!(
             template, TIE_BREAK_SERVICE_NAME, PSI.ServiceModel(EnergyTieBreak, TieBreakMarket, TIE_BREAK_SERVICE_NAME),

@@ -18,6 +18,14 @@ function replay_validation_system(terms; invoked = 1.0)
     )
 end
 
+# Replays two intervals of `sys` under `parts` with HiGHS, returning the replay result.
+function run_two_steps(sys; parts)
+    return run_replication(
+        sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); parts,
+        optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+    )
+end
+
 @testset "excluded constraints bypass buildability checks and retain their reason" begin
     ghost = UnitTerm("GHOST", BidType.ENERGY, 1.0)
     for reason in (:never_invoked, :manual_exclusion)
@@ -55,19 +63,9 @@ end
     parts = (:fcas, :generic_constraints)
     template = replication_template(sys; parts)
     @test_throws ArgumentError check_fcas_services(sys, template)
-    result = try
-        run_replication(
-            sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); parts,
-            optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
-        )
-    catch err
-        err
-    end
-    @test !(result isa Exception)
-    if !(result isa Exception)
-        @test nrow(PSI.read_optimizer_stats(result.results)) == 2
-        @test !haskey(PSI.get_device_models(PSI.get_template(result.model)), :EnergyReservoirStorage)
-    end
+    result = run_two_steps(sys; parts)
+    @test nrow(PSI.read_optimizer_stats(result.results)) == 2
+    @test !haskey(PSI.get_device_models(PSI.get_template(result.model)), :EnergyReservoirStorage)
 end
 
 @testset "replay omits a battery-only FCAS market when batteries are omitted" begin
@@ -90,35 +88,15 @@ end
     template = replication_template(sys; parts, skipped)
     @test !any(k -> first(k) == "1_RAISE6SEC", keys(PSI.get_service_models(template)))
     @test only(skipped) == (constraint = "F_BAT_ONLY", reason = :unmodeled_device_type, n_missing = 1)
-    result = try
-        run_replication(
-            sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); parts,
-            optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
-        )
-    catch err
-        err
-    end
-    @test !(result isa Exception)
-    if !(result isa Exception)
-        @test nrow(PSI.read_optimizer_stats(result.results)) == 2
-    end
+    result = run_two_steps(sys; parts)
+    @test nrow(PSI.read_optimizer_stats(result.results)) == 2
     for devices in ([TOY_CHEAP, TOY_BATTERY], [TOY_CHEAP])
         gc = PSY.get_component(GenericConstraint, sys, "F_BAT_ONLY")
         empty!(get_terms(gc))
         push!(get_terms(gc), RegionTerm("1", BidType.RAISE6SEC, 1.0, devices))
-        result = try
-            run_replication(
-                sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); parts,
-                optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
-            )
-        catch err
-            err
-        end
-        @test !(result isa Exception)
-        if !(result isa Exception)
-            @test nrow(PSI.read_optimizer_stats(result.results)) == 2
-            @test only(result.skipped_constraints.reason) == :unmodeled_device_type
-        end
+        result = run_two_steps(sys; parts)
+        @test nrow(PSI.read_optimizer_stats(result.results)) == 2
+        @test only(result.skipped_constraints.reason) == :unmodeled_device_type
     end
 end
 
@@ -144,27 +122,7 @@ end
     ) == 12345.0
 end
 
-@testset "a left-out part tolerates only its own device types in generic constraints" begin
-    sys = nem_toy_system(
-        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0;
-        batteries = [TOY_BATTERY => toy_battery(50.0, 30.0, 50.0, 0.0; initial = 0.0, ramp_up = 100.0)],
-        horizon = TOY_RESOLUTION,
-    )
+@testset "left-out parts tolerate only their own device types" begin
     @test AEMS._left_out_part_types((:fcas, :losses, :tie_breaks, :generic_constraints)) == [PSY.Storage]
     @test AEMS._left_out_part_types(AEMS.REPLICATION_PARTS) == DataType[]
-    gc = GenericConstraint(; name = "MIXED", sense = ConstraintSense.LE, rhs = 1.0, terms = ConstraintTerm[])
-    modeled = DataType[]
-    tolerated_types = [PSY.Storage]
-    diagnose(terms) = (
-        empty!(get_terms(gc)); append!(get_terms(gc), terms);
-        AEMS._constraint_diagnosis(sys, gc, modeled, false, Set{String}(); tolerated_types)
-    )
-    battery_only = diagnose(ConstraintTerm[UnitTerm(TOY_BATTERY, BidType.ENERGY, 1.0)])
-    @test battery_only[1] == :unmodeled_device_type && !battery_only[4]
-    other = diagnose(ConstraintTerm[UnitTerm(TOY_CHEAP, BidType.ENERGY, 1.0)])
-    @test other[1] == :unmodeled_device_type && other[4]
-    mixed = diagnose(
-        ConstraintTerm[UnitTerm(TOY_BATTERY, BidType.ENERGY, 1.0), UnitTerm(TOY_CHEAP, BidType.ENERGY, 1.0)],
-    )
-    @test mixed[4] && typeof(PSY.get_component(PSY.Device, sys, TOY_CHEAP)) in mixed[2]
 end

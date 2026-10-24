@@ -82,7 +82,7 @@ function _replicate_chunk(
     ts_directory = time_series_in_memory ? nothing : something(time_series_directory, joinpath(folder, "time_series"))
     time_series_in_memory || mkpath(ts_directory)
     sys = nem_system(
-        db, ReplayNetworkConfiguration(); date_range = first(steps):DISPATCH_INTERVAL:(last(steps) + _REPLICATION_HORIZON),
+        db, NEMDEConfiguration(); date_range = first(steps):DISPATCH_INTERVAL:(last(steps) + _REPLICATION_HORIZON),
         intervention = intervention, interval_flow_limits = interval_flow_limits,
         time_series_in_memory = time_series_in_memory, time_series_directory = ts_directory,
     )
@@ -122,7 +122,7 @@ end
 
 Replays the historical NEM dispatch intervals `start:5 minutes:stop` and compares each with AEMO's
 published outcome. Each chunk of the range is one `PowerSimulations.Simulation`: a one-interval
-[`replication_template`](@ref) model is built once on a `nem_system(db, ReplayNetworkConfiguration(); ...)` over the chunk
+[`replication_template`](@ref) model is built once on a `nem_system(db, NEMDEConfiguration(); ...)` over the chunk
 and stepped through its intervals, its parameters updating at each step, and every step starts from
 the interval's published `INITIALMW`. A chunk starts at `start`, at every 04:05 trading-day start, at
 00:05 on 1 July and, with a `Dates.Period` `chunk`, every `chunk` after its own start. Each chunk
@@ -131,7 +131,7 @@ that its intervals share one Market Price Cap, the same price-tied band pairs
 ([`check_tie_break_pairs`](@ref)) and a feasible dispatch envelope ([`check_dispatch_envelope`](@ref)).
 
 # Arguments
-- `db`: an `AEMDB` connection whose cache holds the tables of `ReplayNetworkConfiguration` plus
+- `db`: an `AEMDB` connection whose cache holds the tables of `NEMDEConfiguration` plus
   `DISPATCHINTERCONNECTORRES`, from `start` to `stop + 10 minutes`.
 - `start`, `stop`: `SETTLEMENTDATE`s a whole number of 5-minute intervals apart; `start == stop`
   replays one interval.
@@ -140,9 +140,9 @@ that its intervals share one Market Price Cap, the same price-tied band pairs
   to HiGHS with `mip_rel_gap = 0` and `mip_abs_gap = 1e-10`, since the interconnector loss encoding is a MILP.
 - `parts`: the [`REPLICATION_PARTS`](@ref) to model; default all.
 - `chunk`: `:trading_day` or a `Dates.Period` that is a positive multiple of 5 minutes.
-- `interval_flow_limits`: as in `nem_system(db, ReplayNetworkConfiguration(); ...)`; default `false`.
+- `interval_flow_limits`: as in `nem_system(db, NEMDEConfiguration(); ...)`; default `false`.
 - `output_dir`: a directory for the chunk folders `chunk_<k>`; `nothing` uses a fresh `mktempdir()` per chunk.
-- `time_series_in_memory`, `time_series_directory`: passed to `nem_system(db, ReplayNetworkConfiguration(); ...)`;
+- `time_series_in_memory`, `time_series_directory`: passed to `nem_system(db, NEMDEConfiguration(); ...)`;
   `time_series_directory = nothing` writes each chunk's time-series file under `<chunk folder>/time_series`.
 - `cache_size_mib`: the simulation store's write cache in MiB; `nothing` keeps PowerSimulations' default.
 

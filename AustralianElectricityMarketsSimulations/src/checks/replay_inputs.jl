@@ -22,7 +22,7 @@ function _check_replay_system_inputs(sys::PSY.System, parts)
     :generic_constraints in parts && _check_replay_constraint_inputs(sys)
     uncovered = [
         PSY.get_name(device) for device in nem_dispatch_devices(sys)
-            if (:batteries in parts || !(device isa PSY.Storage)) && !_has_nem_dispatch_limits(device, NEMReplayDispatch)
+            if (:batteries in parts || !(device isa PSY.Storage)) && !_has_nem_dispatch_limits(device)
     ]
     isempty(uncovered) || throw(
         ArgumentError(

@@ -6,7 +6,7 @@ from that system. Its simulation utilities do not take a database connection.
 
 ## Construct the system with AEM
 
-Use `ReplayNetworkConfiguration` to attach demand, energy and FCAS bids, dispatch inputs,
+Use `NEMDEConfiguration` to attach demand, energy and FCAS bids, dispatch inputs,
 energy limits, generic constraints, interconnector losses and MNSP offers. The configuration's
 `table_requirements` lists its source tables. Populate the cache before construction.
 
@@ -17,7 +17,7 @@ using Dates
 steps = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 10)
 db = aem_connect()
 sys = nem_system(
-    db, ReplayNetworkConfiguration();
+    db, NEMDEConfiguration();
     date_range = first(steps):Minute(5):(last(steps) + Minute(10)),
     intervention = 0,
 )

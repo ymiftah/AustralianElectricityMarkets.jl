@@ -11,8 +11,9 @@ Reads and processes interconnector data from the database.
 
 # Returns
 A `DataFrame` containing the interconnector constraint data, latest or as of `as_of`. Interconnectors with an
-endpoint region absent from the cached `DISPATCHREGIONSUM` are dropped with a warning, so that
-table must be populated; an `ArgumentError` is thrown when it is missing or empty.
+endpoint region absent from the latest cached `DISPATCHREGIONSUM` snapshot at or before `as_of`
+are dropped with a warning. With `as_of = nothing`, uses the latest cached snapshot. Throws an
+`ArgumentError` when no eligible demand snapshot is cached.
 
 # Example
 ```julia
@@ -45,7 +46,7 @@ function read_interconnectors(db; as_of::Union{Nothing, Date, DateTime} = nothin
         ) = 1
     """
     df = isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of])
-    current_regions = _current_regions(db)
+    current_regions = _current_regions(db; as_of)
     retired = filter(
         row -> !(row.REGIONFROM in current_regions) || !(row.REGIONTO in current_regions), df,
     )
@@ -56,6 +57,41 @@ function read_interconnectors(db; as_of::Union{Nothing, Date, DateTime} = nothin
     )
 end
 
+"""
+    read_interconnector_loss_breakpoints(db; as_of) -> DataFrame
+
+Reads `LOSSMODEL`'s segment breakpoints for each interconnector's latest version effective on or
+before `as_of`.
+
+# Arguments
+- `db`: an `AEMDB` connection.
+- `as_of`: a `Date` or `DateTime`.
+
+# Returns
+A `DataFrame` with `INTERCONNECTORID`, `LOSSSEGMENT` and `MWBREAKPOINT`, sorted by breakpoint
+within an interconnector. Throws an `ArgumentError` when `LOSSMODEL` is not cached.
+"""
+function read_interconnector_loss_breakpoints(db; as_of::Union{Date, DateTime})
+    return _read_loss_model_table(db, :LOSSMODEL, "LOSSSEGMENT", "MWBREAKPOINT", "MWBREAKPOINT", as_of)
+end
+
+"""
+    read_interconnector_demand_coefficients(db; as_of) -> DataFrame
+
+Reads `LOSSFACTORMODEL`'s per-region demand coefficients for each interconnector's latest version
+effective on or before `as_of`.
+
+# Arguments
+- `db`: an `AEMDB` connection.
+- `as_of`: a `Date` or `DateTime`.
+
+# Returns
+A `DataFrame` with `INTERCONNECTORID`, `REGIONID` and `DEMANDCOEFFICIENT`. Throws an
+`ArgumentError` when `LOSSFACTORMODEL` is not cached.
+"""
+function read_interconnector_demand_coefficients(db; as_of::Union{Date, DateTime})
+    return _read_loss_model_table(db, :LOSSFACTORMODEL, "REGIONID", "DEMANDCOEFFICIENT", "r.REGIONID", as_of)
+end
 
 # `INTERCONNECTORID`, `key` and non-null `value` of each interconnector's latest `table_name` version
 # effective on or before `as_of`, sorted by interconnector then `order_by`.
@@ -92,55 +128,17 @@ end
 
 
 """
-    read_interconnector_loss_breakpoints(db, as_of) -> DataFrame
-
-Reads `LOSSMODEL`'s segment breakpoints for each interconnector's latest version effective on or
-before `as_of`.
-
-# Arguments
-- `db`: an `AEMDB` connection.
-- `as_of`: a `Date` or `DateTime`.
-
-# Returns
-A `DataFrame` with `INTERCONNECTORID`, `LOSSSEGMENT` and `MWBREAKPOINT`, sorted by breakpoint
-within an interconnector. Throws an `ArgumentError` when `LOSSMODEL` is not cached.
-"""
-function read_interconnector_loss_breakpoints(db, as_of::Union{Date, DateTime})
-    return _read_loss_model_table(db, :LOSSMODEL, "LOSSSEGMENT", "MWBREAKPOINT", "MWBREAKPOINT", as_of)
-end
-
-
-"""
-    read_interconnector_demand_coefficients(db, as_of) -> DataFrame
-
-Reads `LOSSFACTORMODEL`'s per-region demand coefficients for each interconnector's latest version
-effective on or before `as_of`.
-
-# Arguments
-- `db`: an `AEMDB` connection.
-- `as_of`: a `Date` or `DateTime`.
-
-# Returns
-A `DataFrame` with `INTERCONNECTORID`, `REGIONID` and `DEMANDCOEFFICIENT`. Throws an
-`ArgumentError` when `LOSSFACTORMODEL` is not cached.
-"""
-function read_interconnector_demand_coefficients(db, as_of::Union{Date, DateTime})
-    return _read_loss_model_table(db, :LOSSFACTORMODEL, "REGIONID", "DEMANDCOEFFICIENT", "r.REGIONID", as_of)
-end
-
-
-"""
-    read_interconnector_loss_parameters(db, as_of) -> DataFrame
+    read_interconnector_loss_parameters(db; as_of) -> DataFrame
 
 `INTERCONNECTORCONSTRAINT`'s loss parameters joined to `INTERCONNECTOR`'s region pair,
 version-resolved as of `as_of`: `INTERCONNECTORID`, `REGIONFROM`, `REGIONTO`,
 `FROMREGIONLOSSSHARE`, `LOSSCONSTANT`, `LOSSFLOWCOEFFICIENT`, `ICTYPE`.
 
-Differs from [`read_interconnectors`](@ref), which resolves to the latest version overall.
+Does not filter out interconnectors whose endpoint regions are absent from cached demand.
 
 Throws `ArgumentError` when either table isn't cached.
 """
-function read_interconnector_loss_parameters(db, as_of::Union{Date, DateTime})
+function read_interconnector_loss_parameters(db; as_of::Union{Date, DateTime})
     foreach(table -> _require_cached(db, table), (:INTERCONNECTORCONSTRAINT, :INTERCONNECTOR))
     icc_table = read_hive(db, :INTERCONNECTORCONSTRAINT)
     ic_table = read_hive(db, :INTERCONNECTOR)
@@ -200,4 +198,22 @@ A `DataFrame` with `SETTLEMENTDATE`, `INTERCONNECTORID`, `METEREDMWFLOW`, `EXPOR
 function read_interconnector_limits(db, date_range; intervention::Integer = 0)
     columns = [_cast_double(c) for c in ("METEREDMWFLOW", "EXPORTLIMIT", "IMPORTLIMIT")]
     return _read_dispatch_table(columns, db, :DISPATCHINTERCONNECTORRES, "INTERCONNECTORID", date_range; intervention)
+end
+
+
+function read_interconnector_loss_breakpoints(db, as_of::Union{Date, DateTime})
+    Base.depwarn("Use read_interconnector_loss_breakpoints(db; as_of) instead of a positional as_of.", :read_interconnector_loss_breakpoints)
+    return read_interconnector_loss_breakpoints(db; as_of)
+end
+
+
+function read_interconnector_demand_coefficients(db, as_of::Union{Date, DateTime})
+    Base.depwarn("Use read_interconnector_demand_coefficients(db; as_of) instead of a positional as_of.", :read_interconnector_demand_coefficients)
+    return read_interconnector_demand_coefficients(db; as_of)
+end
+
+
+function read_interconnector_loss_parameters(db, as_of::Union{Date, DateTime})
+    Base.depwarn("Use read_interconnector_loss_parameters(db; as_of) instead of a positional as_of.", :read_interconnector_loss_parameters)
+    return read_interconnector_loss_parameters(db; as_of)
 end

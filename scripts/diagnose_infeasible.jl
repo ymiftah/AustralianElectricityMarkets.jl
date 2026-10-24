@@ -56,7 +56,7 @@ module DiagnoseInfeasible
         println("Interval $settlement_date")
         # The replay path over this one interval: the simulation built once, then stepped.
         steps = settlement_date:Minute(5):settlement_date
-        sys = nem_system(db, ReplayNetworkConfiguration(); date_range = settlement_date:Minute(5):(settlement_date + Minute(10)))
+        sys = nem_system(db, NEMDEConfiguration(); date_range = settlement_date:Minute(5):(settlement_date + Minute(10)))
         prepare_replication!(sys)
         optimizer = JuMP.optimizer_with_attributes(HiGHS.Optimizer, "threads" => 2)
         skipped_constraints = NamedTuple[]

@@ -1,3 +1,4 @@
+# TODO, MOVE THIS IN AEMData, populate the HIVE with it + Make the CSV data artifacts with Artifacts.jl
 const ISP_DATA_DIR = joinpath(@__DIR__, "..", "..", "data", "isp2025")
 
 

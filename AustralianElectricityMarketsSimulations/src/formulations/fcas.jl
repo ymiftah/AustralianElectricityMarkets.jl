@@ -160,25 +160,9 @@ end
 
 
 """
-    _fcas_window(container) -> _FCASWindow
-
-The [`_FCASWindow`](@ref) of `container`'s time steps.
-
-# Returns
-`_FCASWindow`.
-"""
-function _fcas_window(container::PSI.OptimizationContainer)
-    return _FCASWindow(
-        PSI.get_initial_time(container), length(PSI.get_time_steps(container)), PSI.get_resolution(container),
-    )
-end
-
-
-"""
     _fcas_offer(window, device, bid_type, side) -> NEMFCASOffer
-    _fcas_offer(container, device, bid_type, side) -> NEMFCASOffer
 
-`device`'s `bid_type` offer on `side` over `window` ([`_fcas_window`](@ref)), read via
+`device`'s `bid_type` offer on `side` over `window` ([`_FCASWindow`](@ref)), read via
 [`get_fcas_offer`](@ref). The trapezium is AEMO *FCAS Model in NEMDE* §4's scaled/effective
 trapezium wherever `device` carries the scaling input series ([`set_fcas_scaling_inputs!`](@ref)),
 with the AGC ramping capability taken over the window's resolution at every interval. Otherwise it
@@ -189,12 +173,8 @@ A `NEMFCASOffer`.
 """
 function _fcas_offer(window::_FCASWindow, device, bid_type::BidType, side::OfferSide)
     return get_fcas_offer(
-        device, bid_type, side, window.initial_time, window.horizon; scaled = true,
-        resolution = window.resolution,
+        device, bid_type, side, window.initial_time, window.horizon; resolution = window.resolution,
     )
-end
-function _fcas_offer(container::PSI.OptimizationContainer, device, bid_type::BidType, side::OfferSide)
-    return _fcas_offer(_fcas_window(container), device, bid_type, side)
 end
 
 
@@ -341,9 +321,8 @@ end
 
 """
     _fcas_enablement_inputs(window, device) -> (initial_mw, availability, agc_status)
-    _fcas_enablement_inputs(container, device) -> (initial_mw, availability, agc_status)
 
-`device`'s per-interval §5 inputs over `window` ([`_fcas_window`](@ref)): `InitialMW`
+`device`'s per-interval §5 inputs over `window` ([`_FCASWindow`](@ref)): `InitialMW`
 ([`get_initial_mw`](@ref)), energy availability ([`_fcas_availability`](@ref)) and AGC status ([`get_fcas_agc_status`](@ref)), each a function of `t` returning `nothing` where
 unknown.
 
@@ -356,14 +335,10 @@ function _fcas_enablement_inputs(window::_FCASWindow, device::PSY.Device)
     telemetry(series, t) = isnothing(series) ? nothing : series[t]
     return (t -> telemetry(initial_mw, t), _fcas_availability(window, device), t -> telemetry(agc_status, t))
 end
-function _fcas_enablement_inputs(container::PSI.OptimizationContainer, device::PSY.Device)
-    return _fcas_enablement_inputs(_fcas_window(container), device)
-end
 
 
 """
     _fcas_enabled_mask(window, device, bid_type, decremental) -> Vector{Bool}
-    _fcas_enabled_mask(container, device, bid_type, decremental) -> Vector{Bool}
 
 Per-interval [`_fcas_enabled`](@ref) for `device`'s one-directional `bid_type` bid, on the
 [`_fcas_enablement_inputs`](@ref) over `window`.
@@ -380,11 +355,6 @@ function _fcas_enabled_mask(window::_FCASWindow, device::PSY.Device, bid_type::B
             device, is_regulation, decremental, trapeziums[t], curves[t], availability(t), initial_mw(t), agc_status(t),
         )
     end
-end
-function _fcas_enabled_mask(
-        container::PSI.OptimizationContainer, device::PSY.Device, bid_type::BidType, decremental::Bool,
-    )
-    return _fcas_enabled_mask(_fcas_window(container), device, bid_type, decremental)
 end
 
 
@@ -411,7 +381,6 @@ end
 
 """
     _fcas_agc_ramp_caps(window, device, bid_type) -> Vector{Float64}
-    _fcas_agc_ramp_caps(container, device, bid_type) -> Vector{Float64}
 
 `device`'s AGC ramping capability on its regulation `bid_type` target, one entry per interval of
 `window`: the AGC ramping capability ([`get_fcas_agc_ramp_capability`](@ref)) over the window's
@@ -429,9 +398,6 @@ function _fcas_agc_ramp_caps(window::_FCASWindow, device::PSY.Device, bid_type::
         (isnothing(ramp_cap) || isnan(ramp_cap[t])) ? 0.0 : ramp_cap[t]
             for t in 1:window.horizon
     ]
-end
-function _fcas_agc_ramp_caps(container::PSI.OptimizationContainer, device::PSY.Device, bid_type::BidType)
-    return _fcas_agc_ramp_caps(_fcas_window(container), device, bid_type)
 end
 
 

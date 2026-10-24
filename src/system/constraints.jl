@@ -249,7 +249,7 @@ end
 
 
 """
-    add_nem_constraints!(sys, db, date_range; intervention = 0, include_solution = false, resolution = nothing, allow_empty_region_terms = false, unresolved_terms = :drop)
+    add_nem_constraints!(sys, db, date_range; intervention = 0)
 
 Adds one [`GenericConstraint`](@ref) per exact `(GENCONID, EFFECTIVEDATE, VERSIONNO)` invoked
 in `date_range`, named `GENCONID@EFFECTIVEDATE#VERSIONNO` and attached via `add_service!` to
@@ -260,17 +260,7 @@ its contributing devices.
 - `db`: an `AEMDB` connection.
 - `date_range`: the dispatch intervals to replay.
 - `intervention`: `DISPATCHCONSTRAINT.INTERVENTION` to read (default `0`).
-- `include_solution`: also attach `"lhs"` and `"marginal_value"`.
-- `resolution`: declared resolution of every attached series. Inferred from `date_range` when
-  `nothing`.
-- `allow_empty_region_terms`: default `false` throws on an empty `RegionTerm`; `true` warns and
-  proceeds.
-- `unresolved_terms`: what to do with a term whose DUID, region or interconnector is absent from
-  `sys`. `:drop` (default) builds the constraint without an unresolved *unit* term, as nempy does
-  for a unit that is not in the dispatch, and records its kind, key, `BIDTYPE` and factor in the
-  constraint's `ext["dropped_terms"]` and in [`get_dropped_terms`](@ref). An unresolved region or
-  interconnector term, or a constraint with no resolvable term, still skips the constraint.
-  `:skip` skips the constraint for any unresolved term.
+
 
 # Returns
 `(added, skipped)`: `added::Vector{String}` of component names, `skipped::Dict{String, Symbol}`
@@ -287,17 +277,14 @@ intervals of `date_range` with no invoked constraint ([`get_missing_constraint_i
 the constraints given the default weight 1.0 for a NULL `GENERICCONSTRAINTWEIGHT`
 ([`get_defaulted_constraint_weights`](@ref)) are recorded the same way.
 
-Throws `ArgumentError` when `DISPATCHCONSTRAINT`, `BIDPEROFFER_D` or `BIDDAYOFFER_D` is not cached, or when an empty `RegionTerm` is
-found and `allow_empty_region_terms = false`; either throw leaves `sys` unmodified.
+A unit term whose DUID is absent from `sys` is dropped, as nempy does for a unit that is not in the
+dispatch, and recorded in the constraint's `ext["dropped_terms"]` and in [`get_dropped_terms`](@ref).
+An unresolved region or interconnector term, or a constraint with no resolvable term, skips the constraint.
+
+Throws `ArgumentError` when `DISPATCHCONSTRAINT`, `BIDPEROFFER_D` or `BIDDAYOFFER_D` is not cached, or
+when an empty `RegionTerm` is found; either throw leaves `sys` unmodified.
 """
-function add_nem_constraints!(
-        sys, db, date_range; intervention::Integer = 0, include_solution::Bool = false,
-        resolution::Union{Nothing, Dates.Period} = nothing,
-        allow_empty_region_terms::Bool = false, unresolved_terms::Symbol = :drop,
-    )
-    unresolved_terms in (:drop, :skip) || throw(
-        ArgumentError("unresolved_terms must be :drop or :skip, got :$unresolved_terms"),
-    )
+function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0)
     start_date = first(date_range)
     base_power = get_base_power(sys)
 
@@ -326,7 +313,7 @@ function add_nem_constraints!(
     # Drop the last point: `date_range`'s N+1 timestamps label N interval starts, matching
     # `read_fcas_bids`/`set_demand!`'s half-open convention.
     full_grid = collect(date_range)[1:(end - 1)]
-    resolution = isnothing(resolution) ? _infer_resolution(full_grid) : resolution
+    resolution = _infer_resolution(full_grid)
 
     grid_set = Set(full_grid)
     unaligned = setdiff(Set(invoked.SETTLEMENTDATE), grid_set)
@@ -367,8 +354,6 @@ function add_nem_constraints!(
     staged = @NamedTuple{
         gc::GenericConstraint, contributing_devices::Vector{Device},
         rhs_series::Vector{Float64}, invoked_series::Vector{Float64},
-        lhs_series::Union{Nothing, Vector{Float64}},
-        marginal_value_series::Union{Nothing, Vector{Float64}},
     }[]
 
     for key in eachrow(gencon_versions)
@@ -409,16 +394,12 @@ function add_nem_constraints!(
                 if isnothing(names)
                     isnothing(skip_reason) && (skip_reason = :unknown_duid)
                     push!(missing_keys, row.KEY)
-                    if unresolved_terms == :skip
-                        unskippable = true
-                    else
-                        push!(
-                            dropped_terms,
-                            Dict{String, Any}(
-                                "kind" => "UNIT", "key" => row.KEY, "bid_type" => row.BIDTYPE, "factor" => row.FACTOR,
-                            ),
-                        )
-                    end
+                    push!(
+                        dropped_terms,
+                        Dict{String, Any}(
+                            "kind" => "UNIT", "key" => row.KEY, "bid_type" => row.BIDTYPE, "factor" => row.FACTOR,
+                        ),
+                    )
                     continue
                 end
                 push!(resolved_terms, term)
@@ -500,27 +481,11 @@ function add_nem_constraints!(
             ),
         )
 
-        lhs_series = nothing
-        marginal_value_series = nothing
-        if include_solution
-            lhs_by_time = Dict(zip(constraint_rows.SETTLEMENTDATE, constraint_rows.LHS))
-            lhs_series_mw, _ = _pad_to_grid(lhs_by_time, full_grid, first(constraint_rows.LHS))
-            # Same convention as "rhs" - lhs is the constraint's achieved level, directly
-            # compared against rhs, so it is per-unitized the same way.
-            lhs_series = lhs_series_mw ./ base_power
-            mv_by_time = Dict(zip(constraint_rows.SETTLEMENTDATE, constraint_rows.MARGINALVALUE))
-            # Not carried forward like rhs/lhs: an interval this constraint wasn't invoked at
-            # genuinely has zero shadow price, so 0.0 is a fact here, not a filler value.
-            # A $/MW price, not a power quantity - not per-unitized, unlike rhs/lhs.
-            marginal_value_series = [get(mv_by_time, t, 0.0) for t in full_grid]
-        end
-
         push!(
             staged,
             (
                 gc = gc, contributing_devices = unique(contributing_devices), rhs_series = rhs_series,
-                invoked_series = invoked_series, lhs_series = lhs_series,
-                marginal_value_series = marginal_value_series,
+                invoked_series = invoked_series,
             ),
         )
         push!(added, versioned_name)
@@ -535,7 +500,7 @@ function add_nem_constraints!(
     end
 
     if !isempty(dropped)
-        @warn "add_nem_constraints!: built $(length(dropped)) constraint(s) without $(sum(length, values(dropped))) unit term(s) whose DUID is absent from sys (unresolved_terms = :drop); see get_dropped_terms"
+        @warn "add_nem_constraints!: built $(length(dropped)) constraint(s) without $(sum(length, values(dropped))) unit term(s) whose DUID is absent from sys; see get_dropped_terms"
     end
 
     if !isempty(missing_weight)
@@ -550,24 +515,18 @@ function add_nem_constraints!(
                     for e in empty_region_terms
             ), "; ",
         )
-        if allow_empty_region_terms
-            @warn "add_nem_constraints!: $(length(empty_region_terms)) RegionTerm(s) resolved to a region with no Generator/Storage in sys; proceeding with empty devices (allow_empty_region_terms=true): $detail"
-        else
-            throw(
-                ArgumentError(
-                    "add_nem_constraints!: $(length(empty_region_terms)) RegionTerm(s) resolved to a region with no Generator/Storage in sys: $detail. " *
-                        "Pass allow_empty_region_terms=true to add these constraints anyway with an empty RegionTerm.devices.",
-                ),
-            )
-        end
+        throw(
+            ArgumentError(
+                "add_nem_constraints!: $(length(empty_region_terms)) RegionTerm(s) resolved to a region with no Generator/Storage in sys: $detail.",
+            ),
+        )
     end
 
     get_ext(sys)["skipped_constraints"] = skipped_detail
     get_ext(sys)["defaulted_constraint_weights"] = missing_weight
     get_ext(sys)["missing_constraint_intervals"] = string.(missing_intervals)
 
-    # sys is mutated only past this point - every throw above leaves it untouched, so a caller
-    # retrying with allow_empty_region_terms=true on the same sys never double-adds anything.
+    # sys is mutated only past this point - every throw above leaves it untouched.
     get_ext(sys)["dropped_terms"] = Dict{String, Any}[
         merge(term, Dict{String, Any}("constraint" => name)) for (name, terms) in sort!(collect(dropped); by = first)
             for term in terms
@@ -582,16 +541,6 @@ function add_nem_constraints!(
             sys, entry.gc,
             single_series("invoked", start_date, entry.invoked_series, resolution),
         )
-        if include_solution
-            add_time_series!(
-                sys, entry.gc,
-                single_series("lhs", start_date, entry.lhs_series, resolution),
-            )
-            add_time_series!(
-                sys, entry.gc,
-                single_series("marginal_value", start_date, entry.marginal_value_series, resolution),
-            )
-        end
     end
 
     return added, skipped

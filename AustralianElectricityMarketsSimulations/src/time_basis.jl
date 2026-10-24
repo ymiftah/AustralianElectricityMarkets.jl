@@ -1,6 +1,3 @@
-"Length of one NEM dispatch interval, in hours."
-const DISPATCH_INTERVAL_HOURS = 1 / 12
-
 "Length of one NEM dispatch interval."
 const DISPATCH_INTERVAL = Dates.Minute(5)
 

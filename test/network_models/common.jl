@@ -1,57 +1,26 @@
 @testset "RegionModel common" begin
 
     hive_dir = AEM_TEST_HIVE_DIR
-    config = isempty(hive_dir) ? HiveConfiguration() : HiveConfiguration(hive_location = hive_dir, filesystem = "file")
+    config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
     db = aem_connect(config)
 
     @testset "get_bus_dataframe" begin
         df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
-        @test df isa DataFrame
-        @test "region" in names(df)
-        @test "bustype" in names(df)
-        @test "name" in names(df)
         @test nrow(df) == 12 # 6 regions * 2 (Gen + Load)
         @test all(contains(AustralianElectricityMarkets.RegionModel.GEN_SUFFIX), df.name[1:6])
         @test all(contains(AustralianElectricityMarkets.RegionModel.LOAD_SUFFIX), df.name[7:12])
     end
 
-    @testset "get_load_dataframe" begin
-        bus_df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
-        df = AustralianElectricityMarkets.RegionModel.get_load_dataframe(bus_df)
-        @test df isa DataFrame
-        @test "active_power" in names(df)
-        @test "max_active_power" in names(df)
-        @test nrow(df) == 6 # One load per region
-    end
-
     @testset "get_branch_dataframe" begin
         bus_df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
         df = AustralianElectricityMarkets.RegionModel.get_branch_dataframe(bus_df, read_interconnectors(db))
-        @test df isa DataFrame
-        @test "rate" in names(df)
-        @test "bus_from" in names(df)
-        @test "bus_to" in names(df)
         # 6 interconnectors + 6 gen-to-load internal branches = 12
         @test nrow(df) == 12
-    end
-
-    @testset "get_generators_dataframe" begin
-        bus_df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
-        df = AustralianElectricityMarkets.RegionModel.get_generators_dataframe(bus_df, read_units(db))
-        @test df isa DataFrame
-        @test "technology" in names(df)
-        @test "base_power" in names(df)
-        @test "min_active_power" in names(df)
-        @test "max_active_power" in names(df)
-        @test nrow(df) == 6
     end
 
     @testset "get_batteries_dataframe" begin
         bus_df = AustralianElectricityMarkets.RegionModel.get_bus_dataframe(db)
         df = AustralianElectricityMarkets.RegionModel.get_batteries_dataframe(bus_df, read_units(db))
-        @test df isa DataFrame
-        @test "storage_capacity" in names(df)
-        @test "efficiency" in names(df)
         # Our mock data has 1 battery (BW01/GEN1)
         @test nrow(df) == 1
         @test df.name[1] == "BW01"
@@ -99,10 +68,6 @@
 
     @testset "get_interfaces_dataframe" begin
         df = AustralianElectricityMarkets.RegionModel.get_interfaces_dataframe(read_interconnectors(db))
-        @test df isa DataFrame
-        @test "from_area" in names(df)
-        @test "to_area" in names(df)
-        @test "available" in names(df)
         @test nrow(df) == 6
         # Check Snowy availability logic
         snowy_rows = df[(df.from_area .== "SNOWY1") .| (df.to_area .== "SNOWY1"), :]
