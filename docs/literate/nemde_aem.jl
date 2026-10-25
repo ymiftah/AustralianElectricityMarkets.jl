@@ -118,7 +118,7 @@ attach_loss_model!(sys, market);
 #
 # Energy offers, availability, ramp rates and metered initial output specify the unit's
 # feasible dispatch for the interval. For NEMWEB data, use `set_market_bids!` and
-# `set_nem_dispatch_limits!` to attach these inputs.
+# `set_nem_dispatch_limits!` and `set_nem_energy_limits!` to attach these inputs.
 
 function attach_energy_data!(sys, market) #hide
     stamps = [T0, T0 + RESOLUTION] #hide
@@ -138,6 +138,11 @@ function attach_energy_data!(sys, market) #hide
         PSY.add_time_series!(sys, device, series("ramp_up_rate", u.ramp_up_mwh / 60 / BASE_POWER)) #hide
         PSY.add_time_series!(sys, device, series("ramp_down_rate", u.ramp_down_mwh / 60 / BASE_POWER)) #hide
         PSY.add_time_series!(sys, device, series("initial_mw", initial_mw(u) / BASE_POWER)) #hide
+        PSY.add_time_series!(sys, device, series("energy_max_avail", u.max_avail / BASE_POWER)) #hide
+        PSY.get_ext(device)["nem_semi_scheduled"] = is_semi_scheduled(u) #hide
+        if is_semi_scheduled(u) #hide
+            PSY.add_time_series!(sys, device, series("uigf", u.uigf / BASE_POWER)) #hide
+        end #hide
     end #hide
     for load in PSY.get_components(PSY.PowerLoad, sys) #hide
         PSY.add_time_series!(sys, load, series("max_active_power", 1.0; multiplier = PSY.get_max_active_power)) #hide
@@ -166,9 +171,9 @@ function attach_fcas_data!(sys, market) #hide
         for (series_name, value) in ("fcas_trapezium_RAISE6SEC" => trapezium_pu, "fcas_curve_RAISE6SEC" => curve) #hide
             PSY.add_time_series!( #hide
                 sys, device, #hide
-                PSY.Deterministic( #hide
-                    name = series_name, data = Dict(T0 => fill(value, 2)), #hide
-                    resolution = RESOLUTION, interval = RESOLUTION, #hide
+                PSY.SingleTimeSeries( #hide
+                    name = series_name, #hide
+                    data = PSY.TimeSeries.TimeArray([T0, T0 + RESOLUTION], fill(value, 2)), #hide
                 ), #hide
             ) #hide
         end #hide
@@ -287,12 +292,12 @@ solve_status = PSI.solve!(model_psi)
 # ## Step 4: results, checked against page 2
 #
 # Variables are in MW. Duals are per unit of the system base and per interval, so
-# `dual / (BASE_POWER * DISPATCH_INTERVAL_HOURS)` is \$/MWh. FCAS prices come from
+# `dual / (BASE_POWER * INTERVAL_H)` is \$/MWh. FCAS prices come from
 # `compute_fcas_prices`, which sums the duals of the generic constraints that carry an
 # FCAS requirement.
 
 results = PSI.OptimizationProblemResults(model_psi)
-to_dollars_per_mwh(dual) = dual / (BASE_POWER * DISPATCH_INTERVAL_HOURS)
+to_dollars_per_mwh(dual) = dual / (BASE_POWER * INTERVAL_H)
 
 value_by_name(df) = Dict(Symbol(r.name) => r.value for r in eachrow(df))
 psi_dispatch = merge(
@@ -367,15 +372,15 @@ slack_total
 # Everything above was assembled by hand to show the pieces. For real intervals:
 #
 # 1. `db = aem_connect()` and `populate(db, table, start, stop)` cache the NEMWEB tables.
-# 2. `nem_system(db, ConstrainedNetworkConfiguration(); date_range)` builds the `System`: areas,
-#    buses, generators, loads, interconnectors with their `InterconnectorLossModel`, one
-#    `FCASService` per market and the invoked `GenericConstraint`s.
-# 3. The setters `set_demand!`, `set_market_bids!`, `set_nem_dispatch_limits!`,
-#    `set_fcas_bids!` and `set_fcas_scaling_inputs!` attach the interval inputs
-#    (`replication_system` does the whole sequence for one interval).
-# 4. `replication_template(sys)` builds the template of Step 2 for every component.
-# 5. `replicate_interval(db, settlement_date)` builds, solves and compares prices, dispatch,
-#    interconnector flows and FCAS prices with AEMO's published outcome.
+# 2. `nem_system(db, NEMDEConfiguration(); date_range)` builds the populated `System`,
+#    including energy and FCAS offers, dispatch and energy limits, generic constraints and losses.
+# 3. `prepare_replication!(sys)` derives effective FCAS parameters and tie-break scales and
+#    prepares forecast windows from the attached interval inputs.
+# 4. `replication_simulation(sys, steps; folder)` creates a PSI simulation. Build it with
+#    `PSI.build!` and run it with `PSI.execute!`.
+# 5. `replication_results(results, sys)` extracts solved quantities and constraint violations.
+#    The repository scripts compare these with `read_published_interval` from the cache.
+#    See [Run a dispatch simulation from a system](../dispatch_replay.md) for the full workflow.
 #
 # Validate the study inputs before solving. `check_fcas_services(sys, template)`
 # verifies that every FCAS service has a corresponding model in the template,

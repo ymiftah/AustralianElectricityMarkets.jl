@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Updated the AEMSim toy tutorial for the current replay inputs, FCAS time series and pinned
+  PowerSimulations revision.
+
 - Rewrote the six NEMDE formulation chapters for readers who know electricity markets but not the
   NEM: a five-minute dispatch walk-through, glossary and one notation on the overview, a worked
   example per chapter, and no code. Package behaviour appears only in notes titled "Deviation in
