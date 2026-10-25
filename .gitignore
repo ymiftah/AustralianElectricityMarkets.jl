@@ -25,8 +25,4 @@ debug/
 .worktrees
 .vscode/
 docs/superpowers/
-docs/validation/
 scripts/results/
-
-# Working dev folders
-docs-review/
