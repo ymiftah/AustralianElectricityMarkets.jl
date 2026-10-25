@@ -835,7 +835,7 @@ end
     )
     for (name, values) in inputs
         PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, ic, name)
-        AustralianElectricityMarkets.replace_single_series!(sys, ic, PSY.SingleTimeSeries(; name, data = TimeArray(collect(STOCK_STEPS), values)))
+        AustralianElectricityMarkets.replace_single_series!(sys, ic, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(collect(STOCK_STEPS), values)))
     end
     PSY.transform_single_time_series!(sys, TOY_RESOLUTION, TOY_RESOLUTION)
     sim = stock_simulate(sys)

@@ -13,13 +13,29 @@ function _tie_break_pairs(offers, i::Int, active, decremental::Bool)
 end
 
 
+# Pair membership depends on active prices, not the widths used to scale the tie-break rows.
+function _tie_break_prices_unchanged(offers, i::Int, reference::Int, active, decremental::Bool)
+    for (device, curves) in offers
+        current = PSY.get_y_coords(curves[i])
+        initial = PSY.get_y_coords(curves[reference])
+        length(current) == length(initial) || return false
+        for k in get(active, (decremental, PSY.get_name(device)), ())
+            k <= length(current) || continue
+            current[k] == initial[k] || return false
+        end
+    end
+    return true
+end
+
+
 """
     check_tie_break_pairs(sys, steps)
 
 Verifies that the price-tied energy band pairs of `sys` ([`TieBreakMarket`](@ref)) are
 the same at every interval of `steps`, for every region and direction, as a model built once and
 stepped through `steps` requires. Band prices change only between trading days, so a range inside
-one trading day passes.
+one trading day passes. Unchanged active-band prices and band counts reuse the first interval's
+pair set; other intervals retain the full pair comparison.
 
 # Arguments
 - `sys`: the system whose offer curves are checked.
@@ -39,9 +55,12 @@ function check_tie_break_pairs(sys::PSY.System, steps)
             () -> throw(ArgumentError("tie-break: interval $t is not on the offer curve timestamps of region $region.")),
             index, t,
         )
-        reference = _tie_break_pairs(offers, position(first(steps)), active, decremental)
+        reference_index = position(first(steps))
+        reference = _tie_break_pairs(offers, reference_index, active, decremental)
         for t in Iterators.drop(steps, 1)
-            pairs = _tie_break_pairs(offers, position(t), active, decremental)
+            i = position(t)
+            _tie_break_prices_unchanged(offers, i, reference_index, active, decremental) && continue
+            pairs = _tie_break_pairs(offers, i, active, decremental)
             pairs == reference && continue
             changed = first(sort!(collect(symdiff(pairs, reference))), 5)
             throw(

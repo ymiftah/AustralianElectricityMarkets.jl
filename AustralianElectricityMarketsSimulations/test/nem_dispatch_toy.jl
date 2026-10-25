@@ -781,20 +781,7 @@ end
     @test PSY.has_time_series(alta, PSY.SingleTimeSeries, "tie_break_scale_1")
 end
 
-@testset "check_tie_break_pairs compares the tied pairs across the steps" begin
-    steps = [TOY_START, TOY_START + TOY_RESOLUTION]
-    # The two first bands tie at the first interval only.
-    moving = nem_toy_system(
-        [
-            TOY_CHEAP => toy_unit(100.0, [[(60.0, 20.0)], [(60.0, 25.0)]]; initial = 0.0, ramp_up = 100.0),
-            TOY_EXPENSIVE => toy_unit(100.0, [(40.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
-        ],
-        50.0,
-    )
-    @test isnothing(check_tie_break_pairs(moving, steps[1:1]))
-    @test_throws r"differ from those at" check_tie_break_pairs(moving, steps)
-    @test_throws r"is not on the offer curve timestamps" check_tie_break_pairs(moving, [TOY_START + Hour(5)])
-end
+include("tie_break_validation.jl")
 
 @testset "a template without the tie-break service model has no tie-break rows" begin
     sys = nem_toy_system(

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Replay tie-pair validation skips rebuilding unchanged pair sets while preserving full checks
+  and diagnostics for changed prices, band counts and missing timestamps.
+
 - MNSP dispatch uses elastic offer-total and availability limits, metered net-flow ramping and
   directional fixed loading, with MPC-scaled penalties and MW violation reporting.
   `set_mnsp_offers!` now requires metered interconnector results and accepts `intervention`.
