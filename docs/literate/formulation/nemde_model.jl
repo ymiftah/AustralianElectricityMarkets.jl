@@ -151,7 +151,6 @@
 # | Area | Deviation | Chapter |
 # | --- | --- | --- |
 # | Units outside dispatch | Wholesale demand response units are not modelled | [Energy](@ref nemde-energy) |
-# | FCAS scaling for loads | The standard input setter omits scheduled loads, so their telemetered scaling and joint ramping are absent | [FCAS](@ref nemde-fcas) |
 # | Market interconnector | Hard availability, no ramp rate or fixed loading, no converter losses or no-go zone | [Interconnectors](@ref nemde-interconnectors) |
 # | Fast-start units | No profiles or two-pass commitment; participant fixed loadings are omitted for units with a positive T1 for the whole trading day | [Fast-start](@ref nemde-fast-start) |
 #

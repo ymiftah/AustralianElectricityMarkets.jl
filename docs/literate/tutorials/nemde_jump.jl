@@ -59,7 +59,7 @@ function plot_merit_order!(ax, region_name; cleared = nothing, clearing_price = 
         usable = min(quantity(s.b), used[unit_name(s.u)])
         used[unit_name(s.u)] -= usable
         height = max(price(s.b), 3.0)
-        color = region_colors[unit_name(s.u)]
+        color = region_colors[unit_name(s.u)]  # TODO This is bad practice in julia : either make region_colors a const or pass it as args to this function.
         poly!(
             ax, Rect2f(left, 0.0, usable, height);
             color = (color, 0.8), strokecolor = color, strokewidth = 1,

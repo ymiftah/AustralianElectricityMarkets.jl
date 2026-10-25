@@ -431,19 +431,22 @@ function set_fcas_service_bids!(sys, db, date_range; kwargs...)
 end
 
 """
-    _fcas_scaling_devices(sys)
+    _fcas_scaling_devices(sys, component_types)
 
-Every available `Generator` and `EnergyReservoirStorage` in `sys` - the device population
-[`set_fcas_bids!`](@ref) attaches FCAS bid series to, and so the population
-[`set_fcas_scaling_inputs!`](@ref) mirrors.
+Collects the available devices of each requested component type for FCAS scaling inputs.
+
+# Arguments
+- `sys`: the `System` to search.
+- `component_types`: a tuple of non-overlapping `Device` types.
 
 # Returns
 A `Vector{Device}`.
 """
-function _fcas_scaling_devices(sys)
+function _fcas_scaling_devices(sys, component_types)
     devices = Device[]
-    append!(devices, collect(get_components(get_available, Generator, sys)))
-    append!(devices, collect(get_components(get_available, EnergyReservoirStorage, sys)))
+    for component_type in component_types
+        append!(devices, get_components(get_available, component_type, sys))
+    end
     return devices
 end
 
@@ -504,8 +507,8 @@ end
     set_fcas_scaling_inputs!(sys, db, date_range; kwargs...)
 
 Attaches per-device, per-interval [`FCASTrapezium`](@ref) scaling inputs (AEMO *FCAS Model in
-NEMDE* §4) and the §5 AGC-status pre-condition input to every available `Generator` and
-`EnergyReservoirStorage` in `sys`, read from [`read_fcas_scaling_inputs`](@ref)/[`read_uigf`](@ref):
+NEMDE* §4) and the §5 AGC-status pre-condition input to every available `Generator`,
+`EnergyReservoirStorage` and `InterruptiblePowerLoad` in `sys`, read from [`read_fcas_scaling_inputs`](@ref)/[`read_uigf`](@ref):
 
 - `"fcas_agc_enablement_min_RAISEREG"`/`"fcas_agc_enablement_max_RAISEREG"` from
   `RAISEREGENABLEMENTMIN`/`RAISEREGENABLEMENTMAX` (§4.1);
@@ -518,6 +521,9 @@ NEMDE* §4) and the §5 AGC-status pre-condition input to every available `Gener
 - `"fcas_agc_status"` from `AGCSTATUS` (§5: `1` while the unit is under AGC control, `0`
   otherwise), not per-unitized;
 - `"uigf"` from `UIGF`, for semi-scheduled units only (§4.3), shared with [`set_nem_energy_limits!`](@ref).
+
+The ramp-rate series keep their physical up/down direction. Load regulation scaling selects the
+opposite series: raise regulation uses ramp-down capability and lower regulation ramp-up.
 
 Every series but `"fcas_agc_status"` is per-unit of `sys`'s system base, read back by
 [`get_scaled_fcas_trapezium`](@ref); `"fcas_agc_status"` carries AGCSTATUS's raw `0`/`1` value,
@@ -551,7 +557,8 @@ function set_fcas_scaling_inputs!(sys, db, date_range; kwargs...)
     uigf_rows = read_uigf(db, date_range; kwargs...)
     uigf_by_duid = DataFrames.isempty(uigf_rows) ? nothing : groupby(uigf_rows, :DUID)
 
-    for device in _fcas_scaling_devices(sys)
+    component_types = (Generator, EnergyReservoirStorage, InterruptiblePowerLoad)
+    for device in _fcas_scaling_devices(sys, component_types)
         duid = get_name(device)
 
         if !isnothing(by_duid) && haskey(by_duid, (duid,))

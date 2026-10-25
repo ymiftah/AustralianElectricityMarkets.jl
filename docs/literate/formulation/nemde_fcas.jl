@@ -285,12 +285,10 @@ end #hide
 # *Each panel applies one input to the trapezium of the previous figure. They can also apply
 # together. The sloping sides keep their slopes.*
 #
-# !!! note "Deviation in AustralianElectricityMarketsSimulations"
-#     **AEMO:** scales the trapeziums of generators, batteries and scheduled loads. **This
-#     package:** the standard scaling-input setter covers generators and batteries only.
-#     Scheduled loads therefore use their offered trapeziums without telemetered scaling,
-#     and their joint ramping rows are inactive without AGC ramp inputs. The formulation
-#     can use these inputs on loads when they are attached separately.
+# The standard input workflow attaches telemetered scaling inputs to available generators,
+# batteries and interruptible loads. Missing AGC ramp inputs leave the corresponding joint
+# ramping rows inactive. See [Inspect an FCAS interval](@ref fcas-requirement-reading) for the
+# construction and effective-offer preprocessing sequence.
 #
 # ### [Can the unit be enabled at all?](@id fcas-cases-preconditions)
 #

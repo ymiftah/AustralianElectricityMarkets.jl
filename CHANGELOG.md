@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Documented `set_...!`, `add_...!` and `attach_...!` naming and repeat-call contracts in
+  `AGENTS.md`, and the submitted-bid to effective-FCAS-offer preprocessing sequence.
+
 - Reviewed NEMDE deviation notes against the current replay: corrected elastic energy limits,
   incomplete-constraint validation, load FCAS input coverage and fast-start fixed loadings.
 
@@ -94,6 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MNSP dispatch uses elastic offer-total and availability limits, metered net-flow ramping and
   directional fixed loading, with MPC-scaled penalties and MW violation reporting.
   `set_mnsp_offers!` now requires metered interconnector results and accepts `intervention`.
+- FCAS scaling inputs now cover available interruptible loads as well as generators and storage,
+  with load regulation using the correct consumption ramp direction.
 
 - Historical system construction uses one as-of interconnector result for buses and links, with
   active regions taken from the latest cached demand snapshot at or before the requested time.

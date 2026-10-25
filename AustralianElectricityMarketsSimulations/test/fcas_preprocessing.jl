@@ -56,3 +56,18 @@ end
     # times 12, i.e. 21 MW/h, so the lower form is 45 - 21 * 5/60 = 43.25 MW; not a BDU.
     @test collect(ramping("ER01", BidType.LOWERREG)) ≈ [(45 - 21 * 5 / 60) / 100, FCAS_INACTIVE_LIMIT_MW / 100] atol = 1.0e-9
 end
+
+@testset "load regulation preprocessing applies interval AGC status without replacing bids" begin
+    db = damaged_cache(
+        AEM_TEST_HIVE_DIR, :DISPATCHLOAD,
+        "UPDATE input SET RAISEREGENABLEMENTMIN = 0, RAISEREGENABLEMENTMAX = 0, AGCSTATUS = CASE WHEN SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:05:00' THEN 1 ELSE 0 END WHERE DUID = 'ASLOAD1'",
+    )
+    start = DateTime(2025, 1, 1, 0, 5)
+    sys = fcas_replay_system(db, start:DISPATCH_INTERVAL:(start + 2 * DISPATCH_INTERVAL))
+    load = PSY.get_component(PSY.InterruptiblePowerLoad, sys, "ASLOAD1")
+    effective = PSY.get_time_series_values(PSY.SingleTimeSeries, load, "fcas_effective_RAISEREG_decremental")
+    @test effective[1][1] ≈ 15.0 / PSY.get_base_power(sys)
+    @test effective[2][1] == 0.0
+    submitted = PSY.get_time_series_values(PSY.SingleTimeSeries, load, "fcas_trapezium_RAISEREG_decremental")
+    @test all(t -> t[5] ≈ 15.0 / PSY.get_base_power(sys), submitted)
+end

@@ -99,6 +99,10 @@ front, so every group runs on its own.
   non-obvious thing is.
 - Naming: NEMWEB tables/columns stay `SCREAMING_CASE`; Julia API is `snake_case`; private helpers
   are `_`-prefixed; mutating functions take `!`.
+- Mutation verbs describe the operation: `set_...!` assigns or replaces a property, input or
+  named dataset; `add_...!` creates components or services in a system; `attach_...!` associates
+  supplemental attributes or metadata with existing components. State repeat-call behaviour in
+  each public mutator's docstring; the verb alone does not guarantee idempotence.
 - Names exported from Cache or the Readers/RegionModel submodules are re-exported at the top
   level with `@doc (@doc Sub.f) f` so Documenter resolves the docstring from the top-level name.
 - DataFrame work uses `@chain`. Parquet access goes through **DuckDB.jl** — `read_hive` returns a

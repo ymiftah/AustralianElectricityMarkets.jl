@@ -3,6 +3,28 @@ function table_requirements(::NetworkConfiguration)
 end
 
 
+"""
+    nem_system(db, network_configuration; kwargs...)
+
+Builds a regional NEM system from cached market data according to `network_configuration`.
+
+# Arguments
+- `db`: the market cache connection.
+- `network_configuration`: a [`RegionalNetworkConfiguration`](@ref) or
+  [`NEMDEConfiguration`](@ref).
+- `as_of`: the `Date` or `DateTime` for resolving static metadata; regional construction defaults
+  to the latest cached version and NEMDE construction to the first requested interval.
+- `date_range`: required for NEMDE construction, including the exclusive stop.
+- `kwargs`: configuration-specific inputs and `PowerSystems.System` storage options.
+
+# Returns
+A `PowerSystems.System` populated according to the requested configuration.
+
+# Example
+```julia
+sys = nem_system(db, RegionalNetworkConfiguration())
+```
+"""
 function nem_system(db, network_configuration::T) where {T <: NetworkConfiguration}
     error("Not implemented for $(typeof(network_configuration))")
 end

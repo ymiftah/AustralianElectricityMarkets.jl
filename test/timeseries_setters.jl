@@ -627,6 +627,54 @@
             @test AustralianElectricityMarkets._agc_ramp_rate(5.0, 0.0, interval_hours) == 5.0
         end
 
+        @testset "scaling device types include available load providers" begin
+            sys = deepcopy(sys_base)
+            load = get_component(InterruptiblePowerLoad, sys, "PUMP1")
+            unavailable = get_component(InterruptiblePowerLoad, sys, "PUMP2")
+            set_available!(unavailable, false)
+            types = (Generator, EnergyReservoirStorage, InterruptiblePowerLoad)
+            devices = AustralianElectricityMarkets._fcas_scaling_devices(sys, types)
+            @test load in devices
+            @test !(unavailable in devices)
+            @test any(d -> d isa Generator, devices)
+            @test any(d -> d isa EnergyReservoirStorage, devices)
+            @test allunique(devices)
+            loads = AustralianElectricityMarkets._fcas_scaling_devices(sys, (InterruptiblePowerLoad,))
+            @test !isempty(loads)
+            @test all(d -> d isa InterruptiblePowerLoad && get_available(d), loads)
+
+            set_fcas_scaling_inputs!(sys, db, date_range)
+            rows = sort(subset(truth, :DUID => ByRow(==("PUMP1"))), :SETTLEMENTDATE)
+            @test !isempty(rows)
+            values = get_time_series_values(SingleTimeSeries, load, "fcas_agc_enablement_min_RAISEREG")
+            @test values ≈ rows.RAISEREGENABLEMENTMIN ./ base_power
+            @test get_fcas_agc_status(load, start_date, length(date_range) - 1) == ones(Int, length(date_range) - 1)
+            @test !has_time_series(unavailable)
+        end
+
+        @testset "load regulation scaling uses consumption ramp direction" begin
+            rates_db = damaged_cache(
+                hive_dir, :DISPATCHLOAD,
+                "UPDATE input SET RAMPUPRATE = 120, RAMPDOWNRATE = 60, RAISEREGENABLEMENTMIN = 0, RAISEREGENABLEMENTMAX = 0, LOWERREGENABLEMENTMIN = 0, LOWERREGENABLEMENTMAX = 0 WHERE DUID = 'PUMP1'",
+            )
+            sys = deepcopy(sys_base)
+            load = get_component(InterruptiblePowerLoad, sys, "PUMP1")
+            horizon = length(date_range) - 1
+            trap = (0.0, 10.0, 90.0, 100.0, 20.0, NaN, NaN) ./ base_power
+            for service in (BidType.RAISEREG, BidType.LOWERREG)
+                add_time_series!(sys, load, single_series(fcas_series_name("fcas_trapezium", service, OfferSide.LOAD), start_date, fill(trap, horizon), resolution))
+            end
+            set_fcas_scaling_inputs!(sys, rates_db, date_range)
+            with_units_base(sys, "NATURAL_UNITS") do
+                raise = get_scaled_fcas_trapezium(load, BidType.RAISEREG, start_date, horizon; decremental = true)
+                lower = get_scaled_fcas_trapezium(load, BidType.LOWERREG, start_date, horizon; decremental = true)
+                @test get_max_avail.(raise) ≈ fill(5.0, horizon)
+                @test get_max_avail.(lower) ≈ fill(10.0, horizon)
+                raw = AustralianElectricityMarkets._get_fcas_trapezium(load, BidType.RAISEREG, start_date, horizon; decremental = true)
+                @test get_max_avail.(raw) == fill(20.0, horizon)
+            end
+        end
+
         @testset "get_fcas_agc_status is nothing when fcas_agc_status is not attached" begin
             sys = deepcopy(sys_base)
             device = get_component(ThermalStandard, sys, "ER01")

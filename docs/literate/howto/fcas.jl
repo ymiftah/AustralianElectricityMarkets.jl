@@ -69,3 +69,27 @@
 # The published enablement shows which units were used. The offers alone do not: a cheaper
 # unit can be left out because it is stranded, or because its energy target leaves it no
 # headroom.
+#
+# ## From submitted bids to effective offers
+#
+# FCAS bids are read and attached at their native five-minute resolution. Coarser aggregation
+# is unsupported: averaging band quantities does not define a corresponding bid trapezium.
+#
+# A system built with `NEMDEConfiguration()` keeps submitted FCAS bids and the per-interval
+# AGC and UIGF inputs as separate time series. This lets you inspect the submitted trapezium
+# and recompute effective offers after changing an input.
+#
+# ```julia
+# using AustralianElectricityMarketsSimulations
+#
+# sys = nem_system(db, NEMDEConfiguration(); date_range = window)
+# set_fcas_effective_offers!(sys)
+# ```
+#
+# Run `set_fcas_effective_offers!` after attaching all bids, scaling inputs, dispatch limits
+# and FCAS services, and before `transform_single_time_series!` and building the simulation.
+# It applies scaling and enablement checks for every dispatch interval and replaces its
+# derived series when called again. Recompute these series whenever their inputs change.
+#
+# The original bid trapeziums remain available alongside the effective offers. AEMO describes
+# the scaling and enablement stages in [*FCAS Model in NEMDE*, sections 4 and 5, pages 14–19](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf).
