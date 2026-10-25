@@ -32,7 +32,7 @@
 #
 # Several hundred are active in a typical interval. Constraints are grouped into sets, and
 # AEMO switches sets on and off as network conditions change. Each constraint also has
-# versions over time, so the definition that applies is the one in force for the interval.
+# versions over time, so the definition that applies is the one in force for a trading interval.
 #
 # The sign of a coefficient alone does not say whether a unit is held back or pushed up.
 # In a ``\le`` constraint, a unit with a positive coefficient is held back when the
@@ -41,17 +41,16 @@
 # [Constraint Formulation Guidelines, §§4-5](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/congestion-information/2025/constraint-formulation-guidelines.pdf).
 #
 # !!! note "Deviation in AustralianElectricityMarketsSimulations"
-#     **AEMO:** computes each right-hand side from live system measurements. **This
-#     package:** uses the right-hand side AEMO published for the interval. It does not
+#     **AEMO:** computes each right-hand side from live system measurements. **AustralianElectricityMarkets.jl:** uses the right-hand side AEMO published for the interval. It does not
 #     recompute it, so it reproduces the limits that applied and cannot answer what the
 #     limit would have been under different conditions.
 #
 # !!! note "Deviation in AustralianElectricityMarketsSimulations"
 #     **AEMO:** evaluates each constraint using its applicable participant and interconnector
-#     terms. **This package:** the data-loading step records dropped unit terms and skipped
-#     constraints when components cannot be matched. The replay template rejects those
+#     terms. **AustralianElectricityMarkets.jl:** the data-loading step records dropped unit terms and skipped
+#     constraints when components cannot be matched. The default configuration rejects those
 #     incomplete inputs. If a model family is explicitly omitted, it excludes the whole
-#     affected constraint; it does not solve a partial left-hand side. A custom template
+#     affected constraint; it does not solve a partial left-hand side. A custom configuration
 #     built directly from the loaded constraints must check these records itself.
 #
 # ## When constraints cannot all be met
@@ -73,7 +72,7 @@
 # C_V=h\;\mathrm{MPC}\sum_nv_n\,\sigma_n.
 # ```
 #
-# The factor is a pure number. Multiplying by the market price cap, the highest price any
+# Multiplying by the market price cap, the highest price any
 # offer can have, guarantees that violating a constraint with a factor above 1 costs more
 # than accepting any offer. The factors therefore act as a ranking. When two constraints
 # conflict, the one with the lower factor gives way.
@@ -105,14 +104,6 @@
 # own factor, and most network limits rank below the regional energy balance. The schedule
 # lists further items that are outside these chapters.
 #
-# !!! note "Deviation in AustralianElectricityMarketsSimulations"
-#     **AEMO:** every item above has a priced violation. **This package:** items 3, 5, 8,
-#     12, 14, 19 to 24 and the generic constraints have one. Participant fixed loadings
-#     also have priced violations at factor 380 (item 13), except on fast-start units.
-#     Items 4, 9, 16 and 17 remain hard or absent (see [Interconnectors and losses](@ref
-#     nemde-interconnectors)), and item 10 is absent. The market price cap defaults to a
-#     built-in table by financial year and can be overridden.
-#
 # ## Offers at the same price
 #
 # When two offer bands in a region have the same price, the cost is the same whichever one
@@ -135,10 +126,6 @@
 # For example, two generators each offer a band at \$50/MWh, of 100 MW and 50 MW, and 90 MW
 # is needed from them. Tie-breaking gives 60 MW and 30 MW, 60 per cent of each.
 #
-# !!! note "Deviation in AustralianElectricityMarketsSimulations"
-#     **AEMO:** the tie-breaking slack is priced at its factor times the market price cap.
-#     **This package:** it is priced at 0.000001 dollars per MWh, without the market price
-#     cap. The proportional sharing is the same; the penalty is smaller.
 #
 # ## From the solution to prices
 #
@@ -188,7 +175,7 @@
 # [Dispatch Procedure](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/power_system_ops/procedures/so_op_3705-dispatch.pdf).
 #
 # !!! note "Deviation in AustralianElectricityMarketsSimulations"
-#     **AEMO:** publishes prices after the adjustments above. **This package:** returns the
+#     **AEMO:** publishes prices after the adjustments above. **AustralianElectricityMarkets.jl:** returns the
 #     marginal values, using an LP with integer decisions fixed when the dispatch model
 #     contains integers, with none of AEMO's pricing adjustments. Its prices are
 #     comparable with the ROP. In an interval with a violated constraint they contain
