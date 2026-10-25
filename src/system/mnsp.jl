@@ -1,5 +1,5 @@
 """
-    set_mnsp_offers!(sys, db, date_range) -> Vector{String}
+    set_mnsp_offers!(sys, db, date_range; intervention = 0) -> Vector{String}
 
 Attaches both directional offers and availability series to each available MNSP interconnector.
 Standing `INTERCONNECTORCONSTRAINT.ICTYPE` data determines which interconnectors require offers.
@@ -10,6 +10,11 @@ link's `MAXAVAIL` in MW; the opposite link gets `"mnsp_reverse_offer"` and
 `"mnsp_reverse_max_avail"`. The interconnector's `ext` records `"mnsp_forward"` and `"mnsp_reverse"`
 with the link's `link_id`, `from_region_tlf`, `to_region_tlf`, `lhs_factor` and `max_capacity`.
 
+Each link also receives `"mnsp_<direction>_ramp_rate"` in MW/min, `"mnsp_<direction>_fixed_load"`
+in MW and a `"mnsp_<direction>_fixed_load_invoked"` flag. A NULL fixed loading is inactive;
+a numeric zero is active. `"mnsp_initial_flow"` holds signed SCADA flow in MW from
+`DISPATCHINTERCONNECTORRES.METEREDMWFLOW`, selected by `intervention`.
+
 Every link must have complete, valid inputs on the five-minute interval grid; missing or invalid
 inputs, or an `ICTYPE` that differs between the first and last interval, throw `ArgumentError`
 before any offers in `sys` are changed. Calling it again replaces earlier series, which requires
@@ -19,11 +24,12 @@ before any offers in `sys` are changed. Calling it again replaces earlier series
 - `sys`: the `PSY.System` to add to.
 - `db`: an `AEMDB` connection holding MNSP registration, offers and dispatch bid tracking.
 - `date_range`: five-minute interval-ending timestamps, with an exclusive final timestamp.
+- `intervention`: `0` for pricing-run metered flow, `1` for physical dispatch.
 
 # Returns
 The names of the interconnectors that received offers. Regulated interconnectors require none.
 """
-function set_mnsp_offers!(sys, db, date_range)
+function set_mnsp_offers!(sys, db, date_range; intervention::Integer = 0)
     step(date_range) == Minute(5) ||
         throw(ArgumentError("set_mnsp_offers!: MNSP offers require five-minute data, got $(step(date_range))"))
     intervals = collect(date_range)[1:(end - 1)]
@@ -43,7 +49,7 @@ function set_mnsp_offers!(sys, db, date_range)
         throw(ArgumentError("set_mnsp_offers!: ICTYPE differs between the first and last interval; split the replay at the change"))
     required = sort!([name for name in keys(devices) if types[name] == "MNSP"])
     isempty(required) && return String[]
-    tables = (:MNSP_INTERCONNECTOR, :MNSP_DAYOFFER, :MNSP_BIDOFFERPERIOD, :DISPATCH_MNSPBIDTRK)
+    tables = (:MNSP_INTERCONNECTOR, :MNSP_DAYOFFER, :MNSP_BIDOFFERPERIOD, :DISPATCH_MNSPBIDTRK, :DISPATCHINTERCONNECTORRES)
     uncached = filter(t -> !_table_is_cached(db, t), tables)
     isempty(uncached) || throw(
         ArgumentError(
@@ -53,9 +59,11 @@ function set_mnsp_offers!(sys, db, date_range)
     )
     links = read_mnsp_links(db, start_date)
     offers = read_mnsp_offers(db, date_range)
+    flows = read_interconnector_limits(db, date_range; intervention)
     staged = NamedTuple[]
     for name in required
         device = devices[name]
+        initial = sort(flows[flows.INTERCONNECTORID .== name, :], :SETTLEMENTDATE)
         from_area = get_name(get_from_area(device))
         to_area = get_name(get_to_area(device))
         group = links[links.INTERCONNECTORID .== name, :]
@@ -86,18 +94,30 @@ function set_mnsp_offers!(sys, db, date_range)
                         "Populate DISPATCH_MNSPBIDTRK and its referenced MNSP_DAYOFFER/MNSP_BIDOFFERPERIOD, including the previous month when required.",
                 )
             )
+            initial.SETTLEMENTDATE == intervals && all(v -> v isa Real && isfinite(v), initial.METEREDMWFLOW) ||
+                throw(ArgumentError("set_mnsp_offers!: MNSP $name requires finite metered flow for every interval"))
             for row in eachrow(rows)
-                for column in (:MAXAVAIL, (Symbol("BANDAVAIL$i") for i in 1:10)..., (Symbol("PRICEBAND$i") for i in 1:10)...)
+                for column in (:MAXAVAIL, :RAMPUPRATE, (Symbol("BANDAVAIL$i") for i in 1:10)..., (Symbol("PRICEBAND$i") for i in 1:10)...)
                     value = row[column]
                     valid = value isa Real && isfinite(value) && (startswith(string(column), "PRICEBAND") || value >= 0)
                     valid || throw(ArgumentError("set_mnsp_offers!: MNSP $name link $(link.LINKID) has invalid $column at $(row.INTERVAL_DATETIME)"))
                 end
             end
-            push!(staged, (; device, direction, link, rows, curves = [_mnsp_offer_curve(row) for row in eachrow(rows)]))
+            all(v -> ismissing(v) || (v isa Real && isfinite(v) && v >= 0), rows.FIXEDLOAD) ||
+                throw(ArgumentError("set_mnsp_offers!: MNSP $name link $(link.LINKID) has invalid FIXEDLOAD"))
+            push!(staged, (; device, direction, link, rows, initial, curves = [_mnsp_offer_curve(row) for row in eachrow(rows)]))
         end
     end
-    for (; device, direction, link, rows, curves) in staged
-        for (series, values) in (("offer", curves), ("max_avail", Float64.(rows.MAXAVAIL)))
+    for (; device, direction, link, rows, initial, curves) in staged
+        if direction == "forward"
+            replace_single_series!(sys, device, single_series("mnsp_initial_flow", start_date, Float64.(initial.METEREDMWFLOW), Minute(5)))
+        end
+        for (series, values) in (
+                ("offer", curves), ("max_avail", Float64.(rows.MAXAVAIL)),
+                ("ramp_rate", Float64.(rows.RAMPUPRATE)),
+                ("fixed_load", Float64.(coalesce.(rows.FIXEDLOAD, 0.0))),
+                ("fixed_load_invoked", Float64.(.!ismissing.(rows.FIXEDLOAD))),
+            )
             series_name = mnsp_series_name(direction, series)
             replace_single_series!(sys, device, single_series(series_name, start_date, values, Minute(5)))
         end

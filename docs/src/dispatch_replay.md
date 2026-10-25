@@ -30,6 +30,17 @@ optionally `time_series_directory` for file-backed time series.
 `interval_flow_limits = true` attaches published interval flow limits for diagnostics.
 These limits are computed after dispatch; keep the default `false` when validating simulated flows.
 
+MNSP inputs include each directional link's offers, availability, ramp rate and fixed-loading
+instruction, plus the interconnector's metered starting flow from the selected `intervention`
+run. `set_mnsp_offers!` requires `DISPATCHINTERCONNECTORRES` alongside the MNSP offer tables.
+A NULL fixed-loading value means no instruction; zero is an active instruction.
+
+The dispatch model prices MNSP violations at the interval's Market Price Cap times CVP factors
+1155 for net-flow ramping, 1135 for total offered MW, 380 for fixed loading and 365 for
+availability. Violation reports retain the directional link and express quantities in MW.
+The existing loss-model domain still bounds flow. MNSP loss-equation violations, Basslink
+converter losses, its no-go zone and frequency-controller alternative runs are not modelled.
+
 ## Prepare and run with PSI
 
 ```julia

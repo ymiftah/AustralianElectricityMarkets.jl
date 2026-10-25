@@ -239,6 +239,12 @@ const _VIOLATION_FAMILIES = (
     EnergyUIGFSlack => ("energy_uigf", "up"),
     EnergyFixedLoadSurplusSlack => ("fixed_load", "up"),
     EnergyFixedLoadDeficitSlack => ("fixed_load", "down"),
+    MNSPMaxAvailSlack => ("mnsp_max_avail", "up"),
+    MNSPOfferSlack => ("mnsp_offer", "up"),
+    MNSPRampUpSlack => ("mnsp_ramp", "up"),
+    MNSPRampDownSlack => ("mnsp_ramp", "down"),
+    MNSPFixedLoadSurplusSlack => ("mnsp_fixed_load", "up"),
+    MNSPFixedLoadDeficitSlack => ("mnsp_fixed_load", "down"),
     UnitRampUpSlack => ("unit_ramp", "up"),
     UnitRampDownSlack => ("unit_ramp", "down"),
     InterconnectorFlowSurplusSlack => ("interconnector_flow", "up"),
@@ -259,6 +265,9 @@ const _VIOLATION_FAMILIES = (
 # `_fcas_upper_regulation_service` names and the lower (`>=`) form for the other, so the sense is
 # resolved per device from the service's bid type.
 function _violation_direction(sys::PSY.System, type, meta::AbstractString, name::AbstractString, default::AbstractString)
+    if type <: AbstractMNSPSlack && !isempty(meta)
+        return type in (MNSPMaxAvailSlack, MNSPOfferSlack) ? meta : "$(meta)_$default"
+    end
     type === FCASJointCapacitySlack && return endswith(meta, "_lower") ? "down" : "up"
     if type === FCASJointRampingSlack
         service = PSY.get_component(FCASService, sys, meta)

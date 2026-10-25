@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- MNSP dispatch uses elastic offer-total and availability limits, metered net-flow ramping and
+  directional fixed loading, with MPC-scaled penalties and MW violation reporting.
+  `set_mnsp_offers!` now requires metered interconnector results and accepts `intervention`.
+
 - Historical system construction uses one as-of interconnector result for buses and links, with
   active regions taken from the latest cached demand snapshot at or before the requested time.
 - Demand aggregation and joined bid preparation run in DuckDB, preserving timestamp ceiling,

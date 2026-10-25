@@ -57,7 +57,7 @@ function AustralianElectricityMarkets.nem_system(
     set_fcas_scaling_inputs!(sys, db, date_range; intervention)
     set_nem_dispatch_limits!(sys, db, date_range; intervention)
     set_nem_energy_limits!(sys, db, date_range; intervention)
-    set_mnsp_offers!(sys, db, date_range)
+    set_mnsp_offers!(sys, db, date_range; intervention)
     interval_flow_limits && set_interconnector_flow_limits!(sys, db, date_range; intervention)
     return sys
 end

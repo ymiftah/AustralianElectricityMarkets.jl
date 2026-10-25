@@ -40,6 +40,7 @@ include("types/energy_offers.jl")
 include("types/tie_break.jl")
 include("types/interconnector_losses.jl")
 include("types/mnsp.jl")
+include("types/mnsp_limits.jl")
 include("types/logging.jl")
 
 include("formulations/slacks.jl")
@@ -56,6 +57,7 @@ include("formulations/storage.jl")
 include("formulations/tie_break.jl")
 include("formulations/interconnector_losses.jl")
 include("formulations/mnsp.jl")
+include("formulations/mnsp_limits.jl")
 include("psi_compat.jl")
 include("formulations/fcas.jl")
 include("checks/fcas.jl")
@@ -113,5 +115,7 @@ export MNSPLinkFlowVariable, MNSPLinkFlowConstraint, MNSPLinkBandConstraint, MNS
     MNSPReverseBandWidthParameter, MNSPMaxAvailParameter, MNSPForwardMaxAvailParameter,
     MNSPReverseMaxAvailParameter, MNSPBandPriceParameter
 export interconnector_loss_gaps, check_interconnector_loss_segments
+
+export MNSPInitialFlowParameter, MNSPForwardRampRateParameter, MNSPReverseRampRateParameter, MNSPForwardFixedLoadParameter, MNSPReverseFixedLoadParameter, MNSPForwardFixedLoadInvokedParameter, MNSPReverseFixedLoadInvokedParameter, MNSPMaxAvailSlack, MNSPOfferSlack, MNSPRampUpSlack, MNSPRampDownSlack, MNSPFixedLoadSurplusSlack, MNSPFixedLoadDeficitSlack, MNSPRampConstraint, MNSPFixedLoadConstraint, MNSP_RAMP_CVP_FACTOR, MNSP_OFFER_CVP_FACTOR, MNSP_AVAILABILITY_CVP_FACTOR
 
 end

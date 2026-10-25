@@ -17,6 +17,7 @@ function PSI.get_default_time_series_names(::Type{PSY.AreaInterchange}, ::Type{N
         MNSPReverseBandWidthParameter => mnsp_series_name("reverse", "offer"),
         MNSPForwardMaxAvailParameter => mnsp_series_name("forward", "max_avail"),
         MNSPReverseMaxAvailParameter => mnsp_series_name("reverse", "max_avail"),
+        _MNSP_OPERATING_SERIES...,
     )
 end
 
@@ -477,6 +478,7 @@ function PSI.construct_device!(
     loss_models = Dict(PSY.get_name(d) => _loss_model(d) for d in devices)
     _add_loss_constraints!(container, devices, loss_models)
     _add_mnsp_link_constraints!(container, devices)
+    _add_mnsp_operating_constraints!(container, devices)
     _add_mnsp_band_costs!(container, devices)
     _add_flow_limit_constraint!(container, devices, device_model, network_model)
     PSI.add_feedforward_constraints!(container, device_model, devices)
