@@ -1,18 +1,16 @@
 """
     read_hive(db::AEMDB, table_name::Symbol)
 
-Builds the SQL `read_parquet(...)` source fragment for a hive-partitioned
-parquet dataset, for use as a `FROM` source in a larger query.
-
-Uses `union_by_name=true`: a table's `_TABLE_SPECS` entry can grow new columns over time
-(AEMO widens NEMWEB tables, or this repo starts ingesting a column it previously skipped)
-without invalidating partitions already on disk under the old, narrower schema - those
-partitions just read back with `NULL` in the new columns instead of the glob raising a
-schema-mismatch error.
+Builds the SQL `read_parquet(...)` source fragment for a hive-partitioned parquet dataset, for use
+as a `FROM` source in a larger query. Partitions written before a column was added read back
+`NULL` for it.
 
 # Arguments
 - `db::AEMDB`: The database connection wrapper to use.
 - `table_name::Symbol`: The name of the table to read.
+
+# Returns
+A `String` SQL fragment.
 """
 function read_hive(
         db::AEMDB,

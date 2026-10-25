@@ -1,10 +1,4 @@
-export read_affine_heatrates, read_coal_prices, read_gas_prices, read_biomass_prices, read_isp_thermal_costs_parameters
-
-export read_isp_renewable_costs_parameters
-
-export read_isp_fixed_opex, read_isp_variable_opex
-
-
+# TODO, MOVE THIS IN AEMData, populate the HIVE with it + Make the CSV data artifacts with Artifacts.jl
 const ISP_DATA_DIR = joinpath(@__DIR__, "..", "..", "data", "isp2025")
 
 
@@ -25,58 +19,51 @@ function read_affine_heatrates()
 end
 
 
-"""
-    read_coal_prices()
-
-Read coal prices from ISP 2025 data.
-"""
-function read_coal_prices()
-    file_source = joinpath(ISP_DATA_DIR, "coal_prices.csv")
-    return @chain file_source begin
+# An ISP price table in long format: `id_cols`, `year` (first year of the financial year) and
+# `price_aud`.
+function _read_isp_prices(file_name::String, id_cols)
+    return @chain joinpath(ISP_DATA_DIR, file_name) begin
         CSV.read(DataFrame)
-        stack(Not([:station, :scenario]); variable_name = :year, value_name = :price_aud)
+        stack(Not(id_cols); variable_name = :year, value_name = :price_aud)
         transform!(
             :year => ByRow(x -> parse(Int, split(x, "-")[1])) => :year,
             :price_aud => ByRow(x -> parse(Float64, strip(x, ['$', ' ']))) => :price_aud,
         )
     end
 end
+
+
+"""
+    read_coal_prices()
+
+Reads coal prices from ISP 2025 data.
+
+# Returns
+A `DataFrame` with `station`, `scenario`, `year` and `price_aud`.
+"""
+read_coal_prices() = _read_isp_prices("coal_prices.csv", [:station, :scenario])
 
 
 """
     read_gas_prices()
 
-Read gas prices from ISP 2025 data.
+Reads gas prices from ISP 2025 data.
+
+# Returns
+A `DataFrame` with `station`, `scenario`, `year` and `price_aud`.
 """
-function read_gas_prices()
-    file_source = joinpath(ISP_DATA_DIR, "gas_prices.csv")
-    return @chain file_source begin
-        CSV.read(DataFrame)
-        stack(Not([:station, :scenario]); variable_name = :year, value_name = :price_aud)
-        transform!(
-            :year => ByRow(x -> parse(Int, split(x, "-")[1])) => :year,
-            :price_aud => ByRow(x -> parse(Float64, strip(x, ['$', ' ']))) => :price_aud,
-        )
-    end
-end
+read_gas_prices() = _read_isp_prices("gas_prices.csv", [:station, :scenario])
 
 
 """
     read_biomass_prices()
 
-Read biomass prices from ISP 2025 data.
+Reads biomass prices from ISP 2025 data.
+
+# Returns
+A `DataFrame` with `scenario`, `year` and `price_aud`.
 """
-function read_biomass_prices()
-    file_source = joinpath(ISP_DATA_DIR, "biomass_prices.csv")
-    return @chain file_source begin
-        CSV.read(DataFrame)
-        stack(Not(:scenario); variable_name = :year, value_name = :price_aud)
-        transform!(
-            :year => ByRow(x -> parse(Int, split(x, "-")[1])) => :year,
-            :price_aud => ByRow(x -> parse(Float64, strip(x, ['$', ' ']))) => :price_aud,
-        )
-    end
-end
+read_biomass_prices() = _read_isp_prices("biomass_prices.csv", [:scenario])
 
 
 """

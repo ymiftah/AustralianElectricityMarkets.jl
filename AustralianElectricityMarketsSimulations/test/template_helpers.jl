@@ -35,6 +35,11 @@ function _area_balance_template()
     return template
 end
 
+# Buildable subset of every `GenericConstraint` in `sys` for `template`.
+_buildable_gcs(sys, template; kwargs...) = AEMS._filter_buildable_generic_constraints(
+    sys, template, PSY.get_components(GenericConstraint, sys); kwargs...,
+)
+
 # Sundance's 100 MW floor exceeds fixture demand under no-commitment dispatch; zero every
 # `ThermalStandard` floor before building an `augmented_pscb_system()` template.
 function _fix_thermal_floor!(sys)
@@ -43,4 +48,21 @@ function _fix_thermal_floor!(sys)
         PSY.set_active_power_limits!(gen, (min = 0.0, max = limits.max))
     end
     return
+end
+
+
+# `name => (DateTime => raw dual)` of every `NEMConstraintLimit` in `results`.
+function stock_gc_duals(results)
+    read(k) = results isa PSI.SimulationProblemResults ? only(values(PSI.read_realized_duals(results, [k]))) : PSI.read_dual(results, k)
+    return Dict(
+        k.meta => Dict(r.DateTime => r.value for r in eachrow(read(k)))
+            for k in PSI.list_dual_keys(results) if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit
+    )
+end
+
+# The exception `f()` throws, or `nothing` if it returns normally.
+_caught(f) = try
+    f(); nothing
+catch e
+    e
 end

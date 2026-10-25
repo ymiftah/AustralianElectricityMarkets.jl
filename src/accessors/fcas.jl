@@ -1,7 +1,3 @@
-_fcas_series_name(prefix::AbstractString, service::BidType, decremental::Bool) =
-    decremental ? "$(prefix)_$(string(service))_decremental" : "$(prefix)_$(string(service))"
-
-
 """
     _fcas_units_multiplier(component) -> Float64
 
@@ -45,7 +41,7 @@ end
 
 
 """
-    get_fcas_trapezium(component, service, initial_time, horizon; decremental = false) -> Vector{FCASTrapezium}
+    _get_fcas_trapezium(component, service, initial_time, horizon; decremental = false) -> Vector{FCASTrapezium}
 
 Full-series read of `component`'s FCAS trapezium for `service`, `horizon` steps from
 `initial_time`, in `component`'s `System`'s current display units (MW under `NATURAL_UNITS`,
@@ -53,8 +49,8 @@ per-unit of the system base under `SYSTEM_BASE`). `decremental` selects the stor
 `DIRECTION == "LOAD"` series. Throws `ArgumentError` if the series isn't attached, or if any
 step holds a malformed trapezium (out-of-order limits or a negative `MaxAvail`).
 """
-function get_fcas_trapezium(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
-    name = _fcas_series_name("fcas_trapezium", service, decremental)
+function _get_fcas_trapezium(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
+    name = fcas_series_name("fcas_trapezium", service, decremental)
     rows = _read_fcas_series("trapezium", component, name, service, decremental, initial_time, horizon)
     multiplier = _fcas_units_multiplier(component)
     return [
@@ -80,15 +76,13 @@ end
 
 """
     get_scaled_fcas_trapezium(component, service, initial_time, horizon; decremental = false,
-        resolution = Minute(5), agc_first_interval_only = false, agc_ramp_scaling = true) -> Vector{FCASTrapezium}
+        resolution = Minute(5)) -> Vector{FCASTrapezium}
 
-Like [`get_fcas_trapezium`](@ref), but applies [`scale_fcas_trapezium`](@ref) at every step
+Like `_get_fcas_trapezium`, but applies [`scale_fcas_trapezium`](@ref) at every step
 using `component`'s `"fcas_agc_enablement_min_<service>"`/`"fcas_agc_enablement_max_<service>"`
 series and its AGC ramping capability, `"fcas_agc_ramp_rate_<service>"` (MW/h) times
 `resolution` (regulation `service`s only, from [`set_fcas_scaling_inputs!`](@ref)), and its
-`"fcas_uigf"` series, when attached. A `NaN` entry applies no scaling at that step. With
-`agc_first_interval_only`, the AGC inputs apply to the first step only; with
-`agc_ramp_scaling = false`, the AGC ramping capability applies at no step. UIGF applies at every
+`"uigf"` series, when attached. A `NaN` entry applies no scaling at that step. UIGF applies at every
 step. `decremental` selects the storage `DIRECTION == "LOAD"` trapezium series only - the AGC
 enablement/ramp/UIGF series are shared by both directions of the same device.
 
@@ -97,27 +91,25 @@ enablement/ramp/UIGF series are shared by both directions of the same device.
 """
 function get_scaled_fcas_trapezium(
         component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false,
-        resolution::Dates.Period = Minute(5), agc_first_interval_only::Bool = false, agc_ramp_scaling::Bool = true,
+        resolution::Dates.Period = Minute(5),
     )
-    trapeziums = get_fcas_trapezium(component, service, initial_time, horizon; decremental = decremental)
+    trapeziums = _get_fcas_trapezium(component, service, initial_time, horizon; decremental = decremental)
     is_regulation = service in FCAS_REGULATION_MARKETS
-    service_str = string(service)
     agc_enablement_min = is_regulation ?
-        _read_optional_fcas_scaling_series(component, "fcas_agc_enablement_min_$service_str", initial_time, horizon) : nothing
+        _read_optional_fcas_scaling_series(component, fcas_series_name("fcas_agc_enablement_min", service), initial_time, horizon) : nothing
     agc_enablement_max = is_regulation ?
-        _read_optional_fcas_scaling_series(component, "fcas_agc_enablement_max_$service_str", initial_time, horizon) : nothing
-    agc_max_avail = is_regulation && agc_ramp_scaling ?
+        _read_optional_fcas_scaling_series(component, fcas_series_name("fcas_agc_enablement_max", service), initial_time, horizon) : nothing
+    agc_max_avail = is_regulation ?
         get_fcas_agc_ramp_capability(component, service, initial_time, horizon; resolution = resolution) : nothing
     input_at(series, i) = (isnothing(series) || isnan(series[i])) ? nothing : series[i]
-    agc_at(series, i) = (agc_first_interval_only && i > 1) ? nothing : input_at(series, i)
-    uigf = _read_optional_fcas_scaling_series(component, "fcas_uigf", initial_time, horizon)
+    uigf = _read_optional_fcas_scaling_series(component, NEM_SERIES.uigf, initial_time, horizon)
 
     return [
         scale_fcas_trapezium(
             trapeziums[i];
-            agc_enablement_min = agc_at(agc_enablement_min, i),
-            agc_enablement_max = agc_at(agc_enablement_max, i),
-            agc_max_avail = agc_at(agc_max_avail, i),
+            agc_enablement_min = input_at(agc_enablement_min, i),
+            agc_enablement_max = input_at(agc_enablement_max, i),
+            agc_max_avail = input_at(agc_max_avail, i),
             uigf = input_at(uigf, i),
             is_regulation = is_regulation,
         ) for i in eachindex(trapeziums)
@@ -139,7 +131,7 @@ units, `NaN` at an interval with no ramp rate. `nothing` if `component` carries 
 function get_fcas_agc_ramp_capability(
         component, service::BidType, initial_time, horizon::Integer; resolution::Dates.Period = Minute(5),
     )
-    rate = _read_optional_fcas_scaling_series(component, "fcas_agc_ramp_rate_$(string(service))", initial_time, horizon)
+    rate = _read_optional_fcas_scaling_series(component, fcas_series_name("fcas_agc_ramp_rate", service), initial_time, horizon)
     isnothing(rate) && return nothing
     return rate .* (Dates.value(Millisecond(resolution)) / 3_600_000)
 end
@@ -157,14 +149,14 @@ value. `nothing` if `component` carries no such series.
 `Union{Nothing, Vector{Union{Nothing, Int}}}`.
 """
 function get_fcas_agc_status(component, initial_time, horizon::Integer)
-    has_time_series(component, SingleTimeSeries, "fcas_agc_status") || return nothing
-    values = get_time_series_values(SingleTimeSeries, component, "fcas_agc_status"; start_time = initial_time, len = horizon)
+    has_time_series(component, SingleTimeSeries, NEM_SERIES.fcas_agc_status) || return nothing
+    values = get_time_series_values(SingleTimeSeries, component, NEM_SERIES.fcas_agc_status; start_time = initial_time, len = horizon)
     return Union{Nothing, Int}[isnan(v) ? nothing : round(Int, v) for v in values]
 end
 
 
 """
-    get_fcas_offer_curve(component, service, initial_time, horizon; decremental = false) -> Vector{PSY.PiecewiseStepData}
+    _get_fcas_offer_curve(component, service, initial_time, horizon; decremental = false) -> Vector{PSY.PiecewiseStepData}
 
 Full-series read of `component`'s FCAS offer curve for `service`, `horizon` steps from
 `initial_time`. Quantities (`x_coords`) are in `component`'s `System`'s current display units
@@ -172,8 +164,8 @@ Full-series read of `component`'s FCAS offer curve for `service`, `horizon` step
 (`y_coords`) are always \$/MW, never per-unitized. `decremental` selects the storage
 `DIRECTION == "LOAD"` series. Throws `ArgumentError` if the series isn't attached.
 """
-function get_fcas_offer_curve(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
-    name = _fcas_series_name("fcas_curve", service, decremental)
+function _get_fcas_offer_curve(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
+    name = fcas_series_name("fcas_curve", service, decremental)
     rows = _read_fcas_series("curve", component, name, service, decremental, initial_time, horizon)
     multiplier = _fcas_units_multiplier(component)
     return [PSY.PiecewiseStepData(get_x_coords(c) .* multiplier, get_y_coords(c)) for c in rows]
@@ -191,24 +183,8 @@ function _require_equal_length(a::AbstractVector, b::AbstractVector, service::Bi
         ArgumentError(
             "FCAS trapezium series ($(length(a)) points) and offer curve series " *
                 "($(length(b)) points) for $(string(service)) on \"$(get_name(component))\" " *
-                "have different lengths - cannot pair them into FCASBids.",
+                "have different lengths - cannot pair them.",
         ),
     )
     return nothing
-end
-
-
-"""
-    get_fcas_bid(component, service, initial_time, horizon; decremental = false) -> Vector{FCASBid}
-
-Full-series read of `component`'s FCAS bid for `service`, `horizon` steps from
-`initial_time`. `decremental` selects the storage `DIRECTION == "LOAD"` series. Throws
-`ArgumentError` if the series isn't attached or if the trapezium and curve series have
-different lengths.
-"""
-function get_fcas_bid(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
-    trapeziums = get_fcas_trapezium(component, service, initial_time, horizon; decremental = decremental)
-    curves = get_fcas_offer_curve(component, service, initial_time, horizon; decremental = decremental)
-    _require_equal_length(trapeziums, curves, service, component)
-    return [FCASBid(service, curve, trapezium) for (curve, trapezium) in zip(curves, trapeziums)]
 end

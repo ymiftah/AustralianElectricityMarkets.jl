@@ -11,10 +11,10 @@ const TIE_BREAK_CVP_FACTOR = 1.0e-6
 
 # Name of the series and meta of the parameter holding segment `band`'s tie-break scale.
 function _tie_break_series_name(band::Int, decremental::Bool)
-    return "tie_break_scale_$(band)" * (decremental ? "_decremental" : "")
+    return "tie_break_scale_$(band)" * side_suffix(offer_side(decremental))
 end
 function _tie_break_meta(band::Int, decremental::Bool)
-    return string(band) * (decremental ? "_decremental" : "")
+    return string(band) * side_suffix(offer_side(decremental))
 end
 
 
@@ -63,11 +63,18 @@ function _tie_break_curves(container::PSI.OptimizationContainer, device::PSY.Com
 end
 
 
-# Bands of every PSI market-bid block variable in `container`, grouped by
-# (direction, region, time step), and the `_tie_break_active_bands` they were filtered on. Segments PSI pads beyond a unit's offer curve, and segments empty
-# throughout the offer series, are left out. A unit absent from the offer series (a fixed curve in a
-# direction where no unit has a time-varying one) keeps all its bands, so a tie it takes part in
-# fails the build for want of scales.
+"""
+    _tie_break_bands(container, sys) -> (groups, active)
+
+The bands of every PSI market-bid block variable in `container`, grouped by `(decremental, region,
+t)`, and the [`_tie_break_active_bands`](@ref) they were filtered on. Segments PSI pads beyond a
+unit's offer curve and segments empty throughout the offer series are left out. A unit absent from
+the offer series, a fixed curve in a direction where no unit has a time-varying one, keeps all its
+bands.
+
+# Returns
+`(groups::Dict{Tuple{Bool, String, Int}, Vector{_TieBand}}, active::Dict{Tuple{Bool, String}, Set{Int}})`.
+"""
 function _tie_break_bands(container::PSI.OptimizationContainer, sys::PSY.System)
     active = _tie_break_active_bands(_tie_break_offers(sys))
     groups = Dict{Tuple{Bool, String, Int}, Vector{_TieBand}}()
@@ -100,7 +107,7 @@ end
 
 Adds the [`TieBreakScaleParameter`](@ref) of segment `band` keyed `(T, meta)`, unless it exists:
 one row per available `T` carrying the segment's `"tie_break_scale_<band>[_decremental]"` forecast,
-the set PowerSimulations' time-series parameter update visits. Multipliers are `1.0`.
+the set PowerSimulations' time-series parameter update visits ([`_add_series_parameter!`](@ref)).
 
 # Returns
 `nothing`.
@@ -113,32 +120,7 @@ function _add_tie_break_parameter!(
     ts_name = _tie_break_series_name(band, decremental)
     ts_type = PSI.get_default_time_series_type(container)
     devices = [d for d in PSY.get_available_components(T, sys) if PSY.has_time_series(d, ts_type, ts_name)]
-    settings = PSI.get_settings(container)
-    interval, resolution = PSI.get_interval(settings), PSI.get_resolution(settings)
-    names = PSY.get_name.(devices)
-    uuids = [
-        string(
-            IS.get_time_series_uuid(
-                ts_type, d, ts_name; resolution = PSI._to_is_resolution(resolution), interval = PSI._to_is_interval(interval),
-            ),
-        ) for d in devices
-    ]
-    time_steps = PSI.get_time_steps(container)
-    param_container = PSI.add_param_container!(
-        container, TieBreakScaleParameter(), T, ts_type, ts_name, uuids, names, (), time_steps; meta = meta,
-    )
-    attributes = PSI.get_attributes(param_container)
-    jm = PSI.get_jump_model(container)
-    values = PSI.get_parameter_array_data(param_container)
-    multipliers = PSI.get_multiplier_array_data(param_container)
-    for (i, d) in enumerate(devices)
-        raw = PSI.get_time_series_initial_values!(container, ts_type, d, ts_name; interval = interval, resolution = resolution)
-        for t in time_steps
-            PSI._set_parameter_at!(values, jm, raw[t], i, t)
-        end
-        PSI._set_multiplier_at!(multipliers, 1.0, i)
-        PSI.add_component_name!(attributes, names[i], uuids[i])
-    end
+    _add_series_parameter!(container, TieBreakScaleParameter(), T, devices, ts_name, meta)
     return
 end
 
@@ -209,11 +191,14 @@ function _tie_break_label(region::AbstractString, decremental::Bool)
 end
 
 
-PSI.get_default_time_series_names(::Type{EnergyTieBreak}, ::Type{TieBreakMarket}) =
-    Dict{Type{<:PSI.TimeSeriesParameter}, String}()
+function PSI.get_default_time_series_names(::Type{EnergyTieBreak}, ::Type{TieBreakMarket})
+    return Dict{Type{<:PSI.TimeSeriesParameter}, String}()
+end
 
 
-PSI.get_default_attributes(::Type{EnergyTieBreak}, ::Type{TieBreakMarket}) = Dict{String, Any}()
+function PSI.get_default_attributes(::Type{EnergyTieBreak}, ::Type{TieBreakMarket})
+    return Dict{String, Any}()
+end
 
 
 """
@@ -249,21 +234,16 @@ end
 """
     PSI.construct_service!(container, sys, ::PSI.ModelConstructStage, model::PSI.ServiceModel{EnergyTieBreak, TieBreakMarket}, devices_template, incompatible_device_types, network_model)
 
-Model stage for [`TieBreakMarket`](@ref): dispatches price-tied energy bands in proportion to their
-size. Within each region, direction (offer or load bid) and time step, the market-bid block bands
-whose prices at the reference node are within [`TIE_BREAK_CVP_FACTOR`](@ref) of one another form a
-tie group. Every pair of bands of different units in a group gets the [`TieBreakConstraint`](@ref)
-row `s_b x_a - s_a x_b + up - down = 0`, where `x` is the cleared MW of a band and `s = w / w_ref`
-its [`TieBreakScaleParameter`](@ref), `w` being its width and `w_ref` the widest band of the group at
-that interval, so the [`TieBreakSlackUp`](@ref) and [`TieBreakSlackDown`](@ref) slacks are in
-system-base per-unit MW. The slacks are priced at [`TIE_BREAK_CVP_FACTOR`](@ref) `\$/MWh`. A band
-held back by a ramp, availability or group limit relaxes its rows instead of moving the dispatch of
-the other units, and a band of zero width has scale 0, which makes its rows vacuous. FCAS bands are
-not tied. Groups are read from the offer prices at build and the scales are updated by simulation
-steps, so a recurrent build requires the same groups at every step ([`check_tie_break_pairs`](@ref)).
-Containers are keyed by [`EnergyTieBreak`](@ref) with the service name as meta, and are not added
-when no band is tied. Throws unless [`set_tie_break_scales!`](@ref) covered every tied band and
-every contributor carrying a scale is modelled or excluded by its device model's
+Model stage for [`TieBreakMarket`](@ref): adds one [`TieBreakConstraint`](@ref) row
+`s_b x_a - s_a x_b + up - down = 0` per pair of bands of different units in a price-tied group, the
+market-bid block bands of one region, direction and time step whose prices at the reference node
+are within [`TIE_BREAK_CVP_FACTOR`](@ref) of one another. `x` is a band's cleared MW and `s` its
+[`TieBreakScaleParameter`](@ref); the [`TieBreakSlackUp`](@ref) and [`TieBreakSlackDown`](@ref)
+slacks, in system-base per-unit MW, are priced at [`TIE_BREAK_CVP_FACTOR`](@ref) `\$/MWh`. FCAS
+bands are not tied. Groups are read at build, so a recurrent build requires the same groups at
+every step ([`check_tie_break_pairs`](@ref)). Containers are keyed by [`EnergyTieBreak`](@ref) with
+the service name as meta and are not added when no band is tied. Throws an `ArgumentError` unless [`set_tie_break_scales!`](@ref) covered every
+tied band and every contributor carrying a scale is modelled or excluded by its device model's
 `"filter_function"`.
 
 # Returns

@@ -3,15 +3,9 @@ using TOML
 using Logging
 
 @testset "Independent population and reader packages" begin
-    @test isdefined(AustralianElectricityMarkets, :Readers)
-    if isdefined(AustralianElectricityMarkets, :Readers)
-        readers = AustralianElectricityMarkets.Readers
-        @test read_units === readers.read_units
-        @test read_demand === readers.read_demand
-        @test read_fcas_bids === readers.read_fcas_bids
-        @test parentmodule(read_units) === readers
-        @test parentmodule(read_fcas_bids) === readers
-    end
+    readers = AustralianElectricityMarkets.Readers
+    @test !isdefined(readers, :PowerSystems)
+    @test !isdefined(AustralianElectricityMarkets, :EnergyTieBreak)
 
     @test HiveConfiguration === AustralianElectricityMarketsData.HiveConfiguration
     @test aem_connect === AustralianElectricityMarketsData.aem_connect
@@ -24,6 +18,9 @@ using Logging
     data_deps = TOML.parsefile(joinpath(root, "AustralianElectricityMarketsData", "Project.toml"))["deps"]
     sim_deps = TOML.parsefile(joinpath(root, "AustralianElectricityMarketsSimulations", "Project.toml"))["deps"]
     @test !haskey(aem_deps, "AustralianElectricityMarketsData")
+    @test !haskey(aem_deps, "AustralianElectricityMarketsSimulations")
+    @test !haskey(aem_deps, "PowerSimulations")
+    @test !haskey(sim_deps, "DuckDB")
     @test !haskey(data_deps, "AustralianElectricityMarkets")
     @test !haskey(data_deps, "AustralianElectricityMarketsSimulations")
     @test !haskey(sim_deps, "AustralianElectricityMarketsData")

@@ -34,7 +34,7 @@ islocal(source::DataSource) = islocal(get_filesystem(source))
 
 """
     DataSource(table_name, table_columns, config=HiveConfiguration();
-               table_sort_by=String[], add_partitions=String[], month_filter_column=nothing)
+               table_sort_by=String[], month_filter_column=nothing)
 
 Create a new `DataSource` for a NEMWEB table, rooted at `config.hive_location`.
 Works for both local and remote (`s3`/`gs`) `config.filesystem` — path
@@ -45,14 +45,13 @@ function DataSource(
         table_columns::Vector{String},
         config::HiveConfiguration = HiveConfiguration();
         table_sort_by::Vector{String} = String[],
-        add_partitions::Vector{String} = String[],
         month_filter_column::Union{Nothing, String} = nothing,
     )
     return DataSource(
         table_name,
         table_columns,
         table_sort_by,
-        vcat(add_partitions, ARCHIVE_MONTH_PARTITION),
+        [ARCHIVE_MONTH_PARTITION],
         joinpath(_parse_hive_root(config), table_name),
         month_filter_column,
     )

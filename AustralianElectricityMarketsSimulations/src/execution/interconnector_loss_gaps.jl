@@ -16,8 +16,8 @@ where the solver dissipated more than the curve at that flow.
 A `Dict` keyed by `(interconnector name, t)`.
 """
 function interconnector_loss_gaps(results::PSI.OptimizationProblemResults, sys::PSY.System)
-    flow_df = PSI.read_variable(results, "FlowActivePowerVariable__AreaInterchange")
-    loss_df = PSI.read_variable(results, "InterconnectorLossVariable__AreaInterchange")
+    flow_df = PSI.read_variable(results, PSI.FlowActivePowerVariable, PSY.AreaInterchange)
+    loss_df = PSI.read_variable(results, InterconnectorLossVariable, PSY.AreaInterchange)
     stamps = sort(unique(flow_df.DateTime))
     base_power = PSY.get_base_power(sys)
     flows = Dict((r.name, r.DateTime) => r.value for r in eachrow(flow_df))
@@ -30,7 +30,7 @@ function interconnector_loss_gaps(results::PSI.OptimizationProblemResults, sys::
         model = only(models)
         at_zero = loss_curve_vertex_values(model, Dict{String, Float64}())
         coefficients = PSY.get_time_series_values(
-            PSY.SingleTimeSeries, d, "loss_demand_coefficient"; start_time = first(stamps), len = length(stamps),
+            PSY.SingleTimeSeries, d, NEM_SERIES.loss_demand_coefficient; start_time = first(stamps), len = length(stamps),
         )
         for (t, stamp) in enumerate(stamps)
             haskey(flows, (name, stamp)) || continue

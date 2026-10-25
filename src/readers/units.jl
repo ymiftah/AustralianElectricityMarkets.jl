@@ -1,27 +1,25 @@
 """
     read_units(db; as_of = nothing)
 
-Gathers and processes unit data from the database: one row per commissioned `DUID`, including
-scheduled loads, which have no `GENUNITS` row, so their `CO2E_ENERGY_SOURCE` is `missing`.
+Reads commissioned unit metadata, one row per `DUID` including scheduled loads. Scheduled loads
+have no `GENUNITS` row, so their `CO2E_ENERGY_SOURCE` is `missing`.
 
 # Arguments
-- `db`: The database connection.
-- `as_of`: when a `Date` or `DateTime`, resolves `DUDETAIL` (latest `EFFECTIVEDATE <= as_of`,
-  then highest `VERSIONNO`) and `DUDETAILSUMMARY` (the row with `START_DATE <= as_of < END_DATE`,
-  so the loss factors in force then) as of that instant; units with no such row are omitted.
-  `nothing` keeps the open, latest version in the cache.
+- `db`: the database connection.
+- `as_of`: when a `Date` or `DateTime`, resolves `DUDETAIL` (latest `EFFECTIVEDATE <= as_of`, then
+  highest `VERSIONNO`) and `DUDETAILSUMMARY` (the row with `START_DATE <= as_of < END_DATE`) as of
+  that instant, omitting units with no such row. `nothing` keeps the open, latest cached version.
 
 # Returns
-A `DataFrame` containing detailed information about each generation unit.
+A `DataFrame` with one row per commissioned `DUID`, including `CO2E_ENERGY_SOURCE`.
 
 # Example
 ```julia
 db = aem_connect()
 units_df = read_units(db)
-println(units_df)
 ```
 """
-function _read_units(db; as_of::Union{Nothing, Date, DateTime} = nothing)
+function read_units(db; as_of::Union{Nothing, Date, DateTime} = nothing)
     dudetail_table = read_hive(db, :DUDETAIL)
     summary_table = read_hive(db, :DUDETAILSUMMARY)
     op_status_table = read_hive(db, :STATIONOPERATINGSTATUS)
@@ -135,35 +133,5 @@ function _read_units(db; as_of::Union{Nothing, Date, DateTime} = nothing)
         isempty(dropped) ||
             @warn "read_units: $(length(dropped)) currently registered unit(s) are not in force as of $as_of and were omitted" first_dropped = first(dropped, 5)
     end
-    return dudetail
-end
-
-using DataFrames
-
-
-"""
-    read_units(db; as_of = nothing)
-
-Read commissioned unit metadata, mapping each unit's raw AEMO fuel/technology
-source to `PowerSystems.PrimeMovers` (`TECHNOLOGY`) and `PowerSystems.ThermalFuels`
-(`FUELTYPE`) values.
-
-Includes the raw `CO2E_ENERGY_SOURCE` column alongside the mapped enum columns.
-
-# Arguments
-- `db`: the database connection.
-- `as_of`: a `Date` or `DateTime` to resolve the static unit tables as of (loss factors in force
-  then), or `nothing` for the latest cached version.
-
-# Returns
-- `DataFrame`: one row per commissioned `DUID`, including `TECHNOLOGY` and `FUELTYPE` columns.
-"""
-function read_units(db; as_of = nothing)
-    dudetail = _read_units(db; as_of = as_of)
-    transform!(
-        dudetail,
-        :CO2E_ENERGY_SOURCE => ByRow(x -> AEMO_PM_MAPPING[x]) => :TECHNOLOGY,
-        :CO2E_ENERGY_SOURCE => ByRow(x -> AEMO_FUEL_MAPPING[x]) => :FUELTYPE,
-    )
     return dudetail
 end

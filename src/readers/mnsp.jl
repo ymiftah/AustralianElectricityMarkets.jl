@@ -5,8 +5,8 @@ Reads the MNSP link offers NEMDE applied in each dispatch interval of `date_rang
 
 Each interval's offer is the one named by `DISPATCH_MNSPBIDTRK` (dispatch run 1), joined to its
 `MNSP_DAYOFFER` price bands and its `MNSP_BIDOFFERPERIOD` availability for that interval's
-five-minute period of the trading day. The tables cover trading days from the five-minute
-settlement start; earlier days live in `MNSP_PEROFFER`.
+five-minute period of the trading day. The tables cover trading days from the start of five-minute
+settlement (1 October 2021); earlier intervals are not supported.
 
 # Arguments
 - `db`: The database connection.

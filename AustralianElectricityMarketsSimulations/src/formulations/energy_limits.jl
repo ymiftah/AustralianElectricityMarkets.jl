@@ -1,24 +1,4 @@
-function PSI.get_variable_binary(::AbstractEnergyLimitSlack, ::Type{<:PSY.StaticInjection}, ::AbstractNEMDispatch)
-    return false
-end
-
-function PSI.get_variable_lower_bound(::AbstractEnergyLimitSlack, ::PSY.StaticInjection, ::AbstractNEMDispatch)
-    return 0.0
-end
-
-function PSI.get_variable_upper_bound(::AbstractEnergyLimitSlack, ::PSY.StaticInjection, ::AbstractNEMDispatch)
-    return nothing
-end
-
-function PSI.convert_result_to_natural_units(::Type{<:AbstractEnergyLimitSlack})
-    return true
-end
-
-function PSI.convert_result_to_natural_units(::Type{EnergyMaxAvailTimeSeriesParameter})
-    return true
-end
-
-function PSI.convert_result_to_natural_units(::Type{EnergyUIGFTimeSeriesParameter})
+function PSI.convert_result_to_natural_units(::Type{<:Union{EnergyMaxAvailTimeSeriesParameter, EnergyUIGFTimeSeriesParameter}})
     return true
 end
 
@@ -47,7 +27,7 @@ function _energy_limit_cvp(::EnergyUIGFSlack)
 end
 
 function _semi_scheduled_devices(devices::Union{Vector{T}, IS.FlattenIteratorWrapper{T}}) where {T}
-    return T[d for d in devices if PSY.get_ext(d)["nem_semi_scheduled"]]
+    return T[d for d in devices if is_semi_scheduled(d)]
 end
 
 """
@@ -92,10 +72,7 @@ function PSI.add_proportional_cost!(
         devices::Union{Vector{T}, IS.FlattenIteratorWrapper{T}}, ::AbstractNEMDispatch,
     ) where {S <: AbstractEnergyLimitSlack, T <: PSY.StaticInjection}
     isempty(devices) && return
-    _add_mpc_penalty!(
-        container, PSI.get_variable(container, slack, T), [PSY.get_name(d) for d in devices],
-        PSI.get_time_steps(container), _energy_limit_cvp(slack),
-    )
+    _add_mpc_penalty!(container, S, T, [PSY.get_name(d) for d in devices], _energy_limit_cvp(slack))
     return
 end
 

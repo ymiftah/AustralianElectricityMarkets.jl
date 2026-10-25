@@ -1,19 +1,3 @@
-function _check_energy_limit_series(sys, model, initial_time, n_intervals)
-    for d in PSI.get_available_components(model, sys)
-        name = PSY.get_name(d)
-        semi = get(PSY.get_ext(d), "nem_semi_scheduled", nothing)
-        semi isa Bool || throw(ArgumentError("$name: missing schedule classification; call set_nem_energy_limits!"))
-        series = semi ? ("energy_max_avail", "energy_uigf") : ("energy_max_avail",)
-        for key in series
-            PSY.has_time_series(d, PSY.SingleTimeSeries, key) || throw(ArgumentError("$name: missing $key; call set_nem_energy_limits!"))
-            values = PSY.get_time_series_values(PSY.SingleTimeSeries, d, key; start_time = initial_time, len = n_intervals, ignore_scaling_factors = true)
-            bad = findfirst(v -> !isfinite(v) || v < 0, values)
-            isnothing(bad) || throw(ArgumentError("$name at interval $bad: invalid $key"))
-        end
-    end
-    return
-end
-
 """
     check_dispatch_envelope(sys, template, initial_time, n_intervals) -> Nothing
 
@@ -38,18 +22,30 @@ function check_dispatch_envelope(sys::PSY.System, template::PSI.ProblemTemplate,
     return
 end
 
-function _check_energy_limit_series(
-        sys, model::PSI.DeviceModel{T, D}, initial_time, n_intervals,
-    ) where {T <: PSY.Storage, D <: AbstractNEMDispatch}
+
+# Throws unless every available device of `model` carries finite, non-negative energy-limit series.
+function _check_energy_limit_series(sys, model::PSI.DeviceModel, initial_time, n_intervals)
     for d in PSI.get_available_components(model, sys)
-        for name in ("energy_max_avail", "energy_max_avail_decremental")
-            PSY.has_time_series(d, PSY.SingleTimeSeries, name) || throw(
-                ArgumentError("$(PSY.get_name(d)): missing $name; call set_market_bids! for both directions"),
-            )
-            values = PSY.get_time_series_values(PSY.SingleTimeSeries, d, name; start_time = initial_time, len = n_intervals, ignore_scaling_factors = true)
+        name = PSY.get_name(d)
+        keys, remedy = _energy_limit_series(d)
+        for key in keys
+            PSY.has_time_series(d, PSY.SingleTimeSeries, key) || throw(ArgumentError("$name: missing $key; $remedy"))
+            values = PSY.get_time_series_values(PSY.SingleTimeSeries, d, key; start_time = initial_time, len = n_intervals, ignore_scaling_factors = true)
             bad = findfirst(v -> !isfinite(v) || v < 0, values)
-            isnothing(bad) || throw(ArgumentError("$(PSY.get_name(d)) at interval $bad: invalid $name"))
+            isnothing(bad) || throw(ArgumentError("$name at interval $bad: invalid $key"))
         end
     end
     return
+end
+
+
+# The energy-limit series names a device's dispatch reads, and the setter that attaches them.
+function _energy_limit_series(d::PSY.Storage)
+    return energy_max_avail_series_name.((OfferSide.GEN, OfferSide.LOAD)), "call set_market_bids! for both directions"
+end
+
+function _energy_limit_series(d)
+    semi = is_semi_scheduled(d)
+    max_avail = energy_max_avail_series_name(OfferSide.GEN)
+    return (semi ? (max_avail, NEM_SERIES.uigf) : (max_avail,)), "call set_nem_energy_limits!"
 end

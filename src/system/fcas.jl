@@ -1,17 +1,78 @@
 """
-    _fcas_bid_direction(device, bid_type) -> Symbol
+    _require_fcas_float(row, field::Symbol)
 
-`:incremental`, `:decremental`, `:both` or `:none`, describing which `"fcas_trapezium_<bid_type>
-[_decremental]"` series `device` carries.
+`Float64(getproperty(row, field))`, or an actionable `ArgumentError` naming `field` and the
+row's `DUID` if the value is `missing`.
 """
-function _fcas_bid_direction(device, bid_type::BidType)
-    bid_type_str = string(bid_type)
-    has_inc = has_time_series(device, SingleTimeSeries, "fcas_trapezium_$bid_type_str")
-    has_dec = has_time_series(device, SingleTimeSeries, "fcas_trapezium_$(bid_type_str)_decremental")
-    has_inc && has_dec && return :both
-    has_inc && return :incremental
-    has_dec && return :decremental
-    return :none
+function _require_fcas_float(row, field::Symbol)
+    value = getproperty(row, field)
+    ismissing(value) && throw(
+        ArgumentError(
+            "BIDPEROFFER_D.$field is missing for DUID $(row.DUID) - cannot build an " *
+                "FCASTrapezium without it.",
+        ),
+    )
+    return Float64(value)
+end
+
+
+"""
+    _extract_fcas_bid(row)
+
+Mirrors [`_extract_power_bids`](@ref), keeping every price band as energy offers do, and also builds
+the FCAS trapezium.
+
+# Returns
+`(curve_data, trapezium_row)`: a `PiecewiseStepData` and the `NTuple{7,Float64}` wire form
+of an [`FCASTrapezium`](@ref).
+"""
+function _extract_fcas_bid(row)
+    curve_data = _extract_power_bids(row; keep_empty_bands = true)
+    trapezium = FCASTrapezium(;
+        enablement_min = _require_fcas_float(row, :ENABLEMENTMIN),
+        low_breakpoint = _require_fcas_float(row, :LOWBREAKPOINT),
+        high_breakpoint = _require_fcas_float(row, :HIGHBREAKPOINT),
+        enablement_max = _require_fcas_float(row, :ENABLEMENTMAX),
+        max_avail = _require_fcas_float(row, :MAXAVAIL),
+        ramp_up_rate = ismissing(row.ROCUP) ? nothing : Float64(row.ROCUP),
+        ramp_down_rate = ismissing(row.ROCDOWN) ? nothing : Float64(row.ROCDOWN),
+    )
+    interval = hasproperty(row, :INTERVAL_DATETIME) ? " at $(row.INTERVAL_DATETIME)" : ""
+    _validate_fcas_trapezium(trapezium, "BIDPEROFFER_D DUID $(row.DUID) ($(row.DIRECTION))$interval")
+    return curve_data, Tuple(trapezium)
+end
+
+
+IS.@scoped_enum(FCASBidDirection, NONE = 0, INCREMENTAL = 1, DECREMENTAL = 2, BOTH = 3)
+
+
+@doc """
+    FCASBidDirection
+
+Which sides of an FCAS bid a device carries: `NONE`, `INCREMENTAL` (generation side),
+`DECREMENTAL` (load side) or `BOTH`. Returned by [`fcas_bid_direction`](@ref).
+""" FCASBidDirection
+
+
+"""
+    fcas_bid_direction(device, bid_type) -> FCASBidDirection
+
+Which sides of a `bid_type` FCAS bid `device` carries, read from its `"fcas_trapezium_<bid_type>"`
+and `"fcas_trapezium_<bid_type>_decremental"` series ([`fcas_series_name`](@ref)).
+
+# Arguments
+- `device`: any component.
+- `bid_type`: the FCAS [`BidType`](@ref).
+
+# Returns
+An [`FCASBidDirection`](@ref).
+"""
+function fcas_bid_direction(device, bid_type::BidType)
+    has_inc, has_dec = (has_time_series(device, SingleTimeSeries, fcas_series_name("fcas_trapezium", bid_type, dec)) for dec in (false, true))
+    has_inc && has_dec && return FCASBidDirection.BOTH
+    has_inc && return FCASBidDirection.INCREMENTAL
+    has_dec && return FCASBidDirection.DECREMENTAL
+    return FCASBidDirection.NONE
 end
 
 
@@ -23,10 +84,10 @@ incremental bid on any device but a load, a decremental-only bid on a `Storage` 
 `InterruptiblePowerLoad`, or a `Storage` device's regulation bid on both sides.
 """
 function _fcas_bid_modeled(device, bid_type::BidType)
-    direction = _fcas_bid_direction(device, bid_type)
-    direction == :incremental && return !(device isa InterruptiblePowerLoad)
-    direction == :decremental && return device isa Storage || device isa InterruptiblePowerLoad
-    direction == :both && return device isa Storage && bid_type in FCAS_REGULATION_MARKETS
+    direction = fcas_bid_direction(device, bid_type)
+    direction == FCASBidDirection.INCREMENTAL && return !(device isa InterruptiblePowerLoad)
+    direction == FCASBidDirection.DECREMENTAL && return device isa Storage || device isa InterruptiblePowerLoad
+    direction == FCASBidDirection.BOTH && return device isa Storage && bid_type in FCAS_REGULATION_MARKETS
     return false
 end
 
@@ -37,8 +98,8 @@ function _fcas_service_devices(
         sys, region::AbstractString, bid_type::BidType;
         candidates = _region_devices(sys, region; loads = true),
     )
-    inc_name = _fcas_series_name("fcas_curve", bid_type, false)
-    dec_name = _fcas_series_name("fcas_curve", bid_type, true)
+    inc_name = fcas_series_name("fcas_curve", bid_type, false)
+    dec_name = fcas_series_name("fcas_curve", bid_type, true)
     return filter(candidates) do d
         has_time_series(d, SingleTimeSeries, inc_name) || has_time_series(d, SingleTimeSeries, dec_name)
     end
@@ -94,22 +155,22 @@ end
 
 
 """
-    _attach_fcas_bid_series!(sys, component, gdf, duid, series_suffix, start_date, resolution)
+    _attach_fcas_bid_series!(sys, component, gdf, duid, bid_type, side, start_date, resolution)
 
-Attaches the two per-`(component, FCAS market)` `SingleTimeSeries` series - `"fcas_curve_\$
-series_suffix"` and `"fcas_trapezium_\$series_suffix"` - from `gdf` (a `DUID`-grouped bids
+Attaches the two per-`(component, FCAS market, side)` `SingleTimeSeries` series, `"fcas_curve_..."`
+and `"fcas_trapezium_..."` ([`fcas_series_name`](@ref)), from `gdf` (a `DUID`-grouped bids
 `DataFrame`) if `duid` has a group in it. No-op otherwise, so callers can probe a component
 against several `DIRECTION` groupings without checking `haskey` themselves. Returns whether
 the series were attached.
 """
-function _attach_fcas_bid_series!(sys, component, gdf, duid::AbstractString, series_suffix::AbstractString, start_date, resolution)
+function _attach_fcas_bid_series!(sys, component, gdf, duid::AbstractString, bid_type::BidType, side::OfferSide, start_date, resolution)
     (isnothing(gdf) || !haskey(gdf, (duid,))) && return false
     rows = gdf[(duid,)]
     # rows.curve_data/.trapezium_row are SubArray views into the grouped DataFrame -
     # the series needs plain Vectors.
-    curve_ts = _single_series("fcas_curve_$(series_suffix)", start_date, collect(rows.curve_data), resolution)
+    curve_ts = single_series(fcas_series_name("fcas_curve", bid_type, side), start_date, collect(rows.curve_data), resolution)
     add_time_series!(sys, component, curve_ts)
-    trapezium_ts = _single_series("fcas_trapezium_$(series_suffix)", start_date, collect(rows.trapezium_row), resolution)
+    trapezium_ts = single_series(fcas_series_name("fcas_trapezium", bid_type, side), start_date, collect(rows.trapezium_row), resolution)
     add_time_series!(sys, component, trapezium_ts)
     return true
 end
@@ -126,7 +187,7 @@ FCAS market)` with bid data in `date_range`:
   interval, packed by [`_extract_fcas_bid`](@ref).
 
 Both series' MW quantities (curve `x_coords`, all trapezium fields but not prices) are stored
-per-unit of `sys`'s system base; [`get_fcas_trapezium`](@ref)/[`get_fcas_offer_curve`](@ref)
+per-unit of `sys`'s system base; `_get_fcas_trapezium`/`_get_fcas_offer_curve`
 convert back on read.
 
 `DIRECTION` routes and names the series, mirroring [`set_market_bids!`](@ref)'s energy-bid
@@ -143,7 +204,7 @@ needs. Dropping `LOAD`/
 large share of real FCAS providers - measured on 2 Jan 2025 `BIDPEROFFER_D`, `LOAD` and
 `BIDIRECTIONAL` rows together outnumber `GEN` rows for several contingency markets.
 
-Two series, not one carrying [`FCASBid`](@ref)/[`FCASTrapezium`](@ref) objects directly, so each
+Two series, not one carrying [`FCASTrapezium`](@ref) objects directly, so each
 element is a plain `PiecewiseStepData` or `NTuple{7,Float64}`. Does not require or create any `Reserve`/service - FCAS
 requirements are [`GenericConstraint`](@ref)s built separately by
 [`add_nem_constraints!`](@ref).
@@ -161,7 +222,7 @@ function set_fcas_bids!(sys, db, date_range; kwargs...)
     resolution = get(kwargs, :resolution, Minute(5))
     base_power = get_base_power(sys)
 
-    all_bids = groupby(read_fcas_bids(db, date_range, collect(FCAS_BID_TYPES); kwargs...), :BIDTYPE)
+    all_bids = groupby(read_fcas_bids(db, date_range, collect(FCAS_BID_TYPES); resolution = get(kwargs, :resolution, nothing)), :BIDTYPE)
     for bid_type in FCAS_BID_TYPES
         haskey(all_bids, (bid_type,)) || continue
         bids = DataFrame(all_bids[(bid_type,)])
@@ -174,26 +235,24 @@ function set_fcas_bids!(sys, db, date_range; kwargs...)
             :trapezium_row => ByRow(t -> t ./ base_power) => :trapezium_row,
         )
         sort!(bids, :INTERVAL_DATETIME)
-        bid_type_str = string(bid_type)
-
         incremental = subset(bids, :DIRECTION => ByRow(in(("GEN", "BIDIRECTIONAL"))))
         decremental = subset(bids, :DIRECTION => ByRow(==("LOAD")))
         gdf_inc = DataFrames.isempty(incremental) ? nothing : groupby(incremental, :DUID)
         gdf_dec = DataFrames.isempty(decremental) ? nothing : groupby(decremental, :DUID)
 
         foreach(get_components(Generator, sys)) do gen
-            _attach_fcas_bid_series!(sys, gen, gdf_inc, get_name(gen), bid_type_str, start_date, resolution)
+            _attach_fcas_bid_series!(sys, gen, gdf_inc, get_name(gen), bid_type, OfferSide.GEN, start_date, resolution)
         end
         foreach(get_components(EnergyReservoirStorage, sys)) do stor
             duid = get_name(stor)
-            _attach_fcas_bid_series!(sys, stor, gdf_inc, duid, bid_type_str, start_date, resolution)
-            _attach_fcas_bid_series!(sys, stor, gdf_dec, duid, "$(bid_type_str)_decremental", start_date, resolution)
+            _attach_fcas_bid_series!(sys, stor, gdf_inc, duid, bid_type, OfferSide.GEN, start_date, resolution)
+            _attach_fcas_bid_series!(sys, stor, gdf_dec, duid, bid_type, OfferSide.LOAD, start_date, resolution)
         end
         foreach(get_components(InterruptiblePowerLoad, sys)) do load
             attached = _attach_fcas_bid_series!(
-                sys, load, gdf_dec, get_name(load), "$(bid_type_str)_decremental", start_date, resolution,
+                sys, load, gdf_dec, get_name(load), bid_type, OfferSide.LOAD, start_date, resolution,
             )
-            attached && _is_non_scheduled_load(load) && get(get_ext(load), "commissioned", true) === true &&
+            attached && is_non_scheduled_load(load) && is_commissioned(load) &&
                 set_available!(load, true)
         end
     end
@@ -241,9 +300,7 @@ function _attach_fcas_scaling_series!(
         push!(values, absent ? NaN : row[col] * scale / base_power)
     end
     all(isnan, values) && return nothing
-    add_time_series!(
-        sys, device, SingleTimeSeries(; name = name, data = TimeArray(full_grid, values)),
-    )
+    replace_single_series!(sys, device, single_series(name, full_grid, values))
     return nothing
 end
 
@@ -264,7 +321,7 @@ NEMDE* §4) and the §5 AGC-status pre-condition input to every available `Gener
   length, applied on read);
 - `"fcas_agc_status"` from `AGCSTATUS` (§5: `1` while the unit is under AGC control, `0`
   otherwise), not per-unitized;
-- `"fcas_uigf"` from `UIGF`, for semi-scheduled units only (§4.3).
+- `"uigf"` from `UIGF`, for semi-scheduled units only (§4.3), shared with [`set_nem_energy_limits!`](@ref).
 
 Every series but `"fcas_agc_status"` is per-unit of `sys`'s system base, read back by
 [`get_scaled_fcas_trapezium`](@ref); `"fcas_agc_status"` carries AGCSTATUS's raw `0`/`1` value,
@@ -298,34 +355,34 @@ function set_fcas_scaling_inputs!(sys, db, date_range; kwargs...)
             by_time = Dict(zip(by_duid[(duid,)].SETTLEMENTDATE, eachrow(by_duid[(duid,)])))
             _attach_fcas_scaling_series!(
                 sys, device, by_time, full_grid, :RAISEREGENABLEMENTMIN,
-                "fcas_agc_enablement_min_RAISEREG", base_power,
+                fcas_series_name("fcas_agc_enablement_min", BidType.RAISEREG), base_power,
             )
             _attach_fcas_scaling_series!(
                 sys, device, by_time, full_grid, :RAISEREGENABLEMENTMAX,
-                "fcas_agc_enablement_max_RAISEREG", base_power,
+                fcas_series_name("fcas_agc_enablement_max", BidType.RAISEREG), base_power,
             )
             _attach_fcas_scaling_series!(
                 sys, device, by_time, full_grid, :LOWERREGENABLEMENTMIN,
-                "fcas_agc_enablement_min_LOWERREG", base_power,
+                fcas_series_name("fcas_agc_enablement_min", BidType.LOWERREG), base_power,
             )
             _attach_fcas_scaling_series!(
                 sys, device, by_time, full_grid, :LOWERREGENABLEMENTMAX,
-                "fcas_agc_enablement_max_LOWERREG", base_power,
+                fcas_series_name("fcas_agc_enablement_max", BidType.LOWERREG), base_power,
             )
             _attach_fcas_scaling_series!(
-                sys, device, by_time, full_grid, :RAMPUPRATE, "fcas_agc_ramp_rate_RAISEREG", base_power,
+                sys, device, by_time, full_grid, :RAMPUPRATE, fcas_series_name("fcas_agc_ramp_rate", BidType.RAISEREG), base_power,
             )
             _attach_fcas_scaling_series!(
-                sys, device, by_time, full_grid, :RAMPDOWNRATE, "fcas_agc_ramp_rate_LOWERREG", base_power,
+                sys, device, by_time, full_grid, :RAMPDOWNRATE, fcas_series_name("fcas_agc_ramp_rate", BidType.LOWERREG), base_power,
             )
             _attach_fcas_scaling_series!(
-                sys, device, by_time, full_grid, :AGCSTATUS, "fcas_agc_status", 1.0,
+                sys, device, by_time, full_grid, :AGCSTATUS, NEM_SERIES.fcas_agc_status, 1.0,
             )
         end
 
         if !isnothing(uigf_by_duid) && haskey(uigf_by_duid, (duid,))
             by_time = Dict(zip(uigf_by_duid[(duid,)].SETTLEMENTDATE, eachrow(uigf_by_duid[(duid,)])))
-            _attach_fcas_scaling_series!(sys, device, by_time, full_grid, :UIGF, "fcas_uigf", base_power)
+            _attach_fcas_scaling_series!(sys, device, by_time, full_grid, :UIGF, NEM_SERIES.uigf, base_power)
         end
     end
     return

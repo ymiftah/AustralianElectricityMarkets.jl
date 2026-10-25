@@ -1,13 +1,12 @@
 """
     table_requirements(::ConstrainedNetworkConfiguration)
 
-`RegionalNetworkConfiguration`'s tables plus `:DISPATCHLOAD, :DISPATCHPRICE,
+`RegionalNetworkConfiguration`'s tables plus `:DISPATCHPRICE,
 :DISPATCH_FCAS_REQ, :DISPATCHCONSTRAINT, :GENCONDATA, :SPDCONNECTIONPOINTCONSTRAINT,
 :SPDREGIONCONSTRAINT, :SPDINTERCONNECTORCONSTRAINT`.
 """
 AustralianElectricityMarkets.table_requirements(::ConstrainedNetworkConfiguration) = [
     table_requirements(RegionalNetworkConfiguration())...,
-    :DISPATCHLOAD,
     :DISPATCHPRICE,
     # Both generations of the dispatch FCAS requirement table: DISPATCH_FCAS_REQ covers up
     # to the 2025-05 archive month, DISPATCH_FCAS_REQ_CONSTRAINT from 2025-06 on. A cache
@@ -26,9 +25,7 @@ AustralianElectricityMarkets.table_requirements(::ConstrainedNetworkConfiguratio
 # kwargs...), which rejects any kwarg it doesn't recognize.
 function AustralianElectricityMarkets.nem_system(
         db, ::ConstrainedNetworkConfiguration; date_range = nothing,
-        intervention::Integer = 0, include_solution::Bool = false,
-        resolution::Union{Nothing, Dates.Period} = nothing,
-        allow_empty_region_terms::Bool = false, unresolved_terms::Symbol = :drop,
+        intervention::Integer = 0,
         as_of = isnothing(date_range) ? nothing : first(date_range),
         kwargs...,
     )
@@ -37,11 +34,8 @@ function AustralianElectricityMarkets.nem_system(
     end
     sys = nem_system(db; as_of = as_of, kwargs...)
     set_fcas_bids!(sys, db, date_range)
-    add_nem_constraints!(
-        sys, db, date_range; intervention = intervention, include_solution = include_solution,
-        resolution = resolution, allow_empty_region_terms = allow_empty_region_terms,
-        unresolved_terms = unresolved_terms,
-    )
+    add_nem_constraints!(sys, db, date_range; intervention = intervention)
+    set_nem_fixed_loads!(sys, db, date_range)
     add_fcas_services!(sys)
     attach_interconnector_losses!(sys, db, first(date_range))
     return sys

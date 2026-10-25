@@ -1,184 +1,114 @@
 """
-    read_dispatch_limits(db, date_range; intervention = 0)
+    read_dispatch_limits(db, date_range; intervention = 0, resolution = Minute(5))
 
-Reads per-interval, per-unit dispatch limits from `DISPATCHLOAD`: one row per
-`(SETTLEMENTDATE, DUID)` with `INITIALMW`, `RAMPUPRATE`, `RAMPDOWNRATE` and `AVAILABILITY` —
-the ramp rate and dispatch envelope NEMDE actually applied for that interval.
+Reads per-unit dispatch limits from `DISPATCHLOAD`: `INITIALMW`, `RAMPUPRATE`, `RAMPDOWNRATE` and
+`AVAILABILITY`, the ramp rates and dispatch envelope NEMDE applied for each 5-minute interval.
+`AVAILABILITY` is the `MAXAVAIL` bid availability of a scheduled unit, or the lower of `MAXAVAIL`
+and `UIGF` for a semi-scheduled unit.
 
-`AVAILABILITY` is the per-interval upper bound NEMDE applied: the `MAXAVAIL` bid availability
-for a scheduled unit, or the lower of `MAXAVAIL` bid availability and `UIGF` for a
-semi-scheduled unit.
+With a `resolution` coarser than five minutes, the intervals are ceiled onto it and each bucket keeps
+the `INITIALMW` at its first interval (the metered MW at the start of the period) and the minimum of
+each ramp rate and `AVAILABILITY` across its intervals.
 
-`intervention` selects the dispatch run: `0` is the normal (non-intervention) run
-(`INTERVENTION` is compared via `COALESCE(INTERVENTION, 0)` for partitions predating that
-column — see [`read_fcas_requirements`](@ref)).
+!!! warning
+    Coarse buckets aggregate the available rows without checking five-minute coverage. An
+    incomplete bucket can shift `INITIALMW` away from the period start and omit more restrictive
+    ramp rates or availability limits. Ensure the cache covers every five-minute interval.
 
 # Arguments
 - `db`: an `AEMDB` connection.
 - `date_range`: the dispatch intervals to read (half-open: `start <= t < stop`).
 - `intervention`: `0` for the pricing run, `1` for the physical run.
+- `resolution`: the `Dates.Period` to aggregate onto. Defaults to 5 minutes.
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `INITIALMW`, `RAMPUPRATE`, `RAMPDOWNRATE`,
-`AVAILABILITY`.
+`AVAILABILITY`. Throws an `ArgumentError` when `DISPATCHLOAD` is not cached or lacks a column.
 """
-function read_dispatch_limits(db, date_range; intervention::Integer = 0)
+function read_dispatch_limits(db, date_range; intervention::Integer = 0, resolution::Dates.Period = Minute(5))
+    columns = ("INITIALMW", "RAMPUPRATE", "RAMPDOWNRATE", "AVAILABILITY")
     start_date = first(date_range)
     end_date = last(date_range)
-    sd = Date(start_date) - Day(1)
-    ed = Date(end_date) + Day(1)
-
-    _table_is_cached(db, :DISPATCHLOAD) || throw(
-        ArgumentError(
-            "DISPATCHLOAD is not cached — run `populate(db, :DISPATCHLOAD, <from>, <to>)` first.",
-        ),
-    )
-    table = read_hive(db, :DISPATCHLOAD)
-    schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
-    for col in ("RAMPUPRATE", "RAMPDOWNRATE", "AVAILABILITY")
-        col in schema || throw(
-            ArgumentError(
-                "DISPATCHLOAD's cached partitions have no $col column at all — they predate " *
-                    "AEMO publishing it. Run `populate(db, :DISPATCHLOAD, <from>, <to>; force_new = true)` " *
-                    "to re-download.",
-            ),
+    # A row ceiled into the range has its raw stamp in [start - resolution, end).
+    df = _read_dispatch_table(
+        db, :DISPATCHLOAD, "DUID", (start_date - resolution, end_date); intervention,
+    ) do schema
+        _require_columns(:DISPATCHLOAD, schema, columns[2:end])
+        return [_cast_double(c) for c in columns]
+    end
+    isempty(df) && return df
+    sort!(df, [:DUID, :SETTLEMENTDATE])
+    df[!, :SETTLEMENTDATE] = ceil.(df[!, :SETTLEMENTDATE], resolution)
+    return @chain df begin
+        groupby([:SETTLEMENTDATE, :DUID])
+        combine(
+            :INITIALMW => first => :INITIALMW,
+            :RAMPUPRATE => minimum => :RAMPUPRATE,
+            :RAMPDOWNRATE => minimum => :RAMPDOWNRATE,
+            :AVAILABILITY => minimum => :AVAILABILITY,
         )
+        subset(:SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
+        sort([:DUID, :SETTLEMENTDATE])
     end
-
-    params = Any[sd, ed]
-    _push_intervention!(params, schema, intervention)
-    df = _query(
-        db,
-        """
-        SELECT SETTLEMENTDATE, DUID,
-               $(_cast_double("INITIALMW")), $(_cast_double("RAMPUPRATE")), $(_cast_double("RAMPDOWNRATE")),
-               $(_cast_double("AVAILABILITY"))
-        FROM $table
-        WHERE SETTLEMENTDATE BETWEEN ? AND ? $(_intervention_where(schema))
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, DUID ORDER BY archive_month DESC
-        ) = 1
-        """,
-        params,
-    )
-    subset!(df, :SETTLEMENTDATE => ByRow(x -> start_date <= x < end_date))
-    return df
-end
-
-
-"""
-    _uigf_rows(db, where_sql, params, intervention)
-
-Raw `(SETTLEMENTDATE, DUID, UIGF)` rows behind both [`read_uigf`](@ref) methods, deduplicating
-archive-month overlap. Only rows for a DUID that `DUDETAILSUMMARY` lists as `SEMI-SCHEDULED` at
-that `SETTLEMENTDATE` are kept.
-
-`DISPATCHLOAD` carries one row per `(SETTLEMENTDATE, DUID, INTERVENTION)`, so ranking by
-`archive_month` alone is enough - there is no forecast-priority dimension to break ties on
-(unlike `INTERMITTENT_DS_RUN`, which publishes several forecast runs per interval).
-
-Throws an `ArgumentError` when `DISPATCHLOAD` or `DUDETAILSUMMARY` isn't cached at all, or when
-`DUDETAILSUMMARY` has no `SCHEDULE_TYPE` column. Warns and returns an empty
-frame when it *is* cached but every cached partition predates the `UIGF` column - that is
-legitimate schema evolution (`read_hive`'s `union_by_name` exists to tolerate it), not a
-missing download, so it is not an error; referencing a column absent from *every* file in a
-`read_hive` glob would otherwise be a hard DuckDB Binder Error.
-"""
-function _uigf_rows(db, where_sql::AbstractString, params::Vector{Any}, intervention::Integer)
-    _table_is_cached(db, :DISPATCHLOAD) || throw(
-        ArgumentError(
-            "DISPATCHLOAD is not cached — run `populate(db, :DISPATCHLOAD, <from>, <to>)` first.",
-        ),
-    )
-    table = read_hive(db, :DISPATCHLOAD)
-    schema = names(_query(db, "SELECT * FROM $table LIMIT 0"))
-    if !("UIGF" in schema)
-        @warn "DISPATCHLOAD is cached, but none of its cached partitions have a UIGF column (they predate AEMO adding it); returning no UIGF rows."
-        return DataFrame(SETTLEMENTDATE = DateTime[], DUID = String[], UIGF = Float64[])
-    end
-    _table_is_cached(db, :DUDETAILSUMMARY) || throw(
-        ArgumentError(
-            "DUDETAILSUMMARY is not cached — run `populate(db, :DUDETAILSUMMARY, <from>, <to>)` first.",
-        ),
-    )
-    dudetailsummary = read_hive(db, :DUDETAILSUMMARY)
-    "SCHEDULE_TYPE" in names(_query(db, "SELECT * FROM $dudetailsummary LIMIT 0")) || throw(
-        ArgumentError(
-            "DUDETAILSUMMARY is cached without a SCHEDULE_TYPE column — re-populate it with " *
-                "`populate(db, :DUDETAILSUMMARY, <from>, <to>; force_new = true)`.",
-        ),
-    )
-    _push_intervention!(params, schema, intervention)
-    df = _query(
-        db,
-        """
-        SELECT SETTLEMENTDATE, DUID, $(_cast_double("UIGF"))
-        FROM $table AS dl
-        WHERE $where_sql AND UIGF IS NOT NULL
-          $(_intervention_where(schema))
-          AND EXISTS (
-              SELECT 1 FROM $dudetailsummary AS dus
-              WHERE dus.DUID = dl.DUID AND dus.SCHEDULE_TYPE = 'SEMI-SCHEDULED'
-                AND dus.START_DATE <= dl.SETTLEMENTDATE
-                AND (dus.END_DATE IS NULL OR dus.END_DATE >= dl.SETTLEMENTDATE)
-          )
-        QUALIFY row_number() OVER (
-            PARTITION BY SETTLEMENTDATE, DUID ORDER BY archive_month DESC
-        ) = 1
-        """,
-        params,
-    )
-    dropmissing!(df, :UIGF)
-    return df
 end
 
 
 """
     read_uigf(db, date_range; resolution = Minute(5), intervention = 0)
-    read_uigf(db, settlement_date::DateTime; intervention = 0)
 
-Reads the per-unit Unconstrained Intermittent Generation Forecast (`DISPATCHLOAD.UIGF`) - the
-upper limit NEMDE applies to each semi-scheduled unit for each dispatch interval.
-
-Only DUIDs that `DUDETAILSUMMARY` lists as `SEMI-SCHEDULED` at each interval appear in the
-result: `DISPATCHLOAD` publishes `UIGF = 0` for scheduled and non-scheduled units. Over a
-`date_range`, rows are ceiled onto `resolution` and averaged within each bucket, matching
-[`read_demand`](@ref)'s convention. The `DateTime` method reads exactly one interval and skips
-both the widened scan and the bucketing - use it when replicating a single dispatch interval.
-
-`intervention` selects the dispatch run: `0` is the normal (non-intervention) run
-(`INTERVENTION` is compared via `COALESCE(INTERVENTION, 0)` for partitions predating that
-column - see [`read_fcas_requirements`](@ref)).
+Reads the per-unit Unconstrained Intermittent Generation Forecast (`DISPATCHLOAD.UIGF`), the
+upper limit NEMDE applies to each semi-scheduled unit in each dispatch interval. Only DUIDs that
+`DUDETAILSUMMARY` lists as `SEMI-SCHEDULED` at the interval appear. Rows are ceiled onto
+`resolution` and averaged within each bucket, as [`read_demand`](@ref) does.
 
 # Arguments
 - `db`: an `AEMDB` connection.
 - `date_range`: the range of interval timestamps to read (half-open: `start <= t < stop`).
-- `settlement_date`: a single interval end, read exactly.
 - `resolution`: the resolution to aggregate onto. Defaults to 5 minutes.
 - `intervention`: 0 for the pricing run, 1 for the physical run.
 
 # Returns
-A `DataFrame` with `SETTLEMENTDATE`, `DUID` and `UIGF` (MW).
+A `DataFrame` with `SETTLEMENTDATE`, `DUID` and `UIGF` (MW). Throws an `ArgumentError` when
+`DISPATCHLOAD` or `DUDETAILSUMMARY` is not cached or `DUDETAILSUMMARY` has no `SCHEDULE_TYPE`;
+warns and returns an empty frame when no cached `DISPATCHLOAD` partition has a `UIGF` column.
 
 # Example
 ```julia
 uigf = read_uigf(db, Date(2025, 1, 1):Date(2025, 1, 2); resolution = Minute(30))
-one_interval = read_uigf(db, DateTime(2025, 1, 1, 0, 5))
 ```
 """
 function read_uigf(db, date_range; resolution::Dates.Period = Minute(5), intervention::Integer = 0)
     start_date = first(date_range)
     end_date = last(date_range)
-    df = _uigf_rows(
-        db,
-        "SETTLEMENTDATE BETWEEN ? AND ?",
-        Any[Date(start_date) - Day(1), Date(end_date) + Day(1)],
-        intervention,
+    _require_cached(db, :DISPATCHLOAD)
+    if !("UIGF" in _table_schema(db, read_hive(db, :DISPATCHLOAD)))
+        @warn "DISPATCHLOAD is cached, but none of its cached partitions have a UIGF column (they predate AEMO adding it); returning no UIGF rows."
+        return DataFrame(SETTLEMENTDATE = DateTime[], DUID = String[], UIGF = Float64[])
+    end
+    _require_cached(db, :DUDETAILSUMMARY)
+    dudetailsummary = read_hive(db, :DUDETAILSUMMARY)
+    "SCHEDULE_TYPE" in _table_schema(db, dudetailsummary) || throw(
+        ArgumentError(
+            "DUDETAILSUMMARY is cached without a SCHEDULE_TYPE column: re-populate it with " *
+                "`populate(db, :DUDETAILSUMMARY, <from>, <to>; force_new = true)`.",
+        ),
     )
+    # A row ceiled into the range has its raw stamp in [start - resolution, end).
+    semi_scheduled = """
+        AND UIGF IS NOT NULL AND EXISTS (
+            SELECT 1 FROM $dudetailsummary AS dus
+            WHERE dus.DUID = src.DUID AND dus.SCHEDULE_TYPE = 'SEMI-SCHEDULED'
+              AND dus.START_DATE <= src.SETTLEMENTDATE
+              AND (dus.END_DATE IS NULL OR dus.END_DATE > src.SETTLEMENTDATE)
+        )
+    """
+    df = _read_dispatch_table(
+        [_cast_double("UIGF")], db, :DISPATCHLOAD, "DUID",
+        (DateTime(start_date) - resolution, DateTime(end_date)); intervention, where = semi_scheduled,
+    )
+    dropmissing!(df, :UIGF)
     isempty(df) && return df
-    # Ceil onto `resolution` before filtering, matching `read_demand`/`set_demand!`: filtering
-    # the raw stamps first would let an interval just inside the range (e.g. 01:55) round up
-    # onto a bucket just outside it (02:00) and add a spurious trailing bucket.
+    # Ceil before filtering so a stamp just inside the range cannot add a bucket just outside it.
     df[!, :SETTLEMENTDATE] = ceil.(df[!, :SETTLEMENTDATE], resolution)
     return @chain df begin
         groupby([:SETTLEMENTDATE, :DUID])
@@ -188,7 +118,45 @@ function read_uigf(db, date_range; resolution::Dates.Period = Minute(5), interve
     end
 end
 
+"""
+    read_energy_limits(db, date_range; intervention = 0) -> DataFrame
 
-function read_uigf(db, settlement_date::DateTime; intervention::Integer = 0)
-    return _uigf_rows(db, "SETTLEMENTDATE = ?", Any[settlement_date], intervention)
+Reads energy bid `MAXAVAIL`, the separate dispatch `UIGF`, and the effective schedule type
+for each offered unit, direction and interval in the half-open `date_range`.
+
+# Arguments
+- `db`: an `AEMDB` connection with energy offers, dispatch results and registration data.
+- `date_range`: the interval range, with an exclusive final timestamp.
+- `intervention`: the dispatch run used for UIGF.
+
+# Returns
+A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `DIRECTION`, `MAXAVAIL`, `UIGF` and
+`SCHEDULE_TYPE`. Unmatched dispatch or registration data remain `missing`.
+"""
+function read_energy_limits(db, date_range; intervention::Integer = 0)
+    offers = select(read_energy_bids(db, date_range), :INTERVAL_DATETIME, :DUID, :DIRECTION, :MAXAVAIL)
+    uigf = _read_dispatch_table([_cast_double("UIGF")], db, :DISPATCHLOAD, "DUID", date_range; intervention)
+    leftjoin!(offers, uigf; on = [:INTERVAL_DATETIME => :SETTLEMENTDATE, :DUID])
+    summary = read_hive(db, :DUDETAILSUMMARY)
+    return _with_registered(db, offers, "nem_energy_offers") do
+        return _query(
+            db,
+            """
+            WITH sm AS (
+                SELECT * FROM $summary
+                WHERE archive_month = (SELECT max(archive_month) FROM $summary)
+            )
+            SELECT o.INTERVAL_DATETIME AS SETTLEMENTDATE, o.DUID, o.DIRECTION,
+                   TRY_CAST(o.MAXAVAIL AS DOUBLE) AS MAXAVAIL, o.UIGF, sm_at.SCHEDULE_TYPE
+            FROM nem_energy_offers o
+            LEFT JOIN LATERAL (
+                SELECT SCHEDULE_TYPE FROM sm
+                WHERE sm.DUID = o.DUID AND sm.START_DATE <= o.INTERVAL_DATETIME
+                  AND (sm.END_DATE IS NULL OR sm.END_DATE > o.INTERVAL_DATETIME)
+                ORDER BY START_DATE DESC LIMIT 1
+            ) sm_at ON true
+            ORDER BY o.DUID, o.DIRECTION, o.INTERVAL_DATETIME
+            """,
+        )
+    end
 end

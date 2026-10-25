@@ -78,13 +78,13 @@
         bat = get_component(EnergyReservoirStorage, sys, "BAT1")
         add_time_series!(
             sys, bat,
-            AustralianElectricityMarkets._single_series(
+            AustralianElectricityMarkets.single_series(
                 "fcas_curve_RAISE6SEC_decremental", start_date, fill(PiecewiseStepData([0.0, 5.0], [10.0]), 2), Minute(5),
             ),
         )
         add_time_series!(
             sys, bat,
-            AustralianElectricityMarkets._single_series(
+            AustralianElectricityMarkets.single_series(
                 "fcas_trapezium_RAISE6SEC_decremental", start_date, fill((0.0, 0.0, 5.0, 5.0, 5.0, NaN, NaN), 2), Minute(5),
             ),
         )
@@ -95,9 +95,4 @@
         @test has_service(bat, svc)
     end
 
-    @testset "get_region/get_bid_type accessors" begin
-        svc = FCASService(; name = "1_RAISE6SEC", region = "1", bid_type = BidType.RAISE6SEC)
-        @test get_region(svc) == "1"
-        @test get_bid_type(svc) == BidType.RAISE6SEC
-    end
 end

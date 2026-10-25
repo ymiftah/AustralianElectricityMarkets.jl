@@ -58,12 +58,29 @@ end
 
 
 """
-    get_bus_dataframe(db)
+    _map_unit_technology(units) -> DataFrame
+
+Copy of a [`read_units`](@ref) DataFrame with `:TECHNOLOGY::PrimeMovers` and
+`:FUELTYPE::ThermalFuels` columns derived from its raw `:CO2E_ENERGY_SOURCE` via
+`AEMO_PM_MAPPING` and `AEMO_FUEL_MAPPING`; both are `missing` where the source is.
+"""
+function _map_unit_technology(units)
+    return transform(
+        units,
+        :CO2E_ENERGY_SOURCE => ByRow(x -> AustralianElectricityMarkets.AEMO_PM_MAPPING[x]) => :TECHNOLOGY,
+        :CO2E_ENERGY_SOURCE => ByRow(x -> AustralianElectricityMarkets.AEMO_FUEL_MAPPING[x]) => :FUELTYPE,
+    )
+end
+
+
+"""
+    get_bus_dataframe(db; as_of = nothing)
 
 Generates a DataFrame of bus information.
 
 # Arguments
 - `db`: The database connection.
+- `as_of`: a `Date` or `DateTime` to resolve interconnectors and regions, or `nothing` for the latest snapshot.
 
 # Returns
 A `DataFrame` containing bus details.
@@ -75,8 +92,12 @@ bus_df = get_bus_dataframe(db)
 println(bus_df)
 ```
 """
-function get_bus_dataframe(db)
-    interconnectors = read_interconnectors(db)
+function get_bus_dataframe(db; as_of = nothing)
+    return _bus_dataframe(read_interconnectors(db; as_of))
+end
+
+
+function _bus_dataframe(interconnectors)
     regions = @chain interconnectors begin
         select(:REGIONFROM => :region)
         vcat(select(interconnectors, :REGIONTO => :region))
@@ -226,7 +247,7 @@ println(gen_df)
 """
 function get_generators_dataframe(bus_df, units)
     bus = select(bus_df, :bus_id, :name)
-    units = copy(units)
+    units = _map_unit_technology(units)
     # Scheduled loads (some have a GENUNITS row) are built by `get_scheduled_loads_dataframe`.
     "DISPATCHTYPE" in names(units) && subset!(units, :DISPATCHTYPE => ByRow(!isequal("LOAD")))
 
@@ -298,7 +319,7 @@ println(branch_df)
 """
 function get_batteries_dataframe(bus_df, units)
     bus = select(bus_df, :bus_id, :name)
-    units = copy(units)
+    units = _map_unit_technology(units)
     dropmissing!(units, :TECHNOLOGY)  # TODO make assumptions when technology is missing ?
     dropmissing!(units, :STORAGEIMPORTEFFICIENCYFACTOR) # TODO make assumptions when efficiency is  missing ?
     subset!(units, :TECHNOLOGY => ByRow(==(PrimeMovers.BA)))

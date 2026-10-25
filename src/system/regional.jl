@@ -20,8 +20,8 @@ println(sys)
 """
 function nem_system(db; time_series_in_memory = true, as_of = nothing, kwargs...)
     @info "parsing buses"
-    bus_df = get_bus_dataframe(db)
     interconnectors = read_interconnectors(db; as_of = as_of)
+    bus_df = _bus_dataframe(interconnectors)
     units = read_units(db; as_of = as_of)
     @info "parsing loads"
     loads_df = get_load_dataframe(bus_df)
@@ -78,6 +78,7 @@ AustralianElectricityMarkets.table_requirements(::RegionalNetworkConfiguration) 
     :DUALLOC,
     :BIDDAYOFFER_D,
     :BIDPEROFFER_D,
+    :DISPATCHLOAD,
 ]
 
 

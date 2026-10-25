@@ -1,47 +1,4 @@
 """
-    _partition_has_data(source::DataSource, partition_dir::String) -> Bool
-
-True if `partition_dir` exists and contains at least one `.parquet` file.
-Local filesystems use `isdir`/`readdir` directly; remote filesystems query
-DuckDB's `glob()` over `httpfs`.
-"""
-function _partition_has_data(source::DataSource, partition_dir::String)::Bool
-    if islocal(source)
-        return isdir(partition_dir) && any(endswith(f, ".parquet") for f in readdir(partition_dir))
-    end
-    conn = _new_duckdb_connection(get_filesystem(source))
-    try
-        df = DataFrame(DBInterface.execute(conn, "SELECT COUNT(*) AS n FROM glob('$partition_dir/*.parquet')"))
-        return df.n[1] > 0
-    finally
-        DBInterface.close!(conn)
-    end
-end
-
-
-"""
-    _partition_dir_names(source::DataSource) -> Vector{String}
-
-Bare directory names (e.g. `"archive_month=2024-01-01"`, no path prefix)
-directly under `source.path`. Local filesystems use `readdir` directly;
-remote filesystems query DuckDB's `glob()` over `httpfs`.
-"""
-function _partition_dir_names(source::DataSource)::Vector{String}
-    if islocal(source)
-        isdir(source.path) || return String[]
-        return readdir(source.path)
-    end
-    conn = _new_duckdb_connection(get_filesystem(source))
-    try
-        df = DataFrame(DBInterface.execute(conn, "SELECT file FROM glob('$(source.path)/*/')"))
-        return [basename(rstrip(f, '/')) for f in df.file]
-    finally
-        DBInterface.close!(conn)
-    end
-end
-
-
-"""
     cached_date_range(source::DataSource) -> Union{Nothing, Tuple{Date, Date}}
 
 Scan `source.path` for Hive-partitioned `archive_month=YYYY-MM-DD` directories that
@@ -63,4 +20,44 @@ function cached_date_range(source::DataSource)::Union{Nothing, Tuple{Date, Date}
 
     isempty(months) && return nothing
     return (minimum(months), Dates.lastdayofmonth(maximum(months)))
+end
+"""
+    _partition_has_data(source::DataSource, partition_dir::String) -> Bool
+
+True if `partition_dir` exists and contains at least one `.parquet` file.
+Local filesystems use `isdir`/`readdir` directly; remote filesystems query
+DuckDB's `glob()` over `httpfs`.
+"""
+function _partition_has_data(source::DataSource, partition_dir::String)::Bool
+    if islocal(source)
+        return isdir(partition_dir) && any(endswith(f, ".parquet") for f in readdir(partition_dir))
+    end
+    conn = _new_duckdb_connection(get_filesystem(source))
+    try
+        df = DataFrame(DBInterface.execute(conn, "SELECT COUNT(*) AS n FROM glob('$partition_dir/*.parquet')"))
+        return df.n[1] > 0
+    finally
+        DBInterface.close!(conn)
+    end
+end
+
+"""
+    _partition_dir_names(source::DataSource) -> Vector{String}
+
+Bare directory names (e.g. `"archive_month=2024-01-01"`, no path prefix)
+directly under `source.path`. Local filesystems use `readdir` directly;
+remote filesystems query DuckDB's `glob()` over `httpfs`.
+"""
+function _partition_dir_names(source::DataSource)::Vector{String}
+    if islocal(source)
+        isdir(source.path) || return String[]
+        return readdir(source.path)
+    end
+    conn = _new_duckdb_connection(get_filesystem(source))
+    try
+        df = DataFrame(DBInterface.execute(conn, "SELECT file FROM glob('$(source.path)/*/')"))
+        return [basename(rstrip(f, '/')) for f in df.file]
+    finally
+        DBInterface.close!(conn)
+    end
 end

@@ -1,6 +1,6 @@
 "Whether `load` carries a decremental FCAS trapezium series for any FCAS market."
 _offers_fcas(load) = any(
-    bt -> has_time_series(load, SingleTimeSeries, "fcas_trapezium_$(string(bt))_decremental"), FCAS_BID_TYPES,
+    bt -> has_time_series(load, SingleTimeSeries, fcas_series_name("fcas_trapezium", bt, OfferSide.LOAD)), FCAS_BID_TYPES,
 )
 
 
@@ -78,9 +78,6 @@ const _ZERO_FLOW_EFFECTIVEDATE = Date(2013, 8, 21)
 
 const _ZERO_FLOW_VERSIONNO = 1
 
-# CVP factor of the Unit and Interconnector Zero constraint type, applied to the Market Price Cap.
-const _ZERO_FLOW_CVP_FACTOR = 1160.0
-
 
 """
     _zero_flow_constraint_definitions(gencon_versions) -> (definitions, terms)
@@ -113,7 +110,7 @@ function _zero_flow_constraint_definitions(gencon_versions)
         EFFECTIVEDATE = recognised.GENCONID_EFFECTIVEDATE,
         VERSIONNO = recognised.GENCONID_VERSIONNO,
         CONSTRAINTTYPE = fill("<=", nrow(recognised)),
-        GENERICCONSTRAINTWEIGHT = fill(_ZERO_FLOW_CVP_FACTOR, nrow(recognised)),
+        GENERICCONSTRAINTWEIGHT = fill(1.0, nrow(recognised)),
         CONSTRAINTVALUE = fill(0.0, nrow(recognised)),
         DESCRIPTION = ["Interconnector Zero: $(_ZERO_FLOW_CONSTRAINTS[id][1]) flow" for id in recognised.GENCONID],
         LIMITTYPE = fill("Interconnector Zero", nrow(recognised)),
@@ -130,10 +127,6 @@ function _zero_flow_constraint_definitions(gencon_versions)
     )
     return definitions, terms
 end
-
-# CVP factor of the Energy Inflexible Offer (participant fixed loading) constraint.
-const _FIXED_LOAD_CVP_FACTOR = 380.0
-
 
 function _empty_definitions()
     return DataFrame(
@@ -152,69 +145,9 @@ function _empty_terms()
 end
 
 
-"""
-    _fixed_load_series(sys, fixed_loads) -> Dict{String, Dict{DateTime, Float64}}
-
-Fixed-loading targets on each available device's energy axis: scheduled-load consumption is
-positive, and a storage charging target is negative net injection. Rows for units that are not
-components of `sys`, or are unavailable, are ignored.
-"""
-function _fixed_load_series(sys, fixed_loads)
-    series = Dict{String, Dict{DateTime, Float64}}()
-    for row in eachrow(fixed_loads)
-        device = get_component(Device, sys, row.DUID)
-        (isnothing(device) || !get_available(device)) && continue
-        by_time = get!(series, row.DUID, Dict{DateTime, Float64}())
-        sign = device isa Storage && row.DIRECTION == "LOAD" ? -1.0 : 1.0
-        by_time[row.INTERVAL_DATETIME] = get(by_time, row.INTERVAL_DATETIME, 0.0) + sign * row.FIXEDLOAD
-    end
-    return series
-end
-
-
 # Whether a `$<DUID>` DISPATCHCONSTRAINT id is an Energy Inflexible Offer constraint built from bids.
 function _is_modelled_fixed_load(genconid::AbstractString, fixed_loads, interval::DateTime)
     return startswith(genconid, "\$") && haskey(fixed_loads, genconid[2:end]) && haskey(fixed_loads[genconid[2:end]], interval)
-end
-
-
-"""
-    _fixed_load_constraint(sys, duid, series, grid, base_power; solution = nothing)
-
-The staged `\$<duid>` [`GenericConstraint`](@ref): a net-injection equality (`EQ`) on `duid`'s
-energy at its fixed loading, weight 380 (CVP item 13), invoked only at the intervals in `series`.
-`solution` is the unit's `DISPATCHCONSTRAINT` rows, used to fill `lhs`/`marginal_value` series.
-"""
-function _fixed_load_constraint(sys, duid, series, grid, base_power; solution = nothing)
-    rhs_mw = [get(series, t, 0.0) for t in grid]
-    invoked_series = [haskey(series, t) ? 1.0 : 0.0 for t in grid]
-    first_mw = rhs_mw[findfirst(==(1.0), invoked_series)]
-    name = "\$" * duid
-    gc = GenericConstraint(;
-        name = name,
-        sense = ConstraintSense.EQ,
-        rhs = first_mw / base_power,
-        constraint_weight = _FIXED_LOAD_CVP_FACTOR,
-        description = "Energy Inflexible Offer: $duid fixed loading",
-        terms = ConstraintTerm[UnitTerm(duid, BidType.ENERGY, 1.0)],
-        ext = Dict{String, Any}(
-            "gencon_id" => name, "limit_type" => "Energy Inflexible Offer", "source" => "built-in",
-            "effective_date" => "", "version_no" => 0, "dropped_terms" => Dict{String, Any}[],
-        ),
-    )
-    lhs_series = nothing
-    marginal_value_series = nothing
-    if !isnothing(solution)
-        lhs_by_time = Dict(zip(solution.SETTLEMENTDATE, solution.LHS))
-        mv_by_time = Dict(zip(solution.SETTLEMENTDATE, solution.MARGINALVALUE))
-        lhs_series = [get(lhs_by_time, t, 0.0) for t in grid] ./ base_power
-        marginal_value_series = [get(mv_by_time, t, 0.0) for t in grid]
-    end
-    return (
-        gc = gc, contributing_devices = Device[get_component(Device, sys, duid)],
-        rhs_series = rhs_mw ./ base_power, invoked_series = invoked_series,
-        lhs_series = lhs_series, marginal_value_series = marginal_value_series,
-    )
 end
 
 
@@ -316,7 +249,7 @@ end
 
 
 """
-    add_nem_constraints!(sys, db, date_range; intervention = 0, include_solution = false, resolution = nothing, allow_empty_region_terms = false, unresolved_terms = :drop)
+    add_nem_constraints!(sys, db, date_range; intervention = 0)
 
 Adds one [`GenericConstraint`](@ref) per exact `(GENCONID, EFFECTIVEDATE, VERSIONNO)` invoked
 in `date_range`, named `GENCONID@EFFECTIVEDATE#VERSIONNO` and attached via `add_service!` to
@@ -327,17 +260,7 @@ its contributing devices.
 - `db`: an `AEMDB` connection.
 - `date_range`: the dispatch intervals to replay.
 - `intervention`: `DISPATCHCONSTRAINT.INTERVENTION` to read (default `0`).
-- `include_solution`: also attach `"lhs"` and `"marginal_value"`.
-- `resolution`: declared resolution of every attached series. Inferred from `date_range` when
-  `nothing`.
-- `allow_empty_region_terms`: default `false` throws on an empty `RegionTerm`; `true` warns and
-  proceeds.
-- `unresolved_terms`: what to do with a term whose DUID, region or interconnector is absent from
-  `sys`. `:drop` (default) builds the constraint without an unresolved *unit* term, as nempy does
-  for a unit that is not in the dispatch, and records its kind, key, `BIDTYPE` and factor in the
-  constraint's `ext["dropped_terms"]` and in [`get_dropped_terms`](@ref). An unresolved region or
-  interconnector term, or a constraint with no resolvable term, still skips the constraint.
-  `:skip` skips the constraint for any unresolved term.
+
 
 # Returns
 `(added, skipped)`: `added::Vector{String}` of component names, `skipped::Dict{String, Symbol}`
@@ -345,50 +268,34 @@ mapping a skipped name to `:no_definition`, `:no_terms`, `:unknown_duid`, `:unkn
 `:unknown_interconnector` (the kind of the first unresolved term). Dropped unit terms are read back
 with [`get_dropped_terms`](@ref).
 
-Each device in `sys` with a participant fixed loading (`BIDPEROFFER_D.FIXEDLOAD > 0`, fast-start
-units excluded) also gets a `\$<DUID>` constraint: an equality on the unit's net energy at its fixed
-loading, weight 380, invoked at the intervals that carry one. Its `DISPATCHCONSTRAINT` row is not
-reported as skipped.
+A unit's participant fixed loading (`\$<DUID>`) is not a generic constraint: its
+`DISPATCHCONSTRAINT` row is neither added nor reported as skipped where [`set_nem_fixed_loads!`](@ref)
+attaches the loading to the unit.
 
 Each skipped version is also recorded on `sys`; read it with [`get_skipped_constraints`](@ref). The
 intervals of `date_range` with no invoked constraint ([`get_missing_constraint_intervals`](@ref)) and
 the constraints given the default weight 1.0 for a NULL `GENERICCONSTRAINTWEIGHT`
 ([`get_defaulted_constraint_weights`](@ref)) are recorded the same way.
 
-Throws `ArgumentError` when `DISPATCHCONSTRAINT`, `BIDPEROFFER_D` or `BIDDAYOFFER_D` is not cached, or when an empty `RegionTerm` is
-found and `allow_empty_region_terms = false`; either throw leaves `sys` unmodified.
+A unit term whose DUID is absent from `sys` is dropped, as nempy does for a unit that is not in the
+dispatch, and recorded in the constraint's `ext["dropped_terms"]` and in [`get_dropped_terms`](@ref).
+An unresolved region or interconnector term, or a constraint with no resolvable term, skips the constraint.
+
+Throws `ArgumentError` when `DISPATCHCONSTRAINT`, `BIDPEROFFER_D` or `BIDDAYOFFER_D` is not cached, or
+when an empty `RegionTerm` is found; either throw leaves `sys` unmodified.
 """
-function add_nem_constraints!(
-        sys, db, date_range; intervention::Integer = 0, include_solution::Bool = false,
-        resolution::Union{Nothing, Dates.Period} = nothing,
-        allow_empty_region_terms::Bool = false, unresolved_terms::Symbol = :drop,
-    )
-    unresolved_terms in (:drop, :skip) || throw(
-        ArgumentError("unresolved_terms must be :drop or :skip, got :$unresolved_terms"),
-    )
+function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0)
     start_date = first(date_range)
     base_power = get_base_power(sys)
 
-    _table_is_cached(db, :DISPATCHCONSTRAINT) || throw(
-        ArgumentError(
-            "DISPATCHCONSTRAINT is not cached for $date_range — run " *
-                "`populate(db, :DISPATCHCONSTRAINT, <from>, <to>)` first.",
-        ),
-    )
-
+    _require_cached(db, :DISPATCHCONSTRAINT)
     for table in (:BIDPEROFFER_D, :BIDDAYOFFER_D)
-        _table_is_cached(db, table) || throw(
-            ArgumentError(
-                "$table is not cached for $date_range: run `populate(db, :$table, <from>, <to>)` first. " *
-                    "add_nem_constraints! reads FIXEDLOAD and T1 from it.",
-            ),
-        )
+        _require_cached(db, table; context = "add_nem_constraints! reads FIXEDLOAD and T1 from it.")
     end
 
     invoked_all = read_invoked_constraints(db, date_range; intervention = intervention)
     missing_intervals = setdiff(collect(date_range)[1:(end - 1)], invoked_all.SETTLEMENTDATE)
-    # Energy Inflexible Offer constraints are built from the bids; their DISPATCHCONSTRAINT rows
-    # (no definition tables) are used only for the optional solution series.
+    # Fixed loadings are unit offer data (set_nem_fixed_loads!), so their `$DUID` rows are not generic constraints.
     fixed_loads = _fixed_load_series(sys, read_fixed_loads(db, date_range))
     if DataFrames.isempty(invoked_all) && isempty(fixed_loads)
         get_ext(sys)["skipped_constraints"] = Dict{String, Any}[]
@@ -406,7 +313,7 @@ function add_nem_constraints!(
     # Drop the last point: `date_range`'s N+1 timestamps label N interval starts, matching
     # `read_fcas_bids`/`set_demand!`'s half-open convention.
     full_grid = collect(date_range)[1:(end - 1)]
-    resolution = isnothing(resolution) ? _infer_resolution(full_grid) : resolution
+    resolution = _infer_resolution(full_grid)
 
     grid_set = Set(full_grid)
     unaligned = setdiff(Set(invoked.SETTLEMENTDATE), grid_set)
@@ -447,8 +354,6 @@ function add_nem_constraints!(
     staged = @NamedTuple{
         gc::GenericConstraint, contributing_devices::Vector{Device},
         rhs_series::Vector{Float64}, invoked_series::Vector{Float64},
-        lhs_series::Union{Nothing, Vector{Float64}},
-        marginal_value_series::Union{Nothing, Vector{Float64}},
     }[]
 
     for key in eachrow(gencon_versions)
@@ -489,16 +394,12 @@ function add_nem_constraints!(
                 if isnothing(names)
                     isnothing(skip_reason) && (skip_reason = :unknown_duid)
                     push!(missing_keys, row.KEY)
-                    if unresolved_terms == :skip
-                        unskippable = true
-                    else
-                        push!(
-                            dropped_terms,
-                            Dict{String, Any}(
-                                "kind" => "UNIT", "key" => row.KEY, "bid_type" => row.BIDTYPE, "factor" => row.FACTOR,
-                            ),
-                        )
-                    end
+                    push!(
+                        dropped_terms,
+                        Dict{String, Any}(
+                            "kind" => "UNIT", "key" => row.KEY, "bid_type" => row.BIDTYPE, "factor" => row.FACTOR,
+                        ),
+                    )
                     continue
                 end
                 push!(resolved_terms, term)
@@ -580,41 +481,14 @@ function add_nem_constraints!(
             ),
         )
 
-        lhs_series = nothing
-        marginal_value_series = nothing
-        if include_solution
-            lhs_by_time = Dict(zip(constraint_rows.SETTLEMENTDATE, constraint_rows.LHS))
-            lhs_series_mw, _ = _pad_to_grid(lhs_by_time, full_grid, first(constraint_rows.LHS))
-            # Same convention as "rhs" - lhs is the constraint's achieved level, directly
-            # compared against rhs, so it is per-unitized the same way.
-            lhs_series = lhs_series_mw ./ base_power
-            mv_by_time = Dict(zip(constraint_rows.SETTLEMENTDATE, constraint_rows.MARGINALVALUE))
-            # Not carried forward like rhs/lhs: an interval this constraint wasn't invoked at
-            # genuinely has zero shadow price, so 0.0 is a fact here, not a filler value.
-            # A $/MW price, not a power quantity - not per-unitized, unlike rhs/lhs.
-            marginal_value_series = [get(mv_by_time, t, 0.0) for t in full_grid]
-        end
-
         push!(
             staged,
             (
                 gc = gc, contributing_devices = unique(contributing_devices), rhs_series = rhs_series,
-                invoked_series = invoked_series, lhs_series = lhs_series,
-                marginal_value_series = marginal_value_series,
+                invoked_series = invoked_series,
             ),
         )
         push!(added, versioned_name)
-    end
-
-    for (duid, series) in sort!(collect(fixed_loads); by = first)
-        push!(
-            staged,
-            _fixed_load_constraint(
-                sys, duid, series, full_grid, base_power;
-                solution = include_solution ? filter(r -> r.GENCONID == "\$" * duid, invoked_all) : nothing,
-            ),
-        )
-        push!(added, "\$" * duid)
     end
 
     if !isempty(skipped)
@@ -626,7 +500,7 @@ function add_nem_constraints!(
     end
 
     if !isempty(dropped)
-        @warn "add_nem_constraints!: built $(length(dropped)) constraint(s) without $(sum(length, values(dropped))) unit term(s) whose DUID is absent from sys (unresolved_terms = :drop); see get_dropped_terms"
+        @warn "add_nem_constraints!: built $(length(dropped)) constraint(s) without $(sum(length, values(dropped))) unit term(s) whose DUID is absent from sys; see get_dropped_terms"
     end
 
     if !isempty(missing_weight)
@@ -641,24 +515,18 @@ function add_nem_constraints!(
                     for e in empty_region_terms
             ), "; ",
         )
-        if allow_empty_region_terms
-            @warn "add_nem_constraints!: $(length(empty_region_terms)) RegionTerm(s) resolved to a region with no Generator/Storage in sys; proceeding with empty devices (allow_empty_region_terms=true): $detail"
-        else
-            throw(
-                ArgumentError(
-                    "add_nem_constraints!: $(length(empty_region_terms)) RegionTerm(s) resolved to a region with no Generator/Storage in sys: $detail. " *
-                        "Pass allow_empty_region_terms=true to add these constraints anyway with an empty RegionTerm.devices.",
-                ),
-            )
-        end
+        throw(
+            ArgumentError(
+                "add_nem_constraints!: $(length(empty_region_terms)) RegionTerm(s) resolved to a region with no Generator/Storage in sys: $detail.",
+            ),
+        )
     end
 
     get_ext(sys)["skipped_constraints"] = skipped_detail
     get_ext(sys)["defaulted_constraint_weights"] = missing_weight
     get_ext(sys)["missing_constraint_intervals"] = string.(missing_intervals)
 
-    # sys is mutated only past this point - every throw above leaves it untouched, so a caller
-    # retrying with allow_empty_region_terms=true on the same sys never double-adds anything.
+    # sys is mutated only past this point - every throw above leaves it untouched.
     get_ext(sys)["dropped_terms"] = Dict{String, Any}[
         merge(term, Dict{String, Any}("constraint" => name)) for (name, terms) in sort!(collect(dropped); by = first)
             for term in terms
@@ -667,22 +535,12 @@ function add_nem_constraints!(
         add_service!(sys, entry.gc, entry.contributing_devices)
         add_time_series!(
             sys, entry.gc,
-            _single_series("rhs", start_date, entry.rhs_series, resolution),
+            single_series("rhs", start_date, entry.rhs_series, resolution),
         )
         add_time_series!(
             sys, entry.gc,
-            _single_series("invoked", start_date, entry.invoked_series, resolution),
+            single_series("invoked", start_date, entry.invoked_series, resolution),
         )
-        if include_solution
-            add_time_series!(
-                sys, entry.gc,
-                _single_series("lhs", start_date, entry.lhs_series, resolution),
-            )
-            add_time_series!(
-                sys, entry.gc,
-                _single_series("marginal_value", start_date, entry.marginal_value_series, resolution),
-            )
-        end
     end
 
     return added, skipped
