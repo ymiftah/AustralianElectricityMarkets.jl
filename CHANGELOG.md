@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Reviewed NEMDE deviation notes against the current replay: corrected elastic energy limits,
+  incomplete-constraint validation, load FCAS input coverage and fast-start fixed loadings.
+
+- Grouped Literate sources into overview, formulation, tutorials, how-to guides and shared helpers,
+  preserving published page paths.
+
 - Updated the AEMSim toy tutorial for the current replay inputs, FCAS time series and pinned
   PowerSimulations revision.
 

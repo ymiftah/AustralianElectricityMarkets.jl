@@ -8,9 +8,6 @@ using CairoMakie #hide
 # moves. The same generators, batteries and loads provide both energy and FCAS, and a MW
 # held in reserve is a MW not sold as energy. NEMDE therefore clears the two together.
 #
-# This chapter covers what is bought, how much, what each unit can provide, and how the
-# price of each service is set. Symbols follow the [notation table](@ref nemde-notation).
-#
 # ## The ten services
 #
 # The NEM runs at 50 Hz. A **raise** service increases net injection when frequency falls. A
@@ -230,7 +227,7 @@ end #hide
 #
 # ## [Adjusting the offer to the interval](@id fcas-cases-scaling)
 #
-# The trapezium is offered in advance. Before each solve AEMO shrinks it to what the unit
+# The trapezium is offered as part of a bid. Before each solve AEMO shrinks it to what the unit
 # can do in this interval, and then checks whether the unit can be enabled at all. Neither
 # step involves the optimisation.
 #
@@ -290,12 +287,14 @@ end #hide
 #
 # !!! note "Deviation in AustralianElectricityMarketsSimulations"
 #     **AEMO:** scales the trapeziums of generators, batteries and scheduled loads. **This
-#     package:** scales those of generators and batteries. A scheduled load's trapeziums are
-#     used as offered, and the joint ramping constraints below are not applied to it.
+#     package:** the standard scaling-input setter covers generators and batteries only.
+#     Scheduled loads therefore use their offered trapeziums without telemetered scaling,
+#     and their joint ramping rows are inactive without AGC ramp inputs. The formulation
+#     can use these inputs on loads when they are attached separately.
 #
 # ### [Can the unit be enabled at all?](@id fcas-cases-preconditions)
 #
-# After scaling, AEMO tests each offer. An offer that fails any test is excluded: its
+# After scaling, AEMO checks each offer. An offer that fails the requirements is excluded: its
 # enablement is fixed at zero for the interval. Passing does not mean the unit will be
 # enabled, only that it may be.
 #
@@ -307,7 +306,7 @@ end #hide
 # | The unit starts inside the range | ``E^{\min}\le\max(p^0,0)\le E^{\max}`` | ``E^{\min}\le p^0\le E^{\max}``, with ``p^0`` negative when charging. With regulation offered on both sides, from ``E^{\min}`` of the consumption offer to ``E^{\max}`` of the generation offer |
 # | Regulation only: the unit is on AGC | Required | Required |
 #
-# The fourth test has a name. A unit that begins the interval outside the range of a
+# The fourth test has a specific name. A unit that begins the interval outside the range of a
 # trapezium is **stranded**: it cannot be enabled for that service until it has moved back
 # inside. The starting point ``p^0`` is the metered output, as for ramp rates. See
 # [FCAS Model in NEMDE, §5, pp. 18-19](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf).
@@ -452,12 +451,12 @@ end #hide
 # availability.*
 #
 # !!! note "Deviation in AustralianElectricityMarketsSimulations"
-#     **AEMO:** publishes actual availability for every unit and service. **This package:**
+#     **AEMO:** publishes actual availability for every unit and service. **AustralianElectricityMarkets.jl:**
 #     does not compute it. The published values can be read from the data for comparison.
 #
 # ## [FCAS prices](@id fcas-pricing)
 #
-# The price of a service in a region is the cost of requiring one more MW of it there. In
+# The price of a service in a region is the cost of requiring one more MW of it. In
 # the optimisation that is the sum of the marginal values of every requirement that covers
 # the region for that service.
 #

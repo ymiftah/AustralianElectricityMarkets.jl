@@ -20,8 +20,8 @@ using CairoMakie #hide
 #
 # ## The offer
 #
-# An energy offer has ten **price bands**. Its prices are set once per trading day and must
-# not decrease from band 1 to band 10. Its quantities, the MW placed in each band, are set per
+# An energy offer has ten increasing **price bands**. Its prices are set once per trading day,
+# its quantities, the MW placed in each band, are set per
 # five-minute interval and can be rebid until shortly before dispatch. A participant
 # therefore moves volume between fixed prices instead of changing the prices themselves.
 #
@@ -85,7 +85,7 @@ using CairoMakie #hide
 # p_u-\sigma_u^{\mathrm{uigf}}\le \mathrm{UIGF}_u\quad\text{(semi-scheduled units)}.
 # ```
 #
-# The slacks ``\sigma`` are zero in almost every interval. They exist so that the problem
+# The slacks ``\sigma`` are (hopefully) zero in almost every interval. They exist so that the problem
 # always has a solution, and they are priced high enough to be a last resort. See
 # [Violations, tie-breaking and prices](@ref nemde-prices).
 #
@@ -102,7 +102,7 @@ using CairoMakie #hide
 #
 # ``R^{\uparrow}_u`` and ``R^{\downarrow}_u`` are the lower of the rate the participant
 # offered and the rate its telemetry reports. A unit metered at 100 MW with ramp rates of
-# 120 MW per hour can be sent anywhere from 90 to 110 MW.
+# 120 MW per hour can be sent anywhere from 90 to 110 MW in the next 5-min trading interval.
 #
 # Availability and ramp limits can contradict each other. A unit metered at 100 MW that
 # declares 60 MW available, with 10 MW of downward ramp, cannot satisfy both. NEMDE then
@@ -111,13 +111,11 @@ using CairoMakie #hide
 # availability. The factors are items 3, 12 and 14 of AEMO's
 # [Schedule of Constraint Violation Penalty Factors, v8.0](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/congestion-information/2025/schedule-of-constraint-violation-penalty-factors.pdf).
 #
-# !!! note "Deviation in AustralianElectricityMarketsSimulations"
-#     **AEMO:** availability and the UIGF are constraints with their own priced violation.
-#     **This package:** both are hard upper limits with no violation variable. To reproduce
-#     the outcome above, the upper limit is raised to the ramp-down floor,
-#     ``\max(A_u,\;p^0_u-R^{\downarrow}_uh)``, before the solve. The result matches when the
-#     ramp limit is the only reason to exceed availability, and differs if NEMDE exceeds
-#     availability for any other reason.
+# The package models bid availability and the UIGF as separate constraints with priced
+# violations at these factors, including separate generation and consumption availability
+# for batteries. It also prices violations of the equality between dispatch and cleared
+# energy bands at factor 1135 (item 8 of the same schedule). It does not raise availability
+# to the ramp-down floor before solving.
 #
 # ## Batteries
 #
@@ -153,11 +151,6 @@ end #hide
 # its half-hourly forecast runs
 # ([FCAS Model in NEMDE, §5, pp. 18-19](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/dispatch/policy_and_process/fcas-model-in-nemde.pdf)).
 #
-# !!! note "Deviation in AustralianElectricityMarketsSimulations"
-#     **AEMO:** the published documents do not say how NEMDE rules out clearing generation
-#     and consumption bands of one battery in the same interval. **This package:** has no
-#     such rule. If both directions clear, only the net injection is meaningful.
-#
 # ## Supply meets demand in each region
 #
 # The sign of each participant's contribution to its region is as follows.
@@ -186,27 +179,9 @@ end #hide
 # The marginal value of this constraint, ``\lambda_r``, is the regional energy price.
 #
 # !!! note "Deviation in AustralianElectricityMarketsSimulations"
-#     **AEMO:** ``D_r`` is a forecast made before the solve. **This package:** ``D_r`` is the
-#     published `TOTALDEMAND` of the interval, which AEMO reports after the solve as demand
-#     net of dispatched scheduled load. The balance therefore reproduces the published
-#     regional requirement. It does not test the demand forecast.
-#
-# !!! note "Deviation in AustralianElectricityMarketsSimulations"
 #     **AEMO:** wholesale demand response units are dispatched like other units. **This
 #     package:** they are not modelled, and their response is absent from the balance.
 #
-# ## A worked example
-#
-# One region has a demand of 250 MW, no interconnector and two generators.
-#
-# | Generator | Offered | Price at the unit | Loss factor | Price at the reference node |
-# | --- | --- | --- | --- | --- |
-# | G1 | 100 MW | \$30/MWh | 1.00 | \$30.00/MWh |
-# | G2 | 200 MW | \$50/MWh | 0.95 | \$52.63/MWh |
-#
-# G1 is cheaper and clears in full. G2 supplies the remaining 150 MW. One more MW of demand
-# would come from G2, so the regional price is \$52.63/MWh. G2 is paid that price times its
-# loss factor, which is the \$50/MWh it offered. G1 is paid \$52.63/MWh.
 #
 # ## References
 #

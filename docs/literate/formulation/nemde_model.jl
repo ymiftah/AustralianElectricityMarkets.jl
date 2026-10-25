@@ -4,7 +4,7 @@
 # Engine (NEMDE)**, run by the Australian Energy Market Operator (AEMO) every five minutes.
 # These chapters explain that optimisation: what it decides, which constraints it respects,
 # what it costs and how prices come out of it. They assume familiarity with electricity
-# markets in general and none with the NEM. For the market's institutions and history, see
+# markets in general, but none with the NEM. For the market's institutions and history, see
 # [The dispatch process](@ref nem-dispatch).
 #
 # ## What happens every five minutes
@@ -20,7 +20,7 @@
 #    interconnector's flow from its telemetry system (SCADA) at the start of the interval.
 # 3. **Forecasts are prepared.** AEMO forecasts each region's demand at the end of the
 #    interval, and the maximum output of each wind and solar farm.
-# 4. **Network limits are evaluated.** The transmission network is not modelled line by
+# 4. **Network limits are modelled.** The transmission network is not modelled line by
 #    line. AEMO expresses each limit as a linear inequality over unit outputs and
 #    interconnector flows, called a **generic constraint**, and computes its right-hand side
 #    from current system conditions.
@@ -45,8 +45,7 @@
 # | Generic constraints and their right-hand sides | Violation of any constraint that cannot be met | Violation quantities |
 # | Loss factors and loss equations | | |
 #
-# The published prices and targets are results of the optimisation. They are never inputs
-# to it.
+# The published prices and targets for each units are results of the optimisation.
 #
 # ## The optimisation in one view
 #
@@ -74,7 +73,7 @@
 # | [Energy bids and participants](@ref nemde-energy) | Offer bands, loss-factor adjustment of prices, availability, ramp rates, batteries and the regional energy balance |
 # | [FCAS capability and co-optimisation](@ref nemde-fcas) | The ten reserve services, how much is required, how much each unit can provide, and how reserves compete with energy for the same plant |
 # | [Interconnectors and losses](@ref nemde-interconnectors) | Flows between regions, the losses they incur, and transfers offered by a market interconnector |
-# | [Fast-start dispatch](@ref nemde-fast-start) | The one case where NEMDE takes a commitment decision |
+# | [Fast-start dispatch](@ref nemde-fast-start) | Unit commitment of `fast-start` units |
 # | [Violations, tie-breaking and prices](@ref nemde-prices) | Generic constraints, violation penalties, equally priced offers, and how marginal values become published prices |
 #
 # ## [Notation](@id nemde-notation)
@@ -144,24 +143,17 @@
 #
 # ## [Where this package differs](@id nemde-deviations)
 #
-# These chapters describe AEMO's dispatch. Where the dispatch model in
-# `AustralianElectricityMarketsSimulations` does something else, the chapter says so in a note
-# titled "Deviation in AustralianElectricityMarketsSimulations", placed beside the equation it
-# affects. The deviations are, in summary:
+# These chapters describe AEMO's dispatch. The following limitations apply to the NEM dispatch
+# formulations and replay workflow in `AustralianElectricityMarketsSimulations.jl`; other
+# PowerSimulations formulations can behave differently. The chapter notes give the details.
+# Availability, UIGF and total offered energy are enforced with separate priced violations.
 #
 # | Area | Deviation | Chapter |
 # | --- | --- | --- |
-# | Availability and forecast limits | Hard limits, raised when the ramp-down limit would otherwise conflict, in place of priced violations | [Energy](@ref nemde-energy) |
-# | Batteries | No rule against clearing generation and consumption at once | [Energy](@ref nemde-energy) |
-# | Regional demand | The published demand is used as the balance requirement | [Energy](@ref nemde-energy) |
 # | Units outside dispatch | Wholesale demand response units are not modelled | [Energy](@ref nemde-energy) |
-# | FCAS scaling for loads | Telemetered limits are not applied to scheduled loads | [FCAS](@ref nemde-fcas) |
-# | Loss curve | Integer variables order the loss segments, and the curve is shifted to pass through zero | [Interconnectors](@ref nemde-interconnectors) |
+# | FCAS scaling for loads | The standard input setter omits scheduled loads, so their telemetered scaling and joint ramping are absent | [FCAS](@ref nemde-fcas) |
 # | Market interconnector | Hard availability, no ramp rate or fixed loading, no converter losses or no-go zone | [Interconnectors](@ref nemde-interconnectors) |
-# | Fast-start units | Dispatched as ordinary units, without profiles or the two-pass solve | [Fast-start](@ref nemde-fast-start) |
-# | Generic constraints | Published right-hand sides are replayed, and terms for units outside the model are dropped | [Prices](@ref nemde-prices) |
-# | Tie-breaking | The penalty is not scaled by the market price cap | [Prices](@ref nemde-prices) |
-# | Published prices | No re-runs, price scaling, administered pricing or intervention pricing | [Prices](@ref nemde-prices) |
+# | Fast-start units | No profiles or two-pass commitment; participant fixed loadings are omitted for units with a positive T1 for the whole trading day | [Fast-start](@ref nemde-fast-start) |
 #
 # ## [Official references](@id nemde-model-references)
 #
@@ -179,7 +171,7 @@
 # MMSDM name, one directory per archive month:
 #
 # ```text
-# ~/.nemdb_cache/<TABLE>/archive_month=YYYY-MM-01/*.parquet
+# ~/<.nemdb_cache>/<TABLE>/archive_month=YYYY-MM-01/*.parquet
 # ```
 #
 # Each chapter ends with a table that maps its symbols to MMSDM tables and columns. In those

@@ -213,7 +213,7 @@ fcas_unit_target(container, service_name) =
 fcas_unit_mw(container, service_name, duid) =
     PSI.JuMP.value(fcas_unit_target(container, service_name)[duid, 1]) * PSI.get_base_power(container)
 
-@testset "FCASMarket reproduces docs/literate/fcas.jl's published Tungatinah/TAS1 numbers" begin
+@testset "FCASMarket reproduces docs/literate/howto/fcas.jl's published Tungatinah/TAS1 numbers" begin
     # BIDPEROFFER_D trapeziums for DUID TUNGATIN, 2025-01-13 16:30, one row per market.
     duid = TOY_CHEAP
     trapeziums_mw = Dict(

@@ -6,7 +6,7 @@ using DocumenterVitepress
 using Literate
 using CairoMakie
 
-include(joinpath(@__DIR__, "literate", "inline_source.jl"))
+include(joinpath(@__DIR__, "literate", "shared", "inline_source.jl"))
 include(joinpath(@__DIR__, "formulation_pages.jl"))
 
 DocMeta.setdocmeta!(
@@ -22,10 +22,15 @@ set_theme!(theme_dark())
 CairoMakie.activate!(type = "image/png")
 
 ## Generate Literate examples
-for name in vcat(FORMULATION_PAGES, ["nem", "fcas", "nemde_jump", "nemde_psi", "nemde_aem", "build_system", "economic_dispatch", "market_bids", "interchanges", "clearing-with-batteries"])
+for (group, names) in [
+            "formulation" => FORMULATION_PAGES,
+            "overview" => ["nem"],
+            "tutorials" => ["nemde_jump", "nemde_psi", "nemde_aem"],
+            "howto" => ["build_system", "economic_dispatch", "market_bids", "interchanges", "clearing-with-batteries", "fcas"],
+        ], name in names
     figure_options = name in FORMULATION_PAGES ? (; image_formats = [(MIME("image/png"), ".png")]) : (;)
     Literate.markdown(
-        joinpath(@__DIR__, "literate", "$name.jl"),
+        joinpath(@__DIR__, "literate", group, "$name.jl"),
         joinpath(@__DIR__, "src", "examples");
         figure_options...,
         execute = true,

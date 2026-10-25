@@ -6,8 +6,8 @@ begin
     using Markdown
 end;
 
-include(joinpath(@__DIR__, "..", "..", "literate", "toy_market.jl")) #hide
-include(joinpath(@__DIR__, "..", "..", "literate", "toy_jump.jl")); #hide
+include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_market.jl")) #hide
+include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_jump.jl")); #hide
 
 # # [NEMDE as a JuMP model](@id nemde-jump)
 #

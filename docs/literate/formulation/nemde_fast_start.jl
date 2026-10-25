@@ -136,9 +136,11 @@ end #hide
 # !!! note "Deviation in AustralianElectricityMarketsSimulations"
 #     **AEMO:** fast-start units follow their inflexibility profile, and commitment is
 #     decided by the two solves above. **This package:** profiles are not modelled and there
-#     is one solve. A fast-start unit is dispatched as an ordinary unit, limited by its
-#     offer, availability and ramp rates. Its modelled target can therefore differ from the
+#     is no two-pass commitment. A fast-start unit is dispatched as an ordinary unit, limited
+#     by its offer, availability and ramp rates. Its modelled target can therefore differ from the
 #     published one while the unit is starting up or held at minimum load.
+#     Participant fixed loadings are also omitted for the whole trading day when the unit's
+#     daily offer has a positive ``T_1``, including intervals after its profile would end.
 #
 # ## References
 #

@@ -47,11 +47,12 @@
 #     limit would have been under different conditions.
 #
 # !!! note "Deviation in AustralianElectricityMarketsSimulations"
-#     **AEMO:** every registered unit is in the problem, so every term of a constraint is
-#     present. **This package:** a term for a unit outside the model is dropped and the
-#     constraint is built from the rest. This is exact only if that unit's dispatch was
-#     zero. A constraint with a region or interconnector term that cannot be matched is
-#     left out entirely.
+#     **AEMO:** evaluates each constraint using its applicable participant and interconnector
+#     terms. **This package:** the data-loading step records dropped unit terms and skipped
+#     constraints when components cannot be matched. The replay template rejects those
+#     incomplete inputs. If a model family is explicitly omitted, it excludes the whole
+#     affected constraint; it does not solve a partial left-hand side. A custom template
+#     built directly from the loaded constraints must check these records itself.
 #
 # ## When constraints cannot all be met
 #
@@ -105,12 +106,12 @@
 # lists further items that are outside these chapters.
 #
 # !!! note "Deviation in AustralianElectricityMarketsSimulations"
-#     **AEMO:** every item above has a priced violation. **This package:** items 3, 5, 19 to
-#     24 and the generic constraints have one. Items 12 and 14 are hard limits adjusted before
-#     the solve (see [Energy bids and participants](@ref nemde-energy)), items 4, 9, 16 and
-#     17 are hard or absent (see [Interconnectors and losses](@ref nemde-interconnectors)),
-#     and items 8 and 10 are absent. The market price cap comes from a built-in table by
-#     financial year.
+#     **AEMO:** every item above has a priced violation. **This package:** items 3, 5, 8,
+#     12, 14, 19 to 24 and the generic constraints have one. Participant fixed loadings
+#     also have priced violations at factor 380 (item 13), except on fast-start units.
+#     Items 4, 9, 16 and 17 remain hard or absent (see [Interconnectors and losses](@ref
+#     nemde-interconnectors)), and item 10 is absent. The market price cap defaults to a
+#     built-in table by financial year and can be overridden.
 #
 # ## Offers at the same price
 #
@@ -188,7 +189,8 @@
 #
 # !!! note "Deviation in AustralianElectricityMarketsSimulations"
 #     **AEMO:** publishes prices after the adjustments above. **This package:** returns the
-#     marginal values of a single solve, with none of the adjustments. Its prices are
+#     marginal values, using an LP with integer decisions fixed when the dispatch model
+#     contains integers, with none of AEMO's pricing adjustments. Its prices are
 #     comparable with the ROP. In an interval with a violated constraint they contain
 #     penalty prices and can be far from the published RRP.
 #

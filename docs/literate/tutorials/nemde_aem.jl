@@ -14,8 +14,8 @@ import PowerSystems as PSY
 import PowerSimulations as PSI
 import AustralianElectricityMarketsSimulations as AEMSim
 
-include(joinpath(@__DIR__, "..", "..", "literate", "toy_market.jl")) #hide
-include(joinpath(@__DIR__, "..", "..", "literate", "toy_jump.jl")); #hide
+include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_market.jl")) #hide
+include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_jump.jl")); #hide
 
 # # [Building it with AEM and AEMSim](@id nemde-aem)
 #

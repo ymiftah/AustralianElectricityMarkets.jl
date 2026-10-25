@@ -6,12 +6,12 @@ set_theme!()
 
 function formulation_review_links()
     links = Dict(
-        "nemde-jump" => "../../docs/literate/nemde_jump.jl",
-        "nem-dispatch" => "../../docs/literate/nem.jl",
-        "fcas-requirement-reading" => "../../docs/literate/fcas.jl",
+        "nemde-jump" => "../../docs/literate/tutorials/nemde_jump.jl",
+        "nem-dispatch" => "../../docs/literate/overview/nem.jl",
+        "fcas-requirement-reading" => "../../docs/literate/howto/fcas.jl",
     )
     for name in FORMULATION_PAGES
-        source = read(joinpath(@__DIR__, "literate", "$name.jl"), String)
+        source = read(joinpath(@__DIR__, "literate", "formulation", "$name.jl"), String)
         for matched in eachmatch(r"\(@id ([^)]+)\)", source)
             anchor = matched.captures[1]
             links[anchor] = "$name.md#$anchor"
@@ -45,7 +45,7 @@ function render_formulation_review(output = joinpath(@__DIR__, "..", "docs-revie
     links = formulation_review_links()
     for name in FORMULATION_PAGES
         Literate.markdown(
-            joinpath(@__DIR__, "literate", "$name.jl"), output;
+            joinpath(@__DIR__, "literate", "formulation", "$name.jl"), output;
             preprocess = content -> replace(content, "@ref" => "@reviewref", "@id" => "@reviewid"),
             execute = true,
             flavor = Literate.CommonMarkFlavor(),
