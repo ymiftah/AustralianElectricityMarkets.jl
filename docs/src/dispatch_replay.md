@@ -79,6 +79,18 @@ loading and first-use compilation from warmed interval updates, and report updat
 from the MIP and pricing-LP solve times. `-O0` can reduce compiler work while increasing Julia
 execution time, so a short startup test alone does not establish overnight throughput.
 
+A local, three-interval January 2026 benchmark is available for before/after checks:
+
+```sh
+julia -O1 --project=AustralianElectricityMarketsSimulations/test \
+    AustralianElectricityMarketsSimulations/test/real_data/benchmark_updates.jl /tmp/replay-update-pilot
+```
+
+Give a new output folder and an existing local cache covering January 6 through 04:25 AEST.
+The harness records source hashes, per-step update/solve times, stored decisions and pricing
+duals. Step 0 is warm-up. Compare subsequent steps using identical flags and inputs; the pilot
+is not a full-day throughput or complete numerical-audit test.
+
 ## Compare historical results with NEMDE
 
 The repository scripts coordinate cache access, system construction, simulation and published

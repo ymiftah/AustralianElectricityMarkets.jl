@@ -60,3 +60,37 @@ The existing recurrent-simulation tests compare updated dispatch, FCAS outcomes,
 and duals against standalone interval solves. Real-data performance checks use identical
 inputs, solver settings and Julia optimisation levels, with update and solve time reported
 separately. Short-window measurements are not full-day throughput guarantees.
+
+### Controlled real-data pilot
+
+`test/real_data/benchmark_updates.jl` measures 2026-01-06 interval ends 04:05, 04:10 and
+04:15 AEST. Both revisions used Julia 1.13.2 with `-O1`, PSI 0.38.4 at its pinned revision,
+HiGHS.jl 1.26.1, one solver thread, relative MIP gap `1e-8`, absolute gap `1e-10`, disk-backed
+forecasts and 2,800 parameter containers. The baseline formulation files were unchanged from
+`v0.2` at `feb3b5f`; the fixed implementation was `408acf4`. Each result records SHA-256
+hashes of the three formulation files. Other local test work ran concurrently, so the
+wall-clock observations are a pilot rather than a stable throughput distribution.
+
+| Update | Baseline seconds | Cached/keyed seconds |
+| --- | ---: | ---: |
+| 04:05, warm-up | 102.0068 | 125.5078 |
+| 04:10 | 14.6142 | 2.0710 |
+| 04:15 | 7.8590 | 1.7312 |
+| Mean excluding warm-up | 11.2366 | 1.9011 |
+
+The warmed mean improved by 5.91 times. Cache construction moved work into the first update,
+which took longer. Construction, solves, exports and audit work are excluded from update
+times. The baseline and fixed pilot objectives matched exactly at all three intervals.
+For each interval, all 42,883 exported variable cells, their objective coefficients, and
+all 4,243 stored pricing-dual cells also matched exactly; no duplicate export keys occurred.
+
+The exported point omits 29,951 model variables outside the registered decision-variable
+containers, so the harness reported incomplete primal-audit coverage. These comparisons
+establish update equivalence for this pilot, not independent full-model feasibility or
+market fidelity. A complete trading day was not re-run after the fix.
+
+Local raw pilot folders are `/tmp/aem-update-before-complete-o1` and
+`/tmp/aem-update-after-complete-o1`; the comparison summary is
+`/tmp/aem-update-comparison.json`. Earlier construction/profile attempts and failed exporter
+attempts are excluded from the table. The complete Simulations suite passed 2,117 checks;
+pre-commit checks and independent source review passed.
