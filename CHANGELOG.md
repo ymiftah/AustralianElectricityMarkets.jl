@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- System construction filters generic-constraint terms to requested versions before archive
+  deduplication, reads native FCAS trapeziums with their offer bands, and groups energy bids
+  once for unit and direction lookups.
+
 - Replay tie-pair validation skips rebuilding unchanged pair sets while preserving full checks
   and diagnostics for changed prices, band counts and missing timestamps.
 

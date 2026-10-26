@@ -67,7 +67,7 @@ function _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
             shut_down = 0.0,
         )
     )
-    psd = gen_bids.piecewise_step_data
+    psd = copy(gen_bids.piecewise_step_data)
     time_series_data = single_series("variable_cost", start_date, psd, resolution)
     set_incremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
     time_series_incremental_initial_input = single_series("incremental_initial_input", start_date, zeros(size(psd)), resolution)
@@ -104,7 +104,7 @@ function _set_decremental_bid_cost!(sys, device, load_bids, start_date, resoluti
             shut_down = 0.0,
         ),
     )
-    psd = load_bids.piecewise_step_data
+    psd = copy(load_bids.piecewise_step_data)
     time_series_data = single_series("decremental_variable_cost", start_date, psd, resolution)
     set_decremental_variable_cost!(sys, device, time_series_data, UnitSystem.NATURAL_UNITS)
     time_series_decremental_initial_input = single_series("decremental_initial_input", start_date, (first ∘ get_y_coords).(psd), resolution)
@@ -152,10 +152,14 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     factors = read_loss_factors(db; as_of = start_date, through = end_date)
     _refer_bids_to_reference_node!(subset!(bids, :DUID => ByRow(in(sys_units))), factors)
 
+    by_unit_side = groupby(bids, [:DUID, :DIRECTION]; sort = false)
+    empty_bids = view(bids, Int[], :)
+    offered_units = Set(bids.DUID)
+
     # Sets all generator subtype first
     foreach(get_components(Generator, sys)) do gen
         gen_id = get_name(gen)
-        gen_bids = subset(bids, :DUID => ByRow(==(gen_id)), :DIRECTION => ByRow(==("GEN")))
+        gen_bids = get(by_unit_side, (gen_id, "GEN"), empty_bids)
         if DataFrames.isempty(gen_bids)
             @warn "No bid data for generator $(gen_id), setting to unavailable."
             set_available!(gen, false)
@@ -171,9 +175,9 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     foreach(get_components(InterruptiblePowerLoad, sys)) do load
         is_non_scheduled_load(load) && return
         load_id = get_name(load)
-        load_bids = subset(bids, :DUID => ByRow(==(load_id)), :DIRECTION => ByRow(==("LOAD")))
+        load_bids = get(by_unit_side, (load_id, "LOAD"), empty_bids)
         if DataFrames.isempty(load_bids)
-            any(==(load_id), bids.DUID) ? push!(gen_bid_loads, load_id) : push!(unbid_loads, load_id)
+            load_id in offered_units ? push!(gen_bid_loads, load_id) : push!(unbid_loads, load_id)
             set_available!(load, false)
         else
             _set_decremental_bid_cost!(sys, load, load_bids, start_date, resolution)
@@ -185,8 +189,8 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     # Then sets the batteries
     return foreach(get_components(EnergyReservoirStorage, sys)) do gen
         gen_id = get_name(gen)
-        gen_bids = subset(bids, :DUID => ByRow(==(gen_id)), :DIRECTION => ByRow(==("GEN")))
-        load_bids = subset(bids, :DUID => ByRow(==(gen_id)), :DIRECTION => ByRow(==("LOAD")))
+        gen_bids = get(by_unit_side, (gen_id, "GEN"), empty_bids)
+        load_bids = get(by_unit_side, (gen_id, "LOAD"), empty_bids)
 
         if DataFrames.isempty(gen_bids) || DataFrames.isempty(load_bids)
             @warn "No bid data for generator $(gen_id), setting to unavailable."
