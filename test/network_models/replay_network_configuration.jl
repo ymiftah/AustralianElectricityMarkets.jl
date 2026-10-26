@@ -1,3 +1,7 @@
+@testset "Replay requirements include mandatory MNSP metering" begin
+    @test :DISPATCHINTERCONNECTORRES in table_requirements(NEMDEConfiguration())
+end
+
 @testset "NEMDEConfiguration" begin
     hive = mktempdir()
     create_mock_data(hive; complete_inputs = true)

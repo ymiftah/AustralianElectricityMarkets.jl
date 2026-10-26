@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Replay table requirements include `DISPATCHINTERCONNECTORRES` for MNSP metered-flow
+  ramping, including when diagnostic interval flow limits are disabled.
+
 - Energy-offer and fixed-loading affine sums are constructed inside their existing typed PSI
   constraint hooks, reducing intermediate expression copies without changing model equations.
 

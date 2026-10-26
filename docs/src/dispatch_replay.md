@@ -32,7 +32,8 @@ These limits are computed after dispatch; keep the default `false` when validati
 
 MNSP inputs include each directional link's offers, availability, ramp rate and fixed-loading
 instruction, plus the interconnector's metered starting flow from the selected `intervention`
-run. `set_mnsp_offers!` requires `DISPATCHINTERCONNECTORRES` alongside the MNSP offer tables.
+run. `table_requirements(NEMDEConfiguration())` includes `DISPATCHINTERCONNECTORRES`, which
+`set_mnsp_offers!` requires even when `interval_flow_limits = false`.
 A NULL fixed-loading value means no instruction; zero is an active instruction.
 
 The dispatch model prices MNSP violations at the interval's Market Price Cap times CVP factors

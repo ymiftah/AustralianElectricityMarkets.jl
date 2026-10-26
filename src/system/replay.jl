@@ -1,9 +1,9 @@
 """
     table_requirements(::NEMDEConfiguration)
 
-Returns the constrained network tables plus the interconnector loss and MNSP offer tables
-needed to populate a replay system. Optional interval flow limits also require
-`DISPATCHINTERCONNECTORRES`.
+Returns the constrained network tables plus interconnector loss, MNSP offer and metered-flow
+tables needed for replay. `DISPATCHINTERCONNECTORRES` is required for MNSP ramping even when
+published interval flow limits are not attached.
 
 # Returns
 A vector of NEMWEB table symbols.
@@ -12,7 +12,7 @@ function AustralianElectricityMarkets.table_requirements(::NEMDEConfiguration)
     return [
         table_requirements(ConstrainedNetworkConfiguration())...,
         :LOSSMODEL, :LOSSFACTORMODEL, :MNSP_INTERCONNECTOR, :MNSP_DAYOFFER,
-        :MNSP_BIDOFFERPERIOD, :DISPATCH_MNSPBIDTRK,
+        :MNSP_BIDOFFERPERIOD, :DISPATCH_MNSPBIDTRK, :DISPATCHINTERCONNECTORRES,
     ]
 end
 
