@@ -157,6 +157,38 @@ end
         terms = read_constraint_terms(db, versions, date_range)
         @test !isempty(terms)
 
+        # Repeated requests and unrelated versions cannot multiply or replace term rows.
+        one_version = subset(versions, :GENCONID => ByRow(==("F_VIC1_RAISE6SEC")))
+        requested = vcat(one_version, one_version)
+        expected = subset(terms, :GENCONID => ByRow(==("F_VIC1_RAISE6SEC")))
+        actual = read_constraint_terms(db, requested, date_range)
+        @test isequal(sort(actual, names(actual)), sort(expected, names(expected)))
+        unknown = copy(one_version)
+        unknown.GENCONID_VERSIONNO .+= 1000
+        @test isempty(read_constraint_terms(db, unknown, date_range))
+
+        mktempdir() do archive_hive
+            tables = (:SPDCONNECTIONPOINTCONSTRAINT, :SPDREGIONCONSTRAINT, :SPDINTERCONNECTORCONSTRAINT)
+            for table in (tables..., :DUDETAILSUMMARY)
+                cp(joinpath(hive_dir, string(table)), joinpath(archive_hive, string(table)))
+            end
+            for table in tables
+                source = joinpath(hive_dir, string(table), "**", "*.parquet")
+                later = mkpath(joinpath(archive_hive, string(table), "archive_month=2025-02"))
+                DuckDB.execute(
+                    db.db,
+                    "COPY (SELECT * EXCLUDE (archive_month) REPLACE (FACTOR + 7 AS FACTOR) " *
+                        "FROM read_parquet('$source', hive_partitioning=true)) " *
+                        "TO '$(joinpath(later, "correction.parquet"))' (FORMAT PARQUET)",
+                )
+            end
+            archive_db = aem_connect(HiveConfiguration(hive_location = archive_hive))
+            corrected = read_constraint_terms(archive_db, versions, date_range)
+            expected = copy(terms)
+            expected.FACTOR .+= 7
+            @test isequal(sort(corrected, names(corrected)), sort(expected, names(expected)))
+        end
+
         # F_VIC1_RAISE6SEC expands to 4 UnitTerms - every DUID behind CP_BAYSW (BW01-04)
         vic1_terms = subset(terms, :GENCONID => ByRow(==("F_VIC1_RAISE6SEC")))
         @test nrow(vic1_terms) == 4

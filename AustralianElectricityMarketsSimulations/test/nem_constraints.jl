@@ -8,6 +8,26 @@ import PowerSimulations as PSI
 const AEMS = AustralianElectricityMarketsSimulations
 const ISOPT = PSI.IS.Optimization
 
+@testset "Constraint lookup preserves abstract name resolution and phase lifetime" begin
+    sys = augmented_pscb_system()
+    device = first(get_components(ThermalStandard, sys))
+    name = get_name(device)
+    lookup = AEMS._ConstraintComponentLookup(sys)
+    @test AEMS._constraint_component(PSY.Device, lookup, name) === device
+    @test AEMS._constraint_component(PSY.Device, lookup, name) === device
+    @test isnothing(AEMS._constraint_component(PSY.Device, lookup, "missing device"))
+    @test isnothing(AEMS._constraint_component(PSY.Device, lookup, "missing device"))
+
+    other = first(get_components(RenewableDispatch, sys))
+    remove_component!(sys, other)
+    set_name!(other, name)
+    add_component!(sys, other)
+    fresh = AEMS._ConstraintComponentLookup(sys)
+    @test_throws ArgumentError AEMS._constraint_component(PSY.Device, fresh, name)
+    @test AEMS._constraint_component(ThermalStandard, fresh, name) === device
+    @test AEMS._constraint_component(RenewableDispatch, fresh, name) === other
+end
+
 const NEM_CONSTRAINTS_HIVE_DIR = mktempdir()
 create_pscb_nemweb_data(NEM_CONSTRAINTS_HIVE_DIR)
 const NEM_CONSTRAINTS_DB = aem_connect(

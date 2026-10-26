@@ -61,14 +61,20 @@ get_upper_slope_coeff(t::FCASTrapezium) = iszero(t.max_avail) ? 0.0 : (t.enablem
 
 Returns `t` if it is a well-formed FCAS bid trapezium (AEMO, *FCAS Model in NEMDE*, §2):
 `enablement_min <= low_breakpoint <= high_breakpoint <= enablement_max` and `max_avail >= 0`.
-Throws an `ArgumentError` naming `context` otherwise.
+Throws an `ArgumentError` naming `context` otherwise. A context callback is evaluated only
+when validation fails.
 """
 function _validate_fcas_trapezium(t::FCASTrapezium, context::AbstractString)
+    return _validate_fcas_trapezium(t, () -> context)
+end
+
+function _validate_fcas_trapezium(t::FCASTrapezium, context::F) where {F <: Function}
     ordered = t.enablement_min <= t.low_breakpoint <= t.high_breakpoint <= t.enablement_max
     (ordered && t.max_avail >= 0.0) && return t
+    description = context()
     throw(
         ArgumentError(
-            "Malformed FCAS trapezium for $context: requires EnablementMin <= LowBreakpoint <= " *
+            "Malformed FCAS trapezium for $description: requires EnablementMin <= LowBreakpoint <= " *
                 "HighBreakpoint <= EnablementMax and MaxAvail >= 0, got EnablementMin = " *
                 "$(t.enablement_min), LowBreakpoint = $(t.low_breakpoint), HighBreakpoint = " *
                 "$(t.high_breakpoint), EnablementMax = $(t.enablement_max), MaxAvail = $(t.max_avail).",

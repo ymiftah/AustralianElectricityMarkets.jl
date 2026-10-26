@@ -34,7 +34,7 @@ const TEST_GROUPS = [
         ],
     ),
     "replay_network" => ("Replay network configuration", ["network_models/replay_network_configuration.jl"]),
-    "timeseries_setters" => ("Time series setter tests", ["timeseries_setters.jl"]),
+    "timeseries_setters" => ("Time series setter tests", ["timeseries_setters.jl", "bid_conversion.jl"]),
     "interval_inputs" => ("Per-interval inputs", ["interval_inputs.jl"]),
     "mnsp" => ("MNSP offers", ["mnsp_offers.jl"]),
     "fcas" => ("FCAS types", ["fcas/fcas.jl"]),

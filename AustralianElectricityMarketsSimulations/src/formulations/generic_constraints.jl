@@ -12,6 +12,36 @@ PSI.get_multiplier_value(::NEMConstraintRHSParameter, ::GenericConstraint, ::Lin
     1.0
 
 
+# The System is unchanged while one constraint's terms and diagnostics are constructed.
+struct _ConstraintComponentLookup
+    system::PSY.System
+    components::Dict{Tuple{DataType, String}, Union{Nothing, PSY.Component}}
+end
+
+function _ConstraintComponentLookup(sys::PSY.System)
+    return _ConstraintComponentLookup(sys, Dict{Tuple{DataType, String}, Union{Nothing, PSY.Component}}())
+end
+
+function _constraint_component(::Type{T}, sys::PSY.System, name::String) where {T <: PSY.Component}
+    return PSY.get_component(T, sys, name)
+end
+
+function _constraint_component(::Type{T}, lookup::_ConstraintComponentLookup, name::String) where {T <: PSY.Component}
+    component = get!(lookup.components, (T, name)) do
+        return PSY.get_component(T, lookup.system, name)
+    end
+    return component::Union{Nothing, T}
+end
+
+function _constraint_system(sys::PSY.System)
+    return sys
+end
+
+function _constraint_system(lookup::_ConstraintComponentLookup)
+    return lookup.system
+end
+
+
 # --- Term validation: fail loudly, never a partial LHS ---
 
 "A device's ENERGY variables and each one's multiplier in its net injection. `PSY.Storage` has no
@@ -40,10 +70,10 @@ available device's energy variables aren't in `container`.
 The resolved `PSY.Device`.
 """
 function _checked_device(
-        container::PSI.OptimizationContainer, sys::PSY.System, gc::GenericConstraint, term::UnitTerm,
+        container::PSI.OptimizationContainer, sys::Union{PSY.System, _ConstraintComponentLookup}, gc::GenericConstraint, term::UnitTerm,
     )
     name = PSY.get_name(gc)
-    device = PSY.get_component(PSY.Device, sys, get_duid(term))
+    device = _constraint_component(PSY.Device, sys, get_duid(term))
     isnothing(device) && throw(
         ArgumentError(
             "GenericConstraint \"$name\": UnitTerm's DUID \"$(get_duid(term))\" has no matching " *
@@ -72,12 +102,12 @@ when a device is absent from `sys`, or an available device's energy variables ar
 A `Vector{PSY.Device}`.
 """
 function _checked_devices(
-        container::PSI.OptimizationContainer, sys::PSY.System, gc::GenericConstraint, term::RegionTerm,
+        container::PSI.OptimizationContainer, sys::Union{PSY.System, _ConstraintComponentLookup}, gc::GenericConstraint, term::RegionTerm,
     )
     name = PSY.get_name(gc)
     devices = PSY.Device[]
     for dname in get_devices(term)
-        device = PSY.get_component(PSY.Device, sys, dname)
+        device = _constraint_component(PSY.Device, sys, dname)
         isnothing(device) && throw(
             ArgumentError(
                 "GenericConstraint \"$name\": RegionTerm on region \"$(get_region(term))\" " *
@@ -108,11 +138,11 @@ otherwise.
 The resolved `PSY.AreaInterchange`.
 """
 function _checked_interconnector(
-        container::PSI.OptimizationContainer, sys::PSY.System, gc::GenericConstraint,
+        container::PSI.OptimizationContainer, sys::Union{PSY.System, _ConstraintComponentLookup}, gc::GenericConstraint,
         term::InterconnectorTerm,
     )
     name = PSY.get_name(gc)
-    device = PSY.get_component(PSY.AreaInterchange, sys, get_interconnector(term))
+    device = _constraint_component(PSY.AreaInterchange, sys, get_interconnector(term))
     isnothing(device) && throw(
         ArgumentError(
             "GenericConstraint \"$name\": InterconnectorTerm's interconnector " *
@@ -158,13 +188,13 @@ devices but the template sets no [`FCASMarket`](@ref) model for it.
 """
 function _add_device_fcas_terms!(container, expr, sys, gc, device, bid_type::BidType, factor)
     svc_name = fcas_service_name(device, bid_type)
-    svc = PSY.get_component(FCASService, sys, svc_name)
+    svc = _constraint_component(FCASService, sys, svc_name)
     (isnothing(svc) || !PSY.get_available(svc)) && return
     dname = PSY.get_name(device)
     regulation = bid_type in FCAS_REGULATION_MARKETS
     key_type = regulation ? FCASUnitRegulationTarget : FCASCapacityVariable
     if !PSI.has_container_key(container, key_type, FCASService, svc_name)
-        any(PSY.get_available, PSY.get_contributing_devices(sys, svc)) || return
+        any(PSY.get_available, PSY.get_contributing_devices(_constraint_system(sys), svc)) || return
         throw(
             ArgumentError(
                 "GenericConstraint \"$(PSY.get_name(gc))\": term on \"$dname\" references FCASService " *
@@ -190,17 +220,17 @@ end
 Warns once for `gc`, naming every FCAS service its terms reference that is absent from `sys`
 (those terms contribute zero).
 """
-function _warn_absent_fcas_services(sys::PSY.System, gc::GenericConstraint)
+function _warn_absent_fcas_services(sys::Union{PSY.System, _ConstraintComponentLookup}, gc::GenericConstraint)
     absent = Set{String}()
     for term in get_terms(gc)
         term isa Union{UnitTerm, RegionTerm} || continue
         get_bid_type(term) == BidType.ENERGY && continue
         names = term isa UnitTerm ? [get_duid(term)] : get_devices(term)
         for dname in names
-            device = PSY.get_component(PSY.Device, sys, dname)
+            device = _constraint_component(PSY.Device, sys, dname)
             isnothing(device) && continue
             svc_name = fcas_service_name(device, get_bid_type(term))
-            isnothing(PSY.get_component(FCASService, sys, svc_name)) && push!(absent, svc_name)
+            isnothing(_constraint_component(FCASService, sys, svc_name)) && push!(absent, svc_name)
         end
     end
     isempty(absent) || @warn(
@@ -228,7 +258,7 @@ function PSI.add_to_expression!(
         ::Type{UnitTerm},
         gc::GenericConstraint,
         term::UnitTerm,
-        sys::PSY.System,
+        sys::Union{PSY.System, _ConstraintComponentLookup},
     )
     name = PSY.get_name(gc)
     expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
@@ -244,7 +274,7 @@ function PSI.add_to_expression!(
         ::Type{RegionTerm},
         gc::GenericConstraint,
         term::RegionTerm,
-        sys::PSY.System,
+        sys::Union{PSY.System, _ConstraintComponentLookup},
     )
     name = PSY.get_name(gc)
     expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
@@ -261,7 +291,7 @@ function PSI.add_to_expression!(
         ::Type{InterconnectorTerm},
         gc::GenericConstraint,
         term::InterconnectorTerm,
-        sys::PSY.System,
+        sys::Union{PSY.System, _ConstraintComponentLookup},
     )
     name = PSY.get_name(gc)
     expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
@@ -407,10 +437,11 @@ function PSI.construct_service!(
     gc = PSY.get_component(GenericConstraint, sys, name)
     PSY.get_available(gc) || return
 
+    lookup = _ConstraintComponentLookup(sys)
     for term in get_terms(gc)
-        PSI.add_to_expression!(container, NEMConstraintLHS, typeof(term), gc, term, sys)
+        PSI.add_to_expression!(container, NEMConstraintLHS, typeof(term), gc, term, lookup)
     end
-    _warn_absent_fcas_services(sys, gc)
+    _warn_absent_fcas_services(lookup, gc)
     # Before add_constraints! reads NEMConstraintLHS: a slack must already be merged in for the
     # constraint it relaxes to be built with it, not around it.
     _add_gc_slack_variables!(container, gc, model)

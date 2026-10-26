@@ -187,6 +187,31 @@
         @test isequal(select(subset(both, :BIDTYPE => ByRow(==(BidType.RAISEREG))), Not(:BIDTYPE)), reg_bids)
     end
 
+    @testset "FCAS period fields share the price and quantity rows" begin
+        R = AustralianElectricityMarkets.Readers
+        markets = [BidType.RAISE6SEC, BidType.RAISEREG]
+        projected = R._massage_bids(
+            db, first(date_range), last(date_range); bid_types = markets,
+            keep_bid_type = true, period_columns = R._FCAS_TRAPEZIUM_COLUMNS,
+        )
+        expected = read_fcas_bids(db, date_range, markets)
+        transform!(projected, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
+        keys = [:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION, :BIDTYPE]
+        @test isequal(sort(projected, keys), sort(expected, keys))
+        @test_throws ArgumentError R._massage_bids(
+            db, first(date_range), last(date_range); resolution = Minute(15),
+            period_columns = R._FCAS_TRAPEZIUM_COLUMNS,
+        )
+        for resolution in (nothing, Minute(5), Minute(15))
+            bands = R._massage_bids(db, first(date_range), last(date_range); bid_types = markets, keep_bid_type = true, resolution)
+            trapezium = R._read_period_offers(db, markets, first(date_range), last(date_range), nothing; columns = R._FCAS_TRAPEZIUM_COLUMNS)
+            legacy = innerjoin(bands, trapezium; on = keys)
+            transform!(legacy, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
+            actual = read_fcas_bids(db, date_range, markets; resolution)
+            @test isequal(sort(actual, keys), sort(legacy, keys))
+        end
+    end
+
     @testset "set_fcas_bids!" begin
         # Two SingleTimeSeries per (component, market), not a Reserve/service.
         sys = nem_system(db, RegionalNetworkConfiguration())

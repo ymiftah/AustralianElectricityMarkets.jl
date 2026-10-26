@@ -29,16 +29,26 @@ function AustralianElectricityMarkets.nem_system(
         as_of = isnothing(date_range) ? nothing : first(date_range),
         kwargs...,
     )
+    sys, _ = _constrained_system(db; date_range, intervention, as_of, kwargs...)
+    return sys
+end
+
+
+function _constrained_system(
+        db; date_range = nothing, intervention::Integer = 0,
+        as_of = isnothing(date_range) ? nothing : first(date_range), kwargs...,
+    )
     if isnothing(date_range)
         error("ConstrainedNetworkConfiguration requires a `date_range` keyword argument (e.g. `nem_system(db, ConstrainedNetworkConfiguration(); date_range = start:Minute(5):stop)`).")
     end
-    sys = nem_system(db; as_of = as_of, kwargs...)
+    sys, units = _regional_system(db; as_of, kwargs...)
     set_fcas_bids!(sys, db, date_range)
-    add_nem_constraints!(sys, db, date_range; intervention = intervention)
-    set_nem_fixed_loads!(sys, db, date_range)
+    invoked, fixed = AustralianElectricityMarkets._read_constraint_inputs(db, date_range; intervention)
+    AustralianElectricityMarkets._add_nem_constraints!(sys, db, date_range, invoked, fixed; intervention)
+    AustralianElectricityMarkets._set_nem_fixed_loads!(sys, fixed, date_range)
     add_fcas_services!(sys)
     attach_interconnector_losses!(sys, db, first(date_range))
-    return sys
+    return sys, units
 end
 
 

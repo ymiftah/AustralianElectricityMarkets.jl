@@ -92,4 +92,6 @@ using .RegionModel: RegionalNetworkConfiguration, ConstrainedNetworkConfiguratio
 @doc (@doc RegionModel.ConstrainedNetworkConfiguration) ConstrainedNetworkConfiguration
 @doc (@doc RegionModel.NEMDEConfiguration) NEMDEConfiguration
 
+include("precompile.jl")
+
 end

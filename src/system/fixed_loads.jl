@@ -37,9 +37,14 @@ Devices with no fixed loading in the range get no series; existing series are re
 `nothing`.
 """
 function set_nem_fixed_loads!(sys, db, date_range)
+    return _set_nem_fixed_loads!(sys, read_fixed_loads(db, date_range), date_range)
+end
+
+
+function _set_nem_fixed_loads!(sys, rows, date_range)
     grid = collect(date_range)[1:(end - 1)]
     base_power = get_base_power(sys)
-    for (duid, by_time) in _fixed_load_series(sys, read_fixed_loads(db, date_range))
+    for (duid, by_time) in _fixed_load_series(sys, rows)
         device = get_component(Device, sys, duid)
         target = [get(by_time, t, 0.0) / base_power for t in grid]
         invoked = [haskey(by_time, t) ? 1.0 : 0.0 for t in grid]

@@ -18,7 +18,13 @@ sys = nem_system(db)
 println(sys)
 ```
 """
-function nem_system(db; time_series_in_memory = true, as_of = nothing, kwargs...)
+function nem_system(db; kwargs...)
+    sys, _ = _regional_system(db; kwargs...)
+    return sys
+end
+
+
+function _regional_system(db; time_series_in_memory = true, as_of = nothing, kwargs...)
     @info "parsing buses"
     interconnectors = read_interconnectors(db; as_of = as_of)
     bus_df = _bus_dataframe(interconnectors)
@@ -46,7 +52,7 @@ function nem_system(db; time_series_in_memory = true, as_of = nothing, kwargs...
     _add_scheduled_loads!(sys, scheduled_loads_df)
     _add_area_interfaces!(sys, interfaces_df)
 
-    return sys
+    return sys, units
 end
 
 

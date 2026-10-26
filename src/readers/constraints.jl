@@ -87,6 +87,10 @@ function read_constraint_terms(db, gencon_versions, date_range)
             WITH cp AS (
                 SELECT * FROM $cp_table
                 WHERE EFFECTIVEDATE <= $eff_bound
+                  AND (GENCONID, EFFECTIVEDATE, VERSIONNO) IN (
+                      SELECT GENCONID, GENCONID_EFFECTIVEDATE, GENCONID_VERSIONNO
+                      FROM wanted_gencon_versions
+                  )
                 QUALIFY row_number() OVER (
                     PARTITION BY CONNECTIONPOINTID, EFFECTIVEDATE, VERSIONNO, GENCONID, BIDTYPE
                     ORDER BY archive_month DESC
@@ -116,6 +120,10 @@ function read_constraint_terms(db, gencon_versions, date_range)
             FROM (
                 SELECT * FROM $region_table
                 WHERE EFFECTIVEDATE <= $eff_bound
+                  AND (GENCONID, EFFECTIVEDATE, VERSIONNO) IN (
+                      SELECT GENCONID, GENCONID_EFFECTIVEDATE, GENCONID_VERSIONNO
+                      FROM wanted_gencon_versions
+                  )
                 QUALIFY row_number() OVER (
                     PARTITION BY REGIONID, EFFECTIVEDATE, VERSIONNO, GENCONID, BIDTYPE ORDER BY archive_month DESC
                 ) = 1
@@ -130,6 +138,10 @@ function read_constraint_terms(db, gencon_versions, date_range)
             FROM (
                 SELECT * FROM $ic_table
                 WHERE EFFECTIVEDATE <= $eff_bound
+                  AND (GENCONID, EFFECTIVEDATE, VERSIONNO) IN (
+                      SELECT GENCONID, GENCONID_EFFECTIVEDATE, GENCONID_VERSIONNO
+                      FROM wanted_gencon_versions
+                  )
                 QUALIFY row_number() OVER (
                     PARTITION BY INTERCONNECTORID, EFFECTIVEDATE, VERSIONNO, GENCONID ORDER BY archive_month DESC
                 ) = 1

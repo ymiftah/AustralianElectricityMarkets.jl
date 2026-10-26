@@ -263,6 +263,10 @@ function add_toy_interchange!(sys, stamps, ic)
         ),
     )
     isnothing(ic.mnsp) && return
+    PSY.add_time_series!(sys, interchange, AustralianElectricityMarkets.single_series("mnsp_initial_flow", TOY_START, zeros(length(stamps)), TOY_RESOLUTION))
+    for dir in ("forward", "reverse"), (field, value) in (("ramp_rate", 1000.0), ("fixed_load", 0.0), ("fixed_load_invoked", 0.0))
+        PSY.add_time_series!(sys, interchange, AustralianElectricityMarkets.single_series("mnsp_$(dir)_$field", TOY_START, fill(value, length(stamps)), TOY_RESOLUTION))
+    end
     for (dir, offer, tlfs) in zip(("forward", "reverse"), ic.mnsp, ic.mnsp_tlfs)
         per_stamp = first(offer) isa Tuple ? collect(offer) : fill(offer, length(stamps))
         curves = [_toy_offer(bands) for (_, bands) in per_stamp]

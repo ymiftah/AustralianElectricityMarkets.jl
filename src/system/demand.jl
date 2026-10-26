@@ -17,10 +17,14 @@ interval of `date_range`, or if a demand value is not finite.
 """
 function set_demand!(sys, db, date_range; kwargs...)
     demand = read_demand(db, date_range; kwargs...)
-    demand = @chain demand begin
-        transform!(:REGIONID => ByRow(x -> x * " Load") => :name)
+    return _set_demand!(sys, demand, date_range; resolution = get(kwargs, :resolution, Minute(5)))
+end
+
+
+function _set_demand!(sys, rows, date_range; resolution = Minute(5))
+    demand = @chain rows begin
+        transform(:REGIONID => ByRow(x -> x * " Load") => :name)
     end
-    resolution = get(kwargs, :resolution, Minute(5))
     grid = DateTime(first(date_range)):resolution:(DateTime(last(date_range)) - resolution)
     present = Set(zip(demand.SETTLEMENTDATE, demand.name))
     required_names = union(
