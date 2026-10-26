@@ -72,10 +72,15 @@ function PSI.add_constraints!(
     jm = PSI.get_jump_model(container)
     for device in fixed, t in steps
         name = PSY.get_name(device)
-        net = sum(m * PSI.get_variable(container, V(), T)[name, t] for (V, m) in _energy_variables(device))
         relax = inactive * (1.0 - invoked(name, t))
-        upper[name, t] = JuMP.@constraint(jm, net - surplus[name, t] <= target(name, t) + relax)
-        lower[name, t] = JuMP.@constraint(jm, net + deficit[name, t] >= target(name, t) - relax)
+        upper[name, t] = JuMP.@constraint(
+            jm, sum(m * PSI.get_variable(container, V(), T)[name, t] for (V, m) in _energy_variables(device)) -
+                surplus[name, t] <= target(name, t) + relax
+        )
+        lower[name, t] = JuMP.@constraint(
+            jm, sum(m * PSI.get_variable(container, V(), T)[name, t] for (V, m) in _energy_variables(device)) +
+                deficit[name, t] >= target(name, t) - relax
+        )
     end
     return
 end

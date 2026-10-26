@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Replay table requirements include `DISPATCHINTERCONNECTORRES` for MNSP metered-flow
+  ramping, including when diagnostic interval flow limits are disabled.
+
+- Energy-offer and fixed-loading affine sums are constructed inside their existing typed PSI
+  constraint hooks, reducing intermediate expression copies without changing model equations.
+
+- System builds use typed FCAS field access, retain fewer intermediate bid columns and reuse
+  demand, dispatch, unit and fixed-loading inputs within one construction. Generic-constraint
+  construction reuses component lookups locally, preserving missing and ambiguous-name errors.
+- Synthetic in-memory energy-offer precompilation reduces first-use conversion latency without
+  reading the market cache or accessing the network.
+
+- Energy and FCAS bid conversion constructs final curves once, reduces temporary band arrays
+  and formats FCAS validation context only on failure, preserving prices, quantities and diagnostics.
+
+- System construction filters generic-constraint terms to requested versions before archive
+  deduplication, reads native FCAS trapeziums with their offer bands, and groups energy bids
+  once for unit and direction lookups.
+
+- Replay tie-pair validation skips rebuilding unchanged pair sets while preserving full checks
+  and diagnostics for changed prices, band counts and missing timestamps.
+
+- MNSP dispatch uses elastic offer-total and availability limits, metered net-flow ramping and
+  directional fixed loading, with MPC-scaled penalties and MW violation reporting.
+  `set_mnsp_offers!` now requires metered interconnector results and accepts `intervention`.
+
 - Historical system construction uses one as-of interconnector result for buses and links, with
   active regions taken from the latest cached demand snapshot at or before the requested time.
 - Demand aggregation and joined bid preparation run in DuckDB, preserving timestamp ceiling,

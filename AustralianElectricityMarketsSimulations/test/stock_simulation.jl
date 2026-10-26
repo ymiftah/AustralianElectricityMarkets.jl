@@ -822,3 +822,49 @@ end
         DataFrame(SETTLEMENTDATE = [TOY_START], REGIONID = ["1"], ROP = [NaN]),
     )
 end
+
+@testset "MNSP metered ramp and fixed-loading inputs update between simulation steps" begin
+    sys = mnsp_sentinel_system()
+    ic = only(collect(PSY.get_components(PSY.AreaInterchange, sys)))
+    inputs = (
+        "mnsp_initial_flow" => [0.0, 50.0],
+        "mnsp_forward_ramp_rate" => [2.0, 1.0],
+        "mnsp_reverse_ramp_rate" => [1000.0, 6.0],
+        "mnsp_forward_fixed_load" => [0.0, 20.0],
+        "mnsp_forward_fixed_load_invoked" => [0.0, 1.0],
+    )
+    for (name, values) in inputs
+        PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, ic, name)
+        AustralianElectricityMarkets.replace_single_series!(sys, ic, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(collect(STOCK_STEPS), values)))
+    end
+    PSY.transform_single_time_series!(sys, TOY_RESOLUTION, TOY_RESOLUTION)
+    sim = stock_simulate(sys)
+    @test stock_flow.(sim.solved) ≈ [10.0, 20.0] atol = TOY_TOLERANCE
+    for (name, expected) in inputs
+        P = first(only(filter(pair -> last(pair) == name, AEMS._MNSP_OPERATING_SERIES)))
+        key = "$(nameof(P))__AreaInterchange"
+        @test stock_realized(sim.results, key, PSY.get_name(ic); scale = 1.0) ≈ expected atol = TOY_TOLERANCE
+    end
+    container = PSI.get_optimization_container(sim.model)
+    objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
+    for (V, factor, meta) in (
+            (AEMS.MNSPRampUpSlack, 1155.0, ""),
+            (AEMS.MNSPOfferSlack, 1135.0, "forward"),
+            (AEMS.MNSPMaxAvailSlack, 365.0, "reverse"),
+            (AEMS.MNSPFixedLoadDeficitSlack, 380.0, "forward"),
+        )
+        slack = PSI.get_variable(container, V(), PSY.AreaInterchange, meta)
+        @test PSI.JuMP.coefficient(objective, slack[PSY.get_name(ic), 1]) ≈ factor * 17500 * 100 / 12
+    end
+    # Exercise the same repricing function at the next financial year's first dispatch interval.
+    PSI.cost_function_unsynch(container)
+    V = AEMS.MNSPRampUpSlack
+    key = PSI.ParameterKey(AEMS.MarketPriceCapPenaltyParameter, PSY.AreaInterchange, "MNSPRampUpSlack")
+    caps = PSI.get_parameter_array(container, key)
+    multiplier = PSI.get_parameter_multiplier_array(container, key)
+    slack = PSI.get_variable(container, V(), PSY.AreaInterchange)
+    AEMS._price_mpc_penalty!(container, caps, multiplier, slack, DateTime(2025, 7, 1, 0, 5))
+    @test caps[PSY.get_name(ic), 1] == 20300.0
+    expression = PSI.get_objective_expression(PSI.get_objective_expression(container))
+    @test PSI.JuMP.coefficient(expression, slack[PSY.get_name(ic), 1]) ≈ 1155 * 20300 * 100 / 12
+end

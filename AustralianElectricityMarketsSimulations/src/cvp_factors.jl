@@ -115,3 +115,27 @@ function constraint_cvp_factor(gc::GenericConstraint)
     )
     return _BUILT_IN_CVP_FACTORS[limit_type]
 end
+
+
+"""
+    MNSP_RAMP_CVP_FACTOR
+
+AEMO MNSP ramp rate CVP factor (1155), item 4 of the Schedule of Constraint Violation Penalty Factors v8.0.
+"""
+const MNSP_RAMP_CVP_FACTOR = 1155.0
+
+
+"""
+    MNSP_OFFER_CVP_FACTOR
+
+AEMO MNSP total offered MW CVP factor (1135), item 9 of the Schedule of Constraint Violation Penalty Factors v8.0.
+"""
+const MNSP_OFFER_CVP_FACTOR = 1135.0
+
+
+"""
+    MNSP_AVAILABILITY_CVP_FACTOR
+
+AEMO MNSP availability CVP factor (365), item 16 of the Schedule of Constraint Violation Penalty Factors v8.0.
+"""
+const MNSP_AVAILABILITY_CVP_FACTOR = 365.0

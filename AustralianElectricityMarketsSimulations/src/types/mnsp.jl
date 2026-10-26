@@ -1,5 +1,5 @@
 # MNSP link offers on a `PSY.AreaInterchange` under `NEMInterconnectorLoss`: the interconnector's net
-# flow is split into a forward and a reverse link flow, each bounded and priced by its own offer.
+# flow is split into a forward and a reverse link flow, each priced by its own offer and elastic commercial limits.
 
 """
     MNSPLinkFlowVariable
@@ -22,7 +22,7 @@ struct MNSPLinkFlowConstraint <: PSI.ConstraintType end
 """
     MNSPLinkBandConstraint
 
-`Σ bands == link flow` for one MNSP link, per-unit. Indexed `(interconnector name, "forward" | "reverse", t)`.
+`Σ bands + offer surplus == link flow` for one MNSP link, per-unit. Indexed `(interconnector name, "forward" | "reverse", t)`.
 """
 struct MNSPLinkBandConstraint <: PSI.ConstraintType end
 
@@ -30,7 +30,7 @@ struct MNSPLinkBandConstraint <: PSI.ConstraintType end
 """
     MNSPLinkMaxAvailConstraint
 
-`link flow <= MAXAVAIL` for one MNSP link, per-unit. Indexed `(interconnector name, "forward" | "reverse", t)`.
+`link flow - availability surplus <= MAXAVAIL` for one MNSP link, per-unit. Indexed `(interconnector name, "forward" | "reverse", t)`.
 """
 struct MNSPLinkMaxAvailConstraint <: PSI.ConstraintType end
 

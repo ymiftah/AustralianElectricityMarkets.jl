@@ -75,11 +75,16 @@ left unmodified.
 `nothing`.
 """
 function set_nem_dispatch_limits!(sys, db, date_range; kwargs...)
+    rows = read_dispatch_limits(db, date_range; resolution = step(date_range), kwargs...)
+    return _set_nem_dispatch_limits!(sys, rows, date_range)
+end
+
+
+function _set_nem_dispatch_limits!(sys, rows, date_range)
     base_power = get_base_power(sys)
     full_grid = collect(date_range)[1:(end - 1)]
     interval_hours = Dates.value(Millisecond(step(date_range))) / (1000 * 60 * 60)
 
-    rows = read_dispatch_limits(db, date_range; resolution = step(date_range), kwargs...)
     by_duid = DataFrames.isempty(rows) ? nothing : groupby(rows, :DUID)
 
     devices = nem_dispatch_devices(sys)

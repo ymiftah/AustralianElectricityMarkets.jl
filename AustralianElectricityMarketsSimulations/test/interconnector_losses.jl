@@ -477,6 +477,33 @@ end
     @test !PSI.has_container_key(container, AEMS.InterconnectorLossVariable, PSY.AreaInterchange)
 end
 
+# Operating-input helper for MNSP regressions; values use the setter's natural MW/MW-min units.
+function _mnsp_operating_series!(sys; initial = 0.0, up = 1000.0, down = 1000.0, fixed_forward = nothing, fixed_reverse = nothing)
+    ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
+    load = first(PSY.get_components(PSY.PowerLoad, sys))
+    stamps = collect(timestamp(PSY.get_data(PSY.get_time_series(PSY.SingleTimeSeries, load, "max_active_power"))))
+    values = Pair{String, Any}["mnsp_initial_flow" => initial]
+    for (dir, ramp, fixed) in (("forward", up, fixed_forward), ("reverse", down, fixed_reverse))
+        append!(
+            values, [
+                "mnsp_$(dir)_ramp_rate" => ramp,
+                "mnsp_$(dir)_fixed_load" => (isnothing(fixed) ? 0.0 : fixed),
+                "mnsp_$(dir)_fixed_load_invoked" => (isnothing(fixed) ? 0.0 : 1.0),
+            ]
+        )
+    end
+    for (name, value) in values
+        if PSY.has_time_series(ic, PSY.DeterministicSingleTimeSeries, name)
+            PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, ic, name)
+        end
+        AustralianElectricityMarkets.replace_single_series!(
+            sys, ic, PSY.SingleTimeSeries(; name, data = TimeArray(stamps, (value isa Number ? fill(Float64(value), length(stamps)) : Float64.(value)))),
+        )
+    end
+    PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
+    return ic
+end
+
 """
     _attach_mnsp_offers!(sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0))
 
@@ -501,6 +528,7 @@ function _attach_mnsp_offers!(
         end
         PSY.get_ext(ic)["mnsp_$dir"] = Dict{String, Any}("from_region_tlf" => tlfs[1], "to_region_tlf" => tlfs[2])
     end
+    _mnsp_operating_series!(sys)
     PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
     return ic
 end
@@ -722,3 +750,5 @@ end
     expected = 0.0003 * demand2 * flow
     @test loss ≈ expected atol = 1.0e-5
 end
+
+include("mnsp_limits.jl")

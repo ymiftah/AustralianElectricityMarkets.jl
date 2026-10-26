@@ -208,7 +208,7 @@ end
 
 
 """
-    _massage_bids(db, start_date, end_date; resolution = nothing, bid_types = [BidType.ENERGY], keep_bid_type = false)
+    _massage_bids(db, start_date, end_date; resolution = nothing, bid_types = [BidType.ENERGY], keep_bid_type = false, period_columns = String[])
 
 Joins the latest `BIDPEROFFER_D` period offers of `bid_types` to their `BIDDAYOFFER_D` price bands,
 one row per `(SETTLEMENTDATE, DUID, DIRECTION, INTERVAL_DATETIME)` with
@@ -219,17 +219,21 @@ bands.
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `DIRECTION`, `INTERVAL_DATETIME`, `PRICEBANDARRAY`,
 `BANDAVAILARRAY`, `MAXAVAIL`, `MINIMUMLOAD`, `DAILYENERGYCONSTRAINT`, and `BIDTYPE` when
-`keep_bid_type`.
+`keep_bid_type`. Native-resolution requests can also project `period_columns` from the same
+latest period rows.
 """
 function _massage_bids(
         db, start_date, end_date;
         resolution::Union{Nothing, Dates.Period} = nothing, bid_types::AbstractVector{BidType} = [BidType.ENERGY],
-        keep_bid_type::Bool = false,
+        keep_bid_type::Bool = false, period_columns::AbstractVector{<:AbstractString} = String[],
     )
     period_source = read_hive(db, :BIDPEROFFER_D)
     band_columns = _band_columns(_table_schema(db, period_source), "BANDAVAIL")
     quantities = ["MAXAVAIL"; band_columns]
-    period_sql, params = _period_offers_sql(db, bid_types, start_date, end_date, resolution; columns = quantities)
+    isempty(period_columns) || isnothing(resolution) || throw(
+        ArgumentError("additional period columns require native resolution"),
+    )
+    period_sql, params = _period_offers_sql(db, bid_types, start_date, end_date, resolution; columns = [quantities; period_columns])
     bucket = isnothing(resolution) ? "INTERVAL_DATETIME" : _ceil_timestamp_sql("INTERVAL_DATETIME", resolution)
     period = if isnothing(resolution)
         "SELECT * FROM latest_period"
@@ -244,6 +248,7 @@ function _massage_bids(
     price_columns = _band_columns(_table_schema(db, price_source), "PRICEBAND")
     price_array = join(("d.$c" for c in price_columns), ", ")
     band_array = join(("p.$c" for c in band_columns), ", ")
+    period_projection = join((", p.$c" for c in period_columns))
     bid_type_column = keep_bid_type ? ", p.BIDTYPE" : ""
     append!(params, _offer_days(start_date, end_date))
     append!(params, (start_date, end_date))
@@ -263,7 +268,7 @@ function _massage_bids(
              )
         SELECT p.SETTLEMENTDATE, p.DUID, p.DIRECTION, p.INTERVAL_DATETIME,
                list_value($price_array) AS PRICEBANDARRAY, list_value($band_array) AS BANDAVAILARRAY,
-               p.MAXAVAIL, d.MINIMUMLOAD, d.DAILYENERGYCONSTRAINT $bid_type_column,
+               p.MAXAVAIL, d.MINIMUMLOAD, d.DAILYENERGYCONSTRAINT $bid_type_column $period_projection,
                d.DUID IS NULL AS MISSING_PRICE
         FROM period p
         LEFT JOIN prices d USING (SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE)

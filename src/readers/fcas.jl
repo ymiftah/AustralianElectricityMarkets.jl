@@ -136,6 +136,14 @@ function read_fcas_bids(
     )
     start_date = first(date_range)
     end_date = last(date_range)
+    if isnothing(resolution)
+        bids = _massage_bids(
+            db, start_date, end_date; bid_types, keep_bid_type = true,
+            period_columns = _FCAS_TRAPEZIUM_COLUMNS,
+        )
+        transform!(bids, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
+        return bids
+    end
     bids = _massage_bids(db, start_date, end_date; bid_types, keep_bid_type = true, resolution)
     trapezium = _read_period_offers(db, bid_types, start_date, end_date, nothing; columns = _FCAS_TRAPEZIUM_COLUMNS)
     joined = innerjoin(

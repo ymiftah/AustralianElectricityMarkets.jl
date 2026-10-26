@@ -5,6 +5,11 @@
 row's `DUID` if the value is `missing`.
 """
 function _require_fcas_float(row, field::Symbol)
+    return _require_fcas_float(row, Val(field))
+end
+
+
+function _require_fcas_float(row, ::Val{field}) where {field}
     value = getproperty(row, field)
     ismissing(value) && throw(
         ArgumentError(
@@ -17,29 +22,35 @@ end
 
 
 """
-    _extract_fcas_bid(row)
+    _extract_fcas_bid(row; base_power = nothing)
 
 Mirrors [`_extract_power_bids`](@ref), keeping every price band as energy offers do, and also builds
-the FCAS trapezium.
+the FCAS trapezium. When `base_power` is supplied, returned MW values are divided by it;
+prices are unchanged. The trapezium is validated in its original MW units.
 
 # Returns
 `(curve_data, trapezium_row)`: a `PiecewiseStepData` and the `NTuple{7,Float64}` wire form
 of an [`FCASTrapezium`](@ref).
 """
-function _extract_fcas_bid(row)
-    curve_data = _extract_power_bids(row; keep_empty_bands = true)
+function _extract_fcas_bid(row; base_power = nothing)
+    curve_data = _extract_power_bids(row; keep_empty_bands = true, base_power)
     trapezium = FCASTrapezium(;
-        enablement_min = _require_fcas_float(row, :ENABLEMENTMIN),
-        low_breakpoint = _require_fcas_float(row, :LOWBREAKPOINT),
-        high_breakpoint = _require_fcas_float(row, :HIGHBREAKPOINT),
-        enablement_max = _require_fcas_float(row, :ENABLEMENTMAX),
-        max_avail = _require_fcas_float(row, :MAXAVAIL),
+        enablement_min = _require_fcas_float(row, Val(:ENABLEMENTMIN)),
+        low_breakpoint = _require_fcas_float(row, Val(:LOWBREAKPOINT)),
+        high_breakpoint = _require_fcas_float(row, Val(:HIGHBREAKPOINT)),
+        enablement_max = _require_fcas_float(row, Val(:ENABLEMENTMAX)),
+        max_avail = _require_fcas_float(row, Val(:MAXAVAIL)),
         ramp_up_rate = ismissing(row.ROCUP) ? nothing : Float64(row.ROCUP),
         ramp_down_rate = ismissing(row.ROCDOWN) ? nothing : Float64(row.ROCDOWN),
     )
-    interval = hasproperty(row, :INTERVAL_DATETIME) ? " at $(row.INTERVAL_DATETIME)" : ""
-    _validate_fcas_trapezium(trapezium, "BIDPEROFFER_D DUID $(row.DUID) ($(row.DIRECTION))$interval")
-    return curve_data, Tuple(trapezium)
+    _validate_fcas_trapezium(
+        trapezium, () -> begin
+            interval = hasproperty(row, :INTERVAL_DATETIME) ? " at $(row.INTERVAL_DATETIME)" : ""
+            return "BIDPEROFFER_D DUID $(row.DUID) ($(row.DIRECTION))$interval"
+        end
+    )
+    packed = Tuple(trapezium)
+    return curve_data, isnothing(base_power) ? packed : packed ./ base_power
 end
 
 
@@ -176,6 +187,21 @@ function _attach_fcas_bid_series!(sys, component, gdf, duid::AbstractString, bid
 end
 
 
+# Only routing columns and converted values are retained; directional groups view that table.
+function _fcas_bid_groups(raw, base_power)
+    bids = select(
+        raw, :DUID, :DIRECTION, :INTERVAL_DATETIME,
+        AsTable(:) => ByRow(r -> _extract_fcas_bid(r; base_power)) => [:curve_data, :trapezium_row],
+    )
+    sort!(bids, :INTERVAL_DATETIME)
+    incremental = subset(bids, :DIRECTION => ByRow(in(("GEN", "BIDIRECTIONAL"))); view = true)
+    decremental = subset(bids, :DIRECTION => ByRow(==("LOAD")); view = true)
+    gdf_inc = DataFrames.isempty(incremental) ? nothing : groupby(incremental, :DUID)
+    gdf_dec = DataFrames.isempty(decremental) ? nothing : groupby(decremental, :DUID)
+    return gdf_inc, gdf_dec
+end
+
+
 """
     set_fcas_bids!(sys, db, date_range; kwargs...)
 
@@ -225,20 +251,7 @@ function set_fcas_bids!(sys, db, date_range; kwargs...)
     all_bids = groupby(read_fcas_bids(db, date_range, collect(FCAS_BID_TYPES); resolution = get(kwargs, :resolution, nothing)), :BIDTYPE)
     for bid_type in FCAS_BID_TYPES
         haskey(all_bids, (bid_type,)) || continue
-        bids = DataFrame(all_bids[(bid_type,)])
-        transform!(bids, AsTable(:) => ByRow(_extract_fcas_bid) => [:curve_data, :trapezium_row])
-        # Per-unitize quantities (offer curve x_coords, trapezium MW/ramp-rate fields), not
-        # prices (curve y_coords); component accessors convert back on read.
-        transform!(
-            bids,
-            :curve_data => ByRow(psd -> PiecewiseStepData(get_x_coords(psd) ./ base_power, get_y_coords(psd))) => :curve_data,
-            :trapezium_row => ByRow(t -> t ./ base_power) => :trapezium_row,
-        )
-        sort!(bids, :INTERVAL_DATETIME)
-        incremental = subset(bids, :DIRECTION => ByRow(in(("GEN", "BIDIRECTIONAL"))))
-        decremental = subset(bids, :DIRECTION => ByRow(==("LOAD")))
-        gdf_inc = DataFrames.isempty(incremental) ? nothing : groupby(incremental, :DUID)
-        gdf_dec = DataFrames.isempty(decremental) ? nothing : groupby(decremental, :DUID)
+        gdf_inc, gdf_dec = _fcas_bid_groups(all_bids[(bid_type,)], base_power)
 
         foreach(get_components(Generator, sys)) do gen
             _attach_fcas_bid_series!(sys, gen, gdf_inc, get_name(gen), bid_type, OfferSide.GEN, start_date, resolution)

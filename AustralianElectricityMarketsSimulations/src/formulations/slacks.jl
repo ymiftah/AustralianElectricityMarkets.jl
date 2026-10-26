@@ -3,7 +3,7 @@ const _DEVICE_SLACKS = Union{AbstractEnergyLimitSlack, AbstractEnergyOfferSlack,
 
 # Slack variables whose results read back in MW rather than system-base per-unit.
 const _NATURAL_UNIT_SLACKS = Union{
-    _DEVICE_SLACKS,
+    _DEVICE_SLACKS, AbstractMNSPSlack,
     UnitRampUpSlack, UnitRampDownSlack,
     GenericConstraintSlackUp, GenericConstraintSlackDown,
     InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack,

@@ -107,13 +107,13 @@ end
 """
     _mnsp_link_bound(device, direction) -> Float64
 
-The largest `min(MAXAVAIL, offered MW)` of `device`'s `direction` link over the whole of its
-series, in MW.
+The non-negative flow extent of `device`'s loss-model domain in `direction`, in system-base per-unit.
+Commercial availability and offered MW do not restrict this direction-selection bound.
 """
 function _mnsp_link_bound(device::PSY.AreaInterchange, direction::AbstractString)
-    curves = PSY.get_time_series_values(PSY.SingleTimeSeries, device, mnsp_series_name(direction, "offer"))
-    avail = PSY.get_time_series_values(PSY.SingleTimeSeries, device, mnsp_series_name(direction, "max_avail"))
-    return maximum(min(a, sum(diff(PSY.get_x_coords(c)))) for (a, c) in zip(avail, curves))
+    model = _loss_model(device)
+    extent = direction == "forward" ? last(model.breakpoints) : -first(model.breakpoints)
+    return max(0.0, extent)
 end
 
 
@@ -213,6 +213,10 @@ function _add_mnsp_link_variables!(container::PSI.OptimizationContainer, devices
     for dir in _MNSP_DIRECTIONS, param in _MNSP_PARAMETERS[Symbol(dir)]
         PSI.add_parameters!(container, param, devices, device_model)
     end
+    for (P, _) in _MNSP_OPERATING_SERIES
+        PSI.add_parameters!(container, P, mnsp, device_model)
+    end
+    _add_mnsp_limit_variables!(container, mnsp)
     link_var = PSI.add_variable_container!(
         container, MNSPLinkFlowVariable(), PSY.AreaInterchange, names, directions, time_steps,
     )
@@ -233,7 +237,7 @@ function _add_mnsp_link_variables!(container::PSI.OptimizationContainer, devices
         name = PSY.get_name(d)
         lower_loss, upper_loss = _loss_range(d, _loss_model(d))
         tlf = Dict(dir => _mnsp_link_tlfs(d, dir) for dir in _MNSP_DIRECTIONS)
-        bound = Dict(dir => _mnsp_link_bound(d, dir) / base_power for dir in _MNSP_DIRECTIONS)
+        bound = Dict(dir => _mnsp_link_bound(d, dir) for dir in _MNSP_DIRECTIONS)
         area = (forward = PSY.get_name(PSY.get_from_area(d)), reverse = PSY.get_name(PSY.get_to_area(d)))
         other = (forward = area.reverse, reverse = area.forward)
         for t in time_steps
@@ -267,8 +271,8 @@ end
     _add_mnsp_link_constraints!(container, devices)
 
 Adds, for each device in `devices` carrying MNSP offers, the rows over the variables of
-[`_add_mnsp_link_variables!`](@ref): each band within its offered width, the bands summing to the
-link flow ([`MNSPLinkBandConstraint`](@ref)), the link flow within its `MAXAVAIL`
+[`_add_mnsp_link_variables!`](@ref): each band within its offered width, the bands plus an offer surplus summing to the
+link flow ([`MNSPLinkBandConstraint`](@ref)), an elastic `MAXAVAIL` limit
 ([`MNSPLinkMaxAvailConstraint`](@ref)), `flow = forward - reverse` ([`MNSPLinkFlowConstraint`](@ref)),
 one direction at a time ([`MNSPLinkDirectionConstraint`](@ref)), each directional loss zero on the
 inactive link ([`MNSPLinkLossConstraint`](@ref)), and the two losses summing to the
@@ -319,7 +323,7 @@ function _add_mnsp_link_constraints!(container::PSI.OptimizationContainer, devic
     for d in mnsp
         name = PSY.get_name(d)
         lower_loss, upper_loss = _loss_range(d, _loss_model(d))
-        bound = Dict(dir => _mnsp_link_bound(d, dir) / base_power for dir in _MNSP_DIRECTIONS)
+        bound = Dict(dir => _mnsp_link_bound(d, dir) for dir in _MNSP_DIRECTIONS)
         widths = Dict(dir => PSI.get_parameter_column_refs(width[dir], name) for dir in _MNSP_DIRECTIONS)
         width_mult = Dict(dir => PSI.get_multiplier_array(width[dir]) for dir in _MNSP_DIRECTIONS)
         avails = Dict(dir => PSI.get_parameter_column_refs(max_avail[dir], name) for dir in _MNSP_DIRECTIONS)
@@ -332,8 +336,10 @@ function _add_mnsp_link_constraints!(container::PSI.OptimizationContainer, devic
                 for label in labels
                     JuMP.@constraint(jm, bands[name, label, t] <= width_mult[dir][name, label, t] * widths[dir][label, t] / base_power)
                 end
-                band_con[name, dir, t] = JuMP.@constraint(jm, sum(bands[name, label, t] for label in labels) == q)
-                avail_con[name, dir, t] = JuMP.@constraint(jm, q <= avail_mult[dir][name, t] * avails[dir][t] / base_power)
+                offer_slack = PSI.get_variable(container, MNSPOfferSlack(), PSY.AreaInterchange, dir)[name, t]
+                avail_slack = PSI.get_variable(container, MNSPMaxAvailSlack(), PSY.AreaInterchange, dir)[name, t]
+                band_con[name, dir, t] = JuMP.@constraint(jm, sum(bands[name, label, t] for label in labels) + offer_slack == q)
+                avail_con[name, dir, t] = JuMP.@constraint(jm, q - avail_slack <= avail_mult[dir][name, t] * avails[dir][t] / base_power)
                 on = dir == "forward" ? forward_on : 1 - forward_on
                 direction_con[name, dir, t] = JuMP.@constraint(jm, q <= bound[dir] * on)
                 loss = link_loss[name, dir, t]
@@ -380,5 +386,6 @@ function _add_mnsp_band_costs!(container::PSI.OptimizationContainer, devices)
             _set_mnsp_band_prices!(container, prices, multiplier, d, dir, initial_time)
         end
     end
+    _add_mnsp_limit_costs!(container, mnsp)
     return
 end

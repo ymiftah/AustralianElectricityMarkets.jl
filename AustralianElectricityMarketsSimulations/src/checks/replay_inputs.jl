@@ -93,5 +93,12 @@ function _check_mnsp_offers(device::PSY.AreaInterchange)
                 "call set_mnsp_offers! with complete data before dispatch",
         ),
     )
+    if all(present)
+        for (_, series) in _MNSP_OPERATING_SERIES
+            PSY.has_time_series(device, PSY.SingleTimeSeries, series) || throw(
+                ArgumentError("AreaInterchange $(PSY.get_name(device)) is missing MNSP operating input $series; call set_mnsp_offers!"),
+            )
+        end
+    end
     return
 end
