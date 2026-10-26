@@ -917,3 +917,32 @@ end
     )
     @test !haskey(PSI.get_parameters(container), PSI.ParameterKey(AEMS.MarketPriceCapPenaltyParameter, PSY.Area, "SystemBalanceSlackUp"))
 end
+
+@testset "typed storage fixed-loading rows preserve net injection and invocation" begin
+    for (target, invoked) in ((20.0, 1.0), (-20.0, 1.0), (20.0, 0.0))
+        sys = nem_toy_system(
+            [TOY_CHEAP => toy_unit(200.0, [(200.0, 20.0)]; initial = 80.0, ramp_up = 100.0)],
+            80.0;
+            batteries = [TOY_BATTERY => toy_battery(40.0, 50.0, 40.0, 1.0; initial = 0.0, ramp_up = 100.0)],
+            mutate! = function (sys, stamps)
+                storage = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
+                for (name, value) in (("fixed_load", target / PSY.get_base_power(sys)), ("fixed_load_invoked", invoked))
+                    PSY.add_time_series!(sys, storage, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(stamps, fill(value, length(stamps)))))
+                end
+                return
+            end,
+        )
+        out = solve_toy(sys)
+        net = out.battery_out_mw[TOY_BATTERY] - out.battery_in_mw[TOY_BATTERY]
+        @test net ≈ (iszero(invoked) ? 0.0 : target) atol = TOY_TOLERANCE
+        container = out.container
+        T = PSY.EnergyReservoirStorage
+        U = PSI.get_variable(container, PSI.ActivePowerOutVariable(), T)[TOY_BATTERY, 1]
+        D = PSI.get_variable(container, PSI.ActivePowerInVariable(), T)[TOY_BATTERY, 1]
+        for meta in ("upper", "lower")
+            row = PSI.get_constraint(container, AEMS.EnergyFixedLoadConstraint(), T, meta)[TOY_BATTERY, 1]
+            @test abs(PSI.JuMP.normalized_coefficient(row, U)) == 1.0
+            @test PSI.JuMP.normalized_coefficient(row, U) == -PSI.JuMP.normalized_coefficient(row, D)
+        end
+    end
+end

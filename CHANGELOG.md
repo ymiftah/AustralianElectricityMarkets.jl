@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Energy-offer and fixed-loading affine sums are constructed inside their existing typed PSI
+  constraint hooks, reducing intermediate expression copies without changing model equations.
+
 - System builds use typed FCAS field access, retain fewer intermediate bid columns and reuse
   demand, dispatch, unit and fixed-loading inputs within one construction. Generic-constraint
   construction reuses component lookups locally, preserving missing and ambiguous-name errors.

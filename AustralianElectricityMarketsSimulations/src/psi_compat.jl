@@ -28,9 +28,12 @@ function PSI._add_pwl_constraint!(
     above_type, below_type = _energy_offer_slacks(V)
     above = PSI.get_variable(container, above_type(), T)[name, period]
     below = PSI.get_variable(container, below_type(), T)[name, period]
-    offered = PSI.jump_fixed_value(first(breakpoints))::Float64 +
-        sum(bands[name, k, period] for k in 1:(length(breakpoints) - 1))
-    rows[name, period] = JuMP.@constraint(jm, power[name, period] == offered + above - below)
+    offset = PSI.jump_fixed_value(first(breakpoints))::Float64
+    length(breakpoints) > 1 || throw(ArgumentError("energy offers require at least one band"))
+    rows[name, period] = JuMP.@constraint(
+        jm, power[name, period] == offset +
+            sum(bands[name, k, period] for k in 1:(length(breakpoints) - 1)) + above - below
+    )
     for k in 1:(length(breakpoints) - 1)
         JuMP.@constraint(jm, bands[name, k, period] <= breakpoints[k + 1] - breakpoints[k])
     end
