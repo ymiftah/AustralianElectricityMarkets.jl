@@ -1,50 +1,76 @@
 """
-    _extract_power_bids(row; keep_empty_bands = false)
+    _extract_power_bids(row; keep_empty_bands = false, price_factor = nothing, base_power = nothing)
 
 Builds a `PiecewiseStepData` offer curve from a row's `PRICEBANDARRAY`/`BANDAVAILARRAY`
 columns, reversing band order for `DIRECTION == "LOAD"` rows so the resulting curve stays
 concave. Bands of zero availability are dropped unless `keep_empty_bands`, in which case every
-band is a segment and segment `k` is always the same price band.
+band is a segment and segment `k` is always the same price band. When supplied, `price_factor`
+divides prices before cent rounding and `base_power` divides cumulative MW breakpoints.
 """
-function _extract_power_bids(row; keep_empty_bands::Bool = false)
-    price_band_array = copy(row.PRICEBANDARRAY)
-    bandavail_array = copy(row.BANDAVAILARRAY)
-    if row.DIRECTION == "LOAD"
-        # Reverse the order for loads, so the decremental curves are concave
-        reverse!(price_band_array)
-        reverse!(bandavail_array)
+function _extract_power_bids(row; keep_empty_bands::Bool = false, price_factor = nothing, base_power = nothing)
+    prices, quantities = row.PRICEBANDARRAY, row.BANDAVAILARRAY
+    if keep_empty_bands && length(prices) == length(quantities)
+        order = row.DIRECTION == "LOAD" ? (length(quantities):-1:1) : eachindex(quantities)
+        a = Float64[prices[i] for i in order]
+        widths = quantities[order]
+    else
+        price_band_array, bandavail_array = copy(prices), copy(quantities)
+        if row.DIRECTION == "LOAD"
+            reverse!(price_band_array)
+            reverse!(bandavail_array)
+        end
+        kept = keep_empty_bands ? trues(length(bandavail_array)) : bandavail_array .> 0
+        a = Float64.(price_band_array[kept])
+        widths = bandavail_array[kept]
     end
-    kept = keep_empty_bands ? trues(length(bandavail_array)) : bandavail_array .> 0
-    a = price_band_array[kept]
-    b = [zero(eltype(price_band_array)); bandavail_array[kept] |> cumsum]
+    b = [zero(eltype(prices)); cumsum(widths)]
+    if !isnothing(price_factor)
+        for i in eachindex(a)
+            a[i] = round(a[i] / price_factor; digits = 2)
+        end
+    end
+    if !isnothing(base_power)
+        # Base conversion must not hide a decrease in the original MW breakpoints.
+        issorted(b) || PiecewiseStepData(b, a)
+        b = Float64.(b) ./ base_power
+    end
     return PiecewiseStepData(b, a)
 end
 
 
 """
-    _refer_bids_to_reference_node!(bids, factors) -> bids
+    _set_referred_bid_curves!(bids, factors; units = Set(bids.DUID)) -> bids
 
-Divides every price of `bids.piecewise_step_data` by its unit's loss factor, leaving the MW
-breakpoints unchanged. Referred prices are rounded to whole cents, as in NEMDE's case files.
+Builds energy curves with direction-specific loss factors and cent-rounded prices for
+`units`. Other rows retain connection-point prices; every row's band quantities are validated.
+Existing `piecewise_step_data` values are replaced.
 
 # Arguments
-- `bids`: the `DataFrame` from `_massage_bids`, modified in place.
-- `factors`: the output of [`read_loss_factors`](@ref); `GEN_LOSS_FACTOR` applies to `GEN` rows and
-  `LOAD_LOSS_FACTOR` to `LOAD` rows. Throws an `ArgumentError` naming any bid `DUID` it lacks.
+- `bids`: raw prepared energy bids, modified in place.
+- `factors`: unit generation and load loss factors from [`read_loss_factors`](@ref).
+- `units`: names whose curves must have a loss factor.
 
 # Returns
-`bids`.
+`bids`. Throws `ArgumentError` naming any required unit without a loss factor.
 """
-function _refer_bids_to_reference_node!(bids, factors)
+function _set_referred_bid_curves!(bids, factors; units = Set(bids.DUID))
     lookup = Dict(r.DUID => (gen = r.GEN_LOSS_FACTOR, load = r.LOAD_LOSS_FACTOR) for r in eachrow(factors))
-    unknown = setdiff(unique(bids.DUID), keys(lookup))
+    transform!(
+        bids,
+        AsTable(:) => ByRow(
+            r -> begin
+                factor = if r.DUID in units && haskey(lookup, r.DUID)
+                    r.DIRECTION == "LOAD" ? lookup[r.DUID].load : lookup[r.DUID].gen
+                else
+                    nothing
+                end
+                return _extract_power_bids(r; keep_empty_bands = true, price_factor = factor)
+            end
+        ) => :piecewise_step_data,
+    )
+    unknown = [name for name in unique(bids.DUID) if name in units && !haskey(lookup, name)]
     isempty(unknown) ||
         throw(ArgumentError("No DUDETAILSUMMARY loss factor for bid unit(s) $(join(unknown, ", "))."))
-    bids.piecewise_step_data = map(eachrow(bids)) do row
-        factor = row.DIRECTION == "LOAD" ? lookup[row.DUID].load : lookup[row.DUID].gen
-        psd = row.piecewise_step_data
-        return PiecewiseStepData(get_x_coords(psd), round.(get_y_coords(psd) ./ factor; digits = 2))
-    end
     return bids
 end
 
@@ -147,10 +173,11 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     resolution = get(kwargs, :resolution, Minute(5))
 
     bids = _massage_bids(db, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
-    transform!(bids, AsTable(:) => ByRow(r -> _extract_power_bids(r; keep_empty_bands = true)) => :piecewise_step_data)
     sys_units = Set(get_name(c) for T in (Generator, InterruptiblePowerLoad, EnergyReservoirStorage) for c in get_components(T, sys))
     factors = read_loss_factors(db; as_of = start_date, through = end_date)
-    _refer_bids_to_reference_node!(subset!(bids, :DUID => ByRow(in(sys_units))), factors)
+    # Validate band quantities even for units absent from the constructed system.
+    _set_referred_bid_curves!(bids, factors; units = sys_units)
+    subset!(bids, :DUID => ByRow(in(sys_units)))
 
     by_unit_side = groupby(bids, [:DUID, :DIRECTION]; sort = false)
     empty_bids = view(bids, Int[], :)

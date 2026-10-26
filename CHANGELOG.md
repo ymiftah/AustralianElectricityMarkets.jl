@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Energy and FCAS bid conversion constructs final curves once, reduces temporary band arrays
+  and formats FCAS validation context only on failure, preserving prices, quantities and diagnostics.
+
 - System construction filters generic-constraint terms to requested versions before archive
   deduplication, reads native FCAS trapeziums with their offer bands, and groups energy bids
   once for unit and direction lookups.
