@@ -116,3 +116,39 @@ end
     @test actual isa ArgumentError
     @test actual.msg == expected.msg
 end
+
+@testset "FCAS numeric extraction is inferred for each field" begin
+    AEM = AustralianElectricityMarkets
+    row = (DUID = "TYPED", MAXAVAIL = 12.5, ENABLEMENTMIN = 0.0, LOWBREAKPOINT = 1.0)
+    @test @inferred(AEM._require_fcas_float(row, Val(:MAXAVAIL))) === 12.5
+    @test @inferred(AEM._require_fcas_float(row, Val(:ENABLEMENTMIN))) === 0.0
+    @test @inferred(AEM._require_fcas_float(merge(row, (MAXAVAIL = 12,)), Val(:MAXAVAIL))) === 12.0
+    @test_throws r"MAXAVAIL is missing for DUID TYPED" AEM._require_fcas_float(merge(row, (MAXAVAIL = missing,)), Val(:MAXAVAIL))
+end
+
+@testset "FCAS groups retain ordered directional bids without mutating inputs" begin
+    AEM = AustralianElectricityMarkets
+    raw = DataFrame(
+        DUID = ["A", "A", "A", "B"], DIRECTION = ["LOAD", "GEN", "BIDIRECTIONAL", "GEN"],
+        INTERVAL_DATETIME = [DateTime(2026, 1, 22, 4, 10), DateTime(2026, 1, 22, 4, 10), DateTime(2026, 1, 22, 4, 5), DateTime(2026, 1, 22, 4, 5)],
+        PRICEBANDARRAY = [[10.0, 20.0] for _ in 1:4], BANDAVAILARRAY = [[0.0, 5.0] for _ in 1:4],
+        ENABLEMENTMIN = zeros(4), LOWBREAKPOINT = fill(10.0, 4), HIGHBREAKPOINT = fill(20.0, 4),
+        ENABLEMENTMAX = fill(30.0, 4), MAXAVAIL = fill(5.0, 4), ROCUP = fill(missing, 4), ROCDOWN = fill(2.0, 4),
+    )
+    before = deepcopy(raw)
+    inc, dec = AEM._fcas_bid_groups(raw, 100.0)
+    @test isequal(raw, before)
+    @test inc[("A",)].DIRECTION == ["BIDIRECTIONAL", "GEN"]
+    @test inc[("A",)].INTERVAL_DATETIME == sort(raw.INTERVAL_DATETIME[[2, 3]])
+    @test dec[("A",)].DIRECTION == ["LOAD"]
+    @test inc[("B",)].DIRECTION == ["GEN"]
+    for group in (inc, dec), rows in group, row in eachrow(rows)
+        original = only(eachrow(filter(r -> r.DUID == row.DUID && r.DIRECTION == row.DIRECTION, raw)))
+        curve, packed = AEM._extract_fcas_bid(original; base_power = 100.0)
+        @test isequal(get_x_coords(curve), get_x_coords(row.curve_data))
+        @test isequal(get_y_coords(curve), get_y_coords(row.curve_data))
+        @test isequal(packed, row.trapezium_row)
+    end
+    @test AEM._fcas_bid_groups(raw[1:1, :], 100.0)[1] === nothing
+    @test AEM._fcas_bid_groups(raw[2:2, :], 100.0)[2] === nothing
+end

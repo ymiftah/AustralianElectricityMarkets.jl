@@ -52,3 +52,37 @@
     end
 
 end
+
+@testset "Replay shared inputs preserve independent setter results" begin
+    AEM = AustralianElectricityMarkets
+    hive = mktempdir()
+    create_mock_data(hive; complete_inputs = true)
+    write_mock_interconnector_results(hive)
+    db = aem_connect(HiveConfiguration(hive_location = hive))
+    grid = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+    shared, units = AEM.RegionModel._constrained_system(db; date_range = grid)
+    independent = nem_system(db, ConstrainedNetworkConfiguration(); date_range = grid)
+    @test isequal(units, read_units(db; as_of = first(grid)))
+    demand = read_demand(db, grid; resolution = Minute(5))
+    demand_before = deepcopy(demand)
+    dispatch = read_dispatch_limits(db, grid; intervention = 0, resolution = Minute(5))
+    AEM._set_demand!(shared, demand, grid; resolution = Minute(5))
+    set_demand!(independent, db, grid; resolution = Minute(5))
+    @test isequal(demand, demand_before)
+    for sys in (shared, independent)
+        set_market_bids!(sys, db, grid; resolution = Minute(5))
+        set_fcas_scaling_inputs!(sys, db, grid)
+    end
+    AEM._set_nem_dispatch_limits!(shared, dispatch, grid)
+    set_nem_dispatch_limits!(independent, db, grid)
+    for T in (PowerLoad, ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad), component in get_components(T, shared)
+        other = get_component(T, independent, get_name(component))
+        for key in PowerSystems.get_time_series_keys(component)
+            name = get_name(key)
+            @test isequal(
+                get_time_series_values(SingleTimeSeries, component, name; ignore_scaling_factors = true),
+                get_time_series_values(SingleTimeSeries, other, name; ignore_scaling_factors = true),
+            )
+        end
+    end
+end

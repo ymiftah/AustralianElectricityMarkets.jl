@@ -46,16 +46,19 @@ function AustralianElectricityMarkets.nem_system(
     )
     resolution = Minute(5)
     storage = isnothing(time_series_directory) ? (;) : (; time_series_directory)
-    sys = AustralianElectricityMarkets.nem_system(
-        db, ConstrainedNetworkConfiguration(); date_range, intervention,
+    sys, units = _constrained_system(
+        db; date_range, intervention,
         time_series_in_memory, storage...,
     )
-    _check_replay_energy_bid_coverage(sys, db, date_range; intervention)
-    set_demand!(sys, db, date_range; resolution)
+    bids = read_energy_bids(db, date_range)
+    dispatch = read_dispatch_limits(db, date_range; intervention, resolution)
+    demand = read_demand(db, date_range; resolution)
+    _check_replay_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
+    AustralianElectricityMarkets._set_demand!(sys, demand, date_range; resolution)
     set_loss_demand_coefficients!(sys)
     set_market_bids!(sys, db, date_range; resolution)
     set_fcas_scaling_inputs!(sys, db, date_range; intervention)
-    set_nem_dispatch_limits!(sys, db, date_range; intervention)
+    AustralianElectricityMarkets._set_nem_dispatch_limits!(sys, dispatch, date_range)
     set_nem_energy_limits!(sys, db, date_range; intervention)
     set_mnsp_offers!(sys, db, date_range; intervention)
     interval_flow_limits && set_interconnector_flow_limits!(sys, db, date_range; intervention)
@@ -96,6 +99,11 @@ function _check_replay_energy_bid_coverage(sys, db, date_range; intervention::In
     dispatch = read_dispatch_limits(db, date_range; intervention = intervention)
     units = read_units(db; as_of = first(date_range))
     demand = read_demand(db, date_range)
+    return _check_replay_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
+end
+
+
+function _check_replay_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
     demand_stamps = Set(zip(demand.REGIONID, demand.SETTLEMENTDATE))
     grid = collect(date_range)[1:(end - 1)]
     missing_demand = [(region, t) for region in sort!(unique(units.REGIONID)), t in grid if !((region, t) in demand_stamps)]

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- System builds use typed FCAS field access, retain fewer intermediate bid columns and reuse
+  demand, dispatch, unit and fixed-loading inputs within one construction. Generic-constraint
+  construction reuses component lookups locally, preserving missing and ambiguous-name errors.
+- Synthetic in-memory energy-offer precompilation reduces first-use conversion latency without
+  reading the market cache or accessing the network.
+
 - Energy and FCAS bid conversion constructs final curves once, reduces temporary band arrays
   and formats FCAS validation context only on failure, preserving prices, quantities and diagnostics.
 

@@ -285,18 +285,28 @@ Throws `ArgumentError` when `DISPATCHCONSTRAINT`, `BIDPEROFFER_D` or `BIDDAYOFFE
 when an empty `RegionTerm` is found; either throw leaves `sys` unmodified.
 """
 function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0)
-    start_date = first(date_range)
-    base_power = get_base_power(sys)
+    invoked, fixed = _read_constraint_inputs(db, date_range; intervention)
+    return _add_nem_constraints!(sys, db, date_range, invoked, fixed; intervention)
+end
 
+
+function _read_constraint_inputs(db, date_range; intervention = 0)
     _require_cached(db, :DISPATCHCONSTRAINT)
     for table in (:BIDPEROFFER_D, :BIDDAYOFFER_D)
         _require_cached(db, table; context = "add_nem_constraints! reads FIXEDLOAD and T1 from it.")
     end
+    invoked = read_invoked_constraints(db, date_range; intervention)
+    fixed = read_fixed_loads(db, date_range)
+    return invoked, fixed
+end
 
-    invoked_all = read_invoked_constraints(db, date_range; intervention = intervention)
+
+function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; intervention = 0)
+    start_date = first(date_range)
+    base_power = get_base_power(sys)
     missing_intervals = setdiff(collect(date_range)[1:(end - 1)], invoked_all.SETTLEMENTDATE)
     # Fixed loadings are unit offer data (set_nem_fixed_loads!), so their `$DUID` rows are not generic constraints.
-    fixed_loads = _fixed_load_series(sys, read_fixed_loads(db, date_range))
+    fixed_loads = _fixed_load_series(sys, fixed)
     if DataFrames.isempty(invoked_all) && isempty(fixed_loads)
         get_ext(sys)["skipped_constraints"] = Dict{String, Any}[]
         get_ext(sys)["defaulted_constraint_weights"] = String[]
