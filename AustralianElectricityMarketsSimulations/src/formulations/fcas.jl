@@ -1077,7 +1077,7 @@ end
 
 
 """
-    _set_fcas_band_prices!(container, prices, multiplier, meta, offers, bid_type, start_time)
+    _set_fcas_band_prices!(container, prices, multiplier, meta, offers, bid_type, start_time; source = container)
 
 Writes the band prices of each of `offers` (`(device, decremental)`) for `bid_type` from
 `start_time`, read from the container's default forecast type, into the [`FCASBandPriceParameter`](@ref) array `prices` (`0.0` beyond the offered
@@ -1088,13 +1088,13 @@ of meta `meta`, to the variant objective.
 `nothing`.
 """
 function _set_fcas_band_prices!(
-        container::PSI.OptimizationContainer, prices, multiplier, meta::String, offers, bid_type::BidType, start_time::DateTime,
+        container::PSI.OptimizationContainer, prices, multiplier, meta::String, offers, bid_type::BidType, start_time::DateTime; source = container,
     )
     bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, meta)
     labels = axes(prices)[2]
     for (device, decremental) in offers
         dname = PSY.get_name(device)
-        curves = _forecast_window_values(container, device, fcas_series_name("fcas_curve", bid_type, decremental), start_time)
+        curves = _forecast_window_values(source, device, fcas_series_name("fcas_curve", bid_type, decremental), start_time)
         for (t, curve) in enumerate(curves)
             y = PSY.get_y_coords(curve)
             for (b, label) in enumerate(labels)
@@ -1255,7 +1255,7 @@ function PSI.update_container_parameter_values!(
         device = contributors[dname]
         (device, isnothing(side) ? _fcas_direction(device, bid_type) == FCASBidDirection.DECREMENTAL : side)
     end
-    _set_fcas_band_prices!(container, prices, multiplier, key.meta, offers, bid_type, PSI.get_current_time(model))
+    _set_fcas_band_prices!(container, prices, multiplier, key.meta, offers, bid_type, PSI.get_current_time(model); source = model)
     return
 end
 

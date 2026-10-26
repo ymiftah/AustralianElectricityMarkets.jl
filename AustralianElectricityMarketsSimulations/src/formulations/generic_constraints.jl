@@ -341,7 +341,7 @@ end
 # --- add_constraints!: sense dispatch, honouring the "invoked" series ---
 
 """
-    _invoked_mask(container, gc, start_time = PSI.get_initial_time(container)) -> Vector{Float64}
+    _invoked_mask(source, gc, start_time = PSI.get_initial_time(source)) -> Vector{Float64}
 
 The `GenericConstraint`'s `"invoked"` series (`1.0`/`0.0`) over the container's time steps from
 `start_time`, read from the container's default forecast type.
@@ -350,10 +350,10 @@ The `GenericConstraint`'s `"invoked"` series (`1.0`/`0.0`) over the container's 
 A `Vector{Float64}`.
 """
 function _invoked_mask(
-        container::PSI.OptimizationContainer, gc::GenericConstraint,
-        start_time::DateTime = PSI.get_initial_time(container),
+        source::Union{PSI.OptimizationContainer, PSI.OperationModel}, gc::GenericConstraint,
+        start_time::DateTime = PSI.get_initial_time(source),
     )
-    return _forecast_window_values(container, gc, "invoked", start_time)
+    return _forecast_window_values(source, gc, "invoked", start_time)
 end
 
 
@@ -502,10 +502,10 @@ end
 
 # Writes `gc`'s `"invoked"` values from `initial_time` into `invoked_values` and adds its slack costs
 # at each interval's Market Price Cap to the variant objective.
-function _price_gc_slacks!(container::PSI.OptimizationContainer, gc::GenericConstraint, model::PSI.ServiceModel, invoked_values, penalties, initial_time::DateTime)
+function _price_gc_slacks!(container::PSI.OptimizationContainer, gc::GenericConstraint, model::PSI.ServiceModel, invoked_values, penalties, initial_time::DateTime; source = container)
     name = PSY.get_name(gc)
     resolution = PSI.get_resolution(container)
-    invoked = _invoked_mask(container, gc, initial_time)
+    invoked = _invoked_mask(source, gc, initial_time)
     for t in axes(invoked_values)[2]
         invoked_values[name, t] = invoked[t]
         mpc = _service_market_price_cap(model, container, initial_time + resolution * (t - 1))
@@ -549,13 +549,10 @@ function PSI.update_container_parameter_values!(
         "Cannot update GenericConstraintSlackCostParameter on a synchronized container; the slack costs would be added twice.",
     )
     gc = PSY.get_component(GenericConstraint, PSI.get_system(model), key.meta)
-    service_model = only(
-        m for m in values(PSI.get_service_models(PSI.get_template(model)))
-            if PSI.get_component_type(m) === GenericConstraint && PSI.get_service_name(m) == key.meta
-    )
+    service_model = PSI.get_model(PSI.get_template(model), GenericConstraint, key.meta)
     _price_gc_slacks!(
         container, gc, service_model, PSI.get_parameter_array(container, key),
-        PSI.get_parameter_multiplier_array(container, key), PSI.get_current_time(model),
+        PSI.get_parameter_multiplier_array(container, key), PSI.get_current_time(model); source = model,
     )
     return
 end

@@ -68,6 +68,17 @@ The constructor checks input coverage, compatible tie-break pairs, one Market Pr
 FCAS services and dispatch envelopes. Its `parts` keyword selects from `REPLICATION_PARTS`.
 Pass a vector through `skipped` to collect constraints omitted from the template.
 
+## Recurrent update performance
+
+File-backed systems reuse the decision model's forecast cache when updating FCAS bid prices
+and generic-constraint invocation-dependent costs. Keep PSI's time-series caching enabled for
+this storage mode. The `cache_size_mib` argument controls result-write buffering separately.
+
+When measuring throughput, record the Julia version and optimisation level, separate package
+loading and first-use compilation from warmed interval updates, and report update time separately
+from the MIP and pricing-LP solve times. `-O0` can reduce compiler work while increasing Julia
+execution time, so a short startup test alone does not establish overnight throughput.
+
 ## Compare historical results with NEMDE
 
 The repository scripts coordinate cache access, system construction, simulation and published

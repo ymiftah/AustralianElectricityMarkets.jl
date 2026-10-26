@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recurrent FCAS price and generic-constraint slack-cost updates reuse the decision model's
+  forecast cache for disk-backed time series and use keyed generic service-model lookup.
+
 - Replay table requirements include `DISPATCHINTERCONNECTORRES` for MNSP metered-flow
   ramping, including when diagnostic interval flow limits are disabled.
 
