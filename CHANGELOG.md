@@ -189,6 +189,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A standalone Python report script for saved dispatch replays, including runtime
+  distributions, NEMDE error percentiles by unit/region/service/interconnector,
+  memory, partial-run coverage and overlap-aware pooled comparisons.
+
 - `NEMDEConfiguration` builds fully populated replay systems through AEM's `nem_system`.
   AEMSim's `prepare_replication!`, `replication_simulation` and `replication_results` consume built
   systems and expose the standard PSI build, execute and results lifecycle.

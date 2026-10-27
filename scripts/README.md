@@ -9,6 +9,72 @@ workspace runtime:
 julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replicate_random_days.jl --help
 ```
 
+## Detailed statistics from saved runs
+
+Use Python 3.11 or newer to report saved outputs without starting Julia or
+running another simulation. No additional Python packages are required:
+
+```sh
+python3 scripts/simulation_statistics.py \
+    /run/media/simba/Store/aem_validation/overnight_10h_20261027T120955Z \
+    /run/media/simba/Store/aem_validation/overnight_10h_parallel_20261027T131045Z
+```
+
+The default report folder is `<first run>/simulation_statistics/`. Set
+`--output /path/to/report` to choose another folder. Re-running the command
+refreshes only the generated report files. Source logs and comparisons are read
+without alteration; running jobs, dependency settings and solver settings are
+not changed. Active runs are supported: incomplete trailing CSV records are
+ignored with warnings, and failed/in-progress timing prefixes remain visible.
+
+The report includes:
+
+| File | Contents |
+| --- | --- |
+| `report.md` | Runtime breakdown, timing percentiles, NEMDE errors, regional prices, unit outliers, memory and failures |
+| `statistics.json` | Full report, provenance, status, warnings and coverage |
+| `runtime.csv` | Per-day totals, updates, MIP, pricing, auxiliary work, writes, state and residual time |
+| `timing_percentiles.csv` | Call counts, totals, min/mean, p5/p25/p50/p75/p90/p95/p99/max by phase and update cohort |
+| `errors.csv` | Per-day absolute-error percentiles, signed bias, MAE, RMSE, missing rows and duplicates |
+| `entity_errors.csv` | The same distributions by DUID, region, FCAS region/service and interconnector, with paired-interval coverage |
+| `worst_errors.csv` | Largest comparison errors and their interval/entity/published/solved values |
+| `slowest_intervals.csv` | Slowest update, MIP, pricing and write calls per day |
+| `memory_statistics.csv` | Sampled worker RSS distributions and recorded high-water RSS, in MiB |
+| `native_timers.csv` | Native timer snapshots with their hierarchy and call counts; nested totals overlap |
+| `phase_boundaries.csv` | Loading, preflight, build, execution, comparison and export boundaries with observed phase spans |
+
+Energy comparisons use **ROP against ROP**, not RRP. Percentiles use linear
+interpolation; unqualified error percentiles describe absolute errors. Signed
+bias and signed p5/p95 are included. Missing values are never replaced with zero.
+Every duplicated comparison key is excluded, rather than choosing an arbitrary
+copy. Regional/FCAS expected groups stay visible even when no values are paired.
+Dispatch/interconnector inventories are inferred from exported rows.
+
+Accuracy reports use completed days only. Pooled errors retain the first
+completed attempt of each trading day in argument order, exclude overlaps and
+exclude attempts with different recorded provenance. Each day's own results
+remain available. Different seeds do not guarantee disjoint trading days.
+Independent numerical-feasibility audit coverage is not established by this
+script, even when the source solver reports `OPTIMAL`.
+
+Timing distinguishes the solve wrapper from its nested MIP/pricing/auxiliary
+timers. Compilation and GC are already included in measured wall times, and
+cover instrumented calls only. Allocation totals describe allocation traffic,
+not retained memory. Unattributed execution includes state work when native
+state timings are unavailable. Ambiguous cumulative native snapshots are not
+summed. Observed phase spans include framework overhead and overlap internal
+timers. Summed parallel worker time is not elapsed host wall time.
+
+The default `--cache-windows 24` only labels likely refill boundaries. Set it to
+the input-cache window count used by the source run; it does not change a run's
+cache. The labels identify a timing pattern, not a measured attribution to IO.
+
+Run the Python-only regression tests with:
+
+```sh
+python3 -m unittest discover -s test/scripts -p 'test_simulation_statistics.py'
+```
+
 ## Overnight: random trading days for ten hours
 
 The default command shuffles all 181 trading days from **2026-01-01 through

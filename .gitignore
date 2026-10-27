@@ -16,6 +16,7 @@ docs/src/examples/*.md
 docs/data/
 env
 node_modules
+__pycache__/
 wip
 
 .env
