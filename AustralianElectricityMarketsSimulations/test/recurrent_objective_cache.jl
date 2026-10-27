@@ -118,16 +118,63 @@ end
     end
 end
 
-include(joinpath(@__DIR__, "real_data", "benchmark_updates.jl"))
-
-@testset "benchmark snapshot iteration handles dense and sparse containers" begin
-    jm = PSI.JuMP.Model()
-    dense = PSI.JuMP.@variable(jm, dense[["a", "b"], 1:2])
-    sparse = PSI.JuMP.Containers.SparseAxisArray(
-        Dict{Tuple{String, Int, Int}, Any}(("a", 1, 1) => dense["a", 1], ("b", 2, 1) => dense["b", 2], ("c", 3, 1) => 0.0),
+@testset "structured caches bound history and refill with current values" begin
+    sys = fcas_toy_system()
+    template = replication_template(sys)
+    PSY.clear_time_series!(sys)
+    device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+    curves = [_toy_offer([(10.0, Float64(i))]) for i in 1:60]
+    key = PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series("variable_cost", TOY_START, curves, TOY_RESOLUTION))
+    PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series("fcas_curve_RAISEREG", TOY_START, curves, TOY_RESOLUTION))
+    PSY.transform_single_time_series!(sys, TOY_RESOLUTION, TOY_RESOLUTION)
+    model = PSI.DecisionModel(
+        template, sys;
+        initial_time = TOY_START, horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION,
+        interval = TOY_RESOLUTION,
     )
-    @test Set(first(pair) for pair in _benchmark_entries(dense)) == Set([("a", 1), ("a", 2), ("b", 1), ("b", 2)])
-    @test Set(first(pair) for pair in _benchmark_entries(sparse)) == Set([("a", 1, 1), ("b", 2, 1), ("c", 3, 1)])
-    @test count(pair -> last(pair) isa PSI.JuMP.VariableRef, _benchmark_entries(sparse)) == 2
-    @test collect(_benchmark_entries([2.0, 3.0])) == [(1,) => 2.0, (2,) => 3.0]
+    for i in 1:60
+        start = TOY_START + (i - 1) * TOY_RESOLUTION
+        static = AEMS._cached_static_bid_values!(model, device, key, start)
+        forecast = AEMS._forecast_window_values(model, device, "fcas_curve_RAISEREG", start)
+        energy = PSI.get_time_series_values!(PSY.DeterministicSingleTimeSeries, model, device, "variable_cost", start, 1)
+        @test PSY.get_y_coords(only(energy)) == [Float64(i)]
+        @test PSY.get_y_coords(only(static)) == [Float64(i)]
+        @test PSY.get_y_coords(only(forecast)) == [Float64(i)]
+        if i in (1, 24, 25, 48, 49, 60)
+            caches = values(PSI.get_time_series_cache(model))
+            @test all(c -> c isa PSI.IS.StaticTimeSeriesCache ? c.in_memory_rows <= 24 : c.in_memory_count <= 24, caches)
+            @test all(c -> Base.summarysize(PSI.IS._get_time_series(c)) < 100_000, caches)
+            @test PSY.get_y_coords(only(AEMS._cached_static_bid_values!(model, device, key, start))) == [Float64(i)]
+        end
+    end
+    @test_throws PSI.IS.InvalidValue AEMS._cached_static_bid_values!(model, device, key, TOY_START)
+    PSI.empty_time_series_cache!(model)
+    @test PSY.get_y_coords(only(AEMS._cached_static_bid_values!(model, device, key, TOY_START))) == [1.0]
+end
+
+@testset "static bid cache respects features and disabled or tiny budgets" begin
+    sys = fcas_toy_system()
+    template = replication_template(sys)
+    PSY.clear_time_series!(sys)
+    device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+    curves = [_toy_offer([(10.0, Float64(i))]) for i in 1:3]
+    series = AustralianElectricityMarkets.single_series("variable_cost", TOY_START, curves, TOY_RESOLUTION)
+    key = PSY.add_time_series!(sys, device, series)
+    alternate = AustralianElectricityMarkets.single_series("featured_variable_cost", TOY_START, reverse(curves), TOY_RESOLUTION)
+    models = [
+        PSI.DecisionModel(
+            template, sys; initial_time = TOY_START, horizon = TOY_RESOLUTION,
+            resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, time_series_cache_size = budget
+        ) for budget in (0, 1)
+    ]
+    feature_key = PSY.add_time_series!(sys, device, alternate; scenario = "alternate")
+    for (budget, model) in zip((0, 1), models)
+        @test PSY.get_y_coords(only(AEMS._cached_static_bid_values!(model, device, feature_key, TOY_START))) == [3.0]
+        @test isempty(PSI.get_time_series_cache(model))
+        for i in 1:3
+            stamp = TOY_START + (i - 1) * TOY_RESOLUTION
+            @test PSY.get_y_coords(only(AEMS._cached_static_bid_values!(model, device, key, stamp))) == [Float64(i)]
+        end
+        @test budget == 0 ? isempty(PSI.get_time_series_cache(model)) : only(values(PSI.get_time_series_cache(model))).in_memory_rows == 1
+    end
 end

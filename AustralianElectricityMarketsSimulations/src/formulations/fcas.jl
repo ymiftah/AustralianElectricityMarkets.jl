@@ -1080,9 +1080,15 @@ end
     _set_fcas_band_prices!(container, prices, multiplier, meta, offers, bid_type, start_time; source = container)
 
 Writes the band prices of each of `offers` (`(device, decremental)`) for `bid_type` from
-`start_time`, read from the container's default forecast type, into the [`FCASBandPriceParameter`](@ref) array `prices` (`0.0` beyond the offered
+`start_time` through `source`, into the [`FCASBandPriceParameter`](@ref) array `prices` (`0.0` beyond the offered
 bands) and adds each band's cost, price times `multiplier` times its [`FCASOfferBandVariable`](@ref)
 of meta `meta`, to the variant objective.
+
+# Arguments
+- `container`, `prices`, `multiplier`: the optimization container and price/multiplier arrays.
+- `meta`, `offers`, `bid_type`: the offer-group key, device/direction pairs and FCAS market.
+- `start_time`: the first requested timestamp.
+- `source`: the model for cached recurrent reads, or the container for construction reads.
 
 # Returns
 `nothing`.

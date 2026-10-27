@@ -1,5 +1,9 @@
 # Every override of, and call into, a private PowerSimulations.jl internal. Re-check this file
 # whenever the pinned PowerSimulations revision changes.
+# Re-check both invoke tuples below, forecast-reader dispatch and key.features on PSI/IS upgrades.
+# IS shallow row sizing bounds windows; cache timestamps must repeat or advance (clear before restarting).
+const _BID_CACHE_WINDOWS = 24
+
 
 """
     PSI._add_pwl_constraint!(container, component, variable, formulation, breakpoints, period, band_type, constraint_type)
@@ -254,20 +258,32 @@ end
     _cached_static_bid_values!(model, component, key, start_time)
 
 Read a single-period static bid series through the decision model's time-series cache,
-retaining the series key's resolution and PowerSystems scaling behavior.
+retaining the series key's resolution and PowerSystems scaling behavior. Retains at most 24
+rows; timestamps must repeat or advance sequentially. Clear the model cache before restarting.
+
+# Arguments
+- `model`: the decision model owning the cache.
+- `component`: the bid-series owner.
+- `key`: the static bid key; feature-qualified keys use a direct read.
+- `start_time`: the requested interval timestamp.
 
 # Returns
 The bid values at `start_time`.
 """
 function _cached_static_bid_values!(model::PSI.DecisionModel, component, key::IS.StaticTimeSeriesKey, start_time)
+    if !PSI.use_time_series_cache(PSI.get_settings(model)) || !isempty(key.features)
+        series = IS.get_time_series(component, key; start_time, len = 1)
+        return IS.get_time_series_values(component, series; start_time, len = 1, ignore_scaling_factors = false)
+    end
     cache = PSI.get_time_series_cache(model)
     ts_type = IS.get_time_series_type(key)
     resolution = IS.get_resolution(key)
     name = IS.get_name(key)
     cache_key = IS.TimeSeriesCacheKey(IS.get_uuid(component), ts_type, name, Dates.Millisecond(resolution), nothing)
     ts_cache = get!(cache, cache_key) do
-        return IS.make_time_series_cache(
-            ts_type, component, name, start_time, 1; resolution, ignore_scaling_factors = false,
+        return IS.StaticTimeSeriesCache(
+            ts_type, component, name; start_time, resolution, ignore_scaling_factors = false,
+            cache_size_bytes = _bid_cache_size(model, 1),
         )
     end
     return PSI.TimeSeries.values(IS.get_time_series_array!(ts_cache, start_time))
@@ -317,4 +333,56 @@ function PSI._update_parameter_values!(
         end
     end
     return
+end
+
+
+# IS uses shallow row size for PiecewiseStepData; this byte argument enforces a row/window cap.
+function _bid_cache_size(model::PSI.DecisionModel, horizon::Int)
+    row_bytes = sizeof(IS.PiecewiseStepData) * horizon
+    return max(row_bytes, min(PSI.get_settings(model).time_series_cache_size, _BID_CACHE_WINDOWS * row_bytes))
+end
+
+"""
+    PSI.get_time_series_values!(T, model, component::PSY.StaticInjection, name, start_time, horizon; kwargs...)
+
+Bound NEM energy and FCAS curve forecast caches to 24 windows, including PSI's native
+energy-breakpoint readers. Other series and formulations use PSI's original reader.
+
+# Arguments
+- `T`: the model's forecast type.
+- `model`, `component`: the cache owner and series owner.
+- `name`: the registered energy or FCAS curve series name.
+- `start_time`, `horizon`: the current timestamp and requested window length.
+- `ignore_scaling_factors`, `interval`: forwarded native forecast options.
+
+# Returns
+A vector of forecast values. Cache access must be sequential or repeat the last timestamp.
+"""
+function PSI.get_time_series_values!(
+        ::Type{T}, model::PSI.DecisionModel, component::PSY.StaticInjection, name::String,
+        start_time::DateTime, horizon::Int; ignore_scaling_factors = true,
+        interval::Dates.Millisecond = PSI.UNSET_INTERVAL,
+    ) where {T <: PSY.Forecast}
+    device_model = PSI.get_model(PSI.get_template(model), typeof(component))
+    bid_curve = name in ("variable_cost", "decremental_variable_cost") || startswith(name, "fcas_curve_")
+    if bid_curve && !isnothing(device_model) && PSI.get_formulation(device_model) <: AbstractNEMDispatch &&
+            PSI.use_time_series_cache(PSI.get_settings(model))
+        settings = PSI.get_settings(model)
+        resolution = PSI.get_resolution(settings)
+        is_interval = PSI._to_is_interval(interval)
+        cache = PSI.get_time_series_cache(model)
+        key = IS.TimeSeriesCacheKey(IS.get_uuid(component), T, name, resolution, is_interval)
+        ts_cache = get!(cache, key) do
+            return IS.ForecastCache(
+                T, component, name; start_time, horizon_count = horizon,
+                cache_size_bytes = _bid_cache_size(model, horizon),
+                ignore_scaling_factors, interval = is_interval, resolution,
+            )
+        end
+        return PSI.TimeSeries.values(IS.get_time_series_array!(ts_cache, start_time))
+    end
+    return invoke(
+        PSI.get_time_series_values!, Tuple{Type{T}, PSI.DecisionModel, Any, String, DateTime, Int},
+        T, model, component, name, start_time, horizon; ignore_scaling_factors, interval,
+    )
 end

@@ -343,8 +343,13 @@ end
 """
     _invoked_mask(source, gc, start_time = PSI.get_initial_time(source)) -> Vector{Float64}
 
-The `GenericConstraint`'s `"invoked"` series (`1.0`/`0.0`) over the container's time steps from
-`start_time`, read from the container's default forecast type.
+The `GenericConstraint`'s `"invoked"` series (`1.0`/`0.0`) over `source`'s horizon from
+`start_time`, using model caching for recurrent reads or direct reads for a container.
+
+# Arguments
+- `source`: the optimization container or operation model supplying forecast values.
+- `gc`: the generic constraint owning the invocation series.
+- `start_time`: the first requested timestamp.
 
 # Returns
 A `Vector{Float64}`.
