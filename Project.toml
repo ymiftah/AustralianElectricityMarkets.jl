@@ -22,6 +22,7 @@ Chain = "8be319e6-bccf-4806-a6f7-6fae938471bc"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 DuckDB = "d2f5444f-75bc-4fdf-ac35-56f514c445e1"
+HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
 InfrastructureSystems = "2cd47ed4-ca9b-11e9-27f2-ab636a7671f1"
 JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
@@ -31,6 +32,7 @@ TimeSeries = "9e3dc215-6440-5c97-bce1-76c03772f85e"
 
 [sources]
 AustralianElectricityMarketsCache = {path = "AustralianElectricityMarketsCache"}
+HDF5 = {url = "https://github.com/JuliaIO/HDF5.jl.git", rev = "4c4592a397a4e4f6045a56003ca4d038c8eb3a78"}
 
 [compat]
 AustralianElectricityMarketsCache = "0.1"
@@ -39,6 +41,7 @@ Chain = "0.6, 1.0"
 DataFrames = "1.7"
 Dates = "1"
 DuckDB = "1"
+HDF5 = "0.17.5"
 InfrastructureSystems = "^3.1"
 JSON3 = "1"
 PowerSystems = "5.10.0"

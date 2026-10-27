@@ -6,6 +6,7 @@ using DataFrames
 using Dates
 using DuckDB
 using HiGHS
+import HDF5
 using TOML
 using SHA
 import PowerSimulations as PSI
@@ -95,6 +96,7 @@ function main(folder, day::Date)
         "checkout_status" => checkout_status, "package_source_hashes" => package_hashes, "optimization_level" => Int(Base.JLOptions().opt_level),
         "julia" => string(VERSION), "psi" => string(Base.pkgversion(PSI)),
         "highs_package" => string(Base.pkgversion(HiGHS)),
+        "hdf5" => string(Base.pkgversion(HDF5)),
         "aem" => string(Base.pkgversion(AustralianElectricityMarkets)),
         "aem_simulations" => string(Base.pkgversion(AustralianElectricityMarketsSimulations)),
         "interval_time_zone" => "fixed AEST UTC+10", "intervention" => 0,

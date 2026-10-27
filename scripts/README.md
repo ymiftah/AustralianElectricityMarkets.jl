@@ -225,6 +225,14 @@ That older CLI prints comparisons, uses its existing zero-relative-gap default,
 and stores PSI outputs in temporary folders. Use the overnight runner when you
 need the persistent outputs and `1e-8` relative gap described above.
 
+## HDF5 dependency
+
+The environment requires HDF5 0.17.5 and pins its official fixed release-branch revision
+until that version is tagged. It contains the datatype-handle cleanup needed to prevent
+construction overhead growing across repeated builds. Instantiate the checked-out project
+before launching; keep the project source pins when reproducing a run. The worker snapshots
+its resolved manifest and package sources.
+
 ## Early validation and detailed timing
 
 Before constructing each chunk, a data-only preflight checks the padded five-minute

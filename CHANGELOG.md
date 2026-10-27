@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Require HDF5 0.17.5 with the upstream datatype-handle leak fix; temporarily pin
+  the official release-branch revision until that version is tagged. This prevents
+  growing native file-close overhead across repeated replay system builds.
+
 - Replay table requirements include `DISPATCHINTERCONNECTORRES` for MNSP metered-flow
   ramping, including when diagnostic interval flow limits are disabled.
 
