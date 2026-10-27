@@ -33,6 +33,8 @@ TimeSeries = "9e3dc215-6440-5c97-bce1-76c03772f85e"
 [sources]
 AustralianElectricityMarketsCache = {path = "AustralianElectricityMarketsCache"}
 HDF5 = {url = "https://github.com/JuliaIO/HDF5.jl.git", rev = "4c4592a397a4e4f6045a56003ca4d038c8eb3a78"}
+InfrastructureSystems = {url = "https://github.com/ymiftah/InfrastructureSystems.jl.git", rev = "121d4331f4abc4274fc64c179e912daf10d63607"}
+PowerSystems = {url = "https://github.com/ymiftah/PowerSystems.jl.git", rev = "03f9639648cc01c62df26836bdc620f2382521ff"}
 
 [compat]
 AustralianElectricityMarketsCache = "0.1"

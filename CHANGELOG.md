@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Temporarily pin InfrastructureSystems 3.6.3 to a fork revision that limits
+  forecast-cache sizing reads to one window instead of all remaining windows.
+
+- Pin PowerSimulations to the fork rebased on upstream 0.38.5, and pin PowerSystems
+  5.12.4 to its fork revision in every workspace project that depends on it.
+
 - Require HDF5 0.17.5 with the upstream datatype-handle leak fix; temporarily pin
   the official release-branch revision until that version is tagged. This prevents
   growing native file-close overhead across repeated replay system builds.

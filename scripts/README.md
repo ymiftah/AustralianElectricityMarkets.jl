@@ -133,6 +133,18 @@ retains its successful days and records both counts in `outcome.toml`.
 
 ### Solver and system defaults
 
+The workspace temporarily pins forks of InfrastructureSystems 3.6.3
+([`121d433`](https://github.com/ymiftah/InfrastructureSystems.jl/commit/121d4331f4abc4274fc64c179e912daf10d63607),
+which limits the forecast cache's initial sizing read to one forecast window),
+PowerSimulations 0.38.5
+([`b5e8775`](https://github.com/ymiftah/PowerSimulations.jl/commit/b5e8775f3f9d18f133f913d3561860d1d39f6c64))
+and PowerSystems 5.12.4
+([`03f9639`](https://github.com/ymiftah/PowerSystems.jl/commit/03f9639648cc01c62df26836bdc620f2382521ff)).
+After updating the checkout, compare `Pkg.status` with these revisions. A root
+`Pkg.resolve()` applies root source pins only; for a stale subproject pin, run
+`Pkg.add(url = ..., rev = ...)` with that project active. Existing frozen replay
+launches retain their own dependency versions.
+
 - HiGHS with `mip_rel_gap = 1e-8` and `mip_abs_gap = 1e-10`.
 - One solver thread, all `REPLICATION_PARTS`, and `intervention = 0` (pricing run).
 - A new system and model per trading day, with interval parameters updated in
