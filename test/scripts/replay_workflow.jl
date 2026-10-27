@@ -17,7 +17,9 @@ end
     t = DateTime(2025, 1, 1, 0, 5, 0)
 
     @testset "replicate_range replays one interval, solves and compares" begin
-        result = replicate_range(db, t, t)
+        phases = Symbol[]
+        result = replicate_range(db, t, t; on_phase = phase -> push!(phases, phase))
+        @test phases == [:preflight, :system_build, :model_build, :execute, :compare]
         @test only(result.results) isa PSI.SimulationProblemResults
         skipped = result.skipped_constraints
         @test names(skipped) == ["chunk", "constraint", "reason", "n_missing"]
@@ -195,3 +197,41 @@ end
     @test any(in((:unmodeled_fcas_service, :unmodeled_device_type)), result.skipped_constraints.reason)
     @test any(!ismissing, result.comparison.dispatch.TOTALCLEARED_solved)
 end
+
+include("replay_batch.jl")
+
+@testset "data-only preflight checks exact padded coverage and versions" begin
+    t = DateTime(2025, 1, 1, 0, 5)
+    grid = collect(t:Minute(5):(t + Minute(5)))
+    links = DataFrame(INTERCONNECTORID = ["M", "M"], LINKID = ["F", "R"])
+    offers = DataFrame(LINKID = ["F", "R", "F", "R"], INTERVAL_DATETIME = [grid[1], grid[1], grid[2], grid[2]])
+    @test isnothing(ReplayWorkflow._check_mnsp_coverage(links, offers, ["M"], grid))
+    @test_throws ArgumentError ReplayWorkflow._check_mnsp_coverage(links, offers[1:3, :], ["M"], grid)
+    @test_throws ArgumentError ReplayWorkflow._check_mnsp_coverage(links, vcat(offers, offers[1:1, :]), ["M"], grid)
+    @test_throws ArgumentError ReplayWorkflow._check_mnsp_coverage(links[1:1, :], offers, ["M"], grid)
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR))
+    @test isnothing(ReplayWorkflow._preflight_inputs(db, t:Minute(5):(t + Minute(10)); parts = REPLICATION_PARTS))
+end
+
+@testset "preflight preserves fixed-load and built-in constraint handling" begin
+    t = DateTime(2025, 1, 1, 0, 5)
+    eff = DateTime(2020, 1, 1)
+    invoked = DataFrame(
+        GENCONID = ["C", "\$U"], SETTLEMENTDATE = [t, t],
+        GENCONID_EFFECTIVEDATE = [eff, eff], GENCONID_VERSIONNO = [1, 1]
+    )
+    fixed = DataFrame(DUID = ["U"], INTERVAL_DATETIME = [t])
+    definitions = DataFrame(GENCONID = ["C"], EFFECTIVEDATE = [eff], VERSIONNO = [1])
+    @test isnothing(ReplayWorkflow._check_constraint_versions(invoked, fixed, definitions))
+    definitions.VERSIONNO .= 2
+    @test_throws ArgumentError ReplayWorkflow._check_constraint_versions(invoked, fixed, definitions)
+    builtin = first(keys(AustralianElectricityMarkets._ZERO_FLOW_CONSTRAINTS))
+    invoked = DataFrame(
+        GENCONID = [builtin], SETTLEMENTDATE = [t],
+        GENCONID_EFFECTIVEDATE = [DateTime(AustralianElectricityMarkets._ZERO_FLOW_EFFECTIVEDATE)],
+        GENCONID_VERSIONNO = [AustralianElectricityMarkets._ZERO_FLOW_VERSIONNO]
+    )
+    @test isnothing(ReplayWorkflow._check_constraint_versions(invoked, fixed, definitions[1:0, :]))
+end
+
+include("replay_preflight.jl")

@@ -560,6 +560,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Added a timed random-day replay runner with early MNSP and constraint-version checks,
+  one Julia worker per trading day, native interval timings and process memory sampling.
+  An admitted day finishes even after the overall admission deadline.
+
 - Recurrent objective updates reuse model-owned forecast caches and keyed service lookups.
   Structured energy/FCAS bid caches retain at most 24 windows per series; FCAS price updates
   reuse the service contributor map. Disk-backed reads preserve native scaling and cost conversion.
