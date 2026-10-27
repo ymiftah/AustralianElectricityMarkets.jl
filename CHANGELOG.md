@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Recurrent FCAS price and generic-constraint slack-cost updates reuse the decision model's
   forecast cache for disk-backed time series and use keyed generic service-model lookup.
+  Single-interval NEM energy-offer slopes cache their static bid series, and FCAS price updates
+  reuse the built service contributor map. The local update benchmark supports CPU and
+  allocation profiling with `--profile`.
 
 - Replay table requirements include `DISPATCHINTERCONNECTORRES` for MNSP metered-flow
   ramping, including when diagnostic interval flow limits are disabled.

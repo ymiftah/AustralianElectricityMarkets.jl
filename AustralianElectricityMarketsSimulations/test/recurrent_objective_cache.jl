@@ -75,6 +75,49 @@ end
     end
 end
 
+@testset "energy offer slopes reuse disk-backed data without changing unit conversion" begin
+    for cached in (true, false)
+        mktempdir() do folder
+            units = Dict(TOY_CHEAP => toy_unit(50.0, [[(20.0, 10.0)], [(35.0, 30.0)]]; initial = 0.0, ramp_up = 100.0))
+            sys = nem_toy_system(
+                units, 10.0; horizon = TOY_RESOLUTION,
+                batteries = ["BAT" => toy_battery(20.0, 75.0, 20.0, 25.0; initial = 0.0, ramp_up = 100.0)],
+                loads = ["LOAD" => toy_load(20.0, 40.0; initial = 0.0, ramp_up = 100.0)],
+            )
+            model = PSI.DecisionModel(
+                replication_template(sys), sys; horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION,
+                interval = TOY_RESOLUTION, initial_time = TOY_START,
+                optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
+                time_series_cache_size = cached ? 1024 * 1024 : 0,
+            )
+            @test PSI.build!(model; output_dir = joinpath(folder, "model")) == PSI.ModelBuildStatus.BUILT
+            container = PSI.get_optimization_container(model)
+            keys = [k for k in Base.keys(PSI.get_parameters(model)) if PSI.IS.Optimization.get_entry_type(k) <: PSI.AbstractPiecewiseLinearSlopeParameter]
+            _update_objective_cache_parameters!(model, keys, 0)
+            gen_band = PSI.get_variable(container, PSI.PiecewiseLinearBlockIncrementalOffer(), PSY.ThermalStandard)[TOY_CHEAP, 1, 1]
+            @test PSI.JuMP.coefficient(PSI.get_variant_terms(PSI.get_objective_expression(container)), gen_band) ≈ 10.0 * 100.0 / 12
+            path = PSI.IS.get_time_series_storage(PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)).file_path
+            cached && mv(path, path * ".hidden")
+            try
+                @test_nowarn _update_objective_cache_parameters!(model, keys, 1)
+                objective = PSI.get_variant_terms(PSI.get_objective_expression(container))
+                @test PSI.JuMP.coefficient(objective, gen_band) ≈ 30.0 * 100.0 / 12
+                for (T, name, band_type, price) in (
+                        (PSY.EnergyReservoirStorage, "BAT", PSI.PiecewiseLinearBlockIncrementalOffer, 75.0),
+                        (PSY.EnergyReservoirStorage, "BAT", PSI.PiecewiseLinearBlockDecrementalOffer, -25.0),
+                        (PSY.InterruptiblePowerLoad, "LOAD", PSI.PiecewiseLinearBlockDecrementalOffer, -40.0),
+                    )
+                    band = PSI.get_variable(container, band_type(), T)[name, 1, 1]
+                    @test PSI.JuMP.coefficient(objective, band) ≈ price * 100.0 / 12
+                end
+                @test cached || isempty(PSI.get_time_series_cache(model))
+            finally
+                cached && mv(path * ".hidden", path)
+            end
+        end
+    end
+end
+
 include(joinpath(@__DIR__, "real_data", "benchmark_updates.jl"))
 
 @testset "benchmark snapshot iteration handles dense and sparse containers" begin

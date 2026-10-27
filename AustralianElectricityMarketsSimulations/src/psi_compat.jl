@@ -248,3 +248,73 @@ function PSI._unwrap_for_param(::MNSPBandWidthParameter, curve::IS.PiecewiseStep
     length(widths) <= n || throw(ArgumentError("MNSP offer has $(length(widths)) bands, more than the band axis' $n."))
     return vcat(widths, zeros(n - length(widths)))
 end
+
+
+"""
+    _cached_static_bid_values!(model, component, key, start_time)
+
+Read a single-period static bid series through the decision model's time-series cache,
+retaining the series key's resolution and PowerSystems scaling behavior.
+
+# Returns
+The bid values at `start_time`.
+"""
+function _cached_static_bid_values!(model::PSI.DecisionModel, component, key::IS.StaticTimeSeriesKey, start_time)
+    cache = PSI.get_time_series_cache(model)
+    ts_type = IS.get_time_series_type(key)
+    resolution = IS.get_resolution(key)
+    name = IS.get_name(key)
+    cache_key = IS.TimeSeriesCacheKey(IS.get_uuid(component), ts_type, name, Dates.Millisecond(resolution), nothing)
+    ts_cache = get!(cache, cache_key) do
+        return IS.make_time_series_cache(
+            ts_type, component, name, start_time, 1; resolution, ignore_scaling_factors = false,
+        )
+    end
+    return PSI.TimeSeries.values(IS.get_time_series_array!(ts_cache, start_time))
+end
+
+
+"""
+    PSI._update_parameter_values!(parameter_array, slope, multiplier, attributes, component_type, model, input)
+
+Update single-period NEM energy-offer slopes from cached static bids, using PSI's native
+parameter unwrapping and objective conversion. Other formulations and horizons use PSI's reader.
+
+# Returns
+`nothing`.
+"""
+function PSI._update_parameter_values!(
+        parameter_array::PSI.DenseAxisArray, slope::T, multiplier::PSI.JuMPFloatArray,
+        attributes::PSI.CostFunctionAttributes, ::Type{V}, model::PSI.DecisionModel,
+        input::PSI.DatasetContainer{PSI.InMemoryDataset},
+    ) where {T <: PSI.AbstractPiecewiseLinearSlopeParameter, V <: PSY.StaticInjection}
+    container = PSI.get_optimization_container(model)
+    settings = PSI.get_settings(model)
+    device_model = PSI.get_model(PSI.get_template(model), V)
+    if !(PSI.get_formulation(device_model) <: AbstractNEMDispatch) ||
+            length(PSI.get_time_steps(container)) != 1 || !PSI.use_time_series_cache(settings) ||
+            PSI.get_interval(settings) != PSI.get_resolution(settings)
+        return invoke(
+            PSI._update_parameter_values!,
+            Tuple{PSI.DenseAxisArray, PSI.ObjectiveFunctionParameter, PSI.JuMPFloatArray, PSI.CostFunctionAttributes, Type{V}, PSI.DecisionModel, PSI.DatasetContainer{PSI.InMemoryDataset}},
+            parameter_array, slope, multiplier, attributes, V, model, input,
+        )
+    end
+    PSI.is_synchronized(container) && error("Cannot update $T on a synchronized container; objective expressions would be added twice")
+    start_time = PSI.get_current_time(model)
+    for component in PSI.get_available_components(device_model, PSI.get_system(model))
+        cost = PSY.get_operation_cost(component)
+        key = cost isa PSY.OfferCurveCost ? PSI._get_parameter_field(slope, cost) : nothing
+        name = PSY.get_name(component)
+        if key isa IS.StaticTimeSeriesKey && Dates.Millisecond(IS.get_resolution(key)) == PSI.get_resolution(settings)
+            values = _cached_static_bid_values!(model, component, key, start_time)
+            for (t, value::PSY.PiecewiseStepData) in enumerate(values)
+                PSI._set_param_value!(parameter_array, PSI._unwrap_for_param(slope, value, PSI.lookup_additional_axes(parameter_array)), name, t)
+                PSI.update_variable_cost!(slope, container, value, multiplier, attributes, component, t)
+            end
+        else
+            PSI.handle_variable_cost_parameter(slope, cost, component, name, parameter_array, multiplier, attributes, container, start_time, 1)
+        end
+    end
+    return
+end

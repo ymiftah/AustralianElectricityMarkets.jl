@@ -1,8 +1,8 @@
 # Three January 6, 2026 intervals from the local cache; no downloads. Run with identical Julia
-# flags on each revision, giving a new output folder as the only argument. Step 0 is warm-up.
+# flags on each revision, giving a new output folder as the first argument. Add --profile for warmed update profiles. Step 0 is warm-up.
 using AustralianElectricityMarkets
 using AustralianElectricityMarketsSimulations
-using Dates, Logging, TOML, HiGHS, SHA
+using Dates, Logging, TOML, HiGHS, SHA, Profile
 import PowerSimulations as PSI
 const AEMS = AustralianElectricityMarketsSimulations
 function _benchmark_csv_row(io, values)
@@ -19,7 +19,7 @@ function _benchmark_entries(array::AbstractArray)
     return (Tuple(idx) => array[idx] for idx in CartesianIndices(array))
 end
 
-function _benchmark_updates(folder)
+function _benchmark_updates(folder; profile_updates = false)
     mkdir(folder)
     t = DateTime(2026, 1, 6, 4, 5)
     steps = t:Minute(5):(t + Minute(10))
@@ -37,8 +37,8 @@ function _benchmark_updates(folder)
     container = PSI.get_optimization_container(model)
     results = Dict{String, Any}("system_build_s" => system_s, "model_build_s" => model_s, "julia" => string(VERSION), "optimization_level" => Int(Base.JLOptions().opt_level), "parameter_keys" => length(PSI.get_parameters(model)), "steps" => Any[])
     results["source_hashes"] = Dict(
-        file => bytes2hex(sha256(read(joinpath(dirname(pathof(AEMS)), "formulations", file))))
-            for file in ("series_parameters.jl", "fcas.jl", "generic_constraints.jl")
+        file => bytes2hex(sha256(read(joinpath(dirname(pathof(AEMS)), file))))
+            for file in ("formulations/series_parameters.jl", "formulations/fcas.jl", "formulations/generic_constraints.jl", "psi_compat.jl")
     )
     results["psi_version"] = string(Base.pkgversion(PSI))
     results["highs_package_version"] = string(Base.pkgversion(HiGHS))
@@ -92,10 +92,58 @@ function _benchmark_updates(folder)
         end
         println("STEP $i $row"); flush(stdout)
     end
+    profile_updates && _profile_recurrent_updates!(model, out.simulation, folder)
     return
 end
+# Repeated reads at the final timestamp isolate warmed update work from solves and cache fills.
+function _profile_recurrent_updates!(model, simulation, folder)
+    container = PSI.get_optimization_container(model)
+    state = PSI.get_simulation_state(simulation)
+    open(joinpath(folder, "update_families.csv"), "w") do io
+        _benchmark_csv_row(io, ("repetition", "family", "component", "meta", "seconds", "allocated_bytes", "gc_seconds"))
+        for repetition in 0:3
+            PSI.cost_function_unsynch(container)
+            for key in keys(PSI.get_parameters(model))
+                stat = @timed PSI.update_parameter_values!(model, key, state)
+                _benchmark_csv_row(
+                    io, (
+                        repetition, PSI.IS.Optimization.get_entry_type(key), PSI.IS.Optimization.get_component_type(key),
+                        key.meta, stat.time, stat.bytes, stat.gctime,
+                    )
+                )
+            end
+            stat = @timed PSI.update_objective_function!(container)
+            PSI.set_synchronized_status!(PSI.get_objective_expression(container), true)
+            _benchmark_csv_row(io, (repetition, "objective_install", "", "", stat.time, stat.bytes, stat.gctime))
+        end
+    end
+    open(joinpath(folder, "warmed_updates.csv"), "w") do io
+        _benchmark_csv_row(io, ("repetition", "seconds", "allocated_bytes", "gc_seconds"))
+        for repetition in 0:5
+            stat = @timed PSI.update_model!(model, simulation)
+            _benchmark_csv_row(io, (repetition, stat.time, stat.bytes, stat.gctime))
+        end
+    end
+    Profile.clear()
+    Profile.init(; n = 2_000_000, delay = 0.002)
+    Profile.@profile for _ in 1:5
+        PSI.update_model!(model, simulation)
+    end
+    for format in (:flat, :tree)
+        open(joinpath(folder, "update_cpu_$format.txt"), "w") do io
+            output = IOContext(io, :displaysize => (200, 240))
+            if format == :flat
+                Profile.print(output; format, sortedby = :count, mincount = 5, C = true)
+            else
+                Profile.print(output; format, mincount = 10, C = true)
+            end
+        end
+    end
+    return
+end
+
 if abspath(PROGRAM_FILE) == @__FILE__
     with_logger(ConsoleLogger(stderr, Logging.Error)) do
-        _benchmark_updates(ARGS[1])
+        _benchmark_updates(ARGS[1]; profile_updates = "--profile" in ARGS[2:end])
     end
 end

@@ -71,7 +71,9 @@ Pass a vector through `skipped` to collect constraints omitted from the template
 ## Recurrent update performance
 
 File-backed systems reuse the decision model's forecast cache when updating FCAS bid prices
-and generic-constraint invocation-dependent costs. Keep PSI's time-series caching enabled for
+and generic-constraint invocation-dependent costs. Single-interval NEM models also cache static
+energy-offer prices, preserving their series resolution and PSI cost conversion. FCAS updates
+reuse the service model's contributor map. Keep PSI's time-series caching enabled for
 this storage mode. The `cache_size_mib` argument controls result-write buffering separately.
 
 When measuring throughput, record the Julia version and optimisation level, separate package
@@ -90,6 +92,13 @@ Give a new output folder and an existing local cache covering January 6 through 
 The harness records source hashes, per-step update/solve times, stored decisions and pricing
 duals. Step 0 is warm-up. Compare subsequent steps using identical flags and inputs; the pilot
 is not a full-day throughput or complete numerical-audit test.
+
+Append `--profile` to write per-parameter-family timing and allocation rows to
+`update_families.csv`, whole-update measurements to `warmed_updates.csv`, and sampled CPU
+reports including native HDF5 calls to `update_cpu_flat.txt` and `update_cpu_tree.txt`.
+These measurements repeat the final timestamp without solving; exclude repetition 0 when
+summarising them. Julia allocated bytes measure allocation traffic, not resident memory.
+The three advancing steps remain the separate solve/output equivalence check.
 
 ## Compare historical results with NEMDE
 

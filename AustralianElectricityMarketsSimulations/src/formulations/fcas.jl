@@ -1250,7 +1250,8 @@ function PSI.update_container_parameter_values!(
     bid_type = get_bid_type(svc)
     prices = PSI.get_parameter_array(container, key)
     multiplier = PSI.get_parameter_multiplier_array(container, key)
-    contributors = Dict(PSY.get_name(d) => d for d in PSY.get_contributing_devices(sys, svc))
+    service_model = PSI.get_model(PSI.get_template(model), FCASService, PSY.get_name(svc))
+    contributors = Dict(PSY.get_name(d) => d for d in PSI.get_contributing_devices(service_model))
     offers = map(axes(prices)[1]) do dname
         device = contributors[dname]
         (device, isnothing(side) ? _fcas_direction(device, bid_type) == FCASBidDirection.DECREMENTAL : side)

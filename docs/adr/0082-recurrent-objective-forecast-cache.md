@@ -94,3 +94,77 @@ Local raw pilot folders are `/tmp/aem-update-before-complete-o1` and
 `/tmp/aem-update-comparison.json`. Earlier construction/profile attempts and failed exporter
 attempts are excluded from the table. The complete Simulations suite passed 2,117 checks;
 pre-commit checks and independent source review passed.
+
+### Profile-guided follow-up, 27 October 2026
+
+A retained model built from the same three January 6 intervals was profiled with Julia
+1.13.2 `-O1`, the same pinned PSI and solver settings, and 2,800 parameter containers.
+Initial advancing warmed updates averaged 1.005 seconds, below the earlier 1.901-second
+pilot. Absolute times varied between runs; the earlier number was not an I/O floor.
+Per-family timings excluded repetition zero and averaged three repetitions at the final
+interval. Sampled CPU stacks included native HDF5 frames.
+
+| Family | Before seconds | After seconds | Before allocated MB | After allocated MB |
+| --- | ---: | ---: | ---: | ---: |
+| Incremental energy slopes | 0.5660 | 0.0038 | 7.60 | 2.27 |
+| Decremental energy slopes | 0.0977 | 0.0008 | 1.45 | 0.40 |
+| FCAS band prices | 0.1548 | 0.0337 | 216.48 | 22.49 |
+
+Energy slope updates called PowerSystems' static offer getters on each component, bypassing
+the model cache. HDF5 close stacks spent time enumerating open objects. These were repeated
+library/metadata operations, rather than unavoidable disk bandwidth. FCAS updates rebuilt
+contributors by scanning system devices and checking service membership for every service.
+
+Cache the actual `StaticTimeSeriesKey` bid data for single-period NEM models when caching is
+enabled and model interval, model resolution and series resolution match. Use the existing
+model cache with the static series type and key resolution, retaining PowerSystems' scaling.
+Continue through PSI's native parameter unwrapping and `update_variable_cost!`, including
+its natural-unit to system-base conversion and decremental sign. Other formulations,
+horizons, resolutions and cost representations retain the original PSI reader. There is no
+substitution of a transformed forecast for the static cost series. FCAS contributor lookup
+now uses the already-built service model's contributing-device map.
+
+The unchanged energy term is referred bid price times band MW times interval hours, with
+load-side bands decreasing the objective. AEMO's [Treatment of Loss Factors in the National
+Electricity Market](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2016/treatment_of_loss_factors_in_the_nem.pdf),
+sections 13 and 14, pages 29-30, describes bid referral and separate generation/load factors.
+This reference supports the price relationship, not its historical settlement intervals.
+FCAS cost semantics remain those cited above. No new bounds, equations or cost terms change.
+
+To reduce timing drift, four blocks alternated baseline, optimized, baseline and optimized
+methods in the same retained model at the final timestamp. Each block ran garbage collection
+and one untimed update before five timed updates. Baseline methods explicitly restored the
+native energy reader and previous FCAS system scan; automatic source reloading otherwise
+picked up edits during exploratory measurements. No test suite ran during the paired timings.
+
+| Warmed whole update | Baseline | Optimized |
+| --- | ---: | ---: |
+| Mean seconds, 10 repetitions each | 1.1473 | 0.2801 |
+| Median seconds | 1.1411 | 0.2763 |
+| Range seconds | 1.0803-1.2791 | 0.2497-0.3647 |
+| Mean allocated bytes | 300,951,600 | 100,253,839 |
+
+This is a 4.10-times warmed-update improvement and 66.7% less Julia allocation traffic.
+Allocated bytes are not peak or retained RSS. This comparison excludes model construction,
+cache fills, solves and exports. The remaining profile is distributed across structured FCAS
+parameter updates, tie-break scales and other model updates; some small MNSP HDF5 reads remain.
+It does not establish an irreducible minimum or a full-day speedup.
+
+Separate advancing-interval checks reset the cache and solved all three timestamps before
+and after the change. The two warmed transitions took 1.2242/1.4827 seconds before and
+0.3931/0.3611 seconds after. Objectives and every stored variable value, objective coefficient
+and pricing dual matched exactly, with the same per-interval counts and incomplete full-model
+primal-audit coverage noted above. The disk-backed regression additionally checks changing
+energy slopes, storage in both directions, scheduled load, unit conversion and cache disabled.
+
+The benchmark's optional `--profile` mode writes per-key timings/allocations, repeated whole
+update timings and native CPU reports. It was exercised on the retained real-data model.
+Local raw profiles, alternating timings and the JSON summary are in
+`/tmp/aem-warm-profile-228/`; capture summaries are `/tmp/profile_baseline_restored.log` and
+`/tmp/profile_optimized.log`. Earlier exploratory captures are excluded from the paired table.
+
+Final verification passed 2,133 checks in the complete Simulations suite (`-O0`) and all
+40 cache-group checks through isolated `Pkg.test`. The earlier CI failure came from missing
+standard-library test dependencies introduced by including the benchmark helper; Logging,
+TOML, SHA and Profile are now declared in the test project. Runic, configured pre-commit
+checks and independent source/harness review passed.
