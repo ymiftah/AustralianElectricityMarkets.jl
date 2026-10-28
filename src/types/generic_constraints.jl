@@ -53,7 +53,7 @@ A `FACTOR * <region's BidType aggregate>` term, from `SPDREGIONCONSTRAINT`.
 
 !!! note
     `devices` is the region's contributing `Generator`/`Storage` names, resolved once by
-    [`resolve_term_devices`](@ref) at ingestion time (see [`add_nem_constraints!`](@ref)) — `region`
+    [`resolve_term_devices`](@ref) at ingestion time (see [`nem_system`](@ref)) — `region`
     and `bid_type` are kept alongside it so downstream code can still see this is a regional
     aggregate, not merely an unlabelled device list.
 """
@@ -177,10 +177,6 @@ PSY.supports_time_series(::GenericConstraint) = true
 
 get_sense(value::GenericConstraint) = value.sense
 
-# pu under SYSTEM_BASE, MW under NATURAL_UNITS - stamped by add_service! like any other
-# PSY.Component's units_info.
-get_rhs(value::GenericConstraint) = PSY.get_value(value, Val(:rhs), Val(:mva))
-
 """
     get_constraint_weight(value::GenericConstraint) -> Float64
 
@@ -194,8 +190,6 @@ scales the [`constraint_cvp_factor`](@ref) of the constraint.
 A `Float64`.
 """
 get_constraint_weight(value::GenericConstraint) = value.constraint_weight
-
-set_constraint_weight!(value::GenericConstraint, val) = value.constraint_weight = val
 
 PSY.get_description(value::GenericConstraint) = value.description
 
@@ -224,12 +218,3 @@ get_limit_type(value::GenericConstraint) = coalesce(get(value.ext, "limit_type",
 `GENCONDATA.SOURCE`, or `nothing` if absent.
 """
 get_source(value::GenericConstraint) = coalesce(get(value.ext, "source", nothing), nothing)
-
-
-"""
-    get_gencon_id(value::GenericConstraint) -> Union{String, Nothing}
-
-AEMO's bare `GENCONID`, unversioned — unlike [`get_name`](@ref), which may include the
-`EFFECTIVEDATE#VERSIONNO` suffix. Returns `nothing` if absent.
-"""
-get_gencon_id(value::GenericConstraint) = coalesce(get(value.ext, "gencon_id", nothing), nothing)

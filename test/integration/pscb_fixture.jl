@@ -11,7 +11,7 @@ FCAS and constraint types need before every code path can be reached.
 The base case carries five `ThermalStandard`, one `HydroDispatch` and two `HydroTurbine` units
 across two `Area`s (`"1"` and `"2"`), and is supply-adequate by construction. It has no
 `AreaInterchange`, `RenewableDispatch` or `EnergyReservoirStorage`, so on its own
-[`add_nem_constraints!`](@ref) can never resolve an `INTERCONNECTOR` term, there is no
+`_add_nem_constraints!` can never resolve an `INTERCONNECTOR` term, there is no
 semi-scheduled unit to carry a `UIGF` ceiling, and [`set_fcas_bids!`](@ref)'s decremental
 (`LOAD`-direction) branch is never entered. One of each is added, named so NEMWEB fixture rows
 can key to them by `DUID`.

@@ -536,6 +536,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- Public names `set_nem_fixed_loads!`, `add_nem_constraints!`, `set_nem_dispatch_limits!`, `set_demand!`, `get_low_breakpoint`, `get_high_breakpoint`, `get_rhs`, `set_constraint_weight!`, `get_gencon_id`, `interconnector_loss_gaps` and `check_interconnector_loss_segments`; `nem_system` builds these inputs.
 - `ConstrainedNetworkConfiguration` was removed; build replay systems with `NEMDEConfiguration`.
 - The public `filter_buildable_generic_constraints` (`AustralianElectricityMarketsSimulations`).
   The replication path runs the same buildability check internally.

@@ -11,6 +11,7 @@ const AEMS = AustralianElectricityMarketsSimulations
 include(joinpath(@__DIR__, "..", "..", "test", "fixtures", "mock_data.jl"))
 include(joinpath(@__DIR__, "..", "..", "test", "integration", "pscb_fixture.jl"))
 include(joinpath(@__DIR__, "..", "..", "test", "integration", "pscb_nemweb_data.jl"))
+include(joinpath(@__DIR__, "..", "..", "test", "fixtures", "input_builders.jl"))
 include(joinpath(@__DIR__, "template_helpers.jl"))
 include(joinpath(@__DIR__, "toy_fixture.jl"))
 

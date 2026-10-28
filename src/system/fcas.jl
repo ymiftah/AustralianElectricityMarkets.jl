@@ -306,7 +306,7 @@ attached under the plain `<SERVICE>` name alongside `GEN`), attached to every ma
 to `EnergyReservoirStorage` and `InterruptiblePowerLoad` under `"<SERVICE>_decremental"`. A
 non-scheduled load (no energy bid) that gets a series is made available if its unit is
 commissioned; one without any FCAS bid stays unavailable. Run this before
-[`set_nem_dispatch_limits!`](@ref), which attaches the ramp and limit series a newly available load
+[`nem_system`](@ref), which attaches the ramp and limit series a newly available load
 needs. Dropping `LOAD`/
 `BIDIRECTIONAL` rows entirely (as an earlier version of this function did) silently loses a
 large share of real FCAS providers - measured on 2 Jan 2025 `BIDPEROFFER_D`, `LOAD` and
@@ -315,7 +315,7 @@ large share of real FCAS providers - measured on 2 Jan 2025 `BIDPEROFFER_D`, `LO
 The trapezium is a series of plain `NTuple{7,Float64}`, so it is not a [`FCASTrapezium`](@ref) object.
 Adds the [`FCASService`](@ref)s through [`add_fcas_services!`](@ref) before writing the offer curves,
 as the service bids need them. FCAS requirements are [`GenericConstraint`](@ref)s built separately by
-[`add_nem_constraints!`](@ref).
+[`nem_system`](@ref).
 
 Unlike the deleted `set_fcas_offers!`, this is genuinely time-varying (mirrors
 [`set_market_bids!`](@ref)'s energy-bid path), not a single-interval snapshot.

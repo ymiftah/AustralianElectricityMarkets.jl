@@ -22,7 +22,7 @@ function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, we
             end
             if !isnothing(target)
                 add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, target; sense = ConstraintSense.EQ)
-                set_constraint_weight!(only(PSY.get_components(GenericConstraint, sys)), weight)
+                only(PSY.get_components(GenericConstraint, sys)).constraint_weight = weight
             end
             return
         end,

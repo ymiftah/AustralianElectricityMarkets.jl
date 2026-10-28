@@ -36,10 +36,6 @@ end
 
 get_enablement_min(value::FCASTrapezium) = value.enablement_min
 
-get_low_breakpoint(value::FCASTrapezium) = value.low_breakpoint
-
-get_high_breakpoint(value::FCASTrapezium) = value.high_breakpoint
-
 get_enablement_max(value::FCASTrapezium) = value.enablement_max
 
 get_max_avail(value::FCASTrapezium) = value.max_avail

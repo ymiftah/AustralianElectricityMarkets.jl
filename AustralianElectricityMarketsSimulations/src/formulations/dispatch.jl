@@ -226,7 +226,7 @@ function PSI.construct_device!(
 end
 
 
-const _SETTER_REMEDY = "Call set_nem_dispatch_limits! over the model's date range first."
+const _SETTER_REMEDY = "Build the System with nem_system(db, NEMDEConfiguration(); date_range) over the model's date range first."
 
 
 """
@@ -417,7 +417,7 @@ function set_nem_dispatch_models!(template, sys; tie_breaks::Bool = true)
     types = nem_dispatch_participants(sys)
     isempty(types) && throw(
         ArgumentError(
-            "no dispatch participants in this System: call set_market_bids!, set_nem_dispatch_limits! and set_nem_energy_limits! over the " *
+            "no dispatch participants in this System: build it with nem_system(db, NEMDEConfiguration(); date_range) over the " *
                 "model's date range first",
         ),
     )

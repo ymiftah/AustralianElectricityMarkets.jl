@@ -71,14 +71,14 @@ end
     demand_before = deepcopy(demand)
     dispatch = read_dispatch_limits(db, grid; intervention = 0, resolution = Minute(5))
     AEM._set_demand!(shared, demand, grid; resolution = Minute(5))
-    set_demand!(independent, db, grid; resolution = Minute(5))
+    attach_demand!(independent, db, grid; resolution = Minute(5))
     @test isequal(demand, demand_before)
     for sys in (shared, independent)
         set_market_bids!(sys, db, grid; resolution = Minute(5))
         set_fcas_scaling_inputs!(sys, db, grid)
     end
     AEM._set_nem_dispatch_limits!(shared, dispatch, grid)
-    set_nem_dispatch_limits!(independent, db, grid)
+    attach_dispatch_limits!(independent, db, grid)
     for T in (PowerLoad, ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad), component in get_components(T, shared)
         other = get_component(T, independent, get_name(component))
         for key in PowerSystems.get_time_series_keys(component)
@@ -112,6 +112,11 @@ end
     db = aem_connect(HiveConfiguration(hive_location = hive))
     grid = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     sys, _ = AEM.RegionModel._constrained_system(db; date_range = grid)
+    # FCAS price bids are stored only by NEMDEConfiguration, so no device carries an offer curve here.
+    @test !any(
+        has_time_series(device, SingleTimeSeries, fcas_offer_series_name(svc, dec))
+            for device in get_components(Device, sys), svc in get_components(FCASService, sys), dec in (false, true)
+    )
     # No set_market_bids!: each bidder keeps its zero cost and gets an empty MarketBidCost.
     bidders = [g for g in get_components(Generator, sys) if has_time_series(g, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")]
     @test !isempty(bidders)

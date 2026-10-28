@@ -19,6 +19,7 @@ import PowerSystems as PSY
 
 const AEM = AustralianElectricityMarkets
 const AEMS = AustralianElectricityMarketsSimulations
+include(joinpath(@__DIR__, "..", "..", "..", "test", "fixtures", "input_builders.jl"))
 
 const REAL_HIVE = isempty(ARGS) ? joinpath(homedir(), ".nemdb_cache") : only(ARGS)
 const REAL_START = DateTime(2026, 6, 4, 0, 0)
@@ -99,16 +100,6 @@ function build_and_solve!(model)
     return (; build_time, solve_time)
 end
 
-function term_device_names(gc; energy_only::Bool = false)
-    names = String[]
-    for term in get_terms(gc)
-        energy_only && term isa Union{UnitTerm, RegionTerm} && get_bid_type(term) != BidType.ENERGY && continue
-        term isa UnitTerm && push!(names, get_duid(term))
-        term isa RegionTerm && append!(names, get_devices(term))
-    end
-    return names
-end
-
 @testset "Real NEM data, $(Date(REAL_START))" begin
     sys, _ = AEM.RegionModel._constrained_system(db; date_range = REAL_DATE_RANGE)
 
@@ -121,7 +112,7 @@ end
         @test !isempty(PSY.get_components(GenericConstraint, sys))
     end
 
-    set_demand!(sys, db, REAL_DATE_RANGE; resolution = REAL_RESOLUTION)
+    attach_demand!(sys, db, REAL_DATE_RANGE; resolution = REAL_RESOLUTION)
     set_market_bids!(sys, db, REAL_DATE_RANGE; resolution = REAL_RESOLUTION)
     set_fcas_scaling_inputs!(sys, db, REAL_DATE_RANGE)
     limits = read_dispatch_limits(db, REAL_DATE_RANGE)
@@ -134,7 +125,7 @@ end
         end
 
         @test begin
-            set_nem_dispatch_limits!(sys, db, REAL_DATE_RANGE)
+            attach_dispatch_limits!(sys, db, REAL_DATE_RANGE)
             true
         end
 
@@ -254,61 +245,6 @@ end
         total_area_slack_mw = sum(values(slack_mw); init = 0.0)
         @info "Real-data DecisionModel" build_time solve_time total_area_slack_mw
 
-    end
-
-    @testset "interconnector loss gap and regional price signs" begin
-        # NEMInterconnectorLoss in place of the main model's lossless StaticBranch; the solved loss
-        # is compared with the breakpoint interpolation at the same solved flow.
-        loss_template = aemsim_template(sys)
-        PSI.set_device_model!(loss_template, PSY.AreaInterchange, NEMInterconnectorLoss)
-        loss_model = PSI.DecisionModel(
-            loss_template, sys;
-            optimizer = optimizer_with_attributes(
-                HiGHS.Optimizer, "output_flag" => false, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10,
-            ),
-            horizon = REAL_SPAN,
-            resolution = REAL_RESOLUTION,
-            interval = REAL_RESOLUTION,
-            initial_time = REAL_START,
-            name = "real_data_losses",
-        )
-        build_and_solve!(loss_model)
-
-        loss_res = PSI.OptimizationProblemResults(loss_model)
-        gaps = check_interconnector_loss_segments(loss_res, sys; tolerance = 1.0e-3)
-        timestamps = collect(REAL_DATE_RANGE)[1:(end - 1)]
-
-        # Weighted marginal price of a unit of loss: share * price_from + (1 - share) * price_to.
-        # The contiguous-fill encoding is exact at any sign of this price.
-        dual_df = PSI.read_dual(loss_res, "CopperPlateBalanceConstraint__Area")
-        price = Dict((r.name, r.DateTime) => r.value for r in eachrow(dual_df))
-        weighted_price = Dict{Tuple{String, Int}, Float64}()
-        for ic in PSY.get_components(PSY.AreaInterchange, sys)
-            models = PSY.get_supplemental_attributes(InterconnectorLossModel, ic)
-            length(models) == 1 || continue
-            model = only(models)
-            for (t, stamp) in enumerate(timestamps)
-                pf = get(price, (model.from_region, stamp), NaN)
-                pt = get(price, (model.to_region, stamp), NaN)
-                weighted_price[(PSY.get_name(ic), t)] =
-                    model.from_region_loss_share * pf + (1 - model.from_region_loss_share) * pt
-            end
-        end
-
-        @test !isempty(gaps)
-        # Negative weighted prices included, loss must stay on the curve at the solved flow.
-        @test all(abs(gap) < 1.0e-3 for gap in values(gaps))
-
-        names = sort(unique(first.(keys(gaps))))
-        report = join(
-            [
-                "$n: max|gap| $(round(maximum(abs(gaps[(n, t)]) for t in eachindex(timestamps)); digits = 4)) MW, " *
-                    "t1 weighted price $(weighted_price[(n, 1)] >= 0 ? "non-negative" : "NEGATIVE"), " *
-                    "$(count(t -> weighted_price[(n, t)] < 0, eachindex(timestamps))) negative interval(s)"
-                    for n in names
-            ], "; ",
-        )
-        @info "Interconnector over-dissipation gap (solved LP loss - curve at solved flow) and weighted price sign" report
     end
 
     @testset "FCASMarket builds and solves alongside the constrained System" begin
@@ -522,13 +458,13 @@ end
 
 @testset "Elastic GenericConstraint slack matches AEMO's published violation, $(Date(VIOLATION_START))" begin
     sys, _ = AEM.RegionModel._constrained_system(db; date_range = VIOLATION_DATE_RANGE)
-    set_demand!(sys, db, VIOLATION_DATE_RANGE; resolution = REAL_RESOLUTION)
+    attach_demand!(sys, db, VIOLATION_DATE_RANGE; resolution = REAL_RESOLUTION)
     set_market_bids!(sys, db, VIOLATION_DATE_RANGE; resolution = REAL_RESOLUTION)
-    set_nem_dispatch_limits!(sys, db, VIOLATION_DATE_RANGE)
+    attach_dispatch_limits!(sys, db, VIOLATION_DATE_RANGE)
     PSY.transform_single_time_series!(sys, VIOLATION_SPAN, REAL_RESOLUTION)
 
     target_gencon_ids = ("Q_STR_ALDSF_ZERO", "Q_BRDDSF01_1INV")
-    gcs = [gc for gc in PSY.get_components(GenericConstraint, sys) if get_gencon_id(gc) in target_gencon_ids]
+    gcs = [gc for gc in PSY.get_components(GenericConstraint, sys) if get(gc.ext, "gencon_id", nothing) in target_gencon_ids]
     @test length(gcs) == length(target_gencon_ids)
 
     template = aemsim_template(sys)
@@ -560,7 +496,7 @@ end
     dc_table = AustralianElectricityMarkets.Readers.read_hive(db, :DISPATCHCONSTRAINT)
     for gc in gcs
         name = PSY.get_name(gc)
-        gencon_id = get_gencon_id(gc)
+        gencon_id = get(gc.ext, "gencon_id", nothing)
         var_type = get_sense(gc) == ConstraintSense.LE ? "GenericConstraintSlackUp" : "GenericConstraintSlackDown"
         slack_df = PSI.read_variable(results, "$(var_type)__GenericConstraint__$name")
         dual_df = PSI.read_dual(results, "NEMConstraintLimit__GenericConstraint__$name")

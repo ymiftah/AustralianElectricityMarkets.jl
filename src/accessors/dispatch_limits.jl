@@ -1,7 +1,7 @@
 """
     get_initial_mw(component, initial_time, horizon) -> Union{Nothing, Vector{Float64}}
 
-Full-series read of `component`'s `"initial_mw"` series ([`set_nem_dispatch_limits!`](@ref),
+Full-series read of `component`'s `"initial_mw"` series ([`nem_system`](@ref),
 `DISPATCHLOAD.INITIALMW`, net MW for a battery), `horizon` steps from `initial_time`, in
 `component`'s `System`'s current display units. `nothing` if `component` carries no such series.
 
@@ -16,7 +16,7 @@ end
 """
     get_energy_availability(component, initial_time, horizon) -> Union{Nothing, Vector{Float64}}
 
-Full-series read of `component`'s `"availability"` series ([`set_nem_dispatch_limits!`](@ref),
+Full-series read of `component`'s `"availability"` series ([`nem_system`](@ref),
 `DISPATCHLOAD.AVAILABILITY`), `horizon` steps from `initial_time`, in `component`'s `System`'s
 current display units. `nothing` if `component` carries no such series.
 

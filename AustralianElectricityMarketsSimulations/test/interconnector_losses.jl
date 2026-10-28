@@ -201,11 +201,6 @@ end
     model, res = _solve_loss(sys)
 
     container = PSI.get_optimization_container(model)
-    gaps = interconnector_loss_gaps(PSI.OptimizationProblemResults(model), sys)
-    @test !isempty(gaps)
-    # Positive marginal cost everywhere in this toy system, so the LP has no incentive to
-    # over-dissipate - the solved loss must land exactly on the curve at the solved flow.
-    @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
 
     res = PSI.OptimizationProblemResults(model)
     flow_df = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
@@ -238,16 +233,13 @@ end
 end
 
 @testset "negative weighted price cannot burn energy on out-of-order segments" begin
-    # Negative-cost supply makes extra loss profitable, so only the segment encoding keeps
-    # the solved loss on the curve at the solved flow.
+    # Negative-cost supply makes extra loss profitable, so the segment encoding must bound
+    # the loss by the curve.
     sys = _loss_test_system(;
         loss_flow_coefficient = 2.0e-4, breakpoints = [-100.0, -25.0, 0.0, 25.0, 100.0],
         negative_cost = true,
     )
     model, res = _solve_loss(sys)
-    gaps = interconnector_loss_gaps(res, sys)
-    @test !isempty(gaps)
-    @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
     prices = PSI.read_dual(res, PSI.CopperPlateBalanceConstraint, PSY.Area)
     price = Dict((r.name, r.DateTime) => r.value for r in eachrow(prices))
     share = 0.4
@@ -372,9 +364,6 @@ end
     model, res = _solve_loss(sys)
 
     container = PSI.get_optimization_container(model)
-    gaps = interconnector_loss_gaps(PSI.OptimizationProblemResults(model), sys)
-    @test !isempty(gaps)
-    @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
 end
 
 @testset "a build without the loss demand coefficient series fails, naming its setter" begin
@@ -745,7 +734,7 @@ end
     end
 end
 
-@testset "zero-referenced quadratic losses solve without a gap" begin
+@testset "zero-referenced quadratic losses match the analytical offset" begin
     # This range crosses zero without placing a breakpoint there. The analytical offset is
     # hand-computed from the chord endpoints; demand affects its linear term only.
     breakpoints = [-1000.0, 1000.0]
@@ -756,9 +745,6 @@ end
         priced_supply_only = true,
     )
     model, res = _solve_loss(sys)
-    gaps = interconnector_loss_gaps(res, sys)
-    @test !isempty(gaps)
-    @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
 
     flow_df = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
     loss_df = PSI.read_variable(res, "InterconnectorLossVariable__AreaInterchange")

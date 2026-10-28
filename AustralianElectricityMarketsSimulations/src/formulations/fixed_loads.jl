@@ -22,7 +22,7 @@ _fixed_load_devices(devices) = [d for d in devices if PSY.has_time_series(d, PSY
 
 Adds the fixed-loading parameters ([`FixedLoadTimeSeriesParameter`](@ref),
 [`FixedLoadInvokedTimeSeriesParameter`](@ref)) and the surplus and deficit slacks for the
-`devices` carrying a `"fixed_load"` series ([`set_nem_fixed_loads!`](@ref)).
+`devices` carrying a `"fixed_load"` series (built by [`nem_system`](@ref)).
 
 # Returns
 `nothing`.

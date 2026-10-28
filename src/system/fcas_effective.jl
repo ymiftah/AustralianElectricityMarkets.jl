@@ -529,7 +529,7 @@ series, per-unit of the system base:
 
 Values follow the dispatch process: AGC scaling, AGC status and `InitialMW` apply at every interval.
 Existing series of these names are replaced. Call it after [`set_fcas_bids!`](@ref),
-[`set_fcas_scaling_inputs!`](@ref), [`set_market_bids!`](@ref), [`set_nem_dispatch_limits!`](@ref)
+[`set_fcas_scaling_inputs!`](@ref), [`set_market_bids!`](@ref), [`nem_system`](@ref)
 and [`add_fcas_services!`](@ref), and before `transform_single_time_series!`; `FCASMarket`
 requires these series.
 

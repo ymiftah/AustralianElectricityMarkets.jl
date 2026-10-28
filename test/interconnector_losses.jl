@@ -177,7 +177,7 @@ let
         # No demand series yet: nothing to evaluate the loss factor at.
         @test_throws r"no \"loss_demand\" series" set_loss_demand_coefficients!(sys)
         date_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 1, 0)
-        set_demand!(sys, db, date_range; resolution = Minute(5))
+        attach_demand!(sys, db, date_range; resolution = Minute(5))
         set_loss_demand_coefficients!(sys)
         base_power = get_base_power(sys)
         ic1 = get_component(AreaInterchange, sys, "IC1")
@@ -209,7 +209,7 @@ let
         fresh() = begin
             sys = nem_system(db, RegionalNetworkConfiguration())
             @test_logs (:warn, r"no resolvable loss model") match_mode = :any attach_interconnector_losses!(sys, db, as_of)
-            set_demand!(sys, db, date_range; resolution = Minute(5))
+            attach_demand!(sys, db, date_range; resolution = Minute(5))
             sys
         end
 

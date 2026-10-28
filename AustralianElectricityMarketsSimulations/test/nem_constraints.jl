@@ -42,12 +42,12 @@ const NEM_CONSTRAINTS_GENCON_IDS =
 """
     _gc(sys, gencon_id) -> GenericConstraint
 
-The one [`GenericConstraint`](@ref) in `sys` whose [`get_gencon_id`](@ref) is `gencon_id`.
-`add_nem_constraints!` names components `GENCONID@EFFECTIVEDATE#VERSIONNO`, so bare `GENCONID`
+The one [`GenericConstraint`](@ref) in `sys` whose `ext["gencon_id"]` is `gencon_id`.
+`_add_nem_constraints!` names components `GENCONID@EFFECTIVEDATE#VERSIONNO`, so bare `GENCONID`
 values (this file's own fixture ids) aren't valid component names.
 """
 _gc(sys, gencon_id::AbstractString) =
-    only(gc for gc in get_components(GenericConstraint, sys) if get_gencon_id(gc) == gencon_id)
+    only(gc for gc in get_components(GenericConstraint, sys) if get(gc.ext, "gencon_id", nothing) == gencon_id)
 
 """
     _native_forecast_params(sys)
@@ -55,7 +55,7 @@ _gc(sys, gencon_id::AbstractString) =
 `augmented_pscb_system()`'s own baked-in forecast shape (read from its `DeterministicSingleTimeSeries`) - PSY requires every
 `Forecast`-derived time series in a `System` to share one `(initial_timestamp, resolution,
 interval, count, horizon)`, so a `GenericConstraint`'s `"rhs"`/`"invoked"` series (added by
-`add_nem_constraints!` on a 2025 NEMWEB grid) can't coexist with the fixture's own 2020-dated
+`_add_nem_constraints!` on a 2025 NEMWEB grid) can't coexist with the fixture's own 2020-dated
 `PowerLoad` demand data unless retimed to match exactly - see [`_retime_gc_series!`](@ref).
 """
 function _native_forecast_params(sys)
@@ -82,7 +82,7 @@ with one anchored to the fixture's own native forecast window (`params`, from
 [`_native_forecast_params`](@ref)) instead of NEMWEB's 2025 dates - the only way both can be
 fed into the same `DecisionModel`. `overrides_mw` maps a `GENCONID` to a replacement constant
 `"rhs"` value in natural MW (e.g. deliberately tightened below its unconstrained flow), converted
-to per-unit before storage; every other constraint keeps its `add_nem_constraints!`-assigned
+to per-unit before storage; every other constraint keeps its `_add_nem_constraints!`-assigned
 per-unit value. `invoked_overrides` maps a `GENCONID` to a full raw `"invoked"` vector (length
 `params.count + params.horizon / params.interval - 1`), letting a test exercise a genuinely
 mixed `0.0`/`1.0` series; every other constraint stays `fill(1.0, ...)`.
@@ -113,7 +113,7 @@ end
 """
     _remove_unused_pscb_constraints!(sys)
 
-Removes every `N_VERSIONED_LIMIT` [`GenericConstraint`](@ref) `add_nem_constraints!` builds
+Removes every `N_VERSIONED_LIMIT` [`GenericConstraint`](@ref) `_add_nem_constraints!` builds
 from the PSCB fixture. This file's own [`NEM_CONSTRAINTS_GENCON_IDS`](@ref) never retimes them
 (no test here exercises version switching), so left in place their raw NEMWEB-resolution
 `"rhs"`/`"invoked"` series would conflict with every other constraint's retimed series the
@@ -122,7 +122,7 @@ is even registered for [`GenericConstraint`](@ref).
 """
 function _remove_unused_pscb_constraints!(sys)
     for gc in collect(get_components(GenericConstraint, sys))
-        get_gencon_id(gc) == "N_VERSIONED_LIMIT" && remove_component!(sys, gc)
+        get(gc.ext, "gencon_id", nothing) == "N_VERSIONED_LIMIT" && remove_component!(sys, gc)
     end
     return
 end
@@ -131,7 +131,7 @@ end
     _prepared_system(overrides_mw = Dict{String, Float64}(), invoked_overrides = Dict{String, Vector{Float64}}())
 
 An `augmented_pscb_system()` with the thermal floor fixed, every PSCB fixture constraint this
-file uses added via [`add_nem_constraints!`](@ref) (`N_VERSIONED_LIMIT` removed - see
+file uses added via `_add_nem_constraints!` (`N_VERSIONED_LIMIT` removed - see
 [`_remove_unused_pscb_constraints!`](@ref)), and their `"rhs"`/`"invoked"` series retimed to the
 fixture's own native forecast window (optionally overriding specific constraints' RHS values
 and/or supplying a full mixed `"invoked"` series - see [`_retime_gc_series!`](@ref)).
@@ -142,7 +142,7 @@ function _prepared_system(
     )
     sys = augmented_pscb_system()
     _fix_thermal_floor!(sys)
-    add_nem_constraints!(sys, NEM_CONSTRAINTS_DB, NEM_CONSTRAINTS_DATE_RANGE)
+    build_constraints!(sys, NEM_CONSTRAINTS_DB, NEM_CONSTRAINTS_DATE_RANGE)
     _remove_unused_pscb_constraints!(sys)
     params = _native_forecast_params(sys)
     _retime_gc_series!(sys, params, overrides_mw, invoked_overrides)
@@ -191,7 +191,7 @@ function _build_error(model)
     return nothing
 end
 
-@testset "add_nem_constraints! attaches them as Services with resolved contributing devices" begin
+@testset "constraint build attaches them as Services with resolved contributing devices" begin
     sys = _prepared_system()
     gc = _gc(sys, "N_IC1_LIMIT")
     devices = get_contributing_devices(sys, gc)
@@ -608,7 +608,7 @@ end
     _add_zero_flow_pair!(sys, params, interconnector)
 
 Attaches the two `<=` [`GenericConstraint`](@ref)s of an Interconnector Zero pair on `interconnector`
-(`-flow <= 0` and `flow <= 0`, right-hand side 0), the built-in shape `add_nem_constraints!` builds
+(`-flow <= 0` and `flow <= 0`, right-hand side 0), the built-in shape `_add_nem_constraints!` builds
 with no weight of its own. Added before [`_retime_gc_series!`](@ref).
 """
 function _add_zero_flow_pair!(sys, params, interconnector::AbstractString)
@@ -641,7 +641,7 @@ end
 
     sys = augmented_pscb_system()
     _fix_thermal_floor!(sys)
-    add_nem_constraints!(sys, NEM_CONSTRAINTS_DB, NEM_CONSTRAINTS_DATE_RANGE)
+    build_constraints!(sys, NEM_CONSTRAINTS_DB, NEM_CONSTRAINTS_DATE_RANGE)
     _remove_unused_pscb_constraints!(sys)
     params = _native_forecast_params(sys)
     weight = AustralianElectricityMarkets.INTERCONNECTOR_ZERO_CVP_FACTOR

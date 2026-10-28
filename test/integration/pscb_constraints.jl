@@ -13,14 +13,14 @@
 
     # Every constraint in this fixture except N_VERSIONED_LIMIT has exactly one invoked
     # GENCONDATA/SPD* version, always EFFECTIVEDATE=2025-01-01, VERSIONNO=1 - see
-    # create_pscb_nemweb_data. add_nem_constraints! names components by the full versioned
+    # create_pscb_nemweb_data. _add_nem_constraints! names components by the full versioned
     # triple, so tests look components up by
     # this name rather than the bare GENCONID.
     vname(gencon_id, version = 1) = "$gencon_id@2025-01-01#$version"
 
-    @testset "add_nem_constraints!" begin
+    @testset "constraint build" begin
         sys = augmented_pscb_system()
-        added, skipped = add_nem_constraints!(sys, db, date_range)
+        added, skipped = build_constraints!(sys, db, date_range)
 
         @test isempty(skipped)
         @test Set(added) == Set(
@@ -104,8 +104,8 @@
             @test !isnothing(gc_v2)
 
             # Both versions report the same bare GENCONID despite being different components.
-            @test get_gencon_id(gc_v1) == "N_VERSIONED_LIMIT"
-            @test get_gencon_id(gc_v2) == "N_VERSIONED_LIMIT"
+            @test get(gc_v1.ext, "gencon_id", nothing) == "N_VERSIONED_LIMIT"
+            @test get(gc_v2.ext, "gencon_id", nothing) == "N_VERSIONED_LIMIT"
             @test get_name(gc_v1) != get_name(gc_v2)
 
             # The changed sense and term coefficient actually differ between the two versions.
@@ -132,7 +132,7 @@
             # the version-triple loop degenerates to the old one-constraint-per-GENCONID
             # behaviour when there is only ever one version, with no separate branch for it.
             matches = filter(
-                gc -> get_gencon_id(gc) == "F_R1_RAISE6SEC", collect(get_components(GenericConstraint, sys)),
+                gc -> get(gc.ext, "gencon_id", nothing) == "F_R1_RAISE6SEC", collect(get_components(GenericConstraint, sys)),
             )
             @test length(matches) == 1
             @test get_name(only(matches)) == vname("F_R1_RAISE6SEC")

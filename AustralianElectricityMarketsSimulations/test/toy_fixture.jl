@@ -240,7 +240,7 @@ function add_toy_interchange!(sys, stamps, ic)
             scaling_factor_multiplier = PSY.get_max_active_power,
         ),
     )
-    # Each area's loss demand is its load, as `set_demand!` attaches it.
+    # Each area's loss demand is its load, as `_set_demand!` attaches it.
     for name in ("bus3", "bus4")
         demand = PSY.get_time_series(PSY.SingleTimeSeries, PSY.get_component(PSY.PowerLoad, sys, name), "max_active_power")
         PSY.add_time_series!(
@@ -280,7 +280,7 @@ function add_toy_interchange!(sys, stamps, ic)
 end
 
 # A single ENERGY `UnitTerm` `GenericConstraint` `name` of `sense` on `duid`'s ENERGY output at
-# `rhs_mw`, with "rhs"/"invoked" series on `stamps`, in the form `add_nem_constraints!`
+# `rhs_mw`, with "rhs"/"invoked" series on `stamps`, in the form `_add_nem_constraints!`
 # would produce. `rhs_mw` is a natural-MW value, stored per-unit of the system base. `rhs_mw` and
 # `invoked` take a scalar or one value per stamp.
 function add_toy_generic_constraint!(

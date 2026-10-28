@@ -75,7 +75,7 @@ end
 """
     add_toy_storage_initial_mw!(sys, device, initial_timestamp, n, initial_mw)
 
-Attaches [`set_nem_dispatch_limits!`](@ref)'s per-device `"initial_mw"` `SingleTimeSeries` (net
+Attaches `_set_nem_dispatch_limits!`'s per-device `"initial_mw"` `SingleTimeSeries` (net
 MW, per-unit of the system base), one flat window of `n` steps at `initial_timestamp`.
 """
 function add_toy_storage_initial_mw!(sys, device, initial_timestamp, n::Integer, initial_mw::Float64; resolution = TOY_RESOLUTION)
@@ -1719,7 +1719,7 @@ end
 
 # A toy system whose one unit bids each `(bid_type, price)` in `bids` (flat 20 MW trapezium), with
 # a GenericConstraint per `(name, sense, rhs_mw, terms, requirements)` in `gcs`, in the form
-# `add_nem_constraints!` produces.
+# `_add_nem_constraints!` produces.
 function fcas_requirement_toy_system(bids, gcs)
     return fcas_energy_toy_system(
         2.0;

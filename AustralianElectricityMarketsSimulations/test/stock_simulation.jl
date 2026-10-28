@@ -535,7 +535,7 @@ function reg_ramp_system(;
             add_toy_fcas_offer!(sys, park, stamps, BidType.RAISEREG, fill((0.0, 0.0, 100.0, 100.0, 20.0), 2), fill([(20.0, 10.0)], 2))
             add_toy_series!(sys, alta, stamps, "fcas_agc_ramp_rate_RAISEREG", alta_ramp)
             add_toy_fcas_market!(sys, stamps, BidType.RAISEREG, [TOY_CHEAP, TOY_EXPENSIVE], "F_REG", reg_req)
-            set_constraint_weight!(PSY.get_component(GenericConstraint, sys, "F_REG"), weight)
+            PSY.get_component(GenericConstraint, sys, "F_REG").constraint_weight = weight
         end,
     )
 end

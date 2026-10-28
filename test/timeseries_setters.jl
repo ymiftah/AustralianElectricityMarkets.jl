@@ -37,12 +37,12 @@
         return aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
     end
 
-    @testset "set_demand! rejects incomplete regional demand" begin
+    @testset "demand build rejects incomplete regional demand" begin
         # The mock hive holds demand to 04:00; a window running to 06:00 has no rows for the last two hours.
         start_date = DateTime(2025, 1, 1, 3, 0)
         late_range = start_date:Minute(5):(start_date + Hour(3))
         err = try
-            set_demand!(deepcopy(sys_base), db, late_range; resolution = Minute(5))
+            attach_demand!(deepcopy(sys_base), db, late_range; resolution = Minute(5))
             nothing
         catch e
             e
@@ -63,8 +63,8 @@
             horizon = Hour(2)
             date_range = start_date:resolution:(start_date + horizon)
 
-            @testset "set_demand!" begin
-                set_demand!(sys, db, date_range; resolution = resolution)
+            @testset "demand build" begin
+                attach_demand!(sys, db, date_range; resolution = resolution)
                 for load in get_components(PowerLoad, sys)
                     ta = get_time_series_array(SingleTimeSeries, load, "max_active_power")
                     # subset! logic in setters/timeseries.jl: first(date_range) <= x < last(date_range)
@@ -147,12 +147,12 @@
         horizon = Hour(2)
         date_range = start_date:resolution:(start_date + horizon)
 
-        set_demand!(sys, db, date_range; resolution = resolution)
+        attach_demand!(sys, db, date_range; resolution = resolution)
 
         demand_df = read_demand(db; resolution = resolution)
         subset!(demand_df, :SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
 
-        @testset "set_demand! matches true TOTALDEMAND and LOSSDEMAND (NATURAL_UNITS)" begin
+        @testset "demand build matches true TOTALDEMAND and LOSSDEMAND (NATURAL_UNITS)" begin
             for load in get_components(PowerLoad, sys)
                 region_id = replace(get_name(load), " Load" => "")
                 region_demand = @chain demand_df begin
@@ -316,7 +316,7 @@
         function seed(write_mode)
             s = deepcopy(sys_base)
             set_units_base_system!(s, write_mode)
-            set_demand!(s, db, date_range; resolution = resolution)
+            attach_demand!(s, db, date_range; resolution = resolution)
             set_units_base_system!(s, "NATURAL_UNITS")
             return s
         end
@@ -338,7 +338,7 @@
         end
     end
 
-    @testset "set_nem_dispatch_limits!" begin
+    @testset "dispatch limits build" begin
         resolution = Minute(5)
         start_date = DateTime(2025, 1, 1, 0, 0)
         date_range = start_date:resolution:(start_date + Hour(2))
@@ -348,7 +348,7 @@
 
         @testset "attaches the full dispatch envelope to a scheduled load" begin
             sys = deepcopy(sys_base)
-            set_nem_dispatch_limits!(sys, db, date_range)
+            attach_dispatch_limits!(sys, db, date_range)
             pump = get_component(InterruptiblePowerLoad, sys, "PUMP1")
             for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw", "max_active_power", "availability")
                 @test length(get_time_series_array(SingleTimeSeries, pump, name)) == length(date_range) - 1
@@ -363,7 +363,7 @@
             sys = deepcopy(sys_base)
             set_fcas_bids!(sys, db, date_range)
             @test all(>(0.0), subset(truth, :DUID => ByRow(==("ASLOAD1"))).INITIALMW)
-            set_nem_dispatch_limits!(sys, db, date_range)
+            attach_dispatch_limits!(sys, db, date_range)
             asload = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
             @test get_available(asload)
             for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw", "max_active_power", "availability")
@@ -394,7 +394,7 @@
 
         @testset "attaches ramp/initial series to a battery, with no max_active_power" begin
             sys = deepcopy(sys_base)
-            set_nem_dispatch_limits!(sys, db, date_range)
+            attach_dispatch_limits!(sys, db, date_range)
 
             battery = get_component(EnergyReservoirStorage, sys, "BW01")
             @test !isnothing(battery)
@@ -416,7 +416,7 @@
 
         @testset "ramp rates convert MW/h to MW/min and per-unitise; initial_mw matches DISPATCHLOAD exactly, per-unitised" begin
             sys = deepcopy(sys_base)
-            set_nem_dispatch_limits!(sys, db, date_range)
+            attach_dispatch_limits!(sys, db, date_range)
 
             devices = vcat(
                 collect(get_components(ThermalStandard, sys)),
@@ -445,7 +445,7 @@
 
         @testset "availability and initial_mw read back as raw AVAILABILITY/INITIALMW" begin
             sys = deepcopy(sys_base)
-            set_nem_dispatch_limits!(sys, db, date_range)
+            attach_dispatch_limits!(sys, db, date_range)
             renewable = get_component(RenewableDispatch, sys, "BW03")
             battery = get_component(EnergyReservoirStorage, sys, "BW01")
             horizon = length(date_range) - 1
@@ -480,7 +480,7 @@
                     sys = deepcopy(sys_base)
 
                     err = try
-                        set_nem_dispatch_limits!(sys, bad_db, short_range)
+                        attach_dispatch_limits!(sys, bad_db, short_range)
                         nothing
                     catch e
                         e
@@ -510,7 +510,7 @@
             end
             sys = deepcopy(sys_base)
 
-            @test_nowarn set_nem_dispatch_limits!(sys, zero_db, short_range)
+            @test_nowarn attach_dispatch_limits!(sys, zero_db, short_range)
 
             battery = get_component(EnergyReservoirStorage, sys, "BW01")
             @test has_time_series(battery, SingleTimeSeries, "ramp_up_rate")
@@ -539,7 +539,7 @@
             end
 
             err = try
-                set_nem_dispatch_limits!(sys, db, date_range)
+                attach_dispatch_limits!(sys, db, date_range)
                 nothing
             catch e
                 e
@@ -729,7 +729,7 @@
             bat = get_component(EnergyReservoirStorage, sys, "BW01")
             # No DISPATCHLOAD rows exist for this far-future range: every interval is missing.
             future_range = DateTime(2099, 1, 1, 0, 0):resolution:(DateTime(2099, 1, 1, 2, 0))
-            @test_throws ArgumentError set_nem_dispatch_limits!(sys, db, future_range)
+            @test_throws ArgumentError attach_dispatch_limits!(sys, db, future_range)
             @test !has_time_series(bat, SingleTimeSeries, "initial_mw")
         end
     end
@@ -748,7 +748,7 @@
             return (INITIALMW = 50.0, RAMPUPRATE = 5.0, RAMPDOWNRATE = 4.0, AVAILABILITY = 100.0)
         end
         sys = deepcopy(sys_base)
-        set_nem_dispatch_limits!(sys, floor_db, short_range)
+        attach_dispatch_limits!(sys, floor_db, short_range)
 
         er01 = get_component(ThermalStandard, sys, "ER01")
         static_cap = with_units_base(() -> get_max_active_power(er01), sys, "NATURAL_UNITS")
@@ -780,7 +780,7 @@
             er01 = get_component(ThermalStandard, sys, "ER01")
             set_available!(er01, false)
 
-            @test_nowarn set_nem_dispatch_limits!(sys, partial_db, short_range)
+            @test_nowarn attach_dispatch_limits!(sys, partial_db, short_range)
             @test !has_time_series(er01, SingleTimeSeries, "ramp_up_rate")
             @test has_time_series(get_component(ThermalStandard, sys, "ER02"), SingleTimeSeries, "ramp_up_rate")
 
@@ -790,7 +790,7 @@
             sys = deepcopy(sys_base)
 
             err = try
-                set_nem_dispatch_limits!(sys, partial_db, short_range)
+                attach_dispatch_limits!(sys, partial_db, short_range)
                 nothing
             catch e
                 e

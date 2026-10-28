@@ -795,7 +795,7 @@ Adds each load as an `InterruptiblePowerLoad` with a zero `LoadCost`;
 [`set_market_bids!`](@ref) replaces a scheduled load's with a decremental `MarketBidCost`, or marks
 it unavailable when it has no bid. A non-scheduled load (`scheduled = false`) is tagged
 `ext["non_scheduled"] = true` (and `ext["commissioned"]`) and starts unavailable; it keeps the zero
-cost, and [`set_nem_dispatch_limits!`](@ref) fixes its energy at zero. Despite the name, this builds
+cost, and the dispatch limits ([`nem_system`](@ref)) fix its energy at zero. Despite the name, this builds
 every `DISPATCHTYPE = LOAD` unit of the data frame.
 
 # Arguments

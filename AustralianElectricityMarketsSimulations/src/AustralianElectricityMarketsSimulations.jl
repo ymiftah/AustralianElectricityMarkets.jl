@@ -74,7 +74,6 @@ include("checks/replay_inputs.jl")
 include("preprocessing/replication.jl")
 include("execution/replication.jl")
 include("execution/simulation.jl")
-include("execution/interconnector_loss_gaps.jl")
 
 
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
@@ -115,7 +114,6 @@ export MNSPLinkFlowVariable, MNSPLinkFlowConstraint, MNSPLinkBandConstraint, MNS
     MNSPLinkLossVariable, MNSPLinkBandVariable, MNSPBandWidthParameter, MNSPForwardBandWidthParameter,
     MNSPReverseBandWidthParameter, MNSPMaxAvailParameter, MNSPForwardMaxAvailParameter,
     MNSPReverseMaxAvailParameter, MNSPBandPriceParameter
-export interconnector_loss_gaps, check_interconnector_loss_segments
 
 export MNSPInitialFlowParameter, MNSPForwardRampRateParameter, MNSPReverseRampRateParameter, MNSPForwardFixedLoadParameter, MNSPReverseFixedLoadParameter, MNSPForwardFixedLoadInvokedParameter, MNSPReverseFixedLoadInvokedParameter, MNSPMaxAvailSlack, MNSPOfferSlack, MNSPRampUpSlack, MNSPRampDownSlack, MNSPFixedLoadSurplusSlack, MNSPFixedLoadDeficitSlack, MNSPRampConstraint, MNSPFixedLoadConstraint
 

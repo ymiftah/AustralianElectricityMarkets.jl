@@ -6,7 +6,7 @@ using PowerSystems
 import PowerSystems as PSY
 using Dates
 
-export nem_system, set_demand!
+export nem_system
 
 include("../types/network_configurations.jl")
 include("components.jl")

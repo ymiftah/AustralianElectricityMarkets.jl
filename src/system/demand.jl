@@ -1,26 +1,3 @@
-"""
-    set_demand!(sys, db, date_range; kwargs...)
-
-Adds load time series data to the system from the database.
-
-This function reads demand data for a specified date range, processes it into a time series,
-and attaches it to the `PowerLoad` components in the system. `TOTALDEMAND` becomes the
-`"max_active_power"` series and `LOSSDEMAND` (see [`read_demand`](@ref)) a second `"loss_demand"`
-series. Throws an `ArgumentError` if any available load or area has no demand row for an
-interval of `date_range`, or if a demand value is not finite.
-
-# Arguments
-- `sys`: The `PowerSystems.System` object.
-- `db`: The database connection.
-- `date_range`: A range of dates for which to fetch demand data.
-- `kwargs`: Additional keyword arguments passed to `read_demand`.
-"""
-function set_demand!(sys, db, date_range; kwargs...)
-    demand = read_demand(db, date_range; kwargs...)
-    return _set_demand!(sys, demand, date_range; resolution = get(kwargs, :resolution, Minute(5)))
-end
-
-
 function _set_demand!(sys, rows, date_range; resolution = Minute(5))
     demand = @chain rows begin
         transform(:REGIONID => ByRow(x -> x * " Load") => :name)
@@ -34,11 +11,11 @@ function _set_demand!(sys, rows, date_range; resolution = Minute(5))
     missing_rows = [(name, t) for name in sort!(collect(required_names)), t in grid if !((t, name) in present)]
     isempty(missing_rows) || throw(
         ArgumentError(
-            "set_demand!: missing regional demand inputs: $(join(string.(first(missing_rows, 5)), ", "))",
+            "missing regional demand inputs: $(join(string.(first(missing_rows, 5)), ", "))",
         )
     )
     all(isfinite, demand.TOTALDEMAND) && all(isfinite, demand.LOSSDEMAND) ||
-        throw(ArgumentError("set_demand!: regional demand inputs must be finite"))
+        throw(ArgumentError("regional demand inputs must be finite"))
     ts = _as_timearray(demand, :SETTLEMENTDATE, :name, :TOTALDEMAND)
     loss_ts = _as_timearray(demand, :SETTLEMENTDATE, :name, :LOSSDEMAND)
     _add_demand_ts_to_components!(sys, loss_ts; name = "loss_demand")

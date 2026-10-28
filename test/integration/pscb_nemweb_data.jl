@@ -3,7 +3,7 @@ using Dates
 using DuckDB
 
 # NEMWEB fixture keyed to `augmented_pscb_system()`'s component names, for testing the FCAS and
-# constraint types against a real system. Only the tables `set_fcas_bids!`, `add_nem_constraints!`
+# constraint types against a real system. Only the tables `set_fcas_bids!`, `_add_nem_constraints!`
 # and `attach_interconnector_losses!` read are written - `nem_system` is never called on this
 # hive, so the unit/station build tables are deliberately absent.
 #
@@ -36,7 +36,7 @@ const PSCB_FCAS_BID_TYPES = [
 const PSCB_REGULATION_TYPES = ["RAISEREG", "LOWERREG"]
 
 # The interval `N_PARTIAL` first appears in DISPATCHCONSTRAINT; before it, the constraint is
-# simply not invoked. Drives add_nem_constraints!'s rhs padding and "invoked" mask.
+# simply not invoked. Drives _add_nem_constraints!'s rhs padding and "invoked" mask.
 const PSCB_PARTIAL_FROM = 10
 
 # `N_VERSIONED_LIMIT` is invoked at every interval, but AEMO switches which GENCONDATA/SPD*
@@ -66,7 +66,7 @@ Six constraints are defined, each reaching a distinct code path:
 `DUID` gets a `DISPATCHLOAD` row per interval, with a `UIGF` forecast only for `SOLAR1` and `0.0` for every other DUID.
 
 Intervals are 5-minutely over `2025-01-01T00:00` -> `02:00`, because
-`add_nem_constraints!` builds its series at a hardcoded `Minute(5)` resolution.
+`_add_nem_constraints!` builds its series at a hardcoded `Minute(5)` resolution.
 """
 function create_pscb_nemweb_data(hive_root::String)
     db = DuckDB.DB()
@@ -275,7 +275,7 @@ function create_pscb_nemweb_data(hive_root::String)
 
         # N_VERSIONED_LIMIT is invoked at every interval, but under VERSIONNO 1 before the
         # switch and VERSIONNO 2 from it on - exactly one version's row per interval, never
-        # both, so add_nem_constraints! must produce two GenericConstraints whose "invoked"
+        # both, so _add_nem_constraints! must produce two GenericConstraints whose "invoked"
         # series are complementary.
         versioned_verno = i >= PSCB_VERSION_SWITCH_FROM ? 2 : 1
         versioned_rhs = (versioned_verno == 1 ? 50.0 : 55.0) + 0.1 * i

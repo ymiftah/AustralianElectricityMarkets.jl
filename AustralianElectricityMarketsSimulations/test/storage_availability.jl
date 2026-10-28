@@ -7,7 +7,7 @@ function storage_availability_system(; target = 60.0, weight = 1160.0, initial =
             isnothing(target) && return
             battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
             gc = GenericConstraint(; name = "NC_STORAGE", sense = ConstraintSense.EQ, rhs = first(target) / PSY.get_base_power(sys), terms = ConstraintTerm[UnitTerm(TOY_BATTERY, BidType.ENERGY, 1.0)])
-            set_constraint_weight!(gc, weight)
+            gc.constraint_weight = weight
             PSY.add_service!(sys, gc, [battery])
             for (name, values) in (("rhs", _toy_values(target, length(stamps)) ./ PSY.get_base_power(sys)), ("invoked", ones(length(stamps))))
                 PSY.add_time_series!(sys, gc, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(stamps, values)))

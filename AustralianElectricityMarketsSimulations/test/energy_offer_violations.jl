@@ -7,7 +7,7 @@ function offered_band_system(; bands = [(40.0, 20.0)], target = 60.0, weight = 1
         80.0; horizon = TOY_RESOLUTION,
         mutate! = function (sys, stamps)
             add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, target; sense = ConstraintSense.EQ)
-            set_constraint_weight!(only(PSY.get_components(GenericConstraint, sys)), weight)
+            only(PSY.get_components(GenericConstraint, sys)).constraint_weight = weight
             return
         end,
     )
@@ -28,7 +28,7 @@ end
                 curve = PSY.PiecewiseStepData([10.0, 50.0], [20.0])
                 AustralianElectricityMarkets._set_incremental_bid_cost!(sys, cheap, (piecewise_step_data = fill(curve, length(stamps)),), TOY_START, TOY_RESOLUTION)
                 add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, target; sense = ConstraintSense.EQ)
-                set_constraint_weight!(only(PSY.get_components(GenericConstraint, sys)), 1160.0)
+                only(PSY.get_components(GenericConstraint, sys)).constraint_weight = 1160.0
                 return
             end,
         )
@@ -92,7 +92,7 @@ end
             mutate! = function (sys, stamps)
                 device = PSY.get_component(kind == :load ? PSY.InterruptiblePowerLoad : PSY.EnergyReservoirStorage, sys, name)
                 gc = GenericConstraint(; name = "NC_OFFER", sense = ConstraintSense.EQ, rhs = target / PSY.get_base_power(sys), terms = ConstraintTerm[UnitTerm(name, BidType.ENERGY, 1.0)])
-                set_constraint_weight!(gc, 1160.0)
+                gc.constraint_weight = 1160.0
                 PSY.add_service!(sys, gc, [device])
                 for (key, value) in (("rhs", target / PSY.get_base_power(sys)), ("invoked", 1.0))
                     PSY.add_time_series!(sys, gc, PSY.SingleTimeSeries(; name = key, data = PSY.TimeSeries.TimeArray(stamps, fill(value, length(stamps)))))
