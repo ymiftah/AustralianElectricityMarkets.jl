@@ -3,20 +3,23 @@ _other_regulation(bid_type::BidType) = bid_type == BidType.RAISEREG ? BidType.LO
 
 
 """
-    _fcas_upper_regulation_service(device) -> BidType
+    fcas_upper_regulation_service(device) -> BidType
 
 The regulation service whose target enters `device`'s upper-slope (`<= EnablementMax`) FCAS rows:
 `BidType.RAISEREG` for a generating unit, `BidType.LOWERREG` for a `PSY.ControllableLoad`, whose
 energy axis is consumption so raising consumption lowers frequency (AEMO *FCAS Model in NEMDE*
 §6.1, §6.2). The other regulation service enters the lower-slope rows.
 
+# Arguments
+- `device`: the device bidding FCAS.
+
 # Returns
 `BidType.RAISEREG` or `BidType.LOWERREG`.
 """
-_fcas_upper_regulation_service(::PSY.Device) = BidType.RAISEREG
+fcas_upper_regulation_service(::PSY.Device) = BidType.RAISEREG
 
 
-_fcas_upper_regulation_service(::PSY.ControllableLoad) = BidType.LOWERREG
+fcas_upper_regulation_service(::PSY.ControllableLoad) = BidType.LOWERREG
 
 
 """
@@ -57,7 +60,7 @@ end
 """
     _fcas_offer(window, device, bid_type, side) -> NEMFCASOffer
 
-`device`'s `bid_type` offer on `side` over `window` ([`_FCASWindow`](@ref)), read via
+`device`'s `bid_type` offer on `side` over `window` (`_FCASWindow`), read via
 [`get_fcas_offer`](@ref). The trapezium is AEMO *FCAS Model in NEMDE* §4's scaled/effective
 trapezium wherever `device` carries the scaling input series ([`set_fcas_scaling_inputs!`](@ref)),
 with the AGC ramping capability taken over the window's resolution at every interval. Otherwise it
@@ -139,8 +142,8 @@ end
 
 The computable subset of AEMO's *FCAS Model in NEMDE* §5 enablement pre-conditions: `MaxAvail`
 positive; at least one priced band with positive quantity; `EnablementMax` at or above
-`EnablementMin`; the sign pre-condition ([`_fcas_sign_ok`](@ref)); the energy-maximum-availability
-pre-condition ([`_fcas_energy_max_avail_ok`](@ref)); when `check_stranded` and `initial_mw` is
+`EnablementMin`; the sign pre-condition (`_fcas_sign_ok`); the energy-maximum-availability
+pre-condition (`_fcas_energy_max_avail_ok`); when `check_stranded` and `initial_mw` is
 known, the "stranded" pre-condition (`initial_mw` for a `PSY.Storage` device, `Max[initial_mw,
 0]` otherwise, inside `[EnablementMin, EnablementMax]`); and, for a regulation service, `1 ==
 agc_status` whenever `agc_status` is known. The daily or profiled energy pre-condition is not
@@ -199,7 +202,7 @@ end
     _fcas_both_sides_enabled(device, gen_trap, gen_curve, load_trap, load_curve, agc_status, initial_mw, energy_max_avail) -> (Bool, Bool)
 
 Whether a `PSY.Storage` device's generation-side and load-side regulation bids are enabled: each
-side's own [`_fcas_enabled`](@ref) pre-conditions independently (`check_stranded = false`,
+side's own `_fcas_enabled` pre-conditions independently (`check_stranded = false`,
 `energy_max_avail` as for a single-sided `PSY.Storage` bid), then, when `initial_mw` is known, the
 "stranded" pre-condition. When both sides pass their own pre-conditions, AEMO *FCAS Model in
 NEMDE* §5's combined form (`EnablementMin`<sub>LOAD</sub>` <= initial_mw <= EnablementMax`<sub>GEN</sub>)
@@ -229,8 +232,8 @@ end
 """
     _fcas_enablement_inputs(window, device) -> (initial_mw, availability, agc_status)
 
-`device`'s per-interval §5 inputs over `window` ([`_FCASWindow`](@ref)): `InitialMW`
-([`get_initial_mw`](@ref)), energy availability ([`_fcas_availability`](@ref)) and AGC status ([`get_fcas_agc_status`](@ref)), each a function of `t` returning `nothing` where
+`device`'s per-interval §5 inputs over `window` (`_FCASWindow`): `InitialMW`
+([`get_initial_mw`](@ref)), energy availability (`_fcas_availability`) and AGC status ([`get_fcas_agc_status`](@ref)), each a function of `t` returning `nothing` where
 unknown.
 
 # Returns
@@ -247,8 +250,8 @@ end
 """
     _fcas_enabled_mask(window, device, bid_type, decremental) -> Vector{Bool}
 
-Per-interval [`_fcas_enabled`](@ref) for `device`'s one-directional `bid_type` bid, on the
-[`_fcas_enablement_inputs`](@ref) over `window`.
+Per-interval `_fcas_enabled` for `device`'s one-directional `bid_type` bid, on the
+`_fcas_enablement_inputs` over `window`.
 
 # Returns
 `Vector{Bool}`, one entry per interval of `window`.
@@ -268,8 +271,8 @@ end
 """
     _fcas_both_sides_enabled_mask(window, device, bid_type) -> (Vector{Bool}, Vector{Bool})
 
-Per-interval [`_fcas_both_sides_enabled`](@ref) for a `PSY.Storage` device bidding regulation
-`bid_type` on both sides, on the [`_fcas_enablement_inputs`](@ref) over `window`.
+Per-interval `_fcas_both_sides_enabled` for a `PSY.Storage` device bidding regulation
+`bid_type` on both sides, on the `_fcas_enablement_inputs` over `window`.
 
 # Returns
 `(gen_enabled::Vector{Bool}, load_enabled::Vector{Bool})`.
@@ -312,9 +315,9 @@ end
     _fcas_regulation_enabled_mask(window, device, bid_type, direction) -> Vector{Bool}
 
 `device`'s per-interval enablement for regulation `bid_type`, for the unit as a whole:
-[`_fcas_enabled_mask`](@ref) for a single-sided `direction` (`INCREMENTAL` or `DECREMENTAL`), or,
+`_fcas_enabled_mask` for a single-sided `direction` (`INCREMENTAL` or `DECREMENTAL`), or,
 for `direction == FCASBidDirection.BOTH` (a `PSY.Storage` device bidding both sides), either side enabled
-([`_fcas_both_sides_enabled_mask`](@ref)).
+(`_fcas_both_sides_enabled_mask`).
 
 # Returns
 `Vector{Bool}`, one entry per interval of `window`.
@@ -347,20 +350,52 @@ orders of magnitude above any one unit's energy plus FCAS, so the row never bind
 const FCAS_INACTIVE_LIMIT_MW = 1.0e5
 
 
-"`\"fcas_effective_<BIDTYPE>[_decremental]\"`, the [`set_fcas_effective_offers!`](@ref) series of one FCAS offer."
-function _fcas_effective_series_name(bid_type::BidType, decremental::Bool)
+"""
+    fcas_effective_series_name(bid_type, decremental) -> String
+
+Name of the [`set_fcas_effective_offers!`](@ref) series of one FCAS offer, `"fcas_effective_<BIDTYPE>"`
+with `"_decremental"` appended for a decremental offer.
+
+# Arguments
+- `bid_type`: the FCAS market.
+- `decremental`: whether the offer is decremental.
+
+# Returns
+A `String`.
+"""
+function fcas_effective_series_name(bid_type::BidType, decremental::Bool)
     return fcas_series_name("fcas_effective", bid_type, decremental)
 end
 
 
-"`\"fcas_ramping_limits_<BIDTYPE>\"`, the [`set_fcas_effective_offers!`](@ref) series of one regulation market."
-function _fcas_ramping_series_name(bid_type::BidType)
+"""
+    fcas_ramping_series_name(bid_type) -> String
+
+Name of the [`set_fcas_effective_offers!`](@ref) series of one regulation market, `"fcas_ramping_limits_<BIDTYPE>"`.
+
+# Arguments
+- `bid_type`: the regulation market.
+
+# Returns
+A `String`.
+"""
+function fcas_ramping_series_name(bid_type::BidType)
     return fcas_series_name("fcas_ramping_limits", bid_type)
 end
 
 
-"The `decremental` flag of each offer a device bidding in `direction` makes: one, or two for `BOTH`."
-function _fcas_offer_sides(direction::FCASBidDirection)
+"""
+    fcas_offer_sides(direction) -> Tuple{Vararg{Bool}}
+
+The `decremental` flag of each offer a device bidding in `direction` makes.
+
+# Arguments
+- `direction`: the [`FCASBidDirection`](@ref) of the device's offers.
+
+# Returns
+`(false,)` or `(true,)` for a single side, `(false, true)` for `BOTH`.
+"""
+function fcas_offer_sides(direction::FCASBidDirection)
     direction == FCASBidDirection.BOTH && return (false, true)
     return (direction == FCASBidDirection.DECREMENTAL,)
 end
@@ -398,10 +433,10 @@ end
 
 `device`'s regulation ramping limits for `bid_type` over `window`, per-unit of the system base:
 `(joint, bdu)` per interval. `joint` is the AEMO *FCAS Model in NEMDE* §6.1 right-hand side,
-`InitialMW` plus the AGC ramping capability of [`_fcas_ramp_rate_service`](@ref) on the upper form
-([`_fcas_upper_regulation_service`](@ref)) or minus it on the lower form, and `±inactive` wherever the
+`InitialMW` plus the AGC ramping capability of `_fcas_ramp_rate_service` on the upper form
+([`fcas_upper_regulation_service`](@ref)) or minus it on the lower form, and `±inactive` wherever the
 capability is zero, `InitialMW` is unknown or the unit is not enabled for `bid_type`
-([`_fcas_regulation_enabled_mask`](@ref)). `bdu` is the §6.4 right-hand side of a `PSY.Storage` device
+(`_fcas_regulation_enabled_mask`). `bdu` is the §6.4 right-hand side of a `PSY.Storage` device
 bidding both sides, its AGC ramping capability on `bid_type`, and `inactive` where that is zero or
 for any other device.
 
@@ -412,7 +447,7 @@ function _fcas_effective_ramping(window::_FCASWindow, device::PSY.Device, bid_ty
     caps = _fcas_agc_ramp_caps(window, device, _fcas_ramp_rate_service(device, bid_type))
     initial_mw = get_initial_mw(device, window.initial_time, window.horizon)
     enabled = _fcas_regulation_enabled_mask(window, device, bid_type, direction)
-    upper = bid_type == _fcas_upper_regulation_service(device)
+    upper = bid_type == fcas_upper_regulation_service(device)
     bdu_caps = direction == FCASBidDirection.BOTH ? _fcas_agc_ramp_caps(window, device, bid_type) : nothing
     return map(1:window.horizon) do t
         mw = isnothing(initial_mw) ? NaN : initial_mw[t]
@@ -431,9 +466,9 @@ end
     _fcas_effective_values(window, device, bid_type, direction, inactive) -> (offers, ramping)
 
 `device`'s effective FCAS offers for `bid_type` over `window`: `offers` maps each offer's
-`decremental` flag to its [`_fcas_effective_offer`](@ref) per interval, enabled by
-[`_fcas_both_sides_enabled_mask`](@ref) for a `PSY.Storage` device's regulation bid on both sides and
-by [`_fcas_enabled_mask`](@ref) otherwise; `ramping` is [`_fcas_effective_ramping`](@ref) for a
+`decremental` flag to its `_fcas_effective_offer` per interval, enabled by
+`_fcas_both_sides_enabled_mask` for a `PSY.Storage` device's regulation bid on both sides and
+by `_fcas_enabled_mask` otherwise; `ramping` is `_fcas_effective_ramping` for a
 regulation market, `nothing` otherwise.
 
 # Returns
@@ -445,7 +480,7 @@ function _fcas_effective_values(window::_FCASWindow, device::PSY.Device, bid_typ
         gen, load = _fcas_both_sides_enabled_mask(window, device, bid_type)
         Dict(false => gen, true => load)
     else
-        Dict(dec => _fcas_enabled_mask(window, device, bid_type, dec) for dec in _fcas_offer_sides(direction))
+        Dict(dec => _fcas_enabled_mask(window, device, bid_type, dec) for dec in fcas_offer_sides(direction))
     end
     offers = Dict{Bool, Vector{NTuple{15, Float64}}}()
     for (decremental, mask) in enabled
@@ -478,7 +513,7 @@ series, per-unit of the system base:
 Values follow the dispatch process: AGC scaling, AGC status and `InitialMW` apply at every interval.
 Existing series of these names are replaced. Call it after [`set_fcas_bids!`](@ref),
 [`set_fcas_scaling_inputs!`](@ref), [`set_market_bids!`](@ref), [`set_nem_dispatch_limits!`](@ref)
-and [`add_fcas_services!`](@ref), and before `transform_single_time_series!`; [`FCASMarket`](@ref)
+and [`add_fcas_services!`](@ref), and before `transform_single_time_series!`; `FCASMarket`
 requires these series.
 
 # Arguments
@@ -509,7 +544,7 @@ end
     _attach_fcas_effective_series!(sys, device, bid_type, inactive)
 
 Attaches `device`'s [`set_fcas_effective_offers!`](@ref) series for `bid_type`, computed over the
-timestamps of its trapezium series under the dispatch process ([`_fcas_effective_values`](@ref)).
+timestamps of its trapezium series under the dispatch process (`_fcas_effective_values`).
 No-op for a device without a `bid_type` trapezium series.
 
 # Returns
@@ -524,8 +559,8 @@ function _attach_fcas_effective_series!(sys::PSY.System, device::PSY.Device, bid
     window = _FCASWindow(first(stamps), length(stamps), resolution)
     offers, ramping = _fcas_effective_values(window, device, bid_type, direction, inactive)
     for (decremental, values) in offers
-        replace_single_series!(sys, device, single_series(_fcas_effective_series_name(bid_type, decremental), first(stamps), values, resolution))
+        replace_single_series!(sys, device, single_series(fcas_effective_series_name(bid_type, decremental), first(stamps), values, resolution))
     end
-    isnothing(ramping) || replace_single_series!(sys, device, single_series(_fcas_ramping_series_name(bid_type), first(stamps), ramping, resolution))
+    isnothing(ramping) || replace_single_series!(sys, device, single_series(fcas_ramping_series_name(bid_type), first(stamps), ramping, resolution))
     return
 end

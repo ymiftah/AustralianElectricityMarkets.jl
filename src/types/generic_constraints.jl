@@ -181,6 +181,18 @@ get_sense(value::GenericConstraint) = value.sense
 # PSY.Component's units_info.
 get_rhs(value::GenericConstraint) = PSY.get_value(value, Val(:rhs), Val(:mva))
 
+"""
+    get_constraint_weight(value::GenericConstraint) -> Float64
+
+The weight of `value`'s slacks, as set by `GENCONDATA.GENERICCONSTRAINTWEIGHT` (1.0 when unset). It
+scales the [`constraint_cvp_factor`](@ref) of the constraint.
+
+# Arguments
+- `value`: the [`GenericConstraint`](@ref).
+
+# Returns
+A `Float64`.
+"""
 get_constraint_weight(value::GenericConstraint) = value.constraint_weight
 
 set_constraint_weight!(value::GenericConstraint, val) = value.constraint_weight = val

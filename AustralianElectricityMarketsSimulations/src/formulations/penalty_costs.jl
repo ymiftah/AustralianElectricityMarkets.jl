@@ -1,3 +1,12 @@
+# Validates a Market Price Cap override given as a PSI model attribute or setting.
+function _checked_market_price_cap(rate)
+    value = rate isa Real ? Float64(rate) : NaN
+    isfinite(value) && value > 0.0 ||
+        throw(ArgumentError("market_price_cap must be finite and strictly positive, got $rate."))
+    return value
+end
+
+
 # The `MarketPriceCapPenaltyParameter` meta of the slack container keyed `(V, T, meta)`, and back.
 _mpc_parameter_meta(::Type{V}, meta::String) where {V} = isempty(meta) ? string(nameof(V)) : "$(nameof(V))_$(meta)"
 _mpc_slack_meta(::Type{V}, parameter_meta::String) where {V} = String(chopprefix(chopprefix(parameter_meta, string(nameof(V))), "_"))
@@ -27,7 +36,7 @@ function _add_mpc_penalty!(
         container::PSI.OptimizationContainer, ::Type{V}, ::Type{T}, names, cvp_factor::Real;
         meta::String = IS.Optimization.CONTAINER_KEY_EMPTY_META, rate = nothing,
     ) where {V <: PSI.VariableType, T <: PSY.Component}
-    fixed_rate = isnothing(rate) ? nothing : AustralianElectricityMarkets._checked_market_price_cap(rate)
+    fixed_rate = isnothing(rate) ? nothing : _checked_market_price_cap(rate)
     isempty(names) && return
     slack = PSI.get_variable(container, V(), T, meta)
     time_steps = PSI.get_time_steps(container)
@@ -112,7 +121,7 @@ A `\$/MWh` value.
 """
 function _service_market_price_cap(service_model::PSI.ServiceModel, container::PSI.OptimizationContainer, t::DateTime)
     rate = get(PSI.get_attributes(service_model), "market_price_cap", nothing)
-    return isnothing(rate) ? _container_market_price_cap(container, t) : AustralianElectricityMarkets._checked_market_price_cap(rate)
+    return isnothing(rate) ? _container_market_price_cap(container, t) : _checked_market_price_cap(rate)
 end
 
 
@@ -132,7 +141,7 @@ A finite, strictly positive `\$/MWh` value; invalid overrides throw `ArgumentErr
 """
 function _container_market_price_cap(container::PSI.OptimizationContainer, t::DateTime)
     rate = get(PSI.get_ext(PSI.get_settings(container)), "market_price_cap", nothing)
-    return AustralianElectricityMarkets._checked_market_price_cap(isnothing(rate) ? AustralianElectricityMarkets._financial_year_mpc(t) : rate)
+    return _checked_market_price_cap(isnothing(rate) ? _financial_year_mpc(t) : rate)
 end
 
 

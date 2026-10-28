@@ -29,7 +29,7 @@ bands.
 `(groups::Dict{Tuple{Bool, String, Int}, Vector{_TieBand}}, active::Dict{Tuple{Bool, String}, Set{Int}})`.
 """
 function _tie_break_bands(container::PSI.OptimizationContainer, sys::PSY.System)
-    active = AustralianElectricityMarkets._tie_break_active_bands(AustralianElectricityMarkets._tie_break_offers(sys))
+    active = _tie_break_active_bands(_tie_break_offers(sys))
     groups = Dict{Tuple{Bool, String, Int}, Vector{_TieBand}}()
     for (key, variables) in PSI.get_variables(container)
         entry = PSI.IS.Optimization.get_entry_type(key)
@@ -70,7 +70,7 @@ function _add_tie_break_parameter!(
     ) where {T <: PSY.Component}
     meta = _tie_break_meta(band, decremental)
     PSI.has_container_key(container, TieBreakScaleParameter, T, meta) && return
-    ts_name = AustralianElectricityMarkets._tie_break_series_name(band, decremental)
+    ts_name = tie_break_series_name(band, decremental)
     ts_type = PSI.get_default_time_series_type(container)
     devices = [d for d in PSY.get_available_components(T, sys) if PSY.has_time_series(d, ts_type, ts_name)]
     _add_series_parameter!(container, TieBreakScaleParameter(), T, devices, ts_name, meta)
@@ -98,9 +98,9 @@ function _check_tie_break_series(
     modeled = Set{Tuple{DataType, String}}()
     for ((decremental, _, _), bands) in groups
         foreach(b -> push!(modeled, (b.type, b.name)), bands)
-        for group in AustralianElectricityMarkets._tie_groups(bands), i in group
+        for group in tie_groups(bands), i in group
             b = bands[i]
-            PSY.has_time_series(PSY.get_component(b.type, sys, b.name), ts_type, AustralianElectricityMarkets._tie_break_series_name(b.band, decremental)) &&
+            PSY.has_time_series(PSY.get_component(b.type, sys, b.name), ts_type, tie_break_series_name(b.band, decremental)) &&
                 continue
             push!(haskey(active, (decremental, b.name)) ? missing_series : fixed_only, b.name)
         end
@@ -222,7 +222,7 @@ function PSI.construct_service!(
         bands = groups[(decremental, region, t)]
         label = _tie_break_label(region, decremental)
         pair = 0
-        for group in AustralianElectricityMarkets._tie_groups(bands)
+        for group in tie_groups(bands)
             foreach(i -> _add_tie_break_parameter!(container, bands[i].type, sys, decremental, bands[i].band), group)
             for i in 1:(length(group) - 1), j in (i + 1):length(group)
                 a, b = bands[group[i]], bands[group[j]]

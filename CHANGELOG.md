@@ -574,22 +574,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Energy tie-break input derivation and the `EnergyTieBreak` service now live in the data
+- Energy tie-break input derivation and the `EnergyTieBreak` service now live in the root
   package (`AustralianElectricityMarkets`), so a serialized `System` holding them loads without
   `AustralianElectricityMarketsSimulations`. `AustralianElectricityMarketsSimulations` keeps the
   tie-break PSI formulations and checks.
 
 - FCAS effective-offer input derivation (`set_fcas_effective_offers!`, `FCAS_BAND_COUNT`,
-  `FCAS_INACTIVE_LIMIT_MW`) now lives in the data package (`AustralianElectricityMarkets`),
+  `FCAS_INACTIVE_LIMIT_MW`) now lives in the root package (`AustralianElectricityMarkets`),
   so a `System` built with it no longer needs `AustralianElectricityMarketsSimulations`
   to derive its FCAS series. `AustralianElectricityMarketsSimulations` keeps the FCAS PSI
   formulations and checks.
 
 - NEM penalty factors (`*_CVP_FACTOR`, `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR`, `constraint_cvp_factor`)
-  and the `DISPATCH_INTERVAL` constant now live in the data package (`AustralianElectricityMarkets`),
+  and the `DISPATCH_INTERVAL` constant now live in the root package (`AustralianElectricityMarkets`),
   so the market-rule constants load without `AustralianElectricityMarketsSimulations`.
   `AustralianElectricityMarketsSimulations` keeps the penalty PSI formulations and re-exports
   `DISPATCH_INTERVAL`.
+
+- The following names are exported from `AustralianElectricityMarkets` only, and
+  `AustralianElectricityMarketsSimulations` no longer exports the FCAS `*_CVP_FACTOR` constants:
+  `EnergyTieBreak`, `TIE_BREAK_SERVICE_NAME`, `TIE_BREAK_CVP_FACTOR`, `set_tie_break_scales!`,
+  `set_fcas_effective_offers!`, `FCAS_BAND_COUNT`, `FCAS_INACTIVE_LIMIT_MW`,
+  `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR`, `constraint_cvp_factor`, the `*_CVP_FACTOR` constants, and the
+  helpers `fcas_effective_series_name`, `fcas_ramping_series_name`, `fcas_upper_regulation_service`,
+  `fcas_offer_sides`, `tie_break_series_name` and `tie_groups`.
 
 - Added a timed random-day replay runner with early MNSP and constraint-version checks,
   one Julia worker per trading day, native interval timings and process memory sampling.

@@ -179,8 +179,8 @@ function _check_fcas_effective_series(container::PSI.OptimizationContainer, devi
     uncovered = String[]
     for d in devices
         dname = PSY.get_name(d)
-        names = [AustralianElectricityMarkets._fcas_effective_series_name(bid_type, dec) for dec in AustralianElectricityMarkets._fcas_offer_sides(directions[dname])]
-        bid_type in FCAS_REGULATION_MARKETS && push!(names, AustralianElectricityMarkets._fcas_ramping_series_name(bid_type))
+        names = [fcas_effective_series_name(bid_type, dec) for dec in fcas_offer_sides(directions[dname])]
+        bid_type in FCAS_REGULATION_MARKETS && push!(names, fcas_ramping_series_name(bid_type))
         all(n -> PSY.has_time_series(d, ts_type, n), names) || push!(uncovered, dname)
     end
     isempty(uncovered) || throw(
@@ -210,14 +210,14 @@ function _add_fcas_offer_parameters!(
     regulation = bid_type in FCAS_REGULATION_MARKETS
     for device in devices
         model = _fcas_device_model(devices_template, typeof(device))
-        for decremental in AustralianElectricityMarkets._fcas_offer_sides(directions[PSY.get_name(device)])
-            name, meta = AustralianElectricityMarkets._fcas_effective_series_name(bid_type, decremental), _fcas_offer_meta(bid_type, decremental)
+        for decremental in fcas_offer_sides(directions[PSY.get_name(device)])
+            name, meta = fcas_effective_series_name(bid_type, decremental), _fcas_offer_meta(bid_type, decremental)
             for P in _FCAS_OFFER_PARAMETERS
                 _add_fcas_parameter!(container, P(), model, sys, name, meta)
             end
         end
         regulation && _add_fcas_parameter!(
-            container, FCASRampingLimitParameter(), model, sys, AustralianElectricityMarkets._fcas_ramping_series_name(bid_type), string(bid_type),
+            container, FCASRampingLimitParameter(), model, sys, fcas_ramping_series_name(bid_type), string(bid_type),
         )
     end
     return
@@ -241,7 +241,7 @@ The largest effective `MaxAvail` of `device`'s `bid_type` offer on one side, per
 `Float64`.
 """
 function _fcas_capacity_bound(device::PSY.Device, bid_type::BidType, decremental::Bool)
-    series = PSY.get_time_series_values(PSY.SingleTimeSeries, device, AustralianElectricityMarkets._fcas_effective_series_name(bid_type, decremental))
+    series = PSY.get_time_series_values(PSY.SingleTimeSeries, device, fcas_effective_series_name(bid_type, decremental))
     return maximum(first, series)
 end
 
@@ -253,42 +253,6 @@ function _set_fcas_capacity_bound!(model::PSI.ServiceModel, variable, bound::Flo
     JuMP.set_upper_bound(variable, bound)
     return
 end
-
-
-"""
-    FCAS_CAPACITY_CVP_FACTOR
-
-CVP factor (70) of AEMO's FCAS EnablementMin/EnablementMax constraint, item 24 of the *Schedule of
-Constraint Violation Penalty Factors* v8.0. Prices [`FCASJointCapacitySlack`](@ref).
-"""
-const FCAS_CAPACITY_CVP_FACTOR = 70.0
-
-
-"""
-    FCAS_RAMPING_CVP_FACTOR
-
-CVP factor (155) of AEMO's FCAS Joint Ramping constraint, item 20 of the *Schedule of Constraint
-Violation Penalty Factors* v8.0. Prices [`FCASJointRampingSlack`](@ref).
-"""
-const FCAS_RAMPING_CVP_FACTOR = 155.0
-
-
-"""
-    FCAS_MAXAVAIL_CVP_FACTOR
-
-CVP factor (155) of AEMO's FCAS MaxAvail constraint, item 19 of the *Schedule of Constraint
-Violation Penalty Factors* v8.0. Prices [`FCASMaxAvailSlack`](@ref).
-"""
-const FCAS_MAXAVAIL_CVP_FACTOR = 155.0
-
-
-"""
-    FCAS_BDU_RAMPING_CVP_FACTOR
-
-CVP factor (155) of AEMO's BDU Regulation FCAS SCADA Ramping constraint, item 21 of the
-*Schedule of Constraint Violation Penalty Factors* v8.0. Prices [`FCASBDURampingSlack`](@ref).
-"""
-const FCAS_BDU_RAMPING_CVP_FACTOR = 155.0
 
 
 """
@@ -447,7 +411,7 @@ Builds AEMO *FCAS Model in NEMDE* §6.1's [`FCASJointRampingConstraint`](@ref) f
 contributing `device` of a regulation `FCASService` named `name`: the unit's net energy
 ([`_energy_variables`](@ref)) combined with its [`FCASUnitRegulationTarget`](@ref) against
 the `"joint_ramping"` field of its [`FCASRampingLimitParameter`](@ref), in the upper or lower form
-depending on `bid_type` ([`_fcas_upper_regulation_service`](@ref)). Where §6.1 does not apply, the
+depending on `bid_type` ([`fcas_upper_regulation_service`](@ref)). Where §6.1 does not apply, the
 parameter holds [`FCAS_INACTIVE_LIMIT_MW`](@ref) and the row never binds.
 
 # Returns
@@ -468,7 +432,7 @@ function _add_fcas_joint_ramping_constraints!(
     for device in devices
         dname = PSY.get_name(device)
         ramping, multiplier = _fcas_parameter_refs(container, FCASRampingLimitParameter, device, string(bid_type))
-        upper = bid_type == AustralianElectricityMarkets._fcas_upper_regulation_service(device)
+        upper = bid_type == fcas_upper_regulation_service(device)
         for t in time_steps
             lhs = JuMP.AffExpr(0.0)
             _add_fcas_variable_terms!(container, lhs, device, _energy_variables(device), dname, t)
@@ -851,8 +815,8 @@ function PSI.construct_service!(
         lower_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(name)_lower")
         for group in groups, (device, _) in group.offers
             dname = PSY.get_name(device)
-            upper_service = AustralianElectricityMarkets._fcas_upper_regulation_service(device)
-            lower_service = AustralianElectricityMarkets._other_regulation(upper_service)
+            upper_service = fcas_upper_regulation_service(device)
+            lower_service = _other_regulation(upper_service)
             for t in time_steps
                 upper_reg = _device_regulation_target(container, device, upper_service, t)
                 isnothing(upper_reg) || JuMP.add_to_expression!(upper_lhs[dname, t], 1.0, upper_reg)

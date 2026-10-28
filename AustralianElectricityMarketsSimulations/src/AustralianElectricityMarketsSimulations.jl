@@ -16,7 +16,11 @@ using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCAST
     get_scaled_fcas_trapezium, get_sense, get_service, get_skipped_constraints, get_source,
     get_storage_energy_max_avail, get_terms, get_upper_slope_coeff, loss_curve_vertex_values,
     is_non_scheduled_load, loss_segments, nem_dispatch_devices, remove_single_series!, replace_single_series!,
-    single_series, FCAS_BAND_COUNT, set_fcas_effective_offers!
+    single_series, FCAS_BAND_COUNT, set_fcas_effective_offers!,
+    FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR, FCAS_BDU_RAMPING_CVP_FACTOR,
+    fcas_effective_series_name, fcas_ramping_series_name, fcas_upper_regulation_service, fcas_offer_sides,
+    tie_break_series_name, tie_groups,
+    _tie_break_offers, _tie_break_active_bands, _tie_break_stamp_bands, _other_regulation, _financial_year_mpc
 using Chain
 using DataFrames
 using Dates
@@ -92,8 +96,6 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASMaxAvailConstraint, FCASMaxAvailSlack, FCASBDURampingSlack,
     FCASOfferBandVariable, FCASOfferBandConstraint, FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter,
     FCASLowerSlopeParameter, FCASRampingLimitParameter, FCASBandPriceParameter,
-    FCAS_MAXAVAIL_CVP_FACTOR, FCAS_BDU_RAMPING_CVP_FACTOR, FCAS_CAPACITY_CVP_FACTOR,
-    FCAS_RAMPING_CVP_FACTOR,
     UnitRampUpSlack, UnitRampDownSlack,
     InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack
 export compute_fcas_prices

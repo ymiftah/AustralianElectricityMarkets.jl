@@ -281,7 +281,7 @@ end
 function _violation_direction(sys::PSY.System, ::Type{FCASJointRampingSlack}, meta::AbstractString, name::AbstractString, ::AbstractString)
     service = PSY.get_component(FCASService, sys, meta)
     device = PSY.get_component(PSY.Device, sys, name)
-    return get_bid_type(service) == AustralianElectricityMarkets._fcas_upper_regulation_service(device) ? "up" : "down"
+    return get_bid_type(service) == fcas_upper_regulation_service(device) ? "up" : "down"
 end
 
 

@@ -93,6 +93,42 @@ fixed loading, item 13 of the *Schedule of Constraint Violation Penalty Factors*
 const FIXED_LOADING_CVP_FACTOR = 380.0
 
 
+"""
+    FCAS_CAPACITY_CVP_FACTOR
+
+CVP factor (70) of AEMO's FCAS EnablementMin/EnablementMax constraint, item 24 of the *Schedule of
+Constraint Violation Penalty Factors* v8.0. Prices `FCASJointCapacitySlack`.
+"""
+const FCAS_CAPACITY_CVP_FACTOR = 70.0
+
+
+"""
+    FCAS_RAMPING_CVP_FACTOR
+
+CVP factor (155) of AEMO's FCAS Joint Ramping constraint, item 20 of the *Schedule of Constraint
+Violation Penalty Factors* v8.0. Prices `FCASJointRampingSlack`.
+"""
+const FCAS_RAMPING_CVP_FACTOR = 155.0
+
+
+"""
+    FCAS_MAXAVAIL_CVP_FACTOR
+
+CVP factor (155) of AEMO's FCAS MaxAvail constraint, item 19 of the *Schedule of Constraint
+Violation Penalty Factors* v8.0. Prices `FCASMaxAvailSlack`.
+"""
+const FCAS_MAXAVAIL_CVP_FACTOR = 155.0
+
+
+"""
+    FCAS_BDU_RAMPING_CVP_FACTOR
+
+CVP factor (155) of AEMO's BDU Regulation FCAS SCADA Ramping constraint, item 21 of the
+*Schedule of Constraint Violation Penalty Factors* v8.0. Prices `FCASBDURampingSlack`.
+"""
+const FCAS_BDU_RAMPING_CVP_FACTOR = 155.0
+
+
 const _BUILT_IN_CVP_FACTORS = Dict(
     "Interconnector Zero" => INTERCONNECTOR_ZERO_CVP_FACTOR,
 )
@@ -162,16 +198,8 @@ function _financial_year_mpc(t::DateTime)
     isnothing(idx) && throw(
         ArgumentError(
             "No published Market Price Cap covers $t; extend MARKET_PRICE_CAP_BY_FINANCIAL_YEAR " *
-                "or set the \"market_price_cap\" entry of `PSI.get_ext(PSI.get_settings(model))`.",
+                "or supply a market_price_cap override.",
         ),
     )
     return MARKET_PRICE_CAP_BY_FINANCIAL_YEAR[idx][2]
-end
-
-
-function _checked_market_price_cap(rate)
-    value = rate isa Real ? Float64(rate) : NaN
-    isfinite(value) && value > 0.0 ||
-        throw(ArgumentError("market_price_cap must be finite and strictly positive, got $rate."))
-    return value
 end

@@ -219,7 +219,7 @@ struct FCASMaxAvailConstraint <: PSI.ConstraintType end
 
 Variable type for the elastic slack on an [`FCASMaxAvailConstraint`](@ref) row, built only when
 the owning `PSI.ServiceModel` has `use_slacks = true`. Priced at
-[`FCAS_MAXAVAIL_CVP_FACTOR`](@ref) times the Market Price Cap.
+`FCAS_MAXAVAIL_CVP_FACTOR` times the Market Price Cap.
 """
 struct FCASMaxAvailSlack <: PSI.VariableType end
 
@@ -229,7 +229,7 @@ struct FCASMaxAvailSlack <: PSI.VariableType end
 
 Variable type for the elastic slack on a [`FCASBDURampingConstraint`](@ref) row, built only when
 the owning `PSI.ServiceModel` has `use_slacks = true`. Priced at
-[`FCAS_BDU_RAMPING_CVP_FACTOR`](@ref) times the Market Price Cap.
+`FCAS_BDU_RAMPING_CVP_FACTOR` times the Market Price Cap.
 """
 struct FCASBDURampingSlack <: PSI.VariableType end
 
@@ -294,7 +294,7 @@ struct FCASJointRampingConstraint <: PSI.ConstraintType end
 
 Variable type for the elastic slack on a [`FCASJointCapacityConstraint`](@ref) row (AEMO
 `xxUpperDeficit`/`xxLowerSurplus`), built when the owning `PSI.ServiceModel` has
-`use_slacks = true`. Priced at [`FCAS_CAPACITY_CVP_FACTOR`](@ref) times the Market Price Cap.
+`use_slacks = true`. Priced at `FCAS_CAPACITY_CVP_FACTOR` times the Market Price Cap.
 """
 struct FCASJointCapacitySlack <: PSI.VariableType end
 
@@ -304,7 +304,7 @@ struct FCASJointCapacitySlack <: PSI.VariableType end
 
 Variable type for the elastic slack on a [`FCASJointRampingConstraint`](@ref) row (AEMO
 `R5REJointRampDeficit`/`L5REJointRampDeficit`), built when the owning `PSI.ServiceModel` has
-`use_slacks = true`. Priced at [`FCAS_RAMPING_CVP_FACTOR`](@ref) times the Market Price Cap.
+`use_slacks = true`. Priced at `FCAS_RAMPING_CVP_FACTOR` times the Market Price Cap.
 """
 struct FCASJointRampingSlack <: PSI.VariableType end
 

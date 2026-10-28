@@ -609,7 +609,7 @@ end
 @testset "tie groups" begin
     band(price, name, band = 1) = (; price, name, band)
     tol = TIE_BREAK_CVP_FACTOR
-    groups = AustralianElectricityMarkets._tie_groups
+    groups = AustralianElectricityMarkets.tie_groups
     @test groups([band(5.0, "a"), band(5.0, "b"), band(5.0, "c")]) == [[1, 2, 3]]
     # A run of one unit's bands is no group; zero-width bands are grouped like any other.
     @test groups([band(5.0, "a", 1), band(5.0, "a", 2), band(7.0, "b")]) == Vector{Int}[]
