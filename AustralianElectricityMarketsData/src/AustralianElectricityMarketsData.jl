@@ -2,6 +2,8 @@ module AustralianElectricityMarketsData
 
 using HTTP, ZipArchives, Dates
 using DuckDB, DBInterface
+using DataFrames
+using XML
 using AustralianElectricityMarketsCache
 import AustralianElectricityMarketsCache: DataSource, get_filesystem, islocal,
     _parse_hive_root, _local_tmp_dir, _new_duckdb_connection, _partition_has_data,
@@ -20,6 +22,8 @@ include("nemweb_load/parquet.jl")
 include("nemweb_load/download.jl")
 include("nemweb_load/populate.jl")
 include("nemweb_load/legacy.jl")
+include("isp2026/xml.jl")
+include("isp2026/properties.jl")
 
 @doc (@doc AustralianElectricityMarketsCache.HiveConfiguration) HiveConfiguration
 @doc (@doc AustralianElectricityMarketsCache.AEMDB) AEMDB
