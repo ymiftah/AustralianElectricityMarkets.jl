@@ -17,8 +17,8 @@
     function build_system()
         sys = augmented_pscb_system()
         set_fcas_bids!(sys, db, date_range)
+        set_fcas_service_bids!(sys, db, date_range)
         add_nem_constraints!(sys, db, date_range)
-        add_fcas_services!(sys)
         attach_interconnector_losses!(sys, db, first(date_range))
         return sys
     end
@@ -79,9 +79,9 @@
             @test get_gencon_id(v1) == get_gencon_id(v2) == "N_VERSIONED_LIMIT"
 
             bat = get_component(EnergyReservoirStorage, sys, "BAT1")
-            @test has_time_series(bat, SingleTimeSeries, "fcas_curve_RAISEREG")
+            @test has_time_series(bat, SingleTimeSeries, fcas_offer_series_name(fcas_service(bat, BidType.RAISEREG), false))
             @test has_time_series(bat, SingleTimeSeries, "fcas_trapezium_RAISEREG")
-            @test has_time_series(bat, SingleTimeSeries, "fcas_curve_RAISEREG_decremental")
+            @test has_time_series(bat, SingleTimeSeries, fcas_offer_series_name(fcas_service(bat, BidType.RAISEREG), true))
             @test has_time_series(bat, SingleTimeSeries, "fcas_trapezium_RAISEREG_decremental")
         end
 

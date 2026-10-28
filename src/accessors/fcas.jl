@@ -165,7 +165,7 @@ Full-series read of `component`'s FCAS offer curve for `service`, `horizon` step
 `DIRECTION == "LOAD"` series. Throws `ArgumentError` if the series isn't attached.
 """
 function _get_fcas_offer_curve(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
-    name = fcas_series_name("fcas_curve", service, decremental)
+    name = fcas_offer_series_name(fcas_service(component, service), decremental)
     rows = _read_fcas_series("curve", component, name, service, decremental, initial_time, horizon)
     multiplier = _fcas_units_multiplier(component)
     return [PSY.PiecewiseStepData(get_x_coords(c) .* multiplier, get_y_coords(c)) for c in rows]

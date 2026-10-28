@@ -416,8 +416,13 @@ end
 
 # --- FCAS on the toy system: one `(MW, ...)` value or band list per stamp. ---
 
-# Attaches `device`'s `"fcas_trapezium_*"`/`"fcas_curve_*"` series: `trapeziums` are
+# Key of the offer curves `add_toy_fcas_offer!` holds in a device's `ext` until its FCASService exists.
+const TOY_FCAS_CURVES_KEY = "toy_fcas_curves"
+
+# Attaches `device`'s `"fcas_trapezium_*"` series: `trapeziums` are
 # `(EnablementMin, LowBreakpoint, HighBreakpoint, EnablementMax, MaxAvail)` in MW, `bands` `(MW, price)` lists.
+# The offer curves become the device's service bids once its FCASService exists
+# (see `flush_toy_fcas_curves!`).
 function add_toy_fcas_offer!(sys, device, stamps, bid_type, trapeziums, bands; decremental = false)
     base_power = PSY.get_base_power(sys)
     suffix = decremental ? "$(string(bid_type))_decremental" : string(bid_type)
@@ -426,8 +431,36 @@ function add_toy_fcas_offer!(sys, device, stamps, bid_type, trapeziums, bands; d
             for (a, b, c, d, e) in trapeziums
     ]
     curves = [PSY.PiecewiseStepData([0.0; cumsum(first.(bs))] ./ base_power, last.(bs)) for bs in bands]
-    for (name, values) in (("fcas_trapezium_$suffix", traps), ("fcas_curve_$suffix", curves))
-        PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series(name, stamps[1], values, TOY_RESOLUTION))
+    PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series("fcas_trapezium_$suffix", stamps[1], traps, TOY_RESOLUTION))
+    pending = get!(() -> Any[], PSY.get_ext(device), TOY_FCAS_CURVES_KEY)
+    push!(pending, (bid_type, decremental, stamps[1], curves))
+    flush_toy_fcas_curves!(sys)
+    return
+end
+
+# Writes each pending offer curve as the service bid of every FCASService of its bid type that its
+# device belongs to and that does not carry it yet. Give a MarketBidCost to any device without one,
+# as PowerSystems requires. Call it after adding FCASServices, since a curve waits until its service exists.
+function flush_toy_fcas_curves!(sys)
+    for device in PSY.get_components(PSY.Device, sys)
+        pending = get(PSY.get_ext(device), TOY_FCAS_CURVES_KEY, nothing)
+        isnothing(pending) && continue
+        for (bid_type, decremental, start, curves) in pending
+            for svc in PSY.get_services(device)
+                svc isa FCASService && get_bid_type(svc) == bid_type || continue
+                name = AustralianElectricityMarkets.fcas_offer_series_name(svc, decremental)
+                PSY.has_time_series(device, PSY.SingleTimeSeries, name) && continue
+                PSY.get_operation_cost(device) isa PSY.MarketBidCost || PSY.set_operation_cost!(
+                    device, PSY.MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0),
+                )
+                ts = AustralianElectricityMarkets.single_series(name, start, curves, TOY_RESOLUTION)
+                if decremental
+                    PSY.set_decremental_service_bid!(sys, device, svc, ts, PSY.UnitSystem.NATURAL_UNITS)
+                else
+                    PSY.set_service_bid!(sys, device, svc, ts, PSY.UnitSystem.NATURAL_UNITS)
+                end
+            end
+        end
     end
     return
 end
@@ -448,6 +481,7 @@ function add_toy_fcas_market!(sys, stamps, bid_type, duids, name, rhs_mw)
     PSY.add_service!(sys, gc, devices)
     add_toy_series!(sys, gc, stamps, "rhs", rhs_mw)
     add_toy_series!(sys, gc, stamps, "invoked", [1.0, 1.0]; scale = 1.0)
+    flush_toy_fcas_curves!(sys)
     return
 end
 # Alta and Park City offer RAISE6SEC, Alta also RAISEREG and LOWERREG, `TOY_BATTERY` RAISEREG on both
@@ -487,6 +521,7 @@ function fcas_toy_system(;
             add_toy_fcas_market!(sys, stamps, BidType.RAISE6SEC, [TOY_CHEAP, TOY_EXPENSIVE, TOY_BATTERY], "F_R6", r6_req)
             add_toy_fcas_market!(sys, stamps, BidType.LOWER6SEC, ["pump"], "F_L6", [5.0, 5.0])
             PSY.add_service!(sys, FCASService(; name = "1_LOWERREG", region = "1", bid_type = BidType.LOWERREG), [alta])
+            flush_toy_fcas_curves!(sys)
         end,
     )
 end

@@ -8,7 +8,7 @@ const FCAS_TOY_TOLERANCE = 1.0e-4
 """
     add_toy_fcas!(sys, device, initial_timestamp, n, bid_type, trapezium_mw, bands_mw_price; decremental = false)
 
-Attaches flat `"fcas_trapezium_*"`/`"fcas_curve_*"` series over `n` steps from `initial_timestamp`,
+Attaches flat `"fcas_trapezium_*"` series and the offer curves as service bids over `n` steps from `initial_timestamp`,
 as [`add_toy_fcas_offer!`](@ref) does.
 """
 function add_toy_fcas!(
@@ -235,6 +235,7 @@ fcas_unit_mw(container, service_name, duid) =
                 PSY.add_service!(
                     sys, FCASService(; name = name, region = "TAS1", bid_type = bid_type), [device],
                 )
+                flush_toy_fcas_curves!(sys)
             end
         end,
     )
@@ -290,6 +291,7 @@ end
                     sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG),
                     [device],
                 )
+                flush_toy_fcas_curves!(sys)
             end,
         )
         container = build_fcas(sys, [service_name])
@@ -328,6 +330,7 @@ end
                 PSY.add_service!(
                     sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG), [device],
                 )
+                flush_toy_fcas_curves!(sys)
             end,
         )
         return build_fcas(sys, [service_name])
@@ -364,6 +367,7 @@ end
                     sys, FCASService(; name = "TAS1_LOWER6SEC", region = "TAS1", bid_type = BidType.LOWER6SEC),
                     [device],
                 )
+                flush_toy_fcas_curves!(sys)
             end,
         )
         container = build_fcas(sys, ["TAS1_LOWER6SEC"])
@@ -390,8 +394,10 @@ end
             n = length(stamps)
             add_toy_fcas!(sys, device, stamps[1], n, BidType.LOWER6SEC, (-100.0, -90.0, 10.0, 20.0, 10.0), [(10.0, 10.0)])
             PSY.add_service!(sys, FCASService(; name = "TAS1_LOWER6SEC", region = "TAS1", bid_type = BidType.LOWER6SEC), [device])
+            flush_toy_fcas_curves!(sys)
             add_toy_fcas!(sys, device, stamps[1], n, BidType.RAISEREG, (0.0, 0.0, 100.0, 100.0, 9.0), [(9.0, 10.0)])
             PSY.add_service!(sys, FCASService(; name = "TAS1_RAISEREG", region = "TAS1", bid_type = BidType.RAISEREG), [device])
+            flush_toy_fcas_curves!(sys)
         end,
     )
     container = build_fcas(sys, ["TAS1_LOWER6SEC", "TAS1_RAISEREG"])
@@ -421,6 +427,7 @@ end
                     sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC),
                     [device],
                 )
+                flush_toy_fcas_curves!(sys)
             end,
         )
     end
@@ -446,6 +453,7 @@ end
                 sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC),
                 [device],
             )
+            flush_toy_fcas_curves!(sys)
         end,
     )
     base_power = PSY.get_base_power(sys)
@@ -533,6 +541,7 @@ function storage_fcas_toy_model(
         )
     end
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = bid_type), [bat])
+    flush_toy_fcas_curves!(sys)
     set_fcas_effective_offers!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
@@ -695,6 +704,7 @@ function _build_bdu_regulation(
         )
     end
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG), [bat])
+    flush_toy_fcas_curves!(sys)
     if !isnothing(requirement_mw)
         rhs_pu = requirement_mw / get_base_power(sys)
         gc = GenericConstraint(;
@@ -836,6 +846,7 @@ end
                 sys, FCASService(; name = "TAS1_LOWER6SEC", region = "TAS1", bid_type = BidType.LOWER6SEC),
                 [device],
             )
+            flush_toy_fcas_curves!(sys)
         end,
     )
     template = fcas_toy_template(sys, ["TAS1_LOWER6SEC"])
@@ -864,6 +875,7 @@ end
                 sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.LOWER6SEC),
                 [device],
             )
+            flush_toy_fcas_curves!(sys)
         end,
     )
 
@@ -897,6 +909,7 @@ end
                     sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.LOWER6SEC),
                     [device],
                 )
+                flush_toy_fcas_curves!(sys)
             end,
         )
         template = fcas_toy_template(dec_sys, [service_name])
@@ -923,6 +936,7 @@ function raise6sec_toy(; units, trapezium_mw, service_name = "TAS1_RAISE6SEC", e
             PSY.add_service!(
                 sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC), devices,
             )
+            flush_toy_fcas_curves!(sys)
             isnothing(extra!) || extra!(sys, stamps)
         end,
     )
@@ -946,6 +960,7 @@ end
                     sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC),
                     [device],
                 )
+                flush_toy_fcas_curves!(sys)
             end,
         )
         return build_fcas(sys, [service_name])
@@ -1025,6 +1040,7 @@ end
             for (bid_type, name) in ((BidType.RAISE6SEC, "TAS1_RAISE6SEC"), (BidType.LOWERREG, "TAS1_LOWERREG"))
                 add_toy_fcas!(sys, device, stamps[1], length(stamps), bid_type, (0.0, 10.0, 90.0, 100.0, 10.0), [(10.0, 10.0)])
                 PSY.add_service!(sys, FCASService(; name = name, region = "TAS1", bid_type = bid_type), [device])
+                flush_toy_fcas_curves!(sys)
             end
         end,
     )
@@ -1101,10 +1117,12 @@ end
             add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISE6SEC, (0.0, 0.0, 100.0, 100.0, 10.0), [(10.0, 10.0)])
             for name in ("TAS1_RAISEREG", "TAS1_RAISEREG_B")
                 PSY.add_service!(sys, FCASService(; name = name, region = "TAS1", bid_type = BidType.RAISEREG), [device])
+                flush_toy_fcas_curves!(sys)
             end
             PSY.add_service!(
                 sys, FCASService(; name = "TAS1_RAISE6SEC", region = "TAS1", bid_type = BidType.RAISE6SEC), [device],
             )
+            flush_toy_fcas_curves!(sys)
         end,
     )
     service_names = ["TAS1_RAISEREG", "TAS1_RAISEREG_B", "TAS1_RAISE6SEC"]
@@ -1142,8 +1160,10 @@ end
             PSY.add_service!(
                 sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC), [device, offline],
             )
+            flush_toy_fcas_curves!(sys)
             # A service the template doesn't model under FCASMarket, with an unbid contributor.
             PSY.add_service!(sys, FCASService(; name = "TAS1_LOWER6SEC", region = "TAS1", bid_type = BidType.LOWER6SEC), [device])
+            flush_toy_fcas_curves!(sys)
         end,
     )
 
@@ -1174,6 +1194,7 @@ end
             PSY.add_service!(
                 sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC), [device],
             )
+            flush_toy_fcas_curves!(sys)
         end,
     )
     container = build_fcas(sys, [service_name])
@@ -1215,6 +1236,7 @@ end
             device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
             add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISE6SEC, (0.0, 0.0, 100.0, 100.0, 10.0), [(10.0, 10.0)])
             PSY.add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC), [device])
+            flush_toy_fcas_curves!(sys)
         end,
     )
     template = fcas_toy_template(sys, [service_name])
@@ -1302,7 +1324,9 @@ function joint_ramping_toy(
             isnothing(lower_agc) ||
                 add_toy_fcas_scaling!(sys, device, stamps[1], n, BidType.LOWERREG; agc_max_avail = lower_agc)
             PSY.add_service!(sys, FCASService(; name = "TAS1_RAISEREG", region = "TAS1", bid_type = BidType.RAISEREG), [device])
+            flush_toy_fcas_curves!(sys)
             PSY.add_service!(sys, FCASService(; name = "TAS1_LOWERREG", region = "TAS1", bid_type = BidType.LOWERREG), [device])
+            flush_toy_fcas_curves!(sys)
             isnothing(extra!) || extra!(sys, device, stamps)
         end,
     )
@@ -1477,6 +1501,7 @@ end
             add_toy_fcas_scaling!(sys, device, stamps[1], n, BidType.RAISEREG; agc_max_avail = 5.0)
             PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, "initial_mw")
             PSY.add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG), [device])
+            flush_toy_fcas_curves!(sys)
         end,
     )
     network = PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true)
@@ -1551,6 +1576,7 @@ function lower6sec_slack_sys(band_mw)
                 sys, FCASService(; name = "TAS1_LOWER6SEC", region = "TAS1", bid_type = BidType.LOWER6SEC),
                 [device],
             )
+            flush_toy_fcas_curves!(sys)
         end,
     )
 end
@@ -1706,6 +1732,7 @@ function fcas_requirement_toy_system(bids, gcs)
                 PSY.add_service!(
                     sys, FCASService(; name = fcas_service_name(device, bid_type), region = "1", bid_type = bid_type), [device],
                 )
+                flush_toy_fcas_curves!(sys)
             end
             for (name, sense, rhs_mw, terms, requirements) in gcs
                 rhs_pu = rhs_mw / PSY.get_base_power(sys)
@@ -1850,6 +1877,7 @@ end
     device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
     # The template models a different FCAS service only, so the term's own service has no FCASMarket model.
     PSY.add_service!(sys, FCASService(; name = "1_LOWER6SEC", region = "1", bid_type = BidType.LOWER6SEC), [device])
+    flush_toy_fcas_curves!(sys)
     template = fcas_toy_template(sys, ["1_LOWER6SEC"])
     PSI.set_service_model!(template, "F_TOY", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_TOY"))
     err = _caught(() -> _buildable_gcs(sys, template))
@@ -1890,6 +1918,7 @@ function load_fcas_toy(bids; initial = 10.0, capacity = 40.0, availability = 40.
                 PSY.add_service!(
                     sys, FCASService(; name = "TAS1_$(string(bid_type))", region = "TAS1", bid_type = bid_type), [load],
                 )
+                flush_toy_fcas_curves!(sys)
             end
             isnothing(extra!) || extra!(sys, load, stamps)
         end,
@@ -2007,6 +2036,7 @@ end
             PSY.add_service!(
                 sys, FCASService(; name = fcas_service_name(load, bid_type), region = "1", bid_type = bid_type), [load],
             )
+            flush_toy_fcas_curves!(sys)
             rhs_pu = 5.0 / PSY.get_base_power(sys)
             gc = GenericConstraint(;
                 name = "F_TOY", sense = ConstraintSense.GE, rhs = rhs_pu,
@@ -2046,6 +2076,7 @@ end
 
     add_toy_fcas!(sys, load, TOY_START, 2, BidType.LOWER6SEC, (5.0, 10.0, 20.0, 30.0, 10.0), [(10.0, 10.0)])
     PSY.add_service!(sys, FCASService(; name = "TAS1_LOWER6SEC", region = "TAS1", bid_type = BidType.LOWER6SEC), [load])
+    flush_toy_fcas_curves!(sys)
     err = _caught(() -> check_fcas_services(sys, fcas_toy_template(sys, ["TAS1_RAISE6SEC", "TAS1_LOWER6SEC"])))
     @test err isa ArgumentError
     @test occursin("incremental", sprint(showerror, err))
@@ -2074,6 +2105,7 @@ function make_non_scheduled_fcas_load!(sys, stamps)
     PSY.add_service!(
         sys, FCASService(; name = "TAS1_RAISE6SEC", region = "TAS1", bid_type = BidType.RAISE6SEC), [load],
     )
+    flush_toy_fcas_curves!(sys)
     return
 end
 

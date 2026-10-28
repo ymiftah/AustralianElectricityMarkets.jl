@@ -17,7 +17,7 @@ export NetworkConfiguration, table_requirements, nem_system
 export RegionalNetworkConfiguration, ConstrainedNetworkConfiguration, NEMDEConfiguration
 export set_mnsp_offers!, set_demand!, set_market_bids!
 export get_storage_energy_max_avail
-export set_fcas_bids!, set_fcas_scaling_inputs!, set_fcas_effective_offers!
+export set_fcas_bids!, set_fcas_service_bids!, set_fcas_scaling_inputs!, set_fcas_effective_offers!
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW
 export set_nem_dispatch_limits!, set_interconnector_flow_limits!, set_loss_demand_coefficients!
 export get_initial_mw, get_energy_availability
@@ -25,7 +25,7 @@ export set_nem_energy_limits!
 export set_nem_fixed_loads!
 export add_nem_constraints!, get_skipped_constraints, get_dropped_terms,
     get_missing_constraint_intervals, get_defaulted_constraint_weights
-export fcas_service_name
+export fcas_service_name, fcas_service, fcas_offer_series_name
 export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS, BidType
 export InterconnectorLossModel, interconnector_loss_models, loss_factor, interconnector_losses, loss_segments,
     loss_curve_vertex_values, attach_interconnector_losses!

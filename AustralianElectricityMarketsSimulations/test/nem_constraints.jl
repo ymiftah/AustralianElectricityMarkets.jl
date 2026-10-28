@@ -213,6 +213,7 @@ function _add_fcas_services!(sys)
         for (name, devices) in by_name
             region = get_name(get_area(get_bus(first(devices))))
             add_service!(sys, FCASService(; name = name, region = region, bid_type = bid_type), devices)
+            flush_toy_fcas_curves!(sys)
         end
     end
     return
@@ -227,6 +228,7 @@ end
         sys, FCASService(; name = "1_RAISE6SEC", region = "1", bid_type = BidType.RAISE6SEC),
         get_contributing_devices(sys, _gc(sys, "F_R1_RAISE6SEC")),
     )
+    flush_toy_fcas_curves!(sys)
     model = _decision_model(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     err = _build_error(model)
     @test err isa ArgumentError

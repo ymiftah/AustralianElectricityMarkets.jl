@@ -103,14 +103,15 @@ function _fcas_bid_modeled(device, bid_type::BidType)
 end
 
 
-# A device bids a (region, bid_type) market if it carries either direction's curve series - a
-# storage device can provide the market while charging or discharging.
+# A device bids a (region, bid_type) market if it carries either direction's trapezium series - a
+# storage device can provide the market while charging or discharging. The offer curves are
+# attached alongside them, as service bids, only after the services exist.
 function _fcas_service_devices(
         sys, region::AbstractString, bid_type::BidType;
         candidates = _region_devices(sys, region; loads = true),
     )
-    inc_name = fcas_series_name("fcas_curve", bid_type, false)
-    dec_name = fcas_series_name("fcas_curve", bid_type, true)
+    inc_name = fcas_series_name("fcas_trapezium", bid_type, false)
+    dec_name = fcas_series_name("fcas_trapezium", bid_type, true)
     return filter(candidates) do d
         has_time_series(d, SingleTimeSeries, inc_name) || has_time_series(d, SingleTimeSeries, dec_name)
     end
@@ -125,10 +126,11 @@ with at least one available device bidding it, attached via `add_service!` to th
 whose bid direction the FCAS market formulation models (an incremental bid, a decremental-only
 bid on a `Storage` device or a load, or a `Storage` device's regulation bid on both sides). A
 service already in `sys` under that name is left as is. Devices bidding a market in a direction the formulation does not model are left out and
-reported.
+reported. [`set_fcas_bids!`](@ref) calls this before it writes the offer curves, so a later call
+adds nothing.
 
 # Arguments
-- `sys`: the `System` to add to, after [`set_fcas_bids!`](@ref) has run.
+- `sys`: the `System` to add to, once the trapezium series of [`set_fcas_bids!`](@ref) are attached.
 
 # Returns
 `(added, excluded)`: `added::Vector{String}` of service names created, and
@@ -166,24 +168,83 @@ end
 
 
 """
-    _attach_fcas_bid_series!(sys, component, gdf, duid, bid_type, side, start_date, resolution)
+    _attach_fcas_trapezium_series!(sys, component, gdf, duid, bid_type, side, start_date, resolution)
 
-Attaches the two per-`(component, FCAS market, side)` `SingleTimeSeries` series, `"fcas_curve_..."`
-and `"fcas_trapezium_..."` ([`fcas_series_name`](@ref)), from `gdf` (a `DUID`-grouped bids
-`DataFrame`) if `duid` has a group in it. No-op otherwise, so callers can probe a component
-against several `DIRECTION` groupings without checking `haskey` themselves. Returns whether
-the series were attached.
+Attaches the per-`(component, FCAS market, side)` `"fcas_trapezium_..."` `SingleTimeSeries`
+([`fcas_series_name`](@ref)) from `gdf` (a `DUID`-grouped bids `DataFrame`) if `duid` has a group
+in it. No-op otherwise, so callers can probe a component against several `DIRECTION` groupings
+without checking `haskey` themselves. Returns whether the series was attached.
 """
-function _attach_fcas_bid_series!(sys, component, gdf, duid::AbstractString, bid_type::BidType, side::OfferSide, start_date, resolution)
+function _attach_fcas_trapezium_series!(sys, component, gdf, duid::AbstractString, bid_type::BidType, side::OfferSide, start_date, resolution)
     (isnothing(gdf) || !haskey(gdf, (duid,))) && return false
     rows = gdf[(duid,)]
-    # rows.curve_data/.trapezium_row are SubArray views into the grouped DataFrame -
-    # the series needs plain Vectors.
-    curve_ts = single_series(fcas_series_name("fcas_curve", bid_type, side), start_date, collect(rows.curve_data), resolution)
-    add_time_series!(sys, component, curve_ts)
+    # rows.trapezium_row is a SubArray view into the grouped DataFrame - the series needs a plain Vector.
     trapezium_ts = single_series(fcas_series_name("fcas_trapezium", bid_type, side), start_date, collect(rows.trapezium_row), resolution)
     add_time_series!(sys, component, trapezium_ts)
     return true
+end
+
+
+# The offer curves of `duid` in `gdf` (a `DUID`-grouped bids `DataFrame`), or `nothing`.
+function _fcas_offer_curves(gdf, duid::AbstractString)
+    (isnothing(gdf) || !haskey(gdf, (duid,))) && return nothing
+    # A SubArray view into the grouped DataFrame, collected so the service bid holds a plain Vector.
+    return collect(gdf[(duid,)].curve_data)
+end
+
+
+# Whether `x` is a zero cost term; a term this does not recognise counts as non-zero.
+_is_zero_cost_term(::Nothing) = true
+_is_zero_cost_term(x::Real) = iszero(x)
+_is_zero_cost_term(x::NamedTuple) = all(_is_zero_cost_term, values(x))
+_is_zero_cost_term(x::PSY.LinearCurve) = iszero(PSY.get_proportional_term(x)) && iszero(PSY.get_constant_term(x))
+_is_zero_cost_term(x::PSY.CostCurve) = _is_zero_cost_term(PSY.get_value_curve(x))
+_is_zero_cost_term(::Any) = false
+
+"""
+    _is_zero_cost(cost) -> Bool
+
+Whether every term of the operation cost `cost` is zero, so that replacing it with an empty
+`MarketBidCost` leaves the device's energy cost at zero. Terms that are not zero linear
+curves or numbers count as non-zero.
+"""
+_is_zero_cost(cost) = all(f -> _is_zero_cost_term(getfield(cost, f)), fieldnames(typeof(cost)))
+
+
+# Writes `curves` as `device`'s service bid for its FCASService of `bid_type`. A device whose
+# operation cost is not a MarketBidCost gets an empty one only when that cost is all zero: the
+# replacement then leaves its energy cost at zero. Any other device keeps its cost and no FCAS
+# price bid.
+function _write_fcas_service_bid!(sys, device, bid_type::BidType, decremental::Bool, curves, start_date, resolution)
+    (isnothing(curves) || isempty(_fcas_services(device, bid_type))) && return
+    service = only(_fcas_services(device, bid_type))
+    name = fcas_offer_series_name(service, decremental)
+    # Already stored, for example by an earlier call made before the device's energy bids were set.
+    has_time_series(device, SingleTimeSeries, name) && return
+    cost = get_operation_cost(device)
+    if !(cost isa MarketBidCost)
+        if _is_zero_cost(cost)
+            # Zero-cost replacement: a MarketBidCost without energy curves prices energy at zero.
+            set_operation_cost!(
+                device,
+                MarketBidCost(;
+                    no_load_cost = 0.0,
+                    start_up = (hot = 0.0, warm = 0.0, cold = 0.0),
+                    shut_down = 0.0,
+                ),
+            )
+        else
+            @debug "set_fcas_service_bids!: $(get_name(device)) keeps its $(nameof(typeof(cost))) energy cost, so its $(string(bid_type)) offer is not stored as a service bid"
+            return
+        end
+    end
+    ts = single_series(name, start_date, curves, resolution)
+    if decremental
+        set_decremental_service_bid!(sys, device, service, ts, PSY.UnitSystem.NATURAL_UNITS)
+    else
+        set_service_bid!(sys, device, service, ts, PSY.UnitSystem.NATURAL_UNITS)
+    end
+    return
 end
 
 
@@ -205,16 +266,14 @@ end
 """
     set_fcas_bids!(sys, db, date_range; kwargs...)
 
-Attaches FCAS bid data to the system as two `SingleTimeSeries` time series per `(component,
-FCAS market)` with bid data in `date_range`:
-- `"fcas_curve_<SERVICE>"` (e.g. `"fcas_curve_RAISE6SEC"`), a `Vector{PiecewiseStepData}` -
-  the priced 10-band offer curve per interval;
+Attaches FCAS bid data to the system per `(component, FCAS market, side)` with bid data in
+`date_range`:
 - `"fcas_trapezium_<SERVICE>"`, a `Vector{NTuple{7,Float64}}` - the AEMO trapezium per
   interval, packed by [`_extract_fcas_bid`](@ref).
+The priced offer curves are stored by [`set_fcas_service_bids!`](@ref), which must run after this.
 
-Both series' MW quantities (curve `x_coords`, all trapezium fields but not prices) are stored
-per-unit of `sys`'s system base; `_get_fcas_trapezium`/`_get_fcas_offer_curve`
-convert back on read.
+The MW quantities (curve `x_coords`, all trapezium fields but not prices) are stored per-unit of
+`sys`'s system base; `_get_fcas_trapezium`/`_get_fcas_offer_curve` convert back on read.
 
 `DIRECTION` routes and names the series, mirroring [`set_market_bids!`](@ref)'s energy-bid
 GEN/LOAD split: `GEN` and `BIDIRECTIONAL` rows are both capability offered while the unit
@@ -230,9 +289,9 @@ needs. Dropping `LOAD`/
 large share of real FCAS providers - measured on 2 Jan 2025 `BIDPEROFFER_D`, `LOAD` and
 `BIDIRECTIONAL` rows together outnumber `GEN` rows for several contingency markets.
 
-Two series, not one carrying [`FCASTrapezium`](@ref) objects directly, so each
-element is a plain `PiecewiseStepData` or `NTuple{7,Float64}`. Does not require or create any `Reserve`/service - FCAS
-requirements are [`GenericConstraint`](@ref)s built separately by
+The trapezium is a series of plain `NTuple{7,Float64}`, so it is not a [`FCASTrapezium`](@ref) object.
+Adds the [`FCASService`](@ref)s through [`add_fcas_services!`](@ref) before writing the offer curves,
+as the service bids need them. FCAS requirements are [`GenericConstraint`](@ref)s built separately by
 [`add_nem_constraints!`](@ref).
 
 Unlike the deleted `set_fcas_offers!`, this is genuinely time-varying (mirrors
@@ -242,6 +301,9 @@ Unlike the deleted `set_fcas_offers!`, this is genuinely time-varying (mirrors
 - `sys`: The `PowerSystems.System` object.
 - `db`: The database connection.
 - `date_range`: A range of dates for which to fetch FCAS bid data.
+
+# Returns
+`(added, excluded)`, as [`add_fcas_services!`](@ref) returns for the services this call creates.
 """
 function set_fcas_bids!(sys, db, date_range; kwargs...)
     start_date = first(date_range)
@@ -254,19 +316,68 @@ function set_fcas_bids!(sys, db, date_range; kwargs...)
         gdf_inc, gdf_dec = _fcas_bid_groups(all_bids[(bid_type,)], base_power)
 
         foreach(get_components(Generator, sys)) do gen
-            _attach_fcas_bid_series!(sys, gen, gdf_inc, get_name(gen), bid_type, OfferSide.GEN, start_date, resolution)
+            _attach_fcas_trapezium_series!(sys, gen, gdf_inc, get_name(gen), bid_type, OfferSide.GEN, start_date, resolution)
         end
         foreach(get_components(EnergyReservoirStorage, sys)) do stor
             duid = get_name(stor)
-            _attach_fcas_bid_series!(sys, stor, gdf_inc, duid, bid_type, OfferSide.GEN, start_date, resolution)
-            _attach_fcas_bid_series!(sys, stor, gdf_dec, duid, bid_type, OfferSide.LOAD, start_date, resolution)
+            _attach_fcas_trapezium_series!(sys, stor, gdf_inc, duid, bid_type, OfferSide.GEN, start_date, resolution)
+            _attach_fcas_trapezium_series!(sys, stor, gdf_dec, duid, bid_type, OfferSide.LOAD, start_date, resolution)
         end
         foreach(get_components(InterruptiblePowerLoad, sys)) do load
-            attached = _attach_fcas_bid_series!(
+            attached = _attach_fcas_trapezium_series!(
                 sys, load, gdf_dec, get_name(load), bid_type, OfferSide.LOAD, start_date, resolution,
             )
             attached && is_non_scheduled_load(load) && is_commissioned(load) &&
                 set_available!(load, true)
+        end
+    end
+    return add_fcas_services!(sys)
+end
+
+
+"""
+    set_fcas_service_bids!(sys, db, date_range; kwargs...)
+
+Stores the FCAS offer curves of `date_range` as the service bids of the devices that contribute to
+each [`FCASService`](@ref), one `PiecewiseStepData` series per device, service and side (see
+[`fcas_offer_series_name`](@ref)). Run it after [`set_fcas_bids!`](@ref) and, on the NEMDE path, after
+[`set_market_bids!`](@ref), so that energy bidders already carry their `MarketBidCost`. Curves already
+stored are left as they are, so a second call stores only the curves the first one could not.
+
+A device whose operation cost is not a `MarketBidCost` gets an empty one only if that cost is all
+zero (a `StorageCost` or `LoadCost` at zero), which leaves its energy cost at zero. Any other device
+(for example a generator with a fuel or variable O&M cost) keeps its cost and carries no FCAS offer
+curve, logged at `@debug`.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object, with its FCAS services.
+- `db`: The database connection.
+- `date_range`: A range of dates for which to fetch FCAS bid data.
+- `kwargs`: `resolution`, as for [`set_fcas_bids!`](@ref).
+
+# Returns
+`nothing`.
+"""
+function set_fcas_service_bids!(sys, db, date_range; kwargs...)
+    start_date = first(date_range)
+    resolution = get(kwargs, :resolution, Minute(5))
+    base_power = get_base_power(sys)
+
+    all_bids = groupby(read_fcas_bids(db, date_range, collect(FCAS_BID_TYPES); resolution = get(kwargs, :resolution, nothing)), :BIDTYPE)
+    for bid_type in FCAS_BID_TYPES
+        haskey(all_bids, (bid_type,)) || continue
+        gdf_inc, gdf_dec = _fcas_bid_groups(all_bids[(bid_type,)], base_power)
+
+        foreach(get_components(Generator, sys)) do gen
+            _write_fcas_service_bid!(sys, gen, bid_type, false, _fcas_offer_curves(gdf_inc, get_name(gen)), start_date, resolution)
+        end
+        foreach(get_components(EnergyReservoirStorage, sys)) do stor
+            duid = get_name(stor)
+            _write_fcas_service_bid!(sys, stor, bid_type, false, _fcas_offer_curves(gdf_inc, duid), start_date, resolution)
+            _write_fcas_service_bid!(sys, stor, bid_type, true, _fcas_offer_curves(gdf_dec, duid), start_date, resolution)
+        end
+        foreach(get_components(InterruptiblePowerLoad, sys)) do load
+            _write_fcas_service_bid!(sys, load, bid_type, true, _fcas_offer_curves(gdf_dec, get_name(load)), start_date, resolution)
         end
     end
     return

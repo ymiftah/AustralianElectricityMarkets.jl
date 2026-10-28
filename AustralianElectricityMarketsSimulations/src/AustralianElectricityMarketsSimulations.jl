@@ -8,7 +8,7 @@ using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCAST
     UNIT_RAMP_CVP_FACTOR, INTERCONNECTOR_FLOW_CVP_FACTOR, ENERGY_OFFER_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR,
     ENERGY_MAX_AVAIL_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR, FIXED_LOADING_CVP_FACTOR,
     MNSP_RAMP_CVP_FACTOR, MNSP_OFFER_CVP_FACTOR, MNSP_AVAILABILITY_CVP_FACTOR, constraint_cvp_factor,
-    energy_max_avail_series_name, offer_side, side_suffix, has_schedule_classification, is_semi_scheduled, get_energy_offer, get_fcas_offer, FCASBidDirection, fcas_bid_direction, fcas_series_name, mnsp_series_name, fcas_service_name, get_bid_type, get_constraint_weight,
+    energy_max_avail_series_name, offer_side, side_suffix, has_schedule_classification, is_semi_scheduled, get_energy_offer, get_fcas_offer, FCASBidDirection, fcas_bid_direction, fcas_series_name, mnsp_series_name, fcas_service_name, fcas_service, fcas_offer_series_name, get_bid_type, get_constraint_weight,
     get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_enablement_max,
     get_enablement_min, get_energy_availability, get_factor, get_fcas_agc_ramp_capability,
     get_fcas_agc_status, get_fcas_requirements, get_initial_mw, get_interconnector,

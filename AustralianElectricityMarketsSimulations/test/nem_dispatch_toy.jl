@@ -432,6 +432,7 @@ end
         service = FCASService(; name, region = "1", bid_type = bid_type)
         PSY.add_service!(sys, service, [PSY.get_component(PSY.StaticInjection, sys, n) for n in (TOY_CHEAP, "PUMP")])
     end
+    flush_toy_fcas_curves!(sys)
     # Capacity rows: the sense follows the `_lower` suffix whatever the device.
     @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_upper", TOY_CHEAP, "up") == "up"
     @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_lower", TOY_CHEAP, "up") == "down"

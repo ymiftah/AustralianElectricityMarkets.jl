@@ -142,30 +142,30 @@
     @testset "set_fcas_bids!" begin
         sys = augmented_pscb_system()
         set_fcas_bids!(sys, db, date_range)
+        set_fcas_service_bids!(sys, db, date_range)
 
-        @testset "thermal unit gets curve and trapezium series" begin
+        @testset "thermal unit gets trapezium series and no offer curve (non-zero cost)" begin
             gen = get_component(ThermalStandard, sys, "Alta")
-            @test has_time_series(gen, SingleTimeSeries, "fcas_curve_RAISE6SEC")
+            @test !has_time_series(gen, SingleTimeSeries, fcas_offer_series_name(fcas_service(gen, BidType.RAISE6SEC), false))
             @test has_time_series(gen, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")
         end
 
-        @testset "SOLAR1 (RenewableDispatch) gets curve and trapezium series" begin
+        @testset "SOLAR1 (RenewableDispatch, zero cost) gets curve and trapezium series" begin
             solar = get_component(RenewableDispatch, sys, "SOLAR1")
-            @test has_time_series(solar, SingleTimeSeries, "fcas_curve_RAISE6SEC")
+            @test has_time_series(solar, SingleTimeSeries, fcas_offer_series_name(fcas_service(solar, BidType.RAISE6SEC), false))
             @test has_time_series(solar, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")
         end
 
         @testset "BAT1 gets both incremental and decremental series" begin
             bat = get_component(EnergyReservoirStorage, sys, "BAT1")
-            @test has_time_series(bat, SingleTimeSeries, "fcas_curve_RAISEREG")
+            @test has_time_series(bat, SingleTimeSeries, fcas_offer_series_name(fcas_service(bat, BidType.RAISEREG), false))
             @test has_time_series(bat, SingleTimeSeries, "fcas_trapezium_RAISEREG")
-            @test has_time_series(bat, SingleTimeSeries, "fcas_curve_RAISEREG_decremental")
+            @test has_time_series(bat, SingleTimeSeries, fcas_offer_series_name(fcas_service(bat, BidType.RAISEREG), true))
             @test has_time_series(bat, SingleTimeSeries, "fcas_trapezium_RAISEREG_decremental")
         end
 
         @testset "decremental series is storage-only" begin
             gen = get_component(ThermalStandard, sys, "Alta")
-            @test !has_time_series(gen, SingleTimeSeries, "fcas_curve_RAISEREG_decremental")
             @test !has_time_series(gen, SingleTimeSeries, "fcas_trapezium_RAISEREG_decremental")
         end
     end

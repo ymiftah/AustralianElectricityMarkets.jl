@@ -76,6 +76,25 @@ end
 
 
 """
+    _energy_market_bid_cost(device) -> MarketBidCost
+
+A `MarketBidCost` with zero no-load and shut-down costs and no energy curves, for `device` to take
+its energy bid. It keeps the FCAS services `device`'s service bids were added under by
+[`set_fcas_bids!`](@ref).
+"""
+function _energy_market_bid_cost(device)
+    cost = get_operation_cost(device)
+    services = cost isa MarketBidCost ? get_ancillary_service_offers(cost) : Service[]
+    return MarketBidCost(;
+        no_load_cost = 0.0,
+        start_up = (hot = 0.0, warm = 0.0, cold = 0.0),
+        shut_down = 0.0,
+        ancillary_service_offers = copy(services),
+    )
+end
+
+
+"""
     _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
 
 Sets `gen` available with a `MarketBidCost` and attaches its incremental
@@ -85,14 +104,7 @@ of `set_market_bids!`.
 """
 function _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
     set_available!(gen, true)
-    set_operation_cost!(
-        gen,
-        MarketBidCost(;
-            no_load_cost = 0.0,
-            start_up = (hot = 0.0, warm = 0.0, cold = 0.0),
-            shut_down = 0.0,
-        )
-    )
+    set_operation_cost!(gen, _energy_market_bid_cost(gen))
     psd = copy(gen_bids.piecewise_step_data)
     time_series_data = single_series("variable_cost", start_date, psd, resolution)
     set_incremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
@@ -122,14 +134,7 @@ battery and scheduled-load branches of `set_market_bids!`.
 """
 function _set_decremental_bid_cost!(sys, device, load_bids, start_date, resolution)
     set_available!(device, true)
-    device isa InterruptiblePowerLoad && set_operation_cost!(
-        device,
-        MarketBidCost(;
-            no_load_cost = 0.0,
-            start_up = (hot = 0.0, warm = 0.0, cold = 0.0),
-            shut_down = 0.0,
-        ),
-    )
+    device isa InterruptiblePowerLoad && set_operation_cost!(device, _energy_market_bid_cost(device))
     psd = copy(load_bids.piecewise_step_data)
     time_series_data = single_series("decremental_variable_cost", start_date, psd, resolution)
     set_decremental_variable_cost!(sys, device, time_series_data, UnitSystem.NATURAL_UNITS)

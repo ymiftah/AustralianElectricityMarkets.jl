@@ -3,7 +3,7 @@ function _objective_cache_system()
     sys = fcas_toy_system()
     alta = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
     gc = PSY.get_component(GenericConstraint, sys, "F_REG")
-    curve_name = "fcas_curve_RAISEREG"
+    curve_name = AustralianElectricityMarkets.fcas_offer_series_name(PSY.get_component(FCASService, sys, "1_RAISEREG"), false)
     replacements = (
         (alta, curve_name, [_toy_offer([(0.1, 5.0), (0.1, 12.0)]), _toy_offer([(0.1, 15.0), (0.1, 22.0)])]),
         (gc, "invoked", [1.0, 0.0]),
@@ -125,7 +125,8 @@ end
     device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
     curves = [_toy_offer([(10.0, Float64(i))]) for i in 1:60]
     PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series("variable_cost", TOY_START, curves, TOY_RESOLUTION))
-    PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series("fcas_curve_RAISEREG", TOY_START, curves, TOY_RESOLUTION))
+    curve_name = AustralianElectricityMarkets.fcas_offer_series_name(PSY.get_component(FCASService, sys, "1_RAISEREG"), false)
+    PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series(curve_name, TOY_START, curves, TOY_RESOLUTION))
     PSY.transform_single_time_series!(sys, TOY_RESOLUTION, TOY_RESOLUTION)
     model = PSI.DecisionModel(
         template, sys;
@@ -136,7 +137,7 @@ end
     for i in 1:60
         start = TOY_START + (i - 1) * TOY_RESOLUTION
         energy = read_energy(start)
-        forecast = AEMS._forecast_window_values(model, device, "fcas_curve_RAISEREG", start)
+        forecast = AEMS._forecast_window_values(model, device, curve_name, start)
         @test PSY.get_y_coords(only(energy)) == [Float64(i)]
         @test PSY.get_y_coords(only(forecast)) == [Float64(i)]
         if i in (1, 24, 25, 48, 49, 60)

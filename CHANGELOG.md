@@ -578,6 +578,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- FCAS offer curves are stored as PowerSystems service bids on each device's `MarketBidCost`
+  (`fcas_offer_series_name`, `fcas_service`) instead of the `"fcas_curve_<BIDTYPE>"` series.
+
 - Pin PowerSystems and PowerSimulations forks that round-trip zero-valued bid costs and accept service-only MarketBidCosts.
 
 - Energy-offer bid caching and the time-series reader override now come from PowerSimulations and

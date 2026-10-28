@@ -247,3 +247,50 @@ fcas_service_name(region::AbstractString, bid_type::BidType) = "$(region)_$(stri
 function fcas_service_name(device::Device, bid_type::BidType)
     return fcas_service_name(get_name(get_area(get_bus(device))), bid_type)
 end
+
+
+"""
+    fcas_service(device, bid_type) -> FCASService
+
+The [`FCASService`](@ref) for `bid_type` that `device` contributes to, found among the services
+attached to `device`. A device normally contributes to one service per FCAS market, its region's;
+if it contributes to several, the one whose name sorts first is returned.
+
+# Arguments
+- `device`: a `PowerSystems` device, attached to its services by [`add_fcas_services!`](@ref).
+- `bid_type`: the FCAS market.
+
+# Returns
+The `FCASService`. Throws `ArgumentError` if `device` has no such service.
+"""
+function fcas_service(device::PSY.Device, bid_type::BidType)
+    services = _fcas_services(device, bid_type)
+    isempty(services) && throw(
+        ArgumentError("\"$(get_name(device))\" contributes to no $(string(bid_type)) FCASService."),
+    )
+    return first(sort!(services; by = get_name))
+end
+
+# The FCASServices for `bid_type` attached to `device`: empty when `device` does not bid that market.
+function _fcas_services(device::PSY.Device, bid_type::BidType)
+    return FCASService[svc for svc in PSY.get_services(device) if svc isa FCASService && get_bid_type(svc) == bid_type]
+end
+
+
+"""
+    fcas_offer_series_name(service::FCASService, decremental::Bool) -> String
+
+Name of the time series holding a device's FCAS offer curve for `service`, the series of its
+[`FCASService`](@ref) bid. The incremental curve is named by the service and the decremental one by
+[`PSY.get_decremental_service_bid_name`](@ref), as PowerSystems stores service bids.
+
+# Arguments
+- `service`: the FCAS service, one per region and [`BidType`](@ref).
+- `decremental`: `true` for the load-side (`LOAD`) curve, `false` for the generation-side one.
+
+# Returns
+A `String`.
+"""
+function fcas_offer_series_name(service::FCASService, decremental::Bool)
+    return decremental ? PSY.get_decremental_service_bid_name(service) : PSY.get_name(service)
+end

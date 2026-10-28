@@ -30,6 +30,7 @@ function AustralianElectricityMarkets.nem_system(
         kwargs...,
     )
     sys, _ = _constrained_system(db; date_range, intervention, as_of, kwargs...)
+    set_fcas_service_bids!(sys, db, date_range)
     return sys
 end
 
@@ -46,7 +47,6 @@ function _constrained_system(
     invoked, fixed = AustralianElectricityMarkets._read_constraint_inputs(db, date_range; intervention)
     AustralianElectricityMarkets._add_nem_constraints!(sys, db, date_range, invoked, fixed; intervention)
     AustralianElectricityMarkets._set_nem_fixed_loads!(sys, fixed, date_range)
-    add_fcas_services!(sys)
     attach_interconnector_losses!(sys, db, first(date_range))
     return sys, units
 end

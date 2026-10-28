@@ -82,6 +82,11 @@ function PSI.get_initial_conditions_service_model(::PSI.OperationModel, service_
 end
 
 
+# Whether `cost` has offer curves on the side (`decremental`). A `MarketBidCost` with none on a side
+# (for example a non-scheduled load with no energy offer) contributes no cost term on it.
+_has_offer_curves(cost::PSY.MarketBidCost, decremental::Bool) =
+    !isnothing(decremental ? PSY.get_decremental_offer_curves(cost) : PSY.get_incremental_offer_curves(cost))
+
 """
     PSI._add_variable_cost_to_objective!(container, ::PSI.ActivePowerOutVariable, component::PSY.Storage, cost_function::PSY.MarketBidCost, ::AbstractNEMDispatch)
 
@@ -98,7 +103,7 @@ function PSI._add_variable_cost_to_objective!(
         cost_function::PSY.MarketBidCost,
         ::V,
     ) where {T <: PSI.ActivePowerOutVariable, V <: AbstractNEMDispatch}
-    PSI.add_pwl_term!(false, container, component, cost_function, T(), V())
+    _has_offer_curves(cost_function, false) && PSI.add_pwl_term!(false, container, component, cost_function, T(), V())
     return
 end
 
@@ -119,7 +124,7 @@ function PSI._add_variable_cost_to_objective!(
         cost_function::PSY.MarketBidCost,
         ::V,
     ) where {T <: PSI.ActivePowerInVariable, V <: AbstractNEMDispatch}
-    PSI.add_pwl_term!(true, container, component, cost_function, T(), V())
+    _has_offer_curves(cost_function, true) && PSI.add_pwl_term!(true, container, component, cost_function, T(), V())
     return
 end
 
@@ -140,7 +145,7 @@ function PSI._add_variable_cost_to_objective!(
         cost_function::PSY.MarketBidCost,
         ::V,
     ) where {T <: PSI.ActivePowerVariable, V <: AbstractNEMDispatch}
-    PSI.add_pwl_term!(true, container, component, cost_function, T(), V())
+    _has_offer_curves(cost_function, true) && PSI.add_pwl_term!(true, container, component, cost_function, T(), V())
     return
 end
 

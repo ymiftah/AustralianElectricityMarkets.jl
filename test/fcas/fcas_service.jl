@@ -31,10 +31,9 @@
 
     @testset "add_fcas_services! builds one service per bid (region, bid_type), modeled bids only" begin
         sys = augmented_pscb_system()
-        set_fcas_bids!(sys, db, date_range)
+        added, excluded = set_fcas_bids!(sys, db, date_range)
         expected, left_out = _expected_services(sys)
         @test !isempty(expected)
-        added, excluded = add_fcas_services!(sys)
 
         @test Set(added) == Set(keys(expected))
         @test Dict(k => Set(v) for (k, v) in excluded) == left_out
@@ -53,8 +52,7 @@
 
     @testset "a second call adds nothing and keeps the existing services" begin
         sys = augmented_pscb_system()
-        set_fcas_bids!(sys, db, date_range)
-        first_added, _ = add_fcas_services!(sys)
+        first_added, _ = set_fcas_bids!(sys, db, date_range)
         added, _ = add_fcas_services!(sys)
         @test isempty(added)
         @test Set(get_name.(get_components(FCASService, sys))) == Set(first_added)
@@ -62,10 +60,9 @@
 
     @testset "an unavailable bidder is not attached" begin
         sys = augmented_pscb_system()
-        set_fcas_bids!(sys, db, date_range)
         alta = get_component(ThermalStandard, sys, "Alta")
         set_available!(alta, false)
-        add_fcas_services!(sys)
+        set_fcas_bids!(sys, db, date_range)
         @test !any(s -> has_service(alta, s), get_components(FCASService, sys))
     end
 
@@ -79,12 +76,6 @@
         add_time_series!(
             sys, bat,
             AustralianElectricityMarkets.single_series(
-                "fcas_curve_RAISE6SEC_decremental", start_date, fill(PiecewiseStepData([0.0, 5.0], [10.0]), 2), Minute(5),
-            ),
-        )
-        add_time_series!(
-            sys, bat,
-            AustralianElectricityMarkets.single_series(
                 "fcas_trapezium_RAISE6SEC_decremental", start_date, fill((0.0, 0.0, 5.0, 5.0, 5.0, NaN, NaN), 2), Minute(5),
             ),
         )
@@ -93,6 +84,14 @@
         @test "1_RAISE6SEC" in added
         svc = get_component(FCASService, sys, "1_RAISE6SEC")
         @test has_service(bat, svc)
+        set_operation_cost!(bat, PowerSystems.MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0))
+        set_decremental_service_bid!(
+            sys, bat, svc,
+            AustralianElectricityMarkets.single_series(
+                PowerSystems.get_decremental_service_bid_name(svc), start_date, fill(PiecewiseStepData([0.0, 5.0], [10.0]), 2), Minute(5),
+            ),
+            PowerSystems.UnitSystem.NATURAL_UNITS,
+        )
     end
 
 end
