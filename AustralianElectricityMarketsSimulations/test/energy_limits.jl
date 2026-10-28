@@ -121,19 +121,16 @@ end
     @test_throws ArgumentError check_dispatch_envelope(invalid, template, TOY_START, 2)
 end
 
-@testset "penalty costs follow each interval's Market Price Cap across 1 July" begin
-    # The interval ending 00:00 on 1 July is the 2024-25 cap (17,500), the next the 2025-26 cap (20,300).
+@testset "a simulation across 1 July is refused, and each side of the boundary builds at its own Market Price Cap" begin
     start = DateTime(2025, 7, 1)
     steps = start:TOY_RESOLUTION:(start + TOY_RESOLUTION)
     optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
     sys = energy_limit_system(; max_avail = 40.0, start)
-    out = run_replication(sys, steps; optimizer)
-    objectives = PSI.read_optimizer_stats(out.results).objective_value
-    for (i, t) in enumerate(steps)
+    @test_throws ArgumentError run_replication(sys, steps; optimizer)
+    for (t, cap) in ((steps[1], 17_500.0), (steps[2], 20_300.0))
         model = AEMS._replication_decision_model(replication_template(sys), sys, t; optimizer)
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        @test AEMS._container_market_price_cap(PSI.get_optimization_container(model), t) == cap
         @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-        @test objectives[i] ≈ only(PSI.read_optimizer_stats(PSI.OptimizationProblemResults(model)).objective_value) rtol = 1.0e-9
     end
-    @test objectives[2] > objectives[1]
 end

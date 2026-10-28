@@ -584,6 +584,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Generic-constraint slack costs use PowerSimulations' time-series cost parameters: each slack's cost
   target scales the `"invoked"` series by the CVP factor and the build-time Market Price Cap, with the objective unchanged.
 
+- Market Price Cap penalties are priced once at build in the invariant objective, at the cap of the
+  simulation's first interval; `MarketPriceCapPenaltyParameter` is removed.
+
+- Replay simulations whose first and last intervals fall in different financial years are refused by
+  the pre-flight check `check_single_financial_year`; split the range at 00:05 on 1 July.
+
 - Energy-offer bid caching and the time-series reader override now come from PowerSimulations and
   InfrastructureSystems: AEMSim no longer overrides PSI's recurrent parameter update or
   `get_time_series_values!`, so cache windows are bounded by the native cache sizing.

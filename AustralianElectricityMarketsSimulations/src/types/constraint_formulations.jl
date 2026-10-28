@@ -268,18 +268,6 @@ struct GenericConstraintSlackCostParameter <: PSI.TimeSeriesCostParameter end
 
 
 """
-    MarketPriceCapPenaltyParameter
-
-Objective-function parameter pricing one penalty slack container at its CVP factor times the
-Market Price Cap: its value is each interval's cap and its multiplier the CVP factor per MW of one
-interval. Keyed by the slack's component type, with a meta naming the slack variable type and meta.
-Re-priced at each simulation step, so a model built once follows the cap across a financial year
-boundary.
-"""
-struct MarketPriceCapPenaltyParameter <: PSI.ObjectiveFunctionParameter end
-
-
-"""
     FCASJointRampingConstraint
 
 Constraint type for AEMO *FCAS Model in NEMDE* §6.1's joint ramping constraint, bounding a

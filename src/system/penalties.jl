@@ -182,6 +182,21 @@ const MNSP_AVAILABILITY_CVP_FACTOR = 365.0
 
 
 """
+    _financial_year_start(t::DateTime) -> Date
+
+The first day of the financial year of the dispatch interval ending at `t`. The interval ending
+00:00 on 1 July runs 23:55-00:00 on 30 June, so it belongs to the earlier year.
+
+# Returns
+A `Date` on 1 July.
+"""
+function _financial_year_start(t::DateTime)
+    start = t - DISPATCH_INTERVAL
+    return Date(year(start) - (month(start) < 7), 7, 1)
+end
+
+
+"""
     _financial_year_mpc(t::DateTime) -> Float64
 
 The published Market Price Cap for the financial year of the dispatch interval ending at `t` (a
@@ -192,8 +207,7 @@ earlier year's cap.
 A `\$/MWh` value.
 """
 function _financial_year_mpc(t::DateTime)
-    start = t - DISPATCH_INTERVAL
-    year_start = Date(year(start) - (month(start) < 7), 7, 1)
+    year_start = _financial_year_start(t)
     idx = findfirst(p -> p[1] == year_start, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR)
     isnothing(idx) && throw(
         ArgumentError(

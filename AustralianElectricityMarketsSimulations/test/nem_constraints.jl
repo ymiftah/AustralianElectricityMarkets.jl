@@ -531,6 +531,11 @@ end
     @test_throws r"No published Market Price Cap" AustralianElectricityMarkets._financial_year_mpc(DateTime(2027, 7, 1, 0, 5))
 end
 
+@testset "check_single_financial_year: a range within one financial year passes, one across 1 July is refused" begin
+    AEMS.check_single_financial_year(DateTime(2025, 6, 30, 23, 55):Minute(5):DateTime(2025, 7, 1))
+    @test_throws ArgumentError AEMS.check_single_financial_year(DateTime(2025, 7, 1):Minute(5):DateTime(2025, 7, 1, 0, 5))
+end
+
 @testset "area-balance slack Market Price Cap: unpublished year throws, settings entry overrides" begin
     # _prepared_system() is dated 2020, outside AustralianElectricityMarkets.MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.
     pruned_system() = (sys = _prepared_system(); _prune_unbuildable_constraints!(sys); sys)
@@ -551,6 +556,39 @@ end
         slack = PSI.get_variable(container, var_type(), PSY.Area)
         @test all(v -> objective_terms[v] ≈ expected, slack)
     end
+end
+
+@testset "Market Price Cap penalties equal CVP x base x interval coefficient x MPC after build and after an update" begin
+    sys = _prepared_system()
+    _prune_unbuildable_constraints!(sys)
+    model = _decision_model(_nem_service_template(), sys; mpc = 10_000.0, optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    expected = PSI.get_base_power(container) *
+        interval_cost_coefficient(AustralianElectricityMarkets.AREA_BALANCE_CVP_FACTOR * 10_000.0, PSI.get_resolution(container))
+    slacks = [PSI.get_variable(container, var_type(), PSY.Area) for var_type in (PSI.SystemBalanceSlackUp, PSI.SystemBalanceSlackDown)]
+    # Invariant and variant terms together: the price of each slack, whether set at build or re-set at a step.
+    function check_penalties()
+        objective = PSI.get_objective_expression(container)
+        for slack in slacks, name in axes(slack)[1], t in axes(slack)[2]
+            coefficient = PSI.JuMP.coefficient(PSI.get_invariant_terms(objective), slack[name, t]) +
+                PSI.JuMP.coefficient(PSI.get_variant_terms(objective), slack[name, t])
+            @test coefficient ≈ expected
+        end
+    end
+    check_penalties()
+
+    # A simulation step from the second interval re-prices the penalties that are priced per step.
+    input = PSI.DatasetContainer{PSI.InMemoryDataset}()
+    PSI.set_execution_count!(model, 1)
+    PSI.cost_function_unsynch(container)
+    PSI.reset_variant_terms(PSI.get_objective_expression(container))
+    for key in collect(Base.keys(PSI.get_parameters(model)))
+        nameof(PSI.IS.Optimization.get_entry_type(key)) == :MarketPriceCapPenaltyParameter || continue
+        PSI.update_container_parameter_values!(container, model, key, input)
+    end
+    PSI.set_execution_count!(model, 0)
+    check_penalties()
 end
 
 @testset "terms on an unavailable interconnector or unit contribute zero and build" begin

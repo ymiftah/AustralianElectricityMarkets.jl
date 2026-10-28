@@ -20,7 +20,7 @@ using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCAST
     FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR, FCAS_BDU_RAMPING_CVP_FACTOR,
     fcas_effective_series_name, fcas_ramping_series_name, fcas_upper_regulation_service, fcas_offer_sides,
     tie_break_series_name, tie_groups,
-    _tie_break_offers, _tie_break_active_bands, _tie_break_stamp_bands, _other_regulation, _financial_year_mpc
+    _tie_break_offers, _tie_break_active_bands, _tie_break_stamp_bands, _other_regulation, _financial_year_mpc, _financial_year_start
 using Chain
 using DataFrames
 using Dates
@@ -70,6 +70,7 @@ include("psi_compat.jl")
 include("formulations/fcas.jl")
 include("checks/fcas.jl")
 include("checks/tie_break.jl")
+include("checks/financial_year.jl")
 include("checks/replay_inputs.jl")
 include("preprocessing/replication.jl")
 include("execution/replication.jl")

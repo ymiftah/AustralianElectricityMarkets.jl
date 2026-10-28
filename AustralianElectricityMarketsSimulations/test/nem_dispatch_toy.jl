@@ -903,7 +903,7 @@ end
     @test occursin("requests duals TieBreakConstraint, which it does not register", log)
 end
 
-@testset "Market Price Cap penalties are re-priced on a non-area-balance network model" begin
+@testset "Market Price Cap penalties are priced at build on a non-area-balance network model" begin
     sys = nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0)], 50.0)
     template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaPTDFPowerModel; use_slacks = false))
     set_nem_dispatch_models!(template, sys)
@@ -911,11 +911,18 @@ end
     model = toy_model(sys; template)
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    @test haskey(
-        PSI.get_parameters(container),
-        PSI.ParameterKey(AEMS.MarketPriceCapPenaltyParameter, PSY.ThermalStandard, "UnitRampUpSlack"),
+    @test !PSI.has_container_key(container, PSI.SystemBalanceSlackUp, PSY.Area)
+    # Each unit ramp slack's price: base power x interval coefficient of its CVP factor x the build-time cap.
+    # The JuMP objective is read because building folds the invariant terms into the variant expression.
+    expected = PSI.get_base_power(container) * AEMS.interval_cost_coefficient(
+        AustralianElectricityMarkets.UNIT_RAMP_CVP_FACTOR * AEMS._container_market_price_cap(container, TOY_START),
+        PSI.get_resolution(container),
     )
-    @test !haskey(PSI.get_parameters(container), PSI.ParameterKey(AEMS.MarketPriceCapPenaltyParameter, PSY.Area, "SystemBalanceSlackUp"))
+    objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
+    slack = PSI.get_variable(container, AEMS.UnitRampUpSlack(), PSY.ThermalStandard)
+    for t in axes(slack)[2]
+        @test PSI.JuMP.coefficient(objective, slack[TOY_CHEAP, t]) ≈ expected
+    end
 end
 
 @testset "typed storage fixed-loading rows preserve net injection and invocation" begin

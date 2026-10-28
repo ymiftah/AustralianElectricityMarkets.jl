@@ -33,6 +33,7 @@ function _range_simulation(
         folder::AbstractString = mktempdir(), name = "dispatch", simulation_name = "replication", skipped = nothing,
     )
     _check_replication_steps(sys, steps)
+    check_single_financial_year(steps)
     :tie_breaks in parts && check_tie_break_pairs(sys, steps)
     template_skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
     exclude = :generic_constraints in parts ? _never_invoked_constraints(sys, steps) : Dict{String, Symbol}()
