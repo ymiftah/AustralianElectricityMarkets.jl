@@ -3,7 +3,9 @@ module AustralianElectricityMarketsSimulations
 import AustralianElectricityMarkets
 using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCASTrapezium,
     FCAS_REGULATION_MARKETS, GenericConstraint, InterconnectorLossModel, InterconnectorTerm,
-    NEM_SERIES, OfferSide, RegionTerm, UnitTerm, energy_max_avail_series_name, offer_side, side_suffix, has_schedule_classification, is_semi_scheduled, get_energy_offer, get_fcas_offer, FCASBidDirection, fcas_bid_direction, fcas_series_name, mnsp_series_name, fcas_service_name, get_bid_type, get_constraint_weight,
+    EnergyTieBreak, NEM_SERIES, OfferSide, RegionTerm, UnitTerm, TIE_BREAK_CVP_FACTOR, TIE_BREAK_SERVICE_NAME,
+    set_tie_break_scales!,
+    energy_max_avail_series_name, offer_side, side_suffix, has_schedule_classification, is_semi_scheduled, get_energy_offer, get_fcas_offer, FCASBidDirection, fcas_bid_direction, fcas_series_name, mnsp_series_name, fcas_service_name, get_bid_type, get_constraint_weight,
     get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_enablement_max,
     get_enablement_min, get_energy_availability, get_factor, get_fcas_agc_ramp_capability,
     get_fcas_agc_status, get_fcas_requirements, get_initial_mw, get_interconnector,
@@ -62,7 +64,6 @@ include("psi_compat.jl")
 include("formulations/fcas.jl")
 include("checks/fcas.jl")
 include("preprocessing/fcas.jl")
-include("preprocessing/tie_break.jl")
 include("checks/tie_break.jl")
 include("checks/replay_inputs.jl")
 include("preprocessing/replication.jl")
@@ -103,8 +104,8 @@ export AbstractNEMDispatch, NEMReplayDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter
 export nem_dispatch_participants, set_nem_dispatch_models!
-export EnergyTieBreak, TIE_BREAK_CVP_FACTOR, TIE_BREAK_SERVICE_NAME, TieBreakScaleParameter, TieBreakMarket, TieBreakSlackUp,
-    TieBreakSlackDown, TieBreakConstraint, set_tie_break_scales!, check_tie_break_pairs
+export TieBreakScaleParameter, TieBreakMarket, TieBreakSlackUp,
+    TieBreakSlackDown, TieBreakConstraint, check_tie_break_pairs
 export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegmentVariable,
     InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint,
     InterconnectorLossSegmentFullVariable, InterconnectorLossSegmentOrderConstraint,

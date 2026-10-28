@@ -1,10 +1,60 @@
 """
+    TIE_BREAK_CVP_FACTOR
+
+Constraint violation penalty factor (1e-6) of AEMO's tie-break constraint (`TBSlack1` and
+`TBSlack2`, item 53 of the *Schedule of Constraint Violation Penalty Factors* v8.0). It is also
+the price tolerance, in `\$/MWh` after loss-factor adjustment, within which two energy bands are
+price-tied.
+"""
+const TIE_BREAK_CVP_FACTOR = 1.0e-6
+
+
+"""
     TIE_BREAK_SERVICE_NAME
 
 Name of the [`EnergyTieBreak`](@ref) service [`set_tie_break_scales!`](@ref) attaches, and of the
-`PowerSimulations.ServiceModel` [`set_nem_dispatch_models!`](@ref) registers for it.
+`PowerSimulations.ServiceModel` that the NEM dispatch model set registers for it.
 """
 const TIE_BREAK_SERVICE_NAME = "energy_tie_break"
+
+
+# Name of the series holding segment `band`'s tie-break scale.
+function _tie_break_series_name(band::Int, decremental::Bool)
+    return "tie_break_scale_$(band)" * side_suffix(offer_side(decremental))
+end
+
+
+"""
+    _tie_groups(bands) -> Vector{Vector{Int}}
+
+Price-tied groups of `bands` (each with `price`, `name` and `band`): runs of the bands sorted by
+price whose consecutive prices differ by at most [`TIE_BREAK_CVP_FACTOR`](@ref), kept when they
+hold bands of two or more units. Each group lists indices into `bands` in sorted order. Throws an
+`ArgumentError` for a run spanning more than [`TIE_BREAK_CVP_FACTOR`](@ref), which only
+transitive ties produce.
+
+# Returns
+`Vector{Vector{Int}}`.
+"""
+function _tie_groups(bands)
+    order = sort!(collect(eachindex(bands)); by = i -> (bands[i].price, bands[i].name, bands[i].band))
+    groups = Vector{Int}[]
+    start = 1
+    for k in eachindex(order)
+        (k == length(order) || bands[order[k + 1]].price - bands[order[k]].price > TIE_BREAK_CVP_FACTOR) || continue
+        group = order[start:k]
+        start = k + 1
+        lo, hi = bands[first(group)], bands[last(group)]
+        hi.price - lo.price > TIE_BREAK_CVP_FACTOR && throw(
+            ArgumentError(
+                "tie-break: the prices of $(lo.name) band $(lo.band) ($(lo.price)) and $(hi.name) band $(hi.band) " *
+                    "($(hi.price)) are tied only through bands between them; transitive ties are not supported.",
+            ),
+        )
+        length(unique(bands[i].name for i in group)) > 1 && push!(groups, group)
+    end
+    return groups
+end
 
 
 # The energy offers of one (direction, region): offer timestamps and resolution, and each unit's curves on them.

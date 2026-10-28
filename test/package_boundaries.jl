@@ -5,7 +5,7 @@ using Logging
 @testset "Independent population and reader packages" begin
     readers = AustralianElectricityMarkets.Readers
     @test !isdefined(readers, :PowerSystems)
-    @test !isdefined(AustralianElectricityMarkets, :EnergyTieBreak)
+    @test isdefined(AustralianElectricityMarkets, :EnergyTieBreak)
 
     @test HiveConfiguration === AustralianElectricityMarketsData.HiveConfiguration
     @test aem_connect === AustralianElectricityMarketsData.aem_connect

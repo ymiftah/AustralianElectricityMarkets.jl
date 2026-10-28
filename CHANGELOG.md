@@ -574,6 +574,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Energy tie-break input derivation and the `EnergyTieBreak` service now live in the data
+  package (`AustralianElectricityMarkets`), so a serialized `System` holding them loads without
+  `AustralianElectricityMarketsSimulations`. `AustralianElectricityMarketsSimulations` keeps the
+  tie-break PSI formulations and checks.
+
 - Added a timed random-day replay runner with early MNSP and constraint-version checks,
   one Julia worker per trading day, native interval timings and process memory sampling.
   An admitted day finishes even after the overall admission deadline.

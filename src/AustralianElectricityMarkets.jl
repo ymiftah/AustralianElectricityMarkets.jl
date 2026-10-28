@@ -43,6 +43,7 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
 export FCASService, add_fcas_services!, Readers
 export OfferSide, offer_side, side_suffix, NEM_SERIES, energy_max_avail_series_name
 export NEMEnergyOffer, get_energy_offer, NEMFCASOffer, get_fcas_offer
+export EnergyTieBreak, set_tie_break_scales!, TIE_BREAK_SERVICE_NAME, TIE_BREAK_CVP_FACTOR
 export fcas_series_name, mnsp_series_name, FCASBidDirection, fcas_bid_direction, single_series, remove_single_series!, replace_single_series!,
     nem_dispatch_devices, is_non_scheduled_load, is_commissioned, has_schedule_classification, is_semi_scheduled,
     energy_offer_sides
@@ -53,6 +54,7 @@ include("types/network_configuration.jl")
 include("types/fcas.jl")
 include("types/generic_constraints.jl")
 include("types/interconnector_losses.jl")
+include("types/tie_break.jl")
 
 include("readers/Readers.jl")
 using .Readers
@@ -81,6 +83,7 @@ include("system/mnsp.jl")
 include("system/constraints.jl")
 include("system/fixed_loads.jl")
 include("system/interconnectors.jl")
+include("system/tie_break.jl")
 include("system/RegionModel.jl")
 
 using .RegionModel: RegionalNetworkConfiguration, ConstrainedNetworkConfiguration, NEMDEConfiguration

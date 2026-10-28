@@ -1,9 +1,9 @@
 # Pairs `(name_a, band_a, name_b, band_b)` of price-tied bands of different units at stamp `i`, the
 # `(name, band)` of `a` ordered before that of `b`.
 function _tie_break_pairs(offers, i::Int, active, decremental::Bool)
-    bands = _tie_break_stamp_bands(offers, i, active, decremental)
+    bands = AustralianElectricityMarkets._tie_break_stamp_bands(offers, i, active, decremental)
     pairs = Set{Tuple{String, Int, String, Int}}()
-    for group in _tie_groups(bands), x in 1:(length(group) - 1), y in (x + 1):length(group)
+    for group in AustralianElectricityMarkets._tie_groups(bands), x in 1:(length(group) - 1), y in (x + 1):length(group)
         a, b = bands[group[x]], bands[group[y]]
         a.name == b.name && continue
         lo, hi = minmax((a.name, a.band), (b.name, b.band))
@@ -47,8 +47,8 @@ pair set; other intervals retain the full pair comparison.
 the differing pairs, or a step that is not on a region's offer curve timestamps.
 """
 function check_tie_break_pairs(sys::PSY.System, steps)
-    all_offers = _tie_break_offers(sys)
-    active = _tie_break_active_bands(all_offers)
+    all_offers = AustralianElectricityMarkets._tie_break_offers(sys)
+    active = AustralianElectricityMarkets._tie_break_active_bands(all_offers)
     for ((decremental, region), (; stamps, offers)) in all_offers
         index = Dict(s => i for (i, s) in enumerate(stamps))
         position(t) = get(

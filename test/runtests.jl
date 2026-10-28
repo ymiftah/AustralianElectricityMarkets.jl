@@ -46,6 +46,7 @@ const TEST_GROUPS = [
     "pscb_constraints" => ("PSCB constraints and FCAS", ["integration/pscb_constraints.jl"]),
     "fcas_service" => ("PSCB FCASService", ["fcas/fcas_service.jl"]),
     "system_build_coverage" => ("System build coverage and JSON round-trip", ["integration/system_build_coverage.jl"]),
+    "tie_break_service" => ("Energy tie-break service", ["tie_break_service.jl"]),
     "aqua" => ("Aqua", ["aqua.jl"]),
 ]
 
