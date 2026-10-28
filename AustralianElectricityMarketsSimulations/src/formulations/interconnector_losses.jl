@@ -336,8 +336,8 @@ flow-limit parameters when every device carries those time series. Each row carr
 whatever the device model's `use_slacks`, as NEMDE's limit is always soft, so
 limits that conflict with each other or with the loss breakpoint range are violated at that price
 instead of making the model infeasible. The breakpoint range itself stays a hard bound. Because
-the slacks are priced from the Market Price Cap, building requires a cap for every interval,
-whether the cap comes from `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` (from FY2024-25) or from the
+the slacks are priced from the Market Price Cap of the build's initial interval, building requires a cap
+for that interval, whether the cap comes from `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` (from FY2024-25) or from the
 `"market_price_cap"` entry of the model's settings, even when `use_slacks` is `false`.
 """
 function _add_flow_limit_constraint!(

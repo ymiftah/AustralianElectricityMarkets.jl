@@ -59,7 +59,7 @@ How each family is updated:
   variable.
 - **MNSP band prices:** `TimeSeriesCostParameter`.
 - **Generic-constraint slack costs:** `TimeSeriesCostParameter` on the existing `"invoked"`
-  series, with a build-time multiplier of base power times CVP factor times Market Price Cap.
+  series, with a build-time scale (multiplier 1.0) of base power times CVP factor times Market Price Cap.
 - **Market Price Cap penalties:** build-time constants. The runner splits replay chunks at
   00:05 on 1 July, and a pre-flight check rejects a range that crosses a financial year.
 - **Interval timing:** read from PSI's recorders, `OptimizerStats` and `execute!` progress

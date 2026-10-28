@@ -582,7 +582,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   target on `MNSPBandPriceParameter`, updated by PowerSimulations at each step, with the objective unchanged.
 
 - Generic-constraint slack costs use PowerSimulations' time-series cost parameters: each slack's cost
-  target scales the `"invoked"` series by the CVP factor and the build-time Market Price Cap, with the objective unchanged.
+  target scales the `"invoked"` series by the CVP factor and the Market Price Cap of the build's initial
+  interval; within one financial year the objective is unchanged.
 
 - Market Price Cap penalties are priced once at build in the invariant objective, at the cap of the
   simulation's first interval; `MarketPriceCapPenaltyParameter` is removed.
@@ -641,11 +642,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `FCASMarket` adds its offer band variables in the argument stage and their rows in the model
   stage; `objective_function!` only prices them. The band-sum-to-capacity rows are registered as
   the new `FCASOfferBandConstraint`.
-- Each Market Price Cap penalty slack is priced through its own `MarketPriceCapPenaltyParameter`,
-  keyed by the slack's component type and named by its variable type, and re-priced per key at each
-  step. Fixed-rate penalties are invariant costs. The settings `ext` penalty record, the placeholder
-  parameter on `PSY.Area` and the private `_update_parameter_values!` override are gone. The
-  generic-constraint slack cost updates through the same per-key method.
 - Every override of, or call into, a private PowerSimulations internal lives in `psi_compat.jl`.
   The NEM energy-offer rows are built directly in the `_add_pwl_constraint!` override, which drops
   the extra `add_constraints!` method and the `_include_min_gen_power_in_constraint` and
@@ -706,9 +702,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `read_invoked_constraints`, `read_interconnector_limits`, `read_published_interval`) share one
   query and throw an `ArgumentError` naming the `populate` call when their table is not cached.
 - Violation penalties (unit ramp, energy availability and UIGF, storage availability, total energy
-  offer bands, FCAS, interconnector flow, area balance and generic constraints) are re-priced at each
-  simulation step from that interval's Market Price Cap, so `replicate_range` no longer rejects a
-  chunk that crosses a Market Price Cap change.
+  offer bands, FCAS, interconnector flow, area balance and generic constraints) are priced at build
+  from the Market Price Cap of the simulation's initial interval. A range crossing 1 July is refused
+  by the pre-flight check, so split it at 00:05 on 1 July.
 
 - NEM energy dispatch can exceed total offered band MW through CVP1135 surplus/deficit
   variables, preserving submitted band prices, live widths and directional availability costs.

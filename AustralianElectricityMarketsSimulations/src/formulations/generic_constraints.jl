@@ -347,24 +347,20 @@ end
 # --- add_constraints!: sense dispatch, honouring the "invoked" series ---
 
 """
-    _invoked_mask(source, gc, start_time = PSI.get_initial_time(source)) -> Vector{Float64}
+    _invoked_mask(container, gc) -> Vector{Float64}
 
-The `GenericConstraint`'s `"invoked"` series (`1.0`/`0.0`) over `source`'s horizon from
-`start_time`, using model caching for recurrent reads or direct reads for a container.
+The `GenericConstraint`'s `"invoked"` series (`1.0`/`0.0`) over `container`'s time steps from its
+initial time.
 
 # Arguments
-- `source`: the optimization container or operation model supplying forecast values.
+- `container`: the optimization container being built.
 - `gc`: the generic constraint owning the invocation series.
-- `start_time`: the first requested timestamp.
 
 # Returns
 A `Vector{Float64}`.
 """
-function _invoked_mask(
-        source::Union{PSI.OptimizationContainer, PSI.OperationModel}, gc::GenericConstraint,
-        start_time::DateTime = PSI.get_initial_time(source),
-    )
-    return _forecast_window_values(source, gc, "invoked", start_time)
+function _invoked_mask(container::PSI.OptimizationContainer, gc::GenericConstraint)
+    return _forecast_window_values(container, gc, "invoked", PSI.get_initial_time(container))
 end
 
 

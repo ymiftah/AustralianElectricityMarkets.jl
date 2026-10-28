@@ -9,7 +9,7 @@ Accepted. Supersedes [0070](0070-per-slack-market-price-cap-parameters.md) and
 
 Penalty slacks priced at the Market Price Cap were registered as a per-slack
 `MarketPriceCapPenaltyParameter` and re-priced at each simulation step, so a model built once followed
-the cap across 1 July. PowerSimulations now prices time-series values natively through cost targets,
+the cap across 1 July. PowerSimulations now prices time-series values natively through cost targets ([0084](0084-native-sienna-recurrent-updates.md)),
 and the replay chunks already split at 00:05 on 1 July.
 
 ## Decision
@@ -23,6 +23,6 @@ Penalty factors and caps are unchanged. The financial year of an interval ending
 ## Consequences
 
 - A range across 1 July is refused before build; callers split it at 00:05 on 1 July.
-- Generic-constraint slack costs use native cost targets scaled by the build-time cap, as do the
-  Market Price Cap penalties of the other slacks.
+- Generic-constraint slack costs use native cost targets scaled by the build-time cap; the Market Price
+  Cap penalties of the other slacks are invariant constants.
 - The `MarketPriceCapPenaltyParameter` type is removed.

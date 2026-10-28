@@ -93,8 +93,8 @@ end
 """
     _add_mnsp_limit_costs!(container, devices)
 
-Prices MNSP violations at their CVP factors times each interval's Market Price Cap, base power
-and interval duration. Registered MPC parameters update the costs during recurrent solves.
+Prices MNSP violations at their CVP factors times the Market Price Cap of the build's initial interval,
+base power and interval duration.
 
 # Returns
 `nothing`.

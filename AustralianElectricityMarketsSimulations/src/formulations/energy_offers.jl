@@ -40,7 +40,7 @@ end
 """
     PSI.add_proportional_cost!(container, slack, devices, formulation)
 
-Prices each total-offer mismatch at CVP1135 times the Market Price Cap, with system-base MW
+Prices each total-offer mismatch at CVP1135 times the Market Price Cap of the build's initial interval, with system-base MW
 and interval-hour conversion. Submitted energy prices apply only to cleared band quantities.
 
 # Returns
