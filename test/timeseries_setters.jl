@@ -988,7 +988,14 @@ end
     end
 
     @testset "non-scheduled loads receive zero availability" begin
-        fcas_sys = nem_system(db, NEMDEConfiguration(); date_range = range)
+        # The strict replay build needs complete invoked-constraint and dispatch inputs.
+        complete_dir = mktempdir()
+        create_mock_data(complete_dir; complete_inputs = true)
+        write_mock_interconnector_results(complete_dir)
+        complete_db = aem_connect(HiveConfiguration(hive_location = complete_dir, filesystem = "file"))
+        replay_range = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+        fcas_sys = nem_system(complete_db, NEMDEConfiguration(); date_range = replay_range)
+        close(complete_db.db)
         loads = [l for l in get_components(ControllableLoad, fcas_sys) if get_available(l) && startswith(get_name(l), "ASLOAD")]
         @test !isempty(loads)
         for load in loads
