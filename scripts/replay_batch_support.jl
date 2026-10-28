@@ -56,6 +56,7 @@ function parse_options(args)
         "seed" => "20261026", "hive" => joinpath(homedir(), ".nemdb_cache"),
         "output" => joinpath("/run/media/simba/Store/aem_validation", Dates.format(now(UTC), "yyyymmddTHHMMSS") * "Z_$(getpid())"),
         "sample-seconds" => "5", "solver-threads" => "1", "cache-size-mib" => "64",
+        "time-series-in-memory" => "false",
     )
     iseven(length(args)) || throw(ArgumentError("options require --name value pairs; use --help"))
     for i in 1:2:length(args)
@@ -70,6 +71,11 @@ function parse_options(args)
     end
     for key in ("solver-threads", "cache-size-mib")
         parse(Int, options[key]) > 0 || throw(ArgumentError("--$key must be positive"))
+    end
+    try
+        parse(Bool, options["time-series-in-memory"])
+    catch
+        throw(ArgumentError("--time-series-in-memory must be true or false"))
     end
     parse(Int, options["seed"])
     options["output"] = abspath(expanduser(options["output"]))

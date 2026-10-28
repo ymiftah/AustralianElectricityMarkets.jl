@@ -89,8 +89,10 @@ function main(folder, day::Date)
         "unknown"
     end
     package_hashes = ReplayBatchSupport.snapshot_package_sources(package_root, joinpath(day_folder, "package_source"))
+    time_series_in_memory = parse(Bool, config["time-series-in-memory"])
     provenance = Dict(
         "revision" => actual_revision, "supervisor_revision" => config["git_revision"],
+        "time_series_in_memory" => time_series_in_memory,
         "checkout_status" => checkout_status, "package_source_hashes" => package_hashes, "optimization_level" => Int(Base.JLOptions().opt_level),
         "julia" => string(VERSION), "psi" => string(Base.pkgversion(PSI)),
         "highs_package" => string(Base.pkgversion(HiGHS)),
@@ -140,7 +142,7 @@ function main(folder, day::Date)
             steps = trading_steps(day)
             result = replicate_range(
                 db, first(steps), last(steps);
-                optimizer, output_dir = day_folder, time_series_in_memory = false,
+                optimizer, output_dir = day_folder, time_series_in_memory,
                 cache_size_mib = parse(Int, config["cache-size-mib"]), on_phase
             )
             on_phase(:export)

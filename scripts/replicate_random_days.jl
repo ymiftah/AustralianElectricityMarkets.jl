@@ -20,6 +20,7 @@ function main(args = ARGS)
               --sample-seconds N    Worker memory sampling period (5)
               --solver-threads N    HiGHS threads (1)
               --cache-size-mib N    PSI results write cache in MiB (64)
+              --time-series-in-memory B  hold time series in memory (false)
 
             HiGHS mip_rel_gap=1e-8, mip_abs_gap=1e-10. Linux /proc required for memory sampling.
             See scripts/README.md for outputs and overnight launch commands.

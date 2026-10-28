@@ -202,6 +202,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The replay batch runner accepts `--time-series-in-memory true|false` (default `false`), recorded in `run.toml` and each day's `provenance.toml`, to hold replication time series in memory.
+
 - A standalone Python report script for saved dispatch replays, including runtime
   distributions, NEMDE error percentiles by unit/region/service/interconnector,
   memory, partial-run coverage and overlap-aware pooled comparisons.

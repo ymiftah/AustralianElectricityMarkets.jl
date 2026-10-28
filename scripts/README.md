@@ -126,6 +126,9 @@ julia -O1 --project=AustralianElectricityMarketsSimulations/test \
     --sample-seconds 5 --solver-threads 1 --cache-size-mib 64
 ```
 
+`--time-series-in-memory true` holds the time series in memory (default `false`, on disk), which cuts
+per-step parameter updates but raises peak memory.
+
 The seed fixes the shuffled order for the same Julia version. Change `--seed` for
 a different order. Failed days are recorded and skipped, with no automatic retry.
 If no day completes, the command exits with an error. A run with some failures

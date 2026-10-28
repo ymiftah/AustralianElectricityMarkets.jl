@@ -21,6 +21,9 @@ using .ReplayBatchSupport
     @test_throws ArgumentError parse_options(["--sample-seconds", "-1"])
     @test_throws ArgumentError parse_options(["--unknown", "x"])
     @test_throws ArgumentError parse_options(["--output"])
+    @test parse_options(String[])["time-series-in-memory"] == "false"
+    @test parse_options(["--time-series-in-memory", "true"])["time-series-in-memory"] == "true"
+    @test_throws ArgumentError parse_options(["--time-series-in-memory", "yes"])
     @test dirname(parse_options(String[])["output"]) == "/run/media/simba/Store/aem_validation"
 end
 
