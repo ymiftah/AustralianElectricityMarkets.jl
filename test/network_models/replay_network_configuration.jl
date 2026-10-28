@@ -90,3 +90,34 @@ end
         end
     end
 end
+
+@testset "NEMDE network builds generators with zero operation costs" begin
+    AEM = AustralianElectricityMarkets
+    hive = mktempdir()
+    create_mock_data(hive; complete_inputs = true)
+    write_mock_interconnector_results(hive)
+    db = aem_connect(HiveConfiguration(hive_location = hive))
+    sys, _, _ = AEM.RegionModel._nem_network(db)
+    generators = collect(get_components(Generator, sys))
+    @test !isempty(generators)
+    @test all(g -> get_operation_cost(g) isa Union{RenewableGenerationCost, HydroGenerationCost, ThermalGenerationCost}, generators)
+    @test all(g -> AEM._is_zero_cost(get_operation_cost(g)), generators)
+end
+
+@testset "FCAS offers on a zero-cost device without an energy bid" begin
+    AEM = AustralianElectricityMarkets
+    hive = mktempdir()
+    create_mock_data(hive; complete_inputs = true)
+    write_mock_interconnector_results(hive)
+    db = aem_connect(HiveConfiguration(hive_location = hive))
+    grid = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+    sys, _ = AEM.RegionModel._constrained_system(db; date_range = grid)
+    # No set_market_bids!: each bidder keeps its zero cost and gets an empty MarketBidCost.
+    bidders = [g for g in get_components(Generator, sys) if has_time_series(g, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")]
+    @test !isempty(bidders)
+    set_fcas_service_bids!(sys, db, grid)
+    for g in bidders
+        cost = get_operation_cost(g)
+        @test cost isa MarketBidCost
+    end
+end

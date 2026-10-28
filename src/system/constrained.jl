@@ -1,8 +1,9 @@
 """
     _constrained_system(db; date_range, intervention = 0, as_of = first(date_range), kwargs...) -> (sys, units)
 
-The regional system with FCAS bids, FCAS services, NEM generic constraints and interconnector losses
-over `date_range`, without energy or FCAS price bids. `units` is the unit table as of `as_of`. Used by
+The cost-free network (`_nem_network`) with FCAS bids, FCAS services, NEM generic constraints
+and interconnector losses over `date_range`, without energy or FCAS price bids. It reads no ISP
+operating costs. `units` is the unit table as of `as_of`. Used by
 [`NEMDEConfiguration`](@ref), which adds the energy and FCAS price bids on top.
 """
 function _constrained_system(
@@ -12,7 +13,7 @@ function _constrained_system(
     if isnothing(date_range)
         error("the constrained system requires a `date_range` keyword argument.")
     end
-    sys, units = _regional_system(db; as_of, kwargs...)
+    sys, units, _ = _nem_network(db; as_of, kwargs...)
     set_fcas_bids!(sys, db, date_range)
     invoked, fixed = AustralianElectricityMarkets._read_constraint_inputs(db, date_range; intervention)
     AustralianElectricityMarkets._add_nem_constraints!(sys, db, date_range, invoked, fixed; intervention)

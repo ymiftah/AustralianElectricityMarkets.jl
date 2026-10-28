@@ -521,15 +521,6 @@ function _add_loads!(sys, loads_df)
 end
 
 
-"""
-    _add_generation!(sys, gen_df)
-
-Adds generation units to the system.
-
-# Arguments
-- `sys`: The `PowerSystems.System` object.
-- `gen_df`: A `DataFrame` of generator data.
-"""
 _fill_missing_median(x) = all(ismissing.(x)) ? missing : median(skipmissing(x))
 
 
@@ -565,24 +556,23 @@ function _fill_opex!(df, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix
 end
 
 
+"""
+    _add_generation!(sys, gen_df)
+
+Adds the renewable, hydro and thermal generators of `gen_df` to `sys` with zero operation costs.
+`_set_isp_generation_costs!` replaces those costs with the ISP operating costs.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `gen_df`: A `DataFrame` of generator data.
+
+# Returns
+`sys`.
+"""
 function _add_generation!(sys, gen_df)
-    variable_opex_df = _map_primemover!(read_isp_variable_opex())
-    fixed_opex_df = _map_primemover!(read_isp_fixed_opex())
-
-    # Primemover-level medians used in step 2 of the 4-step fill cascade
-    pm_var_medians = combine(
-        groupby(variable_opex_df, :primemover),
-        :variable_opex_aud_mwh => median ∘ skipmissing => :variable_opex_aud_mwh_pm,
-    )
-    pm_fix_medians = combine(
-        groupby(fixed_opex_df, :primemover),
-        :fixed_opex_aud_kw_year => median ∘ skipmissing => :fixed_opex_aud_kw_year_pm,
-    )
-
     renewable = subset(
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:RenewableDispatch]))
     )
-    renewable = _fill_opex!(renewable, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians)
     renewable_components = (
         RenewableDispatch(;
             name = row[:name],
@@ -594,12 +584,7 @@ function _add_generation!(sys, gen_df)
             prime_mover_type = row[:technology],
             reactive_power_limits = nothing,  # (min = row[:reactive_power_limits_min], max = row[:reactive_power_limits_max]), # 0 MVAR to 0.25 MVAR per-unitized by device base_power
             power_factor = 1.0,
-            operation_cost = RenewableGenerationCost(;
-                # per ISP2025: "Wind and Large-scale Solar PV O&M costs are assumed to be included in the Fixed O&M costs"
-                # so the variable cost below should be 0
-                variable = CostCurve(LinearCurve(coalesce(row[:variable_opex_aud_mwh], 0.0), 0.0)),
-                fixed = coalesce(row[:fixed_opex_aud_kw_year], 0.0) * row[:base_power] * 1000.0 / 8760.0,
-            ),
+            operation_cost = RenewableGenerationCost(nothing),
             base_power = row[:base_power], # MVA
             ext = Dict(
                 "postcode" => row[:postcode],
@@ -613,7 +598,6 @@ function _add_generation!(sys, gen_df)
     hydro = subset(
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:HydroDispatch]))
     )
-    hydro_with_costs = _fill_opex!(hydro, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians)
     hydro_components = (
         HydroDispatch(;
             name = row[:name],
@@ -633,35 +617,20 @@ function _add_generation!(sys, gen_df)
                 end
             ),
             time_limits = nothing,
-            operation_cost = HydroGenerationCost(;
-                variable = CostCurve(LinearCurve(coalesce(row[:variable_opex_aud_mwh], 0.0))),
-                fixed = coalesce(row[:fixed_opex_aud_kw_year], 0.0) * row[:base_power] * 1000.0 / 8760.0,
-            ),
+            operation_cost = HydroGenerationCost(nothing),
             base_power = row[:base_power],
             ext = Dict(
                 "postcode" => row[:postcode],
                 "station_name" => row[:station_name],
                 "station_id" => row[:station_id],
             ),
-        ) for row in eachrow(hydro_with_costs)
+        ) for row in eachrow(hydro)
     )
     add_components!(sys, hydro_components)
 
     thermal = subset(
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:ThermalStandard]))
     )
-    # look up affine costs from isp
-    affine_heatrates = read_isp_thermal_costs_parameters(
-        # TODO hardcoded for now, todo work on interface
-        2025, "Step Change"
-    )
-    # per-unit join of thermal-specific affine heat-rate/fuel-price parameters
-    leftjoin!(thermal, affine_heatrates, on = :name => :unit; makeunique = true)
-    thermal_with_costs = _fill_opex!(
-        thermal, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians;
-        extra_median_cols = [:price_aud, :no_load_heat_input_GJ_per_h, :marginal_heat_rate_GJ_per_MWH],
-    )
-
     thermal_components = (
         ThermalStandard(;
             name = row[:name],
@@ -680,7 +649,102 @@ function _add_generation!(sys, gen_df)
                     (up = row[:max_ramp_up], down = row[:max_ramp_down]) # per-unitized by device base_power per minute
                 end
             ), # per-unitized by device base_power per minute
-            operation_cost = ThermalGenerationCost(;
+            operation_cost = ThermalGenerationCost(nothing),
+            base_power = row[:base_power], # MVA
+            time_limits = (up = 8.0, down = 8.0), # Hours
+            must_run = false,
+            prime_mover_type = row[:technology],
+            fuel = row[:fuel_type],
+            ext = Dict(
+                "postcode" => row[:postcode],
+                "station_name" => row[:station_name],
+                "station_id" => row[:station_id],
+            ),
+        ) for row in eachrow(thermal)
+    )
+    add_components!(sys, thermal_components)
+
+    return sys
+end
+
+
+"""
+    _set_isp_generation_costs!(sys, gen_df)
+
+Replaces the operation cost of every renewable, hydro and thermal generator of `gen_df` in `sys`
+with its ISP2025 operating cost: per-unit ISP variable and fixed O&M, filled by the
+`_fill_opex!` cascade, and for thermal units the ISP affine heat-rate and fuel-price
+parameters. Generators must already be in `sys`, as added by `_add_generation!`.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `gen_df`: A `DataFrame` of generator data, as returned by `get_generators_dataframe`.
+
+# Returns
+`sys`.
+"""
+function _set_isp_generation_costs!(sys, gen_df)
+    variable_opex_df = _map_primemover!(read_isp_variable_opex())
+    fixed_opex_df = _map_primemover!(read_isp_fixed_opex())
+
+    # Primemover-level medians used in step 2 of the 4-step fill cascade
+    pm_var_medians = combine(
+        groupby(variable_opex_df, :primemover),
+        :variable_opex_aud_mwh => median ∘ skipmissing => :variable_opex_aud_mwh_pm,
+    )
+    pm_fix_medians = combine(
+        groupby(fixed_opex_df, :primemover),
+        :fixed_opex_aud_kw_year => median ∘ skipmissing => :fixed_opex_aud_kw_year_pm,
+    )
+
+    renewable = subset(
+        gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:RenewableDispatch]))
+    )
+    renewable = _fill_opex!(renewable, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians)
+    for row in eachrow(renewable)
+        set_operation_cost!(
+            get_component(RenewableDispatch, sys, row[:name]),
+            RenewableGenerationCost(;
+                # per ISP2025: "Wind and Large-scale Solar PV O&M costs are assumed to be included in the Fixed O&M costs"
+                # so the variable cost below should be 0
+                variable = CostCurve(LinearCurve(coalesce(row[:variable_opex_aud_mwh], 0.0), 0.0)),
+                fixed = coalesce(row[:fixed_opex_aud_kw_year], 0.0) * row[:base_power] * 1000.0 / 8760.0,
+            ),
+        )
+    end
+
+    hydro = subset(
+        gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:HydroDispatch]))
+    )
+    hydro_with_costs = _fill_opex!(hydro, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians)
+    for row in eachrow(hydro_with_costs)
+        set_operation_cost!(
+            get_component(HydroDispatch, sys, row[:name]),
+            HydroGenerationCost(;
+                variable = CostCurve(LinearCurve(coalesce(row[:variable_opex_aud_mwh], 0.0))),
+                fixed = coalesce(row[:fixed_opex_aud_kw_year], 0.0) * row[:base_power] * 1000.0 / 8760.0,
+            ),
+        )
+    end
+
+    thermal = subset(
+        gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:ThermalStandard]))
+    )
+    # look up affine costs from isp
+    affine_heatrates = read_isp_thermal_costs_parameters(
+        # TODO hardcoded for now, todo work on interface
+        2025, "Step Change"
+    )
+    # per-unit join of thermal-specific affine heat-rate/fuel-price parameters
+    leftjoin!(thermal, affine_heatrates, on = :name => :unit; makeunique = true)
+    thermal_with_costs = _fill_opex!(
+        thermal, variable_opex_df, fixed_opex_df, pm_var_medians, pm_fix_medians;
+        extra_median_cols = [:price_aud, :no_load_heat_input_GJ_per_h, :marginal_heat_rate_GJ_per_MWH],
+    )
+    for row in eachrow(thermal_with_costs)
+        set_operation_cost!(
+            get_component(ThermalStandard, sys, row[:name]),
+            ThermalGenerationCost(;
                 variable = FuelCurve(;
                     value_curve = LinearCurve(
                         row[:marginal_heat_rate_GJ_per_MWH],
@@ -693,23 +757,11 @@ function _add_generation!(sys, gen_df)
                 start_up = 100.0,
                 shut_down = 100.0
             ),
-            base_power = row[:base_power], # MVA
-            time_limits = (up = 8.0, down = 8.0), # Hours
-            must_run = false,
-            prime_mover_type = row[:technology],
-            fuel = row[:fuel_type],
-            ext = Dict(
-                "postcode" => row[:postcode],
-                "station_name" => row[:station_name],
-                "station_id" => row[:station_id],
-            ),
-        ) for row in eachrow(thermal_with_costs)
-    )
-    add_components!(sys, thermal_components)
+        )
+    end
 
     return sys
 end
-
 
 function _add_batteries!(sys, batteries_df)
     battery_components = (

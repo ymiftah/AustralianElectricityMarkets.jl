@@ -588,6 +588,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- NEMDE replay systems are built without the regional configuration's ISP operating costs; the regional configuration is unchanged.
+
 - Tie-break scale parameters are added through PowerSimulations' native `add_parameters!` with the
   device model from the template, replacing AEMSim's private series-parameter helper.
 
