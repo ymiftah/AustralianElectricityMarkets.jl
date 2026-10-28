@@ -578,6 +578,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Replay `interval_timings.csv` is read from PSI's native recorder events and optimizer
+  statistics after `execute!` instead of wrapping PSI methods. Schema 2 replaces the
+  `solve_impl` and `result_write` phases with `solve_and_write` and adds `schema_version`;
+  see `scripts/README.md` for the fields whose meaning changed or are now unavailable.
+
 - MNSP band prices use PowerSimulations' time-series cost parameters: each band's cost is a cost
   target on `MNSPBandPriceParameter`, updated by PowerSimulations at each step, with the objective unchanged.
 

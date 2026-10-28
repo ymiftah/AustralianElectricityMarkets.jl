@@ -12,8 +12,6 @@ using SHA
 import PowerSimulations as PSI
 using ..ReplayBatchSupport
 
-include("replay_timing.jl")
-
 include("replay_workflow.jl")
 using .ReplayWorkflow: replicate_range
 
@@ -101,7 +99,7 @@ function main(folder, day::Date)
         "aem_simulations" => string(Base.pkgversion(AustralianElectricityMarketsSimulations)),
         "interval_time_zone" => "fixed AEST UTC+10", "intervention" => 0,
         "mip_rel_gap" => 1.0e-8, "mip_abs_gap" => 1.0e-10,
-        "instrumentation" => "Run-local wrappers invoke pinned PSI originals; solve_impl timings contain MIP, pricing and auxiliary timers; nested timers overlap",
+        "instrumentation" => "interval_timings.csv is read from PSI recorder events and optimizer stats after execute!; TimerOutputs trees in timers_*.toml overlap",
         "source_hashes" => Dict(name => bytes2hex(sha256(read(joinpath(@__DIR__, name)))) for name in readdir(@__DIR__) if endswith(name, ".jl")),
     )
     source_folder = joinpath(day_folder, "runner_source")

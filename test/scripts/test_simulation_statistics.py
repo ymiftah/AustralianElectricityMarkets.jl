@@ -88,6 +88,18 @@ class ReplayStatisticsTests(unittest.TestCase):
         self.assertEqual(timings["series"]["mip"]["total_s"], 40)
         self.assertEqual(timings["series"]["solve_wrapper_residual"]["total_s"], 1)
 
+    def test_schema_two_solve_and_write_rows_are_counted(self):
+        run, day = self.day()
+        fields = ["phase", "execution_count", "interval_aest", "wall_s", "timed_solve_s", "pricing_s", "auxiliary_s", "schema_version"]
+        self.csv(day / "chunk_1/problems/dispatch/interval_timings.csv", fields, [
+            ["parameter_update", 0, "2026-04-07T04:05:00", 4, "NaN", "NaN", "NaN", 2],
+            ["solve_and_write", 0, "2026-04-07T04:05:00", 50, 40, 8, 1, 2],
+        ])
+        timings = report.analyze([run])["days"][0]["timing"]
+        self.assertEqual(timings["written_intervals"], 1)
+        self.assertEqual(timings["series"]["mip"]["total_s"], 40)
+        self.assertEqual(timings["series"]["solve_and_write"]["total_s"], 50)
+
     def test_incomplete_final_csv_record_is_ignored(self):
         path = self.root / "memory.csv"
         path.write_text("timestamp,rss_mib\na,100\nb,2")
