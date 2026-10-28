@@ -7,6 +7,9 @@ on:
     paths:
       - "src/**"
       - "docs/**"
+      - "AustralianElectricityMarketsCache/**"
+      - "AustralianElectricityMarketsData/**"
+      - "data/**"
       - "*.toml"
       - ".github/workflows/Documentation.yml"
   pull_request:
@@ -15,6 +18,9 @@ on:
     paths:
       - "src/**"
       - "docs/**"
+      - "AustralianElectricityMarketsCache/**"
+      - "AustralianElectricityMarketsData/**"
+      - "data/**"
       - "*.toml"
       - ".github/workflows/Documentation.yml"
   workflow_dispatch:
@@ -45,7 +51,7 @@ jobs:
           mkdir -p ~/.nemdb_cache
           cp -r docs/data/* ~/.nemdb_cache/
       - name: Fetch data
-        shell: julia --project=@. --color=yes {0}
+        shell: julia --project=docs --color=yes {0}
         run: |
           using Pkg
           Pkg.instantiate()

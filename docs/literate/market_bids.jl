@@ -1,4 +1,5 @@
 using AustralianElectricityMarkets
+using AustralianElectricityMarketsData: populate
 using PowerSystems
 using PowerSimulations
 using HydroPowerSimulations
@@ -56,10 +57,8 @@ date_range = start_date:interval:(start_date + horizon)
 # Set deterministic time series.
 
 set_demand!(sys, db, date_range; resolution = interval)
-set_renewable_pv!(sys, db, date_range; resolution = interval)
-set_renewable_wind!(sys, db, date_range; resolution = interval)
-set_hydro_limits!(sys, db, date_range; resolution = interval)
 set_market_bids!(sys, db, date_range; resolution = interval)
+set_nem_dispatch_limits!(sys, db, date_range)
 
 # Derive forecasts from the deterministic time series.
 
@@ -158,7 +157,7 @@ end
 
 begin
     ren = get_component(RenewableDispatch, sys, "COLEASF1")
-    ts = get_time_series_array(Deterministic, ren, "max_active_power") |> DataFrame
+    ts = get_time_series_array(SingleTimeSeries, ren, "max_active_power") |> DataFrame
     index, values = ts.timestamp, ts.NSW1 * 100
     fig = Figure()
     ax = Axis(fig[1, 1], xlabel = "timestamp", title = "Max active power [MW]", ylabel = "MW")

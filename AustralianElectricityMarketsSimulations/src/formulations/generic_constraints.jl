@@ -1,0 +1,631 @@
+# `LinearFactorLimit`, the `GenericConstraint` service formulation over energy and FCAS terms.
+
+PSI.get_default_time_series_names(::Type{GenericConstraint}, ::Type{LinearFactorLimit}) =
+    Dict{Type{<:PSI.TimeSeriesParameter}, String}(NEMConstraintRHSParameter => "rhs")
+
+
+PSI.get_default_attributes(::Type{GenericConstraint}, ::Type{LinearFactorLimit}) =
+    Dict{String, Any}()
+
+
+PSI.get_multiplier_value(::NEMConstraintRHSParameter, ::GenericConstraint, ::LinearFactorLimit) =
+    1.0
+
+
+# The System is unchanged while one constraint's terms and diagnostics are constructed.
+struct _ConstraintComponentLookup
+    system::PSY.System
+    components::Dict{Tuple{DataType, String}, Union{Nothing, PSY.Component}}
+end
+
+function _ConstraintComponentLookup(sys::PSY.System)
+    return _ConstraintComponentLookup(sys, Dict{Tuple{DataType, String}, Union{Nothing, PSY.Component}}())
+end
+
+function _constraint_component(::Type{T}, sys::PSY.System, name::String) where {T <: PSY.Component}
+    return PSY.get_component(T, sys, name)
+end
+
+function _constraint_component(::Type{T}, lookup::_ConstraintComponentLookup, name::String) where {T <: PSY.Component}
+    component = get!(lookup.components, (T, name)) do
+        return PSY.get_component(T, lookup.system, name)
+    end
+    return component::Union{Nothing, T}
+end
+
+function _constraint_system(sys::PSY.System)
+    return sys
+end
+
+function _constraint_system(lookup::_ConstraintComponentLookup)
+    return lookup.system
+end
+
+
+# --- Term validation: fail loudly, never a partial LHS ---
+
+"A device's ENERGY variables and each one's multiplier in its net injection. `PSY.Storage` has no
+`ActivePowerVariable`: storage formulations split it into charge/discharge, which PSI's own
+nodal balance nets with variable multipliers of -1.0 and +1.0."
+_energy_variables(::PSY.Storage) =
+    ((PSI.ActivePowerOutVariable, 1.0), (PSI.ActivePowerInVariable, -1.0))
+
+_energy_variables(::PSY.Device) = ((PSI.ActivePowerVariable, 1.0),)
+
+
+_energy_modeled(container::PSI.OptimizationContainer, device::PSY.Device) = all(
+    v -> PSI.has_container_key(container, first(v), typeof(device)),
+    _energy_variables(device),
+)
+
+
+"""
+    _checked_device(container, sys, gc, term::UnitTerm) -> PSY.Device
+
+Resolves `term`'s device and confirms the template models its energy variables. Throws
+`ArgumentError` naming `gc`, `term` and the reason when its device is absent from `sys`, or an
+available device's energy variables aren't in `container`.
+
+# Returns
+The resolved `PSY.Device`.
+"""
+function _checked_device(
+        container::PSI.OptimizationContainer, sys::Union{PSY.System, _ConstraintComponentLookup}, gc::GenericConstraint, term::UnitTerm,
+    )
+    name = PSY.get_name(gc)
+    device = _constraint_component(PSY.Device, sys, get_duid(term))
+    isnothing(device) && throw(
+        ArgumentError(
+            "GenericConstraint \"$name\": UnitTerm's DUID \"$(get_duid(term))\" has no matching " *
+                "component in `sys`.",
+        ),
+    )
+    PSY.get_available(device) && !_energy_modeled(container, device) && throw(
+        ArgumentError(
+            "GenericConstraint \"$name\": UnitTerm's device \"$(get_duid(term))\" " *
+                "($(typeof(device))) has no energy variables in this template; the template " *
+                "must model $(typeof(device)).",
+        ),
+    )
+    return device
+end
+
+
+"""
+    _checked_devices(container, sys, gc, term::RegionTerm) -> Vector{PSY.Device}
+
+Resolves `term`'s already-attributed devices ([`get_devices`](@ref)) and confirms the template
+models each one's energy variables. Throws `ArgumentError` naming `gc`, `term` and the reason
+when a device is absent from `sys`, or an available device's energy variables aren't in `container`.
+
+# Returns
+A `Vector{PSY.Device}`.
+"""
+function _checked_devices(
+        container::PSI.OptimizationContainer, sys::Union{PSY.System, _ConstraintComponentLookup}, gc::GenericConstraint, term::RegionTerm,
+    )
+    name = PSY.get_name(gc)
+    devices = PSY.Device[]
+    for dname in get_devices(term)
+        device = _constraint_component(PSY.Device, sys, dname)
+        isnothing(device) && throw(
+            ArgumentError(
+                "GenericConstraint \"$name\": RegionTerm on region \"$(get_region(term))\" " *
+                    "names device \"$dname\", which has no matching component in `sys`.",
+            ),
+        )
+        PSY.get_available(device) && !_energy_modeled(container, device) && throw(
+            ArgumentError(
+                "GenericConstraint \"$name\": RegionTerm on region \"$(get_region(term))\" " *
+                    "device \"$dname\" ($(typeof(device))) has no energy variables in this " *
+                    "template; the template must model $(typeof(device)).",
+            ),
+        )
+        push!(devices, device)
+    end
+    return devices
+end
+
+
+"""
+    _checked_interconnector(container, sys, gc, term::InterconnectorTerm) -> PSY.AreaInterchange
+
+Resolves `term`'s `PSY.AreaInterchange` and confirms the template models
+`PSI.FlowActivePowerVariable` for it. Throws `ArgumentError` naming `gc`, `term` and the reason
+otherwise.
+
+# Returns
+The resolved `PSY.AreaInterchange`.
+"""
+function _checked_interconnector(
+        container::PSI.OptimizationContainer, sys::Union{PSY.System, _ConstraintComponentLookup}, gc::GenericConstraint,
+        term::InterconnectorTerm,
+    )
+    name = PSY.get_name(gc)
+    device = _constraint_component(PSY.AreaInterchange, sys, get_interconnector(term))
+    isnothing(device) && throw(
+        ArgumentError(
+            "GenericConstraint \"$name\": InterconnectorTerm's interconnector " *
+                "\"$(get_interconnector(term))\" has no matching component in `sys`.",
+        ),
+    )
+    PSY.get_available(device) && !PSI.has_container_key(container, PSI.FlowActivePowerVariable, PSY.AreaInterchange) && throw(
+        ArgumentError(
+            "GenericConstraint \"$name\": InterconnectorTerm's interconnector " *
+                "\"$(get_interconnector(term))\" has no FlowActivePowerVariable in this " *
+                "template; the template must model PSY.AreaInterchange.",
+        ),
+    )
+    return device
+end
+
+
+# --- add_to_expression! per term type ---
+
+"Adds `factor * device's net injection` into `expr`, over every variable `_energy_variables` names."
+function _add_device_energy_terms!(container, expr, name, device, factor)
+    PSY.get_available(device) || return  # unavailable devices have no variables: they contribute zero
+    dname = PSY.get_name(device)
+    for (var_type, multiplier) in _energy_variables(device)
+        var = PSI.get_variable(container, var_type(), typeof(device))
+        for t in PSI.get_time_steps(container)
+            JuMP.add_to_expression!(expr[name, t], multiplier * factor, var[dname, t])
+        end
+    end
+    return
+end
+
+
+"""
+    _add_device_fcas_terms!(container, expr, sys, gc, device, bid_type, factor)
+
+Adds `factor` times `device`'s enablement of its [`fcas_service_name`](@ref) service into `expr`:
+its [`FCASCapacityVariable`](@ref) for a contingency service, or its
+[`FCASUnitRegulationTarget`](@ref) for a regulation service (the net gen + load target, AEMO
+*FCAS Model in NEMDE* §2.4). Adds nothing when the service is absent, unavailable or has no
+available devices, or `device` has no variable in it. Throws `ArgumentError` when the service has
+devices but the template sets no [`FCASMarket`](@ref) model for it.
+"""
+function _add_device_fcas_terms!(container, expr, sys, gc, device, bid_type::BidType, factor)
+    svc_name = fcas_service_name(device, bid_type)
+    svc = _constraint_component(FCASService, sys, svc_name)
+    (isnothing(svc) || !PSY.get_available(svc)) && return
+    dname = PSY.get_name(device)
+    regulation = bid_type in FCAS_REGULATION_MARKETS
+    key_type = regulation ? FCASUnitRegulationTarget : FCASCapacityVariable
+    if !PSI.has_container_key(container, key_type, FCASService, svc_name)
+        any(PSY.get_available, PSY.get_contributing_devices(_constraint_system(sys), svc)) || return
+        throw(
+            ArgumentError(
+                "GenericConstraint \"$(PSY.get_name(gc))\": term on \"$dname\" references FCASService " *
+                    "\"$svc_name\", which has no $(nameof(key_type)) in this template; the template " *
+                    "must set an FCASMarket model for it.",
+            ),
+        )
+    end
+    fcas = regulation ?
+        PSI.get_expression(container, FCASUnitRegulationTarget(), FCASService, svc_name) :
+        PSI.get_variable(container, FCASCapacityVariable(), FCASService, svc_name)
+    dname in axes(fcas, 1) || return
+    for t in PSI.get_time_steps(container)
+        JuMP.add_to_expression!(expr[PSY.get_name(gc), t], factor, fcas[dname, t])
+    end
+    return
+end
+
+
+"""
+    _warn_absent_fcas_services(sys, gc)
+
+Warns once for `gc`, naming every FCAS service its terms reference that is absent from `sys`
+(those terms contribute zero).
+"""
+function _warn_absent_fcas_services(sys::Union{PSY.System, _ConstraintComponentLookup}, gc::GenericConstraint)
+    absent = Set{String}()
+    for term in get_terms(gc)
+        term isa Union{UnitTerm, RegionTerm} || continue
+        get_bid_type(term) == BidType.ENERGY && continue
+        names = term isa UnitTerm ? [get_duid(term)] : get_devices(term)
+        for dname in names
+            device = _constraint_component(PSY.Device, sys, dname)
+            isnothing(device) && continue
+            svc_name = fcas_service_name(device, get_bid_type(term))
+            isnothing(_constraint_component(FCASService, sys, svc_name)) && push!(absent, svc_name)
+        end
+    end
+    isempty(absent) || @warn(
+        "GenericConstraint \"$(PSY.get_name(gc))\": FCAS terms reference services absent from the " *
+            "System and contribute zero: $(join(sort!(collect(absent)), ", "))."
+    )
+    return
+end
+
+
+"Adds `device`'s `bid_type` term to `expr`: its energy injection for `ENERGY`, else its FCAS enablement."
+function _add_device_terms!(container, expr, sys, gc, device, bid_type::BidType, factor)
+    if bid_type == BidType.ENERGY
+        _add_device_energy_terms!(container, expr, PSY.get_name(gc), device, factor)
+    else
+        _add_device_fcas_terms!(container, expr, sys, gc, device, bid_type, factor)
+    end
+    return
+end
+
+
+function PSI.add_to_expression!(
+        container::PSI.OptimizationContainer,
+        ::Type{NEMConstraintLHS},
+        ::Type{UnitTerm},
+        gc::GenericConstraint,
+        term::UnitTerm,
+        sys::Union{PSY.System, _ConstraintComponentLookup},
+    )
+    name = PSY.get_name(gc)
+    expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
+    device = _checked_device(container, sys, gc, term)
+    _add_device_terms!(container, expr, sys, gc, device, get_bid_type(term), get_factor(term))
+    return
+end
+
+
+function PSI.add_to_expression!(
+        container::PSI.OptimizationContainer,
+        ::Type{NEMConstraintLHS},
+        ::Type{RegionTerm},
+        gc::GenericConstraint,
+        term::RegionTerm,
+        sys::Union{PSY.System, _ConstraintComponentLookup},
+    )
+    name = PSY.get_name(gc)
+    expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
+    for device in _checked_devices(container, sys, gc, term)
+        _add_device_terms!(container, expr, sys, gc, device, get_bid_type(term), get_factor(term))
+    end
+    return
+end
+
+
+function PSI.add_to_expression!(
+        container::PSI.OptimizationContainer,
+        ::Type{NEMConstraintLHS},
+        ::Type{InterconnectorTerm},
+        gc::GenericConstraint,
+        term::InterconnectorTerm,
+        sys::Union{PSY.System, _ConstraintComponentLookup},
+    )
+    name = PSY.get_name(gc)
+    expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
+    device = _checked_interconnector(container, sys, gc, term)
+    PSY.get_available(device) || return  # no flow variable: contributes zero
+    var = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
+    dname = PSY.get_name(device)
+    for t in PSI.get_time_steps(container)
+        JuMP.add_to_expression!(expr[name, t], get_factor(term), var[dname, t])
+    end
+    return
+end
+
+
+"""
+    _add_gc_slack_variables!(container, gc, model)
+
+Builds [`GenericConstraintSlackUp`](@ref)/[`GenericConstraintSlackDown`](@ref) for `gc` when
+`PSI.get_use_slacks(model)`, one side per `get_sense(gc)` (`LE` → up only, `GE` → down only,
+`EQ` → both), and merges each into [`NEMConstraintLHS`](@ref): `-slack_up` on the `LE` side,
+`+slack_down` on the `GE` side, so `add_constraints!`'s stored bound becomes satisfiable by
+relaxing it rather than infeasible. A no-op when `use_slacks` is `false`.
+"""
+function _add_gc_slack_variables!(
+        container::PSI.OptimizationContainer, gc::GenericConstraint,
+        model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
+    )
+    PSI.get_use_slacks(model) || return
+    name = PSY.get_name(gc)
+    time_steps = PSI.get_time_steps(container)
+    expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
+    sense = get_sense(gc)
+    for (var_type, side, coefficient) in (
+            (GenericConstraintSlackUp, ConstraintSense.LE, -1.0),
+            (GenericConstraintSlackDown, ConstraintSense.GE, 1.0),
+        )
+        sense in (side, ConstraintSense.EQ) || continue
+        slack = _add_slack_variables!(container, var_type, GenericConstraint, [name], time_steps; meta = name)
+        for t in time_steps
+            JuMP.add_to_expression!(expr[name, t], coefficient, slack[name, t])
+        end
+    end
+    return
+end
+
+
+# --- add_constraints!: sense dispatch, honouring the "invoked" series ---
+
+"""
+    _invoked_mask(container, gc, start_time = PSI.get_initial_time(container)) -> Vector{Float64}
+
+The `GenericConstraint`'s `"invoked"` series (`1.0`/`0.0`) over the container's time steps from
+`start_time`, read from the container's default forecast type.
+
+# Returns
+A `Vector{Float64}`.
+"""
+function _invoked_mask(
+        container::PSI.OptimizationContainer, gc::GenericConstraint,
+        start_time::DateTime = PSI.get_initial_time(container),
+    )
+    return _forecast_window_values(container, gc, "invoked", start_time)
+end
+
+
+function PSI.add_constraints!(
+        container::PSI.OptimizationContainer,
+        ::Type{NEMConstraintLimit},
+        gc::GenericConstraint,
+        model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
+    )
+    name = PSY.get_name(gc)
+    expr = PSI.get_expression(container, NEMConstraintLHS(), GenericConstraint, name)
+    time_steps = PSI.get_time_steps(container)
+    # One container per constraint (`meta = name`), as each `GenericConstraint` has its own `ServiceModel`.
+    con = PSI.lazy_container_addition!(
+        container, NEMConstraintLimit(), GenericConstraint, [name], time_steps; meta = name,
+    )
+    rhs_param = PSI.get_parameter(container, NEMConstraintRHSParameter(), GenericConstraint, name)
+    rhs_refs = PSI.get_parameter_column_refs(rhs_param, name)
+    rhs_mult = PSI.get_multiplier_array(rhs_param)
+    jm = PSI.get_jump_model(container)
+    sense = get_sense(gc)
+    slacks = PSI.get_use_slacks(model)
+    slacks || !PSI.built_for_recurrent_solves(container) || throw(
+        ArgumentError(
+            "GenericConstraint \"$name\": a recurrent build masks non-invoked intervals with zero-cost " *
+                "slacks, so its LinearFactorLimit model needs use_slacks = true.",
+        ),
+    )
+    invoked = slacks ? nothing : _invoked_mask(container, gc)
+    for t in time_steps
+        if !slacks && invoked[t] == 0.0
+            # PSI's dual read-back broadcasts over every cell, so a non-invoked interval keeps a
+            # vacuous, disconnected row whose dual is exactly 0.0.
+            con[name, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
+            continue
+        end
+        con[name, t] = if sense == ConstraintSense.LE
+            JuMP.@constraint(jm, expr[name, t] <= rhs_refs[t] * rhs_mult[name, t])
+        elseif sense == ConstraintSense.GE
+            JuMP.@constraint(jm, expr[name, t] >= rhs_refs[t] * rhs_mult[name, t])
+        else
+            JuMP.@constraint(jm, expr[name, t] == rhs_refs[t] * rhs_mult[name, t])
+        end
+    end
+    return
+end
+
+
+# --- construct_service!: argument + model stages ---
+
+function PSI.construct_service!(
+        container::PSI.OptimizationContainer,
+        sys::PSY.System,
+        ::PSI.ArgumentConstructStage,
+        model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
+        devices_template::Dict{Symbol, PSI.DeviceModel},
+        incompatible_device_types::Set{<:DataType},
+        network_model::PSI.NetworkModel,
+    )
+    name = PSI.get_service_name(model)
+    gc = PSY.get_component(GenericConstraint, sys, name)
+    PSI.lazy_container_addition!(
+        container, NEMConstraintLHS(), GenericConstraint, [name], PSI.get_time_steps(container);
+        meta = name,
+    )
+    PSI.add_parameters!(container, NEMConstraintRHSParameter, gc, model)
+    return
+end
+
+
+function PSI.construct_service!(
+        container::PSI.OptimizationContainer,
+        sys::PSY.System,
+        ::PSI.ModelConstructStage,
+        model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
+        devices_template::Dict{Symbol, PSI.DeviceModel},
+        incompatible_device_types::Set{<:DataType},
+        network_model::PSI.NetworkModel,
+    )
+    name = PSI.get_service_name(model)
+    gc = PSY.get_component(GenericConstraint, sys, name)
+    PSY.get_available(gc) || return
+
+    lookup = _ConstraintComponentLookup(sys)
+    for term in get_terms(gc)
+        PSI.add_to_expression!(container, NEMConstraintLHS, typeof(term), gc, term, lookup)
+    end
+    _warn_absent_fcas_services(lookup, gc)
+    # Before add_constraints! reads NEMConstraintLHS: a slack must already be merged in for the
+    # constraint it relaxes to be built with it, not around it.
+    _add_gc_slack_variables!(container, gc, model)
+
+    PSI.add_constraints!(container, NEMConstraintLimit, gc, model)
+
+    # Not `PSI.add_constraint_dual!(container, sys, model)`: `add_dual_container!` directly is
+    # exactly what that method's scalar-`D<:PSY.Service` branch does internally.
+    if !isempty(PSI.get_duals(model))
+        time_steps = PSI.get_time_steps(container)
+        for constraint_type in PSI.get_duals(model)
+            PSI.add_dual_container!(
+                container, constraint_type, GenericConstraint, [name], time_steps; meta = name,
+            )
+        end
+    end
+
+    PSI.objective_function!(container, gc, model)
+    return
+end
+
+
+"""
+    PSI.objective_function!(container, gc, model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit})
+
+Prices `gc`'s elastic slacks (built by [`_add_gc_slack_variables!`](@ref), a no-op unless
+`PSI.get_use_slacks(model)`) through a [`GenericConstraintSlackCostParameter`](@ref): each
+interval's coefficient is its `"invoked"` value times [`constraint_cvp_factor`](@ref) times the Market
+Price Cap per MW, so a non-invoked interval's slack is free and its row is vacuous.
+`GenericConstraint`s built without slacks carry no cost of their own.
+
+# Returns
+`nothing`.
+"""
+function PSI.objective_function!(
+        container::PSI.OptimizationContainer, gc::GenericConstraint,
+        model::PSI.ServiceModel{GenericConstraint, LinearFactorLimit},
+    )
+    PSI.get_use_slacks(model) || return
+    name = PSY.get_name(gc)
+    time_steps = PSI.get_time_steps(container)
+    resolution = PSI.get_resolution(container)
+    initial_time = PSI.get_initial_time(container)
+    base_power = PSI.get_base_power(container)
+    weight = constraint_cvp_factor(gc)
+    param = PSI.add_param_container!(
+        container, GenericConstraintSlackCostParameter(), GenericConstraint,
+        (GenericConstraintSlackUp, GenericConstraintSlackDown), PSI.SOSStatusVariable.NO_VARIABLE,
+        false, Float64, [name], time_steps; meta = name,
+    )
+    invoked_values = PSI.get_parameter_array(param)
+    penalties = PSI.get_multiplier_array(param)
+    fill!(penalties, base_power * interval_cost_coefficient(weight, resolution))
+    _price_gc_slacks!(container, gc, model, invoked_values, penalties, initial_time)
+    return
+end
+
+
+# Writes `gc`'s `"invoked"` values from `initial_time` into `invoked_values` and adds its slack costs
+# at each interval's Market Price Cap to the variant objective.
+function _price_gc_slacks!(container::PSI.OptimizationContainer, gc::GenericConstraint, model::PSI.ServiceModel, invoked_values, penalties, initial_time::DateTime)
+    name = PSY.get_name(gc)
+    resolution = PSI.get_resolution(container)
+    invoked = _invoked_mask(container, gc, initial_time)
+    for t in axes(invoked_values)[2]
+        invoked_values[name, t] = invoked[t]
+        mpc = _service_market_price_cap(model, container, initial_time + resolution * (t - 1))
+        _add_gc_slack_costs!(container, gc, invoked_values, penalties, t, mpc)
+    end
+    return
+end
+
+
+# Adds `gc`'s slacks at step `t` to the variant objective at `invoked x penalty` per unit; nothing
+# when that is zero, which leaves the row vacuous.
+function _add_gc_slack_costs!(container::PSI.OptimizationContainer, gc::GenericConstraint, invoked_values, penalties, t::Int, mpc::Real)
+    name = PSY.get_name(gc)
+    cost = invoked_values[name, t] * penalties[name, t] * mpc
+    iszero(cost) && return
+    for var_type in (GenericConstraintSlackUp, GenericConstraintSlackDown)
+        PSI.has_container_key(container, var_type, GenericConstraint, name) || continue
+        slack = PSI.get_variable(container, var_type(), GenericConstraint, name)
+        PSI.add_to_objective_variant_expression!(container, cost * slack[name, t])
+    end
+    return
+end
+
+
+"""
+    PSI.update_container_parameter_values!(container, model, key::PSI.ParameterKey{GenericConstraintSlackCostParameter, GenericConstraint}, input)
+
+Simulation-step update of the [`GenericConstraintSlackCostParameter`](@ref) of the constraint
+`key.meta`: reads its `"invoked"` values for the window at the model's current time and re-adds the
+slack costs (`invoked x` the build-time penalty in the multiplier `x` the Market Price Cap of its
+service model) to the variant objective.
+
+# Returns
+`nothing`.
+"""
+function PSI.update_container_parameter_values!(
+        container::PSI.OptimizationContainer, model::PSI.OperationModel,
+        key::PSI.ParameterKey{GenericConstraintSlackCostParameter, GenericConstraint}, ::PSI.DatasetContainer{PSI.InMemoryDataset},
+    )
+    PSI.is_synchronized(container) && error(
+        "Cannot update GenericConstraintSlackCostParameter on a synchronized container; the slack costs would be added twice.",
+    )
+    gc = PSY.get_component(GenericConstraint, PSI.get_system(model), key.meta)
+    service_model = only(
+        m for m in values(PSI.get_service_models(PSI.get_template(model)))
+            if PSI.get_component_type(m) === GenericConstraint && PSI.get_service_name(m) == key.meta
+    )
+    _price_gc_slacks!(
+        container, gc, service_model, PSI.get_parameter_array(container, key),
+        PSI.get_parameter_multiplier_array(container, key), PSI.get_current_time(model),
+    )
+    return
+end
+
+
+# Each key's long-format frame (`DateTime`, `value`): solved values, or realized ones of a simulation.
+_read_dual_frames(results::PSI.OptimizationProblemResults, keys) = Dict(key => PSI.read_dual(results, key) for key in keys)
+# Opens the simulation store once for all `keys`, over the window `read_realized_duals` reads.
+function _read_dual_frames(results::PSI.SimulationProblemResults, keys)
+    isempty(keys) && return Dict{PSI.OptimizationContainerKey, DataFrame}()
+    vals = PSI.read_realized_duals(results, collect(keys))
+    return Dict(key => vals[PSI.IS.Optimization.encode_key_as_string(key)] for key in keys)
+end
+
+
+"""
+    compute_fcas_prices(results, sys; resolution = nothing) -> DataFrame
+
+Maps solved [`NEMConstraintLimit`](@ref) duals onto regional FCAS prices: each `(region, service)`
+`ROP` is the sum of the duals of every built [`GenericConstraint`](@ref) whose
+[`get_fcas_requirements`](@ref) names that pair, in `\$/MWh`. This mirrors the sum of
+`DISPATCH_FCAS_REQ`'s `MARGINALVALUE` (see [`read_fcas_prices`](@ref)). Duals keep the solver's
+sign (change in cost per unit increase of the right-hand side): non-negative for a binding `>=`
+constraint, non-positive for `<=`. Warns when a constraint with requirements has no recorded dual.
+
+# Arguments
+- `results`: `PSI.OptimizationProblemResults` of a model, or `PSI.SimulationProblemResults` of a
+  simulation (its realized duals), that recorded `NEMConstraintLimit` duals.
+- `sys`: the `System` the model was built from.
+- `resolution`: interval length converting per-interval duals to `\$/MWh`. Defaults to the
+  resolution the results record, which a single-interval solve does not; required then.
+
+# Returns
+A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `BIDTYPE` and `ROP`, like [`read_fcas_prices`](@ref).
+"""
+function compute_fcas_prices(
+        results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}, sys::PSY.System;
+        resolution::Union{Nothing, Dates.Period} = nothing,
+    )
+    resolution = something(resolution, PSI.get_resolution(results), Some(nothing))
+    isnothing(resolution) && throw(
+        ArgumentError(
+            "compute_fcas_prices: `results` do not record a resolution (a single-interval model), so pass `resolution` explicitly.",
+        ),
+    )
+    dual_keys = Dict(
+        k.meta => k for k in PSI.list_dual_keys(results) if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit
+    )
+    scale = PSY.get_base_power(sys) * interval_hours(resolution)
+    prices = Dict{Tuple{String, BidType}, DataFrame}()
+    constrained = [gc for gc in PSY.get_components(GenericConstraint, sys) if !isempty(get_fcas_requirements(gc))]
+    unrecorded = [PSY.get_name(gc) for gc in constrained if !haskey(dual_keys, PSY.get_name(gc))]
+    recorded = [gc for gc in constrained if haskey(dual_keys, PSY.get_name(gc))]
+    duals = _read_dual_frames(results, [dual_keys[PSY.get_name(gc)] for gc in recorded])
+    for gc in recorded
+        dual = duals[dual_keys[PSY.get_name(gc)]]
+        for req in get_fcas_requirements(gc)
+            id = (get_region(req), get_service(req))
+            term = DataFrame(; SETTLEMENTDATE = dual.DateTime, ROP = dual.value ./ scale)
+            haskey(prices, id) ? (prices[id].ROP .+= term.ROP) : (prices[id] = term)
+        end
+    end
+    isempty(unrecorded) || @warn(
+        "compute_fcas_prices: $(length(unrecorded)) GenericConstraint(s) with FCAS requirements " *
+            "have no NEMConstraintLimit dual and are left out: $(join(first(sort!(unrecorded), 5), ", "))" *
+            (length(unrecorded) > 5 ? ", ..." : ".")
+    )
+    out = DataFrame(; SETTLEMENTDATE = DateTime[], REGIONID = String[], BIDTYPE = BidType[], ROP = Float64[])
+    for ((region, service), df) in sort!(collect(prices); by = p -> (p[1][1], string(p[1][2])))
+        append!(out, DataFrame(; SETTLEMENTDATE = df.SETTLEMENTDATE, REGIONID = region, BIDTYPE = service, ROP = df.ROP))
+    end
+    return out
+end

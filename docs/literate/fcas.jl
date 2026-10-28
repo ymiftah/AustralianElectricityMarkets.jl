@@ -160,7 +160,7 @@ tungatin_bid = subset(
     :DUID => ByRow(==("TUNGATIN")),
     :INTERVAL_DATETIME => ByRow(==(DateTime(2025, 1, 13, 16, 30))),
 )
-select(tungatin_bid, :ENABLEMENTMIN, :LOWBREAKPOINT, :HIGHBREAKPOINT, :ENABLEMENTMAX, :MAXAVAIL, :piecewise_step_data)
+select(tungatin_bid, :ENABLEMENTMIN, :LOWBREAKPOINT, :HIGHBREAKPOINT, :ENABLEMENTMAX, :MAXAVAIL, :PRICEBANDARRAY, :BANDAVAILARRAY)
 
 # ## [The trapezium](@id fcas-trapezium)
 #
@@ -358,15 +358,14 @@ end
 #   and, for FCAS requirements specifically, a non-empty `fcas_requirements` list tagging which
 #   regional `(service, region)` price its shadow price feeds - see
 #   [`add_nem_constraints!`](@ref).
-# - [`FCASTrapezium`](@ref)/[`FCASBid`](@ref) - a device's offered trapezium and priced
-#   10-band offer curve for one FCAS market, attached as a `Deterministic` time series via
-#   [`set_fcas_bids!`](@ref).
+# - [`FCASTrapezium`](@ref) - a device's offered trapezium for one FCAS market, and its priced
+#   10-band offer curve, attached as `SingleTimeSeries` time series via [`set_fcas_bids!`](@ref).
 # - [`ConstrainedNetworkConfiguration`](@ref) - a [`nem_system`](@ref) configuration that
 #   pulls in all the tables this page reads and builds both the bids and the constraints
 #   automatically (it requires a `date_range` keyword, since both are interval-scoped).
 
 sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = date_range)
-get_component(GenericConstraint, sys, "F_T+NIL_MG_R6")
+only(filter(gc -> get_gencon_id(gc) == "F_T+NIL_MG_R6", collect(get_components(GenericConstraint, sys))))
 
 # **Not (yet) modelled** by this package, stated plainly:
 #
@@ -376,7 +375,6 @@ get_component(GenericConstraint, sys, "F_T+NIL_MG_R6")
 #   `PowerSimulations.jl` dispatch problem - that is the intended next layer built on top of
 #   `GenericConstraint`. Enabling that is on the [Roadmap](@ref).
 # - Mainland-vs-local contingency splits (e.g. South Australian islanding).
-# - The `RAISE1SEC`/`LOWER1SEC` markets.
 # - AGC ramp-rate scaling (the missing telemetry noted above).
 # - FCAS cost recovery (`BASE_COST`/`ADJUSTED_COST`/CMPF/CRMPF in `DISPATCH_FCAS_REQ`).
 # - Recomputing `RHS` from AEMO's RPN expressions - NEMDE derives it from live SCADA that
@@ -393,9 +391,9 @@ get_component(GenericConstraint, sys, "F_T+NIL_MG_R6")
 #    Central Dispatch*](https://nempy.readthedocs.io/en/latest/_downloads/e3c8a21d3084db332a30bd0d564e93c3/FCAS%20Model%20in%20NEMDE.pdf),
 #    May 2017 - source for the trapezium (§2-3) and the joint ramping/capacity constraints
 #    (§6) reproduced in [The trapezium](@ref fcas-trapezium) and [Co-optimisation in
-#    dispatch](@ref fcas-cooptimisation). Predates the 1-second markets and later Primary
-#    Frequency Response rule changes, but the trapezium and joint-constraint mathematics it
-#    documents are unchanged.
+#    dispatch](@ref fcas-cooptimisation). The 1-second markets (version 2.0 onwards of the
+#    document) follow the same trapezium and joint-constraint mathematics as the other
+#    contingency services.
 # 4. AEMO, *MMS Data Model Report*, Electricity - per-table definitions for the tables read
 #    on this page:
 #    [`DISPATCH_FCAS_REQ`](https://visualisations.aemo.com.au/aemo/nemweb/mmsdatamodelreport/electricity/mms%20data%20model%20report_files/MMS_116.htm),
