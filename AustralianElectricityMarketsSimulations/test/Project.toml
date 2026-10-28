@@ -18,8 +18,8 @@ TimeSeries = "9e3dc215-6440-5c97-bce1-76c03772f85e"
 
 [sources]
 HDF5 = {url = "https://github.com/JuliaIO/HDF5.jl.git", rev = "4c4592a397a4e4f6045a56003ca4d038c8eb3a78"}
-PowerSimulations = {rev = "b5e8775f3f9d18f133f913d3561860d1d39f6c64", url = "https://github.com/ymiftah/PowerSimulations.jl.git"}
-PowerSystems = {url = "https://github.com/ymiftah/PowerSystems.jl.git", rev = "03f9639648cc01c62df26836bdc620f2382521ff"}
+PowerSimulations = {rev = "07045f5e4311d719d4a2fb349ab7fe0101f3f91a", url = "https://github.com/ymiftah/PowerSimulations.jl.git"}
+PowerSystems = {url = "https://github.com/ymiftah/PowerSystems.jl.git", rev = "51abe93bbb3329a00bf6ff45fe1e91da088ae401"}
 
 [compat]
 HDF5 = "0.17.5"

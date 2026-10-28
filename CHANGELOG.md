@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pin PowerSimulations to the fork rebased on upstream 0.38.5, and pin PowerSystems
   5.12.4 to its fork revision in every workspace project that depends on it.
 
+- Pin the InfrastructureSystems, PowerSystems and PowerSimulations forks to revisions that size
+  cache rows by their deep footprint, add decremental service bids, read time-varying offer costs
+  through the model cache, and add meta-keyed and cost time-series parameters.
+
 - Require HDF5 0.17.5 with the upstream datatype-handle leak fix; temporarily pin
   the official release-branch revision until that version is tagged. This prevents
   growing native file-close overhead across repeated replay system builds.
