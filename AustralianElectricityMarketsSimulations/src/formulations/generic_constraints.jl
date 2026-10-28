@@ -360,7 +360,13 @@ initial time.
 A `Vector{Float64}`.
 """
 function _invoked_mask(container::PSI.OptimizationContainer, gc::GenericConstraint)
-    return _forecast_window_values(container, gc, "invoked", PSI.get_initial_time(container))
+    start_time = PSI.get_initial_time(container)
+    ts_type = PSI.get_default_time_series_type(container)
+    forecast = IS.get_time_series(ts_type, gc, "invoked"; start_time = start_time, count = 1)
+    return IS.get_time_series_values(
+        gc, forecast; start_time = start_time, len = length(PSI.get_time_steps(container)),
+        ignore_scaling_factors = true,
+    )
 end
 
 

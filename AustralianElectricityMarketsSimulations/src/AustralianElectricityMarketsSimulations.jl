@@ -52,7 +52,6 @@ include("types/mnsp_limits.jl")
 include("types/logging.jl")
 
 include("formulations/slacks.jl")
-include("formulations/series_parameters.jl")
 include("formulations/generic_constraints.jl")
 include("formulations/penalty_costs.jl")
 include("checks/nem_constraints.jl")

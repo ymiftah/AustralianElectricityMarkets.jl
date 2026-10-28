@@ -38,7 +38,7 @@ function _benchmark_updates(folder; profile_updates = false)
     results = Dict{String, Any}("system_build_s" => system_s, "model_build_s" => model_s, "julia" => string(VERSION), "optimization_level" => Int(Base.JLOptions().opt_level), "parameter_keys" => length(PSI.get_parameters(model)), "steps" => Any[])
     results["source_hashes"] = Dict(
         file => bytes2hex(sha256(read(joinpath(dirname(pathof(AEMS)), file))))
-            for file in ("formulations/series_parameters.jl", "formulations/fcas.jl", "formulations/generic_constraints.jl", "psi_compat.jl")
+            for file in ("formulations/fcas.jl", "formulations/generic_constraints.jl", "psi_compat.jl")
     )
     results["psi_version"] = string(Base.pkgversion(PSI))
     results["highs_package_version"] = string(Base.pkgversion(HiGHS))

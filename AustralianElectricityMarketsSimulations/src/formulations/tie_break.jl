@@ -56,26 +56,30 @@ end
 
 
 """
-    _add_tie_break_parameter!(container, T, sys, decremental, band)
+    _add_tie_break_parameter!(container, devices_template, T, sys, decremental, band)
 
 Adds the [`TieBreakScaleParameter`](@ref) of segment `band` keyed `(T, meta)`, unless it exists:
 one row per available `T` carrying the segment's `"tie_break_scale_<band>[_decremental]"` forecast,
-the set PowerSimulations' time-series parameter update visits ([`_add_series_parameter!`](@ref)).
+with the device model of `T` from `devices_template`.
 
 # Returns
 `nothing`.
 """
 function _add_tie_break_parameter!(
-        container::PSI.OptimizationContainer, ::Type{T}, sys::PSY.System, decremental::Bool, band::Int,
+        container::PSI.OptimizationContainer, devices_template::Dict{Symbol, PSI.DeviceModel},
+        ::Type{T}, sys::PSY.System, decremental::Bool, band::Int,
     ) where {T <: PSY.Component}
     meta = _tie_break_meta(band, decremental)
     PSI.has_container_key(container, TieBreakScaleParameter, T, meta) && return
     ts_name = tie_break_series_name(band, decremental)
     ts_type = PSI.get_default_time_series_type(container)
     devices = [d for d in PSY.get_available_components(T, sys) if PSY.has_time_series(d, ts_type, ts_name)]
-    _add_series_parameter!(container, TieBreakScaleParameter(), T, devices, ts_name, meta)
+    model = devices_template[Symbol(IS.strip_module_name(T))]
+    PSI.add_parameters!(container, TieBreakScaleParameter, devices, model; meta = meta, time_series_name = ts_name)
     return
 end
+
+PSI.get_multiplier_value(::TieBreakScaleParameter, ::PSY.Component, ::PSI.AbstractDeviceFormulation) = 1.0
 
 
 # Whether `device` is left out of the build by the `"filter_function"` of its device model.
@@ -223,7 +227,7 @@ function PSI.construct_service!(
         label = _tie_break_label(region, decremental)
         pair = 0
         for group in tie_groups(bands)
-            foreach(i -> _add_tie_break_parameter!(container, bands[i].type, sys, decremental, bands[i].band), group)
+            foreach(i -> _add_tie_break_parameter!(container, devices_template, bands[i].type, sys, decremental, bands[i].band), group)
             for i in 1:(length(group) - 1), j in (i + 1):length(group)
                 a, b = bands[group[i]], bands[group[j]]
                 a.name == b.name && continue

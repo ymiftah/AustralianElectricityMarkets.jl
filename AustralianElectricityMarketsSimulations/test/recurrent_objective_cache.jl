@@ -139,7 +139,11 @@ end
     for i in 1:60
         start = TOY_START + (i - 1) * TOY_RESOLUTION
         energy = read_energy(start)
-        forecast = AEMS._forecast_window_values(model, device, curve_name, start)
+        forecast = PSI.get_time_series_values!(
+            PSI.get_default_time_series_type(PSI.get_optimization_container(model)), model, device, curve_name, start,
+            length(PSI.get_time_steps(PSI.get_optimization_container(model)));
+            interval = PSI.get_interval(PSI.get_settings(model)), ignore_scaling_factors = true,
+        )
         @test PSY.get_y_coords(only(energy)) == [Float64(i)]
         @test PSY.get_y_coords(only(forecast)) == [Float64(i)]
         if i in (1, 24, 25, 48, 49, 60)
