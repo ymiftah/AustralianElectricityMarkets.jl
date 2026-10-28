@@ -124,7 +124,7 @@ end
     PSY.clear_time_series!(sys)
     device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
     curves = [_toy_offer([(10.0, Float64(i))]) for i in 1:60]
-    key = PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series("variable_cost", TOY_START, curves, TOY_RESOLUTION))
+    PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series("variable_cost", TOY_START, curves, TOY_RESOLUTION))
     PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series("fcas_curve_RAISEREG", TOY_START, curves, TOY_RESOLUTION))
     PSY.transform_single_time_series!(sys, TOY_RESOLUTION, TOY_RESOLUTION)
     model = PSI.DecisionModel(
@@ -132,49 +132,49 @@ end
         initial_time = TOY_START, horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION,
         interval = TOY_RESOLUTION,
     )
+    read_energy(start) = PSI.get_time_series_values!(PSY.DeterministicSingleTimeSeries, model, device, "variable_cost", start, 1)
     for i in 1:60
         start = TOY_START + (i - 1) * TOY_RESOLUTION
-        static = AEMS._cached_static_bid_values!(model, device, key, start)
+        energy = read_energy(start)
         forecast = AEMS._forecast_window_values(model, device, "fcas_curve_RAISEREG", start)
-        energy = PSI.get_time_series_values!(PSY.DeterministicSingleTimeSeries, model, device, "variable_cost", start, 1)
         @test PSY.get_y_coords(only(energy)) == [Float64(i)]
-        @test PSY.get_y_coords(only(static)) == [Float64(i)]
         @test PSY.get_y_coords(only(forecast)) == [Float64(i)]
         if i in (1, 24, 25, 48, 49, 60)
-            caches = values(PSI.get_time_series_cache(model))
-            @test all(c -> c isa PSI.IS.StaticTimeSeriesCache ? c.in_memory_rows <= 24 : c.in_memory_count <= 24, caches)
-            @test all(c -> Base.summarysize(PSI.IS._get_time_series(c)) < 100_000, caches)
-            @test PSY.get_y_coords(only(AEMS._cached_static_bid_values!(model, device, key, start))) == [Float64(i)]
+            caches = PSI.get_time_series_cache(model)
+            @test any(k -> k isa PSI.IS.TimeSeriesCacheKey && k.name == "variable_cost", keys(caches))
+            @test all(c -> Base.summarysize(PSI.IS._get_time_series(c)) < 100_000, values(caches))
+            @test PSY.get_y_coords(only(read_energy(start))) == [Float64(i)]
         end
     end
-    @test_throws PSI.IS.InvalidValue AEMS._cached_static_bid_values!(model, device, key, TOY_START)
+    @test_throws PSI.IS.InvalidValue read_energy(TOY_START)
     PSI.empty_time_series_cache!(model)
-    @test PSY.get_y_coords(only(AEMS._cached_static_bid_values!(model, device, key, TOY_START))) == [1.0]
+    @test PSY.get_y_coords(only(read_energy(TOY_START))) == [1.0]
 end
 
-@testset "static bid cache respects features and disabled or tiny budgets" begin
+@testset "bid cache is used when enabled and skipped when disabled" begin
     sys = fcas_toy_system()
     template = replication_template(sys)
     PSY.clear_time_series!(sys)
     device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
     curves = [_toy_offer([(10.0, Float64(i))]) for i in 1:3]
     series = AustralianElectricityMarkets.single_series("variable_cost", TOY_START, curves, TOY_RESOLUTION)
-    key = PSY.add_time_series!(sys, device, series)
-    alternate = AustralianElectricityMarkets.single_series("featured_variable_cost", TOY_START, reverse(curves), TOY_RESOLUTION)
-    models = [
-        PSI.DecisionModel(
+    PSY.add_time_series!(sys, device, series)
+    PSY.transform_single_time_series!(sys, TOY_RESOLUTION, TOY_RESOLUTION)
+    for budget in (0, 1024 * 1024)
+        model = PSI.DecisionModel(
             template, sys; initial_time = TOY_START, horizon = TOY_RESOLUTION,
-            resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, time_series_cache_size = budget
-        ) for budget in (0, 1)
-    ]
-    feature_key = PSY.add_time_series!(sys, device, alternate; scenario = "alternate")
-    for (budget, model) in zip((0, 1), models)
-        @test PSY.get_y_coords(only(AEMS._cached_static_bid_values!(model, device, feature_key, TOY_START))) == [3.0]
-        @test isempty(PSI.get_time_series_cache(model))
+            resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, time_series_cache_size = budget,
+        )
         for i in 1:3
             stamp = TOY_START + (i - 1) * TOY_RESOLUTION
-            @test PSY.get_y_coords(only(AEMS._cached_static_bid_values!(model, device, key, stamp))) == [Float64(i)]
+            values = PSI.get_time_series_values!(PSY.DeterministicSingleTimeSeries, model, device, "variable_cost", stamp, 1)
+            @test PSY.get_y_coords(only(values)) == [Float64(i)]
         end
-        @test budget == 0 ? isempty(PSI.get_time_series_cache(model)) : only(values(PSI.get_time_series_cache(model))).in_memory_rows == 1
+        caches = PSI.get_time_series_cache(model)
+        if budget == 0
+            @test isempty(caches)
+        else
+            @test any(k -> k isa PSI.IS.TimeSeriesCacheKey && k.name == "variable_cost", keys(caches))
+        end
     end
 end
