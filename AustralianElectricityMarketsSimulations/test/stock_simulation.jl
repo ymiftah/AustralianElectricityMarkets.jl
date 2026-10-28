@@ -856,15 +856,6 @@ end
         slack = PSI.get_variable(container, V(), PSY.AreaInterchange, meta)
         @test PSI.JuMP.coefficient(objective, slack[PSY.get_name(ic), 1]) ≈ factor * 17500 * 100 / 12
     end
-    # Exercise the same repricing function at the next financial year's first dispatch interval.
-    PSI.cost_function_unsynch(container)
-    V = AEMS.MNSPRampUpSlack
-    key = PSI.ParameterKey(AEMS.MarketPriceCapPenaltyParameter, PSY.AreaInterchange, "MNSPRampUpSlack")
-    caps = PSI.get_parameter_array(container, key)
-    multiplier = PSI.get_parameter_multiplier_array(container, key)
-    slack = PSI.get_variable(container, V(), PSY.AreaInterchange)
-    AEMS._price_mpc_penalty!(container, caps, multiplier, slack, DateTime(2025, 7, 1, 0, 5))
-    @test caps[PSY.get_name(ic), 1] == 20300.0
-    expression = PSI.get_objective_expression(PSI.get_objective_expression(container))
-    @test PSI.JuMP.coefficient(expression, slack[PSY.get_name(ic), 1]) ≈ 1155 * 20300 * 100 / 12
+    # The Market Price Cap is fixed per simulation: a range across 1 July is refused before build.
+    @test_throws ArgumentError AEMS.check_single_financial_year(DateTime(2025, 6, 30, 23, 55):Minute(5):DateTime(2025, 7, 1, 0, 5))
 end

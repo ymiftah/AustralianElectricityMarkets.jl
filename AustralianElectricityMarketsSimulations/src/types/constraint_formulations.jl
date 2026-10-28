@@ -260,24 +260,12 @@ struct GenericConstraintSlackDown <: PSI.VariableType end
 """
     GenericConstraintSlackCostParameter
 
-Objective-function parameter pricing a [`GenericConstraint`](@ref)'s elastic slacks: its value is
-the constraint's `"invoked"` mask (`1.0`/`0.0`) per interval and its multiplier the violation
-penalty, `GENERICCONSTRAINTWEIGHT` times the Market Price Cap per MW of one interval, so a
-non-invoked interval's slack costs nothing.
+Time-series cost parameter pricing a [`GenericConstraint`](@ref)'s elastic slacks: its value is
+the constraint's `"invoked"` mask (`1.0`/`0.0`) per interval, read at each simulation step. Each
+slack's cost target scales the mask by the system base power, the interval coefficient of
+`GENERICCONSTRAINTWEIGHT` and the Market Price Cap, so a non-invoked interval's slack costs nothing.
 """
-struct GenericConstraintSlackCostParameter <: PSI.ObjectiveFunctionParameter end
-
-
-"""
-    MarketPriceCapPenaltyParameter
-
-Objective-function parameter pricing one penalty slack container at its CVP factor times the
-Market Price Cap: its value is each interval's cap and its multiplier the CVP factor per MW of one
-interval. Keyed by the slack's component type, with a meta naming the slack variable type and meta.
-Re-priced at each simulation step, so a model built once follows the cap across a financial year
-boundary.
-"""
-struct MarketPriceCapPenaltyParameter <: PSI.ObjectiveFunctionParameter end
+struct GenericConstraintSlackCostParameter <: PSI.TimeSeriesCostParameter end
 
 
 """

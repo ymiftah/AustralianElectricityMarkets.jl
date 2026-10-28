@@ -261,3 +261,11 @@ function PSI._unwrap_for_param(::FCASBandPriceParameter, curve::IS.PiecewiseStep
     length(prices) <= n || throw(ArgumentError("FCAS offer has $(length(prices)) bands, more than the band axis' $n."))
     return vcat(prices, zeros(n - length(prices)))
 end
+
+# An offer curve's band prices in $/MWh, padded with zero prices to the band axis.
+function PSI._unwrap_for_param(::MNSPBandPriceParameter, curve::IS.PiecewiseStepData, expected_axs)
+    prices = PSY.get_y_coords(curve)
+    n = length(only(expected_axs))
+    length(prices) <= n || throw(ArgumentError("MNSP offer has $(length(prices)) bands, more than the band axis' $n."))
+    return vcat(prices, zeros(n - length(prices)))
+end

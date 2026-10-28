@@ -121,9 +121,25 @@ end
     @test_throws ArgumentError check_dispatch_envelope(invalid, template, TOY_START, 2)
 end
 
-@testset "penalty costs follow each interval's Market Price Cap across 1 July" begin
-    # The interval ending 00:00 on 1 July is the 2024-25 cap (17,500), the next the 2025-26 cap (20,300).
+@testset "a simulation across 1 July is refused, and each side of the boundary prices at its own Market Price Cap" begin
     start = DateTime(2025, 7, 1)
+    steps = start:TOY_RESOLUTION:(start + TOY_RESOLUTION)
+    optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
+    sys = energy_limit_system(; max_avail = 40.0, start)
+    @test_throws ArgumentError run_replication(sys, steps; optimizer)
+    # The max-availability slack of TOY_CHEAP: 370 CVP x Market Price Cap x 100 MW base x 5 minutes.
+    for (t, expected) in ((steps[1], 370.0 * 17_500.0 * 100.0 / 12), (steps[2], 370.0 * 20_300.0 * 100.0 / 12))
+        model = AEMS._replication_decision_model(replication_template(sys), sys, t; optimizer)
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        container = PSI.get_optimization_container(model)
+        objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
+        slack = PSI.get_variable(container, AEMS.EnergyMaxAvailSlack(), PSY.ThermalStandard)
+        @test PSI.JuMP.coefficient(objective, slack[TOY_CHEAP, 1]) ≈ expected
+    end
+end
+
+@testset "a range entirely after 1 July replays as standalone single-interval builds" begin
+    start = DateTime(2025, 7, 1, 0, 5)
     steps = start:TOY_RESOLUTION:(start + TOY_RESOLUTION)
     optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
     sys = energy_limit_system(; max_avail = 40.0, start)
@@ -135,5 +151,4 @@ end
         @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
         @test objectives[i] ≈ only(PSI.read_optimizer_stats(PSI.OptimizationProblemResults(model)).objective_value) rtol = 1.0e-9
     end
-    @test objectives[2] > objectives[1]
 end

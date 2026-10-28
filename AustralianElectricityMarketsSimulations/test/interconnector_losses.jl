@@ -505,25 +505,31 @@ function _mnsp_operating_series!(sys; initial = 0.0, up = 1000.0, down = 1000.0,
 end
 
 """
-    _attach_mnsp_offers!(sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0))
+    _attach_mnsp_offers!(sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0), forward_after = nothing)
 
-Gives `IC1` (area `"1"` to `"2"`) an MNSP offer per link, constant over the loads' series, and
-re-transforms the system's series. `forward` and `reverse` are `(max_avail_mw, [(band_mw, price), ...])`.
+Gives `IC1` (area `"1"` to `"2"`) an MNSP offer per link and re-transforms the system's series.
+`forward` and `reverse` are `(max_avail_mw, [(band_mw, price), ...])`, constant over the loads' series
+unless `forward_after` (the same bands list) replaces the forward offer from the second timestamp on.
 """
 function _attach_mnsp_offers!(
-        sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0),
+        sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0), forward_after = nothing,
     )
     ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
     load = first(PSY.get_components(PSY.PowerLoad, sys))
     grid = collect(timestamp(PSY.get_data(PSY.get_time_series(PSY.SingleTimeSeries, load, "max_active_power"))))
+    offer_curve(bands) = PSY.PiecewiseStepData([0.0; cumsum(Float64[b[1] for b in bands])], Float64[b[2] for b in bands])
     for (dir, (max_avail, bands), tlfs) in (
             ("forward", forward, forward_tlfs), ("reverse", reverse, reverse_tlfs),
         )
-        x = [0.0; cumsum(Float64[b[1] for b in bands])]
-        curve = PSY.PiecewiseStepData(x, Float64[b[2] for b in bands])
-        for (name, value) in (("mnsp_$(dir)_offer", curve), ("mnsp_$(dir)_max_avail", Float64(max_avail)))
+        curve = offer_curve(bands)
+        offers = if dir == "forward" && !isnothing(forward_after)
+            [i == 1 ? curve : offer_curve(forward_after) for i in eachindex(grid)]
+        else
+            fill(curve, length(grid))
+        end
+        for (name, value) in (("mnsp_$(dir)_offer", offers), ("mnsp_$(dir)_max_avail", fill(Float64(max_avail), length(grid))))
             PSY.add_time_series!(
-                sys, ic, PSY.SingleTimeSeries(; name = name, data = TimeArray(grid, fill(value, length(grid)))),
+                sys, ic, PSY.SingleTimeSeries(; name = name, data = TimeArray(grid, value)),
             )
         end
         PSY.get_ext(ic)["mnsp_$dir"] = Dict{String, Any}("from_region_tlf" => tlfs[1], "to_region_tlf" => tlfs[2])
@@ -587,27 +593,46 @@ end
     @test_throws r"incomplete directional offer inputs" AEMS._check_mnsp_offers(PSY.get_component(PSY.AreaInterchange, partial, "IC1"))
 end
 
-@testset "the MNSP band price update re-reads the offer window and re-prices the bands" begin
+@testset "MNSP band prices are native time-series cost targets" begin
     sys = _loss_test_system(; breakpoints = [-1000.0, 1000.0])
-    _attach_mnsp_offers!(sys; forward = (500.0, [(200.0, 10.0), (300.0, 25.0)]), reverse = (500.0, [(500.0, 10.0)]))
+    _attach_mnsp_offers!(
+        sys; forward = (500.0, [(200.0, 10.0), (300.0, 25.0)]), reverse = (500.0, [(500.0, 10.0)]),
+        forward_after = [(200.0, 40.0), (300.0, 5.0)],
+    )
     model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
+    base_power = PSI.get_base_power(container)
+    hours = AEMS.interval_hours(PSI.get_resolution(container))
     key = PSI.ParameterKey(AEMS.MNSPBandPriceParameter, PSY.AreaInterchange, "forward")
     prices = PSI.get_parameter_array(container, key)
+    price_column() = PSI.get_parameter_column_refs(PSI.get_parameter(container, key), "IC1")
     multiplier = PSI.get_parameter_multiplier_array(container, key)
-    device = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
-    @test [prices["IC1", b, 1] for b in axes(prices)[2][1:2]] == [10.0, 25.0]
-
-    prices.data .= -1.0
-    PSI.reset_variant_terms(PSI.get_objective_expression(container))
-    AEMS._set_mnsp_band_prices!(container, prices, multiplier, device, "forward", PSI.get_initial_time(container) + Hour(1))
     labels = axes(prices)[2]
-    @test [prices["IC1", b, 1] for b in labels[1:2]] == [10.0, 25.0]
-    @test all(==(0.0), [prices["IC1", b, 1] for b in labels[3:end]])
     bands = PSI.get_variable(container, AEMS.MNSPLinkBandVariable(), PSY.AreaInterchange, "forward")
-    variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
-    @test PSI.JuMP.coefficient(variant, bands["IC1", labels[2], 1]) == 25.0 * multiplier["IC1", labels[2], 1]
+    @test all(==(1.0), multiplier)
+    @test [price_column()[b, 1] for b in labels[1:2]] == [10.0, 25.0]
+    @test [price_column()[b, 2] for b in labels[1:2]] == [40.0, 5.0]
+    @test all(==(0.0), [price_column()[b, t] for b in labels[3:end], t in 1:2])
+
+    # Each band's cost is price * (base power * interval hours), the coefficient of its band variable.
+    function check_band_costs(expected)
+        variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
+        for t in 1:2, (b, label) in enumerate(labels)
+            price = b <= size(expected, 1) ? expected[b, t] : 0.0
+            @test PSI.JuMP.coefficient(variant, bands["IC1", label, t]) == price * (base_power * hours)
+        end
+    end
+    check_band_costs([10.0 40.0; 25.0 5.0])
+
+    # After one execution the window starts at the second timestamp; the update re-applies the costs.
+    PSI.set_execution_count!(model, 1)
+    PSI.cost_function_unsynch(container)
+    PSI.reset_variant_terms(PSI.get_objective_expression(container))
+    PSI.update_container_parameter_values!(container, model, key, PSI.DatasetContainer{PSI.InMemoryDataset}())
+    PSI.set_execution_count!(model, 0)
+    @test [price_column()[b, t] for b in labels[1:2], t in 1:2] == [40.0 40.0; 5.0 5.0]
+    check_band_costs([40.0 40.0; 5.0 5.0])
 end
 
 @testset "MNSP link offers bound and price the interconnector flow" begin

@@ -1,38 +1,92 @@
-# Run-local measurement wrappers delegate to the original pinned PSI methods.
-function _record_interval_measurement(model, phase, stat; solve_s = NaN, pricing_s = NaN, aux_s = NaN)
-    folder = PSI.get_output_dir(model)
-    row = (;
-        timestamp_utc = string(now(UTC)), interval_aest = string(PSI.get_current_time(model)),
-        execution_count = PSI.get_execution_count(model), phase,
-        wall_s = stat.time, allocated_bytes = stat.bytes, gc_s = stat.gctime,
-        compilation_s = hasproperty(stat, :compile_time) ? stat.compile_time : NaN,
-        timed_solve_s = solve_s, pricing_s, auxiliary_s = aux_s,
+# Per-step interval timings from PSI's native recorder events and optimizer statistics. Read
+# once `execute!` has returned; no PSI method is wrapped.
+
+const _TIMING_COLUMNS = (
+    "timestamp_utc", "interval_aest", "execution_count", "phase", "wall_s", "allocated_bytes",
+    "gc_s", "compilation_s", "timed_solve_s", "pricing_s", "auxiliary_s", "schema_version",
+)
+const _TIMING_SCHEMA_VERSION = 2
+
+_timing_seconds(from::DateTime, to::DateTime) = Dates.value(to - from) / 1000
+_timing_nan(value) = ismissing(value) ? NaN : Float64(value)
+
+# Each step has one `ProblemExecutionEvent` start and done. Parameter updates logged for the
+# step's simulation time within that window end the `parameter_update` span; the rest of the
+# window is `solve_and_write`.
+function _interval_timing_rows(simulation, model, results)
+    folder = PSI.get_simulation_dir(simulation)
+    name = string(PSI.get_name(model))
+    executions = filter(
+        e -> string(e.model_name) == name,
+        PSI.list_simulation_events(PSI.ProblemExecutionEvent, folder),
     )
-    write_csv(joinpath(folder, "interval_timings.csv"), keys(row), [values(row)]; append = true)
-    return
+    starts = sort(filter(e -> e.status == "start", executions); by = e -> e.step)
+    dones = Dict(e.step => e for e in executions if e.status == "done")
+    stats = PSI.read_optimizer_stats(results)
+    nrow(stats) == length(starts) ||
+        error("Model $name: $(nrow(stats)) optimizer stat rows for $(length(starts)) executions.")
+
+    updates = Dict{DateTime, Vector{DateTime}}()
+    updates_events = Iterators.flatten(
+        (
+            PSI.list_simulation_events(PSI.ParameterUpdateEvent, folder),
+            PSI.list_simulation_events(PSI.InitialConditionUpdateEvent, folder),
+        )
+    )
+    for event in updates_events
+        string(event.model_name) == name || continue
+        push!(get!(Vector{DateTime}, updates, event.simulation_time), PSI.IS.get_timestamp(event))
+    end
+
+    offset = Dates.now() - Dates.now(Dates.UTC)
+    rows = NamedTuple[]
+    for (i, start) in enumerate(starts)
+        done = get(dones, start.step, nothing)
+        isnothing(done) && error("Model $name: step $(start.step) has no done event.")
+        started, finished = PSI.IS.get_timestamp(start), PSI.IS.get_timestamp(done)
+        in_window = filter(t -> started <= t <= finished, get(updates, start.simulation_time, DateTime[]))
+        updated = isempty(in_window) ? started : maximum(in_window)
+        interval = string(start.simulation_time)
+        count = start.step - 1
+        stat = stats[i, :]
+        push!(
+            rows, (;
+                timestamp_utc = string(updated - offset), interval_aest = interval, execution_count = count,
+                phase = "parameter_update", wall_s = _timing_seconds(started, updated),
+                allocated_bytes = NaN, gc_s = NaN, compilation_s = NaN,
+                timed_solve_s = NaN, pricing_s = NaN, auxiliary_s = NaN,
+                schema_version = _TIMING_SCHEMA_VERSION,
+            ),
+        )
+        push!(
+            rows, (;
+                timestamp_utc = string(finished - offset), interval_aest = interval, execution_count = count,
+                phase = "solve_and_write", wall_s = _timing_seconds(updated, finished),
+                allocated_bytes = _timing_nan(stat.solve_bytes_alloc), gc_s = _timing_nan(stat.sec_in_gc),
+                compilation_s = NaN, timed_solve_s = stat.timed_solve_time,
+                pricing_s = stat.timed_calculate_dual_variables, auxiliary_s = stat.timed_calculate_aux_variables,
+                schema_version = _TIMING_SCHEMA_VERSION,
+            ),
+        )
+    end
+    return rows
 end
 
-function PSI.update_model!(model::PSI.DecisionModel, sim::PSI.Simulation)
-    stat = @timed invoke(PSI.update_model!, Tuple{PSI.OperationModel, PSI.Simulation}, model, sim)
-    _record_interval_measurement(model, "parameter_update", stat)
-    return stat.value
-end
+"""
+    _write_interval_timings!(simulation, model, results) -> String
 
-function PSI.solve_impl!(model::PSI.DecisionModel)
-    stat = @timed invoke(PSI.solve_impl!, Tuple{PSI.OperationModel}, model)
-    stats = PSI.get_optimizer_stats(model)
-    _record_interval_measurement(
-        model, "solve_impl", stat; solve_s = stats.timed_solve_time,
-        pricing_s = stats.timed_calculate_dual_variables, aux_s = stats.timed_calculate_aux_variables,
-    )
-    return stat.value
-end
-
-function PSI.write_results!(store, model::PSI.DecisionModel, index::Union{DateTime, Int}, timestamp::DateTime; exports = nothing)
-    stat = @timed invoke(
-        PSI.write_results!, Tuple{Any, PSI.OperationModel, Union{DateTime, Int}, DateTime},
-        store, model, index, timestamp; exports,
-    )
-    _record_interval_measurement(model, "result_write", stat)
-    return stat.value
+Writes `interval_timings.csv` into the model's output directory, one `parameter_update` and one
+`solve_and_write` row per executed step, and returns its path. Fields the recorder does not
+provide are written as `NaN`.
+"""
+function _write_interval_timings!(simulation, model, results)
+    path = joinpath(PSI.get_output_dir(model), "interval_timings.csv")
+    rows = _interval_timing_rows(simulation, model, results)
+    open(path, "w") do io
+        println(io, join(_TIMING_COLUMNS, ','))
+        for row in rows
+            println(io, join((row[Symbol(column)] for column in _TIMING_COLUMNS), ','))
+        end
+    end
+    return path
 end

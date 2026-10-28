@@ -225,10 +225,17 @@ def native_snapshots(folder, warnings):
     return snapshots, state_total
 
 
+# Schema 1 wrote solve_impl and result_write rows; schema 2 writes one solve_and_write row per step.
+SOLVER_PHASES = ("solve_impl", "solve_and_write")
+WRITE_PHASES = ("result_write", "solve_and_write")
+MEASURED_PHASES = ("parameter_update", "solve_impl", "result_write", "solve_and_write")
+
+
 def day_timing(folder, totals, cache_windows, warnings):
     series = defaultdict(list)
     calls = defaultdict(list)
     seen = set()
+    written = 0
     for path in sorted(folder.rglob("interval_timings.csv")):
         first_update = True
         for row in read_csv(path, warnings):
@@ -243,9 +250,10 @@ def day_timing(folder, totals, cache_windows, warnings):
                 continue
             series[phase].append(wall)
             calls[phase].append({"interval_aest": row.get("interval_aest"), "wall_s": wall})
+            written += phase in WRITE_PHASES
             for field in ("gc_s", "compilation_s", "allocated_bytes"):
                 series[field].append(number(row.get(field)))
-            if phase == "solve_impl":
+            if phase in SOLVER_PHASES:
                 children = []
                 for field, label in (("timed_solve_s", "mip"), ("pricing_s", "pricing"), ("auxiliary_s", "auxiliary")):
                     value = number(row.get(field))
@@ -262,7 +270,7 @@ def day_timing(folder, totals, cache_windows, warnings):
                 first_update = False
     native, state = native_snapshots(folder, warnings)
     execute = number(totals.get("execute_s"))
-    measured = math.fsum(value for phase in ("parameter_update", "solve_impl", "result_write") for value in series[phase])
+    measured = math.fsum(value for phase in MEASURED_PHASES for value in series[phase])
     result = {
         "series": {key: distribution(values) for key, values in sorted(series.items())
                    if key not in ("gc_s", "compilation_s", "allocated_bytes")},
@@ -273,7 +281,7 @@ def day_timing(folder, totals, cache_windows, warnings):
         "execution_unattributed_s": None if execute is None else execute - measured - (state or 0),
         "slowest_calls": {phase: sorted(rows, key=lambda row: row["wall_s"], reverse=True)[:10]
                           for phase, rows in calls.items()},
-        "written_intervals": len(series["result_write"]),
+        "written_intervals": written,
     }
     if result["execution_unattributed_s"] is not None and result["execution_unattributed_s"] < -.1:
         warnings.append(f"Negative execution residual; timer boundaries require review: {folder}")
@@ -361,7 +369,7 @@ def analyze(runs, cache_windows=24):
     result["pooled_completed_days"] = len(selected_days)
     result["unique_written_intervals"] = len({(item["day"], row["interval_aest"])
         for item in result["days"] for path in (Path(item["run"]) / item["day"]).rglob("interval_timings.csv")
-        for row in read_csv(path, warnings) if row.get("phase") == "result_write" and row.get("interval_aest")})
+        for row in read_csv(path, warnings) if row.get("phase") in WRITE_PHASES and row.get("interval_aest")})
     return result
 
 
@@ -393,7 +401,7 @@ def save_report(result, output):
         timing = day["timing"]
         runtime.append({**context, **day["totals"], "written_intervals": timing["written_intervals"],
                         **{phase + "_s": timing["series"].get(phase, {}).get("total_s")
-                           for phase in ("parameter_update", "mip", "pricing", "auxiliary", "result_write")},
+                           for phase in ("parameter_update", "mip", "pricing", "auxiliary", "result_write", "solve_and_write")},
                         **{key: timing[key] for key in ("native_state_s", "execution_unattributed_s",
                            "outside_build_execute_compare_s", "instrumented_gc_s", "instrumented_compilation_s",
                            "instrumented_allocated_bytes")}})
@@ -426,15 +434,15 @@ def save_report(result, output):
              f"Completed unique trading days: {result['unique_completed_days']}; "
              f"unique written interval identities: {result['unique_written_intervals']}.", "",
              "## Runtime", "", "Seconds. Partial days have timing prefixes only. Repeated days remain separate worker attempts.", "",
-             markdown_table(["Run", "Day", "Status", "Wall", "Build system/model", "Updates", "MIP", "Pricing", "Writes"],
+             markdown_table(["Run", "Day", "Status", "Wall", "Build system/model", "Updates", "MIP", "Pricing", "Writes", "Solve and write"],
                 [[Path(row["run"]).name, row["day"], row["status"], row.get("elapsed_s"),
                   (row.get("system_build_s") or 0) + (row.get("model_build_s") or 0) if row.get("elapsed_s") else None,
-                  row["parameter_update_s"], row["mip_s"], row["pricing_s"], row["result_write_s"]] for row in runtime]),
+                  row["parameter_update_s"], row["mip_s"], row["pricing_s"], row["result_write_s"], row["solve_and_write_s"]] for row in runtime]),
              "", "## Timing distributions", "", "Seconds per instrumented call; nested phases are shown separately.", "",
              markdown_table(["Day", "Phase/cohort", "n", "Total", "p5", "p25", "p50", "p75", "p90", "p95", "p99", "Max"],
                 [[row["day"], row["phase"], *(row.get(key) for key in
                     ("n", "total_s", "p5", "p25", "p50", "p75", "p90", "p95", "p99", "max"))]
-                 for row in timings if row["phase"] not in ("solve_impl", "parameter_update")]),
+                 for row in timings if row["phase"] not in ("solve_impl", "solve_and_write", "parameter_update")]),
              "", "## Completed-day NEMDE absolute errors", "",
              markdown_table(["Day", "Metric", "Unit", "n", "MAE", "p5", "p50", "p95", "p99", "Max"],
                 [[row["day"], row["metric"], row["unit"], row.get("n"), row.get("mae"),

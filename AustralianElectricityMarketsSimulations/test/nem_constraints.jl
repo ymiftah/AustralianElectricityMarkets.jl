@@ -349,30 +349,7 @@ end
     gc = _gc(sys, "N_IC1_LIMIT")
     name = PSY.get_name(gc)
     param = PSI.get_parameter(container, AEMS.GenericConstraintSlackCostParameter(), GenericConstraint, name)
-    values = PSI.get_parameter_array(param)
-    penalties = PSI.get_multiplier_array(param)
-    @test [values[name, t] for t in 1:2] == [0.0, 1.0]
-    @test penalties[name, 1] == penalties[name, 2] > 0.0
-
-    # A simulation step re-reads the mask for its own window and re-prices the slacks.
-    initial_time = PSI.get_initial_time(container)
-    values[name, 1] = 5.0
-    values[name, 2] = 5.0
-    PSI.reset_variant_terms(PSI.get_objective_expression(container))
-    service_model = only(
-        m for m in Base.values(PSI.get_service_models(PSI.get_template(model))) if PSI.get_service_name(m) == name
-    )
-    AEMS._price_gc_slacks!(container, gc, service_model, values, penalties, initial_time)
-    @test [values[name, t] for t in 1:2] == [0.0, 1.0]
-    # The rebuilt cost: no term at the non-invoked step, the penalty per cap times that step's Market Price Cap at the invoked one.
-    mpc = AEMS._container_market_price_cap(container, initial_time + PSI.get_resolution(container))
-    variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
-    for slack_type in (AEMS.GenericConstraintSlackUp, AEMS.GenericConstraintSlackDown)
-        PSI.has_container_key(container, slack_type, GenericConstraint, name) || continue
-        slack = PSI.get_variable(container, slack_type(), GenericConstraint, name)
-        @test PSI.JuMP.coefficient(variant, slack[name, 1]) == 0.0
-        @test PSI.JuMP.coefficient(variant, slack[name, 2]) ≈ penalties[name, 2] * mpc
-    end
+    @test PSI.get_parameter_column_refs(param, name)[1:2] == [0.0, 1.0]
 
     # A recurrent build masks non-invoked intervals with zero-cost slacks, so it needs use_slacks.
     bare = _decision_model(_nem_service_template(; use_slacks = false), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
@@ -387,6 +364,51 @@ end
     end
     @test err isa ArgumentError
     @test occursin("use_slacks = true", err.msg)
+end
+
+@testset "generic-constraint slack costs equal invoked x weight x base x interval coefficient x MPC at build and after an update" begin
+    n_raw = let p = _native_forecast_params(augmented_pscb_system())
+        p.count + Int(p.horizon / p.interval) - 1
+    end
+    invoked_vec = vcat([0.0], fill(1.0, n_raw - 1))
+    sys = _prepared_system(Dict("N_IC1_LIMIT" => 100.0), Dict("N_IC1_LIMIT" => invoked_vec))
+    _prune_unbuildable_constraints!(sys)
+    model = _decision_model(_nem_service_template(; use_slacks = true), sys; mpc = 20_300.0, optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    gc = _gc(sys, "N_IC1_LIMIT")
+    name = PSY.get_name(gc)
+    @test AustralianElectricityMarkets.constraint_cvp_factor(gc) == 1.0
+    @test PSI.get_base_power(container) == 100.0
+    @test PSI.get_resolution(container) == Hour(1)
+    key = PSI.ParameterKey(AEMS.GenericConstraintSlackCostParameter, GenericConstraint, name)
+    invoked = () -> PSI.get_parameter_column_refs(PSI.get_parameter(container, key), name)
+    @test invoked()[1:2] == [0.0, 1.0]
+
+    # Each slack's cost target: invoked x weight 1.0 x 100 MW base x 20,300 $/MWh x one hour.
+    function check_slack_costs()
+        variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
+        checked = 0
+        for slack_type in (AEMS.GenericConstraintSlackUp, AEMS.GenericConstraintSlackDown)
+            PSI.has_container_key(container, slack_type, GenericConstraint, name) || continue
+            slack = PSI.get_variable(container, slack_type(), GenericConstraint, name)
+            for t in 1:2
+                checked += 1
+                @test PSI.JuMP.coefficient(variant, slack[name, t]) ≈ invoked()[t] * 1.0 * 20_300.0 * 100.0
+            end
+        end
+        @test checked > 0
+    end
+    check_slack_costs()
+
+    # A simulation step from the second interval re-reads the invoked series for its window and re-applies the costs.
+    PSI.set_execution_count!(model, 1)
+    PSI.cost_function_unsynch(container)
+    PSI.reset_variant_terms(PSI.get_objective_expression(container))
+    PSI.update_container_parameter_values!(container, model, key, PSI.DatasetContainer{PSI.InMemoryDataset}())
+    PSI.set_execution_count!(model, 0)
+    @test invoked()[1:2] == [1.0, 1.0]
+    check_slack_costs()
 end
 
 @testset "Buildable generic constraints: the default throws one aggregated ArgumentError, and allow_partial_coverage returns the subset" begin
@@ -511,6 +533,11 @@ end
     @test_throws r"No published Market Price Cap" AustralianElectricityMarkets._financial_year_mpc(DateTime(2027, 7, 1, 0, 5))
 end
 
+@testset "check_single_financial_year: a range within one financial year passes, one across 1 July is refused" begin
+    AEMS.check_single_financial_year(DateTime(2025, 6, 30, 23, 55):Minute(5):DateTime(2025, 7, 1))
+    @test_throws ArgumentError AEMS.check_single_financial_year(DateTime(2025, 7, 1):Minute(5):DateTime(2025, 7, 1, 0, 5))
+end
+
 @testset "area-balance slack Market Price Cap: unpublished year throws, settings entry overrides" begin
     # _prepared_system() is dated 2020, outside AustralianElectricityMarkets.MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.
     pruned_system() = (sys = _prepared_system(); _prune_unbuildable_constraints!(sys); sys)
@@ -530,6 +557,41 @@ end
     for var_type in (PSI.SystemBalanceSlackUp, PSI.SystemBalanceSlackDown)
         slack = PSI.get_variable(container, var_type(), PSY.Area)
         @test all(v -> objective_terms[v] ≈ expected, slack)
+    end
+end
+
+@testset "Market Price Cap penalties are invariant constants of the initial interval's cap, unchanged by a parameter update" begin
+    # 2026-01-06 falls in 2025-26, whose Market Price Cap is 20,300 $/MWh.
+    start = DateTime(2026, 1, 6)
+    sys = nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0)], 50.0; start = start)
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    set_nem_dispatch_models!(template, sys)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    model = PSI.DecisionModel(
+        template, sys; optimizer = HiGHS.Optimizer, horizon = 2 * TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = start,
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    # 150 CVP x 20,300 $/MWh x 100 MW base x 5 minutes.
+    expected = 150.0 * 20_300.0 * 100.0 / 12
+    slacks = [PSI.get_variable(container, v(), PSY.Area) for v in (PSI.SystemBalanceSlackUp, PSI.SystemBalanceSlackDown)]
+    objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
+    for slack in slacks, name in axes(slack)[1], t in axes(slack)[2]
+        @test PSI.JuMP.coefficient(objective, slack[name, t]) ≈ expected
+    end
+
+    # A parameter update rebuilds the variant terms and leaves the priced constants in the invariant objective.
+    PSI.cost_function_unsynch(container)
+    PSI.reset_variant_terms(PSI.get_objective_expression(container))
+    input = PSI.DatasetContainer{PSI.InMemoryDataset}()
+    for key in collect(Base.keys(PSI.get_parameters(model)))
+        PSI.update_container_parameter_values!(container, model, key, input)
+    end
+    objective_function = PSI.get_objective_expression(container)
+    for slack in slacks, name in axes(slack)[1], t in axes(slack)[2]
+        @test PSI.JuMP.coefficient(PSI.get_invariant_terms(objective_function), slack[name, t]) ≈ expected
+        @test PSI.JuMP.coefficient(PSI.get_variant_terms(objective_function), slack[name, t]) == 0.0
     end
 end
 

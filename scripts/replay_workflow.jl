@@ -12,6 +12,7 @@ const _REPLICATION_HORIZON = 2DISPATCH_INTERVAL
 const _SIMULATION_NAME = "replay_workflow"
 
 include("replay_preflight.jl")
+include("replay_timing.jl")
 
 
 # `start:5 min:stop`; throws unless `stop` is `start` plus a whole number of intervals.
@@ -96,6 +97,7 @@ function _replicate_chunk(
     run = run_replication(sys, steps; optimizer, parts, folder, simulation_name = _SIMULATION_NAME, cache_size_mib, on_phase)
     live = run.results
     simulation_build_s, execute_s = run.timings
+    _write_interval_timings!(run.simulation, run.model, live)
     isnothing(on_phase) || on_phase(:compare)
     t3 = time()
     report = replication_results(live, sys; parts)

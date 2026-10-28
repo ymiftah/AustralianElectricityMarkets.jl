@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted. The `ext` record and `PSY.Area` parameter mechanism is superseded by
-[0070](0070-per-slack-market-price-cap-parameters.md).
+Superseded by [0085](0085-build-time-market-price-cap.md). Its `ext` record and `PSY.Area` parameter
+mechanism had been superseded by [0070](0070-per-slack-market-price-cap-parameters.md).
 
 ## Context
 
