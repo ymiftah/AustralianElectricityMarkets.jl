@@ -144,9 +144,9 @@ end
 """
     _add_fcas_parameter!(container, param, model, sys, ts_name, meta)
 
-Adds `param`, keyed by `model`'s component type and `meta`, unless it exists: one row per available
-component of `model` carrying a `ts_name` forecast, the set PowerSimulations' time-series parameter
-update visits ([`_add_series_parameter!`](@ref)), on the axes of [`_fcas_parameter_axes`](@ref).
+Adds `param`, keyed by `model`'s component type and `meta`, unless it exists, through PowerSimulations'
+time-series parameter `add_parameters!` for the available components of `model` carrying a `ts_name`
+forecast, on the axes of [`_fcas_parameter_axes`](@ref).
 
 # Returns
 `nothing`.
@@ -157,11 +157,38 @@ function _add_fcas_parameter!(
     ) where {T <: PSI.TimeSeriesParameter, D <: PSY.Device}
     PSI.has_container_key(container, T, D, meta) && return
     ts_type = PSI.get_default_time_series_type(container)
-    devices = [d for d in PSI.get_available_components(model, sys) if PSY.has_time_series(d, ts_type, ts_name)]
+    devices = D[d for d in PSI.get_available_components(model, sys) if PSY.has_time_series(d, ts_type, ts_name)]
     isempty(devices) && return
-    param_container = _add_series_parameter!(container, param, D, devices, ts_name, meta; axes = _fcas_parameter_axes(param))
-    PSI.set_subsystem!(PSI.get_attributes(param_container), PSI.get_subsystem(model))
+    PSI.add_parameters!(container, T, devices, model; meta = meta, time_series_name = ts_name)
     return
+end
+
+
+# PowerSimulations adds the FCAS offer and ramping parameters on the axes of `_fcas_parameter_axes`, and
+# the band prices on the band axis. Every FCAS parameter is read at unit multiplier.
+function PSI.calc_additional_axes(
+        ::PSI.OptimizationContainer,
+        param::Union{FCASOfferLimitParameter, FCASBandWidthParameter, FCASRampingLimitParameter, FCASUpperSlopeParameter, FCASLowerSlopeParameter},
+        ::Union{Vector{D}, IS.FlattenIteratorWrapper{D}}, ::PSI.DeviceModel{D, W},
+    ) where {D <: PSY.Device, W <: PSI.AbstractDeviceFormulation}
+    return _fcas_parameter_axes(param)
+end
+
+function PSI.calc_additional_axes(
+        ::PSI.OptimizationContainer, ::FCASBandPriceParameter,
+        ::Union{Vector{D}, IS.FlattenIteratorWrapper{D}}, ::PSI.DeviceModel{D, W},
+    ) where {D <: PSY.Device, W <: PSI.AbstractDeviceFormulation}
+    return (_FCAS_BAND_LABELS,)
+end
+
+function PSI.get_multiplier_value(
+        ::Union{
+            FCASOfferLimitParameter, FCASBandWidthParameter, FCASRampingLimitParameter,
+            FCASUpperSlopeParameter, FCASLowerSlopeParameter, FCASBandPriceParameter,
+        },
+        ::PSY.StaticInjection, ::AbstractNEMDispatch,
+    )
+    return 1.0
 end
 
 
@@ -598,46 +625,6 @@ end
 
 
 """
-    _set_fcas_band_prices!(container, prices, multiplier, meta, offers, svc, start_time; source = container)
-
-Writes the band prices of each of `offers` (`(device, decremental)`) for the FCAS service `svc` from
-`start_time` through `source`, into the [`FCASBandPriceParameter`](@ref) array `prices` (`0.0` beyond the offered
-bands) and adds each band's cost, price times `multiplier` times its [`FCASOfferBandVariable`](@ref)
-of meta `meta`, to the variant objective.
-
-# Arguments
-- `container`, `prices`, `multiplier`: the optimization container and price/multiplier arrays.
-- `meta`, `offers`, `svc`: the offer-group key, device/direction pairs and FCAS service.
-- `start_time`: the first requested timestamp.
-- `source`: the model for cached recurrent reads, or the container for construction reads.
-
-# Returns
-`nothing`.
-"""
-function _set_fcas_band_prices!(
-        container::PSI.OptimizationContainer, prices, multiplier, meta::String, offers, svc::FCASService, start_time::DateTime; source = container,
-    )
-    bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, meta)
-    labels = axes(prices)[2]
-    for (device, decremental) in offers
-        dname = PSY.get_name(device)
-        name = fcas_offer_series_name(svc, decremental)
-        curves = _forecast_window_values(source, device, name, start_time)
-        for (t, curve) in enumerate(curves)
-            y = PSY.get_y_coords(curve)
-            for (b, label) in enumerate(labels)
-                prices[dname, label, t] = b <= length(y) ? y[b] : 0.0
-                PSI.add_to_objective_variant_expression!(
-                    container, prices[dname, label, t] * multiplier[dname, label, t] * bands[dname, label, t],
-                )
-            end
-        end
-    end
-    return
-end
-
-
-"""
     _add_fcas_band_variables!(container, group, svc)
 
 For an [`_fcas_offer_groups`](@ref) `group`, adds one [`FCASOfferBandVariable`](@ref) per offer,
@@ -697,96 +684,50 @@ end
 
 
 """
-    _add_fcas_band_costs!(container, group, svc)
+    _add_fcas_band_costs!(container, group, svc, devices_template)
 
-Prices the [`FCASOfferBandVariable`](@ref)s of an [`_fcas_offer_groups`](@ref) `group` through an
-[`FCASBandPriceParameter`](@ref) of meta `group.meta`. Prices are `\$/MW` per hour, so the price
-multiplier is the system base power times the interval length in hours.
+Prices the [`FCASOfferBandVariable`](@ref)s of an [`_fcas_offer_groups`](@ref) `group` through
+[`FCASBandPriceParameter`](@ref) time-series cost parameters: one per device type and side, of meta
+`"<group.meta>_gen"` or `"<group.meta>_load"`, read from the offers' `"fcas_offer_..."` series. Each
+band's cost target is its price times the system base power and the interval hours.
 
-# Returns
-`nothing`.
-"""
-function _add_fcas_band_costs!(container::PSI.OptimizationContainer, group, svc::FCASService)
-    names = [PSY.get_name(d) for (d, _) in group.offers]
-    labels = axes(PSI.get_variable(container, FCASOfferBandVariable(), FCASService, group.meta))[2]
-    price = PSI.add_param_container!(
-        container, FCASBandPriceParameter(), FCASService, (FCASOfferBandVariable,),
-        PSI.SOSStatusVariable.NO_VARIABLE, false, Float64, names, labels, PSI.get_time_steps(container); meta = group.meta,
-    )
-    prices, multiplier = PSI.get_parameter_array(price), PSI.get_multiplier_array(price)
-    fill!(multiplier, PSI.get_base_power(container) * interval_hours(PSI.get_resolution(container)))
-    _set_fcas_band_prices!(container, prices, multiplier, group.meta, group.offers, svc, PSI.get_initial_time(container))
-    return
-end
-
-
-"""
-    PSI.objective_function!(container, svc, model::PSI.ServiceModel{FCASService, FCASMarket})
-
-Prices every contributing device's FCAS offer bands ([`_add_fcas_band_costs!`](@ref)): one offer
-per single-sided device, and one per side for a `PSY.Storage` device bidding both sides.
+# Arguments
+- `container`: the optimization container of the model being built.
+- `group`: the offer group.
+- `svc`: the `FCASService` of the group.
+- `devices_template`: the template's device models, supplying the model of each device type.
 
 # Returns
 `nothing`.
 """
-function PSI.objective_function!(
-        container::PSI.OptimizationContainer,
-        svc::FCASService,
-        model::PSI.ServiceModel{FCASService, FCASMarket},
-    )
-    devices = PSI.get_contributing_devices(model)
-    isempty(devices) && return
-    for group in _fcas_offer_groups(PSY.get_name(svc), devices, get_bid_type(svc))
-        _add_fcas_band_costs!(container, group, svc)
-    end
-    return
-end
-
-
-# The `FCASService` and side (`nothing` for single-sided offers, else `decremental`) whose
-# `_fcas_offer_groups` meta is `meta`.
-function _fcas_price_meta_service(sys::PSY.System, meta::String)
-    for svc in PSY.get_components(FCASService, sys)
-        name = PSY.get_name(svc)
-        meta == name && return svc, nothing
-        for decremental in (false, true)
-            meta == _fcas_side_meta(name, decremental) && return svc, decremental
+function _add_fcas_band_costs!(container::PSI.OptimizationContainer, group, svc::FCASService, devices_template)
+    bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, group.meta)
+    labels = axes(bands)[2]
+    for decremental in (false, true)
+        side = [device for (device, dec) in group.offers if dec == decremental]
+        isempty(side) && continue
+        meta = _fcas_band_price_meta(group, decremental)
+        ts_name = fcas_offer_series_name(svc, decremental)
+        for D in unique(typeof.(side))
+            devices = D[device for device in side if device isa D]
+            PSI.add_parameters!(
+                container, FCASBandPriceParameter, devices, _fcas_device_model(devices_template, D);
+                meta = meta, time_series_name = ts_name,
+            )
         end
     end
-    throw(ArgumentError("No FCASService for the FCASBandPriceParameter meta \"$meta\"."))
-end
-
-
-"""
-    PSI.update_container_parameter_values!(container, model, key::PSI.ParameterKey{FCASBandPriceParameter, FCASService}, input)
-
-Simulation-step update of an [`FCASBandPriceParameter`](@ref): reads each offer's band prices for the
-window at the model's current time and re-adds the band costs to the variant objective.
-
-# Returns
-`nothing`.
-"""
-function PSI.update_container_parameter_values!(
-        container::PSI.OptimizationContainer, model::PSI.OperationModel,
-        key::PSI.ParameterKey{FCASBandPriceParameter, FCASService}, ::PSI.DatasetContainer{PSI.InMemoryDataset},
-    )
-    PSI.is_synchronized(container) && error(
-        "Cannot update FCASBandPriceParameter on a synchronized container; the band costs would be added twice.",
-    )
-    sys = PSI.get_system(model)
-    svc, side = _fcas_price_meta_service(sys, key.meta)
-    bid_type = get_bid_type(svc)
-    prices = PSI.get_parameter_array(container, key)
-    multiplier = PSI.get_parameter_multiplier_array(container, key)
-    service_model = PSI.get_model(PSI.get_template(model), FCASService, PSY.get_name(svc))
-    contributors = Dict(PSY.get_name(d) => d for d in PSI.get_contributing_devices(service_model))
-    offers = map(axes(prices)[1]) do dname
-        device = contributors[dname]
-        (device, isnothing(side) ? _fcas_direction(device, bid_type) == FCASBidDirection.DECREMENTAL : side)
+    scale = PSI.get_base_power(container) * interval_hours(PSI.get_resolution(container))
+    for (device, decremental) in group.offers, t in PSI.get_time_steps(container), (b, label) in enumerate(labels)
+        dname = PSY.get_name(device)
+        key = PSI.ParameterKey(FCASBandPriceParameter, typeof(device), _fcas_band_price_meta(group, decremental))
+        PSI.add_cost_target!(container, key, dname, (b,), t, bands[dname, label, t], scale)
     end
-    _set_fcas_band_prices!(container, prices, multiplier, key.meta, offers, svc, PSI.get_current_time(model); source = model)
     return
 end
+
+
+"The meta of a band-price parameter of `group` on the side `decremental`: `<group.meta>_gen` or `<group.meta>_load`."
+_fcas_band_price_meta(group, decremental::Bool) = "$(group.meta)_$(decremental ? "load" : "gen")"
 
 
 function PSI.construct_service!(
@@ -874,6 +815,8 @@ function PSI.construct_service!(
         PSI.add_dual_container!(container, FCASJointRampingConstraint, FCASService, names, time_steps; meta = name)
     end
 
-    PSI.objective_function!(container, svc, model)
+    for group in groups
+        _add_fcas_band_costs!(container, group, svc, devices_template)
+    end
     return
 end

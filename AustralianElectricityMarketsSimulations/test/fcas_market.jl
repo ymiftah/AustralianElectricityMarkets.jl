@@ -479,9 +479,10 @@ end
 
     # Each band is priced at its offer price times the base power and the interval in hours.
     container = build_fcas(sys, [service_name])
-    price = PSI.get_parameter(container, FCASBandPriceParameter(), FCASService, service_name)
-    @test PSI.get_parameter_array(price)[duid, :, 1].data == [10.0, 30.0]
-    @test all(==(base_power * interval_hours(TOY_RESOLUTION)), PSI.get_multiplier_array(price).data)
+    price = PSI.get_parameter(container, FCASBandPriceParameter(), PSY.ThermalStandard, "$(service_name)_gen")
+    column = PSI.get_parameter_column_refs(price, duid)
+    @test [column[label, 1] for label in ("1", "2")] == [10.0, 30.0]
+    @test all(==(1.0), PSI.get_multiplier_array(price).data)
     bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, service_name)
     variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
     @test PSI.JuMP.coefficient(variant, bands[duid, "2", 1]) ≈ base_power * 30.0 / 12
@@ -1249,14 +1250,8 @@ end
     @test isnothing(_caught(() -> PSI.build_impl!(model)))
 end
 
-@testset "FCAS band price step update and price meta lookup" begin
+@testset "FCAS band price parameters are native time-series cost parameters, one per device type and side" begin
     sys = fcas_toy_system()
-    svc = PSY.get_component(FCASService, sys, "1_RAISEREG")
-    @test AEMS._fcas_price_meta_service(sys, "1_RAISEREG") == (svc, nothing)
-    @test AEMS._fcas_price_meta_service(sys, "1_RAISEREG_gen") == (svc, false)
-    @test AEMS._fcas_price_meta_service(sys, "1_RAISEREG_load") == (svc, true)
-    @test_throws r"No FCASService for the FCASBandPriceParameter meta \"1_NOSUCH_load\"" AEMS._fcas_price_meta_service(sys, "1_NOSUCH_load")
-
     model = PSI.DecisionModel(
         fcas_toy_template(sys, ["1_RAISEREG"]), sys;
         optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
@@ -1265,10 +1260,15 @@ end
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    for meta in ("1_RAISEREG_gen", "1_RAISEREG_load")
-        key = PSI.ParameterKey(FCASBandPriceParameter, FCASService, meta)
-        prices = PSI.get_parameter_array(container, key)
-        multiplier = PSI.get_parameter_multiplier_array(container, key)
+    keys = [k for k in Base.keys(PSI.get_parameters(model)) if PSI.IS.Optimization.get_entry_type(k) === FCASBandPriceParameter]
+    @test !isempty(keys)
+    @test all(k -> startswith(k.meta, "1_RAISEREG"), keys)
+    @test all(k -> PSI.IS.Optimization.get_entry_type(k) <: PSI.TimeSeriesCostParameter, keys)
+    for key in keys
+        meta = String(chopsuffix(chopsuffix(key.meta, "_gen"), "_load"))
+        param = PSI.get_parameter(container, key)
+        prices = PSI.get_parameter_array(param)
+        multiplier = PSI.get_multiplier_array(param)
         expected = copy(prices.data)
         prices.data .= -1.0
         # The second window, as the model's current time after one execution.
@@ -1281,15 +1281,12 @@ end
         labels = axes(prices)[2]
         bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, meta)
         variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
-        priced = findfirst(label -> prices[TOY_BATTERY, label, 1] > 0.0, labels)
+        device = first(axes(multiplier)[1])
+        column = PSI.get_parameter_column_refs(param, device)
+        priced = findfirst(label -> column[label, 1] > 0.0, labels)
         @test !isnothing(priced)
-        @test PSI.JuMP.coefficient(variant, bands[TOY_BATTERY, labels[priced], 1]) ==
-            prices[TOY_BATTERY, labels[priced], 1] * multiplier[TOY_BATTERY, labels[priced], 1]
-        # A synchronized container would add the band costs twice.
-        PSI.set_synchronized_status!(PSI.get_objective_expression(container), true)
-        @test_throws r"synchronized container" PSI.update_container_parameter_values!(
-            container, model, key, PSI.DatasetContainer{PSI.InMemoryDataset}(),
-        )
+        @test PSI.JuMP.coefficient(variant, bands[device, labels[priced], 1]) ==
+            column[labels[priced], 1] * (PSI.get_base_power(container) * interval_hours(TOY_RESOLUTION)) * multiplier[device, labels[priced], 1]
     end
 end
 

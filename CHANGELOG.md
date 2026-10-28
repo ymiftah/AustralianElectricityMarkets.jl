@@ -581,6 +581,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Price FCAS offer bands and set the FCAS offer parameters through PowerSimulations' native time-series
+  parameters: the band prices are time-series cost targets, bit-identical to the former objective terms.
+
 - FCAS offer curves are stored as PowerSystems service bids on each device's `MarketBidCost`
   (`fcas_offer_series_name`, `fcas_service`) instead of the `"fcas_curve_<BIDTYPE>"` series.
 

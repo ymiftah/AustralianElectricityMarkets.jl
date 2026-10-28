@@ -48,10 +48,10 @@ end
             @test PSI.build!(model; output_dir = joinpath(folder, "model")) == PSI.ModelBuildStatus.BUILT
             container = PSI.get_optimization_container(model)
             keys = [k for k in Base.keys(PSI.get_parameters(model)) if PSI.IS.Optimization.get_entry_type(k) in (FCASBandPriceParameter, AEMS.GenericConstraintSlackCostParameter)]
-            price_key = only(k for k in keys if PSI.IS.Optimization.get_entry_type(k) === FCASBandPriceParameter && startswith(k.meta, "1_RAISEREG") && TOY_CHEAP in axes(PSI.get_parameter_array(container, k))[1])
+            price_key = only(k for k in keys if PSI.IS.Optimization.get_entry_type(k) === FCASBandPriceParameter && startswith(k.meta, "1_RAISEREG") && TOY_CHEAP in axes(PSI.get_multiplier_array(PSI.get_parameter(container, k)))[1])
             invoked_key = only(k for k in keys if PSI.IS.Optimization.get_entry_type(k) === AEMS.GenericConstraintSlackCostParameter && k.meta == "F_REG")
             _update_objective_cache_parameters!(model, keys, 0)
-            @test PSI.get_parameter_array(container, price_key)[TOY_CHEAP, "1", 1] == 5.0
+            @test PSI.get_parameter_column_refs(PSI.get_parameter(container, price_key), TOY_CHEAP)["1", 1] == 5.0
             @test PSI.get_parameter_array(container, invoked_key)["F_REG", 1] == 1.0
             slack = PSI.get_variable(container, GenericConstraintSlackDown(), GenericConstraint, "F_REG")["F_REG", 1]
             penalty = PSI.get_parameter_multiplier_array(container, invoked_key)["F_REG", 1]
@@ -61,11 +61,12 @@ end
             cached && mv(path, path * ".hidden")
             try
                 _update_objective_cache_parameters!(model, keys, 1)
-                @test PSI.get_parameter_array(container, price_key)[TOY_CHEAP, "1", 1] == 15.0
+                @test PSI.get_parameter_column_refs(PSI.get_parameter(container, price_key), TOY_CHEAP)["1", 1] == 15.0
                 @test PSI.get_parameter_array(container, invoked_key)["F_REG", 1] == 0.0
                 objective = PSI.get_variant_terms(PSI.get_objective_expression(container))
                 @test PSI.JuMP.coefficient(objective, slack) == 0.0
-                band = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, price_key.meta)[TOY_CHEAP, "1", 1]
+                band_meta = String(chopsuffix(chopsuffix(price_key.meta, "_gen"), "_load"))
+                band = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, band_meta)[TOY_CHEAP, "1", 1]
                 @test PSI.JuMP.coefficient(objective, band) ≈ 15.0 * 100.0 / 12
                 @test cached || isempty(PSI.get_time_series_cache(model))
             finally

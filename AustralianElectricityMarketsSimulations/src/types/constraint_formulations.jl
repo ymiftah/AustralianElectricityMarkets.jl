@@ -173,11 +173,12 @@ struct FCASRampingLimitParameter <: PSI.TimeSeriesParameter end
 """
     FCASBandPriceParameter
 
-Objective-function parameter pricing [`FCASOfferBandVariable`](@ref)s: its value is each band's
-offer price in `\$/MW` per hour (`0.0` for a band not offered) and its multiplier the system base
-power times the interval length in hours. Same meta as the band variables it prices.
+Time-series cost parameter pricing [`FCASOfferBandVariable`](@ref)s: its value is each band's offer
+price in `\$/MW` per interval, read from the offer's `"fcas_offer_..."` series (`0.0` for a band not
+offered). Each band's cost target scales the price by the system base power and the interval length
+in hours. Meta `"<group>_gen"` or `"<group>_load"`, one parameter per device type and side.
 """
-struct FCASBandPriceParameter <: PSI.ObjectiveFunctionParameter end
+struct FCASBandPriceParameter <: PSI.TimeSeriesCostParameter end
 
 
 """
