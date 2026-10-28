@@ -479,7 +479,7 @@ function PSI.construct_device!(
     _add_loss_constraints!(container, devices, loss_models)
     _add_mnsp_link_constraints!(container, devices)
     _add_mnsp_operating_constraints!(container, devices)
-    _add_mnsp_band_costs!(container, devices)
+    _add_mnsp_band_costs!(container, devices, device_model)
     _add_flow_limit_constraint!(container, devices, device_model, network_model)
     PSI.add_feedforward_constraints!(container, device_model, devices)
     return

@@ -67,7 +67,9 @@ const _MNSP_PARAMETERS = (
 )
 
 
-function PSI.get_multiplier_value(::MNSPBandWidthParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss)
+function PSI.get_multiplier_value(
+        ::Union{MNSPBandWidthParameter, MNSPBandPriceParameter}, ::PSY.AreaInterchange, ::NEMInterconnectorLoss,
+    )
     return 1.0
 end
 
@@ -77,9 +79,9 @@ function PSI.get_multiplier_value(::MNSPMaxAvailParameter, ::PSY.AreaInterchange
 end
 
 
-# A band-width parameter's band axis: `_mnsp_band_labels` of the links carrying the series.
+# A band-width or band-price parameter's band axis: `_mnsp_band_labels` of the links carrying the series.
 function PSI.calc_additional_axes(
-        ::PSI.OptimizationContainer, ::MNSPBandWidthParameter,
+        ::PSI.OptimizationContainer, ::Union{MNSPBandWidthParameter, MNSPBandPriceParameter},
         devices::Union{Vector{PSY.AreaInterchange}, IS.FlattenIteratorWrapper{PSY.AreaInterchange}},
         ::PSI.DeviceModel{PSY.AreaInterchange, NEMInterconnectorLoss},
     )
@@ -114,72 +116,6 @@ function _mnsp_link_bound(device::PSY.AreaInterchange, direction::AbstractString
     model = _loss_model(device)
     extent = direction == "forward" ? last(model.breakpoints) : -first(model.breakpoints)
     return max(0.0, extent)
-end
-
-
-"""
-    _mnsp_offer_window(container, device, direction, start_time) -> Vector{PSY.PiecewiseStepData}
-
-`device`'s `direction` offer curves over the container's time steps from `start_time`, read from the
-container's default forecast type.
-"""
-function _mnsp_offer_window(container::PSI.OptimizationContainer, device::PSY.AreaInterchange, direction::AbstractString, start_time::DateTime)
-    return _forecast_window_values(container, device, mnsp_series_name(direction, "offer"), start_time)
-end
-
-
-"""
-    _set_mnsp_band_prices!(container, prices, multiplier, device, direction, start_time)
-
-Writes the band prices of `device`'s `direction` offers from `start_time` into the
-[`MNSPBandPriceParameter`](@ref) array `prices` (`0.0` beyond the offered bands) and adds each
-band's cost, price times `multiplier`, to the variant objective.
-
-# Returns
-`nothing`.
-"""
-function _set_mnsp_band_prices!(container::PSI.OptimizationContainer, prices, multiplier, device::PSY.AreaInterchange, direction::AbstractString, start_time::DateTime)
-    name = PSY.get_name(device)
-    bands = PSI.get_variable(container, MNSPLinkBandVariable(), PSY.AreaInterchange, direction)
-    labels = axes(prices)[2]
-    for (t, curve) in enumerate(_mnsp_offer_window(container, device, direction, start_time))
-        y = PSY.get_y_coords(curve)
-        for (b, label) in enumerate(labels)
-            prices[name, label, t] = b <= length(y) ? y[b] : 0.0
-            PSI.add_to_objective_variant_expression!(
-                container, prices[name, label, t] * multiplier[name, label, t] * bands[name, label, t],
-            )
-        end
-    end
-    return
-end
-
-
-"""
-    PSI.update_container_parameter_values!(container, model, key::PSI.ParameterKey{MNSPBandPriceParameter, PSY.AreaInterchange}, input)
-
-Simulation-step update of the [`MNSPBandPriceParameter`](@ref) of the link `key.meta`: reads each
-MNSP's band prices for the window at the model's current time and re-adds the band costs to the
-variant objective.
-
-# Returns
-`nothing`.
-"""
-function PSI.update_container_parameter_values!(
-        container::PSI.OptimizationContainer, model::PSI.OperationModel,
-        key::PSI.ParameterKey{MNSPBandPriceParameter, PSY.AreaInterchange}, ::PSI.DatasetContainer{PSI.InMemoryDataset},
-    )
-    PSI.is_synchronized(container) && error(
-        "Cannot update MNSPBandPriceParameter on a synchronized container; the band costs would be added twice.",
-    )
-    prices = PSI.get_parameter_array(container, key)
-    multiplier = PSI.get_parameter_multiplier_array(container, key)
-    sys = PSI.get_system(model)
-    for name in axes(prices)[1]
-        device = PSY.get_component(PSY.AreaInterchange, sys, name)
-        _set_mnsp_band_prices!(container, prices, multiplier, device, key.meta, PSI.get_current_time(model))
-    end
-    return
 end
 
 
@@ -359,31 +295,38 @@ end
 
 
 """
-    _add_mnsp_band_costs!(container, devices)
+    _add_mnsp_band_costs!(container, devices, device_model)
 
 Adds one [`MNSPBandPriceParameter`](@ref) per link direction for the devices in `devices` carrying
-MNSP offers, and prices each band at its offered price through [`_set_mnsp_band_prices!`](@ref).
+MNSP offers, and a cost target per band and time step pricing each [`MNSPLinkBandVariable`](@ref) at
+its offered price times the system base power and the interval hours.
+
+# Arguments
+- `container`: the optimization container of the model being built.
+- `devices`: the `PSY.AreaInterchange` devices of the formulation.
+- `device_model`: the `PSI.DeviceModel` supplying the device model of the parameters.
 
 # Returns
 `nothing`.
 """
-function _add_mnsp_band_costs!(container::PSI.OptimizationContainer, devices)
+function _add_mnsp_band_costs!(container::PSI.OptimizationContainer, devices, device_model)
     mnsp = filter(_has_mnsp_offers, collect(devices))
     isempty(mnsp) && return
     names = PSY.get_name.(mnsp)
     labels = _mnsp_band_labels(mnsp)
     base_power = PSI.get_base_power(container)
     resolution = PSI.get_resolution(container)
-    initial_time = PSI.get_initial_time(container)
+    scale = base_power * interval_hours(resolution)
+    time_steps = PSI.get_time_steps(container)
     for dir in _MNSP_DIRECTIONS
-        price = PSI.add_param_container!(
-            container, MNSPBandPriceParameter(), PSY.AreaInterchange, (MNSPLinkBandVariable,),
-            PSI.SOSStatusVariable.NO_VARIABLE, false, Float64, names, labels, PSI.get_time_steps(container); meta = dir,
+        PSI.add_parameters!(
+            container, MNSPBandPriceParameter, mnsp, device_model;
+            meta = dir, time_series_name = mnsp_series_name(dir, "offer"),
         )
-        prices, multiplier = PSI.get_parameter_array(price), PSI.get_multiplier_array(price)
-        fill!(multiplier, base_power * interval_hours(resolution))
-        for d in mnsp
-            _set_mnsp_band_prices!(container, prices, multiplier, d, dir, initial_time)
+        key = PSI.ParameterKey(MNSPBandPriceParameter, PSY.AreaInterchange, dir)
+        bands = PSI.get_variable(container, MNSPLinkBandVariable(), PSY.AreaInterchange, dir)
+        for name in names, (b, label) in enumerate(labels), t in time_steps
+            PSI.add_cost_target!(container, key, name, (b,), t, bands[name, label, t], scale)
         end
     end
     _add_mnsp_limit_costs!(container, mnsp)
