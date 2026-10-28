@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Skip the effective FCAS offers of unavailable devices that carry no stored offer curve, so a
+  NEMDE replication whose unpriced units are unavailable no longer fails in `set_fcas_effective_offers!`.
+
 - Temporarily pin InfrastructureSystems 3.6.3 to a fork revision that limits
   forecast-cache sizing reads to one window instead of all remaining windows.
 

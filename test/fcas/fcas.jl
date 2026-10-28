@@ -335,6 +335,36 @@
         @test checked > 0
     end
 
+
+    @testset "set_fcas_effective_offers! skips an unavailable unpriced device, not an available one" begin
+        # A non-zero-cost generator keeps its energy cost, so set_fcas_service_bids! stores it no offer curve.
+        sys = nem_system(db, RegionalNetworkConfiguration())
+        set_fcas_bids!(sys, db, date_range)
+        set_fcas_service_bids!(sys, db, date_range)
+        gen = first(
+            g for g in get_components(Generator, sys)
+                if has_time_series(g, SingleTimeSeries, "fcas_trapezium_RAISE6SEC") && !(get_operation_cost(g) isa MarketBidCost)
+        )
+        @test get_available(gen)
+        # Available devices without their curve are a real data gap, so the derivation still throws.
+        @test_throws ArgumentError set_fcas_effective_offers!(sys)
+        # Each contributing offer lacking its curve, found by the same rule the derivation uses.
+        unpriced = Set{String}()
+        for svc in get_components(FCASService, sys), device in get_contributing_devices(sys, svc)
+            bid_type = get_bid_type(svc)
+            for dec in AustralianElectricityMarkets.fcas_offer_sides(AustralianElectricityMarkets.fcas_bid_direction(device, bid_type))
+                has_time_series(device, SingleTimeSeries, fcas_offer_series_name(svc, dec)) || push!(unpriced, get_name(device))
+            end
+        end
+        @test get_name(gen) in unpriced
+        for name in unpriced
+            device = first(d for d in get_components(Device, sys) if get_name(d) == name)
+            set_available!(device, false)
+        end
+        set_fcas_effective_offers!(sys)
+        @test !has_time_series(gen, SingleTimeSeries, fcas_effective_series_name(BidType.RAISE6SEC, false))
+    end
+
     @testset "a non-scheduled load offering FCAS joins its region's services" begin
         sys = nem_system(db, RegionalNetworkConfiguration())
         added, excluded = set_fcas_bids!(sys, db, date_range)

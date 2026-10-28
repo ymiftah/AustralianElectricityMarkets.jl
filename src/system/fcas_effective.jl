@@ -493,6 +493,23 @@ end
 
 
 """
+    _is_unpriced_unavailable(svc, device, bid_type) -> Bool
+
+Whether `device` is unavailable and carries no stored offer curve for `svc` on one of its sides:
+NEMDE-path units with no energy bids get no service bid, and nothing reads their effective offer.
+An available device without its curve is not skipped, so its missing data still fails.
+
+# Returns
+`Bool`.
+"""
+function _is_unpriced_unavailable(svc::FCASService, device::PSY.Device, bid_type::BidType)
+    PSY.get_available(device) && return false
+    sides = fcas_offer_sides(fcas_bid_direction(device, bid_type))
+    return !all(dec -> PSY.has_time_series(device, PSY.SingleTimeSeries, fcas_offer_series_name(svc, dec)), sides)
+end
+
+
+"""
     set_fcas_effective_offers!(sys)
 
 Attaches, for every device contributing to an [`FCASService`](@ref), the effective FCAS offer
@@ -532,6 +549,7 @@ function set_fcas_effective_offers!(sys::PSY.System)
                 key = (typeof(device), PSY.get_name(device), bid_type)
                 key in done && continue
                 push!(done, key)
+                _is_unpriced_unavailable(svc, device, bid_type) && continue
                 _attach_fcas_effective_series!(sys, device, bid_type, inactive)
             end
         end
