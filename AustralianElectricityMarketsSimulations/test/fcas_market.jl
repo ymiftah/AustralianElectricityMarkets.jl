@@ -606,7 +606,7 @@ end
         enablement_min = emin, low_breakpoint = emin + 1.0, high_breakpoint = emax - 1.0,
         enablement_max = emax, max_avail = 1.0,
     )
-    ok(is_regulation, decremental, t, avail) = AEMS._fcas_energy_max_avail_ok(bat, is_regulation, decremental, t, avail)
+    ok(is_regulation, decremental, t, avail) = AustralianElectricityMarkets._fcas_energy_max_avail_ok(bat, is_regulation, decremental, t, avail)
 
     # Generation side: Energy Max Availability_GEN >= EnablementMin.
     @test !ok(true, false, trap(2.0, 10.0), (gen = 1.0, load = 50.0))
@@ -1062,8 +1062,8 @@ end
     )
     container = PSI.get_optimization_container(model)
     bat = get_component(EnergyReservoirStorage, sys, "BAT1")
-    window = AustralianElectricityMarketsSimulations._FCASWindow(TOY_START, 1, TOY_RESOLUTION)
-    trap = only(AustralianElectricityMarketsSimulations._fcas_offer(window, bat, BidType.LOWERREG, OfferSide.LOAD).trapeziums)
+    window = AustralianElectricityMarkets._FCASWindow(TOY_START, 1, TOY_RESOLUTION)
+    trap = only(AustralianElectricityMarkets._fcas_offer(window, bat, BidType.LOWERREG, OfferSide.LOAD).trapeziums)
     @test collect(Tuple(trap)[1:5]) .* PSI.get_base_power(container) ≈ [-10.0, -8.0, -2.0, 0.0, 4.0]
 end
 

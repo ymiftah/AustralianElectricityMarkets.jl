@@ -579,6 +579,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AustralianElectricityMarketsSimulations`. `AustralianElectricityMarketsSimulations` keeps the
   tie-break PSI formulations and checks.
 
+- FCAS effective-offer input derivation (`set_fcas_effective_offers!`, `FCAS_BAND_COUNT`,
+  `FCAS_INACTIVE_LIMIT_MW`) now lives in the data package (`AustralianElectricityMarkets`),
+  so a `System` built with it no longer needs `AustralianElectricityMarketsSimulations`
+  to derive its FCAS series. `AustralianElectricityMarketsSimulations` keeps the FCAS PSI
+  formulations and checks.
+
 - Added a timed random-day replay runner with early MNSP and constraint-version checks,
   one Julia worker per trading day, native interval timings and process memory sampling.
   An admitted day finishes even after the overall admission deadline.

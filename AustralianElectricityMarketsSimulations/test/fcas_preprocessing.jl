@@ -41,7 +41,7 @@ end
     start = DateTime(2025, 1, 1, 0, 5)
     sys = fcas_replay_system(db, start:DISPATCH_INTERVAL:(start + 6 * DISPATCH_INTERVAL))
     ramping(name, bid_type) = PSY.get_time_series_values(
-        PSY.SingleTimeSeries, PSY.get_component(PSY.Device, sys, name), AEMS._fcas_ramping_series_name(bid_type),
+        PSY.SingleTimeSeries, PSY.get_component(PSY.Device, sys, name), AustralianElectricityMarkets._fcas_ramping_series_name(bid_type),
     )[1]
     # ER01 (ThermalStandard) RAISEREG at 00:05: InitialMW 45 MW and AGC ramp rate 9 MW/h. The §6.1 upper
     # form is 45 + 9 * 5/60 = 45.75 MW; a unit that is not a BDU has no §6.4 limit.

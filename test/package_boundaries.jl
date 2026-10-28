@@ -6,6 +6,7 @@ using Logging
     readers = AustralianElectricityMarkets.Readers
     @test !isdefined(readers, :PowerSystems)
     @test isdefined(AustralianElectricityMarkets, :EnergyTieBreak)
+    @test isdefined(AustralianElectricityMarkets, :set_fcas_effective_offers!)
 
     @test HiveConfiguration === AustralianElectricityMarketsData.HiveConfiguration
     @test aem_connect === AustralianElectricityMarketsData.aem_connect
