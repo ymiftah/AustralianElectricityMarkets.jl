@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted. Extends [0065](0065-replay-system-package-boundary.md).
+Accepted. Extends [0065](0065-replay-system-package-boundary.md). Its `EnergyTieBreak`,
+CVP-factor and private-helper decisions are superseded by
+[0084](0084-native-sienna-recurrent-updates.md).
 
 ## Context
 
