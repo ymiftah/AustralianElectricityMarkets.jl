@@ -14,7 +14,7 @@ import InfrastructureSystems as IS
 
 export HiveConfiguration, aem_connect
 export NetworkConfiguration, table_requirements, nem_system
-export RegionalNetworkConfiguration, ConstrainedNetworkConfiguration, NEMDEConfiguration
+export RegionalNetworkConfiguration, NEMDEConfiguration
 export set_mnsp_offers!, set_demand!, set_market_bids!
 export get_storage_energy_max_avail
 export set_fcas_bids!, set_fcas_service_bids!, set_fcas_scaling_inputs!, set_fcas_effective_offers!
@@ -96,13 +96,12 @@ include("system/tie_break.jl")
 include("system/penalties.jl")
 include("system/RegionModel.jl")
 
-using .RegionModel: RegionalNetworkConfiguration, ConstrainedNetworkConfiguration, NEMDEConfiguration
+using .RegionModel: RegionalNetworkConfiguration, NEMDEConfiguration
 
 @doc (@doc AustralianElectricityMarketsCache.HiveConfiguration) HiveConfiguration
 @doc (@doc AustralianElectricityMarketsCache.aem_connect) aem_connect
 @doc (@doc RegionModel.nem_system) nem_system
 @doc (@doc RegionModel.RegionalNetworkConfiguration) RegionalNetworkConfiguration
-@doc (@doc RegionModel.ConstrainedNetworkConfiguration) ConstrainedNetworkConfiguration
 @doc (@doc RegionModel.NEMDEConfiguration) NEMDEConfiguration
 
 include("precompile.jl")

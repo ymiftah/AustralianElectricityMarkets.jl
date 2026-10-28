@@ -253,22 +253,27 @@ end
     fcas_service(device, bid_type) -> FCASService
 
 The [`FCASService`](@ref) for `bid_type` that `device` contributes to, found among the services
-attached to `device`. A device normally contributes to one service per FCAS market, its region's;
-if it contributes to several, the one whose name sorts first is returned.
+attached to `device`. A device contributes to exactly one service per FCAS market, its region's.
 
 # Arguments
 - `device`: a `PowerSystems` device, attached to its services by [`add_fcas_services!`](@ref).
 - `bid_type`: the FCAS market.
 
 # Returns
-The `FCASService`. Throws `ArgumentError` if `device` has no such service.
+The `FCASService`. Throws `ArgumentError` if `device` has no such service or more than one.
 """
 function fcas_service(device::PSY.Device, bid_type::BidType)
     services = _fcas_services(device, bid_type)
     isempty(services) && throw(
         ArgumentError("\"$(get_name(device))\" contributes to no $(string(bid_type)) FCASService."),
     )
-    return first(sort!(services; by = get_name))
+    length(services) == 1 || throw(
+        ArgumentError(
+            "\"$(get_name(device))\" contributes to $(length(services)) $(string(bid_type)) " *
+                "FCASServices ($(join(sort!(get_name.(services)), ", "))); expected exactly one.",
+        ),
+    )
+    return only(services)
 end
 
 # The FCASServices for `bid_type` attached to `device`: empty when `device` does not bid that market.

@@ -430,7 +430,7 @@ function add_toy_fcas_offer!(sys, device, stamps, bid_type, trapeziums, bands; d
         Tuple(FCASTrapezium(; enablement_min = a / base_power, low_breakpoint = b / base_power, high_breakpoint = c / base_power, enablement_max = d / base_power, max_avail = e / base_power))
             for (a, b, c, d, e) in trapeziums
     ]
-    curves = [PSY.PiecewiseStepData([0.0; cumsum(first.(bs))] ./ base_power, last.(bs)) for bs in bands]
+    curves = [PSY.PiecewiseStepData([0.0; cumsum(first.(bs))], last.(bs)) for bs in bands]
     PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series("fcas_trapezium_$suffix", stamps[1], traps, TOY_RESOLUTION))
     pending = get!(() -> Any[], PSY.get_ext(device), TOY_FCAS_CURVES_KEY)
     push!(pending, (bid_type, decremental, stamps[1], curves))

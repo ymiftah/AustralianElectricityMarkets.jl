@@ -1,16 +1,27 @@
 """
     table_requirements(::NEMDEConfiguration)
 
-Returns the constrained network tables plus interconnector loss, MNSP offer and metered-flow
-tables needed for replay. `DISPATCHINTERCONNECTORRES` is required for MNSP ramping even when
-published interval flow limits are not attached.
+Returns the regional network tables plus the price, FCAS requirement, constraint, interconnector loss,
+MNSP offer and metered-flow tables needed for replay. `DISPATCHINTERCONNECTORRES` is required for MNSP
+ramping even when published interval flow limits are not attached.
 
 # Returns
 A vector of NEMWEB table symbols.
 """
 function AustralianElectricityMarkets.table_requirements(::NEMDEConfiguration)
     return [
-        table_requirements(ConstrainedNetworkConfiguration())...,
+        table_requirements(RegionalNetworkConfiguration())...,
+        :DISPATCHPRICE,
+        # Both generations of the dispatch FCAS requirement table: DISPATCH_FCAS_REQ covers up
+        # to the 2025-05 archive month, DISPATCH_FCAS_REQ_CONSTRAINT from 2025-06 on. A cache
+        # holding only one still builds - readers union whichever are present.
+        :DISPATCH_FCAS_REQ,
+        :DISPATCH_FCAS_REQ_CONSTRAINT,
+        :DISPATCHCONSTRAINT,
+        :GENCONDATA,
+        :SPDCONNECTIONPOINTCONSTRAINT,
+        :SPDREGIONCONSTRAINT,
+        :SPDINTERCONNECTORCONSTRAINT,
         :LOSSMODEL, :LOSSFACTORMODEL, :MNSP_INTERCONNECTOR, :MNSP_DAYOFFER,
         :MNSP_BIDOFFERPERIOD, :DISPATCH_MNSPBIDTRK, :DISPATCHINTERCONNECTORRES,
     ]

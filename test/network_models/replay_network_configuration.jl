@@ -65,7 +65,7 @@ end
     db = aem_connect(HiveConfiguration(hive_location = hive))
     grid = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     shared, units = AEM.RegionModel._constrained_system(db; date_range = grid)
-    independent = nem_system(db, ConstrainedNetworkConfiguration(); date_range = grid)
+    independent, _ = AEM.RegionModel._constrained_system(db; date_range = grid)
     @test isequal(units, read_units(db; as_of = first(grid)))
     demand = read_demand(db, grid; resolution = Minute(5))
     demand_before = deepcopy(demand)

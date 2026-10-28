@@ -104,6 +104,8 @@
     @testset "_get_fcas_trapezium/_get_fcas_offer_curve" begin
         sys = nem_system(db, RegionalNetworkConfiguration())
         set_fcas_bids!(sys, db, date_range)
+        # Energy bids give the fuel-cost generators the MarketBidCost their service bids need.
+        set_market_bids!(sys, db, date_range)
         set_fcas_service_bids!(sys, db, date_range)
         horizon = length(date_range) - 1
 
@@ -118,10 +120,10 @@
         @test offer isa NEMFCASOffer && offer.service == BidType.RAISE6SEC && offer.side == OfferSide.LOAD
         @test offer.trapeziums == trapeziums && offer.curves == curves
 
-        # A generator with a fuel cost keeps its cost and has no offer curve.
+        # A generator with a fuel cost carries its offer curve once it has a MarketBidCost.
         gen = first(g for g in get_components(Generator, sys) if has_time_series(g, SingleTimeSeries, "fcas_trapezium_RAISE6SEC"))
         @test !isempty(AustralianElectricityMarkets._get_fcas_trapezium(gen, BidType.RAISE6SEC, start_date, horizon))
-        @test_throws ArgumentError AustralianElectricityMarkets._get_fcas_offer_curve(gen, BidType.RAISE6SEC, start_date, horizon)
+        @test length(AustralianElectricityMarkets._get_fcas_offer_curve(gen, BidType.RAISE6SEC, start_date, horizon)) == horizon
 
         # BW01 bids RAISE6SEC both ways on a non-regulation market, which the formulation does not
         # model: it has no service, so its trapezium is readable but it has no offer curves.
@@ -150,6 +152,73 @@
         end
         @test err isa ArgumentError
         @test occursin("RAISE6SEC", err.msg)
+    end
+
+    @testset "service bids are stored in MW and read per-unit" begin
+        sys = nem_system(db, RegionalNetworkConfiguration())
+        set_fcas_bids!(sys, db, date_range)
+        set_market_bids!(sys, db, date_range)
+        set_fcas_service_bids!(sys, db, date_range)
+        base_power = get_base_power(sys)
+
+        asload1 = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
+        name = fcas_offer_series_name(fcas_service(asload1, BidType.RAISE6SEC), true)
+        stored = get_time_series_values(SingleTimeSeries, asload1, name)
+        _, gdf_dec = AustralianElectricityMarkets._fcas_bid_groups(read_fcas_bids(db, date_range, BidType.RAISE6SEC), base_power)
+        expected = gdf_dec[("ASLOAD1",)].curve_data
+        @test length(stored) == length(expected)
+        # The stored curve is the bid in MW, not divided by the system base.
+        @test all(get_x_coords(s) == get_x_coords(e) for (s, e) in zip(stored, expected))
+
+        # The reader divides by the system base under SYSTEM_BASE and returns MW under NATURAL_UNITS.
+        with_units_base(sys, "SYSTEM_BASE") do
+            curves = AustralianElectricityMarkets._get_fcas_offer_curve(
+                asload1, BidType.RAISE6SEC, start_date, length(stored); decremental = true,
+            )
+            @test all(get_x_coords(c) ≈ get_x_coords(e) ./ base_power for (c, e) in zip(curves, expected))
+        end
+        with_units_base(sys, "NATURAL_UNITS") do
+            curves = AustralianElectricityMarkets._get_fcas_offer_curve(
+                asload1, BidType.RAISE6SEC, start_date, length(stored); decremental = true,
+            )
+            @test all(get_x_coords(c) ≈ get_x_coords(e) for (c, e) in zip(curves, expected))
+        end
+    end
+
+    @testset "set_fcas_service_bids! throws on a device whose cost cannot carry its offers" begin
+        sys = nem_system(db, RegionalNetworkConfiguration())
+        set_fcas_bids!(sys, db, date_range)
+        bidders = [g for g in get_components(Generator, sys) if has_time_series(g, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")]
+        @test !isempty(bidders)
+        err = try
+            set_fcas_service_bids!(sys, db, date_range)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test any(g -> occursin("\"$(get_name(g))\"", err.msg), bidders)
+        @test any(b -> occursin(string(b), err.msg), FCAS_BID_TYPES)
+        @test occursin("MarketBidCost", err.msg)
+        @test occursin("set_market_bids!", err.msg)
+    end
+
+    @testset "fcas_service throws when a device has two services of one market" begin
+        sys = nem_system(db, RegionalNetworkConfiguration())
+        set_fcas_bids!(sys, db, date_range)
+        asload1 = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
+        @test fcas_service(asload1, BidType.RAISE6SEC) isa FCASService
+        extra = FCASService(; name = "NSW1_RAISE6SEC_EXTRA", region = "NSW1", bid_type = BidType.RAISE6SEC)
+        add_service!(sys, extra, [asload1])
+        @test_throws ArgumentError fcas_service(asload1, BidType.RAISE6SEC)
+    end
+
+    @testset "_is_zero_cost_term needs a zero VOM curve as well as a zero value curve" begin
+        zero_curve = LinearCurve(0.0)
+        zero_cost = CostCurve(; value_curve = zero_curve, power_units = UnitSystem.NATURAL_UNITS, vom_cost = zero_curve)
+        vom_cost = CostCurve(; value_curve = zero_curve, power_units = UnitSystem.NATURAL_UNITS, vom_cost = LinearCurve(5.0))
+        @test AustralianElectricityMarkets._is_zero_cost_term(zero_cost)
+        @test !AustralianElectricityMarkets._is_zero_cost_term(vom_cost)
     end
 
     @testset "_require_equal_length throws on mismatched trapezium/curve series lengths" begin
@@ -228,6 +297,7 @@
         # device's service bid.
         sys = nem_system(db, RegionalNetworkConfiguration())
         set_fcas_bids!(sys, db, date_range)
+        set_market_bids!(sys, db, date_range)
         set_fcas_service_bids!(sys, db, date_range)
         base_power = get_base_power(sys)
 
@@ -239,8 +309,8 @@
             has_time_series(gen, SingleTimeSeries, "fcas_trapezium_RAISE6SEC") || continue
             found = true
             trapezium_ts = get_time_series(SingleTimeSeries, gen, "fcas_trapezium_RAISE6SEC")
-            # Generators in the mock data carry a fuel or O&M cost, so no offer curve is stored.
-            @test !has_time_series(gen, SingleTimeSeries, fcas_offer_series_name(fcas_service(gen, BidType.RAISE6SEC), false))
+            # Generators in the mock data carry a fuel or O&M cost; with their MarketBidCost they carry the offer curve.
+            @test has_time_series(gen, SingleTimeSeries, fcas_offer_series_name(fcas_service(gen, BidType.RAISE6SEC), false))
             @test !isnothing(trapezium_ts)
             trap_rows = get_time_series_values(SingleTimeSeries, gen, "fcas_trapezium_RAISE6SEC")
             # Raw stored series is per-unit of sys's base power - _get_fcas_trapezium (tested
@@ -273,6 +343,7 @@
         sys = nem_system(db, RegionalNetworkConfiguration())
         added, _ = set_fcas_bids!(sys, db, date_range)
         @test !isempty(added)
+        set_market_bids!(sys, db, date_range)
         set_fcas_service_bids!(sys, db, date_range)
         bids = read_fcas_bids(db, date_range, BidType.RAISE6SEC)
         gdf_inc, gdf_dec = AustralianElectricityMarkets._fcas_bid_groups(bids, get_base_power(sys))
@@ -282,15 +353,10 @@
             isempty(AustralianElectricityMarkets._fcas_services(device, BidType.RAISE6SEC)) && continue
             svc = fcas_service(device, BidType.RAISE6SEC)
             cost = get_operation_cost(device)
+            @test cost isa MarketBidCost
             for (decremental, gdf) in ((false, gdf_inc), (true, gdf_dec))
                 (isnothing(gdf) || !haskey(gdf, (get_name(device),))) && continue
                 name = fcas_offer_series_name(svc, decremental)
-                if !(cost isa MarketBidCost)
-                    # A device with a non-zero cost keeps it and stores no offer curve.
-                    @test !has_time_series(device, SingleTimeSeries, name)
-                    n_checked += 1
-                    continue
-                end
                 @test svc in get_ancillary_service_offers(cost)
                 expected = gdf[(get_name(device),)].curve_data
                 stored = get_time_series_values(SingleTimeSeries, device, name)
@@ -308,43 +374,15 @@
         @test n_checked > 0
     end
 
-    @testset "set_fcas_service_bids! leaves every energy cost unchanged" begin
-        # Zero-cost devices get an empty MarketBidCost (zero energy cost); all others keep their cost.
-        # Field-wise comparison: the cost structs are mutable, so `==` compares identities.
-        same_value(a, b) = typeof(a) == typeof(b) && (
-            isempty(fieldnames(typeof(a))) ? a == b : all(f -> same_value(getfield(a, f), getfield(b, f)), fieldnames(typeof(a)))
-        )
-        regional = nem_system(db, RegionalNetworkConfiguration())
-        constrained = nem_system(db, ConstrainedNetworkConfiguration(); date_range = date_range)
-        checked = 0
-        for before in get_components(StaticInjection, regional)
-            hasmethod(get_operation_cost, Tuple{typeof(before)}) || continue
-            after = get_component(typeof(before), constrained, get_name(before))
-            isnothing(after) && continue
-            cost_before = get_operation_cost(before)
-            cost_after = get_operation_cost(after)
-            if cost_after isa MarketBidCost && !(cost_before isa MarketBidCost)
-                @test AustralianElectricityMarkets._is_zero_cost(cost_before)
-                @test isnothing(get_incremental_offer_curves(cost_after))
-                @test isnothing(get_decremental_offer_curves(cost_after))
-            else
-                @test same_value(cost_after, cost_before)
-            end
-            checked += 1
-        end
-        @test checked > 0
-    end
-
 
     @testset "set_fcas_effective_offers! skips an unavailable unpriced device, not an available one" begin
-        # A non-zero-cost generator keeps its energy cost, so set_fcas_service_bids! stores it no offer curve.
         sys = nem_system(db, RegionalNetworkConfiguration())
         set_fcas_bids!(sys, db, date_range)
+        set_market_bids!(sys, db, date_range)
         set_fcas_service_bids!(sys, db, date_range)
-        gen = first(
-            g for g in get_components(Generator, sys)
-                if has_time_series(g, SingleTimeSeries, "fcas_trapezium_RAISE6SEC") && !(get_operation_cost(g) isa MarketBidCost)
-        )
+        gen = first(g for g in get_components(Generator, sys) if has_time_series(g, SingleTimeSeries, "fcas_trapezium_RAISE6SEC"))
+        # Drop the generator's offer curve to model a data gap in an available device.
+        remove_time_series!(sys, SingleTimeSeries, gen, fcas_offer_series_name(fcas_service(gen, BidType.RAISE6SEC), false))
         @test get_available(gen)
         # Available devices without their curve are a real data gap, so the derivation still throws.
         @test_throws ArgumentError set_fcas_effective_offers!(sys)

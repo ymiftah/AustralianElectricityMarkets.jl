@@ -1116,16 +1116,17 @@ end
             device = PSY.get_component(PSY.ThermalStandard, sys, duid)
             add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISEREG, (0.0, 0.0, 100.0, 100.0, 9.0), [(9.0, 10.0)])
             add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISE6SEC, (0.0, 0.0, 100.0, 100.0, 10.0), [(10.0, 10.0)])
-            for name in ("TAS1_RAISEREG", "TAS1_RAISEREG_B")
-                PSY.add_service!(sys, FCASService(; name = name, region = "TAS1", bid_type = BidType.RAISEREG), [device])
-                flush_toy_fcas_curves!(sys)
-            end
+            PSY.add_service!(sys, FCASService(; name = "TAS1_RAISEREG", region = "TAS1", bid_type = BidType.RAISEREG), [device])
             PSY.add_service!(
                 sys, FCASService(; name = "TAS1_RAISE6SEC", region = "TAS1", bid_type = BidType.RAISE6SEC), [device],
             )
             flush_toy_fcas_curves!(sys)
         end,
     )
+    # The second regulation service goes in after the toy build, which refuses a device with two
+    # services of one market in its effective-offer derivation.
+    duplicate_device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+    PSY.add_service!(sys, FCASService(; name = "TAS1_RAISEREG_B", region = "TAS1", bid_type = BidType.RAISEREG), [duplicate_device])
     service_names = ["TAS1_RAISEREG", "TAS1_RAISEREG_B", "TAS1_RAISE6SEC"]
     template = fcas_toy_template(sys, service_names)
 

@@ -5,8 +5,7 @@
     using DataFrames
 
     # This test builds one System through the PSCB fixture's manual builder-call sequence
-    # (nem_system(db, ConstrainedNetworkConfiguration(); ...) can't be used here - see
-    # pscb_nemweb_data.jl's top-of-file comment), asserts every constraint/FCAS/loss input the
+    # (nem_system can't be used here - see pscb_nemweb_data.jl's top-of-file comment), asserts every constraint/FCAS/loss input the
     # System should carry, then re-asserts the same coverage after a JSON round-trip.
     config = HiveConfiguration(hive_location = AEM_TEST_PSCB_HIVE_DIR, filesystem = "file")
     db = aem_connect(config)
@@ -17,6 +16,7 @@
     function build_system()
         sys = augmented_pscb_system()
         set_fcas_bids!(sys, db, date_range)
+        give_generator_market_bid_costs!(sys)
         set_fcas_service_bids!(sys, db, date_range)
         add_nem_constraints!(sys, db, date_range)
         attach_interconnector_losses!(sys, db, first(date_range))

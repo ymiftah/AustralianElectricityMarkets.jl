@@ -26,6 +26,24 @@ function _fcas_units_multiplier(component)
 end
 
 
+"""
+    _fcas_system_base(component) -> Float64
+
+The system base power, in MVA, that `component`'s FCAS offer curves are divided by on read. Throws
+`ArgumentError` if `component` is not attached to a `System`.
+"""
+function _fcas_system_base(component)
+    info = IS.get_internal(component).units_info
+    isnothing(info) && throw(
+        ArgumentError(
+            "\"$(get_name(component))\" is not attached to a System, so its FCAS offer curves " *
+                "have no system base to convert from.",
+        ),
+    )
+    return Float64(info.base_value)
+end
+
+
 function _read_fcas_series(kind::AbstractString, component, name::AbstractString, service::BidType, decremental::Bool, initial_time, horizon::Integer)
     if !has_time_series(component, SingleTimeSeries, name)
         throw(
@@ -159,16 +177,18 @@ end
     _get_fcas_offer_curve(component, service, initial_time, horizon; decremental = false) -> Vector{PSY.PiecewiseStepData}
 
 Full-series read of `component`'s FCAS offer curve for `service`, `horizon` steps from
-`initial_time`. Quantities (`x_coords`) are in `component`'s `System`'s current display units
-(MW under `NATURAL_UNITS`, per-unit of the system base under `SYSTEM_BASE`); prices
-(`y_coords`) are always \$/MW, never per-unitized. `decremental` selects the storage
-`DIRECTION == "LOAD"` series. Throws `ArgumentError` if the series isn't attached.
+`initial_time`. The series is stored in MW and divided by the system base on read. Quantities
+(`x_coords`) are then in `component`'s `System`'s current display units (MW under `NATURAL_UNITS`,
+per-unit of the system base under `SYSTEM_BASE`); prices (`y_coords`) are always \$/MW, never
+per-unitized. `decremental` selects the storage `DIRECTION == "LOAD"` series. Throws `ArgumentError`
+if the series isn't attached.
 """
 function _get_fcas_offer_curve(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
     name = fcas_offer_series_name(fcas_service(component, service), decremental)
     rows = _read_fcas_series("curve", component, name, service, decremental, initial_time, horizon)
+    base_power = _fcas_system_base(component)
     multiplier = _fcas_units_multiplier(component)
-    return [PSY.PiecewiseStepData(get_x_coords(c) .* multiplier, get_y_coords(c)) for c in rows]
+    return [PSY.PiecewiseStepData(get_x_coords(c) ./ base_power .* multiplier, get_y_coords(c)) for c in rows]
 end
 
 

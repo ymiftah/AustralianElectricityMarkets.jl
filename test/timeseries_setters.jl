@@ -988,9 +988,7 @@ end
     end
 
     @testset "non-scheduled loads receive zero availability" begin
-        fcas_sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = range)
-        set_market_bids!(fcas_sys, db, range)
-        set_nem_energy_limits!(fcas_sys, db, range)
+        fcas_sys = nem_system(db, NEMDEConfiguration(); date_range = range)
         loads = [l for l in get_components(ControllableLoad, fcas_sys) if get_available(l) && startswith(get_name(l), "ASLOAD")]
         @test !isempty(loads)
         for load in loads

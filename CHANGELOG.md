@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- FCAS service bids are stored in MW and converted to per-unit of the system base on read, so
+  the offer values seen by the model are unchanged. Storing a service bid on a device without a
+  `MarketBidCost` now throws an `ArgumentError` instead of silently skipping the device.
+
 - Skip the effective FCAS offers of unavailable devices that carry no stored offer curve, so a
   NEMDE replication whose unpriced units are unavailable no longer fails in `set_fcas_effective_offers!`.
 
@@ -532,6 +536,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `ConstrainedNetworkConfiguration` was removed; build replay systems with `NEMDEConfiguration`.
 - The public `filter_buildable_generic_constraints` (`AustralianElectricityMarketsSimulations`).
   The replication path runs the same buildability check internally.
 - `NEMLookaheadDispatch` and `StorageInputDevicePower`, with the pre-dispatch FCAS timing (AGC

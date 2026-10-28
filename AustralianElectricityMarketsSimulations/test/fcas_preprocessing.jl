@@ -2,7 +2,7 @@
 
 # A populated system over `date_range`, using the AEM setters for the preprocessing tests.
 function fcas_replay_system(db, date_range)
-    sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = date_range)
+    sys, _ = AustralianElectricityMarkets.RegionModel._constrained_system(db; date_range = date_range)
     set_demand!(sys, db, date_range; resolution = DISPATCH_INTERVAL)
     set_loss_demand_coefficients!(sys)
     set_market_bids!(sys, db, date_range; resolution = DISPATCH_INTERVAL)

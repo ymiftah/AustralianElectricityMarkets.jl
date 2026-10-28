@@ -142,11 +142,13 @@
     @testset "set_fcas_bids!" begin
         sys = augmented_pscb_system()
         set_fcas_bids!(sys, db, date_range)
+        give_generator_market_bid_costs!(sys)
         set_fcas_service_bids!(sys, db, date_range)
 
-        @testset "thermal unit gets trapezium series and no offer curve (non-zero cost)" begin
+        @testset "thermal unit gets trapezium series and offer curve once it has a MarketBidCost" begin
             gen = get_component(ThermalStandard, sys, "Alta")
-            @test !has_time_series(gen, SingleTimeSeries, fcas_offer_series_name(fcas_service(gen, BidType.RAISE6SEC), false))
+            @test get_operation_cost(gen) isa MarketBidCost
+            @test has_time_series(gen, SingleTimeSeries, fcas_offer_series_name(fcas_service(gen, BidType.RAISE6SEC), false))
             @test has_time_series(gen, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")
         end
 

@@ -44,7 +44,7 @@ end
 
 let
     required = union(
-        AEM.table_requirements(ConstrainedNetworkConfiguration()),
+        AEM.table_requirements(NEMDEConfiguration()),
         [:BIDPEROFFER_D, :BIDDAYOFFER_D],
     )
     missing_tables = filter(t -> !(t in FCAS_REQ_TABLES) && !month_cached(t), required)
@@ -110,7 +110,7 @@ function term_device_names(gc; energy_only::Bool = false)
 end
 
 @testset "Real NEM data, $(Date(REAL_START))" begin
-    sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = REAL_DATE_RANGE)
+    sys, _ = AEM.RegionModel._constrained_system(db; date_range = REAL_DATE_RANGE)
 
     @testset "the constrained System builds" begin
         areas = Set(PSY.get_name.(PSY.get_components(PSY.Area, sys)))
@@ -312,7 +312,7 @@ end
     end
 
     @testset "FCASMarket builds and solves alongside the constrained System" begin
-        # ConstrainedNetworkConfiguration's add_fcas_services! built one FCASService per bid
+        # The constrained layer's add_fcas_services! built one FCASService per bid
         # (region, bid type), attaching only the bids FCASMarket models.
         fcas_registered = PSY.get_name.(PSY.get_components(FCASService, sys))
         n_regulation_trapeziums = 0
@@ -521,7 +521,7 @@ end
 end
 
 @testset "Elastic GenericConstraint slack matches AEMO's published violation, $(Date(VIOLATION_START))" begin
-    sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = VIOLATION_DATE_RANGE)
+    sys, _ = AEM.RegionModel._constrained_system(db; date_range = VIOLATION_DATE_RANGE)
     set_demand!(sys, db, VIOLATION_DATE_RANGE; resolution = REAL_RESOLUTION)
     set_market_bids!(sys, db, VIOLATION_DATE_RANGE; resolution = REAL_RESOLUTION)
     set_nem_dispatch_limits!(sys, db, VIOLATION_DATE_RANGE)

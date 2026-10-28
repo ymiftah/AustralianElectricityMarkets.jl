@@ -84,3 +84,25 @@ function augmented_pscb_system()
 
     return sys
 end
+
+
+"""
+    give_generator_market_bid_costs!(sys)
+
+Gives every `Generator` without a `MarketBidCost` an empty one, the cost
+[`set_market_bids!`](@ref) would give a bidder. The PSCB fixture has no energy bid tables, so
+its generators need this before [`set_fcas_service_bids!`](@ref) can store their offers.
+
+# Returns
+`nothing`.
+"""
+function give_generator_market_bid_costs!(sys)
+    for gen in get_components(Generator, sys)
+        get_operation_cost(gen) isa MarketBidCost && continue
+        set_operation_cost!(
+            gen,
+            MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0),
+        )
+    end
+    return
+end

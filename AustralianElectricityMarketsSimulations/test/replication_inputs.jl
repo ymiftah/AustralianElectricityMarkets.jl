@@ -24,7 +24,7 @@ end
 @testset "a dispatch device without its dispatch-limit series cannot replay" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR))
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 15)
-    sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = interval)
+    sys, _ = AustralianElectricityMarkets.RegionModel._constrained_system(db; date_range = interval)
     @test_throws r"incomplete dispatch inputs for .*; call set_market_bids!, set_nem_dispatch_limits! and set_nem_energy_limits!" replication_template(sys)
 end
 
@@ -55,6 +55,6 @@ end
 @testset "a cached table without the requested constraint intervals cannot replay" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR))
     later = DateTime(2030, 1, 1):Minute(5):DateTime(2030, 1, 1, 0, 10)
-    sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = later)
+    sys, _ = AustralianElectricityMarkets.RegionModel._constrained_system(db; date_range = later)
     @test_throws r"missing.*constraint.*2030" replication_template(sys)
 end

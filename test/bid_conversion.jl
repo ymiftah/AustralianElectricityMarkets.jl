@@ -39,7 +39,8 @@
         curve, packed = AEM._extract_fcas_bid(row; base_power = base)
         expected = original_curve(row; keep_empty_bands = true)
         divisor = isnothing(base) ? 1.0 : base
-        @test get_x_coords(curve) == get_x_coords(expected) ./ divisor
+        # The offer curve stays in MW; only the trapezium is per-unitised.
+        @test get_x_coords(curve) == get_x_coords(expected)
         @test get_y_coords(curve) == get_y_coords(expected)
         @test isequal(packed, (0.0, 10.0, 20.0, 30.0, 5.0, NaN, 2.0) ./ divisor)
         invalid = merge(row, (LOWBREAKPOINT = 40.0,))
