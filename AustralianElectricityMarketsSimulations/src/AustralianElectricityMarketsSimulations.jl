@@ -4,7 +4,10 @@ import AustralianElectricityMarkets
 using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCASTrapezium,
     FCAS_REGULATION_MARKETS, GenericConstraint, InterconnectorLossModel, InterconnectorTerm,
     EnergyTieBreak, NEM_SERIES, OfferSide, RegionTerm, UnitTerm, TIE_BREAK_CVP_FACTOR, TIE_BREAK_SERVICE_NAME,
-    set_tie_break_scales!,
+    set_tie_break_scales!, DISPATCH_INTERVAL,
+    UNIT_RAMP_CVP_FACTOR, INTERCONNECTOR_FLOW_CVP_FACTOR, ENERGY_OFFER_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR,
+    ENERGY_MAX_AVAIL_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR, FIXED_LOADING_CVP_FACTOR,
+    MNSP_RAMP_CVP_FACTOR, MNSP_OFFER_CVP_FACTOR, MNSP_AVAILABILITY_CVP_FACTOR, constraint_cvp_factor,
     energy_max_avail_series_name, offer_side, side_suffix, has_schedule_classification, is_semi_scheduled, get_energy_offer, get_fcas_offer, FCASBidDirection, fcas_bid_direction, fcas_series_name, mnsp_series_name, fcas_service_name, get_bid_type, get_constraint_weight,
     get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_enablement_max,
     get_enablement_min, get_energy_availability, get_factor, get_fcas_agc_ramp_capability,
@@ -32,7 +35,6 @@ const IS = PSY.IS
 const PM = PSI.PM
 
 include("time_basis.jl")
-include("cvp_factors.jl")
 
 include("types/constraint_formulations.jl")
 include("types/dispatch.jl")
@@ -74,17 +76,16 @@ include("execution/interconnector_loss_gaps.jl")
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
 export REPLICATION_PARTS, replication_template
 export prepare_replication!, replication_simulation, run_replication, replication_results, REPLICATION_OPTIMIZER
-export ENERGY_OFFER_CVP_FACTOR, EnergyOfferSurplusSlack, EnergyOfferDeficitSlack,
+export EnergyOfferSurplusSlack, EnergyOfferDeficitSlack,
     EnergyDecrementalOfferSurplusSlack, EnergyDecrementalOfferDeficitSlack
 export EnergyMaxAvailOutConstraint, EnergyMaxAvailInConstraint, EnergyMaxAvailOutSlack, EnergyMaxAvailInSlack
 export EnergyMaxAvailTimeSeriesParameter, EnergyUIGFTimeSeriesParameter,
-    EnergyMaxAvailConstraint, EnergyUIGFConstraint, EnergyMaxAvailSlack, EnergyUIGFSlack,
-    ENERGY_MAX_AVAIL_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR
+    EnergyMaxAvailConstraint, EnergyUIGFConstraint, EnergyMaxAvailSlack, EnergyUIGFSlack
 export FixedLoadTimeSeriesParameter, FixedLoadInvokedTimeSeriesParameter, EnergyFixedLoadConstraint,
     EnergyFixedLoadSurplusSlack, EnergyFixedLoadDeficitSlack
 export NEMConstraintLHS, NEMConstraintLimit,
     NEMConstraintRHSParameter, LinearFactorLimit, FCASMarket
-export GenericConstraintSlackUp, GenericConstraintSlackDown, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR
+export GenericConstraintSlackUp, GenericConstraintSlackDown
 export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASJointCapacityLHS, FCASJointCapacityConstraint, FCASBDURampingConstraint,
     FCASJointRampingConstraint, FCASJointCapacitySlack, FCASJointRampingSlack,
@@ -92,10 +93,9 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASOfferBandVariable, FCASOfferBandConstraint, FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter,
     FCASLowerSlopeParameter, FCASRampingLimitParameter, FCASBandPriceParameter,
     FCAS_MAXAVAIL_CVP_FACTOR, FCAS_BDU_RAMPING_CVP_FACTOR, FCAS_CAPACITY_CVP_FACTOR,
-    FCAS_RAMPING_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR, INTERCONNECTOR_ZERO_CVP_FACTOR, FIXED_LOADING_CVP_FACTOR,
-    constraint_cvp_factor,
-    UNIT_RAMP_CVP_FACTOR, UnitRampUpSlack, UnitRampDownSlack,
-    INTERCONNECTOR_FLOW_CVP_FACTOR, InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack
+    FCAS_RAMPING_CVP_FACTOR,
+    UnitRampUpSlack, UnitRampDownSlack,
+    InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack
 export compute_fcas_prices
 export check_fcas_services, check_dispatch_envelope
 export AbstractNEMDispatch, NEMReplayDispatch,
@@ -115,6 +115,6 @@ export MNSPLinkFlowVariable, MNSPLinkFlowConstraint, MNSPLinkBandConstraint, MNS
     MNSPReverseMaxAvailParameter, MNSPBandPriceParameter
 export interconnector_loss_gaps, check_interconnector_loss_segments
 
-export MNSPInitialFlowParameter, MNSPForwardRampRateParameter, MNSPReverseRampRateParameter, MNSPForwardFixedLoadParameter, MNSPReverseFixedLoadParameter, MNSPForwardFixedLoadInvokedParameter, MNSPReverseFixedLoadInvokedParameter, MNSPMaxAvailSlack, MNSPOfferSlack, MNSPRampUpSlack, MNSPRampDownSlack, MNSPFixedLoadSurplusSlack, MNSPFixedLoadDeficitSlack, MNSPRampConstraint, MNSPFixedLoadConstraint, MNSP_RAMP_CVP_FACTOR, MNSP_OFFER_CVP_FACTOR, MNSP_AVAILABILITY_CVP_FACTOR
+export MNSPInitialFlowParameter, MNSPForwardRampRateParameter, MNSPReverseRampRateParameter, MNSPForwardFixedLoadParameter, MNSPReverseFixedLoadParameter, MNSPForwardFixedLoadInvokedParameter, MNSPReverseFixedLoadInvokedParameter, MNSPMaxAvailSlack, MNSPOfferSlack, MNSPRampUpSlack, MNSPRampDownSlack, MNSPFixedLoadSurplusSlack, MNSPFixedLoadDeficitSlack, MNSPRampConstraint, MNSPFixedLoadConstraint
 
 end

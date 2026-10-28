@@ -323,7 +323,7 @@ end
     slack = PSI.get_variable(container, AEMS.InterconnectorFlowSurplusSlack(), PSY.AreaInterchange)["IC1", 1]
     mpc = AEMS._container_market_price_cap(container, PSI.get_initial_time(container))
     expected = PSY.get_base_power(sys) *
-        AEMS.interval_cost_coefficient(AEMS.INTERCONNECTOR_FLOW_CVP_FACTOR * mpc, PSI.get_resolution(container))
+        AEMS.interval_cost_coefficient(AustralianElectricityMarkets.INTERCONNECTOR_FLOW_CVP_FACTOR * mpc, PSI.get_resolution(container))
     @test PSI.JuMP.objective_function(PSI.get_jump_model(container)).terms[slack] ≈ expected
 end
 

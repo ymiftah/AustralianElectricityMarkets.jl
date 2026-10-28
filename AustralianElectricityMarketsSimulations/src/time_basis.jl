@@ -1,6 +1,3 @@
-"Length of one NEM dispatch interval."
-const DISPATCH_INTERVAL = Dates.Minute(5)
-
 """
     interval_hours(resolution::Dates.Period) -> Float64
 

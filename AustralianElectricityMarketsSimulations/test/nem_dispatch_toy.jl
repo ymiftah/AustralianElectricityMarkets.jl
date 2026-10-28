@@ -167,7 +167,7 @@ end
     @test out.battery_out_mw[TOY_BATTERY] ≈ 15.0 atol = TOY_TOLERANCE
     @test out.battery_in_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
     @test out.dispatch_mw[TOY_CHEAP] ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ (15.0 * 5.0 + 5.0 * ENERGY_MAX_AVAIL_CVP_FACTOR * AEMS._financial_year_mpc(TOY_START)) * interval_hours(DISPATCH_INTERVAL) atol = 1.0e-4
+    @test out.objective ≈ (15.0 * 5.0 + 5.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * AustralianElectricityMarkets._financial_year_mpc(TOY_START)) * interval_hours(DISPATCH_INTERVAL) atol = 1.0e-4
 end
 
 @testset "a net ramp-up ceiling can violate load availability at its price" begin
@@ -188,7 +188,7 @@ end
     @test out.battery_in_mw[TOY_BATTERY] ≈ 15.0 atol = TOY_TOLERANCE
     @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
     @test out.dispatch_mw[TOY_CHEAP] ≈ 15.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ (15.0 * 20.0 - 15.0 * 1000.0 + 5.0 * ENERGY_MAX_AVAIL_CVP_FACTOR * AEMS._financial_year_mpc(TOY_START)) * interval_hours(DISPATCH_INTERVAL) atol = 1.0e-4
+    @test out.objective ≈ (15.0 * 20.0 - 15.0 * 1000.0 + 5.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * AustralianElectricityMarkets._financial_year_mpc(TOY_START)) * interval_hours(DISPATCH_INTERVAL) atol = 1.0e-4
 end
 
 @testset "a per-direction availability binding" begin
@@ -307,12 +307,12 @@ end
         0.0,
     )
     out = solve_toy(sys)
-    mpc = AustralianElectricityMarketsSimulations._financial_year_mpc(TOY_START)
+    mpc = AustralianElectricityMarkets._financial_year_mpc(TOY_START)
 
     @test out.dispatch_mw[TOY_CHEAP] ≈ 0.0 atol = TOY_TOLERANCE
     @test out.ramp_slack_mw.up ≈ 1.0 atol = TOY_TOLERANCE
     @test out.ramp_slack_mw.down ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ UNIT_RAMP_CVP_FACTOR * mpc * interval_hours(DISPATCH_INTERVAL) rtol = 1.0e-8
+    @test out.objective ≈ AustralianElectricityMarkets.UNIT_RAMP_CVP_FACTOR * mpc * interval_hours(DISPATCH_INTERVAL) rtol = 1.0e-8
 end
 
 @testset "a scheduled load adds to the balance and clears when its bid is above the price" begin
@@ -405,19 +405,19 @@ end
         end,
     )
     out = solve_toy(sys)
-    mpc = AustralianElectricityMarketsSimulations._financial_year_mpc(TOY_START)
+    mpc = AustralianElectricityMarkets._financial_year_mpc(TOY_START)
     input_variable = PSI.get_variable(out.container, PSI.ActivePowerInVariable(), PSY.EnergyReservoirStorage)
 
     @test out.battery_in_mw[TOY_BATTERY] ≈ 50.0 atol = TOY_TOLERANCE
     @test !PSI.JuMP.has_upper_bound(input_variable[TOY_BATTERY, 1])
     @test out.storage_ramp_slack_mw.up ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ (50.0 * 20.0 + 10.0 * ENERGY_MAX_AVAIL_CVP_FACTOR * mpc) * interval_hours(DISPATCH_INTERVAL) rtol = 1.0e-8
+    @test out.objective ≈ (50.0 * 20.0 + 10.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * mpc) * interval_hours(DISPATCH_INTERVAL) rtol = 1.0e-8
 
     @testset "the storage ramp slack is priced at 1155 x MPC" begin
         slack = PSI.get_variable(out.container, UnitRampUpSlack(), PSY.EnergyReservoirStorage)[TOY_BATTERY, 1]
         coefficient = PSI.JuMP.objective_function(PSI.get_jump_model(out.container)).terms[slack]
         @test coefficient ≈
-            PSY.get_base_power(sys) * interval_cost_coefficient(UNIT_RAMP_CVP_FACTOR * mpc, TOY_RESOLUTION)
+            PSY.get_base_power(sys) * interval_cost_coefficient(AustralianElectricityMarkets.UNIT_RAMP_CVP_FACTOR * mpc, TOY_RESOLUTION)
     end
 end
 
@@ -446,7 +446,7 @@ end
 end
 
 @testset "penalty ordering: a lower CVP row breaks before a higher one" begin
-    mpc = AustralianElectricityMarketsSimulations._financial_year_mpc(TOY_START)
+    mpc = AustralianElectricityMarkets._financial_year_mpc(TOY_START)
 
     @testset "the area balance (150) breaks before the unit ramp (1155)" begin
         # A 100 MW load against a unit that can climb 5 MW from 0: the 95 MW shortfall is cheaper
@@ -465,7 +465,7 @@ end
         @test violations.direction == ["up"]
         @test only(violations.MW) ≈ 95.0 atol = TOY_TOLERANCE
         @test out.objective ≈
-            (5.0 * 20.0 + 95.0 * AREA_BALANCE_CVP_FACTOR * mpc) * interval_hours(DISPATCH_INTERVAL) rtol = 1.0e-8
+            (5.0 * 20.0 + 95.0 * AustralianElectricityMarkets.AREA_BALANCE_CVP_FACTOR * mpc) * interval_hours(DISPATCH_INTERVAL) rtol = 1.0e-8
     end
 
     @testset "the unit ramp (1155) is reported when it is the only relaxation" begin

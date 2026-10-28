@@ -498,19 +498,19 @@ end
 end
 
 @testset "Market Price Cap lookup covers only the published financial years" begin
-    @test AEMS._financial_year_mpc(DateTime(2025, 6, 30)) == 17_500.0
-    @test AEMS._financial_year_mpc(DateTime(2025, 7, 1)) == 17_500.0  # interval 23:55-00:00 on 30 June
-    @test AEMS._financial_year_mpc(DateTime(2025, 7, 1, 0, 5)) == 20_300.0
-    @test AEMS._financial_year_mpc(DateTime(2026, 6, 30, 23, 55)) == 20_300.0
-    @test AEMS._financial_year_mpc(DateTime(2026, 7, 1)) == 20_300.0
-    @test AEMS._financial_year_mpc(DateTime(2026, 7, 1, 0, 5)) == 23_200.0
-    @test AEMS._financial_year_mpc(DateTime(2027, 7, 1)) == 23_200.0
-    @test_throws r"No published Market Price Cap" AEMS._financial_year_mpc(DateTime(2024, 7, 1))
-    @test_throws r"No published Market Price Cap" AEMS._financial_year_mpc(DateTime(2027, 7, 1, 0, 5))
+    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2025, 6, 30)) == 17_500.0
+    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2025, 7, 1)) == 17_500.0  # interval 23:55-00:00 on 30 June
+    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2025, 7, 1, 0, 5)) == 20_300.0
+    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2026, 6, 30, 23, 55)) == 20_300.0
+    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2026, 7, 1)) == 20_300.0
+    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2026, 7, 1, 0, 5)) == 23_200.0
+    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2027, 7, 1)) == 23_200.0
+    @test_throws r"No published Market Price Cap" AustralianElectricityMarkets._financial_year_mpc(DateTime(2024, 7, 1))
+    @test_throws r"No published Market Price Cap" AustralianElectricityMarkets._financial_year_mpc(DateTime(2027, 7, 1, 0, 5))
 end
 
 @testset "area-balance slack Market Price Cap: unpublished year throws, settings entry overrides" begin
-    # _prepared_system() is dated 2020, outside MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.
+    # _prepared_system() is dated 2020, outside AustralianElectricityMarkets.MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.
     pruned_system() = (sys = _prepared_system(); _prune_unbuildable_constraints!(sys); sys)
     model = PSI.DecisionModel(_nem_service_template(), pruned_system(); optimizer = HiGHS.Optimizer, horizon = Hour(2))
     err = _build_error(model)
@@ -524,7 +524,7 @@ end
     container = PSI.get_optimization_container(model)
     objective_terms = PSI.JuMP.objective_function(PSI.get_jump_model(container)).terms
     expected = PSI.get_base_power(container) *
-        interval_cost_coefficient(AEMS.AREA_BALANCE_CVP_FACTOR * 10_000.0, PSI.get_resolution(container))
+        interval_cost_coefficient(AustralianElectricityMarkets.AREA_BALANCE_CVP_FACTOR * 10_000.0, PSI.get_resolution(container))
     for var_type in (PSI.SystemBalanceSlackUp, PSI.SystemBalanceSlackDown)
         slack = PSI.get_variable(container, var_type(), PSY.Area)
         @test all(v -> objective_terms[v] ≈ expected, slack)
@@ -580,7 +580,7 @@ end
     add_nem_constraints!(sys, NEM_CONSTRAINTS_DB, NEM_CONSTRAINTS_DATE_RANGE)
     _remove_unused_pscb_constraints!(sys)
     params = _native_forecast_params(sys)
-    weight = INTERCONNECTOR_ZERO_CVP_FACTOR
+    weight = AustralianElectricityMarkets.INTERCONNECTOR_ZERO_CVP_FACTOR
     _add_zero_flow_pair!(sys, params, "IC1")
     _retime_gc_series!(sys, params, Dict{String, Float64}())
     _prune_unbuildable_constraints!(sys)
@@ -610,16 +610,16 @@ end
     end
 end
 
-@testset "constraint_cvp_factor prices built-in constraints by limit type, others by their GENCONDATA weight" begin
+@testset "AustralianElectricityMarkets.constraint_cvp_factor prices built-in constraints by limit type, others by their GENCONDATA weight" begin
     built_in(limit_type) = GenericConstraint(;
         name = "B", sense = ConstraintSense.LE, rhs = 0.0, terms = ConstraintTerm[],
         ext = Dict{String, Any}("limit_type" => limit_type, "source" => "built-in"),
     )
-    @test constraint_cvp_factor(built_in("Interconnector Zero")) == INTERCONNECTOR_ZERO_CVP_FACTOR == 1160.0
-    @test_throws ArgumentError constraint_cvp_factor(built_in("Unknown"))
+    @test AustralianElectricityMarkets.constraint_cvp_factor(built_in("Interconnector Zero")) == AustralianElectricityMarkets.INTERCONNECTOR_ZERO_CVP_FACTOR == 1160.0
+    @test_throws ArgumentError AustralianElectricityMarkets.constraint_cvp_factor(built_in("Unknown"))
     published = GenericConstraint(;
         name = "P", sense = ConstraintSense.LE, rhs = 0.0, constraint_weight = 35.0, terms = ConstraintTerm[],
         ext = Dict{String, Any}("limit_type" => "Interconnector Zero", "source" => "AEMO"),
     )
-    @test constraint_cvp_factor(published) == 35.0
+    @test AustralianElectricityMarkets.constraint_cvp_factor(published) == 35.0
 end

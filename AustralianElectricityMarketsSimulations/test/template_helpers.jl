@@ -9,7 +9,7 @@ import HydroPowerSimulations
     _decision_model(args...; mpc = 20_000.0, kwargs...)
 
 `PSI.DecisionModel` with the `"market_price_cap"` settings entry set, for PSCB fixtures dated outside
-`MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` whose area-balance slack still needs a Market Price Cap.
+`AustralianElectricityMarkets.MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` whose area-balance slack still needs a Market Price Cap.
 """
 function _decision_model(args...; mpc = 20_000.0, kwargs...)
     model = PSI.DecisionModel(args...; kwargs...)

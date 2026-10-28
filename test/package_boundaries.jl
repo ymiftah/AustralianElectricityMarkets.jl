@@ -7,6 +7,8 @@ using Logging
     @test !isdefined(readers, :PowerSystems)
     @test isdefined(AustralianElectricityMarkets, :EnergyTieBreak)
     @test isdefined(AustralianElectricityMarkets, :set_fcas_effective_offers!)
+    @test isdefined(AustralianElectricityMarkets, :MARKET_PRICE_CAP_BY_FINANCIAL_YEAR)
+    @test isdefined(AustralianElectricityMarkets, :constraint_cvp_factor)
 
     @test HiveConfiguration === AustralianElectricityMarketsData.HiveConfiguration
     @test aem_connect === AustralianElectricityMarketsData.aem_connect

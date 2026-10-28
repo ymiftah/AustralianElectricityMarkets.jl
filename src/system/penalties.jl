@@ -1,3 +1,7 @@
+"Length of one NEM dispatch interval."
+const DISPATCH_INTERVAL = Dates.Minute(5)
+
+
 """
     MARKET_PRICE_CAP_BY_FINANCIAL_YEAR
 
@@ -17,7 +21,7 @@ const MARKET_PRICE_CAP_BY_FINANCIAL_YEAR = [
 
 CVP factor (1155) of AEMO's Unit Ramp Rate constraint (`DeficitRampRate` and `SurplusRampRate`),
 item 3 of the *Schedule of Constraint Violation Penalty Factors* v8.0. Prices
-[`UnitRampUpSlack`](@ref) and [`UnitRampDownSlack`](@ref).
+`UnitRampUpSlack` and `UnitRampDownSlack`.
 """
 const UNIT_RAMP_CVP_FACTOR = 1155.0
 
@@ -26,8 +30,8 @@ const UNIT_RAMP_CVP_FACTOR = 1155.0
     INTERCONNECTOR_FLOW_CVP_FACTOR
 
 CVP factor (1150) of AEMO's Interconnector Capacity Limit constraint, item 5 of the *Schedule of
-Constraint Violation Penalty Factors* v8.0. Prices [`InterconnectorFlowSurplusSlack`](@ref) and
-[`InterconnectorFlowDeficitSlack`](@ref).
+Constraint Violation Penalty Factors* v8.0. Prices `InterconnectorFlowSurplusSlack` and
+`InterconnectorFlowDeficitSlack`.
 """
 const INTERCONNECTOR_FLOW_CVP_FACTOR = 1150.0
 
@@ -36,7 +40,7 @@ const INTERCONNECTOR_FLOW_CVP_FACTOR = 1150.0
     ENERGY_OFFER_CVP_FACTOR
 
 CVP factor (1135) of AEMO's Total Band MW Offer constraint, item 8 of the *Schedule of Constraint
-Violation Penalty Factors* v8.0. Prices the [`EnergyOfferSurplusSlack`](@ref) family.
+Violation Penalty Factors* v8.0. Prices the `EnergyOfferSurplusSlack` family.
 """
 const ENERGY_OFFER_CVP_FACTOR = 1135.0
 
@@ -45,7 +49,7 @@ const ENERGY_OFFER_CVP_FACTOR = 1135.0
     ENERGY_UIGF_CVP_FACTOR
 
 CVP factor (385) of AEMO's semi-scheduled UIGF constraint, item 12 of the *Schedule of Constraint
-Violation Penalty Factors* v8.0. Prices [`EnergyUIGFSlack`](@ref).
+Violation Penalty Factors* v8.0. Prices `EnergyUIGFSlack`.
 """
 const ENERGY_UIGF_CVP_FACTOR = 385.0
 
@@ -54,8 +58,8 @@ const ENERGY_UIGF_CVP_FACTOR = 385.0
     ENERGY_MAX_AVAIL_CVP_FACTOR
 
 CVP factor (370) of AEMO's Unit MaxAvail constraint, item 14 of the *Schedule of Constraint
-Violation Penalty Factors* v8.0. Prices [`EnergyMaxAvailSlack`](@ref),
-[`EnergyMaxAvailOutSlack`](@ref) and [`EnergyMaxAvailInSlack`](@ref).
+Violation Penalty Factors* v8.0. Prices `EnergyMaxAvailSlack`,
+`EnergyMaxAvailOutSlack` and `EnergyMaxAvailInSlack`.
 """
 const ENERGY_MAX_AVAIL_CVP_FACTOR = 370.0
 
@@ -84,7 +88,7 @@ const INTERCONNECTOR_ZERO_CVP_FACTOR = 1160.0
 
 CVP factor (380) of AEMO's Energy Inflexible Offer constraint, a unit held at its participant
 fixed loading, item 13 of the *Schedule of Constraint Violation Penalty Factors* v8.0. Prices
-[`EnergyFixedLoadSurplusSlack`](@ref) and [`EnergyFixedLoadDeficitSlack`](@ref).
+`EnergyFixedLoadSurplusSlack` and `EnergyFixedLoadDeficitSlack`.
 """
 const FIXED_LOADING_CVP_FACTOR = 380.0
 
@@ -139,3 +143,35 @@ const MNSP_OFFER_CVP_FACTOR = 1135.0
 AEMO MNSP availability CVP factor (365), item 16 of the Schedule of Constraint Violation Penalty Factors v8.0.
 """
 const MNSP_AVAILABILITY_CVP_FACTOR = 365.0
+
+
+"""
+    _financial_year_mpc(t::DateTime) -> Float64
+
+The published Market Price Cap for the financial year of the dispatch interval ending at `t` (a
+`SETTLEMENTDATE`). The interval ending 00:00 on 1 July runs 23:55-00:00 on 30 June, so it takes the
+earlier year's cap.
+
+# Returns
+A `\$/MWh` value.
+"""
+function _financial_year_mpc(t::DateTime)
+    start = t - DISPATCH_INTERVAL
+    year_start = Date(year(start) - (month(start) < 7), 7, 1)
+    idx = findfirst(p -> p[1] == year_start, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR)
+    isnothing(idx) && throw(
+        ArgumentError(
+            "No published Market Price Cap covers $t; extend MARKET_PRICE_CAP_BY_FINANCIAL_YEAR " *
+                "or set the \"market_price_cap\" entry of `PSI.get_ext(PSI.get_settings(model))`.",
+        ),
+    )
+    return MARKET_PRICE_CAP_BY_FINANCIAL_YEAR[idx][2]
+end
+
+
+function _checked_market_price_cap(rate)
+    value = rate isa Real ? Float64(rate) : NaN
+    isfinite(value) && value > 0.0 ||
+        throw(ArgumentError("market_price_cap must be finite and strictly positive, got $rate."))
+    return value
+end

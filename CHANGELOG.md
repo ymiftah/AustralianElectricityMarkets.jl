@@ -585,6 +585,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to derive its FCAS series. `AustralianElectricityMarketsSimulations` keeps the FCAS PSI
   formulations and checks.
 
+- NEM penalty factors (`*_CVP_FACTOR`, `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR`, `constraint_cvp_factor`)
+  and the `DISPATCH_INTERVAL` constant now live in the data package (`AustralianElectricityMarkets`),
+  so the market-rule constants load without `AustralianElectricityMarketsSimulations`.
+  `AustralianElectricityMarketsSimulations` keeps the penalty PSI formulations and re-exports
+  `DISPATCH_INTERVAL`.
+
 - Added a timed random-day replay runner with early MNSP and constraint-version checks,
   one Julia worker per trading day, native interval timings and process memory sampling.
   An admitted day finishes even after the overall admission deadline.

@@ -27,7 +27,7 @@ function _add_mpc_penalty!(
         container::PSI.OptimizationContainer, ::Type{V}, ::Type{T}, names, cvp_factor::Real;
         meta::String = IS.Optimization.CONTAINER_KEY_EMPTY_META, rate = nothing,
     ) where {V <: PSI.VariableType, T <: PSY.Component}
-    fixed_rate = isnothing(rate) ? nothing : _checked_market_price_cap(rate)
+    fixed_rate = isnothing(rate) ? nothing : AustralianElectricityMarkets._checked_market_price_cap(rate)
     isempty(names) && return
     slack = PSI.get_variable(container, V(), T, meta)
     time_steps = PSI.get_time_steps(container)
@@ -112,31 +112,7 @@ A `\$/MWh` value.
 """
 function _service_market_price_cap(service_model::PSI.ServiceModel, container::PSI.OptimizationContainer, t::DateTime)
     rate = get(PSI.get_attributes(service_model), "market_price_cap", nothing)
-    return isnothing(rate) ? _container_market_price_cap(container, t) : _checked_market_price_cap(rate)
-end
-
-
-"""
-    _financial_year_mpc(t::DateTime) -> Float64
-
-The published Market Price Cap for the financial year of the dispatch interval ending at `t` (a
-`SETTLEMENTDATE`). The interval ending 00:00 on 1 July runs 23:55-00:00 on 30 June, so it takes the
-earlier year's cap.
-
-# Returns
-A `\$/MWh` value.
-"""
-function _financial_year_mpc(t::DateTime)
-    start = t - DISPATCH_INTERVAL
-    year_start = Date(year(start) - (month(start) < 7), 7, 1)
-    idx = findfirst(p -> p[1] == year_start, MARKET_PRICE_CAP_BY_FINANCIAL_YEAR)
-    isnothing(idx) && throw(
-        ArgumentError(
-            "No published Market Price Cap covers $t; extend MARKET_PRICE_CAP_BY_FINANCIAL_YEAR " *
-                "or set the \"market_price_cap\" entry of `PSI.get_ext(PSI.get_settings(model))`.",
-        ),
-    )
-    return MARKET_PRICE_CAP_BY_FINANCIAL_YEAR[idx][2]
+    return isnothing(rate) ? _container_market_price_cap(container, t) : AustralianElectricityMarkets._checked_market_price_cap(rate)
 end
 
 
@@ -156,15 +132,7 @@ A finite, strictly positive `\$/MWh` value; invalid overrides throw `ArgumentErr
 """
 function _container_market_price_cap(container::PSI.OptimizationContainer, t::DateTime)
     rate = get(PSI.get_ext(PSI.get_settings(container)), "market_price_cap", nothing)
-    return _checked_market_price_cap(isnothing(rate) ? _financial_year_mpc(t) : rate)
-end
-
-
-function _checked_market_price_cap(rate)
-    value = rate isa Real ? Float64(rate) : NaN
-    isfinite(value) && value > 0.0 ||
-        throw(ArgumentError("market_price_cap must be finite and strictly positive, got $rate."))
-    return value
+    return AustralianElectricityMarkets._checked_market_price_cap(isnothing(rate) ? AustralianElectricityMarkets._financial_year_mpc(t) : rate)
 end
 
 

@@ -267,7 +267,7 @@ end
 
 @testset "a battery's ramp floor binds in step 1 only: simulation equals standalone solves" begin
     expected = [
-        (battery = 15.0, alta = 25.0, price = 50.0, objective = (1325 + 5.0 * ENERGY_MAX_AVAIL_CVP_FACTOR * AEMS._financial_year_mpc(TOY_START)) / 12),
+        (battery = 15.0, alta = 25.0, price = 50.0, objective = (1325 + 5.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * AustralianElectricityMarkets._financial_year_mpc(TOY_START)) / 12),
         (battery = 10.0, alta = 30.0, price = 50.0, objective = 1550 / 12),
     ]
     sim = stock_simulate(battery_sentinel_system())
