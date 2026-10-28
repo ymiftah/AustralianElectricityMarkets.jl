@@ -52,9 +52,10 @@ end
             invoked_key = only(k for k in keys if PSI.IS.Optimization.get_entry_type(k) === AEMS.GenericConstraintSlackCostParameter && k.meta == "F_REG")
             _update_objective_cache_parameters!(model, keys, 0)
             @test PSI.get_parameter_array(container, price_key)[TOY_CHEAP, "1", 1] == 5.0
-            @test PSI.get_parameter_array(container, invoked_key)["F_REG", 1] == 1.0
+            @test PSI.get_parameter_column_refs(PSI.get_parameter(container, invoked_key), "F_REG")[1] == 1.0
             slack = PSI.get_variable(container, GenericConstraintSlackDown(), GenericConstraint, "F_REG")["F_REG", 1]
-            penalty = PSI.get_parameter_multiplier_array(container, invoked_key)["F_REG", 1]
+            gc = PSY.get_component(GenericConstraint, sys, "F_REG")
+            penalty = PSI.get_base_power(container) * interval_cost_coefficient(AustralianElectricityMarkets.constraint_cvp_factor(gc), PSI.get_resolution(container))
             @test PSI.JuMP.coefficient(PSI.get_variant_terms(PSI.get_objective_expression(container)), slack) == 12345.0 * penalty
             storage = PSI.IS.get_time_series_storage(PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP))
             path = storage.file_path
@@ -62,7 +63,7 @@ end
             try
                 _update_objective_cache_parameters!(model, keys, 1)
                 @test PSI.get_parameter_array(container, price_key)[TOY_CHEAP, "1", 1] == 15.0
-                @test PSI.get_parameter_array(container, invoked_key)["F_REG", 1] == 0.0
+                @test PSI.get_parameter_column_refs(PSI.get_parameter(container, invoked_key), "F_REG")[1] == 0.0
                 objective = PSI.get_variant_terms(PSI.get_objective_expression(container))
                 @test PSI.JuMP.coefficient(objective, slack) == 0.0
                 band = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, price_key.meta)[TOY_CHEAP, "1", 1]

@@ -347,30 +347,7 @@ end
     gc = _gc(sys, "N_IC1_LIMIT")
     name = PSY.get_name(gc)
     param = PSI.get_parameter(container, AEMS.GenericConstraintSlackCostParameter(), GenericConstraint, name)
-    values = PSI.get_parameter_array(param)
-    penalties = PSI.get_multiplier_array(param)
-    @test [values[name, t] for t in 1:2] == [0.0, 1.0]
-    @test penalties[name, 1] == penalties[name, 2] > 0.0
-
-    # A simulation step re-reads the mask for its own window and re-prices the slacks.
-    initial_time = PSI.get_initial_time(container)
-    values[name, 1] = 5.0
-    values[name, 2] = 5.0
-    PSI.reset_variant_terms(PSI.get_objective_expression(container))
-    service_model = only(
-        m for m in Base.values(PSI.get_service_models(PSI.get_template(model))) if PSI.get_service_name(m) == name
-    )
-    AEMS._price_gc_slacks!(container, gc, service_model, values, penalties, initial_time)
-    @test [values[name, t] for t in 1:2] == [0.0, 1.0]
-    # The rebuilt cost: no term at the non-invoked step, the penalty per cap times that step's Market Price Cap at the invoked one.
-    mpc = AEMS._container_market_price_cap(container, initial_time + PSI.get_resolution(container))
-    variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
-    for slack_type in (AEMS.GenericConstraintSlackUp, AEMS.GenericConstraintSlackDown)
-        PSI.has_container_key(container, slack_type, GenericConstraint, name) || continue
-        slack = PSI.get_variable(container, slack_type(), GenericConstraint, name)
-        @test PSI.JuMP.coefficient(variant, slack[name, 1]) == 0.0
-        @test PSI.JuMP.coefficient(variant, slack[name, 2]) ≈ penalties[name, 2] * mpc
-    end
+    @test PSI.get_parameter_column_refs(param, name)[1:2] == [0.0, 1.0]
 
     # A recurrent build masks non-invoked intervals with zero-cost slacks, so it needs use_slacks.
     bare = _decision_model(_nem_service_template(; use_slacks = false), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
@@ -385,6 +362,51 @@ end
     end
     @test err isa ArgumentError
     @test occursin("use_slacks = true", err.msg)
+end
+
+@testset "generic-constraint slack costs equal invoked x CVP x base x interval coefficient x MPC at build and after an update" begin
+    n_raw = let p = _native_forecast_params(augmented_pscb_system())
+        p.count + Int(p.horizon / p.interval) - 1
+    end
+    invoked_vec = vcat([0.0], fill(1.0, n_raw - 1))
+    sys = _prepared_system(Dict("N_IC1_LIMIT" => 100.0), Dict("N_IC1_LIMIT" => invoked_vec))
+    _prune_unbuildable_constraints!(sys)
+    model = _decision_model(_nem_service_template(; use_slacks = true), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    gc = _gc(sys, "N_IC1_LIMIT")
+    name = PSY.get_name(gc)
+    base_power = PSI.get_base_power(container)
+    resolution = PSI.get_resolution(container)
+    initial_time = PSI.get_initial_time(container)
+    weight = AustralianElectricityMarkets.constraint_cvp_factor(gc)
+    key = PSI.ParameterKey(AEMS.GenericConstraintSlackCostParameter, GenericConstraint, name)
+    invoked = () -> PSI.get_parameter_column_refs(PSI.get_parameter(container, key), name)
+    @test invoked()[1:2] == [0.0, 1.0]
+
+    # Each slack's coefficient: invoked x base power x interval coefficient of the CVP factor x the Market Price Cap.
+    function check_slack_costs()
+        mpc = AEMS._container_market_price_cap(container, initial_time + resolution)
+        variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
+        for slack_type in (AEMS.GenericConstraintSlackUp, AEMS.GenericConstraintSlackDown)
+            PSI.has_container_key(container, slack_type, GenericConstraint, name) || continue
+            slack = PSI.get_variable(container, slack_type(), GenericConstraint, name)
+            for t in 1:2
+                expected = invoked()[t] * base_power * AEMS.interval_cost_coefficient(weight, resolution) * mpc
+                @test PSI.JuMP.coefficient(variant, slack[name, t]) ≈ expected
+            end
+        end
+    end
+    check_slack_costs()
+
+    # A simulation step from the second interval re-reads the invoked series for its window and re-applies the costs.
+    PSI.set_execution_count!(model, 1)
+    PSI.cost_function_unsynch(container)
+    PSI.reset_variant_terms(PSI.get_objective_expression(container))
+    PSI.update_container_parameter_values!(container, model, key, PSI.DatasetContainer{PSI.InMemoryDataset}())
+    PSI.set_execution_count!(model, 0)
+    @test invoked()[1:2] == [1.0, 1.0]
+    check_slack_costs()
 end
 
 @testset "Buildable generic constraints: the default throws one aggregated ArgumentError, and allow_partial_coverage returns the subset" begin

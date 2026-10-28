@@ -1,7 +1,9 @@
 # `LinearFactorLimit`, the `GenericConstraint` service formulation over energy and FCAS terms.
 
 PSI.get_default_time_series_names(::Type{GenericConstraint}, ::Type{LinearFactorLimit}) =
-    Dict{Type{<:PSI.TimeSeriesParameter}, String}(NEMConstraintRHSParameter => "rhs")
+    Dict{Type{<:PSI.TimeSeriesParameter}, String}(
+    NEMConstraintRHSParameter => "rhs", GenericConstraintSlackCostParameter => "invoked",
+)
 
 
 PSI.get_default_attributes(::Type{GenericConstraint}, ::Type{LinearFactorLimit}) =
@@ -9,6 +11,10 @@ PSI.get_default_attributes(::Type{GenericConstraint}, ::Type{LinearFactorLimit})
 
 
 PSI.get_multiplier_value(::NEMConstraintRHSParameter, ::GenericConstraint, ::LinearFactorLimit) =
+    1.0
+
+
+PSI.get_multiplier_value(::GenericConstraintSlackCostParameter, ::GenericConstraint, ::LinearFactorLimit) =
     1.0
 
 
@@ -474,8 +480,9 @@ end
 
 Prices `gc`'s elastic slacks (built by [`_add_gc_slack_variables!`](@ref), a no-op unless
 `PSI.get_use_slacks(model)`) through a [`GenericConstraintSlackCostParameter`](@ref): each
-interval's coefficient is its `"invoked"` value times [`constraint_cvp_factor`](@ref) times the Market
-Price Cap per MW, so a non-invoked interval's slack is free and its row is vacuous.
+interval's cost target is its `"invoked"` value times the system base power, times
+[`constraint_cvp_factor`](@ref) per interval, times the Market Price Cap of the service model at the
+build's initial time. A non-invoked interval's slack is free and its row is vacuous.
 `GenericConstraint`s built without slacks carry no cost of their own.
 
 # Returns
@@ -489,76 +496,20 @@ function PSI.objective_function!(
     name = PSY.get_name(gc)
     time_steps = PSI.get_time_steps(container)
     resolution = PSI.get_resolution(container)
-    initial_time = PSI.get_initial_time(container)
     base_power = PSI.get_base_power(container)
     weight = constraint_cvp_factor(gc)
-    param = PSI.add_param_container!(
-        container, GenericConstraintSlackCostParameter(), GenericConstraint,
-        (GenericConstraintSlackUp, GenericConstraintSlackDown), PSI.SOSStatusVariable.NO_VARIABLE,
-        false, Float64, [name], time_steps; meta = name,
-    )
-    invoked_values = PSI.get_parameter_array(param)
-    penalties = PSI.get_multiplier_array(param)
-    fill!(penalties, base_power * interval_cost_coefficient(weight, resolution))
-    _price_gc_slacks!(container, gc, model, invoked_values, penalties, initial_time)
-    return
-end
-
-
-# Writes `gc`'s `"invoked"` values from `initial_time` into `invoked_values` and adds its slack costs
-# at each interval's Market Price Cap to the variant objective.
-function _price_gc_slacks!(container::PSI.OptimizationContainer, gc::GenericConstraint, model::PSI.ServiceModel, invoked_values, penalties, initial_time::DateTime; source = container)
-    name = PSY.get_name(gc)
-    resolution = PSI.get_resolution(container)
-    invoked = _invoked_mask(source, gc, initial_time)
-    for t in axes(invoked_values)[2]
-        invoked_values[name, t] = invoked[t]
-        mpc = _service_market_price_cap(model, container, initial_time + resolution * (t - 1))
-        _add_gc_slack_costs!(container, gc, invoked_values, penalties, t, mpc)
-    end
-    return
-end
-
-
-# Adds `gc`'s slacks at step `t` to the variant objective at `invoked x penalty` per unit; nothing
-# when that is zero, which leaves the row vacuous.
-function _add_gc_slack_costs!(container::PSI.OptimizationContainer, gc::GenericConstraint, invoked_values, penalties, t::Int, mpc::Real)
-    name = PSY.get_name(gc)
-    cost = invoked_values[name, t] * penalties[name, t] * mpc
-    iszero(cost) && return
+    mpc = _service_market_price_cap(model, container, PSI.get_initial_time(container))
+    PSI.add_parameters!(container, GenericConstraintSlackCostParameter, gc, model)
+    scale = base_power * interval_cost_coefficient(weight, resolution) * mpc
     for var_type in (GenericConstraintSlackUp, GenericConstraintSlackDown)
         PSI.has_container_key(container, var_type, GenericConstraint, name) || continue
         slack = PSI.get_variable(container, var_type(), GenericConstraint, name)
-        PSI.add_to_objective_variant_expression!(container, cost * slack[name, t])
+        for t in time_steps
+            PSI.add_cost_target!(
+                container, GenericConstraintSlackCostParameter(), GenericConstraint, name, (), t, slack[name, t], scale,
+            )
+        end
     end
-    return
-end
-
-
-"""
-    PSI.update_container_parameter_values!(container, model, key::PSI.ParameterKey{GenericConstraintSlackCostParameter, GenericConstraint}, input)
-
-Simulation-step update of the [`GenericConstraintSlackCostParameter`](@ref) of the constraint
-`key.meta`: reads its `"invoked"` values for the window at the model's current time and re-adds the
-slack costs (`invoked x` the build-time penalty in the multiplier `x` the Market Price Cap of its
-service model) to the variant objective.
-
-# Returns
-`nothing`.
-"""
-function PSI.update_container_parameter_values!(
-        container::PSI.OptimizationContainer, model::PSI.OperationModel,
-        key::PSI.ParameterKey{GenericConstraintSlackCostParameter, GenericConstraint}, ::PSI.DatasetContainer{PSI.InMemoryDataset},
-    )
-    PSI.is_synchronized(container) && error(
-        "Cannot update GenericConstraintSlackCostParameter on a synchronized container; the slack costs would be added twice.",
-    )
-    gc = PSY.get_component(GenericConstraint, PSI.get_system(model), key.meta)
-    service_model = PSI.get_model(PSI.get_template(model), GenericConstraint, key.meta)
-    _price_gc_slacks!(
-        container, gc, service_model, PSI.get_parameter_array(container, key),
-        PSI.get_parameter_multiplier_array(container, key), PSI.get_current_time(model); source = model,
-    )
     return
 end
 

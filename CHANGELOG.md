@@ -581,6 +581,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MNSP band prices use PowerSimulations' time-series cost parameters: each band's cost is a cost
   target on `MNSPBandPriceParameter`, updated by PowerSimulations at each step, with the objective unchanged.
 
+- Generic-constraint slack costs use PowerSimulations' time-series cost parameters: each slack's cost
+  target scales the `"invoked"` series by the CVP factor and the build-time Market Price Cap, with the objective unchanged.
+
 - Energy-offer bid caching and the time-series reader override now come from PowerSimulations and
   InfrastructureSystems: AEMSim no longer overrides PSI's recurrent parameter update or
   `get_time_series_values!`, so cache windows are bounded by the native cache sizing.
