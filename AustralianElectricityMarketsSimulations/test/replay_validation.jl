@@ -175,3 +175,26 @@ end
         @test all(v -> PSI.JuMP.coefficient(objective, v) == PSI.BALANCE_SLACK_COST, slack)
     end
 end
+
+@testset "an override build prices the balance slack and the unit ramp slack at one Market Price Cap" begin
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 1.0)], 50.0; horizon = TOY_RESOLUTION,
+    )
+    cap = 12_345.0
+    template = replication_template(sys; market_price_cap = cap)
+    # The model must be given the same override as its template.
+    @test_throws ArgumentError AEMS._replication_decision_model(template, sys, TOY_START; optimizer = HiGHS.Optimizer)
+    model = AEMS._replication_decision_model(template, sys, TOY_START; market_price_cap = cap, optimizer = HiGHS.Optimizer)
+    @test PSI.get_ext(PSI.get_settings(model))["market_price_cap"] == cap
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
+    base_power = PSY.get_base_power(sys)
+    per_mpc = base_power * interval_hours(DISPATCH_INTERVAL) * cap
+
+    balance = PSI.get_variable(container, PSI.SystemBalanceSlackUp(), PSY.Area)
+    @test PSI.JuMP.coefficient(objective, balance[first(axes(balance)[1]), first(axes(balance)[2])]) ≈
+        per_mpc * AustralianElectricityMarkets.AREA_BALANCE_CVP_FACTOR rtol = 1.0e-12
+    ramp = PSI.get_variable(container, AEMS.UnitRampUpSlack(), PSY.ThermalStandard)
+    @test all(v -> isapprox(PSI.JuMP.coefficient(objective, v), per_mpc * AEMS.UNIT_RAMP_CVP_FACTOR; rtol = 1.0e-12), ramp)
+end

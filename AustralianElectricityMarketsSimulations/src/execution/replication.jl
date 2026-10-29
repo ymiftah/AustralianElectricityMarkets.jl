@@ -206,15 +206,27 @@ const REPLICATION_OPTIMIZER = JuMP.optimizer_with_attributes(
 
 
 # A one-interval `DecisionModel` of `template` on `sys` from `initial_time`.
+# The model's settings carry the same cap as its network model, so every MPC penalty of a replay is
+# priced at one value; a template priced at another cap is refused.
 function _replication_decision_model(
         template::PSI.ProblemTemplate, sys::PSY.System, initial_time::DateTime;
-        optimizer = REPLICATION_OPTIMIZER, name = "replication",
+        optimizer = REPLICATION_OPTIMIZER, name = "replication", market_price_cap = nothing,
     )
-    return PSI.DecisionModel(
+    cap = _resolved_market_price_cap(initial_time, market_price_cap)
+    slack_cost = PSI.get_slack_cost(PSI.get_network_model(template))
+    slack_cost == _area_balance_slack_cost(sys, cap) || throw(
+        ArgumentError(
+            "replication model: the template prices balance slacks at a Market Price Cap other than $cap; " *
+                "pass the same market_price_cap to replication_template and to the model.",
+        ),
+    )
+    model = PSI.DecisionModel(
         template, sys;
         optimizer = optimizer, horizon = DISPATCH_INTERVAL, resolution = DISPATCH_INTERVAL,
         interval = DISPATCH_INTERVAL, initial_time = initial_time, name = name,
     )
+    PSI.get_ext(PSI.get_settings(model))["market_price_cap"] = cap
+    return model
 end
 
 

@@ -77,12 +77,35 @@ end
 
 
 """
+    _resolved_market_price_cap(t::DateTime, market_price_cap = nothing) -> Float64
+
+The Market Price Cap of a build whose first interval is `t`: `market_price_cap` when given, else
+[`_financial_year_mpc`](@ref)`(t)`. A replay resolves its cap once through this function and gives the
+same value to its network model and to its model settings.
+
+# Returns
+A finite, strictly positive `\$/MWh` value; invalid overrides throw `ArgumentError`, and a financial
+year absent from `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` with no override throws.
+"""
+function _resolved_market_price_cap(t::DateTime, market_price_cap = nothing)
+    isnothing(market_price_cap) && return _financial_year_mpc(t)
+    return _checked_market_price_cap(market_price_cap)
+end
+
+
+# The balance-slack coefficient per per-unit slack variable: AREA_BALANCE_CVP_FACTOR x cap per MW of one interval, x base power.
+function _area_balance_slack_cost(sys::PSY.System, cap::Real)
+    return PSY.get_base_power(sys) * interval_cost_coefficient(AREA_BALANCE_CVP_FACTOR, DISPATCH_INTERVAL) * cap
+end
+
+
+"""
     _area_balance_network_model(sys::PSY.System, initial_time::DateTime; market_price_cap = nothing, duals = Vector{DataType}()) -> PSI.NetworkModel{PSI.AreaBalancePowerModel}
 
 The `AreaBalancePowerModel` network model of a replay, with slacks priced at `slack_cost` per
 per-unit slack variable: [`AREA_BALANCE_CVP_FACTOR`](@ref) times the Market Price Cap per MW of one
-dispatch interval, times the system base power. The cap is `market_price_cap` when given, else the
-Market Price Cap of the financial year of `initial_time`.
+dispatch interval, times the system base power. The cap is [`_resolved_market_price_cap`](@ref) of
+`initial_time` and `market_price_cap`.
 
 # Arguments
 - `sys`: the replay system, whose base power scales the slack cost.
@@ -91,13 +114,13 @@ Market Price Cap of the financial year of `initial_time`.
 - `duals`: the dual constraints to record on the network model.
 
 # Returns
-A `PSI.NetworkModel{PSI.AreaBalancePowerModel}`. Throws `ArgumentError` for an invalid override, or
-for a financial year absent from `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` with no override.
+A `PSI.NetworkModel{PSI.AreaBalancePowerModel}`.
 """
 function _area_balance_network_model(
         sys::PSY.System, initial_time::DateTime; market_price_cap = nothing, duals = Vector{DataType}(),
     )
-    cap = isnothing(market_price_cap) ? _financial_year_mpc(initial_time) : _checked_market_price_cap(market_price_cap)
-    slack_cost = PSY.get_base_power(sys) * interval_cost_coefficient(AREA_BALANCE_CVP_FACTOR, DISPATCH_INTERVAL) * cap
-    return PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true, duals = duals, slack_cost = slack_cost)
+    cap = _resolved_market_price_cap(initial_time, market_price_cap)
+    return PSI.NetworkModel(
+        PSI.AreaBalancePowerModel; use_slacks = true, duals = duals, slack_cost = _area_balance_slack_cost(sys, cap),
+    )
 end
