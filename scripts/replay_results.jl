@@ -7,7 +7,7 @@ module ReplayResults
 using AustralianElectricityMarkets: BidType, FCASService, GenericConstraint, fcas_upper_regulation_service,
     get_bid_type, get_fcas_requirements, get_region, get_service
 using AustralianElectricityMarketsSimulations
-using AustralianElectricityMarketsSimulations: AbstractMNSPSlack, _check_replication_parts
+using Chain
 using DataFrames
 using Dates
 import PowerSimulations as PSI
@@ -179,19 +179,21 @@ function _solved_tables(results, sys::PSY.System, parts)
 
     # A balance dual is per per-unit-interval; dividing gives $/MWh.
     scale = PSY.get_base_power(sys) * interval_hours(DISPATCH_INTERVAL)
-    prices = select(
-        _read_balance_duals(results), :DateTime => :SETTLEMENTDATE, :name => :REGIONID,
-        :value => ByRow(v -> v / scale) => :ROP,
-    )
+    prices = @chain _read_balance_duals(results) begin
+        select(:DateTime => :SETTLEMENTDATE, :name => :REGIONID, :value => ByRow(v -> v / scale) => :ROP)
+    end
     signed = [transform(frames[k], :value => (v -> _DISPATCH_SIGNS[PSI.IS.Optimization.get_entry_type(k)] .* v) => :value) for k in dispatch_keys]
-    stacked = reduce(vcat, signed; init = DataFrame(DateTime = DateTime[], name = String[], value = Float64[]))
-    dispatch = rename(
-        combine(groupby(stacked, [:DateTime, :name]), :value => sum => :TOTALCLEARED),
-        :DateTime => :SETTLEMENTDATE, :name => :DUID,
-    )
+    dispatch = @chain reduce(vcat, signed; init = DataFrame(DateTime = DateTime[], name = String[], value = Float64[])) begin
+        groupby([:DateTime, :name])
+        combine(:value => sum => :TOTALCLEARED)
+        rename(:DateTime => :SETTLEMENTDATE, :name => :DUID)
+    end
     interconnectors = if length(interchange_keys) == 2
         flow, loss = (rename(frames[k], :value => c) for (k, c) in zip(interchange_keys, (:MWFLOW, :MWLOSSES)))
-        rename(leftjoin(flow, loss; on = [:DateTime, :name]), :DateTime => :SETTLEMENTDATE, :name => :INTERCONNECTORID)
+        @chain flow begin
+            leftjoin(loss; on = [:DateTime, :name])
+            rename(:DateTime => :SETTLEMENTDATE, :name => :INTERCONNECTORID)
+        end
     else
         DataFrame(SETTLEMENTDATE = DateTime[], INTERCONNECTORID = String[], MWFLOW = Float64[], MWLOSSES = Union{Missing, Float64}[])
     end
@@ -216,7 +218,7 @@ A named tuple of `solved` tables, `constraint_violations` and `ramp_violations`.
 Throws when required model outputs are missing or regional price duals are non-finite.
 """
 function replication_results(results, sys::PSY.System; parts = REPLICATION_PARTS)
-    _check_replication_parts(parts)
+    check_replication_parts(parts)
     solved = _solved_tables(results, sys, parts)
     _check_prices_finite(solved.prices)
     constraint_violations = _constraint_violations(results, sys)

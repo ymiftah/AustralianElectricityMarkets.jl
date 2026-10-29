@@ -16,7 +16,7 @@ function check_single_financial_year(steps)
     last_year = _financial_year_start(last(steps))
     first_year == last_year || throw(
         ArgumentError(
-            "replication_simulation: steps run from $(first(steps)) to $(last(steps)), across the financial years " *
+            "check_single_financial_year: steps run from $(first(steps)) to $(last(steps)), across the financial years " *
                 "starting $first_year and $last_year; split the range at 00:05 on 1 July.",
         ),
     )

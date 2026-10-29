@@ -1,31 +1,24 @@
 module AustralianElectricityMarketsSimulations
 
 import AustralianElectricityMarkets
-using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCASTrapezium,
-    FCAS_REGULATION_MARKETS, GenericConstraint, InterconnectorLossModel, InterconnectorTerm,
-    EnergyTieBreak, NEM_SERIES, OfferSide, RegionTerm, UnitTerm, TIE_BREAK_CVP_FACTOR, TIE_BREAK_SERVICE_NAME,
-    set_tie_break_scales!, DISPATCH_INTERVAL,
+using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCAS_REGULATION_MARKETS,
+    GenericConstraint, InterconnectorLossModel, InterconnectorTerm, EnergyTieBreak, NEM_SERIES, OfferSide,
+    RegionTerm, UnitTerm, TIE_BREAK_CVP_FACTOR, TIE_BREAK_SERVICE_NAME, DISPATCH_INTERVAL,
     UNIT_RAMP_CVP_FACTOR, INTERCONNECTOR_FLOW_CVP_FACTOR, ENERGY_OFFER_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR,
-    ENERGY_MAX_AVAIL_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR, FIXED_LOADING_CVP_FACTOR,
-    MNSP_RAMP_CVP_FACTOR, MNSP_OFFER_CVP_FACTOR, MNSP_AVAILABILITY_CVP_FACTOR, constraint_cvp_factor,
-    energy_max_avail_series_name, offer_side, side_suffix, has_schedule_classification, is_semi_scheduled, get_energy_offer, get_fcas_offer, FCASBidDirection, fcas_bid_direction, fcas_series_name, mnsp_series_name, fcas_service_name, fcas_service, fcas_offer_series_name, get_bid_type, get_constraint_weight,
-    get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_enablement_max,
-    get_enablement_min, get_energy_availability, get_factor, get_fcas_agc_ramp_capability,
-    get_fcas_agc_status, get_fcas_requirements, get_initial_mw, get_interconnector,
-    get_limit_type, get_lower_slope_coeff, get_max_avail, get_missing_constraint_intervals, get_region,
-    get_scaled_fcas_trapezium, get_sense, get_service, get_skipped_constraints, get_source,
-    get_storage_energy_max_avail, get_terms, get_upper_slope_coeff, loss_curve_vertex_values,
-    is_non_scheduled_load, loss_segments, nem_dispatch_devices,
-    FCAS_BAND_COUNT, set_fcas_effective_offers!,
-    FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR, FCAS_BDU_RAMPING_CVP_FACTOR,
-    fcas_effective_series_name, fcas_ramping_series_name, fcas_upper_regulation_service, fcas_offer_sides,
-    tie_break_series_name, tie_groups,
-    _tie_break_offers, _tie_break_active_bands, _tie_break_stamp_bands, _other_regulation, _financial_year_mpc, _financial_year_start
-using Chain
-using DataFrames
+    ENERGY_MAX_AVAIL_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR, FIXED_LOADING_CVP_FACTOR, MNSP_RAMP_CVP_FACTOR,
+    MNSP_OFFER_CVP_FACTOR, MNSP_AVAILABILITY_CVP_FACTOR, constraint_cvp_factor, energy_max_avail_series_name,
+    offer_side, side_suffix, has_schedule_classification, is_semi_scheduled, FCASBidDirection,
+    fcas_bid_direction, fcas_series_name, mnsp_series_name, fcas_service_name, fcas_offer_series_name,
+    get_bid_type, get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_factor,
+    get_interconnector, get_missing_constraint_intervals, get_region, get_sense, get_skipped_constraints,
+    get_terms, loss_curve_vertex_values, is_non_scheduled_load, loss_segments, nem_dispatch_devices,
+    FCAS_BAND_COUNT, FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR,
+    FCAS_BDU_RAMPING_CVP_FACTOR, fcas_effective_series_name, fcas_ramping_series_name,
+    fcas_upper_regulation_service, fcas_offer_sides, tie_break_series_name, tie_groups, _tie_break_offers,
+    _tie_break_active_bands, _tie_break_stamp_bands, _other_regulation, _financial_year_mpc,
+    _financial_year_start
 using Dates
 using HiGHS
-using HydroPowerSimulations
 using JuMP
 using PowerSimulations
 using PowerSystems
@@ -75,7 +68,8 @@ include("execution/replication.jl")
 
 
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
-export REPLICATION_PARTS, replication_template, replication_decision_model, check_replication_steps
+export REPLICATION_PARTS, replication_template, replication_decision_model, check_replication_steps,
+    check_replication_parts, never_invoked_constraints, AbstractMNSPSlack
 export EnergyOfferSurplusSlack, EnergyOfferDeficitSlack,
     EnergyDecrementalOfferSurplusSlack, EnergyDecrementalOfferDeficitSlack
 export EnergyMaxAvailOutConstraint, EnergyMaxAvailInConstraint, EnergyMaxAvailOutSlack, EnergyMaxAvailInSlack

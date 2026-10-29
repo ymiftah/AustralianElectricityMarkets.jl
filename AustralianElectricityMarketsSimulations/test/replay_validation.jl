@@ -31,7 +31,7 @@ end
     ghost = UnitTerm("GHOST", BidType.ENERGY, 1.0)
     for reason in (:never_invoked, :manual_exclusion)
         sys = replay_validation_system(ConstraintTerm[ghost]; invoked = 0.0)
-        exclusions = reason == :never_invoked ? ReplaySimulation._never_invoked_constraints(sys, [TOY_START]) : Dict("N_REVIEW" => reason)
+        exclusions = reason == :never_invoked ? AEMS.never_invoked_constraints(sys, [TOY_START]) : Dict("N_REVIEW" => reason)
         skipped = NamedTuple[]
         result = try
             replication_template(sys; parts = (:generic_constraints,), exclude_constraints = exclusions, skipped)

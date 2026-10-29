@@ -196,7 +196,7 @@ end
     _check_fcas_effective_series(container, devices, bid_type, directions)
 
 Throws `ArgumentError` naming every device in `devices` without a forecast of its
-[`set_fcas_effective_offers!`](@ref) series for `bid_type`.
+[`AustralianElectricityMarkets.set_fcas_effective_offers!`](@ref) series for `bid_type`.
 
 # Returns
 `nothing`.

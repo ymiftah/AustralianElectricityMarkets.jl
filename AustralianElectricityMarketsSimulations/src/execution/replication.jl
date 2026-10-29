@@ -16,18 +16,20 @@ Builds the `ProblemTemplate` that replicates NEMDE on `sys`: [`AbstractNEMDispat
 on every `PSY.AreaInterchange`, an [`FCASMarket`](@ref) per registered `FCASService`, and a
 [`LinearFactorLimit`](@ref) per `GenericConstraint` with an available contributing device.
 Regions balance through `PSI.AreaBalancePowerModel` with slacks priced at the Market Price Cap of
-`initial_time` (see [`_area_balance_network_model`](@ref)), and the balance duals are recorded as
-regional prices. Price-tied energy bands are dispatched pro rata by the
+`initial_time`, or at `market_price_cap` when given. The balance-slack cap is fixed at template
+construction, so a settings-`ext` cap override must go through `market_price_cap`, which
+[`replication_decision_model`](@ref) checks. The balance duals are recorded as regional prices. Price-tied energy bands are dispatched pro rata by the
 [`TieBreakMarket`](@ref) service model when `sys` carries the [`EnergyTieBreak`](@ref) of
-[`set_tie_break_scales!`](@ref). `parts` selects the [`REPLICATION_PARTS`](@ref) to model; without
+[`AustralianElectricityMarkets.set_tie_break_scales!`](@ref). `parts` selects the [`REPLICATION_PARTS`](@ref) to model; without
 `:losses` no `PSY.AreaInterchange` is modeled and the regions are uncoupled.
 
 # Arguments
 - `sys`: a populated `PSY.System` with attached replay inputs, such as one created through
   `NEMDEConfiguration` and prepared with [`prepare_replay_forecasts!`](@ref).
 - `initial_time`: the first interval of the build, which dates the Market Price Cap of the slacks;
-  default the earliest forecast window of `sys`.
+  default the earliest forecast window of `sys`, which throws `ArgumentError` when `sys` has none.
 - `market_price_cap`: a Market Price Cap that replaces the one dated by `initial_time`, or `nothing`.
+  It must equal the `market_price_cap` later given to [`replication_decision_model`](@ref).
 - `skipped`: a vector that receives one `(constraint, reason, n_missing)` named tuple per generic
   constraint left out of the template, or `nothing`. `reason` is `:no_available_device` when all
   its contributing devices are unavailable, the `exclude_constraints` reason, or, when `parts`
@@ -50,7 +52,7 @@ function replication_template(
         skipped::Union{Nothing, AbstractVector} = nothing, parts = REPLICATION_PARTS,
         exclude_constraints::AbstractDict{<:AbstractString, Symbol} = Dict{String, Symbol}(),
     )
-    _check_replication_parts(parts)
+    check_replication_parts(parts)
     _check_replay_system_inputs(sys, parts)
     start = isnothing(initial_time) ? _first_forecast_time(sys) : initial_time
     template = PSI.ProblemTemplate(
@@ -80,7 +82,18 @@ function replication_template(
 end
 
 
-function _check_replication_parts(parts)
+"""
+    check_replication_parts(parts) -> Nothing
+
+Throws `ArgumentError` naming the entries of `parts` that are not in [`REPLICATION_PARTS`](@ref).
+
+# Arguments
+- `parts`: the replay families to model.
+
+# Returns
+`nothing`.
+"""
+function check_replication_parts(parts)
     unknown = setdiff(parts, REPLICATION_PARTS)
     isempty(unknown) || throw(
         ArgumentError("replication_template: unknown parts $(Tuple(unknown)); choose from $REPLICATION_PARTS."),

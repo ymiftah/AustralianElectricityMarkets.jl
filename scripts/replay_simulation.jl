@@ -4,7 +4,6 @@
 
 module ReplaySimulation
 
-using AustralianElectricityMarkets: GenericConstraint
 using AustralianElectricityMarketsSimulations
 using DataFrames
 using Dates
@@ -45,19 +44,6 @@ function Base.CoreLogging.handle_message(l::_DropMILPWarning, level, message, ar
 end
 
 
-# Available `GenericConstraint`s invoked at none of `steps`, each mapped to `:never_invoked`.
-function _never_invoked_constraints(sys::PSY.System, steps)
-    reasons = Dict{String, Symbol}()
-    for gc in PSY.get_components(PSY.get_available, GenericConstraint, sys)
-        invoked = PSY.get_time_series_values(
-            PSY.SingleTimeSeries, gc, "invoked"; start_time = first(steps), len = length(steps),
-        )
-        all(iszero, invoked) && (reasons[PSY.get_name(gc)] = :never_invoked)
-    end
-    return reasons
-end
-
-
 # Logs the skipped-constraint count by reason and the table, for a build or solve that failed.
 function _log_skipped_constraints(skipped::DataFrame)
     by_reason = combine(groupby(skipped, :reason), nrow => :n)
@@ -76,7 +62,7 @@ function _range_simulation(
     check_single_financial_year(steps)
     :tie_breaks in parts && check_tie_break_pairs(sys, steps)
     template_skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
-    exclude = :generic_constraints in parts ? _never_invoked_constraints(sys, steps) : Dict{String, Symbol}()
+    exclude = :generic_constraints in parts ? never_invoked_constraints(sys, steps) : Dict{String, Symbol}()
     template = replication_template(
         sys; initial_time = first(steps), skipped = template_skipped, parts = parts, exclude_constraints = exclude,
     )

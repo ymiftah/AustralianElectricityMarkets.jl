@@ -11,8 +11,8 @@ selects the component types they apply to. Subtypes differ only in what the ramp
 measures against; [`NEMReplayDispatch`](@ref) is the one subtype. Ramp,
 availability, offer-total and fixed-loading rows always carry priced slacks; the device model's
 `use_slacks` does not apply to them. Only the energy offer cost enters the device's
-`PowerSimulations.ProductionCostExpression`; slack penalties are objective terms only, reported by
-`constraint_violations` of `ReplayResults.replication_results`.
+`PowerSimulations.ProductionCostExpression`; slack penalties are objective terms only, reported as
+violation rows of a replay's results rather than as device cost.
 """
 abstract type AbstractNEMDispatch <: PSI.AbstractDeviceFormulation end
 

@@ -126,8 +126,8 @@ end
 
 @testset "a constraint invoked at no step is left out and reported with its reason" begin
     never = sentinel_system(; invoked = [0.0, 0.0])
-    @test ReplaySimulation._never_invoked_constraints(never, STOCK_STEPS) == Dict("N_TOY_LIMIT" => :never_invoked)
-    @test ReplaySimulation._never_invoked_constraints(sentinel_system(; invoked = [1.0, 0.0]), STOCK_STEPS) == Dict{String, Symbol}()
+    @test AEMS.never_invoked_constraints(never, STOCK_STEPS) == Dict("N_TOY_LIMIT" => :never_invoked)
+    @test AEMS.never_invoked_constraints(sentinel_system(; invoked = [1.0, 0.0]), STOCK_STEPS) == Dict{String, Symbol}()
     out_never = ReplaySimulation.run_replication(never, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     row_never = only(filter(:constraint => ==("N_TOY_LIMIT"), out_never.skipped_constraints))
     @test (row_never.reason, row_never.n_missing) == (:never_invoked, 0)

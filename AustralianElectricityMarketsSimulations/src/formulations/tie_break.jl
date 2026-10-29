@@ -200,7 +200,7 @@ are within [`TIE_BREAK_CVP_FACTOR`](@ref) of one another. `x` is a band's cleare
 slacks, in system-base per-unit MW, are priced at [`TIE_BREAK_CVP_FACTOR`](@ref) `\$/MWh`. FCAS
 bands are not tied. Groups are read at build, so a recurrent build requires the same groups at
 every step ([`check_tie_break_pairs`](@ref)). Containers are keyed by [`EnergyTieBreak`](@ref) with
-the service name as meta and are not added when no band is tied. Throws an `ArgumentError` unless [`set_tie_break_scales!`](@ref) covered every
+the service name as meta and are not added when no band is tied. Throws an `ArgumentError` unless [`AustralianElectricityMarkets.set_tie_break_scales!`](@ref) covered every
 tied band and every contributor carrying a scale is modelled or excluded by its device model's
 `"filter_function"`.
 

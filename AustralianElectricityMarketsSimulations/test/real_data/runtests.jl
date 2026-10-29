@@ -22,7 +22,9 @@ const AEMS = AustralianElectricityMarketsSimulations
 include(joinpath(@__DIR__, "..", "..", "..", "test", "fixtures", "input_builders.jl"))
 include(joinpath(@__DIR__, "..", "..", "..", "scripts", "interconnector_loss_gaps.jl"))
 using .InterconnectorLossGaps: loss_gap_table
-include(joinpath(@__DIR__, "..", "..", "..", "scripts", "replay_results.jl"))
+if !isdefined(@__MODULE__, :ReplayResults)
+    include(joinpath(@__DIR__, "..", "..", "..", "scripts", "replay_results.jl"))
+end
 if !isdefined(@__MODULE__, :ReplaySimulation)
     include(joinpath(@__DIR__, "..", "..", "..", "scripts", "replay_simulation.jl"))
 end

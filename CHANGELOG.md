@@ -543,6 +543,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`read_uigf`**: a new reader for `DISPATCHLOAD.UIGF`, the per-unit Unconstrained Intermittent Generation Forecast: the weather ceiling AEMO's NEMDE actually applied to each semi-scheduled unit for each dispatch interval. Returns `SETTLEMENTDATE`, `DUID`, `UIGF` (MW). `UIGF` is `NULL` for scheduled units, so only semi-scheduled DUIDs appear. Supports the same `resolution` aggregation convention as `read_demand` and the same `intervention` run selection as the other dispatch readers, plus a single-interval `read_uigf(db, settlement_date::DateTime)` method that bounds the scan to one `SETTLEMENTDATE` — the dispatch-replication harness reads UIGF one interval at a time and now shares this reader instead of carrying its own copy of the query.
 - **`DISPATCH_INTERVAL_HOURS`/`interval_cost_coefficient`** (`AustralianElectricityMarketsSimulations`): documented the dispatch-interval-length constant and added `interval_cost_coefficient`, converting a `$/MWh` bid price into an objective coefficient for one dispatch interval.
 
+- AEMSim exports `replication_decision_model`, `check_replication_steps`, `check_single_financial_year`,
+  `check_replication_parts`, `never_invoked_constraints` (the `:never_invoked` exclusions of a replay) and
+  `AbstractMNSPSlack`. `replication_template` takes `initial_time` and `market_price_cap` keywords.
+
 ### Removed
 
 - Public names `set_nem_fixed_loads!`, `add_nem_constraints!`, `set_nem_dispatch_limits!`, `set_demand!`, `get_low_breakpoint`, `get_high_breakpoint`, `get_rhs`, `set_constraint_weight!`, `get_gencon_id`, `interconnector_loss_gaps` and `check_interconnector_loss_segments`; `nem_system` builds these inputs.
@@ -595,9 +599,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `formulation` keyword of `set_nem_dispatch_models!` and `nem_dispatch_participants`, which only
   accepted `NEMReplayDispatch`, and the `skip_uncovered` keyword of `set_nem_dispatch_models!`. A
   participant without its dispatch series now fails the build by name.
+- `replication_simulation`, `run_replication` and `REPLICATION_OPTIMIZER` are no longer exported from
+  `AustralianElectricityMarketsSimulations`. They live in `scripts/replay_simulation.jl` (module `ReplaySimulation`);
+  code that called them through `using AustralianElectricityMarketsSimulations` must include the script.
 
 ### Changed
 
+- A settings-`ext` `"market_price_cap"` override no longer prices the area-balance slack. The balance slack
+  is priced at the cap of `replication_template` (its `market_price_cap`, or the cap dated by `initial_time`),
+  and `replication_decision_model` throws when its cap differs from the template's.
+- Errors of `check_replication_steps` and `check_single_financial_year` name the function that raises them.
+- The simulations precompile workload applies the runner's never-invoked constraint exclusion and tie-break
+  check, and reads back realized dispatch and balance results, so the first comparison in a fresh process
+  compiles less. It is skipped when the mock fixture is not in the installed package.
 - The replay simulation runner moved from AEMSim to `scripts/replay_simulation.jl` (module `ReplaySimulation`); AEMSim keeps the replication template, decision-model constructor and pre-flight checks.
 
 - NEMDE replay systems are built without the regional configuration's ISP operating costs; the regional configuration is unchanged.
@@ -710,9 +724,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `single_series` are public AEM API, used by AEMSim to read the systems AEM builds.
 - New `single_series(name, timestamps, values; kwargs...)`, `remove_single_series!` and
   `replace_single_series!` replace the hand-built and remove-then-add time series code in the setters.
-- New `run_replication(sys, steps; ...)` builds and executes a `replication_simulation` and returns its
-  results, skipped constraints and timings; `REPLICATION_OPTIMIZER` is the exported default optimizer.
-  The replay script uses both instead of its own copies.
+- New `run_replication(sys, steps; ...)` in `scripts/replay_simulation.jl` builds and executes a
+  `replication_simulation` and returns its results, skipped constraints and timings; `REPLICATION_OPTIMIZER`
+  is the default optimizer there.
 - CVP factors of the built-in Interconnector Zero (1160) and Energy Inflexible Offer (380) generic
   constraints move to AEMSim as `INTERCONNECTOR_ZERO_CVP_FACTOR` and `FIXED_LOADING_CVP_FACTOR`.
   AEM builds those constraints with weight 1.0, and AEMSim prices every generic constraint through
