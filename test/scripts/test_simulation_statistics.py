@@ -100,6 +100,74 @@ class ReplayStatisticsTests(unittest.TestCase):
         self.assertEqual(timings["series"]["mip"]["total_s"], 40)
         self.assertEqual(timings["series"]["solve_and_write"]["total_s"], 50)
 
+    def write_state_timer(self, day, seconds):
+        (day / "timers_execute_chunk_1.toml").write_text(
+            '[inner_timers."Execute Simulation"]\n'
+            'n_calls = 1\n'
+            '[inner_timers."Execute Simulation".inner_timers."Execute dispatch".inner_timers."Update State"]\n'
+            f'time_ns = {seconds * 10**9}\n')
+
+    def test_schema_two_residual_is_not_double_subtracted(self):
+        run, day = self.day()
+        self.write_state_timer(day, 10)
+        fields = ["phase", "execution_count", "interval_aest", "wall_s", "timed_solve_s", "pricing_s",
+                  "auxiliary_s", "gc_s", "compilation_s", "allocated_bytes", "schema_version"]
+        self.csv(day / "chunk_1/problems/dispatch/interval_timings.csv", fields, [
+            ["parameter_update", 0, "2026-04-07T04:05:00", 4, "NaN", "NaN", "NaN", "NaN", "NaN", "NaN", 2],
+            ["solve_and_write", 0, "2026-04-07T04:05:00", 50, 40, 8, 1, 0.5, "NaN", 1000, 2],
+        ])
+        timings = report.analyze([run])["days"][0]["timing"]
+        # execute 80 - (parameter_update 4 + solve_and_write 50); the state update is already inside solve_and_write.
+        self.assertEqual(timings["timing_schema"], 2)
+        self.assertEqual(timings["execution_unattributed_s"], 26)
+        self.assertEqual(timings["native_state_s"], 10)
+        self.assertEqual(timings["series"]["solve_and_write_residual"]["total_s"], 1)
+        self.assertNotIn("solve_wrapper_residual", timings["series"])
+        self.assertIsNone(timings["instrumented_compilation_s"])
+        self.assertIsNone(timings["instrumented_gc_s"])
+        self.assertEqual(timings["optimize_gc_s"], 0.5)
+        self.assertEqual(timings["optimize_allocated_bytes"], 1000)
+
+    def test_schema_one_residual_still_subtracts_native_state(self):
+        run, day = self.day()
+        self.write_state_timer(day, 10)
+        self.csv(day / "chunk_1/problems/dispatch/interval_timings.csv",
+                 ["phase", "execution_count", "interval_aest", "wall_s", "timed_solve_s", "pricing_s", "auxiliary_s"], [
+                     ["parameter_update", 1, "2026-04-07T04:10:00", 10, "NaN", "NaN", "NaN"],
+                     ["solve_impl", 0, "2026-04-07T04:05:00", 50, 40, 8, 1],
+                 ])
+        timings = report.analyze([run])["days"][0]["timing"]
+        self.assertEqual(timings["timing_schema"], 1)
+        self.assertEqual(timings["execution_unattributed_s"], 10)
+        self.assertEqual(timings["series"]["solve_wrapper_residual"]["total_s"], 1)
+
+    def test_mixed_schemas_within_one_day_raise(self):
+        run, day = self.day()
+        self.csv(day / "chunk_1/problems/dispatch/interval_timings.csv",
+                 ["phase", "execution_count", "interval_aest", "wall_s", "schema_version"], [
+                     ["solve_and_write", 0, "2026-04-07T04:05:00", 50, 2],
+                 ])
+        self.csv(day / "chunk_2/problems/dispatch/interval_timings.csv",
+                 ["phase", "execution_count", "interval_aest", "wall_s"], [
+                     ["solve_impl", 0, "2026-04-07T04:10:00", 50],
+                 ])
+        with self.assertRaisesRegex(ValueError, "cannot be pooled"):
+            report.analyze([run])
+
+    def test_mixed_schemas_across_days_raise(self):
+        schema_one, day_one = self.day("one")
+        schema_two, day_two = self.day("two")
+        self.csv(day_one / "chunk_1/problems/dispatch/interval_timings.csv",
+                 ["phase", "execution_count", "interval_aest", "wall_s"], [
+                     ["solve_impl", 0, "2026-04-07T04:05:00", 50],
+                 ])
+        self.csv(day_two / "chunk_1/problems/dispatch/interval_timings.csv",
+                 ["phase", "execution_count", "interval_aest", "wall_s", "schema_version"], [
+                     ["solve_and_write", 0, "2026-04-07T04:05:00", 50, 2],
+                 ])
+        with self.assertRaisesRegex(ValueError, "across days"):
+            report.analyze([schema_one, schema_two])
+
     def test_incomplete_final_csv_record_is_ignored(self):
         path = self.root / "memory.csv"
         path.write_text("timestamp,rss_mib\na,100\nb,2")

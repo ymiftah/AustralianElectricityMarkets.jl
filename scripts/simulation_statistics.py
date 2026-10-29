@@ -225,21 +225,74 @@ def native_snapshots(folder, warnings):
     return snapshots, state_total
 
 
-# Schema 1 wrote solve_impl and result_write rows; schema 2 writes one solve_and_write row per step.
+# Schema 1 wrote solve_impl and result_write rows. Schema 2 writes one solve_and_write row per step,
+# whose span also covers the result write, the native state update and the warm start.
 SOLVER_PHASES = ("solve_impl", "solve_and_write")
 WRITE_PHASES = ("result_write", "solve_and_write")
-MEASURED_PHASES = ("parameter_update", "solve_impl", "result_write", "solve_and_write")
+MEASURED_PHASES = {
+    1: ("parameter_update", "solve_impl", "result_write"),
+    2: ("parameter_update", "solve_and_write"),
+}
+
+
+def timing_schema(row):
+    """Return the schema version of an interval timing row; files without the column are schema 1."""
+    if "schema_version" not in row:
+        return 1
+    if row["schema_version"] not in ("1", "2"):
+        raise ValueError(f"Unsupported interval timing schema_version: {row['schema_version']!r}")
+    return int(row["schema_version"])
+
+
+def single_timing_schema(schemas, folder):
+    """Return the one schema present in a set of rows, or None when there are no rows."""
+    if len(schemas) > 1:
+        raise ValueError(f"Schema 1 and schema 2 interval timings cannot be pooled: {folder}")
+    return next(iter(schemas), None)
+
+
+def instrumented_totals(schema, instrumented, optimizer):
+    """Sum the recorder's gc, compilation and allocation fields that the given schema measured.
+
+    Schema 1 measured the whole solve_impl wrapper, so its totals cover every instrumented row.
+    Schema 2 measured only JuMP.optimize!, so its totals are optimize_* and compilation is absent.
+    """
+    def total(values):
+        return math.fsum(value for value in values if value is not None)
+
+    if schema == 1:
+        return {
+            "instrumented_gc_s": total(instrumented["gc_s"]),
+            "instrumented_compilation_s": total(instrumented["compilation_s"]),
+            "instrumented_allocated_bytes": total(instrumented["allocated_bytes"]),
+            "optimize_gc_s": None, "optimize_allocated_bytes": None,
+        }
+    if schema == 2:
+        return {
+            "instrumented_gc_s": None, "instrumented_compilation_s": None,
+            "instrumented_allocated_bytes": None,
+            "optimize_gc_s": total(optimizer["gc_s"]),
+            "optimize_allocated_bytes": total(optimizer["allocated_bytes"]),
+        }
+    return {key: None for key in ("instrumented_gc_s", "instrumented_compilation_s",
+                                  "instrumented_allocated_bytes", "optimize_gc_s",
+                                  "optimize_allocated_bytes")}
 
 
 def day_timing(folder, totals, cache_windows, warnings):
     series = defaultdict(list)
     calls = defaultdict(list)
+    instrumented = defaultdict(list)
+    optimizer = defaultdict(list)
     seen = set()
+    schemas = set()
     written = 0
     for path in sorted(folder.rglob("interval_timings.csv")):
         first_update = True
         for row in read_csv(path, warnings):
             phase = row.get("phase")
+            schema = timing_schema(row)
+            schemas.add(schema)
             key = (str(path), phase, row.get("execution_count"), row.get("interval_aest"))
             if key in seen:
                 warnings.append(f"Duplicate interval timing omitted: {key}")
@@ -252,7 +305,10 @@ def day_timing(folder, totals, cache_windows, warnings):
             calls[phase].append({"interval_aest": row.get("interval_aest"), "wall_s": wall})
             written += phase in WRITE_PHASES
             for field in ("gc_s", "compilation_s", "allocated_bytes"):
-                series[field].append(number(row.get(field)))
+                value = number(row.get(field))
+                instrumented[field].append(value)
+                if schema == 2 and phase == "solve_and_write" and field != "compilation_s":
+                    optimizer[field].append(value)
             if phase in SOLVER_PHASES:
                 children = []
                 for field, label in (("timed_solve_s", "mip"), ("pricing_s", "pricing"), ("auxiliary_s", "auxiliary")):
@@ -262,23 +318,27 @@ def day_timing(folder, totals, cache_windows, warnings):
                     if value is not None:
                         calls[label].append({"interval_aest": row.get("interval_aest"), "wall_s": value})
                 if all(value is not None for value in children):
-                    series["solve_wrapper_residual"].append(wall - math.fsum(children))
+                    residual = "solve_wrapper_residual" if schema == 1 else "solve_and_write_residual"
+                    series[residual].append(wall - math.fsum(children))
             if phase == "parameter_update":
                 count = number(row.get("execution_count"))
                 cohort = "cold" if first_update else "refill_candidate" if count is not None and count % cache_windows == 1 else "ordinary"
                 series["updates_" + cohort].append(wall)
                 first_update = False
+    schema = single_timing_schema(schemas, folder)
     native, state = native_snapshots(folder, warnings)
     execute = number(totals.get("execute_s"))
-    measured = math.fsum(value for phase in MEASURED_PHASES for value in series[phase])
+    measured = math.fsum(value for phase in MEASURED_PHASES.get(schema, ()) for value in series[phase])
+    unattributed = None
+    if execute is not None and schema is not None:
+        # The native state update sits inside schema 2's solve_and_write span, so it is not subtracted again.
+        unattributed = execute - measured - ((state or 0) if schema == 1 else 0)
     result = {
-        "series": {key: distribution(values) for key, values in sorted(series.items())
-                   if key not in ("gc_s", "compilation_s", "allocated_bytes")},
-        "instrumented_gc_s": math.fsum(value for value in series["gc_s"] if value is not None),
-        "instrumented_compilation_s": math.fsum(value for value in series["compilation_s"] if value is not None),
-        "instrumented_allocated_bytes": math.fsum(value for value in series["allocated_bytes"] if value is not None),
+        "timing_schema": schema,
+        "series": {key: distribution(values) for key, values in sorted(series.items())},
+        **instrumented_totals(schema, instrumented, optimizer),
         "native_state_s": state, "native_snapshots": native,
-        "execution_unattributed_s": None if execute is None else execute - measured - (state or 0),
+        "execution_unattributed_s": unattributed,
         "slowest_calls": {phase: sorted(rows, key=lambda row: row["wall_s"], reverse=True)[:10]
                           for phase, rows in calls.items()},
         "written_intervals": written,
@@ -364,6 +424,9 @@ def analyze(runs, cache_windows=24):
                     if eligible:
                         pools[metric].extend(values)
             result["days"].append(item)
+    schemas = {item["timing"]["timing_schema"] for item in result["days"]} - {None}
+    if len(schemas) > 1:
+        raise ValueError(f"Schema 1 and schema 2 interval timings cannot be pooled across days: {sorted(schemas)}")
     result["pooled"] = {metric: error_distribution(values) for metric, values in pools.items()}
     result["unique_completed_days"] = len({item["day"] for item in result["days"] if item["status"] == "completed"})
     result["pooled_completed_days"] = len(selected_days)
@@ -399,12 +462,13 @@ def save_report(result, output):
     for day in result["days"]:
         context = {"run": day["run"], "day": day["day"], "status": day["status"]}
         timing = day["timing"]
-        runtime.append({**context, **day["totals"], "written_intervals": timing["written_intervals"],
+        runtime.append({**context, **day["totals"], "timing_schema": timing["timing_schema"],
+                        "written_intervals": timing["written_intervals"],
                         **{phase + "_s": timing["series"].get(phase, {}).get("total_s")
                            for phase in ("parameter_update", "mip", "pricing", "auxiliary", "result_write", "solve_and_write")},
                         **{key: timing[key] for key in ("native_state_s", "execution_unattributed_s",
                            "outside_build_execute_compare_s", "instrumented_gc_s", "instrumented_compilation_s",
-                           "instrumented_allocated_bytes")}})
+                           "instrumented_allocated_bytes", "optimize_gc_s", "optimize_allocated_bytes")}})
         for phase, stats in timing["series"].items():
             timings.append({**context, "phase": phase, **stats})
         for row in timing["native_snapshots"]:

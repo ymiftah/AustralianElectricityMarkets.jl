@@ -198,6 +198,13 @@ end
     @test any(!ismissing, result.comparison.dispatch.TOTALCLEARED_solved)
 end
 
+@testset "interval timing UTC offset is rounded to quarter hours" begin
+    @test ReplayWorkflow._round_utc_offset(36_000_000 + 400_000) == Millisecond(36_000_000)
+    @test ReplayWorkflow._round_utc_offset(36_000_000 + 500_000) == Millisecond(36_900_000)
+    @test ReplayWorkflow._round_utc_offset(-19_800_000 - 20_000) == Millisecond(-19_800_000)
+    @test iszero(Dates.value(ReplayWorkflow._utc_offset()) % 900_000)
+end
+
 @testset "interval timings come from native PSI records" begin
     # No replay-side override of the PSI methods the timings used to wrap.
     @test which(PSI.update_model!, (PSI.DecisionModel, PSI.Simulation)).module === PowerSimulations
