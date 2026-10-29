@@ -46,7 +46,7 @@ function _precompile_workload()
     check_fcas_services(sys, template)
     check_dispatch_envelope(sys, template, first(steps), length(steps))
     # Must match REPLICATION_OPTIMIZER in scripts/replay_simulation.jl.
-    optimizer = JuMP.optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10)
+    optimizer = JuMP.optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 1.0e-8, "mip_abs_gap" => 1.0e-10)
     model = replication_decision_model(template, sys, first(steps); optimizer = optimizer, name = "dispatch")
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models = models, ini_cond_chronology = PSI.InterProblemChronology())

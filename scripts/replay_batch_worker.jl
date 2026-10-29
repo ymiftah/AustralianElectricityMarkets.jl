@@ -14,6 +14,7 @@ using ..ReplayBatchSupport
 
 include("replay_workflow.jl")
 using .ReplayWorkflow: replicate_range
+using .ReplaySimulation: REPLICATION_MIP_REL_GAP, REPLICATION_MIP_ABS_GAP
 
 function _write_frame(path, frame)
     write_csv(path, names(frame), eachrow(frame))
@@ -100,7 +101,7 @@ function main(folder, day::Date)
         "aem" => string(Base.pkgversion(AustralianElectricityMarkets)),
         "aem_simulations" => string(Base.pkgversion(AustralianElectricityMarketsSimulations)),
         "interval_time_zone" => "fixed AEST UTC+10", "intervention" => 0,
-        "mip_rel_gap" => 1.0e-8, "mip_abs_gap" => 1.0e-10,
+        "mip_rel_gap" => REPLICATION_MIP_REL_GAP, "mip_abs_gap" => REPLICATION_MIP_ABS_GAP,
         "instrumentation" => "interval_timings.csv is read from PSI recorder events and optimizer stats after execute!; TimerOutputs trees in timers_*.toml overlap",
         "source_hashes" => Dict(name => bytes2hex(sha256(read(joinpath(@__DIR__, name)))) for name in readdir(@__DIR__) if endswith(name, ".jl")),
     )
@@ -116,8 +117,8 @@ function main(folder, day::Date)
     started_ns = parse(UInt64, config["started_ns"])
     elapsed() = (time_ns() - started_ns) / 1.0e9
     optimizer = PSI.optimizer_with_attributes(
-        HiGHS.Optimizer, "output_flag" => false, "mip_rel_gap" => 1.0e-8,
-        "mip_abs_gap" => 1.0e-10, "threads" => parse(Int, config["solver-threads"]),
+        HiGHS.Optimizer, "output_flag" => false, "mip_rel_gap" => REPLICATION_MIP_REL_GAP,
+        "mip_abs_gap" => REPLICATION_MIP_ABS_GAP, "threads" => parse(Int, config["solver-threads"]),
     )
     try
         chunk_index = 0

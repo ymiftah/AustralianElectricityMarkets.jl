@@ -12,16 +12,30 @@ using PowerSimulations: optimizer_with_attributes
 import PowerSimulations as PSI
 import PowerSystems as PSY
 
-export replication_simulation, run_replication, REPLICATION_OPTIMIZER
+export replication_simulation, run_replication, REPLICATION_OPTIMIZER, REPLICATION_MIP_REL_GAP, REPLICATION_MIP_ABS_GAP
+
+"""
+    REPLICATION_MIP_REL_GAP
+
+The HiGHS relative MIP gap of the replay optimizer, shared with the batch runner.
+"""
+const REPLICATION_MIP_REL_GAP = 1.0e-8
+
+"""
+    REPLICATION_MIP_ABS_GAP
+
+The HiGHS absolute MIP gap of the replay optimizer, shared with the batch runner.
+"""
+const REPLICATION_MIP_ABS_GAP = 1.0e-10
 
 """
     REPLICATION_OPTIMIZER
 
-The default replay optimizer: HiGHS with zero MIP gap tolerances, since the interconnector loss
-encoding makes each interval a MILP.
+The default replay optimizer: HiGHS with a 1e-8 relative and 1e-10 absolute MIP gap, since the
+interconnector loss encoding makes each interval a MILP.
 """
 const REPLICATION_OPTIMIZER = optimizer_with_attributes(
-    HiGHS.Optimizer, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10,
+    HiGHS.Optimizer, "mip_rel_gap" => REPLICATION_MIP_REL_GAP, "mip_abs_gap" => REPLICATION_MIP_ABS_GAP,
 )
 
 
@@ -92,7 +106,7 @@ pre-flight checks and selects constraints invoked in at least one requested inte
 # Arguments
 - `sys`: a system prepared with `prepare_replay_forecasts!`, or equivalent attached forecasts.
 - `steps`: a non-empty range of five-minute interval-ending timestamps covered by the system.
-- `optimizer`: the JuMP optimizer; defaults to HiGHS with zero MIP gaps.
+- `optimizer`: the JuMP optimizer; defaults to HiGHS with `mip_rel_gap = 1e-8` and `mip_abs_gap = 1e-10`.
 - `parts`: the `REPLICATION_PARTS` included in the model.
 - `folder`: the simulation output directory.
 - `name`: the decision problem name used to retrieve PSI results.

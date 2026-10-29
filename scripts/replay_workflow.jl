@@ -155,7 +155,7 @@ module ReplayWorkflow
       replays one interval.
     - `intervention`: 0 for the pricing run, 1 for the physical run.
     - `optimizer`: the JuMP optimizer, e.g. `optimizer_with_attributes(HiGHS.Optimizer, ...)`. Defaults
-      to HiGHS with `mip_rel_gap = 0` and `mip_abs_gap = 1e-10`, since the interconnector loss encoding is a MILP.
+      to HiGHS with `mip_rel_gap = 1e-8` and `mip_abs_gap = 1e-10`, since the interconnector loss encoding is a MILP.
     - `parts`: the [`REPLICATION_PARTS`](@ref) to model; default all.
     - `chunk`: `:trading_day` or a `Dates.Period` that is a positive multiple of 5 minutes.
     - `interval_flow_limits`: as in `nem_system(db, NEMDEConfiguration(); ...)`; default `false`.

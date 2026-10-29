@@ -124,7 +124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `NEMInterconnectorLoss` fills loss segments contiguously through binary fill indicators, so the
   solved loss follows the loss curve at negative or zero weighted prices instead of burning energy
   on steeper segments. Multi-segment interconnectors make the problem a MILP; duals are read from
-  the LP with the indicators fixed. `replicate_interval` defaults to HiGHS with zero MIP gaps and
+  the LP with the indicators fixed. `replicate_interval` defaults to HiGHS with a 1e-8 relative and 1e-10 absolute MIP gap and
   raises on non-finite regional prices.
 - NEMWEB timestamps with a millisecond fraction (`2026/05/05 15:06:01.000`) parse instead of
   becoming `NULL`.
@@ -924,6 +924,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `nem_system(db, NEMDEConfiguration(); ...)` attaches the effective FCAS offers and tie-break scales itself, so a NEMDE system is complete without further preparation.
 - `prepare_replication!` is replaced by `prepare_replay_forecasts!` in `AustralianElectricityMarkets`, which only transforms the single time series into one-interval forecast windows; it no longer derives FCAS offers or tie-break scales.
 - `replication_results` and `compute_fcas_prices` move out of `AustralianElectricityMarketsSimulations` into `ReplayResults` in `scripts/replay_results.jl`, along with the solved-table and constraint-violation helpers they use.
+- The replay default HiGHS relative MIP gap is 1e-8 (was 0), matching the batch runner; the absolute gap stays 1e-10.
 
 ## [0.1.3] - 2026-03-09
 
