@@ -1,10 +1,3 @@
-# Builds `model` and returns its status with the text of the build log, which records any error.
-function _toy_build_log(model)
-    dir = mktempdir()
-    status = PSI.build!(model; output_dir = dir)
-    return status, join((read(joinpath(dir, f), String) for f in readdir(dir)), "\n")
-end
-
 @testset "merit order: the cheaper unit is filled first" begin
     sys = nem_toy_system(
         [
@@ -783,6 +776,36 @@ end
 end
 
 include("tie_break_validation.jl")
+
+@testset "tie-break scale rows skip devices excluded by the device model's filter_function" begin
+    third = "Solitude"
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(168.0, [(168.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(46.0, [(46.0, 10.0), (10.0, 30.0)]; initial = 0.0, ramp_up = 100.0),
+            third => toy_unit(122.0, [(122.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        168.0,
+    )
+    # Park City ties with the other two units on band 1 but is filtered out of the model, so its row is left out.
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    set_nem_dispatch_models!(template, sys)
+    PSI.set_device_model!(
+        template,
+        PSI.DeviceModel(
+            PSY.ThermalStandard, NEMReplayDispatch;
+            attributes = Dict{String, Any}("filter_function" => d -> PSY.get_name(d) != TOY_EXPENSIVE),
+        ),
+    )
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    model = toy_model(sys; template)
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    key = PSI.ParameterKey(TieBreakScaleParameter, PSY.ThermalStandard, AEMS._tie_break_meta(1, false))
+    # Rows are keyed by the time-series UUID of each device's scale series.
+    ts_uuid(n) = string(PSI.IS.get_time_series_uuid(PSY.SingleTimeSeries, PSY.get_component(PSY.ThermalStandard, sys, n), "tie_break_scale_1"))
+    @test Set(axes(PSI.get_parameter_array(container, key), 1)) == Set(ts_uuid(n) for n in (TOY_CHEAP, third))
+end
 
 @testset "a template without the tie-break service model has no tie-break rows" begin
     sys = nem_toy_system(

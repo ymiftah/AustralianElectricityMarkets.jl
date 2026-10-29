@@ -17,6 +17,7 @@ const TOY_TOLERANCE = 1.0e-6
 const TOY_CHEAP = "Alta"
 const TOY_EXPENSIVE = "Park City"
 const TOY_BATTERY = "batt1"
+const TOY_LOAD_SERVICE_ONLY = "sched_load"
 
 # A unit's offer and dispatch limits, in MW, MW/min and $/MWh. `bands` is a vector of
 # `(MW, price)` pairs in offer order.
@@ -313,6 +314,13 @@ function toy_model(sys; template)
         template, sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
         resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
     )
+end
+
+# Builds `model` and returns its status with the text of the build log, which records any error.
+function _toy_build_log(model)
+    dir = mktempdir()
+    status = PSI.build!(model; output_dir = dir)
+    return status, join((read(joinpath(dir, f), String) for f in readdir(dir)), "\n")
 end
 
 # Solves one 5-minute interval under `NEMReplayDispatch`. Returns dispatch and per-band offers in

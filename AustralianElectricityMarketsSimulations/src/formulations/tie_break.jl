@@ -60,7 +60,7 @@ end
 
 Adds the [`TieBreakScaleParameter`](@ref) of segment `band` keyed `(T, meta)`, unless it exists:
 one row per available `T` carrying the segment's `"tie_break_scale_<band>[_decremental]"` forecast,
-with the device model of `T` from `devices_template`.
+with the device model of `T` from `devices_template`. Devices excluded by its `"filter_function"` get no row.
 
 # Returns
 `nothing`.
@@ -73,8 +73,9 @@ function _add_tie_break_parameter!(
     PSI.has_container_key(container, TieBreakScaleParameter, T, meta) && return
     ts_name = tie_break_series_name(band, decremental)
     ts_type = PSI.get_default_time_series_type(container)
-    devices = [d for d in PSY.get_available_components(T, sys) if PSY.has_time_series(d, ts_type, ts_name)]
     model = devices_template[Symbol(IS.strip_module_name(T))]
+    devices = T[d for d in PSI.get_available_components(model, sys) if PSY.has_time_series(d, ts_type, ts_name)]
+    isempty(devices) && return
     PSI.add_parameters!(container, TieBreakScaleParameter, devices, model; meta = meta, time_series_name = ts_name)
     return
 end

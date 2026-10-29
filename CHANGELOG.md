@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A battery or scheduled load with an energy offer on one side only (a GEN curve without a LOAD curve, or the reverse) now
+  fails the build instead of pricing the missing side at zero. Service-only bids still add no energy cost.
+
+- Tie-break scale parameters skip devices excluded by their device model's `filter_function`, so an excluded unit gets no scale row.
+
 - FCAS service bids are stored in MW and converted to per-unit of the system base on read, so
   the offer values seen by the model are unchanged. Storing a service bid on a device without a
   `MarketBidCost` now throws an `ArgumentError` instead of silently skipping the device.

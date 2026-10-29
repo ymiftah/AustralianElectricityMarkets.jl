@@ -82,16 +82,43 @@ function PSI.get_initial_conditions_service_model(::PSI.OperationModel, service_
 end
 
 
-# Whether `cost` has offer curves on the side (`decremental`). A `MarketBidCost` with none on a side
-# (for example a non-scheduled load with no energy offer) contributes no cost term on it.
-_has_offer_curves(cost::PSY.MarketBidCost, decremental::Bool) =
-    !isnothing(decremental ? PSY.get_decremental_offer_curves(cost) : PSY.get_incremental_offer_curves(cost))
+# Whether `cost` has offer curves on the side (`decremental`).
+function _has_offer_curves(cost::PSY.MarketBidCost, decremental::Bool)
+    curves = decremental ? PSY.get_decremental_offer_curves(cost) : PSY.get_incremental_offer_curves(cost)
+    return !isnothing(curves)
+end
+
+# Whether `cost` has no energy offer curves on either side, as for a device bidding only FCAS services.
+function _is_service_only(cost::PSY.MarketBidCost)
+    return !_has_offer_curves(cost, false) && !_has_offer_curves(cost, true)
+end
+
+# Adds the energy offer term on the side (`decremental`). A service-only cost adds nothing, and a cost
+# with a curve only on the other side throws, rather than pricing this side at zero.
+function _add_energy_offer_term!(
+        decremental::Bool, container::PSI.OptimizationContainer, component::PSY.Component,
+        cost::PSY.MarketBidCost, variable::PSI.VariableType, formulation::AbstractNEMDispatch,
+    )
+    if _has_offer_curves(cost, decremental)
+        PSI.add_pwl_term!(decremental, container, component, cost, variable, formulation)
+    elseif !_is_service_only(cost)
+        side = decremental ? "LOAD" : "GEN"
+        throw(
+            ArgumentError(
+                "$(PSY.get_name(component)): the MarketBidCost has energy offers on the other side but no $side " *
+                    "offer curve, so this side would be priced at zero. Add the $side offer curve or remove the other side's.",
+            ),
+        )
+    end
+    return
+end
 
 """
     PSI._add_variable_cost_to_objective!(container, ::PSI.ActivePowerOutVariable, component::PSY.Storage, cost_function::PSY.MarketBidCost, ::AbstractNEMDispatch)
 
 Override of `PowerSimulations.jl`'s private market-bid hook: prices a battery's
-discharge on its incremental (`"variable_cost"`) offer curve.
+discharge on its incremental (`"variable_cost"`) offer curve. A service-only cost adds nothing;
+a cost with only a decremental curve throws.
 
 # Returns
 `nothing`.
@@ -103,7 +130,7 @@ function PSI._add_variable_cost_to_objective!(
         cost_function::PSY.MarketBidCost,
         ::V,
     ) where {T <: PSI.ActivePowerOutVariable, V <: AbstractNEMDispatch}
-    _has_offer_curves(cost_function, false) && PSI.add_pwl_term!(false, container, component, cost_function, T(), V())
+    _add_energy_offer_term!(false, container, component, cost_function, T(), V())
     return
 end
 
@@ -112,7 +139,7 @@ end
 
 Override of `PowerSimulations.jl`'s private market-bid hook: prices a battery's charge
 on its decremental (`"decremental_variable_cost"`) offer curve, so a load bid band lowers the
-objective when cleared.
+objective when cleared. A service-only cost adds nothing; a cost with only an incremental curve throws.
 
 # Returns
 `nothing`.
@@ -124,7 +151,7 @@ function PSI._add_variable_cost_to_objective!(
         cost_function::PSY.MarketBidCost,
         ::V,
     ) where {T <: PSI.ActivePowerInVariable, V <: AbstractNEMDispatch}
-    _has_offer_curves(cost_function, true) && PSI.add_pwl_term!(true, container, component, cost_function, T(), V())
+    _add_energy_offer_term!(true, container, component, cost_function, T(), V())
     return
 end
 
@@ -133,7 +160,7 @@ end
 
 Override of `PowerSimulations.jl`'s private market-bid hook: prices a scheduled load's
 consumption on its decremental (`"decremental_variable_cost"`) offer curve, so a cleared load band
-lowers the objective.
+lowers the objective. A service-only cost adds nothing; a cost with only an incremental curve throws.
 
 # Returns
 `nothing`.
@@ -145,7 +172,7 @@ function PSI._add_variable_cost_to_objective!(
         cost_function::PSY.MarketBidCost,
         ::V,
     ) where {T <: PSI.ActivePowerVariable, V <: AbstractNEMDispatch}
-    _has_offer_curves(cost_function, true) && PSI.add_pwl_term!(true, container, component, cost_function, T(), V())
+    _add_energy_offer_term!(true, container, component, cost_function, T(), V())
     return
 end
 
@@ -197,7 +224,7 @@ function PSI._unwrap_for_param(::MNSPBandWidthParameter, curve::IS.PiecewiseStep
     return vcat(widths, zeros(n - length(widths)))
 end
 
-# An offer curve's band prices in $/MW per interval, padded with zero prices to the band axis.
+# An offer curve's band prices in $/MWh, padded with zero prices to the band axis.
 function PSI._unwrap_for_param(::FCASBandPriceParameter, curve::IS.PiecewiseStepData, expected_axs)
     prices = PSY.get_y_coords(curve)
     n = length(only(expected_axs))
