@@ -22,8 +22,9 @@ end
     _set_nem_fixed_loads!(sys, rows, date_range)
 
 Attaches each available device's participant fixed loading (AEMO's Energy Inflexible Offer,
-`BIDPEROFFER_D.FIXEDLOAD > 0`, fast-start units excluded; see [`read_fixed_loads`](@ref)) over the
-intervals of `date_range` as two series: `"fixed_load"`, the target net injection in system-base
+`BIDPEROFFER_D.FIXEDLOAD > 0`, excluding rows flagged `IN_PROFILE`, where a fast-start unit is in
+`DISPATCHMODE` 1 or 2; see [`read_fixed_loads`](@ref))
+over the intervals of `date_range` as two series: `"fixed_load"`, the target net injection in system-base
 per-unit (`0` where none applies), and `"fixed_load_invoked"`, `1` at the intervals that carry a
 fixed loading and `0` elsewhere. A storage device's `GEN` and `LOAD` loadings net into one target.
 Devices with no fixed loading in the range get no series; existing series are replaced.
@@ -39,7 +40,8 @@ Devices with no fixed loading in the range get no series; existing series are re
 function _set_nem_fixed_loads!(sys, rows, date_range)
     grid = collect(date_range)[1:(end - 1)]
     base_power = get_base_power(sys)
-    for (duid, by_time) in _fixed_load_series(sys, rows)
+    attached = subset(rows, :IN_PROFILE => ByRow(!))
+    for (duid, by_time) in _fixed_load_series(sys, attached)
         device = get_component(Device, sys, duid)
         target = [get(by_time, t, 0.0) / base_power for t in grid]
         invoked = [haskey(by_time, t) ? 1.0 : 0.0 for t in grid]

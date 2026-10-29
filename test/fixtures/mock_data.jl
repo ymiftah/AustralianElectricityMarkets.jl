@@ -712,6 +712,8 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     # small metered INITIALMW (as KEPBL1 does in real data), which the dispatch limits must pin to 0.
     nonscheduled = ("ASLOAD1", "ASLOAD2")
     initial_mw_for(duid, i) = duid == "BW01" && i == last(intervals) ? -30.0 : duid == "ASLOAD1" ? 0.1 : duid in nonscheduled ? 0.0 : 40.0 + duid_offset(duid) + (i % 10)
+    # BW04 (fast-start, T1 > 0) is in DISPATCHMODE 4 at 00:10 and 2 at 00:15, its fixed-load intervals.
+    dispatch_mode_for(duid, i) = duid == "BW04" && i == 2 ? 4 : duid == "BW04" && i == 3 ? 2 : 0
     ramp_up_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 4.0 + duid_offset(duid) + (i % 5)
     ramp_down_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 3.0 + duid_offset(duid) + (i % 5)
     availability_for(duid, i) = duid in nonscheduled ? 0.0 : 90.0 - 3 * duid_offset(duid) + (i % 6)
@@ -731,6 +733,7 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
             RUNNO = fill(1, m),
             INTERVENTION = fill(0, m),
             DUID = dl_duids,
+            DISPATCHMODE = [dispatch_mode_for(d, i) for d in dl_duids],
             INITIALMW = [initial_mw_for(d, i) for d in dl_duids],
             RAMPUPRATE = [ramp_up_rate_for(d, i) for d in dl_duids],
             RAMPDOWNRATE = [ramp_down_rate_for(d, i) for d in dl_duids],

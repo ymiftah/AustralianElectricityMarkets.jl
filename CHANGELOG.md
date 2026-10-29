@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A fast-start unit's fixed loading is attached at every interval outside DISPATCHMODE 1 and 2 instead of being dropped for the whole trading day; its `$<DUID>` constraint row is never built as a generic constraint.
+
 - Loading the simulations package no longer changes the balance-slack price of other area-balance models; the replay passes its Market Price Cap penalty through the network model's slack cost.
 
 - A battery or scheduled load with an energy offer on one side only (a GEN curve without a LOAD curve, or the reverse) now

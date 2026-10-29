@@ -163,13 +163,20 @@ let
     @testset "read_fixed_loads" begin
         date_range = DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 1, 0)
         df = read_fixed_loads(db, date_range)
-        @test names(df) == ["INTERVAL_DATETIME", "DUID", "DIRECTION", "FIXEDLOAD"]
-        @test nrow(df) == 2
-        @test all(==("BW02"), df.DUID)
-        @test df.INTERVAL_DATETIME == [DateTime(2025, 1, 1, 0, 10), DateTime(2025, 1, 1, 0, 15)]
+        @test names(df) == ["INTERVAL_DATETIME", "DUID", "DIRECTION", "FIXEDLOAD", "IN_PROFILE"]
+        # BW02 has no dispatch mode in the fixture; BW04 is in DISPATCHMODE 4 at 00:10 and 2 at 00:15.
+        @test nrow(df) == 4
+        @test df.INTERVAL_DATETIME == [DateTime(2025, 1, 1, 0, 10), DateTime(2025, 1, 1, 0, 10), DateTime(2025, 1, 1, 0, 15), DateTime(2025, 1, 1, 0, 15)]
+        @test df.DUID == ["BW02", "BW04", "BW02", "BW04"]
         @test all(==(50.0), df.FIXEDLOAD)
+        # Mode 2 is in profile; mode 4 (and a unit with no dispatch mode) is not.
+        @test df.IN_PROFILE == [false, false, false, true]
+        @test eltype(df.IN_PROFILE) == Bool
         # The stop bound is exclusive.
-        @test nrow(read_fixed_loads(db, DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 0, 15))) == 1
+        @test nrow(read_fixed_loads(db, DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 0, 15))) == 2
+        empty_df = read_fixed_loads(db, DateTime(2025, 1, 1, 2, 0):Dates.Minute(5):DateTime(2025, 1, 1, 2, 5))
+        @test nrow(empty_df) == 0
+        @test eltype(empty_df.IN_PROFILE) == Bool
     end
 
     @testset "read_mnsp_offers" begin

@@ -254,7 +254,7 @@ function _read_constraint_inputs(db, date_range; intervention = 0)
         _require_cached(db, table; context = "the constraint build reads FIXEDLOAD and T1 from it.")
     end
     invoked = read_invoked_constraints(db, date_range; intervention)
-    fixed = read_fixed_loads(db, date_range)
+    fixed = read_fixed_loads(db, date_range; intervention)
     return invoked, fixed
 end
 
@@ -280,7 +280,9 @@ mapping a skipped name to `:no_definition`, `:no_terms`, `:unknown_duid`, `:unkn
 with [`get_dropped_terms`](@ref).
 
 A unit's participant fixed loading (`\$<DUID>`) is not a generic constraint: its `DISPATCHCONSTRAINT`
-row is neither added nor reported as skipped where `_set_nem_fixed_loads!` attaches the loading to the unit.
+row is neither added nor reported as skipped at intervals with a fixed-loading row for an available
+device in `sys`. Such rows include those flagged `IN_PROFILE`. Devices that are unavailable or absent
+from `sys` are still reported as skipped.
 
 Each skipped version is also recorded on `sys`; read it with [`get_skipped_constraints`](@ref). The
 intervals of `date_range` with no invoked constraint ([`get_missing_constraint_intervals`](@ref)) and

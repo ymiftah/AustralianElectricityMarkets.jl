@@ -619,9 +619,9 @@ end
     end
 
     @testset "Energy Inflexible Offer constraints are built from FIXEDLOAD" begin
-        # BW01 (GEN) is fixed at 30 MW for 00:10 to 00:20, BW02 at 40 MW but with a fast-start
-        # profile (T1 > 0), BW03 has a zero fixed load. DISPATCHCONSTRAINT carries `$` rows
-        # without a version for BW01, BW02 and an unknown unit; only BW01's is modelled.
+        # BW01 (GEN) is fixed at 30 MW for 00:10 to 00:20. BW02 is fast-start (T1 > 0) at 40 MW for 00:10 to 00:20,
+        # in DISPATCHMODE 2 at 00:10 and 00:15 (in profile) and 4 at 00:20 (attached). BW03 has a zero fixed load.
+        # DISPATCHCONSTRAINT carries `$` rows without a version for BW01, BW02 and an unknown unit; none is built.
         fixed_hive = mktempdir()
         create_mock_data(fixed_hive)
         fixed_conn = DuckDB.connect(DuckDB.DB())
@@ -646,6 +646,12 @@ end
                 "WHEN DUID = 'BW01' THEN 20.0 ELSE 0.0 END ELSE 0.0 END AS FIXEDLOAD)",
         )
         rewrite("BIDDAYOFFER_D", "* REPLACE (CASE WHEN DUID = 'BW02' THEN 6.0 ELSE NULL END AS T1)")
+        rewrite(
+            "DISPATCHLOAD",
+            "* REPLACE (CASE WHEN DUID = 'BW02' THEN CASE WHEN SETTLEMENTDATE BETWEEN " *
+                "TIMESTAMP '2025-01-01 00:10:00' AND TIMESTAMP '2025-01-01 00:15:00' THEN 2 ELSE 4 END " *
+                "ELSE DISPATCHMODE END AS DISPATCHMODE)",
+        )
         dc_dir = joinpath(fixed_hive, "DISPATCHCONSTRAINT")
         tmp = dc_dir * "_new"
         DuckDB.execute(
@@ -666,6 +672,8 @@ end
         # Both directions are read: the GEN and LOAD loadings of BW01 (raw reader values are covered in readers/raw.jl).
         loads = read_fixed_loads(fixed_db, fixed_range)
         @test Set(loads.DIRECTION) == Set(["GEN", "LOAD"])
+        @test loads.IN_PROFILE[loads.DUID .== "BW02"] == [true, true, false]
+        @test !any(loads.IN_PROFILE[loads.DUID .== "BW01"])
 
         fixed_sys = nem_system(fixed_db, RegionalNetworkConfiguration())
         added_f = nothing
@@ -677,7 +685,8 @@ end
         @test isnothing(get_component(GenericConstraint, fixed_sys, "\$BW01"))
         skipped_names = get_skipped_constraints(fixed_sys).constraint
         @test !any(startswith("\$BW01"), skipped_names)
-        @test any(startswith("\$BW02"), skipped_names)  # fast-start: still reported
+        # BW02 has an in-profile row at 00:10 and an attached one at 00:20; both are fixed-load rows, neither built nor reported.
+        @test !any(startswith("\$BW02"), skipped_names)
         @test any(startswith("\$NOSUCH1"), skipped_names)
 
         attach_fixed_loads!(fixed_sys, fixed_db, fixed_range)
@@ -688,7 +697,11 @@ end
         # BW01 is a battery: its 30 MW generation and 20 MW charging targets net to 10 MW injection.
         @test series(bw01, "fixed_load")[3:5] == fill(10.0 / base, 3)
         @test all(iszero, series(bw01, "fixed_load")[[1, 2, 6]])
-        @test !has_time_series(get_component(Device, fixed_sys, "BW02"), SingleTimeSeries, "fixed_load")
+        # BW02 is attached only at its non-profile interval 00:20 (index 5), not at in-profile 00:10 and 00:15.
+        bw02 = get_component(Device, fixed_sys, "BW02")
+        @test findall(isone, series(bw02, "fixed_load_invoked")) == [5]
+        @test series(bw02, "fixed_load_invoked")[[3, 4]] == [0.0, 0.0]
+        @test series(bw02, "fixed_load")[5] == 40.0 / base
 
         # A missing bid table fails with the documented error.
         missing_bids_hive = mktempdir()
