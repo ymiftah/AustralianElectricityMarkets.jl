@@ -33,5 +33,5 @@ julia = "1.11"
 [sources]
 AustralianElectricityMarkets = {path = ".."}
 HDF5 = {url = "https://github.com/JuliaIO/HDF5.jl.git", rev = "4c4592a397a4e4f6045a56003ca4d038c8eb3a78"}
-PowerSimulations = {url = "https://github.com/ymiftah/PowerSimulations.jl.git", rev = "dbb74ef04c127d95e4340109c2c26a1dd84e4c8f"}
+PowerSimulations = {url = "https://github.com/ymiftah/PowerSimulations.jl.git", rev = "10f8a02f5319245abdae7b67bad2a95e4ce28201"}
 PowerSystems = {url = "https://github.com/ymiftah/PowerSystems.jl.git", rev = "c950c8bf165e275946995ec431938ef0b6ff22ba"}
