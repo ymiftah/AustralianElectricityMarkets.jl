@@ -71,14 +71,13 @@ include("checks/fcas.jl")
 include("checks/tie_break.jl")
 include("checks/financial_year.jl")
 include("checks/replay_inputs.jl")
-include("preprocessing/replication.jl")
 include("execution/replication.jl")
 include("execution/simulation.jl")
 
 
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
 export REPLICATION_PARTS, replication_template
-export prepare_replication!, replication_simulation, run_replication, replication_results, REPLICATION_OPTIMIZER
+export replication_simulation, run_replication, REPLICATION_OPTIMIZER
 export EnergyOfferSurplusSlack, EnergyOfferDeficitSlack,
     EnergyDecrementalOfferSurplusSlack, EnergyDecrementalOfferDeficitSlack
 export EnergyMaxAvailOutConstraint, EnergyMaxAvailInConstraint, EnergyMaxAvailOutSlack, EnergyMaxAvailInSlack
@@ -97,7 +96,6 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASLowerSlopeParameter, FCASRampingLimitParameter, FCASBandPriceParameter,
     UnitRampUpSlack, UnitRampDownSlack,
     InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack
-export compute_fcas_prices
 export check_fcas_services, check_dispatch_envelope
 export AbstractNEMDispatch, NEMReplayDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,

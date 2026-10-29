@@ -15,6 +15,11 @@ include(joinpath(@__DIR__, "..", "..", "test", "fixtures", "input_builders.jl"))
 include(joinpath(@__DIR__, "template_helpers.jl"))
 include(joinpath(@__DIR__, "toy_fixture.jl"))
 
+# Replay results are read by the repository script module, which the simulation tests call as `ReplayResults`.
+if !isdefined(@__MODULE__, :ReplayResults)
+    include(joinpath(@__DIR__, "..", "..", "scripts", "replay_results.jl"))
+end
+
 const AEM_TEST_HIVE_DIR = mktempdir()
 create_mock_data(AEM_TEST_HIVE_DIR)
 

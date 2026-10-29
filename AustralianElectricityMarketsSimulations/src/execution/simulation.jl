@@ -17,7 +17,7 @@ function _check_replication_steps(sys::PSY.System, steps::StepRange{DateTime})
         ArgumentError("replication_simulation: steps must be a non-empty range of five-minute intervals."),
     )
     PSY.get_time_series_counts(sys).forecast_count > 0 || throw(
-        ArgumentError("replication_simulation: call prepare_replication!(sys) before constructing a simulation."),
+        ArgumentError("replication_simulation: call prepare_replay_forecasts!(sys) before constructing a simulation."),
     )
     missing_steps = setdiff(steps, PSY.get_forecast_initial_times(sys))
     isempty(missing_steps) || throw(
@@ -64,7 +64,7 @@ Constructs an unbuilt PSI simulation over `steps` from a prepared system. Runs t
 pre-flight checks and selects constraints invoked in at least one requested interval.
 
 # Arguments
-- `sys`: a system prepared with [`prepare_replication!`](@ref), or equivalent attached forecasts.
+- `sys`: a system prepared with [`prepare_replay_forecasts!`](@ref), or equivalent attached forecasts.
 - `steps`: a non-empty range of five-minute interval-ending timestamps covered by the system.
 - `optimizer`: the JuMP optimizer; defaults to HiGHS with zero MIP gaps.
 - `parts`: the [`REPLICATION_PARTS`](@ref) included in the model.

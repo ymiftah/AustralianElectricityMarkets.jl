@@ -26,9 +26,8 @@ function _precompile_workload()
     finally
         _PrecompileMockData.DuckDB.close(db.db)
     end
-    prepare_replication!(sys)
-    run = run_replication(sys, steps; folder = mktempdir())
-    replication_results(run.results, sys)
+    AustralianElectricityMarkets.prepare_replay_forecasts!(sys)
+    run_replication(sys, steps; folder = mktempdir())
     return
 end
 

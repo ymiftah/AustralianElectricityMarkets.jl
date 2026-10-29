@@ -224,7 +224,7 @@ Timing columns in `days.csv`:
 
 | Column | Measurement in seconds |
 | --- | --- |
-| `system_build_s` | System construction and `prepare_replication!` |
+| `system_build_s` | System construction and `prepare_replay_forecasts!` |
 | `model_build_s` | Simulation/model construction, pre-flight checks and `PSI.build!` |
 | `execute_s` | Complete execution loop, including updates, solves, dual calculation and result writes |
 | `solver_s` | Sum of solver-reported solve times |

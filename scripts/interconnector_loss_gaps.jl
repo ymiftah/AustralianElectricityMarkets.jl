@@ -12,8 +12,8 @@ module InterconnectorLossGaps
 
     using AustralianElectricityMarkets:
         HiveConfiguration, InterconnectorLossModel, DISPATCH_INTERVAL, NEM_SERIES, NEMDEConfiguration,
-        aem_connect, loss_curve_vertex_values, nem_system
-    using AustralianElectricityMarketsSimulations: InterconnectorLossVariable, prepare_replication!
+        aem_connect, loss_curve_vertex_values, nem_system, prepare_replay_forecasts!
+    using AustralianElectricityMarketsSimulations: InterconnectorLossVariable
     using DataFrames
     using Dates
     using Printf
@@ -235,7 +235,7 @@ module InterconnectorLossGaps
         # The same system and range that `replicate_range` built for these intervals.
         db = aem_connect(HiveConfiguration(hive_location = hive))
         sys = nem_system(db, NEMDEConfiguration(); date_range = start:DISPATCH_INTERVAL:(stop + 2DISPATCH_INTERVAL))
-        prepare_replication!(sys)
+        prepare_replay_forecasts!(sys)
 
         tables = map(sort(chunk_folders; by = chunk_index)) do folder
             results = PSI.get_decision_problem_results(PSI.SimulationResults(folder, SIMULATION_NAME), PROBLEM_NAME)

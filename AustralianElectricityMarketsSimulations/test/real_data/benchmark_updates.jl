@@ -25,7 +25,7 @@ function _benchmark_updates(folder; profile_updates = false)
     steps = t:Minute(5):(t + Minute(10))
     println("Building three-interval system"); flush(stdout)
     db = aem_connect()
-    system_s = @elapsed sys = prepare_replication!(nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(last(steps) + Minute(10)), time_series_in_memory = false, time_series_directory = folder))
+    system_s = @elapsed sys = prepare_replay_forecasts!(nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(last(steps) + Minute(10)), time_series_in_memory = false, time_series_directory = folder))
     optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false, "threads" => 1, "mip_rel_gap" => 1.0e-8, "mip_abs_gap" => 1.0e-10)
     println("System built: $system_s seconds; constructing model"); flush(stdout)
     model_s = @elapsed begin

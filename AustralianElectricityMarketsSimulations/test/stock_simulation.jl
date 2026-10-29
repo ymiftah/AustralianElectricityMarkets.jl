@@ -54,13 +54,13 @@ function stock_standalone(sys, t; parts = REPLICATION_PARTS, template = replicat
     return (;
         # The MILP dual pass re-solves the model, so the objective is read from the optimizer stats.
         model, results, objective = only(PSI.read_optimizer_stats(results).objective_value),
-        solved = stock_at(AEMS._solved_tables(results, sys, parts), t),
+        solved = stock_at(ReplayResults._solved_tables(results, sys, parts), t),
     )
 end
 # The simulation, its per-step objectives and solved tables.
 function stock_simulate(sys; kwargs...)
     out = run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER, kwargs...)
-    tables = AEMS._solved_tables(out.results, sys, REPLICATION_PARTS)
+    tables = ReplayResults._solved_tables(out.results, sys, REPLICATION_PARTS)
     return (;
         out...,
         objectives = PSI.read_optimizer_stats(out.results).objective_value,
@@ -167,7 +167,7 @@ function masked_standalone(sys, t)
     results = PSI.OptimizationProblemResults(model)
     return (;
         results, objective = PSI.JuMP.objective_value(PSI.get_jump_model(model)),
-        solved = stock_at(AEMS._solved_tables(results, sys, REPLICATION_PARTS), t),
+        solved = stock_at(ReplayResults._solved_tables(results, sys, REPLICATION_PARTS), t),
         gc = stock_gc_duals(results)["N_TOY_LIMIT"][t],
     )
 end
@@ -208,7 +208,7 @@ const MASK_CASES = [
                 # The masked row is violated (vacuous), its slack takes the violation, and no violation is reported.
                 slack = only(PSI.read_variable(new.results, "$(c.slack)__GenericConstraint__N_TOY_LIMIT").value)
                 @test slack >= (c.sense == ConstraintSense.LE ? 40.0 : 30.0) - TOY_TOLERANCE
-                v = AEMS._constraint_violations(new.results, sys)
+                v = ReplayResults._constraint_violations(new.results, sys)
                 @test nrow(v) == 0 || !any(==("generic_constraint"), v.family)
             end
         end
@@ -418,7 +418,7 @@ function stock_fcas_capacities(results, t)
 end
 # FCAS prices of one interval by `(REGIONID, BIDTYPE)`, in $/MWh.
 stock_fcas_prices(results, sys, t) = Dict(
-    (r.REGIONID, r.BIDTYPE) => r.ROP for r in eachrow(compute_fcas_prices(results, sys; resolution = DISPATCH_INTERVAL)) if r.SETTLEMENTDATE == t
+    (r.REGIONID, r.BIDTYPE) => r.ROP for r in eachrow(ReplayResults.compute_fcas_prices(results, sys; resolution = DISPATCH_INTERVAL)) if r.SETTLEMENTDATE == t
 )
 function stock_fcas_standalone(sys, t)
     template = replication_template(sys)
@@ -428,7 +428,7 @@ function stock_fcas_standalone(sys, t)
     results = PSI.OptimizationProblemResults(model)
     return (;
         objective = PSI.JuMP.objective_value(PSI.get_jump_model(model)),
-        solved = stock_at(AEMS._solved_tables(results, sys, REPLICATION_PARTS), t),
+        solved = stock_at(ReplayResults._solved_tables(results, sys, REPLICATION_PARTS), t),
         capacities = stock_fcas_capacities(results, t),
         prices = stock_fcas_prices(results, sys, t),
     )
@@ -727,7 +727,7 @@ end
     # The stored generic constraint slack is already in MW.
     slack = stock_realized(sim.results, "GenericConstraintSlackDown__GenericConstraint__F_REG", "F_REG"; parameter = false, scale = 1.0)
     @test slack ≈ [0.0, 15.0] atol = TOY_TOLERANCE
-    v = AEMS._constraint_violations(sim.results, sys)
+    v = ReplayResults._constraint_violations(sim.results, sys)
     @test nrow(v) == 1
     row = only(eachrow(v))
     @test (row.family, row.name, row.DateTime, row.direction) == ("generic_constraint", "F_REG", STOCK_STEPS[2], "down")
@@ -756,14 +756,14 @@ end
         mutate! = (sys, stamps) -> foreach(i -> add_constraint!(sys, stamps, i), 1:n),
     )
     out = run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
-    slack_families = Dict(AEMS._VIOLATION_FAMILIES)
+    slack_families = Dict(ReplayResults._VIOLATION_FAMILIES)
     keys = [k for k in PSI.list_variable_keys(out.results) if haskey(slack_families, PSI.IS.Optimization.get_entry_type(k))]
     @test length(keys) >= n
-    batched = AEMS._read_variable_frames(out.results, keys)
+    batched = ReplayResults._read_variable_frames(out.results, keys)
     @test Set(Base.keys(batched)) == Set(keys)
-    violated = [k for k in keys if any(>(AEMS._VIOLATION_TOLERANCE_MW), batched[k].value)]
+    violated = [k for k in keys if any(>(ReplayResults._VIOLATION_TOLERANCE_MW), batched[k].value)]
     @test length(violated) == n ÷ 2
-    @test isempty(AEMS._read_variable_frames(out.results, PSI.OptimizationContainerKey[]))
+    @test isempty(ReplayResults._read_variable_frames(out.results, PSI.OptimizationContainerKey[]))
 end
 
 @testset "replication_template follows parts and exclude_constraints" begin
@@ -816,9 +816,9 @@ end
     # Losses modeled but no interchange variable in the results.
     sys = loss_curve_sentinel_system()
     uncoupled = stock_standalone(sys, TOY_START; parts = ())
-    @test_throws r"Losses are modeled" AEMS._solved_tables(uncoupled.results, sys, REPLICATION_PARTS)
-    @test nrow(AEMS._solved_tables(uncoupled.results, sys, ()).interconnectors) == 0
-    @test_throws r"non-finite regional price" AEMS._check_prices_finite(
+    @test_throws r"Losses are modeled" ReplayResults._solved_tables(uncoupled.results, sys, REPLICATION_PARTS)
+    @test nrow(ReplayResults._solved_tables(uncoupled.results, sys, ()).interconnectors) == 0
+    @test_throws r"non-finite regional price" ReplayResults._check_prices_finite(
         DataFrame(SETTLEMENTDATE = [TOY_START], REGIONID = ["1"], ROP = [NaN]),
     )
 end

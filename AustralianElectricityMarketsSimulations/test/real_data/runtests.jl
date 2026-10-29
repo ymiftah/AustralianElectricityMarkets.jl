@@ -22,6 +22,7 @@ const AEMS = AustralianElectricityMarketsSimulations
 include(joinpath(@__DIR__, "..", "..", "..", "test", "fixtures", "input_builders.jl"))
 include(joinpath(@__DIR__, "..", "..", "..", "scripts", "interconnector_loss_gaps.jl"))
 using .InterconnectorLossGaps: loss_gap_table
+include(joinpath(@__DIR__, "..", "..", "..", "scripts", "replay_results.jl"))
 
 const REAL_HIVE = isempty(ARGS) ? joinpath(homedir(), ".nemdb_cache") : only(ARGS)
 const REAL_START = DateTime(2026, 6, 4, 0, 0)
@@ -383,7 +384,7 @@ end
 
         # Report-only: the FCAS prices this solve's constraint duals imply, against AEMO's published
         # ROP (the sum of the requirement constraints' MARGINALVALUE) per (region, service, interval).
-        fcas_prices = compute_fcas_prices(PSI.OptimizationProblemResults(fcas_model), sys)
+        fcas_prices = ReplayResults.compute_fcas_prices(PSI.OptimizationProblemResults(fcas_model), sys)
         published_prices = AEM.read_fcas_prices(db, REAL_DATE_RANGE)
         compared = innerjoin(fcas_prices, published_prices; on = [:SETTLEMENTDATE, :REGIONID, :BIDTYPE], makeunique = true)
         n_price_cmp = nrow(compared)

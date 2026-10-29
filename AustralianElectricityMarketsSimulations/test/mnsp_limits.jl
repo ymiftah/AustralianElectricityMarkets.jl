@@ -20,7 +20,7 @@ function _solve_mnsp_limit_case(sys; target = nothing)
     @test status == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     status == PSI.RunStatus.SUCCESSFULLY_FINALIZED || return nothing
     results = PSI.OptimizationProblemResults(model)
-    violations = filter(row -> startswith(row.family, "mnsp_"), AEMS._constraint_violations(results, sys))
+    violations = filter(row -> startswith(row.family, "mnsp_"), ReplayResults._constraint_violations(results, sys))
     return (; model, results, violations)
 end
 

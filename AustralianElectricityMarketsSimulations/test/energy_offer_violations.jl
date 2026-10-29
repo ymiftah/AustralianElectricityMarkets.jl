@@ -35,7 +35,7 @@ end
         out = solve_toy(sys; generic_slacks = true)
         @test out.dispatch_mw[TOY_CHEAP] ≈ target atol = 1.0e-6
         @test out.band_mw[(TOY_CHEAP, 1)] ≈ max(target - 10.0, 0.0) atol = 1.0e-6
-        rows = filter(:family => ==("energy_offer"), AEMS._constraint_violations(out.results, sys))
+        rows = filter(:family => ==("energy_offer"), ReplayResults._constraint_violations(out.results, sys))
         if target == 0.0
             @test only(rows.MW) ≈ 10.0 atol = 1.0e-6
             @test only(rows.direction) == "down"
@@ -50,7 +50,7 @@ end
     out = solve_toy(sys; generic_slacks = true)
     @test out.dispatch_mw[TOY_CHEAP] ≈ 60.0 atol = 1.0e-6
     @test out.band_mw[(TOY_CHEAP, 1)] ≈ 40.0 atol = 1.0e-6
-    rows = filter(:family => ==("energy_offer"), AEMS._constraint_violations(out.results, sys))
+    rows = filter(:family => ==("energy_offer"), ReplayResults._constraint_violations(out.results, sys))
     @test only(rows.MW) ≈ 20.0 atol = 1.0e-6
     @test only(rows.direction) == "up"
     expected = (40.0 * 20.0 + 20.0 * 80.0 + 20.0 * 1135.0 * 17500.0) * interval_hours(DISPATCH_INTERVAL)
@@ -69,13 +69,13 @@ end
     sys = offered_band_system(; bands = [(0.0, 20.0)])
     out = solve_toy(sys; generic_slacks = true)
     @test out.dispatch_mw[TOY_CHEAP] ≈ 60.0 atol = 1.0e-6
-    @test only(filter(:family => ==("energy_offer"), AEMS._constraint_violations(out.results, sys)).MW) ≈ 60.0 atol = 1.0e-6
+    @test only(filter(:family => ==("energy_offer"), ReplayResults._constraint_violations(out.results, sys)).MW) ≈ 60.0 atol = 1.0e-6
 end
 
 @testset "recurrent offered-band widths update step by step" begin
     sys = offered_band_system(; bands = [[(40.0, 20.0)], [(80.0, 20.0)]])
     out = run_replication(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
-    rows = filter(:family => ==("energy_offer"), AEMS._constraint_violations(out.results, sys))
+    rows = filter(:family => ==("energy_offer"), ReplayResults._constraint_violations(out.results, sys))
     @test nrow(rows) == 1
     @test only(rows.MW) ≈ 20.0 atol = 1.0e-6
     @test only(rows.DateTime) == TOY_START
@@ -103,7 +103,7 @@ end
         out = solve_toy(sys; generic_slacks = true)
         actual = kind == :load ? out.load_mw[name] : out.dispatch_mw[name]
         @test actual ≈ target atol = 1.0e-6
-        rows = filter(:family => ==("energy_offer"), AEMS._constraint_violations(out.results, sys))
+        rows = filter(:family => ==("energy_offer"), ReplayResults._constraint_violations(out.results, sys))
         @test only(rows.MW) ≈ 20.0 atol = 1.0e-6
         @test only(rows.name) == name
     end

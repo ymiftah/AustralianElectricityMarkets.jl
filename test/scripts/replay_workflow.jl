@@ -3,7 +3,7 @@ using .ReplayWorkflow: replicate_range
 
 # Prepares a cache-built system for the script's result-reading regressions.
 function workflow_test_system(db, date_range; kwargs...)
-    return prepare_replication!(nem_system(db, NEMDEConfiguration(); date_range, kwargs...))
+    return prepare_replay_forecasts!(nem_system(db, NEMDEConfiguration(); date_range, kwargs...))
 end
 
 @testset "simulation runtime exposes no cache entry points" begin
@@ -164,7 +164,7 @@ end
 
     # A reopened chunk reads the same constraint violations as the live solve, and needs no system.
     sys2 = workflow_test_system(db, DateTime(2025, 1, 1, 0, 15):Minute(5):DateTime(2025, 1, 1, 0, 25))
-    reopened = replication_results(two.results[2], sys2).constraint_violations
+    reopened = ReplayResults.replication_results(two.results[2], sys2).constraint_violations
     at_chunk2 = filter(:DateTime => t -> t >= DateTime(2025, 1, 1, 0, 15), two.constraint_violations)
     @test sort(reopened, [:DateTime, :name]) == sort(at_chunk2, [:DateTime, :name])
 

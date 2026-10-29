@@ -33,7 +33,8 @@ end
         interval_flow_limits = false, time_series_in_memory = true, time_series_directory = nothing)
 
 Builds a constrained system populated with demand, energy and FCAS bids, scaling and dispatch
-inputs, energy limits, interconnector losses and MNSP offers as single time series.
+inputs, energy limits, interconnector losses and MNSP offers as single time series, then attaches
+the effective FCAS offers and tie-break scales derived from them.
 
 # Arguments
 - `db`: the market cache connection.
@@ -74,6 +75,8 @@ function AustralianElectricityMarkets.nem_system(
     set_nem_energy_limits!(sys, db, date_range; intervention)
     set_mnsp_offers!(sys, db, date_range; intervention)
     interval_flow_limits && set_interconnector_flow_limits!(sys, db, date_range; intervention)
+    set_fcas_effective_offers!(sys)
+    set_tie_break_scales!(sys)
     return sys
 end
 
@@ -165,4 +168,27 @@ function _check_replay_energy_bid_coverage(sys, bids, dispatch, units, demand, d
 end
 
 
-export NEMDEConfiguration
+"""
+    prepare_replay_forecasts!(sys::PSY.System) -> PSY.System
+
+Transforms the single time series of a system built by [`nem_system`](@ref) into five-minute
+forecast windows of one interval each, the form a replay simulation reads.
+
+# Arguments
+- `sys`: a system with at least two timestamps of single time series and no forecasts.
+
+# Returns
+The modified system. Throws `ArgumentError` when forecasts already exist or input series are absent.
+"""
+function prepare_replay_forecasts!(sys::PSY.System)
+    counts = PSY.get_time_series_counts(sys)
+    counts.forecast_count == 0 || throw(ArgumentError("prepare_replay_forecasts!: the system already has forecast time series."))
+    counts.static_time_series_count > 0 || throw(ArgumentError("prepare_replay_forecasts!: attach input time series before preparation."))
+    _, n = PSY.check_time_series_consistency(sys, PSY.SingleTimeSeries)
+    n >= 2 || throw(ArgumentError("prepare_replay_forecasts!: at least two input timestamps are required for forecast windows."))
+    PSY.transform_single_time_series!(sys, DISPATCH_INTERVAL, DISPATCH_INTERVAL)
+    return sys
+end
+
+
+export NEMDEConfiguration, prepare_replay_forecasts!

@@ -905,6 +905,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `get_version_no` — that return `nothing` when the key is absent, as it is for a hand-authored
   constraint.
 - **`add_nem_constraints!`'s `"rhs"`/`"invoked"` grid is now derived from `date_range` directly**, not `unique(invoked.SETTLEMENTDATE)` (whichever intervals *any* constraint happened to be invoked at). The old derivation silently shrank the grid the moment real data had an interval NEMDE genuinely dispatched through with nothing bound, producing a `GenericConstraint` series shorter than every other time series on the same `System` and tripping `PowerSystems.jl`'s cross-component horizon check the moment `ConstrainedNetworkConfiguration` was combined with a wide, real multi-interval `date_range`. The grid now drops `date_range`'s own last point to match `read_fcas_bids`/`set_demand!`'s half-open (`start <= x < stop`) convention.
+- `nem_system(db, NEMDEConfiguration(); ...)` attaches the effective FCAS offers and tie-break scales itself, so a NEMDE system is complete without further preparation.
+- `prepare_replication!` is replaced by `prepare_replay_forecasts!` in `AustralianElectricityMarkets`, which only transforms the single time series into one-interval forecast windows; it no longer derives FCAS offers or tie-break scales.
+- `replication_results` and `compute_fcas_prices` move out of `AustralianElectricityMarketsSimulations` into `ReplayResults` in `scripts/replay_results.jl`, along with the solved-table and constraint-violation helpers they use.
 
 ## [0.1.3] - 2026-03-09
 

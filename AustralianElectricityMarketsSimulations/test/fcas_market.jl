@@ -1786,7 +1786,7 @@ fcas_enabled_mw(results, sys, service_name) =
         service_name = "1_$(string(bid_type))"
         enabled = PSI.read_variable(results, "FCASCapacityVariable__FCASService__$service_name")
         @test enabled.value .* PSY.get_base_power(sys) ≈ [5.0, 5.0] atol = FCAS_TOY_TOLERANCE
-        prices = compute_fcas_prices(results, sys)
+        prices = ReplayResults.compute_fcas_prices(results, sys)
         @test prices.REGIONID == ["1", "1"]
         @test prices.BIDTYPE == [bid_type, bid_type]
         @test prices.ROP ≈ [10.0, 10.0] atol = 1.0e-4
@@ -1800,7 +1800,7 @@ end
     sys = fcas_requirement_toy_system([(bid_type, -10.0)], gcs)
     results = solve_fcas_requirement(sys, [bid_type], ["F_TOY"])
     @test fcas_enabled_mw(results, sys, "1_RAISE6SEC") ≈ 3.0 atol = FCAS_TOY_TOLERANCE
-    prices = compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
+    prices = ReplayResults.compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
     @test prices.ROP ≈ [-10.0] atol = 1.0e-4
 end
 
@@ -1815,7 +1815,7 @@ end
     @test fcas_enabled_mw(results, sys, "1_RAISE6SEC") ≈ 5.0 atol = FCAS_TOY_TOLERANCE
     @test fcas_enabled_mw(results, sys, "1_RAISE60SEC") ≈ 7.0 atol = FCAS_TOY_TOLERANCE
     # F_ONE's dual is 10 - 4 = 6 and F_TWO's is 4: RAISE6SEC sums both, RAISE60SEC gets F_TWO's alone.
-    prices = compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
+    prices = ReplayResults.compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
     @test prices.BIDTYPE == [r60, r6]
     @test prices.ROP ≈ [4.0, 10.0] atol = 1.0e-4
 end
@@ -1829,7 +1829,7 @@ end
     )
     weight = get_constraint_weight(get_component(GenericConstraint, sys, "F_TOY"))
     @test fcas_enabled_mw(results, sys, "1_RAISE6SEC") ≈ 20.0 atol = FCAS_TOY_TOLERANCE
-    prices = compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
+    prices = ReplayResults.compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
     @test prices.ROP ≈ [weight * 20_300.0] rtol = 1.0e-6
 end
 
@@ -1849,7 +1849,7 @@ end
     gen = PSI.read_variable(results, "FCASSideCapacityVariable__FCASService__$(service_name)_gen")
     load = PSI.read_variable(results, "FCASSideCapacityVariable__FCASService__$(service_name)_load")
     @test only(gen.value + load.value) * base_power ≈ 11.0 atol = FCAS_TOY_TOLERANCE
-    prices = compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
+    prices = ReplayResults.compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
     @test prices.ROP ≈ [15.0] atol = 1.0e-4
 end
 
@@ -1858,13 +1858,13 @@ end
     gcs = [("F_TOY", ConstraintSense.GE, 5.0, [UnitTerm(TOY_CHEAP, bid_type, 1.0)], [bid_type])]
     sys = fcas_requirement_toy_system([(bid_type, 10.0)], gcs)
     results = solve_fcas_requirement(sys, [bid_type], ["F_TOY"])
-    @test_throws ArgumentError compute_fcas_prices(results, sys)
+    @test_throws ArgumentError ReplayResults.compute_fcas_prices(results, sys)
     extra = GenericConstraint(;
         name = "F_UNBUILT", sense = ConstraintSense.GE, rhs = 0.0,
         fcas_requirements = [FCASRequirement("1", BidType.LOWER6SEC)],
     )
     PSY.add_component!(sys, extra)
-    prices = @test_logs (:warn, r"F_UNBUILT") compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
+    prices = @test_logs (:warn, r"F_UNBUILT") ReplayResults.compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
     @test nrow(prices) == 1
 end
 
@@ -2049,7 +2049,7 @@ end
     results = solve_fcas_requirement(sys, [bid_type], ["F_TOY"]; steps = 2)
     enabled = PSI.read_variable(results, "FCASCapacityVariable__FCASService__1_RAISE6SEC")
     @test enabled.value .* PSY.get_base_power(sys) ≈ [5.0, 5.0] atol = FCAS_TOY_TOLERANCE
-    @test compute_fcas_prices(results, sys).ROP ≈ [10.0, 10.0] atol = 1.0e-4
+    @test ReplayResults.compute_fcas_prices(results, sys).ROP ≈ [10.0, 10.0] atol = 1.0e-4
 end
 
 @testset "_fcas_direction_problem: which device types can offer each FCAS direction" begin

@@ -415,7 +415,7 @@ end
 end
 
 @testset "constraint_violations directions follow the relaxed row's sense" begin
-    direction = AustralianElectricityMarketsSimulations._violation_direction
+    direction = ReplayResults._violation_direction
     sys = nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 40.0, ramp_up = 100.0)],
         40.0;
@@ -450,7 +450,7 @@ end
             100.0,
         )
         out = solve_toy(sys)
-        violations = AustralianElectricityMarketsSimulations._constraint_violations(out.results, sys)
+        violations = ReplayResults._constraint_violations(out.results, sys)
 
         @test out.dispatch_mw[TOY_CHEAP] ≈ 5.0 atol = TOY_TOLERANCE
         @test out.ramp_slack_mw.up ≈ 0.0 atol = TOY_TOLERANCE
@@ -470,7 +470,7 @@ end
             0.0,
         )
         out = solve_toy(sys)
-        violations = AustralianElectricityMarketsSimulations._constraint_violations(out.results, sys)
+        violations = ReplayResults._constraint_violations(out.results, sys)
 
         @test violations.family == ["unit_ramp"]
         @test only(violations.MW) ≈ 1.0 atol = TOY_TOLERANCE
@@ -482,7 +482,7 @@ end
             40.0,
         )
         out = solve_toy(sys)
-        @test isempty(AustralianElectricityMarketsSimulations._constraint_violations(out.results, sys))
+        @test isempty(ReplayResults._constraint_violations(out.results, sys))
     end
 end
 
