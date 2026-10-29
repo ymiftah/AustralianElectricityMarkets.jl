@@ -1,18 +1,27 @@
 using PrecompileTools: @compile_workload
 
 # The mock NEMWEB cache shared with the test suites, with DuckDB reached through
-# AustralianElectricityMarkets because this package does not depend on it directly.
+# AustralianElectricityMarkets because this package does not depend on it directly. The fixture
+# lives in the repository, not in the installed subdirectory package, so the workload is skipped without it.
 module _PrecompileMockData
     import AustralianElectricityMarkets
     const DuckDB = AustralianElectricityMarkets.DuckDB
+    const FIXTURE = joinpath(@__DIR__, "..", "..", "test", "fixtures", "mock_data.jl")
+    const AVAILABLE = isfile(FIXTURE)
     function _drop_duckdb_using(ex)
         return ex == :(using DuckDB) ? nothing : ex
     end
-    include(_drop_duckdb_using, joinpath(@__DIR__, "..", "..", "test", "fixtures", "mock_data.jl"))
+    if AVAILABLE
+        # Tracked so that editing the fixture recompiles this package.
+        Base.include_dependency(FIXTURE)
+        include(_drop_duckdb_using, FIXTURE)
+    end
 end
 
-# Builds and executes a two-interval replication through the public API, as the replay runner does.
+# Builds, executes and reads back a two-interval replay through the public API, mirroring the template
+# inputs of the replay runner (`scripts/replay_simulation.jl`).
 function _precompile_workload()
+    _PrecompileMockData.AVAILABLE || return
     hive = mktempdir()
     _PrecompileMockData.create_mock_data(hive; complete_inputs = true)
     _PrecompileMockData.write_mock_interconnector_results(hive)
@@ -30,9 +39,13 @@ function _precompile_workload()
     AustralianElectricityMarkets.prepare_replay_forecasts!(sys)
     check_replication_steps(sys, steps)
     check_single_financial_year(steps)
-    template = replication_template(sys)
+    check_tie_break_pairs(sys, steps)
+    template = replication_template(
+        sys; initial_time = first(steps), exclude_constraints = never_invoked_constraints(sys, steps),
+    )
     check_fcas_services(sys, template)
     check_dispatch_envelope(sys, template, first(steps), length(steps))
+    # Must match REPLICATION_OPTIMIZER in scripts/replay_simulation.jl.
     optimizer = JuMP.optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10)
     model = replication_decision_model(template, sys, first(steps); optimizer = optimizer, name = "dispatch")
     models = PSI.SimulationModels(; decision_models = [model])
@@ -45,7 +58,14 @@ function _precompile_workload()
         error("precompile replication failed to build")
     PSI.execute!(simulation) == PSI.RunStatus.SUCCESSFULLY_FINALIZED ||
         error("precompile replication failed to execute")
-    PSI.get_decision_problem_results(PSI.SimulationResults(simulation), "dispatch")
+    results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), "dispatch")
+    # Realized reads of the dispatch variable and the area balance dual, as the replay results do.
+    variable_names = [
+        PSI.IS.Optimization.encode_key_as_string(k) for k in PSI.list_variable_keys(results)
+            if PSI.IS.Optimization.get_entry_type(k) === PSI.ActivePowerVariable
+    ]
+    PSI.read_realized_variables(results, variable_names)
+    PSI.read_realized_duals(results, [PSI.ConstraintKey(PSI.CopperPlateBalanceConstraint, PSY.Area)])
     return
 end
 
