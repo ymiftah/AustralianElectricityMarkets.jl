@@ -211,6 +211,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Interconnector loss-gap diagnostic in `scripts/interconnector_loss_gaps.jl`: `loss_gap_table` tabulates each saved replay interconnector's solved loss against the loss curve at its solved flow, with the weighted marginal price of loss.
 - `AustralianElectricityMarketsSimulations` precompiles a two-interval replay of the mock NEM cache, so a fresh process builds and steps a replay without first-call compilation (a cold 12-interval replay drops from about 490 s to about 100 s).
 - The replay batch runner accepts `--time-series-in-memory true|false` (default `false`), recorded in `run.toml` and each day's `provenance.toml`, to hold replication time series in memory.
 

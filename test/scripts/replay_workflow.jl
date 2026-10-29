@@ -248,6 +248,7 @@ end
 end
 
 include("replay_batch.jl")
+include("interconnector_loss_gaps.jl")
 
 @testset "data-only preflight checks exact padded coverage and versions" begin
     t = DateTime(2025, 1, 1, 0, 5)

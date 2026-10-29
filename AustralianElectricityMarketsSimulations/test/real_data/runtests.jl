@@ -20,6 +20,8 @@ import PowerSystems as PSY
 const AEM = AustralianElectricityMarkets
 const AEMS = AustralianElectricityMarketsSimulations
 include(joinpath(@__DIR__, "..", "..", "..", "test", "fixtures", "input_builders.jl"))
+include(joinpath(@__DIR__, "..", "..", "..", "scripts", "interconnector_loss_gaps.jl"))
+using .InterconnectorLossGaps: loss_gap_table
 
 const REAL_HIVE = isempty(ARGS) ? joinpath(homedir(), ".nemdb_cache") : only(ARGS)
 const REAL_START = DateTime(2026, 6, 4, 0, 0)
@@ -245,6 +247,42 @@ end
         total_area_slack_mw = sum(values(slack_mw); init = 0.0)
         @info "Real-data DecisionModel" build_time solve_time total_area_slack_mw
 
+    end
+
+    @testset "interconnector loss gap and regional price signs" begin
+        # NEMInterconnectorLoss in place of the main model's lossless StaticBranch; the solved loss
+        # is compared with the breakpoint interpolation at the same solved flow.
+        loss_template = aemsim_template(sys)
+        PSI.set_device_model!(loss_template, PSY.AreaInterchange, NEMInterconnectorLoss)
+        loss_model = PSI.DecisionModel(
+            loss_template, sys;
+            optimizer = optimizer_with_attributes(
+                HiGHS.Optimizer, "output_flag" => false, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10,
+            ),
+            horizon = REAL_SPAN,
+            resolution = REAL_RESOLUTION,
+            interval = REAL_RESOLUTION,
+            initial_time = REAL_START,
+            name = "real_data_losses",
+        )
+        build_and_solve!(loss_model)
+
+        table = loss_gap_table(PSI.OptimizationProblemResults(loss_model), sys; tolerance = 1.0e-3)
+
+        @test !isempty(table)
+        # Negative weighted prices included, loss must stay on the curve at the solved flow.
+        @test all(abs.(table.gap_mw) .< 1.0e-3)
+
+        report = join(
+            [
+                let rows = table[table.interconnector .== name, :]
+                    "$name: max|gap| $(round(maximum(abs, rows.gap_mw); digits = 4)) MW, " *
+                        "t1 weighted price $(rows.weighted_loss_price[1] >= 0 ? "non-negative" : "NEGATIVE"), " *
+                        "$(count(<(0), rows.weighted_loss_price)) negative interval(s)"
+                end for name in sort(unique(table.interconnector))
+            ], "; ",
+        )
+        @info "Interconnector over-dissipation gap (solved LP loss - curve at solved flow) and weighted price sign" report
     end
 
     @testset "FCASMarket builds and solves alongside the constrained System" begin

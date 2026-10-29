@@ -306,6 +306,36 @@ That older CLI prints comparisons, uses its existing zero-relative-gap default,
 and stores PSI outputs in temporary folders. Use the overnight runner when you
 need the persistent outputs and `1e-8` relative gap described above.
 
+## Interconnector loss gaps
+
+`scripts/interconnector_loss_gaps.jl` checks a saved replay's solved interconnector losses against
+the loss curve at each solved flow. Run it on the `output_dir` of a `replicate_range` call made with
+`:losses` in its parts:
+
+```sh
+julia --project=AustralianElectricityMarketsSimulations/test scripts/interconnector_loss_gaps.jl \
+    --results /run/media/simba/Store/aem_validation/consecutive-days \
+    --start 2026-01-01T04:05:00 --stop 2026-01-01T04:15:00 \
+    [--hive "$HOME/.nemdb_cache"] [--output loss_gaps.csv] [--tolerance 0.001]
+```
+
+The script rebuilds the NEMDE system over `start` to `stop` plus ten minutes, reads each `chunk_<k>`
+folder's `replay_workflow` results and prints, per interconnector, the maximum absolute gap and the
+number of intervals with a negative weighted loss price. `--tolerance` (MW, default `0.001`) sets
+the gap above which a warning is logged. Nothing is solved again.
+
+The CSV has one row per interconnector and interval with a solved flow:
+
+| Column | Units | Contents |
+| --- | --- | --- |
+| `interconnector` | | Interconnector name |
+| `DateTime` | | Interval start, as in the replay results |
+| `flow_mw` | MW | Solved `FlowActivePowerVariable` |
+| `solved_loss_mw` | MW | Solved `InterconnectorLossVariable` |
+| `curve_loss_mw` | MW | Loss curve interpolated at the solved flow |
+| `gap_mw` | MW | `solved_loss_mw - curve_loss_mw`; zero when the segments reproduce the curve |
+| `weighted_loss_price` | $/MWh | `share * price_from + (1 - share) * price_to` from the `CopperPlateBalanceConstraint__Area` duals |
+
 ## HDF5 dependency
 
 The environment requires HDF5 0.17.5 and pins its official fixed release-branch revision
