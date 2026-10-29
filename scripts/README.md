@@ -333,9 +333,10 @@ Per-model `interval_timings.csv` is derived after `execute!` from PSI's native
 records, without wrapping any PSI method. Each executed step writes two rows, a
 `parameter_update` row and a `solve_and_write` row. The step's `ProblemExecutionEvent`
 start opens the `parameter_update` span, which ends at the last `ParameterUpdateEvent`
-or `InitialConditionUpdateEvent` logged for that step's simulation time (zero when the
-step logs none, as for the first step of a chunk). The `solve_and_write` span runs
-from there to the step's `ProblemExecutionEvent` done. Solver fields come from
+logged for that step's simulation time (zero when the step logs none, as for the first
+step of a chunk). The `solve_and_write` span runs from there to the step's
+`ProblemExecutionEvent` done, so it also holds the objective rebuild that follows the
+parameter updates, initial-condition updates and the simulation state update. Solver fields come from
 `PSI.read_optimizer_stats`. Schema version 2 is in the `schema_version` column.
 
 Schema 2 changes the meaning of these fields:
@@ -351,13 +352,16 @@ Schema 2 changes the meaning of these fields:
   own timers for the solve, dual and auxiliary calculations, unchanged in meaning.
 - `execution_count`: the zero-based step index within the chunk, as before.
 - `timestamp_utc`: the end of the phase, converted from the recorder's local clock with
-  the offset at write time.
+  the offset at write time rounded to 15 minutes; a run spanning a daylight-saving change
+  is off by an hour on one side of it.
 
 Unavailable in schema 2 and written as `NaN`: `compilation_s` on every row, and
 `allocated_bytes`, `gc_s` and the solver fields on `parameter_update` rows. Native
 `timers_build_chunk_*.toml` and `timers_execute_chunk_*.toml` retain the nested PSI
 timing tree. MIP, pricing and auxiliary solve times are nested in the solve span; do
-not sum both. Native state updates are in execution timers. Memory samples include
+not sum both. The state update is inside `solve_and_write`, so do not subtract the
+execution timers' state update from it. The statistics report refuses to pool schema 1
+and schema 2 runs. Memory samples include
 PID and both sampled RSS and the worker's high-water RSS. Add the unmeasured residual
 to reconcile phase totals with overall wall time; compilation/GC measurements are not
 whole-run coverage.
