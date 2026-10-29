@@ -18,19 +18,18 @@ function _decision_model(args...; mpc = 20_000.0, kwargs...)
 end
 
 "Per-area balances via `AreaBalancePowerModel`. Mirrors `docs/literate/interchanges.jl`."
-function _area_balance_template()
+function _area_balance_template(;
+        network_model = PSI.NetworkModel(
+            PSI.AreaBalancePowerModel; use_slacks = true, duals = [PSI.CopperPlateBalanceConstraint],
+        )
+    )
     template = PSI.ProblemTemplate()
     PSI.set_device_model!(template, PSY.Line, PSI.StaticBranch)
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     PSI.set_device_model!(template, PSY.RenewableDispatch, PSI.RenewableFullDispatch)
     PSI.set_device_model!(template, PSY.ThermalStandard, PSI.ThermalBasicUnitCommitment)
     PSI.set_device_model!(template, PSY.HydroDispatch, HydroPowerSimulations.HydroDispatchRunOfRiver)
-    PSI.set_network_model!(
-        template,
-        PSI.NetworkModel(
-            PSI.AreaBalancePowerModel; use_slacks = true, duals = [PSI.CopperPlateBalanceConstraint],
-        ),
-    )
+    PSI.set_network_model!(template, network_model)
     PSI.set_device_model!(template, PSY.AreaInterchange, PSI.StaticBranch)
     return template
 end

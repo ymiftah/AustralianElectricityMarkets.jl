@@ -127,3 +127,51 @@ end
     @test AEMS._left_out_part_types((:fcas, :losses, :tie_breaks, :generic_constraints)) == [PSY.Storage]
     @test AEMS._left_out_part_types(AEMS.REPLICATION_PARTS) == DataType[]
 end
+
+# The toy replay's balance-slack objective coefficient, one area and interval, as recorded on the
+# code that priced slacks in an override: 100 MW x 150 CVP x 17,500 $/MWh x 5/60 h.
+const TOY_BALANCE_SLACK_COEFFICIENT = 2.1875e7
+
+@testset "replay balance slacks are priced through the network model's slack cost" begin
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
+    )
+    model = AEMS._replication_decision_model(replication_template(sys), sys, TOY_START; optimizer = HiGHS.Optimizer)
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
+    for var_type in (PSI.SystemBalanceSlackUp, PSI.SystemBalanceSlackDown)
+        slack = PSI.get_variable(container, var_type(), PSY.Area)
+        @test all(v -> isapprox(PSI.JuMP.coefficient(objective, v), TOY_BALANCE_SLACK_COEFFICIENT; rtol = 1.0e-12), slack)
+    end
+
+    # The same network model with a supplied cap, and a build dated in the next financial year.
+    base_power = PSY.get_base_power(sys)
+    per_mpc = base_power * AustralianElectricityMarkets.AREA_BALANCE_CVP_FACTOR * interval_hours(DISPATCH_INTERVAL)
+    network_slack_cost(; kwargs...) = PSI.get_slack_cost(PSI.get_network_model(replication_template(sys; kwargs...)))
+    @test network_slack_cost(initial_time = TOY_START) ≈ per_mpc * 17_500.0 rtol = 1.0e-12
+    @test network_slack_cost(initial_time = DateTime(2025, 7, 1, 0, 5)) ≈ per_mpc * 20_300.0 rtol = 1.0e-12
+    @test network_slack_cost(initial_time = TOY_START, market_price_cap = 12_345.0) ≈ per_mpc * 12_345.0 rtol = 1.0e-12
+    @test_throws r"No published Market Price Cap" replication_template(sys; initial_time = DateTime(2020, 1, 1))
+    @test_throws ArgumentError replication_template(sys; market_price_cap = 0.0)
+end
+
+@testset "a plain AreaBalance model keeps PSI's slack cost when AEMSim is loaded" begin
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
+    )
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    set_nem_dispatch_models!(template, sys)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    model = PSI.DecisionModel(
+        template, sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
+    for var_type in (PSI.SystemBalanceSlackUp, PSI.SystemBalanceSlackDown)
+        slack = PSI.get_variable(container, var_type(), PSY.Area)
+        @test all(v -> PSI.JuMP.coefficient(objective, v) == PSI.BALANCE_SLACK_COST, slack)
+    end
+end

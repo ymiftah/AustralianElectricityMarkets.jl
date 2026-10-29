@@ -9,14 +9,15 @@ const REPLICATION_PARTS = (:batteries, :fcas, :losses, :tie_breaks, :generic_con
 
 
 """
-    replication_template(sys; skipped = nothing, parts = REPLICATION_PARTS, exclude_constraints = Dict{String, Symbol}()) -> PSI.ProblemTemplate
+    replication_template(sys; initial_time = nothing, market_price_cap = nothing, skipped = nothing, parts = REPLICATION_PARTS, exclude_constraints = Dict{String, Symbol}()) -> PSI.ProblemTemplate
 
 Builds the `ProblemTemplate` that replicates NEMDE on `sys`: [`AbstractNEMDispatch`](@ref) devices
 (via [`set_nem_dispatch_models!`](@ref)), `PSI.StaticPowerLoad` demand, [`NEMInterconnectorLoss`](@ref)
 on every `PSY.AreaInterchange`, an [`FCASMarket`](@ref) per registered `FCASService`, and a
 [`LinearFactorLimit`](@ref) per `GenericConstraint` with an available contributing device.
-Regions balance through `PSI.AreaBalancePowerModel` with slacks, and the balance duals are
-recorded as regional prices. Price-tied energy bands are dispatched pro rata by the
+Regions balance through `PSI.AreaBalancePowerModel` with slacks priced at the Market Price Cap of
+`initial_time` (see [`_area_balance_network_model`](@ref)), and the balance duals are recorded as
+regional prices. Price-tied energy bands are dispatched pro rata by the
 [`TieBreakMarket`](@ref) service model when `sys` carries the [`EnergyTieBreak`](@ref) of
 [`set_tie_break_scales!`](@ref). `parts` selects the [`REPLICATION_PARTS`](@ref) to model; without
 `:losses` no `PSY.AreaInterchange` is modeled and the regions are uncoupled.
@@ -24,6 +25,9 @@ recorded as regional prices. Price-tied energy bands are dispatched pro rata by 
 # Arguments
 - `sys`: a populated `PSY.System` with attached replay inputs, such as one created through
   `NEMDEConfiguration` and prepared with [`prepare_replication!`](@ref).
+- `initial_time`: the first interval of the build, which dates the Market Price Cap of the slacks;
+  default the earliest forecast window of `sys`.
+- `market_price_cap`: a Market Price Cap that replaces the one dated by `initial_time`, or `nothing`.
 - `skipped`: a vector that receives one `(constraint, reason, n_missing)` named tuple per generic
   constraint left out of the template, or `nothing`. `reason` is `:no_available_device` when all
   its contributing devices are unavailable, the `exclude_constraints` reason, or, when `parts`
@@ -42,16 +46,16 @@ series, incomplete MNSP offers), a generic constraint the template cannot model 
 than a left-out part, and `:tie_breaks` without `:batteries` when a battery carries tie-break scales.
 """
 function replication_template(
-        sys::PSY.System; skipped::Union{Nothing, AbstractVector} = nothing, parts = REPLICATION_PARTS,
+        sys::PSY.System; initial_time::Union{Nothing, DateTime} = nothing, market_price_cap = nothing,
+        skipped::Union{Nothing, AbstractVector} = nothing, parts = REPLICATION_PARTS,
         exclude_constraints::AbstractDict{<:AbstractString, Symbol} = Dict{String, Symbol}(),
     )
     _check_replication_parts(parts)
     _check_replay_system_inputs(sys, parts)
+    start = isnothing(initial_time) ? _first_forecast_time(sys) : initial_time
     template = PSI.ProblemTemplate(
-        PSI.NetworkModel(
-            PSI.AreaBalancePowerModel;
-            use_slacks = true,
-            duals = [PSI.CopperPlateBalanceConstraint],
+        _area_balance_network_model(
+            sys, start; market_price_cap = market_price_cap, duals = [PSI.CopperPlateBalanceConstraint],
         ),
     )
     _set_replication_device_models!(template, sys, parts)
@@ -82,6 +86,14 @@ function _check_replication_parts(parts)
         ArgumentError("replication_template: unknown parts $(Tuple(unknown)); choose from $REPLICATION_PARTS."),
     )
     return
+end
+
+
+# The earliest forecast window of `sys`, the build's initial interval when none is given.
+function _first_forecast_time(sys::PSY.System)
+    times = PSY.get_forecast_initial_times(sys)
+    isempty(times) && throw(ArgumentError("replication_template: sys has no forecast windows; pass initial_time."))
+    return minimum(times)
 end
 
 

@@ -77,25 +77,27 @@ end
 
 
 """
-    PSI.objective_function!(container, sys, network_model::PSI.NetworkModel{PSI.AreaBalancePowerModel})
+    _area_balance_network_model(sys::PSY.System, initial_time::DateTime; market_price_cap = nothing, duals = Vector{DataType}()) -> PSI.NetworkModel{PSI.AreaBalancePowerModel}
 
-Override of `PowerSimulations.jl`'s `AreaBalancePowerModel` slack objective, which prices
-`SystemBalanceSlackUp`/`SystemBalanceSlackDown` at the fixed `BALANCE_SLACK_COST`. Prices each
-slack at [`AREA_BALANCE_CVP_FACTOR`](@ref) times the Market Price Cap of the build's initial financial
-year, or the `"market_price_cap"` entry of the model's settings `ext`
-([`_container_market_price_cap`](@ref)), in `\$/MW` per dispatch interval. Throws for a financial
-year absent from `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` with no override. `AreaPTDFPowerModel` keeps
-PSI's flat `BALANCE_SLACK_COST`.
+The `AreaBalancePowerModel` network model of a replay, with slacks priced at `slack_cost` per
+per-unit slack variable: [`AREA_BALANCE_CVP_FACTOR`](@ref) times the Market Price Cap per MW of one
+dispatch interval, times the system base power. The cap is `market_price_cap` when given, else the
+Market Price Cap of the financial year of `initial_time`.
+
+# Arguments
+- `sys`: the replay system, whose base power scales the slack cost.
+- `initial_time`: the first interval of the build.
+- `market_price_cap`: a Market Price Cap that replaces the dated one, or `nothing`.
+- `duals`: the dual constraints to record on the network model.
 
 # Returns
-`nothing`.
+A `PSI.NetworkModel{PSI.AreaBalancePowerModel}`. Throws `ArgumentError` for an invalid override, or
+for a financial year absent from `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` with no override.
 """
-function PSI.objective_function!(
-        container::PSI.OptimizationContainer, sys::PSY.System,
-        network_model::PSI.NetworkModel{PSI.AreaBalancePowerModel},
+function _area_balance_network_model(
+        sys::PSY.System, initial_time::DateTime; market_price_cap = nothing, duals = Vector{DataType}(),
     )
-    areas = PSY.get_name.(PSI.get_available_components(network_model, PSY.Area, sys))
-    _add_mpc_penalty!(container, PSI.SystemBalanceSlackDown, PSY.Area, areas, AREA_BALANCE_CVP_FACTOR)
-    _add_mpc_penalty!(container, PSI.SystemBalanceSlackUp, PSY.Area, areas, AREA_BALANCE_CVP_FACTOR)
-    return nothing
+    cap = isnothing(market_price_cap) ? _financial_year_mpc(initial_time) : _checked_market_price_cap(market_price_cap)
+    slack_cost = PSY.get_base_power(sys) * interval_cost_coefficient(AREA_BALANCE_CVP_FACTOR, DISPATCH_INTERVAL) * cap
+    return PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true, duals = duals, slack_cost = slack_cost)
 end

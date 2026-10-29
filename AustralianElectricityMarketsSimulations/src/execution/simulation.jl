@@ -37,7 +37,9 @@ function _range_simulation(
     :tie_breaks in parts && check_tie_break_pairs(sys, steps)
     template_skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
     exclude = :generic_constraints in parts ? _never_invoked_constraints(sys, steps) : Dict{String, Symbol}()
-    template = replication_template(sys; skipped = template_skipped, parts = parts, exclude_constraints = exclude)
+    template = replication_template(
+        sys; initial_time = first(steps), skipped = template_skipped, parts = parts, exclude_constraints = exclude,
+    )
     isnothing(skipped) || append!(skipped, template_skipped)
     skipped_constraints = DataFrame(template_skipped)
     check_fcas_services(sys, template; excluded_device_types = :batteries in parts ? () : (PSY.Storage,))

@@ -164,8 +164,10 @@ function _prune_unbuildable_constraints!(sys)
     return
 end
 
-function _nem_service_template(; use_slacks::Bool = false, market_price_cap::Union{Nothing, Float64} = nothing)
-    template = _area_balance_template()
+function _nem_service_template(;
+        use_slacks::Bool = false, market_price_cap::Union{Nothing, Float64} = nothing, network_model = nothing,
+    )
+    template = isnothing(network_model) ? _area_balance_template() : _area_balance_template(; network_model)
     attributes = isnothing(market_price_cap) ? Dict{String, Any}() :
         Dict{String, Any}("market_price_cap" => market_price_cap)
     PSI.set_service_model!(
@@ -538,33 +540,25 @@ end
     @test_throws ArgumentError AEMS.check_single_financial_year(DateTime(2025, 7, 1):Minute(5):DateTime(2025, 7, 1, 0, 5))
 end
 
-@testset "area-balance slack Market Price Cap: unpublished year throws, settings entry overrides" begin
+@testset "area-balance network model: unpublished year throws, a supplied cap prices the slack" begin
     # _prepared_system() is dated 2020, outside AustralianElectricityMarkets.MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.
-    pruned_system() = (sys = _prepared_system(); _prune_unbuildable_constraints!(sys); sys)
-    model = PSI.DecisionModel(_nem_service_template(), pruned_system(); optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    err = _build_error(model)
-    @test err isa ArgumentError
-    @test occursin("No published Market Price Cap", sprint(showerror, err))
-
-    model = _decision_model(
-        _nem_service_template(), pruned_system(); mpc = 10_000.0, optimizer = HiGHS.Optimizer, horizon = Hour(2),
-    )
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    container = PSI.get_optimization_container(model)
-    objective_terms = PSI.JuMP.objective_function(PSI.get_jump_model(container)).terms
-    expected = PSI.get_base_power(container) *
-        interval_cost_coefficient(AustralianElectricityMarkets.AREA_BALANCE_CVP_FACTOR * 10_000.0, PSI.get_resolution(container))
-    for var_type in (PSI.SystemBalanceSlackUp, PSI.SystemBalanceSlackDown)
-        slack = PSI.get_variable(container, var_type(), PSY.Area)
-        @test all(v -> objective_terms[v] ≈ expected, slack)
-    end
+    sys = _prepared_system()
+    @test_throws r"No published Market Price Cap" AEMS._area_balance_network_model(sys, DateTime(2020, 1, 1))
+    network = AEMS._area_balance_network_model(sys, DateTime(2020, 1, 1); market_price_cap = 10_000.0)
+    expected = PSY.get_base_power(sys) * AustralianElectricityMarkets.AREA_BALANCE_CVP_FACTOR *
+        interval_hours(DISPATCH_INTERVAL) * 10_000.0
+    @test PSI.get_slack_cost(network) ≈ expected rtol = 1.0e-12
+    @test PSI.get_use_slacks(network)
+    # A plain model keeps PSI's default slack cost, whatever the financial year.
+    @test PSI.get_slack_cost(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true)) == PSI.BALANCE_SLACK_COST
+    @test_throws ArgumentError AEMS._area_balance_network_model(sys, DateTime(2020, 1, 1); market_price_cap = 0.0)
 end
 
 @testset "Market Price Cap penalties are invariant constants of the initial interval's cap, unchanged by a parameter update" begin
     # 2026-01-06 falls in 2025-26, whose Market Price Cap is 20,300 $/MWh.
     start = DateTime(2026, 1, 6)
     sys = nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0)], 50.0; start = start)
-    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    template = PSI.ProblemTemplate(AEMS._area_balance_network_model(sys, start))
     set_nem_dispatch_models!(template, sys)
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     model = PSI.DecisionModel(

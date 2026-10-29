@@ -25,12 +25,12 @@ const AEMS = AustralianElectricityMarketsSimulations
     @test occursin("AreaBalancePowerModel", string(m2.sig))
 end
 
-@testset "the area-balance slack objective resolves to this package's override, AreaPTDF keeps PSI's" begin
+@testset "the area-balance slack objective is PSI's own, so a plain model keeps its default slack cost" begin
     m = which(
         PSI.objective_function!,
         Tuple{PSI.OptimizationContainer, PSY.System, PSI.NetworkModel{PSI.AreaBalancePowerModel}},
     )
-    @test m.module === AEMS
+    @test m.module === PSI
     m_ptdf = which(
         PSI.objective_function!,
         Tuple{PSI.OptimizationContainer, PSY.System, PSI.NetworkModel{PSI.AreaPTDFPowerModel}},

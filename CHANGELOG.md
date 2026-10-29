@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Loading the simulations package no longer changes the balance-slack price of other area-balance models; the replay passes its Market Price Cap penalty through the network model's slack cost.
+
 - A battery or scheduled load with an energy offer on one side only (a GEN curve without a LOAD curve, or the reverse) now
   fails the build instead of pricing the missing side at zero. Service-only bids still add no energy cost.
 
