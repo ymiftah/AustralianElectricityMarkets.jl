@@ -126,3 +126,24 @@ end
         @test cost isa MarketBidCost
     end
 end
+
+@testset "NEMDE replay attaches FCAS effective offers and tie-break scales" begin
+    AEM = AustralianElectricityMarkets
+    hive = mktempdir()
+    create_mock_data(hive; complete_inputs = true)
+    write_mock_interconnector_results(hive)
+    db = aem_connect(HiveConfiguration(hive_location = hive))
+    interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+    sys = nem_system(db, NEMDEConfiguration(); date_range = interval)
+    series = [
+        get_name(key) for device in get_components(StaticInjection, sys)
+            for key in PowerSystems.get_time_series_keys(device)
+    ]
+    @test any(startswith(name, "fcas_effective_") for name in series)
+    # The mock's energy bands are never tied across units within an interval, so no tie-break scale is written;
+    # the EnergyTieBreak service below still records that set_tie_break_scales! ran.
+    @test !any(startswith(name, "tie_break_scale_") for name in series)
+    service = get_component(AEM.EnergyTieBreak, sys, AEM.TIE_BREAK_SERVICE_NAME)
+    @test !isnothing(service)
+    @test !isempty(get_contributing_devices(sys, service))
+end
