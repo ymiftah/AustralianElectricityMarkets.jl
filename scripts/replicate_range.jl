@@ -18,7 +18,7 @@ using Printf
 
 include("replay_workflow.jl")
 using .ReplayWorkflow: replicate_range
-using .ReplaySimulation: REPLICATION_MIP_REL_GAP, REPLICATION_MIP_ABS_GAP
+using .ReplaySimulation: REPLICATION_HIGHS_OPTIONS
 
 # Mean and max absolute gap over the rows with both a solved and a published value.
 function report(title, df, solved, published)
@@ -43,8 +43,7 @@ function main(args = ARGS)
     db = aem_connect(HiveConfiguration(hive_location = hive))
 
     optimizer = optimizer_with_attributes(
-        HiGHS.Optimizer, "output_flag" => false, "mip_rel_gap" => REPLICATION_MIP_REL_GAP,
-        "mip_abs_gap" => REPLICATION_MIP_ABS_GAP
+        HiGHS.Optimizer, "output_flag" => false, REPLICATION_HIGHS_OPTIONS...
     )
     comparison = replicate_range(db, start, stop; optimizer = optimizer).comparison
 

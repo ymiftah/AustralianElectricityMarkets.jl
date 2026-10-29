@@ -605,6 +605,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The replay HiGHS optimizer turns off the root sub-MIP heuristics (RINS, RENS, root reduced-cost, feasibility jump), which cut slow-interval solve times about tenfold with identical solutions.
+
 - A settings-`ext` `"market_price_cap"` override no longer prices the area-balance slack. The balance slack
   is priced at the cap of `replication_template` (its `market_price_cap`, or the cap dated by `initial_time`),
   and `replication_decision_model` throws when its cap differs from the template's.
