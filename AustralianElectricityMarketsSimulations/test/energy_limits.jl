@@ -30,7 +30,7 @@ function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, we
 end
 
 function energy_limit_solve(sys)
-    model = AEMS._replication_decision_model(replication_template(sys), sys, TOY_START; optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
+    model = AEMS.replication_decision_model(replication_template(sys), sys, TOY_START; optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
@@ -97,7 +97,7 @@ end
 
 @testset "recurrent energy limits update step by step" begin
     sys = energy_limit_system(; max_avail = [100.0, 35.0], uigf = [45.0, 25.0], target = [60.0, 20.0])
-    out = run_replication(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
+    out = ReplaySimulation.run_replication(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
     dispatch = ReplayResults._solved_tables(out.results, sys, ()).dispatch
     sort!(dispatch, :SETTLEMENTDATE)
     power = filter(:DUID => ==(TOY_CHEAP), dispatch).TOTALCLEARED
@@ -126,10 +126,10 @@ end
     steps = start:TOY_RESOLUTION:(start + TOY_RESOLUTION)
     optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
     sys = energy_limit_system(; max_avail = 40.0, start)
-    @test_throws ArgumentError run_replication(sys, steps; optimizer)
+    @test_throws ArgumentError ReplaySimulation.run_replication(sys, steps; optimizer)
     # The max-availability slack of TOY_CHEAP: 370 CVP x Market Price Cap x 100 MW base x 5 minutes.
     for (t, expected) in ((steps[1], 370.0 * 17_500.0 * 100.0 / 12), (steps[2], 370.0 * 20_300.0 * 100.0 / 12))
-        model = AEMS._replication_decision_model(replication_template(sys; initial_time = t), sys, t; optimizer)
+        model = AEMS.replication_decision_model(replication_template(sys; initial_time = t), sys, t; optimizer)
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
         container = PSI.get_optimization_container(model)
         objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
@@ -143,10 +143,10 @@ end
     steps = start:TOY_RESOLUTION:(start + TOY_RESOLUTION)
     optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
     sys = energy_limit_system(; max_avail = 40.0, start)
-    out = run_replication(sys, steps; optimizer)
+    out = ReplaySimulation.run_replication(sys, steps; optimizer)
     objectives = PSI.read_optimizer_stats(out.results).objective_value
     for (i, t) in enumerate(steps)
-        model = AEMS._replication_decision_model(replication_template(sys; initial_time = t), sys, t; optimizer)
+        model = AEMS.replication_decision_model(replication_template(sys; initial_time = t), sys, t; optimizer)
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
         @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
         @test objectives[i] ≈ only(PSI.read_optimizer_stats(PSI.OptimizationProblemResults(model)).objective_value) rtol = 1.0e-9

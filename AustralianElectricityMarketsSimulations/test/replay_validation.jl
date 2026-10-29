@@ -21,7 +21,7 @@ end
 
 # Replays two intervals of `sys` under `parts` with HiGHS, returning the replay result.
 function run_two_steps(sys; parts)
-    return run_replication(
+    return ReplaySimulation.run_replication(
         sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); parts,
         optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
     )
@@ -31,7 +31,7 @@ end
     ghost = UnitTerm("GHOST", BidType.ENERGY, 1.0)
     for reason in (:never_invoked, :manual_exclusion)
         sys = replay_validation_system(ConstraintTerm[ghost]; invoked = 0.0)
-        exclusions = reason == :never_invoked ? AEMS._never_invoked_constraints(sys, [TOY_START]) : Dict("N_REVIEW" => reason)
+        exclusions = reason == :never_invoked ? ReplaySimulation._never_invoked_constraints(sys, [TOY_START]) : Dict("N_REVIEW" => reason)
         skipped = NamedTuple[]
         result = try
             replication_template(sys; parts = (:generic_constraints,), exclude_constraints = exclusions, skipped)
@@ -103,7 +103,7 @@ end
 
 @testset "MPC overrides must be finite and positive at both configuration levels" begin
     sys = nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION)
-    model = AEMS._replication_decision_model(replication_template(sys), sys, TOY_START; optimizer = HiGHS.Optimizer)
+    model = AEMS.replication_decision_model(replication_template(sys), sys, TOY_START; optimizer = HiGHS.Optimizer)
     container = PSI.get_optimization_container(model)
     settings = PSI.get_ext(PSI.get_settings(model))
     capped(cap) = PSI.ServiceModel(
@@ -136,7 +136,7 @@ const TOY_BALANCE_SLACK_COEFFICIENT = 2.1875e7
     sys = nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
     )
-    model = AEMS._replication_decision_model(replication_template(sys), sys, TOY_START; optimizer = HiGHS.Optimizer)
+    model = AEMS.replication_decision_model(replication_template(sys), sys, TOY_START; optimizer = HiGHS.Optimizer)
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
@@ -183,8 +183,8 @@ end
     cap = 12_345.0
     template = replication_template(sys; market_price_cap = cap)
     # The model must be given the same override as its template.
-    @test_throws ArgumentError AEMS._replication_decision_model(template, sys, TOY_START; optimizer = HiGHS.Optimizer)
-    model = AEMS._replication_decision_model(template, sys, TOY_START; market_price_cap = cap, optimizer = HiGHS.Optimizer)
+    @test_throws ArgumentError AEMS.replication_decision_model(template, sys, TOY_START; optimizer = HiGHS.Optimizer)
+    model = AEMS.replication_decision_model(template, sys, TOY_START; market_price_cap = cap, optimizer = HiGHS.Optimizer)
     @test PSI.get_ext(PSI.get_settings(model))["market_price_cap"] == cap
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)

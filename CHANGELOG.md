@@ -598,6 +598,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The replay simulation runner moved from AEMSim to `scripts/replay_simulation.jl` (module `ReplaySimulation`); AEMSim keeps the replication template, decision-model constructor and pre-flight checks.
+
 - NEMDE replay systems are built without the regional configuration's ISP operating costs; the regional configuration is unchanged.
 
 - Tie-break scale parameters are added through PowerSimulations' native `add_parameters!` with the

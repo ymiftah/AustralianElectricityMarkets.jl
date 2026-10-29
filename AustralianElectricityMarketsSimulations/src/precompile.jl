@@ -11,6 +11,7 @@ module _PrecompileMockData
     include(_drop_duckdb_using, joinpath(@__DIR__, "..", "..", "test", "fixtures", "mock_data.jl"))
 end
 
+# Builds and executes a two-interval replication through the public API, as the replay runner does.
 function _precompile_workload()
     hive = mktempdir()
     _PrecompileMockData.create_mock_data(hive; complete_inputs = true)
@@ -27,7 +28,24 @@ function _precompile_workload()
         _PrecompileMockData.DuckDB.close(db.db)
     end
     AustralianElectricityMarkets.prepare_replay_forecasts!(sys)
-    run_replication(sys, steps; folder = mktempdir())
+    check_replication_steps(sys, steps)
+    check_single_financial_year(steps)
+    template = replication_template(sys)
+    check_fcas_services(sys, template)
+    check_dispatch_envelope(sys, template, first(steps), length(steps))
+    optimizer = JuMP.optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10)
+    model = replication_decision_model(template, sys, first(steps); optimizer = optimizer, name = "dispatch")
+    models = PSI.SimulationModels(; decision_models = [model])
+    sequence = PSI.SimulationSequence(; models = models, ini_cond_chronology = PSI.InterProblemChronology())
+    simulation = PSI.Simulation(;
+        name = "replication", steps = length(steps), models = models,
+        sequence = sequence, simulation_folder = mktempdir(), initial_time = first(steps),
+    )
+    PSI.build!(simulation; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT ||
+        error("precompile replication failed to build")
+    PSI.execute!(simulation) == PSI.RunStatus.SUCCESSFULLY_FINALIZED ||
+        error("precompile replication failed to execute")
+    PSI.get_decision_problem_results(PSI.SimulationResults(simulation), "dispatch")
     return
 end
 

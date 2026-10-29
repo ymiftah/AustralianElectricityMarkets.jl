@@ -1,3 +1,7 @@
+if !isdefined(@__MODULE__, :ReplaySimulation)
+    include(joinpath(@__DIR__, "replay_simulation.jl"))
+end
+
 module DiagnoseInfeasible
 
     # Diagnoses one interval that does not solve: JuMP statuses, then the HiGHS conflict (or a penalty
@@ -5,6 +9,7 @@ module DiagnoseInfeasible
 
     using AustralianElectricityMarkets
     using AustralianElectricityMarketsSimulations
+    using ..ReplaySimulation: replication_simulation
     using Dates
     using DuckDB
     using HiGHS

@@ -55,7 +55,7 @@ end
 
 @testset "storage availability parameters update step by step" begin
     sys = storage_availability_system(; target = [60.0, -50.0], gen = [40.0, 80.0], load = [70.0, 30.0])
-    out = run_replication(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
+    out = ReplaySimulation.run_replication(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
     rows = filter(r -> r.family == "energy_max_avail" && r.name == TOY_BATTERY, ReplayResults._constraint_violations(out.results, sys))
     sort!(rows, :DateTime)
     @test rows.MW ≈ [20.0, 20.0] atol = 1.0e-6

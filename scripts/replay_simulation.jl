@@ -1,3 +1,50 @@
+# Simulation runner for replay dispatch: constructs, builds and executes the one-interval replication
+# model of a range of intervals, and logs the skipped constraints of a failed run. Included by the
+# replay workflow and the simulation tests.
+
+module ReplaySimulation
+
+using AustralianElectricityMarkets: GenericConstraint
+using AustralianElectricityMarketsSimulations
+using DataFrames
+using Dates
+using HiGHS
+using PowerSimulations: optimizer_with_attributes
+import PowerSimulations as PSI
+import PowerSystems as PSY
+
+export replication_simulation, run_replication, REPLICATION_OPTIMIZER
+
+"""
+    REPLICATION_OPTIMIZER
+
+The default replay optimizer: HiGHS with zero MIP gap tolerances, since the interconnector loss
+encoding makes each interval a MILP.
+"""
+const REPLICATION_OPTIMIZER = optimizer_with_attributes(
+    HiGHS.Optimizer, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10,
+)
+
+
+# Drops PSI's per-container "resulted in a MILP" warning, emitted once per dual container.
+struct _DropMILPWarning <: Base.CoreLogging.AbstractLogger
+    inner::Base.CoreLogging.AbstractLogger
+end
+
+_DropMILPWarning() = _DropMILPWarning(Base.CoreLogging.current_logger())
+
+Base.CoreLogging.min_enabled_level(l::_DropMILPWarning) = Base.CoreLogging.min_enabled_level(l.inner)
+
+Base.CoreLogging.shouldlog(l::_DropMILPWarning, args...) = Base.CoreLogging.shouldlog(l.inner, args...)
+
+Base.CoreLogging.catch_exceptions(l::_DropMILPWarning) = Base.CoreLogging.catch_exceptions(l.inner)
+
+function Base.CoreLogging.handle_message(l::_DropMILPWarning, level, message, args...; kwargs...)
+    occursin("resulted in a MILP", string(message)) && return nothing
+    return Base.CoreLogging.handle_message(l.inner, level, message, args...; kwargs...)
+end
+
+
 # Available `GenericConstraint`s invoked at none of `steps`, each mapped to `:never_invoked`.
 function _never_invoked_constraints(sys::PSY.System, steps)
     reasons = Dict{String, Symbol}()
@@ -11,18 +58,11 @@ function _never_invoked_constraints(sys::PSY.System, steps)
 end
 
 
-# Validates the requested forecast windows using attached system metadata only.
-function _check_replication_steps(sys::PSY.System, steps::StepRange{DateTime})
-    (!isempty(steps) && step(steps) == DISPATCH_INTERVAL) || throw(
-        ArgumentError("replication_simulation: steps must be a non-empty range of five-minute intervals."),
-    )
-    PSY.get_time_series_counts(sys).forecast_count > 0 || throw(
-        ArgumentError("replication_simulation: call prepare_replay_forecasts!(sys) before constructing a simulation."),
-    )
-    missing_steps = setdiff(steps, PSY.get_forecast_initial_times(sys))
-    isempty(missing_steps) || throw(
-        ArgumentError("replication_simulation: attached forecasts do not cover $(first(missing_steps)); construct a system covering the requested range."),
-    )
+# Logs the skipped-constraint count by reason and the table, for a build or solve that failed.
+function _log_skipped_constraints(skipped::DataFrame)
+    by_reason = combine(groupby(skipped, :reason), nrow => :n)
+    counts = join(("$(r.reason)=$(r.n)" for r in eachrow(sort(by_reason, :reason))), ", ")
+    @error "Skipped constraints at failure: $(nrow(skipped)) ($counts)" skipped
     return
 end
 
@@ -32,7 +72,7 @@ function _range_simulation(
         sys::PSY.System, steps::StepRange{DateTime}; optimizer = REPLICATION_OPTIMIZER, parts = REPLICATION_PARTS,
         folder::AbstractString = mktempdir(), name = "dispatch", simulation_name = "replication", skipped = nothing,
     )
-    _check_replication_steps(sys, steps)
+    check_replication_steps(sys, steps)
     check_single_financial_year(steps)
     :tie_breaks in parts && check_tie_break_pairs(sys, steps)
     template_skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
@@ -44,7 +84,7 @@ function _range_simulation(
     skipped_constraints = DataFrame(template_skipped)
     check_fcas_services(sys, template; excluded_device_types = :batteries in parts ? () : (PSY.Storage,))
     check_dispatch_envelope(sys, template, first(steps), length(steps))
-    model = _replication_decision_model(template, sys, first(steps); optimizer = optimizer, name = name)
+    model = replication_decision_model(template, sys, first(steps); optimizer = optimizer, name = name)
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models = models, ini_cond_chronology = PSI.InterProblemChronology())
     simulation = PSI.Simulation(;
@@ -56,7 +96,7 @@ end
 
 
 """
-    replication_simulation(sys::PSY.System, steps; optimizer, parts = REPLICATION_PARTS,
+    replication_simulation(sys::PSY.System, steps; optimizer = REPLICATION_OPTIMIZER, parts = REPLICATION_PARTS,
         folder = mktempdir(), name = "dispatch", simulation_name = "replication",
         skipped = nothing) -> PSI.Simulation
 
@@ -64,10 +104,10 @@ Constructs an unbuilt PSI simulation over `steps` from a prepared system. Runs t
 pre-flight checks and selects constraints invoked in at least one requested interval.
 
 # Arguments
-- `sys`: a system prepared with [`prepare_replay_forecasts!`](@ref), or equivalent attached forecasts.
+- `sys`: a system prepared with `prepare_replay_forecasts!`, or equivalent attached forecasts.
 - `steps`: a non-empty range of five-minute interval-ending timestamps covered by the system.
 - `optimizer`: the JuMP optimizer; defaults to HiGHS with zero MIP gaps.
-- `parts`: the [`REPLICATION_PARTS`](@ref) included in the model.
+- `parts`: the `REPLICATION_PARTS` included in the model.
 - `folder`: the simulation output directory.
 - `name`: the decision problem name used to retrieve PSI results.
 - `simulation_name`: the PSI simulation name, used to reopen results with `PSI.SimulationResults(folder, simulation_name)`.
@@ -130,4 +170,6 @@ function run_replication(
     end
     results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), name)
     return (; simulation, model, results, skipped_constraints, timings = (; build_s, execute_s))
+end
+
 end

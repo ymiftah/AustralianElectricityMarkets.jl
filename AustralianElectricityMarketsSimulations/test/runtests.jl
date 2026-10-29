@@ -20,6 +20,11 @@ if !isdefined(@__MODULE__, :ReplayResults)
     include(joinpath(@__DIR__, "..", "..", "scripts", "replay_results.jl"))
 end
 
+# The simulation runner, which the simulation tests call as `ReplaySimulation`.
+if !isdefined(@__MODULE__, :ReplaySimulation)
+    include(joinpath(@__DIR__, "..", "..", "scripts", "replay_simulation.jl"))
+end
+
 const AEM_TEST_HIVE_DIR = mktempdir()
 create_mock_data(AEM_TEST_HIVE_DIR)
 

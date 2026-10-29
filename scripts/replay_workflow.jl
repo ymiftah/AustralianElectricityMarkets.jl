@@ -2,11 +2,16 @@ if !isdefined(@__MODULE__, :ReplayResults)
     include(joinpath(@__DIR__, "replay_results.jl"))
 end
 
+if !isdefined(@__MODULE__, :ReplaySimulation)
+    include(joinpath(@__DIR__, "replay_simulation.jl"))
+end
+
 module ReplayWorkflow
 
     using AustralianElectricityMarkets
     using AustralianElectricityMarketsSimulations
     using ..ReplayResults: replication_results
+    using ..ReplaySimulation: REPLICATION_OPTIMIZER, run_replication
     using DataFrames
     using Dates
     import PowerSimulations as PSI

@@ -47,7 +47,7 @@ end
 stock_at(tables, t) = map(df -> filter(:SETTLEMENTDATE => ==(t), df), tables)
 # One standalone one-interval solve of `template` (default the replication template) at `t`.
 function stock_standalone(sys, t; parts = REPLICATION_PARTS, template = replication_template(sys; parts))
-    model = AEMS._replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "standalone")
+    model = AEMS.replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "standalone")
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
@@ -59,7 +59,7 @@ function stock_standalone(sys, t; parts = REPLICATION_PARTS, template = replicat
 end
 # The simulation, its per-step objectives and solved tables.
 function stock_simulate(sys; kwargs...)
-    out = run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER, kwargs...)
+    out = ReplaySimulation.run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER, kwargs...)
     tables = ReplayResults._solved_tables(out.results, sys, REPLICATION_PARTS)
     return (;
         out...,
@@ -126,15 +126,15 @@ end
 
 @testset "a constraint invoked at no step is left out and reported with its reason" begin
     never = sentinel_system(; invoked = [0.0, 0.0])
-    @test AEMS._never_invoked_constraints(never, STOCK_STEPS) == Dict("N_TOY_LIMIT" => :never_invoked)
-    @test AEMS._never_invoked_constraints(sentinel_system(; invoked = [1.0, 0.0]), STOCK_STEPS) == Dict{String, Symbol}()
-    out_never = run_replication(never, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    @test ReplaySimulation._never_invoked_constraints(never, STOCK_STEPS) == Dict("N_TOY_LIMIT" => :never_invoked)
+    @test ReplaySimulation._never_invoked_constraints(sentinel_system(; invoked = [1.0, 0.0]), STOCK_STEPS) == Dict{String, Symbol}()
+    out_never = ReplaySimulation.run_replication(never, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     row_never = only(filter(:constraint => ==("N_TOY_LIMIT"), out_never.skipped_constraints))
     @test (row_never.reason, row_never.n_missing) == (:never_invoked, 0)
 end
 
 @testset "argument checks" begin
-    @test_throws ArgumentError run_replication(sentinel_system(), STOCK_STEPS; parts = (:nonsense,))
+    @test_throws ArgumentError ReplaySimulation.run_replication(sentinel_system(), STOCK_STEPS; parts = (:nonsense,))
 end
 
 # Two intervals of 100 MW load: Alta $20 (150 MW, so part-loaded and marginal at 100 MW once the
@@ -161,7 +161,7 @@ function masked_standalone(sys, t)
             PSI.ServiceModel(GenericConstraint, LinearFactorLimit, name; duals = [NEMConstraintLimit], use_slacks = true),
         )
     end
-    model = AEMS._replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "masked")
+    model = AEMS.replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "masked")
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
@@ -243,7 +243,7 @@ end
     sys = masked_system(ConstraintSense.LE, TOY_CHEAP, 60.0)
     template = replication_template(sys; parts = ())
     PSI.set_service_model!(template, "N_TOY_LIMIT", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "N_TOY_LIMIT"; duals = [NEMConstraintLimit]))
-    model = AEMS._replication_decision_model(template, sys, TOY_START; optimizer = STOCK_OPTIMIZER, name = "hard")
+    model = AEMS.replication_decision_model(template, sys, TOY_START; optimizer = STOCK_OPTIMIZER, name = "hard")
     models = PSI.SimulationModels(; decision_models = [model])
     sim = PSI.Simulation(;
         name = "hard", steps = 2, models = models,
@@ -422,7 +422,7 @@ stock_fcas_prices(results, sys, t) = Dict(
 )
 function stock_fcas_standalone(sys, t)
     template = replication_template(sys)
-    model = AEMS._replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "standalone")
+    model = AEMS.replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "standalone")
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
@@ -512,7 +512,7 @@ end
 @testset "the tie-break pre-flight check" begin
     moved = tie_sentinel_system(; park_price = [10.0, 12.0])
     @test_throws ArgumentError check_tie_break_pairs(moved, STOCK_STEPS)
-    @test_throws ArgumentError run_replication(moved, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    @test_throws ArgumentError ReplaySimulation.run_replication(moved, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     @test isnothing(check_tie_break_pairs(tie_sentinel_system(), STOCK_STEPS))
     # Prices change between steps, but no band is ever tied.
     @test isnothing(check_tie_break_pairs(sentinel_system(), STOCK_STEPS))
@@ -755,7 +755,7 @@ end
         [100.0, 120.0]; horizon = TOY_RESOLUTION,
         mutate! = (sys, stamps) -> foreach(i -> add_constraint!(sys, stamps, i), 1:n),
     )
-    out = run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    out = ReplaySimulation.run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     slack_families = Dict(ReplayResults._VIOLATION_FAMILIES)
     keys = [k for k in PSI.list_variable_keys(out.results) if haskey(slack_families, PSI.IS.Optimization.get_entry_type(k))]
     @test length(keys) >= n

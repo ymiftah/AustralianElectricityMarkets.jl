@@ -195,22 +195,26 @@ end
 
 
 """
-    REPLICATION_OPTIMIZER
+    replication_decision_model(template, sys, initial_time; optimizer, name = "replication", market_price_cap = nothing) -> PSI.DecisionModel
 
-The default replay optimizer: HiGHS with zero MIP gap tolerances, since the interconnector loss
-encoding makes each interval a MILP.
+Constructs the one-interval `PSI.DecisionModel` of `template` on `sys` from `initial_time`. Its settings
+carry the Market Price Cap of its network model, so every penalty of a replay is priced at one value.
+
+# Arguments
+- `template`: a [`replication_template`](@ref) built on `sys`.
+- `sys`: the system the template was built on.
+- `initial_time`: the first interval of the model, which dates the Market Price Cap.
+- `optimizer`: the JuMP optimizer for the model.
+- `name`: the decision problem name used to retrieve its results.
+- `market_price_cap`: a Market Price Cap that replaces the one dated by `initial_time`, or `nothing`.
+
+# Returns
+The `PSI.DecisionModel`. Throws `ArgumentError` when `template` prices balance slacks at a different
+cap than the one the model is built at.
 """
-const REPLICATION_OPTIMIZER = JuMP.optimizer_with_attributes(
-    HiGHS.Optimizer, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10,
-)
-
-
-# A one-interval `DecisionModel` of `template` on `sys` from `initial_time`.
-# The model's settings carry the same cap as its network model, so every MPC penalty of a replay is
-# priced at one value; a template priced at another cap is refused.
-function _replication_decision_model(
+function replication_decision_model(
         template::PSI.ProblemTemplate, sys::PSY.System, initial_time::DateTime;
-        optimizer = REPLICATION_OPTIMIZER, name = "replication", market_price_cap = nothing,
+        optimizer, name = "replication", market_price_cap = nothing,
     )
     cap = _resolved_market_price_cap(initial_time, market_price_cap)
     slack_cost = PSI.get_slack_cost(PSI.get_network_model(template))
@@ -227,13 +231,4 @@ function _replication_decision_model(
     )
     PSI.get_ext(PSI.get_settings(model))["market_price_cap"] = cap
     return model
-end
-
-
-# Logs the skipped-constraint count by reason and the table, for a build or solve that failed.
-function _log_skipped_constraints(skipped::DataFrame)
-    by_reason = combine(groupby(skipped, :reason), nrow => :n)
-    counts = join(("$(r.reason)=$(r.n)" for r in eachrow(sort(by_reason, :reason))), ", ")
-    @error "Skipped constraints at failure: $(nrow(skipped)) ($counts)" skipped
-    return
 end

@@ -49,7 +49,6 @@ include("types/tie_break.jl")
 include("types/interconnector_losses.jl")
 include("types/mnsp.jl")
 include("types/mnsp_limits.jl")
-include("types/logging.jl")
 
 include("formulations/slacks.jl")
 include("formulations/generic_constraints.jl")
@@ -71,13 +70,12 @@ include("checks/fcas.jl")
 include("checks/tie_break.jl")
 include("checks/financial_year.jl")
 include("checks/replay_inputs.jl")
+include("checks/replication_steps.jl")
 include("execution/replication.jl")
-include("execution/simulation.jl")
 
 
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
-export REPLICATION_PARTS, replication_template
-export replication_simulation, run_replication, REPLICATION_OPTIMIZER
+export REPLICATION_PARTS, replication_template, replication_decision_model, check_replication_steps
 export EnergyOfferSurplusSlack, EnergyOfferDeficitSlack,
     EnergyDecrementalOfferSurplusSlack, EnergyDecrementalOfferDeficitSlack
 export EnergyMaxAvailOutConstraint, EnergyMaxAvailInConstraint, EnergyMaxAvailOutSlack, EnergyMaxAvailInSlack
@@ -96,7 +94,7 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASLowerSlopeParameter, FCASRampingLimitParameter, FCASBandPriceParameter,
     UnitRampUpSlack, UnitRampDownSlack,
     InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack
-export check_fcas_services, check_dispatch_envelope
+export check_fcas_services, check_dispatch_envelope, check_single_financial_year
 export AbstractNEMDispatch, NEMReplayDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter
