@@ -152,9 +152,9 @@ end
 """
     _prune_unbuildable_constraints!(sys)
 
-Removes the [`GenericConstraint`](@ref)s that `_area_balance_template()`'s device models can never build
+Removes the [`GenericConstraint`](@ref)s that `_area_balance_template(sys)`'s device models can never build
 under [`LinearFactorLimit`](@ref): `F_R1_RAISE6SEC`/`F_R2_LOWERREG` carry non-ENERGY terms, and
-`N_HYDRO_LIMIT` touches a `HydroTurbine`, which `_area_balance_template()` doesn't model. Used by tests
+`N_HYDRO_LIMIT` touches a `HydroTurbine`, which `_area_balance_template(sys)` doesn't model. Used by tests
 that exercise the constraint actually binding, not the loud failure for an unbuildable one.
 """
 function _prune_unbuildable_constraints!(sys)
@@ -164,10 +164,8 @@ function _prune_unbuildable_constraints!(sys)
     return
 end
 
-function _nem_service_template(;
-        use_slacks::Bool = false, market_price_cap::Union{Nothing, Float64} = nothing, network_model = nothing,
-    )
-    template = isnothing(network_model) ? _area_balance_template() : _area_balance_template(; network_model)
+function _nem_service_template(sys; use_slacks::Bool = false, market_price_cap::Union{Nothing, Float64} = nothing, mpc = _HELPER_MPC)
+    template = _area_balance_template(sys; mpc = mpc)
     attributes = isnothing(market_price_cap) ? Dict{String, Any}() :
         Dict{String, Any}("market_price_cap" => market_price_cap)
     PSI.set_service_model!(
@@ -231,7 +229,7 @@ end
         get_contributing_devices(sys, _gc(sys, "F_R1_RAISE6SEC")),
     )
     flush_toy_fcas_curves!(sys)
-    model = _decision_model(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_nem_service_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     err = _build_error(model)
     @test err isa ArgumentError
     msg = sprint(showerror, err)
@@ -244,7 +242,7 @@ end
     for id in ("F_R1_RAISE6SEC", "F_R2_LOWERREG", "N_IC1_LIMIT", "N_PARTIAL")
         remove_component!(sys, _gc(sys, id))
     end
-    model = _decision_model(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_nem_service_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     err = _build_error(model)
     @test err isa ArgumentError
     msg = sprint(showerror, err)
@@ -271,7 +269,7 @@ end
     # dual read-back would either throw (vacuous, dense container left `#undef`) or read a
     # stale key (sparse, if the cell were mistakenly populated).
     baseline_sys = _prepared_system()
-    baseline_template = _area_balance_template()
+    baseline_template = _area_balance_template(baseline_sys)
     baseline_model = _decision_model(baseline_template, baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(baseline_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(baseline_model)
@@ -295,7 +293,7 @@ end
             Dict("N_IC1_LIMIT" => tightened_rhs), Dict("N_IC1_LIMIT" => invoked_vec),
         )
         _prune_unbuildable_constraints!(sys)
-        template = _nem_service_template(; use_slacks = use_slacks)
+        template = _nem_service_template(sys; use_slacks = use_slacks)
         model = _decision_model(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
         PSI.solve!(model)
@@ -345,7 +343,7 @@ end
     invoked_vec = vcat([0.0], fill(1.0, n_raw - 1))
     sys = _prepared_system(Dict("N_IC1_LIMIT" => 100.0), Dict("N_IC1_LIMIT" => invoked_vec))
     _prune_unbuildable_constraints!(sys)
-    model = _decision_model(_nem_service_template(; use_slacks = true), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_nem_service_template(sys; use_slacks = true), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
     gc = _gc(sys, "N_IC1_LIMIT")
@@ -354,7 +352,7 @@ end
     @test PSI.get_parameter_column_refs(param, name)[1:2] == [0.0, 1.0]
 
     # A recurrent build masks non-invoked intervals with zero-cost slacks, so it needs use_slacks.
-    bare = _decision_model(_nem_service_template(; use_slacks = false), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    bare = _decision_model(_nem_service_template(sys; use_slacks = false), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(bare; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     bare_container = PSI.get_optimization_container(bare)
     bare_container.built_for_recurrent_solves = true
@@ -375,7 +373,7 @@ end
     invoked_vec = vcat([0.0], fill(1.0, n_raw - 1))
     sys = _prepared_system(Dict("N_IC1_LIMIT" => 100.0), Dict("N_IC1_LIMIT" => invoked_vec))
     _prune_unbuildable_constraints!(sys)
-    model = _decision_model(_nem_service_template(; use_slacks = true), sys; mpc = 20_300.0, optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_nem_service_template(sys; use_slacks = true, mpc = 20_300.0), sys; mpc = 20_300.0, optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
     gc = _gc(sys, "N_IC1_LIMIT")
@@ -416,7 +414,7 @@ end
 @testset "Buildable generic constraints: the default throws one aggregated ArgumentError, and allow_partial_coverage returns the subset" begin
     sys = _prepared_system()
     _add_fcas_services!(sys)
-    template = _area_balance_template()
+    template = _area_balance_template(sys)
     err = _caught(() -> _buildable_gcs(sys, template))
     @test err isa ArgumentError
     msg = sprint(showerror, err)
@@ -443,10 +441,10 @@ end
 @testset "the buildable subset builds and solves under per-instance registration, where the aggregated registration throws; a left-out constraint is recorded" begin
     sys = _prepared_system()
     _add_fcas_services!(sys)
-    template = _area_balance_template()
+    template = _area_balance_template(sys)
     buildable = _buildable_gcs(sys, template; allow_partial_coverage = true)
 
-    aggregated_template = _area_balance_template()
+    aggregated_template = _area_balance_template(sys)
     PSI.set_service_model!(
         aggregated_template,
         PSI.ServiceModel(GenericConstraint, AEMS.LinearFactorLimit; duals = [AEMS.NEMConstraintLimit]),
@@ -456,7 +454,7 @@ end
     )
     @test _build_error(aggregated_model) isa ArgumentError
 
-    filtered_template = _area_balance_template()
+    filtered_template = _area_balance_template(sys)
     for gc in buildable
         name = PSY.get_name(gc)
         PSI.set_service_model!(
@@ -483,7 +481,7 @@ end
     left_out = _gc(sys, "N_PARTIAL")
     PSY.set_available!.(PSY.get_contributing_devices(sys, left_out), false)
     skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
-    left_out_template = _area_balance_template()
+    left_out_template = _area_balance_template(sys)
     left_out_buildable = _buildable_gcs(
         sys, left_out_template; allow_partial_coverage = true, skipped = skipped,
     )
@@ -594,7 +592,7 @@ end
     _prune_unbuildable_constraints!(sys)
     PSY.set_available!(PSY.get_component(PSY.AreaInterchange, sys, "IC1"), false)
     PSY.set_available!(PSY.get_component(PSY.ThermalStandard, sys, "Sundance"), false)
-    model = _decision_model(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_nem_service_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test isnothing(_build_error(model))
 end
 
@@ -624,7 +622,7 @@ end
     # Unconstrained, IC1 carries a non-zero flow.
     baseline_sys = _prepared_system()
     baseline_model = _decision_model(
-        _area_balance_template(), baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
+        _area_balance_template(baseline_sys), baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
     )
     @test PSI.build!(baseline_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(baseline_model)
@@ -645,8 +643,8 @@ end
 
     test_mpc = 20_300.0
     model = _decision_model(
-        _nem_service_template(; use_slacks = true, market_price_cap = test_mpc), sys;
-        optimizer = HiGHS.Optimizer, horizon = Hour(2),
+        _nem_service_template(sys; use_slacks = true, market_price_cap = test_mpc, mpc = test_mpc), sys;
+        mpc = test_mpc, optimizer = HiGHS.Optimizer, horizon = Hour(2),
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(model)

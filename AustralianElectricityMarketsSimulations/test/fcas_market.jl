@@ -546,15 +546,15 @@ function storage_fcas_toy_model(
     set_fcas_effective_offers!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
-    template = _area_balance_template()
+    template = _area_balance_template(sys; mpc = 17_500.0)
     PSI.set_device_model!(template, EnergyReservoirStorage, NEMReplayDispatch)
     PSI.set_service_model!(
         template, service_name,
         PSI.ServiceModel(FCASService, FCASMarket, service_name; duals = [FCASJointCapacityConstraint]),
     )
 
-    model = PSI.DecisionModel(
-        template, sys;
+    model = _decision_model(
+        template, sys; mpc = 17_500.0,
         optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
         horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
         initial_time = TOY_START,
@@ -720,7 +720,7 @@ function _build_bdu_regulation(
     set_fcas_effective_offers!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
-    template = _area_balance_template()
+    template = _area_balance_template(sys; mpc = 17_500.0)
     PSI.set_device_model!(template, EnergyReservoirStorage, NEMReplayDispatch)
     PSI.set_service_model!(
         template, service_name,
@@ -731,8 +731,8 @@ function _build_bdu_regulation(
         PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_BDU"; duals = [NEMConstraintLimit]),
     )
 
-    model = PSI.DecisionModel(
-        template, sys;
+    model = _decision_model(
+        template, sys; mpc = 17_500.0,
         optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
         horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
         initial_time = TOY_START,

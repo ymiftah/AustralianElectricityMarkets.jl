@@ -5,23 +5,28 @@ import PowerSimulations as PSI
 import PowerSystems as PSY
 import HydroPowerSimulations
 
-"""
-    _decision_model(args...; mpc = 20_000.0, kwargs...)
+# The Market Price Cap every helper-built model and template prices its penalties at, unless overridden.
+const _HELPER_MPC = 20_000.0
 
-`PSI.DecisionModel` with the `"market_price_cap"` settings entry set, for PSCB fixtures dated outside
-`AustralianElectricityMarkets.MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` whose area-balance slack still needs a Market Price Cap.
 """
-function _decision_model(args...; mpc = 20_000.0, kwargs...)
+    _decision_model(args...; mpc = _HELPER_MPC, kwargs...)
+
+`PSI.DecisionModel` with the `"market_price_cap"` settings entry set to `mpc`, for PSCB fixtures dated outside
+`AustralianElectricityMarkets.MARKET_PRICE_CAP_BY_FINANCIAL_YEAR`. Templates from these helpers price their
+balance slack at the same `mpc`.
+"""
+function _decision_model(args...; mpc = _HELPER_MPC, kwargs...)
     model = PSI.DecisionModel(args...; kwargs...)
     PSI.get_ext(PSI.get_settings(model))["market_price_cap"] = mpc
     return model
 end
 
-"Per-area balances via `AreaBalancePowerModel`. Mirrors `docs/literate/interchanges.jl`."
-function _area_balance_template(;
-        network_model = PSI.NetworkModel(
-            PSI.AreaBalancePowerModel; use_slacks = true, duals = [PSI.CopperPlateBalanceConstraint],
-        )
+"Per-area balances via `AreaBalancePowerModel`, with balance slacks priced at `mpc`. Mirrors `docs/literate/interchanges.jl`."
+function _area_balance_template(
+        sys::PSY.System; mpc = _HELPER_MPC,
+        network_model = AEMS._area_balance_network_model(
+            sys, DateTime(2025, 1, 1); market_price_cap = mpc, duals = [PSI.CopperPlateBalanceConstraint],
+        ),
     )
     template = PSI.ProblemTemplate()
     PSI.set_device_model!(template, PSY.Line, PSI.StaticBranch)
