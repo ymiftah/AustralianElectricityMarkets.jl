@@ -688,8 +688,9 @@ end
 
 Prices the [`FCASOfferBandVariable`](@ref)s of an [`_fcas_offer_groups`](@ref) `group` through
 [`FCASBandPriceParameter`](@ref) time-series cost parameters: one per device type and side, of meta
-`"<group.meta>_gen"` or `"<group.meta>_load"`, read from the offers' `"fcas_offer_..."` series. Each
-band's cost target is its price times the system base power and the interval hours.
+`"<group.meta>_gen"` or `"<group.meta>_load"`, read from the offers' service series (see
+[`fcas_offer_series_name`](@ref)). Each band's cost target is its price in `\$/MWh` times the system base
+power and the interval length in hours.
 
 # Arguments
 - `container`: the optimization container of the model being built.
@@ -726,8 +727,22 @@ function _add_fcas_band_costs!(container::PSI.OptimizationContainer, group, svc:
 end
 
 
-"The meta of a band-price parameter of `group` on the side `decremental`: `<group.meta>_gen` or `<group.meta>_load`."
-_fcas_band_price_meta(group, decremental::Bool) = "$(group.meta)_$(decremental ? "load" : "gen")"
+"""
+    _fcas_band_price_meta(group, decremental::Bool) -> String
+
+The meta of a band-price parameter of `group` on the side `decremental`: `<group.meta>_gen` for the
+generation side or `<group.meta>_load` for the load side.
+
+# Arguments
+- `group`: the offer group of [`_fcas_offer_groups`](@ref).
+- `decremental`: `true` for the load side.
+
+# Returns
+A `String`.
+"""
+function _fcas_band_price_meta(group, decremental::Bool)
+    return "$(group.meta)_$(decremental ? "load" : "gen")"
+end
 
 
 function PSI.construct_service!(

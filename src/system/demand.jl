@@ -1,3 +1,20 @@
+"""
+    _set_demand!(sys, rows, date_range; resolution = Minute(5))
+
+Adds load time series data to the `PowerLoad` components of `sys` from `rows`, as [`read_demand`](@ref)
+returns them. `TOTALDEMAND` becomes the `"max_active_power"` series and `LOSSDEMAND` a second
+`"loss_demand"` series. Throws an `ArgumentError` if any available load or area has no demand row for an
+interval of `date_range`, or if a demand value is not finite.
+
+# Arguments
+- `sys`: the `PowerSystems.System` to add to.
+- `rows`: the demand rows over `date_range`, as [`read_demand`](@ref) returns them.
+- `date_range`: the dispatch intervals to replay; its last timestamp ends the final interval.
+- `resolution`: the spacing of the intervals (default five minutes).
+
+# Returns
+`nothing`.
+"""
 function _set_demand!(sys, rows, date_range; resolution = Minute(5))
     demand = @chain rows begin
         transform(:REGIONID => ByRow(x -> x * " Load") => :name)

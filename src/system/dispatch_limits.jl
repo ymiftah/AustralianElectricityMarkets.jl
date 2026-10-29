@@ -22,6 +22,55 @@ function nem_dispatch_devices(sys)
 end
 
 
+"""
+    _set_nem_dispatch_limits!(sys, rows, date_range)
+
+Attaches per-device `SingleTimeSeries` built from `rows` (as [`read_dispatch_limits`](@ref) returns
+them, at the step of `date_range`) to every available `ThermalStandard`, `HydroDispatch`,
+`RenewableDispatch`, `InterruptiblePowerLoad` and `EnergyReservoirStorage` in `sys`:
+`"ramp_up_rate"` and `"ramp_down_rate"` (from `RAMPUPRATE`/`RAMPDOWNRATE`) and `"initial_mw"`
+(from `INITIALMW`, net MW for a battery, consumed MW for a load). A `ThermalStandard`,
+`HydroDispatch`, `RenewableDispatch` or `InterruptiblePowerLoad` also gets `"max_active_power"`, the
+device's upper dispatch limit, `AVAILABILITY` raised to the ramp-down floor `INITIALMW - RAMPDOWNRATE × Δ`
+when that floor is higher, where Δ is the interval length in hours taken from `date_range`'s step,
+replacing any `UIGF`- or bid-derived `"max_active_power"` series a device already carries, and
+`"availability"`, the raw `AVAILABILITY` (for a semi-scheduled unit, the lower of bid `MAXAVAIL`
+and `UIGF`), read back by [`get_energy_availability`](@ref). An `EnergyReservoirStorage` gets no
+`"max_active_power"` series: its per-direction availability is the energy bid `MAXAVAIL` series
+[`set_market_bids!`](@ref) attaches, read back by [`get_storage_energy_max_avail`](@ref).
+
+`"ramp_up_rate"`, `"ramp_down_rate"`, `"initial_mw"` and `"availability"` are stored per-unit of
+`sys`'s system base, rates per minute. `"max_active_power"` follows PSY's native convention instead: data
+normalised by the device's own static `max_active_power` (read under `NATURAL_UNITS`), with
+`scaling_factor_multiplier = get_max_active_power`.
+
+A non-scheduled load (see [`set_fcas_bids!`](@ref)) gets zero `"initial_mw"`, ramp rates, `"availability"`
+and `"max_active_power"` whatever `DISPATCHLOAD` meters: its consumption is already in regional demand
+and is not dispatched. This function must run after [`set_fcas_bids!`](@ref), which makes such a load
+available; a load made available later has no ramp or limit series.
+
+A device with no `DISPATCHLOAD` rows in `date_range`, missing intervals, a `missing` rate or
+`INITIALMW`, or a negative `RAMPUPRATE`/`RAMPDOWNRATE` is a problem; for a `ThermalStandard`,
+`HydroDispatch` or `RenewableDispatch`, a `missing` or negative `AVAILABILITY`, or a
+non-positive static `max_active_power`, is also a problem. A zero `RAMPUPRATE`,
+`RAMPDOWNRATE` or `AVAILABILITY` is carried through as-is: it is AEMO stating that the device
+cannot move, or cannot generate, in that interval. Every problem across every device is
+collected and raised as one aggregated `ArgumentError` naming the affected `DUID`s, and `sys` is
+left unmodified.
+
+!!! warning
+    Coarse buckets aggregate the available rows without checking five-minute coverage. An
+    incomplete bucket can shift `INITIALMW` away from the period start and omit more restrictive
+    ramp rates or availability limits. Ensure the cache covers every five-minute interval.
+
+# Arguments
+- `sys`: the `System` to add to.
+- `rows`: the dispatch-limit rows over `date_range`, as [`read_dispatch_limits`](@ref) returns them.
+- `date_range`: the dispatch intervals to replay. Its step is the model resolution.
+
+# Returns
+`nothing`.
+"""
 function _set_nem_dispatch_limits!(sys, rows, date_range)
     base_power = get_base_power(sys)
     full_grid = collect(date_range)[1:(end - 1)]

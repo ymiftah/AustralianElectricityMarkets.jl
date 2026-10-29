@@ -259,6 +259,41 @@ function _read_constraint_inputs(db, date_range; intervention = 0)
 end
 
 
+"""
+    _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; intervention = 0) -> (added, skipped)
+
+Adds one [`GenericConstraint`](@ref) per exact `(GENCONID, EFFECTIVEDATE, VERSIONNO)` in `invoked_all`,
+named `GENCONID@EFFECTIVEDATE#VERSIONNO` and attached via `add_service!` to its contributing devices.
+
+# Arguments
+- `sys`: the `System` to add to.
+- `db`: an `AEMDB` connection.
+- `date_range`: the dispatch intervals to replay.
+- `invoked_all`: the invoked constraint rows over `date_range`, as `_read_constraint_inputs` returns them.
+- `fixed`: the fixed-loading rows over `date_range`, as `_read_constraint_inputs` returns them.
+- `intervention`: the `DISPATCHCONSTRAINT.INTERVENTION` the rows were read with (default `0`).
+
+# Returns
+`(added, skipped)`: `added::Vector{String}` of component names, `skipped::Dict{String, Symbol}`
+mapping a skipped name to `:no_definition`, `:no_terms`, `:unknown_duid`, `:unknown_region`, or
+`:unknown_interconnector` (the kind of the first unresolved term). Dropped unit terms are read back
+with [`get_dropped_terms`](@ref).
+
+A unit's participant fixed loading (`\$<DUID>`) is not a generic constraint: its `DISPATCHCONSTRAINT`
+row is neither added nor reported as skipped where `_set_nem_fixed_loads!` attaches the loading to the unit.
+
+Each skipped version is also recorded on `sys`; read it with [`get_skipped_constraints`](@ref). The
+intervals of `date_range` with no invoked constraint ([`get_missing_constraint_intervals`](@ref)) and
+the constraints given the default weight 1.0 for a NULL `GENERICCONSTRAINTWEIGHT`
+([`get_defaulted_constraint_weights`](@ref)) are recorded the same way.
+
+A unit term whose DUID is absent from `sys` is dropped, as nempy does for a unit that is not in the
+dispatch, and recorded in the constraint's `ext["dropped_terms"]` and in [`get_dropped_terms`](@ref).
+An unresolved region or interconnector term, or a constraint with no resolvable term, skips the constraint.
+
+Throws `ArgumentError` when a `RegionTerm` resolves to a region with no Generator/Storage in `sys`;
+the throw leaves `sys` unmodified.
+"""
 function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; intervention = 0)
     start_date = first(date_range)
     base_power = get_base_power(sys)

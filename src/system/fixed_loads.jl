@@ -18,6 +18,24 @@ function _fixed_load_series(sys, fixed_loads)
 end
 
 
+"""
+    _set_nem_fixed_loads!(sys, rows, date_range)
+
+Attaches each available device's participant fixed loading (AEMO's Energy Inflexible Offer,
+`BIDPEROFFER_D.FIXEDLOAD > 0`, fast-start units excluded; see [`read_fixed_loads`](@ref)) over the
+intervals of `date_range` as two series: `"fixed_load"`, the target net injection in system-base
+per-unit (`0` where none applies), and `"fixed_load_invoked"`, `1` at the intervals that carry a
+fixed loading and `0` elsewhere. A storage device's `GEN` and `LOAD` loadings net into one target.
+Devices with no fixed loading in the range get no series; existing series are replaced.
+
+# Arguments
+- `sys`: the `System` to add to.
+- `rows`: the fixed-loading rows, as [`read_fixed_loads`](@ref) returns them.
+- `date_range`: the interval range; its last timestamp ends the final interval.
+
+# Returns
+`nothing`.
+"""
 function _set_nem_fixed_loads!(sys, rows, date_range)
     grid = collect(date_range)[1:(end - 1)]
     base_power = get_base_power(sys)
