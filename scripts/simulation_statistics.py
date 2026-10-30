@@ -25,6 +25,14 @@ METRICS = {
     "interconnector_losses_mw": ("interconnectors", "MWLOSSES", ("INTERCONNECTORID",), "MW"),
 }
 PERCENTILES = (5, 25, 50, 75, 90, 95, 99)
+# Mirrors MARKET_PRICE_CAP_BY_FINANCIAL_YEAR in src/system/penalties.jl, keyed by financial-year start.
+MARKET_PRICE_CAP_BY_FINANCIAL_YEAR = {
+    dt.date(2024, 7, 1): 17_500.0,
+    dt.date(2025, 7, 1): 20_300.0,
+    dt.date(2026, 7, 1): 23_200.0,
+}
+MARKET_FLOOR_PRICE = -1000.0
+VIOLATION_FAMILY = "generic_constraint"
 NOTES = [
     "Errors are solved minus published; unqualified error percentiles are absolute errors.",
     "Energy prices compare ROP with ROP, not RRP. Market timestamps use fixed AEST UTC+10.",
@@ -32,6 +40,7 @@ NOTES = [
     "Accuracy summaries use completed days only. Partial and failed timing prefixes remain visible.",
     "Duplicate comparison keys are excluded entirely; missing values are never filled with zero.",
     "Pooled errors use the first completed attempt per day and compatible recorded provenance; exclusions are listed.",
+    "Over-constrained intervals (generic-constraint violation with a price at or above MPC, at or below the floor) are flagged; the excluding pool drops all their rows.",
     "Dispatch/interconnector expected entity inventories are inferred from exports; absent entities cannot be certified complete.",
     "OPTIMAL is not an independent feasibility audit. Full numerical-audit coverage is not established by this report.",
     "Solve-wrapper time contains MIP, pricing and auxiliary work. Nested timings must not be added to parents.",
@@ -124,7 +133,7 @@ def normalize_timestamp(value):
         return None
 
 
-def compare_day(folder, metric, warnings):
+def compare_day(folder, metric, warnings, flagged=frozenset()):
     table, field, dimensions, unit = METRICS[metric]
     path = folder / f"comparison_{table}.csv"
     valid_times = expected_times(folder.name)
@@ -154,7 +163,7 @@ def compare_day(folder, metric, warnings):
             duplicates.add(key)
         else:
             unique[key] = (number(row.get(field + "_published")), number(row.get(field + "_solved")))
-    values, outliers = [], []
+    values, kept, outliers = [], [], []
     for (timestamp, group), (published, solved) in unique.items():
         item = groups[group]
         item["rows"] += 1
@@ -171,6 +180,8 @@ def compare_day(folder, metric, warnings):
             counts["missing_or_nonfinite"] += 1
             continue
         values.append(error)
+        if timestamp not in flagged:
+            kept.append(error)
         item["errors"].append(error)
         item["times"].add(timestamp)
         outlier = (abs(error), timestamp, group, published, solved, error)
@@ -189,7 +200,55 @@ def compare_day(folder, metric, warnings):
         "worst": [dict(zip(("absolute_error", "interval_aest", "entity", "published", "solved", "error"), row))
                   for row in sorted(outliers, reverse=True)],
     }
-    return summary, values
+    return summary, values, kept
+
+
+def financial_year_start(timestamp):
+    """Return the 1 July that starts the financial year containing a naive AEST datetime."""
+    return dt.date(timestamp.year if timestamp.month >= 7 else timestamp.year - 1, 7, 1)
+
+
+def over_constrained_intervals(folder, warnings):
+    """Return the flagged price rows of a day and the set of their interval timestamps.
+
+    An interval is flagged when a generic-constraint violation and a trigger price share its timestamp:
+    an energy ROP at or above MPC or at or below the floor, or an FCAS ROP at or above MPC.
+    """
+    violated = defaultdict(set)
+    if not (folder / "constraint_violations.csv").exists():
+        warnings.append(f"Missing constraint violations; no intervals flagged: {folder}")
+    for row in read_csv(folder / "constraint_violations.csv", warnings):
+        timestamp = normalize_timestamp(row.get("DateTime"))
+        if row.get("family") == VIOLATION_FAMILY and timestamp is not None:
+            violated[timestamp].add(row.get("name") or "")
+    rows, flagged, missing_years = [], set(), set()
+    for table, fcas in (("comparison_prices.csv", False), ("comparison_fcas_prices.csv", True)):
+        for row in read_csv(folder / table, warnings):
+            timestamp = normalize_timestamp(row.get("SETTLEMENTDATE"))
+            solved = number(row.get("ROP_solved"))
+            if timestamp not in violated or solved is None:
+                continue
+            if not fcas and solved <= MARKET_FLOOR_PRICE:
+                trigger = "energy_low"
+            else:
+                start = financial_year_start(dt.datetime.fromisoformat(timestamp))
+                cap = MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.get(start)
+                if cap is None:
+                    missing_years.add(start)
+                    continue
+                if solved < cap:
+                    continue
+                trigger = "fcas_high" if fcas else "energy_high"
+            entity = row.get("REGIONID") or ""
+            if fcas:
+                entity += "|" + (row.get("BIDTYPE") or "")
+            flagged.add(timestamp)
+            rows.append({"day": folder.name, "interval": timestamp, "trigger": trigger, "entity": entity,
+                         "published": number(row.get("ROP_published")), "solved": solved,
+                         "constraints": ";".join(sorted(violated[timestamp]))})
+    for start in sorted(missing_years):
+        warnings.append(f"No market price cap for financial year starting {start}; its intervals not flagged: {folder}")
+    return rows, flagged
 
 
 def native_snapshots(folder, warnings):
@@ -362,6 +421,8 @@ def analyze(runs, cache_windows=24):
               "warnings": [], "runs": [], "days": [], "pooled": {}, "cache_windows": cache_windows}
     warnings = result["warnings"]
     pools = defaultdict(list)
+    kept_pools = defaultdict(list)
+    flagged_rows = []
     selected_days = set()
     signature = None
     for root in dict.fromkeys(Path(path).resolve() for path in runs):
@@ -416,18 +477,24 @@ def analyze(runs, cache_windows=24):
                     signature = current_signature
                     selected_days.add(day)
                     item["pooled"] = True
+                day_flags, flagged = over_constrained_intervals(folder, warnings)
+                flagged_rows.extend({"run": str(root), **row} for row in day_flags)
                 for metric in METRICS:
-                    comparison, values = compare_day(folder, metric, warnings)
+                    comparison, values, kept = compare_day(folder, metric, warnings, flagged)
                     item["comparisons"][metric] = comparison
                     if not comparison["file_present"]:
                         warnings.append(f"Missing completed comparison: {folder}: {metric}")
                     if eligible:
                         pools[metric].extend(values)
+                        kept_pools[metric].extend(kept)
             result["days"].append(item)
     schemas = {item["timing"]["timing_schema"] for item in result["days"]} - {None}
     if len(schemas) > 1:
         raise ValueError(f"Schema 1 and schema 2 interval timings cannot be pooled across days: {sorted(schemas)}")
     result["pooled"] = {metric: error_distribution(values) for metric, values in pools.items()}
+    result["pooled_excluding_over_constrained"] = {metric: error_distribution(values)
+                                                   for metric, values in kept_pools.items()}
+    result["over_constrained_intervals"] = flagged_rows
     result["unique_completed_days"] = len({item["day"] for item in result["days"] if item["status"] == "completed"})
     result["pooled_completed_days"] = len(selected_days)
     result["unique_written_intervals"] = len({(item["day"], row["interval_aest"])
@@ -490,6 +557,7 @@ def save_report(result, output):
                            ("timing_percentiles.csv", timings), ("worst_errors.csv", worst),
                            ("native_timers.csv", native), ("phase_boundaries.csv", boundaries),
                            ("slowest_intervals.csv", slow),
+                           ("over_constrained_intervals.csv", result["over_constrained_intervals"]),
                            ("memory_statistics.csv", [{"run": run["path"], **run["rss_mib"],
                                 "peak_worker_rss_mib": run["peak_worker_rss_mib"]} for run in result["runs"]])):
         write_csv(output / filename, rows)
@@ -515,6 +583,17 @@ def save_report(result, output):
              markdown_table(["Metric", "n", "MAE", "Bias", "p5", "p95", "p99", "Max"],
                 [[metric, *(stats.get(key) for key in ("n", "mae", "bias", "p5", "p95", "p99", "max"))]
                  for metric, stats in result["pooled"].items()]),
+             "", "## Pooled errors excluding over-constrained intervals", "",
+             "Same pool as above, with every row of a flagged interval removed.", "",
+             markdown_table(["Metric", "n", "MAE", "Bias", "p5", "p95", "p99", "Max"],
+                [[metric, *(stats.get(key) for key in ("n", "mae", "bias", "p5", "p95", "p99", "max"))]
+                 for metric, stats in result["pooled_excluding_over_constrained"].items()]),
+             "", "## Over-constrained intervals", "",
+             f"Flagged intervals: {len({(row['run'], row['day'], row['interval']) for row in result['over_constrained_intervals']})}; "
+             "rows are price triggers on intervals with a generic-constraint violation.", "",
+             markdown_table(["Run", "Day", "Interval", "Trigger", "Entity", "Published", "Solved", "Violated constraints"],
+                [[Path(row["run"]).name, row["day"], row["interval"], row["trigger"], row["entity"],
+                  row["published"], row["solved"], row["constraints"]] for row in result["over_constrained_intervals"]]),
              "", "## Regional energy ROP errors", "", "Absolute errors in $/MWh, with signed bias.", "",
              markdown_table(["Day", "Region", "Paired intervals", "MAE", "Bias", "p5", "p50", "p95", "p99", "Max"],
                 [[row["day"], row["entity"], row["paired_intervals"], *(row.get(key) for key in

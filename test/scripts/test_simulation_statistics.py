@@ -200,6 +200,73 @@ class ReplayStatisticsTests(unittest.TestCase):
         self.assertTrue((output / "report.md").exists())
         self.assertTrue((output / "statistics.json").exists())
 
+    def violations(self, day, rows):
+        self.csv(day / "constraint_violations.csv",
+                 ["family", "name", "DateTime", "MW", "direction", "variable"],
+                 [[family, name, when, 1, "up", ""] for family, name, when in rows])
+
+    def fcas_prices(self, day, rows):
+        self.csv(day / "comparison_fcas_prices.csv",
+                 ["SETTLEMENTDATE", "REGIONID", "BIDTYPE", "ROP_published", "ROP_solved"], rows)
+
+    def energy_prices(self, day, rows):
+        self.csv(day / "comparison_prices.csv",
+                 ["SETTLEMENTDATE", "REGIONID", "ROP_published", "ROP_solved"], rows)
+
+    def test_flagged_fcas_interval_is_listed_and_excluded_from_new_pool_only(self):
+        run, day = self.day()
+        self.violations(day, [("generic_constraint", "C1", "2026-04-07T04:05:00")])
+        self.fcas_prices(day, [
+            ["2026-04-07T04:05:00", "NSW1", "LOWER5MIN", 20300, 20310],
+            ["2026-04-07T04:10:00", "NSW1", "LOWER5MIN", 1, 3],
+        ])
+        result = report.analyze([run])
+        self.assertEqual(len(result["over_constrained_intervals"]), 1)
+        flagged = result["over_constrained_intervals"][0]
+        self.assertEqual(flagged["trigger"], "fcas_high")
+        self.assertEqual(flagged["interval"], "2026-04-07T04:05:00")
+        self.assertEqual(flagged["constraints"], "C1")
+        self.assertEqual(result["pooled"]["fcas_price"]["n"], 2)
+        self.assertEqual(result["pooled_excluding_over_constrained"]["fcas_price"]["n"], 1)
+        self.assertEqual(result["pooled_excluding_over_constrained"]["fcas_price"]["mae"], 2)
+
+    def test_high_energy_price_without_violation_is_not_flagged(self):
+        run, day = self.day()
+        self.violations(day, [("generic_constraint", "C1", "2026-04-07T04:10:00")])
+        self.energy_prices(day, [["2026-04-07T04:05:00", "NSW1", 20300, 20310]])
+        result = report.analyze([run])
+        self.assertEqual(result["over_constrained_intervals"], [])
+        self.assertEqual(result["pooled_excluding_over_constrained"]["energy_price"]["n"], 1)
+
+    def test_violation_with_normal_price_is_not_flagged(self):
+        run, day = self.day()
+        self.violations(day, [("generic_constraint", "C1", "2026-04-07T04:05:00")])
+        self.energy_prices(day, [["2026-04-07T04:05:00", "NSW1", 50, 52]])
+        self.assertEqual(report.analyze([run])["over_constrained_intervals"], [])
+
+    def test_unit_ramp_violation_with_high_price_is_not_flagged(self):
+        run, day = self.day()
+        self.violations(day, [("unit_ramp", "U1", "2026-04-07T04:05:00")])
+        self.energy_prices(day, [["2026-04-07T04:05:00", "NSW1", 20300, 20310]])
+        self.assertEqual(report.analyze([run])["over_constrained_intervals"], [])
+
+    def test_energy_floor_price_with_generic_violation_is_flagged(self):
+        run, day = self.day()
+        self.violations(day, [("generic_constraint", "C1", "2026-04-07T04:05:00")])
+        self.energy_prices(day, [["2026-04-07T04:05:00", "NSW1", -1000, -1000],
+                                 ["2026-04-07T04:05:00", "QLD1", 40, 41]])
+        result = report.analyze([run])
+        self.assertEqual([(row["trigger"], row["entity"]) for row in result["over_constrained_intervals"]],
+                         [("energy_low", "NSW1")])
+        self.assertEqual(result["pooled_excluding_over_constrained"]["energy_price"]["n"], 0)
+
+    def test_missing_violation_file_warns_and_flags_nothing(self):
+        run, day = self.day()
+        self.energy_prices(day, [["2026-04-07T04:05:00", "NSW1", 20300, 20310]])
+        result = report.analyze([run])
+        self.assertEqual(result["over_constrained_intervals"], [])
+        self.assertTrue(any("constraint violations" in x for x in result["warnings"]))
+
 
 if __name__ == "__main__":
     unittest.main()

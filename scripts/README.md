@@ -38,6 +38,7 @@ The report includes:
 | `errors.csv` | Per-day absolute-error percentiles, signed bias, MAE, RMSE, missing rows and duplicates |
 | `entity_errors.csv` | The same distributions by DUID, region, FCAS region/service and interconnector, with paired-interval coverage |
 | `worst_errors.csv` | Largest comparison errors and their interval/entity/published/solved values |
+| `over_constrained_intervals.csv` | Price-triggered intervals with a generic-constraint violation, excluded from the pooled errors in `report.md` and `statistics.json` |
 | `slowest_intervals.csv` | Slowest update, MIP, pricing and write calls per day |
 | `memory_statistics.csv` | Sampled worker RSS distributions and recorded high-water RSS, in MiB |
 | `native_timers.csv` | Native timer snapshots with their hierarchy and call counts; nested totals overlap |
