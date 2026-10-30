@@ -389,6 +389,7 @@ function create_pscb_nemweb_data(hive_root::String)
             RUNNO = fill(1, nd),
             INTERVENTION = fill(0, nd),
             DUID = PSCB_DUIDS,
+            DISPATCHMODE = fill(0, nd),
             INITIALMW = fill(40.0 + i, nd),
             TOTALCLEARED = fill(40.0 + i, nd),
             AVAILABILITY = fill(100.0, nd),
