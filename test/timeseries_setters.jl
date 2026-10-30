@@ -623,6 +623,8 @@
             @test AustralianElectricityMarkets._agc_ramp_rate(5.0, missing, interval_hours) == 5.0
             @test AustralianElectricityMarkets._agc_ramp_rate(5.0, 1.0, interval_hours) == 12.0
             @test ismissing(AustralianElectricityMarkets._agc_ramp_rate(missing, 1.0, interval_hours))
+            @test AustralianElectricityMarkets._agc_ramp_rate(0.0, 2.0, interval_hours) == 2.0 / interval_hours
+            @test AustralianElectricityMarkets._agc_ramp_rate(5.0, 0.0, interval_hours) == 5.0
         end
 
         @testset "get_fcas_agc_status is nothing when fcas_agc_status is not attached" begin

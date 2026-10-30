@@ -35,6 +35,9 @@ telemetered)) == max(bid, telemetered)`), so using these columns directly as the
 enablement limit" input is correct either way, and is also what they publish as the actual
 enablement limits NEMDE used.
 
+Superseded in part by [0087](0087-agc-ramp-rate-from-mmsdm.md): the §4.2 ramp is now the larger of
+`RAMPUPRATE`/`RAMPDOWNRATE` and the side's regulation availability over the interval, not the rate alone.
+
 `RAISEREGAVAILABILITY`/`LOWERREGAVAILABILITY` looked like the natural §4.2 input by the same
 "minimum of bid and telemetered" description, but they are not the ramp-capped availability for
 every unit. In `~/.nemdb_cache` `DISPATCHLOAD`, `archive_month=2026-06-01`, normal run,

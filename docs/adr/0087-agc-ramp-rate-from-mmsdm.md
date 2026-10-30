@@ -38,8 +38,36 @@ and joint ramping both read this one series.
 
 The derived rate is a lower bound on the telemetered rate. Joint ramping can therefore be tighter than
 NEMDE's. Against the validation files, the derived raise rate is below the true rate in 27 of 417
-generator and 270 of 341 battery unit-intervals. It is never above the true rate, and never tighter than
-using `RAMPUPRATE` alone. The regulation cap itself is exact.
+generator and 270 of 341 battery unit-intervals. It is never above the true rate, and never lower than `RAMPUPRATE`, so joint ramping is at least as
+loose as before wherever `RAMPUPRATE` is positive. Where `RAMPUPRATE` is 0, for example STAN-1 and
+STAN-2 bidding `ROCDOWN = 0` (110 rows in June and July 2026), the old rate meant no scaling and no
+joint row, while the derived rate now applies both. On the two such rows with case files the new cap
+is exact, and NEMDE's solution violates the new row in 0 of 110 rows. The regulation cap itself is
+exact.
+
+The departure from nempy is that nempy takes the ramp rate from the XML `SCADARampUpRate` and
+`SCADARampDnRate`. This replay reads XML for validation only, so the rate comes from the availability
+instead. This decision supersedes the `RAMPUPRATE` choice in ADR 0018 and the matching text in ADR 0017.
+
+## Evidence
+
+- The per-side cap is exact on 111 case files (about 21,000 side rows), with the largest difference
+  under 0.0005 MW.
+- The derived rate is below the true rate for lower in 30 of 417 generator and 277 of 348 battery
+  unit-intervals.
+- June and July 2026 dispatch: cleared regulation is above the derived cap in 0 of about 454,000 rows
+  (158 with the old rate). NEMDE's solution violating the joint row went from 861 to 725 for raise and
+  from 566 to 167 for lower, none of them on batteries.
+
+## Known gap
+
+Availability 0 with a bid and a positive ramp (32 raise and 33 lower rows on STAN and TARONG units,
+June and July 2026) keeps the ramp as the rate, unchanged from before. The cause is unknown.
+
+## Replays
+
+At 2026-01-22 06:25 and 2026-02-17 22:40 the Tasmanian regulation shortfalls are gone. The day FCAS
+price maximum error on 2026-01-22 fell from 202,981 to 2.4 $/MWh.
 
 ## Alternatives
 

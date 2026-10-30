@@ -463,9 +463,9 @@ The AGC ramp rate (MW/h) for one regulation side of one unit-interval: the large
 # Returns
 `Union{Missing, Float64}`.
 """
-# MMSDM does not publish the telemetered AGC ramp rate, and RAMPUPRATE is capped by the bid rate.
-# Availability over the interval is the exact regulation cap, so this lower bound can leave joint ramping tighter than NEMDE.
 function _agc_ramp_rate(ramp_rate, availability, interval_hours::Real)
+    # MMSDM omits the telemetered AGC ramp rate, and RAMPUPRATE is capped by the bid rate. Availability
+    # over the interval is the exact regulation cap, so this lower bound can leave joint ramping tighter than NEMDE's.
     ismissing(ramp_rate) && return missing
     ismissing(availability) && return ramp_rate
     return max(ramp_rate, availability / interval_hours)
