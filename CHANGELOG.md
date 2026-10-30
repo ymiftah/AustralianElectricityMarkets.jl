@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Replays build every unit registered at any point of the trading day for the whole chunk and pad it to zero outside its registration, so units registered after midnight (NESBESS1, BRDDBES1, DRXNSS01 and FCAS-only units with offers from 00:05) no longer fail the build.
+
 - A fast-start unit's fixed loading is attached at every interval outside DISPATCHMODE 1 and 2 instead of being dropped for the whole trading day; its `$<DUID>` constraint row is never built as a generic constraint.
 
 - Loading the simulations package no longer changes the balance-slack price of other area-balance models; the replay passes its Market Price Cap penalty through the network model's slack cost.

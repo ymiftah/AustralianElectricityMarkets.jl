@@ -1037,3 +1037,28 @@ end
     end
     close(db.db)
 end
+
+@testset "Grid padding of bids and FCAS rows" begin
+    AEM = AustralianElectricityMarkets
+    grid = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 15)
+    curve(prices, widths) = PowerSystems.PiecewiseStepData(vcat(0.0, cumsum(widths)), prices)
+    rows = DataFrame(
+        DUID = ["X", "X"], DIRECTION = ["GEN", "GEN"], INTERVAL_DATETIME = [grid[2], grid[3]],
+        MAXAVAIL = [10.0, 20.0], piecewise_step_data = [curve([1.0, 2.0], [5.0, 5.0]), curve([1.5, 2.5], [5.0, 10.0])],
+    )
+    padded = AEM._pad_bids_to_grid(rows, grid)
+    @test nrow(padded) == length(grid)
+    @test padded.INTERVAL_DATETIME == collect(grid)
+    @test padded.MAXAVAIL == [0.0, 10.0, 20.0]
+    # An absent stamp is a zero-width curve on the first real row's prices.
+    @test PowerSystems.get_y_coords(padded.piecewise_step_data[1]) == [1.0, 2.0]
+    @test PowerSystems.get_x_coords(padded.piecewise_step_data[1]) == [0.0, 0.0, 0.0]
+    @test PowerSystems.get_x_coords(padded.piecewise_step_data[2]) == [0.0, 5.0, 10.0]
+    @test_throws ArgumentError AEM._pad_bids_to_grid(vcat(rows, rows), grid)
+    @test_throws ArgumentError AEM._pad_bids_to_grid(rows, grid[1:2])
+
+    values = DataFrame(INTERVAL_DATETIME = [grid[2]], X = [7.0])
+    @test AEM._on_grid(values, :X, grid, 0.0) == [0.0, 7.0, 0.0]
+    @test_throws ArgumentError AEM._on_grid(vcat(values, values), :X, grid, 0.0)
+    @test_throws ArgumentError AEM._on_grid(DataFrame(INTERVAL_DATETIME = [grid[end] + Minute(5)], X = [1.0]), :X, grid, 0.0)
+end

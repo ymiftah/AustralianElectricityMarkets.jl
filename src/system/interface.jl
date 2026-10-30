@@ -86,3 +86,32 @@ function replace_single_series!(sys, component, ts::SingleTimeSeries)
     add_time_series!(sys, component, ts)
     return
 end
+
+
+"""
+    _registration_spans(units) -> Dict{String, Tuple{DateTime, DateTime}}
+
+Maps each `DUID` of `units` to its registration span `(REGISTERED_FROM, REGISTERED_UNTIL)`, as
+[`read_units`](@ref) reports it.
+"""
+function _registration_spans(units)
+    return Dict(String(r.DUID) => (r.REGISTERED_FROM, r.REGISTERED_UNTIL) for r in eachrow(units))
+end
+
+
+"""
+    _is_registered(registered, duid, t) -> Bool
+
+Whether `duid` is registered at the interval-ending stamp `t`, that is `REGISTERED_FROM < t <=
+REGISTERED_UNTIL`. A `nothing` `registered` means every unit is registered at every stamp; a `duid`
+absent from a span dictionary is not registered.
+"""
+function _is_registered(::Nothing, duid, t)
+    return true
+end
+function _is_registered(registered::AbstractDict, duid, t)
+    span = get(registered, String(duid), nothing)
+    isnothing(span) && return false
+    from, until = span
+    return from < t <= until
+end

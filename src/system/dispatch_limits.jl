@@ -52,8 +52,10 @@ available; a load made available later has no ramp or limit series.
 A device with no `DISPATCHLOAD` rows in `date_range`, missing intervals, a `missing` rate or
 `INITIALMW`, or a negative `RAMPUPRATE`/`RAMPDOWNRATE` is a problem; for a `ThermalStandard`,
 `HydroDispatch` or `RenewableDispatch`, a `missing` or negative `AVAILABILITY`, or a
-non-positive static `max_active_power`, is also a problem. A zero `RAMPUPRATE`,
-`RAMPDOWNRATE` or `AVAILABILITY` is carried through as-is: it is AEMO stating that the device
+non-positive static `max_active_power`, is also a problem. A missing interval outside the device's
+registration (`registered`) is not a problem: the device gets zero `"initial_mw"`, ramp rates,
+`"availability"` and `"max_active_power"` there, as it cannot be dispatched before it is registered.
+A zero `RAMPUPRATE`, `RAMPDOWNRATE` or `AVAILABILITY` is carried through as-is: it is AEMO stating that the device
 cannot move, or cannot generate, in that interval. Every problem across every device is
 collected and raised as one aggregated `ArgumentError` naming the affected `DUID`s, and `sys` is
 left unmodified.
@@ -67,11 +69,13 @@ left unmodified.
 - `sys`: the `System` to add to.
 - `rows`: the dispatch-limit rows over `date_range`, as [`read_dispatch_limits`](@ref) returns them.
 - `date_range`: the dispatch intervals to replay. Its step is the model resolution.
+- `registered`: the registration span of each unit, keyed by `DUID` (see `_registration_spans`), or
+  `nothing` when every unit is registered at every interval.
 
 # Returns
 `nothing`.
 """
-function _set_nem_dispatch_limits!(sys, rows, date_range)
+function _set_nem_dispatch_limits!(sys, rows, date_range; registered = nothing)
     base_power = get_base_power(sys)
     full_grid = collect(date_range)[1:(end - 1)]
     interval_hours = Dates.value(Millisecond(step(date_range))) / (1000 * 60 * 60)
@@ -93,16 +97,19 @@ function _set_nem_dispatch_limits!(sys, rows, date_range)
     for device in devices
         duid = get_name(device)
         is_storage = device isa EnergyReservoirStorage
-        if isnothing(by_duid) || !haskey(by_duid, (duid,))
+        # A non-scheduled load's rows are not read: every value it gets is zero.
+        pinned = is_non_scheduled_load(device)
+        device_rows = isnothing(by_duid) || !haskey(by_duid, (duid,)) ? nothing : by_duid[(duid,)]
+        if isnothing(device_rows) && !pinned
             push!(problems, "$duid: no DISPATCHLOAD rows in $date_range")
             continue
         end
-        by_time = Dict(zip(by_duid[(duid,)].SETTLEMENTDATE, eachrow(by_duid[(duid,)])))
-        missing_intervals = setdiff(full_grid, keys(by_time))
-        if !isempty(missing_intervals)
+        by_time = isnothing(device_rows) ? Dict{DateTime, Nothing}() : Dict(zip(device_rows.SETTLEMENTDATE, eachrow(device_rows)))
+        unexplained = [t for t in full_grid if !pinned && !haskey(by_time, t) && _is_registered(registered, duid, t)]
+        if !isempty(unexplained)
             push!(
                 problems,
-                "$duid: missing DISPATCHLOAD row(s) for $(length(missing_intervals)) of $(length(full_grid)) interval(s) (e.g. $(minimum(missing_intervals)))",
+                "$duid: missing DISPATCHLOAD row(s) for $(length(unexplained)) of $(length(full_grid)) interval(s) (e.g. $(minimum(unexplained)))",
             )
             continue
         end
@@ -127,17 +134,18 @@ function _set_nem_dispatch_limits!(sys, rows, date_range)
         max_active_power = is_storage ? nothing : Float64[]
         availability = is_storage ? nothing : Float64[]
         reason = nothing
-        pinned = is_non_scheduled_load(device)
         for t in full_grid
-            row = by_time[t]
-            if pinned
-                # A non-scheduled load's consumption is already in regional demand and is not
-                # dispatched: its energy is fixed at zero whatever DISPATCHLOAD meters.
+            # A non-scheduled load is dispatched at zero whatever DISPATCHLOAD meters; an unregistered
+            # interval has no row and is zero because the unit is not on the system then.
+            row = get(by_time, t, nothing)
+            if pinned || isnothing(row)
                 push!(initial_mw, 0.0)
                 push!(ramp_up_rate, 0.0)
                 push!(ramp_down_rate, 0.0)
-                push!(max_active_power, 0.0)
-                push!(availability, 0.0)
+                if !is_storage
+                    push!(max_active_power, 0.0)
+                    push!(availability, 0.0)
+                end
                 continue
             end
             if ismissing(row.INITIALMW) || ismissing(row.RAMPUPRATE) || ismissing(row.RAMPDOWNRATE) ||

@@ -145,6 +145,59 @@ end
 
 
 """
+    _replay_grid(date_range, resolution) -> Vector{DateTime}
+
+The interval-ending stamps the replay setters write: from the first stamp of `date_range` up to its
+last stamp less `resolution`, the exclusive end of the range.
+"""
+function _replay_grid(date_range, resolution)
+    return collect(first(date_range):resolution:(last(date_range) - resolution))
+end
+
+
+# Throws `ArgumentError` if `stamps` repeats a stamp or has one outside `grid`; `label` names the input.
+function _check_stamps_on_grid(stamps, grid, label::AbstractString)
+    allunique(stamps) || throw(ArgumentError("$label has a duplicate INTERVAL_DATETIME"))
+    on_grid = Set(grid)
+    outside = [t for t in stamps if !(t in on_grid)]
+    isempty(outside) || throw(ArgumentError("$label has INTERVAL_DATETIME outside the replay grid, e.g. $(first(outside))"))
+    return
+end
+
+
+"""
+    _pad_bids_to_grid(group, grid) -> DataFrame
+
+Pads one `(DUID, DIRECTION)` group of energy bids to every stamp of `grid`. An absent stamp has
+`MAXAVAIL` zero and a zero-width curve on the group's first prices, so the unit offers nothing there.
+Throws an `ArgumentError` for a duplicated stamp or one outside `grid`.
+
+# Arguments
+- `group`: the bids of one unit and direction, with `INTERVAL_DATETIME`, `MAXAVAIL` and
+  `piecewise_step_data`.
+- `grid`: the interval-ending stamps of the replay chunk.
+
+# Returns
+A `DataFrame` with `DUID`, `DIRECTION`, `INTERVAL_DATETIME`, `MAXAVAIL` and `piecewise_step_data`,
+one row per stamp of `grid`.
+"""
+function _pad_bids_to_grid(group::AbstractDataFrame, grid)
+    duid, direction = first(group.DUID), first(group.DIRECTION)
+    _check_stamps_on_grid(group.INTERVAL_DATETIME, grid, "energy bids for $duid $direction")
+    by_time = Dict(zip(group.INTERVAL_DATETIME, eachrow(group)))
+    prices = get_y_coords(first(group.piecewise_step_data))
+    absent = PiecewiseStepData(zeros(length(prices) + 1), copy(prices))
+    return DataFrame(
+        DUID = fill(duid, length(grid)),
+        DIRECTION = fill(direction, length(grid)),
+        INTERVAL_DATETIME = collect(grid),
+        MAXAVAIL = [haskey(by_time, t) ? by_time[t].MAXAVAIL : 0.0 for t in grid],
+        piecewise_step_data = [haskey(by_time, t) ? by_time[t].piecewise_step_data : absent for t in grid],
+    )
+end
+
+
+"""
     set_market_bids!(sys, db, date_range; kwargs...)
 
 Adds market bid cost time series data to the system.
@@ -166,11 +219,15 @@ gets decremental/load-side bid costs, and each direction's energy `MAXAVAIL`, re
 
 # Loss factors
 Energy bid prices are connection-point prices and are always divided by the unit's loss factor,
-resolved as of `first(date_range)` by [`read_loss_factors`](@ref) (one factor per unit for
-the whole range; a warning flags a change inside it), which refers the bids to the regional
-reference node as NEMDE does. The MW axis, FCAS bids and physical limits are untouched. A bidding
-generator, scheduled load or battery of `sys` with no `DUDETAILSUMMARY` row in force throws an
-`ArgumentError`.
+resolved over the chunk by [`read_loss_factors`](@ref) (one factor per unit for the whole range;
+a warning flags a change inside it), which refers the bids to the regional reference node as NEMDE
+does. The MW axis, FCAS bids and physical limits are untouched. A bidding generator, scheduled
+load or battery of `sys` with no `DUDETAILSUMMARY` row in the window throws an `ArgumentError`.
+
+# Grid
+Each `(DUID, DIRECTION)` series spans every interval of `date_range` but its last stamp. An interval
+without an offer, such as one before the unit's registration, is zero `MAXAVAIL` with a zero-width
+curve (see `_pad_bids_to_grid`); a gap inside a registration is caught before this function runs.
 """
 function set_market_bids!(sys, db, date_range; kwargs...)
     start_date = first(date_range)
@@ -179,19 +236,23 @@ function set_market_bids!(sys, db, date_range; kwargs...)
 
     bids = _massage_bids(db, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
     sys_units = Set(get_name(c) for T in (Generator, InterruptiblePowerLoad, EnergyReservoirStorage) for c in get_components(T, sys))
-    factors = read_loss_factors(db; as_of = start_date, through = end_date)
+    factors = read_loss_factors(db; as_of = start_date, through = last(date_range) - step(date_range))
     # Validate band quantities even for units absent from the constructed system.
     _set_referred_bid_curves!(bids, factors; units = sys_units)
     subset!(bids, :DUID => ByRow(in(sys_units)))
 
+    grid = _replay_grid(date_range, resolution)
     by_unit_side = groupby(bids, [:DUID, :DIRECTION]; sort = false)
+    padded = Dict{Tuple{String, String}, DataFrame}(
+        (String(key.DUID), String(key.DIRECTION)) => _pad_bids_to_grid(sub, grid) for (key, sub) in pairs(by_unit_side)
+    )
     empty_bids = view(bids, Int[], :)
     offered_units = Set(bids.DUID)
 
     # Sets all generator subtype first
     foreach(get_components(Generator, sys)) do gen
         gen_id = get_name(gen)
-        gen_bids = get(by_unit_side, (gen_id, "GEN"), empty_bids)
+        gen_bids = get(padded, (gen_id, "GEN"), empty_bids)
         if DataFrames.isempty(gen_bids)
             @warn "No bid data for generator $(gen_id), setting to unavailable."
             set_available!(gen, false)
@@ -207,7 +268,7 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     foreach(get_components(InterruptiblePowerLoad, sys)) do load
         is_non_scheduled_load(load) && return
         load_id = get_name(load)
-        load_bids = get(by_unit_side, (load_id, "LOAD"), empty_bids)
+        load_bids = get(padded, (load_id, "LOAD"), empty_bids)
         if DataFrames.isempty(load_bids)
             load_id in offered_units ? push!(gen_bid_loads, load_id) : push!(unbid_loads, load_id)
             set_available!(load, false)
@@ -221,8 +282,8 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     # Then sets the batteries
     return foreach(get_components(EnergyReservoirStorage, sys)) do gen
         gen_id = get_name(gen)
-        gen_bids = get(by_unit_side, (gen_id, "GEN"), empty_bids)
-        load_bids = get(by_unit_side, (gen_id, "LOAD"), empty_bids)
+        gen_bids = get(padded, (gen_id, "GEN"), empty_bids)
+        load_bids = get(padded, (gen_id, "LOAD"), empty_bids)
 
         if DataFrames.isempty(gen_bids) || DataFrames.isempty(load_bids)
             @warn "No bid data for generator $(gen_id), setting to unavailable."

@@ -100,8 +100,10 @@ Reads each unit's connection-point loss factors from `DUDETAILSUMMARY`: the row 
 - `db`: the database connection.
 - `as_of`: a `Date` or `DateTime` to resolve the factors as of. `nothing` keeps each unit's open row
   (earliest `START_DATE`, the row [`read_units`](@ref) keeps).
-- `through`: when a `Date` or `DateTime` after `as_of`, warns if any unit's factors change
-  in `(as_of, through]`, since the result holds one factor per unit.
+- `through`: when a `Date` or `DateTime` after `as_of`, resolves the factors over the window
+  `[as_of, through]` instead: each unit's earliest row registered in it, the row
+  [`read_units`](@ref) keeps with the same `through`. Warns if a unit's factors differ between its
+  rows in the window, since the result holds one factor per unit.
 
 # Returns
 A `DataFrame` with `DUID`, `LOAD_LOSS_FACTOR` (`TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR`,
@@ -115,9 +117,16 @@ function read_loss_factors(
         through::Union{Nothing, Date, DateTime} = nothing,
     )
     source = read_hive(db, :DUDETAILSUMMARY)
-    window = isnothing(as_of) ? "(END_DATE IS NULL OR year(END_DATE) = 2999)" : "START_DATE <= ? AND (END_DATE IS NULL OR END_DATE > ?)"
+    windowed = !isnothing(as_of) && !isnothing(through) && through > as_of
+    window = if isnothing(as_of)
+        "(END_DATE IS NULL OR year(END_DATE) = 2999)"
+    elseif windowed
+        _registration_window_sql()
+    else
+        "START_DATE <= ? AND (END_DATE IS NULL OR END_DATE > ?)"
+    end
     # Open rows keep the earliest START_DATE, as read_units does, so both readers pick the same row.
-    order = isnothing(as_of) ? "ASC" : "DESC"
+    order = isnothing(as_of) || windowed ? "ASC" : "DESC"
     sql = """
         SELECT DUID,
             TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR AS LOAD_LOSS_FACTOR,
@@ -128,15 +137,28 @@ function read_loss_factors(
         WHERE archive_month = (SELECT max(archive_month) FROM $source) AND $window
         QUALIFY row_number() OVER (PARTITION BY DUID ORDER BY START_DATE $order) = 1
     """
-    factors = isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of, as_of])
-    if !isnothing(as_of) && !isnothing(through) && through > as_of
+    factors = if isnothing(as_of)
+        _query(db, sql)
+    elseif windowed
+        _query(db, sql, [through, as_of])
+    else
+        _query(db, sql, [as_of, as_of])
+    end
+    if windowed
         changed_all = _query(
             db,
             """
-            SELECT DISTINCT DUID FROM $source
-            WHERE archive_month = (SELECT max(archive_month) FROM $source) AND START_DATE > ? AND START_DATE <= ?
+            SELECT DISTINCT DUID FROM (
+                SELECT DUID,
+                    coalesce(min(TRANSMISSIONLOSSFACTOR) OVER w <> max(TRANSMISSIONLOSSFACTOR) OVER w, false)
+                    OR coalesce(min(DISTRIBUTIONLOSSFACTOR) OVER w <> max(DISTRIBUTIONLOSSFACTOR) OVER w, false)
+                    OR (min(SECONDARY_TLF) OVER w IS DISTINCT FROM max(SECONDARY_TLF) OVER w) AS CHANGED
+                FROM $source
+                WHERE archive_month = (SELECT max(archive_month) FROM $source) AND $window
+                WINDOW w AS (PARTITION BY DUID)
+            ) WHERE CHANGED
             """,
-            [as_of, through],
+            [through, as_of],
         ).DUID
         changed = intersect(changed_all, factors.DUID)
         isempty(changed) ||

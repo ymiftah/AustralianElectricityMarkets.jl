@@ -147,3 +147,121 @@ end
     @test !isnothing(service)
     @test !isempty(get_contributing_devices(sys, service))
 end
+
+@testset "units registered mid-chunk are built for the whole chunk" begin
+    hive = mktempdir()
+    create_mock_data(hive; complete_inputs = true)
+    write_mock_interconnector_results(hive)
+    interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+    grid = collect(interval)[1:(end - 1)]
+    full = nem_system(aem_connect(HiveConfiguration(hive_location = hive)), NEMDEConfiguration(); date_range = interval)
+    series(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true) .* get_base_power(full)
+    # A unit first registered at `stamp`: its summary and loss-factor rows start there, and its
+    # bids and dispatch rows before it are removed, as NEMWEB has them.
+    function registered_from(source, duid, stamp)
+        t = "TIMESTAMP '$stamp'"
+        steps = [
+            (:DUDETAILSUMMARY, "UPDATE input SET START_DATE = $t WHERE DUID = '$duid'"),
+            (:DUDETAIL, "UPDATE input SET EFFECTIVEDATE = $t WHERE DUID = '$duid'"),
+            (:BIDPEROFFER_D, "DELETE FROM input WHERE DUID = '$duid' AND INTERVAL_DATETIME <= $t"),
+            (:DISPATCHLOAD, "DELETE FROM input WHERE DUID = '$duid' AND SETTLEMENTDATE <= $t"),
+        ]
+        for (table, query) in steps
+            source = damaged_cache(source, table, query).config.hive_location
+        end
+        return source
+    end
+    connect(source) = aem_connect(HiveConfiguration(hive_location = source, filesystem = "file"))
+    late_hive = registered_from(hive, "BW02", "2025-01-01 00:10:00")
+    late = nem_system(connect(late_hive), NEMDEConfiguration(); date_range = interval)
+    bw02 = get_component(Generator, late, "BW02")
+    bw02_full = get_component(Generator, full, "BW02")
+    # BW02 is registered only at 00:15, so the two earlier stamps are zero-padded.
+    for name in ("energy_max_avail", "availability", "initial_mw", "ramp_up_rate", "ramp_down_rate")
+        @test series(bw02, name) ≈ [0.0, 0.0, series(bw02_full, name)[3]]
+    end
+    @test length(get_time_series_timestamps(SingleTimeSeries, bw02, "energy_max_avail")) == length(grid)
+
+    # Every single-time-series input of every injection spans the whole chunk.
+    for device in get_components(StaticInjection, late), key in get_time_series_keys(device)
+        get_time_series_type(key) === SingleTimeSeries || continue
+        stamps = get_time_series_timestamps(SingleTimeSeries, device, get_name(key))
+        @test stamps == grid
+    end
+    @test isempty(get_dropped_terms(late))
+    @test isempty(get_skipped_constraints(late))
+    @test_nowarn prepare_replay_forecasts!(late)
+
+    @testset "a partly published FCAS trapezium is zero where AEMO publishes none" begin
+        partial = damaged_cache(
+            hive, :BIDPEROFFER_D,
+            "DELETE FROM input WHERE DUID = 'BW01' AND BIDTYPE <> 'ENERGY' AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:05:00'",
+        )
+        sys = nem_system(partial, NEMDEConfiguration(); date_range = interval)
+        battery = get_component(EnergyReservoirStorage, sys, "BW01")
+        battery_full = get_component(EnergyReservoirStorage, full, "BW01")
+        trapezium = fcas_series_name("fcas_trapezium", BidType.RAISE6SEC, false)
+        values = get_time_series_values(SingleTimeSeries, battery, trapezium; ignore_scaling_factors = true)
+        @test length(values) == length(grid)
+        @test isequal(values[1], (0.0, 0.0, 0.0, 0.0, 0.0, NaN, NaN))
+        @test isequal(values[2:3], get_time_series_values(SingleTimeSeries, battery_full, trapezium; ignore_scaling_factors = true)[2:3])
+        # Every FCAS offer curve, whichever device carries it, spans the whole chunk.
+        for svc in get_components(FCASService, sys), device in get_contributing_devices(sys, svc), decremental in (false, true)
+            has_time_series(device, SingleTimeSeries, fcas_offer_series_name(svc, decremental)) || continue
+            @test length(get_time_series_values(SingleTimeSeries, device, fcas_offer_series_name(svc, decremental); ignore_scaling_factors = true)) == length(grid)
+        end
+    end
+
+    @testset "a non-scheduled FCAS-only load is zero where its data stops" begin
+        stopped = damaged_cache(
+            hive, :DISPATCHLOAD,
+            "DELETE FROM input WHERE DUID = 'ASLOAD1' AND SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:15:00'",
+        ).config.hive_location
+        stopped = damaged_cache(
+            stopped, :BIDPEROFFER_D,
+            "DELETE FROM input WHERE DUID = 'ASLOAD1' AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:15:00'",
+        ).config.hive_location
+        sys = nem_system(connect(stopped), NEMDEConfiguration(); date_range = interval)
+        load = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
+        @test all(iszero, series(load, "initial_mw"))
+        values = get_time_series_values(SingleTimeSeries, load, fcas_series_name("fcas_trapezium", BidType.RAISE6SEC, true); ignore_scaling_factors = true)
+        @test length(values) == length(grid)
+        @test all(iszero, values[3][1:5])
+    end
+
+    @testset "a unit deregistered inside the chunk is zero after its last stamp" begin
+        ended = damaged_cache(hive, :DUDETAILSUMMARY, "UPDATE input SET END_DATE = TIMESTAMP '2025-01-01 00:10:00' WHERE DUID = 'BW04'").config.hive_location
+        ended = damaged_cache(ended, :BIDPEROFFER_D, "DELETE FROM input WHERE DUID = 'BW04' AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:15:00'").config.hive_location
+        ended = damaged_cache(ended, :DISPATCHLOAD, "DELETE FROM input WHERE DUID = 'BW04' AND SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:15:00'").config.hive_location
+        sys = nem_system(connect(ended), NEMDEConfiguration(); date_range = interval)
+        gen = get_component(RenewableDispatch, sys, "BW04")
+        @test series(gen, "availability")[1:2] ≈ series(get_component(RenewableDispatch, full, "BW04"), "availability")[1:2]
+        @test series(gen, "availability")[3] == 0.0
+        @test series(gen, "uigf")[3] == 0.0
+    end
+
+    @testset "a semi-scheduled unit registered mid-chunk has zero UIGF before registration" begin
+        semi_late = registered_from(hive, "BW03", "2025-01-01 00:10:00")
+        sys = nem_system(connect(semi_late), NEMDEConfiguration(); date_range = interval)
+        gen = get_component(RenewableDispatch, sys, "BW03")
+        @test get_ext(gen)["nem_semi_scheduled"] === true
+        @test series(gen, "uigf")[1:2] == [0.0, 0.0]
+        @test series(gen, "uigf")[3] ≈ series(get_component(RenewableDispatch, full, "BW03"), "uigf")[3]
+    end
+
+    @testset "missing rows inside a registration still throw" begin
+        gap = damaged_cache(hive, :DISPATCHLOAD, "DELETE FROM input WHERE DUID = 'BW01' AND SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:10:00'")
+        @test_throws r"BW01.*missing DISPATCHLOAD" nem_system(gap, NEMDEConfiguration(); date_range = interval)
+        gap = damaged_cache(hive, :BIDPEROFFER_D, "DELETE FROM input WHERE DUID = 'BW03' AND BIDTYPE = 'ENERGY' AND DIRECTION = 'GEN' AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:10:00'")
+        @test_throws r"incomplete energy bid inputs for BW03 GEN" nem_system(gap, NEMDEConfiguration(); date_range = interval)
+        gap = damaged_cache(late_hive, :BIDPEROFFER_D, "DELETE FROM input WHERE DUID = 'BW02' AND BIDTYPE = 'ENERGY' AND DIRECTION = 'GEN' AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:15:00'")
+        @test_throws r"incomplete energy bid inputs for BW02 GEN" nem_system(gap, NEMDEConfiguration(); date_range = interval)
+    end
+
+    @testset "the as-of network keeps units in force at the first stamp" begin
+        # The regional build itself needs a region with generators left, so the unit table is checked directly.
+        network, units, _ = AustralianElectricityMarkets.RegionModel._nem_network(connect(late_hive); as_of = DateTime(2025, 1, 1, 0, 5))
+        @test !("BW02" in units.DUID)
+        @test isnothing(get_component(Generator, network, "BW02"))
+    end
+end

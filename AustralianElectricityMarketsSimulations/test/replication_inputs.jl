@@ -58,3 +58,23 @@ end
     sys, _ = AustralianElectricityMarkets.RegionModel._constrained_system(db; date_range = later)
     @test_throws r"missing.*constraint.*2030" replication_template(sys)
 end
+
+@testset "a unit registered mid-chunk passes the replay template" begin
+    # BW02 is registered from 00:10 of the replay hive, so it is built for the whole chunk.
+    t = "TIMESTAMP '2025-01-01 00:10:00'"
+    hive = AEM_TEST_REPLAY_HIVE_DIR
+    for (table, query) in [
+            (:DUDETAILSUMMARY, "UPDATE input SET START_DATE = $t WHERE DUID = 'BW02'"),
+            (:DUDETAIL, "UPDATE input SET EFFECTIVEDATE = $t WHERE DUID = 'BW02'"),
+            (:BIDPEROFFER_D, "DELETE FROM input WHERE DUID = 'BW02' AND INTERVAL_DATETIME <= $t"),
+            (:DISPATCHLOAD, "DELETE FROM input WHERE DUID = 'BW02' AND SETTLEMENTDATE <= $t"),
+        ]
+        hive = damaged_cache(hive, table, query).config.hive_location
+    end
+    db = aem_connect(HiveConfiguration(hive_location = hive))
+    interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+    sys = nem_system(db, NEMDEConfiguration(); date_range = interval)
+    @test !isnothing(get_component(Generator, sys, "BW02"))
+    prepare_replay_forecasts!(sys)
+    @test_nowarn replication_template(sys)
+end

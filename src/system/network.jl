@@ -1,26 +1,29 @@
 """
-    _nem_network(db; time_series_in_memory = true, as_of = nothing, kwargs...) -> (sys, units, gen_df)
+    _nem_network(db; time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...) -> (sys, units, gen_df)
 
 Builds the NEM network without operation costs: buses, loads, branches, generators, batteries,
 scheduled loads and area interfaces, with every generator's operation cost zero. Reads no ISP cost
-table. `units` is the unit table as of `as_of`, and `gen_df` is the generator table the generators
-were built from, for `_set_isp_generation_costs!`.
+table. `units` is the unit table as of `as_of`, or over the window `[as_of, through]` (see
+[`read_units`](@ref)), and `gen_df` is the generator table the generators were built from, for
+`_set_isp_generation_costs!`.
 
 # Arguments
 - `db`: The database connection.
 - `time_series_in_memory`: Store time series in memory when `true`.
 - `as_of`: A `Date` or `DateTime` to resolve the unit and interconnector tables as of; `nothing`
   uses the latest cached version.
+- `through`: The end of the unit window that starts at `as_of`; `nothing` builds the units in
+  force at `as_of` only.
 - `kwargs...`: Passed to the `PowerSystems.System` constructor.
 
 # Returns
 A tuple `(sys, units, gen_df)`.
 """
-function _nem_network(db; time_series_in_memory = true, as_of = nothing, kwargs...)
+function _nem_network(db; time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...)
     @info "parsing buses"
     interconnectors = read_interconnectors(db; as_of = as_of)
     bus_df = _bus_dataframe(interconnectors)
-    units = read_units(db; as_of = as_of)
+    units = read_units(db; as_of = as_of, through = through)
     @info "parsing loads"
     loads_df = get_load_dataframe(bus_df)
     @info "parsing branches"

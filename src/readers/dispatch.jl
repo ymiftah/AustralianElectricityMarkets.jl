@@ -149,10 +149,11 @@ function read_energy_limits(db, date_range; intervention::Integer = 0)
             SELECT o.INTERVAL_DATETIME AS SETTLEMENTDATE, o.DUID, o.DIRECTION,
                    TRY_CAST(o.MAXAVAIL AS DOUBLE) AS MAXAVAIL, o.UIGF, sm_at.SCHEDULE_TYPE
             FROM nem_energy_offers o
+            -- An interval-ending stamp equal to END_DATE is still registered; a row starting at the stamp wins.
             LEFT JOIN LATERAL (
                 SELECT SCHEDULE_TYPE FROM sm
                 WHERE sm.DUID = o.DUID AND sm.START_DATE <= o.INTERVAL_DATETIME
-                  AND (sm.END_DATE IS NULL OR sm.END_DATE > o.INTERVAL_DATETIME)
+                  AND (sm.END_DATE IS NULL OR sm.END_DATE >= o.INTERVAL_DATETIME)
                 ORDER BY START_DATE DESC LIMIT 1
             ) sm_at ON true
             ORDER BY o.DUID, o.DIRECTION, o.INTERVAL_DATETIME

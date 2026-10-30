@@ -34,7 +34,9 @@ end
 
 Builds a constrained system populated with demand, energy and FCAS bids, scaling and dispatch
 inputs, energy limits, interconnector losses and MNSP offers as single time series, then attaches
-the effective FCAS offers and tie-break scales derived from them.
+the effective FCAS offers and tie-break scales derived from them. Every unit registered at any
+interval of `date_range` is built for the whole range; outside its registration it has zero
+availability and offers nothing. A missing input inside a registration is an error.
 
 # Arguments
 - `db`: the market cache connection.
@@ -62,6 +64,7 @@ function AustralianElectricityMarkets.nem_system(
         db; date_range, intervention,
         time_series_in_memory, storage...,
     )
+    registered = AustralianElectricityMarkets._registration_spans(units)
     bids = read_energy_bids(db, date_range)
     dispatch = read_dispatch_limits(db, date_range; intervention, resolution)
     demand = read_demand(db, date_range; resolution)
@@ -71,8 +74,8 @@ function AustralianElectricityMarkets.nem_system(
     set_market_bids!(sys, db, date_range; resolution)
     set_fcas_service_bids!(sys, db, date_range; resolution)
     set_fcas_scaling_inputs!(sys, db, date_range; intervention)
-    AustralianElectricityMarkets._set_nem_dispatch_limits!(sys, dispatch, date_range)
-    set_nem_energy_limits!(sys, db, date_range; intervention)
+    AustralianElectricityMarkets._set_nem_dispatch_limits!(sys, dispatch, date_range; registered)
+    set_nem_energy_limits!(sys, db, date_range; intervention, registered)
     set_mnsp_offers!(sys, db, date_range; intervention)
     interval_flow_limits && set_interconnector_flow_limits!(sys, db, date_range; intervention)
     set_fcas_effective_offers!(sys)
@@ -97,7 +100,8 @@ Verifies the cached bids and demand cover every interval of `date_range` (its la
 excluded). Every region with a unit (`DUDETAILSUMMARY`) needs regional demand (`DISPATCHREGIONSUM`)
 at every interval. Every scheduled unit of `sys` that bids energy (`BIDPEROFFER_D`), or is
 available or metered in `DISPATCHLOAD`, needs an energy period offer with a finite non-negative
-`MAXAVAIL` at every interval, read independently of the price join with `BIDDAYOFFER_D`.
+`MAXAVAIL` at every interval of its registration in `units` (`REGISTERED_FROM` to `REGISTERED_UNTIL`),
+read independently of the price join with `BIDDAYOFFER_D`.
 Non-scheduled units and loads are not checked.
 
 # Arguments
@@ -112,7 +116,7 @@ Non-scheduled units and loads are not checked.
 function _check_replay_energy_bid_coverage(sys, db, date_range; intervention::Integer = 0)
     bids = read_energy_bids(db, date_range)
     dispatch = read_dispatch_limits(db, date_range; intervention = intervention)
-    units = read_units(db; as_of = first(date_range))
+    units = read_units(db; as_of = first(date_range), through = last(date_range) - step(date_range))
     demand = read_demand(db, date_range)
     return _check_replay_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
 end
@@ -121,6 +125,7 @@ end
 function _check_replay_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
     demand_stamps = Set(zip(demand.REGIONID, demand.SETTLEMENTDATE))
     grid = collect(date_range)[1:(end - 1)]
+    registered = AustralianElectricityMarkets._registration_spans(units)
     missing_demand = [(region, t) for region in sort!(unique(units.REGIONID)), t in grid if !((region, t) in demand_stamps)]
     isempty(missing_demand) || throw(
         ArgumentError(
@@ -156,7 +161,8 @@ function _check_replay_energy_bid_coverage(sys, bids, dispatch, units, demand, d
         )
     end
     for name in sort!(collect(keys(required))), direction in required[name]
-        missing_intervals = setdiff(grid, get(coverage, (name, direction), Set{DateTime}()))
+        expected = filter(t -> AustralianElectricityMarkets._is_registered(registered, name, t), grid)
+        missing_intervals = setdiff(expected, get(coverage, (name, direction), Set{DateTime}()))
         isempty(missing_intervals) || throw(
             ArgumentError(
                 "incomplete energy bid inputs for $name $direction: missing $(length(missing_intervals)) intervals, " *

@@ -1,5 +1,5 @@
 """
-    set_nem_energy_limits!(sys, db, date_range; intervention = 0)
+    set_nem_energy_limits!(sys, db, date_range; intervention = 0, registered = nothing)
 
 Attaches separate energy `MAXAVAIL` and semi-scheduled `UIGF` series, in system-base per-unit,
 to available non-storage dispatch devices. Validates complete, finite, non-negative inputs
@@ -10,12 +10,15 @@ and a stable effective schedule type before modifying `sys`.
 - `db`: the market cache connection.
 - `date_range`: five-minute dispatch intervals, including the exclusive stop timestamp.
 - `intervention`: the dispatch run used for UIGF.
+- `registered`: the registration span of each unit, keyed by `DUID` (see `_registration_spans`), or
+  `nothing` when every unit is registered at every interval. A registered unit without an energy
+  offer at an interval is an error; an unregistered one gets zero `MAXAVAIL` and `UIGF` there.
 
 # Returns
 `nothing`. Non-scheduled FCAS-only loads receive zero energy availability and are identified
 as non-semi-scheduled. Missing required input raises `ArgumentError`.
 """
-function set_nem_energy_limits!(sys, db, date_range; intervention::Integer = 0)
+function set_nem_energy_limits!(sys, db, date_range; intervention::Integer = 0, registered = nothing)
     step(date_range) == Minute(5) || throw(ArgumentError("energy limits require five-minute intervals"))
     grid = collect(date_range)[1:(end - 1)]
     isempty(grid) && throw(ArgumentError("energy limits require at least one interval"))
@@ -34,10 +37,20 @@ function set_nem_energy_limits!(sys, db, date_range; intervention::Integer = 0)
             push!(modes, "NON-SCHEDULED")
         else
             direction = device isa PSY.ControllableLoad ? "LOAD" : "GEN"
+            # Decided from the offers that exist, before any absent interval is padded.
+            semi_known = any(
+                t -> haskey(by_offer, (name, direction, t)) && isequal(by_offer[(name, direction, t)].SCHEDULE_TYPE, "SEMI-SCHEDULED"),
+                grid,
+            )
             for t in grid
                 key = (name, direction, t)
                 if !haskey(by_offer, key)
-                    push!(problems, "$name $direction at $t: missing energy offer")
+                    if _is_registered(registered, name, t)
+                        push!(problems, "$name $direction at $t: missing energy offer")
+                    else
+                        push!(availability, 0.0)
+                        semi_known && push!(forecast, 0.0)
+                    end
                     continue
                 end
                 row = by_offer[key]

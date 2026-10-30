@@ -81,6 +81,52 @@ let
         @test isempty(read_units(vdb; as_of = DateTime(2019, 1, 1)))
     end
 
+    @testset "read_units over a registration window" begin
+        vdir = mktempdir()
+        create_versioned_static_data(hive_dir, vdir)
+        vwin = aem_connect(HiveConfiguration(hive_location = vdir, filesystem = "file"))
+        window = read_units(vwin; as_of = DateTime(2025, 3, 1), through = DateTime(2025, 8, 1))
+        bw01 = window[window.DUID .== "BW01", :]
+        # Both BW01 rows overlap the window: the earlier one supplies the attributes, the span covers both.
+        @test only(bw01.CONNECTIONPOINTID) == "CP_BAYSW"
+        @test only(bw01.REGISTERED_FROM) == DateTime(2020, 1, 1)
+        @test only(bw01.REGISTERED_UNTIL) == DateTime(2999, 12, 31)
+        @test allunique(window.DUID)
+        # Only the first row overlaps a window ending before the change.
+        before = read_units(vwin; as_of = DateTime(2025, 3, 1), through = DateTime(2025, 6, 1))
+        @test only(before[before.DUID .== "BW01", :REGISTERED_UNTIL]) == DateTime(2025, 7, 1)
+        @test isempty(read_units(vwin; as_of = DateTime(2019, 1, 1), through = DateTime(2019, 12, 31)))
+        @test_throws ArgumentError read_units(vwin; through = DateTime(2025, 1, 1))
+    end
+
+    @testset "a mid-window region change is rejected and a loss factor change warns" begin
+        # A second BW03 row from 00:10 in another region (BW03 is in QLD1), the first row left open.
+        moved = damaged_cache(
+            hive_dir, :DUDETAILSUMMARY,
+            "INSERT INTO input SELECT * REPLACE (TIMESTAMP '2025-01-01 00:10:00' AS START_DATE, 'NSW1' AS REGIONID) FROM input WHERE DUID = 'BW03'",
+        )
+        window = (as_of = DateTime(2025, 1, 1, 0, 5), through = DateTime(2025, 1, 1, 0, 15))
+        @test_throws r"BW03.*REGIONID" read_units(moved; window...)
+        # A changed loss factor is not an error: the earlier row's factor is used, with a warning.
+        lossy = damaged_cache(
+            hive_dir, :DUDETAILSUMMARY,
+            "INSERT INTO input SELECT * REPLACE (TIMESTAMP '2025-01-01 00:10:00' AS START_DATE, 0.9 AS TRANSMISSIONLOSSFACTOR) FROM input WHERE DUID = 'BW03'",
+        )
+        @test read_units(lossy; window...) isa DataFrame
+        factors = @test_logs (:warn, r"Loss factors change") match_mode = :any read_loss_factors(lossy; window...)
+        @test only(factors[factors.DUID .== "BW03", :LOAD_LOSS_FACTOR]) == 1.0
+        # Identical factors across the window stay quiet.
+        same = damaged_cache(
+            hive_dir, :DUDETAILSUMMARY,
+            "INSERT INTO input SELECT * REPLACE (TIMESTAMP '2025-01-01 00:10:00' AS START_DATE) FROM input WHERE DUID = 'BW03'",
+        )
+        quiet = Test.TestLogger()
+        Base.CoreLogging.with_logger(quiet) do
+            read_loss_factors(same; window...)
+        end
+        @test !any(occursin("Loss factors change", string(record.message)) for record in quiet.logs)
+    end
+
     @testset "read_demand" begin
         df = read_demand(db)
         @test df isa DataFrame

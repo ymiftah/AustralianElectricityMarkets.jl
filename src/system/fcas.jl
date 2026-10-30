@@ -167,29 +167,49 @@ function _add_fcas_service!(sys, region, bid_type, candidates, added, excluded)
 end
 
 
+# The values of `field` in `rows` on `grid`: the value at each stamp, or `pad` where `rows` has none.
+# Rows at a repeated stamp, or outside `grid`, are an error.
+function _on_grid(rows, field::Symbol, grid, pad)
+    stamps = rows.INTERVAL_DATETIME
+    _check_stamps_on_grid(stamps, grid, "FCAS $(field) rows")
+    by_time = Dict(zip(stamps, rows[!, field]))
+    return [get(by_time, t, pad) for t in grid]
+end
+
+
+# A zero trapezium on every MW and ramp field: no offer is available there, so no ramp is defined.
+const _ABSENT_FCAS_TRAPEZIUM = (0.0, 0.0, 0.0, 0.0, 0.0, NaN, NaN)
+
+
 """
-    _attach_fcas_trapezium_series!(sys, component, gdf, duid, bid_type, side, start_date, resolution)
+    _attach_fcas_trapezium_series!(sys, component, gdf, duid, bid_type, side, grid, resolution)
 
 Attaches the per-`(component, FCAS market, side)` `"fcas_trapezium_..."` `SingleTimeSeries`
 ([`fcas_series_name`](@ref)) from `gdf` (a `DUID`-grouped bids `DataFrame`) if `duid` has a group
-in it. No-op otherwise, so callers can probe a component against several `DIRECTION` groupings
-without checking `haskey` themselves. Returns whether the series was attached.
+in it, one value per stamp of `grid`. A stamp without a bid holds a zero trapezium, which offers
+nothing there. No-op otherwise, so callers can probe a component against several `DIRECTION`
+groupings without checking `haskey` themselves. Returns whether the series was attached.
 """
-function _attach_fcas_trapezium_series!(sys, component, gdf, duid::AbstractString, bid_type::BidType, side::OfferSide, start_date, resolution)
+function _attach_fcas_trapezium_series!(sys, component, gdf, duid::AbstractString, bid_type::BidType, side::OfferSide, grid, resolution)
     (isnothing(gdf) || !haskey(gdf, (duid,))) && return false
     rows = gdf[(duid,)]
-    # rows.trapezium_row is a SubArray view into the grouped DataFrame - the series needs a plain Vector.
-    trapezium_ts = single_series(fcas_series_name("fcas_trapezium", bid_type, side), start_date, collect(rows.trapezium_row), resolution)
+    trapezium_ts = single_series(
+        fcas_series_name("fcas_trapezium", bid_type, side), first(grid),
+        _on_grid(rows, :trapezium_row, grid, _ABSENT_FCAS_TRAPEZIUM), resolution,
+    )
     add_time_series!(sys, component, trapezium_ts)
     return true
 end
 
 
-# The offer curves of `duid` in `gdf` (a `DUID`-grouped bids `DataFrame`), or `nothing`.
-function _fcas_offer_curves(gdf, duid::AbstractString)
+# The offer curves of `duid` in `gdf` (a `DUID`-grouped bids `DataFrame`) on `grid`, or `nothing`.
+# A stamp without a curve holds a zero-width curve on the first curve's prices.
+function _fcas_offer_curves(gdf, duid::AbstractString, grid)
     (isnothing(gdf) || !haskey(gdf, (duid,))) && return nothing
-    # A SubArray view into the grouped DataFrame, collected so the service bid holds a plain Vector.
-    return collect(gdf[(duid,)].curve_data)
+    rows = gdf[(duid,)]
+    prices = get_y_coords(first(rows.curve_data))
+    absent = PiecewiseStepData(zeros(length(prices) + 1), copy(prices))
+    return _on_grid(rows, :curve_data, grid, absent)
 end
 
 
@@ -293,6 +313,8 @@ Attaches FCAS bid data to the system per `(component, FCAS market, side)` with b
 - `"fcas_trapezium_<SERVICE>"`, a `Vector{NTuple{7,Float64}}` - the AEMO trapezium per
   interval, packed by [`_extract_fcas_bid`](@ref).
 The priced offer curves are stored by [`set_fcas_service_bids!`](@ref), which must run after this.
+Each series spans every interval of `date_range` but its last stamp; an interval without a bid holds
+a zero trapezium, which offers nothing there.
 
 The trapezium's MW quantities (all fields but not prices) are stored per-unit of `sys`'s system base,
 and `_get_fcas_trapezium` converts them back on read. Service bids, the offer curves, are stored in MW
@@ -329,8 +351,8 @@ Unlike the deleted `set_fcas_offers!`, this is genuinely time-varying (mirrors
 `(added, excluded)`, as [`add_fcas_services!`](@ref) returns for the services this call creates.
 """
 function set_fcas_bids!(sys, db, date_range; kwargs...)
-    start_date = first(date_range)
     resolution = get(kwargs, :resolution, Minute(5))
+    grid = _replay_grid(date_range, resolution)
     base_power = get_base_power(sys)
 
     all_bids = groupby(read_fcas_bids(db, date_range, collect(FCAS_BID_TYPES); resolution = get(kwargs, :resolution, nothing)), :BIDTYPE)
@@ -339,16 +361,16 @@ function set_fcas_bids!(sys, db, date_range; kwargs...)
         gdf_inc, gdf_dec = _fcas_bid_groups(all_bids[(bid_type,)], base_power)
 
         foreach(get_components(Generator, sys)) do gen
-            _attach_fcas_trapezium_series!(sys, gen, gdf_inc, get_name(gen), bid_type, OfferSide.GEN, start_date, resolution)
+            _attach_fcas_trapezium_series!(sys, gen, gdf_inc, get_name(gen), bid_type, OfferSide.GEN, grid, resolution)
         end
         foreach(get_components(EnergyReservoirStorage, sys)) do stor
             duid = get_name(stor)
-            _attach_fcas_trapezium_series!(sys, stor, gdf_inc, duid, bid_type, OfferSide.GEN, start_date, resolution)
-            _attach_fcas_trapezium_series!(sys, stor, gdf_dec, duid, bid_type, OfferSide.LOAD, start_date, resolution)
+            _attach_fcas_trapezium_series!(sys, stor, gdf_inc, duid, bid_type, OfferSide.GEN, grid, resolution)
+            _attach_fcas_trapezium_series!(sys, stor, gdf_dec, duid, bid_type, OfferSide.LOAD, grid, resolution)
         end
         foreach(get_components(InterruptiblePowerLoad, sys)) do load
             attached = _attach_fcas_trapezium_series!(
-                sys, load, gdf_dec, get_name(load), bid_type, OfferSide.LOAD, start_date, resolution,
+                sys, load, gdf_dec, get_name(load), bid_type, OfferSide.LOAD, grid, resolution,
             )
             attached && is_non_scheduled_load(load) && is_commissioned(load) &&
                 set_available!(load, true)
@@ -385,6 +407,7 @@ zero (a `StorageCost` or `LoadCost` at zero), which leaves its energy cost at ze
 function set_fcas_service_bids!(sys, db, date_range; kwargs...)
     start_date = first(date_range)
     resolution = get(kwargs, :resolution, Minute(5))
+    grid = _replay_grid(date_range, resolution)
     base_power = get_base_power(sys)
 
     all_bids = groupby(read_fcas_bids(db, date_range, collect(FCAS_BID_TYPES); resolution = get(kwargs, :resolution, nothing)), :BIDTYPE)
@@ -393,15 +416,15 @@ function set_fcas_service_bids!(sys, db, date_range; kwargs...)
         gdf_inc, gdf_dec = _fcas_bid_groups(all_bids[(bid_type,)], base_power)
 
         foreach(get_components(Generator, sys)) do gen
-            _write_fcas_service_bid!(sys, gen, bid_type, false, _fcas_offer_curves(gdf_inc, get_name(gen)), start_date, resolution)
+            _write_fcas_service_bid!(sys, gen, bid_type, false, _fcas_offer_curves(gdf_inc, get_name(gen), grid), start_date, resolution)
         end
         foreach(get_components(EnergyReservoirStorage, sys)) do stor
             duid = get_name(stor)
-            _write_fcas_service_bid!(sys, stor, bid_type, false, _fcas_offer_curves(gdf_inc, duid), start_date, resolution)
-            _write_fcas_service_bid!(sys, stor, bid_type, true, _fcas_offer_curves(gdf_dec, duid), start_date, resolution)
+            _write_fcas_service_bid!(sys, stor, bid_type, false, _fcas_offer_curves(gdf_inc, duid, grid), start_date, resolution)
+            _write_fcas_service_bid!(sys, stor, bid_type, true, _fcas_offer_curves(gdf_dec, duid, grid), start_date, resolution)
         end
         foreach(get_components(InterruptiblePowerLoad, sys)) do load
-            _write_fcas_service_bid!(sys, load, bid_type, true, _fcas_offer_curves(gdf_dec, get_name(load)), start_date, resolution)
+            _write_fcas_service_bid!(sys, load, bid_type, true, _fcas_offer_curves(gdf_dec, get_name(load), grid), start_date, resolution)
         end
     end
     return
