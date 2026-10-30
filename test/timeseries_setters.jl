@@ -585,14 +585,44 @@
                 @test isapprox(got_raise_max, rows.RAISEREGENABLEMENTMAX ./ base_power; atol = 1.0e-9)
                 @test isapprox(got_lower_min, rows.LOWERREGENABLEMENTMIN ./ base_power; atol = 1.0e-9)
                 @test isapprox(got_lower_max, rows.LOWERREGENABLEMENTMAX ./ base_power; atol = 1.0e-9)
-                @test isapprox(got_raise_rate, rows.RAMPUPRATE ./ base_power; atol = 1.0e-9)
-                @test isapprox(got_lower_rate, rows.RAMPDOWNRATE ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_raise_rate, max.(rows.RAMPUPRATE, rows.RAISEREGAVAILABILITY .* 12) ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_lower_rate, max.(rows.RAMPDOWNRATE, rows.LOWERREGAVAILABILITY .* 12) ./ base_power; atol = 1.0e-9)
                 @test isapprox(got_agc_status, rows.AGCSTATUS; atol = 1.0e-9)
 
                 initial_time = start_date
                 horizon = length(date_range) - 1
                 @test get_fcas_agc_status(device, initial_time, horizon) == round.(Int, rows.AGCSTATUS)
             end
+        end
+
+        @testset "the AGC ramp rate is availability times 12 where that exceeds the ramp rate, else the ramp rate" begin
+            sys = deepcopy(sys_base)
+            set_fcas_scaling_inputs!(sys, db, date_range)
+
+            raise_from_availability = truth.RAISEREGAVAILABILITY .* 12 .> truth.RAMPUPRATE
+            lower_from_availability = truth.LOWERREGAVAILABILITY .* 12 .> truth.RAMPDOWNRATE
+            @test any(raise_from_availability) && !all(raise_from_availability)
+            @test any(lower_from_availability) && !all(lower_from_availability)
+
+            for device in vcat(collect(get_components(Generator, sys)), collect(get_components(EnergyReservoirStorage, sys)))
+                rows = sort(subset(truth, :DUID => ByRow(==(get_name(device)))), :SETTLEMENTDATE)
+                got_raise = get_time_series_values(SingleTimeSeries, device, "fcas_agc_ramp_rate_RAISEREG")
+                got_lower = get_time_series_values(SingleTimeSeries, device, "fcas_agc_ramp_rate_LOWERREG")
+                raise_mask = rows.RAISEREGAVAILABILITY .* 12 .> rows.RAMPUPRATE
+                lower_mask = rows.LOWERREGAVAILABILITY .* 12 .> rows.RAMPDOWNRATE
+
+                @test isapprox(got_raise[raise_mask], rows.RAISEREGAVAILABILITY[raise_mask] .* 12 ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_raise[.!raise_mask], rows.RAMPUPRATE[.!raise_mask] ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_lower[lower_mask], rows.LOWERREGAVAILABILITY[lower_mask] .* 12 ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_lower[.!lower_mask], rows.RAMPDOWNRATE[.!lower_mask] ./ base_power; atol = 1.0e-9)
+            end
+        end
+
+        @testset "a missing availability falls back to the ramp rate; a missing ramp rate stays missing" begin
+            interval_hours = 5 / 60
+            @test AustralianElectricityMarkets._agc_ramp_rate(5.0, missing, interval_hours) == 5.0
+            @test AustralianElectricityMarkets._agc_ramp_rate(5.0, 1.0, interval_hours) == 12.0
+            @test ismissing(AustralianElectricityMarkets._agc_ramp_rate(missing, 1.0, interval_hours))
         end
 
         @testset "get_fcas_agc_status is nothing when fcas_agc_status is not attached" begin
@@ -703,7 +733,10 @@
                     )
                 end
                 raw_mw = with_units_base(() -> get_max_avail.(AustralianElectricityMarkets._get_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)), sys, "NATURAL_UNITS")
-                @test isapprox(get_max_avail.(scaled_i), min.(raw_mw, rows.RAMPUPRATE .* hours); atol = 1.0e-6)
+                @test isapprox(
+                    get_max_avail.(scaled_i),
+                    min.(raw_mw, max.(rows.RAMPUPRATE, rows.RAISEREGAVAILABILITY .* 12) .* hours); atol = 1.0e-6,
+                )
             end
 
             # A contingency market carries no AGC scaling input series at all: unscaled.

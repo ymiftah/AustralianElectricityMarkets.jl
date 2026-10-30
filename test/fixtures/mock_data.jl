@@ -717,6 +717,10 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     ramp_up_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 4.0 + duid_offset(duid) + (i % 5)
     ramp_down_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 3.0 + duid_offset(duid) + (i % 5)
     availability_for(duid, i) = duid in nonscheduled ? 0.0 : 90.0 - 3 * duid_offset(duid) + (i % 6)
+    # Regulation availability (MW) times 12 for a five-minute interval gives a rate that sits above the
+    # ramp rate for some unit-intervals and below it for others, so both branches of the AGC ramp rate are tested.
+    raise_availability_for(duid, i) = duid in nonscheduled ? 0.0 : 0.25 + 0.5 * (duid_offset(duid) % 3) + 0.25 * (i % 4)
+    lower_availability_for(duid, i) = duid in nonscheduled ? 0.0 : 0.25 + 0.5 * ((duid_offset(duid) + 1) % 3) + 0.25 * ((i + 1) % 4)
     # AEMO *FCAS Model in NEMDE* §4.1 telemetered AGC enablement limits - strictly inside the
     # BIDPEROFFER_D RAISEREG/LOWERREG trapezium's own [20.0, 100.0] enablement span (see
     # BIDPEROFFER_D above), so set_fcas_scaling_inputs! + scale_fcas_trapezium's shrinkage is
@@ -740,8 +744,8 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
             TOTALCLEARED = fill(50.0, m),
             AVAILABILITY = [availability_for(d, i) for d in dl_duids],
             AGCSTATUS = fill(1, m),
-            RAISEREGAVAILABILITY = fill(3.0, m),
-            LOWERREGAVAILABILITY = fill(3.0, m),
+            RAISEREGAVAILABILITY = [raise_availability_for(d, i) for d in dl_duids],
+            LOWERREGAVAILABILITY = [lower_availability_for(d, i) for d in dl_duids],
             RAISEREGENABLEMENTMIN = [raise_reg_enablement_min_for(d, i) for d in dl_duids],
             RAISEREGENABLEMENTMAX = [raise_reg_enablement_max_for(d, i) for d in dl_duids],
             LOWERREGENABLEMENTMIN = [lower_reg_enablement_min_for(d, i) for d in dl_duids],

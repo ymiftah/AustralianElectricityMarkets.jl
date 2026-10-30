@@ -217,8 +217,9 @@ Reads per-interval, per-unit AEMO *FCAS Model in NEMDE* §4.1/§4.2/§5 scaling 
 inputs from `DISPATCHLOAD`: one row per `(SETTLEMENTDATE, DUID)` with `RAISEREGENABLEMENTMIN/MAX`,
 `LOWERREGENABLEMENTMIN/MAX` (the telemetered AGC enablement limits, already the more
 restrictive of bid and telemetered per AEMO's data model), `RAMPUPRATE`/`RAMPDOWNRATE`
-(the telemetered AGC ramp rate, MW/h - the same column [`read_dispatch_limits`](@ref) reads
-for energy ramping), and `AGCSTATUS` (`1` while the unit is under AGC control, `0` otherwise).
+(MW/h, the bid-capped ramp rate that [`read_dispatch_limits`](@ref) also reads for energy ramping),
+`RAISEREGAVAILABILITY`/`LOWERREGAVAILABILITY` (the regulation availability, MW), and `AGCSTATUS`
+(`1` while the unit is under AGC control, `0` otherwise).
 
 `intervention` selects the dispatch run: `0` is the normal (non-intervention) run
 (`INTERVENTION` is compared via `COALESCE(INTERVENTION, 0)` for partitions predating that
@@ -231,12 +232,14 @@ column - see [`read_fcas_requirements`](@ref)).
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `RAISEREGENABLEMENTMIN`, `RAISEREGENABLEMENTMAX`,
-`LOWERREGENABLEMENTMIN`, `LOWERREGENABLEMENTMAX`, `RAMPUPRATE`, `RAMPDOWNRATE`, `AGCSTATUS`.
+`LOWERREGENABLEMENTMIN`, `LOWERREGENABLEMENTMAX`, `RAMPUPRATE`, `RAMPDOWNRATE`,
+`RAISEREGAVAILABILITY`, `LOWERREGAVAILABILITY`, `AGCSTATUS`.
 """
 function read_fcas_scaling_inputs(db, date_range; intervention::Integer = 0)
     scaling_cols = (
         "RAISEREGENABLEMENTMIN", "RAISEREGENABLEMENTMAX",
-        "LOWERREGENABLEMENTMIN", "LOWERREGENABLEMENTMAX", "RAMPUPRATE", "RAMPDOWNRATE", "AGCSTATUS",
+        "LOWERREGENABLEMENTMIN", "LOWERREGENABLEMENTMAX", "RAMPUPRATE", "RAMPDOWNRATE",
+        "RAISEREGAVAILABILITY", "LOWERREGAVAILABILITY", "AGCSTATUS",
     )
     return _read_dispatch_table(db, :DISPATCHLOAD, "DUID", date_range; intervention) do schema
         _require_columns(:DISPATCHLOAD, schema, scaling_cols)

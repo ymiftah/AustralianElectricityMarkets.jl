@@ -449,6 +449,30 @@ end
 
 
 """
+    _agc_ramp_rate(ramp_rate, availability, interval_hours) -> Union{Missing, Float64}
+
+The AGC ramp rate (MW/h) for one regulation side of one unit-interval: the larger of the
+`DISPATCHLOAD` ramp rate and the regulation `availability` (MW) spread over `interval_hours`. A
+`missing` ramp rate stays `missing`; a `missing` availability leaves the ramp rate as it is.
+
+# Arguments
+- `ramp_rate`: `RAMPUPRATE` or `RAMPDOWNRATE`, in MW/h.
+- `availability`: `RAISEREGAVAILABILITY` or `LOWERREGAVAILABILITY`, in MW.
+- `interval_hours`: the length of one dispatch interval in hours.
+
+# Returns
+`Union{Missing, Float64}`.
+"""
+# MMSDM does not publish the telemetered AGC ramp rate, and RAMPUPRATE is capped by the bid rate.
+# Availability over the interval is the exact regulation cap, so this lower bound can leave joint ramping tighter than NEMDE.
+function _agc_ramp_rate(ramp_rate, availability, interval_hours::Real)
+    ismissing(ramp_rate) && return missing
+    ismissing(availability) && return ramp_rate
+    return max(ramp_rate, availability / interval_hours)
+end
+
+
+"""
     _attach_fcas_scaling_series!(sys, device, by_time, full_grid, col, name, base_power; scale = 1.0)
 
 Attaches a `SingleTimeSeries` named `name` to `device`, per-unitised by `base_power` and
@@ -487,9 +511,10 @@ NEMDE* §4) and the §5 AGC-status pre-condition input to every available `Gener
   `RAISEREGENABLEMENTMIN`/`RAISEREGENABLEMENTMAX` (§4.1);
 - `"fcas_agc_enablement_min_LOWERREG"`/`"fcas_agc_enablement_max_LOWERREG"` from
   `LOWERREGENABLEMENTMIN`/`LOWERREGENABLEMENTMAX` (§4.1);
-- `"fcas_agc_ramp_rate_RAISEREG"`/`"fcas_agc_ramp_rate_LOWERREG"` from `RAMPUPRATE`/
-  `RAMPDOWNRATE`, in MW/h (§4.2's AGC ramping capability is this rate times the model's interval
-  length, applied on read);
+- `"fcas_agc_ramp_rate_RAISEREG"`/`"fcas_agc_ramp_rate_LOWERREG"` from the larger of
+  `RAMPUPRATE`/`RAMPDOWNRATE` and `RAISEREGAVAILABILITY`/`LOWERREGAVAILABILITY` spread over the
+  interval, in MW/h (§4.2's AGC ramping capability is this rate times the model's interval
+  length, applied on read; see `_agc_ramp_rate`);
 - `"fcas_agc_status"` from `AGCSTATUS` (§5: `1` while the unit is under AGC control, `0`
   otherwise), not per-unitized;
 - `"uigf"` from `UIGF`, for semi-scheduled units only (§4.3), shared with [`set_nem_energy_limits!`](@ref).
@@ -515,6 +540,13 @@ function set_fcas_scaling_inputs!(sys, db, date_range; kwargs...)
     full_grid = collect(date_range)[1:(end - 1)]
 
     scaling_rows = read_fcas_scaling_inputs(db, date_range; kwargs...)
+    interval_hours = Dates.value(Millisecond(step(date_range))) / (1000 * 60 * 60)
+    scaling_rows[!, :AGC_RAMP_RAISEREG] = _agc_ramp_rate.(
+        scaling_rows.RAMPUPRATE, scaling_rows.RAISEREGAVAILABILITY, interval_hours,
+    )
+    scaling_rows[!, :AGC_RAMP_LOWERREG] = _agc_ramp_rate.(
+        scaling_rows.RAMPDOWNRATE, scaling_rows.LOWERREGAVAILABILITY, interval_hours,
+    )
     by_duid = DataFrames.isempty(scaling_rows) ? nothing : groupby(scaling_rows, :DUID)
     uigf_rows = read_uigf(db, date_range; kwargs...)
     uigf_by_duid = DataFrames.isempty(uigf_rows) ? nothing : groupby(uigf_rows, :DUID)
@@ -541,10 +573,10 @@ function set_fcas_scaling_inputs!(sys, db, date_range; kwargs...)
                 fcas_series_name("fcas_agc_enablement_max", BidType.LOWERREG), base_power,
             )
             _attach_fcas_scaling_series!(
-                sys, device, by_time, full_grid, :RAMPUPRATE, fcas_series_name("fcas_agc_ramp_rate", BidType.RAISEREG), base_power,
+                sys, device, by_time, full_grid, :AGC_RAMP_RAISEREG, fcas_series_name("fcas_agc_ramp_rate", BidType.RAISEREG), base_power,
             )
             _attach_fcas_scaling_series!(
-                sys, device, by_time, full_grid, :RAMPDOWNRATE, fcas_series_name("fcas_agc_ramp_rate", BidType.LOWERREG), base_power,
+                sys, device, by_time, full_grid, :AGC_RAMP_LOWERREG, fcas_series_name("fcas_agc_ramp_rate", BidType.LOWERREG), base_power,
             )
             _attach_fcas_scaling_series!(
                 sys, device, by_time, full_grid, :AGCSTATUS, NEM_SERIES.fcas_agc_status, 1.0,

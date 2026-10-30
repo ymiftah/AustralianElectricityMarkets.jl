@@ -44,12 +44,15 @@ end
     ramping(name, bid_type) = PSY.get_time_series_values(
         PSY.SingleTimeSeries, PSY.get_component(PSY.Device, sys, name), AustralianElectricityMarkets.fcas_ramping_series_name(bid_type),
     )[1]
-    # ER01 (ThermalStandard) RAISEREG at 00:05: InitialMW 45 MW and AGC ramp rate 9 MW/h. The §6.1 upper
-    # form is 45 + 9 * 5/60 = 45.75 MW; a unit that is not a BDU has no §6.4 limit.
-    @test ramping("ER01", BidType.RAISEREG) ≈ (45.75 / 100, FCAS_INACTIVE_LIMIT_MW / 100) atol = 1.0e-9
-    # BW01 (storage) RAISEREG at 00:05: InitialMW 41 MW and AGC ramp rate 5 MW/h. The §6.1 upper form is
-    # 41 + 5 * 5/60 MW; the §6.4 BDU limit is the AGC ramp capability, 5 * 5/60 MW.
-    @test ramping("BW01", BidType.RAISEREG) ≈ ((41 + 5 * 5 / 60) / 100, (5 * 5 / 60) / 100) atol = 1.0e-9
-    # ER01 LOWERREG at 00:05: AGC ramp rate 8 MW/h, so the lower form is 45 - 8 * 5/60 MW; not a BDU.
-    @test ramping("ER01", BidType.LOWERREG) ≈ ((45 - 8 * 5 / 60) / 100, FCAS_INACTIVE_LIMIT_MW / 100) atol = 1.0e-9
+    # ER01 (ThermalStandard) RAISEREG at 00:05: InitialMW 45 MW. The AGC ramp rate is the larger of RAMPUPRATE
+    # 9 MW/h and 1.0 MW availability times 12, i.e. 12 MW/h. The §6.1 upper form is 45 + 12 * 5/60 = 46 MW;
+    # a unit that is not a BDU has no §6.4 limit.
+    @test collect(ramping("ER01", BidType.RAISEREG)) ≈ [46.0 / 100, FCAS_INACTIVE_LIMIT_MW / 100] atol = 1.0e-9
+    # BW01 (storage) RAISEREG at 00:05: InitialMW 41 MW. The AGC ramp rate is the larger of RAMPUPRATE 5 MW/h
+    # and 0.5 MW availability times 12, i.e. 6 MW/h. The §6.1 upper form is 41 + 6 * 5/60 MW; the §6.4 BDU
+    # limit is the AGC ramp capability, 6 * 5/60 MW.
+    @test collect(ramping("BW01", BidType.RAISEREG)) ≈ [(41 + 6 * 5 / 60) / 100, (6 * 5 / 60) / 100] atol = 1.0e-9
+    # ER01 LOWERREG at 00:05: the AGC ramp rate is the larger of RAMPDOWNRATE 8 MW/h and 1.75 MW availability
+    # times 12, i.e. 21 MW/h, so the lower form is 45 - 21 * 5/60 = 43.25 MW; not a BDU.
+    @test collect(ramping("ER01", BidType.LOWERREG)) ≈ [(45 - 21 * 5 / 60) / 100, FCAS_INACTIVE_LIMIT_MW / 100] atol = 1.0e-9
 end
