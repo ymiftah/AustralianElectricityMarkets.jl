@@ -100,10 +100,10 @@ Reads each unit's connection-point loss factors from `DUDETAILSUMMARY`: the row 
 - `db`: the database connection.
 - `as_of`: a `Date` or `DateTime` to resolve the factors as of. `nothing` keeps each unit's open row
   (earliest `START_DATE`, the row [`read_units`](@ref) keeps).
-- `through`: when a `Date` or `DateTime` after `as_of`, resolves the factors over the window
-  `[as_of, through]` instead: each unit's earliest row registered in it, the row
-  [`read_units`](@ref) keeps with the same `through`. Warns if a unit's factors differ between its
-  rows in the window, since the result holds one factor per unit.
+- `through`: with `as_of`, resolves the factors over the window `[as_of, through]` instead: each
+  unit's earliest row registered in it, the row [`read_units`](@ref) keeps with the same `through`.
+  Warns if a unit's factors differ between its rows in the window, since the result holds one
+  factor per unit.
 
 # Returns
 A `DataFrame` with `DUID`, `LOAD_LOSS_FACTOR` (`TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR`,
@@ -116,8 +116,9 @@ function read_loss_factors(
         db; as_of::Union{Nothing, Date, DateTime} = nothing,
         through::Union{Nothing, Date, DateTime} = nothing,
     )
+    isnothing(through) || !isnothing(as_of) || throw(ArgumentError("read_loss_factors: through requires as_of"))
     source = read_hive(db, :DUDETAILSUMMARY)
-    windowed = !isnothing(as_of) && !isnothing(through) && through > as_of
+    windowed = !isnothing(through)
     window = if isnothing(as_of)
         "(END_DATE IS NULL OR year(END_DATE) = 2999)"
     elseif windowed
@@ -145,24 +146,23 @@ function read_loss_factors(
         _query(db, sql, [as_of, as_of])
     end
     if windowed
+        # NULL counts as a value, so a NULL to number change in SECONDARY_TLF is caught.
         changed_all = _query(
             db,
             """
-            SELECT DISTINCT DUID FROM (
-                SELECT DUID,
-                    coalesce(min(TRANSMISSIONLOSSFACTOR) OVER w <> max(TRANSMISSIONLOSSFACTOR) OVER w, false)
-                    OR coalesce(min(DISTRIBUTIONLOSSFACTOR) OVER w <> max(DISTRIBUTIONLOSSFACTOR) OVER w, false)
-                    OR (min(SECONDARY_TLF) OVER w IS DISTINCT FROM max(SECONDARY_TLF) OVER w) AS CHANGED
-                FROM $source
-                WHERE archive_month = (SELECT max(archive_month) FROM $source) AND $window
-                WINDOW w AS (PARTITION BY DUID)
-            ) WHERE CHANGED
+            SELECT DUID
+            FROM $source
+            WHERE archive_month = (SELECT max(archive_month) FROM $source) AND $window
+            GROUP BY DUID
+            HAVING count(DISTINCT TRANSMISSIONLOSSFACTOR) > 1
+                OR count(DISTINCT DISTRIBUTIONLOSSFACTOR) > 1
+                OR count(DISTINCT coalesce(CAST(SECONDARY_TLF AS VARCHAR), 'NULL')) > 1
             """,
             [through, as_of],
         ).DUID
         changed = intersect(changed_all, factors.DUID)
         isempty(changed) ||
-            @warn "Loss factors change within the date range; the factors in force at its start are used throughout" as_of through first_changed = first(changed, 5)
+            @warn "Loss factors change within the date range; the factors of each unit's earliest registration row overlapping it are used throughout" as_of through first_changed = first(changed, 5)
     end
     return select(factors, :DUID, :GEN_LOSS_FACTOR, :LOAD_LOSS_FACTOR)
 end

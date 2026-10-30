@@ -26,16 +26,18 @@ of the chunk. Each unit takes its attributes from its earliest overlapping `DUDE
 Every per-unit series spans the whole chunk. Outside a unit's registration it holds zero energy
 `MAXAVAIL`, `UIGF`, `INITIALMW`, ramp rates and `AVAILABILITY`, and a zero FCAS trapezium (zero
 `MAXAVAIL`), with zero-width energy and offer curves. A missing row inside a registration is still an
-error, as is a missing energy offer. A non-scheduled load keeps its exemption: every value it is given is
-zero, so its DISPATCHLOAD and offer rows need not exist.
+error, as is a missing energy offer. A non-scheduled load is exempt from these missing-row checks: every
+value it is given is zero, so its DISPATCHLOAD and offer rows need not exist.
 
 A loss factor is taken from the earliest row registered in the chunk and warns when the factors differ
 inside it. A unit whose REGIONID, DISPATCHTYPE or SCHEDULE_TYPE changes inside the chunk is an error,
 because one unit cannot change region or dispatch type within a single system. The
 RegionalNetworkConfiguration path keeps its as-of selection.
 
-The schedule type of an energy offer is read with the same end bound: an interval-ending stamp equal to a
-row's END_DATE is still registered, so a unit deregistered at a stamp keeps its schedule type there.
+The schedule type of an energy offer is read with the same registration rule: a `DUDETAILSUMMARY` row's
+schedule type applies at `t` when `START_DATE < t <= END_DATE`. A row starting at a stamp does not yet
+apply there, and the row ending at it still does, so a unit deregistered at a stamp keeps its schedule
+type there.
 
 ## Alternatives
 
@@ -54,6 +56,6 @@ it is rejected.
 - A unit changing REGIONID, DISPATCHTYPE or SCHEDULE_TYPE inside a chunk fails the build. Since 2021-10
   REGIONID changed mid-chunk four times, among them DRXNDB04 and HAUGHTSS.
 - A padded FCAS trapezium has NaN ramp rates, which `FCASTrapezium` reads as absent.
-- Padded stamps are the only ones that change. A full-registration day builds exactly as before.
-- Energy bid rows at stamps outside the replay grid are an error rather than being dropped, as they
-  would otherwise misalign a series.
+- Padded stamps are the only ones that change. A full-registration day is expected to build as before.
+- Energy bid rows, and FCAS trapezium and offer-curve rows, at stamps outside the replay grid are an
+  error rather than being dropped, as they would otherwise misalign a series.

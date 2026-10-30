@@ -190,6 +190,27 @@ end
     end
     @test isempty(get_dropped_terms(late))
     @test isempty(get_skipped_constraints(late))
+
+    @testset "BW02's padded stamps offer no FCAS" begin
+        # BW02's RAISE6SEC is a modelled incremental bid, so its effective offer is disabled where AEMO publishes none.
+        raise6 = BidType.RAISE6SEC
+        inactive = -FCAS_INACTIVE_LIMIT_MW / get_base_power(late)
+        effective = get_time_series_values(SingleTimeSeries, bw02, fcas_effective_series_name(raise6, false); ignore_scaling_factors = true)
+        for i in 1:2
+            @test effective[i][1] == 0.0
+            @test effective[i][2] == inactive
+        end
+        # The padded offer curve has zero width, so the service bid offers nothing there.
+        svc = only(s for s in get_components(FCASService, late) if get_bid_type(s) == raise6 && "BW02" in get_name.(get_contributing_devices(late, s)))
+        curves = get_time_series_values(SingleTimeSeries, bw02, fcas_offer_series_name(svc, false); ignore_scaling_factors = true)
+        @test all(i -> sum(diff(PowerSystems.get_x_coords(curves[i]))) == 0.0, 1:2)
+        # A tie-break scale is zero where the padded band has no width, or absent when the unit is never tied.
+        for key in get_time_series_keys(bw02)
+            get_time_series_type(key) === SingleTimeSeries && startswith(get_name(key), "tie_break_scale_") || continue
+            values = get_time_series_values(SingleTimeSeries, bw02, get_name(key); ignore_scaling_factors = true)
+            @test all(iszero, values[1:2])
+        end
+    end
     @test_nowarn prepare_replay_forecasts!(late)
 
     @testset "a partly published FCAS trapezium is zero where AEMO publishes none" begin

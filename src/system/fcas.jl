@@ -168,10 +168,10 @@ end
 
 
 # The values of `field` in `rows` on `grid`: the value at each stamp, or `pad` where `rows` has none.
-# Rows at a repeated stamp, or outside `grid`, are an error.
-function _on_grid(rows, field::Symbol, grid, pad)
+# Rows at a repeated stamp, or outside `grid`, are an error naming the unit and bid type.
+function _on_grid(rows, field::Symbol, grid, pad, duid, bid_type::BidType)
     stamps = rows.INTERVAL_DATETIME
-    _check_stamps_on_grid(stamps, grid, "FCAS $(field) rows")
+    _check_stamps_on_grid(stamps, grid, "FCAS $(bid_type) $(field) rows for $duid")
     by_time = Dict(zip(stamps, rows[!, field]))
     return [get(by_time, t, pad) for t in grid]
 end
@@ -195,7 +195,7 @@ function _attach_fcas_trapezium_series!(sys, component, gdf, duid::AbstractStrin
     rows = gdf[(duid,)]
     trapezium_ts = single_series(
         fcas_series_name("fcas_trapezium", bid_type, side), first(grid),
-        _on_grid(rows, :trapezium_row, grid, _ABSENT_FCAS_TRAPEZIUM), resolution,
+        _on_grid(rows, :trapezium_row, grid, _ABSENT_FCAS_TRAPEZIUM, duid, bid_type), resolution,
     )
     add_time_series!(sys, component, trapezium_ts)
     return true
@@ -204,12 +204,12 @@ end
 
 # The offer curves of `duid` in `gdf` (a `DUID`-grouped bids `DataFrame`) on `grid`, or `nothing`.
 # A stamp without a curve holds a zero-width curve on the first curve's prices.
-function _fcas_offer_curves(gdf, duid::AbstractString, grid)
+function _fcas_offer_curves(gdf, duid::AbstractString, bid_type::BidType, grid)
     (isnothing(gdf) || !haskey(gdf, (duid,))) && return nothing
     rows = gdf[(duid,)]
     prices = get_y_coords(first(rows.curve_data))
     absent = PiecewiseStepData(zeros(length(prices) + 1), copy(prices))
-    return _on_grid(rows, :curve_data, grid, absent)
+    return _on_grid(rows, :curve_data, grid, absent, duid, bid_type)
 end
 
 
@@ -416,15 +416,15 @@ function set_fcas_service_bids!(sys, db, date_range; kwargs...)
         gdf_inc, gdf_dec = _fcas_bid_groups(all_bids[(bid_type,)], base_power)
 
         foreach(get_components(Generator, sys)) do gen
-            _write_fcas_service_bid!(sys, gen, bid_type, false, _fcas_offer_curves(gdf_inc, get_name(gen), grid), start_date, resolution)
+            _write_fcas_service_bid!(sys, gen, bid_type, false, _fcas_offer_curves(gdf_inc, get_name(gen), bid_type, grid), start_date, resolution)
         end
         foreach(get_components(EnergyReservoirStorage, sys)) do stor
             duid = get_name(stor)
-            _write_fcas_service_bid!(sys, stor, bid_type, false, _fcas_offer_curves(gdf_inc, duid, grid), start_date, resolution)
-            _write_fcas_service_bid!(sys, stor, bid_type, true, _fcas_offer_curves(gdf_dec, duid, grid), start_date, resolution)
+            _write_fcas_service_bid!(sys, stor, bid_type, false, _fcas_offer_curves(gdf_inc, duid, bid_type, grid), start_date, resolution)
+            _write_fcas_service_bid!(sys, stor, bid_type, true, _fcas_offer_curves(gdf_dec, duid, bid_type, grid), start_date, resolution)
         end
         foreach(get_components(InterruptiblePowerLoad, sys)) do load
-            _write_fcas_service_bid!(sys, load, bid_type, true, _fcas_offer_curves(gdf_dec, get_name(load), grid), start_date, resolution)
+            _write_fcas_service_bid!(sys, load, bid_type, true, _fcas_offer_curves(gdf_dec, get_name(load), bid_type, grid), start_date, resolution)
         end
     end
     return

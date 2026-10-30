@@ -103,15 +103,15 @@ end
     _is_registered(registered, duid, t) -> Bool
 
 Whether `duid` is registered at the interval-ending stamp `t`, that is `REGISTERED_FROM < t <=
-REGISTERED_UNTIL`. A `nothing` `registered` means every unit is registered at every stamp; a `duid`
-absent from a span dictionary is not registered.
+REGISTERED_UNTIL`. A `nothing` `registered` means every unit is registered at every stamp. Throws an
+`ArgumentError` naming `duid` when a span dictionary has no entry for it.
 """
 function _is_registered(::Nothing, duid, t)
     return true
 end
 function _is_registered(registered::AbstractDict, duid, t)
     span = get(registered, String(duid), nothing)
-    isnothing(span) && return false
+    isnothing(span) && throw(ArgumentError("$duid has no registration span, so whether it is registered at $t is unknown"))
     from, until = span
     return from < t <= until
 end

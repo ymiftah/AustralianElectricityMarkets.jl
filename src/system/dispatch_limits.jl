@@ -44,17 +44,19 @@ and `UIGF`), read back by [`get_energy_availability`](@ref). An `EnergyReservoir
 normalised by the device's own static `max_active_power` (read under `NATURAL_UNITS`), with
 `scaling_factor_multiplier = get_max_active_power`.
 
-A non-scheduled load (see [`set_fcas_bids!`](@ref)) gets zero `"initial_mw"`, ramp rates, `"availability"`
-and `"max_active_power"` whatever `DISPATCHLOAD` meters: its consumption is already in regional demand
-and is not dispatched. This function must run after [`set_fcas_bids!`](@ref), which makes such a load
+A non-scheduled load (see [`set_fcas_bids!`](@ref)) is exempt from the missing-row checks below and gets
+zero `"initial_mw"`, ramp rates, `"availability"` and `"max_active_power"` whatever `DISPATCHLOAD` meters:
+its consumption is already in regional demand and is not dispatched. This function must run after [`set_fcas_bids!`](@ref), which makes such a load
 available; a load made available later has no ramp or limit series.
 
-A device with no `DISPATCHLOAD` rows in `date_range`, missing intervals, a `missing` rate or
+A device other than a non-scheduled load with no `DISPATCHLOAD` rows in `date_range`, a `missing` rate or
 `INITIALMW`, or a negative `RAMPUPRATE`/`RAMPDOWNRATE` is a problem; for a `ThermalStandard`,
 `HydroDispatch` or `RenewableDispatch`, a `missing` or negative `AVAILABILITY`, or a
-non-positive static `max_active_power`, is also a problem. A missing interval outside the device's
-registration (`registered`) is not a problem: the device gets zero `"initial_mw"`, ramp rates,
-`"availability"` and `"max_active_power"` there, as it cannot be dispatched before it is registered.
+non-positive static `max_active_power`, is also a problem. An interval within the device's
+registration (`registered`) with no row is a missing-row problem. An interval with no row outside
+that registration, before or after it, is not a problem: the device gets zero `"initial_mw"` and ramp
+rates there, and zero `"availability"` and `"max_active_power"` if it is not storage (storage has
+neither series), as it is not on the system then. A row outside the registration is read like any other.
 A zero `RAMPUPRATE`, `RAMPDOWNRATE` or `AVAILABILITY` is carried through as-is: it is AEMO stating that the device
 cannot move, or cannot generate, in that interval. Every problem across every device is
 collected and raised as one aggregated `ArgumentError` naming the affected `DUID`s, and `sys` is

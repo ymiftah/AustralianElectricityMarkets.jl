@@ -977,7 +977,7 @@ end
         bad = invalid_energy_cache(
             :DUDETAILSUMMARY, function (frame)
                 changed = frame[frame.DUID .== "BW03", :][1:1, :]
-                changed.START_DATE .= range[2]
+                changed.START_DATE .= range[1]
                 changed.SCHEDULE_TYPE .= "SCHEDULED"
                 append!(frame, changed)
                 return
@@ -1058,7 +1058,7 @@ end
     @test_throws ArgumentError AEM._pad_bids_to_grid(rows, grid[1:2])
 
     values = DataFrame(INTERVAL_DATETIME = [grid[2]], X = [7.0])
-    @test AEM._on_grid(values, :X, grid, 0.0) == [0.0, 7.0, 0.0]
-    @test_throws ArgumentError AEM._on_grid(vcat(values, values), :X, grid, 0.0)
-    @test_throws ArgumentError AEM._on_grid(DataFrame(INTERVAL_DATETIME = [grid[end] + Minute(5)], X = [1.0]), :X, grid, 0.0)
+    @test AEM._on_grid(values, :X, grid, 0.0, "U1", BidType.RAISEREG) == [0.0, 7.0, 0.0]
+    @test_throws ArgumentError AEM._on_grid(vcat(values, values), :X, grid, 0.0, "U1", BidType.RAISEREG)
+    @test_throws ArgumentError AEM._on_grid(DataFrame(INTERVAL_DATETIME = [grid[end] + Minute(5)], X = [1.0]), :X, grid, 0.0, "U1", BidType.RAISEREG)
 end

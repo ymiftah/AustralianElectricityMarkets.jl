@@ -81,14 +81,14 @@ function read_units(
     end
     window_columns = if windowed
         """
-        , min(START_DATE) OVER (PARTITION BY DUID) AS REGISTERED_FROM,
-        max(coalesce(END_DATE, TIMESTAMP '2999-12-31 00:00:00')) OVER (PARTITION BY DUID) AS REGISTERED_UNTIL,
+        , CAST(min(START_DATE) OVER (PARTITION BY DUID) AS TIMESTAMP) AS REGISTERED_FROM,
+        CAST(max(coalesce(END_DATE, TIMESTAMP '2999-12-31 00:00:00')) OVER (PARTITION BY DUID) AS TIMESTAMP) AS REGISTERED_UNTIL,
         coalesce(min(REGIONID) OVER (PARTITION BY DUID) <> max(REGIONID) OVER (PARTITION BY DUID), false) AS _REGION_CHANGES,
         coalesce(min(DISPATCHTYPE) OVER (PARTITION BY DUID) <> max(DISPATCHTYPE) OVER (PARTITION BY DUID), false) AS _DISPATCHTYPE_CHANGES,
         coalesce(min(SCHEDULE_TYPE) OVER (PARTITION BY DUID) <> max(SCHEDULE_TYPE) OVER (PARTITION BY DUID), false) AS _SCHEDULE_CHANGES
         """
     else
-        ", START_DATE AS REGISTERED_FROM, coalesce(END_DATE, TIMESTAMP '2999-12-31 00:00:00') AS REGISTERED_UNTIL"
+        ", CAST(START_DATE AS TIMESTAMP) AS REGISTERED_FROM, CAST(coalesce(END_DATE, TIMESTAMP '2999-12-31 00:00:00') AS TIMESTAMP) AS REGISTERED_UNTIL"
     end
     # Windowed rows take the registration in force at the later of as_of and the summary row's start.
     dudetail_join = windowed ? "AND dudetail.EFFECTIVEDATE <= greatest(CAST(? AS TIMESTAMP), summary.START_DATE)" : ""
@@ -200,7 +200,7 @@ function read_units(
         ).DUID
         dropped = setdiff(current, dudetail.DUID)
         isempty(dropped) ||
-            @warn "read_units: $(length(dropped)) currently registered unit(s) are not in force as of $as_of and were omitted" first_dropped = first(dropped, 5)
+            @warn "read_units: $(length(dropped)) currently registered unit(s) are $(windowed ? "not registered between $as_of and $through" : "not in force as of $as_of") and were omitted" first_dropped = first(dropped, 5)
     end
     return dudetail
 end

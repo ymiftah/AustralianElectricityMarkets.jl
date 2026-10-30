@@ -74,6 +74,10 @@ let
         @test cp_of(read_units(vdb; as_of = early)) == "CP_BAYSW"
         @test cp_of(read_units(vdb; as_of = DateTime(2025, 8, 1))) == "CP_NEW"
         @test allunique(read_units(vdb; as_of = early).DUID)
+        for units in (read_units(vdb), read_units(vdb; as_of = early))
+            @test eltype(units.REGISTERED_FROM) == DateTime
+            @test eltype(units.REGISTERED_UNTIL) == DateTime
+        end
         # The older archive's stale open rows must not leak into either as-of read.
         @test maxmwin(read_interconnectors(vdb; as_of = early)) != 111.0
         @test only(read_units(vdb; as_of = early)[read_units(vdb; as_of = early).DUID .== "BW01", :REGISTEREDCAPACITY]) == 100.0
@@ -92,6 +96,9 @@ let
         @test only(bw01.REGISTERED_FROM) == DateTime(2020, 1, 1)
         @test only(bw01.REGISTERED_UNTIL) == DateTime(2999, 12, 31)
         @test allunique(window.DUID)
+        # Production and mock types agree: the span is always TIMESTAMP, whichever reader path.
+        @test eltype(window.REGISTERED_FROM) == DateTime
+        @test eltype(window.REGISTERED_UNTIL) == DateTime
         # Only the first row overlaps a window ending before the change.
         before = read_units(vwin; as_of = DateTime(2025, 3, 1), through = DateTime(2025, 6, 1))
         @test only(before[before.DUID .== "BW01", :REGISTERED_UNTIL]) == DateTime(2025, 7, 1)
