@@ -19,6 +19,7 @@
 # parquet files.
 
 using AustralianElectricityMarkets
+using AustralianElectricityMarketsData: populate
 using Dates
 using PowerSystems
 using DataFrames
@@ -28,10 +29,10 @@ using CairoMakie, AlgebraOfGraphics
 db = aem_connect();
 date_range = Date(2025, 1, 1):Date(2025, 1, 2)
 
-# tables = table_requirements(RegionalNetworkConfiguration())
-# map(tables) do table
-#     fetch_table_data(table, date_range)
-# end;
+# populate(
+#     db, first(date_range), last(date_range);
+#     tables = table_requirements(RegionalNetworkConfiguration()),
+# )
 nothing #hide
 
 # Once the data is downloaded, a few utility functions allow direct parsing of key quantities,

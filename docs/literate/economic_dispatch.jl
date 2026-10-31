@@ -1,4 +1,5 @@
 using AustralianElectricityMarkets
+using AustralianElectricityMarketsData: populate
 using PowerSystems
 using PowerSimulations
 using HydroPowerSimulations
@@ -25,10 +26,10 @@ using HiGHS
 #     in parquet files.
 #
 # ```julia
-# tables = table_requirements(RegionalNetworkConfiguration())
-# map(tables) do table
-#     fetch_table_data(table, date_range)
-# end;
+# populate(
+#     db, Date(2025, 1, 2), Date(2025, 1, 3);
+#     tables = table_requirements(RegionalNetworkConfiguration()),
+# )
 # ```
 #
 # Only the data requirements for a `RegionalNetworkConfiguration` are downloaded.
@@ -49,9 +50,7 @@ horizon = Hour(24)
 # Set deterministic time series.
 
 set_demand!(sys, db, date_range; resolution = interval)
-set_renewable_pv!(sys, db, date_range; resolution = interval)
-set_renewable_wind!(sys, db, date_range; resolution = interval)
-set_hydro_limits!(sys, db, date_range; resolution = interval)
+set_nem_dispatch_limits!(sys, db, DateTime(2025, 1, 2):interval:DateTime(2025, 1, 3))
 
 # Derive forecasts from the deterministic time series.
 

@@ -7,6 +7,933 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The AGC ramp rate that caps regulation and joint ramping is the larger of `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE` and the regulation availability spread over the interval, instead of the bid-capped ramp rate alone. Regulation caps now match NEMDE's; joint ramping can be tighter than NEMDE's, because the telemetered rate is not published.
+
+- Replays build every unit registered at any point of the trading day for the whole chunk and pad it to zero outside its registration, so units registered after midnight (NESBESS1, BRDDBES1, DRXNSS01 and FCAS-only units with offers from 00:05) no longer fail the build.
+
+- A fast-start unit's fixed loading is attached at every interval outside DISPATCHMODE 1 and 2 instead of being dropped for the whole trading day; its `$<DUID>` constraint row is never built as a generic constraint.
+
+- Loading the simulations package no longer changes the balance-slack price of other area-balance models; the replay passes its Market Price Cap penalty through the network model's slack cost.
+
+- A battery or scheduled load with an energy offer on one side only (a GEN curve without a LOAD curve, or the reverse) now
+  fails the build instead of pricing the missing side at zero. Service-only bids still add no energy cost.
+
+- Tie-break scale parameters skip devices excluded by their device model's `filter_function`, so an excluded unit gets no scale row.
+
+- FCAS service bids are stored in MW and converted to per-unit of the system base on read, so
+  the offer values seen by the model are unchanged. Storing a service bid on a device without a
+  `MarketBidCost` now throws an `ArgumentError` instead of silently skipping the device.
+
+- Skip the effective FCAS offers of unavailable devices that carry no stored offer curve, so a
+  NEMDE replication whose unpriced units are unavailable no longer fails in `set_fcas_effective_offers!`.
+
+- Temporarily pin InfrastructureSystems 3.6.3 to a fork revision that limits
+  forecast-cache sizing reads to one window instead of all remaining windows.
+
+- Pin PowerSimulations to the fork rebased on upstream 0.38.5, and pin PowerSystems
+  5.12.4 to its fork revision in every workspace project that depends on it.
+
+- Pin the InfrastructureSystems, PowerSystems and PowerSimulations forks to revisions that size
+  cache rows by their deep footprint, add decremental service bids, read time-varying offer costs
+  through the model cache, and add meta-keyed and cost time-series parameters.
+
+- Require HDF5 0.17.5 with the upstream datatype-handle leak fix; temporarily pin
+  the official release-branch revision until that version is tagged. This prevents
+  growing native file-close overhead across repeated replay system builds.
+
+- Replay table requirements include `DISPATCHINTERCONNECTORRES` for MNSP metered-flow
+  ramping, including when diagnostic interval flow limits are disabled.
+
+- Energy-offer and fixed-loading affine sums are constructed inside their existing typed PSI
+  constraint hooks, reducing intermediate expression copies without changing model equations.
+
+- System builds use typed FCAS field access, retain fewer intermediate bid columns and reuse
+  demand, dispatch, unit and fixed-loading inputs within one construction. Generic-constraint
+  construction reuses component lookups locally, preserving missing and ambiguous-name errors.
+- Synthetic in-memory energy-offer precompilation reduces first-use conversion latency without
+  reading the market cache or accessing the network.
+
+- Energy and FCAS bid conversion constructs final curves once, reduces temporary band arrays
+  and formats FCAS validation context only on failure, preserving prices, quantities and diagnostics.
+
+- System construction filters generic-constraint terms to requested versions before archive
+  deduplication, reads native FCAS trapeziums with their offer bands, and groups energy bids
+  once for unit and direction lookups.
+
+- Replay tie-pair validation skips rebuilding unchanged pair sets while preserving full checks
+  and diagnostics for changed prices, band counts and missing timestamps.
+
+- MNSP dispatch uses elastic offer-total and availability limits, metered net-flow ramping and
+  directional fixed loading, with MPC-scaled penalties and MW violation reporting.
+  `set_mnsp_offers!` now requires metered interconnector results and accepts `intervention`.
+
+- Historical system construction uses one as-of interconnector result for buses and links, with
+  active regions taken from the latest cached demand snapshot at or before the requested time.
+- Demand aggregation and joined bid preparation run in DuckDB, preserving timestamp ceiling,
+  trading-day and direction keys, missing-value behavior and numerical band order.
+- Interconnector loss readers accept required `as_of` keywords; positional calls remain supported
+  with deprecation warnings.
+- Tests no longer contact NEMWEB, Google Storage or DuckDB extension servers: online tests are
+  explicitly skipped and the legacy test-data download helper is disabled.
+- Generic constraint field types are defined before use so the package loads, and interconnector
+  loss-demand preparation uses the restored shared demand-offset helper.
+- Market bid tutorials apply bids before strict dispatch limits so units without offers are
+  marked unavailable first. Dispatch-limit docstrings warn that coarse buckets accept incomplete
+  five-minute coverage.
+- `set_nem_dispatch_limits!` accepts a `date_range` with a step coarser than five minutes (for example
+  30 minutes): `read_dispatch_limits` aggregates `DISPATCHLOAD` onto it, keeping `INITIALMW` at the start
+  of each period and the minimum ramp rate and `AVAILABILITY` across it.
+- `replication_template` tolerates unmodeled device types in generic constraints only for the left-out
+  part: storage without `:batteries`, `AreaInterchange` without `:losses`. Other unmodeled types throw.
+- `read_energy_limits` raises on a cached `DISPATCHLOAD` without a `UIGF` column instead of
+  filling `NULL`; repopulate with `force_new = true`.
+- NEM dispatch no longer registers or updates the unused `"max_active_power"` parameter; dispatch
+  limits come from the energy availability and UIGF series. Non-scheduled loads stay fixed at 0 MW
+  for energy because they carry no energy offer.
+- `replication_simulation` accepts a documented `simulation_name` keyword (default `"replication"`) for reopening results with
+  `PSI.SimulationResults(folder, simulation_name)`; the replay script passes its own name.
+
+- Replay excludes explicitly omitted and never-invoked generic constraints before checking their
+  buildability, preserves their skip reasons, and reports missing components even when another
+  term uses an omitted model family. FCAS pre-flight checks respect omitted battery models.
+- Market Price Cap overrides at model and service level must be finite and strictly positive,
+  preventing zero-cost violation slacks and negative unbounded violation costs.
+
+- For interconnectors carrying paired directional MNSP offers, DC losses are supplied by the active
+  sending area (`-from_tlf * (q + loss)`) using its terminal loss factor, instead of the static
+  regional loss share. New `MNSPLinkLossVariable`. Interconnectors without directional offers keep
+  static sharing.
+
+- Piecewise interconnector loss curves are referenced to zero flow: when a chord brackets zero, the
+  new `loss_curve_vertex_values` subtracts its zero-flow intercept from every vertex, so modelled
+  loss is zero at zero flow and marginal slopes are unchanged. The loss equation and
+  `interconnector_loss_gaps` use it.
+
+- `interconnector_loss_models` fills the V-SA `NSW1` demand coefficient (`1.6981e-6`) that AEMO's
+  2025-26 report publishes but MMSDM `LOSSFACTORMODEL` omits, for 2025-07-01 to 2026-06-30. A value
+  present in the table is never overridden.
+
+- Invoked generic constraint versions with a missing effective date no longer abort the build (they are
+  treated as having no definition).
+- `filter_buildable_generic_constraints` leaves out a generic constraint whose contributing devices
+  are all unavailable (for example wholesale demand response constraints once their units are
+  unavailable), which PSI cannot build, and reports it as `:no_available_device` through its new
+  `skipped` keyword (also accepted by `replication_template`).
+- The 1-second FCAS markets (`RAISE1SEC`, `LOWER1SEC`) are modelled as contingency services: they
+  are part of `FCAS_CONTINGENCY_MARKETS`/`FCAS_BID_TYPES`, so their bids, requirements, prices and
+  dispatch outcomes are read, `add_fcas_services!` creates their services, and `FCASMarket` and
+  `compute_fcas_prices` handle them. The `F_*_R1`/`F_*_L1` generic constraints are no longer built
+  without their 1-second terms as always-violated rows priced at the constraint violation penalty,
+  which had forced Basslink import and TAS1 price gaps.
+- `NEMInterconnectorLoss` fills loss segments contiguously through binary fill indicators, so the
+  solved loss follows the loss curve at negative or zero weighted prices instead of burning energy
+  on steeper segments. Multi-segment interconnectors make the problem a MILP; duals are read from
+  the LP with the indicators fixed. `replicate_interval` defaults to HiGHS with a 1e-8 relative and 1e-10 absolute MIP gap and
+  raises on non-finite regional prices.
+- NEMWEB timestamps with a millisecond fraction (`2026/05/05 15:06:01.000`) parse instead of
+  becoming `NULL`.
+- Unit ramp rows of the `AbstractNEMDispatch` formulations are elastic: `UnitRampUpSlack` and
+  `UnitRampDownSlack`, priced at `UNIT_RAMP_CVP_FACTOR` (1155, AEMO CVP item 3) times the Market
+  Price Cap, so a ramp envelope that conflicts with the variable bounds (an offline unit with a
+  slightly negative `INITIALMW` and a zero ramp rate) no longer makes the interval infeasible. `replicate_interval` returns `ramp_violations` listing any non-zero ramp slack.
+- `IntervalInputs` documentation: `interconnector_flows` holds the target `MWFLOW`, not the flow
+  at interval start.
+- **`read_units` dropped units whose `DUALLOC` GENSETID is also a DUID** (for example `OSB-AG`,
+  `PTSTAN1`): `DUALLOC` was deduplicated per `GENSETID` by `DUID DESC`, which kept the legacy
+  `OSB01` row over `OSB-AG`. It is now deduplicated per `DUID` (first genset by `GENSETID`), and
+  units with no `GENUNITS` row (scheduled loads) are kept with a `missing` technology.
+  `get_generators_dataframe` excludes `DISPATCHTYPE = LOAD` units, so a load with a `GENUNITS` row
+  (`PUMP2`) is not also built as a generator.
+- Interconnector loss equations are evaluated at NEMDE's own regional demand, `INITIALSUPPLY +
+  DEMANDFORECAST` plus the initial charging load of the region's `BIDIRECTIONAL` units (new
+  `read_demand` column `LOSSDEMAND`, attached by `set_demand!` as a `loss_demand` series), instead
+  of `TOTALDEMAND`. It reproduces the `InitialDemand` in NEMDE case files to 1e-5 MW.
+- A `GenericConstraint` term on an unavailable device or `AreaInterchange` contributes zero
+  instead of throwing a `KeyError` in `build!` (PSI creates variables only for available
+  components); `UnitTerm`, `RegionTerm` and `InterconnectorTerm` now match FCAS terms.
+- `NEMInterconnectorLoss` throws an `ArgumentError` for any network model other than
+  `AreaBalancePowerModel`, the regional balance NEMDE uses.
+- Interconnector demand-dependent loss coefficients exclude unavailable `PowerLoad`s and retain
+  forecast scaling. Recurrent solves now fail with a rebuild diagnostic; standalone
+  `DecisionModel`s with `AreaBalancePowerModel` remain supported.
+- `NEMInterconnectorLoss` rejects an available `PowerLoad` on a bus with no area with an
+  `ArgumentError`, and builds without loss terms when no `AreaInterchange` is available.
+- `read_interconnectors` throws an `ArgumentError` naming `DISPATCHREGIONSUM` when that table is
+  not cached, instead of a raw DuckDB error.
+- **`read_uigf` returned scheduled and non-scheduled units**: `DISPATCHLOAD` publishes
+  `UIGF = 0` rather than `NULL` for them, so `set_fcas_scaling_inputs!` attached a zero
+  `"fcas_uigf"` series to every scheduled unit and §4.3 scaling clamped its FCAS
+  `EnablementMax` to zero. `read_uigf` now keeps only DUIDs that `DUDETAILSUMMARY.SCHEDULE_TYPE`
+  lists as `SEMI-SCHEDULED` at each interval, and throws if `DUDETAILSUMMARY` isn't cached.
+- **`set_nem_dispatch_limits!` stored `RAMPUPRATE`/`RAMPDOWNRATE` as MW per minute when AEMO
+  publishes them as MW per hour**: the `"ramp_up_rate"`/`"ramp_down_rate"` series it wrote, and
+  the `AustralianElectricityMarketsSimulations` formulation reading them, are documented as
+  per-minute, so every ramp band was 60 times too wide. The setter now divides both rates by 60
+  before per-unitising; the formulation's own per-interval scaling is unchanged.
+- **The dispatch envelope ignored AEMO's ramp-down floor**: `set_nem_dispatch_limits!`'s
+  `"max_active_power"` series, and `AustralianElectricityMarketsSimulations`'s `energy_bounds`,
+  capped a unit's upper dispatch limit at `AVAILABILITY` even when `INITIALMW - RAMPDOWNRATE ×
+  Δ` (Δ the interval in hours) was higher — a real, recorded NEMDE outcome, not an
+  inconsistency — making the model infeasible on real data. The upper dispatch limit is now
+  `AVAILABILITY` raised to that ramp-down floor when the floor is higher.
+- **`set_nem_dispatch_limits!`/`set_nem_initial_conditions!` demanded `DISPATCHLOAD` data for
+  unavailable units**: `_nem_dispatch_devices` selected every
+  `ThermalStandard`/`HydroDispatch`/`RenewableDispatch`/`EnergyReservoirStorage` regardless of
+  availability, so a unit `set_market_bids!` had already marked unavailable for having no bids
+  made the strict setter throw. Both setters now only require data for available devices.
+- **A battery's net ramp floor/ceiling could exceed its per-direction availability**: mirroring
+  the generator fix above, `_storage_dispatch_ceilings`
+  (`AustralianElectricityMarketsSimulations/src/nem_dispatch_storage.jl`) now raises the
+  generation-side ceiling to a net ramp-down floor above it, and the load-side ceiling to match a
+  net ramp-up ceiling below its negative, instead of leaving the two inconsistent and the model
+  infeasible.
+- **`populate` silently dropped every part past the first of a multi-part NEMWEB archive, and cached an arbitrary, duplicated slice of `DISPATCH_FCAS_REQ_CONSTRAINT`'s cumulative dump instead of one archive month**: `_get_archive`'s alternative URL pattern hardcoded `FILE01`, so a table AEMO splits into `FILE01`/`FILE02`/... (confirmed on `DISPATCH_FCAS_REQ_CONSTRAINT`, 2-3 parts per month from 2025-08 onward) only ever got its first part. That table's archive is also cumulative - every month's file holds the full history since 2024-12-09 - so each cached partition held an arbitrary window of the same growing dataset rather than that month's rows. `_get_archive` now fetches every part until one 404s; `_TABLE_SPECS` entries can opt in to a `month_filter_column` that scopes rows to their archive month and deduplicates rows repeated across parts (set only for `DISPATCH_FCAS_REQ_CONSTRAINT`). **Action required**: re-populate `DISPATCH_FCAS_REQ_CONSTRAINT` with `force_new = true`.
+- **`GenericConstraint.rhs`/`"rhs"`/`"lhs"` time series, `FCASTrapezium`/`FCASBid`, and `InterconnectorLossModel` ignored the `System`'s units base**: every one of these stored raw MW as a
+  literal field, so a `System` switched to `SYSTEM_BASE` (the default `PowerSystems.System` constructs unless told otherwise, and the base `AustralianElectricityMarketsSimulations` builds its
+  optimization model in) reported native PSY device limits per-unit while these types kept reporting MW - an internally inconsistent `System`, confirmed directly by comparing
+  `get_active_power_limits`/`get_rhs` under both units bases. `GenericConstraint`/`FCASService` scalar fields now route through `PSY.get_value`/`PSY.set_value` like any other PSY component
+  field; the `"rhs"`/`"lhs"` time series and `FCASTrapezium`/`FCASBid` (neither of which can use PSY's own per-component machinery) are written per-unit of the system base by
+  `add_nem_constraints!`/`set_fcas_bids!` and converted back to MW on read by `get_fcas_trapezium`/`get_fcas_offer_curve` under `NATURAL_UNITS`; `InterconnectorLossModel` is per-unitized once,
+  at `attach_interconnector_losses!` time. `ConstraintTerm.factor`, the `"invoked"` mask, `constraint_weight`, `$/MWh`/`$/MW` prices, and `from_region_loss_share` are unaffected - none of them
+  are power quantities. This reverses the Phase 1 exit test's `"unit contract: native MW/\$, not per-unitized"` testset, which pinned the broken behaviour; it now asserts the opposite.
+
+- **`allow_empty_region_terms` was unreachable**: `nem_system(db, ConstrainedNetworkConfiguration(); date_range, ...)` now forwards `intervention`/`include_solution`/`resolution`/`allow_empty_region_terms` to `add_nem_constraints!` explicitly, instead of silently routing them into `System`'s constructor kwargs.
+- **`add_nem_constraints!` no longer partially mutates `sys` before an aggregated empty-`RegionTerm` throw** — a caller retrying with `allow_empty_region_terms = true` on the same `System` no longer hits duplicate-component errors.
+- **`add_nem_constraints!` warns when invoked `SETTLEMENTDATE`s don't align to `date_range`'s grid**, instead of silently producing an all-zero `"invoked"` series.
+- **`GenericConstraint`'s `get_limit_type`/`get_source`/`get_effective_date`/`get_version_no`/`get_gencon_id`** now return `nothing`, not Julia `missing`, when the underlying `GENCONDATA` field was `NULL`.
+- **`set_fcas_bids!` throws an actionable `ArgumentError`**, not a raw `MethodError`, when a required FCAS trapezium field (`ENABLEMENTMIN`/`LOWBREAKPOINT`/`HIGHBREAKPOINT`/`ENABLEMENTMAX`/`MAXAVAIL`) is `NULL`.
+- **`loss_segments` throws on duplicate adjacent `LOSSMODEL` breakpoints** instead of silently producing a `NaN` slope.
+- **`get_fcas_bid` throws on a trapezium/offer-curve series length mismatch** instead of silently truncating via `zip`.
+- **Stale data-fetching documentation**: The README, docs landing page, "Gathering Data" page, and the commented download snippets in the Literate examples all referenced a `fetch_table_data` function and a `PyHiveConfiguration` type that no longer exist. They now use `populate` and `HiveConfiguration`, and the description of the package as a wrapper around a Python package has been removed.
+- **`read_bids`/`read_fcas_bids` discarded `MAXAVAIL`/`MINIMUMLOAD`/`DAILYENERGYCONSTRAINT`**: `_massage_bids` queried these physical-bound columns from `BIDPEROFFER_D`/`BIDDAYOFFER_D` but dropped them before returning, leaving only the priced curve. They are now retained on the output; `_read_fcas_trapezium` no longer selects its own duplicate `MAXAVAIL`, since `read_fcas_bids`'s join now gets it from the same place.
+- **`set_fcas_bids!` silently dropped `LOAD`/`BIDIRECTIONAL`-direction FCAS bids**: it only ever iterated `Generator` components with `DIRECTION = 'GEN'`, so batteries and other bidirectional providers — a large share of real FCAS volume in several markets — got no FCAS data at all. It now also attaches to `EnergyReservoirStorage`: `GEN`/`BIDIRECTIONAL` rows under the existing series names, `LOAD` rows under a new `"<SERVICE>_decremental"` suffix, mirroring `set_market_bids!`'s incremental/decremental split.
+- **`add_nem_constraints!` dropped constraints with partial interval coverage** instead of handling them: a `GENCONID` invoked for fewer intervals than its peers (its constraint set started or stopped applying partway through the range) was skipped entirely rather than added. On a week of real `DISPATCHCONSTRAINT` data this dropped 45% of invoked constraints, including over a quarter of the ones that ever bind. It is now added with its `"rhs"`/`"lhs"` series padded to the full interval grid (last known value carried forward) and a new `"invoked"` series (`1.0`/`0.0`) recording which intervals were real.
+- **`read_constraint_fcas_requirements`/`read_fcas_requirements` returned nothing after 2025-05**: both read `DISPATCH_FCAS_REQ`, which AEMO stopped publishing after that archive month, so any later date range produced an empty result — and for `add_nem_constraints!` an empty `fcas_requirements` list is indistinguishable from "this is a pure network constraint", making every FCAS requirement silently vanish. Both now read through a union of `DISPATCH_FCAS_REQ` and its successor `DISPATCH_FCAS_REQ_CONSTRAINT`, deduplicated over the months where AEMO publishes both, so attribution is continuous across the changeover. Two caveats are documented rather than papered over: the successor has no `INTERVENTION` column, so `intervention` filters the old table only; and it drops the `GENCONEFFECTIVEDATE`/`GENCONVERSIONNO` pair, so post-changeover `GENCONDATA` enrichment falls back to the latest version effective at the interval instead of an exact-version match.
+- **`populate` silently skipped months it was merely rate-limited on**: `_get_archive` mapped *every* `HTTP.Exceptions.HTTPError` — 403, 429, 5xx, connection resets — to `MissingDataError`, which `populate` logs as "No data available" and skips. NEMWEB rate-limits bulk fetches with 403, so a wide date range could report success while leaving holes indistinguishable from months AEMO never published (observed directly: 180 such skips in one bulk run, including months verified to exist). Downloads now classify the response — 404 alone means absence; 403/408/425/429/5xx and connection failures retry up to 5 times with exponential backoff and then raise the new `TransientDownloadError`, which `populate` deliberately does **not** swallow. The primary→alternative URL fallback now fires only on a genuine 404, so a throttled run stops adding load instead of doubling it.
+- **Renewable ceilings were normalised by the in-window maximum**, so the reconstructed MW depended on how wide a `date_range` the caller asked for, and the last interval of any window was always pinned to the unit's full registered capacity. Seeding a single dispatch interval (a 2-point window, as the dispatch-replication harness does) therefore gave every semi-scheduled unit a ceiling at ~100% of nameplate. An all-zero window — solar overnight — divided by zero and wrote `NaN` into the time series with no error. Both are gone: `UIGF` is an absolute MW figure per unit per interval, so no window-relative normalisation happens at all.
+- **Time-series setters depended on the `System`'s units base at write time**: `_add_demand_ts_to_components!` divides by `get_max_active_power`, which is itself unit-mode-aware, so the stored series came out a factor of `get_base_power(sys)` wrong when the setter was called in one units base and read back expecting the other. `nem_system` leaves a `System` in `SYSTEM_BASE` (what the Literate docs pages use) while the replication harness switches to `NATURAL_UNITS` first, so the two call sites disagreed. The divisor is now always taken in `NATURAL_UNITS` via `with_units_base`, making the stored series identical regardless of the caller's units base.
+- **`read_bids`/`set_market_bids!`/`set_hydro_limits!` mis-aggregated bids at any resolution other than 5 minutes**: `_massage_bids` summed `MAXAVAIL` across the intervals in each bucket while pre-scaling `BANDAVAIL` by `Minute(5) / resolution` and summing that — two different conventions for two quantities that are both MW. At 30-minute resolution a bucket covering six intervals returned `MAXAVAIL = 621.0` where the true mean was `103.5` (6x inflated; 12x hourly), so `set_hydro_limits!`, which uses `MAXAVAIL` as the hydro ceiling, gave every hydro unit roughly twelve times its nameplate on an hourly read. Separately, `ceil` leaves the first bucket a singleton, and the scale-then-sum trick is only valid for a *full* bucket, so `BANDAVAIL` there came back at `1/12` of its true value. The two errors cancel at the 5-minute default, which is why neither surfaced. Both quantities are now aggregated with `mean`, which is correct for full and partial buckets alike.
+- **`get_generators_dataframe` swapped `MAXRATEOFCHANGEUP`/`MAXRATEOFCHANGEDOWN`**: `DUDETAIL`'s ramp-up rate fed `:max_ramp_down` and its ramp-down rate fed `:max_ramp_up`, so any unit with asymmetric registered ramp rates got `ThermalStandard`/`HydroDispatch.ramp_limits` crossed; the mock hive's equal up/down rates hid it. Mapping is now direct, and one mock `DUDETAIL` unit carries distinct up/down rates to catch a regression.
+
+### Added
+
+- Interconnector loss-gap diagnostic in `scripts/interconnector_loss_gaps.jl`: `loss_gap_table` tabulates each saved replay interconnector's solved loss against the loss curve at its solved flow, with the weighted marginal price of loss.
+- `AustralianElectricityMarketsSimulations` precompiles a two-interval replay of the mock NEM cache, so a fresh process builds and steps a replay without first-call compilation (a cold 12-interval replay drops from about 490 s to about 100 s).
+- The replay batch runner accepts `--time-series-in-memory true|false` (default `false`), recorded in `run.toml` and each day's `provenance.toml`, to hold replication time series in memory.
+
+- A standalone Python report script for saved dispatch replays, including runtime
+  distributions, NEMDE error percentiles by unit/region/service/interconnector,
+  memory, partial-run coverage and overlap-aware pooled comparisons.
+
+- `NEMDEConfiguration` builds fully populated replay systems through AEM's `nem_system`.
+  AEMSim's `prepare_replication!`, `replication_simulation` and `replication_results` consume built
+  systems and expose the standard PSI build, execute and results lifecycle.
+- `read_energy_limits` and `set_nem_energy_limits!` retain separate energy bid `MAXAVAIL`,
+  semi-scheduled `UIGF` and effective schedule classification, validating required inputs before
+  attaching system-base time series.
+- The repository script helper `replicate_range(db, start, stop; parts, chunk, ...)` replays a range of dispatch intervals as one
+  stock PowerSimulations `Simulation` per chunk, stepping a one-interval replication model whose
+  parameters update between intervals. Chunks break at every trading-day start (04:05), at 00:05 on
+  1 July and every `chunk` period; each chunk leaves out the generic constraints it never invokes
+  and runs `check_tie_break_pairs`, `check_fcas_services` and
+  `check_dispatch_envelope` before its build. It returns the per-interval comparison with the
+  published outcome, constraint violations, solver statistics and each chunk's reopened results.
+  `scripts/replicate_range.jl` prints the comparison for a range.
+- `REPLICATION_PARTS` and the `parts` and `exclude_constraints` keywords of `replication_template`
+  select the modelled families (batteries, FCAS, losses, tie-breaks, generic constraints) and leave
+  out named generic constraints. The input checks follow `parts`, and a generic constraint that
+  needs a left-out family is reported in `skipped` instead of failing the build.
+- `get_missing_constraint_intervals` and `get_defaulted_constraint_weights` report what
+  `add_nem_constraints!` could not take from the cache: dispatch intervals with no invoked
+  constraint, and constraints built with the default weight 1.0 for a NULL
+  `GENERICCONSTRAINTWEIGHT`. Both survive a `System` JSON round-trip, and a run with no invoked
+  constraint resets them along with the skipped constraints and dropped terms.
+- `set_fcas_effective_offers!` precomputes each FCAS offer's enablement-masked `MaxAvail`,
+  enablement limits, slope coefficients, band widths and regulation ramping limits as per-interval
+  series, with the `FCASOfferBandVariable` and the `FCAS*Parameter` types `FCASMarket` reads them
+  through.
+- `set_storage_dispatch_ceilings!` attaches each battery's per-direction dispatch ceilings
+  (`"storage_gen_ceiling"`, `"storage_load_ceiling"`): its energy offer `MAXAVAIL`, raised on the
+  net axis to the ramp envelope. `NEMReplayDispatch` bounds a battery with them as time-series
+  parameters, so the bounds update between simulation steps. `check_dispatch_envelope` verifies a
+  replay's ramp floors against availability before a build.
+- `add_nem_constraints!` builds an Energy Inflexible Offer constraint `\$<DUID>` for each available
+  device with a participant fixed loading (`BIDPEROFFER_D.FIXEDLOAD > 0`, fast-start units
+  excluded): a net-energy equality at the fixed loading, weight 380, invoked at the intervals that
+  carry one. Fixed loadings of units outside the system are ignored. It now also requires
+  `BIDPEROFFER_D` (`FIXEDLOAD`) and `BIDDAYOFFER_D` (`T1`) to be cached.
+- `set_loss_demand_coefficients!` attaches each loss-modelled `AreaInterchange` a
+  `"loss_demand_coefficient"` series: the demand term of its loss factor at every interval.
+- `read_fixed_loads` reads participant-entered energy fixed loadings from `BIDPEROFFER_D`, skipping
+  units with a fast-start inflexibility profile.
+- `read_published_interval` accepts a range of dispatch intervals and reads each table once.
+- `populate_legacy_archive` fills the cache for months before 2015, when NEMWEB hosts one monolithic
+  `MMSDM_<yyyy>_<mm>.zip` per month. It range-reads only the requested tables' entries, defaulting to the
+  four generic-constraint definition tables, so constraints last revised before 2015 (for example
+  `N_NIL_TE_B`, `N_MBTE1_B`, the `*_ZERO` interconnector constraints) get a definition.
+
+- `add_nem_constraints!` builds the Interconnector Zero constraints `SVML_ZERO`, `VSML_ZERO`, `VT_ZERO` and
+  `TV_ZERO`, which `GENCONDATA` and the `SPD*` tables do not define, from a built-in definition: a
+  one-term `<=` constraint on the `V-S-MNSP1` or `T-V-MNSP1` flow with right-hand side 0 and CVP
+  factor 1160, applied only to version 2013-08-21 #1 (any other version warns and is skipped). An
+  invoked pair constrains the interconnector's net flow to zero, elastic at 1160 times the Market
+  Price Cap, instead of being skipped as `no_definition`.
+- **MNSP link offers**: `read_mnsp_links(db, as_of)` reads the link table, and `set_mnsp_offers!`
+  attaches the two link offers (availability, price bands, link loss factors) of every interconnector
+  that offers in the date range to its `AreaInterchange`. Under `NEMInterconnectorLoss` such an
+  interconnector's flow splits into a forward and a reverse `MNSPLinkFlowVariable`, each bounded by
+  `MAXAVAIL` and the offered bands, priced at the offered price, and entering the regional balances
+  through the link's own loss factors. Circulating flow is excluded by a registered binary
+  (`MNSPLinkDirectionVariable`), so a zero net flow gives zero link flows. An interconnector
+  without offers keeps the free-flow model. The loss share of `T-V-MNSP1` is fixed at 1.0, as in nempy.
+
+- Loads offer FCAS. `set_fcas_bids!` attaches `LOAD`-direction FCAS bids to `InterruptiblePowerLoad`
+  components, `nem_system` builds non-scheduled loads (ancillary-service and demand-response loads
+  with no energy bid) unavailable and `set_fcas_bids!` makes the ones that offer FCAS available, with
+  zero energy. `FCASMarket` models a load on its consumed MW with AEMO's scheduled-load joint
+  capacity and ramping rows (the regulation targets swap sides), `add_fcas_services!` includes load
+  bidders, FCAS `RegionTerm`s reach a region's loads, and the decremental-bid-on-a-non-`Storage`
+  throw is narrowed to devices that are neither storage nor loads. Scheduled loads' FCAS scaling
+  inputs are not modelled.
+- `read_loss_factors` reads each unit's TLF x DLF (and a bidirectional unit's secondary factor)
+  from `DUDETAILSUMMARY`, as of a date.
+- Storage ramp rows, FCAS MaxAvail rows (item 19, 155) and BDU SCADA ramping rows (item 21, 155),
+  and interconnector flow limit rows (item 5, 1150) are elastic at their CVP factor times the
+  Market Price Cap: a battery whose net ramp envelope exceeds its rating (the rating's upper bound
+  is raised to the `NEMReplayDispatch` ramp floor, as for generators), or conflicting flow limits,
+  no longer make the interval infeasible. The FCAS rows are elastic under `use_slacks`.
+  `replicate_interval` also returns `constraint_violations`, every non-zero slack of the elastic families, by family and
+  direction; `ramp_violations` keeps working.
+- Data package ingests the MNSP offer tables (`MNSP_DAYOFFER`, `MNSP_BIDOFFERPERIOD`,
+  `MNSP_PEROFFER`, `DISPATCH_MNSPBIDTRK`), `DISPATCHLOAD.DISPATCHMODETIME` and
+  `DISPATCHINTERCONNECTORRES.FCASEXPORTLIMIT`/`FCASIMPORTLIMIT`, with `read_mnsp_offers`
+  returning the offer NEMDE applied per link and interval. Re-populate cached `DISPATCHLOAD` and
+  `DISPATCHINTERCONNECTORRES` months with `force_new = true` to fill the new columns.
+- Energy tie-break: price-tied energy bands of a region (offers and load bids separately, FCAS
+  excluded) are dispatched in proportion to band MW through pairwise MW-proportion rows with elastic
+  slacks priced at `TIE_BREAK_CVP_FACTOR` (1e-6 $/MWh), as in NEMDE's tie-break constraint. Added from the
+  `AreaBalancePowerModel` objective hook, so it needs `use_slacks = true`.
+- `read_interconnector_limits` and `set_interconnector_flow_limits!` read the per-interval
+  `DISPATCHINTERCONNECTORRES` `EXPORTLIMIT`/`IMPORTLIMIT` and attach them as the flow-limit series
+  `NEMInterconnectorLoss` bounds flow by; `nem_system(db, NEMDEConfiguration(); interval_flow_limits = true, ...)`
+  applies them as an opt-in diagnostic (they are post-solve results and pin flows to NEMDE).
+- `read_units`, `read_interconnectors` and `nem_system` accept `as_of`, resolving the static
+  tables (loss factors, flow limits) as in force at that instant.
+- **Scheduled loads** (pumps and other `DISPATCHTYPE = LOAD`, `SCHEDULE_TYPE = SCHEDULED` units such as
+  `SHPUMP`, `PUMP2`, `SNOWYP`, `KIDSPHL1`) are built into the `System` as `InterruptiblePowerLoad`s
+  on their region's generator bus. `set_market_bids!` attaches their decremental (`LOAD`)
+  offer (a load that bids `GEN`, a wholesale demand response unit, is made unavailable with one
+  aggregated warning and is not modelled), `set_nem_dispatch_limits!` their ramp, `INITIALMW` and `AVAILABILITY` series, and under
+  `AbstractNEMDispatch` they are a consumed-MW variable withdrawn from the area balance and priced
+  on the decremental offer. The regional balance still clears at `TOTALDEMAND`
+  (demand less loads), so dispatched load adds to the generation required, and generic-constraint
+  terms on a load resolve. Loads offering FCAS are not modelled.
+- **Skipped generic constraints are observable**: `get_skipped_constraints(sys)` returns a table
+  (constraint, reason, number and list of unresolved DUIDs, regions or interconnectors) of the
+  invoked constraint versions `add_nem_constraints!` did not build, and the skip warning carries
+  the count by reason. `replicate_interval` returns a `skipped_constraints` table that also
+  lists the constraints the template cannot model, and
+  `scripts/diagnose_infeasible.jl` reports the solver
+  status and conflicting constraint families for an interval that does not solve.
+- **Dispatch simulation and comparison:** AEM constructs the populated system through
+  `NEMDEConfiguration`. AEMSim supplies `replication_template` and system-only simulation
+  utilities using NEM dispatch devices, `FCASMarket`, `LinearFactorLimit`, `NEMInterconnectorLoss`
+  and `AreaBalancePowerModel` with slacks. The repository workflow compares solved regional `ROP`
+  (with published `RRP`), `TOTALCLEARED`, interconnector flows and losses, and FCAS prices, keeping
+  every published row. AEM's `read_published_interval` reads the published outcomes;
+  `scripts/replicate_range.jl` prints the comparison from the local hive cache.
+- **Elastic FCAS joint rows and area-balance CVP pricing** (`AustralianElectricityMarketsSimulations`):
+  with `use_slacks = true` on an `FCASMarket` `PSI.ServiceModel`, `FCASJointCapacityConstraint`
+  rows get a `FCASJointCapacitySlack` (CVP factor 70, AEMO item 24) and `FCASJointRampingConstraint`
+  rows a `FCASJointRampingSlack` (factor 155, item 20), both priced at factor x Market Price Cap.
+  PSI's `AreaBalancePowerModel` slack is now priced at 150 x Market Price Cap (items 22 and 23)
+  instead of the fixed `BALANCE_SLACK_COST`. The Market Price Cap comes from
+  `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` (now including FY2024-25) or from a `"market_price_cap"`
+  entry in `PSI.get_ext(PSI.get_settings(model))`, which every elastic slack falls back to; an
+  unpublished year with no override throws.
+- **FCAS terms in generic constraints** (`AustralianElectricityMarketsSimulations`): `LinearFactorLimit`
+  now builds `UnitTerm`/`RegionTerm`s with an FCAS `bid_type` from `FCASMarket`'s capacity variables
+  (regulation reads the unit's net regulation target), resolving the service with the new
+  `fcas_service_name(device, bid_type)` (`<REGIONID>_<BIDTYPE>`, from the device's own area). A
+  service that is absent, unavailable or has no available devices contributes zero (one warning per
+  constraint for absent ones); a service with devices but no `FCASMarket` model throws.
+  `compute_fcas_prices(results, sys)` maps `NEMConstraintLimit` duals onto regional FCAS prices
+  (`SETTLEMENTDATE`, `REGIONID`, `BIDTYPE`, `ROP`) through each constraint's `fcas_requirements`,
+  reading the resolution from `results` and warning about constraints with no recorded dual.
+  `filter_buildable_generic_constraints` reports an FCAS term whose own service has devices but no
+  `FCASMarket` model as `:unmodeled_fcas_service` (replacing `:unsupported_bid_type`).
+- **Elastic `GenericConstraint`s under `LinearFactorLimit`** (`AustralianElectricityMarketsSimulations`):
+  `GenericConstraintSlackUp`/`GenericConstraintSlackDown` variables, built only for the side(s)
+  `get_sense(gc)` needs and only when the owning `PSI.ServiceModel` sets `use_slacks = true`,
+  merged into `NEMConstraintLHS` so a genuinely violated interval builds and solves with a nonzero
+  slack instead of an infeasible LP. `objective_function!` for `LinearFactorLimit` now prices each
+  slack at `GENERICCONSTRAINTWEIGHT * Market Price Cap` for the interval's financial year (a new
+  `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR` table, overridable per `PSI.ServiceModel` via a
+  `"market_price_cap"` attribute), converted to an objective coefficient the same way every other
+  price in this package's objective is (`interval_cost_coefficient`, `base_power`). Years absent
+  from the published table throw instead of reusing an earlier year's cap.
+- **`FCASJointRampingConstraint`, AEMO *FCAS Model in NEMDE* §6.1's joint ramping constraint**
+  (`AustralianElectricityMarketsSimulations`): for every contributing device of a regulation
+  `FCASService`, bounds the device's net energy dispatch combined with its
+  `FCASUnitRegulationTarget` against `InitialMW` plus or minus its telemetered AGC ramp
+  (`get_fcas_agc_ramp_capability`, shared with §4.2 and §6.4 through the generalised
+  `_fcas_agc_ramp_caps`). Built over every contributing device regardless of bid direction, gated
+  to a vacuous row wherever the ramp capability is zero or absent, `InitialMW` is unknown at that
+  interval, or the device isn't enabled for the service. `check_fcas_services` now also reports a
+  regulation contributor that carries a positive AGC ramp rate but no `"initial_mw"` series.
+- **`NEMInterconnectorLoss`, the interconnector loss formulation** (`AustralianElectricityMarketsSimulations`):
+  a `PSY.AreaInterchange` device formulation that reads Phase 1's `InterconnectorLossModel`
+  `PSY.SupplementalAttribute` (root package's `attach_interconnector_losses!`) and linearises
+  NEMDE's quadratic loss curve into the from/to regional power balance on the model's own
+  `LOSSMODEL` breakpoints, no SOS2/binary needed. Losses are apportioned by
+  `INTERCONNECTORCONSTRAINT.FROMREGIONLOSSSHARE`: the from-area bears `share * loss`, the to-area
+  the remainder, both as extra consumption on top of the ordinary lossless flow — matching both
+  AEMO's data model and `nempy`'s `set_interconnector_losses`. The loss curve is linearised as
+  bounded segments with nondecreasing chord slopes. Positive weighted marginal prices make cost
+  minimisation fill the cheapest segment first; zero or negative prices may permit excess loss.
+  `interconnector_loss_gaps(results, sys)` reports this excess against the breakpoint
+  interpolation in MW, and `check_interconnector_loss_segments` warns above a supplied tolerance.
+- **`FCASMarket`, the `FCASService` co-optimisation formulation** (`AustralianElectricityMarketsSimulations`):
+  a `FCASCapacityVariable` per contributing device and interval, bounded above by the device's
+  `MAXAVAIL` for that market, and both forms (upper and lower) of the joint capacity constraint
+  from AEMO's *FCAS Model in NEMDE* §6.2/§6.3, each held in a per-`(device, t)`
+  `FCASJointCapacityLHS` expression: energy dispatch, offset by the service's own trapezium slope
+  and any matching regulation target, held inside `[EnablementMin, EnablementMax]`. A `PSY.Storage`
+  device's energy term is its net `ActivePowerOutVariable - ActivePowerInVariable` on contingency,
+  matching how real battery contingency FCAS is bid (`DIRECTION = BIDIRECTIONAL`, against a net-MW
+  trapezium), and the bid side's own energy on regulation (`ActivePowerOutVariable` for a `GEN`
+  bid, `-ActivePowerInVariable` for a `LOAD` bid). The computable subset of AEMO's §5 enablement
+  pre-conditions (`MaxAvail`, a positive offer band, the enablement sign and
+  energy-maximum-availability tests against `DISPATCHLOAD.AVAILABILITY`, and "stranded" outside the
+  trapezium against `INITIALMW`, net for a battery, first interval only under
+  `NEMLookaheadDispatch`) gates a disabled `(device, t)` to zero capacity and a vacuous constraint
+  row, rather than a device NEMDE would not enable being forced on. For a `PSY.Storage` device the energy
+  test reads each direction's energy bid `MAXAVAIL`, which `set_market_bids!` now attaches and
+  `get_storage_energy_max_avail` reads back. Trapezium and offer-curve data are read
+  directly off the `Deterministic` series `set_fcas_bids!` attaches, so no `PSI.TimeSeriesParameter`
+  is registered for them and they never conflict with the `SingleTimeSeries`-derived forecasts every
+  other formulation reads. Offer cost is an epigraph over the device's step offer curve (band
+  variables filling cheapest-first), priced with the same `$/MWh`-over-an-interval basis as energy,
+  scaled by the system base power to price a per-unit capacity variable against a natural-`$`/MW
+  offer, over the model's own resolution (`interval_cost_coefficient(price, resolution)`).
+  `FCASMarket` supports a standalone `DecisionModel` only (it throws when built for a
+  `Simulation`), records duals for `FCASJointCapacityConstraint` only, and throws on a device
+  contributing to two `FCASService`s of the same market. A decremental (`LOAD`-direction) bid on a non-`Storage` device throws — no scheduled-load
+  device type exists in this package yet, and `set_fcas_bids!` never produces one. `check_fcas_services`
+  is a pre-flight check, over the available services the template models under `FCASMarket` and
+  their available contributors, confirming each has an energy-dispatching device model, a
+  supported FCAS bid direction and at most one service per market. AEMSim's own duplicate trapezium-slope arithmetic
+  (`EffectiveTrapezium`, the local `lower_slope_coeff`/`upper_slope_coeff`) is gone; `scale_trapezium`
+  now returns an `FCASTrapezium` directly, reading root's
+  `get_lower_slope_coeff`/`get_upper_slope_coeff`.
+- **`get_initial_mw`/`get_energy_availability`** read back `set_nem_dispatch_limits!`'s
+  `"initial_mw"` and new `"availability"` (raw `DISPATCHLOAD.AVAILABILITY`) series in display units.
+  `interval_cost_coefficient` takes an optional `resolution` (default `DISPATCH_INTERVAL`, 5
+  minutes), `energy_bounds` a `resolution` keyword, and `interval_hours`/`DISPATCH_INTERVAL` are
+  exported.
+- **FCAS bid trapeziums are validated**: `set_fcas_bids!` and `get_fcas_trapezium` throw unless
+  `EnablementMin ≤ LowBreakpoint ≤ HighBreakpoint ≤ EnablementMax` and `MaxAvail ≥ 0`, as AEMO's
+  bid validation guarantees for every published bid.
+- **`FCASMarket` models a `PSY.Storage` device bidding regulation on both sides per-side**
+  (`AustralianElectricityMarketsSimulations`), per AEMO *FCAS Model in NEMDE* §6.3 footnote 8 and
+  §6.4: two `FCASSideCapacityVariable`s per `(device, t)` (`"<service>_gen"`/`"<service>_load"`),
+  each with its own energy term (`ActivePowerOutVariable` for the generation side,
+  `-ActivePowerInVariable` for the load side), its own §6.3 joint capacity pair against its own
+  scaled trapezium, and priced against its own offer curve. A new `FCASUnitRegulationTarget`
+  expression (`Reg_gen + Reg_load`, or the single-sided `FCASCapacityVariable` otherwise) is the
+  unit's published regulation total: §6.2's cross term on another service's joint capacity
+  constraint, and a new `FCASBDURampingConstraint` (§6.4's "BDU regulating FCAS SCADA ramping
+  constraint", bounding the total against the device's AGC ramping capability, skipped where no
+  ramping-capability series or a zero SCADA ramp rate, and applied per AEMO's Table 3: every
+  interval in dispatch, the first in 5-minute pre-dispatch, none in 30-minute pre-dispatch), both
+  read it. AEMO's §5 pre-conditions
+  gate each side independently; when both sides pass, one combined stranded pre-condition
+  (`EnablementMin_LOAD <= InitialMW <= EnablementMax_GEN`) gates both together, and otherwise the
+  side still enabled is checked against its own trapezium. A new AGC-status pre-condition
+  (`get_fcas_agc_status`/`"fcas_agc_status"`, also gating a single-sided or non-`Storage` device's
+  regulation bid) gates every regulation bid; under `NEMLookaheadDispatch` AGC status and the
+  SCADA ramping cap apply to the first interval only. `_merge_offer_curve` is gone - each side now prices
+  against its own curve. Both directions of a contingency market, or of any market on a
+  non-`PSY.Storage` device, still throw, and `check_fcas_services` reports them.
+- **FCAS trapezium scaling** (AEMO *FCAS Model in NEMDE* §4): `scale_fcas_trapezium` (root) is
+  the pure §4.1/§4.2/§4.3 arithmetic — the telemetered AGC enablement limits and AGC ramping
+  capability narrow a `RAISEREG`/`LOWERREG` trapezium, and a semi-scheduled unit's UIGF narrows
+  any trapezium's `EnablementMax` — with the paired breakpoint recomputed from the bid's own
+  slope. `read_fcas_scaling_inputs`/`set_fcas_scaling_inputs!` read
+  `DISPATCHLOAD.RAISEREGENABLEMENTMIN/MAX`, `LOWERREGENABLEMENTMIN/MAX`, `RAMPUPRATE`/
+  `RAMPDOWNRATE` and `UIGF` into per-device `SingleTimeSeries`; `get_scaled_fcas_trapezium`
+  reads a device's bid trapezium plus whichever of those series are attached and applies the
+  scaling. `FCASMarket`'s `_fcas_series` (`AustralianElectricityMarketsSimulations`) now calls
+  `get_scaled_fcas_trapezium` instead of `get_fcas_trapezium`; a `System` without
+  `set_fcas_scaling_inputs!` is unaffected, since an absent series scales nothing. The AGC inputs
+  follow AEMO's §4.4 Table 1 timing: every interval under `NEMReplayDispatch`; the first interval
+  only under `NEMLookaheadDispatch` at 5 minutes; and at longer resolutions (30-minute
+  pre-dispatch) AGC enablement scaling on the first interval and no AGC ramp scaling.
+  `get_scaled_fcas_trapezium` gains `agc_ramp_scaling` (default `true`) to drop §4.2. No scaling
+  applies to a contingency bid from a scheduled unit, matching AEMO. An interval with no source
+  value applies no scaling at that interval only.
+- **Battery FCAS inputs** (root): `set_fcas_scaling_inputs!` also attaches `AGCSTATUS` as
+  `"fcas_agc_status"`, read by `get_fcas_agc_status`. The same AGC enablement series is read for
+  both a `PSY.Storage` device's generation-side and load-side regulation trapezium; a window
+  outside a side's own span leaves that side's scaled trapezium empty (`EnablementMin >
+  EnablementMax`), which §5 disables.
+- **`AbstractNEMDispatch`, a uniform device formulation for NEM dispatch participants** (`AustralianElectricityMarketsSimulations`): a per-band bid stack from `MarketBidCost`, a per-interval ramp limit from the `"ramp_up_rate"`/`"ramp_down_rate"` series, and the `DISPATCHLOAD.AVAILABILITY` envelope, replacing the stock `ThermalBasicDispatch`/`RenewableFullDispatch`/`HydroDispatchRunOfRiver` formulations whose commitment binaries, forecast ceiling and energy budget NEMDE does not apply. The formulation is written against `PowerSystems.StaticInjection` and is never gated on a fixed list of device types: NEMDE dispatches on market participation, not technology, so a `ThermalMultiStart` or any other injector a user brings is treated identically. It models one injection variable per device; state of charge for bidirectional units layers on as its own formulation.
+- **`NEMReplayDispatch` and `NEMLookaheadDispatch`**, the two concrete `AbstractNEMDispatch` formulations, differing only in what the ramp constraint measures against: the replay formulation measures every interval against its own metered `INITIALMW`, as NEMDE does, and the lookahead formulation chains each interval from the previous one's dispatch. Both are concrete, so a consumer always names one and the choice is never made by default.
+- **`nem_dispatch_participants` and `set_nem_dispatch_models!`**, which set one formulation across every participant by reading which components carry the dispatch-limit series rather than assuming types, plus the `RampUpRateTimeSeriesParameter`/`RampDownRateTimeSeriesParameter`/`InitialPowerTimeSeriesParameter` parameter types. An `AbstractNEMDispatch` model builds as a pure LP with no `OnVariable`, and a device missing a ramp series or with a ramp-down floor above its availability ceiling is named at build rather than surfacing as a solver `INFEASIBLE`.
+- **`set_nem_dispatch_models!(...; skip_uncovered = true)`**, which excludes uncovered components from the device models behind a warning instead of failing the build. This is the sim-side counterpart to `set_nem_dispatch_limits!(...; allow_missing_ramp_rates = true)`: without it, proceeding with a partial subset in the data layer still could not be built. Participation is now decided by the formulation's full registered series set rather than by probing `"ramp_up_rate"` alone.
+- **`NEMLookaheadDispatch` now builds and solves.** It never had: the argument stage never called `add_initial_condition!`, so the `DevicePower` condition its ramp base reads was never declared; and `"initial_mw"` was registered only for `NEMReplayDispatch`, while `PowerSimulations.jl` copies the parent model's time-series names onto the initial-conditions sub-model it runs under `NEMReplayDispatch`, leaving that sub-model reaching for a parameter that was never added. Both modes now register `"initial_mw"`, and the envelope pre-flight checks the registered names rather than inferring them from the formulation type.
+- **Batteries (`EnergyReservoirStorage`) now dispatch under `AbstractNEMDispatch`**, as `PowerSimulations.ActivePowerOutVariable`/`ActivePowerInVariable`, instead of borrowing `StorageSystemsSimulations.jl`'s state-of-charge formulation, which models something `DISPATCHLOAD` does not carry.
+  Each direction is bounded by its own energy bid `MAXAVAIL`, read back from `set_market_bids!`'s new `"energy_max_avail"`/`"energy_max_avail_decremental"` series via `get_storage_energy_max_avail`; the ramp constraint bounds the net `Out - In` against `INITIALMW` exactly as a generator's single variable is bounded; and the objective prices `Out` on the incremental offer curve and `In` on the decremental one, so a cleared load-bid band lowers the objective.
+  `set_nem_dispatch_limits!`/`set_nem_initial_conditions!` now also cover `EnergyReservoirStorage`, without the `"max_active_power"` series generators get (a battery has no single availability ceiling). `nem_dispatch_participants`/`set_nem_dispatch_models!` need no device-type list to pick this up: a battery becomes a participant by carrying the ramp/initial series, the same as any other type.
+  There is no state of charge and no charge/discharge exclusivity constraint - `Out` and `In` can be simultaneously nonzero when nothing else forbids it, matching NEMDE's own plain-LP formulation.
+- **`get_storage_energy_max_avail`**: New accessor reading a battery's per-direction energy bid `MAXAVAIL`, attached by `set_market_bids!`, back as `(gen, load)` in the caller's current display units.
+
+- **`read_dispatch_limits`/`set_nem_dispatch_limits!`**: New reader and `System` setter for
+  `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE`/`INITIALMW`/`AVAILABILITY` — the ramp rate and
+  dispatch envelope NEMDE actually applied in dispatch — as four per-device `SingleTimeSeries`
+  on every `ThermalStandard`, `HydroDispatch` and `RenewableDispatch`: `"ramp_up_rate"`,
+  `"ramp_down_rate"` and `"initial_mw"`, stored per-unit of the system base, and
+  `"max_active_power"`, stored PSI-native (normalised by the device's own static
+  `max_active_power`, with `scaling_factor_multiplier = get_max_active_power`) so it overwrites
+  any `UIGF`- or bid-derived `"max_active_power"` series the device already carries — `AVAILABILITY`
+  is already the lower of `MAXAVAIL` bid availability and `UIGF` for semi-scheduled units, so it
+  is the uniform envelope across all three device types. A zero `RAMPUPRATE`, `RAMPDOWNRATE` or
+  `AVAILABILITY` is a real dispatch limit AEMO publishes — a unit held at fixed output, a unit on
+  outage, a PV farm at night — and is carried through unchanged; only a `missing` or negative
+  value is treated as unusable. `allow_missing_ramp_rates` opts into proceeding on the buildable
+  subset when some devices lack usable data (including a non-positive static `max_active_power`,
+  which would otherwise divide by zero); the default throws one aggregated `ArgumentError` naming
+  every affected `DUID`. (Reader renamed from `read_dispatch_ramp_rates`, since it now reads the
+  dispatch envelope too.)
+- **`set_nem_initial_conditions!`**: New `System` setter that seeds `active_power` on every
+  `ThermalStandard`, `HydroDispatch` and `RenewableDispatch` from `DISPATCHLOAD.INITIALMW` at a
+  single dispatch interval, for PSI's `DevicePower` initial condition under the chained ramp
+  base mode. Shares `set_nem_dispatch_limits!`'s missing-data policy: `allow_missing_ramp_rates`
+  opts into proceeding on the buildable subset; the default throws one aggregated
+  `ArgumentError` naming every affected `DUID`.
+- **Interconnector loss model** (`src/interconnector_losses.jl`): `InterconnectorLossModel`, three readers `read_interconnector_loss_breakpoints`/`read_interconnector_demand_coefficients`/`read_interconnector_loss_parameters`, and `interconnector_loss_models` assembler. NEMDE models losses as quadratic in flow with demand-dependent linear coefficients; `loss_factor` evaluates it, `interconnector_losses` integrates it, and `loss_segments` linearises on `LOSSMODEL`'s `MWBREAKPOINT`s as chord slopes. Readers are version-resolved on `EFFECTIVEDATE`/`VERSIONNO` as of a caller-supplied date, not `archive_month`, and throw `ArgumentError` naming the missing table when uncached.
+- **`attach_interconnector_losses!`**: `InterconnectorLossModel` is now a `PSY.SupplementalAttribute`, so it can be attached to a `System`'s `AreaInterchange` components and round-trips through JSON. `attach_interconnector_losses!(sys, db, as_of)` attaches one per `AreaInterchange`, matched by `INTERCONNECTORID`; an interconnector with no resolvable loss model is skipped and reported in one aggregated `@warn`. Wired as the fourth build step in `ConstrainedNetworkConfiguration`, after `add_fcas_services!`.
+- **`FCASService`/`add_fcas_services!`**: New `PSY.Service` anchoring the devices
+  contributing to each `(region, bid_type)` FCAS market with at least one available bidder — a
+  plain `add_service!` join, carrying no requirement or time series of its own. Only bids whose
+  direction `FCASMarket` models are attached (the rest are reported), and a service already in
+  the `System` is left as is. Wired as the third build step in `ConstrainedNetworkConfiguration`.
+- **`get_fcas_trapezium`/`get_fcas_offer_curve`/`get_fcas_bid`**: New full-series accessors
+  reconstructing typed `FCASTrapezium`/`PiecewiseStepData`/`FCASBid` values from the raw
+  tuple/curve series `set_fcas_bids!` stores. `decremental = true` reads a storage device's
+  LOAD-direction series. Throw `ArgumentError` if the series isn't attached.
+- **`resolve_term_devices`**: New canonical resolver from a `ConstraintTerm` to the names of the
+  devices it contributes in a `System` — a `UnitTerm`/`InterconnectorTerm`'s single named device
+  if it exists, or every `Generator`/`Storage` in a `RegionTerm`'s region if its `Area` exists
+  (possibly empty). Called exactly once per term inside `add_nem_constraints!`; nothing
+  downstream re-resolves. `_region_devices` moved from `src/constraints/build.jl` to the new
+  `src/constraints/resolve.jl` alongside it.
+
+- **`IntervalInputs`/`read_interval_inputs`** (`AustralianElectricityMarkets`): Reads every NEMWEB input needed to reconstruct one historical dispatch interval in isolation — `DISPATCHLOAD.INITIALMW`/`UIGF`, `DISPATCHREGIONSUM.TOTALDEMAND`, rebid-resolved energy and FCAS bids, and `DISPATCHINTERCONNECTORRES.MWFLOW` — the foundation for the dispatch-replication harness that validates how closely `PowerSimulations.jl` reproduces NEMDE.
+- **NEM constraint formulation scaffolding** (`AustralianElectricityMarketsSimulations`): `AbstractNEMConstraintFormulation`, `NEMConstraintLHS`/`NEMConstraintLimit`/`NEMConstraintRHSParameter`, `LinearFactorLimit`, and `FCASMarket` — the `PowerSimulations.jl` service-formulation types that later PRs drive `GenericConstraint`/`FCASService` through. No formulation logic yet.
+- **`LinearFactorLimit` formulation** (`AustralianElectricityMarketsSimulations/src/nem_constraints.jl`): drives a `GenericConstraint` through PSI's `ServiceModel` machinery for its energy terms (`InterconnectorTerm`, and `UnitTerm`/`RegionTerm` with `bid_type == BidType.ENERGY`) — assembling `NEMConstraintLHS` from the constraint's own stored terms in the `ModelConstructStage` and bounding it against the replayed `"rhs"` series with a sense-dispatching `NEMConstraintLimit`.
+  A term whose `bid_type` isn't `ENERGY`, whose device is missing from the `System`, or whose device type the template doesn't model throws an `ArgumentError` naming the constraint and the reason, rather than silently dropping the constraint. An interval where the `"invoked"` series is `0.0` is never enforced: the cell holds a vacuous placeholder constraint instead, so it stays readable for PSI's dual read-back and its dual reads back as exactly `0.0`.
+- **`filter_buildable_generic_constraints`** (`AustralianElectricityMarketsSimulations/src/check/nem_constraints.jl`): a pre-flight check that returns the `GenericConstraint`s in a `System` that a `PSI.ProblemTemplate` can actually build under `LinearFactorLimit`, so a caller can find out before `set_service_model!`/`build!` rather than hitting PSI's `_populate_contributing_devices!` first-failure-wins error. Default (`allow_partial_coverage = false`) throws one aggregated `ArgumentError` naming every unbuildable constraint, grouped by reason (`unsupported bid_type`, `missing component`, `unmodeled device type`, the last naming the offending device type(s)); `allow_partial_coverage = true` returns the buildable subset and emits one summary `@warn`.
+- **`PowerSimulations.jl` pinned to a fork** (`AustralianElectricityMarketsSimulations/Project.toml`): adds `AreaBalancePowerModel` dual registration (`add_constraint_dual!`/`assign_dual_variable!`) missing from registry v0.38.4, needed to read back the regional energy-balance dual. Documented in `AustralianElectricityMarketsSimulations/src/psi_compat.jl`.
+- **`DISPATCH_FCAS_REQ` data source**: Added ingestion support for AEMO's `DISPATCH_FCAS_REQ` table, and widened `DISPATCHLOAD`/`DISPATCHPRICE`/`DISPATCHREGIONSUM` to carry `RUNNO`/`INTERVENTION` and the remaining FCAS-related columns AEMO publishes on them.
+- **`read_fcas_prices`/`read_fcas_dispatch`**: New readers for per-region FCAS clearing prices (`DISPATCHPRICE`) and per-unit FCAS dispatch outcomes (`DISPATCHLOAD`), complementing `read_fcas_requirements`.
+- **`read_prices`**: New reader for per-region energy spot prices (`DISPATCHPRICE.RRP`/`ROP`/`APCFLAG`).
+- **"FCAS in the NEM" documentation**: A new Explanation page walking through NEM FCAS markets, the offer trapezium, and dispatch co-optimisation from AEMO's own documents, with every figure computed from real NEMWEB data.
+- **"The National Electricity Market" documentation**: A new Explanation page (the first in that section) introducing the NEM's institutions, market design, and dispatch process, and contrasting it with US ISO/RTO and European market designs, with a real-data figure of regional price divergence.
+- **`GenericConstraint`/`ConstraintTerm`/`FCASRequirement`**: New NEM generic-constraint types (`src/constraints/`), representing both network limits and FCAS requirements as one `PowerSystems.Service` — matching how AEMO actually models them, rather than as separate `PowerSystems.Reserve` subtypes.
+- **`read_invoked_constraints`/`read_constraint_definitions`/`read_constraint_terms`/`read_constraint_fcas_requirements`/`add_nem_constraints!`**: New readers and `System` builder for the constraint suite, joining `DISPATCHCONSTRAINT`'s per-interval `GENCONID_EFFECTIVEDATE`/`GENCONID_VERSIONNO` to `GENCONDATA`/`SPDCONNECTIONPOINTCONSTRAINT`/`SPDREGIONCONSTRAINT`/`SPDINTERCONNECTORCONSTRAINT` by exact version equality.
+- **`ConstrainedNetworkConfiguration`**: Replaces `FCASNetworkConfiguration` — builds both FCAS bids and NEM generic constraints (network and FCAS-requirement alike) into the resulting `System`.
+- **`DISPATCH_FCAS_REQ_CONSTRAINT`/`DISPATCH_FCAS_REQ_RUN` data sources**: AEMO last published `DISPATCH_FCAS_REQ` for the 2025-05 archive month and replaced it with these two (`GENCONID` → `CONSTRAINTID`, `SETTLEMENTDATE` → `INTERVAL_DATETIME`, no `INTERVENTION`, no `GENCONEFFECTIVEDATE`/`GENCONVERSIONNO`, plus new `LHS`/`RHS`/`RRP`/enablement/FPP-cost columns). Both are now ingested, and the new table is backfilled by AEMO rather than starting at the changeover, so the two overlap.
+- **`read_uigf`**: a new reader for `DISPATCHLOAD.UIGF`, the per-unit Unconstrained Intermittent Generation Forecast: the weather ceiling AEMO's NEMDE actually applied to each semi-scheduled unit for each dispatch interval. Returns `SETTLEMENTDATE`, `DUID`, `UIGF` (MW). `UIGF` is `NULL` for scheduled units, so only semi-scheduled DUIDs appear. Supports the same `resolution` aggregation convention as `read_demand` and the same `intervention` run selection as the other dispatch readers, plus a single-interval `read_uigf(db, settlement_date::DateTime)` method that bounds the scan to one `SETTLEMENTDATE` — the dispatch-replication harness reads UIGF one interval at a time and now shares this reader instead of carrying its own copy of the query.
+- **`DISPATCH_INTERVAL_HOURS`/`interval_cost_coefficient`** (`AustralianElectricityMarketsSimulations`): documented the dispatch-interval-length constant and added `interval_cost_coefficient`, converting a `$/MWh` bid price into an objective coefficient for one dispatch interval.
+
+- AEMSim exports `replication_decision_model`, `check_replication_steps`, `check_single_financial_year`,
+  `check_replication_parts`, `never_invoked_constraints` (the `:never_invoked` exclusions of a replay) and
+  `AbstractMNSPSlack`. `replication_template` takes `initial_time` and `market_price_cap` keywords.
+
+### Removed
+
+- Public names `set_nem_fixed_loads!`, `add_nem_constraints!`, `set_nem_dispatch_limits!`, `set_demand!`, `get_low_breakpoint`, `get_high_breakpoint`, `get_rhs`, `set_constraint_weight!`, `get_gencon_id`, `interconnector_loss_gaps` and `check_interconnector_loss_segments`; `nem_system` builds these inputs.
+- `ConstrainedNetworkConfiguration` was removed; build replay systems with `NEMDEConfiguration`.
+- The public `filter_buildable_generic_constraints` (`AustralianElectricityMarketsSimulations`).
+  The replication path runs the same buildability check internally.
+- `NEMLookaheadDispatch` and `StorageInputDevicePower`, with the pre-dispatch FCAS timing (AGC
+  scaling and telemetry on the first interval only) that only it used. `NEMReplayDispatch` is the
+  one `AbstractNEMDispatch` formulation.
+- `AbstractNEMConstraintFormulation`: `LinearFactorLimit` subtypes
+  `PowerSimulations.AbstractServiceFormulation` directly, as no method dispatched on the abstract
+  type and it had no other subtype.
+- Single-interval input readers `read_interval_inputs` and `read_uigf_as_dict`, and the
+  `read_uigf(db, ::DateTime)` method: replay reads every interval through the range readers.
+- `IntervalInputs`, which nothing constructed.
+- Unused `FUEL_MAPPING` and `FUEL_PRICES` constants.
+- `set_storage_dispatch_ceilings!` and the toy fixture's `ceilings` option: replay dispatch reads raw directional storage availability, so nothing consumes the derived `"storage_gen_ceiling"` and `"storage_load_ceiling"` series.
+- AEMSim's database-taking `replication_system` and `replicate_range` APIs, database-reader
+  re-exports and DuckDB runtime dependency. Construct systems through AEM and use top-level
+  repository scripts for cache orchestration and NEMDE comparisons.
+- `replicate_interval` (both methods) and `replication_system(db, settlement_date)`: every replay
+  builds its model once and steps it through `replicate_range`. `scripts/replicate_interval.jl` is
+  replaced by `scripts/replicate_range.jl`.
+- **`GENCONDATA.DYNAMICRHS` is no longer read or interpreted**: `read_constraint_definitions` no longer selects it, and `add_nem_constraints!` no longer puts it on `GenericConstraint.ext`. AEMO documents the column as "Not used"; the raw NEMWEB ingestion column list is untouched.
+- `AustralianElectricityMarketsSimulations.MissingCacheError`, which nothing threw, and the unused
+  `Statistics` dependency of `AustralianElectricityMarketsSimulations`.
+- Root renewable and hydro setters `set_renewable_pv!`, `set_renewable_wind!` and `set_hydro_limits!`:
+  `set_nem_dispatch_limits!` and `set_nem_energy_limits!` set the same device limits.
+- `set_nem_initial_conditions!`, and the `allow_missing_ramp_rates` keyword of
+  `set_nem_dispatch_limits!`: unusable `DISPATCHLOAD` data always throws.
+- `FCASBid`, `get_fcas_bid`, `get_offer_curve` and `get_trapezium`: `NEMFCASOffer` (from
+  `get_fcas_offer`) carries the same trapezium and curve pairing.
+- `get_fcas_offer`'s `scaled` keyword (offers are always scaled), the `agc_first_interval_only` and
+  `agc_ramp_scaling` keywords of `get_scaled_fcas_trapezium`, and the exports of
+  `get_fcas_trapezium` and `get_fcas_offer_curve`.
+- `add_nem_constraints!` and `ConstrainedNetworkConfiguration` keywords `include_solution`,
+  `resolution`, `allow_empty_region_terms` and `unresolved_terms`, and the `"lhs"` and
+  `"marginal_value"` series they attached. An unresolved unit term is always dropped and recorded
+  in `get_dropped_terms`.
+- `GenericConstraint` accessors `set_sense!`, `set_rhs!`, `set_terms!`, `set_fcas_requirements!`,
+  `get_effective_date` and `get_version_no`.
+- The root export of `list_available_tables`; it remains exported by `AustralianElectricityMarketsCache`
+  and `AustralianElectricityMarketsData`.
+- The `add_partitions` keyword of `DataSource`.
+
+- `energy_bounds` and `scale_trapezium` (`AustralianElectricityMarketsSimulations`), which nothing in
+  the replication path called. Root's `scale_fcas_trapezium` is unchanged.
+- `DISPATCH_INTERVAL_HOURS` (`AustralianElectricityMarketsSimulations`). Use
+  `interval_hours(DISPATCH_INTERVAL)` instead.
+- The `formulation` keyword of `set_nem_dispatch_models!` and `nem_dispatch_participants`, which only
+  accepted `NEMReplayDispatch`, and the `skip_uncovered` keyword of `set_nem_dispatch_models!`. A
+  participant without its dispatch series now fails the build by name.
+- `replication_simulation`, `run_replication` and `REPLICATION_OPTIMIZER` are no longer exported from
+  `AustralianElectricityMarketsSimulations`. They live in `scripts/replay_simulation.jl` (module `ReplaySimulation`);
+  code that called them through `using AustralianElectricityMarketsSimulations` must include the script.
+
+### Changed
+
+- The replay HiGHS optimizer turns off the root sub-MIP heuristics (RINS, RENS, root reduced-cost, feasibility jump), which cut slow-interval solve times about tenfold with identical solutions.
+
+- A settings-`ext` `"market_price_cap"` override no longer prices the area-balance slack. The balance slack
+  is priced at the cap of `replication_template` (its `market_price_cap`, or the cap dated by `initial_time`),
+  and `replication_decision_model` throws when its cap differs from the template's.
+- Errors of `check_replication_steps` and `check_single_financial_year` name the function that raises them.
+- The simulations precompile workload applies the runner's never-invoked constraint exclusion and tie-break
+  check, and reads back realized dispatch and balance results, so the first comparison in a fresh process
+  compiles less. It is skipped when the mock fixture is not in the installed package.
+- The replay simulation runner moved from AEMSim to `scripts/replay_simulation.jl` (module `ReplaySimulation`); AEMSim keeps the replication template, decision-model constructor and pre-flight checks.
+
+- NEMDE replay systems are built without the regional configuration's ISP operating costs; the regional configuration is unchanged.
+
+- Tie-break scale parameters are added through PowerSimulations' native `add_parameters!` with the
+  device model from the template, replacing AEMSim's private series-parameter helper.
+
+- Price FCAS offer bands and set the FCAS offer parameters through PowerSimulations' native time-series
+  parameters: the band prices are time-series cost targets, bit-identical to the former objective terms.
+
+- FCAS offer curves are stored as PowerSystems service bids on each device's `MarketBidCost`
+  (`fcas_offer_series_name`, `fcas_service`) instead of the `"fcas_curve_<BIDTYPE>"` series.
+
+- Pin PowerSystems and PowerSimulations forks that round-trip zero-valued bid costs and accept service-only MarketBidCosts.
+
+- Replay `interval_timings.csv` is read from PSI's native recorder events and optimizer
+  statistics after `execute!` instead of wrapping PSI methods. Schema 2 replaces the
+  `solve_impl` and `result_write` phases with `solve_and_write` and adds `schema_version`;
+  see `scripts/README.md` for the fields whose meaning changed or are now unavailable.
+
+- MNSP band prices use PowerSimulations' time-series cost parameters: each band's cost is a cost
+  target on `MNSPBandPriceParameter`, updated by PowerSimulations at each step, with the objective unchanged.
+
+- Generic-constraint slack costs use PowerSimulations' time-series cost parameters: each slack's cost
+  target scales the `"invoked"` series by the CVP factor and the Market Price Cap of the build's initial
+  interval; within one financial year the objective is unchanged.
+
+- Market Price Cap penalties are priced once at build in the invariant objective, at the cap of the
+  simulation's first interval; `MarketPriceCapPenaltyParameter` is removed.
+
+- Replay simulations whose first and last intervals fall in different financial years are refused by
+  the pre-flight check `check_single_financial_year`; split the range at 00:05 on 1 July.
+
+- Energy-offer bid caching and the time-series reader override now come from PowerSimulations and
+  InfrastructureSystems: AEMSim no longer overrides PSI's recurrent parameter update or
+  `get_time_series_values!`, so cache windows are bounded by the native cache sizing.
+
+- Energy tie-break input derivation and the `EnergyTieBreak` service now live in the root
+  package (`AustralianElectricityMarkets`), so a serialized `System` holding them loads without
+  `AustralianElectricityMarketsSimulations`. `AustralianElectricityMarketsSimulations` keeps the
+  tie-break PSI formulations and checks.
+
+- FCAS effective-offer input derivation (`set_fcas_effective_offers!`, `FCAS_BAND_COUNT`,
+  `FCAS_INACTIVE_LIMIT_MW`) now lives in the root package (`AustralianElectricityMarkets`),
+  so a `System` built with it no longer needs `AustralianElectricityMarketsSimulations`
+  to derive its FCAS series. `AustralianElectricityMarketsSimulations` keeps the FCAS PSI
+  formulations and checks.
+
+- NEM penalty factors (`*_CVP_FACTOR`, `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR`, `constraint_cvp_factor`)
+  and the `DISPATCH_INTERVAL` constant now live in the root package (`AustralianElectricityMarkets`),
+  so the market-rule constants load without `AustralianElectricityMarketsSimulations`.
+  `AustralianElectricityMarketsSimulations` keeps the penalty PSI formulations and re-exports
+  `DISPATCH_INTERVAL`.
+
+- The following names are exported from `AustralianElectricityMarkets` only, and
+  `AustralianElectricityMarketsSimulations` no longer exports the FCAS `*_CVP_FACTOR` constants:
+  `EnergyTieBreak`, `TIE_BREAK_SERVICE_NAME`, `TIE_BREAK_CVP_FACTOR`, `set_tie_break_scales!`,
+  `set_fcas_effective_offers!`, `FCAS_BAND_COUNT`, `FCAS_INACTIVE_LIMIT_MW`,
+  `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR`, `constraint_cvp_factor`, the `*_CVP_FACTOR` constants, and the
+  helpers `fcas_effective_series_name`, `fcas_ramping_series_name`, `fcas_upper_regulation_service`,
+  `fcas_offer_sides`, `tie_break_series_name` and `tie_groups`.
+
+- Added a timed random-day replay runner with early MNSP and constraint-version checks,
+  one Julia worker per trading day, native interval timings and process memory sampling.
+  An admitted day finishes even after the overall admission deadline.
+
+- Recurrent objective updates reuse model-owned forecast caches and keyed service lookups.
+  Structured energy/FCAS bid caches retain at most 24 windows per series; FCAS price updates
+  reuse the service contributor map. Disk-backed reads preserve native scaling and cost conversion.
+
+- The down row of a NEM unit's `PSI.RampConstraint` uses PSI's `"dn"` meta instead of `"down"`.
+- `NEMConstraintLimit` scales its RHS parameter by the parameter multiplier.
+- Interconnector and MNSP series names join the registry: `NEM_SERIES.from_to_flow_limit`,
+  `to_from_flow_limit`, `loss_demand_coefficient`, and `mnsp_series_name(direction, kind)`.
+- Battery ramp rows and fixed-loading rows are built through `PSI.add_constraints!` methods
+  (`RampConstraint` on `ActivePowerOutVariable`, `EnergyFixedLoadConstraint`).
+- `NEMInterconnectorLoss` builds its loss and MNSP variables and balance terms in the argument
+  stage, and their constraints and MNSP band costs in the model stage. The MNSP band-sum, MAXAVAIL,
+  direction, loss-bound and loss-split rows are registered as the new `MNSPLinkBandConstraint`,
+  `MNSPLinkMaxAvailConstraint`, `MNSPLinkDirectionConstraint`, `MNSPLinkLossConstraint` and
+  `MNSPLinkLossSplitConstraint`.
+- `FCASMarket` adds its offer band variables in the argument stage and their rows in the model
+  stage; `objective_function!` only prices them. The band-sum-to-capacity rows are registered as
+  the new `FCASOfferBandConstraint`.
+- Every override of, or call into, a private PowerSimulations internal lives in `psi_compat.jl`.
+  The NEM energy-offer rows are built directly in the `_add_pwl_constraint!` override, which drops
+  the extra `add_constraints!` method and the `_include_min_gen_power_in_constraint` and
+  `_include_constant_min_gen_power_in_constraint` overrides.
+- FCAS band prices are read from the container's forecast window, as MNSP band prices and the
+  generic-constraint `"invoked"` mask are.
+- Formulation docstrings state which costs reach PowerSimulations' cost expressions: only energy
+  offer costs enter `ProductionCostExpression`; violation penalties and FCAS and MNSP band costs are
+  objective terms only.
+- **Breaking:** `fcas_bid_direction` returns the new `FCASBidDirection` enum (`NONE`,
+  `INCREMENTAL`, `DECREMENTAL`, `BOTH`) instead of a `Symbol`.
+- Bid series names live in one registry: `OfferSide` (`GEN`/`LOAD`), `NEM_SERIES`,
+  `energy_max_avail_series_name` and `fcas_series_name(prefix, service[, side])`. Typed accessors
+  `is_semi_scheduled`, `has_schedule_classification`, `is_commissioned` and `energy_offer_sides`
+  replace raw `ext` reads. Offer views `NEMEnergyOffer`/`get_energy_offer` and
+  `NEMFCASOffer`/`get_fcas_offer` read one side of an offer as a bundle.
+- Energy limits and FCAS scaling share one `"uigf"` series (was `"energy_uigf"` and `"fcas_uigf"`),
+  and `read_uigf` treats `DUDETAILSUMMARY.END_DATE` as exclusive. FCAS offer curves keep all ten
+  price bands. A storage device's missing or non-finite energy `MAXAVAIL` throws in
+  `set_market_bids!`.
+- Participant fixed loadings are attached by the new `set_nem_fixed_loads!` as `"fixed_load"` and
+  `"fixed_load_invoked"` series and modelled as `EnergyFixedLoadConstraint` rows of the dispatch
+  formulation, elastic at CVP 380 (violation family `"fixed_load"`), instead of `$DUID` generic
+  constraints.
+- `fcas_series_name`, `fcas_bid_direction`, `nem_dispatch_devices`, `is_non_scheduled_load` and
+  `single_series` are public AEM API, used by AEMSim to read the systems AEM builds.
+- New `single_series(name, timestamps, values; kwargs...)`, `remove_single_series!` and
+  `replace_single_series!` replace the hand-built and remove-then-add time series code in the setters.
+- New `run_replication(sys, steps; ...)` in `scripts/replay_simulation.jl` builds and executes a
+  `replication_simulation` and returns its results, skipped constraints and timings; `REPLICATION_OPTIMIZER`
+  is the default optimizer there.
+- CVP factors of the built-in Interconnector Zero (1160) and Energy Inflexible Offer (380) generic
+  constraints move to AEMSim as `INTERCONNECTOR_ZERO_CVP_FACTOR` and `FIXED_LOADING_CVP_FACTOR`.
+  AEM builds those constraints with weight 1.0, and AEMSim prices every generic constraint through
+  the new `constraint_cvp_factor`. Dispatch is unchanged.
+- `EnergyTieBreak` moves from AEM to AEMSim, which creates and models it.
+- `read_units` returns the raw unit columns without `TECHNOLOGY`/`FUELTYPE`; the PowerSystems
+  prime mover and fuel mapping happens in `get_generators_dataframe` and `get_batteries_dataframe`.
+  Readers no longer depends on PowerSystems.
+- `read_bids` and `read_fcas_bids` return the raw `PRICEBANDARRAY`/`BANDAVAILARRAY` columns
+  instead of a `piecewise_step_data` curve; `set_market_bids!` and the FCAS setters build the
+  `PiecewiseStepData` curves.
+
+- `FCASMarket` and `check_fcas_services` apply one FCAS bid direction rule with one message per
+  violation, so a decremental-only FCAS bid on a device that is neither storage nor a controllable
+  load fails at build with the message `check_fcas_services` reports. Interconnector flow-limit
+  series and MNSP band-axis errors are `ArgumentError`s. Dispatch results are unchanged.
+
+- `AustralianElectricityMarketsSimulations` internals: generator and battery ramp rows share one
+  builder; unit ramp, interconnector flow and generic constraint slacks share one variable builder;
+  the slack variable hooks and the no-op service model hooks are single `Union` methods; and the CVP
+  factors and the Market Price Cap table live in one file. Dispatch results are unchanged.
+- `interconnector_loss_models` and the bid conversion helpers moved from `Readers` to system
+  construction; `interconnector_loss_models` is still exported from `AustralianElectricityMarkets`.
+- `read_bids`, `read_energy_bids` and `read_fcas_bids` take an explicit `resolution` keyword and
+  reject unknown keywords.
+- Per-interval dispatch readers (`read_prices`, `read_fcas_prices`, `read_fcas_dispatch`,
+  `read_invoked_constraints`, `read_interconnector_limits`, `read_published_interval`) share one
+  query and throw an `ArgumentError` naming the `populate` call when their table is not cached.
+- Violation penalties (unit ramp, energy availability and UIGF, storage availability, total energy
+  offer bands, FCAS, interconnector flow, area balance and generic constraints) are priced at build
+  from the Market Price Cap of the simulation's initial interval. A range crossing 1 July is refused
+  by the pre-flight check, so split it at 00:05 on 1 July.
+
+- NEM energy dispatch can exceed total offered band MW through CVP1135 surplus/deficit
+  variables, preserving submitted band prices, live widths and directional availability costs.
+
+- NEM storage dispatch uses raw GEN/LOAD MAXAVAIL with separate CVP370 violations and
+  live directional parameters, replacing competing static and ramp-adjusted hard ceilings.
+
+- NEM non-storage dispatch models raw bid MAXAVAIL and semi-scheduled UIGF as separate
+  elastic limits at CVP370 and CVP385, with typed PSI surplus variables, constraints and costs.
+
+- The repository replay workflow uses `replicate_range`, one interval included (`start == stop`):
+  a model built once per chunk and stepped. It reports a generic-constraint slack as a violation
+  only where the constraint is invoked. AEM's replay configuration takes the input `date_range`;
+  AEMSim's `prepare_replication!` transforms its attached series into one-interval windows.
+- `replication_template` throws, before building, on dispatch constraint intervals missing from the
+  cache, skipped constraints, dropped unit terms, defaulted constraint weights, devices without
+  dispatch-limit series and incomplete MNSP offers, instead of replaying a partial model.
+  AEM's replay configuration first checks that every scheduled unit has an energy offer, and every region
+  demand, for each interval. Each error names the input to repopulate or the setter to call.
+  `replicate_interval`'s `skipped_constraints` now has only `constraint`, `reason` and `n_missing`
+  columns, since the only constraints left out are those with no available device.
+- Price-tied energy bands are dispatched in proportion to their size by a tie-break row per pair
+  whose coefficients are `TieBreakScaleParameter`s read from the `"tie_break_scale_<k>"` series of
+  `set_tie_break_scales!`, so the rows follow offers between simulation steps. The rows are the
+  `TieBreakMarket` formulation of a new `EnergyTieBreak` service (`TIE_BREAK_SERVICE_NAME`), which
+  `set_tie_break_scales!` attaches over every available market-bid unit and
+  `set_nem_dispatch_models!` models unless `tie_breaks = false`; slacks and rows are registered as
+  `TieBreakSlackUp`, `TieBreakSlackDown` and `TieBreakConstraint`. Segments empty throughout the
+  offer series never form ties. `check_tie_break_pairs` verifies that a range keeps the same tied
+  pairs. A contributor carrying scales must be modelled, unless its device model's
+  `"filter_function"` excludes it (`set_nem_dispatch_models!(...; skip_uncovered = true)`). Tied
+  fixed-curve units in a direction with no time-varying curve, and duals requested on the
+  `TieBreakMarket` service model, fail the build by name.
+- `set_market_bids!` keeps every price band as a segment of the offer curve, with zero-width segments
+  for empty bands, so segment `k` is always the same price band.
+- `FCASMarket` reads each device's effective offer as time-series and constraint-coefficient
+  parameters, and prices offer bands through `FCASBandPriceParameter`, so a model builds in
+  recurrent simulations. A device without the series fails the build, naming the setter. A
+  disabled offer keeps an inactive joint row (`FCAS_INACTIVE_LIMIT_MW`) in place of a vacuous
+  placeholder.
+- `NEMInterconnectorLoss` takes the demand term of each interval's loss factor as the flow's
+  coefficient in the loss definition, driven by a `LossDemandCoefficientParameter` read from the
+  `"loss_demand_coefficient"` series, so it builds in recurrent simulations. AEM's replay constructor
+  calls `set_loss_demand_coefficients!`; a model without that series fails to build.
+- MNSP link flows are modelled per offer band (`MNSPLinkBandVariable`) with band widths,
+  availability and prices read from the `"mnsp_<direction>_*"` series as parameters, so offers can
+  update between simulation steps.
+- Generic-constraint slack costs are a `GenericConstraintSlackCostParameter` driven by the
+  `"invoked"` series, so a recurrent build prices a slack only at invoked intervals and keeps a
+  non-invoked row vacuous. `compute_fcas_prices` also accepts simulation results.
+- The Market Price Cap of a dispatch interval is that of the financial year the interval starts in:
+  the interval ending 00:00 on 1 July takes the earlier year's cap.
+- The Simulations package pins PowerSimulations to a fork revision with updatable constraint
+  coefficients, a cached `is_milp`, and escaped `/` in simulation store names.
+- `set_mnsp_offers!` requires complete, valid inputs for every `MNSP` interconnector (named by
+  `INTERCONNECTORCONSTRAINT.ICTYPE`) and throws before changing the system, instead of warning and
+  leaving the interconnector on the free-flow model. `REGULATED` interconnectors need no offers.
+- Bids, FCAS bids and curves, MNSP offers and generic-constraint series are attached as
+  `SingleTimeSeries` instead of one-window `Deterministic` forecasts, so a model can start at any
+  interval of the range after `transform_single_time_series!`.
+  Setters that replace a series (`set_mnsp_offers!`) must run before `transform_single_time_series!`.
+- `set_demand!` throws when an available load or area lacks a demand row for any interval of the
+  range, or a demand value is not finite, instead of leaving a gap in the series.
+- `read_bids` throws when a period offer has no matching `BIDDAYOFFER_D` price-band row, instead of
+  dropping the unit silently.
+- The replication model solves one dispatch interval instead of two (the second was only
+  reported as absent). Mean solve time over 42 validation intervals fell from 37 s to 24 s;
+  regional prices are unchanged, dispatch differs at four of the 42 intervals.
+- `add_fcas_services!` looks up each region's devices once instead of once per bid type.
+- `read_energy_bids`, `read_bids` and `read_fcas_bids`, and `read_invoked_constraints`, filter their
+  interval window in SQL instead of reading a day either side and trimming in Julia. Results are
+  unchanged; for one interval, a warm read of the bids and invoked constraints dropped from 6.2 s to
+  1.5 s.
+
+- Replication builds are faster: a warm interval's system construction, model build and solve fall
+  from about 60 s to about 24 s. `read_fcas_bids` accepts a vector of bid types and reads the bid
+  tables once for all of them (`set_fcas_bids!` uses it), `add_nem_constraints!` resolves each
+  region's devices once, and the generic-constraint buildability check indexes devices by service.
+  Template finalisation uses a one-pass contributing-device mapping from the pinned
+  PowerSimulations revision.
+
+- `read_demand(db, date_range)` bounds regional demand and initial battery charging reads to the
+  intervals contributing to the requested aggregate timestamps. `set_demand!` uses this bounded
+  read instead of processing the full cached history, while preserving complete aggregation bins.
+
+- Each package has a separate CI workflow using native path filters for its tests,
+  dependencies and shared fixtures. Coverage is collected only on Julia 1.11, and
+  Codecov carries forward coverage for packages whose workflows were skipped.
+- Organized AEM source into `types/`, `readers/`, `system/` and `accessors/`.
+  Type-specific calculations live with their types, and system construction and
+  setters share one folder. Market calculations and SQL results are unchanged.
+- Moved market and ISP readers from AEMData, and interval readers from AEMSim,
+  into `AustralianElectricityMarkets.Readers`. Public AEM reader names and AEMSim
+  interval-reader names remain re-exports. `IntervalInputs` is now defined in AEM.
+- Extracted shared connection types and cache metadata into
+  `AustralianElectricityMarketsCache`. AEM and AEMData are independent; AEMSim
+  depends on AEM. Import `populate` explicitly from AEMData.
+- Organized AEMSim source into types, formulations, checks, preprocessing and
+  execution folders, and moved the shared mock fixture to `test/fixtures/`.
+
+- All floating-point NEMWEB columns are now `Float64` (`DOUBLE` in the parquet cache) instead of
+  `Float32`. Re-populate every cached table with `populate(...; force_new = true)`; partitions
+  written earlier keep single precision.
+- `set_market_bids!` always divides energy bid prices by each unit's loss factor (`TRANSMISSIONLOSSFACTOR`
+  x `DISTRIBUTIONLOSSFACTOR`, as of the start of `date_range`; `SECONDARY_TLF` for the discharge side of
+  batteries), referring them to the regional reference node as NEMDE does. A bidding unit without a loss factor
+  throws. Referred prices are rounded to cents.
+- `nem_system(db, ConstrainedNetworkConfiguration(); date_range)` resolves static unit and
+  interconnector tables as of `first(date_range)` instead of the newest cached version; pass
+  `as_of = nothing` for the previous behaviour.
+- `add_nem_constraints!` builds a generic constraint without any term whose DUID, region or
+  interconnector is absent from the `System`, recording the dropped keys in the constraint's
+  `ext["dropped_terms"]`, instead of skipping the whole constraint. A constraint with no
+  resolvable term is still skipped. `unresolved_terms = :skip` restores the old behaviour; the
+  keyword is also accepted by `nem_system(db, ConstrainedNetworkConfiguration(); ...)`.
+- `add_nem_constraints!` builds a generic constraint without a unit term whose DUID is absent from
+  the `System`, instead of skipping the whole constraint. The dropped terms (kind, key, `BIDTYPE`,
+  factor) are recorded in the constraint's `ext["dropped_terms"]` and returned by the new
+  `get_dropped_terms(sys)`. An unresolved region or interconnector term, or a constraint with no
+  resolvable term, is still skipped. `unresolved_terms = :skip` restores the old behaviour for unit
+  terms; the keyword is also accepted by `nem_system(db, ConstrainedNetworkConfiguration(); ...)`.
+- **`scale_trapezium` (`AustralianElectricityMarketsSimulations`) follows root's
+  `scale_fcas_trapezium`**: a squeezed trapezium keeps the bid's slopes instead of having its
+  breakpoints clamped, and an `agc_ramp_mw` of `0.0` applies no cap instead of capping
+  `MaxAvail` at zero, as AEMO's "zero or absent" rule requires.
+- **`src/parser.jl` split into nine files by domain**: the 1424-line file mixed the `BidType` enum, shared DuckDB helpers, six NEMWEB readers and six `System` setters. It is now
+  `src/bid_types.jl` (the enum and FCAS market tuples), `src/query_helpers.jl` (`_table_is_cached`, `_cast_double`, intervention filtering — all already used from `constraints/` and
+  `interconnector_losses.jl`), `src/readers/prices.jl`, `src/readers/dispatch.jl`, `src/setters/timeseries.jl`, `src/setters/bids.jl`, `src/setters/dispatch_limits.jl`,
+  `src/fcas/bid_parser.jl` and `src/fcas/requirements.jl`. A pure move: no function body, docstring or comment changed, and the include order still puts `BidType` ahead of the
+  `FCASBid`/`UnitTerm` struct definitions that annotate fields with it.
+- **BREAKING: `FCASBid.offer_curve` is now typed `PSY.PiecewiseStepData`**, not
+  `PSY.CostCurve{PiecewiseIncrementalCurve}`.
+- **BREAKING: `add_nem_constraints!` builds one `GenericConstraint` per exact `(GENCONID, EFFECTIVEDATE, VERSIONNO)` triple invoked, not one per bare `GENCONID`**, named `GENCONID@EFFECTIVEDATE#VERSIONNO` (e.g. `"N_BAYSW_THERMAL@2025-01-01#1"`).
+  `GENCONID` is AEMO's reporting identity, not a stable mathematical one: AEMO revises a constraint's sense, terms and coefficients across versions while keeping `GENCONID` fixed, and on the real cache 178 of 6258 distinct constraint IDs (2.8%) were invoked under more than one version within a single archive month, 96 of those switches mid-day.
+  Previously `add_nem_constraints!` merged every version invoked in the requested range into one `GenericConstraint`, silently blending different AEMO equations.
+  The bare `GENCONID` is kept on `ext["gencon_id"]`, read through the new `get_gencon_id` accessor. `added`/`skipped` are now keyed by the versioned component name for the same reason.
+  `read_constraint_terms` now carries `EFFECTIVEDATE`/`VERSIONNO` through to its output (previously dropped in the final `SELECT`, silently merging two versions' terms into one bag).
+  `fcas_requirements` remains matched by bare `GENCONID` only and is attached to every version — AEMO's current FCAS-requirement table has no version columns to match against.
+- **`AustralianElectricityMarketsSimulations`**: Re-added `PowerSimulations`/`JuMP`/`HiGHS`/`HydroPowerSimulations` dependencies, pinned to `PowerSimulations = "0.38"` (PSI's service-model API, not the 0.34 line the abandoned replication work targeted), laying the groundwork for a PSI service-model integration of NEM generic constraints.
+- **BREAKING: `RegionTerm` gains a `devices::Vector{String}` field** (region and bid_type kept alongside it), resolved once via `resolve_term_devices` at ingestion time and read through the new `get_devices` accessor. `RegionTerm`'s positional and keyword constructors both default `devices` to `String[]`, so hand-authored terms still construct.
+- **BREAKING: `add_nem_constraints!` throws by default when a `RegionTerm`'s region resolves but has no `Generator`/`Storage` in `sys`**, instead of silently skipping the constraint (`:no_region_devices` is removed from the `skipped` reasons). Every offending case across the whole build is collected and reported together, as one aggregated `ArgumentError` naming every affected `GENCONID`, region and `bid_type`.
+  The new `allow_empty_region_terms = true` keyword restores the old behaviour of proceeding — but now with an aggregated one-time `@warn` rather than a silent, per-constraint skip, and the constraint is still added with an empty `RegionTerm.devices`.
+- **BREAKING: `read_constraint_fcas_requirements`/`read_fcas_requirements`/`add_nem_constraints!` (and `AustralianElectricityMarketsSimulations`'s interconnector-flow read behind `read_interval_inputs`) now throw `ArgumentError` when their table isn't cached at all**, instead of silently returning an empty `DataFrame`/`Dict`/`(String[], Dict())`. An empty result was indistinguishable from a genuine "nothing governs this" answer — the exact defect class behind `read_fcas_requirements` silently dropping every FCAS requirement after AEMO's 2025-05 table changeover. Each error names the missing table (`DISPATCH_FCAS_REQ`/`DISPATCH_FCAS_REQ_CONSTRAINT`, `DISPATCHCONSTRAINT`, or `DISPATCHINTERCONNECTORRES`) and the `populate` call to fix it.
+- **`add_nem_constraints!`/`read_uigf` still warn (not throw) for a genuinely empty answer from a cached table**: `add_nem_constraints!` warns and returns `(String[], Dict())` when `DISPATCHCONSTRAINT` is cached but has no rows in the requested range — a real result, not missing data. `read_uigf` warns and returns an empty frame when `DISPATCHLOAD` is cached but every partition predates the `UIGF` column — ordinary schema evolution `read_hive`'s `union_by_name` exists to tolerate, not a missing download. Both still throw when their table isn't cached at all.
+- **`_table_is_cached`**: No longer catches every exception into `false`. A glob matching zero files is still a legitimate `false`, but a genuine failure to check (bad S3/GS credentials, a network drop, corrupt parquet) now raises DuckDB's own error instead of being silently reported as "not cached".
+- **`read_fcas_requirements`**: Rewritten to read the generic-constraint-based `DISPATCH_FCAS_REQ`/`DISPATCHCONSTRAINT`/`GENCONDATA` tables instead of the `RESERVE` table, which AEMO stopped populating in Dec 2003. The `RESERVE` table entry has been removed from `_TABLE_SPECS` accordingly.
+- **`read_hive`**: Now reads with `union_by_name=true`, so a table's `_TABLE_SPECS` entry can grow new columns without invalidating partitions already cached under an older, narrower schema.
+- **Market price cap**: Corrected stale `$17,500/MWh` figures (FY2024-25) in the docs to the current `$23,200/MWh` (FY2026-27).
+- **FCAS requirements are no longer modelled as `PowerSystems.Reserve`s**: `ContingencyFCASReserve`/`RegulationFCASReserve`/`FCASResponseTime`/`NEMMarketBidCost` are removed. A `PSY.Reserve` cannot represent a requirement governed by several constraints at once, netting an interconnector flow, or armed/disarmed by a large RHS offset — all of which are common in real NEMWEB data (see the "FCAS in the NEM" docs page). `FCASOffer` is renamed `FCASBid` (keyed by `BidType`, not a reserve name) and `set_fcas_offers!` is renamed `set_fcas_bids!`, now attaching a genuinely time-varying `Deterministic` series instead of a single-interval snapshot.
+- **Documentation CI**: The `Documentation` workflow's `pull_request` trigger is now scoped to `main`, so PRs targeting other branches (e.g. release branches) no longer run the docs build.
+- **`set_renewable_pv!`/`set_renewable_wind!`**: now use per-unit UIGF instead of regional availability. They previously read `DISPATCHREGIONSUM.SS_SOLAR_AVAILABILITY`/`SS_WIND_AVAILABILITY` — regional *aggregates* — and applied one normalised regional shape to every unit in the region, rescaled by that unit's own nameplate. Unit-level availability never entered. They now read each unit's own `UIGF` via the new `read_uigf`, which is the ceiling NEMDE itself applied. Units with no `UIGF` keep their static `max_active_power`.
+- **`add_nem_constraints!` no longer hardcodes its series resolution to `Minute(5)`**: it now takes a `resolution` keyword (default `nothing`), and when unset infers the resolution from the spacing between consecutive points in the invoked-constraint grid rather than assuming it. A grid with fewer than 2 points falls back to `Minute(5)`, since a single interval carries no spacing information. If the grid's spacing turns out not to be uniform — a gap in the underlying `DISPATCHCONSTRAINT` data — it now warns naming the distinct spacings found and proceeds using the smallest one, instead of silently mislabelling the attached `Deterministic` series with a resolution that doesn't match its own timestamps. Passing `resolution` explicitly skips inference and validation, as before.
+- **BREAKING: `GenericConstraint` is now a `PowerSystems.Service`, not a `PowerSystems.Component`**: `add_nem_constraints!` attaches each one via `add_service!` with its resolved contributing devices instead of `add_component!` — a `UnitTerm`/`InterconnectorTerm`'s single named device, or a `RegionTerm`'s every `Generator`/`Storage` unit in that region (see the new `_region_devices`). A `RegionTerm` naming a region with no matching unit now skips the whole constraint with a new `:no_region_devices` reason, the same as an unresolvable `UnitTerm`/`InterconnectorTerm`.
+- **BREAKING: `GenericConstraint` gains a `description::String` field** (default `""`), placed
+  after `constraint_weight` in the struct's field layout, with `get_description`/`set_description!`
+  accessors. `add_nem_constraints!` now passes `def.DESCRIPTION` (falling back to `""` when the
+  nullable column is `missing`) as this field instead of into `ext["description"]`. The other four
+  AEMO constraint-authoring values (`limit_type`, `source`, `effective_date`, `version_no`) stay in
+  `ext`, but gain read-only accessors — `get_limit_type`, `get_source`, `get_effective_date`,
+  `get_version_no` — that return `nothing` when the key is absent, as it is for a hand-authored
+  constraint.
+- **`add_nem_constraints!`'s `"rhs"`/`"invoked"` grid is now derived from `date_range` directly**, not `unique(invoked.SETTLEMENTDATE)` (whichever intervals *any* constraint happened to be invoked at). The old derivation silently shrank the grid the moment real data had an interval NEMDE genuinely dispatched through with nothing bound, producing a `GenericConstraint` series shorter than every other time series on the same `System` and tripping `PowerSystems.jl`'s cross-component horizon check the moment `ConstrainedNetworkConfiguration` was combined with a wide, real multi-interval `date_range`. The grid now drops `date_range`'s own last point to match `read_fcas_bids`/`set_demand!`'s half-open (`start <= x < stop`) convention.
+- `nem_system(db, NEMDEConfiguration(); ...)` attaches the effective FCAS offers and tie-break scales itself, so a NEMDE system is complete without further preparation.
+- `prepare_replication!` is replaced by `prepare_replay_forecasts!` in `AustralianElectricityMarkets`, which only transforms the single time series into one-interval forecast windows; it no longer derives FCAS offers or tie-break scales.
+- `replication_results` and `compute_fcas_prices` move out of `AustralianElectricityMarketsSimulations` into `ReplayResults` in `scripts/replay_results.jl`, along with the solved-table and constraint-violation helpers they use.
+- The replay default HiGHS relative MIP gap is 1e-8 (was 0), matching the batch runner; the absolute gap stays 1e-10.
+
 ## [0.1.3] - 2026-03-09
 
 ### Added

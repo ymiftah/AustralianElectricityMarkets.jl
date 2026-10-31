@@ -1,4 +1,5 @@
 using AustralianElectricityMarkets
+using AustralianElectricityMarketsData: populate
 import AustralianElectricityMarkets.RegionModel as RM
 using PowerSystems
 using PowerSimulations
@@ -26,10 +27,10 @@ using HiGHS
 #     in parquet files.
 #
 # ```julia
-# tables = table_requirements(RegionalNetworkConfiguration())
-# map(tables) do table
-#     fetch_table_data(table, Date(2025, 1, 1):Date(2025,1,31))
-# end;
+# populate(
+#     db, Date(2025, 1, 1), Date(2025, 1, 31);
+#     tables = table_requirements(RegionalNetworkConfiguration()),
+# )
 # ```
 
 db = aem_connect();
@@ -49,16 +50,24 @@ date_range = start_date:interval:(start_date + horizon)
 # Set deterministic time series.
 
 set_demand!(sys, db, date_range; resolution = interval)
-set_renewable_pv!(sys, db, date_range; resolution = interval)
-set_renewable_wind!(sys, db, date_range; resolution = interval)
-set_hydro_limits!(sys, db, date_range; resolution = interval)
 set_market_bids!(sys, db, date_range; resolution = interval)
+set_nem_dispatch_limits!(sys, db, date_range)
 
 # Derive forecasts from the deterministic time series.
 
 transform_single_time_series!(sys, horizon, interval);
 @show sys
 
+# ## Interconnector losses
+#
+# To include an attached `InterconnectorLossModel`, use
+# `AustralianElectricityMarketsSimulations.NEMInterconnectorLoss` for `AreaInterchange`.
+# It supports standalone `DecisionModel`s with `AreaBalancePowerModel`, the regional balance
+# NEMDE uses; other network models are rejected.
+# Demand-dependent loss coefficients use available `PowerLoad` forecasts at construction.
+# Rebuild the `DecisionModel` when demand forecasts or load availability change; recurrent
+# solves through a reused `Simulation` are rejected. Forecast scaling is applied once.
+#
 # ## Set up the problem
 
 begin
@@ -152,7 +161,7 @@ end
 
 begin
     ren = get_component(RenewableDispatch, sys, "COLEASF1")
-    ts = get_time_series_array(Deterministic, ren, "max_active_power") |> DataFrame
+    ts = get_time_series_array(SingleTimeSeries, ren, "max_active_power") |> DataFrame
     index, values = ts.timestamp, ts.NSW1 * 100
     fig = Figure()
     ax = Axis(fig[1, 1], xlabel = "timestamp", title = "Max active power [MW]", ylabel = "MW")

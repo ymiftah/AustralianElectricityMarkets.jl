@@ -1,0 +1,287 @@
+include(joinpath(@__DIR__, "..", "..", "scripts", "replay_workflow.jl"))
+using .ReplayWorkflow: replicate_range
+
+# Prepares a cache-built system for the script's result-reading regressions.
+function workflow_test_system(db, date_range; kwargs...)
+    return prepare_replay_forecasts!(nem_system(db, NEMDEConfiguration(); date_range, kwargs...))
+end
+
+@testset "simulation runtime exposes no cache entry points" begin
+    for api in (:replication_system, :replicate_range, :read_interval_inputs, :read_published_interval, :aem_connect)
+        @test !isdefined(AEMS, api)
+    end
+end
+
+@testset "Replication pipeline" begin
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
+    t = DateTime(2025, 1, 1, 0, 5, 0)
+
+    @testset "replicate_range replays one interval, solves and compares" begin
+        phases = Symbol[]
+        result = replicate_range(db, t, t; on_phase = phase -> push!(phases, phase))
+        @test phases == [:preflight, :system_build, :model_build, :execute, :compare]
+        @test only(result.results) isa PSI.SimulationProblemResults
+        skipped = result.skipped_constraints
+        @test names(skipped) == ["chunk", "constraint", "reason", "n_missing"]
+        @test all(in((:no_available_device, :never_invoked)), skipped.reason)
+        comparison = result.comparison
+        published = read_published_interval(db, t)
+
+        # One row per published key, so nothing is dropped silently.
+        @test all(==(t), comparison.prices.SETTLEMENTDATE)
+        @test nrow(comparison.prices) == nrow(published.prices)
+        @test nrow(comparison.dispatch) == nrow(published.dispatch)
+        @test nrow(comparison.interconnectors) == nrow(published.interconnectors)
+        @test nrow(comparison.fcas_prices) == nrow(published.fcas_prices)
+        @test all(==(t), comparison.fcas_prices.SETTLEMENTDATE)
+
+        @test issubset(Set(["NSW1", "QLD1", "SA1", "TAS1", "VIC1"]), Set(comparison.prices.REGIONID))
+        @test all(isfinite, skipmissing(comparison.prices.ROP_solved))
+        @test any(!ismissing, comparison.prices.ROP_solved)
+        @test any(!ismissing, comparison.dispatch.TOTALCLEARED_solved)
+        @test any(!ismissing, comparison.interconnectors.MWFLOW_solved)
+        @test all(isfinite, skipmissing(comparison.interconnectors.MWLOSSES_solved))
+        @test any(!ismissing, comparison.fcas_prices.ROP_solved)
+        # The scheduled load PUMP1 is solved, as a non-negative consumed MW.
+        pump = only(filter(:DUID => ==("PUMP1"), comparison.dispatch))
+        @test !ismissing(pump.TOTALCLEARED_solved)
+        @test pump.TOTALCLEARED_solved >= 0
+        # The 1-second markets are published, modelled and compared like the other FCAS markets.
+        for bid_type in (BidType.RAISE1SEC, BidType.LOWER1SEC)
+            rows = filter(:BIDTYPE => ==(bid_type), comparison.fcas_prices)
+            @test !isempty(rows)
+            @test any(!ismissing, rows.ROP_solved)
+        end
+        # The unavailable IC6 has no solved flow.
+        @test ismissing(only(filter(:INTERCONNECTORID => ==("IC6"), comparison.interconnectors)).MWFLOW_solved)
+    end
+
+    @testset "MNSP offers reach the replay model" begin
+        # The mock offers Basslink-like links on IC2 (300 MW available) for the intervals up to 04:00.
+        sys = workflow_test_system(db, t:Minute(5):(t + Minute(10)))
+        ic2 = get_component(AreaInterchange, sys, "IC2")
+        @test has_time_series(ic2, SingleTimeSeries, "mnsp_forward_max_avail")
+        result = replicate_range(db, t, t; interval_flow_limits = true)
+        @test any(
+            k -> PSI.IS.Optimization.get_entry_type(k) === MNSPLinkFlowVariable,
+            PSI.list_variable_keys(only(result.results)),
+        )
+        flow = only(filter(:INTERCONNECTORID => ==("IC2"), result.comparison.interconnectors)).MWFLOW_solved
+        @test abs(flow) <= 300.0 + 1.0e-6
+    end
+end
+
+
+@testset "replicate_range on the mock cache" begin
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
+    t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)
+    result = replicate_range(db, t1, t2)
+    @test nrow(result.chunks) == 1 && length(result.results) == 1
+    c = result.comparison
+    for table in (:prices, :dispatch, :interconnectors)
+        @test first(names(c[table])) == "SETTLEMENTDATE" && Set(c[table].SETTLEMENTDATE) == Set([t1, t2])
+        @test nrow(c[table]) == sum(nrow(read_published_interval(db, t)[table]) for t in (t1, t2))
+    end
+    @test all(isfinite, skipmissing(c.prices.ROP_solved)) && any(!ismissing, c.prices.ROP_solved)
+    @test any(!ismissing, c.dispatch.TOTALCLEARED_solved)
+    # Interchanges are modeled (the unavailable IC6 is not), and so is FCAS.
+    @test any(!ismissing, c.interconnectors.MWFLOW_solved)
+    @test all(isfinite, skipmissing(c.interconnectors.MWLOSSES_solved))
+    @test all(ismissing, filter(:INTERCONNECTORID => ==("IC6"), c.interconnectors).MWFLOW_solved)
+    @test any(!ismissing, c.fcas_prices.ROP_solved) && all(isfinite, skipmissing(c.fcas_prices.ROP_solved))
+    # Invoked at 00:10 only over BW01-BW04: modeled now that batteries are, and masked at 00:05.
+    @test !any(startswith("N_PARTIAL_COVERAGE"), result.skipped_constraints.constraint)
+    duals = stock_gc_duals(result.results[1])
+    partial = only(k for k in keys(duals) if startswith(k, "N_PARTIAL_COVERAGE"))
+    @test duals[partial][t1] == 0.0
+    @test any(!ismissing, c.dispatch.TOTALCLEARED_solved[c.dispatch.DUID .== "BW01"])
+    # The MNSP IC2 is modeled with its link offers in both steps.
+    links = only(values(PSI.read_realized_variables(result.results[1], ["MNSPLinkFlowVariable__AreaInterchange"])))
+    @test Set(links.DateTime) == Set([t1, t2]) && all(>=(-1.0e-9), links.value)
+    @test names(result.ramp_violations) == ["DUID", "DateTime", "MW", "direction"]
+    @test issubset(Set(result.constraint_violations.DateTime), Set([t1, t2]))
+    @test_throws ArgumentError replicate_range(db, t1, t1 - Minute(5))
+
+    # Every family is modeled by default: no unmodeled skips, FCAS, interchange losses and storage variables.
+    @test !any(in(("unmodeled_fcas_service", "unmodeled_device_type")), string.(result.skipped_constraints.reason))
+    var_keys = PSI.list_variable_keys(result.results[1])
+    entry_and_component(k) = (PSI.IS.Optimization.get_entry_type(k), PSI.IS.Optimization.get_component_type(k))
+    @test any(k -> entry_and_component(k)[1] === FCASCapacityVariable, var_keys)
+    @test any(k -> entry_and_component(k) == (InterconnectorLossVariable, PSY.AreaInterchange), var_keys)
+    @test any(k -> entry_and_component(k) == (ActivePowerOutVariable, PSY.EnergyReservoirStorage), var_keys)
+end
+
+# Whether two stacked comparison NamedTuples hold the same rows (sorted by key) and equal numbers, `missing` included.
+function same_comparison(x, y; atol = 1.0e-6)
+    same(u, v) = (ismissing(u) && ismissing(v)) || (!ismissing(u) && !ismissing(v) && isapprox(u, v; atol = atol))
+    keyed(df) = sort(df, [n for n in names(df) if eltype(df[!, n]) <: Union{Missing, AbstractString, DateTime}])
+    return keys(x) == keys(y) && all(keys(x)) do name
+        a, b = keyed(getproperty(x, name)), keyed(getproperty(y, name))
+        names(a) == names(b) && nrow(a) == nrow(b) && all(
+            col -> eltype(a[!, col]) <: Union{Missing, Real} ? all(same.(a[!, col], b[!, col])) : isequal(a[!, col], b[!, col]),
+            names(a),
+        )
+    end
+end
+
+@testset "replicate_range chunks" begin
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
+    @test_throws ArgumentError ReplayWorkflow._range_steps(DateTime(2025, 1, 1), DateTime(2024, 12, 31))
+    @test_throws ArgumentError ReplayWorkflow._range_steps(DateTime(2025, 1, 1), DateTime(2025, 1, 1, 0, 7))
+    @test ReplayWorkflow._range_steps(DateTime(2025, 1, 1), DateTime(2025, 1, 1)) == DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 1)
+    chunks = ReplayWorkflow._range_chunks
+    @test chunks(DateTime(2026, 1, 1, 3, 55):Minute(5):DateTime(2026, 1, 1, 4, 15), :trading_day) ==
+        [DateTime(2026, 1, 1, 3, 55):Minute(5):DateTime(2026, 1, 1, 4, 0), DateTime(2026, 1, 1, 4, 5):Minute(5):DateTime(2026, 1, 1, 4, 15)]
+    @test chunks(DateTime(2026, 1, 1, 4, 5):Minute(5):DateTime(2026, 1, 2, 4, 0), :trading_day) ==
+        [DateTime(2026, 1, 1, 4, 5):Minute(5):DateTime(2026, 1, 2, 4, 0)]
+    @test chunks(DateTime(2026, 6, 30, 23, 50):Minute(5):DateTime(2026, 7, 1, 0, 15), :trading_day) ==
+        [DateTime(2026, 6, 30, 23, 50):Minute(5):DateTime(2026, 7, 1, 0, 0), DateTime(2026, 7, 1, 0, 5):Minute(5):DateTime(2026, 7, 1, 0, 15)]
+    @test chunks(DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20), Minute(10)) ==
+        [DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 10), DateTime(2025, 1, 1, 0, 15):Minute(5):DateTime(2025, 1, 1, 0, 20)]
+    steps = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 10)
+    @test_throws ArgumentError chunks(steps, Minute(7))
+    @test_throws ArgumentError chunks(steps, Minute(0))
+    @test_throws ArgumentError chunks(steps, :calendar_day)
+    @test_throws ArgumentError chunks(steps, Month(1))
+
+    # Chunks are a partition of the range; two chunks solve the same intervals as one.
+    t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 20)
+    one = replicate_range(db, t1, t2)
+    two = replicate_range(db, t1, t2; chunk = Minute(10))
+    @test nrow(two.chunks) == 2 && length(two.results) == 2
+    @test two.chunks.n_steps == [2, 2]
+    @test same_comparison(one.comparison, two.comparison)
+    @test nrow(one.solver_stats) == nrow(two.solver_stats) == 4
+    @test one.solver_stats.SETTLEMENTDATE == two.solver_stats.SETTLEMENTDATE
+    @test one.solver_stats.objective_value ≈ two.solver_stats.objective_value atol = 1.0e-6
+    @test two.solver_stats.chunk == [1, 1, 2, 2]
+    # Each chunk's reopened results hold its own intervals only.
+    t_mid = DateTime(2025, 1, 1, 0, 15)
+    @test collect(PSI.get_timestamps(two.results[1])) == collect(t1:Minute(5):(t_mid - Minute(5)))
+    @test collect(PSI.get_timestamps(two.results[2])) == collect(t_mid:Minute(5):t2)
+    @test PSI.read_optimizer_stats(two.results[2]).objective_value ≈
+        filter(:SETTLEMENTDATE => >=(t_mid), one.solver_stats).objective_value atol = 1.0e-6
+
+    # A reopened chunk reads the same constraint violations as the live solve, and needs no system.
+    sys2 = workflow_test_system(db, DateTime(2025, 1, 1, 0, 15):Minute(5):DateTime(2025, 1, 1, 0, 25))
+    reopened = ReplayResults.replication_results(two.results[2], sys2).constraint_violations
+    at_chunk2 = filter(:DateTime => t -> t >= DateTime(2025, 1, 1, 0, 15), two.constraint_violations)
+    @test sort(reopened, [:DateTime, :name]) == sort(at_chunk2, [:DateTime, :name])
+
+    # The folders hold the stores of each chunk on disk.
+    d = mktempdir()
+    small = replicate_range(db, t1, DateTime(2025, 1, 1, 0, 10); output_dir = d, cache_size_mib = 16)
+    @test isdir(joinpath(d, "chunk_1")) && any(f -> f == "simulation_store.h5", (f for (_, _, fs) in walkdir(joinpath(d, "chunk_1")) for f in fs))
+    @test small.chunks.n_steps == [2] && nrow(small.solver_stats) == 2
+    # On-disk time series default to a directory inside each chunk folder.
+    d = mktempdir()
+    replicate_range(db, t1, DateTime(2025, 1, 1, 0, 20); output_dir = d, chunk = Minute(10), time_series_in_memory = false)
+    @test all(k -> !isempty(readdir(joinpath(d, "chunk_$k", "time_series"))), 1:2)
+
+    # Every replication time-series parameter is stored, as PowerSimulations stores right-hand-side parameters.
+    stored = Set(PSI.IS.Optimization.get_entry_type(k) for k in PSI.list_parameter_keys(one.results[1]))
+    @test NEMConstraintRHSParameter in stored
+    @test_throws ArgumentError replicate_range(db, t1, DateTime(2025, 1, 1, 0, 10); parts = (:nonsense,))
+end
+
+
+@testset "replicate_range respects parts on the mock cache" begin
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
+    t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)
+    result = replicate_range(db, t1, t2; parts = (:generic_constraints,))
+    types = Set(PSI.IS.Optimization.get_component_type(k) for k in PSI.list_variable_keys(only(result.results)))
+    @test !(PSY.EnergyReservoirStorage in types) && !(PSY.AreaInterchange in types)
+    @test !any(k -> PSI.IS.Optimization.get_entry_type(k) === FCASCapacityVariable, PSI.list_variable_keys(only(result.results)))
+    @test all(ismissing, result.comparison.interconnectors.MWFLOW_solved)
+    @test all(ismissing, result.comparison.fcas_prices.ROP_solved)
+    @test any(in((:unmodeled_fcas_service, :unmodeled_device_type)), result.skipped_constraints.reason)
+    @test any(!ismissing, result.comparison.dispatch.TOTALCLEARED_solved)
+end
+
+@testset "interval timing UTC offset is rounded to quarter hours" begin
+    @test ReplayWorkflow._round_utc_offset(36_000_000 + 400_000) == Millisecond(36_000_000)
+    @test ReplayWorkflow._round_utc_offset(36_000_000 + 500_000) == Millisecond(36_900_000)
+    @test ReplayWorkflow._round_utc_offset(-19_800_000 - 20_000) == Millisecond(-19_800_000)
+    @test iszero(Dates.value(ReplayWorkflow._utc_offset()) % 900_000)
+end
+
+@testset "interval timings come from native PSI records" begin
+    # No replay-side override of the PSI methods the timings used to wrap.
+    @test which(PSI.update_model!, (PSI.DecisionModel, PSI.Simulation)).module === PowerSimulations
+    @test which(PSI.solve_impl!, (PSI.DecisionModel,)).module === PowerSimulations
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
+    t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)
+    d = mktempdir()
+    result = replicate_range(db, t1, t2; output_dir = d)
+    paths = [joinpath(root, f) for (root, _, files) in walkdir(d) for f in files if f == "interval_timings.csv"]
+    @test length(paths) == 1
+    lines = readlines(only(paths))
+    columns = split(lines[1], ',')
+    @test columns == [
+        "timestamp_utc", "interval_aest", "execution_count", "phase", "wall_s", "allocated_bytes",
+        "gc_s", "compilation_s", "timed_solve_s", "pricing_s", "auxiliary_s", "schema_version",
+    ]
+    rows = [Dict(zip(columns, split(line, ','))) for line in lines[2:end]]
+    intervals = [string(t1), string(t1 + Minute(5))]
+    @test [(r["interval_aest"], r["phase"]) for r in rows] ==
+        [(i, phase) for i in intervals for phase in ("parameter_update", "solve_and_write")]
+    @test all(==("2"), (r["schema_version"] for r in rows))
+    @test [parse(Int, r["execution_count"]) for r in rows] == [0, 0, 1, 1]
+    wall(r) = parse(Float64, r["wall_s"])
+    @test all(>=(0), wall.(rows))
+    solves = filter(r -> r["phase"] == "solve_and_write", rows)
+    @test all(>(0), wall.(solves))
+    @test wall(rows[3]) > 0
+    # Solver fields are the optimizer statistics of each executed step.
+    stats = PSI.read_optimizer_stats(only(result.results))
+    for (row, i) in zip(solves, 1:2)
+        @test parse(Float64, row["timed_solve_s"]) ≈ stats.timed_solve_time[i]
+        @test parse(Float64, row["pricing_s"]) ≈ stats.timed_calculate_dual_variables[i]
+        @test parse(Float64, row["auxiliary_s"]) ≈ stats.timed_calculate_aux_variables[i]
+        @test parse(Float64, row["allocated_bytes"]) ≈ stats.solve_bytes_alloc[i]
+        @test parse(Float64, row["gc_s"]) ≈ stats.sec_in_gc[i]
+    end
+    @test parse(Float64, solves[1]["timed_solve_s"]) ≈ result.solver_stats.timed_solve_time[1]
+    for row in filter(r -> r["phase"] == "parameter_update", rows)
+        @test all(isnan, parse.(Float64, (row["timed_solve_s"], row["compilation_s"], row["allocated_bytes"])))
+    end
+end
+
+include("replay_batch.jl")
+include("interconnector_loss_gaps.jl")
+
+@testset "data-only preflight checks exact padded coverage and versions" begin
+    t = DateTime(2025, 1, 1, 0, 5)
+    grid = collect(t:Minute(5):(t + Minute(5)))
+    links = DataFrame(INTERCONNECTORID = ["M", "M"], LINKID = ["F", "R"])
+    offers = DataFrame(LINKID = ["F", "R", "F", "R"], INTERVAL_DATETIME = [grid[1], grid[1], grid[2], grid[2]])
+    @test isnothing(ReplayWorkflow._check_mnsp_coverage(links, offers, ["M"], grid))
+    @test_throws ArgumentError ReplayWorkflow._check_mnsp_coverage(links, offers[1:3, :], ["M"], grid)
+    @test_throws ArgumentError ReplayWorkflow._check_mnsp_coverage(links, vcat(offers, offers[1:1, :]), ["M"], grid)
+    @test_throws ArgumentError ReplayWorkflow._check_mnsp_coverage(links[1:1, :], offers, ["M"], grid)
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR))
+    @test isnothing(ReplayWorkflow._preflight_inputs(db, t:Minute(5):(t + Minute(10)); parts = REPLICATION_PARTS))
+end
+
+@testset "preflight preserves fixed-load and built-in constraint handling" begin
+    t = DateTime(2025, 1, 1, 0, 5)
+    eff = DateTime(2020, 1, 1)
+    invoked = DataFrame(
+        GENCONID = ["C", "\$U"], SETTLEMENTDATE = [t, t],
+        GENCONID_EFFECTIVEDATE = [eff, eff], GENCONID_VERSIONNO = [1, 1]
+    )
+    fixed = DataFrame(DUID = ["U"], INTERVAL_DATETIME = [t])
+    definitions = DataFrame(GENCONID = ["C"], EFFECTIVEDATE = [eff], VERSIONNO = [1])
+    @test isnothing(ReplayWorkflow._check_constraint_versions(invoked, fixed, definitions))
+    definitions.VERSIONNO .= 2
+    @test_throws ArgumentError ReplayWorkflow._check_constraint_versions(invoked, fixed, definitions)
+    builtin = first(keys(AustralianElectricityMarkets._ZERO_FLOW_CONSTRAINTS))
+    invoked = DataFrame(
+        GENCONID = [builtin], SETTLEMENTDATE = [t],
+        GENCONID_EFFECTIVEDATE = [DateTime(AustralianElectricityMarkets._ZERO_FLOW_EFFECTIVEDATE)],
+        GENCONID_VERSIONNO = [AustralianElectricityMarkets._ZERO_FLOW_VERSIONNO]
+    )
+    @test isnothing(ReplayWorkflow._check_constraint_versions(invoked, fixed, definitions[1:0, :]))
+end
+
+include("replay_preflight.jl")

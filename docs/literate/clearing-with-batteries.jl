@@ -1,5 +1,6 @@
 begin
     using AustralianElectricityMarkets
+    using AustralianElectricityMarketsData: populate
     import AustralianElectricityMarkets.RegionModel as RM
     using PowerSystems
     using PowerSimulations
@@ -23,11 +24,15 @@ end
 # when electricity prices are low (e.g., during the middle of the day when solar is abundant)
 # and discharging when prices are high (e.g., during the evening peak). Furthermore, they
 # provide essential services like **FCAS** (Frequency Control Ancillary Services) to keep the
-# grid stable.
+# grid stable. See [FCAS in the NEM](@ref) for a full introduction to FCAS markets, offers,
+# and requirements.
 #
-# !!! info "FCAS is a work in progress"
-#     This package does not support yet the definition of Ancillary Services consistent with the NEM rules.
-#     Stay tuned for the inclusion of those in the future.
+# !!! info "FCAS co-optimisation is a work in progress"
+#     This package can read FCAS offers, requirements and dispatch outcomes (see
+#     [FCAS in the NEM](@ref)), and represents FCAS reserves and offers as
+#     `PowerSystems.jl` types. It does not yet *enforce* the FCAS trapezium and joint
+#     capacity/ramping constraints inside a `PowerSimulations.jl` dispatch problem like this
+#     one - the battery's FCAS offers are not part of the optimisation below.
 #
 # ## Setup the system
 #
@@ -38,10 +43,10 @@ end
 #     in parquet files.
 #
 # ```julia
-# tables = table_requirements(RegionalNetworkConfiguration())
-# map(tables) do table
-#     fetch_table_data(table, Date(2025, 1, 1):Date(2025,1,31))
-# end;
+# populate(
+#     db, Date(2025, 1, 1), Date(2025, 1, 31);
+#     tables = table_requirements(RegionalNetworkConfiguration()),
+# )
 # ```
 
 db = aem_connect();
@@ -59,13 +64,11 @@ start_date = DateTime(2025, 1, 2, 4, 0)
 date_range = start_date:interval:(start_date + horizon)
 @show date_range
 
-# Set deterministic time series for demand, renewables, hydro, and market bids.
+# Set deterministic time series for demand, dispatch limits, and market bids.
 
 set_demand!(sys, db, date_range; resolution = interval)
-set_renewable_pv!(sys, db, date_range; resolution = interval)
-set_renewable_wind!(sys, db, date_range; resolution = interval)
-set_hydro_limits!(sys, db, date_range; resolution = interval)
 set_market_bids!(sys, db, date_range; resolution = interval)
+set_nem_dispatch_limits!(sys, db, date_range)
 
 # Derive forecasts from the deterministic time series.
 

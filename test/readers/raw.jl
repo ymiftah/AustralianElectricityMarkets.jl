@@ -1,0 +1,265 @@
+let
+    hive_dir = AEM_TEST_HIVE_DIR
+    @test isdir(hive_dir)
+
+    config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
+    db = aem_connect(config)
+
+    @testset "read_interconnectors drops an interconnector with a retired endpoint region" begin
+        # A region absent from DISPATCHREGIONSUM (the authoritative "currently active" source)
+        # must never resurrect as a phantom, zero-demand area - see AustralianElectricityMarkets
+        # `get_bus_dataframe`, which builds its region set straight from this function's output.
+        retired_dir = mktempdir()
+        cp(joinpath(hive_dir, "INTERCONNECTORCONSTRAINT"), joinpath(retired_dir, "INTERCONNECTORCONSTRAINT"); force = true)
+        cp(joinpath(hive_dir, "DISPATCHREGIONSUM"), joinpath(retired_dir, "DISPATCHREGIONSUM"); force = true)
+        let ddb = DuckDB.DB(), conn = DuckDB.connect(ddb)
+            DuckDB.execute(conn, "SET preserve_identifier_case=true")
+            ic_table = joinpath(hive_dir, "INTERCONNECTOR", "archive_month=2025-01")
+            df_ic = DataFrame(DuckDB.execute(conn, "SELECT * FROM read_parquet('$ic_table/*.parquet')"))
+            push!(
+                df_ic,
+                (INTERCONNECTORID = "V-SN", REGIONFROM = "VIC1", REGIONTO = "SNOWY_RETIRED", archive_month = "2025-01"),
+            )
+            DuckDB.register_data_frame(conn, df_ic, "tmp_table")
+            table_dir = joinpath(retired_dir, "INTERCONNECTOR")
+            mkpath(table_dir)
+            DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+            DuckDB.execute(
+                conn,
+                """
+                COPY (SELECT 'V-SN' AS INTERCONNECTORID, DATE '2025-01-01' AS EFFECTIVEDATE, 1 AS VERSIONNO,
+                             500.0 AS MAXMWIN, 500.0 AS MAXMWOUT, 0.5 AS FROMREGIONLOSSSHARE,
+                             0.01 AS LOSSCONSTANT, 0.001 AS LOSSFLOWCOEFFICIENT, 'MNSP' AS ICTYPE,
+                             '2025-01' AS archive_month)
+                TO '$(joinpath(retired_dir, "INTERCONNECTORCONSTRAINT"))' (FORMAT 'PARQUET', PARTITION_BY (archive_month), APPEND)
+                """,
+            )
+        end
+        retired_config = HiveConfiguration(hive_location = retired_dir, filesystem = "file")
+        retired_db = aem_connect(retired_config)
+        df = read_interconnectors(retired_db)
+        @test !("V-SN" in df.INTERCONNECTORID)
+        @test !("SNOWY_RETIRED" in vcat(df.REGIONFROM, df.REGIONTO))
+    end
+
+    @testset "read_interconnectors requires a populated DISPATCHREGIONSUM" begin
+        bare_dir = mktempdir()
+        for table in ("INTERCONNECTOR", "INTERCONNECTORCONSTRAINT")
+            cp(joinpath(hive_dir, table), joinpath(bare_dir, table); force = true)
+        end
+        bare_db = aem_connect(HiveConfiguration(hive_location = bare_dir, filesystem = "file"))
+        err = try
+            read_interconnectors(bare_db)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("DISPATCHREGIONSUM", sprint(showerror, err))
+    end
+
+    @testset "static tables resolve as of the interval" begin
+        versioned_dir = mktempdir()
+        create_versioned_static_data(hive_dir, versioned_dir)
+        vdb = aem_connect(HiveConfiguration(hive_location = versioned_dir, filesystem = "file"))
+        early = DateTime(2025, 3, 1)
+
+        maxmwin(df) = only(df[df.INTERCONNECTORID .== "IC1", :MAXMWIN])
+        @test maxmwin(read_interconnectors(vdb)) == 300.0
+        @test maxmwin(read_interconnectors(vdb; as_of = early)) == 500.0
+        @test maxmwin(read_interconnectors(vdb; as_of = DateTime(2025, 8, 1))) == 300.0
+
+        cp_of(df) = only(df[df.DUID .== "BW01", :CONNECTIONPOINTID])
+        @test cp_of(read_units(vdb)) == "CP_NEW"
+        @test cp_of(read_units(vdb; as_of = early)) == "CP_BAYSW"
+        @test cp_of(read_units(vdb; as_of = DateTime(2025, 8, 1))) == "CP_NEW"
+        @test allunique(read_units(vdb; as_of = early).DUID)
+        for units in (read_units(vdb), read_units(vdb; as_of = early))
+            @test eltype(units.REGISTERED_FROM) == DateTime
+            @test eltype(units.REGISTERED_UNTIL) == DateTime
+        end
+        # The older archive's stale open rows must not leak into either as-of read.
+        @test maxmwin(read_interconnectors(vdb; as_of = early)) != 111.0
+        @test only(read_units(vdb; as_of = early)[read_units(vdb; as_of = early).DUID .== "BW01", :REGISTEREDCAPACITY]) == 100.0
+        # A unit not yet registered as of the date is omitted.
+        @test isempty(read_units(vdb; as_of = DateTime(2019, 1, 1)))
+    end
+
+    @testset "read_units over a registration window" begin
+        vdir = mktempdir()
+        create_versioned_static_data(hive_dir, vdir)
+        vwin = aem_connect(HiveConfiguration(hive_location = vdir, filesystem = "file"))
+        window = read_units(vwin; as_of = DateTime(2025, 3, 1), through = DateTime(2025, 8, 1))
+        bw01 = window[window.DUID .== "BW01", :]
+        # Both BW01 rows overlap the window: the earlier one supplies the attributes, the span covers both.
+        @test only(bw01.CONNECTIONPOINTID) == "CP_BAYSW"
+        @test only(bw01.REGISTERED_FROM) == DateTime(2020, 1, 1)
+        @test only(bw01.REGISTERED_UNTIL) == DateTime(2999, 12, 31)
+        @test allunique(window.DUID)
+        # Production and mock types agree: the span is always TIMESTAMP, whichever reader path.
+        @test eltype(window.REGISTERED_FROM) == DateTime
+        @test eltype(window.REGISTERED_UNTIL) == DateTime
+        # Only the first row overlaps a window ending before the change.
+        before = read_units(vwin; as_of = DateTime(2025, 3, 1), through = DateTime(2025, 6, 1))
+        @test only(before[before.DUID .== "BW01", :REGISTERED_UNTIL]) == DateTime(2025, 7, 1)
+        @test isempty(read_units(vwin; as_of = DateTime(2019, 1, 1), through = DateTime(2019, 12, 31)))
+        @test_throws ArgumentError read_units(vwin; through = DateTime(2025, 1, 1))
+    end
+
+    @testset "a mid-window region change is rejected and a loss factor change warns" begin
+        # A second BW03 row from 00:10 in another region (BW03 is in QLD1), the first row left open.
+        moved = damaged_cache(
+            hive_dir, :DUDETAILSUMMARY,
+            "INSERT INTO input SELECT * REPLACE (TIMESTAMP '2025-01-01 00:10:00' AS START_DATE, 'NSW1' AS REGIONID) FROM input WHERE DUID = 'BW03'",
+        )
+        window = (as_of = DateTime(2025, 1, 1, 0, 5), through = DateTime(2025, 1, 1, 0, 15))
+        @test_throws r"BW03.*REGIONID" read_units(moved; window...)
+        # A changed loss factor is not an error: the earlier row's factor is used, with a warning.
+        lossy = damaged_cache(
+            hive_dir, :DUDETAILSUMMARY,
+            "INSERT INTO input SELECT * REPLACE (TIMESTAMP '2025-01-01 00:10:00' AS START_DATE, 0.9 AS TRANSMISSIONLOSSFACTOR) FROM input WHERE DUID = 'BW03'",
+        )
+        @test read_units(lossy; window...) isa DataFrame
+        factors = @test_logs (:warn, r"Loss factors change") match_mode = :any read_loss_factors(lossy; window...)
+        @test only(factors[factors.DUID .== "BW03", :LOAD_LOSS_FACTOR]) == 1.0
+        # Identical factors across the window stay quiet.
+        same = damaged_cache(
+            hive_dir, :DUDETAILSUMMARY,
+            "INSERT INTO input SELECT * REPLACE (TIMESTAMP '2025-01-01 00:10:00' AS START_DATE) FROM input WHERE DUID = 'BW03'",
+        )
+        quiet = Test.TestLogger()
+        Base.CoreLogging.with_logger(quiet) do
+            read_loss_factors(same; window...)
+        end
+        @test !any(occursin("Loss factors change", string(record.message)) for record in quiet.logs)
+    end
+
+    @testset "read_demand" begin
+        df = read_demand(db)
+        @test df isa DataFrame
+        @test nrow(df) > 0
+        @test "REGIONID" in names(df)
+        first_vic = df[(df.REGIONID .== "VIC1") .& (df.SETTLEMENTDATE .== minimum(df.SETTLEMENTDATE)), :]
+        @test only(first_vic.TOTALDEMAND) == 1000.0
+        # Loss-equation demand is INITIALSUPPLY + DEMANDFORECAST (mock: 990 + 10 i + 25) plus the
+        # initial charging of BIDIRECTIONAL units (BW01, VIC1, INITIALMW -30 in the last interval).
+        @test only(first_vic.LOSSDEMAND) == 1015.0
+        last_rows = df[df.SETTLEMENTDATE .== maximum(df.SETTLEMENTDATE), :]
+        @test only(last_rows[last_rows.REGIONID .== "VIC1", :LOSSDEMAND]) == 990.0 + 480 + 25 - 30
+        @test all(last_rows[last_rows.REGIONID .!= "VIC1", :LOSSDEMAND] .== 990.0 + 480 + 25)
+    end
+
+    @testset "read_units" begin
+        df = read_units(db)
+        @test df isa DataFrame
+        @test nrow(df) > 0
+        @test "DUID" in names(df)
+        @test "CO2E_ENERGY_SOURCE" in names(df)
+        @test !("TECHNOLOGY" in names(df))
+        @test !("FUELTYPE" in names(df))
+        @test "BW01" in df.DUID
+        @test only(df.CO2E_ENERGY_SOURCE[df.DUID .== "BW01"]) == "Battery Storage"
+
+        # BAYSW (station for BW01-BW04) is renamed in a later STATION archive_month
+        # partition (mock_data.jl). read_units() must resolve one name per DUID —
+        # not fan out into duplicate rows via the STATIONID -> STATIONNAME join.
+        @test allunique(df.DUID)
+        bw01_names = df.STATIONNAME[df.DUID .== "BW01"]
+        @test length(bw01_names) == 1
+        @test only(bw01_names) == "Bayswater Power Station"
+    end
+
+    @testset "read_bids rejects period offers without a price-band row" begin
+        partial = mktempdir()
+        for table in ("BIDPEROFFER_D", "BIDDAYOFFER_D")
+            cp(joinpath(hive_dir, table), joinpath(partial, table))
+        end
+        let ddb = DuckDB.DB(), conn = DuckDB.connect(ddb)
+            DuckDB.execute(conn, "SET preserve_identifier_case=true")
+            table_dir = joinpath(partial, "BIDDAYOFFER_D")
+            kept = DataFrame(DuckDB.execute(conn, "SELECT * FROM read_parquet('$table_dir/**/*.parquet', hive_partitioning=true)"))
+            subset!(kept, :DUID => ByRow(!=("BW03")))
+            rm(table_dir; recursive = true)
+            DuckDB.register_data_frame(conn, kept, "tmp_table")
+            DuckDB.execute(conn, "COPY (SELECT * FROM tmp_table) TO '$table_dir' (FORMAT 'PARQUET', PARTITION_BY (archive_month))")
+            DuckDB.disconnect(conn)
+            DuckDB.close(ddb)
+        end
+        partial_db = aem_connect(HiveConfiguration(hive_location = partial, filesystem = "file"))
+        date_range = DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 1, 0)
+        err = try
+            read_bids(partial_db, date_range)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("BW03", err.msg)
+    end
+
+    @testset "_extract_power_bids keeps empty bands as zero-width segments on request" begin
+        row(direction) = (
+            DIRECTION = direction, PRICEBANDARRAY = [10.0, 20.0, 30.0], BANDAVAILARRAY = [5.0, 0.0, 7.0],
+        )
+        dropped = AustralianElectricityMarkets._extract_power_bids(row("GEN"))
+        @test PowerSystems.get_x_coords(dropped) == [0.0, 5.0, 12.0]
+        @test PowerSystems.get_y_coords(dropped) == [10.0, 30.0]
+        kept = AustralianElectricityMarkets._extract_power_bids(row("GEN"); keep_empty_bands = true)
+        @test PowerSystems.get_x_coords(kept) == [0.0, 5.0, 5.0, 12.0]
+        @test PowerSystems.get_y_coords(kept) == [10.0, 20.0, 30.0]
+        # LOAD curves list the bands in reverse, so segment k stays the same price band.
+        load = AustralianElectricityMarkets._extract_power_bids(row("LOAD"); keep_empty_bands = true)
+        @test PowerSystems.get_y_coords(load) == [30.0, 20.0, 10.0]
+        @test PowerSystems.get_x_coords(load) == [0.0, 7.0, 7.0, 12.0]
+    end
+
+    @testset "read_fixed_loads" begin
+        date_range = DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 1, 0)
+        df = read_fixed_loads(db, date_range)
+        @test names(df) == ["INTERVAL_DATETIME", "DUID", "DIRECTION", "FIXEDLOAD", "IN_PROFILE"]
+        # BW02 has no dispatch mode in the fixture; BW04 is in DISPATCHMODE 4 at 00:10 and 2 at 00:15.
+        @test nrow(df) == 4
+        @test df.INTERVAL_DATETIME == [DateTime(2025, 1, 1, 0, 10), DateTime(2025, 1, 1, 0, 10), DateTime(2025, 1, 1, 0, 15), DateTime(2025, 1, 1, 0, 15)]
+        @test df.DUID == ["BW02", "BW04", "BW02", "BW04"]
+        @test all(==(50.0), df.FIXEDLOAD)
+        # Mode 2 is in profile; mode 4 (and a unit with no dispatch mode) is not.
+        @test df.IN_PROFILE == [false, false, false, true]
+        @test eltype(df.IN_PROFILE) == Bool
+        # The stop bound is exclusive.
+        @test nrow(read_fixed_loads(db, DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 0, 15))) == 2
+        empty_df = read_fixed_loads(db, DateTime(2025, 1, 1, 2, 0):Dates.Minute(5):DateTime(2025, 1, 1, 2, 5))
+        @test nrow(empty_df) == 0
+        @test eltype(empty_df.IN_PROFILE) == Bool
+    end
+
+    @testset "read_mnsp_offers" begin
+        # Interval ending 12:00 uses the second (rebid) offer, 11:55 the first; period = steps since 04:00.
+        range = DateTime(2025, 1, 1, 11, 55):Dates.Minute(5):DateTime(2025, 1, 1, 12, 5)
+        df = read_mnsp_offers(db, range)
+        @test nrow(df) == 4  # intervals 11:55 and 12:00, two links; the stop bound is exclusive
+        @test sort(unique(df.LINKID)) == ["BLNKTAS", "BLNKVIC"]
+        @test all(==("BASSLINK"), df.PARTICIPANTID)
+        before = df[(df.INTERVAL_DATETIME .== DateTime(2025, 1, 1, 11, 55)) .& (df.LINKID .== "BLNKTAS"), :]
+        after = df[(df.INTERVAL_DATETIME .== DateTime(2025, 1, 1, 12, 0)) .& (df.LINKID .== "BLNKTAS"), :]
+        @test only(before.MAXAVAIL) == 594
+        @test only(after.MAXAVAIL) == 400
+        @test only(before.PRICEBAND2) == 40
+        @test only(after.PRICEBAND2) == 80
+        @test only(after.BANDAVAIL2) == 100
+        @test ismissing(only(after.FIXEDLOAD))
+        # The last interval of the trading day ends at 04:00 the next calendar day.
+        edge = read_mnsp_offers(db, DateTime(2025, 1, 2, 3, 55):Dates.Minute(5):DateTime(2025, 1, 2, 4, 5))
+        @test nrow(edge) == 4
+        @test isempty(read_mnsp_offers(db, DateTime(2030, 1, 1):Dates.Minute(5):DateTime(2030, 1, 1, 1)))
+    end
+
+    @testset "read_mnsp_links" begin
+        links = read_mnsp_links(db, DateTime(2025, 1, 1))
+        @test isempty(read_mnsp_links(db, DateTime(2020, 1, 1)))
+        @test sort(links.LINKID) == ["BLNKTAS", "BLNKVIC"]
+        tas = only(links[links.LINKID .== "BLNKTAS", :])
+        @test (tas.INTERCONNECTORID, tas.FROMREGION, tas.TOREGION) == ("IC2", "NSW1", "VIC1")
+        @test tas.TO_REGION_TLF == 0.9907
+        @test tas.MAXCAPACITY == 594
+    end
+end
