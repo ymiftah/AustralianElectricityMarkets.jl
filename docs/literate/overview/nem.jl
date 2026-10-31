@@ -12,9 +12,7 @@ end
 # # The National Electricity Market
 #
 # The **National Electricity Market (NEM)** is the wholesale electricity market covering
-# Australia's eastern and south-eastern seaboard.
-# The NEM interconnects **five regions**, each simultaneously a state (or, for NSW, a state
-# plus a territory) and a wholesale pricing zone:
+# Australia's eastern and south-eastern seaboard:
 #
 # - **Queensland (QLD1)**
 # - **New South Wales (NSW1)**, including the Australian Capital Territory
@@ -22,16 +20,17 @@ end
 # - **South Australia (SA1)**
 # - **Tasmania (TAS1)**, connected to the mainland only via the Basslink HVDC undersea cable
 #
-# Western Australia and the Northern Territory are not part of the NEM; they run their own,
-# separate electricity systems and are out of scope for this package. The NEM's transmission
-# network spans around 40,000 km of lines and cables and serves more than 85% of Australia's
-# population. It began operating as a wholesale spot market in December 1998, under the
-# **National Electricity Law** and the **National Electricity Rules** - the legal instruments
-# that, together, specify almost everything on this page.
+# The NEM interconnects these **five regions**, each simultaneously a state (or, for NSW, a state
+# plus a territory) and a wholesale pricing zone[^regions].
 #
+# [^regions]: Western Australia and the Northern Territory are not part of the NEM; they run their own,
+# separate electricity systems and are out of scope for this package.
+#
+# The NEM's transmission
+# network spans around 40,000 km of lines and cables and serves more than 85% of Australia's
+# population.
 # This page introduces the NEM's institutions, market design, and dispatch process, then
-# contrasts it's design with other electricity markets. [FCAS in the NEM](@ref) picks up one part of
-# the NEM's specificity - frequency control - in much greater depth.
+# contrasts it's design with other electricity markets.
 #
 # !!! note "References"
 #     See [References](@ref nem-references) at the end for official sources - AEMO's
@@ -60,10 +59,7 @@ nothing #hide
 # Three design choices define the NEM:
 #
 # - **Mandatory gross pool.** Every megawatt-hour physically supplied to or consumed from the
-#   grid is bought and sold through AEMO at the regional spot price. There is no physical
-#   bilateral trading, a generator's own contracts (ASX futures, swaps, caps,
-#   OTC hedges) are purely financial overlays settled against the spot price, not physical
-#   delivery agreements.
+#   grid is bought and sold through AEMO at the regional spot price.
 # - **Energy-only.** Generators are paid only for the energy (and FCAS) they are dispatched
 #   to supply. There is no separate capacity market and no explicit payment for being
 #   available but undispatched. Resource adequacy instead relies on the high price cap
@@ -73,7 +69,7 @@ nothing #hide
 # - **Regional pricing, not nodal pricing.** Each of the five regions clears at a single spot
 #   price, set at that region's **Regional Reference Node (RRN)**. This is a coarser
 #   granularity than the nodal locational marginal pricing (LMP) used across most US
-#   ISOs/RTOs - see [How the NEM differs from US and European markets](@ref nem-vs-world).
+#   ISOs/RTOs for example (c.f.) [How the NEM differs from US and European markets](@ref nem-vs-world)).
 #
 # !!! note "One price per region is not one price per unit"
 #     Pricing regionally does not mean location stops mattering. NEMDE dispatches against
@@ -84,12 +80,10 @@ nothing #hide
 #     The mirror case, **constrained off**, leaves a unit offering *below* the RRP
 #     undispatched. AEMO calls the resulting divergence between a unit's implied local price
 #     and its regional price **mis-pricing**, and publishes the per-unit gap as a *Local Price
-#     Adjustment* - the sum of `MarginalValue x Factor` over the bound constraints that unit
-#     appears on (`DISPATCH_LOCAL_PRICE`).
+#     Adjustment*.
 #
-#     The unit is nonetheless **settled at the RRP**, scaled by its Marginal Loss Factor - not
-#     at its own offer, and not at its local price. US markets (PJM, CAISO, MISO) make uplift
-#     or make-whole payments for exactly this situation; the NEM has no equivalent side
+#     The unit is nonetheless **settled at the RRP** (scaled by its Marginal Loss Factor) not
+#     at its own offer, and not at its local price. The NEM has no adjustment
 #     payment for ordinary network congestion, so a constrained-on generator wears the
 #     difference. Compensation arises only for AEMO *directions* and administered price
 #     periods, which are separate mechanisms. This is the sharpest practical consequence of
@@ -112,17 +106,17 @@ nothing #hide
 #    solves a security-constrained economic dispatch: minimise the cost of meeting forecast
 #    demand in every region, subject to each unit's offered bands, ramp rates, and several
 #    hundred network and system-security constraints, jointly with the FCAS markets (see
-#    [FCAS in the NEM](@ref)).
+#    [FCAS capability and co-optimisation](@ref nemde-fcas)).
 #
-# **Bidding.** Each unit submits up to **ten price bands** per market per trading day via
-# `BIDDAYOFFER_D` (read by [`read_bids`](@ref) for energy) - these prices are fixed once
-# submitted, by 12:30pm the day before. What can still change, right up to **gate closure**
+# **Bidding.** Each unit submits up to **ten price bands** per market per trading day.
+# These prices are fixed once submitted, by 12:30pm the day before. What can still change,
+# right up to **gate closure**
 # (~20 seconds before each dispatch interval), is how many megawatts sit in each of those ten
-# bands: rebids via `BIDPEROFFER_D`, in response to revised demand forecasts, plant
-# availability, or market conditions. Absent binding network constraints AEMO dispatches in
-# **merit order** - cheapest offered band first - and every dispatched unit in a region is
+# bands in response to revised demand forecasts, plant
+# availability, or market conditions. Absent binding network constraints AEMO, dispatches in
+# **merit order** and every dispatched unit in a region is
 # paid the same **uniform clearing price**, set by the last (most expensive) band needed to
-# meet demand, not by what each individual unit actually bid. Network constraints routinely
+# meet demand. Network constraints routinely
 # override that ordering, though; see [Regional pricing, not nodal
 # pricing](@ref nem-organisation) above.
 #
@@ -179,7 +173,7 @@ end
 
 # Every mainland region dips negative around the midday solar peak, while Tasmania - the one
 # region without abundant mainland-scale solar feeding its own price - never drops below
-# \$110/MWh all day:
+# \$110/MWh all day (a consequence of interconnector congestion between Tasmania and Victoria):
 
 @chain prices begin
     groupby(:REGIONID)
@@ -191,9 +185,6 @@ end
     sort(:REGIONID)
 end
 
-# A single national price would average these away entirely - hiding both the midday glut
-# and Tasmania's comparative scarcity. That divergence is a direct, quantitative signature of
-# interconnector congestion and regional supply mix, not a modelling artefact.
 
 # ## [How the NEM differs from US and European markets](@id nem-vs-world)
 #
@@ -209,18 +200,14 @@ end
 # The pattern across most of these rows is the same: the NEM makes fewer things mandatory and
 # fewer things centrally planned than a typical US ISO, while pricing at coarser spatial
 # granularity than either. There is no day-ahead market to clear and no central unit
-# commitment to solve - participants decide when to start and stop their own plant, and
+# commitment to solve: participants decide when to start and stop their own plant, and
 # accept whatever the real-time price turns out to be. The trade-off for carrying that much
 # more real-time price risk is a market price cap several times higher than anywhere else
-# shown above: an energy-only design only works if the price is allowed to spike high enough,
+# shown above. An energy-only design only works if the price is allowed to spike high enough,
 # often enough, to remunerate capacity that runs for a handful of hours a year.
 #
-# The regional/zonal-vs-nodal split (row 1) is not unique to the NEM - most of Europe prices
-# zonally too - but it is worth being explicit that the NEM's mandatory gross pool is the
-# design Great Britain's own market abandoned in 2001 in favour of bilateral trading (NETA,
-# later BETTA). The NEM kept it, and still runs on it today.
-
-# ## How this maps onto the package
+#
+# ## How this maps onto AustralianElectricityMarkets.jl
 #
 # Each NEM region becomes an `Area` component when building a system:
 
@@ -229,8 +216,9 @@ get_component(Area, sys, "TAS1")
 
 # The readers used on this page - [`read_prices`](@ref), and elsewhere in this package
 # [`read_demand`](@ref), [`read_bids`](@ref), [`read_interconnectors`](@ref) - all read
-# directly from the AEMO tables described above, keyed by the same five region codes. From
-# here, [FCAS in the NEM](@ref) covers the ancillary-services markets co-optimised alongside
+# directly from tables [AEMO publishes in their data archives](https://www.aemo.com.au/energy-systems/electricity/national-electricity-market-nem/data-nem/market-data-nemweb),
+# keyed by the same five region codes. From
+# here, [FCAS capability and co-optimisation](@ref nemde-fcas) covers the ancillary-services markets co-optimised alongside
 # the energy dispatch described here.
 
 # ## [References](@id nem-references)

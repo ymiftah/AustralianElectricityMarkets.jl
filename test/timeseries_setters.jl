@@ -627,6 +627,76 @@
             @test AustralianElectricityMarkets._agc_ramp_rate(5.0, 0.0, interval_hours) == 5.0
         end
 
+        @testset "scaling device types include available load providers" begin
+            sys = deepcopy(sys_base)
+            load = get_component(InterruptiblePowerLoad, sys, "PUMP1")
+            unavailable = get_component(InterruptiblePowerLoad, sys, "PUMP2")
+            set_available!(unavailable, false)
+            types = (Generator, EnergyReservoirStorage, InterruptiblePowerLoad)
+            devices = AustralianElectricityMarkets._fcas_scaling_devices(sys, types)
+            @test load in devices
+            @test !(unavailable in devices)
+            @test any(d -> d isa Generator, devices)
+            @test any(d -> d isa EnergyReservoirStorage, devices)
+            @test allunique(devices)
+            loads = AustralianElectricityMarkets._fcas_scaling_devices(sys, (InterruptiblePowerLoad,))
+            @test !isempty(loads)
+            @test all(d -> d isa InterruptiblePowerLoad && get_available(d), loads)
+
+            set_fcas_scaling_inputs!(sys, db, date_range)
+            rows = sort(subset(truth, :DUID => ByRow(==("PUMP1"))), :SETTLEMENTDATE)
+            @test !isempty(rows)
+            values = get_time_series_values(SingleTimeSeries, load, "fcas_agc_enablement_min_RAISEREG")
+            @test values ≈ rows.RAISEREGENABLEMENTMIN ./ base_power
+            @test get_fcas_agc_status(load, start_date, length(date_range) - 1) == ones(Int, length(date_range) - 1)
+            @test !has_time_series(unavailable)
+        end
+
+        @testset "load regulation scaling uses consumption ramp direction" begin
+            rates_db = damaged_cache(
+                hive_dir, :DISPATCHLOAD,
+                "UPDATE input SET RAMPUPRATE = 120, RAMPDOWNRATE = 60, RAISEREGENABLEMENTMIN = 0, RAISEREGENABLEMENTMAX = 0, LOWERREGENABLEMENTMIN = 0, LOWERREGENABLEMENTMAX = 0 WHERE DUID = 'PUMP1'",
+            )
+            sys = deepcopy(sys_base)
+            load = get_component(InterruptiblePowerLoad, sys, "PUMP1")
+            horizon = length(date_range) - 1
+            trap = (0.0, 10.0, 90.0, 100.0, 20.0, NaN, NaN) ./ base_power
+            for service in (BidType.RAISEREG, BidType.LOWERREG)
+                add_time_series!(sys, load, single_series(fcas_series_name("fcas_trapezium", service, OfferSide.LOAD), start_date, fill(trap, horizon), resolution))
+            end
+            set_fcas_scaling_inputs!(sys, rates_db, date_range)
+            with_units_base(sys, "NATURAL_UNITS") do
+                raise = get_scaled_fcas_trapezium(load, BidType.RAISEREG, start_date, horizon; decremental = true)
+                lower = get_scaled_fcas_trapezium(load, BidType.LOWERREG, start_date, horizon; decremental = true)
+                @test get_max_avail.(raise) ≈ fill(5.0, horizon)
+                @test get_max_avail.(lower) ≈ fill(10.0, horizon)
+                raw = AustralianElectricityMarkets._get_fcas_trapezium(load, BidType.RAISEREG, start_date, horizon; decremental = true)
+                @test get_max_avail.(raw) == fill(20.0, horizon)
+            end
+        end
+
+        @testset "load regulation availability pairs with its own service" begin
+            rates_db = damaged_cache(
+                hive_dir, :DISPATCHLOAD,
+                "UPDATE input SET RAMPUPRATE = 180, RAMPDOWNRATE = 720, RAISEREGAVAILABILITY = 0, LOWERREGAVAILABILITY = 60, RAISEREGENABLEMENTMIN = 0, RAISEREGENABLEMENTMAX = 0, LOWERREGENABLEMENTMIN = 0, LOWERREGENABLEMENTMAX = 0 WHERE DUID = 'PUMP1'",
+            )
+            sys = deepcopy(sys_base)
+            load = get_component(InterruptiblePowerLoad, sys, "PUMP1")
+            horizon = length(date_range) - 1
+            trap = (0.0, 10.0, 90.0, 100.0, 100.0, NaN, NaN) ./ base_power
+            for service in (BidType.RAISEREG, BidType.LOWERREG)
+                add_time_series!(sys, load, single_series(fcas_series_name("fcas_trapezium", service, OfferSide.LOAD), start_date, fill(trap, horizon), resolution))
+            end
+            set_fcas_scaling_inputs!(sys, rates_db, date_range)
+            with_units_base(sys, "NATURAL_UNITS") do
+                # 60 MW per 5 minutes is LOWERREGAVAILABILITY; the up ramp rate alone would give 15.
+                lower = get_scaled_fcas_trapezium(load, BidType.LOWERREG, start_date, horizon; decremental = true)
+                raise = get_scaled_fcas_trapezium(load, BidType.RAISEREG, start_date, horizon; decremental = true)
+                @test get_max_avail.(lower) ≈ fill(60.0, horizon)
+                @test get_max_avail.(raise) ≈ fill(60.0, horizon)
+            end
+        end
+
         @testset "get_fcas_agc_status is nothing when fcas_agc_status is not attached" begin
             sys = deepcopy(sys_base)
             device = get_component(ThermalStandard, sys, "ER01")
@@ -745,6 +815,37 @@
             raw_contingency = AustralianElectricityMarkets._get_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
             scaled_contingency = get_scaled_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
             @test all(i -> isequal(Tuple(raw_contingency[i]), Tuple(scaled_contingency[i])), 1:horizon)
+        end
+    end
+
+    @testset "public demand and dispatch limit setters attach the private setters' series" begin
+        start_date = DateTime(2025, 1, 1, 0, 0)
+        date_range = start_date:Minute(5):(start_date + Hour(1))
+        series_snapshot(sys) = Dict(
+            (get_name(device), get_name(key)) => get_time_series_values(SingleTimeSeries, device, get_name(key))
+                for device in get_components(Device, sys) for key in get_time_series_keys(device)
+        )
+
+        @testset "set_demand! attaches the series of the private demand setter" begin
+            public = deepcopy(sys_base)
+            private = deepcopy(sys_base)
+            set_demand!(public, db, date_range; resolution = Minute(5))
+            attach_demand!(private, db, date_range)
+            snapshot = series_snapshot(public)
+            @test any(k -> k[2] == "loss_demand", keys(snapshot))
+            @test isequal(snapshot, series_snapshot(private))
+            @test_throws ArgumentError set_demand!(public, db, date_range; resolution = Minute(5))
+        end
+
+        @testset "set_nem_dispatch_limits! attaches the series of the private dispatch limits setter" begin
+            public = deepcopy(sys_base)
+            private = deepcopy(sys_base)
+            set_nem_dispatch_limits!(public, db, date_range)
+            attach_dispatch_limits!(private, db, date_range)
+            snapshot = series_snapshot(public)
+            @test any(k -> k[2] == "availability", keys(snapshot))
+            @test isequal(snapshot, series_snapshot(private))
+            @test_throws ArgumentError set_nem_dispatch_limits!(public, db, date_range)
         end
     end
 

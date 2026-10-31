@@ -68,7 +68,7 @@ function AustralianElectricityMarkets.nem_system(
     bids = read_energy_bids(db, date_range)
     dispatch = read_dispatch_limits(db, date_range; intervention, resolution)
     demand = read_demand(db, date_range; resolution)
-    _check_replay_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
+    _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
     AustralianElectricityMarkets._set_demand!(sys, demand, date_range; resolution)
     set_loss_demand_coefficients!(sys)
     set_market_bids!(sys, db, date_range; resolution)
@@ -94,7 +94,7 @@ _required_bid_directions(device::PSY.InterruptiblePowerLoad, coverage) =
 
 
 """
-    _check_replay_energy_bid_coverage(sys, db, date_range; intervention = 0)
+    _check_nemde_energy_bid_coverage(sys, db, date_range; intervention = 0)
 
 Verifies the cached bids and demand cover every interval of `date_range` (its last stamp
 excluded). Every region with a unit (`DUDETAILSUMMARY`) needs regional demand (`DISPATCHREGIONSUM`)
@@ -113,16 +113,16 @@ Non-scheduled units and loads are not checked.
 # Returns
 `nothing`. Throws an `ArgumentError` naming the first unit and direction, or region, missing an input.
 """
-function _check_replay_energy_bid_coverage(sys, db, date_range; intervention::Integer = 0)
+function _check_nemde_energy_bid_coverage(sys, db, date_range; intervention::Integer = 0)
     bids = read_energy_bids(db, date_range)
     dispatch = read_dispatch_limits(db, date_range; intervention = intervention)
     units = read_units(db; as_of = first(date_range), through = last(date_range) - step(date_range))
     demand = read_demand(db, date_range)
-    return _check_replay_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
+    return _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
 end
 
 
-function _check_replay_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
+function _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
     demand_stamps = Set(zip(demand.REGIONID, demand.SETTLEMENTDATE))
     grid = collect(date_range)[1:(end - 1)]
     registered = AustralianElectricityMarkets._registration_spans(units)

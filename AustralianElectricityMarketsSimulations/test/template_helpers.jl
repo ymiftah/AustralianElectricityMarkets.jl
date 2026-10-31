@@ -21,7 +21,7 @@ function _decision_model(args...; mpc = _HELPER_MPC, kwargs...)
     return model
 end
 
-"Per-area balances via `AreaBalancePowerModel`, with balance slacks priced at `mpc`. Mirrors `docs/literate/interchanges.jl`."
+"Per-area balances via `AreaBalancePowerModel`, with balance slacks priced at `mpc`. Mirrors `docs/literate/howto/interchanges.jl`."
 function _area_balance_template(
         sys::PSY.System; mpc = _HELPER_MPC,
         network_model = AEMS._area_balance_network_model(

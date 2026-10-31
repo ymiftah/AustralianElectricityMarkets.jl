@@ -7,7 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- The solar availability plot in the build-system how-to queries `DISPATCHREGIONSUM` directly, since `read_demand` no longer returns `SS_SOLAR_AVAILABILITY`, and is labelled as semi-scheduled availability.
+
+- Documented the replay API after the merge: `prepare_replay_forecasts!` and the
+  `ReplaySimulation`/`ReplayResults` script modules replace the removed package-level names.
+
+- JuMP merit-order plotting helpers now receive their market and colour mapping explicitly.
+
+- Documented `set_...!`, `add_...!` and `attach_...!` naming and repeat-call contracts in
+  `AGENTS.md`, and the submitted-bid to effective-FCAS-offer preprocessing sequence.
+
+- Reviewed NEMDE deviation notes against the current replay: corrected elastic energy limits,
+  incomplete-constraint validation, load FCAS input coverage and fast-start fixed loadings.
+
+- Grouped Literate sources into overview, formulation, tutorials, how-to guides and shared helpers,
+  preserving published page paths.
+
+- Updated the AEMSim toy tutorial for the current replay inputs, FCAS time series and pinned
+  PowerSimulations revision.
+
+- Rewrote the six NEMDE formulation chapters for readers who know electricity markets but not the
+  NEM: a five-minute dispatch walk-through, glossary and one notation on the overview, a worked
+  example per chapter, and no code. Package behaviour appears only in notes titled "Deviation in
+  AustralianElectricityMarketsSimulations". Each chapter ends with a "Where the data lives" table
+  mapping its symbols to MMSDM tables, columns, cache directories and time keys. The Julia FCAS
+  walkthrough moved to a new how-to page, "Inspect an FCAS interval". Removed two notes that the
+  zero-flow loss reference and directional MNSP losses had made out of date.
+- Revised the NEMDE chapters and tutorials for users: removed development history and internal
+  implementation descriptions, and distinguished NEM rules from reconstruction assumptions.
+- Expanded the NEMDE formulation into linked energy, FCAS, interconnector, fast-start and pricing
+  chapters, with equations, MMSDM input maps, executable figures and notes on known gaps and reconstruction assumptions.
+  Consolidated the FCAS introduction and worked interval, and added a local Literate review renderer.
+- Added toy-market walkthroughs using JuMP, PowerSimulations.jl and AEM / AEMSim, with
+  dispatch and price comparisons for the examples' stated scope.
+
 ### Fixed
+
+- Scheduled loads pair each regulation availability with its own service: the lower-regulation AGC ramp cap uses `LOWERREGAVAILABILITY` with the up ramp rate, and the raise cap uses `RAISEREGAVAILABILITY` with the down ramp rate. Previously the availabilities were swapped, so a load's regulation caps could be understated.
 
 - The AGC ramp rate that caps regulation and joint ramping is the larger of `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE` and the regulation availability spread over the interval, instead of the bid-capped ramp rate alone. Regulation caps now match NEMDE's; joint ramping can be tighter than NEMDE's, because the telemetered rate is not published.
 
@@ -68,6 +106,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MNSP dispatch uses elastic offer-total and availability limits, metered net-flow ramping and
   directional fixed loading, with MPC-scaled penalties and MW violation reporting.
   `set_mnsp_offers!` now requires metered interconnector results and accepts `intervention`.
+- FCAS scaling inputs now cover available interruptible loads as well as generators and storage,
+  with load regulation using the correct consumption ramp direction.
 
 - Historical system construction uses one as-of interconnector result for buses and links, with
   active regions taken from the latest cached demand snapshot at or before the requested time.
@@ -219,6 +259,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Public `set_demand!` and `set_nem_dispatch_limits!` are restored with their original signatures. Each wraps the private setter that the system builds call, and a second call on the same system throws an `ArgumentError` for the series already attached.
+
 - Interconnector loss-gap diagnostic in `scripts/interconnector_loss_gaps.jl`: `loss_gap_table` tabulates each saved replay interconnector's solved loss against the loss curve at its solved flow, with the weighted marginal price of loss.
 - `AustralianElectricityMarketsSimulations` precompiles a two-interval replay of the mock NEM cache, so a fresh process builds and steps a replay without first-call compilation (a cold 12-interval replay drops from about 490 s to about 100 s).
 - The replay batch runner accepts `--time-series-in-memory true|false` (default `false`), recorded in `run.toml` and each day's `provenance.toml`, to hold replication time series in memory.
@@ -274,6 +316,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   four generic-constraint definition tables, so constraints last revised before 2015 (for example
   `N_NIL_TE_B`, `N_MBTE1_B`, the `*_ZERO` interconnector constraints) get a definition.
 
+- **"From NEM dispatch to PowerSimulations.jl" explanation page** (`docs/literate/intro_to_psi_nem.jl`): builds a two-region toy NEM (bid stacks, ramp limits from initial MW, regional balance, interconnector, RAISE6SEC FCAS trapezium, a generic constraint) first as a hand-written JuMP model, then as a PSY `System` plus a PSI template using `NEMReplayDispatch`, `FCASMarket` and `LinearFactorLimit`, and checks the two agree. The docs environment now depends on JuMP, `AustralianElectricityMarketsData` and `AustralianElectricityMarketsSimulations` (with the pinned PowerSimulations fork).
 - `add_nem_constraints!` builds the Interconnector Zero constraints `SVML_ZERO`, `VSML_ZERO`, `VT_ZERO` and
   `TV_ZERO`, which `GENCONDATA` and the `SPD*` tables do not define, from a built-in definition: a
   one-term `<=` constraint on the `V-S-MNSP1` or `T-V-MNSP1` flow with right-hand side 0 and CVP
@@ -555,7 +598,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- Public names `set_nem_fixed_loads!`, `add_nem_constraints!`, `set_nem_dispatch_limits!`, `set_demand!`, `get_low_breakpoint`, `get_high_breakpoint`, `get_rhs`, `set_constraint_weight!`, `get_gencon_id`, `interconnector_loss_gaps` and `check_interconnector_loss_segments`; `nem_system` builds these inputs.
+- Public names `set_nem_fixed_loads!`, `add_nem_constraints!`, `get_low_breakpoint`, `get_high_breakpoint`, `get_rhs`, `set_constraint_weight!`, `get_gencon_id`, `interconnector_loss_gaps` and `check_interconnector_loss_segments`; `nem_system` builds these inputs.
 - `ConstrainedNetworkConfiguration` was removed; build replay systems with `NEMDEConfiguration`.
 - The public `filter_buildable_generic_constraints` (`AustralianElectricityMarketsSimulations`).
   The replication path runs the same buildability check internally.

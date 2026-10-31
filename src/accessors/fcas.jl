@@ -101,7 +101,8 @@ using `component`'s `"fcas_agc_enablement_min_<service>"`/`"fcas_agc_enablement_
 series and its AGC ramping capability, `"fcas_agc_ramp_rate_<service>"` (MW/h) times
 `resolution` (regulation `service`s only, from [`set_fcas_scaling_inputs!`](@ref)), and its
 `"uigf"` series, when attached. A `NaN` entry applies no scaling at that step. UIGF applies at every
-step. `decremental` selects the storage `DIRECTION == "LOAD"` trapezium series only - the AGC
+step. For controllable loads, raise regulation uses the physical ramp-down rate and lower
+regulation the ramp-up rate. `decremental` selects the `DIRECTION == "LOAD"` trapezium series; the AGC
 enablement/ramp/UIGF series are shared by both directions of the same device.
 
 # Returns
@@ -118,7 +119,7 @@ function get_scaled_fcas_trapezium(
     agc_enablement_max = is_regulation ?
         _read_optional_fcas_scaling_series(component, fcas_series_name("fcas_agc_enablement_max", service), initial_time, horizon) : nothing
     agc_max_avail = is_regulation ?
-        get_fcas_agc_ramp_capability(component, service, initial_time, horizon; resolution = resolution) : nothing
+        get_fcas_agc_ramp_capability(component, _fcas_ramp_rate_service(component, service), initial_time, horizon; resolution = resolution) : nothing
     input_at(series, i) = (isnothing(series) || isnan(series[i])) ? nothing : series[i]
     uigf = _read_optional_fcas_scaling_series(component, NEM_SERIES.uigf, initial_time, horizon)
 

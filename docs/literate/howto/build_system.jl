@@ -21,6 +21,7 @@
 using AustralianElectricityMarkets
 using AustralianElectricityMarketsData: populate
 using Dates
+using DuckDB
 using PowerSystems
 using DataFrames
 using Chain
@@ -83,13 +84,27 @@ begin
 end
 
 # Australia has a fairly high penetration of PV, which at times exceed a state's total
-# demand for electricity (in SA in particular).
+# demand for electricity (in SA in particular). `read_demand` does not return the semi-scheduled
+# solar availability, so it is queried from `DISPATCHREGIONSUM` directly.
+
+source = read_hive(db, :DISPATCHREGIONSUM)
+solar = DataFrame(
+    DuckDB.execute(
+        db.db,
+        """
+        SELECT SETTLEMENTDATE, REGIONID, SS_SOLAR_AVAILABILITY
+        FROM $source
+        WHERE SETTLEMENTDATE >= '2025-01-20' AND SETTLEMENTDATE <= '2025-01-31'
+          AND SS_SOLAR_AVAILABILITY IS NOT NULL
+        """,
+    ),
+)
 
 begin
     spec = data(
-        subset(demand, :SETTLEMENTDATE => ByRow(x -> (Date(2025, 1, 20) <= x <= Date(2025, 1, 31))))
+        subset(solar, :SETTLEMENTDATE => ByRow(x -> (Date(2025, 1, 20) <= x <= Date(2025, 1, 31))))
     )
-    spec *= mapping(:SETTLEMENTDATE => "Date", :SS_SOLAR_AVAILABILITY => "Total Demand [MW]", color = :REGIONID => "State")
+    spec *= mapping(:SETTLEMENTDATE => "Date", :SS_SOLAR_AVAILABILITY => "Semi-scheduled solar availability [MW]", color = :REGIONID => "State")
     spec *= visual(Lines)
     figure_options = (;
         title = "Solar generation from semi-scheduled units per state",

@@ -1,6 +1,5 @@
 using AustralianElectricityMarkets
 using AustralianElectricityMarketsData: populate
-import AustralianElectricityMarkets.RegionModel as RM
 using PowerSystems
 using PowerSimulations
 using HydroPowerSimulations
@@ -10,17 +9,22 @@ using AlgebraOfGraphics, CairoMakie
 using Dates
 using HiGHS
 
-# # The impact of network constraints
+# # Market Clearing
 #
-# We previously ignored the network constraints by adopting a "Copper Plate" model.
-# In this zonal model, we will treat each region as a single node (the "Regional Reference Node")
-# and the interconnectors as links between them. This will limit the energy that can be transferred
-# between regions, and lead to different prices across regions once the market is cleared.
+# In the NEM, generators submit bids consisting of up to **10 price-quantity bands** for
+# each 5-minute dispatch interval. Prices can range from the market floor (-\$1,000/MWh) to
+# the market price cap (\$23,200/MWh for FY2026-27) - see [Prices, caps and
+# floors](@ref nem-price-settings) in [The National Electricity Market](@ref) for the full
+# set of reliability settings.
 #
-# While this captures inter-regional congestion, it does not model intra-regional constraints
-# (congestion within a state), which AEMO manages through a process called "Constraint Equations."
+# The following section demonstrates the definition of a market clearing problem, where
+# all units in the NEM need to be dispatched according to their energy bids to meet the aggregate
+# demand at each region. In this example, we still ignore network constraints to simplify the problem,
+# and adopt a "Copper Plate" formulation.
 #
 # ## Setup the system
+#
+# Initialise a connection to manage the market data via duckdb.
 #
 # !!! note "Get the data first!"
 #     You will first need to download the data from the monthly archive, saving them locally
@@ -28,22 +32,25 @@ using HiGHS
 #
 # ```julia
 # populate(
-#     db, Date(2025, 1, 1), Date(2025, 1, 31);
+#     db, Date(2025, 1, 2), Date(2025, 1, 3);
 #     tables = table_requirements(RegionalNetworkConfiguration()),
 # )
 # ```
+#
+# Only the data requirements for a `RegionalNetworkConfiguration` are downloaded.
 
 db = aem_connect();
+nothing #hide
 
-# Instantiate the system.
+# Instantiate the system. # `as_of` selects the units registered on that date.
 
-sys = nem_system(db, RegionalNetworkConfiguration())
+sys = nem_system(db, RegionalNetworkConfiguration(); as_of = Date(2025, 1, 2))
 
 # Set the horizon to consider for the simulation.
 
 interval = Minute(5)
 horizon = Hour(24)
-start_date = DateTime(2025, 1, 2, 0, 0)
+start_date = DateTime(2025, 1, 2, 4, 0)
 date_range = start_date:interval:(start_date + horizon)
 @show date_range
 
@@ -58,17 +65,7 @@ set_nem_dispatch_limits!(sys, db, date_range)
 transform_single_time_series!(sys, horizon, interval);
 @show sys
 
-# ## Interconnector losses
-#
-# To include an attached `InterconnectorLossModel`, use
-# `AustralianElectricityMarketsSimulations.NEMInterconnectorLoss` for `AreaInterchange`.
-# It supports standalone `DecisionModel`s with `AreaBalancePowerModel`, the regional balance
-# NEMDE uses; other network models are rejected.
-# Demand-dependent loss coefficients use available `PowerLoad` forecasts at construction.
-# Rebuild the `DecisionModel` when demand forecasts or load availability change; recurrent
-# solves through a reused `Simulation` are rejected. Forecast scaling is applied once.
-#
-# ## Set up the problem
+# ## Define the problem
 
 begin
     template = ProblemTemplate()
@@ -77,14 +74,13 @@ begin
     set_device_model!(template, RenewableDispatch, RenewableFullDispatch)
     set_device_model!(template, ThermalStandard, ThermalBasicUnitCommitment)
     set_device_model!(template, HydroDispatch, HydroDispatchRunOfRiver)
-    set_network_model!(template, NetworkModel(AreaBalancePowerModel; use_slacks = true))
-    set_device_model!(template, AreaInterchange, StaticBranch)
+    set_network_model!(template, NetworkModel(CopperPlatePowerModel))
     template
 end
 
 # The dispatch problem will be solved with open source solver HiGHS.
 
-solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.1)
+solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.05)
 problem = DecisionModel(template, sys; optimizer = solver, horizon = horizon)
 build!(problem; output_dir = joinpath(tempdir(), "out"))
 
@@ -98,14 +94,14 @@ res = OptimizationProblemResults(problem)
 
 # Let's observe how the units are dispatched.
 
-begin
-    function filter_non_all_zero(df, group_by)
-        gdf = groupby(df, group_by)
-        is_all_zero = combine(gdf, :value => (x -> all(x == 0)) => :all_zero)
-        subset!(is_all_zero, :all_zero => x -> .!x)
-        return innerjoin(df, is_all_zero, on = group_by)
-    end
+function filter_non_all_zero(df, group_by)
+    gdf = groupby(df, group_by)
+    is_all_zero = combine(gdf, :value => (x -> all(x == 0)) => :all_zero)
+    subset!(is_all_zero, :all_zero => x -> .!x)
+    return innerjoin(df, is_all_zero, on = group_by)
+end
 
+begin
     renewables = read_variable(res, "ActivePowerVariable__RenewableDispatch")
     thermal = read_variable(res, "ActivePowerVariable__ThermalStandard")
     hydro = read_variable(res, "ActivePowerVariable__HydroDispatch")
@@ -170,18 +166,12 @@ begin
     fig
 end
 
-# In the NEM, interconnectors are vital for sharing resources between states. However, when
-# an interconnector reaches its limit (becomes saturated), the regions on either side can
-# have different clearing prices. This **Price Separation** is a key feature of the NEM's
-# regional structure. Let's observe the interchange flows and how close they operate to their limits.
-
-begin
-    interchange_flow = read_variable(res, "FlowActivePowerVariable__AreaInterchange")
-    spec = data(interchange_flow) * mapping(:DateTime, :value => "Interchange flow (MW)", color = :name) * visual(Lines)
-    draw(spec; figure = (; size = (500, 500)))
-end
-
-# We see that a few lines are often saturated: V-S-MNSP1 connecting Victoria and South Australia,
-# or T-V-MSP1 connecting Victoria and Tasmania. The interfaces between New South Wales and Queensland,
-# and New South Wales and Victoria are operated within their bounds and the power flows in both
-# directions depending on the time of the day and resources available.
+# This was not observed in the Economic dispatch example, and many factors can explain this behaviour:
+#
+# - **Negative Bidding**: In the NEM, many generators (especially coal) have high "cycling costs":
+#   it is expensive for them to turn off and restart. To avoid this, they often bid at very low or
+#   even negative prices, ensuring they are dispatched even when demand is low or renewables are abundant.
+# - **Contractual Obligations**: Some generators may have hedged their risk with future contracts,
+#   requiring them to generate regardless of the spot price.
+# - **Strategic Behavior**: The 10-band bidding system allows for complex strategies that simple
+#   cost-minimization models do not capture.

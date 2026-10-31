@@ -45,10 +45,17 @@ converter losses, its no-go zone and frequency-controller alternative runs are n
 ## Prepare and run with PSI
 
 ```julia
+using AustralianElectricityMarkets
 using AustralianElectricityMarketsSimulations
 import PowerSimulations as PSI
 
-prepare_replication!(sys)
+# From the repository root: the runner and result extraction live in `scripts/`.
+include("scripts/replay_simulation.jl")
+include("scripts/replay_results.jl")
+using .ReplaySimulation: replication_simulation
+using .ReplayResults: replication_results
+
+prepare_replay_forecasts!(sys)
 simulation = replication_simulation(sys, steps; folder = mktempdir())
 PSI.build!(simulation; store_systems_in_results = false)
 PSI.execute!(simulation)
@@ -59,10 +66,11 @@ report.solved.prices
 report.constraint_violations
 ```
 
-`prepare_replication!` derives effective FCAS parameters and tie-break scales from attached
-data and transforms single time series into five-minute forecast windows. Call it once on a
-system with at least two input timestamps. `replication_simulation` returns an unbuilt
-`PSI.Simulation`; the caller controls building, execution and result access.
+`nem_system(db, NEMDEConfiguration(); ...)` already derives the effective FCAS offers and the
+tie-break scales. `prepare_replay_forecasts!` transforms the single time series into five-minute
+forecast windows; call it once on a system with at least two input timestamps.
+`replication_simulation` returns an unbuilt `PSI.Simulation`; the caller controls building,
+execution and result access.
 
 The constructor checks input coverage, compatible tie-break pairs, one Market Price Cap,
 FCAS services and dispatch envelopes. Its `parts` keyword selects from `REPLICATION_PARTS`.

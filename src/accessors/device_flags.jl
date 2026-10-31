@@ -1,7 +1,7 @@
 """
     is_non_scheduled_load(device) -> Bool
 
-Whether `device` is a non-scheduled load ([`get_scheduled_loads_dataframe`](@ref)): it has no
+Whether `device` is a non-scheduled load (`get_scheduled_loads_dataframe`): it has no
 energy bid, and takes part in the market only through FCAS offers.
 
 # Arguments
