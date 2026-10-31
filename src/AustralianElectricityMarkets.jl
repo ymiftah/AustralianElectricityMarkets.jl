@@ -100,7 +100,6 @@ export prepare_replay_forecasts!
 
 @doc (@doc AustralianElectricityMarketsCache.HiveConfiguration) HiveConfiguration
 @doc (@doc AustralianElectricityMarketsCache.aem_connect) aem_connect
-@doc (@doc RegionModel.nem_system) nem_system
 @doc (@doc RegionModel.RegionalNetworkConfiguration) RegionalNetworkConfiguration
 @doc (@doc RegionModel.NEMDEConfiguration) NEMDEConfiguration
 @doc (@doc RegionModel.prepare_replay_forecasts!) prepare_replay_forecasts!
