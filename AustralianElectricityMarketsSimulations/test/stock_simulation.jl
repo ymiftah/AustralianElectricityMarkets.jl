@@ -47,20 +47,20 @@ end
 stock_at(tables, t) = map(df -> filter(:SETTLEMENTDATE => ==(t), df), tables)
 # One standalone one-interval solve of `template` (default the replication template) at `t`.
 function stock_standalone(sys, t; parts = REPLICATION_PARTS, template = replication_template(sys; parts))
-    model = AEMS._replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "standalone")
+    model = AEMS.replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "standalone")
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
     return (;
         # The MILP dual pass re-solves the model, so the objective is read from the optimizer stats.
         model, results, objective = only(PSI.read_optimizer_stats(results).objective_value),
-        solved = stock_at(AEMS._solved_tables(results, sys, parts), t),
+        solved = stock_at(ReplayResults._solved_tables(results, sys, parts), t),
     )
 end
 # The simulation, its per-step objectives and solved tables.
 function stock_simulate(sys; kwargs...)
-    out = run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER, kwargs...)
-    tables = AEMS._solved_tables(out.results, sys, REPLICATION_PARTS)
+    out = ReplaySimulation.run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER, kwargs...)
+    tables = ReplayResults._solved_tables(out.results, sys, REPLICATION_PARTS)
     return (;
         out...,
         objectives = PSI.read_optimizer_stats(out.results).objective_value,
@@ -126,15 +126,15 @@ end
 
 @testset "a constraint invoked at no step is left out and reported with its reason" begin
     never = sentinel_system(; invoked = [0.0, 0.0])
-    @test AEMS._never_invoked_constraints(never, STOCK_STEPS) == Dict("N_TOY_LIMIT" => :never_invoked)
-    @test AEMS._never_invoked_constraints(sentinel_system(; invoked = [1.0, 0.0]), STOCK_STEPS) == Dict{String, Symbol}()
-    out_never = run_replication(never, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    @test AEMS.never_invoked_constraints(never, STOCK_STEPS) == Dict("N_TOY_LIMIT" => :never_invoked)
+    @test AEMS.never_invoked_constraints(sentinel_system(; invoked = [1.0, 0.0]), STOCK_STEPS) == Dict{String, Symbol}()
+    out_never = ReplaySimulation.run_replication(never, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     row_never = only(filter(:constraint => ==("N_TOY_LIMIT"), out_never.skipped_constraints))
     @test (row_never.reason, row_never.n_missing) == (:never_invoked, 0)
 end
 
 @testset "argument checks" begin
-    @test_throws ArgumentError run_replication(sentinel_system(), STOCK_STEPS; parts = (:nonsense,))
+    @test_throws ArgumentError ReplaySimulation.run_replication(sentinel_system(), STOCK_STEPS; parts = (:nonsense,))
 end
 
 # Two intervals of 100 MW load: Alta $20 (150 MW, so part-loaded and marginal at 100 MW once the
@@ -161,13 +161,13 @@ function masked_standalone(sys, t)
             PSI.ServiceModel(GenericConstraint, LinearFactorLimit, name; duals = [NEMConstraintLimit], use_slacks = true),
         )
     end
-    model = AEMS._replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "masked")
+    model = AEMS.replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "masked")
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
     return (;
         results, objective = PSI.JuMP.objective_value(PSI.get_jump_model(model)),
-        solved = stock_at(AEMS._solved_tables(results, sys, REPLICATION_PARTS), t),
+        solved = stock_at(ReplayResults._solved_tables(results, sys, REPLICATION_PARTS), t),
         gc = stock_gc_duals(results)["N_TOY_LIMIT"][t],
     )
 end
@@ -208,7 +208,7 @@ const MASK_CASES = [
                 # The masked row is violated (vacuous), its slack takes the violation, and no violation is reported.
                 slack = only(PSI.read_variable(new.results, "$(c.slack)__GenericConstraint__N_TOY_LIMIT").value)
                 @test slack >= (c.sense == ConstraintSense.LE ? 40.0 : 30.0) - TOY_TOLERANCE
-                v = AEMS._constraint_violations(new.results, sys)
+                v = ReplayResults._constraint_violations(new.results, sys)
                 @test nrow(v) == 0 || !any(==("generic_constraint"), v.family)
             end
         end
@@ -243,7 +243,7 @@ end
     sys = masked_system(ConstraintSense.LE, TOY_CHEAP, 60.0)
     template = replication_template(sys; parts = ())
     PSI.set_service_model!(template, "N_TOY_LIMIT", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "N_TOY_LIMIT"; duals = [NEMConstraintLimit]))
-    model = AEMS._replication_decision_model(template, sys, TOY_START; optimizer = STOCK_OPTIMIZER, name = "hard")
+    model = AEMS.replication_decision_model(template, sys, TOY_START; optimizer = STOCK_OPTIMIZER, name = "hard")
     models = PSI.SimulationModels(; decision_models = [model])
     sim = PSI.Simulation(;
         name = "hard", steps = 2, models = models,
@@ -267,7 +267,7 @@ end
 
 @testset "a battery's ramp floor binds in step 1 only: simulation equals standalone solves" begin
     expected = [
-        (battery = 15.0, alta = 25.0, price = 50.0, objective = (1325 + 5.0 * ENERGY_MAX_AVAIL_CVP_FACTOR * AEMS._financial_year_mpc(TOY_START)) / 12),
+        (battery = 15.0, alta = 25.0, price = 50.0, objective = (1325 + 5.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * AustralianElectricityMarkets._financial_year_mpc(TOY_START)) / 12),
         (battery = 10.0, alta = 30.0, price = 50.0, objective = 1550 / 12),
     ]
     sim = stock_simulate(battery_sentinel_system())
@@ -418,17 +418,17 @@ function stock_fcas_capacities(results, t)
 end
 # FCAS prices of one interval by `(REGIONID, BIDTYPE)`, in $/MWh.
 stock_fcas_prices(results, sys, t) = Dict(
-    (r.REGIONID, r.BIDTYPE) => r.ROP for r in eachrow(compute_fcas_prices(results, sys; resolution = DISPATCH_INTERVAL)) if r.SETTLEMENTDATE == t
+    (r.REGIONID, r.BIDTYPE) => r.ROP for r in eachrow(ReplayResults.compute_fcas_prices(results, sys; resolution = DISPATCH_INTERVAL)) if r.SETTLEMENTDATE == t
 )
 function stock_fcas_standalone(sys, t)
     template = replication_template(sys)
-    model = AEMS._replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "standalone")
+    model = AEMS.replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "standalone")
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
     return (;
         objective = PSI.JuMP.objective_value(PSI.get_jump_model(model)),
-        solved = stock_at(AEMS._solved_tables(results, sys, REPLICATION_PARTS), t),
+        solved = stock_at(ReplayResults._solved_tables(results, sys, REPLICATION_PARTS), t),
         capacities = stock_fcas_capacities(results, t),
         prices = stock_fcas_prices(results, sys, t),
     )
@@ -512,7 +512,7 @@ end
 @testset "the tie-break pre-flight check" begin
     moved = tie_sentinel_system(; park_price = [10.0, 12.0])
     @test_throws ArgumentError check_tie_break_pairs(moved, STOCK_STEPS)
-    @test_throws ArgumentError run_replication(moved, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    @test_throws ArgumentError ReplaySimulation.run_replication(moved, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     @test isnothing(check_tie_break_pairs(tie_sentinel_system(), STOCK_STEPS))
     # Prices change between steps, but no band is ever tied.
     @test isnothing(check_tie_break_pairs(sentinel_system(), STOCK_STEPS))
@@ -535,7 +535,7 @@ function reg_ramp_system(;
             add_toy_fcas_offer!(sys, park, stamps, BidType.RAISEREG, fill((0.0, 0.0, 100.0, 100.0, 20.0), 2), fill([(20.0, 10.0)], 2))
             add_toy_series!(sys, alta, stamps, "fcas_agc_ramp_rate_RAISEREG", alta_ramp)
             add_toy_fcas_market!(sys, stamps, BidType.RAISEREG, [TOY_CHEAP, TOY_EXPENSIVE], "F_REG", reg_req)
-            set_constraint_weight!(PSY.get_component(GenericConstraint, sys, "F_REG"), weight)
+            PSY.get_component(GenericConstraint, sys, "F_REG").constraint_weight = weight
         end,
     )
 end
@@ -727,7 +727,7 @@ end
     # The stored generic constraint slack is already in MW.
     slack = stock_realized(sim.results, "GenericConstraintSlackDown__GenericConstraint__F_REG", "F_REG"; parameter = false, scale = 1.0)
     @test slack ≈ [0.0, 15.0] atol = TOY_TOLERANCE
-    v = AEMS._constraint_violations(sim.results, sys)
+    v = ReplayResults._constraint_violations(sim.results, sys)
     @test nrow(v) == 1
     row = only(eachrow(v))
     @test (row.family, row.name, row.DateTime, row.direction) == ("generic_constraint", "F_REG", STOCK_STEPS[2], "down")
@@ -755,15 +755,15 @@ end
         [100.0, 120.0]; horizon = TOY_RESOLUTION,
         mutate! = (sys, stamps) -> foreach(i -> add_constraint!(sys, stamps, i), 1:n),
     )
-    out = run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
-    slack_families = Dict(AEMS._VIOLATION_FAMILIES)
+    out = ReplaySimulation.run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    slack_families = Dict(ReplayResults._VIOLATION_FAMILIES)
     keys = [k for k in PSI.list_variable_keys(out.results) if haskey(slack_families, PSI.IS.Optimization.get_entry_type(k))]
     @test length(keys) >= n
-    batched = AEMS._read_variable_frames(out.results, keys)
+    batched = ReplayResults._read_variable_frames(out.results, keys)
     @test Set(Base.keys(batched)) == Set(keys)
-    violated = [k for k in keys if any(>(AEMS._VIOLATION_TOLERANCE_MW), batched[k].value)]
+    violated = [k for k in keys if any(>(ReplayResults._VIOLATION_TOLERANCE_MW), batched[k].value)]
     @test length(violated) == n ÷ 2
-    @test isempty(AEMS._read_variable_frames(out.results, PSI.OptimizationContainerKey[]))
+    @test isempty(ReplayResults._read_variable_frames(out.results, PSI.OptimizationContainerKey[]))
 end
 
 @testset "replication_template follows parts and exclude_constraints" begin
@@ -816,9 +816,9 @@ end
     # Losses modeled but no interchange variable in the results.
     sys = loss_curve_sentinel_system()
     uncoupled = stock_standalone(sys, TOY_START; parts = ())
-    @test_throws r"Losses are modeled" AEMS._solved_tables(uncoupled.results, sys, REPLICATION_PARTS)
-    @test nrow(AEMS._solved_tables(uncoupled.results, sys, ()).interconnectors) == 0
-    @test_throws r"non-finite regional price" AEMS._check_prices_finite(
+    @test_throws r"Losses are modeled" ReplayResults._solved_tables(uncoupled.results, sys, REPLICATION_PARTS)
+    @test nrow(ReplayResults._solved_tables(uncoupled.results, sys, ()).interconnectors) == 0
+    @test_throws r"non-finite regional price" ReplayResults._check_prices_finite(
         DataFrame(SETTLEMENTDATE = [TOY_START], REGIONID = ["1"], ROP = [NaN]),
     )
 end
@@ -856,15 +856,6 @@ end
         slack = PSI.get_variable(container, V(), PSY.AreaInterchange, meta)
         @test PSI.JuMP.coefficient(objective, slack[PSY.get_name(ic), 1]) ≈ factor * 17500 * 100 / 12
     end
-    # Exercise the same repricing function at the next financial year's first dispatch interval.
-    PSI.cost_function_unsynch(container)
-    V = AEMS.MNSPRampUpSlack
-    key = PSI.ParameterKey(AEMS.MarketPriceCapPenaltyParameter, PSY.AreaInterchange, "MNSPRampUpSlack")
-    caps = PSI.get_parameter_array(container, key)
-    multiplier = PSI.get_parameter_multiplier_array(container, key)
-    slack = PSI.get_variable(container, V(), PSY.AreaInterchange)
-    AEMS._price_mpc_penalty!(container, caps, multiplier, slack, DateTime(2025, 7, 1, 0, 5))
-    @test caps[PSY.get_name(ic), 1] == 20300.0
-    expression = PSI.get_objective_expression(PSI.get_objective_expression(container))
-    @test PSI.JuMP.coefficient(expression, slack[PSY.get_name(ic), 1]) ≈ 1155 * 20300 * 100 / 12
+    # The Market Price Cap is fixed per simulation: a range across 1 July is refused before build.
+    @test_throws ArgumentError AEMS.check_single_financial_year(DateTime(2025, 6, 30, 23, 55):Minute(5):DateTime(2025, 7, 1, 0, 5))
 end

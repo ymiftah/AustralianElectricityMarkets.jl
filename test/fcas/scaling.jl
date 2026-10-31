@@ -4,8 +4,8 @@
 
     "Round every field of an `FCASTrapezium` to `digits`, for exact-value assertions."
     trap_tuple(t::FCASTrapezium; digits::Int = 9) = (
-        round(get_enablement_min(t); digits = digits), round(get_low_breakpoint(t); digits = digits),
-        round(get_high_breakpoint(t); digits = digits), round(get_enablement_max(t); digits = digits),
+        round(get_enablement_min(t); digits = digits), round(t.low_breakpoint; digits = digits),
+        round(t.high_breakpoint; digits = digits), round(get_enablement_max(t); digits = digits),
         round(get_max_avail(t); digits = digits),
     )
 
@@ -143,7 +143,7 @@
             @test get_enablement_max(eff) == 0.0
             # The high breakpoint slides past the low one: the upper slope still forces zero
             # FCAS at zero output (E + UpperSlope·X <= 0).
-            @test get_high_breakpoint(eff) == -20.0
+            @test eff.high_breakpoint == -20.0
             @test get_upper_slope_coeff(eff) ≈ get_upper_slope_coeff(bid)
         end
 

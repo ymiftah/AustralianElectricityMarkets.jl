@@ -226,7 +226,7 @@ function PSI.construct_device!(
 end
 
 
-const _SETTER_REMEDY = "Call set_nem_dispatch_limits! over the model's date range first."
+const _SETTER_REMEDY = "Build the System with nem_system(db, NEMDEConfiguration(); date_range) over the model's date range first."
 
 
 """
@@ -400,7 +400,7 @@ end
     set_nem_dispatch_models!(template, sys; tie_breaks = true)
 
 Sets [`NEMReplayDispatch`](@ref) as the device model for every dispatch participant in `sys`, and, when
-`sys` carries the [`EnergyTieBreak`](@ref) of [`set_tie_break_scales!`](@ref), its
+`sys` carries the [`EnergyTieBreak`](@ref) of [`AustralianElectricityMarkets.set_tie_break_scales!`](@ref), its
 [`TieBreakMarket`](@ref) service model, which dispatches price-tied energy bands pro rata. Without it
 ties resolve to an arbitrary solver vertex.
 
@@ -417,7 +417,7 @@ function set_nem_dispatch_models!(template, sys; tie_breaks::Bool = true)
     types = nem_dispatch_participants(sys)
     isempty(types) && throw(
         ArgumentError(
-            "no dispatch participants in this System: call set_market_bids!, set_nem_dispatch_limits! and set_nem_energy_limits! over the " *
+            "no dispatch participants in this System: build it with nem_system(db, NEMDEConfiguration(); date_range) over the " *
                 "model's date range first",
         ),
     )

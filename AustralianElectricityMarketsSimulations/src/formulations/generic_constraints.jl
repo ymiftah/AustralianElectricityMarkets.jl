@@ -1,7 +1,9 @@
 # `LinearFactorLimit`, the `GenericConstraint` service formulation over energy and FCAS terms.
 
 PSI.get_default_time_series_names(::Type{GenericConstraint}, ::Type{LinearFactorLimit}) =
-    Dict{Type{<:PSI.TimeSeriesParameter}, String}(NEMConstraintRHSParameter => "rhs")
+    Dict{Type{<:PSI.TimeSeriesParameter}, String}(
+    NEMConstraintRHSParameter => "rhs", GenericConstraintSlackCostParameter => "invoked",
+)
 
 
 PSI.get_default_attributes(::Type{GenericConstraint}, ::Type{LinearFactorLimit}) =
@@ -9,6 +11,10 @@ PSI.get_default_attributes(::Type{GenericConstraint}, ::Type{LinearFactorLimit})
 
 
 PSI.get_multiplier_value(::NEMConstraintRHSParameter, ::GenericConstraint, ::LinearFactorLimit) =
+    1.0
+
+
+PSI.get_multiplier_value(::GenericConstraintSlackCostParameter, ::GenericConstraint, ::LinearFactorLimit) =
     1.0
 
 
@@ -341,19 +347,26 @@ end
 # --- add_constraints!: sense dispatch, honouring the "invoked" series ---
 
 """
-    _invoked_mask(container, gc, start_time = PSI.get_initial_time(container)) -> Vector{Float64}
+    _invoked_mask(container, gc) -> Vector{Float64}
 
-The `GenericConstraint`'s `"invoked"` series (`1.0`/`0.0`) over the container's time steps from
-`start_time`, read from the container's default forecast type.
+The `GenericConstraint`'s `"invoked"` series (`1.0`/`0.0`) over `container`'s time steps from its
+initial time.
+
+# Arguments
+- `container`: the optimization container being built.
+- `gc`: the generic constraint owning the invocation series.
 
 # Returns
 A `Vector{Float64}`.
 """
-function _invoked_mask(
-        container::PSI.OptimizationContainer, gc::GenericConstraint,
-        start_time::DateTime = PSI.get_initial_time(container),
+function _invoked_mask(container::PSI.OptimizationContainer, gc::GenericConstraint)
+    start_time = PSI.get_initial_time(container)
+    ts_type = PSI.get_default_time_series_type(container)
+    forecast = IS.get_time_series(ts_type, gc, "invoked"; start_time = start_time, count = 1)
+    return IS.get_time_series_values(
+        gc, forecast; start_time = start_time, len = length(PSI.get_time_steps(container)),
+        ignore_scaling_factors = true,
     )
-    return _forecast_window_values(container, gc, "invoked", start_time)
 end
 
 
@@ -469,8 +482,9 @@ end
 
 Prices `gc`'s elastic slacks (built by [`_add_gc_slack_variables!`](@ref), a no-op unless
 `PSI.get_use_slacks(model)`) through a [`GenericConstraintSlackCostParameter`](@ref): each
-interval's coefficient is its `"invoked"` value times [`constraint_cvp_factor`](@ref) times the Market
-Price Cap per MW, so a non-invoked interval's slack is free and its row is vacuous.
+interval's cost target is its `"invoked"` value times the system base power, times
+[`constraint_cvp_factor`](@ref) per interval, times the Market Price Cap of the service model at the
+build's initial time. A non-invoked interval's slack is free and its row is vacuous.
 `GenericConstraint`s built without slacks carry no cost of their own.
 
 # Returns
@@ -484,148 +498,19 @@ function PSI.objective_function!(
     name = PSY.get_name(gc)
     time_steps = PSI.get_time_steps(container)
     resolution = PSI.get_resolution(container)
-    initial_time = PSI.get_initial_time(container)
     base_power = PSI.get_base_power(container)
     weight = constraint_cvp_factor(gc)
-    param = PSI.add_param_container!(
-        container, GenericConstraintSlackCostParameter(), GenericConstraint,
-        (GenericConstraintSlackUp, GenericConstraintSlackDown), PSI.SOSStatusVariable.NO_VARIABLE,
-        false, Float64, [name], time_steps; meta = name,
-    )
-    invoked_values = PSI.get_parameter_array(param)
-    penalties = PSI.get_multiplier_array(param)
-    fill!(penalties, base_power * interval_cost_coefficient(weight, resolution))
-    _price_gc_slacks!(container, gc, model, invoked_values, penalties, initial_time)
-    return
-end
-
-
-# Writes `gc`'s `"invoked"` values from `initial_time` into `invoked_values` and adds its slack costs
-# at each interval's Market Price Cap to the variant objective.
-function _price_gc_slacks!(container::PSI.OptimizationContainer, gc::GenericConstraint, model::PSI.ServiceModel, invoked_values, penalties, initial_time::DateTime)
-    name = PSY.get_name(gc)
-    resolution = PSI.get_resolution(container)
-    invoked = _invoked_mask(container, gc, initial_time)
-    for t in axes(invoked_values)[2]
-        invoked_values[name, t] = invoked[t]
-        mpc = _service_market_price_cap(model, container, initial_time + resolution * (t - 1))
-        _add_gc_slack_costs!(container, gc, invoked_values, penalties, t, mpc)
-    end
-    return
-end
-
-
-# Adds `gc`'s slacks at step `t` to the variant objective at `invoked x penalty` per unit; nothing
-# when that is zero, which leaves the row vacuous.
-function _add_gc_slack_costs!(container::PSI.OptimizationContainer, gc::GenericConstraint, invoked_values, penalties, t::Int, mpc::Real)
-    name = PSY.get_name(gc)
-    cost = invoked_values[name, t] * penalties[name, t] * mpc
-    iszero(cost) && return
+    mpc = _service_market_price_cap(model, container, PSI.get_initial_time(container))
+    PSI.add_parameters!(container, GenericConstraintSlackCostParameter, gc, model)
+    scale = base_power * interval_cost_coefficient(weight, resolution) * mpc
     for var_type in (GenericConstraintSlackUp, GenericConstraintSlackDown)
         PSI.has_container_key(container, var_type, GenericConstraint, name) || continue
         slack = PSI.get_variable(container, var_type(), GenericConstraint, name)
-        PSI.add_to_objective_variant_expression!(container, cost * slack[name, t])
-    end
-    return
-end
-
-
-"""
-    PSI.update_container_parameter_values!(container, model, key::PSI.ParameterKey{GenericConstraintSlackCostParameter, GenericConstraint}, input)
-
-Simulation-step update of the [`GenericConstraintSlackCostParameter`](@ref) of the constraint
-`key.meta`: reads its `"invoked"` values for the window at the model's current time and re-adds the
-slack costs (`invoked x` the build-time penalty in the multiplier `x` the Market Price Cap of its
-service model) to the variant objective.
-
-# Returns
-`nothing`.
-"""
-function PSI.update_container_parameter_values!(
-        container::PSI.OptimizationContainer, model::PSI.OperationModel,
-        key::PSI.ParameterKey{GenericConstraintSlackCostParameter, GenericConstraint}, ::PSI.DatasetContainer{PSI.InMemoryDataset},
-    )
-    PSI.is_synchronized(container) && error(
-        "Cannot update GenericConstraintSlackCostParameter on a synchronized container; the slack costs would be added twice.",
-    )
-    gc = PSY.get_component(GenericConstraint, PSI.get_system(model), key.meta)
-    service_model = only(
-        m for m in values(PSI.get_service_models(PSI.get_template(model)))
-            if PSI.get_component_type(m) === GenericConstraint && PSI.get_service_name(m) == key.meta
-    )
-    _price_gc_slacks!(
-        container, gc, service_model, PSI.get_parameter_array(container, key),
-        PSI.get_parameter_multiplier_array(container, key), PSI.get_current_time(model),
-    )
-    return
-end
-
-
-# Each key's long-format frame (`DateTime`, `value`): solved values, or realized ones of a simulation.
-_read_dual_frames(results::PSI.OptimizationProblemResults, keys) = Dict(key => PSI.read_dual(results, key) for key in keys)
-# Opens the simulation store once for all `keys`, over the window `read_realized_duals` reads.
-function _read_dual_frames(results::PSI.SimulationProblemResults, keys)
-    isempty(keys) && return Dict{PSI.OptimizationContainerKey, DataFrame}()
-    vals = PSI.read_realized_duals(results, collect(keys))
-    return Dict(key => vals[PSI.IS.Optimization.encode_key_as_string(key)] for key in keys)
-end
-
-
-"""
-    compute_fcas_prices(results, sys; resolution = nothing) -> DataFrame
-
-Maps solved [`NEMConstraintLimit`](@ref) duals onto regional FCAS prices: each `(region, service)`
-`ROP` is the sum of the duals of every built [`GenericConstraint`](@ref) whose
-[`get_fcas_requirements`](@ref) names that pair, in `\$/MWh`. This mirrors the sum of
-`DISPATCH_FCAS_REQ`'s `MARGINALVALUE` (see [`read_fcas_prices`](@ref)). Duals keep the solver's
-sign (change in cost per unit increase of the right-hand side): non-negative for a binding `>=`
-constraint, non-positive for `<=`. Warns when a constraint with requirements has no recorded dual.
-
-# Arguments
-- `results`: `PSI.OptimizationProblemResults` of a model, or `PSI.SimulationProblemResults` of a
-  simulation (its realized duals), that recorded `NEMConstraintLimit` duals.
-- `sys`: the `System` the model was built from.
-- `resolution`: interval length converting per-interval duals to `\$/MWh`. Defaults to the
-  resolution the results record, which a single-interval solve does not; required then.
-
-# Returns
-A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `BIDTYPE` and `ROP`, like [`read_fcas_prices`](@ref).
-"""
-function compute_fcas_prices(
-        results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}, sys::PSY.System;
-        resolution::Union{Nothing, Dates.Period} = nothing,
-    )
-    resolution = something(resolution, PSI.get_resolution(results), Some(nothing))
-    isnothing(resolution) && throw(
-        ArgumentError(
-            "compute_fcas_prices: `results` do not record a resolution (a single-interval model), so pass `resolution` explicitly.",
-        ),
-    )
-    dual_keys = Dict(
-        k.meta => k for k in PSI.list_dual_keys(results) if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit
-    )
-    scale = PSY.get_base_power(sys) * interval_hours(resolution)
-    prices = Dict{Tuple{String, BidType}, DataFrame}()
-    constrained = [gc for gc in PSY.get_components(GenericConstraint, sys) if !isempty(get_fcas_requirements(gc))]
-    unrecorded = [PSY.get_name(gc) for gc in constrained if !haskey(dual_keys, PSY.get_name(gc))]
-    recorded = [gc for gc in constrained if haskey(dual_keys, PSY.get_name(gc))]
-    duals = _read_dual_frames(results, [dual_keys[PSY.get_name(gc)] for gc in recorded])
-    for gc in recorded
-        dual = duals[dual_keys[PSY.get_name(gc)]]
-        for req in get_fcas_requirements(gc)
-            id = (get_region(req), get_service(req))
-            term = DataFrame(; SETTLEMENTDATE = dual.DateTime, ROP = dual.value ./ scale)
-            haskey(prices, id) ? (prices[id].ROP .+= term.ROP) : (prices[id] = term)
+        for t in time_steps
+            PSI.add_cost_target!(
+                container, GenericConstraintSlackCostParameter(), GenericConstraint, name, (), t, slack[name, t], scale,
+            )
         end
     end
-    isempty(unrecorded) || @warn(
-        "compute_fcas_prices: $(length(unrecorded)) GenericConstraint(s) with FCAS requirements " *
-            "have no NEMConstraintLimit dual and are left out: $(join(first(sort!(unrecorded), 5), ", "))" *
-            (length(unrecorded) > 5 ? ", ..." : ".")
-    )
-    out = DataFrame(; SETTLEMENTDATE = DateTime[], REGIONID = String[], BIDTYPE = BidType[], ROP = Float64[])
-    for ((region, service), df) in sort!(collect(prices); by = p -> (p[1][1], string(p[1][2])))
-        append!(out, DataFrame(; SETTLEMENTDATE = df.SETTLEMENTDATE, REGIONID = region, BIDTYPE = service, ROP = df.ROP))
-    end
-    return out
+    return
 end

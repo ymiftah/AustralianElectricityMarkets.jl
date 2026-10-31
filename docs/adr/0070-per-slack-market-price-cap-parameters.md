@@ -2,8 +2,9 @@
 
 ## Status
 
-Accepted. Supersedes the mechanism of [0065](0065-market-price-cap-repricing.md); its decision to
-re-price penalties at each step's cap stands.
+Superseded by [0085](0085-build-time-market-price-cap.md): penalties are priced at build from the
+initial interval's cap, not re-priced at each step. It had replaced the mechanism of
+[0065](0065-market-price-cap-repricing.md).
 
 ## Context
 

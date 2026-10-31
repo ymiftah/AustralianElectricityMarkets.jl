@@ -9,6 +9,7 @@ using DataFrames: nrow, DataFrame
 using PowerSystems
 
 include("fixtures/mock_data.jl")
+include("fixtures/input_builders.jl")
 # Create mock data in a temporary directory for the duration of the test session
 const AEM_TEST_HIVE_DIR = mktempdir()
 create_mock_data(AEM_TEST_HIVE_DIR)
@@ -28,12 +29,10 @@ const TEST_GROUPS = [
     "reader_aggregation" => ("Reader aggregation and historical regions", ["readers/aggregation.jl"]),
     "network_models" => (
         "Network models",
-        [
-            "network_models/common.jl",
-            "network_models/constrained_network_configuration.jl",
-        ],
+        ["network_models/common.jl"],
     ),
     "replay_network" => ("Replay network configuration", ["network_models/replay_network_configuration.jl"]),
+    "hdf5_storage" => ("HDF5 storage resource lifetime", ["hdf5_storage.jl"]),
     "timeseries_setters" => ("Time series setter tests", ["timeseries_setters.jl", "bid_conversion.jl"]),
     "interval_inputs" => ("Per-interval inputs", ["interval_inputs.jl"]),
     "mnsp" => ("MNSP offers", ["mnsp_offers.jl"]),
@@ -45,6 +44,7 @@ const TEST_GROUPS = [
     "pscb_constraints" => ("PSCB constraints and FCAS", ["integration/pscb_constraints.jl"]),
     "fcas_service" => ("PSCB FCASService", ["fcas/fcas_service.jl"]),
     "system_build_coverage" => ("System build coverage and JSON round-trip", ["integration/system_build_coverage.jl"]),
+    "tie_break_service" => ("Energy tie-break service", ["tie_break_service.jl"]),
     "aqua" => ("Aqua", ["aqua.jl"]),
 ]
 

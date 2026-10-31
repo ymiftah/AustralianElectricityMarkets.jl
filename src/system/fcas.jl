@@ -25,15 +25,15 @@ end
     _extract_fcas_bid(row; base_power = nothing)
 
 Mirrors [`_extract_power_bids`](@ref), keeping every price band as energy offers do, and also builds
-the FCAS trapezium. When `base_power` is supplied, returned MW values are divided by it;
-prices are unchanged. The trapezium is validated in its original MW units.
+the FCAS trapezium. The offer curve stays in MW. When `base_power` is supplied, the trapezium's MW
+values are divided by it; prices are unchanged. The trapezium is validated in its original MW units.
 
 # Returns
-`(curve_data, trapezium_row)`: a `PiecewiseStepData` and the `NTuple{7,Float64}` wire form
+`(curve_data, trapezium_row)`: a `PiecewiseStepData` in MW and the `NTuple{7,Float64}` wire form
 of an [`FCASTrapezium`](@ref).
 """
 function _extract_fcas_bid(row; base_power = nothing)
-    curve_data = _extract_power_bids(row; keep_empty_bands = true, base_power)
+    curve_data = _extract_power_bids(row; keep_empty_bands = true)
     trapezium = FCASTrapezium(;
         enablement_min = _require_fcas_float(row, Val(:ENABLEMENTMIN)),
         low_breakpoint = _require_fcas_float(row, Val(:LOWBREAKPOINT)),
@@ -103,14 +103,15 @@ function _fcas_bid_modeled(device, bid_type::BidType)
 end
 
 
-# A device bids a (region, bid_type) market if it carries either direction's curve series - a
-# storage device can provide the market while charging or discharging.
+# A device bids a (region, bid_type) market if it carries either direction's trapezium series - a
+# storage device can provide the market while charging or discharging. The offer curves are
+# attached alongside them, as service bids, only after the services exist.
 function _fcas_service_devices(
         sys, region::AbstractString, bid_type::BidType;
         candidates = _region_devices(sys, region; loads = true),
     )
-    inc_name = fcas_series_name("fcas_curve", bid_type, false)
-    dec_name = fcas_series_name("fcas_curve", bid_type, true)
+    inc_name = fcas_series_name("fcas_trapezium", bid_type, false)
+    dec_name = fcas_series_name("fcas_trapezium", bid_type, true)
     return filter(candidates) do d
         has_time_series(d, SingleTimeSeries, inc_name) || has_time_series(d, SingleTimeSeries, dec_name)
     end
@@ -125,10 +126,11 @@ with at least one available device bidding it, attached via `add_service!` to th
 whose bid direction the FCAS market formulation models (an incremental bid, a decremental-only
 bid on a `Storage` device or a load, or a `Storage` device's regulation bid on both sides). A
 service already in `sys` under that name is left as is. Devices bidding a market in a direction the formulation does not model are left out and
-reported.
+reported. [`set_fcas_bids!`](@ref) calls this before it writes the offer curves, so a later call
+adds nothing.
 
 # Arguments
-- `sys`: the `System` to add to, after [`set_fcas_bids!`](@ref) has run.
+- `sys`: the `System` to add to, once the trapezium series of [`set_fcas_bids!`](@ref) are attached.
 
 # Returns
 `(added, excluded)`: `added::Vector{String}` of service names created, and
@@ -165,25 +167,126 @@ function _add_fcas_service!(sys, region, bid_type, candidates, added, excluded)
 end
 
 
-"""
-    _attach_fcas_bid_series!(sys, component, gdf, duid, bid_type, side, start_date, resolution)
+# The values of `field` in `rows` on `grid`: the value at each stamp, or `pad` where `rows` has none.
+# Rows at a repeated stamp, or outside `grid`, are an error naming the unit and bid type.
+function _on_grid(rows, field::Symbol, grid, pad, duid, bid_type::BidType)
+    stamps = rows.INTERVAL_DATETIME
+    _check_stamps_on_grid(stamps, grid, "FCAS $(bid_type) $(field) rows for $duid")
+    by_time = Dict(zip(stamps, rows[!, field]))
+    return [get(by_time, t, pad) for t in grid]
+end
 
-Attaches the two per-`(component, FCAS market, side)` `SingleTimeSeries` series, `"fcas_curve_..."`
-and `"fcas_trapezium_..."` ([`fcas_series_name`](@ref)), from `gdf` (a `DUID`-grouped bids
-`DataFrame`) if `duid` has a group in it. No-op otherwise, so callers can probe a component
-against several `DIRECTION` groupings without checking `haskey` themselves. Returns whether
-the series were attached.
+
+# A zero trapezium on every MW and ramp field: no offer is available there, so no ramp is defined.
+const _ABSENT_FCAS_TRAPEZIUM = (0.0, 0.0, 0.0, 0.0, 0.0, NaN, NaN)
+
+
 """
-function _attach_fcas_bid_series!(sys, component, gdf, duid::AbstractString, bid_type::BidType, side::OfferSide, start_date, resolution)
+    _attach_fcas_trapezium_series!(sys, component, gdf, duid, bid_type, side, grid, resolution)
+
+Attaches the per-`(component, FCAS market, side)` `"fcas_trapezium_..."` `SingleTimeSeries`
+([`fcas_series_name`](@ref)) from `gdf` (a `DUID`-grouped bids `DataFrame`) if `duid` has a group
+in it, one value per stamp of `grid`. A stamp without a bid holds a zero trapezium, which offers
+nothing there. No-op otherwise, so callers can probe a component against several `DIRECTION`
+groupings without checking `haskey` themselves. Returns whether the series was attached.
+"""
+function _attach_fcas_trapezium_series!(sys, component, gdf, duid::AbstractString, bid_type::BidType, side::OfferSide, grid, resolution)
     (isnothing(gdf) || !haskey(gdf, (duid,))) && return false
     rows = gdf[(duid,)]
-    # rows.curve_data/.trapezium_row are SubArray views into the grouped DataFrame -
-    # the series needs plain Vectors.
-    curve_ts = single_series(fcas_series_name("fcas_curve", bid_type, side), start_date, collect(rows.curve_data), resolution)
-    add_time_series!(sys, component, curve_ts)
-    trapezium_ts = single_series(fcas_series_name("fcas_trapezium", bid_type, side), start_date, collect(rows.trapezium_row), resolution)
+    trapezium_ts = single_series(
+        fcas_series_name("fcas_trapezium", bid_type, side), first(grid),
+        _on_grid(rows, :trapezium_row, grid, _ABSENT_FCAS_TRAPEZIUM, duid, bid_type), resolution,
+    )
     add_time_series!(sys, component, trapezium_ts)
     return true
+end
+
+
+# The offer curves of `duid` in `gdf` (a `DUID`-grouped bids `DataFrame`) on `grid`, or `nothing`.
+# A stamp without a curve holds a zero-width curve on the first curve's prices.
+function _fcas_offer_curves(gdf, duid::AbstractString, bid_type::BidType, grid)
+    (isnothing(gdf) || !haskey(gdf, (duid,))) && return nothing
+    rows = gdf[(duid,)]
+    prices = get_y_coords(first(rows.curve_data))
+    absent = PiecewiseStepData(zeros(length(prices) + 1), copy(prices))
+    return _on_grid(rows, :curve_data, grid, absent, duid, bid_type)
+end
+
+
+# Whether `x` is a zero cost term; a term this does not recognise counts as non-zero.
+function _is_zero_cost_term(::Nothing)
+    return true
+end
+
+function _is_zero_cost_term(x::Real)
+    return iszero(x)
+end
+
+function _is_zero_cost_term(x::NamedTuple)
+    return all(_is_zero_cost_term, values(x))
+end
+
+function _is_zero_cost_term(x::PSY.LinearCurve)
+    return iszero(PSY.get_proportional_term(x)) && iszero(PSY.get_constant_term(x))
+end
+
+function _is_zero_cost_term(x::PSY.CostCurve)
+    return _is_zero_cost_term(PSY.get_value_curve(x)) && _is_zero_cost_term(PSY.get_vom_cost(x))
+end
+
+function _is_zero_cost_term(::Any)
+    return false
+end
+
+"""
+    _is_zero_cost(cost) -> Bool
+
+Whether every term of the operation cost `cost` is zero, so that replacing it with an empty
+`MarketBidCost` leaves the device's energy cost at zero. Terms that are not zero linear
+curves or numbers count as non-zero.
+"""
+function _is_zero_cost(cost)
+    return all(f -> _is_zero_cost_term(getfield(cost, f)), fieldnames(typeof(cost)))
+end
+
+
+# Writes `curves`, in MW, as `device`'s service bid for its FCASService of `bid_type`. A device whose
+# operation cost is not a MarketBidCost gets an empty one only when that cost is all zero: the
+# replacement then leaves its energy cost at zero. Any other cost throws, as the offer cannot be
+# stored without a MarketBidCost.
+function _write_fcas_service_bid!(sys, device, bid_type::BidType, decremental::Bool, curves, start_date, resolution)
+    (isnothing(curves) || isempty(_fcas_services(device, bid_type))) && return
+    service = only(_fcas_services(device, bid_type))
+    name = fcas_offer_series_name(service, decremental)
+    # Already stored, for example by an earlier call made before the device's energy bids were set.
+    has_time_series(device, SingleTimeSeries, name) && return
+    cost = get_operation_cost(device)
+    if !(cost isa MarketBidCost)
+        _is_zero_cost(cost) || throw(
+            ArgumentError(
+                "\"$(get_name(device))\" has a $(nameof(typeof(cost))) operation cost, not a " *
+                    "MarketBidCost, so its $(string(bid_type)) offers cannot be stored as service " *
+                    "bids. The device needs a MarketBidCost first, for example by calling " *
+                    "set_market_bids! before set_fcas_service_bids!.",
+            ),
+        )
+        # Zero-cost replacement: a MarketBidCost without energy curves prices energy at zero.
+        set_operation_cost!(
+            device,
+            MarketBidCost(;
+                no_load_cost = 0.0,
+                start_up = (hot = 0.0, warm = 0.0, cold = 0.0),
+                shut_down = 0.0,
+            ),
+        )
+    end
+    ts = single_series(name, start_date, curves, resolution)
+    if decremental
+        set_decremental_service_bid!(sys, device, service, ts, PSY.UnitSystem.NATURAL_UNITS)
+    else
+        set_service_bid!(sys, device, service, ts, PSY.UnitSystem.NATURAL_UNITS)
+    end
+    return
 end
 
 
@@ -205,16 +308,17 @@ end
 """
     set_fcas_bids!(sys, db, date_range; kwargs...)
 
-Attaches FCAS bid data to the system as two `SingleTimeSeries` time series per `(component,
-FCAS market)` with bid data in `date_range`:
-- `"fcas_curve_<SERVICE>"` (e.g. `"fcas_curve_RAISE6SEC"`), a `Vector{PiecewiseStepData}` -
-  the priced 10-band offer curve per interval;
+Attaches FCAS bid data to the system per `(component, FCAS market, side)` with bid data in
+`date_range`:
 - `"fcas_trapezium_<SERVICE>"`, a `Vector{NTuple{7,Float64}}` - the AEMO trapezium per
   interval, packed by [`_extract_fcas_bid`](@ref).
+The priced offer curves are stored by [`set_fcas_service_bids!`](@ref), which must run after this.
+Each series spans every interval of `date_range` but its last stamp; an interval without a bid holds
+a zero trapezium, which offers nothing there.
 
-Both series' MW quantities (curve `x_coords`, all trapezium fields but not prices) are stored
-per-unit of `sys`'s system base; `_get_fcas_trapezium`/`_get_fcas_offer_curve`
-convert back on read.
+The trapezium's MW quantities (all fields but not prices) are stored per-unit of `sys`'s system base,
+and `_get_fcas_trapezium` converts them back on read. Service bids, the offer curves, are stored in MW
+by [`set_fcas_service_bids!`](@ref) and converted to per-unit of the system base by `_get_fcas_offer_curve` on read.
 
 `DIRECTION` routes and names the series, mirroring [`set_market_bids!`](@ref)'s energy-bid
 GEN/LOAD split: `GEN` and `BIDIRECTIONAL` rows are both capability offered while the unit
@@ -224,16 +328,16 @@ attached under the plain `<SERVICE>` name alongside `GEN`), attached to every ma
 to `EnergyReservoirStorage` and `InterruptiblePowerLoad` under `"<SERVICE>_decremental"`. A
 non-scheduled load (no energy bid) that gets a series is made available if its unit is
 commissioned; one without any FCAS bid stays unavailable. Run this before
-[`set_nem_dispatch_limits!`](@ref), which attaches the ramp and limit series a newly available load
+[`nem_system`](@ref), which attaches the ramp and limit series a newly available load
 needs. Dropping `LOAD`/
 `BIDIRECTIONAL` rows entirely (as an earlier version of this function did) silently loses a
 large share of real FCAS providers - measured on 2 Jan 2025 `BIDPEROFFER_D`, `LOAD` and
 `BIDIRECTIONAL` rows together outnumber `GEN` rows for several contingency markets.
 
-Two series, not one carrying [`FCASTrapezium`](@ref) objects directly, so each
-element is a plain `PiecewiseStepData` or `NTuple{7,Float64}`. Does not require or create any `Reserve`/service - FCAS
-requirements are [`GenericConstraint`](@ref)s built separately by
-[`add_nem_constraints!`](@ref).
+The trapezium is a series of plain `NTuple{7,Float64}`, so it is not a [`FCASTrapezium`](@ref) object.
+Adds the [`FCASService`](@ref)s through [`add_fcas_services!`](@ref) before writing the offer curves,
+as the service bids need them. FCAS requirements are [`GenericConstraint`](@ref)s built separately by
+[`nem_system`](@ref).
 
 Unlike the deleted `set_fcas_offers!`, this is genuinely time-varying (mirrors
 [`set_market_bids!`](@ref)'s energy-bid path), not a single-interval snapshot.
@@ -242,10 +346,13 @@ Unlike the deleted `set_fcas_offers!`, this is genuinely time-varying (mirrors
 - `sys`: The `PowerSystems.System` object.
 - `db`: The database connection.
 - `date_range`: A range of dates for which to fetch FCAS bid data.
+
+# Returns
+`(added, excluded)`, as [`add_fcas_services!`](@ref) returns for the services this call creates.
 """
 function set_fcas_bids!(sys, db, date_range; kwargs...)
-    start_date = first(date_range)
     resolution = get(kwargs, :resolution, Minute(5))
+    grid = _replay_grid(date_range, resolution)
     base_power = get_base_power(sys)
 
     all_bids = groupby(read_fcas_bids(db, date_range, collect(FCAS_BID_TYPES); resolution = get(kwargs, :resolution, nothing)), :BIDTYPE)
@@ -254,19 +361,70 @@ function set_fcas_bids!(sys, db, date_range; kwargs...)
         gdf_inc, gdf_dec = _fcas_bid_groups(all_bids[(bid_type,)], base_power)
 
         foreach(get_components(Generator, sys)) do gen
-            _attach_fcas_bid_series!(sys, gen, gdf_inc, get_name(gen), bid_type, OfferSide.GEN, start_date, resolution)
+            _attach_fcas_trapezium_series!(sys, gen, gdf_inc, get_name(gen), bid_type, OfferSide.GEN, grid, resolution)
         end
         foreach(get_components(EnergyReservoirStorage, sys)) do stor
             duid = get_name(stor)
-            _attach_fcas_bid_series!(sys, stor, gdf_inc, duid, bid_type, OfferSide.GEN, start_date, resolution)
-            _attach_fcas_bid_series!(sys, stor, gdf_dec, duid, bid_type, OfferSide.LOAD, start_date, resolution)
+            _attach_fcas_trapezium_series!(sys, stor, gdf_inc, duid, bid_type, OfferSide.GEN, grid, resolution)
+            _attach_fcas_trapezium_series!(sys, stor, gdf_dec, duid, bid_type, OfferSide.LOAD, grid, resolution)
         end
         foreach(get_components(InterruptiblePowerLoad, sys)) do load
-            attached = _attach_fcas_bid_series!(
-                sys, load, gdf_dec, get_name(load), bid_type, OfferSide.LOAD, start_date, resolution,
+            attached = _attach_fcas_trapezium_series!(
+                sys, load, gdf_dec, get_name(load), bid_type, OfferSide.LOAD, grid, resolution,
             )
             attached && is_non_scheduled_load(load) && is_commissioned(load) &&
                 set_available!(load, true)
+        end
+    end
+    return add_fcas_services!(sys)
+end
+
+
+"""
+    set_fcas_service_bids!(sys, db, date_range; kwargs...)
+
+Stores the FCAS offer curves of `date_range` as the service bids of the devices that contribute to
+each [`FCASService`](@ref), one `PiecewiseStepData` series per device, service and side (see
+[`fcas_offer_series_name`](@ref)). The curves are stored in MW. Run it after [`set_fcas_bids!`](@ref)
+and, on the NEMDE path, after [`set_market_bids!`](@ref), so that energy bidders already carry their
+`MarketBidCost`. Curves already stored are left as they are, so a second call stores only the curves
+the first one could not.
+
+A device whose operation cost is not a `MarketBidCost` gets an empty one only if that cost is all
+zero (a `StorageCost` or `LoadCost` at zero), which leaves its energy cost at zero. Any other device
+(for example a generator with a fuel or variable O&M cost) that has offers to store throws an
+`ArgumentError`, as its offers need a `MarketBidCost` first.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object, with its FCAS services.
+- `db`: The database connection.
+- `date_range`: A range of dates for which to fetch FCAS bid data.
+- `kwargs`: `resolution`, as for [`set_fcas_bids!`](@ref).
+
+# Returns
+`nothing`.
+"""
+function set_fcas_service_bids!(sys, db, date_range; kwargs...)
+    start_date = first(date_range)
+    resolution = get(kwargs, :resolution, Minute(5))
+    grid = _replay_grid(date_range, resolution)
+    base_power = get_base_power(sys)
+
+    all_bids = groupby(read_fcas_bids(db, date_range, collect(FCAS_BID_TYPES); resolution = get(kwargs, :resolution, nothing)), :BIDTYPE)
+    for bid_type in FCAS_BID_TYPES
+        haskey(all_bids, (bid_type,)) || continue
+        gdf_inc, gdf_dec = _fcas_bid_groups(all_bids[(bid_type,)], base_power)
+
+        foreach(get_components(Generator, sys)) do gen
+            _write_fcas_service_bid!(sys, gen, bid_type, false, _fcas_offer_curves(gdf_inc, get_name(gen), bid_type, grid), start_date, resolution)
+        end
+        foreach(get_components(EnergyReservoirStorage, sys)) do stor
+            duid = get_name(stor)
+            _write_fcas_service_bid!(sys, stor, bid_type, false, _fcas_offer_curves(gdf_inc, duid, bid_type, grid), start_date, resolution)
+            _write_fcas_service_bid!(sys, stor, bid_type, true, _fcas_offer_curves(gdf_dec, duid, bid_type, grid), start_date, resolution)
+        end
+        foreach(get_components(InterruptiblePowerLoad, sys)) do load
+            _write_fcas_service_bid!(sys, load, bid_type, true, _fcas_offer_curves(gdf_dec, get_name(load), bid_type, grid), start_date, resolution)
         end
     end
     return
@@ -287,6 +445,30 @@ function _fcas_scaling_devices(sys)
     append!(devices, collect(get_components(get_available, Generator, sys)))
     append!(devices, collect(get_components(get_available, EnergyReservoirStorage, sys)))
     return devices
+end
+
+
+"""
+    _agc_ramp_rate(ramp_rate, availability, interval_hours) -> Union{Missing, Float64}
+
+The AGC ramp rate (MW/h) for one regulation side of one unit-interval: the larger of the
+`DISPATCHLOAD` ramp rate and the regulation `availability` (MW) spread over `interval_hours`. A
+`missing` ramp rate stays `missing`; a `missing` availability leaves the ramp rate as it is.
+
+# Arguments
+- `ramp_rate`: `RAMPUPRATE` or `RAMPDOWNRATE`, in MW/h.
+- `availability`: `RAISEREGAVAILABILITY` or `LOWERREGAVAILABILITY`, in MW.
+- `interval_hours`: the length of one dispatch interval in hours.
+
+# Returns
+`Union{Missing, Float64}`.
+"""
+function _agc_ramp_rate(ramp_rate, availability, interval_hours::Real)
+    # MMSDM omits the telemetered AGC ramp rate, and RAMPUPRATE is capped by the bid rate. Availability
+    # over the interval is the exact regulation cap, so this lower bound can leave joint ramping tighter than NEMDE's.
+    ismissing(ramp_rate) && return missing
+    ismissing(availability) && return ramp_rate
+    return max(ramp_rate, availability / interval_hours)
 end
 
 
@@ -329,9 +511,10 @@ NEMDE* §4) and the §5 AGC-status pre-condition input to every available `Gener
   `RAISEREGENABLEMENTMIN`/`RAISEREGENABLEMENTMAX` (§4.1);
 - `"fcas_agc_enablement_min_LOWERREG"`/`"fcas_agc_enablement_max_LOWERREG"` from
   `LOWERREGENABLEMENTMIN`/`LOWERREGENABLEMENTMAX` (§4.1);
-- `"fcas_agc_ramp_rate_RAISEREG"`/`"fcas_agc_ramp_rate_LOWERREG"` from `RAMPUPRATE`/
-  `RAMPDOWNRATE`, in MW/h (§4.2's AGC ramping capability is this rate times the model's interval
-  length, applied on read);
+- `"fcas_agc_ramp_rate_RAISEREG"`/`"fcas_agc_ramp_rate_LOWERREG"` from the larger of
+  `RAMPUPRATE`/`RAMPDOWNRATE` and `RAISEREGAVAILABILITY`/`LOWERREGAVAILABILITY` spread over the
+  interval, in MW/h (§4.2's AGC ramping capability is this rate times the model's interval
+  length, applied on read; see `_agc_ramp_rate`);
 - `"fcas_agc_status"` from `AGCSTATUS` (§5: `1` while the unit is under AGC control, `0`
   otherwise), not per-unitized;
 - `"uigf"` from `UIGF`, for semi-scheduled units only (§4.3), shared with [`set_nem_energy_limits!`](@ref).
@@ -357,6 +540,13 @@ function set_fcas_scaling_inputs!(sys, db, date_range; kwargs...)
     full_grid = collect(date_range)[1:(end - 1)]
 
     scaling_rows = read_fcas_scaling_inputs(db, date_range; kwargs...)
+    interval_hours = Dates.value(Millisecond(step(date_range))) / (1000 * 60 * 60)
+    scaling_rows[!, :AGC_RAMP_RAISEREG] = _agc_ramp_rate.(
+        scaling_rows.RAMPUPRATE, scaling_rows.RAISEREGAVAILABILITY, interval_hours,
+    )
+    scaling_rows[!, :AGC_RAMP_LOWERREG] = _agc_ramp_rate.(
+        scaling_rows.RAMPDOWNRATE, scaling_rows.LOWERREGAVAILABILITY, interval_hours,
+    )
     by_duid = DataFrames.isempty(scaling_rows) ? nothing : groupby(scaling_rows, :DUID)
     uigf_rows = read_uigf(db, date_range; kwargs...)
     uigf_by_duid = DataFrames.isempty(uigf_rows) ? nothing : groupby(uigf_rows, :DUID)
@@ -383,10 +573,10 @@ function set_fcas_scaling_inputs!(sys, db, date_range; kwargs...)
                 fcas_series_name("fcas_agc_enablement_max", BidType.LOWERREG), base_power,
             )
             _attach_fcas_scaling_series!(
-                sys, device, by_time, full_grid, :RAMPUPRATE, fcas_series_name("fcas_agc_ramp_rate", BidType.RAISEREG), base_power,
+                sys, device, by_time, full_grid, :AGC_RAMP_RAISEREG, fcas_series_name("fcas_agc_ramp_rate", BidType.RAISEREG), base_power,
             )
             _attach_fcas_scaling_series!(
-                sys, device, by_time, full_grid, :RAMPDOWNRATE, fcas_series_name("fcas_agc_ramp_rate", BidType.LOWERREG), base_power,
+                sys, device, by_time, full_grid, :AGC_RAMP_LOWERREG, fcas_series_name("fcas_agc_ramp_rate", BidType.LOWERREG), base_power,
             )
             _attach_fcas_scaling_series!(
                 sys, device, by_time, full_grid, :AGCSTATUS, NEM_SERIES.fcas_agc_status, 1.0,

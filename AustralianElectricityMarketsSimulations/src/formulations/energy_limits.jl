@@ -61,7 +61,7 @@ end
 """
     PSI.add_proportional_cost!(container, slack, devices, formulation)
 
-Prices each energy-limit surplus at its AEMO CVP times the interval's Market Price Cap,
+Prices each energy-limit surplus at its AEMO CVP times the Market Price Cap of the build's initial interval,
 converting per-unit dispatch to MW and the interval duration to hours.
 
 # Returns

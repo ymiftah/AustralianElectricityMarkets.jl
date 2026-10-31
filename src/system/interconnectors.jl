@@ -203,8 +203,8 @@ Attaches to each `PSY.AreaInterchange` carrying exactly one [`InterconnectorLoss
 `SingleTimeSeries` `"loss_demand_coefficient"`: at each interval, the demand term of its
 [`loss_factor`](@ref), `Σ_r demand_coefficients[r] × demand[r]`. `demand[r]` is the summed demand of
 the available `PowerLoad`s in area `r`, per-unit of the system base, from each load's
-`"loss_demand"` series set by [`set_demand!`](@ref). The series sits on the timestamps of those
-series and replaces an existing one. Call it after `set_demand!` and after any change to the loads or loss models, before
+`"loss_demand"` series set by the demand build. The series sits on the timestamps of those
+series and replaces an existing one. Call it after the demand build and after any change to the loads or loss models, before
 `transform_single_time_series!`.
 
 # Arguments
@@ -249,7 +249,7 @@ function _area_loss_demand(sys)
         has_time_series(load, SingleTimeSeries, "loss_demand") || throw(
             ArgumentError(
                 "set_loss_demand_coefficients!: PowerLoad $(get_name(load)) has no \"loss_demand\" series; " *
-                    "call set_demand! after the loads are added and before set_loss_demand_coefficients!",
+                    "attach the demand (_set_demand!) after the loads are added and before set_loss_demand_coefficients!",
             ),
         )
     end

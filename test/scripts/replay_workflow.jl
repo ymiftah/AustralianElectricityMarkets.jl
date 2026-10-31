@@ -3,7 +3,7 @@ using .ReplayWorkflow: replicate_range
 
 # Prepares a cache-built system for the script's result-reading regressions.
 function workflow_test_system(db, date_range; kwargs...)
-    return prepare_replication!(nem_system(db, NEMDEConfiguration(); date_range, kwargs...))
+    return prepare_replay_forecasts!(nem_system(db, NEMDEConfiguration(); date_range, kwargs...))
 end
 
 @testset "simulation runtime exposes no cache entry points" begin
@@ -17,7 +17,9 @@ end
     t = DateTime(2025, 1, 1, 0, 5, 0)
 
     @testset "replicate_range replays one interval, solves and compares" begin
-        result = replicate_range(db, t, t)
+        phases = Symbol[]
+        result = replicate_range(db, t, t; on_phase = phase -> push!(phases, phase))
+        @test phases == [:preflight, :system_build, :model_build, :execute, :compare]
         @test only(result.results) isa PSI.SimulationProblemResults
         skipped = result.skipped_constraints
         @test names(skipped) == ["chunk", "constraint", "reason", "n_missing"]
@@ -162,7 +164,7 @@ end
 
     # A reopened chunk reads the same constraint violations as the live solve, and needs no system.
     sys2 = workflow_test_system(db, DateTime(2025, 1, 1, 0, 15):Minute(5):DateTime(2025, 1, 1, 0, 25))
-    reopened = replication_results(two.results[2], sys2).constraint_violations
+    reopened = ReplayResults.replication_results(two.results[2], sys2).constraint_violations
     at_chunk2 = filter(:DateTime => t -> t >= DateTime(2025, 1, 1, 0, 15), two.constraint_violations)
     @test sort(reopened, [:DateTime, :name]) == sort(at_chunk2, [:DateTime, :name])
 
@@ -195,3 +197,91 @@ end
     @test any(in((:unmodeled_fcas_service, :unmodeled_device_type)), result.skipped_constraints.reason)
     @test any(!ismissing, result.comparison.dispatch.TOTALCLEARED_solved)
 end
+
+@testset "interval timing UTC offset is rounded to quarter hours" begin
+    @test ReplayWorkflow._round_utc_offset(36_000_000 + 400_000) == Millisecond(36_000_000)
+    @test ReplayWorkflow._round_utc_offset(36_000_000 + 500_000) == Millisecond(36_900_000)
+    @test ReplayWorkflow._round_utc_offset(-19_800_000 - 20_000) == Millisecond(-19_800_000)
+    @test iszero(Dates.value(ReplayWorkflow._utc_offset()) % 900_000)
+end
+
+@testset "interval timings come from native PSI records" begin
+    # No replay-side override of the PSI methods the timings used to wrap.
+    @test which(PSI.update_model!, (PSI.DecisionModel, PSI.Simulation)).module === PowerSimulations
+    @test which(PSI.solve_impl!, (PSI.DecisionModel,)).module === PowerSimulations
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
+    t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)
+    d = mktempdir()
+    result = replicate_range(db, t1, t2; output_dir = d)
+    paths = [joinpath(root, f) for (root, _, files) in walkdir(d) for f in files if f == "interval_timings.csv"]
+    @test length(paths) == 1
+    lines = readlines(only(paths))
+    columns = split(lines[1], ',')
+    @test columns == [
+        "timestamp_utc", "interval_aest", "execution_count", "phase", "wall_s", "allocated_bytes",
+        "gc_s", "compilation_s", "timed_solve_s", "pricing_s", "auxiliary_s", "schema_version",
+    ]
+    rows = [Dict(zip(columns, split(line, ','))) for line in lines[2:end]]
+    intervals = [string(t1), string(t1 + Minute(5))]
+    @test [(r["interval_aest"], r["phase"]) for r in rows] ==
+        [(i, phase) for i in intervals for phase in ("parameter_update", "solve_and_write")]
+    @test all(==("2"), (r["schema_version"] for r in rows))
+    @test [parse(Int, r["execution_count"]) for r in rows] == [0, 0, 1, 1]
+    wall(r) = parse(Float64, r["wall_s"])
+    @test all(>=(0), wall.(rows))
+    solves = filter(r -> r["phase"] == "solve_and_write", rows)
+    @test all(>(0), wall.(solves))
+    @test wall(rows[3]) > 0
+    # Solver fields are the optimizer statistics of each executed step.
+    stats = PSI.read_optimizer_stats(only(result.results))
+    for (row, i) in zip(solves, 1:2)
+        @test parse(Float64, row["timed_solve_s"]) ≈ stats.timed_solve_time[i]
+        @test parse(Float64, row["pricing_s"]) ≈ stats.timed_calculate_dual_variables[i]
+        @test parse(Float64, row["auxiliary_s"]) ≈ stats.timed_calculate_aux_variables[i]
+        @test parse(Float64, row["allocated_bytes"]) ≈ stats.solve_bytes_alloc[i]
+        @test parse(Float64, row["gc_s"]) ≈ stats.sec_in_gc[i]
+    end
+    @test parse(Float64, solves[1]["timed_solve_s"]) ≈ result.solver_stats.timed_solve_time[1]
+    for row in filter(r -> r["phase"] == "parameter_update", rows)
+        @test all(isnan, parse.(Float64, (row["timed_solve_s"], row["compilation_s"], row["allocated_bytes"])))
+    end
+end
+
+include("replay_batch.jl")
+include("interconnector_loss_gaps.jl")
+
+@testset "data-only preflight checks exact padded coverage and versions" begin
+    t = DateTime(2025, 1, 1, 0, 5)
+    grid = collect(t:Minute(5):(t + Minute(5)))
+    links = DataFrame(INTERCONNECTORID = ["M", "M"], LINKID = ["F", "R"])
+    offers = DataFrame(LINKID = ["F", "R", "F", "R"], INTERVAL_DATETIME = [grid[1], grid[1], grid[2], grid[2]])
+    @test isnothing(ReplayWorkflow._check_mnsp_coverage(links, offers, ["M"], grid))
+    @test_throws ArgumentError ReplayWorkflow._check_mnsp_coverage(links, offers[1:3, :], ["M"], grid)
+    @test_throws ArgumentError ReplayWorkflow._check_mnsp_coverage(links, vcat(offers, offers[1:1, :]), ["M"], grid)
+    @test_throws ArgumentError ReplayWorkflow._check_mnsp_coverage(links[1:1, :], offers, ["M"], grid)
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR))
+    @test isnothing(ReplayWorkflow._preflight_inputs(db, t:Minute(5):(t + Minute(10)); parts = REPLICATION_PARTS))
+end
+
+@testset "preflight preserves fixed-load and built-in constraint handling" begin
+    t = DateTime(2025, 1, 1, 0, 5)
+    eff = DateTime(2020, 1, 1)
+    invoked = DataFrame(
+        GENCONID = ["C", "\$U"], SETTLEMENTDATE = [t, t],
+        GENCONID_EFFECTIVEDATE = [eff, eff], GENCONID_VERSIONNO = [1, 1]
+    )
+    fixed = DataFrame(DUID = ["U"], INTERVAL_DATETIME = [t])
+    definitions = DataFrame(GENCONID = ["C"], EFFECTIVEDATE = [eff], VERSIONNO = [1])
+    @test isnothing(ReplayWorkflow._check_constraint_versions(invoked, fixed, definitions))
+    definitions.VERSIONNO .= 2
+    @test_throws ArgumentError ReplayWorkflow._check_constraint_versions(invoked, fixed, definitions)
+    builtin = first(keys(AustralianElectricityMarkets._ZERO_FLOW_CONSTRAINTS))
+    invoked = DataFrame(
+        GENCONID = [builtin], SETTLEMENTDATE = [t],
+        GENCONID_EFFECTIVEDATE = [DateTime(AustralianElectricityMarkets._ZERO_FLOW_EFFECTIVEDATE)],
+        GENCONID_VERSIONNO = [AustralianElectricityMarkets._ZERO_FLOW_VERSIONNO]
+    )
+    @test isnothing(ReplayWorkflow._check_constraint_versions(invoked, fixed, definitions[1:0, :]))
+end
+
+include("replay_preflight.jl")

@@ -4,9 +4,9 @@
 Verifies that `sys` carries every input the replay template of `parts` depends on, from the records
 of the setters that built it: with `:generic_constraints`, [`get_missing_constraint_intervals`](@ref),
 [`get_defaulted_constraint_weights`](@ref), [`get_skipped_constraints`](@ref) and
-[`get_dropped_terms`](@ref) of [`add_nem_constraints!`](@ref) (`DISPATCHCONSTRAINT`, `GENCONDATA`,
+[`get_dropped_terms`](@ref) of the constraint build (`DISPATCHCONSTRAINT`, `GENCONDATA`,
 `SPDCONNECTIONPOINTCONSTRAINT`, `SPDREGIONCONSTRAINT`, `SPDINTERCONNECTORCONSTRAINT`); the
-dispatch-limit series of [`set_nem_dispatch_limits!`](@ref) (`DISPATCHLOAD`) on every dispatch
+dispatch-limit series of the dispatch-limits build (`DISPATCHLOAD`) on every dispatch
 device, batteries only with `:batteries`; and, with `:losses`, the offers of `set_mnsp_offers!`
 (`INTERCONNECTORCONSTRAINT`, `MNSP_INTERCONNECTOR`, `MNSP_DAYOFFER`, `MNSP_BIDOFFERPERIOD`,
 `DISPATCH_MNSPBIDTRK`) on every available MNSP.
@@ -27,7 +27,7 @@ function _check_replay_system_inputs(sys::PSY.System, parts)
     isempty(uncovered) || throw(
         ArgumentError(
             "replication_template: incomplete dispatch inputs for $(join(sort!(uncovered), ", ")); " *
-                "call set_market_bids!, set_nem_dispatch_limits! and set_nem_energy_limits! over the replay range before replay",
+                "build sys with nem_system(db, NEMDEConfiguration(); date_range) over the replay range before replay",
         ),
     )
     :losses in parts && foreach(_check_mnsp_offers, PSY.get_components(PSY.get_available, PSY.AreaInterchange, sys))
@@ -35,7 +35,7 @@ function _check_replay_system_inputs(sys::PSY.System, parts)
 end
 
 
-# The `add_nem_constraints!` records of `sys` are empty: every invoked constraint, weight and term was read.
+# The constraint-build records of `sys` are empty: every invoked constraint, weight and term was read.
 function _check_replay_constraint_inputs(sys::PSY.System)
     missing_intervals = get_missing_constraint_intervals(sys)
     isempty(missing_intervals) || throw(

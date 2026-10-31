@@ -127,6 +127,29 @@
         @test length(get_components(AreaInterchange, system)) == 6
     end
 
+    @testset "regional system carries the ISP operating costs" begin
+        # Values from the ISP cost fill on this mock data, captured before the network builder
+        # was split from the cost fill. Units of the mock data: fuel in AUD/GJ, O&M in AUD/MWh.
+        sys = nem_system(db, RegionalNetworkConfiguration())
+        thermal = get_operation_cost(get_component(ThermalStandard, sys, "ER01"))
+        fuel = get_variable(thermal)
+        @test get_proportional_term(get_value_curve(fuel)) ≈ 9.26
+        @test get_constant_term(get_value_curve(fuel)) ≈ 648.0
+        @test get_fuel_cost(fuel) ≈ 4.96
+        @test get_proportional_term(get_vom_cost(fuel)) ≈ 8.0
+        @test get_fixed(thermal) ≈ 319.634703196347
+        @test get_start_up(thermal) == 100.0
+        @test get_shut_down(thermal) == 100.0
+
+        hydro = get_operation_cost(get_component(HydroDispatch, sys, "BW02"))
+        @test get_proportional_term(get_value_curve(get_variable(hydro))) ≈ 8.0
+        @test get_fixed(hydro) ≈ 319.634703196347
+
+        renewable = get_operation_cost(get_component(RenewableDispatch, sys, "BW03"))
+        @test get_proportional_term(get_value_curve(get_variable(renewable))) ≈ 8.0
+        @test get_fixed(renewable) ≈ 319.634703196347
+    end
+
     @testset "ISP technology coverage in PM_MAPPING" begin
         # The ISP readers return
         # raw isp_technology strings (that package does not depend on PowerSystems); the

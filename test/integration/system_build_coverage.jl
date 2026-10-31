@@ -5,8 +5,7 @@
     using DataFrames
 
     # This test builds one System through the PSCB fixture's manual builder-call sequence
-    # (nem_system(db, ConstrainedNetworkConfiguration(); ...) can't be used here - see
-    # pscb_nemweb_data.jl's top-of-file comment), asserts every constraint/FCAS/loss input the
+    # (nem_system can't be used here - see pscb_nemweb_data.jl's top-of-file comment), asserts every constraint/FCAS/loss input the
     # System should carry, then re-asserts the same coverage after a JSON round-trip.
     config = HiveConfiguration(hive_location = AEM_TEST_PSCB_HIVE_DIR, filesystem = "file")
     db = aem_connect(config)
@@ -17,8 +16,9 @@
     function build_system()
         sys = augmented_pscb_system()
         set_fcas_bids!(sys, db, date_range)
-        add_nem_constraints!(sys, db, date_range)
-        add_fcas_services!(sys)
+        give_generator_market_bid_costs!(sys)
+        set_fcas_service_bids!(sys, db, date_range)
+        build_constraints!(sys, db, date_range)
         attach_interconnector_losses!(sys, db, first(date_range))
         return sys
     end
@@ -76,12 +76,12 @@
             v2 = get_component(GenericConstraint, sys, vname("N_VERSIONED_LIMIT", 2))
             @test (get_factor(only(get_terms(v1))), get_factor(only(get_terms(v2)))) == (1.0, 2.0)
             @test (get_sense(v1), get_sense(v2)) == (ConstraintSense.LE, ConstraintSense.GE)
-            @test get_gencon_id(v1) == get_gencon_id(v2) == "N_VERSIONED_LIMIT"
+            @test get(v1.ext, "gencon_id", nothing) == get(v2.ext, "gencon_id", nothing) == "N_VERSIONED_LIMIT"
 
             bat = get_component(EnergyReservoirStorage, sys, "BAT1")
-            @test has_time_series(bat, SingleTimeSeries, "fcas_curve_RAISEREG")
+            @test has_time_series(bat, SingleTimeSeries, fcas_offer_series_name(fcas_service(bat, BidType.RAISEREG), false))
             @test has_time_series(bat, SingleTimeSeries, "fcas_trapezium_RAISEREG")
-            @test has_time_series(bat, SingleTimeSeries, "fcas_curve_RAISEREG_decremental")
+            @test has_time_series(bat, SingleTimeSeries, fcas_offer_series_name(fcas_service(bat, BidType.RAISEREG), true))
             @test has_time_series(bat, SingleTimeSeries, "fcas_trapezium_RAISEREG_decremental")
         end
 
@@ -125,7 +125,7 @@
         # augmented_pscb_system() leaves sys in NATURAL_UNITS - same MW/$ ranges the
         # pre-PR-1.12 contract asserted directly off the stored fields.
         @test get_units_base(sys) == "NATURAL_UNITS"
-        rhs_mw = get_rhs(gc)
+        rhs_mw = PowerSystems.get_value(gc, Val(:rhs), Val(:mva))
         limits_mw = get_active_power_limits(sundance)
         trapezium_mw = only(AustralianElectricityMarkets._get_fcas_trapezium(sundance, BidType.RAISE6SEC, start_date, 1))
         @test 10.0 <= rhs_mw <= 200.0
@@ -137,7 +137,7 @@
         # base exactly like a native PSY device field does, instead of silently staying MW.
         set_units_base_system!(sys, "SYSTEM_BASE")
         try
-            @test get_rhs(gc) ≈ rhs_mw / base_power
+            @test PowerSystems.get_value(gc, Val(:rhs), Val(:mva)) ≈ rhs_mw / base_power
             limits_pu = get_active_power_limits(sundance)
             @test limits_pu.max ≈ limits_mw.max / base_power
             trapezium_pu = only(AustralianElectricityMarkets._get_fcas_trapezium(sundance, BidType.RAISE6SEC, start_date, 1))
@@ -147,7 +147,7 @@
         end
 
         # Switching back reproduces the original MW/$ values exactly.
-        @test get_rhs(gc) == rhs_mw
+        @test PowerSystems.get_value(gc, Val(:rhs), Val(:mva)) == rhs_mw
         @test get_active_power_limits(sundance).max == limits_mw.max
 
         # FCAS values are per-unit of the system base; a device's own fields are per-unit of
@@ -178,7 +178,7 @@
             )
             gc, gc2 = get_component(GenericConstraint, sys, name), get_component(GenericConstraint, sys2, name)
             @test get_sense(gc2) == get_sense(gc)
-            @test get_rhs(gc2) == get_rhs(gc)
+            @test PowerSystems.get_value(gc2, Val(:rhs), Val(:mva)) == PowerSystems.get_value(gc, Val(:rhs), Val(:mva))
             @test get_constraint_weight(gc2) == get_constraint_weight(gc)
             @test get_ext(gc2) == get_ext(gc)
         end

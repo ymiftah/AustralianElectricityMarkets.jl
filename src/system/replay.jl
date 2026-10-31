@@ -1,16 +1,27 @@
 """
     table_requirements(::NEMDEConfiguration)
 
-Returns the constrained network tables plus interconnector loss, MNSP offer and metered-flow
-tables needed for replay. `DISPATCHINTERCONNECTORRES` is required for MNSP ramping even when
-published interval flow limits are not attached.
+Returns the regional network tables plus the price, FCAS requirement, constraint, interconnector loss,
+MNSP offer and metered-flow tables needed for replay. `DISPATCHINTERCONNECTORRES` is required for MNSP
+ramping even when published interval flow limits are not attached.
 
 # Returns
 A vector of NEMWEB table symbols.
 """
 function AustralianElectricityMarkets.table_requirements(::NEMDEConfiguration)
     return [
-        table_requirements(ConstrainedNetworkConfiguration())...,
+        table_requirements(RegionalNetworkConfiguration())...,
+        :DISPATCHPRICE,
+        # Both generations of the dispatch FCAS requirement table: DISPATCH_FCAS_REQ covers up
+        # to the 2025-05 archive month, DISPATCH_FCAS_REQ_CONSTRAINT from 2025-06 on. A cache
+        # holding only one still builds - readers union whichever are present.
+        :DISPATCH_FCAS_REQ,
+        :DISPATCH_FCAS_REQ_CONSTRAINT,
+        :DISPATCHCONSTRAINT,
+        :GENCONDATA,
+        :SPDCONNECTIONPOINTCONSTRAINT,
+        :SPDREGIONCONSTRAINT,
+        :SPDINTERCONNECTORCONSTRAINT,
         :LOSSMODEL, :LOSSFACTORMODEL, :MNSP_INTERCONNECTOR, :MNSP_DAYOFFER,
         :MNSP_BIDOFFERPERIOD, :DISPATCH_MNSPBIDTRK, :DISPATCHINTERCONNECTORRES,
     ]
@@ -22,7 +33,10 @@ end
         interval_flow_limits = false, time_series_in_memory = true, time_series_directory = nothing)
 
 Builds a constrained system populated with demand, energy and FCAS bids, scaling and dispatch
-inputs, energy limits, interconnector losses and MNSP offers as single time series.
+inputs, energy limits, interconnector losses and MNSP offers as single time series, then attaches
+the effective FCAS offers and tie-break scales derived from them. Every unit registered at any
+interval of `date_range` is built for the whole range; outside its registration it has zero
+availability and offers nothing. A missing input inside a registration is an error.
 
 # Arguments
 - `db`: the market cache connection.
@@ -50,6 +64,7 @@ function AustralianElectricityMarkets.nem_system(
         db; date_range, intervention,
         time_series_in_memory, storage...,
     )
+    registered = AustralianElectricityMarkets._registration_spans(units)
     bids = read_energy_bids(db, date_range)
     dispatch = read_dispatch_limits(db, date_range; intervention, resolution)
     demand = read_demand(db, date_range; resolution)
@@ -57,11 +72,14 @@ function AustralianElectricityMarkets.nem_system(
     AustralianElectricityMarkets._set_demand!(sys, demand, date_range; resolution)
     set_loss_demand_coefficients!(sys)
     set_market_bids!(sys, db, date_range; resolution)
+    set_fcas_service_bids!(sys, db, date_range; resolution)
     set_fcas_scaling_inputs!(sys, db, date_range; intervention)
-    AustralianElectricityMarkets._set_nem_dispatch_limits!(sys, dispatch, date_range)
-    set_nem_energy_limits!(sys, db, date_range; intervention)
+    AustralianElectricityMarkets._set_nem_dispatch_limits!(sys, dispatch, date_range; registered)
+    set_nem_energy_limits!(sys, db, date_range; intervention, registered)
     set_mnsp_offers!(sys, db, date_range; intervention)
     interval_flow_limits && set_interconnector_flow_limits!(sys, db, date_range; intervention)
+    set_fcas_effective_offers!(sys)
+    set_tie_break_scales!(sys)
     return sys
 end
 
@@ -82,7 +100,8 @@ Verifies the cached bids and demand cover every interval of `date_range` (its la
 excluded). Every region with a unit (`DUDETAILSUMMARY`) needs regional demand (`DISPATCHREGIONSUM`)
 at every interval. Every scheduled unit of `sys` that bids energy (`BIDPEROFFER_D`), or is
 available or metered in `DISPATCHLOAD`, needs an energy period offer with a finite non-negative
-`MAXAVAIL` at every interval, read independently of the price join with `BIDDAYOFFER_D`.
+`MAXAVAIL` at every interval of its registration in `units` (`REGISTERED_FROM` to `REGISTERED_UNTIL`),
+read independently of the price join with `BIDDAYOFFER_D`.
 Non-scheduled units and loads are not checked.
 
 # Arguments
@@ -97,7 +116,7 @@ Non-scheduled units and loads are not checked.
 function _check_replay_energy_bid_coverage(sys, db, date_range; intervention::Integer = 0)
     bids = read_energy_bids(db, date_range)
     dispatch = read_dispatch_limits(db, date_range; intervention = intervention)
-    units = read_units(db; as_of = first(date_range))
+    units = read_units(db; as_of = first(date_range), through = last(date_range) - step(date_range))
     demand = read_demand(db, date_range)
     return _check_replay_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
 end
@@ -106,6 +125,7 @@ end
 function _check_replay_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
     demand_stamps = Set(zip(demand.REGIONID, demand.SETTLEMENTDATE))
     grid = collect(date_range)[1:(end - 1)]
+    registered = AustralianElectricityMarkets._registration_spans(units)
     missing_demand = [(region, t) for region in sort!(unique(units.REGIONID)), t in grid if !((region, t) in demand_stamps)]
     isempty(missing_demand) || throw(
         ArgumentError(
@@ -141,7 +161,8 @@ function _check_replay_energy_bid_coverage(sys, bids, dispatch, units, demand, d
         )
     end
     for name in sort!(collect(keys(required))), direction in required[name]
-        missing_intervals = setdiff(grid, get(coverage, (name, direction), Set{DateTime}()))
+        expected = filter(t -> AustralianElectricityMarkets._is_registered(registered, name, t), grid)
+        missing_intervals = setdiff(expected, get(coverage, (name, direction), Set{DateTime}()))
         isempty(missing_intervals) || throw(
             ArgumentError(
                 "incomplete energy bid inputs for $name $direction: missing $(length(missing_intervals)) intervals, " *
@@ -153,4 +174,27 @@ function _check_replay_energy_bid_coverage(sys, bids, dispatch, units, demand, d
 end
 
 
-export NEMDEConfiguration
+"""
+    prepare_replay_forecasts!(sys::PSY.System) -> PSY.System
+
+Transforms the single time series of a system built by [`nem_system`](@ref) into five-minute
+forecast windows of one interval each, the form a replay simulation reads.
+
+# Arguments
+- `sys`: a system with at least two timestamps of single time series and no forecasts.
+
+# Returns
+The modified system. Throws `ArgumentError` when forecasts already exist or input series are absent.
+"""
+function prepare_replay_forecasts!(sys::PSY.System)
+    counts = PSY.get_time_series_counts(sys)
+    counts.forecast_count == 0 || throw(ArgumentError("prepare_replay_forecasts!: the system already has forecast time series."))
+    counts.static_time_series_count > 0 || throw(ArgumentError("prepare_replay_forecasts!: attach input time series before preparation."))
+    _, n = PSY.check_time_series_consistency(sys, PSY.SingleTimeSeries)
+    n >= 2 || throw(ArgumentError("prepare_replay_forecasts!: at least two input timestamps are required for forecast windows."))
+    PSY.transform_single_time_series!(sys, DISPATCH_INTERVAL, DISPATCH_INTERVAL)
+    return sys
+end
+
+
+export NEMDEConfiguration, prepare_replay_forecasts!

@@ -62,7 +62,7 @@ end
     _add_cvp_slack!(container, var_type, T, names, time_steps, cvp_factor; meta, label, rate = nothing)
 
 Builds the slack variables of [`_add_slack_variables!`](@ref) and prices them in the objective at
-`cvp_factor` times the Market Price Cap ([`_add_mpc_penalty!`](@ref)) for the interval, in
+`cvp_factor` times the Market Price Cap of the build's initial interval ([`_add_mpc_penalty!`](@ref)), in
 `\$/MW` per dispatch interval.
 
 # Arguments

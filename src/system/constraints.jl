@@ -187,7 +187,7 @@ function _infer_resolution(grid::Vector{DateTime})
     length(grid) < 2 && return Minute(5)
     distinct = sort(unique(diff(grid)))
     if length(distinct) > 1
-        @warn "add_nem_constraints!: grid spacing is not uniform (found $(join(distinct, ", "))); the stored series' fixed resolution will not match every SETTLEMENTDATE. Proceeding with the smallest spacing, $(first(distinct))."
+        @warn "nem constraints: grid spacing is not uniform (found $(join(distinct, ", "))); the stored series' fixed resolution will not match every SETTLEMENTDATE. Proceeding with the smallest spacing, $(first(distinct))."
     end
     return _canonical_period(first(distinct))
 end
@@ -248,19 +248,30 @@ function _versions_without_definition(invoked, definitions)
 end
 
 
-"""
-    add_nem_constraints!(sys, db, date_range; intervention = 0)
+function _read_constraint_inputs(db, date_range; intervention = 0)
+    _require_cached(db, :DISPATCHCONSTRAINT)
+    for table in (:BIDPEROFFER_D, :BIDDAYOFFER_D)
+        _require_cached(db, table; context = "the constraint build reads FIXEDLOAD and T1 from it.")
+    end
+    invoked = read_invoked_constraints(db, date_range; intervention)
+    fixed = read_fixed_loads(db, date_range; intervention)
+    return invoked, fixed
+end
 
-Adds one [`GenericConstraint`](@ref) per exact `(GENCONID, EFFECTIVEDATE, VERSIONNO)` invoked
-in `date_range`, named `GENCONID@EFFECTIVEDATE#VERSIONNO` and attached via `add_service!` to
-its contributing devices.
+
+"""
+    _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; intervention = 0) -> (added, skipped)
+
+Adds one [`GenericConstraint`](@ref) per exact `(GENCONID, EFFECTIVEDATE, VERSIONNO)` in `invoked_all`,
+named `GENCONID@EFFECTIVEDATE#VERSIONNO` and attached via `add_service!` to its contributing devices.
 
 # Arguments
 - `sys`: the `System` to add to.
 - `db`: an `AEMDB` connection.
 - `date_range`: the dispatch intervals to replay.
-- `intervention`: `DISPATCHCONSTRAINT.INTERVENTION` to read (default `0`).
-
+- `invoked_all`: the invoked constraint rows over `date_range`, as `_read_constraint_inputs` returns them.
+- `fixed`: the fixed-loading rows over `date_range`, as `_read_constraint_inputs` returns them.
+- `intervention`: the `DISPATCHCONSTRAINT.INTERVENTION` the rows were read with (default `0`).
 
 # Returns
 `(added, skipped)`: `added::Vector{String}` of component names, `skipped::Dict{String, Symbol}`
@@ -268,9 +279,10 @@ mapping a skipped name to `:no_definition`, `:no_terms`, `:unknown_duid`, `:unkn
 `:unknown_interconnector` (the kind of the first unresolved term). Dropped unit terms are read back
 with [`get_dropped_terms`](@ref).
 
-A unit's participant fixed loading (`\$<DUID>`) is not a generic constraint: its
-`DISPATCHCONSTRAINT` row is neither added nor reported as skipped where [`set_nem_fixed_loads!`](@ref)
-attaches the loading to the unit.
+A unit's participant fixed loading (`\$<DUID>`) is not a generic constraint: its `DISPATCHCONSTRAINT`
+row is neither added nor reported as skipped at intervals with a fixed-loading row for an available
+device in `sys`. Such rows include those flagged `IN_PROFILE`. Devices that are unavailable or absent
+from `sys` are still reported as skipped.
 
 Each skipped version is also recorded on `sys`; read it with [`get_skipped_constraints`](@ref). The
 intervals of `date_range` with no invoked constraint ([`get_missing_constraint_intervals`](@ref)) and
@@ -281,31 +293,14 @@ A unit term whose DUID is absent from `sys` is dropped, as nempy does for a unit
 dispatch, and recorded in the constraint's `ext["dropped_terms"]` and in [`get_dropped_terms`](@ref).
 An unresolved region or interconnector term, or a constraint with no resolvable term, skips the constraint.
 
-Throws `ArgumentError` when `DISPATCHCONSTRAINT`, `BIDPEROFFER_D` or `BIDDAYOFFER_D` is not cached, or
-when an empty `RegionTerm` is found; either throw leaves `sys` unmodified.
+Throws `ArgumentError` when a `RegionTerm` resolves to a region with no Generator/Storage in `sys`;
+the throw leaves `sys` unmodified.
 """
-function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0)
-    invoked, fixed = _read_constraint_inputs(db, date_range; intervention)
-    return _add_nem_constraints!(sys, db, date_range, invoked, fixed; intervention)
-end
-
-
-function _read_constraint_inputs(db, date_range; intervention = 0)
-    _require_cached(db, :DISPATCHCONSTRAINT)
-    for table in (:BIDPEROFFER_D, :BIDDAYOFFER_D)
-        _require_cached(db, table; context = "add_nem_constraints! reads FIXEDLOAD and T1 from it.")
-    end
-    invoked = read_invoked_constraints(db, date_range; intervention)
-    fixed = read_fixed_loads(db, date_range)
-    return invoked, fixed
-end
-
-
 function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; intervention = 0)
     start_date = first(date_range)
     base_power = get_base_power(sys)
     missing_intervals = setdiff(collect(date_range)[1:(end - 1)], invoked_all.SETTLEMENTDATE)
-    # Fixed loadings are unit offer data (set_nem_fixed_loads!), so their `$DUID` rows are not generic constraints.
+    # Fixed loadings are unit offer data (_set_nem_fixed_loads!), so their `$DUID` rows are not generic constraints.
     fixed_loads = _fixed_load_series(sys, fixed)
     if DataFrames.isempty(invoked_all) && isempty(fixed_loads)
         get_ext(sys)["skipped_constraints"] = Dict{String, Any}[]
@@ -321,14 +316,14 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
     invoked_by_version = groupby(invoked, [:GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO])
 
     # Drop the last point: `date_range`'s N+1 timestamps label N interval starts, matching
-    # `read_fcas_bids`/`set_demand!`'s half-open convention.
+    # `read_fcas_bids`/`_set_demand!`'s half-open convention.
     full_grid = collect(date_range)[1:(end - 1)]
     resolution = _infer_resolution(full_grid)
 
     grid_set = Set(full_grid)
     unaligned = setdiff(Set(invoked.SETTLEMENTDATE), grid_set)
     if !isempty(unaligned)
-        @warn "add_nem_constraints!: $(length(unaligned)) invoked SETTLEMENTDATE(s) fall outside date_range's grid and will be dropped from every constraint's \"rhs\"/\"invoked\" series - check that date_range's step matches the cache's real dispatch cadence: $(sort(collect(unaligned)))"
+        @warn "nem constraints: $(length(unaligned)) invoked SETTLEMENTDATE(s) fall outside date_range's grid and will be dropped from every constraint's \"rhs\"/\"invoked\" series - check that date_range's step matches the cache's real dispatch cadence: $(sort(collect(unaligned)))"
     end
 
     gencon_versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
@@ -506,15 +501,15 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
         for reason in values(skipped)
             reason_counts[reason] = get(reason_counts, reason, 0) + 1
         end
-        @warn "add_nem_constraints!: skipped $(length(skipped)) of $(nrow(gencon_versions)) invoked constraint versions (by reason: $(join(("$r=$n" for (r, n) in sort(collect(reason_counts))), ", "))); see get_skipped_constraints" reason_counts
+        @warn "nem constraints: skipped $(length(skipped)) of $(nrow(gencon_versions)) invoked constraint versions (by reason: $(join(("$r=$n" for (r, n) in sort(collect(reason_counts))), ", "))); see get_skipped_constraints" reason_counts
     end
 
     if !isempty(dropped)
-        @warn "add_nem_constraints!: built $(length(dropped)) constraint(s) without $(sum(length, values(dropped))) unit term(s) whose DUID is absent from sys; see get_dropped_terms"
+        @warn "nem constraints: built $(length(dropped)) constraint(s) without $(sum(length, values(dropped))) unit term(s) whose DUID is absent from sys; see get_dropped_terms"
     end
 
     if !isempty(missing_weight)
-        @warn "add_nem_constraints!: $(length(missing_weight)) constraint(s) have a NULL GENERICCONSTRAINTWEIGHT and were given constraint_weight = 1.0: $missing_weight"
+        @warn "nem constraints: $(length(missing_weight)) constraint(s) have a NULL GENERICCONSTRAINTWEIGHT and were given constraint_weight = 1.0: $missing_weight"
     end
 
     if !isempty(empty_region_terms)
@@ -527,7 +522,7 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
         )
         throw(
             ArgumentError(
-                "add_nem_constraints!: $(length(empty_region_terms)) RegionTerm(s) resolved to a region with no Generator/Storage in sys: $detail.",
+                "nem constraints: $(length(empty_region_terms)) RegionTerm(s) resolved to a region with no Generator/Storage in sys: $detail.",
             ),
         )
     end

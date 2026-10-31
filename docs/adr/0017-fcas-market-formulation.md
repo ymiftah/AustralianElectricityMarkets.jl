@@ -268,7 +268,8 @@ jointly). `FCASMarket` now builds that directly:
 - **§6.4's BDU SCADA ramping constraint bounds that same total.** `FCASBDURampingConstraint`,
   built only for both-sided devices on a regulation service, `Reg_gen + Reg_load ≤` the device's
   AGC ramping capability (`get_fcas_agc_ramp_capability`, the same `RAMPUPRATE`/`RAMPDOWNRATE ×
-  interval` quantity §4.2 already scales each side's own `MaxAvail` by) — skipped (no constraint
+  interval` quantity §4.2 already scales each side's own `MaxAvail` by; superseded in part by
+  [0087](0087-agc-ramp-rate-from-mmsdm.md), which takes the larger of that rate and the side's availability) — skipped (no constraint
   row) for a `(device, t)` carrying no ramp-capability series. AEMO's own text motivates this as
   preventing exactly the "double-counting" the combined-variable model above could not represent:
   each side's own `MaxAvail` is independently capped at the ramp capability by §4.2, but nothing
@@ -315,6 +316,10 @@ and the load side's read `ActivePowerInVariable`, and ADR 0020 lets both be posi
 interval. Raising both by the same amount leaves net output unchanged but moves each side along its
 own trapezium slope, so a solve that circulates energy can enable regulation NEMDE would not. The
 real-data suite asserts that no battery charges and discharges in the same interval.
+
+Superseded in part by [0087](0087-agc-ramp-rate-from-mmsdm.md): the rate is now the larger of
+`RAMPUPRATE`/`RAMPDOWNRATE` and the side's regulation availability over the interval. The text below
+describes the earlier rate.
 
 **§6.1 joint ramping** now bounds a unit's net energy dispatch combined with its
 `FCASUnitRegulationTarget` against `InitialMW` plus or minus its AGC ramp (§6.4 bounds a

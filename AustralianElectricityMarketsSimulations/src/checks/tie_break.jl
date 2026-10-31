@@ -3,7 +3,7 @@
 function _tie_break_pairs(offers, i::Int, active, decremental::Bool)
     bands = _tie_break_stamp_bands(offers, i, active, decremental)
     pairs = Set{Tuple{String, Int, String, Int}}()
-    for group in _tie_groups(bands), x in 1:(length(group) - 1), y in (x + 1):length(group)
+    for group in tie_groups(bands), x in 1:(length(group) - 1), y in (x + 1):length(group)
         a, b = bands[group[x]], bands[group[y]]
         a.name == b.name && continue
         lo, hi = minmax((a.name, a.band), (b.name, b.band))

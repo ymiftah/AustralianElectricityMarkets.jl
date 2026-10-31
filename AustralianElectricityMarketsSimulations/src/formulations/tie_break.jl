@@ -1,53 +1,6 @@
-"""
-    TIE_BREAK_CVP_FACTOR
-
-Constraint violation penalty factor (1e-6) of AEMO's tie-break constraint (`TBSlack1` and
-`TBSlack2`, item 53 of the *Schedule of Constraint Violation Penalty Factors* v8.0). It is also
-the price tolerance, in `\$/MWh` after loss-factor adjustment, within which two energy bands are
-price-tied.
-"""
-const TIE_BREAK_CVP_FACTOR = 1.0e-6
-
-
-# Name of the series and meta of the parameter holding segment `band`'s tie-break scale.
-function _tie_break_series_name(band::Int, decremental::Bool)
-    return "tie_break_scale_$(band)" * side_suffix(offer_side(decremental))
-end
+# Meta of the parameter holding segment `band`'s tie-break scale.
 function _tie_break_meta(band::Int, decremental::Bool)
     return string(band) * side_suffix(offer_side(decremental))
-end
-
-
-"""
-    _tie_groups(bands) -> Vector{Vector{Int}}
-
-Price-tied groups of `bands` (each with `price`, `name` and `band`): runs of the bands sorted by
-price whose consecutive prices differ by at most [`TIE_BREAK_CVP_FACTOR`](@ref), kept when they
-hold bands of two or more units. Each group lists indices into `bands` in sorted order. Throws an
-`ArgumentError` for a run spanning more than [`TIE_BREAK_CVP_FACTOR`](@ref), which only
-transitive ties produce.
-
-# Returns
-`Vector{Vector{Int}}`.
-"""
-function _tie_groups(bands)
-    order = sort!(collect(eachindex(bands)); by = i -> (bands[i].price, bands[i].name, bands[i].band))
-    groups = Vector{Int}[]
-    start = 1
-    for k in eachindex(order)
-        (k == length(order) || bands[order[k + 1]].price - bands[order[k]].price > TIE_BREAK_CVP_FACTOR) || continue
-        group = order[start:k]
-        start = k + 1
-        lo, hi = bands[first(group)], bands[last(group)]
-        hi.price - lo.price > TIE_BREAK_CVP_FACTOR && throw(
-            ArgumentError(
-                "tie-break: the prices of $(lo.name) band $(lo.band) ($(lo.price)) and $(hi.name) band $(hi.band) " *
-                    "($(hi.price)) are tied only through bands between them; transitive ties are not supported.",
-            ),
-        )
-        length(unique(bands[i].name for i in group)) > 1 && push!(groups, group)
-    end
-    return groups
 end
 
 
@@ -67,7 +20,7 @@ end
     _tie_break_bands(container, sys) -> (groups, active)
 
 The bands of every PSI market-bid block variable in `container`, grouped by `(decremental, region,
-t)`, and the [`_tie_break_active_bands`](@ref) they were filtered on. Segments PSI pads beyond a
+t)`, and the `_tie_break_active_bands` they were filtered on. Segments PSI pads beyond a
 unit's offer curve and segments empty throughout the offer series are left out. A unit absent from
 the offer series, a fixed curve in a direction where no unit has a time-varying one, keeps all its
 bands.
@@ -103,26 +56,31 @@ end
 
 
 """
-    _add_tie_break_parameter!(container, T, sys, decremental, band)
+    _add_tie_break_parameter!(container, devices_template, T, sys, decremental, band)
 
 Adds the [`TieBreakScaleParameter`](@ref) of segment `band` keyed `(T, meta)`, unless it exists:
 one row per available `T` carrying the segment's `"tie_break_scale_<band>[_decremental]"` forecast,
-the set PowerSimulations' time-series parameter update visits ([`_add_series_parameter!`](@ref)).
+with the device model of `T` from `devices_template`. Devices excluded by its `"filter_function"` get no row.
 
 # Returns
 `nothing`.
 """
 function _add_tie_break_parameter!(
-        container::PSI.OptimizationContainer, ::Type{T}, sys::PSY.System, decremental::Bool, band::Int,
+        container::PSI.OptimizationContainer, devices_template::Dict{Symbol, PSI.DeviceModel},
+        ::Type{T}, sys::PSY.System, decremental::Bool, band::Int,
     ) where {T <: PSY.Component}
     meta = _tie_break_meta(band, decremental)
     PSI.has_container_key(container, TieBreakScaleParameter, T, meta) && return
-    ts_name = _tie_break_series_name(band, decremental)
+    ts_name = tie_break_series_name(band, decremental)
     ts_type = PSI.get_default_time_series_type(container)
-    devices = [d for d in PSY.get_available_components(T, sys) if PSY.has_time_series(d, ts_type, ts_name)]
-    _add_series_parameter!(container, TieBreakScaleParameter(), T, devices, ts_name, meta)
+    model = devices_template[Symbol(IS.strip_module_name(T))]
+    devices = T[d for d in PSI.get_available_components(model, sys) if PSY.has_time_series(d, ts_type, ts_name)]
+    isempty(devices) && return
+    PSI.add_parameters!(container, TieBreakScaleParameter, devices, model; meta = meta, time_series_name = ts_name)
     return
 end
+
+PSI.get_multiplier_value(::TieBreakScaleParameter, ::PSY.Component, ::PSI.AbstractDeviceFormulation) = 1.0
 
 
 # Whether `device` is left out of the build by the `"filter_function"` of its device model.
@@ -145,9 +103,9 @@ function _check_tie_break_series(
     modeled = Set{Tuple{DataType, String}}()
     for ((decremental, _, _), bands) in groups
         foreach(b -> push!(modeled, (b.type, b.name)), bands)
-        for group in _tie_groups(bands), i in group
+        for group in tie_groups(bands), i in group
             b = bands[i]
-            PSY.has_time_series(PSY.get_component(b.type, sys, b.name), ts_type, _tie_break_series_name(b.band, decremental)) &&
+            PSY.has_time_series(PSY.get_component(b.type, sys, b.name), ts_type, tie_break_series_name(b.band, decremental)) &&
                 continue
             push!(haskey(active, (decremental, b.name)) ? missing_series : fixed_only, b.name)
         end
@@ -242,7 +200,7 @@ are within [`TIE_BREAK_CVP_FACTOR`](@ref) of one another. `x` is a band's cleare
 slacks, in system-base per-unit MW, are priced at [`TIE_BREAK_CVP_FACTOR`](@ref) `\$/MWh`. FCAS
 bands are not tied. Groups are read at build, so a recurrent build requires the same groups at
 every step ([`check_tie_break_pairs`](@ref)). Containers are keyed by [`EnergyTieBreak`](@ref) with
-the service name as meta and are not added when no band is tied. Throws an `ArgumentError` unless [`set_tie_break_scales!`](@ref) covered every
+the service name as meta and are not added when no band is tied. Throws an `ArgumentError` unless [`AustralianElectricityMarkets.set_tie_break_scales!`](@ref) covered every
 tied band and every contributor carrying a scale is modelled or excluded by its device model's
 `"filter_function"`.
 
@@ -269,8 +227,8 @@ function PSI.construct_service!(
         bands = groups[(decremental, region, t)]
         label = _tie_break_label(region, decremental)
         pair = 0
-        for group in _tie_groups(bands)
-            foreach(i -> _add_tie_break_parameter!(container, bands[i].type, sys, decremental, bands[i].band), group)
+        for group in tie_groups(bands)
+            foreach(i -> _add_tie_break_parameter!(container, devices_template, bands[i].type, sys, decremental, bands[i].band), group)
             for i in 1:(length(group) - 1), j in (i + 1):length(group)
                 a, b = bands[group[i]], bands[group[j]]
                 a.name == b.name && continue

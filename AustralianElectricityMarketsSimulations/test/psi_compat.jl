@@ -25,12 +25,12 @@ const AEMS = AustralianElectricityMarketsSimulations
     @test occursin("AreaBalancePowerModel", string(m2.sig))
 end
 
-@testset "the area-balance slack objective resolves to this package's override, AreaPTDF keeps PSI's" begin
+@testset "the area-balance slack objective is PSI's own, so a plain model keeps its default slack cost" begin
     m = which(
         PSI.objective_function!,
         Tuple{PSI.OptimizationContainer, PSY.System, PSI.NetworkModel{PSI.AreaBalancePowerModel}},
     )
-    @test m.module === AEMS
+    @test m.module === PSI
     m_ptdf = which(
         PSI.objective_function!,
         Tuple{PSI.OptimizationContainer, PSY.System, PSI.NetworkModel{PSI.AreaPTDFPowerModel}},
@@ -84,4 +84,47 @@ end
             @test PSI.JuMP.normalized_coefficient(bound, bands[name, k, 1]) == 1.0
         end
     end
+end
+
+@testset "energy cost guards: service-only costs add nothing, one-sided energy offers throw" begin
+    template_for(sys) = begin
+        template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+        set_nem_dispatch_models!(template, sys; tie_breaks = false)
+        PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+        return template
+    end
+    service_only() = PSY.MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0)
+    toy(; loads = Pair{String, Any}[]) = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0)],
+        50.0;
+        batteries = [TOY_BATTERY => toy_battery(50.0, 10.0, 50.0, 1.0; initial = 0.0, ramp_up = 100.0)],
+        loads = loads,
+    )
+
+    # (a) A battery with no energy curves builds, and its discharge carries no energy cost.
+    sys = toy()
+    battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
+    PSY.set_operation_cost!(battery, service_only())
+    model = toy_model(sys; template = template_for(sys))
+    status, log = _toy_build_log(model)
+    @test status == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    out = PSI.get_variable(container, PSI.ActivePowerOutVariable(), PSY.EnergyReservoirStorage)
+    @test PSI.JuMP.coefficient(PSI.JuMP.objective_function(PSI.get_jump_model(container)), out[TOY_BATTERY, first(axes(out, 2))]) == 0.0
+
+    # (b) A battery with a GEN curve and no LOAD curve fails the build instead of charging for free.
+    sys = toy()
+    battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
+    gen_curve = PSY.CostCurve(PSY.PiecewiseIncrementalCurve(0.0, [0.0, 50.0], [10.0]))
+    PSY.set_operation_cost!(battery, PSY.MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0, incremental_offer_curves = gen_curve))
+    status, log = _toy_build_log(toy_model(sys; template = template_for(sys)))
+    @test status == PSI.ModelBuildStatus.FAILED
+    @test occursin("$TOY_BATTERY: the MarketBidCost has energy offers on the other side but no LOAD offer curve", log)
+
+    # (c) A scheduled load with no energy curves and a service-only cost builds.
+    sys = toy(; loads = [TOY_LOAD_SERVICE_ONLY => toy_load(50.0, 30.0; initial = 0.0, ramp_up = 100.0)])
+    load = PSY.get_component(PSY.InterruptiblePowerLoad, sys, TOY_LOAD_SERVICE_ONLY)
+    PSY.set_operation_cost!(load, service_only())
+    status, _ = _toy_build_log(toy_model(sys; template = template_for(sys)))
+    @test status == PSI.ModelBuildStatus.BUILT
 end

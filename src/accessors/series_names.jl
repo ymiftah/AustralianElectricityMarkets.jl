@@ -77,7 +77,7 @@ Name of the per-device FCAS time series `"<prefix>_<service>"`, suffixed by
 [`side_suffix`](@ref) for an offer `side` (an `OfferSide`, or `decremental::Bool`).
 
 # Arguments
-- `prefix`: the series kind, such as `"fcas_trapezium"`, `"fcas_curve"` or `"fcas_agc_ramp_rate"`.
+- `prefix`: the series kind, such as `"fcas_trapezium"` or `"fcas_agc_ramp_rate"`.
 - `service`: the FCAS [`BidType`](@ref).
 - `side`: the offer side; omitted for a series shared by both sides.
 

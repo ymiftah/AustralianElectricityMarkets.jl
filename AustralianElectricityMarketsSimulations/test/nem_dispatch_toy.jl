@@ -1,10 +1,3 @@
-# Builds `model` and returns its status with the text of the build log, which records any error.
-function _toy_build_log(model)
-    dir = mktempdir()
-    status = PSI.build!(model; output_dir = dir)
-    return status, join((read(joinpath(dir, f), String) for f in readdir(dir)), "\n")
-end
-
 @testset "merit order: the cheaper unit is filled first" begin
     sys = nem_toy_system(
         [
@@ -167,7 +160,7 @@ end
     @test out.battery_out_mw[TOY_BATTERY] ≈ 15.0 atol = TOY_TOLERANCE
     @test out.battery_in_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
     @test out.dispatch_mw[TOY_CHEAP] ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ (15.0 * 5.0 + 5.0 * ENERGY_MAX_AVAIL_CVP_FACTOR * AEMS._financial_year_mpc(TOY_START)) * interval_hours(DISPATCH_INTERVAL) atol = 1.0e-4
+    @test out.objective ≈ (15.0 * 5.0 + 5.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * AustralianElectricityMarkets._financial_year_mpc(TOY_START)) * interval_hours(DISPATCH_INTERVAL) atol = 1.0e-4
 end
 
 @testset "a net ramp-up ceiling can violate load availability at its price" begin
@@ -188,7 +181,7 @@ end
     @test out.battery_in_mw[TOY_BATTERY] ≈ 15.0 atol = TOY_TOLERANCE
     @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
     @test out.dispatch_mw[TOY_CHEAP] ≈ 15.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ (15.0 * 20.0 - 15.0 * 1000.0 + 5.0 * ENERGY_MAX_AVAIL_CVP_FACTOR * AEMS._financial_year_mpc(TOY_START)) * interval_hours(DISPATCH_INTERVAL) atol = 1.0e-4
+    @test out.objective ≈ (15.0 * 20.0 - 15.0 * 1000.0 + 5.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * AustralianElectricityMarkets._financial_year_mpc(TOY_START)) * interval_hours(DISPATCH_INTERVAL) atol = 1.0e-4
 end
 
 @testset "a per-direction availability binding" begin
@@ -307,12 +300,12 @@ end
         0.0,
     )
     out = solve_toy(sys)
-    mpc = AustralianElectricityMarketsSimulations._financial_year_mpc(TOY_START)
+    mpc = AustralianElectricityMarkets._financial_year_mpc(TOY_START)
 
     @test out.dispatch_mw[TOY_CHEAP] ≈ 0.0 atol = TOY_TOLERANCE
     @test out.ramp_slack_mw.up ≈ 1.0 atol = TOY_TOLERANCE
     @test out.ramp_slack_mw.down ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ UNIT_RAMP_CVP_FACTOR * mpc * interval_hours(DISPATCH_INTERVAL) rtol = 1.0e-8
+    @test out.objective ≈ AustralianElectricityMarkets.UNIT_RAMP_CVP_FACTOR * mpc * interval_hours(DISPATCH_INTERVAL) rtol = 1.0e-8
 end
 
 @testset "a scheduled load adds to the balance and clears when its bid is above the price" begin
@@ -405,24 +398,24 @@ end
         end,
     )
     out = solve_toy(sys)
-    mpc = AustralianElectricityMarketsSimulations._financial_year_mpc(TOY_START)
+    mpc = AustralianElectricityMarkets._financial_year_mpc(TOY_START)
     input_variable = PSI.get_variable(out.container, PSI.ActivePowerInVariable(), PSY.EnergyReservoirStorage)
 
     @test out.battery_in_mw[TOY_BATTERY] ≈ 50.0 atol = TOY_TOLERANCE
     @test !PSI.JuMP.has_upper_bound(input_variable[TOY_BATTERY, 1])
     @test out.storage_ramp_slack_mw.up ≈ 0.0 atol = TOY_TOLERANCE
-    @test out.objective ≈ (50.0 * 20.0 + 10.0 * ENERGY_MAX_AVAIL_CVP_FACTOR * mpc) * interval_hours(DISPATCH_INTERVAL) rtol = 1.0e-8
+    @test out.objective ≈ (50.0 * 20.0 + 10.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * mpc) * interval_hours(DISPATCH_INTERVAL) rtol = 1.0e-8
 
     @testset "the storage ramp slack is priced at 1155 x MPC" begin
         slack = PSI.get_variable(out.container, UnitRampUpSlack(), PSY.EnergyReservoirStorage)[TOY_BATTERY, 1]
         coefficient = PSI.JuMP.objective_function(PSI.get_jump_model(out.container)).terms[slack]
         @test coefficient ≈
-            PSY.get_base_power(sys) * interval_cost_coefficient(UNIT_RAMP_CVP_FACTOR * mpc, TOY_RESOLUTION)
+            PSY.get_base_power(sys) * interval_cost_coefficient(AustralianElectricityMarkets.UNIT_RAMP_CVP_FACTOR * mpc, TOY_RESOLUTION)
     end
 end
 
 @testset "constraint_violations directions follow the relaxed row's sense" begin
-    direction = AustralianElectricityMarketsSimulations._violation_direction
+    direction = ReplayResults._violation_direction
     sys = nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 40.0, ramp_up = 100.0)],
         40.0;
@@ -432,6 +425,7 @@ end
         service = FCASService(; name, region = "1", bid_type = bid_type)
         PSY.add_service!(sys, service, [PSY.get_component(PSY.StaticInjection, sys, n) for n in (TOY_CHEAP, "PUMP")])
     end
+    flush_toy_fcas_curves!(sys)
     # Capacity rows: the sense follows the `_lower` suffix whatever the device.
     @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_upper", TOY_CHEAP, "up") == "up"
     @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_lower", TOY_CHEAP, "up") == "down"
@@ -446,7 +440,7 @@ end
 end
 
 @testset "penalty ordering: a lower CVP row breaks before a higher one" begin
-    mpc = AustralianElectricityMarketsSimulations._financial_year_mpc(TOY_START)
+    mpc = AustralianElectricityMarkets._financial_year_mpc(TOY_START)
 
     @testset "the area balance (150) breaks before the unit ramp (1155)" begin
         # A 100 MW load against a unit that can climb 5 MW from 0: the 95 MW shortfall is cheaper
@@ -456,7 +450,7 @@ end
             100.0,
         )
         out = solve_toy(sys)
-        violations = AustralianElectricityMarketsSimulations._constraint_violations(out.results, sys)
+        violations = ReplayResults._constraint_violations(out.results, sys)
 
         @test out.dispatch_mw[TOY_CHEAP] ≈ 5.0 atol = TOY_TOLERANCE
         @test out.ramp_slack_mw.up ≈ 0.0 atol = TOY_TOLERANCE
@@ -465,7 +459,7 @@ end
         @test violations.direction == ["up"]
         @test only(violations.MW) ≈ 95.0 atol = TOY_TOLERANCE
         @test out.objective ≈
-            (5.0 * 20.0 + 95.0 * AREA_BALANCE_CVP_FACTOR * mpc) * interval_hours(DISPATCH_INTERVAL) rtol = 1.0e-8
+            (5.0 * 20.0 + 95.0 * AustralianElectricityMarkets.AREA_BALANCE_CVP_FACTOR * mpc) * interval_hours(DISPATCH_INTERVAL) rtol = 1.0e-8
     end
 
     @testset "the unit ramp (1155) is reported when it is the only relaxation" begin
@@ -476,7 +470,7 @@ end
             0.0,
         )
         out = solve_toy(sys)
-        violations = AustralianElectricityMarketsSimulations._constraint_violations(out.results, sys)
+        violations = ReplayResults._constraint_violations(out.results, sys)
 
         @test violations.family == ["unit_ramp"]
         @test only(violations.MW) ≈ 1.0 atol = TOY_TOLERANCE
@@ -488,7 +482,7 @@ end
             40.0,
         )
         out = solve_toy(sys)
-        @test isempty(AustralianElectricityMarketsSimulations._constraint_violations(out.results, sys))
+        @test isempty(ReplayResults._constraint_violations(out.results, sys))
     end
 end
 
@@ -609,7 +603,7 @@ end
 @testset "tie groups" begin
     band(price, name, band = 1) = (; price, name, band)
     tol = TIE_BREAK_CVP_FACTOR
-    groups = AustralianElectricityMarketsSimulations._tie_groups
+    groups = AustralianElectricityMarkets.tie_groups
     @test groups([band(5.0, "a"), band(5.0, "b"), band(5.0, "c")]) == [[1, 2, 3]]
     # A run of one unit's bands is no group; zero-width bands are grouped like any other.
     @test groups([band(5.0, "a", 1), band(5.0, "a", 2), band(7.0, "b")]) == Vector{Int}[]
@@ -783,6 +777,36 @@ end
 
 include("tie_break_validation.jl")
 
+@testset "tie-break scale rows skip devices excluded by the device model's filter_function" begin
+    third = "Solitude"
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(168.0, [(168.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(46.0, [(46.0, 10.0), (10.0, 30.0)]; initial = 0.0, ramp_up = 100.0),
+            third => toy_unit(122.0, [(122.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        168.0,
+    )
+    # Park City ties with the other two units on band 1 but is filtered out of the model, so its row is left out.
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    set_nem_dispatch_models!(template, sys)
+    PSI.set_device_model!(
+        template,
+        PSI.DeviceModel(
+            PSY.ThermalStandard, NEMReplayDispatch;
+            attributes = Dict{String, Any}("filter_function" => d -> PSY.get_name(d) != TOY_EXPENSIVE),
+        ),
+    )
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    model = toy_model(sys; template)
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    key = PSI.ParameterKey(TieBreakScaleParameter, PSY.ThermalStandard, AEMS._tie_break_meta(1, false))
+    # Rows are keyed by the time-series UUID of each device's scale series.
+    ts_uuid(n) = string(PSI.IS.get_time_series_uuid(PSY.SingleTimeSeries, PSY.get_component(PSY.ThermalStandard, sys, n), "tie_break_scale_1"))
+    @test Set(axes(PSI.get_parameter_array(container, key), 1)) == Set(ts_uuid(n) for n in (TOY_CHEAP, third))
+end
+
 @testset "a template without the tie-break service model has no tie-break rows" begin
     sys = nem_toy_system(
         [
@@ -903,7 +927,7 @@ end
     @test occursin("requests duals TieBreakConstraint, which it does not register", log)
 end
 
-@testset "Market Price Cap penalties are re-priced on a non-area-balance network model" begin
+@testset "Market Price Cap penalties are priced at build on a non-area-balance network model" begin
     sys = nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0)], 50.0)
     template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaPTDFPowerModel; use_slacks = false))
     set_nem_dispatch_models!(template, sys)
@@ -911,11 +935,18 @@ end
     model = toy_model(sys; template)
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    @test haskey(
-        PSI.get_parameters(container),
-        PSI.ParameterKey(AEMS.MarketPriceCapPenaltyParameter, PSY.ThermalStandard, "UnitRampUpSlack"),
+    @test !PSI.has_container_key(container, PSI.SystemBalanceSlackUp, PSY.Area)
+    # Each unit ramp slack's price: base power x interval coefficient of its CVP factor x the build-time cap.
+    # The JuMP objective is read because building folds the invariant terms into the variant expression.
+    expected = PSI.get_base_power(container) * AEMS.interval_cost_coefficient(
+        AustralianElectricityMarkets.UNIT_RAMP_CVP_FACTOR * AEMS._container_market_price_cap(container, TOY_START),
+        PSI.get_resolution(container),
     )
-    @test !haskey(PSI.get_parameters(container), PSI.ParameterKey(AEMS.MarketPriceCapPenaltyParameter, PSY.Area, "SystemBalanceSlackUp"))
+    objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
+    slack = PSI.get_variable(container, AEMS.UnitRampUpSlack(), PSY.ThermalStandard)
+    for t in axes(slack)[2]
+        @test PSI.JuMP.coefficient(objective, slack[TOY_CHEAP, t]) ≈ expected
+    end
 end
 
 @testset "typed storage fixed-loading rows preserve net injection and invocation" begin

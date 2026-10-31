@@ -22,7 +22,7 @@ _fixed_load_devices(devices) = [d for d in devices if PSY.has_time_series(d, PSY
 
 Adds the fixed-loading parameters ([`FixedLoadTimeSeriesParameter`](@ref),
 [`FixedLoadInvokedTimeSeriesParameter`](@ref)) and the surplus and deficit slacks for the
-`devices` carrying a `"fixed_load"` series ([`set_nem_fixed_loads!`](@ref)).
+`devices` carrying a `"fixed_load"` series (built by [`nem_system`](@ref)).
 
 # Returns
 `nothing`.
@@ -86,7 +86,7 @@ function PSI.add_constraints!(
 end
 
 
-"Prices the fixed-loading slacks of `devices` at [`FIXED_LOADING_CVP_FACTOR`](@ref) times the Market Price Cap."
+"Prices the fixed-loading slacks of `devices` at [`FIXED_LOADING_CVP_FACTOR`](@ref) times the Market Price Cap of the build's initial interval."
 function _add_fixed_load_costs!(container::PSI.OptimizationContainer, devices, ::Type{T}) where {T}
     names = PSY.get_name.(_fixed_load_devices(devices))
     isempty(names) && return

@@ -7,7 +7,7 @@ function _mnsp_limit_case(; forward = (10.0, [(5.0, 10.0)]), reverse = (100.0, [
 end
 
 function _solve_mnsp_limit_case(sys; target = nothing)
-    model = _decision_model(_loss_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_loss_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
     if !isnothing(target)
@@ -20,7 +20,7 @@ function _solve_mnsp_limit_case(sys; target = nothing)
     @test status == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     status == PSI.RunStatus.SUCCESSFULLY_FINALIZED || return nothing
     results = PSI.OptimizationProblemResults(model)
-    violations = filter(row -> startswith(row.family, "mnsp_"), AEMS._constraint_violations(results, sys))
+    violations = filter(row -> startswith(row.family, "mnsp_"), ReplayResults._constraint_violations(results, sys))
     return (; model, results, violations)
 end
 

@@ -132,8 +132,9 @@ struct MNSPReverseMaxAvailParameter <: MNSPMaxAvailParameter end
 """
     MNSPBandPriceParameter
 
-Objective-function parameter pricing an MNSP link's [`MNSPLinkBandVariable`](@ref)s: its value is
-each band's offer price in `\$/MWh` per interval (`0.0` for a band not offered) and its multiplier
-the system base power times the interval length in hours. Meta `"forward"` or `"reverse"`.
+Time-series cost parameter pricing an MNSP link's [`MNSPLinkBandVariable`](@ref)s: its value is
+each band's offer price in `\$/MWh` per interval, read from the link's `"mnsp_<direction>_offer"`
+series (`0.0` for a band not offered). Each band's cost target scales the price by the system base
+power and the interval length in hours. Meta `"forward"` or `"reverse"`.
 """
-struct MNSPBandPriceParameter <: PSI.ObjectiveFunctionParameter end
+struct MNSPBandPriceParameter <: PSI.TimeSeriesCostParameter end

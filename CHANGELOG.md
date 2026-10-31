@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The AGC ramp rate that caps regulation and joint ramping is the larger of `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE` and the regulation availability spread over the interval, instead of the bid-capped ramp rate alone. Regulation caps now match NEMDE's; joint ramping can be tighter than NEMDE's, because the telemetered rate is not published.
+
+- Replays build every unit registered at any point of the trading day for the whole chunk and pad it to zero outside its registration, so units registered after midnight (NESBESS1, BRDDBES1, DRXNSS01 and FCAS-only units with offers from 00:05) no longer fail the build.
+
+- A fast-start unit's fixed loading is attached at every interval outside DISPATCHMODE 1 and 2 instead of being dropped for the whole trading day; its `$<DUID>` constraint row is never built as a generic constraint.
+
+- Loading the simulations package no longer changes the balance-slack price of other area-balance models; the replay passes its Market Price Cap penalty through the network model's slack cost.
+
+- A battery or scheduled load with an energy offer on one side only (a GEN curve without a LOAD curve, or the reverse) now
+  fails the build instead of pricing the missing side at zero. Service-only bids still add no energy cost.
+
+- Tie-break scale parameters skip devices excluded by their device model's `filter_function`, so an excluded unit gets no scale row.
+
+- FCAS service bids are stored in MW and converted to per-unit of the system base on read, so
+  the offer values seen by the model are unchanged. Storing a service bid on a device without a
+  `MarketBidCost` now throws an `ArgumentError` instead of silently skipping the device.
+
+- Skip the effective FCAS offers of unavailable devices that carry no stored offer curve, so a
+  NEMDE replication whose unpriced units are unavailable no longer fails in `set_fcas_effective_offers!`.
+
+- Temporarily pin InfrastructureSystems 3.6.3 to a fork revision that limits
+  forecast-cache sizing reads to one window instead of all remaining windows.
+
+- Pin PowerSimulations to the fork rebased on upstream 0.38.5, and pin PowerSystems
+  5.12.4 to its fork revision in every workspace project that depends on it.
+
+- Pin the InfrastructureSystems, PowerSystems and PowerSimulations forks to revisions that size
+  cache rows by their deep footprint, add decremental service bids, read time-varying offer costs
+  through the model cache, and add meta-keyed and cost time-series parameters.
+
+- Require HDF5 0.17.5 with the upstream datatype-handle leak fix; temporarily pin
+  the official release-branch revision until that version is tagged. This prevents
+  growing native file-close overhead across repeated replay system builds.
+
 - Replay table requirements include `DISPATCHINTERCONNECTORRES` for MNSP metered-flow
   ramping, including when diagnostic interval flow limits are disabled.
 
@@ -96,7 +130,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `NEMInterconnectorLoss` fills loss segments contiguously through binary fill indicators, so the
   solved loss follows the loss curve at negative or zero weighted prices instead of burning energy
   on steeper segments. Multi-segment interconnectors make the problem a MILP; duals are read from
-  the LP with the indicators fixed. `replicate_interval` defaults to HiGHS with zero MIP gaps and
+  the LP with the indicators fixed. `replicate_interval` defaults to HiGHS with a 1e-8 relative and 1e-10 absolute MIP gap and
   raises on non-finite regional prices.
 - NEMWEB timestamps with a millisecond fraction (`2026/05/05 15:06:01.000`) parse instead of
   becoming `NULL`.
@@ -184,6 +218,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`get_generators_dataframe` swapped `MAXRATEOFCHANGEUP`/`MAXRATEOFCHANGEDOWN`**: `DUDETAIL`'s ramp-up rate fed `:max_ramp_down` and its ramp-down rate fed `:max_ramp_up`, so any unit with asymmetric registered ramp rates got `ThermalStandard`/`HydroDispatch.ramp_limits` crossed; the mock hive's equal up/down rates hid it. Mapping is now direct, and one mock `DUDETAIL` unit carries distinct up/down rates to catch a regression.
 
 ### Added
+
+- Interconnector loss-gap diagnostic in `scripts/interconnector_loss_gaps.jl`: `loss_gap_table` tabulates each saved replay interconnector's solved loss against the loss curve at its solved flow, with the weighted marginal price of loss.
+- `AustralianElectricityMarketsSimulations` precompiles a two-interval replay of the mock NEM cache, so a fresh process builds and steps a replay without first-call compilation (a cold 12-interval replay drops from about 490 s to about 100 s).
+- The replay batch runner accepts `--time-series-in-memory true|false` (default `false`), recorded in `run.toml` and each day's `provenance.toml`, to hold replication time series in memory.
+
+- A standalone Python report script for saved dispatch replays, including runtime
+  distributions, NEMDE error percentiles by unit/region/service/interconnector,
+  memory, partial-run coverage and overlap-aware pooled comparisons.
 
 - `NEMDEConfiguration` builds fully populated replay systems through AEM's `nem_system`.
   AEMSim's `prepare_replication!`, `replication_simulation` and `replication_results` consume built
@@ -507,8 +549,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`read_uigf`**: a new reader for `DISPATCHLOAD.UIGF`, the per-unit Unconstrained Intermittent Generation Forecast: the weather ceiling AEMO's NEMDE actually applied to each semi-scheduled unit for each dispatch interval. Returns `SETTLEMENTDATE`, `DUID`, `UIGF` (MW). `UIGF` is `NULL` for scheduled units, so only semi-scheduled DUIDs appear. Supports the same `resolution` aggregation convention as `read_demand` and the same `intervention` run selection as the other dispatch readers, plus a single-interval `read_uigf(db, settlement_date::DateTime)` method that bounds the scan to one `SETTLEMENTDATE` — the dispatch-replication harness reads UIGF one interval at a time and now shares this reader instead of carrying its own copy of the query.
 - **`DISPATCH_INTERVAL_HOURS`/`interval_cost_coefficient`** (`AustralianElectricityMarketsSimulations`): documented the dispatch-interval-length constant and added `interval_cost_coefficient`, converting a `$/MWh` bid price into an objective coefficient for one dispatch interval.
 
+- AEMSim exports `replication_decision_model`, `check_replication_steps`, `check_single_financial_year`,
+  `check_replication_parts`, `never_invoked_constraints` (the `:never_invoked` exclusions of a replay) and
+  `AbstractMNSPSlack`. `replication_template` takes `initial_time` and `market_price_cap` keywords.
+
 ### Removed
 
+- Public names `set_nem_fixed_loads!`, `add_nem_constraints!`, `set_nem_dispatch_limits!`, `set_demand!`, `get_low_breakpoint`, `get_high_breakpoint`, `get_rhs`, `set_constraint_weight!`, `get_gencon_id`, `interconnector_loss_gaps` and `check_interconnector_loss_segments`; `nem_system` builds these inputs.
+- `ConstrainedNetworkConfiguration` was removed; build replay systems with `NEMDEConfiguration`.
 - The public `filter_buildable_generic_constraints` (`AustralianElectricityMarketsSimulations`).
   The replication path runs the same buildability check internally.
 - `NEMLookaheadDispatch` and `StorageInputDevicePower`, with the pre-dispatch FCAS timing (AGC
@@ -557,8 +605,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `formulation` keyword of `set_nem_dispatch_models!` and `nem_dispatch_participants`, which only
   accepted `NEMReplayDispatch`, and the `skip_uncovered` keyword of `set_nem_dispatch_models!`. A
   participant without its dispatch series now fails the build by name.
+- `replication_simulation`, `run_replication` and `REPLICATION_OPTIMIZER` are no longer exported from
+  `AustralianElectricityMarketsSimulations`. They live in `scripts/replay_simulation.jl` (module `ReplaySimulation`);
+  code that called them through `using AustralianElectricityMarketsSimulations` must include the script.
 
 ### Changed
+
+- The replay HiGHS optimizer turns off the root sub-MIP heuristics (RINS, RENS, root reduced-cost, feasibility jump), which cut slow-interval solve times about tenfold with identical solutions.
+
+- A settings-`ext` `"market_price_cap"` override no longer prices the area-balance slack. The balance slack
+  is priced at the cap of `replication_template` (its `market_price_cap`, or the cap dated by `initial_time`),
+  and `replication_decision_model` throws when its cap differs from the template's.
+- Errors of `check_replication_steps` and `check_single_financial_year` name the function that raises them.
+- The simulations precompile workload applies the runner's never-invoked constraint exclusion and tie-break
+  check, and reads back realized dispatch and balance results, so the first comparison in a fresh process
+  compiles less. It is skipped when the mock fixture is not in the installed package.
+- The replay simulation runner moved from AEMSim to `scripts/replay_simulation.jl` (module `ReplaySimulation`); AEMSim keeps the replication template, decision-model constructor and pre-flight checks.
+
+- NEMDE replay systems are built without the regional configuration's ISP operating costs; the regional configuration is unchanged.
+
+- Tie-break scale parameters are added through PowerSimulations' native `add_parameters!` with the
+  device model from the template, replacing AEMSim's private series-parameter helper.
+
+- Price FCAS offer bands and set the FCAS offer parameters through PowerSimulations' native time-series
+  parameters: the band prices are time-series cost targets, bit-identical to the former objective terms.
+
+- FCAS offer curves are stored as PowerSystems service bids on each device's `MarketBidCost`
+  (`fcas_offer_series_name`, `fcas_service`) instead of the `"fcas_curve_<BIDTYPE>"` series.
+
+- Pin PowerSystems and PowerSimulations forks that round-trip zero-valued bid costs and accept service-only MarketBidCosts.
+
+- Replay `interval_timings.csv` is read from PSI's native recorder events and optimizer
+  statistics after `execute!` instead of wrapping PSI methods. Schema 2 replaces the
+  `solve_impl` and `result_write` phases with `solve_and_write` and adds `schema_version`;
+  see `scripts/README.md` for the fields whose meaning changed or are now unavailable.
+
+- MNSP band prices use PowerSimulations' time-series cost parameters: each band's cost is a cost
+  target on `MNSPBandPriceParameter`, updated by PowerSimulations at each step, with the objective unchanged.
+
+- Generic-constraint slack costs use PowerSimulations' time-series cost parameters: each slack's cost
+  target scales the `"invoked"` series by the CVP factor and the Market Price Cap of the build's initial
+  interval; within one financial year the objective is unchanged.
+
+- Market Price Cap penalties are priced once at build in the invariant objective, at the cap of the
+  simulation's first interval; `MarketPriceCapPenaltyParameter` is removed.
+
+- Replay simulations whose first and last intervals fall in different financial years are refused by
+  the pre-flight check `check_single_financial_year`; split the range at 00:05 on 1 July.
+
+- Energy-offer bid caching and the time-series reader override now come from PowerSimulations and
+  InfrastructureSystems: AEMSim no longer overrides PSI's recurrent parameter update or
+  `get_time_series_values!`, so cache windows are bounded by the native cache sizing.
+
+- Energy tie-break input derivation and the `EnergyTieBreak` service now live in the root
+  package (`AustralianElectricityMarkets`), so a serialized `System` holding them loads without
+  `AustralianElectricityMarketsSimulations`. `AustralianElectricityMarketsSimulations` keeps the
+  tie-break PSI formulations and checks.
+
+- FCAS effective-offer input derivation (`set_fcas_effective_offers!`, `FCAS_BAND_COUNT`,
+  `FCAS_INACTIVE_LIMIT_MW`) now lives in the root package (`AustralianElectricityMarkets`),
+  so a `System` built with it no longer needs `AustralianElectricityMarketsSimulations`
+  to derive its FCAS series. `AustralianElectricityMarketsSimulations` keeps the FCAS PSI
+  formulations and checks.
+
+- NEM penalty factors (`*_CVP_FACTOR`, `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR`, `constraint_cvp_factor`)
+  and the `DISPATCH_INTERVAL` constant now live in the root package (`AustralianElectricityMarkets`),
+  so the market-rule constants load without `AustralianElectricityMarketsSimulations`.
+  `AustralianElectricityMarketsSimulations` keeps the penalty PSI formulations and re-exports
+  `DISPATCH_INTERVAL`.
+
+- The following names are exported from `AustralianElectricityMarkets` only, and
+  `AustralianElectricityMarketsSimulations` no longer exports the FCAS `*_CVP_FACTOR` constants:
+  `EnergyTieBreak`, `TIE_BREAK_SERVICE_NAME`, `TIE_BREAK_CVP_FACTOR`, `set_tie_break_scales!`,
+  `set_fcas_effective_offers!`, `FCAS_BAND_COUNT`, `FCAS_INACTIVE_LIMIT_MW`,
+  `MARKET_PRICE_CAP_BY_FINANCIAL_YEAR`, `constraint_cvp_factor`, the `*_CVP_FACTOR` constants, and the
+  helpers `fcas_effective_series_name`, `fcas_ramping_series_name`, `fcas_upper_regulation_service`,
+  `fcas_offer_sides`, `tie_break_series_name` and `tie_groups`.
+
+- Added a timed random-day replay runner with early MNSP and constraint-version checks,
+  one Julia worker per trading day, native interval timings and process memory sampling.
+  An admitted day finishes even after the overall admission deadline.
+
+- Recurrent objective updates reuse model-owned forecast caches and keyed service lookups.
+  Structured energy/FCAS bid caches retain at most 24 windows per series; FCAS price updates
+  reuse the service contributor map. Disk-backed reads preserve native scaling and cost conversion.
 
 - The down row of a NEM unit's `PSI.RampConstraint` uses PSI's `"dn"` meta instead of `"down"`.
 - `NEMConstraintLimit` scales its RHS parameter by the parameter multiplier.
@@ -574,11 +704,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `FCASMarket` adds its offer band variables in the argument stage and their rows in the model
   stage; `objective_function!` only prices them. The band-sum-to-capacity rows are registered as
   the new `FCASOfferBandConstraint`.
-- Each Market Price Cap penalty slack is priced through its own `MarketPriceCapPenaltyParameter`,
-  keyed by the slack's component type and named by its variable type, and re-priced per key at each
-  step. Fixed-rate penalties are invariant costs. The settings `ext` penalty record, the placeholder
-  parameter on `PSY.Area` and the private `_update_parameter_values!` override are gone. The
-  generic-constraint slack cost updates through the same per-key method.
 - Every override of, or call into, a private PowerSimulations internal lives in `psi_compat.jl`.
   The NEM energy-offer rows are built directly in the `_add_pwl_constraint!` override, which drops
   the extra `add_constraints!` method and the `_include_min_gen_power_in_constraint` and
@@ -607,9 +732,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `single_series` are public AEM API, used by AEMSim to read the systems AEM builds.
 - New `single_series(name, timestamps, values; kwargs...)`, `remove_single_series!` and
   `replace_single_series!` replace the hand-built and remove-then-add time series code in the setters.
-- New `run_replication(sys, steps; ...)` builds and executes a `replication_simulation` and returns its
-  results, skipped constraints and timings; `REPLICATION_OPTIMIZER` is the exported default optimizer.
-  The replay script uses both instead of its own copies.
+- New `run_replication(sys, steps; ...)` in `scripts/replay_simulation.jl` builds and executes a
+  `replication_simulation` and returns its results, skipped constraints and timings; `REPLICATION_OPTIMIZER`
+  is the default optimizer there.
 - CVP factors of the built-in Interconnector Zero (1160) and Energy Inflexible Offer (380) generic
   constraints move to AEMSim as `INTERCONNECTOR_ZERO_CVP_FACTOR` and `FIXED_LOADING_CVP_FACTOR`.
   AEM builds those constraints with weight 1.0, and AEMSim prices every generic constraint through
@@ -639,9 +764,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `read_invoked_constraints`, `read_interconnector_limits`, `read_published_interval`) share one
   query and throw an `ArgumentError` naming the `populate` call when their table is not cached.
 - Violation penalties (unit ramp, energy availability and UIGF, storage availability, total energy
-  offer bands, FCAS, interconnector flow, area balance and generic constraints) are re-priced at each
-  simulation step from that interval's Market Price Cap, so `replicate_range` no longer rejects a
-  chunk that crosses a Market Price Cap change.
+  offer bands, FCAS, interconnector flow, area balance and generic constraints) are priced at build
+  from the Market Price Cap of the simulation's initial interval. A range crossing 1 July is refused
+  by the pre-flight check, so split it at 00:05 on 1 July.
 
 - NEM energy dispatch can exceed total offered band MW through CVP1135 surplus/deficit
   variables, preserving submitted band prices, live widths and directional availability costs.
@@ -804,6 +929,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `get_version_no` — that return `nothing` when the key is absent, as it is for a hand-authored
   constraint.
 - **`add_nem_constraints!`'s `"rhs"`/`"invoked"` grid is now derived from `date_range` directly**, not `unique(invoked.SETTLEMENTDATE)` (whichever intervals *any* constraint happened to be invoked at). The old derivation silently shrank the grid the moment real data had an interval NEMDE genuinely dispatched through with nothing bound, producing a `GenericConstraint` series shorter than every other time series on the same `System` and tripping `PowerSystems.jl`'s cross-component horizon check the moment `ConstrainedNetworkConfiguration` was combined with a wide, real multi-interval `date_range`. The grid now drops `date_range`'s own last point to match `read_fcas_bids`/`set_demand!`'s half-open (`start <= x < stop`) convention.
+- `nem_system(db, NEMDEConfiguration(); ...)` attaches the effective FCAS offers and tie-break scales itself, so a NEMDE system is complete without further preparation.
+- `prepare_replication!` is replaced by `prepare_replay_forecasts!` in `AustralianElectricityMarkets`, which only transforms the single time series into one-interval forecast windows; it no longer derives FCAS offers or tie-break scales.
+- `replication_results` and `compute_fcas_prices` move out of `AustralianElectricityMarketsSimulations` into `ReplayResults` in `scripts/replay_results.jl`, along with the solved-table and constraint-violation helpers they use.
+- The replay default HiGHS relative MIP gap is 1e-8 (was 0), matching the batch runner; the absolute gap stays 1e-10.
 
 ## [0.1.3] - 2026-03-09
 

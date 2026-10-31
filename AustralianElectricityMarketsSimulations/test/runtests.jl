@@ -11,8 +11,19 @@ const AEMS = AustralianElectricityMarketsSimulations
 include(joinpath(@__DIR__, "..", "..", "test", "fixtures", "mock_data.jl"))
 include(joinpath(@__DIR__, "..", "..", "test", "integration", "pscb_fixture.jl"))
 include(joinpath(@__DIR__, "..", "..", "test", "integration", "pscb_nemweb_data.jl"))
+include(joinpath(@__DIR__, "..", "..", "test", "fixtures", "input_builders.jl"))
 include(joinpath(@__DIR__, "template_helpers.jl"))
 include(joinpath(@__DIR__, "toy_fixture.jl"))
+
+# Replay results are read by the repository script module, which the simulation tests call as `ReplayResults`.
+if !isdefined(@__MODULE__, :ReplayResults)
+    include(joinpath(@__DIR__, "..", "..", "scripts", "replay_results.jl"))
+end
+
+# The simulation runner, which the simulation tests call as `ReplaySimulation`.
+if !isdefined(@__MODULE__, :ReplaySimulation)
+    include(joinpath(@__DIR__, "..", "..", "scripts", "replay_simulation.jl"))
+end
 
 const AEM_TEST_HIVE_DIR = mktempdir()
 create_mock_data(AEM_TEST_HIVE_DIR)
@@ -28,7 +39,6 @@ write_mock_interconnector_results(AEM_TEST_REPLAY_HIVE_DIR)
 # only those, e.g. `julia --project=test test/runtests.jl fcas_market pipeline`.
 const TEST_GROUPS = [
     "time_basis" => ("Time basis", "time_basis.jl"),
-    "tie_break_service" => ("Energy tie-break service", "tie_break_service.jl"),
     "psi_compat" => ("PSI compat", "psi_compat.jl"),
     "nem_constraints" => ("NEM constraints", "nem_constraints.jl"),
     "nem_dispatch" => ("NEM dispatch formulation", "nem_dispatch.jl"),
@@ -42,6 +52,7 @@ const TEST_GROUPS = [
     "energy_offer_violations" => ("Elastic energy offer totals", "energy_offer_violations.jl"),
     "energy_limits" => ("Elastic energy limits", "energy_limits.jl"),
     "pipeline" => ("Replication pipeline", "pipeline.jl"),
+    "recurrent_objective_cache" => ("Recurrent objective forecast cache", "recurrent_objective_cache.jl"),
     "stock_simulation" => ("Stock simulation replay", "stock_simulation.jl"),
     "replay_scripts" => ("Repository replay workflow", "../../test/scripts/replay_workflow.jl"),
 ]

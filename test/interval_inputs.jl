@@ -73,7 +73,7 @@
         )
         @test from_to(nem_system(vdb, RegionalNetworkConfiguration())) == 300.0
         @test from_to(nem_system(vdb, RegionalNetworkConfiguration(); as_of = DateTime(2025, 3, 1))) == 500.0
-        constrained = nem_system(vdb, ConstrainedNetworkConfiguration(); date_range = date_range)
+        constrained, _ = AustralianElectricityMarkets.RegionModel._constrained_system(vdb; date_range = date_range)
         @test from_to(constrained) == 500.0
     end
 end

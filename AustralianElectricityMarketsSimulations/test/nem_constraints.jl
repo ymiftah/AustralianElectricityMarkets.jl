@@ -42,12 +42,12 @@ const NEM_CONSTRAINTS_GENCON_IDS =
 """
     _gc(sys, gencon_id) -> GenericConstraint
 
-The one [`GenericConstraint`](@ref) in `sys` whose [`get_gencon_id`](@ref) is `gencon_id`.
-`add_nem_constraints!` names components `GENCONID@EFFECTIVEDATE#VERSIONNO`, so bare `GENCONID`
+The one [`GenericConstraint`](@ref) in `sys` whose `ext["gencon_id"]` is `gencon_id`.
+`_add_nem_constraints!` names components `GENCONID@EFFECTIVEDATE#VERSIONNO`, so bare `GENCONID`
 values (this file's own fixture ids) aren't valid component names.
 """
 _gc(sys, gencon_id::AbstractString) =
-    only(gc for gc in get_components(GenericConstraint, sys) if get_gencon_id(gc) == gencon_id)
+    only(gc for gc in get_components(GenericConstraint, sys) if get(gc.ext, "gencon_id", nothing) == gencon_id)
 
 """
     _native_forecast_params(sys)
@@ -55,7 +55,7 @@ _gc(sys, gencon_id::AbstractString) =
 `augmented_pscb_system()`'s own baked-in forecast shape (read from its `DeterministicSingleTimeSeries`) - PSY requires every
 `Forecast`-derived time series in a `System` to share one `(initial_timestamp, resolution,
 interval, count, horizon)`, so a `GenericConstraint`'s `"rhs"`/`"invoked"` series (added by
-`add_nem_constraints!` on a 2025 NEMWEB grid) can't coexist with the fixture's own 2020-dated
+`_add_nem_constraints!` on a 2025 NEMWEB grid) can't coexist with the fixture's own 2020-dated
 `PowerLoad` demand data unless retimed to match exactly - see [`_retime_gc_series!`](@ref).
 """
 function _native_forecast_params(sys)
@@ -82,7 +82,7 @@ with one anchored to the fixture's own native forecast window (`params`, from
 [`_native_forecast_params`](@ref)) instead of NEMWEB's 2025 dates - the only way both can be
 fed into the same `DecisionModel`. `overrides_mw` maps a `GENCONID` to a replacement constant
 `"rhs"` value in natural MW (e.g. deliberately tightened below its unconstrained flow), converted
-to per-unit before storage; every other constraint keeps its `add_nem_constraints!`-assigned
+to per-unit before storage; every other constraint keeps its `_add_nem_constraints!`-assigned
 per-unit value. `invoked_overrides` maps a `GENCONID` to a full raw `"invoked"` vector (length
 `params.count + params.horizon / params.interval - 1`), letting a test exercise a genuinely
 mixed `0.0`/`1.0` series; every other constraint stays `fill(1.0, ...)`.
@@ -113,7 +113,7 @@ end
 """
     _remove_unused_pscb_constraints!(sys)
 
-Removes every `N_VERSIONED_LIMIT` [`GenericConstraint`](@ref) `add_nem_constraints!` builds
+Removes every `N_VERSIONED_LIMIT` [`GenericConstraint`](@ref) `_add_nem_constraints!` builds
 from the PSCB fixture. This file's own [`NEM_CONSTRAINTS_GENCON_IDS`](@ref) never retimes them
 (no test here exercises version switching), so left in place their raw NEMWEB-resolution
 `"rhs"`/`"invoked"` series would conflict with every other constraint's retimed series the
@@ -122,7 +122,7 @@ is even registered for [`GenericConstraint`](@ref).
 """
 function _remove_unused_pscb_constraints!(sys)
     for gc in collect(get_components(GenericConstraint, sys))
-        get_gencon_id(gc) == "N_VERSIONED_LIMIT" && remove_component!(sys, gc)
+        get(gc.ext, "gencon_id", nothing) == "N_VERSIONED_LIMIT" && remove_component!(sys, gc)
     end
     return
 end
@@ -131,7 +131,7 @@ end
     _prepared_system(overrides_mw = Dict{String, Float64}(), invoked_overrides = Dict{String, Vector{Float64}}())
 
 An `augmented_pscb_system()` with the thermal floor fixed, every PSCB fixture constraint this
-file uses added via [`add_nem_constraints!`](@ref) (`N_VERSIONED_LIMIT` removed - see
+file uses added via `_add_nem_constraints!` (`N_VERSIONED_LIMIT` removed - see
 [`_remove_unused_pscb_constraints!`](@ref)), and their `"rhs"`/`"invoked"` series retimed to the
 fixture's own native forecast window (optionally overriding specific constraints' RHS values
 and/or supplying a full mixed `"invoked"` series - see [`_retime_gc_series!`](@ref)).
@@ -142,7 +142,7 @@ function _prepared_system(
     )
     sys = augmented_pscb_system()
     _fix_thermal_floor!(sys)
-    add_nem_constraints!(sys, NEM_CONSTRAINTS_DB, NEM_CONSTRAINTS_DATE_RANGE)
+    build_constraints!(sys, NEM_CONSTRAINTS_DB, NEM_CONSTRAINTS_DATE_RANGE)
     _remove_unused_pscb_constraints!(sys)
     params = _native_forecast_params(sys)
     _retime_gc_series!(sys, params, overrides_mw, invoked_overrides)
@@ -152,9 +152,9 @@ end
 """
     _prune_unbuildable_constraints!(sys)
 
-Removes the [`GenericConstraint`](@ref)s that `_area_balance_template()`'s device models can never build
+Removes the [`GenericConstraint`](@ref)s that `_area_balance_template(sys)`'s device models can never build
 under [`LinearFactorLimit`](@ref): `F_R1_RAISE6SEC`/`F_R2_LOWERREG` carry non-ENERGY terms, and
-`N_HYDRO_LIMIT` touches a `HydroTurbine`, which `_area_balance_template()` doesn't model. Used by tests
+`N_HYDRO_LIMIT` touches a `HydroTurbine`, which `_area_balance_template(sys)` doesn't model. Used by tests
 that exercise the constraint actually binding, not the loud failure for an unbuildable one.
 """
 function _prune_unbuildable_constraints!(sys)
@@ -164,8 +164,8 @@ function _prune_unbuildable_constraints!(sys)
     return
 end
 
-function _nem_service_template(; use_slacks::Bool = false, market_price_cap::Union{Nothing, Float64} = nothing)
-    template = _area_balance_template()
+function _nem_service_template(sys; use_slacks::Bool = false, market_price_cap::Union{Nothing, Float64} = nothing, mpc = _HELPER_MPC)
+    template = _area_balance_template(sys; mpc = mpc)
     attributes = isnothing(market_price_cap) ? Dict{String, Any}() :
         Dict{String, Any}("market_price_cap" => market_price_cap)
     PSI.set_service_model!(
@@ -191,7 +191,7 @@ function _build_error(model)
     return nothing
 end
 
-@testset "add_nem_constraints! attaches them as Services with resolved contributing devices" begin
+@testset "constraint build attaches them as Services with resolved contributing devices" begin
     sys = _prepared_system()
     gc = _gc(sys, "N_IC1_LIMIT")
     devices = get_contributing_devices(sys, gc)
@@ -213,6 +213,7 @@ function _add_fcas_services!(sys)
         for (name, devices) in by_name
             region = get_name(get_area(get_bus(first(devices))))
             add_service!(sys, FCASService(; name = name, region = region, bid_type = bid_type), devices)
+            flush_toy_fcas_curves!(sys)
         end
     end
     return
@@ -227,7 +228,8 @@ end
         sys, FCASService(; name = "1_RAISE6SEC", region = "1", bid_type = BidType.RAISE6SEC),
         get_contributing_devices(sys, _gc(sys, "F_R1_RAISE6SEC")),
     )
-    model = _decision_model(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    flush_toy_fcas_curves!(sys)
+    model = _decision_model(_nem_service_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     err = _build_error(model)
     @test err isa ArgumentError
     msg = sprint(showerror, err)
@@ -240,7 +242,7 @@ end
     for id in ("F_R1_RAISE6SEC", "F_R2_LOWERREG", "N_IC1_LIMIT", "N_PARTIAL")
         remove_component!(sys, _gc(sys, id))
     end
-    model = _decision_model(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_nem_service_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     err = _build_error(model)
     @test err isa ArgumentError
     msg = sprint(showerror, err)
@@ -267,7 +269,7 @@ end
     # dual read-back would either throw (vacuous, dense container left `#undef`) or read a
     # stale key (sparse, if the cell were mistakenly populated).
     baseline_sys = _prepared_system()
-    baseline_template = _area_balance_template()
+    baseline_template = _area_balance_template(baseline_sys)
     baseline_model = _decision_model(baseline_template, baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(baseline_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(baseline_model)
@@ -291,7 +293,7 @@ end
             Dict("N_IC1_LIMIT" => tightened_rhs), Dict("N_IC1_LIMIT" => invoked_vec),
         )
         _prune_unbuildable_constraints!(sys)
-        template = _nem_service_template(; use_slacks = use_slacks)
+        template = _nem_service_template(sys; use_slacks = use_slacks)
         model = _decision_model(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
         PSI.solve!(model)
@@ -341,39 +343,16 @@ end
     invoked_vec = vcat([0.0], fill(1.0, n_raw - 1))
     sys = _prepared_system(Dict("N_IC1_LIMIT" => 100.0), Dict("N_IC1_LIMIT" => invoked_vec))
     _prune_unbuildable_constraints!(sys)
-    model = _decision_model(_nem_service_template(; use_slacks = true), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_nem_service_template(sys; use_slacks = true), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
     gc = _gc(sys, "N_IC1_LIMIT")
     name = PSY.get_name(gc)
     param = PSI.get_parameter(container, AEMS.GenericConstraintSlackCostParameter(), GenericConstraint, name)
-    values = PSI.get_parameter_array(param)
-    penalties = PSI.get_multiplier_array(param)
-    @test [values[name, t] for t in 1:2] == [0.0, 1.0]
-    @test penalties[name, 1] == penalties[name, 2] > 0.0
-
-    # A simulation step re-reads the mask for its own window and re-prices the slacks.
-    initial_time = PSI.get_initial_time(container)
-    values[name, 1] = 5.0
-    values[name, 2] = 5.0
-    PSI.reset_variant_terms(PSI.get_objective_expression(container))
-    service_model = only(
-        m for m in Base.values(PSI.get_service_models(PSI.get_template(model))) if PSI.get_service_name(m) == name
-    )
-    AEMS._price_gc_slacks!(container, gc, service_model, values, penalties, initial_time)
-    @test [values[name, t] for t in 1:2] == [0.0, 1.0]
-    # The rebuilt cost: no term at the non-invoked step, the penalty per cap times that step's Market Price Cap at the invoked one.
-    mpc = AEMS._container_market_price_cap(container, initial_time + PSI.get_resolution(container))
-    variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
-    for slack_type in (AEMS.GenericConstraintSlackUp, AEMS.GenericConstraintSlackDown)
-        PSI.has_container_key(container, slack_type, GenericConstraint, name) || continue
-        slack = PSI.get_variable(container, slack_type(), GenericConstraint, name)
-        @test PSI.JuMP.coefficient(variant, slack[name, 1]) == 0.0
-        @test PSI.JuMP.coefficient(variant, slack[name, 2]) ≈ penalties[name, 2] * mpc
-    end
+    @test PSI.get_parameter_column_refs(param, name)[1:2] == [0.0, 1.0]
 
     # A recurrent build masks non-invoked intervals with zero-cost slacks, so it needs use_slacks.
-    bare = _decision_model(_nem_service_template(; use_slacks = false), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    bare = _decision_model(_nem_service_template(sys; use_slacks = false), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(bare; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     bare_container = PSI.get_optimization_container(bare)
     bare_container.built_for_recurrent_solves = true
@@ -387,10 +366,55 @@ end
     @test occursin("use_slacks = true", err.msg)
 end
 
+@testset "generic-constraint slack costs equal invoked x weight x base x interval coefficient x MPC at build and after an update" begin
+    n_raw = let p = _native_forecast_params(augmented_pscb_system())
+        p.count + Int(p.horizon / p.interval) - 1
+    end
+    invoked_vec = vcat([0.0], fill(1.0, n_raw - 1))
+    sys = _prepared_system(Dict("N_IC1_LIMIT" => 100.0), Dict("N_IC1_LIMIT" => invoked_vec))
+    _prune_unbuildable_constraints!(sys)
+    model = _decision_model(_nem_service_template(sys; use_slacks = true, mpc = 20_300.0), sys; mpc = 20_300.0, optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    gc = _gc(sys, "N_IC1_LIMIT")
+    name = PSY.get_name(gc)
+    @test AustralianElectricityMarkets.constraint_cvp_factor(gc) == 1.0
+    @test PSI.get_base_power(container) == 100.0
+    @test PSI.get_resolution(container) == Hour(1)
+    key = PSI.ParameterKey(AEMS.GenericConstraintSlackCostParameter, GenericConstraint, name)
+    invoked = () -> PSI.get_parameter_column_refs(PSI.get_parameter(container, key), name)
+    @test invoked()[1:2] == [0.0, 1.0]
+
+    # Each slack's cost target: invoked x weight 1.0 x 100 MW base x 20,300 $/MWh x one hour.
+    function check_slack_costs()
+        variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
+        checked = 0
+        for slack_type in (AEMS.GenericConstraintSlackUp, AEMS.GenericConstraintSlackDown)
+            PSI.has_container_key(container, slack_type, GenericConstraint, name) || continue
+            slack = PSI.get_variable(container, slack_type(), GenericConstraint, name)
+            for t in 1:2
+                checked += 1
+                @test PSI.JuMP.coefficient(variant, slack[name, t]) ≈ invoked()[t] * 1.0 * 20_300.0 * 100.0
+            end
+        end
+        @test checked > 0
+    end
+    check_slack_costs()
+
+    # A simulation step from the second interval re-reads the invoked series for its window and re-applies the costs.
+    PSI.set_execution_count!(model, 1)
+    PSI.cost_function_unsynch(container)
+    PSI.reset_variant_terms(PSI.get_objective_expression(container))
+    PSI.update_container_parameter_values!(container, model, key, PSI.DatasetContainer{PSI.InMemoryDataset}())
+    PSI.set_execution_count!(model, 0)
+    @test invoked()[1:2] == [1.0, 1.0]
+    check_slack_costs()
+end
+
 @testset "Buildable generic constraints: the default throws one aggregated ArgumentError, and allow_partial_coverage returns the subset" begin
     sys = _prepared_system()
     _add_fcas_services!(sys)
-    template = _area_balance_template()
+    template = _area_balance_template(sys)
     err = _caught(() -> _buildable_gcs(sys, template))
     @test err isa ArgumentError
     msg = sprint(showerror, err)
@@ -417,10 +441,10 @@ end
 @testset "the buildable subset builds and solves under per-instance registration, where the aggregated registration throws; a left-out constraint is recorded" begin
     sys = _prepared_system()
     _add_fcas_services!(sys)
-    template = _area_balance_template()
+    template = _area_balance_template(sys)
     buildable = _buildable_gcs(sys, template; allow_partial_coverage = true)
 
-    aggregated_template = _area_balance_template()
+    aggregated_template = _area_balance_template(sys)
     PSI.set_service_model!(
         aggregated_template,
         PSI.ServiceModel(GenericConstraint, AEMS.LinearFactorLimit; duals = [AEMS.NEMConstraintLimit]),
@@ -430,7 +454,7 @@ end
     )
     @test _build_error(aggregated_model) isa ArgumentError
 
-    filtered_template = _area_balance_template()
+    filtered_template = _area_balance_template(sys)
     for gc in buildable
         name = PSY.get_name(gc)
         PSI.set_service_model!(
@@ -457,7 +481,7 @@ end
     left_out = _gc(sys, "N_PARTIAL")
     PSY.set_available!.(PSY.get_contributing_devices(sys, left_out), false)
     skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
-    left_out_template = _area_balance_template()
+    left_out_template = _area_balance_template(sys)
     left_out_buildable = _buildable_gcs(
         sys, left_out_template; allow_partial_coverage = true, skipped = skipped,
     )
@@ -498,36 +522,68 @@ end
 end
 
 @testset "Market Price Cap lookup covers only the published financial years" begin
-    @test AEMS._financial_year_mpc(DateTime(2025, 6, 30)) == 17_500.0
-    @test AEMS._financial_year_mpc(DateTime(2025, 7, 1)) == 17_500.0  # interval 23:55-00:00 on 30 June
-    @test AEMS._financial_year_mpc(DateTime(2025, 7, 1, 0, 5)) == 20_300.0
-    @test AEMS._financial_year_mpc(DateTime(2026, 6, 30, 23, 55)) == 20_300.0
-    @test AEMS._financial_year_mpc(DateTime(2026, 7, 1)) == 20_300.0
-    @test AEMS._financial_year_mpc(DateTime(2026, 7, 1, 0, 5)) == 23_200.0
-    @test AEMS._financial_year_mpc(DateTime(2027, 7, 1)) == 23_200.0
-    @test_throws r"No published Market Price Cap" AEMS._financial_year_mpc(DateTime(2024, 7, 1))
-    @test_throws r"No published Market Price Cap" AEMS._financial_year_mpc(DateTime(2027, 7, 1, 0, 5))
+    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2025, 6, 30)) == 17_500.0
+    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2025, 7, 1)) == 17_500.0  # interval 23:55-00:00 on 30 June
+    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2025, 7, 1, 0, 5)) == 20_300.0
+    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2026, 6, 30, 23, 55)) == 20_300.0
+    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2026, 7, 1)) == 20_300.0
+    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2026, 7, 1, 0, 5)) == 23_200.0
+    @test AustralianElectricityMarkets._financial_year_mpc(DateTime(2027, 7, 1)) == 23_200.0
+    @test_throws r"No published Market Price Cap" AustralianElectricityMarkets._financial_year_mpc(DateTime(2024, 7, 1))
+    @test_throws r"No published Market Price Cap" AustralianElectricityMarkets._financial_year_mpc(DateTime(2027, 7, 1, 0, 5))
 end
 
-@testset "area-balance slack Market Price Cap: unpublished year throws, settings entry overrides" begin
-    # _prepared_system() is dated 2020, outside MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.
-    pruned_system() = (sys = _prepared_system(); _prune_unbuildable_constraints!(sys); sys)
-    model = PSI.DecisionModel(_nem_service_template(), pruned_system(); optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    err = _build_error(model)
-    @test err isa ArgumentError
-    @test occursin("No published Market Price Cap", sprint(showerror, err))
+@testset "check_single_financial_year: a range within one financial year passes, one across 1 July is refused" begin
+    AEMS.check_single_financial_year(DateTime(2025, 6, 30, 23, 55):Minute(5):DateTime(2025, 7, 1))
+    @test_throws ArgumentError AEMS.check_single_financial_year(DateTime(2025, 7, 1):Minute(5):DateTime(2025, 7, 1, 0, 5))
+end
 
-    model = _decision_model(
-        _nem_service_template(), pruned_system(); mpc = 10_000.0, optimizer = HiGHS.Optimizer, horizon = Hour(2),
+@testset "area-balance network model: unpublished year throws, a supplied cap prices the slack" begin
+    # _prepared_system() is dated 2020, outside AustralianElectricityMarkets.MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.
+    sys = _prepared_system()
+    @test_throws r"No published Market Price Cap" AEMS._area_balance_network_model(sys, DateTime(2020, 1, 1))
+    network = AEMS._area_balance_network_model(sys, DateTime(2020, 1, 1); market_price_cap = 10_000.0)
+    expected = PSY.get_base_power(sys) * AustralianElectricityMarkets.AREA_BALANCE_CVP_FACTOR *
+        interval_hours(DISPATCH_INTERVAL) * 10_000.0
+    @test PSI.get_slack_cost(network) ≈ expected rtol = 1.0e-12
+    @test PSI.get_use_slacks(network)
+    # A plain model keeps PSI's default slack cost, whatever the financial year.
+    @test PSI.get_slack_cost(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true)) == PSI.BALANCE_SLACK_COST
+    @test_throws ArgumentError AEMS._area_balance_network_model(sys, DateTime(2020, 1, 1); market_price_cap = 0.0)
+end
+
+@testset "Market Price Cap penalties are invariant constants of the initial interval's cap, unchanged by a parameter update" begin
+    # 2026-01-06 falls in 2025-26, whose Market Price Cap is 20,300 $/MWh.
+    start = DateTime(2026, 1, 6)
+    sys = nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0)], 50.0; start = start)
+    template = PSI.ProblemTemplate(AEMS._area_balance_network_model(sys, start))
+    set_nem_dispatch_models!(template, sys)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    model = PSI.DecisionModel(
+        template, sys; optimizer = HiGHS.Optimizer, horizon = 2 * TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = start,
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    objective_terms = PSI.JuMP.objective_function(PSI.get_jump_model(container)).terms
-    expected = PSI.get_base_power(container) *
-        interval_cost_coefficient(AEMS.AREA_BALANCE_CVP_FACTOR * 10_000.0, PSI.get_resolution(container))
-    for var_type in (PSI.SystemBalanceSlackUp, PSI.SystemBalanceSlackDown)
-        slack = PSI.get_variable(container, var_type(), PSY.Area)
-        @test all(v -> objective_terms[v] ≈ expected, slack)
+    # 150 CVP x 20,300 $/MWh x 100 MW base x 5 minutes.
+    expected = 150.0 * 20_300.0 * 100.0 / 12
+    slacks = [PSI.get_variable(container, v(), PSY.Area) for v in (PSI.SystemBalanceSlackUp, PSI.SystemBalanceSlackDown)]
+    objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
+    for slack in slacks, name in axes(slack)[1], t in axes(slack)[2]
+        @test PSI.JuMP.coefficient(objective, slack[name, t]) ≈ expected
+    end
+
+    # A parameter update rebuilds the variant terms and leaves the priced constants in the invariant objective.
+    PSI.cost_function_unsynch(container)
+    PSI.reset_variant_terms(PSI.get_objective_expression(container))
+    input = PSI.DatasetContainer{PSI.InMemoryDataset}()
+    for key in collect(Base.keys(PSI.get_parameters(model)))
+        PSI.update_container_parameter_values!(container, model, key, input)
+    end
+    objective_function = PSI.get_objective_expression(container)
+    for slack in slacks, name in axes(slack)[1], t in axes(slack)[2]
+        @test PSI.JuMP.coefficient(PSI.get_invariant_terms(objective_function), slack[name, t]) ≈ expected
+        @test PSI.JuMP.coefficient(PSI.get_variant_terms(objective_function), slack[name, t]) == 0.0
     end
 end
 
@@ -536,7 +592,7 @@ end
     _prune_unbuildable_constraints!(sys)
     PSY.set_available!(PSY.get_component(PSY.AreaInterchange, sys, "IC1"), false)
     PSY.set_available!(PSY.get_component(PSY.ThermalStandard, sys, "Sundance"), false)
-    model = _decision_model(_nem_service_template(), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+    model = _decision_model(_nem_service_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test isnothing(_build_error(model))
 end
 
@@ -544,7 +600,7 @@ end
     _add_zero_flow_pair!(sys, params, interconnector)
 
 Attaches the two `<=` [`GenericConstraint`](@ref)s of an Interconnector Zero pair on `interconnector`
-(`-flow <= 0` and `flow <= 0`, right-hand side 0), the built-in shape `add_nem_constraints!` builds
+(`-flow <= 0` and `flow <= 0`, right-hand side 0), the built-in shape `_add_nem_constraints!` builds
 with no weight of its own. Added before [`_retime_gc_series!`](@ref).
 """
 function _add_zero_flow_pair!(sys, params, interconnector::AbstractString)
@@ -566,7 +622,7 @@ end
     # Unconstrained, IC1 carries a non-zero flow.
     baseline_sys = _prepared_system()
     baseline_model = _decision_model(
-        _area_balance_template(), baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
+        _area_balance_template(baseline_sys), baseline_sys; optimizer = HiGHS.Optimizer, horizon = Hour(2),
     )
     @test PSI.build!(baseline_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(baseline_model)
@@ -577,18 +633,18 @@ end
 
     sys = augmented_pscb_system()
     _fix_thermal_floor!(sys)
-    add_nem_constraints!(sys, NEM_CONSTRAINTS_DB, NEM_CONSTRAINTS_DATE_RANGE)
+    build_constraints!(sys, NEM_CONSTRAINTS_DB, NEM_CONSTRAINTS_DATE_RANGE)
     _remove_unused_pscb_constraints!(sys)
     params = _native_forecast_params(sys)
-    weight = INTERCONNECTOR_ZERO_CVP_FACTOR
+    weight = AustralianElectricityMarkets.INTERCONNECTOR_ZERO_CVP_FACTOR
     _add_zero_flow_pair!(sys, params, "IC1")
     _retime_gc_series!(sys, params, Dict{String, Float64}())
     _prune_unbuildable_constraints!(sys)
 
     test_mpc = 20_300.0
     model = _decision_model(
-        _nem_service_template(; use_slacks = true, market_price_cap = test_mpc), sys;
-        optimizer = HiGHS.Optimizer, horizon = Hour(2),
+        _nem_service_template(sys; use_slacks = true, market_price_cap = test_mpc, mpc = test_mpc), sys;
+        mpc = test_mpc, optimizer = HiGHS.Optimizer, horizon = Hour(2),
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     PSI.solve!(model)
@@ -610,16 +666,16 @@ end
     end
 end
 
-@testset "constraint_cvp_factor prices built-in constraints by limit type, others by their GENCONDATA weight" begin
+@testset "AustralianElectricityMarkets.constraint_cvp_factor prices built-in constraints by limit type, others by their GENCONDATA weight" begin
     built_in(limit_type) = GenericConstraint(;
         name = "B", sense = ConstraintSense.LE, rhs = 0.0, terms = ConstraintTerm[],
         ext = Dict{String, Any}("limit_type" => limit_type, "source" => "built-in"),
     )
-    @test constraint_cvp_factor(built_in("Interconnector Zero")) == INTERCONNECTOR_ZERO_CVP_FACTOR == 1160.0
-    @test_throws ArgumentError constraint_cvp_factor(built_in("Unknown"))
+    @test AustralianElectricityMarkets.constraint_cvp_factor(built_in("Interconnector Zero")) == AustralianElectricityMarkets.INTERCONNECTOR_ZERO_CVP_FACTOR == 1160.0
+    @test_throws ArgumentError AustralianElectricityMarkets.constraint_cvp_factor(built_in("Unknown"))
     published = GenericConstraint(;
         name = "P", sense = ConstraintSense.LE, rhs = 0.0, constraint_weight = 35.0, terms = ConstraintTerm[],
         ext = Dict{String, Any}("limit_type" => "Interconnector Zero", "source" => "AEMO"),
     )
-    @test constraint_cvp_factor(published) == 35.0
+    @test AustralianElectricityMarkets.constraint_cvp_factor(published) == 35.0
 end

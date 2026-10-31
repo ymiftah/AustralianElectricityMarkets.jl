@@ -153,7 +153,7 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     # 5. DUDETAILSUMMARY. CONNECTIONPOINTID groups BW01-04 under Bayswater's connection
     # point and ER01-02 under Eraring's - exercises the constraint-term reader's 1:many
     # connection-point -> DUID expansion. A 7th, PHANTOM1 row shares no other table (never
-    # becomes a System component) - exercises add_nem_constraints!'s unresolvable-term skip
+    # becomes a System component) - exercises _add_nem_constraints!'s unresolvable-term skip
     # path (see test/constraints/constraints.jl). SCHEDULE_TYPE marks BW03/BW04 as the
     # semi-scheduled units (see GENUNITS below).
     connection_points = ["CP_BAYSW", "CP_BAYSW", "CP_BAYSW", "CP_BAYSW", "CP_ERARING", "CP_ERARING"]
@@ -453,7 +453,7 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     # unresolvable-term constraint (N_PHANTOM_TEST, references DUDETAILSUMMARY's PHANTOM1
     # DUID, which is never built into a System component), and one partial-coverage
     # constraint (N_PARTIAL_COVERAGE, invoked in DISPATCHCONSTRAINT for only every other
-    # interval - exercises add_nem_constraints!'s rhs-padding/"invoked"-mask path, see
+    # interval - exercises _add_nem_constraints!'s rhs-padding/"invoked"-mask path, see
     # test/constraints/constraints.jl), and one constraint with a resolvable term (CP_BAYSW)
     # and an unresolvable one (CP_PHANTOM) - N_ONE_PHANTOM_TERM, built with the term dropped.
     gencon_ids = ["F_$(region)_$(bid_type)" for region in regions for bid_type in fcas_bid_types]
@@ -546,7 +546,7 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     # GENCONID_VERSIONNO pin the exact GENCONDATA version, matching test_date/1 above -
     # AEMO's own mechanism for exact-equality constraint-term joins (no date-window
     # heuristic). N_BAYSW_THERMAL and N_PHANTOM_TEST are invoked here too, so they're
-    # eligible for add_nem_constraints! despite not appearing in DISPATCH_FCAS_REQ.
+    # eligible for _add_nem_constraints! despite not appearing in DISPATCH_FCAS_REQ.
     # N_PARTIAL_COVERAGE is invoked for only every other interval - real AEMO constraints
     # invoked less than every dispatch interval within a date_range, unlike this mock's other
     # (fully-covered-by-construction) synthetic constraints.
@@ -694,15 +694,15 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     # a setter that pins a unit's ceiling to its nameplate is detectable.
     #
     # INITIALMW/RAMPUPRATE/RAMPDOWNRATE (the effective dispatch ramp rate and ramp base read by
-    # read_dispatch_limits/set_nem_dispatch_limits!) vary per interval and per DUID - a
+    # read_dispatch_limits/_set_nem_dispatch_limits!) vary per interval and per DUID - a
     # per-unit, per-interval offset keyed on each DUID's position in `duids` - so a test
     # asserting a per-interval, per-unit value is capable of failing.
     #
-    # AVAILABILITY (the dispatch envelope read_dispatch_limits/set_nem_dispatch_limits! writes
+    # AVAILABILITY (the dispatch envelope read_dispatch_limits/_set_nem_dispatch_limits! writes
     # into every device's "max_active_power" series) also varies per DUID and interval, and
     # stays strictly below the 100 MW REGISTEREDCAPACITY so the normalised fraction isn't
     # trivially 1.0. For BW03/BW04 it is deliberately kept off the UIGF profile above (a
-    # different formula entirely), so a test can prove set_nem_dispatch_limits! actually
+    # different formula entirely), so a test can prove _set_nem_dispatch_limits! actually
     # overwrites the UIGF-derived "max_active_power" series rather than coinciding with it.
     uigf_for(duid, i) = duid == "BW03" ? 40.0 + i : (duid == "BW04" ? 70.0 - i : 0.0)
     dl_duids = vcat(duids, ["PUMP1", "PUMP2", "WDR1", "ASLOAD1", "ASLOAD2"])  # the loads last, so no offset moves
@@ -712,9 +712,15 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     # small metered INITIALMW (as KEPBL1 does in real data), which the dispatch limits must pin to 0.
     nonscheduled = ("ASLOAD1", "ASLOAD2")
     initial_mw_for(duid, i) = duid == "BW01" && i == last(intervals) ? -30.0 : duid == "ASLOAD1" ? 0.1 : duid in nonscheduled ? 0.0 : 40.0 + duid_offset(duid) + (i % 10)
+    # BW04 (fast-start, T1 > 0) is in DISPATCHMODE 4 at 00:10 and 2 at 00:15, its fixed-load intervals.
+    dispatch_mode_for(duid, i) = duid == "BW04" && i == 2 ? 4 : duid == "BW04" && i == 3 ? 2 : 0
     ramp_up_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 4.0 + duid_offset(duid) + (i % 5)
     ramp_down_rate_for(duid, i) = duid in nonscheduled ? 0.0 : 3.0 + duid_offset(duid) + (i % 5)
     availability_for(duid, i) = duid in nonscheduled ? 0.0 : 90.0 - 3 * duid_offset(duid) + (i % 6)
+    # Regulation availability (MW) times 12 for a five-minute interval gives a rate that sits above the
+    # ramp rate for some unit-intervals and below it for others, so both branches of the AGC ramp rate are tested.
+    raise_availability_for(duid, i) = duid in nonscheduled ? 0.0 : 0.25 + 0.5 * (duid_offset(duid) % 3) + 0.25 * (i % 4)
+    lower_availability_for(duid, i) = duid in nonscheduled ? 0.0 : 0.25 + 0.5 * ((duid_offset(duid) + 1) % 3) + 0.25 * ((i + 1) % 4)
     # AEMO *FCAS Model in NEMDE* §4.1 telemetered AGC enablement limits - strictly inside the
     # BIDPEROFFER_D RAISEREG/LOWERREG trapezium's own [20.0, 100.0] enablement span (see
     # BIDPEROFFER_D above), so set_fcas_scaling_inputs! + scale_fcas_trapezium's shrinkage is
@@ -731,14 +737,15 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
             RUNNO = fill(1, m),
             INTERVENTION = fill(0, m),
             DUID = dl_duids,
+            DISPATCHMODE = [dispatch_mode_for(d, i) for d in dl_duids],
             INITIALMW = [initial_mw_for(d, i) for d in dl_duids],
             RAMPUPRATE = [ramp_up_rate_for(d, i) for d in dl_duids],
             RAMPDOWNRATE = [ramp_down_rate_for(d, i) for d in dl_duids],
             TOTALCLEARED = fill(50.0, m),
             AVAILABILITY = [availability_for(d, i) for d in dl_duids],
             AGCSTATUS = fill(1, m),
-            RAISEREGAVAILABILITY = fill(3.0, m),
-            LOWERREGAVAILABILITY = fill(3.0, m),
+            RAISEREGAVAILABILITY = [raise_availability_for(d, i) for d in dl_duids],
+            LOWERREGAVAILABILITY = [lower_availability_for(d, i) for d in dl_duids],
             RAISEREGENABLEMENTMIN = [raise_reg_enablement_min_for(d, i) for d in dl_duids],
             RAISEREGENABLEMENTMAX = [raise_reg_enablement_max_for(d, i) for d in dl_duids],
             LOWERREGENABLEMENTMIN = [lower_reg_enablement_min_for(d, i) for d in dl_duids],

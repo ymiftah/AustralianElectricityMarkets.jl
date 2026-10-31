@@ -119,7 +119,7 @@ struct FCASOfferBandConstraint <: PSI.ConstraintType end
     FCASOfferLimitParameter
 
 Time-series parameter of a device's effective FCAS offer limits for one market and side, read from
-its `"fcas_effective_<BIDTYPE>[_decremental]"` series ([`set_fcas_effective_offers!`](@ref)), per-unit
+its `"fcas_effective_<BIDTYPE>[_decremental]"` series ([`AustralianElectricityMarkets.set_fcas_effective_offers!`](@ref)), per-unit
 of the system base, with a field axis `"max_avail"`, `"enablement_min"`, `"enablement_max"`. Keyed by
 device type with meta `"<BIDTYPE>[_decremental]"`.
 """
@@ -162,7 +162,7 @@ struct FCASLowerSlopeParameter <: PSI.ConstraintCoefficientParameter end
     FCASRampingLimitParameter
 
 Time-series parameter of a device's regulation ramping limits for one regulation market, read from
-its `"fcas_ramping_limits_<BIDTYPE>"` series ([`set_fcas_effective_offers!`](@ref)), per-unit of the
+its `"fcas_ramping_limits_<BIDTYPE>"` series ([`AustralianElectricityMarkets.set_fcas_effective_offers!`](@ref)), per-unit of the
 system base, with a field axis `"joint_ramping"` ([`FCASJointRampingConstraint`](@ref) right-hand
 side) and `"bdu_ramping"` ([`FCASBDURampingConstraint`](@ref) right-hand side). Keyed by device type
 with meta `"<BIDTYPE>"`.
@@ -173,11 +173,13 @@ struct FCASRampingLimitParameter <: PSI.TimeSeriesParameter end
 """
     FCASBandPriceParameter
 
-Objective-function parameter pricing [`FCASOfferBandVariable`](@ref)s: its value is each band's
-offer price in `\$/MW` per hour (`0.0` for a band not offered) and its multiplier the system base
-power times the interval length in hours. Same meta as the band variables it prices.
+Time-series cost parameter pricing [`FCASOfferBandVariable`](@ref)s: its value is each band's offer
+price in `\$/MWh`, read from the offer's service series: the service name for the generation side and
+`"<service>_decremental"` for the load side (`0.0` for a band not offered). Each band's cost target scales the
+price by the system base power and the interval length in hours. Meta `"<group>_gen"` or `"<group>_load"`, one
+parameter per device type and side.
 """
-struct FCASBandPriceParameter <: PSI.ObjectiveFunctionParameter end
+struct FCASBandPriceParameter <: PSI.TimeSeriesCostParameter end
 
 
 """
@@ -219,7 +221,7 @@ struct FCASMaxAvailConstraint <: PSI.ConstraintType end
 
 Variable type for the elastic slack on an [`FCASMaxAvailConstraint`](@ref) row, built only when
 the owning `PSI.ServiceModel` has `use_slacks = true`. Priced at
-[`FCAS_MAXAVAIL_CVP_FACTOR`](@ref) times the Market Price Cap.
+`FCAS_MAXAVAIL_CVP_FACTOR` times the Market Price Cap.
 """
 struct FCASMaxAvailSlack <: PSI.VariableType end
 
@@ -229,7 +231,7 @@ struct FCASMaxAvailSlack <: PSI.VariableType end
 
 Variable type for the elastic slack on a [`FCASBDURampingConstraint`](@ref) row, built only when
 the owning `PSI.ServiceModel` has `use_slacks = true`. Priced at
-[`FCAS_BDU_RAMPING_CVP_FACTOR`](@ref) times the Market Price Cap.
+`FCAS_BDU_RAMPING_CVP_FACTOR` times the Market Price Cap.
 """
 struct FCASBDURampingSlack <: PSI.VariableType end
 
@@ -259,24 +261,12 @@ struct GenericConstraintSlackDown <: PSI.VariableType end
 """
     GenericConstraintSlackCostParameter
 
-Objective-function parameter pricing a [`GenericConstraint`](@ref)'s elastic slacks: its value is
-the constraint's `"invoked"` mask (`1.0`/`0.0`) per interval and its multiplier the violation
-penalty, `GENERICCONSTRAINTWEIGHT` times the Market Price Cap per MW of one interval, so a
-non-invoked interval's slack costs nothing.
+Time-series cost parameter pricing a [`GenericConstraint`](@ref)'s elastic slacks: its value is
+the constraint's `"invoked"` mask (`1.0`/`0.0`) per interval, read at each simulation step. Each
+slack's cost target scales the mask by the system base power, the interval coefficient of
+`GENERICCONSTRAINTWEIGHT` and the Market Price Cap, so a non-invoked interval's slack costs nothing.
 """
-struct GenericConstraintSlackCostParameter <: PSI.ObjectiveFunctionParameter end
-
-
-"""
-    MarketPriceCapPenaltyParameter
-
-Objective-function parameter pricing one penalty slack container at its CVP factor times the
-Market Price Cap: its value is each interval's cap and its multiplier the CVP factor per MW of one
-interval. Keyed by the slack's component type, with a meta naming the slack variable type and meta.
-Re-priced at each simulation step, so a model built once follows the cap across a financial year
-boundary.
-"""
-struct MarketPriceCapPenaltyParameter <: PSI.ObjectiveFunctionParameter end
+struct GenericConstraintSlackCostParameter <: PSI.TimeSeriesCostParameter end
 
 
 """
@@ -294,7 +284,7 @@ struct FCASJointRampingConstraint <: PSI.ConstraintType end
 
 Variable type for the elastic slack on a [`FCASJointCapacityConstraint`](@ref) row (AEMO
 `xxUpperDeficit`/`xxLowerSurplus`), built when the owning `PSI.ServiceModel` has
-`use_slacks = true`. Priced at [`FCAS_CAPACITY_CVP_FACTOR`](@ref) times the Market Price Cap.
+`use_slacks = true`. Priced at `FCAS_CAPACITY_CVP_FACTOR` times the Market Price Cap.
 """
 struct FCASJointCapacitySlack <: PSI.VariableType end
 
@@ -304,7 +294,7 @@ struct FCASJointCapacitySlack <: PSI.VariableType end
 
 Variable type for the elastic slack on a [`FCASJointRampingConstraint`](@ref) row (AEMO
 `R5REJointRampDeficit`/`L5REJointRampDeficit`), built when the owning `PSI.ServiceModel` has
-`use_slacks = true`. Priced at [`FCAS_RAMPING_CVP_FACTOR`](@ref) times the Market Price Cap.
+`use_slacks = true`. Priced at `FCAS_RAMPING_CVP_FACTOR` times the Market Price Cap.
 """
 struct FCASJointRampingSlack <: PSI.VariableType end
 

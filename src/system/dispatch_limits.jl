@@ -2,7 +2,7 @@
     nem_dispatch_devices(sys) -> Vector{Device}
 
 Collects every available `ThermalStandard`, `HydroDispatch`, `RenewableDispatch`,
-`InterruptiblePowerLoad` and `EnergyReservoirStorage` in `sys`, the device types that [`set_nem_dispatch_limits!`](@ref)
+`InterruptiblePowerLoad` and `EnergyReservoirStorage` in `sys`, the device types that the dispatch limits
 applies to.
 
 # Arguments
@@ -23,38 +23,41 @@ end
 
 
 """
-    set_nem_dispatch_limits!(sys, db, date_range; kwargs...)
+    _set_nem_dispatch_limits!(sys, rows, date_range)
 
-Attaches per-device `SingleTimeSeries` from [`read_dispatch_limits`](@ref) to every available
-`ThermalStandard`, `HydroDispatch`, `RenewableDispatch`, `InterruptiblePowerLoad` and
-`EnergyReservoirStorage` in `sys`:
+Attaches per-device `SingleTimeSeries` built from `rows` (as [`read_dispatch_limits`](@ref) returns
+them, at the step of `date_range`) to every available `ThermalStandard`, `HydroDispatch`,
+`RenewableDispatch`, `InterruptiblePowerLoad` and `EnergyReservoirStorage` in `sys`:
 `"ramp_up_rate"` and `"ramp_down_rate"` (from `RAMPUPRATE`/`RAMPDOWNRATE`) and `"initial_mw"`
 (from `INITIALMW`, net MW for a battery, consumed MW for a load). A `ThermalStandard`,
-`HydroDispatch`, `RenewableDispatch` or `InterruptiblePowerLoad` also gets `"max_active_power"`, the device's upper dispatch limit,
-`AVAILABILITY` raised to the ramp-down floor `INITIALMW - RAMPDOWNRATE × Δ` when that floor is
-higher, where Δ is the interval length in hours taken from `date_range`'s step, replacing any
-`UIGF`- or bid-derived `"max_active_power"` series a device already carries - and
+`HydroDispatch`, `RenewableDispatch` or `InterruptiblePowerLoad` also gets `"max_active_power"`, the
+device's upper dispatch limit, `AVAILABILITY` raised to the ramp-down floor `INITIALMW - RAMPDOWNRATE × Δ`
+when that floor is higher, where Δ is the interval length in hours taken from `date_range`'s step,
+replacing any `UIGF`- or bid-derived `"max_active_power"` series a device already carries, and
 `"availability"`, the raw `AVAILABILITY` (for a semi-scheduled unit, the lower of bid `MAXAVAIL`
-and `UIGF`), read back by [`get_energy_availability`](@ref). An
-`EnergyReservoirStorage` gets no `"max_active_power"` series: its per-direction availability is
-the energy bid `MAXAVAIL` series [`set_market_bids!`](@ref) attaches, read back by
-[`get_storage_energy_max_avail`](@ref).
+and `UIGF`), read back by [`get_energy_availability`](@ref). An `EnergyReservoirStorage` gets no
+`"max_active_power"` series: its per-direction availability is the energy bid `MAXAVAIL` series
+[`set_market_bids!`](@ref) attaches, read back by [`get_storage_energy_max_avail`](@ref).
 
 `"ramp_up_rate"`, `"ramp_down_rate"`, `"initial_mw"` and `"availability"` are stored per-unit of
 `sys`'s system base, rates per minute. `"max_active_power"` follows PSY's native convention instead: data
 normalised by the device's own static `max_active_power` (read under `NATURAL_UNITS`), with
 `scaling_factor_multiplier = get_max_active_power`.
 
-A non-scheduled load (see [`set_fcas_bids!`](@ref)) gets zero `"initial_mw"`, ramp rates, `"availability"`
-and `"max_active_power"` whatever `DISPATCHLOAD` meters: its consumption is already in regional demand
-and is not dispatched. This function must run after [`set_fcas_bids!`](@ref), which makes such a load
+A non-scheduled load (see [`set_fcas_bids!`](@ref)) is exempt from the missing-row checks below and gets
+zero `"initial_mw"`, ramp rates, `"availability"` and `"max_active_power"` whatever `DISPATCHLOAD` meters:
+its consumption is already in regional demand and is not dispatched. This function must run after [`set_fcas_bids!`](@ref), which makes such a load
 available; a load made available later has no ramp or limit series.
 
-A device with no `DISPATCHLOAD` rows in `date_range`, missing intervals, a `missing` rate or
+A device other than a non-scheduled load with no `DISPATCHLOAD` rows in `date_range`, a `missing` rate or
 `INITIALMW`, or a negative `RAMPUPRATE`/`RAMPDOWNRATE` is a problem; for a `ThermalStandard`,
 `HydroDispatch` or `RenewableDispatch`, a `missing` or negative `AVAILABILITY`, or a
-non-positive static `max_active_power`, is also a problem. A zero `RAMPUPRATE`,
-`RAMPDOWNRATE` or `AVAILABILITY` is carried through as-is: it is AEMO stating that the device
+non-positive static `max_active_power`, is also a problem. An interval within the device's
+registration (`registered`) with no row is a missing-row problem. An interval with no row outside
+that registration, before or after it, is not a problem: the device gets zero `"initial_mw"` and ramp
+rates there, and zero `"availability"` and `"max_active_power"` if it is not storage (storage has
+neither series), as it is not on the system then. A row outside the registration is read like any other.
+A zero `RAMPUPRATE`, `RAMPDOWNRATE` or `AVAILABILITY` is carried through as-is: it is AEMO stating that the device
 cannot move, or cannot generate, in that interval. Every problem across every device is
 collected and raised as one aggregated `ArgumentError` naming the affected `DUID`s, and `sys` is
 left unmodified.
@@ -66,21 +69,15 @@ left unmodified.
 
 # Arguments
 - `sys`: the `System` to add to.
-- `db`: an `AEMDB` connection.
-- `date_range`: the dispatch intervals to replay. Its step is the model resolution: `DISPATCHLOAD`
-  is aggregated onto it as [`read_dispatch_limits`](@ref) describes.
-- `kwargs`: passed to [`read_dispatch_limits`](@ref) (e.g. `intervention`).
+- `rows`: the dispatch-limit rows over `date_range`, as [`read_dispatch_limits`](@ref) returns them.
+- `date_range`: the dispatch intervals to replay. Its step is the model resolution.
+- `registered`: the registration span of each unit, keyed by `DUID` (see `_registration_spans`), or
+  `nothing` when every unit is registered at every interval.
 
 # Returns
 `nothing`.
 """
-function set_nem_dispatch_limits!(sys, db, date_range; kwargs...)
-    rows = read_dispatch_limits(db, date_range; resolution = step(date_range), kwargs...)
-    return _set_nem_dispatch_limits!(sys, rows, date_range)
-end
-
-
-function _set_nem_dispatch_limits!(sys, rows, date_range)
+function _set_nem_dispatch_limits!(sys, rows, date_range; registered = nothing)
     base_power = get_base_power(sys)
     full_grid = collect(date_range)[1:(end - 1)]
     interval_hours = Dates.value(Millisecond(step(date_range))) / (1000 * 60 * 60)
@@ -102,16 +99,19 @@ function _set_nem_dispatch_limits!(sys, rows, date_range)
     for device in devices
         duid = get_name(device)
         is_storage = device isa EnergyReservoirStorage
-        if isnothing(by_duid) || !haskey(by_duid, (duid,))
+        # A non-scheduled load's rows are not read: every value it gets is zero.
+        pinned = is_non_scheduled_load(device)
+        device_rows = isnothing(by_duid) || !haskey(by_duid, (duid,)) ? nothing : by_duid[(duid,)]
+        if isnothing(device_rows) && !pinned
             push!(problems, "$duid: no DISPATCHLOAD rows in $date_range")
             continue
         end
-        by_time = Dict(zip(by_duid[(duid,)].SETTLEMENTDATE, eachrow(by_duid[(duid,)])))
-        missing_intervals = setdiff(full_grid, keys(by_time))
-        if !isempty(missing_intervals)
+        by_time = isnothing(device_rows) ? Dict{DateTime, Nothing}() : Dict(zip(device_rows.SETTLEMENTDATE, eachrow(device_rows)))
+        unexplained = [t for t in full_grid if !pinned && !haskey(by_time, t) && _is_registered(registered, duid, t)]
+        if !isempty(unexplained)
             push!(
                 problems,
-                "$duid: missing DISPATCHLOAD row(s) for $(length(missing_intervals)) of $(length(full_grid)) interval(s) (e.g. $(minimum(missing_intervals)))",
+                "$duid: missing DISPATCHLOAD row(s) for $(length(unexplained)) of $(length(full_grid)) interval(s) (e.g. $(minimum(unexplained)))",
             )
             continue
         end
@@ -136,17 +136,18 @@ function _set_nem_dispatch_limits!(sys, rows, date_range)
         max_active_power = is_storage ? nothing : Float64[]
         availability = is_storage ? nothing : Float64[]
         reason = nothing
-        pinned = is_non_scheduled_load(device)
         for t in full_grid
-            row = by_time[t]
-            if pinned
-                # A non-scheduled load's consumption is already in regional demand and is not
-                # dispatched: its energy is fixed at zero whatever DISPATCHLOAD meters.
+            # A non-scheduled load is dispatched at zero whatever DISPATCHLOAD meters; an unregistered
+            # interval has no row and is zero because the unit is not on the system then.
+            row = get(by_time, t, nothing)
+            if pinned || isnothing(row)
                 push!(initial_mw, 0.0)
                 push!(ramp_up_rate, 0.0)
                 push!(ramp_down_rate, 0.0)
-                push!(max_active_power, 0.0)
-                push!(availability, 0.0)
+                if !is_storage
+                    push!(max_active_power, 0.0)
+                    push!(availability, 0.0)
+                end
                 continue
             end
             if ismissing(row.INITIALMW) || ismissing(row.RAMPUPRATE) || ismissing(row.RAMPDOWNRATE) ||
@@ -182,7 +183,7 @@ function _set_nem_dispatch_limits!(sys, rows, date_range)
 
     isempty(problems) || throw(
         ArgumentError(
-            "set_nem_dispatch_limits!: $(length(problems)) device(s) have unusable DISPATCHLOAD ramp data: " *
+            "dispatch limits: $(length(problems)) device(s) have unusable DISPATCHLOAD ramp data: " *
                 join(problems, "; ") * ".",
         ),
     )

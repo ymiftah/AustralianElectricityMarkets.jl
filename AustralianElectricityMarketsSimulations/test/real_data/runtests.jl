@@ -19,6 +19,15 @@ import PowerSystems as PSY
 
 const AEM = AustralianElectricityMarkets
 const AEMS = AustralianElectricityMarketsSimulations
+include(joinpath(@__DIR__, "..", "..", "..", "test", "fixtures", "input_builders.jl"))
+include(joinpath(@__DIR__, "..", "..", "..", "scripts", "interconnector_loss_gaps.jl"))
+using .InterconnectorLossGaps: loss_gap_table
+if !isdefined(@__MODULE__, :ReplayResults)
+    include(joinpath(@__DIR__, "..", "..", "..", "scripts", "replay_results.jl"))
+end
+if !isdefined(@__MODULE__, :ReplaySimulation)
+    include(joinpath(@__DIR__, "..", "..", "..", "scripts", "replay_simulation.jl"))
+end
 
 const REAL_HIVE = isempty(ARGS) ? joinpath(homedir(), ".nemdb_cache") : only(ARGS)
 const REAL_START = DateTime(2026, 6, 4, 0, 0)
@@ -44,7 +53,7 @@ end
 
 let
     required = union(
-        AEM.table_requirements(ConstrainedNetworkConfiguration()),
+        AEM.table_requirements(NEMDEConfiguration()),
         [:BIDPEROFFER_D, :BIDDAYOFFER_D],
     )
     missing_tables = filter(t -> !(t in FCAS_REQ_TABLES) && !month_cached(t), required)
@@ -99,18 +108,8 @@ function build_and_solve!(model)
     return (; build_time, solve_time)
 end
 
-function term_device_names(gc; energy_only::Bool = false)
-    names = String[]
-    for term in get_terms(gc)
-        energy_only && term isa Union{UnitTerm, RegionTerm} && get_bid_type(term) != BidType.ENERGY && continue
-        term isa UnitTerm && push!(names, get_duid(term))
-        term isa RegionTerm && append!(names, get_devices(term))
-    end
-    return names
-end
-
 @testset "Real NEM data, $(Date(REAL_START))" begin
-    sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = REAL_DATE_RANGE)
+    sys, _ = AEM.RegionModel._constrained_system(db; date_range = REAL_DATE_RANGE)
 
     @testset "the constrained System builds" begin
         areas = Set(PSY.get_name.(PSY.get_components(PSY.Area, sys)))
@@ -121,7 +120,7 @@ end
         @test !isempty(PSY.get_components(GenericConstraint, sys))
     end
 
-    set_demand!(sys, db, REAL_DATE_RANGE; resolution = REAL_RESOLUTION)
+    attach_demand!(sys, db, REAL_DATE_RANGE; resolution = REAL_RESOLUTION)
     set_market_bids!(sys, db, REAL_DATE_RANGE; resolution = REAL_RESOLUTION)
     set_fcas_scaling_inputs!(sys, db, REAL_DATE_RANGE)
     limits = read_dispatch_limits(db, REAL_DATE_RANGE)
@@ -134,7 +133,7 @@ end
         end
 
         @test begin
-            set_nem_dispatch_limits!(sys, db, REAL_DATE_RANGE)
+            attach_dispatch_limits!(sys, db, REAL_DATE_RANGE)
             true
         end
 
@@ -274,45 +273,26 @@ end
         )
         build_and_solve!(loss_model)
 
-        loss_res = PSI.OptimizationProblemResults(loss_model)
-        gaps = check_interconnector_loss_segments(loss_res, sys; tolerance = 1.0e-3)
-        timestamps = collect(REAL_DATE_RANGE)[1:(end - 1)]
+        table = loss_gap_table(PSI.OptimizationProblemResults(loss_model), sys; tolerance = 1.0e-3)
 
-        # Weighted marginal price of a unit of loss: share * price_from + (1 - share) * price_to.
-        # The contiguous-fill encoding is exact at any sign of this price.
-        dual_df = PSI.read_dual(loss_res, "CopperPlateBalanceConstraint__Area")
-        price = Dict((r.name, r.DateTime) => r.value for r in eachrow(dual_df))
-        weighted_price = Dict{Tuple{String, Int}, Float64}()
-        for ic in PSY.get_components(PSY.AreaInterchange, sys)
-            models = PSY.get_supplemental_attributes(InterconnectorLossModel, ic)
-            length(models) == 1 || continue
-            model = only(models)
-            for (t, stamp) in enumerate(timestamps)
-                pf = get(price, (model.from_region, stamp), NaN)
-                pt = get(price, (model.to_region, stamp), NaN)
-                weighted_price[(PSY.get_name(ic), t)] =
-                    model.from_region_loss_share * pf + (1 - model.from_region_loss_share) * pt
-            end
-        end
-
-        @test !isempty(gaps)
+        @test !isempty(table)
         # Negative weighted prices included, loss must stay on the curve at the solved flow.
-        @test all(abs(gap) < 1.0e-3 for gap in values(gaps))
+        @test all(abs.(table.gap_mw) .< 1.0e-3)
 
-        names = sort(unique(first.(keys(gaps))))
         report = join(
             [
-                "$n: max|gap| $(round(maximum(abs(gaps[(n, t)]) for t in eachindex(timestamps)); digits = 4)) MW, " *
-                    "t1 weighted price $(weighted_price[(n, 1)] >= 0 ? "non-negative" : "NEGATIVE"), " *
-                    "$(count(t -> weighted_price[(n, t)] < 0, eachindex(timestamps))) negative interval(s)"
-                    for n in names
+                let rows = table[table.interconnector .== name, :]
+                    "$name: max|gap| $(round(maximum(abs, rows.gap_mw); digits = 4)) MW, " *
+                        "t1 weighted price $(rows.weighted_loss_price[1] >= 0 ? "non-negative" : "NEGATIVE"), " *
+                        "$(count(<(0), rows.weighted_loss_price)) negative interval(s)"
+                end for name in sort(unique(table.interconnector))
             ], "; ",
         )
         @info "Interconnector over-dissipation gap (solved LP loss - curve at solved flow) and weighted price sign" report
     end
 
     @testset "FCASMarket builds and solves alongside the constrained System" begin
-        # ConstrainedNetworkConfiguration's add_fcas_services! built one FCASService per bid
+        # The constrained layer's add_fcas_services! built one FCASService per bid
         # (region, bid type), attaching only the bids FCASMarket models.
         fcas_registered = PSY.get_name.(PSY.get_components(FCASService, sys))
         n_regulation_trapeziums = 0
@@ -409,7 +389,7 @@ end
 
         # Report-only: the FCAS prices this solve's constraint duals imply, against AEMO's published
         # ROP (the sum of the requirement constraints' MARGINALVALUE) per (region, service, interval).
-        fcas_prices = compute_fcas_prices(PSI.OptimizationProblemResults(fcas_model), sys)
+        fcas_prices = ReplayResults.compute_fcas_prices(PSI.OptimizationProblemResults(fcas_model), sys)
         published_prices = AEM.read_fcas_prices(db, REAL_DATE_RANGE)
         compared = innerjoin(fcas_prices, published_prices; on = [:SETTLEMENTDATE, :REGIONID, :BIDTYPE], makeunique = true)
         n_price_cmp = nrow(compared)
@@ -521,14 +501,14 @@ end
 end
 
 @testset "Elastic GenericConstraint slack matches AEMO's published violation, $(Date(VIOLATION_START))" begin
-    sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = VIOLATION_DATE_RANGE)
-    set_demand!(sys, db, VIOLATION_DATE_RANGE; resolution = REAL_RESOLUTION)
+    sys, _ = AEM.RegionModel._constrained_system(db; date_range = VIOLATION_DATE_RANGE)
+    attach_demand!(sys, db, VIOLATION_DATE_RANGE; resolution = REAL_RESOLUTION)
     set_market_bids!(sys, db, VIOLATION_DATE_RANGE; resolution = REAL_RESOLUTION)
-    set_nem_dispatch_limits!(sys, db, VIOLATION_DATE_RANGE)
+    attach_dispatch_limits!(sys, db, VIOLATION_DATE_RANGE)
     PSY.transform_single_time_series!(sys, VIOLATION_SPAN, REAL_RESOLUTION)
 
     target_gencon_ids = ("Q_STR_ALDSF_ZERO", "Q_BRDDSF01_1INV")
-    gcs = [gc for gc in PSY.get_components(GenericConstraint, sys) if get_gencon_id(gc) in target_gencon_ids]
+    gcs = [gc for gc in PSY.get_components(GenericConstraint, sys) if get(gc.ext, "gencon_id", nothing) in target_gencon_ids]
     @test length(gcs) == length(target_gencon_ids)
 
     template = aemsim_template(sys)
@@ -560,7 +540,7 @@ end
     dc_table = AustralianElectricityMarkets.Readers.read_hive(db, :DISPATCHCONSTRAINT)
     for gc in gcs
         name = PSY.get_name(gc)
-        gencon_id = get_gencon_id(gc)
+        gencon_id = get(gc.ext, "gencon_id", nothing)
         var_type = get_sense(gc) == ConstraintSense.LE ? "GenericConstraintSlackUp" : "GenericConstraintSlackDown"
         slack_df = PSI.read_variable(results, "$(var_type)__GenericConstraint__$name")
         dual_df = PSI.read_dual(results, "NEMConstraintLimit__GenericConstraint__$name")

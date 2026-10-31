@@ -36,7 +36,7 @@
         @test get_name(gc) == "F_TEST"
         @test get_available(gc) == true
         @test get_sense(gc) == ConstraintSense.GE
-        @test get_rhs(gc) == 137.5
+        @test gc.rhs == 137.5
         @test get_constraint_weight(gc) == 2.0
         @test length(get_terms(gc)) == 2
         @test length(get_fcas_requirements(gc)) == 1
@@ -54,7 +54,7 @@
         )
         @test get_limit_type(gc_null_ext) === nothing
         @test get_source(gc_null_ext) === nothing
-        @test get_gencon_id(gc_null_ext) === nothing
+        @test ismissing(gc_null_ext.ext["gencon_id"])
         @test get_description(gc) == ""
         @test isempty(get_ext(gc))
         set_description!(gc, "a hand-authored test constraint")
@@ -86,7 +86,7 @@
         gc2 = get_component(GenericConstraint, sys2, "F_ROUNDTRIP")
         @test !isnothing(gc2)
         @test get_sense(gc2) == ConstraintSense.GE
-        @test get_rhs(gc2) == 137.5
+        @test gc2.rhs == 137.5
         @test get_constraint_weight(gc2) == 2.0
         @test get_description(gc2) == "test constraint"
         @test length(get_terms(gc2)) == 3
@@ -251,7 +251,7 @@ end
 
 end
 
-@testset "add_nem_constraints!" begin
+@testset "constraint build" begin
     hive_dir = AEM_TEST_HIVE_DIR
     config = HiveConfiguration(hive_location = hive_dir, filesystem = "file")
     db = aem_connect(config)
@@ -259,10 +259,10 @@ end
     date_range = start_date:Minute(5):(start_date + Hour(1))
 
     sys = nem_system(db, RegionalNetworkConfiguration())
-    added, skipped = add_nem_constraints!(sys, db, date_range)
+    added, skipped = build_constraints!(sys, db, date_range)
 
     # Every GENCONID in mock_data.jl has exactly one invoked GENCONDATA/SPD* version, always
-    # EFFECTIVEDATE=2025-01-01, VERSIONNO=1. add_nem_constraints! names components by the full
+    # EFFECTIVEDATE=2025-01-01, VERSIONNO=1. _add_nem_constraints! names components by the full
     # versioned triple, so tests look
     # components up by this name rather than the bare GENCONID.
     vname(gencon_id, version = 1) = "$gencon_id@2025-01-01#$version"
@@ -312,7 +312,7 @@ end
     # (6 of 12 rows over this date_range) - it is added anyway, with its "rhs" padded
     # to the full 12-interval grid (carrying the last known value forward) and an "invoked"
     # series recording which of those 12 were real, so it never silently drops a real-data
-    # constraint that just wasn't invoked every interval (see add_nem_constraints! docstring).
+    # constraint that just wasn't invoked every interval (see the constraint build in `nem_system`).
     @test vname("N_PARTIAL_COVERAGE") in added
     partial_gc = get_component(GenericConstraint, sys, vname("N_PARTIAL_COVERAGE"))
     base_power = get_base_power(sys)
@@ -407,7 +407,7 @@ end
         @test resolve_term_devices(sys_relocated, RegionTerm("TAS1", BidType.RAISEREG, 1.0)) == String[]
 
         err = try
-            add_nem_constraints!(sys_relocated, db, date_range)
+            build_constraints!(sys_relocated, db, date_range)
             nothing
         catch e
             e
@@ -448,7 +448,7 @@ end
         @test length(unique(invoked_gap.SETTLEMENTDATE)) == length(date_range) - 2
 
         gap_sys = nem_system(gap_db, RegionalNetworkConfiguration())
-        add_nem_constraints!(gap_sys, gap_db, date_range)
+        build_constraints!(gap_sys, gap_db, date_range)
         gap_gc = get_component(GenericConstraint, gap_sys, vname("N_BAYSW_THERMAL"))
         rhs_len = length(get_time_series_values(SingleTimeSeries, gap_gc, "rhs"))
         @test rhs_len == length(date_range) - 1
@@ -479,7 +479,7 @@ end
         misaligned_db = aem_connect(HiveConfiguration(hive_location = misaligned_hive, filesystem = "file"))
         misaligned_sys = nem_system(misaligned_db, RegionalNetworkConfiguration())
         @test_logs (:warn, r"fall outside date_range's grid") match_mode = :any begin
-            add_nem_constraints!(misaligned_sys, misaligned_db, date_range)
+            build_constraints!(misaligned_sys, misaligned_db, date_range)
         end
     end
 
@@ -487,13 +487,13 @@ end
         # Multi-interval grid: the fixture is 5-minutely, so inference must read Minute(5) off
         # the data itself, not just happen to match a hardcoded default.
         sys_default = nem_system(db, RegionalNetworkConfiguration())
-        add_nem_constraints!(sys_default, db, date_range)
+        build_constraints!(sys_default, db, date_range)
         gc_default = get_component(GenericConstraint, sys_default, vname("N_BAYSW_THERMAL"))
         rhs_ts_default = get_time_series(SingleTimeSeries, gc_default, "rhs")
         @test get_resolution(rhs_ts_default) == Minute(5)
 
 
-        # A single-interval grid can't be exercised end-to-end through add_nem_constraints!:
+        # A single-interval grid can't be exercised end-to-end through _add_nem_constraints!:
         # InfrastructureSystems rejects a one-point SingleTimeSeries ("data array length must be at
         # least 2"), independent of resolution - so a 1-point full_grid always errors before
         # resolution matters. _infer_resolution is unit-tested directly instead, contrasted
@@ -582,7 +582,7 @@ end
         zero_sys = nem_system(zero_db, RegionalNetworkConfiguration())
         added_z, skipped_z = nothing, nothing
         @test_logs (:warn, r"TV_ZERO is invoked at an unrecognised version") match_mode = :any begin
-            added_z, skipped_z = add_nem_constraints!(zero_sys, zero_db, date_range)
+            added_z, skipped_z = build_constraints!(zero_sys, zero_db, date_range)
         end
 
         zname(id, ver = 1) = "$id@2013-08-21#$ver"
@@ -597,7 +597,7 @@ end
             )
             gc = get_component(GenericConstraint, zero_sys, zname(id))
             @test get_sense(gc) == ConstraintSense.LE
-            @test get_rhs(gc) == 0.0
+            @test gc.rhs == 0.0
             @test get_source(gc) == "built-in"
             @test get_limit_type(gc) == "Interconnector Zero"
             term = only(get_terms(gc))
@@ -619,9 +619,9 @@ end
     end
 
     @testset "Energy Inflexible Offer constraints are built from FIXEDLOAD" begin
-        # BW01 (GEN) is fixed at 30 MW for 00:10 to 00:20, BW02 at 40 MW but with a fast-start
-        # profile (T1 > 0), BW03 has a zero fixed load. DISPATCHCONSTRAINT carries `$` rows
-        # without a version for BW01, BW02 and an unknown unit; only BW01's is modelled.
+        # BW01 (GEN) is fixed at 30 MW for 00:10 to 00:20. BW02 is fast-start (T1 > 0) at 40 MW for 00:10 to 00:20,
+        # in DISPATCHMODE 2 at 00:10 and 00:15 (in profile) and 4 at 00:20 (attached). BW03 has a zero fixed load.
+        # DISPATCHCONSTRAINT carries `$` rows without a version for BW01, BW02 and an unknown unit; none is built.
         fixed_hive = mktempdir()
         create_mock_data(fixed_hive)
         fixed_conn = DuckDB.connect(DuckDB.DB())
@@ -646,6 +646,12 @@ end
                 "WHEN DUID = 'BW01' THEN 20.0 ELSE 0.0 END ELSE 0.0 END AS FIXEDLOAD)",
         )
         rewrite("BIDDAYOFFER_D", "* REPLACE (CASE WHEN DUID = 'BW02' THEN 6.0 ELSE NULL END AS T1)")
+        rewrite(
+            "DISPATCHLOAD",
+            "* REPLACE (CASE WHEN DUID = 'BW02' THEN CASE WHEN SETTLEMENTDATE BETWEEN " *
+                "TIMESTAMP '2025-01-01 00:10:00' AND TIMESTAMP '2025-01-01 00:15:00' THEN 2 ELSE 4 END " *
+                "ELSE DISPATCHMODE END AS DISPATCHMODE)",
+        )
         dc_dir = joinpath(fixed_hive, "DISPATCHCONSTRAINT")
         tmp = dc_dir * "_new"
         DuckDB.execute(
@@ -666,21 +672,24 @@ end
         # Both directions are read: the GEN and LOAD loadings of BW01 (raw reader values are covered in readers/raw.jl).
         loads = read_fixed_loads(fixed_db, fixed_range)
         @test Set(loads.DIRECTION) == Set(["GEN", "LOAD"])
+        @test loads.IN_PROFILE[loads.DUID .== "BW02"] == [true, true, false]
+        @test !any(loads.IN_PROFILE[loads.DUID .== "BW01"])
 
         fixed_sys = nem_system(fixed_db, RegionalNetworkConfiguration())
         added_f = nothing
         @test_logs (:warn, r"skipped") match_mode = :any begin
-            added_f, _ = add_nem_constraints!(fixed_sys, fixed_db, fixed_range)
+            added_f, _ = build_constraints!(fixed_sys, fixed_db, fixed_range)
         end
         # A modelled fixed loading is unit offer data, not a generic constraint.
         @test !any(startswith("\$"), added_f)
         @test isnothing(get_component(GenericConstraint, fixed_sys, "\$BW01"))
         skipped_names = get_skipped_constraints(fixed_sys).constraint
         @test !any(startswith("\$BW01"), skipped_names)
-        @test any(startswith("\$BW02"), skipped_names)  # fast-start: still reported
+        # BW02 has an in-profile row at 00:10 and an attached one at 00:20; both are fixed-load rows, neither built nor reported.
+        @test !any(startswith("\$BW02"), skipped_names)
         @test any(startswith("\$NOSUCH1"), skipped_names)
 
-        set_nem_fixed_loads!(fixed_sys, fixed_db, fixed_range)
+        attach_fixed_loads!(fixed_sys, fixed_db, fixed_range)
         bw01 = get_component(Device, fixed_sys, "BW01")
         base = get_base_power(fixed_sys)
         series(device, name) = get_time_series_values(SingleTimeSeries, device, name)
@@ -688,23 +697,27 @@ end
         # BW01 is a battery: its 30 MW generation and 20 MW charging targets net to 10 MW injection.
         @test series(bw01, "fixed_load")[3:5] == fill(10.0 / base, 3)
         @test all(iszero, series(bw01, "fixed_load")[[1, 2, 6]])
-        @test !has_time_series(get_component(Device, fixed_sys, "BW02"), SingleTimeSeries, "fixed_load")
+        # BW02 is attached only at its non-profile interval 00:20 (index 5), not at in-profile 00:10 and 00:15.
+        bw02 = get_component(Device, fixed_sys, "BW02")
+        @test findall(isone, series(bw02, "fixed_load_invoked")) == [5]
+        @test series(bw02, "fixed_load_invoked")[[3, 4]] == [0.0, 0.0]
+        @test series(bw02, "fixed_load")[5] == 40.0 / base
 
         # A missing bid table fails with the documented error.
         missing_bids_hive = mktempdir()
         cp(fixed_hive, missing_bids_hive; force = true)
         rm(joinpath(missing_bids_hive, "BIDDAYOFFER_D"); recursive = true)
         missing_bids_db = aem_connect(HiveConfiguration(hive_location = missing_bids_hive, filesystem = "file"))
-        @test_throws r"BIDDAYOFFER_D is not cached" add_nem_constraints!(
+        @test_throws r"BIDDAYOFFER_D is not cached" build_constraints!(
             nem_system(missing_bids_db, RegionalNetworkConfiguration()), missing_bids_db, fixed_range,
         )
 
         # An unavailable unit's fixed loading is ignored; its `$` row is then reported as skipped.
         unavailable_sys = nem_system(fixed_db, RegionalNetworkConfiguration())
         set_available!(get_component(Device, unavailable_sys, "BW01"), false)
-        add_nem_constraints!(unavailable_sys, fixed_db, fixed_range)
+        build_constraints!(unavailable_sys, fixed_db, fixed_range)
         @test any(startswith("\$BW01"), get_skipped_constraints(unavailable_sys).constraint)
-        set_nem_fixed_loads!(unavailable_sys, fixed_db, fixed_range)
+        attach_fixed_loads!(unavailable_sys, fixed_db, fixed_range)
         @test !has_time_series(get_component(Device, unavailable_sys, "BW01"), SingleTimeSeries, "fixed_load")
     end
 
@@ -738,7 +751,7 @@ end
         empty_db = aem_connect(HiveConfiguration(hive_location = mktempdir(), filesystem = "file"))
         empty_sys = nem_system(db, RegionalNetworkConfiguration())
         err = try
-            add_nem_constraints!(empty_sys, empty_db, date_range)
+            build_constraints!(empty_sys, empty_db, date_range)
             nothing
         catch e
             e
@@ -755,7 +768,7 @@ end
         far_sys = nem_system(db, RegionalNetworkConfiguration())
         added_far, skipped_far = nothing, nothing
         @test_logs (:warn, r"No constraints invoked") match_mode = :any begin
-            added_far, skipped_far = add_nem_constraints!(far_sys, db, far_future_range)
+            added_far, skipped_far = build_constraints!(far_sys, db, far_future_range)
         end
         @test added_far == String[]
         @test skipped_far == Dict{String, Symbol}()
@@ -766,7 +779,7 @@ end
         late = DateTime(2025, 1, 1, 3, 0)
         late_range = late:Minute(5):(late + Hour(3))
         late_sys = nem_system(db, RegionalNetworkConfiguration())
-        add_nem_constraints!(late_sys, db, late_range)
+        build_constraints!(late_sys, db, late_range)
         expected = collect(DateTime(2025, 1, 1, 4, 5):Minute(5):DateTime(2025, 1, 1, 5, 55))
         @test get_missing_constraint_intervals(late_sys) == expected
 
@@ -778,18 +791,18 @@ end
         # A range wholly outside the cache records every interval.
         none = DateTime(2030, 1, 1):Minute(5):DateTime(2030, 1, 1, 0, 15)
         none_sys = nem_system(db, RegionalNetworkConfiguration())
-        add_nem_constraints!(none_sys, db, none)
+        build_constraints!(none_sys, db, none)
         @test get_missing_constraint_intervals(none_sys) == collect(none)[1:(end - 1)]
 
         # A NULL GENERICCONSTRAINTWEIGHT builds with weight 1.0 and is recorded.
         weight_db = damaged_cache(AEM_TEST_HIVE_DIR, :GENCONDATA, "UPDATE input SET GENERICCONSTRAINTWEIGHT = NULL WHERE GENCONID = 'N_BAYSW_THERMAL'")
         weight_sys = nem_system(weight_db, RegionalNetworkConfiguration())
-        @test_logs (:warn, r"NULL GENERICCONSTRAINTWEIGHT") match_mode = :any add_nem_constraints!(weight_sys, weight_db, date_range)
+        @test_logs (:warn, r"NULL GENERICCONSTRAINTWEIGHT") match_mode = :any build_constraints!(weight_sys, weight_db, date_range)
         @test get_defaulted_constraint_weights(weight_sys) == [vname("N_BAYSW_THERMAL")]
         @test get_constraint_weight(get_component(GenericConstraint, weight_sys, vname("N_BAYSW_THERMAL"))) == 1.0
 
         # A later run with no invoked constraint resets every record of the earlier one.
-        @test_logs (:warn, r"No constraints invoked") match_mode = :any add_nem_constraints!(weight_sys, weight_db, none)
+        @test_logs (:warn, r"No constraints invoked") match_mode = :any build_constraints!(weight_sys, weight_db, none)
         @test isempty(get_defaulted_constraint_weights(weight_sys))
         @test isempty(get_skipped_constraints(weight_sys))
         @test isempty(get_dropped_terms(weight_sys))

@@ -41,24 +41,24 @@ end
 
 Reads participant-entered energy fixed loadings from `BIDPEROFFER_D`: one row per
 `(INTERVAL_DATETIME, DUID, DIRECTION)` whose latest offer version carries `FIXEDLOAD > 0`
-(zero means no fixed load). Units with a fast-start inflexibility profile (`BIDDAYOFFER_D.T1 > 0`
-on the trading day) are excluded, because the profile overrides a fixed loading in modes 1 to 3
-and the profile is not replayed.
+(zero means no fixed load). `IN_PROFILE` is `true` where the `DISPATCHLOAD.DISPATCHMODE` of the
+unit at the interval is 1 or 2, the fast-start modes in which the inflexibility profile fixes dispatch.
 
 # Arguments
 - `db`: an `AEMDB` connection.
 - `date_range`: the dispatch interval labels; rows with `first <= INTERVAL_DATETIME < last` are kept.
+- `intervention`: the `DISPATCHLOAD.INTERVENTION` value the dispatch modes are read at (default `0`).
 
 # Returns
-A `DataFrame` with `INTERVAL_DATETIME`, `DUID`, `DIRECTION` (`GEN` or `LOAD`) and `FIXEDLOAD` (MW,
-positive).
+A `DataFrame` with `INTERVAL_DATETIME`, `DUID`, `DIRECTION` (`GEN` or `LOAD`), `FIXEDLOAD` (MW,
+positive) and `IN_PROFILE` (`Bool`).
 """
-function read_fixed_loads(db, date_range)
+function read_fixed_loads(db, date_range; intervention = 0)
     start_datetime = first(date_range)
     end_datetime = last(date_range)
     days = _offer_days(start_datetime, end_datetime)
     offers = read_hive(db, :BIDPEROFFER_D)
-    day_offers = read_hive(db, :BIDDAYOFFER_D)
+    dispatch = read_hive(db, :DISPATCHLOAD)
     fixed_loads = _query(
         db,
         """
@@ -70,26 +70,22 @@ function read_fixed_loads(db, date_range)
                 PARTITION BY SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION ORDER BY VERSIONNO DESC
             ) = 1
         ),
-        fast_start AS (
-            SELECT DISTINCT SETTLEMENTDATE, DUID
-            FROM (
-                SELECT SETTLEMENTDATE, DUID, T1
-                FROM $day_offers
-                WHERE BIDTYPE = 'ENERGY' AND SETTLEMENTDATE BETWEEN ? AND ?
-                QUALIFY row_number() OVER (
-                    PARTITION BY SETTLEMENTDATE, DUID, DIRECTION ORDER BY VERSIONNO DESC
-                ) = 1
-            )
-            WHERE T1 > 0
+        dispatch_mode AS (
+            SELECT SETTLEMENTDATE, DUID, DISPATCHMODE
+            FROM $dispatch
+            WHERE INTERVENTION = ? AND SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
+            QUALIFY row_number() OVER (PARTITION BY SETTLEMENTDATE, DUID ORDER BY RUNNO DESC) = 1
         )
-        SELECT l.INTERVAL_DATETIME, l.DUID, l.DIRECTION, l.FIXEDLOAD
+        SELECT l.INTERVAL_DATETIME, l.DUID, l.DIRECTION, l.FIXEDLOAD,
+            coalesce(m.DISPATCHMODE IN (1, 2), false) AS IN_PROFILE
         FROM latest l
-        ANTI JOIN fast_start f ON f.SETTLEMENTDATE = l.SETTLEMENTDATE AND f.DUID = l.DUID
+        LEFT JOIN dispatch_mode m ON m.SETTLEMENTDATE = l.INTERVAL_DATETIME AND m.DUID = l.DUID
         WHERE l.FIXEDLOAD > 0 AND l.INTERVAL_DATETIME >= ? AND l.INTERVAL_DATETIME < ?
         ORDER BY l.INTERVAL_DATETIME, l.DUID, l.DIRECTION
         """,
-        [days; days; start_datetime; end_datetime],
+        [days; intervention; start_datetime; end_datetime; start_datetime; end_datetime],
     )
+    fixed_loads.IN_PROFILE = convert(Vector{Bool}, fixed_loads.IN_PROFILE)
     return fixed_loads
 end
 
@@ -104,8 +100,10 @@ Reads each unit's connection-point loss factors from `DUDETAILSUMMARY`: the row 
 - `db`: the database connection.
 - `as_of`: a `Date` or `DateTime` to resolve the factors as of. `nothing` keeps each unit's open row
   (earliest `START_DATE`, the row [`read_units`](@ref) keeps).
-- `through`: when a `Date` or `DateTime` after `as_of`, warns if any unit's factors change
-  in `(as_of, through]`, since the result holds one factor per unit.
+- `through`: with `as_of`, resolves the factors over the window `[as_of, through]` instead: each
+  unit's earliest row registered in it, the row [`read_units`](@ref) keeps with the same `through`.
+  Warns if a unit's factors differ between its rows in the window, since the result holds one
+  factor per unit.
 
 # Returns
 A `DataFrame` with `DUID`, `LOAD_LOSS_FACTOR` (`TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR`,
@@ -118,10 +116,18 @@ function read_loss_factors(
         db; as_of::Union{Nothing, Date, DateTime} = nothing,
         through::Union{Nothing, Date, DateTime} = nothing,
     )
+    isnothing(through) || !isnothing(as_of) || throw(ArgumentError("read_loss_factors: through requires as_of"))
     source = read_hive(db, :DUDETAILSUMMARY)
-    window = isnothing(as_of) ? "(END_DATE IS NULL OR year(END_DATE) = 2999)" : "START_DATE <= ? AND (END_DATE IS NULL OR END_DATE > ?)"
+    windowed = !isnothing(through)
+    window = if isnothing(as_of)
+        "(END_DATE IS NULL OR year(END_DATE) = 2999)"
+    elseif windowed
+        _registration_window_sql()
+    else
+        "START_DATE <= ? AND (END_DATE IS NULL OR END_DATE > ?)"
+    end
     # Open rows keep the earliest START_DATE, as read_units does, so both readers pick the same row.
-    order = isnothing(as_of) ? "ASC" : "DESC"
+    order = isnothing(as_of) || windowed ? "ASC" : "DESC"
     sql = """
         SELECT DUID,
             TRANSMISSIONLOSSFACTOR * DISTRIBUTIONLOSSFACTOR AS LOAD_LOSS_FACTOR,
@@ -132,19 +138,31 @@ function read_loss_factors(
         WHERE archive_month = (SELECT max(archive_month) FROM $source) AND $window
         QUALIFY row_number() OVER (PARTITION BY DUID ORDER BY START_DATE $order) = 1
     """
-    factors = isnothing(as_of) ? _query(db, sql) : _query(db, sql, [as_of, as_of])
-    if !isnothing(as_of) && !isnothing(through) && through > as_of
+    factors = if isnothing(as_of)
+        _query(db, sql)
+    elseif windowed
+        _query(db, sql, [through, as_of])
+    else
+        _query(db, sql, [as_of, as_of])
+    end
+    if windowed
+        # NULL counts as a value, so a NULL to number change in SECONDARY_TLF is caught.
         changed_all = _query(
             db,
             """
-            SELECT DISTINCT DUID FROM $source
-            WHERE archive_month = (SELECT max(archive_month) FROM $source) AND START_DATE > ? AND START_DATE <= ?
+            SELECT DUID
+            FROM $source
+            WHERE archive_month = (SELECT max(archive_month) FROM $source) AND $window
+            GROUP BY DUID
+            HAVING count(DISTINCT TRANSMISSIONLOSSFACTOR) > 1
+                OR count(DISTINCT DISTRIBUTIONLOSSFACTOR) > 1
+                OR count(DISTINCT coalesce(CAST(SECONDARY_TLF AS VARCHAR), 'NULL')) > 1
             """,
-            [as_of, through],
+            [through, as_of],
         ).DUID
         changed = intersect(changed_all, factors.DUID)
         isempty(changed) ||
-            @warn "Loss factors change within the date range; the factors in force at its start are used throughout" as_of through first_changed = first(changed, 5)
+            @warn "Loss factors change within the date range; the factors of each unit's earliest registration row overlapping it are used throughout" as_of through first_changed = first(changed, 5)
     end
     return select(factors, :DUID, :GEN_LOSS_FACTOR, :LOAD_LOSS_FACTOR)
 end

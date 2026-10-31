@@ -74,11 +74,64 @@ let
         @test cp_of(read_units(vdb; as_of = early)) == "CP_BAYSW"
         @test cp_of(read_units(vdb; as_of = DateTime(2025, 8, 1))) == "CP_NEW"
         @test allunique(read_units(vdb; as_of = early).DUID)
+        for units in (read_units(vdb), read_units(vdb; as_of = early))
+            @test eltype(units.REGISTERED_FROM) == DateTime
+            @test eltype(units.REGISTERED_UNTIL) == DateTime
+        end
         # The older archive's stale open rows must not leak into either as-of read.
         @test maxmwin(read_interconnectors(vdb; as_of = early)) != 111.0
         @test only(read_units(vdb; as_of = early)[read_units(vdb; as_of = early).DUID .== "BW01", :REGISTEREDCAPACITY]) == 100.0
         # A unit not yet registered as of the date is omitted.
         @test isempty(read_units(vdb; as_of = DateTime(2019, 1, 1)))
+    end
+
+    @testset "read_units over a registration window" begin
+        vdir = mktempdir()
+        create_versioned_static_data(hive_dir, vdir)
+        vwin = aem_connect(HiveConfiguration(hive_location = vdir, filesystem = "file"))
+        window = read_units(vwin; as_of = DateTime(2025, 3, 1), through = DateTime(2025, 8, 1))
+        bw01 = window[window.DUID .== "BW01", :]
+        # Both BW01 rows overlap the window: the earlier one supplies the attributes, the span covers both.
+        @test only(bw01.CONNECTIONPOINTID) == "CP_BAYSW"
+        @test only(bw01.REGISTERED_FROM) == DateTime(2020, 1, 1)
+        @test only(bw01.REGISTERED_UNTIL) == DateTime(2999, 12, 31)
+        @test allunique(window.DUID)
+        # Production and mock types agree: the span is always TIMESTAMP, whichever reader path.
+        @test eltype(window.REGISTERED_FROM) == DateTime
+        @test eltype(window.REGISTERED_UNTIL) == DateTime
+        # Only the first row overlaps a window ending before the change.
+        before = read_units(vwin; as_of = DateTime(2025, 3, 1), through = DateTime(2025, 6, 1))
+        @test only(before[before.DUID .== "BW01", :REGISTERED_UNTIL]) == DateTime(2025, 7, 1)
+        @test isempty(read_units(vwin; as_of = DateTime(2019, 1, 1), through = DateTime(2019, 12, 31)))
+        @test_throws ArgumentError read_units(vwin; through = DateTime(2025, 1, 1))
+    end
+
+    @testset "a mid-window region change is rejected and a loss factor change warns" begin
+        # A second BW03 row from 00:10 in another region (BW03 is in QLD1), the first row left open.
+        moved = damaged_cache(
+            hive_dir, :DUDETAILSUMMARY,
+            "INSERT INTO input SELECT * REPLACE (TIMESTAMP '2025-01-01 00:10:00' AS START_DATE, 'NSW1' AS REGIONID) FROM input WHERE DUID = 'BW03'",
+        )
+        window = (as_of = DateTime(2025, 1, 1, 0, 5), through = DateTime(2025, 1, 1, 0, 15))
+        @test_throws r"BW03.*REGIONID" read_units(moved; window...)
+        # A changed loss factor is not an error: the earlier row's factor is used, with a warning.
+        lossy = damaged_cache(
+            hive_dir, :DUDETAILSUMMARY,
+            "INSERT INTO input SELECT * REPLACE (TIMESTAMP '2025-01-01 00:10:00' AS START_DATE, 0.9 AS TRANSMISSIONLOSSFACTOR) FROM input WHERE DUID = 'BW03'",
+        )
+        @test read_units(lossy; window...) isa DataFrame
+        factors = @test_logs (:warn, r"Loss factors change") match_mode = :any read_loss_factors(lossy; window...)
+        @test only(factors[factors.DUID .== "BW03", :LOAD_LOSS_FACTOR]) == 1.0
+        # Identical factors across the window stay quiet.
+        same = damaged_cache(
+            hive_dir, :DUDETAILSUMMARY,
+            "INSERT INTO input SELECT * REPLACE (TIMESTAMP '2025-01-01 00:10:00' AS START_DATE) FROM input WHERE DUID = 'BW03'",
+        )
+        quiet = Test.TestLogger()
+        Base.CoreLogging.with_logger(quiet) do
+            read_loss_factors(same; window...)
+        end
+        @test !any(occursin("Loss factors change", string(record.message)) for record in quiet.logs)
     end
 
     @testset "read_demand" begin
@@ -163,13 +216,20 @@ let
     @testset "read_fixed_loads" begin
         date_range = DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 1, 0)
         df = read_fixed_loads(db, date_range)
-        @test names(df) == ["INTERVAL_DATETIME", "DUID", "DIRECTION", "FIXEDLOAD"]
-        @test nrow(df) == 2
-        @test all(==("BW02"), df.DUID)
-        @test df.INTERVAL_DATETIME == [DateTime(2025, 1, 1, 0, 10), DateTime(2025, 1, 1, 0, 15)]
+        @test names(df) == ["INTERVAL_DATETIME", "DUID", "DIRECTION", "FIXEDLOAD", "IN_PROFILE"]
+        # BW02 has no dispatch mode in the fixture; BW04 is in DISPATCHMODE 4 at 00:10 and 2 at 00:15.
+        @test nrow(df) == 4
+        @test df.INTERVAL_DATETIME == [DateTime(2025, 1, 1, 0, 10), DateTime(2025, 1, 1, 0, 10), DateTime(2025, 1, 1, 0, 15), DateTime(2025, 1, 1, 0, 15)]
+        @test df.DUID == ["BW02", "BW04", "BW02", "BW04"]
         @test all(==(50.0), df.FIXEDLOAD)
+        # Mode 2 is in profile; mode 4 (and a unit with no dispatch mode) is not.
+        @test df.IN_PROFILE == [false, false, false, true]
+        @test eltype(df.IN_PROFILE) == Bool
         # The stop bound is exclusive.
-        @test nrow(read_fixed_loads(db, DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 0, 15))) == 1
+        @test nrow(read_fixed_loads(db, DateTime(2025, 1, 1, 0, 0):Dates.Minute(5):DateTime(2025, 1, 1, 0, 15))) == 2
+        empty_df = read_fixed_loads(db, DateTime(2025, 1, 1, 2, 0):Dates.Minute(5):DateTime(2025, 1, 1, 2, 5))
+        @test nrow(empty_df) == 0
+        @test eltype(empty_df.IN_PROFILE) == Bool
     end
 
     @testset "read_mnsp_offers" begin

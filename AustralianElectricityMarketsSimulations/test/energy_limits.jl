@@ -22,7 +22,7 @@ function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, we
             end
             if !isnothing(target)
                 add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, target; sense = ConstraintSense.EQ)
-                set_constraint_weight!(only(PSY.get_components(GenericConstraint, sys)), weight)
+                only(PSY.get_components(GenericConstraint, sys)).constraint_weight = weight
             end
             return
         end,
@@ -30,12 +30,12 @@ function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, we
 end
 
 function energy_limit_solve(sys)
-    model = AEMS._replication_decision_model(replication_template(sys), sys, TOY_START; optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
+    model = AEMS.replication_decision_model(replication_template(sys), sys, TOY_START; optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
     dispatch = PSI.read_variable(results, "ActivePowerVariable__ThermalStandard")
-    return (; results, objective = PSI.JuMP.objective_value(PSI.get_jump_model(PSI.get_optimization_container(model))), power = only(r.value for r in eachrow(dispatch) if r.name == TOY_CHEAP), violations = AEMS._constraint_violations(results, sys))
+    return (; results, objective = PSI.JuMP.objective_value(PSI.get_jump_model(PSI.get_optimization_container(model))), power = only(r.value for r in eachrow(dispatch) if r.name == TOY_CHEAP), violations = ReplayResults._constraint_violations(results, sys))
 end
 
 function energy_slack(out, type)
@@ -97,12 +97,12 @@ end
 
 @testset "recurrent energy limits update step by step" begin
     sys = energy_limit_system(; max_avail = [100.0, 35.0], uigf = [45.0, 25.0], target = [60.0, 20.0])
-    out = run_replication(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
-    dispatch = AEMS._solved_tables(out.results, sys, ()).dispatch
+    out = ReplaySimulation.run_replication(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
+    dispatch = ReplayResults._solved_tables(out.results, sys, ()).dispatch
     sort!(dispatch, :SETTLEMENTDATE)
     power = filter(:DUID => ==(TOY_CHEAP), dispatch).TOTALCLEARED
     @test power ≈ [60.0, 20.0] atol = 1.0e-6
-    violations = AEMS._constraint_violations(out.results, sys)
+    violations = ReplayResults._constraint_violations(out.results, sys)
     forecast = filter(:family => ==("energy_uigf"), violations)
     @test nrow(forecast) == 1
     @test only(forecast.MW) ≈ 15.0 atol = 1.0e-6
@@ -121,19 +121,34 @@ end
     @test_throws ArgumentError check_dispatch_envelope(invalid, template, TOY_START, 2)
 end
 
-@testset "penalty costs follow each interval's Market Price Cap across 1 July" begin
-    # The interval ending 00:00 on 1 July is the 2024-25 cap (17,500), the next the 2025-26 cap (20,300).
+@testset "a simulation across 1 July is refused, and each side of the boundary prices at its own Market Price Cap" begin
     start = DateTime(2025, 7, 1)
     steps = start:TOY_RESOLUTION:(start + TOY_RESOLUTION)
     optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
     sys = energy_limit_system(; max_avail = 40.0, start)
-    out = run_replication(sys, steps; optimizer)
+    @test_throws ArgumentError ReplaySimulation.run_replication(sys, steps; optimizer)
+    # The max-availability slack of TOY_CHEAP: 370 CVP x Market Price Cap x 100 MW base x 5 minutes.
+    for (t, expected) in ((steps[1], 370.0 * 17_500.0 * 100.0 / 12), (steps[2], 370.0 * 20_300.0 * 100.0 / 12))
+        model = AEMS.replication_decision_model(replication_template(sys; initial_time = t), sys, t; optimizer)
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        container = PSI.get_optimization_container(model)
+        objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
+        slack = PSI.get_variable(container, AEMS.EnergyMaxAvailSlack(), PSY.ThermalStandard)
+        @test PSI.JuMP.coefficient(objective, slack[TOY_CHEAP, 1]) ≈ expected
+    end
+end
+
+@testset "a range entirely after 1 July replays as standalone single-interval builds" begin
+    start = DateTime(2025, 7, 1, 0, 5)
+    steps = start:TOY_RESOLUTION:(start + TOY_RESOLUTION)
+    optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
+    sys = energy_limit_system(; max_avail = 40.0, start)
+    out = ReplaySimulation.run_replication(sys, steps; optimizer)
     objectives = PSI.read_optimizer_stats(out.results).objective_value
     for (i, t) in enumerate(steps)
-        model = AEMS._replication_decision_model(replication_template(sys), sys, t; optimizer)
+        model = AEMS.replication_decision_model(replication_template(sys; initial_time = t), sys, t; optimizer)
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
         @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
         @test objectives[i] ≈ only(PSI.read_optimizer_stats(PSI.OptimizationProblemResults(model)).objective_value) rtol = 1.0e-9
     end
-    @test objectives[2] > objectives[1]
 end

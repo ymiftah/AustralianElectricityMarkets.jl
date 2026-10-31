@@ -37,12 +37,12 @@
         return aem_connect(HiveConfiguration(hive_location = hive, filesystem = "file"))
     end
 
-    @testset "set_demand! rejects incomplete regional demand" begin
+    @testset "demand build rejects incomplete regional demand" begin
         # The mock hive holds demand to 04:00; a window running to 06:00 has no rows for the last two hours.
         start_date = DateTime(2025, 1, 1, 3, 0)
         late_range = start_date:Minute(5):(start_date + Hour(3))
         err = try
-            set_demand!(deepcopy(sys_base), db, late_range; resolution = Minute(5))
+            attach_demand!(deepcopy(sys_base), db, late_range; resolution = Minute(5))
             nothing
         catch e
             e
@@ -63,8 +63,8 @@
             horizon = Hour(2)
             date_range = start_date:resolution:(start_date + horizon)
 
-            @testset "set_demand!" begin
-                set_demand!(sys, db, date_range; resolution = resolution)
+            @testset "demand build" begin
+                attach_demand!(sys, db, date_range; resolution = resolution)
                 for load in get_components(PowerLoad, sys)
                     ta = get_time_series_array(SingleTimeSeries, load, "max_active_power")
                     # subset! logic in setters/timeseries.jl: first(date_range) <= x < last(date_range)
@@ -147,12 +147,12 @@
         horizon = Hour(2)
         date_range = start_date:resolution:(start_date + horizon)
 
-        set_demand!(sys, db, date_range; resolution = resolution)
+        attach_demand!(sys, db, date_range; resolution = resolution)
 
         demand_df = read_demand(db; resolution = resolution)
         subset!(demand_df, :SETTLEMENTDATE => ByRow(x -> first(date_range) <= x < last(date_range)))
 
-        @testset "set_demand! matches true TOTALDEMAND and LOSSDEMAND (NATURAL_UNITS)" begin
+        @testset "demand build matches true TOTALDEMAND and LOSSDEMAND (NATURAL_UNITS)" begin
             for load in get_components(PowerLoad, sys)
                 region_id = replace(get_name(load), " Load" => "")
                 region_demand = @chain demand_df begin
@@ -316,7 +316,7 @@
         function seed(write_mode)
             s = deepcopy(sys_base)
             set_units_base_system!(s, write_mode)
-            set_demand!(s, db, date_range; resolution = resolution)
+            attach_demand!(s, db, date_range; resolution = resolution)
             set_units_base_system!(s, "NATURAL_UNITS")
             return s
         end
@@ -338,7 +338,7 @@
         end
     end
 
-    @testset "set_nem_dispatch_limits!" begin
+    @testset "dispatch limits build" begin
         resolution = Minute(5)
         start_date = DateTime(2025, 1, 1, 0, 0)
         date_range = start_date:resolution:(start_date + Hour(2))
@@ -348,7 +348,7 @@
 
         @testset "attaches the full dispatch envelope to a scheduled load" begin
             sys = deepcopy(sys_base)
-            set_nem_dispatch_limits!(sys, db, date_range)
+            attach_dispatch_limits!(sys, db, date_range)
             pump = get_component(InterruptiblePowerLoad, sys, "PUMP1")
             for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw", "max_active_power", "availability")
                 @test length(get_time_series_array(SingleTimeSeries, pump, name)) == length(date_range) - 1
@@ -363,7 +363,7 @@
             sys = deepcopy(sys_base)
             set_fcas_bids!(sys, db, date_range)
             @test all(>(0.0), subset(truth, :DUID => ByRow(==("ASLOAD1"))).INITIALMW)
-            set_nem_dispatch_limits!(sys, db, date_range)
+            attach_dispatch_limits!(sys, db, date_range)
             asload = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
             @test get_available(asload)
             for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw", "max_active_power", "availability")
@@ -394,7 +394,7 @@
 
         @testset "attaches ramp/initial series to a battery, with no max_active_power" begin
             sys = deepcopy(sys_base)
-            set_nem_dispatch_limits!(sys, db, date_range)
+            attach_dispatch_limits!(sys, db, date_range)
 
             battery = get_component(EnergyReservoirStorage, sys, "BW01")
             @test !isnothing(battery)
@@ -416,7 +416,7 @@
 
         @testset "ramp rates convert MW/h to MW/min and per-unitise; initial_mw matches DISPATCHLOAD exactly, per-unitised" begin
             sys = deepcopy(sys_base)
-            set_nem_dispatch_limits!(sys, db, date_range)
+            attach_dispatch_limits!(sys, db, date_range)
 
             devices = vcat(
                 collect(get_components(ThermalStandard, sys)),
@@ -445,7 +445,7 @@
 
         @testset "availability and initial_mw read back as raw AVAILABILITY/INITIALMW" begin
             sys = deepcopy(sys_base)
-            set_nem_dispatch_limits!(sys, db, date_range)
+            attach_dispatch_limits!(sys, db, date_range)
             renewable = get_component(RenewableDispatch, sys, "BW03")
             battery = get_component(EnergyReservoirStorage, sys, "BW01")
             horizon = length(date_range) - 1
@@ -480,7 +480,7 @@
                     sys = deepcopy(sys_base)
 
                     err = try
-                        set_nem_dispatch_limits!(sys, bad_db, short_range)
+                        attach_dispatch_limits!(sys, bad_db, short_range)
                         nothing
                     catch e
                         e
@@ -510,7 +510,7 @@
             end
             sys = deepcopy(sys_base)
 
-            @test_nowarn set_nem_dispatch_limits!(sys, zero_db, short_range)
+            @test_nowarn attach_dispatch_limits!(sys, zero_db, short_range)
 
             battery = get_component(EnergyReservoirStorage, sys, "BW01")
             @test has_time_series(battery, SingleTimeSeries, "ramp_up_rate")
@@ -539,7 +539,7 @@
             end
 
             err = try
-                set_nem_dispatch_limits!(sys, db, date_range)
+                attach_dispatch_limits!(sys, db, date_range)
                 nothing
             catch e
                 e
@@ -585,14 +585,46 @@
                 @test isapprox(got_raise_max, rows.RAISEREGENABLEMENTMAX ./ base_power; atol = 1.0e-9)
                 @test isapprox(got_lower_min, rows.LOWERREGENABLEMENTMIN ./ base_power; atol = 1.0e-9)
                 @test isapprox(got_lower_max, rows.LOWERREGENABLEMENTMAX ./ base_power; atol = 1.0e-9)
-                @test isapprox(got_raise_rate, rows.RAMPUPRATE ./ base_power; atol = 1.0e-9)
-                @test isapprox(got_lower_rate, rows.RAMPDOWNRATE ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_raise_rate, max.(rows.RAMPUPRATE, rows.RAISEREGAVAILABILITY .* 12) ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_lower_rate, max.(rows.RAMPDOWNRATE, rows.LOWERREGAVAILABILITY .* 12) ./ base_power; atol = 1.0e-9)
                 @test isapprox(got_agc_status, rows.AGCSTATUS; atol = 1.0e-9)
 
                 initial_time = start_date
                 horizon = length(date_range) - 1
                 @test get_fcas_agc_status(device, initial_time, horizon) == round.(Int, rows.AGCSTATUS)
             end
+        end
+
+        @testset "the AGC ramp rate is availability times 12 where that exceeds the ramp rate, else the ramp rate" begin
+            sys = deepcopy(sys_base)
+            set_fcas_scaling_inputs!(sys, db, date_range)
+
+            raise_from_availability = truth.RAISEREGAVAILABILITY .* 12 .> truth.RAMPUPRATE
+            lower_from_availability = truth.LOWERREGAVAILABILITY .* 12 .> truth.RAMPDOWNRATE
+            @test any(raise_from_availability) && !all(raise_from_availability)
+            @test any(lower_from_availability) && !all(lower_from_availability)
+
+            for device in vcat(collect(get_components(Generator, sys)), collect(get_components(EnergyReservoirStorage, sys)))
+                rows = sort(subset(truth, :DUID => ByRow(==(get_name(device)))), :SETTLEMENTDATE)
+                got_raise = get_time_series_values(SingleTimeSeries, device, "fcas_agc_ramp_rate_RAISEREG")
+                got_lower = get_time_series_values(SingleTimeSeries, device, "fcas_agc_ramp_rate_LOWERREG")
+                raise_mask = rows.RAISEREGAVAILABILITY .* 12 .> rows.RAMPUPRATE
+                lower_mask = rows.LOWERREGAVAILABILITY .* 12 .> rows.RAMPDOWNRATE
+
+                @test isapprox(got_raise[raise_mask], rows.RAISEREGAVAILABILITY[raise_mask] .* 12 ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_raise[.!raise_mask], rows.RAMPUPRATE[.!raise_mask] ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_lower[lower_mask], rows.LOWERREGAVAILABILITY[lower_mask] .* 12 ./ base_power; atol = 1.0e-9)
+                @test isapprox(got_lower[.!lower_mask], rows.RAMPDOWNRATE[.!lower_mask] ./ base_power; atol = 1.0e-9)
+            end
+        end
+
+        @testset "a missing availability falls back to the ramp rate; a missing ramp rate stays missing" begin
+            interval_hours = 5 / 60
+            @test AustralianElectricityMarkets._agc_ramp_rate(5.0, missing, interval_hours) == 5.0
+            @test AustralianElectricityMarkets._agc_ramp_rate(5.0, 1.0, interval_hours) == 12.0
+            @test ismissing(AustralianElectricityMarkets._agc_ramp_rate(missing, 1.0, interval_hours))
+            @test AustralianElectricityMarkets._agc_ramp_rate(0.0, 2.0, interval_hours) == 2.0 / interval_hours
+            @test AustralianElectricityMarkets._agc_ramp_rate(5.0, 0.0, interval_hours) == 5.0
         end
 
         @testset "get_fcas_agc_status is nothing when fcas_agc_status is not attached" begin
@@ -703,7 +735,10 @@
                     )
                 end
                 raw_mw = with_units_base(() -> get_max_avail.(AustralianElectricityMarkets._get_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)), sys, "NATURAL_UNITS")
-                @test isapprox(get_max_avail.(scaled_i), min.(raw_mw, rows.RAMPUPRATE .* hours); atol = 1.0e-6)
+                @test isapprox(
+                    get_max_avail.(scaled_i),
+                    min.(raw_mw, max.(rows.RAMPUPRATE, rows.RAISEREGAVAILABILITY .* 12) .* hours); atol = 1.0e-6,
+                )
             end
 
             # A contingency market carries no AGC scaling input series at all: unscaled.
@@ -729,7 +764,7 @@
             bat = get_component(EnergyReservoirStorage, sys, "BW01")
             # No DISPATCHLOAD rows exist for this far-future range: every interval is missing.
             future_range = DateTime(2099, 1, 1, 0, 0):resolution:(DateTime(2099, 1, 1, 2, 0))
-            @test_throws ArgumentError set_nem_dispatch_limits!(sys, db, future_range)
+            @test_throws ArgumentError attach_dispatch_limits!(sys, db, future_range)
             @test !has_time_series(bat, SingleTimeSeries, "initial_mw")
         end
     end
@@ -748,7 +783,7 @@
             return (INITIALMW = 50.0, RAMPUPRATE = 5.0, RAMPDOWNRATE = 4.0, AVAILABILITY = 100.0)
         end
         sys = deepcopy(sys_base)
-        set_nem_dispatch_limits!(sys, floor_db, short_range)
+        attach_dispatch_limits!(sys, floor_db, short_range)
 
         er01 = get_component(ThermalStandard, sys, "ER01")
         static_cap = with_units_base(() -> get_max_active_power(er01), sys, "NATURAL_UNITS")
@@ -780,7 +815,7 @@
             er01 = get_component(ThermalStandard, sys, "ER01")
             set_available!(er01, false)
 
-            @test_nowarn set_nem_dispatch_limits!(sys, partial_db, short_range)
+            @test_nowarn attach_dispatch_limits!(sys, partial_db, short_range)
             @test !has_time_series(er01, SingleTimeSeries, "ramp_up_rate")
             @test has_time_series(get_component(ThermalStandard, sys, "ER02"), SingleTimeSeries, "ramp_up_rate")
 
@@ -790,7 +825,7 @@
             sys = deepcopy(sys_base)
 
             err = try
-                set_nem_dispatch_limits!(sys, partial_db, short_range)
+                attach_dispatch_limits!(sys, partial_db, short_range)
                 nothing
             catch e
                 e
@@ -977,7 +1012,7 @@ end
         bad = invalid_energy_cache(
             :DUDETAILSUMMARY, function (frame)
                 changed = frame[frame.DUID .== "BW03", :][1:1, :]
-                changed.START_DATE .= range[2]
+                changed.START_DATE .= range[1]
                 changed.SCHEDULE_TYPE .= "SCHEDULED"
                 append!(frame, changed)
                 return
@@ -988,9 +1023,14 @@ end
     end
 
     @testset "non-scheduled loads receive zero availability" begin
-        fcas_sys = nem_system(db, ConstrainedNetworkConfiguration(); date_range = range)
-        set_market_bids!(fcas_sys, db, range)
-        set_nem_energy_limits!(fcas_sys, db, range)
+        # The strict replay build needs complete invoked-constraint and dispatch inputs.
+        complete_dir = mktempdir()
+        create_mock_data(complete_dir; complete_inputs = true)
+        write_mock_interconnector_results(complete_dir)
+        complete_db = aem_connect(HiveConfiguration(hive_location = complete_dir, filesystem = "file"))
+        replay_range = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+        fcas_sys = nem_system(complete_db, NEMDEConfiguration(); date_range = replay_range)
+        close(complete_db.db)
         loads = [l for l in get_components(ControllableLoad, fcas_sys) if get_available(l) && startswith(get_name(l), "ASLOAD")]
         @test !isempty(loads)
         for load in loads
@@ -1031,4 +1071,29 @@ end
         @test all(r -> r.SETTLEMENTDATE < last(range), eachrow(rows))
     end
     close(db.db)
+end
+
+@testset "Grid padding of bids and FCAS rows" begin
+    AEM = AustralianElectricityMarkets
+    grid = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 15)
+    curve(prices, widths) = PowerSystems.PiecewiseStepData(vcat(0.0, cumsum(widths)), prices)
+    rows = DataFrame(
+        DUID = ["X", "X"], DIRECTION = ["GEN", "GEN"], INTERVAL_DATETIME = [grid[2], grid[3]],
+        MAXAVAIL = [10.0, 20.0], piecewise_step_data = [curve([1.0, 2.0], [5.0, 5.0]), curve([1.5, 2.5], [5.0, 10.0])],
+    )
+    padded = AEM._pad_bids_to_grid(rows, grid)
+    @test nrow(padded) == length(grid)
+    @test padded.INTERVAL_DATETIME == collect(grid)
+    @test padded.MAXAVAIL == [0.0, 10.0, 20.0]
+    # An absent stamp is a zero-width curve on the first real row's prices.
+    @test PowerSystems.get_y_coords(padded.piecewise_step_data[1]) == [1.0, 2.0]
+    @test PowerSystems.get_x_coords(padded.piecewise_step_data[1]) == [0.0, 0.0, 0.0]
+    @test PowerSystems.get_x_coords(padded.piecewise_step_data[2]) == [0.0, 5.0, 10.0]
+    @test_throws ArgumentError AEM._pad_bids_to_grid(vcat(rows, rows), grid)
+    @test_throws ArgumentError AEM._pad_bids_to_grid(rows, grid[1:2])
+
+    values = DataFrame(INTERVAL_DATETIME = [grid[2]], X = [7.0])
+    @test AEM._on_grid(values, :X, grid, 0.0, "U1", BidType.RAISEREG) == [0.0, 7.0, 0.0]
+    @test_throws ArgumentError AEM._on_grid(vcat(values, values), :X, grid, 0.0, "U1", BidType.RAISEREG)
+    @test_throws ArgumentError AEM._on_grid(DataFrame(INTERVAL_DATETIME = [grid[end] + Minute(5)], X = [1.0]), :X, grid, 0.0, "U1", BidType.RAISEREG)
 end

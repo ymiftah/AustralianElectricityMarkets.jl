@@ -8,8 +8,9 @@ Chain = "8be319e6-bccf-4806-a6f7-6fae938471bc"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
-DuckDB = "d2f5444f-75bc-4fdf-ac35-56f514c445e1"
 DocumenterVitepress = "4710194d-e776-4893-9690-8d956a29c365"
+DuckDB = "d2f5444f-75bc-4fdf-ac35-56f514c445e1"
+HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
 HiGHS = "87dc4568-4c63-4d18-b0c0-bb2238e4078b"
 HydroPowerSimulations = "fc1677e0-6ad7-4515-bf3a-bd6bf20a0b1b"
 Literate = "98b081ad-f1c9-55d3-8b20-4c87d4299306"
@@ -22,6 +23,7 @@ AustralianElectricityMarkets = "0.1"
 AustralianElectricityMarketsCache = "0.1"
 AustralianElectricityMarketsData = "0.1"
 DuckDB = "1"
+HDF5 = "0.17.5"
 HiGHS = "1"
 HydroPowerSimulations = "0.19"
 PowerSimulations = "0.38"
@@ -32,3 +34,6 @@ StorageSystemsSimulations = "0.20"
 AustralianElectricityMarkets = {path = ".."}
 AustralianElectricityMarketsCache = {path = "../AustralianElectricityMarketsCache"}
 AustralianElectricityMarketsData = {path = "../AustralianElectricityMarketsData"}
+HDF5 = {url = "https://github.com/JuliaIO/HDF5.jl.git", rev = "4c4592a397a4e4f6045a56003ca4d038c8eb3a78"}
+PowerSimulations = {url = "https://github.com/ymiftah/PowerSimulations.jl.git", rev = "81c0259d18196c7d7c0a040f7638fc00fc37d327"}
+PowerSystems = {url = "https://github.com/ymiftah/PowerSystems.jl.git", rev = "c950c8bf165e275946995ec431938ef0b6ff22ba"}

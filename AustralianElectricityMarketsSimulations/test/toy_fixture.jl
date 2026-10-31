@@ -17,6 +17,7 @@ const TOY_TOLERANCE = 1.0e-6
 const TOY_CHEAP = "Alta"
 const TOY_EXPENSIVE = "Park City"
 const TOY_BATTERY = "batt1"
+const TOY_LOAD_SERVICE_ONLY = "sched_load"
 
 # A unit's offer and dispatch limits, in MW, MW/min and $/MWh. `bands` is a vector of
 # `(MW, price)` pairs in offer order.
@@ -240,7 +241,7 @@ function add_toy_interchange!(sys, stamps, ic)
             scaling_factor_multiplier = PSY.get_max_active_power,
         ),
     )
-    # Each area's loss demand is its load, as `set_demand!` attaches it.
+    # Each area's loss demand is its load, as `_set_demand!` attaches it.
     for name in ("bus3", "bus4")
         demand = PSY.get_time_series(PSY.SingleTimeSeries, PSY.get_component(PSY.PowerLoad, sys, name), "max_active_power")
         PSY.add_time_series!(
@@ -280,7 +281,7 @@ function add_toy_interchange!(sys, stamps, ic)
 end
 
 # A single ENERGY `UnitTerm` `GenericConstraint` `name` of `sense` on `duid`'s ENERGY output at
-# `rhs_mw`, with "rhs"/"invoked" series on `stamps`, in the form `add_nem_constraints!`
+# `rhs_mw`, with "rhs"/"invoked" series on `stamps`, in the form `_add_nem_constraints!`
 # would produce. `rhs_mw` is a natural-MW value, stored per-unit of the system base. `rhs_mw` and
 # `invoked` take a scalar or one value per stamp.
 function add_toy_generic_constraint!(
@@ -315,6 +316,13 @@ function toy_model(sys; template)
     )
 end
 
+# Builds `model` and returns its status with the text of the build log, which records any error.
+function _toy_build_log(model)
+    dir = mktempdir()
+    status = PSI.build!(model; output_dir = dir)
+    return status, join((read(joinpath(dir, f), String) for f in readdir(dir)), "\n")
+end
+
 # Solves one 5-minute interval under `NEMReplayDispatch`. Returns dispatch and per-band offers in
 # MW, the area price in $/MWh, the objective in $, and each `GenericConstraint`'s shadow price in
 # $/MWh, keyed by name (empty if `sys` carries none). Any `GenericConstraint` in `sys` is registered
@@ -324,11 +332,7 @@ function solve_toy(
         generic_slacks = false,
         optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
     )
-    network = PSI.NetworkModel(
-        PSI.AreaBalancePowerModel;
-        use_slacks = true,
-        duals = [PSI.CopperPlateBalanceConstraint],
-    )
+    network = AEMS._area_balance_network_model(sys, TOY_START; duals = [PSI.CopperPlateBalanceConstraint])
     template = PSI.ProblemTemplate(network)
     set_nem_dispatch_models!(template, sys)
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
@@ -416,8 +420,13 @@ end
 
 # --- FCAS on the toy system: one `(MW, ...)` value or band list per stamp. ---
 
-# Attaches `device`'s `"fcas_trapezium_*"`/`"fcas_curve_*"` series: `trapeziums` are
+# Key of the offer curves `add_toy_fcas_offer!` holds in a device's `ext` until its FCASService exists.
+const TOY_FCAS_CURVES_KEY = "toy_fcas_curves"
+
+# Attaches `device`'s `"fcas_trapezium_*"` series: `trapeziums` are
 # `(EnablementMin, LowBreakpoint, HighBreakpoint, EnablementMax, MaxAvail)` in MW, `bands` `(MW, price)` lists.
+# The offer curves become the device's service bids once its FCASService exists
+# (see `flush_toy_fcas_curves!`).
 function add_toy_fcas_offer!(sys, device, stamps, bid_type, trapeziums, bands; decremental = false)
     base_power = PSY.get_base_power(sys)
     suffix = decremental ? "$(string(bid_type))_decremental" : string(bid_type)
@@ -425,9 +434,37 @@ function add_toy_fcas_offer!(sys, device, stamps, bid_type, trapeziums, bands; d
         Tuple(FCASTrapezium(; enablement_min = a / base_power, low_breakpoint = b / base_power, high_breakpoint = c / base_power, enablement_max = d / base_power, max_avail = e / base_power))
             for (a, b, c, d, e) in trapeziums
     ]
-    curves = [PSY.PiecewiseStepData([0.0; cumsum(first.(bs))] ./ base_power, last.(bs)) for bs in bands]
-    for (name, values) in (("fcas_trapezium_$suffix", traps), ("fcas_curve_$suffix", curves))
-        PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series(name, stamps[1], values, TOY_RESOLUTION))
+    curves = [PSY.PiecewiseStepData([0.0; cumsum(first.(bs))], last.(bs)) for bs in bands]
+    PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series("fcas_trapezium_$suffix", stamps[1], traps, TOY_RESOLUTION))
+    pending = get!(() -> Any[], PSY.get_ext(device), TOY_FCAS_CURVES_KEY)
+    push!(pending, (bid_type, decremental, stamps[1], curves))
+    flush_toy_fcas_curves!(sys)
+    return
+end
+
+# Writes each pending offer curve as the service bid of every FCASService of its bid type that its
+# device belongs to and that does not carry it yet. Give a MarketBidCost to any device without one,
+# as PowerSystems requires. Call it after adding FCASServices, since a curve waits until its service exists.
+function flush_toy_fcas_curves!(sys)
+    for device in PSY.get_components(PSY.Device, sys)
+        pending = get(PSY.get_ext(device), TOY_FCAS_CURVES_KEY, nothing)
+        isnothing(pending) && continue
+        for (bid_type, decremental, start, curves) in pending
+            for svc in PSY.get_services(device)
+                svc isa FCASService && get_bid_type(svc) == bid_type || continue
+                name = AustralianElectricityMarkets.fcas_offer_series_name(svc, decremental)
+                PSY.has_time_series(device, PSY.SingleTimeSeries, name) && continue
+                PSY.get_operation_cost(device) isa PSY.MarketBidCost || PSY.set_operation_cost!(
+                    device, PSY.MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0),
+                )
+                ts = AustralianElectricityMarkets.single_series(name, start, curves, TOY_RESOLUTION)
+                if decremental
+                    PSY.set_decremental_service_bid!(sys, device, svc, ts, PSY.UnitSystem.NATURAL_UNITS)
+                else
+                    PSY.set_service_bid!(sys, device, svc, ts, PSY.UnitSystem.NATURAL_UNITS)
+                end
+            end
+        end
     end
     return
 end
@@ -448,6 +485,7 @@ function add_toy_fcas_market!(sys, stamps, bid_type, duids, name, rhs_mw)
     PSY.add_service!(sys, gc, devices)
     add_toy_series!(sys, gc, stamps, "rhs", rhs_mw)
     add_toy_series!(sys, gc, stamps, "invoked", [1.0, 1.0]; scale = 1.0)
+    flush_toy_fcas_curves!(sys)
     return
 end
 # Alta and Park City offer RAISE6SEC, Alta also RAISEREG and LOWERREG, `TOY_BATTERY` RAISEREG on both
@@ -487,6 +525,7 @@ function fcas_toy_system(;
             add_toy_fcas_market!(sys, stamps, BidType.RAISE6SEC, [TOY_CHEAP, TOY_EXPENSIVE, TOY_BATTERY], "F_R6", r6_req)
             add_toy_fcas_market!(sys, stamps, BidType.LOWER6SEC, ["pump"], "F_L6", [5.0, 5.0])
             PSY.add_service!(sys, FCASService(; name = "1_LOWERREG", region = "1", bid_type = BidType.LOWERREG), [alta])
+            flush_toy_fcas_curves!(sys)
         end,
     )
 end

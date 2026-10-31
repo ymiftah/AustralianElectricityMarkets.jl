@@ -9,21 +9,27 @@ const REPLICATION_PARTS = (:batteries, :fcas, :losses, :tie_breaks, :generic_con
 
 
 """
-    replication_template(sys; skipped = nothing, parts = REPLICATION_PARTS, exclude_constraints = Dict{String, Symbol}()) -> PSI.ProblemTemplate
+    replication_template(sys; initial_time = nothing, market_price_cap = nothing, skipped = nothing, parts = REPLICATION_PARTS, exclude_constraints = Dict{String, Symbol}()) -> PSI.ProblemTemplate
 
 Builds the `ProblemTemplate` that replicates NEMDE on `sys`: [`AbstractNEMDispatch`](@ref) devices
 (via [`set_nem_dispatch_models!`](@ref)), `PSI.StaticPowerLoad` demand, [`NEMInterconnectorLoss`](@ref)
 on every `PSY.AreaInterchange`, an [`FCASMarket`](@ref) per registered `FCASService`, and a
 [`LinearFactorLimit`](@ref) per `GenericConstraint` with an available contributing device.
-Regions balance through `PSI.AreaBalancePowerModel` with slacks, and the balance duals are
-recorded as regional prices. Price-tied energy bands are dispatched pro rata by the
+Regions balance through `PSI.AreaBalancePowerModel` with slacks priced at the Market Price Cap of
+`initial_time`, or at `market_price_cap` when given. The balance-slack cap is fixed at template
+construction, so a settings-`ext` cap override must go through `market_price_cap`, which
+[`replication_decision_model`](@ref) checks. The balance duals are recorded as regional prices. Price-tied energy bands are dispatched pro rata by the
 [`TieBreakMarket`](@ref) service model when `sys` carries the [`EnergyTieBreak`](@ref) of
-[`set_tie_break_scales!`](@ref). `parts` selects the [`REPLICATION_PARTS`](@ref) to model; without
+[`AustralianElectricityMarkets.set_tie_break_scales!`](@ref). `parts` selects the [`REPLICATION_PARTS`](@ref) to model; without
 `:losses` no `PSY.AreaInterchange` is modeled and the regions are uncoupled.
 
 # Arguments
 - `sys`: a populated `PSY.System` with attached replay inputs, such as one created through
-  `NEMDEConfiguration` and prepared with [`prepare_replication!`](@ref).
+  `NEMDEConfiguration` and prepared with [`prepare_replay_forecasts!`](@ref).
+- `initial_time`: the first interval of the build, which dates the Market Price Cap of the slacks;
+  default the earliest forecast window of `sys`, which throws `ArgumentError` when `sys` has none.
+- `market_price_cap`: a Market Price Cap that replaces the one dated by `initial_time`, or `nothing`.
+  It must equal the `market_price_cap` later given to [`replication_decision_model`](@ref).
 - `skipped`: a vector that receives one `(constraint, reason, n_missing)` named tuple per generic
   constraint left out of the template, or `nothing`. `reason` is `:no_available_device` when all
   its contributing devices are unavailable, the `exclude_constraints` reason, or, when `parts`
@@ -42,16 +48,16 @@ series, incomplete MNSP offers), a generic constraint the template cannot model 
 than a left-out part, and `:tie_breaks` without `:batteries` when a battery carries tie-break scales.
 """
 function replication_template(
-        sys::PSY.System; skipped::Union{Nothing, AbstractVector} = nothing, parts = REPLICATION_PARTS,
+        sys::PSY.System; initial_time::Union{Nothing, DateTime} = nothing, market_price_cap = nothing,
+        skipped::Union{Nothing, AbstractVector} = nothing, parts = REPLICATION_PARTS,
         exclude_constraints::AbstractDict{<:AbstractString, Symbol} = Dict{String, Symbol}(),
     )
-    _check_replication_parts(parts)
+    check_replication_parts(parts)
     _check_replay_system_inputs(sys, parts)
+    start = isnothing(initial_time) ? _first_forecast_time(sys) : initial_time
     template = PSI.ProblemTemplate(
-        PSI.NetworkModel(
-            PSI.AreaBalancePowerModel;
-            use_slacks = true,
-            duals = [PSI.CopperPlateBalanceConstraint],
+        _area_balance_network_model(
+            sys, start; market_price_cap = market_price_cap, duals = [PSI.CopperPlateBalanceConstraint],
         ),
     )
     _set_replication_device_models!(template, sys, parts)
@@ -76,12 +82,31 @@ function replication_template(
 end
 
 
-function _check_replication_parts(parts)
+"""
+    check_replication_parts(parts) -> Nothing
+
+Throws `ArgumentError` naming the entries of `parts` that are not in [`REPLICATION_PARTS`](@ref).
+
+# Arguments
+- `parts`: the replay families to model.
+
+# Returns
+`nothing`.
+"""
+function check_replication_parts(parts)
     unknown = setdiff(parts, REPLICATION_PARTS)
     isempty(unknown) || throw(
         ArgumentError("replication_template: unknown parts $(Tuple(unknown)); choose from $REPLICATION_PARTS."),
     )
     return
+end
+
+
+# The earliest forecast window of `sys`, the build's initial interval when none is given.
+function _first_forecast_time(sys::PSY.System)
+    times = PSY.get_forecast_initial_times(sys)
+    isempty(times) && throw(ArgumentError("replication_template: sys has no forecast windows; pass initial_time."))
+    return minimum(times)
 end
 
 
@@ -183,244 +208,40 @@ end
 
 
 """
-    REPLICATION_OPTIMIZER
+    replication_decision_model(template, sys, initial_time; optimizer, name = "replication", market_price_cap = nothing) -> PSI.DecisionModel
 
-The default replay optimizer: HiGHS with zero MIP gap tolerances, since the interconnector loss
-encoding makes each interval a MILP.
+Constructs the one-interval `PSI.DecisionModel` of `template` on `sys` from `initial_time`. Its settings
+carry the Market Price Cap of its network model, so every penalty of a replay is priced at one value.
+
+# Arguments
+- `template`: a [`replication_template`](@ref) built on `sys`.
+- `sys`: the system the template was built on.
+- `initial_time`: the first interval of the model, which dates the Market Price Cap.
+- `optimizer`: the JuMP optimizer for the model.
+- `name`: the decision problem name used to retrieve its results.
+- `market_price_cap`: a Market Price Cap that replaces the one dated by `initial_time`, or `nothing`.
+
+# Returns
+The `PSI.DecisionModel`. Throws `ArgumentError` when `template` prices balance slacks at a different
+cap than the one the model is built at.
 """
-const REPLICATION_OPTIMIZER = JuMP.optimizer_with_attributes(
-    HiGHS.Optimizer, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10,
-)
-
-
-# A one-interval `DecisionModel` of `template` on `sys` from `initial_time`.
-function _replication_decision_model(
+function replication_decision_model(
         template::PSI.ProblemTemplate, sys::PSY.System, initial_time::DateTime;
-        optimizer = REPLICATION_OPTIMIZER, name = "replication",
+        optimizer, name = "replication", market_price_cap = nothing,
     )
-    return PSI.DecisionModel(
+    cap = _resolved_market_price_cap(initial_time, market_price_cap)
+    slack_cost = PSI.get_slack_cost(PSI.get_network_model(template))
+    slack_cost == _area_balance_slack_cost(sys, cap) || throw(
+        ArgumentError(
+            "replication model: the template prices balance slacks at a Market Price Cap other than $cap; " *
+                "pass the same market_price_cap to replication_template and to the model.",
+        ),
+    )
+    model = PSI.DecisionModel(
         template, sys;
         optimizer = optimizer, horizon = DISPATCH_INTERVAL, resolution = DISPATCH_INTERVAL,
         interval = DISPATCH_INTERVAL, initial_time = initial_time, name = name,
     )
-end
-
-
-# PSI ignores a failed dual LP and leaves the duals NaN, so check them before reporting prices.
-function _check_prices_finite(prices::DataFrame)
-    bad = prices[.!isfinite.(prices.ROP), :]
-    isempty(bad) || error(
-        "Interval $(minimum(bad.SETTLEMENTDATE)) has non-finite regional price duals; the dual pass failed.",
-    )
-    return
-end
-
-
-# Logs the skipped-constraint count by reason and the table, for a build or solve that failed.
-function _log_skipped_constraints(skipped::DataFrame)
-    by_reason = combine(groupby(skipped, :reason), nrow => :n)
-    counts = join(("$(r.reason)=$(r.n)" for r in eachrow(sort(by_reason, :reason))), ", ")
-    @error "Skipped constraints at failure: $(nrow(skipped)) ($counts)" skipped
-    return
-end
-
-
-# Every elastic slack family, as `slack variable type => (family, direction)`. `direction` is
-# `"up"` for a slack that relaxes a `<=` row and `"down"` for one that relaxes a `>=` row; the
-# FCAS families whose rows have both senses refine it per key in `_violation_direction`.
-const _VIOLATION_FAMILIES = (
-    EnergyOfferSurplusSlack => ("energy_offer", "up"),
-    EnergyOfferDeficitSlack => ("energy_offer", "down"),
-    EnergyDecrementalOfferSurplusSlack => ("energy_offer", "up"),
-    EnergyDecrementalOfferDeficitSlack => ("energy_offer", "down"),
-    EnergyMaxAvailOutSlack => ("energy_max_avail", "up"),
-    EnergyMaxAvailInSlack => ("energy_max_avail", "down"),
-    EnergyMaxAvailSlack => ("energy_max_avail", "up"),
-    EnergyUIGFSlack => ("energy_uigf", "up"),
-    EnergyFixedLoadSurplusSlack => ("fixed_load", "up"),
-    EnergyFixedLoadDeficitSlack => ("fixed_load", "down"),
-    MNSPMaxAvailSlack => ("mnsp_max_avail", "up"),
-    MNSPOfferSlack => ("mnsp_offer", "up"),
-    MNSPRampUpSlack => ("mnsp_ramp", "up"),
-    MNSPRampDownSlack => ("mnsp_ramp", "down"),
-    MNSPFixedLoadSurplusSlack => ("mnsp_fixed_load", "up"),
-    MNSPFixedLoadDeficitSlack => ("mnsp_fixed_load", "down"),
-    UnitRampUpSlack => ("unit_ramp", "up"),
-    UnitRampDownSlack => ("unit_ramp", "down"),
-    InterconnectorFlowSurplusSlack => ("interconnector_flow", "up"),
-    InterconnectorFlowDeficitSlack => ("interconnector_flow", "down"),
-    FCASMaxAvailSlack => ("fcas_max_avail", "up"),
-    FCASBDURampingSlack => ("fcas_bdu_ramping", "up"),
-    FCASJointRampingSlack => ("fcas_joint_ramping", "up"),
-    FCASJointCapacitySlack => ("fcas_enablement", "up"),
-    GenericConstraintSlackUp => ("generic_constraint", "up"),
-    GenericConstraintSlackDown => ("generic_constraint", "down"),
-    PSI.SystemBalanceSlackUp => ("area_balance", "up"),
-    PSI.SystemBalanceSlackDown => ("area_balance", "down"),
-)
-
-
-function _violation_direction(::PSY.System, ::Type, ::AbstractString, ::AbstractString, default::AbstractString)
-    return default
-end
-
-function _violation_direction(::PSY.System, ::Type{<:AbstractMNSPSlack}, meta::AbstractString, ::AbstractString, default::AbstractString)
-    return isempty(meta) ? default : "$(meta)_$default"
-end
-
-function _violation_direction(::PSY.System, ::Type{<:Union{MNSPMaxAvailSlack, MNSPOfferSlack}}, meta::AbstractString, ::AbstractString, default::AbstractString)
-    return isempty(meta) ? default : meta
-end
-
-# Capacity keys end in `_lower` for the >= EnablementMin rows.
-function _violation_direction(::PSY.System, ::Type{FCASJointCapacitySlack}, meta::AbstractString, ::AbstractString, ::AbstractString)
-    return endswith(meta, "_lower") ? "down" : "up"
-end
-
-# Joint ramping uses the upper form for the device's upper regulation service.
-function _violation_direction(sys::PSY.System, ::Type{FCASJointRampingSlack}, meta::AbstractString, name::AbstractString, ::AbstractString)
-    service = PSY.get_component(FCASService, sys, meta)
-    device = PSY.get_component(PSY.Device, sys, name)
-    return get_bid_type(service) == _fcas_upper_regulation_service(device) ? "up" : "down"
-end
-
-
-# The long-format (`DateTime`, `name`, `value`) frame of each of `keys`: solved values of a model,
-# realized values of a simulation's decision problem.
-function _read_variable_frames(results::PSI.OptimizationProblemResults, keys)
-    return Dict(key => PSI.read_variable(results, key) for key in keys)
-end
-function _read_variable_frames(results::PSI.SimulationProblemResults, keys)
-    isempty(keys) && return Dict{PSI.VariableKey, DataFrame}()
-    names = Dict(key => PSI.IS.Optimization.encode_key_as_string(key) for key in keys)
-    vals = PSI.read_realized_variables(results, collect(values(names)))
-    return Dict(key => vals[name] for (key, name) in names)
-end
-
-
-# The stamps at which `sys`'s generic constraint `name` is invoked.
-function _invoked_stamps(sys::PSY.System, name::AbstractString)
-    ts = PSY.get_time_series(PSY.SingleTimeSeries, PSY.get_component(GenericConstraint, sys, name), "invoked")
-    data = PSY.get_data(ts)
-    return Set(t for (t, v) in zip(PSY.TimeSeries.timestamp(data), PSY.TimeSeries.values(data)) if v != 0.0)
-end
-
-
-# `family`, `name`, `DateTime`, `MW`, `direction` and `variable` (the slack variable's key) of
-# every slack above the tolerance, in every interval and every family of `_VIOLATION_FAMILIES`;
-# a generic constraint's slack counts only where it is invoked.
-function _constraint_violations(
-        results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}, sys::PSY.System,
-    )
-    kinds = Dict(_VIOLATION_FAMILIES)
-    rows = NamedTuple{
-        (:family, :name, :DateTime, :MW, :direction, :variable),
-        Tuple{String, String, DateTime, Float64, String, String},
-    }[]
-    slack_keys = [key for key in PSI.list_variable_keys(results) if haskey(kinds, PSI.IS.Optimization.get_entry_type(key))]
-    frames = _read_variable_frames(results, slack_keys)
-    invoked = Dict{String, Set{DateTime}}()
-    for key in slack_keys
-        type = PSI.IS.Optimization.get_entry_type(key)
-        kind = kinds[type]
-        for r in eachrow(frames[key])
-            r.value > _VIOLATION_TOLERANCE_MW || continue
-            kind[1] == "generic_constraint" && !(r.DateTime in get!(() -> _invoked_stamps(sys, r.name), invoked, r.name)) &&
-                continue
-            direction = _violation_direction(sys, type, key.meta, r.name, kind[2])
-            push!(rows, (; family = kind[1], name = r.name, DateTime = r.DateTime, MW = r.value, direction, variable = string(key)))
-        end
-    end
-    return DataFrame(rows)
-end
-
-
-# `DUID`, `DateTime`, `MW` and `direction` of every non-zero unit ramp slack, from the
-# `_constraint_violations` table.
-function _ramp_violations(violations::DataFrame)
-    ramp = violations[violations.family .== "unit_ramp", :]
-    return DataFrame(DUID = ramp.name, DateTime = ramp.DateTime, MW = ramp.MW, direction = ramp.direction)
-end
-
-
-"MW of slack below which a constraint row counts as satisfied."
-const _VIOLATION_TOLERANCE_MW = 1.0e-6
-
-
-# Each dispatch variable's sign in net MW: generation (or discharge) minus charge.
-const _DISPATCH_SIGNS = Dict(
-    PSI.ActivePowerVariable => 1.0, PSI.ActivePowerOutVariable => 1.0, PSI.ActivePowerInVariable => -1.0,
-)
-
-
-function _read_balance_duals(results::PSI.OptimizationProblemResults)
-    return PSI.read_dual(results, PSI.CopperPlateBalanceConstraint, PSY.Area)
-end
-function _read_balance_duals(results::PSI.SimulationProblemResults)
-    return only(values(PSI.read_realized_duals(results, [PSI.ConstraintKey(PSI.CopperPlateBalanceConstraint, PSY.Area)])))
-end
-
-
-# Solved output tables over every interval of `results`: `prices`
-# (`SETTLEMENTDATE`, `REGIONID`, `ROP`), `dispatch` (`DUID`, net `TOTALCLEARED`), `interconnectors`
-# (`INTERCONNECTORID`, `MWFLOW`, `MWLOSSES`) and `fcas_prices` ([`compute_fcas_prices`](@ref)).
-# With `:losses` in `parts`, the interchange flow and loss variables must be in `results`.
-function _solved_tables(results, sys::PSY.System, parts)
-    keys_of(T, C) = [
-        k for k in PSI.list_variable_keys(results)
-            if PSI.IS.Optimization.get_entry_type(k) === T && (isnothing(C) || PSI.IS.Optimization.get_component_type(k) === C)
-    ]
-    interchange_keys = [only(keys_of(T, PSY.AreaInterchange)) for T in (PSI.FlowActivePowerVariable, InterconnectorLossVariable) if !isempty(keys_of(T, PSY.AreaInterchange))]
-    if :losses in parts && !isempty(PSY.get_components(PSY.get_available, PSY.AreaInterchange, sys)) && length(interchange_keys) != 2
-        error("Losses are modeled but the results lack the AreaInterchange flow or loss variables.")
-    end
-    dispatch_keys = PSI.VariableKey[k for T in keys(_DISPATCH_SIGNS) for k in keys_of(T, nothing)]
-    frames = _read_variable_frames(results, [dispatch_keys; interchange_keys])
-
-    # A balance dual is per per-unit-interval; dividing gives $/MWh.
-    scale = PSY.get_base_power(sys) * interval_hours(DISPATCH_INTERVAL)
-    prices = @chain _read_balance_duals(results) begin
-        select(:DateTime => :SETTLEMENTDATE, :name => :REGIONID, :value => ByRow(v -> v / scale) => :ROP)
-    end
-    signed = [transform(frames[k], :value => (v -> _DISPATCH_SIGNS[PSI.IS.Optimization.get_entry_type(k)] .* v) => :value) for k in dispatch_keys]
-    dispatch = @chain reduce(vcat, signed; init = DataFrame(DateTime = DateTime[], name = String[], value = Float64[])) begin
-        groupby([:DateTime, :name])
-        combine(:value => sum => :TOTALCLEARED)
-        rename(:DateTime => :SETTLEMENTDATE, :name => :DUID)
-    end
-    interconnectors = if length(interchange_keys) == 2
-        flow, loss = (rename(frames[k], :value => c) for (k, c) in zip(interchange_keys, (:MWFLOW, :MWLOSSES)))
-        @chain flow begin
-            leftjoin(loss; on = [:DateTime, :name])
-            rename(:DateTime => :SETTLEMENTDATE, :name => :INTERCONNECTORID)
-        end
-    else
-        DataFrame(SETTLEMENTDATE = DateTime[], INTERCONNECTORID = String[], MWFLOW = Float64[], MWLOSSES = Union{Missing, Float64}[])
-    end
-    fcas_prices = compute_fcas_prices(results, sys; resolution = DISPATCH_INTERVAL)
-    return (; prices, dispatch, interconnectors, fcas_prices)
-end
-
-
-"""
-    replication_results(results, sys::PSY.System; parts = REPLICATION_PARTS) -> NamedTuple
-
-Extracts solved dispatch, prices, interconnector flows and constraint violations from PSI
-results using the system's attached component metadata.
-
-# Arguments
-- `results`: PSI optimisation or simulation problem results.
-- `sys`: the system used by the model.
-- `parts`: the [`REPLICATION_PARTS`](@ref) used by the model.
-
-# Returns
-A named tuple of `solved` tables, `constraint_violations` and `ramp_violations`.
-Throws when required model outputs are missing or regional price duals are non-finite.
-"""
-function replication_results(results, sys::PSY.System; parts = REPLICATION_PARTS)
-    _check_replication_parts(parts)
-    solved = _solved_tables(results, sys, parts)
-    _check_prices_finite(solved.prices)
-    constraint_violations = _constraint_violations(results, sys)
-    return (; solved, constraint_violations, ramp_violations = _ramp_violations(constraint_violations))
+    PSI.get_ext(PSI.get_settings(model))["market_price_cap"] = cap
+    return model
 end
