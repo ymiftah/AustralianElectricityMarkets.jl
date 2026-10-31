@@ -128,6 +128,13 @@ region_demand(market::Market, region) = market.demand[region]
 
 "The interconnector's loss curve linearised on its breakpoints, as `(from_mw, to_mw, slope)` per segment."
 loss_at(ic::Interconnector, flow) = ic.loss_coefficient / 2 * flow^2
+"The loss at zero flow of the chord that brackets it; subtracting it makes the linearised curve lose nothing at zero flow."
+function zero_flow_chord_loss(ic::Interconnector)
+    bp = ic.breakpoints
+    i = findfirst(i -> bp[i] < 0 < bp[i + 1], 1:(length(bp) - 1))
+    isnothing(i) && return 0.0
+    return -ic.loss_coefficient * bp[i] * bp[i + 1] / 2
+end
 function linearised_losses(ic::Interconnector)
     bp = ic.breakpoints
     return [

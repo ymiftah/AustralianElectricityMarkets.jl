@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Documented the replay API after the merge: `prepare_replay_forecasts!` and the
+  `ReplaySimulation`/`ReplayResults` script modules replace the removed package-level names.
+
 - JuMP merit-order plotting helpers now receive their market and colour mapping explicitly.
 
 - Documented `set_...!`, `add_...!` and `attach_...!` naming and repeat-call contracts in

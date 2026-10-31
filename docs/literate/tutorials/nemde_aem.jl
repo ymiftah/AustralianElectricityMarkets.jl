@@ -16,6 +16,8 @@ import AustralianElectricityMarketsSimulations as AEMSim
 
 include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_market.jl")) #hide
 include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_jump.jl")); #hide
+include(joinpath(@__DIR__, "..", "..", "..", "scripts", "replay_results.jl")); #hide
+using .ReplayResults: compute_fcas_prices #hide
 
 # # [Building it with AEM and AEMSim](@id nemde-aem)
 #
@@ -146,6 +148,7 @@ function attach_energy_data!(sys, market) #hide
     end #hide
     for load in PSY.get_components(PSY.PowerLoad, sys) #hide
         PSY.add_time_series!(sys, load, series("max_active_power", 1.0; multiplier = PSY.get_max_active_power)) #hide
+        PSY.add_time_series!(sys, load, series("loss_demand", 1.0; multiplier = PSY.get_max_active_power)) #hide
     end #hide
     return sys #hide
 end #hide
@@ -167,20 +170,21 @@ function attach_fcas_data!(sys, market) #hide
                 max_avail = t.max_avail / BASE_POWER, #hide
             ), #hide
         ) #hide
-        curve = PSY.PiecewiseStepData([0.0; cumsum(quantity.(fcas_bids(u)))] ./ BASE_POWER, price.(fcas_bids(u))) #hide
-        for (series_name, value) in ("fcas_trapezium_RAISE6SEC" => trapezium_pu, "fcas_curve_RAISE6SEC" => curve) #hide
-            PSY.add_time_series!( #hide
-                sys, device, #hide
-                PSY.SingleTimeSeries( #hide
-                    name = series_name, #hide
-                    data = PSY.TimeSeries.TimeArray([T0, T0 + RESOLUTION], fill(value, 2)), #hide
-                ), #hide
-            ) #hide
-        end #hide
+        curve = PSY.PiecewiseStepData([0.0; cumsum(quantity.(fcas_bids(u)))], price.(fcas_bids(u))) #hide
+        stamps = [T0, T0 + RESOLUTION] #hide
+        PSY.add_time_series!( #hide
+            sys, device, #hide
+            PSY.SingleTimeSeries(name = "fcas_trapezium_RAISE6SEC", data = PSY.TimeSeries.TimeArray(stamps, fill(trapezium_pu, 2))), #hide
+        ) #hide
         service = FCASService( #hide
             name = "$(region(u))_RAISE6SEC", region = region(u), bid_type = BidType.RAISE6SEC, #hide
         ) #hide
         PSY.add_service!(sys, service, [device]) #hide
+        PSY.get_operation_cost(device) isa PSY.MarketBidCost || PSY.set_operation_cost!( #hide
+            device, PSY.MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0), #hide
+        ) #hide
+        offer = single_series(fcas_offer_series_name(service, false), T0, fill(curve, 2), RESOLUTION) #hide
+        PSY.set_service_bid!(sys, device, service, offer, PSY.UnitSystem.NATURAL_UNITS) #hide
     end #hide
     return sys #hide
 end #hide
@@ -225,6 +229,8 @@ function attach_generic_constraints!(sys, market) #hide
     return sys #hide
 end #hide
 attach_generic_constraints!(sys, market)
+set_loss_demand_coefficients!(sys)
+set_fcas_effective_offers!(sys)
 PSY.transform_single_time_series!(sys, 2 * RESOLUTION, RESOLUTION);
 
 # The `System` now holds the whole market:
@@ -374,22 +380,25 @@ slack_total
 # 1. `db = aem_connect()` and `populate(db, table, start, stop)` cache the NEMWEB tables.
 # 2. `nem_system(db, NEMDEConfiguration(); date_range)` builds the populated `System`,
 #    including energy and FCAS offers, dispatch and energy limits, generic constraints and losses.
-# 3. `prepare_replication!(sys)` derives effective FCAS parameters and tie-break scales and
-#    prepares forecast windows from the attached interval inputs.
-# 4. `replication_simulation(sys, steps; folder)` creates a PSI simulation. Build it with
-#    `PSI.build!` and run it with `PSI.execute!`.
-# 5. `replication_results(results, sys)` extracts solved quantities and constraint violations.
-#    The repository scripts compare these with `read_published_interval` from the cache.
+# 3. `prepare_replay_forecasts!(sys)` transforms the attached interval inputs into five-minute
+#    forecast windows. The effective FCAS parameters and tie-break scales are already derived by
+#    `nem_system`.
+# 4. `replication_simulation(sys, steps; folder)` from `scripts/replay_simulation.jl`
+#    (module `ReplaySimulation`) creates a PSI simulation. Build it with `PSI.build!` and run it
+#    with `PSI.execute!`.
+# 5. `replication_results(results, sys)` from `scripts/replay_results.jl` extracts solved
+#    quantities and constraint violations. The repository scripts compare these with
+#    `read_published_interval` from the cache.
 #    See [Run a dispatch simulation from a system](../dispatch_replay.md) for the full workflow.
 #
 # Validate the study inputs before solving. `check_fcas_services(sys, template)`
 # verifies that every FCAS service has a corresponding model in the template,
-# `interconnector_loss_gaps` reports interconnectors with no loss data, and
-# `check_interconnector_loss_segments(results, sys)` after a solve verifies that each solved loss
-# lies on the loss curve at the solved flow.
+# `check_interconnector_loss_segments(results, sys)` from `scripts/interconnector_loss_gaps.jl`
+# after a solve verifies that each solved loss lies on the loss curve at the solved flow.
 
+include(joinpath(@__DIR__, "..", "..", "..", "scripts", "interconnector_loss_gaps.jl")) #hide
 check_fcas_services(sys, template)
-check_interconnector_loss_segments(results, sys)
+InterconnectorLossGaps.check_interconnector_loss_segments(results, sys)
 
 # !!! note "Example scope"
 #     This tutorial solves a single interval with thermal and wind generation, one contingency

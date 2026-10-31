@@ -123,7 +123,9 @@ set_silent(model)
 # The flow is a signed variable. The loss curve is linearised on the breakpoints: the flow is the
 # first breakpoint plus the flow allocated to each segment, the loss is the loss at the first
 # breakpoint plus each segment's slope times its flow, and a binary per segment boundary forces the
-# segments to fill in order, so the solved loss follows the curve.
+# segments to fill in order, so the solved loss follows the curve. The loss of the segment that
+# brackets zero flow is subtracted, so the linearised curve loses nothing at zero flow, as in the
+# package's loss model.
 #
 # !!! note "Toy loss curve"
 #     This example uses five segments and binary variables to keep the solved flow and loss
@@ -136,7 +138,7 @@ segments = linearised_losses(ic)
 @variable(model, flow)
 @variable(model, 0 <= segment_flow[s in eachindex(segments)] <= segments[s].to_mw - segments[s].from_mw)
 @variable(model, filled[s in 1:(length(segments) - 1)], Bin)
-@expression(model, loss, loss_at(ic, ic.breakpoints[1]) + sum(segments[s].slope * segment_flow[s] for s in eachindex(segments)))
+@expression(model, loss, loss_at(ic, ic.breakpoints[1]) - zero_flow_chord_loss(ic) + sum(segments[s].slope * segment_flow[s] for s in eachindex(segments)))
 
 @constraint(model, flow_definition, flow == ic.breakpoints[1] + sum(segment_flow))
 @constraint(model, segment_full[s in 1:(length(segments) - 1)], segment_flow[s] >= (segments[s].to_mw - segments[s].from_mw) * filled[s])
@@ -367,7 +369,7 @@ let
     flows = range(-ic.max_flow, ic.max_flow; length = 101)
     lines!(ax, flows, loss_at.(Ref(ic), flows); label = "quadratic loss")
     bp = ic.breakpoints
-    lines!(ax, bp, loss_at.(Ref(ic), bp); linestyle = :dash, label = "linearisation")
+    lines!(ax, bp, loss_at.(Ref(ic), bp) .- zero_flow_chord_loss(ic); linestyle = :dash, label = "linearisation")
     for (label, r, marker) in (("energy only", energy_only, :diamond), ("with FCAS and limit", constrained, :circle))
         scatter!(ax, r.flow, r.loss; markersize = 14, marker, label)
     end
