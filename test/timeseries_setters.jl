@@ -818,6 +818,37 @@
         end
     end
 
+    @testset "public demand and dispatch limit setters attach the private setters' series" begin
+        start_date = DateTime(2025, 1, 1, 0, 0)
+        date_range = start_date:Minute(5):(start_date + Hour(1))
+        series_snapshot(sys) = Dict(
+            (get_name(device), get_name(key)) => get_time_series_values(SingleTimeSeries, device, get_name(key))
+                for device in get_components(Device, sys) for key in get_time_series_keys(device)
+        )
+
+        @testset "set_demand! attaches the series of the private demand setter" begin
+            public = deepcopy(sys_base)
+            private = deepcopy(sys_base)
+            set_demand!(public, db, date_range; resolution = Minute(5))
+            attach_demand!(private, db, date_range)
+            snapshot = series_snapshot(public)
+            @test any(k -> k[2] == "loss_demand", keys(snapshot))
+            @test isequal(snapshot, series_snapshot(private))
+            @test_throws ArgumentError set_demand!(public, db, date_range; resolution = Minute(5))
+        end
+
+        @testset "set_nem_dispatch_limits! attaches the series of the private dispatch limits setter" begin
+            public = deepcopy(sys_base)
+            private = deepcopy(sys_base)
+            set_nem_dispatch_limits!(public, db, date_range)
+            attach_dispatch_limits!(private, db, date_range)
+            snapshot = series_snapshot(public)
+            @test any(k -> k[2] == "availability", keys(snapshot))
+            @test isequal(snapshot, series_snapshot(private))
+            @test_throws ArgumentError set_nem_dispatch_limits!(public, db, date_range)
+        end
+    end
+
     @testset "get_initial_mw without an attached initial_mw series" begin
         resolution = Minute(5)
         start_date = DateTime(2025, 1, 1, 0, 0)

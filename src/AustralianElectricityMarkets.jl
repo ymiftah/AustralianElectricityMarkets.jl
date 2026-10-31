@@ -15,11 +15,11 @@ import InfrastructureSystems as IS
 export HiveConfiguration, aem_connect
 export NetworkConfiguration, table_requirements, nem_system
 export RegionalNetworkConfiguration, NEMDEConfiguration
-export set_mnsp_offers!, set_market_bids!
+export set_mnsp_offers!, set_demand!, set_market_bids!
 export get_storage_energy_max_avail
 export set_fcas_bids!, set_fcas_service_bids!, set_fcas_scaling_inputs!, set_fcas_effective_offers!
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW
-export set_interconnector_flow_limits!, set_loss_demand_coefficients!
+export set_nem_dispatch_limits!, set_interconnector_flow_limits!, set_loss_demand_coefficients!
 export get_initial_mw, get_energy_availability
 export set_nem_energy_limits!
 export get_skipped_constraints, get_dropped_terms,
