@@ -7,7 +7,7 @@ Sources are grouped by the topic and purpose of each page:
 | `overview/` | Background on the National Electricity Market |
 | `formulation/` | NEMDE model, energy, FCAS, interconnectors, fast-start and pricing chapters |
 | `tutorials/` | Toy-market walkthroughs using JuMP, PowerSimulations.jl and AEM / AEMSim |
-| `howto/` | System construction, dispatch, market clearing and FCAS interval guides |
+| `howto/` | System construction, dispatch, market clearing and FCAS interval guides (currently not built) |
 | `shared/` | Toy-market data, reference solver and source-inlining helper used by the tutorials |
 
 `docs/make.jl` lists the page groups and renders them into the flat `docs/src/examples/`

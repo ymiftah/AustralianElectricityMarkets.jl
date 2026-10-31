@@ -287,7 +287,7 @@ end #hide
 #
 # The standard input workflow attaches telemetered scaling inputs to available generators,
 # batteries and interruptible loads. Missing AGC ramp inputs leave the corresponding joint
-# ramping rows inactive. See [Inspect an FCAS interval](@ref fcas-requirement-reading) for the
+# ramping rows inactive. See the FCAS interval inspection guide, which is not yet published, for the
 # construction and effective-offer preprocessing sequence.
 #
 # ### [Can the unit be enabled at all?](@id fcas-cases-preconditions)
@@ -494,8 +494,8 @@ end #hide
 # regulation costs half a MW of contingency raise. Whether the optimisation accepts those
 # trades depends on the prices of energy and of each service.
 #
-# To read a real interval's offers, requirements and prices from the cache, see
-# [Inspect an FCAS interval](@ref fcas-requirement-reading).
+# To read a real interval's offers, requirements and prices from the cache, see the FCAS
+# interval inspection guide, which is not yet published.
 #
 # ## [References](@id fcas-references)
 #
