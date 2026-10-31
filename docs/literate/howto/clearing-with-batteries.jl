@@ -51,8 +51,8 @@ end
 
 db = aem_connect();
 
-# Instantiate the system using a regional network configuration.
-sys = nem_system(db, RegionalNetworkConfiguration())
+# Instantiate the system using a regional network configuration. # `as_of` selects the units registered on that date.
+sys = nem_system(db, RegionalNetworkConfiguration(); as_of = Date(2025, 1, 2))
 
 # Set the horizon and resolution for the simulation. Batteries are often more interesting to
 # observe at higher resolutions or over longer periods where their energy constraints become

@@ -35,9 +35,9 @@ using HiGHS
 
 db = aem_connect();
 
-# Instantiate the system.
+# Instantiate the system. # `as_of` selects the units registered on that date.
 
-sys = nem_system(db, RegionalNetworkConfiguration())
+sys = nem_system(db, RegionalNetworkConfiguration(); as_of = Date(2025, 1, 2))
 
 # Set the horizon to consider for the simulation.
 
