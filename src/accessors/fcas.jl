@@ -93,24 +93,6 @@ end
 
 
 """
-    _fcas_scaling_ramp_service(component, service)
-
-Selects the stored physical ramp-rate series for regulation trapezium scaling.
-
-# Returns
-`service` for generation and storage, or the opposite regulation service for a controllable
-load: raising frequency reduces consumption (AEMO *FCAS Model in NEMDE* §6.1, Figure 19).
-"""
-function _fcas_scaling_ramp_service(::Device, service::BidType)
-    return service
-end
-
-function _fcas_scaling_ramp_service(::ControllableLoad, service::BidType)
-    return service == BidType.RAISEREG ? BidType.LOWERREG : BidType.RAISEREG
-end
-
-
-"""
     get_scaled_fcas_trapezium(component, service, initial_time, horizon; decremental = false,
         resolution = Minute(5)) -> Vector{FCASTrapezium}
 
@@ -137,7 +119,7 @@ function get_scaled_fcas_trapezium(
     agc_enablement_max = is_regulation ?
         _read_optional_fcas_scaling_series(component, fcas_series_name("fcas_agc_enablement_max", service), initial_time, horizon) : nothing
     agc_max_avail = is_regulation ?
-        get_fcas_agc_ramp_capability(component, _fcas_scaling_ramp_service(component, service), initial_time, horizon; resolution = resolution) : nothing
+        get_fcas_agc_ramp_capability(component, _fcas_ramp_rate_service(component, service), initial_time, horizon; resolution = resolution) : nothing
     input_at(series, i) = (isnothing(series) || isnan(series[i])) ? nothing : series[i]
     uigf = _read_optional_fcas_scaling_series(component, NEM_SERIES.uigf, initial_time, horizon)
 

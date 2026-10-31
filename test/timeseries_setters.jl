@@ -675,6 +675,28 @@
             end
         end
 
+        @testset "load regulation availability pairs with its own service" begin
+            rates_db = damaged_cache(
+                hive_dir, :DISPATCHLOAD,
+                "UPDATE input SET RAMPUPRATE = 180, RAMPDOWNRATE = 720, RAISEREGAVAILABILITY = 0, LOWERREGAVAILABILITY = 60, RAISEREGENABLEMENTMIN = 0, RAISEREGENABLEMENTMAX = 0, LOWERREGENABLEMENTMIN = 0, LOWERREGENABLEMENTMAX = 0 WHERE DUID = 'PUMP1'",
+            )
+            sys = deepcopy(sys_base)
+            load = get_component(InterruptiblePowerLoad, sys, "PUMP1")
+            horizon = length(date_range) - 1
+            trap = (0.0, 10.0, 90.0, 100.0, 100.0, NaN, NaN) ./ base_power
+            for service in (BidType.RAISEREG, BidType.LOWERREG)
+                add_time_series!(sys, load, single_series(fcas_series_name("fcas_trapezium", service, OfferSide.LOAD), start_date, fill(trap, horizon), resolution))
+            end
+            set_fcas_scaling_inputs!(sys, rates_db, date_range)
+            with_units_base(sys, "NATURAL_UNITS") do
+                # 60 MW per 5 minutes is LOWERREGAVAILABILITY; the up ramp rate alone would give 15.
+                lower = get_scaled_fcas_trapezium(load, BidType.LOWERREG, start_date, horizon; decremental = true)
+                raise = get_scaled_fcas_trapezium(load, BidType.RAISEREG, start_date, horizon; decremental = true)
+                @test get_max_avail.(lower) ≈ fill(60.0, horizon)
+                @test get_max_avail.(raise) ≈ fill(60.0, horizon)
+            end
+        end
+
         @testset "get_fcas_agc_status is nothing when fcas_agc_status is not attached" begin
             sys = deepcopy(sys_base)
             device = get_component(ThermalStandard, sys, "ER01")

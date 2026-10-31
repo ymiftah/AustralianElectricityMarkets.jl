@@ -43,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Scheduled loads pair each regulation availability with its own service: the lower-regulation AGC ramp cap uses `LOWERREGAVAILABILITY` with the up ramp rate, and the raise cap uses `RAISEREGAVAILABILITY` with the down ramp rate. Previously the availabilities were swapped, so a load's regulation caps could be understated.
+
 - The AGC ramp rate that caps regulation and joint ramping is the larger of `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE` and the regulation availability spread over the interval, instead of the bid-capped ramp rate alone. Regulation caps now match NEMDE's; joint ramping can be tighter than NEMDE's, because the telemetered rate is not published.
 
 - Replays build every unit registered at any point of the trading day for the whole chunk and pad it to zero outside its registration, so units registered after midnight (NESBESS1, BRDDBES1, DRXNSS01 and FCAS-only units with offers from 00:05) no longer fail the build.
