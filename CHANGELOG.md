@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- JuMP merit-order plotting helpers now receive their market and colour mapping explicitly.
+
 - Documented `set_...!`, `add_...!` and `attach_...!` naming and repeat-call contracts in
   `AGENTS.md`, and the submitted-bid to effective-FCAS-offer preprocessing sequence.
 

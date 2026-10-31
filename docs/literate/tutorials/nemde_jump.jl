@@ -46,20 +46,20 @@ DataFrame(
 
 region_colors = Dict(unit_name(u) => c for (u, c) in zip(market.units, Makie.wong_colors()))
 
-function merit_order(region_name)
+function merit_order(market, region_name)
     steps = [(u = u, b = b) for u in units_in(market, region_name) for b in bids(u)]
     sort!(steps; by = s -> price(s.b))
     return steps
 end
 
-function plot_merit_order!(ax, region_name; cleared = nothing, clearing_price = nothing)
+function plot_merit_order!(ax, market, region_name, region_colors; cleared = nothing, clearing_price = nothing)
     left = 0.0
     used = Dict(unit_name(u) => availability(u) for u in market.units)
-    for s in merit_order(region_name)
+    for s in merit_order(market, region_name)
         usable = min(quantity(s.b), used[unit_name(s.u)])
         used[unit_name(s.u)] -= usable
         height = max(price(s.b), 3.0)
-        color = region_colors[unit_name(s.u)]  # TODO This is bad practice in julia : either make region_colors a const or pass it as args to this function.
+        color = region_colors[unit_name(s.u)]
         poly!(
             ax, Rect2f(left, 0.0, usable, height);
             color = (color, 0.8), strokecolor = color, strokewidth = 1,
@@ -77,7 +77,7 @@ function plot_merit_order!(ax, region_name; cleared = nothing, clearing_price = 
     return nothing
 end
 
-function merit_order_legend!(fig, position)
+function merit_order_legend!(fig, position, market, region_colors)
     return Legend(
         fig[position...],
         [PolyElement(color = region_colors[unit_name(u)]) for u in market.units],
@@ -90,10 +90,10 @@ let
     fig = Figure(size = (900, 340))
     for (i, r) in enumerate(market.regions)
         ax = Axis(fig[1, i]; title = r, xlabel = "Cumulative offered MW", ylabel = "Offer price (\$/MWh)")
-        plot_merit_order!(ax, r)
+        plot_merit_order!(ax, market, r, region_colors)
         ylims!(ax, 0, 260)
     end
-    merit_order_legend!(fig, (2, 1:2))
+    merit_order_legend!(fig, (2, 1:2), market, region_colors)
     fig
 end
 
@@ -209,10 +209,10 @@ function plot_clearing(result)
             xlabel = "Cumulative offered MW", ylabel = "Offer price (\$/MWh)",
         )
         cleared_mw = sum(result.dispatch[unit_name(u)] for u in units_in(market, r))
-        plot_merit_order!(ax, r; cleared = cleared_mw, clearing_price = result.price[r])
+        plot_merit_order!(ax, market, r, region_colors; cleared = cleared_mw, clearing_price = result.price[r])
         ylims!(ax, 0, 260)
     end
-    merit_order_legend!(fig, (2, 1:2))
+    merit_order_legend!(fig, (2, 1:2), market, region_colors)
     Label(fig[0, :], "Dashed: MW cleared in the region; dotted: regional price"; tellwidth = false)
     return fig
 end
