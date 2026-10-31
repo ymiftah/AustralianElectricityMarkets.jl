@@ -119,7 +119,7 @@ attach_loss_model!(sys, market);
 # ### Market data as time series
 #
 # Energy offers, availability, ramp rates and metered initial output specify the unit's
-# feasible dispatch for the interval. For NEMWEB data, use `set_market_bids!` and
+# feasible dispatch for the interval. For NEMWEB data, use `set_market_bids!`,
 # `set_nem_dispatch_limits!` and `set_nem_energy_limits!` to attach these inputs.
 
 function attach_energy_data!(sys, market) #hide

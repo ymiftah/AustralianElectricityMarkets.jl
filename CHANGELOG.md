@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- The solar availability plot in the build-system how-to queries `DISPATCHREGIONSUM` directly, since `read_demand` no longer returns `SS_SOLAR_AVAILABILITY`, and is labelled as semi-scheduled availability.
+
 - Documented the replay API after the merge: `prepare_replay_forecasts!` and the
   `ReplaySimulation`/`ReplayResults` script modules replace the removed package-level names.
 
