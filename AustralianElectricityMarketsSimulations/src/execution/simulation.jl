@@ -80,7 +80,7 @@ end
 
 
 """
-    run_replication(sys::PSY.System, steps; name = "dispatch", cache_size_mib = nothing, kwargs...) -> NamedTuple
+    run_replication(sys::PSY.System, steps; name = "dispatch", cache_size_mib = nothing, on_phase = nothing, kwargs...) -> NamedTuple
 
 Builds and executes the [`replication_simulation`](@ref) of `sys` over `steps`, logging the
 skipped constraints when the build or execution fails.
@@ -89,6 +89,7 @@ skipped constraints when the build or execution fails.
 - `sys`, `steps`: as for [`replication_simulation`](@ref).
 - `name`: the decision problem name, whose results are returned.
 - `cache_size_mib`: the PSI results cache size, or `nothing` for PSI's default.
+- `on_phase`: optional callback receiving `:model_build` and `:execute` before each phase.
 - `kwargs`: the other [`replication_simulation`](@ref) keywords.
 
 # Returns
@@ -98,8 +99,9 @@ skipped constraints when the build or execution fails.
 does not succeed.
 """
 function run_replication(
-        sys::PSY.System, steps::StepRange{DateTime}; name = "dispatch", cache_size_mib = nothing, kwargs...,
+        sys::PSY.System, steps::StepRange{DateTime}; name = "dispatch", cache_size_mib = nothing, on_phase = nothing, kwargs...,
     )
+    isnothing(on_phase) || on_phase(:model_build)
     t0 = time()
     (; simulation, model, skipped_constraints) = _range_simulation(sys, steps; name = name, kwargs...)
     status = Base.CoreLogging.with_logger(
@@ -110,6 +112,7 @@ function run_replication(
         _log_skipped_constraints(skipped_constraints)
         error("Range from $(first(steps)) failed to build ($status); see the simulation logs.")
     end
+    isnothing(on_phase) || on_phase(:execute)
     t1 = time()
     status = try
         PSI.execute!(simulation; (isnothing(cache_size_mib) ? (;) : (; cache_size_mib))...)

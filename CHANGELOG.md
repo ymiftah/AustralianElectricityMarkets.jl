@@ -185,6 +185,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An overnight random-trading-day replay script with a ten-hour admission budget,
+  persistent NEMDE comparison CSVs, phase and solver timings, and independent process-memory
+  sampling. `scripts/README.md` documents overnight and consecutive-day workflows.
+
 - `NEMDEConfiguration` builds fully populated replay systems through AEM's `nem_system`.
   AEMSim's `prepare_replication!`, `replication_simulation` and `replication_results` consume built
   systems and expose the standard PSI build, execute and results lifecycle.

@@ -128,3 +128,7 @@ bound, constraint and cost term. Record any departure from AEMO in an ADR.
   `System` JSON round-trips.
 - Simulations depends on a **pinned PowerSimulations fork** (`[sources]` in its `Project.toml`);
   check PSI behaviour against that revision, not upstream.
+- **Temporary files that do not need to be in RAM must not go in RAM-backed temp directories**
+  (`/tmp`, `/dev/shm`, the agent session scratchpad). Downloads, extracted archives, case files,
+  solver logs and intermediate datasets go on a disk-backed volume, such as
+  `/run/media/simba/Store/aem_validation/`. Check with `findmnt -no FSTYPE <dir>` (`tmpfs` means RAM).

@@ -17,7 +17,9 @@ end
     t = DateTime(2025, 1, 1, 0, 5, 0)
 
     @testset "replicate_range replays one interval, solves and compares" begin
-        result = replicate_range(db, t, t)
+        phases = Symbol[]
+        result = replicate_range(db, t, t; on_phase = phase -> push!(phases, phase))
+        @test phases == [:system_build, :model_build, :execute, :compare]
         @test only(result.results) isa PSI.SimulationProblemResults
         skipped = result.skipped_constraints
         @test names(skipped) == ["chunk", "constraint", "reason", "n_missing"]
@@ -194,4 +196,33 @@ end
     @test all(ismissing, result.comparison.fcas_prices.ROP_solved)
     @test any(in((:unmodeled_fcas_service, :unmodeled_device_type)), result.skipped_constraints.reason)
     @test any(!ismissing, result.comparison.dispatch.TOTALCLEARED_solved)
+end
+
+include("replay_batch.jl")
+include(joinpath(@__DIR__, "..", "..", "scripts", "replay_batch_worker.jl"))
+
+@testset "batch comparison export preserves missing coverage" begin
+    c = (;
+        prices = DataFrame(ROP_solved = [2.0, 4.0, missing, Inf], ROP_published = [1.0, 6.0, 5.0, 1.0]),
+        dispatch = DataFrame(TOTALCLEARED_solved = [3.0], TOTALCLEARED_published = [missing]),
+        interconnectors = DataFrame(MWFLOW_solved = Float64[], MWFLOW_published = Float64[], MWLOSSES_solved = Float64[], MWLOSSES_published = Float64[]),
+        fcas_prices = DataFrame(ROP_solved = Float64[], ROP_published = Float64[]),
+    )
+    summary = ReplayBatchWorker.comparison_summary(c)
+    p = only(filter(:metric => ==("energy_price"), summary))
+    @test p.n_rows == 4 && p.n_paired == 2 && p.n_missing == 1 && p.n_nonfinite == 1
+    @test p.mae == 1.5 && p.max_abs_gap == 2.0 && p.bias == -0.5
+    @test p.rmse ≈ sqrt(2.5)
+    @test ismissing(only(filter(:metric => ==("dispatch_mw"), summary)).mae)
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR))
+    t = DateTime(2025, 1, 1, 0, 5)
+    mktempdir() do folder
+        result = replicate_range(db, t, t; output_dir = folder)
+        totals = ReplayBatchWorker.save_day(folder, result)
+        @test totals.intervals == 1
+        @test isfile(joinpath(folder, "comparison_dispatch.csv"))
+        @test length(readlines(joinpath(folder, "solver_stats.csv"))) == 2
+        @test length(readlines(joinpath(folder, "summary.csv"))) == 6
+        @test isfile(joinpath(folder, "chunks.csv"))
+    end
 end

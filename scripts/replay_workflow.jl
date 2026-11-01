@@ -76,8 +76,9 @@ end
 # the tables and the results reopened from `folder` are returned, so the system is collectable.
 function _replicate_chunk(
         db, steps, k::Integer; intervention::Integer, optimizer, parts, interval_flow_limits::Bool, folder::AbstractString,
-        time_series_in_memory::Bool, time_series_directory, cache_size_mib,
+        time_series_in_memory::Bool, time_series_directory, cache_size_mib, on_phase,
     )
+    isnothing(on_phase) || on_phase(:system_build)
     t0 = time()
     ts_directory = time_series_in_memory ? nothing : something(time_series_directory, joinpath(folder, "time_series"))
     time_series_in_memory || mkpath(ts_directory)
@@ -88,9 +89,10 @@ function _replicate_chunk(
     )
     prepare_replication!(sys)
     system_build_s = time() - t0
-    run = run_replication(sys, steps; optimizer, parts, folder, simulation_name = _SIMULATION_NAME, cache_size_mib)
+    run = run_replication(sys, steps; optimizer, parts, folder, simulation_name = _SIMULATION_NAME, cache_size_mib, on_phase)
     live = run.results
     simulation_build_s, execute_s = run.timings
+    isnothing(on_phase) || on_phase(:compare)
     t3 = time()
     report = replication_results(live, sys; parts)
     solved = report.solved
@@ -144,6 +146,7 @@ that its intervals share one Market Price Cap, the same price-tied band pairs
 - `output_dir`: a directory for the chunk folders `chunk_<k>`; `nothing` uses a fresh `mktempdir()` per chunk.
 - `time_series_in_memory`, `time_series_directory`: passed to `nem_system(db, NEMDEConfiguration(); ...)`;
   `time_series_directory = nothing` writes each chunk's time-series file under `<chunk folder>/time_series`.
+- `on_phase`: optional callback receiving `:system_build`, `:model_build`, `:execute` and `:compare` for each chunk.
 - `cache_size_mib`: the simulation store's write cache in MiB; `nothing` keeps PowerSimulations' default.
 
 # Returns
@@ -182,7 +185,7 @@ function replicate_range(
         optimizer = REPLICATION_OPTIMIZER, parts = REPLICATION_PARTS, chunk = :trading_day,
         interval_flow_limits::Bool = false, output_dir::Union{Nothing, AbstractString} = nothing, time_series_in_memory::Bool = true,
         time_series_directory::Union{Nothing, AbstractString} = nothing,
-        cache_size_mib::Union{Nothing, Integer} = nothing,
+        cache_size_mib::Union{Nothing, Integer} = nothing, on_phase = nothing,
     )
     unknown = setdiff(parts, REPLICATION_PARTS)
     isempty(unknown) || throw(ArgumentError("replicate_range: unknown parts $(Tuple(unknown)); choose from $REPLICATION_PARTS."))
@@ -195,7 +198,7 @@ function replicate_range(
             return _replicate_chunk(
                 db, steps, k; intervention = intervention, optimizer = optimizer, parts = parts,
                 interval_flow_limits = interval_flow_limits, folder = folder, time_series_in_memory = time_series_in_memory,
-                time_series_directory = time_series_directory, cache_size_mib = cache_size_mib,
+                time_series_directory = time_series_directory, cache_size_mib = cache_size_mib, on_phase = on_phase,
             )
         catch
             @error "replicate_range: chunk $k ($(first(steps)) to $(last(steps))) failed; solved chunk folders: $(folders[1:(end - 1)])"
