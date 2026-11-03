@@ -122,3 +122,52 @@ function _current_regions(db; as_of::Union{Nothing, Date, DateTime} = nothing)
     )
     return Set(df.REGIONID)
 end
+
+
+"""
+    _read_regional_renewable_availability(db, date_range; resolution, intervention)
+
+Reads the regional semi-scheduled solar and wind availability from `DISPATCHREGIONSUM`, averaged
+onto `resolution` as [`read_demand`](@ref) aggregates demand.
+
+# Arguments
+- `db`: an `AEMDB` connection.
+- `date_range`: the range of aggregate timestamps, with an inclusive start and exclusive end.
+- `resolution`: the `Dates.Period` to aggregate onto.
+- `intervention`: `0` for the pricing run, `1` for the physical run. Ignored when the cached
+  partitions predate the `INTERVENTION` column.
+
+# Returns
+A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `SS_SOLAR_AVAILABILITY` and `SS_WIND_AVAILABILITY`.
+"""
+function _read_regional_renewable_availability(db, date_range; resolution::Dates.Period, intervention::Integer)
+    source = read_hive(db, :DISPATCHREGIONSUM)
+    schema = _table_schema(db, source)
+    # Each rounded-up timestamp includes the raw bin ending at it, even before the requested start.
+    lower = ceil(DateTime(first(date_range)), resolution) - resolution
+    upper = ceil(DateTime(last(date_range)), resolution) - resolution
+    params = Any[lower, upper]
+    _push_intervention!(params, schema, intervention)
+    append!(params, (DateTime(first(date_range)), DateTime(last(date_range))))
+    bucket = _ceil_timestamp_sql("r.SETTLEMENTDATE", resolution)
+    return _query(
+        db,
+        """
+        WITH raw_regional AS (
+            SELECT $bucket AS SETTLEMENTDATE, r.REGIONID, r.SS_SOLAR_AVAILABILITY, r.SS_WIND_AVAILABILITY
+            FROM $source r
+            WHERE r.SETTLEMENTDATE IS NOT NULL AND r.REGIONID IS NOT NULL
+              AND r.SETTLEMENTDATE > ? AND r.SETTLEMENTDATE <= ?
+              $(_intervention_where(schema))
+        )
+        SELECT SETTLEMENTDATE, REGIONID,
+               avg(SS_SOLAR_AVAILABILITY) AS SS_SOLAR_AVAILABILITY,
+               avg(SS_WIND_AVAILABILITY) AS SS_WIND_AVAILABILITY
+        FROM raw_regional
+        WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
+        GROUP BY SETTLEMENTDATE, REGIONID
+        ORDER BY SETTLEMENTDATE, REGIONID
+        """,
+        params,
+    )
+end

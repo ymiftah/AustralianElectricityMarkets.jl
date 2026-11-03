@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Restored the regional how-to pages, built with `set_regional_availability!`; fixed their series plots and output directories.
+
+- Removed the "Inspect an FCAS interval" how-to; building a system with `NEMDEConfiguration`
+  covers FCAS offers, requirements and scaling inputs.
+
 - The solar availability plot in the build-system how-to queries `DISPATCHREGIONSUM` directly, since `read_demand` no longer returns `SS_SOLAR_AVAILABILITY`, and is labelled as semi-scheduled availability.
 
 - Documented the replay API after the merge: `prepare_replay_forecasts!` and the
@@ -32,9 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   NEM: a five-minute dispatch walk-through, glossary and one notation on the overview, a worked
   example per chapter, and no code. Package behaviour appears only in notes titled "Deviation in
   AustralianElectricityMarketsSimulations". Each chapter ends with a "Where the data lives" table
-  mapping its symbols to MMSDM tables, columns, cache directories and time keys. The Julia FCAS
-  walkthrough moved to a new how-to page, "Inspect an FCAS interval". Removed two notes that the
-  zero-flow loss reference and directional MNSP losses had made out of date.
+  mapping its symbols to MMSDM tables, columns, cache directories and time keys.
+  Removed two notes that the zero-flow loss reference and directional MNSP losses had made out
+  of date.
 - Revised the NEMDE chapters and tutorials for users: removed development history and internal
   implementation descriptions, and distinguished NEM rules from reconstruction assumptions.
 - Expanded the NEMDE formulation into linked energy, FCAS, interconnector, fast-start and pricing
@@ -382,8 +387,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `check_replication_parts`, `never_invoked_constraints` (the `:never_invoked` exclusions of a replay) and
   `AbstractMNSPSlack`. `replication_template` takes `initial_time` and `market_price_cap` keywords.
 
+- `set_regional_availability!` attaches `max_active_power` series for regional systems: per-unit UIGF
+  or DISPATCHLOAD availability, and the region's semi-scheduled solar or wind capacity factor for units
+  with no dispatch rows.
+
 ### Changed
 
+- `template_nemde()` takes no arguments and lists every replay model explicitly, batteries included. The replay scripts and checks take a `template` (default `template_nemde()`) in place of `parts`, and read what is modeled from it. A replay that models less builds its own `PSI.ProblemTemplate`.
 - `template_nemde(parts = REPLICATION_PARTS)` replaces `replication_template`: a data-free `PSI.ProblemTemplate` with type-level formulations, taking no system, database, interval or Market Price Cap.
 - `exclude_unmodeled_services!(sys, template; parts, exclude_constraints)` sets the components a replay leaves out unavailable and returns their `(constraint, reason, n_missing)` records. Each call replaces the exclusions of the previous call on the same system, so a reused system no longer keeps an earlier replay range's exclusions.
 - `check_template_against_sys(template, sys; parts)` holds the pre-build validation that `replication_template` ran, and throws naming the failed check.
@@ -719,6 +729,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `REPLICATION_PARTS`, `check_replication_parts` and the `parts` keywords of the replay API (`exclude_unmodeled_services!`, `check_template_against_sys`, `replication_results`, `replication_simulation`, `run_replication`, `replicate_range`).
+- The `excluded_device_types` keyword of `check_fcas_services`, and the storage-only FCAS exclusion: an FCAS service whose available contributors are all storage is now built, not set unavailable.
 - Public names `set_nem_fixed_loads!`, `add_nem_constraints!`, `get_low_breakpoint`, `get_high_breakpoint`, `get_rhs`, `set_constraint_weight!`, `get_gencon_id`, `interconnector_loss_gaps` and `check_interconnector_loss_segments`; `nem_system` builds these inputs.
 - `ConstrainedNetworkConfiguration` was removed; build replay systems with `NEMDEConfiguration`.
 - The public `filter_buildable_generic_constraints` (`AustralianElectricityMarketsSimulations`).
