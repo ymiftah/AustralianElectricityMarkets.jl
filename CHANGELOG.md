@@ -231,6 +231,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   distributions, NEMDE error percentiles by unit/region/service/interconnector,
   memory, partial-run coverage and overlap-aware pooled comparisons.
 
+- **Complete ISP cache extraction**: Added a standalone extractor for every PLEXOS XML table and CSV trace, with persistent DuckDB storage, source provenance, trace-file mappings and source-count validation. Documented the extracted September 2026 release in `docs/analysis/isp2026-cache.md`.
+- **ISP 2026 data inventory**: Documented all 27 XML tables, populated object classes and relationships, and external trace files in the local three-scenario model package, with a machine-readable catalogue in `docs/analysis/`.
+- ISP 2026 PLEXOS XML parsing, per-scenario DuckDB loading and scalar property resolution
+  with date, band and active monthly timeslice selection.
 - `NEMDEConfiguration` builds fully populated replay systems through AEM's `nem_system`.
   AEMSim's `prepare_replication!`, `replication_simulation` and `replication_results` consume built
   systems and expose the standard PSI build, execute and results lifecycle.
