@@ -220,8 +220,6 @@ end #hide
 # - AEMO, [Marginal Loss Factors for the 2025-26 Financial Year](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/loss_factors_and_regional_boundaries/2025-26-marginal-loss-factors/marginal-loss-factors-for-the-2025-26-fin-year.pdf?la=en), §§3-5: loss equations, integration and Basslink.
 # - AEMO, [Schedule of Constraint Violation Penalty Factors, v8.0](https://www.aemo.com.au/-/media/files/electricity/nem/security_and_reliability/congestion-information/2025/schedule-of-constraint-violation-penalty-factors.pdf), items 4, 5, 9, 16 and 17.
 # - AEMO, [MMS Data Model Report](https://visualisations.aemo.com.au/aemo/nemweb/MMSDataModelReport/): column definitions.
-# - [Loss inputs and assumptions](../interconnector-losses.md): yearly loss equations and
-#   changes of network configuration.
 #
 # ## [Where the data lives](@id nemde-interconnectors-data)
 #

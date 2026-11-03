@@ -312,7 +312,6 @@ slack_total
 # 5. `replication_results(results, sys)` from `scripts/replay_results.jl` extracts solved
 #    quantities and constraint violations. The repository scripts compare these with
 #    `read_published_interval` from the cache.
-#    See [Run a dispatch simulation from a system](../dispatch_replay.md) for the full workflow.
 #
 # Validate the study inputs before solving. `check_fcas_services(sys, template)`
 # verifies that every FCAS service has a corresponding model in the template,

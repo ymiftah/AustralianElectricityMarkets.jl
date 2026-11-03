@@ -89,11 +89,9 @@ makedocs(;
             "Interchanges" => "examples/interchanges.md",
             "Clearing with batteries" => "examples/clearing-with-batteries.md",
         ],
-        "Dispatch replay" => "dispatch_replay.md",
         "Roadmap" => "roadmap.md",
         "Reference" => [
             "API" => "95-reference.md",
-            "Loss inputs and assumptions" => "interconnector-losses.md",
         ],
     ],
     checkdocs = :none,

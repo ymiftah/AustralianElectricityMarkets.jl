@@ -35,7 +35,6 @@ function formulation_review_markdown(content, name, links)
             return "<a id=\"$(parsed.captures[3])\"></a>\n\n$(parsed.captures[1]) $(parsed.captures[2])"
         end
     )
-    content = replace(content, "../interconnector-losses.md" => "interconnector-losses.md")
     return content
 end
 
@@ -53,10 +52,6 @@ function render_formulation_review(output = joinpath(@__DIR__, "..", "docs-revie
             credit = false,
         )
     end
-    loss_reference = read(joinpath(@__DIR__, "src", "interconnector-losses.md"), String)
-    loss_reference = replace(loss_reference, "examples/nemde_interconnectors.md" => "nemde_interconnectors.md")
-    loss_reference = replace(loss_reference, r"\[(`[^`]+`)\]\(@ref\)" => s"\1")
-    write(joinpath(output, "interconnector-losses.md"), loss_reference)
     titles = [
         "Overview", "Energy bids and participants", "FCAS capability and co-optimisation",
         "Interconnectors and losses", "Fast-start dispatch", "Violations, tie-breaking and prices",
@@ -65,7 +60,6 @@ function render_formulation_review(output = joinpath(@__DIR__, "..", "docs-revie
     for (name, title) in zip(FORMULATION_PAGES, titles)
         index *= "- [$title]($name.md)\n"
     end
-    index *= "- [Loss inputs and assumptions](interconnector-losses.md)\n"
     write(joinpath(output, "index.md"), index)
     return output
 end
