@@ -6,6 +6,10 @@ Inventory date: 28 October 2026. Branch: `isp2026-plexos-parsing`, inspected at 
 
 This inventory covers the existing local `2026 ISP Model` package in `/home/simba/Downloads/2026 ISP Model`: Accelerated Transition (AT), Slower Growth (SG), and Step Change (SC). All three XML files and all 345 available CSV files were inspected. The local XML hashes are recorded in the [machine-readable catalogue](isp2026-inventory.json). The local package has not been matched byte-for-byte to the current online release.
 
+The JSON catalogue is generated, not committed. Regenerate it from the repository root with `python3
+docs/analysis/inventory_isp.py --source "<path to 2026 ISP Model>"`. The command also rewrites this
+report, so review the diff before keeping report changes.
+
 The package has 27 raw XML tables, 28 populated object classes out of 103 class definitions, and nine referenced trace families. All three scenarios contain 3,345 objects and 14,420 memberships. The current Julia reader selects 13 raw tables by default. Its generic reader can also extract the remaining tables when they are explicitly requested.
 
 AEMO publishes the model and common trace downloads separately. The model instructions describe the scenario folders and the nine trace families; see [AEMO, 2026 ISP PLEXOS Model Instructions, sections 1.1 and 2, pages 5 to 7](https://www.aemo.com.au/-/media/files/major-publications/isp/2026/isp-model/2026-isp-plexos-model-instructions.pdf). All counts, columns, property names and file-presence checks below come from the local files.
