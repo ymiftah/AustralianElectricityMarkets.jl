@@ -54,11 +54,11 @@ start_date = DateTime(2025, 1, 2, 4, 0)
 date_range = start_date:interval:(start_date + horizon)
 @show date_range
 
-# Set deterministic time series.
+# Set deterministic time series for demand, availability and market bids.
 
 set_demand!(sys, db, date_range; resolution = interval)
 set_market_bids!(sys, db, date_range; resolution = interval)
-set_nem_dispatch_limits!(sys, db, date_range)
+set_regional_availability!(sys, db, date_range; resolution = interval)
 
 # Derive forecasts from the deterministic time series.
 
@@ -82,7 +82,7 @@ end
 
 solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.05)
 problem = DecisionModel(template, sys; optimizer = solver, horizon = horizon)
-build!(problem; output_dir = joinpath(tempdir(), "out"))
+build!(problem; output_dir = mktempdir())
 
 # Solve the problem.
 
@@ -158,7 +158,8 @@ end
 begin
     ren = get_component(RenewableDispatch, sys, "COLEASF1")
     ts = get_time_series_array(SingleTimeSeries, ren, "max_active_power") |> DataFrame
-    index, values = ts.timestamp, ts.NSW1 * 100
+    max_mw = with_units_base(() -> get_max_active_power(ren), sys, "NATURAL_UNITS")
+    index, values = ts.timestamp, ts.A .* max_mw
     fig = Figure()
     ax = Axis(fig[1, 1], xlabel = "timestamp", title = "Max active power [MW]", ylabel = "MW")
     lines!(index, values; label = "COLEASF1")

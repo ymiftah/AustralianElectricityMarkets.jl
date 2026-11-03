@@ -1,6 +1,5 @@
 using AustralianElectricityMarkets
 using AustralianElectricityMarketsData: populate
-import AustralianElectricityMarkets.RegionModel as RM
 using PowerSystems
 using PowerSimulations
 using HydroPowerSimulations
@@ -51,23 +50,13 @@ date_range = start_date:interval:(start_date + horizon)
 
 set_demand!(sys, db, date_range; resolution = interval)
 set_market_bids!(sys, db, date_range; resolution = interval)
-set_nem_dispatch_limits!(sys, db, date_range)
+set_regional_availability!(sys, db, date_range; resolution = interval)
 
 # Derive forecasts from the deterministic time series.
 
 transform_single_time_series!(sys, horizon, interval);
 @show sys
 
-# ## Interconnector losses
-#
-# To include an attached `InterconnectorLossModel`, use
-# `AustralianElectricityMarketsSimulations.NEMInterconnectorLoss` for `AreaInterchange`.
-# It supports standalone `DecisionModel`s with `AreaBalancePowerModel`, the regional balance
-# NEMDE uses; other network models are rejected.
-# Demand-dependent loss coefficients use available `PowerLoad` forecasts at construction.
-# Rebuild the `DecisionModel` when demand forecasts or load availability change; recurrent
-# solves through a reused `Simulation` are rejected. Forecast scaling is applied once.
-#
 # ## Set up the problem
 
 begin
@@ -86,7 +75,7 @@ end
 
 solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.1)
 problem = DecisionModel(template, sys; optimizer = solver, horizon = horizon)
-build!(problem; output_dir = joinpath(tempdir(), "out"))
+build!(problem; output_dir = mktempdir())
 
 # Solve the problem.
 
@@ -162,7 +151,8 @@ end
 begin
     ren = get_component(RenewableDispatch, sys, "COLEASF1")
     ts = get_time_series_array(SingleTimeSeries, ren, "max_active_power") |> DataFrame
-    index, values = ts.timestamp, ts.NSW1 * 100
+    max_mw = with_units_base(() -> get_max_active_power(ren), sys, "NATURAL_UNITS")
+    index, values = ts.timestamp, ts.A .* max_mw
     fig = Figure()
     ax = Axis(fig[1, 1], xlabel = "timestamp", title = "Max active power [MW]", ylabel = "MW")
     lines!(index, values; label = "COLEASF1")
@@ -182,6 +172,6 @@ begin
 end
 
 # We see that a few lines are often saturated: V-S-MNSP1 connecting Victoria and South Australia,
-# or T-V-MSP1 connecting Victoria and Tasmania. The interfaces between New South Wales and Queensland,
+# or T-V-MNSP1 connecting Victoria and Tasmania. The interfaces between New South Wales and Queensland,
 # and New South Wales and Victoria are operated within their bounds and the power flows in both
 # directions depending on the time of the day and resources available.

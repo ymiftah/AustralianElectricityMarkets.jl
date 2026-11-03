@@ -1,7 +1,6 @@
 begin
     using AustralianElectricityMarkets
     using AustralianElectricityMarketsData: populate
-    import AustralianElectricityMarkets.RegionModel as RM
     using PowerSystems
     using PowerSimulations
     using HydroPowerSimulations
@@ -20,19 +19,15 @@ end
 # `StorageDispatchWithReserves` model, which allows the optimizer to manage both charging and
 # discharging while respecting energy limits.
 #
+# This page uses the stock `StorageDispatchWithReserves` formulation as an energy-only illustration;
+# the NEMDE replay uses its own battery formulation.
+#
 # Batteries in the NEM play an increasingly vital role. They can perform **Arbitrage**: charging
 # when electricity prices are low (e.g., during the middle of the day when solar is abundant)
 # and discharging when prices are high (e.g., during the evening peak). Furthermore, they
 # provide essential services like **FCAS** (Frequency Control Ancillary Services) to keep the
 # grid stable. See [FCAS capability and co-optimisation](@ref nemde-fcas) for a full introduction to FCAS markets, offers,
 # and requirements.
-#
-# !!! info "FCAS co-optimisation is a work in progress"
-#     This package can read FCAS offers, requirements and dispatch outcomes (see
-#     [FCAS capability and co-optimisation](@ref nemde-fcas)), and represents FCAS reserves and offers as
-#     `PowerSystems.jl` types. It does not yet *enforce* the FCAS trapezium and joint
-#     capacity/ramping constraints inside a `PowerSimulations.jl` dispatch problem like this
-#     one - the battery's FCAS offers are not part of the optimisation below.
 #
 # ## Setup the system
 #
@@ -64,11 +59,11 @@ start_date = DateTime(2025, 1, 2, 4, 0)
 date_range = start_date:interval:(start_date + horizon)
 @show date_range
 
-# Set deterministic time series for demand, dispatch limits, and market bids.
+# Set deterministic time series for demand, availability, and market bids.
 
 set_demand!(sys, db, date_range; resolution = interval)
 set_market_bids!(sys, db, date_range; resolution = interval)
-set_nem_dispatch_limits!(sys, db, date_range)
+set_regional_availability!(sys, db, date_range; resolution = interval)
 
 # Derive forecasts from the deterministic time series.
 
@@ -104,7 +99,7 @@ end
 
 solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.05)
 problem = DecisionModel(template, sys; optimizer = solver, horizon = horizon)
-build!(problem; output_dir = joinpath(tempdir(), "out"))
+build!(problem; output_dir = mktempdir())
 
 # Solve the problem.
 

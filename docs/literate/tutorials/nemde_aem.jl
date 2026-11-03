@@ -199,10 +199,9 @@ DataFrame(
 # out as unavailable on `sys` and returns the skipped constraints, and `check_template_against_sys`
 # verifies the inputs and that the template models every participant.
 
-parts = REPLICATION_PARTS
-template = template_nemde(parts)
-skipped = exclude_unmodeled_services!(sys, template; parts)
-check_template_against_sys(template, sys; parts)
+template = template_nemde()
+skipped = exclude_unmodeled_services!(sys, template)
+check_template_against_sys(template, sys)
 isempty(skipped)
 
 # ## Step 3: build and solve

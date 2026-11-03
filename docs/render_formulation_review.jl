@@ -8,7 +8,6 @@ function formulation_review_links()
     links = Dict(
         "nemde-jump" => "../../docs/literate/tutorials/nemde_jump.jl",
         "nem-dispatch" => "../../docs/literate/overview/nem.jl",
-        "fcas-requirement-reading" => "../../docs/literate/howto/fcas.jl",
     )
     for name in FORMULATION_PAGES
         source = read(joinpath(@__DIR__, "literate", "formulation", "$name.jl"), String)

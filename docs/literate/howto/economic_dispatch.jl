@@ -47,10 +47,10 @@ date_range = Date(2025, 1, 2):Date(2025, 1, 3)
 interval = Minute(30)
 horizon = Hour(24)
 
-# Set deterministic time series.
+# Set deterministic time series for demand and the availability of each unit.
 
 set_demand!(sys, db, date_range; resolution = interval)
-set_nem_dispatch_limits!(sys, db, DateTime(2025, 1, 2):interval:DateTime(2025, 1, 3))
+set_regional_availability!(sys, db, date_range; resolution = interval)
 
 # Derive forecasts from the deterministic time series.
 
@@ -81,7 +81,7 @@ end
 
 solver = optimizer_with_attributes(HiGHS.Optimizer, "mip_rel_gap" => 0.2)
 problem = DecisionModel(template, sys; optimizer = solver, horizon = horizon)
-build!(problem; output_dir = joinpath(tempdir(), "out"))
+build!(problem; output_dir = mktempdir())
 
 # Solve the problem.
 

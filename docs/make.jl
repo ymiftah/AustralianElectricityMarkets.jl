@@ -26,7 +26,7 @@ for (group, names) in [
             "formulation" => FORMULATION_PAGES,
             "overview" => ["nem"],
             "tutorials" => ["nemde_jump", "nemde_psi", "nemde_aem"],
-            # How-to pages are set aside until they are revisited.
+            "howto" => ["build_system", "economic_dispatch", "market_bids", "interchanges", "clearing-with-batteries"],
         ], name in names
     figure_options = name in FORMULATION_PAGES ? (; image_formats = [(MIME("image/png"), ".png")]) : (;)
     Literate.markdown(
@@ -81,7 +81,14 @@ makedocs(;
                 "Building it with AEM and AEMSim" => "examples/nemde_aem.md",
             ],
         ],
-        # How-to pages are set aside until they are revisited.
+        "How-to" => [
+            "Gather data" => "examples/gather_data.md",
+            "Build a regional system" => "examples/build_system.md",
+            "Economic dispatch" => "examples/economic_dispatch.md",
+            "Market bids" => "examples/market_bids.md",
+            "Interchanges" => "examples/interchanges.md",
+            "Clearing with batteries" => "examples/clearing-with-batteries.md",
+        ],
         "Dispatch replay" => "dispatch_replay.md",
         "Roadmap" => "roadmap.md",
         "Reference" => [

@@ -1,4 +1,4 @@
-# # Overview of the NEM
+# # [Build a regional system](@id build-regional-system)
 #
 # The [National Electricity Market (NEM)](https://www.aemo.com.au/energy-systems/electricity/national-electricity-market-nem)
 # operates on one of the world's longest interconnected power systems. It covers around
@@ -13,8 +13,9 @@
 #
 # This package handles the download of data from the [NEMWEB Archive](https://www.aemo.com.au/energy-systems/electricity/national-electricity-market-nem/data-nem/market-data-nemweb)
 # and the parsing of the data into a System from `PowerSystems.jl`.
-# At the moment only a simple zonal network model is available (a nodal model with physical lines is a work-in-progress),
-# which allows to model a simple economic dispatch.
+# `RegionalNetworkConfiguration` builds a zonal model in which each region is a single node, for
+# economic dispatch studies. `NEMDEConfiguration` builds the full replay system, with bids, FCAS,
+# constraints and losses, used to replicate NEMDE dispatch.
 # By default, the package will create a hidden folder `.nemdb_cache` in the home directory, and save the data into
 # parquet files.
 
@@ -28,7 +29,7 @@ using Chain
 using CairoMakie, AlgebraOfGraphics
 
 db = aem_connect();
-date_range = Date(2025, 1, 1):Date(2025, 1, 2)
+date_range = Date(2025, 1, 20):Date(2025, 1, 31)
 
 # populate(
 #     db, first(date_range), last(date_range);
@@ -68,7 +69,7 @@ draw(
 # from other regions. It excludes "behind-the-meter" rooftop PV, which instead appears as a
 # reduction in operational demand.
 
-demand = read_demand(db)
+demand = read_demand(db, date_range)
 
 begin
     spec = data(
