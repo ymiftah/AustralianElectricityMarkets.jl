@@ -71,9 +71,9 @@ include("execution/replication.jl")
 
 
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
-export REPLICATION_PARTS, NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
+export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
     exclude_unmodeled_services!, replication_decision_model, check_replication_steps,
-    check_replication_parts, never_invoked_constraints, AbstractMNSPSlack
+    never_invoked_constraints, AbstractMNSPSlack
 export EnergyOfferSurplusSlack, EnergyOfferDeficitSlack,
     EnergyDecrementalOfferSurplusSlack, EnergyDecrementalOfferDeficitSlack
 export EnergyMaxAvailOutConstraint, EnergyMaxAvailInConstraint, EnergyMaxAvailOutSlack, EnergyMaxAvailInSlack

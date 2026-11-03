@@ -7,8 +7,8 @@ using .InterconnectorLossGaps: loss_gap_table
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)
     folder = mktempdir()
-    result = replicate_range(db, t1, t2; output_dir = folder, parts = AEMS.REPLICATION_PARTS)
-    @test :losses in AEMS.REPLICATION_PARTS && nrow(result.chunks) == 1
+    result = replicate_range(db, t1, t2; output_dir = folder)
+    @test nrow(result.chunks) == 1
 
     sys = workflow_test_system(db, t1:Minute(5):(t2 + Minute(10)))
     table = loss_gap_table(only(result.results), sys)

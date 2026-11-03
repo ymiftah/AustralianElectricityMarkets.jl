@@ -42,14 +42,14 @@ function _check_constraint_versions(invoked, fixed, definitions)
     return
 end
 
-function _preflight_inputs(db, date_range; intervention = 0, parts = REPLICATION_PARTS)
+function _preflight_inputs(db, date_range; intervention = 0, template::PSI.ProblemTemplate = template_nemde())
     grid = collect(date_range)[1:(end - 1)]
     interconnectors = read_interconnectors(db; as_of = first(date_range))
     required = [r.INTERCONNECTORID for r in eachrow(interconnectors) if isequal(r.ICTYPE, "MNSP") && r.REGIONFROM != "SNOWY1" && r.REGIONTO != "SNOWY1"]
     if !isempty(required)
         _check_mnsp_coverage(read_mnsp_links(db, first(date_range)), read_mnsp_offers(db, date_range), required, grid)
     end
-    if :generic_constraints in parts
+    if _has_service_model(template, GenericConstraint)
         invoked = read_invoked_constraints(db, date_range; intervention)
         missing_intervals = setdiff(grid, invoked.SETTLEMENTDATE)
         isempty(missing_intervals) || throw(ArgumentError("preflight: missing DISPATCHCONSTRAINT intervals: $(first(missing_intervals))"))

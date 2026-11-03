@@ -181,16 +181,27 @@ end
     # Every replication time-series parameter is stored, as PowerSimulations stores right-hand-side parameters.
     stored = Set(PSI.IS.Optimization.get_entry_type(k) for k in PSI.list_parameter_keys(one.results[1]))
     @test NEMConstraintRHSParameter in stored
-    @test_throws ArgumentError replicate_range(db, t1, DateTime(2025, 1, 1, 0, 10); parts = (:nonsense,))
 end
 
 
-@testset "replicate_range respects parts on the mock cache" begin
+@testset "replicate_range replays the given template on the mock cache" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)
-    result = replicate_range(db, t1, t2; parts = (:generic_constraints,))
+    # The dispatch participants and static demand of `template_nemde`, with generic constraints only.
+    template = PSI.ProblemTemplate(
+        PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true, duals = [PSI.CopperPlateBalanceConstraint]),
+    )
+    for T in (PSY.ThermalStandard, PSY.HydroDispatch, PSY.RenewableDispatch, PSY.InterruptiblePowerLoad, PSY.EnergyReservoirStorage)
+        PSI.set_device_model!(template, T, AEMS.NEMReplayDispatch)
+    end
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    PSI.set_service_model!(
+        template,
+        PSI.ServiceModel(GenericConstraint, LinearFactorLimit; duals = [NEMConstraintLimit], use_slacks = true),
+    )
+    result = replicate_range(db, t1, t2; template)
     types = Set(PSI.IS.Optimization.get_component_type(k) for k in PSI.list_variable_keys(only(result.results)))
-    @test !(PSY.EnergyReservoirStorage in types) && !(PSY.AreaInterchange in types)
+    @test PSY.EnergyReservoirStorage in types && !(PSY.AreaInterchange in types)
     @test !any(k -> PSI.IS.Optimization.get_entry_type(k) === FCASCapacityVariable, PSI.list_variable_keys(only(result.results)))
     @test all(ismissing, result.comparison.interconnectors.MWFLOW_solved)
     @test all(ismissing, result.comparison.fcas_prices.ROP_solved)
@@ -260,7 +271,7 @@ include("interconnector_loss_gaps.jl")
     @test_throws ArgumentError ReplayWorkflow._check_mnsp_coverage(links, vcat(offers, offers[1:1, :]), ["M"], grid)
     @test_throws ArgumentError ReplayWorkflow._check_mnsp_coverage(links[1:1, :], offers, ["M"], grid)
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR))
-    @test isnothing(ReplayWorkflow._preflight_inputs(db, t:Minute(5):(t + Minute(10)); parts = REPLICATION_PARTS))
+    @test isnothing(ReplayWorkflow._preflight_inputs(db, t:Minute(5):(t + Minute(10)); template = AEMS.template_nemde()))
 end
 
 @testset "preflight preserves fixed-load and built-in constraint handling" begin

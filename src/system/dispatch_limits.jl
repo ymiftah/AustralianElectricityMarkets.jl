@@ -1,7 +1,6 @@
 """
 The concrete device types that carry NEM dispatch limits: the types [`nem_dispatch_devices`](@ref)
-collects and the replay models with its dispatch formulation. Its `EnergyReservoirStorage` member is
-modelled by the replay only when the batteries are included.
+collects and the replay models with its dispatch formulation.
 """
 const NEM_DISPATCH_DEVICE_TYPES = (
     ThermalStandard, HydroDispatch, RenewableDispatch, InterruptiblePowerLoad, EnergyReservoirStorage,

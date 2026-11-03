@@ -1,5 +1,7 @@
 # 0088. Data-free replay template
 
+Amended by [0090](0090-template-is-the-replay-scope.md): `template_nemde` takes no arguments and the `parts` argument is removed.
+
 ## Status
 
 Accepted. Supersedes the `replication_template` entry point and its public API in

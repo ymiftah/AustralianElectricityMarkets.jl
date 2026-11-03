@@ -71,15 +71,52 @@ catch e
     e
 end
 
-# The replay template of `sys` for `parts`: `template_nemde`, then `exclude_unmodeled_services!` (its records
-# appended to `skipped`), then `check_template_against_sys`. Excludes components of `sys` in place.
+# The `template_nemde` dispatch participants and static demand, with no interchange and no services.
+function energy_template()
+    template = PSI.ProblemTemplate(
+        PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true, duals = [PSI.CopperPlateBalanceConstraint]),
+    )
+    PSI.set_device_model!(template, PSY.ThermalStandard, AEMS.NEMReplayDispatch)
+    PSI.set_device_model!(template, PSY.HydroDispatch, AEMS.NEMReplayDispatch)
+    PSI.set_device_model!(template, PSY.RenewableDispatch, AEMS.NEMReplayDispatch)
+    PSI.set_device_model!(template, PSY.InterruptiblePowerLoad, AEMS.NEMReplayDispatch)
+    PSI.set_device_model!(template, PSY.EnergyReservoirStorage, AEMS.NEMReplayDispatch)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    return template
+end
+
+# Adds the `template_nemde` FCAS service model to `template` and returns it.
+function with_fcas!(template::PSI.ProblemTemplate)
+    PSI.set_service_model!(
+        template,
+        PSI.ServiceModel(FCASService, AEMS.FCASMarket; duals = [AEMS.FCASJointCapacityConstraint], use_slacks = true),
+    )
+    return template
+end
+
+# Adds the `template_nemde` generic-constraint service model to `template` and returns it.
+function with_generic_constraints!(template::PSI.ProblemTemplate)
+    PSI.set_service_model!(
+        template,
+        PSI.ServiceModel(GenericConstraint, LinearFactorLimit; duals = [NEMConstraintLimit], use_slacks = true),
+    )
+    return template
+end
+
+# Adds the `template_nemde` tie-break service model to `template` and returns it.
+function with_tie_breaks!(template::PSI.ProblemTemplate)
+    PSI.set_service_model!(template, PSI.ServiceModel(EnergyTieBreak, AEMS.TieBreakMarket))
+    return template
+end
+
+# Replays `template` on `sys`: `exclude_unmodeled_services!` (its records appended to `skipped`), then
+# `check_template_against_sys`. Excludes components of `sys` in place and returns `template`.
 function replay_template(
-        sys::PSY.System; parts = AEMS.REPLICATION_PARTS, skipped = nothing,
+        sys::PSY.System; template::PSI.ProblemTemplate = AEMS.template_nemde(), skipped = nothing,
         exclude_constraints = Dict{String, Symbol}(),
     )
-    template = AEMS.template_nemde(parts)
-    rows = AEMS.exclude_unmodeled_services!(sys, template; parts, exclude_constraints)
+    rows = AEMS.exclude_unmodeled_services!(sys, template; exclude_constraints)
     isnothing(skipped) || append!(skipped, rows)
-    AEMS.check_template_against_sys(template, sys; parts)
+    AEMS.check_template_against_sys(template, sys)
     return template
 end

@@ -6,7 +6,8 @@
 #         [--hive <dir>] [--output <csv>] [--tolerance <MW>]
 #
 # `--results` is the `output_dir` of `replicate_range`, holding `chunk_<k>` folders. The system is
-# rebuilt over the same range, so the results must come from a replay with `:losses` in its parts.
+# rebuilt over the same range, so the results must come from a replay whose template models
+# `PSY.AreaInterchange` (the default `template_nemde()` does).
 
 module InterconnectorLossGaps
 

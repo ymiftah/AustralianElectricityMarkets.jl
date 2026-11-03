@@ -19,10 +19,10 @@ function replay_validation_system(terms; invoked = 1.0)
     )
 end
 
-# Replays two intervals of `sys` under `parts` with HiGHS, returning the replay result.
-function run_two_steps(sys; parts)
+# Replays two intervals of `sys` under `template` with HiGHS, returning the replay result.
+function run_two_steps(sys, template)
     return ReplaySimulation.run_replication(
-        sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); parts,
+        sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); template,
         optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
     )
 end
@@ -34,7 +34,7 @@ end
         exclusions = reason == :never_invoked ? AEMS.never_invoked_constraints(sys, [TOY_START]) : Dict("N_REVIEW" => reason)
         skipped = NamedTuple[]
         result = try
-            replay_template(sys; parts = (:generic_constraints,), exclude_constraints = exclusions, skipped)
+            replay_template(sys; template = with_generic_constraints!(energy_template()), exclude_constraints = exclusions, skipped)
         catch err
             err
         end
@@ -51,25 +51,25 @@ end
     ghost = UnitTerm("GHOST", BidType.ENERGY, 1.0)
     for terms in (ConstraintTerm[fcas, ghost], ConstraintTerm[ghost, fcas])
         sys = replay_validation_system(terms)
-        @test_throws r"missing_component" replay_template(sys; parts = (:generic_constraints,))
+        @test_throws r"missing_component" replay_template(sys; template = with_generic_constraints!(energy_template()))
     end
     sys = replay_validation_system(ConstraintTerm[fcas])
     skipped = NamedTuple[]
-    @test replay_template(sys; parts = (:generic_constraints,), skipped) isa PSI.ProblemTemplate
+    @test replay_template(sys; template = with_generic_constraints!(energy_template()), skipped) isa PSI.ProblemTemplate
     @test only(skipped) == (constraint = "N_REVIEW", reason = :unmodeled_fcas_service, n_missing = 1)
 end
 
-@testset "replay omits battery FCAS contributors while retaining strict standalone checks" begin
+@testset "replay models battery FCAS contributors and passes the standalone FCAS check" begin
     sys = fcas_toy_system()
-    parts = (:fcas, :generic_constraints)
-    template = replay_template(sys; parts)
-    @test_throws ArgumentError check_fcas_services(sys, template)
-    result = run_two_steps(sys; parts)
+    template = with_generic_constraints!(with_fcas!(energy_template()))
+    replay_template(sys; template)
+    @test isnothing(check_fcas_services(sys, template))
+    result = run_two_steps(sys, template)
     @test nrow(PSI.read_optimizer_stats(result.results)) == 2
-    @test !haskey(PSI.get_device_models(PSI.get_template(result.model)), :EnergyReservoirStorage)
+    @test haskey(PSI.get_device_models(PSI.get_template(result.model)), :EnergyReservoirStorage)
 end
 
-@testset "replay omits a battery-only FCAS market when batteries are omitted" begin
+@testset "replay models a battery-only FCAS market through the template" begin
     sys = nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0;
         batteries = [TOY_BATTERY => toy_battery(50.0, 30.0, 50.0, 0.0; initial = 0.0, ramp_up = 100.0)],
@@ -84,20 +84,20 @@ end
             return
         end,
     )
-    parts = (:fcas, :generic_constraints)
+    template = with_generic_constraints!(with_fcas!(energy_template()))
     skipped = NamedTuple[]
-    replay_template(sys; parts, skipped)
-    @test !PSY.get_available(PSY.get_component(FCASService, sys, "1_RAISE6SEC"))
-    @test only(skipped) == (constraint = "F_BAT_ONLY", reason = :unmodeled_device_type, n_missing = 1)
-    result = run_two_steps(sys; parts)
+    replay_template(sys; template, skipped)
+    @test PSY.get_available(PSY.get_component(FCASService, sys, "1_RAISE6SEC"))
+    @test isempty(skipped)
+    result = run_two_steps(sys, template)
     @test nrow(PSI.read_optimizer_stats(result.results)) == 2
     for devices in ([TOY_CHEAP, TOY_BATTERY], [TOY_CHEAP])
         gc = PSY.get_component(GenericConstraint, sys, "F_BAT_ONLY")
         empty!(get_terms(gc))
         push!(get_terms(gc), RegionTerm("1", BidType.RAISE6SEC, 1.0, devices))
-        result = run_two_steps(sys; parts)
+        result = run_two_steps(sys, template)
         @test nrow(PSI.read_optimizer_stats(result.results)) == 2
-        @test only(result.skipped_constraints.reason) == :unmodeled_device_type
+        @test isempty(result.skipped_constraints)
     end
 end
 
@@ -130,21 +130,19 @@ end
     fcas = PSY.get_component(FCASService, sys, "1_RAISEREG")
     PSY.set_available!(fcas, false)  # Unavailable in the input: no replay call may re-enable it.
     first_skipped = NamedTuple[]
-    replay_template(sys; parts = (:generic_constraints,), exclude_constraints = Dict("N_REVIEW" => :manual_exclusion), skipped = first_skipped)
+    replay_template(
+        sys; template = with_generic_constraints!(energy_template()), exclude_constraints = Dict("N_REVIEW" => :manual_exclusion),
+        skipped = first_skipped,
+    )
     @test !PSY.get_available(review)
     # The second call excludes nothing, so N_REVIEW is judged afresh on its now buildable terms.
     empty!(get_terms(review))
     push!(get_terms(review), UnitTerm(TOY_CHEAP, BidType.ENERGY, 1.0))
     second_skipped = NamedTuple[]
-    replay_template(sys; parts = (:generic_constraints,), skipped = second_skipped)
+    replay_template(sys; template = with_generic_constraints!(energy_template()), skipped = second_skipped)
     @test PSY.get_available(review)
     @test !any(r -> r.constraint == "N_REVIEW", second_skipped)
     @test !PSY.get_available(fcas)
-end
-
-@testset "left-out parts tolerate only their own device types" begin
-    @test AEMS._left_out_part_types((:fcas, :losses, :tie_breaks, :generic_constraints)) == [PSY.Storage]
-    @test AEMS._left_out_part_types(AEMS.REPLICATION_PARTS) == DataType[]
 end
 
 # The toy replay's balance-slack objective coefficient, one area and interval, as recorded on the

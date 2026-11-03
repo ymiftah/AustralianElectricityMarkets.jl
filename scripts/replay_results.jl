@@ -7,6 +7,7 @@ module ReplayResults
 using AustralianElectricityMarkets: BidType, FCASService, GenericConstraint, fcas_upper_regulation_service,
     get_bid_type, get_fcas_requirements, get_region, get_service
 using AustralianElectricityMarketsSimulations
+import AustralianElectricityMarketsSimulations: _has_device_model
 using Chain
 using DataFrames
 using Dates
@@ -164,14 +165,14 @@ end
 # Solved output tables over every interval of `results`: `prices`
 # (`SETTLEMENTDATE`, `REGIONID`, `ROP`), `dispatch` (`DUID`, net `TOTALCLEARED`), `interconnectors`
 # (`INTERCONNECTORID`, `MWFLOW`, `MWLOSSES`) and `fcas_prices` ([`compute_fcas_prices`](@ref)).
-# With `:losses` in `parts`, the interchange flow and loss variables must be in `results`.
-function _solved_tables(results, sys::PSY.System, parts)
+# With an `AreaInterchange` model in `template`, the interchange flow and loss variables must be in `results`.
+function _solved_tables(results, sys::PSY.System, template::PSI.ProblemTemplate)
     keys_of(T, C) = [
         k for k in PSI.list_variable_keys(results)
             if PSI.IS.Optimization.get_entry_type(k) === T && (isnothing(C) || PSI.IS.Optimization.get_component_type(k) === C)
     ]
     interchange_keys = [only(keys_of(T, PSY.AreaInterchange)) for T in (PSI.FlowActivePowerVariable, InterconnectorLossVariable) if !isempty(keys_of(T, PSY.AreaInterchange))]
-    if :losses in parts && !isempty(PSY.get_components(PSY.get_available, PSY.AreaInterchange, sys)) && length(interchange_keys) != 2
+    if _has_device_model(template, PSY.AreaInterchange) && !isempty(PSY.get_components(PSY.get_available, PSY.AreaInterchange, sys)) && length(interchange_keys) != 2
         error("Losses are modeled but the results lack the AreaInterchange flow or loss variables.")
     end
     dispatch_keys = PSI.VariableKey[k for T in keys(_DISPATCH_SIGNS) for k in keys_of(T, nothing)]
@@ -203,7 +204,7 @@ end
 
 
 """
-    replication_results(results, sys::PSY.System; parts = REPLICATION_PARTS) -> NamedTuple
+    replication_results(results, sys::PSY.System; template::PSI.ProblemTemplate = template_nemde()) -> NamedTuple
 
 Extracts solved dispatch, prices, interconnector flows and constraint violations from PSI
 results using the system's attached component metadata.
@@ -211,15 +212,14 @@ results using the system's attached component metadata.
 # Arguments
 - `results`: PSI optimisation or simulation problem results.
 - `sys`: the system used by the model.
-- `parts`: the [`REPLICATION_PARTS`](@ref) used by the model.
+- `template`: the `PSI.ProblemTemplate` used by the model; defaults to [`template_nemde`](@ref)().
 
 # Returns
 A named tuple of `solved` tables, `constraint_violations` and `ramp_violations`.
 Throws when required model outputs are missing or regional price duals are non-finite.
 """
-function replication_results(results, sys::PSY.System; parts = REPLICATION_PARTS)
-    check_replication_parts(parts)
-    solved = _solved_tables(results, sys, parts)
+function replication_results(results, sys::PSY.System; template::PSI.ProblemTemplate = template_nemde())
+    solved = _solved_tables(results, sys, template)
     _check_prices_finite(solved.prices)
     constraint_violations = _constraint_violations(results, sys)
     return (; solved, constraint_violations, ramp_violations = _ramp_violations(constraint_violations))

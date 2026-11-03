@@ -150,7 +150,7 @@ After updating the checkout, compare `Pkg.status` with these revisions. A root
 launches retain their own dependency versions.
 
 - HiGHS with `mip_rel_gap = 1e-8` and `mip_abs_gap = 1e-10`.
-- One solver thread, all `REPLICATION_PARTS`, and `intervention = 0` (pricing run).
+- One solver thread, the default `template_nemde()` template, and `intervention = 0` (pricing run).
 - A new system and model per trading day, with interval parameters updated in
   place within the day. The existing workflow also splits at 00:05 on July 1.
 - Historical metered `INITIALMW` at each interval, rather than the previous
@@ -310,8 +310,8 @@ need the persistent outputs and `1e-8` relative gap described above.
 ## Interconnector loss gaps
 
 `scripts/interconnector_loss_gaps.jl` checks a saved replay's solved interconnector losses against
-the loss curve at each solved flow. Run it on the `output_dir` of a `replicate_range` call made with
-`:losses` in its parts:
+the loss curve at each solved flow. Run it on the `output_dir` of a `replicate_range` call whose
+template models `PSY.AreaInterchange` (the default does):
 
 ```sh
 julia --project=AustralianElectricityMarketsSimulations/test scripts/interconnector_loss_gaps.jl \

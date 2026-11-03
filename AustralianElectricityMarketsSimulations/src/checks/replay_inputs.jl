@@ -1,28 +1,27 @@
 """
-    _check_replay_system_inputs(sys, parts)
+    _check_replay_system_inputs(sys, template)
 
-Verifies that `sys` carries every input the replay template of `parts` depends on, from the records
-of the setters that built it: with `:generic_constraints`, [`get_missing_constraint_intervals`](@ref),
+Verifies that `sys` carries every input the replay of `template` depends on, from the records
+of the setters that built it: with a `GenericConstraint` service model, [`get_missing_constraint_intervals`](@ref),
 [`get_defaulted_constraint_weights`](@ref), [`get_skipped_constraints`](@ref) and
 [`get_dropped_terms`](@ref) of the constraint build (`DISPATCHCONSTRAINT`, `GENCONDATA`,
 `SPDCONNECTIONPOINTCONSTRAINT`, `SPDREGIONCONSTRAINT`, `SPDINTERCONNECTORCONSTRAINT`); the
 dispatch-limit series of the dispatch-limits build (`DISPATCHLOAD`) on every dispatch
-device, batteries only with `:batteries`; and, with `:losses`, the offers of `set_mnsp_offers!`
+device; and, with a `PSY.AreaInterchange` device model, the offers of `set_mnsp_offers!`
 (`INTERCONNECTORCONSTRAINT`, `MNSP_INTERCONNECTOR`, `MNSP_DAYOFFER`, `MNSP_BIDOFFERPERIOD`,
 `DISPATCH_MNSPBIDTRK`) on every available MNSP.
 
 # Arguments
 - `sys`: the `PSY.System` to check.
-- `parts`: the [`REPLICATION_PARTS`](@ref) the template models.
+- `template`: the `PSI.ProblemTemplate` the replay builds.
 
 # Returns
 `nothing`. Throws an `ArgumentError` naming the first incomplete input and how to supply it.
 """
-function _check_replay_system_inputs(sys::PSY.System, parts)
-    :generic_constraints in parts && _check_replay_constraint_inputs(sys)
+function _check_replay_system_inputs(sys::PSY.System, template::PSI.ProblemTemplate)
+    _has_service_model(template, GenericConstraint) && _check_replay_constraint_inputs(sys)
     uncovered = [
-        PSY.get_name(device) for device in nem_dispatch_devices(sys)
-            if (:batteries in parts || !(device isa PSY.Storage)) && !_has_nem_dispatch_limits(device)
+        PSY.get_name(device) for device in nem_dispatch_devices(sys) if !_has_nem_dispatch_limits(device)
     ]
     isempty(uncovered) || throw(
         ArgumentError(
@@ -30,7 +29,8 @@ function _check_replay_system_inputs(sys::PSY.System, parts)
                 "build sys with nem_system(db, NEMDEConfiguration(); date_range) over the replay range before replay",
         ),
     )
-    :losses in parts && foreach(_check_mnsp_offers, PSY.get_components(PSY.get_available, PSY.AreaInterchange, sys))
+    _has_device_model(template, PSY.AreaInterchange) &&
+        foreach(_check_mnsp_offers, PSY.get_components(PSY.get_available, PSY.AreaInterchange, sys))
     return
 end
 

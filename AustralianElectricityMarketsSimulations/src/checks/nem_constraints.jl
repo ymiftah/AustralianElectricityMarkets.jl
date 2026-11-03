@@ -37,16 +37,13 @@ end
 
 
 # An FCAS term needs its device's service modelled; an absent, unavailable or deviceless service
-# contributes zero at build, so it is not a failure. A left-out service fails whatever its availability.
+# contributes zero at build, so it is not a failure.
 function _fcas_failures(
-        sys::PSY.System, device::PSY.Device, bid_type::BidType, fcas_modeled::Set{String},
-        fcas_unmodeled::Set{String}, modeled_types::Vector{DataType},
+        sys::PSY.System, device::PSY.Device, bid_type::BidType, fcas_modeled::Set{String}, modeled_types::Vector{DataType},
     )
     name = fcas_service_name(device, bid_type)
     svc = bid_type == BidType.ENERGY ? nothing : PSY.get_component(FCASService, sys, name)
-    left_out = name in fcas_unmodeled
-    (!left_out && (isnothing(svc) || !PSY.get_available(svc) || name in fcas_modeled)) &&
-        return _TermFailures()
+    (isnothing(svc) || !PSY.get_available(svc) || name in fcas_modeled) && return _TermFailures()
     devices = filter(PSY.get_available, PSY.get_contributing_devices(sys, svc))
     isempty(devices) && return _TermFailures()
     if !any(d -> _type_modeled(d, modeled_types), devices)
@@ -80,20 +77,18 @@ end
 
 function _term_failures(
         sys::PSY.System, term::UnitTerm, modeled_types::Vector{DataType}, ::Bool, fcas_modeled::Set{String},
-        fcas_unmodeled::Set{String},
     )
     device = PSY.get_component(PSY.Device, sys, get_duid(term))
     isnothing(device) &&
         return _TermFailures([(:missing_component, nothing)])
     _type_modeled(device, modeled_types) ||
         return _TermFailures([(:unmodeled_device_type, typeof(device))])
-    return _fcas_failures(sys, device, get_bid_type(term), fcas_modeled, fcas_unmodeled, modeled_types)
+    return _fcas_failures(sys, device, get_bid_type(term), fcas_modeled, modeled_types)
 end
 
 
 function _term_failures(
         sys::PSY.System, term::RegionTerm, modeled_types::Vector{DataType}, ::Bool, fcas_modeled::Set{String},
-        fcas_unmodeled::Set{String},
     )
     failures = _TermFailures()
     for dname in get_devices(term)
@@ -103,7 +98,7 @@ function _term_failures(
         elseif !_type_modeled(device, modeled_types)
             push!(failures, (:unmodeled_device_type, typeof(device)))
         else
-            append!(failures, _fcas_failures(sys, device, get_bid_type(term), fcas_modeled, fcas_unmodeled, modeled_types))
+            append!(failures, _fcas_failures(sys, device, get_bid_type(term), fcas_modeled, modeled_types))
         end
     end
     return failures
@@ -111,8 +106,7 @@ end
 
 
 function _term_failures(
-        sys::PSY.System, term::InterconnectorTerm, ::Vector{DataType}, interconnector_modeled::Bool,
-        ::Set{String}, ::Set{String},
+        sys::PSY.System, term::InterconnectorTerm, ::Vector{DataType}, interconnector_modeled::Bool, ::Set{String},
     )
     device = PSY.get_component(PSY.AreaInterchange, sys, get_interconnector(term))
     isnothing(device) &&
@@ -123,22 +117,21 @@ end
 
 
 """
-    _constraint_diagnosis(sys, gc, modeled_types, interconnector_modeled, fcas_modeled; fcas_unmodeled = Set{String}(), tolerated_reasons = Set{Symbol}(), tolerated_types = DataType[]) -> Union{Nothing, Tuple{Symbol, Vector{DataType}, Int, Bool}}
+    _constraint_diagnosis(sys, gc, modeled_types, interconnector_modeled, fcas_modeled; tolerated_reasons = Set{Symbol}(), tolerated_types = DataType[]) -> Union{Nothing, Tuple{Symbol, Vector{DataType}, Int, Bool}}
 
 The first failure that is not tolerated, or the first failure when all are tolerated, with its
 device types, failure count and whether it is blocking. A failure is tolerated when its reason is
 in `tolerated_reasons`, or, for `:unmodeled_device_type`, when its device type is a subtype of one
-of `tolerated_types`. The FCAS services named in `fcas_unmodeled` fail whether or not they are
-available. Returns `nothing` when every term is buildable.
+of `tolerated_types`. Returns `nothing` when every term is buildable.
 """
 function _constraint_diagnosis(
         sys::PSY.System, gc::GenericConstraint, modeled_types::Vector{DataType},
         interconnector_modeled::Bool, fcas_modeled::Set{String};
-        fcas_unmodeled::Set{String} = Set{String}(), tolerated_reasons = Set{Symbol}(), tolerated_types = DataType[],
+        tolerated_reasons = Set{Symbol}(), tolerated_types = DataType[],
     )
     failures = _TermFailures()
     for term in get_terms(gc)
-        append!(failures, _term_failures(sys, term, modeled_types, interconnector_modeled, fcas_modeled, fcas_unmodeled))
+        append!(failures, _term_failures(sys, term, modeled_types, interconnector_modeled, fcas_modeled))
     end
     isempty(failures) && return nothing
     tolerated(f) = f[1] == :unmodeled_device_type ?
@@ -192,8 +185,6 @@ devices are all unavailable is left out without being a failure.
   constraint left out: `reason = :no_available_device` when all its contributing devices are
   unavailable, else the unbuildable reason with `n_missing` the number of failing terms or devices.
   `nothing` records nothing.
-- `unmodeled_fcas`: names of available `FCASService`s that the template models but the caller leaves
-  out, so their terms count as unmodeled.
 
 # Returns
 A `Vector{GenericConstraint}`, sorted by name.
@@ -202,12 +193,10 @@ function _filter_buildable_generic_constraints(
         sys::PSY.System, template::PSI.ProblemTemplate, constraints; allow_partial_coverage::Bool = false,
         skipped::Union{Nothing, AbstractVector} = nothing, tolerated_reasons = Set{Symbol}(),
         tolerated_types = DataType[], blocked::Union{Nothing, AbstractVector} = nothing,
-        unmodeled_fcas = String[],
     )
     modeled_types = _modeled_device_types(template)
     interconnector_modeled = _interconnector_modeled(template)
-    fcas_modeled = setdiff(_modeled_fcas_services(template, sys), unmodeled_fcas)
-    fcas_left_out = Set{String}(unmodeled_fcas)
+    fcas_modeled = _modeled_fcas_services(template, sys)
 
     gcs = sort(collect(constraints); by = PSY.get_name)
     contributing = _service_device_index(sys)
@@ -224,8 +213,7 @@ function _filter_buildable_generic_constraints(
             continue
         end
         diagnosis = _constraint_diagnosis(
-            sys, gc, modeled_types, interconnector_modeled, fcas_modeled;
-            fcas_unmodeled = fcas_left_out, tolerated_reasons, tolerated_types,
+            sys, gc, modeled_types, interconnector_modeled, fcas_modeled; tolerated_reasons, tolerated_types,
         )
         if isnothing(diagnosis)
             push!(buildable, gc)

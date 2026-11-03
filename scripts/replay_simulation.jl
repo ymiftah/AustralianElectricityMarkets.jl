@@ -4,7 +4,9 @@
 
 module ReplaySimulation
 
+using AustralianElectricityMarkets: EnergyTieBreak, GenericConstraint
 using AustralianElectricityMarketsSimulations
+import AustralianElectricityMarketsSimulations: _has_service_model
 using DataFrames
 using Dates
 using HiGHS
@@ -85,19 +87,18 @@ end
 
 # Constructs the simulation and retains its model and skipped-constraint report for internal callers.
 function _range_simulation(
-        sys::PSY.System, steps::StepRange{DateTime}; optimizer = REPLICATION_OPTIMIZER, parts = REPLICATION_PARTS,
+        sys::PSY.System, steps::StepRange{DateTime}; optimizer = REPLICATION_OPTIMIZER, template::PSI.ProblemTemplate = template_nemde(),
         folder::AbstractString = mktempdir(), name = "dispatch", simulation_name = "replication", skipped = nothing,
     )
     check_replication_steps(sys, steps)
     check_single_financial_year(steps)
-    :tie_breaks in parts && check_tie_break_pairs(sys, steps)
-    exclude = :generic_constraints in parts ? never_invoked_constraints(sys, steps) : Dict{String, Symbol}()
-    template = template_nemde(parts)
-    template_skipped = exclude_unmodeled_services!(sys, template; parts = parts, exclude_constraints = exclude)
+    _has_service_model(template, EnergyTieBreak) && check_tie_break_pairs(sys, steps)
+    exclude = _has_service_model(template, GenericConstraint) ? never_invoked_constraints(sys, steps) : Dict{String, Symbol}()
+    template_skipped = exclude_unmodeled_services!(sys, template; exclude_constraints = exclude)
     isnothing(skipped) || append!(skipped, template_skipped)
     skipped_constraints = DataFrame(template_skipped)
-    check_template_against_sys(template, sys; parts = parts)
-    check_fcas_services(sys, template; excluded_device_types = :batteries in parts ? () : (PSY.Storage,))
+    check_template_against_sys(template, sys)
+    check_fcas_services(sys, template)
     check_dispatch_envelope(sys, template, first(steps), length(steps))
     model = replication_decision_model(template, sys, first(steps); optimizer = optimizer, name = name)
     models = PSI.SimulationModels(; decision_models = [model])
@@ -111,7 +112,7 @@ end
 
 
 """
-    replication_simulation(sys::PSY.System, steps; optimizer = REPLICATION_OPTIMIZER, parts = REPLICATION_PARTS,
+    replication_simulation(sys::PSY.System, steps; optimizer = REPLICATION_OPTIMIZER, template = template_nemde(),
         folder = mktempdir(), name = "dispatch", simulation_name = "replication",
         skipped = nothing) -> PSI.Simulation
 
@@ -122,7 +123,7 @@ pre-flight checks and selects constraints invoked in at least one requested inte
 - `sys`: a system prepared with `prepare_replay_forecasts!`, or equivalent attached forecasts.
 - `steps`: a non-empty range of five-minute interval-ending timestamps covered by the system.
 - `optimizer`: the JuMP optimizer; defaults to HiGHS with the gaps and heuristic settings of `REPLICATION_HIGHS_OPTIONS`.
-- `parts`: the `REPLICATION_PARTS` included in the model.
+- `template`: the `PSI.ProblemTemplate` to replay; defaults to [`template_nemde`](@ref)().
 - `folder`: the simulation output directory.
 - `name`: the decision problem name used to retrieve PSI results.
 - `simulation_name`: the PSI simulation name, used to reopen results with `PSI.SimulationResults(folder, simulation_name)`.

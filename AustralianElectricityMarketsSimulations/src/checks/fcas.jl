@@ -15,7 +15,7 @@ end
 
 
 """
-    check_fcas_services(sys, template; excluded_device_types = ())
+    check_fcas_services(sys, template)
 
 Verifies every available [`FCASService`](@ref) that `template` models under
 [`FCASMarket`](@ref) is buildable: each available contributing device's type is modeled by a
@@ -29,13 +29,11 @@ NEMDE* §6.1's joint ramping constraint needs. A per-interval gap in `"initial_m
 # Arguments
 - `sys`: system to read services and components from.
 - `template`: `PSI.ProblemTemplate` to check device coverage against.
-- `excluded_device_types`: device types deliberately omitted from the template; their contributors
-  are not checked. The default checks every available contributor.
 
 # Returns
 `nothing`. Throws `ArgumentError` naming every problem device otherwise.
 """
-function check_fcas_services(sys::PSY.System, template::PSI.ProblemTemplate; excluded_device_types = ())
+function check_fcas_services(sys::PSY.System, template::PSI.ProblemTemplate)
     device_models = collect(values(PSI.get_device_models(template)))
     fcas_market_services = _modeled_fcas_services(template, sys)
     problems = String[]
@@ -47,7 +45,6 @@ function check_fcas_services(sys::PSY.System, template::PSI.ProblemTemplate; exc
         bid_type = get_bid_type(svc)
         for device in PSY.get_contributing_devices(sys, svc)
             PSY.get_available(device) || continue
-            any(t -> device isa t, excluded_device_types) && continue
             dname = PSY.get_name(device)
             push!(get!(services_by_market, (dname, bid_type), String[]), svc_name)
             idx = findfirst(m -> device isa PSI.get_component_type(m), device_models)

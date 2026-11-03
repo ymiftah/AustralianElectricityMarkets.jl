@@ -10,6 +10,7 @@ module ReplayWorkflow
 
     using AustralianElectricityMarkets
     using AustralianElectricityMarketsSimulations
+    import AustralianElectricityMarketsSimulations: _has_service_model
     using ..ReplayResults: replication_results
     using ..ReplaySimulation: REPLICATION_OPTIMIZER, run_replication
     using DataFrames
@@ -88,11 +89,11 @@ module ReplayWorkflow
     # One chunk of `replicate_range`: system, simulation, execution, comparison and violations. Only
     # the tables and the results reopened from `folder` are returned, so the system is collectable.
     function _replicate_chunk(
-            db, steps, k::Integer; intervention::Integer, optimizer, parts, interval_flow_limits::Bool, folder::AbstractString,
-            time_series_in_memory::Bool, time_series_directory, cache_size_mib, on_phase,
+            db, steps, k::Integer; intervention::Integer, optimizer, template::PSI.ProblemTemplate, interval_flow_limits::Bool,
+            folder::AbstractString, time_series_in_memory::Bool, time_series_directory, cache_size_mib, on_phase,
         )
         isnothing(on_phase) || on_phase(:preflight)
-        _preflight_inputs(db, first(steps):DISPATCH_INTERVAL:(last(steps) + _REPLICATION_HORIZON); intervention, parts)
+        _preflight_inputs(db, first(steps):DISPATCH_INTERVAL:(last(steps) + _REPLICATION_HORIZON); intervention, template)
         isnothing(on_phase) || on_phase(:system_build)
         t0 = time()
         ts_directory = time_series_in_memory ? nothing : something(time_series_directory, joinpath(folder, "time_series"))
@@ -104,13 +105,15 @@ module ReplayWorkflow
         )
         prepare_replay_forecasts!(sys)
         system_build_s = time() - t0
-        run = run_replication(sys, steps; optimizer, parts, folder, simulation_name = _SIMULATION_NAME, cache_size_mib, on_phase)
+        run = run_replication(
+            sys, steps; optimizer, template, folder, simulation_name = _SIMULATION_NAME, cache_size_mib, on_phase,
+        )
         live = run.results
         simulation_build_s, execute_s = run.timings
         _write_interval_timings!(run.simulation, run.model, live)
         isnothing(on_phase) || on_phase(:compare)
         t3 = time()
-        report = replication_results(live, sys; parts)
+        report = replication_results(live, sys; template)
         solved = report.solved
         comparison = _compare_to_published(read_published_interval(db, steps; intervention = intervention), solved, steps)
         violations = report.constraint_violations
@@ -134,7 +137,7 @@ module ReplayWorkflow
 
 
     """
-        replicate_range(db, start, stop; intervention = 0, optimizer = REPLICATION_OPTIMIZER, parts = REPLICATION_PARTS,
+        replicate_range(db, start, stop; intervention = 0, optimizer = REPLICATION_OPTIMIZER, template = template_nemde(),
             chunk = :trading_day, interval_flow_limits = false, output_dir = nothing, time_series_in_memory = true,
             time_series_directory = nothing, cache_size_mib = nothing) -> NamedTuple
 
@@ -156,7 +159,7 @@ module ReplayWorkflow
     - `intervention`: 0 for the pricing run, 1 for the physical run.
     - `optimizer`: the JuMP optimizer, e.g. `optimizer_with_attributes(HiGHS.Optimizer, ...)`. Defaults
       to HiGHS with `mip_rel_gap = 1e-8` and `mip_abs_gap = 1e-10`, since the interconnector loss encoding is a MILP.
-    - `parts`: the [`REPLICATION_PARTS`](@ref) to model; default all.
+    - `template`: the `PSI.ProblemTemplate` to replay; defaults to [`template_nemde`](@ref)().
     - `chunk`: `:trading_day` or a `Dates.Period` that is a positive multiple of 5 minutes.
     - `interval_flow_limits`: as in `nem_system(db, NEMDEConfiguration(); ...)`; default `false`.
     - `output_dir`: a directory for the chunk folders `chunk_<k>`; `nothing` uses a fresh `mktempdir()` per chunk.
@@ -172,8 +175,8 @@ module ReplayWorkflow
     - `results`: a `Vector` of the `PSI.SimulationProblemResults` of each chunk, reopened from its folder.
     - `skipped_constraints`: a `DataFrame` with one row per generic constraint a chunk left out:
       `chunk`, `constraint`, `reason` (`:no_available_device` when all its contributing devices are
-      unavailable, `:never_invoked` when invoked at none of the chunk's intervals, or the reason a
-      left-out part gives) and `n_missing`.
+      unavailable, `:never_invoked` when invoked at none of the chunk's intervals, or the unbuildable
+      reason of a term the template does not model) and `n_missing`.
     - `comparison`: a `NamedTuple` of `DataFrame`s with one row per published key and interval and
       `_solved` and `_published` columns, `missing` where the model has no solved value: `prices`
       (`SETTLEMENTDATE`, `REGIONID`; solved `ROP`, published `ROP` and `RRP`), `dispatch` (`DUID`,
@@ -190,21 +193,19 @@ module ReplayWorkflow
     - `solver_stats`: a `DataFrame` with one row per interval: `SETTLEMENTDATE`, `chunk`, `objective_value`,
       `solver_solve_time`, `timed_solve_time`, `timed_calculate_dual_variables` and `termination_status`.
 
-    The FCAS `ROP_solved` is `missing` unless `parts` includes `:fcas` and `:generic_constraints`, and
-    `MWFLOW_solved`/`MWLOSSES_solved` are `missing` unless `parts` includes `:losses`. Throws
-    `ArgumentError` on an unknown part, a `stop` that is not `start` plus whole intervals, a bad `chunk`
+    The FCAS `ROP_solved` is `missing` unless the template models `FCASService` and `GenericConstraint`, and
+    `MWFLOW_solved`/`MWLOSSES_solved` are `missing` unless it models `PSY.AreaInterchange`. Throws
+    `ArgumentError` on a `stop` that is not `start` plus whole intervals, a bad `chunk`
     or a chunk that fails its pre-flight checks, and rethrows the error of a chunk that fails to build or
     execute after logging its skipped constraints and the folders of the chunks already solved.
     """
     function replicate_range(
             db, start::DateTime, stop::DateTime; intervention::Integer = 0,
-            optimizer = REPLICATION_OPTIMIZER, parts = REPLICATION_PARTS, chunk = :trading_day,
+            optimizer = REPLICATION_OPTIMIZER, template::PSI.ProblemTemplate = template_nemde(), chunk = :trading_day,
             interval_flow_limits::Bool = false, output_dir::Union{Nothing, AbstractString} = nothing, time_series_in_memory::Bool = true,
             time_series_directory::Union{Nothing, AbstractString} = nothing,
             cache_size_mib::Union{Nothing, Integer} = nothing, on_phase = nothing,
         )
-        unknown = setdiff(parts, REPLICATION_PARTS)
-        isempty(unknown) || throw(ArgumentError("replicate_range: unknown parts $(Tuple(unknown)); choose from $REPLICATION_PARTS."))
         chunks = _range_chunks(_range_steps(start, stop), chunk)
         folders = String[]
         outs = map(enumerate(chunks)) do (k, steps)
@@ -212,7 +213,7 @@ module ReplayWorkflow
             push!(folders, folder)
             try
                 return _replicate_chunk(
-                    db, steps, k; intervention = intervention, optimizer = optimizer, parts = parts,
+                    db, steps, k; intervention = intervention, optimizer = optimizer, template = template,
                     interval_flow_limits = interval_flow_limits, folder = folder, time_series_in_memory = time_series_in_memory,
                     time_series_directory = time_series_directory, cache_size_mib = cache_size_mib, on_phase = on_phase,
                 )

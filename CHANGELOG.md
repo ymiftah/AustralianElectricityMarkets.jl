@@ -66,7 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `read_energy_limits` and `set_nem_energy_limits!` retain separate energy bid `MAXAVAIL`,
   semi-scheduled `UIGF` and effective schedule classification, validating required inputs before
   attaching system-base time series.
-- The repository script helper `replicate_range(db, start, stop; parts, chunk, ...)` replays a range of dispatch intervals as one
+- The repository script helper `replicate_range(db, start, stop; template, chunk, ...)` replays a range of dispatch intervals as one
   stock PowerSimulations `Simulation` per chunk, stepping a one-interval replication model whose
   parameters update between intervals. Chunks break at every trading-day start (04:05), at 00:05 on
   1 July and every `chunk` period; each chunk leaves out the generic constraints it never invokes
@@ -74,10 +74,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `check_dispatch_envelope` before its build. It returns the per-interval comparison with the
   published outcome, constraint violations, solver statistics and each chunk's reopened results.
   `scripts/replicate_range.jl` prints the comparison for a range.
-- `REPLICATION_PARTS` and the `parts` and `exclude_constraints` keywords of `replication_template`
-  select the modelled families (batteries, FCAS, losses, tie-breaks, generic constraints) and leave
-  out named generic constraints. The input checks follow `parts`, and a generic constraint that
-  needs a left-out family is reported in `skipped` instead of failing the build.
 - `get_missing_constraint_intervals` and `get_defaulted_constraint_weights` report what
   `add_nem_constraints!` could not take from the cache: dispatch intervals with no invoked
   constraint, and constraints built with the default weight 1.0 for a NULL
@@ -384,7 +380,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`DISPATCH_INTERVAL_HOURS`/`interval_cost_coefficient`** (`AustralianElectricityMarketsSimulations`): documented the dispatch-interval-length constant and added `interval_cost_coefficient`, converting a `$/MWh` bid price into an objective coefficient for one dispatch interval.
 
 - AEMSim exports `replication_decision_model`, `check_replication_steps`, `check_single_financial_year`,
-  `check_replication_parts`, `never_invoked_constraints` (the `:never_invoked` exclusions of a replay) and
+  `never_invoked_constraints` (the `:never_invoked` exclusions of a replay) and
   `AbstractMNSPSlack`. `replication_template` takes `initial_time` and `market_price_cap` keywords.
 
 - `set_regional_availability!` attaches `max_active_power` series for regional systems: per-unit UIGF
@@ -393,10 +389,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `template_nemde()` takes no arguments and lists every replay model explicitly, batteries included. The replay scripts and checks take a `template` (default `template_nemde()`) in place of `parts`, and read what is modeled from it. A replay that models less builds its own `PSI.ProblemTemplate`.
-- `template_nemde(parts = REPLICATION_PARTS)` replaces `replication_template`: a data-free `PSI.ProblemTemplate` with type-level formulations, taking no system, database, interval or Market Price Cap.
-- `exclude_unmodeled_services!(sys, template; parts, exclude_constraints)` sets the components a replay leaves out unavailable and returns their `(constraint, reason, n_missing)` records. Each call replaces the exclusions of the previous call on the same system, so a reused system no longer keeps an earlier replay range's exclusions.
-- `check_template_against_sys(template, sys; parts)` holds the pre-build validation that `replication_template` ran, and throws naming the failed check.
+- `template_nemde()` replaces `replication_template`: a data-free `PSI.ProblemTemplate` with type-level formulations that lists every replay model explicitly, batteries included, and takes no system, database, interval or Market Price Cap. The replay scripts and checks take a `template` (default `template_nemde()`) and read what is modeled from it; a replay that models less builds its own `PSI.ProblemTemplate`. A template without an FCAS or `AreaInterchange` model reports the generic constraints that need them in `skipped` instead of failing the build.
+- `exclude_unmodeled_services!(sys, template; exclude_constraints)` sets the components a replay leaves out unavailable and returns their `(constraint, reason, n_missing)` records. Each call replaces the exclusions of the previous call on the same system, so a reused system no longer keeps an earlier replay range's exclusions.
+- `check_template_against_sys(template, sys)` holds the pre-build validation that `replication_template` ran, and throws naming the failed check.
 - `NEM_DISPATCH_DEVICE_TYPES` is exported from `AustralianElectricityMarkets` and lists the dispatch participant types that `template_nemde` models.
 
 - Public `nem_network` returns `(sys, units)` for the NEM network without operation costs, and public `add_nem_constraints!(sys, db, date_range; intervention)` attaches the invoked NEM generic constraints and fixed loadings. Both were previously internal.
@@ -729,7 +724,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- `REPLICATION_PARTS`, `check_replication_parts` and the `parts` keywords of the replay API (`exclude_unmodeled_services!`, `check_template_against_sys`, `replication_results`, `replication_simulation`, `run_replication`, `replicate_range`).
 - The `excluded_device_types` keyword of `check_fcas_services`, and the storage-only FCAS exclusion: an FCAS service whose available contributors are all storage is now built, not set unavailable.
 - Public names `set_nem_fixed_loads!`, `add_nem_constraints!`, `get_low_breakpoint`, `get_high_breakpoint`, `get_rhs`, `set_constraint_weight!`, `get_gencon_id`, `interconnector_loss_gaps` and `check_interconnector_loss_segments`; `nem_system` builds these inputs.
 - `ConstrainedNetworkConfiguration` was removed; build replay systems with `NEMDEConfiguration`.
@@ -871,8 +865,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `set_nem_dispatch_limits!` accepts a `date_range` with a step coarser than five minutes (for example
   30 minutes): `read_dispatch_limits` aggregates `DISPATCHLOAD` onto it, keeping `INITIALMW` at the start
   of each period and the minimum ramp rate and `AVAILABILITY` across it.
-- `replication_template` tolerates unmodeled device types in generic constraints only for the left-out
-  part: storage without `:batteries`, `AreaInterchange` without `:losses`. Other unmodeled types throw.
+- `exclude_unmodeled_services!` tolerates unmodeled device types in generic constraints only for
+  `AreaInterchange` when the template has no interchange model. Other unmodeled types throw.
 - `read_energy_limits` raises on a cached `DISPATCHLOAD` without a `UIGF` column instead of
   filling `NULL`; repopulate with `force_new = true`.
 - NEM dispatch no longer registers or updates the unused `"max_active_power"` parameter; dispatch

@@ -98,7 +98,7 @@ end
 @testset "recurrent energy limits update step by step" begin
     sys = energy_limit_system(; max_avail = [100.0, 35.0], uigf = [45.0, 25.0], target = [60.0, 20.0])
     out = ReplaySimulation.run_replication(sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
-    dispatch = ReplayResults._solved_tables(out.results, sys, ()).dispatch
+    dispatch = ReplayResults._solved_tables(out.results, sys, AEMS.template_nemde()).dispatch
     sort!(dispatch, :SETTLEMENTDATE)
     power = filter(:DUID => ==(TOY_CHEAP), dispatch).TOTALCLEARED
     @test power ≈ [60.0, 20.0] atol = 1.0e-6
