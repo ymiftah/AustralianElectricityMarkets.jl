@@ -34,7 +34,7 @@ end
         exclusions = reason == :never_invoked ? AEMS.never_invoked_constraints(sys, [TOY_START]) : Dict("N_REVIEW" => reason)
         skipped = NamedTuple[]
         result = try
-            replication_template(sys; parts = (:generic_constraints,), exclude_constraints = exclusions, skipped)
+            replay_template(sys; parts = (:generic_constraints,), exclude_constraints = exclusions, skipped)
         catch err
             err
         end
@@ -51,18 +51,18 @@ end
     ghost = UnitTerm("GHOST", BidType.ENERGY, 1.0)
     for terms in (ConstraintTerm[fcas, ghost], ConstraintTerm[ghost, fcas])
         sys = replay_validation_system(terms)
-        @test_throws r"missing_component" replication_template(sys; parts = (:generic_constraints,))
+        @test_throws r"missing_component" replay_template(sys; parts = (:generic_constraints,))
     end
     sys = replay_validation_system(ConstraintTerm[fcas])
     skipped = NamedTuple[]
-    @test replication_template(sys; parts = (:generic_constraints,), skipped) isa PSI.ProblemTemplate
+    @test replay_template(sys; parts = (:generic_constraints,), skipped) isa PSI.ProblemTemplate
     @test only(skipped) == (constraint = "N_REVIEW", reason = :unmodeled_fcas_service, n_missing = 1)
 end
 
 @testset "replay omits battery FCAS contributors while retaining strict standalone checks" begin
     sys = fcas_toy_system()
     parts = (:fcas, :generic_constraints)
-    template = replication_template(sys; parts)
+    template = replay_template(sys; parts)
     @test_throws ArgumentError check_fcas_services(sys, template)
     result = run_two_steps(sys; parts)
     @test nrow(PSI.read_optimizer_stats(result.results)) == 2
@@ -86,8 +86,8 @@ end
     )
     parts = (:fcas, :generic_constraints)
     skipped = NamedTuple[]
-    template = replication_template(sys; parts, skipped)
-    @test !any(k -> first(k) == "1_RAISE6SEC", keys(PSI.get_service_models(template)))
+    replay_template(sys; parts, skipped)
+    @test !PSY.get_available(PSY.get_component(FCASService, sys, "1_RAISE6SEC"))
     @test only(skipped) == (constraint = "F_BAT_ONLY", reason = :unmodeled_device_type, n_missing = 1)
     result = run_two_steps(sys; parts)
     @test nrow(PSI.read_optimizer_stats(result.results)) == 2
@@ -103,7 +103,7 @@ end
 
 @testset "MPC overrides must be finite and positive at both configuration levels" begin
     sys = nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION)
-    model = AEMS.replication_decision_model(replication_template(sys), sys, TOY_START; optimizer = HiGHS.Optimizer)
+    model = AEMS.replication_decision_model(replay_template(sys), sys, TOY_START; optimizer = HiGHS.Optimizer)
     container = PSI.get_optimization_container(model)
     settings = PSI.get_ext(PSI.get_settings(model))
     capped(cap) = PSI.ServiceModel(
@@ -123,6 +123,25 @@ end
     ) == 12345.0
 end
 
+@testset "each replay call replaces the exclusions of the previous call on the same system" begin
+    ghost = UnitTerm("GHOST", BidType.ENERGY, 1.0)
+    sys = replay_validation_system(ConstraintTerm[ghost])
+    review = PSY.get_component(GenericConstraint, sys, "N_REVIEW")
+    fcas = PSY.get_component(FCASService, sys, "1_RAISEREG")
+    PSY.set_available!(fcas, false)  # Unavailable in the input: no replay call may re-enable it.
+    first_skipped = NamedTuple[]
+    replay_template(sys; parts = (:generic_constraints,), exclude_constraints = Dict("N_REVIEW" => :manual_exclusion), skipped = first_skipped)
+    @test !PSY.get_available(review)
+    # The second call excludes nothing, so N_REVIEW is judged afresh on its now buildable terms.
+    empty!(get_terms(review))
+    push!(get_terms(review), UnitTerm(TOY_CHEAP, BidType.ENERGY, 1.0))
+    second_skipped = NamedTuple[]
+    replay_template(sys; parts = (:generic_constraints,), skipped = second_skipped)
+    @test PSY.get_available(review)
+    @test !any(r -> r.constraint == "N_REVIEW", second_skipped)
+    @test !PSY.get_available(fcas)
+end
+
 @testset "left-out parts tolerate only their own device types" begin
     @test AEMS._left_out_part_types((:fcas, :losses, :tie_breaks, :generic_constraints)) == [PSY.Storage]
     @test AEMS._left_out_part_types(AEMS.REPLICATION_PARTS) == DataType[]
@@ -136,7 +155,7 @@ const TOY_BALANCE_SLACK_COEFFICIENT = 2.1875e7
     sys = nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
     )
-    model = AEMS.replication_decision_model(replication_template(sys), sys, TOY_START; optimizer = HiGHS.Optimizer)
+    model = AEMS.replication_decision_model(replay_template(sys), sys, TOY_START; optimizer = HiGHS.Optimizer)
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
@@ -145,15 +164,25 @@ const TOY_BALANCE_SLACK_COEFFICIENT = 2.1875e7
         @test all(v -> isapprox(PSI.JuMP.coefficient(objective, v), TOY_BALANCE_SLACK_COEFFICIENT; rtol = 1.0e-12), slack)
     end
 
-    # The same network model with a supplied cap, and a build dated in the next financial year.
-    base_power = PSY.get_base_power(sys)
-    per_mpc = base_power * AustralianElectricityMarkets.AREA_BALANCE_CVP_FACTOR * interval_hours(DISPATCH_INTERVAL)
-    network_slack_cost(; kwargs...) = PSI.get_slack_cost(PSI.get_network_model(replication_template(sys; kwargs...)))
-    @test network_slack_cost(initial_time = TOY_START) ≈ per_mpc * 17_500.0 rtol = 1.0e-12
-    @test network_slack_cost(initial_time = DateTime(2025, 7, 1, 0, 5)) ≈ per_mpc * 20_300.0 rtol = 1.0e-12
-    @test network_slack_cost(initial_time = TOY_START, market_price_cap = 12_345.0) ≈ per_mpc * 12_345.0 rtol = 1.0e-12
-    @test_throws r"No published Market Price Cap" replication_template(sys; initial_time = DateTime(2020, 1, 1))
-    @test_throws ArgumentError replication_template(sys; market_price_cap = 0.0)
+    @test_throws r"No published Market Price Cap" AEMS.replication_decision_model(
+        replay_template(sys), sys, DateTime(2020, 1, 1); optimizer = HiGHS.Optimizer,
+    )
+    @test_throws ArgumentError AEMS.replication_decision_model(
+        replay_template(sys), sys, TOY_START; optimizer = HiGHS.Optimizer, market_price_cap = 0.0,
+    )
+end
+
+@testset "replication_decision_model prices the balance slacks and its settings at one Market Price Cap" begin
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
+    )
+    template = replay_template(sys)
+    template_cost = PSI.get_slack_cost(PSI.get_network_model(template))
+    model = AEMS.replication_decision_model(template, sys, TOY_START; optimizer = HiGHS.Optimizer, market_price_cap = 12_345.0)
+    @test PSI.get_ext(PSI.get_settings(model))["market_price_cap"] == 12_345.0
+    model_cost = PSI.get_slack_cost(PSI.get_network_model(PSI.get_template(model)))
+    @test model_cost == AEMS._area_balance_slack_cost(sys, 12_345.0)
+    @test PSI.get_slack_cost(PSI.get_network_model(template)) == template_cost
 end
 
 @testset "a plain AreaBalance model keeps PSI's slack cost when AEMSim is loaded" begin
@@ -181,9 +210,7 @@ end
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 1.0)], 50.0; horizon = TOY_RESOLUTION,
     )
     cap = 12_345.0
-    template = replication_template(sys; market_price_cap = cap)
-    # The model must be given the same override as its template.
-    @test_throws ArgumentError AEMS.replication_decision_model(template, sys, TOY_START; optimizer = HiGHS.Optimizer)
+    template = replay_template(sys)
     model = AEMS.replication_decision_model(template, sys, TOY_START; market_price_cap = cap, optimizer = HiGHS.Optimizer)
     @test PSI.get_ext(PSI.get_settings(model))["market_price_cap"] == cap
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT

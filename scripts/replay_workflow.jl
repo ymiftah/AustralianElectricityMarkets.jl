@@ -140,7 +140,7 @@ module ReplayWorkflow
 
     Replays the historical NEM dispatch intervals `start:5 minutes:stop` and compares each with AEMO's
     published outcome. Each chunk of the range is one `PowerSimulations.Simulation`: a one-interval
-    [`replication_template`](@ref) model is built once on a `nem_system(db, NEMDEConfiguration(); ...)` over the chunk
+    [`template_nemde`](@ref) model is built once on a `nem_system(db, NEMDEConfiguration(); ...)` over the chunk
     and stepped through its intervals, its parameters updating at each step, and every step starts from
     the interval's published `INITIALMW`. A chunk starts at `start`, at every 04:05 trading-day start, at
     00:05 on 1 July and, with a `Dates.Period` `chunk`, every `chunk` after its own start. Each chunk

@@ -1,9 +1,18 @@
 """
+The concrete device types that carry NEM dispatch limits: the types [`nem_dispatch_devices`](@ref)
+collects and the replay models with its dispatch formulation. Its `EnergyReservoirStorage` member is
+modelled by the replay only when the batteries are included.
+"""
+const NEM_DISPATCH_DEVICE_TYPES = (
+    ThermalStandard, HydroDispatch, RenewableDispatch, InterruptiblePowerLoad, EnergyReservoirStorage,
+)
+
+
+"""
     nem_dispatch_devices(sys) -> Vector{Device}
 
-Collects every available `ThermalStandard`, `HydroDispatch`, `RenewableDispatch`,
-`InterruptiblePowerLoad` and `EnergyReservoirStorage` in `sys`, the device types that the dispatch limits
-applies to.
+Collects every available device whose type is in [`NEM_DISPATCH_DEVICE_TYPES`](@ref) in `sys`, the
+device types that the dispatch limits applies to.
 
 # Arguments
 - `sys`: the `System` to collect from.
@@ -13,11 +22,9 @@ A `Vector{Device}`.
 """
 function nem_dispatch_devices(sys)
     devices = Device[]
-    append!(devices, collect(get_components(get_available, ThermalStandard, sys)))
-    append!(devices, collect(get_components(get_available, HydroDispatch, sys)))
-    append!(devices, collect(get_components(get_available, RenewableDispatch, sys)))
-    append!(devices, collect(get_components(get_available, InterruptiblePowerLoad, sys)))
-    append!(devices, collect(get_components(get_available, EnergyReservoirStorage, sys)))
+    for T in NEM_DISPATCH_DEVICE_TYPES
+        append!(devices, collect(get_components(get_available, T, sys)))
+    end
     return devices
 end
 
@@ -70,14 +77,38 @@ attached.
 - `db`: an `AEMDB` connection.
 - `date_range`: the dispatch intervals to replay. Its step is the model resolution: `DISPATCHLOAD`
   is aggregated onto it as [`read_dispatch_limits`](@ref) describes.
+- `registered`: the registration span of each unit, keyed by `DUID` (see [`registration_spans`](@ref)),
+  or `nothing` when every unit is registered at every interval.
 - `kwargs`: passed to [`read_dispatch_limits`](@ref) (e.g. `intervention`).
 
 # Returns
 `nothing`.
 """
-function set_nem_dispatch_limits!(sys, db, date_range; kwargs...)
+function set_nem_dispatch_limits!(sys, db, date_range; registered = nothing, kwargs...)
     rows = read_dispatch_limits(db, date_range; resolution = step(date_range), kwargs...)
-    return _set_nem_dispatch_limits!(sys, rows, date_range)
+    return _set_nem_dispatch_limits!(sys, rows, date_range; registered)
+end
+
+
+"""
+    set_nem_dispatch_limits!(sys, rows::DataFrame, date_range; registered = nothing)
+
+Attaches the per-device dispatch limit series built from `rows`, already read with
+[`read_dispatch_limits`](@ref) at the step of `date_range`, with the same series, errors and
+repeat-call behaviour as the database form.
+
+# Arguments
+- `sys`: the `System` to add to.
+- `rows`: the dispatch-limit rows over `date_range`, as [`read_dispatch_limits`](@ref) returns them.
+- `date_range`: the dispatch intervals to replay. Its step is the model resolution.
+- `registered`: the registration span of each unit, keyed by `DUID` (see [`registration_spans`](@ref)),
+  or `nothing` when every unit is registered at every interval.
+
+# Returns
+`nothing`.
+"""
+function set_nem_dispatch_limits!(sys, rows::DataFrame, date_range; registered = nothing)
+    return _set_nem_dispatch_limits!(sys, rows, date_range; registered)
 end
 
 
@@ -130,8 +161,8 @@ left unmodified.
 - `sys`: the `System` to add to.
 - `rows`: the dispatch-limit rows over `date_range`, as [`read_dispatch_limits`](@ref) returns them.
 - `date_range`: the dispatch intervals to replay. Its step is the model resolution.
-- `registered`: the registration span of each unit, keyed by `DUID` (see `_registration_spans`), or
-  `nothing` when every unit is registered at every interval.
+- `registered`: the registration span of each unit, keyed by `DUID` (see [`registration_spans`](@ref)),
+  or `nothing` when every unit is registered at every interval.
 
 # Returns
 `nothing`.

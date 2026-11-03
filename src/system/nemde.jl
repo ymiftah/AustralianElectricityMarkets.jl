@@ -55,32 +55,54 @@ function AustralianElectricityMarkets.nem_system(
         interval_flow_limits::Bool = false, time_series_in_memory::Bool = true,
         time_series_directory::Union{Nothing, AbstractString} = nothing,
     )
+    # 1. Validate the inputs
     (step(date_range) == Minute(5) && length(date_range) >= 2) || throw(
         ArgumentError("NEMDEConfiguration: the date range must step by 5 minutes over at least two stamps, got $date_range."),
     )
     resolution = Minute(5)
+
+    # 2. Check the required tables are cached
+    _check_required_tables_cached(db)
+
+    # 3. Base network: every unit registered during the range
     storage = isnothing(time_series_directory) ? (;) : (; time_series_directory)
-    sys, units = _constrained_system(
-        db; date_range, intervention,
-        time_series_in_memory, storage...,
-    )
-    registered = AustralianElectricityMarkets._registration_spans(units)
-    bids = read_energy_bids(db, date_range)
-    dispatch = read_dispatch_limits(db, date_range; intervention, resolution)
-    demand = read_demand(db, date_range; resolution)
-    _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
-    AustralianElectricityMarkets._set_demand!(sys, demand, date_range; resolution)
+    sys, _ = nem_network(db; as_of = first(date_range), through = last(date_range) - resolution, time_series_in_memory, storage...)
+
+    # 4. Devices and services
+    set_fcas_bids!(sys, db, date_range)
+    add_nem_constraints!(sys, db, date_range; intervention)
+    attach_interconnector_losses!(sys, db, first(date_range))
+
+    # 5. Time series
+    (; dispatch, units, demand) = nemde_energy_bids_with_coverage(sys, db, date_range; intervention, resolution)
+    registered = registration_spans(units)
+    set_demand!(sys, demand, date_range; resolution)
     set_loss_demand_coefficients!(sys)
     set_market_bids!(sys, db, date_range; resolution)
     set_fcas_service_bids!(sys, db, date_range; resolution)
     set_fcas_scaling_inputs!(sys, db, date_range; intervention)
-    AustralianElectricityMarkets._set_nem_dispatch_limits!(sys, dispatch, date_range; registered)
+    set_nem_dispatch_limits!(sys, dispatch, date_range; registered)
     set_nem_energy_limits!(sys, db, date_range; intervention, registered)
     set_mnsp_offers!(sys, db, date_range; intervention)
     interval_flow_limits && set_interconnector_flow_limits!(sys, db, date_range; intervention)
     set_fcas_effective_offers!(sys)
     set_tie_break_scales!(sys)
     return sys
+end
+
+
+# Checks that every required table of `NEMDEConfiguration` has a cached partition, and that at least
+# one of the two FCAS requirement tables does. Does not check the date range.
+function _check_required_tables_cached(db)
+    fcas_requirements = (:DISPATCH_FCAS_REQ, :DISPATCH_FCAS_REQ_CONSTRAINT)
+    for table in table_requirements(NEMDEConfiguration())
+        table in fcas_requirements && continue
+        AustralianElectricityMarkets._require_cached(db, table)
+    end
+    any(table -> AustralianElectricityMarkets._table_is_cached(db, table), fcas_requirements) || throw(
+        ArgumentError("NEMDEConfiguration needs DISPATCH_FCAS_REQ or DISPATCH_FCAS_REQ_CONSTRAINT cached."),
+    )
+    return
 end
 
 
@@ -94,7 +116,7 @@ _required_bid_directions(device::PSY.InterruptiblePowerLoad, coverage) =
 
 
 """
-    _check_nemde_energy_bid_coverage(sys, db, date_range; intervention = 0)
+    nemde_energy_bids_with_coverage(sys, db, date_range; intervention = 0, resolution = Minute(5))
 
 Verifies the cached bids and demand cover every interval of `date_range` (its last stamp
 excluded). Every region with a unit (`DUDETAILSUMMARY`) needs regional demand (`DISPATCHREGIONSUM`)
@@ -109,23 +131,26 @@ Non-scheduled units and loads are not checked.
 - `db`: an `AEMDB` connection.
 - `date_range`: the replay range.
 - `intervention`: the `DISPATCHLOAD` run, 0 for pricing and 1 for physical.
+- `resolution`: the spacing of the dispatch intervals that `DISPATCHLOAD` and regional demand are aggregated to.
 
 # Returns
-`nothing`. Throws an `ArgumentError` naming the first unit and direction, or region, missing an input.
+A named tuple `(; bids, dispatch, units, demand)` of the read inputs. Throws an `ArgumentError` naming
+the first unit and direction, or region, missing an input.
 """
-function _check_nemde_energy_bid_coverage(sys, db, date_range; intervention::Integer = 0)
+function nemde_energy_bids_with_coverage(sys, db, date_range; intervention::Integer = 0, resolution = Minute(5))
     bids = read_energy_bids(db, date_range)
-    dispatch = read_dispatch_limits(db, date_range; intervention = intervention)
+    dispatch = read_dispatch_limits(db, date_range; intervention, resolution)
     units = read_units(db; as_of = first(date_range), through = last(date_range) - step(date_range))
-    demand = read_demand(db, date_range)
-    return _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
+    demand = read_demand(db, date_range; resolution)
+    _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
+    return (; bids, dispatch, units, demand)
 end
 
 
 function _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
     demand_stamps = Set(zip(demand.REGIONID, demand.SETTLEMENTDATE))
     grid = collect(date_range)[1:(end - 1)]
-    registered = AustralianElectricityMarkets._registration_spans(units)
+    registered = registration_spans(units)
     missing_demand = [(region, t) for region in sort!(unique(units.REGIONID)), t in grid if !((region, t) in demand_stamps)]
     isempty(missing_demand) || throw(
         ArgumentError(

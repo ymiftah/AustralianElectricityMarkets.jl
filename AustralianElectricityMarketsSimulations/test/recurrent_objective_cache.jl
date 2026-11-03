@@ -36,8 +36,8 @@ end
         mktempdir() do folder
             sys = _objective_cache_system()
             @test !PSY.stores_time_series_in_memory(sys)
-            template = replication_template(sys)
-            service_model = PSI.get_model(template, GenericConstraint, "F_REG")
+            template = replay_template(sys)
+            service_model = PSI.get_model(template, GenericConstraint, "")  # type-level model, shared attributes
             PSI.get_attributes(service_model)["market_price_cap"] = 12345.0
             model = PSI.DecisionModel(
                 template, sys; horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION,
@@ -87,7 +87,7 @@ end
                 loads = ["LOAD" => toy_load(20.0, 40.0; initial = 0.0, ramp_up = 100.0)],
             )
             model = PSI.DecisionModel(
-                replication_template(sys), sys; horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION,
+                replay_template(sys), sys; horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION,
                 interval = TOY_RESOLUTION, initial_time = TOY_START,
                 optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
                 time_series_cache_size = cached ? 1024 * 1024 : 0,
@@ -122,7 +122,7 @@ end
 
 @testset "structured caches bound history and refill with current values" begin
     sys = fcas_toy_system()
-    template = replication_template(sys)
+    template = replay_template(sys)
     PSY.clear_time_series!(sys)
     device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
     curves = [_toy_offer([(10.0, Float64(i))]) for i in 1:60]
@@ -160,7 +160,7 @@ end
 
 @testset "bid cache is used when enabled and skipped when disabled" begin
     sys = fcas_toy_system()
-    template = replication_template(sys)
+    template = replay_template(sys)
     PSY.clear_time_series!(sys)
     device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
     curves = [_toy_offer([(10.0, Float64(i))]) for i in 1:3]

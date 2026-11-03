@@ -109,7 +109,7 @@ function build_and_solve!(model)
 end
 
 @testset "Real NEM data, $(Date(REAL_START))" begin
-    sys, _ = AEM.RegionModel._constrained_system(db; date_range = REAL_DATE_RANGE)
+    sys, _ = constrained_system(db; date_range = REAL_DATE_RANGE)
 
     @testset "the constrained System builds" begin
         areas = Set(PSY.get_name.(PSY.get_components(PSY.Area, sys)))
@@ -501,7 +501,7 @@ end
 end
 
 @testset "Elastic GenericConstraint slack matches AEMO's published violation, $(Date(VIOLATION_START))" begin
-    sys, _ = AEM.RegionModel._constrained_system(db; date_range = VIOLATION_DATE_RANGE)
+    sys, _ = constrained_system(db; date_range = VIOLATION_DATE_RANGE)
     attach_demand!(sys, db, VIOLATION_DATE_RANGE; resolution = REAL_RESOLUTION)
     set_market_bids!(sys, db, VIOLATION_DATE_RANGE; resolution = REAL_RESOLUTION)
     attach_dispatch_limits!(sys, db, VIOLATION_DATE_RANGE)

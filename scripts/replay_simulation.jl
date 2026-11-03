@@ -91,13 +91,12 @@ function _range_simulation(
     check_replication_steps(sys, steps)
     check_single_financial_year(steps)
     :tie_breaks in parts && check_tie_break_pairs(sys, steps)
-    template_skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
     exclude = :generic_constraints in parts ? never_invoked_constraints(sys, steps) : Dict{String, Symbol}()
-    template = replication_template(
-        sys; initial_time = first(steps), skipped = template_skipped, parts = parts, exclude_constraints = exclude,
-    )
+    template = template_nemde(parts)
+    template_skipped = exclude_unmodeled_services!(sys, template; parts = parts, exclude_constraints = exclude)
     isnothing(skipped) || append!(skipped, template_skipped)
     skipped_constraints = DataFrame(template_skipped)
+    check_template_against_sys(template, sys; parts = parts)
     check_fcas_services(sys, template; excluded_device_types = :batteries in parts ? () : (PSY.Storage,))
     check_dispatch_envelope(sys, template, first(steps), length(steps))
     model = replication_decision_model(template, sys, first(steps); optimizer = optimizer, name = name)

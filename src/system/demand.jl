@@ -26,6 +26,26 @@ end
 
 
 """
+    set_demand!(sys, demand::DataFrame, date_range; resolution = Minute(5))
+
+Adds load time series to the `PowerLoad` components of `sys` from `demand` rows already read with
+[`read_demand`](@ref), with the same series, errors and repeat-call behaviour as the database form.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+- `demand`: The demand rows over `date_range`, as [`read_demand`](@ref) returns them.
+- `date_range`: The dispatch intervals to replay; its last timestamp ends the final interval.
+- `resolution`: The spacing of the intervals (default five minutes).
+
+# Returns
+`nothing`.
+"""
+function set_demand!(sys, demand::DataFrame, date_range; resolution = Minute(5))
+    return _set_demand!(sys, demand, date_range; resolution)
+end
+
+
+"""
     _set_demand!(sys, rows, date_range; resolution = Minute(5))
 
 Adds load time series data to the `PowerLoad` components of `sys` from `rows`, as [`read_demand`](@ref)

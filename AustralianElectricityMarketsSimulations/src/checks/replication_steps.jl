@@ -30,7 +30,7 @@ end
     never_invoked_constraints(sys, steps) -> Dict{String, Symbol}
 
 Maps each available `GenericConstraint` of `sys` that is invoked in none of `steps` to `:never_invoked`,
-the `exclude_constraints` reason of [`replication_template`](@ref).
+the `exclude_constraints` reason of [`exclude_unmodeled_services!`](@ref).
 
 # Arguments
 - `sys`: the system prepared with `prepare_replay_forecasts!`, whose constraints carry an `"invoked"` series.

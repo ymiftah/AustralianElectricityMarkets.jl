@@ -70,3 +70,16 @@ _caught(f) = try
 catch e
     e
 end
+
+# The replay template of `sys` for `parts`: `template_nemde`, then `exclude_unmodeled_services!` (its records
+# appended to `skipped`), then `check_template_against_sys`. Excludes components of `sys` in place.
+function replay_template(
+        sys::PSY.System; parts = AEMS.REPLICATION_PARTS, skipped = nothing,
+        exclude_constraints = Dict{String, Symbol}(),
+    )
+    template = AEMS.template_nemde(parts)
+    rows = AEMS.exclude_unmodeled_services!(sys, template; parts, exclude_constraints)
+    isnothing(skipped) || append!(skipped, rows)
+    AEMS.check_template_against_sys(template, sys; parts)
+    return template
+end

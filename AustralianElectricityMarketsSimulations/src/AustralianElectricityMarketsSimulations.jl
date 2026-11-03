@@ -12,6 +12,7 @@ using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCAS_
     get_bid_type, get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_factor,
     get_interconnector, get_missing_constraint_intervals, get_region, get_sense, get_skipped_constraints,
     get_terms, loss_curve_vertex_values, is_non_scheduled_load, loss_segments, nem_dispatch_devices,
+    NEM_DISPATCH_DEVICE_TYPES,
     FCAS_BAND_COUNT, FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR,
     FCAS_BDU_RAMPING_CVP_FACTOR, fcas_effective_series_name, fcas_ramping_series_name,
     fcas_upper_regulation_service, fcas_offer_sides, tie_break_series_name, tie_groups, _tie_break_offers,
@@ -64,11 +65,14 @@ include("checks/tie_break.jl")
 include("checks/financial_year.jl")
 include("checks/replay_inputs.jl")
 include("checks/replication_steps.jl")
+include("checks/template.jl")
+include("templates/template_nemde.jl")
 include("execution/replication.jl")
 
 
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
-export REPLICATION_PARTS, replication_template, replication_decision_model, check_replication_steps,
+export REPLICATION_PARTS, NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
+    exclude_unmodeled_services!, replication_decision_model, check_replication_steps,
     check_replication_parts, never_invoked_constraints, AbstractMNSPSlack
 export EnergyOfferSurplusSlack, EnergyOfferDeficitSlack,
     EnergyDecrementalOfferSurplusSlack, EnergyDecrementalOfferDeficitSlack

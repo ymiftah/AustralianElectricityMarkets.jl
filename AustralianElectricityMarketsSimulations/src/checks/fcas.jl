@@ -37,7 +37,7 @@ NEMDE* §6.1's joint ramping constraint needs. A per-interval gap in `"initial_m
 """
 function check_fcas_services(sys::PSY.System, template::PSI.ProblemTemplate; excluded_device_types = ())
     device_models = collect(values(PSI.get_device_models(template)))
-    fcas_market_services = _modeled_fcas_services(template)
+    fcas_market_services = _modeled_fcas_services(template, sys)
     problems = String[]
     services_by_market = Dict{Tuple{String, BidType}, Vector{String}}()
     for svc in PSY.get_components(FCASService, sys)

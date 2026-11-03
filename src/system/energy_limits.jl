@@ -10,7 +10,7 @@ and a stable effective schedule type before modifying `sys`.
 - `db`: the market cache connection.
 - `date_range`: five-minute dispatch intervals, including the exclusive stop timestamp.
 - `intervention`: the dispatch run used for UIGF.
-- `registered`: the registration span of each unit, keyed by `DUID` (see `_registration_spans`), or
+- `registered`: the registration span of each unit, keyed by `DUID` (see [`registration_spans`](@ref)), or
   `nothing` when every unit is registered at every interval. A registered unit without an energy
   offer at an interval is an error; an unregistered one gets zero `MAXAVAIL` and `UIGF` there.
 

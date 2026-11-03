@@ -40,9 +40,9 @@ function _precompile_workload()
     check_replication_steps(sys, steps)
     check_single_financial_year(steps)
     check_tie_break_pairs(sys, steps)
-    template = replication_template(
-        sys; initial_time = first(steps), exclude_constraints = never_invoked_constraints(sys, steps),
-    )
+    template = template_nemde()
+    exclude_unmodeled_services!(sys, template; exclude_constraints = never_invoked_constraints(sys, steps))
+    check_template_against_sys(template, sys)
     check_fcas_services(sys, template)
     check_dispatch_envelope(sys, template, first(steps), length(steps))
     # Must match REPLICATION_HIGHS_OPTIONS in scripts/replay_simulation.jl.

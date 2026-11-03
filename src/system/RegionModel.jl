@@ -10,7 +10,6 @@ include("../types/network_configurations.jl")
 include("components.jl")
 include("network.jl")
 include("regional.jl")
-include("constrained.jl")
 include("nemde.jl")
 
 end

@@ -550,3 +550,28 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
 
     return added, skipped
 end
+
+
+"""
+    add_nem_constraints!(sys, db, date_range; intervention::Integer = 0) -> nothing
+
+Reads the invoked constraints and participant fixed loadings over `date_range` from `db` and attaches
+them to `sys`: one [`GenericConstraint`](@ref) per invoked version, then each device's fixed loading
+series. Constraints skipped or dropped are recorded on `sys` (see [`get_skipped_constraints`](@ref)).
+
+# Arguments
+- `sys`: the `System` to add to.
+- `db`: an `AEMDB` connection.
+- `date_range`: the dispatch intervals to replay; its last timestamp ends the final interval.
+- `intervention`: the `DISPATCHCONSTRAINT.INTERVENTION` run to read, 0 for pricing or 1 for physical.
+
+# Returns
+`nothing`. A second call on the same system throws an `ArgumentError` at the first constraint already
+attached, and the fixed loading series are replaced.
+"""
+function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0)
+    invoked, fixed = _read_constraint_inputs(db, date_range; intervention)
+    _add_nem_constraints!(sys, db, date_range, invoked, fixed; intervention)
+    _set_nem_fixed_loads!(sys, fixed, date_range)
+    return
+end

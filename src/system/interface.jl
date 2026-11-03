@@ -111,12 +111,19 @@ end
 
 
 """
-    _registration_spans(units) -> Dict{String, Tuple{DateTime, DateTime}}
+    registration_spans(units) -> Dict{String, Tuple{DateTime, DateTime}}
 
 Maps each `DUID` of `units` to its registration span `(REGISTERED_FROM, REGISTERED_UNTIL)`, as
-[`read_units`](@ref) reports it.
+[`read_units`](@ref) reports it. Pass the result as the `registered` keyword of the dispatch limit
+and energy limit setters.
+
+# Arguments
+- `units`: the unit table, as [`read_units`](@ref) returns it.
+
+# Returns
+A `Dict` from `DUID` to its `(REGISTERED_FROM, REGISTERED_UNTIL)` tuple.
 """
-function _registration_spans(units)
+function registration_spans(units)
     return Dict(String(r.DUID) => (r.REGISTERED_FROM, r.REGISTERED_UNTIL) for r in eachrow(units))
 end
 

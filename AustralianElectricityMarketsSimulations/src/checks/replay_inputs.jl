@@ -26,7 +26,7 @@ function _check_replay_system_inputs(sys::PSY.System, parts)
     ]
     isempty(uncovered) || throw(
         ArgumentError(
-            "replication_template: incomplete dispatch inputs for $(join(sort!(uncovered), ", ")); " *
+            "check_template_against_sys: incomplete dispatch inputs for $(join(sort!(uncovered), ", ")); " *
                 "build sys with nem_system(db, NEMDEConfiguration(); date_range) over the replay range before replay",
         ),
     )
@@ -40,21 +40,21 @@ function _check_replay_constraint_inputs(sys::PSY.System)
     missing_intervals = get_missing_constraint_intervals(sys)
     isempty(missing_intervals) || throw(
         ArgumentError(
-            "replication_template: missing dispatch constraint intervals: $(join(string.(missing_intervals), ", ")); " *
+            "check_template_against_sys: missing dispatch constraint intervals: $(join(string.(missing_intervals), ", ")); " *
                 "populate DISPATCHCONSTRAINT for the requested range",
         ),
     )
     defaulted_weights = get_defaulted_constraint_weights(sys)
     isempty(defaulted_weights) || throw(
         ArgumentError(
-            "replication_template: constraints with a NULL GENERICCONSTRAINTWEIGHT: $(join(defaulted_weights, ", ")); " *
+            "check_template_against_sys: constraints with a NULL GENERICCONSTRAINTWEIGHT: $(join(defaulted_weights, ", ")); " *
                 "repopulate GENCONDATA with populate(...; force_new = true)",
         ),
     )
     skipped_inputs = get_skipped_constraints(sys)
     isempty(skipped_inputs) || throw(
         ArgumentError(
-            "replication_template: incomplete constraint inputs: $(join(skipped_inputs.constraint, ", ")); see " *
+            "check_template_against_sys: incomplete constraint inputs: $(join(skipped_inputs.constraint, ", ")); see " *
                 "get_skipped_constraints(sys) for the missing definitions and keys, and repopulate GENCONDATA and the " *
                 "SPD*CONSTRAINT tables with populate(...; force_new = true)",
         ),
@@ -62,7 +62,7 @@ function _check_replay_constraint_inputs(sys::PSY.System)
     dropped_inputs = get_dropped_terms(sys)
     isempty(dropped_inputs) || throw(
         ArgumentError(
-            "replication_template: incomplete constraint terms: " *
+            "check_template_against_sys: incomplete constraint terms: " *
                 "$(join(dropped_inputs.constraint .* ": " .* dropped_inputs.key, ", ")); see get_dropped_terms(sys), and " *
                 "build sys with every unit its constraints name",
         ),
