@@ -215,8 +215,9 @@ The existing single-constraint statement is a useful special case only.
 
 ### PR #183: loss normalization and directional loss allocation
 
-The new `docs/src/interconnector-losses.md` already explains inputs, annual applicability and
-assumptions. Link it from the model page and add the actual optimization equations there.
+The PR #183 loss input page (`docs/src/interconnector-losses.md`, since removed) explained inputs, annual
+applicability and assumptions. Those assumptions are now recorded in
+[ADR 0091](0091-interconnector-loss-input-assumptions.md), and the optimization equations belong there too.
 
 1. **Analytic versus dispatch loss curve.** The analytic integral remains unchanged. If a chord
    brackets zero, dispatch vertices become `V_j = L_analytic(B_j) - L_chord(0)`, preserving slopes
@@ -319,7 +320,7 @@ merged into the optimisation implementation.
 | Slack signs and CVP inventory | [Violations, tie-breaking and prices](../literate/nemde_prices.jl) |
 | Equal-price energy tie-breaking | [Violations, tie-breaking and prices](../literate/nemde_prices.jl) |
 | Price normalisation and multiple requirements | [Violations, tie-breaking and prices](../literate/nemde_prices.jl) |
-| Pending #183 anchoring, allocation and provenance | [Interconnectors and losses](../literate/nemde_interconnectors.jl), [loss input reference](../src/interconnector-losses.md) |
+| Pending #183 anchoring, allocation and provenance | [Interconnectors and losses](../literate/nemde_interconnectors.jl), [loss input assumptions](0091-interconnector-loss-input-assumptions.md) |
 | Pending #184 profiles, two passes and distinct thermal violations | [Fast-start dispatch](../literate/nemde_fast_start.jl) |
 
 The pending descriptions were checked against #183 head

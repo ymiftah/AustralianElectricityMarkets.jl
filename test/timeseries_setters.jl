@@ -1212,7 +1212,8 @@ end
     # Raw 5-minute intervals (index i from start_date) that round up to the stamp t.
     raw_indices(t) = [i for i in 0:48 if ceil(start_date + Minute(5 * i), resolution) == t]
     # Fixture: BW03 UIGF is 40 + i (its AVAILABILITY is also present, so UIGF must win); BW02
-    # AVAILABILITY is 87 + i % 6; regional SS_SOLAR_AVAILABILITY is 100 + i in every region.
+    # AVAILABILITY is 87 + i % 6; regional SS_SOLAR_UIGF is 120 + i in every region, and its
+    # SS_SOLAR_AVAILABILITY is 100 + i, which must not be read.
     function regional_system()
         sys = deepcopy(sys_base)
         bw03 = get_component(RenewableDispatch, sys, "BW03")
@@ -1246,8 +1247,8 @@ end
         @test natural_values(sys, bw02) ≈ [minimum(87 + i % 6 for i in raw_indices(t)) for t in stamps]
         # Semi-scheduled solar: UIGF, the mean over each bucket, not AVAILABILITY.
         @test natural_values(sys, bw03) ≈ [mean(40 + i for i in raw_indices(t)) for t in stamps]
-        # No dispatch rows: 400 MW of QLD1 solar capacity against the regional 100 + i.
-        expected_factor = [clamp(mean(100 + i for i in raw_indices(t)) / 400.0, 0.0, 1.0) for t in stamps]
+        # No dispatch rows: the regional 120 + i UIGF over the 400 MW of QLD1 solar UIGF capacity.
+        expected_factor = [clamp(mean(120 + i for i in raw_indices(t)) / 400.0, 0.0, 1.0) for t in stamps]
         @test natural_values(sys, pvx) ≈ expected_factor .* pvx_capacity
         @test all(0.0 .< expected_factor .< 1.0)
     end
@@ -1286,5 +1287,38 @@ end
         set_regional_availability!(sys, db, date_range; resolution)
         @test !has_time_series(bw02, SingleTimeSeries, "max_active_power")
         @test has_time_series(get_component(RenewableDispatch, sys, "BW03"), SingleTimeSeries, "max_active_power")
+    end
+
+    @testset "the denominator counts unavailable units" begin
+        sys = regional_system()
+        set_available!(get_component(RenewableDispatch, sys, "BW03"), false)
+        set_regional_availability!(sys, db, date_range; resolution)
+        pvx = get_component(RenewableDispatch, sys, "PVX1")
+        pvx_capacity = with_units_base(() -> get_max_active_power(pvx), sys, "NATURAL_UNITS")
+        expected_factor = [clamp(mean(120 + i for i in raw_indices(t)) / 400.0, 0.0, 1.0) for t in stamps]
+        @test natural_values(sys, pvx) ≈ expected_factor .* pvx_capacity
+    end
+
+    @testset "a start off the resolution grid throws" begin
+        sys = regional_system()
+        misaligned = start_date + Minute(7)
+        @test_throws ArgumentError set_regional_availability!(
+            sys, db, misaligned:Minute(5):(misaligned + Hour(1)); resolution,
+        )
+    end
+
+    @testset "a device with zero capacity is zero at every stamp" begin
+        sys = regional_system()
+        bw03 = get_component(RenewableDispatch, sys, "BW03")
+        add_component!(
+            sys, RenewableDispatch(;
+                name = "PVZ1", available = true, bus = get_bus(bw03), active_power = 0.0,
+                reactive_power = 0.0, rating = 0.0, prime_mover_type = PrimeMovers.PVe,
+                reactive_power_limits = nothing, power_factor = 1.0,
+                operation_cost = RenewableGenerationCost(nothing), base_power = get_base_power(bw03),
+            ),
+        )
+        set_regional_availability!(sys, db, date_range; resolution)
+        @test natural_values(sys, get_component(RenewableDispatch, sys, "PVZ1")) ≈ zeros(length(stamps))
     end
 end

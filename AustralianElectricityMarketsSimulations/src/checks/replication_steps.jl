@@ -29,8 +29,9 @@ end
 """
     never_invoked_constraints(sys, steps) -> Dict{String, Symbol}
 
-Maps each available `GenericConstraint` of `sys` that is invoked in none of `steps` to `:never_invoked`,
-the `exclude_constraints` reason of [`exclude_unmodeled_services!`](@ref).
+Maps each `GenericConstraint` of `sys`, available or not, that is invoked in none of `steps` to
+`:never_invoked`, the `exclude_constraints` reason of [`exclude_unmodeled_services!`](@ref). Constraints
+excluded by an earlier call are unavailable, so they are included to be reported again on a reused system.
 
 # Arguments
 - `sys`: the system prepared with `prepare_replay_forecasts!`, whose constraints carry an `"invoked"` series.
@@ -41,7 +42,7 @@ A `Dict` from constraint name to `:never_invoked`; empty when every constraint i
 """
 function never_invoked_constraints(sys::PSY.System, steps)
     reasons = Dict{String, Symbol}()
-    for gc in PSY.get_components(PSY.get_available, GenericConstraint, sys)
+    for gc in PSY.get_components(GenericConstraint, sys)
         invoked = PSY.get_time_series_values(
             PSY.SingleTimeSeries, gc, "invoked"; start_time = first(steps), len = length(steps),
         )

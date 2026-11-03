@@ -168,7 +168,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `scripts/diagnose_infeasible.jl` reports the solver
   status and conflicting constraint families for an interval that does not solve.
 - **Dispatch simulation and comparison:** AEM constructs the populated system through
-  `NEMDEConfiguration`. AEMSim supplies `replication_template` and system-only simulation
+  `NEMDEConfiguration`. AEMSim supplies `template_nemde()` and system-only simulation
   utilities using NEM dispatch devices, `FCASMarket`, `LinearFactorLimit`, `NEMInterconnectorLoss`
   and `AreaBalancePowerModel` with slacks. The repository workflow compares solved regional `ROP`
   (with published `RRP`), `TOTALCLEARED`, interconnector flows and losses, and FCAS prices, keeping
@@ -381,17 +381,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - AEMSim exports `replication_decision_model`, `check_replication_steps`, `check_single_financial_year`,
   `never_invoked_constraints` (the `:never_invoked` exclusions of a replay) and
-  `AbstractMNSPSlack`. `replication_template` takes `initial_time` and `market_price_cap` keywords.
+  `AbstractMNSPSlack`.
 
 - `set_regional_availability!` attaches `max_active_power` series for regional systems: per-unit UIGF
-  or DISPATCHLOAD availability, and the region's semi-scheduled solar or wind capacity factor for units
-  with no dispatch rows.
+  or DISPATCHLOAD availability, and for units with no dispatch rows the region's semi-scheduled solar or
+  wind UIGF capacity factor (`SS_SOLAR_UIGF`, `SS_WIND_UIGF`).
 
 ### Changed
 
-- `template_nemde()` replaces `replication_template`: a data-free `PSI.ProblemTemplate` with type-level formulations that lists every replay model explicitly, batteries included, and takes no system, database, interval or Market Price Cap. The replay scripts and checks take a `template` (default `template_nemde()`) and read what is modeled from it; a replay that models less builds its own `PSI.ProblemTemplate`. A template without an FCAS or `AreaInterchange` model reports the generic constraints that need them in `skipped` instead of failing the build.
+- `template_nemde()` is a data-free `PSI.ProblemTemplate` with type-level formulations that lists every replay model explicitly, batteries included, and takes no system, database, interval or Market Price Cap. The replay scripts and checks take a `template` (default `template_nemde()`) and read what is modeled from it; a replay that models less builds its own `PSI.ProblemTemplate`. A template without an FCAS or `AreaInterchange` model reports the generic constraints that need them in `skipped` instead of failing the build.
 - `exclude_unmodeled_services!(sys, template; exclude_constraints)` sets the components a replay leaves out unavailable and returns their `(constraint, reason, n_missing)` records. Each call replaces the exclusions of the previous call on the same system, so a reused system no longer keeps an earlier replay range's exclusions.
-- `check_template_against_sys(template, sys)` holds the pre-build validation that `replication_template` ran, and throws naming the failed check.
+- `check_template_against_sys(template, sys)` holds the pre-build validation of a replay template against its system, and throws naming the failed check.
 - `NEM_DISPATCH_DEVICE_TYPES` is exported from `AustralianElectricityMarkets` and lists the dispatch participant types that `template_nemde` models.
 
 - Public `nem_network` returns `(sys, units)` for the NEM network without operation costs, and public `add_nem_constraints!(sys, db, date_range; intervention)` attaches the invoked NEM generic constraints and fixed loadings. Both were previously internal.
@@ -402,8 +402,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The replay HiGHS optimizer turns off the root sub-MIP heuristics (RINS, RENS, root reduced-cost, feasibility jump), which cut slow-interval solve times about tenfold with identical solutions.
 
 - A settings-`ext` `"market_price_cap"` override no longer prices the area-balance slack. The balance slack
-  is priced at the cap of `replication_template` (its `market_price_cap`, or the cap dated by `initial_time`),
-  and `replication_decision_model` throws when its cap differs from the template's.
+  is priced at the Market Price Cap that `replication_decision_model` resolves for its interval.
 - Errors of `check_replication_steps` and `check_single_financial_year` name the function that raises them.
 - The simulations precompile workload applies the runner's never-invoked constraint exclusion and tie-break
   check, and reads back realized dispatch and balance results, so the first comparison in a fresh process
@@ -569,7 +568,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a model built once per chunk and stepped. It reports a generic-constraint slack as a violation
   only where the constraint is invoked. AEM's replay configuration takes the input `date_range`;
   AEMSim's `prepare_replication!` transforms its attached series into one-interval windows.
-- `replication_template` throws, before building, on dispatch constraint intervals missing from the
+- The replay path throws, before building, on dispatch constraint intervals missing from the
   cache, skipped constraints, dropped unit terms, defaulted constraint weights, devices without
   dispatch-limit series and incomplete MNSP offers, instead of replaying a partial model.
   AEM's replay configuration first checks that every scheduled unit has an energy offer, and every region
@@ -722,10 +721,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `replication_results` and `compute_fcas_prices` move out of `AustralianElectricityMarketsSimulations` into `ReplayResults` in `scripts/replay_results.jl`, along with the solved-table and constraint-violation helpers they use.
 - The replay default HiGHS relative MIP gap is 1e-8 (was 0), matching the batch runner; the absolute gap stays 1e-10.
 
+- `DISPATCHREGIONSUM` caches `SS_SOLAR_UIGF` and `SS_WIND_UIGF`, which `set_regional_availability!` reads for the regional capacity factor in place of `SS_SOLAR_AVAILABILITY` and `SS_WIND_AVAILABILITY`. Cached months need `populate(db, :DISPATCHREGIONSUM, start, stop; force_new = true)` to gain the columns.
+
 ### Removed
 
 - The `excluded_device_types` keyword of `check_fcas_services`, and the storage-only FCAS exclusion: an FCAS service whose available contributors are all storage is now built, not set unavailable.
-- Public names `set_nem_fixed_loads!`, `add_nem_constraints!`, `get_low_breakpoint`, `get_high_breakpoint`, `get_rhs`, `set_constraint_weight!`, `get_gencon_id`, `interconnector_loss_gaps` and `check_interconnector_loss_segments`; `nem_system` builds these inputs.
+- Public names `set_nem_fixed_loads!`, `get_low_breakpoint`, `get_high_breakpoint`, `get_rhs`, `set_constraint_weight!`, `get_gencon_id`, `interconnector_loss_gaps` and `check_interconnector_loss_segments`; `nem_system` builds these inputs.
 - `ConstrainedNetworkConfiguration` was removed; build replay systems with `NEMDEConfiguration`.
 - The public `filter_buildable_generic_constraints` (`AustralianElectricityMarketsSimulations`).
   The replication path runs the same buildability check internally.
@@ -779,11 +780,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AustralianElectricityMarketsSimulations`. They live in `scripts/replay_simulation.jl` (module `ReplaySimulation`);
   code that called them through `using AustralianElectricityMarketsSimulations` must include the script.
 
-- `replication_template` is removed. The Market Price Cap is resolved only by `replication_decision_model`, which prices both the balance slacks and the penalties at that cap; the template/model cap-mismatch check is removed.
-
 - Removed the internal `_constrained_system`; `nem_system` builds the NEMDE system from the public functions above.
 
 ### Fixed
+
+- `set_regional_availability!` throws an `ArgumentError` when the start of its range is off the resolution grid, clamps every value to [0, 1], and gives a device with zero capacity 0.0 at every stamp.
+- `never_invoked_constraints` scans every `GenericConstraint`, available or not, so a reused system reports the constraints an earlier replay excluded as never invoked again.
 
 - Scheduled loads pair each regulation availability with its own service: the lower-regulation AGC ramp cap uses `LOWERREGAVAILABILITY` with the up ramp rate, and the raise cap uses `RAISEREGAVAILABILITY` with the down ramp rate. Previously the availabilities were swapped, so a load's regulation caps could be understated.
 
@@ -897,10 +899,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Invoked generic constraint versions with a missing effective date no longer abort the build (they are
   treated as having no definition).
-- `filter_buildable_generic_constraints` leaves out a generic constraint whose contributing devices
-  are all unavailable (for example wholesale demand response constraints once their units are
-  unavailable), which PSI cannot build, and reports it as `:no_available_device` through its new
-  `skipped` keyword (also accepted by `replication_template`).
+- Generic constraints whose contributing devices are all unavailable (for example wholesale demand response constraints once their units are unavailable) are left out of a replay and reported as `:no_available_device` by `exclude_unmodeled_services!`, since PSI cannot build them.
 - The 1-second FCAS markets (`RAISE1SEC`, `LOWER1SEC`) are modelled as contingency services: they
   are part of `FCAS_CONTINGENCY_MARKETS`/`FCAS_BID_TYPES`, so their bids, requirements, prices and
   dispatch outcomes are read, `add_fcas_services!` creates their services, and `FCASMarket` and

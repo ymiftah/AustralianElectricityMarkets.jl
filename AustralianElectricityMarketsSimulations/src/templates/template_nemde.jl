@@ -19,11 +19,9 @@ function template_nemde()
     template = PSI.ProblemTemplate(
         PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true, duals = [PSI.CopperPlateBalanceConstraint]),
     )
-    PSI.set_device_model!(template, PSY.ThermalStandard, NEMReplayDispatch)
-    PSI.set_device_model!(template, PSY.HydroDispatch, NEMReplayDispatch)
-    PSI.set_device_model!(template, PSY.RenewableDispatch, NEMReplayDispatch)
-    PSI.set_device_model!(template, PSY.InterruptiblePowerLoad, NEMReplayDispatch)
-    PSI.set_device_model!(template, PSY.EnergyReservoirStorage, NEMReplayDispatch)
+    for T in NEM_DISPATCH_DEVICE_TYPES
+        PSI.set_device_model!(template, T, NEMReplayDispatch)
+    end
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     PSI.set_device_model!(template, PSY.AreaInterchange, NEMInterconnectorLoss)
     PSI.set_service_model!(

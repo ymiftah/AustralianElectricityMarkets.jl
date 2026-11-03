@@ -74,7 +74,7 @@ function AustralianElectricityMarkets.nem_system(
     attach_interconnector_losses!(sys, db, first(date_range))
 
     # 5. Time series
-    (; dispatch, units, demand) = nemde_energy_bids_with_coverage(sys, db, date_range; intervention, resolution)
+    (; dispatch, units, demand) = _nemde_energy_bids_with_coverage(sys, db, date_range; intervention, resolution)
     registered = registration_spans(units)
     set_demand!(sys, demand, date_range; resolution)
     set_loss_demand_coefficients!(sys)
@@ -116,7 +116,7 @@ _required_bid_directions(device::PSY.InterruptiblePowerLoad, coverage) =
 
 
 """
-    nemde_energy_bids_with_coverage(sys, db, date_range; intervention = 0, resolution = Minute(5))
+    _nemde_energy_bids_with_coverage(sys, db, date_range; intervention = 0, resolution = Minute(5))
 
 Verifies the cached bids and demand cover every interval of `date_range` (its last stamp
 excluded). Every region with a unit (`DUDETAILSUMMARY`) needs regional demand (`DISPATCHREGIONSUM`)
@@ -134,16 +134,16 @@ Non-scheduled units and loads are not checked.
 - `resolution`: the spacing of the dispatch intervals that `DISPATCHLOAD` and regional demand are aggregated to.
 
 # Returns
-A named tuple `(; bids, dispatch, units, demand)` of the read inputs. Throws an `ArgumentError` naming
+A named tuple `(; dispatch, units, demand)` of the read inputs. Throws an `ArgumentError` naming
 the first unit and direction, or region, missing an input.
 """
-function nemde_energy_bids_with_coverage(sys, db, date_range; intervention::Integer = 0, resolution = Minute(5))
+function _nemde_energy_bids_with_coverage(sys, db, date_range; intervention::Integer = 0, resolution = Minute(5))
     bids = read_energy_bids(db, date_range)
     dispatch = read_dispatch_limits(db, date_range; intervention, resolution)
     units = read_units(db; as_of = first(date_range), through = last(date_range) - step(date_range))
     demand = read_demand(db, date_range; resolution)
     _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
-    return (; bids, dispatch, units, demand)
+    return (; dispatch, units, demand)
 end
 
 

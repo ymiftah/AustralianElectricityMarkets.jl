@@ -120,7 +120,7 @@ max_avail(t::Trapezium) = t.max_avail
 upper_slope(t::Trapezium) = (t.enablement_max - t.high_breakpoint) / t.max_avail
 lower_slope(t::Trapezium) = (t.low_breakpoint - t.enablement_min) / t.max_avail
 
-"The interconnector's loss curve linearised on its breakpoints, as `(from_mw, to_mw, slope)` per segment."
+"The loss in MW of interconnector `ic` at `flow` MW, quadratic in the flow."
 loss_at(ic::Interconnector, flow) = ic.loss_coefficient / 2 * flow^2
 "The loss at zero flow of the chord that brackets it; subtracting it makes the linearised curve lose nothing at zero flow."
 function zero_flow_chord_loss(ic::Interconnector)
@@ -129,6 +129,7 @@ function zero_flow_chord_loss(ic::Interconnector)
     isnothing(i) && return 0.0
     return -ic.loss_coefficient * bp[i] * bp[i + 1] / 2
 end
+"The interconnector's loss curve linearised on its breakpoints, as `(from_mw, to_mw, slope)` per segment."
 function linearised_losses(ic::Interconnector)
     bp = ic.breakpoints
     return [

@@ -151,8 +151,7 @@ end
 begin
     ren = get_component(RenewableDispatch, sys, "COLEASF1")
     ts = get_time_series_array(SingleTimeSeries, ren, "max_active_power") |> DataFrame
-    max_mw = with_units_base(() -> get_max_active_power(ren), sys, "NATURAL_UNITS")
-    index, values = ts.timestamp, ts.A .* max_mw
+    index, values = ts.timestamp, ts.A .* get_base_power(sys)
     fig = Figure()
     ax = Axis(fig[1, 1], xlabel = "timestamp", title = "Max active power [MW]", ylabel = "MW")
     lines!(index, values; label = "COLEASF1")

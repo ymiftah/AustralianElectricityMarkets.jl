@@ -125,9 +125,9 @@ end
 
 
 """
-    _read_regional_renewable_availability(db, date_range; resolution, intervention)
+    _read_regional_renewable_uigf(db, date_range; resolution, intervention)
 
-Reads the regional semi-scheduled solar and wind availability from `DISPATCHREGIONSUM`, averaged
+Reads the regional semi-scheduled solar and wind UIGF from `DISPATCHREGIONSUM`, averaged
 onto `resolution` as [`read_demand`](@ref) aggregates demand.
 
 # Arguments
@@ -138,9 +138,9 @@ onto `resolution` as [`read_demand`](@ref) aggregates demand.
   partitions predate the `INTERVENTION` column.
 
 # Returns
-A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `SS_SOLAR_AVAILABILITY` and `SS_WIND_AVAILABILITY`.
+A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `SS_SOLAR_UIGF` and `SS_WIND_UIGF`.
 """
-function _read_regional_renewable_availability(db, date_range; resolution::Dates.Period, intervention::Integer)
+function _read_regional_renewable_uigf(db, date_range; resolution::Dates.Period, intervention::Integer)
     source = read_hive(db, :DISPATCHREGIONSUM)
     schema = _table_schema(db, source)
     # Each rounded-up timestamp includes the raw bin ending at it, even before the requested start.
@@ -154,15 +154,15 @@ function _read_regional_renewable_availability(db, date_range; resolution::Dates
         db,
         """
         WITH raw_regional AS (
-            SELECT $bucket AS SETTLEMENTDATE, r.REGIONID, r.SS_SOLAR_AVAILABILITY, r.SS_WIND_AVAILABILITY
+            SELECT $bucket AS SETTLEMENTDATE, r.REGIONID, r.SS_SOLAR_UIGF, r.SS_WIND_UIGF
             FROM $source r
             WHERE r.SETTLEMENTDATE IS NOT NULL AND r.REGIONID IS NOT NULL
               AND r.SETTLEMENTDATE > ? AND r.SETTLEMENTDATE <= ?
               $(_intervention_where(schema))
         )
         SELECT SETTLEMENTDATE, REGIONID,
-               avg(SS_SOLAR_AVAILABILITY) AS SS_SOLAR_AVAILABILITY,
-               avg(SS_WIND_AVAILABILITY) AS SS_WIND_AVAILABILITY
+               avg(SS_SOLAR_UIGF) AS SS_SOLAR_UIGF,
+               avg(SS_WIND_UIGF) AS SS_WIND_UIGF
         FROM raw_regional
         WHERE SETTLEMENTDATE >= ? AND SETTLEMENTDATE < ?
         GROUP BY SETTLEMENTDATE, REGIONID

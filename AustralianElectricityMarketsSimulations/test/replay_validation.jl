@@ -2,7 +2,7 @@ using HiGHS
 import PowerSimulations as PSI
 import PowerSystems as PSY
 
-function replay_validation_system(terms; invoked = 1.0)
+function replay_validation_system(terms; invoked = 1.0, with_off_constraint = false)
     return nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0;
         horizon = TOY_RESOLUTION,
@@ -14,6 +14,15 @@ function replay_validation_system(terms; invoked = 1.0)
             PSY.add_service!(sys, gc, [unit])
             add_toy_series!(sys, gc, stamps, "rhs", fill(100.0, length(stamps)))
             add_toy_series!(sys, gc, stamps, "invoked", fill(invoked, length(stamps)); scale = 1.0)
+            if with_off_constraint
+                off = GenericConstraint(;
+                    name = "N_OFF", sense = ConstraintSense.LE, rhs = 1.0,
+                    terms = ConstraintTerm[UnitTerm(TOY_CHEAP, BidType.ENERGY, 1.0)],
+                )
+                PSY.add_service!(sys, off, [unit])
+                add_toy_series!(sys, off, stamps, "rhs", fill(100.0, length(stamps)))
+                add_toy_series!(sys, off, stamps, "invoked", fill(1.0, length(stamps)); scale = 1.0)
+            end
             return
         end,
     )
@@ -125,16 +134,18 @@ end
 
 @testset "each replay call replaces the exclusions of the previous call on the same system" begin
     ghost = UnitTerm("GHOST", BidType.ENERGY, 1.0)
-    sys = replay_validation_system(ConstraintTerm[ghost])
+    sys = replay_validation_system(ConstraintTerm[ghost]; with_off_constraint = true)
     review = PSY.get_component(GenericConstraint, sys, "N_REVIEW")
-    fcas = PSY.get_component(FCASService, sys, "1_RAISEREG")
-    PSY.set_available!(fcas, false)  # Unavailable in the input: no replay call may re-enable it.
+    off = PSY.get_component(GenericConstraint, sys, "N_OFF")
+    PSY.set_available!(off, false)  # Unavailable in the input: no replay call may re-enable it.
     first_skipped = NamedTuple[]
     replay_template(
         sys; template = with_generic_constraints!(energy_template()), exclude_constraints = Dict("N_REVIEW" => :manual_exclusion),
         skipped = first_skipped,
     )
     @test !PSY.get_available(review)
+    @test !PSY.get_available(off)
+    @test !any(r -> r.constraint == "N_OFF", first_skipped)
     # The second call excludes nothing, so N_REVIEW is judged afresh on its now buildable terms.
     empty!(get_terms(review))
     push!(get_terms(review), UnitTerm(TOY_CHEAP, BidType.ENERGY, 1.0))
@@ -142,7 +153,23 @@ end
     replay_template(sys; template = with_generic_constraints!(energy_template()), skipped = second_skipped)
     @test PSY.get_available(review)
     @test !any(r -> r.constraint == "N_REVIEW", second_skipped)
-    @test !PSY.get_available(fcas)
+    @test !PSY.get_available(off)
+    @test !any(r -> r.constraint == "N_OFF", second_skipped)
+end
+
+@testset "a never-invoked constraint stays excluded and is reported again on a reused system" begin
+    ghost = UnitTerm("GHOST", BidType.ENERGY, 1.0)
+    sys = replay_validation_system(ConstraintTerm[ghost]; invoked = 0.0)
+    review = PSY.get_component(GenericConstraint, sys, "N_REVIEW")
+    for _ in 1:2
+        exclusions = AEMS.never_invoked_constraints(sys, [TOY_START])
+        skipped = NamedTuple[]
+        replay_template(
+            sys; template = with_generic_constraints!(energy_template()), exclude_constraints = exclusions, skipped,
+        )
+        @test !PSY.get_available(review)
+        @test only(skipped) == (constraint = "N_REVIEW", reason = :never_invoked, n_missing = 0)
+    end
 end
 
 # The toy replay's balance-slack objective coefficient, one area and interval, as recorded on the

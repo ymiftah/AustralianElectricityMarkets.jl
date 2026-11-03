@@ -23,13 +23,22 @@ Each stamp takes the first source that exists:
 
 1. a `RenewableDispatch` with a `read_uigf` row: `UIGF / capacity`;
 2. a `read_dispatch_limits` `AVAILABILITY` row: `AVAILABILITY / capacity`;
-3. a solar (`PVe`) or wind (`WT`) `RenewableDispatch`: the regional `SS_SOLAR_AVAILABILITY` or
-   `SS_WIND_AVAILABILITY` divided by the summed capacity of the region's semi-scheduled units of that
-   prime mover, clamped to [0, 1];
+3. a solar (`PVe`) or wind (`WT` or `WS`) `RenewableDispatch`: the regional `SS_SOLAR_UIGF` or
+   `SS_WIND_UIGF` from `DISPATCHREGIONSUM` divided by the summed NATURAL capacity of the region's
+   semi-scheduled units of that fuel, clamped to [0, 1]. The denominator counts every such unit in the
+   system that has UIGF rows, available or not, so withdrawing a unit does not raise the others' factor;
 4. otherwise `1.0`, the registered capacity.
 
+The numerator is the regional UIGF, as AEMO defines it in the MMS Data Model Report for DISPATCHREGIONSUM:
+"Regional aggregated Unconstrained Intermittent Generation Forecast of Semi-scheduled generation (MW)
+where the primary fuel source is solar/wind". The `SS_SOLAR_AVAILABILITY` and `SS_WIND_AVAILABILITY`
+columns were rejected as the numerator. They are aggregate energy availability and include the MAXAVAIL
+withdrawal, so a unit that is economically withdrawn at negative prices would drive the fallback to zero.
+
 Values are per-unit of each device's own `max_active_power`, as `set_nem_dispatch_limits!` writes
-them. A repeat call replaces the series. Thermal, storage and load devices are not touched.
+them, and are clamped to [0, 1]. A device with a capacity of zero or less is 0.0 at every stamp. The
+start of `date_range` must lie on the `resolution` grid. A repeat call replaces the series. Thermal,
+storage and load devices are not touched.
 
 ## Consequences
 
@@ -37,5 +46,5 @@ them. A repeat call replaces the series. Thermal, storage and load devices are n
   excludes it. Those studies can therefore over-supply relative to `TOTALDEMAND`.
 - A unit with no dispatch rows and no regional solar or wind data is treated as fully available. Its
   output is limited only by its registered capacity.
-- The regional capacity factor is the same for every unit of a prime mover in a region, so it does not
+- The regional capacity factor is the same for every unit of a fuel group in a region, so it does not
   separate units within that group.
