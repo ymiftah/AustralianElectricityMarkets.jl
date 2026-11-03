@@ -4,6 +4,7 @@ begin
     using DataFrames
     using CairoMakie
     using Markdown
+    import PowerSystems as PSY
 end;
 
 include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_market.jl")) #hide
@@ -13,8 +14,9 @@ include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_jump.jl")); #h
 #
 # The [formulation overview](@ref nemde-model) introduces the full model. This page turns
 # a deliberately reduced subset into running code: a [JuMP](https://jump.dev) model of a small market, solved with
-# [HiGHS](https://highs.dev). Nothing here depends on `PowerSystems.jl` or `PowerSimulations.jl`;
-# the next two pages show how to solve the toy market with those packages.
+# [HiGHS](https://highs.dev). The market data is a `PowerSystems.jl` `System`, and the model reads its
+# energy data through PSY's getters. The [next page](@ref nemde-psi) builds the energy part of this model
+# with `PowerSimulations.jl` from the same `System`.
 #
 # !!! note "Example scope"
 #     This teaching model omits scheduled consumption, batteries, regulation FCAS scaling,
@@ -29,37 +31,49 @@ include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_jump.jl")); #h
 # stability limit on `COAL1` and one `RAISE6SEC` requirement per region. A single 5-minute
 # dispatch interval is cleared.
 #
-# The table shows each unit's availability, metered initial output, ramp capability and offers.
+# The market is built once, as the `System` returned by `toy_system`. Each generator carries its
+# offer as a cost curve and its dispatch envelope as its active power limits, and each region has
+# an `Area`, a bus and a load. Initial output, ramp rates, FCAS offers, generic constraints and loss
+# parameters are not stock PSY fields for this toy, so they stay plain Julia data keyed by unit name.
+
+sys = toy_system(market)
+unit_names = generator_names(sys)
+regions = region_names(sys)
+
+# The table shows each unit's availability, metered initial output and ramp capability, which
+# the envelope is built from, together with the envelope and the offers as the `System` holds them:
 
 DataFrame(
-    unit = [String(unit_name(u)) for u in market.units],
-    region = [region(u) for u in market.units],
-    availability_MW = availability.(market.units),
-    initial_MW = initial_mw.(market.units),
-    ramp_up_MW_per_interval = ramp_up.(market.units),
-    bands = [join(["$(quantity(b)) MW @ \$$(price(b))" for b in bids(u)], ", ") for u in market.units],
+    unit = unit_names,
+    region = [generator_region(sys, n) for n in unit_names],
+    availability_MW = [availability(find_unit(market, n)) for n in unit_names],
+    initial_MW = [find_unit(market, n).initial_mw for n in unit_names],
+    ramp_up_MW_per_interval = [ramp_up(find_unit(market, n)) for n in unit_names],
+    envelope_min_MW = [envelope(sys, n)[1] for n in unit_names],
+    envelope_max_MW = [envelope(sys, n)[2] for n in unit_names],
+    bands = [join(["$(quantity(b)) MW @ \$$(price(b))" for b in offer_bids(sys, n)], ", ") for n in unit_names],
 )
 
 # `WIND1` offers 200 MW at \$0 but its forecast is 150 MW, so only 150 MW of its offer is usable:
 # the first place a forecast changes the bid stack. The merit order of each region, with the
 # unusable part of the wind offer drawn faded:
 
-region_colors = Dict(unit_name(u) => c for (u, c) in zip(market.units, Makie.wong_colors()))
+region_colors = Dict(n => c for (n, c) in zip(unit_names, Makie.wong_colors()))
 
-function merit_order(market, region_name)
-    steps = [(u = u, b = b) for u in units_in(market, region_name) for b in bids(u)]
+function merit_order(sys, region_name)
+    steps = [(name = n, b = b) for n in units_in(sys, region_name) for b in offer_bids(sys, n)]
     sort!(steps; by = s -> price(s.b))
     return steps
 end
 
-function plot_merit_order!(ax, market, region_name, region_colors; cleared = nothing, clearing_price = nothing)
+function plot_merit_order!(ax, sys, market, region_name, region_colors; cleared = nothing, clearing_price = nothing)
     left = 0.0
-    used = Dict(unit_name(u) => availability(u) for u in market.units)
-    for s in merit_order(market, region_name)
-        usable = min(quantity(s.b), used[unit_name(s.u)])
-        used[unit_name(s.u)] -= usable
+    used = Dict(n => availability(find_unit(market, n)) for n in units_in(sys, region_name))
+    for s in merit_order(sys, region_name)
+        usable = min(quantity(s.b), used[s.name])
+        used[s.name] -= usable
         height = max(price(s.b), 3.0)
-        color = region_colors[unit_name(s.u)]
+        color = region_colors[s.name]
         poly!(
             ax, Rect2f(left, 0.0, usable, height);
             color = (color, 0.8), strokecolor = color, strokewidth = 1,
@@ -77,46 +91,50 @@ function plot_merit_order!(ax, market, region_name, region_colors; cleared = not
     return nothing
 end
 
-function merit_order_legend!(fig, position, market, region_colors)
+function merit_order_legend!(fig, position, names, region_colors)
     return Legend(
         fig[position...],
-        [PolyElement(color = region_colors[unit_name(u)]) for u in market.units],
-        [String(unit_name(u)) for u in market.units];
+        [PolyElement(color = region_colors[n]) for n in names],
+        names;
         orientation = :horizontal, tellheight = true,
     )
 end
 
 let
     fig = Figure(size = (900, 340))
-    for (i, r) in enumerate(market.regions)
+    for (i, r) in enumerate(regions)
         ax = Axis(fig[1, i]; title = r, xlabel = "Cumulative offered MW", ylabel = "Offer price (\$/MWh)")
-        plot_merit_order!(ax, market, r, region_colors)
+        plot_merit_order!(ax, sys, market, r, region_colors)
         ylims!(ax, 0, 260)
     end
-    merit_order_legend!(fig, (2, 1:2), market, region_colors)
+    merit_order_legend!(fig, (2, 1:2), unit_names, region_colors)
     fig
 end
 
-# ## Energy: bands, ramps and regional balance
+# ## Energy: bands, envelopes and regional balance
 #
 # The decision variables are the MW cleared in each band of each offer, bounded by the band
-# quantity. A unit's dispatch is the sum of its bands, and the objective is the offer cost over
-# the interval of ``\Delta = 5/60`` hours.
+# quantity. The bands are read from each generator's cost curve. A unit's dispatch is the sum of its
+# bands, and the objective is the offer cost over the interval of ``\Delta = 5/60`` hours.
 
 model = Model(HiGHS.Optimizer)
 set_silent(model)
 
-@variable(model, 0 <= cleared[u in market.units, j in 1:n_bids(u)] <= quantity(bid(u, j)))
-@expression(model, dispatch[u in market.units], sum(cleared[u, j] for j in 1:n_bids(u)))
-@expression(model, offer_cost, sum(price(bid(u, j)) * cleared[u, j] * INTERVAL_H for u in market.units for j in 1:n_bids(u)))
+bands = Dict(n => offer_bids(sys, n) for n in unit_names)
+@variable(model, 0 <= cleared[n in unit_names, j in eachindex(bands[n])] <= quantity(bands[n][j]))
+@expression(model, dispatch[n in unit_names], sum(cleared[n, j] for j in eachindex(bands[n])))
+@expression(model, offer_cost, sum(price(bands[n][j]) * cleared[n, j] * INTERVAL_H for n in unit_names for j in eachindex(bands[n])))
 @objective(model, Min, offer_cost)
 
-# Each unit's dispatch is limited by its availability (the `UIGF` cap for `WIND1` is inside
-# `availability`) and by what it can reach in one interval from `INITIALMW`:
+# Each unit's dispatch is held inside its envelope. The upper limit is its availability (the `UIGF`
+# cap for `WIND1`) or what it can reach in one interval from `INITIALMW`, whichever is lower. The
+# lower limit is what it cannot drop below in one interval. PSY's renewable unit has no output floor,
+# so `WIND1` has a zero lower limit here; its ramp-down limit is not modelled, and it does not bind
+# because `WIND1` offers at \$0.
 
-@constraint(model, availability_limit[u in market.units], dispatch[u] <= availability(u))
-@constraint(model, ramp_up_limit[u in market.units], dispatch[u] - initial_mw(u) <= ramp_up(u))
-@constraint(model, ramp_down_limit[u in market.units], initial_mw(u) - dispatch[u] <= ramp_down(u))
+envelopes = Dict(n => envelope(sys, n) for n in unit_names)
+@constraint(model, envelope_min[n in unit_names], dispatch[n] >= envelopes[n][1])
+@constraint(model, envelope_max[n in unit_names], dispatch[n] <= envelopes[n][2])
 
 # ### The interconnector and its losses
 #
@@ -125,15 +143,12 @@ set_silent(model)
 # breakpoint plus each segment's slope times its flow, and a binary per segment boundary forces the
 # segments to fill in order, so the solved loss follows the curve. The loss of the segment that
 # brackets zero flow is subtracted, so the linearised curve loses nothing at zero flow, as in the
-# package's loss model.
-#
-# !!! note "Toy loss curve"
-#     This example uses five segments and binary variables to keep the solved flow and loss
-#     on the chosen curve, including at negative prices. This construction is specific to the
-#     example; it does not describe NEMDE's loss solution procedure.
+# package's loss model. The flow limit and the exporting region come from the `AreaInterchange`.
 
 ic = market.interconnector
 segments = linearised_losses(ic)
+from = PSY.get_name(PSY.get_from_area(interconnector(sys)))
+max_flow = flow_limit(sys)
 
 @variable(model, flow)
 @variable(model, 0 <= segment_flow[s in eachindex(segments)] <= segments[s].to_mw - segments[s].from_mw)
@@ -143,19 +158,19 @@ segments = linearised_losses(ic)
 @constraint(model, flow_definition, flow == ic.breakpoints[1] + sum(segment_flow))
 @constraint(model, segment_full[s in 1:(length(segments) - 1)], segment_flow[s] >= (segments[s].to_mw - segments[s].from_mw) * filled[s])
 @constraint(model, segment_next[s in 1:(length(segments) - 1)], segment_flow[s + 1] <= (segments[s + 1].to_mw - segments[s + 1].from_mw) * filled[s])
-@constraint(model, flow_limit_up, flow <= ic.max_flow)
-@constraint(model, flow_limit_down, flow >= -ic.max_flow)
+@constraint(model, flow_limit_up, flow <= max_flow)
+@constraint(model, flow_limit_down, flow >= -max_flow)
 
 # ### Regional balance and prices
 #
 # Each region supplies its demand plus the flow it exports plus its share of the losses. The
 # regional price is the dual of this row: the cost of one more MW of demand there.
 
-generation(r) = sum(dispatch[u] for u in units_in(market, r))
-exported(r) = r == ic.from ? flow : -flow
-loss_charged(r) = (r == ic.from ? ic.from_loss_share : 1 - ic.from_loss_share) * loss
+generation(r) = sum(dispatch[n] for n in units_in(sys, r))
+exported(r) = r == from ? flow : -flow
+loss_charged(r) = (r == from ? ic.from_loss_share : 1 - ic.from_loss_share) * loss
 
-@constraint(model, balance[r in market.regions], generation(r) - exported(r) - loss_charged(r) == region_demand(market, r))
+@constraint(model, balance[r in regions], generation(r) - exported(r) - loss_charged(r) == region_demand(sys, r))
 
 # ### Solving
 #
@@ -170,12 +185,12 @@ function solve!(model)
     optimize!(model)
     @assert termination_status(model) == OPTIMAL
     result = (;
-        dispatch = Dict(unit_name(u) => value(model[:dispatch][u]) for u in market.units),
+        dispatch = Dict(Symbol(n) => value(model[:dispatch][n]) for n in unit_names),
         flow = value(model[:flow]),
         loss = value(model[:loss]),
-        price = Dict(r => dual(model[:balance][r]) / INTERVAL_H for r in market.regions),
+        price = Dict(r => dual(model[:balance][r]) / INTERVAL_H for r in regions),
         objective = objective_value(model),
-        raise = haskey(model, :raise) ? Dict(unit_name(u) => value(model[:raise][u]) for u in fcas_units(market)) : nothing,
+        raise = haskey(model, :raise) ? Dict(Symbol(n) => value(model[:raise][n]) for n in fcas_names(market)) : nothing,
         generic = haskey(model, :generic) ? Dict(n => dual(c) / INTERVAL_H for (n, c) in model[:generic]) : nothing,
         violation = haskey(model, :violation) ? Dict(n => value(v) for (n, v) in model[:violation]) : nothing,
     )
@@ -205,16 +220,16 @@ DataFrame(
 
 function plot_clearing(result)
     fig = Figure(size = (900, 380))
-    for (i, r) in enumerate(market.regions)
+    for (i, r) in enumerate(regions)
         ax = Axis(
             fig[1, i]; title = "$r (price \$$(round(result.price[r]; digits = 1))/MWh)",
             xlabel = "Cumulative offered MW", ylabel = "Offer price (\$/MWh)",
         )
-        cleared_mw = sum(result.dispatch[unit_name(u)] for u in units_in(market, r))
-        plot_merit_order!(ax, market, r, region_colors; cleared = cleared_mw, clearing_price = result.price[r])
+        cleared_mw = sum(result.dispatch[Symbol(n)] for n in units_in(sys, r))
+        plot_merit_order!(ax, sys, market, r, region_colors; cleared = cleared_mw, clearing_price = result.price[r])
         ylims!(ax, 0, 260)
     end
-    merit_order_legend!(fig, (2, 1:2), market, region_colors)
+    merit_order_legend!(fig, (2, 1:2), unit_names, region_colors)
     Label(fig[0, :], "Dashed: MW cleared in the region; dotted: regional price"; tellwidth = false)
     return fig
 end
@@ -224,25 +239,28 @@ plot_clearing(energy_only)
 #
 # Each unit offering `RAISE6SEC` gets a capacity variable, the sum of its FCAS bands, and two
 # *joint* rows that keep that capacity inside the unit's trapezium at its energy dispatch, so
-# energy and FCAS compete for the same MW. The FCAS offer cost joins the objective.
+# energy and FCAS compete for the same MW. The FCAS offer cost joins the objective. The FCAS
+# offers are plain data keyed by unit name.
+
+fnames = fcas_names(market)
 
 DataFrame(
-    unit = [String(unit_name(u)) for u in fcas_units(market)],
-    enablement_min = [trapezium(u).enablement_min for u in fcas_units(market)],
-    low_breakpoint = [trapezium(u).low_breakpoint for u in fcas_units(market)],
-    high_breakpoint = [trapezium(u).high_breakpoint for u in fcas_units(market)],
-    enablement_max = [trapezium(u).enablement_max for u in fcas_units(market)],
-    max_avail = [max_avail(trapezium(u)) for u in fcas_units(market)],
-    upper_slope = [upper_slope(trapezium(u)) for u in fcas_units(market)],
-    lower_slope = [lower_slope(trapezium(u)) for u in fcas_units(market)],
+    unit = fnames,
+    enablement_min = [trapezium(market, n).enablement_min for n in fnames],
+    low_breakpoint = [trapezium(market, n).low_breakpoint for n in fnames],
+    high_breakpoint = [trapezium(market, n).high_breakpoint for n in fnames],
+    enablement_max = [trapezium(market, n).enablement_max for n in fnames],
+    max_avail = [max_avail(trapezium(market, n)) for n in fnames],
+    upper_slope = [upper_slope(trapezium(market, n)) for n in fnames],
+    lower_slope = [lower_slope(trapezium(market, n)) for n in fnames],
 )
 
-@variable(model, 0 <= raise[u in fcas_units(market)] <= max_avail(trapezium(u)))
-@variable(model, 0 <= raise_cleared[u in fcas_units(market), j in 1:n_fcas_bids(u)] <= quantity(fcas_bid(u, j)))
-@constraint(model, raise_definition[u in fcas_units(market)], raise[u] == sum(raise_cleared[u, j] for j in 1:n_fcas_bids(u)))
-@constraint(model, trapezium_upper[u in fcas_units(market)], dispatch[u] + upper_slope(trapezium(u)) * raise[u] <= trapezium(u).enablement_max)
-@constraint(model, trapezium_lower[u in fcas_units(market)], dispatch[u] - lower_slope(trapezium(u)) * raise[u] >= trapezium(u).enablement_min)
-@expression(model, fcas_cost, sum(price(fcas_bid(u, j)) * raise_cleared[u, j] * INTERVAL_H for u in fcas_units(market) for j in 1:n_fcas_bids(u)))
+@variable(model, 0 <= raise[n in fnames] <= max_avail(trapezium(market, n)))
+@variable(model, 0 <= raise_cleared[n in fnames, j in eachindex(fcas_bids(market, n))] <= quantity(fcas_bids(market, n)[j]))
+@constraint(model, raise_definition[n in fnames], raise[n] == sum(raise_cleared[n, j] for j in eachindex(fcas_bids(market, n))))
+@constraint(model, trapezium_upper[n in fnames], dispatch[n] + upper_slope(trapezium(market, n)) * raise[n] <= trapezium(market, n).enablement_max)
+@constraint(model, trapezium_lower[n in fnames], dispatch[n] - lower_slope(trapezium(market, n)) * raise[n] >= trapezium(market, n).enablement_min)
+@expression(model, fcas_cost, sum(price(b) * raise_cleared[n, j] * INTERVAL_H for n in fnames for (j, b) in enumerate(fcas_bids(market, n))))
 set_objective_function(model, objective_function(model) + fcas_cost)
 
 # ## Generic constraints
@@ -258,8 +276,8 @@ model[:generic] = Dict{String, ConstraintRef}()
 model[:violation] = Dict{String, VariableRef}()
 
 function term_variable(model, t::Term)
-    t.kind == :energy && return model[:dispatch][find_unit(market, t.id)]
-    t.kind == :raise6 && return model[:raise][find_unit(market, t.id)]
+    t.kind == :energy && return model[:dispatch][String(t.id)]
+    t.kind == :raise6 && return model[:raise][String(t.id)]
     return model[:flow]
 end
 
@@ -306,12 +324,12 @@ end
 
 let
     fig = Figure(size = (900, 360))
-    for (i, u) in enumerate(fcas_units(market))
-        ax = Axis(fig[1, i]; title = "$(unit_name(u)) RAISE6SEC", xlabel = "Energy dispatch (MW)", ylabel = "RAISE6SEC (MW)")
+    for (i, n) in enumerate(fnames)
+        ax = Axis(fig[1, i]; title = "$n RAISE6SEC", xlabel = "Energy dispatch (MW)", ylabel = "RAISE6SEC (MW)")
         plot_trapezium!(
-            ax, trapezium(u), [
-                ("energy only", energy_only.dispatch[unit_name(u)], 0.0, :diamond),
-                ("co-optimised", co_optimised.dispatch[unit_name(u)], co_optimised.raise[unit_name(u)], :circle),
+            ax, trapezium(market, n), [
+                ("energy only", energy_only.dispatch[Symbol(n)], 0.0, :diamond),
+                ("co-optimised", co_optimised.dispatch[Symbol(n)], co_optimised.raise[Symbol(n)], :circle),
             ],
         )
         i == 1 && axislegend(ax; position = :lb)
@@ -366,7 +384,7 @@ maximum(abs, values(constrained.violation))
 let
     fig = Figure(size = (900, 320))
     ax = Axis(fig[1, 1]; xlabel = "Flow NSW1 to VIC1 (MW)", ylabel = "Loss (MW)", title = "Interconnector loss")
-    flows = range(-ic.max_flow, ic.max_flow; length = 101)
+    flows = range(-max_flow, max_flow; length = 101)
     lines!(ax, flows, loss_at.(Ref(ic), flows); label = "quadratic loss")
     bp = ic.breakpoints
     lines!(ax, bp, loss_at.(Ref(ic), bp) .- zero_flow_chord_loss(ic); linestyle = :dash, label = "linearisation")
@@ -384,6 +402,6 @@ end
 
 # Compare the dispatch and prices with the reference toy solution:
 
-reference = solve_toy_jump(market)
+reference = solve_toy_jump(sys, market)
 @assert maximum(abs, [constrained.dispatch[u] - reference.dispatch[u] for u in keys(reference.dispatch)]) < 1.0e-6
 @assert abs(constrained.objective - reference.objective) < 1.0e-6

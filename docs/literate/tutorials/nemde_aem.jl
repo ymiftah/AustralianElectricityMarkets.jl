@@ -21,9 +21,9 @@ using .ReplayResults: compute_fcas_prices #hide
 
 # # [Building it with AEM and AEMSim](@id nemde-aem)
 #
-# [Page 3](@ref nemde-psi) solves an energy-only market using PowerSimulations.jl (PSI).
+# [The previous page](@ref nemde-psi) solves an energy-only market using PowerSimulations.jl (PSI).
 # This page includes FCAS, losses and generic constraints in the toy market of
-# [page 2](@ref nemde-jump), using `AustralianElectricityMarkets` and
+# [the JuMP model](@ref nemde-jump), using `AustralianElectricityMarkets` and
 # `AustralianElectricityMarketsSimulations`. It then compares dispatch, flows and prices
 # with the JuMP example.
 #
@@ -36,64 +36,6 @@ using .ReplayResults: compute_fcas_prices #hide
 #
 # For real markets, [`nem_system`](@ref) reads NEMWEB data into a `PowerSystems.jl` `System`
 # (see [The National Electricity Market](@ref)). Here we use the tutorial's two-region toy system.
-
-function toy_system(market) #hide
-    sys = PSY.System(BASE_POWER) #hide
-    areas = Dict(r => PSY.Area(; name = r) for r in market.regions) #hide
-    PSY.add_components!(sys, collect(values(areas))) #hide
-    buses = Dict( #hide
-        r => PSY.ACBus( #hide
-            number = i, name = "$(r)-node", base_voltage = 330.0, bustype = PSY.ACBusTypes.PQ, #hide
-            area = areas[r], available = true, angle = 0.0, magnitude = 1.0, #hide
-            voltage_limits = (min = 0.9, max = 1.1), #hide
-        ) for (i, r) in enumerate(market.regions) #hide
-    ) #hide
-    PSY.add_components!(sys, collect(values(buses))) #hide
-    for u in market.units #hide
-        bus = buses[region(u)] #hide
-        device = if is_semi_scheduled(u) #hide
-            PSY.RenewableDispatch( #hide
-                name = String(unit_name(u)), available = true, bus = bus, active_power = 0.0, reactive_power = 0.0, #hide
-                rating = u.capacity / BASE_POWER, prime_mover_type = PSY.PrimeMovers.WT, #hide
-                reactive_power_limits = nothing, power_factor = 1.0, #hide
-                operation_cost = PSY.RenewableGenerationCost(nothing), base_power = BASE_POWER, #hide
-            ) #hide
-        else #hide
-            PSY.ThermalStandard( #hide
-                name = String(unit_name(u)), available = true, status = true, bus = bus, active_power = 0.0, #hide
-                reactive_power = 0.0, rating = u.capacity / BASE_POWER, #hide
-                active_power_limits = (min = 0.0, max = u.capacity / BASE_POWER), #hide
-                reactive_power_limits = nothing, ramp_limits = nothing, #hide
-                operation_cost = PSY.ThermalGenerationCost(nothing), base_power = BASE_POWER, #hide
-                time_limits = nothing, #hide
-                prime_mover_type = unit_name(u) == :COAL1 ? PSY.PrimeMovers.ST : PSY.PrimeMovers.GT, #hide
-                fuel = unit_name(u) == :COAL1 ? PSY.ThermalFuels.COAL : PSY.ThermalFuels.NATURAL_GAS, #hide
-            ) #hide
-        end #hide
-        PSY.add_component!(sys, device) #hide
-    end #hide
-    for r in market.regions #hide
-        mw = region_demand(market, r) #hide
-        PSY.add_component!( #hide
-            sys, #hide
-            PSY.PowerLoad( #hide
-                name = "$(r)-load", available = true, bus = buses[r], #hide
-                active_power = mw / BASE_POWER, reactive_power = 0.0, base_power = BASE_POWER, #hide
-                max_active_power = mw / BASE_POWER, max_reactive_power = 0.0, #hide
-            ), #hide
-        ) #hide
-    end #hide
-    ic = market.interconnector #hide
-    PSY.add_component!( #hide
-        sys, #hide
-        PSY.AreaInterchange( #hide
-            name = ic.name, available = true, active_power_flow = 0.0, #hide
-            from_area = areas[ic.from], to_area = areas[ic.to], #hide
-            flow_limits = (from_to = ic.max_flow / BASE_POWER, to_from = ic.max_flow / BASE_POWER), #hide
-        ), #hide
-    ) #hide
-    return sys #hide
-end #hide
 
 sys = toy_system(market)
 
@@ -129,8 +71,8 @@ function attach_energy_data!(sys, market) #hide
         scaling_factor_multiplier = multiplier, #hide
     ) #hide
     for u in market.units #hide
-        device = PSY.get_component(PSY.StaticInjection, sys, String(unit_name(u))) #hide
-        offer = PSY.PiecewiseStepData([0.0; cumsum(quantity.(bids(u)))], price.(bids(u))) #hide
+        device = PSY.get_component(PSY.Generator, sys, String(u.name)) #hide
+        offer = PSY.PiecewiseStepData([0.0; cumsum(quantity.(u.bids))], price.(u.bids)) #hide
         AustralianElectricityMarkets._set_incremental_bid_cost!( #hide
             sys, device, (piecewise_step_data = fill(offer, length(stamps)),), T0, RESOLUTION, #hide
         ) #hide
@@ -139,7 +81,7 @@ function attach_energy_data!(sys, market) #hide
         ) #hide
         PSY.add_time_series!(sys, device, series("ramp_up_rate", u.ramp_up_mwh / 60 / BASE_POWER)) #hide
         PSY.add_time_series!(sys, device, series("ramp_down_rate", u.ramp_down_mwh / 60 / BASE_POWER)) #hide
-        PSY.add_time_series!(sys, device, series("initial_mw", initial_mw(u) / BASE_POWER)) #hide
+        PSY.add_time_series!(sys, device, series("initial_mw", u.initial_mw / BASE_POWER)) #hide
         PSY.add_time_series!(sys, device, series("energy_max_avail", u.max_avail / BASE_POWER)) #hide
         PSY.get_ext(device)["nem_semi_scheduled"] = is_semi_scheduled(u) #hide
         if is_semi_scheduled(u) #hide
@@ -147,7 +89,6 @@ function attach_energy_data!(sys, market) #hide
         end #hide
     end #hide
     for load in PSY.get_components(PSY.PowerLoad, sys) #hide
-        PSY.add_time_series!(sys, load, series("max_active_power", 1.0; multiplier = PSY.get_max_active_power)) #hide
         PSY.add_time_series!(sys, load, series("loss_demand", 1.0; multiplier = PSY.get_max_active_power)) #hide
     end #hide
     return sys #hide
@@ -160,9 +101,9 @@ attach_energy_data!(sys, market);
 # describing the FCAS capacity available at each energy dispatch level.
 
 function attach_fcas_data!(sys, market) #hide
-    for u in fcas_units(market) #hide
-        device = PSY.get_component(PSY.StaticInjection, sys, String(unit_name(u))) #hide
-        t = trapezium(u) #hide
+    for n in fcas_names(market) #hide
+        device = PSY.get_component(PSY.Generator, sys, n) #hide
+        t = trapezium(market, n) #hide
         trapezium_pu = Tuple( #hide
             FCASTrapezium( #hide
                 enablement_min = t.enablement_min / BASE_POWER, low_breakpoint = t.low_breakpoint / BASE_POWER, #hide
@@ -170,14 +111,14 @@ function attach_fcas_data!(sys, market) #hide
                 max_avail = t.max_avail / BASE_POWER, #hide
             ), #hide
         ) #hide
-        curve = PSY.PiecewiseStepData([0.0; cumsum(quantity.(fcas_bids(u)))], price.(fcas_bids(u))) #hide
+        curve = PSY.PiecewiseStepData([0.0; cumsum(quantity.(fcas_bids(market, n)))], price.(fcas_bids(market, n))) #hide
         stamps = [T0, T0 + RESOLUTION] #hide
         PSY.add_time_series!( #hide
             sys, device, #hide
             PSY.SingleTimeSeries(name = "fcas_trapezium_RAISE6SEC", data = PSY.TimeSeries.TimeArray(stamps, fill(trapezium_pu, 2))), #hide
         ) #hide
         service = FCASService( #hide
-            name = "$(region(u))_RAISE6SEC", region = region(u), bid_type = BidType.RAISE6SEC, #hide
+            name = "$(generator_region(sys, n))_RAISE6SEC", region = generator_region(sys, n), bid_type = BidType.RAISE6SEC, #hide
         ) #hide
         PSY.add_service!(sys, service, [device]) #hide
         PSY.get_operation_cost(device) isa PSY.MarketBidCost || PSY.set_operation_cost!( #hide
@@ -208,7 +149,7 @@ function attach_generic_constraints!(sys, market) #hide
     stamps = [T0, T0 + RESOLUTION] #hide
     for gc in market.constraints #hide
         requirements = [ #hide
-            FCASRequirement(; region = region(find_unit(market, t.id)), service = BidType.RAISE6SEC) #hide
+            FCASRequirement(; region = generator_region(sys, String(t.id)), service = BidType.RAISE6SEC) #hide
                 for t in gc.terms if t.kind == :raise6 #hide
         ] #hide
         constraint = GenericConstraint( #hide
@@ -252,50 +193,33 @@ DataFrame(
 
 # ## Step 2: the template
 #
-# Select the dispatch, network, interconnector and service formulations for the problem.
-# For systems read from NEMWEB, `replication_template(sys)` supplies these selections.
-#
-# `set_nem_dispatch_models!` selects `NEMReplayDispatch` for the units with NEM dispatch
-# inputs. Replay measures each interval's ramp from its metered initial output.
+# `template_nemde` builds the data-free replay template: `NEMReplayDispatch` for each dispatch
+# device type, the regional balance with slacks, the interconnector losses, and one service model per
+# FCAS service and per generic constraint. `exclude_unmodeled_services!` marks what the replay leaves
+# out as unavailable on `sys` and returns the skipped constraints, and `check_template_against_sys`
+# verifies the inputs and that the template models every participant.
 
-network = PSI.NetworkModel(
-    PSI.AreaBalancePowerModel;
-    use_slacks = true,
-    duals = [PSI.CopperPlateBalanceConstraint],
-)
-template = PSI.ProblemTemplate(network)
-types = set_nem_dispatch_models!(template, sys)
-PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
-PSI.set_device_model!(template, PSY.AreaInterchange, NEMInterconnectorLoss)
-for service in PSY.get_components(FCASService, sys)
-    service_name = PSY.get_name(service)
-    PSI.set_service_model!(
-        template, service_name,
-        PSI.ServiceModel(FCASService, FCASMarket, service_name; duals = [FCASJointCapacityConstraint], use_slacks = true),
-    )
-end
-for gc in PSY.get_components(GenericConstraint, sys)
-    gc_name = PSY.get_name(gc)
-    PSI.set_service_model!(
-        template, gc_name,
-        PSI.ServiceModel(GenericConstraint, LinearFactorLimit, gc_name; duals = [NEMConstraintLimit], use_slacks = true),
-    )
-end
-types
+parts = REPLICATION_PARTS
+template = template_nemde(parts)
+skipped = exclude_unmodeled_services!(sys, template; parts)
+check_template_against_sys(template, sys; parts)
+isempty(skipped)
 
 # ## Step 3: build and solve
+#
+# `replication_decision_model` prices the regional balance slacks and every penalty at one Market
+# Price Cap, dated by the first interval.
 
-model_psi = PSI.DecisionModel(
-    template, sys;
+model_psi = replication_decision_model(
+    template, sys, T0;
     optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false, "mip_rel_gap" => 0.0),
-    horizon = RESOLUTION, resolution = RESOLUTION, interval = RESOLUTION,
-    initial_time = T0, name = "nemde_aem", store_variable_names = true,
+    name = "nemde_aem",
 )
 build_status = PSI.build!(model_psi; output_dir = mktempdir())
 
 solve_status = PSI.solve!(model_psi)
 
-# ## Step 4: results, checked against page 2
+# ## Step 4: results, checked against the JuMP model
 #
 # Variables are in MW. Duals are per unit of the system base and per interval, so
 # `dual / (BASE_POWER * INTERVAL_H)` is \$/MWh. FCAS prices come from
@@ -320,7 +244,7 @@ limit_key = only(k for k in keys(read_duals(results)) if occursin("N_COAL_LIMIT"
 psi_limit_dual = to_dollars_per_mwh(only(read_dual(results, limit_key).value))
 psi_objective = only(values(PSI.get_objective_value(results)))
 
-reference = solve_toy_jump(market);
+reference = solve_toy_jump(toy_system(market), market);
 
 comparison = DataFrame(
     quantity = [
@@ -371,7 +295,7 @@ slack_total = sum( #hide
 slack_total
 
 # Nothing is violated in the toy market, so the solution equals the JuMP
-# model of page 2, which carries only the generic constraint violations.
+# model of [the JuMP model](@ref nemde-jump), which carries only the generic constraint violations.
 #
 # ## From the toy to the real market
 #
