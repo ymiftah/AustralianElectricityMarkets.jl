@@ -1,0 +1,9 @@
+name = "PortfolioBoundary"
+uuid = "403a86f6-b3d1-45be-825f-3a18084c8791"
+version = "0.1.0"
+
+[weakdeps]
+PowerSystemsInvestmentsPortfolios = "bed98974-b02a-5e2f-9fe0-a103f8c450dd"
+
+[extensions]
+PortfolioBoundaryPSIPExt = "PowerSystemsInvestmentsPortfolios"

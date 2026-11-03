@@ -1,0 +1,5 @@
+module PortfolioBoundaryPSIPExt
+using PortfolioBoundary
+using PowerSystemsInvestmentsPortfolios
+PortfolioBoundary.portfolio_type() = PowerSystemsInvestmentsPortfolios.Portfolio
+end
