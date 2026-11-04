@@ -91,7 +91,8 @@ relaxing a `<=` row and `"down"` for one relaxing a `>=` row; for `"area_balance
 
 # Returns
 A `DataFrame` with `family`, `name`, `DateTime`, `MW`, `direction` and `variable` (the slack
-variable's key). The unit ramp rows are those with `family == "unit_ramp"`.
+variable's key as PSI encodes it in result files, e.g. `"UnitRampUpSlack__HydroDispatch"`). The
+unit ramp rows are those with `family == "unit_ramp"`.
 """
 function read_constraint_violations(
         results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}, sys::PSY.System,
@@ -112,7 +113,7 @@ function read_constraint_violations(
             kind[1] == "generic_constraint" && !(r.DateTime in get!(() -> _invoked_stamps(sys, r.name), invoked, r.name)) &&
                 continue
             direction = _violation_direction(sys, type, key.meta, r.name, kind[2])
-            push!(rows, (; family = kind[1], name = r.name, DateTime = r.DateTime, MW = r.value, direction, variable = string(key)))
+            push!(rows, (; family = kind[1], name = r.name, DateTime = r.DateTime, MW = r.value, direction, variable = PSI.IS.Optimization.encode_key_as_string(key)))
         end
     end
     out = DataFrame(rows)
