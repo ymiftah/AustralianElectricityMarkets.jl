@@ -30,7 +30,10 @@ function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, we
 end
 
 function energy_limit_solve(sys)
-    model = AEMS.replication_decision_model(replay_template(sys), sys, TOY_START; optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false))
+    model = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, replay_template(sys), sys;
+        optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false), initial_time = TOY_START,
+    )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
@@ -129,7 +132,7 @@ end
     @test_throws ArgumentError ReplaySimulation.run_replication(sys, steps; optimizer)
     # The max-availability slack of TOY_CHEAP: 370 CVP x Market Price Cap x 100 MW base x 5 minutes.
     for (t, expected) in ((steps[1], 370.0 * 17_500.0 * 100.0 / 12), (steps[2], 370.0 * 20_300.0 * 100.0 / 12))
-        model = AEMS.replication_decision_model(replay_template(sys), sys, t; optimizer)
+        model = PSI.DecisionModel(AEMS.NEMDispatchProblem, replay_template(sys), sys; optimizer, initial_time = t)
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
         container = PSI.get_optimization_container(model)
         objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
@@ -146,7 +149,7 @@ end
     out = ReplaySimulation.run_replication(sys, steps; optimizer)
     objectives = PSI.read_optimizer_stats(out.results).objective_value
     for (i, t) in enumerate(steps)
-        model = AEMS.replication_decision_model(replay_template(sys), sys, t; optimizer)
+        model = PSI.DecisionModel(AEMS.NEMDispatchProblem, replay_template(sys), sys; optimizer, initial_time = t)
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
         @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
         @test objectives[i] ≈ only(PSI.read_optimizer_stats(PSI.OptimizationProblemResults(model)).objective_value) rtol = 1.0e-9

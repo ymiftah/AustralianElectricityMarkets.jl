@@ -47,7 +47,9 @@ end
 stock_at(tables, t) = map(df -> filter(:SETTLEMENTDATE => ==(t), df), tables)
 # One standalone one-interval solve of `template` (default the replication template) at `t`.
 function stock_standalone(sys, t; template = replay_template(sys))
-    model = AEMS.replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "standalone")
+    model = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, template, sys; optimizer = STOCK_OPTIMIZER, initial_time = t, name = "standalone",
+    )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
@@ -157,7 +159,7 @@ function masked_standalone(sys, t)
             PSI.ServiceModel(GenericConstraint, LinearFactorLimit, name; duals = [NEMConstraintLimit], use_slacks = true),
         )
     end
-    model = AEMS.replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "masked")
+    model = PSI.DecisionModel(AEMS.NEMDispatchProblem, template, sys; optimizer = STOCK_OPTIMIZER, initial_time = t, name = "masked")
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
@@ -239,7 +241,9 @@ end
     sys = masked_system(ConstraintSense.LE, TOY_CHEAP, 60.0)
     template = replay_template(sys; template = energy_template())
     PSI.set_service_model!(template, "N_TOY_LIMIT", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "N_TOY_LIMIT"; duals = [NEMConstraintLimit]))
-    model = AEMS.replication_decision_model(template, sys, TOY_START; optimizer = STOCK_OPTIMIZER, name = "hard")
+    model = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, template, sys; optimizer = STOCK_OPTIMIZER, initial_time = TOY_START, name = "hard",
+    )
     models = PSI.SimulationModels(; decision_models = [model])
     sim = PSI.Simulation(;
         name = "hard", steps = 2, models = models,
@@ -418,7 +422,9 @@ stock_fcas_prices(results, sys, t) = Dict(
 )
 function stock_fcas_standalone(sys, t)
     template = replay_template(sys)
-    model = AEMS.replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "standalone")
+    model = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, template, sys; optimizer = STOCK_OPTIMIZER, initial_time = t, name = "standalone",
+    )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)

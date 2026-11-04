@@ -6,7 +6,7 @@ type of [`NEM_DISPATCH_DEVICE_TYPES`](@ref), including the batteries, `PSI.Stati
 [`NEMInterconnectorLoss`](@ref) on each `PSY.AreaInterchange`, an [`FCASMarket`](@ref) per `FCASService`,
 a [`LinearFactorLimit`](@ref) per `GenericConstraint` and the [`TieBreakMarket`](@ref) service model, over
 `PSI.AreaBalancePowerModel` regions. The balance slacks carry PSI's default slack cost here; only
-[`replication_decision_model`](@ref) prices them at the Market Price Cap.
+[`NEMDispatchProblem`](@ref) prices them at the Market Price Cap.
 
 A replay that models less builds its own `PSI.ProblemTemplate` and passes it in.
 [`exclude_unmodeled_services!`](@ref), [`check_template_against_sys`](@ref) and

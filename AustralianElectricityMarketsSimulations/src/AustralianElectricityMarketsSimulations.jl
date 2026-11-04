@@ -67,13 +67,15 @@ include("checks/replay_inputs.jl")
 include("checks/replication_steps.jl")
 include("checks/template.jl")
 include("templates/template_nemde.jl")
-include("execution/replication.jl")
+include("problems/optimizer.jl")
+include("problems/nem_dispatch.jl")
 
 
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
 export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
-    exclude_unmodeled_services!, replication_decision_model, check_replication_steps,
+    exclude_unmodeled_services!, check_replication_steps,
     never_invoked_constraints, AbstractMNSPSlack
+export NEMDispatchProblem, nemde_optimizer, NEMDE_HIGHS_OPTIONS
 export EnergyOfferSurplusSlack, EnergyOfferDeficitSlack,
     EnergyDecrementalOfferSurplusSlack, EnergyDecrementalOfferDeficitSlack
 export EnergyMaxAvailOutConstraint, EnergyMaxAvailInConstraint, EnergyMaxAvailOutSlack, EnergyMaxAvailInSlack

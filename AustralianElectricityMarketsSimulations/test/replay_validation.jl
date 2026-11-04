@@ -112,7 +112,7 @@ end
 
 @testset "MPC overrides must be finite and positive at both configuration levels" begin
     sys = nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION)
-    model = AEMS.replication_decision_model(replay_template(sys), sys, TOY_START; optimizer = HiGHS.Optimizer)
+    model = PSI.DecisionModel(AEMS.NEMDispatchProblem, replay_template(sys), sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START)
     container = PSI.get_optimization_container(model)
     settings = PSI.get_ext(PSI.get_settings(model))
     capped(cap) = PSI.ServiceModel(
@@ -180,7 +180,7 @@ const TOY_BALANCE_SLACK_COEFFICIENT = 2.1875e7
     sys = nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
     )
-    model = AEMS.replication_decision_model(replay_template(sys), sys, TOY_START; optimizer = HiGHS.Optimizer)
+    model = PSI.DecisionModel(AEMS.NEMDispatchProblem, replay_template(sys), sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START)
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
@@ -189,22 +189,27 @@ const TOY_BALANCE_SLACK_COEFFICIENT = 2.1875e7
         @test all(v -> isapprox(PSI.JuMP.coefficient(objective, v), TOY_BALANCE_SLACK_COEFFICIENT; rtol = 1.0e-12), slack)
     end
 
-    @test_throws r"No published Market Price Cap" AEMS.replication_decision_model(
-        replay_template(sys), sys, DateTime(2020, 1, 1); optimizer = HiGHS.Optimizer,
+    undated = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, replay_template(sys), sys; optimizer = HiGHS.Optimizer, initial_time = DateTime(2020, 1, 1),
     )
-    @test_throws ArgumentError AEMS.replication_decision_model(
-        replay_template(sys), sys, TOY_START; optimizer = HiGHS.Optimizer, market_price_cap = 0.0,
+    @test_throws r"No published Market Price Cap" PSI.validate_template(undated)
+    @test PSI.build!(undated; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
+    @test_throws ArgumentError PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, replay_template(sys), sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START, market_price_cap = 0.0,
     )
 end
 
-@testset "replication_decision_model prices the balance slacks and its settings at one Market Price Cap" begin
+@testset "NEMDispatchProblem prices the balance slacks and its settings at one Market Price Cap" begin
     sys = nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
     )
     template = replay_template(sys)
     template_cost = PSI.get_slack_cost(PSI.get_network_model(template))
-    model = AEMS.replication_decision_model(template, sys, TOY_START; optimizer = HiGHS.Optimizer, market_price_cap = 12_345.0)
-    @test PSI.get_ext(PSI.get_settings(model))["market_price_cap"] == 12_345.0
+    model = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, template, sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START, market_price_cap = 12_345.0,
+    )
+    @test PSI.get_ext(PSI.get_settings(model))["market_price_cap_override"] == 12_345.0
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     model_cost = PSI.get_slack_cost(PSI.get_network_model(PSI.get_template(model)))
     @test model_cost == AEMS._area_balance_slack_cost(sys, 12_345.0)
     @test PSI.get_slack_cost(PSI.get_network_model(template)) == template_cost
@@ -236,8 +241,10 @@ end
     )
     cap = 12_345.0
     template = replay_template(sys)
-    model = AEMS.replication_decision_model(template, sys, TOY_START; market_price_cap = cap, optimizer = HiGHS.Optimizer)
-    @test PSI.get_ext(PSI.get_settings(model))["market_price_cap"] == cap
+    model = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, template, sys; market_price_cap = cap, optimizer = HiGHS.Optimizer, initial_time = TOY_START,
+    )
+    @test PSI.get_ext(PSI.get_settings(model))["market_price_cap_override"] == cap
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
@@ -249,4 +256,48 @@ end
         per_mpc * AustralianElectricityMarkets.AREA_BALANCE_CVP_FACTOR rtol = 1.0e-12
     ramp = PSI.get_variable(container, AEMS.UnitRampUpSlack(), PSY.ThermalStandard)
     @test all(v -> isapprox(PSI.JuMP.coefficient(objective, v), per_mpc * AEMS.UNIT_RAMP_CVP_FACTOR; rtol = 1.0e-12), ramp)
+end
+
+@testset "NEMDispatchProblem dates the Market Price Cap at each validation" begin
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
+    )
+    template = replay_template(sys)
+    @test_throws ArgumentError PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, template, sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START, ext = Dict{String, Any}(),
+    )
+    model = PSI.DecisionModel(AEMS.NEMDispatchProblem, template, sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START)
+    ext = PSI.get_ext(PSI.get_settings(model))
+    PSI.validate_template(model)
+    @test ext["market_price_cap"] == AEMS._financial_year_mpc(TOY_START)
+    @test !haskey(ext, "market_price_cap_override")
+    # 1 August 2025 falls in the 2025-26 financial year, which has a different cap.
+    next_year = DateTime(2025, 8, 1)
+    PSI.set_initial_time!(model, next_year)
+    PSI.validate_template(model)
+    @test ext["market_price_cap"] == AEMS._financial_year_mpc(next_year)
+    @test ext["market_price_cap"] != AEMS._financial_year_mpc(TOY_START)
+end
+
+@testset "NEMDispatchProblem in a Simulation" begin
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
+    )
+    template = replay_template(sys)
+    template_cost = PSI.get_slack_cost(PSI.get_network_model(template))
+    model = PSI.DecisionModel(AEMS.NEMDispatchProblem, template, sys; optimizer = HiGHS.Optimizer)
+    models = PSI.SimulationModels(; decision_models = [model])
+    sequence = PSI.SimulationSequence(; models = models, ini_cond_chronology = PSI.InterProblemChronology())
+    second_interval = TOY_START + TOY_RESOLUTION
+    sim = PSI.Simulation(;
+        name = "nem_problem", steps = 1, models = models, sequence = sequence,
+        simulation_folder = mktempdir(), initial_time = second_interval,
+    )
+    @test PSI.build!(sim) == PSI.SimulationBuildStatus.BUILT
+    @test PSI.get_initial_time(model) == second_interval
+    @test PSI.execute!(sim) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    cap = AEMS._resolved_market_price_cap(second_interval)
+    @test PSI.get_ext(PSI.get_settings(model))["market_price_cap"] == cap
+    @test PSI.get_slack_cost(PSI.get_network_model(PSI.get_template(model))) == AEMS._area_balance_slack_cost(sys, cap)
+    @test PSI.get_slack_cost(PSI.get_network_model(template)) == template_cost
 end

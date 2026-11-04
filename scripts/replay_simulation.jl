@@ -9,8 +9,6 @@ using AustralianElectricityMarketsSimulations
 import AustralianElectricityMarketsSimulations: _has_service_model
 using DataFrames
 using Dates
-using HiGHS
-using PowerSimulations: optimizer_with_attributes
 import PowerSimulations as PSI
 import PowerSystems as PSY
 
@@ -22,29 +20,22 @@ export replication_simulation, run_replication, REPLICATION_OPTIMIZER, REPLICATI
 
 The HiGHS relative MIP gap of the replay optimizer, shared with the batch runner.
 """
-const REPLICATION_MIP_REL_GAP = 1.0e-8
+const REPLICATION_MIP_REL_GAP = Dict(NEMDE_HIGHS_OPTIONS)["mip_rel_gap"]
 
 """
     REPLICATION_MIP_ABS_GAP
 
 The HiGHS absolute MIP gap of the replay optimizer, shared with the batch runner.
 """
-const REPLICATION_MIP_ABS_GAP = 1.0e-10
+const REPLICATION_MIP_ABS_GAP = Dict(NEMDE_HIGHS_OPTIONS)["mip_abs_gap"]
 
 """
     REPLICATION_HIGHS_OPTIONS
 
 The HiGHS options shared by every replay optimizer: the MIP gaps and the root sub-MIP heuristics
-turned off (RINS, RENS, root reduced-cost and feasibility jump).
+turned off (RINS, RENS, root reduced-cost and feasibility jump). This is [`NEMDE_HIGHS_OPTIONS`](@ref).
 """
-const REPLICATION_HIGHS_OPTIONS = (
-    "mip_rel_gap" => REPLICATION_MIP_REL_GAP,
-    "mip_abs_gap" => REPLICATION_MIP_ABS_GAP,
-    "mip_heuristic_run_rins" => false,
-    "mip_heuristic_run_rens" => false,
-    "mip_heuristic_run_root_reduced_cost" => false,
-    "mip_heuristic_run_feasibility_jump" => false,
-)
+const REPLICATION_HIGHS_OPTIONS = NEMDE_HIGHS_OPTIONS
 
 """
     REPLICATION_OPTIMIZER
@@ -54,7 +45,7 @@ The default replay optimizer: HiGHS with the options of [`REPLICATION_HIGHS_OPTI
 interval a MILP. Root sub-MIP heuristics are off because they only search for better incumbents
 after the optimum is found and dominate solve time on slow intervals.
 """
-const REPLICATION_OPTIMIZER = optimizer_with_attributes(HiGHS.Optimizer, REPLICATION_HIGHS_OPTIONS...)
+const REPLICATION_OPTIMIZER = nemde_optimizer()
 
 
 # Drops PSI's per-container "resulted in a MILP" warning, emitted once per dual container.
@@ -100,7 +91,9 @@ function _range_simulation(
     check_template_against_sys(template, sys)
     check_fcas_services(sys, template)
     check_dispatch_envelope(sys, template, first(steps), length(steps))
-    model = replication_decision_model(template, sys, first(steps); optimizer = optimizer, name = name)
+    model = PSI.DecisionModel(
+        NEMDispatchProblem, template, sys; optimizer = optimizer, initial_time = first(steps), name = name,
+    )
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models = models, ini_cond_chronology = PSI.InterProblemChronology())
     simulation = PSI.Simulation(;

@@ -50,6 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `NEMDispatchProblem`: `PSI.DecisionModel(NEMDispatchProblem, template, sys; kwargs...)` builds the NEM dispatch model.
+
+- The Market Price Cap of a NEM dispatch model is dated by the model's initial time at every build, and the balance-slack cost follows it, unless `market_price_cap` is given.
+
+- `nemde_optimizer` returns HiGHS with the NEMDE gaps and root heuristics set, and `NEMDE_HIGHS_OPTIONS` holds those options.
+
 - Public `set_demand!` and `set_nem_dispatch_limits!` are restored with their original signatures. Each wraps the private setter that the system builds call, and a second call on the same system throws an `ArgumentError` for the series already attached.
 
 - Interconnector loss-gap diagnostic in `scripts/interconnector_loss_gaps.jl`: `loss_gap_table` tabulates each saved replay interconnector's solved loss against the loss curve at its solved flow, with the weighted marginal price of loss.
@@ -724,6 +730,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DISPATCHREGIONSUM` caches `SS_SOLAR_UIGF` and `SS_WIND_UIGF`, which `set_regional_availability!` reads for the regional capacity factor in place of `SS_SOLAR_AVAILABILITY` and `SS_WIND_AVAILABILITY`. Cached months need `populate(db, :DISPATCHREGIONSUM, start, stop; force_new = true)` to gain the columns.
 
 ### Removed
+
+- `replication_decision_model` is removed in favour of `PSI.DecisionModel(NEMDispatchProblem, template, sys; kwargs...)`. The default decision problem name is now `"dispatch"`.
 
 - The `excluded_device_types` keyword of `check_fcas_services`, and the storage-only FCAS exclusion: an FCAS service whose available contributors are all storage is now built, not set unavailable.
 - Public names `set_nem_fixed_loads!`, `get_low_breakpoint`, `get_high_breakpoint`, `get_rhs`, `set_constraint_weight!`, `get_gencon_id`, `interconnector_loss_gaps` and `check_interconnector_loss_segments`; `nem_system` builds these inputs.

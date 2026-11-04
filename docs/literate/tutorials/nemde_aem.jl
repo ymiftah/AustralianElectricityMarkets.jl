@@ -206,12 +206,13 @@ isempty(skipped)
 
 # ## Step 3: build and solve
 #
-# `replication_decision_model` prices the regional balance slacks and every penalty at one Market
+# `AEMSim.NEMDispatchProblem` prices the regional balance slacks and every penalty at one Market
 # Price Cap, dated by the first interval.
 
-model_psi = replication_decision_model(
-    template, sys, T0;
+model_psi = PSI.DecisionModel(
+    AEMSim.NEMDispatchProblem, template, sys;
     optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false, "mip_rel_gap" => 0.0),
+    initial_time = T0,
     name = "nemde_aem",
 )
 build_status = PSI.build!(model_psi; output_dir = mktempdir())
