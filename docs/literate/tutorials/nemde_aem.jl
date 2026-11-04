@@ -305,9 +305,24 @@ slack_total
 # 3. `prepare_replay!(sys, template, steps)` transforms the attached interval inputs into five-minute
 #    forecast windows and runs the replay pre-flight checks. The effective FCAS parameters and
 #    tie-break scales are already derived by `nem_system`.
-# 4. `replication_simulation(sys, steps; folder)` from `scripts/replay_simulation.jl`
-#    (module `ReplaySimulation`) creates a PSI simulation. Build it with `PSI.build!` and run it
-#    with `PSI.execute!`.
+# 4. Construct, build and run a PSI simulation of the interval range `steps`:
+#
+#    ```julia
+#    skipped = prepare_replay!(sys, template, steps)
+#    model = PSI.DecisionModel(
+#        AEMSim.NEMDispatchProblem, template, sys;
+#        optimizer = AEMSim.nemde_optimizer(), initial_time = first(steps), name = "dispatch",
+#    )
+#    models = PSI.SimulationModels(; decision_models = [model])
+#    sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
+#    simulation = PSI.Simulation(;
+#        name = "replication", steps = length(steps), models, sequence,
+#        simulation_folder = mktempdir(), initial_time = first(steps),
+#    )
+#    PSI.build!(simulation; store_systems_in_results = false)
+#    PSI.execute!(simulation)
+#    results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), "dispatch")
+#    ```
 # 5. `read_solved_interval(results, sys)` and `read_constraint_violations(results, sys)` extract the
 #    solved quantities and constraint violations. The repository scripts compare the solved tables with
 #    `read_published_interval` from the cache.

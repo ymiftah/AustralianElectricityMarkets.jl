@@ -30,7 +30,7 @@ end
 
 # Replays two intervals of `sys` under `template` with HiGHS, returning the replay result.
 function run_two_steps(sys, template)
-    return ReplaySimulation.run_replication(
+    return run_replay(
         sys, TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION); template,
         optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
     )

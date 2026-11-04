@@ -20,9 +20,6 @@ import PowerSystems as PSY
 const AEM = AustralianElectricityMarkets
 const AEMS = AustralianElectricityMarketsSimulations
 include(joinpath(@__DIR__, "..", "..", "..", "test", "fixtures", "input_builders.jl"))
-if !isdefined(@__MODULE__, :ReplaySimulation)
-    include(joinpath(@__DIR__, "..", "..", "..", "scripts", "replay_simulation.jl"))
-end
 
 const REAL_HIVE = isempty(ARGS) ? joinpath(homedir(), ".nemdb_cache") : only(ARGS)
 const REAL_START = DateTime(2026, 6, 4, 0, 0)

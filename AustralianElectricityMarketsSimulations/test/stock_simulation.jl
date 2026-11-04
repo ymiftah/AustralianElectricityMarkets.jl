@@ -61,7 +61,7 @@ function stock_standalone(sys, t; template = replay_template(sys))
 end
 # The simulation, its per-step objectives and solved tables.
 function stock_simulate(sys; kwargs...)
-    out = ReplaySimulation.run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER, kwargs...)
+    out = run_replay(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER, kwargs...)
     tables = read_solved_interval(out.results, sys)
     return (;
         out...,
@@ -130,7 +130,7 @@ end
     never = sentinel_system(; invoked = [0.0, 0.0])
     @test AEMS.never_invoked_constraints(never, STOCK_STEPS) == Dict("N_TOY_LIMIT" => :never_invoked)
     @test AEMS.never_invoked_constraints(sentinel_system(; invoked = [1.0, 0.0]), STOCK_STEPS) == Dict{String, Symbol}()
-    out_never = ReplaySimulation.run_replication(never, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    out_never = run_replay(never, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     row_never = only(filter(:constraint => ==("N_TOY_LIMIT"), out_never.skipped_constraints))
     @test (row_never.reason, row_never.n_missing) == (:never_invoked, 0)
 end
@@ -514,7 +514,7 @@ end
 @testset "the tie-break pre-flight check" begin
     moved = tie_sentinel_system(; park_price = [10.0, 12.0])
     @test_throws ArgumentError check_tie_break_pairs(moved, STOCK_STEPS)
-    @test_throws ArgumentError ReplaySimulation.run_replication(moved, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    @test_throws ArgumentError run_replay(moved, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     @test isnothing(check_tie_break_pairs(tie_sentinel_system(), STOCK_STEPS))
     # Prices change between steps, but no band is ever tied.
     @test isnothing(check_tie_break_pairs(sentinel_system(), STOCK_STEPS))
@@ -757,7 +757,7 @@ end
         [100.0, 120.0]; horizon = TOY_RESOLUTION,
         mutate! = (sys, stamps) -> foreach(i -> add_constraint!(sys, stamps, i), 1:n),
     )
-    out = ReplaySimulation.run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    out = run_replay(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     slack_families = Dict(AEMS._VIOLATION_FAMILIES)
     keys = [k for k in PSI.list_variable_keys(out.results) if haskey(slack_families, PSI.IS.Optimization.get_entry_type(k))]
     @test length(keys) >= n

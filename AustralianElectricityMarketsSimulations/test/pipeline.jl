@@ -12,12 +12,13 @@
     forecasts = PowerSystems.get_time_series_counts(sys).forecast_count
     @test AEMS._prepare_replay_forecasts!(sys) === sys
     @test PowerSystems.get_time_series_counts(sys).forecast_count == forecasts
-    @test_throws r"cover" ReplaySimulation.replication_simulation(sys, (t + Hour(1)):Minute(5):(t + Hour(1)))
-    @test_throws ArgumentError ReplaySimulation.replication_simulation(sys, t:Minute(10):(t + Minute(10)))
-    @test_throws ArgumentError ReplaySimulation.replication_simulation(sys, t:Minute(5):(t - Minute(5)))
-    skipped = NamedTuple[]
+    @test_throws r"cover" replay_simulation(sys, (t + Hour(1)):Minute(5):(t + Hour(1)))
+    @test_throws ArgumentError replay_simulation(sys, t:Minute(10):(t + Minute(10)))
+    @test_throws ArgumentError replay_simulation(sys, t:Minute(5):(t - Minute(5)))
     folder = mktempdir()
-    simulation = ReplaySimulation.replication_simulation(sys, steps; name = "custom_dispatch", simulation_name = "custom_run", skipped, folder)
+    replay = replay_simulation(sys, steps; name = "custom_dispatch", simulation_name = "custom_run", folder)
+    simulation = replay.simulation
+    skipped = replay.skipped_constraints
     @test simulation isa PSI.Simulation
     @test isnothing(simulation.internal)
     @test PSI.get_steps(simulation) == 2
@@ -36,5 +37,5 @@
     ramp = select(filter(:family => ==("unit_ramp"), violations), :name => :DUID, :DateTime, :MW, :direction)
     @test names(ramp) == ["DUID", "DateTime", "MW", "direction"]
     @test all(in(steps), violations.DateTime)
-    @test all(in((:no_available_device, :never_invoked)), getproperty.(skipped, :reason))
+    @test all(in((:no_available_device, :never_invoked)), skipped.reason)
 end

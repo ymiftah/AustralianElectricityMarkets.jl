@@ -18,8 +18,8 @@ module _PrecompileMockData
     end
 end
 
-# Builds, executes and reads back a two-interval replay through the public API, mirroring the template
-# inputs of the replay runner (`scripts/replay_simulation.jl`).
+# Builds, executes and reads back a two-interval replay through the public API, with the inputs and
+# steps of the replay workflow (`prepare_replay!` followed by a PSI simulation).
 function _precompile_workload()
     _PrecompileMockData.AVAILABLE || return
     hive = mktempdir()

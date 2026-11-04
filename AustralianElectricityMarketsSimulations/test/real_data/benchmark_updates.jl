@@ -3,11 +3,9 @@
 using AustralianElectricityMarkets
 using AustralianElectricityMarketsSimulations
 using Dates, Logging, TOML, HiGHS, SHA, Profile
-if !isdefined(@__MODULE__, :ReplaySimulation)
-    include(joinpath(@__DIR__, "..", "..", "..", "scripts", "replay_simulation.jl"))
-end
 import PowerSimulations as PSI
 const AEMS = AustralianElectricityMarketsSimulations
+include(joinpath(@__DIR__, "..", "template_helpers.jl"))
 function _benchmark_csv_row(io, values)
     println(io, join(("\"" * replace(string(v), "\"" => "\"\"") * "\"" for v in values), ','))
     return
@@ -32,7 +30,7 @@ function _benchmark_updates(folder; profile_updates = false)
     optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false, "threads" => 1, "mip_rel_gap" => 1.0e-8, "mip_abs_gap" => 1.0e-10)
     println("System built: $system_s seconds; constructing model"); flush(stdout)
     model_s = @elapsed begin
-        out = ReplaySimulation._range_simulation(sys, steps; optimizer, folder)
+        out = replay_simulation(sys, steps; optimizer, folder)
         PSI.build!(out.simulation; store_systems_in_results = false, console_level = Logging.Error)
     end
     println("Model built: $model_s seconds; measuring updates"); flush(stdout)

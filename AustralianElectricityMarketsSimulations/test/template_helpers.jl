@@ -120,3 +120,41 @@ function replay_template(
     AEMS.check_template_against_sys(template, sys)
     return template
 end
+
+"""
+    replay_simulation(sys, steps; optimizer, template, folder, name, simulation_name) -> (; simulation, model, skipped_constraints)
+
+Prepares `sys` with `prepare_replay!` and constructs, without building, the PSI simulation of `steps`.
+"""
+function replay_simulation(
+        sys::PSY.System, steps; optimizer = nemde_optimizer(), template::PSI.ProblemTemplate = template_nemde(),
+        folder::AbstractString = mktempdir(), name = "dispatch", simulation_name = "replication",
+    )
+    skipped_constraints = prepare_replay!(sys, template, steps)
+    model = PSI.DecisionModel(NEMDispatchProblem, template, sys; optimizer, initial_time = first(steps), name)
+    models = PSI.SimulationModels(; decision_models = [model])
+    sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
+    simulation = PSI.Simulation(;
+        name = simulation_name, steps = length(steps), models, sequence, simulation_folder = folder, initial_time = first(steps),
+    )
+    return (; simulation, model, skipped_constraints)
+end
+
+"""
+    run_replay(sys, steps; cache_size_mib = nothing, name = "dispatch", kwargs...) -> (; simulation, model, results, skipped_constraints)
+
+Builds and executes the [`replay_simulation`](@ref) of `sys` over `steps` and reads the results of the decision
+problem `name`. Throws when the build or the execution does not succeed. `kwargs` go to `replay_simulation`.
+"""
+function run_replay(sys, steps; cache_size_mib = nothing, name = "dispatch", kwargs...)
+    (; simulation, model, skipped_constraints) = replay_simulation(sys, steps; name, kwargs...)
+    status = PSI.build!(simulation; store_systems_in_results = false)
+    status == PSI.SimulationBuildStatus.BUILT ||
+        error("Range from $(first(steps)) failed to build ($status); see the simulation logs.")
+    execute_kwargs = isnothing(cache_size_mib) ? (;) : (; cache_size_mib)
+    status = PSI.execute!(simulation; execute_kwargs...)
+    status == PSI.RunStatus.SUCCESSFULLY_FINALIZED ||
+        error("Range from $(first(steps)) failed to execute ($status); see the simulation logs.")
+    results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), name)
+    return (; simulation, model, results, skipped_constraints)
+end
