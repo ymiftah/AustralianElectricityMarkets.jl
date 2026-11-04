@@ -7,8 +7,9 @@ const _BAND_VARIABLE_TYPES = (
     PSI.PiecewiseLinearBlockDecrementalOffer => OfferSide.LOAD,
 )
 
-# The objective coefficient the solver sees on each energy band variable of `container`, keyed
-# `(device name, side, band, t)`.
+# The objective coefficient the solver sees on each energy band variable of `container` (the
+# `PSI.OptimizationContainer`, e.g. `out.container` from `solve_toy`, not the DecisionModel),
+# keyed `(device name, side, band, t)`.
 function _band_variable_coefficients(container)
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
     coefficients = Dict{Tuple{String, OfferSide, Int, Int}, Float64}()
@@ -22,7 +23,9 @@ function _band_variable_coefficients(container)
 end
 
 # The raw CopperPlateBalanceConstraint dual of the single area, in $ per base-power MW.
-_area_balance_dual(out) = only(read_dual(out.results, "CopperPlateBalanceConstraint__Area").value)
+function _area_balance_dual(out)
+    return only(read_dual(out.results, "CopperPlateBalanceConstraint__Area").value)
+end
 
 @testset "bid store equivalence on the toy fixture" begin
     # $/MWh x base power (100 MW) x interval hours (1/12).
