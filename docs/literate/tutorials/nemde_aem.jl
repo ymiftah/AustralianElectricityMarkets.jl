@@ -16,8 +16,6 @@ import AustralianElectricityMarketsSimulations as AEMSim
 
 include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_market.jl")) #hide
 include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_jump.jl")); #hide
-include(joinpath(@__DIR__, "..", "..", "..", "scripts", "replay_results.jl")); #hide
-using .ReplayResults: compute_fcas_prices #hide
 
 # # [Building it with AEM and AEMSim](@id nemde-aem)
 #
@@ -223,7 +221,7 @@ solve_status = PSI.solve!(model_psi)
 #
 # Variables are in MW. Duals are per unit of the system base and per interval, so
 # `dual / (BASE_POWER * INTERVAL_H)` is \$/MWh. FCAS prices come from
-# `compute_fcas_prices`, which sums the duals of the generic constraints that carry an
+# `read_fcas_prices`, which sums the duals of the generic constraints that carry an
 # FCAS requirement.
 
 results = PSI.OptimizationProblemResults(model_psi)
@@ -239,7 +237,7 @@ psi_price = Dict(
 )
 psi_flow = only(read_variable(results, "FlowActivePowerVariable__AreaInterchange").value)
 psi_loss = only(read_variable(results, "InterconnectorLossVariable__AreaInterchange").value)
-psi_fcas_price = compute_fcas_prices(results, sys; resolution = RESOLUTION)
+psi_fcas_price = read_fcas_prices(results, sys; resolution = RESOLUTION)
 limit_key = only(k for k in keys(read_duals(results)) if occursin("N_COAL_LIMIT", k))
 psi_limit_dual = to_dollars_per_mwh(only(read_dual(results, limit_key).value))
 psi_objective = only(values(PSI.get_objective_value(results)))
@@ -310,8 +308,8 @@ slack_total
 # 4. `replication_simulation(sys, steps; folder)` from `scripts/replay_simulation.jl`
 #    (module `ReplaySimulation`) creates a PSI simulation. Build it with `PSI.build!` and run it
 #    with `PSI.execute!`.
-# 5. `replication_results(results, sys)` from `scripts/replay_results.jl` extracts solved
-#    quantities and constraint violations. The repository scripts compare these with
+# 5. `read_solved_interval(results, sys)` and `read_constraint_violations(results, sys)` extract the
+#    solved quantities and constraint violations. The repository scripts compare the solved tables with
 #    `read_published_interval` from the cache.
 #
 # Validate the study inputs before solving. `check_fcas_services(template, sys)`

@@ -50,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `read_solved_interval` reads the solved prices, dispatch, interconnector flows and FCAS prices of a PowerSimulations result in the columns of `read_published_interval`, and `read_constraint_violations` lists its elastic slacks above tolerance, as `AustralianElectricityMarketsSimulations` functions.
+
+- `read_prices` and `read_fcas_prices` accept PowerSimulations optimization and simulation results, with the system the model was built from, and return the regional prices and FCAS prices of the solved interval.
+
 - `check_replay_inputs(db, date_range; intervention, template)` verifies from the cache alone that a replay's MNSP offers and generic constraint inputs are complete, before any system is built.
 
 - `trading_day_steps(day)` returns the 288 interval-ending timestamps of a NEM trading day, and `replay_chunks(steps; chunk)` splits a range into chunks that each fit one financial year and one trading day.
@@ -738,6 +742,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DISPATCHREGIONSUM` caches `SS_SOLAR_UIGF` and `SS_WIND_UIGF`, which `set_regional_availability!` reads for the regional capacity factor in place of `SS_SOLAR_AVAILABILITY` and `SS_WIND_AVAILABILITY`. Cached months need `populate(db, :DISPATCHREGIONSUM, start, stop; force_new = true)` to gain the columns.
 
 ### Removed
+
+- `replication_results` and `compute_fcas_prices` are removed from the repository scripts, along with the `ReplayResults` module of `scripts/replay_results.jl`; use `read_solved_interval`, `read_constraint_violations` and `read_fcas_prices` instead.
 
 - `prepare_replay_forecasts!` is removed: forecasts are attached by `prepare_replay!`, and attaching them again on a prepared system does nothing.
 

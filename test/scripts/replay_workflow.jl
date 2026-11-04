@@ -149,7 +149,7 @@ end
 
     # A reopened chunk reads the same constraint violations as the live solve, and needs no system.
     sys2 = workflow_test_system(db, DateTime(2025, 1, 1, 0, 15):Minute(5):DateTime(2025, 1, 1, 0, 25))
-    reopened = ReplayResults.replication_results(two.results[2], sys2).constraint_violations
+    reopened = read_constraint_violations(two.results[2], sys2)
     at_chunk2 = filter(:DateTime => t -> t >= DateTime(2025, 1, 1, 0, 15), two.constraint_violations)
     @test sort(reopened, [:DateTime, :name]) == sort(at_chunk2, [:DateTime, :name])
 

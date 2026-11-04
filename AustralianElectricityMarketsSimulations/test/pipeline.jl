@@ -26,13 +26,15 @@
     results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), "custom_dispatch")
     reopened = PSI.get_decision_problem_results(PSI.SimulationResults(folder, "custom_run"), "custom_dispatch")
     @test PSI.read_optimizer_stats(reopened).objective_value == PSI.read_optimizer_stats(results).objective_value
-    out = ReplayResults.replication_results(results, sys)
+    solved = read_solved_interval(results, sys)
+    violations = read_constraint_violations(results, sys)
     # The mock includes SNOWY1 alongside the five current regions.
-    @test nrow(out.solved.prices) == 12
-    @test Set(out.solved.prices.SETTLEMENTDATE) == Set(steps)
-    @test all(isfinite, out.solved.prices.ROP)
-    @test any(!ismissing, out.solved.dispatch.TOTALCLEARED)
-    @test names(out.ramp_violations) == ["DUID", "DateTime", "MW", "direction"]
-    @test all(in(steps), out.constraint_violations.DateTime)
+    @test nrow(solved.prices) == 12
+    @test Set(solved.prices.SETTLEMENTDATE) == Set(steps)
+    @test all(isfinite, solved.prices.ROP)
+    @test any(!ismissing, solved.dispatch.TOTALCLEARED)
+    ramp = select(filter(:family => ==("unit_ramp"), violations), :name => :DUID, :DateTime, :MW, :direction)
+    @test names(ramp) == ["DUID", "DateTime", "MW", "direction"]
+    @test all(in(steps), violations.DateTime)
     @test all(in((:no_available_device, :never_invoked)), getproperty.(skipped, :reason))
 end

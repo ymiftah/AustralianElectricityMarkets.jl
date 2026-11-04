@@ -77,10 +77,10 @@ front, so every group runs on its own.
 | `src/system/` | System construction and modification; RegionModel submodule |
 | `src/accessors/` | Attached component data and time-series lookup |
 | `…Simulations/src/types/`, `…Simulations/src/formulations/` | PSI types and dispatch, FCAS, constraint and loss formulations |
+| `…Simulations/src/results/` | Solved and violation readers of PSI results: `read_solved_interval`, `read_constraint_violations`, and the `read_prices` / `read_fcas_prices` methods |
 | `…Simulations/src/checks/<what_is_checked>.jl` | pre-flight checks run before a build |
 | `…Simulations/src/psi_compat.jl` | shims over the pinned PowerSimulations fork |
 | `scripts/replay_simulation.jl` | `ReplaySimulation`: replay simulation runner (`replication_simulation`, `run_replication`, `REPLICATION_OPTIMIZER`) |
-| `scripts/replay_results.jl` | `ReplayResults`: post-processing of replay results (prices, dispatch, flows, violations) |
 | `docs/adr/` | architecture decisions — design rationale goes here |
 | `docs/superpowers/plans/` | implementation plans; follow-up work is recorded here or in an ADR |
 

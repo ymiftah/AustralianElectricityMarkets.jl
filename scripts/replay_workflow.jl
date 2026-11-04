@@ -1,7 +1,3 @@
-if !isdefined(@__MODULE__, :ReplayResults)
-    include(joinpath(@__DIR__, "replay_results.jl"))
-end
-
 if !isdefined(@__MODULE__, :ReplaySimulation)
     include(joinpath(@__DIR__, "replay_simulation.jl"))
 end
@@ -11,8 +7,8 @@ module ReplayWorkflow
     using AustralianElectricityMarkets
     using AustralianElectricityMarketsSimulations
     import AustralianElectricityMarketsSimulations: _has_service_model
-    using ..ReplayResults: replication_results
     using ..ReplaySimulation: REPLICATION_OPTIMIZER, run_replication
+    using Chain
     using DataFrames
     using Dates
     import PowerSimulations as PSI
@@ -83,10 +79,13 @@ module ReplayWorkflow
         _write_interval_timings!(run.simulation, run.model, live)
         isnothing(on_phase) || on_phase(:compare)
         t3 = time()
-        report = replication_results(live, sys; template)
-        solved = report.solved
+        solved = read_solved_interval(live, sys)
         comparison = _compare_to_published(read_published_interval(db, steps; intervention = intervention), solved, steps)
-        violations = report.constraint_violations
+        violations = read_constraint_violations(live, sys)
+        ramp = @chain violations begin
+            subset(:family => ByRow(==("unit_ramp")))
+            select(:name => :DUID, :DateTime, :MW, :direction)
+        end
         stats = PSI.read_optimizer_stats(live)
         nrow(stats) == length(steps) || error("Chunk $k: $(nrow(stats)) optimizer stat rows for $(length(steps)) steps.")
         solver_stats = DataFrame(
@@ -101,7 +100,7 @@ module ReplayWorkflow
         return (;
             timings = (; system_build_s, simulation_build_s, execute_s, compare_s), results = reopened,
             comparison, skipped_constraints = insertcols(run.skipped_constraints, 1, :chunk => fill(k, nrow(run.skipped_constraints))),
-            constraint_violations = violations, ramp_violations = report.ramp_violations, solver_stats,
+            constraint_violations = violations, ramp_violations = ramp, solver_stats,
         )
     end
 

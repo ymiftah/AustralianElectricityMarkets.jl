@@ -19,8 +19,9 @@ using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCAS_
     _tie_break_active_bands, _tie_break_stamp_bands, _other_regulation, _financial_year_mpc,
     _financial_year_start, _versions_without_definition, _zero_flow_constraint_definitions, _empty_definitions,
     read_interconnectors, read_mnsp_links, read_mnsp_offers, read_invoked_constraints, read_fixed_loads,
-    read_constraint_definitions
-using DataFrames: DataFrame, eachrow, nrow, select
+    read_constraint_definitions, get_fcas_requirements, get_service
+using Chain
+using DataFrames: DataFrame, ByRow, combine, eachrow, groupby, leftjoin, nrow, rename, select, sort!, transform
 using Dates
 using HiGHS
 using JuMP
@@ -74,6 +75,9 @@ include("checks/replay_data.jl")
 include("checks/replay_range.jl")
 include("problems/optimizer.jl")
 include("problems/nem_dispatch.jl")
+include("results/read_results.jl")
+include("results/solved.jl")
+include("results/violations.jl")
 
 
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
@@ -100,6 +104,7 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     UnitRampUpSlack, UnitRampDownSlack,
     InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack
 export check_fcas_services, check_dispatch_envelope, check_single_financial_year
+export read_solved_interval, read_constraint_violations
 export AbstractNEMDispatch, NEMReplayDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter
