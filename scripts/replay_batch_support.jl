@@ -197,7 +197,7 @@ function supervise(options)
     )
     write_status(folder, "loading")
     project = dirname(Base.active_project())
-    script = joinpath(@__DIR__, "replicate_random_days.jl")
+    script = joinpath(@__DIR__, "replay_batch.jl")
     println("Replay output: $folder\nDetailed log: $(joinpath(folder, "run.log"))")
     flush(stdout)
     outcome = run_schedule(

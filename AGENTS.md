@@ -9,7 +9,7 @@ four packages sharing the root `Manifest.toml`:
 | `AustralianElectricityMarketsCache` | `AustralianElectricityMarketsCache/` | Shared configuration, DuckDB connections, cache metadata and partition inspection. No market readers or population pipeline. |
 | `AustralianElectricityMarketsData` | `AustralianElectricityMarketsData/` | NEMWEB download and Hive-partitioned parquet population. Depends on Cache, with no AEM, AEMSim or PowerSystems dependency. |
 | `AustralianElectricityMarkets` | repo root (`src/`) | Domain types, Readers submodule, PSY system construction and modification, attached-data accessors, per-interval NEM inputs and market-rule tables (CVP factors, MPC). Depends on Cache, with no Data or Simulations dependency. |
-| `AustralianElectricityMarketsSimulations` | `AustralianElectricityMarketsSimulations/` | NEMDE replication in PSI: `AbstractNEMDispatch` device formulations (batteries included), FCAS market and trapezium formulations, NEM constraint formulations, replication template, decision-model constructor and pre-flight checks. The simulation runner is in `scripts/replay_simulation.jl`. |
+| `AustralianElectricityMarketsSimulations` | `AustralianElectricityMarketsSimulations/` | NEMDE replication in PSI: `AbstractNEMDispatch` device formulations (batteries included), FCAS market and trapezium formulations, NEM constraint formulations, replication template, decision-model constructor and pre-flight checks. The overnight batch runner is in `scripts/replay_batch.jl`. |
 
 ## Quick start
 
@@ -80,7 +80,7 @@ front, so every group runs on its own.
 | `…Simulations/src/results/` | Solved and violation readers of PSI results: `read_solved_interval`, `read_constraint_violations`, and the `read_prices` / `read_fcas_prices` methods |
 | `…Simulations/src/checks/<what_is_checked>.jl` | pre-flight checks run before a build |
 | `…Simulations/src/psi_compat.jl` | shims over the pinned PowerSimulations fork |
-| `scripts/replay_simulation.jl` | `ReplaySimulation`: replay simulation runner (`replication_simulation`, `run_replication`, `REPLICATION_OPTIMIZER`) |
+| `scripts/replay_batch.jl` | overnight batch replay of random trading days on the AEMSim replay API |
 | `docs/adr/` | architecture decisions — design rationale goes here |
 | `docs/superpowers/plans/` | implementation plans; follow-up work is recorded here or in an ADR |
 

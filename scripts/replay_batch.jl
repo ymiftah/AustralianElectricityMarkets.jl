@@ -1,5 +1,6 @@
-# Lightweight supervisor; the worker loads the market and optimisation packages after sampling starts.
-include("replay_batch_support.jl")
+# Overnight batch runner for replay dispatch. The supervisor samples trading days and runs each in a
+# worker process (`--worker <folder> <day>`), which loads the market and optimisation packages.
+isdefined(@__MODULE__, :ReplayBatchSupport) || include("replay_batch_support.jl")
 using .ReplayBatchSupport
 using Dates
 
@@ -9,7 +10,7 @@ function main(args = ARGS)
             """
             Replay randomly ordered trading days against published NEMDE outcomes.
 
-            julia --project=AustralianElectricityMarketsSimulations/test scripts/replicate_random_days.jl [options]
+            julia --project=AustralianElectricityMarketsSimulations/test scripts/replay_batch.jl [options]
 
               --first DATE          First trading day, inclusive (2026-01-01)
               --last DATE           Last trading day, inclusive (2026-06-30)

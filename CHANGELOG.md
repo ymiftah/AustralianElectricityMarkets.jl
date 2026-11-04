@@ -747,6 +747,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The repository scripts `replicate_random_days.jl`, `replay_workflow.jl`, `replay_simulation.jl`, `replay_timing.jl`, `replicate_range.jl`, `diagnose_infeasible.jl` and `interconnector_loss_gaps.jl` are removed. The overnight runner is `scripts/replay_batch.jl` on the AEMSim replay API; `diagnose_infeasible.jl` is replaced by `DecisionModel(...; calculate_conflict = true)`.
+
 - `replication_results` and `compute_fcas_prices` are removed from the repository scripts, along with the `ReplayResults` module of `scripts/replay_results.jl`; use `read_solved_interval`, `read_constraint_violations` and `read_fcas_prices` instead.
 
 - `prepare_replay_forecasts!` is removed: forecasts are attached by `prepare_replay!`, and attaching them again on a prepared system does nothing.

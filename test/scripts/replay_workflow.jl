@@ -1,16 +1,14 @@
-include(joinpath(@__DIR__, "..", "..", "scripts", "replay_workflow.jl"))
-using .ReplayWorkflow: replicate_range
-
-# Prepares a cache-built system for the script's result-reading regressions.
-function workflow_test_system(db, date_range; kwargs...)
-    return AEMS._prepare_replay_forecasts!(nem_system(db, NEMDEConfiguration(); date_range, kwargs...))
+if !isdefined(@__MODULE__, :ReplayBatchWorker)
+    include(joinpath(@__DIR__, "..", "..", "scripts", "replay_batch.jl"))
+    include(joinpath(@__DIR__, "..", "..", "scripts", "replay_batch_worker.jl"))
 end
+using .ReplayBatchWorker: _replay_day, _round_utc_offset, _utc_offset
 
 @testset "interval timing UTC offset is rounded to quarter hours" begin
-    @test ReplayWorkflow._round_utc_offset(36_000_000 + 400_000) == Millisecond(36_000_000)
-    @test ReplayWorkflow._round_utc_offset(36_000_000 + 500_000) == Millisecond(36_900_000)
-    @test ReplayWorkflow._round_utc_offset(-19_800_000 - 20_000) == Millisecond(-19_800_000)
-    @test iszero(Dates.value(ReplayWorkflow._utc_offset()) % 900_000)
+    @test _round_utc_offset(36_000_000 + 400_000) == Millisecond(36_000_000)
+    @test _round_utc_offset(36_000_000 + 500_000) == Millisecond(36_900_000)
+    @test _round_utc_offset(-19_800_000 - 20_000) == Millisecond(-19_800_000)
+    @test iszero(Dates.value(_utc_offset()) % 900_000)
 end
 
 @testset "interval timings come from native PSI records" begin
@@ -20,7 +18,9 @@ end
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)
     d = mktempdir()
-    result = replicate_range(db, t1, t2; output_dir = d)
+    result = _replay_day(
+        db, t1:Minute(5):t2, d; optimizer = nemde_optimizer(), time_series_in_memory = true, cache_size_mib = 64,
+    )
     paths = [joinpath(root, f) for (root, _, files) in walkdir(d) for f in files if f == "interval_timings.csv"]
     @test length(paths) == 1
     lines = readlines(only(paths))
@@ -41,7 +41,9 @@ end
     @test all(>(0), wall.(solves))
     @test wall(rows[3]) > 0
     # Solver fields are the optimizer statistics of each executed step.
-    stats = PSI.read_optimizer_stats(only(result.results))
+    stats = PSI.read_optimizer_stats(
+        PSI.get_decision_problem_results(PSI.SimulationResults(only(result.chunks.folder), "replay_workflow"), "dispatch"),
+    )
     for (row, i) in zip(solves, 1:2)
         @test parse(Float64, row["timed_solve_s"]) ≈ stats.timed_solve_time[i]
         @test parse(Float64, row["pricing_s"]) ≈ stats.timed_calculate_dual_variables[i]
@@ -56,4 +58,3 @@ end
 end
 
 include("replay_batch.jl")
-include("interconnector_loss_gaps.jl")

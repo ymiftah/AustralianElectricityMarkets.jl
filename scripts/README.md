@@ -6,7 +6,7 @@ the repository root, using the Simulations test environment and the installed Ju
 workspace runtime:
 
 ```sh
-julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replicate_random_days.jl --help
+julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replay_batch.jl --help
 ```
 
 ## Detailed statistics from saved runs
@@ -87,7 +87,7 @@ construction, execution, comparisons and exports. It is checked between days;
 there is no solver time limit.
 
 ```sh
-julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replicate_random_days.jl
+julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replay_batch.jl
 ```
 
 The examples use `-O1` for Julia code optimisation. Each trading day runs in a
@@ -106,7 +106,7 @@ For an unattended run that survives closing the terminal:
 ```sh
 mkdir -p scripts/results
 nohup julia -O1 --project=AustralianElectricityMarketsSimulations/test \
-    scripts/replicate_random_days.jl \
+    scripts/replay_batch.jl \
     > scripts/results/overnight-launch.log 2>&1 < /dev/null &
 echo $! > scripts/results/overnight.pid
 tail -f scripts/results/overnight-launch.log
@@ -120,7 +120,7 @@ An explicit configuration equivalent to the defaults:
 
 ```sh
 julia -O1 --project=AustralianElectricityMarketsSimulations/test \
-    scripts/replicate_random_days.jl \
+    scripts/replay_batch.jl \
     --first 2026-01-01 --last 2026-06-30 --hours 10 --seed 20261026 \
     --hive "$HOME/.nemdb_cache" \
     --output /run/media/simba/Store/aem_validation/overnight-2026-01-to-06 \
@@ -266,78 +266,54 @@ it is a diagnostic, not a claim that the replica exactly matches NEMDE.
 
 ## Consecutive days or selected intervals
 
-For consecutive days, use the existing `ReplayWorkflow.replicate_range` function.
-This example solves two full trading days and retains native PSI outputs:
+For consecutive intervals, use the AEMSim replay API directly. This example replays
+one trading day in the chunks of `replay_chunks`, keeps the native PSI stores under
+`folder`, and compares each chunk with the published outcome in memory:
 
 ```julia
 using AustralianElectricityMarkets, AustralianElectricityMarketsSimulations
-using Dates, HiGHS
-using PowerSimulations: optimizer_with_attributes
-
-include("scripts/replay_workflow.jl")
-using .ReplayWorkflow: replicate_range
+using Dates
+import PowerSimulations as PSI
 
 db = aem_connect(HiveConfiguration(hive_location = joinpath(homedir(), ".nemdb_cache")))
-optimizer = optimizer_with_attributes(
-    HiGHS.Optimizer, "mip_rel_gap" => 1e-8, "mip_abs_gap" => 1e-10,
-    "threads" => 1, "output_flag" => false,
-)
-result = replicate_range(
-    db, DateTime(2026, 1, 1, 4, 5), DateTime(2026, 1, 3, 4, 0);
-    optimizer, output_dir = "/run/media/simba/Store/aem_validation/consecutive-days",
-    time_series_in_memory = false, cache_size_mib = 64,
-)
-result.comparison.dispatch
-result.solver_stats
-result.chunks
+optimizer = nemde_optimizer(; threads = 1, output_flag = false)
+template = template_nemde()
+folder = "/run/media/simba/Store/aem_validation/consecutive-days"
+
+for (k, steps) in enumerate(replay_chunks(trading_day_steps(Date(2026, 1, 1))))
+    chunk_folder = joinpath(folder, "chunk_$k")
+    horizon = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
+    check_replay_inputs(db, horizon; template)
+    sys = nem_system(
+        db, NEMDEConfiguration(); date_range = horizon, time_series_in_memory = false,
+        time_series_directory = joinpath(chunk_folder, "time_series"),
+    )
+    skipped = prepare_replay!(sys, template, steps)
+    model = PSI.DecisionModel(
+        NEMDispatchProblem, template, sys; optimizer, initial_time = first(steps), name = "dispatch",
+    )
+    models = PSI.SimulationModels(; decision_models = [model])
+    sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
+    simulation = PSI.Simulation(;
+        name = "replay_workflow", steps = length(steps), models, sequence,
+        simulation_folder = chunk_folder, initial_time = first(steps),
+    )
+    PSI.build!(simulation; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT || error("build failed")
+    PSI.execute!(simulation; cache_size_mib = 64) == PSI.RunStatus.SUCCESSFULLY_FINALIZED || error("execution failed")
+    results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), "dispatch")
+    comparison = compare_intervals(read_published_interval(db, steps), read_solved_interval(results, sys))
+    comparison_summary(comparison)
+    read_constraint_violations(results, sys)
+    PSI.read_optimizer_stats(results)
+end
 ```
 
-`replicate_range` returns comparison tables in memory and writes native PSI
-stores to `output_dir`; the overnight wrapper additionally exports CSVs and
-resource samples. Consecutive-range execution has no ten-hour budget.
+The overnight runner in `scripts/replay_batch.jl` runs this same sequence per trading
+day, writes the tables as CSVs and adds the resource samples. A loop like this has
+no ten-hour budget.
 
-For a short terminal comparison using the older positional CLI:
-
-```sh
-julia -O1 --project=AustralianElectricityMarketsSimulations/test scripts/replicate_range.jl \
-    2026-01-01T04:05:00 2026-01-01T04:15:00 "$HOME/.nemdb_cache"
-```
-
-That older CLI prints comparisons, uses its existing zero-relative-gap default,
-and stores PSI outputs in temporary folders. Use the overnight runner when you
-need the persistent outputs and `1e-8` relative gap described above.
-
-## Interconnector loss gaps
-
-`scripts/interconnector_loss_gaps.jl` checks a saved replay's solved interconnector losses against
-the loss curve at each solved flow. Run it on the `output_dir` of a `replicate_range` call whose
-template models `PSY.AreaInterchange` (the default does):
-
-```sh
-julia --project=AustralianElectricityMarketsSimulations/test scripts/interconnector_loss_gaps.jl \
-    --results /run/media/simba/Store/aem_validation/consecutive-days \
-    --start 2026-01-01T04:05:00 --stop 2026-01-01T04:15:00 \
-    [--hive "$HOME/.nemdb_cache"] [--output loss_gaps.csv] [--tolerance 0.001]
-```
-
-The script rebuilds the NEMDE system over `start` to `stop` plus ten minutes, reads each `chunk_<k>`
-folder's `replay_workflow` results and prints, per interconnector, the maximum absolute gap and the
-number of intervals with a negative weighted loss price. `--tolerance` (MW, default `0.001`) sets
-the gap above which a warning is logged. Nothing is solved again.
-
-The CSV has one row per interconnector and interval with a solved flow:
-
-| Column | Units | Contents |
-| --- | --- | --- |
-| `interconnector` | | Interconnector name |
-| `DateTime` | | Interval start, as in the replay results |
-| `flow_mw` | MW | Solved `FlowActivePowerVariable` |
-| `solved_loss_mw` | MW | Solved `InterconnectorLossVariable` |
-| `curve_loss_mw` | MW | Loss curve interpolated at the solved flow |
-| `gap_mw` | MW | `solved_loss_mw - curve_loss_mw`; zero when the segments reproduce the curve |
-| `weighted_loss_price` | $/MWh | `share * price_from + (1 - share) * price_to` from the regional prices of `read_prices` |
-
-The same table is available from the library as `read_interconnector_loss_gaps(results, sys)`.
+The solved interconnector losses of a saved replay can be checked against the loss curve
+at each solved flow with `read_interconnector_loss_gaps(results, sys)`.
 
 ## HDF5 dependency
 

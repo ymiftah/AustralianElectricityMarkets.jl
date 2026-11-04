@@ -1,7 +1,8 @@
 using Dates
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "scripts", "replay_batch_support.jl"))
+isdefined(@__MODULE__, :ReplayBatchSupport) ||
+    include(joinpath(@__DIR__, "..", "..", "scripts", "replay_batch_support.jl"))
 using .ReplayBatchSupport
 
 @testset "overnight day selection and budget" begin
