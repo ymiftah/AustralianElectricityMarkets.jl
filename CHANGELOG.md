@@ -50,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `check_replay_inputs(db, date_range; intervention, template)` verifies from the cache alone that a replay's MNSP offers and generic constraint inputs are complete, before any system is built.
+
+- `trading_day_steps(day)` returns the 288 interval-ending timestamps of a NEM trading day, and `replay_chunks(steps; chunk)` splits a range into chunks that each fit one financial year and one trading day.
+
 - `NEMDispatchProblem`: `PSI.DecisionModel(NEMDispatchProblem, template, sys; kwargs...)` builds the NEM dispatch model.
 
 - The Market Price Cap of a NEM dispatch model is dated by the model's initial time at every build, and the balance-slack cost follows it, unless `market_price_cap` is given.

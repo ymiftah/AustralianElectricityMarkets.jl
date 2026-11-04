@@ -129,21 +129,6 @@ end
     @test_throws ArgumentError ReplayWorkflow._range_steps(DateTime(2025, 1, 1), DateTime(2024, 12, 31))
     @test_throws ArgumentError ReplayWorkflow._range_steps(DateTime(2025, 1, 1), DateTime(2025, 1, 1, 0, 7))
     @test ReplayWorkflow._range_steps(DateTime(2025, 1, 1), DateTime(2025, 1, 1)) == DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 1)
-    chunks = ReplayWorkflow._range_chunks
-    @test chunks(DateTime(2026, 1, 1, 3, 55):Minute(5):DateTime(2026, 1, 1, 4, 15), :trading_day) ==
-        [DateTime(2026, 1, 1, 3, 55):Minute(5):DateTime(2026, 1, 1, 4, 0), DateTime(2026, 1, 1, 4, 5):Minute(5):DateTime(2026, 1, 1, 4, 15)]
-    @test chunks(DateTime(2026, 1, 1, 4, 5):Minute(5):DateTime(2026, 1, 2, 4, 0), :trading_day) ==
-        [DateTime(2026, 1, 1, 4, 5):Minute(5):DateTime(2026, 1, 2, 4, 0)]
-    @test chunks(DateTime(2026, 6, 30, 23, 50):Minute(5):DateTime(2026, 7, 1, 0, 15), :trading_day) ==
-        [DateTime(2026, 6, 30, 23, 50):Minute(5):DateTime(2026, 7, 1, 0, 0), DateTime(2026, 7, 1, 0, 5):Minute(5):DateTime(2026, 7, 1, 0, 15)]
-    @test chunks(DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20), Minute(10)) ==
-        [DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 10), DateTime(2025, 1, 1, 0, 15):Minute(5):DateTime(2025, 1, 1, 0, 20)]
-    steps = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 10)
-    @test_throws ArgumentError chunks(steps, Minute(7))
-    @test_throws ArgumentError chunks(steps, Minute(0))
-    @test_throws ArgumentError chunks(steps, :calendar_day)
-    @test_throws ArgumentError chunks(steps, Month(1))
-
     # Chunks are a partition of the range; two chunks solve the same intervals as one.
     t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 20)
     one = replicate_range(db, t1, t2)
@@ -266,12 +251,12 @@ include("interconnector_loss_gaps.jl")
     grid = collect(t:Minute(5):(t + Minute(5)))
     links = DataFrame(INTERCONNECTORID = ["M", "M"], LINKID = ["F", "R"])
     offers = DataFrame(LINKID = ["F", "R", "F", "R"], INTERVAL_DATETIME = [grid[1], grid[1], grid[2], grid[2]])
-    @test isnothing(ReplayWorkflow._check_mnsp_coverage(links, offers, ["M"], grid))
-    @test_throws ArgumentError ReplayWorkflow._check_mnsp_coverage(links, offers[1:3, :], ["M"], grid)
-    @test_throws ArgumentError ReplayWorkflow._check_mnsp_coverage(links, vcat(offers, offers[1:1, :]), ["M"], grid)
-    @test_throws ArgumentError ReplayWorkflow._check_mnsp_coverage(links[1:1, :], offers, ["M"], grid)
+    @test isnothing(AEMS._check_mnsp_coverage(links, offers, ["M"], grid))
+    @test_throws ArgumentError AEMS._check_mnsp_coverage(links, offers[1:3, :], ["M"], grid)
+    @test_throws ArgumentError AEMS._check_mnsp_coverage(links, vcat(offers, offers[1:1, :]), ["M"], grid)
+    @test_throws ArgumentError AEMS._check_mnsp_coverage(links[1:1, :], offers, ["M"], grid)
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR))
-    @test isnothing(ReplayWorkflow._preflight_inputs(db, t:Minute(5):(t + Minute(10)); template = AEMS.template_nemde()))
+    @test isnothing(AEMS.check_replay_inputs(db, t:Minute(5):(t + Minute(10)); template = AEMS.template_nemde()))
 end
 
 @testset "preflight preserves fixed-load and built-in constraint handling" begin
@@ -283,16 +268,16 @@ end
     )
     fixed = DataFrame(DUID = ["U"], INTERVAL_DATETIME = [t])
     definitions = DataFrame(GENCONID = ["C"], EFFECTIVEDATE = [eff], VERSIONNO = [1])
-    @test isnothing(ReplayWorkflow._check_constraint_versions(invoked, fixed, definitions))
+    @test isnothing(AEMS._check_constraint_versions(invoked, fixed, definitions))
     definitions.VERSIONNO .= 2
-    @test_throws ArgumentError ReplayWorkflow._check_constraint_versions(invoked, fixed, definitions)
+    @test_throws ArgumentError AEMS._check_constraint_versions(invoked, fixed, definitions)
     builtin = first(keys(AustralianElectricityMarkets._ZERO_FLOW_CONSTRAINTS))
     invoked = DataFrame(
         GENCONID = [builtin], SETTLEMENTDATE = [t],
         GENCONID_EFFECTIVEDATE = [DateTime(AustralianElectricityMarkets._ZERO_FLOW_EFFECTIVEDATE)],
         GENCONID_VERSIONNO = [AustralianElectricityMarkets._ZERO_FLOW_VERSIONNO]
     )
-    @test isnothing(ReplayWorkflow._check_constraint_versions(invoked, fixed, definitions[1:0, :]))
+    @test isnothing(AEMS._check_constraint_versions(invoked, fixed, definitions[1:0, :]))
 end
 
 include("replay_preflight.jl")

@@ -9,5 +9,5 @@
     )
     rm(joinpath(fixed_db.config.hive_location, "GENCONDATA"); recursive = true)
     t = DateTime(2025, 1, 1, 0, 5)
-    @test isnothing(ReplayWorkflow._preflight_inputs(fixed_db, t:Minute(5):(t + Minute(10))))
+    @test isnothing(AEMS.check_replay_inputs(fixed_db, t:Minute(5):(t + Minute(10))))
 end
