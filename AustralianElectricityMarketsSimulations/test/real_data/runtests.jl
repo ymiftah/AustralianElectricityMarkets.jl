@@ -5,12 +5,15 @@
 #         AustralianElectricityMarketsSimulations/test/real_data/runtests.jl [hive_location]
 #
 # `hive_location` defaults to `~/.nemdb_cache`.
+#
+# Every solve goes through the replay API. Data AEMO did not publish (a unit without a DISPATCHLOAD
+# row, a constraint without rows) is left out of the comparisons and reported with `@info`.
 
 using Test
+using Chain
 using Dates
 using DataFrames
 using DuckDB
-using HiGHS
 using PowerSimulations
 using AustralianElectricityMarkets
 using AustralianElectricityMarketsSimulations
@@ -19,91 +22,86 @@ import PowerSystems as PSY
 
 const AEM = AustralianElectricityMarkets
 const AEMS = AustralianElectricityMarketsSimulations
-include(joinpath(@__DIR__, "..", "..", "..", "test", "fixtures", "input_builders.jl"))
 
 const REAL_HIVE = isempty(ARGS) ? joinpath(homedir(), ".nemdb_cache") : only(ARGS)
 const REAL_START = DateTime(2026, 6, 4, 0, 0)
 const REAL_RESOLUTION = Minute(5)
 const REAL_SPAN = Hour(1)
-const REAL_DATE_RANGE = REAL_START:REAL_RESOLUTION:(REAL_START + REAL_SPAN)
-const REAL_MONTH = Date(year(REAL_START), month(REAL_START), 1)
+const REAL_STEPS = (REAL_START + REAL_RESOLUTION):REAL_RESOLUTION:(REAL_START + REAL_SPAN)
 
 const VIOLATION_START = DateTime(2026, 6, 9, 5, 0)
-const VIOLATION_SPAN = Hour(1)
-const VIOLATION_DATE_RANGE = VIOLATION_START:REAL_RESOLUTION:(VIOLATION_START + VIOLATION_SPAN)
-
-# Either table carries the dispatch FCAS requirements, depending on the archive month.
-const FCAS_REQ_TABLES = (:DISPATCH_FCAS_REQ, :DISPATCH_FCAS_REQ_CONSTRAINT)
+const VIOLATION_STEPS = VIOLATION_START:REAL_RESOLUTION:(VIOLATION_START + REAL_SPAN)
 
 const db = aem_connect(HiveConfiguration(hive_location = REAL_HIVE))
 
-function month_cached(table)
-    root = AEM._parse_hive_root(db.config)
-    glob = "$root/$table/archive_month=$REAL_MONTH/*.parquet"
-    return only(DataFrame(DuckDB.execute(db.db, "SELECT COUNT(*) AS n FROM glob('$glob')")).n) > 0
-end
-
-let
-    required = union(
-        AEM.table_requirements(NEMDEConfiguration()),
-        [:BIDPEROFFER_D, :BIDDAYOFFER_D],
+# Pre-flight checks, the system over `steps` and the two intervals after them, then the built and
+# executed replay of `template`; throws unless both the build and the execution succeed.
+function replay_real(steps; template = template_nemde())
+    date_range = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
+    check_replay_inputs(db, date_range; template)
+    sys = nem_system(db, NEMDEConfiguration(); date_range)
+    skipped = prepare_replay!(sys, template, steps)
+    model = PSI.DecisionModel(
+        NEMDispatchProblem, template, sys; optimizer = nemde_optimizer(), initial_time = first(steps), name = "dispatch",
     )
-    missing_tables = filter(t -> !(t in FCAS_REQ_TABLES) && !month_cached(t), required)
-    any(month_cached, FCAS_REQ_TABLES) || push!(missing_tables, last(FCAS_REQ_TABLES))
-    isempty(missing_tables) || error(
-        "The hive at $REAL_HIVE has no $REAL_MONTH partition for: $(join(missing_tables, ", ")). " *
-            "Populate them first, e.g.\n" * join(
-            [
-                "    populate(db, :$t, Date($(year(REAL_MONTH)), $(month(REAL_MONTH)), 1), " *
-                    "Date($(year(REAL_MONTH)), $(month(REAL_MONTH)), $(daysinmonth(REAL_MONTH))))"
-                    for t in missing_tables
-            ], "\n",
-        ),
+    models = PSI.SimulationModels(; decision_models = [model])
+    sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
+    simulation = PSI.Simulation(;
+        name = "real_data", steps = length(steps), models, sequence,
+        simulation_folder = mktempdir(), initial_time = first(steps),
     )
-end
-
-function aemsim_template(sys)
-    template = PSI.ProblemTemplate(
-        PSI.NetworkModel(
-            PSI.AreaBalancePowerModel;
-            use_slacks = true,
-            duals = [PSI.CopperPlateBalanceConstraint],
-        ),
-    )
-    set_nem_dispatch_models!(template, sys)
-    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
-    PSI.set_device_model!(template, PSY.AreaInterchange, PSI.StaticBranch)
-    return template
-end
-
-# `PSI.build!` swallows build exceptions into a `FAILED` status; this returns the exception.
-function build_error(model)
-    PSI.set_output_dir!(model, mktempdir())
-    try
-        PSI.build_impl!(model)
-    catch e
-        return e
-    end
-    return nothing
-end
-
-# Builds and solves `model`, asserting each reaches its terminal status; returns the build and solve times in seconds.
-function build_and_solve!(model)
-    build_time = @elapsed build_status = PSI.build!(model; output_dir = mktempdir())
-    if build_status != PSI.ModelBuildStatus.BUILT
-        err = build_error(model)
-        isnothing(err) || @error "build! did not reach BUILT" exception = err
-    end
-    @test build_status == PSI.ModelBuildStatus.BUILT
-    solve_time = @elapsed run_status = PSI.solve!(model)
+    build_status = PSI.build!(simulation; store_systems_in_results = false)
+    @test build_status == PSI.SimulationBuildStatus.BUILT
+    build_status == PSI.SimulationBuildStatus.BUILT ||
+        error("Replay from $(first(steps)) failed to build ($build_status); see the simulation logs.")
+    run_status = PSI.execute!(simulation)
     @test run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-    return (; build_time, solve_time)
+    run_status == PSI.RunStatus.SUCCESSFULLY_FINALIZED ||
+        error("Replay from $(first(steps)) failed to execute ($run_status); see the simulation logs.")
+    results = PSI.get_decision_problem_results(PSI.SimulationResults(simulation), "dispatch")
+    return (; sys, template, skipped, model, results, date_range)
+end
+
+# An unbounded capacity variable means a nonzero effective MaxAvail somewhere in the window.
+enabled(v) = !PSI.JuMP.has_upper_bound(v) || PSI.JuMP.upper_bound(v) > 0.0
+
+# The rows of the SQL `statement` with positional `params`.
+query(db, statement, params) = DataFrame(DuckDB.execute(db.db, statement, params))
+
+# The variable keys of `results` with entry type `V` on component type `C`.
+function variable_keys(results, V::Type, C::Type)
+    return [
+        k for k in PSI.list_variable_keys(results)
+            if PSI.IS.Optimization.get_entry_type(k) === V && PSI.IS.Optimization.get_component_type(k) === C
+    ]
+end
+
+# The §6.1 joint ramping check of one unit and interval at NEMDE's published solution against the
+# right-hand side `rhs_mw`; `nothing` where the dispatch row or one of its values was not published.
+function joint_ramping_row(published, service, bid_type, device, settlement, rhs_mw)
+    prow = get(published, (bid_type, PSY.get_name(device), settlement), nothing)
+    (isnothing(prow) || ismissing(prow.TOTALCLEARED) || ismissing(prow.TARGET) || ismissing(prow.INITIALMW)) && return nothing
+    energy_mw, target_mw, initial_mw = prow.TOTALCLEARED, prow.TARGET, prow.INITIALMW
+    upper = bid_type == fcas_upper_regulation_service(device)
+    lhs_mw = upper ? energy_mw + target_mw : energy_mw - target_mw
+    diff_mw = lhs_mw - rhs_mw
+    violated = upper ? diff_mw > 1.0 : diff_mw < -1.0
+    ramp_cap_mw = upper ? rhs_mw - initial_mw : initial_mw - rhs_mw
+    # The unit's energy already sits on the bid-capped ramp floor, with no headroom for the target.
+    energy_at_own_ramp_floor = isapprox(energy_mw, upper ? initial_mw + ramp_cap_mw : initial_mw - ramp_cap_mw; atol = 1.0)
+    return (;
+        service, bid_type, duid = PSY.get_name(device), device_type = nameof(typeof(device)), settlement,
+        initial_mw, energy_mw, target_mw, ramp_cap_mw, lhs_mw, rhs_mw, diff_mw, violated,
+        agc_status = prow.AGCSTATUS, energy_at_own_ramp_floor,
+    )
 end
 
 @testset "Real NEM data, $(Date(REAL_START))" begin
-    sys, _ = constrained_system(db; date_range = REAL_DATE_RANGE)
+    replay = replay_real(REAL_STEPS)
+    (; sys, template, skipped, model, results, date_range) = replay
+    devices = AEM.nem_dispatch_devices(sys)
 
-    @testset "the constrained System builds" begin
+    @testset "the NEMDE System builds" begin
         areas = Set(PSY.get_name.(PSY.get_components(PSY.Area, sys)))
         @test issubset(Set(["NSW1", "QLD1", "SA1", "TAS1", "VIC1"]), areas)
         for T in (PSY.ThermalStandard, PSY.HydroDispatch, PSY.RenewableDispatch, PSY.AreaInterchange)
@@ -112,32 +110,17 @@ end
         @test !isempty(PSY.get_components(GenericConstraint, sys))
     end
 
-    attach_demand!(sys, db, REAL_DATE_RANGE; resolution = REAL_RESOLUTION)
-    set_market_bids!(sys, db, REAL_DATE_RANGE; resolution = REAL_RESOLUTION)
-    set_fcas_scaling_inputs!(sys, db, REAL_DATE_RANGE)
-    limits = read_dispatch_limits(db, REAL_DATE_RANGE)
-    devices = AEM.nem_dispatch_devices(sys)
-
     @testset "dispatch limits" begin
-        dispatched = Set(limits.DUID)
-        @testset "every unit without DISPATCHLOAD rows was set unavailable for having no bids" begin
-            @test all(d -> PSY.get_name(d) in dispatched || !PSY.get_available(d), devices)
-        end
+        limits = read_dispatch_limits(db, date_range)
 
-        @test begin
-            attach_dispatch_limits!(sys, db, REAL_DATE_RANGE)
-            true
-        end
-
-        @test all(
-            d -> !PSY.get_available(d) || AEMS._has_nem_dispatch_limits(d),
-            devices,
-        )
+        @test all(AEMS._has_nem_dispatch_limits, devices)
+        @test all(d -> PSY.get_name(d) in Set(limits.DUID) || AEM.is_non_scheduled_load(d), devices)
 
         @testset "the stored ramp rate yields AEMO's per-interval ramp" begin
+            first_stamp = first(date_range)
             row = first(
                 filter(
-                    r -> r.SETTLEMENTDATE == REAL_START && coalesce(r.RAMPUPRATE, 0.0) > 0 &&
+                    r -> r.SETTLEMENTDATE == first_stamp && coalesce(r.RAMPUPRATE, 0.0) > 0 &&
                         !isnothing(PSY.get_component(PSY.ThermalStandard, sys, r.DUID)) &&
                         PSY.get_available(PSY.get_component(PSY.ThermalStandard, sys, r.DUID)),
                     limits,
@@ -150,122 +133,69 @@ end
             @test stored * minutes ≈
                 row.RAMPUPRATE * interval_hours(DISPATCH_INTERVAL) / PSY.get_base_power(sys) rtol = 1.0e-9
         end
-    end
 
-    @testset "the stored dispatch ceiling is max(AVAILABILITY, ramp-down floor)" begin
-        full_grid = collect(REAL_DATE_RANGE)[1:(end - 1)]
-        checked = 0
-        mismatches = String[]
-        for device in devices
-            PSY.has_time_series(device, PSY.SingleTimeSeries, "max_active_power") || continue
-            duid = PSY.get_name(device)
-            static_max_active_power = PSY.with_units_base(
-                () -> PSY.get_max_active_power(device), sys, "NATURAL_UNITS",
-            )
-            series = PSY.get_time_series_values(
-                PSY.SingleTimeSeries, device, "max_active_power"; ignore_scaling_factors = true,
-            )
-            rows = filter(:DUID => ==(duid), limits)
-            by_time = Dict(zip(rows.SETTLEMENTDATE, eachrow(rows)))
-            for (t, value) in zip(full_grid, series)
-                row = get(by_time, t, nothing)
-                isnothing(row) && continue
-                expected = max(row.AVAILABILITY, row.INITIALMW - row.RAMPDOWNRATE * interval_hours(DISPATCH_INTERVAL))
-                checked += 1
-                isapprox(value * static_max_active_power, expected; atol = 1.0e-6) ||
-                    push!(mismatches, "$duid at $t: $(value * static_max_active_power) vs $expected")
+        @testset "the stored dispatch ceiling is max(AVAILABILITY, ramp-down floor)" begin
+            checked = 0
+            unpublished = 0
+            mismatches = String[]
+            for device in devices
+                PSY.has_time_series(device, PSY.SingleTimeSeries, "max_active_power") || continue
+                duid = PSY.get_name(device)
+                static_max_active_power = PSY.with_units_base(
+                    () -> PSY.get_max_active_power(device), sys, "NATURAL_UNITS",
+                )
+                series = PSY.get_time_series_values(
+                    PSY.SingleTimeSeries, device, "max_active_power"; ignore_scaling_factors = true,
+                )
+                stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, "max_active_power")
+                rows = filter(:DUID => ==(duid), limits)
+                by_time = Dict(zip(rows.SETTLEMENTDATE, eachrow(rows)))
+                pinned = AEM.is_non_scheduled_load(device)
+                for (t, value) in zip(stamps, series)
+                    row = get(by_time, t, nothing)
+                    # A non-scheduled load, or a unit with no DISPATCHLOAD row, is pinned to zero.
+                    if pinned || isnothing(row)
+                        unpublished += 1
+                        iszero(value) || push!(mismatches, "$duid at $t: $value vs 0 (no published limit)")
+                        continue
+                    end
+                    expected = max(row.AVAILABILITY, row.INITIALMW - row.RAMPDOWNRATE * interval_hours(DISPATCH_INTERVAL))
+                    checked += 1
+                    isapprox(value * static_max_active_power, expected; atol = 1.0e-6) ||
+                        push!(mismatches, "$duid at $t: $(value * static_max_active_power) vs $expected")
+                end
             end
+            @info "Dispatch ceiling coverage" checked unpublished
+            @test checked > 0
+            @test isempty(mismatches)
         end
-        @test checked > 0
-        @test isempty(mismatches)
     end
-
-    template = aemsim_template(sys)
-    constraints = collect(PSY.get_components(GenericConstraint, sys))
-    buildable = AEMS._filter_buildable_generic_constraints(
-        sys, template, constraints; allow_partial_coverage = true,
-    )
 
     @testset "the pre-flight constraint check" begin
-        @test_throws ArgumentError AEMS._filter_buildable_generic_constraints(
-            sys, template, constraints,
-        )
-        @test !isempty(buildable)
-        @test issubset(Set(PSY.get_name.(buildable)), Set(PSY.get_name.(constraints)))
-
-        modeled = AEMS._modeled_device_types(template)
-        interconnector_modeled = AEMS._interconnector_modeled(template)
-        buildable_names = Set(PSY.get_name.(buildable))
-        diagnoses = [
-            AEMS._constraint_diagnosis(sys, gc, modeled, interconnector_modeled, AEMS._modeled_fcas_services(template))
-                for gc in constraints if !(PSY.get_name(gc) in buildable_names)
-        ]
-
-        @testset "every constraint term names a device in the System" begin
-            @test issubset(Set(first.(diagnoses)), Set([:unmodeled_fcas_service, :unmodeled_device_type]))
-        end
+        @test names(skipped) == ["constraint", "reason", "n_missing"]
+        known = (:unmodeled_fcas_service, :missing_component, :unmodeled_device_type, :no_available_device, :never_invoked)
+        @test all(in(known), skipped.reason)
+        # Every constraint term names a device in the System.
+        @test !(:missing_component in skipped.reason)
+        # Some GenericConstraint is modelled: the results record its NEMConstraintLimit dual.
+        @test any(k -> PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit, PSI.list_dual_keys(results))
+        @info "Constraints left out of the replay, by reason" counts = Dict(r => count(==(r), skipped.reason) for r in unique(skipped.reason))
     end
 
-    @testset "the AEMSim template builds and solves a DecisionModel" begin
-        PSY.transform_single_time_series!(sys, REAL_SPAN, REAL_RESOLUTION)
-        for gc in buildable
-            name = PSY.get_name(gc)
-            PSI.set_service_model!(
-                template, name,
-                PSI.ServiceModel(
-                    GenericConstraint, LinearFactorLimit, name; duals = [NEMConstraintLimit],
-                    use_slacks = true,
-                ),
-            )
-        end
-        model = PSI.DecisionModel(
-            template, sys;
-            optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
-            horizon = REAL_SPAN,
-            resolution = REAL_RESOLUTION,
-            interval = REAL_RESOLUTION,
-            initial_time = REAL_START,
-            name = "real_data",
-        )
+    solved = read_solved_interval(results, sys)
+    violations = read_constraint_violations(results, sys)
 
-        build_time, solve_time = build_and_solve!(model)
-
-        container = PSI.get_optimization_container(model)
-        base_power = PSY.get_base_power(sys)
-        slack_keys = filter(PSI.get_variable_keys(container)) do key
-            PSI.get_component_type(key) == PSY.Area && occursin("Slack", string(PSI.get_entry_type(key)))
-        end
-        slack_mw = Dict{Tuple{String, Int}, Float64}()
-        for key in slack_keys
-            var = PSI.get_variable(container, key)
-            for area in axes(var, 1), t in axes(var, 2)
-                slack_mw[(area, t)] = get(slack_mw, (area, t), 0.0) + PSI.JuMP.value(var[area, t]) * base_power
-            end
-        end
-        total_area_slack_mw = sum(values(slack_mw); init = 0.0)
-        @info "Real-data DecisionModel" build_time solve_time total_area_slack_mw
-
+    @testset "the replay builds and solves" begin
+        comparison = compare_intervals(read_published_interval(db, REAL_STEPS), solved)
+        @test !isempty(comparison.prices)
+        @test !isempty(comparison.dispatch)
+        @test !isempty(comparison.interconnectors)
+        total_area_slack_mw = sum(violations.MW[violations.family .== "area_balance"]; init = 0.0)
+        @info "Real-data replay" summary = sprint(show, comparison_summary(comparison); context = :limit => false) total_area_slack_mw
     end
 
-    @testset "interconnector loss gap and regional price signs" begin
-        # NEMInterconnectorLoss in place of the main model's lossless StaticBranch; the solved loss
-        # is compared with the breakpoint interpolation at the same solved flow.
-        loss_template = aemsim_template(sys)
-        PSI.set_device_model!(loss_template, PSY.AreaInterchange, NEMInterconnectorLoss)
-        loss_model = PSI.DecisionModel(
-            loss_template, sys;
-            optimizer = optimizer_with_attributes(
-                HiGHS.Optimizer, "output_flag" => false, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10,
-            ),
-            horizon = REAL_SPAN,
-            resolution = REAL_RESOLUTION,
-            interval = REAL_RESOLUTION,
-            initial_time = REAL_START,
-            name = "real_data_losses",
-        )
-        build_and_solve!(loss_model)
-
-        table = read_interconnector_loss_gaps(PSI.OptimizationProblemResults(loss_model), sys)
+    @testset "interconnector loss gap" begin
+        table = read_interconnector_loss_gaps(results, sys)
 
         @test !isempty(table)
         # Negative weighted prices included, loss must stay on the curve at the solved flow.
@@ -283,24 +213,21 @@ end
         @info "Interconnector over-dissipation gap (solved LP loss - curve at solved flow) and weighted price sign" report
     end
 
-    @testset "FCASMarket builds and solves alongside the constrained System" begin
-        # The constrained layer's add_fcas_services! built one FCASService per bid
-        # (region, bid type), attaching only the bids FCASMarket models.
+    @testset "FCAS" begin
         fcas_registered = PSY.get_name.(PSY.get_components(FCASService, sys))
         n_regulation_trapeziums = 0
         n_regulation_trapeziums_scaled = 0
-        horizon = Int(REAL_SPAN / REAL_RESOLUTION)
+        horizon = length(REAL_STEPS)
         for svc in PSY.get_components(FCASService, sys)
             bid_type = get_bid_type(svc)
-            name = PSY.get_name(svc)
             # Count how many (device, t) regulation trapeziums AEMO's §4 scaling actually
-            # narrowed - contingency bid types are never scaled for a scheduled unit.
+            # narrowed; contingency bid types are never scaled for a scheduled unit.
             bid_type in AEM.FCAS_REGULATION_MARKETS || continue
             for d in PSY.get_contributing_devices(sys, svc)
                 direction = AEM.fcas_bid_direction(d, bid_type)
                 for decremental in (direction == FCASBidDirection.BOTH ? (false, true) : (direction == FCASBidDirection.DECREMENTAL,))
-                    raw = AustralianElectricityMarkets._get_fcas_trapezium(d, bid_type, REAL_START, horizon; decremental = decremental)
-                    scaled = get_scaled_fcas_trapezium(d, bid_type, REAL_START, horizon; decremental = decremental)
+                    raw = AEM._get_fcas_trapezium(d, bid_type, first(date_range), horizon; decremental = decremental)
+                    scaled = get_scaled_fcas_trapezium(d, bid_type, first(date_range), horizon; decremental = decremental)
                     n_regulation_trapeziums += length(raw)
                     n_regulation_trapeziums_scaled += count(
                         i -> !isequal(Tuple(raw[i]), Tuple(scaled[i])), eachindex(raw),
@@ -313,247 +240,183 @@ end
         # AGC telemetry is tighter than the bid for some units on any real window.
         @test n_regulation_trapeziums_scaled > 0
 
-        fcas_template = aemsim_template(sys)
-        for name in fcas_registered
-            PSI.set_service_model!(
-                fcas_template, name,
-                PSI.ServiceModel(FCASService, FCASMarket, name; duals = [FCASJointCapacityConstraint], use_slacks = true),
-            )
-        end
-        # Buildable against this template, so constraints with FCAS terms are in play.
-        fcas_buildable = AEMS._filter_buildable_generic_constraints(
-            sys, fcas_template, PSY.get_components(GenericConstraint, sys); allow_partial_coverage = true,
-        )
-        n_fcas_constraints = count(gc -> !isempty(get_fcas_requirements(gc)), fcas_buildable)
-        for gc in fcas_buildable
-            name = PSY.get_name(gc)
-            PSI.set_service_model!(
-                fcas_template, name,
-                PSI.ServiceModel(
-                    GenericConstraint, LinearFactorLimit, name; duals = [NEMConstraintLimit], use_slacks = true,
-                ),
-            )
-        end
-        @test isnothing(check_fcas_services(fcas_template, sys))
-
-        fcas_model = PSI.DecisionModel(
-            fcas_template, sys;
-            optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
-            horizon = REAL_SPAN,
-            resolution = REAL_RESOLUTION,
-            interval = REAL_RESOLUTION,
-            initial_time = REAL_START,
-            name = "real_data_fcas",
-        )
-
-        build_time, solve_time = build_and_solve!(fcas_model)
-
-        container = PSI.get_optimization_container(fcas_model)
-        n_enabled_pairs = 0
-        for name in fcas_registered
-            if PSI.has_container_key(container, FCASCapacityVariable, FCASService, name)
-                var = PSI.get_variable(container, FCASCapacityVariable(), FCASService, name)
-                n_enabled_pairs += count(k -> PSI.JuMP.upper_bound(var[k...]) > 0.0, Iterators.product(axes(var)...))
-            end
-            for side in ("gen", "load")
-                PSI.has_container_key(container, FCASSideCapacityVariable, FCASService, "$(name)_$side") || continue
-                var = PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "$(name)_$side")
-                n_enabled_pairs += count(k -> PSI.JuMP.upper_bound(var[k...]) > 0.0, Iterators.product(axes(var)...))
-            end
-        end
-        @test n_enabled_pairs > 0
-
-        # Per-side regulation reads a battery's discharge and charge separately, so the solve
-        # must not charge and discharge a battery in the same interval.
-        n_circulating = 0
-        if PSI.has_container_key(container, PSI.ActivePowerOutVariable, PSY.EnergyReservoirStorage)
-            out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), PSY.EnergyReservoirStorage)
-            in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), PSY.EnergyReservoirStorage)
-            base_power = PSY.get_base_power(sys)
-            for duid in axes(out_var, 1), t in axes(out_var, 2)
-                simultaneous_mw = min(PSI.JuMP.value(out_var[duid, t]), PSI.JuMP.value(in_var[duid, t])) * base_power
-                simultaneous_mw > 1.0e-3 && (n_circulating += 1)
-            end
-        end
-        @test n_circulating == 0
-
-        @info "Real-data FCASMarket DecisionModel" build_time solve_time n_services = length(fcas_registered) n_enabled_pairs n_regulation_trapeziums_scaled n_regulation_trapeziums
-
-        # Report-only: the FCAS prices this solve's constraint duals imply, against AEMO's published
-        # ROP (the sum of the requirement constraints' MARGINALVALUE) per (region, service, interval).
-        fcas_prices = AEM.read_fcas_prices(PSI.OptimizationProblemResults(fcas_model), sys)
-        published_prices = AEM.read_fcas_prices(db, REAL_DATE_RANGE)
+        # The FCAS prices the solve's constraint duals imply, against AEMO's published ROP (the sum
+        # of the requirement constraints' MARGINALVALUE) per (region, service, interval).
+        fcas_prices = AEM.read_fcas_prices(results, sys)
+        published_prices = AEM.read_fcas_prices(db, date_range)
         compared = innerjoin(fcas_prices, published_prices; on = [:SETTLEMENTDATE, :REGIONID, :BIDTYPE], makeunique = true)
         n_price_cmp = nrow(compared)
         n_price_ok = count(r -> isapprox(r.ROP, r.ROP_1; atol = 0.5, rtol = 0.01), eachrow(compared))
         fcas_price_match_rate = n_price_cmp > 0 ? n_price_ok / n_price_cmp : NaN
-        @info "Real-data FCAS prices from constraint duals vs published ROP" n_fcas_constraints n_price_cmp n_price_ok fcas_price_match_rate
+        @info "Real-data FCAS prices from constraint duals vs published ROP" n_price_cmp n_price_ok fcas_price_match_rate
         @test n_price_cmp > 0
 
-        reg_dispatch = filter(:BIDTYPE => in(AEM.FCAS_REGULATION_MARKETS), AEM.read_fcas_dispatch(db, REAL_DATE_RANGE))
+        # Per-side regulation reads a battery's discharge and charge separately, so the solve
+        # must not charge and discharge a battery in the same interval.
+        out_keys = variable_keys(results, PSI.ActivePowerOutVariable, PSY.EnergyReservoirStorage)
+        in_keys = variable_keys(results, PSI.ActivePowerInVariable, PSY.EnergyReservoirStorage)
+        n_circulating = 0
+        @test !isempty(out_keys) && !isempty(in_keys)
+        if !isempty(out_keys) && !isempty(in_keys)
+            realized = PSI.read_realized_variables(
+                results, PSI.IS.Optimization.encode_key_as_string.([only(out_keys), only(in_keys)]),
+            )
+            out_df, in_df = (realized[PSI.IS.Optimization.encode_key_as_string(k)] for k in (only(out_keys), only(in_keys)))
+            both = innerjoin(out_df, in_df; on = [:DateTime, :name], makeunique = true)
+            n_circulating = count(r -> min(r.value, r.value_1) > 1.0e-3, eachrow(both))
+        end
+        @test n_circulating == 0
+        @info "Real-data FCAS" n_services = length(fcas_registered) n_regulation_trapeziums_scaled n_regulation_trapeziums
+    end
 
-        # AEMO §6.1 fidelity: evaluate every non-placeholder FCASJointRampingConstraint row this
-        # build actually constructs (both RAISEREG and LOWERREG services, generators and
-        # storage), at NEMDE's own published solution (TOTALCLEARED and the published regulation
-        # TARGET), against the row's own right-hand side - this build's InitialMW and ramp
-        # capability, read straight off the built JuMP constraint rather than recomputed.
-        published_lookup = Dict(
-            (row.BIDTYPE, row.DUID, row.SETTLEMENTDATE) => row for row in eachrow(reg_dispatch)
+    # AEMO §6.1 fidelity: each active joint ramping row (a regulation service, unit and interval),
+    # evaluated at NEMDE's own published TOTALCLEARED and regulation TARGET against the row's
+    # right-hand side. The series check covers every step; the container check covers the last step.
+    @testset "§6.1 joint ramping at the published solution" begin
+        container = PSI.get_optimization_container(model)
+        settlement = last(REAL_STEPS)
+        base_power = PSY.get_base_power(sys)
+
+        n_enabled_pairs = 0
+        for name in PSY.get_name.(PSY.get_components(FCASService, sys))
+            if PSI.has_container_key(container, FCASCapacityVariable, FCASService, name)
+                var = PSI.get_variable(container, FCASCapacityVariable(), FCASService, name)
+                n_enabled_pairs += count(k -> enabled(var[k...]), Iterators.product(axes(var)...))
+            end
+            for side in ("gen", "load")
+                PSI.has_container_key(container, FCASSideCapacityVariable, FCASService, "$(name)_$side") || continue
+                var = PSI.get_variable(container, FCASSideCapacityVariable(), FCASService, "$(name)_$side")
+                n_enabled_pairs += count(k -> enabled(var[k...]), Iterators.product(axes(var)...))
+            end
+        end
+        @test n_enabled_pairs > 0
+
+        reg_dispatch = filter(
+            :BIDTYPE => in(AEM.FCAS_REGULATION_MARKETS),
+            AEM.read_fcas_dispatch(db, first(REAL_STEPS):DISPATCH_INTERVAL:(last(REAL_STEPS) + DISPATCH_INTERVAL)),
         )
-        joint_ramping_rows = NamedTuple[]
+        published = Dict((row.BIDTYPE, row.DUID, row.SETTLEMENTDATE) => row for row in eachrow(reg_dispatch))
+
+        # The last step: the right-hand side of the built row is its set bound less the fixed (parameter) terms.
+        last_step = NamedTuple[]
+        n_inactive_last = 0
         for svc in PSY.get_components(FCASService, sys)
             bid_type = get_bid_type(svc)
             bid_type in AEM.FCAS_REGULATION_MARKETS || continue
             name = PSY.get_name(svc)
             PSI.has_container_key(container, FCASJointRampingConstraint, FCASService, name) || continue
             con = PSI.get_constraint(container, FCASJointRampingConstraint(), FCASService, name)
-            devices_by_name = Dict(PSY.get_name(d) => d for d in PSY.get_contributing_devices(sys, svc))
-            for duid in axes(con, 1), t in axes(con, 2)
-                row = PSI.JuMP.constraint_object(con[duid, t])
-                isempty(row.func.terms) && continue  # gated placeholder: nothing to check
-                settlement = REAL_START + (t - 1) * REAL_RESOLUTION
-                haskey(published_lookup, (bid_type, duid, settlement)) || continue
-                prow = published_lookup[(bid_type, duid, settlement)]
-                (ismissing(prow.TOTALCLEARED) || ismissing(prow.TARGET) || ismissing(prow.INITIALMW)) && continue
-
-                energy_mw = prow.TOTALCLEARED
-                target_mw = prow.TARGET
-                initial_mw = prow.INITIALMW
-                if bid_type == BidType.RAISEREG
-                    lhs_mw = energy_mw + target_mw
-                    rhs_mw = row.set.upper * base_power
-                    diff_mw = lhs_mw - rhs_mw
-                    violated = diff_mw > 1.0
-                    ramp_cap_mw = rhs_mw - initial_mw
-                else
-                    lhs_mw = energy_mw - target_mw
-                    rhs_mw = row.set.lower * base_power
-                    diff_mw = lhs_mw - rhs_mw
-                    violated = diff_mw < -1.0
-                    ramp_cap_mw = initial_mw - rhs_mw
+            for device in PSY.get_contributing_devices(sys, svc)
+                duid = PSY.get_name(device)
+                duid in axes(con, 1) || continue
+                row = PSI.JuMP.constraint_object(con[duid, 1])
+                fixed = [v for v in keys(row.func.terms) if PSI.JuMP.is_fixed(v)]
+                fixed_pu = row.func.constant + sum(row.func.terms[v] * PSI.JuMP.fix_value(v) for v in fixed; init = 0.0)
+                upper = bid_type == fcas_upper_regulation_service(device)
+                rhs_mw = ((upper ? row.set.upper : row.set.lower) - fixed_pu) * base_power
+                if abs(rhs_mw) >= FCAS_INACTIVE_LIMIT_MW - 1
+                    n_inactive_last += 1
+                    continue
                 end
-                device = devices_by_name[duid]
-                # Whether the unit's own energy ramp already sits at the bid-capped floor this
-                # build's `InitialMW + RampUp`/`InitialMW - RampDown` gives, with zero headroom
-                # left for the published regulation target - the signature of the row's known
-                # departure (DISPATCHLOAD's bid-capped ramp rate standing in for the unpublished
-                # telemetered SCADA rate).
-                energy_at_own_ramp_floor = isapprox(
-                    energy_mw, bid_type == BidType.RAISEREG ? initial_mw + ramp_cap_mw : initial_mw - ramp_cap_mw;
-                    atol = 1.0,
-                )
-                push!(
-                    joint_ramping_rows,
-                    (;
-                        service = name, bid_type, duid, device_type = nameof(typeof(device)),
-                        settlement, initial_mw, energy_mw, target_mw, ramp_cap_mw,
-                        lhs_mw, rhs_mw, diff_mw, violated,
-                        agc_status = prow.AGCSTATUS, energy_at_own_ramp_floor,
-                    ),
-                )
+                checked = joint_ramping_row(published, name, bid_type, device, settlement, rhs_mw)
+                isnothing(checked) || push!(last_step, checked)
+                # The built row reads the device's fcas_ramping_limits series at that interval.
+                series = PSY.get_time_series_values(PSY.SingleTimeSeries, device, fcas_ramping_series_name(bid_type))
+                stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, fcas_ramping_series_name(bid_type))
+                @test rhs_mw ≈ first(series[findfirst(==(settlement), stamps)]) * base_power atol = 1.0e-6
             end
         end
-        n_joint_ramping_rows = length(joint_ramping_rows)
-        violations = filter(r -> r.violated, joint_ramping_rows)
-        n_joint_ramping_violations = length(violations)
 
-        n_ramp_floor_violations = count(r -> r.energy_at_own_ramp_floor, violations)
-        n_unexplained_violations = n_joint_ramping_violations - n_ramp_floor_violations
-        if !isempty(violations)
-            println("§6.1 fidelity violations at the published solution ($(n_joint_ramping_violations)/$(n_joint_ramping_rows)):")
-            println(
-                rpad("service", 22), rpad("duid", 12), rpad("type", 22), rpad("bidtype", 10),
-                rpad("initial_mw", 11), rpad("energy_mw", 10), rpad("target_mw", 10),
-                rpad("ramp_mw", 9), rpad("diff_mw", 9), rpad("agc", 4), "at_ramp_floor",
-            )
-            for r in violations
-                agc = ismissing(r.agc_status) ? "?" : string(r.agc_status)
+        # Every step, from the device series that the formulation reads as the right-hand side.
+        all_steps = NamedTuple[]
+        n_inactive_all = 0
+        for svc in PSY.get_components(FCASService, sys)
+            bid_type = get_bid_type(svc)
+            bid_type in AEM.FCAS_REGULATION_MARKETS || continue
+            name = PSY.get_name(svc)
+            for device in PSY.get_contributing_devices(sys, svc)
+                PSY.has_time_series(device, PSY.SingleTimeSeries, fcas_ramping_series_name(bid_type)) || continue
+                series = PSY.get_time_series_values(PSY.SingleTimeSeries, device, fcas_ramping_series_name(bid_type))
+                stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, fcas_ramping_series_name(bid_type))
+                for (t, value) in zip(stamps, series)
+                    t in REAL_STEPS || continue
+                    rhs_mw = first(value) * base_power
+                    if abs(rhs_mw) >= FCAS_INACTIVE_LIMIT_MW - 1
+                        n_inactive_all += 1
+                        continue
+                    end
+                    checked = joint_ramping_row(published, name, bid_type, device, t, rhs_mw)
+                    isnothing(checked) || push!(all_steps, checked)
+                end
+            end
+        end
+
+        for (label, rows) in (("last step", last_step), ("all steps", all_steps))
+            violations = filter(r -> r.violated, rows)
+            if !isempty(violations)
+                println("§6.1 fidelity violations at the published solution, $label ($(length(violations))/$(length(rows))):")
                 println(
-                    rpad(r.service, 22), rpad(r.duid, 12), rpad(string(r.device_type), 22), rpad(string(r.bid_type), 10),
-                    rpad(string(round(r.initial_mw; digits = 1)), 11), rpad(string(round(r.energy_mw; digits = 1)), 10),
-                    rpad(string(round(r.target_mw; digits = 1)), 10), rpad(string(round(r.ramp_cap_mw; digits = 1)), 9),
-                    rpad(string(round(r.diff_mw; digits = 1)), 9), rpad(agc, 4), r.energy_at_own_ramp_floor,
+                    rpad("service", 22), rpad("duid", 12), rpad("type", 22), rpad("settlement", 21),
+                    rpad("initial_mw", 11), rpad("energy_mw", 10), rpad("target_mw", 10),
+                    rpad("ramp_mw", 9), rpad("diff_mw", 9), rpad("agc", 4), "at_ramp_floor",
                 )
+                for r in violations
+                    agc = ismissing(r.agc_status) ? "?" : string(r.agc_status)
+                    println(
+                        rpad(r.service, 22), rpad(r.duid, 12), rpad(string(r.device_type), 22), rpad(string(r.settlement), 21),
+                        rpad(string(round(r.initial_mw; digits = 1)), 11), rpad(string(round(r.energy_mw; digits = 1)), 10),
+                        rpad(string(round(r.target_mw; digits = 1)), 10), rpad(string(round(r.ramp_cap_mw; digits = 1)), 9),
+                        rpad(string(round(r.diff_mw; digits = 1)), 9), rpad(agc, 4), r.energy_at_own_ramp_floor,
+                    )
+                end
             end
+            n_rows = length(rows)
+            n_violations = length(violations)
+            n_ramp_floor_violations = count(r -> r.energy_at_own_ramp_floor, violations)
+            n_unexplained_violations = n_violations - n_ramp_floor_violations
+            n_inactive = label == "last step" ? n_inactive_last : n_inactive_all
+            @info "§6.1 fidelity, $label" n_enabled_pairs n_rows n_inactive n_violations n_ramp_floor_violations n_unexplained_violations
+            @test n_rows > 0
+            @test n_unexplained_violations == 0
         end
-        @info "§6.1 fidelity" n_joint_ramping_rows n_joint_ramping_violations n_ramp_floor_violations n_unexplained_violations
-
-        # On 2026-06-04 all 10 violations (out of 1520 rows) are VIC1's LYA2 (a large coal
-        # ThermalStandard) over ten consecutive LOWERREG intervals while it ramps down at exactly
-        # its bid-capped RAMPDOWNRATE floor (TOTALCLEARED == InitialMW - RampDown·Delta each
-        # time, confirmed above), yet still carries a small published LOWERREG target. A battery
-        # crossing zero (checked, zero found) is not the cause here; a continuously-ramping
-        # generator with no energy headroom left under the bid-capped rate is exactly the
-        # documented departure - DISPATCHLOAD's RAMPDOWNRATE is "lesser of bid or telemetered", so
-        # our row is tighter than NEMDE's true telemetered-rate row whenever the bid rate binds
-        # every interval. No other category (fast start, intervention, AGC-disabled, or a
-        # units/time-basis mismatch) appears in this window.
-        @test n_unexplained_violations == 0
     end
 end
 
 @testset "Elastic GenericConstraint slack matches AEMO's published violation, $(Date(VIOLATION_START))" begin
-    sys, _ = constrained_system(db; date_range = VIOLATION_DATE_RANGE)
-    attach_demand!(sys, db, VIOLATION_DATE_RANGE; resolution = REAL_RESOLUTION)
-    set_market_bids!(sys, db, VIOLATION_DATE_RANGE; resolution = REAL_RESOLUTION)
-    attach_dispatch_limits!(sys, db, VIOLATION_DATE_RANGE)
-    PSY.transform_single_time_series!(sys, VIOLATION_SPAN, REAL_RESOLUTION)
+    replay = replay_real(VIOLATION_STEPS)
+    (; sys, results, date_range) = replay
+    base_power = PSY.get_base_power(sys)
 
     target_gencon_ids = ("Q_STR_ALDSF_ZERO", "Q_BRDDSF01_1INV")
     gcs = [gc for gc in PSY.get_components(GenericConstraint, sys) if get(gc.ext, "gencon_id", nothing) in target_gencon_ids]
     @test length(gcs) == length(target_gencon_ids)
 
-    template = aemsim_template(sys)
-    for gc in gcs
-        name = PSY.get_name(gc)
-        PSI.set_service_model!(
-            template, name,
-            PSI.ServiceModel(
-                GenericConstraint, LinearFactorLimit, name; duals = [NEMConstraintLimit],
-                use_slacks = true,
-            ),
-        )
-    end
-    model = PSI.DecisionModel(
-        template, sys;
-        optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
-        horizon = VIOLATION_SPAN,
-        resolution = REAL_RESOLUTION,
-        interval = REAL_RESOLUTION,
-        initial_time = VIOLATION_START,
-        name = "real_data_violation",
+    dual_keys = Dict(
+        k.meta => k for k in PSI.list_dual_keys(results) if PSI.IS.Optimization.get_entry_type(k) === NEMConstraintLimit
     )
-
-    build_and_solve!(model)
-
-    results = PSI.OptimizationProblemResults(model)
-    base_power = PSY.get_base_power(sys)
-
-    dc_table = AustralianElectricityMarkets.Readers.read_hive(db, :DISPATCHCONSTRAINT)
+    dc_table = read_hive(db, :DISPATCHCONSTRAINT)
+    violations = read_constraint_violations(results, sys)
     for gc in gcs
         name = PSY.get_name(gc)
         gencon_id = get(gc.ext, "gencon_id", nothing)
-        var_type = get_sense(gc) == ConstraintSense.LE ? "GenericConstraintSlackUp" : "GenericConstraintSlackDown"
-        slack_df = PSI.read_variable(results, "$(var_type)__GenericConstraint__$name")
-        dual_df = PSI.read_dual(results, "NEMConstraintLimit__GenericConstraint__$name")
-        invoked_timestamps = PSY.get_time_series_timestamps(
-            PSY.SingleTimeSeries, gc, "invoked";
-            start_time = VIOLATION_START, len = nrow(slack_df),
-        )
         invoked_values = PSY.get_time_series_values(
-            PSY.SingleTimeSeries, gc, "invoked";
-            start_time = VIOLATION_START, len = nrow(slack_df),
+            PSY.SingleTimeSeries, gc, "invoked"; start_time = first(VIOLATION_STEPS), len = length(VIOLATION_STEPS),
         )
-        @test length(invoked_values) == nrow(slack_df)
-        @test invoked_timestamps == slack_df.DateTime
-        @test invoked_timestamps == dual_df.DateTime
-        invoked_df = DataFrame(DateTime = invoked_timestamps, invoked = invoked_values .> 0.0)
-        invoked_slack = innerjoin(slack_df, invoked_df; on = :DateTime, validate = (true, true))
-        @test nrow(invoked_slack) == nrow(slack_df)
-        @test any(.!invoked_slack.invoked)
-        @test all(abs.(invoked_slack.value[.!invoked_slack.invoked]) .<= 1.0e-6)
-        invoked_slack = subset(invoked_slack, :invoked => ByRow(identity))
+        invoked = invoked_values .> 0.0
+        invoked_dates = collect(VIOLATION_STEPS)[invoked]
+        @info "Invoked intervals of the violation window" gencon_id n_invoked = count(invoked) n_not_invoked = count(!, invoked)
 
+        slack_type = get_sense(gc) == ConstraintSense.LE ? "GenericConstraintSlackUp" : "GenericConstraintSlackDown"
+        slack_name = "$(slack_type)__GenericConstraint__$name"
+        slack_df = PSI.read_realized_variables(results, [slack_name])[slack_name]
+        @test sort(slack_df.DateTime) == collect(VIOLATION_STEPS)
+        # A non-invoked row is vacuous and its slack free, so the violation reader must not report it.
+        @test any(!, invoked)
+        reported = filter(r -> r.family == "generic_constraint" && r.name == name, violations).DateTime
+        @test isempty(setdiff(reported, invoked_dates))
+
+        dual_key = dual_keys[name]
+        dual_df = PSI.read_realized_duals(results, [dual_key])[PSI.IS.Optimization.encode_key_as_string(dual_key)]
         published = DataFrame(
             DuckDB.execute(
                 db.db,
@@ -562,28 +425,29 @@ end
                 WHERE CONSTRAINTID = ? AND SETTLEMENTDATE BETWEEN ? AND ? AND INTERVENTION = 0
                 ORDER BY SETTLEMENTDATE
                 """,
-                [gencon_id, VIOLATION_START, VIOLATION_START + VIOLATION_SPAN],
+                [gencon_id, first(VIOLATION_STEPS), last(VIOLATION_STEPS)],
             ),
         )
-        invoked_dates = invoked_timestamps[invoked_values .> 0.0]
         published_invoked = subset(published, :SETTLEMENTDATE => ByRow(in(invoked_dates)))
         @test Set(published_invoked.SETTLEMENTDATE) == Set(invoked_dates)
         @test nrow(published_invoked) == length(invoked_dates)
         comparison = innerjoin(
-            invoked_slack, select(published_invoked, :SETTLEMENTDATE => :DateTime, :VIOLATIONDEGREE, :MARGINALVALUE);
+            select(slack_df, :DateTime, :value => :slack_mw),
+            select(published_invoked, :SETTLEMENTDATE => :DateTime, :VIOLATIONDEGREE, :MARGINALVALUE);
             on = :DateTime, validate = (true, true),
         )
         comparison = innerjoin(
-            comparison, select(dual_df, :DateTime, :value => :dual);
-            on = :DateTime, validate = (true, true),
+            comparison, select(dual_df, :DateTime, :value => :dual); on = :DateTime, validate = (true, true),
         )
-        @test nrow(comparison) == length(invoked_dates)
-        @test any(v -> v > 0.0, comparison.value)
-        @test any(v -> v > 0.0, comparison.VIOLATIONDEGREE)
-        # slack_df.value is already natural-unit MW (GenericConstraintSlackUp/Down convert on
-        # read); dual_df.value is left in $ per pu of RHS per interval by PSI, so divide by
-        # base_power and the interval length for a $/MW comparison against AEMO's MARGINALVALUE.
-        @test all(isapprox.(comparison.value, comparison.VIOLATIONDEGREE; atol = 1.0e-6))
+        # The reader may leave a step without a value; none is a zero slack.
+        comparison.slack_mw = coalesce.(comparison.slack_mw, 0.0)
+        @test nrow(comparison) == nrow(published_invoked)
+        @test any(>(0.0), comparison.slack_mw)
+        @test any(>(0.0), comparison.VIOLATIONDEGREE)
+        @info "Realized slack vs published VIOLATIONDEGREE" gencon_id comparison
+        @test all(isapprox.(comparison.slack_mw, comparison.VIOLATIONDEGREE; atol = 1.0e-6))
+        # PSI leaves the dual in $ per pu of RHS per interval; divide by base_power and the interval
+        # length for a $/MW comparison against AEMO's MARGINALVALUE.
         violated = subset(comparison, :VIOLATIONDEGREE => ByRow(>(1.0e-6)))
         @test nrow(violated) > 0
         @test all(
@@ -598,7 +462,7 @@ end
         # Direct curve evaluation, no LP: isolates the loss model from dispatch. Each
         # AreaInterchange's own attached model is used (already per-unit, so undone to MW below).
         table = read_hive(db, :DISPATCHINTERCONNECTORRES)
-        flows_losses = AEM._query(
+        flows_losses = query(
             db,
             """
             SELECT SETTLEMENTDATE, INTERCONNECTORID,
@@ -609,14 +473,14 @@ end
                 PARTITION BY SETTLEMENTDATE, INTERCONNECTORID ORDER BY archive_month DESC
             ) = 1
             """,
-            [REAL_START, last(REAL_DATE_RANGE)],
+            [first(VIOLATION_STEPS), last(VIOLATION_STEPS)],
         )
         filter!(row -> !ismissing(row.MWFLOW) && !ismissing(row.MWLOSSES), flows_losses)
 
         # Two demand definitions: this package's TOTALDEMAND, and nempy's INITIALSUPPLY +
         # DEMANDFORECAST. Keyed by `t.SETTLEMENTDATE`: a GroupKey never equals a DateTime.
         region_sum = read_hive(db, :DISPATCHREGIONSUM)
-        demand_rows = AEM._query(
+        demand_rows = query(
             db,
             """
             SELECT SETTLEMENTDATE, REGIONID,
@@ -628,7 +492,7 @@ end
                 PARTITION BY SETTLEMENTDATE, REGIONID ORDER BY archive_month DESC
             ) = 1
             """,
-            [REAL_START, last(REAL_DATE_RANGE)],
+            [first(VIOLATION_STEPS), last(VIOLATION_STEPS)],
         )
         demand_by_time(column) = Dict(
             key.SETTLEMENTDATE => Dict(
@@ -639,7 +503,6 @@ end
         demands = ("TOTALDEMAND" => demand_by_time(:TOTALDEMAND), "INITIALSUPPLY+DEMANDFORECAST" => demand_by_time(:NEMPY_DEMAND))
         @test !isempty(last(first(demands)))
 
-        base_power = PSY.get_base_power(sys)
         reports = String[]
         for (label, demand_lookup) in demands
             abs_errors = Float64[]
@@ -650,7 +513,7 @@ end
                 models = PSY.get_supplemental_attributes(InterconnectorLossModel, ic)
                 length(models) == 1 || continue
                 model_mw = AEM._to_pu(only(models), 1.0 / base_power)
-                demand = get(demand_lookup, row.SETTLEMENTDATE, Dict{String, Float64}())
+                demand = demand_lookup[row.SETTLEMENTDATE]
                 err = abs(interconnector_losses(model_mw, row.MWFLOW, demand) - row.MWLOSSES)
                 push!(abs_errors, err)
                 push!(get!(() -> Float64[], per_ic_errors, row.INTERCONNECTORID), err)
