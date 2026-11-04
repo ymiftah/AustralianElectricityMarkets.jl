@@ -110,26 +110,18 @@ end
     end
 end
 
-@testset "MPC overrides must be finite and positive at both configuration levels" begin
+@testset "MPC overrides must be finite and positive" begin
     sys = nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION)
     model = PSI.DecisionModel(AEMS.NEMDispatchProblem, replay_template(sys), sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START)
     container = PSI.get_optimization_container(model)
     settings = PSI.get_ext(PSI.get_settings(model))
-    capped(cap) = PSI.ServiceModel(
-        GenericConstraint, LinearFactorLimit, "N_CAP"; attributes = Dict{String, Any}("market_price_cap" => cap),
-    )
     for cap in (0.0, -1.0, Inf, -Inf, NaN)
         settings["market_price_cap"] = cap
         @test_throws ArgumentError AEMS._container_market_price_cap(container, TOY_START)
-        @test_throws ArgumentError AEMS._service_market_price_cap(capped(cap), container, TOY_START)
         @test_throws ArgumentError AEMS._add_mpc_penalty!(container, PSI.SystemBalanceSlackUp, PSY.Area, String[], 155.0; rate = cap)
     end
     settings["market_price_cap"] = 12345.0
     @test AEMS._container_market_price_cap(container, TOY_START) == 12345.0
-    @test AEMS._service_market_price_cap(capped(23456.0), container, TOY_START) == 23456.0
-    @test AEMS._service_market_price_cap(
-        PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "N_CAP"), container, TOY_START,
-    ) == 12345.0
 end
 
 @testset "each replay call replaces the exclusions of the previous call on the same system" begin

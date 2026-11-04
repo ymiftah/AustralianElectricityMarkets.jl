@@ -164,15 +164,13 @@ function _prune_unbuildable_constraints!(sys)
     return
 end
 
-function _nem_service_template(sys; use_slacks::Bool = false, market_price_cap::Union{Nothing, Float64} = nothing, mpc = _HELPER_MPC)
+function _nem_service_template(sys; use_slacks::Bool = false, mpc = _HELPER_MPC)
     template = _area_balance_template(sys; mpc = mpc)
-    attributes = isnothing(market_price_cap) ? Dict{String, Any}() :
-        Dict{String, Any}("market_price_cap" => market_price_cap)
     PSI.set_service_model!(
         template,
         PSI.ServiceModel(
             GenericConstraint, AEMS.LinearFactorLimit; duals = [AEMS.NEMConstraintLimit],
-            use_slacks = use_slacks, attributes = attributes,
+            use_slacks = use_slacks,
         ),
     )
     return template
@@ -643,7 +641,7 @@ end
 
     test_mpc = 20_300.0
     model = _decision_model(
-        _nem_service_template(sys; use_slacks = true, market_price_cap = test_mpc, mpc = test_mpc), sys;
+        _nem_service_template(sys; use_slacks = true, mpc = test_mpc), sys;
         mpc = test_mpc, optimizer = HiGHS.Optimizer, horizon = Hour(2),
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT

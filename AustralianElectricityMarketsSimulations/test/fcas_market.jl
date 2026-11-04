@@ -1746,7 +1746,7 @@ function fcas_requirement_toy_system(bids, gcs)
     )
 end
 
-function solve_fcas_requirement(sys, bid_types, gc_names; use_slacks = false, steps = 1, attributes = Dict{String, Any}())
+function solve_fcas_requirement(sys, bid_types, gc_names; use_slacks = false, steps = 1, mpc = nothing)
     device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
     template = fcas_toy_template(sys, [fcas_service_name(device, bt) for bt in bid_types])
     for name in gc_names
@@ -1754,7 +1754,7 @@ function solve_fcas_requirement(sys, bid_types, gc_names; use_slacks = false, st
             template, name,
             PSI.ServiceModel(
                 GenericConstraint, LinearFactorLimit, name; duals = [NEMConstraintLimit],
-                use_slacks = use_slacks, attributes = attributes,
+                use_slacks = use_slacks,
             ),
         )
     end
@@ -1764,6 +1764,7 @@ function solve_fcas_requirement(sys, bid_types, gc_names; use_slacks = false, st
         horizon = steps * TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
         initial_time = TOY_START, name = "fcas_req_toy", store_variable_names = true,
     )
+    isnothing(mpc) || (PSI.get_ext(PSI.get_settings(model))["market_price_cap"] = mpc)
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     return PSI.OptimizationProblemResults(model)
@@ -1825,7 +1826,7 @@ end
     gcs = [("F_TOY", ConstraintSense.GE, 25.0, [UnitTerm(TOY_CHEAP, bid_type, 1.0)], [bid_type])]
     sys = fcas_requirement_toy_system([(bid_type, 10.0)], gcs)
     results = solve_fcas_requirement(
-        sys, [bid_type], ["F_TOY"]; use_slacks = true, attributes = Dict{String, Any}("market_price_cap" => 20_300.0),
+        sys, [bid_type], ["F_TOY"]; use_slacks = true, mpc = 20_300.0,
     )
     weight = get_constraint_weight(get_component(GenericConstraint, sys, "F_TOY"))
     @test fcas_enabled_mw(results, sys, "1_RAISE6SEC") ≈ 20.0 atol = FCAS_TOY_TOLERANCE

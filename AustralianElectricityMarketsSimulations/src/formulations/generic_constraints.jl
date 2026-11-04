@@ -500,7 +500,7 @@ function PSI.objective_function!(
     resolution = PSI.get_resolution(container)
     base_power = PSI.get_base_power(container)
     weight = constraint_cvp_factor(gc)
-    mpc = _service_market_price_cap(model, container, PSI.get_initial_time(container))
+    mpc = _container_market_price_cap(container, PSI.get_initial_time(container))
     PSI.add_parameters!(container, GenericConstraintSlackCostParameter, gc, model)
     scale = base_power * interval_cost_coefficient(weight, resolution) * mpc
     for var_type in (GenericConstraintSlackUp, GenericConstraintSlackDown)

@@ -37,14 +37,13 @@ end
             sys = _objective_cache_system()
             @test !PSY.stores_time_series_in_memory(sys)
             template = replay_template(sys)
-            service_model = PSI.get_model(template, GenericConstraint, "")  # type-level model, shared attributes
-            PSI.get_attributes(service_model)["market_price_cap"] = 12345.0
             model = PSI.DecisionModel(
                 template, sys; horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION,
                 interval = TOY_RESOLUTION, initial_time = TOY_START,
                 optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false),
                 time_series_cache_size = cached ? 1024 * 1024 : 0,
             )
+            PSI.get_ext(PSI.get_settings(model))["market_price_cap"] = 12345.0
             @test PSI.build!(model; output_dir = joinpath(folder, "model")) == PSI.ModelBuildStatus.BUILT
             container = PSI.get_optimization_container(model)
             keys = [k for k in Base.keys(PSI.get_parameters(model)) if PSI.IS.Optimization.get_entry_type(k) in (FCASBandPriceParameter, AEMS.GenericConstraintSlackCostParameter)]

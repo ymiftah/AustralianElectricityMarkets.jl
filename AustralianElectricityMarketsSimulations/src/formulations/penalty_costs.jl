@@ -1,4 +1,4 @@
-# Validates a Market Price Cap override given as a PSI model attribute or setting.
+# Validates a Market Price Cap override given as a settings entry.
 function _checked_market_price_cap(rate)
     value = rate isa Real ? Float64(rate) : NaN
     isfinite(value) && value > 0.0 ||
@@ -42,26 +42,11 @@ end
 
 
 """
-    _service_market_price_cap(service_model, container, t::DateTime) -> Float64
-
-The `"market_price_cap"` attribute of `service_model` when set, else
-[`_container_market_price_cap`](@ref)`(container, t)`.
-
-# Returns
-A `\$/MWh` value.
-"""
-function _service_market_price_cap(service_model::PSI.ServiceModel, container::PSI.OptimizationContainer, t::DateTime)
-    rate = get(PSI.get_attributes(service_model), "market_price_cap", nothing)
-    return isnothing(rate) ? _container_market_price_cap(container, t) : _checked_market_price_cap(rate)
-end
-
-
-"""
     _container_market_price_cap(container, t::DateTime) -> Float64
 
 The `"market_price_cap"` entry of the model's `PSI.get_ext(PSI.get_settings(model))`, or
 [`_financial_year_mpc`](@ref)`(t)` if unset. The cap of every penalty priced by
-[`_add_mpc_penalty!`](@ref), and the fallback of [`_service_market_price_cap`](@ref).
+[`_add_mpc_penalty!`](@ref).
 
 # Arguments
   - `container`: the `PSI.OptimizationContainer` being built.

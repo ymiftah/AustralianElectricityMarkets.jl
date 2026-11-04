@@ -733,6 +733,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `replication_decision_model` is removed in favour of `PSI.DecisionModel(NEMDispatchProblem, template, sys; kwargs...)`. The default decision problem name is now `"dispatch"`.
 
+- The `"market_price_cap"` service-model attribute is removed; the Market Price Cap comes from the model settings, set with `DecisionModel(NEMDispatchProblem, ...; market_price_cap)`.
+
 - The `excluded_device_types` keyword of `check_fcas_services`, and the storage-only FCAS exclusion: an FCAS service whose available contributors are all storage is now built, not set unavailable.
 - Public names `set_nem_fixed_loads!`, `get_low_breakpoint`, `get_high_breakpoint`, `get_rhs`, `set_constraint_weight!`, `get_gencon_id`, `interconnector_loss_gaps` and `check_interconnector_loss_segments`; `nem_system` builds these inputs.
 - `ConstrainedNetworkConfiguration` was removed; build replay systems with `NEMDEConfiguration`.
