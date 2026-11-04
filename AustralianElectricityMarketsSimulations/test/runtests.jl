@@ -44,6 +44,7 @@ const TEST_GROUPS = [
     "pipeline" => ("Replication pipeline", "pipeline.jl"),
     "recurrent_objective_cache" => ("Recurrent objective forecast cache", "recurrent_objective_cache.jl"),
     "stock_simulation" => ("Stock simulation replay", "stock_simulation.jl"),
+    "replay_workflow" => ("Replay workflow on the mock cache", "replay_workflow.jl"),
     "replay_scripts" => ("Repository replay workflow", "../../test/scripts/replay_workflow.jl"),
 ]
 

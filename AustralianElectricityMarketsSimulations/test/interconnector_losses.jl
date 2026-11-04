@@ -788,3 +788,16 @@ end
 end
 
 include("mnsp_limits.jl")
+
+@testset "read_interconnector_loss_gaps on a replay of the mock cache" begin
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
+    steps = DateTime(2025, 1, 1, 0, 5):DISPATCH_INTERVAL:DateTime(2025, 1, 1, 0, 10)
+    date_range = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
+    check_replay_inputs(db, date_range)
+    sys = nem_system(db, NEMDEConfiguration(); date_range)
+    replay = run_replay(sys, steps; folder = mktempdir())
+    table = read_interconnector_loss_gaps(replay.results, sys)
+    @test names(table) == ["interconnector", "DateTime", "flow_mw", "solved_loss_mw", "curve_loss_mw", "gap_mw", "weighted_loss_price"]
+    @test !isempty(table) && Set(table.DateTime) == Set(steps)
+    @test all(isfinite, table.gap_mw) && all(<(1.0e-3), abs.(table.gap_mw))
+end

@@ -2,18 +2,12 @@ if !isdefined(@__MODULE__, :InterconnectorLossGaps)
     include(joinpath(@__DIR__, "..", "..", "scripts", "interconnector_loss_gaps.jl"))
 end
 
-@testset "interconnector loss gaps on a saved replay" begin
+@testset "interconnector loss gaps CLI on a saved replay" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     t1, t2 = DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)
     folder = mktempdir()
     result = replicate_range(db, t1, t2; output_dir = folder)
     @test nrow(result.chunks) == 1
-
-    sys = workflow_test_system(db, t1:Minute(5):(t2 + Minute(10)))
-    table = read_interconnector_loss_gaps(only(result.results), sys)
-    @test names(table) == ["interconnector", "DateTime", "flow_mw", "solved_loss_mw", "curve_loss_mw", "gap_mw", "weighted_loss_price"]
-    @test !isempty(table) && Set(table.DateTime) == Set([t1, t2])
-    @test all(isfinite, table.gap_mw) && all(<(1.0e-3), abs.(table.gap_mw))
 
     csv = joinpath(mktempdir(), "loss_gaps.csv")
     main_table = InterconnectorLossGaps.main(
@@ -22,11 +16,11 @@ end
             "--hive", AEM_TEST_REPLAY_HIVE_DIR, "--output", csv,
         ]
     )
-    @test nrow(main_table) == nrow(table)
+    @test !isempty(main_table) && Set(main_table.DateTime) == Set([t1, t2])
     lines = readlines(csv)
-    @test lines[1] == join(names(table), ",")
+    @test lines[1] == join(names(main_table), ",")
     fields = [split(line, ',') for line in lines[2:end]]
-    @test length(fields) == nrow(table)
+    @test length(fields) == nrow(main_table)
     @test all(length(f) == 7 for f in fields)
     @test Set(parse(DateTime, f[2]) for f in fields) == Set([t1, t2])
     gaps = parse.(Float64, (f[6] for f in fields))
