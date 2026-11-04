@@ -69,9 +69,17 @@ function prepared_test_system(db, date_range)
 end
 
 @testset "simulation runtime exposes no cache entry points" begin
-    for api in (:replication_system, :replicate_range, :read_interval_inputs, :read_published_interval, :aem_connect)
+    for api in (:replication_system, :read_interval_inputs, :read_published_interval, :aem_connect)
         @test !isdefined(AEMS, api)
     end
+end
+
+# Results that list an interconnector flow variable and no loss variable.
+struct FlowWithoutLossResults end
+PSI.list_variable_keys(::FlowWithoutLossResults) = [PSI.VariableKey(PSI.FlowActivePowerVariable, PSY.AreaInterchange)]
+
+@testset "read_solved_interval rejects interconnector flows without losses" begin
+    @test_throws ArgumentError read_solved_interval(FlowWithoutLossResults(), PSY.System(100.0))
 end
 
 @testset "Replication pipeline" begin
