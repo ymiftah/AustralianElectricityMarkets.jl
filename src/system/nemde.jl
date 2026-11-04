@@ -199,27 +199,4 @@ function _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, da
 end
 
 
-"""
-    prepare_replay_forecasts!(sys::PSY.System) -> PSY.System
-
-Transforms the single time series of a system built by [`nem_system`](@ref) into five-minute
-forecast windows of one interval each, the form a replay simulation reads.
-
-# Arguments
-- `sys`: a system with at least two timestamps of single time series and no forecasts.
-
-# Returns
-The modified system. Throws `ArgumentError` when forecasts already exist or input series are absent.
-"""
-function prepare_replay_forecasts!(sys::PSY.System)
-    counts = PSY.get_time_series_counts(sys)
-    counts.forecast_count == 0 || throw(ArgumentError("prepare_replay_forecasts!: the system already has forecast time series."))
-    counts.static_time_series_count > 0 || throw(ArgumentError("prepare_replay_forecasts!: attach input time series before preparation."))
-    _, n = PSY.check_time_series_consistency(sys, PSY.SingleTimeSeries)
-    n >= 2 || throw(ArgumentError("prepare_replay_forecasts!: at least two input timestamps are required for forecast windows."))
-    PSY.transform_single_time_series!(sys, DISPATCH_INTERVAL, DISPATCH_INTERVAL)
-    return sys
-end
-
-
-export NEMDEConfiguration, prepare_replay_forecasts!
+export NEMDEConfiguration

@@ -211,7 +211,7 @@ end
             @test all(iszero, values[1:2])
         end
     end
-    @test_nowarn prepare_replay_forecasts!(late)
+    @test_nowarn PowerSystems.transform_single_time_series!(late, DISPATCH_INTERVAL, DISPATCH_INTERVAL)
 
     @testset "a partly published FCAS trapezium is zero where AEMO publishes none" begin
         partial = damaged_cache(

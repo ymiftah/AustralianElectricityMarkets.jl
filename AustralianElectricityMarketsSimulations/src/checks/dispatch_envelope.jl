@@ -1,20 +1,20 @@
 """
-    check_dispatch_envelope(sys, template, initial_time, n_intervals) -> Nothing
+    check_dispatch_envelope(template, sys, initial_time, n_intervals) -> Nothing
 
 Validates complete, finite, non-negative separate energy availability and UIGF inputs for
 NEM dispatch devices over the requested intervals. Conflicts with ramping are
 resolved by the model's priced violation variables.
 
 # Arguments
-- `sys`: the system whose time series are checked.
 - `template`: the dispatch template.
+- `sys`: the system whose time series are checked.
 - `initial_time`: the first interval timestamp.
 - `n_intervals`: the number of intervals to check.
 
 # Returns
 `nothing`; invalid or missing energy inputs raise `ArgumentError`.
 """
-function check_dispatch_envelope(sys::PSY.System, template::PSI.ProblemTemplate, initial_time::DateTime, n_intervals::Integer)
+function check_dispatch_envelope(template::PSI.ProblemTemplate, sys::PSY.System, initial_time::DateTime, n_intervals::Integer)
     for model in values(PSI.get_device_models(template))
         PSI.get_formulation(model) <: AbstractNEMDispatch || continue
         _check_energy_limit_series(sys, model, initial_time, n_intervals)

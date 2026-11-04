@@ -5,7 +5,7 @@ Verifies that `steps` is a non-empty range of five-minute intervals and that `sy
 forecast windows covering each of them.
 
 # Arguments
-- `sys`: the system the simulation runs on, prepared with `prepare_replay_forecasts!`.
+- `sys`: the system the simulation runs on, prepared by [`prepare_replay!`](@ref).
 - `steps`: the interval-ending timestamps the simulation solves.
 
 # Returns
@@ -17,7 +17,7 @@ function check_replication_steps(sys::PSY.System, steps::StepRange{DateTime})
         ArgumentError("check_replication_steps: steps must be a non-empty range of five-minute intervals."),
     )
     PSY.get_time_series_counts(sys).forecast_count > 0 || throw(
-        ArgumentError("check_replication_steps: call prepare_replay_forecasts!(sys) before constructing a simulation."),
+        ArgumentError("check_replication_steps: call prepare_replay!(sys, template, steps) before constructing a simulation."),
     )
     missing_steps = setdiff(steps, PSY.get_forecast_initial_times(sys))
     isempty(missing_steps) || throw(
@@ -34,7 +34,7 @@ Maps each `GenericConstraint` of `sys`, available or not, that is invoked in non
 excluded by an earlier call are unavailable, so they are included to be reported again on a reused system.
 
 # Arguments
-- `sys`: the system prepared with `prepare_replay_forecasts!`, whose constraints carry an `"invoked"` series.
+- `sys`: the system prepared by [`prepare_replay!`](@ref), whose constraints carry an `"invoked"` series.
 - `steps`: the interval-ending timestamps the simulation solves.
 
 # Returns

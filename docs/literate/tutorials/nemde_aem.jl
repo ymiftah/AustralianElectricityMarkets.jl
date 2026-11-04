@@ -304,9 +304,9 @@ slack_total
 # 1. `db = aem_connect()` and `populate(db, table, start, stop)` cache the NEMWEB tables.
 # 2. `nem_system(db, NEMDEConfiguration(); date_range)` builds the populated `System`,
 #    including energy and FCAS offers, dispatch and energy limits, generic constraints and losses.
-# 3. `prepare_replay_forecasts!(sys)` transforms the attached interval inputs into five-minute
-#    forecast windows. The effective FCAS parameters and tie-break scales are already derived by
-#    `nem_system`.
+# 3. `prepare_replay!(sys, template, steps)` transforms the attached interval inputs into five-minute
+#    forecast windows and runs the replay pre-flight checks. The effective FCAS parameters and
+#    tie-break scales are already derived by `nem_system`.
 # 4. `replication_simulation(sys, steps; folder)` from `scripts/replay_simulation.jl`
 #    (module `ReplaySimulation`) creates a PSI simulation. Build it with `PSI.build!` and run it
 #    with `PSI.execute!`.
@@ -314,13 +314,13 @@ slack_total
 #    quantities and constraint violations. The repository scripts compare these with
 #    `read_published_interval` from the cache.
 #
-# Validate the study inputs before solving. `check_fcas_services(sys, template)`
+# Validate the study inputs before solving. `check_fcas_services(template, sys)`
 # verifies that every FCAS service has a corresponding model in the template,
 # `check_interconnector_loss_segments(results, sys)` from `scripts/interconnector_loss_gaps.jl`
 # after a solve verifies that each solved loss lies on the loss curve at the solved flow.
 
 include(joinpath(@__DIR__, "..", "..", "..", "scripts", "interconnector_loss_gaps.jl")) #hide
-check_fcas_services(sys, template)
+check_fcas_services(template, sys)
 InterconnectorLossGaps.check_interconnector_loss_segments(results, sys)
 
 # !!! note "Example scope"

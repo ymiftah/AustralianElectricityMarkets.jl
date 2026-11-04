@@ -342,7 +342,7 @@ end
                 ),
             )
         end
-        @test isnothing(check_fcas_services(sys, fcas_template))
+        @test isnothing(check_fcas_services(fcas_template, sys))
 
         fcas_model = PSI.DecisionModel(
             fcas_template, sys;

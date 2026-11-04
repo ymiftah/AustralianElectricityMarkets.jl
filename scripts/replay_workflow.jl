@@ -103,7 +103,6 @@ module ReplayWorkflow
             intervention = intervention, interval_flow_limits = interval_flow_limits,
             time_series_in_memory = time_series_in_memory, time_series_directory = ts_directory,
         )
-        prepare_replay_forecasts!(sys)
         system_build_s = time() - t0
         run = run_replication(
             sys, steps; optimizer, template, folder, simulation_name = _SIMULATION_NAME, cache_size_mib, on_phase,

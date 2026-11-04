@@ -18,6 +18,7 @@ using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCAS_
     fcas_upper_regulation_service, fcas_offer_sides, tie_break_series_name, tie_groups, _tie_break_offers,
     _tie_break_active_bands, _tie_break_stamp_bands, _other_regulation, _financial_year_mpc,
     _financial_year_start
+using DataFrames: DataFrame
 using Dates
 using HiGHS
 using JuMP
@@ -67,6 +68,7 @@ include("checks/replay_inputs.jl")
 include("checks/replication_steps.jl")
 include("checks/template.jl")
 include("templates/template_nemde.jl")
+include("checks/replay_range.jl")
 include("problems/optimizer.jl")
 include("problems/nem_dispatch.jl")
 
@@ -74,7 +76,7 @@ include("problems/nem_dispatch.jl")
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
 export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
     exclude_unmodeled_services!, check_replication_steps,
-    never_invoked_constraints, AbstractMNSPSlack
+    never_invoked_constraints, prepare_replay!, AbstractMNSPSlack
 export NEMDispatchProblem, nemde_optimizer, NEMDE_HIGHS_OPTIONS
 export EnergyOfferSurplusSlack, EnergyOfferDeficitSlack,
     EnergyDecrementalOfferSurplusSlack, EnergyDecrementalOfferDeficitSlack

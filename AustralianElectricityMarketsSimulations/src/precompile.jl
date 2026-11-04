@@ -36,15 +36,8 @@ function _precompile_workload()
     finally
         _PrecompileMockData.DuckDB.close(db.db)
     end
-    AustralianElectricityMarkets.prepare_replay_forecasts!(sys)
-    check_replication_steps(sys, steps)
-    check_single_financial_year(steps)
-    check_tie_break_pairs(sys, steps)
     template = template_nemde()
-    exclude_unmodeled_services!(sys, template; exclude_constraints = never_invoked_constraints(sys, steps))
-    check_template_against_sys(template, sys)
-    check_fcas_services(sys, template)
-    check_dispatch_envelope(sys, template, first(steps), length(steps))
+    prepare_replay!(sys, template, steps)
     model = PSI.DecisionModel(
         NEMDispatchProblem, template, sys; optimizer = nemde_optimizer(), initial_time = first(steps), name = "dispatch",
     )

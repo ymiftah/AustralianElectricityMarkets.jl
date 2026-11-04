@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The solar availability plot in the build-system how-to queries `DISPATCHREGIONSUM` directly, since `read_demand` no longer returns `SS_SOLAR_AVAILABILITY`, and is labelled as semi-scheduled availability.
 
-- Documented the replay API after the merge: `prepare_replay_forecasts!` and the
+- Documented the replay API after the merge: `prepare_replay!` and the
   `ReplaySimulation`/`ReplayResults` script modules replace the removed package-level names.
 
 - JuMP merit-order plotting helpers now receive their market and colour mapping explicitly.
@@ -393,7 +393,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or DISPATCHLOAD availability, and for units with no dispatch rows the region's semi-scheduled solar or
   wind UIGF capacity factor (`SS_SOLAR_UIGF`, `SS_WIND_UIGF`).
 
+- `prepare_replay!(sys, template, steps)` prepares a system for a replay over `steps`: it attaches the five-minute forecast windows, runs the replay pre-flight checks and returns the skipped-constraint table.
+
 ### Changed
+
+- `check_fcas_services` and `check_dispatch_envelope` take `(template, sys, ...)`.
 
 - `template_nemde()` is a data-free `PSI.ProblemTemplate` with type-level formulations that lists every replay model explicitly, batteries included, and takes no system, database, interval or Market Price Cap. The replay scripts and checks take a `template` (default `template_nemde()`) and read what is modeled from it; a replay that models less builds its own `PSI.ProblemTemplate`. A template without an FCAS or `AreaInterchange` model reports the generic constraints that need them in `skipped` instead of failing the build.
 - `exclude_unmodeled_services!(sys, template; exclude_constraints)` sets the components a replay leaves out unavailable and returns their `(constraint, reason, n_missing)` records. Each call replaces the exclusions of the previous call on the same system, so a reused system no longer keeps an earlier replay range's exclusions.
@@ -730,6 +734,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DISPATCHREGIONSUM` caches `SS_SOLAR_UIGF` and `SS_WIND_UIGF`, which `set_regional_availability!` reads for the regional capacity factor in place of `SS_SOLAR_AVAILABILITY` and `SS_WIND_AVAILABILITY`. Cached months need `populate(db, :DISPATCHREGIONSUM, start, stop; force_new = true)` to gain the columns.
 
 ### Removed
+
+- `prepare_replay_forecasts!` is removed: forecasts are attached by `prepare_replay!`, and attaching them again on a prepared system does nothing.
 
 - `replication_decision_model` is removed in favour of `PSI.DecisionModel(NEMDispatchProblem, template, sys; kwargs...)`. The default decision problem name is now `"dispatch"`.
 

@@ -96,14 +96,13 @@ include("system/tie_break.jl")
 include("system/penalties.jl")
 include("system/RegionModel.jl")
 
-using .RegionModel: RegionalNetworkConfiguration, NEMDEConfiguration, prepare_replay_forecasts!, nem_network
-export prepare_replay_forecasts!, nem_network
+using .RegionModel: RegionalNetworkConfiguration, NEMDEConfiguration, nem_network
+export nem_network
 
 @doc (@doc AustralianElectricityMarketsCache.HiveConfiguration) HiveConfiguration
 @doc (@doc AustralianElectricityMarketsCache.aem_connect) aem_connect
 @doc (@doc RegionModel.RegionalNetworkConfiguration) RegionalNetworkConfiguration
 @doc (@doc RegionModel.NEMDEConfiguration) NEMDEConfiguration
-@doc (@doc RegionModel.prepare_replay_forecasts!) prepare_replay_forecasts!
 @doc (@doc RegionModel.nem_network) nem_network
 
 include("precompile.jl")

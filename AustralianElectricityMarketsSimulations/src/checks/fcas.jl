@@ -15,7 +15,7 @@ end
 
 
 """
-    check_fcas_services(sys, template)
+    check_fcas_services(template, sys)
 
 Verifies every available [`FCASService`](@ref) that `template` models under
 [`FCASMarket`](@ref) is buildable: each available contributing device's type is modeled by a
@@ -27,13 +27,13 @@ with a positive AGC ramp rate also carries an `"initial_mw"` series, which AEMO 
 NEMDE* §6.1's joint ramping constraint needs. A per-interval gap in `"initial_mw"` is not checked.
 
 # Arguments
-- `sys`: system to read services and components from.
 - `template`: `PSI.ProblemTemplate` to check device coverage against.
+- `sys`: system to read services and components from.
 
 # Returns
 `nothing`. Throws `ArgumentError` naming every problem device otherwise.
 """
-function check_fcas_services(sys::PSY.System, template::PSI.ProblemTemplate)
+function check_fcas_services(template::PSI.ProblemTemplate, sys::PSY.System)
     device_models = collect(values(PSI.get_device_models(template)))
     fcas_market_services = _modeled_fcas_services(template, sys)
     problems = String[]

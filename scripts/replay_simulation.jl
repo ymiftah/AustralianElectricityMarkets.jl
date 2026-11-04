@@ -4,9 +4,7 @@
 
 module ReplaySimulation
 
-using AustralianElectricityMarkets: EnergyTieBreak, GenericConstraint
 using AustralianElectricityMarketsSimulations
-import AustralianElectricityMarketsSimulations: _has_service_model
 using DataFrames
 using Dates
 import PowerSimulations as PSI
@@ -81,16 +79,8 @@ function _range_simulation(
         sys::PSY.System, steps::StepRange{DateTime}; optimizer = REPLICATION_OPTIMIZER, template::PSI.ProblemTemplate = template_nemde(),
         folder::AbstractString = mktempdir(), name = "dispatch", simulation_name = "replication", skipped = nothing,
     )
-    check_replication_steps(sys, steps)
-    check_single_financial_year(steps)
-    _has_service_model(template, EnergyTieBreak) && check_tie_break_pairs(sys, steps)
-    exclude = _has_service_model(template, GenericConstraint) ? never_invoked_constraints(sys, steps) : Dict{String, Symbol}()
-    template_skipped = exclude_unmodeled_services!(sys, template; exclude_constraints = exclude)
-    isnothing(skipped) || append!(skipped, template_skipped)
-    skipped_constraints = DataFrame(template_skipped)
-    check_template_against_sys(template, sys)
-    check_fcas_services(sys, template)
-    check_dispatch_envelope(sys, template, first(steps), length(steps))
+    skipped_constraints = prepare_replay!(sys, template, steps)
+    isnothing(skipped) || append!(skipped, NamedTuple.(eachrow(skipped_constraints)))
     model = PSI.DecisionModel(
         NEMDispatchProblem, template, sys; optimizer = optimizer, initial_time = first(steps), name = name,
     )
@@ -109,11 +99,11 @@ end
         folder = mktempdir(), name = "dispatch", simulation_name = "replication",
         skipped = nothing) -> PSI.Simulation
 
-Constructs an unbuilt PSI simulation over `steps` from a prepared system. Runs the replay
-pre-flight checks and selects constraints invoked in at least one requested interval.
+Constructs an unbuilt PSI simulation over `steps`. Prepares `sys` with [`prepare_replay!`](@ref), which
+runs the replay pre-flight checks and selects constraints invoked in at least one requested interval.
 
 # Arguments
-- `sys`: a system prepared with `prepare_replay_forecasts!`, or equivalent attached forecasts.
+- `sys`: the system to replay, with its input series attached; prepared in place by [`prepare_replay!`](@ref).
 - `steps`: a non-empty range of five-minute interval-ending timestamps covered by the system.
 - `optimizer`: the JuMP optimizer; defaults to HiGHS with the gaps and heuristic settings of `REPLICATION_HIGHS_OPTIONS`.
 - `template`: the `PSI.ProblemTemplate` to replay; defaults to [`template_nemde`](@ref)().

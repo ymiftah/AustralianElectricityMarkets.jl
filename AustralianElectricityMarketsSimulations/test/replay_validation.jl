@@ -72,7 +72,7 @@ end
     sys = fcas_toy_system()
     template = with_generic_constraints!(with_fcas!(energy_template()))
     replay_template(sys; template)
-    @test isnothing(check_fcas_services(sys, template))
+    @test isnothing(check_fcas_services(template, sys))
     result = run_two_steps(sys, template)
     @test nrow(PSI.read_optimizer_stats(result.results)) == 2
     @test haskey(PSI.get_device_models(PSI.get_template(result.model)), :EnergyReservoirStorage)
@@ -292,4 +292,18 @@ end
     @test PSI.get_ext(PSI.get_settings(model))["market_price_cap"] == cap
     @test PSI.get_slack_cost(PSI.get_network_model(PSI.get_template(model))) == AEMS._area_balance_slack_cost(sys, cap)
     @test PSI.get_slack_cost(PSI.get_network_model(template)) == template_cost
+end
+
+@testset "prepare_replay! returns the skipped table and is repeatable" begin
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
+    )
+    steps = TOY_START:TOY_RESOLUTION:TOY_START
+    # The fixture attaches its own forecast windows, so the call keeps them and only runs the checks.
+    forecasts = PSY.get_time_series_counts(sys).forecast_count
+    skipped = prepare_replay!(sys, replay_template(sys), steps)
+    @test skipped isa DataFrame
+    @test names(skipped) == ["constraint", "reason", "n_missing"]
+    @test PSY.get_time_series_counts(sys).forecast_count == forecasts > 0
+    @test prepare_replay!(sys, replay_template(sys), steps) == skipped
 end

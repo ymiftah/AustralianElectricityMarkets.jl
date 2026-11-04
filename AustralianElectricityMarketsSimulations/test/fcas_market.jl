@@ -882,7 +882,7 @@ end
 
     @testset "every contributing device modeled and bid: passes silently" begin
         template = fcas_toy_template(sys, [service_name])
-        @test isnothing(check_fcas_services(sys, template))
+        @test isnothing(check_fcas_services(template, sys))
     end
 
     @testset "a device type the template doesn't model throws, naming it" begin
@@ -890,7 +890,7 @@ end
         template = PSI.ProblemTemplate(network)
         PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
         PSI.set_service_model!(template, service_name, PSI.ServiceModel(FCASService, FCASMarket, service_name))
-        err = _caught(() -> check_fcas_services(sys, template))
+        err = _caught(() -> check_fcas_services(template, sys))
         @test err isa ArgumentError
         msg = sprint(showerror, err)
         @test occursin(service_name, msg)
@@ -914,7 +914,7 @@ end
             end,
         )
         template = fcas_toy_template(dec_sys, [service_name])
-        err = _caught(() -> check_fcas_services(dec_sys, template))
+        err = _caught(() -> check_fcas_services(template, dec_sys))
         @test err isa ArgumentError
         @test occursin("only for a `PSY.Storage` device or a `PSY.ControllableLoad`", sprint(showerror, err))
     end
@@ -1131,7 +1131,7 @@ end
     template = fcas_toy_template(sys, service_names)
 
     @testset "check_fcas_services reports it, naming both services" begin
-        err = _caught(() -> check_fcas_services(sys, template))
+        err = _caught(() -> check_fcas_services(template, sys))
         @test err isa ArgumentError
         msg = sprint(showerror, err)
         @test occursin("TAS1_RAISEREG, TAS1_RAISEREG_B", msg)
@@ -1171,7 +1171,7 @@ end
 
     @testset "unavailable devices and services not modeled by FCASMarket are skipped" begin
         @test !PSY.get_available(PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE))
-        @test isnothing(check_fcas_services(sys, fcas_toy_template(sys, [service_name])))
+        @test isnothing(check_fcas_services(fcas_toy_template(sys, [service_name]), sys))
     end
 
     @testset "a contributor modeled as FixedOutput is reported" begin
@@ -1180,7 +1180,7 @@ end
         PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
         PSI.set_device_model!(template, PSY.ThermalStandard, PSI.FixedOutput)
         PSI.set_service_model!(template, service_name, PSI.ServiceModel(FCASService, FCASMarket, service_name))
-        err = _caught(() -> check_fcas_services(sys, template))
+        err = _caught(() -> check_fcas_services(template, sys))
         @test err isa ArgumentError
         @test occursin("FixedOutput", sprint(showerror, err))
     end
@@ -1509,7 +1509,7 @@ end
     PSI.set_service_model!(
         template, service_name, PSI.ServiceModel(FCASService, FCASMarket, service_name),
     )
-    err = _caught(() -> check_fcas_services(sys, template))
+    err = _caught(() -> check_fcas_services(template, sys))
     @test err isa ArgumentError
     msg = sprint(showerror, err)
     @test occursin(duid, msg)
@@ -2071,12 +2071,12 @@ end
 @testset "check_fcas_services refuses an incremental FCAS bid on a load" begin
     sys = load_fcas_toy([(BidType.RAISE6SEC, (5.0, 10.0, 20.0, 30.0, 10.0), [(10.0, 10.0)])])
     load = PSY.get_component(PSY.InterruptiblePowerLoad, sys, "PUMP")
-    @test check_fcas_services(sys, fcas_toy_template(sys, ["TAS1_RAISE6SEC"])) === nothing
+    @test check_fcas_services(fcas_toy_template(sys, ["TAS1_RAISE6SEC"]), sys) === nothing
 
     add_toy_fcas!(sys, load, TOY_START, 2, BidType.LOWER6SEC, (5.0, 10.0, 20.0, 30.0, 10.0), [(10.0, 10.0)])
     PSY.add_service!(sys, FCASService(; name = "TAS1_LOWER6SEC", region = "TAS1", bid_type = BidType.LOWER6SEC), [load])
     flush_toy_fcas_curves!(sys)
-    err = _caught(() -> check_fcas_services(sys, fcas_toy_template(sys, ["TAS1_RAISE6SEC", "TAS1_LOWER6SEC"])))
+    err = _caught(() -> check_fcas_services(fcas_toy_template(sys, ["TAS1_RAISE6SEC", "TAS1_LOWER6SEC"]), sys))
     @test err isa ArgumentError
     @test occursin("incremental", sprint(showerror, err))
 end

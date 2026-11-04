@@ -65,7 +65,7 @@ function PSI.validate_template(model::PSI.DecisionModel{NEMDispatchProblem})
     ext["market_price_cap"] = cap
     PSI.get_network_model(template).slack_cost = _area_balance_slack_cost(sys, cap)
     check_template_against_sys(template, sys)
-    check_fcas_services(sys, template)
+    check_fcas_services(template, sys)
     PSI.validate_template_impl!(model)
     return
 end
