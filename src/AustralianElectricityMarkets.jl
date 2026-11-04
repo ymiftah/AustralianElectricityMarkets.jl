@@ -43,6 +43,7 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
 export FCASService, add_fcas_services!, Readers
 export OfferSide, offer_side, side_suffix, NEM_SERIES, energy_max_avail_series_name
 export NEMEnergyOffer, get_energy_offer, NEMFCASOffer, get_fcas_offer
+export NEMOfferCost, NEMEnergyBid, NEMFCASBid, get_energy_bids, get_fcas_bids, get_fixed_load, get_fixed_load_invoked
 export EnergyTieBreak, set_tie_break_scales!, TIE_BREAK_SERVICE_NAME, TIE_BREAK_CVP_FACTOR
 export MARKET_PRICE_CAP_BY_FINANCIAL_YEAR, DISPATCH_INTERVAL, constraint_cvp_factor
 export UNIT_RAMP_CVP_FACTOR, INTERCONNECTOR_FLOW_CVP_FACTOR, ENERGY_OFFER_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR,
@@ -74,6 +75,7 @@ for name in names(Readers)
 end
 
 include("accessors/series_names.jl")
+include("types/nem_offer_cost.jl")
 include("accessors/device_flags.jl")
 include("accessors/bids.jl")
 include("accessors/dispatch_limits.jl")
