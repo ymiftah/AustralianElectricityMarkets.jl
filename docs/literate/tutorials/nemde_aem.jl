@@ -314,12 +314,11 @@ slack_total
 #
 # Validate the study inputs before solving. `check_fcas_services(template, sys)`
 # verifies that every FCAS service has a corresponding model in the template,
-# `check_interconnector_loss_segments(results, sys)` from `scripts/interconnector_loss_gaps.jl`
-# after a solve verifies that each solved loss lies on the loss curve at the solved flow.
+# `read_interconnector_loss_gaps(results, sys)` after a solve verifies that each solved loss lies on
+# the loss curve at the solved flow: its `gap_mw` column is zero.
 
-include(joinpath(@__DIR__, "..", "..", "..", "scripts", "interconnector_loss_gaps.jl")) #hide
 check_fcas_services(template, sys)
-InterconnectorLossGaps.check_interconnector_loss_segments(results, sys)
+read_interconnector_loss_gaps(results, sys)
 
 # !!! note "Example scope"
 #     This tutorial solves a single interval with thermal and wind generation, one contingency

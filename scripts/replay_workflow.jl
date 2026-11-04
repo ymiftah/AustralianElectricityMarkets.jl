@@ -33,26 +33,6 @@ module ReplayWorkflow
     end
 
 
-    # Every published row of `steps` with its solved value, `missing` where the model has none. Every
-    # table is keyed by `SETTLEMENTDATE` and its own key column.
-    function _compare_to_published(published, solved, steps)
-        at_steps(df) = filter(:SETTLEMENTDATE => in(Set(steps)), df)
-        compare(table, on) = leftjoin(
-            at_steps(published[table]), at_steps(solved[table]);
-            on = [:SETTLEMENTDATE, on], renamecols = "_published" => "_solved",
-        )
-        return (;
-            prices = compare(:prices, :REGIONID),
-            dispatch = compare(:dispatch, :DUID),
-            interconnectors = compare(:interconnectors, :INTERCONNECTORID),
-            fcas_prices = leftjoin(
-                at_steps(select(published.fcas_prices, :SETTLEMENTDATE, :REGIONID, :BIDTYPE, :ROP)),
-                at_steps(solved.fcas_prices); on = [:SETTLEMENTDATE, :REGIONID, :BIDTYPE], renamecols = "_published" => "_solved",
-            ),
-        )
-    end
-
-
     # One chunk of `replicate_range`: system, simulation, execution, comparison and violations. Only
     # the tables and the results reopened from `folder` are returned, so the system is collectable.
     function _replicate_chunk(
@@ -80,7 +60,7 @@ module ReplayWorkflow
         isnothing(on_phase) || on_phase(:compare)
         t3 = time()
         solved = read_solved_interval(live, sys)
-        comparison = _compare_to_published(read_published_interval(db, steps; intervention = intervention), solved, steps)
+        comparison = compare_intervals(read_published_interval(db, steps; intervention = intervention), solved)
         violations = read_constraint_violations(live, sys)
         ramp = @chain violations begin
             subset(:family => ByRow(==("unit_ramp")))

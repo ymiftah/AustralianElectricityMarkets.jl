@@ -1,7 +1,6 @@
 if !isdefined(@__MODULE__, :InterconnectorLossGaps)
     include(joinpath(@__DIR__, "..", "..", "scripts", "interconnector_loss_gaps.jl"))
 end
-using .InterconnectorLossGaps: loss_gap_table
 
 @testset "interconnector loss gaps on a saved replay" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
@@ -11,7 +10,7 @@ using .InterconnectorLossGaps: loss_gap_table
     @test nrow(result.chunks) == 1
 
     sys = workflow_test_system(db, t1:Minute(5):(t2 + Minute(10)))
-    table = loss_gap_table(only(result.results), sys)
+    table = read_interconnector_loss_gaps(only(result.results), sys)
     @test names(table) == ["interconnector", "DateTime", "flow_mw", "solved_loss_mw", "curve_loss_mw", "gap_mw", "weighted_loss_price"]
     @test !isempty(table) && Set(table.DateTime) == Set([t1, t2])
     @test all(isfinite, table.gap_mw) && all(<(1.0e-3), abs.(table.gap_mw))

@@ -21,41 +21,6 @@ function _write_frame(path, frame)
     return
 end
 
-function comparison_summary(comparison)
-    rows = NamedTuple[]
-    for (metric, table, solved, published) in (
-            ("energy_price", :prices, :ROP_solved, :ROP_published),
-            ("dispatch_mw", :dispatch, :TOTALCLEARED_solved, :TOTALCLEARED_published),
-            ("interconnector_flow_mw", :interconnectors, :MWFLOW_solved, :MWFLOW_published),
-            ("interconnector_losses_mw", :interconnectors, :MWLOSSES_solved, :MWLOSSES_published),
-            ("fcas_price", :fcas_prices, :ROP_solved, :ROP_published),
-        )
-        frame = comparison[table]
-        gaps = Float64[]
-        n_missing, n_nonfinite = 0, 0
-        for (a, b) in zip(frame[!, solved], frame[!, published])
-            if ismissing(a) || ismissing(b)
-                n_missing += 1
-            elseif !isfinite(a) || !isfinite(b)
-                n_nonfinite += 1
-            else
-                push!(gaps, a - b)
-            end
-        end
-        paired = length(gaps)
-        push!(
-            rows, (;
-                metric, n_rows = nrow(frame), n_paired = paired, n_missing, n_nonfinite,
-                mae = paired == 0 ? missing : sum(abs, gaps) / paired,
-                rmse = paired == 0 ? missing : sqrt(sum(abs2, gaps) / paired),
-                max_abs_gap = paired == 0 ? missing : maximum(abs, gaps),
-                bias = paired == 0 ? missing : sum(gaps) / paired,
-            )
-        )
-    end
-    return DataFrame(rows)
-end
-
 function save_day(folder, result)
     for table in keys(result.comparison)
         _write_frame(joinpath(folder, "comparison_$table.csv"), result.comparison[table])

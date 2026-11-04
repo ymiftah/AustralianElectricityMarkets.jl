@@ -20,8 +20,6 @@ import PowerSystems as PSY
 const AEM = AustralianElectricityMarkets
 const AEMS = AustralianElectricityMarketsSimulations
 include(joinpath(@__DIR__, "..", "..", "..", "test", "fixtures", "input_builders.jl"))
-include(joinpath(@__DIR__, "..", "..", "..", "scripts", "interconnector_loss_gaps.jl"))
-using .InterconnectorLossGaps: loss_gap_table
 if !isdefined(@__MODULE__, :ReplaySimulation)
     include(joinpath(@__DIR__, "..", "..", "..", "scripts", "replay_simulation.jl"))
 end
@@ -270,7 +268,7 @@ end
         )
         build_and_solve!(loss_model)
 
-        table = loss_gap_table(PSI.OptimizationProblemResults(loss_model), sys; tolerance = 1.0e-3)
+        table = read_interconnector_loss_gaps(PSI.OptimizationProblemResults(loss_model), sys)
 
         @test !isempty(table)
         # Negative weighted prices included, loss must stay on the curve at the solved flow.

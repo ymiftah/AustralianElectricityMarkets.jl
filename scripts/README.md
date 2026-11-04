@@ -335,7 +335,9 @@ The CSV has one row per interconnector and interval with a solved flow:
 | `solved_loss_mw` | MW | Solved `InterconnectorLossVariable` |
 | `curve_loss_mw` | MW | Loss curve interpolated at the solved flow |
 | `gap_mw` | MW | `solved_loss_mw - curve_loss_mw`; zero when the segments reproduce the curve |
-| `weighted_loss_price` | $/MWh | `share * price_from + (1 - share) * price_to` from the `CopperPlateBalanceConstraint__Area` duals |
+| `weighted_loss_price` | $/MWh | `share * price_from + (1 - share) * price_to` from the regional prices of `read_prices` |
+
+The same table is available from the library as `read_interconnector_loss_gaps(results, sys)`.
 
 ## HDF5 dependency
 

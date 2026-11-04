@@ -78,6 +78,8 @@ include("problems/nem_dispatch.jl")
 include("results/read_results.jl")
 include("results/solved.jl")
 include("results/violations.jl")
+include("results/comparison.jl")
+include("results/interconnector_losses.jl")
 
 
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
@@ -105,6 +107,7 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack
 export check_fcas_services, check_dispatch_envelope, check_single_financial_year
 export read_solved_interval, read_constraint_violations
+export compare_intervals, comparison_summary, read_interconnector_loss_gaps
 export AbstractNEMDispatch, NEMReplayDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter
