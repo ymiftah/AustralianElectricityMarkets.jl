@@ -18,8 +18,8 @@ module _PrecompileMockData
     end
 end
 
-# Builds, executes and reads back a two-interval replay through the public API, mirroring the template
-# inputs of the replay runner (`scripts/replay_simulation.jl`).
+# Builds, executes and reads back a two-interval replay through the public API, with the inputs and
+# steps of the replay workflow (`prepare_replay!` followed by a PSI simulation).
 function _precompile_workload()
     _PrecompileMockData.AVAILABLE || return
     hive = mktempdir()
@@ -36,22 +36,11 @@ function _precompile_workload()
     finally
         _PrecompileMockData.DuckDB.close(db.db)
     end
-    AustralianElectricityMarkets.prepare_replay_forecasts!(sys)
-    check_replication_steps(sys, steps)
-    check_single_financial_year(steps)
-    check_tie_break_pairs(sys, steps)
-    template = replication_template(
-        sys; initial_time = first(steps), exclude_constraints = never_invoked_constraints(sys, steps),
+    template = template_nemde()
+    prepare_replay!(sys, template, steps)
+    model = PSI.DecisionModel(
+        NEMDispatchProblem, template, sys; optimizer = nemde_optimizer(), initial_time = first(steps), name = "dispatch",
     )
-    check_fcas_services(sys, template)
-    check_dispatch_envelope(sys, template, first(steps), length(steps))
-    # Must match REPLICATION_HIGHS_OPTIONS in scripts/replay_simulation.jl.
-    optimizer = JuMP.optimizer_with_attributes(
-        HiGHS.Optimizer, "mip_rel_gap" => 1.0e-8, "mip_abs_gap" => 1.0e-10,
-        "mip_heuristic_run_rins" => false, "mip_heuristic_run_rens" => false,
-        "mip_heuristic_run_root_reduced_cost" => false, "mip_heuristic_run_feasibility_jump" => false,
-    )
-    model = replication_decision_model(template, sys, first(steps); optimizer = optimizer, name = "dispatch")
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models = models, ini_cond_chronology = PSI.InterProblemChronology())
     simulation = PSI.Simulation(;

@@ -3,6 +3,28 @@ function table_requirements(::NetworkConfiguration)
 end
 
 
+"""
+    nem_system(db, network_configuration; kwargs...)
+
+Builds a regional NEM system from cached market data according to `network_configuration`.
+
+# Arguments
+- `db`: the market cache connection.
+- `network_configuration`: a [`RegionalNetworkConfiguration`](@ref) or
+  [`NEMDEConfiguration`](@ref).
+- `as_of`: the `Date` or `DateTime` for resolving static metadata; regional construction defaults
+  to the latest cached version and NEMDE construction to the first requested interval.
+- `date_range`: required for NEMDE construction, including the exclusive stop.
+- `kwargs`: configuration-specific inputs and `PowerSystems.System` storage options.
+
+# Returns
+A `PowerSystems.System` populated according to the requested configuration.
+
+# Example
+```julia
+sys = nem_system(db, RegionalNetworkConfiguration())
+```
+"""
 function nem_system(db, network_configuration::T) where {T <: NetworkConfiguration}
     error("Not implemented for $(typeof(network_configuration))")
 end
@@ -89,12 +111,19 @@ end
 
 
 """
-    _registration_spans(units) -> Dict{String, Tuple{DateTime, DateTime}}
+    registration_spans(units) -> Dict{String, Tuple{DateTime, DateTime}}
 
 Maps each `DUID` of `units` to its registration span `(REGISTERED_FROM, REGISTERED_UNTIL)`, as
-[`read_units`](@ref) reports it.
+[`read_units`](@ref) reports it. Pass the result as the `registered` keyword of the dispatch limit
+and energy limit setters.
+
+# Arguments
+- `units`: the unit table, as [`read_units`](@ref) returns it.
+
+# Returns
+A `Dict` from `DUID` to its `(REGISTERED_FROM, REGISTERED_UNTIL)` tuple.
 """
-function _registration_spans(units)
+function registration_spans(units)
     return Dict(String(r.DUID) => (r.REGISTERED_FROM, r.REGISTERED_UNTIL) for r in eachrow(units))
 end
 

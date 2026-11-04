@@ -225,7 +225,7 @@ end
     sys = nem_dispatch_system(; mutate! = s -> flatten_series!(s, "ER02", "energy_max_avail", -1.0))
     template = ProblemTemplate(NetworkModel(AreaBalancePowerModel; use_slacks = true))
     set_nem_dispatch_models!(template, sys)
-    @test_throws ArgumentError check_dispatch_envelope(sys, template, NEM_DISPATCH_START, 6)
+    @test_throws ArgumentError check_dispatch_envelope(template, sys, NEM_DISPATCH_START, 6)
 end
 
 

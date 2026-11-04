@@ -4,7 +4,7 @@
 Reads `DISPATCHCONSTRAINT` over `date_range`: one row per `(SETTLEMENTDATE, GENCONID)` with
 `RHS` and the exact constraint version NEMDE used that interval
 (`GENCONID_EFFECTIVEDATE`/`GENCONID_VERSIONNO`). Membership in this table is the definition
-of "NEMDE actually enforced this constraint" c.f. the constraint build of [`nem_system`](@ref).
+of "NEMDE actually enforced this constraint" c.f. the constraint build of [`AustralianElectricityMarkets.nem_system`](@ref).
 """
 function read_invoked_constraints(db, date_range; intervention::Integer = 0)
     columns = [

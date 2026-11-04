@@ -9,7 +9,7 @@ four packages sharing the root `Manifest.toml`:
 | `AustralianElectricityMarketsCache` | `AustralianElectricityMarketsCache/` | Shared configuration, DuckDB connections, cache metadata and partition inspection. No market readers or population pipeline. |
 | `AustralianElectricityMarketsData` | `AustralianElectricityMarketsData/` | NEMWEB download and Hive-partitioned parquet population. Depends on Cache, with no AEM, AEMSim or PowerSystems dependency. |
 | `AustralianElectricityMarkets` | repo root (`src/`) | Domain types, Readers submodule, PSY system construction and modification, attached-data accessors, per-interval NEM inputs and market-rule tables (CVP factors, MPC). Depends on Cache, with no Data or Simulations dependency. |
-| `AustralianElectricityMarketsSimulations` | `AustralianElectricityMarketsSimulations/` | NEMDE replication in PSI: `AbstractNEMDispatch` device formulations (batteries included), FCAS market and trapezium formulations, NEM constraint formulations, replication template, decision-model constructor and pre-flight checks. The simulation runner is in `scripts/replay_simulation.jl`. |
+| `AustralianElectricityMarketsSimulations` | `AustralianElectricityMarketsSimulations/` | NEMDE replication in PSI: `AbstractNEMDispatch` device formulations (batteries included), FCAS market and trapezium formulations, NEM constraint formulations, replication template, decision-model constructor and pre-flight checks. The overnight batch runner is in `scripts/replay_batch.jl`. |
 
 ## Quick start
 
@@ -77,10 +77,10 @@ front, so every group runs on its own.
 | `src/system/` | System construction and modification; RegionModel submodule |
 | `src/accessors/` | Attached component data and time-series lookup |
 | `…Simulations/src/types/`, `…Simulations/src/formulations/` | PSI types and dispatch, FCAS, constraint and loss formulations |
+| `…Simulations/src/results/` | Solved and violation readers of PSI results: `read_solved_interval`, `read_constraint_violations`, and the `read_prices` / `read_fcas_prices` methods |
 | `…Simulations/src/checks/<what_is_checked>.jl` | pre-flight checks run before a build |
 | `…Simulations/src/psi_compat.jl` | shims over the pinned PowerSimulations fork |
-| `scripts/replay_simulation.jl` | `ReplaySimulation`: replay simulation runner (`replication_simulation`, `run_replication`, `REPLICATION_OPTIMIZER`) |
-| `scripts/replay_results.jl` | `ReplayResults`: post-processing of replay results (prices, dispatch, flows, violations) |
+| `scripts/replay_batch.jl` | overnight batch replay of random trading days on the AEMSim replay API |
 | `docs/adr/` | architecture decisions — design rationale goes here |
 | `docs/superpowers/plans/` | implementation plans; follow-up work is recorded here or in an ADR |
 
@@ -99,6 +99,10 @@ front, so every group runs on its own.
   non-obvious thing is.
 - Naming: NEMWEB tables/columns stay `SCREAMING_CASE`; Julia API is `snake_case`; private helpers
   are `_`-prefixed; mutating functions take `!`.
+- Mutation verbs describe the operation: `set_...!` assigns or replaces a property, input or
+  named dataset; `add_...!` creates components or services in a system; `attach_...!` associates
+  supplemental attributes or metadata with existing components. State repeat-call behaviour in
+  each public mutator's docstring; the verb alone does not guarantee idempotence.
 - Names exported from Cache or the Readers/RegionModel submodules are re-exported at the top
   level with `@doc (@doc Sub.f) f` so Documenter resolves the docstring from the top-level name.
 - DataFrame work uses `@chain`. Parquet access goes through **DuckDB.jl** — `read_hive` returns a

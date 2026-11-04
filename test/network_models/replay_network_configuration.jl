@@ -64,8 +64,8 @@ end
     write_mock_interconnector_results(hive)
     db = aem_connect(HiveConfiguration(hive_location = hive))
     grid = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
-    shared, units = AEM.RegionModel._constrained_system(db; date_range = grid)
-    independent, _ = AEM.RegionModel._constrained_system(db; date_range = grid)
+    shared, units = constrained_system(db; date_range = grid)
+    independent, _ = constrained_system(db; date_range = grid)
     @test isequal(units, read_units(db; as_of = first(grid)))
     demand = read_demand(db, grid; resolution = Minute(5))
     demand_before = deepcopy(demand)
@@ -111,7 +111,7 @@ end
     write_mock_interconnector_results(hive)
     db = aem_connect(HiveConfiguration(hive_location = hive))
     grid = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
-    sys, _ = AEM.RegionModel._constrained_system(db; date_range = grid)
+    sys, _ = constrained_system(db; date_range = grid)
     # FCAS price bids are stored only by NEMDEConfiguration, so no device carries an offer curve here.
     @test !any(
         has_time_series(device, SingleTimeSeries, fcas_offer_series_name(svc, dec))
@@ -211,7 +211,7 @@ end
             @test all(iszero, values[1:2])
         end
     end
-    @test_nowarn prepare_replay_forecasts!(late)
+    @test_nowarn PowerSystems.transform_single_time_series!(late, DISPATCH_INTERVAL, DISPATCH_INTERVAL)
 
     @testset "a partly published FCAS trapezium is zero where AEMO publishes none" begin
         partial = damaged_cache(

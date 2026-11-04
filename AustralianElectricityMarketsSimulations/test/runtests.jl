@@ -15,16 +15,6 @@ include(joinpath(@__DIR__, "..", "..", "test", "fixtures", "input_builders.jl"))
 include(joinpath(@__DIR__, "template_helpers.jl"))
 include(joinpath(@__DIR__, "toy_fixture.jl"))
 
-# Replay results are read by the repository script module, which the simulation tests call as `ReplayResults`.
-if !isdefined(@__MODULE__, :ReplayResults)
-    include(joinpath(@__DIR__, "..", "..", "scripts", "replay_results.jl"))
-end
-
-# The simulation runner, which the simulation tests call as `ReplaySimulation`.
-if !isdefined(@__MODULE__, :ReplaySimulation)
-    include(joinpath(@__DIR__, "..", "..", "scripts", "replay_simulation.jl"))
-end
-
 const AEM_TEST_HIVE_DIR = mktempdir()
 create_mock_data(AEM_TEST_HIVE_DIR)
 
@@ -54,6 +44,7 @@ const TEST_GROUPS = [
     "pipeline" => ("Replication pipeline", "pipeline.jl"),
     "recurrent_objective_cache" => ("Recurrent objective forecast cache", "recurrent_objective_cache.jl"),
     "stock_simulation" => ("Stock simulation replay", "stock_simulation.jl"),
+    "replay_workflow" => ("Replay workflow on the mock cache", "replay_workflow.jl"),
     "replay_scripts" => ("Repository replay workflow", "../../test/scripts/replay_workflow.jl"),
 ]
 

@@ -166,7 +166,7 @@ row per `(SETTLEMENTDATE, DUID, BIDTYPE::BidType, TARGET, ACTUALAVAILABILITY)`, 
 unit's energy context columns `INITIALMW`, `TOTALCLEARED`, `AVAILABILITY`, `AGCSTATUS`. This
 is the cleared counterpart to [`read_fcas_bids`](@ref)'s offered trapezium - comparing
 `TARGET`/`ACTUALAVAILABILITY` against the offer's trapezium shows how much of what a unit
-offered was actually deliverable at its dispatched energy level (see [`FCASTrapezium`](@ref)).
+offered was actually deliverable at its dispatched energy level (see [`AustralianElectricityMarkets.FCASTrapezium`](@ref)).
 
 `ACTUALAVAILABILITY` is `missing` for the two regulation markets (`RAISEREG`/`LOWERREG`) -
 AEMO does not publish a trapezium-adjusted availability for regulation, only the raw offer

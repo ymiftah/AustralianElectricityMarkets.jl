@@ -1,9 +1,17 @@
 """
+The concrete device types that carry NEM dispatch limits: the types [`nem_dispatch_devices`](@ref)
+collects and the replay models with its dispatch formulation.
+"""
+const NEM_DISPATCH_DEVICE_TYPES = (
+    ThermalStandard, HydroDispatch, RenewableDispatch, InterruptiblePowerLoad, EnergyReservoirStorage,
+)
+
+
+"""
     nem_dispatch_devices(sys) -> Vector{Device}
 
-Collects every available `ThermalStandard`, `HydroDispatch`, `RenewableDispatch`,
-`InterruptiblePowerLoad` and `EnergyReservoirStorage` in `sys`, the device types that the dispatch limits
-applies to.
+Collects every available device whose type is in [`NEM_DISPATCH_DEVICE_TYPES`](@ref) in `sys`, the
+device types that the dispatch limits applies to.
 
 # Arguments
 - `sys`: the `System` to collect from.
@@ -13,12 +21,93 @@ A `Vector{Device}`.
 """
 function nem_dispatch_devices(sys)
     devices = Device[]
-    append!(devices, collect(get_components(get_available, ThermalStandard, sys)))
-    append!(devices, collect(get_components(get_available, HydroDispatch, sys)))
-    append!(devices, collect(get_components(get_available, RenewableDispatch, sys)))
-    append!(devices, collect(get_components(get_available, InterruptiblePowerLoad, sys)))
-    append!(devices, collect(get_components(get_available, EnergyReservoirStorage, sys)))
+    for T in NEM_DISPATCH_DEVICE_TYPES
+        append!(devices, collect(get_components(get_available, T, sys)))
+    end
     return devices
+end
+
+
+"""
+    set_nem_dispatch_limits!(sys, db, date_range; kwargs...)
+
+Attaches per-device `SingleTimeSeries` from [`read_dispatch_limits`](@ref) to every available
+`ThermalStandard`, `HydroDispatch`, `RenewableDispatch`, `InterruptiblePowerLoad` and
+`EnergyReservoirStorage` in `sys`:
+`"ramp_up_rate"` and `"ramp_down_rate"` (from `RAMPUPRATE`/`RAMPDOWNRATE`) and `"initial_mw"`
+(from `INITIALMW`, net MW for a battery, consumed MW for a load). A `ThermalStandard`,
+`HydroDispatch`, `RenewableDispatch` or `InterruptiblePowerLoad` also gets `"max_active_power"`, the device's upper dispatch limit,
+`AVAILABILITY` raised to the ramp-down floor `INITIALMW - RAMPDOWNRATE × Δ` when that floor is
+higher, where Δ is the interval length in hours taken from `date_range`'s step, replacing any
+`UIGF`- or bid-derived `"max_active_power"` series a device already carries - and
+`"availability"`, the raw `AVAILABILITY` (for a semi-scheduled unit, the lower of bid `MAXAVAIL`
+and `UIGF`), read back by [`get_energy_availability`](@ref). An
+`EnergyReservoirStorage` gets no `"max_active_power"` series: its per-direction availability is
+the energy bid `MAXAVAIL` series [`set_market_bids!`](@ref) attaches, read back by
+[`get_storage_energy_max_avail`](@ref).
+
+`"ramp_up_rate"`, `"ramp_down_rate"`, `"initial_mw"` and `"availability"` are stored per-unit of
+`sys`'s system base, rates per minute. `"max_active_power"` follows PSY's native convention instead: data
+normalised by the device's own static `max_active_power` (read under `NATURAL_UNITS`), with
+`scaling_factor_multiplier = get_max_active_power`.
+
+A non-scheduled load (see [`set_fcas_bids!`](@ref)) gets zero `"initial_mw"`, ramp rates, `"availability"`
+and `"max_active_power"` whatever `DISPATCHLOAD` meters: its consumption is already in regional demand
+and is not dispatched. This function must run after [`set_fcas_bids!`](@ref), which makes such a load
+available; a load made available later has no ramp or limit series.
+
+A device with no `DISPATCHLOAD` rows in `date_range`, missing intervals, a `missing` rate or
+`INITIALMW`, or a negative `RAMPUPRATE`/`RAMPDOWNRATE` is a problem; for a `ThermalStandard`,
+`HydroDispatch` or `RenewableDispatch`, a `missing` or negative `AVAILABILITY`, or a
+non-positive static `max_active_power`, is also a problem. A zero `RAMPUPRATE`,
+`RAMPDOWNRATE` or `AVAILABILITY` is carried through as-is: it is AEMO stating that the device
+cannot move, or cannot generate, in that interval. Every problem across every device is
+collected and raised as one aggregated `ArgumentError` naming the affected `DUID`s, and `sys` is
+left unmodified. A second call on the same system throws an `ArgumentError` for the series already
+attached.
+
+!!! warning
+    Coarse buckets aggregate the available rows without checking five-minute coverage. An
+    incomplete bucket can shift `INITIALMW` away from the period start and omit more restrictive
+    ramp rates or availability limits. Ensure the cache covers every five-minute interval.
+
+# Arguments
+- `sys`: the `System` to add to.
+- `db`: an `AEMDB` connection.
+- `date_range`: the dispatch intervals to replay. Its step is the model resolution: `DISPATCHLOAD`
+  is aggregated onto it as [`read_dispatch_limits`](@ref) describes.
+- `registered`: the registration span of each unit, keyed by `DUID` (see [`registration_spans`](@ref)),
+  or `nothing` when every unit is registered at every interval.
+- `kwargs`: passed to [`read_dispatch_limits`](@ref) (e.g. `intervention`).
+
+# Returns
+`nothing`.
+"""
+function set_nem_dispatch_limits!(sys, db, date_range; registered = nothing, kwargs...)
+    rows = read_dispatch_limits(db, date_range; resolution = step(date_range), kwargs...)
+    return _set_nem_dispatch_limits!(sys, rows, date_range; registered)
+end
+
+
+"""
+    set_nem_dispatch_limits!(sys, rows::DataFrame, date_range; registered = nothing)
+
+Attaches the per-device dispatch limit series built from `rows`, already read with
+[`read_dispatch_limits`](@ref) at the step of `date_range`, with the same series, errors and
+repeat-call behaviour as the database form.
+
+# Arguments
+- `sys`: the `System` to add to.
+- `rows`: the dispatch-limit rows over `date_range`, as [`read_dispatch_limits`](@ref) returns them.
+- `date_range`: the dispatch intervals to replay. Its step is the model resolution.
+- `registered`: the registration span of each unit, keyed by `DUID` (see [`registration_spans`](@ref)),
+  or `nothing` when every unit is registered at every interval.
+
+# Returns
+`nothing`.
+"""
+function set_nem_dispatch_limits!(sys, rows::DataFrame, date_range; registered = nothing)
+    return _set_nem_dispatch_limits!(sys, rows, date_range; registered)
 end
 
 
@@ -71,8 +160,8 @@ left unmodified.
 - `sys`: the `System` to add to.
 - `rows`: the dispatch-limit rows over `date_range`, as [`read_dispatch_limits`](@ref) returns them.
 - `date_range`: the dispatch intervals to replay. Its step is the model resolution.
-- `registered`: the registration span of each unit, keyed by `DUID` (see `_registration_spans`), or
-  `nothing` when every unit is registered at every interval.
+- `registered`: the registration span of each unit, keyed by `DUID` (see [`registration_spans`](@ref)),
+  or `nothing` when every unit is registered at every interval.
 
 # Returns
 `nothing`.

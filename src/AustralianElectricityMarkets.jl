@@ -15,13 +15,13 @@ import InfrastructureSystems as IS
 export HiveConfiguration, aem_connect
 export NetworkConfiguration, table_requirements, nem_system
 export RegionalNetworkConfiguration, NEMDEConfiguration
-export set_mnsp_offers!, set_market_bids!
+export set_mnsp_offers!, set_demand!, set_market_bids!, add_nem_constraints!, set_regional_availability!
 export get_storage_energy_max_avail
 export set_fcas_bids!, set_fcas_service_bids!, set_fcas_scaling_inputs!, set_fcas_effective_offers!
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW
-export set_interconnector_flow_limits!, set_loss_demand_coefficients!
+export set_nem_dispatch_limits!, set_interconnector_flow_limits!, set_loss_demand_coefficients!
 export get_initial_mw, get_energy_availability
-export set_nem_energy_limits!
+export set_nem_energy_limits!, registration_spans
 export get_skipped_constraints, get_dropped_terms,
     get_missing_constraint_intervals, get_defaulted_constraint_weights
 export fcas_service_name, fcas_service, fcas_offer_series_name
@@ -52,7 +52,7 @@ export UNIT_RAMP_CVP_FACTOR, INTERCONNECTOR_FLOW_CVP_FACTOR, ENERGY_OFFER_CVP_FA
 export fcas_effective_series_name, fcas_ramping_series_name, fcas_upper_regulation_service, fcas_offer_sides,
     tie_break_series_name, tie_groups
 export fcas_series_name, mnsp_series_name, FCASBidDirection, fcas_bid_direction, single_series, remove_single_series!, replace_single_series!,
-    nem_dispatch_devices, is_non_scheduled_load, is_commissioned, has_schedule_classification, is_semi_scheduled,
+    nem_dispatch_devices, NEM_DISPATCH_DEVICE_TYPES, is_non_scheduled_load, is_commissioned, has_schedule_classification, is_semi_scheduled,
     energy_offer_sides
 
 include("constants.jl")
@@ -84,6 +84,7 @@ include("system/interface.jl")
 include("system/demand.jl")
 include("system/bids.jl")
 include("system/dispatch_limits.jl")
+include("system/regional_availability.jl")
 include("system/energy_limits.jl")
 include("system/fcas.jl")
 include("system/fcas_effective.jl")
@@ -95,15 +96,14 @@ include("system/tie_break.jl")
 include("system/penalties.jl")
 include("system/RegionModel.jl")
 
-using .RegionModel: RegionalNetworkConfiguration, NEMDEConfiguration, prepare_replay_forecasts!
-export prepare_replay_forecasts!
+using .RegionModel: RegionalNetworkConfiguration, NEMDEConfiguration, nem_network
+export nem_network
 
 @doc (@doc AustralianElectricityMarketsCache.HiveConfiguration) HiveConfiguration
 @doc (@doc AustralianElectricityMarketsCache.aem_connect) aem_connect
-@doc (@doc RegionModel.nem_system) nem_system
 @doc (@doc RegionModel.RegionalNetworkConfiguration) RegionalNetworkConfiguration
 @doc (@doc RegionModel.NEMDEConfiguration) NEMDEConfiguration
-@doc (@doc RegionModel.prepare_replay_forecasts!) prepare_replay_forecasts!
+@doc (@doc RegionModel.nem_network) nem_network
 
 include("precompile.jl")
 

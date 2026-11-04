@@ -286,7 +286,7 @@ end
     _add_fcas_slack!(container, model, var_type, meta, names, time_steps, cvp_factor)
 
 When `PSI.get_use_slacks(model)`, builds an [`_add_cvp_slack!`](@ref) slack of `var_type` per
-`(name, t)` keyed by `FCASService` and `meta`, at the model's Market Price Cap override.
+`(name, t)` keyed by `FCASService` and `meta`, priced at the container's Market Price Cap.
 
 # Returns
 The slack variable container, or `nothing` when `use_slacks` is `false`.
@@ -298,7 +298,7 @@ function _add_fcas_slack!(
     PSI.get_use_slacks(model) || return nothing
     return _add_cvp_slack!(
         container, var_type, FCASService, names, time_steps, cvp_factor;
-        meta = meta, label = "$(nameof(var_type))_$meta", rate = PSI.get_attribute(model, "market_price_cap"),
+        meta = meta, label = "$(nameof(var_type))_$meta",
     )
 end
 

@@ -49,3 +49,31 @@ function _nem_network(db; time_series_in_memory = true, as_of = nothing, through
 
     return sys, units, gen_df
 end
+
+
+"""
+    nem_network(db; time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...) -> (sys, units)
+
+Builds the NEM network without operation costs: buses, loads, branches, generators, batteries,
+scheduled loads and area interfaces, with every generator's operation cost zero. Reads no ISP cost
+table. `units` is the unit table as of `as_of`, or over the window `[as_of, through]` (see
+[`read_units`](@ref)).
+
+# Arguments
+- `db`: The database connection.
+- `time_series_in_memory`: Store time series in memory when `true`.
+- `as_of`: A `Date` or `DateTime` to resolve the unit and interconnector tables as of; `nothing`
+  uses the latest cached version.
+- `through`: The end of the unit window that starts at `as_of`; `nothing` builds the units in
+  force at `as_of` only.
+- `kwargs...`: Passed to the `PowerSystems.System` constructor.
+
+# Returns
+A tuple `(sys, units)`.
+"""
+function nem_network(db; time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...)
+    sys, units, _ = _nem_network(db; time_series_in_memory, as_of, through, kwargs...)
+    return sys, units
+end
+
+export nem_network

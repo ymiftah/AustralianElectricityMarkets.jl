@@ -12,11 +12,16 @@ using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCAS_
     get_bid_type, get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_factor,
     get_interconnector, get_missing_constraint_intervals, get_region, get_sense, get_skipped_constraints,
     get_terms, loss_curve_vertex_values, is_non_scheduled_load, loss_segments, nem_dispatch_devices,
+    NEM_DISPATCH_DEVICE_TYPES,
     FCAS_BAND_COUNT, FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR,
     FCAS_BDU_RAMPING_CVP_FACTOR, fcas_effective_series_name, fcas_ramping_series_name,
     fcas_upper_regulation_service, fcas_offer_sides, tie_break_series_name, tie_groups, _tie_break_offers,
     _tie_break_active_bands, _tie_break_stamp_bands, _other_regulation, _financial_year_mpc,
-    _financial_year_start
+    _financial_year_start, _versions_without_definition, _zero_flow_constraint_definitions, _empty_definitions,
+    read_interconnectors, read_mnsp_links, read_mnsp_offers, read_invoked_constraints, read_fixed_loads,
+    read_constraint_definitions, get_fcas_requirements, get_service
+using Chain
+using DataFrames: DataFrame, ByRow, combine, eachrow, groupby, leftjoin, nrow, rename, select, sort!, transform
 using Dates
 using HiGHS
 using JuMP
@@ -64,12 +69,24 @@ include("checks/tie_break.jl")
 include("checks/financial_year.jl")
 include("checks/replay_inputs.jl")
 include("checks/replication_steps.jl")
-include("execution/replication.jl")
+include("checks/template.jl")
+include("templates/template_nemde.jl")
+include("checks/replay_data.jl")
+include("checks/replay_range.jl")
+include("problems/optimizer.jl")
+include("problems/nem_dispatch.jl")
+include("results/read_results.jl")
+include("results/solved.jl")
+include("results/violations.jl")
+include("results/comparison.jl")
+include("results/interconnector_losses.jl")
 
 
-export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient
-export REPLICATION_PARTS, replication_template, replication_decision_model, check_replication_steps,
-    check_replication_parts, never_invoked_constraints, AbstractMNSPSlack
+export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
+export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys, check_replay_inputs,
+    exclude_unmodeled_services!, check_replication_steps,
+    never_invoked_constraints, prepare_replay!, AbstractMNSPSlack
+export NEMDispatchProblem, nemde_optimizer, NEMDE_HIGHS_OPTIONS
 export EnergyOfferSurplusSlack, EnergyOfferDeficitSlack,
     EnergyDecrementalOfferSurplusSlack, EnergyDecrementalOfferDeficitSlack
 export EnergyMaxAvailOutConstraint, EnergyMaxAvailInConstraint, EnergyMaxAvailOutSlack, EnergyMaxAvailInSlack
@@ -89,6 +106,8 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     UnitRampUpSlack, UnitRampDownSlack,
     InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack
 export check_fcas_services, check_dispatch_envelope, check_single_financial_year
+export read_solved_interval, read_constraint_violations
+export compare_intervals, comparison_summary, read_interconnector_loss_gaps
 export AbstractNEMDispatch, NEMReplayDispatch,
     RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter

@@ -213,7 +213,7 @@ fcas_unit_target(container, service_name) =
 fcas_unit_mw(container, service_name, duid) =
     PSI.JuMP.value(fcas_unit_target(container, service_name)[duid, 1]) * PSI.get_base_power(container)
 
-@testset "FCASMarket reproduces docs/literate/fcas.jl's published Tungatinah/TAS1 numbers" begin
+@testset "FCASMarket reproduces the published Tungatinah/TAS1 numbers" begin
     # BIDPEROFFER_D trapeziums for DUID TUNGATIN, 2025-01-13 16:30, one row per market.
     duid = TOY_CHEAP
     trapeziums_mw = Dict(
@@ -882,7 +882,7 @@ end
 
     @testset "every contributing device modeled and bid: passes silently" begin
         template = fcas_toy_template(sys, [service_name])
-        @test isnothing(check_fcas_services(sys, template))
+        @test isnothing(check_fcas_services(template, sys))
     end
 
     @testset "a device type the template doesn't model throws, naming it" begin
@@ -890,7 +890,7 @@ end
         template = PSI.ProblemTemplate(network)
         PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
         PSI.set_service_model!(template, service_name, PSI.ServiceModel(FCASService, FCASMarket, service_name))
-        err = _caught(() -> check_fcas_services(sys, template))
+        err = _caught(() -> check_fcas_services(template, sys))
         @test err isa ArgumentError
         msg = sprint(showerror, err)
         @test occursin(service_name, msg)
@@ -914,7 +914,7 @@ end
             end,
         )
         template = fcas_toy_template(dec_sys, [service_name])
-        err = _caught(() -> check_fcas_services(dec_sys, template))
+        err = _caught(() -> check_fcas_services(template, dec_sys))
         @test err isa ArgumentError
         @test occursin("only for a `PSY.Storage` device or a `PSY.ControllableLoad`", sprint(showerror, err))
     end
@@ -1131,7 +1131,7 @@ end
     template = fcas_toy_template(sys, service_names)
 
     @testset "check_fcas_services reports it, naming both services" begin
-        err = _caught(() -> check_fcas_services(sys, template))
+        err = _caught(() -> check_fcas_services(template, sys))
         @test err isa ArgumentError
         msg = sprint(showerror, err)
         @test occursin("TAS1_RAISEREG, TAS1_RAISEREG_B", msg)
@@ -1171,7 +1171,7 @@ end
 
     @testset "unavailable devices and services not modeled by FCASMarket are skipped" begin
         @test !PSY.get_available(PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE))
-        @test isnothing(check_fcas_services(sys, fcas_toy_template(sys, [service_name])))
+        @test isnothing(check_fcas_services(fcas_toy_template(sys, [service_name]), sys))
     end
 
     @testset "a contributor modeled as FixedOutput is reported" begin
@@ -1180,7 +1180,7 @@ end
         PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
         PSI.set_device_model!(template, PSY.ThermalStandard, PSI.FixedOutput)
         PSI.set_service_model!(template, service_name, PSI.ServiceModel(FCASService, FCASMarket, service_name))
-        err = _caught(() -> check_fcas_services(sys, template))
+        err = _caught(() -> check_fcas_services(template, sys))
         @test err isa ArgumentError
         @test occursin("FixedOutput", sprint(showerror, err))
     end
@@ -1509,7 +1509,7 @@ end
     PSI.set_service_model!(
         template, service_name, PSI.ServiceModel(FCASService, FCASMarket, service_name),
     )
-    err = _caught(() -> check_fcas_services(sys, template))
+    err = _caught(() -> check_fcas_services(template, sys))
     @test err isa ArgumentError
     msg = sprint(showerror, err)
     @test occursin(duid, msg)
@@ -1746,7 +1746,7 @@ function fcas_requirement_toy_system(bids, gcs)
     )
 end
 
-function solve_fcas_requirement(sys, bid_types, gc_names; use_slacks = false, steps = 1, attributes = Dict{String, Any}())
+function solve_fcas_requirement(sys, bid_types, gc_names; use_slacks = false, steps = 1, mpc = nothing)
     device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
     template = fcas_toy_template(sys, [fcas_service_name(device, bt) for bt in bid_types])
     for name in gc_names
@@ -1754,7 +1754,7 @@ function solve_fcas_requirement(sys, bid_types, gc_names; use_slacks = false, st
             template, name,
             PSI.ServiceModel(
                 GenericConstraint, LinearFactorLimit, name; duals = [NEMConstraintLimit],
-                use_slacks = use_slacks, attributes = attributes,
+                use_slacks = use_slacks,
             ),
         )
     end
@@ -1764,6 +1764,7 @@ function solve_fcas_requirement(sys, bid_types, gc_names; use_slacks = false, st
         horizon = steps * TOY_RESOLUTION, resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION,
         initial_time = TOY_START, name = "fcas_req_toy", store_variable_names = true,
     )
+    isnothing(mpc) || (PSI.get_ext(PSI.get_settings(model))["market_price_cap"] = mpc)
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     return PSI.OptimizationProblemResults(model)
@@ -1786,7 +1787,7 @@ fcas_enabled_mw(results, sys, service_name) =
         service_name = "1_$(string(bid_type))"
         enabled = PSI.read_variable(results, "FCASCapacityVariable__FCASService__$service_name")
         @test enabled.value .* PSY.get_base_power(sys) ≈ [5.0, 5.0] atol = FCAS_TOY_TOLERANCE
-        prices = ReplayResults.compute_fcas_prices(results, sys)
+        prices = read_fcas_prices(results, sys)
         @test prices.REGIONID == ["1", "1"]
         @test prices.BIDTYPE == [bid_type, bid_type]
         @test prices.ROP ≈ [10.0, 10.0] atol = 1.0e-4
@@ -1800,7 +1801,7 @@ end
     sys = fcas_requirement_toy_system([(bid_type, -10.0)], gcs)
     results = solve_fcas_requirement(sys, [bid_type], ["F_TOY"])
     @test fcas_enabled_mw(results, sys, "1_RAISE6SEC") ≈ 3.0 atol = FCAS_TOY_TOLERANCE
-    prices = ReplayResults.compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
+    prices = read_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
     @test prices.ROP ≈ [-10.0] atol = 1.0e-4
 end
 
@@ -1815,7 +1816,7 @@ end
     @test fcas_enabled_mw(results, sys, "1_RAISE6SEC") ≈ 5.0 atol = FCAS_TOY_TOLERANCE
     @test fcas_enabled_mw(results, sys, "1_RAISE60SEC") ≈ 7.0 atol = FCAS_TOY_TOLERANCE
     # F_ONE's dual is 10 - 4 = 6 and F_TWO's is 4: RAISE6SEC sums both, RAISE60SEC gets F_TWO's alone.
-    prices = ReplayResults.compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
+    prices = read_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
     @test prices.BIDTYPE == [r60, r6]
     @test prices.ROP ≈ [4.0, 10.0] atol = 1.0e-4
 end
@@ -1825,11 +1826,11 @@ end
     gcs = [("F_TOY", ConstraintSense.GE, 25.0, [UnitTerm(TOY_CHEAP, bid_type, 1.0)], [bid_type])]
     sys = fcas_requirement_toy_system([(bid_type, 10.0)], gcs)
     results = solve_fcas_requirement(
-        sys, [bid_type], ["F_TOY"]; use_slacks = true, attributes = Dict{String, Any}("market_price_cap" => 20_300.0),
+        sys, [bid_type], ["F_TOY"]; use_slacks = true, mpc = 20_300.0,
     )
     weight = get_constraint_weight(get_component(GenericConstraint, sys, "F_TOY"))
     @test fcas_enabled_mw(results, sys, "1_RAISE6SEC") ≈ 20.0 atol = FCAS_TOY_TOLERANCE
-    prices = ReplayResults.compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
+    prices = read_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
     @test prices.ROP ≈ [weight * 20_300.0] rtol = 1.0e-6
 end
 
@@ -1849,22 +1850,22 @@ end
     gen = PSI.read_variable(results, "FCASSideCapacityVariable__FCASService__$(service_name)_gen")
     load = PSI.read_variable(results, "FCASSideCapacityVariable__FCASService__$(service_name)_load")
     @test only(gen.value + load.value) * base_power ≈ 11.0 atol = FCAS_TOY_TOLERANCE
-    prices = ReplayResults.compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
+    prices = read_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
     @test prices.ROP ≈ [15.0] atol = 1.0e-4
 end
 
-@testset "compute_fcas_prices needs a resolution for one interval, and warns on constraints without a dual" begin
+@testset "read_fcas_prices needs a resolution for one interval, and warns on constraints without a dual" begin
     bid_type = BidType.RAISE6SEC
     gcs = [("F_TOY", ConstraintSense.GE, 5.0, [UnitTerm(TOY_CHEAP, bid_type, 1.0)], [bid_type])]
     sys = fcas_requirement_toy_system([(bid_type, 10.0)], gcs)
     results = solve_fcas_requirement(sys, [bid_type], ["F_TOY"])
-    @test_throws ArgumentError ReplayResults.compute_fcas_prices(results, sys)
+    @test_throws ArgumentError read_fcas_prices(results, sys)
     extra = GenericConstraint(;
         name = "F_UNBUILT", sense = ConstraintSense.GE, rhs = 0.0,
         fcas_requirements = [FCASRequirement("1", BidType.LOWER6SEC)],
     )
     PSY.add_component!(sys, extra)
-    prices = @test_logs (:warn, r"F_UNBUILT") ReplayResults.compute_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
+    prices = @test_logs (:warn, r"F_UNBUILT") read_fcas_prices(results, sys; resolution = TOY_RESOLUTION)
     @test nrow(prices) == 1
 end
 
@@ -2049,7 +2050,7 @@ end
     results = solve_fcas_requirement(sys, [bid_type], ["F_TOY"]; steps = 2)
     enabled = PSI.read_variable(results, "FCASCapacityVariable__FCASService__1_RAISE6SEC")
     @test enabled.value .* PSY.get_base_power(sys) ≈ [5.0, 5.0] atol = FCAS_TOY_TOLERANCE
-    @test ReplayResults.compute_fcas_prices(results, sys).ROP ≈ [10.0, 10.0] atol = 1.0e-4
+    @test read_fcas_prices(results, sys).ROP ≈ [10.0, 10.0] atol = 1.0e-4
 end
 
 @testset "_fcas_direction_problem: which device types can offer each FCAS direction" begin
@@ -2070,12 +2071,12 @@ end
 @testset "check_fcas_services refuses an incremental FCAS bid on a load" begin
     sys = load_fcas_toy([(BidType.RAISE6SEC, (5.0, 10.0, 20.0, 30.0, 10.0), [(10.0, 10.0)])])
     load = PSY.get_component(PSY.InterruptiblePowerLoad, sys, "PUMP")
-    @test check_fcas_services(sys, fcas_toy_template(sys, ["TAS1_RAISE6SEC"])) === nothing
+    @test check_fcas_services(fcas_toy_template(sys, ["TAS1_RAISE6SEC"]), sys) === nothing
 
     add_toy_fcas!(sys, load, TOY_START, 2, BidType.LOWER6SEC, (5.0, 10.0, 20.0, 30.0, 10.0), [(10.0, 10.0)])
     PSY.add_service!(sys, FCASService(; name = "TAS1_LOWER6SEC", region = "TAS1", bid_type = BidType.LOWER6SEC), [load])
     flush_toy_fcas_curves!(sys)
-    err = _caught(() -> check_fcas_services(sys, fcas_toy_template(sys, ["TAS1_RAISE6SEC", "TAS1_LOWER6SEC"])))
+    err = _caught(() -> check_fcas_services(fcas_toy_template(sys, ["TAS1_RAISE6SEC", "TAS1_LOWER6SEC"]), sys))
     @test err isa ArgumentError
     @test occursin("incremental", sprint(showerror, err))
 end

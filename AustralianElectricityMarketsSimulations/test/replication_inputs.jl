@@ -5,7 +5,7 @@
             "constraint" => "N_MISSING@2025-01-01#1", "reason" => "no_definition", "missing" => String[],
         ),
     ]
-    @test_throws r"incomplete.*N_MISSING" replication_template(sys)
+    @test_throws r"incomplete.*N_MISSING" replay_template(sys)
 
     delete!(get_ext(sys), "skipped_constraints")
     get_ext(sys)["dropped_terms"] = [
@@ -14,18 +14,18 @@
             "bid_type" => "ENERGY", "factor" => 1.0,
         ),
     ]
-    @test_throws r"incomplete.*MISSING_DUID" replication_template(sys)
+    @test_throws r"incomplete.*MISSING_DUID" replay_template(sys)
 
     delete!(get_ext(sys), "dropped_terms")
     get_ext(sys)["defaulted_constraint_weights"] = ["N_NULL_WEIGHT@2025-01-01#1"]
-    @test_throws r"NULL GENERICCONSTRAINTWEIGHT: N_NULL_WEIGHT.*force_new = true" replication_template(sys)
+    @test_throws r"NULL GENERICCONSTRAINTWEIGHT: N_NULL_WEIGHT.*force_new = true" replay_template(sys)
 end
 
 @testset "a dispatch device without its dispatch-limit series cannot replay" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR))
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 15)
-    sys, _ = AustralianElectricityMarkets.RegionModel._constrained_system(db; date_range = interval)
-    @test_throws r"incomplete dispatch inputs for .*; build sys with nem_system" replication_template(sys)
+    sys, _ = constrained_system(db; date_range = interval)
+    @test_throws r"incomplete dispatch inputs for .*; build sys with nem_system" replay_template(sys)
 end
 
 @testset "an MNSP cannot enter the regulated formulation without its offers" begin
@@ -35,7 +35,7 @@ end
     @test_throws r"IC2.*MNSP" AEMS._check_mnsp_offers(ic)
     # With every dispatch device unavailable, the template reaches the MNSP check.
     foreach(d -> set_available!(d, false), AustralianElectricityMarkets.nem_dispatch_devices(sys))
-    @test_throws r"IC2.*MNSP" replication_template(sys)
+    @test_throws r"IC2.*MNSP" replay_template(sys)
     get_ext(ic)["ic_type"] = "REGULATED"
     @test isnothing(AEMS._check_mnsp_offers(ic))
 end
@@ -55,8 +55,12 @@ end
 @testset "a cached table without the requested constraint intervals cannot replay" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR))
     later = DateTime(2030, 1, 1):Minute(5):DateTime(2030, 1, 1, 0, 10)
-    sys, _ = AustralianElectricityMarkets.RegionModel._constrained_system(db; date_range = later)
-    @test_throws r"missing.*constraint.*2030" replication_template(sys)
+    sys, _ = constrained_system(db; date_range = later)
+    @test_throws r"missing.*constraint.*2030" replay_template(sys)
+end
+
+@testset "replay forecasts need attached input series" begin
+    @test_throws r"attach input time series" AEMS._prepare_replay_forecasts!(System(100.0; time_series_in_memory = true))
 end
 
 @testset "a unit registered mid-chunk passes the replay template" begin
@@ -75,6 +79,6 @@ end
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     sys = nem_system(db, NEMDEConfiguration(); date_range = interval)
     @test !isnothing(get_component(Generator, sys, "BW02"))
-    prepare_replay_forecasts!(sys)
-    @test_nowarn replication_template(sys)
+    AEMS._prepare_replay_forecasts!(sys)
+    @test_nowarn replay_template(sys)
 end

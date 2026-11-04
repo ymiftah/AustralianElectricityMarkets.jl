@@ -75,8 +75,7 @@ Both packages share connection and configuration types from
 `AustralianElectricityMarkets` creates and populates `PowerSystems.System`s from cached data.
 `AustralianElectricityMarketsSimulations` consumes those systems and supplies typed PSI
 formulations and simulation utilities without querying the cache. Top-level `scripts/`
-coordinate historical replay and NEMDE comparisons. See the
-[dispatch replay guide](docs/src/dispatch_replay.md) for the construction and PSI lifecycle.
+coordinate historical replay and NEMDE comparisons.
 
 The root source folders separate types and their methods (`types/`), external-data
 readers (`readers/`), system construction and modification (`system/`), and attached

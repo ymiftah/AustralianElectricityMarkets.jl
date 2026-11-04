@@ -43,24 +43,26 @@ function binding_sentinel_system()
     ]
     return nem_toy_system(units, [90.0, 130.0]; horizon = TOY_RESOLUTION)
 end
-# The solved tables of `_solved_tables` at interval `t`.
+# The solved tables of `read_solved_interval` at interval `t`.
 stock_at(tables, t) = map(df -> filter(:SETTLEMENTDATE => ==(t), df), tables)
 # One standalone one-interval solve of `template` (default the replication template) at `t`.
-function stock_standalone(sys, t; parts = REPLICATION_PARTS, template = replication_template(sys; parts))
-    model = AEMS.replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "standalone")
+function stock_standalone(sys, t; template = replay_template(sys))
+    model = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, template, sys; optimizer = STOCK_OPTIMIZER, initial_time = t, name = "standalone",
+    )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
     return (;
         # The MILP dual pass re-solves the model, so the objective is read from the optimizer stats.
         model, results, objective = only(PSI.read_optimizer_stats(results).objective_value),
-        solved = stock_at(ReplayResults._solved_tables(results, sys, parts), t),
+        solved = stock_at(read_solved_interval(results, sys), t),
     )
 end
 # The simulation, its per-step objectives and solved tables.
 function stock_simulate(sys; kwargs...)
-    out = ReplaySimulation.run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER, kwargs...)
-    tables = ReplayResults._solved_tables(out.results, sys, REPLICATION_PARTS)
+    out = run_replay(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER, kwargs...)
+    tables = read_solved_interval(out.results, sys)
     return (;
         out...,
         objectives = PSI.read_optimizer_stats(out.results).objective_value,
@@ -128,13 +130,9 @@ end
     never = sentinel_system(; invoked = [0.0, 0.0])
     @test AEMS.never_invoked_constraints(never, STOCK_STEPS) == Dict("N_TOY_LIMIT" => :never_invoked)
     @test AEMS.never_invoked_constraints(sentinel_system(; invoked = [1.0, 0.0]), STOCK_STEPS) == Dict{String, Symbol}()
-    out_never = ReplaySimulation.run_replication(never, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    out_never = run_replay(never, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     row_never = only(filter(:constraint => ==("N_TOY_LIMIT"), out_never.skipped_constraints))
     @test (row_never.reason, row_never.n_missing) == (:never_invoked, 0)
-end
-
-@testset "argument checks" begin
-    @test_throws ArgumentError ReplaySimulation.run_replication(sentinel_system(), STOCK_STEPS; parts = (:nonsense,))
 end
 
 # Two intervals of 100 MW load: Alta $20 (150 MW, so part-loaded and marginal at 100 MW once the
@@ -153,7 +151,7 @@ end
 stock_gc_price(raw) = raw / (100.0 * interval_hours(DISPATCH_INTERVAL))
 # One standalone solve at `t`, every `GenericConstraint` under `LinearFactorLimit` with `use_slacks`.
 function masked_standalone(sys, t)
-    template = replication_template(sys; parts = ())
+    template = replay_template(sys; template = energy_template())
     for gc in PSY.get_components(GenericConstraint, sys)
         name = PSY.get_name(gc)
         PSI.set_service_model!(
@@ -161,13 +159,13 @@ function masked_standalone(sys, t)
             PSI.ServiceModel(GenericConstraint, LinearFactorLimit, name; duals = [NEMConstraintLimit], use_slacks = true),
         )
     end
-    model = AEMS.replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "masked")
+    model = PSI.DecisionModel(AEMS.NEMDispatchProblem, template, sys; optimizer = STOCK_OPTIMIZER, initial_time = t, name = "masked")
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
     return (;
         results, objective = PSI.JuMP.objective_value(PSI.get_jump_model(model)),
-        solved = stock_at(ReplayResults._solved_tables(results, sys, REPLICATION_PARTS), t),
+        solved = stock_at(read_solved_interval(results, sys), t),
         gc = stock_gc_duals(results)["N_TOY_LIMIT"][t],
     )
 end
@@ -208,7 +206,7 @@ const MASK_CASES = [
                 # The masked row is violated (vacuous), its slack takes the violation, and no violation is reported.
                 slack = only(PSI.read_variable(new.results, "$(c.slack)__GenericConstraint__N_TOY_LIMIT").value)
                 @test slack >= (c.sense == ConstraintSense.LE ? 40.0 : 30.0) - TOY_TOLERANCE
-                v = ReplayResults._constraint_violations(new.results, sys)
+                v = read_constraint_violations(new.results, sys)
                 @test nrow(v) == 0 || !any(==("generic_constraint"), v.family)
             end
         end
@@ -241,9 +239,11 @@ end
 
 @testset "a recurrent build without slacks throws" begin
     sys = masked_system(ConstraintSense.LE, TOY_CHEAP, 60.0)
-    template = replication_template(sys; parts = ())
+    template = replay_template(sys; template = energy_template())
     PSI.set_service_model!(template, "N_TOY_LIMIT", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "N_TOY_LIMIT"; duals = [NEMConstraintLimit]))
-    model = AEMS.replication_decision_model(template, sys, TOY_START; optimizer = STOCK_OPTIMIZER, name = "hard")
+    model = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, template, sys; optimizer = STOCK_OPTIMIZER, initial_time = TOY_START, name = "hard",
+    )
     models = PSI.SimulationModels(; decision_models = [model])
     sim = PSI.Simulation(;
         name = "hard", steps = 2, models = models,
@@ -418,17 +418,19 @@ function stock_fcas_capacities(results, t)
 end
 # FCAS prices of one interval by `(REGIONID, BIDTYPE)`, in $/MWh.
 stock_fcas_prices(results, sys, t) = Dict(
-    (r.REGIONID, r.BIDTYPE) => r.ROP for r in eachrow(ReplayResults.compute_fcas_prices(results, sys; resolution = DISPATCH_INTERVAL)) if r.SETTLEMENTDATE == t
+    (r.REGIONID, r.BIDTYPE) => r.ROP for r in eachrow(read_fcas_prices(results, sys; resolution = DISPATCH_INTERVAL)) if r.SETTLEMENTDATE == t
 )
 function stock_fcas_standalone(sys, t)
-    template = replication_template(sys)
-    model = AEMS.replication_decision_model(template, sys, t; optimizer = STOCK_OPTIMIZER, name = "standalone")
+    template = replay_template(sys)
+    model = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, template, sys; optimizer = STOCK_OPTIMIZER, initial_time = t, name = "standalone",
+    )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
     return (;
         objective = PSI.JuMP.objective_value(PSI.get_jump_model(model)),
-        solved = stock_at(ReplayResults._solved_tables(results, sys, REPLICATION_PARTS), t),
+        solved = stock_at(read_solved_interval(results, sys), t),
         capacities = stock_fcas_capacities(results, t),
         prices = stock_fcas_prices(results, sys, t),
     )
@@ -512,7 +514,7 @@ end
 @testset "the tie-break pre-flight check" begin
     moved = tie_sentinel_system(; park_price = [10.0, 12.0])
     @test_throws ArgumentError check_tie_break_pairs(moved, STOCK_STEPS)
-    @test_throws ArgumentError ReplaySimulation.run_replication(moved, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    @test_throws ArgumentError run_replay(moved, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     @test isnothing(check_tie_break_pairs(tie_sentinel_system(), STOCK_STEPS))
     # Prices change between steps, but no band is ever tied.
     @test isnothing(check_tie_break_pairs(sentinel_system(), STOCK_STEPS))
@@ -727,7 +729,7 @@ end
     # The stored generic constraint slack is already in MW.
     slack = stock_realized(sim.results, "GenericConstraintSlackDown__GenericConstraint__F_REG", "F_REG"; parameter = false, scale = 1.0)
     @test slack ≈ [0.0, 15.0] atol = TOY_TOLERANCE
-    v = ReplayResults._constraint_violations(sim.results, sys)
+    v = read_constraint_violations(sim.results, sys)
     @test nrow(v) == 1
     row = only(eachrow(v))
     @test (row.family, row.name, row.DateTime, row.direction) == ("generic_constraint", "F_REG", STOCK_STEPS[2], "down")
@@ -755,48 +757,50 @@ end
         [100.0, 120.0]; horizon = TOY_RESOLUTION,
         mutate! = (sys, stamps) -> foreach(i -> add_constraint!(sys, stamps, i), 1:n),
     )
-    out = ReplaySimulation.run_replication(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
-    slack_families = Dict(ReplayResults._VIOLATION_FAMILIES)
+    out = run_replay(sys, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
+    slack_families = Dict(AEMS._VIOLATION_FAMILIES)
     keys = [k for k in PSI.list_variable_keys(out.results) if haskey(slack_families, PSI.IS.Optimization.get_entry_type(k))]
     @test length(keys) >= n
-    batched = ReplayResults._read_variable_frames(out.results, keys)
+    batched = AEMS._read_variable_frames(out.results, keys)
     @test Set(Base.keys(batched)) == Set(keys)
-    violated = [k for k in keys if any(>(ReplayResults._VIOLATION_TOLERANCE_MW), batched[k].value)]
+    violated = [k for k in keys if any(>(AEMS._VIOLATION_TOLERANCE_MW), batched[k].value)]
     @test length(violated) == n ÷ 2
-    @test isempty(ReplayResults._read_variable_frames(out.results, PSI.OptimizationContainerKey[]))
+    @test isempty(AEMS._read_variable_frames(out.results, PSI.OptimizationContainerKey[]))
 end
 
-@testset "replication_template follows parts and exclude_constraints" begin
+@testset "replay template follows the template and exclude_constraints" begin
     sys = fcas_toy_system()
-    full = replication_template(sys)
-    @test haskey(PSI.get_device_models(full), :EnergyReservoirStorage)
-    # Without :fcas the FCAS requirements need an unmodeled market and are reported, not built.
+    full = replay_template(sys)
+    @test Set(PSI.get_component_type(m) for m in values(PSI.get_device_models(full))) ==
+        Set([AEMS.NEM_DISPATCH_DEVICE_TYPES..., PSY.PowerLoad])
+    # A dispatch participant without a device model fails the template check.
+    no_storage = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    for T in (PSY.ThermalStandard, PSY.HydroDispatch, PSY.RenewableDispatch, PSY.InterruptiblePowerLoad)
+        PSI.set_device_model!(no_storage, T, AEMS.NEMReplayDispatch)
+    end
+    PSI.set_device_model!(no_storage, PSY.PowerLoad, PSI.StaticPowerLoad)
+    @test_throws r"no device model in template for dispatch participant types .*EnergyReservoirStorage" AEMS.check_template_against_sys(
+        no_storage, fcas_toy_system(),
+    )
+    # Without FCAS service models the FCAS requirements need an unmodeled market and are reported, not built.
     skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
-    no_fcas = replication_template(sys; parts = (:batteries, :generic_constraints), skipped = skipped)
-    @test isempty(AEMS._modeled_fcas_services(no_fcas))
+    no_fcas = replay_template(sys; template = with_generic_constraints!(energy_template()), skipped = skipped)
+    @test isempty(AEMS._modeled_fcas_services(no_fcas, sys))
     @test Set(r.constraint for r in skipped) == Set(["F_REG", "F_R6", "F_L6"])
     @test all(r -> r.reason == :unmodeled_fcas_service, skipped)
-    @test !any(((name, _),) -> name == TIE_BREAK_SERVICE_NAME, keys(PSI.get_service_models(no_fcas)))
-    # Without :batteries no storage model is set.
-    no_batteries = replication_template(sentinel_system(); parts = (:generic_constraints,))
-    @test !haskey(PSI.get_device_models(no_batteries), :EnergyReservoirStorage)
+    @test !any(m -> PSI.get_component_type(m) === EnergyTieBreak, values(PSI.get_service_models(no_fcas)))
     # exclude_constraints leaves a constraint out with its reason, and rejects an unknown name.
     skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
-    excluded = replication_template(sentinel_system(); skipped, exclude_constraints = Dict("N_TOY_LIMIT" => :never_invoked))
+    sys = sentinel_system()
+    replay_template(sys; skipped, exclude_constraints = Dict("N_TOY_LIMIT" => :never_invoked))
     @test only(skipped) == (constraint = "N_TOY_LIMIT", reason = :never_invoked, n_missing = 0)
-    @test !any(((name, _),) -> name == "N_TOY_LIMIT", keys(PSI.get_service_models(excluded)))
-    @test_throws r"exclude_constraints names N_ABSENT" replication_template(sentinel_system(); exclude_constraints = Dict("N_ABSENT" => :x))
-    @test_throws r"unknown parts" replication_template(sentinel_system(); parts = (:batteries, :nonsense))
+    @test !PSY.get_available(PSY.get_component(GenericConstraint, sys, "N_TOY_LIMIT"))
+    @test_throws r"exclude_constraints names N_ABSENT" replay_template(sentinel_system(); exclude_constraints = Dict("N_ABSENT" => :x))
 end
 
-@testset "tie-breaks without batteries fail when a battery carries tie-break scales" begin
-    # Alta and the battery offer generation at the same $30, so their bands are tied.
-    units = [TOY_CHEAP => toy_unit(100.0, [(100.0, 30.0)]; initial = 30.0, ramp_up = 100.0)]
-    batteries = [TOY_BATTERY => toy_battery(50.0, 30.0, 50.0, 1.0; initial = 0.0, ramp_up = 100.0)]
-    sys = nem_toy_system(units, 60.0; batteries, horizon = TOY_RESOLUTION)
-    @test_throws r"carry tie-break scales; add :batteries" replication_template(sys; parts = (:tie_breaks,))
-    @test !any(((name, _),) -> name == TIE_BREAK_SERVICE_NAME, keys(PSI.get_service_models(replication_template(sys; parts = ()))))
-    @test any(((name, _),) -> name == TIE_BREAK_SERVICE_NAME, keys(PSI.get_service_models(replication_template(sys; parts = (:batteries, :tie_breaks)))))
+@testset "tie-break service model follows the template" begin
+    @test !any(((_, T),) -> T == :EnergyTieBreak, keys(PSI.get_service_models(energy_template())))
+    @test any(((_, T),) -> T == :EnergyTieBreak, keys(PSI.get_service_models(with_tie_breaks!(energy_template()))))
 end
 
 @testset "named errors of the replay core" begin
@@ -812,13 +816,12 @@ end
             add_toy_series!(sys, gc, stamps, "invoked", [1.0, 1.0]; scale = 1.0)
         end,
     )
-    @test_throws r"cannot model: N_GHOST \(missing_component\)" replication_template(ghost; parts = (:generic_constraints,))
+    @test_throws r"cannot model: N_GHOST \(missing_component\)" replay_template(ghost; template = with_generic_constraints!(energy_template()))
     # Losses modeled but no interchange variable in the results.
     sys = loss_curve_sentinel_system()
-    uncoupled = stock_standalone(sys, TOY_START; parts = ())
-    @test_throws r"Losses are modeled" ReplayResults._solved_tables(uncoupled.results, sys, REPLICATION_PARTS)
-    @test nrow(ReplayResults._solved_tables(uncoupled.results, sys, ()).interconnectors) == 0
-    @test_throws r"non-finite regional price" ReplayResults._check_prices_finite(
+    uncoupled = stock_standalone(sys, TOY_START; template = replay_template(sys; template = energy_template()))
+    @test nrow(read_solved_interval(uncoupled.results, sys).interconnectors) == 0
+    @test_throws r"non-finite regional price" AEMS._check_prices_finite(
         DataFrame(SETTLEMENTDATE = [TOY_START], REGIONID = ["1"], ROP = [NaN]),
     )
 end

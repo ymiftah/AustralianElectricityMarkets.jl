@@ -20,25 +20,30 @@ function _modeled_device_types(template::PSI.ProblemTemplate)
 end
 
 
-# Names of the FCASServices the template models under FCASMarket.
-function _modeled_fcas_services(template::PSI.ProblemTemplate)
-    return Set(
-        name for ((name, _), model) in PSI.get_service_models(template)
-            if PSI.get_component_type(model) == FCASService && PSI.get_formulation(model) == FCASMarket
-    )
+# Names of the available FCASServices the template models under FCASMarket: a named model's service,
+# and every available service of a type-level model, which PSI expands over the available services.
+function _modeled_fcas_services(template::PSI.ProblemTemplate, sys::PSY.System)
+    names = Set{String}()
+    for ((name, _), model) in PSI.get_service_models(template)
+        PSI.get_component_type(model) == FCASService && PSI.get_formulation(model) == FCASMarket || continue
+        if isempty(name)
+            union!(names, PSY.get_name(svc) for svc in PSY.get_components(PSY.get_available, FCASService, sys))
+        else
+            push!(names, name)
+        end
+    end
+    return names
 end
 
 
 # An FCAS term needs its device's service modelled; an absent, unavailable or deviceless service
 # contributes zero at build, so it is not a failure.
 function _fcas_failures(
-        sys::PSY.System, device::PSY.Device, bid_type::BidType, fcas_modeled::Set{String},
-        modeled_types::Vector{DataType},
+        sys::PSY.System, device::PSY.Device, bid_type::BidType, fcas_modeled::Set{String}, modeled_types::Vector{DataType},
     )
     name = fcas_service_name(device, bid_type)
     svc = bid_type == BidType.ENERGY ? nothing : PSY.get_component(FCASService, sys, name)
-    (isnothing(svc) || !PSY.get_available(svc) || name in fcas_modeled) &&
-        return _TermFailures()
+    (isnothing(svc) || !PSY.get_available(svc) || name in fcas_modeled) && return _TermFailures()
     devices = filter(PSY.get_available, PSY.get_contributing_devices(sys, svc))
     isempty(devices) && return _TermFailures()
     if !any(d -> _type_modeled(d, modeled_types), devices)
@@ -101,8 +106,7 @@ end
 
 
 function _term_failures(
-        sys::PSY.System, term::InterconnectorTerm, ::Vector{DataType}, interconnector_modeled::Bool,
-        ::Set{String},
+        sys::PSY.System, term::InterconnectorTerm, ::Vector{DataType}, interconnector_modeled::Bool, ::Set{String},
     )
     device = PSY.get_component(PSY.AreaInterchange, sys, get_interconnector(term))
     isnothing(device) &&
@@ -192,7 +196,7 @@ function _filter_buildable_generic_constraints(
     )
     modeled_types = _modeled_device_types(template)
     interconnector_modeled = _interconnector_modeled(template)
-    fcas_modeled = _modeled_fcas_services(template)
+    fcas_modeled = _modeled_fcas_services(template, sys)
 
     gcs = sort(collect(constraints); by = PSY.get_name)
     contributing = _service_device_index(sys)
@@ -208,7 +212,9 @@ function _filter_buildable_generic_constraints(
             isnothing(skipped) || push!(skipped, (constraint = PSY.get_name(gc), reason = :no_available_device, n_missing = 0))
             continue
         end
-        diagnosis = _constraint_diagnosis(sys, gc, modeled_types, interconnector_modeled, fcas_modeled; tolerated_reasons, tolerated_types)
+        diagnosis = _constraint_diagnosis(
+            sys, gc, modeled_types, interconnector_modeled, fcas_modeled; tolerated_reasons, tolerated_types,
+        )
         if isnothing(diagnosis)
             push!(buildable, gc)
         else

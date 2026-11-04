@@ -283,7 +283,7 @@ end
 
 Name of the time series holding a device's FCAS offer curve for `service`, the series of its
 [`FCASService`](@ref) bid. The incremental curve is named by the service and the decremental one by
-[`PSY.get_decremental_service_bid_name`](@ref), as PowerSystems stores service bids.
+`PSY.get_decremental_service_bid_name`, as PowerSystems stores service bids.
 
 # Arguments
 - `service`: the FCAS service, one per region and [`BidType`](@ref).

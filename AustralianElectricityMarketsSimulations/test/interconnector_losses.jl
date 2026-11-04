@@ -9,10 +9,6 @@ using TimeSeries: TimeArray, timestamp
 import PowerSimulations as PSI
 import PowerSystems as PSY
 const AEMS = AustralianElectricityMarketsSimulations
-if !isdefined(@__MODULE__, :InterconnectorLossGaps)
-    include(joinpath(@__DIR__, "..", "..", "scripts", "interconnector_loss_gaps.jl"))
-end
-using .InterconnectorLossGaps: interconnector_loss_gaps
 
 """
     _loss_test_system(; loss_flow_coefficient, from_region_loss_share, breakpoints)
@@ -205,11 +201,11 @@ end
     model, res = _solve_loss(sys)
 
     container = PSI.get_optimization_container(model)
-    gaps = interconnector_loss_gaps(PSI.OptimizationProblemResults(model), sys)
+    gaps = read_interconnector_loss_gaps(PSI.OptimizationProblemResults(model), sys)
     @test !isempty(gaps)
     # Positive marginal cost everywhere in this toy system, so the LP has no incentive to
     # over-dissipate - the solved loss must land exactly on the curve at the solved flow.
-    @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
+    @test all(abs(gap) < 1.0e-6 for gap in gaps.gap_mw)
 
     res = PSI.OptimizationProblemResults(model)
     flow_df = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
@@ -249,9 +245,9 @@ end
         negative_cost = true,
     )
     model, res = _solve_loss(sys)
-    gaps = interconnector_loss_gaps(res, sys)
+    gaps = read_interconnector_loss_gaps(res, sys)
     @test !isempty(gaps)
-    @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
+    @test all(abs(gap) < 1.0e-6 for gap in gaps.gap_mw)
     prices = PSI.read_dual(res, PSI.CopperPlateBalanceConstraint, PSY.Area)
     price = Dict((r.name, r.DateTime) => r.value for r in eachrow(prices))
     share = 0.4
@@ -387,9 +383,9 @@ end
     model, res = _solve_loss(sys)
 
     container = PSI.get_optimization_container(model)
-    gaps = interconnector_loss_gaps(PSI.OptimizationProblemResults(model), sys)
+    gaps = read_interconnector_loss_gaps(PSI.OptimizationProblemResults(model), sys)
     @test !isempty(gaps)
-    @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
+    @test all(abs(gap) < 1.0e-6 for gap in gaps.gap_mw)
 end
 
 @testset "a build without the loss demand coefficient series fails, naming its setter" begin
@@ -771,9 +767,9 @@ end
         priced_supply_only = true,
     )
     model, res = _solve_loss(sys)
-    gaps = interconnector_loss_gaps(res, sys)
+    gaps = read_interconnector_loss_gaps(res, sys)
     @test !isempty(gaps)
-    @test all(abs(gap) < 1.0e-6 for gap in values(gaps))
+    @test all(abs(gap) < 1.0e-6 for gap in gaps.gap_mw)
 
     flow_df = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
     loss_df = PSI.read_variable(res, "InterconnectorLossVariable__AreaInterchange")
@@ -792,3 +788,16 @@ end
 end
 
 include("mnsp_limits.jl")
+
+@testset "read_interconnector_loss_gaps on a replay of the mock cache" begin
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
+    steps = DateTime(2025, 1, 1, 0, 5):DISPATCH_INTERVAL:DateTime(2025, 1, 1, 0, 10)
+    date_range = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
+    check_replay_inputs(db, date_range)
+    sys = nem_system(db, NEMDEConfiguration(); date_range)
+    replay = run_replay(sys, steps; folder = mktempdir())
+    table = read_interconnector_loss_gaps(replay.results, sys)
+    @test names(table) == ["interconnector", "DateTime", "flow_mw", "solved_loss_mw", "curve_loss_mw", "gap_mw", "weighted_loss_price"]
+    @test !isempty(table) && Set(table.DateTime) == Set(steps)
+    @test all(isfinite, table.gap_mw) && all(<(1.0e-3), abs.(table.gap_mw))
+end
