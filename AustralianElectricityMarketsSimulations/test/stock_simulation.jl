@@ -281,7 +281,7 @@ end
             @test stock_price(solved) ≈ expected[k].price atol = TOY_TOLERANCE
         end
     end
-    ramp_slack = only(values(PSI.read_realized_variables(sim.results, ["UnitRampDownSlack__EnergyReservoirStorage"])))
+    ramp_slack = only(values(PSI.read_realized_variables(sim.results, ["UnitRampDownSlack__NEMStorage"])))
     @test all(v -> abs(v) <= TOY_TOLERANCE, ramp_slack.value)
 end
 
@@ -503,7 +503,7 @@ end
         @test stock_price(sim.solved[k]) ≈ 10.0 atol = TOY_TOLERANCE
         @test sim.objectives[k] ≈ e.objective atol = 1.0e-4
     end
-    scales = only(values(PSI.read_realized_parameters(sim.results, ["TieBreakScaleParameter__ThermalStandard__1"])))
+    scales = only(values(PSI.read_realized_parameters(sim.results, ["TieBreakScaleParameter__NEMThermalGen__1"])))
     scale(name) = sort(filter(:name => ==(name), scales), :DateTime).value
     @test scale(TOY_CHEAP) ≈ [1.0, 0.8]
     @test scale(TOY_EXPENSIVE) ≈ [0.5, 1.0]
@@ -531,8 +531,8 @@ function reg_ramp_system(;
     ]
     return nem_toy_system(
         units, load_mw; horizon = TOY_RESOLUTION, mutate! = (sys, stamps) -> begin
-            alta = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
-            park = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
+            alta = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
+            park = PSY.get_component(NEMThermalGen, sys, TOY_EXPENSIVE)
             add_toy_fcas_offer!(sys, alta, stamps, BidType.RAISEREG, fill((0.0, 0.0, 100.0, 100.0, 25.0), 2), fill([(25.0, 5.0)], 2))
             add_toy_fcas_offer!(sys, park, stamps, BidType.RAISEREG, fill((0.0, 0.0, 100.0, 100.0, 20.0), 2), fill([(20.0, 10.0)], 2))
             add_toy_series!(sys, alta, stamps, "fcas_agc_ramp_rate_RAISEREG", alta_ramp)
@@ -560,8 +560,8 @@ function bdu_reg_system(;
     ]
     return nem_toy_system(
         units, 50.0; batteries, horizon = TOY_RESOLUTION, mutate! = (sys, stamps) -> begin
-            park = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
-            bat = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
+            park = PSY.get_component(NEMThermalGen, sys, TOY_EXPENSIVE)
+            bat = PSY.get_component(NEMStorage, sys, TOY_BATTERY)
             add_toy_fcas_offer!(sys, park, stamps, BidType.RAISEREG, fill((0.0, 0.0, 100.0, 100.0, 20.0), 2), fill([(20.0, 10.0)], 2))
             add_toy_fcas_offer!(sys, bat, stamps, BidType.RAISEREG, gen_trap, fill([(10.0, 3.0)], 2))
             add_toy_fcas_offer!(sys, bat, stamps, BidType.RAISEREG, load_trap, fill([(10.0, 4.0)], 2); decremental = true)
@@ -630,7 +630,7 @@ end
         ),
     ]
     sim, _ = stock_fcas_case(reg_ramp_system, expected)
-    rhs = stock_realized(sim.results, "FCASRampingLimitParameter__ThermalStandard__RAISEREG", TOY_CHEAP; field = "joint_ramping")
+    rhs = stock_realized(sim.results, "FCASRampingLimitParameter__NEMThermalGen__RAISEREG", TOY_CHEAP; field = "joint_ramping")
     @test rhs ≈ [90.0, 70.0] atol = TOY_TOLERANCE
     # Energy + RaiseReg is 70 MW in both steps: slack in step 1, at the RHS in step 2.
     @test rhs[1] - (50.0 + 20.0) ≈ 20.0 atol = TOY_TOLERANCE
@@ -658,7 +658,7 @@ end
     ]
     build() = bdu_reg_system(; batt_ramp = [360.0, 180.0])
     sim, _ = stock_fcas_case(build, expected)
-    key = "FCASRampingLimitParameter__EnergyReservoirStorage__RAISEREG"
+    key = "FCASRampingLimitParameter__NEMStorage__RAISEREG"
     @test stock_realized(sim.results, key, TOY_BATTERY; field = "bdu_ramping") ≈ [30.0, 15.0] atol = TOY_TOLERANCE
     # §6.1 for the battery: InitialMW 10 + 30, then 10 + 15; never binding (net energy 0).
     @test stock_realized(sim.results, key, TOY_BATTERY; field = "joint_ramping") ≈ [40.0, 25.0] atol = TOY_TOLERANCE
@@ -685,9 +685,9 @@ end
         ),
     ]
     sim, _ = stock_fcas_case(bdu_stranded_system, expected)
-    gen_slope = stock_realized(sim.results, "FCASLowerSlopeParameter__EnergyReservoirStorage__RAISEREG", TOY_BATTERY; scale = 1.0)
+    gen_slope = stock_realized(sim.results, "FCASLowerSlopeParameter__NEMStorage__RAISEREG", TOY_BATTERY; scale = 1.0)
     @test gen_slope ≈ [1.0, 0.625] atol = TOY_TOLERANCE
-    limits = "FCASOfferLimitParameter__EnergyReservoirStorage__RAISEREG_decremental"
+    limits = "FCASOfferLimitParameter__NEMStorage__RAISEREG_decremental"
     @test stock_realized(sim.results, limits, TOY_BATTERY; field = "max_avail") ≈ [10.0, 0.0] atol = TOY_TOLERANCE
     @test stock_realized(sim.results, limits, TOY_BATTERY; field = "enablement_min") ≈ [-50.0, -FCAS_INACTIVE_LIMIT_MW] atol = TOY_TOLERANCE
     # After step 2: the generation side's capacity enters its EnablementMin row at -0.625, the disabled load side's at 0.
@@ -775,11 +775,11 @@ end
         Set([AEMS.NEM_DISPATCH_DEVICE_TYPES..., PSY.PowerLoad])
     # A dispatch participant without a device model fails the template check.
     no_storage = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
-    for T in (PSY.ThermalStandard, PSY.HydroDispatch, PSY.RenewableDispatch, PSY.InterruptiblePowerLoad)
+    for T in (NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMLoad)
         PSI.set_device_model!(no_storage, T, AEMS.NEMReplayDispatch)
     end
     PSI.set_device_model!(no_storage, PSY.PowerLoad, PSI.StaticPowerLoad)
-    @test_throws r"no device model in template for dispatch participant types .*EnergyReservoirStorage" AEMS.check_template_against_sys(
+    @test_throws r"no device model in template for dispatch participant types .*NEMStorage" AEMS.check_template_against_sys(
         no_storage, fcas_toy_system(),
     )
     # Without FCAS service models the FCAS requirements need an unmodeled market and are reported, not built.
@@ -811,7 +811,7 @@ end
             gc = GenericConstraint(;
                 name = "N_GHOST", sense = ConstraintSense.LE, rhs = 1.0, terms = ConstraintTerm[UnitTerm("GHOST", BidType.ENERGY, 1.0)],
             )
-            PSY.add_service!(sys, gc, [PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)])
+            PSY.add_service!(sys, gc, [PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)])
             add_toy_series!(sys, gc, stamps, "rhs", [100.0, 100.0])
             add_toy_series!(sys, gc, stamps, "invoked", [1.0, 1.0]; scale = 1.0)
         end,

@@ -44,7 +44,7 @@ end
     ramping(name, bid_type) = PSY.get_time_series_values(
         PSY.SingleTimeSeries, PSY.get_component(PSY.Device, sys, name), AustralianElectricityMarkets.fcas_ramping_series_name(bid_type),
     )[1]
-    # ER01 (ThermalStandard) RAISEREG at 00:05: InitialMW 45 MW. The AGC ramp rate is the larger of RAMPUPRATE
+    # ER01 (NEMThermalGen) RAISEREG at 00:05: InitialMW 45 MW. The AGC ramp rate is the larger of RAMPUPRATE
     # 9 MW/h and 1.0 MW availability times 12, i.e. 12 MW/h. The §6.1 upper form is 45 + 12 * 5/60 = 46 MW;
     # a unit that is not a BDU has no §6.4 limit.
     @test collect(ramping("ER01", BidType.RAISEREG)) ≈ [46.0 / 100, FCAS_INACTIVE_LIMIT_MW / 100] atol = 1.0e-9
@@ -64,7 +64,7 @@ end
     )
     start = DateTime(2025, 1, 1, 0, 5)
     sys = fcas_replay_system(db, start:DISPATCH_INTERVAL:(start + 2 * DISPATCH_INTERVAL))
-    load = PSY.get_component(PSY.InterruptiblePowerLoad, sys, "ASLOAD1")
+    load = PSY.get_component(NEMLoad, sys, "ASLOAD1")
     effective = PSY.get_time_series_values(PSY.SingleTimeSeries, load, "fcas_effective_RAISEREG_decremental")
     @test effective[1][1] ≈ 15.0 / PSY.get_base_power(sys)
     @test effective[2][1] == 0.0

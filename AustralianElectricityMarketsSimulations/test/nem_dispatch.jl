@@ -18,7 +18,7 @@ const NEM_DISPATCH_HORIZON = Hour(1)
 # forecast windows the model reads.
 function nem_dispatch_system(; mutate! = identity, data_span = NEM_DISPATCH_HORIZON)
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    sys = nem_system(db, RegionalNetworkConfiguration())
+    sys = first(nem_network(db))
     date_range = NEM_DISPATCH_START:NEM_DISPATCH_RESOLUTION:(NEM_DISPATCH_START + data_span)
     attach_demand!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_market_bids!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
@@ -47,7 +47,7 @@ function flatten_series!(sys, ::Type{T}, duid, name, value) where {T}
     )
     return sys
 end
-flatten_series!(sys, duid, name, value) = flatten_series!(sys, PSY.ThermalStandard, duid, name, value)
+flatten_series!(sys, duid, name, value) = flatten_series!(sys, NEMThermalGen, duid, name, value)
 
 function nem_dispatch_model(sys; horizon = NEM_DISPATCH_HORIZON, name = "nem_dispatch_test")
     template = ProblemTemplate(NetworkModel(AreaBalancePowerModel; use_slacks = true))
@@ -79,10 +79,10 @@ component_keys(container_keys, ::Type{T}) where {T} =
 @testset "participants are discovered from the data, not a fixed type list" begin
     sys = nem_dispatch_system()
     types = nem_dispatch_participants(sys)
-    @test PSY.ThermalStandard in types
-    @test PSY.HydroDispatch in types
-    @test PSY.RenewableDispatch in types
-    @test PSY.EnergyReservoirStorage in types
+    @test NEMThermalGen in types
+    @test NEMHydroGen in types
+    @test NEMRenewableGen in types
+    @test NEMStorage in types
     # A load carries no ramp series, so it is not a participant.
     @test !(PSY.PowerLoad in types)
 
@@ -98,7 +98,7 @@ component_keys(container_keys, ::Type{T}) where {T} =
 
     @testset "a System with no dispatch limits throws, naming the setter" begin
         db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-        bare = nem_system(db, RegionalNetworkConfiguration())
+        bare = first(nem_network(db))
         template = ProblemTemplate(NetworkModel(AreaBalancePowerModel; use_slacks = true))
         err = try
             set_nem_dispatch_models!(template, bare)
@@ -130,9 +130,9 @@ end
     @testset "every generator participant gets identical variable and constraint entry types" begin
         participants = nem_dispatch_participants(sys)
         @test length(participants) >= 3
-        @test PSY.EnergyReservoirStorage in participants
-        @test PSY.InterruptiblePowerLoad in participants
-        generator_participants = filter(!in((PSY.EnergyReservoirStorage, PSY.InterruptiblePowerLoad)), participants)
+        @test NEMStorage in participants
+        @test NEMLoad in participants
+        generator_participants = filter(!in((NEMStorage, NEMLoad)), participants)
         variable_sets = [setdiff(entry_types(component_keys(variable_keys, T)), [EnergyUIGFSlack]) for T in generator_participants]
         constraint_sets = [setdiff(entry_types(component_keys(constraint_keys, T)), [EnergyUIGFConstraint]) for T in generator_participants]
         @test allequal(variable_sets)
@@ -141,19 +141,19 @@ end
         @test PSI.RampConstraint in first(constraint_sets)
 
         @testset "a scheduled load gets the single-variable shape priced on its decremental offer" begin
-            load_variables = entry_types(component_keys(variable_keys, PSY.InterruptiblePowerLoad))
-            load_constraints = entry_types(component_keys(constraint_keys, PSY.InterruptiblePowerLoad))
+            load_variables = entry_types(component_keys(variable_keys, NEMLoad))
+            load_constraints = entry_types(component_keys(constraint_keys, NEMLoad))
             @test PSI.ActivePowerVariable in load_variables
             @test EnergyOfferBandVariable in load_variables
-            band_metas = [k.meta for k in component_keys(variable_keys, PSY.InterruptiblePowerLoad) if IS.Optimization.get_entry_type(k) === EnergyOfferBandVariable]
+            band_metas = [k.meta for k in component_keys(variable_keys, NEMLoad) if IS.Optimization.get_entry_type(k) === EnergyOfferBandVariable]
             @test band_metas == ["load"]
             @test PSI.RampConstraint in load_constraints
             @test EnergyMaxAvailConstraint in load_constraints
         end
 
         @testset "a battery gets the per-direction shape instead of a single ActivePowerVariable" begin
-            battery_variables = entry_types(component_keys(variable_keys, PSY.EnergyReservoirStorage))
-            battery_constraints = entry_types(component_keys(constraint_keys, PSY.EnergyReservoirStorage))
+            battery_variables = entry_types(component_keys(variable_keys, NEMStorage))
+            battery_constraints = entry_types(component_keys(constraint_keys, NEMStorage))
             @test PSI.ActivePowerOutVariable in battery_variables
             @test PSI.ActivePowerInVariable in battery_variables
             @test !(PSI.ActivePowerVariable in battery_variables)
@@ -171,13 +171,13 @@ end
     solve!(model)
 
     results = PSI.OptimizationProblemResults(model)
-    dispatch = read_variable(results, "ActivePowerVariable__ThermalStandard")
+    dispatch = read_variable(results, "ActivePowerVariable__NEMThermalGen")
     solved_mw = [
         only(row.value for row in eachrow(dispatch) if row.name == "ER02" && row.DateTime == t)
             for t in sort(unique(dispatch.DateTime))
     ]
 
-    device = PSY.get_component(PSY.ThermalStandard, sys, "ER02")
+    device = PSY.get_component(NEMThermalGen, sys, "ER02")
     base_power = PSY.get_base_power(sys)
     initial_mw = PSY.get_time_series_values(
         PSY.SingleTimeSeries, device, "initial_mw"; len = 12,
@@ -223,7 +223,7 @@ end
     # participant but that device has nothing to read.
     sys = nem_dispatch_system(;
         mutate! = function (s)
-            device = PSY.get_component(PSY.ThermalStandard, s, "ER02")
+            device = PSY.get_component(NEMThermalGen, s, "ER02")
             for name in ("ramp_up_rate", "ramp_down_rate")
                 PSY.remove_time_series!(s, PSY.SingleTimeSeries, device, name)
             end
@@ -244,20 +244,34 @@ end
     container = PSI.get_optimization_container(model)
     @test length(PSI.get_time_steps(container)) == 1
 
-    power = PSI.get_variable(container, PSI.ActivePowerVariable(), PSY.ThermalStandard)
+    power = PSI.get_variable(container, PSI.ActivePowerVariable(), NEMThermalGen)
     @test size(power, 2) == 1
     for meta in ("up", "dn")
         constraint = PSI.get_constraint(
-            container, PSI.RampConstraint(), PSY.ThermalStandard, meta,
+            container, PSI.RampConstraint(), NEMThermalGen, meta,
         )
         @test size(constraint, 2) == 1
         @test constraint_vars(constraint["ER02", 1]) == Set([power["ER02", 1]])
         slack_type = meta == "up" ? AEMS.UnitRampUpSlack : AEMS.UnitRampDownSlack
         other_type = meta == "up" ? AEMS.UnitRampDownSlack : AEMS.UnitRampUpSlack
         func = JuMP.constraint_object(constraint["ER02", 1]).func
-        slack = PSI.get_variable(container, slack_type(), PSY.ThermalStandard)["ER02", 1]
-        other = PSI.get_variable(container, other_type(), PSY.ThermalStandard)["ER02", 1]
+        slack = PSI.get_variable(container, slack_type(), NEMThermalGen)["ER02", 1]
+        other = PSI.get_variable(container, other_type(), NEMThermalGen)["ER02", 1]
         @test JuMP.coefficient(func, slack) == -1.0
         @test JuMP.coefficient(func, other) == 0.0
     end
+end
+
+@testset "a NEM type under a stock formulation is rejected" begin
+    sys = nem_dispatch_system()
+    template = ProblemTemplate(NetworkModel(AreaBalancePowerModel; use_slacks = true))
+    PSI.set_device_model!(template, NEMThermalGen, PSI.ThermalBasicDispatch)
+    err = try
+        check_template_against_sys(template, sys)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("NEMThermalGen", err.msg) && occursin("AbstractNEMDispatch", err.msg)
 end

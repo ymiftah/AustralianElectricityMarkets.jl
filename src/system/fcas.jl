@@ -92,12 +92,12 @@ end
 
 Whether `device`'s `bid_type` FCAS bid has a direction the FCAS market formulation models: an
 incremental bid on any device but a load, a decremental-only bid on a `Storage` device or an
-`InterruptiblePowerLoad`, or a `Storage` device's regulation bid on both sides.
+`ControllableLoad`, or a `Storage` device's regulation bid on both sides.
 """
 function _fcas_bid_modeled(device, bid_type::BidType)
     direction = fcas_bid_direction(device, bid_type)
-    direction == FCASBidDirection.INCREMENTAL && return !(device isa InterruptiblePowerLoad)
-    direction == FCASBidDirection.DECREMENTAL && return device isa Storage || device isa InterruptiblePowerLoad
+    direction == FCASBidDirection.INCREMENTAL && return !(device isa ControllableLoad)
+    direction == FCASBidDirection.DECREMENTAL && return device isa Storage || device isa ControllableLoad
     direction == FCASBidDirection.BOTH && return device isa Storage && bid_type in FCAS_REGULATION_MARKETS
     return false
 end
@@ -249,15 +249,15 @@ Each series spans every interval of `date_range` but its last stamp; an interval
 a zero trapezium, which offers nothing there.
 
 The trapezium's MW quantities (all fields but not prices) are stored per-unit of `sys`'s system base,
-and `_get_fcas_trapezium` converts them back on read. Service bids, the offer curves, are stored in MW
+and `_get_fcas_trapezium` converts them back on read. The offer curves are stored in MW
 by [`set_fcas_service_bids!`](@ref) and converted to per-unit of the system base by `_get_fcas_offer_curve` on read.
 
 `DIRECTION` routes and names the series, mirroring [`set_market_bids!`](@ref)'s energy-bid
 GEN/LOAD split: `GEN` and `BIDIRECTIONAL` rows are both capability offered while the unit
 dispatches normally (a `BIDIRECTIONAL` bid doesn't distinguish charge/discharge, so it's
 attached under the plain `<SERVICE>` name alongside `GEN`), attached to every matching
-`Generator` and `EnergyReservoirStorage`; `LOAD` rows are decremental capability, attached
-to `EnergyReservoirStorage` and `InterruptiblePowerLoad` under `"<SERVICE>_decremental"`. A
+`Generator` and `Storage`; `LOAD` rows are decremental capability, attached
+to `Storage` and `ControllableLoad` under `"<SERVICE>_decremental"`. A
 non-scheduled load (no energy bid) that gets a series is made available if its unit is
 commissioned; one without any FCAS bid stays unavailable. Run this before
 [`nem_system`](@ref), which attaches the ramp and limit series a newly available load
@@ -268,7 +268,7 @@ large share of real FCAS providers - measured on 2 Jan 2025 `BIDPEROFFER_D`, `LO
 
 The trapezium is a series of plain `NTuple{7,Float64}`, so it is not a [`FCASTrapezium`](@ref) object.
 Adds the [`FCASService`](@ref)s through [`add_fcas_services!`](@ref) before writing the offer curves,
-as the service bids need them. FCAS requirements are [`GenericConstraint`](@ref)s built separately by
+as the offer curves need them. FCAS requirements are [`GenericConstraint`](@ref)s built separately by
 [`nem_system`](@ref).
 
 Unlike the deleted `set_fcas_offers!`, this is genuinely time-varying (mirrors
@@ -295,12 +295,12 @@ function set_fcas_bids!(sys, db, date_range; kwargs...)
         foreach(get_components(Generator, sys)) do gen
             _attach_fcas_trapezium_series!(sys, gen, gdf_inc, get_name(gen), bid_type, OfferSide.GEN, grid, resolution)
         end
-        foreach(get_components(EnergyReservoirStorage, sys)) do stor
+        foreach(get_components(Storage, sys)) do stor
             duid = get_name(stor)
             _attach_fcas_trapezium_series!(sys, stor, gdf_inc, duid, bid_type, OfferSide.GEN, grid, resolution)
             _attach_fcas_trapezium_series!(sys, stor, gdf_dec, duid, bid_type, OfferSide.LOAD, grid, resolution)
         end
-        foreach(get_components(InterruptiblePowerLoad, sys)) do load
+        foreach(get_components(ControllableLoad, sys)) do load
             attached = _attach_fcas_trapezium_series!(
                 sys, load, gdf_dec, get_name(load), bid_type, OfferSide.LOAD, grid, resolution,
             )
@@ -318,8 +318,9 @@ end
 Stores the FCAS offer curves of `date_range` on the devices that contribute to each
 [`FCASService`](@ref), one `PiecewiseStepData` series per device, service and side (see
 [`set_fcas_offer!`](@ref) and [`fcas_offer_series_name`](@ref)). The curves are stored in MW. Run it
-after [`set_fcas_bids!`](@ref). Operation costs are left as they are. A second call replaces the
-series it stores.
+after [`set_fcas_bids!`](@ref). A device with a [`NEMOfferCost`](@ref) records each stored curve and
+its trapezium as a [`NEMFCASBid`](@ref); other operation costs are left as they are. A second call
+replaces the series and the bids it stores.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object, with its FCAS services.
@@ -344,12 +345,12 @@ function set_fcas_service_bids!(sys, db, date_range; kwargs...)
         foreach(get_components(Generator, sys)) do gen
             _write_fcas_service_bid!(sys, gen, bid_type, false, _fcas_offer_curves(gdf_inc, get_name(gen), bid_type, grid), start_date, resolution)
         end
-        foreach(get_components(EnergyReservoirStorage, sys)) do stor
+        foreach(get_components(Storage, sys)) do stor
             duid = get_name(stor)
             _write_fcas_service_bid!(sys, stor, bid_type, false, _fcas_offer_curves(gdf_inc, duid, bid_type, grid), start_date, resolution)
             _write_fcas_service_bid!(sys, stor, bid_type, true, _fcas_offer_curves(gdf_dec, duid, bid_type, grid), start_date, resolution)
         end
-        foreach(get_components(InterruptiblePowerLoad, sys)) do load
+        foreach(get_components(ControllableLoad, sys)) do load
             _write_fcas_service_bid!(sys, load, bid_type, true, _fcas_offer_curves(gdf_dec, get_name(load), bid_type, grid), start_date, resolution)
         end
     end
@@ -434,7 +435,7 @@ end
 
 Attaches per-device, per-interval [`FCASTrapezium`](@ref) scaling inputs (AEMO *FCAS Model in
 NEMDE* §4) and the §5 AGC-status pre-condition input to every available `Generator`,
-`EnergyReservoirStorage` and `InterruptiblePowerLoad` in `sys`, read from [`read_fcas_scaling_inputs`](@ref)/[`read_uigf`](@ref):
+`Storage` and `ControllableLoad` in `sys`, read from [`read_fcas_scaling_inputs`](@ref)/[`read_uigf`](@ref):
 
 - `"fcas_agc_enablement_min_RAISEREG"`/`"fcas_agc_enablement_max_RAISEREG"` from
   `RAISEREGENABLEMENTMIN`/`RAISEREGENABLEMENTMAX` (§4.1);
@@ -450,7 +451,7 @@ NEMDE* §4) and the §5 AGC-status pre-condition input to every available `Gener
 
 Generators and storage pair each ramp rate with its own service's availability: `RAMPUPRATE` with
 `RAISEREGAVAILABILITY`, and `RAMPDOWNRATE` with `LOWERREGAVAILABILITY`. An
-`InterruptiblePowerLoad` pairs them with the service that reads each series: its
+`ControllableLoad` pairs them with the service that reads each series: its
 `"fcas_agc_ramp_rate_RAISEREG"` (read for lower regulation) takes `RAMPUPRATE` with
 `LOWERREGAVAILABILITY`, and its `"fcas_agc_ramp_rate_LOWERREG"` (read for raise regulation) takes
 `RAMPDOWNRATE` with `RAISEREGAVAILABILITY`.
@@ -493,10 +494,10 @@ function set_fcas_scaling_inputs!(sys, db, date_range; kwargs...)
     uigf_rows = read_uigf(db, date_range; kwargs...)
     uigf_by_duid = DataFrames.isempty(uigf_rows) ? nothing : groupby(uigf_rows, :DUID)
 
-    component_types = (Generator, EnergyReservoirStorage, InterruptiblePowerLoad)
+    component_types = (Generator, Storage, ControllableLoad)
     for device in _fcas_scaling_devices(sys, component_types)
         duid = get_name(device)
-        ramp_raise, ramp_lower = device isa InterruptiblePowerLoad ?
+        ramp_raise, ramp_lower = device isa ControllableLoad ?
             (:AGC_RAMP_LOAD_RAISEREG, :AGC_RAMP_LOAD_LOWERREG) : (:AGC_RAMP_RAISEREG, :AGC_RAMP_LOWERREG)
 
         if !isnothing(by_duid) && haskey(by_duid, (duid,))

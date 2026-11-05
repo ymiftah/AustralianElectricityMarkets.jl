@@ -111,7 +111,7 @@ end
 _required_bid_directions(device, coverage) = string.(energy_offer_sides(device))
 # A wholesale demand response unit bids GEN only; every other scheduled load, including one with no
 # period offer at all, is required on LOAD.
-_required_bid_directions(device::PSY.InterruptiblePowerLoad, coverage) =
+_required_bid_directions(device::PSY.ControllableLoad, coverage) =
     haskey(coverage, (PSY.get_name(device), "GEN")) ? ("GEN",) : string.(energy_offer_sides(device))
 
 
@@ -170,7 +170,7 @@ function _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, da
     for row in eachrow(bids)
         push!(get!(coverage, (row.DUID, row.DIRECTION), Set{DateTime}()), row.INTERVAL_DATETIME)
     end
-    for T in (PSY.Generator, PSY.InterruptiblePowerLoad, PSY.EnergyReservoirStorage), device in PSY.get_components(T, sys)
+    for T in (PSY.Generator, PSY.ControllableLoad, PSY.Storage), device in PSY.get_components(T, sys)
         name = PSY.get_name(device)
         name in required_names && !(name in non_scheduled) || continue
         is_non_scheduled_load(device) && continue

@@ -496,7 +496,7 @@ end
     _is_unpriced_unavailable(svc, device, bid_type) -> Bool
 
 Whether `device` is unavailable and carries no stored offer curve for `svc` on one of its sides:
-NEMDE-path units with no energy bids get no service bid, and nothing reads their effective offer.
+NEMDE-path units with no energy bids get no FCAS offer curve, and nothing reads their effective offer.
 An available device without its curve is not skipped, so its missing data still fails.
 
 # Returns

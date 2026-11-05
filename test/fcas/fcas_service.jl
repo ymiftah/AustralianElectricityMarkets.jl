@@ -72,7 +72,7 @@
         # matching GEN row for the same bid type. Constructed directly instead: BAT1 gets
         # only manual decremental RAISE6SEC series, and no other device gets any at all.
         sys = augmented_pscb_system()
-        bat = get_component(EnergyReservoirStorage, sys, "BAT1")
+        bat = get_component(NEMStorage, sys, "BAT1")
         add_time_series!(
             sys, bat,
             AustralianElectricityMarkets.single_series(

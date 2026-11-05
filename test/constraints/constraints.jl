@@ -258,7 +258,7 @@ end
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:Minute(5):(start_date + Hour(1))
 
-    sys = nem_system(db, RegionalNetworkConfiguration())
+    sys = first(nem_network(db))
     added, skipped = build_constraints!(sys, db, date_range)
 
     # Every GENCONID in mock_data.jl has exactly one invoked GENCONDATA/SPD* version, always
@@ -292,7 +292,7 @@ end
     @test only(get_terms(pump_gc)) == UnitTerm("PUMP1", BidType.ENERGY, -1.0)
     @test isempty(get_ext(pump_gc)["dropped_terms"])
     # A load DUID names exactly one Device, also when it has a GENUNITS row (PUMP1).
-    @test get_component(Device, sys, "PUMP1") isa InterruptiblePowerLoad
+    @test get_component(Device, sys, "PUMP1") isa NEMLoad
 
     skipped_table = get_skipped_constraints(sys)
     @test Set(skipped_table.constraint) == Set(keys(skipped))

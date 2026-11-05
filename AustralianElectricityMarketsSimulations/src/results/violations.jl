@@ -91,7 +91,7 @@ relaxing a `<=` row and `"down"` for one relaxing a `>=` row; for `"area_balance
 
 # Returns
 A `DataFrame` with `family`, `name`, `DateTime`, `MW`, `direction` and `variable` (the slack
-variable's key as PSI encodes it in result files, e.g. `"UnitRampUpSlack__HydroDispatch"`). The
+variable's key as PSI encodes it in result files, e.g. `"UnitRampUpSlack__NEMHydroGen"`). The
 unit ramp rows are those with `family == "unit_ramp"`.
 """
 function read_constraint_violations(

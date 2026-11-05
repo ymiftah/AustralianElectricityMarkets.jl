@@ -13,7 +13,7 @@
     db = aem_connect(config)
 
     # Base system for testing
-    sys_base = nem_system(db, RegionalNetworkConfiguration())
+    sys_base, _ = nem_network(db)
 
     # Writes a DISPATCHLOAD hive whose row (interval i of grid, duid) takes the values `cell(duid, i)`.
     function dispatchload_db(cell, grid, duids)
@@ -80,33 +80,32 @@
                 @test_logs (:warn, r"WDR1") (:warn, r"PUMP2") match_mode = :any set_market_bids!(
                     sys, db, date_range; resolution = resolution,
                 )
-                for gen in get_components(ThermalStandard, sys)
+                for gen in get_components(NEMThermalGen, sys)
                     # Verify time series exists
-                    ta = get_time_series_array(SingleTimeSeries, gen, "variable_cost")
+                    ta = get_time_series_array(SingleTimeSeries, gen, "energy_offer")
                     # set_market_bids! creates one value per bid interval of date_range.
                     @test length(ta) == length(date_range) - 1
                 end
 
                 @testset "Scheduled loads" begin
-                    @test !get_available(get_component(InterruptiblePowerLoad, sys, "PUMP2"))
-                    @test !get_available(get_component(InterruptiblePowerLoad, sys, "WDR1"))
-                    pump = get_component(InterruptiblePowerLoad, sys, "PUMP1")
+                    @test !get_available(get_component(NEMLoad, sys, "PUMP2"))
+                    @test !get_available(get_component(NEMLoad, sys, "WDR1"))
+                    pump = get_component(NEMLoad, sys, "PUMP1")
                     @test get_available(pump)
-                    ta = get_time_series_array(SingleTimeSeries, pump, "decremental_variable_cost")
+                    ta = get_time_series_array(SingleTimeSeries, pump, "energy_offer_decremental")
                     @test length(ta) == length(date_range) - 1
-                    @test !isempty(get_time_series_array(SingleTimeSeries, pump, "decremental_initial_input"))
                     # A load has no incremental offer
-                    @test !has_time_series(pump, SingleTimeSeries, "variable_cost")
+                    @test !has_time_series(pump, SingleTimeSeries, "energy_offer")
                 end
 
                 @testset "Batteries" begin
-                    for bat in get_components(EnergyReservoirStorage, sys)
+                    for bat in get_components(NEMStorage, sys)
                         # GEN bids
-                        ta_gen = get_time_series_array(SingleTimeSeries, bat, "variable_cost")
+                        ta_gen = get_time_series_array(SingleTimeSeries, bat, "energy_offer")
                         @test length(ta_gen) == length(date_range) - 1
 
                         # LOAD bids (decremental)
-                        ta_load = get_time_series_array(SingleTimeSeries, bat, "decremental_variable_cost")
+                        ta_load = get_time_series_array(SingleTimeSeries, bat, "energy_offer_decremental")
                         @test length(ta_load) == length(date_range) - 1
 
                         # The offer views read the same curves, one per side.
@@ -114,10 +113,6 @@
                         @test gen_offer.side == OfferSide.GEN && load_offer.side == OfferSide.LOAD
                         @test gen_offer.timestamps == PowerSystems.TimeSeries.timestamp(ta_gen) && gen_offer.curves == values(ta_gen)
                         @test load_offer.curves == values(ta_load)
-
-                        # Initial inputs
-                        @test !isempty(get_time_series_array(SingleTimeSeries, bat, "incremental_initial_input"))
-                        @test !isempty(get_time_series_array(SingleTimeSeries, bat, "decremental_initial_input"))
 
                         # Energy MAXAVAIL per direction; the mock bids 100 + i MW on both sides,
                         # rising with the interval index i.
@@ -131,7 +126,7 @@
                         @test all(x -> 100.0 <= x <= 149.0, avail.gen)
                         @test avail.gen[end] > avail.gen[1]
                     end
-                    @test isnothing(get_storage_energy_max_avail(first(get_components(ThermalStandard, sys)), first(date_range), 1))
+                    @test isnothing(get_storage_energy_max_avail(first(get_components(NEMThermalGen, sys)), first(date_range), 1))
                     @test isnothing(get_energy_offer(first(get_components(PowerLoad, sys)), OfferSide.GEN))
                 end
             end
@@ -166,8 +161,8 @@
         set_energy_offer!(sys, stock, OfferSide.GEN, single("anything", curve(20.0)))
         @test get_time_series_values(SingleTimeSeries, stock, "energy_offer") == fill(curve(20.0), 2)
         @test_throws ArgumentError set_energy_offer!(sys, stock, OfferSide.GEN, single("flat", 1.0))
-        offer = get_energy_offer(stock, OfferSide.GEN)
-        @test offer.curves == fill(curve(20.0), 2) && offer.timestamps == [start, start + Minute(5)]
+        # A device that is not a NEM type has no offer view.
+        @test isnothing(get_energy_offer(stock, OfferSide.GEN))
         @test isnothing(get_energy_offer(stock, OfferSide.LOAD))
 
         # A NEMOfferCost records the bid, which needs the max_avail series.
@@ -191,35 +186,43 @@
         @test get_time_series_values(SingleTimeSeries, gen, "energy_offer") == fill(curve(30.0), 2)
     end
 
-    @testset "set_market_bids! writes energy_offer series with referred prices" begin
+    @testset "set_market_bids! records each side's offer on the NEMOfferCost" begin
         sys = deepcopy(sys_base)
         start_date = DateTime(2025, 1, 1, 0, 0)
         date_range = start_date:Minute(5):(start_date + Hour(1))
         set_market_bids!(sys, db, date_range)
-        gen = first(get_components(ThermalStandard, sys))
-        for (device, side, name) in (
-                (gen, OfferSide.GEN, "variable_cost"),
-                (first(get_components(EnergyReservoirStorage, sys)), OfferSide.GEN, "variable_cost"),
-                (first(get_components(EnergyReservoirStorage, sys)), OfferSide.LOAD, "decremental_variable_cost"),
-            )
-            @test get_time_series_values(SingleTimeSeries, device, energy_offer_series_name(side)) ==
-                get_time_series_values(SingleTimeSeries, device, name)
+        gen = first(get_components(NEMThermalGen, sys))
+        storage = first(get_components(NEMStorage, sys))
+        for (device, side) in ((gen, OfferSide.GEN), (storage, OfferSide.GEN), (storage, OfferSide.LOAD))
+            bid = only(b for b in AustralianElectricityMarkets.get_energy_bids(get_operation_cost(device)) if b.side == side)
+            @test bid.curves.name == energy_offer_series_name(side)
+            @test bid.max_avail.name == energy_max_avail_series_name(side)
+            offer = get_energy_offer(device, side)
+            @test offer.curves == get_time_series_values(SingleTimeSeries, device, energy_offer_series_name(side))
+            @test offer.timestamps[1] == date_range[1]
         end
+        @test !any(has_time_series(gen, SingleTimeSeries, n) for n in ("variable_cost", "incremental_initial_input"))
     end
 
-    @testset "set_market_bids! twice replaces the offers" begin
+    @testset "set_market_bids! twice keeps one NEMEnergyBid per side" begin
         sys = deepcopy(sys_base)
         start_date = DateTime(2025, 1, 1, 0, 0)
-        date_range = start_date:Minute(5):(start_date + Hour(1))
-        set_market_bids!(sys, db, date_range)
-        gen = first(get_components(ThermalStandard, sys))
-        first_values = get_time_series_values(SingleTimeSeries, gen, "energy_offer")
-        # set_market_bids! itself cannot be repeated (variable_cost is a duplicate); its offer write replaces.
-        resolution = Minute(5)
-        ts = AustralianElectricityMarkets.single_series("energy_offer", start_date, first_values, resolution)
-        set_energy_offer!(sys, gen, OfferSide.GEN, ts)
-        @test get_time_series_values(SingleTimeSeries, gen, "energy_offer") == first_values
-        @test count(k -> k.name == "energy_offer", get_time_series_keys(gen)) == 1
+        first_range = start_date:Minute(5):(start_date + Hour(1))
+        second_range = (start_date + Minute(30)):Minute(5):(start_date + Minute(90))
+        set_market_bids!(sys, db, first_range)
+        set_market_bids!(sys, db, second_range)
+        for device in vcat(collect(get_components(NEMThermalGen, sys)), collect(get_components(NEMStorage, sys)))
+            get_available(device) || continue
+            bids = AustralianElectricityMarkets.get_energy_bids(get_operation_cost(device))
+            sides = [b.side for b in bids]
+            @test allunique(sides)
+            @test !isempty(sides)
+            for side in sides
+                # The second call's window replaced the first's series.
+                @test get_energy_offer(device, side).timestamps[1] == second_range[1]
+            end
+            @test count(k -> k.name == "energy_offer", get_time_series_keys(device)) <= 1
+        end
     end
 
     @testset "Absolute value correctness (regression: 100x demand/hydro scaling bug)" begin
@@ -433,7 +436,7 @@
         @testset "attaches the full dispatch envelope to a scheduled load" begin
             sys = deepcopy(sys_base)
             attach_dispatch_limits!(sys, db, date_range)
-            pump = get_component(InterruptiblePowerLoad, sys, "PUMP1")
+            pump = get_component(NEMLoad, sys, "PUMP1")
             for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw", "max_active_power", "availability")
                 @test length(get_time_series_array(SingleTimeSeries, pump, name)) == length(date_range) - 1
             end
@@ -448,7 +451,7 @@
             set_fcas_bids!(sys, db, date_range)
             @test all(>(0.0), subset(truth, :DUID => ByRow(==("ASLOAD1"))).INITIALMW)
             attach_dispatch_limits!(sys, db, date_range)
-            asload = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
+            asload = get_component(NEMLoad, sys, "ASLOAD1")
             @test get_available(asload)
             for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw", "max_active_power", "availability")
                 @test all(==(0.0), get_time_series_values(SingleTimeSeries, asload, name))
@@ -480,7 +483,7 @@
             sys = deepcopy(sys_base)
             attach_dispatch_limits!(sys, db, date_range)
 
-            battery = get_component(EnergyReservoirStorage, sys, "BW01")
+            battery = get_component(NEMStorage, sys, "BW01")
             @test !isnothing(battery)
             for name in ("ramp_up_rate", "ramp_down_rate", "initial_mw")
                 ta = get_time_series_array(SingleTimeSeries, battery, name)
@@ -503,9 +506,9 @@
             attach_dispatch_limits!(sys, db, date_range)
 
             devices = vcat(
-                collect(get_components(ThermalStandard, sys)),
-                collect(get_components(HydroDispatch, sys)),
-                collect(get_components(RenewableDispatch, sys)),
+                collect(get_components(NEMThermalGen, sys)),
+                collect(get_components(NEMHydroGen, sys)),
+                collect(get_components(NEMRenewableGen, sys)),
             )
             n_checked = 0
             for device in devices
@@ -530,8 +533,8 @@
         @testset "availability and initial_mw read back as raw AVAILABILITY/INITIALMW" begin
             sys = deepcopy(sys_base)
             attach_dispatch_limits!(sys, db, date_range)
-            renewable = get_component(RenewableDispatch, sys, "BW03")
-            battery = get_component(EnergyReservoirStorage, sys, "BW01")
+            renewable = get_component(NEMRenewableGen, sys, "BW03")
+            battery = get_component(NEMStorage, sys, "BW01")
             horizon = length(date_range) - 1
             with_units_base(sys, "NATURAL_UNITS") do
                 for (device, duid) in ((renewable, "BW03"), (battery, "BW01"))
@@ -572,7 +575,7 @@
                     @test err isa ArgumentError
                     @test occursin("ER01", err.msg)
                     # Throwing leaves sys untouched, even for the devices with perfectly good data.
-                    @test !has_time_series(get_component(ThermalStandard, sys, "ER02"), SingleTimeSeries, case.series)
+                    @test !has_time_series(get_component(NEMThermalGen, sys, "ER02"), SingleTimeSeries, case.series)
                 end
             end
         end
@@ -596,11 +599,11 @@
 
             @test_nowarn attach_dispatch_limits!(sys, zero_db, short_range)
 
-            battery = get_component(EnergyReservoirStorage, sys, "BW01")
+            battery = get_component(NEMStorage, sys, "BW01")
             @test has_time_series(battery, SingleTimeSeries, "ramp_up_rate")
             @test !has_time_series(battery, SingleTimeSeries, "max_active_power")
 
-            offline = get_component(ThermalStandard, sys, "ER01")
+            offline = get_component(NEMThermalGen, sys, "ER01")
             @test all(
                 iszero,
                 get_time_series_values(
@@ -608,15 +611,15 @@
                 ),
             )
 
-            fixed = get_component(ThermalStandard, sys, "ER02")
+            fixed = get_component(NEMThermalGen, sys, "ER02")
             @test all(iszero, get_time_series_values(SingleTimeSeries, fixed, "ramp_up_rate"))
             @test all(iszero, get_time_series_values(SingleTimeSeries, fixed, "ramp_down_rate"))
-            @test has_time_series(get_component(HydroDispatch, sys, "BW02"), SingleTimeSeries, "ramp_up_rate")
+            @test has_time_series(get_component(NEMHydroGen, sys, "BW02"), SingleTimeSeries, "ramp_up_rate")
         end
 
         @testset "zero static max_active_power throws, naming the DUID" begin
             sys = deepcopy(sys_base)
-            thermal = get_component(ThermalStandard, sys, "ER01")
+            thermal = get_component(NEMThermalGen, sys, "ER01")
             with_units_base(sys, "NATURAL_UNITS") do
                 set_active_power_limits!(thermal, (min = 0.0, max = 0.0))
                 return
@@ -630,7 +633,7 @@
             end
             @test err isa ArgumentError
             @test occursin("ER01", err.msg)
-            @test !has_time_series(get_component(HydroDispatch, sys, "BW02"), SingleTimeSeries, "max_active_power")
+            @test !has_time_series(get_component(NEMHydroGen, sys, "BW02"), SingleTimeSeries, "max_active_power")
             @test !has_time_series(thermal, SingleTimeSeries, "max_active_power")
         end
     end
@@ -648,7 +651,7 @@
             set_fcas_scaling_inputs!(sys, db, date_range)
 
             devices = vcat(
-                collect(get_components(Generator, sys)), collect(get_components(EnergyReservoirStorage, sys)),
+                collect(get_components(Generator, sys)), collect(get_components(NEMStorage, sys)),
             )
             @test length(devices) == 6  # BW01, BW02, BW03, BW04, ER01, ER02
 
@@ -688,7 +691,7 @@
             @test any(raise_from_availability) && !all(raise_from_availability)
             @test any(lower_from_availability) && !all(lower_from_availability)
 
-            for device in vcat(collect(get_components(Generator, sys)), collect(get_components(EnergyReservoirStorage, sys)))
+            for device in vcat(collect(get_components(Generator, sys)), collect(get_components(NEMStorage, sys)))
                 rows = sort(subset(truth, :DUID => ByRow(==(get_name(device)))), :SETTLEMENTDATE)
                 got_raise = get_time_series_values(SingleTimeSeries, device, "fcas_agc_ramp_rate_RAISEREG")
                 got_lower = get_time_series_values(SingleTimeSeries, device, "fcas_agc_ramp_rate_LOWERREG")
@@ -713,19 +716,19 @@
 
         @testset "scaling device types include available load providers" begin
             sys = deepcopy(sys_base)
-            load = get_component(InterruptiblePowerLoad, sys, "PUMP1")
-            unavailable = get_component(InterruptiblePowerLoad, sys, "PUMP2")
+            load = get_component(NEMLoad, sys, "PUMP1")
+            unavailable = get_component(NEMLoad, sys, "PUMP2")
             set_available!(unavailable, false)
-            types = (Generator, EnergyReservoirStorage, InterruptiblePowerLoad)
+            types = (Generator, NEMStorage, NEMLoad)
             devices = AustralianElectricityMarkets._fcas_scaling_devices(sys, types)
             @test load in devices
             @test !(unavailable in devices)
             @test any(d -> d isa Generator, devices)
-            @test any(d -> d isa EnergyReservoirStorage, devices)
+            @test any(d -> d isa NEMStorage, devices)
             @test allunique(devices)
-            loads = AustralianElectricityMarkets._fcas_scaling_devices(sys, (InterruptiblePowerLoad,))
+            loads = AustralianElectricityMarkets._fcas_scaling_devices(sys, (NEMLoad,))
             @test !isempty(loads)
-            @test all(d -> d isa InterruptiblePowerLoad && get_available(d), loads)
+            @test all(d -> d isa NEMLoad && get_available(d), loads)
 
             set_fcas_scaling_inputs!(sys, db, date_range)
             rows = sort(subset(truth, :DUID => ByRow(==("PUMP1"))), :SETTLEMENTDATE)
@@ -742,7 +745,7 @@
                 "UPDATE input SET RAMPUPRATE = 120, RAMPDOWNRATE = 60, RAISEREGENABLEMENTMIN = 0, RAISEREGENABLEMENTMAX = 0, LOWERREGENABLEMENTMIN = 0, LOWERREGENABLEMENTMAX = 0 WHERE DUID = 'PUMP1'",
             )
             sys = deepcopy(sys_base)
-            load = get_component(InterruptiblePowerLoad, sys, "PUMP1")
+            load = get_component(NEMLoad, sys, "PUMP1")
             horizon = length(date_range) - 1
             trap = (0.0, 10.0, 90.0, 100.0, 20.0, NaN, NaN) ./ base_power
             for service in (BidType.RAISEREG, BidType.LOWERREG)
@@ -765,7 +768,7 @@
                 "UPDATE input SET RAMPUPRATE = 180, RAMPDOWNRATE = 720, RAISEREGAVAILABILITY = 0, LOWERREGAVAILABILITY = 60, RAISEREGENABLEMENTMIN = 0, RAISEREGENABLEMENTMAX = 0, LOWERREGENABLEMENTMIN = 0, LOWERREGENABLEMENTMAX = 0 WHERE DUID = 'PUMP1'",
             )
             sys = deepcopy(sys_base)
-            load = get_component(InterruptiblePowerLoad, sys, "PUMP1")
+            load = get_component(NEMLoad, sys, "PUMP1")
             horizon = length(date_range) - 1
             trap = (0.0, 10.0, 90.0, 100.0, 100.0, NaN, NaN) ./ base_power
             for service in (BidType.RAISEREG, BidType.LOWERREG)
@@ -783,13 +786,13 @@
 
         @testset "get_fcas_agc_status is nothing when fcas_agc_status is not attached" begin
             sys = deepcopy(sys_base)
-            device = get_component(ThermalStandard, sys, "ER01")
+            device = get_component(NEMThermalGen, sys, "ER01")
             @test isnothing(get_fcas_agc_status(device, start_date, length(date_range) - 1))
         end
 
         @testset "get_fcas_agc_status is nothing at an interval with no AGCSTATUS" begin
             sys = deepcopy(sys_base)
-            device = get_component(ThermalStandard, sys, "ER01")
+            device = get_component(NEMThermalGen, sys, "ER01")
             full_grid = collect(date_range)[1:(end - 1)]
             by_time = Dict(t => (AGCSTATUS = (t == full_grid[1] ? missing : 1.0),) for t in full_grid)
             AustralianElectricityMarkets._attach_fcas_scaling_series!(
@@ -804,15 +807,15 @@
             sys = deepcopy(sys_base)
             set_fcas_scaling_inputs!(sys, db, date_range)
 
-            @test has_time_series(get_component(RenewableDispatch, sys, "BW03"), SingleTimeSeries, "uigf")
-            @test has_time_series(get_component(RenewableDispatch, sys, "BW04"), SingleTimeSeries, "uigf")
-            @test !has_time_series(get_component(ThermalStandard, sys, "ER01"), SingleTimeSeries, "uigf")
-            @test !has_time_series(get_component(HydroDispatch, sys, "BW02"), SingleTimeSeries, "uigf")
+            @test has_time_series(get_component(NEMRenewableGen, sys, "BW03"), SingleTimeSeries, "uigf")
+            @test has_time_series(get_component(NEMRenewableGen, sys, "BW04"), SingleTimeSeries, "uigf")
+            @test !has_time_series(get_component(NEMThermalGen, sys, "ER01"), SingleTimeSeries, "uigf")
+            @test !has_time_series(get_component(NEMHydroGen, sys, "BW02"), SingleTimeSeries, "uigf")
         end
 
         @testset "an absent interval is stored as NaN; an all-absent column attaches nothing" begin
             sys = deepcopy(sys_base)
-            device = get_component(ThermalStandard, sys, "ER01")
+            device = get_component(NEMThermalGen, sys, "ER01")
             full_grid = collect(date_range)[1:(end - 1)]
             incomplete_by_time = Dict(
                 t => (RAISEREGENABLEMENTMIN = (t == full_grid[1] ? missing : 25.0),) for t in full_grid[1:(end - 1)]
@@ -839,7 +842,7 @@
             set_market_bids!(sys, db, date_range; resolution = resolution)
             set_fcas_bids!(sys, db, date_range; resolution = resolution)
 
-            device = get_component(ThermalStandard, sys, "ER01")
+            device = get_component(NEMThermalGen, sys, "ER01")
             full_grid = collect(date_range)[1:(end - 1)]
             horizon = length(full_grid)
             # 60 MW/h is a 5 MW AGC ramping capability over 5 minutes.
@@ -865,7 +868,7 @@
             set_fcas_bids!(sys, db, date_range; resolution = resolution)
             set_fcas_scaling_inputs!(sys, db, date_range)
 
-            device = get_component(ThermalStandard, sys, "ER01")
+            device = get_component(NEMThermalGen, sys, "ER01")
             initial_time = start_date
             horizon = length(date_range) - 1
 
@@ -940,13 +943,13 @@
 
         @testset "get_initial_mw is nothing when initial_mw is not attached" begin
             sys = deepcopy(sys_base)
-            bat = get_component(EnergyReservoirStorage, sys, "BW01")
+            bat = get_component(NEMStorage, sys, "BW01")
             @test isnothing(get_initial_mw(bat, start_date, length(date_range) - 1))
         end
 
         @testset "a device with no DISPATCHLOAD rows over date_range throws and is left without series" begin
             sys = deepcopy(sys_base)
-            bat = get_component(EnergyReservoirStorage, sys, "BW01")
+            bat = get_component(NEMStorage, sys, "BW01")
             # No DISPATCHLOAD rows exist for this far-future range: every interval is missing.
             future_range = DateTime(2099, 1, 1, 0, 0):resolution:(DateTime(2099, 1, 1, 2, 0))
             @test_throws ArgumentError attach_dispatch_limits!(sys, db, future_range)
@@ -970,7 +973,7 @@
         sys = deepcopy(sys_base)
         attach_dispatch_limits!(sys, floor_db, short_range)
 
-        er01 = get_component(ThermalStandard, sys, "ER01")
+        er01 = get_component(NEMThermalGen, sys, "ER01")
         static_cap = with_units_base(() -> get_max_active_power(er01), sys, "NATURAL_UNITS")
         got_er01 = get_time_series_values(
             SingleTimeSeries, er01, "max_active_power"; ignore_scaling_factors = true,
@@ -978,7 +981,7 @@
         @test all(isapprox.(got_er01, 65.41 / static_cap; atol = 1.0e-8))
 
         # ER02's floor (50.0 - 4.0/12 ≈ 49.67) is below its AVAILABILITY (100.0).
-        er02 = get_component(ThermalStandard, sys, "ER02")
+        er02 = get_component(NEMThermalGen, sys, "ER02")
         got_er02 = get_time_series_values(
             SingleTimeSeries, er02, "max_active_power"; ignore_scaling_factors = true,
         )
@@ -997,12 +1000,12 @@
 
         @testset "unavailable: no throw, and no series added for the unavailable device" begin
             sys = deepcopy(sys_base)
-            er01 = get_component(ThermalStandard, sys, "ER01")
+            er01 = get_component(NEMThermalGen, sys, "ER01")
             set_available!(er01, false)
 
             @test_nowarn attach_dispatch_limits!(sys, partial_db, short_range)
             @test !has_time_series(er01, SingleTimeSeries, "ramp_up_rate")
-            @test has_time_series(get_component(ThermalStandard, sys, "ER02"), SingleTimeSeries, "ramp_up_rate")
+            @test has_time_series(get_component(NEMThermalGen, sys, "ER02"), SingleTimeSeries, "ramp_up_rate")
 
         end
 
@@ -1076,7 +1079,7 @@
             @test_logs (:warn, r"change within the date range") match_mode = :any read_loss_factors(ldb; as_of = start_date, through = DateTime(2025, 7, 1, 1))
         end
 
-        sys_lf = nem_system(ldb, RegionalNetworkConfiguration())
+        sys_lf = first(nem_network(ldb))
         set_market_bids!(sys_lf, ldb, date_range; resolution = Minute(5))
 
         # Read raw bids (unscaled by loss factors) to compare
@@ -1085,12 +1088,12 @@
         raw_price(duid, direction) = get_y_coords(raw_curve(duid, direction))
         raw_mw(duid, direction) = get_x_coords(raw_curve(duid, direction))
 
-        prices(sys, name, series = "variable_cost") = with_units_base(sys, "NATURAL_UNITS") do
+        prices(sys, name, series = "energy_offer") = with_units_base(sys, "NATURAL_UNITS") do
             ta = get_time_series_array(SingleTimeSeries, get_component(Device, sys, name), series)
             return get_y_coords(first(values(ta)))
         end
         mw(sys, name) = with_units_base(sys, "NATURAL_UNITS") do
-            ta = get_time_series_array(SingleTimeSeries, get_component(Device, sys, name), "variable_cost")
+            ta = get_time_series_array(SingleTimeSeries, get_component(Device, sys, name), "energy_offer")
             return get_x_coords(first(values(ta)))
         end
 
@@ -1098,21 +1101,21 @@
             @test prices(sys_lf, "ER01") ≈ round.(raw_price("ER01", "GEN") ./ (0.9 * 0.97); digits = 2)
             @test prices(sys_lf, "BW02") ≈ raw_price("BW02", "GEN")
             @test prices(sys_lf, "BW01") ≈ round.(raw_price("BW01", "GEN") ./ 0.5; digits = 2)
-            @test prices(sys_lf, "BW01", "decremental_variable_cost") ≈
+            @test prices(sys_lf, "BW01", "energy_offer_decremental") ≈
                 round.(raw_price("BW01", "LOAD") ./ 0.8; digits = 2)
             @test mw(sys_lf, "ER01") ≈ raw_mw("ER01", "GEN")
         end
 
         @testset "a scheduled load's decremental bid uses its load loss factor" begin
-            @test get_available(get_component(InterruptiblePowerLoad, sys_lf, "PUMP1"))
-            @test prices(sys_lf, "PUMP1", "decremental_variable_cost") ≈
+            @test get_available(get_component(NEMLoad, sys_lf, "PUMP1"))
+            @test prices(sys_lf, "PUMP1", "energy_offer_decremental") ≈
                 round.(raw_price("PUMP1", "LOAD") ./ 0.8; digits = 2)
         end
 
         @testset "a bidding unit without a DUDETAILSUMMARY row in force is an error" begin
             # BW02's only row starts after the range, so it has no factor at its start.
             partial = loss_factor_db(df -> subset(two_years(df), [:DUID, :START_DATE] => ByRow((d, t) -> !(d == "BW02" && t < fy_change))))
-            sys_partial = nem_system(partial, RegionalNetworkConfiguration())
+            sys_partial = first(nem_network(partial))
             @test_throws ArgumentError set_market_bids!(sys_partial, partial, date_range; resolution = Minute(5))
         end
     end
@@ -1123,22 +1126,22 @@ end
     range = DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 1, 0, 10)
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR))
     function energy_test_system(db)
-        sys = nem_system(db, RegionalNetworkConfiguration())
+        sys = first(nem_network(db))
         set_market_bids!(sys, db, range)
         return sys
     end
     sys = energy_test_system(db)
     set_nem_energy_limits!(sys, db, range)
     for (duid, forecast) in [("BW03", [40.0, 41.0]), ("BW04", [70.0, 69.0])]
-        gen = get_component(RenewableDispatch, sys, duid)
+        gen = get_component(NEMRenewableGen, sys, duid)
         @test get_ext(gen)["nem_semi_scheduled"] === true
         @test get_time_series_values(SingleTimeSeries, gen, "energy_max_avail"; ignore_scaling_factors = true) .* get_base_power(sys) ≈ [100.0, 101.0]
         @test get_time_series_values(SingleTimeSeries, gen, "uigf"; ignore_scaling_factors = true) .* get_base_power(sys) ≈ forecast
     end
-    coal = get_component(ThermalStandard, sys, "ER01")
+    coal = get_component(NEMThermalGen, sys, "ER01")
     @test get_ext(coal)["nem_semi_scheduled"] === false
     @test !has_time_series(coal, SingleTimeSeries, "uigf")
-    @test has_time_series(get_component(EnergyReservoirStorage, sys, "BW01"), SingleTimeSeries, "energy_max_avail")
+    @test has_time_series(get_component(NEMStorage, sys, "BW01"), SingleTimeSeries, "energy_max_avail")
 
     function invalid_energy_cache(table, transform!)
         hive = mktempdir()
@@ -1170,7 +1173,13 @@ end
         )
         untouched = energy_test_system(db)
         @test_throws ArgumentError set_nem_energy_limits!(untouched, bad, range)
-        @test all(!has_time_series(g, SingleTimeSeries, "energy_max_avail") && !haskey(get_ext(g), "nem_semi_scheduled") for g in get_components(Generator, untouched) if get_available(g))
+        # Only the bid's own MAXAVAIL series is on the generators: the failed setter wrote nothing.
+        reference = energy_test_system(db)
+        @test all(
+            !haskey(get_ext(g), "nem_semi_scheduled") &&
+                get_time_series_values(SingleTimeSeries, g, "energy_max_avail") == get_time_series_values(SingleTimeSeries, get_component(Generator, reference, get_name(g)), "energy_max_avail")
+                for g in get_components(Generator, untouched) if get_available(g)
+        )
         close(bad.db)
     end
     @testset "a cached DISPATCHLOAD without UIGF is an error" begin
@@ -1228,7 +1237,7 @@ end
     @testset "a repeated call replaces series after a classification change" begin
         again = energy_test_system(db)
         set_nem_energy_limits!(again, db, range)
-        gen = get_component(RenewableDispatch, again, "BW03")
+        gen = get_component(NEMRenewableGen, again, "BW03")
         @test has_time_series(gen, SingleTimeSeries, "uigf")
         reclassified = invalid_energy_cache(
             :DUDETAILSUMMARY, function (frame)
@@ -1287,7 +1296,7 @@ end
     using DataFrames, Statistics
     import TimeSeries
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    sys_base = nem_system(db, RegionalNetworkConfiguration())
+    sys_base, _ = nem_network(db)
     resolution = Minute(30)
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:Minute(5):(start_date + Hour(2))
@@ -1300,16 +1309,16 @@ end
     # SS_SOLAR_AVAILABILITY is 100 + i, which must not be read.
     function regional_system()
         sys = deepcopy(sys_base)
-        bw03 = get_component(RenewableDispatch, sys, "BW03")
+        bw03 = get_component(NEMRenewableGen, sys, "BW03")
         # BW03 is QLD1's only solar unit with UIGF, so its 400 MW keeps 100 + i below the denominator.
         with_units_base(() -> set_rating!(bw03, 400.0), sys, "NATURAL_UNITS")
         # A solar unit with no DISPATCHLOAD rows, in BW03's region and on its bus.
         add_component!(
-            sys, RenewableDispatch(;
+            sys, NEMRenewableGen(;
                 name = "PVX1", available = true, bus = get_bus(bw03), active_power = 0.0,
                 reactive_power = 0.0, rating = get_rating(bw03), prime_mover_type = PrimeMovers.PVe,
                 reactive_power_limits = nothing, power_factor = 1.0,
-                operation_cost = RenewableGenerationCost(nothing), base_power = get_base_power(bw03),
+                operation_cost = NEMOfferCost(), base_power = get_base_power(bw03),
             ),
         )
         return sys
@@ -1321,9 +1330,9 @@ end
     @testset "attaches each priority source in MW of the unit" begin
         sys = regional_system()
         set_regional_availability!(sys, db, date_range; resolution)
-        bw02 = get_component(HydroDispatch, sys, "BW02")
-        bw03 = get_component(RenewableDispatch, sys, "BW03")
-        pvx = get_component(RenewableDispatch, sys, "PVX1")
+        bw02 = get_component(NEMHydroGen, sys, "BW02")
+        bw03 = get_component(NEMRenewableGen, sys, "BW03")
+        pvx = get_component(NEMRenewableGen, sys, "PVX1")
         @test with_units_base(() -> get_max_active_power(bw03), sys, "NATURAL_UNITS") ≈ 400.0
         pvx_capacity = with_units_base(() -> get_max_active_power(pvx), sys, "NATURAL_UNITS")
 
@@ -1340,7 +1349,7 @@ end
     @testset "a repeat call replaces the series with the same values" begin
         sys = regional_system()
         set_regional_availability!(sys, db, date_range; resolution)
-        bw03 = get_component(RenewableDispatch, sys, "BW03")
+        bw03 = get_component(NEMRenewableGen, sys, "BW03")
         before = natural_values(sys, bw03)
         set_regional_availability!(sys, db, date_range; resolution)
         series = [ts for ts in get_time_series_multiple(bw03) if get_name(ts) == "max_active_power"]
@@ -1352,7 +1361,7 @@ end
         sys = regional_system()
         set_regional_availability!(sys, db, date_range; resolution)
         for name in ("BW02", "BW03", "PVX1")
-            device = get_component(name == "BW02" ? HydroDispatch : RenewableDispatch, sys, name)
+            device = get_component(name == "BW02" ? NEMHydroGen : NEMRenewableGen, sys, name)
             ta = get_time_series_array(SingleTimeSeries, device, "max_active_power")
             @test TimeSeries.timestamp(ta) == stamps
             @test length(ta) == length(stamps)
@@ -1360,24 +1369,24 @@ end
         # A Date range is read by its first and last days, half-hourly across the first day.
         sys_days = regional_system()
         set_regional_availability!(sys_days, db, Date(2025, 1, 1):Date(2025, 1, 2); resolution)
-        ta = get_time_series_array(SingleTimeSeries, get_component(RenewableDispatch, sys_days, "BW03"), "max_active_power")
+        ta = get_time_series_array(SingleTimeSeries, get_component(NEMRenewableGen, sys_days, "BW03"), "max_active_power")
         @test TimeSeries.timestamp(ta) == collect(DateTime(2025, 1, 1):resolution:DateTime(2025, 1, 1, 23, 30))
     end
 
     @testset "unavailable units are skipped" begin
         sys = regional_system()
-        bw02 = get_component(HydroDispatch, sys, "BW02")
+        bw02 = get_component(NEMHydroGen, sys, "BW02")
         set_available!(bw02, false)
         set_regional_availability!(sys, db, date_range; resolution)
         @test !has_time_series(bw02, SingleTimeSeries, "max_active_power")
-        @test has_time_series(get_component(RenewableDispatch, sys, "BW03"), SingleTimeSeries, "max_active_power")
+        @test has_time_series(get_component(NEMRenewableGen, sys, "BW03"), SingleTimeSeries, "max_active_power")
     end
 
     @testset "the denominator counts unavailable units" begin
         sys = regional_system()
-        set_available!(get_component(RenewableDispatch, sys, "BW03"), false)
+        set_available!(get_component(NEMRenewableGen, sys, "BW03"), false)
         set_regional_availability!(sys, db, date_range; resolution)
-        pvx = get_component(RenewableDispatch, sys, "PVX1")
+        pvx = get_component(NEMRenewableGen, sys, "PVX1")
         pvx_capacity = with_units_base(() -> get_max_active_power(pvx), sys, "NATURAL_UNITS")
         expected_factor = [clamp(mean(120 + i for i in raw_indices(t)) / 400.0, 0.0, 1.0) for t in stamps]
         @test natural_values(sys, pvx) ≈ expected_factor .* pvx_capacity
@@ -1393,16 +1402,16 @@ end
 
     @testset "a device with zero capacity is zero at every stamp" begin
         sys = regional_system()
-        bw03 = get_component(RenewableDispatch, sys, "BW03")
+        bw03 = get_component(NEMRenewableGen, sys, "BW03")
         add_component!(
-            sys, RenewableDispatch(;
+            sys, NEMRenewableGen(;
                 name = "PVZ1", available = true, bus = get_bus(bw03), active_power = 0.0,
                 reactive_power = 0.0, rating = 0.0, prime_mover_type = PrimeMovers.PVe,
                 reactive_power_limits = nothing, power_factor = 1.0,
-                operation_cost = RenewableGenerationCost(nothing), base_power = get_base_power(bw03),
+                operation_cost = NEMOfferCost(), base_power = get_base_power(bw03),
             ),
         )
         set_regional_availability!(sys, db, date_range; resolution)
-        @test natural_values(sys, get_component(RenewableDispatch, sys, "PVZ1")) ≈ zeros(length(stamps))
+        @test natural_values(sys, get_component(NEMRenewableGen, sys, "PVZ1")) ≈ zeros(length(stamps))
     end
 end

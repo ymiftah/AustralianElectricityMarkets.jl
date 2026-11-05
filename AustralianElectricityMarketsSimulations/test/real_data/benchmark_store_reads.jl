@@ -22,7 +22,7 @@ end
 function benchmark_store_reads()
     sys = PowerSystemCaseBuilder.build_system(PowerSystemCaseBuilder.PSISystems, "5_bus_hydro_ed_sys")
     PSY.clear_time_series!(sys)
-    device = first(PSY.get_components(PSY.ThermalStandard, sys))
+    device = first(PSY.get_components(NEMThermalGen, sys))
     curves = [PSY.PiecewiseStepData([0.0, 10.0], [10.0]) for _ in 1:60]
     key = PSY.add_time_series!(sys, device, single_series("probe", DateTime(2026), curves, Minute(5)))
     read_series(device, key, 1)

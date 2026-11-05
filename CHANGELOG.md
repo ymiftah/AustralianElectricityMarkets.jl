@@ -54,7 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `read_interconnector_loss_gaps` reads each interconnector's solved loss against the loss curve at its solved flow, with the weighted marginal price of loss in `$/MWh`, as an `AustralianElectricityMarketsSimulations` function.
 
-- `read_solved_interval` reads the solved prices, dispatch, interconnector flows and FCAS prices of a PowerSimulations result in the columns of `read_published_interval`, and `read_constraint_violations` lists its elastic slacks above tolerance, naming each slack variable by the key PSI writes to result files (for example `UnitRampUpSlack__HydroDispatch`), as `AustralianElectricityMarketsSimulations` functions.
+- `read_solved_interval` reads the solved prices, dispatch, interconnector flows and FCAS prices of a PowerSimulations result in the columns of `read_published_interval`, and `read_constraint_violations` lists its elastic slacks above tolerance, naming each slack variable by the key PSI writes to result files (for example `UnitRampUpSlack__NEMHydroGen`), as `AustralianElectricityMarketsSimulations` functions.
 
 - `read_prices` and `read_fcas_prices` accept PowerSimulations optimization and simulation results, with the system the model was built from, and return the regional prices and FCAS prices of the solved interval.
 
@@ -408,6 +408,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `prepare_replay!(sys, template, steps)` prepares a system for a replay over `steps`: it attaches the five-minute forecast windows, runs the replay pre-flight checks and returns the skipped-constraint table.
 
 ### Changed
+
+- **Breaking:** replay systems (`nem_system(db, NEMDEConfiguration(); ...)` and `nem_network`) hold the
+  NEM device types `NEMThermalGen`, `NEMHydroGen`, `NEMRenewableGen`, `NEMStorage` and `NEMLoad` in
+  place of `ThermalStandard`, `HydroDispatch`, `RenewableDispatch`, `EnergyReservoirStorage` and
+  `InterruptiblePowerLoad`, each with a `NEMOfferCost` that records the keys of its offer series.
+  `NEM_DISPATCH_DEVICE_TYPES` lists the five NEM types, and result keys name them (for example
+  `ActivePowerVariable__NEMThermalGen`). `RegionalNetworkConfiguration` systems keep the stock types.
+  Dispatch, prices and the objective are unchanged.
+
+- `set_market_bids!` stores each energy bid through `set_energy_offer!`, with its `MAXAVAIL` as the
+  `energy_max_avail` series of the side, and keeps one `NEMEnergyBid` per side when called again.
+  `set_fcas_service_bids!` and the fixed-load setter record their series on the `NEMOfferCost` the same way.
+
+- `get_energy_offer` and `get_fcas_offer` read through the keys of a device's `NEMOfferCost`; a device
+  that is not a NEM type has no offer (`nothing`).
+
+- `check_template_against_sys` throws an `ArgumentError` for a NEM device type modelled with a
+  formulation that is not an `AbstractNEMDispatch`.
 
 - AEMSim prices NEM energy offers itself: each `energy_offer` series band becomes an
   `EnergyOfferBandVariable` costed through `EnergyBandPriceParameter` and bounded by
@@ -765,6 +783,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DISPATCHREGIONSUM` caches `SS_SOLAR_UIGF` and `SS_WIND_UIGF`, which `set_regional_availability!` reads for the regional capacity factor in place of `SS_SOLAR_AVAILABILITY` and `SS_WIND_AVAILABILITY`. Cached months need `populate(db, :DISPATCHREGIONSUM, start, stop; force_new = true)` to gain the columns.
 
 ### Removed
+
+- `set_market_bids!` no longer writes a `PowerSystems.MarketBidCost` or its `variable_cost`,
+  `decremental_variable_cost` and initial-input series; no component of a NEM system carries a
+  `MarketBidCost`.
 
 - The `psi_compat.jl` overrides of PowerSimulations' market-bid hooks (`_add_pwl_constraint!`, the
   `_add_variable_cost_to_objective!` and `_add_vom_cost_to_objective!` methods) are removed along

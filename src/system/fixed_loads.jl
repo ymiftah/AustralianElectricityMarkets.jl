@@ -27,7 +27,8 @@ Attaches each available device's participant fixed loading (AEMO's Energy Inflex
 over the intervals of `date_range` as two series: `"fixed_load"`, the target net injection in system-base
 per-unit (`0` where none applies), and `"fixed_load_invoked"`, `1` at the intervals that carry a
 fixed loading and `0` elsewhere. A storage device's `GEN` and `LOAD` loadings net into one target.
-Devices with no fixed loading in the range get no series; existing series are replaced.
+A [`NEMOfferCost`](@ref) records the keys of both series. Devices with no fixed loading in the range
+get no series; existing series are replaced.
 
 # Arguments
 - `sys`: the `System` to add to.
@@ -48,6 +49,11 @@ function _set_nem_fixed_loads!(sys, rows, date_range)
         any(isone, invoked) || continue
         replace_single_series!(sys, device, single_series(NEM_SERIES.fixed_load, grid, target))
         replace_single_series!(sys, device, single_series(NEM_SERIES.fixed_load_invoked, grid, invoked))
+        cost = get_operation_cost(device)
+        if cost isa NEMOfferCost
+            cost.fixed_load = _series_key(device, NEM_SERIES.fixed_load)
+            cost.fixed_load_invoked = _series_key(device, NEM_SERIES.fixed_load_invoked)
+        end
     end
     return
 end

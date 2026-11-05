@@ -13,7 +13,7 @@ across two `Area`s (`"1"` and `"2"`), and is supply-adequate by construction. It
 `AreaInterchange`, `RenewableDispatch` or `EnergyReservoirStorage`, so on its own
 `_add_nem_constraints!` can never resolve an `INTERCONNECTOR` term, there is no
 semi-scheduled unit to carry a `UIGF` ceiling, and [`set_fcas_bids!`](@ref)'s decremental
-(`LOAD`-direction) branch is never entered. One of each is added, named so NEMWEB fixture rows
+(`LOAD`-direction) branch is never entered. One of each is added, the storage as a `NEMStorage`, which the FCAS offer views read, named so NEMWEB fixture rows
 can key to them by `DUID`.
 
 Returned in `NATURAL_UNITS`, so component limits read as MW.
@@ -61,7 +61,7 @@ function augmented_pscb_system()
 
     add_component!(
         sys,
-        EnergyReservoirStorage(;
+        NEMStorage(;
             name = "BAT1",
             available = true,
             bus = bus_1,
@@ -78,31 +78,9 @@ function augmented_pscb_system()
             reactive_power = 0.0,
             reactive_power_limits = nothing,
             base_power = 100.0,
-            operation_cost = StorageCost(),
+            operation_cost = NEMOfferCost(),
         ),
     )
 
     return sys
-end
-
-
-"""
-    give_generator_market_bid_costs!(sys)
-
-Gives every `Generator` without a `MarketBidCost` an empty one, the cost
-[`set_market_bids!`](@ref) would give a bidder. The PSCB fixture has no energy bid tables, so
-its generators need this before [`set_fcas_service_bids!`](@ref) can store their offers.
-
-# Returns
-`nothing`.
-"""
-function give_generator_market_bid_costs!(sys)
-    for gen in get_components(Generator, sys)
-        get_operation_cost(gen) isa MarketBidCost && continue
-        set_operation_cost!(
-            gen,
-            MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0),
-        )
-    end
-    return
 end

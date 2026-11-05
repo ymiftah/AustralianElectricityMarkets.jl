@@ -43,7 +43,7 @@ function _loss_test_system(;
         PSY.set_active_power_limits!(gen, (min = 0.0, max = limits.max))
     end
     PSY.set_available!(PSY.get_component(PSY.ThermalStandard, sys, "Solitude"), false)
-    PSY.set_available!(PSY.get_component(PSY.RenewableDispatch, sys, "SOLAR1"), false)
+    PSY.set_available!(PSY.get_component(RenewableDispatch, sys, "SOLAR1"), false)
     # Zero-cost hydro makes every marginal price zero, so the LP is indifferent to how loss
     # segments fill; thermal units carry a positive cost.
     priced_supply_only && foreach(h -> PSY.set_available!(h, false), PSY.get_components(PSY.HydroDispatch, sys))
@@ -264,7 +264,7 @@ end
         sys = _loss_test_system()
         if negative
             PSY.set_available!(PSY.get_component(PSY.ThermalStandard, sys, "Solitude"), true)
-            PSY.set_available!(PSY.get_component(PSY.RenewableDispatch, sys, "SOLAR1"), true)
+            PSY.set_available!(PSY.get_component(RenewableDispatch, sys, "SOLAR1"), true)
             for load in PSY.get_components(l -> PSY.get_name(PSY.get_area(PSY.get_bus(l))) == "1", PSY.PowerLoad, sys)
                 PSY.set_max_active_power!(load, 3 * PSY.get_max_active_power(load))
             end

@@ -12,17 +12,17 @@ A [`RegionTerm`](@ref)'s contributing devices.
 # Arguments
 - `sys`: the `System` to search.
 - `region`: an `Area` name.
-- `loads`: also include the region's `InterruptiblePowerLoad`s that carry an FCAS bid series
+- `loads`: also include the region's `ControllableLoad`s that carry an FCAS bid series
   ([`set_fcas_bids!`](@ref) must have run); loads are not part of a region's energy aggregate.
 
 # Returns
-`Vector{Device}` of every `Generator`/`Storage` (and, with `loads`, `InterruptiblePowerLoad`) in
+`Vector{Device}` of every `Generator`/`Storage` (and, with `loads`, `ControllableLoad`) in
 `sys` whose bus's area is named `region`.
 """
 function _region_devices(sys, region::AbstractString; loads::Bool = false)
     devices = Device[]
     sources = (get_components(Generator, sys), get_components(Storage, sys))
-    loads && (sources = (sources..., get_components(_offers_fcas, InterruptiblePowerLoad, sys)))
+    loads && (sources = (sources..., get_components(_offers_fcas, ControllableLoad, sys)))
     for d in Iterators.flatten(sources)
         get_name(get_area(get_bus(d))) == region && push!(devices, d)
     end
@@ -43,7 +43,7 @@ lookup — never throws, warns, or applies policy.
 # Returns
 `nothing` if `term` references something `sys` doesn't have. Otherwise a `Vector{String}` of
 device names — a `UnitTerm`/`InterconnectorTerm` resolves to its own name, a `RegionTerm` to
-every `Generator`/`Storage` in that region (possibly empty), plus every `InterruptiblePowerLoad`
+every `Generator`/`Storage` in that region (possibly empty), plus every `ControllableLoad`
 when the term is an FCAS term.
 """
 function resolve_term_devices(sys, term::UnitTerm)

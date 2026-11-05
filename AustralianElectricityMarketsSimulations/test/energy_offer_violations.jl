@@ -21,7 +21,7 @@ end
         ],
         80.0;
         mutate! = function (sys, stamps)
-            cheap = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+            cheap = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
             curve = PSY.PiecewiseStepData([10.0, 50.0], [20.0])
             AustralianElectricityMarkets.set_energy_offer!(
                 sys, cheap, AustralianElectricityMarkets.OfferSide.GEN,
@@ -80,7 +80,7 @@ end
             loads = kind == :load ? [name => toy_load(40.0, 1.0; initial = 0.0, ramp_up = 100.0, availability = 100.0)] : Pair{String, Any}[],
             batteries = kind == :load ? Pair{String, Any}[] : [name => toy_battery(40.0, 50.0, 40.0, 1.0; initial = 0.0, ramp_up = 100.0, gen_avail = 100.0, load_avail = 100.0)],
             mutate! = function (sys, stamps)
-                device = PSY.get_component(kind == :load ? PSY.InterruptiblePowerLoad : PSY.EnergyReservoirStorage, sys, name)
+                device = PSY.get_component(kind == :load ? NEMLoad : NEMStorage, sys, name)
                 gc = GenericConstraint(; name = "NC_OFFER", sense = ConstraintSense.EQ, rhs = target / PSY.get_base_power(sys), terms = ConstraintTerm[UnitTerm(name, BidType.ENERGY, 1.0)])
                 gc.constraint_weight = 1160.0
                 PSY.add_service!(sys, gc, [device])

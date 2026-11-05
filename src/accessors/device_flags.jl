@@ -10,7 +10,7 @@ energy bid, and takes part in the market only through FCAS offers.
 # Returns
 `Bool`.
 """
-is_non_scheduled_load(device) = device isa InterruptiblePowerLoad && get(get_ext(device), "non_scheduled", false) === true
+is_non_scheduled_load(device) = device isa ControllableLoad && get(get_ext(device), "non_scheduled", false) === true
 
 
 """

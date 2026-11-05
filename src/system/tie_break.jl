@@ -74,9 +74,10 @@ const _TieOffers = @NamedTuple{
 }
 
 
-# Whether `device` carries an energy offer series on either side.
-function _has_market_bid(device::PSY.Component)
-    return any(side -> PSY.has_time_series(device, PSY.SingleTimeSeries, energy_offer_series_name(side)), (OfferSide.GEN, OfferSide.LOAD))
+# Whether `device` has an energy bid on either side.
+function _has_energy_offer(device::PSY.Component)
+    cost = _nem_offer_cost(device)
+    return !isnothing(cost) && !isempty(get_energy_bids(cost))
 end
 
 
@@ -154,7 +155,7 @@ Attaches each price-tied energy band's tie-break scale `w / w_ref` (its width ov
 tie group at that interval, 0 when the band is untied or the group has no width) as the `SingleTimeSeries`
 `"tie_break_scale_<k>[_decremental]"` of its unit, where `k` is the band's segment index. Series left by an earlier call
 on any `StaticInjection` are removed first. Replaces any [`EnergyTieBreak`](@ref) named [`TIE_BREAK_SERVICE_NAME`](@ref)
-with one whose contributing devices are every available unit priced on a `MarketBidCost`, or leaves none
+with one whose contributing devices are every available unit with an energy offer, or leaves none
 when there is no such unit. Call it after [`set_market_bids!`](@ref) and before
 `transform_single_time_series!`. Every contributor carrying a scale must be modelled in the build, or the
 build fails.
@@ -192,7 +193,7 @@ function set_tie_break_scales!(sys::PSY.System)
     end
     existing = PSY.get_component(EnergyTieBreak, sys, TIE_BREAK_SERVICE_NAME)
     isnothing(existing) || PSY.remove_component!(sys, existing)
-    devices = [d for d in PSY.get_available_components(PSY.StaticInjection, sys) if _has_market_bid(d)]
+    devices = [d for d in PSY.get_available_components(PSY.StaticInjection, sys) if _has_energy_offer(d)]
     isempty(devices) || PSY.add_service!(sys, EnergyTieBreak(; name = TIE_BREAK_SERVICE_NAME), devices)
     return
 end

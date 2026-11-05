@@ -7,12 +7,20 @@ function _tie_validation_system(curves_a, curves_b; decremental = false)
     sys = nem_toy_system(units, 0.0; loads, tie_break_scales = false)
     PSY.clear_time_series!(sys)
     names = decremental ? ("LOAD_A", "LOAD_B") : (TOY_CHEAP, TOY_EXPENSIVE)
-    T = decremental ? PSY.InterruptiblePowerLoad : PSY.ThermalStandard
+    T = decremental ? NEMLoad : NEMThermalGen
     side = decremental ? AustralianElectricityMarkets.OfferSide.LOAD : AustralianElectricityMarkets.OfferSide.GEN
     series = AustralianElectricityMarkets.energy_offer_series_name(side)
-    setter!(sys, device, bids, start, resolution) = AustralianElectricityMarkets.set_energy_offer!(
-        sys, device, side, AustralianElectricityMarkets.single_series(series, start, copy(bids.piecewise_step_data), resolution),
-    )
+    function setter!(sys, device, bids, start, resolution)
+        n = length(bids.piecewise_step_data)
+        AustralianElectricityMarkets.replace_single_series!(
+            sys, device,
+            AustralianElectricityMarkets.single_series(AustralianElectricityMarkets.energy_max_avail_series_name(side), start, ones(n), resolution),
+        )
+        AustralianElectricityMarkets.set_energy_offer!(
+            sys, device, side, AustralianElectricityMarkets.single_series(series, start, copy(bids.piecewise_step_data), resolution),
+        )
+        return
+    end
     for (name, curves) in zip(names, (curves_a, curves_b))
         setter!(sys, PSY.get_component(T, sys, name), (; piecewise_step_data = curves), TOY_START, TOY_RESOLUTION)
     end

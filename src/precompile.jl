@@ -8,11 +8,11 @@ function _precompile_workload()
         voltage_limits = (min = 0.9, max = 1.1), base_voltage = 220.0,
     )
     PSY.add_component!(sys, bus)
-    generator = PSY.ThermalStandard(;
+    generator = NEMThermalGen(;
         name = "precompile_generator", available = true, status = true, bus,
         active_power = 0.0, reactive_power = 0.0, rating = 100.0,
         active_power_limits = (min = 0.0, max = 100.0), reactive_power_limits = nothing,
-        ramp_limits = nothing, operation_cost = PSY.ThermalGenerationCost(nothing),
+        ramp_limits = nothing, operation_cost = NEMOfferCost(),
         base_power = 100.0,
     )
     PSY.add_component!(sys, generator)
@@ -25,7 +25,9 @@ function _precompile_workload()
         DUID = ["precompile_generator"], GEN_LOSS_FACTOR = [1.01], LOAD_LOSS_FACTOR = [1.02],
     )
     _set_referred_bid_curves!(bids, factors)
-    _set_incremental_bid_cost!(sys, generator, bids, DateTime(2025, 1, 1), Minute(5))
+    bids.INTERVAL_DATETIME = [DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)]
+    bids.MAXAVAIL = [100.0, 100.0]
+    _write_energy_bid!(sys, generator, bids, OfferSide.GEN, DateTime(2025, 1, 1, 0, 5), Minute(5))
     return get_energy_offer(generator, OfferSide.GEN)
 end
 

@@ -7,7 +7,7 @@ function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, we
         ],
         80.0; horizon = TOY_RESOLUTION, start,
         mutate! = function (sys, stamps)
-            cheap = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+            cheap = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
             PSY.set_active_power_limits!(cheap, (min = 0.0, max = rating))
             PSY.remove_time_series!(sys, PSY.SingleTimeSeries, cheap, "energy_max_avail")
             base = PSY.get_base_power(sys)
@@ -37,12 +37,12 @@ function energy_limit_solve(sys)
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
-    dispatch = PSI.read_variable(results, "ActivePowerVariable__ThermalStandard")
+    dispatch = PSI.read_variable(results, "ActivePowerVariable__NEMThermalGen")
     return (; results, objective = PSI.JuMP.objective_value(PSI.get_jump_model(PSI.get_optimization_container(model))), power = only(r.value for r in eachrow(dispatch) if r.name == TOY_CHEAP), violations = read_constraint_violations(results, sys))
 end
 
 function energy_slack(out, type)
-    return only(r.value for r in eachrow(PSI.read_variable(out.results, string(nameof(type)) * "__ThermalStandard")) if r.name == TOY_CHEAP)
+    return only(r.value for r in eachrow(PSI.read_variable(out.results, string(nameof(type)) * "__NEMThermalGen")) if r.name == TOY_CHEAP)
 end
 
 @testset "a static rating does not defeat the separate energy limits" begin
@@ -114,7 +114,7 @@ end
 
 @testset "missing and non-finite forecasts are rejected before solving" begin
     sys = energy_limit_system()
-    cheap = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+    cheap = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
     PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, cheap, "uigf")
     PSY.remove_time_series!(sys, PSY.SingleTimeSeries, cheap, "uigf")
     @test_throws ArgumentError replay_template(sys)
@@ -136,7 +136,7 @@ end
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
         container = PSI.get_optimization_container(model)
         objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
-        slack = PSI.get_variable(container, AEMS.EnergyMaxAvailSlack(), PSY.ThermalStandard)
+        slack = PSI.get_variable(container, AEMS.EnergyMaxAvailSlack(), NEMThermalGen)
         @test PSI.JuMP.coefficient(objective, slack[TOY_CHEAP, 1]) ≈ expected
     end
 end

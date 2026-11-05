@@ -1,14 +1,14 @@
 """
     set_regional_availability!(sys, db, date_range; resolution::Dates.Period = Minute(30), intervention::Integer = 0)
 
-Attaches a `"max_active_power"` series to every available `RenewableDispatch` and `HydroDispatch` in
+Attaches a `"max_active_power"` series to every available `RenewableGen` and `HydroGen` in
 `sys`, for the economic studies of a [`RegionalNetworkConfiguration`](@ref). Unlike
 `set_nem_dispatch_limits!`, a unit with no `DISPATCHLOAD` rows is not an error: each stamp takes the
 first of these values that exists:
 
-1. a `RenewableDispatch` with a [`read_uigf`](@ref) row: `UIGF / capacity`;
+1. a `RenewableGen` with a [`read_uigf`](@ref) row: `UIGF / capacity`;
 2. a [`read_dispatch_limits`](@ref) `AVAILABILITY` row: `AVAILABILITY / capacity`;
-3. a solar (`PVe`) or wind (`WT` or `WS`) `RenewableDispatch`: the regional semi-scheduled UIGF of its
+3. a solar (`PVe`) or wind (`WT` or `WS`) `RenewableGen`: the regional semi-scheduled UIGF of its
    area, the `DISPATCHREGIONSUM` `SS_SOLAR_UIGF` or `SS_WIND_UIGF`, over the summed NATURAL capacity of
    the region's semi-scheduled units of that fuel, clamped to [0, 1]. The denominator counts every such
    unit in `sys` that has UIGF rows, available or not;
@@ -57,12 +57,12 @@ function set_regional_availability!(
     )
     regional_at = Dict((r.REGIONID, r.SETTLEMENTDATE) => r for r in eachrow(regional))
 
-    renewables = collect(get_available_components(RenewableDispatch, sys))
-    hydros = collect(get_available_components(HydroDispatch, sys))
+    renewables = collect(get_available_components(RenewableGen, sys))
+    hydros = collect(get_available_components(HydroGen, sys))
     uigf_duids = Set(uigf.DUID)
     # Summed NATURAL capacity of the semi-scheduled units per region and fuel, over all units in sys.
     denominators = Dict{Tuple{String, Symbol}, Float64}()
-    for device in get_components(RenewableDispatch, sys)
+    for device in get_components(RenewableGen, sys)
         get_name(device) in uigf_duids || continue
         fuel = _renewable_fuel(device)
         isnothing(fuel) && continue
@@ -93,7 +93,7 @@ end
 """
     _renewable_fuel(device) -> Union{Symbol, Nothing}
 
-The regional fuel group of a `RenewableDispatch`: `:solar` for `PVe`, `:wind` for `WT` and `WS`, and
+The regional fuel group of a `RenewableGen`: `:solar` for `PVe`, `:wind` for `WT` and `WS`, and
 `nothing` for any other prime mover.
 """
 function _renewable_fuel(device)
@@ -112,12 +112,12 @@ The per-unit availability of `device` at stamp `t`, clamped to [0, 1], by the pr
 """
 function _availability_at(device, t, capacity, uigf_at, avail_at, regional_at, denominators)
     duid = get_name(device)
-    if device isa RenewableDispatch && haskey(uigf_at, (duid, t))
+    if device isa RenewableGen && haskey(uigf_at, (duid, t))
         return clamp(uigf_at[(duid, t)] / capacity, 0.0, 1.0)
     elseif haskey(avail_at, (duid, t))
         return clamp(avail_at[(duid, t)] / capacity, 0.0, 1.0)
     end
-    factor = device isa RenewableDispatch ? _regional_capacity_factor(device, t, regional_at, denominators) : nothing
+    factor = device isa RenewableGen ? _regional_capacity_factor(device, t, regional_at, denominators) : nothing
     return something(factor, 1.0)
 end
 

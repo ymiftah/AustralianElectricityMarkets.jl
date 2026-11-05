@@ -76,71 +76,39 @@ end
 
 
 """
-    _energy_market_bid_cost(device) -> MarketBidCost
+    _write_energy_bid!(sys, device, bids, side, start_date, resolution)
 
-A `MarketBidCost` with zero no-load and shut-down costs and no energy curves, for `device` to take
-its energy bid. It keeps the FCAS services already on `device`'s `MarketBidCost`, if it has one.
-"""
-function _energy_market_bid_cost(device)
-    cost = get_operation_cost(device)
-    services = cost isa MarketBidCost ? get_ancillary_service_offers(cost) : Service[]
-    return MarketBidCost(;
-        no_load_cost = 0.0,
-        start_up = (hot = 0.0, warm = 0.0, cold = 0.0),
-        shut_down = 0.0,
-        ancillary_service_offers = copy(services),
-    )
-end
-
-
-"""
-    _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
-
-Sets `gen` available with a `MarketBidCost` and attaches its incremental
-(generation-side) variable cost time series and initial input, derived from
-`gen_bids.piecewise_step_data`. Shared by the generator and battery branches
-of `set_market_bids!`.
-"""
-function _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
-    set_available!(gen, true)
-    set_operation_cost!(gen, _energy_market_bid_cost(gen))
-    psd = copy(gen_bids.piecewise_step_data)
-    time_series_data = single_series("variable_cost", start_date, psd, resolution)
-    set_incremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
-    set_energy_offer!(sys, gen, OfferSide.GEN, single_series("energy_offer", start_date, copy(psd), resolution))
-    time_series_incremental_initial_input = single_series("incremental_initial_input", start_date, zeros(size(psd)), resolution)
-    set_incremental_initial_input!(sys, gen, time_series_incremental_initial_input)
-    return
-end
-
-
-"""
-    _set_decremental_bid_cost!(sys, device, load_bids, start_date, resolution)
-
-Attaches the decremental (load-side) variable cost and initial input time series derived from
-`load_bids.piecewise_step_data` to `device`, whose operation cost must already be a `MarketBidCost`
-(set by `_set_incremental_bid_cost!` for a battery; a scheduled load's is replaced here). Shared by the
-battery and scheduled-load branches of `set_market_bids!`.
+Sets `device` available and stores its energy offer on `side`: the `MAXAVAIL` of `bids`, per-unit of
+the system base, as the `energy_max_avail` series of `side`, then the curves of
+`bids.piecewise_step_data` through [`set_energy_offer!`](@ref). Both series replace any of the same
+name. Throws an `ArgumentError` if any interval's `MAXAVAIL` is missing or not finite.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
-- `device`: An `EnergyReservoirStorage` or `InterruptiblePowerLoad`.
-- `load_bids`: The device's `LOAD` direction rows from `_massage_bids`.
+- `device`: a NEM device type.
+- `bids`: the device's rows for `side` from `_pad_bids_to_grid`.
+- `side`: the [`OfferSide`](@ref) of the bids.
 - `start_date`: The first interval of the series.
 - `resolution`: The series resolution.
 
 # Returns
 `nothing`.
 """
-function _set_decremental_bid_cost!(sys, device, load_bids, start_date, resolution)
+function _write_energy_bid!(sys, device, bids, side::OfferSide, start_date, resolution)
     set_available!(device, true)
-    device isa InterruptiblePowerLoad && set_operation_cost!(device, _energy_market_bid_cost(device))
-    psd = copy(load_bids.piecewise_step_data)
-    time_series_data = single_series("decremental_variable_cost", start_date, psd, resolution)
-    set_decremental_variable_cost!(sys, device, time_series_data, UnitSystem.NATURAL_UNITS)
-    set_energy_offer!(sys, device, OfferSide.LOAD, single_series("energy_offer_decremental", start_date, copy(psd), resolution))
-    time_series_decremental_initial_input = single_series("decremental_initial_input", start_date, (first ∘ get_y_coords).(psd), resolution)
-    set_decremental_initial_input!(sys, device, time_series_decremental_initial_input)
+    name = energy_max_avail_series_name(side)
+    bad = findfirst(x -> ismissing(x) || !isfinite(x), bids.MAXAVAIL)
+    isnothing(bad) || throw(
+        ArgumentError(
+            "set_market_bids!: $(get_name(device)) has no finite $name at $(bids.INTERVAL_DATETIME[bad]); " *
+                "repopulate BIDPEROFFER_D with populate(...; force_new = true)",
+        ),
+    )
+    replace_single_series!(
+        sys, device,
+        single_series(name, start_date, Float64.(bids.MAXAVAIL) ./ get_base_power(sys), resolution),
+    )
+    set_energy_offer!(sys, device, side, single_series(energy_offer_series_name(side), start_date, copy(bids.piecewise_step_data), resolution))
     return
 end
 
@@ -201,16 +169,17 @@ end
 """
     set_market_bids!(sys, db, date_range; kwargs...)
 
-Adds market bid cost time series data to the system.
+Stores each unit's energy offers on its NEM device type.
 
 This function reads energy and price bid data for a specified date range from the
-database, converts it into piecewise `MarketBidCost` variable cost time series, and
-attaches it to `Generator`, scheduled `InterruptiblePowerLoad` (decremental bid only; a load that
-bids `GEN` is made unavailable; a non-scheduled load is left as built) and `EnergyReservoirStorage`
-components (the latter also
-gets decremental/load-side bid costs, and each direction's energy `MAXAVAIL`, read back by
+database and, through [`set_energy_offer!`](@ref), attaches each bid's curves and `MAXAVAIL` series to
+the `Generator`s, scheduled `ControllableLoad`s (decremental bid only; a load that
+bids `GEN` is made unavailable; a non-scheduled load is left as built) and `Storage` devices
+of `sys` (the latter also get the load-side bid, and each direction's energy `MAXAVAIL`, read back by
 [`get_storage_energy_max_avail`](@ref)). Every curve has one segment per price band, in band order
-(reversed for `LOAD`), bands of zero availability included as zero-width segments.
+(reversed for `LOAD`), bands of zero availability included as zero-width segments. A repeat call
+replaces the series and keeps one [`NEMEnergyBid`](@ref) per side. The devices must be NEM types, as
+[`nem_network`](@ref) builds them.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
@@ -236,7 +205,7 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     resolution = get(kwargs, :resolution, Minute(5))
 
     bids = _massage_bids(db, start_date, end_date; resolution = get(kwargs, :resolution, nothing))
-    sys_units = Set(get_name(c) for T in (Generator, InterruptiblePowerLoad, EnergyReservoirStorage) for c in get_components(T, sys))
+    sys_units = Set(get_name(c) for T in (Generator, ControllableLoad, Storage) for c in get_components(T, sys))
     factors = read_loss_factors(db; as_of = start_date, through = last(date_range) - step(date_range))
     # Validate band quantities even for units absent from the constructed system.
     _set_referred_bid_curves!(bids, factors; units = sys_units)
@@ -258,7 +227,7 @@ function set_market_bids!(sys, db, date_range; kwargs...)
             @warn "No bid data for generator $(gen_id), setting to unavailable."
             set_available!(gen, false)
         else
-            _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
+            _write_energy_bid!(sys, gen, gen_bids, OfferSide.GEN, start_date, resolution)
         end
     end
 
@@ -266,7 +235,7 @@ function set_market_bids!(sys, db, date_range; kwargs...)
     # (a wholesale demand response unit, whose response acts as supply) is not modelled.
     unbid_loads = String[]
     gen_bid_loads = String[]
-    foreach(get_components(InterruptiblePowerLoad, sys)) do load
+    foreach(get_components(ControllableLoad, sys)) do load
         is_non_scheduled_load(load) && return
         load_id = get_name(load)
         load_bids = get(padded, (load_id, "LOAD"), empty_bids)
@@ -274,14 +243,14 @@ function set_market_bids!(sys, db, date_range; kwargs...)
             load_id in offered_units ? push!(gen_bid_loads, load_id) : push!(unbid_loads, load_id)
             set_available!(load, false)
         else
-            _set_decremental_bid_cost!(sys, load, load_bids, start_date, resolution)
+            _write_energy_bid!(sys, load, load_bids, OfferSide.LOAD, start_date, resolution)
         end
     end
     isempty(gen_bid_loads) || @warn "set_market_bids!: $(length(gen_bid_loads)) scheduled load(s) bid GEN, not LOAD (wholesale demand response); setting to unavailable: $(join(gen_bid_loads, ", "))"
     isempty(unbid_loads) || @warn "set_market_bids!: $(length(unbid_loads)) scheduled load(s) have no bid data; setting to unavailable: $(join(unbid_loads, ", "))"
 
     # Then sets the batteries
-    return foreach(get_components(EnergyReservoirStorage, sys)) do gen
+    return foreach(get_components(Storage, sys)) do gen
         gen_id = get_name(gen)
         gen_bids = get(padded, (gen_id, "GEN"), empty_bids)
         load_bids = get(padded, (gen_id, "LOAD"), empty_bids)
@@ -290,37 +259,8 @@ function set_market_bids!(sys, db, date_range; kwargs...)
             @warn "No bid data for generator $(gen_id), setting to unavailable."
             set_available!(gen, false)
         else
-            _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
-
-            _set_decremental_bid_cost!(sys, gen, load_bids, start_date, resolution)
-
-            _set_storage_energy_max_avail!(sys, gen, gen_bids, energy_max_avail_series_name(OfferSide.GEN), start_date, resolution)
-            _set_storage_energy_max_avail!(sys, gen, load_bids, energy_max_avail_series_name(OfferSide.LOAD), start_date, resolution)
+            _write_energy_bid!(sys, gen, gen_bids, OfferSide.GEN, start_date, resolution)
+            _write_energy_bid!(sys, gen, load_bids, OfferSide.LOAD, start_date, resolution)
         end
     end
-end
-
-
-"""
-    _set_storage_energy_max_avail!(sys, storage, bids, name, start_date, resolution)
-
-Attaches `bids.MAXAVAIL` to `storage` as a `SingleTimeSeries` named `name`, per-unit of `sys`'s
-system base. Throws an `ArgumentError` if any interval's `MAXAVAIL` is missing or not finite.
-
-# Returns
-`nothing`.
-"""
-function _set_storage_energy_max_avail!(sys, storage, bids, name::AbstractString, start_date, resolution)
-    bad = findfirst(x -> ismissing(x) || !isfinite(x), bids.MAXAVAIL)
-    isnothing(bad) || throw(
-        ArgumentError(
-            "set_market_bids!: $(get_name(storage)) has no finite $name at $(bids.INTERVAL_DATETIME[bad]); " *
-                "repopulate BIDPEROFFER_D with populate(...; force_new = true)",
-        ),
-    )
-    add_time_series!(
-        sys, storage,
-        single_series(name, start_date, Float64.(bids.MAXAVAIL) ./ get_base_power(sys), resolution),
-    )
-    return
 end

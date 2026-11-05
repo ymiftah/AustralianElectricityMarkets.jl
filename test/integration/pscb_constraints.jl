@@ -142,12 +142,10 @@
     @testset "set_fcas_bids!" begin
         sys = augmented_pscb_system()
         set_fcas_bids!(sys, db, date_range)
-        give_generator_market_bid_costs!(sys)
         set_fcas_service_bids!(sys, db, date_range)
 
-        @testset "thermal unit gets trapezium series and offer curve once it has a MarketBidCost" begin
+        @testset "thermal unit gets trapezium series and offer curve" begin
             gen = get_component(ThermalStandard, sys, "Alta")
-            @test get_operation_cost(gen) isa MarketBidCost
             @test has_time_series(gen, SingleTimeSeries, fcas_offer_series_name(fcas_service(gen, BidType.RAISE6SEC), false))
             @test has_time_series(gen, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")
         end
@@ -159,7 +157,7 @@
         end
 
         @testset "BAT1 gets both incremental and decremental series" begin
-            bat = get_component(EnergyReservoirStorage, sys, "BAT1")
+            bat = get_component(NEMStorage, sys, "BAT1")
             @test has_time_series(bat, SingleTimeSeries, fcas_offer_series_name(fcas_service(bat, BidType.RAISEREG), false))
             @test has_time_series(bat, SingleTimeSeries, "fcas_trapezium_RAISEREG")
             @test has_time_series(bat, SingleTimeSeries, fcas_offer_series_name(fcas_service(bat, BidType.RAISEREG), true))

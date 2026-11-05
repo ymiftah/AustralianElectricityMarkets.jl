@@ -3,7 +3,7 @@ The concrete device types that carry NEM dispatch limits: the types [`nem_dispat
 collects and the replay models with its dispatch formulation.
 """
 const NEM_DISPATCH_DEVICE_TYPES = (
-    ThermalStandard, HydroDispatch, RenewableDispatch, InterruptiblePowerLoad, EnergyReservoirStorage,
+    NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMLoad, NEMStorage,
 )
 
 
@@ -32,17 +32,17 @@ end
     set_nem_dispatch_limits!(sys, db, date_range; kwargs...)
 
 Attaches per-device `SingleTimeSeries` from [`read_dispatch_limits`](@ref) to every available
-`ThermalStandard`, `HydroDispatch`, `RenewableDispatch`, `InterruptiblePowerLoad` and
-`EnergyReservoirStorage` in `sys`:
+`NEMThermalGen`, `NEMHydroGen`, `NEMRenewableGen`, `NEMLoad` and
+`NEMStorage` in `sys`:
 `"ramp_up_rate"` and `"ramp_down_rate"` (from `RAMPUPRATE`/`RAMPDOWNRATE`) and `"initial_mw"`
-(from `INITIALMW`, net MW for a battery, consumed MW for a load). A `ThermalStandard`,
-`HydroDispatch`, `RenewableDispatch` or `InterruptiblePowerLoad` also gets `"max_active_power"`, the device's upper dispatch limit,
+(from `INITIALMW`, net MW for a battery, consumed MW for a load). A `NEMThermalGen`,
+`NEMHydroGen`, `NEMRenewableGen` or `NEMLoad` also gets `"max_active_power"`, the device's upper dispatch limit,
 `AVAILABILITY` raised to the ramp-down floor `INITIALMW - RAMPDOWNRATE × Δ` when that floor is
 higher, where Δ is the interval length in hours taken from `date_range`'s step, replacing any
 `UIGF`- or bid-derived `"max_active_power"` series a device already carries - and
 `"availability"`, the raw `AVAILABILITY` (for a semi-scheduled unit, the lower of bid `MAXAVAIL`
 and `UIGF`), read back by [`get_energy_availability`](@ref). An
-`EnergyReservoirStorage` gets no `"max_active_power"` series: its per-direction availability is
+`NEMStorage` gets no `"max_active_power"` series: its per-direction availability is
 the energy bid `MAXAVAIL` series [`set_market_bids!`](@ref) attaches, read back by
 [`get_storage_energy_max_avail`](@ref).
 
@@ -57,8 +57,8 @@ and is not dispatched. This function must run after [`set_fcas_bids!`](@ref), wh
 available; a load made available later has no ramp or limit series.
 
 A device with no `DISPATCHLOAD` rows in `date_range`, missing intervals, a `missing` rate or
-`INITIALMW`, or a negative `RAMPUPRATE`/`RAMPDOWNRATE` is a problem; for a `ThermalStandard`,
-`HydroDispatch` or `RenewableDispatch`, a `missing` or negative `AVAILABILITY`, or a
+`INITIALMW`, or a negative `RAMPUPRATE`/`RAMPDOWNRATE` is a problem; for a `NEMThermalGen`,
+`NEMHydroGen` or `NEMRenewableGen`, a `missing` or negative `AVAILABILITY`, or a
 non-positive static `max_active_power`, is also a problem. A zero `RAMPUPRATE`,
 `RAMPDOWNRATE` or `AVAILABILITY` is carried through as-is: it is AEMO stating that the device
 cannot move, or cannot generate, in that interval. Every problem across every device is
@@ -115,16 +115,16 @@ end
     _set_nem_dispatch_limits!(sys, rows, date_range)
 
 Attaches per-device `SingleTimeSeries` built from `rows` (as [`read_dispatch_limits`](@ref) returns
-them, at the step of `date_range`) to every available `ThermalStandard`, `HydroDispatch`,
-`RenewableDispatch`, `InterruptiblePowerLoad` and `EnergyReservoirStorage` in `sys`:
+them, at the step of `date_range`) to every available `NEMThermalGen`, `NEMHydroGen`,
+`NEMRenewableGen`, `NEMLoad` and `NEMStorage` in `sys`:
 `"ramp_up_rate"` and `"ramp_down_rate"` (from `RAMPUPRATE`/`RAMPDOWNRATE`) and `"initial_mw"`
-(from `INITIALMW`, net MW for a battery, consumed MW for a load). A `ThermalStandard`,
-`HydroDispatch`, `RenewableDispatch` or `InterruptiblePowerLoad` also gets `"max_active_power"`, the
+(from `INITIALMW`, net MW for a battery, consumed MW for a load). A `NEMThermalGen`,
+`NEMHydroGen`, `NEMRenewableGen` or `NEMLoad` also gets `"max_active_power"`, the
 device's upper dispatch limit, `AVAILABILITY` raised to the ramp-down floor `INITIALMW - RAMPDOWNRATE × Δ`
 when that floor is higher, where Δ is the interval length in hours taken from `date_range`'s step,
 replacing any `UIGF`- or bid-derived `"max_active_power"` series a device already carries, and
 `"availability"`, the raw `AVAILABILITY` (for a semi-scheduled unit, the lower of bid `MAXAVAIL`
-and `UIGF`), read back by [`get_energy_availability`](@ref). An `EnergyReservoirStorage` gets no
+and `UIGF`), read back by [`get_energy_availability`](@ref). A `NEMStorage` gets no
 `"max_active_power"` series: its per-direction availability is the energy bid `MAXAVAIL` series
 [`set_market_bids!`](@ref) attaches, read back by [`get_storage_energy_max_avail`](@ref).
 
@@ -139,8 +139,8 @@ its consumption is already in regional demand and is not dispatched. This functi
 available; a load made available later has no ramp or limit series.
 
 A device other than a non-scheduled load with no `DISPATCHLOAD` rows in `date_range`, a `missing` rate or
-`INITIALMW`, or a negative `RAMPUPRATE`/`RAMPDOWNRATE` is a problem; for a `ThermalStandard`,
-`HydroDispatch` or `RenewableDispatch`, a `missing` or negative `AVAILABILITY`, or a
+`INITIALMW`, or a negative `RAMPUPRATE`/`RAMPDOWNRATE` is a problem; for a `NEMThermalGen`,
+`NEMHydroGen` or `NEMRenewableGen`, a `missing` or negative `AVAILABILITY`, or a
 non-positive static `max_active_power`, is also a problem. An interval within the device's
 registration (`registered`) with no row is a missing-row problem. An interval with no row outside
 that registration, before or after it, is not a problem: the device gets zero `"initial_mw"` and ramp
@@ -187,7 +187,7 @@ function _set_nem_dispatch_limits!(sys, rows, date_range; registered = nothing)
 
     for device in devices
         duid = get_name(device)
-        is_storage = device isa EnergyReservoirStorage
+        is_storage = device isa NEMStorage
         # A non-scheduled load's rows are not read: every value it gets is zero.
         pinned = is_non_scheduled_load(device)
         device_rows = isnothing(by_duid) || !haskey(by_duid, (duid,)) ? nothing : by_duid[(duid,)]

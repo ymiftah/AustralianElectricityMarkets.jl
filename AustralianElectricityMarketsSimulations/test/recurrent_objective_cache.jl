@@ -1,7 +1,7 @@
 # The second forecast must be served from the model cache even when its HDF5 file is unavailable.
 function _objective_cache_system()
     sys = fcas_toy_system()
-    alta = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+    alta = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
     gc = PSY.get_component(GenericConstraint, sys, "F_REG")
     curve_name = AustralianElectricityMarkets.fcas_offer_series_name(PSY.get_component(FCASService, sys, "1_RAISEREG"), false)
     replacements = (
@@ -56,7 +56,7 @@ end
             gc = PSY.get_component(GenericConstraint, sys, "F_REG")
             penalty = PSI.get_base_power(container) * interval_cost_coefficient(AustralianElectricityMarkets.constraint_cvp_factor(gc), PSI.get_resolution(container))
             @test PSI.JuMP.coefficient(PSI.get_variant_terms(PSI.get_objective_expression(container)), slack) == 12345.0 * penalty
-            storage = PSI.IS.get_time_series_storage(PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP))
+            storage = PSI.IS.get_time_series_storage(PSY.get_component(NEMThermalGen, sys, TOY_CHEAP))
             path = storage.file_path
             cached && mv(path, path * ".hidden")
             try
@@ -95,18 +95,18 @@ end
             container = PSI.get_optimization_container(model)
             keys = [k for k in Base.keys(PSI.get_parameters(model)) if PSI.IS.Optimization.get_entry_type(k) === EnergyBandPriceParameter]
             _update_objective_cache_parameters!(model, keys, 0)
-            gen_band = PSI.get_variable(container, EnergyOfferBandVariable(), PSY.ThermalStandard, "gen")[TOY_CHEAP, "1", 1]
+            gen_band = PSI.get_variable(container, EnergyOfferBandVariable(), NEMThermalGen, "gen")[TOY_CHEAP, "1", 1]
             @test PSI.JuMP.coefficient(PSI.get_variant_terms(PSI.get_objective_expression(container)), gen_band) ≈ 10.0 * 100.0 / 12
-            path = PSI.IS.get_time_series_storage(PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)).file_path
+            path = PSI.IS.get_time_series_storage(PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)).file_path
             cached && mv(path, path * ".hidden")
             try
                 @test_nowarn _update_objective_cache_parameters!(model, keys, 1)
                 objective = PSI.get_variant_terms(PSI.get_objective_expression(container))
                 @test PSI.JuMP.coefficient(objective, gen_band) ≈ 30.0 * 100.0 / 12
                 for (T, name, meta, price) in (
-                        (PSY.EnergyReservoirStorage, "BAT", "gen", 75.0),
-                        (PSY.EnergyReservoirStorage, "BAT", "load", -25.0),
-                        (PSY.InterruptiblePowerLoad, "LOAD", "load", -40.0),
+                        (NEMStorage, "BAT", "gen", 75.0),
+                        (NEMStorage, "BAT", "load", -25.0),
+                        (NEMLoad, "LOAD", "load", -40.0),
                     )
                     band = PSI.get_variable(container, EnergyOfferBandVariable(), T, meta)[name, "1", 1]
                     @test PSI.JuMP.coefficient(objective, band) ≈ price * 100.0 / 12
@@ -123,7 +123,7 @@ end
     sys = fcas_toy_system()
     template = replay_template(sys)
     PSY.clear_time_series!(sys)
-    device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+    device = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
     curves = [_toy_offer([(10.0, Float64(i))]) for i in 1:60]
     PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series("variable_cost", TOY_START, curves, TOY_RESOLUTION))
     curve_name = AustralianElectricityMarkets.fcas_offer_series_name(PSY.get_component(FCASService, sys, "1_RAISEREG"), false)
@@ -161,7 +161,7 @@ end
     sys = fcas_toy_system()
     template = replay_template(sys)
     PSY.clear_time_series!(sys)
-    device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+    device = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
     curves = [_toy_offer([(10.0, Float64(i))]) for i in 1:3]
     series = AustralianElectricityMarkets.single_series("variable_cost", TOY_START, curves, TOY_RESOLUTION)
     PSY.add_time_series!(sys, device, series)
