@@ -196,7 +196,7 @@ end
     _check_fcas_effective_series(container, devices, bid_type, directions)
 
 Throws `ArgumentError` naming every device in `devices` without a forecast of its
-[`AustralianElectricityMarkets.set_fcas_effective_offers!`](@ref) series for `bid_type`.
+[`set_effective_offers!`](@ref) series for `bid_type`.
 
 # Returns
 `nothing`.
@@ -213,7 +213,7 @@ function _check_fcas_effective_series(container::PSI.OptimizationContainer, devi
     isempty(uncovered) || throw(
         ArgumentError(
             "FCASMarket: $(length(uncovered)) device(s) carry no effective $(string(bid_type)) offer forecast: " *
-                "$(join(uncovered, ", ")). Call set_fcas_effective_offers!(sys) before transform_single_time_series!.",
+                "$(join(uncovered, ", ")). Call set_effective_offers!(sys) before transform_single_time_series!.",
         ),
     )
     return

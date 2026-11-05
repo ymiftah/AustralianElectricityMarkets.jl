@@ -603,7 +603,7 @@ end
 @testset "tie groups" begin
     band(price, name, band = 1) = (; price, name, band)
     tol = TIE_BREAK_CVP_FACTOR
-    groups = AustralianElectricityMarkets.tie_groups
+    groups = AEMS.tie_groups
     @test groups([band(5.0, "a"), band(5.0, "b"), band(5.0, "c")]) == [[1, 2, 3]]
     # A run of one unit's bands is no group; zero-width bands are grouped like any other.
     @test groups([band(5.0, "a", 1), band(5.0, "a", 2), band(7.0, "b")]) == Vector{Int}[]
@@ -653,7 +653,7 @@ end
     status, log = _toy_build_log(model)
     @test status == PSI.ModelBuildStatus.FAILED
     @test occursin("tie-break: 2 unit(s) with price-tied bands carry no tie-break scale forecast: Alta, Park City.", log)
-    @test occursin("Call set_tie_break_scales!(sys) before transform_single_time_series!.", log)
+    @test occursin("Call set_effective_offers!(sys) before transform_single_time_series!.", log)
 end
 
 @testset "a unit carrying tie-break scales must be modelled" begin
@@ -739,7 +739,7 @@ end
     @test scale(TOY_EXPENSIVE, 2) ≈ [1.0, 1.0]
 end
 
-@testset "set_tie_break_scales! removes scales left by an earlier call" begin
+@testset "set_effective_offers! removes scales left by an earlier call" begin
     # The fixture attaches a stale scale in `mutate!` and runs the setter afterwards.
     sys = nem_toy_system(
         [
@@ -831,7 +831,7 @@ end
     @test all(k -> PSI.JuMP.value(up[k...]) + PSI.JuMP.value(down[k...]) < 1.0e-8, keys(rows.data))
 end
 
-@testset "set_tie_break_scales! attaches one EnergyTieBreak over the units with an energy offer" begin
+@testset "set_effective_offers! attaches one EnergyTieBreak over the units with an energy offer" begin
     sys = nem_toy_system(
         [
             TOY_CHEAP => toy_unit(100.0, [(60.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
@@ -843,8 +843,8 @@ end
     )
     service = PSY.get_component(EnergyTieBreak, sys, TIE_BREAK_SERVICE_NAME)
     @test isnothing(service)
-    set_tie_break_scales!(sys)
-    set_tie_break_scales!(sys)
+    set_effective_offers!(sys)
+    set_effective_offers!(sys)
     services = collect(PSY.get_components(EnergyTieBreak, sys))
     @test length(services) == 1
     # No band ties here; every unit with an energy offer still contributes, so the build-time checks run.

@@ -217,8 +217,11 @@ function nem_toy_system(
     isnothing(interchange) || add_toy_interchange!(sys, stamps, interchange)
     isnothing(mutate!) || mutate!(sys, stamps)
     isnothing(interchange) || set_loss_demand_coefficients!(sys)
-    set_fcas_effective_offers!(sys)
-    tie_break_scales && set_tie_break_scales!(sys)
+    if tie_break_scales
+        set_effective_offers!(sys)
+    else
+        AEMS._set_fcas_effective_offers!(sys)
+    end
 
     # One window per `horizon`.
     PSY.transform_single_time_series!(sys, horizon, TOY_RESOLUTION)

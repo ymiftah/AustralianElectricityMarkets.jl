@@ -27,7 +27,8 @@ end
         exclude_constraints::AbstractDict{<:AbstractString, Symbol} = Dict{String, Symbol}()) -> DataFrame
 
 Prepares `sys` for a replay of `template` over `steps`: attaches the five-minute forecast windows,
-runs the replay pre-flight checks and excludes the constraints the template cannot model. Each call
+derives the effective offers ([`set_effective_offers!`](@ref)) from the bids and conditions of `sys` on the
+first call, runs the replay pre-flight checks and excludes the constraints the template cannot model. Each call
 on the same system replaces the exclusions of the previous call, as [`exclude_unmodeled_services!`](@ref)
 does; the forecasts are attached only by the first call.
 
@@ -46,6 +47,7 @@ function prepare_replay!(
         sys::PSY.System, template::PSI.ProblemTemplate, steps::StepRange{DateTime};
         exclude_constraints::AbstractDict{<:AbstractString, Symbol} = Dict{String, Symbol}(),
     )
+    PSY.get_time_series_counts(sys).forecast_count == 0 && set_effective_offers!(sys)
     _prepare_replay_forecasts!(sys)
     check_replication_steps(sys, steps)
     check_single_financial_year(steps)

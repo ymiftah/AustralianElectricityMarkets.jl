@@ -397,7 +397,7 @@ end
 @testset "a malformed offered trapezium is rejected before the build" begin
     duid = TOY_CHEAP
     service_name = "TAS1_RAISE6SEC"
-    # set_fcas_effective_offers!, which the toy system runs, reads every trapezium.
+    # set_effective_offers!, which the toy system runs, reads every trapezium.
     err = _caught() do
         fcas_energy_toy_system(
             2.0;
@@ -528,7 +528,7 @@ function storage_fcas_toy_model(
     end
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = bid_type), [bat])
     flush_toy_fcas_curves!(sys)
-    set_fcas_effective_offers!(sys)
+    set_effective_offers!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
     template = _area_balance_template(sys; mpc = 17_500.0)
@@ -601,7 +601,7 @@ end
         enablement_min = emin, low_breakpoint = emin + 1.0, high_breakpoint = emax - 1.0,
         enablement_max = emax, max_avail = 1.0,
     )
-    ok(is_regulation, decremental, t, avail) = AustralianElectricityMarkets._fcas_energy_max_avail_ok(bat, is_regulation, decremental, t, avail)
+    ok(is_regulation, decremental, t, avail) = AEMS._fcas_energy_max_avail_ok(bat, is_regulation, decremental, t, avail)
 
     # Generation side: Energy Max Availability_GEN >= EnablementMin.
     @test !ok(true, false, trap(2.0, 10.0), (gen = 1.0, load = 50.0))
@@ -702,7 +702,7 @@ function _build_bdu_regulation(
         add_toy_series!(sys, gc, stamps, "rhs", fill(rhs_pu, length(stamps)); scale = 1.0)
         add_toy_series!(sys, gc, stamps, "invoked", fill(1.0, length(stamps)); scale = 1.0)
     end
-    set_fcas_effective_offers!(sys)
+    set_effective_offers!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
     template = _area_balance_template(sys; mpc = 17_500.0)
@@ -1064,8 +1064,8 @@ end
     )
     container = PSI.get_optimization_container(model)
     bat = get_component(NEMStorage, sys, "BAT1")
-    window = AustralianElectricityMarkets._FCASWindow(TOY_START, 1, TOY_RESOLUTION)
-    trap = only(AustralianElectricityMarkets._fcas_offer(window, bat, BidType.LOWERREG, OfferSide.LOAD).trapeziums)
+    window = AEMS._FCASWindow(TOY_START, 1, TOY_RESOLUTION)
+    trap = only(AEMS._fcas_offer(window, bat, BidType.LOWERREG, OfferSide.LOAD).trapeziums)
     @test collect(Tuple(trap)[1:5]) .* PSI.get_base_power(container) ≈ [-10.0, -8.0, -2.0, 0.0, 4.0]
 end
 
@@ -1212,7 +1212,7 @@ end
     PSI.set_output_dir!(model, mktempdir())
     err = _caught(() -> PSI.build_impl!(model))
     @test err isa ArgumentError
-    @test occursin("set_fcas_effective_offers!", err.msg)
+    @test occursin("set_effective_offers!", err.msg)
 end
 
 @testset "FCASMarket builds for a recurrent simulation" begin

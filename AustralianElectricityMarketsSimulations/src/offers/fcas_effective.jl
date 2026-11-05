@@ -358,7 +358,7 @@ const FCAS_INACTIVE_LIMIT_MW = 1.0e5
 """
     fcas_effective_series_name(bid_type, decremental) -> String
 
-Name of the [`set_fcas_effective_offers!`](@ref) series of one FCAS offer, `"fcas_effective_<BIDTYPE>"`
+Name of the [`set_effective_offers!`](@ref) series of one FCAS offer, `"fcas_effective_<BIDTYPE>"`
 with `"_decremental"` appended for a decremental offer.
 
 # Arguments
@@ -376,7 +376,7 @@ end
 """
     fcas_ramping_series_name(bid_type) -> String
 
-Name of the [`set_fcas_effective_offers!`](@ref) series of one regulation market, `"fcas_ramping_limits_<BIDTYPE>"`.
+Name of the [`set_effective_offers!`](@ref) series of one regulation market, `"fcas_ramping_limits_<BIDTYPE>"`.
 
 # Arguments
 - `bid_type`: the regulation market.
@@ -515,28 +515,11 @@ end
 
 
 """
-    set_fcas_effective_offers!(sys)
+    _set_fcas_effective_offers!(sys)
 
-Attaches, for every device contributing to an [`FCASService`](@ref), the effective FCAS offer
-NEMDE dispatches against in each interval (AEMO *FCAS Model in NEMDE* §4 scaling and §5 enablement
-pre-conditions), on the timestamps of the device's `"fcas_trapezium_<BIDTYPE>[_decremental]"`
-series, per-unit of the system base:
-
-- `"fcas_effective_<BIDTYPE>[_decremental]"`, one `NTuple{15, Float64}` per interval:
-  `(MaxAvail, EnablementMin, EnablementMax, UpperSlopeCoeff, LowerSlopeCoeff, w1, ..., w10)` of the
-  scaled trapezium and the offer's band widths, padded with zero widths. An offer not enabled has
-  zero `MaxAvail`, slopes and widths and enablement limits `∓FCAS_INACTIVE_LIMIT_MW`.
-- `"fcas_ramping_limits_<BIDTYPE>"` for a regulation market, one `NTuple{2, Float64}` per interval:
-  the §6.1 joint ramping right-hand side, `+FCAS_INACTIVE_LIMIT_MW` for the upper form and
-  `-FCAS_INACTIVE_LIMIT_MW` for the lower form where it does not apply, and, for a `Storage` device
-  bidding both sides, the §6.4 SCADA ramping right-hand side, `+FCAS_INACTIVE_LIMIT_MW` where it
-  does not apply.
-
-Values follow the dispatch process: AGC scaling, AGC status and `InitialMW` apply at every interval.
-Existing series of these names are replaced. Call it after [`set_fcas_bids!`](@ref),
-[`set_fcas_scaling_inputs!`](@ref), [`set_market_bids!`](@ref), [`nem_system`](@ref)
-and [`add_fcas_services!`](@ref), and before `transform_single_time_series!`; `FCASMarket`
-requires these series.
+Attaches the effective FCAS offers and regulation ramping limits of every device contributing to an
+[`FCASService`](@ref), as the series described by [`set_effective_offers!`](@ref). Replaces existing series
+of these names.
 
 # Arguments
 - `sys`: the `System` to add to.
@@ -544,7 +527,7 @@ requires these series.
 # Returns
 `nothing`.
 """
-function set_fcas_effective_offers!(sys::PSY.System)
+function _set_fcas_effective_offers!(sys::PSY.System)
     PSY.with_units_base(sys, "SYSTEM_BASE") do
         inactive = FCAS_INACTIVE_LIMIT_MW / PSY.get_base_power(sys)
         done = Set{Tuple{DataType, String, BidType}}()
@@ -566,7 +549,7 @@ end
 """
     _attach_fcas_effective_series!(sys, device, bid_type, inactive)
 
-Attaches `device`'s [`set_fcas_effective_offers!`](@ref) series for `bid_type`, computed over the
+Attaches `device`'s [`set_effective_offers!`](@ref) series for `bid_type`, computed over the
 timestamps of its trapezium series under the dispatch process (`_fcas_effective_values`).
 No-op for a device without a `bid_type` trapezium series.
 

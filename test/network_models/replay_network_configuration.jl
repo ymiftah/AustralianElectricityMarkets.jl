@@ -176,27 +176,6 @@ end
     end
 end
 
-@testset "NEMDE replay attaches FCAS effective offers and tie-break scales" begin
-    AEM = AustralianElectricityMarkets
-    hive = mktempdir()
-    create_mock_data(hive; complete_inputs = true)
-    write_mock_interconnector_results(hive)
-    db = aem_connect(HiveConfiguration(hive_location = hive))
-    interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
-    sys = nem_system(db, NEMDEConfiguration(); date_range = interval)
-    series = [
-        get_name(key) for device in get_components(StaticInjection, sys)
-            for key in PowerSystems.get_time_series_keys(device)
-    ]
-    @test any(startswith(name, "fcas_effective_") for name in series)
-    # The mock's energy bands are never tied across units within an interval, so no tie-break scale is written;
-    # the EnergyTieBreak service below still records that set_tie_break_scales! ran.
-    @test !any(startswith(name, "tie_break_scale_") for name in series)
-    service = get_component(AEM.EnergyTieBreak, sys, AEM.TIE_BREAK_SERVICE_NAME)
-    @test !isnothing(service)
-    @test !isempty(get_contributing_devices(sys, service))
-end
-
 @testset "units registered mid-chunk are built for the whole chunk" begin
     hive = mktempdir()
     create_mock_data(hive; complete_inputs = true)
@@ -240,25 +219,12 @@ end
     @test isempty(get_dropped_terms(late))
     @test isempty(get_skipped_constraints(late))
 
-    @testset "BW02's padded stamps offer no FCAS" begin
-        # BW02's RAISE6SEC is a modelled incremental bid, so its effective offer is disabled where AEMO publishes none.
+    @testset "BW02's padded offer curve has no width" begin
         raise6 = BidType.RAISE6SEC
-        inactive = -FCAS_INACTIVE_LIMIT_MW / get_base_power(late)
-        effective = get_time_series_values(SingleTimeSeries, bw02, fcas_effective_series_name(raise6, false); ignore_scaling_factors = true)
-        for i in 1:2
-            @test effective[i][1] == 0.0
-            @test effective[i][2] == inactive
-        end
         # The padded offer curve has zero width, so the service bid offers nothing there.
         svc = only(s for s in get_components(FCASService, late) if get_bid_type(s) == raise6 && "BW02" in get_name.(get_contributing_devices(late, s)))
         curves = get_time_series_values(SingleTimeSeries, bw02, fcas_offer_series_name(svc, false); ignore_scaling_factors = true)
         @test all(i -> sum(diff(PowerSystems.get_x_coords(curves[i]))) == 0.0, 1:2)
-        # A tie-break scale is zero where the padded band has no width, or absent when the unit is never tied.
-        for key in get_time_series_keys(bw02)
-            get_time_series_type(key) === SingleTimeSeries && startswith(get_name(key), "tie_break_scale_") || continue
-            values = get_time_series_values(SingleTimeSeries, bw02, get_name(key); ignore_scaling_factors = true)
-            @test all(iszero, values[1:2])
-        end
     end
     @test_nowarn PowerSystems.transform_single_time_series!(late, DISPATCH_INTERVAL, DISPATCH_INTERVAL)
 

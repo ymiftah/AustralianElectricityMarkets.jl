@@ -32,10 +32,10 @@ Attaches per-device `SingleTimeSeries` from [`read_dispatch_limits`](@ref) to ev
 higher, where Δ is the interval length in hours taken from `date_range`'s step, replacing any
 `UIGF`- or bid-derived `"max_active_power"` series a device already carries - and
 `"availability"`, the raw `AVAILABILITY` (for a semi-scheduled unit, the lower of bid `MAXAVAIL`
-and `UIGF`), read back by [`get_energy_availability`](@ref). An
+and `UIGF`), read back by `get_energy_availability`. An
 `NEMStorage` gets no `"max_active_power"` series: its per-direction availability is
 the energy bid `MAXAVAIL` series [`set_market_bids!`](@ref) attaches, read back by
-[`get_storage_energy_max_avail`](@ref).
+`get_storage_energy_max_avail`.
 
 `"ramp_up_rate"`, `"ramp_down_rate"`, `"initial_mw"` and `"availability"` are stored per-unit of
 `sys`'s system base, rates per minute. `"max_active_power"` follows PSY's native convention instead: data
@@ -115,9 +115,9 @@ device's upper dispatch limit, `AVAILABILITY` raised to the ramp-down floor `INI
 when that floor is higher, where Δ is the interval length in hours taken from `date_range`'s step,
 replacing any `UIGF`- or bid-derived `"max_active_power"` series a device already carries, and
 `"availability"`, the raw `AVAILABILITY` (for a semi-scheduled unit, the lower of bid `MAXAVAIL`
-and `UIGF`), read back by [`get_energy_availability`](@ref). A `NEMStorage` gets no
+and `UIGF`), read back by `get_energy_availability`. A `NEMStorage` gets no
 `"max_active_power"` series: its per-direction availability is the energy bid `MAXAVAIL` series
-[`set_market_bids!`](@ref) attaches, read back by [`get_storage_energy_max_avail`](@ref).
+[`set_market_bids!`](@ref) attaches, read back by `get_storage_energy_max_avail`.
 
 `"ramp_up_rate"`, `"ramp_down_rate"`, `"initial_mw"` and `"availability"` are stored per-unit of
 `sys`'s system base, rates per minute. `"max_active_power"` follows PSY's native convention instead: data

@@ -414,7 +414,7 @@ end
 Attaches a `SingleTimeSeries` named `name` to `device`, per-unitised by `base_power` and
 `scale`, from `by_time[t][col]` at every `t` in `full_grid`. An interval with no row in
 `by_time`, or a `missing` value for `col`, is stored as `NaN`, which
-[`get_scaled_fcas_trapezium`](@ref) reads as an absent input for that interval. No-op if every
+`get_scaled_fcas_trapezium` reads as an absent input for that interval. No-op if every
 interval is absent.
 
 # Returns
@@ -463,8 +463,8 @@ Generators and storage pair each ramp rate with its own service's availability: 
 `RAMPDOWNRATE` with `RAISEREGAVAILABILITY`.
 
 Every series but `"fcas_agc_status"` is per-unit of `sys`'s system base, read back by
-[`get_scaled_fcas_trapezium`](@ref); `"fcas_agc_status"` carries AGCSTATUS's raw `0`/`1` value,
-read back by [`get_fcas_agc_status`](@ref). An interval with no source row or a `missing` source
+`get_scaled_fcas_trapezium`; `"fcas_agc_status"` carries AGCSTATUS's raw `0`/`1` value,
+read back by `get_fcas_agc_status`. An interval with no source row or a `missing` source
 value is stored as `NaN`: it applies no scaling at that interval, per §4's "zero or absent" rule,
 and reads back as an unknown AGC status.
 

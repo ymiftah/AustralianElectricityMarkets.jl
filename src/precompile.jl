@@ -28,7 +28,7 @@ function _precompile_workload()
     bids.INTERVAL_DATETIME = [DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)]
     bids.MAXAVAIL = [100.0, 100.0]
     _write_energy_bid!(sys, generator, bids, OfferSide.GEN, DateTime(2025, 1, 1, 0, 5), Minute(5))
-    return get_energy_offer(generator, OfferSide.GEN)
+    return nothing
 end
 
 # Exercise in-memory bid conversion and attachment only while creating the package cache.

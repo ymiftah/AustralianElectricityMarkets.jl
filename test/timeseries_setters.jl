@@ -108,26 +108,22 @@
                         ta_load = get_time_series_array(SingleTimeSeries, bat, "energy_offer_decremental")
                         @test length(ta_load) == length(date_range) - 1
 
-                        # The offer views read the same curves, one per side.
-                        gen_offer, load_offer = get_energy_offer(bat, OfferSide.GEN), get_energy_offer(bat, OfferSide.LOAD)
-                        @test gen_offer.side == OfferSide.GEN && load_offer.side == OfferSide.LOAD
-                        @test gen_offer.timestamps == PowerSystems.TimeSeries.timestamp(ta_gen) && gen_offer.curves == values(ta_gen)
-                        @test load_offer.curves == values(ta_load)
-
                         # Energy MAXAVAIL per direction; the mock bids 100 + i MW on both sides,
                         # rising with the interval index i.
                         horizon = length(date_range) - 1
                         avail = with_units_base(sys, "NATURAL_UNITS") do
-                            get_storage_energy_max_avail(bat, first(date_range), horizon)
+                            (
+                                gen = get_time_series_values(SingleTimeSeries, bat, "energy_max_avail"; start_time = first(date_range), len = horizon) .* get_base_power(sys),
+                                load = get_time_series_values(SingleTimeSeries, bat, "energy_max_avail_decremental"; start_time = first(date_range), len = horizon) .* get_base_power(sys),
+                            )
                         end
-                        @test !isnothing(avail)
                         @test length(avail.gen) == horizon
                         @test avail.gen ≈ avail.load
                         @test all(x -> 100.0 <= x <= 149.0, avail.gen)
                         @test avail.gen[end] > avail.gen[1]
                     end
-                    @test isnothing(get_storage_energy_max_avail(first(get_components(NEMThermalGen, sys)), first(date_range), 1))
-                    @test isnothing(get_energy_offer(first(get_components(PowerLoad, sys)), OfferSide.GEN))
+                    @test !has_time_series(first(get_components(NEMThermalGen, sys)), SingleTimeSeries, "energy_max_avail_decremental")
+                    @test !has_time_series(first(get_components(PowerLoad, sys)), SingleTimeSeries, "energy_offer")
                 end
             end
         end
@@ -165,9 +161,6 @@
         @test_throws r"bidding devices must be NEM device types" AustralianElectricityMarkets._write_energy_bid!(
             sys, stock, nothing, OfferSide.GEN, start, Minute(5),
         )
-        # A device that is not a NEM type has no offer view.
-        @test isnothing(get_energy_offer(stock, OfferSide.GEN))
-        @test isnothing(get_energy_offer(stock, OfferSide.LOAD))
 
         # A NEMOfferCost records the bid, which needs the max_avail series.
         gen = NEMThermalGen(;
@@ -201,9 +194,7 @@
             bid = only(b for b in AustralianElectricityMarkets.get_energy_bids(get_operation_cost(device)) if b.side == side)
             @test bid.curves.name == energy_offer_series_name(side)
             @test bid.max_avail.name == energy_max_avail_series_name(side)
-            offer = get_energy_offer(device, side)
-            @test offer.curves == get_time_series_values(SingleTimeSeries, device, energy_offer_series_name(side))
-            @test offer.timestamps[1] == date_range[1]
+            @test get_time_series_timestamps(SingleTimeSeries, device, energy_offer_series_name(side))[1] == date_range[1]
         end
         @test !any(has_time_series(gen, SingleTimeSeries, n) for n in ("variable_cost", "incremental_initial_input"))
     end
@@ -223,7 +214,7 @@
             @test !isempty(sides)
             for side in sides
                 # The second call's window replaced the first's series.
-                @test get_energy_offer(device, side).timestamps[1] == second_range[1]
+                @test get_time_series_timestamps(SingleTimeSeries, device, energy_offer_series_name(side))[1] == second_range[1]
             end
             @test count(k -> k.name == "energy_offer", get_time_series_keys(device)) <= 1
         end
@@ -590,13 +581,13 @@
             with_units_base(sys, "NATURAL_UNITS") do
                 for (device, duid) in ((renewable, "BW03"), (battery, "BW01"))
                     rows = sort(subset(truth, :DUID => ByRow(==(duid))), :SETTLEMENTDATE)
-                    @test isapprox(get_initial_mw(device, start_date, horizon), rows.INITIALMW; atol = 1.0e-8)
+                    @test isapprox(get_time_series_values(SingleTimeSeries, device, "initial_mw"; start_time = start_date, len = horizon) .* get_base_power(sys), rows.INITIALMW; atol = 1.0e-8)
                 end
                 rows = sort(subset(truth, :DUID => ByRow(==("BW03"))), :SETTLEMENTDATE)
-                @test isapprox(get_energy_availability(renewable, start_date, horizon), rows.AVAILABILITY; atol = 1.0e-8)
+                @test isapprox(get_time_series_values(SingleTimeSeries, renewable, "availability"; start_time = start_date, len = horizon) .* get_base_power(sys), rows.AVAILABILITY; atol = 1.0e-8)
             end
             # A battery's availability comes from its energy bid, not AVAILABILITY.
-            @test isnothing(get_energy_availability(battery, start_date, horizon))
+            @test !has_time_series(battery, SingleTimeSeries, "availability")
         end
 
         @testset "missing or negative dispatch inputs throw, naming the DUID, and leave sys untouched" begin
@@ -727,9 +718,7 @@
                 @test isapprox(got_lower_rate, max.(rows.RAMPDOWNRATE, rows.LOWERREGAVAILABILITY .* 12) ./ base_power; atol = 1.0e-9)
                 @test isapprox(got_agc_status, rows.AGCSTATUS; atol = 1.0e-9)
 
-                initial_time = start_date
-                horizon = length(date_range) - 1
-                @test get_fcas_agc_status(device, initial_time, horizon) == round.(Int, rows.AGCSTATUS)
+                @test round.(Int, got_agc_status) == round.(Int, rows.AGCSTATUS)
             end
         end
 
@@ -786,62 +775,17 @@
             @test !isempty(rows)
             values = get_time_series_values(SingleTimeSeries, load, "fcas_agc_enablement_min_RAISEREG")
             @test values ≈ rows.RAISEREGENABLEMENTMIN ./ base_power
-            @test get_fcas_agc_status(load, start_date, length(date_range) - 1) == ones(Int, length(date_range) - 1)
+            @test get_time_series_values(SingleTimeSeries, load, "fcas_agc_status") == ones(length(date_range) - 1)
             @test !has_time_series(unavailable)
         end
 
-        @testset "load regulation scaling uses consumption ramp direction" begin
-            rates_db = damaged_cache(
-                hive_dir, :DISPATCHLOAD,
-                "UPDATE input SET RAMPUPRATE = 120, RAMPDOWNRATE = 60, RAISEREGENABLEMENTMIN = 0, RAISEREGENABLEMENTMAX = 0, LOWERREGENABLEMENTMIN = 0, LOWERREGENABLEMENTMAX = 0 WHERE DUID = 'PUMP1'",
-            )
-            sys = deepcopy(sys_base)
-            load = get_component(NEMLoad, sys, "PUMP1")
-            horizon = length(date_range) - 1
-            trap = (0.0, 10.0, 90.0, 100.0, 20.0, NaN, NaN) ./ base_power
-            for service in (BidType.RAISEREG, BidType.LOWERREG)
-                add_time_series!(sys, load, single_series(fcas_series_name("fcas_trapezium", service, OfferSide.LOAD), start_date, fill(trap, horizon), resolution))
-            end
-            set_fcas_scaling_inputs!(sys, rates_db, date_range)
-            with_units_base(sys, "NATURAL_UNITS") do
-                raise = get_scaled_fcas_trapezium(load, BidType.RAISEREG, start_date, horizon; decremental = true)
-                lower = get_scaled_fcas_trapezium(load, BidType.LOWERREG, start_date, horizon; decremental = true)
-                @test get_max_avail.(raise) ≈ fill(5.0, horizon)
-                @test get_max_avail.(lower) ≈ fill(10.0, horizon)
-                raw = AustralianElectricityMarkets._get_fcas_trapezium(load, BidType.RAISEREG, start_date, horizon; decremental = true)
-                @test get_max_avail.(raw) == fill(20.0, horizon)
-            end
-        end
-
-        @testset "load regulation availability pairs with its own service" begin
-            rates_db = damaged_cache(
-                hive_dir, :DISPATCHLOAD,
-                "UPDATE input SET RAMPUPRATE = 180, RAMPDOWNRATE = 720, RAISEREGAVAILABILITY = 0, LOWERREGAVAILABILITY = 60, RAISEREGENABLEMENTMIN = 0, RAISEREGENABLEMENTMAX = 0, LOWERREGENABLEMENTMIN = 0, LOWERREGENABLEMENTMAX = 0 WHERE DUID = 'PUMP1'",
-            )
-            sys = deepcopy(sys_base)
-            load = get_component(NEMLoad, sys, "PUMP1")
-            horizon = length(date_range) - 1
-            trap = (0.0, 10.0, 90.0, 100.0, 100.0, NaN, NaN) ./ base_power
-            for service in (BidType.RAISEREG, BidType.LOWERREG)
-                add_time_series!(sys, load, single_series(fcas_series_name("fcas_trapezium", service, OfferSide.LOAD), start_date, fill(trap, horizon), resolution))
-            end
-            set_fcas_scaling_inputs!(sys, rates_db, date_range)
-            with_units_base(sys, "NATURAL_UNITS") do
-                # 60 MW per 5 minutes is LOWERREGAVAILABILITY; the up ramp rate alone would give 15.
-                lower = get_scaled_fcas_trapezium(load, BidType.LOWERREG, start_date, horizon; decremental = true)
-                raise = get_scaled_fcas_trapezium(load, BidType.RAISEREG, start_date, horizon; decremental = true)
-                @test get_max_avail.(lower) ≈ fill(60.0, horizon)
-                @test get_max_avail.(raise) ≈ fill(60.0, horizon)
-            end
-        end
-
-        @testset "get_fcas_agc_status is nothing when fcas_agc_status is not attached" begin
+        @testset "fcas_agc_status is not attached when no AGC status is given" begin
             sys = deepcopy(sys_base)
             device = get_component(NEMThermalGen, sys, "ER01")
-            @test isnothing(get_fcas_agc_status(device, start_date, length(date_range) - 1))
+            @test !has_time_series(device, SingleTimeSeries, "fcas_agc_status")
         end
 
-        @testset "get_fcas_agc_status is nothing at an interval with no AGCSTATUS" begin
+        @testset "an interval with no AGCSTATUS is stored as NaN in fcas_agc_status" begin
             sys = deepcopy(sys_base)
             device = get_component(NEMThermalGen, sys, "ER01")
             full_grid = collect(date_range)[1:(end - 1)]
@@ -849,8 +793,8 @@
             AustralianElectricityMarkets._attach_fcas_scaling_series!(
                 sys, device, by_time, full_grid, :AGCSTATUS, "fcas_agc_status", 1.0,
             )
-            status = get_fcas_agc_status(device, start_date, length(full_grid))
-            @test isnothing(status[1])
+            status = get_time_series_values(SingleTimeSeries, device, "fcas_agc_status"; start_time = start_date, len = length(full_grid))
+            @test isnan(status[1])
             @test all(==(1), status[2:end])
         end
 
@@ -888,72 +832,6 @@
             @test !has_time_series(device, SingleTimeSeries, "fcas_agc_enablement_max_RAISEREG")
         end
 
-        @testset "get_scaled_fcas_trapezium skips scaling only at an absent interval" begin
-            sys = deepcopy(sys_base)
-            set_market_bids!(sys, db, date_range; resolution = resolution)
-            set_fcas_bids!(sys, db, date_range; resolution = resolution)
-
-            device = get_component(NEMThermalGen, sys, "ER01")
-            full_grid = collect(date_range)[1:(end - 1)]
-            horizon = length(full_grid)
-            # 60 MW/h is a 5 MW AGC ramping capability over 5 minutes.
-            by_time = Dict(t => (RAMPUPRATE = (t == full_grid[1] ? missing : 60.0),) for t in full_grid)
-            AustralianElectricityMarkets._attach_fcas_scaling_series!(
-                sys, device, by_time, full_grid, :RAMPUPRATE, "fcas_agc_ramp_rate_RAISEREG", base_power,
-            )
-
-            raw, scaled = with_units_base(sys, "NATURAL_UNITS") do
-                (
-                    AustralianElectricityMarkets._get_fcas_trapezium(device, BidType.RAISEREG, start_date, horizon),
-                    get_scaled_fcas_trapezium(device, BidType.RAISEREG, start_date, horizon),
-                )
-            end
-            @test get_max_avail(raw[1]) > 5.0
-            @test isequal(Tuple(scaled[1]), Tuple(raw[1]))
-            @test all(i -> isapprox(get_max_avail(scaled[i]), min(get_max_avail(raw[i]), 5.0)), 2:horizon)
-        end
-
-        @testset "get_scaled_fcas_trapezium narrows the trapezium wherever the AGC input is more restrictive" begin
-            sys = deepcopy(sys_base)
-            set_market_bids!(sys, db, date_range; resolution = resolution)
-            set_fcas_bids!(sys, db, date_range; resolution = resolution)
-            set_fcas_scaling_inputs!(sys, db, date_range)
-
-            device = get_component(NEMThermalGen, sys, "ER01")
-            initial_time = start_date
-            horizon = length(date_range) - 1
-
-            raw = AustralianElectricityMarkets._get_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)
-            scaled = get_scaled_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)
-            @test length(raw) == horizon
-
-            for i in 1:horizon
-                @test get_max_avail(scaled[i]) <= get_max_avail(raw[i])
-                @test get_enablement_min(scaled[i]) >= get_enablement_min(raw[i])
-                @test get_enablement_max(scaled[i]) <= get_enablement_max(raw[i])
-            end
-            @test any(i -> get_max_avail(scaled[i]) < get_max_avail(raw[i]), 1:horizon)
-
-            # The AGC ramping capability is the MW/h ramp rate times the interval length.
-            rows = sort(subset(truth, :DUID => ByRow(==("ER01"))), :SETTLEMENTDATE)
-            for (resolution_i, hours) in ((Minute(5), 5 / 60), (Minute(30), 0.5))
-                scaled_i = with_units_base(sys, "NATURAL_UNITS") do
-                    get_scaled_fcas_trapezium(
-                        device, BidType.RAISEREG, initial_time, horizon; resolution = resolution_i,
-                    )
-                end
-                raw_mw = with_units_base(() -> get_max_avail.(AustralianElectricityMarkets._get_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)), sys, "NATURAL_UNITS")
-                @test isapprox(
-                    get_max_avail.(scaled_i),
-                    min.(raw_mw, max.(rows.RAMPUPRATE, rows.RAISEREGAVAILABILITY .* 12) .* hours); atol = 1.0e-6,
-                )
-            end
-
-            # A contingency market carries no AGC scaling input series at all: unscaled.
-            raw_contingency = AustralianElectricityMarkets._get_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
-            scaled_contingency = get_scaled_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
-            @test all(i -> isequal(Tuple(raw_contingency[i]), Tuple(scaled_contingency[i])), 1:horizon)
-        end
     end
 
     @testset "public demand and dispatch limit setters attach the private setters' series" begin
@@ -987,15 +865,15 @@
         end
     end
 
-    @testset "get_initial_mw without an attached initial_mw series" begin
+    @testset "initial_mw without an attached initial_mw series" begin
         resolution = Minute(5)
         start_date = DateTime(2025, 1, 1, 0, 0)
         date_range = start_date:resolution:(start_date + Hour(2))
 
-        @testset "get_initial_mw is nothing when initial_mw is not attached" begin
+        @testset "initial_mw is not attached when it is not given" begin
             sys = deepcopy(sys_base)
             bat = get_component(NEMStorage, sys, "BW01")
-            @test isnothing(get_initial_mw(bat, start_date, length(date_range) - 1))
+            @test !has_time_series(bat, SingleTimeSeries, "initial_mw")
         end
 
         @testset "a device with no DISPATCHLOAD rows over date_range throws and is left without series" begin

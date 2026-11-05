@@ -6,7 +6,8 @@ using Logging
     readers = AustralianElectricityMarkets.Readers
     @test !isdefined(readers, :PowerSystems)
     @test isdefined(AustralianElectricityMarkets, :EnergyTieBreak)
-    @test isdefined(AustralianElectricityMarkets, :set_fcas_effective_offers!)
+    @test !isdefined(AustralianElectricityMarkets, :set_fcas_effective_offers!)
+    @test !isdefined(AustralianElectricityMarkets, :get_fcas_offer)
     @test isdefined(AustralianElectricityMarkets, :MARKET_PRICE_CAP_BY_FINANCIAL_YEAR)
     @test isdefined(AustralianElectricityMarkets, :constraint_cvp_factor)
 

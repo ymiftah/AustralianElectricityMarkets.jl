@@ -166,7 +166,7 @@ function attach_generic_constraints!(sys, market) #hide
 end #hide
 attach_generic_constraints!(sys, market)
 set_loss_demand_coefficients!(sys)
-set_fcas_effective_offers!(sys)
+AEMSim.set_effective_offers!(sys)
 PSY.transform_single_time_series!(sys, 2 * RESOLUTION, RESOLUTION);
 
 # The `System` now holds the whole market:

@@ -181,7 +181,7 @@ specified date range from the database and, through [`set_energy_offer!`](@ref),
 bid's curves and `MAXAVAIL` series to the `Generator`s, scheduled `ControllableLoad`s (decremental bid only; a load that
 bids `GEN` is made unavailable; a non-scheduled load is left as built) and `Storage` devices
 of `sys` (the latter also get the load-side bid, and each direction's energy `MAXAVAIL`, read back by
-[`get_storage_energy_max_avail`](@ref)). Every curve has one segment per price band, in band order
+`get_storage_energy_max_avail`). Every curve has one segment per price band, in band order
 (reversed for `LOAD`), bands of zero availability included as zero-width segments. A repeat call
 replaces the series and keeps one [`NEMEnergyBid`](@ref) per side. The devices must be NEM types, as
 [`nem_network`](@ref) builds them.

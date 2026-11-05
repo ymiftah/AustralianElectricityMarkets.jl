@@ -12,11 +12,12 @@ using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCAS_
     get_bid_type, get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_factor,
     get_interconnector, get_missing_constraint_intervals, get_region, get_sense, get_skipped_constraints,
     get_terms, loss_curve_vertex_values, is_non_scheduled_load, loss_segments, nem_dispatch_devices,
-    NEM_DISPATCH_DEVICE_TYPES,
-    FCAS_BAND_COUNT, FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR,
-    FCAS_BDU_RAMPING_CVP_FACTOR, fcas_effective_series_name, fcas_ramping_series_name,
-    fcas_upper_regulation_service, fcas_offer_sides, tie_break_series_name, tie_groups, _tie_break_offers,
-    _tie_break_active_bands, _tie_break_stamp_bands, _other_regulation, _financial_year_mpc,
+    NEM_DISPATCH_DEVICE_TYPES, single_series, remove_single_series!, replace_single_series!,
+    _nem_offer_cost, _fcas_units_multiplier, _get_fcas_trapezium, _get_fcas_offer_curve, get_energy_bids,
+    get_fcas_bids, FCASTrapezium, get_enablement_min, get_enablement_max, get_max_avail, get_upper_slope_coeff,
+    get_lower_slope_coeff, scale_fcas_trapezium,
+    FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR,
+    FCAS_BDU_RAMPING_CVP_FACTOR, _financial_year_mpc,
     _financial_year_start, _versions_without_definition, _zero_flow_constraint_definitions, _empty_definitions,
     read_interconnectors, read_mnsp_links, read_mnsp_offers, read_invoked_constraints, read_fixed_loads,
     read_constraint_definitions, get_fcas_requirements, get_service
@@ -37,6 +38,11 @@ const IS = PSY.IS
 const PM = PSI.PM
 
 include("time_basis.jl")
+
+include("offers/accessors.jl")
+include("offers/fcas_effective.jl")
+include("offers/tie_break.jl")
+include("offers/effective_offers.jl")
 
 include("types/constraint_formulations.jl")
 include("types/dispatch.jl")
@@ -82,6 +88,11 @@ include("results/comparison.jl")
 include("results/interconnector_losses.jl")
 
 
+export set_effective_offers!, NEMEnergyOffer, get_energy_offer, NEMFCASOffer, get_fcas_offer,
+    get_scaled_fcas_trapezium, get_fcas_agc_ramp_capability, get_fcas_agc_status, get_initial_mw,
+    get_energy_availability, get_storage_energy_max_avail
+export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,
+    fcas_upper_regulation_service, fcas_offer_sides, tie_break_series_name, tie_groups
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
 export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys, check_replay_inputs,
     exclude_unmodeled_services!, check_replication_steps,

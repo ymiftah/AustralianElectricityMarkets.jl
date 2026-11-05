@@ -419,6 +419,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `set_fcas_effective_offers!` and `set_tie_break_scales!` moved from AEM to AEMSim as `set_effective_offers!`, which `prepare_replay!` calls first. `nem_system` no longer attaches the effective offers, and the FCAS offer and dispatch read accessors (`get_fcas_offer`, `get_energy_offer`, `get_initial_mw`, `get_energy_availability`, `get_storage_energy_max_avail`, `get_scaled_fcas_trapezium`, `get_fcas_agc_status`, `get_fcas_agc_ramp_capability`) moved with them.
+
 - **Breaking:** replay systems (`nem_system(db, NEMDEConfiguration(); ...)` and `nem_network`) hold the
   NEM device types `NEMThermalGen`, `NEMHydroGen`, `NEMRenewableGen`, `NEMStorage` and `NEMLoad` in
   place of `ThermalStandard`, `HydroDispatch`, `RenewableDispatch`, `EnergyReservoirStorage` and

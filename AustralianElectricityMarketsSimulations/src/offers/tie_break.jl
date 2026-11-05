@@ -1,24 +1,4 @@
 """
-    TIE_BREAK_CVP_FACTOR
-
-Constraint violation penalty factor (1e-6) of AEMO's tie-break constraint (`TBSlack1` and
-`TBSlack2`, item 53 of the *Schedule of Constraint Violation Penalty Factors* v8.0). It is also
-the price tolerance, in `\$/MWh` after loss-factor adjustment, within which two energy bands are
-price-tied.
-"""
-const TIE_BREAK_CVP_FACTOR = 1.0e-6
-
-
-"""
-    TIE_BREAK_SERVICE_NAME
-
-Name of the [`EnergyTieBreak`](@ref) service [`set_tie_break_scales!`](@ref) attaches, and of the
-tie-break service model that the NEM dispatch model set registers for it.
-"""
-const TIE_BREAK_SERVICE_NAME = "energy_tie_break"
-
-
-"""
     tie_break_series_name(band, decremental) -> String
 
 Name of the series holding segment `band`'s tie-break scale, `"tie_break_scale_<band>"` with the side suffix.
@@ -149,7 +129,7 @@ end
 
 
 """
-    set_tie_break_scales!(sys)
+    _set_tie_break_scales!(sys)
 
 Attaches each price-tied energy band's tie-break scale `w / w_ref` (its width over the widest band of its
 tie group at that interval, 0 when the band is untied or the group has no width) as the `SingleTimeSeries`
@@ -166,7 +146,7 @@ build fails.
 # Returns
 `nothing`.
 """
-function set_tie_break_scales!(sys::PSY.System)
+function _set_tie_break_scales!(sys::PSY.System)
     all_offers = _tie_break_offers(sys)
     for device in PSY.get_components(PSY.StaticInjection, sys), key in collect(PSY.get_time_series_keys(device))
         name = IS.get_name(key)

@@ -115,9 +115,6 @@
         @test trapeziums isa Vector{FCASTrapezium}
         @test curves isa Vector{PiecewiseStepData}
         @test length(trapeziums) == length(curves) == horizon
-        offer = get_fcas_offer(asload1, BidType.RAISE6SEC, OfferSide.LOAD, start_date, horizon)
-        @test offer isa NEMFCASOffer && offer.service == BidType.RAISE6SEC && offer.side == OfferSide.LOAD
-        @test offer.trapeziums == trapeziums && offer.curves == curves
 
         # A generator carries its offer curve once FCAS service bids are stored.
         gen = first(g for g in get_components(Generator, sys) if has_time_series(g, SingleTimeSeries, "fcas_trapezium_RAISE6SEC"))
@@ -192,31 +189,6 @@
         extra = FCASService(; name = "NSW1_RAISE6SEC_EXTRA", region = "NSW1", bid_type = BidType.RAISE6SEC)
         add_service!(sys, extra, [asload1])
         @test_throws ArgumentError fcas_service(asload1, BidType.RAISE6SEC)
-    end
-
-    @testset "_require_equal_length throws on mismatched trapezium/curve series lengths" begin
-        trapeziums = FCASTrapezium[
-            FCASTrapezium(;
-                enablement_min = 1.0, low_breakpoint = 2.0, high_breakpoint = 3.0,
-                enablement_max = 4.0, max_avail = 5.0,
-            ),
-        ]
-        curves = PiecewiseStepData[
-            PiecewiseStepData([0.0, 1.0], [1.0]), PiecewiseStepData([0.0, 1.0], [1.0]),
-        ]
-
-        # Create a simple mock component for testing
-        mock_bus = ACBus(; number = 1, name = "BW01", available = true, bustype = ACBusTypes.REF, angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1), base_voltage = 130.0)
-
-        err = try
-            AustralianElectricityMarkets._require_equal_length(trapeziums, curves, BidType.RAISE6SEC, mock_bus)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
-        @test occursin("RAISE6SEC", err.msg)
-        @test occursin("BW01", err.msg)
     end
 
     @testset "read_fcas_bids" begin
@@ -427,34 +399,6 @@
         @test n_checked > 0
     end
 
-
-    @testset "set_fcas_effective_offers! skips an unavailable unpriced device, not an available one" begin
-        sys = first(nem_network(db))
-        set_fcas_bids!(sys, db, date_range)
-        set_market_bids!(sys, db, date_range)
-        set_fcas_service_bids!(sys, db, date_range)
-        gen = first(g for g in get_components(Generator, sys) if has_time_series(g, SingleTimeSeries, "fcas_trapezium_RAISE6SEC"))
-        # Drop the generator's offer curve to model a data gap in an available device.
-        remove_time_series!(sys, SingleTimeSeries, gen, fcas_offer_series_name(fcas_service(gen, BidType.RAISE6SEC), false))
-        @test get_available(gen)
-        # Available devices without their curve are a real data gap, so the derivation still throws.
-        @test_throws ArgumentError set_fcas_effective_offers!(sys)
-        # Each contributing offer lacking its curve, found by the same rule the derivation uses.
-        unpriced = Set{String}()
-        for svc in get_components(FCASService, sys), device in get_contributing_devices(sys, svc)
-            bid_type = get_bid_type(svc)
-            for dec in AustralianElectricityMarkets.fcas_offer_sides(AustralianElectricityMarkets.fcas_bid_direction(device, bid_type))
-                has_time_series(device, SingleTimeSeries, fcas_offer_series_name(svc, dec)) || push!(unpriced, get_name(device))
-            end
-        end
-        @test get_name(gen) in unpriced
-        for name in unpriced
-            device = first(d for d in get_components(Device, sys) if get_name(d) == name)
-            set_available!(device, false)
-        end
-        set_fcas_effective_offers!(sys)
-        @test !has_time_series(gen, SingleTimeSeries, fcas_effective_series_name(BidType.RAISE6SEC, false))
-    end
 
     @testset "a non-scheduled load offering FCAS joins its region's services" begin
         sys = first(nem_network(db))
