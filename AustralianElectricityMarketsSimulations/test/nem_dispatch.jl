@@ -76,18 +76,6 @@ end
 component_keys(container_keys, ::Type{T}) where {T} =
     [k for k in container_keys if IS.Optimization.get_component_type(k) === T]
 
-@testset "the formulation is not gated on device type" begin
-    @testset "the market-bid constraint hook resolves to our override, for a non-Generator injector too" begin
-        for T in (PSY.ThermalMultiStart, PSY.InterruptiblePowerLoad)
-            signature = (
-                PSI.OptimizationContainer, T, PSI.ActivePowerVariable, NEMReplayDispatch, Vector{Float64}, Int,
-                Type{PSI.PiecewiseLinearBlockIncrementalOffer}, Type{PSI.PiecewiseLinearBlockIncrementalOfferConstraint},
-            )
-            @test which(PSI._add_pwl_constraint!, signature).module === AustralianElectricityMarketsSimulations
-        end
-    end
-end
-
 @testset "participants are discovered from the data, not a fixed type list" begin
     sys = nem_dispatch_system()
     types = nem_dispatch_participants(sys)
@@ -156,8 +144,9 @@ end
             load_variables = entry_types(component_keys(variable_keys, PSY.InterruptiblePowerLoad))
             load_constraints = entry_types(component_keys(constraint_keys, PSY.InterruptiblePowerLoad))
             @test PSI.ActivePowerVariable in load_variables
-            @test PSI.PiecewiseLinearBlockDecrementalOffer in load_variables
-            @test !(PSI.PiecewiseLinearBlockIncrementalOffer in load_variables)
+            @test EnergyOfferBandVariable in load_variables
+            band_metas = [k.meta for k in component_keys(variable_keys, PSY.InterruptiblePowerLoad) if IS.Optimization.get_entry_type(k) === EnergyOfferBandVariable]
+            @test band_metas == ["load"]
             @test PSI.RampConstraint in load_constraints
             @test EnergyMaxAvailConstraint in load_constraints
         end

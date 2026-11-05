@@ -409,6 +409,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- AEMSim prices NEM energy offers itself: each `energy_offer` series band becomes an
+  `EnergyOfferBandVariable` costed through `EnergyBandPriceParameter` and bounded by
+  `EnergyBandWidthParameter`, as FCAS bands are, and the energy tie-break rows bind these variables.
+  Dispatch, prices and the objective are unchanged. Devices without an `energy_offer` series (FCAS-only
+  units) have no energy bands. The `PiecewiseLinearBlock*Offer` variables of the PowerSimulations
+  market-bid path are no longer created.
+
 - Energy offer curves are also stored as plain device series named `energy_offer` (suffixed
   `_decremental` for the load side) by the new exported `set_energy_offer!`, which `set_market_bids!`
   calls; `energy_offer_series_name` returns the name. `get_energy_offer` reads this series, so
@@ -757,6 +764,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DISPATCHREGIONSUM` caches `SS_SOLAR_UIGF` and `SS_WIND_UIGF`, which `set_regional_availability!` reads for the regional capacity factor in place of `SS_SOLAR_AVAILABILITY` and `SS_WIND_AVAILABILITY`. Cached months need `populate(db, :DISPATCHREGIONSUM, start, stop; force_new = true)` to gain the columns.
 
 ### Removed
+
+- The `psi_compat.jl` overrides of PowerSimulations' market-bid hooks (`_add_pwl_constraint!`, the
+  `_add_variable_cost_to_objective!` and `_add_vom_cost_to_objective!` methods) are removed along
+  with the device `PSI.variable_cost` method and the `process_market_bid_parameters!` calls.
 
 - The repository scripts `replicate_random_days.jl`, `replay_workflow.jl`, `replay_simulation.jl`, `replay_timing.jl`, `replicate_range.jl`, `diagnose_infeasible.jl` and `interconnector_loss_gaps.jl` are removed. The overnight runner is `scripts/replay_batch.jl` on the AEMSim replay API; `diagnose_infeasible.jl` is replaced by `DecisionModel(...; calculate_conflict = true)`.
 

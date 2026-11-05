@@ -366,9 +366,7 @@ function solve_toy(
     dispatch = read_variable(results, "ActivePowerVariable__ThermalStandard")
     dual = only(read_dual(results, "CopperPlateBalanceConstraint__Area").value)
     container = PSI.get_optimization_container(model)
-    offers = PSI.get_variable(
-        container, PSI.PiecewiseLinearBlockIncrementalOffer(), PSY.ThermalStandard,
-    )
+    offers = PSI.get_variable(container, EnergyOfferBandVariable(), PSY.ThermalStandard, "gen")
     dispatch_mw = Dict(row.name => row.value for row in eachrow(dispatch))
     battery_out_mw = Dict{String, Float64}()
     battery_in_mw = Dict{String, Float64}()
@@ -412,8 +410,8 @@ function solve_toy(
         container = container,
         storage_ramp_slack_mw = storage_ramp_slack_mw,
         band_mw = Dict(
-            (name, band) => PSI.JuMP.value(v) * base_power
-                for ((name, band, _), v) in pairs(offers.data)
+            (name, parse(Int, label)) => PSI.JuMP.value(offers[name, label, t]) * base_power
+                for name in axes(offers, 1), label in axes(offers, 2), t in axes(offers, 3)
         ),
         price = dual / (base_power * interval_hours(DISPATCH_INTERVAL)),
         objective = PSI.JuMP.objective_value(PSI.get_jump_model(container)),

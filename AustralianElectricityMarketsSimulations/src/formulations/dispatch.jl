@@ -26,12 +26,8 @@ PSI.get_multiplier_value(::EnergyMaxAvailTimeSeriesParameter, ::PSY.StaticInject
 
 PSI.get_multiplier_value(::EnergyUIGFTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
 
-PSI.get_multiplier_value(::PSI.AbstractPiecewiseLinearBreakpointParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
-
 
 PSI.objective_function_multiplier(::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = PSI.OBJECTIVE_FUNCTION_POSITIVE
-
-PSI.variable_cost(cost::PSY.OperationalCost, ::PSI.ActivePowerVariable, ::PSY.StaticInjection, ::AbstractNEMDispatch) = PSY.get_variable(cost)
 
 #! format: on
 
@@ -120,19 +116,11 @@ function PSI.get_initial_conditions_device_model(
 end
 
 
-# Generators bid an incremental curve; a scheduled load bids only a decremental one.
-_process_market_bid_parameters!(container, devices, model) =
-    PSI.process_market_bid_parameters!(container, devices, model)
-
-_process_market_bid_parameters!(container, devices::IS.FlattenIteratorWrapper{<:PSY.ControllableLoad}, model) =
-    PSI.process_market_bid_parameters!(container, devices, model, false, true)
-
-
 """
     PSI.construct_device!(container, sys, ::PSI.ArgumentConstructStage, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
 
 Argument stage for [`AbstractNEMDispatch`](@ref): the active power variable, the separate energy
-limit and ramp parameters, the per-band bid variables, and the device's contribution to the
+limit and ramp parameters, the offer-total violation variables, and the device's contribution to the
 active power balance.
 
 # Returns
@@ -175,7 +163,6 @@ function PSI.construct_device!(
         PSI.add_parameters!(container, EnergyUIGFTimeSeriesParameter, devices, model)
     _add_fixed_load_arguments!(container, devices, model)
 
-    _process_market_bid_parameters!(container, devices, model)
     for S in _ENERGY_OFFER_SLACK_TYPES
         PSI.add_variables!(container, S, devices, D())
     end
@@ -199,7 +186,7 @@ end
     PSI.construct_device!(container, sys, ::PSI.ModelConstructStage, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
 
 Model stage for [`AbstractNEMDispatch`](@ref): the elastic energy availability constraints, the ramp
-constraint and the market-bid objective.
+constraint and the energy offer bands and their objective.
 
 # Returns
 `nothing`.
@@ -350,8 +337,8 @@ end
 """
     PSI.objective_function!(container, devices, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_formulation)
 
-Prices an [`AbstractNEMDispatch`](@ref) device's dispatch through `PowerSimulations.jl`'s
-market-bid path, so the objective is the device's own submitted bid stack.
+Prices an [`AbstractNEMDispatch`](@ref) device's dispatch on its own submitted energy offer
+bands ([`_add_energy_offer_bands!`](@ref)), so the objective is the device's own bid stack.
 
 # Returns
 `nothing`.
@@ -359,10 +346,10 @@ market-bid path, so the objective is the device's own submitted bid stack.
 function PSI.objective_function!(
         container::PSI.OptimizationContainer,
         devices::IS.FlattenIteratorWrapper{T},
-        ::PSI.DeviceModel{T, D},
+        model::PSI.DeviceModel{T, D},
         ::Type{<:PM.AbstractPowerModel},
     ) where {T <: PSY.StaticInjection, D <: AbstractNEMDispatch}
-    PSI.add_variable_cost!(container, PSI.ActivePowerVariable(), devices, D())
+    foreach(side -> _add_energy_offer_bands!(container, devices, model, side), _energy_offer_sides(T))
     PSI.add_proportional_cost!(container, EnergyMaxAvailSlack(), devices, D())
     PSI.add_proportional_cost!(container, EnergyUIGFSlack(), _semi_scheduled_devices(devices), D())
     _add_fixed_load_costs!(container, devices, T)

@@ -51,7 +51,7 @@ end
 
 Argument stage for a battery under [`AbstractNEMDispatch`](@ref): the per-direction active
 power variables, the ramp parameters, the raw availability
-parameters, the incremental and decremental market-bid parameters, and the device's net
+parameters, the offer-total violation variables, and the device's net
 contribution to the active power balance.
 
 # Returns
@@ -80,7 +80,6 @@ function PSI.construct_device!(
 
     _add_fixed_load_arguments!(container, devices, model)
 
-    PSI.process_market_bid_parameters!(container, devices, model, true, true)
     for S in _ENERGY_OFFER_SLACK_TYPES
         PSI.add_variables!(container, S, devices, D())
     end
@@ -112,7 +111,7 @@ end
     PSI.construct_device!(container, sys, ::PSI.ModelConstructStage, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model) where {T <: PSY.Storage}
 
 Model stage for a battery under [`AbstractNEMDispatch`](@ref): the elastic directional availability
-envelope, the net ramp constraint and the market-bid objective.
+envelope, the net ramp constraint and the energy offer bands and their objective.
 
 # Returns
 `nothing`.
@@ -151,11 +150,11 @@ against `PowerSimulations.ActivePowerInVariable`.
 function PSI.objective_function!(
         container::PSI.OptimizationContainer,
         devices::IS.FlattenIteratorWrapper{T},
-        ::PSI.DeviceModel{T, D},
+        model::PSI.DeviceModel{T, D},
         ::Type{<:PM.AbstractPowerModel},
     ) where {T <: PSY.Storage, D <: AbstractNEMDispatch}
-    PSI.add_variable_cost!(container, PSI.ActivePowerOutVariable(), devices, D())
-    PSI.add_variable_cost!(container, PSI.ActivePowerInVariable(), devices, D())
+    _check_storage_offer_sides(devices)
+    foreach(side -> _add_energy_offer_bands!(container, devices, model, side), _energy_offer_sides(T))
     PSI.add_proportional_cost!(container, EnergyMaxAvailOutSlack(), devices, D())
     PSI.add_proportional_cost!(container, EnergyMaxAvailInSlack(), devices, D())
     _add_fixed_load_costs!(container, devices, T)

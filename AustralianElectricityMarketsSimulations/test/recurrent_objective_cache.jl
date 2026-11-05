@@ -93,9 +93,9 @@ end
             )
             @test PSI.build!(model; output_dir = joinpath(folder, "model")) == PSI.ModelBuildStatus.BUILT
             container = PSI.get_optimization_container(model)
-            keys = [k for k in Base.keys(PSI.get_parameters(model)) if PSI.IS.Optimization.get_entry_type(k) <: PSI.AbstractPiecewiseLinearSlopeParameter]
+            keys = [k for k in Base.keys(PSI.get_parameters(model)) if PSI.IS.Optimization.get_entry_type(k) === EnergyBandPriceParameter]
             _update_objective_cache_parameters!(model, keys, 0)
-            gen_band = PSI.get_variable(container, PSI.PiecewiseLinearBlockIncrementalOffer(), PSY.ThermalStandard)[TOY_CHEAP, 1, 1]
+            gen_band = PSI.get_variable(container, EnergyOfferBandVariable(), PSY.ThermalStandard, "gen")[TOY_CHEAP, "1", 1]
             @test PSI.JuMP.coefficient(PSI.get_variant_terms(PSI.get_objective_expression(container)), gen_band) ≈ 10.0 * 100.0 / 12
             path = PSI.IS.get_time_series_storage(PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)).file_path
             cached && mv(path, path * ".hidden")
@@ -103,12 +103,12 @@ end
                 @test_nowarn _update_objective_cache_parameters!(model, keys, 1)
                 objective = PSI.get_variant_terms(PSI.get_objective_expression(container))
                 @test PSI.JuMP.coefficient(objective, gen_band) ≈ 30.0 * 100.0 / 12
-                for (T, name, band_type, price) in (
-                        (PSY.EnergyReservoirStorage, "BAT", PSI.PiecewiseLinearBlockIncrementalOffer, 75.0),
-                        (PSY.EnergyReservoirStorage, "BAT", PSI.PiecewiseLinearBlockDecrementalOffer, -25.0),
-                        (PSY.InterruptiblePowerLoad, "LOAD", PSI.PiecewiseLinearBlockDecrementalOffer, -40.0),
+                for (T, name, meta, price) in (
+                        (PSY.EnergyReservoirStorage, "BAT", "gen", 75.0),
+                        (PSY.EnergyReservoirStorage, "BAT", "load", -25.0),
+                        (PSY.InterruptiblePowerLoad, "LOAD", "load", -40.0),
                     )
-                    band = PSI.get_variable(container, band_type(), T)[name, 1, 1]
+                    band = PSI.get_variable(container, EnergyOfferBandVariable(), T, meta)[name, "1", 1]
                     @test PSI.JuMP.coefficient(objective, band) ≈ price * 100.0 / 12
                 end
                 @test cached || isempty(PSI.get_time_series_cache(model))

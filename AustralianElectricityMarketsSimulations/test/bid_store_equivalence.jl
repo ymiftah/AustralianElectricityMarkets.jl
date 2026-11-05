@@ -1,10 +1,10 @@
 # Pins the toy dispatch, area prices, objective and the objective coefficient of every offer band
 # variable, so a change to where NEM bids are stored can prove it left the optimisation unchanged.
 
-# Offer variable types whose objective coefficients are pinned, with the side each carries.
+# Offer band variable meta whose objective coefficients are pinned, with the side each carries.
 const _BAND_VARIABLE_TYPES = (
-    PSI.PiecewiseLinearBlockIncrementalOffer => OfferSide.GEN,
-    PSI.PiecewiseLinearBlockDecrementalOffer => OfferSide.LOAD,
+    "gen" => OfferSide.GEN,
+    "load" => OfferSide.LOAD,
 )
 
 # The objective coefficient the solver sees on each energy band variable of `container` (the
@@ -13,10 +13,11 @@ const _BAND_VARIABLE_TYPES = (
 function _band_variable_coefficients(container)
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
     coefficients = Dict{Tuple{String, OfferSide, Int, Int}, Float64}()
-    for (variable_type, side) in _BAND_VARIABLE_TYPES, key in PSI.get_variable_keys(container)
-        PSI.IS.Optimization.get_entry_type(key) === variable_type || continue
-        for ((name, band, t), variable) in pairs(PSI.get_variable(container, key).data)
-            coefficients[(name, side, band, t)] = PSI.JuMP.coefficient(objective, variable)
+    for (meta, side) in _BAND_VARIABLE_TYPES, key in PSI.get_variable_keys(container)
+        PSI.IS.Optimization.get_entry_type(key) === EnergyOfferBandVariable && key.meta == meta || continue
+        variables = PSI.get_variable(container, key)
+        for name in axes(variables, 1), label in axes(variables, 2), t in axes(variables, 3)
+            coefficients[(name, side, parse(Int, label), t)] = PSI.JuMP.coefficient(objective, variables[name, label, t])
         end
     end
     return coefficients
@@ -27,10 +28,11 @@ end
 # through `_BAND_VARIABLE_TYPES`.
 function _tie_break_terms(container)
     names = Dict{PSI.JuMP.VariableRef, Tuple{String, OfferSide, Int, Int}}()
-    for (variable_type, side) in _BAND_VARIABLE_TYPES, key in PSI.get_variable_keys(container)
-        PSI.IS.Optimization.get_entry_type(key) === variable_type || continue
-        for ((name, band, t), variable) in pairs(PSI.get_variable(container, key).data)
-            names[variable] = (name, side, band, t)
+    for (meta, side) in _BAND_VARIABLE_TYPES, key in PSI.get_variable_keys(container)
+        PSI.IS.Optimization.get_entry_type(key) === EnergyOfferBandVariable && key.meta == meta || continue
+        variables = PSI.get_variable(container, key)
+        for name in axes(variables, 1), label in axes(variables, 2), t in axes(variables, 3)
+            names[variables[name, label, t]] = (name, side, parse(Int, label), t)
         end
     end
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
