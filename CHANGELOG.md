@@ -789,6 +789,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The PowerSystems fork pin; the packages depend on registered PowerSystems 5.12.4. Replay bids use the NEM device types with `NEMOfferCost`.
+
 - `set_market_bids!` no longer writes a `PowerSystems.MarketBidCost` or its `variable_cost`,
   `decremental_variable_cost` and initial-input series; no component of a NEM system carries a
   `MarketBidCost`.
