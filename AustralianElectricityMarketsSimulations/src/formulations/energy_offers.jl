@@ -160,10 +160,6 @@ function _add_energy_offer_bands!(
     labels = string.(1:_energy_band_count(selected))
 
     bands = PSI.add_variable_container!(container, EnergyOfferBandVariable(), T, names, labels, time_steps; meta)
-    for name in names, label in labels, t in time_steps
-        bands[name, label, t] = JuMP.@variable(jm, lower_bound = 0.0, base_name = "EnergyOfferBandVariable_$(meta)_{$name,$label,$t}")
-    end
-
     series = energy_offer_series_name(side)
     PSI.add_parameters!(container, EnergyBandWidthParameter, selected, model; meta, time_series_name = series)
     PSI.add_parameters!(container, EnergyBandPriceParameter, selected, model; meta, time_series_name = series)
@@ -175,24 +171,28 @@ function _add_energy_offer_bands!(
     widths = PSI.get_parameter(container, EnergyBandWidthParameter(), T, meta)
     width_multiplier = PSI.get_multiplier_array(widths)
     rows = PSI.add_constraints_container!(container, EnergyOfferBandConstraint(), T, names, time_steps; meta)
+    key = PSI.ParameterKey(EnergyBandPriceParameter, T, meta)
     base_power = PSI.get_base_power(container)
+    direction = side == OfferSide.GEN ? 1.0 : -1.0
+    scale = direction * base_power * interval_hours(PSI.get_resolution(container))
     for name in names
         width_refs = PSI.get_parameter_column_refs(widths, name)
         for t in time_steps
             for label in labels
-                JuMP.@constraint(jm, bands[name, label, t] <= width_multiplier[name, label, t] * width_refs[label, t] / base_power)
+                bands[name, label, t] = JuMP.@variable(
+                    jm, lower_bound = 0.0, base_name = "EnergyOfferBandVariable_$(meta)_{$name,$label,$t}",
+                )
             end
             rows[name, t] = JuMP.@constraint(
                 jm, power[name, t] == sum(bands[name, label, t] for label in labels) + above[name, t] - below[name, t]
             )
+            for label in labels
+                JuMP.@constraint(jm, bands[name, label, t] <= width_multiplier[name, label, t] * width_refs[label, t] / base_power)
+            end
+            for (b, label) in enumerate(labels)
+                PSI.add_cost_target!(container, key, name, (b,), t, bands[name, label, t], scale)
+            end
         end
-    end
-
-    key = PSI.ParameterKey(EnergyBandPriceParameter, T, meta)
-    direction = side == OfferSide.GEN ? 1.0 : -1.0
-    scale = direction * base_power * interval_hours(PSI.get_resolution(container))
-    for name in names, (b, label) in enumerate(labels), t in time_steps
-        PSI.add_cost_target!(container, key, name, (b,), t, bands[name, label, t], scale)
     end
     return
 end
