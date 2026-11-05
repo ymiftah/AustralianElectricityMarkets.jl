@@ -35,7 +35,7 @@ include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_jump.jl")); #h
 # For real markets, [`nem_system`](@ref) reads NEMWEB data into a `PowerSystems.jl` `System`
 # (see [The National Electricity Market](@ref)). Here we use the tutorial's two-region toy system.
 
-sys = toy_system(market)
+sys = toy_system(market; nem = true)
 
 # ### The interconnector's loss model
 #
@@ -71,8 +71,9 @@ function attach_energy_data!(sys, market) #hide
     for u in market.units #hide
         device = PSY.get_component(PSY.Generator, sys, String(u.name)) #hide
         offer = PSY.PiecewiseStepData([0.0; cumsum(quantity.(u.bids))], price.(u.bids)) #hide
-        AustralianElectricityMarkets._set_incremental_bid_cost!( #hide
-            sys, device, (piecewise_step_data = fill(offer, length(stamps)),), T0, RESOLUTION, #hide
+        PSY.add_time_series!(sys, device, series("energy_max_avail", u.max_avail / BASE_POWER)) #hide
+        set_energy_offer!( #hide
+            sys, device, OfferSide.GEN, single_series("energy_offer", T0, fill(offer, length(stamps)), RESOLUTION), #hide
         ) #hide
         PSY.add_time_series!( #hide
             sys, device, series("max_active_power", availability(u) / u.capacity; multiplier = PSY.get_max_active_power), #hide
@@ -80,7 +81,6 @@ function attach_energy_data!(sys, market) #hide
         PSY.add_time_series!(sys, device, series("ramp_up_rate", u.ramp_up_mwh / 60 / BASE_POWER)) #hide
         PSY.add_time_series!(sys, device, series("ramp_down_rate", u.ramp_down_mwh / 60 / BASE_POWER)) #hide
         PSY.add_time_series!(sys, device, series("initial_mw", u.initial_mw / BASE_POWER)) #hide
-        PSY.add_time_series!(sys, device, series("energy_max_avail", u.max_avail / BASE_POWER)) #hide
         PSY.get_ext(device)["nem_semi_scheduled"] = is_semi_scheduled(u) #hide
         if is_semi_scheduled(u) #hide
             PSY.add_time_series!(sys, device, series("uigf", u.uigf / BASE_POWER)) #hide
@@ -119,11 +119,8 @@ function attach_fcas_data!(sys, market) #hide
             name = "$(generator_region(sys, n))_RAISE6SEC", region = generator_region(sys, n), bid_type = BidType.RAISE6SEC, #hide
         ) #hide
         PSY.add_service!(sys, service, [device]) #hide
-        PSY.get_operation_cost(device) isa PSY.MarketBidCost || PSY.set_operation_cost!( #hide
-            device, PSY.MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0), #hide
-        ) #hide
         offer = single_series(fcas_offer_series_name(service, false), T0, fill(curve, 2), RESOLUTION) #hide
-        PSY.set_service_bid!(sys, device, service, offer, PSY.UnitSystem.NATURAL_UNITS) #hide
+        set_fcas_offer!(sys, device, BidType.RAISE6SEC, OfferSide.GEN, offer) #hide
     end #hide
     return sys #hide
 end #hide
@@ -177,13 +174,13 @@ PSY.transform_single_time_series!(sys, 2 * RESOLUTION, RESOLUTION);
 DataFrame(
     type = [
         string(nameof(T)) for T in (
-                PSY.Area, PSY.ACBus, PSY.ThermalStandard, PSY.RenewableDispatch, PSY.PowerLoad,
+                PSY.Area, PSY.ACBus, NEMThermalGen, NEMRenewableGen, PSY.PowerLoad,
                 PSY.AreaInterchange, FCASService, GenericConstraint,
             )
     ],
     count = [
         length(PSY.get_components(T, sys)) for T in (
-                PSY.Area, PSY.ACBus, PSY.ThermalStandard, PSY.RenewableDispatch, PSY.PowerLoad,
+                PSY.Area, PSY.ACBus, NEMThermalGen, NEMRenewableGen, PSY.PowerLoad,
                 PSY.AreaInterchange, FCASService, GenericConstraint,
             )
     ],
@@ -229,8 +226,8 @@ to_dollars_per_mwh(dual) = dual / (BASE_POWER * INTERVAL_H)
 
 value_by_name(df) = Dict(Symbol(r.name) => r.value for r in eachrow(df))
 psi_dispatch = merge(
-    value_by_name(read_variable(results, "ActivePowerVariable__ThermalStandard")),
-    value_by_name(read_variable(results, "ActivePowerVariable__RenewableDispatch")),
+    value_by_name(read_variable(results, "ActivePowerVariable__NEMThermalGen")),
+    value_by_name(read_variable(results, "ActivePowerVariable__NEMRenewableGen")),
 )
 psi_price = Dict(
     r.name => to_dollars_per_mwh(r.value) for r in eachrow(read_dual(results, "CopperPlateBalanceConstraint__Area"))
