@@ -22,6 +22,29 @@ function _band_variable_coefficients(container)
     return coefficients
 end
 
+# The terms of every tie-break row of `container`, as `(row coefficients by (name, side, band, t),
+# objective coefficients of its two slacks)` pairs, in a stable order. Band variables are named
+# through `_BAND_VARIABLE_TYPES`.
+function _tie_break_terms(container)
+    names = Dict{PSI.JuMP.VariableRef, Tuple{String, OfferSide, Int, Int}}()
+    for (variable_type, side) in _BAND_VARIABLE_TYPES, key in PSI.get_variable_keys(container)
+        PSI.IS.Optimization.get_entry_type(key) === variable_type || continue
+        for ((name, band, t), variable) in pairs(PSI.get_variable(container, key).data)
+            names[variable] = (name, side, band, t)
+        end
+    end
+    objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
+    rows = PSI.get_constraint(container, TieBreakConstraint(), EnergyTieBreak, TIE_BREAK_SERVICE_NAME)
+    terms = []
+    for row in values(rows.data)
+        func = PSI.JuMP.constraint_object(row).func
+        bands = Dict(names[v] => c for (v, c) in func.terms if haskey(names, v))
+        slacks = sort!([PSI.JuMP.coefficient(objective, v) for (v, _) in func.terms if !haskey(names, v)])
+        push!(terms, (bands, slacks))
+    end
+    return terms
+end
+
 # The raw CopperPlateBalanceConstraint dual of the single area, in $ per base-power MW.
 function _area_balance_dual(out)
     return only(read_dual(out.results, "CopperPlateBalanceConstraint__Area").value)
@@ -74,5 +97,32 @@ end
         @test coefficients[(TOY_CHEAP, OfferSide.GEN, 1, 1)] ≈ 20.0 * per_mwh atol = 1.0e-6
         @test coefficients[(TOY_BATTERY, OfferSide.GEN, 1, 1)] ≈ 1000.0 * per_mwh atol = 1.0e-6
         @test coefficients[(TOY_BATTERY, OfferSide.LOAD, 1, 1)] ≈ -50.0 * per_mwh atol = 1.0e-6
+    end
+
+    @testset "tie-break: two units tied at one band price" begin
+        sys = nem_toy_system(
+            [
+                TOY_CHEAP => toy_unit(100.0, [(60.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+                TOY_EXPENSIVE => toy_unit(100.0, [(40.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+            ],
+            50.0,
+        )
+        out = solve_toy(sys)
+
+        # The 50 MW load splits pro rata to the 60 and 40 MW bands.
+        @test out.dispatch_mw[TOY_CHEAP] ≈ 30.0 atol = 1.0e-6
+        @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 20.0 atol = 1.0e-6
+        @test out.price ≈ 20.0 atol = 1.0e-6
+        @test _area_balance_dual(out) ≈ 20.0 * per_mwh atol = 1.0e-6
+        @test out.objective ≈ 20.0 * 50.0 / 12.0 atol = 1.0e-6
+
+        # One row `s_b x_a - s_a x_b + up - down = 0`, its slacks priced at TIE_BREAK_CVP_FACTOR $/MWh.
+        terms = _tie_break_terms(out.container)
+        @test length(terms) == 1
+        bands, slacks = only(terms)
+        @test length(bands) == 2
+        @test bands[(TOY_CHEAP, OfferSide.GEN, 1, 1)] ≈ 2 / 3 atol = 1.0e-9
+        @test bands[(TOY_EXPENSIVE, OfferSide.GEN, 1, 1)] ≈ -1.0 atol = 1.0e-9
+        @test slacks ≈ fill(TIE_BREAK_CVP_FACTOR * per_mwh, 2) atol = 1.0e-12
     end
 end
