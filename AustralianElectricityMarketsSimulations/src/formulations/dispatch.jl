@@ -166,8 +166,6 @@ function PSI.construct_device!(
     for S in _ENERGY_OFFER_SLACK_TYPES
         PSI.add_variables!(container, S, devices, D())
     end
-    PSI.add_cost_expressions!(container, devices, model)
-
     PSI.add_to_expression!(
         container,
         PSI.ActivePowerBalance,
@@ -338,7 +336,7 @@ end
     PSI.objective_function!(container, devices, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_formulation)
 
 Prices an [`AbstractNEMDispatch`](@ref) device's dispatch on its own submitted energy offer
-bands ([`_add_energy_offer_bands!`](@ref)), so the objective is the device's own bid stack.
+bands (`_add_energy_offer_bands!`), so the objective is the device's own bid stack.
 
 # Returns
 `nothing`.
@@ -349,6 +347,7 @@ function PSI.objective_function!(
         model::PSI.DeviceModel{T, D},
         ::Type{<:PM.AbstractPowerModel},
     ) where {T <: PSY.StaticInjection, D <: AbstractNEMDispatch}
+    _check_energy_offer_sides(devices)
     foreach(side -> _add_energy_offer_bands!(container, devices, model, side), _energy_offer_sides(T))
     PSI.add_proportional_cost!(container, EnergyMaxAvailSlack(), devices, D())
     PSI.add_proportional_cost!(container, EnergyUIGFSlack(), _semi_scheduled_devices(devices), D())

@@ -8,7 +8,11 @@ function _tie_validation_system(curves_a, curves_b; decremental = false)
     PSY.clear_time_series!(sys)
     names = decremental ? ("LOAD_A", "LOAD_B") : (TOY_CHEAP, TOY_EXPENSIVE)
     T = decremental ? PSY.InterruptiblePowerLoad : PSY.ThermalStandard
-    setter! = decremental ? AustralianElectricityMarkets._set_decremental_bid_cost! : AustralianElectricityMarkets._set_incremental_bid_cost!
+    side = decremental ? AustralianElectricityMarkets.OfferSide.LOAD : AustralianElectricityMarkets.OfferSide.GEN
+    series = AustralianElectricityMarkets.energy_offer_series_name(side)
+    setter!(sys, device, bids, start, resolution) = AustralianElectricityMarkets.set_energy_offer!(
+        sys, device, side, AustralianElectricityMarkets.single_series(series, start, copy(bids.piecewise_step_data), resolution),
+    )
     for (name, curves) in zip(names, (curves_a, curves_b))
         setter!(sys, PSY.get_component(T, sys, name), (; piecewise_step_data = curves), TOY_START, TOY_RESOLUTION)
     end

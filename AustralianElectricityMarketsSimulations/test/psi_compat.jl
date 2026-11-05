@@ -113,12 +113,39 @@ end
     @test cleared(TOY_CHEAP, 3) ≈ 0.0 atol = 1.0e-6
 end
 
-@testset "a battery with equal GEN and LOAD prices does not circulate" begin
+@testset "a battery with its LOAD price below its GEN price does not circulate" begin
     sys = nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0)],
         50.0;
-        batteries = [TOY_BATTERY => toy_battery(50.0, 30.0, 50.0, 30.0; initial = 0.0, ramp_up = 100.0)],
+        batteries = [TOY_BATTERY => toy_battery(50.0, 30.0, 50.0, 20.0; initial = 0.0, ramp_up = 100.0)],
     )
     out = solve_toy(sys)
     @test out.battery_out_mw[TOY_BATTERY] * out.battery_in_mw[TOY_BATTERY] ≈ 0.0 atol = 1.0e-6
+end
+
+@testset "an energy offer on a side the device type does not bid fails the build" begin
+    template_for(sys) = begin
+        template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+        set_nem_dispatch_models!(template, sys; tie_breaks = false)
+        PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+        return template
+    end
+    offer = (sys, stamps) -> PSY.PiecewiseStepData([0.0, 10.0], [5.0])
+    stray(device_type, name, side, series) = (sys, stamps) -> AustralianElectricityMarkets.set_energy_offer!(
+        sys, PSY.get_component(device_type, sys, name), side,
+        AustralianElectricityMarkets.single_series(series, TOY_START, fill(offer(sys, stamps), length(stamps)), TOY_RESOLUTION),
+    )
+    toy(mutate!) = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0)], 50.0;
+        loads = [TOY_LOAD_SERVICE_ONLY => toy_load(50.0, 30.0; initial = 0.0, ramp_up = 100.0)], mutate!,
+    )
+    sys = toy(stray(PSY.ThermalStandard, TOY_CHEAP, OfferSide.LOAD, "energy_offer_decremental"))
+    status, log = _toy_build_log(toy_model(sys; template = template_for(sys)))
+    @test status == PSI.ModelBuildStatus.FAILED
+    @test occursin("$TOY_CHEAP: the device carries an unpriced LOAD energy offer series", log)
+
+    sys = toy(stray(PSY.InterruptiblePowerLoad, TOY_LOAD_SERVICE_ONLY, OfferSide.GEN, "energy_offer"))
+    status, log = _toy_build_log(toy_model(sys; template = template_for(sys)))
+    @test status == PSI.ModelBuildStatus.FAILED
+    @test occursin("$TOY_LOAD_SERVICE_ONLY: the device carries an unpriced GEN energy offer series", log)
 end

@@ -63,6 +63,13 @@ function toy_load(capacity, price; initial, ramp_up, ramp_down = 100.0, availabi
     return (; capacity, price, initial, ramp_up, ramp_down, availability)
 end
 
+# The stock zero operation cost of a device type: the toy units carry their energy bids as `energy_offer`
+# series only, so no `MarketBidCost` prices them.
+zero_cost(::Type{PSY.ThermalStandard}) = PSY.ThermalGenerationCost(;
+    variable = PSY.CostCurve(PSY.LinearCurve(0.0)), fixed = 0.0, start_up = 0.0, shut_down = 0.0,
+)
+zero_cost(::Type{PSY.InterruptiblePowerLoad}) = PSY.LoadCost(; variable = PSY.CostCurve(PSY.LinearCurve(0.0)), fixed = 0.0)
+
 # `5_bus_hydro_ed_sys` reduced to one area, the load on bus4 and the given `ThermalStandard`
 # units, each carrying its bid stack and the four dispatch-limit series over two 5-minute
 # intervals. `batteries` is a vector of `name => toy_battery(...)` pairs, each built as an
@@ -115,9 +122,11 @@ function nem_toy_system(
     for (name, unit) in units
         gen = PSY.get_component(PSY.ThermalStandard, sys, name)
         PSY.set_active_power_limits!(gen, (min = 0.0, max = unit.capacity))
-        AustralianElectricityMarkets._set_incremental_bid_cost!(
-            sys, gen, (piecewise_step_data = _toy_offers(unit.bands, length(stamps)),),
-            start, TOY_RESOLUTION,
+        PSY.set_available!(gen, true)
+        PSY.set_operation_cost!(gen, zero_cost(PSY.ThermalStandard))
+        AustralianElectricityMarkets.set_energy_offer!(
+            sys, gen, AustralianElectricityMarkets.OfferSide.GEN,
+            AustralianElectricityMarkets.single_series("energy_offer", start, _toy_offers(unit.bands, length(stamps)), TOY_RESOLUTION),
         )
         add_series!(
             gen, "max_active_power", unit.availability ./ unit.capacity;
@@ -152,26 +161,17 @@ function nem_toy_system(
         )
         PSY.add_component!(sys, battery)
 
+        PSY.set_available!(battery, true)
         gen_offer = PSY.PiecewiseStepData([0.0, bat.gen_capacity], [bat.gen_price])
-        AustralianElectricityMarkets._set_incremental_bid_cost!(
-            sys, battery, (piecewise_step_data = fill(gen_offer, length(stamps)),),
-            start, TOY_RESOLUTION,
+        AustralianElectricityMarkets.set_energy_offer!(
+            sys, battery, AustralianElectricityMarkets.OfferSide.GEN,
+            AustralianElectricityMarkets.single_series("energy_offer", start, fill(gen_offer, length(stamps)), TOY_RESOLUTION),
         )
         load_offer = PSY.PiecewiseStepData([0.0, bat.load_capacity], [bat.load_price])
-        decr = AustralianElectricityMarkets.single_series(
-            "decremental_variable_cost", start, fill(load_offer, length(stamps)), TOY_RESOLUTION,
-        )
-        PSY.set_decremental_variable_cost!(sys, battery, decr, PSY.UnitSystem.NATURAL_UNITS)
         AustralianElectricityMarkets.set_energy_offer!(
             sys, battery, AustralianElectricityMarkets.OfferSide.LOAD,
-            AustralianElectricityMarkets.single_series(
-                "energy_offer_decremental", start, fill(load_offer, length(stamps)), TOY_RESOLUTION,
-            ),
+            AustralianElectricityMarkets.single_series("energy_offer_decremental", start, fill(load_offer, length(stamps)), TOY_RESOLUTION),
         )
-        decr_init = AustralianElectricityMarkets.single_series(
-            "decremental_initial_input", start, fill(0.0, length(stamps)), TOY_RESOLUTION,
-        )
-        PSY.set_decremental_initial_input!(sys, battery, decr_init)
 
         add_forecast!(battery, "energy_max_avail", bat.gen_avail ./ base_power)
         add_forecast!(battery, "energy_max_avail_decremental", bat.load_avail ./ base_power)
@@ -186,15 +186,13 @@ function nem_toy_system(
             name = name, available = true, bus = bus1, active_power = ld.initial / base_power,
             reactive_power = 0.0, max_active_power = ld.capacity / base_power,
             max_reactive_power = 0.0, base_power = base_power,
-            operation_cost = PSY.MarketBidCost(;
-                no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0,
-            ),
+            operation_cost = zero_cost(PSY.InterruptiblePowerLoad),
         )
         PSY.add_component!(sys, scheduled)
         offer = PSY.PiecewiseStepData([0.0, ld.capacity], [ld.price])
-        AustralianElectricityMarkets._set_decremental_bid_cost!(
-            sys, scheduled, (piecewise_step_data = fill(offer, length(stamps)),),
-            start, TOY_RESOLUTION,
+        AustralianElectricityMarkets.set_energy_offer!(
+            sys, scheduled, AustralianElectricityMarkets.OfferSide.LOAD,
+            AustralianElectricityMarkets.single_series("energy_offer_decremental", start, fill(offer, length(stamps)), TOY_RESOLUTION),
         )
         add_series!(
             scheduled, "max_active_power", ld.availability / ld.capacity;

@@ -22,6 +22,8 @@ function _energy_offer_power_variable(::Type{<:PSY.Storage}, side::OfferSide)
     return side == OfferSide.GEN ? PSI.ActivePowerOutVariable : PSI.ActivePowerInVariable
 end
 
+_side_label(side::OfferSide) = side == OfferSide.GEN ? "GEN" : "LOAD"
+
 _energy_offer_meta(side::OfferSide) = side == OfferSide.GEN ? "gen" : "load"
 
 # The devices bidding energy on `side`: those carrying its `energy_offer` series.
@@ -73,29 +75,33 @@ end
 
 
 """
-    _check_storage_offer_sides(devices)
+    _check_energy_offer_sides(devices)
 
-Throws `ArgumentError` for a storage device with an energy offer on one side only, which would price
-the other side at zero. A device with no energy offer (an FCAS-only unit) passes.
+Throws `ArgumentError` for a device with an energy offer series on a side its type does not bid
+(`GEN` for a scheduled load, `LOAD` for a generator), or, for storage, on one side only, which would
+price the other side at zero. A device with no energy offer (an FCAS-only unit) passes.
 
 # Returns
 `nothing`.
 """
-function _check_storage_offer_sides(devices)
+function _check_energy_offer_sides(devices::Union{Vector{T}, IS.FlattenIteratorWrapper{T}}) where {T}
+    sides = _energy_offer_sides(T)
     for d in devices
-        has = [PSY.has_time_series(d, PSY.SingleTimeSeries, energy_offer_series_name(side)) for side in (OfferSide.GEN, OfferSide.LOAD)]
-        (has[1] == has[2]) && continue
-        side = has[1] ? "LOAD" : "GEN"
-        throw(
-            ArgumentError(
-                "$(PSY.get_name(d)): the device has an energy offer on the other side but no $side " *
-                    "energy offer series, so this side would be priced at zero. Add the $side offer or remove the other side's.",
-            ),
-        )
+        has = Dict(side => PSY.has_time_series(d, PSY.SingleTimeSeries, energy_offer_series_name(side)) for side in (OfferSide.GEN, OfferSide.LOAD))
+        stray = [side for side in (OfferSide.GEN, OfferSide.LOAD) if has[side] && !(side in sides)]
+        missing_sides = [side for side in sides if !has[side]]
+        isempty(stray) && !(T <: PSY.Storage && length(missing_sides) == 1 && any(values(has))) && continue
+        problem = isempty(stray) ?
+            "the device has an energy offer on the other side but no $(_side_label(only(missing_sides))) energy offer series, so this side would be priced at zero" :
+            "the device carries an unpriced $(_side_label(only(stray))) energy offer series; a $(nameof(T)) bids only the $(join(_side_label.(sides), ", ")) side"
+        throw(ArgumentError("$(PSY.get_name(d)): $problem."))
     end
     return
 end
 
+
+# The band count of the offers being added, scoped so the series are scanned once per side.
+const _ENERGY_BAND_COUNT = Base.ScopedValues.ScopedValue(0)
 
 """
     _energy_band_count(devices) -> Int
@@ -107,6 +113,8 @@ series; at least 1.
 `Int`.
 """
 function _energy_band_count(devices)
+    scoped = _ENERGY_BAND_COUNT[]
+    scoped > 0 && return scoped
     n = 1
     for d in devices, side in (OfferSide.GEN, OfferSide.LOAD)
         name = energy_offer_series_name(side)
@@ -157,12 +165,15 @@ function _add_energy_offer_bands!(
     meta = _energy_offer_meta(side)
     time_steps = PSI.get_time_steps(container)
     jm = PSI.get_jump_model(container)
-    labels = string.(1:_energy_band_count(selected))
+    count = _energy_band_count(selected)
+    labels = string.(1:count)
 
     bands = PSI.add_variable_container!(container, EnergyOfferBandVariable(), T, names, labels, time_steps; meta)
     series = energy_offer_series_name(side)
-    PSI.add_parameters!(container, EnergyBandWidthParameter, selected, model; meta, time_series_name = series)
-    PSI.add_parameters!(container, EnergyBandPriceParameter, selected, model; meta, time_series_name = series)
+    Base.ScopedValues.@with _ENERGY_BAND_COUNT => count begin
+        PSI.add_parameters!(container, EnergyBandWidthParameter, selected, model; meta, time_series_name = series)
+        PSI.add_parameters!(container, EnergyBandPriceParameter, selected, model; meta, time_series_name = series)
+    end
 
     power = PSI.get_variable(container, _energy_offer_power_variable(T, side)(), T)
     above_type, below_type = _energy_offer_slacks(side)

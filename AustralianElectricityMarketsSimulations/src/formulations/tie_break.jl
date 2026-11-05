@@ -15,14 +15,14 @@ end
 
 
 """
-    _tie_break_bands(container, sys) -> (groups, active)
+    _tie_break_bands(container, sys) -> groups
 
 The bands of every [`EnergyOfferBandVariable`](@ref) in `container`, grouped by `(decremental, region,
-t)`, and the `_tie_break_active_bands` they were filtered on. Bands beyond a unit's offer curve at
+t)`. Bands beyond a unit's offer curve at
 an interval and bands empty throughout the unit's offer series are left out.
 
 # Returns
-`(groups::Dict{Tuple{Bool, String, Int}, Vector{_TieBand}}, active::Dict{Tuple{Bool, String}, Set{Int}})`.
+`Dict{Tuple{Bool, String, Int}, Vector{_TieBand}}`.
 """
 function _tie_break_bands(container::PSI.OptimizationContainer, sys::PSY.System)
     active = _tie_break_active_bands(_tie_break_offers(sys))
@@ -46,7 +46,7 @@ function _tie_break_bands(container::PSI.OptimizationContainer, sys::PSY.System)
             end
         end
     end
-    return groups, active
+    return groups
 end
 
 
@@ -204,7 +204,7 @@ function PSI.construct_service!(
     name = PSI.get_service_name(model)
     service = PSY.get_component(EnergyTieBreak, sys, name)
     PSY.get_available(service) || return
-    groups, _ = _tie_break_bands(container, sys)
+    groups = _tie_break_bands(container, sys)
     _check_tie_break_series(container, sys, groups, service, devices_template)
 
     rows = Tuple{String, Int, Int, Bool, _TieBand, _TieBand}[]

@@ -83,8 +83,6 @@ function PSI.construct_device!(
     for S in _ENERGY_OFFER_SLACK_TYPES
         PSI.add_variables!(container, S, devices, D())
     end
-    PSI.add_cost_expressions!(container, devices, model)
-
     PSI.add_to_expression!(
         container,
         PSI.ActivePowerBalance,
@@ -140,9 +138,10 @@ end
 """
     PSI.objective_function!(container, devices, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_formulation) where {T <: PSY.Storage}
 
-Prices a battery's discharge on its incremental offer curve against
-`PowerSimulations.ActivePowerOutVariable` and its charge on its decremental offer curve
-against `PowerSimulations.ActivePowerInVariable`.
+Prices a battery's discharge on its `GEN` energy offer bands against
+`PowerSimulations.ActivePowerOutVariable` and its charge on its `LOAD` energy offer bands against
+`PowerSimulations.ActivePowerInVariable`. Throws `ArgumentError` through `_check_energy_offer_sides`
+for a battery with an energy offer on one side only.
 
 # Returns
 `nothing`.
@@ -153,7 +152,7 @@ function PSI.objective_function!(
         model::PSI.DeviceModel{T, D},
         ::Type{<:PM.AbstractPowerModel},
     ) where {T <: PSY.Storage, D <: AbstractNEMDispatch}
-    _check_storage_offer_sides(devices)
+    _check_energy_offer_sides(devices)
     foreach(side -> _add_energy_offer_bands!(container, devices, model, side), _energy_offer_sides(T))
     PSI.add_proportional_cost!(container, EnergyMaxAvailOutSlack(), devices, D())
     PSI.add_proportional_cost!(container, EnergyMaxAvailInSlack(), devices, D())

@@ -414,7 +414,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `EnergyBandWidthParameter`, as FCAS bands are, and the energy tie-break rows bind these variables.
   Dispatch, prices and the objective are unchanged. Devices without an `energy_offer` series (FCAS-only
   units) have no energy bands. The `PiecewiseLinearBlock*Offer` variables of the PowerSimulations
-  market-bid path are no longer created.
+  market-bid path are no longer created. A generator with a `LOAD` energy offer series, a scheduled
+  load with a `GEN` one, or a battery with one side only, fails the build with an `ArgumentError`.
 
 - Energy offer curves are also stored as plain device series named `energy_offer` (suffixed
   `_decremental` for the load side) by the new exported `set_energy_offer!`, which `set_market_bids!`
@@ -537,9 +538,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_include_constant_min_gen_power_in_constraint` overrides.
 - FCAS band prices are read from the container's forecast window, as MNSP band prices and the
   generic-constraint `"invoked"` mask are.
-- Formulation docstrings state which costs reach PowerSimulations' cost expressions: only energy
-  offer costs enter `ProductionCostExpression`; violation penalties and FCAS and MNSP band costs are
-  objective terms only.
+- Formulation docstrings state which costs reach PowerSimulations' cost expressions: energy offer
+  band costs, violation penalties and FCAS and MNSP band costs are objective terms only, and the NEM
+  dispatch device models no longer build an empty `ProductionCostExpression`.
 - **Breaking:** `fcas_bid_direction` returns the new `FCASBidDirection` enum (`NONE`,
   `INCREMENTAL`, `DECREMENTAL`, `BOTH`) instead of a `Symbol`.
 - Bid series names live in one registry: `OfferSide` (`GEN`/`LOAD`), `NEM_SERIES`,
