@@ -101,7 +101,6 @@ end
     generators = collect(get_components(Generator, sys))
     @test !isempty(generators)
     @test all(g -> get_operation_cost(g) isa Union{RenewableGenerationCost, HydroGenerationCost, ThermalGenerationCost}, generators)
-    @test all(g -> AEM._is_zero_cost(get_operation_cost(g)), generators)
 end
 
 @testset "FCAS offers on a zero-cost device without an energy bid" begin
@@ -117,13 +116,13 @@ end
         has_time_series(device, SingleTimeSeries, fcas_offer_series_name(svc, dec))
             for device in get_components(Device, sys), svc in get_components(FCASService, sys), dec in (false, true)
     )
-    # No set_market_bids!: each bidder keeps its zero cost and gets an empty MarketBidCost.
+    # No set_market_bids!: each bidder keeps its zero cost and gets its offer series.
     bidders = [g for g in get_components(Generator, sys) if has_time_series(g, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")]
     @test !isempty(bidders)
     set_fcas_service_bids!(sys, db, grid)
     for g in bidders
-        cost = get_operation_cost(g)
-        @test cost isa MarketBidCost
+        @test !(get_operation_cost(g) isa MarketBidCost)
+        @test has_time_series(g, SingleTimeSeries, "fcas_offer_RAISE6SEC")
     end
 end
 

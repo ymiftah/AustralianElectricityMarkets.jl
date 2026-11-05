@@ -442,9 +442,9 @@ function add_toy_fcas_offer!(sys, device, stamps, bid_type, trapeziums, bands; d
     return
 end
 
-# Writes each pending offer curve as the service bid of every FCASService of its bid type that its
-# device belongs to and that does not carry it yet. Give a MarketBidCost to any device without one,
-# as PowerSystems requires. Call it after adding FCASServices, since a curve waits until its service exists.
+# Writes each pending offer curve as the offer series of every FCASService of its bid type that its
+# device belongs to and that does not carry it yet. Call it after adding FCASServices, since a curve
+# waits until its service exists.
 function flush_toy_fcas_curves!(sys)
     for device in PSY.get_components(PSY.Device, sys)
         pending = get(PSY.get_ext(device), TOY_FCAS_CURVES_KEY, nothing)
@@ -454,15 +454,8 @@ function flush_toy_fcas_curves!(sys)
                 svc isa FCASService && get_bid_type(svc) == bid_type || continue
                 name = AustralianElectricityMarkets.fcas_offer_series_name(svc, decremental)
                 PSY.has_time_series(device, PSY.SingleTimeSeries, name) && continue
-                PSY.get_operation_cost(device) isa PSY.MarketBidCost || PSY.set_operation_cost!(
-                    device, PSY.MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0),
-                )
                 ts = AustralianElectricityMarkets.single_series(name, start, curves, TOY_RESOLUTION)
-                if decremental
-                    PSY.set_decremental_service_bid!(sys, device, svc, ts, PSY.UnitSystem.NATURAL_UNITS)
-                else
-                    PSY.set_service_bid!(sys, device, svc, ts, PSY.UnitSystem.NATURAL_UNITS)
-                end
+                AustralianElectricityMarkets.set_fcas_offer!(sys, device, bid_type, AustralianElectricityMarkets.offer_side(decremental), ts)
             end
         end
     end

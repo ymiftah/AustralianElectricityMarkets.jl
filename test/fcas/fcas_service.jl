@@ -84,13 +84,11 @@
         @test "1_RAISE6SEC" in added
         svc = get_component(FCASService, sys, "1_RAISE6SEC")
         @test has_service(bat, svc)
-        set_operation_cost!(bat, PowerSystems.MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0))
-        set_decremental_service_bid!(
-            sys, bat, svc,
+        set_fcas_offer!(
+            sys, bat, BidType.RAISE6SEC, OfferSide.LOAD,
             AustralianElectricityMarkets.single_series(
-                PowerSystems.get_decremental_service_bid_name(svc), start_date, fill(PiecewiseStepData([0.0, 5.0], [10.0]), 2), Minute(5),
+                "offer", start_date, fill(PiecewiseStepData([0.0, 5.0], [10.0]), 2), Minute(5),
             ),
-            PowerSystems.UnitSystem.NATURAL_UNITS,
         )
     end
 

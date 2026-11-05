@@ -185,24 +185,6 @@
         end
     end
 
-    @testset "set_fcas_service_bids! throws on a device whose cost cannot carry its offers" begin
-        sys = nem_system(db, RegionalNetworkConfiguration())
-        set_fcas_bids!(sys, db, date_range)
-        bidders = [g for g in get_components(Generator, sys) if has_time_series(g, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")]
-        @test !isempty(bidders)
-        err = try
-            set_fcas_service_bids!(sys, db, date_range)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
-        @test any(g -> occursin("\"$(get_name(g))\"", err.msg), bidders)
-        @test any(b -> occursin(string(b), err.msg), FCAS_BID_TYPES)
-        @test occursin("MarketBidCost", err.msg)
-        @test occursin("set_market_bids!", err.msg)
-    end
-
     @testset "fcas_service throws when a device has two services of one market" begin
         sys = nem_system(db, RegionalNetworkConfiguration())
         set_fcas_bids!(sys, db, date_range)
@@ -211,14 +193,6 @@
         extra = FCASService(; name = "NSW1_RAISE6SEC_EXTRA", region = "NSW1", bid_type = BidType.RAISE6SEC)
         add_service!(sys, extra, [asload1])
         @test_throws ArgumentError fcas_service(asload1, BidType.RAISE6SEC)
-    end
-
-    @testset "_is_zero_cost_term needs a zero VOM curve as well as a zero value curve" begin
-        zero_curve = LinearCurve(0.0)
-        zero_cost = CostCurve(; value_curve = zero_curve, power_units = UnitSystem.NATURAL_UNITS, vom_cost = zero_curve)
-        vom_cost = CostCurve(; value_curve = zero_curve, power_units = UnitSystem.NATURAL_UNITS, vom_cost = LinearCurve(5.0))
-        @test AustralianElectricityMarkets._is_zero_cost_term(zero_cost)
-        @test !AustralianElectricityMarkets._is_zero_cost_term(vom_cost)
     end
 
     @testset "_require_equal_length throws on mismatched trapezium/curve series lengths" begin
@@ -339,7 +313,70 @@
         @test !any(s -> s isa FCASService && get_bid_type(s) == BidType.RAISE6SEC, get_services(pump))
     end
 
-    @testset "offer curves are the device's service bids" begin
+    @testset "set_fcas_offer! stores the curves under fcas_offer_<market>" begin
+        sys = nem_system(db, RegionalNetworkConfiguration())
+        set_fcas_bids!(sys, db, date_range)
+        gen = first(g for g in get_components(Generator, sys) if has_time_series(g, SingleTimeSeries, "fcas_trapezium_RAISE6SEC"))
+        cost = get_operation_cost(gen)
+        curve(price) = PiecewiseStepData([0.0, 5.0], [price])
+        series(name, price) = AustralianElectricityMarkets.single_series(name, start_date, fill(curve(price), 2), Minute(5))
+        set_fcas_offer!(sys, gen, BidType.RAISE6SEC, OfferSide.GEN, series("anything", 10.0))
+        @test has_time_series(gen, SingleTimeSeries, "fcas_offer_RAISE6SEC")
+        @test !has_time_series(gen, SingleTimeSeries, "anything")
+        @test get_time_series_values(SingleTimeSeries, gen, "fcas_offer_RAISE6SEC") == fill(curve(10.0), 2)
+        @test get_operation_cost(gen) === cost
+        set_fcas_offer!(sys, gen, BidType.RAISE6SEC, OfferSide.GEN, series("anything", 20.0))
+        @test get_time_series_values(SingleTimeSeries, gen, "fcas_offer_RAISE6SEC") == fill(curve(20.0), 2)
+        flat = AustralianElectricityMarkets.single_series("flat", start_date, [1.0, 2.0], Minute(5))
+        @test_throws ArgumentError set_fcas_offer!(sys, gen, BidType.RAISE6SEC, OfferSide.GEN, flat)
+    end
+
+    @testset "set_fcas_offer! records the bid on a NEMOfferCost" begin
+        sys = System(100.0)
+        bus = ACBus(;
+            number = 1, name = "bus", available = true, bustype = ACBusTypes.REF, angle = 0.0,
+            magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1), base_voltage = 230.0,
+        )
+        add_component!(sys, bus)
+        gen = NEMThermalGen(;
+            name = "g", available = true, status = true, bus, active_power = 50.0, reactive_power = 0.0, rating = 120.0,
+            active_power_limits = (min = 10.0, max = 100.0), reactive_power_limits = (min = -5.0, max = 5.0),
+            ramp_limits = (up = 2.0, down = 3.0), base_power = 100.0, time_limits = (up = 1.0, down = 2.0),
+            prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL, operation_cost = NEMOfferCost(),
+        )
+        add_component!(sys, gen)
+        svc = FCASService(; name = "svc", region = "NSW1", bid_type = BidType.RAISE6SEC)
+        add_service!(sys, svc, [gen])
+        single(name, v) = AustralianElectricityMarkets.single_series(name, start_date, fill(v, 2), Minute(5))
+        curve = PiecewiseStepData([0.0, 5.0], [10.0])
+        @test_throws ArgumentError set_fcas_offer!(sys, gen, BidType.LOWER6SEC, OfferSide.GEN, single("o", curve))
+        # The bid needs the trapezium series it pairs with.
+        @test_throws ArgumentError set_fcas_offer!(sys, gen, BidType.RAISE6SEC, OfferSide.GEN, single("o", curve))
+        add_time_series!(sys, gen, single("fcas_trapezium_RAISE6SEC", (0.0, 0.0, 1.0, 1.0, 1.0, NaN, NaN)))
+        set_fcas_offer!(sys, gen, BidType.RAISE6SEC, OfferSide.GEN, single("o", curve))
+        bids = get_fcas_bids(get_operation_cost(gen))
+        @test length(bids) == 1
+        @test bids[1].service == BidType.RAISE6SEC && bids[1].side == OfferSide.GEN
+        @test bids[1].curves.name == "fcas_offer_RAISE6SEC"
+        @test bids[1].trapezium.name == "fcas_trapezium_RAISE6SEC"
+        set_fcas_offer!(sys, gen, BidType.RAISE6SEC, OfferSide.GEN, single("o", PiecewiseStepData([0.0, 5.0], [20.0])))
+        @test length(get_fcas_bids(get_operation_cost(gen))) == 1
+        @test get_time_series_values(SingleTimeSeries, gen, "fcas_offer_RAISE6SEC") == fill(PiecewiseStepData([0.0, 5.0], [20.0]), 2)
+    end
+
+    @testset "an FCAS-only unit keeps its zero cost" begin
+        sys = nem_system(db, RegionalNetworkConfiguration())
+        set_fcas_bids!(sys, db, date_range)
+        before = Dict(get_name(d) => get_operation_cost(d) for d in get_components(Device, sys) if hasmethod(get_operation_cost, Tuple{typeof(d)}))
+        set_fcas_service_bids!(sys, db, date_range)
+        for d in get_components(Device, sys)
+            hasmethod(get_operation_cost, Tuple{typeof(d)}) || continue
+            @test !(get_operation_cost(d) isa MarketBidCost)
+            @test get_operation_cost(d) === before[get_name(d)]
+        end
+    end
+
+    @testset "offer curves are named device series" begin
         sys = nem_system(db, RegionalNetworkConfiguration())
         added, _ = set_fcas_bids!(sys, db, date_range)
         @test !isempty(added)
@@ -352,22 +389,16 @@
         for device in bidders
             isempty(AustralianElectricityMarkets._fcas_services(device, BidType.RAISE6SEC)) && continue
             svc = fcas_service(device, BidType.RAISE6SEC)
-            cost = get_operation_cost(device)
-            @test cost isa MarketBidCost
             for (decremental, gdf) in ((false, gdf_inc), (true, gdf_dec))
                 (isnothing(gdf) || !haskey(gdf, (get_name(device),))) && continue
                 name = fcas_offer_series_name(svc, decremental)
-                @test svc in get_ancillary_service_offers(cost)
+                @test name == "fcas_offer_RAISE6SEC" * (decremental ? "_decremental" : "")
                 expected = gdf[(get_name(device),)].curve_data
                 stored = get_time_series_values(SingleTimeSeries, device, name)
                 @test length(stored) == length(expected)
                 for (s, e) in zip(stored, expected)
                     @test get_x_coords(s) == get_x_coords(e) && get_y_coords(s) == get_y_coords(e)
                 end
-                served = decremental ?
-                    get_decremental_services_bid(device, cost, svc; start_time = first(date_range), len = length(expected)) :
-                    get_services_bid(device, cost, svc; start_time = first(date_range), len = length(expected))
-                @test length(served) == length(expected)
                 n_checked += 1
             end
         end

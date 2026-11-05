@@ -281,9 +281,8 @@ end
 """
     fcas_offer_series_name(service::FCASService, decremental::Bool) -> String
 
-Name of the time series holding a device's FCAS offer curve for `service`, the series of its
-[`FCASService`](@ref) bid. The incremental curve is named by the service and the decremental one by
-`PSY.get_decremental_service_bid_name`, as PowerSystems stores service bids.
+Name of the time series holding a device's FCAS offer curve for `service`:
+`fcas_offer_<market>`, suffixed `_decremental` for the load side. See [`set_fcas_offer!`](@ref).
 
 # Arguments
 - `service`: the FCAS service, one per region and [`BidType`](@ref).
@@ -293,5 +292,5 @@ Name of the time series holding a device's FCAS offer curve for `service`, the s
 A `String`.
 """
 function fcas_offer_series_name(service::FCASService, decremental::Bool)
-    return decremental ? PSY.get_decremental_service_bid_name(service) : PSY.get_name(service)
+    return fcas_series_name("fcas_offer", get_bid_type(service), decremental)
 end

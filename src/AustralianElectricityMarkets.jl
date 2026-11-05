@@ -17,7 +17,7 @@ export NetworkConfiguration, table_requirements, nem_system
 export RegionalNetworkConfiguration, NEMDEConfiguration
 export set_mnsp_offers!, set_demand!, set_market_bids!, add_nem_constraints!, set_regional_availability!
 export get_storage_energy_max_avail
-export set_fcas_bids!, set_fcas_service_bids!, set_fcas_scaling_inputs!, set_fcas_effective_offers!
+export set_fcas_bids!, set_fcas_offer!, set_fcas_service_bids!, set_fcas_scaling_inputs!, set_fcas_effective_offers!
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW
 export set_nem_dispatch_limits!, set_interconnector_flow_limits!, set_loss_demand_coefficients!
 export get_initial_mw, get_energy_availability
@@ -91,6 +91,7 @@ include("system/dispatch_limits.jl")
 include("system/regional_availability.jl")
 include("system/energy_limits.jl")
 include("system/fcas.jl")
+include("system/offers.jl")
 include("system/fcas_effective.jl")
 include("system/mnsp.jl")
 include("system/constraints.jl")

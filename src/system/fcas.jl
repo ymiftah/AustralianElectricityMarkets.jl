@@ -105,7 +105,7 @@ end
 
 # A device bids a (region, bid_type) market if it carries either direction's trapezium series - a
 # storage device can provide the market while charging or discharging. The offer curves are
-# attached alongside them, as service bids, only after the services exist.
+# attached alongside them, as offer series, only after the services exist.
 function _fcas_service_devices(
         sys, region::AbstractString, bid_type::BidType;
         candidates = _region_devices(sys, region; loads = true),
@@ -213,79 +213,11 @@ function _fcas_offer_curves(gdf, duid::AbstractString, bid_type::BidType, grid)
 end
 
 
-# Whether `x` is a zero cost term; a term this does not recognise counts as non-zero.
-function _is_zero_cost_term(::Nothing)
-    return true
-end
-
-function _is_zero_cost_term(x::Real)
-    return iszero(x)
-end
-
-function _is_zero_cost_term(x::NamedTuple)
-    return all(_is_zero_cost_term, values(x))
-end
-
-function _is_zero_cost_term(x::PSY.LinearCurve)
-    return iszero(PSY.get_proportional_term(x)) && iszero(PSY.get_constant_term(x))
-end
-
-function _is_zero_cost_term(x::PSY.CostCurve)
-    return _is_zero_cost_term(PSY.get_value_curve(x)) && _is_zero_cost_term(PSY.get_vom_cost(x))
-end
-
-function _is_zero_cost_term(::Any)
-    return false
-end
-
-"""
-    _is_zero_cost(cost) -> Bool
-
-Whether every term of the operation cost `cost` is zero, so that replacing it with an empty
-`MarketBidCost` leaves the device's energy cost at zero. Terms that are not zero linear
-curves or numbers count as non-zero.
-"""
-function _is_zero_cost(cost)
-    return all(f -> _is_zero_cost_term(getfield(cost, f)), fieldnames(typeof(cost)))
-end
-
-
-# Writes `curves`, in MW, as `device`'s service bid for its FCASService of `bid_type`. A device whose
-# operation cost is not a MarketBidCost gets an empty one only when that cost is all zero: the
-# replacement then leaves its energy cost at zero. Any other cost throws, as the offer cannot be
-# stored without a MarketBidCost.
+# Writes `curves`, in MW, as `device`'s offer for its FCASService of `bid_type`; nothing when there are none.
 function _write_fcas_service_bid!(sys, device, bid_type::BidType, decremental::Bool, curves, start_date, resolution)
     (isnothing(curves) || isempty(_fcas_services(device, bid_type))) && return
-    service = only(_fcas_services(device, bid_type))
-    name = fcas_offer_series_name(service, decremental)
-    # Already stored, for example by an earlier call made before the device's energy bids were set.
-    has_time_series(device, SingleTimeSeries, name) && return
-    cost = get_operation_cost(device)
-    if !(cost isa MarketBidCost)
-        _is_zero_cost(cost) || throw(
-            ArgumentError(
-                "\"$(get_name(device))\" has a $(nameof(typeof(cost))) operation cost, not a " *
-                    "MarketBidCost, so its $(string(bid_type)) offers cannot be stored as service " *
-                    "bids. The device needs a MarketBidCost first, for example by calling " *
-                    "set_market_bids! before set_fcas_service_bids!.",
-            ),
-        )
-        # Zero-cost replacement: a MarketBidCost without energy curves prices energy at zero.
-        set_operation_cost!(
-            device,
-            MarketBidCost(;
-                no_load_cost = 0.0,
-                start_up = (hot = 0.0, warm = 0.0, cold = 0.0),
-                shut_down = 0.0,
-            ),
-        )
-    end
-    ts = single_series(name, start_date, curves, resolution)
-    if decremental
-        set_decremental_service_bid!(sys, device, service, ts, PSY.UnitSystem.NATURAL_UNITS)
-    else
-        set_service_bid!(sys, device, service, ts, PSY.UnitSystem.NATURAL_UNITS)
-    end
+    ts = single_series(fcas_series_name("fcas_offer", bid_type, decremental), start_date, curves, resolution)
+    set_fcas_offer!(sys, device, bid_type, offer_side(decremental), ts)
     return
 end
 
@@ -383,17 +315,11 @@ end
 """
     set_fcas_service_bids!(sys, db, date_range; kwargs...)
 
-Stores the FCAS offer curves of `date_range` as the service bids of the devices that contribute to
-each [`FCASService`](@ref), one `PiecewiseStepData` series per device, service and side (see
-[`fcas_offer_series_name`](@ref)). The curves are stored in MW. Run it after [`set_fcas_bids!`](@ref)
-and, on the NEMDE path, after [`set_market_bids!`](@ref), so that energy bidders already carry their
-`MarketBidCost`. Curves already stored are left as they are, so a second call stores only the curves
-the first one could not.
-
-A device whose operation cost is not a `MarketBidCost` gets an empty one only if that cost is all
-zero (a `StorageCost` or `LoadCost` at zero), which leaves its energy cost at zero. Any other device
-(for example a generator with a fuel or variable O&M cost) that has offers to store throws an
-`ArgumentError`, as its offers need a `MarketBidCost` first.
+Stores the FCAS offer curves of `date_range` on the devices that contribute to each
+[`FCASService`](@ref), one `PiecewiseStepData` series per device, service and side (see
+[`set_fcas_offer!`](@ref) and [`fcas_offer_series_name`](@ref)). The curves are stored in MW. Run it
+after [`set_fcas_bids!`](@ref). Operation costs are left as they are. A second call replaces the
+series it stores.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object, with its FCAS services.
