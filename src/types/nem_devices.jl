@@ -372,3 +372,12 @@ function PSY.get_max_reactive_power(d::NEMRenewableGen)
     isnothing(limits) && return PSY.get_rating(d) * sin(acos(PSY.get_power_factor(d)))
     return limits.max
 end
+
+
+"""
+The concrete device types that carry NEM dispatch limits: the types [`nem_dispatch_devices`](@ref)
+collects and the replay models with its dispatch formulation.
+"""
+const NEM_DISPATCH_DEVICE_TYPES = (
+    NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMLoad, NEMStorage,
+)

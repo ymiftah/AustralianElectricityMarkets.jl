@@ -14,7 +14,7 @@ function _tie_validation_system(curves_a, curves_b; decremental = false)
         n = length(bids.piecewise_step_data)
         AustralianElectricityMarkets.replace_single_series!(
             sys, device,
-            AustralianElectricityMarkets.single_series(AustralianElectricityMarkets.energy_max_avail_series_name(side), start, ones(n), resolution),
+            AustralianElectricityMarkets.single_series(AustralianElectricityMarkets.energy_max_avail_series_name(device, side), start, ones(n), resolution),
         )
         AustralianElectricityMarkets.set_energy_offer!(
             sys, device, side, AustralianElectricityMarkets.single_series(series, start, copy(bids.piecewise_step_data), resolution),

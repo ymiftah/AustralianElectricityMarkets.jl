@@ -140,7 +140,7 @@ end
             AustralianElectricityMarkets.replace_single_series!(
                 sys, device,
                 AustralianElectricityMarkets.single_series(
-                    AustralianElectricityMarkets.energy_max_avail_series_name(side), TOY_START, fill(1.0, length(stamps)), TOY_RESOLUTION,
+                    AustralianElectricityMarkets.energy_max_avail_series_name(device, side), TOY_START, fill(1.0, length(stamps)), TOY_RESOLUTION,
                 ),
             )
             AustralianElectricityMarkets.set_energy_offer!(

@@ -15,7 +15,10 @@ One side of a unit's energy offer, held as keys of the time series on the unit.
 # Fields
 - `side`: the [`OfferSide`](@ref) the bid is on.
 - `curves`: key of the `PiecewiseStepData` series, natural units, loss-factor referred prices.
-- `max_avail`: key of the `MAXAVAIL` series, per-unit of the system base.
+- `max_avail`: key of the `MAXAVAIL` series the dispatch formulation reads for the device and side,
+  per-unit of the system base: `energy_max_avail` (`GEN`) and `energy_max_avail_decremental` (`LOAD`)
+  for a storage device, and `energy_max_avail` for any other device. `set_nem_energy_limits!` replaces
+  that series with the `DISPATCHLOAD` availability; the key still resolves.
 """
 struct NEMEnergyBid <: PSY.DeviceParameter
     side::OfferSide

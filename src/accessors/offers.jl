@@ -19,7 +19,18 @@ end
 
 
 # The five NEM device types, whose operation cost is a `NEMOfferCost`.
-const _NEMDevice = Union{NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMStorage, NEMLoad}
+const _NEMDevice = Union{NEM_DISPATCH_DEVICE_TYPES...}
+
+"""
+    energy_max_avail_series_name(device, side::OfferSide) -> String
+
+Name of the series holding `device`'s energy offer `MAXAVAIL` for `side`, as the dispatch formulation
+reads it: per side for a `Storage` device, and `energy_max_avail` for any other device (a scheduled
+load's `LOAD` offer included).
+"""
+function energy_max_avail_series_name(device, side::OfferSide)
+    return energy_max_avail_series_name(device isa PSY.Storage ? side : OfferSide.GEN)
+end
 
 # `device`'s `NEMOfferCost`, or `nothing` for a device that is not a NEM type.
 _nem_offer_cost(::Any) = nothing
@@ -76,7 +87,8 @@ end
 
 `component`'s `service` offer on `side`, `horizon` steps from `initial_time`, in `component`'s
 `System`'s current display units: the [`get_scaled_fcas_trapezium`](@ref) trapeziums (`kwargs` are
-passed to it), paired with the offer curves of `_get_fcas_offer_curve`.
+passed to it) and offer curves, both read from the series keyed by the [`NEMFCASBid`](@ref) of its
+[`NEMOfferCost`](@ref).
 Throws `ArgumentError` if `component` has no [`NEMFCASBid`](@ref) for `(service, side)`, either
 series isn't attached, or they differ in length.
 
@@ -86,15 +98,19 @@ A [`NEMFCASOffer`](@ref), or `nothing` when `component` is not a NEM device type
 function get_fcas_offer(component, service::BidType, side::OfferSide, initial_time, horizon::Integer; kwargs...)
     cost = _nem_offer_cost(component)
     isnothing(cost) && return nothing
-    any(b -> b.service == service && b.side == side, get_fcas_bids(cost)) || throw(
+    i = findfirst(b -> b.service == service && b.side == side, get_fcas_bids(cost))
+    isnothing(i) && throw(
         ArgumentError(
             "\"$(get_name(component))\" has no FCAS bid for $(string(service)) on $(string(side)); " *
                 "call set_fcas_service_bids! first.",
         ),
     )
+    bid = get_fcas_bids(cost)[i]
     decremental = side == OfferSide.LOAD
-    trapeziums = get_scaled_fcas_trapezium(component, service, initial_time, horizon; decremental, kwargs...)
-    curves = _get_fcas_offer_curve(component, service, initial_time, horizon; decremental)
+    trapeziums = get_scaled_fcas_trapezium(
+        component, service, initial_time, horizon; decremental, trapezium_name = IS.get_name(bid.trapezium), kwargs...,
+    )
+    curves = _get_fcas_offer_curve(component, service, initial_time, horizon; decremental, name = IS.get_name(bid.curves))
     _require_equal_length(trapeziums, curves, service, component)
     return NEMFCASOffer(service, side, trapeziums, curves)
 end

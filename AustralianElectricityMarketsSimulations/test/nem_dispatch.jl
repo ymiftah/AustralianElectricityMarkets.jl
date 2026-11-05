@@ -275,3 +275,27 @@ end
     @test err isa ArgumentError
     @test occursin("NEMThermalGen", err.msg) && occursin("AbstractNEMDispatch", err.msg)
 end
+
+@testset "an energy bid's MAXAVAIL key names the series the formulation reads" begin
+    sys = nem_dispatch_system()
+    checked = 0
+    for device in PSY.get_components(PSY.StaticInjection, sys)
+        cost = AustralianElectricityMarkets._nem_offer_cost(device)
+        isnothing(cost) && continue
+        names = PSI.get_default_time_series_names(typeof(device), NEMReplayDispatch)
+        for bid in AustralianElectricityMarkets.get_energy_bids(cost)
+            read_name = if device isa PSY.Storage
+                PSI.get_default_time_series_names(typeof(device), NEMReplayDispatch)[
+                    bid.side == OfferSide.GEN ? PSI.ActivePowerOutTimeSeriesParameter : PSI.ActivePowerInTimeSeriesParameter,
+                ]
+            else
+                names[EnergyMaxAvailTimeSeriesParameter]
+            end
+            @test bid.max_avail.name == read_name
+            @test PSY.has_time_series(device, PSY.SingleTimeSeries, bid.max_avail.name)
+            checked += 1
+        end
+    end
+    @test checked > 0
+    @test any(d -> d isa NEMLoad && !isempty(AustralianElectricityMarkets.get_energy_bids(PSY.get_operation_cost(d))), PSY.get_components(PSY.StaticInjection, sys))
+end

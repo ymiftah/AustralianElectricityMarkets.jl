@@ -64,11 +64,13 @@ end
 Full-series read of `component`'s FCAS trapezium for `service`, `horizon` steps from
 `initial_time`, in `component`'s `System`'s current display units (MW under `NATURAL_UNITS`,
 per-unit of the system base under `SYSTEM_BASE`). `decremental` selects the storage
-`DIRECTION == "LOAD"` series. Throws `ArgumentError` if the series isn't attached, or if any
-step holds a malformed trapezium (out-of-order limits or a negative `MaxAvail`).
+`DIRECTION == "LOAD"` series, or `name` reads the series of that name. Throws `ArgumentError` if the
+series isn't attached, or if any step holds a malformed trapezium (out-of-order limits or a negative `MaxAvail`).
 """
-function _get_fcas_trapezium(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
-    name = fcas_series_name("fcas_trapezium", service, decremental)
+function _get_fcas_trapezium(
+        component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false,
+        name::AbstractString = fcas_series_name("fcas_trapezium", service, decremental),
+    )
     rows = _read_fcas_series("trapezium", component, name, service, decremental, initial_time, horizon)
     multiplier = _fcas_units_multiplier(component)
     return [
@@ -110,9 +112,12 @@ enablement/ramp/UIGF series are shared by both directions of the same device.
 """
 function get_scaled_fcas_trapezium(
         component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false,
-        resolution::Dates.Period = Minute(5),
+        resolution::Dates.Period = Minute(5), trapezium_name::Union{Nothing, AbstractString} = nothing,
     )
-    trapeziums = _get_fcas_trapezium(component, service, initial_time, horizon; decremental = decremental)
+    trapeziums = _get_fcas_trapezium(
+        component, service, initial_time, horizon; decremental,
+        name = something(trapezium_name, fcas_series_name("fcas_trapezium", service, decremental)),
+    )
     is_regulation = service in FCAS_REGULATION_MARKETS
     agc_enablement_min = is_regulation ?
         _read_optional_fcas_scaling_series(component, fcas_series_name("fcas_agc_enablement_min", service), initial_time, horizon) : nothing
@@ -181,11 +186,13 @@ Full-series read of `component`'s FCAS offer curve for `service`, `horizon` step
 `initial_time`. The series is stored in MW and divided by the system base on read. Quantities
 (`x_coords`) are then in `component`'s `System`'s current display units (MW under `NATURAL_UNITS`,
 per-unit of the system base under `SYSTEM_BASE`); prices (`y_coords`) are always \$/MW, never
-per-unitized. `decremental` selects the storage `DIRECTION == "LOAD"` series. Throws `ArgumentError`
-if the series isn't attached.
+per-unitized. `decremental` selects the storage `DIRECTION == "LOAD"` series, or `name` reads the
+series of that name. Throws `ArgumentError` if the series isn't attached.
 """
-function _get_fcas_offer_curve(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
-    name = fcas_offer_series_name(fcas_service(component, service), decremental)
+function _get_fcas_offer_curve(
+        component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false,
+        name::AbstractString = fcas_offer_series_name(fcas_service(component, service), decremental),
+    )
     rows = _read_fcas_series("curve", component, name, service, decremental, initial_time, horizon)
     base_power = _fcas_system_base(component)
     multiplier = _fcas_units_multiplier(component)

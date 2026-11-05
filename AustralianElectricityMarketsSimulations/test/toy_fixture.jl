@@ -197,7 +197,7 @@ function nem_toy_system(
             operation_cost = AustralianElectricityMarkets.NEMOfferCost(),
         )
         PSY.add_component!(sys, scheduled)
-        add_series!(scheduled, "energy_max_avail_decremental", ld.availability / base_power)
+        add_series!(scheduled, "energy_max_avail", ld.availability / base_power)
         offer = PSY.PiecewiseStepData([0.0, ld.capacity], [ld.price])
         AustralianElectricityMarkets.set_energy_offer!(
             sys, scheduled, AustralianElectricityMarkets.OfferSide.LOAD,
@@ -211,7 +211,6 @@ function nem_toy_system(
         add_series!(scheduled, "ramp_down_rate", ld.ramp_down / base_power)
         add_series!(scheduled, "initial_mw", ld.initial / base_power)
         add_series!(scheduled, "availability", ld.availability / base_power)
-        add_series!(scheduled, "energy_max_avail", ld.availability / base_power)
         PSY.get_ext(scheduled)["nem_semi_scheduled"] = false
     end
 

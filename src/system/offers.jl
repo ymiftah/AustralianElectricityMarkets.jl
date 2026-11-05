@@ -53,7 +53,7 @@ end
 Stores `curves`, an energy offer curve per interval in MW and \$/MWh, on `device` as the series
 `energy_offer` (suffixed `_decremental` for the `LOAD` side), replacing a series of that name
 already on it. A call on a device whose operation cost is a [`NEMOfferCost`](@ref) also records the
-series, with the device's `energy_max_avail` series for `side`, as its energy bid for `side`; a
+series, with the device's `MAXAVAIL` series for `side` ([`energy_max_avail_series_name`](@ref)), as its energy bid for `side`; a
 repeat call replaces that bid. Other devices keep their operation cost.
 
 # Arguments
@@ -73,7 +73,7 @@ function set_energy_offer!(sys, device::PSY.StaticInjection, side::OfferSide, cu
     cost = get_operation_cost(device)
     max_avail = nothing
     if cost isa NEMOfferCost
-        max_avail = _series_key(device, energy_max_avail_series_name(side))
+        max_avail = _series_key(device, energy_max_avail_series_name(device, side))
     end
     ts = SingleTimeSeries(; name, data = IS.get_data(curves), resolution = IS.get_resolution(curves))
     replace_single_series!(sys, device, ts)

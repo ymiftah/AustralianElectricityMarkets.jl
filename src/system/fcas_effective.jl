@@ -67,12 +67,17 @@ with the AGC ramping capability taken over the window's resolution at every inte
 is the bid trapezium unscaled.
 
 # Returns
-A `NEMFCASOffer`.
+A `NEMFCASOffer`. Throws `ArgumentError` naming `device` when it is not a NEM device type or has no bid
+for `bid_type` on `side`.
 """
 function _fcas_offer(window::_FCASWindow, device, bid_type::BidType, side::OfferSide)
-    return get_fcas_offer(
+    offer = get_fcas_offer(
         device, bid_type, side, window.initial_time, window.horizon; resolution = window.resolution,
     )
+    isnothing(offer) && throw(
+        ArgumentError("\"$(PSY.get_name(device))\" is not a NEM device type, so it has no $(string(bid_type)) offer."),
+    )
+    return offer
 end
 
 

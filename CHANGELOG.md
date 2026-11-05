@@ -424,6 +424,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `get_energy_offer` and `get_fcas_offer` read through the keys of a device's `NEMOfferCost`; a device
   that is not a NEM type has no offer (`nothing`).
 
+- A `NEMEnergyBid`'s `max_avail` key names the `MAXAVAIL` series the dispatch formulation reads:
+  `energy_max_avail` for every device but storage, whose sides keep `energy_max_avail` and
+  `energy_max_avail_decremental`. `set_market_bids!` no longer writes `energy_max_avail_decremental`
+  on scheduled loads.
+
 - `check_template_against_sys` throws an `ArgumentError` for a NEM device type modelled with a
   formulation that is not an `AbstractNEMDispatch`.
 

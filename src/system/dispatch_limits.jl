@@ -1,13 +1,4 @@
 """
-The concrete device types that carry NEM dispatch limits: the types [`nem_dispatch_devices`](@ref)
-collects and the replay models with its dispatch formulation.
-"""
-const NEM_DISPATCH_DEVICE_TYPES = (
-    NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMLoad, NEMStorage,
-)
-
-
-"""
     nem_dispatch_devices(sys) -> Vector{Device}
 
 Collects every available device whose type is in [`NEM_DISPATCH_DEVICE_TYPES`](@ref) in `sys`, the

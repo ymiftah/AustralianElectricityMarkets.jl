@@ -1296,7 +1296,7 @@ end
     using DataFrames, Statistics
     import TimeSeries
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    sys_base, _ = nem_network(db)
+    sys_base = nem_system(db, RegionalNetworkConfiguration())
     resolution = Minute(30)
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:Minute(5):(start_date + Hour(2))
@@ -1309,16 +1309,16 @@ end
     # SS_SOLAR_AVAILABILITY is 100 + i, which must not be read.
     function regional_system()
         sys = deepcopy(sys_base)
-        bw03 = get_component(NEMRenewableGen, sys, "BW03")
+        bw03 = get_component(RenewableDispatch, sys, "BW03")
         # BW03 is QLD1's only solar unit with UIGF, so its 400 MW keeps 100 + i below the denominator.
         with_units_base(() -> set_rating!(bw03, 400.0), sys, "NATURAL_UNITS")
         # A solar unit with no DISPATCHLOAD rows, in BW03's region and on its bus.
         add_component!(
-            sys, NEMRenewableGen(;
+            sys, RenewableDispatch(;
                 name = "PVX1", available = true, bus = get_bus(bw03), active_power = 0.0,
                 reactive_power = 0.0, rating = get_rating(bw03), prime_mover_type = PrimeMovers.PVe,
                 reactive_power_limits = nothing, power_factor = 1.0,
-                operation_cost = NEMOfferCost(), base_power = get_base_power(bw03),
+                operation_cost = RenewableGenerationCost(nothing), base_power = get_base_power(bw03),
             ),
         )
         return sys
@@ -1330,9 +1330,9 @@ end
     @testset "attaches each priority source in MW of the unit" begin
         sys = regional_system()
         set_regional_availability!(sys, db, date_range; resolution)
-        bw02 = get_component(NEMHydroGen, sys, "BW02")
-        bw03 = get_component(NEMRenewableGen, sys, "BW03")
-        pvx = get_component(NEMRenewableGen, sys, "PVX1")
+        bw02 = get_component(HydroDispatch, sys, "BW02")
+        bw03 = get_component(RenewableDispatch, sys, "BW03")
+        pvx = get_component(RenewableDispatch, sys, "PVX1")
         @test with_units_base(() -> get_max_active_power(bw03), sys, "NATURAL_UNITS") ≈ 400.0
         pvx_capacity = with_units_base(() -> get_max_active_power(pvx), sys, "NATURAL_UNITS")
 
@@ -1349,7 +1349,7 @@ end
     @testset "a repeat call replaces the series with the same values" begin
         sys = regional_system()
         set_regional_availability!(sys, db, date_range; resolution)
-        bw03 = get_component(NEMRenewableGen, sys, "BW03")
+        bw03 = get_component(RenewableDispatch, sys, "BW03")
         before = natural_values(sys, bw03)
         set_regional_availability!(sys, db, date_range; resolution)
         series = [ts for ts in get_time_series_multiple(bw03) if get_name(ts) == "max_active_power"]
@@ -1361,7 +1361,7 @@ end
         sys = regional_system()
         set_regional_availability!(sys, db, date_range; resolution)
         for name in ("BW02", "BW03", "PVX1")
-            device = get_component(name == "BW02" ? NEMHydroGen : NEMRenewableGen, sys, name)
+            device = get_component(name == "BW02" ? HydroDispatch : RenewableDispatch, sys, name)
             ta = get_time_series_array(SingleTimeSeries, device, "max_active_power")
             @test TimeSeries.timestamp(ta) == stamps
             @test length(ta) == length(stamps)
@@ -1369,24 +1369,24 @@ end
         # A Date range is read by its first and last days, half-hourly across the first day.
         sys_days = regional_system()
         set_regional_availability!(sys_days, db, Date(2025, 1, 1):Date(2025, 1, 2); resolution)
-        ta = get_time_series_array(SingleTimeSeries, get_component(NEMRenewableGen, sys_days, "BW03"), "max_active_power")
+        ta = get_time_series_array(SingleTimeSeries, get_component(RenewableDispatch, sys_days, "BW03"), "max_active_power")
         @test TimeSeries.timestamp(ta) == collect(DateTime(2025, 1, 1):resolution:DateTime(2025, 1, 1, 23, 30))
     end
 
     @testset "unavailable units are skipped" begin
         sys = regional_system()
-        bw02 = get_component(NEMHydroGen, sys, "BW02")
+        bw02 = get_component(HydroDispatch, sys, "BW02")
         set_available!(bw02, false)
         set_regional_availability!(sys, db, date_range; resolution)
         @test !has_time_series(bw02, SingleTimeSeries, "max_active_power")
-        @test has_time_series(get_component(NEMRenewableGen, sys, "BW03"), SingleTimeSeries, "max_active_power")
+        @test has_time_series(get_component(RenewableDispatch, sys, "BW03"), SingleTimeSeries, "max_active_power")
     end
 
     @testset "the denominator counts unavailable units" begin
         sys = regional_system()
-        set_available!(get_component(NEMRenewableGen, sys, "BW03"), false)
+        set_available!(get_component(RenewableDispatch, sys, "BW03"), false)
         set_regional_availability!(sys, db, date_range; resolution)
-        pvx = get_component(NEMRenewableGen, sys, "PVX1")
+        pvx = get_component(RenewableDispatch, sys, "PVX1")
         pvx_capacity = with_units_base(() -> get_max_active_power(pvx), sys, "NATURAL_UNITS")
         expected_factor = [clamp(mean(120 + i for i in raw_indices(t)) / 400.0, 0.0, 1.0) for t in stamps]
         @test natural_values(sys, pvx) ≈ expected_factor .* pvx_capacity
@@ -1402,16 +1402,16 @@ end
 
     @testset "a device with zero capacity is zero at every stamp" begin
         sys = regional_system()
-        bw03 = get_component(NEMRenewableGen, sys, "BW03")
+        bw03 = get_component(RenewableDispatch, sys, "BW03")
         add_component!(
-            sys, NEMRenewableGen(;
+            sys, RenewableDispatch(;
                 name = "PVZ1", available = true, bus = get_bus(bw03), active_power = 0.0,
                 reactive_power = 0.0, rating = 0.0, prime_mover_type = PrimeMovers.PVe,
                 reactive_power_limits = nothing, power_factor = 1.0,
-                operation_cost = NEMOfferCost(), base_power = get_base_power(bw03),
+                operation_cost = RenewableGenerationCost(nothing), base_power = get_base_power(bw03),
             ),
         )
         set_regional_availability!(sys, db, date_range; resolution)
-        @test natural_values(sys, get_component(NEMRenewableGen, sys, "PVZ1")) ≈ zeros(length(stamps))
+        @test natural_values(sys, get_component(RenewableDispatch, sys, "PVZ1")) ≈ zeros(length(stamps))
     end
 end
