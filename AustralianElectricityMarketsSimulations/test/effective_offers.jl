@@ -296,3 +296,133 @@ end
     @test occursin("RAISE6SEC", err.msg)
     @test occursin("BW01", err.msg)
 end
+
+@testset "Accessors of offers, dispatch limits and AGC status" begin
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    sys_base, _ = nem_network(db)
+    resolution = Minute(5)
+    start_date = DateTime(2025, 1, 1, 0, 0)
+    date_range = start_date:resolution:(start_date + Hour(2))
+    horizon = length(date_range) - 1
+    base_power = get_base_power(sys_base)
+    truth = read_dispatch_limits(db, date_range)
+    scaling_truth = read_fcas_scaling_inputs(db, date_range)
+
+    @testset "energy offer views and MAXAVAIL per direction" begin
+        sys = deepcopy(sys_base)
+        set_market_bids!(sys, db, date_range)
+        for bat in get_components(NEMStorage, sys)
+            gen_offer, load_offer = get_energy_offer(bat, OfferSide.GEN), get_energy_offer(bat, OfferSide.LOAD)
+            ta_gen = get_time_series_array(SingleTimeSeries, bat, "energy_offer")
+            ta_load = get_time_series_array(SingleTimeSeries, bat, "energy_offer_decremental")
+            @test gen_offer.side == OfferSide.GEN && load_offer.side == OfferSide.LOAD
+            @test gen_offer.timestamps == PowerSystems.TimeSeries.timestamp(ta_gen) && gen_offer.curves == values(ta_gen)
+            @test load_offer.curves == values(ta_load)
+            # Energy MAXAVAIL per direction; the mock bids 100 + i MW on both sides, rising with i.
+            avail = with_units_base(sys, "NATURAL_UNITS") do
+                get_storage_energy_max_avail(bat, start_date, horizon)
+            end
+            @test !isnothing(avail)
+            @test length(avail.gen) == horizon
+            @test avail.gen ≈ avail.load
+            @test all(x -> 100.0 <= x <= 149.0, avail.gen)
+            @test avail.gen[end] > avail.gen[1]
+        end
+        @test isnothing(get_storage_energy_max_avail(first(get_components(NEMThermalGen, sys)), start_date, 1))
+        @test isnothing(get_energy_offer(first(get_components(PowerLoad, sys)), OfferSide.GEN))
+    end
+
+    @testset "a device that is not a NEM type has no offer view" begin
+        sys = deepcopy(sys_base)
+        bus = first(get_components(ACBus, sys))
+        start = DateTime(2025, 1, 1)
+        stock = ThermalStandard(;
+            name = "stock", available = true, status = true, bus, active_power = 0.0, reactive_power = 0.0, rating = 1.0,
+            active_power_limits = (min = 0.0, max = 1.0), reactive_power_limits = nothing, ramp_limits = nothing,
+            operation_cost = ThermalGenerationCost(; variable = CostCurve(LinearCurve(0.0)), fixed = 0.0, start_up = 0.0, shut_down = 0.0),
+            base_power = 100.0, time_limits = nothing, must_run = false, prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL,
+        )
+        add_component!(sys, stock)
+        set_energy_offer!(
+            sys, stock, OfferSide.GEN,
+            AustralianElectricityMarkets.single_series("energy_offer", start, fill(PiecewiseStepData([0.0, 5.0], [10.0]), 2), Minute(5)),
+        )
+        @test isnothing(get_energy_offer(stock, OfferSide.GEN))
+        @test isnothing(get_energy_offer(stock, OfferSide.LOAD))
+    end
+
+    @testset "offer views of each side after set_market_bids!" begin
+        sys = deepcopy(sys_base)
+        set_market_bids!(sys, db, date_range)
+        gen = first(get_components(NEMThermalGen, sys))
+        storage = first(get_components(NEMStorage, sys))
+        for (device, side) in ((gen, OfferSide.GEN), (storage, OfferSide.GEN), (storage, OfferSide.LOAD))
+            offer = get_energy_offer(device, side)
+            @test offer.side == side
+            @test offer.curves == get_time_series_values(SingleTimeSeries, device, energy_offer_series_name(side))
+            @test offer.timestamps[1] == date_range[1]
+        end
+    end
+
+    @testset "a second set_market_bids! replaces the offer timestamps" begin
+        sys = deepcopy(sys_base)
+        second_range = (start_date + Minute(30)):Minute(5):(start_date + Minute(90))
+        set_market_bids!(sys, db, date_range)
+        set_market_bids!(sys, db, second_range)
+        for device in vcat(collect(get_components(NEMThermalGen, sys)), collect(get_components(NEMStorage, sys)))
+            get_available(device) || continue
+            for side in [b.side for b in AustralianElectricityMarkets.get_energy_bids(get_operation_cost(device))]
+                @test get_energy_offer(device, side).timestamps[1] == second_range[1]
+            end
+        end
+    end
+
+    @testset "initial_mw and availability read back as the DISPATCHLOAD columns" begin
+        sys = deepcopy(sys_base)
+        attach_dispatch_limits!(sys, db, date_range)
+        renewable = get_component(NEMRenewableGen, sys, "BW03")
+        battery = get_component(NEMStorage, sys, "BW01")
+        with_units_base(sys, "NATURAL_UNITS") do
+            for (device, duid) in ((renewable, "BW03"), (battery, "BW01"))
+                rows = sort(subset(truth, :DUID => ByRow(==(duid))), :SETTLEMENTDATE)
+                @test isapprox(get_initial_mw(device, start_date, horizon), rows.INITIALMW; atol = 1.0e-8)
+            end
+            rows = sort(subset(truth, :DUID => ByRow(==("BW03"))), :SETTLEMENTDATE)
+            @test isapprox(get_energy_availability(renewable, start_date, horizon), rows.AVAILABILITY; atol = 1.0e-8)
+        end
+        # A battery's availability comes from its energy bid, not AVAILABILITY.
+        @test isnothing(get_energy_availability(battery, start_date, horizon))
+    end
+
+    @testset "get_initial_mw is nothing when initial_mw is not attached" begin
+        sys = deepcopy(sys_base)
+        bat = get_component(NEMStorage, sys, "BW01")
+        @test isnothing(get_initial_mw(bat, start_date, horizon))
+    end
+
+    @testset "get_fcas_agc_status reads back AGCSTATUS and is nothing when not attached" begin
+        sys = deepcopy(sys_base)
+        set_fcas_scaling_inputs!(sys, db, date_range)
+        device = get_component(NEMThermalGen, sys, "ER01")
+        rows = sort(subset(scaling_truth, :DUID => ByRow(==("ER01"))), :SETTLEMENTDATE)
+        @test get_fcas_agc_status(device, start_date, horizon) == round.(Int, rows.AGCSTATUS)
+        load = get_component(NEMLoad, sys, "PUMP1")
+        @test get_fcas_agc_status(load, start_date, horizon) == ones(Int, horizon)
+
+        bare = deepcopy(sys_base)
+        @test isnothing(get_fcas_agc_status(get_component(NEMThermalGen, bare, "ER01"), start_date, horizon))
+    end
+
+    @testset "get_fcas_agc_status is nothing at an interval with no AGCSTATUS" begin
+        sys = deepcopy(sys_base)
+        device = get_component(NEMThermalGen, sys, "ER01")
+        full_grid = collect(date_range)[1:(end - 1)]
+        by_time = Dict(t => (AGCSTATUS = (t == full_grid[1] ? missing : 1.0),) for t in full_grid)
+        AustralianElectricityMarkets._attach_fcas_scaling_series!(
+            sys, device, by_time, full_grid, :AGCSTATUS, "fcas_agc_status", 1.0,
+        )
+        status = get_fcas_agc_status(device, start_date, length(full_grid))
+        @test isnothing(status[1])
+        @test all(==(1), status[2:end])
+    end
+end
