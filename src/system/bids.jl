@@ -78,10 +78,11 @@ end
 """
     _write_energy_bid!(sys, device, bids, side, start_date, resolution)
 
-Sets `device` available and stores its energy offer on `side`: the `MAXAVAIL` of `bids`, per-unit of
-the system base, as the series [`energy_max_avail_series_name`](@ref) names for `device` and `side`, then the curves of
-`bids.piecewise_step_data` through [`set_energy_offer!`](@ref). Both series replace any of the same
-name. Throws an `ArgumentError` if any interval's `MAXAVAIL` is missing or not finite.
+Sets `device` available and stores its energy offer on `side`: the `MAXAVAIL` of `bids`, per-unit
+of the system base, as the series [`energy_max_avail_series_name`](@ref) names for `device` and
+`side`, then the curves of `bids.piecewise_step_data` through [`set_energy_offer!`](@ref). Both series replace any of the same
+name. Throws an `ArgumentError` if `device`'s operation cost is not a [`NEMOfferCost`](@ref), or if any
+interval's `MAXAVAIL` is missing or not finite.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
@@ -95,6 +96,12 @@ name. Throws an `ArgumentError` if any interval's `MAXAVAIL` is missing or not f
 `nothing`.
 """
 function _write_energy_bid!(sys, device, bids, side::OfferSide, start_date, resolution)
+    get_operation_cost(device) isa NEMOfferCost || throw(
+        ArgumentError(
+            "set_market_bids!: $(get_name(device)) has a $(typeof(get_operation_cost(device))) operation cost; " *
+                "bidding devices must be NEM device types with a NEMOfferCost",
+        ),
+    )
     set_available!(device, true)
     name = energy_max_avail_series_name(device, side)
     bad = findfirst(x -> ismissing(x) || !isfinite(x), bids.MAXAVAIL)
@@ -169,9 +176,9 @@ end
 """
     set_market_bids!(sys, db, date_range; kwargs...)
 
-Stores each unit's energy offers on its NEM device type. It reads energy and price bid data for a specified date range from the
-database and, through [`set_energy_offer!`](@ref), attaches each bid's curves and `MAXAVAIL` series to
-the `Generator`s, scheduled `ControllableLoad`s (decremental bid only; a load that
+Stores each unit's energy offers on its NEM device type. It reads energy and price bid data for a
+specified date range from the database and, through [`set_energy_offer!`](@ref), attaches each
+bid's curves and `MAXAVAIL` series to the `Generator`s, scheduled `ControllableLoad`s (decremental bid only; a load that
 bids `GEN` is made unavailable; a non-scheduled load is left as built) and `Storage` devices
 of `sys` (the latter also get the load-side bid, and each direction's energy `MAXAVAIL`, read back by
 [`get_storage_energy_max_avail`](@ref)). Every curve has one segment per price band, in band order

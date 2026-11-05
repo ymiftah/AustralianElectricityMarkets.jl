@@ -377,6 +377,27 @@
         end
     end
 
+    @testset "set_fcas_service_bids! rejects a bidding device without a NEMOfferCost" begin
+        sys = System(100.0)
+        bus = ACBus(;
+            number = 1, name = "bus", available = true, bustype = ACBusTypes.REF, angle = 0.0,
+            magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1), base_voltage = 230.0,
+        )
+        add_component!(sys, bus)
+        stock = ThermalStandard(;
+            name = "stock", available = true, status = true, bus, active_power = 0.0, reactive_power = 0.0, rating = 1.0,
+            active_power_limits = (min = 0.0, max = 1.0), reactive_power_limits = nothing, ramp_limits = nothing,
+            operation_cost = ThermalGenerationCost(; variable = CostCurve(LinearCurve(0.0)), fixed = 0.0, start_up = 0.0, shut_down = 0.0),
+            base_power = 100.0, time_limits = nothing, must_run = false, prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL,
+        )
+        add_component!(sys, stock)
+        add_service!(sys, FCASService(; name = "svc", region = "NSW1", bid_type = BidType.RAISE6SEC), [stock])
+        curves = [PiecewiseStepData([0.0, 5.0], [10.0])]
+        @test_throws r"bidding devices must be NEM device types" AustralianElectricityMarkets._write_fcas_service_bid!(
+            sys, stock, BidType.RAISE6SEC, false, curves, start_date, Minute(5),
+        )
+    end
+
     @testset "offer curves are named device series" begin
         sys = first(nem_network(db))
         added, _ = set_fcas_bids!(sys, db, date_range)

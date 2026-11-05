@@ -101,7 +101,7 @@ function _zero_cost_term(cost::PowerSystems.OperationalCost)
     return all(f -> _zero_cost_term(getfield(cost, f)), fieldnames(typeof(cost)))
 end
 
-@testset "NEMDE network builds generators with zero operation costs" begin
+@testset "Stock regional network builds generators with zero operation costs" begin
     AEM = AustralianElectricityMarkets
     hive = mktempdir()
     create_mock_data(hive; complete_inputs = true)

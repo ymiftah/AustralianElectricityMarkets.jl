@@ -53,8 +53,8 @@ end
 Stores `curves`, an energy offer curve per interval in MW and \$/MWh, on `device` as the series
 `energy_offer` (suffixed `_decremental` for the `LOAD` side), replacing a series of that name
 already on it. A call on a device whose operation cost is a [`NEMOfferCost`](@ref) also records the
-series, with the device's `MAXAVAIL` series for `side` ([`energy_max_avail_series_name`](@ref)), as its energy bid for `side`; a
-repeat call replaces that bid. Other devices keep their operation cost.
+series, with the device's `MAXAVAIL` series for `side` ([`energy_max_avail_series_name`](@ref)), as
+its energy bid for `side`; a repeat call replaces that bid. Other devices keep their operation cost.
 
 # Arguments
 - `sys`: the `System` holding `device`.

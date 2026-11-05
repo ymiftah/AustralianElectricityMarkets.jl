@@ -68,7 +68,7 @@ end
 """
     NEMOfferCost(; energy, fcas, fixed_load, fixed_load_invoked)
 
-The operation cost of a NEM unit: the keys of its offer series, in place of a `MarketBidCost`.
+The operation cost of a NEM unit: the keys of its offer series, as a reference to the series that carry its energy and FCAS offers.
 `NEMOfferCost()` is the offer of a unit that bids nothing.
 
 # Fields

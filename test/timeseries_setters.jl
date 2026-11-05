@@ -161,6 +161,10 @@
         set_energy_offer!(sys, stock, OfferSide.GEN, single("anything", curve(20.0)))
         @test get_time_series_values(SingleTimeSeries, stock, "energy_offer") == fill(curve(20.0), 2)
         @test_throws ArgumentError set_energy_offer!(sys, stock, OfferSide.GEN, single("flat", 1.0))
+        # A bidding device must carry a NEMOfferCost.
+        @test_throws r"bidding devices must be NEM device types" AustralianElectricityMarkets._write_energy_bid!(
+            sys, stock, nothing, OfferSide.GEN, start, Minute(5),
+        )
         # A device that is not a NEM type has no offer view.
         @test isnothing(get_energy_offer(stock, OfferSide.GEN))
         @test isnothing(get_energy_offer(stock, OfferSide.LOAD))

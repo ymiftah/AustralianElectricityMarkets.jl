@@ -216,6 +216,12 @@ end
 # Writes `curves`, in MW, as `device`'s offer for its FCASService of `bid_type`; nothing when there are none.
 function _write_fcas_service_bid!(sys, device, bid_type::BidType, decremental::Bool, curves, start_date, resolution)
     (isnothing(curves) || isempty(_fcas_services(device, bid_type))) && return
+    get_operation_cost(device) isa NEMOfferCost || throw(
+        ArgumentError(
+            "set_fcas_service_bids!: $(get_name(device)) has a $(typeof(get_operation_cost(device))) operation cost; " *
+                "bidding devices must be NEM device types with a NEMOfferCost",
+        ),
+    )
     ts = single_series(fcas_series_name("fcas_offer", bid_type, decremental), start_date, curves, resolution)
     set_fcas_offer!(sys, device, bid_type, offer_side(decremental), ts)
     return

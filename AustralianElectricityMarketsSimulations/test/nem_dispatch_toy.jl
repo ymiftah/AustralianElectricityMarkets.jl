@@ -687,6 +687,23 @@ end
     @test occursin("tie-break: 1 unit(s) carry tie-break scales but have no energy offer band variables in the model: $TOY_BATTERY.", log)
 end
 
+@testset "an energy offer series without a recorded bid fails the tie-break build by name" begin
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(100.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        100.0,
+    )
+    PSY.set_operation_cost!(PSY.get_component(NEMThermalGen, sys, TOY_CHEAP), NEMOfferCost())
+    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+    set_nem_dispatch_models!(template, sys)
+    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+    status, log = _toy_build_log(toy_model(sys; template))
+    @test status == PSI.ModelBuildStatus.FAILED
+    @test occursin("tie-break: $TOY_CHEAP has an energy offer series but no recorded NEMEnergyBid", log)
+end
+
 @testset "empty bands priced alike do not form tie groups" begin
     # Both units hold a zero-width top band at the same price; only their first bands are tied.
     sys = nem_toy_system(

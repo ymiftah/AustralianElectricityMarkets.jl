@@ -38,6 +38,9 @@ function _tie_break_bands(container::PSI.OptimizationContainer, sys::PSY.System)
         for (name, cells) in by_device
             device = PSY.get_component(T, sys, name)
             region = PSY.get_name(PSY.get_area(PSY.get_bus(device)))
+            haskey(active, (decremental, name)) || throw(
+                ArgumentError("tie-break: $name has an energy offer series but no recorded NEMEnergyBid on its side"),
+            )
             curves = _tie_break_curves(container, device, decremental)
             for (band, t, var) in cells
                 prices = PSY.get_y_coords(curves[t])
