@@ -39,10 +39,10 @@ A `String` SQL fragment.
 function read_hive(db::AEMDB, table_name::Symbol, date_range)
     hive_root = _parse_hive_root(db.config)
     months = Dates.firstdayofmonth(Date(first(date_range)) - Day(1)):Month(1):Dates.firstdayofmonth(Date(last(date_range)) + Day(1))
-    wanted = Set("archive_month=$m" for m in months)
+    wanted = Set(Dates.format(m, "yyyy-mm") for m in months)
     files = String[
         f for f in DataFrame(DuckDB.execute(db.db, "SELECT file FROM glob('$hive_root/$table_name/**/*.parquet')")).file
-            if basename(dirname(f)) in wanted
+            if (m = match(r"^archive_month=(\d{4}-\d{2})", basename(dirname(f)))) !== nothing && m.captures[1] in wanted
     ]
     isempty(files) && return read_hive(db, table_name)
     list = join(("'$f'" for f in sort!(files)), ", ")
