@@ -74,9 +74,9 @@ const _TieOffers = @NamedTuple{
 }
 
 
-# Whether `device` is priced on a `MarketBidCost`.
+# Whether `device` carries an energy offer series on either side.
 function _has_market_bid(device::PSY.Component)
-    return hasmethod(PSY.get_operation_cost, Tuple{typeof(device)}) && PSY.get_operation_cost(device) isa PSY.MarketBidCost
+    return any(side -> PSY.has_time_series(device, PSY.SingleTimeSeries, energy_offer_series_name(side)), (OfferSide.GEN, OfferSide.LOAD))
 end
 
 
@@ -85,9 +85,7 @@ end
 
 Every available component's energy offer curves, grouped by (direction, region):
 `(decremental, region) => (stamps, resolution, offers)`, `offers` holding one `(device, curves)` per unit, the
-`PiecewiseStepData` curves (natural units) on `stamps`. A unit with a fixed curve repeats it over the
-`stamps` of its region's time-varying curves, or of another region's, and is left out when no unit has a
-time-varying curve in that direction. Throws an `ArgumentError` when two time-varying curves of a group
+`PiecewiseStepData` curves (natural units) on `stamps`. Throws an `ArgumentError` when two curves of a group
 are on different timestamps.
 
 # Returns
@@ -95,17 +93,12 @@ are on different timestamps.
 """
 function _tie_break_offers(sys::PSY.System)
     offers = Dict{Tuple{Bool, String}, _TieOffers}()
-    fixed = Tuple{Bool, String, PSY.Component, PSY.PiecewiseStepData}[]
     for device in PSY.get_available_components(PSY.StaticInjection, sys)
         region = PSY.get_name(PSY.get_area(PSY.get_bus(device)))
         for side in (OfferSide.GEN, OfferSide.LOAD)
             offer = get_energy_offer(device, side)
             isnothing(offer) && continue
             decremental = side == OfferSide.LOAD
-            if isnothing(offer.timestamps)
-                push!(fixed, (decremental, region, device, only(offer.curves)))
-                continue
-            end
             entry = get!(() -> _TieOffers((offer.timestamps, offer.resolution, [])), offers, (decremental, region))
             entry.stamps == offer.timestamps || throw(
                 ArgumentError(
@@ -115,16 +108,6 @@ function _tie_break_offers(sys::PSY.System)
             )
             push!(entry.offers, (device, offer.curves))
         end
-    end
-    for (decremental, region, device, curve) in fixed
-        grid = get(offers, (decremental, region), nothing)
-        if isnothing(grid)
-            donors = sort!([k for k in keys(offers) if first(k) == decremental])
-            isempty(donors) && continue
-            grid = offers[first(donors)]
-        end
-        entry = get!(() -> _TieOffers((grid.stamps, grid.resolution, [])), offers, (decremental, region))
-        push!(entry.offers, (device, fill(curve, length(grid.stamps))))
     end
     return offers
 end

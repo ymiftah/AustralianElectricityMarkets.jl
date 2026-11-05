@@ -1,19 +1,19 @@
 """
     NEMEnergyOffer
 
-One side of a unit's energy offer, as attached by [`set_market_bids!`](@ref): its price-band curves
-over the offer's timestamps, or a single fixed curve.
+One side of a unit's energy offer, as attached by [`set_energy_offer!`](@ref): its price-band curves
+over the offer's timestamps.
 
 # Fields
 - `side::OfferSide`: the offer side.
-- `timestamps::Union{Nothing, Vector{DateTime}}`: one per curve; `nothing` for a fixed curve.
-- `resolution::Union{Nothing, Dates.Period}`: the spacing of `timestamps`; `nothing` for a fixed curve.
-- `curves::Vector{PiecewiseStepData}`: the offer curves, as stored on the operation cost.
+- `timestamps::Vector{DateTime}`: one per curve.
+- `resolution::Dates.Period`: the spacing of `timestamps`.
+- `curves::Vector{PiecewiseStepData}`: the offer curves.
 """
 struct NEMEnergyOffer
     side::OfferSide
-    timestamps::Union{Nothing, Vector{DateTime}}
-    resolution::Union{Nothing, Dates.Period}
+    timestamps::Vector{DateTime}
+    resolution::Dates.Period
     curves::Vector{PiecewiseStepData}
 end
 
@@ -21,24 +21,21 @@ end
 """
     get_energy_offer(device, side::OfferSide) -> Union{Nothing, NEMEnergyOffer}
 
-`device`'s energy offer on `side` from its `MarketBidCost`: the incremental curves for `GEN` and
-the decremental curves for `LOAD`.
+`device`'s energy offer on `side`, read from its [`energy_offer_series_name`](@ref) series.
+
+# Arguments
+- `device`: the bidding device.
+- `side`: the [`OfferSide`](@ref) to read.
 
 # Returns
-A [`NEMEnergyOffer`](@ref), or `nothing` when `device` has no `MarketBidCost` or no curves on `side`.
+A [`NEMEnergyOffer`](@ref), or `nothing` when `device` has no energy offer series on `side`.
 """
 function get_energy_offer(device, side::OfferSide)
-    hasmethod(get_operation_cost, Tuple{typeof(device)}) || return nothing
-    cost = get_operation_cost(device)
-    cost isa MarketBidCost || return nothing
-    key = side == OfferSide.GEN ? get_incremental_offer_curves(cost) : get_decremental_offer_curves(cost)
-    if key isa IS.TimeSeriesKey
-        ts = get_time_series(SingleTimeSeries, device, IS.get_name(key))
-        series = get_time_series_array(device, ts)
-        return NEMEnergyOffer(side, timestamp(series), IS.get_resolution(ts), collect(values(series)))
-    end
-    key isa CostCurve || return nothing
-    return NEMEnergyOffer(side, nothing, nothing, [get_function_data(get_value_curve(key))])
+    name = energy_offer_series_name(side)
+    has_time_series(device, SingleTimeSeries, name) || return nothing
+    ts = get_time_series(SingleTimeSeries, device, name)
+    series = get_time_series_array(device, ts)
+    return NEMEnergyOffer(side, timestamp(series), IS.get_resolution(ts), collect(values(series)))
 end
 
 

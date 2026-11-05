@@ -56,6 +56,7 @@
             set_operation_cost!(gen, MarketBidCost(; no_load_cost = 0.5, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.25))
             series = AustralianElectricityMarkets.single_series("variable_cost", start, fill(curve, 2), Minute(5))
             set_incremental_variable_cost!(sys, gen, series, UnitSystem.NATURAL_UNITS)
+            set_energy_offer!(sys, gen, OfferSide.GEN, AustralianElectricityMarkets.single_series("energy_offer", start, fill(curve, 2), Minute(5)))
         end
 
         set_tie_break_scales!(sys)

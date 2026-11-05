@@ -138,6 +138,90 @@
         end
     end
 
+    @testset "set_energy_offer! names, validates and replaces" begin
+        sys = System(100.0)
+        bus = ACBus(;
+            number = 1, name = "bus", available = true, bustype = ACBusTypes.REF, angle = 0.0,
+            magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1), base_voltage = 230.0,
+        )
+        add_component!(sys, bus)
+        start = DateTime(2025, 1, 1)
+        single(name, v) = AustralianElectricityMarkets.single_series(name, start, fill(v, 2), Minute(5))
+        curve(p) = PiecewiseStepData([0.0, 5.0], [p])
+        @test energy_offer_series_name(OfferSide.GEN) == "energy_offer"
+        @test energy_offer_series_name(OfferSide.LOAD) == "energy_offer_decremental"
+
+        # A stock-cost device keeps its operation cost.
+        stock = ThermalStandard(;
+            name = "stock", available = true, status = true, bus, active_power = 0.0, reactive_power = 0.0, rating = 1.0,
+            active_power_limits = (min = 0.0, max = 1.0), reactive_power_limits = nothing, ramp_limits = nothing,
+            operation_cost = ThermalGenerationCost(; variable = CostCurve(LinearCurve(0.0)), fixed = 0.0, start_up = 0.0, shut_down = 0.0),
+            base_power = 100.0, time_limits = nothing, must_run = false, prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL,
+        )
+        add_component!(sys, stock)
+        cost = get_operation_cost(stock)
+        set_energy_offer!(sys, stock, OfferSide.GEN, single("anything", curve(10.0)))
+        @test get_time_series_values(SingleTimeSeries, stock, "energy_offer") == fill(curve(10.0), 2)
+        @test get_operation_cost(stock) === cost
+        set_energy_offer!(sys, stock, OfferSide.GEN, single("anything", curve(20.0)))
+        @test get_time_series_values(SingleTimeSeries, stock, "energy_offer") == fill(curve(20.0), 2)
+        @test_throws ArgumentError set_energy_offer!(sys, stock, OfferSide.GEN, single("flat", 1.0))
+        offer = get_energy_offer(stock, OfferSide.GEN)
+        @test offer.curves == fill(curve(20.0), 2) && offer.timestamps == [start, start + Minute(5)]
+        @test isnothing(get_energy_offer(stock, OfferSide.LOAD))
+
+        # A NEMOfferCost records the bid, which needs the max_avail series.
+        gen = NEMThermalGen(;
+            name = "g", available = true, status = true, bus, active_power = 50.0, reactive_power = 0.0, rating = 120.0,
+            active_power_limits = (min = 10.0, max = 100.0), reactive_power_limits = (min = -5.0, max = 5.0),
+            ramp_limits = (up = 2.0, down = 3.0), base_power = 100.0, time_limits = (up = 1.0, down = 2.0),
+            prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL, operation_cost = NEMOfferCost(),
+        )
+        add_component!(sys, gen)
+        @test_throws ArgumentError set_energy_offer!(sys, gen, OfferSide.GEN, single("o", curve(10.0)))
+        @test !has_time_series(gen, SingleTimeSeries, "energy_offer")
+        add_time_series!(sys, gen, single("energy_max_avail", 0.5))
+        set_energy_offer!(sys, gen, OfferSide.GEN, single("o", curve(10.0)))
+        bids = AustralianElectricityMarkets.get_energy_bids(get_operation_cost(gen))
+        @test length(bids) == 1
+        @test bids[1].side == OfferSide.GEN
+        @test bids[1].curves.name == "energy_offer" && bids[1].max_avail.name == "energy_max_avail"
+        set_energy_offer!(sys, gen, OfferSide.GEN, single("o", curve(30.0)))
+        @test length(AustralianElectricityMarkets.get_energy_bids(get_operation_cost(gen))) == 1
+        @test get_time_series_values(SingleTimeSeries, gen, "energy_offer") == fill(curve(30.0), 2)
+    end
+
+    @testset "set_market_bids! writes energy_offer series with referred prices" begin
+        sys = deepcopy(sys_base)
+        start_date = DateTime(2025, 1, 1, 0, 0)
+        date_range = start_date:Minute(5):(start_date + Hour(1))
+        set_market_bids!(sys, db, date_range)
+        gen = first(get_components(ThermalStandard, sys))
+        for (device, side, name) in (
+                (gen, OfferSide.GEN, "variable_cost"),
+                (first(get_components(EnergyReservoirStorage, sys)), OfferSide.GEN, "variable_cost"),
+                (first(get_components(EnergyReservoirStorage, sys)), OfferSide.LOAD, "decremental_variable_cost"),
+            )
+            @test get_time_series_values(SingleTimeSeries, device, energy_offer_series_name(side)) ==
+                get_time_series_values(SingleTimeSeries, device, name)
+        end
+    end
+
+    @testset "set_market_bids! twice replaces the offers" begin
+        sys = deepcopy(sys_base)
+        start_date = DateTime(2025, 1, 1, 0, 0)
+        date_range = start_date:Minute(5):(start_date + Hour(1))
+        set_market_bids!(sys, db, date_range)
+        gen = first(get_components(ThermalStandard, sys))
+        first_values = get_time_series_values(SingleTimeSeries, gen, "energy_offer")
+        # set_market_bids! itself cannot be repeated (variable_cost is a duplicate); its offer write replaces.
+        resolution = Minute(5)
+        ts = AustralianElectricityMarkets.single_series("energy_offer", start_date, first_values, resolution)
+        set_energy_offer!(sys, gen, OfferSide.GEN, ts)
+        @test get_time_series_values(SingleTimeSeries, gen, "energy_offer") == first_values
+        @test count(k -> k.name == "energy_offer", get_time_series_keys(gen)) == 1
+    end
+
     @testset "Absolute value correctness (regression: 100x demand/hydro scaling bug)" begin
         sys = deepcopy(sys_base)
         set_units_base_system!(sys, "NATURAL_UNITS")

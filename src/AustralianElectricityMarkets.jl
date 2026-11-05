@@ -17,7 +17,7 @@ export NetworkConfiguration, table_requirements, nem_system
 export RegionalNetworkConfiguration, NEMDEConfiguration
 export set_mnsp_offers!, set_demand!, set_market_bids!, add_nem_constraints!, set_regional_availability!
 export get_storage_energy_max_avail
-export set_fcas_bids!, set_fcas_offer!, set_fcas_service_bids!, set_fcas_scaling_inputs!, set_fcas_effective_offers!
+export set_fcas_bids!, set_fcas_offer!, set_energy_offer!, set_fcas_service_bids!, set_fcas_scaling_inputs!, set_fcas_effective_offers!
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW
 export set_nem_dispatch_limits!, set_interconnector_flow_limits!, set_loss_demand_coefficients!
 export get_initial_mw, get_energy_availability
@@ -41,7 +41,7 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
     get_limit_type, get_source,
     get_terms, get_fcas_requirements, resolve_term_devices
 export FCASService, add_fcas_services!, Readers
-export OfferSide, offer_side, side_suffix, NEM_SERIES, energy_max_avail_series_name
+export OfferSide, offer_side, side_suffix, NEM_SERIES, energy_offer_series_name, energy_max_avail_series_name
 export NEMEnergyOffer, get_energy_offer, NEMFCASOffer, get_fcas_offer
 export NEMOfferCost, NEMEnergyBid, NEMFCASBid, get_energy_bids, get_fcas_bids, get_fixed_load, get_fixed_load_invoked
 export NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMStorage, NEMLoad

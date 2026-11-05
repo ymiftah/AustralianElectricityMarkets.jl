@@ -873,39 +873,6 @@ end
     end
 end
 
-@testset "tied fixed-curve units with no time-varying curve in their direction fail the build" begin
-    fixed(sys, stamps) = for name in (TOY_CHEAP, TOY_EXPENSIVE)
-        gen = PSY.get_component(PSY.ThermalStandard, sys, name)
-        PSY.set_operation_cost!(
-            gen,
-            PSY.MarketBidCost(;
-                no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0,
-                incremental_offer_curves = PSY.CostCurve(PSY.PiecewiseIncrementalCurve(0.0, [0.0, 50.0], [20.0])),
-            ),
-        )
-    end
-    sys = nem_toy_system(
-        [
-            TOY_CHEAP => toy_unit(100.0, [(50.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
-            TOY_EXPENSIVE => toy_unit(100.0, [(50.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
-        ],
-        50.0;
-        mutate! = fixed,
-    )
-    template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
-    set_nem_dispatch_models!(template, sys)
-    PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
-    model = toy_model(sys; template)
-    status, log = _toy_build_log(model)
-    @test status == PSI.ModelBuildStatus.FAILED
-    @test occursin(
-        "tie-break: 2 unit(s) with fixed offer curves have price-tied bands in a direction where no unit has a " *
-            "time-varying offer curve, so set_tie_break_scales! cannot scale them: Alta, Park City.",
-        log,
-    )
-    @test !occursin("Call set_tie_break_scales!(sys)", log)
-end
-
 @testset "duals requested on the tie-break service model fail the build" begin
     sys = nem_toy_system(
         [

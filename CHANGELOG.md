@@ -409,6 +409,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Energy offer curves are also stored as plain device series named `energy_offer` (suffixed
+  `_decremental` for the load side) by the new exported `set_energy_offer!`, which `set_market_bids!`
+  calls; `energy_offer_series_name` returns the name. `get_energy_offer` reads this series, so
+  `NEMEnergyOffer.timestamps` and `resolution` are always set, and `EnergyTieBreak` contributors are
+  the units carrying an energy offer series.
+
 - FCAS offer curves are stored as plain device series named `fcas_offer_<market>` (suffixed
   `_decremental` for the load side) by the new exported `set_fcas_offer!`, not as `MarketBidCost`
   service bids. FCAS-only units keep their operation cost, and `fcas_offer_series_name` returns the

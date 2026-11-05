@@ -107,6 +107,7 @@ function _set_incremental_bid_cost!(sys, gen, gen_bids, start_date, resolution)
     psd = copy(gen_bids.piecewise_step_data)
     time_series_data = single_series("variable_cost", start_date, psd, resolution)
     set_incremental_variable_cost!(sys, gen, time_series_data, UnitSystem.NATURAL_UNITS)
+    set_energy_offer!(sys, gen, OfferSide.GEN, single_series("energy_offer", start_date, copy(psd), resolution))
     time_series_incremental_initial_input = single_series("incremental_initial_input", start_date, zeros(size(psd)), resolution)
     set_incremental_initial_input!(sys, gen, time_series_incremental_initial_input)
     return
@@ -137,6 +138,7 @@ function _set_decremental_bid_cost!(sys, device, load_bids, start_date, resoluti
     psd = copy(load_bids.piecewise_step_data)
     time_series_data = single_series("decremental_variable_cost", start_date, psd, resolution)
     set_decremental_variable_cost!(sys, device, time_series_data, UnitSystem.NATURAL_UNITS)
+    set_energy_offer!(sys, device, OfferSide.LOAD, single_series("energy_offer_decremental", start_date, copy(psd), resolution))
     time_series_decremental_initial_input = single_series("decremental_initial_input", start_date, (first ∘ get_y_coords).(psd), resolution)
     set_decremental_initial_input!(sys, device, time_series_decremental_initial_input)
     return

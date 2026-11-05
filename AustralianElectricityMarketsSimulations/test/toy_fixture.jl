@@ -162,6 +162,12 @@ function nem_toy_system(
             "decremental_variable_cost", start, fill(load_offer, length(stamps)), TOY_RESOLUTION,
         )
         PSY.set_decremental_variable_cost!(sys, battery, decr, PSY.UnitSystem.NATURAL_UNITS)
+        AustralianElectricityMarkets.set_energy_offer!(
+            sys, battery, AustralianElectricityMarkets.OfferSide.LOAD,
+            AustralianElectricityMarkets.single_series(
+                "energy_offer_decremental", start, fill(load_offer, length(stamps)), TOY_RESOLUTION,
+            ),
+        )
         decr_init = AustralianElectricityMarkets.single_series(
             "decremental_initial_input", start, fill(0.0, length(stamps)), TOY_RESOLUTION,
         )

@@ -45,3 +45,40 @@ function set_fcas_offer!(sys, device::PSY.StaticInjection, service::BidType, sid
     end
     return
 end
+
+
+"""
+    set_energy_offer!(sys, device, side, curves) -> Nothing
+
+Stores `curves`, an energy offer curve per interval in MW and \$/MWh, on `device` as the series
+`energy_offer` (suffixed `_decremental` for the `LOAD` side), replacing a series of that name
+already on it. A call on a device whose operation cost is a [`NEMOfferCost`](@ref) also records the
+series, with the device's `energy_max_avail` series for `side`, as its energy bid for `side`; a
+repeat call replaces that bid. Other devices keep their operation cost.
+
+# Arguments
+- `sys`: the `System` holding `device`.
+- `device`: the bidding device.
+- `side`: the [`OfferSide`](@ref) of the offer.
+- `curves`: a `SingleTimeSeries` of `PiecewiseStepData`; its name is replaced.
+
+# Returns
+`nothing`.
+"""
+function set_energy_offer!(sys, device::PSY.StaticInjection, side::OfferSide, curves::SingleTimeSeries)
+    eltype(values(IS.get_data(curves))) <: PiecewiseStepData || throw(
+        ArgumentError("Energy offer curves must be a SingleTimeSeries of PiecewiseStepData."),
+    )
+    name = energy_offer_series_name(side)
+    cost = get_operation_cost(device)
+    max_avail = nothing
+    if cost isa NEMOfferCost
+        max_avail = _series_key(device, energy_max_avail_series_name(side))
+    end
+    ts = SingleTimeSeries(; name, data = IS.get_data(curves), resolution = IS.get_resolution(curves))
+    replace_single_series!(sys, device, ts)
+    if cost isa NEMOfferCost
+        _set_energy_bid!(cost, NEMEnergyBid(; side, curves = _series_key(device, name), max_avail))
+    end
+    return
+end

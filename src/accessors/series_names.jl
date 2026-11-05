@@ -43,7 +43,7 @@ Names of the per-device `SingleTimeSeries` the setters attach, by field:
   per-unit.
 - `loss_demand_coefficient`: an interchange's demand term of its loss factor.
 
-Offer-side series are named by [`energy_max_avail_series_name`](@ref) and
+Offer-side series are named by [`energy_offer_series_name`](@ref), [`energy_max_avail_series_name`](@ref) and
 [`fcas_series_name`](@ref); MNSP link series by [`mnsp_series_name`](@ref).
 """
 const NEM_SERIES = (
@@ -60,6 +60,14 @@ const NEM_SERIES = (
     to_from_flow_limit = "to_from_flow_limit",
     loss_demand_coefficient = "loss_demand_coefficient",
 )
+
+
+"""
+    energy_offer_series_name(side::OfferSide) -> String
+
+Name of the series holding a device's energy offer curves on `side`.
+"""
+energy_offer_series_name(side::OfferSide) = "energy_offer" * side_suffix(side)
 
 
 """
