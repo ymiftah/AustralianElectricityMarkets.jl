@@ -4,13 +4,11 @@ function _tie_break_meta(band::Int, decremental::Bool)
 end
 
 
-# A device's offer curves (`PiecewiseStepData`, natural units) over the container's time steps.
+# A device's energy offer curves (`PiecewiseStepData`, natural units) over the container's time steps.
 function _tie_break_curves(container::PSI.OptimizationContainer, device::PSY.Component, decremental::Bool)
-    curves = PSI.get_offer_curves_maybe_decremental(Val(decremental), device)
-    PSI.is_time_variant(curves) || return fill(PSY.get_function_data(PSY.get_value_curve(curves)), length(PSI.get_time_steps(container)))
     settings = PSI.get_settings(container)
     return PSI.get_time_series_initial_values!(
-        container, PSI.get_default_time_series_type(container), device, IS.get_name(curves);
+        container, PSI.get_default_time_series_type(container), device, energy_offer_series_name(offer_side(decremental));
         interval = PSI.get_interval(settings), resolution = PSI.get_resolution(settings),
     )
 end
@@ -19,11 +17,9 @@ end
 """
     _tie_break_bands(container, sys) -> (groups, active)
 
-The bands of every PSI market-bid block variable in `container`, grouped by `(decremental, region,
-t)`, and the `_tie_break_active_bands` they were filtered on. Segments PSI pads beyond a
-unit's offer curve and segments empty throughout the offer series are left out. A unit absent from
-the offer series, a fixed curve in a direction where no unit has a time-varying one, keeps all its
-bands.
+The bands of every [`EnergyOfferBandVariable`](@ref) in `container`, grouped by `(decremental, region,
+t)`, and the `_tie_break_active_bands` they were filtered on. Bands beyond a unit's offer curve at
+an interval and bands empty throughout the unit's offer series are left out.
 
 # Returns
 `(groups::Dict{Tuple{Bool, String, Int}, Vector{_TieBand}}, active::Dict{Tuple{Bool, String}, Set{Int}})`.
@@ -32,13 +28,12 @@ function _tie_break_bands(container::PSI.OptimizationContainer, sys::PSY.System)
     active = _tie_break_active_bands(_tie_break_offers(sys))
     groups = Dict{Tuple{Bool, String, Int}, Vector{_TieBand}}()
     for (key, variables) in PSI.get_variables(container)
-        entry = PSI.IS.Optimization.get_entry_type(key)
-        decremental = entry === PSI.PiecewiseLinearBlockDecrementalOffer
-        (decremental || entry === PSI.PiecewiseLinearBlockIncrementalOffer) || continue
+        PSI.IS.Optimization.get_entry_type(key) === EnergyOfferBandVariable || continue
+        decremental = key.meta == _energy_offer_meta(OfferSide.LOAD)
         T = PSI.IS.Optimization.get_component_type(key)
         by_device = Dict{String, Vector{Tuple{Int, Int, JuMP.VariableRef}}}()
-        for ((name, band, t), var) in pairs(variables.data)
-            push!(get!(by_device, name, Tuple{Int, Int, JuMP.VariableRef}[]), (band, t, var))
+        for name in axes(variables, 1), label in axes(variables, 2), t in axes(variables, 3)
+            push!(get!(by_device, name, Tuple{Int, Int, JuMP.VariableRef}[]), (parse(Int, label), t, variables[name, label, t]))
         end
         for (name, cells) in by_device
             device = PSY.get_component(T, sys, name)
@@ -46,7 +41,7 @@ function _tie_break_bands(container::PSI.OptimizationContainer, sys::PSY.System)
             curves = _tie_break_curves(container, device, decremental)
             for (band, t, var) in cells
                 prices = PSY.get_y_coords(curves[t])
-                band <= length(prices) && (!haskey(active, (decremental, name)) || band in active[(decremental, name)]) || continue
+                band <= length(prices) && band in active[(decremental, name)] || continue
                 push!(get!(groups, (decremental, region, t), _TieBand[]), (; price = prices[band], var, name, band, type = T))
             end
         end
@@ -95,11 +90,10 @@ end
 # Throws unless every price-tied band carries its scale series and every contributor of `service`
 # carrying a scale series is modelled, or excluded by its device model's `"filter_function"`.
 function _check_tie_break_series(
-        container::PSI.OptimizationContainer, sys::PSY.System, groups, active, service::EnergyTieBreak, devices_template,
+        container::PSI.OptimizationContainer, sys::PSY.System, groups, service::EnergyTieBreak, devices_template,
     )
     ts_type = PSI.get_default_time_series_type(container)
     missing_series = Set{String}()
-    fixed_only = Set{String}()
     modeled = Set{Tuple{DataType, String}}()
     for ((decremental, _, _), bands) in groups
         foreach(b -> push!(modeled, (b.type, b.name)), bands)
@@ -107,17 +101,9 @@ function _check_tie_break_series(
             b = bands[i]
             PSY.has_time_series(PSY.get_component(b.type, sys, b.name), ts_type, tie_break_series_name(b.band, decremental)) &&
                 continue
-            push!(haskey(active, (decremental, b.name)) ? missing_series : fixed_only, b.name)
+            push!(missing_series, b.name)
         end
     end
-    isempty(fixed_only) || throw(
-        ArgumentError(
-            "tie-break: $(length(fixed_only)) unit(s) with fixed offer curves have price-tied bands in a direction where " *
-                "no unit has a time-varying offer curve, so set_tie_break_scales! cannot scale them: " *
-                "$(join(sort!(collect(fixed_only)), ", ")). Give them time-varying offer curves (set_market_bids!), or " *
-                "build without the tie-break service model (set_nem_dispatch_models!(...; tie_breaks = false)).",
-        ),
-    )
     isempty(missing_series) || throw(
         ArgumentError(
             "tie-break: $(length(missing_series)) unit(s) with price-tied bands carry no tie-break scale forecast: " *
@@ -134,7 +120,7 @@ function _check_tie_break_series(
     end
     isempty(unmodeled) || throw(
         ArgumentError(
-            "tie-break: $(length(unmodeled)) unit(s) carry tie-break scales but have no market-bid variables in the model: " *
+            "tie-break: $(length(unmodeled)) unit(s) carry tie-break scales but have no energy offer band variables in the model: " *
                 "$(join(sort!(unmodeled), ", ")). Their bands set the widest band of a tie group; model them or leave " *
                 "the EnergyTieBreak service model out of the template.",
         ),
@@ -162,8 +148,7 @@ end
 """
     PSI.construct_service!(container, sys, ::PSI.ArgumentConstructStage, model::PSI.ServiceModel{EnergyTieBreak, TieBreakMarket}, devices_template, incompatible_device_types, network_model)
 
-Argument stage for [`TieBreakMarket`](@ref): adds nothing, as the rows read the market-bid block
-variables that the device models create at their model stage. Throws an `ArgumentError` when
+Argument stage for [`TieBreakMarket`](@ref): adds nothing, as the rows read the [`EnergyOfferBandVariable`](@ref)s that the device models create at their model stage. Throws an `ArgumentError` when
 `model` requests duals, which [`TieBreakMarket`](@ref) does not register.
 
 # Returns
@@ -194,7 +179,7 @@ end
 
 Model stage for [`TieBreakMarket`](@ref): adds one [`TieBreakConstraint`](@ref) row
 `s_b x_a - s_a x_b + up - down = 0` per pair of bands of different units in a price-tied group, the
-market-bid block bands of one region, direction and time step whose prices at the reference node
+energy offer bands of one region, direction and time step whose prices at the reference node
 are within [`TIE_BREAK_CVP_FACTOR`](@ref) of one another. `x` is a band's cleared MW and `s` its
 [`TieBreakScaleParameter`](@ref); the [`TieBreakSlackUp`](@ref) and [`TieBreakSlackDown`](@ref)
 slacks, in system-base per-unit MW, are priced at [`TIE_BREAK_CVP_FACTOR`](@ref) `\$/MWh`. FCAS
@@ -219,8 +204,8 @@ function PSI.construct_service!(
     name = PSI.get_service_name(model)
     service = PSY.get_component(EnergyTieBreak, sys, name)
     PSY.get_available(service) || return
-    groups, active = _tie_break_bands(container, sys)
-    _check_tie_break_series(container, sys, groups, active, service, devices_template)
+    groups, _ = _tie_break_bands(container, sys)
+    _check_tie_break_series(container, sys, groups, service, devices_template)
 
     rows = Tuple{String, Int, Int, Bool, _TieBand, _TieBand}[]
     for (decremental, region, t) in sort!(collect(keys(groups)))

@@ -684,42 +684,7 @@ end
     model = toy_model(mixed; template)
     status, log = _toy_build_log(model)
     @test status == PSI.ModelBuildStatus.FAILED
-    @test occursin("tie-break: 1 unit(s) carry tie-break scales but have no market-bid variables in the model: $TOY_BATTERY.", log)
-end
-
-@testset "a fixed-curve unit ties with time-varying units" begin
-    third = "Solitude"
-    # Replaces the expensive unit's time-varying offer with a fixed curve of the same band.
-    function fix_offer!(sys, _)
-        gen = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
-        PSY.remove_time_series!(sys, PSY.SingleTimeSeries, gen, "variable_cost")
-        PSY.remove_time_series!(sys, PSY.SingleTimeSeries, gen, "incremental_initial_input")
-        PSY.set_operation_cost!(
-            gen,
-            PSY.MarketBidCost(;
-                no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0,
-                incremental_offer_curves = PSY.CostCurve(PSY.PiecewiseIncrementalCurve(0.0, [0.0, 46.0], [10.0])),
-            ),
-        )
-        return
-    end
-    sys = nem_toy_system(
-        [
-            TOY_CHEAP => toy_unit(168.0, [(168.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
-            TOY_EXPENSIVE => toy_unit(46.0, [(46.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
-            third => toy_unit(122.0, [(122.0, 10.0)]; initial = 0.0, ramp_up = 100.0),
-        ],
-        168.0;
-        mutate! = fix_offer!,
-    )
-    gen = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
-    @test PSY.get_time_series_values(PSY.SingleTimeSeries, gen, "tie_break_scale_1") ≈ fill(46.0 / 168.0, 2)
-
-    out = solve_toy(sys)
-    @test out.dispatch_mw[TOY_CHEAP] ≈ 84.0 atol = 1.0e-5
-    @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 23.0 atol = 1.0e-5
-    @test out.dispatch_mw[third] ≈ 61.0 atol = 1.0e-5
-    @test out.price ≈ 10.0 atol = TOY_TOLERANCE
+    @test occursin("tie-break: 1 unit(s) carry tie-break scales but have no energy offer band variables in the model: $TOY_BATTERY.", log)
 end
 
 @testset "empty bands priced alike do not form tie groups" begin
