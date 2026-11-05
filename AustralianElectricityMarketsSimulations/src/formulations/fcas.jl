@@ -608,7 +608,7 @@ end
     _fcas_band_labels(offers, svc::FCASService) -> Vector{String}
 
 Band labels `"1"` to `"n"`, `n` the most bands any offer in `offers` has over the whole of its
-offer curve series (the service bid of `svc`, see [`fcas_offer_series_name`](@ref)), at least 1.
+offer curve series (see [`fcas_offer_series_name`](@ref)), at least 1.
 
 # Returns
 `Vector{String}`.

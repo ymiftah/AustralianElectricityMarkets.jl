@@ -91,6 +91,16 @@ end
     end
 end
 
+# Whether every numeric term of an operation cost is zero.
+_zero_cost_term(::Nothing) = true
+_zero_cost_term(x::Real) = iszero(x)
+_zero_cost_term(x::NamedTuple) = all(_zero_cost_term, values(x))
+_zero_cost_term(x::LinearCurve) = iszero(get_proportional_term(x)) && iszero(get_constant_term(x))
+_zero_cost_term(x::CostCurve) = _zero_cost_term(get_value_curve(x)) && _zero_cost_term(get_vom_cost(x))
+function _zero_cost_term(cost::PowerSystems.OperationalCost)
+    return all(f -> _zero_cost_term(getfield(cost, f)), fieldnames(typeof(cost)))
+end
+
 @testset "NEMDE network builds generators with zero operation costs" begin
     AEM = AustralianElectricityMarkets
     hive = mktempdir()
@@ -101,6 +111,12 @@ end
     generators = collect(get_components(Generator, sys))
     @test !isempty(generators)
     @test all(g -> get_operation_cost(g) isa Union{RenewableGenerationCost, HydroGenerationCost, ThermalGenerationCost}, generators)
+    @test all(g -> _zero_cost_term(get_operation_cost(g)), generators)
+    others = [
+        d for T in (EnergyReservoirStorage, ControllableLoad) for d in get_components(T, sys)
+    ]
+    @test !isempty(others)
+    @test all(d -> _zero_cost_term(get_operation_cost(d)), others)
 end
 
 @testset "FCAS offers on a zero-cost device without an energy bid" begin

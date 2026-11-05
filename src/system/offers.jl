@@ -26,18 +26,21 @@ the series, with the device's `fcas_trapezium_<service>` series for `side`, as i
 `nothing`.
 """
 function set_fcas_offer!(sys, device::PSY.StaticInjection, service::BidType, side::OfferSide, curves::SingleTimeSeries)
-    first(values(IS.get_data(curves))) isa PiecewiseStepData || throw(
+    eltype(values(IS.get_data(curves))) <: PiecewiseStepData || throw(
         ArgumentError("FCAS offer curves must be a SingleTimeSeries of PiecewiseStepData."),
     )
     isempty(_fcas_services(device, service)) && throw(
         ArgumentError("\"$(get_name(device))\" has no FCASService for $(string(service))."),
     )
     name = fcas_series_name("fcas_offer", service, side)
-    ts = SingleTimeSeries(; name, data = IS.get_data(curves), resolution = IS.get_resolution(curves))
-    replace_single_series!(sys, device, ts)
     cost = get_operation_cost(device)
+    trapezium = nothing
     if cost isa NEMOfferCost
         trapezium = _series_key(device, fcas_series_name("fcas_trapezium", service, side))
+    end
+    ts = SingleTimeSeries(; name, data = IS.get_data(curves), resolution = IS.get_resolution(curves))
+    replace_single_series!(sys, device, ts)
+    if cost isa NEMOfferCost
         _set_fcas_bid!(cost, NEMFCASBid(service, side, _series_key(device, name), trapezium))
     end
     return

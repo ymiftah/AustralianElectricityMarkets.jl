@@ -79,8 +79,7 @@ end
     _energy_market_bid_cost(device) -> MarketBidCost
 
 A `MarketBidCost` with zero no-load and shut-down costs and no energy curves, for `device` to take
-its energy bid. It keeps the FCAS services `device`'s service bids were added under by
-[`set_fcas_bids!`](@ref).
+its energy bid. It keeps the FCAS services already on `device`'s `MarketBidCost`, if it has one.
 """
 function _energy_market_bid_cost(device)
     cost = get_operation_cost(device)

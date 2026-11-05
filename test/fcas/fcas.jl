@@ -352,6 +352,7 @@
         @test_throws ArgumentError set_fcas_offer!(sys, gen, BidType.LOWER6SEC, OfferSide.GEN, single("o", curve))
         # The bid needs the trapezium series it pairs with.
         @test_throws ArgumentError set_fcas_offer!(sys, gen, BidType.RAISE6SEC, OfferSide.GEN, single("o", curve))
+        @test !has_time_series(gen, SingleTimeSeries, "fcas_offer_RAISE6SEC")
         add_time_series!(sys, gen, single("fcas_trapezium_RAISE6SEC", (0.0, 0.0, 1.0, 1.0, 1.0, NaN, NaN)))
         set_fcas_offer!(sys, gen, BidType.RAISE6SEC, OfferSide.GEN, single("o", curve))
         bids = get_fcas_bids(get_operation_cost(gen))
@@ -364,7 +365,7 @@
         @test get_time_series_values(SingleTimeSeries, gen, "fcas_offer_RAISE6SEC") == fill(PiecewiseStepData([0.0, 5.0], [20.0]), 2)
     end
 
-    @testset "an FCAS-only unit keeps its zero cost" begin
+    @testset "set_fcas_service_bids! leaves operation costs unchanged" begin
         sys = nem_system(db, RegionalNetworkConfiguration())
         set_fcas_bids!(sys, db, date_range)
         before = Dict(get_name(d) => get_operation_cost(d) for d in get_components(Device, sys) if hasmethod(get_operation_cost, Tuple{typeof(d)}))
