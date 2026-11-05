@@ -67,15 +67,19 @@ type and ensuring PSI only meets them through AEMSim formulations.
 - The PowerSystems fork pin is dropped. The registered PowerSystems 5.12.4 contains
   Sienna-Platform/PowerSystems.jl#1832, which PSI `81c0259` relies on. The PSI fork (`81c0259`)
   and IS fork pins are unchanged.
+- Series names drive the formulation; `NEMOfferCost` keys drive the accessors and the tie-break
+  membership. The `max_avail` keys are written but the formulation does not read them.
 
 ## Behaviour
 
 Dispatch, energy prices, interconnector flows and the objective match the pre-change baseline on
-the 2026-06-04 window within 1e-6. FCAS prices differ in three duals changed earlier on this
-branch by the FCAS offer rework, and they now match AEMO published prices: TAS1 `RAISEREG` at 04:05
-and SA1 `RAISE6SEC` and `RAISE60SEC` at 04:15. TAS1 `RAISEREG` also flips between 4.72 and 5.72 at
-one interval from capture to capture, a pre-existing degenerate dual. One interval showed
+the 2026-06-04 window within 1e-6. FCAS prices differ in three duals that changed when AEMSim began
+pricing the bands (Task 5), and they now match AEMO published prices: TAS1 `RAISEREG` at 04:05 and
+SA1 `RAISE6SEC` and `RAISE60SEC` at 04:15. TAS1 `RAISEREG` also flips between 4.72 and 5.72 at a
+different single interval in each capture, a pre-existing degenerate dual. One interval showed
 `GPWFWST1` dispatch and `T-V-MNSP1` losses differing by about 1.06e-6 once (solver tolerance).
+
+Replay systems serialize without the PowerSystems fork. There is no new departure from AEMO.
 
 `get_operation_cost(device)` is a `NEMOfferCost` on replay systems, and code that asked for
 `ThermalStandard` and similar now asks for the NEM type or its abstract parent.

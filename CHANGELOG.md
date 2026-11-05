@@ -327,7 +327,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   both a `PSY.Storage` device's generation-side and load-side regulation trapezium; a window
   outside a side's own span leaves that side's scaled trapezium empty (`EnablementMin >
   EnablementMax`), which §5 disables.
-- **`AbstractNEMDispatch`, a uniform device formulation for NEM dispatch participants** (`AustralianElectricityMarketsSimulations`): a per-band bid stack from `MarketBidCost`, a per-interval ramp limit from the `"ramp_up_rate"`/`"ramp_down_rate"` series, and the `DISPATCHLOAD.AVAILABILITY` envelope, replacing the stock `ThermalBasicDispatch`/`RenewableFullDispatch`/`HydroDispatchRunOfRiver` formulations whose commitment binaries, forecast ceiling and energy budget NEMDE does not apply. The formulation is written against `PowerSystems.StaticInjection` and is never gated on a fixed list of device types: NEMDE dispatches on market participation, not technology, so a `ThermalMultiStart` or any other injector a user brings is treated identically. It models one injection variable per device; state of charge for bidirectional units layers on as its own formulation.
+- **`AbstractNEMDispatch`, a uniform device formulation for NEM dispatch participants** (`AustralianElectricityMarketsSimulations`): a per-band bid stack from the energy offer series, a per-interval ramp limit from the `"ramp_up_rate"`/`"ramp_down_rate"` series, and the `DISPATCHLOAD.AVAILABILITY` envelope, replacing the stock `ThermalBasicDispatch`/`RenewableFullDispatch`/`HydroDispatchRunOfRiver` formulations whose commitment binaries, forecast ceiling and energy budget NEMDE does not apply. The formulation is written against `PowerSystems.StaticInjection` and is never gated on a fixed list of device types: NEMDE dispatches on market participation, not technology, so a `ThermalMultiStart` or any other injector a user brings is treated identically. It models one injection variable per device; state of charge for bidirectional units layers on as its own formulation.
 - **`NEMReplayDispatch` and `NEMLookaheadDispatch`**, the two concrete `AbstractNEMDispatch` formulations, differing only in what the ramp constraint measures against: the replay formulation measures every interval against its own metered `INITIALMW`, as NEMDE does, and the lookahead formulation chains each interval from the previous one's dispatch. Both are concrete, so a consumer always names one and the choice is never made by default.
 - **`nem_dispatch_participants` and `set_nem_dispatch_models!`**, which set one formulation across every participant by reading which components carry the dispatch-limit series rather than assuming types, plus the `RampUpRateTimeSeriesParameter`/`RampDownRateTimeSeriesParameter`/`InitialPowerTimeSeriesParameter` parameter types. An `AbstractNEMDispatch` model builds as a pure LP with no `OnVariable`, and a device missing a ramp series or with a ramp-down floor above its availability ceiling is named at build rather than surfacing as a solver `INFEASIBLE`.
 - **`set_nem_dispatch_models!(...; skip_uncovered = true)`**, which excludes uncovered components from the device models behind a warning instead of failing the build. This is the sim-side counterpart to `set_nem_dispatch_limits!(...; allow_missing_ramp_rates = true)`: without it, proceeding with a partial subset in the data layer still could not be built. Participation is now decided by the formulation's full registered series set rather than by probing `"ramp_up_rate"` alone.
@@ -405,6 +405,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or DISPATCHLOAD availability, and for units with no dispatch rows the region's semi-scheduled solar or
   wind UIGF capacity factor (`SS_SOLAR_UIGF`, `SS_WIND_UIGF`).
 
+- `NEMOfferCost`, the operation cost of the NEM device types, records the keys of a device's offer
+  series as `NEMEnergyBid`s (one per `OfferSide`) and `NEMFCASBid`s (one per FCAS market and side).
+  `NEMThermalGen`, `NEMHydroGen`, `NEMRenewableGen`, `NEMStorage` and `NEMLoad` are the device types
+  that carry it.
+
+- `set_energy_offer!(sys, device, side, curves)` and `set_fcas_offer!(sys, device, service, side,
+  curves)` store offer curves as series on a device and record them on its `NEMOfferCost`, and
+  `energy_offer_series_name` names the energy series. AEMSim adds `EnergyOfferBandVariable`,
+  `EnergyBandPriceParameter`, `EnergyBandWidthParameter` and the band constraint they feed.
+
 - `prepare_replay!(sys, template, steps)` prepares a system for a replay over `steps`: it attaches the five-minute forecast windows, runs the replay pre-flight checks and returns the skipped-constraint table.
 
 ### Changed
@@ -412,44 +422,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** replay systems (`nem_system(db, NEMDEConfiguration(); ...)` and `nem_network`) hold the
   NEM device types `NEMThermalGen`, `NEMHydroGen`, `NEMRenewableGen`, `NEMStorage` and `NEMLoad` in
   place of `ThermalStandard`, `HydroDispatch`, `RenewableDispatch`, `EnergyReservoirStorage` and
-  `InterruptiblePowerLoad`, each with a `NEMOfferCost` that records the keys of its offer series.
-  `NEM_DISPATCH_DEVICE_TYPES` lists the five NEM types, and result keys name them (for example
-  `ActivePowerVariable__NEMThermalGen`). `RegionalNetworkConfiguration` systems keep the stock types.
-  Dispatch, prices and the objective are unchanged.
+  `InterruptiblePowerLoad`. `NEM_DISPATCH_DEVICE_TYPES` lists them and result keys name them (for
+  example `ActivePowerVariable__NEMThermalGen`). `RegionalNetworkConfiguration` systems keep the stock
+  types. Dispatch, energy prices, flows and the objective are unchanged. FCAS prices are non-unique at
+  degenerate (tied) intervals, so a replay may return a different but equally optimal FCAS price there.
 
-- `set_market_bids!` stores each energy bid through `set_energy_offer!`, with its `MAXAVAIL` as the
-  `energy_max_avail` series of the side, and keeps one `NEMEnergyBid` per side when called again.
-  `set_fcas_service_bids!` and the fixed-load setter record their series on the `NEMOfferCost` the same way.
+- `set_market_bids!` and `set_fcas_service_bids!` record each device's offers on its `NEMOfferCost`
+  through `set_energy_offer!` and `set_fcas_offer!`, and keep one `NEMEnergyBid` per side when called
+  again. `set_market_bids!` throws an `ArgumentError` for a missing or non-finite `MAXAVAIL`, for every
+  device kind, and both setters throw for a bidding device whose operation cost is not a `NEMOfferCost`.
 
 - `get_energy_offer` and `get_fcas_offer` read through the keys of a device's `NEMOfferCost`; a device
-  that is not a NEM type has no offer (`nothing`).
-
-- A `NEMEnergyBid`'s `max_avail` key names the `MAXAVAIL` series the dispatch formulation reads:
-  `energy_max_avail` for every device but storage, whose sides keep `energy_max_avail` and
-  `energy_max_avail_decremental`. `set_market_bids!` no longer writes `energy_max_avail_decremental`
-  on scheduled loads.
-
-- `check_template_against_sys` throws an `ArgumentError` for a NEM device type modelled with a
-  formulation that is not an `AbstractNEMDispatch`.
+  that is not a NEM type has no offer (`nothing`). `EnergyTieBreak` contributors are the units with a
+  `NEMEnergyBid`.
 
 - AEMSim prices NEM energy offers itself: each `energy_offer` series band becomes an
   `EnergyOfferBandVariable` costed through `EnergyBandPriceParameter` and bounded by
   `EnergyBandWidthParameter`, as FCAS bands are, and the energy tie-break rows bind these variables.
-  Dispatch, prices and the objective are unchanged. Devices without an `energy_offer` series (FCAS-only
-  units) have no energy bands. The `PiecewiseLinearBlock*Offer` variables of the PowerSimulations
-  market-bid path are no longer created. A generator with a `LOAD` energy offer series, a scheduled
-  load with a `GEN` one, or a battery with one side only, fails the build with an `ArgumentError`.
+  The energy offer cost is an objective term only: it no longer reaches `ProductionCostExpression`,
+  and result files no longer carry `ProductionCostExpression__<type>`. Devices without an
+  `energy_offer` series (FCAS-only units) have no energy bands. A generator with a `LOAD` energy offer
+  series, a scheduled load with a `GEN` one, or a battery with one side only, fails the build with an
+  `ArgumentError`.
 
-- Energy offer curves are also stored as plain device series named `energy_offer` (suffixed
-  `_decremental` for the load side) by the new exported `set_energy_offer!`, which `set_market_bids!`
-  calls; `energy_offer_series_name` returns the name. `get_energy_offer` reads this series, so
-  `NEMEnergyOffer.timestamps` and `resolution` are always set, and `EnergyTieBreak` contributors are
-  the units carrying an energy offer series.
-
-- FCAS offer curves are stored as plain device series named `fcas_offer_<market>` (suffixed
-  `_decremental` for the load side) by the new exported `set_fcas_offer!`, not as `MarketBidCost`
-  service bids. FCAS-only units keep their operation cost, and `fcas_offer_series_name` returns the
-  new name.
+- `check_template_against_sys` throws an `ArgumentError` for a NEM device type modelled with a
+  formulation that is not an `AbstractNEMDispatch`.
 
 - `check_fcas_services` and `check_dispatch_envelope` take `(template, sys, ...)`.
 
@@ -480,11 +477,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Price FCAS offer bands and set the FCAS offer parameters through PowerSimulations' native time-series
   parameters: the band prices are time-series cost targets, bit-identical to the former objective terms.
-
-- FCAS offer curves are stored as PowerSystems service bids on each device's `MarketBidCost`
-  (`fcas_offer_series_name`, `fcas_service`) instead of the `"fcas_curve_<BIDTYPE>"` series.
-
-- Pin PowerSystems and PowerSimulations forks that round-trip zero-valued bid costs and accept service-only MarketBidCosts.
 
 - Replay `interval_timings.csv` is read from PSI's native recorder events and optimizer
   statistics after `execute!` instead of wrapping PSI methods. Schema 2 replaces the
@@ -562,8 +554,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - FCAS band prices are read from the container's forecast window, as MNSP band prices and the
   generic-constraint `"invoked"` mask are.
 - Formulation docstrings state which costs reach PowerSimulations' cost expressions: energy offer
-  band costs, violation penalties and FCAS and MNSP band costs are objective terms only, and the NEM
-  dispatch device models no longer build an empty `ProductionCostExpression`.
+  band costs, violation penalties and FCAS and MNSP band costs are objective terms only.
 - **Breaking:** `fcas_bid_direction` returns the new `FCASBidDirection` enum (`NONE`,
   `INCREMENTAL`, `DECREMENTAL`, `BOTH`) instead of a `Symbol`.
 - Bid series names live in one registry: `OfferSide` (`GEN`/`LOAD`), `NEM_SERIES`,
@@ -789,15 +780,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- The PowerSystems fork pin; the packages depend on registered PowerSystems 5.12.4. Replay bids use the NEM device types with `NEMOfferCost`.
+- `MarketBidCost` on NEM systems: no component of a replay system carries one, and the PowerSimulations
+  market-bid overrides of `psi_compat.jl` and the `PiecewiseLinearBlock*Offer` variables are gone.
 
-- `set_market_bids!` no longer writes a `PowerSystems.MarketBidCost` or its `variable_cost`,
-  `decremental_variable_cost` and initial-input series; no component of a NEM system carries a
-  `MarketBidCost`.
-
-- The `psi_compat.jl` overrides of PowerSimulations' market-bid hooks (`_add_pwl_constraint!`, the
-  `_add_variable_cost_to_objective!` and `_add_vom_cost_to_objective!` methods) are removed along
-  with the device `PSI.variable_cost` method and the `process_market_bid_parameters!` calls.
+- The PowerSystems fork pin; the packages depend on registered PowerSystems 5.12.4, and replay systems
+  serialize without the fork.
 
 - The repository scripts `replicate_random_days.jl`, `replay_workflow.jl`, `replay_simulation.jl`, `replay_timing.jl`, `replicate_range.jl`, `diagnose_infeasible.jl` and `interconnector_loss_gaps.jl` are removed. The overnight runner is `scripts/replay_batch.jl` on the AEMSim replay API; `diagnose_infeasible.jl` is replaced by `DecisionModel(...; calculate_conflict = true)`.
 
@@ -887,8 +874,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tie-break scale parameters skip devices excluded by their device model's `filter_function`, so an excluded unit gets no scale row.
 
 - FCAS service bids are stored in MW and converted to per-unit of the system base on read, so
-  the offer values seen by the model are unchanged. Storing a service bid on a device without a
-  `MarketBidCost` now throws an `ArgumentError` instead of silently skipping the device.
+  the offer values seen by the model are unchanged.
 
 - Skip the effective FCAS offers of unavailable devices that carry no stored offer curve, so a
   NEMDE replication whose unpriced units are unavailable no longer fails in `set_fcas_effective_offers!`.
