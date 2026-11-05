@@ -25,7 +25,7 @@ export set_nem_energy_limits!, registration_spans
 export get_skipped_constraints, get_dropped_terms,
     get_missing_constraint_intervals, get_defaulted_constraint_weights
 export fcas_service_name, fcas_service, fcas_offer_series_name
-export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS, BidType
+export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS, NEM_MARKETS, BidType
 export InterconnectorLossModel, interconnector_loss_models, loss_factor, interconnector_losses, loss_segments,
     loss_curve_vertex_values, attach_interconnector_losses!
 export FCASTrapezium,

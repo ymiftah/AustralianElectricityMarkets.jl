@@ -185,6 +185,45 @@ function read_bids(db, date_range; resolution::Union{Nothing, Dates.Period} = no
 end
 
 
+"""
+    read_offers(db, date_range; markets = NEM_MARKETS) -> DataFrame
+
+Reads the latest energy and FCAS offers of `markets` in one query: `BIDPEROFFER_D` period offers
+joined to their `BIDDAYOFFER_D` price bands, at native resolution. Each row is one
+`(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE)` with
+`first(date_range) <= INTERVAL_DATETIME < last(date_range)`.
+
+# Arguments
+- `db`: an `AEMDB` connection.
+- `date_range`: the intervals to read (half-open).
+- `markets`: the `BidType` values to read, default `NEM_MARKETS`.
+
+# Returns
+A `DataFrame` with `SETTLEMENTDATE`, `INTERVAL_DATETIME`, `DUID`, `DIRECTION`, `BIDTYPE` (`BidType`),
+`PRICEBANDARRAY`, `BANDAVAILARRAY`, `MAXAVAIL`, `MINIMUMLOAD`, `DAILYENERGYCONSTRAINT`, `FIXEDLOAD`,
+`ROCUP`, `ROCDOWN`, `ENABLEMENTMIN`, `LOWBREAKPOINT`, `HIGHBREAKPOINT` and `ENABLEMENTMAX`.
+Throws an `ArgumentError` naming any of these columns absent from the cached tables, and when a
+unit's period offers have no price bands.
+"""
+function read_offers(db, date_range; markets = NEM_MARKETS)
+    start_date = first(date_range)
+    end_date = last(date_range)
+    period_source = read_hive(db, :BIDPEROFFER_D, (start_date - Day(1), end_date + Day(1)))
+    price_source = read_hive(db, :BIDDAYOFFER_D, (start_date - Day(1), end_date + Day(1)))
+    _require_columns(
+        :BIDPEROFFER_D, _table_schema(db, period_source),
+        ["FIXEDLOAD", "ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN"],
+    )
+    _require_columns(:BIDDAYOFFER_D, _table_schema(db, price_source), ["MINIMUMLOAD", "DAILYENERGYCONSTRAINT"])
+    offers = _massage_bids(
+        db, start_date, end_date; bid_types = collect(BidType, markets), keep_bid_type = true,
+        period_columns = ["FIXEDLOAD", "ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN"],
+    )
+    transform!(offers, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
+    return offers
+end
+
+
 # SQL list literal of `bid_types`, e.g. `'RAISE6SEC', 'LOWER6SEC'`.
 _bid_type_list(bid_types) = join(("'$(string(bt))'" for bt in bid_types), ", ")
 

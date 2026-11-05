@@ -36,3 +36,7 @@ const FCAS_REGULATION_MARKETS = (BidType.RAISEREG, BidType.LOWERREG)
 
 
 const FCAS_BID_TYPES = (FCAS_CONTINGENCY_MARKETS..., FCAS_REGULATION_MARKETS...)
+
+
+# Every BIDTYPE a unit can offer: energy and the ten FCAS markets.
+const NEM_MARKETS = (BidType.ENERGY, FCAS_BID_TYPES...)

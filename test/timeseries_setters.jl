@@ -357,6 +357,53 @@
         end
     end
 
+    @testset "read_offers" begin
+        start_date = DateTime(2025, 1, 1, 0, 0)
+        date_range = start_date:Minute(5):(start_date + Hour(1))
+        offers = read_offers(db, date_range)
+        key_columns = [:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION, :BIDTYPE]
+        by_key(df) = sort(df, key_columns)
+
+        @test all(
+            c in names(offers) for c in [
+                    "PRICEBANDARRAY", "BANDAVAILARRAY", "MAXAVAIL", "MINIMUMLOAD", "DAILYENERGYCONSTRAINT",
+                    "FIXEDLOAD", "ROCUP", "ROCDOWN", "ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX",
+                ]
+        )
+        @test eltype(offers.BIDTYPE) == BidType
+
+        @testset "energy rows match read_bids" begin
+            energy = by_key(subset(offers, :BIDTYPE => ByRow(==(BidType.ENERGY))))
+            bids = sort(read_bids(db, date_range), [:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION])
+            shared = intersect(names(energy), names(bids))
+            @test nrow(energy) == nrow(bids)
+            @test isequal(select(energy, shared), select(bids, shared))
+        end
+
+        @testset "FCAS rows match read_fcas_bids" begin
+            fcas = by_key(subset(offers, :BIDTYPE => ByRow(!=(BidType.ENERGY))))
+            reference = by_key(read_fcas_bids(db, date_range, collect(FCAS_BID_TYPES)))
+            shared = intersect(names(fcas), names(reference))
+            @test nrow(fcas) == nrow(reference)
+            @test isequal(select(fcas, shared), select(reference, shared))
+        end
+
+        @testset "FIXEDLOAD rows match read_fixed_loads" begin
+            loaded = by_key(subset(offers, :FIXEDLOAD => ByRow(>(0)), :BIDTYPE => ByRow(==(BidType.ENERGY))))
+            expected = sort(read_fixed_loads(db, date_range), [:INTERVAL_DATETIME, :DUID, :DIRECTION])
+            @test !isempty(expected)
+            @test nrow(loaded) == nrow(expected)
+            @test loaded.FIXEDLOAD == expected.FIXEDLOAD
+            @test loaded.INTERVAL_DATETIME == expected.INTERVAL_DATETIME
+        end
+
+        @testset "markets restricts the BIDTYPE rows" begin
+            energy_only = read_offers(db, date_range; markets = (BidType.ENERGY,))
+            @test all(==(BidType.ENERGY), energy_only.BIDTYPE)
+            @test nrow(energy_only) == nrow(subset(offers, :BIDTYPE => ByRow(==(BidType.ENERGY))))
+        end
+    end
+
     @testset "read_bids resolution aggregation uses per-bucket mean (regression: scale-then-sum bug)" begin
         # Fixture: every DUID gets a GEN energy bid with MAXAVAIL = 100.0 + i and ten
         # BANDAVAIL bands of 10.0 each, for i in 0:48 at 5-minute intervals from 00:00.

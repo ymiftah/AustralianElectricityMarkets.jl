@@ -14,9 +14,9 @@ using DuckDB
 using Statistics: median, mean
 using AustralianElectricityMarketsCache
 import AustralianElectricityMarketsCache: _parse_hive_root
-import ..AustralianElectricityMarkets: BidType, FCAS_BID_TYPES
+import ..AustralianElectricityMarkets: BidType, FCAS_BID_TYPES, NEM_MARKETS
 
-export read_hive, read_units, read_demand, read_energy_bids, read_fixed_loads, read_bids, read_loss_factors
+export read_hive, read_units, read_demand, read_energy_bids, read_fixed_loads, read_bids, read_offers, read_loss_factors
 export read_fcas_bids, read_fcas_requirements, read_fcas_prices, read_fcas_dispatch,
     read_fcas_scaling_inputs
 export read_invoked_constraints, read_constraint_definitions, read_constraint_terms,
