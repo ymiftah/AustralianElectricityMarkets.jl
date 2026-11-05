@@ -44,7 +44,7 @@ is cached.
 function read_fcas_requirements(db, date_range; intervention::Integer = 0)
     start_date = first(date_range)
     end_date = last(date_range)
-    constraint_table = read_hive(db, :DISPATCHCONSTRAINT)
+    constraint_table = read_hive(db, :DISPATCHCONSTRAINT, (start_date, end_date))
     gencon_table = read_hive(db, :GENCONDATA)
     constraint_schema = _table_schema(db, constraint_table)
     req_union_sql, params = _fcas_req_union_sql(db, start_date, end_date, intervention)

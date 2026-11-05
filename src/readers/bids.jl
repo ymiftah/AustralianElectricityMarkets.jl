@@ -57,8 +57,8 @@ function read_fixed_loads(db, date_range; intervention = 0)
     start_datetime = first(date_range)
     end_datetime = last(date_range)
     days = _offer_days(start_datetime, end_datetime)
-    offers = read_hive(db, :BIDPEROFFER_D)
-    dispatch = read_hive(db, :DISPATCHLOAD)
+    offers = read_hive(db, :BIDPEROFFER_D, (start_datetime - Day(1), end_datetime + Day(1)))
+    dispatch = read_hive(db, :DISPATCHLOAD, (start_datetime, end_datetime))
     fixed_loads = _query(
         db,
         """
@@ -208,7 +208,7 @@ end
 
 
 function _period_offers_sql(db, bid_types, start_date, end_date, resolution; columns = nothing)
-    source = read_hive(db, :BIDPEROFFER_D)
+    source = read_hive(db, :BIDPEROFFER_D, (start_date - Day(1), end_date + Day(1)))
     selected = isnothing(columns) ? ["MAXAVAIL"; _band_columns(_table_schema(db, source), "BANDAVAIL")] : columns
     lower = isnothing(resolution) ? start_date : start_date - resolution
     sql = """
@@ -245,7 +245,7 @@ function _massage_bids(
         resolution::Union{Nothing, Dates.Period} = nothing, bid_types::AbstractVector{BidType} = [BidType.ENERGY],
         keep_bid_type::Bool = false, period_columns::AbstractVector{<:AbstractString} = String[],
     )
-    period_source = read_hive(db, :BIDPEROFFER_D)
+    period_source = read_hive(db, :BIDPEROFFER_D, (start_date - Day(1), end_date + Day(1)))
     band_columns = _band_columns(_table_schema(db, period_source), "BANDAVAIL")
     quantities = ["MAXAVAIL"; band_columns]
     isempty(period_columns) || isnothing(resolution) || throw(
@@ -262,7 +262,7 @@ function _massage_bids(
         FROM latest_period GROUP BY ALL
         """
     end
-    price_source = read_hive(db, :BIDDAYOFFER_D)
+    price_source = read_hive(db, :BIDDAYOFFER_D, (start_date - Day(1), end_date + Day(1)))
     price_columns = _band_columns(_table_schema(db, price_source), "PRICEBAND")
     price_array = join(("d.$c" for c in price_columns), ", ")
     band_array = join(("p.$c" for c in band_columns), ", ")

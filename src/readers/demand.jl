@@ -24,8 +24,8 @@ println(demand_df)
 ```
 """
 function read_demand(db, date_range = nothing; resolution::Dates.Period = Dates.Minute(5))
-    source = read_hive(db, :DISPATCHREGIONSUM)
-    dispatchload = read_hive(db, :DISPATCHLOAD)
+    source = isnothing(date_range) ? read_hive(db, :DISPATCHREGIONSUM) : read_hive(db, :DISPATCHREGIONSUM, date_range)
+    dispatchload = isnothing(date_range) ? read_hive(db, :DISPATCHLOAD) : read_hive(db, :DISPATCHLOAD, date_range)
     summary = read_hive(db, :DUDETAILSUMMARY)
     demand_where = ""
     charging_where = ""
@@ -141,7 +141,7 @@ onto `resolution` as [`read_demand`](@ref) aggregates demand.
 A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `SS_SOLAR_UIGF` and `SS_WIND_UIGF`.
 """
 function _read_regional_renewable_uigf(db, date_range; resolution::Dates.Period, intervention::Integer)
-    source = read_hive(db, :DISPATCHREGIONSUM)
+    source = read_hive(db, :DISPATCHREGIONSUM, date_range)
     schema = _table_schema(db, source)
     # Each rounded-up timestamp includes the raw bin ending at it, even before the requested start.
     lower = ceil(DateTime(first(date_range)), resolution) - resolution

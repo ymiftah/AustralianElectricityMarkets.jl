@@ -241,7 +241,7 @@ function _fcas_req_union_sql(db, start_date, end_date, intervention::Integer)
     params = Any[]
 
     if _table_is_cached(db, :DISPATCH_FCAS_REQ)
-        table = read_hive(db, :DISPATCH_FCAS_REQ)
+        table = read_hive(db, :DISPATCH_FCAS_REQ, (start_date, end_date))
         schema = _table_schema(db, table)
         push!(
             branches,
@@ -258,7 +258,7 @@ function _fcas_req_union_sql(db, start_date, end_date, intervention::Integer)
     end
 
     if _table_is_cached(db, :DISPATCH_FCAS_REQ_CONSTRAINT)
-        table = read_hive(db, :DISPATCH_FCAS_REQ_CONSTRAINT)
+        table = read_hive(db, :DISPATCH_FCAS_REQ_CONSTRAINT, (start_date, end_date))
         push!(
             branches,
             """

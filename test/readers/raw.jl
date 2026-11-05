@@ -262,4 +262,23 @@ let
         @test tas.TO_REGION_TLF == 0.9907
         @test tas.MAXCAPACITY == 594
     end
+
+    @testset "read_hive date range" begin
+        # Partitions use the cache's archive_month=YYYY-MM-01 layout, while the mock names its
+        # months YYYY-MM. Copy the mock's 2025-01 DISPATCHLOAD files into a 2025-01-01 partition
+        # of a scratch cache, which has no 2024-12-01 partition.
+        range_dir = mktempdir()
+        part = joinpath(range_dir, "DISPATCHLOAD", "archive_month=2025-01-01")
+        mkpath(part)
+        for f in readdir(joinpath(hive_dir, "DISPATCHLOAD", "archive_month=2025-01"); join = true)
+            cp(f, joinpath(part, basename(f)))
+        end
+        range_db = aem_connect(HiveConfiguration(hive_location = range_dir, filesystem = "file"))
+        sql = read_hive(range_db, :DISPATCHLOAD, DateTime(2025, 1, 1, 0, 5):Dates.Minute(5):DateTime(2025, 1, 1, 1))
+        named = [m.captures[1] for m in eachmatch(r"'([^']+\.parquet)'", sql)]
+        @test unique(basename.(dirname.(named))) == ["archive_month=2025-01-01"]
+        @test sort(named) == sort(readdir(part; join = true))
+        @test read_hive(range_db, :DISPATCHLOAD, DateTime(2030, 1, 1):Dates.Minute(5):DateTime(2030, 1, 1, 1)) ==
+            read_hive(range_db, :DISPATCHLOAD)
+    end
 end
