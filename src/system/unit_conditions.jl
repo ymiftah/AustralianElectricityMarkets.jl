@@ -16,7 +16,7 @@ read. The values are `SingleTimeSeries` in AEMO's natural units, and their keys 
 - `"observed_dispatch_mode"`: `DISPATCHMODE`.
 
 A non-scheduled load is pinned to zero initial output, but keeps its metered ramp rates for AGC ramping.
-A ramp, regulation or dispatch-mode value with no row at an interval is `NaN`; the telemetry `uigf` is
+A ramp, regulation, AGC status or dispatch-mode value with no row at an interval is `NaN`; the telemetry `uigf` is
 zero there. Every problem across every device is raised as one `ArgumentError`, and `sys` is left
 unmodified. A repeat call replaces each series it writes, and replaces the structs on the devices.
 

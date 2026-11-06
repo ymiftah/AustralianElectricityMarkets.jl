@@ -234,6 +234,7 @@ function _set_dispatch_limits!(sys::PSY.System)
     base = PSY.get_base_power(sys)
     for device in AustralianElectricityMarkets.nem_dispatch_devices(sys)
         telemetry = getproperty(device, :telemetry)
+        # A unit without telemetry gets no limit series; the replay input check names it.
         isnothing(telemetry) && continue
         up = _bid_series(device, telemetry.ramp_up_limit)
         down = _bid_series(device, telemetry.ramp_down_limit)
@@ -247,7 +248,7 @@ function _set_dispatch_limits!(sys::PSY.System)
         device isa PSY.Storage && continue
         initial = _bid_series(device, AustralianElectricityMarkets.get_observed_state(device).initial_mw).values ./ base
         max_avail_name = energy_max_avail_series_name(device, OfferSide.GEN)
-        device isa PSY.Storage || PSY.has_time_series(device, PSY.SingleTimeSeries, max_avail_name) ||
+        PSY.has_time_series(device, PSY.SingleTimeSeries, max_avail_name) ||
             throw(ArgumentError("\"$(PSY.get_name(device))\" has no energy MAXAVAIL; call set_market_bids! first."))
         max_avail = _condition_series(device, max_avail_name).values
         uigf = isnothing(telemetry.uigf) ? nothing : _bid_series(device, telemetry.uigf).values ./ base

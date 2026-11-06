@@ -25,8 +25,8 @@ end
     add_toy_fcas_scaling!(sys, device, initial_timestamp, n, bid_type; agc_enablement_min = nothing,
         agc_enablement_max = nothing, agc_max_avail = nothing, uigf = nothing)
 
-Attaches [`set_fcas_scaling_inputs!`](@ref)'s per-device `"fcas_agc_enablement_min_<bid_type>"`/
-`"fcas_agc_enablement_max_<bid_type>"`/`"fcas_agc_ramp_rate_<bid_type>"`/`"uigf"`
+Attaches the regulation enablement of `bid_type` and the UIGF to the device's telemetry, and the derived
+`"fcas_agc_ramp_rate_<bid_type>"` series,
 `SingleTimeSeries`, one flat window of `n` steps at `initial_timestamp`, mirroring its
 per-unit-of-system-base convention. `agc_max_avail` is the AGC ramping capability in MW over one
 `resolution` interval, stored as the equivalent MW/h ramp rate. A `nothing` keyword leaves the
@@ -63,7 +63,7 @@ end
 """
     add_toy_fcas_agc_status!(sys, device, initial_timestamp, n, status)
 
-Attaches [`set_fcas_scaling_inputs!`](@ref)'s per-device `"fcas_agc_status"` `SingleTimeSeries`
+Attaches the `agc_status` telemetry series of the device,
 (not per-unitized), one flat window of `n` steps at `initial_timestamp`.
 """
 function add_toy_fcas_agc_status!(sys, device, initial_timestamp, n::Integer, status::Int; resolution = TOY_RESOLUTION)
@@ -75,7 +75,7 @@ end
 """
     add_toy_storage_initial_mw!(sys, device, initial_timestamp, n, initial_mw)
 
-Attaches `_set_nem_dispatch_limits!`'s per-device `"initial_mw"` `SingleTimeSeries` (net
+Attaches the observed `initial_mw` series of the device (net
 MW, per-unit of the system base), one flat window of `n` steps at `initial_timestamp`.
 """
 function add_toy_storage_initial_mw!(sys, device, initial_timestamp, n::Integer, initial_mw::Float64; resolution = TOY_RESOLUTION)
@@ -89,8 +89,8 @@ end
 
 Attaches `bat`'s `NEMReplayDispatch` requirements over `stamps`: a cheap generation-side and
 worthless load-side `energy_offer` series (so charging is never attractive), generous ramp rates, and
-a zero net `"initial_mw"` - none of these ever bind in these tests, which fix the energy
-variables directly. Callers that need a specific `"initial_mw"` overwrite it afterwards, e.g.
+a zero net `"observed_initial_mw"` - none of these ever bind in these tests, which fix the energy
+variables directly. Callers that need a specific `"observed_initial_mw"` overwrite it afterwards, e.g.
 via [`add_toy_storage_initial_mw!`](@ref).
 """
 function _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)

@@ -88,14 +88,32 @@ function _has_nem_dispatch_limits(device)
     if !(device isa PSY.Storage)
         has_registration(device) || return false
     end
+    (hasproperty(device, :observed_state) && hasproperty(device, :telemetry)) || return false
+    observed, telemetry = device.observed_state, device.telemetry
+    (isnothing(observed) || isnothing(telemetry)) && return false
+    observed.initial_mw isa IS.TimeSeriesKey || return false
+    _require_key_name(device, observed.initial_mw, NEM_OBSERVED_SERIES.initial_mw)
     names = PSI.get_default_time_series_names(typeof(device), NEMReplayDispatch)
+    uigf_required = haskey(names, EnergyUIGFTimeSeriesParameter) && is_semi_scheduled(device)
+    if uigf_required
+        telemetry.uigf isa IS.TimeSeriesKey || return false
+        _require_key_name(device, telemetry.uigf, NEM_TELEMETRY_SERIES.uigf)
+    end
     required = (
         name for (param, name) in names
-            if !in(param, first.(_FIXED_LOAD_SERIES)) && (param !== EnergyUIGFTimeSeriesParameter || is_semi_scheduled(device))
+            if !in(param, first.(_FIXED_LOAD_SERIES)) && param !== InitialPowerTimeSeriesParameter &&
+            param !== EnergyUIGFTimeSeriesParameter
     )
-    return all(
-        PSY.has_time_series(device, PSY.SingleTimeSeries, name) for name in required
+    return all(PSY.has_time_series(device, PSY.SingleTimeSeries, name) for name in required)
+end
+
+# Throws an `ArgumentError` naming `device` unless the series behind `key` is named `expected`.
+function _require_key_name(device, key::IS.TimeSeriesKey, expected::AbstractString)
+    name = PSY.get_name(key)
+    name == expected || throw(
+        ArgumentError("\"$(PSY.get_name(device))\": its unit data holds the series \"$name\", expected \"$expected\""),
     )
+    return
 end
 
 
@@ -310,12 +328,12 @@ end
 function _ramp_base_accessor(container, ::Type{NEMReplayDispatch}, ::Type{T}, names, _) where {T}
     PSI.has_container_key(container, InitialPowerTimeSeriesParameter, T) || throw(
         ArgumentError(
-            "NEMReplayDispatch: the device model registers no \"initial_mw\" parameter, so the " *
+            "NEMReplayDispatch: the device model registers no \"observed_initial_mw\" parameter, so the " *
                 "ramp has no base to measure against",
         ),
     )
     initial, covered = _ts_parameter_accessor(container, InitialPowerTimeSeriesParameter, T)
-    _require_coverage(names, "no \"initial_mw\" time series", _SETTER_REMEDY, covered)
+    _require_coverage(names, "no \"observed_initial_mw\" time series", _SETTER_REMEDY, covered)
     return initial
 end
 

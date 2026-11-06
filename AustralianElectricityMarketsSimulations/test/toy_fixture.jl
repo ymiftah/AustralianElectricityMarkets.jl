@@ -21,10 +21,8 @@ function _toy_registration(; schedule_type = ScheduleType.SCHEDULED, gen_loss_fa
     )
 end
 
-# The two `5_bus_hydro_ed_sys` units the toy keeps; both sit on bus1.
 # Holds `values`, natural units, as the series of a toy unit's telemetry or observed-state `field`, and
-# rebuilds the struct to hold its key. The other fields keep their values; a unit with no struct yet takes
-# the defaults, which leave its regulation, UIGF and ramp inputs unset.
+# rebuilds the struct to hold its key; other fields keep their values or take the defaults.
 function set_toy_unit_field!(sys, device, stamps, field::Symbol, values)
     observed = field in (:initial_mw, :dispatch_mode)
     names = observed ? AustralianElectricityMarkets.NEM_OBSERVED_SERIES : AustralianElectricityMarkets.NEM_TELEMETRY_SERIES
@@ -70,6 +68,7 @@ function _toy_observed_fields(device)
     return (initial_mw = current.initial_mw, dispatch_mode = current.dispatch_mode)
 end
 
+# The two `5_bus_hydro_ed_sys` units the toy keeps; both sit on bus1.
 const TOY_CHEAP = "Alta"
 const TOY_EXPENSIVE = "Park City"
 const TOY_BATTERY = "batt1"

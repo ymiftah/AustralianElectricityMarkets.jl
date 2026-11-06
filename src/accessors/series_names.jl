@@ -63,7 +63,7 @@ const NEM_SERIES = (
 Names of the per-device `SingleTimeSeries` that [`set_unit_conditions!`](@ref) attaches for a unit's
 [`NEMTelemetry`](@ref), in AEMO's natural units, as `DISPATCHLOAD` publishes them:
 
-- `agc_status`: `AGCSTATUS`, `0` or `1`.
+- `agc_status`: `AGCSTATUS`, `0` or `1`, `NaN` at an interval with no row.
 - `uigf`: `UIGF`, MW, semi-scheduled units only.
 - `ramp_up_limit`, `ramp_down_limit`: `RAMPUPRATE`, `RAMPDOWNRATE`, MW/h.
 - `raise_reg_enablement`, `lower_reg_enablement`: the `(min, max)` MW enablement of each service.

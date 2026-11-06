@@ -94,7 +94,7 @@ end
 
 
 """
-    get_initial_mw(component, initial_time, horizon) -> Union{Nothing, Vector{Float64}}
+    get_initial_mw(component, initial_time, horizon) -> Vector{Float64}
 
 Window of `component`'s observed `initial_mw` ([`set_unit_conditions!`](@ref), `DISPATCHLOAD.INITIALMW`,
 net MW for a battery), `horizon` steps from `initial_time`, in `component`'s `System`'s current display units.
@@ -273,7 +273,7 @@ end
 
 
 """
-    get_fcas_agc_status(component, initial_time, horizon) -> Union{Nothing, Vector{Int}}
+    get_fcas_agc_status(component, initial_time, horizon) -> Vector{Union{Nothing, Int}}
 
 Window of `component`'s telemetered `agc_status` ([`set_unit_conditions!`](@ref), `DISPATCHLOAD.AGCSTATUS`),
 `horizon` steps from `initial_time`: `1` while the unit is under AGC control and `0` otherwise, `nothing`

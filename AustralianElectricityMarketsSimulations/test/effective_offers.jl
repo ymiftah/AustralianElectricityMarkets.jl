@@ -506,6 +506,7 @@ end
             e
         end
         @test err isa ArgumentError
+        @test occursin("BW01", sprint(showerror, err))
     end
 
     @testset "get_fcas_agc_status reads back AGCSTATUS and throws for a unit with no telemetry" begin
@@ -631,5 +632,80 @@ end
         end
         @test err isa ArgumentError
         @test occursin("ER01 has no telemetry", sprint(showerror, err))
+    end
+end
+
+
+@testset "Derived availability: zero branches, the MAXAVAIL branch, and the struct-key check" begin
+    AEMSim = AustralianElectricityMarketsSimulations
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    sys_base, _ = nem_network(db)
+    resolution = Minute(5)
+    start_date = DateTime(2025, 1, 1, 0, 0)
+    date_range = start_date:resolution:(start_date + Hour(2))
+    horizon = length(date_range) - 1
+    full_grid = collect(date_range)[1:(end - 1)]
+
+    function built()
+        sys = deepcopy(sys_base)
+        set_market_bids!(sys, db, date_range; resolution = resolution)
+        set_available!(get_component(NEMThermalGen, sys, "ER02"), false)
+        set_available!(get_component(NEMHydroGen, sys, "BW02"), false)
+        set_unit_conditions!(sys, db, date_range)
+        set_effective_offers!(sys)
+        return sys
+    end
+
+    @testset "a non-scheduled load has zero availability and zero max_active_power" begin
+        sys = built()
+        asload = get_component(NEMLoad, sys, "ASLOAD1")
+        @test AustralianElectricityMarkets.is_non_scheduled_load(asload)
+        @test all(==(0.0), get_energy_availability(asload, start_date, horizon))
+        @test all(==(0.0), get_time_series_values(SingleTimeSeries, asload, NEM_SERIES.max_active_power; ignore_scaling_factors = true))
+    end
+
+    @testset "an interval with no DISPATCHLOAD row (NaN ramp) has zero availability" begin
+        sys = built()
+        device = get_component(NEMThermalGen, sys, "ER01")
+        ramps = fill(60.0, length(full_grid))
+        ramps[2] = NaN
+        replace_single_series!(sys, device, single_series(NEM_TELEMETRY_SERIES.ramp_up_limit, full_grid, ramps))
+        avail = get_energy_availability(device, start_date, horizon)
+        @test avail[2] == 0.0
+        @test avail[1] > 0.0
+    end
+
+    @testset "a scheduled unit's availability is exactly its energy MAXAVAIL" begin
+        sys = built()
+        device = get_component(NEMThermalGen, sys, "ER01")
+        with_units_base(sys, "NATURAL_UNITS") do
+            max_avail = get_time_series_values(SingleTimeSeries, device, energy_max_avail_series_name(device, OfferSide.GEN); start_time = start_date, len = horizon)
+            @test get_energy_availability(device, start_date, horizon) ≈ max_avail .* get_base_power(sys) atol = 1.0e-9
+        end
+    end
+
+    @testset "a device whose observed key is not the observed_initial_mw series throws, naming it" begin
+        sys = built()
+        device = get_component(NEMThermalGen, sys, "ER01")
+        @test AEMSim._has_nem_dispatch_limits(device)
+        key = AustralianElectricityMarkets.get_observed_state(device).initial_mw
+        values = get_time_series_values(SingleTimeSeries, device, get_name(key); ignore_scaling_factors = true)
+        add_time_series!(sys, device, single_series("other_initial", start_date, values, resolution))
+        AustralianElectricityMarkets.set_observed_state!(
+            device,
+            AustralianElectricityMarkets.NEMObservedState(;
+                initial_mw = AustralianElectricityMarkets._series_key(device, "other_initial"),
+                dispatch_mode = AustralianElectricityMarkets.get_observed_state(device).dispatch_mode,
+            ),
+        )
+        err = try
+            AEMSim._has_nem_dispatch_limits(device)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("ER01", sprint(showerror, err))
+        @test occursin("other_initial", sprint(showerror, err))
     end
 end

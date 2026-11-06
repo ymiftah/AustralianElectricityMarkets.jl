@@ -71,7 +71,7 @@ function check_fcas_services(template::PSI.ProblemTemplate, sys::PSY.System)
                     problems,
                     "FCASService \"$svc_name\": device \"$dname\" ($(typeof(device))) carries a " *
                         "positive fcas_agc_ramp_rate_$(string(bid_type)) series but no " *
-                        "\"initial_mw\" series; AEMO §6.1's joint ramping constraint needs both.",
+                        "\"observed_initial_mw\" series; AEMO §6.1's joint ramping constraint needs both.",
                 )
             end
         end
