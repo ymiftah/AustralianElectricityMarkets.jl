@@ -17,7 +17,9 @@ end
     StateSource
 
 Supertype for the sources of a unit's state: [`ObservedState`](@ref) reads AEMO's published state and
-[`SimulatedState`](@ref) takes the previous interval's solution.
+[`SimulatedState`](@ref) takes the previous interval's solution. A source carries whatever it needs in its
+own fields, such as a previous solution or a fast-start mode history; [`unit_state`](@ref)`(source, device, t)`
+is the whole interface that callers use.
 """
 abstract type StateSource end
 
@@ -50,8 +52,8 @@ The state of `device` at the start of the interval beginning at `t`, read from `
 - `t`: the first timestamp of the interval.
 
 # Returns
-The [`NEMUnitState`](@ref). Throws an `ArgumentError` naming `device` when it is not a NEM device with an
-observed state.
+The [`NEMUnitState`](@ref) for an [`ObservedState`](@ref). Throws an `ArgumentError` naming `device` when it
+is not a NEM device with an observed state, and for a [`SimulatedState`](@ref), which is not implemented yet.
 """
 function unit_state(::ObservedState, device, t::DateTime)
     observed = AustralianElectricityMarkets.get_observed_state(device)
@@ -74,14 +76,15 @@ end
 """
     NEMFCASInputs(; service, side, offer, trapezium, agc_ramp)
 
-The keys of one FCAS service's inputs on a device, for one side of its market.
+The keys of one FCAS service's inputs on a device, for one side of its market. Throws an `ArgumentError`
+when `service` is not an FCAS `BidType`.
 
 # Fields
-- `service`: the `BidType` of the FCAS service.
+- `service`: the FCAS `BidType`.
 - `side`: the `OfferSide` of the offer.
-- `offer`: the derived offer curve series, or `nothing`.
-- `trapezium`: the derived trapezium series, or `nothing`.
-- `agc_ramp`: the derived AGC ramp series, or `nothing`.
+- `offer`: the derived FCAS offer curve series, a price-band series in MW against \$/MWh, or `nothing`.
+- `trapezium`: the derived FCAS trapezium series, MW, or `nothing`.
+- `agc_ramp`: the AGC ramp rate series, in the units the unit conditions publish, or `nothing`.
 """
 struct NEMFCASInputs <: PSY.DeviceParameter
     service::AustralianElectricityMarkets.BidType
@@ -92,6 +95,8 @@ struct NEMFCASInputs <: PSY.DeviceParameter
 end
 
 function NEMFCASInputs(; service, side, offer = nothing, trapezium = nothing, agc_ramp = nothing)
+    service in AustralianElectricityMarkets.FCAS_BID_TYPES ||
+        throw(ArgumentError("NEMFCASInputs needs an FCAS bid type, got $(service)"))
     return NEMFCASInputs(service, side, offer, trapezium, agc_ramp)
 end
 
@@ -108,13 +113,13 @@ The keys of a device's derived dispatch inputs, held on the device as a suppleme
 is a key of a series attached to the device, or `nothing` where the input is absent.
 
 # Fields
-- `energy_offer`: the derived incremental energy offer series.
-- `energy_offer_decremental`: the derived decremental energy offer series.
+- `energy_offer`: the derived incremental energy offer series, a price-band series in MW against \$/MWh.
+- `energy_offer_decremental`: the derived decremental energy offer series, a price-band series in MW against \$/MWh.
 - `energy_availability`: the derived energy availability series, MW.
 - `energy_availability_decremental`: the derived decremental energy availability series, MW.
 - `uigf`: the unit initial generation forecast, MW.
-- `ramp_up`: the effective ramp-up limit series.
-- `ramp_down`: the effective ramp-down limit series.
+- `ramp_up`: the effective ramp-up limit series, MW/h.
+- `ramp_down`: the effective ramp-down limit series, MW/h.
 - `fcas`: one [`NEMFCASInputs`](@ref) per FCAS service and side.
 - `internal`: `InfrastructureSystems` bookkeeping.
 """

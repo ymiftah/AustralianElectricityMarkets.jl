@@ -94,8 +94,12 @@ end
     add_component!(sys, bus)
     gen = _st_thermal("unit", bus)
     add_component!(sys, gen)
-    for name in ("energy", "energy_dec", "avail", "uigf", "up", "down", "fcas_offer", "fcas_trap", "agc")
-        add_time_series!(sys, gen, _st_series(name, collect(1.0:length(_ST_STAMPS))))
+    # Distinct values per series, so a key that resolves to the wrong series fails the value check.
+    expected = Dict{String, Vector{Float64}}()
+    for (i, name) in enumerate(("energy", "energy_dec", "avail", "uigf", "up", "down", "fcas_offer", "fcas_trap", "agc"))
+        values = collect(1.0:length(_ST_STAMPS)) .+ 100.0 * i
+        expected[name] = values
+        add_time_series!(sys, gen, _st_series(name, values))
     end
     inputs = AEMS.NEMDispatchInputs(;
         energy_offer = _st_key(gen, "energy"), energy_offer_decremental = _st_key(gen, "energy_dec"),
@@ -129,8 +133,38 @@ end
         @test fcas.side == AustralianElectricityMarkets.OfferSide.GEN
         @test AustralianElectricityMarkets._keys_equal(fcas.agc_ramp, inputs.fcas[1].agc_ramp)
 
-        for key in (back.energy_offer, back.ramp_down, fcas.offer, fcas.trapezium)
-            @test _ST_IS.get_time_series(back_gen, key) !== nothing
+        # Every present key reads back the values of the series it was built from.
+        read_back(key) = _ST_IS.get_time_series_values(
+            back_gen, key; start_time = first(_ST_STAMPS), len = length(_ST_STAMPS),
+        )
+        resolved = Set{String}()
+        check(key, built) = if isnothing(key)
+            @test isnothing(built)
+        else
+            @test key isa _ST_IS.TimeSeriesKey
+            @test key.name == built.name
+            @test read_back(key) == expected[built.name]
+            push!(resolved, built.name)
         end
+        for field in (
+                :energy_offer, :energy_offer_decremental, :energy_availability,
+                :energy_availability_decremental, :uigf, :ramp_up, :ramp_down,
+            )
+            check(getfield(back, field), getfield(inputs, field))
+        end
+        for (built_fcas, back_fcas) in zip(inputs.fcas, back.fcas)
+            for field in (:offer, :trapezium, :agc_ramp)
+                check(getfield(back_fcas, field), getfield(built_fcas, field))
+            end
+        end
+        @test resolved == Set(keys(expected))
+    end
+
+    @testset "NEMFCASInputs rejects a service that is not an FCAS bid type" begin
+        AEMS = AustralianElectricityMarketsSimulations
+        @test_throws ArgumentError AEMS.NEMFCASInputs(;
+            service = AustralianElectricityMarkets.BidType.ENERGY,
+            side = AustralianElectricityMarkets.OfferSide.GEN,
+        )
     end
 end
