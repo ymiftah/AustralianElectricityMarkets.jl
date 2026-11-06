@@ -54,6 +54,9 @@ the fields, constructors, getters and setters of `PSY.ThermalStandard`, with the
 - `reactive_power_limits`: `Union{Nothing, PSY.MinMax}`
 - `ramp_limits`: `Union{Nothing, PSY.UpDown}`
 - `operation_cost`: `NEMOfferCost`
+- `registration`: `Union{Nothing, NEMRegistration}`, the unit registration.
+- `telemetry`: `Union{Nothing, NEMTelemetry}`, the telemetered limits.
+- `observed_state`: `Union{Nothing, NEMObservedState}`, the published unit state.
 - `base_power`: `Float64`
 - `time_limits`: `Union{Nothing, PSY.UpDown}`
 - `must_run`: `Bool`
@@ -77,6 +80,9 @@ mutable struct NEMThermalGen <: PSY.ThermalGen
     reactive_power_limits::Union{Nothing, PSY.MinMax}
     ramp_limits::Union{Nothing, PSY.UpDown}
     operation_cost::NEMOfferCost
+    registration::Union{Nothing, NEMRegistration}
+    telemetry::Union{Nothing, NEMTelemetry}
+    observed_state::Union{Nothing, NEMObservedState}
     base_power::Float64
     time_limits::Union{Nothing, PSY.UpDown}
     must_run::Bool
@@ -89,12 +95,12 @@ mutable struct NEMThermalGen <: PSY.ThermalGen
     internal::IS.InfrastructureSystemsInternal
 end
 
-function NEMThermalGen(name, available, status, bus, active_power, reactive_power, rating, active_power_limits, reactive_power_limits, ramp_limits, operation_cost, base_power, time_limits = nothing, must_run = false, prime_mover_type = PrimeMovers.OT, fuel = ThermalFuels.OTHER, services = Device[], time_at_status = PSY.INFINITE_TIME, dynamic_injector = nothing, ext = Dict{String, Any}())
-    return NEMThermalGen(name, available, status, bus, active_power, reactive_power, rating, active_power_limits, reactive_power_limits, ramp_limits, operation_cost, base_power, time_limits, must_run, prime_mover_type, fuel, services, time_at_status, dynamic_injector, ext, IS.InfrastructureSystemsInternal())
+function NEMThermalGen(name, available, status, bus, active_power, reactive_power, rating, active_power_limits, reactive_power_limits, ramp_limits, operation_cost, base_power, time_limits = nothing, must_run = false, prime_mover_type = PrimeMovers.OT, fuel = ThermalFuels.OTHER, services = Device[], time_at_status = PSY.INFINITE_TIME, dynamic_injector = nothing, ext = Dict{String, Any}(), registration = nothing, telemetry = nothing, observed_state = nothing)
+    return NEMThermalGen(name, available, status, bus, active_power, reactive_power, rating, active_power_limits, reactive_power_limits, ramp_limits, operation_cost, registration, telemetry, observed_state, base_power, time_limits, must_run, prime_mover_type, fuel, services, time_at_status, dynamic_injector, ext, IS.InfrastructureSystemsInternal())
 end
 
-function NEMThermalGen(; name, available, status, bus, active_power, reactive_power, rating, active_power_limits, reactive_power_limits, ramp_limits, operation_cost, base_power, time_limits = nothing, must_run = false, prime_mover_type = PrimeMovers.OT, fuel = ThermalFuels.OTHER, services = Device[], time_at_status = PSY.INFINITE_TIME, dynamic_injector = nothing, ext = Dict{String, Any}(), internal = IS.InfrastructureSystemsInternal())
-    return NEMThermalGen(name, available, status, bus, active_power, reactive_power, rating, active_power_limits, reactive_power_limits, ramp_limits, operation_cost, base_power, time_limits, must_run, prime_mover_type, fuel, services, time_at_status, dynamic_injector, ext, internal)
+function NEMThermalGen(; name, available, status, bus, active_power, reactive_power, rating, active_power_limits, reactive_power_limits, ramp_limits, operation_cost, base_power, time_limits = nothing, must_run = false, prime_mover_type = PrimeMovers.OT, fuel = ThermalFuels.OTHER, services = Device[], time_at_status = PSY.INFINITE_TIME, dynamic_injector = nothing, ext = Dict{String, Any}(), internal = IS.InfrastructureSystemsInternal(), registration = nothing, telemetry = nothing, observed_state = nothing)
+    return NEMThermalGen(name, available, status, bus, active_power, reactive_power, rating, active_power_limits, reactive_power_limits, ramp_limits, operation_cost, registration, telemetry, observed_state, base_power, time_limits, must_run, prime_mover_type, fuel, services, time_at_status, dynamic_injector, ext, internal)
 end
 
 _define_accessors!(
@@ -128,6 +134,9 @@ the fields, constructors, getters and setters of `PSY.HydroDispatch`, with the s
 - `status`: `Bool`
 - `time_at_status`: `Float64`
 - `operation_cost`: `NEMOfferCost`
+- `registration`: `Union{Nothing, NEMRegistration}`, the unit registration.
+- `telemetry`: `Union{Nothing, NEMTelemetry}`, the telemetered limits.
+- `observed_state`: `Union{Nothing, NEMObservedState}`, the published unit state.
 - `services`: `Vector{Service}`
 - `dynamic_injector`: `Union{Nothing, DynamicInjection}`
 - `ext`: `Dict{String, Any}`
@@ -149,18 +158,21 @@ mutable struct NEMHydroGen <: PSY.HydroGen
     status::Bool
     time_at_status::Float64
     operation_cost::NEMOfferCost
+    registration::Union{Nothing, NEMRegistration}
+    telemetry::Union{Nothing, NEMTelemetry}
+    observed_state::Union{Nothing, NEMObservedState}
     services::Vector{Service}
     dynamic_injector::Union{Nothing, DynamicInjection}
     ext::Dict{String, Any}
     internal::IS.InfrastructureSystemsInternal
 end
 
-function NEMHydroGen(name, available, bus, active_power, reactive_power, rating, prime_mover_type, active_power_limits, reactive_power_limits, ramp_limits, time_limits, base_power, status = false, time_at_status = PSY.INFINITE_TIME, operation_cost = NEMOfferCost(), services = Device[], dynamic_injector = nothing, ext = Dict{String, Any}())
-    return NEMHydroGen(name, available, bus, active_power, reactive_power, rating, prime_mover_type, active_power_limits, reactive_power_limits, ramp_limits, time_limits, base_power, status, time_at_status, operation_cost, services, dynamic_injector, ext, IS.InfrastructureSystemsInternal())
+function NEMHydroGen(name, available, bus, active_power, reactive_power, rating, prime_mover_type, active_power_limits, reactive_power_limits, ramp_limits, time_limits, base_power, status = false, time_at_status = PSY.INFINITE_TIME, operation_cost = NEMOfferCost(), services = Device[], dynamic_injector = nothing, ext = Dict{String, Any}(), registration = nothing, telemetry = nothing, observed_state = nothing)
+    return NEMHydroGen(name, available, bus, active_power, reactive_power, rating, prime_mover_type, active_power_limits, reactive_power_limits, ramp_limits, time_limits, base_power, status, time_at_status, operation_cost, registration, telemetry, observed_state, services, dynamic_injector, ext, IS.InfrastructureSystemsInternal())
 end
 
-function NEMHydroGen(; name, available, bus, active_power, reactive_power, rating, prime_mover_type, active_power_limits, reactive_power_limits, ramp_limits, time_limits, base_power, status = false, time_at_status = PSY.INFINITE_TIME, operation_cost = NEMOfferCost(), services = Device[], dynamic_injector = nothing, ext = Dict{String, Any}(), internal = IS.InfrastructureSystemsInternal())
-    return NEMHydroGen(name, available, bus, active_power, reactive_power, rating, prime_mover_type, active_power_limits, reactive_power_limits, ramp_limits, time_limits, base_power, status, time_at_status, operation_cost, services, dynamic_injector, ext, internal)
+function NEMHydroGen(; name, available, bus, active_power, reactive_power, rating, prime_mover_type, active_power_limits, reactive_power_limits, ramp_limits, time_limits, base_power, status = false, time_at_status = PSY.INFINITE_TIME, operation_cost = NEMOfferCost(), services = Device[], dynamic_injector = nothing, ext = Dict{String, Any}(), internal = IS.InfrastructureSystemsInternal(), registration = nothing, telemetry = nothing, observed_state = nothing)
+    return NEMHydroGen(name, available, bus, active_power, reactive_power, rating, prime_mover_type, active_power_limits, reactive_power_limits, ramp_limits, time_limits, base_power, status, time_at_status, operation_cost, registration, telemetry, observed_state, services, dynamic_injector, ext, internal)
 end
 
 _define_accessors!(
@@ -189,6 +201,9 @@ the fields, constructors, getters and setters of `PSY.RenewableDispatch`, with t
 - `reactive_power_limits`: `Union{Nothing, PSY.MinMax}`
 - `power_factor`: `Float64`
 - `operation_cost`: `NEMOfferCost`
+- `registration`: `Union{Nothing, NEMRegistration}`, the unit registration.
+- `telemetry`: `Union{Nothing, NEMTelemetry}`, the telemetered limits.
+- `observed_state`: `Union{Nothing, NEMObservedState}`, the published unit state.
 - `base_power`: `Float64`
 - `services`: `Vector{Service}`
 - `dynamic_injector`: `Union{Nothing, DynamicInjection}`
@@ -206,6 +221,9 @@ mutable struct NEMRenewableGen <: PSY.RenewableGen
     reactive_power_limits::Union{Nothing, PSY.MinMax}
     power_factor::Float64
     operation_cost::NEMOfferCost
+    registration::Union{Nothing, NEMRegistration}
+    telemetry::Union{Nothing, NEMTelemetry}
+    observed_state::Union{Nothing, NEMObservedState}
     base_power::Float64
     services::Vector{Service}
     dynamic_injector::Union{Nothing, DynamicInjection}
@@ -213,12 +231,12 @@ mutable struct NEMRenewableGen <: PSY.RenewableGen
     internal::IS.InfrastructureSystemsInternal
 end
 
-function NEMRenewableGen(name, available, bus, active_power, reactive_power, rating, prime_mover_type, reactive_power_limits, power_factor, operation_cost, base_power, services = Device[], dynamic_injector = nothing, ext = Dict{String, Any}())
-    return NEMRenewableGen(name, available, bus, active_power, reactive_power, rating, prime_mover_type, reactive_power_limits, power_factor, operation_cost, base_power, services, dynamic_injector, ext, IS.InfrastructureSystemsInternal())
+function NEMRenewableGen(name, available, bus, active_power, reactive_power, rating, prime_mover_type, reactive_power_limits, power_factor, operation_cost, base_power, services = Device[], dynamic_injector = nothing, ext = Dict{String, Any}(), registration = nothing, telemetry = nothing, observed_state = nothing)
+    return NEMRenewableGen(name, available, bus, active_power, reactive_power, rating, prime_mover_type, reactive_power_limits, power_factor, operation_cost, registration, telemetry, observed_state, base_power, services, dynamic_injector, ext, IS.InfrastructureSystemsInternal())
 end
 
-function NEMRenewableGen(; name, available, bus, active_power, reactive_power, rating, prime_mover_type, reactive_power_limits, power_factor, operation_cost, base_power, services = Device[], dynamic_injector = nothing, ext = Dict{String, Any}(), internal = IS.InfrastructureSystemsInternal())
-    return NEMRenewableGen(name, available, bus, active_power, reactive_power, rating, prime_mover_type, reactive_power_limits, power_factor, operation_cost, base_power, services, dynamic_injector, ext, internal)
+function NEMRenewableGen(; name, available, bus, active_power, reactive_power, rating, prime_mover_type, reactive_power_limits, power_factor, operation_cost, base_power, services = Device[], dynamic_injector = nothing, ext = Dict{String, Any}(), internal = IS.InfrastructureSystemsInternal(), registration = nothing, telemetry = nothing, observed_state = nothing)
+    return NEMRenewableGen(name, available, bus, active_power, reactive_power, rating, prime_mover_type, reactive_power_limits, power_factor, operation_cost, registration, telemetry, observed_state, base_power, services, dynamic_injector, ext, internal)
 end
 
 _define_accessors!(
@@ -254,6 +272,9 @@ the fields, constructors, getters and setters of `PSY.EnergyReservoirStorage`, w
 - `reactive_power_limits`: `Union{Nothing, PSY.MinMax}`
 - `base_power`: `Float64`
 - `operation_cost`: `NEMOfferCost`
+- `registration`: `Union{Nothing, NEMRegistration}`, the unit registration.
+- `telemetry`: `Union{Nothing, NEMTelemetry}`, the telemetered limits.
+- `observed_state`: `Union{Nothing, NEMObservedState}`, the published unit state.
 - `conversion_factor`: `Float64`
 - `storage_target`: `Float64`
 - `cycle_limits`: `Int`
@@ -280,6 +301,9 @@ mutable struct NEMStorage <: PSY.Storage
     reactive_power_limits::Union{Nothing, PSY.MinMax}
     base_power::Float64
     operation_cost::NEMOfferCost
+    registration::Union{Nothing, NEMRegistration}
+    telemetry::Union{Nothing, NEMTelemetry}
+    observed_state::Union{Nothing, NEMObservedState}
     conversion_factor::Float64
     storage_target::Float64
     cycle_limits::Int
@@ -289,12 +313,12 @@ mutable struct NEMStorage <: PSY.Storage
     internal::IS.InfrastructureSystemsInternal
 end
 
-function NEMStorage(name, available, bus, prime_mover_type, storage_technology_type, storage_capacity, storage_level_limits, initial_storage_capacity_level, rating, active_power, input_active_power_limits, output_active_power_limits, efficiency, reactive_power, reactive_power_limits, base_power, operation_cost = NEMOfferCost(), conversion_factor = 1.0, storage_target = 0.0, cycle_limits = 1.0e4, services = Device[], dynamic_injector = nothing, ext = Dict{String, Any}())
-    return NEMStorage(name, available, bus, prime_mover_type, storage_technology_type, storage_capacity, storage_level_limits, initial_storage_capacity_level, rating, active_power, input_active_power_limits, output_active_power_limits, efficiency, reactive_power, reactive_power_limits, base_power, operation_cost, conversion_factor, storage_target, cycle_limits, services, dynamic_injector, ext, IS.InfrastructureSystemsInternal())
+function NEMStorage(name, available, bus, prime_mover_type, storage_technology_type, storage_capacity, storage_level_limits, initial_storage_capacity_level, rating, active_power, input_active_power_limits, output_active_power_limits, efficiency, reactive_power, reactive_power_limits, base_power, operation_cost = NEMOfferCost(), conversion_factor = 1.0, storage_target = 0.0, cycle_limits = 1.0e4, services = Device[], dynamic_injector = nothing, ext = Dict{String, Any}(), registration = nothing, telemetry = nothing, observed_state = nothing)
+    return NEMStorage(name, available, bus, prime_mover_type, storage_technology_type, storage_capacity, storage_level_limits, initial_storage_capacity_level, rating, active_power, input_active_power_limits, output_active_power_limits, efficiency, reactive_power, reactive_power_limits, base_power, operation_cost, registration, telemetry, observed_state, conversion_factor, storage_target, cycle_limits, services, dynamic_injector, ext, IS.InfrastructureSystemsInternal())
 end
 
-function NEMStorage(; name, available, bus, prime_mover_type, storage_technology_type, storage_capacity, storage_level_limits, initial_storage_capacity_level, rating, active_power, input_active_power_limits, output_active_power_limits, efficiency, reactive_power, reactive_power_limits, base_power, operation_cost = NEMOfferCost(), conversion_factor = 1.0, storage_target = 0.0, cycle_limits = 1.0e4, services = Device[], dynamic_injector = nothing, ext = Dict{String, Any}(), internal = IS.InfrastructureSystemsInternal())
-    return NEMStorage(name, available, bus, prime_mover_type, storage_technology_type, storage_capacity, storage_level_limits, initial_storage_capacity_level, rating, active_power, input_active_power_limits, output_active_power_limits, efficiency, reactive_power, reactive_power_limits, base_power, operation_cost, conversion_factor, storage_target, cycle_limits, services, dynamic_injector, ext, internal)
+function NEMStorage(; name, available, bus, prime_mover_type, storage_technology_type, storage_capacity, storage_level_limits, initial_storage_capacity_level, rating, active_power, input_active_power_limits, output_active_power_limits, efficiency, reactive_power, reactive_power_limits, base_power, operation_cost = NEMOfferCost(), conversion_factor = 1.0, storage_target = 0.0, cycle_limits = 1.0e4, services = Device[], dynamic_injector = nothing, ext = Dict{String, Any}(), internal = IS.InfrastructureSystemsInternal(), registration = nothing, telemetry = nothing, observed_state = nothing)
+    return NEMStorage(name, available, bus, prime_mover_type, storage_technology_type, storage_capacity, storage_level_limits, initial_storage_capacity_level, rating, active_power, input_active_power_limits, output_active_power_limits, efficiency, reactive_power, reactive_power_limits, base_power, operation_cost, registration, telemetry, observed_state, conversion_factor, storage_target, cycle_limits, services, dynamic_injector, ext, internal)
 end
 
 _define_accessors!(
@@ -322,6 +346,9 @@ the fields, constructors, getters and setters of `PSY.InterruptiblePowerLoad`, w
 - `max_reactive_power`: `Float64`
 - `base_power`: `Float64`
 - `operation_cost`: `NEMOfferCost`
+- `registration`: `Union{Nothing, NEMRegistration}`, the unit registration.
+- `telemetry`: `Union{Nothing, NEMTelemetry}`, the telemetered limits.
+- `observed_state`: `Union{Nothing, NEMObservedState}`, the published unit state.
 - `conformity`: `LoadConformity`
 - `services`: `Vector{Service}`
 - `dynamic_injector`: `Union{Nothing, DynamicInjection}`
@@ -338,6 +365,9 @@ mutable struct NEMLoad <: PSY.ControllableLoad
     max_reactive_power::Float64
     base_power::Float64
     operation_cost::NEMOfferCost
+    registration::Union{Nothing, NEMRegistration}
+    telemetry::Union{Nothing, NEMTelemetry}
+    observed_state::Union{Nothing, NEMObservedState}
     conformity::LoadConformity
     services::Vector{Service}
     dynamic_injector::Union{Nothing, DynamicInjection}
@@ -345,12 +375,12 @@ mutable struct NEMLoad <: PSY.ControllableLoad
     internal::IS.InfrastructureSystemsInternal
 end
 
-function NEMLoad(name, available, bus, active_power, reactive_power, max_active_power, max_reactive_power, base_power, operation_cost, conformity = LoadConformity.UNDEFINED, services = Device[], dynamic_injector = nothing, ext = Dict{String, Any}())
-    return NEMLoad(name, available, bus, active_power, reactive_power, max_active_power, max_reactive_power, base_power, operation_cost, conformity, services, dynamic_injector, ext, IS.InfrastructureSystemsInternal())
+function NEMLoad(name, available, bus, active_power, reactive_power, max_active_power, max_reactive_power, base_power, operation_cost, conformity = LoadConformity.UNDEFINED, services = Device[], dynamic_injector = nothing, ext = Dict{String, Any}(), registration = nothing, telemetry = nothing, observed_state = nothing)
+    return NEMLoad(name, available, bus, active_power, reactive_power, max_active_power, max_reactive_power, base_power, operation_cost, registration, telemetry, observed_state, conformity, services, dynamic_injector, ext, IS.InfrastructureSystemsInternal())
 end
 
-function NEMLoad(; name, available, bus, active_power, reactive_power, max_active_power, max_reactive_power, base_power, operation_cost, conformity = LoadConformity.UNDEFINED, services = Device[], dynamic_injector = nothing, ext = Dict{String, Any}(), internal = IS.InfrastructureSystemsInternal())
-    return NEMLoad(name, available, bus, active_power, reactive_power, max_active_power, max_reactive_power, base_power, operation_cost, conformity, services, dynamic_injector, ext, internal)
+function NEMLoad(; name, available, bus, active_power, reactive_power, max_active_power, max_reactive_power, base_power, operation_cost, conformity = LoadConformity.UNDEFINED, services = Device[], dynamic_injector = nothing, ext = Dict{String, Any}(), internal = IS.InfrastructureSystemsInternal(), registration = nothing, telemetry = nothing, observed_state = nothing)
+    return NEMLoad(name, available, bus, active_power, reactive_power, max_active_power, max_reactive_power, base_power, operation_cost, registration, telemetry, observed_state, conformity, services, dynamic_injector, ext, internal)
 end
 
 _define_accessors!(
@@ -381,3 +411,70 @@ collects and the replay models with its dispatch formulation.
 const NEM_DISPATCH_DEVICE_TYPES = (
     NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMLoad, NEMStorage,
 )
+
+
+# The value of a NEM device's struct field, or an `ArgumentError` naming the device when it is unset.
+function _require_unit_data(value, what::AbstractString, d)
+    isnothing(value) && throw(ArgumentError("$(PSY.get_name(d)) has no $what; build it with nem_system"))
+    return value
+end
+
+"""
+    get_registration(d) -> NEMRegistration
+
+The [`NEMRegistration`](@ref) of the NEM device `d`. Throws an `ArgumentError` naming `d` when it has none.
+"""
+function get_registration(d::Union{NEM_DISPATCH_DEVICE_TYPES...})
+    return _require_unit_data(d.registration, "registration", d)
+end
+
+"""
+    get_telemetry(d) -> NEMTelemetry
+
+The [`NEMTelemetry`](@ref) of the NEM device `d`. Throws an `ArgumentError` naming `d` when it has none.
+"""
+function get_telemetry(d::Union{NEM_DISPATCH_DEVICE_TYPES...})
+    return _require_unit_data(d.telemetry, "telemetry", d)
+end
+
+"""
+    get_observed_state(d) -> NEMObservedState
+
+The [`NEMObservedState`](@ref) of the NEM device `d`. Throws an `ArgumentError` naming `d` when it has none.
+"""
+function get_observed_state(d::Union{NEM_DISPATCH_DEVICE_TYPES...})
+    return _require_unit_data(d.observed_state, "observed state", d)
+end
+
+"""
+    set_registration!(d, registration::Union{Nothing, NEMRegistration})
+
+Sets the registration of the NEM device `d`, replacing any earlier one, and returns it. Repeat calls
+overwrite.
+"""
+function set_registration!(d::Union{NEM_DISPATCH_DEVICE_TYPES...}, registration)
+    d.registration = registration
+    return registration
+end
+
+"""
+    set_telemetry!(d, telemetry::Union{Nothing, NEMTelemetry})
+
+Sets the telemetry of the NEM device `d`, replacing any earlier one, and returns it. Repeat calls
+overwrite.
+"""
+function set_telemetry!(d::Union{NEM_DISPATCH_DEVICE_TYPES...}, telemetry)
+    d.telemetry = telemetry
+    return telemetry
+end
+
+"""
+    set_observed_state!(d, observed_state::Union{Nothing, NEMObservedState})
+
+Sets the observed state of the NEM device `d`, replacing any earlier one, and returns it. Repeat calls
+overwrite.
+"""
+function set_observed_state!(d::Union{NEM_DISPATCH_DEVICE_TYPES...}, observed_state)
+    d.observed_state = observed_state
+    return observed_state
+end

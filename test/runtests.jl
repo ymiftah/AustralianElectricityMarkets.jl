@@ -47,6 +47,7 @@ const TEST_GROUPS = [
     "system_build_coverage" => ("System build coverage and JSON round-trip", ["integration/system_build_coverage.jl"]),
     "tie_break_service" => ("Energy tie-break service", ["tie_break_service.jl"]),
     "nem_offer_cost" => ("NEMOfferCost", ["types/nem_offer_cost.jl"]),
+    "unit_data" => ("NEM unit data structs", ["types/unit_data.jl"]),
     "nem_devices" => ("NEM device types", ["types/nem_devices.jl"]),
     "aqua" => ("Aqua", ["aqua.jl"]),
 ]

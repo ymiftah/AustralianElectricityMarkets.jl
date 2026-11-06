@@ -40,6 +40,8 @@ export get_energy_bids, get_fcas_bids, get_direction, get_offer_curves, get_max_
     get_fixed_load, get_minimum_load, get_fast_start_profile, get_daily_energy_constraint, get_normal_status,
     get_energy_limit, get_trapezium
 export NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMStorage, NEMLoad
+export NEMRegistration, NEMTelemetry, NEMObservedState, ScheduleType
+export get_registration, get_telemetry, get_observed_state, set_registration!, set_telemetry!, set_observed_state!
 export EnergyTieBreak, TIE_BREAK_SERVICE_NAME, TIE_BREAK_CVP_FACTOR
 export MARKET_PRICE_CAP_BY_FINANCIAL_YEAR, DISPATCH_INTERVAL, constraint_cvp_factor
 export UNIT_RAMP_CVP_FACTOR, INTERCONNECTOR_FLOW_CVP_FACTOR, ENERGY_OFFER_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR,
@@ -70,6 +72,7 @@ end
 
 include("accessors/series_names.jl")
 include("types/nem_offer_cost.jl")
+include("types/unit_data.jl")
 include("types/nem_devices.jl")
 include("accessors/device_flags.jl")
 include("accessors/fcas.jl")

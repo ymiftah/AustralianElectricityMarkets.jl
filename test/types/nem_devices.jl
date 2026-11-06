@@ -107,6 +107,7 @@ function _nd_conforms(case, offer_bid)
     add_component!(sys, stock)
     add_component!(sys, nem)
 
+    @test isnothing(nem.registration) && isnothing(nem.telemetry) && isnothing(nem.observed_state)
     _nd_check_fields(stock, nem; skip = (:internal, :operation_cost, :name))
     _nd_check_getters(stock, nem, sys)
     @test get_operation_cost(nem) == NEMOfferCost()
