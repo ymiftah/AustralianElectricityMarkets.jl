@@ -1,9 +1,10 @@
 """
     set_nem_energy_limits!(sys, db, date_range; intervention = 0, registered = nothing)
 
-Attaches separate energy `MAXAVAIL` and semi-scheduled `UIGF` series, in system-base per-unit,
-to available non-storage dispatch devices. Validates complete, finite, non-negative inputs
-and a stable effective schedule type before modifying `sys`.
+Attaches the semi-scheduled `UIGF` series, in system-base per-unit, to available non-storage dispatch
+devices, and records each device's schedule type in `ext["nem_semi_scheduled"]`. Validates complete,
+finite, non-negative inputs and a stable effective schedule type before modifying `sys`. The energy
+`MAXAVAIL` is not written here: it is the bid's, attached by [`set_market_bids!`](@ref).
 
 # Arguments
 - `sys`: the system after bids and FCAS participants have been attached.
@@ -15,8 +16,8 @@ and a stable effective schedule type before modifying `sys`.
   offer at an interval is an error; an unregistered one gets zero `MAXAVAIL` and `UIGF` there.
 
 # Returns
-`nothing`. Non-scheduled FCAS-only loads receive zero energy availability and are identified
-as non-semi-scheduled. Missing required input raises `ArgumentError`.
+`nothing`. Non-scheduled FCAS-only loads are identified as non-semi-scheduled. Missing required input
+raises `ArgumentError`.
 """
 function set_nem_energy_limits!(sys, db, date_range; intervention::Integer = 0, registered = nothing)
     step(date_range) == Minute(5) || throw(ArgumentError("energy limits require five-minute intervals"))
@@ -80,7 +81,6 @@ function set_nem_energy_limits!(sys, db, date_range; intervention::Integer = 0, 
     base = get_base_power(sys)
     for data in staged
         remove_single_series!(sys, data.device, NEM_SERIES.uigf)
-        replace_single_series!(sys, data.device, single_series(energy_max_avail_series_name(OfferSide.GEN), first(grid), data.availability ./ base, step(date_range)))
         if data.semi
             add_time_series!(sys, data.device, single_series(NEM_SERIES.uigf, first(grid), data.forecast ./ base, step(date_range)))
         end

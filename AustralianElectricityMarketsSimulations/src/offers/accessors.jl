@@ -1,8 +1,8 @@
 """
     NEMEnergyOffer
 
-One side of a unit's energy offer, as attached by [`set_energy_offer!`](@ref): its price-band curves
-over the offer's timestamps.
+One side of a unit's energy offer, as attached by [`set_effective_offers!`](@ref): its price-band
+curves over the offer's timestamps.
 
 # Fields
 - `side::OfferSide`: the offer side.
@@ -21,24 +21,24 @@ end
 """
     get_energy_offer(device, side::OfferSide) -> Union{Nothing, NEMEnergyOffer}
 
-`device`'s energy offer on `side`, read from the series keyed by the [`NEMEnergyBid`](@ref) of its
-[`NEMOfferCost`](@ref).
+`device`'s energy offer on `side`, read from the `"energy_offer"` series of that side.
 
 # Arguments
 - `device`: the bidding device.
 - `side`: the [`OfferSide`](@ref) to read.
 
 # Returns
-A [`NEMEnergyOffer`](@ref), or `nothing` when `device` is not a NEM device type or has no energy
-bid on `side`.
+A [`NEMEnergyOffer`](@ref), or `nothing` when `device` is not a NEM device type, has no energy
+bid on `side`, or the offer is not attached.
 """
 function get_energy_offer(device, side::OfferSide)
     cost = _nem_offer_cost(device)
     isnothing(cost) && return nothing
-    i = findfirst(b -> b.side == side, get_energy_bids(cost))
-    isnothing(i) && return nothing
-    ts = IS.get_time_series(device, get_energy_bids(cost)[i].curves)
-    series = get_time_series_array(device, ts)
+    any(b -> AustralianElectricityMarkets._energy_offer_side(b.direction) == side, get_energy_bids(cost)) || return nothing
+    name = energy_offer_series_name(side)
+    PSY.has_time_series(device, PSY.SingleTimeSeries, name) || return nothing
+    ts = PSY.get_time_series(PSY.SingleTimeSeries, device, name)
+    series = PSY.get_time_series_array(PSY.SingleTimeSeries, device, name)
     return NEMEnergyOffer(side, PSY.TimeSeries.timestamp(series), IS.get_resolution(ts), collect(values(series)))
 end
 
@@ -47,7 +47,7 @@ end
     NEMFCASOffer
 
 One side of a unit's offer for one FCAS market over a window, as attached by
-[`set_fcas_bids!`](@ref): a trapezium and an offer curve per interval.
+[`set_effective_offers!`](@ref): a trapezium and an offer curve per interval.
 
 # Fields
 - `service::BidType`: the FCAS market.
@@ -68,9 +68,9 @@ end
 
 `component`'s `service` offer on `side`, `horizon` steps from `initial_time`, in `component`'s
 `System`'s current display units: the [`get_scaled_fcas_trapezium`](@ref) trapeziums (`kwargs` are
-passed to it) and offer curves, both read from the series keyed by the [`NEMFCASBid`](@ref) of its
-[`NEMOfferCost`](@ref).
-Throws `ArgumentError` if `component` has no [`NEMFCASBid`](@ref) for `(service, side)`, either
+passed to it) and the offer curves, read from the derived `"fcas_trapezium_<service>"` and
+`"fcas_offer_<service>"` series.
+Throws `ArgumentError` if `component` has no [`NEMFCASBid`](@ref) for `service` on `side`, or either
 series isn't attached, or they differ in length.
 
 # Returns
@@ -79,19 +79,15 @@ A [`NEMFCASOffer`](@ref), or `nothing` when `component` is not a NEM device type
 function get_fcas_offer(component, service::BidType, side::OfferSide, initial_time, horizon::Integer; kwargs...)
     cost = _nem_offer_cost(component)
     isnothing(cost) && return nothing
-    i = findfirst(b -> b.service == service && b.side == side, get_fcas_bids(cost))
-    isnothing(i) && throw(
+    any(b -> b.service == service && AustralianElectricityMarkets._fcas_bid_side(component, b) == side, get_fcas_bids(cost)) || throw(
         ArgumentError(
             "\"$(get_name(component))\" has no FCAS bid for $(string(service)) on $(string(side)); " *
-                "call set_fcas_service_bids! first.",
+                "call set_market_bids! first.",
         ),
     )
-    bid = get_fcas_bids(cost)[i]
     decremental = side == OfferSide.LOAD
-    trapeziums = get_scaled_fcas_trapezium(
-        component, service, initial_time, horizon; decremental, trapezium_name = IS.get_name(bid.trapezium), kwargs...,
-    )
-    curves = _get_fcas_offer_curve(component, service, initial_time, horizon; decremental, name = IS.get_name(bid.curves))
+    trapeziums = get_scaled_fcas_trapezium(component, service, initial_time, horizon; decremental, kwargs...)
+    curves = _get_fcas_offer_curve(component, service, initial_time, horizon; decremental)
     _require_equal_length(trapeziums, curves, service, component)
     return NEMFCASOffer(service, side, trapeziums, curves)
 end

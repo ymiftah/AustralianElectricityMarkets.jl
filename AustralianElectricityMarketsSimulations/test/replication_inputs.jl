@@ -79,6 +79,7 @@ end
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     sys = nem_system(db, NEMDEConfiguration(); date_range = interval)
     @test !isnothing(get_component(Generator, sys, "BW02"))
+    set_effective_offers!(sys)
     AEMS._prepare_replay_forecasts!(sys)
     @test_nowarn replay_template(sys)
 end

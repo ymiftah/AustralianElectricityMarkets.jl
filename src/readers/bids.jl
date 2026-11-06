@@ -200,8 +200,9 @@ joined to their `BIDDAYOFFER_D` price bands, at native resolution. Each row is o
 
 # Returns
 A `DataFrame` with `SETTLEMENTDATE`, `INTERVAL_DATETIME`, `DUID`, `DIRECTION`, `BIDTYPE` (`BidType`),
-`PRICEBANDARRAY`, `BANDAVAILARRAY`, `MAXAVAIL`, `MINIMUMLOAD`, `DAILYENERGYCONSTRAINT`, `FIXEDLOAD`,
-`ROCUP`, `ROCDOWN`, `ENABLEMENTMIN`, `LOWBREAKPOINT`, `HIGHBREAKPOINT` and `ENABLEMENTMAX`.
+`PRICEBANDARRAY`, `BANDAVAILARRAY`, `MAXAVAIL`, `MINIMUMLOAD`, `DAILYENERGYCONSTRAINT`, `T1`, `T2`,
+`T3`, `T4`, `NORMALSTATUS`, `FIXEDLOAD`, `ROCUP`, `ROCDOWN`, `ENERGYLIMIT`, `ENABLEMENTMIN`,
+`LOWBREAKPOINT`, `HIGHBREAKPOINT` and `ENABLEMENTMAX`.
 Throws an `ArgumentError` naming any of these columns absent from the cached tables, and when a
 unit's period offers have no price bands.
 """
@@ -212,12 +213,16 @@ function read_offers(db, date_range; markets = NEM_MARKETS)
     price_source = read_hive(db, :BIDDAYOFFER_D, (start_date - Day(1), end_date + Day(1)))
     _require_columns(
         :BIDPEROFFER_D, _table_schema(db, period_source),
-        ["FIXEDLOAD", "ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN"],
+        ["FIXEDLOAD", "ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN", "ENERGYLIMIT"],
     )
-    _require_columns(:BIDDAYOFFER_D, _table_schema(db, price_source), ["MINIMUMLOAD", "DAILYENERGYCONSTRAINT"])
+    _require_columns(
+        :BIDDAYOFFER_D, _table_schema(db, price_source),
+        ["MINIMUMLOAD", "DAILYENERGYCONSTRAINT", "T1", "T2", "T3", "T4", "NORMALSTATUS"],
+    )
     offers = _massage_bids(
         db, start_date, end_date; bid_types = collect(BidType, markets), keep_bid_type = true,
-        period_columns = ["FIXEDLOAD", "ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN"],
+        period_columns = ["FIXEDLOAD", "ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN", "ENERGYLIMIT"],
+        extra_price_columns = ["T1", "T2", "T3", "T4", "NORMALSTATUS"],
     )
     transform!(offers, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
     return offers
@@ -283,6 +288,7 @@ function _massage_bids(
         db, start_date, end_date;
         resolution::Union{Nothing, Dates.Period} = nothing, bid_types::AbstractVector{BidType} = [BidType.ENERGY],
         keep_bid_type::Bool = false, period_columns::AbstractVector{<:AbstractString} = String[],
+        extra_price_columns::AbstractVector{<:AbstractString} = String[],
     )
     period_source = read_hive(db, :BIDPEROFFER_D, (start_date - Day(1), end_date + Day(1)))
     band_columns = _band_columns(_table_schema(db, period_source), "BANDAVAIL")
@@ -307,6 +313,7 @@ function _massage_bids(
     band_array = join(("p.$c" for c in band_columns), ", ")
     period_projection = join((", p.$c" for c in period_columns))
     bid_type_column = keep_bid_type ? ", p.BIDTYPE" : ""
+    extra_projection = join((", d.$c" for c in extra_price_columns))
     append!(params, _offer_days(start_date, end_date))
     append!(params, (start_date, end_date))
     bids = _query(
@@ -316,7 +323,7 @@ function _massage_bids(
              period AS ($period),
              prices AS (
                  SELECT SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE, MINIMUMLOAD, DAILYENERGYCONSTRAINT,
-                        $(join(price_columns, ", "))
+                        $(join([extra_price_columns; price_columns], ", "))
                  FROM $price_source
                  WHERE BIDTYPE IN ($(_bid_type_list(bid_types))) AND SETTLEMENTDATE BETWEEN ? AND ?
                  QUALIFY row_number() OVER (
@@ -325,7 +332,7 @@ function _massage_bids(
              )
         SELECT p.SETTLEMENTDATE, p.DUID, p.DIRECTION, p.INTERVAL_DATETIME,
                list_value($price_array) AS PRICEBANDARRAY, list_value($band_array) AS BANDAVAILARRAY,
-               p.MAXAVAIL, d.MINIMUMLOAD, d.DAILYENERGYCONSTRAINT $bid_type_column $period_projection,
+               p.MAXAVAIL, d.MINIMUMLOAD, d.DAILYENERGYCONSTRAINT $extra_projection $bid_type_column $period_projection,
                d.DUID IS NULL AS MISSING_PRICE
         FROM period p
         LEFT JOIN prices d USING (SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE)

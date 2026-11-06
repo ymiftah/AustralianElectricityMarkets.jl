@@ -40,3 +40,15 @@ const FCAS_BID_TYPES = (FCAS_CONTINGENCY_MARKETS..., FCAS_REGULATION_MARKETS...)
 
 # Every BIDTYPE a unit can offer: energy and the ten FCAS markets.
 const NEM_MARKETS = (BidType.ENERGY, FCAS_BID_TYPES...)
+
+
+IS.@scoped_enum(BidDirection, GEN = 1, LOAD = 2, BIDIRECTIONAL = 3)
+
+
+@doc """
+    BidDirection
+
+AEMO's `DIRECTION` of a bid: `GEN` (generation), `LOAD` (consumption) or `BIDIRECTIONAL`, an FCAS
+bid that a storage device offers on both sides. A `BIDIRECTIONAL` FCAS bid is modelled on the
+generation side.
+""" BidDirection

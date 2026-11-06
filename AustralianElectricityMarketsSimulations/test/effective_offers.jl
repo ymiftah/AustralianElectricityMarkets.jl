@@ -6,39 +6,33 @@
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:Minute(5):(start_date + Hour(1))
 
-    @testset "set_effective_offers! skips an unavailable unpriced device, not an available one" begin
-        sys = first(nem_network(db))
-        set_fcas_bids!(sys, db, date_range)
-        set_market_bids!(sys, db, date_range)
-        set_fcas_service_bids!(sys, db, date_range)
-        gen = first(g for g in get_components(Generator, sys) if has_time_series(g, SingleTimeSeries, "fcas_trapezium_RAISE6SEC"))
-        # Drop the generator's offer curve to model a data gap in an available device.
-        remove_time_series!(sys, SingleTimeSeries, gen, fcas_offer_series_name(fcas_service(gen, BidType.RAISE6SEC), false))
-        @test get_available(gen)
-        # Available devices without their curve are a real data gap, so the derivation still throws.
-        @test_throws ArgumentError set_effective_offers!(sys)
-        # Each contributing offer lacking its curve, found by the same rule the derivation uses.
-        unpriced = Set{String}()
-        for svc in get_components(FCASService, sys), device in get_contributing_devices(sys, svc)
-            bid_type = get_bid_type(svc)
-            for dec in fcas_offer_sides(fcas_bid_direction(device, bid_type))
-                has_time_series(device, SingleTimeSeries, fcas_offer_series_name(svc, dec)) || push!(unpriced, get_name(device))
-            end
-        end
-        @test get_name(gen) in unpriced
-        for name in unpriced
-            device = first(d for d in get_components(Device, sys) if get_name(d) == name)
-            set_available!(device, false)
-        end
+    @testset "derived offers equal the values attached before the bids were split out" begin
+        replay_db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
+        interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+        sys = nem_system(replay_db, NEMDEConfiguration(); date_range = interval)
         set_effective_offers!(sys)
-        @test !has_time_series(gen, SingleTimeSeries, fcas_effective_series_name(BidType.RAISE6SEC, false))
+        values_of(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)
+        er01 = get_component(NEMThermalGen, sys, "ER01")
+        bw01 = get_component(NEMStorage, sys, "BW01")
+        asload1 = get_component(NEMLoad, sys, "ASLOAD1")
+        prices_ascending = [51.0, 52.0, 53.0, 54.0, 55.0, 56.0, 57.0, 58.0, 59.0, 60.0]
+        prices_descending = reverse(prices_ascending)
+        bands = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]
+
+        @test PowerSystems.get_x_coords(first(values_of(er01, "energy_offer"))) == bands
+        @test PowerSystems.get_y_coords(first(values_of(er01, "energy_offer"))) == prices_ascending
+        @test first(values_of(er01, "energy_max_avail")) ≈ 1.01
+        @test PowerSystems.get_y_coords(first(values_of(bw01, "energy_offer_decremental"))) == prices_descending
+        @test first(values_of(bw01, "energy_max_avail_decremental")) ≈ 1.01
+        @test PowerSystems.get_y_coords(first(values_of(bw01, "fcas_offer_RAISEREG"))) == prices_ascending
+        @test isequal(collect(first(values_of(bw01, "fcas_trapezium_RAISEREG"))), [0.2, 0.3, 0.9, 1.0, 0.21, NaN, NaN])
+        @test PowerSystems.get_y_coords(first(values_of(asload1, "fcas_offer_RAISE6SEC_decremental"))) == prices_descending
     end
 
     @testset "get_fcas_offer reads the scaled trapezium and the offer curve" begin
         sys = first(nem_network(db))
-        set_fcas_bids!(sys, db, date_range)
         set_market_bids!(sys, db, date_range)
-        set_fcas_service_bids!(sys, db, date_range)
+        set_effective_offers!(sys)
         horizon = length(date_range) - 1
         # ASLOAD1 is a zero-cost non-scheduled load, so its decremental offer is read from its own series.
         asload1 = get_component(NEMLoad, sys, "ASLOAD1")
@@ -70,8 +64,7 @@
                 prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL,
             )
             add_component!(sys, gen)
-            add_time_series!(sys, gen, AustralianElectricityMarkets.single_series("energy_max_avail", start, fill(1.0, 2), Minute(5)))
-            set_energy_offer!(sys, gen, OfferSide.GEN, AustralianElectricityMarkets.single_series("energy_offer", start, fill(curve, 2), Minute(5)))
+            _toy_energy_bid!(sys, gen, AustralianElectricityMarkets.BidDirection.GEN, [start, start + Minute(5)], fill(curve, 2), fill(PSY.get_base_power(sys), 2))
         end
 
         set_effective_offers!(sys)
@@ -207,7 +200,7 @@ end
     @testset "get_scaled_fcas_trapezium skips scaling only at an absent interval" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
-        set_fcas_bids!(sys, db, date_range; resolution = resolution)
+        set_effective_offers!(sys)
 
         device = get_component(NEMThermalGen, sys, "ER01")
         full_grid = collect(date_range)[1:(end - 1)]
@@ -232,7 +225,7 @@ end
     @testset "get_scaled_fcas_trapezium narrows the trapezium wherever the AGC input is more restrictive" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
-        set_fcas_bids!(sys, db, date_range; resolution = resolution)
+        set_effective_offers!(sys)
         set_fcas_scaling_inputs!(sys, db, date_range)
 
         device = get_component(NEMThermalGen, sys, "ER01")
@@ -311,6 +304,7 @@ end
     @testset "energy offer views and MAXAVAIL per direction" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range)
+        set_effective_offers!(sys)
         for bat in get_components(NEMStorage, sys)
             gen_offer, load_offer = get_energy_offer(bat, OfferSide.GEN), get_energy_offer(bat, OfferSide.LOAD)
             ta_gen = get_time_series_array(SingleTimeSeries, bat, "energy_offer")
@@ -343,10 +337,6 @@ end
             base_power = 100.0, time_limits = nothing, must_run = false, prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL,
         )
         add_component!(sys, stock)
-        set_energy_offer!(
-            sys, stock, OfferSide.GEN,
-            AustralianElectricityMarkets.single_series("energy_offer", start, fill(PiecewiseStepData([0.0, 5.0], [10.0]), 2), Minute(5)),
-        )
         @test isnothing(get_energy_offer(stock, OfferSide.GEN))
         @test isnothing(get_energy_offer(stock, OfferSide.LOAD))
     end
@@ -354,6 +344,7 @@ end
     @testset "offer views of each side after set_market_bids!" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range)
+        set_effective_offers!(sys)
         gen = first(get_components(NEMThermalGen, sys))
         storage = first(get_components(NEMStorage, sys))
         for (device, side) in ((gen, OfferSide.GEN), (storage, OfferSide.GEN), (storage, OfferSide.LOAD))
@@ -368,10 +359,12 @@ end
         sys = deepcopy(sys_base)
         second_range = (start_date + Minute(30)):Minute(5):(start_date + Minute(90))
         set_market_bids!(sys, db, date_range)
+        set_effective_offers!(sys)
         set_market_bids!(sys, db, second_range)
+        set_effective_offers!(sys)
         for device in vcat(collect(get_components(NEMThermalGen, sys)), collect(get_components(NEMStorage, sys)))
             get_available(device) || continue
-            for side in [b.side for b in AustralianElectricityMarkets.get_energy_bids(get_operation_cost(device))]
+            for side in [AustralianElectricityMarkets._energy_offer_side(b.direction) for b in AustralianElectricityMarkets.get_energy_bids(get_operation_cost(device))]
                 @test get_energy_offer(device, side).timestamps[1] == second_range[1]
             end
         end

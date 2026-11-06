@@ -1,4 +1,4 @@
-function _tie_validation_system(curves_a, curves_b; decremental = false)
+function _tie_validation_system(curves_a, curves_b; decremental = false, unrounded = false)
     units = decremental ? Pair{String, Any}[] : [
             TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
             TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
@@ -12,17 +12,23 @@ function _tie_validation_system(curves_a, curves_b; decremental = false)
     series = AustralianElectricityMarkets.energy_offer_series_name(side)
     function setter!(sys, device, bids, start, resolution)
         n = length(bids.piecewise_step_data)
-        AustralianElectricityMarkets.replace_single_series!(
-            sys, device,
-            AustralianElectricityMarkets.single_series(AustralianElectricityMarkets.energy_max_avail_series_name(device, side), start, ones(n), resolution),
-        )
-        AustralianElectricityMarkets.set_energy_offer!(
-            sys, device, side, AustralianElectricityMarkets.single_series(series, start, copy(bids.piecewise_step_data), resolution),
-        )
+        stamps = [start + (k - 1) * resolution for k in 1:n]
+        direction = side == OfferSide.LOAD ? AustralianElectricityMarkets.BidDirection.LOAD : AustralianElectricityMarkets.BidDirection.GEN
+        _toy_energy_bid!(sys, device, direction, stamps, copy(bids.piecewise_step_data), fill(PSY.get_base_power(sys), n))
         return
     end
     for (name, curves) in zip(names, (curves_a, curves_b))
         setter!(sys, PSY.get_component(T, sys, name), (; piecewise_step_data = curves), TOY_START, TOY_RESOLUTION)
+    end
+    AEMS._set_static_offers!(sys)
+    # The derivation rounds referred prices to cents; `unrounded` writes the curves as given instead.
+    if unrounded
+        for (name, curves) in zip(names, (curves_a, curves_b))
+            AustralianElectricityMarkets.replace_single_series!(
+                sys, PSY.get_component(T, sys, name),
+                AustralianElectricityMarkets.single_series(series, TOY_START, copy(curves), TOY_RESOLUTION),
+            )
+        end
     end
     return sys, TOY_START:TOY_RESOLUTION:(TOY_START + (length(curves_a) - 1) * TOY_RESOLUTION)
 end
@@ -70,7 +76,7 @@ end
     end
     sys, steps = _tie_validation_system(
         [curve([20.0, 20.0 + 2.0e-6]), curve([20.0, 20.0 + 0.75e-6])],
-        fill(curve([20.0 + 1.5e-6]), 2),
+        fill(curve([20.0 + 1.5e-6]), 2); unrounded = true,
     )
     @test_throws r"transitive ties are not supported" check_tie_break_pairs(sys, steps)
 end

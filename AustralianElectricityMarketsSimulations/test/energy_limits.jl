@@ -9,9 +9,15 @@ function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, we
         mutate! = function (sys, stamps)
             cheap = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
             PSY.set_active_power_limits!(cheap, (min = 0.0, max = rating))
-            PSY.remove_time_series!(sys, PSY.SingleTimeSeries, cheap, "energy_max_avail")
+            # The bid's MAXAVAIL (MW) is what the derivation turns into energy_max_avail.
+            AustralianElectricityMarkets.replace_single_series!(
+                sys, cheap,
+                AustralianElectricityMarkets.single_series(
+                    AustralianElectricityMarkets.bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN),
+                    stamps[1], _toy_values(max_avail, 2), TOY_RESOLUTION,
+                ),
+            )
             base = PSY.get_base_power(sys)
-            PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "energy_max_avail", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(max_avail, 2) ./ base)))
             PSY.get_ext(cheap)["nem_semi_scheduled"] = !isnothing(uigf)
             if !isnothing(uigf)
                 PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "uigf", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(uigf, 2) ./ base)))

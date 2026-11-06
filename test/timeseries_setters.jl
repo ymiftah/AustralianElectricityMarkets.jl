@@ -81,9 +81,8 @@
                     sys, db, date_range; resolution = resolution,
                 )
                 for gen in get_components(NEMThermalGen, sys)
-                    # Verify time series exists
-                    ta = get_time_series_array(SingleTimeSeries, gen, "energy_offer")
                     # set_market_bids! creates one value per bid interval of date_range.
+                    ta = get_time_series_array(SingleTimeSeries, gen, "bid_energy_offer_curves_gen")
                     @test length(ta) == length(date_range) - 1
                 end
 
@@ -92,114 +91,58 @@
                     @test !get_available(get_component(NEMLoad, sys, "WDR1"))
                     pump = get_component(NEMLoad, sys, "PUMP1")
                     @test get_available(pump)
-                    ta = get_time_series_array(SingleTimeSeries, pump, "energy_offer_decremental")
+                    ta = get_time_series_array(SingleTimeSeries, pump, "bid_energy_offer_curves_load")
                     @test length(ta) == length(date_range) - 1
-                    # A load has no incremental offer
-                    @test !has_time_series(pump, SingleTimeSeries, "energy_offer")
+                    # A load has no incremental bid
+                    @test !has_time_series(pump, SingleTimeSeries, "bid_energy_offer_curves_gen")
                 end
 
                 @testset "Batteries" begin
                     for bat in get_components(NEMStorage, sys)
                         # GEN bids
-                        ta_gen = get_time_series_array(SingleTimeSeries, bat, "energy_offer")
+                        ta_gen = get_time_series_array(SingleTimeSeries, bat, "bid_energy_offer_curves_gen")
                         @test length(ta_gen) == length(date_range) - 1
 
                         # LOAD bids (decremental)
-                        ta_load = get_time_series_array(SingleTimeSeries, bat, "energy_offer_decremental")
+                        ta_load = get_time_series_array(SingleTimeSeries, bat, "bid_energy_offer_curves_load")
                         @test length(ta_load) == length(date_range) - 1
 
-                        # Energy MAXAVAIL per direction; the mock bids 100 + i MW on both sides,
-                        # rising with the interval index i.
+                        # Energy MAXAVAIL per direction, in MW as offered; the mock bids 100 + i MW on both
+                        # sides, rising with the interval index i.
                         horizon = length(date_range) - 1
-                        avail = with_units_base(sys, "NATURAL_UNITS") do
-                            (
-                                gen = get_time_series_values(SingleTimeSeries, bat, "energy_max_avail"; start_time = first(date_range), len = horizon) .* get_base_power(sys),
-                                load = get_time_series_values(SingleTimeSeries, bat, "energy_max_avail_decremental"; start_time = first(date_range), len = horizon) .* get_base_power(sys),
-                            )
-                        end
+                        avail = (
+                            gen = get_time_series_values(SingleTimeSeries, bat, "bid_energy_max_avail_gen"; start_time = first(date_range), len = horizon),
+                            load = get_time_series_values(SingleTimeSeries, bat, "bid_energy_max_avail_load"; start_time = first(date_range), len = horizon),
+                        )
                         @test length(avail.gen) == horizon
                         @test avail.gen ≈ avail.load
                         @test all(x -> 100.0 <= x <= 149.0, avail.gen)
                         @test avail.gen[end] > avail.gen[1]
                     end
-                    @test !has_time_series(first(get_components(NEMThermalGen, sys)), SingleTimeSeries, "energy_max_avail_decremental")
-                    @test !has_time_series(first(get_components(PowerLoad, sys)), SingleTimeSeries, "energy_offer")
+                    @test !has_time_series(first(get_components(NEMThermalGen, sys)), SingleTimeSeries, "bid_energy_max_avail_load")
+                    @test !has_time_series(first(get_components(PowerLoad, sys)), SingleTimeSeries, "bid_energy_offer_curves_gen")
                 end
             end
         end
     end
 
-    @testset "set_energy_offer! names, validates and replaces" begin
-        sys = System(100.0)
-        bus = ACBus(;
-            number = 1, name = "bus", available = true, bustype = ACBusTypes.REF, angle = 0.0,
-            magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1), base_voltage = 230.0,
-        )
-        add_component!(sys, bus)
-        start = DateTime(2025, 1, 1)
-        single(name, v) = AustralianElectricityMarkets.single_series(name, start, fill(v, 2), Minute(5))
-        curve(p) = PiecewiseStepData([0.0, 5.0], [p])
-        @test energy_offer_series_name(OfferSide.GEN) == "energy_offer"
-        @test energy_offer_series_name(OfferSide.LOAD) == "energy_offer_decremental"
-
-        # A stock-cost device keeps its operation cost.
-        stock = ThermalStandard(;
-            name = "stock", available = true, status = true, bus, active_power = 0.0, reactive_power = 0.0, rating = 1.0,
-            active_power_limits = (min = 0.0, max = 1.0), reactive_power_limits = nothing, ramp_limits = nothing,
-            operation_cost = ThermalGenerationCost(; variable = CostCurve(LinearCurve(0.0)), fixed = 0.0, start_up = 0.0, shut_down = 0.0),
-            base_power = 100.0, time_limits = nothing, must_run = false, prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL,
-        )
-        add_component!(sys, stock)
-        cost = get_operation_cost(stock)
-        set_energy_offer!(sys, stock, OfferSide.GEN, single("anything", curve(10.0)))
-        @test get_time_series_values(SingleTimeSeries, stock, "energy_offer") == fill(curve(10.0), 2)
-        @test get_operation_cost(stock) === cost
-        set_energy_offer!(sys, stock, OfferSide.GEN, single("anything", curve(20.0)))
-        @test get_time_series_values(SingleTimeSeries, stock, "energy_offer") == fill(curve(20.0), 2)
-        @test_throws ArgumentError set_energy_offer!(sys, stock, OfferSide.GEN, single("flat", 1.0))
-        # A bidding device must carry a NEMOfferCost.
-        @test_throws r"bidding devices must be NEM device types" AustralianElectricityMarkets._write_energy_bid!(
-            sys, stock, nothing, OfferSide.GEN, start, Minute(5),
-        )
-
-        # A NEMOfferCost records the bid, which needs the max_avail series.
-        gen = NEMThermalGen(;
-            name = "g", available = true, status = true, bus, active_power = 50.0, reactive_power = 0.0, rating = 120.0,
-            active_power_limits = (min = 10.0, max = 100.0), reactive_power_limits = (min = -5.0, max = 5.0),
-            ramp_limits = (up = 2.0, down = 3.0), base_power = 100.0, time_limits = (up = 1.0, down = 2.0),
-            prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL, operation_cost = NEMOfferCost(),
-        )
-        add_component!(sys, gen)
-        @test_throws ArgumentError set_energy_offer!(sys, gen, OfferSide.GEN, single("o", curve(10.0)))
-        @test !has_time_series(gen, SingleTimeSeries, "energy_offer")
-        add_time_series!(sys, gen, single("energy_max_avail", 0.5))
-        set_energy_offer!(sys, gen, OfferSide.GEN, single("o", curve(10.0)))
-        bids = AustralianElectricityMarkets.get_energy_bids(get_operation_cost(gen))
-        @test length(bids) == 1
-        @test bids[1].side == OfferSide.GEN
-        @test bids[1].curves.name == "energy_offer" && bids[1].max_avail.name == "energy_max_avail"
-        set_energy_offer!(sys, gen, OfferSide.GEN, single("o", curve(30.0)))
-        @test length(AustralianElectricityMarkets.get_energy_bids(get_operation_cost(gen))) == 1
-        @test get_time_series_values(SingleTimeSeries, gen, "energy_offer") == fill(curve(30.0), 2)
-    end
-
-    @testset "set_market_bids! records each side's offer on the NEMOfferCost" begin
+    @testset "set_market_bids! records each direction's bid on the NEMOfferCost" begin
         sys = deepcopy(sys_base)
         start_date = DateTime(2025, 1, 1, 0, 0)
         date_range = start_date:Minute(5):(start_date + Hour(1))
         set_market_bids!(sys, db, date_range)
         gen = first(get_components(NEMThermalGen, sys))
         storage = first(get_components(NEMStorage, sys))
-        for (device, side) in ((gen, OfferSide.GEN), (storage, OfferSide.GEN), (storage, OfferSide.LOAD))
-            bid = only(b for b in AustralianElectricityMarkets.get_energy_bids(get_operation_cost(device)) if b.side == side)
-            @test bid.curves.name == energy_offer_series_name(side)
-            @test bid.max_avail.name == energy_max_avail_series_name(side)
-            @test get_time_series_timestamps(SingleTimeSeries, device, energy_offer_series_name(side))[1] == date_range[1]
+        for (device, direction) in ((gen, AustralianElectricityMarkets.BidDirection.GEN), (storage, AustralianElectricityMarkets.BidDirection.GEN), (storage, AustralianElectricityMarkets.BidDirection.LOAD))
+            bid = only(b for b in AustralianElectricityMarkets.get_energy_bids(get_operation_cost(device)) if b.direction == direction)
+            @test bid.offer_curves.name == AustralianElectricityMarkets.bid_series_name(AustralianElectricityMarkets.BidType.ENERGY, :offer_curves, direction)
+            @test bid.max_avail.name == AustralianElectricityMarkets.bid_series_name(AustralianElectricityMarkets.BidType.ENERGY, :max_avail, direction)
+            @test get_time_series_timestamps(SingleTimeSeries, device, bid.offer_curves.name)[1] == date_range[1]
         end
         @test !any(has_time_series(gen, SingleTimeSeries, n) for n in ("variable_cost", "incremental_initial_input"))
     end
 
-    @testset "set_market_bids! twice keeps one NEMEnergyBid per side" begin
+    @testset "set_market_bids! twice keeps one NEMEnergyBid per direction" begin
         sys = deepcopy(sys_base)
         start_date = DateTime(2025, 1, 1, 0, 0)
         first_range = start_date:Minute(5):(start_date + Hour(1))
@@ -209,14 +152,14 @@
         for device in vcat(collect(get_components(NEMThermalGen, sys)), collect(get_components(NEMStorage, sys)))
             get_available(device) || continue
             bids = AustralianElectricityMarkets.get_energy_bids(get_operation_cost(device))
-            sides = [b.side for b in bids]
-            @test allunique(sides)
-            @test !isempty(sides)
-            for side in sides
+            directions = [b.direction for b in bids]
+            @test allunique(directions)
+            @test !isempty(directions)
+            for direction in directions
+                name = AustralianElectricityMarkets.bid_series_name(AustralianElectricityMarkets.BidType.ENERGY, :offer_curves, direction)
                 # The second call's window replaced the first's series.
-                @test get_time_series_timestamps(SingleTimeSeries, device, energy_offer_series_name(side))[1] == second_range[1]
+                @test get_time_series_timestamps(SingleTimeSeries, device, name)[1] == second_range[1]
             end
-            @test count(k -> k.name == "energy_offer", get_time_series_keys(device)) <= 1
         end
     end
 
@@ -364,7 +307,7 @@
         @test eltype(offers.BIDTYPE) == BidType
 
         @testset "energy rows match read_bids" begin
-            energy = by_key(subset(offers, :BIDTYPE => ByRow(==(BidType.ENERGY))))
+            energy = by_key(subset(offers, :BIDTYPE => ByRow(==(AustralianElectricityMarkets.BidType.ENERGY))))
             bids = sort(read_bids(db, date_range), [:SETTLEMENTDATE, :INTERVAL_DATETIME, :DUID, :DIRECTION])
             shared = intersect(names(energy), names(bids))
             @test nrow(energy) == nrow(bids)
@@ -372,7 +315,7 @@
         end
 
         @testset "FCAS rows match read_fcas_bids" begin
-            fcas = by_key(subset(offers, :BIDTYPE => ByRow(!=(BidType.ENERGY))))
+            fcas = by_key(subset(offers, :BIDTYPE => ByRow(!=(AustralianElectricityMarkets.BidType.ENERGY))))
             reference = by_key(read_fcas_bids(db, date_range, collect(FCAS_BID_TYPES)))
             shared = intersect(names(fcas), names(reference))
             @test nrow(fcas) == nrow(reference)
@@ -380,7 +323,7 @@
         end
 
         @testset "FIXEDLOAD rows match read_fixed_loads" begin
-            loaded = by_key(subset(offers, :FIXEDLOAD => ByRow(>(0)), :BIDTYPE => ByRow(==(BidType.ENERGY))))
+            loaded = by_key(subset(offers, :FIXEDLOAD => ByRow(>(0)), :BIDTYPE => ByRow(==(AustralianElectricityMarkets.BidType.ENERGY))))
             expected = sort(read_fixed_loads(db, date_range), [:INTERVAL_DATETIME, :DUID, :DIRECTION])
             @test !isempty(expected)
             @test nrow(loaded) == nrow(expected)
@@ -389,9 +332,9 @@
         end
 
         @testset "markets restricts the BIDTYPE rows" begin
-            energy_only = read_offers(db, date_range; markets = (BidType.ENERGY,))
-            @test all(==(BidType.ENERGY), energy_only.BIDTYPE)
-            @test nrow(energy_only) == nrow(subset(offers, :BIDTYPE => ByRow(==(BidType.ENERGY))))
+            energy_only = read_offers(db, date_range; markets = (AustralianElectricityMarkets.BidType.ENERGY,))
+            @test all(==(AustralianElectricityMarkets.BidType.ENERGY), energy_only.BIDTYPE)
+            @test nrow(energy_only) == nrow(subset(offers, :BIDTYPE => ByRow(==(AustralianElectricityMarkets.BidType.ENERGY))))
         end
     end
 
@@ -490,7 +433,7 @@
 
         @testset "pins a non-scheduled load's energy to zero whatever DISPATCHLOAD meters" begin
             sys = deepcopy(sys_base)
-            set_fcas_bids!(sys, db, date_range)
+            set_market_bids!(sys, db, date_range)
             @test all(>(0.0), subset(truth, :DUID => ByRow(==("ASLOAD1"))).INITIALMW)
             attach_dispatch_limits!(sys, db, date_range)
             asload = get_component(NEMLoad, sys, "ASLOAD1")
@@ -1017,28 +960,33 @@
         raw_price(duid, direction) = get_y_coords(raw_curve(duid, direction))
         raw_mw(duid, direction) = get_x_coords(raw_curve(duid, direction))
 
-        prices(sys, name, series = "energy_offer") = with_units_base(sys, "NATURAL_UNITS") do
-            ta = get_time_series_array(SingleTimeSeries, get_component(Device, sys, name), series)
+        prices(sys, name, direction = "GEN") = with_units_base(sys, "NATURAL_UNITS") do
+            ta = get_time_series_array(SingleTimeSeries, get_component(Device, sys, name), AustralianElectricityMarkets.bid_series_name(AustralianElectricityMarkets.BidType.ENERGY, :offer_curves, AustralianElectricityMarkets.BidDirection(direction)))
             return get_y_coords(first(values(ta)))
         end
         mw(sys, name) = with_units_base(sys, "NATURAL_UNITS") do
-            ta = get_time_series_array(SingleTimeSeries, get_component(Device, sys, name), "energy_offer")
+            ta = get_time_series_array(SingleTimeSeries, get_component(Device, sys, name), AustralianElectricityMarkets.bid_series_name(AustralianElectricityMarkets.BidType.ENERGY, :offer_curves, AustralianElectricityMarkets.BidDirection.GEN))
             return get_x_coords(first(values(ta)))
         end
 
-        @testset "prices are divided, MW is not" begin
-            @test prices(sys_lf, "ER01") ≈ round.(raw_price("ER01", "GEN") ./ (0.9 * 0.97); digits = 2)
+        @testset "bid prices are as offered, MW is not divided" begin
+            @test prices(sys_lf, "ER01") ≈ raw_price("ER01", "GEN")
             @test prices(sys_lf, "BW02") ≈ raw_price("BW02", "GEN")
-            @test prices(sys_lf, "BW01") ≈ round.(raw_price("BW01", "GEN") ./ 0.5; digits = 2)
-            @test prices(sys_lf, "BW01", "energy_offer_decremental") ≈
-                round.(raw_price("BW01", "LOAD") ./ 0.8; digits = 2)
+            @test prices(sys_lf, "BW01") ≈ raw_price("BW01", "GEN")
+            @test prices(sys_lf, "BW01", "LOAD") ≈ raw_price("BW01", "LOAD")
             @test mw(sys_lf, "ER01") ≈ raw_mw("ER01", "GEN")
         end
 
-        @testset "a scheduled load's decremental bid uses its load loss factor" begin
+        @testset "loss factors are kept on the unit for AEMSim to refer prices" begin
+            @test get_ext(get_component(NEMThermalGen, sys_lf, "ER01"))["nem_gen_loss_factor"] ≈ 0.9 * 0.97
+            @test get_ext(get_component(NEMStorage, sys_lf, "BW01"))["nem_gen_loss_factor"] ≈ 0.5
+            @test get_ext(get_component(NEMStorage, sys_lf, "BW01"))["nem_load_loss_factor"] ≈ 0.8
+        end
+
+        @testset "a scheduled load's decremental bid is as offered" begin
             @test get_available(get_component(NEMLoad, sys_lf, "PUMP1"))
-            @test prices(sys_lf, "PUMP1", "energy_offer_decremental") ≈
-                round.(raw_price("PUMP1", "LOAD") ./ 0.8; digits = 2)
+            @test prices(sys_lf, "PUMP1", "LOAD") ≈ raw_price("PUMP1", "LOAD")
+            @test get_ext(get_component(NEMLoad, sys_lf, "PUMP1"))["nem_load_loss_factor"] ≈ 0.8
         end
 
         @testset "a bidding unit without a DUDETAILSUMMARY row in force is an error" begin
@@ -1064,13 +1012,14 @@ end
     for (duid, forecast) in [("BW03", [40.0, 41.0]), ("BW04", [70.0, 69.0])]
         gen = get_component(NEMRenewableGen, sys, duid)
         @test get_ext(gen)["nem_semi_scheduled"] === true
-        @test get_time_series_values(SingleTimeSeries, gen, "energy_max_avail"; ignore_scaling_factors = true) .* get_base_power(sys) ≈ [100.0, 101.0]
+        @test get_time_series_values(SingleTimeSeries, gen, AustralianElectricityMarkets.bid_series_name(AustralianElectricityMarkets.BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN)) ≈ [100.0, 101.0]
         @test get_time_series_values(SingleTimeSeries, gen, "uigf"; ignore_scaling_factors = true) .* get_base_power(sys) ≈ forecast
     end
     coal = get_component(NEMThermalGen, sys, "ER01")
     @test get_ext(coal)["nem_semi_scheduled"] === false
     @test !has_time_series(coal, SingleTimeSeries, "uigf")
-    @test has_time_series(get_component(NEMStorage, sys, "BW01"), SingleTimeSeries, "energy_max_avail")
+    @test has_time_series(get_component(NEMStorage, sys, "BW01"), SingleTimeSeries, AustralianElectricityMarkets.bid_series_name(AustralianElectricityMarkets.BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN))
+    @test !has_time_series(get_component(NEMThermalGen, sys, "ER01"), SingleTimeSeries, "energy_max_avail")
 
     function invalid_energy_cache(table, transform!)
         hive = mktempdir()
@@ -1102,11 +1051,9 @@ end
         )
         untouched = energy_test_system(db)
         @test_throws ArgumentError set_nem_energy_limits!(untouched, bad, range)
-        # Only the bid's own MAXAVAIL series is on the generators: the failed setter wrote nothing.
-        reference = energy_test_system(db)
+        # The failed setter wrote no UIGF and kept each unit's schedule type unset.
         @test all(
-            !haskey(get_ext(g), "nem_semi_scheduled") &&
-                get_time_series_values(SingleTimeSeries, g, "energy_max_avail") == get_time_series_values(SingleTimeSeries, get_component(Generator, reference, get_name(g)), "energy_max_avail")
+            !haskey(get_ext(g), "nem_semi_scheduled") && !has_time_series(g, SingleTimeSeries, "uigf")
                 for g in get_components(Generator, untouched) if get_available(g)
         )
         close(bad.db)
@@ -1158,7 +1105,6 @@ end
         @test !isempty(loads)
         for load in loads
             @test get_ext(load)["nem_semi_scheduled"] === false
-            @test all(iszero, get_time_series_values(SingleTimeSeries, load, "energy_max_avail"; ignore_scaling_factors = true))
             @test !has_time_series(load, SingleTimeSeries, "uigf")
         end
     end
@@ -1177,7 +1123,7 @@ end
         set_nem_energy_limits!(again, reclassified, range)
         @test get_ext(gen)["nem_semi_scheduled"] === false
         @test !has_time_series(gen, SingleTimeSeries, "uigf")
-        @test get_time_series_values(SingleTimeSeries, gen, "energy_max_avail"; ignore_scaling_factors = true) .* get_base_power(again) ≈ [100.0, 101.0]
+        @test get_time_series_values(SingleTimeSeries, gen, AustralianElectricityMarkets.bid_series_name(AustralianElectricityMarkets.BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN)) ≈ [100.0, 101.0]
         set_nem_energy_limits!(again, db, range)
         @test get_ext(gen)["nem_semi_scheduled"] === true
         @test get_time_series_values(SingleTimeSeries, gen, "uigf"; ignore_scaling_factors = true) .* get_base_power(again) ≈ [40.0, 41.0]
@@ -1194,31 +1140,6 @@ end
         @test all(r -> r.SETTLEMENTDATE < last(range), eachrow(rows))
     end
     close(db.db)
-end
-
-@testset "Grid padding of bids and FCAS rows" begin
-    AEM = AustralianElectricityMarkets
-    grid = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 15)
-    curve(prices, widths) = PowerSystems.PiecewiseStepData(vcat(0.0, cumsum(widths)), prices)
-    rows = DataFrame(
-        DUID = ["X", "X"], DIRECTION = ["GEN", "GEN"], INTERVAL_DATETIME = [grid[2], grid[3]],
-        MAXAVAIL = [10.0, 20.0], piecewise_step_data = [curve([1.0, 2.0], [5.0, 5.0]), curve([1.5, 2.5], [5.0, 10.0])],
-    )
-    padded = AEM._pad_bids_to_grid(rows, grid)
-    @test nrow(padded) == length(grid)
-    @test padded.INTERVAL_DATETIME == collect(grid)
-    @test padded.MAXAVAIL == [0.0, 10.0, 20.0]
-    # An absent stamp is a zero-width curve on the first real row's prices.
-    @test PowerSystems.get_y_coords(padded.piecewise_step_data[1]) == [1.0, 2.0]
-    @test PowerSystems.get_x_coords(padded.piecewise_step_data[1]) == [0.0, 0.0, 0.0]
-    @test PowerSystems.get_x_coords(padded.piecewise_step_data[2]) == [0.0, 5.0, 10.0]
-    @test_throws ArgumentError AEM._pad_bids_to_grid(vcat(rows, rows), grid)
-    @test_throws ArgumentError AEM._pad_bids_to_grid(rows, grid[1:2])
-
-    values = DataFrame(INTERVAL_DATETIME = [grid[2]], X = [7.0])
-    @test AEM._on_grid(values, :X, grid, 0.0, "U1", BidType.RAISEREG) == [0.0, 7.0, 0.0]
-    @test_throws ArgumentError AEM._on_grid(vcat(values, values), :X, grid, 0.0, "U1", BidType.RAISEREG)
-    @test_throws ArgumentError AEM._on_grid(DataFrame(INTERVAL_DATETIME = [grid[end] + Minute(5)], X = [1.0]), :X, grid, 0.0, "U1", BidType.RAISEREG)
 end
 
 @testset "Regional availability setter" begin

@@ -1,7 +1,8 @@
-"Whether `load` carries a decremental FCAS trapezium series for any FCAS market."
-_offers_fcas(load) = any(
-    bt -> has_time_series(load, SingleTimeSeries, fcas_series_name("fcas_trapezium", bt, OfferSide.LOAD)), FCAS_BID_TYPES,
-)
+"Whether `load` holds a load-side FCAS bid for any FCAS market."
+function _offers_fcas(load)
+    cost = _nem_offer_cost(load)
+    return !isnothing(cost) && any(b -> _fcas_bid_side(load, b) == OfferSide.LOAD, get_fcas_bids(cost))
+end
 
 
 """
@@ -12,8 +13,8 @@ A [`RegionTerm`](@ref)'s contributing devices.
 # Arguments
 - `sys`: the `System` to search.
 - `region`: an `Area` name.
-- `loads`: also include the region's `ControllableLoad`s that carry an FCAS bid series
-  ([`set_fcas_bids!`](@ref) must have run); loads are not part of a region's energy aggregate.
+- `loads`: also include the region's `ControllableLoad`s that carry a load-side FCAS bid
+  ([`set_market_bids!`](@ref) must have run); loads are not part of a region's energy aggregate.
 
 # Returns
 `Vector{Device}` of every `Generator`/`Storage` (and, with `loads`, `ControllableLoad`) in

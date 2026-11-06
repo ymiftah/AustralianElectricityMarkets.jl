@@ -22,7 +22,7 @@ regulation bid.
 """
 function _fcas_direction_problem(device::PSY.Device, bid_type::BidType, direction::FCASBidDirection)
     bid = string(bid_type)
-    direction === FCASBidDirection.NONE && return "carries neither an incremental nor a decremental $bid bid; call set_fcas_bids! first"
+    direction === FCASBidDirection.NONE && return "carries neither an incremental nor a decremental $bid bid; call set_market_bids! first"
     direction === FCASBidDirection.BOTH && !(device isa PSY.Storage && bid_type in FCAS_REGULATION_MARKETS) &&
         return "carries both an incremental and a decremental $bid bid; bidirectional FCAS capacity is modeled " *
         "only for a `PSY.Storage` device's regulation markets"

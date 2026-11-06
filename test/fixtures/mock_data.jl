@@ -330,8 +330,8 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
                 LOWBREAKPOINT = fill(30.0, n),
                 HIGHBREAKPOINT = fill(90.0, n),
                 ENABLEMENTMAX = fill(100.0, n),
-                ROCUP = fill(bid_type in ("RAISEREG", "LOWERREG") ? 1.0 : missing, n),
-                ROCDOWN = fill(bid_type in ("RAISEREG", "LOWERREG") ? 1.0 : missing, n),
+                ROCUP = fill(missing, n),
+                ROCDOWN = fill(missing, n),
             )
             for b in 1:10
                 block[!, "BANDAVAIL$b"] = fill(10.0, nrow(block))
@@ -358,8 +358,8 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
                 LOWBREAKPOINT = [30.0, 0.0],
                 HIGHBREAKPOINT = [90.0, 0.0],
                 ENABLEMENTMAX = [100.0, 0.0],
-                ROCUP = fill(bid_type in ("RAISEREG", "LOWERREG") ? 1.0 : missing, 2),
-                ROCDOWN = fill(bid_type in ("RAISEREG", "LOWERREG") ? 1.0 : missing, 2),
+                ROCUP = fill(missing, 2),
+                ROCDOWN = fill(missing, 2),
             )
             for b in 1:10
                 block[!, "BANDAVAIL$b"] = fill(10.0, nrow(block))
@@ -376,6 +376,10 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
         (df_bid_per_offer.INTERVAL_DATETIME .>= DateTime(2025, 1, 1, 0, 10)) .&
         (df_bid_per_offer.INTERVAL_DATETIME .<= DateTime(2025, 1, 1, 0, 15))
     df_bid_per_offer.FIXEDLOAD[fixed] .= 50.0
+    # Energy ramp rates feed the regulation trapezia; ENERGYLIMIT is absent from every unit.
+    df_bid_per_offer.ROCUP = [b == "ENERGY" ? 1.0 : r for (b, r) in zip(df_bid_per_offer.BIDTYPE, df_bid_per_offer.ROCUP)]
+    df_bid_per_offer.ROCDOWN = [b == "ENERGY" ? 1.0 : r for (b, r) in zip(df_bid_per_offer.BIDTYPE, df_bid_per_offer.ROCDOWN)]
+    df_bid_per_offer.ENERGYLIMIT = Vector{Union{Missing, Float64}}(missing, nrow(df_bid_per_offer))
     save_hive(df_bid_per_offer, :BIDPEROFFER_D)
 
     # 11. BIDDAYOFFER_D (Daily)
@@ -442,6 +446,10 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     end
     # T1 > 0 marks a fast-start inflexibility profile; only BW04 has one.
     bid_day_offer.T1 = Float64.(bid_day_offer.DUID .== "BW04") .* 10.0
+    bid_day_offer.T2 = zeros(nrow(bid_day_offer))
+    bid_day_offer.T3 = zeros(nrow(bid_day_offer))
+    bid_day_offer.T4 = zeros(nrow(bid_day_offer))
+    bid_day_offer.NORMALSTATUS = fill("ON", nrow(bid_day_offer))
     save_hive(bid_day_offer, :BIDDAYOFFER_D)
 
     # FCAS requirements are generic-constraint-based (RESERVE has been unpopulated by AEMO

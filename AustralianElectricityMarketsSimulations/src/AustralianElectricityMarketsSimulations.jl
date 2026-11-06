@@ -14,7 +14,7 @@ using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCAS_
     get_terms, loss_curve_vertex_values, is_non_scheduled_load, loss_segments, nem_dispatch_devices,
     NEM_DISPATCH_DEVICE_TYPES, single_series, remove_single_series!, replace_single_series!,
     _nem_offer_cost, _fcas_units_multiplier, _get_fcas_trapezium, _get_fcas_offer_curve, get_energy_bids,
-    get_fcas_bids, FCASTrapezium, get_enablement_min, get_enablement_max, get_max_avail, get_upper_slope_coeff,
+    get_fcas_bids, energy_offer_sides, FCASTrapezium, get_enablement_min, get_enablement_max, get_max_avail, get_upper_slope_coeff,
     get_lower_slope_coeff, scale_fcas_trapezium,
     FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR,
     FCAS_BDU_RAMPING_CVP_FACTOR, _financial_year_mpc,

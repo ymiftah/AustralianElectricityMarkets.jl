@@ -131,11 +131,7 @@ function nem_toy_system(
     for (name, unit) in units
         gen = _toy_thermal(sys, PSY.get_component(PSY.ThermalStandard, sys, name), name)
         PSY.set_active_power_limits!(gen, (min = 0.0, max = unit.capacity))
-        add_series!(gen, "energy_max_avail", unit.availability ./ base_power)
-        AustralianElectricityMarkets.set_energy_offer!(
-            sys, gen, AustralianElectricityMarkets.OfferSide.GEN,
-            AustralianElectricityMarkets.single_series("energy_offer", start, _toy_offers(unit.bands, length(stamps)), TOY_RESOLUTION),
-        )
+        _toy_energy_bid!(sys, gen, AustralianElectricityMarkets.BidDirection.GEN, stamps, _toy_offers(unit.bands, length(stamps)), _toy_values(unit.availability, length(stamps)))
         add_series!(
             gen, "max_active_power", unit.availability ./ unit.capacity;
             multiplier = PSY.get_max_active_power,
@@ -170,18 +166,10 @@ function nem_toy_system(
         PSY.add_component!(sys, battery)
 
         PSY.set_available!(battery, true)
-        add_forecast!(battery, "energy_max_avail", bat.gen_avail ./ base_power)
-        add_forecast!(battery, "energy_max_avail_decremental", bat.load_avail ./ base_power)
         gen_offer = PSY.PiecewiseStepData([0.0, bat.gen_capacity], [bat.gen_price])
-        AustralianElectricityMarkets.set_energy_offer!(
-            sys, battery, AustralianElectricityMarkets.OfferSide.GEN,
-            AustralianElectricityMarkets.single_series("energy_offer", start, fill(gen_offer, length(stamps)), TOY_RESOLUTION),
-        )
+        _toy_energy_bid!(sys, battery, AustralianElectricityMarkets.BidDirection.GEN, stamps, fill(gen_offer, length(stamps)), _toy_values(bat.gen_avail, length(stamps)))
         load_offer = PSY.PiecewiseStepData([0.0, bat.load_capacity], [bat.load_price])
-        AustralianElectricityMarkets.set_energy_offer!(
-            sys, battery, AustralianElectricityMarkets.OfferSide.LOAD,
-            AustralianElectricityMarkets.single_series("energy_offer_decremental", start, fill(load_offer, length(stamps)), TOY_RESOLUTION),
-        )
+        _toy_energy_bid!(sys, battery, AustralianElectricityMarkets.BidDirection.LOAD, stamps, fill(load_offer, length(stamps)), _toy_values(bat.load_avail, length(stamps)))
 
         add_series!(battery, "ramp_up_rate", bat.ramp_up ./ base_power)
         add_series!(battery, "ramp_down_rate", bat.ramp_down ./ base_power)
@@ -197,12 +185,8 @@ function nem_toy_system(
             operation_cost = AustralianElectricityMarkets.NEMOfferCost(),
         )
         PSY.add_component!(sys, scheduled)
-        add_series!(scheduled, "energy_max_avail", ld.availability / base_power)
         offer = PSY.PiecewiseStepData([0.0, ld.capacity], [ld.price])
-        AustralianElectricityMarkets.set_energy_offer!(
-            sys, scheduled, AustralianElectricityMarkets.OfferSide.LOAD,
-            AustralianElectricityMarkets.single_series("energy_offer_decremental", start, fill(offer, length(stamps)), TOY_RESOLUTION),
-        )
+        _toy_energy_bid!(sys, scheduled, AustralianElectricityMarkets.BidDirection.LOAD, stamps, fill(offer, length(stamps)), _toy_values(ld.availability, length(stamps)))
         add_series!(
             scheduled, "max_active_power", ld.availability / ld.capacity;
             multiplier = PSY.get_max_active_power,
@@ -220,6 +204,7 @@ function nem_toy_system(
     if tie_break_scales
         set_effective_offers!(sys)
     else
+        AEMS._set_static_offers!(sys)
         AEMS._set_fcas_effective_offers!(sys)
     end
 
@@ -433,48 +418,76 @@ end
 
 # --- FCAS on the toy system: one `(MW, ...)` value or band list per stamp. ---
 
-# Key of the offer curves `add_toy_fcas_offer!` holds in a device's `ext` until its FCASService exists.
-const TOY_FCAS_CURVES_KEY = "toy_fcas_curves"
-
-# Attaches `device`'s `"fcas_trapezium_*"` series: `trapeziums` are
-# `(EnablementMin, LowBreakpoint, HighBreakpoint, EnablementMax, MaxAvail)` in MW, `bands` `(MW, price)` lists.
-# The offer curves become the device's service bids once its FCASService exists
-# (see `flush_toy_fcas_curves!`).
+# Records `device`'s FCAS bid for `bid_type` from `trapeziums`, one `(EnablementMin, LowBreakpoint,
+# HighBreakpoint, EnablementMax, MaxAvail)` per stamp in MW, and `bands`, one `(MW, price)` list per
+# stamp. The derivation writes its offers once the FCASService exists (see `derive_toy_offers!`).
 function add_toy_fcas_offer!(sys, device, stamps, bid_type, trapeziums, bands; decremental = false)
-    base_power = PSY.get_base_power(sys)
-    suffix = decremental ? "$(string(bid_type))_decremental" : string(bid_type)
-    traps = [
-        Tuple(FCASTrapezium(; enablement_min = a / base_power, low_breakpoint = b / base_power, high_breakpoint = c / base_power, enablement_max = d / base_power, max_avail = e / base_power))
-            for (a, b, c, d, e) in trapeziums
-    ]
+    AEM = AustralianElectricityMarkets
+    direction = decremental ? AEM.BidDirection.LOAD : AEM.BidDirection.GEN
+    field(f::Symbol) = AEM.bid_series_name(bid_type, f, direction)
     curves = [PSY.PiecewiseStepData([0.0; cumsum(first.(bs))], last.(bs)) for bs in bands]
-    PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series("fcas_trapezium_$suffix", stamps[1], traps, TOY_RESOLUTION))
-    pending = get!(() -> Any[], PSY.get_ext(device), TOY_FCAS_CURVES_KEY)
-    push!(pending, (bid_type, decremental, stamps[1], curves))
-    flush_toy_fcas_curves!(sys)
+    points = [(Float64(a), Float64(b), Float64(c), Float64(d)) for (a, b, c, d, _) in trapeziums]
+    max_avail = [Float64(e) for (_, _, _, _, e) in trapeziums]
+    AEM.replace_single_series!(sys, device, AEM.single_series(field(:offer_curves), stamps[1], curves, TOY_RESOLUTION))
+    AEM.replace_single_series!(sys, device, AEM.single_series(field(:max_avail), stamps[1], max_avail, TOY_RESOLUTION))
+    AEM.replace_single_series!(sys, device, AEM.single_series(field(:trapezium), stamps[1], points, TOY_RESOLUTION))
+    bid = AEM.NEMFCASBid(;
+        service = bid_type, direction, offer_curves = AEM._series_key(device, field(:offer_curves)),
+        max_avail = AEM._series_key(device, field(:max_avail)), trapezium = AEM._series_key(device, field(:trapezium)),
+    )
+    AEM._set_fcas_bid!(PSY.get_operation_cost(device), bid)
     return
 end
 
-# Writes each pending offer curve as the offer series of every FCASService of its bid type that its
-# device belongs to and that does not carry it yet. Call it after adding FCASServices, since a curve
-# waits until its service exists.
-function flush_toy_fcas_curves!(sys)
+# Attaches each missing FCAS offer series from the recorded bids, for FCASServices added to a toy
+# system; existing series are left as they are, so it also works after the forecasts are built.
+function derive_toy_offers!(sys)
+    AEM = AustralianElectricityMarkets
     for device in PSY.get_components(PSY.Device, sys)
-        pending = get(PSY.get_ext(device), TOY_FCAS_CURVES_KEY, nothing)
-        isnothing(pending) && continue
-        for (bid_type, decremental, start, curves) in pending
-            for svc in PSY.get_services(device)
-                svc isa FCASService && get_bid_type(svc) == bid_type || continue
-                name = AustralianElectricityMarkets.fcas_offer_series_name(svc, decremental)
-                PSY.has_time_series(device, PSY.SingleTimeSeries, name) && continue
-                ts = AustralianElectricityMarkets.single_series(name, start, curves, TOY_RESOLUTION)
-                AustralianElectricityMarkets.set_fcas_offer!(sys, device, bid_type, AustralianElectricityMarkets.offer_side(decremental), ts)
-            end
+        cost = AEM._nem_offer_cost(device)
+        isnothing(cost) && continue
+        for bid in AEM.get_fcas_bids(cost)
+            side = AEM._fcas_bid_side(device, bid)
+            (isnothing(side) || isempty(AEM._fcas_services(device, bid.service))) && continue
+            name = AEM.fcas_series_name("fcas_offer", bid.service, side)
+            PSY.has_time_series(device, PSY.SingleTimeSeries, name) && continue
+            offer = AEMS._bid_series(device, bid.offer_curves)
+            PSY.add_time_series!(sys, device, AEM.single_series(name, first(offer.timestamps), offer.values, offer.resolution))
         end
     end
     return
 end
-# Attaches a per-stamp `SingleTimeSeries` `name`, per-unitised unless `scale` says otherwise.
+
+# Records an energy bid of `device` on `direction`, with `curves` (one per stamp, as offered) and
+# `max_avail` (MW per stamp), with no ramp rate and unit loss factors of 1.
+function _toy_energy_bid!(sys, device, direction, stamps, curves, max_avail)
+    AEM = AustralianElectricityMarkets
+    field(f::Symbol) = AEM.bid_series_name(BidType.ENERGY, f, direction)
+    nan = fill(NaN, length(stamps))
+    for (name, values) in (
+            (field(:offer_curves), curves), (field(:max_avail), max_avail), (field(:roc_up), nan), (field(:roc_down), nan),
+        )
+        replace_single_series_with!(sys, device, name, values, stamps)
+    end
+    bid = AEM.NEMEnergyBid(;
+        direction, offer_curves = AEM._series_key(device, field(:offer_curves)),
+        max_avail = AEM._series_key(device, field(:max_avail)),
+        roc_up = AEM._series_key(device, field(:roc_up)), roc_down = AEM._series_key(device, field(:roc_down)),
+    )
+    AEM._set_energy_bid!(PSY.get_operation_cost(device), bid)
+    PSY.get_ext(device)["nem_gen_loss_factor"] = 1.0
+    PSY.get_ext(device)["nem_load_loss_factor"] = 1.0
+    return
+end
+
+# Replaces the `SingleTimeSeries` `name` on `device` with `values` per stamp.
+function replace_single_series_with!(sys, device, name, values, stamps)
+    AustralianElectricityMarkets.replace_single_series!(
+        sys, device, AustralianElectricityMarkets.single_series(name, stamps[1], values, TOY_RESOLUTION),
+    )
+    return
+end
+
 function add_toy_series!(sys, component, stamps, name, values; scale = 1 / PSY.get_base_power(sys))
     PSY.add_time_series!(sys, component, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(stamps, Float64.(values) .* scale)))
     return
@@ -491,7 +504,6 @@ function add_toy_fcas_market!(sys, stamps, bid_type, duids, name, rhs_mw)
     PSY.add_service!(sys, gc, devices)
     add_toy_series!(sys, gc, stamps, "rhs", rhs_mw)
     add_toy_series!(sys, gc, stamps, "invoked", [1.0, 1.0]; scale = 1.0)
-    flush_toy_fcas_curves!(sys)
     return
 end
 # Alta and Park City offer RAISE6SEC, Alta also RAISEREG and LOWERREG, `TOY_BATTERY` RAISEREG on both
@@ -531,7 +543,6 @@ function fcas_toy_system(;
             add_toy_fcas_market!(sys, stamps, BidType.RAISE6SEC, [TOY_CHEAP, TOY_EXPENSIVE, TOY_BATTERY], "F_R6", r6_req)
             add_toy_fcas_market!(sys, stamps, BidType.LOWER6SEC, ["pump"], "F_L6", [5.0, 5.0])
             PSY.add_service!(sys, FCASService(; name = "1_LOWERREG", region = "1", bid_type = BidType.LOWERREG), [alta])
-            flush_toy_fcas_curves!(sys)
         end,
     )
 end

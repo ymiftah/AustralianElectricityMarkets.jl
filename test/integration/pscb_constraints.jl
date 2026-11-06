@@ -19,7 +19,7 @@
     vname(gencon_id, version = 1) = "$gencon_id@2025-01-01#$version"
 
     @testset "constraint build" begin
-        sys = augmented_pscb_system()
+        sys = nem_pscb_system()
         added, skipped = build_constraints!(sys, db, date_range)
 
         @test isempty(skipped)
@@ -139,34 +139,44 @@
         end
     end
 
-    @testset "set_fcas_bids!" begin
-        sys = augmented_pscb_system()
-        set_fcas_bids!(sys, db, date_range)
-        set_fcas_service_bids!(sys, db, date_range)
+    @testset "set_market_bids!" begin
+        sys = nem_pscb_system()
+        set_market_bids!(sys, db, date_range)
+        fcas_bid_names(device, service, direction) = [
+            AustralianElectricityMarkets.bid_series_name(service, :offer_curves, direction),
+            AustralianElectricityMarkets.bid_series_name(service, :trapezium, direction),
+        ]
+        bid_for(device, service, direction) = only(
+            b for b in AustralianElectricityMarkets.get_fcas_bids(get_operation_cost(device))
+                if b.service == service && b.direction == direction
+        )
 
-        @testset "thermal unit gets trapezium series and offer curve" begin
-            gen = get_component(ThermalStandard, sys, "Alta")
-            @test has_time_series(gen, SingleTimeSeries, fcas_offer_series_name(fcas_service(gen, BidType.RAISE6SEC), false))
-            @test has_time_series(gen, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")
+        @testset "thermal unit records a generation-side bid with its series" begin
+            gen = get_component(NEMThermalGen, sys, "Alta")
+            bid = bid_for(gen, BidType.RAISE6SEC, AustralianElectricityMarkets.BidDirection.GEN)
+            @test has_time_series(gen, SingleTimeSeries, bid.offer_curves.name)
+            @test has_time_series(gen, SingleTimeSeries, bid.trapezium.name)
         end
 
-        @testset "SOLAR1 (RenewableDispatch, zero cost) gets curve and trapezium series" begin
-            solar = get_component(RenewableDispatch, sys, "SOLAR1")
-            @test has_time_series(solar, SingleTimeSeries, fcas_offer_series_name(fcas_service(solar, BidType.RAISE6SEC), false))
-            @test has_time_series(solar, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")
+        @testset "SOLAR1 (RenewableDispatch, zero cost) records a generation-side bid" begin
+            solar = get_component(NEMRenewableGen, sys, "SOLAR1")
+            bid = bid_for(solar, BidType.RAISE6SEC, AustralianElectricityMarkets.BidDirection.GEN)
+            @test has_time_series(solar, SingleTimeSeries, bid.offer_curves.name)
+            @test has_time_series(solar, SingleTimeSeries, bid.trapezium.name)
         end
 
-        @testset "BAT1 gets both incremental and decremental series" begin
+        @testset "BAT1 records both incremental and decremental bids" begin
             bat = get_component(NEMStorage, sys, "BAT1")
-            @test has_time_series(bat, SingleTimeSeries, fcas_offer_series_name(fcas_service(bat, BidType.RAISEREG), false))
-            @test has_time_series(bat, SingleTimeSeries, "fcas_trapezium_RAISEREG")
-            @test has_time_series(bat, SingleTimeSeries, fcas_offer_series_name(fcas_service(bat, BidType.RAISEREG), true))
-            @test has_time_series(bat, SingleTimeSeries, "fcas_trapezium_RAISEREG_decremental")
+            for direction in (AustralianElectricityMarkets.BidDirection.GEN, AustralianElectricityMarkets.BidDirection.LOAD)
+                bid = bid_for(bat, BidType.RAISEREG, direction)
+                @test has_time_series(bat, SingleTimeSeries, bid.offer_curves.name)
+                @test has_time_series(bat, SingleTimeSeries, bid.trapezium.name)
+            end
         end
 
-        @testset "decremental series is storage-only" begin
-            gen = get_component(ThermalStandard, sys, "Alta")
-            @test !has_time_series(gen, SingleTimeSeries, "fcas_trapezium_RAISEREG_decremental")
+        @testset "decremental bid is storage-only, a generator's load bid is not modelled" begin
+            gen = get_component(NEMThermalGen, sys, "Alta")
+            @test !any(b -> b.direction == AustralianElectricityMarkets.BidDirection.LOAD, AustralianElectricityMarkets.get_fcas_bids(get_operation_cost(gen)))
         end
     end
 end

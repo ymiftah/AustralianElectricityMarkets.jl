@@ -18,11 +18,11 @@ function attach_dispatch_limits!(sys, db, date_range)
     return AustralianElectricityMarkets._set_nem_dispatch_limits!(sys, rows, date_range)
 end
 
-# The network, FCAS bids, NEM constraints and interconnector losses over `date_range`, without the
-# energy or FCAS price bids that `nem_system` adds. Returns `(sys, units)`.
+# The network, bids, NEM constraints and interconnector losses over `date_range`, without the
+# unit conditions and dispatch limits that `nem_system` adds. Returns `(sys, units)`.
 function constrained_system(db; date_range, intervention::Integer = 0)
     sys, units = nem_network(db; as_of = first(date_range), through = last(date_range) - step(date_range))
-    set_fcas_bids!(sys, db, date_range)
+    set_market_bids!(sys, db, date_range)
     add_nem_constraints!(sys, db, date_range; intervention)
     attach_interconnector_losses!(sys, db, first(date_range))
     return sys, units

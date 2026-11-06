@@ -389,8 +389,8 @@ end
         @test Set(nsw1_names) == Set(expected_nsw1)
 
         # An FCAS term also reaches the region's loads that offer FCAS; an ENERGY term does not.
-        fcas_sys = nem_system(db, RegionalNetworkConfiguration())
-        set_fcas_bids!(fcas_sys, db, date_range)
+        fcas_sys = first(nem_network(db))
+        set_market_bids!(fcas_sys, db, date_range)
         fcas_names = resolve_term_devices(fcas_sys, RegionTerm("NSW1", BidType.RAISE6SEC, 1.0))
         generator_names = get_name.(AustralianElectricityMarkets._region_devices(fcas_sys, "NSW1"))
         @test Set(fcas_names) == Set(generator_names) ∪ Set(["ASLOAD1"])

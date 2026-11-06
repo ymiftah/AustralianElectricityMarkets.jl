@@ -24,6 +24,7 @@ function nem_dispatch_system(; mutate! = identity, data_span = NEM_DISPATCH_HORI
     set_market_bids!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     attach_dispatch_limits!(sys, db, date_range)
     set_nem_energy_limits!(sys, db, date_range)
+    set_effective_offers!(sys)
     mutate!(sys)
     # One window spanning the whole span, matching the single window the bid forecast carries.
     PSY.transform_single_time_series!(sys, data_span, NEM_DISPATCH_RESOLUTION)
@@ -276,7 +277,7 @@ end
     @test occursin("NEMThermalGen", err.msg) && occursin("AbstractNEMDispatch", err.msg)
 end
 
-@testset "an energy bid's MAXAVAIL key names the series the formulation reads" begin
+@testset "the series the formulation reads is the energy bid's MAXAVAIL per unit" begin
     sys = nem_dispatch_system()
     checked = 0
     for device in PSY.get_components(PSY.StaticInjection, sys)
@@ -286,13 +287,14 @@ end
         for bid in AustralianElectricityMarkets.get_energy_bids(cost)
             read_name = if device isa PSY.Storage
                 PSI.get_default_time_series_names(typeof(device), NEMReplayDispatch)[
-                    bid.side == OfferSide.GEN ? PSI.ActivePowerOutTimeSeriesParameter : PSI.ActivePowerInTimeSeriesParameter,
+                    AustralianElectricityMarkets._energy_offer_side(bid.direction) == OfferSide.GEN ? PSI.ActivePowerOutTimeSeriesParameter : PSI.ActivePowerInTimeSeriesParameter,
                 ]
             else
                 names[EnergyMaxAvailTimeSeriesParameter]
             end
-            @test bid.max_avail.name == read_name
-            @test PSY.has_time_series(device, PSY.SingleTimeSeries, bid.max_avail.name)
+            offered = PSY.get_time_series_values(PSY.SingleTimeSeries, device, bid.max_avail.name)
+            derived = PSY.get_time_series_values(PSY.SingleTimeSeries, device, read_name)
+            @test derived ≈ offered ./ PSY.get_base_power(sys)
             checked += 1
         end
     end

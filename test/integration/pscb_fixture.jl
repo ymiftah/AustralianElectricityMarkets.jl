@@ -2,6 +2,63 @@ using PowerSystemCaseBuilder
 
 const PSB = PowerSystemCaseBuilder
 
+# Replaces a stock generator with the NEM device type that bids it, keeping its name, bus, limits
+# and parameters, and an empty `NEMOfferCost`.
+function _replace_with_nem_device!(sys, stock::ThermalStandard)
+    nem = NEMThermalGen(;
+        name = get_name(stock), available = get_available(stock), status = get_status(stock),
+        bus = get_bus(stock), active_power = get_active_power(stock), reactive_power = get_reactive_power(stock),
+        rating = get_rating(stock), active_power_limits = get_active_power_limits(stock),
+        reactive_power_limits = get_reactive_power_limits(stock), ramp_limits = get_ramp_limits(stock),
+        operation_cost = NEMOfferCost(), base_power = get_base_power(stock), time_limits = get_time_limits(stock),
+        must_run = get_must_run(stock), prime_mover_type = get_prime_mover_type(stock), fuel = get_fuel(stock),
+        time_at_status = get_time_at_status(stock),
+    )
+    remove_component!(sys, stock)
+    add_component!(sys, nem)
+    return nem
+end
+
+function _replace_with_nem_device!(sys, stock::HydroDispatch)
+    nem = NEMHydroGen(;
+        name = get_name(stock), available = get_available(stock), bus = get_bus(stock),
+        active_power = get_active_power(stock), reactive_power = get_reactive_power(stock),
+        rating = get_rating(stock), prime_mover_type = get_prime_mover_type(stock),
+        active_power_limits = get_active_power_limits(stock), reactive_power_limits = get_reactive_power_limits(stock),
+        ramp_limits = get_ramp_limits(stock), time_limits = get_time_limits(stock), base_power = get_base_power(stock),
+        status = get_status(stock), time_at_status = get_time_at_status(stock), operation_cost = NEMOfferCost(),
+    )
+    remove_component!(sys, stock)
+    add_component!(sys, nem)
+    return nem
+end
+
+function _replace_with_nem_device!(sys, stock::HydroTurbine)
+    nem = NEMHydroGen(;
+        name = get_name(stock), available = get_available(stock), bus = get_bus(stock),
+        active_power = get_active_power(stock), reactive_power = get_reactive_power(stock),
+        rating = get_rating(stock), prime_mover_type = get_prime_mover_type(stock),
+        active_power_limits = get_active_power_limits(stock), reactive_power_limits = get_reactive_power_limits(stock),
+        ramp_limits = get_ramp_limits(stock), time_limits = get_time_limits(stock), base_power = get_base_power(stock),
+        operation_cost = NEMOfferCost(),
+    )
+    remove_component!(sys, stock)
+    add_component!(sys, nem)
+    return nem
+end
+
+function _replace_with_nem_device!(sys, stock::RenewableDispatch)
+    nem = NEMRenewableGen(;
+        name = get_name(stock), available = get_available(stock), bus = get_bus(stock),
+        active_power = get_active_power(stock), reactive_power = get_reactive_power(stock), rating = get_rating(stock),
+        prime_mover_type = get_prime_mover_type(stock), reactive_power_limits = get_reactive_power_limits(stock),
+        power_factor = get_power_factor(stock), operation_cost = NEMOfferCost(), base_power = get_base_power(stock),
+    )
+    remove_component!(sys, stock)
+    add_component!(sys, nem)
+    return nem
+end
+
 """
     augmented_pscb_system()
 
@@ -12,7 +69,7 @@ The base case carries five `ThermalStandard`, one `HydroDispatch` and two `Hydro
 across two `Area`s (`"1"` and `"2"`), and is supply-adequate by construction. It has no
 `AreaInterchange`, `RenewableDispatch` or `EnergyReservoirStorage`, so on its own
 `_add_nem_constraints!` can never resolve an `INTERCONNECTOR` term, there is no
-semi-scheduled unit to carry a `UIGF` ceiling, and [`set_fcas_bids!`](@ref)'s decremental
+semi-scheduled unit to carry a `UIGF` ceiling, and the bids' decremental
 (`LOAD`-direction) branch is never entered. One of each is added, the storage as a `NEMStorage`, which the FCAS offer views read, named so NEMWEB fixture rows
 can key to them by `DUID`.
 
@@ -82,5 +139,32 @@ function augmented_pscb_system()
         ),
     )
 
+    return sys
+end
+
+
+"""
+    nem_pscb_system()
+
+[`augmented_pscb_system`](@ref) with its thermal, hydro and renewable units rebuilt as the NEM device
+types, each with an empty `NEMOfferCost`, so [`set_market_bids!`](@ref) can record their bids. The base
+case's reserve service and hydro reservoirs, which reference the stock units, are removed.
+
+# Returns
+A `PowerSystems.System` in `NATURAL_UNITS`.
+"""
+function nem_pscb_system()
+    sys = augmented_pscb_system()
+    for service in collect(get_components(s -> !(s isa FCASService), Service, sys))
+        remove_component!(sys, service)
+    end
+    for reservoir in collect(get_components(HydroReservoir, sys))
+        remove_component!(sys, reservoir)
+    end
+    for T in (ThermalStandard, HydroDispatch, HydroTurbine, RenewableDispatch)
+        for stock in collect(get_components(T, sys))
+            _replace_with_nem_device!(sys, stock)
+        end
+    end
     return sys
 end

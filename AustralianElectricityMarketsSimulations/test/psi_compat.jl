@@ -47,12 +47,25 @@ end
     end
     # Removes the named device's energy offers on `sides` (their series and bids) before the fixture
     # transforms its series.
+    # The side's MAXAVAIL stays as its `energy_max_avail` series, which the derivation no longer writes
+    # for a device without bids.
     without(device_type, name, sides) = (sys, _) -> begin
         device = PSY.get_component(device_type, sys, name)
         bids = AustralianElectricityMarkets.get_energy_bids(PSY.get_operation_cost(device))
+        base = PSY.get_base_power(sys)
         for side in sides
-            PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, AustralianElectricityMarkets.energy_offer_series_name(side))
-            filter!(b -> b.side != side, bids)
+            i = findfirst(b -> AustralianElectricityMarkets._energy_offer_side(b.direction) == side, bids)
+            if !isnothing(i)
+                mw = PSY.get_time_series_values(PSY.SingleTimeSeries, device, bids[i].max_avail.name; ignore_scaling_factors = true)
+                AustralianElectricityMarkets.replace_single_series!(
+                    sys, device,
+                    AustralianElectricityMarkets.single_series(AustralianElectricityMarkets.energy_max_avail_series_name(device, side), TOY_START, mw ./ base, TOY_RESOLUTION),
+                )
+            end
+            name_offer = AustralianElectricityMarkets.energy_offer_series_name(side)
+            PSY.has_time_series(device, PSY.SingleTimeSeries, name_offer) &&
+                PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, name_offer)
+            filter!(b -> AustralianElectricityMarkets._energy_offer_side(b.direction) != side, bids)
         end
         return
     end
@@ -143,8 +156,8 @@ end
                     AustralianElectricityMarkets.energy_max_avail_series_name(device, side), TOY_START, fill(1.0, length(stamps)), TOY_RESOLUTION,
                 ),
             )
-            AustralianElectricityMarkets.set_energy_offer!(
-                sys, device, side,
+            AustralianElectricityMarkets.replace_single_series!(
+                sys, device,
                 AustralianElectricityMarkets.single_series(series, TOY_START, fill(offer(sys, stamps), length(stamps)), TOY_RESOLUTION),
             )
             return

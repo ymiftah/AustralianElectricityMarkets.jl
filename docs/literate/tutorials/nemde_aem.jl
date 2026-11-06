@@ -68,13 +68,26 @@ function attach_energy_data!(sys, market) #hide
         name = name, data = PSY.TimeSeries.TimeArray(stamps, fill(value, length(stamps))), #hide
         scaling_factor_multiplier = multiplier, #hide
     ) #hide
+    bid_key(device, name) = only(k for k in PSY.get_time_series_keys(device) if PSY.IS.get_name(k) == name) #hide
     for u in market.units #hide
         device = PSY.get_component(PSY.Generator, sys, String(u.name)) #hide
         offer = PSY.PiecewiseStepData([0.0; cumsum(quantity.(u.bids))], price.(u.bids)) #hide
-        PSY.add_time_series!(sys, device, series("energy_max_avail", u.max_avail / BASE_POWER)) #hide
-        set_energy_offer!( #hide
-            sys, device, OfferSide.GEN, single_series("energy_offer", T0, fill(offer, length(stamps)), RESOLUTION), #hide
+        PSY.add_time_series!( #hide
+            sys, device, PSY.SingleTimeSeries(name = "bid_energy_offer_curves_gen", data = PSY.TimeSeries.TimeArray(stamps, fill(offer, length(stamps)))), #hide
         ) #hide
+        PSY.add_time_series!(sys, device, series("bid_energy_max_avail_gen", u.max_avail)) #hide
+        PSY.add_time_series!(sys, device, series("bid_energy_roc_up_gen", NaN)) #hide
+        PSY.add_time_series!(sys, device, series("bid_energy_roc_down_gen", NaN)) #hide
+        push!( #hide
+            get_energy_bids(PSY.get_operation_cost(device)), #hide
+            NEMEnergyBid( #hide
+                direction = BidDirection.GEN, offer_curves = bid_key(device, "bid_energy_offer_curves_gen"), #hide
+                max_avail = bid_key(device, "bid_energy_max_avail_gen"), roc_up = bid_key(device, "bid_energy_roc_up_gen"), #hide
+                roc_down = bid_key(device, "bid_energy_roc_down_gen"), #hide
+            ), #hide
+        ) #hide
+        PSY.get_ext(device)["nem_gen_loss_factor"] = 1.0 #hide
+        PSY.get_ext(device)["nem_load_loss_factor"] = 1.0 #hide
         PSY.add_time_series!( #hide
             sys, device, series("max_active_power", availability(u) / u.capacity; multiplier = PSY.get_max_active_power), #hide
         ) #hide
@@ -99,28 +112,36 @@ attach_energy_data!(sys, market);
 # describing the FCAS capacity available at each energy dispatch level.
 
 function attach_fcas_data!(sys, market) #hide
+    series(name, value) = PSY.SingleTimeSeries(name = name, data = PSY.TimeSeries.TimeArray([T0, T0 + RESOLUTION], fill(value, 2))) #hide
+    bid_key(device, name) = only(k for k in PSY.get_time_series_keys(device) if PSY.IS.get_name(k) == name) #hide
     for n in fcas_names(market) #hide
         device = PSY.get_component(PSY.Generator, sys, n) #hide
         t = trapezium(market, n) #hide
-        trapezium_pu = Tuple( #hide
-            FCASTrapezium( #hide
-                enablement_min = t.enablement_min / BASE_POWER, low_breakpoint = t.low_breakpoint / BASE_POWER, #hide
-                high_breakpoint = t.high_breakpoint / BASE_POWER, enablement_max = t.enablement_max / BASE_POWER, #hide
-                max_avail = t.max_avail / BASE_POWER, #hide
-            ), #hide
-        ) #hide
+        points = (t.enablement_min, t.low_breakpoint, t.high_breakpoint, t.enablement_max) #hide
         curve = PSY.PiecewiseStepData([0.0; cumsum(quantity.(fcas_bids(market, n)))], price.(fcas_bids(market, n))) #hide
         stamps = [T0, T0 + RESOLUTION] #hide
         PSY.add_time_series!( #hide
             sys, device, #hide
-            PSY.SingleTimeSeries(name = "fcas_trapezium_RAISE6SEC", data = PSY.TimeSeries.TimeArray(stamps, fill(trapezium_pu, 2))), #hide
+            PSY.SingleTimeSeries(name = "bid_raise6sec_trapezium_gen", data = PSY.TimeSeries.TimeArray(stamps, fill(points, 2))), #hide
+        ) #hide
+        PSY.add_time_series!(sys, device, series("bid_raise6sec_max_avail_gen", t.max_avail)) #hide
+        PSY.add_time_series!( #hide
+            sys, device, #hide
+            PSY.SingleTimeSeries(name = "bid_raise6sec_offer_curves_gen", data = PSY.TimeSeries.TimeArray(stamps, fill(curve, 2))), #hide
         ) #hide
         service = FCASService( #hide
             name = "$(generator_region(sys, n))_RAISE6SEC", region = generator_region(sys, n), bid_type = BidType.RAISE6SEC, #hide
         ) #hide
         PSY.add_service!(sys, service, [device]) #hide
-        offer = single_series(fcas_offer_series_name(service, false), T0, fill(curve, 2), RESOLUTION) #hide
-        set_fcas_offer!(sys, device, BidType.RAISE6SEC, OfferSide.GEN, offer) #hide
+        push!( #hide
+            get_fcas_bids(PSY.get_operation_cost(device)), #hide
+            NEMFCASBid( #hide
+                service = BidType.RAISE6SEC, direction = BidDirection.GEN, #hide
+                offer_curves = bid_key(device, "bid_raise6sec_offer_curves_gen"), #hide
+                max_avail = bid_key(device, "bid_raise6sec_max_avail_gen"), #hide
+                trapezium = bid_key(device, "bid_raise6sec_trapezium_gen"), #hide
+            ), #hide
+        ) #hide
     end #hide
     return sys #hide
 end #hide

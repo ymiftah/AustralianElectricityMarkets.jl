@@ -110,3 +110,22 @@ Name of an MNSP interchange's `"mnsp_<direction>_<kind>"` series.
 A `String`.
 """
 mnsp_series_name(direction::AbstractString, kind::AbstractString) = "mnsp_$(direction)_$(kind)"
+
+
+"""
+    bid_series_name(service::BidType, field::Symbol, direction::BidDirection) -> String
+
+Name of the time series holding one field of a unit's bid: `"bid_<service>_<field>_<direction>"` in
+lowercase, e.g. `"bid_energy_offer_curves_gen"`.
+
+# Arguments
+- `service`: the bid's [`BidType`](@ref), `ENERGY` or an FCAS market.
+- `field`: the field name of [`NEMEnergyBid`](@ref) or [`NEMFCASBid`](@ref), such as `:offer_curves`.
+- `direction`: the bid's [`BidDirection`](@ref).
+
+# Returns
+A `String`.
+"""
+function bid_series_name(service::BidType, field::Symbol, direction::BidDirection)
+    return lowercase("bid_$(string(service))_$(field)_$(string(direction))")
+end

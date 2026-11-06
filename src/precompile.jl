@@ -16,18 +16,18 @@ function _precompile_workload()
         base_power = 100.0,
     )
     PSY.add_component!(sys, generator)
-    bids = DataFrame(;
-        DUID = fill("precompile_generator", 2), DIRECTION = fill("GEN", 2),
+    stamps = [DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)]
+    rows = DataFrame(;
+        DUID = fill("precompile_generator", 2), DIRECTION = fill("GEN", 2), INTERVAL_DATETIME = stamps,
         PRICEBANDARRAY = [collect(10.0:10.0:100.0) for _ in 1:2],
-        BANDAVAILARRAY = [fill(10.0, 10) for _ in 1:2],
+        BANDAVAILARRAY = [fill(10.0, 10) for _ in 1:2], MAXAVAIL = [100.0, 100.0],
+        ROCUP = [1.0, 1.0], ROCDOWN = [1.0, 1.0], FIXEDLOAD = [missing, missing],
+        MINIMUMLOAD = [0.0, 0.0], DAILYENERGYCONSTRAINT = [missing, missing],
+        T1 = [missing, missing], T2 = [missing, missing], T3 = [missing, missing], T4 = [missing, missing],
+        NORMALSTATUS = ["ON", "ON"], ENERGYLIMIT = [missing, missing],
     )
-    factors = DataFrame(;
-        DUID = ["precompile_generator"], GEN_LOSS_FACTOR = [1.01], LOAD_LOSS_FACTOR = [1.02],
-    )
-    _set_referred_bid_curves!(bids, factors)
-    bids.INTERVAL_DATETIME = [DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)]
-    bids.MAXAVAIL = [100.0, 100.0]
-    _write_energy_bid!(sys, generator, bids, OfferSide.GEN, DateTime(2025, 1, 1, 0, 5), Minute(5))
+    grid = [DateTime(2025, 1, 1, 0, 5), DateTime(2025, 1, 1, 0, 10)]
+    _write_energy_bid!(sys, generator, BidDirection.GEN, rows, grid, first(grid), Minute(5))
     return nothing
 end
 

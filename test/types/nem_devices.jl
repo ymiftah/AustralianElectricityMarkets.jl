@@ -127,7 +127,14 @@ function _nd_conforms(case, offer_bid)
     keys_by_name = Dict(k.name => k for k in _ND_IS.get_time_series_keys(nem))
     set_operation_cost!(
         nem,
-        NEMOfferCost(; energy = [NEMEnergyBid(offer_bid, keys_by_name["energy_offer"], keys_by_name["max_avail"])]),
+        NEMOfferCost(;
+            energy = [
+                NEMEnergyBid(;
+                    direction = BidDirection.GEN, offer_curves = keys_by_name["energy_offer"],
+                    max_avail = keys_by_name["max_avail"], roc_up = 0.0, roc_down = 0.0,
+                ),
+            ],
+        ),
     )
 
     mktempdir() do dir

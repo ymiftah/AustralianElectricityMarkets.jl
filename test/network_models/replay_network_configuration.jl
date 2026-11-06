@@ -14,9 +14,9 @@ end
     sys = nem_system(db, config; date_range = interval)
     gen = get_component(NEMRenewableGen, sys, "BW03")
     @test get_ext(gen)["nem_semi_scheduled"] === true
-    @test get_time_series_values(SingleTimeSeries, gen, "energy_max_avail"; ignore_scaling_factors = true) .* get_base_power(sys) ≈ [101.0, 102.0, 103.0]
+    @test get_time_series_values(SingleTimeSeries, gen, "bid_energy_max_avail_gen") ≈ [101.0, 102.0, 103.0]
     @test get_time_series_values(SingleTimeSeries, gen, "uigf"; ignore_scaling_factors = true) .* get_base_power(sys) ≈ [41.0, 42.0, 43.0]
-    @test !has_time_series(gen, DeterministicSingleTimeSeries, "energy_max_avail")
+    @test !has_time_series(gen, DeterministicSingleTimeSeries, "bid_energy_max_avail_gen")
     @test !isempty(collect(get_components(FCASService, sys)))
     ic = get_component(AreaInterchange, sys, "IC2")
     @test has_time_series(ic, SingleTimeSeries, "mnsp_forward_max_avail")
@@ -70,14 +70,14 @@ end
     demand = read_demand(db, grid; resolution = Minute(5))
     demand_before = deepcopy(demand)
     dispatch = read_dispatch_limits(db, grid; intervention = 0, resolution = Minute(5))
-    AEM._set_demand!(shared, demand, grid; resolution = Minute(5))
+    AustralianElectricityMarkets._set_demand!(shared, demand, grid; resolution = Minute(5))
     attach_demand!(independent, db, grid; resolution = Minute(5))
     @test isequal(demand, demand_before)
     for sys in (shared, independent)
         set_market_bids!(sys, db, grid; resolution = Minute(5))
         set_fcas_scaling_inputs!(sys, db, grid)
     end
-    AEM._set_nem_dispatch_limits!(shared, dispatch, grid)
+    AustralianElectricityMarkets._set_nem_dispatch_limits!(shared, dispatch, grid)
     attach_dispatch_limits!(independent, db, grid)
     for T in (PowerLoad, NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMStorage, NEMLoad), component in get_components(T, shared)
         other = get_component(T, independent, get_name(component))
@@ -107,7 +107,7 @@ end
     create_mock_data(hive; complete_inputs = true)
     write_mock_interconnector_results(hive)
     db = aem_connect(HiveConfiguration(hive_location = hive))
-    sys, _, _ = AEM.RegionModel._nem_network(db)
+    sys, _, _ = AustralianElectricityMarkets.RegionModel._nem_network(db)
     generators = collect(get_components(Generator, sys))
     @test !isempty(generators)
     @test all(g -> get_operation_cost(g) isa Union{RenewableGenerationCost, HydroGenerationCost, ThermalGenerationCost}, generators)
@@ -137,7 +137,7 @@ end
     bids = [(d, b) for d in nem_devices for b in AustralianElectricityMarkets.get_energy_bids(get_operation_cost(d))]
     @test !isempty(bids)
     for (device, bid) in bids
-        @test has_time_series(device, SingleTimeSeries, bid.curves.name)
+        @test has_time_series(device, SingleTimeSeries, bid.offer_curves.name)
         @test has_time_series(device, SingleTimeSeries, bid.max_avail.name)
     end
 end
@@ -153,7 +153,7 @@ end
     @test !isempty(get_components(ThermalStandard, sys))
 end
 
-@testset "FCAS offers on a zero-cost device without an energy bid" begin
+@testset "FCAS bids are recorded without derived offer series" begin
     AEM = AustralianElectricityMarkets
     hive = mktempdir()
     create_mock_data(hive; complete_inputs = true)
@@ -161,18 +161,17 @@ end
     db = aem_connect(HiveConfiguration(hive_location = hive))
     grid = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     sys, _ = constrained_system(db; date_range = grid)
-    # FCAS price bids are stored only by NEMDEConfiguration, so no device carries an offer curve here.
+    # The formulation's offer series are derived by AEMSim, so AEM attaches none.
     @test !any(
         has_time_series(device, SingleTimeSeries, fcas_offer_series_name(svc, dec))
             for device in get_components(Device, sys), svc in get_components(FCASService, sys), dec in (false, true)
     )
-    # No set_market_bids!: each bidder keeps its zero cost and gets its offer series.
-    bidders = [g for g in get_components(Generator, sys) if has_time_series(g, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")]
+    bidders = [g for g in get_components(Generator, sys) if !isempty(AustralianElectricityMarkets.get_fcas_bids(get_operation_cost(g)))]
     @test !isempty(bidders)
-    set_fcas_service_bids!(sys, db, grid)
     for g in bidders
         @test get_operation_cost(g) isa NEMOfferCost
-        @test has_time_series(g, SingleTimeSeries, "fcas_offer_RAISE6SEC")
+        @test has_time_series(g, SingleTimeSeries, AustralianElectricityMarkets.bid_series_name(BidType.RAISE6SEC, :offer_curves, AustralianElectricityMarkets.BidDirection.GEN)) ||
+            isempty(filter(b -> b.service == BidType.RAISE6SEC, AustralianElectricityMarkets.get_fcas_bids(get_operation_cost(g))))
     end
 end
 
@@ -205,10 +204,10 @@ end
     bw02 = get_component(Generator, late, "BW02")
     bw02_full = get_component(Generator, full, "BW02")
     # BW02 is registered only at 00:15, so the two earlier stamps are zero-padded.
-    for name in ("energy_max_avail", "availability", "initial_mw", "ramp_up_rate", "ramp_down_rate")
+    for name in ("bid_energy_max_avail_gen", "availability", "initial_mw", "ramp_up_rate", "ramp_down_rate")
         @test series(bw02, name) ≈ [0.0, 0.0, series(bw02_full, name)[3]]
     end
-    @test length(get_time_series_timestamps(SingleTimeSeries, bw02, "energy_max_avail")) == length(grid)
+    @test length(get_time_series_timestamps(SingleTimeSeries, bw02, "bid_energy_max_avail_gen")) == length(grid)
 
     # Every single-time-series input of every injection spans the whole chunk.
     for device in get_components(StaticInjection, late), key in get_time_series_keys(device)
@@ -223,7 +222,7 @@ end
         raise6 = BidType.RAISE6SEC
         # The padded offer curve has zero width, so the service bid offers nothing there.
         svc = only(s for s in get_components(FCASService, late) if get_bid_type(s) == raise6 && "BW02" in get_name.(get_contributing_devices(late, s)))
-        curves = get_time_series_values(SingleTimeSeries, bw02, fcas_offer_series_name(svc, false); ignore_scaling_factors = true)
+        curves = get_time_series_values(SingleTimeSeries, bw02, AustralianElectricityMarkets.bid_series_name(BidType.RAISE6SEC, :offer_curves, AustralianElectricityMarkets.BidDirection.GEN); ignore_scaling_factors = true)
         @test all(i -> sum(diff(PowerSystems.get_x_coords(curves[i]))) == 0.0, 1:2)
     end
     @test_nowarn PowerSystems.transform_single_time_series!(late, DISPATCH_INTERVAL, DISPATCH_INTERVAL)
@@ -236,15 +235,15 @@ end
         sys = nem_system(partial, NEMDEConfiguration(); date_range = interval)
         battery = get_component(NEMStorage, sys, "BW01")
         battery_full = get_component(NEMStorage, full, "BW01")
-        trapezium = fcas_series_name("fcas_trapezium", BidType.RAISE6SEC, false)
+        trapezium = AustralianElectricityMarkets.bid_series_name(BidType.RAISE6SEC, :trapezium, AustralianElectricityMarkets.BidDirection.GEN)
         values = get_time_series_values(SingleTimeSeries, battery, trapezium; ignore_scaling_factors = true)
         @test length(values) == length(grid)
-        @test isequal(values[1], (0.0, 0.0, 0.0, 0.0, 0.0, NaN, NaN))
+        @test isequal(values[1], (0.0, 0.0, 0.0, 0.0))
         @test isequal(values[2:3], get_time_series_values(SingleTimeSeries, battery_full, trapezium; ignore_scaling_factors = true)[2:3])
         # Every FCAS offer curve, whichever device carries it, spans the whole chunk.
-        for svc in get_components(FCASService, sys), device in get_contributing_devices(sys, svc), decremental in (false, true)
-            has_time_series(device, SingleTimeSeries, fcas_offer_series_name(svc, decremental)) || continue
-            @test length(get_time_series_values(SingleTimeSeries, device, fcas_offer_series_name(svc, decremental); ignore_scaling_factors = true)) == length(grid)
+        bidders = Iterators.flatten((get_components(Generator, sys), get_components(Storage, sys), get_components(ControllableLoad, sys)))
+        for device in bidders, bid in AustralianElectricityMarkets.get_fcas_bids(get_operation_cost(device))
+            @test length(get_time_series_values(SingleTimeSeries, device, bid.offer_curves.name; ignore_scaling_factors = true)) == length(grid)
         end
     end
 
@@ -260,9 +259,9 @@ end
         sys = nem_system(connect(stopped), NEMDEConfiguration(); date_range = interval)
         load = get_component(NEMLoad, sys, "ASLOAD1")
         @test all(iszero, series(load, "initial_mw"))
-        values = get_time_series_values(SingleTimeSeries, load, fcas_series_name("fcas_trapezium", BidType.RAISE6SEC, true); ignore_scaling_factors = true)
+        values = get_time_series_values(SingleTimeSeries, load, AustralianElectricityMarkets.bid_series_name(BidType.RAISE6SEC, :trapezium, AustralianElectricityMarkets.BidDirection.LOAD); ignore_scaling_factors = true)
         @test length(values) == length(grid)
-        @test all(iszero, values[3][1:5])
+        @test all(iszero, values[3])
     end
 
     @testset "a unit deregistered inside the chunk is zero after its last stamp" begin

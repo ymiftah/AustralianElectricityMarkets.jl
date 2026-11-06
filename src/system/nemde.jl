@@ -68,18 +68,16 @@ function AustralianElectricityMarkets.nem_system(
     storage = isnothing(time_series_directory) ? (;) : (; time_series_directory)
     sys, _ = nem_network(db; as_of = first(date_range), through = last(date_range) - resolution, time_series_in_memory, storage...)
 
-    # 4. Devices and services
-    set_fcas_bids!(sys, db, date_range)
+    # 4. Units, bids and services
+    (; dispatch, units, demand) = _nemde_energy_bids_with_coverage(sys, db, date_range; intervention, resolution)
+    registered = registration_spans(units)
+    set_market_bids!(sys, db, date_range; registered, resolution)
     add_nem_constraints!(sys, db, date_range; intervention)
     attach_interconnector_losses!(sys, db, first(date_range))
 
     # 5. Time series
-    (; dispatch, units, demand) = _nemde_energy_bids_with_coverage(sys, db, date_range; intervention, resolution)
-    registered = registration_spans(units)
     set_demand!(sys, demand, date_range; resolution)
     set_loss_demand_coefficients!(sys)
-    set_market_bids!(sys, db, date_range; resolution)
-    set_fcas_service_bids!(sys, db, date_range; resolution)
     set_fcas_scaling_inputs!(sys, db, date_range; intervention)
     set_nem_dispatch_limits!(sys, dispatch, date_range; registered)
     set_nem_energy_limits!(sys, db, date_range; intervention, registered)

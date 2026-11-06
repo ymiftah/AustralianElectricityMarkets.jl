@@ -360,7 +360,7 @@ end
 Generates a DataFrame of loads (`DISPATCHTYPE = LOAD` units, scheduled pumps and the
 non-scheduled ancillary-service and demand-response loads alike), each on its region's generator
 bus. A non-scheduled load starts unavailable: it carries no energy bid, and
-[`set_fcas_bids!`](@ref) makes it available only when it offers FCAS. Empty when `units` has no
+[`set_market_bids!`](@ref) makes it available only when it offers FCAS. Empty when `units` has no
 `DISPATCHTYPE` column.
 
 # Arguments

@@ -23,10 +23,7 @@ end
         mutate! = function (sys, stamps)
             cheap = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
             curve = PSY.PiecewiseStepData([10.0, 50.0], [20.0])
-            AustralianElectricityMarkets.set_energy_offer!(
-                sys, cheap, AustralianElectricityMarkets.OfferSide.GEN,
-                AustralianElectricityMarkets.single_series("energy_offer", TOY_START, fill(curve, length(stamps)), TOY_RESOLUTION),
-            )
+            _toy_energy_bid!(sys, cheap, AustralianElectricityMarkets.BidDirection.GEN, stamps, fill(curve, length(stamps)), fill(100.0, length(stamps)))
             return
         end,
     )

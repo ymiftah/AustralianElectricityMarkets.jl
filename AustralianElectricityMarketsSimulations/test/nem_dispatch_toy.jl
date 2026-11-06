@@ -425,7 +425,7 @@ end
         service = FCASService(; name, region = "1", bid_type = bid_type)
         PSY.add_service!(sys, service, [PSY.get_component(PSY.StaticInjection, sys, n) for n in (TOY_CHEAP, "PUMP")])
     end
-    flush_toy_fcas_curves!(sys)
+    derive_toy_offers!(sys)
     # Capacity rows: the sense follows the `_lower` suffix whatever the device.
     @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_upper", TOY_CHEAP, "up") == "up"
     @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_lower", TOY_CHEAP, "up") == "down"
@@ -843,6 +843,8 @@ end
     )
     service = PSY.get_component(EnergyTieBreak, sys, TIE_BREAK_SERVICE_NAME)
     @test isnothing(service)
+    # The derivation runs before the forecasts are built, as `prepare_replay!` does.
+    PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries)
     set_effective_offers!(sys)
     set_effective_offers!(sys)
     services = collect(PSY.get_components(EnergyTieBreak, sys))

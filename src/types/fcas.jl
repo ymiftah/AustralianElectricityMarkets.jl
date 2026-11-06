@@ -282,7 +282,7 @@ end
     fcas_offer_series_name(service::FCASService, decremental::Bool) -> String
 
 Name of the time series holding a device's FCAS offer curve for `service`:
-`fcas_offer_<market>`, suffixed `_decremental` for the load side. See [`set_fcas_offer!`](@ref).
+`fcas_offer_<market>`, suffixed `_decremental` for the load side. The series is attached by `set_effective_offers!` in AEMSim.
 
 # Arguments
 - `service`: the FCAS service, one per region and [`BidType`](@ref).

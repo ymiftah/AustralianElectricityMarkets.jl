@@ -42,9 +42,9 @@ the energy bid `MAXAVAIL` series [`set_market_bids!`](@ref) attaches, read back 
 normalised by the device's own static `max_active_power` (read under `NATURAL_UNITS`), with
 `scaling_factor_multiplier = get_max_active_power`.
 
-A non-scheduled load (see [`set_fcas_bids!`](@ref)) gets zero `"initial_mw"`, ramp rates, `"availability"`
+A non-scheduled load (see [`set_market_bids!`](@ref)) gets zero `"initial_mw"`, ramp rates, `"availability"`
 and `"max_active_power"` whatever `DISPATCHLOAD` meters: its consumption is already in regional demand
-and is not dispatched. This function must run after [`set_fcas_bids!`](@ref), which makes such a load
+and is not dispatched. This function must run after [`set_market_bids!`](@ref), which makes such a load
 available; a load made available later has no ramp or limit series.
 
 A device with no `DISPATCHLOAD` rows in `date_range`, missing intervals, a `missing` rate or
@@ -124,9 +124,9 @@ and `UIGF`), read back by `get_energy_availability`. A `NEMStorage` gets no
 normalised by the device's own static `max_active_power` (read under `NATURAL_UNITS`), with
 `scaling_factor_multiplier = get_max_active_power`.
 
-A non-scheduled load (see [`set_fcas_bids!`](@ref)) is exempt from the missing-row checks below and gets
+A non-scheduled load (see [`set_market_bids!`](@ref)) is exempt from the missing-row checks below and gets
 zero `"initial_mw"`, ramp rates, `"availability"` and `"max_active_power"` whatever `DISPATCHLOAD` meters:
-its consumption is already in regional demand and is not dispatched. This function must run after [`set_fcas_bids!`](@ref), which makes such a load
+its consumption is already in regional demand and is not dispatched. This function must run after [`set_market_bids!`](@ref), which makes such a load
 available; a load made available later has no ramp or limit series.
 
 A device other than a non-scheduled load with no `DISPATCHLOAD` rows in `date_range`, a `missing` rate or

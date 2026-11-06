@@ -16,7 +16,7 @@ export HiveConfiguration, aem_connect
 export NetworkConfiguration, table_requirements, nem_system
 export RegionalNetworkConfiguration, NEMDEConfiguration
 export set_mnsp_offers!, set_demand!, set_market_bids!, add_nem_constraints!, set_regional_availability!
-export set_fcas_bids!, set_fcas_offer!, set_energy_offer!, set_fcas_service_bids!, set_fcas_scaling_inputs!
+export set_fcas_scaling_inputs!
 export set_nem_dispatch_limits!, set_interconnector_flow_limits!, set_loss_demand_coefficients!
 export set_nem_energy_limits!, registration_spans
 export get_skipped_constraints, get_dropped_terms,
@@ -37,7 +37,10 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
     get_terms, get_fcas_requirements, resolve_term_devices
 export FCASService, add_fcas_services!, Readers
 export OfferSide, offer_side, side_suffix, NEM_SERIES, energy_offer_series_name, energy_max_avail_series_name
-export NEMOfferCost, NEMEnergyBid, NEMFCASBid, get_energy_bids, get_fcas_bids, get_fixed_load, get_fixed_load_invoked
+export NEMOfferCost, NEMEnergyBid, NEMFCASBid, BidDirection, FastStartProfile, FCASTrapeziumPoints, bid_value, bid_series_name
+export get_energy_bids, get_fcas_bids, get_direction, get_offer_curves, get_max_avail, get_roc_up, get_roc_down,
+    get_fixed_load, get_minimum_load, get_fast_start_profile, get_daily_energy_constraint, get_normal_status,
+    get_energy_limit, get_trapezium
 export NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMStorage, NEMLoad
 export EnergyTieBreak, TIE_BREAK_SERVICE_NAME, TIE_BREAK_CVP_FACTOR
 export MARKET_PRICE_CAP_BY_FINANCIAL_YEAR, DISPATCH_INTERVAL, constraint_cvp_factor
@@ -74,6 +77,7 @@ include("accessors/device_flags.jl")
 include("accessors/fcas.jl")
 include("accessors/constraints.jl")
 include("accessors/offers.jl")
+include("accessors/bids.jl")
 include("system/interface.jl")
 include("system/demand.jl")
 include("system/bids.jl")
