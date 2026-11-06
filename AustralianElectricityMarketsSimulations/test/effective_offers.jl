@@ -241,7 +241,7 @@ end
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:resolution:(start_date + Hour(2))
     base_power = get_base_power(sys_base)
-    truth = read_fcas_scaling_inputs(db, date_range)
+    truth = read_unit_conditions(db, date_range)
 
     @testset "load regulation scaling uses consumption ramp direction" begin
         rates_db = damaged_cache(
@@ -255,7 +255,8 @@ end
         for service in (BidType.RAISEREG, BidType.LOWERREG)
             add_time_series!(sys, load, single_series(fcas_series_name("fcas_trapezium", service, OfferSide.LOAD), start_date, fill(trap, horizon), resolution))
         end
-        set_fcas_scaling_inputs!(sys, rates_db, date_range)
+        set_unit_conditions!(sys, rates_db, date_range)
+        AustralianElectricityMarketsSimulations._set_dispatch_limits!(sys)
         with_units_base(sys, "NATURAL_UNITS") do
             raise = get_scaled_fcas_trapezium(load, BidType.RAISEREG, start_date, horizon; decremental = true)
             lower = get_scaled_fcas_trapezium(load, BidType.LOWERREG, start_date, horizon; decremental = true)
@@ -278,7 +279,8 @@ end
         for service in (BidType.RAISEREG, BidType.LOWERREG)
             add_time_series!(sys, load, single_series(fcas_series_name("fcas_trapezium", service, OfferSide.LOAD), start_date, fill(trap, horizon), resolution))
         end
-        set_fcas_scaling_inputs!(sys, rates_db, date_range)
+        set_unit_conditions!(sys, rates_db, date_range)
+        AustralianElectricityMarketsSimulations._set_dispatch_limits!(sys)
         with_units_base(sys, "NATURAL_UNITS") do
             # 60 MW per 5 minutes is LOWERREGAVAILABILITY; the up ramp rate alone would give 15.
             lower = get_scaled_fcas_trapezium(load, BidType.LOWERREG, start_date, horizon; decremental = true)
@@ -291,16 +293,16 @@ end
     @testset "get_scaled_fcas_trapezium skips scaling only at an absent interval" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
+        set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
 
         device = get_component(NEMThermalGen, sys, "ER01")
         full_grid = collect(date_range)[1:(end - 1)]
         horizon = length(full_grid)
         # 60 MW/h is a 5 MW AGC ramping capability over 5 minutes.
-        by_time = Dict(t => (RAMPUPRATE = (t == full_grid[1] ? missing : 60.0),) for t in full_grid)
-        AustralianElectricityMarkets._attach_fcas_scaling_series!(
-            sys, device, by_time, full_grid, :RAMPUPRATE, "fcas_agc_ramp_rate_RAISEREG", base_power,
-        )
+        ramp = [t == first(full_grid) ? NaN : 60.0 / 60 / base_power for t in full_grid]
+        replace_single_series!(sys, device, single_series(AustralianElectricityMarkets.NEM_SERIES.dispatch_ramp_up_rate, full_grid, ramp))
+        AustralianElectricityMarketsSimulations._set_dispatch_limits!(sys)
 
         raw, scaled = with_units_base(sys, "NATURAL_UNITS") do
             (
@@ -309,7 +311,7 @@ end
             )
         end
         @test get_max_avail(raw[1]) > 5.0
-        @test isequal(Tuple(scaled[1]), Tuple(raw[1]))
+        @test isequal(get_max_avail(scaled[1]), get_max_avail(raw[1]))
         @test all(i -> isapprox(get_max_avail(scaled[i]), min(get_max_avail(raw[i]), 5.0)), 2:horizon)
     end
 
@@ -317,7 +319,8 @@ end
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
         set_effective_offers!(sys)
-        set_fcas_scaling_inputs!(sys, db, date_range)
+        set_unit_conditions!(sys, db, date_range)
+        AustralianElectricityMarketsSimulations._set_dispatch_limits!(sys)
 
         device = get_component(NEMThermalGen, sys, "ER01")
         initial_time = start_date
@@ -390,7 +393,7 @@ end
     horizon = length(date_range) - 1
     base_power = get_base_power(sys_base)
     truth = read_dispatch_limits(db, date_range)
-    scaling_truth = read_fcas_scaling_inputs(db, date_range)
+    scaling_truth = read_unit_conditions(db, date_range)
 
     @testset "energy offer views and MAXAVAIL per direction" begin
         sys = deepcopy(sys_base)
@@ -486,7 +489,8 @@ end
 
     @testset "get_fcas_agc_status reads back AGCSTATUS and is nothing when not attached" begin
         sys = deepcopy(sys_base)
-        set_fcas_scaling_inputs!(sys, db, date_range)
+        set_unit_conditions!(sys, db, date_range)
+        AustralianElectricityMarketsSimulations._set_dispatch_limits!(sys)
         device = get_component(NEMThermalGen, sys, "ER01")
         rows = sort(subset(scaling_truth, :DUID => ByRow(==("ER01"))), :SETTLEMENTDATE)
         @test get_fcas_agc_status(device, start_date, horizon) == round.(Int, rows.AGCSTATUS)
@@ -501,12 +505,31 @@ end
         sys = deepcopy(sys_base)
         device = get_component(NEMThermalGen, sys, "ER01")
         full_grid = collect(date_range)[1:(end - 1)]
-        by_time = Dict(t => (AGCSTATUS = (t == full_grid[1] ? missing : 1.0),) for t in full_grid)
-        AustralianElectricityMarkets._attach_fcas_scaling_series!(
-            sys, device, by_time, full_grid, :AGCSTATUS, "fcas_agc_status", 1.0,
-        )
+        status = [t == first(full_grid) ? NaN : 1.0 for t in full_grid]
+        replace_single_series!(sys, device, single_series(AustralianElectricityMarkets.NEM_SERIES.fcas_agc_status, full_grid, status))
         status = get_fcas_agc_status(device, start_date, length(full_grid))
         @test isnothing(status[1])
         @test all(==(1), status[2:end])
+    end
+end
+
+@testset "Initial-state dispatch limits" begin
+    AEMSim = AustralianElectricityMarketsSimulations
+    @testset "_max_active_power is the availability unless the ramp-down floor is higher" begin
+        @test AEMSim._max_active_power(100.0, 50.0, 40.0, 1 / 12) == 100.0
+        @test AEMSim._max_active_power(10.0, 50.0, 40.0, 1 / 12) ≈ 50.0 - 40.0 / 12
+        @test AEMSim._max_active_power(10.0, 50.0, 40.0, 1 / 12) == AEMSim._max_active_power(10.0, 50.0, 40.0, 1 / 12)
+    end
+    @testset "_max_active_power uses the initial_mw it is given" begin
+        low = AEMSim._max_active_power(0.0, 10.0, 60.0, 1 / 12)
+        high = AEMSim._max_active_power(0.0, 100.0, 60.0, 1 / 12)
+        @test low == 5.0
+        @test high == 95.0
+    end
+    @testset "_agc_ramp_rate takes the larger of the ramp and availability per hour" begin
+        @test AEMSim._agc_ramp_rate(5.0, 1.0, 1 / 12) == 12.0
+        @test AEMSim._agc_ramp_rate(5.0, NaN, 1 / 12) == 5.0
+        @test AEMSim._agc_ramp_rate(5.0, 0.0, 1 / 12) == 5.0
+        @test isnan(AEMSim._agc_ramp_rate(NaN, 1.0, 1 / 12))
     end
 end

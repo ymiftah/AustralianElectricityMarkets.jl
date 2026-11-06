@@ -170,7 +170,7 @@ end
 Like `_get_fcas_trapezium`, but applies [`scale_fcas_trapezium`](@ref) at every step
 using `component`'s `"fcas_agc_enablement_min_<service>"`/`"fcas_agc_enablement_max_<service>"`
 series and its AGC ramping capability, `"fcas_agc_ramp_rate_<service>"` (MW/h) times
-`resolution` (regulation `service`s only, from [`set_fcas_scaling_inputs!`](@ref)), and its
+`resolution` (regulation `service`s only, from [`set_unit_conditions!`](@ref)), and its
 `"uigf"` series, when attached. A `NaN` entry applies no scaling at that step. UIGF applies at every
 step. For controllable loads, raise regulation uses the physical ramp-down rate and lower
 regulation the ramp-up rate. `decremental` selects the `DIRECTION == "LOAD"` trapezium series; the AGC
@@ -214,7 +214,7 @@ end
     get_fcas_agc_ramp_capability(component, service, initial_time, horizon; resolution = Minute(5)) -> Union{Nothing, Vector{Float64}}
 
 `component`'s AGC ramping capability for regulation `service` (AEMO *FCAS Model in NEMDE* §4.2):
-its `"fcas_agc_ramp_rate_<service>"` series ([`set_fcas_scaling_inputs!`](@ref), MW/h) times
+its `"fcas_agc_ramp_rate_<service>"` series ([`set_unit_conditions!`](@ref), MW/h) times
 `resolution`, `horizon` steps from `initial_time`, in `component`'s `System`'s current display
 units, `NaN` at an interval with no ramp rate. `nothing` if `component` carries no such series.
 
@@ -234,7 +234,7 @@ end
     get_fcas_agc_status(component, initial_time, horizon) -> Union{Nothing, Vector{Int}}
 
 Full-series read of `component`'s `"fcas_agc_status"` `SingleTimeSeries`
-([`set_fcas_scaling_inputs!`](@ref)), `horizon` steps from `initial_time`: `DISPATCHLOAD.AGCSTATUS`,
+([`set_unit_conditions!`](@ref)), `horizon` steps from `initial_time`: `DISPATCHLOAD.AGCSTATUS`,
 `1` while the unit is under AGC control and `0` otherwise, `nothing` at an interval with no
 value. `nothing` if `component` carries no such series.
 

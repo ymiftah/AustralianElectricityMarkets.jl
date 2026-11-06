@@ -40,6 +40,7 @@ const PM = PSI.PM
 include("time_basis.jl")
 
 include("offers/accessors.jl")
+include("offers/initial_state.jl")
 include("offers/fcas_effective.jl")
 include("offers/tie_break.jl")
 include("offers/effective_offers.jl")

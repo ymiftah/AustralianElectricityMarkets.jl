@@ -62,7 +62,7 @@ end
 
 `device`'s `bid_type` offer on `side` over `window` (`_FCASWindow`), read via
 [`get_fcas_offer`](@ref). The trapezium is AEMO *FCAS Model in NEMDE* §4's scaled/effective
-trapezium wherever `device` carries the scaling input series ([`set_fcas_scaling_inputs!`](@ref)),
+trapezium wherever `device` carries the scaling input series ([`set_unit_conditions!`](@ref)),
 with the AGC ramping capability taken over the window's resolution at every interval. Otherwise it
 is the bid trapezium unscaled.
 

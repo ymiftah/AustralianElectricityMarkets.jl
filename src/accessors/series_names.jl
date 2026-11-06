@@ -31,12 +31,16 @@ side_suffix(side::OfferSide) = side == OfferSide.LOAD ? "_decremental" : ""
 Names of the per-device `SingleTimeSeries` the setters attach, by field:
 
 - `initial_mw`: `DISPATCHLOAD.INITIALMW`, net MW, system-base per-unit.
-- `ramp_up_rate`, `ramp_down_rate`: `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE`, system-base per-unit per minute.
+- `dispatch_ramp_up_rate`, `dispatch_ramp_down_rate`: `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE`, the
+  lesser of bid and telemetered rate, system-base per-unit per minute.
+- `ramp_up_rate`, `ramp_down_rate`: the dispatch ramp rates the formulation reads, system-base per-unit
+  per minute, derived by AEMSim from the dispatch ramp rates.
 - `availability`: `DISPATCHLOAD.AVAILABILITY`, system-base per-unit.
 - `max_active_power`: the device's upper dispatch limit, a multiplier of its `max_active_power`.
 - `uigf`: a semi-scheduled unit's `DISPATCHLOAD.UIGF`, read by its energy limit and FCAS trapezium
   scaling, system-base per-unit.
-- `fcas_agc_status`: `DISPATCHLOAD.AGCSTATUS`, `0` or `1`.
+- `dispatch_mode`: `DISPATCHLOAD.DISPATCHMODE`, as published.
+- `fcas_agc_status`: `DISPATCHLOAD.AGCSTATUS`, as published (`0` or `1`).
 - `fixed_load`: a unit's participant fixed loading, net injection in system-base per-unit.
 - `fixed_load_invoked`: `1` at the intervals a fixed loading applies, `0` elsewhere.
 - `from_to_flow_limit`, `to_from_flow_limit`: an interchange's per-interval flow limits, system-base
@@ -48,11 +52,14 @@ Offer-side series are named by [`energy_offer_series_name`](@ref), [`energy_max_
 """
 const NEM_SERIES = (
     initial_mw = "initial_mw",
+    dispatch_ramp_up_rate = "dispatch_ramp_up_rate",
+    dispatch_ramp_down_rate = "dispatch_ramp_down_rate",
     ramp_up_rate = "ramp_up_rate",
     ramp_down_rate = "ramp_down_rate",
     availability = "availability",
     max_active_power = "max_active_power",
     uigf = "uigf",
+    dispatch_mode = "dispatch_mode",
     fcas_agc_status = "fcas_agc_status",
     fixed_load = "fixed_load",
     fixed_load_invoked = "fixed_load_invoked",

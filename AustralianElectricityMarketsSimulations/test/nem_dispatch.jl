@@ -23,7 +23,6 @@ function nem_dispatch_system(; mutate! = identity, data_span = NEM_DISPATCH_HORI
     attach_demand!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     set_market_bids!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     attach_dispatch_limits!(sys, db, date_range)
-    set_nem_energy_limits!(sys, db, date_range)
     set_effective_offers!(sys)
     mutate!(sys)
     # One window spanning the whole span, matching the single window the bid forecast carries.

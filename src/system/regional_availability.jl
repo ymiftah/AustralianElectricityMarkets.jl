@@ -3,7 +3,7 @@
 
 Attaches a `"max_active_power"` series to every available `RenewableGen` and `HydroGen` in
 `sys`, for the economic studies of a [`RegionalNetworkConfiguration`](@ref). Unlike
-`set_nem_dispatch_limits!`, a unit with no `DISPATCHLOAD` rows is not an error: each stamp takes the
+`set_unit_conditions!`, a unit with no `DISPATCHLOAD` rows is not an error: each stamp takes the
 first of these values that exists:
 
 1. a `RenewableGen` with a [`read_uigf`](@ref) row: `UIGF / capacity`;
@@ -15,8 +15,7 @@ first of these values that exists:
 4. otherwise `1.0`, the registered capacity.
 
 Every value is clamped to [0, 1]. A device with a capacity of zero or less is 0.0 at every stamp. The
-series is per-unit of each device's own `max_active_power`, as `set_nem_dispatch_limits!` writes it. A
-repeat call replaces the series. Thermal, storage and load devices are not touched.
+series is per-unit of each device's own `max_active_power`. A repeat call replaces the series. Thermal, storage and load devices are not touched.
 
 # Arguments
 - `sys`: the `System` to add to.

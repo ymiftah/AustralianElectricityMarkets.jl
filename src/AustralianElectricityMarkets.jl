@@ -16,9 +16,7 @@ export HiveConfiguration, aem_connect
 export NetworkConfiguration, table_requirements, nem_system
 export RegionalNetworkConfiguration, NEMDEConfiguration
 export set_mnsp_offers!, set_demand!, set_market_bids!, add_nem_constraints!, set_regional_availability!
-export set_fcas_scaling_inputs!
-export set_nem_dispatch_limits!, set_interconnector_flow_limits!, set_loss_demand_coefficients!
-export set_nem_energy_limits!, registration_spans
+export set_unit_conditions!, set_interconnector_flow_limits!, set_loss_demand_coefficients!, registration_spans
 export get_skipped_constraints, get_dropped_terms,
     get_missing_constraint_intervals, get_defaulted_constraint_weights
 export fcas_service_name, fcas_service, fcas_offer_series_name
@@ -62,7 +60,7 @@ include("types/tie_break.jl")
 
 include("readers/Readers.jl")
 using .Readers
-using .Readers: _query, _table_is_cached, _require_cached, _massage_bids
+using .Readers: _query, _table_is_cached, _require_cached, _massage_bids, _require_columns, _table_schema
 
 for name in names(Readers)
     name === :Readers && continue
@@ -82,8 +80,8 @@ include("system/interface.jl")
 include("system/demand.jl")
 include("system/bids.jl")
 include("system/dispatch_limits.jl")
+include("system/unit_conditions.jl")
 include("system/regional_availability.jl")
-include("system/energy_limits.jl")
 include("system/fcas.jl")
 include("system/offers.jl")
 include("system/mnsp.jl")

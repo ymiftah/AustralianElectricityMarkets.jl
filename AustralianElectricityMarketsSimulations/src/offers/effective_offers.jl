@@ -6,6 +6,10 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
 
 - `"energy_offer[_decremental]"`, the energy offer curves, with prices referred to the reference node
   by the unit's loss factor and rounded to cents.
+- `"ramp_up_rate"`, `"ramp_down_rate"`, the dispatch ramp rates per unit of the system base per minute,
+  `"max_active_power"`, the upper dispatch limit of a non-storage NEM dispatch device, and
+  `"fcas_agc_ramp_rate_<BIDTYPE>"`, the AGC ramp rate of each regulation service, from the unit
+  conditions that [`set_unit_conditions!`](@ref) attaches.
 - `"energy_max_avail[_decremental]"`, the energy `MAXAVAIL` per unit of the system base; zero for a
   non-scheduled load without an energy bid.
 - `"fcas_offer_<BIDTYPE>[_decremental]"` and `"fcas_trapezium_<BIDTYPE>[_decremental]"`, the FCAS
@@ -17,8 +21,8 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
 - `"tie_break_scale_<k>[_decremental]"`, the tie-break scale of each price-tied energy band, and the
   [`EnergyTieBreak`](@ref) service joining the units that carry them.
 
-The static series are written first, then the FCAS effective offers and tie-break scales that read
-them. Existing series of these names are replaced, so a second call on the same `sys` gives the same
+The static series are written first, then the dispatch ramps and limits, then the FCAS effective offers
+and tie-break scales that read them. Existing series of these names are replaced, so a second call on the same `sys` gives the same
 result. [`prepare_replay!`](@ref) calls it before attaching the forecasts. Call it before
 `transform_single_time_series!`: the series are single time series until then.
 
@@ -33,6 +37,7 @@ service map to the same side of a unit.
 """
 function set_effective_offers!(sys::PSY.System)
     _set_static_offers!(sys)
+    _set_dispatch_limits!(sys)
     _set_fcas_effective_offers!(sys)
     _set_tie_break_scales!(sys)
     return
@@ -190,5 +195,70 @@ end
 function _set_static_offers!(sys::PSY.System)
     _set_energy_offers!(sys)
     _set_fcas_offers!(sys)
+    return
+end
+
+
+# The `NEM_SERIES.dispatch_ramp_*` and regulation series of `device` as a `_bid_series`-shaped named
+# tuple, read from its `SingleTimeSeries` of `name`.
+function _condition_series(device, name::AbstractString)
+    array = PSY.get_time_series_array(PSY.SingleTimeSeries, device, name)
+    stamps = PSY.TimeSeries.timestamp(array)
+    return (; timestamps = stamps, resolution = Dates.Minute(Dates.value(stamps[2] - stamps[1]) ÷ 60_000), values = collect(values(array)))
+end
+
+
+# Attaches the ramp rates, AGC ramp rates and upper dispatch limit of each NEM dispatch device whose
+# unit conditions are attached. The ramps copy the dispatch rates; the AGC rates take the larger of a
+# ramp rate and its regulation availability (a `ControllableLoad` pairs each ramp with the other service).
+function _set_dispatch_limits!(sys::PSY.System)
+    base = PSY.get_base_power(sys)
+    for device in nem_dispatch_devices(sys)
+        PSY.has_time_series(device, PSY.SingleTimeSeries, NEM_SERIES.dispatch_ramp_up_rate) || continue
+        up = _condition_series(device, NEM_SERIES.dispatch_ramp_up_rate)
+        down = _condition_series(device, NEM_SERIES.dispatch_ramp_down_rate)
+        interval_hours = Dates.value(Millisecond(up.resolution)) / (1000 * 60 * 60)
+        replace_single_series!(sys, device, single_series(NEM_SERIES.ramp_up_rate, first(up.timestamps), up.values, up.resolution))
+        replace_single_series!(sys, device, single_series(NEM_SERIES.ramp_down_rate, first(down.timestamps), down.values, down.resolution))
+        _set_agc_ramp_rates!(sys, device, up, down, interval_hours)
+        device isa PSY.Storage && continue
+        initial = _condition_series(device, NEM_SERIES.initial_mw)
+        availability = _condition_series(device, NEM_SERIES.availability)
+        static = with_units_base(() -> PSY.get_max_active_power(device), sys, "NATURAL_UNITS")
+        ramp_down_per_hour = down.values .* 60
+        limits = [
+            _max_active_power(availability.values[i], initial.values[i], ramp_down_per_hour[i], interval_hours) * base / static
+                for i in eachindex(availability.values)
+        ]
+        replace_single_series!(
+            sys, device,
+            single_series(NEM_SERIES.max_active_power, availability.timestamps, limits; scaling_factor_multiplier = PSY.get_max_active_power),
+        )
+    end
+    return
+end
+
+
+# Attaches `fcas_agc_ramp_rate_<service>` for both regulation services, when `device` has their
+# availability. A `ControllableLoad` reads its raise regulation from the lower availability and the
+# ramp-up rate, and its lower regulation from the ramp-down rate and the raise availability.
+function _set_agc_ramp_rates!(sys::PSY.System, device, up, down, interval_hours::Real)
+    names = [fcas_series_name("fcas_regulation_availability", service) for service in (BidType.RAISEREG, BidType.LOWERREG)]
+    all(name -> PSY.has_time_series(device, PSY.SingleTimeSeries, name), names) || return
+    raise_availability, lower_availability = (_condition_series(device, name).values for name in names)
+    ramp_up, ramp_down = up.values .* 60, down.values .* 60
+    if device isa PSY.ControllableLoad
+        sides = (ramp_up => lower_availability, ramp_down => raise_availability)
+    else
+        sides = (ramp_up => raise_availability, ramp_down => lower_availability)
+    end
+    for (service, (ramp, availability)) in zip((BidType.RAISEREG, BidType.LOWERREG), sides)
+        values = [_agc_ramp_rate(ramp[i], availability[i], interval_hours) for i in eachindex(ramp)]
+        all(isnan, values) && continue
+        replace_single_series!(
+            sys, device,
+            single_series(fcas_series_name("fcas_agc_ramp_rate", service), up.timestamps, values),
+        )
+    end
     return
 end

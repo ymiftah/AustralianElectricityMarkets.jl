@@ -60,7 +60,7 @@ attach_loss_model!(sys, market);
 #
 # Energy offers, availability, ramp rates and metered initial output specify the unit's
 # feasible dispatch for the interval. For NEMWEB data, use `set_market_bids!`,
-# `set_nem_dispatch_limits!` and `set_nem_energy_limits!` to attach these inputs.
+# `set_unit_conditions!` to attach these inputs.
 
 function attach_energy_data!(sys, market) #hide
     stamps = [T0, T0 + RESOLUTION] #hide

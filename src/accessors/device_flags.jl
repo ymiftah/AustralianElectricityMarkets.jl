@@ -28,7 +28,7 @@ is_commissioned(device) = get(get_ext(device), "commissioned", true) === true
 """
     has_schedule_classification(device) -> Bool
 
-Whether [`set_nem_energy_limits!`](@ref) has classified `device` as scheduled or semi-scheduled.
+Whether [`set_unit_conditions!`](@ref) has classified `device` as scheduled or semi-scheduled.
 
 # Returns
 `Bool`.
@@ -39,7 +39,7 @@ has_schedule_classification(device) = get(get_ext(device), "nem_semi_scheduled",
 """
     is_semi_scheduled(device) -> Bool
 
-Whether `device` is semi-scheduled, as classified by [`set_nem_energy_limits!`](@ref). Throws an
+Whether `device` is semi-scheduled, as classified by [`set_unit_conditions!`](@ref). Throws an
 `ArgumentError` when `device` has no classification.
 
 # Returns
@@ -47,7 +47,7 @@ Whether `device` is semi-scheduled, as classified by [`set_nem_energy_limits!`](
 """
 function is_semi_scheduled(device)
     has_schedule_classification(device) || throw(
-        ArgumentError("$(get_name(device)): missing schedule classification; call set_nem_energy_limits!"),
+        ArgumentError("$(get_name(device)): missing schedule classification; call set_unit_conditions!"),
     )
     return get_ext(device)["nem_semi_scheduled"]
 end

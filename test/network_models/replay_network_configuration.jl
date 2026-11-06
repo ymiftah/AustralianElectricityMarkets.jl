@@ -69,16 +69,13 @@ end
     @test isequal(units, read_units(db; as_of = first(grid)))
     demand = read_demand(db, grid; resolution = Minute(5))
     demand_before = deepcopy(demand)
-    dispatch = read_dispatch_limits(db, grid; intervention = 0, resolution = Minute(5))
     AustralianElectricityMarkets._set_demand!(shared, demand, grid; resolution = Minute(5))
     attach_demand!(independent, db, grid; resolution = Minute(5))
     @test isequal(demand, demand_before)
     for sys in (shared, independent)
         set_market_bids!(sys, db, grid; resolution = Minute(5))
-        set_fcas_scaling_inputs!(sys, db, grid)
+        set_unit_conditions!(sys, db, grid)
     end
-    AustralianElectricityMarkets._set_nem_dispatch_limits!(shared, dispatch, grid)
-    attach_dispatch_limits!(independent, db, grid)
     for T in (PowerLoad, NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMStorage, NEMLoad), component in get_components(T, shared)
         other = get_component(T, independent, get_name(component))
         for key in PowerSystems.get_time_series_keys(component)
@@ -204,7 +201,7 @@ end
     bw02 = get_component(Generator, late, "BW02")
     bw02_full = get_component(Generator, full, "BW02")
     # BW02 is registered only at 00:15, so the two earlier stamps are zero-padded.
-    for name in ("bid_energy_max_avail_gen", "availability", "initial_mw", "ramp_up_rate", "ramp_down_rate")
+    for name in ("bid_energy_max_avail_gen", "availability", "initial_mw", "dispatch_ramp_up_rate", "dispatch_ramp_down_rate")
         @test series(bw02, name) ≈ [0.0, 0.0, series(bw02_full, name)[3]]
     end
     @test length(get_time_series_timestamps(SingleTimeSeries, bw02, "bid_energy_max_avail_gen")) == length(grid)

@@ -48,7 +48,7 @@ function PSI.add_constraints!(
     names = PSY.get_name.(collect(devices))
     steps = PSI.get_time_steps(container)
     limit, covered = _ts_parameter_accessor(container, _energy_limit_parameter(C), T)
-    _require_coverage(names, "missing energy-limit series", "Call set_nem_energy_limits! first.", covered)
+    _require_coverage(names, "missing energy-limit series", "Call set_unit_conditions! first.", covered)
     power = PSI.get_variable(container, U(), T)
     slack = PSI.get_variable(container, _energy_limit_slack(C)(), T)
     rows = PSI.add_constraints_container!(container, C(), T, names, steps)

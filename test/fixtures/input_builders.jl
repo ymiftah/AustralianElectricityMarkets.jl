@@ -14,8 +14,7 @@ function attach_demand!(sys, db, date_range; resolution = Minute(5))
 end
 
 function attach_dispatch_limits!(sys, db, date_range)
-    rows = AustralianElectricityMarkets.read_dispatch_limits(db, date_range; resolution = step(date_range))
-    return AustralianElectricityMarkets._set_nem_dispatch_limits!(sys, rows, date_range)
+    return set_unit_conditions!(sys, db, date_range)
 end
 
 # The network, bids, NEM constraints and interconnector losses over `date_range`, without the

@@ -32,9 +32,8 @@ end
     nem_system(db, ::NEMDEConfiguration; date_range, intervention = 0,
         interval_flow_limits = false, time_series_in_memory = true, time_series_directory = nothing)
 
-Builds a constrained system populated with demand, energy and FCAS bids, scaling and dispatch
-inputs, energy limits, interconnector losses and MNSP offers as single time series, then attaches
-the effective FCAS offers and tie-break scales derived from them. Every unit registered at any
+Builds a constrained system populated with demand, energy and FCAS bids, unit conditions,
+interconnector losses and MNSP offers as single time series. Every unit registered at any
 interval of `date_range` is built for the whole range; outside its registration it has zero
 availability and offers nothing. A missing input inside a registration is an error.
 
@@ -72,15 +71,13 @@ function AustralianElectricityMarkets.nem_system(
     (; dispatch, units, demand) = _nemde_energy_bids_with_coverage(sys, db, date_range; intervention, resolution)
     registered = registration_spans(units)
     set_market_bids!(sys, db, date_range; registered, resolution)
+    set_unit_conditions!(sys, db, date_range; intervention, registered)
     add_nem_constraints!(sys, db, date_range; intervention)
     attach_interconnector_losses!(sys, db, first(date_range))
 
     # 5. Time series
     set_demand!(sys, demand, date_range; resolution)
     set_loss_demand_coefficients!(sys)
-    set_fcas_scaling_inputs!(sys, db, date_range; intervention)
-    set_nem_dispatch_limits!(sys, dispatch, date_range; registered)
-    set_nem_energy_limits!(sys, db, date_range; intervention, registered)
     set_mnsp_offers!(sys, db, date_range; intervention)
     interval_flow_limits && set_interconnector_flow_limits!(sys, db, date_range; intervention)
     return sys
