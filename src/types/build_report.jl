@@ -37,12 +37,16 @@ function Base.:(==)(a::NEMBuildReport, b::NEMBuildReport)
     return all(f -> getfield(a, f) == getfield(b, f), fieldnames(NEMBuildReport))
 end
 
+function Base.hash(report::NEMBuildReport, h::UInt)
+    return hash(Tuple(getfield(report, f) for f in fieldnames(NEMBuildReport)), h)
+end
+
 
 """
     set_build_report!(sys, report::NEMBuildReport) -> NEMBuildReport
 
-Stores `report` on `sys` under one key of its `ext`, as plain data so it survives a `System` JSON
-round-trip. Repeat calls replace the stored report.
+Stores a copy of `report` on `sys` under one key of its `ext`, as plain data so it survives a `System` JSON
+round-trip. Later changes to `report` do not reach `sys`. Repeat calls replace the stored report.
 
 # Arguments
 - `sys`: the `System` the report describes.
@@ -53,10 +57,10 @@ round-trip. Repeat calls replace the stored report.
 """
 function set_build_report!(sys, report::NEMBuildReport)
     get_ext(sys)["build_report"] = Dict{String, Any}(
-        "skipped_constraints" => report.skipped_constraints,
+        "skipped_constraints" => deepcopy(report.skipped_constraints),
         "missing_constraint_intervals" => string.(report.missing_constraint_intervals),
-        "defaulted_constraint_weights" => report.defaulted_constraint_weights,
-        "dropped_terms" => report.dropped_terms,
+        "defaulted_constraint_weights" => copy(report.defaulted_constraint_weights),
+        "dropped_terms" => deepcopy(report.dropped_terms),
     )
     return report
 end

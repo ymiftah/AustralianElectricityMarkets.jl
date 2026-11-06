@@ -106,6 +106,18 @@ end
     @test AEM.get_invoked(gc, first(_NW_STAMPS)) === true
 end
 
+@testset "GenericConstraint keyed rhs is read in MW with no unit conversion" begin
+    # System base is 100 MW, so a per-unit read would return 1.0 and 1.1 instead.
+    mw_values = [100.0 + 10.0 * (k - 1) for k in 1:length(_NW_STAMPS)]
+    gc = GenericConstraint(; name = "N_MW", sense = ConstraintSense.LE, rhs = _nw_key("mw_rhs"))
+    sys = System(100.0)
+    add_component!(sys, gc)
+    add_time_series!(sys, gc, AEM.single_series("mw_rhs", first(_NW_STAMPS), mw_values, Minute(5)))
+    @test AEM.get_rhs(gc, _NW_STAMPS[1]) == 100.0
+    @test AEM.get_rhs(gc, _NW_STAMPS[2]) == 110.0
+    @test AEM.get_rhs(gc, _NW_STAMPS[2]) isa Float64
+end
+
 @testset "GenericConstraint keyed rhs and invoked read their series and survive JSON" begin
     rhs_key = _nw_key("rhs")
     invoked_key = _nw_key("invoked")
@@ -171,4 +183,24 @@ end
         @test AEM.get_missing_constraint_intervals(restored) == [DateTime(2025, 1, 1, 0, 5)]
         @test AEM.get_defaulted_constraint_weights(restored) == ["N_NULL@2025-01-01#1"]
     end
+end
+
+@testset "set_build_report! stores a copy and hash agrees with ==" begin
+    sys = System(100.0)
+    dropped() = Dict{String, Any}(
+        "constraint" => "N", "kind" => "UNIT", "key" => "K", "bid_type" => "ENERGY", "factor" => 1.0,
+    )
+    report = AEM.NEMBuildReport(; defaulted_constraint_weights = ["N_W"], dropped_terms = [dropped()])
+    AEM.set_build_report!(sys, report)
+
+    push!(report.defaulted_constraint_weights, "LATE")
+    report.dropped_terms[1]["key"] = "CHANGED"
+    stored = AEM.get_build_report(sys)
+    @test stored.defaulted_constraint_weights == ["N_W"]
+    @test only(stored.dropped_terms)["key"] == "K"
+
+    twin = AEM.NEMBuildReport(; defaulted_constraint_weights = ["N_W"], dropped_terms = [dropped()])
+    @test stored == twin
+    @test hash(stored) == hash(twin)
+    @test hash(stored) != hash(AEM.NEMBuildReport())
 end

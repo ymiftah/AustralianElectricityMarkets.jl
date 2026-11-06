@@ -127,8 +127,8 @@ and FCAS requirements. Attached to its contributing devices as a `PSY.Service`.
 - `name`: identifier — `GENCONID@EFFECTIVEDATE#VERSIONNO` for an AEMO-sourced constraint.
 - `available`: whether it is enforced.
 - `sense`: `LE`, `GE` or `EQ`, from `GENCONDATA.CONSTRAINTTYPE`.
-- `rhs`: `GENCONDATA.CONSTRAINTVALUE` per-unit of the system base, or a key of the per-interval
-  right-hand side series; read it with [`get_rhs`](@ref).
+- `rhs`: `GENCONDATA.CONSTRAINTVALUE` in MW as published, or a key of the per-interval right-hand side
+  series in MW; read it with [`get_rhs`](@ref).
 - `invoked`: whether the constraint is enforced, or a key of the per-interval invoked series; read it
   with [`get_invoked`](@ref).
 - `constraint_weight`: `GENCONDATA.GENERICCONSTRAINTWEIGHT` verbatim; 1.0 for a constraint whose
@@ -177,15 +177,15 @@ end
 """
     get_rhs(value::GenericConstraint, t::DateTime) -> Float64
 
-The right-hand side of `value` at `t`, per-unit of the system base. A static `rhs` is returned as stored;
-a keyed one is read from its series at `t`.
+The right-hand side of `value` at `t`, in MW as published. A static `rhs` is returned as stored; a keyed
+one is read from its series at `t` with no unit conversion.
 
 # Arguments
 - `value`: the [`GenericConstraint`](@ref).
 - `t`: the interval's start time.
 
 # Returns
-A `Float64`.
+A `Float64` in MW.
 """
 get_rhs(value::GenericConstraint, t::DateTime) = _constraint_value(value, value.rhs, t, Float64)
 

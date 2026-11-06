@@ -77,7 +77,7 @@ IS.get_internal(bid::NEMMNSPBid) = bid.internal
 """
     NEMMNSPObservedState(; initial_flow)
 
-The MNSP's published flow from `DISPATCHLOAD`, held on its `AreaInterchange`.
+The MNSP's published flow from `DISPATCHINTERCONNECTORRES`, held on its `AreaInterchange`.
 
 # Fields
 - `initial_flow`: `METEREDMWFLOW`, the flow at the start of the interval, MW.
