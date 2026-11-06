@@ -423,6 +423,12 @@ end
     get_registration(d) -> NEMRegistration
 
 The [`NEMRegistration`](@ref) of the NEM device `d`. Throws an `ArgumentError` naming `d` when it has none.
+
+# Arguments
+- `d`: a NEM device type, or a stock device, which has no registration.
+
+# Returns
+- The [`NEMRegistration`](@ref) of `d`.
 """
 function get_registration(d::Union{NEM_DISPATCH_DEVICE_TYPES...})
     return _require_unit_data(d.registration, "registration", d)
@@ -432,6 +438,12 @@ end
     get_telemetry(d) -> NEMTelemetry
 
 The [`NEMTelemetry`](@ref) of the NEM device `d`. Throws an `ArgumentError` naming `d` when it has none.
+
+# Arguments
+- `d`: a NEM device type, or a stock device, which has no telemetry.
+
+# Returns
+- The [`NEMTelemetry`](@ref) of `d`.
 """
 function get_telemetry(d::Union{NEM_DISPATCH_DEVICE_TYPES...})
     return _require_unit_data(d.telemetry, "telemetry", d)
@@ -441,6 +453,12 @@ end
     get_observed_state(d) -> NEMObservedState
 
 The [`NEMObservedState`](@ref) of the NEM device `d`. Throws an `ArgumentError` naming `d` when it has none.
+
+# Arguments
+- `d`: a NEM device type, or a stock device, which has no observed state.
+
+# Returns
+- The [`NEMObservedState`](@ref) of `d`.
 """
 function get_observed_state(d::Union{NEM_DISPATCH_DEVICE_TYPES...})
     return _require_unit_data(d.observed_state, "observed state", d)
@@ -449,8 +467,14 @@ end
 """
     set_registration!(d, registration::Union{Nothing, NEMRegistration})
 
-Sets the registration of the NEM device `d`, replacing any earlier one, and returns it. Repeat calls
-overwrite.
+Sets the registration of the NEM device `d`, replacing any earlier one. Repeat calls overwrite.
+
+# Arguments
+- `d`: the NEM device to update.
+- `registration`: the [`NEMRegistration`](@ref), or `nothing` to unset it.
+
+# Returns
+- `registration`.
 """
 function set_registration!(d::Union{NEM_DISPATCH_DEVICE_TYPES...}, registration)
     d.registration = registration
@@ -460,8 +484,14 @@ end
 """
     set_telemetry!(d, telemetry::Union{Nothing, NEMTelemetry})
 
-Sets the telemetry of the NEM device `d`, replacing any earlier one, and returns it. Repeat calls
-overwrite.
+Sets the telemetry of the NEM device `d`, replacing any earlier one. Repeat calls overwrite.
+
+# Arguments
+- `d`: the NEM device to update.
+- `telemetry`: the [`NEMTelemetry`](@ref), or `nothing` to unset it.
+
+# Returns
+- `telemetry`.
 """
 function set_telemetry!(d::Union{NEM_DISPATCH_DEVICE_TYPES...}, telemetry)
     d.telemetry = telemetry
@@ -471,10 +501,30 @@ end
 """
     set_observed_state!(d, observed_state::Union{Nothing, NEMObservedState})
 
-Sets the observed state of the NEM device `d`, replacing any earlier one, and returns it. Repeat calls
-overwrite.
+Sets the observed state of the NEM device `d`, replacing any earlier one. Repeat calls overwrite.
+
+# Arguments
+- `d`: the NEM device to update.
+- `observed_state`: the [`NEMObservedState`](@ref), or `nothing` to unset it.
+
+# Returns
+- `observed_state`.
 """
 function set_observed_state!(d::Union{NEM_DISPATCH_DEVICE_TYPES...}, observed_state)
     d.observed_state = observed_state
     return observed_state
+end
+
+
+# Stock devices carry no NEM inputs; the NEM device methods above are more specific.
+function get_registration(d::PSY.Device)
+    throw(ArgumentError("$(PSY.get_name(d)) is not a NEM device, so it has no registration"))
+end
+
+function get_telemetry(d::PSY.Device)
+    throw(ArgumentError("$(PSY.get_name(d)) is not a NEM device, so it has no telemetry"))
+end
+
+function get_observed_state(d::PSY.Device)
+    throw(ArgumentError("$(PSY.get_name(d)) is not a NEM device, so it has no observed state"))
 end

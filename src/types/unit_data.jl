@@ -49,8 +49,8 @@ value.
 # Fields
 - `agc_status`: whether the unit is under AGC.
 - `uigf`: the unit initial generation forecast, MW. Semi-scheduled units only.
-- `ramp_up_limit`: the ramp up rate, MW/min.
-- `ramp_down_limit`: the ramp down rate, MW/min.
+- `ramp_up_limit`: `RAMPUPRATE`, MW/h, as published.
+- `ramp_down_limit`: `RAMPDOWNRATE`, MW/h, as published.
 - `raise_reg_enablement`: the `(min, max)` MW enablement of raise regulation.
 - `lower_reg_enablement`: the `(min, max)` MW enablement of lower regulation.
 - `raise_reg_max_avail`: the raise regulation maximum availability, MW.
@@ -80,6 +80,8 @@ end
 
 # A static `(min, max)` pair as `Float64`; JSON reads a tuple back as a vector. Any other value as is.
 function _bid_pair(x::Union{Tuple{Real, Real}, AbstractVector})
+    length(x) == 2 && all(v -> v isa Real, x) ||
+        throw(ArgumentError("expected a (min, max) pair of two numbers, got $(x)"))
     return (Float64(x[1]), Float64(x[2]))
 end
 

@@ -1,5 +1,6 @@
 import AustralianElectricityMarkets as AEM
 using Dates: DateTime, Minute
+import TimeSeries
 using TimeSeries: TimeArray
 
 const _UD_IS = PowerSystems.IS
@@ -65,7 +66,11 @@ end
     )
     @test keyed.uigf isa _UD_IS.TimeSeriesKey
     @test keyed.agc_status isa _UD_IS.TimeSeriesKey
-    @test keyed == keyed
+    @test keyed == AEM.NEMTelemetry(;
+        agc_status = _ud_key("agc"), uigf = _ud_key("uigf"), ramp_up_limit = _ud_key("up"),
+        ramp_down_limit = 3, raise_reg_enablement = _ud_key("raise_enab"), lower_reg_enablement = (1.5, 40),
+        raise_reg_max_avail = _ud_key("raise_max"), lower_reg_max_avail = 40,
+    )
     @test keyed != tel
 end
 
@@ -98,6 +103,28 @@ end
     @test err.msg == "bare has no telemetry; build it with nem_system"
 end
 
+@testset "Stock devices throw an ArgumentError naming the device" begin
+    stock = ThermalStandard(;
+        name = "stock_unit", available = true, status = true, bus = _ud_bus(), active_power = 50.0,
+        reactive_power = 0.0, rating = 120.0, active_power_limits = (min = 10.0, max = 100.0),
+        reactive_power_limits = nothing, ramp_limits = nothing, operation_cost = ThermalGenerationCost(nothing),
+        base_power = 100.0,
+    )
+    for (getter, what) in (
+            (AEM.get_registration, "registration"),
+            (AEM.get_telemetry, "telemetry"),
+            (AEM.get_observed_state, "observed state"),
+        )
+        err = try
+            getter(stock)
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test err.msg == "stock_unit is not a NEM device, so it has no $what"
+    end
+end
+
 @testset "NEM device setters replace the struct" begin
     gen = _ud_thermal("settable", _ud_bus())
     reg = _ud_registration()
@@ -122,11 +149,21 @@ end
     sys = System(100.0)
     bus = _ud_bus()
     add_component!(sys, bus)
-    gen = _ud_thermal("unit", bus; registration = _ud_registration(), telemetry = _ud_telemetry())
+    gen = _ud_thermal("unit", bus; registration = _ud_registration())
     add_component!(sys, gen)
-    add_time_series!(sys, gen, _ud_series("initial_mw"))
-    key = only(k for k in _UD_IS.get_time_series_keys(gen) if k.name == "initial_mw")
-    AEM.set_observed_state!(gen, AEM.NEMObservedState(; initial_mw = key, dispatch_mode = 2))
+    for name in ("initial_mw", "agc", "raise_enab")
+        add_time_series!(sys, gen, _ud_series(name))
+    end
+    key(name) = only(k for k in _UD_IS.get_time_series_keys(gen) if k.name == name)
+    AEM.set_telemetry!(
+        gen,
+        AEM.NEMTelemetry(;
+            agc_status = key("agc"), uigf = nothing, ramp_up_limit = 2.0, ramp_down_limit = 3.0,
+            raise_reg_enablement = key("raise_enab"), lower_reg_enablement = (1.5, 40.0),
+            raise_reg_max_avail = 30.0, lower_reg_max_avail = 40.0,
+        ),
+    )
+    AEM.set_observed_state!(gen, AEM.NEMObservedState(; initial_mw = key("initial_mw"), dispatch_mode = 2))
 
     mktempdir() do dir
         path = joinpath(dir, "sys.json")
@@ -137,8 +174,19 @@ end
         @test AEM.get_registration(back) == AEM.get_registration(gen)
         @test AEM.get_telemetry(back) == AEM.get_telemetry(gen)
         @test AEM.get_observed_state(back) == AEM.get_observed_state(gen)
-        restored_key = AEM.get_observed_state(back).initial_mw
-        @test restored_key isa _UD_IS.TimeSeriesKey
-        @test has_time_series(back, SingleTimeSeries, restored_key.name)
+
+        telemetry = AEM.get_telemetry(back)
+        @test telemetry.agc_status isa _UD_IS.TimeSeriesKey
+        @test telemetry.raise_reg_enablement isa _UD_IS.TimeSeriesKey
+        @test telemetry.lower_reg_enablement === (1.5, 40.0)
+
+        # Each key resolves through the reloaded unit to the series it was built from.
+        observed = AEM.get_observed_state(back)
+        @test observed.initial_mw isa _UD_IS.TimeSeriesKey
+        for resolved in (observed.initial_mw, telemetry.agc_status, telemetry.raise_reg_enablement)
+            @test _UD_IS.get_time_series(back, resolved) !== nothing
+        end
+        stored = get_time_series(SingleTimeSeries, back, observed.initial_mw.name).data
+        @test TimeSeries.values(stored) == collect(1.0:length(_UD_STAMPS))
     end
 end
