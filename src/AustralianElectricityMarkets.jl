@@ -16,7 +16,7 @@ export HiveConfiguration, aem_connect
 export NetworkConfiguration, table_requirements, nem_system
 export RegionalNetworkConfiguration, NEMDEConfiguration
 export set_mnsp_offers!, set_demand!, set_market_bids!, add_nem_constraints!, set_regional_availability!
-export set_unit_conditions!, set_interconnector_flow_limits!, set_loss_demand_coefficients!, registration_spans
+export set_unit_conditions!, set_interconnector_flow_limits!, set_loss_demand_coefficients!
 export get_skipped_constraints, get_dropped_terms,
     get_missing_constraint_intervals, get_defaulted_constraint_weights
 export NEMBuildReport, get_build_report, set_build_report!

@@ -13,6 +13,14 @@ const TOY_START = DateTime(2025, 1, 1)
 const TOY_RESOLUTION = Minute(5)
 const TOY_TOLERANCE = 1.0e-6
 
+# The registration of a toy unit: open over every toy date, scheduled unless `schedule_type` says otherwise.
+function _toy_registration(; schedule_type = ScheduleType.SCHEDULED, gen_loss_factor = 1.0, load_loss_factor = 1.0)
+    return NEMRegistration(;
+        schedule_type, gen_loss_factor, load_loss_factor,
+        registered_from = DateTime(2000, 1, 1), registered_until = DateTime(2999, 12, 31),
+    )
+end
+
 # The two `5_bus_hydro_ed_sys` units the toy keeps; both sit on bus1.
 const TOY_CHEAP = "Alta"
 const TOY_EXPENSIVE = "Park City"
@@ -140,7 +148,7 @@ function nem_toy_system(
         add_series!(gen, "ramp_down_rate", unit.ramp_down ./ base_power)
         add_series!(gen, "initial_mw", unit.initial ./ base_power)
         add_series!(gen, "availability", unit.availability ./ base_power)
-        PSY.get_ext(gen)["nem_semi_scheduled"] = false
+        set_registration!(gen, _toy_registration())
     end
 
     load = PSY.get_component(PSY.PowerLoad, sys, "bus4")
@@ -195,7 +203,7 @@ function nem_toy_system(
         add_series!(scheduled, "ramp_down_rate", ld.ramp_down / base_power)
         add_series!(scheduled, "initial_mw", ld.initial / base_power)
         add_series!(scheduled, "availability", ld.availability / base_power)
-        PSY.get_ext(scheduled)["nem_semi_scheduled"] = false
+        set_registration!(scheduled, _toy_registration())
     end
 
     isnothing(interchange) || add_toy_interchange!(sys, stamps, interchange)
@@ -475,8 +483,8 @@ function _toy_energy_bid!(sys, device, direction, stamps, curves, max_avail)
         roc_up = AEM._series_key(device, field(:roc_up)), roc_down = AEM._series_key(device, field(:roc_down)),
     )
     AEM._set_energy_bid!(PSY.get_operation_cost(device), bid)
-    PSY.get_ext(device)["nem_gen_loss_factor"] = 1.0
-    PSY.get_ext(device)["nem_load_loss_factor"] = 1.0
+    current = AEM.has_schedule_classification(device) ? AEM.get_registration(device).schedule_type : ScheduleType.SCHEDULED
+    set_registration!(device, _toy_registration(; schedule_type = current))
     return
 end
 

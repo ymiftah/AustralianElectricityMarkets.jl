@@ -147,7 +147,7 @@ end
     nem_pscb_system()
 
 [`augmented_pscb_system`](@ref) with its thermal, hydro and renewable units rebuilt as the NEM device
-types, each with an empty `NEMOfferCost`, so [`set_market_bids!`](@ref) can record their bids. The base
+types, each with an empty `NEMOfferCost` and a [`NEMRegistration`](@ref), so [`set_market_bids!`](@ref) can record their bids. The base
 case's reserve service and hydro reservoirs, which reference the stock units, are removed.
 
 # Returns
@@ -165,6 +165,17 @@ function nem_pscb_system()
         for stock in collect(get_components(T, sys))
             _replace_with_nem_device!(sys, stock)
         end
+    end
+    # Every NEM device is scheduled, open over the fixture dates, with unit loss factors.
+    for device in get_components(Device, sys)
+        device isa Union{NEM_DISPATCH_DEVICE_TYPES...} || continue
+        set_registration!(
+            device,
+            NEMRegistration(;
+                schedule_type = ScheduleType.SCHEDULED, gen_loss_factor = 1.0, load_loss_factor = 1.0,
+                registered_from = DateTime(2000, 1, 1), registered_until = DateTime(2999, 12, 31),
+            ),
+        )
     end
     return sys
 end

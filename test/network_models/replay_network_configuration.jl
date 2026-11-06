@@ -2,6 +2,41 @@
     @test :DISPATCHINTERCONNECTORRES in table_requirements(NEMDEConfiguration())
 end
 
+@testset "every NEM device of the network carries its registration" begin
+    hive = mktempdir()
+    create_mock_data(hive; complete_inputs = true)
+    write_mock_interconnector_results(hive)
+    db = aem_connect(HiveConfiguration(hive_location = hive))
+    interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+    as_of, through = first(interval), last(interval) - Minute(5)
+    sys, units = nem_network(db; as_of, through)
+    units_by_duid = Dict(String(r.DUID) => r for r in eachrow(units))
+    factors = Dict(String(r.DUID) => r for r in eachrow(read_loss_factors(db; as_of, through)))
+    schedule_types = Dict(
+        "SCHEDULED" => ScheduleType.SCHEDULED, "SEMI-SCHEDULED" => ScheduleType.SEMI_SCHEDULED,
+        "NON-SCHEDULED" => ScheduleType.NON_SCHEDULED,
+    )
+    devices = [d for T in (Generator, ControllableLoad, Storage) for d in get_components(T, sys)]
+    @test !isempty(devices)
+    for device in devices
+        name = get_name(device)
+        registration = get_registration(device)
+        unit, factor = units_by_duid[name], factors[name]
+        @test registration.schedule_type == schedule_types[unit.SCHEDULE_TYPE]
+        @test registration.gen_loss_factor == factor.GEN_LOSS_FACTOR
+        @test registration.load_loss_factor == factor.LOAD_LOSS_FACTOR
+        @test registration.registered_from == unit.REGISTERED_FROM
+        @test registration.registered_until == unit.REGISTERED_UNTIL
+        for key in ("nem_gen_loss_factor", "nem_load_loss_factor", "nem_semi_scheduled")
+            @test !haskey(get_ext(device), key)
+        end
+    end
+
+    # A device built without a registration fails the build steps that read it, naming it.
+    set_registration!(get_component(NEMThermalGen, sys, "ER01"), nothing)
+    @test_throws r"ER01 has no registration" set_unit_conditions!(sys, db, interval)
+end
+
 @testset "NEMDEConfiguration" begin
     hive = mktempdir()
     create_mock_data(hive; complete_inputs = true)
@@ -13,7 +48,7 @@ end
     @test_throws ArgumentError nem_system(db, config; date_range = first(interval):Minute(5):first(interval))
     sys = nem_system(db, config; date_range = interval)
     gen = get_component(NEMRenewableGen, sys, "BW03")
-    @test get_ext(gen)["nem_semi_scheduled"] === true
+    @test get_registration(gen).schedule_type == ScheduleType.SEMI_SCHEDULED
     @test get_time_series_values(SingleTimeSeries, gen, "bid_energy_max_avail_gen") ≈ [101.0, 102.0, 103.0]
     @test get_time_series_values(SingleTimeSeries, gen, "uigf"; ignore_scaling_factors = true) .* get_base_power(sys) ≈ [41.0, 42.0, 43.0]
     @test !has_time_series(gen, DeterministicSingleTimeSeries, "bid_energy_max_avail_gen")
@@ -281,7 +316,7 @@ end
         semi_late = registered_from(hive, "BW03", "2025-01-01 00:10:00")
         sys = nem_system(connect(semi_late), NEMDEConfiguration(); date_range = interval)
         gen = get_component(NEMRenewableGen, sys, "BW03")
-        @test get_ext(gen)["nem_semi_scheduled"] === true
+        @test get_registration(gen).schedule_type == ScheduleType.SEMI_SCHEDULED
         @test series(gen, "uigf")[1:2] == [0.0, 0.0]
         @test series(gen, "uigf")[3] ≈ series(get_component(NEMRenewableGen, full, "BW03"), "uigf")[3]
     end

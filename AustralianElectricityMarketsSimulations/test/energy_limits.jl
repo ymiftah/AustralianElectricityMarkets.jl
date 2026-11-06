@@ -18,7 +18,7 @@ function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, we
                 ),
             )
             base = PSY.get_base_power(sys)
-            PSY.get_ext(cheap)["nem_semi_scheduled"] = !isnothing(uigf)
+            set_registration!(cheap, _toy_registration(; schedule_type = isnothing(uigf) ? ScheduleType.SCHEDULED : ScheduleType.SEMI_SCHEDULED))
             if !isnothing(uigf)
                 PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "uigf", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(uigf, 2) ./ base)))
             end

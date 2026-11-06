@@ -2075,7 +2075,7 @@ function make_non_scheduled_fcas_load!(sys, stamps)
     end
     PSY.set_operation_cost!(load, NEMOfferCost())
     PSY.get_ext(load)["non_scheduled"] = true
-    PSY.get_ext(load)["nem_semi_scheduled"] = false
+    set_registration!(load, _toy_registration())
     for name in ("max_active_power", "energy_max_avail", "ramp_up_rate", "ramp_down_rate", "initial_mw", "availability")
         PSY.add_time_series!(
             sys, load,

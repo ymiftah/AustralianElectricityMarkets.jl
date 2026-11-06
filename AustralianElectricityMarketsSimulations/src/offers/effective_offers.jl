@@ -75,12 +75,10 @@ function _energy_bid(cost, side::OfferSide)
     return isnothing(i) ? nothing : get_energy_bids(cost)[i]
 end
 
-# The loss factor that refers `side`'s prices to the reference node, from the unit's `ext`.
+# The loss factor that refers `side`'s prices to the reference node, from the unit's registration.
 function _loss_factor(device, side::OfferSide)
-    key = side == OfferSide.LOAD ? "nem_load_loss_factor" : "nem_gen_loss_factor"
-    return get(PSY.get_ext(device), key) do
-        throw(ArgumentError("\"$(PSY.get_name(device))\" has no $key; call set_market_bids! first."))
-    end
+    registration = get_registration(device)
+    return side == OfferSide.LOAD ? registration.load_loss_factor : registration.gen_loss_factor
 end
 
 # The offer curves of `curves` referred to the reference node by `factor`, prices rounded to cents.

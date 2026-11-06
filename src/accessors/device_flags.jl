@@ -28,28 +28,25 @@ is_commissioned(device) = get(get_ext(device), "commissioned", true) === true
 """
     has_schedule_classification(device) -> Bool
 
-Whether [`set_unit_conditions!`](@ref) has classified `device` as scheduled or semi-scheduled.
+Whether `device` carries a [`NEMRegistration`](@ref), which holds its schedule type.
 
 # Returns
 `Bool`.
 """
-has_schedule_classification(device) = get(get_ext(device), "nem_semi_scheduled", nothing) isa Bool
+has_schedule_classification(device) = device isa Union{NEM_DISPATCH_DEVICE_TYPES...} && !isnothing(device.registration)
 
 
 """
     is_semi_scheduled(device) -> Bool
 
-Whether `device` is semi-scheduled, as classified by [`set_unit_conditions!`](@ref). Throws an
-`ArgumentError` when `device` has no classification.
+Whether `device` is semi-scheduled, from the schedule type of its [`NEMRegistration`](@ref). Throws an
+`ArgumentError` naming `device` when it has no registration.
 
 # Returns
 `Bool`.
 """
 function is_semi_scheduled(device)
-    has_schedule_classification(device) || throw(
-        ArgumentError("$(get_name(device)): missing schedule classification; call set_unit_conditions!"),
-    )
-    return get_ext(device)["nem_semi_scheduled"]
+    return get_registration(device).schedule_type == ScheduleType.SEMI_SCHEDULED
 end
 
 

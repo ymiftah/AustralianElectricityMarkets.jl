@@ -68,23 +68,6 @@ function _bucket_value(column::Symbol, values)
     return isempty(present) ? missing : mean(present)
 end
 
-# Stores the loss factors of each unit in `factors` in its `ext`, the values AEMSim refers
-# energy prices by. Throws `ArgumentError` naming any unit with an energy offer and no factor.
-function _store_loss_factors!(sys, offers, factors)
-    lookup = Dict(String(r.DUID) => r for r in eachrow(factors))
-    energy_units = unique(String.(offers.DUID[offers.BIDTYPE .== Ref(BidType.ENERGY)]))
-    unknown = sort!([u for u in energy_units if !haskey(lookup, u)])
-    isempty(unknown) || throw(ArgumentError("No DUDETAILSUMMARY loss factor for bid unit(s) $(join(unknown, ", "))."))
-    for T in (Generator, ControllableLoad, Storage), device in get_components(T, sys)
-        factor = get(lookup, get_name(device), nothing)
-        isnothing(factor) && continue
-        get_ext(device)["nem_gen_loss_factor"] = Float64(factor.GEN_LOSS_FACTOR)
-        get_ext(device)["nem_load_loss_factor"] = Float64(factor.LOAD_LOSS_FACTOR)
-    end
-    return
-end
-
-
 # Attaches `values` as the series `name` on `device`, or removes a stale series of that name when
 # `values` is `nothing`. Returns the key of the series, or `nothing`.
 function _bid_field!(sys, device, name::AbstractString, values, start_date, resolution)
@@ -228,15 +211,16 @@ end
 
 
 """
-    _check_registered_bids(name, direction, rows, grid, registered)
+    _check_registered_bids(device, direction, rows, grid)
 
-Throws `ArgumentError` naming `name` and `direction` when a unit registered at a stamp of `grid`
-(see [`registration_spans`](@ref)) has no row in `rows`. A `nothing` `registered` checks nothing.
+Throws `ArgumentError` naming `device` and `direction` when the device is registered at a stamp of
+`grid` (see [`NEMRegistration`](@ref)) and has no row in `rows`.
 """
-function _check_registered_bids(name::AbstractString, direction::BidDirection, rows, grid, registered)
-    isnothing(registered) && return
+function _check_registered_bids(device, direction::BidDirection, rows, grid)
+    name = get_name(device)
+    registration = get_registration(device)
     stamps = Set(rows.INTERVAL_DATETIME)
-    missing_stamps = [t for t in grid if _is_registered(registered, name, t) && !(t in stamps)]
+    missing_stamps = [t for t in grid if _is_registered(registration, t) && !(t in stamps)]
     isempty(missing_stamps) || throw(
         ArgumentError(
             "set_market_bids!: $name $(string(direction)) has no energy offer at $(first(missing_stamps)) while registered; " *
@@ -250,7 +234,7 @@ end
 # The energy offer rows of `device`, keyed by direction, that are written: every direction present
 # in `groups` (the rows of one unit by `(DUID, BIDTYPE, DIRECTION)`). Returns `false` and sets the
 # device unavailable when a direction in `required` has no rows.
-function _bid_device_energy!(sys, device, required, groups, grid, start_date, resolution, registered)
+function _bid_device_energy!(sys, device, required, groups, grid, start_date, resolution)
     name = get_name(device)
     rows_of(direction::BidDirection) = get(groups, (name, BidType.ENERGY, string(direction)), nothing)
     if any(d -> isnothing(rows_of(d)), required)
@@ -265,7 +249,7 @@ function _bid_device_energy!(sys, device, required, groups, grid, start_date, re
     )
     set_available!(device, true)
     for direction in required
-        _check_registered_bids(name, direction, rows_of(direction), grid, registered)
+        _check_registered_bids(device, direction, rows_of(direction), grid)
     end
     for direction in (BidDirection.GEN, BidDirection.LOAD)
         rows = rows_of(direction)
@@ -277,17 +261,17 @@ end
 
 
 """
-    set_market_bids!(sys, db, date_range; markets = NEM_MARKETS, registered = nothing, resolution = Minute(5)) -> (; added, excluded)
+    set_market_bids!(sys, db, date_range; markets = NEM_MARKETS, resolution = Minute(5)) -> (; added, excluded)
 
 Stores the bids of each unit of `sys` for `date_range`: one [`read_offers`](@ref) read of the
 `markets`, written as one series per bid field ([`bid_series_name`](@ref)) and recorded on the unit's
 [`NEMOfferCost`](@ref) as [`NEMEnergyBid`](@ref)s and [`NEMFCASBid`](@ref)s. The values are as offered:
-MW, \$/MWh at the connection point and MW/min. A unit's loss factors are kept in its `ext`
-(`"nem_gen_loss_factor"` and `"nem_load_loss_factor"`), from which AEMSim refers its energy prices.
+MW, \$/MWh at the connection point and MW/min. A unit's loss factors, from which AEMSim refers its
+energy prices, are on its [`NEMRegistration`](@ref) recorded by [`nem_network`](@ref).
 
 Generators bid `GEN`. Scheduled loads bid `LOAD`, and a non-scheduled load bids no energy. Storage
 devices bid both directions. A unit missing a required energy direction is set unavailable. A
-device bidding a required direction at a stamp of `registered` without a row throws. FCAS bids are
+device bidding a required direction at a stamp of its registration without a row throws. FCAS bids are
 recorded for every unit, and the FCAS services of `markets` are added by [`add_fcas_services!`](@ref).
 A non-scheduled load with an FCAS bid is made available when it is commissioned. Repeat calls
 replace the series and the bids of the same direction and service.
@@ -297,7 +281,6 @@ replace the series and the bids of the same direction and service.
 - `db`: The database connection.
 - `date_range`: The intervals to read (half-open, the last stamp exclusive).
 - `markets`: The `BidType`s to read; defaults to [`NEM_MARKETS`](@ref).
-- `registered`: The registration span of each unit, from [`registration_spans`](@ref), or `nothing`.
 - `resolution`: The spacing of the series, which must match the intervals of `date_range`.
 
 # Returns
@@ -305,7 +288,7 @@ replace the series and the bids of the same direction and service.
 """
 function set_market_bids!(
         sys, db, date_range;
-        markets = NEM_MARKETS, registered = nothing, resolution::Dates.Period = Minute(5),
+        markets = NEM_MARKETS, resolution::Dates.Period = Minute(5),
     )
     start_date = first(date_range)
     grid = _replay_grid(date_range, resolution)
@@ -316,8 +299,6 @@ function set_market_bids!(
     end
     sys_units = Set(get_name(c) for T in (Generator, ControllableLoad, Storage) for c in get_components(T, sys))
     subset!(offers, :DUID => ByRow(in(sys_units)))
-    factors = read_loss_factors(db; as_of = start_date, through = last(date_range) - step(date_range))
-    _store_loss_factors!(sys, offers, factors)
     groups = Dict{Tuple{String, BidType, String}, SubDataFrame}(
         (String(k.DUID), k.BIDTYPE, String(k.DIRECTION)) => sub for (k, sub) in pairs(groupby(offers, [:DUID, :BIDTYPE, :DIRECTION]))
     )
@@ -341,17 +322,17 @@ function set_market_bids!(
 
     unbid = String[]
     for gen in get_components(Generator, sys)
-        _bid_device_energy!(sys, gen, (BidDirection.GEN,), groups, grid, start_date, resolution, registered) ||
+        _bid_device_energy!(sys, gen, (BidDirection.GEN,), groups, grid, start_date, resolution) ||
             push!(unbid, get_name(gen))
     end
     gen_bid_loads = String[]
     for load in get_components(ControllableLoad, sys)
         is_non_scheduled_load(load) && continue
-        _bid_device_energy!(sys, load, (BidDirection.LOAD,), groups, grid, start_date, resolution, registered) ||
+        _bid_device_energy!(sys, load, (BidDirection.LOAD,), groups, grid, start_date, resolution) ||
             push!(isnothing(energy_rows(get_name(load), BidDirection.GEN)) ? unbid : gen_bid_loads, get_name(load))
     end
     for stor in get_components(Storage, sys)
-        _bid_device_energy!(sys, stor, (BidDirection.GEN, BidDirection.LOAD), groups, grid, start_date, resolution, registered) ||
+        _bid_device_energy!(sys, stor, (BidDirection.GEN, BidDirection.LOAD), groups, grid, start_date, resolution) ||
             push!(unbid, get_name(stor))
     end
     isempty(gen_bid_loads) || @warn "set_market_bids!: $(length(gen_bid_loads)) scheduled load(s) bid GEN, not LOAD (wholesale demand response); setting to unavailable: $(join(gen_bid_loads, ", "))"

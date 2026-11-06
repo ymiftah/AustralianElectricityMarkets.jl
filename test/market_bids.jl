@@ -101,25 +101,14 @@
         @test get_x_coords(curve) == [0.0; cumsum(reverse(Float64.(row.BANDAVAILARRAY)))]
     end
 
-    @testset "a stamp without a row holds a zero-width curve, zero MAXAVAIL and a zero trapezium" begin
-        # BW02's GEN energy and RAISE6SEC rows at 00:10 are removed from the cache.
+    @testset "a registered stamp without an energy row throws, naming the unit" begin
+        # BW02's GEN energy and RAISE6SEC rows at 00:10 are removed from the cache, while BW02 is registered.
         gap_db = damaged_cache(
             AEM_TEST_HIVE_DIR, :BIDPEROFFER_D,
             "DELETE FROM input WHERE DUID = 'BW02' AND DIRECTION = 'GEN' AND BIDTYPE IN ('ENERGY', 'RAISE6SEC') AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:10:00'",
         )
         sys, _ = nem_network(gap_db; as_of = first(interval), through = last(interval) - Minute(5))
-        set_market_bids!(sys, gap_db, interval)
-        bw02 = get_component(Device, sys, "BW02")
-        energy = energy_bid(bw02, AEM.BidDirection.GEN)
-        curves = bid_value(bw02, energy, :offer_curves, first(interval), 3)
-        @test all(iszero, get_x_coords(curves[2]))
-        @test get_y_coords(curves[2]) == get_y_coords(curves[1])
-        @test bid_value(bw02, energy, :max_avail, first(interval), 3)[2] == 0.0
-        raise6 = only(b for b in AEM.get_fcas_bids(get_operation_cost(bw02)) if b.service == BidType.RAISE6SEC && b.direction == AEM.BidDirection.GEN)
-        fcas_curves = bid_value(bw02, raise6, :offer_curves, first(interval), 3)
-        @test all(iszero, get_x_coords(fcas_curves[2]))
-        @test bid_value(bw02, raise6, :max_avail, first(interval), 3)[2] == 0.0
-        @test collect(bid_value(bw02, raise6, :trapezium, first(interval), 3)[2]) == zeros(4)
+        @test_throws ArgumentError set_market_bids!(sys, gap_db, interval)
     end
 
     @testset "NULL fields are nothing when NULL throughout, and zero where NULL on some intervals" begin
@@ -153,10 +142,9 @@
     end
 
     @testset "a registered unit without an energy offer at an interval throws, naming it" begin
-        sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
         wide = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 8)
-        registered = registration_spans(read_units(db; as_of = first(wide), through = last(wide) - Minute(5)))
-        @test_throws r"\w+ (GEN|LOAD) has no energy offer at" set_market_bids!(sys, db, wide; registered)
+        sys, _ = nem_network(db; as_of = first(wide), through = last(wide) - Minute(5))
+        @test_throws r"\w+ (GEN|LOAD) has no energy offer at" set_market_bids!(sys, db, wide)
     end
 
     @testset "a non-scheduled load with an FCAS bid ends available and bids no energy" begin
@@ -169,12 +157,12 @@
         @test isempty(AEM.get_energy_bids(get_operation_cost(asload)))
     end
 
-    @testset "loss factors are kept in each bidding unit's ext" begin
+    @testset "loss factors are kept in each bidding unit's registration" begin
         sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
         set_market_bids!(sys, db, interval)
         for storage in get_components(NEMStorage, sys)
-            @test get_ext(storage)["nem_gen_loss_factor"] > 0.0
-            @test get_ext(storage)["nem_load_loss_factor"] > 0.0
+            @test get_registration(storage).gen_loss_factor > 0.0
+            @test get_registration(storage).load_loss_factor > 0.0
         end
     end
 end

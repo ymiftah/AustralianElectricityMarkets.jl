@@ -125,8 +125,7 @@
             _toy_energy_bid!(sys, load, AustralianElectricityMarkets.BidDirection.LOAD, stamps, fill(load_curve, 2), fill(100.0, 2))
             gen_lf, load_lf = 0.9 * 0.97, 0.8
             for device in (gen, load)
-                get_ext(device)["nem_gen_loss_factor"] = gen_lf
-                get_ext(device)["nem_load_loss_factor"] = load_lf
+                set_registration!(device, _toy_registration(; gen_loss_factor = gen_lf, load_loss_factor = load_lf))
             end
             set_effective_offers!(sys)
             lf_values(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)

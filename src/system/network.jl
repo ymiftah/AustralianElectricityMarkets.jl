@@ -48,8 +48,46 @@ function _nem_network(db; nem_types::Bool = false, time_series_in_memory = true,
     _add_batteries!(sys, batteries_df; nem_types)
     _add_scheduled_loads!(sys, scheduled_loads_df; nem_types)
     _add_area_interfaces!(sys, interfaces_df)
+    nem_types && _set_registrations!(sys, units, read_loss_factors(db; as_of, through))
 
     return sys, units, gen_df
+end
+
+
+const _SCHEDULE_TYPES = Dict(
+    "SCHEDULED" => ScheduleType.SCHEDULED, "SEMI-SCHEDULED" => ScheduleType.SEMI_SCHEDULED,
+    "NON-SCHEDULED" => ScheduleType.NON_SCHEDULED,
+)
+
+"""
+    _set_registrations!(sys, units, factors)
+
+Records on each generator, storage and controllable load of `sys` its [`NEMRegistration`](@ref), from
+its row of `units` ([`read_units`](@ref)) and its loss factors ([`read_loss_factors`](@ref)). Throws an
+`ArgumentError` naming a device with no unit row, a unit with no loss factor, or an unknown schedule type.
+"""
+function _set_registrations!(sys, units, factors)
+    unit_rows = Dict(String(r.DUID) => r for r in eachrow(units))
+    factor_rows = Dict(String(r.DUID) => r for r in eachrow(factors))
+    for T in (Generator, ControllableLoad, Storage), device in get_components(T, sys)
+        name = get_name(device)
+        unit = get(unit_rows, name, nothing)
+        isnothing(unit) && throw(ArgumentError("$name has no DUDETAILSUMMARY row, so it has no registration"))
+        factor = get(factor_rows, name, nothing)
+        (isnothing(factor) || ismissing(factor.GEN_LOSS_FACTOR) || ismissing(factor.LOAD_LOSS_FACTOR)) &&
+            throw(ArgumentError("No DUDETAILSUMMARY loss factor for $name."))
+        schedule = get(_SCHEDULE_TYPES, unit.SCHEDULE_TYPE, nothing)
+        isnothing(schedule) && throw(ArgumentError("$name has an unknown SCHEDULE_TYPE $(repr(unit.SCHEDULE_TYPE))"))
+        set_registration!(
+            device,
+            NEMRegistration(;
+                schedule_type = schedule, gen_loss_factor = factor.GEN_LOSS_FACTOR,
+                load_loss_factor = factor.LOAD_LOSS_FACTOR, registered_from = unit.REGISTERED_FROM,
+                registered_until = unit.REGISTERED_UNTIL,
+            ),
+        )
+    end
+    return
 end
 
 

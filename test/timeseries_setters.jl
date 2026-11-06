@@ -491,7 +491,7 @@
             end
             # The metered ramp rates stay as published, for AGC ramping; AEMSim zeroes the ramp limits.
             @test get_time_series_values(SingleTimeSeries, asload, "dispatch_ramp_up_rate") ≈ subset(truth, :DUID => ByRow(==("ASLOAD1"))).RAMPUPRATE ./ 60 ./ base_power
-            @test get_ext(asload)["nem_semi_scheduled"] === false
+            @test !is_semi_scheduled(asload)
         end
 
         @testset "a battery gets dispatch ramps and initial_mw, with no availability" begin
@@ -510,11 +510,11 @@
             set_unit_conditions!(sys, db, semi_range)
             for (duid, forecast) in [("BW03", [40.0, 41.0]), ("BW04", [70.0, 69.0])]
                 gen = get_component(NEMRenewableGen, sys, duid)
-                @test get_ext(gen)["nem_semi_scheduled"] === true
+                @test is_semi_scheduled(gen)
                 @test get_time_series_values(SingleTimeSeries, gen, "uigf"; ignore_scaling_factors = true) .* get_base_power(sys) ≈ forecast
             end
             coal = get_component(NEMThermalGen, sys, "ER01")
-            @test get_ext(coal)["nem_semi_scheduled"] === false
+            @test !is_semi_scheduled(coal)
             @test !has_time_series(coal, SingleTimeSeries, "uigf")
         end
 
@@ -529,10 +529,10 @@
         # Copies the cache, rewrites `table` with `transform!`, and checks that `sys` got no condition.
         # The exception `corrupt_and_build` last threw, so tests can match its message.
         last_error = Ref{Any}(nothing)
-        function corrupt_and_build(table, transform!; registered = nothing, sys = deepcopy(sys_base))
+        function corrupt_and_build(table, transform!; sys = deepcopy(sys_base))
             bad = corrupt_cache(table, transform!)
             try
-                set_unit_conditions!(sys, bad, check_range; registered)
+                set_unit_conditions!(sys, bad, check_range)
             catch e
                 last_error[] = e
                 rethrow()
@@ -543,8 +543,12 @@
         end
         untouched(sys) = !any(has_time_series(d, SingleTimeSeries, AustralianElectricityMarkets.NEM_SERIES.initial_mw) for d in get_components(Device, sys))
         check_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 0, 10)
-        spans = registration_spans(read_units(db; as_of = first(check_range), through = last(check_range) - Minute(5)))
         at(t) = DateTime(2025, 1, 1, 0, t)
+        # `registration` with the registration span [from, until].
+        with_span(registration, from, until) = NEMRegistration(;
+            schedule_type = registration.schedule_type, gen_loss_factor = registration.gen_loss_factor,
+            load_loss_factor = registration.load_loss_factor, registered_from = from, registered_until = until,
+        )
         dispatch_rows(frame) = frame.DUID .== "ER01"
 
         @testset "a missing RAMPUPRATE throws, naming the DUID, and leaves sys untouched" begin
@@ -589,26 +593,27 @@
         end
 
         @testset "a missing row inside a unit's registration throws, and one outside it does not" begin
-            registered = copy(spans)
-            registered["ER01"] = (at(0), at(10))
             sys = deepcopy(sys_base)
+            er01 = get_component(NEMThermalGen, sys, "ER01")
+            set_registration!(er01, with_span(get_registration(er01), at(0), at(10)))
             @test_throws ArgumentError corrupt_and_build(
-                :DISPATCHLOAD, frame -> filter!(r -> !(r.DUID == "ER01" && r.SETTLEMENTDATE == at(5)), frame); registered, sys,
+                :DISPATCHLOAD, frame -> filter!(r -> !(r.DUID == "ER01" && r.SETTLEMENTDATE == at(5)), frame); sys,
             )
             @test occursin("ER01: missing DISPATCHLOAD row(s) for 1 of 2 interval(s)", last_error[].msg)
             @test untouched(sys)
 
-            registered["ER01"] = (at(5), at(10))
-            sys = corrupt_and_build(:DISPATCHLOAD, frame -> filter!(r -> !(r.DUID == "ER01" && r.SETTLEMENTDATE == at(0)), frame); registered)
+            sys = deepcopy(sys_base)
+            er01 = get_component(NEMThermalGen, sys, "ER01")
+            set_registration!(er01, with_span(get_registration(er01), at(5), at(10)))
+            sys = corrupt_and_build(:DISPATCHLOAD, frame -> filter!(r -> !(r.DUID == "ER01" && r.SETTLEMENTDATE == at(0)), frame); sys)
             # Unregistered at 00:00 with no row: the ramp rates there are NaN, the limits zero.
             ramp = get_time_series_values(SingleTimeSeries, get_component(NEMThermalGen, sys, "ER01"), "dispatch_ramp_up_rate")
             @test isnan(ramp[1])
             @test get_time_series_values(SingleTimeSeries, get_component(NEMThermalGen, sys, "ER01"), "initial_mw")[1] == 0.0
         end
 
-        @testset "a schedule type changing mid-range throws, naming the DUID" begin
-            sys = deepcopy(sys_base)
-            @test_throws ArgumentError corrupt_and_build(
+        @testset "a schedule type changing mid-range throws at build, naming the DUID" begin
+            bad = corrupt_cache(
                 :DUDETAILSUMMARY, frame -> begin
                     i = findfirst(==("ER01"), frame.DUID)
                     extra = frame[[i], :]
@@ -616,10 +621,9 @@
                     extra.START_DATE .= at(0)
                     extra.SCHEDULE_TYPE .= "SEMI-SCHEDULED"
                     append!(frame, extra)
-                end; sys
+                end
             )
-            @test occursin("ER01: schedule type changes or is missing in the requested range", last_error[].msg)
-            @test untouched(sys)
+            @test_throws r"ER01 change REGIONID/DISPATCHTYPE/SCHEDULE_TYPE" nem_network(bad; as_of = at(0), through = at(10) - Minute(5))
         end
 
         @testset "a zero static max_active_power throws, naming the DUID" begin
@@ -677,7 +681,7 @@
         function two_years(df)
             old = copy(df)
             old.END_DATE = Union{DateTime, Missing}[fy_change for _ in 1:nrow(old)]
-            old.DISPATCHTYPE = [d == "BW01" ? "BIDIRECTIONAL" : "GENERATOR" for d in old.DUID]
+            old.DISPATCHTYPE = [d == "BW01" ? "BIDIRECTIONAL" : t == "LOAD" ? "LOAD" : "GENERATOR" for (d, t) in zip(old.DUID, old.DISPATCHTYPE)]
             old.TRANSMISSIONLOSSFACTOR = [d == "ER01" ? 0.9 : d in ("BW01", "PUMP1") ? 0.8 : 1.0 for d in old.DUID]
             old.DISTRIBUTIONLOSSFACTOR = [d == "ER01" ? 0.97 : 1.0 for d in old.DUID]
             old.SECONDARY_TLF = Union{Float64, Missing}[d == "BW01" ? 0.5 : d == "BW02" ? 0.7 : missing for d in old.DUID]
@@ -711,7 +715,7 @@
             @test_logs (:warn, r"change within the date range") match_mode = :any read_loss_factors(ldb; as_of = start_date, through = DateTime(2025, 7, 1, 1))
         end
 
-        sys_lf = first(nem_network(ldb))
+        sys_lf, _ = nem_network(ldb; as_of = start_date, through = last(date_range) - Minute(5))
         set_market_bids!(sys_lf, ldb, date_range; resolution = Minute(5))
 
         # Read raw bids (unscaled by loss factors) to compare
@@ -737,23 +741,27 @@
             @test mw(sys_lf, "ER01") ≈ raw_mw("ER01", "GEN")
         end
 
-        @testset "loss factors are kept on the unit for AEMSim to refer prices" begin
-            @test get_ext(get_component(NEMThermalGen, sys_lf, "ER01"))["nem_gen_loss_factor"] ≈ 0.9 * 0.97
-            @test get_ext(get_component(NEMStorage, sys_lf, "BW01"))["nem_gen_loss_factor"] ≈ 0.5
-            @test get_ext(get_component(NEMStorage, sys_lf, "BW01"))["nem_load_loss_factor"] ≈ 0.8
+        @testset "loss factors are kept on the registration for AEMSim to refer prices" begin
+            @test get_registration(get_component(NEMThermalGen, sys_lf, "ER01")).gen_loss_factor ≈ 0.9 * 0.97
+            @test get_registration(get_component(NEMStorage, sys_lf, "BW01")).gen_loss_factor ≈ 0.5
+            @test get_registration(get_component(NEMStorage, sys_lf, "BW01")).load_loss_factor ≈ 0.8
         end
 
         @testset "a scheduled load's decremental bid is as offered" begin
             @test get_available(get_component(NEMLoad, sys_lf, "PUMP1"))
             @test prices(sys_lf, "PUMP1", "LOAD") ≈ raw_price("PUMP1", "LOAD")
-            @test get_ext(get_component(NEMLoad, sys_lf, "PUMP1"))["nem_load_loss_factor"] ≈ 0.8
+            @test get_registration(get_component(NEMLoad, sys_lf, "PUMP1")).load_loss_factor ≈ 0.8
         end
 
-        @testset "a bidding unit without a DUDETAILSUMMARY row in force is an error" begin
-            # BW02's only row starts after the range, so it has no factor at its start.
-            partial = loss_factor_db(df -> subset(two_years(df), [:DUID, :START_DATE] => ByRow((d, t) -> !(d == "BW02" && t < fy_change))))
-            sys_partial = first(nem_network(partial))
-            @test_throws ArgumentError set_market_bids!(sys_partial, partial, date_range; resolution = Minute(5))
+        @testset "a unit with no loss factor throws at build, naming it" begin
+            unfactored = loss_factor_db(
+                df -> begin
+                    df = two_years(df)
+                    df.TRANSMISSIONLOSSFACTOR = Union{Float64, Missing}[d == "BW02" ? missing : x for (d, x) in zip(df.DUID, df.TRANSMISSIONLOSSFACTOR)]
+                    df
+                end
+            )
+            @test_throws r"No DUDETAILSUMMARY loss factor for BW02" nem_network(unfactored; as_of = start_date, through = last(date_range) - Minute(5))
         end
     end
 end

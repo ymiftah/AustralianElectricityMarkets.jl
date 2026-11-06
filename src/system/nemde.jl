@@ -65,13 +65,12 @@ function AustralianElectricityMarkets.nem_system(
 
     # 3. Base network: every unit registered during the range
     storage = isnothing(time_series_directory) ? (;) : (; time_series_directory)
-    sys, _ = nem_network(db; as_of = first(date_range), through = last(date_range) - resolution, time_series_in_memory, storage...)
+    sys, units = nem_network(db; as_of = first(date_range), through = last(date_range) - resolution, time_series_in_memory, storage...)
 
     # 4. Units, bids and services
-    (; dispatch, units, demand) = _nemde_energy_bids_with_coverage(sys, db, date_range; intervention, resolution)
-    registered = registration_spans(units)
-    set_market_bids!(sys, db, date_range; registered, resolution)
-    set_unit_conditions!(sys, db, date_range; intervention, registered)
+    (; dispatch, demand) = _nemde_energy_bids_with_coverage(sys, db, date_range, units; intervention, resolution)
+    set_market_bids!(sys, db, date_range; resolution)
+    set_unit_conditions!(sys, db, date_range; intervention)
     add_nem_constraints!(sys, db, date_range; intervention)
     attach_interconnector_losses!(sys, db, first(date_range))
 
@@ -109,7 +108,7 @@ _required_bid_directions(device::PSY.ControllableLoad, coverage) =
 
 
 """
-    _nemde_energy_bids_with_coverage(sys, db, date_range; intervention = 0, resolution = Minute(5))
+    _nemde_energy_bids_with_coverage(sys, db, date_range, units; intervention = 0, resolution = Minute(5))
 
 Verifies the cached bids and demand cover every interval of `date_range` (its last stamp
 excluded). Every region with a unit (`DUDETAILSUMMARY`) needs regional demand (`DISPATCHREGIONSUM`)
@@ -123,27 +122,26 @@ Non-scheduled units and loads are not checked.
 - `sys`: the `PSY.System` whose units are checked.
 - `db`: an `AEMDB` connection.
 - `date_range`: the replay range.
+- `units`: the unit table over `date_range`, as [`nem_network`](@ref) returns it.
 - `intervention`: the `DISPATCHLOAD` run, 0 for pricing and 1 for physical.
 - `resolution`: the spacing of the dispatch intervals that `DISPATCHLOAD` and regional demand are aggregated to.
 
 # Returns
-A named tuple `(; dispatch, units, demand)` of the read inputs. Throws an `ArgumentError` naming
+A named tuple `(; dispatch, demand)` of the read inputs. Throws an `ArgumentError` naming
 the first unit and direction, or region, missing an input.
 """
-function _nemde_energy_bids_with_coverage(sys, db, date_range; intervention::Integer = 0, resolution = Minute(5))
+function _nemde_energy_bids_with_coverage(sys, db, date_range, units; intervention::Integer = 0, resolution = Minute(5))
     bids = read_energy_bids(db, date_range)
     dispatch = read_dispatch_limits(db, date_range; intervention, resolution)
-    units = read_units(db; as_of = first(date_range), through = last(date_range) - step(date_range))
     demand = read_demand(db, date_range; resolution)
     _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
-    return (; dispatch, units, demand)
+    return (; dispatch, demand)
 end
 
 
 function _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)
     demand_stamps = Set(zip(demand.REGIONID, demand.SETTLEMENTDATE))
     grid = collect(date_range)[1:(end - 1)]
-    registered = registration_spans(units)
     missing_demand = [(region, t) for region in sort!(unique(units.REGIONID)), t in grid if !((region, t) in demand_stamps)]
     isempty(missing_demand) || throw(
         ArgumentError(
@@ -151,7 +149,6 @@ function _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, da
                 "repopulate DISPATCHREGIONSUM with populate(...; force_new = true)",
         ),
     )
-    non_scheduled = Set(r.DUID for r in eachrow(units) if isequal(r.SCHEDULE_TYPE, "NON-SCHEDULED"))
     required_names = Set(bids.DUID)
     for row in eachrow(dispatch)
         available = !ismissing(row.AVAILABILITY) && row.AVAILABILITY > 0
@@ -159,15 +156,19 @@ function _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, da
         (available || metered) && push!(required_names, row.DUID)
     end
     required = Dict{String, Tuple{Vararg{String}}}()
+    registrations = Dict{String, NEMRegistration}()
     coverage = Dict{Tuple{String, String}, Set{DateTime}}()
     for row in eachrow(bids)
         push!(get!(coverage, (row.DUID, row.DIRECTION), Set{DateTime}()), row.INTERVAL_DATETIME)
     end
     for T in (PSY.Generator, PSY.ControllableLoad, PSY.Storage), device in PSY.get_components(T, sys)
         name = PSY.get_name(device)
-        name in required_names && !(name in non_scheduled) || continue
+        name in required_names || continue
+        registration = get_registration(device)
+        registration.schedule_type == ScheduleType.NON_SCHEDULED && continue
         is_non_scheduled_load(device) && continue
         required[name] = _required_bid_directions(device, coverage)
+        registrations[name] = registration
     end
     for row in eachrow(bids)
         row.DIRECTION in get(required, row.DUID, ()) || continue
@@ -179,7 +180,7 @@ function _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, da
         )
     end
     for name in sort!(collect(keys(required))), direction in required[name]
-        expected = filter(t -> AustralianElectricityMarkets._is_registered(registered, name, t), grid)
+        expected = filter(t -> AustralianElectricityMarkets._is_registered(registrations[name], t), grid)
         missing_intervals = setdiff(expected, get(coverage, (name, direction), Set{DateTime}()))
         isempty(missing_intervals) || throw(
             ArgumentError(
