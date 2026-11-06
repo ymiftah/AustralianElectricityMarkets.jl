@@ -22,6 +22,9 @@ them. Existing series of these names are replaced, so a second call on the same 
 result. [`prepare_replay!`](@ref) calls it before attaching the forecasts. Call it before
 `transform_single_time_series!`: the series are single time series until then.
 
+Throws `ArgumentError` when a bid is static rather than series-backed, or when two FCAS bids of one
+service map to the same side of a unit.
+
 # Arguments
 - `sys`: the `System` to add to.
 
@@ -48,6 +51,16 @@ function _bid_series(device, key::IS.TimeSeriesKey)
     return (;
         timestamps = PSY.TimeSeries.timestamp(array), resolution = IS.get_resolution(ts),
         values = collect(values(array)),
+    )
+end
+
+# A static bid field has no series to derive the offers from.
+function _bid_series(device, bid)
+    throw(
+        ArgumentError(
+            "set_effective_offers!: \"$(PSY.get_name(device))\" has a static bid; set_effective_offers! needs " *
+                "series-backed bids, as set_market_bids! writes them.",
+        ),
     )
 end
 
@@ -140,10 +153,15 @@ function _set_fcas_offers!(sys::PSY.System)
     for device in _bidding_devices(sys)
         cost = AustralianElectricityMarkets._nem_offer_cost(device)
         isnothing(cost) && continue
+        seen = Set{Tuple{BidType, OfferSide}}()
         for bid in get_fcas_bids(cost)
             side = AustralianElectricityMarkets._fcas_bid_side(device, bid)
             isnothing(side) && continue
             service = bid.service
+            (service, side) in seen && throw(
+                ArgumentError("\"$(PSY.get_name(device))\" has two $(service) bids on the $(side) side; one is overwritten."),
+            )
+            push!(seen, (service, side))
             decremental = side == OfferSide.LOAD
             trapezium = _bid_series(device, bid.trapezium)
             max_avail = _bid_series(device, bid.max_avail).values

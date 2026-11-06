@@ -102,10 +102,10 @@ _numeric_on_grid(by_time, grid, column::Symbol) =
     Float64[haskey(by_time, t) && !ismissing(by_time[t][column]) ? Float64(by_time[t][column]) : 0.0 for t in grid]
 
 # An offer curve on `grid`: the curve at each stamp of `by_time`, or a zero-width curve on the
-# first curve's prices where there is none.
+# prices of the earliest row where there is none.
 function _curves_on_grid(by_time, grid)
     curves = Dict(t => _extract_power_bids(row; keep_empty_bands = true) for (t, row) in by_time)
-    prices = get_y_coords(first(values(curves)))
+    prices = get_y_coords(curves[minimum(keys(by_time))])
     absent = PiecewiseStepData(zeros(length(prices) + 1), copy(prices))
     return [get(curves, t, absent) for t in grid]
 end
@@ -336,7 +336,7 @@ function set_market_bids!(
             end
         end
     end
-    # FCAS services are attached before the energy availability is set, as the FCAS offers of HEAD were.
+    # Services must exist before energy availability is set, so a unit unavailable for energy keeps them.
     added, excluded = add_fcas_services!(sys; bid_types = fcas_types)
 
     unbid = String[]

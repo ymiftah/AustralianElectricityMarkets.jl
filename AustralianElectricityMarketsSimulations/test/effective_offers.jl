@@ -84,6 +84,97 @@
         @test get_time_series_values(SingleTimeSeries, get_component(NEMThermalGen, sys2, "G1"), "tie_break_scale_2") ≈ [10.0 / 13.0, 10.0 / 13.0]
     end
 
+    @testset "energy prices are referred by the factor of their own side, and inputs are validated" begin
+        start = DateTime(2025, 1, 1)
+        stamps = [start, start + Minute(5)]
+        # One bus with a generator (GEN bid) and a scheduled load (LOAD bid), and a generator with no energy bid.
+        function unit_system()
+            sys = System(100.0)
+            area = Area(; name = "NSW")
+            add_component!(sys, area)
+            bus = ACBus(; number = 1, name = "b1", available = true, bustype = ACBusTypes.REF, angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1), base_voltage = 130.0)
+            add_component!(sys, bus)
+            set_area!(bus, area)
+            for name in ("GEN1", "GEN2")
+                add_component!(
+                    sys, NEMThermalGen(;
+                        name = name, available = true, status = true, bus = bus,
+                        active_power = 0.0, reactive_power = 0.0, rating = 1.0,
+                        active_power_limits = (min = 0.0, max = 1.0), reactive_power_limits = nothing,
+                        ramp_limits = nothing, operation_cost = NEMOfferCost(), base_power = 100.0, time_limits = nothing,
+                        must_run = false, prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL,
+                    ),
+                )
+            end
+            add_component!(
+                sys, NEMLoad(;
+                    name = "PUMP2", available = true, bus = bus, active_power = 0.0, reactive_power = 0.0,
+                    max_active_power = 1.0, max_reactive_power = 0.0, base_power = 100.0, operation_cost = NEMOfferCost(),
+                ),
+            )
+            return sys
+        end
+
+        @testset "GEN and LOAD prices use their own loss factor" begin
+            sys = unit_system()
+            gen = get_component(NEMThermalGen, sys, "GEN1")
+            load = get_component(NEMLoad, sys, "PUMP2")
+            gen_curve = PiecewiseStepData([0.0, 10.0, 20.0], [41.0, 57.0])
+            load_curve = PiecewiseStepData([0.0, 10.0, 20.0], [33.0, 61.0])
+            _toy_energy_bid!(sys, gen, AustralianElectricityMarkets.BidDirection.GEN, stamps, fill(gen_curve, 2), fill(100.0, 2))
+            _toy_energy_bid!(sys, load, AustralianElectricityMarkets.BidDirection.LOAD, stamps, fill(load_curve, 2), fill(100.0, 2))
+            gen_lf, load_lf = 0.9 * 0.97, 0.8
+            for device in (gen, load)
+                get_ext(device)["nem_gen_loss_factor"] = gen_lf
+                get_ext(device)["nem_load_loss_factor"] = load_lf
+            end
+            set_effective_offers!(sys)
+            lf_values(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)
+            bid_prices(device, direction) = get_y_coords(first(lf_values(device, bid_series_name(BidType.ENERGY, :offer_curves, direction))))
+            @test get_y_coords(first(lf_values(gen, "energy_offer"))) == round.(bid_prices(gen, AustralianElectricityMarkets.BidDirection.GEN) ./ gen_lf; digits = 2)
+            @test get_y_coords(first(lf_values(load, "energy_offer_decremental"))) == round.(bid_prices(load, AustralianElectricityMarkets.BidDirection.LOAD) ./ load_lf; digits = 2)
+            @test get_y_coords(first(lf_values(gen, "energy_offer"))) != round.(get_y_coords(gen_curve) ./ load_lf; digits = 2)
+        end
+
+        @testset "a static energy bid is rejected, as it has no series to derive from" begin
+            sys = unit_system()
+            gen = get_component(NEMThermalGen, sys, "GEN1")
+            set_operation_cost!(
+                gen,
+                NEMOfferCost(;
+                    energy = [
+                        NEMEnergyBid(;
+                            direction = AustralianElectricityMarkets.BidDirection.GEN,
+                            offer_curves = PiecewiseStepData([0.0, 10.0], [5.0]), max_avail = 10.0, roc_up = 0.0, roc_down = 0.0,
+                        ),
+                    ],
+                ),
+            )
+            @test_throws ArgumentError set_effective_offers!(sys)
+        end
+
+        @testset "two FCAS bids of one service on one side are rejected" begin
+            sys = unit_system()
+            gen = get_component(NEMThermalGen, sys, "GEN2")
+            for direction in (AustralianElectricityMarkets.BidDirection.GEN, AustralianElectricityMarkets.BidDirection.BIDIRECTIONAL)
+                name(f) = bid_series_name(BidType.RAISE6SEC, f, direction)
+                replace_single_series_with!(sys, gen, name(:offer_curves), fill(PiecewiseStepData([0.0, 10.0], [5.0]), 2), stamps)
+                replace_single_series_with!(sys, gen, name(:max_avail), fill(10.0, 2), stamps)
+                replace_single_series_with!(sys, gen, name(:trapezium), fill((0.0, 10.0, 90.0, 100.0), 2), stamps)
+                AustralianElectricityMarkets._set_fcas_bid!(
+                    get_operation_cost(gen),
+                    AustralianElectricityMarkets.NEMFCASBid(;
+                        service = BidType.RAISE6SEC, direction,
+                        offer_curves = AustralianElectricityMarkets._series_key(gen, name(:offer_curves)),
+                        max_avail = AustralianElectricityMarkets._series_key(gen, name(:max_avail)),
+                        trapezium = AustralianElectricityMarkets._series_key(gen, name(:trapezium)),
+                    ),
+                )
+            end
+            @test_throws ArgumentError set_effective_offers!(sys)
+        end
+    end
+
     @testset "NEMDE replay attaches FCAS effective offers and tie-break scales" begin
         replay_db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
         interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)

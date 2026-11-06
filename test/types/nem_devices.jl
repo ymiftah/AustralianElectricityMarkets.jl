@@ -125,6 +125,7 @@ function _nd_conforms(case, offer_bid)
         add_time_series!(sys, dev, _nd_series("max_avail"))
     end
     keys_by_name = Dict(k.name => k for k in _ND_IS.get_time_series_keys(nem))
+    # A keyed GEN energy bid and a static LOAD energy bid and FCAS bid, so both kinds round-trip.
     set_operation_cost!(
         nem,
         NEMOfferCost(;
@@ -132,6 +133,17 @@ function _nd_conforms(case, offer_bid)
                 NEMEnergyBid(;
                     direction = BidDirection.GEN, offer_curves = keys_by_name["energy_offer"],
                     max_avail = keys_by_name["max_avail"], roc_up = 0.0, roc_down = 0.0,
+                ),
+                NEMEnergyBid(;
+                    direction = BidDirection.LOAD, offer_curves = PowerSystems.PiecewiseStepData([0.0, 10.0], [25.0]),
+                    max_avail = 5.0, roc_up = 1.0, roc_down = 1.0,
+                ),
+            ],
+            fcas = [
+                NEMFCASBid(;
+                    service = BidType.RAISE6SEC, direction = BidDirection.GEN,
+                    offer_curves = PowerSystems.PiecewiseStepData([0.0, 10.0], [25.0]), max_avail = 10.0,
+                    trapezium = AEM.FCASTrapeziumPoints((0.0, 10.0, 90.0, 100.0)),
                 ),
             ],
         ),
@@ -146,6 +158,8 @@ function _nd_conforms(case, offer_bid)
         _nd_check_fields(nem, back)
         @test get_operation_cost(back) == get_operation_cost(nem)
         @test !isempty(get_energy_bids(get_operation_cost(back)))
+        @test only(AEM.get_fcas_bids(get_operation_cost(back))).max_avail == 10.0
+        @test only(b for b in AEM.get_energy_bids(get_operation_cost(back)) if b.direction == BidDirection.LOAD).max_avail == 5.0
         @test has_time_series(back, SingleTimeSeries, "energy_offer")
     end
     return

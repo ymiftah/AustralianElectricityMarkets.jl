@@ -376,7 +376,7 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
         (df_bid_per_offer.INTERVAL_DATETIME .>= DateTime(2025, 1, 1, 0, 10)) .&
         (df_bid_per_offer.INTERVAL_DATETIME .<= DateTime(2025, 1, 1, 0, 15))
     df_bid_per_offer.FIXEDLOAD[fixed] .= 50.0
-    # Energy ramp rates feed the regulation trapezia; ENERGYLIMIT is absent from every unit.
+    # ROCUP and ROCDOWN are set on energy bids only; ENERGYLIMIT is absent from every unit.
     df_bid_per_offer.ROCUP = [b == "ENERGY" ? 1.0 : r for (b, r) in zip(df_bid_per_offer.BIDTYPE, df_bid_per_offer.ROCUP)]
     df_bid_per_offer.ROCDOWN = [b == "ENERGY" ? 1.0 : r for (b, r) in zip(df_bid_per_offer.BIDTYPE, df_bid_per_offer.ROCDOWN)]
     df_bid_per_offer.ENERGYLIMIT = Vector{Union{Missing, Float64}}(missing, nrow(df_bid_per_offer))

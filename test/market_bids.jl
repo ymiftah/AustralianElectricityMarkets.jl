@@ -10,19 +10,116 @@
     grid = collect(interval)[1:(end - 1)]
     series(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)
     energy_bid(device, direction) = only(b for b in AEM.get_energy_bids(get_operation_cost(device)) if b.direction == direction)
+    # The `read_offers` rows of one unit, bid type and direction, keyed by interval stamp.
+    function rows_by_stamp(offers, duid, bidtype::BidType, direction::AEM.BidDirection)
+        keep = (offers.DUID .== duid) .& (offers.BIDTYPE .== Ref(bidtype)) .& (offers.DIRECTION .== string(direction))
+        return Dict(r.INTERVAL_DATETIME => r for r in eachrow(offers[keep, :]))
+    end
+    _num(x) = ismissing(x) ? 0.0 : Float64(x)
+    # A column of `by` on `grid`, zero where a stamp has no row or the value is NULL.
+    on_grid(by, column::Symbol) = [haskey(by, t) ? _num(by[t][column]) : 0.0 for t in grid]
+    _matches(a, b) = length(a) == length(b) && all(isapprox.(a, b))
+    # The offer curve of a row, with the bands of a LOAD row in reverse order (as AEMO lists them).
+    function row_curve(row, direction::AEM.BidDirection)
+        prices, widths = Float64.(row.PRICEBANDARRAY), Float64.(row.BANDAVAILARRAY)
+        if direction == AEM.BidDirection.LOAD
+            prices, widths = reverse(prices), reverse(widths)
+        end
+        return (x = [0.0; cumsum(widths)], y = prices)
+    end
+    # The offer curve on each stamp of `grid`: a zero-width curve on the earliest row's prices where there is no row.
+    function expected_curves(by, direction::AEM.BidDirection)
+        earliest = row_curve(by[minimum(keys(by))], direction)
+        absent = (x = zeros(length(earliest.y) + 1), y = earliest.y)
+        return [haskey(by, t) ? row_curve(by[t], direction) : absent for t in grid]
+    end
 
-    @testset "bid series equal the read_offers columns, on the grid" begin
+    @testset "every bid field equals its read_offers column, on the grid" begin
         sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
         offers = read_offers(db, interval)
         set_market_bids!(sys, db, interval)
-        for (duid, direction) in (("BW01", AEM.BidDirection.GEN), ("BW01", AEM.BidDirection.LOAD), ("BW02", AEM.BidDirection.GEN), ("BW04", AEM.BidDirection.GEN), ("PUMP1", AEM.BidDirection.LOAD), ("ER01", AEM.BidDirection.GEN))
-            device = get_component(PowerSystems.Device, sys, duid)
-            keep = (offers.DUID .== duid) .& (offers.DIRECTION .== string(direction)) .& (offers.BIDTYPE .== Ref(BidType.ENERGY))
-            rows = sort(offers[keep, :], :INTERVAL_DATETIME)
-            @test rows.INTERVAL_DATETIME == grid
-            @test series(device, AEM.bid_series_name(BidType.ENERGY, :max_avail, direction)) == rows.MAXAVAIL
-            @test series(device, AEM.bid_series_name(BidType.ENERGY, :roc_up, direction)) == coalesce.(rows.ROCUP, 0.0)
+        n = length(grid)
+        for device in get_components(Device, sys)
+            name = get_name(device)
+            cost = AEM._nem_offer_cost(device)
+            isnothing(cost) && continue
+            for bid in AEM.get_energy_bids(cost)
+                by = rows_by_stamp(offers, name, BidType.ENERGY, bid.direction)
+                curves = bid_value(device, bid, :offer_curves, first(interval), n)
+                expected = expected_curves(by, bid.direction)
+                @test _matches(get_x_coords.(curves), [e.x for e in expected])
+                @test _matches(get_y_coords.(curves), [e.y for e in expected])
+                for (field, column) in (
+                        (:max_avail, :MAXAVAIL), (:roc_up, :ROCUP), (:roc_down, :ROCDOWN), (:fixed_load, :FIXEDLOAD),
+                        (:minimum_load, :MINIMUMLOAD), (:daily_energy_constraint, :DAILYENERGYCONSTRAINT), (:energy_limit, :ENERGYLIMIT),
+                    )
+                    if isnothing(getfield(bid, field))
+                        # FIXEDLOAD of zero is no fixed load, as set_market_bids! reads it.
+                        @test all(r -> ismissing(r[column]) || (field == :fixed_load && iszero(r[column])), values(by))
+                    else
+                        @test _matches(bid_value(device, bid, field, first(interval), n), on_grid(by, column))
+                    end
+                end
+                if isnothing(bid.fast_start_profile)
+                    @test all(r -> all(ismissing, (r.T1, r.T2, r.T3, r.T4)), values(by))
+                else
+                    profile = [[_num(get(by, t, (T1 = missing, T2 = missing, T3 = missing, T4 = missing))[c]) for c in (:T1, :T2, :T3, :T4)] for t in grid]
+                    @test _matches([collect(p) for p in bid_value(device, bid, :fast_start_profile, first(interval), n)], profile)
+                end
+                if isnothing(bid.normal_status)
+                    @test all(r -> ismissing(r.NORMALSTATUS), values(by))
+                else
+                    normal = [haskey(by, t) && isequal(by[t].NORMALSTATUS, "ON") for t in grid]
+                    @test bid_value(device, bid, :normal_status, first(interval), n) == normal
+                end
+            end
+            for bid in AEM.get_fcas_bids(cost)
+                by = rows_by_stamp(offers, name, bid.service, bid.direction)
+                curves = bid_value(device, bid, :offer_curves, first(interval), n)
+                expected = expected_curves(by, bid.direction)
+                @test _matches(get_x_coords.(curves), [e.x for e in expected])
+                @test _matches(get_y_coords.(curves), [e.y for e in expected])
+                @test _matches(bid_value(device, bid, :max_avail, first(interval), n), on_grid(by, :MAXAVAIL))
+                points = bid_value(device, bid, :trapezium, first(interval), n)
+                trapezium = [
+                    haskey(by, t) ? [_num(by[t][c]) for c in (:ENABLEMENTMIN, :LOWBREAKPOINT, :HIGHBREAKPOINT, :ENABLEMENTMAX)] : zeros(4)
+                        for t in grid
+                ]
+                @test _matches([collect(p) for p in points], trapezium)
+            end
         end
+    end
+
+    @testset "a LOAD offer curve is stored with its bands in reverse order" begin
+        sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
+        offers = read_offers(db, interval)
+        set_market_bids!(sys, db, interval)
+        pump = get_component(Device, sys, "PUMP1")
+        row = rows_by_stamp(offers, "PUMP1", BidType.ENERGY, AEM.BidDirection.LOAD)[first(interval)]
+        curve = first(bid_value(pump, energy_bid(pump, AEM.BidDirection.LOAD), :offer_curves, first(interval), 1))
+        @test get_y_coords(curve) == reverse(Float64.(row.PRICEBANDARRAY))
+        @test get_x_coords(curve) == [0.0; cumsum(reverse(Float64.(row.BANDAVAILARRAY)))]
+    end
+
+    @testset "a stamp without a row holds a zero-width curve, zero MAXAVAIL and a zero trapezium" begin
+        # BW02's GEN energy and RAISE6SEC rows at 00:10 are removed from the cache.
+        gap_db = damaged_cache(
+            AEM_TEST_HIVE_DIR, :BIDPEROFFER_D,
+            "DELETE FROM input WHERE DUID = 'BW02' AND DIRECTION = 'GEN' AND BIDTYPE IN ('ENERGY', 'RAISE6SEC') AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:10:00'",
+        )
+        sys, _ = nem_network(gap_db; as_of = first(interval), through = last(interval) - Minute(5))
+        set_market_bids!(sys, gap_db, interval)
+        bw02 = get_component(Device, sys, "BW02")
+        energy = energy_bid(bw02, AEM.BidDirection.GEN)
+        curves = bid_value(bw02, energy, :offer_curves, first(interval), 3)
+        @test all(iszero, get_x_coords(curves[2]))
+        @test get_y_coords(curves[2]) == get_y_coords(curves[1])
+        @test bid_value(bw02, energy, :max_avail, first(interval), 3)[2] == 0.0
+        raise6 = only(b for b in AEM.get_fcas_bids(get_operation_cost(bw02)) if b.service == BidType.RAISE6SEC && b.direction == AEM.BidDirection.GEN)
+        fcas_curves = bid_value(bw02, raise6, :offer_curves, first(interval), 3)
+        @test all(iszero, get_x_coords(fcas_curves[2]))
+        @test bid_value(bw02, raise6, :max_avail, first(interval), 3)[2] == 0.0
+        @test collect(bid_value(bw02, raise6, :trapezium, first(interval), 3)[2]) == zeros(4)
     end
 
     @testset "NULL fields are nothing when NULL throughout, and zero where NULL on some intervals" begin
