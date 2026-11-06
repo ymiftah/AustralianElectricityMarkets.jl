@@ -201,8 +201,13 @@ end
     bw02 = get_component(Generator, late, "BW02")
     bw02_full = get_component(Generator, full, "BW02")
     # BW02 is registered only at 00:15, so the two earlier stamps are zero-padded.
-    for name in ("bid_energy_max_avail_gen", "availability", "initial_mw", "dispatch_ramp_up_rate", "dispatch_ramp_down_rate")
+    for name in ("bid_energy_max_avail_gen", "availability", "initial_mw")
         @test series(bw02, name) ≈ [0.0, 0.0, series(bw02_full, name)[3]]
+    end
+    # Ramp rates have no value at the stamps without a row; the AGC ramp reads them as NaN there.
+    for name in ("dispatch_ramp_up_rate", "dispatch_ramp_down_rate")
+        @test isnan.(series(bw02, name)[1:2]) == [true, true]
+        @test series(bw02, name)[3] ≈ series(bw02_full, name)[3]
     end
     @test length(get_time_series_timestamps(SingleTimeSeries, bw02, "bid_energy_max_avail_gen")) == length(grid)
 

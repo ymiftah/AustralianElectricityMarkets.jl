@@ -486,9 +486,11 @@
             set_unit_conditions!(sys, db, date_range)
             asload = get_component(NEMLoad, sys, "ASLOAD1")
             @test get_available(asload)
-            for name in ("initial_mw", "availability", "dispatch_ramp_up_rate", "dispatch_ramp_down_rate")
+            for name in ("initial_mw", "availability")
                 @test all(==(0.0), get_time_series_values(SingleTimeSeries, asload, name))
             end
+            # The metered ramp rates stay as published, for AGC ramping; AEMSim zeroes the ramp limits.
+            @test get_time_series_values(SingleTimeSeries, asload, "dispatch_ramp_up_rate") ≈ subset(truth, :DUID => ByRow(==("ASLOAD1"))).RAMPUPRATE ./ 60 ./ base_power
             @test get_ext(asload)["nem_semi_scheduled"] === false
         end
 
@@ -524,19 +526,132 @@
             @test get_time_series_values(SingleTimeSeries, get_component(NEMLoad, sys, "PUMP1"), "initial_mw") == before
         end
 
-        @testset "invalid DISPATCHLOAD inputs throw and leave sys untouched" begin
-            for (label, transform!) in (
-                    ("missing UIGF column", frame -> select!(frame, Not(:UIGF))),
-                    ("negative UIGF on a semi-scheduled unit", frame -> (frame.UIGF = Union{Float64, Missing}[r.DUID == "BW03" ? -1.0 : r.UIGF for r in eachrow(frame)]; nothing)),
-                )
-                @testset "$label" begin
-                    bad = corrupt_cache(:DISPATCHLOAD, transform!)
-                    untouched = first(nem_network(db))
-                    set_market_bids!(untouched, db, DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 1, 0, 10))
-                    @test_throws Exception set_unit_conditions!(untouched, bad, DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 1, 0, 10))
-                    close(bad.db)
-                end
+        # Copies the cache, rewrites `table` with `transform!`, and checks that `sys` got no condition.
+        # The exception `corrupt_and_build` last threw, so tests can match its message.
+        last_error = Ref{Any}(nothing)
+        function corrupt_and_build(table, transform!; registered = nothing, sys = deepcopy(sys_base))
+            bad = corrupt_cache(table, transform!)
+            try
+                set_unit_conditions!(sys, bad, check_range; registered)
+            catch e
+                last_error[] = e
+                rethrow()
+            finally
+                close(bad.db)
             end
+            return sys
+        end
+        untouched(sys) = !any(has_time_series(d, SingleTimeSeries, AustralianElectricityMarkets.NEM_SERIES.initial_mw) for d in get_components(Device, sys))
+        check_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 0, 10)
+        spans = registration_spans(read_units(db; as_of = first(check_range), through = last(check_range) - Minute(5)))
+        at(t) = DateTime(2025, 1, 1, 0, t)
+        dispatch_rows(frame) = frame.DUID .== "ER01"
+
+        @testset "a missing RAMPUPRATE throws, naming the DUID, and leaves sys untouched" begin
+            sys = deepcopy(sys_base)
+            @test_throws ArgumentError corrupt_and_build(
+                :DISPATCHLOAD, frame -> begin
+                    frame.RAMPUPRATE = Union{Float64, Missing}[r.DUID == "ER01" && r.SETTLEMENTDATE == at(5) ? missing : r.RAMPUPRATE for r in eachrow(frame)]
+                end; sys
+            )
+            @test occursin("ER01: missing INITIALMW/RAMPUPRATE/RAMPDOWNRATE/AVAILABILITY at $(at(5))", last_error[].msg)
+            @test untouched(sys)
+        end
+
+        @testset "a negative AVAILABILITY throws, naming the DUID, and leaves sys untouched" begin
+            sys = deepcopy(sys_base)
+            @test_throws ArgumentError corrupt_and_build(
+                :DISPATCHLOAD, frame -> begin
+                    frame.AVAILABILITY = Union{Float64, Missing}[r.DUID == "ER01" && r.SETTLEMENTDATE == at(5) ? -1.0 : r.AVAILABILITY for r in eachrow(frame)]
+                end; sys
+            )
+            @test occursin("ER01: negative AVAILABILITY", last_error[].msg)
+            @test untouched(sys)
+        end
+
+        @testset "zero AVAILABILITY and zero ramp rates are carried through, not rejected" begin
+            sys = corrupt_and_build(
+                :DISPATCHLOAD, frame -> begin
+                    frame.AVAILABILITY = Union{Float64, Missing}[r.DUID == "ER01" && r.SETTLEMENTDATE == at(5) ? 0.0 : r.AVAILABILITY for r in eachrow(frame)]
+                    frame.RAMPUPRATE = Union{Float64, Missing}[r.DUID == "ER01" && r.SETTLEMENTDATE == at(5) ? 0.0 : r.RAMPUPRATE for r in eachrow(frame)]
+                end
+            )
+            availability = get_time_series_values(SingleTimeSeries, get_component(NEMThermalGen, sys, "ER01"), "availability")
+            @test availability[2] == 0.0
+            @test get_time_series_values(SingleTimeSeries, get_component(NEMThermalGen, sys, "ER01"), "dispatch_ramp_up_rate")[2] == 0.0
+        end
+
+        @testset "a device with no DISPATCHLOAD rows throws, naming the DUID" begin
+            sys = deepcopy(sys_base)
+            @test_throws ArgumentError corrupt_and_build(:DISPATCHLOAD, frame -> filter!(r -> r.DUID != "ER01", frame); sys)
+            @test occursin("ER01: no DISPATCHLOAD rows", last_error[].msg)
+            @test untouched(sys)
+        end
+
+        @testset "a missing row inside a unit's registration throws, and one outside it does not" begin
+            registered = copy(spans)
+            registered["ER01"] = (at(0), at(10))
+            sys = deepcopy(sys_base)
+            @test_throws ArgumentError corrupt_and_build(
+                :DISPATCHLOAD, frame -> filter!(r -> !(r.DUID == "ER01" && r.SETTLEMENTDATE == at(5)), frame); registered, sys,
+            )
+            @test occursin("ER01: missing DISPATCHLOAD row(s) for 1 of 2 interval(s)", last_error[].msg)
+            @test untouched(sys)
+
+            registered["ER01"] = (at(5), at(10))
+            sys = corrupt_and_build(:DISPATCHLOAD, frame -> filter!(r -> !(r.DUID == "ER01" && r.SETTLEMENTDATE == at(0)), frame); registered)
+            # Unregistered at 00:00 with no row: the ramp rates there are NaN, the limits zero.
+            ramp = get_time_series_values(SingleTimeSeries, get_component(NEMThermalGen, sys, "ER01"), "dispatch_ramp_up_rate")
+            @test isnan(ramp[1])
+            @test get_time_series_values(SingleTimeSeries, get_component(NEMThermalGen, sys, "ER01"), "initial_mw")[1] == 0.0
+        end
+
+        @testset "a schedule type changing mid-range throws, naming the DUID" begin
+            sys = deepcopy(sys_base)
+            @test_throws ArgumentError corrupt_and_build(
+                :DUDETAILSUMMARY, frame -> begin
+                    i = findfirst(==("ER01"), frame.DUID)
+                    extra = frame[[i], :]
+                    frame.END_DATE[i] = at(0)
+                    extra.START_DATE .= at(0)
+                    extra.SCHEDULE_TYPE .= "SEMI-SCHEDULED"
+                    append!(frame, extra)
+                end; sys
+            )
+            @test occursin("ER01: schedule type changes or is missing in the requested range", last_error[].msg)
+            @test untouched(sys)
+        end
+
+        @testset "a zero static max_active_power throws, naming the DUID" begin
+            sys = deepcopy(sys_base)
+            set_active_power_limits!(get_component(NEMThermalGen, sys, "ER01"), (min = 0.0, max = 0.0))
+            @test_throws ArgumentError corrupt_and_build(:DISPATCHLOAD, identity; sys)
+            @test occursin("ER01: static max_active_power is 0.0", last_error[].msg)
+            @test untouched(sys)
+        end
+
+        @testset "a negative UIGF on a semi-scheduled unit throws, naming the DUID" begin
+            sys = deepcopy(sys_base)
+            @test_throws ArgumentError corrupt_and_build(
+                :DISPATCHLOAD, frame -> begin
+                    frame.UIGF = Union{Float64, Missing}[r.DUID == "BW03" && r.SETTLEMENTDATE == at(5) ? -1.0 : r.UIGF for r in eachrow(frame)]
+                end; sys
+            )
+            @test occursin("BW03 at $(at(5)): missing or invalid UIGF", last_error[].msg)
+            @test untouched(sys)
+        end
+
+        @testset "a cached DISPATCHLOAD without a required column throws, leaving sys untouched" begin
+            sys = deepcopy(sys_base)
+            @test_throws ArgumentError corrupt_and_build(:DISPATCHLOAD, frame -> select!(frame, Not(:UIGF)); sys)
+            @test untouched(sys)
+        end
+
+        @testset "an unavailable unit is excluded from the strict checks" begin
+            sys = deepcopy(sys_base)
+            set_available!(get_component(NEMThermalGen, sys, "ER02"), false)
+            set_unit_conditions!(sys, corrupt_cache(:DISPATCHLOAD, frame -> filter!(r -> r.DUID != "ER02", frame)), check_range)
+            @test !has_time_series(get_component(NEMThermalGen, sys, "ER02"), SingleTimeSeries, AustralianElectricityMarkets.NEM_SERIES.initial_mw)
         end
     end
 

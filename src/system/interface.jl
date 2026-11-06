@@ -41,13 +41,14 @@ starting at `start_date`.
 - `start_date`: The timestamp of the first value.
 - `values`: The per-interval values, one element per interval.
 - `resolution`: The spacing between consecutive timestamps.
+- `kwargs`: Passed to `SingleTimeSeries`, e.g. `scaling_factor_multiplier`.
 
 # Returns
 A `SingleTimeSeries`.
 """
-function single_series(name::AbstractString, start_date, values, resolution)
+function single_series(name::AbstractString, start_date, values, resolution; kwargs...)
     timestamps = [start_date + (k - 1) * resolution for k in 1:length(values)]
-    return SingleTimeSeries(; name = name, data = TimeArray(timestamps, values), resolution = resolution)
+    return SingleTimeSeries(; name = name, data = TimeArray(timestamps, values), resolution = resolution, kwargs...)
 end
 
 

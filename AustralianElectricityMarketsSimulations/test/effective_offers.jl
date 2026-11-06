@@ -311,6 +311,8 @@ end
             )
         end
         @test get_max_avail(raw[1]) > 5.0
+        # Without a ramp rate at an interval, the ramp limit there is zero, as HEAD.
+        @test get_time_series_values(SingleTimeSeries, device, "ramp_up_rate")[1] == 0.0
         @test isequal(get_max_avail(scaled[1]), get_max_avail(raw[1]))
         @test all(i -> isapprox(get_max_avail(scaled[i]), min(get_max_avail(raw[i]), 5.0)), 2:horizon)
     end
@@ -518,7 +520,7 @@ end
     @testset "_max_active_power is the availability unless the ramp-down floor is higher" begin
         @test AEMSim._max_active_power(100.0, 50.0, 40.0, 1 / 12) == 100.0
         @test AEMSim._max_active_power(10.0, 50.0, 40.0, 1 / 12) ≈ 50.0 - 40.0 / 12
-        @test AEMSim._max_active_power(10.0, 50.0, 40.0, 1 / 12) == AEMSim._max_active_power(10.0, 50.0, 40.0, 1 / 12)
+        @test AEMSim._max_active_power(10.0, 50.0, 40.0, 1 / 12) == 50.0 - 40.0 * (1 / 12)
     end
     @testset "_max_active_power uses the initial_mw it is given" begin
         low = AEMSim._max_active_power(0.0, 10.0, 60.0, 1 / 12)
@@ -531,5 +533,65 @@ end
         @test AEMSim._agc_ramp_rate(5.0, NaN, 1 / 12) == 5.0
         @test AEMSim._agc_ramp_rate(5.0, 0.0, 1 / 12) == 5.0
         @test isnan(AEMSim._agc_ramp_rate(NaN, 1.0, 1 / 12))
+    end
+end
+
+
+@testset "Dispatch limits derived from unit conditions" begin
+    AEMSim = AustralianElectricityMarketsSimulations
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    sys_base, _ = nem_network(db)
+    resolution = Minute(5)
+    start_date = DateTime(2025, 1, 1, 0, 0)
+    date_range = start_date:resolution:(start_date + Hour(2))
+    base_power = get_base_power(sys_base)
+    truth = read_unit_conditions(db, date_range)
+
+    @testset "a one-interval range is refused, as a single-value series is at HEAD" begin
+        one = start_date:resolution:(start_date + resolution)
+        @test_throws ArgumentError set_unit_conditions!(deepcopy(sys_base), db, one)
+    end
+
+    @testset "a non-scheduled load keeps its metered ramp for AGC and zeros its ramp limit" begin
+        sys = deepcopy(sys_base)
+        set_market_bids!(sys, db, date_range; resolution = resolution)
+        set_unit_conditions!(sys, db, date_range)
+        set_effective_offers!(sys)
+        asload = get_component(NEMLoad, sys, "ASLOAD1")
+        @test all(==(0.0), get_time_series_values(SingleTimeSeries, asload, "ramp_up_rate"; ignore_scaling_factors = true))
+        rows = sort(subset(truth, :DUID => ByRow(==("ASLOAD1"))), :SETTLEMENTDATE)
+        got = get_time_series_values(SingleTimeSeries, asload, fcas_series_name("fcas_agc_ramp_rate", BidType.RAISEREG))
+        # A ControllableLoad raises regulation from its ramp-up rate and its lower availability, per hour.
+        raise(ramp, avail) = isnan(avail) ? ramp : max(ramp, avail * 12)
+        expected = [raise(r / base_power, a / base_power) for (r, a) in zip(rows.RAMPUPRATE, rows.LOWERREGAVAILABILITY)]
+        @test isapprox(got, expected; nans = true)
+    end
+
+    @testset "the ramp-down floor above AVAILABILITY raises max_active_power to the floor" begin
+        sys = deepcopy(sys_base)
+        set_market_bids!(sys, db, date_range; resolution = resolution)
+        set_unit_conditions!(sys, db, date_range)
+        device = get_component(NEMThermalGen, sys, "ER01")
+        full_grid = collect(date_range)[1:(end - 1)]
+        n = length(full_grid)
+        replace_single_series!(sys, device, single_series(NEM_SERIES.availability, full_grid, zeros(n)))
+        replace_single_series!(sys, device, single_series(NEM_SERIES.initial_mw, full_grid, fill(100.0 / base_power, n)))
+        replace_single_series!(sys, device, single_series(NEM_SERIES.dispatch_ramp_down_rate, full_grid, fill(60.0 / 60 / base_power, n)))
+        AEMSim._set_dispatch_limits!(sys)
+        # 100 MW less 60 MW/h over one 5-minute interval is the 95 MW floor, above the zero availability.
+        static = with_units_base(() -> get_max_active_power(device), sys, "NATURAL_UNITS")
+        got = get_time_series_values(SingleTimeSeries, device, "max_active_power"; ignore_scaling_factors = true)
+        @test isapprox(got, fill(95.0 / static, n); atol = 1.0e-12)
+    end
+
+    @testset "a device without unit conditions gets no limit series" begin
+        sys = deepcopy(sys_base)
+        set_market_bids!(sys, db, date_range; resolution = resolution)
+        set_unit_conditions!(sys, db, date_range)
+        device = get_component(NEMThermalGen, sys, "ER01")
+        remove_single_series!(sys, device, NEM_SERIES.dispatch_ramp_up_rate)
+        AEMSim._set_dispatch_limits!(sys)
+        @test !has_time_series(device, SingleTimeSeries, NEM_SERIES.ramp_up_rate)
+        @test !has_time_series(device, SingleTimeSeries, NEM_SERIES.max_active_power)
     end
 end

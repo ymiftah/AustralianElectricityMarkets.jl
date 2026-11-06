@@ -199,18 +199,22 @@ function _set_static_offers!(sys::PSY.System)
 end
 
 
-# The `NEM_SERIES.dispatch_ramp_*` and regulation series of `device` as a `_bid_series`-shaped named
-# tuple, read from its `SingleTimeSeries` of `name`.
+# The series of one dispatch condition of `device` as a named tuple with the timestamps, the stored
+# resolution and the values.
 function _condition_series(device, name::AbstractString)
     array = PSY.get_time_series_array(PSY.SingleTimeSeries, device, name)
-    stamps = PSY.TimeSeries.timestamp(array)
-    return (; timestamps = stamps, resolution = Dates.Minute(Dates.value(stamps[2] - stamps[1]) ÷ 60_000), values = collect(values(array)))
+    return (;
+        timestamps = PSY.TimeSeries.timestamp(array),
+        resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, name)),
+        values = collect(values(array)),
+    )
 end
 
 
-# Attaches the ramp rates, AGC ramp rates and upper dispatch limit of each NEM dispatch device whose
-# unit conditions are attached. The ramps copy the dispatch rates; the AGC rates take the larger of a
-# ramp rate and its regulation availability (a `ControllableLoad` pairs each ramp with the other service).
+# Attaches the ramp rates, AGC ramp rates and upper dispatch limit of each NEM dispatch device with unit
+# conditions. The ramps copy the dispatch rates, with a non-scheduled load and a missing row at zero; the
+# AGC rates read the dispatch rates as published. A device without them gets no limit series, and the
+# replay input check names it.
 function _set_dispatch_limits!(sys::PSY.System)
     base = PSY.get_base_power(sys)
     for device in nem_dispatch_devices(sys)
@@ -218,21 +222,24 @@ function _set_dispatch_limits!(sys::PSY.System)
         up = _condition_series(device, NEM_SERIES.dispatch_ramp_up_rate)
         down = _condition_series(device, NEM_SERIES.dispatch_ramp_down_rate)
         interval_hours = Dates.value(Millisecond(up.resolution)) / (1000 * 60 * 60)
-        replace_single_series!(sys, device, single_series(NEM_SERIES.ramp_up_rate, first(up.timestamps), up.values, up.resolution))
-        replace_single_series!(sys, device, single_series(NEM_SERIES.ramp_down_rate, first(down.timestamps), down.values, down.resolution))
+        pinned = is_non_scheduled_load(device)
+        ramp_up_rate = pinned ? zeros(length(up.values)) : replace(up.values, NaN => 0.0)
+        ramp_down_rate = pinned ? zeros(length(down.values)) : replace(down.values, NaN => 0.0)
+        replace_single_series!(sys, device, single_series(NEM_SERIES.ramp_up_rate, first(up.timestamps), ramp_up_rate, up.resolution))
+        replace_single_series!(sys, device, single_series(NEM_SERIES.ramp_down_rate, first(down.timestamps), ramp_down_rate, down.resolution))
         _set_agc_ramp_rates!(sys, device, up, down, interval_hours)
         device isa PSY.Storage && continue
         initial = _condition_series(device, NEM_SERIES.initial_mw)
         availability = _condition_series(device, NEM_SERIES.availability)
         static = with_units_base(() -> PSY.get_max_active_power(device), sys, "NATURAL_UNITS")
-        ramp_down_per_hour = down.values .* 60
+        ramp_down_per_hour = ramp_down_rate .* 60
         limits = [
             _max_active_power(availability.values[i], initial.values[i], ramp_down_per_hour[i], interval_hours) * base / static
                 for i in eachindex(availability.values)
         ]
         replace_single_series!(
             sys, device,
-            single_series(NEM_SERIES.max_active_power, availability.timestamps, limits; scaling_factor_multiplier = PSY.get_max_active_power),
+            single_series(NEM_SERIES.max_active_power, first(availability.timestamps), limits, availability.resolution; scaling_factor_multiplier = PSY.get_max_active_power),
         )
     end
     return
@@ -257,7 +264,7 @@ function _set_agc_ramp_rates!(sys::PSY.System, device, up, down, interval_hours:
         all(isnan, values) && continue
         replace_single_series!(
             sys, device,
-            single_series(fcas_series_name("fcas_agc_ramp_rate", service), up.timestamps, values),
+            single_series(fcas_series_name("fcas_agc_ramp_rate", service), first(up.timestamps), values, up.resolution),
         )
     end
     return
