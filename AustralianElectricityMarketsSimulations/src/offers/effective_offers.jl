@@ -197,8 +197,8 @@ function _set_static_offers!(sys::PSY.System)
 end
 
 
-# The series of one dispatch condition of `device` as a named tuple with the timestamps, the stored
-# resolution and the values.
+# The series of one named derived or bid series of `device` as a named tuple with the timestamps, the
+# stored resolution and the values.
 function _condition_series(device, name::AbstractString)
     array = PSY.get_time_series_array(PSY.SingleTimeSeries, device, name)
     return (;
@@ -209,55 +209,78 @@ function _condition_series(device, name::AbstractString)
 end
 
 
-# Attaches the ramp rates, AGC ramp rates and upper dispatch limit of each NEM dispatch device with unit
-# conditions. The ramps copy the dispatch rates, with a non-scheduled load and a missing row at zero; the
-# AGC rates read the dispatch rates as published. A device without them gets no limit series, and the
-# replay input check names it.
+# The energy availability per unit of the system base: the energy `MAXAVAIL`, limited by the UIGF of a
+# semi-scheduled unit (`uigf` is `nothing` otherwise), and zero for a non-scheduled load or an interval with
+# no DISPATCHLOAD row (a `NaN` ramp rate).
+function _derived_availability(max_avail::AbstractVector, uigf, ramp_up_raw::AbstractVector, pinned::Bool)
+    return [
+        (pinned || isnan(ramp_up_raw[i])) ? 0.0 : (isnothing(uigf) ? max_avail[i] : min(max_avail[i], uigf[i]))
+            for i in eachindex(max_avail)
+    ]
+end
+
+
+# The values of a telemetry key over the grid of `like`: a static value is repeated.
+function _grid_values(device, key, like)
+    key isa IS.TimeSeriesKey || return fill(Float64(key), length(like.values))
+    return _bid_series(device, key).values
+end
+
+
+# Attaches the ramp rates, AGC ramp rates and upper dispatch limit of each available NEM dispatch device.
+# The ramps copy the telemetry ramp limits per minute, with a non-scheduled load and a missing row at zero;
+# the AGC rates read the telemetry as published. The limit reads the derived availability.
 function _set_dispatch_limits!(sys::PSY.System)
     base = PSY.get_base_power(sys)
-    for device in nem_dispatch_devices(sys)
-        PSY.has_time_series(device, PSY.SingleTimeSeries, NEM_SERIES.dispatch_ramp_up_rate) || continue
-        up = _condition_series(device, NEM_SERIES.dispatch_ramp_up_rate)
-        down = _condition_series(device, NEM_SERIES.dispatch_ramp_down_rate)
+    for device in AustralianElectricityMarkets.nem_dispatch_devices(sys)
+        telemetry = getproperty(device, :telemetry)
+        isnothing(telemetry) && continue
+        up = _bid_series(device, telemetry.ramp_up_limit)
+        down = _bid_series(device, telemetry.ramp_down_limit)
         interval_hours = Dates.value(Millisecond(up.resolution)) / (1000 * 60 * 60)
-        pinned = is_non_scheduled_load(device)
-        ramp_up_rate = pinned ? zeros(length(up.values)) : replace(up.values, NaN => 0.0)
-        ramp_down_rate = pinned ? zeros(length(down.values)) : replace(down.values, NaN => 0.0)
+        pinned = AustralianElectricityMarkets.is_non_scheduled_load(device)
+        ramp_up_rate = pinned ? zeros(length(up.values)) : replace(up.values ./ 60 ./ base, NaN => 0.0)
+        ramp_down_rate = pinned ? zeros(length(down.values)) : replace(down.values ./ 60 ./ base, NaN => 0.0)
         replace_single_series!(sys, device, single_series(NEM_SERIES.ramp_up_rate, first(up.timestamps), ramp_up_rate, up.resolution))
         replace_single_series!(sys, device, single_series(NEM_SERIES.ramp_down_rate, first(down.timestamps), ramp_down_rate, down.resolution))
-        _set_agc_ramp_rates!(sys, device, up, down, interval_hours)
+        _set_agc_ramp_rates!(sys, device, telemetry, up, down, base, interval_hours)
         device isa PSY.Storage && continue
-        initial = _condition_series(device, NEM_SERIES.initial_mw)
-        availability = _condition_series(device, NEM_SERIES.availability)
+        initial = _bid_series(device, AustralianElectricityMarkets.get_observed_state(device).initial_mw).values ./ base
+        max_avail_name = energy_max_avail_series_name(device, OfferSide.GEN)
+        device isa PSY.Storage || PSY.has_time_series(device, PSY.SingleTimeSeries, max_avail_name) ||
+            throw(ArgumentError("\"$(PSY.get_name(device))\" has no energy MAXAVAIL; call set_market_bids! first."))
+        max_avail = _condition_series(device, max_avail_name).values
+        uigf = isnothing(telemetry.uigf) ? nothing : _bid_series(device, telemetry.uigf).values ./ base
+        availability = _derived_availability(max_avail, uigf, up.values, pinned)
         static = with_units_base(() -> PSY.get_max_active_power(device), sys, "NATURAL_UNITS")
         ramp_down_per_hour = ramp_down_rate .* 60
         limits = [
-            _max_active_power(availability.values[i], initial.values[i], ramp_down_per_hour[i], interval_hours) * base / static
-                for i in eachindex(availability.values)
+            _max_active_power(availability[i], initial[i], ramp_down_per_hour[i], interval_hours) * base / static
+                for i in eachindex(availability)
         ]
         replace_single_series!(
             sys, device,
-            single_series(NEM_SERIES.max_active_power, first(availability.timestamps), limits, availability.resolution; scaling_factor_multiplier = PSY.get_max_active_power),
+            single_series(NEM_SERIES.max_active_power, first(up.timestamps), limits, up.resolution; scaling_factor_multiplier = PSY.get_max_active_power),
         )
     end
     return
 end
 
 
-# Attaches `fcas_agc_ramp_rate_<service>` for both regulation services, when `device` has their
-# availability. A `ControllableLoad` reads its raise regulation from the lower availability and the
-# ramp-up rate, and its lower regulation from the ramp-down rate and the raise availability.
-function _set_agc_ramp_rates!(sys::PSY.System, device, up, down, interval_hours::Real)
-    names = [fcas_series_name("fcas_regulation_availability", service) for service in (BidType.RAISEREG, BidType.LOWERREG)]
-    all(name -> PSY.has_time_series(device, PSY.SingleTimeSeries, name), names) || return
-    raise_availability, lower_availability = (_condition_series(device, name).values for name in names)
-    ramp_up, ramp_down = up.values .* 60, down.values .* 60
+# Attaches `fcas_agc_ramp_rate_<service>` for both regulation services. A `ControllableLoad` reads its raise
+# regulation from the lower availability and the ramp-up rate, and its lower regulation from the ramp-down
+# rate and the raise availability.
+function _set_agc_ramp_rates!(sys::PSY.System, device, telemetry, up, down, base::Real, interval_hours::Real)
+    raise_availability = _grid_values(device, telemetry.raise_reg_max_avail, up) ./ base
+    lower_availability = _grid_values(device, telemetry.lower_reg_max_avail, up) ./ base
+    ramp_up, ramp_down = up.values ./ base, down.values ./ base
     if device isa PSY.ControllableLoad
         sides = (ramp_up => lower_availability, ramp_down => raise_availability)
     else
         sides = (ramp_up => raise_availability, ramp_down => lower_availability)
     end
     for (service, (ramp, availability)) in zip((BidType.RAISEREG, BidType.LOWERREG), sides)
+        all(isnan, availability) && continue
         values = [_agc_ramp_rate(ramp[i], availability[i], interval_hours) for i in eachindex(ramp)]
         all(isnan, values) && continue
         replace_single_series!(

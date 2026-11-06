@@ -22,6 +22,54 @@ function _toy_registration(; schedule_type = ScheduleType.SCHEDULED, gen_loss_fa
 end
 
 # The two `5_bus_hydro_ed_sys` units the toy keeps; both sit on bus1.
+# Holds `values`, natural units, as the series of a toy unit's telemetry or observed-state `field`, and
+# rebuilds the struct to hold its key. The other fields keep their values; a unit with no struct yet takes
+# the defaults, which leave its regulation, UIGF and ramp inputs unset.
+function set_toy_unit_field!(sys, device, stamps, field::Symbol, values)
+    observed = field in (:initial_mw, :dispatch_mode)
+    names = observed ? AustralianElectricityMarkets.NEM_OBSERVED_SERIES : AustralianElectricityMarkets.NEM_TELEMETRY_SERIES
+    name = getproperty(names, field)
+    AustralianElectricityMarkets.replace_single_series!(
+        sys, device, AustralianElectricityMarkets.single_series(name, stamps[1], values, TOY_RESOLUTION),
+    )
+    fields = merge(
+        observed ? _toy_observed_fields(device) : _toy_telemetry_fields(device),
+        NamedTuple{(field,)}((AustralianElectricityMarkets._series_key(device, name),)),
+    )
+    if observed
+        AustralianElectricityMarkets.set_observed_state!(device, AustralianElectricityMarkets.NEMObservedState(; fields...))
+    else
+        AustralianElectricityMarkets.set_telemetry!(device, AustralianElectricityMarkets.NEMTelemetry(; fields...))
+    end
+    return
+end
+
+# Removes a toy unit's UIGF series and its telemetry key.
+function clear_toy_uigf!(sys, device)
+    name = AustralianElectricityMarkets.NEM_TELEMETRY_SERIES.uigf
+    PSY.has_time_series(device, PSY.DeterministicSingleTimeSeries, name) &&
+        PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, device, name)
+    AustralianElectricityMarkets.remove_single_series!(sys, device, name)
+    AustralianElectricityMarkets.set_telemetry!(device, AustralianElectricityMarkets.NEMTelemetry(; merge(_toy_telemetry_fields(device), (uigf = nothing,))...))
+    return
+end
+
+function _toy_telemetry_fields(device)
+    current = getproperty(device, :telemetry)
+    isnothing(current) && return (
+        agc_status = true, uigf = nothing, ramp_up_limit = NaN, ramp_down_limit = NaN,
+        raise_reg_enablement = (NaN, NaN), lower_reg_enablement = (NaN, NaN),
+        raise_reg_max_avail = NaN, lower_reg_max_avail = NaN,
+    )
+    return NamedTuple{fieldnames(AustralianElectricityMarkets.NEMTelemetry)}(Tuple(getfield(current, f) for f in fieldnames(AustralianElectricityMarkets.NEMTelemetry)))
+end
+
+function _toy_observed_fields(device)
+    current = getproperty(device, :observed_state)
+    isnothing(current) && return (initial_mw = 0.0, dispatch_mode = 0)
+    return (initial_mw = current.initial_mw, dispatch_mode = current.dispatch_mode)
+end
+
 const TOY_CHEAP = "Alta"
 const TOY_EXPENSIVE = "Park City"
 const TOY_BATTERY = "batt1"
@@ -146,8 +194,9 @@ function nem_toy_system(
         )
         add_series!(gen, "ramp_up_rate", unit.ramp_up ./ base_power)
         add_series!(gen, "ramp_down_rate", unit.ramp_down ./ base_power)
-        add_series!(gen, "initial_mw", unit.initial ./ base_power)
-        add_series!(gen, "availability", unit.availability ./ base_power)
+        set_toy_unit_field!(sys, gen, stamps, :initial_mw, _toy_values(unit.initial, length(stamps)))
+        set_toy_unit_field!(sys, gen, stamps, :ramp_up_limit, _toy_values(unit.ramp_up, length(stamps)) .* 60)
+        set_toy_unit_field!(sys, gen, stamps, :ramp_down_limit, _toy_values(unit.ramp_down, length(stamps)) .* 60)
         set_registration!(gen, _toy_registration())
     end
 
@@ -181,7 +230,9 @@ function nem_toy_system(
 
         add_series!(battery, "ramp_up_rate", bat.ramp_up ./ base_power)
         add_series!(battery, "ramp_down_rate", bat.ramp_down ./ base_power)
-        add_series!(battery, "initial_mw", bat.initial ./ base_power)
+        set_toy_unit_field!(sys, battery, stamps, :initial_mw, _toy_values(bat.initial, length(stamps)))
+        set_toy_unit_field!(sys, battery, stamps, :ramp_up_limit, _toy_values(bat.ramp_up, length(stamps)) .* 60)
+        set_toy_unit_field!(sys, battery, stamps, :ramp_down_limit, _toy_values(bat.ramp_down, length(stamps)) .* 60)
     end
 
     # Scheduled loads (`NEMLoad`) on bus1, priced on their decremental offer only.
@@ -201,8 +252,9 @@ function nem_toy_system(
         )
         add_series!(scheduled, "ramp_up_rate", ld.ramp_up / base_power)
         add_series!(scheduled, "ramp_down_rate", ld.ramp_down / base_power)
-        add_series!(scheduled, "initial_mw", ld.initial / base_power)
-        add_series!(scheduled, "availability", ld.availability / base_power)
+        set_toy_unit_field!(sys, scheduled, stamps, :initial_mw, _toy_values(ld.initial, length(stamps)))
+        set_toy_unit_field!(sys, scheduled, stamps, :ramp_up_limit, _toy_values(ld.ramp_up, length(stamps)) .* 60)
+        set_toy_unit_field!(sys, scheduled, stamps, :ramp_down_limit, _toy_values(ld.ramp_down, length(stamps)) .* 60)
         set_registration!(scheduled, _toy_registration())
     end
 
@@ -543,10 +595,10 @@ function fcas_toy_system(;
             add_toy_fcas_offer!(sys, pump, stamps, BidType.LOWER6SEC, fill((0.0, 5.0, 35.0, 40.0, 10.0), 2), fill([(10.0, 4.0)], 2); decremental = true)
             add_toy_series!(sys, alta, stamps, "fcas_agc_ramp_rate_RAISEREG", alta_ramp)
             add_toy_series!(sys, alta, stamps, "fcas_agc_ramp_rate_LOWERREG", [240.0, 240.0])
-            add_toy_series!(sys, alta, stamps, "fcas_agc_enablement_max_RAISEREG", agc_emax)
-            add_toy_series!(sys, alta, stamps, "fcas_agc_status", alta_agc; scale = 1.0)
+            set_toy_unit_field!(sys, alta, stamps, :raise_reg_enablement, collect(zip(fill(NaN, 2), _toy_values(agc_emax, 2))))
+            set_toy_unit_field!(sys, alta, stamps, :agc_status, Float64.(_toy_values(alta_agc, 2)))
             add_toy_series!(sys, bat, stamps, "fcas_agc_ramp_rate_RAISEREG", batt_ramp)
-            add_toy_series!(sys, bat, stamps, "fcas_agc_status", [1, 1]; scale = 1.0)
+            set_toy_unit_field!(sys, bat, stamps, :agc_status, [1.0, 1.0])
             add_toy_fcas_market!(sys, stamps, BidType.RAISEREG, [TOY_CHEAP, TOY_BATTERY], "F_REG", reg_req)
             add_toy_fcas_market!(sys, stamps, BidType.RAISE6SEC, [TOY_CHEAP, TOY_EXPENSIVE, TOY_BATTERY], "F_R6", r6_req)
             add_toy_fcas_market!(sys, stamps, BidType.LOWER6SEC, ["pump"], "F_L6", [5.0, 5.0])

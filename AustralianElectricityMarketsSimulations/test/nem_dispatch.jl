@@ -180,8 +180,8 @@ end
     device = PSY.get_component(NEMThermalGen, sys, "ER02")
     base_power = PSY.get_base_power(sys)
     initial_mw = PSY.get_time_series_values(
-        PSY.SingleTimeSeries, device, "initial_mw"; len = 12,
-    )
+        PSY.SingleTimeSeries, device, AustralianElectricityMarkets.NEM_OBSERVED_SERIES.initial_mw; len = 12,
+    ) ./ base_power
     up_rate = PSY.get_time_series_values(
         PSY.SingleTimeSeries, device, "ramp_up_rate"; len = 12,
     )

@@ -20,7 +20,7 @@ abstract type AbstractNEMDispatch <: PSI.AbstractDeviceFormulation end
 """
     NEMReplayDispatch
 
-[`AbstractNEMDispatch`](@ref) whose ramp constraint measures against the device's `"initial_mw"`
+[`AbstractNEMDispatch`](@ref) whose ramp constraint measures against the device's `"observed_initial_mw"`
 time series at every interval. Intervals are decoupled.
 """
 struct NEMReplayDispatch <: AbstractNEMDispatch end
@@ -45,6 +45,6 @@ struct RampDownRateTimeSeriesParameter <: PSI.TimeSeriesParameter end
 """
     InitialPowerTimeSeriesParameter
 
-Time-series parameter for a device's `"initial_mw"` series, in system-base per-unit.
+Time-series parameter for a device's `"observed_initial_mw"` series, in system-base per-unit.
 """
 struct InitialPowerTimeSeriesParameter <: PSI.TimeSeriesParameter end

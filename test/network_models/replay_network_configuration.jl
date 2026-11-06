@@ -53,7 +53,7 @@ end
     gen = get_component(NEMRenewableGen, sys, "BW03")
     @test get_registration(gen).schedule_type == ScheduleType.SEMI_SCHEDULED
     @test get_time_series_values(SingleTimeSeries, gen, "bid_energy_max_avail_gen") ≈ [101.0, 102.0, 103.0]
-    @test get_time_series_values(SingleTimeSeries, gen, "uigf"; ignore_scaling_factors = true) .* get_base_power(sys) ≈ [41.0, 42.0, 43.0]
+    @test get_time_series_values(SingleTimeSeries, gen, "telemetry_uigf"; ignore_scaling_factors = true) ≈ [41.0, 42.0, 43.0]
     @test !has_time_series(gen, DeterministicSingleTimeSeries, "bid_energy_max_avail_gen")
     @test !isempty(collect(get_components(FCASService, sys)))
     ic = get_component(AreaInterchange, sys, "IC2")
@@ -64,14 +64,14 @@ end
     directory = mktempdir()
     on_disk = nem_system(db, config; date_range = interval, time_series_in_memory = false, time_series_directory = directory)
     @test !isempty(readdir(directory))
-    @test get_time_series_values(SingleTimeSeries, get_component(NEMRenewableGen, on_disk, "BW03"), "uigf"; ignore_scaling_factors = true) .* get_base_power(on_disk) ≈ [41.0, 42.0, 43.0]
+    @test get_time_series_values(SingleTimeSeries, get_component(NEMRenewableGen, on_disk, "BW03"), "telemetry_uigf"; ignore_scaling_factors = true) ≈ [41.0, 42.0, 43.0]
     physical_db = damaged_cache(
         hive, :DISPATCHLOAD,
         "INSERT INTO input SELECT * REPLACE (1 AS INTERVENTION, INITIALMW + CASE WHEN DUID = 'BW03' THEN 10 ELSE 0 END AS INITIALMW) FROM input WHERE INTERVENTION = 0",
     )
     physical = nem_system(physical_db, config; date_range = interval, intervention = 1)
     physical_gen = get_component(NEMRenewableGen, physical, "BW03")
-    @test get_time_series_values(SingleTimeSeries, physical_gen, "initial_mw"; ignore_scaling_factors = true) .- get_time_series_values(SingleTimeSeries, gen, "initial_mw"; ignore_scaling_factors = true) ≈ fill(10 / get_base_power(sys), 3)
+    @test get_time_series_values(SingleTimeSeries, physical_gen, "observed_initial_mw"; ignore_scaling_factors = true) .- get_time_series_values(SingleTimeSeries, gen, "observed_initial_mw"; ignore_scaling_factors = true) ≈ fill(10.0, 3)
     @testset "missing bids and demand cannot remove participants or create zero demand" begin
         interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 15)
         for (table, query, expected) in [
@@ -218,6 +218,8 @@ end
     grid = collect(interval)[1:(end - 1)]
     full = nem_system(aem_connect(HiveConfiguration(hive_location = hive)), NEMDEConfiguration(); date_range = interval)
     series(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true) .* get_base_power(full)
+    # Natural-unit telemetry and observed-state series, as published.
+    raw(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)
     # A unit first registered at `stamp`: its summary and loss-factor rows start there, and its
     # bids and dispatch rows before it are removed, as NEMWEB has them.
     function registered_from(source, duid, stamp)
@@ -239,13 +241,12 @@ end
     bw02 = get_component(Generator, late, "BW02")
     bw02_full = get_component(Generator, full, "BW02")
     # BW02 is registered only at 00:15, so the two earlier stamps are zero-padded.
-    for name in ("bid_energy_max_avail_gen", "availability", "initial_mw")
-        @test series(bw02, name) ≈ [0.0, 0.0, series(bw02_full, name)[3]]
-    end
+    @test series(bw02, "bid_energy_max_avail_gen") ≈ [0.0, 0.0, series(bw02_full, "bid_energy_max_avail_gen")[3]]
+    @test raw(bw02, "observed_initial_mw") ≈ [0.0, 0.0, raw(bw02_full, "observed_initial_mw")[3]]
     # Ramp rates have no value at the stamps without a row; the AGC ramp reads them as NaN there.
-    for name in ("dispatch_ramp_up_rate", "dispatch_ramp_down_rate")
-        @test isnan.(series(bw02, name)[1:2]) == [true, true]
-        @test series(bw02, name)[3] ≈ series(bw02_full, name)[3]
+    for name in ("telemetry_ramp_up_limit", "telemetry_ramp_down_limit")
+        @test isnan.(raw(bw02, name)[1:2]) == [true, true]
+        @test raw(bw02, name)[3] ≈ raw(bw02_full, name)[3]
     end
     @test length(get_time_series_timestamps(SingleTimeSeries, bw02, "bid_energy_max_avail_gen")) == length(grid)
 
@@ -298,7 +299,7 @@ end
         ).config.hive_location
         sys = nem_system(connect(stopped), NEMDEConfiguration(); date_range = interval)
         load = get_component(NEMLoad, sys, "ASLOAD1")
-        @test all(iszero, series(load, "initial_mw"))
+        @test all(iszero, raw(load, "observed_initial_mw"))
         values = get_time_series_values(SingleTimeSeries, load, AustralianElectricityMarkets.bid_series_name(BidType.RAISE6SEC, :trapezium, AustralianElectricityMarkets.BidDirection.LOAD); ignore_scaling_factors = true)
         @test length(values) == length(grid)
         @test all(iszero, values[3])
@@ -310,9 +311,7 @@ end
         ended = damaged_cache(ended, :DISPATCHLOAD, "DELETE FROM input WHERE DUID = 'BW04' AND SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:15:00'").config.hive_location
         sys = nem_system(connect(ended), NEMDEConfiguration(); date_range = interval)
         gen = get_component(NEMRenewableGen, sys, "BW04")
-        @test series(gen, "availability")[1:2] ≈ series(get_component(NEMRenewableGen, full, "BW04"), "availability")[1:2]
-        @test series(gen, "availability")[3] == 0.0
-        @test series(gen, "uigf")[3] == 0.0
+        @test raw(gen, "telemetry_uigf")[3] == 0.0
     end
 
     @testset "a semi-scheduled unit registered mid-chunk has zero UIGF before registration" begin
@@ -320,8 +319,8 @@ end
         sys = nem_system(connect(semi_late), NEMDEConfiguration(); date_range = interval)
         gen = get_component(NEMRenewableGen, sys, "BW03")
         @test get_registration(gen).schedule_type == ScheduleType.SEMI_SCHEDULED
-        @test series(gen, "uigf")[1:2] == [0.0, 0.0]
-        @test series(gen, "uigf")[3] ≈ series(get_component(NEMRenewableGen, full, "BW03"), "uigf")[3]
+        @test raw(gen, "telemetry_uigf")[1:2] == [0.0, 0.0]
+        @test raw(gen, "telemetry_uigf")[3] ≈ raw(get_component(NEMRenewableGen, full, "BW03"), "telemetry_uigf")[3]
     end
 
     @testset "missing rows inside a registration still throw" begin

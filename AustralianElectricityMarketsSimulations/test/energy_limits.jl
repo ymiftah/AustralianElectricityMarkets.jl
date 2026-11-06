@@ -20,7 +20,7 @@ function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, we
             base = PSY.get_base_power(sys)
             set_registration!(cheap, _toy_registration(; schedule_type = isnothing(uigf) ? ScheduleType.SCHEDULED : ScheduleType.SEMI_SCHEDULED))
             if !isnothing(uigf)
-                PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "uigf", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(uigf, 2) ./ base)))
+                set_toy_unit_field!(sys, cheap, stamps, :uigf, _toy_values(uigf, 2))
             end
             if !isnothing(fixed_load)
                 PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "fixed_load", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(fixed_load, 2) ./ base)))
@@ -121,8 +121,7 @@ end
 @testset "missing and non-finite forecasts are rejected before solving" begin
     sys = energy_limit_system()
     cheap = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
-    PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, cheap, "uigf")
-    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, cheap, "uigf")
+    clear_toy_uigf!(sys, cheap)
     @test_throws ArgumentError replay_template(sys)
     invalid = energy_limit_system(; uigf = [45.0, NaN])
     template = replay_template(invalid)

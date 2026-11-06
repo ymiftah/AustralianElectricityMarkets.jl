@@ -23,8 +23,8 @@ Verifies every available [`FCASService`](@ref) that `template` models under
 bid direction is one [`FCASMarket`](@ref) models (incremental on any device but a load, decremental
 on a `PSY.Storage` device or a load, both only on a `PSY.Storage` device's regulation market), no device
 contributes to more than one such `FCASService` of the same market, and a regulation contributor
-with a positive AGC ramp rate also carries an `"initial_mw"` series, which AEMO *FCAS Model in
-NEMDE* §6.1's joint ramping constraint needs. A per-interval gap in `"initial_mw"` is not checked.
+with a positive AGC ramp rate also carries an `"observed_initial_mw"` series, which AEMO *FCAS Model in
+NEMDE* §6.1's joint ramping constraint needs. A per-interval gap in `"observed_initial_mw"` is not checked.
 
 # Arguments
 - `template`: `PSI.ProblemTemplate` to check device coverage against.
@@ -66,7 +66,7 @@ function check_fcas_services(template::PSI.ProblemTemplate, sys::PSY.System)
             problem = _fcas_direction_problem(device, bid_type, direction)
             isnothing(problem) || push!(problems, "FCASService \"$svc_name\": device \"$dname\" $problem.")
             if bid_type in FCAS_REGULATION_MARKETS && _fcas_ramp_series_positive(device, bid_type) &&
-                    !PSY.has_time_series(device, PSY.SingleTimeSeries, NEM_SERIES.initial_mw)
+                    !(AustralianElectricityMarkets.get_observed_state(device).initial_mw isa IS.TimeSeriesKey)
                 push!(
                     problems,
                     "FCASService \"$svc_name\": device \"$dname\" ($(typeof(device))) carries a " *

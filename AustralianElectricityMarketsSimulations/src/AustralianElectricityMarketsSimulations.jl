@@ -2,7 +2,7 @@ module AustralianElectricityMarketsSimulations
 
 import AustralianElectricityMarkets
 using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCAS_REGULATION_MARKETS,
-    GenericConstraint, InterconnectorLossModel, InterconnectorTerm, EnergyTieBreak, NEM_SERIES, OfferSide,
+    GenericConstraint, InterconnectorLossModel, InterconnectorTerm, EnergyTieBreak, NEM_SERIES, NEM_TELEMETRY_SERIES, NEM_OBSERVED_SERIES, OfferSide,
     RegionTerm, UnitTerm, TIE_BREAK_CVP_FACTOR, TIE_BREAK_SERVICE_NAME, DISPATCH_INTERVAL,
     UNIT_RAMP_CVP_FACTOR, INTERCONNECTOR_FLOW_CVP_FACTOR, ENERGY_OFFER_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR,
     ENERGY_MAX_AVAIL_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR, FIXED_LOADING_CVP_FACTOR, MNSP_RAMP_CVP_FACTOR,

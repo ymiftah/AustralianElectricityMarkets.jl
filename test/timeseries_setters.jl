@@ -443,6 +443,8 @@
         LOWER = AustralianElectricityMarkets.BidType.LOWERREG
         fcas_name = AustralianElectricityMarkets.fcas_series_name
         truth = read_unit_conditions(db, date_range)
+        # The natural-unit values of a unit's telemetry or observed-state series, read through its key.
+        unit_values(device, key) = get_time_series_values(SingleTimeSeries, device, get_name(key); ignore_scaling_factors = true)
 
         # Copies the cache at `table` and rewrites that table with `transform!`.
         function corrupt_cache(table, transform!)
@@ -460,20 +462,22 @@
             return bad
         end
 
-        @testset "attaches the operating condition of a scheduled load, per-unitised" begin
+        @testset "attaches the operating condition of a scheduled load in natural units, through its keys" begin
             sys = deepcopy(sys_base)
             set_unit_conditions!(sys, db, date_range)
             pump = get_component(NEMLoad, sys, "PUMP1")
             rows = sort(subset(truth, :DUID => ByRow(==("PUMP1"))), :SETTLEMENTDATE)
-            values(name) = get_time_series_values(SingleTimeSeries, pump, name)
-            @test isapprox(values("initial_mw"), rows.INITIALMW ./ base_power; atol = 1.0e-8)
-            @test isapprox(values("availability"), rows.AVAILABILITY ./ base_power; atol = 1.0e-8)
-            @test values("dispatch_ramp_up_rate") == rows.RAMPUPRATE ./ 60 ./ base_power
-            @test values("dispatch_ramp_down_rate") == rows.RAMPDOWNRATE ./ 60 ./ base_power
-            @test values(AustralianElectricityMarkets.NEM_SERIES.dispatch_mode) == rows.DISPATCHMODE
-            @test values(fcas_name("fcas_regulation_availability", RAISE)) ≈ rows.RAISEREGAVAILABILITY ./ base_power
-            @test values(fcas_name("fcas_agc_enablement_min", LOWER)) ≈ rows.LOWERREGENABLEMENTMIN ./ base_power
-            @test values(fcas_name("fcas_agc_enablement_max", RAISE)) ≈ rows.RAISEREGENABLEMENTMAX ./ base_power
+            telemetry, observed = get_telemetry(pump), get_observed_state(pump)
+            @test unit_values(pump, observed.initial_mw) == rows.INITIALMW
+            @test unit_values(pump, observed.dispatch_mode) == rows.DISPATCHMODE
+            @test unit_values(pump, telemetry.agc_status) == rows.AGCSTATUS
+            @test unit_values(pump, telemetry.ramp_up_limit) == rows.RAMPUPRATE
+            @test unit_values(pump, telemetry.ramp_down_limit) == rows.RAMPDOWNRATE
+            @test unit_values(pump, telemetry.raise_reg_max_avail) == rows.RAISEREGAVAILABILITY
+            @test unit_values(pump, telemetry.lower_reg_max_avail) == rows.LOWERREGAVAILABILITY
+            @test first.(unit_values(pump, telemetry.lower_reg_enablement)) == rows.LOWERREGENABLEMENTMIN
+            @test last.(unit_values(pump, telemetry.raise_reg_enablement)) == rows.RAISEREGENABLEMENTMAX
+            @test isnothing(telemetry.uigf)
             # Ramps, the upper limit and AGC ramp rates are derived in AEMSim, not here.
             @test !has_time_series(pump, SingleTimeSeries, "ramp_up_rate")
             @test !has_time_series(pump, SingleTimeSeries, "max_active_power")
@@ -486,21 +490,19 @@
             set_unit_conditions!(sys, db, date_range)
             asload = get_component(NEMLoad, sys, "ASLOAD1")
             @test get_available(asload)
-            for name in ("initial_mw", "availability")
-                @test all(==(0.0), get_time_series_values(SingleTimeSeries, asload, name))
-            end
+            @test all(==(0.0), unit_values(asload, get_observed_state(asload).initial_mw))
             # The metered ramp rates stay as published, for AGC ramping; AEMSim zeroes the ramp limits.
-            @test get_time_series_values(SingleTimeSeries, asload, "dispatch_ramp_up_rate") ≈ subset(truth, :DUID => ByRow(==("ASLOAD1"))).RAMPUPRATE ./ 60 ./ base_power
+            @test unit_values(asload, get_telemetry(asload).ramp_up_limit) ≈ subset(truth, :DUID => ByRow(==("ASLOAD1"))).RAMPUPRATE
             @test !is_semi_scheduled(asload)
         end
 
-        @testset "a battery gets dispatch ramps and initial_mw, with no availability" begin
+        @testset "a battery gets its telemetry ramps and observed initial_mw, with no UIGF" begin
             sys = deepcopy(sys_base)
             set_unit_conditions!(sys, db, date_range)
             battery = get_component(NEMStorage, sys, "BW01")
-            @test has_time_series(battery, SingleTimeSeries, "initial_mw")
-            @test has_time_series(battery, SingleTimeSeries, "dispatch_ramp_up_rate")
-            @test !has_time_series(battery, SingleTimeSeries, "availability")
+            @test get_observed_state(battery).initial_mw isa TimeSeriesKey
+            @test get_telemetry(battery).ramp_up_limit isa TimeSeriesKey
+            @test isnothing(get_telemetry(battery).uigf)
         end
 
         @testset "a semi-scheduled unit gets its UIGF, a scheduled unit none" begin
@@ -511,19 +513,20 @@
             for (duid, forecast) in [("BW03", [40.0, 41.0]), ("BW04", [70.0, 69.0])]
                 gen = get_component(NEMRenewableGen, sys, duid)
                 @test is_semi_scheduled(gen)
-                @test get_time_series_values(SingleTimeSeries, gen, "uigf"; ignore_scaling_factors = true) .* get_base_power(sys) ≈ forecast
+                @test unit_values(gen, get_telemetry(gen).uigf) ≈ forecast
             end
             coal = get_component(NEMThermalGen, sys, "ER01")
             @test !is_semi_scheduled(coal)
-            @test !has_time_series(coal, SingleTimeSeries, "uigf")
+            @test isnothing(get_telemetry(coal).uigf)
         end
 
         @testset "a repeat call replaces the series with the same values" begin
             sys = deepcopy(sys_base)
             set_unit_conditions!(sys, db, date_range)
-            before = get_time_series_values(SingleTimeSeries, get_component(NEMLoad, sys, "PUMP1"), "initial_mw")
+            pump = get_component(NEMLoad, sys, "PUMP1")
+            before = unit_values(pump, get_observed_state(pump).initial_mw)
             set_unit_conditions!(sys, db, date_range)
-            @test get_time_series_values(SingleTimeSeries, get_component(NEMLoad, sys, "PUMP1"), "initial_mw") == before
+            @test unit_values(pump, get_observed_state(pump).initial_mw) == before
         end
 
         # Copies the cache, rewrites `table` with `transform!`, and checks that `sys` got no condition.
@@ -541,7 +544,7 @@
             end
             return sys
         end
-        untouched(sys) = !any(has_time_series(d, SingleTimeSeries, AustralianElectricityMarkets.NEM_SERIES.initial_mw) for d in get_components(Device, sys))
+        untouched(sys) = !any(has_time_series(d, SingleTimeSeries, AustralianElectricityMarkets.NEM_OBSERVED_SERIES.initial_mw) for d in get_components(Device, sys))
         check_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 0, 10)
         at(t) = DateTime(2025, 1, 1, 0, t)
         # `registration` with the registration span [from, until].
@@ -580,9 +583,8 @@
                     frame.RAMPUPRATE = Union{Float64, Missing}[r.DUID == "ER01" && r.SETTLEMENTDATE == at(5) ? 0.0 : r.RAMPUPRATE for r in eachrow(frame)]
                 end
             )
-            availability = get_time_series_values(SingleTimeSeries, get_component(NEMThermalGen, sys, "ER01"), "availability")
-            @test availability[2] == 0.0
-            @test get_time_series_values(SingleTimeSeries, get_component(NEMThermalGen, sys, "ER01"), "dispatch_ramp_up_rate")[2] == 0.0
+            er01 = get_component(NEMThermalGen, sys, "ER01")
+            @test unit_values(er01, get_telemetry(er01).ramp_up_limit)[2] == 0.0
         end
 
         @testset "a device with no DISPATCHLOAD rows throws, naming the DUID" begin
@@ -607,9 +609,9 @@
             set_registration!(er01, with_span(get_registration(er01), at(5), at(10)))
             sys = corrupt_and_build(:DISPATCHLOAD, frame -> filter!(r -> !(r.DUID == "ER01" && r.SETTLEMENTDATE == at(0)), frame); sys)
             # Unregistered at 00:00 with no row: the ramp rates there are NaN, the limits zero.
-            ramp = get_time_series_values(SingleTimeSeries, get_component(NEMThermalGen, sys, "ER01"), "dispatch_ramp_up_rate")
-            @test isnan(ramp[1])
-            @test get_time_series_values(SingleTimeSeries, get_component(NEMThermalGen, sys, "ER01"), "initial_mw")[1] == 0.0
+            er01 = get_component(NEMThermalGen, sys, "ER01")
+            @test isnan(unit_values(er01, get_telemetry(er01).ramp_up_limit)[1])
+            @test unit_values(er01, get_observed_state(er01).initial_mw)[1] == 0.0
         end
 
         @testset "a schedule type changing mid-range throws at build, naming the DUID" begin
@@ -655,7 +657,7 @@
             sys = deepcopy(sys_base)
             set_available!(get_component(NEMThermalGen, sys, "ER02"), false)
             set_unit_conditions!(sys, corrupt_cache(:DISPATCHLOAD, frame -> filter!(r -> r.DUID != "ER02", frame)), check_range)
-            @test !has_time_series(get_component(NEMThermalGen, sys, "ER02"), SingleTimeSeries, AustralianElectricityMarkets.NEM_SERIES.initial_mw)
+            @test isnothing(get_component(NEMThermalGen, sys, "ER02").observed_state)
         end
     end
 

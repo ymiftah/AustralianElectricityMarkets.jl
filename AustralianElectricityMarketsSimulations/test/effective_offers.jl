@@ -32,6 +32,7 @@
     @testset "get_fcas_offer reads the scaled trapezium and the offer curve" begin
         sys = first(nem_network(db))
         set_market_bids!(sys, db, date_range)
+        set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
         horizon = length(date_range) - 1
         # ASLOAD1 is a zero-cost non-scheduled load, so its decremental offer is read from its own series.
@@ -248,6 +249,8 @@ end
             "UPDATE input SET RAMPUPRATE = 120, RAMPDOWNRATE = 60, RAISEREGENABLEMENTMIN = 0, RAISEREGENABLEMENTMAX = 0, LOWERREGENABLEMENTMIN = 0, LOWERREGENABLEMENTMAX = 0 WHERE DUID = 'PUMP1'",
         )
         sys = deepcopy(sys_base)
+        set_market_bids!(sys, db, date_range; resolution = resolution)
+        set_available!(get_component(NEMThermalGen, sys, "ER02"), false)
         load = get_component(NEMLoad, sys, "PUMP1")
         horizon = length(date_range) - 1
         trap = (0.0, 10.0, 90.0, 100.0, 20.0, NaN, NaN) ./ base_power
@@ -255,7 +258,7 @@ end
             add_time_series!(sys, load, single_series(fcas_series_name("fcas_trapezium", service, OfferSide.LOAD), start_date, fill(trap, horizon), resolution))
         end
         set_unit_conditions!(sys, rates_db, date_range)
-        AustralianElectricityMarketsSimulations._set_dispatch_limits!(sys)
+        set_effective_offers!(sys)
         with_units_base(sys, "NATURAL_UNITS") do
             raise = get_scaled_fcas_trapezium(load, BidType.RAISEREG, start_date, horizon; decremental = true)
             lower = get_scaled_fcas_trapezium(load, BidType.LOWERREG, start_date, horizon; decremental = true)
@@ -272,6 +275,8 @@ end
             "UPDATE input SET RAMPUPRATE = 180, RAMPDOWNRATE = 720, RAISEREGAVAILABILITY = 0, LOWERREGAVAILABILITY = 60, RAISEREGENABLEMENTMIN = 0, RAISEREGENABLEMENTMAX = 0, LOWERREGENABLEMENTMIN = 0, LOWERREGENABLEMENTMAX = 0 WHERE DUID = 'PUMP1'",
         )
         sys = deepcopy(sys_base)
+        set_market_bids!(sys, db, date_range; resolution = resolution)
+        set_available!(get_component(NEMThermalGen, sys, "ER02"), false)
         load = get_component(NEMLoad, sys, "PUMP1")
         horizon = length(date_range) - 1
         trap = (0.0, 10.0, 90.0, 100.0, 100.0, NaN, NaN) ./ base_power
@@ -279,7 +284,7 @@ end
             add_time_series!(sys, load, single_series(fcas_series_name("fcas_trapezium", service, OfferSide.LOAD), start_date, fill(trap, horizon), resolution))
         end
         set_unit_conditions!(sys, rates_db, date_range)
-        AustralianElectricityMarketsSimulations._set_dispatch_limits!(sys)
+        set_effective_offers!(sys)
         with_units_base(sys, "NATURAL_UNITS") do
             # 60 MW per 5 minutes is LOWERREGAVAILABILITY; the up ramp rate alone would give 15.
             lower = get_scaled_fcas_trapezium(load, BidType.LOWERREG, start_date, horizon; decremental = true)
@@ -299,8 +304,8 @@ end
         full_grid = collect(date_range)[1:(end - 1)]
         horizon = length(full_grid)
         # 60 MW/h is a 5 MW AGC ramping capability over 5 minutes.
-        ramp = [t == first(full_grid) ? NaN : 60.0 / 60 / base_power for t in full_grid]
-        replace_single_series!(sys, device, single_series(AustralianElectricityMarkets.NEM_SERIES.dispatch_ramp_up_rate, full_grid, ramp))
+        ramp = [t == first(full_grid) ? NaN : 60.0 for t in full_grid]
+        replace_single_series!(sys, device, single_series(AustralianElectricityMarkets.NEM_TELEMETRY_SERIES.ramp_up_limit, full_grid, ramp))
         AustralianElectricityMarketsSimulations._set_dispatch_limits!(sys)
 
         raw, scaled = with_units_base(sys, "NATURAL_UNITS") do
@@ -319,8 +324,8 @@ end
     @testset "get_scaled_fcas_trapezium narrows the trapezium wherever the AGC input is more restrictive" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
-        set_effective_offers!(sys)
         set_unit_conditions!(sys, db, date_range)
+        set_effective_offers!(sys)
         AustralianElectricityMarketsSimulations._set_dispatch_limits!(sys)
 
         device = get_component(NEMThermalGen, sys, "ER01")
@@ -399,6 +404,7 @@ end
     @testset "energy offer views and MAXAVAIL per direction" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range)
+        set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
         for bat in get_components(NEMStorage, sys)
             gen_offer, load_offer = get_energy_offer(bat, OfferSide.GEN), get_energy_offer(bat, OfferSide.LOAD)
@@ -439,6 +445,7 @@ end
     @testset "offer views of each side after set_market_bids!" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range)
+        set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
         gen = first(get_components(NEMThermalGen, sys))
         storage = first(get_components(NEMStorage, sys))
@@ -454,6 +461,7 @@ end
         sys = deepcopy(sys_base)
         second_range = (start_date + Minute(30)):Minute(5):(start_date + Minute(90))
         set_market_bids!(sys, db, date_range)
+        set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
         set_market_bids!(sys, db, second_range)
         set_effective_offers!(sys)
@@ -465,9 +473,12 @@ end
         end
     end
 
-    @testset "initial_mw and availability read back as the DISPATCHLOAD columns" begin
+    @testset "initial_mw reads back as DISPATCHLOAD, and availability is the bid MAXAVAIL" begin
         sys = deepcopy(sys_base)
+        set_market_bids!(sys, db, date_range)
         attach_dispatch_limits!(sys, db, date_range)
+        set_available!(get_component(NEMThermalGen, sys, "ER02"), false)
+        set_effective_offers!(sys)
         renewable = get_component(NEMRenewableGen, sys, "BW03")
         battery = get_component(NEMStorage, sys, "BW01")
         with_units_base(sys, "NATURAL_UNITS") do
@@ -476,22 +487,33 @@ end
                 @test isapprox(get_initial_mw(device, start_date, horizon), rows.INITIALMW; atol = 1.0e-8)
             end
             rows = sort(subset(truth, :DUID => ByRow(==("BW03"))), :SETTLEMENTDATE)
-            @test isapprox(get_energy_availability(renewable, start_date, horizon), rows.AVAILABILITY; atol = 1.0e-8)
+            # The mock's AVAILABILITY is synthetic; the real-data gate checks the derivation against it.
+            max_avail = get_time_series_values(SingleTimeSeries, renewable, energy_max_avail_series_name(renewable, OfferSide.GEN); start_time = start_date, len = horizon)
+            uigf = get_time_series_values(SingleTimeSeries, renewable, get_name(get_telemetry(renewable).uigf); start_time = start_date, len = horizon)
+            @test isapprox(get_energy_availability(renewable, start_date, horizon), min.(max_avail .* get_base_power(sys), uigf); atol = 1.0e-8)
         end
         # A battery's availability comes from its energy bid, not AVAILABILITY.
         @test isnothing(get_energy_availability(battery, start_date, horizon))
     end
 
-    @testset "get_initial_mw is nothing when initial_mw is not attached" begin
+    @testset "get_initial_mw throws, naming the unit, when it has no observed state" begin
         sys = deepcopy(sys_base)
         bat = get_component(NEMStorage, sys, "BW01")
-        @test isnothing(get_initial_mw(bat, start_date, horizon))
+        err = try
+            get_initial_mw(bat, start_date, horizon)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
     end
 
-    @testset "get_fcas_agc_status reads back AGCSTATUS and is nothing when not attached" begin
+    @testset "get_fcas_agc_status reads back AGCSTATUS and throws for a unit with no telemetry" begin
         sys = deepcopy(sys_base)
+        set_market_bids!(sys, db, date_range)
+        set_available!(get_component(NEMThermalGen, sys, "ER02"), false)
         set_unit_conditions!(sys, db, date_range)
-        AustralianElectricityMarketsSimulations._set_dispatch_limits!(sys)
+        set_effective_offers!(sys)
         device = get_component(NEMThermalGen, sys, "ER01")
         rows = sort(subset(scaling_truth, :DUID => ByRow(==("ER01"))), :SETTLEMENTDATE)
         @test get_fcas_agc_status(device, start_date, horizon) == round.(Int, rows.AGCSTATUS)
@@ -499,15 +521,16 @@ end
         @test get_fcas_agc_status(load, start_date, horizon) == ones(Int, horizon)
 
         bare = deepcopy(sys_base)
-        @test isnothing(get_fcas_agc_status(get_component(NEMThermalGen, bare, "ER01"), start_date, horizon))
+        @test_throws ArgumentError get_fcas_agc_status(get_component(NEMThermalGen, bare, "ER01"), start_date, horizon)
     end
 
     @testset "get_fcas_agc_status is nothing at an interval with no AGCSTATUS" begin
         sys = deepcopy(sys_base)
+        set_unit_conditions!(sys, db, date_range)
         device = get_component(NEMThermalGen, sys, "ER01")
         full_grid = collect(date_range)[1:(end - 1)]
         status = [t == first(full_grid) ? NaN : 1.0 for t in full_grid]
-        replace_single_series!(sys, device, single_series(AustralianElectricityMarkets.NEM_SERIES.fcas_agc_status, full_grid, status))
+        replace_single_series!(sys, device, single_series(AustralianElectricityMarkets.NEM_TELEMETRY_SERIES.agc_status, full_grid, status))
         status = get_fcas_agc_status(device, start_date, length(full_grid))
         @test isnothing(status[1])
         @test all(==(1), status[2:end])
@@ -570,12 +593,15 @@ end
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
         set_unit_conditions!(sys, db, date_range)
+        set_available!(get_component(NEMThermalGen, sys, "ER02"), false)
+        set_available!(get_component(NEMHydroGen, sys, "BW02"), false)
+        set_effective_offers!(sys)
         device = get_component(NEMThermalGen, sys, "ER01")
         full_grid = collect(date_range)[1:(end - 1)]
         n = length(full_grid)
-        replace_single_series!(sys, device, single_series(NEM_SERIES.availability, full_grid, zeros(n)))
-        replace_single_series!(sys, device, single_series(NEM_SERIES.initial_mw, full_grid, fill(100.0 / base_power, n)))
-        replace_single_series!(sys, device, single_series(NEM_SERIES.dispatch_ramp_down_rate, full_grid, fill(60.0 / 60 / base_power, n)))
+        replace_single_series!(sys, device, single_series(energy_max_avail_series_name(device, OfferSide.GEN), full_grid, zeros(n)))
+        replace_single_series!(sys, device, single_series(NEM_OBSERVED_SERIES.initial_mw, full_grid, fill(100.0, n)))
+        replace_single_series!(sys, device, single_series(NEM_TELEMETRY_SERIES.ramp_down_limit, full_grid, fill(60.0, n)))
         AEMSim._set_dispatch_limits!(sys)
         # 100 MW less 60 MW/h over one 5-minute interval is the 95 MW floor, above the zero availability.
         static = with_units_base(() -> get_max_active_power(device), sys, "NATURAL_UNITS")
@@ -583,14 +609,27 @@ end
         @test isapprox(got, fill(95.0 / static, n); atol = 1.0e-12)
     end
 
-    @testset "a device without unit conditions gets no limit series" begin
+    @testset "a device without telemetry gets no limit series, and its telemetry accessor throws" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
         set_unit_conditions!(sys, db, date_range)
+        set_available!(get_component(NEMThermalGen, sys, "ER02"), false)
+        set_available!(get_component(NEMHydroGen, sys, "BW02"), false)
+        set_effective_offers!(sys)
         device = get_component(NEMThermalGen, sys, "ER01")
-        remove_single_series!(sys, device, NEM_SERIES.dispatch_ramp_up_rate)
+        remove_single_series!(sys, device, NEM_SERIES.ramp_up_rate)
+        remove_single_series!(sys, device, NEM_SERIES.max_active_power)
+        AustralianElectricityMarkets.set_telemetry!(device, nothing)
         AEMSim._set_dispatch_limits!(sys)
         @test !has_time_series(device, SingleTimeSeries, NEM_SERIES.ramp_up_rate)
         @test !has_time_series(device, SingleTimeSeries, NEM_SERIES.max_active_power)
+        err = try
+            AustralianElectricityMarkets.get_telemetry(device)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("ER01 has no telemetry", sprint(showerror, err))
     end
 end

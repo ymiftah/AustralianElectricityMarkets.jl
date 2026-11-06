@@ -20,11 +20,11 @@ PSI.get_multiplier_value(::RampUpRateTimeSeriesParameter, ::PSY.StaticInjection,
 
 PSI.get_multiplier_value(::RampDownRateTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
 
-PSI.get_multiplier_value(::InitialPowerTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
+PSI.get_multiplier_value(::InitialPowerTimeSeriesParameter, d::PSY.StaticInjection, ::AbstractNEMDispatch) = 1 / PSY.get_system_base_power(d)
 
 PSI.get_multiplier_value(::EnergyMaxAvailTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
 
-PSI.get_multiplier_value(::EnergyUIGFTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
+PSI.get_multiplier_value(::EnergyUIGFTimeSeriesParameter, d::PSY.StaticInjection, ::AbstractNEMDispatch) = 1 / PSY.get_system_base_power(d)
 
 
 PSI.objective_function_multiplier(::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = PSI.OBJECTIVE_FUNCTION_POSITIVE
@@ -35,7 +35,7 @@ PSI.objective_function_multiplier(::PSI.ActivePowerVariable, ::AbstractNEMDispat
     PSI.get_default_time_series_names(::Type{<:PSY.StaticInjection}, ::Type{<:AbstractNEMDispatch})
 
 Registers the time series [`AbstractNEMDispatch`](@ref) reads as parameters. Both modes register
-`"initial_mw"`: `PowerSimulations.jl` copies the parent model's names onto the
+`"observed_initial_mw"`: `PowerSimulations.jl` copies the parent model's names onto the
 initial-conditions sub-model, which runs [`NEMReplayDispatch`](@ref) and reads it.
 
 # Returns
@@ -48,9 +48,9 @@ function PSI.get_default_time_series_names(
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
         RampUpRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
         RampDownRateTimeSeriesParameter => NEM_SERIES.ramp_down_rate,
-        InitialPowerTimeSeriesParameter => NEM_SERIES.initial_mw,
+        InitialPowerTimeSeriesParameter => NEM_OBSERVED_SERIES.initial_mw,
         EnergyMaxAvailTimeSeriesParameter => energy_max_avail_series_name(OfferSide.GEN),
-        EnergyUIGFTimeSeriesParameter => NEM_SERIES.uigf,
+        EnergyUIGFTimeSeriesParameter => NEM_TELEMETRY_SERIES.uigf,
         _FIXED_LOAD_SERIES...,
     )
 end

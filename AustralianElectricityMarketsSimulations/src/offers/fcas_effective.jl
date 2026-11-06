@@ -538,6 +538,7 @@ function _set_fcas_effective_offers!(sys::PSY.System)
                 key in done && continue
                 push!(done, key)
                 _is_unpriced_unavailable(svc, device, bid_type) && continue
+                PSY.get_available(device) || continue
                 _attach_fcas_effective_series!(sys, device, bid_type, inactive)
             end
         end

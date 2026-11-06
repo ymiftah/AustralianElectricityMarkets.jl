@@ -43,20 +43,20 @@ function add_toy_fcas_scaling!(
     base_power = PSY.get_base_power(sys)
     stamps = [initial_timestamp + (i - 1) * resolution for i in 1:n]
     bid_type_str = string(bid_type)
-    for (value, name) in (
-            (agc_enablement_min, "fcas_agc_enablement_min_$bid_type_str"),
-            (agc_enablement_max, "fcas_agc_enablement_max_$bid_type_str"),
-            (isnothing(agc_max_avail) ? nothing : agc_max_avail / (Dates.value(Minute(resolution)) / 60), "fcas_agc_ramp_rate_$bid_type_str"),
-            (uigf, "uigf"),
-        )
-        isnothing(value) && continue
-        PSY.add_time_series!(
-            sys, device,
-            PSY.SingleTimeSeries(;
-                name = name, data = PSY.TimeSeries.TimeArray(stamps, fill(value / base_power, n)),
-            ),
-        )
+    if !isnothing(agc_enablement_min) || !isnothing(agc_enablement_max)
+        enablement = fill((something(agc_enablement_min, NaN), something(agc_enablement_max, NaN)), n)
+        field = bid_type == BidType.RAISEREG ? :raise_reg_enablement : :lower_reg_enablement
+        set_toy_unit_field!(sys, device, stamps, field, enablement)
     end
+    isnothing(uigf) || set_toy_unit_field!(sys, device, stamps, :uigf, fill(uigf, n))
+    isnothing(agc_max_avail) && return
+    PSY.add_time_series!(
+        sys, device,
+        PSY.SingleTimeSeries(;
+            name = "fcas_agc_ramp_rate_$bid_type_str",
+            data = PSY.TimeSeries.TimeArray(stamps, fill(agc_max_avail / (Dates.value(Minute(resolution)) / 60) / base_power, n)),
+        ),
+    )
     return
 end
 
@@ -68,7 +68,7 @@ Attaches [`set_fcas_scaling_inputs!`](@ref)'s per-device `"fcas_agc_status"` `Si
 """
 function add_toy_fcas_agc_status!(sys, device, initial_timestamp, n::Integer, status::Int; resolution = TOY_RESOLUTION)
     stamps = [initial_timestamp + (i - 1) * resolution for i in 1:n]
-    add_toy_series!(sys, device, stamps, "fcas_agc_status", fill(Float64(status), n); scale = 1.0)
+    set_toy_unit_field!(sys, device, stamps, :agc_status, fill(Float64(status), n))
     return
 end
 
@@ -80,7 +80,7 @@ MW, per-unit of the system base), one flat window of `n` steps at `initial_times
 """
 function add_toy_storage_initial_mw!(sys, device, initial_timestamp, n::Integer, initial_mw::Float64; resolution = TOY_RESOLUTION)
     stamps = [initial_timestamp + (i - 1) * resolution for i in 1:n]
-    add_toy_series!(sys, device, stamps, "initial_mw", fill(initial_mw, n))
+    set_toy_unit_field!(sys, device, stamps, :initial_mw, fill(initial_mw, n))
     return
 end
 
@@ -110,9 +110,9 @@ function _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
             sys, bat, PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, fill(1.0e4 / base_power, length(stamps)))),
         )
     end
-    PSY.add_time_series!(
-        sys, bat, PSY.SingleTimeSeries(; name = "initial_mw", data = PSY.TimeSeries.TimeArray(stamps, fill(0.0, length(stamps)))),
-    )
+    set_toy_unit_field!(sys, bat, stamps, :initial_mw, fill(0.0, length(stamps)))
+    set_toy_unit_field!(sys, bat, stamps, :ramp_up_limit, fill(1.0e4 * 60, length(stamps)))
+    set_toy_unit_field!(sys, bat, stamps, :ramp_down_limit, fill(1.0e4 * 60, length(stamps)))
     return
 end
 
@@ -512,7 +512,6 @@ function storage_fcas_toy_model(
     stamps = [TOY_START, TOY_START + TOY_RESOLUTION]
     _add_flat_max_active_power!(sys, stamps)
     _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
-    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, bat, "initial_mw")
     add_toy_storage_initial_mw!(sys, bat, stamps[1], length(stamps), initial_mw)
 
     add_toy_fcas!(sys, bat, stamps[1], length(stamps), bid_type, trapezium_mw, [(10.0, 50.0)]; decremental = decremental)
@@ -679,7 +678,6 @@ function _build_bdu_regulation(
     end
     _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
     if !isnothing(storage_initial_mw)
-        PSY.remove_time_series!(sys, PSY.SingleTimeSeries, bat, "initial_mw")
         add_toy_storage_initial_mw!(sys, bat, stamps[1], length(stamps), storage_initial_mw)
     end
     if !isnothing(agc_max_avail) || !isnothing(agc_enablement_min) || !isnothing(agc_enablement_max)
@@ -1482,10 +1480,12 @@ end
             n = length(stamps)
             add_toy_fcas!(sys, device, stamps[1], n, BidType.RAISEREG, (0.0, 0.0, 100.0, 100.0, 10.0), [(10.0, 10.0)])
             add_toy_fcas_scaling!(sys, device, stamps[1], n, BidType.RAISEREG; agc_max_avail = 5.0)
-            PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, "initial_mw")
             PSY.add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG), [device])
             derive_toy_offers!(sys)
         end,
+    )
+    AustralianElectricityMarkets.set_observed_state!(
+        PSY.get_component(NEMThermalGen, sys, duid), AustralianElectricityMarkets.NEMObservedState(; initial_mw = 0.0, dispatch_mode = 0),
     )
     network = PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true)
     template = PSI.ProblemTemplate(network)
@@ -2076,12 +2076,17 @@ function make_non_scheduled_fcas_load!(sys, stamps)
     PSY.set_operation_cost!(load, NEMOfferCost())
     PSY.get_ext(load)["non_scheduled"] = true
     set_registration!(load, _toy_registration())
-    for name in ("max_active_power", "energy_max_avail", "ramp_up_rate", "ramp_down_rate", "initial_mw", "availability")
+    for name in ("max_active_power", "energy_max_avail", "ramp_up_rate", "ramp_down_rate")
         PSY.add_time_series!(
             sys, load,
             PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, zeros(length(stamps)))),
         )
     end
+    AustralianElectricityMarkets.set_telemetry!(load, nothing)
+    AustralianElectricityMarkets.set_observed_state!(load, nothing)
+    set_toy_unit_field!(sys, load, stamps, :initial_mw, zeros(length(stamps)))
+    set_toy_unit_field!(sys, load, stamps, :ramp_up_limit, zeros(length(stamps)))
+    set_toy_unit_field!(sys, load, stamps, :ramp_down_limit, zeros(length(stamps)))
     add_toy_fcas!(
         sys, load, stamps[1], length(stamps), BidType.RAISE6SEC, (0.0, 0.0, 0.0, 0.0, 20.0), [(20.0, 3.0)];
         decremental = true,
