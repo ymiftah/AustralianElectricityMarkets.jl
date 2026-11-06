@@ -127,7 +127,10 @@ and FCAS requirements. Attached to its contributing devices as a `PSY.Service`.
 - `name`: identifier — `GENCONID@EFFECTIVEDATE#VERSIONNO` for an AEMO-sourced constraint.
 - `available`: whether it is enforced.
 - `sense`: `LE`, `GE` or `EQ`, from `GENCONDATA.CONSTRAINTTYPE`.
-- `rhs`: static default from `GENCONDATA.CONSTRAINTVALUE`, per-unit of the system base.
+- `rhs`: `GENCONDATA.CONSTRAINTVALUE` per-unit of the system base, or a key of the per-interval
+  right-hand side series; read it with [`get_rhs`](@ref).
+- `invoked`: whether the constraint is enforced, or a key of the per-interval invoked series; read it
+  with [`get_invoked`](@ref).
 - `constraint_weight`: `GENCONDATA.GENERICCONSTRAINTWEIGHT` verbatim; 1.0 for a constraint whose
   `source` is `"built-in"`, which has no `GENCONDATA` row.
 - `description`: human-readable, defaults to `""`.
@@ -140,7 +143,8 @@ mutable struct GenericConstraint <: PSY.Service
     name::String
     available::Bool
     sense::ConstraintSense
-    rhs::Float64
+    rhs::Union{IS.TimeSeriesKey, Float64}
+    invoked::Union{IS.TimeSeriesKey, Bool}
     constraint_weight::Float64
     description::String
     terms::Vector{ConstraintTerm}
@@ -154,7 +158,8 @@ function GenericConstraint(;
         name::AbstractString,
         available::Bool = true,
         sense::ConstraintSense,
-        rhs::Float64,
+        rhs::Union{IS.TimeSeriesKey, Real},
+        invoked::Union{IS.TimeSeriesKey, Bool} = true,
         constraint_weight::Float64 = 1.0,
         description::AbstractString = "",
         terms::Vector{<:ConstraintTerm} = ConstraintTerm[],
@@ -163,10 +168,49 @@ function GenericConstraint(;
         internal::IS.InfrastructureSystemsInternal = IS.InfrastructureSystemsInternal(),
     )
     return GenericConstraint(
-        String(name), available, sense, rhs, constraint_weight, String(description),
+        String(name), available, sense, _bid_number(rhs), invoked, constraint_weight, String(description),
         Vector{ConstraintTerm}(terms), fcas_requirements, ext, internal,
     )
 end
+
+
+"""
+    get_rhs(value::GenericConstraint, t::DateTime) -> Float64
+
+The right-hand side of `value` at `t`, per-unit of the system base. A static `rhs` is returned as stored;
+a keyed one is read from its series at `t`.
+
+# Arguments
+- `value`: the [`GenericConstraint`](@ref).
+- `t`: the interval's start time.
+
+# Returns
+A `Float64`.
+"""
+get_rhs(value::GenericConstraint, t::DateTime) = _constraint_value(value, value.rhs, t, Float64)
+
+
+"""
+    get_invoked(value::GenericConstraint, t::DateTime) -> Bool
+
+Whether `value` is enforced at `t`. A static `invoked` is returned as stored; a keyed one is read from its
+series at `t`, where a nonzero value means invoked.
+
+# Arguments
+- `value`: the [`GenericConstraint`](@ref).
+- `t`: the interval's start time.
+
+# Returns
+A `Bool`.
+"""
+get_invoked(value::GenericConstraint, t::DateTime) = _constraint_value(value, value.invoked, t, Bool)
+
+function _constraint_value(value::GenericConstraint, field::IS.TimeSeriesKey, t::DateTime, ::Type{T}) where {T}
+    raw = IS.get_time_series_values(value, field; start_time = t, len = 1)
+    return T == Bool ? !iszero(only(raw)) : Float64(only(raw))
+end
+
+_constraint_value(::GenericConstraint, field, ::DateTime, ::Type{T}) where {T} = T == Bool ? Bool(field) : Float64(field)
 
 
 PSY.get_available(value::GenericConstraint) = value.available

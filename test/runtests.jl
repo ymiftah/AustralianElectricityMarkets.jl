@@ -48,6 +48,7 @@ const TEST_GROUPS = [
     "tie_break_service" => ("Energy tie-break service", ["tie_break_service.jl"]),
     "nem_offer_cost" => ("NEMOfferCost", ["types/nem_offer_cost.jl"]),
     "unit_data" => ("NEM unit data structs", ["types/unit_data.jl"]),
+    "network_data" => ("NEM network data structs", ["types/network_data.jl"]),
     "nem_devices" => ("NEM device types", ["types/nem_devices.jl"]),
     "aqua" => ("Aqua", ["aqua.jl"]),
 ]

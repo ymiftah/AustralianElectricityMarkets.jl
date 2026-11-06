@@ -304,10 +304,7 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
     # Fixed loadings are unit offer data (_set_nem_fixed_loads!), so their `$DUID` rows are not generic constraints.
     fixed_loads = _fixed_load_series(sys, fixed)
     if DataFrames.isempty(invoked_all) && isempty(fixed_loads)
-        get_ext(sys)["skipped_constraints"] = Dict{String, Any}[]
-        get_ext(sys)["defaulted_constraint_weights"] = String[]
-        get_ext(sys)["dropped_terms"] = Dict{String, Any}[]
-        get_ext(sys)["missing_constraint_intervals"] = string.(missing_intervals)
+        set_build_report!(sys, NEMBuildReport(; missing_constraint_intervals = missing_intervals))
         @warn "No constraints invoked over $date_range; nothing added."
         return String[], Dict{String, Symbol}()
     end
@@ -528,15 +525,19 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
         )
     end
 
-    get_ext(sys)["skipped_constraints"] = skipped_detail
-    get_ext(sys)["defaulted_constraint_weights"] = missing_weight
-    get_ext(sys)["missing_constraint_intervals"] = string.(missing_intervals)
-
     # sys is mutated only past this point - every throw above leaves it untouched.
-    get_ext(sys)["dropped_terms"] = Dict{String, Any}[
-        merge(term, Dict{String, Any}("constraint" => name)) for (name, terms) in sort!(collect(dropped); by = first)
-            for term in terms
-    ]
+    set_build_report!(
+        sys,
+        NEMBuildReport(;
+            skipped_constraints = skipped_detail,
+            missing_constraint_intervals = missing_intervals,
+            defaulted_constraint_weights = missing_weight,
+            dropped_terms = Dict{String, Any}[
+                merge(term, Dict{String, Any}("constraint" => name)) for (name, terms) in sort!(collect(dropped); by = first)
+                    for term in terms
+            ],
+        ),
+    )
     for entry in staged
         add_service!(sys, entry.gc, entry.contributing_devices)
         add_time_series!(

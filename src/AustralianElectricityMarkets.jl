@@ -19,6 +19,8 @@ export set_mnsp_offers!, set_demand!, set_market_bids!, add_nem_constraints!, se
 export set_unit_conditions!, set_interconnector_flow_limits!, set_loss_demand_coefficients!, registration_spans
 export get_skipped_constraints, get_dropped_terms,
     get_missing_constraint_intervals, get_defaulted_constraint_weights
+export NEMBuildReport, get_build_report, set_build_report!
+export MNSPDirection, NEMInterconnectorLimits, NEMMNSPBid, NEMMNSPObservedState
 export fcas_service_name, fcas_service, fcas_offer_series_name
 export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS, NEM_MARKETS, BidType
 export InterconnectorLossModel, interconnector_loss_models, loss_factor, interconnector_losses, loss_segments,
@@ -30,7 +32,7 @@ export FCASTrapezium,
 export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm, FCASRequirement,
     GenericConstraint,
     get_duid, get_bid_type, get_factor, get_interconnector, get_region, get_service, get_devices,
-    get_sense, get_constraint_weight,
+    get_sense, get_constraint_weight, get_rhs, get_invoked,
     get_limit_type, get_source,
     get_terms, get_fcas_requirements, resolve_term_devices
 export FCASService, add_fcas_services!, Readers
@@ -73,6 +75,8 @@ end
 include("accessors/series_names.jl")
 include("types/nem_offer_cost.jl")
 include("types/unit_data.jl")
+include("types/network_data.jl")
+include("types/build_report.jl")
 include("types/nem_devices.jl")
 include("accessors/device_flags.jl")
 include("accessors/fcas.jl")
