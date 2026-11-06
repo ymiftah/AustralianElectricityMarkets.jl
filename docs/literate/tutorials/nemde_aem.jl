@@ -86,15 +86,20 @@ function attach_energy_data!(sys, market) #hide
                 roc_down = bid_key(device, "bid_energy_roc_down_gen"), #hide
             ), #hide
         ) #hide
-        PSY.get_ext(device)["nem_gen_loss_factor"] = 1.0 #hide
-        PSY.get_ext(device)["nem_load_loss_factor"] = 1.0 #hide
+        set_registration!( #hide
+            device, #hide
+            NEMRegistration( #hide
+                schedule_type = is_semi_scheduled(u) ? ScheduleType.SEMI_SCHEDULED : ScheduleType.SCHEDULED, #hide
+                gen_loss_factor = 1.0, load_loss_factor = 1.0, #hide
+                registered_from = DateTime(2000), registered_until = DateTime(2999, 12, 31), #hide
+            ), #hide
+        ) #hide
         PSY.add_time_series!( #hide
             sys, device, series("max_active_power", availability(u) / u.capacity; multiplier = PSY.get_max_active_power), #hide
         ) #hide
         PSY.add_time_series!(sys, device, series("ramp_up_rate", u.ramp_up_mwh / 60 / BASE_POWER)) #hide
         PSY.add_time_series!(sys, device, series("ramp_down_rate", u.ramp_down_mwh / 60 / BASE_POWER)) #hide
         PSY.add_time_series!(sys, device, series("initial_mw", u.initial_mw / BASE_POWER)) #hide
-        PSY.get_ext(device)["nem_semi_scheduled"] = is_semi_scheduled(u) #hide
         if is_semi_scheduled(u) #hide
             PSY.add_time_series!(sys, device, series("uigf", u.uigf / BASE_POWER)) #hide
         end #hide

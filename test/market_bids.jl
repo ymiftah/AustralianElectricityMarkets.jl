@@ -108,7 +108,7 @@
             "DELETE FROM input WHERE DUID = 'BW02' AND DIRECTION = 'GEN' AND BIDTYPE IN ('ENERGY', 'RAISE6SEC') AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:10:00'",
         )
         sys, _ = nem_network(gap_db; as_of = first(interval), through = last(interval) - Minute(5))
-        @test_throws ArgumentError set_market_bids!(sys, gap_db, interval)
+        @test_throws r"BW02 GEN has no energy offer at 2025-01-01T00:10" set_market_bids!(sys, gap_db, interval)
     end
 
     @testset "NULL fields are nothing when NULL throughout, and zero where NULL on some intervals" begin

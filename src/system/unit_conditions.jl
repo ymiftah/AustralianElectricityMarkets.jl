@@ -11,15 +11,14 @@ per-unit `SingleTimeSeries` of the system base. Every available `Generator`, `St
 storage) and, for a semi-scheduled unit, `"uigf"`. AEMSim derives `ramp_*`, `max_active_power` and
 `fcas_agc_ramp_rate_*` from these.
 
-The schedule type and registration span of a NEM dispatch device come from its [`NEMRegistration`](@ref).
-A non-scheduled load gets zero
-`initial_mw` and `availability` whatever `DISPATCHLOAD` meters, but keeps its metered ramp rates for
-AGC ramping. A device with no `DISPATCHLOAD` rows in `date_range`, a missing interval inside its
-registration, a `missing` or negative rate or `AVAILABILITY`, or a missing or invalid `UIGF` on a
-semi-scheduled interval is a problem. Every problem across every device
-is raised as one `ArgumentError`, and `sys` is left unmodified. Ramp rates, regulation and dispatch-mode
-values with no row at an interval are `NaN`, which applies no scaling there. A repeat call replaces each
-series it writes.
+The schedule type and registration span of a NEM dispatch device come from its
+[`NEMRegistration`](@ref). A non-scheduled load gets zero `initial_mw` and `availability` whatever
+`DISPATCHLOAD` meters, but keeps its metered ramp rates for AGC ramping. A device with no
+`DISPATCHLOAD` rows in `date_range`, a missing interval inside its registration, a `missing` or
+negative rate or `AVAILABILITY`, or a missing or invalid `UIGF` on a semi-scheduled interval is a
+problem. Every problem across every device is raised as one `ArgumentError`, and `sys` is left
+unmodified. Ramp rates, regulation and dispatch-mode values with no row at an interval are `NaN`,
+which applies no scaling there. A repeat call replaces each series it writes.
 
 # Arguments
 - `sys`: the `System` to add to, after [`set_market_bids!`](@ref) has made the non-scheduled loads

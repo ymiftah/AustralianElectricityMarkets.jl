@@ -114,7 +114,7 @@ Verifies the cached bids and demand cover every interval of `date_range` (its la
 excluded). Every region with a unit (`DUDETAILSUMMARY`) needs regional demand (`DISPATCHREGIONSUM`)
 at every interval. Every scheduled unit of `sys` that bids energy (`BIDPEROFFER_D`), or is
 available or metered in `DISPATCHLOAD`, needs an energy period offer with a finite non-negative
-`MAXAVAIL` at every interval of its registration in `units` (`REGISTERED_FROM` to `REGISTERED_UNTIL`),
+`MAXAVAIL` at every interval of its registration (its [`NEMRegistration`](@ref) on `sys`),
 read independently of the price join with `BIDDAYOFFER_D`.
 Non-scheduled units and loads are not checked.
 
@@ -122,7 +122,7 @@ Non-scheduled units and loads are not checked.
 - `sys`: the `PSY.System` whose units are checked.
 - `db`: an `AEMDB` connection.
 - `date_range`: the replay range.
-- `units`: the unit table over `date_range`, as [`nem_network`](@ref) returns it.
+- `units`: the unit table over `date_range`, as [`nem_network`](@ref) returns it; its regions need demand.
 - `intervention`: the `DISPATCHLOAD` run, 0 for pricing and 1 for physical.
 - `resolution`: the spacing of the dispatch intervals that `DISPATCHLOAD` and regional demand are aggregated to.
 

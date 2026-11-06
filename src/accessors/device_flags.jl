@@ -26,14 +26,14 @@ is_commissioned(device) = get(get_ext(device), "commissioned", true) === true
 
 
 """
-    has_schedule_classification(device) -> Bool
+    has_registration(device) -> Bool
 
 Whether `device` carries a [`NEMRegistration`](@ref), which holds its schedule type.
 
 # Returns
 `Bool`.
 """
-has_schedule_classification(device) = device isa Union{NEM_DISPATCH_DEVICE_TYPES...} && !isnothing(device.registration)
+has_registration(device) = device isa Union{NEM_DISPATCH_DEVICE_TYPES...} && !isnothing(device.registration)
 
 
 """

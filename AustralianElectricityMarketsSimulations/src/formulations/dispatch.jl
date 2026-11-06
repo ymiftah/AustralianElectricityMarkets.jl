@@ -86,7 +86,7 @@ directional availability for storage and UIGF only for semi-scheduled units.
 """
 function _has_nem_dispatch_limits(device)
     if !(device isa PSY.Storage)
-        has_schedule_classification(device) || return false
+        has_registration(device) || return false
     end
     names = PSI.get_default_time_series_names(typeof(device), NEMReplayDispatch)
     required = (

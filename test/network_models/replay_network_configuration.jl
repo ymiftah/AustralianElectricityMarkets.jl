@@ -47,6 +47,9 @@ end
     @test_throws ArgumentError nem_system(db, config; date_range = first(interval):Minute(10):last(interval))
     @test_throws ArgumentError nem_system(db, config; date_range = first(interval):Minute(5):first(interval))
     sys = nem_system(db, config; date_range = interval)
+    for T in (Generator, ControllableLoad, Storage), device in get_components(T, sys), key in ("nem_gen_loss_factor", "nem_load_loss_factor", "nem_semi_scheduled")
+        @test !haskey(get_ext(device), key)
+    end
     gen = get_component(NEMRenewableGen, sys, "BW03")
     @test get_registration(gen).schedule_type == ScheduleType.SEMI_SCHEDULED
     @test get_time_series_values(SingleTimeSeries, gen, "bid_energy_max_avail_gen") ≈ [101.0, 102.0, 103.0]

@@ -483,7 +483,7 @@ function _toy_energy_bid!(sys, device, direction, stamps, curves, max_avail)
         roc_up = AEM._series_key(device, field(:roc_up)), roc_down = AEM._series_key(device, field(:roc_down)),
     )
     AEM._set_energy_bid!(PSY.get_operation_cost(device), bid)
-    current = AEM.has_schedule_classification(device) ? AEM.get_registration(device).schedule_type : ScheduleType.SCHEDULED
+    current = AEM.has_registration(device) ? AEM.get_registration(device).schedule_type : ScheduleType.SCHEDULED
     set_registration!(device, _toy_registration(; schedule_type = current))
     return
 end
