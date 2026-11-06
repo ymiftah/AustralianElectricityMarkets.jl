@@ -54,6 +54,7 @@ include("types/tie_break.jl")
 include("types/interconnector_losses.jl")
 include("types/mnsp.jl")
 include("types/mnsp_limits.jl")
+include("types/state.jl")
 
 include("formulations/slacks.jl")
 include("formulations/generic_constraints.jl")
@@ -94,6 +95,7 @@ export set_effective_offers!, NEMEnergyOffer, get_energy_offer, NEMFCASOffer, ge
     get_energy_availability, get_storage_energy_max_avail
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,
     fcas_upper_regulation_service, fcas_offer_sides, tie_break_series_name, tie_groups
+export StateSource, ObservedState, SimulatedState, NEMUnitState, unit_state, NEMDispatchInputs, NEMFCASInputs
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
 export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys, check_replay_inputs,
     exclude_unmodeled_services!, check_replication_steps,
