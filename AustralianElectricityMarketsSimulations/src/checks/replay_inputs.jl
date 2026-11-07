@@ -74,9 +74,8 @@ end
 """
     _check_mnsp_offers(device)
 
-Verifies that `device` carries either none or all four of the links' offer and availability series
-of `set_mnsp_offers!`, and all four when it is an MNSP (`ext["ic_type"] == "MNSP"`), since a partial
-set cannot be modelled.
+Verifies that `device` carries either none or all of the MNSP keys of `set_mnsp_offers!`, and all of them when
+its [`NEMInterconnectorRegistration`](@ref) is `InterconnectorKind.MNSP`, since a partial set cannot be modelled.
 
 # Arguments
 - `device`: the `PSY.AreaInterchange` to check.
@@ -85,20 +84,15 @@ set cannot be modelled.
 `nothing`. Throws an `ArgumentError` naming `device` otherwise.
 """
 function _check_mnsp_offers(device::PSY.AreaInterchange)
-    present = _mnsp_offer_series_present(device)
-    required = get(PSY.get_ext(device), "ic_type", nothing) == "MNSP"
+    bids, initial = _mnsp_offer_series_present(device)
+    present = [bids; initial]
+    registrations = PSY.get_supplemental_attributes(NEMInterconnectorRegistration, device)
+    required = !isempty(registrations) && only(registrations).kind == InterconnectorKind.MNSP
     (required || any(present)) && !all(present) && throw(
         ArgumentError(
             "AreaInterchange $(PSY.get_name(device)) is an MNSP with incomplete directional offer inputs; " *
                 "call set_mnsp_offers! with complete data before dispatch",
         ),
     )
-    if all(present)
-        for (_, series) in _MNSP_OPERATING_SERIES
-            PSY.has_time_series(device, PSY.SingleTimeSeries, series) || throw(
-                ArgumentError("AreaInterchange $(PSY.get_name(device)) is missing MNSP operating input $series; call set_mnsp_offers!"),
-            )
-        end
-    end
     return
 end

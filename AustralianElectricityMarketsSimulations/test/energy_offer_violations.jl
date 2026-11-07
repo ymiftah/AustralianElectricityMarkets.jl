@@ -78,12 +78,10 @@ end
             batteries = kind == :load ? Pair{String, Any}[] : [name => toy_battery(40.0, 50.0, 40.0, 1.0; initial = 0.0, ramp_up = 100.0, gen_avail = 100.0, load_avail = 100.0)],
             mutate! = function (sys, stamps)
                 device = PSY.get_component(kind == :load ? NEMLoad : NEMStorage, sys, name)
-                gc = GenericConstraint(; name = "NC_OFFER", sense = ConstraintSense.EQ, rhs = target / PSY.get_base_power(sys), terms = ConstraintTerm[UnitTerm(name, BidType.ENERGY, 1.0)])
+                gc = GenericConstraint(; name = "NC_OFFER", sense = ConstraintSense.EQ, rhs = target, terms = ConstraintTerm[UnitTerm(name, BidType.ENERGY, 1.0)])
                 gc.constraint_weight = 1160.0
                 PSY.add_service!(sys, gc, [device])
-                for (key, value) in (("rhs", target / PSY.get_base_power(sys)), ("invoked", 1.0))
-                    PSY.add_time_series!(sys, gc, PSY.SingleTimeSeries(; name = key, data = PSY.TimeSeries.TimeArray(stamps, fill(value, length(stamps)))))
-                end
+                add_toy_constraint_series!(sys, gc, stamps, fill(target, length(stamps)), fill(1.0, length(stamps)))
                 return
             end,
         )

@@ -291,7 +291,7 @@ the constraints given the default weight 1.0 for a NULL `GENERICCONSTRAINTWEIGHT
 ([`get_defaulted_constraint_weights`](@ref)) are recorded the same way.
 
 A unit term whose DUID is absent from `sys` is dropped, as nempy does for a unit that is not in the
-dispatch, and recorded in the constraint's `ext["dropped_terms"]` and in [`get_dropped_terms`](@ref).
+dispatch, and recorded in the build report ([`get_dropped_terms`](@ref)).
 An unresolved region or interconnector term, or a constraint with no resolvable term, skips the constraint.
 
 Throws `ArgumentError` when a `RegionTerm` resolves to a region with no Generator/Storage in `sys`;
@@ -299,7 +299,6 @@ the throw leaves `sys` unmodified.
 """
 function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; intervention = 0)
     start_date = first(date_range)
-    base_power = get_base_power(sys)
     missing_intervals = setdiff(collect(date_range)[1:(end - 1)], invoked_all.SETTLEMENTDATE)
     # Fixed loadings are unit offer data (_set_nem_fixed_loads!), so their `$DUID` rows are not generic constraints.
     fixed_loads = _fixed_load_series(sys, fixed)
@@ -310,7 +309,7 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
     end
     invoked = filter(r -> !_is_modelled_fixed_load(r.GENCONID, fixed_loads, r.SETTLEMENTDATE), invoked_all)
     # Grouped by the full (GENCONID, EFFECTIVEDATE, VERSIONNO) triple, not GENCONID alone: two
-    # versions must never be merged into one "invoked"/"rhs" series.
+    # versions must never be merged into one constraint's invoked or rhs series.
     invoked_by_version = groupby(invoked, [:GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO])
 
     # Drop the last point: `date_range`'s N+1 timestamps label N interval starts, matching
@@ -321,7 +320,7 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
     grid_set = Set(full_grid)
     unaligned = setdiff(Set(invoked.SETTLEMENTDATE), grid_set)
     if !isempty(unaligned)
-        @warn "nem constraints: $(length(unaligned)) invoked SETTLEMENTDATE(s) fall outside date_range's grid and will be dropped from every constraint's \"rhs\"/\"invoked\" series - check that date_range's step matches the cache's real dispatch cadence: $(sort(collect(unaligned)))"
+        @warn "nem constraints: $(length(unaligned)) invoked SETTLEMENTDATE(s) fall outside date_range's grid and will be dropped from every constraint's rhs and invoked series - check that date_range's step matches the cache's real dispatch cadence: $(sort(collect(unaligned)))"
     end
 
     gencon_versions = unique(select(invoked, :GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO))
@@ -460,16 +459,11 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
         rhs_by_time = Dict(zip(constraint_rows.SETTLEMENTDATE, constraint_rows.RHS))
         default_rhs_mw = coalesce(def.CONSTRAINTVALUE, first(constraint_rows.RHS))
         rhs_series_mw, invoked_series = _pad_to_grid(rhs_by_time, full_grid, default_rhs_mw)
-        # rhs/lhs are per-unitized here, once, before either is stored - the "rhs" time series
-        # and GenericConstraint.rhs must agree with PSY.get_value's SYSTEM_BASE/NATURAL_UNITS
-        # convention for every other power quantity on this System.
-        rhs_series = rhs_series_mw ./ base_power
-
         ismissing(def.GENERICCONSTRAINTWEIGHT) && push!(missing_weight, versioned_name)
         gc = GenericConstraint(;
             name = versioned_name,
             sense = sense,
-            rhs = default_rhs_mw / base_power,
+            rhs = default_rhs_mw,
             constraint_weight = coalesce(def.GENERICCONSTRAINTWEIGHT, 1.0),
             description = coalesce(def.DESCRIPTION, ""),
             terms = resolved_terms,
@@ -487,7 +481,7 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
         push!(
             staged,
             (
-                gc = gc, contributing_devices = unique(contributing_devices), rhs_series = rhs_series,
+                gc = gc, contributing_devices = unique(contributing_devices), rhs_series = rhs_series_mw,
                 invoked_series = invoked_series,
             ),
         )
@@ -542,12 +536,14 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
         add_service!(sys, entry.gc, entry.contributing_devices)
         add_time_series!(
             sys, entry.gc,
-            single_series("rhs", start_date, entry.rhs_series, resolution),
+            single_series(NEM_CONSTRAINT_SERIES.rhs, start_date, entry.rhs_series, resolution),
         )
         add_time_series!(
             sys, entry.gc,
-            single_series("invoked", start_date, entry.invoked_series, resolution),
+            single_series(NEM_CONSTRAINT_SERIES.invoked, start_date, entry.invoked_series, resolution),
         )
+        entry.gc.rhs = _series_key(entry.gc, NEM_CONSTRAINT_SERIES.rhs)
+        entry.gc.invoked = _series_key(entry.gc, NEM_CONSTRAINT_SERIES.invoked)
     end
 
     return added, skipped

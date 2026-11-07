@@ -6,7 +6,7 @@ function _objective_cache_system()
     curve_name = AustralianElectricityMarkets.fcas_offer_series_name(PSY.get_component(FCASService, sys, "1_RAISEREG"), false)
     replacements = (
         (alta, curve_name, [_toy_offer([(0.1, 5.0), (0.1, 12.0)]), _toy_offer([(0.1, 15.0), (0.1, 22.0)])]),
-        (gc, "invoked", [1.0, 0.0]),
+        (gc, AustralianElectricityMarkets.NEM_CONSTRAINT_SERIES.invoked, [1.0, 0.0]),
     )
     for (owner, name, values) in replacements
         PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, owner, name)

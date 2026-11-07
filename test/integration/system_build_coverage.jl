@@ -29,8 +29,8 @@
             @test !isnothing(gc_v1)
             @test !isnothing(gc_v2)
             for gc in (gc_v1, gc_v2)
-                rhs_series = get_time_series_values(SingleTimeSeries, gc, "rhs")
-                invoked_series = get_time_series_values(SingleTimeSeries, gc, "invoked")
+                rhs_series = _constraint_series(gc, :rhs)
+                invoked_series = _constraint_series(gc, :invoked)
                 @test length(rhs_series) == length(date_range) - 1
                 @test length(invoked_series) == length(date_range) - 1
             end
@@ -64,11 +64,11 @@
 
             n_partial = get_component(GenericConstraint, sys, vname("N_PARTIAL"))
             @test get_duid(only(filter(t -> t isa UnitTerm, get_terms(n_partial)))) == "SOLAR1"
-            invoked = get_time_series_values(SingleTimeSeries, n_partial, "invoked")
-            rhs = get_time_series_values(SingleTimeSeries, n_partial, "rhs")
+            invoked = _constraint_series(n_partial, :invoked)
+            rhs = _constraint_series(n_partial, :rhs)
             @test invoked == [fill(0.0, 10); fill(1.0, 15)]
             @test all(==(rhs[10]), rhs[1:10])
-            @test rhs[11:25] ≈ [(40.0 + 0.1 * i) / get_base_power(sys) for i in 10:24]
+            @test rhs[11:25] ≈ [40.0 + 0.1 * i for i in 10:24]
 
             v1 = get_component(GenericConstraint, sys, vname("N_VERSIONED_LIMIT", 1))
             v2 = get_component(GenericConstraint, sys, vname("N_VERSIONED_LIMIT", 2))
@@ -124,7 +124,7 @@
             )
             gc, gc2 = get_component(GenericConstraint, sys, name), get_component(GenericConstraint, sys2, name)
             @test get_sense(gc2) == get_sense(gc)
-            @test PowerSystems.get_value(gc2, Val(:rhs), Val(:mva)) == PowerSystems.get_value(gc, Val(:rhs), Val(:mva))
+            @test _constraint_series(gc2, :rhs) == _constraint_series(gc, :rhs)
             @test get_constraint_weight(gc2) == get_constraint_weight(gc)
             @test get_ext(gc2) == get_ext(gc)
         end

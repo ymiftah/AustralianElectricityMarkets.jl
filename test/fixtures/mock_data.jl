@@ -1,3 +1,6 @@
+# The values of `gc`'s series in `field` (`:rhs` or `:invoked`), read through its key.
+_constraint_series(gc, field::Symbol) = TimeSeries.values(get_time_series_array(gc, PowerSystems.IS.get_time_series(gc, getproperty(gc, field))))
+
 using DataFrames
 using Dates
 using DuckDB

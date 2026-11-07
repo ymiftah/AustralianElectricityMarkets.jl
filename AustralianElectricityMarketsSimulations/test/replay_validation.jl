@@ -12,16 +12,14 @@ function replay_validation_system(terms; invoked = 1.0, with_off_constraint = fa
             derive_toy_offers!(sys)
             gc = GenericConstraint(; name = "N_REVIEW", sense = ConstraintSense.LE, rhs = 1.0, terms)
             PSY.add_service!(sys, gc, [unit])
-            add_toy_series!(sys, gc, stamps, "rhs", fill(100.0, length(stamps)))
-            add_toy_series!(sys, gc, stamps, "invoked", fill(invoked, length(stamps)); scale = 1.0)
+            add_toy_constraint_series!(sys, gc, stamps, fill(100.0, length(stamps)), fill(invoked, length(stamps)))
             if with_off_constraint
                 off = GenericConstraint(;
                     name = "N_OFF", sense = ConstraintSense.LE, rhs = 1.0,
                     terms = ConstraintTerm[UnitTerm(TOY_CHEAP, BidType.ENERGY, 1.0)],
                 )
                 PSY.add_service!(sys, off, [unit])
-                add_toy_series!(sys, off, stamps, "rhs", fill(100.0, length(stamps)))
-                add_toy_series!(sys, off, stamps, "invoked", fill(1.0, length(stamps)); scale = 1.0)
+                add_toy_constraint_series!(sys, off, stamps, fill(100.0, length(stamps)), fill(1.0, length(stamps)))
             end
             return
         end,

@@ -13,6 +13,7 @@ end;
 import PowerSystems as PSY
 import PowerSimulations as PSI
 import AustralianElectricityMarketsSimulations as AEMSim
+import AustralianElectricityMarkets as AEM
 
 include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_market.jl")) #hide
 include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_jump.jl")); #hide
@@ -175,18 +176,20 @@ function attach_generic_constraints!(sys, market) #hide
         ] #hide
         constraint = GenericConstraint( #hide
             name = gc.name, sense = SENSES[gc.sense], #hide
-            rhs = gc.rhs / BASE_POWER, constraint_weight = gc.weight, #hide
+            rhs = gc.rhs, constraint_weight = gc.weight, #hide
             terms = ConstraintTerm[constraint_term(market, t) for t in gc.terms], #hide
             fcas_requirements = FCASRequirement[requirements...], #hide
         ) #hide
         devices = [PSY.get_component(PSY.StaticInjection, sys, String(t.id)) for t in gc.terms] #hide
         PSY.add_service!(sys, constraint, devices) #hide
-        for (series_name, value) in ("rhs" => gc.rhs / BASE_POWER, "invoked" => 1.0) #hide
+        for (series_name, value) in (AEM.NEM_CONSTRAINT_SERIES.rhs => gc.rhs, AEM.NEM_CONSTRAINT_SERIES.invoked => 1.0) #hide
             PSY.add_time_series!( #hide
                 sys, constraint, #hide
                 PSY.SingleTimeSeries(; name = series_name, data = PSY.TimeSeries.TimeArray(stamps, fill(value, length(stamps)))), #hide
             ) #hide
         end #hide
+        constraint.rhs = only(k for k in PSY.get_time_series_keys(constraint) if k.name == AEM.NEM_CONSTRAINT_SERIES.rhs) #hide
+        constraint.invoked = only(k for k in PSY.get_time_series_keys(constraint) if k.name == AEM.NEM_CONSTRAINT_SERIES.invoked) #hide
     end #hide
     return sys #hide
 end #hide

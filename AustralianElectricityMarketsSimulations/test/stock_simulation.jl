@@ -812,8 +812,7 @@ end
                 name = "N_GHOST", sense = ConstraintSense.LE, rhs = 1.0, terms = ConstraintTerm[UnitTerm("GHOST", BidType.ENERGY, 1.0)],
             )
             PSY.add_service!(sys, gc, [PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)])
-            add_toy_series!(sys, gc, stamps, "rhs", [100.0, 100.0])
-            add_toy_series!(sys, gc, stamps, "invoked", [1.0, 1.0]; scale = 1.0)
+            add_toy_constraint_series!(sys, gc, stamps, [100.0, 100.0], [1.0, 1.0])
         end,
     )
     @test_throws r"cannot model: N_GHOST \(missing_component\)" replay_template(ghost; template = with_generic_constraints!(energy_template()))
@@ -829,24 +828,34 @@ end
 @testset "MNSP metered ramp and fixed-loading inputs update between simulation steps" begin
     sys = mnsp_sentinel_system()
     ic = only(collect(PSY.get_components(PSY.AreaInterchange, sys)))
+    names = AustralianElectricityMarkets.NEM_MNSP_SERIES
+    derived = AEMS.NEM_MNSP_FIXED_LOAD_SERIES
+    # The bid's fixed loading is NaN where AEMO publishes NULL, so the first step is not invoked.
     inputs = (
-        "mnsp_initial_flow" => [0.0, 50.0],
-        "mnsp_forward_ramp_rate" => [2.0, 1.0],
-        "mnsp_reverse_ramp_rate" => [1000.0, 6.0],
-        "mnsp_forward_fixed_load" => [0.0, 20.0],
-        "mnsp_forward_fixed_load_invoked" => [0.0, 1.0],
+        names.initial_flow => [0.0, 50.0],
+        names.forward_ramp_rate => [2.0, 1.0],
+        names.reverse_ramp_rate => [1000.0, 6.0],
+        names.forward_fixed_load => [NaN, 20.0],
+    )
+    expected = (
+        names.initial_flow => [0.0, 50.0],
+        names.forward_ramp_rate => [2.0, 1.0],
+        names.reverse_ramp_rate => [1000.0, 6.0],
+        derived.forward_value => [0.0, 20.0],
+        derived.forward_invoked => [0.0, 1.0],
     )
     for (name, values) in inputs
         PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, ic, name)
         AustralianElectricityMarkets.replace_single_series!(sys, ic, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(collect(STOCK_STEPS), values)))
     end
+    AEMS._set_mnsp_fixed_loads!(sys)
     PSY.transform_single_time_series!(sys, TOY_RESOLUTION, TOY_RESOLUTION)
     sim = stock_simulate(sys)
     @test stock_flow.(sim.solved) ≈ [10.0, 20.0] atol = TOY_TOLERANCE
-    for (name, expected) in inputs
+    for (name, values) in expected
         P = first(only(filter(pair -> last(pair) == name, AEMS._MNSP_OPERATING_SERIES)))
         key = "$(nameof(P))__AreaInterchange"
-        @test stock_realized(sim.results, key, PSY.get_name(ic); scale = 1.0) ≈ expected atol = TOY_TOLERANCE
+        @test stock_realized(sim.results, key, PSY.get_name(ic); scale = 1.0) ≈ values atol = TOY_TOLERANCE
     end
     container = PSI.get_optimization_container(sim.model)
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))

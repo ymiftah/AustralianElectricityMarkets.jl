@@ -20,7 +20,7 @@ struct NEMConstraintLimit <: PSI.ConstraintType end
     NEMConstraintRHSParameter
 
 Time-series parameter type for a [`GenericConstraint`](@ref)'s right-hand side, fed from its
-`"rhs"` time series.
+right-hand side time series, in MW.
 """
 struct NEMConstraintRHSParameter <: PSI.TimeSeriesParameter end
 
@@ -262,7 +262,7 @@ struct GenericConstraintSlackDown <: PSI.VariableType end
     GenericConstraintSlackCostParameter
 
 Time-series cost parameter pricing a [`GenericConstraint`](@ref)'s elastic slacks: its value is
-the constraint's `"invoked"` mask (`1.0`/`0.0`) per interval, read at each simulation step. Each
+the constraint's invoked mask (`1.0`/`0.0`) per interval, read at each simulation step. Each
 slack's cost target scales the mask by the system base power, the interval coefficient of
 `GENERICCONSTRAINTWEIGHT` and the Market Price Cap, so a non-invoked interval's slack costs nothing.
 """

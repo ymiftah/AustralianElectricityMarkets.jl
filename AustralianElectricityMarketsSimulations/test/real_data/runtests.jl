@@ -399,8 +399,8 @@ end
     for gc in gcs
         name = PSY.get_name(gc)
         gencon_id = get(gc.ext, "gencon_id", nothing)
-        invoked_values = PSY.get_time_series_values(
-            PSY.SingleTimeSeries, gc, "invoked"; start_time = first(VIOLATION_STEPS), len = length(VIOLATION_STEPS),
+        invoked_values = PSY.IS.get_time_series_values(
+            gc, gc.invoked; start_time = first(VIOLATION_STEPS), len = length(VIOLATION_STEPS),
         )
         invoked = invoked_values .> 0.0
         invoked_dates = collect(VIOLATION_STEPS)[invoked]

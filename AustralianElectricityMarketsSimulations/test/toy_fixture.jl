@@ -62,6 +62,27 @@ function _toy_telemetry_fields(device)
     return NamedTuple{fieldnames(AustralianElectricityMarkets.NEMTelemetry)}(Tuple(getfield(current, f) for f in fieldnames(AustralianElectricityMarkets.NEMTelemetry)))
 end
 
+# Turns a toy unit's NaN telemetry statics into NaN series: AEM key-backs every DISPATCHLOAD limit,
+# and a NaN static cannot be written to the System JSON a simulation store holds.
+function _key_toy_telemetry_limits!(sys, stamps, device)
+    current = getproperty(device, :telemetry)
+    isnothing(current) && return
+    for field in (
+            :ramp_up_limit, :ramp_down_limit, :raise_reg_max_avail, :lower_reg_max_avail,
+            :raise_reg_enablement, :lower_reg_enablement,
+        )
+        value = getfield(current, field)
+        value isa Union{Real, Tuple} || continue
+        _has_nan(value) || continue
+        values = value isa Tuple ? fill(value, length(stamps)) : fill(Float64(value), length(stamps))
+        set_toy_unit_field!(sys, device, stamps, field, values)
+    end
+    return
+end
+
+_has_nan(value::Real) = isnan(value)
+_has_nan(value::Tuple) = any(isnan, value)
+
 function _toy_observed_fields(device)
     current = getproperty(device, :observed_state)
     isnothing(current) && return (initial_mw = 0.0, dispatch_mode = 0)
@@ -259,6 +280,9 @@ function nem_toy_system(
 
     isnothing(interchange) || add_toy_interchange!(sys, stamps, interchange)
     isnothing(mutate!) || mutate!(sys, stamps)
+    for T in (NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMStorage, NEMLoad)
+        foreach(device -> _key_toy_telemetry_limits!(sys, stamps, device), PSY.get_components(T, sys))
+    end
     isnothing(interchange) || set_loss_demand_coefficients!(sys)
     if tie_break_scales
         set_effective_offers!(sys)
@@ -323,47 +347,55 @@ function add_toy_interchange!(sys, stamps, ic)
         ),
     )
     isnothing(ic.mnsp) && return
-    PSY.add_time_series!(sys, interchange, AustralianElectricityMarkets.single_series("mnsp_initial_flow", TOY_START, zeros(length(stamps)), TOY_RESOLUTION))
-    for dir in ("forward", "reverse"), (field, value) in (("ramp_rate", 1000.0), ("fixed_load", 0.0), ("fixed_load_invoked", 0.0))
-        PSY.add_time_series!(sys, interchange, AustralianElectricityMarkets.single_series("mnsp_$(dir)_$field", TOY_START, fill(value, length(stamps)), TOY_RESOLUTION))
-    end
+    observed = _toy_series_key(sys, interchange, AustralianElectricityMarkets.NEM_MNSP_SERIES.initial_flow, zeros(length(stamps)))
+    PSY.add_supplemental_attribute!(sys, interchange, AustralianElectricityMarkets.NEMMNSPObservedState(; initial_flow = observed))
     for (dir, offer, tlfs) in zip(("forward", "reverse"), ic.mnsp, ic.mnsp_tlfs)
         per_stamp = first(offer) isa Tuple ? collect(offer) : fill(offer, length(stamps))
         curves = [_toy_offer(bands) for (_, bands) in per_stamp]
         avail = [Float64(max_avail) for (max_avail, _) in per_stamp]
-        for (name, values) in (("mnsp_$(dir)_offer", curves), ("mnsp_$(dir)_max_avail", avail))
-            PSY.add_time_series!(sys, interchange, AustralianElectricityMarkets.single_series(name, TOY_START, values, TOY_RESOLUTION))
-        end
-        PSY.get_ext(interchange)["mnsp_$dir"] = Dict{String, Any}("from_region_tlf" => tlfs[1], "to_region_tlf" => tlfs[2])
+        direction = dir == "forward" ? AustralianElectricityMarkets.MNSPDirection.FORWARD : AustralianElectricityMarkets.MNSPDirection.REVERSE
+        PSY.add_supplemental_attribute!(
+            sys, interchange,
+            AustralianElectricityMarkets.NEMMNSPLink(;
+                direction, link_id = "TOY_$dir", from_region_tlf = tlfs[1], to_region_tlf = tlfs[2],
+                lhs_factor = 1.0, max_capacity = 1000.0,
+            ),
+        )
+        PSY.add_supplemental_attribute!(
+            sys, interchange,
+            AustralianElectricityMarkets.NEMMNSPBid(;
+                direction,
+                offer_curves = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_offer")), curves),
+                max_avail = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_max_avail")), avail),
+                ramp_up = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_ramp_rate")), fill(1000.0, length(stamps))),
+                fixed_load = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_fixed_load")), fill(NaN, length(stamps))),
+            ),
+        )
     end
     return
 end
 
+# Adds `values` as the `SingleTimeSeries` `name` on `component` and returns its key.
+function _toy_series_key(sys, component, name::AbstractString, values)
+    PSY.add_time_series!(sys, component, AustralianElectricityMarkets.single_series(name, TOY_START, values, TOY_RESOLUTION))
+    return _toy_constraint_key(component, name)
+end
+
 # A single ENERGY `UnitTerm` `GenericConstraint` `name` of `sense` on `duid`'s ENERGY output at
-# `rhs_mw`, with "rhs"/"invoked" series on `stamps`, in the form `_add_nem_constraints!`
-# would produce. `rhs_mw` is a natural-MW value, stored per-unit of the system base. `rhs_mw` and
-# `invoked` take a scalar or one value per stamp.
+# `rhs_mw`, with its right-hand side and invoked mask as typed series on `stamps`, in the form
+# `_add_nem_constraints!` would produce. `rhs_mw` and `invoked` take a scalar or one value per stamp.
 function add_toy_generic_constraint!(
         sys, stamps, duid, rhs_mw; invoked = 1.0, sense = ConstraintSense.LE, name = "N_TOY_LIMIT",
     )
-    base_power = PSY.get_base_power(sys)
-    rhs_pu = _toy_values(rhs_mw, length(stamps)) ./ base_power
     duids = duid isa AbstractString ? [duid] : collect(duid)
     gc = GenericConstraint(;
         name = name,
         sense = sense,
-        rhs = first(rhs_pu),
+        rhs = first(_toy_values(rhs_mw, length(stamps))),
         terms = ConstraintTerm[UnitTerm(d, BidType.ENERGY, 1.0) for d in duids],
     )
     PSY.add_service!(sys, gc, [PSY.get_component(AustralianElectricityMarkets.NEMThermalGen, sys, d) for d in duids])
-    PSY.add_time_series!(
-        sys, gc,
-        PSY.SingleTimeSeries(; name = "rhs", data = PSY.TimeSeries.TimeArray(stamps, rhs_pu)),
-    )
-    PSY.add_time_series!(
-        sys, gc,
-        PSY.SingleTimeSeries(; name = "invoked", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(invoked, length(stamps)))),
-    )
+    add_toy_constraint_series!(sys, gc, stamps, rhs_mw, invoked)
     return
 end
 
@@ -547,22 +579,47 @@ function replace_single_series_with!(sys, device, name, values, stamps)
     return
 end
 
+# Attaches `gc`'s right-hand side (`rhs_mw`, MW) and invoked mask as its typed series, named by
+# `NEM_CONSTRAINT_SERIES`, and points `gc.rhs` and `gc.invoked` at them.
+function add_toy_constraint_series!(sys, gc, stamps, rhs_mw, invoked)
+    n = length(stamps)
+    PSY.add_time_series!(
+        sys, gc,
+        PSY.SingleTimeSeries(; name = AustralianElectricityMarkets.NEM_CONSTRAINT_SERIES.rhs, data = PSY.TimeSeries.TimeArray(stamps, _toy_values(rhs_mw, n))),
+    )
+    PSY.add_time_series!(
+        sys, gc,
+        PSY.SingleTimeSeries(; name = AustralianElectricityMarkets.NEM_CONSTRAINT_SERIES.invoked, data = PSY.TimeSeries.TimeArray(stamps, _toy_values(invoked, n))),
+    )
+    gc.rhs = _toy_constraint_key(gc, AustralianElectricityMarkets.NEM_CONSTRAINT_SERIES.rhs)
+    gc.invoked = _toy_constraint_key(gc, AustralianElectricityMarkets.NEM_CONSTRAINT_SERIES.invoked)
+    return
+end
+
+# The key named `name` on `gc`, preferring the deterministic one that a transform leaves beside the single series.
+function _toy_constraint_key(gc, name::AbstractString)
+    keys = [k for k in PSY.IS.get_time_series_keys(gc) if k.name == name]
+    deterministic = [k for k in keys if k.time_series_type <: PSY.DeterministicSingleTimeSeries]
+    return only(isempty(deterministic) ? keys : deterministic)
+end
+
+# The values of `gc`'s series in `field` (`:rhs` or `:invoked`), read through its key.
+_constraint_series(gc, field::Symbol) = PSY.TimeSeries.values(PSY.get_time_series_array(gc, PSY.IS.get_time_series(gc, getproperty(gc, field))))
+
 function add_toy_series!(sys, component, stamps, name, values; scale = 1 / PSY.get_base_power(sys))
     PSY.add_time_series!(sys, component, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(stamps, Float64.(values) .* scale)))
     return
 end
 # An `FCASService` `"1_<BIDTYPE>"` over `duids` and its GE requirement `name` of `rhs_mw` per stamp.
 function add_toy_fcas_market!(sys, stamps, bid_type, duids, name, rhs_mw)
-    base_power = PSY.get_base_power(sys)
     devices = [PSY.get_component(PSY.Device, sys, d) for d in duids]
     PSY.add_service!(sys, FCASService(; name = "1_$(string(bid_type))", region = "1", bid_type), devices)
     gc = GenericConstraint(;
-        name, sense = ConstraintSense.GE, rhs = rhs_mw[1] / base_power,
+        name, sense = ConstraintSense.GE, rhs = rhs_mw[1],
         terms = ConstraintTerm[UnitTerm(d, bid_type, 1.0) for d in duids], fcas_requirements = [FCASRequirement("1", bid_type)],
     )
     PSY.add_service!(sys, gc, devices)
-    add_toy_series!(sys, gc, stamps, "rhs", rhs_mw)
-    add_toy_series!(sys, gc, stamps, "invoked", [1.0, 1.0]; scale = 1.0)
+    add_toy_constraint_series!(sys, gc, stamps, rhs_mw, [1.0, 1.0])
     return
 end
 # Alta and Park City offer RAISE6SEC, Alta also RAISEREG and LOWERREG, `TOY_BATTERY` RAISEREG on both

@@ -64,8 +64,8 @@ end
 
 # The stamps at which `sys`'s generic constraint `name` is invoked.
 function _invoked_stamps(sys::PSY.System, name::AbstractString)
-    ts = PSY.get_time_series(PSY.SingleTimeSeries, PSY.get_component(GenericConstraint, sys, name), "invoked")
-    data = PSY.get_data(ts)
+    constraint = PSY.get_component(GenericConstraint, sys, name)
+    data = PSY.get_data(IS.get_time_series(constraint, _constraint_key(constraint, :invoked, NEM_CONSTRAINT_SERIES.invoked)))
     return Set(t for (t, v) in zip(PSY.TimeSeries.timestamp(data), PSY.TimeSeries.values(data)) if v != 0.0)
 end
 

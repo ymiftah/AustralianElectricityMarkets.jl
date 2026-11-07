@@ -127,7 +127,7 @@ end
         # The mock offers Basslink-like links on IC2 (300 MW available) for the intervals up to 04:00.
         sys = prepared_test_system(db, t:Minute(5):(t + Minute(10)))
         ic2 = get_component(AreaInterchange, sys, "IC2")
-        @test has_time_series(ic2, SingleTimeSeries, "mnsp_forward_max_avail")
+        @test !isempty(get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPBid, ic2))
         result = replay_steps(db, t:DISPATCH_INTERVAL:t; interval_flow_limits = true)
         @test any(
             k -> PSI.IS.Optimization.get_entry_type(k) === MNSPLinkFlowVariable,

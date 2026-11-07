@@ -118,6 +118,28 @@ function _solve_loss(sys)
     return model, PSI.OptimizationProblemResults(model)
 end
 
+# Adds `values` on `grid` as the `SingleTimeSeries` `name` of `ic`, replacing any earlier one, and returns its key.
+function _add_key!(sys, ic, grid, name::AbstractString, values)
+    # A transform leaves the series deterministic, which must go before its single-series origin.
+    PSY.has_time_series(ic, PSY.DeterministicSingleTimeSeries, name) && PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, ic, name)
+    PSY.has_time_series(ic, PSY.SingleTimeSeries, name) && PSY.remove_time_series!(sys, PSY.SingleTimeSeries, ic, name)
+    PSY.add_time_series!(sys, ic, PSY.SingleTimeSeries(; name, data = TimeArray(grid, values)))
+    return only(k for k in PSY.IS.get_time_series_keys(ic) if k.name == name)
+end
+
+# Gives `ic` the per-interval flow limits `from_to` and `to_from` (MW) as its `NEMInterconnectorLimits`.
+function _add_interconnector_limits!(sys, ic, grid, from_to, to_from)
+    for old in PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMInterconnectorLimits, ic)
+        PSY.remove_supplemental_attribute!(sys, ic, old)
+    end
+    limits = AustralianElectricityMarkets.NEMInterconnectorLimits(;
+        from_to_limit = _add_key!(sys, ic, grid, AustralianElectricityMarkets.NEM_INTERCONNECTOR_SERIES.from_to_limit, fill(Float64(from_to), length(grid))),
+        to_from_limit = _add_key!(sys, ic, grid, AustralianElectricityMarkets.NEM_INTERCONNECTOR_SERIES.to_from_limit, fill(Float64(to_from), length(grid))),
+    )
+    PSY.add_supplemental_attribute!(sys, ic, limits)
+    return
+end
+
 @testset "missing/ambiguous InterconnectorLossModel throws" begin
     sys = augmented_pscb_system()
     model = _decision_model(_loss_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
@@ -275,11 +297,7 @@ end
         end
         load = first(PSY.get_components(PSY.PowerLoad, sys))
         grid = collect(timestamp(PSY.get_data(PSY.get_time_series(PSY.SingleTimeSeries, load, "max_active_power"))))
-        for (name, ratio) in (("from_to_flow_limit", from_to_ratio), ("to_from_flow_limit", to_from_ratio))
-            PSY.add_time_series!(
-                sys, ic1, PSY.SingleTimeSeries(; name = name, data = TimeArray(grid, fill(ratio, length(grid)))),
-            )
-        end
+        _add_interconnector_limits!(sys, ic1, grid, from_to_ratio * from_to_static, to_from_ratio * to_from_static)
         PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
         model, res = _solve_loss(sys)
         flow_df = PSI.read_variable(PSI.OptimizationProblemResults(model), "FlowActivePowerVariable__AreaInterchange")
@@ -361,11 +379,7 @@ end
     end
     load = first(PSY.get_components(PSY.PowerLoad, sys))
     grid = collect(timestamp(PSY.get_data(PSY.get_time_series(PSY.SingleTimeSeries, load, "max_active_power"))))
-    for (name, ratio) in (("from_to_flow_limit", -0.1), ("to_from_flow_limit", 0.05))
-        PSY.add_time_series!(
-            sys, ic1, PSY.SingleTimeSeries(; name = name, data = TimeArray(grid, fill(ratio, length(grid)))),
-        )
-    end
+    _add_interconnector_limits!(sys, ic1, grid, -10.0, 5.0)
     PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
     model, res = _solve_loss(sys)
     surplus = PSI.read_variable(res, "InterconnectorFlowSurplusSlack__AreaInterchange")
@@ -488,29 +502,44 @@ end
     @test !PSI.has_container_key(container, AEMS.InterconnectorLossVariable, PSY.AreaInterchange)
 end
 
-# Operating-input helper for MNSP regressions; values use the setter's natural MW/MW-min units.
+
+# Operating-input helper for MNSP regressions; values use the setter's natural MW/MW-min units. Replaces the
+# operating keys of the link bids and the observed flow of an interchange that already has offers.
 function _mnsp_operating_series!(sys; initial = 0.0, up = 1000.0, down = 1000.0, fixed_forward = nothing, fixed_reverse = nothing)
     ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
     load = first(PSY.get_components(PSY.PowerLoad, sys))
     stamps = collect(timestamp(PSY.get_data(PSY.get_time_series(PSY.SingleTimeSeries, load, "max_active_power"))))
-    values = Pair{String, Any}["mnsp_initial_flow" => initial]
-    for (dir, ramp, fixed) in (("forward", up, fixed_forward), ("reverse", down, fixed_reverse))
-        append!(
-            values, [
-                "mnsp_$(dir)_ramp_rate" => ramp,
-                "mnsp_$(dir)_fixed_load" => (isnothing(fixed) ? 0.0 : fixed),
-                "mnsp_$(dir)_fixed_load_invoked" => (isnothing(fixed) ? 0.0 : 1.0),
-            ]
+    names = AustralianElectricityMarkets.NEM_MNSP_SERIES
+    for old in PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPObservedState, ic)
+        PSY.remove_supplemental_attribute!(sys, ic, old)
+    end
+    PSY.add_supplemental_attribute!(
+        sys, ic,
+        AustralianElectricityMarkets.NEMMNSPObservedState(;
+            initial_flow = _add_key!(sys, ic, stamps, names.initial_flow, fill(Float64(initial), length(stamps))),
+        ),
+    )
+    for (dir, direction, ramp, fixed) in (
+            ("forward", AustralianElectricityMarkets.MNSPDirection.FORWARD, up, fixed_forward),
+            ("reverse", AustralianElectricityMarkets.MNSPDirection.REVERSE, down, fixed_reverse),
+        )
+        bid = only(b for b in PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPBid, ic) if b.direction == direction)
+        PSY.remove_supplemental_attribute!(sys, ic, bid)
+        PSY.add_supplemental_attribute!(
+            sys, ic,
+            AustralianElectricityMarkets.NEMMNSPBid(;
+                direction,
+                offer_curves = bid.offer_curves,
+                max_avail = bid.max_avail,
+                ramp_up = _add_key!(sys, ic, stamps, getproperty(names, Symbol(dir, "_ramp_rate")), fill(Float64(ramp), length(stamps))),
+                fixed_load = _add_key!(
+                    sys, ic, stamps, getproperty(names, Symbol(dir, "_fixed_load")),
+                    fill(isnothing(fixed) ? NaN : Float64(fixed), length(stamps)),
+                ),
+            ),
         )
     end
-    for (name, value) in values
-        if PSY.has_time_series(ic, PSY.DeterministicSingleTimeSeries, name)
-            PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, ic, name)
-        end
-        AustralianElectricityMarkets.replace_single_series!(
-            sys, ic, PSY.SingleTimeSeries(; name, data = TimeArray(stamps, (value isa Number ? fill(Float64(value), length(stamps)) : Float64.(value)))),
-        )
-    end
+    AEMS._set_mnsp_fixed_loads!(sys)
     PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
     return ic
 end
@@ -538,14 +567,34 @@ function _attach_mnsp_offers!(
         else
             fill(curve, length(grid))
         end
-        for (name, value) in (("mnsp_$(dir)_offer", offers), ("mnsp_$(dir)_max_avail", fill(Float64(max_avail), length(grid))))
-            PSY.add_time_series!(
-                sys, ic, PSY.SingleTimeSeries(; name = name, data = TimeArray(grid, value)),
-            )
+        direction = dir == "forward" ? AustralianElectricityMarkets.MNSPDirection.FORWARD : AustralianElectricityMarkets.MNSPDirection.REVERSE
+        names = AustralianElectricityMarkets.NEM_MNSP_SERIES
+        for old in PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPBid, ic)
+            old.direction == direction && PSY.remove_supplemental_attribute!(sys, ic, old)
         end
-        PSY.get_ext(ic)["mnsp_$dir"] = Dict{String, Any}("from_region_tlf" => tlfs[1], "to_region_tlf" => tlfs[2])
+        for old in PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPLink, ic)
+            old.direction == direction && PSY.remove_supplemental_attribute!(sys, ic, old)
+        end
+        PSY.add_supplemental_attribute!(
+            sys, ic,
+            AustralianElectricityMarkets.NEMMNSPLink(;
+                direction, link_id = "TEST_$dir", from_region_tlf = tlfs[1], to_region_tlf = tlfs[2],
+                lhs_factor = 1.0, max_capacity = 1000.0,
+            ),
+        )
+        PSY.add_supplemental_attribute!(
+            sys, ic,
+            AustralianElectricityMarkets.NEMMNSPBid(;
+                direction,
+                offer_curves = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_offer")), offers),
+                max_avail = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_max_avail")), fill(Float64(max_avail), length(grid))),
+                ramp_up = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_ramp_rate")), fill(1000.0, length(grid))),
+                fixed_load = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_fixed_load")), fill(NaN, length(grid))),
+            ),
+        )
     end
     _mnsp_operating_series!(sys)
+    AEMS._set_mnsp_fixed_loads!(sys)
     PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
     return ic
 end
@@ -586,18 +635,25 @@ end
     @test !AEMS._has_mnsp_offers(ic)  # no offers and not an MNSP: the free-flow model
     @test isnothing(AEMS._check_mnsp_offers(ic))
 
-    PSY.get_ext(ic)["ic_type"] = "MNSP"
+    registration = AustralianElectricityMarkets.NEMInterconnectorRegistration(; kind = AustralianElectricityMarkets.InterconnectorKind.MNSP)
+    PSY.add_supplemental_attribute!(sys, ic, registration)
     @test !AEMS._has_mnsp_offers(ic)
     @test_throws r"is an MNSP with incomplete directional offer inputs" AEMS._check_mnsp_offers(ic)
+    PSY.remove_supplemental_attribute!(sys, ic, registration)
 
-    delete!(PSY.get_ext(ic), "ic_type")
     partial = _loss_test_system(;
         breakpoints = [-1000.0, 1000.0], mutate! = sys -> begin
             ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
             load = first(PSY.get_components(PSY.PowerLoad, sys))
             grid = collect(timestamp(PSY.get_data(PSY.get_time_series(PSY.SingleTimeSeries, load, "max_active_power"))))
-            PSY.add_time_series!(
-                sys, ic, PSY.SingleTimeSeries(; name = "mnsp_forward_max_avail", data = TimeArray(grid, fill(10.0, length(grid)))),
+            PSY.add_supplemental_attribute!(
+                sys, ic,
+                AustralianElectricityMarkets.NEMMNSPBid(;
+                    direction = AustralianElectricityMarkets.MNSPDirection.FORWARD,
+                    offer_curves = PSY.PiecewiseStepData([0.0, 10.0], [1.0]),
+                    max_avail = _add_key!(sys, ic, grid, AustralianElectricityMarkets.NEM_MNSP_SERIES.forward_max_avail, fill(10.0, length(grid))),
+                    ramp_up = 1.0,
+                ),
             )
         end
     )

@@ -858,9 +858,19 @@ function _add_area_interfaces!(sys, interconnectors)
                 "from_region_loss_factor" => row[:from_region_loss_factor],
                 "loss_constant" => row[:loss_constant],
                 "loss_flow_coefficient" => row[:loss_flow_coefficient],
-                "ic_type" => row[:ic_type],
             )
         ) for row in eachrow(interconnectors)
     )
-    return add_components!(sys, area_interchanges)
+    add_components!(sys, area_interchanges)
+    for row in eachrow(interconnectors)
+        kind = get(_INTERCONNECTOR_KINDS, row[:ic_type], nothing)
+        isnothing(kind) && throw(ArgumentError("interconnector $(row[:name]) has no valid ICTYPE ($(repr(row[:ic_type])))"))
+        add_supplemental_attribute!(
+            sys, get_component(AreaInterchange, sys, row[:name]),
+            NEMInterconnectorRegistration(; kind),
+        )
+    end
+    return
 end
+
+const _INTERCONNECTOR_KINDS = Dict("REGULATED" => InterconnectorKind.REGULATED, "MNSP" => InterconnectorKind.MNSP)

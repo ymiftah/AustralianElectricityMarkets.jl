@@ -7,16 +7,16 @@ function PSI.convert_result_to_natural_units(::Type{InterconnectorLossSegmentVar
 end
 
 
-# PSI's flow-limit series names for `AreaInterchange`, plus the loss-factor demand coefficient.
+# PSI's flow-limit and MNSP offer series names for `AreaInterchange`, plus the loss-factor demand coefficient.
 function PSI.get_default_time_series_names(::Type{PSY.AreaInterchange}, ::Type{NEMInterconnectorLoss})
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
-        PSI.FromToFlowLimitParameter => NEM_SERIES.from_to_flow_limit,
-        PSI.ToFromFlowLimitParameter => NEM_SERIES.to_from_flow_limit,
+        PSI.FromToFlowLimitParameter => NEM_INTERCONNECTOR_SERIES.from_to_limit,
+        PSI.ToFromFlowLimitParameter => NEM_INTERCONNECTOR_SERIES.to_from_limit,
         LossDemandCoefficientParameter => NEM_SERIES.loss_demand_coefficient,
-        MNSPForwardBandWidthParameter => mnsp_series_name("forward", "offer"),
-        MNSPReverseBandWidthParameter => mnsp_series_name("reverse", "offer"),
-        MNSPForwardMaxAvailParameter => mnsp_series_name("forward", "max_avail"),
-        MNSPReverseMaxAvailParameter => mnsp_series_name("reverse", "max_avail"),
+        MNSPForwardBandWidthParameter => NEM_MNSP_SERIES.forward_offer,
+        MNSPReverseBandWidthParameter => NEM_MNSP_SERIES.reverse_offer,
+        MNSPForwardMaxAvailParameter => NEM_MNSP_SERIES.forward_max_avail,
+        MNSPReverseMaxAvailParameter => NEM_MNSP_SERIES.reverse_max_avail,
         _MNSP_OPERATING_SERIES...,
     )
 end
@@ -24,6 +24,48 @@ end
 
 function PSI.get_multiplier_value(::LossDemandCoefficientParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss)
     return 1.0
+end
+
+# The from-to parameter holds the negated lower bound in MW, so its multiplier is -1; the constraints divide by the system base power.
+function PSI.get_multiplier_value(::PSI.FromToFlowLimitParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss)
+    return -1.0
+end
+
+function PSI.get_multiplier_value(::PSI.ToFromFlowLimitParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss)
+    return 1.0
+end
+
+
+"""
+    _interconnector_limits(device) -> Union{NEMInterconnectorLimits, Nothing}
+
+The single [`NEMInterconnectorLimits`](@ref) of `device`, or `nothing` when it carries none. Throws
+`ArgumentError` when it carries more than one.
+"""
+function _interconnector_limits(device::PSY.AreaInterchange)
+    limits = PSY.get_supplemental_attributes(NEMInterconnectorLimits, device)
+    isempty(limits) && return nothing
+    length(limits) == 1 || throw(
+        ArgumentError("AreaInterchange \"$(PSY.get_name(device))\" carries $(length(limits)) NEMInterconnectorLimits; it requires one."),
+    )
+    return only(limits)
+end
+
+
+"""
+    _flow_limit_keys(device) -> NamedTuple
+
+The `(from_to, to_from)` series keys of `device`'s [`NEMInterconnectorLimits`](@ref). Throws
+`ArgumentError` naming `device` unless both are keys named by [`NEM_INTERCONNECTOR_SERIES`](@ref).
+"""
+function _flow_limit_keys(device::PSY.AreaInterchange)
+    limits = _interconnector_limits(device)
+    name = PSY.get_name(device)
+    (!isnothing(limits) && limits.from_to_limit isa IS.TimeSeriesKey && limits.to_from_limit isa IS.TimeSeriesKey) ||
+        throw(ArgumentError("AreaInterchange \"$name\" has no time-series flow limits in both directions; it requires both keys in its NEMInterconnectorLimits."))
+    _require_key_name(device, limits.from_to_limit, NEM_INTERCONNECTOR_SERIES.from_to_limit)
+    _require_key_name(device, limits.to_from_limit, NEM_INTERCONNECTOR_SERIES.to_from_limit)
+    return (from_to = limits.from_to_limit, to_from = limits.to_from_limit)
 end
 
 # --- attached `InterconnectorLossModel` + per-interconnector validation ---
@@ -379,6 +421,7 @@ function _add_flow_limit_constraint!(
             end
         end
     else
+        base_power = PSI.get_base_power(container)
         param_from_to = PSI.get_parameter(
             container, PSI.FromToFlowLimitParameter(), PSY.AreaInterchange,
         )
@@ -397,10 +440,10 @@ function _add_flow_limit_constraint!(
             refs_to_from = PSI.get_parameter_column_refs(param_to_from, name)
             for t in time_steps
                 con_lb[name, t] = JuMP.@constraint(
-                    jm, var_array[name, t] + deficit[name, t] >= mult_from_to[name, t] * refs_from_to[t]
+                    jm, var_array[name, t] + deficit[name, t] >= mult_from_to[name, t] * refs_from_to[t] / base_power
                 )
                 con_ub[name, t] = JuMP.@constraint(
-                    jm, var_array[name, t] - surplus[name, t] <= mult_to_from[name, t] * refs_to_from[t]
+                    jm, var_array[name, t] - surplus[name, t] <= mult_to_from[name, t] * refs_to_from[t] / base_power
                 )
             end
         end
@@ -443,16 +486,7 @@ function PSI.construct_device!(
         network_model,
     )
     if all(has_ts)
-        for device in devices
-            name = PSY.get_name(device)
-            if !all(series -> PSY.has_time_series(device, PSY.SingleTimeSeries, series), _FLOW_LIMIT_SERIES)
-                throw(
-                    ArgumentError(
-                        "AreaInterchange $name has less than two time series. It is required to add both from_to and to_from time series.",
-                    ),
-                )
-            end
-        end
+        foreach(_flow_limit_keys, devices)
         PSI.add_parameters!(container, PSI.FromToFlowLimitParameter, devices, device_model)
         PSI.add_parameters!(container, PSI.ToFromFlowLimitParameter, devices, device_model)
     end

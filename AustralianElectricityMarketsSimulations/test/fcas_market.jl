@@ -690,15 +690,14 @@ function _build_bdu_regulation(
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG), [bat])
     derive_toy_offers!(sys)
     if !isnothing(requirement_mw)
-        rhs_pu = requirement_mw / get_base_power(sys)
+        rhs_pu = requirement_mw
         gc = GenericConstraint(;
             name = "F_BDU", sense = ConstraintSense.GE, rhs = rhs_pu,
             terms = ConstraintTerm[UnitTerm("BAT1", BidType.RAISEREG, 1.0)],
             fcas_requirements = [FCASRequirement("TAS1", BidType.RAISEREG)],
         )
         add_service!(sys, gc, [bat])
-        add_toy_series!(sys, gc, stamps, "rhs", fill(rhs_pu, length(stamps)); scale = 1.0)
-        add_toy_series!(sys, gc, stamps, "invoked", fill(1.0, length(stamps)); scale = 1.0)
+        add_toy_constraint_series!(sys, gc, stamps, fill(rhs_pu, length(stamps)), fill(1.0, length(stamps)))
     end
     set_effective_offers!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
@@ -1718,14 +1717,12 @@ function fcas_requirement_toy_system(bids, gcs)
                 derive_toy_offers!(sys)
             end
             for (name, sense, rhs_mw, terms, requirements) in gcs
-                rhs_pu = rhs_mw / PSY.get_base_power(sys)
                 gc = GenericConstraint(;
-                    name = name, sense = sense, rhs = rhs_pu, terms = ConstraintTerm[terms...],
+                    name = name, sense = sense, rhs = rhs_mw, terms = ConstraintTerm[terms...],
                     fcas_requirements = [FCASRequirement("1", bt) for bt in requirements],
                 )
                 PSY.add_service!(sys, gc, [device])
-                add_toy_series!(sys, gc, stamps, "rhs", fill(rhs_pu, length(stamps)); scale = 1.0)
-                add_toy_series!(sys, gc, stamps, "invoked", fill(1.0, length(stamps)); scale = 1.0)
+                add_toy_constraint_series!(sys, gc, stamps, fill(rhs_mw, length(stamps)), fill(1.0, length(stamps)))
             end
         end,
     )
@@ -2021,15 +2018,14 @@ end
                 sys, FCASService(; name = fcas_service_name(load, bid_type), region = "1", bid_type = bid_type), [load],
             )
             derive_toy_offers!(sys)
-            rhs_pu = 5.0 / PSY.get_base_power(sys)
+            rhs_pu = 5.0
             gc = GenericConstraint(;
                 name = "F_TOY", sense = ConstraintSense.GE, rhs = rhs_pu,
                 terms = ConstraintTerm[UnitTerm("PUMP", bid_type, 1.0)],
                 fcas_requirements = [FCASRequirement("1", bid_type)],
             )
             PSY.add_service!(sys, gc, [load])
-            add_toy_series!(sys, gc, stamps, "rhs", fill(rhs_pu, length(stamps)); scale = 1.0)
-            add_toy_series!(sys, gc, stamps, "invoked", fill(1.0, length(stamps)); scale = 1.0)
+            add_toy_constraint_series!(sys, gc, stamps, fill(rhs_pu, length(stamps)), fill(1.0, length(stamps)))
         end,
     )
     results = solve_fcas_requirement(sys, [bid_type], ["F_TOY"]; steps = 2)
@@ -2128,14 +2124,13 @@ end
         mutate! = (sys, stamps) -> begin
             make_non_scheduled_fcas_load!(sys, stamps)
             load = PSY.get_component(NEMLoad, sys, "ASLOAD")
-            rhs_pu = 5.0 / PSY.get_base_power(sys)
+            rhs_pu = 5.0
             gc = GenericConstraint(;
                 name = "PULL_LOAD", sense = ConstraintSense.GE, rhs = rhs_pu,
                 terms = ConstraintTerm[UnitTerm("ASLOAD", BidType.ENERGY, 1.0)],
             )
             PSY.add_service!(sys, gc, [load])
-            add_toy_series!(sys, gc, stamps, "rhs", fill(rhs_pu, length(stamps)); scale = 1.0)
-            add_toy_series!(sys, gc, stamps, "invoked", fill(1.0, length(stamps)); scale = 1.0)
+            add_toy_constraint_series!(sys, gc, stamps, fill(rhs_pu, length(stamps)), fill(1.0, length(stamps)))
         end,
     )
     template = fcas_toy_template(sys, ["TAS1_RAISE6SEC"])

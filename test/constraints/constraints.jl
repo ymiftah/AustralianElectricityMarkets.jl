@@ -316,11 +316,11 @@ end
     @test vname("N_PARTIAL_COVERAGE") in added
     partial_gc = get_component(GenericConstraint, sys, vname("N_PARTIAL_COVERAGE"))
     base_power = get_base_power(sys)
-    partial_rhs = get_time_series_values(SingleTimeSeries, partial_gc, "rhs")
-    partial_invoked = get_time_series_values(SingleTimeSeries, partial_gc, "invoked")
+    partial_rhs = _constraint_series(partial_gc, :rhs)
+    partial_invoked = _constraint_series(partial_gc, :invoked)
     @test length(partial_rhs) == 12
     @test length(partial_rhs) == length(date_range) - 1  # grid spans date_range, not invocations
-    @test all(==(150.0 / base_power), partial_rhs)  # constant RHS - forward-fill is a no-op here
+    @test all(==(150.0), partial_rhs)  # constant RHS - forward-fill is a no-op here
     @test partial_invoked == [isodd(i) ? 0.0 : 1.0 for i in 0:11]
 
     gc = get_component(GenericConstraint, sys, vname("F_VIC1_RAISE6SEC"))
@@ -344,7 +344,7 @@ end
     nsw1_raise6sec = get_component(GenericConstraint, sys, vname("F_NSW1_RAISE6SEC"))
     @test any(t -> t isa InterconnectorTerm && get_interconnector(t) == "IC1", get_terms(nsw1_raise6sec))
 
-    rhs_values = get_time_series_values(SingleTimeSeries, gc, "rhs")
+    rhs_values = _constraint_series(gc, :rhs)
     @test issorted(rhs_values)  # RHS = 50.0 + 0.1*i, confirmed time-varying in Task 8
 
 
@@ -450,7 +450,7 @@ end
         gap_sys = nem_system(gap_db, RegionalNetworkConfiguration())
         build_constraints!(gap_sys, gap_db, date_range)
         gap_gc = get_component(GenericConstraint, gap_sys, vname("N_BAYSW_THERMAL"))
-        rhs_len = length(get_time_series_values(SingleTimeSeries, gap_gc, "rhs"))
+        rhs_len = length(_constraint_series(gap_gc, :rhs))
         @test rhs_len == length(date_range) - 1
         @test rhs_len != length(unique(invoked_gap.SETTLEMENTDATE))
     end
@@ -489,7 +489,7 @@ end
         sys_default = nem_system(db, RegionalNetworkConfiguration())
         build_constraints!(sys_default, db, date_range)
         gc_default = get_component(GenericConstraint, sys_default, vname("N_BAYSW_THERMAL"))
-        rhs_ts_default = get_time_series(SingleTimeSeries, gc_default, "rhs")
+        rhs_ts_default = PowerSystems.IS.get_time_series(gc_default, gc_default.rhs)
         @test get_resolution(rhs_ts_default) == Minute(5)
 
 
@@ -597,14 +597,14 @@ end
             )
             gc = get_component(GenericConstraint, zero_sys, zname(id))
             @test get_sense(gc) == ConstraintSense.LE
-            @test gc.rhs == 0.0
+            @test all(==(0.0), _constraint_series(gc, :rhs))
             @test get_source(gc) == "built-in"
             @test get_limit_type(gc) == "Interconnector Zero"
             term = only(get_terms(gc))
             @test term isa InterconnectorTerm
             @test get_interconnector(term) == interconnector
             @test get_factor(term) == factor
-            rhs_z = get_time_series_values(SingleTimeSeries, gc, "rhs")
+            rhs_z = _constraint_series(gc, :rhs)
             @test all(==(0.0), rhs_z)
         end
 

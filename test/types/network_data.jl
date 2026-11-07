@@ -27,11 +27,22 @@ _nw_interchange(name::String, from::Area, to::Area) = AreaInterchange(;
 
     bid = AEM.NEMMNSPBid(;
         direction = AEM.MNSPDirection.REVERSE, offer_curves = PowerSystems.PiecewiseStepData([0.0, 10.0], [5.0]),
-        max_avail = 80, ramp_up = 1.5, ramp_down = 2.5,
+        max_avail = 80, ramp_up = 1.5,
     )
     @test bid.direction == AEM.MNSPDirection.REVERSE
     @test bid.max_avail === 80.0
+    @test bid.ramp_up === 1.5
     @test isnothing(bid.fixed_load)
+
+    link = AEM.NEMMNSPLink(;
+        direction = AEM.MNSPDirection.FORWARD, link_id = "BLNK", from_region_tlf = 1, to_region_tlf = 0.99,
+        lhs_factor = 2, max_capacity = 600,
+    )
+    @test link.link_id == "BLNK"
+    @test link.max_capacity === 600.0
+    @test link.to_region_tlf === 0.99
+
+    @test AEM.NEMInterconnectorRegistration(; kind = AEM.InterconnectorKind.MNSP).kind == AEM.InterconnectorKind.MNSP
 
     @test AEM.NEMMNSPObservedState(; initial_flow = 12).initial_flow === 12.0
     @test AEM.NEMMNSPObservedState(; initial_flow = _nw_key("flow")).initial_flow isa _NW_IS.TimeSeriesKey
@@ -59,9 +70,17 @@ end
         AEM.NEMMNSPBid(;
             direction = AEM.MNSPDirection.FORWARD,
             offer_curves = PowerSystems.PiecewiseStepData([0.0, 10.0, 20.0], [5.0, 50.0]),
-            max_avail = _nw_key(mnsp, "max_fwd"), ramp_up = 1.0, ramp_down = 2.0, fixed_load = nothing,
+            max_avail = _nw_key(mnsp, "max_fwd"), ramp_up = 1.0, fixed_load = nothing,
         ),
     )
+    add_supplemental_attribute!(
+        sys, mnsp,
+        AEM.NEMMNSPLink(;
+            direction = AEM.MNSPDirection.FORWARD, link_id = "BLNKTAS", from_region_tlf = 1.0,
+            to_region_tlf = 0.9907, lhs_factor = 2.0, max_capacity = 600.0,
+        ),
+    )
+    add_supplemental_attribute!(sys, ic, AEM.NEMInterconnectorRegistration(; kind = AEM.InterconnectorKind.REGULATED))
     add_supplemental_attribute!(
         sys, mnsp, AEM.NEMMNSPObservedState(; initial_flow = _nw_key(mnsp, "initial_flow")),
     )
@@ -90,6 +109,12 @@ end
         @test _NW_IS.get_time_series_values(
             mnsp_back, back_bid.max_avail; start_time = first(_NW_STAMPS), len = 1,
         ) == [1.0]
+
+        back_link = only(get_supplemental_attributes(AEM.NEMMNSPLink, mnsp_back))
+        @test back_link.link_id == "BLNKTAS"
+        @test back_link.to_region_tlf === 0.9907
+        back_registration = only(get_supplemental_attributes(AEM.NEMInterconnectorRegistration, ic_back))
+        @test back_registration.kind == AEM.InterconnectorKind.REGULATED
 
         back_state = only(get_supplemental_attributes(AEM.NEMMNSPObservedState, mnsp_back))
         @test _NW_IS.get_time_series_values(
@@ -203,4 +228,16 @@ end
     @test stored == twin
     @test hash(stored) == hash(twin)
     @test hash(stored) != hash(AEM.NEMBuildReport())
+end
+
+@testset "a constraint's keyed rhs resolves to the same values after transform_single_time_series!" begin
+    sys = System(100.0)
+    gc = GenericConstraint(; name = "N_TRANSFORM", sense = ConstraintSense.LE, rhs = 0.0)
+    add_component!(sys, gc)
+    add_time_series!(sys, gc, AEM.single_series("constraint_rhs", first(_NW_STAMPS), collect(1.0:length(_NW_STAMPS)), Minute(5)))
+    gc.rhs = _nw_key(gc, "constraint_rhs")
+    PowerSystems.transform_single_time_series!(sys, Minute(10), Minute(5))
+    @test AEM.get_rhs(gc, _NW_STAMPS[1]) == 1.0
+    @test AEM.get_rhs(gc, _NW_STAMPS[3]) == 3.0
+    @test AEM.get_rhs(gc, _NW_STAMPS[5]) == 5.0
 end

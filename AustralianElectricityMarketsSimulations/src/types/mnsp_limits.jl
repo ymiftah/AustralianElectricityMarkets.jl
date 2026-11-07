@@ -1,52 +1,66 @@
+"""
+    NEM_MNSP_FIXED_LOAD_SERIES
+
+Names of the NaN-free fixed-loading series that [`set_effective_offers!`](@ref) derives per MNSP link direction from
+the bid's `fixed_load`: `value` is the loading in MW, `0` where the bid is NULL, and `invoked` is `1` where a
+loading is published and `0` where it is NULL.
+"""
+const NEM_MNSP_FIXED_LOAD_SERIES = (
+    forward_value = "forward_fixed_load_value",
+    reverse_value = "reverse_fixed_load_value",
+    forward_invoked = "forward_fixed_load_invoked_flag",
+    reverse_invoked = "reverse_fixed_load_invoked_flag",
+)
+
 "Time-series parameter of an MNSP operating input in natural units."
 abstract type MNSPOperatingParameter <: PSI.TimeSeriesParameter end
 
 """
     MNSPInitialFlowParameter
 
-Signed metered starting flow, in MW, from the `"mnsp_initial_flow"` series.
+Signed metered starting flow, in MW, from the [`NEMMNSPObservedState`](@ref) key `NEM_MNSP_SERIES.initial_flow`.
 """
 struct MNSPInitialFlowParameter <: MNSPOperatingParameter end
 
 """
     MNSPForwardRampRateParameter
 
-Forward link ramp rate, in MW/min, from `"mnsp_forward_ramp_rate"`.
+Forward link ramp rate, in MW/min, from the forward bid's `ramp_up` key.
 """
 struct MNSPForwardRampRateParameter <: MNSPOperatingParameter end
 
 """
     MNSPReverseRampRateParameter
 
-Reverse link ramp rate, in MW/min, from `"mnsp_reverse_ramp_rate"`.
+Reverse link ramp rate, in MW/min, from the reverse bid's `ramp_up` key, which limits the net flow's decrease.
 """
 struct MNSPReverseRampRateParameter <: MNSPOperatingParameter end
 
 """
     MNSPForwardFixedLoadParameter
 
-Forward link fixed loading, in MW, from `"mnsp_forward_fixed_load"`.
+Forward link fixed loading, in MW, from the forward bid's `fixed_load` key.
 """
 struct MNSPForwardFixedLoadParameter <: MNSPOperatingParameter end
 
 """
     MNSPReverseFixedLoadParameter
 
-Reverse link fixed loading, in MW, from `"mnsp_reverse_fixed_load"`.
+Reverse link fixed loading, in MW, from the reverse bid's `fixed_load` key.
 """
 struct MNSPReverseFixedLoadParameter <: MNSPOperatingParameter end
 
 """
     MNSPForwardFixedLoadInvokedParameter
 
-Forward fixed-loading invocation flag, from `"mnsp_forward_fixed_load_invoked"`.
+Forward fixed-loading invocation flag, from the forward bid's `fixed_load_invoked` key.
 """
 struct MNSPForwardFixedLoadInvokedParameter <: MNSPOperatingParameter end
 
 """
     MNSPReverseFixedLoadInvokedParameter
 
-Reverse fixed-loading invocation flag, from `"mnsp_reverse_fixed_load_invoked"`.
+Reverse fixed-loading invocation flag, from the reverse bid's `fixed_load_invoked` key.
 """
 struct MNSPReverseFixedLoadInvokedParameter <: MNSPOperatingParameter end
 

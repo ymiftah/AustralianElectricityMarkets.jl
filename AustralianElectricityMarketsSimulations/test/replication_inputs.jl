@@ -44,7 +44,8 @@ end
     # With every dispatch device unavailable, the template reaches the MNSP check.
     foreach(d -> set_available!(d, false), AustralianElectricityMarkets.nem_dispatch_devices(sys))
     @test_throws r"IC2.*MNSP" replay_template(sys)
-    get_ext(ic)["ic_type"] = "REGULATED"
+    PSY.remove_supplemental_attribute!(sys, ic, only(PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMInterconnectorRegistration, ic)))
+    PSY.add_supplemental_attribute!(sys, ic, AustralianElectricityMarkets.NEMInterconnectorRegistration(; kind = AustralianElectricityMarkets.InterconnectorKind.REGULATED))
     @test isnothing(AEMS._check_mnsp_offers(ic))
 end
 

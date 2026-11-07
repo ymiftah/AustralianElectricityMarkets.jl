@@ -177,7 +177,7 @@ end
 
 """
 A `(REGIONID, BIDTYPE)` FCAS market anchor. Carries no requirement or time series of its own;
-the regional RHS lives on the governing [`GenericConstraint`](@ref)'s own `"rhs"` series.
+the regional RHS lives on the governing [`GenericConstraint`](@ref)'s own right-hand side series.
 
 # Fields
 - `name`: `"<REGIONID>_<BIDTYPE>"`.
