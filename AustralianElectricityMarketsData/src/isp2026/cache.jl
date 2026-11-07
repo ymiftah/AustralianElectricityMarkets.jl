@@ -1,6 +1,6 @@
 # ── ISP cache database ───────────────────────────────────────────────────────
 
-const _ISP_CACHE_LAYOUT = 1
+const _ISP_CACHE_LAYOUT = 2
 const _ISP_RESERVED_SCHEMAS = ("cache_meta", "traces", "main", "information_schema", "pg_catalog")
 const _ISP_STALE_BUILD_SECONDS = 3600
 
@@ -50,8 +50,8 @@ end
     populate_isp(config::HiveConfiguration, source_dir::AbstractString;
         release = ISP_RELEASE_2026, force_new = false, download! = _download_isp_archive) -> String
 
-Obtain the release archives from `source_dir`, extract the model package and build the ISP
-cache database.
+Obtain the release archives from `source_dir`, extract every archive and build the ISP cache
+database from the extracted model and trace files.
 
 # Arguments
 - `config`: cache configuration; the cache must be on the local filesystem.
@@ -75,7 +75,9 @@ function populate_isp(
     archives = acquire_isp_archives(config, source_dir; release, download!)
     dir = mktempdir(dirname(target); prefix = "isp-model-")
     try
-        _extract_zip(archives[:model], dir)
+        for (kind, archive) in sort!(collect(archives))
+            _extract_zip(archive, joinpath(dir, string(kind)))
+        end
         return build_isp_cache(config, dir; force_new)
     finally
         rm(dir; recursive = true, force = true)
@@ -129,19 +131,21 @@ function _isp_archive_entry_path(dir::AbstractString, name::AbstractString)::Str
 end
 
 """
-    build_isp_cache(config::HiveConfiguration, model_dir::AbstractString;
+    build_isp_cache(config::HiveConfiguration, source_root::AbstractString;
         force_new = false) -> String
 
-Build the ISP cache database from an extracted model package.
+Build the ISP cache database from a directory holding the extracted release archives.
 
 Each scenario is a folder holding one PLEXOS XML export. It becomes a schema named after that
-folder, with the leading year-and-`ISP` prefix removed and the rest snake-cased.
+folder, with the leading year-and-`ISP` prefix removed and the rest snake-cased. Trace CSV
+files found anywhere under `source_root` are loaded into `traces` tables keyed by SHA-256, and
+each scenario gains a `trace_bindings` view, even when no CSV is present.
 The database is written beside the target and renamed over it only after every table's record
 count and column set are confirmed, so a failed build leaves the previous database in place.
 
 # Arguments
 - `config`: cache configuration.
-- `model_dir`: directory holding one folder per scenario.
+- `source_root`: directory holding the extracted archives.
 - `force_new`: rebuild even when the database already exists.
 
 # Returns
@@ -149,7 +153,7 @@ count and column set are confirmed, so a failed build leaves the previous databa
 """
 function build_isp_cache(
         config::HiveConfiguration,
-        model_dir::AbstractString,
+        source_root::AbstractString,
         ;
         force_new::Bool = false,
     )::String
@@ -157,11 +161,12 @@ function build_isp_cache(
     mkpath(dirname(target))
     _remove_stale_isp_builds(target)
     isfile(target) && !force_new && return _checked_isp_cache(target)
-    isdir(model_dir) || throw(ArgumentError("model directory not found at $(model_dir)"))
+    isdir(source_root) ||
+        throw(ArgumentError("source directory not found at $(source_root)"))
 
     building = target * ".building-" * string(time_ns())
     try
-        _write_isp_cache(building, model_dir)
+        _write_isp_cache(building, source_root)
         # rename(2) replaces the target in one step; mv may unlink it first.
         Base.Filesystem.rename(building, target)
     catch
@@ -258,22 +263,25 @@ function _remove_quietly(path::AbstractString)
 end
 
 """
-    _write_isp_cache(path::AbstractString, model_dir::AbstractString)
+    _write_isp_cache(path::AbstractString, source_root::AbstractString)
 
 Write the whole database at `path` and validate it.
 
 # Arguments
 - `path`: file to create.
-- `model_dir`: directory holding one folder per scenario.
+- `source_root`: directory holding the extracted archives.
 
 # Returns
 - `nothing`.
 """
-function _write_isp_cache(path::AbstractString, model_dir::AbstractString)
+function _write_isp_cache(path::AbstractString, source_root::AbstractString)
     db = DuckDB.DB(path)
     try
         conn = DuckDB.connect(db)
         try
+            DuckDB.execute(conn, "SET external_threads = 1")
+            DuckDB.execute(conn, "SET threads = 2")
+            DuckDB.execute(conn, "SET memory_limit = '2GB'")
             DuckDB.execute(conn, "CREATE SCHEMA cache_meta")
             DuckDB.execute(
                 conn,
@@ -286,7 +294,7 @@ function _write_isp_cache(path::AbstractString, model_dir::AbstractString)
             DuckDB.execute(
                 conn,
                 "INSERT INTO cache_meta.cache VALUES (?, now(), ?)",
-                [_ISP_CACHE_LAYOUT, model_dir],
+                [_ISP_CACHE_LAYOUT, source_root],
             )
             DuckDB.execute(
                 conn,
@@ -307,9 +315,13 @@ function _write_isp_cache(path::AbstractString, model_dir::AbstractString)
                 )
                 """,
             )
-            for (scenario, xml_path) in _isp_scenarios(model_dir)
-                _write_isp_scenario!(conn, model_dir, scenario, xml_path)
+            model_root = isdir(joinpath(source_root, "model")) ?
+                joinpath(source_root, "model") : source_root
+            scenarios = _isp_scenarios(model_root)
+            for (scenario, xml_path) in scenarios
+                _write_isp_scenario!(conn, source_root, scenario, xml_path)
             end
+            _write_isp_traces!(conn, source_root, scenarios)
         finally
             DuckDB.disconnect(conn)
         end
@@ -320,26 +332,26 @@ function _write_isp_cache(path::AbstractString, model_dir::AbstractString)
 end
 
 """
-    _isp_scenarios(model_dir::AbstractString) -> Vector{Pair{String, String}}
+    _isp_scenarios(source_root::AbstractString) -> Vector{Pair{String, String}}
 
 Map each scenario schema name to its XML export.
 
 # Arguments
-- `model_dir`: directory holding one folder per scenario.
+- `source_root`: directory holding the extracted archives.
 
 # Returns
 - `Vector{Pair{String, String}}` of schema name to XML path, sorted by schema name.
 """
-function _isp_scenarios(model_dir::AbstractString)::Vector{Pair{String, String}}
-    root_dir = normpath(model_dir)
+function _isp_scenarios(source_root::AbstractString)::Vector{Pair{String, String}}
+    root_dir = normpath(source_root)
     found = Dict{String, String}()
-    for (root, _, files) in walkdir(model_dir)
+    for (root, _, files) in walkdir(source_root)
         for file in files
             endswith(lowercase(file), ".xml") || continue
             path = joinpath(root, file)
             normpath(root) == root_dir && throw(
                 ArgumentError(
-                    "scenario XML $(path) sits directly in $(model_dir); expected one folder per scenario"
+                    "scenario XML $(path) sits directly in $(source_root); expected one folder per scenario"
                 ),
             )
             scenario = _isp_scenario_name(basename(root))
@@ -354,7 +366,8 @@ function _isp_scenarios(model_dir::AbstractString)::Vector{Pair{String, String}}
             found[scenario] = path
         end
     end
-    isempty(found) && throw(ArgumentError("no scenario XML found under $(model_dir)"))
+    isempty(found) &&
+        throw(ArgumentError("no scenario XML found under $(source_root)"))
     return sort!(collect(found))
 end
 
@@ -384,13 +397,13 @@ function _isp_scenario_name(folder::AbstractString)::String
 end
 
 """
-    _write_isp_scenario!(conn, model_dir, scenario, xml_path)
+    _write_isp_scenario!(conn, source_root, scenario, xml_path)
 
 Load one scenario's tables and record their provenance and row counts.
 
 # Arguments
 - `conn`: open DuckDB connection.
-- `model_dir`: directory holding one folder per scenario.
+- `source_root`: directory holding the extracted archives.
 - `scenario`: schema name.
 - `xml_path`: the scenario's XML export.
 
@@ -399,7 +412,7 @@ Load one scenario's tables and record their provenance and row counts.
 """
 function _write_isp_scenario!(
         conn,
-        model_dir::AbstractString,
+        source_root::AbstractString,
         scenario::AbstractString,
         xml_path::AbstractString,
     )
@@ -413,7 +426,7 @@ function _write_isp_scenario!(
         ),
     )
     digest = _isp_sha256(xml_path)
-    source = relpath(xml_path, model_dir)
+    source = relpath(xml_path, source_root)
     DuckDB.execute(conn, "CREATE SCHEMA $(schema)")
 
     inventory = DataFrame(

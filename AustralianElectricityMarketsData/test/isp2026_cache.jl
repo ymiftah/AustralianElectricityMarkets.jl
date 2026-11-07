@@ -20,7 +20,8 @@
             )
             @test nrow(inventory) == 2 * length(ISP_XML_TABLES)
             @test sort(unique(inventory.scenario)) == ["slower_growth", "step_change"]
-            @test all(==(1), inventory.column_count)
+            @test all(>=(1), inventory.column_count)
+            @test all(==(3), inventory.column_count[inventory.table_name .== "t_text"])
 
             for row in eachrow(inventory)
                 @test !isabspath(row.source_path)
@@ -35,7 +36,8 @@
                         db.db,
                         """
                         SELECT table_name FROM information_schema.tables
-                        WHERE table_schema = '$scenario' ORDER BY table_name
+                        WHERE table_schema = '$scenario' AND table_type = 'BASE TABLE'
+                        ORDER BY table_name
                         """,
                     ),
                 )
@@ -219,7 +221,7 @@ end
         mkpath(source)
         config = HiveConfiguration(; hive_location = joinpath(root, "cache"))
         xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<MasterDataSet>\n" *
-            join(["<$(table)><id>1</id></$(table)>" for table in ISP_XML_TABLES], "\n") *
+            join([_isp_trace_fixture_record(table) for table in ISP_XML_TABLES], "\n") *
             "\n</MasterDataSet>\n"
         zip_path = joinpath(source, "some browser name.zip")
         ZipArchives = AustralianElectricityMarketsData.ZipArchives
@@ -267,7 +269,7 @@ end
         folder = joinpath(model, "2026 ISP Model", "2026 ISP Step Change")
         mkpath(folder)
         records = join(
-            ["<$(table)><id>1</id></$(table)>" for table in ISP_XML_TABLES], "\n",
+            [_isp_trace_fixture_record(table) for table in ISP_XML_TABLES], "\n",
         )
         write(
             joinpath(folder, "2026 ISP Step Change Model.xml"),

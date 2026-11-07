@@ -30,6 +30,7 @@ include("isp2026/properties.jl")
 include("isp2026/release.jl")
 include("isp2026/download.jl")
 include("isp2026/cache.jl")
+include("isp2026/traces.jl")
 
 @doc (@doc AustralianElectricityMarketsCache.HiveConfiguration) HiveConfiguration
 @doc (@doc AustralianElectricityMarketsCache.AEMDB) AEMDB

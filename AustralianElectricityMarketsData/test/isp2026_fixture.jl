@@ -73,6 +73,8 @@ function write_isp_fixture(path::AbstractString; broken_timeslice::Bool = false)
         ],
         "\n      ",
     )
+    # The trace queries read t_tag.action_id, which the tagged records above omit.
+    trace_filler = "<t_tag><action_id>1</action_id></t_tag>"
     xml = """<?xml version="1.0" standalone="yes"?>
     <MasterDataSet>
       <t_class><class_id>1</class_id><name>Generator</name></t_class>
@@ -160,6 +162,7 @@ function write_isp_fixture(path::AbstractString; broken_timeslice::Bool = false)
       <t_tag><data_id>17</data_id><object_id>13</object_id></t_tag>
       <t_tag><data_id>18</data_id><object_id>14</object_id></t_tag>
       $(broken_tag)
+      $(trace_filler)
 
       <t_text><data_id>8</data_id><class_id>2</class_id><value>M1-3,11,12</value></t_text>
       <t_text><data_id>9</data_id><class_id>2</class_id><value>M4-10</value></t_text>
@@ -172,11 +175,48 @@ function write_isp_fixture(path::AbstractString; broken_timeslice::Bool = false)
 end
 
 """
+    _isp_trace_fixture_columns(table::AbstractString)
+
+Columns the trace queries require of `table`, or `("id",)` for a table they do not read.
+
+# Arguments
+- `table`: PLEXOS table name.
+
+# Returns
+- `Tuple` of column names.
+"""
+function _isp_trace_fixture_columns(table::AbstractString)
+    required = Dict(
+        AustralianElectricityMarketsData._ISP_TRACE_REFERENCE_COLUMNS...,
+        AustralianElectricityMarketsData._ISP_TRACE_BINDING_COLUMNS...,
+    )
+    return get(required, table, ("id",))
+end
+
+"""
+    _isp_trace_fixture_record(table::AbstractString, index::Integer = 1) -> String
+
+One XML record for `table` carrying every column the trace queries read, each valued `index`.
+
+# Arguments
+- `table`: PLEXOS table name.
+- `index`: value written to every field.
+
+# Returns
+- `String` the XML record.
+"""
+function _isp_trace_fixture_record(table::AbstractString, index::Integer = 1)
+    fields = join(["<$(column)>$(index)</$(column)>" for column in _isp_trace_fixture_columns(table)])
+    return "<$(table)>$(fields)</$(table)>"
+end
+
+"""
     write_isp_cache_fixture(dir; scenarios = ["2026 ISP Step Change", "2026 ISP Slower Growth"])
 
 Write one scenario folder per entry of `scenarios`, each holding a PLEXOS XML export with one
-record in every table of [`ISP_XML_TABLES`](@ref). The first scenario's `t_object` carries two
-records and the second's three, so cross-scenario isolation is observable.
+record in every table of [`ISP_XML_TABLES`](@ref), carrying the columns the trace queries read.
+The first scenario's `t_object` carries two records and the second's three, so cross-scenario
+isolation is observable.
 """
 function write_isp_cache_fixture(dir; scenarios = ["2026 ISP Step Change", "2026 ISP Slower Growth"])
     for (index, scenario) in enumerate(scenarios)
@@ -187,7 +227,7 @@ function write_isp_cache_fixture(dir; scenarios = ["2026 ISP Step Change", "2026
         for table in ISP_XML_TABLES
             count = table == "t_object" ? objects : 1
             for i in 1:count
-                push!(records, "<$(table)><id>$(i)</id></$(table)>")
+                push!(records, _isp_trace_fixture_record(table, i))
             end
         end
         write(
@@ -196,5 +236,77 @@ function write_isp_cache_fixture(dir; scenarios = ["2026 ISP Step Change", "2026
                 join(records, "\n") * "\n</MasterDataSet>\n",
         )
     end
+    return dir
+end
+
+"""
+    write_isp_trace_fixture(dir; missing_reference = false)
+
+Write a scenario XML with Data File references and the CSV traces they point to.
+
+The two `Filename` data rows are untagged, as in the real export. Two `Rating` rows are
+tagged to the Data File objects so the bindings view has two non-`Filename` rows. One
+reference uses backslashes and the two identical `DEMO` CSVs use CRLF line endings, so both
+path normalisation and CRLF record splitting are exercised.
+
+# Arguments
+- `dir`: directory to write the fixture under.
+- `missing_reference`: add a Data File reference to a CSV that does not exist.
+
+# Returns
+- `String` the fixture directory.
+"""
+function write_isp_trace_fixture(dir; missing_reference = false)
+    scenario = joinpath(dir, "model", "2026 ISP Model", "2026 ISP Step Change")
+    demand = joinpath(scenario, "Traces", "demand")
+    shared = joinpath(dir, "wind", "Traces", "wind")
+    mkpath(demand)
+    mkpath(shared)
+    write(joinpath(demand, "DEMO.csv"), "Year,Month,Day,01\r\n2026,7,1,10\r\n2026,7,1,20\r\n")
+    write(
+        joinpath(demand, "DEMO_COPY.csv"),
+        "Year,Month,Day,01\r\n2026,7,1,10\r\n2026,7,1,20\r\n",
+    )
+    write(joinpath(shared, "SHARED.csv"), "Year,Value\n2026,5\n")
+    records = String[
+        "<t_class><class_id>1</class_id><name>Data File</name></t_class>",
+        "<t_class><class_id>2</class_id><name>Generator</name></t_class>",
+        "<t_property><property_id>1</property_id><name>Filename</name></t_property>",
+        "<t_property><property_id>2</property_id><name>Rating</name></t_property>",
+        "<t_object><object_id>10</object_id><name>DEMO_GEN</name></t_object>",
+        "<t_object><object_id>20</object_id><name>DEMO</name></t_object>",
+        "<t_object><object_id>21</object_id><name>SHARED</name></t_object>",
+        "<t_membership><membership_id>100</membership_id><parent_object_id>1</parent_object_id><child_object_id>20</child_object_id></t_membership>",
+        "<t_membership><membership_id>101</membership_id><parent_object_id>1</parent_object_id><child_object_id>21</child_object_id></t_membership>",
+        "<t_data><data_id>1000</data_id><membership_id>100</membership_id><property_id>1</property_id></t_data>",
+        "<t_data><data_id>1001</data_id><membership_id>101</membership_id><property_id>1</property_id></t_data>",
+        "<t_data><data_id>1002</data_id><membership_id>100</membership_id><property_id>2</property_id><value>5</value></t_data>",
+        "<t_data><data_id>1003</data_id><membership_id>101</membership_id><property_id>2</property_id><value>7</value></t_data>",
+        "<t_tag><data_id>1002</data_id><object_id>20</object_id><action_id>1</action_id></t_tag>",
+        "<t_tag><data_id>1003</data_id><object_id>21</object_id><action_id>1</action_id></t_tag>",
+        "<t_text><data_id>1000</data_id><class_id>1</class_id><value>Traces\\demand\\DEMO.csv</value></t_text>",
+        "<t_text><data_id>1001</data_id><class_id>1</class_id><value>Traces/wind/SHARED.csv</value></t_text>",
+    ]
+    if missing_reference
+        push!(
+            records,
+            "<t_object><object_id>22</object_id><name>ABSENT</name></t_object>",
+            "<t_membership><membership_id>102</membership_id><parent_object_id>1</parent_object_id><child_object_id>22</child_object_id></t_membership>",
+            "<t_data><data_id>1004</data_id><membership_id>102</membership_id><property_id>1</property_id></t_data>",
+            "<t_tag><data_id>1004</data_id><object_id>22</object_id><action_id>1</action_id></t_tag>",
+            "<t_text><data_id>1004</data_id><class_id>1</class_id><value>Traces/demand/ABSENT.csv</value></t_text>",
+        )
+    end
+    for table in ISP_XML_TABLES
+        startswith(table, "t_") || continue
+        any(occursin("<$(table)>", record) for record in records) && continue
+        push!(records, "<$(table)><id>1</id></$(table)>")
+    end
+    mkpath(scenario)
+    write(
+        joinpath(scenario, "2026 ISP Step Change Model.xml"),
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<MasterDataSet>\n" *
+            join(records, "\n") * "\n</MasterDataSet>\n",
+    )
     return dir
 end
