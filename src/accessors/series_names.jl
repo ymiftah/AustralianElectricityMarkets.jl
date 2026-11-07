@@ -139,9 +139,8 @@ const NEM_INTERCONNECTOR_SERIES = (
 """
     NEM_MNSP_SERIES
 
-Names of the series an MNSP interchange holds through [`NEMMNSPBid`](@ref), [`NEMMNSPObservedState`](@ref)
-and the [`NEMMNSPLink`](@ref) of each direction. Offers and max availability are in MW, the ramp rate in MW/min,
-and the fixed loading in MW.
+Names of the series an MNSP interchange holds through [`NEMMNSPBid`](@ref) and [`NEMMNSPObservedState`](@ref).
+Offers and max availability are in MW, the ramp rate in MW/min, and the fixed loading in MW.
 """
 const NEM_MNSP_SERIES = (
     forward_offer = "link_forward_offer",

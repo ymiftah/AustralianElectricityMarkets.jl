@@ -52,7 +52,8 @@ function _set_mnsp_fixed_loads!(sys::PSY.System)
         for dir in _MNSP_DIRECTIONS
             bid = _mnsp_bid(device, dir)
             isnothing(bid) && continue
-            series = isnothing(bid.fixed_load) ? _bid_series(device, bid.max_avail) : _bid_series(device, bid.fixed_load)
+            series = isnothing(bid.fixed_load) ? _bid_series(device, bid.max_avail, :max_avail) :
+                _bid_series(device, bid.fixed_load, :fixed_load)
             raw = isnothing(bid.fixed_load) ? fill(NaN, length(series.values)) : Float64.(series.values)
             value = [isnan(v) ? 0.0 : v for v in raw]
             invoked = [isnan(v) ? 0.0 : 1.0 for v in raw]
@@ -75,7 +76,7 @@ _bidding_devices(sys::PSY.System) = Iterators.flatten(
 )
 
 # The timestamps, resolution and values of a bid field's time series on `device`.
-function _bid_series(device, key::IS.TimeSeriesKey)
+function _bid_series(device, key::IS.TimeSeriesKey, ::Symbol)
     ts = IS.get_time_series(device, key)
     array = PSY.get_time_series_array(device, ts)
     return (;
@@ -85,11 +86,11 @@ function _bid_series(device, key::IS.TimeSeriesKey)
 end
 
 # A static bid field has no series to derive the offers from.
-function _bid_series(device, bid)
+function _bid_series(device, value, field::Symbol)
     throw(
         ArgumentError(
-            "set_effective_offers!: \"$(PSY.get_name(device))\" has a static bid; set_effective_offers! needs " *
-                "series-backed bids, as set_market_bids! writes them.",
+            "set_effective_offers!: \"$(PSY.get_name(device))\" has a static `$(field)` field; set_effective_offers! " *
+                "needs series-backed bid inputs, as set_market_bids! writes them.",
         ),
     )
 end
@@ -120,7 +121,7 @@ function _bid_axis(sys::PSY.System)
         cost = AustralianElectricityMarkets._nem_offer_cost(device)
         isnothing(cost) && continue
         for bid in get_energy_bids(cost)
-            series = _bid_series(device, bid.max_avail)
+            series = _bid_series(device, bid.max_avail, :max_avail)
             return (; timestamps = series.timestamps, resolution = series.resolution)
         end
     end
@@ -148,7 +149,7 @@ function _set_energy_offers!(sys::PSY.System)
                 end
                 continue
             end
-            curves = _bid_series(device, bid.offer_curves)
+            curves = _bid_series(device, bid.offer_curves, :offer_curves)
             replace_single_series!(
                 sys, device,
                 single_series(
@@ -156,7 +157,7 @@ function _set_energy_offers!(sys::PSY.System)
                     _referred_curves(curves.values, _loss_factor(device, side)), curves.resolution,
                 ),
             )
-            max_avail = _bid_series(device, bid.max_avail)
+            max_avail = _bid_series(device, bid.max_avail, :max_avail)
             replace_single_series!(
                 sys, device,
                 single_series(
@@ -191,8 +192,8 @@ function _set_fcas_offers!(sys::PSY.System)
             )
             push!(seen, (service, side))
             decremental = side == OfferSide.LOAD
-            trapezium = _bid_series(device, bid.trapezium)
-            max_avail = _bid_series(device, bid.max_avail).values
+            trapezium = _bid_series(device, bid.trapezium, :trapezium)
+            max_avail = _bid_series(device, bid.max_avail, :max_avail).values
             values_by_interval = [
                 _fcas_trapezium_values(trapezium.values[i], max_avail[i], base) for i in eachindex(trapezium.values)
             ]
@@ -204,7 +205,7 @@ function _set_fcas_offers!(sys::PSY.System)
                 ),
             )
             isempty(AustralianElectricityMarkets._fcas_services(device, service)) && continue
-            offer = _bid_series(device, bid.offer_curves)
+            offer = _bid_series(device, bid.offer_curves, :offer_curves)
             replace_single_series!(
                 sys, device,
                 single_series(fcas_series_name("fcas_offer", service, side), first(offer.timestamps), offer.values, offer.resolution),
@@ -248,7 +249,7 @@ end
 # The values of a telemetry key over the grid of `like`: a static value is repeated.
 function _grid_values(device, key, like)
     key isa IS.TimeSeriesKey || return fill(Float64(key), length(like.values))
-    return _bid_series(device, key).values
+    return _bid_series(device, key, :availability).values
 end
 
 
@@ -261,8 +262,8 @@ function _set_dispatch_limits!(sys::PSY.System)
         telemetry = getproperty(device, :telemetry)
         # A unit without telemetry gets no limit series; the replay input check names it.
         isnothing(telemetry) && continue
-        up = _bid_series(device, telemetry.ramp_up_limit)
-        down = _bid_series(device, telemetry.ramp_down_limit)
+        up = _bid_series(device, telemetry.ramp_up_limit, :ramp_up_limit)
+        down = _bid_series(device, telemetry.ramp_down_limit, :ramp_down_limit)
         interval_hours = Dates.value(Millisecond(up.resolution)) / (1000 * 60 * 60)
         pinned = AustralianElectricityMarkets.is_non_scheduled_load(device)
         ramp_up_rate = pinned ? zeros(length(up.values)) : replace(up.values ./ 60 ./ base, NaN => 0.0)
@@ -271,12 +272,12 @@ function _set_dispatch_limits!(sys::PSY.System)
         replace_single_series!(sys, device, single_series(NEM_SERIES.ramp_down_rate, first(down.timestamps), ramp_down_rate, down.resolution))
         _set_agc_ramp_rates!(sys, device, telemetry, up, down, base, interval_hours)
         device isa PSY.Storage && continue
-        initial = _bid_series(device, AustralianElectricityMarkets.get_observed_state(device).initial_mw).values ./ base
+        initial = _bid_series(device, AustralianElectricityMarkets.get_observed_state(device).initial_mw, :initial_mw).values ./ base
         max_avail_name = energy_max_avail_series_name(device, OfferSide.GEN)
         PSY.has_time_series(device, PSY.SingleTimeSeries, max_avail_name) ||
             throw(ArgumentError("\"$(PSY.get_name(device))\" has no energy MAXAVAIL; call set_market_bids! first."))
         max_avail = _condition_series(device, max_avail_name).values
-        uigf = isnothing(telemetry.uigf) ? nothing : _bid_series(device, telemetry.uigf).values ./ base
+        uigf = isnothing(telemetry.uigf) ? nothing : _bid_series(device, telemetry.uigf, :uigf).values ./ base
         availability = _derived_availability(max_avail, uigf, up.values, pinned)
         static = with_units_base(() -> PSY.get_max_active_power(device), sys, "NATURAL_UNITS")
         ramp_down_per_hour = ramp_down_rate .* 60

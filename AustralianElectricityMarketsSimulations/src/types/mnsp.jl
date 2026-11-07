@@ -100,7 +100,7 @@ PSI.convert_result_to_natural_units(::Type{MNSPLinkBandVariable}) = true
     MNSPBandWidthParameter
 
 Time-series parameter of an MNSP link's offered band widths, in MW, read from its
-`"mnsp_<direction>_offer"` series with a band axis; bands beyond an interval's offer have width
+`"link_<direction>_offer"` series with a band axis; bands beyond an interval's offer have width
 `0.0`. [`MNSPForwardBandWidthParameter`](@ref) and [`MNSPReverseBandWidthParameter`](@ref) are the
 two links.
 """
@@ -117,7 +117,7 @@ struct MNSPReverseBandWidthParameter <: MNSPBandWidthParameter end
     MNSPMaxAvailParameter
 
 Time-series parameter of an MNSP link's `MAXAVAIL`, in MW, read from its
-`"mnsp_<direction>_max_avail"` series. [`MNSPForwardMaxAvailParameter`](@ref) and
+`"link_<direction>_max_avail"` series. [`MNSPForwardMaxAvailParameter`](@ref) and
 [`MNSPReverseMaxAvailParameter`](@ref) are the two links.
 """
 abstract type MNSPMaxAvailParameter <: PSI.TimeSeriesParameter end
@@ -133,7 +133,7 @@ struct MNSPReverseMaxAvailParameter <: MNSPMaxAvailParameter end
     MNSPBandPriceParameter
 
 Time-series cost parameter pricing an MNSP link's [`MNSPLinkBandVariable`](@ref)s: its value is
-each band's offer price in `\$/MWh` per interval, read from the link's `"mnsp_<direction>_offer"`
+each band's offer price in `\$/MWh` per interval, read from the link's `"link_<direction>_offer"`
 series (`0.0` for a band not offered). Each band's cost target scales the price by the system base
 power and the interval length in hours. Meta `"forward"` or `"reverse"`.
 """

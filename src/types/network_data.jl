@@ -43,12 +43,14 @@ IS.get_internal(registration::NEMInterconnectorRegistration) = registration.inte
 """
     NEMInterconnectorLimits(; from_to_limit, to_from_limit)
 
-An interconnector's flow limits as AEMO publishes them, in MW. Each field is a static value or a key of the
-time series that holds it on the owning `AreaInterchange`.
+An interconnector's flow limits derived from the signed flow range AEMO publishes, in MW. Each field is a static
+value or a key of the time series that holds it on the owning `AreaInterchange`.
 
 # Fields
-- `from_to_limit`: the limit on flow from the from-region to the to-region, MW.
-- `to_from_limit`: the limit on flow from the to-region to the from-region, MW.
+- `from_to_limit`: the negated lower bound of the published signed flow range, MW. For a published
+  `[IMPORTLIMIT, EXPORTLIMIT]` it holds `-min(IMPORTLIMIT, EXPORTLIMIT)`, so a flow row recovers the bound with a
+  `-1` multiplier.
+- `to_from_limit`: the upper bound of the published signed flow range, MW: `max(IMPORTLIMIT, EXPORTLIMIT)`.
 - `internal`: `InfrastructureSystems` bookkeeping.
 """
 struct NEMInterconnectorLimits <: PSY.SupplementalAttribute

@@ -39,28 +39,36 @@ struct MNSPReverseRampRateParameter <: MNSPOperatingParameter end
 """
     MNSPForwardFixedLoadParameter
 
-Forward link fixed loading, in MW, from the forward bid's `fixed_load` key.
+Forward link fixed loading, in MW, read from the `NEM_MNSP_FIXED_LOAD_SERIES.forward_value` series that
+[`set_effective_offers!`](@ref) derives from the forward bid's `fixed_load`; the bid's raw series holds NaN where
+AEMO publishes NULL, and the derived series holds `0` there.
 """
 struct MNSPForwardFixedLoadParameter <: MNSPOperatingParameter end
 
 """
     MNSPReverseFixedLoadParameter
 
-Reverse link fixed loading, in MW, from the reverse bid's `fixed_load` key.
+Reverse link fixed loading, in MW, read from the `NEM_MNSP_FIXED_LOAD_SERIES.reverse_value` series that
+[`set_effective_offers!`](@ref) derives from the reverse bid's `fixed_load`; the bid's raw series holds NaN where
+AEMO publishes NULL, and the derived series holds `0` there.
 """
 struct MNSPReverseFixedLoadParameter <: MNSPOperatingParameter end
 
 """
     MNSPForwardFixedLoadInvokedParameter
 
-Forward fixed-loading invocation flag, from the forward bid's `fixed_load_invoked` key.
+Forward fixed-loading invocation flag, `1` where the forward bid publishes a loading and `0` where it is NULL,
+read from the `NEM_MNSP_FIXED_LOAD_SERIES.forward_invoked` series that [`set_effective_offers!`](@ref) derives;
+the bid's raw `fixed_load` series holds NaN where AEMO publishes NULL.
 """
 struct MNSPForwardFixedLoadInvokedParameter <: MNSPOperatingParameter end
 
 """
     MNSPReverseFixedLoadInvokedParameter
 
-Reverse fixed-loading invocation flag, from the reverse bid's `fixed_load_invoked` key.
+Reverse fixed-loading invocation flag, `1` where the reverse bid publishes a loading and `0` where it is NULL,
+read from the `NEM_MNSP_FIXED_LOAD_SERIES.reverse_invoked` series that [`set_effective_offers!`](@ref) derives;
+the bid's raw `fixed_load` series holds NaN where AEMO publishes NULL.
 """
 struct MNSPReverseFixedLoadInvokedParameter <: MNSPOperatingParameter end
 

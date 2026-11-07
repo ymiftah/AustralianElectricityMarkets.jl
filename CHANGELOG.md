@@ -417,6 +417,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `prepare_replay!(sys, template, steps)` prepares a system for a replay over `steps`: it attaches the five-minute forecast windows, runs the replay pre-flight checks and returns the skipped-constraint table.
 
+- Interconnector, MNSP and constraint data are held in typed fields instead of `ext` entries: `NEMMNSPBid`, `NEMMNSPLink` and `NEMMNSPObservedState` on an MNSP interchange, `NEMInterconnectorLimits` and `NEMInterconnectorRegistration` as supplemental attributes on an `AreaInterchange`, and `GenericConstraint.rhs` and `GenericConstraint.invoked` as time-series keys or static values.
+
 ### Changed
 
 - `set_fcas_effective_offers!` and `set_tie_break_scales!` moved from AEM to AEMSim as `set_effective_offers!`, which `prepare_replay!` calls first. `nem_system` no longer attaches the effective offers, and the FCAS offer and dispatch read accessors (`get_fcas_offer`, `get_energy_offer`, `get_initial_mw`, `get_energy_availability`, `get_storage_energy_max_avail`, `get_scaled_fcas_trapezium`, `get_fcas_agc_status`, `get_fcas_agc_ramp_capability`) moved with them.
@@ -854,6 +856,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   code that called them through `using AustralianElectricityMarketsSimulations` must include the script.
 
 - Removed the internal `_constrained_system`; `nem_system` builds the NEMDE system from the public functions above.
+
+- `mnsp_series_name`, and the `NEM_SERIES.from_to_flow_limit` and `NEM_SERIES.to_from_flow_limit` constants. MNSP series names are in `NEM_MNSP_SERIES` and interconnector flow limits are read through `NEMInterconnectorLimits` and `NEM_INTERCONNECTOR_SERIES`.
 
 ### Fixed
 

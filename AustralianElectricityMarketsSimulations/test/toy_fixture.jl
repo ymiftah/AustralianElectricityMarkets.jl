@@ -288,6 +288,7 @@ function nem_toy_system(
         set_effective_offers!(sys)
     else
         AEMS._set_static_offers!(sys)
+        AEMS._set_mnsp_fixed_loads!(sys)
         AEMS._set_fcas_effective_offers!(sys)
     end
 
@@ -542,7 +543,7 @@ function derive_toy_offers!(sys)
             (isnothing(side) || isempty(AEM._fcas_services(device, bid.service))) && continue
             name = AEM.fcas_series_name("fcas_offer", bid.service, side)
             PSY.has_time_series(device, PSY.SingleTimeSeries, name) && continue
-            offer = AEMS._bid_series(device, bid.offer_curves)
+            offer = AEMS._bid_series(device, bid.offer_curves, :offer_curves)
             PSY.add_time_series!(sys, device, AEM.single_series(name, first(offer.timestamps), offer.values, offer.resolution))
         end
     end
