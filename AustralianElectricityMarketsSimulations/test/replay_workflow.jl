@@ -1,9 +1,10 @@
-# The replay workflow over the mock cache: pre-flight checks, the system, the simulation, the solved
-# and published comparison, and the chunks of a range. Uses the `replay_chunks` and `run_replay` API
-# and the mock hives loaded by `runtests.jl`.
+# The replay workflow over the mock cache: the system (which validates its inputs), the simulation,
+# the solved and published comparison, and the chunks of a range. Uses the `replay_chunks` and
+# `run_replay` API and the mock hives loaded by `runtests.jl`.
 
-# Replays `steps` as one simulation: pre-flight checks, the system over `steps` and the two intervals
-# after them, `run_replay`, then the solved and published comparison. Time series are kept on disk in
+# Replays `steps` as one simulation: the system over `steps` and the two intervals after them (with
+# `nem_system` validating its inputs), `run_replay`, then the solved and published comparison. Time
+# series are kept on disk in
 # `folder/time_series` unless `time_series_in_memory`; `kwargs` go to `run_replay`.
 function replay_steps(
         db, steps; intervention::Integer = 0, template::PSI.ProblemTemplate = template_nemde(),

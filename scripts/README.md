@@ -322,18 +322,18 @@ construction overhead growing across repeated builds. Instantiate the checked-ou
 before launching; keep the project source pins when reproducing a run. The worker snapshots
 its resolved manifest and package sources.
 
-## Early validation and detailed timing
+## Validation and detailed timing
 
-Before constructing each chunk, `nem_system` validates the padded five-minute range,
-including the interval after the trading day used by forecast preparation. It checks
-the typed records of every dispatch device, the constraint build report (missing
-intervals, defaulted weights, skipped constraints and dropped terms) and both MNSP
-directional links. Model-level input checks still run. No data is downloaded and
+`nem_system` validates its inputs as the last step of each chunk's system build, over the
+padded five-minute range including the interval after the trading day used by forecast
+preparation. It checks the typed records of every dispatch device, the constraint build
+report (missing intervals, defaulted weights, skipped constraints and dropped terms) and
+both MNSP directional links. Model-level input checks still run. No data is downloaded and
 failed days are retained without retrying. Keep the checkout unchanged during a batch
 so code cannot change while a worker loads it.
 
-`phases.csv` separates preflight, system/preprocessing, model build, execution,
-comparison and export. Each day's provenance, `runner_source/` and `package_source/` snapshots identify
+`phases.csv` separates system/preprocessing, model build, execution, comparison and export.
+Each day's provenance, `runner_source/` and `package_source/` snapshots identify
 the scripts, package sources, actual worker revision and dirty checkout state.
 
 Per-model `interval_timings.csv` is derived after `execute!` from PSI's native

@@ -419,7 +419,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `nem_system(db, NEMDEConfiguration(); date_range)` validates its built inputs before returning: the typed records of every dispatch device, the constraint build report (missing intervals, defaulted weights, skipped constraints and dropped terms) and each MNSP's two directional links with a bid and observed state. It throws an `ArgumentError` listing every item at fault and how to supply it.
+- `nem_system(db, NEMDEConfiguration(); date_range)` validates its built inputs before returning: the typed records of every dispatch device, the constraint build report (missing intervals, defaulted weights, skipped constraints and dropped terms) and each MNSP's two directional links with a bid and observed state. It throws an `ArgumentError` at the first failing part (devices, then the constraint build report, then MNSPs), naming every offender within that part and how to supply it.
 
 - `set_fcas_effective_offers!` and `set_tie_break_scales!` moved from AEM to AEMSim as `set_effective_offers!`, which `prepare_replay!` calls first. `nem_system` no longer attaches the effective offers, and the FCAS offer and dispatch read accessors (`get_fcas_offer`, `get_energy_offer`, `get_initial_mw`, `get_energy_availability`, `get_storage_energy_max_avail`, `get_scaled_fcas_trapezium`, `get_fcas_agc_status`, `get_fcas_agc_ramp_capability`) moved with them.
 

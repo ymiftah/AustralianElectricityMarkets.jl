@@ -7,17 +7,18 @@ const _NEM_DEVICE_RECORDS = (
 
 
 """
-    _check_nemde_replay_inputs(sys)
+    _check_nemde_replay_inputs(sys::PSY.System) -> Nothing
 
 Verifies that `sys` holds every input a NEMDE dispatch replay reads: the typed records of every NEM
 dispatch device, a constraint build report with nothing missing, defaulted, skipped or dropped, and
 two directional links with a bid and observed state on every MNSP.
 
 # Arguments
-- `sys`: a `System` built by [`nem_system`](@ref).
+- `sys`: the `System` to check.
 
 # Returns
-`nothing`. Throws an `ArgumentError` listing every incomplete input and how to supply it.
+`Nothing`. Throws an `ArgumentError` naming the offenders in the first failing part and how to supply
+them.
 """
 function _check_nemde_replay_inputs(sys::PSY.System)
     _check_nemde_device_records(sys)
@@ -29,18 +30,18 @@ end
 
 # Every NEM dispatch device carries its registration, telemetry and observed state.
 function _check_nemde_device_records(sys)
-    missing = String[]
+    missing_inputs = String[]
     for device in nem_dispatch_devices(sys), (getter, what) in _NEM_DEVICE_RECORDS
         try
             getter(device)
         catch error
             error isa ArgumentError || rethrow()
-            push!(missing, "$(PSY.get_name(device)) has no $what")
+            push!(missing_inputs, "$(PSY.get_name(device)) has no $what")
         end
     end
-    isempty(missing) || throw(
+    isempty(missing_inputs) || throw(
         ArgumentError(
-            "nem_system: $(length(missing)) dispatch device input(s) are unset: $(join(missing, ", ")); " *
+            "nem_system: $(length(missing_inputs)) dispatch device input(s) are unset: $(join(missing_inputs, ", ")); " *
                 "build sys with nem_system(db, NEMDEConfiguration(); date_range) over the replay range",
         ),
     )
@@ -50,13 +51,19 @@ end
 
 # The constraint build report holds every invoked constraint, weight and term it read.
 function _check_nemde_constraint_report(sys)
-    missing_intervals = get_missing_constraint_intervals(sys)
-    isempty(missing_intervals) || throw(
-        ArgumentError(
-            "nem_system: $(length(missing_intervals)) dispatch interval(s) have no DISPATCHCONSTRAINT rows, " *
-                "starting at $(first(missing_intervals)); repopulate DISPATCHCONSTRAINT with populate(...; force_new = true)",
-        ),
-    )
+    missing_stamps = get_missing_constraint_intervals(sys)
+    if !isempty(missing_stamps)
+        # A long gap lists its first five stamps and counts the rest.
+        shown = first(missing_stamps, min(length(missing_stamps), 5))
+        detail = join(shown, ", ") *
+            (length(missing_stamps) > length(shown) ? " and $(length(missing_stamps) - length(shown)) more" : "")
+        throw(
+            ArgumentError(
+                "nem_system: $(length(missing_stamps)) dispatch interval(s) have no DISPATCHCONSTRAINT rows, " *
+                    "at $detail; repopulate DISPATCHCONSTRAINT with populate(...; force_new = true)",
+            ),
+        )
+    end
     defaulted = get_defaulted_constraint_weights(sys)
     isempty(defaulted) || throw(
         ArgumentError(
@@ -90,6 +97,7 @@ end
 function _check_nemde_mnsp_structure(sys)
     incomplete = String[]
     for device in get_components(AreaInterchange, sys)
+        PSY.get_available(device) || continue
         registrations = get_supplemental_attributes(NEMInterconnectorRegistration, device)
         (isempty(registrations) || only(registrations).kind != InterconnectorKind.MNSP) && continue
         name = get_name(device)

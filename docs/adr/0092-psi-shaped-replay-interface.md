@@ -44,7 +44,8 @@ the orchestration lived in repository scripts:
   with the published columns; `read_solved_interval` mirrors `read_published_interval`, so
   `compare_intervals` is a join. `read_constraint_violations` returns a fixed row order.
 - **Data and range helpers in the package:** `check_replay_inputs`, `trading_day_steps`,
-  `replay_chunks`, `nemde_optimizer`.
+  `replay_chunks`, `nemde_optimizer`. Superseded: `check_replay_inputs` was removed, and
+  `nem_system` now validates these inputs at the end of the build.
 - **No `replicate_range` function.** The documented interface is the PSI code itself: `nem_system`,
   `prepare_replay!`, `DecisionModel`, `SimulationModels`, `SimulationSequence`, `Simulation`,
   `build!`, `execute!`, then the readers. `scripts/` keeps only the overnight batch runner, built on

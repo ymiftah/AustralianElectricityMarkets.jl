@@ -47,14 +47,17 @@ using Logging
     @testset "the simulation package never reads the cache" begin
         offenders = String[]
         source = joinpath(root, "AustralianElectricityMarketsSimulations", "src")
+        scanned = 0
         for (directory, _, files) in walkdir(source), file in files
             file == "precompile.jl" && continue
+            scanned += 1
             path = joinpath(directory, file)
             for (number, line) in enumerate(eachline(path))
                 occursin(r"\bAEMDB\b|\baem_connect\b|\bread_hive\b", line) || continue
                 push!(offenders, "$path:$number: $(strip(line))")
             end
         end
+        @test scanned > 0
         @test isempty(offenders) || error("AEMSim source reads the cache:\n" * join(offenders, "\n"))
     end
 end

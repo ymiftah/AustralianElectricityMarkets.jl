@@ -6,15 +6,17 @@ using PrecompileTools: @compile_workload
 module _PrecompileMockData
     import AustralianElectricityMarkets
     const DuckDB = AustralianElectricityMarkets.DuckDB
+    # The fixture imports TimeSeries, which AEMSim does not depend on directly.
+    const TimeSeries = parentmodule(AustralianElectricityMarkets.TimeArray)
     const FIXTURE = joinpath(@__DIR__, "..", "..", "test", "fixtures", "mock_data.jl")
     const AVAILABLE = isfile(FIXTURE)
-    function _drop_duckdb_using(ex)
-        return ex == :(using DuckDB) ? nothing : ex
+    function _drop_external_using(ex)
+        return ex in (:(using DuckDB), :(import TimeSeries)) ? nothing : ex
     end
     if AVAILABLE
         # Tracked so that editing the fixture recompiles this package.
         Base.include_dependency(FIXTURE)
-        include(_drop_duckdb_using, FIXTURE)
+        include(_drop_external_using, FIXTURE)
     end
 end
 

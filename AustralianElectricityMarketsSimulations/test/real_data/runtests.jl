@@ -34,8 +34,9 @@ const VIOLATION_STEPS = VIOLATION_START:REAL_RESOLUTION:(VIOLATION_START + REAL_
 
 const db = aem_connect(HiveConfiguration(hive_location = REAL_HIVE))
 
-# Pre-flight checks, the system over `steps` and the two intervals after them, then the built and
-# executed replay of `template`; throws unless both the build and the execution succeed.
+# The system over `steps` and the two intervals after them, with `nem_system` validating its inputs,
+# then `prepare_replay!` and the built and executed replay of `template`; throws unless both the build
+# and the execution succeed.
 function replay_real(steps; template = template_nemde())
     date_range = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
     sys = nem_system(db, NEMDEConfiguration(); date_range)

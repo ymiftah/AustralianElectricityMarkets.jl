@@ -126,7 +126,53 @@ end
 
     @testset "an invoked constraint without an exact GENCONDATA definition" begin
         damaged = damaged_cache(hive, :GENCONDATA, "DELETE FROM input WHERE GENCONID = 'N_BAYSW_THERMAL'")
-        @test_throws r"GENCONID" nem_system(damaged, NEMDEConfiguration(); date_range = interval)
+        @test_throws r"N_BAYSW_THERMAL.*no_definition" nem_system(damaged, NEMDEConfiguration(); date_range = interval)
+    end
+
+    @testset "a NULL GENERICCONSTRAINTWEIGHT is reported, defaulted" begin
+        damaged = damaged_cache(
+            hive, :GENCONDATA,
+            "UPDATE input SET GENERICCONSTRAINTWEIGHT = NULL WHERE GENCONID = 'N_BAYSW_THERMAL'",
+        )
+        @test_throws r"default 1\.0.*N_BAYSW_THERMAL" nem_system(damaged, NEMDEConfiguration(); date_range = interval)
+        both = damaged_cache(
+            hive, :GENCONDATA,
+            "UPDATE input SET GENERICCONSTRAINTWEIGHT = NULL " *
+                "WHERE GENCONID IN ('N_BAYSW_THERMAL', 'N_PUMP_THERMAL')",
+        )
+        err = try
+            nem_system(both, NEMDEConfiguration(); date_range = interval)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("N_BAYSW_THERMAL", err.msg)
+        @test occursin("N_PUMP_THERMAL", err.msg)
+    end
+
+    @testset "a unit term whose DUID is absent from the system is reported, dropped" begin
+        # CP_PHANTOM resolves to PHANTOM1, a DUDETAILSUMMARY DUID the build never creates.
+        phantom_term =
+            "INSERT INTO input SELECT 'CP_PHANTOM' AS CONNECTIONPOINTID, EFFECTIVEDATE, VERSIONNO, GENCONID, " *
+            "PERIODID + 1 AS PERIODID, 1.0 AS FACTOR, BIDTYPE, LASTCHANGED, archive_month FROM input " *
+            "WHERE GENCONID = 'N_BAYSW_THERMAL'"
+        damaged = damaged_cache(hive, :SPDCONNECTIONPOINTCONSTRAINT, phantom_term)
+        @test_throws r"N_BAYSW_THERMAL.*PHANTOM1" nem_system(damaged, NEMDEConfiguration(); date_range = interval)
+        both_terms =
+            "INSERT INTO input SELECT 'CP_PHANTOM' AS CONNECTIONPOINTID, EFFECTIVEDATE, VERSIONNO, GENCONID, " *
+            "PERIODID + 1 AS PERIODID, 1.0 AS FACTOR, BIDTYPE, LASTCHANGED, archive_month FROM input " *
+            "WHERE GENCONID IN ('N_BAYSW_THERMAL', 'N_PUMP_THERMAL')"
+        both = damaged_cache(hive, :SPDCONNECTIONPOINTCONSTRAINT, both_terms)
+        err = try
+            nem_system(both, NEMDEConfiguration(); date_range = interval)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("N_BAYSW_THERMAL", err.msg)
+        @test occursin("N_PUMP_THERMAL", err.msg)
     end
 
     @testset "fixed-load constraints need no GENCONDATA" begin
