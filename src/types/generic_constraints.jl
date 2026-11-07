@@ -52,9 +52,8 @@ get_interconnector(t::InterconnectorTerm) = t.interconnector
 A `FACTOR * <region's BidType aggregate>` term, from `SPDREGIONCONSTRAINT`.
 
 !!! note
-    `devices` is the region's contributing `Generator`/`Storage` names, resolved once by
-    [`resolve_term_devices`](@ref) at ingestion time (see [`nem_system`](@ref)) — `region`
-    and `bid_type` are kept alongside it so downstream code can still see this is a regional
+    `devices` is the region's contributing `Generator`/`Storage` names.
+    `region` and `bid_type` are kept alongside it so downstream code can still see this is a regional
     aggregate, not merely an unlabelled device list.
 """
 struct RegionTerm <: ConstraintTerm
