@@ -19,7 +19,7 @@
     vname(gencon_id, version = 1) = "$gencon_id@2025-01-01#$version"
 
     @testset "constraint build" begin
-        sys = augmented_pscb_system()
+        sys = nem_pscb_system()
         added, skipped = build_constraints!(sys, db, date_range)
 
         @test isempty(skipped)
@@ -74,26 +74,23 @@
 
         @testset "N_PARTIAL padding" begin
             gc = get_component(GenericConstraint, sys, vname("N_PARTIAL"))
-            base_power = get_base_power(sys)
-            invoked_series = get_time_series_values(SingleTimeSeries, gc, "invoked")
-            rhs_series = get_time_series_values(SingleTimeSeries, gc, "rhs")
+            invoked_series = _constraint_series(gc, :invoked)
+            rhs_series = _constraint_series(gc, :rhs)
 
             @test length(invoked_series) == length(rhs_series) == 25  # full 0:24 grid
             @test invoked_series[1:10] == fill(0.0, 10)   # intervals 0..9: not yet invoked
             @test invoked_series[11:25] == fill(1.0, 15)  # intervals 10..24: invoked
 
-            # rhs is carried forward before interval 10 and real thereafter. The "rhs" series is
-            # stored per-unit of sys's base power - see GenericConstraint.
+            # rhs is carried forward before interval 10 and real thereafter, in MW.
             @test all(==(rhs_series[10]), rhs_series[1:10])
-            @test rhs_series[11:25] ≈ [(40.0 + 0.1 * i) / base_power for i in 10:24]
+            @test rhs_series[11:25] ≈ [40.0 + 0.1 * i for i in 10:24]
         end
 
         @testset "rhs varies across intervals for a fully-covered constraint" begin
             gc = get_component(GenericConstraint, sys, vname("F_R1_RAISE6SEC"))
-            base_power = get_base_power(sys)
-            rhs_series = get_time_series_values(SingleTimeSeries, gc, "rhs")
+            rhs_series = _constraint_series(gc, :rhs)
             @test length(rhs_series) == 25
-            @test rhs_series ≈ [(30.0 + 0.1 * i) / base_power for i in 0:24]
+            @test rhs_series ≈ [30.0 + 0.1 * i for i in 0:24]
             @test issorted(rhs_series)  # confirms it isn't flat
         end
 
@@ -119,8 +116,8 @@
 
             # "invoked" series are complementary: exactly one version is 1.0 at every interval,
             # switching at PSCB_VERSION_SWITCH_FROM, never both at once.
-            invoked_v1 = get_time_series_values(SingleTimeSeries, gc_v1, "invoked")
-            invoked_v2 = get_time_series_values(SingleTimeSeries, gc_v2, "invoked")
+            invoked_v1 = _constraint_series(gc_v1, :invoked)
+            invoked_v2 = _constraint_series(gc_v2, :invoked)
             @test length(invoked_v1) == length(invoked_v2) == 25
             @test all(==(1.0), invoked_v1 .+ invoked_v2)  # exactly one is 1.0 at every interval
             @test invoked_v1 == [i < PSCB_VERSION_SWITCH_FROM ? 1.0 : 0.0 for i in 0:24]
@@ -139,36 +136,44 @@
         end
     end
 
-    @testset "set_fcas_bids!" begin
-        sys = augmented_pscb_system()
-        set_fcas_bids!(sys, db, date_range)
-        give_generator_market_bid_costs!(sys)
-        set_fcas_service_bids!(sys, db, date_range)
+    @testset "set_market_bids!" begin
+        sys = nem_pscb_system()
+        set_market_bids!(sys, db, date_range)
+        fcas_bid_names(device, service, direction) = [
+            AustralianElectricityMarkets.bid_series_name(service, :offer_curves, direction),
+            AustralianElectricityMarkets.bid_series_name(service, :trapezium, direction),
+        ]
+        bid_for(device, service, direction) = only(
+            b for b in AustralianElectricityMarkets.get_fcas_bids(get_operation_cost(device))
+                if b.service == service && b.direction == direction
+        )
 
-        @testset "thermal unit gets trapezium series and offer curve once it has a MarketBidCost" begin
-            gen = get_component(ThermalStandard, sys, "Alta")
-            @test get_operation_cost(gen) isa MarketBidCost
-            @test has_time_series(gen, SingleTimeSeries, fcas_offer_series_name(fcas_service(gen, BidType.RAISE6SEC), false))
-            @test has_time_series(gen, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")
+        @testset "thermal unit records a generation-side bid with its series" begin
+            gen = get_component(NEMThermalGen, sys, "Alta")
+            bid = bid_for(gen, BidType.RAISE6SEC, AustralianElectricityMarkets.BidDirection.GEN)
+            @test has_time_series(gen, SingleTimeSeries, bid.offer_curves.name)
+            @test has_time_series(gen, SingleTimeSeries, bid.trapezium.name)
         end
 
-        @testset "SOLAR1 (RenewableDispatch, zero cost) gets curve and trapezium series" begin
-            solar = get_component(RenewableDispatch, sys, "SOLAR1")
-            @test has_time_series(solar, SingleTimeSeries, fcas_offer_series_name(fcas_service(solar, BidType.RAISE6SEC), false))
-            @test has_time_series(solar, SingleTimeSeries, "fcas_trapezium_RAISE6SEC")
+        @testset "SOLAR1 (RenewableDispatch, zero cost) records a generation-side bid" begin
+            solar = get_component(NEMRenewableGen, sys, "SOLAR1")
+            bid = bid_for(solar, BidType.RAISE6SEC, AustralianElectricityMarkets.BidDirection.GEN)
+            @test has_time_series(solar, SingleTimeSeries, bid.offer_curves.name)
+            @test has_time_series(solar, SingleTimeSeries, bid.trapezium.name)
         end
 
-        @testset "BAT1 gets both incremental and decremental series" begin
-            bat = get_component(EnergyReservoirStorage, sys, "BAT1")
-            @test has_time_series(bat, SingleTimeSeries, fcas_offer_series_name(fcas_service(bat, BidType.RAISEREG), false))
-            @test has_time_series(bat, SingleTimeSeries, "fcas_trapezium_RAISEREG")
-            @test has_time_series(bat, SingleTimeSeries, fcas_offer_series_name(fcas_service(bat, BidType.RAISEREG), true))
-            @test has_time_series(bat, SingleTimeSeries, "fcas_trapezium_RAISEREG_decremental")
+        @testset "BAT1 records both incremental and decremental bids" begin
+            bat = get_component(NEMStorage, sys, "BAT1")
+            for direction in (AustralianElectricityMarkets.BidDirection.GEN, AustralianElectricityMarkets.BidDirection.LOAD)
+                bid = bid_for(bat, BidType.RAISEREG, direction)
+                @test has_time_series(bat, SingleTimeSeries, bid.offer_curves.name)
+                @test has_time_series(bat, SingleTimeSeries, bid.trapezium.name)
+            end
         end
 
-        @testset "decremental series is storage-only" begin
-            gen = get_component(ThermalStandard, sys, "Alta")
-            @test !has_time_series(gen, SingleTimeSeries, "fcas_trapezium_RAISEREG_decremental")
+        @testset "decremental bid is storage-only, a generator's load bid is not modelled" begin
+            gen = get_component(NEMThermalGen, sys, "Alta")
+            @test !any(b -> b.direction == AustralianElectricityMarkets.BidDirection.LOAD, AustralianElectricityMarkets.get_fcas_bids(get_operation_cost(gen)))
         end
     end
 end

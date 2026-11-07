@@ -262,4 +262,20 @@ let
         @test tas.TO_REGION_TLF == 0.9907
         @test tas.MAXCAPACITY == 594
     end
+
+    @testset "read_hive date range" begin
+        # The mock names months YYYY-MM and the real cache YYYY-MM-01; both must match by month.
+        # DUDETAIL is cached for 2025-01 only; MNSP_DAYOFFER for 2024-12 and 2025-01.
+        named_files(sql) = [m.captures[1] for m in eachmatch(r"'([^']+\.parquet)'", sql)]
+        partition_files(table, month) = readdir(joinpath(hive_dir, table, "archive_month=$month"); join = true)
+        partition_dirs(files) = unique(basename.(dirname.(files)))
+        inside = named_files(read_hive(db, :DUDETAIL, DateTime(2025, 1, 15, 4, 5):Dates.Minute(5):DateTime(2025, 1, 15, 9)))
+        @test partition_dirs(inside) == ["archive_month=2025-01"]
+        @test sort(inside) == sort(partition_files("DUDETAIL", "2025-01"))
+        edge = named_files(read_hive(db, :MNSP_DAYOFFER, DateTime(2024, 12, 31, 22):Dates.Minute(5):DateTime(2025, 1, 1, 2)))
+        @test sort(partition_dirs(edge)) == ["archive_month=2024-12", "archive_month=2025-01"]
+        @test sort(edge) == sort(vcat(partition_files("MNSP_DAYOFFER", "2024-12"), partition_files("MNSP_DAYOFFER", "2025-01")))
+        @test read_hive(db, :DISPATCHLOAD, DateTime(2030, 1, 1):Dates.Minute(5):DateTime(2030, 1, 1, 1)) ==
+            read_hive(db, :DISPATCHLOAD)
+    end
 end

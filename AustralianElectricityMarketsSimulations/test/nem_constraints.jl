@@ -91,22 +91,27 @@ function _retime_gc_series!(
         sys, params, overrides_mw::Dict{String, Float64},
         invoked_overrides::Dict{String, Vector{Float64}} = Dict{String, Vector{Float64}}(),
     )
-    base_power = get_base_power(sys)
     times, n_raw = _raw_series_times(params)
+    names = AustralianElectricityMarkets.NEM_CONSTRAINT_SERIES
     for name in NEM_CONSTRAINTS_GENCON_IDS
         gc = _gc(sys, name)
         rhs_value = if haskey(overrides_mw, name)
-            overrides_mw[name] / base_power
+            overrides_mw[name]
         else
-            get_time_series_values(SingleTimeSeries, gc, "rhs")[1]
+            _constraint_series(gc, :rhs)[1]
         end
         invoked_values = get(invoked_overrides, name, fill(1.0, n_raw))
-        remove_time_series!(sys, SingleTimeSeries, gc, "rhs")
-        remove_time_series!(sys, SingleTimeSeries, gc, "invoked")
-        add_time_series!(sys, gc, SingleTimeSeries(; name = "rhs", data = TimeArray(times, fill(rhs_value, n_raw))))
-        add_time_series!(sys, gc, SingleTimeSeries(; name = "invoked", data = TimeArray(times, invoked_values)))
+        remove_time_series!(sys, SingleTimeSeries, gc, names.rhs)
+        remove_time_series!(sys, SingleTimeSeries, gc, names.invoked)
+        add_time_series!(sys, gc, SingleTimeSeries(; name = names.rhs, data = TimeArray(times, fill(rhs_value, n_raw))))
+        add_time_series!(sys, gc, SingleTimeSeries(; name = names.invoked, data = TimeArray(times, invoked_values)))
     end
     transform_single_time_series!(sys, params.horizon, params.interval)
+    for name in NEM_CONSTRAINTS_GENCON_IDS
+        gc = _gc(sys, name)
+        gc.rhs = _toy_constraint_key(gc, names.rhs)
+        gc.invoked = _toy_constraint_key(gc, names.invoked)
+    end
     return
 end
 
@@ -211,7 +216,7 @@ function _add_fcas_services!(sys)
         for (name, devices) in by_name
             region = get_name(get_area(get_bus(first(devices))))
             add_service!(sys, FCASService(; name = name, region = region, bid_type = bid_type), devices)
-            flush_toy_fcas_curves!(sys)
+            derive_toy_offers!(sys)
         end
     end
     return
@@ -226,7 +231,7 @@ end
         sys, FCASService(; name = "1_RAISE6SEC", region = "1", bid_type = BidType.RAISE6SEC),
         get_contributing_devices(sys, _gc(sys, "F_R1_RAISE6SEC")),
     )
-    flush_toy_fcas_curves!(sys)
+    derive_toy_offers!(sys)
     model = _decision_model(_nem_service_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     err = _build_error(model)
     @test err isa ArgumentError
@@ -610,8 +615,7 @@ function _add_zero_flow_pair!(sys, params, interconnector::AbstractString)
             ext = Dict{String, Any}("limit_type" => "Interconnector Zero", "source" => "built-in"),
         )
         add_service!(sys, gc, [get_component(AreaInterchange, sys, interconnector)])
-        add_time_series!(sys, gc, SingleTimeSeries(; name = "rhs", data = TimeArray(times, zeros(n_raw))))
-        add_time_series!(sys, gc, SingleTimeSeries(; name = "invoked", data = TimeArray(times, ones(n_raw))))
+        add_toy_constraint_series!(sys, gc, times, zeros(n_raw), ones(n_raw))
     end
     return
 end

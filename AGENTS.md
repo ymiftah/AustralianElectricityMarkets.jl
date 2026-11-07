@@ -133,4 +133,6 @@ bound, constraint and cost term. Record any departure from AEMO in an ADR.
   module: `IS.get_module` only resolves top-level package names, so submodule-nested types break
   `System` JSON round-trips.
 - Simulations depends on a **pinned PowerSimulations fork** (`[sources]` in its `Project.toml`);
-  check PSI behaviour against that revision, not upstream.
+  check PSI behaviour against that revision, not upstream. PowerSystems is the registered release.
+- Replay systems use the NEM device types (`NEMThermalGen`, `NEMHydroGen`, `NEMRenewableGen`,
+  `NEMStorage`, `NEMLoad`) with a `NEMOfferCost`; `RegionalNetworkConfiguration` keeps stock types.

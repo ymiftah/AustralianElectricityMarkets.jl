@@ -16,48 +16,49 @@ export HiveConfiguration, aem_connect
 export NetworkConfiguration, table_requirements, nem_system
 export RegionalNetworkConfiguration, NEMDEConfiguration
 export set_mnsp_offers!, set_demand!, set_market_bids!, add_nem_constraints!, set_regional_availability!
-export get_storage_energy_max_avail
-export set_fcas_bids!, set_fcas_service_bids!, set_fcas_scaling_inputs!, set_fcas_effective_offers!
-export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW
-export set_nem_dispatch_limits!, set_interconnector_flow_limits!, set_loss_demand_coefficients!
-export get_initial_mw, get_energy_availability
-export set_nem_energy_limits!, registration_spans
+export set_unit_conditions!, set_interconnector_flow_limits!, set_loss_demand_coefficients!
 export get_skipped_constraints, get_dropped_terms,
     get_missing_constraint_intervals, get_defaulted_constraint_weights
+export NEMBuildReport, get_build_report, set_build_report!
+export MNSPDirection, InterconnectorKind, NEMInterconnectorRegistration, NEMInterconnectorLimits, NEMMNSPLink, NEMMNSPBid, NEMMNSPObservedState
 export fcas_service_name, fcas_service, fcas_offer_series_name
-export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS, BidType
+export FCAS_BID_TYPES, FCAS_CONTINGENCY_MARKETS, FCAS_REGULATION_MARKETS, NEM_MARKETS, BidType
 export InterconnectorLossModel, interconnector_loss_models, loss_factor, interconnector_losses, loss_segments,
     loss_curve_vertex_values, attach_interconnector_losses!
 export FCASTrapezium,
     get_enablement_min, get_enablement_max,
     get_max_avail, get_ramp_up_rate, get_ramp_down_rate, get_lower_slope_coeff, get_upper_slope_coeff,
     scale_fcas_trapezium
-export get_scaled_fcas_trapezium,
-    get_fcas_agc_ramp_capability, get_fcas_agc_status
 export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm, FCASRequirement,
     GenericConstraint,
     get_duid, get_bid_type, get_factor, get_interconnector, get_region, get_service, get_devices,
-    get_sense, get_constraint_weight,
+    get_sense, get_constraint_weight, get_rhs, get_invoked,
     get_limit_type, get_source,
     get_terms, get_fcas_requirements, resolve_term_devices
 export FCASService, add_fcas_services!, Readers
-export OfferSide, offer_side, side_suffix, NEM_SERIES, energy_max_avail_series_name
-export NEMEnergyOffer, get_energy_offer, NEMFCASOffer, get_fcas_offer
-export EnergyTieBreak, set_tie_break_scales!, TIE_BREAK_SERVICE_NAME, TIE_BREAK_CVP_FACTOR
+export OfferSide, offer_side, side_suffix, NEM_SERIES, NEM_TELEMETRY_SERIES, NEM_OBSERVED_SERIES, NEM_INTERCONNECTOR_SERIES, NEM_MNSP_SERIES, NEM_CONSTRAINT_SERIES, energy_offer_series_name, energy_max_avail_series_name
+export NEMOfferCost, NEMEnergyBid, NEMFCASBid, BidDirection, FastStartProfile, FCASTrapeziumPoints, bid_value, bid_series_name
+export get_energy_bids, get_fcas_bids, get_direction, get_offer_curves, get_max_avail, get_roc_up, get_roc_down,
+    get_fixed_load, get_minimum_load, get_fast_start_profile, get_daily_energy_constraint, get_normal_status,
+    get_energy_limit, get_trapezium
+export NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMStorage, NEMLoad
+export NEMRegistration, NEMTelemetry, NEMObservedState, ScheduleType
+export get_registration, get_telemetry, get_observed_state, set_registration!, set_telemetry!, set_observed_state!
+export EnergyTieBreak, TIE_BREAK_SERVICE_NAME, TIE_BREAK_CVP_FACTOR
 export MARKET_PRICE_CAP_BY_FINANCIAL_YEAR, DISPATCH_INTERVAL, constraint_cvp_factor
 export UNIT_RAMP_CVP_FACTOR, INTERCONNECTOR_FLOW_CVP_FACTOR, ENERGY_OFFER_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR,
     ENERGY_MAX_AVAIL_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR, INTERCONNECTOR_ZERO_CVP_FACTOR, FIXED_LOADING_CVP_FACTOR,
     MNSP_RAMP_CVP_FACTOR, MNSP_OFFER_CVP_FACTOR, MNSP_AVAILABILITY_CVP_FACTOR,
     FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR, FCAS_BDU_RAMPING_CVP_FACTOR
-export fcas_effective_series_name, fcas_ramping_series_name, fcas_upper_regulation_service, fcas_offer_sides,
-    tie_break_series_name, tie_groups
-export fcas_series_name, mnsp_series_name, FCASBidDirection, fcas_bid_direction, single_series, remove_single_series!, replace_single_series!,
-    nem_dispatch_devices, NEM_DISPATCH_DEVICE_TYPES, is_non_scheduled_load, is_commissioned, has_schedule_classification, is_semi_scheduled,
+export fcas_series_name, FCASBidDirection, fcas_bid_direction, single_series, remove_single_series!, replace_single_series!,
+    nem_dispatch_devices, NEM_DISPATCH_DEVICE_TYPES, is_non_scheduled_load, is_commissioned, has_registration, is_semi_scheduled,
     energy_offer_sides
 
 include("constants.jl")
+include("utils.jl")
 include("types/bid_types.jl")
-include("types/network_configuration.jl")
+include("network_configurations/NetworkConfigurations.jl")
+using .NetworkConfigurations: NetworkConfiguration, RegionalNetworkConfiguration, NEMDEConfiguration
 include("types/fcas.jl")
 include("types/generic_constraints.jl")
 include("types/interconnector_losses.jl")
@@ -65,7 +66,7 @@ include("types/tie_break.jl")
 
 include("readers/Readers.jl")
 using .Readers
-using .Readers: _query, _table_is_cached, _require_cached, _massage_bids
+using .Readers: _query, _table_is_cached, _require_cached, _massage_bids, _require_columns, _table_schema
 
 for name in names(Readers)
     name === :Readers && continue
@@ -74,35 +75,39 @@ for name in names(Readers)
 end
 
 include("accessors/series_names.jl")
+include("types/nem_offer_cost.jl")
+include("types/unit_data.jl")
+include("types/network_data.jl")
+include("types/build_report.jl")
+include("types/nem_devices.jl")
 include("accessors/device_flags.jl")
-include("accessors/bids.jl")
-include("accessors/dispatch_limits.jl")
 include("accessors/fcas.jl")
 include("accessors/constraints.jl")
 include("accessors/offers.jl")
+include("accessors/bids.jl")
 include("system/interface.jl")
 include("system/demand.jl")
 include("system/bids.jl")
 include("system/dispatch_limits.jl")
+include("system/unit_conditions.jl")
 include("system/regional_availability.jl")
-include("system/energy_limits.jl")
 include("system/fcas.jl")
-include("system/fcas_effective.jl")
+include("system/offers.jl")
 include("system/mnsp.jl")
 include("system/constraints.jl")
 include("system/fixed_loads.jl")
 include("system/interconnectors.jl")
-include("system/tie_break.jl")
 include("system/penalties.jl")
 include("system/RegionModel.jl")
+include("system/replay_checks.jl")
 
-using .RegionModel: RegionalNetworkConfiguration, NEMDEConfiguration, nem_network
+using .RegionModel: nem_network
 export nem_network
 
 @doc (@doc AustralianElectricityMarketsCache.HiveConfiguration) HiveConfiguration
 @doc (@doc AustralianElectricityMarketsCache.aem_connect) aem_connect
-@doc (@doc RegionModel.RegionalNetworkConfiguration) RegionalNetworkConfiguration
-@doc (@doc RegionModel.NEMDEConfiguration) NEMDEConfiguration
+@doc (@doc NetworkConfigurations.RegionalNetworkConfiguration) RegionalNetworkConfiguration
+@doc (@doc NetworkConfigurations.NEMDEConfiguration) NEMDEConfiguration
 @doc (@doc RegionModel.nem_network) nem_network
 
 include("precompile.jl")

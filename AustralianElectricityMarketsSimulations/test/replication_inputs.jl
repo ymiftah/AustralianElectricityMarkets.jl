@@ -1,23 +1,31 @@
 @testset "replay requires complete inputs before model construction" begin
     sys = System(100.0; time_series_in_memory = true)
-    get_ext(sys)["skipped_constraints"] = [
-        Dict{String, Any}(
-            "constraint" => "N_MISSING@2025-01-01#1", "reason" => "no_definition", "missing" => String[],
+    set_build_report!(
+        sys,
+        NEMBuildReport(;
+            skipped_constraints = [
+                Dict{String, Any}(
+                    "constraint" => "N_MISSING@2025-01-01#1", "reason" => "no_definition", "missing" => String[],
+                ),
+            ],
         ),
-    ]
+    )
     @test_throws r"incomplete.*N_MISSING" replay_template(sys)
 
-    delete!(get_ext(sys), "skipped_constraints")
-    get_ext(sys)["dropped_terms"] = [
-        Dict{String, Any}(
-            "constraint" => "N_PARTIAL@2025-01-01#1", "kind" => "UNIT", "key" => "MISSING_DUID",
-            "bid_type" => "ENERGY", "factor" => 1.0,
+    set_build_report!(
+        sys,
+        NEMBuildReport(;
+            dropped_terms = [
+                Dict{String, Any}(
+                    "constraint" => "N_PARTIAL@2025-01-01#1", "kind" => "UNIT", "key" => "MISSING_DUID",
+                    "bid_type" => "ENERGY", "factor" => 1.0,
+                ),
+            ],
         ),
-    ]
+    )
     @test_throws r"incomplete.*MISSING_DUID" replay_template(sys)
 
-    delete!(get_ext(sys), "dropped_terms")
-    get_ext(sys)["defaulted_constraint_weights"] = ["N_NULL_WEIGHT@2025-01-01#1"]
+    set_build_report!(sys, NEMBuildReport(; defaulted_constraint_weights = ["N_NULL_WEIGHT@2025-01-01#1"]))
     @test_throws r"NULL GENERICCONSTRAINTWEIGHT: N_NULL_WEIGHT.*force_new = true" replay_template(sys)
 end
 
@@ -36,7 +44,8 @@ end
     # With every dispatch device unavailable, the template reaches the MNSP check.
     foreach(d -> set_available!(d, false), AustralianElectricityMarkets.nem_dispatch_devices(sys))
     @test_throws r"IC2.*MNSP" replay_template(sys)
-    get_ext(ic)["ic_type"] = "REGULATED"
+    PSY.remove_supplemental_attribute!(sys, ic, only(PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMInterconnectorRegistration, ic)))
+    PSY.add_supplemental_attribute!(sys, ic, AustralianElectricityMarkets.NEMInterconnectorRegistration(; kind = AustralianElectricityMarkets.InterconnectorKind.REGULATED))
     @test isnothing(AEMS._check_mnsp_offers(ic))
 end
 
@@ -46,10 +55,11 @@ end
     t = DateTime(2025, 1, 1, 0, 5)
     rows = DataFrame(INTERVAL_DATETIME = [t, t], DUID = ["PUMP1", "BW01"], DIRECTION = ["LOAD", "LOAD"], FIXEDLOAD = [30.0, 5.0])
     targets = AustralianElectricityMarkets._fixed_load_series(sys, rows)
-    @test targets["PUMP1"][t] == 30.0
-    @test targets["BW01"][t] == -5.0
-    @test AustralianElectricityMarkets._is_modelled_fixed_load("\$PUMP1", targets, t)
-    @test !AustralianElectricityMarkets._is_modelled_fixed_load("\$PUMP1", targets, t + Minute(5))
+    by_key = Dict((r.DUID, r.INTERVAL_DATETIME) => r.TARGET for r in eachrow(targets))
+    @test by_key[("PUMP1", t)] == 30.0
+    @test by_key[("BW01", t)] == -5.0
+    @test haskey(by_key, ("PUMP1", t))
+    @test !haskey(by_key, ("PUMP1", t + Minute(5)))
 end
 
 @testset "a cached table without the requested constraint intervals cannot replay" begin
@@ -79,6 +89,7 @@ end
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     sys = nem_system(db, NEMDEConfiguration(); date_range = interval)
     @test !isnothing(get_component(Generator, sys, "BW02"))
+    set_effective_offers!(sys)
     AEMS._prepare_replay_forecasts!(sys)
     @test_nowarn replay_template(sys)
 end

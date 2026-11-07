@@ -13,7 +13,7 @@ unresolved term), `n_missing` (number of unresolved term keys of any kind) and `
 (those keys). Empty when nothing was skipped or no constraints were built into `sys`.
 """
 function get_skipped_constraints(sys)
-    rows = get(get_ext(sys), "skipped_constraints", Dict{String, Any}[])
+    rows = get_build_report(sys).skipped_constraints
     return DataFrame(;
         constraint = String[r["constraint"] for r in rows],
         reason = Symbol[Symbol(r["reason"]) for r in rows],
@@ -37,7 +37,7 @@ A `DataFrame` with `constraint` (versioned name), `kind`, `key`, `bid_type` and 
 per dropped term. Empty when nothing was dropped or no constraints were built into `sys`.
 """
 function get_dropped_terms(sys)
-    rows = get(get_ext(sys), "dropped_terms", Dict{String, Any}[])
+    rows = get_build_report(sys).dropped_terms
     return DataFrame(;
         constraint = String[r["constraint"] for r in rows],
         kind = String[r["kind"] for r in rows],
@@ -53,7 +53,7 @@ end
 
 The dispatch intervals of the range [`nem_system`](@ref) ran over that had no invoked
 constraint in `DISPATCHCONSTRAINT`, so their generic constraints are absent from `sys`. They are
-stored in `ext` as ISO 8601 strings, so they survive a `System` JSON round-trip.
+stored with the [`NEMBuildReport`](@ref), so they survive a `System` JSON round-trip.
 
 # Arguments
 - `sys`: a `System` built by `nem_system`.
@@ -63,7 +63,7 @@ A `Vector{DateTime}`, empty when every interval had invoked constraints or no co
 into `sys`.
 """
 function get_missing_constraint_intervals(sys)
-    return DateTime[DateTime(String(t)) for t in get(get_ext(sys), "missing_constraint_intervals", String[])]
+    return get_build_report(sys).missing_constraint_intervals
 end
 
 
@@ -80,5 +80,5 @@ The versioned names of the constraints [`nem_system`](@ref) built with the defau
 A `Vector{String}`, empty when no weight was defaulted or no constraints were built into `sys`.
 """
 function get_defaulted_constraint_weights(sys)
-    return collect(String, get(get_ext(sys), "defaulted_constraint_weights", String[]))
+    return get_build_report(sys).defaulted_constraint_weights
 end

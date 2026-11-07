@@ -27,25 +27,38 @@ end
 function _check_energy_limit_series(sys, model::PSI.DeviceModel, initial_time, n_intervals)
     for d in PSI.get_available_components(model, sys)
         name = PSY.get_name(d)
-        keys, remedy = _energy_limit_series(d)
-        for key in keys
+        names, uigf, remedy = _energy_limit_series(d)
+        for key in names
             PSY.has_time_series(d, PSY.SingleTimeSeries, key) || throw(ArgumentError("$name: missing $key; $remedy"))
             values = PSY.get_time_series_values(PSY.SingleTimeSeries, d, key; start_time = initial_time, len = n_intervals, ignore_scaling_factors = true)
-            bad = findfirst(v -> !isfinite(v) || v < 0, values)
-            isnothing(bad) || throw(ArgumentError("$name at interval $bad: invalid $key"))
+            _require_valid_input(name, values, key)
         end
+        isnothing(uigf) || _require_valid_input(name, IS.get_time_series_values(d, uigf; start_time = initial_time, len = n_intervals), "UIGF")
     end
     return
 end
 
 
-# The energy-limit series names a device's dispatch reads, and the setter that attaches them.
+# Throws unless every entry of `values` is finite and non-negative.
+function _require_valid_input(name::AbstractString, values, label::AbstractString)
+    bad = findfirst(v -> !isfinite(v) || v < 0, values)
+    isnothing(bad) || throw(ArgumentError("$name at interval $bad: invalid $label"))
+    return
+end
+
+
+# The derived energy-limit series names a device's dispatch reads, its UIGF key (`nothing` unless
+# semi-scheduled), and the setter that attaches them.
 function _energy_limit_series(d::PSY.Storage)
-    return energy_max_avail_series_name.((OfferSide.GEN, OfferSide.LOAD)), "call set_market_bids! for both directions"
+    return energy_max_avail_series_name.((OfferSide.GEN, OfferSide.LOAD)), nothing, "call set_market_bids! for both directions"
 end
 
 function _energy_limit_series(d)
-    semi = is_semi_scheduled(d)
     max_avail = energy_max_avail_series_name(OfferSide.GEN)
-    return (semi ? (max_avail, NEM_SERIES.uigf) : (max_avail,)), "call set_nem_energy_limits!"
+    if !is_semi_scheduled(d)
+        return (max_avail,), nothing, "call set_unit_conditions!"
+    end
+    uigf = AustralianElectricityMarkets.get_telemetry(d).uigf
+    isnothing(uigf) && throw(ArgumentError("$(PSY.get_name(d)): semi-scheduled but has no UIGF; call set_unit_conditions!"))
+    return (max_avail,), uigf, "call set_unit_conditions!"
 end

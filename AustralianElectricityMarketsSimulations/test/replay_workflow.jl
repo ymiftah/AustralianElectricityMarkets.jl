@@ -11,7 +11,6 @@ function replay_steps(
         folder::AbstractString = mktempdir(), kwargs...,
     )
     date_range = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
-    check_replay_inputs(db, date_range; intervention, template)
     time_series = time_series_in_memory ? (;) : (; time_series_directory = mkpath(joinpath(folder, "time_series")))
     sys = nem_system(
         db, NEMDEConfiguration(); date_range, intervention, interval_flow_limits, time_series_in_memory, time_series...,
@@ -127,7 +126,7 @@ end
         # The mock offers Basslink-like links on IC2 (300 MW available) for the intervals up to 04:00.
         sys = prepared_test_system(db, t:Minute(5):(t + Minute(10)))
         ic2 = get_component(AreaInterchange, sys, "IC2")
-        @test has_time_series(ic2, SingleTimeSeries, "mnsp_forward_max_avail")
+        @test !isempty(get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPBid, ic2))
         result = replay_steps(db, t:DISPATCH_INTERVAL:t; interval_flow_limits = true)
         @test any(
             k -> PSI.IS.Optimization.get_entry_type(k) === MNSPLinkFlowVariable,
@@ -173,7 +172,7 @@ end
     entry_and_component(k) = (PSI.IS.Optimization.get_entry_type(k), PSI.IS.Optimization.get_component_type(k))
     @test any(k -> entry_and_component(k)[1] === FCASCapacityVariable, var_keys)
     @test any(k -> entry_and_component(k) == (InterconnectorLossVariable, PSY.AreaInterchange), var_keys)
-    @test any(k -> entry_and_component(k) == (ActivePowerOutVariable, PSY.EnergyReservoirStorage), var_keys)
+    @test any(k -> entry_and_component(k) == (ActivePowerOutVariable, NEMStorage), var_keys)
 end
 
 @testset "replay_chunks splits a replay into simulations" begin
@@ -225,7 +224,7 @@ end
     template = PSI.ProblemTemplate(
         PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true, duals = [PSI.CopperPlateBalanceConstraint]),
     )
-    for T in (PSY.ThermalStandard, PSY.HydroDispatch, PSY.RenewableDispatch, PSY.InterruptiblePowerLoad, PSY.EnergyReservoirStorage)
+    for T in (NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMLoad, NEMStorage)
         PSI.set_device_model!(template, T, AEMS.NEMReplayDispatch)
     end
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
@@ -235,58 +234,10 @@ end
     )
     result = replay_steps(db, t1:DISPATCH_INTERVAL:t2; template)
     types = Set(PSI.IS.Optimization.get_component_type(k) for k in PSI.list_variable_keys(result.results))
-    @test PSY.EnergyReservoirStorage in types && !(PSY.AreaInterchange in types)
+    @test NEMStorage in types && !(PSY.AreaInterchange in types)
     @test !any(k -> PSI.IS.Optimization.get_entry_type(k) === FCASCapacityVariable, PSI.list_variable_keys(result.results))
     @test all(ismissing, result.comparison.interconnectors.MWFLOW_solved)
     @test all(ismissing, result.comparison.fcas_prices.ROP_solved)
     @test any(in((:unmodeled_fcas_service, :unmodeled_device_type)), result.skipped.reason)
     @test any(!ismissing, result.comparison.dispatch.TOTALCLEARED_solved)
-end
-
-@testset "check_replay_inputs checks exact padded coverage and versions" begin
-    t = DateTime(2025, 1, 1, 0, 5)
-    grid = collect(t:Minute(5):(t + Minute(5)))
-    links = DataFrame(INTERCONNECTORID = ["M", "M"], LINKID = ["F", "R"])
-    offers = DataFrame(LINKID = ["F", "R", "F", "R"], INTERVAL_DATETIME = [grid[1], grid[1], grid[2], grid[2]])
-    @test isnothing(AEMS._check_mnsp_coverage(links, offers, ["M"], grid))
-    @test_throws ArgumentError AEMS._check_mnsp_coverage(links, offers[1:3, :], ["M"], grid)
-    @test_throws ArgumentError AEMS._check_mnsp_coverage(links, vcat(offers, offers[1:1, :]), ["M"], grid)
-    @test_throws ArgumentError AEMS._check_mnsp_coverage(links[1:1, :], offers, ["M"], grid)
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR))
-    @test isnothing(check_replay_inputs(db, t:Minute(5):(t + Minute(10)); template = template_nemde()))
-end
-
-@testset "check_replay_inputs preserves fixed-load and built-in constraint handling" begin
-    t = DateTime(2025, 1, 1, 0, 5)
-    eff = DateTime(2020, 1, 1)
-    invoked = DataFrame(
-        GENCONID = ["C", "\$U"], SETTLEMENTDATE = [t, t],
-        GENCONID_EFFECTIVEDATE = [eff, eff], GENCONID_VERSIONNO = [1, 1]
-    )
-    fixed = DataFrame(DUID = ["U"], INTERVAL_DATETIME = [t])
-    definitions = DataFrame(GENCONID = ["C"], EFFECTIVEDATE = [eff], VERSIONNO = [1])
-    @test isnothing(AEMS._check_constraint_versions(invoked, fixed, definitions))
-    definitions.VERSIONNO .= 2
-    @test_throws ArgumentError AEMS._check_constraint_versions(invoked, fixed, definitions)
-    builtin = first(keys(AustralianElectricityMarkets._ZERO_FLOW_CONSTRAINTS))
-    invoked = DataFrame(
-        GENCONID = [builtin], SETTLEMENTDATE = [t],
-        GENCONID_EFFECTIVEDATE = [DateTime(AustralianElectricityMarkets._ZERO_FLOW_EFFECTIVEDATE)],
-        GENCONID_VERSIONNO = [AustralianElectricityMarkets._ZERO_FLOW_VERSIONNO]
-    )
-    @test isnothing(AEMS._check_constraint_versions(invoked, fixed, definitions[1:0, :]))
-end
-
-@testset "check_replay_inputs needs no GENCONDATA for fixed-load-only units" begin
-    db = damaged_cache(
-        AEM_TEST_REPLAY_HIVE_DIR, :DISPATCHCONSTRAINT,
-        "UPDATE input SET CONSTRAINTID = '\$BW01'"
-    )
-    fixed_db = damaged_cache(
-        db.config.hive_location, :BIDPEROFFER_D,
-        "UPDATE input SET FIXEDLOAD = 1.0 WHERE DUID = 'BW01' AND BIDTYPE = 'ENERGY'"
-    )
-    rm(joinpath(fixed_db.config.hive_location, "GENCONDATA"); recursive = true)
-    t = DateTime(2025, 1, 1, 0, 5)
-    @test isnothing(check_replay_inputs(fixed_db, t:Minute(5):(t + Minute(10))))
 end

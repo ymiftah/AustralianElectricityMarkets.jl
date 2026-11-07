@@ -103,7 +103,7 @@ function _read_dispatch_table(
         intervention::Integer = 0, where::AbstractString = "", order::Bool = false,
     )
     _require_cached(db, table_name)
-    table = read_hive(db, table_name)
+    table = read_hive(db, table_name, date_range)
     schema = _table_schema(db, table)
     select_cols = columns isa Function ? columns(schema) : columns
     params = Any[first(date_range), last(date_range)]

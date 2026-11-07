@@ -38,7 +38,7 @@ function PSI.get_default_time_series_names(
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
         RampUpRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
         RampDownRateTimeSeriesParameter => NEM_SERIES.ramp_down_rate,
-        InitialPowerTimeSeriesParameter => NEM_SERIES.initial_mw,
+        InitialPowerTimeSeriesParameter => NEM_OBSERVED_SERIES.initial_mw,
         PSI.ActivePowerOutTimeSeriesParameter => energy_max_avail_series_name(OfferSide.GEN),
         PSI.ActivePowerInTimeSeriesParameter => energy_max_avail_series_name(OfferSide.LOAD),
         _FIXED_LOAD_SERIES...,
@@ -51,7 +51,7 @@ end
 
 Argument stage for a battery under [`AbstractNEMDispatch`](@ref): the per-direction active
 power variables, the ramp parameters, the raw availability
-parameters, the incremental and decremental market-bid parameters, and the device's net
+parameters, the offer-total violation variables, and the device's net
 contribution to the active power balance.
 
 # Returns
@@ -80,12 +80,9 @@ function PSI.construct_device!(
 
     _add_fixed_load_arguments!(container, devices, model)
 
-    PSI.process_market_bid_parameters!(container, devices, model, true, true)
     for S in _ENERGY_OFFER_SLACK_TYPES
         PSI.add_variables!(container, S, devices, D())
     end
-    PSI.add_cost_expressions!(container, devices, model)
-
     PSI.add_to_expression!(
         container,
         PSI.ActivePowerBalance,
@@ -112,7 +109,7 @@ end
     PSI.construct_device!(container, sys, ::PSI.ModelConstructStage, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model) where {T <: PSY.Storage}
 
 Model stage for a battery under [`AbstractNEMDispatch`](@ref): the elastic directional availability
-envelope, the net ramp constraint and the market-bid objective.
+envelope, the net ramp constraint and the energy offer bands and their objective.
 
 # Returns
 `nothing`.
@@ -141,9 +138,10 @@ end
 """
     PSI.objective_function!(container, devices, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_formulation) where {T <: PSY.Storage}
 
-Prices a battery's discharge on its incremental offer curve against
-`PowerSimulations.ActivePowerOutVariable` and its charge on its decremental offer curve
-against `PowerSimulations.ActivePowerInVariable`.
+Prices a battery's discharge on its `GEN` energy offer bands against
+`PowerSimulations.ActivePowerOutVariable` and its charge on its `LOAD` energy offer bands against
+`PowerSimulations.ActivePowerInVariable`. Throws `ArgumentError` through `_check_energy_offer_sides`
+for a battery with an energy offer on one side only.
 
 # Returns
 `nothing`.
@@ -151,11 +149,11 @@ against `PowerSimulations.ActivePowerInVariable`.
 function PSI.objective_function!(
         container::PSI.OptimizationContainer,
         devices::IS.FlattenIteratorWrapper{T},
-        ::PSI.DeviceModel{T, D},
+        model::PSI.DeviceModel{T, D},
         ::Type{<:PM.AbstractPowerModel},
     ) where {T <: PSY.Storage, D <: AbstractNEMDispatch}
-    PSI.add_variable_cost!(container, PSI.ActivePowerOutVariable(), devices, D())
-    PSI.add_variable_cost!(container, PSI.ActivePowerInVariable(), devices, D())
+    _check_energy_offer_sides(devices)
+    foreach(side -> _add_energy_offer_bands!(container, devices, model, side), _energy_offer_sides(T))
     PSI.add_proportional_cost!(container, EnergyMaxAvailOutSlack(), devices, D())
     PSI.add_proportional_cost!(container, EnergyMaxAvailInSlack(), devices, D())
     _add_fixed_load_costs!(container, devices, T)

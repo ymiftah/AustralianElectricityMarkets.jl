@@ -13,6 +13,7 @@ end;
 import PowerSystems as PSY
 import PowerSimulations as PSI
 import AustralianElectricityMarketsSimulations as AEMSim
+import AustralianElectricityMarkets as AEM
 
 include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_market.jl")) #hide
 include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_jump.jl")); #hide
@@ -35,7 +36,7 @@ include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_jump.jl")); #h
 # For real markets, [`nem_system`](@ref) reads NEMWEB data into a `PowerSystems.jl` `System`
 # (see [The National Electricity Market](@ref)). Here we use the tutorial's two-region toy system.
 
-sys = toy_system(market)
+sys = toy_system(market; nem = true)
 
 # ### The interconnector's loss model
 #
@@ -60,7 +61,7 @@ attach_loss_model!(sys, market);
 #
 # Energy offers, availability, ramp rates and metered initial output specify the unit's
 # feasible dispatch for the interval. For NEMWEB data, use `set_market_bids!`,
-# `set_nem_dispatch_limits!` and `set_nem_energy_limits!` to attach these inputs.
+# `set_unit_conditions!` to attach these inputs.
 
 function attach_energy_data!(sys, market) #hide
     stamps = [T0, T0 + RESOLUTION] #hide
@@ -68,11 +69,31 @@ function attach_energy_data!(sys, market) #hide
         name = name, data = PSY.TimeSeries.TimeArray(stamps, fill(value, length(stamps))), #hide
         scaling_factor_multiplier = multiplier, #hide
     ) #hide
+    bid_key(device, name) = only(k for k in PSY.get_time_series_keys(device) if PSY.IS.get_name(k) == name) #hide
     for u in market.units #hide
         device = PSY.get_component(PSY.Generator, sys, String(u.name)) #hide
         offer = PSY.PiecewiseStepData([0.0; cumsum(quantity.(u.bids))], price.(u.bids)) #hide
-        AustralianElectricityMarkets._set_incremental_bid_cost!( #hide
-            sys, device, (piecewise_step_data = fill(offer, length(stamps)),), T0, RESOLUTION, #hide
+        PSY.add_time_series!( #hide
+            sys, device, PSY.SingleTimeSeries(name = "bid_energy_offer_curves_gen", data = PSY.TimeSeries.TimeArray(stamps, fill(offer, length(stamps)))), #hide
+        ) #hide
+        PSY.add_time_series!(sys, device, series("bid_energy_max_avail_gen", u.max_avail)) #hide
+        PSY.add_time_series!(sys, device, series("bid_energy_roc_up_gen", NaN)) #hide
+        PSY.add_time_series!(sys, device, series("bid_energy_roc_down_gen", NaN)) #hide
+        push!( #hide
+            get_energy_bids(PSY.get_operation_cost(device)), #hide
+            NEMEnergyBid( #hide
+                direction = BidDirection.GEN, offer_curves = bid_key(device, "bid_energy_offer_curves_gen"), #hide
+                max_avail = bid_key(device, "bid_energy_max_avail_gen"), roc_up = bid_key(device, "bid_energy_roc_up_gen"), #hide
+                roc_down = bid_key(device, "bid_energy_roc_down_gen"), #hide
+            ), #hide
+        ) #hide
+        set_registration!( #hide
+            device, #hide
+            NEMRegistration( #hide
+                schedule_type = is_semi_scheduled(u) ? ScheduleType.SEMI_SCHEDULED : ScheduleType.SCHEDULED, #hide
+                gen_loss_factor = 1.0, load_loss_factor = 1.0, #hide
+                registered_from = DateTime(2000), registered_until = DateTime(2999, 12, 31), #hide
+            ), #hide
         ) #hide
         PSY.add_time_series!( #hide
             sys, device, series("max_active_power", availability(u) / u.capacity; multiplier = PSY.get_max_active_power), #hide
@@ -80,8 +101,6 @@ function attach_energy_data!(sys, market) #hide
         PSY.add_time_series!(sys, device, series("ramp_up_rate", u.ramp_up_mwh / 60 / BASE_POWER)) #hide
         PSY.add_time_series!(sys, device, series("ramp_down_rate", u.ramp_down_mwh / 60 / BASE_POWER)) #hide
         PSY.add_time_series!(sys, device, series("initial_mw", u.initial_mw / BASE_POWER)) #hide
-        PSY.add_time_series!(sys, device, series("energy_max_avail", u.max_avail / BASE_POWER)) #hide
-        PSY.get_ext(device)["nem_semi_scheduled"] = is_semi_scheduled(u) #hide
         if is_semi_scheduled(u) #hide
             PSY.add_time_series!(sys, device, series("uigf", u.uigf / BASE_POWER)) #hide
         end #hide
@@ -99,31 +118,36 @@ attach_energy_data!(sys, market);
 # describing the FCAS capacity available at each energy dispatch level.
 
 function attach_fcas_data!(sys, market) #hide
+    series(name, value) = PSY.SingleTimeSeries(name = name, data = PSY.TimeSeries.TimeArray([T0, T0 + RESOLUTION], fill(value, 2))) #hide
+    bid_key(device, name) = only(k for k in PSY.get_time_series_keys(device) if PSY.IS.get_name(k) == name) #hide
     for n in fcas_names(market) #hide
         device = PSY.get_component(PSY.Generator, sys, n) #hide
         t = trapezium(market, n) #hide
-        trapezium_pu = Tuple( #hide
-            FCASTrapezium( #hide
-                enablement_min = t.enablement_min / BASE_POWER, low_breakpoint = t.low_breakpoint / BASE_POWER, #hide
-                high_breakpoint = t.high_breakpoint / BASE_POWER, enablement_max = t.enablement_max / BASE_POWER, #hide
-                max_avail = t.max_avail / BASE_POWER, #hide
-            ), #hide
-        ) #hide
+        points = (t.enablement_min, t.low_breakpoint, t.high_breakpoint, t.enablement_max) #hide
         curve = PSY.PiecewiseStepData([0.0; cumsum(quantity.(fcas_bids(market, n)))], price.(fcas_bids(market, n))) #hide
         stamps = [T0, T0 + RESOLUTION] #hide
         PSY.add_time_series!( #hide
             sys, device, #hide
-            PSY.SingleTimeSeries(name = "fcas_trapezium_RAISE6SEC", data = PSY.TimeSeries.TimeArray(stamps, fill(trapezium_pu, 2))), #hide
+            PSY.SingleTimeSeries(name = "bid_raise6sec_trapezium_gen", data = PSY.TimeSeries.TimeArray(stamps, fill(points, 2))), #hide
+        ) #hide
+        PSY.add_time_series!(sys, device, series("bid_raise6sec_max_avail_gen", t.max_avail)) #hide
+        PSY.add_time_series!( #hide
+            sys, device, #hide
+            PSY.SingleTimeSeries(name = "bid_raise6sec_offer_curves_gen", data = PSY.TimeSeries.TimeArray(stamps, fill(curve, 2))), #hide
         ) #hide
         service = FCASService( #hide
             name = "$(generator_region(sys, n))_RAISE6SEC", region = generator_region(sys, n), bid_type = BidType.RAISE6SEC, #hide
         ) #hide
         PSY.add_service!(sys, service, [device]) #hide
-        PSY.get_operation_cost(device) isa PSY.MarketBidCost || PSY.set_operation_cost!( #hide
-            device, PSY.MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0), #hide
+        push!( #hide
+            get_fcas_bids(PSY.get_operation_cost(device)), #hide
+            NEMFCASBid( #hide
+                service = BidType.RAISE6SEC, direction = BidDirection.GEN, #hide
+                offer_curves = bid_key(device, "bid_raise6sec_offer_curves_gen"), #hide
+                max_avail = bid_key(device, "bid_raise6sec_max_avail_gen"), #hide
+                trapezium = bid_key(device, "bid_raise6sec_trapezium_gen"), #hide
+            ), #hide
         ) #hide
-        offer = single_series(fcas_offer_series_name(service, false), T0, fill(curve, 2), RESOLUTION) #hide
-        PSY.set_service_bid!(sys, device, service, offer, PSY.UnitSystem.NATURAL_UNITS) #hide
     end #hide
     return sys #hide
 end #hide
@@ -152,24 +176,26 @@ function attach_generic_constraints!(sys, market) #hide
         ] #hide
         constraint = GenericConstraint( #hide
             name = gc.name, sense = SENSES[gc.sense], #hide
-            rhs = gc.rhs / BASE_POWER, constraint_weight = gc.weight, #hide
+            rhs = gc.rhs, constraint_weight = gc.weight, #hide
             terms = ConstraintTerm[constraint_term(market, t) for t in gc.terms], #hide
             fcas_requirements = FCASRequirement[requirements...], #hide
         ) #hide
         devices = [PSY.get_component(PSY.StaticInjection, sys, String(t.id)) for t in gc.terms] #hide
         PSY.add_service!(sys, constraint, devices) #hide
-        for (series_name, value) in ("rhs" => gc.rhs / BASE_POWER, "invoked" => 1.0) #hide
+        for (series_name, value) in (AEM.NEM_CONSTRAINT_SERIES.rhs => gc.rhs, AEM.NEM_CONSTRAINT_SERIES.invoked => 1.0) #hide
             PSY.add_time_series!( #hide
                 sys, constraint, #hide
                 PSY.SingleTimeSeries(; name = series_name, data = PSY.TimeSeries.TimeArray(stamps, fill(value, length(stamps)))), #hide
             ) #hide
         end #hide
+        constraint.rhs = only(k for k in PSY.get_time_series_keys(constraint) if k.name == AEM.NEM_CONSTRAINT_SERIES.rhs) #hide
+        constraint.invoked = only(k for k in PSY.get_time_series_keys(constraint) if k.name == AEM.NEM_CONSTRAINT_SERIES.invoked) #hide
     end #hide
     return sys #hide
 end #hide
 attach_generic_constraints!(sys, market)
 set_loss_demand_coefficients!(sys)
-set_fcas_effective_offers!(sys)
+AEMSim.set_effective_offers!(sys)
 PSY.transform_single_time_series!(sys, 2 * RESOLUTION, RESOLUTION);
 
 # The `System` now holds the whole market:
@@ -177,13 +203,13 @@ PSY.transform_single_time_series!(sys, 2 * RESOLUTION, RESOLUTION);
 DataFrame(
     type = [
         string(nameof(T)) for T in (
-                PSY.Area, PSY.ACBus, PSY.ThermalStandard, PSY.RenewableDispatch, PSY.PowerLoad,
+                PSY.Area, PSY.ACBus, NEMThermalGen, NEMRenewableGen, PSY.PowerLoad,
                 PSY.AreaInterchange, FCASService, GenericConstraint,
             )
     ],
     count = [
         length(PSY.get_components(T, sys)) for T in (
-                PSY.Area, PSY.ACBus, PSY.ThermalStandard, PSY.RenewableDispatch, PSY.PowerLoad,
+                PSY.Area, PSY.ACBus, NEMThermalGen, NEMRenewableGen, PSY.PowerLoad,
                 PSY.AreaInterchange, FCASService, GenericConstraint,
             )
     ],
@@ -229,8 +255,8 @@ to_dollars_per_mwh(dual) = dual / (BASE_POWER * INTERVAL_H)
 
 value_by_name(df) = Dict(Symbol(r.name) => r.value for r in eachrow(df))
 psi_dispatch = merge(
-    value_by_name(read_variable(results, "ActivePowerVariable__ThermalStandard")),
-    value_by_name(read_variable(results, "ActivePowerVariable__RenewableDispatch")),
+    value_by_name(read_variable(results, "ActivePowerVariable__NEMThermalGen")),
+    value_by_name(read_variable(results, "ActivePowerVariable__NEMRenewableGen")),
 )
 psi_price = Dict(
     r.name => to_dollars_per_mwh(r.value) for r in eachrow(read_dual(results, "CopperPlateBalanceConstraint__Area"))

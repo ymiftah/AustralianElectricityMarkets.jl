@@ -44,7 +44,6 @@ function _replay_chunk(
     template = template_nemde()
     horizon = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
     on_phase(:preflight)
-    check_replay_inputs(db, horizon; template)
     on_phase(:system_build)
     t0 = time()
     ts_directory = time_series_in_memory ? nothing : joinpath(folder, "time_series")

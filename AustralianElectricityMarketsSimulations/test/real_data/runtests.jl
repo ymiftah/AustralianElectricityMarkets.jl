@@ -38,7 +38,6 @@ const db = aem_connect(HiveConfiguration(hive_location = REAL_HIVE))
 # executed replay of `template`; throws unless both the build and the execution succeed.
 function replay_real(steps; template = template_nemde())
     date_range = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
-    check_replay_inputs(db, date_range; template)
     sys = nem_system(db, NEMDEConfiguration(); date_range)
     skipped = prepare_replay!(sys, template, steps)
     model = PSI.DecisionModel(
@@ -104,7 +103,7 @@ end
     @testset "the NEMDE System builds" begin
         areas = Set(PSY.get_name.(PSY.get_components(PSY.Area, sys)))
         @test issubset(Set(["NSW1", "QLD1", "SA1", "TAS1", "VIC1"]), areas)
-        for T in (PSY.ThermalStandard, PSY.HydroDispatch, PSY.RenewableDispatch, PSY.AreaInterchange)
+        for T in (NEMThermalGen, NEMHydroGen, NEMRenewableGen, PSY.AreaInterchange)
             @test !isempty(PSY.get_components(T, sys))
         end
         @test !isempty(PSY.get_components(GenericConstraint, sys))
@@ -121,12 +120,12 @@ end
             row = first(
                 filter(
                     r -> r.SETTLEMENTDATE == first_stamp && coalesce(r.RAMPUPRATE, 0.0) > 0 &&
-                        !isnothing(PSY.get_component(PSY.ThermalStandard, sys, r.DUID)) &&
-                        PSY.get_available(PSY.get_component(PSY.ThermalStandard, sys, r.DUID)),
+                        !isnothing(PSY.get_component(NEMThermalGen, sys, r.DUID)) &&
+                        PSY.get_available(PSY.get_component(NEMThermalGen, sys, r.DUID)),
                     limits,
                 ),
             )
-            device = PSY.get_component(PSY.ThermalStandard, sys, row.DUID)
+            device = PSY.get_component(NEMThermalGen, sys, row.DUID)
             stored = first(PSY.get_time_series_values(PSY.SingleTimeSeries, device, "ramp_up_rate"))
             minutes = Dates.value(Minute(REAL_RESOLUTION))
             # The formulation multiplies the stored rate by the interval in minutes.
@@ -253,8 +252,8 @@ end
 
         # Per-side regulation reads a battery's discharge and charge separately, so the solve
         # must not charge and discharge a battery in the same interval.
-        out_keys = variable_keys(results, PSI.ActivePowerOutVariable, PSY.EnergyReservoirStorage)
-        in_keys = variable_keys(results, PSI.ActivePowerInVariable, PSY.EnergyReservoirStorage)
+        out_keys = variable_keys(results, PSI.ActivePowerOutVariable, NEMStorage)
+        in_keys = variable_keys(results, PSI.ActivePowerInVariable, NEMStorage)
         n_circulating = 0
         @test !isempty(out_keys) && !isempty(in_keys)
         if !isempty(out_keys) && !isempty(in_keys)
@@ -399,8 +398,8 @@ end
     for gc in gcs
         name = PSY.get_name(gc)
         gencon_id = get(gc.ext, "gencon_id", nothing)
-        invoked_values = PSY.get_time_series_values(
-            PSY.SingleTimeSeries, gc, "invoked"; start_time = first(VIOLATION_STEPS), len = length(VIOLATION_STEPS),
+        invoked_values = PSY.IS.get_time_series_values(
+            gc, gc.invoked; start_time = first(VIOLATION_STEPS), len = length(VIOLATION_STEPS),
         )
         invoked = invoked_values .> 0.0
         invoked_dates = collect(VIOLATION_STEPS)[invoked]

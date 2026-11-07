@@ -1,11 +1,11 @@
 const _MNSP_OPERATING_SERIES = (
-    MNSPInitialFlowParameter => "mnsp_initial_flow",
-    MNSPForwardRampRateParameter => "mnsp_forward_ramp_rate",
-    MNSPReverseRampRateParameter => "mnsp_reverse_ramp_rate",
-    MNSPForwardFixedLoadParameter => "mnsp_forward_fixed_load",
-    MNSPReverseFixedLoadParameter => "mnsp_reverse_fixed_load",
-    MNSPForwardFixedLoadInvokedParameter => "mnsp_forward_fixed_load_invoked",
-    MNSPReverseFixedLoadInvokedParameter => "mnsp_reverse_fixed_load_invoked",
+    MNSPInitialFlowParameter => NEM_MNSP_SERIES.initial_flow,
+    MNSPForwardRampRateParameter => NEM_MNSP_SERIES.forward_ramp_rate,
+    MNSPReverseRampRateParameter => NEM_MNSP_SERIES.reverse_ramp_rate,
+    MNSPForwardFixedLoadParameter => NEM_MNSP_FIXED_LOAD_SERIES.forward_value,
+    MNSPReverseFixedLoadParameter => NEM_MNSP_FIXED_LOAD_SERIES.reverse_value,
+    MNSPForwardFixedLoadInvokedParameter => NEM_MNSP_FIXED_LOAD_SERIES.forward_invoked,
+    MNSPReverseFixedLoadInvokedParameter => NEM_MNSP_FIXED_LOAD_SERIES.reverse_invoked,
 )
 
 const _MNSP_DIRECTIONAL_SLACKS = (

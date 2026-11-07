@@ -43,11 +43,13 @@ function interconnector_loss_models(db, as_of::Union{Date, DateTime})
     coefficients = read_interconnector_demand_coefficients(db; as_of = as_of)
     breakpoints = read_interconnector_loss_breakpoints(db; as_of = as_of)
 
+    # TODO isn't this a groupby combine as array ?
     by_interconnector = Dict{String, Vector{Float64}}()
     for row in eachrow(breakpoints)
         push!(get!(by_interconnector, row.INTERCONNECTORID, Float64[]), row.MWBREAKPOINT)
     end
     demand_coefficients = Dict{String, Dict{String, Float64}}()
+    # TODO isn't this a groupby combine as array ?
     for row in eachrow(coefficients)
         d = get!(demand_coefficients, row.INTERCONNECTORID, Dict{String, Float64}())
         d[row.REGIONID] = row.DEMANDCOEFFICIENT
@@ -133,16 +135,17 @@ end
     set_interconnector_flow_limits!(sys, db, date_range; kwargs...)
 
 Attaches the per-interval flow limits of [`read_interconnector_limits`](@ref) to every
-`PSY.AreaInterchange` in `sys` as the `"from_to_flow_limit"` and `"to_from_flow_limit"`
-`SingleTimeSeries` that `NEMInterconnectorLoss` reads: the flow is bounded below by `IMPORTLIMIT`
-and above by `EXPORTLIMIT`. Each series is the limit as a fraction of the interchange's static
-flow limit. The lower bound is the smaller of the two limits and the upper bound the larger,
-each clamped into the static envelope `[-MAXMWIN, MAXMWOUT]`. An interval with no published row
-or a `missing` limit keeps the static limit, and one `@warn` counts them.
+`PSY.AreaInterchange` in `sys` as a [`NEMInterconnectorLimits`](@ref) whose keys are the
+`SingleTimeSeries` named by [`NEM_INTERCONNECTOR_SERIES`](@ref), in MW: the flow is bounded below by
+`IMPORTLIMIT` and above by `EXPORTLIMIT`. The lower bound is the smaller of the two limits and the upper
+bound the larger, each clamped into the static envelope `[-MAXMWIN, MAXMWOUT]`. An interval with no
+published row or a `missing` limit keeps the static limit, and one `@warn` counts them.
 
 The published limits are computed after NEMDE's solve (each binding constraint's right-hand side
 projected with the other terms held at the solved values), so bounding flow by them pins it to
 NEMDE's answer. Use them as a diagnostic, not when validating flows.
+
+A repeat call replaces the earlier limits.
 
 # Arguments
 - `sys`: the `System` to add to.
@@ -161,15 +164,15 @@ function set_interconnector_flow_limits!(sys, db, date_range; kwargs...)
             (key, g) in pairs(groupby(rows, :INTERCONNECTORID))
     )
 
-    # Fraction of the static limit `static`; 1.0 keeps the static limit.
-    ratio(limit, static) = static > 0 ? limit / static : 1.0
+    # A static limit of zero or less is kept as published, as a fraction of it would be.
+    limit_or_static(limit, static) = static > 0 ? limit : static
     fallbacks = String[]
     series = Dict{String, NTuple{2, Vector{Float64}}}()
     for d in get_components(AreaInterchange, sys)
         name = get_name(d)
         limits = with_units_base(() -> get_flow_limits(d), sys, "NATURAL_UNITS")
-        from_to = ones(length(full_grid))
-        to_from = ones(length(full_grid))
+        from_to = fill(Float64(limits.from_to), length(full_grid))
+        to_from = fill(Float64(limits.to_from), length(full_grid))
         for (k, t) in enumerate(full_grid)
             row = get(get(by_ic, name, Dict{DateTime, Any}()), t, nothing)
             if isnothing(row) || ismissing(row.EXPORTLIMIT) || ismissing(row.IMPORTLIMIT)
@@ -179,8 +182,8 @@ function set_interconnector_flow_limits!(sys, db, date_range; kwargs...)
             # Signed bounds, ordered and clamped into the static envelope [-MAXMWIN, MAXMWOUT].
             lower = clamp(min(row.IMPORTLIMIT, row.EXPORTLIMIT), -limits.from_to, limits.to_from)
             upper = clamp(max(row.IMPORTLIMIT, row.EXPORTLIMIT), -limits.from_to, limits.to_from)
-            from_to[k] = ratio(-lower, limits.from_to)
-            to_from[k] = ratio(upper, limits.to_from)
+            from_to[k] = limit_or_static(-lower, limits.from_to)
+            to_from[k] = limit_or_static(upper, limits.to_from)
         end
         series[name] = (from_to, to_from)
     end
@@ -189,8 +192,18 @@ function set_interconnector_flow_limits!(sys, db, date_range; kwargs...)
 
     for d in get_components(AreaInterchange, sys)
         from_to, to_from = series[get_name(d)]
-        add_time_series!(sys, d, single_series(NEM_SERIES.from_to_flow_limit, full_grid, from_to))
-        add_time_series!(sys, d, single_series(NEM_SERIES.to_from_flow_limit, full_grid, to_from))
+        for old in get_supplemental_attributes(NEMInterconnectorLimits, d)
+            remove_supplemental_attribute!(sys, d, old)
+        end
+        replace_single_series!(sys, d, single_series(NEM_INTERCONNECTOR_SERIES.from_to_limit, full_grid, from_to))
+        replace_single_series!(sys, d, single_series(NEM_INTERCONNECTOR_SERIES.to_from_limit, full_grid, to_from))
+        add_supplemental_attribute!(
+            sys, d,
+            NEMInterconnectorLimits(;
+                from_to_limit = _series_key(d, NEM_INTERCONNECTOR_SERIES.from_to_limit),
+                to_from_limit = _series_key(d, NEM_INTERCONNECTOR_SERIES.to_from_limit),
+            ),
+        )
     end
     return
 end

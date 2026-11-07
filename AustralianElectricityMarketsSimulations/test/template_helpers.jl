@@ -76,11 +76,11 @@ function energy_template()
     template = PSI.ProblemTemplate(
         PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true, duals = [PSI.CopperPlateBalanceConstraint]),
     )
-    PSI.set_device_model!(template, PSY.ThermalStandard, AEMS.NEMReplayDispatch)
-    PSI.set_device_model!(template, PSY.HydroDispatch, AEMS.NEMReplayDispatch)
-    PSI.set_device_model!(template, PSY.RenewableDispatch, AEMS.NEMReplayDispatch)
-    PSI.set_device_model!(template, PSY.InterruptiblePowerLoad, AEMS.NEMReplayDispatch)
-    PSI.set_device_model!(template, PSY.EnergyReservoirStorage, AEMS.NEMReplayDispatch)
+    PSI.set_device_model!(template, NEMThermalGen, AEMS.NEMReplayDispatch)
+    PSI.set_device_model!(template, NEMHydroGen, AEMS.NEMReplayDispatch)
+    PSI.set_device_model!(template, NEMRenewableGen, AEMS.NEMReplayDispatch)
+    PSI.set_device_model!(template, NEMLoad, AEMS.NEMReplayDispatch)
+    PSI.set_device_model!(template, NEMStorage, AEMS.NEMReplayDispatch)
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     return template
 end

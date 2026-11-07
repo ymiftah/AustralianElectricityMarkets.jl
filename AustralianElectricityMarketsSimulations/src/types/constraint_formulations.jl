@@ -20,7 +20,7 @@ struct NEMConstraintLimit <: PSI.ConstraintType end
     NEMConstraintRHSParameter
 
 Time-series parameter type for a [`GenericConstraint`](@ref)'s right-hand side, fed from its
-`"rhs"` time series.
+right-hand side time series, in MW.
 """
 struct NEMConstraintRHSParameter <: PSI.TimeSeriesParameter end
 
@@ -119,7 +119,7 @@ struct FCASOfferBandConstraint <: PSI.ConstraintType end
     FCASOfferLimitParameter
 
 Time-series parameter of a device's effective FCAS offer limits for one market and side, read from
-its `"fcas_effective_<BIDTYPE>[_decremental]"` series ([`AustralianElectricityMarkets.set_fcas_effective_offers!`](@ref)), per-unit
+its `"fcas_effective_<BIDTYPE>[_decremental]"` series ([`set_effective_offers!`](@ref)), per-unit
 of the system base, with a field axis `"max_avail"`, `"enablement_min"`, `"enablement_max"`. Keyed by
 device type with meta `"<BIDTYPE>[_decremental]"`.
 """
@@ -162,7 +162,7 @@ struct FCASLowerSlopeParameter <: PSI.ConstraintCoefficientParameter end
     FCASRampingLimitParameter
 
 Time-series parameter of a device's regulation ramping limits for one regulation market, read from
-its `"fcas_ramping_limits_<BIDTYPE>"` series ([`AustralianElectricityMarkets.set_fcas_effective_offers!`](@ref)), per-unit of the
+its `"fcas_ramping_limits_<BIDTYPE>"` series ([`set_effective_offers!`](@ref)), per-unit of the
 system base, with a field axis `"joint_ramping"` ([`FCASJointRampingConstraint`](@ref) right-hand
 side) and `"bdu_ramping"` ([`FCASBDURampingConstraint`](@ref) right-hand side). Keyed by device type
 with meta `"<BIDTYPE>"`.
@@ -262,7 +262,7 @@ struct GenericConstraintSlackDown <: PSI.VariableType end
     GenericConstraintSlackCostParameter
 
 Time-series cost parameter pricing a [`GenericConstraint`](@ref)'s elastic slacks: its value is
-the constraint's `"invoked"` mask (`1.0`/`0.0`) per interval, read at each simulation step. Each
+the constraint's invoked mask (`1.0`/`0.0`) per interval, read at each simulation step. Each
 slack's cost target scales the mask by the system base power, the interval coefficient of
 `GENERICCONSTRAINTWEIGHT` and the Market Price Cap, so a non-invoked interval's slack costs nothing.
 """

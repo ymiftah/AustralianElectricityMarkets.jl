@@ -2,21 +2,24 @@ module AustralianElectricityMarketsSimulations
 
 import AustralianElectricityMarkets
 using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCAS_REGULATION_MARKETS,
-    GenericConstraint, InterconnectorLossModel, InterconnectorTerm, EnergyTieBreak, NEM_SERIES, OfferSide,
+    GenericConstraint, InterconnectorLossModel, InterconnectorTerm, EnergyTieBreak, NEM_SERIES, NEM_TELEMETRY_SERIES, NEM_OBSERVED_SERIES, NEM_INTERCONNECTOR_SERIES, NEM_MNSP_SERIES, NEM_CONSTRAINT_SERIES,
+    NEMInterconnectorLimits, NEMInterconnectorRegistration, InterconnectorKind, NEMMNSPBid, NEMMNSPLink, NEMMNSPObservedState,
+    MNSPDirection, OfferSide,
     RegionTerm, UnitTerm, TIE_BREAK_CVP_FACTOR, TIE_BREAK_SERVICE_NAME, DISPATCH_INTERVAL,
     UNIT_RAMP_CVP_FACTOR, INTERCONNECTOR_FLOW_CVP_FACTOR, ENERGY_OFFER_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR,
     ENERGY_MAX_AVAIL_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR, FIXED_LOADING_CVP_FACTOR, MNSP_RAMP_CVP_FACTOR,
     MNSP_OFFER_CVP_FACTOR, MNSP_AVAILABILITY_CVP_FACTOR, constraint_cvp_factor, energy_max_avail_series_name,
-    offer_side, side_suffix, has_schedule_classification, is_semi_scheduled, FCASBidDirection,
-    fcas_bid_direction, fcas_series_name, mnsp_series_name, fcas_service_name, fcas_offer_series_name,
+    energy_offer_series_name, offer_side, side_suffix, has_registration, is_semi_scheduled, get_registration, FCASBidDirection,
+    fcas_bid_direction, fcas_series_name, fcas_service_name, fcas_offer_series_name,
     get_bid_type, get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_factor,
     get_interconnector, get_missing_constraint_intervals, get_region, get_sense, get_skipped_constraints,
     get_terms, loss_curve_vertex_values, is_non_scheduled_load, loss_segments, nem_dispatch_devices,
-    NEM_DISPATCH_DEVICE_TYPES,
-    FCAS_BAND_COUNT, FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR,
-    FCAS_BDU_RAMPING_CVP_FACTOR, fcas_effective_series_name, fcas_ramping_series_name,
-    fcas_upper_regulation_service, fcas_offer_sides, tie_break_series_name, tie_groups, _tie_break_offers,
-    _tie_break_active_bands, _tie_break_stamp_bands, _other_regulation, _financial_year_mpc,
+    NEM_DISPATCH_DEVICE_TYPES, single_series, remove_single_series!, replace_single_series!,
+    _nem_offer_cost, _fcas_units_multiplier, _get_fcas_trapezium, _get_fcas_offer_curve, get_energy_bids,
+    get_fcas_bids, energy_offer_sides, FCASTrapezium, get_enablement_min, get_enablement_max, get_max_avail, get_upper_slope_coeff,
+    get_lower_slope_coeff, scale_fcas_trapezium,
+    FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR,
+    FCAS_BDU_RAMPING_CVP_FACTOR, _financial_year_mpc,
     _financial_year_start, _versions_without_definition, _zero_flow_constraint_definitions, _empty_definitions,
     read_interconnectors, read_mnsp_links, read_mnsp_offers, read_invoked_constraints, read_fixed_loads,
     read_constraint_definitions, get_fcas_requirements, get_service
@@ -38,6 +41,12 @@ const PM = PSI.PM
 
 include("time_basis.jl")
 
+include("offers/accessors.jl")
+include("offers/initial_state.jl")
+include("offers/fcas_effective.jl")
+include("offers/tie_break.jl")
+include("offers/effective_offers.jl")
+
 include("types/constraint_formulations.jl")
 include("types/dispatch.jl")
 include("types/energy_limits.jl")
@@ -47,6 +56,7 @@ include("types/tie_break.jl")
 include("types/interconnector_losses.jl")
 include("types/mnsp.jl")
 include("types/mnsp_limits.jl")
+include("types/state.jl")
 
 include("formulations/slacks.jl")
 include("formulations/generic_constraints.jl")
@@ -71,7 +81,6 @@ include("checks/replay_inputs.jl")
 include("checks/replication_steps.jl")
 include("checks/template.jl")
 include("templates/template_nemde.jl")
-include("checks/replay_data.jl")
 include("checks/replay_range.jl")
 include("problems/optimizer.jl")
 include("problems/nem_dispatch.jl")
@@ -82,13 +91,20 @@ include("results/comparison.jl")
 include("results/interconnector_losses.jl")
 
 
+export set_effective_offers!, NEMEnergyOffer, get_energy_offer, NEMFCASOffer, get_fcas_offer,
+    get_scaled_fcas_trapezium, get_fcas_agc_ramp_capability, get_fcas_agc_status, get_initial_mw,
+    get_energy_availability, get_storage_energy_max_avail
+export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,
+    fcas_upper_regulation_service, fcas_offer_sides, tie_break_series_name, tie_groups
+export StateSource, ObservedState, SimulatedState, NEMUnitState, unit_state, NEMDispatchInputs, NEMFCASInputs
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
-export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys, check_replay_inputs,
+export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
     exclude_unmodeled_services!, check_replication_steps,
     never_invoked_constraints, prepare_replay!, AbstractMNSPSlack
 export NEMDispatchProblem, nemde_optimizer, NEMDE_HIGHS_OPTIONS
 export EnergyOfferSurplusSlack, EnergyOfferDeficitSlack,
     EnergyDecrementalOfferSurplusSlack, EnergyDecrementalOfferDeficitSlack
+export EnergyOfferBandVariable, EnergyBandWidthParameter, EnergyBandPriceParameter, EnergyOfferBandConstraint
 export EnergyMaxAvailOutConstraint, EnergyMaxAvailInConstraint, EnergyMaxAvailOutSlack, EnergyMaxAvailInSlack
 export EnergyMaxAvailTimeSeriesParameter, EnergyUIGFTimeSeriesParameter,
     EnergyMaxAvailConstraint, EnergyUIGFConstraint, EnergyMaxAvailSlack, EnergyUIGFSlack

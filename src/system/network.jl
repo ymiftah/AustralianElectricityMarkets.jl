@@ -9,6 +9,8 @@ table. `units` is the unit table as of `as_of`, or over the window `[as_of, thro
 
 # Arguments
 - `db`: The database connection.
+- `nem_types`: Build the NEM device types ([`NEMThermalGen`](@ref) and the others, with an empty
+  [`NEMOfferCost`](@ref)) in place of the stock PowerSystems types.
 - `time_series_in_memory`: Store time series in memory when `true`.
 - `as_of`: A `Date` or `DateTime` to resolve the unit and interconnector tables as of; `nothing`
   uses the latest cached version.
@@ -19,7 +21,7 @@ table. `units` is the unit table as of `as_of`, or over the window `[as_of, thro
 # Returns
 A tuple `(sys, units, gen_df)`.
 """
-function _nem_network(db; time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...)
+function _nem_network(db; nem_types::Bool = false, time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...)
     @info "parsing buses"
     interconnectors = read_interconnectors(db; as_of = as_of)
     bus_df = _bus_dataframe(interconnectors)
@@ -41,13 +43,51 @@ function _nem_network(db; time_series_in_memory = true, as_of = nothing, through
     sys = System(BASE_POWER; time_series_in_memory = time_series_in_memory, kwargs...)
     _add_buses!(sys, bus_df)
     _add_loads!(sys, loads_df)
-    _add_generation!(sys, gen_df)
+    _add_generation!(sys, gen_df; nem_types)
     _add_branches!(sys, branch_df)
-    _add_batteries!(sys, batteries_df)
-    _add_scheduled_loads!(sys, scheduled_loads_df)
+    _add_batteries!(sys, batteries_df; nem_types)
+    _add_scheduled_loads!(sys, scheduled_loads_df; nem_types)
     _add_area_interfaces!(sys, interfaces_df)
+    nem_types && _set_registrations!(sys, units, read_loss_factors(db; as_of, through))
 
     return sys, units, gen_df
+end
+
+
+const _SCHEDULE_TYPES = Dict(
+    "SCHEDULED" => ScheduleType.SCHEDULED, "SEMI-SCHEDULED" => ScheduleType.SEMI_SCHEDULED,
+    "NON-SCHEDULED" => ScheduleType.NON_SCHEDULED,
+)
+
+"""
+    _set_registrations!(sys, units, factors)
+
+Records on each generator, storage and controllable load of `sys` its [`NEMRegistration`](@ref), from
+its row of `units` ([`read_units`](@ref)) and its loss factors ([`read_loss_factors`](@ref)). Throws an
+`ArgumentError` naming a device with no unit row, a unit with no loss factor, or an unknown schedule type.
+"""
+function _set_registrations!(sys, units, factors)
+    unit_rows = Dict(String(r.DUID) => r for r in eachrow(units))
+    factor_rows = Dict(String(r.DUID) => r for r in eachrow(factors))
+    for T in (Generator, ControllableLoad, Storage), device in get_components(T, sys)
+        name = get_name(device)
+        unit = get(unit_rows, name, nothing)
+        isnothing(unit) && throw(ArgumentError("$name has no DUDETAILSUMMARY row, so it has no registration"))
+        factor = get(factor_rows, name, nothing)
+        (isnothing(factor) || ismissing(factor.GEN_LOSS_FACTOR) || ismissing(factor.LOAD_LOSS_FACTOR)) &&
+            throw(ArgumentError("No DUDETAILSUMMARY loss factor for $name."))
+        schedule = get(_SCHEDULE_TYPES, unit.SCHEDULE_TYPE, nothing)
+        isnothing(schedule) && throw(ArgumentError("$name has an unknown SCHEDULE_TYPE $(repr(unit.SCHEDULE_TYPE))"))
+        set_registration!(
+            device,
+            NEMRegistration(;
+                schedule_type = schedule, gen_loss_factor = factor.GEN_LOSS_FACTOR,
+                load_loss_factor = factor.LOAD_LOSS_FACTOR, registered_from = unit.REGISTERED_FROM,
+                registered_until = unit.REGISTERED_UNTIL,
+            ),
+        )
+    end
+    return
 end
 
 
@@ -55,9 +95,9 @@ end
     nem_network(db; time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...) -> (sys, units)
 
 Builds the NEM network without operation costs: buses, loads, branches, generators, batteries,
-scheduled loads and area interfaces, with every generator's operation cost zero. Reads no ISP cost
-table. `units` is the unit table as of `as_of`, or over the window `[as_of, through]` (see
-[`read_units`](@ref)).
+scheduled loads and area interfaces. Devices are the NEM types ([`NEMThermalGen`](@ref) and the
+others), each with an empty [`NEMOfferCost`](@ref). Reads no ISP cost table. `units` is the unit
+table as of `as_of`, or over the window `[as_of, through]` (see [`read_units`](@ref)).
 
 # Arguments
 - `db`: The database connection.
@@ -72,7 +112,7 @@ table. `units` is the unit table as of `as_of`, or over the window `[as_of, thro
 A tuple `(sys, units)`.
 """
 function nem_network(db; time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...)
-    sys, units, _ = _nem_network(db; time_series_in_memory, as_of, through, kwargs...)
+    sys, units, _ = _nem_network(db; nem_types = true, time_series_in_memory, as_of, through, kwargs...)
     return sys, units
 end
 

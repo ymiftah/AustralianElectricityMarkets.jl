@@ -38,93 +38,142 @@ end
     @test m_ptdf.module === PSI
 end
 
-@testset "energy-offer rows retain typed PSI containers and affine coefficients" begin
-    for (T, U, V, W) in (
-                (PSY.ThermalStandard, PSI.ActivePowerVariable, PSI.PiecewiseLinearBlockIncrementalOffer, PSI.PiecewiseLinearBlockIncrementalOfferConstraint),
-                (PSY.InterruptiblePowerLoad, PSI.ActivePowerVariable, PSI.PiecewiseLinearBlockDecrementalOffer, PSI.PiecewiseLinearBlockDecrementalOfferConstraint),
-                (PSY.EnergyReservoirStorage, PSI.ActivePowerOutVariable, PSI.PiecewiseLinearBlockIncrementalOffer, PSI.PiecewiseLinearBlockIncrementalOfferConstraint),
-                (PSY.EnergyReservoirStorage, PSI.ActivePowerInVariable, PSI.PiecewiseLinearBlockDecrementalOffer, PSI.PiecewiseLinearBlockDecrementalOfferConstraint),
-            ), breakpoints in ([0.0, 0.0, 0.5], [0.1, 0.4, 0.6], [-0.2, 0.3], [0.1])
-        sys = PSY.System(100.0; time_series_in_memory = true, runchecks = false)
-        container = PSI.OptimizationContainer(sys, PSI.Settings(sys), nothing, PSY.SingleTimeSeries)
-        jm = PSI.get_jump_model(container)
-        PSI.JuMP.set_string_names_on_creation(jm, false)
-        device = T(nothing)
-        name = PSY.get_name(device)
-        power = PSI.add_variable_container!(container, U(), T, [name], 1:1)
-        power[name, 1] = PSI.JuMP.@variable(jm)
-        bands = PSI.add_variable_container!(container, V(), T, [name], 1:(length(breakpoints) - 1), 1:1)
-        for k in 1:(length(breakpoints) - 1)
-            bands[name, k, 1] = PSI.JuMP.@variable(jm)
-        end
-        S, D = AEMS._energy_offer_slacks(V)
-        surplus = PSI.add_variable_container!(container, S(), T, [name], 1:1)
-        deficit = PSI.add_variable_container!(container, D(), T, [name], 1:1)
-        surplus[name, 1] = PSI.JuMP.@variable(jm, lower_bound = 0)
-        deficit[name, 1] = PSI.JuMP.@variable(jm, lower_bound = 0)
-        signature = Tuple{typeof(container), T, U, NEMReplayDispatch, typeof(breakpoints), Int, Type{V}, Type{W}}
-        @test which(PSI._add_pwl_constraint!, signature).module === AEMS
-        if length(breakpoints) == 1
-            @test_throws ArgumentError PSI._add_pwl_constraint!(container, device, U(), NEMReplayDispatch(), breakpoints, 1, V, W)
-            continue
-        end
-        PSI._add_pwl_constraint!(container, device, U(), NEMReplayDispatch(), breakpoints, 1, V, W)
-        row = PSI.get_constraint(container, W(), T)[name, 1]
-        @test PSI.JuMP.normalized_rhs(row) == first(breakpoints)
-        @test PSI.JuMP.normalized_coefficient(row, power[name, 1]) == 1.0
-        @test PSI.JuMP.normalized_coefficient(row, surplus[name, 1]) == -1.0
-        @test PSI.JuMP.normalized_coefficient(row, deficit[name, 1]) == 1.0
-        for k in 1:(length(breakpoints) - 1)
-            @test PSI.JuMP.normalized_coefficient(row, bands[name, k, 1]) == -1.0
-        end
-        bounds = PSI.JuMP.all_constraints(jm, PSI.JuMP.AffExpr, PSI.MOI.LessThan{Float64})
-        @test length(bounds) == length(breakpoints) - 1
-        for (k, bound) in enumerate(bounds)
-            @test PSI.JuMP.normalized_rhs(bound) ≈ breakpoints[k + 1] - breakpoints[k]
-            @test PSI.JuMP.normalized_coefficient(bound, bands[name, k, 1]) == 1.0
-        end
-    end
-end
-
-@testset "energy cost guards: service-only costs add nothing, one-sided energy offers throw" begin
+@testset "energy offer guards: FCAS-only units have no energy bands, one-sided storage offers throw" begin
     template_for(sys) = begin
         template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
         set_nem_dispatch_models!(template, sys; tie_breaks = false)
         PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
         return template
     end
-    service_only() = PSY.MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0)
-    toy(; loads = Pair{String, Any}[]) = nem_toy_system(
+    # Removes the named device's energy offers on `sides` (their series and bids) before the fixture
+    # transforms its series.
+    # The side's MAXAVAIL stays as its `energy_max_avail` series, which the derivation no longer writes
+    # for a device without bids.
+    without(device_type, name, sides) = (sys, _) -> begin
+        device = PSY.get_component(device_type, sys, name)
+        bids = AustralianElectricityMarkets.get_energy_bids(PSY.get_operation_cost(device))
+        base = PSY.get_base_power(sys)
+        for side in sides
+            i = findfirst(b -> AustralianElectricityMarkets._energy_offer_side(b.direction) == side, bids)
+            if !isnothing(i)
+                mw = PSY.get_time_series_values(PSY.SingleTimeSeries, device, bids[i].max_avail.name; ignore_scaling_factors = true)
+                AustralianElectricityMarkets.replace_single_series!(
+                    sys, device,
+                    AustralianElectricityMarkets.single_series(AustralianElectricityMarkets.energy_max_avail_series_name(device, side), TOY_START, mw ./ base, TOY_RESOLUTION),
+                )
+            end
+            name_offer = AustralianElectricityMarkets.energy_offer_series_name(side)
+            PSY.has_time_series(device, PSY.SingleTimeSeries, name_offer) &&
+                PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, name_offer)
+            filter!(b -> AustralianElectricityMarkets._energy_offer_side(b.direction) != side, bids)
+        end
+        return
+    end
+    toy(; loads = Pair{String, Any}[], mutate! = nothing) = nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0)],
         50.0;
         batteries = [TOY_BATTERY => toy_battery(50.0, 10.0, 50.0, 1.0; initial = 0.0, ramp_up = 100.0)],
-        loads = loads,
+        loads = loads, mutate! = mutate!,
     )
+    band_devices(container, meta) = begin
+        keys = [k for k in PSI.get_variable_keys(container) if PSI.IS.Optimization.get_entry_type(k) === EnergyOfferBandVariable && k.meta == meta]
+        return sort!(vcat((collect(axes(PSI.get_variable(container, k), 1)) for k in keys)...))
+    end
 
-    # (a) A battery with no energy curves builds, and its discharge carries no energy cost.
-    sys = toy()
-    battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
-    PSY.set_operation_cost!(battery, service_only())
+    # (a) A battery with no energy offers builds, has no energy bands, and its discharge carries no energy cost.
+    sys = toy(; mutate! = without(NEMStorage, TOY_BATTERY, (OfferSide.GEN, OfferSide.LOAD)))
     model = toy_model(sys; template = template_for(sys))
     status, log = _toy_build_log(model)
     @test status == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    out = PSI.get_variable(container, PSI.ActivePowerOutVariable(), PSY.EnergyReservoirStorage)
+    @test band_devices(container, "gen") == [TOY_CHEAP]
+    @test isempty(band_devices(container, "load"))
+    out = PSI.get_variable(container, PSI.ActivePowerOutVariable(), NEMStorage)
     @test PSI.JuMP.coefficient(PSI.JuMP.objective_function(PSI.get_jump_model(container)), out[TOY_BATTERY, first(axes(out, 2))]) == 0.0
 
-    # (b) A battery with a GEN curve and no LOAD curve fails the build instead of charging for free.
-    sys = toy()
-    battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
-    gen_curve = PSY.CostCurve(PSY.PiecewiseIncrementalCurve(0.0, [0.0, 50.0], [10.0]))
-    PSY.set_operation_cost!(battery, PSY.MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0, incremental_offer_curves = gen_curve))
+    # (b) A battery with a GEN offer and no LOAD offer fails the build instead of charging for free.
+    sys = toy(; mutate! = without(NEMStorage, TOY_BATTERY, (OfferSide.LOAD,)))
     status, log = _toy_build_log(toy_model(sys; template = template_for(sys)))
     @test status == PSI.ModelBuildStatus.FAILED
-    @test occursin("$TOY_BATTERY: the MarketBidCost has energy offers on the other side but no LOAD offer curve", log)
+    @test occursin("$TOY_BATTERY: the device has an energy offer on the other side but no LOAD energy offer series", log)
 
-    # (c) A scheduled load with no energy curves and a service-only cost builds.
-    sys = toy(; loads = [TOY_LOAD_SERVICE_ONLY => toy_load(50.0, 30.0; initial = 0.0, ramp_up = 100.0)])
-    load = PSY.get_component(PSY.InterruptiblePowerLoad, sys, TOY_LOAD_SERVICE_ONLY)
-    PSY.set_operation_cost!(load, service_only())
-    status, _ = _toy_build_log(toy_model(sys; template = template_for(sys)))
+    # (c) A scheduled load with no energy offer builds and has no energy bands.
+    sys = toy(;
+        loads = [TOY_LOAD_SERVICE_ONLY => toy_load(50.0, 30.0; initial = 0.0, ramp_up = 100.0)],
+        mutate! = without(NEMLoad, TOY_LOAD_SERVICE_ONLY, (OfferSide.LOAD,)),
+    )
+    model = toy_model(sys; template = template_for(sys))
+    status, _ = _toy_build_log(model)
     @test status == PSI.ModelBuildStatus.BUILT
+    @test TOY_LOAD_SERVICE_ONLY ∉ band_devices(PSI.get_optimization_container(model), "load")
+end
+
+@testset "padded energy bands never clear" begin
+    # A one-band unit beside a three-band one: its two padded bands have zero width and price.
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(20.0, 30.0), (20.0, 40.0), (20.0, 50.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        130.0,
+    )
+    out = solve_toy(sys)
+    @test out.dispatch_mw[TOY_CHEAP] ≈ 100.0 atol = 1.0e-6
+    @test out.dispatch_mw[TOY_EXPENSIVE] ≈ 30.0 atol = 1.0e-6
+    bands = PSI.get_variable(out.container, EnergyOfferBandVariable(), NEMThermalGen, "gen")
+    @test axes(bands, 2) == ["1", "2", "3"]
+    base_power = PSY.get_base_power(sys)
+    cleared(name, b) = PSI.JuMP.value(bands[name, string(b), 1]) * base_power
+    @test cleared(TOY_CHEAP, 1) ≈ 100.0 atol = 1.0e-6
+    @test cleared(TOY_CHEAP, 2) ≈ 0.0 atol = 1.0e-6
+    @test cleared(TOY_CHEAP, 3) ≈ 0.0 atol = 1.0e-6
+end
+
+@testset "a battery with its LOAD price below its GEN price does not circulate" begin
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0)],
+        50.0;
+        batteries = [TOY_BATTERY => toy_battery(50.0, 30.0, 50.0, 20.0; initial = 0.0, ramp_up = 100.0)],
+    )
+    out = solve_toy(sys)
+    @test out.battery_out_mw[TOY_BATTERY] * out.battery_in_mw[TOY_BATTERY] ≈ 0.0 atol = 1.0e-6
+end
+
+@testset "an energy offer on a side the device type does not bid fails the build" begin
+    template_for(sys) = begin
+        template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
+        set_nem_dispatch_models!(template, sys; tie_breaks = false)
+        PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
+        return template
+    end
+    offer = (sys, stamps) -> PSY.PiecewiseStepData([0.0, 10.0], [5.0])
+    function stray(device_type, name, side, series)
+        return (sys, stamps) -> begin
+            device = PSY.get_component(device_type, sys, name)
+            AustralianElectricityMarkets.replace_single_series!(
+                sys, device,
+                AustralianElectricityMarkets.single_series(
+                    AustralianElectricityMarkets.energy_max_avail_series_name(device, side), TOY_START, fill(1.0, length(stamps)), TOY_RESOLUTION,
+                ),
+            )
+            AustralianElectricityMarkets.replace_single_series!(
+                sys, device,
+                AustralianElectricityMarkets.single_series(series, TOY_START, fill(offer(sys, stamps), length(stamps)), TOY_RESOLUTION),
+            )
+            return
+        end
+    end
+    toy(mutate!) = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0)], 50.0;
+        loads = [TOY_LOAD_SERVICE_ONLY => toy_load(50.0, 30.0; initial = 0.0, ramp_up = 100.0)], mutate!,
+    )
+    sys = toy(stray(NEMThermalGen, TOY_CHEAP, OfferSide.LOAD, "energy_offer_decremental"))
+    status, log = _toy_build_log(toy_model(sys; template = template_for(sys)))
+    @test status == PSI.ModelBuildStatus.FAILED
+    @test occursin("$TOY_CHEAP: the device carries an unpriced LOAD energy offer series", log)
+
+    sys = toy(stray(NEMLoad, TOY_LOAD_SERVICE_ONLY, OfferSide.GEN, "energy_offer"))
+    status, log = _toy_build_log(toy_model(sys; template = template_for(sys)))
+    @test status == PSI.ModelBuildStatus.FAILED
+    @test occursin("$TOY_LOAD_SERVICE_ONLY: the device carries an unpriced GEN energy offer series", log)
 end

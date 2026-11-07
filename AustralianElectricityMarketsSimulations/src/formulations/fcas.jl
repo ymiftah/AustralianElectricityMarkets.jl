@@ -22,7 +22,7 @@ regulation bid.
 """
 function _fcas_direction_problem(device::PSY.Device, bid_type::BidType, direction::FCASBidDirection)
     bid = string(bid_type)
-    direction === FCASBidDirection.NONE && return "carries neither an incremental nor a decremental $bid bid; call set_fcas_bids! first"
+    direction === FCASBidDirection.NONE && return "carries neither an incremental nor a decremental $bid bid; call set_market_bids! first"
     direction === FCASBidDirection.BOTH && !(device isa PSY.Storage && bid_type in FCAS_REGULATION_MARKETS) &&
         return "carries both an incremental and a decremental $bid bid; bidirectional FCAS capacity is modeled " *
         "only for a `PSY.Storage` device's regulation markets"
@@ -196,7 +196,7 @@ end
     _check_fcas_effective_series(container, devices, bid_type, directions)
 
 Throws `ArgumentError` naming every device in `devices` without a forecast of its
-[`AustralianElectricityMarkets.set_fcas_effective_offers!`](@ref) series for `bid_type`.
+[`set_effective_offers!`](@ref) series for `bid_type`.
 
 # Returns
 `nothing`.
@@ -213,7 +213,7 @@ function _check_fcas_effective_series(container::PSI.OptimizationContainer, devi
     isempty(uncovered) || throw(
         ArgumentError(
             "FCASMarket: $(length(uncovered)) device(s) carry no effective $(string(bid_type)) offer forecast: " *
-                "$(join(uncovered, ", ")). Call set_fcas_effective_offers!(sys) before transform_single_time_series!.",
+                "$(join(uncovered, ", ")). Call set_effective_offers!(sys) before transform_single_time_series!.",
         ),
     )
     return
@@ -608,7 +608,7 @@ end
     _fcas_band_labels(offers, svc::FCASService) -> Vector{String}
 
 Band labels `"1"` to `"n"`, `n` the most bands any offer in `offers` has over the whole of its
-offer curve series (the service bid of `svc`, see [`fcas_offer_series_name`](@ref)), at least 1.
+offer curve series (see [`fcas_offer_series_name`](@ref)), at least 1.
 
 # Returns
 `Vector{String}`.

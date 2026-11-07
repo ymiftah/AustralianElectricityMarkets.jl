@@ -25,8 +25,8 @@ end
     add_toy_fcas_scaling!(sys, device, initial_timestamp, n, bid_type; agc_enablement_min = nothing,
         agc_enablement_max = nothing, agc_max_avail = nothing, uigf = nothing)
 
-Attaches [`set_fcas_scaling_inputs!`](@ref)'s per-device `"fcas_agc_enablement_min_<bid_type>"`/
-`"fcas_agc_enablement_max_<bid_type>"`/`"fcas_agc_ramp_rate_<bid_type>"`/`"uigf"`
+Attaches the regulation enablement of `bid_type` and the UIGF to the device's telemetry, and the derived
+`"fcas_agc_ramp_rate_<bid_type>"` series,
 `SingleTimeSeries`, one flat window of `n` steps at `initial_timestamp`, mirroring its
 per-unit-of-system-base convention. `agc_max_avail` is the AGC ramping capability in MW over one
 `resolution` interval, stored as the equivalent MW/h ramp rate. A `nothing` keyword leaves the
@@ -43,44 +43,44 @@ function add_toy_fcas_scaling!(
     base_power = PSY.get_base_power(sys)
     stamps = [initial_timestamp + (i - 1) * resolution for i in 1:n]
     bid_type_str = string(bid_type)
-    for (value, name) in (
-            (agc_enablement_min, "fcas_agc_enablement_min_$bid_type_str"),
-            (agc_enablement_max, "fcas_agc_enablement_max_$bid_type_str"),
-            (isnothing(agc_max_avail) ? nothing : agc_max_avail / (Dates.value(Minute(resolution)) / 60), "fcas_agc_ramp_rate_$bid_type_str"),
-            (uigf, "uigf"),
-        )
-        isnothing(value) && continue
-        PSY.add_time_series!(
-            sys, device,
-            PSY.SingleTimeSeries(;
-                name = name, data = PSY.TimeSeries.TimeArray(stamps, fill(value / base_power, n)),
-            ),
-        )
+    if !isnothing(agc_enablement_min) || !isnothing(agc_enablement_max)
+        enablement = fill((something(agc_enablement_min, NaN), something(agc_enablement_max, NaN)), n)
+        field = bid_type == BidType.RAISEREG ? :raise_reg_enablement : :lower_reg_enablement
+        set_toy_unit_field!(sys, device, stamps, field, enablement)
     end
+    isnothing(uigf) || set_toy_unit_field!(sys, device, stamps, :uigf, fill(uigf, n))
+    isnothing(agc_max_avail) && return
+    PSY.add_time_series!(
+        sys, device,
+        PSY.SingleTimeSeries(;
+            name = "fcas_agc_ramp_rate_$bid_type_str",
+            data = PSY.TimeSeries.TimeArray(stamps, fill(agc_max_avail / (Dates.value(Minute(resolution)) / 60) / base_power, n)),
+        ),
+    )
     return
 end
 
 """
     add_toy_fcas_agc_status!(sys, device, initial_timestamp, n, status)
 
-Attaches [`set_fcas_scaling_inputs!`](@ref)'s per-device `"fcas_agc_status"` `SingleTimeSeries`
+Attaches the `agc_status` telemetry series of the device,
 (not per-unitized), one flat window of `n` steps at `initial_timestamp`.
 """
 function add_toy_fcas_agc_status!(sys, device, initial_timestamp, n::Integer, status::Int; resolution = TOY_RESOLUTION)
     stamps = [initial_timestamp + (i - 1) * resolution for i in 1:n]
-    add_toy_series!(sys, device, stamps, "fcas_agc_status", fill(Float64(status), n); scale = 1.0)
+    set_toy_unit_field!(sys, device, stamps, :agc_status, fill(Float64(status), n))
     return
 end
 
 """
     add_toy_storage_initial_mw!(sys, device, initial_timestamp, n, initial_mw)
 
-Attaches `_set_nem_dispatch_limits!`'s per-device `"initial_mw"` `SingleTimeSeries` (net
+Attaches the observed `initial_mw` series of the device (net
 MW, per-unit of the system base), one flat window of `n` steps at `initial_timestamp`.
 """
 function add_toy_storage_initial_mw!(sys, device, initial_timestamp, n::Integer, initial_mw::Float64; resolution = TOY_RESOLUTION)
     stamps = [initial_timestamp + (i - 1) * resolution for i in 1:n]
-    add_toy_series!(sys, device, stamps, "initial_mw", fill(initial_mw, n))
+    set_toy_unit_field!(sys, device, stamps, :initial_mw, fill(initial_mw, n))
     return
 end
 
@@ -88,46 +88,31 @@ end
     _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
 
 Attaches `bat`'s `NEMReplayDispatch` requirements over `stamps`: a cheap generation-side and
-worthless load-side `MarketBidCost` (so charging is never attractive), generous ramp rates, and
-a zero net `"initial_mw"` - none of these ever bind in these tests, which fix the energy
-variables directly. Callers that need a specific `"initial_mw"` overwrite it afterwards, e.g.
+worthless load-side `energy_offer` series (so charging is never attractive), generous ramp rates, and
+a zero net `"observed_initial_mw"` - none of these ever bind in these tests, which fix the energy
+variables directly. Callers that need a specific `"observed_initial_mw"` overwrite it afterwards, e.g.
 via [`add_toy_storage_initial_mw!`](@ref).
 """
 function _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
-    rating = PSY.get_output_active_power_limits(bat).max
-    PSY.set_operation_cost!(
-        bat, PSY.MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0),
-    )
-    PSY.set_incremental_variable_cost!(
-        sys, bat, PSY.SingleTimeSeries(;
-            name = "variable_cost",
-            data = PSY.TimeSeries.TimeArray(stamps, fill(PSY.PiecewiseStepData([0.0, rating], [1.0]), length(stamps))),
-        ), PSY.UnitSystem.NATURAL_UNITS,
-    )
-    PSY.set_incremental_initial_input!(
-        sys, bat, PSY.SingleTimeSeries(; name = "incremental_initial_input", data = PSY.TimeSeries.TimeArray(stamps, fill(0.0, length(stamps)))),
-    )
-    PSY.set_decremental_variable_cost!(
-        sys, bat, PSY.SingleTimeSeries(;
-            name = "decremental_variable_cost",
-            data = PSY.TimeSeries.TimeArray(stamps, fill(PSY.PiecewiseStepData([0.0, rating], [0.0]), length(stamps))),
-        ), PSY.UnitSystem.NATURAL_UNITS,
-    )
-    PSY.set_decremental_initial_input!(
-        sys, bat, PSY.SingleTimeSeries(; name = "decremental_initial_input", data = PSY.TimeSeries.TimeArray(stamps, fill(0.0, length(stamps)))),
-    )
     base_power = PSY.get_base_power(sys)
+    for (name, mw) in (("energy_max_avail", PSY.get_output_active_power_limits(bat).max), ("energy_max_avail_decremental", PSY.get_input_active_power_limits(bat).max))
+        PSY.add_time_series!(sys, bat, AustralianElectricityMarkets.single_series(name, stamps[1], fill(mw / base_power, length(stamps)), TOY_RESOLUTION))
+    end
+    rating = PSY.get_output_active_power_limits(bat).max
+    for (side, name, price) in ((OfferSide.GEN, "energy_offer", 1.0), (OfferSide.LOAD, "energy_offer_decremental", 0.0))
+        curves = fill(PSY.PiecewiseStepData([0.0, rating], [price]), length(stamps))
+        AustralianElectricityMarkets.replace_single_series!(
+            sys, bat, AustralianElectricityMarkets.single_series(name, stamps[1], curves, TOY_RESOLUTION),
+        )
+    end
     for name in ("ramp_up_rate", "ramp_down_rate")
         PSY.add_time_series!(
             sys, bat, PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, fill(1.0e4 / base_power, length(stamps)))),
         )
     end
-    PSY.add_time_series!(
-        sys, bat, PSY.SingleTimeSeries(; name = "initial_mw", data = PSY.TimeSeries.TimeArray(stamps, fill(0.0, length(stamps)))),
-    )
-    for (name, mw) in (("energy_max_avail", PSY.get_output_active_power_limits(bat).max), ("energy_max_avail_decremental", PSY.get_input_active_power_limits(bat).max))
-        PSY.add_time_series!(sys, bat, AustralianElectricityMarkets.single_series(name, stamps[1], fill(mw / base_power, length(stamps)), TOY_RESOLUTION))
-    end
+    set_toy_unit_field!(sys, bat, stamps, :initial_mw, fill(0.0, length(stamps)))
+    set_toy_unit_field!(sys, bat, stamps, :ramp_up_limit, fill(1.0e4 * 60, length(stamps)))
+    set_toy_unit_field!(sys, bat, stamps, :ramp_down_limit, fill(1.0e4 * 60, length(stamps)))
     return
 end
 
@@ -151,7 +136,7 @@ function fcas_toy_template(sys, service_names; use_slacks = false)
     return template
 end
 
-"A single-unit toy `System` whose sole `ThermalStandard` can be fixed to `energy_mw`."
+"A single-unit toy `System` whose sole `NEMThermalGen` can be fixed to `energy_mw`."
 function fcas_energy_toy_system(energy_mw; mutate! = nothing)
     return nem_toy_system(
         [
@@ -181,7 +166,7 @@ end
 "Fixes `duid`'s `ActivePowerVariable` at `energy_mw`, so FCAS reward can't shift energy off it."
 function fix_energy!(container, duid, energy_mw)
     base_power = PSI.get_base_power(container)
-    var = PSI.get_variable(container, PSI.ActivePowerVariable(), PSY.ThermalStandard)
+    var = PSI.get_variable(container, PSI.ActivePowerVariable(), NEMThermalGen)
     PSI.JuMP.fix(var[duid, 1], energy_mw / base_power; force = true)
     return
 end
@@ -227,7 +212,7 @@ fcas_unit_mw(container, service_name, duid) =
     sys = fcas_energy_toy_system(
         2.0;
         mutate! = (sys, stamps) -> begin
-            device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+            device = PSY.get_component(NEMThermalGen, sys, duid)
             n = length(stamps)
             for (bid_type, trap_mw) in trapeziums_mw
                 add_toy_fcas!(sys, device, stamps[1], n, bid_type, trap_mw, [(trap_mw[5], 10.0)])
@@ -235,7 +220,7 @@ fcas_unit_mw(container, service_name, duid) =
                 PSY.add_service!(
                     sys, FCASService(; name = name, region = "TAS1", bid_type = bid_type), [device],
                 )
-                flush_toy_fcas_curves!(sys)
+                derive_toy_offers!(sys)
             end
         end,
     )
@@ -254,7 +239,7 @@ fcas_unit_mw(container, service_name, duid) =
         sum(fcas_capacity(container, name)[duid, 1] for name in service_names)
     end
 
-    @test PSI.JuMP.value(PSI.get_variable(container, PSI.ActivePowerVariable(), PSY.ThermalStandard)[duid, 1]) * base_power ≈
+    @test PSI.JuMP.value(PSI.get_variable(container, PSI.ActivePowerVariable(), NEMThermalGen)[duid, 1]) * base_power ≈
         2.0 atol = FCAS_TOY_TOLERANCE
     @test fcas_mw(container, "TAS1_LOWER6SEC", duid) ≈ 1.0 atol = FCAS_TOY_TOLERANCE
     @test fcas_mw(container, "TAS1_RAISE6SEC", duid) ≈ 9.0 atol = FCAS_TOY_TOLERANCE
@@ -281,7 +266,7 @@ end
         sys = fcas_energy_toy_system(
             2.0;
             mutate! = (sys, stamps) -> begin
-                device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+                device = PSY.get_component(NEMThermalGen, sys, duid)
                 n = length(stamps)
                 add_toy_fcas!(sys, device, stamps[1], n, BidType.RAISEREG, trapezium_mw, [(25.0, 10.0)])
                 isnothing(agc_max_avail) || add_toy_fcas_scaling!(
@@ -291,7 +276,7 @@ end
                     sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG),
                     [device],
                 )
-                flush_toy_fcas_curves!(sys)
+                derive_toy_offers!(sys)
             end,
         )
         container = build_fcas(sys, [service_name])
@@ -320,7 +305,7 @@ end
         sys = fcas_energy_toy_system(
             45.0;
             mutate! = (sys, stamps) -> begin
-                device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+                device = PSY.get_component(NEMThermalGen, sys, duid)
                 n = length(stamps)
                 add_toy_fcas!(sys, device, stamps[1], n, BidType.RAISEREG, trapezium_mw, [(25.0, 10.0)])
                 add_toy_fcas_scaling!(
@@ -330,7 +315,7 @@ end
                 PSY.add_service!(
                     sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG), [device],
                 )
-                flush_toy_fcas_curves!(sys)
+                derive_toy_offers!(sys)
             end,
         )
         return build_fcas(sys, [service_name])
@@ -358,7 +343,7 @@ end
         sys = fcas_energy_toy_system(
             energy_mw;
             mutate! = (sys, stamps) -> begin
-                device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+                device = PSY.get_component(NEMThermalGen, sys, duid)
                 add_toy_fcas!(
                     sys, device, stamps[1], length(stamps), BidType.LOWER6SEC,
                     (1.0, 5.0, 26.0, 27.0, 4.0), [(4.0, 10.0)],
@@ -367,7 +352,7 @@ end
                     sys, FCASService(; name = "TAS1_LOWER6SEC", region = "TAS1", bid_type = BidType.LOWER6SEC),
                     [device],
                 )
-                flush_toy_fcas_curves!(sys)
+                derive_toy_offers!(sys)
             end,
         )
         container = build_fcas(sys, ["TAS1_LOWER6SEC"])
@@ -390,14 +375,14 @@ end
     sys = fcas_energy_toy_system(
         2.0;
         mutate! = (sys, stamps) -> begin
-            device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+            device = PSY.get_component(NEMThermalGen, sys, duid)
             n = length(stamps)
             add_toy_fcas!(sys, device, stamps[1], n, BidType.LOWER6SEC, (-100.0, -90.0, 10.0, 20.0, 10.0), [(10.0, 10.0)])
             PSY.add_service!(sys, FCASService(; name = "TAS1_LOWER6SEC", region = "TAS1", bid_type = BidType.LOWER6SEC), [device])
-            flush_toy_fcas_curves!(sys)
+            derive_toy_offers!(sys)
             add_toy_fcas!(sys, device, stamps[1], n, BidType.RAISEREG, (0.0, 0.0, 100.0, 100.0, 9.0), [(9.0, 10.0)])
             PSY.add_service!(sys, FCASService(; name = "TAS1_RAISEREG", region = "TAS1", bid_type = BidType.RAISEREG), [device])
-            flush_toy_fcas_curves!(sys)
+            derive_toy_offers!(sys)
         end,
     )
     container = build_fcas(sys, ["TAS1_LOWER6SEC", "TAS1_RAISEREG"])
@@ -412,12 +397,12 @@ end
 @testset "a malformed offered trapezium is rejected before the build" begin
     duid = TOY_CHEAP
     service_name = "TAS1_RAISE6SEC"
-    # set_fcas_effective_offers!, which the toy system runs, reads every trapezium.
+    # set_effective_offers!, which the toy system runs, reads every trapezium.
     err = _caught() do
         fcas_energy_toy_system(
             2.0;
             mutate! = (sys, stamps) -> begin
-                device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+                device = PSY.get_component(NEMThermalGen, sys, duid)
                 # HighBreakpoint (110) above EnablementMax (100).
                 add_toy_fcas!(
                     sys, device, stamps[1], length(stamps), BidType.RAISE6SEC,
@@ -427,7 +412,7 @@ end
                     sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC),
                     [device],
                 )
-                flush_toy_fcas_curves!(sys)
+                derive_toy_offers!(sys)
             end,
         )
     end
@@ -442,7 +427,7 @@ end
     sys = fcas_energy_toy_system(
         2.0;
         mutate! = (sys, stamps) -> begin
-            device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+            device = PSY.get_component(NEMThermalGen, sys, duid)
             # HighBreakpoint == EnablementMax: the upper form never binds, so only the
             # band-sum cost and the 10 MW MaxAvail bound are in play.
             add_toy_fcas!(
@@ -453,7 +438,7 @@ end
                 sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC),
                 [device],
             )
-            flush_toy_fcas_curves!(sys)
+            derive_toy_offers!(sys)
         end,
     )
     base_power = PSY.get_base_power(sys)
@@ -479,7 +464,7 @@ end
 
     # Each band is priced at its offer price times the base power and the interval in hours.
     container = build_fcas(sys, [service_name])
-    price = PSI.get_parameter(container, FCASBandPriceParameter(), PSY.ThermalStandard, "$(service_name)_gen")
+    price = PSI.get_parameter(container, FCASBandPriceParameter(), NEMThermalGen, "$(service_name)_gen")
     column = PSI.get_parameter_column_refs(price, duid)
     @test [column[label, 1] for label in ("1", "2")] == [10.0, 30.0]
     @test all(==(1.0), PSI.get_multiplier_array(price).data)
@@ -520,14 +505,13 @@ function storage_fcas_toy_model(
     )
     sys = augmented_pscb_system()
     _fix_thermal_floor!(sys)
-    bat = get_component(EnergyReservoirStorage, sys, "BAT1")
+    bat = get_component(NEMStorage, sys, "BAT1")
 
     # Every forecast in a System shares one window count and horizon, so rebuild them to match the FCAS window.
     PSY.clear_time_series!(sys)
     stamps = [TOY_START, TOY_START + TOY_RESOLUTION]
     _add_flat_max_active_power!(sys, stamps)
     _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
-    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, bat, "initial_mw")
     add_toy_storage_initial_mw!(sys, bat, stamps[1], length(stamps), initial_mw)
 
     add_toy_fcas!(sys, bat, stamps[1], length(stamps), bid_type, trapezium_mw, [(10.0, 50.0)]; decremental = decremental)
@@ -542,12 +526,12 @@ function storage_fcas_toy_model(
         )
     end
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = bid_type), [bat])
-    flush_toy_fcas_curves!(sys)
-    set_fcas_effective_offers!(sys)
+    derive_toy_offers!(sys)
+    set_effective_offers!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
     template = _area_balance_template(sys; mpc = 17_500.0)
-    PSI.set_device_model!(template, EnergyReservoirStorage, NEMReplayDispatch)
+    PSI.set_device_model!(template, NEMStorage, NEMReplayDispatch)
     PSI.set_service_model!(
         template, service_name,
         PSI.ServiceModel(FCASService, FCASMarket, service_name; duals = [FCASJointCapacityConstraint]),
@@ -571,8 +555,8 @@ end
     base_power = get_base_power(sys)
 
     container = PSI.get_optimization_container(model)
-    out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), EnergyReservoirStorage)
-    in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)
+    out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), NEMStorage)
+    in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), NEMStorage)
     PSI.JuMP.fix(out_var["BAT1", 1], 0.0; force = true)
     PSI.JuMP.fix(in_var["BAT1", 1], 6.0 / base_power; force = true)  # net = -6 MW (charging)
 
@@ -592,8 +576,8 @@ end
     model, sys = storage_fcas_toy_model(service_name, BidType.RAISEREG, (0.0, 10.0, 15.0, 20.0, 10.0))
     base_power = get_base_power(sys)
     container = PSI.get_optimization_container(model)
-    out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), EnergyReservoirStorage)
-    in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)
+    out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), NEMStorage)
+    in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), NEMStorage)
     for side in ("upper", "lower")
         row = PSI.JuMP.constraint_object(
             PSI.get_constraint(container, FCASJointCapacityConstraint(), FCASService, "$(service_name)_$side")["BAT1", 1],
@@ -611,12 +595,12 @@ end
 
 @testset "a Storage device's energy bid availability gates FCAS per side" begin
     AEMS = AustralianElectricityMarketsSimulations
-    bat = get_component(EnergyReservoirStorage, augmented_pscb_system(), "BAT1")
+    bat = get_component(NEMStorage, augmented_pscb_system(), "BAT1")
     trap(emin, emax) = FCASTrapezium(;
         enablement_min = emin, low_breakpoint = emin + 1.0, high_breakpoint = emax - 1.0,
         enablement_max = emax, max_avail = 1.0,
     )
-    ok(is_regulation, decremental, t, avail) = AustralianElectricityMarkets._fcas_energy_max_avail_ok(bat, is_regulation, decremental, t, avail)
+    ok(is_regulation, decremental, t, avail) = AEMS._fcas_energy_max_avail_ok(bat, is_regulation, decremental, t, avail)
 
     # Generation side: Energy Max Availability_GEN >= EnablementMin.
     @test !ok(true, false, trap(2.0, 10.0), (gen = 1.0, load = 50.0))
@@ -676,7 +660,7 @@ function _build_bdu_regulation(
     )
     sys = augmented_pscb_system()
     _fix_thermal_floor!(sys)
-    bat = get_component(EnergyReservoirStorage, sys, "BAT1")
+    bat = get_component(NEMStorage, sys, "BAT1")
 
     PSY.clear_time_series!(sys)
     stamps = [TOY_START, TOY_START + TOY_RESOLUTION]
@@ -694,7 +678,6 @@ function _build_bdu_regulation(
     end
     _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
     if !isnothing(storage_initial_mw)
-        PSY.remove_time_series!(sys, PSY.SingleTimeSeries, bat, "initial_mw")
         add_toy_storage_initial_mw!(sys, bat, stamps[1], length(stamps), storage_initial_mw)
     end
     if !isnothing(agc_max_avail) || !isnothing(agc_enablement_min) || !isnothing(agc_enablement_max)
@@ -705,23 +688,22 @@ function _build_bdu_regulation(
         )
     end
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG), [bat])
-    flush_toy_fcas_curves!(sys)
+    derive_toy_offers!(sys)
     if !isnothing(requirement_mw)
-        rhs_pu = requirement_mw / get_base_power(sys)
+        rhs_pu = requirement_mw
         gc = GenericConstraint(;
             name = "F_BDU", sense = ConstraintSense.GE, rhs = rhs_pu,
             terms = ConstraintTerm[UnitTerm("BAT1", BidType.RAISEREG, 1.0)],
             fcas_requirements = [FCASRequirement("TAS1", BidType.RAISEREG)],
         )
         add_service!(sys, gc, [bat])
-        add_toy_series!(sys, gc, stamps, "rhs", fill(rhs_pu, length(stamps)); scale = 1.0)
-        add_toy_series!(sys, gc, stamps, "invoked", fill(1.0, length(stamps)); scale = 1.0)
+        add_toy_constraint_series!(sys, gc, stamps, fill(rhs_pu, length(stamps)), fill(1.0, length(stamps)))
     end
-    set_fcas_effective_offers!(sys)
+    set_effective_offers!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
     template = _area_balance_template(sys; mpc = 17_500.0)
-    PSI.set_device_model!(template, EnergyReservoirStorage, NEMReplayDispatch)
+    PSI.set_device_model!(template, NEMStorage, NEMReplayDispatch)
     PSI.set_service_model!(
         template, service_name,
         PSI.ServiceModel(FCASService, FCASMarket, service_name; duals = [FCASJointCapacityConstraint], use_slacks),
@@ -742,8 +724,8 @@ function _build_bdu_regulation(
 
     container = PSI.get_optimization_container(model)
     base_power = PSY.get_base_power(sys)
-    out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), EnergyReservoirStorage)
-    in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)
+    out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), NEMStorage)
+    in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), NEMStorage)
     PSI.JuMP.fix(out_var["BAT1", 1], out_mw / base_power; force = true)
     PSI.JuMP.fix(in_var["BAT1", 1], in_mw / base_power; force = true)
 
@@ -838,7 +820,7 @@ end
     sys = fcas_energy_toy_system(
         2.0;
         mutate! = (sys, stamps) -> begin
-            device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+            device = PSY.get_component(NEMThermalGen, sys, duid)
             add_toy_fcas!(
                 sys, device, stamps[1], length(stamps), BidType.LOWER6SEC,
                 (1.0, 5.0, 26.0, 27.0, 4.0), [(4.0, 10.0)]; decremental = true,
@@ -847,7 +829,7 @@ end
                 sys, FCASService(; name = "TAS1_LOWER6SEC", region = "TAS1", bid_type = BidType.LOWER6SEC),
                 [device],
             )
-            flush_toy_fcas_curves!(sys)
+            derive_toy_offers!(sys)
         end,
     )
     template = fcas_toy_template(sys, ["TAS1_LOWER6SEC"])
@@ -858,7 +840,7 @@ end
     PSI.set_output_dir!(model, mktempdir())
     err = _caught(() -> PSI.build_impl!(model))
     @test err isa ArgumentError
-    @test occursin("only for a `PSY.Storage` device or a `PSY.ControllableLoad`", sprint(showerror, err))
+    @test occursin("carries neither an incremental nor a decremental LOWER6SEC bid", sprint(showerror, err))
 end
 
 @testset "check_fcas_services" begin
@@ -867,7 +849,7 @@ end
     sys = fcas_energy_toy_system(
         2.0;
         mutate! = (sys, stamps) -> begin
-            device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+            device = PSY.get_component(NEMThermalGen, sys, duid)
             add_toy_fcas!(
                 sys, device, stamps[1], length(stamps), BidType.LOWER6SEC,
                 (1.0, 5.0, 26.0, 27.0, 4.0), [(4.0, 10.0)],
@@ -876,7 +858,7 @@ end
                 sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.LOWER6SEC),
                 [device],
             )
-            flush_toy_fcas_curves!(sys)
+            derive_toy_offers!(sys)
         end,
     )
 
@@ -901,7 +883,7 @@ end
         dec_sys = fcas_energy_toy_system(
             2.0;
             mutate! = (sys, stamps) -> begin
-                device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+                device = PSY.get_component(NEMThermalGen, sys, duid)
                 add_toy_fcas!(
                     sys, device, stamps[1], length(stamps), BidType.LOWER6SEC,
                     (1.0, 5.0, 26.0, 27.0, 4.0), [(4.0, 10.0)]; decremental = true,
@@ -910,13 +892,13 @@ end
                     sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.LOWER6SEC),
                     [device],
                 )
-                flush_toy_fcas_curves!(sys)
+                derive_toy_offers!(sys)
             end,
         )
         template = fcas_toy_template(dec_sys, [service_name])
         err = _caught(() -> check_fcas_services(template, dec_sys))
         @test err isa ArgumentError
-        @test occursin("only for a `PSY.Storage` device or a `PSY.ControllableLoad`", sprint(showerror, err))
+        @test occursin("carries neither an incremental nor a decremental LOWER6SEC bid", sprint(showerror, err))
     end
 end
 
@@ -930,14 +912,14 @@ function raise6sec_toy(; units, trapezium_mw, service_name = "TAS1_RAISE6SEC", e
     return nem_toy_system(
         units, sum(u.initial for (_, u) in units);
         mutate! = (sys, stamps) -> begin
-            devices = [PSY.get_component(PSY.ThermalStandard, sys, name) for (name, _) in units]
+            devices = [PSY.get_component(NEMThermalGen, sys, name) for (name, _) in units]
             for device in devices
                 add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISE6SEC, trapezium_mw, [(10.0, 10.0)])
             end
             PSY.add_service!(
                 sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC), devices,
             )
-            flush_toy_fcas_curves!(sys)
+            derive_toy_offers!(sys)
             isnothing(extra!) || extra!(sys, stamps)
         end,
     )
@@ -955,13 +937,13 @@ end
             ],
             initial;
             mutate! = (sys, stamps) -> begin
-                device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+                device = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
                 add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISE6SEC, trapezium_mw, bands)
                 PSY.add_service!(
                     sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC),
                     [device],
                 )
-                flush_toy_fcas_curves!(sys)
+                derive_toy_offers!(sys)
             end,
         )
         return build_fcas(sys, [service_name])
@@ -1020,7 +1002,7 @@ end
     sys = raise6sec_toy(;
         units = [TOY_CHEAP => unit(20.0), TOY_EXPENSIVE => unit(2.0)], trapezium_mw = (5.0, 10.0, 90.0, 100.0, 10.0),
         extra! = (sys, stamps) -> add_toy_fcas_agc_status!(
-            sys, PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP), stamps[1], length(stamps), 0,
+            sys, PSY.get_component(NEMThermalGen, sys, TOY_CHEAP), stamps[1], length(stamps), 0,
         ),
     )
     container = build_fcas(sys, [service_name]; steps = 2)
@@ -1037,11 +1019,11 @@ end
     sys = fcas_energy_toy_system(
         50.0;
         mutate! = (sys, stamps) -> begin
-            device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+            device = PSY.get_component(NEMThermalGen, sys, duid)
             for (bid_type, name) in ((BidType.RAISE6SEC, "TAS1_RAISE6SEC"), (BidType.LOWERREG, "TAS1_LOWERREG"))
                 add_toy_fcas!(sys, device, stamps[1], length(stamps), bid_type, (0.0, 10.0, 90.0, 100.0, 10.0), [(10.0, 10.0)])
                 PSY.add_service!(sys, FCASService(; name = name, region = "TAS1", bid_type = bid_type), [device])
-                flush_toy_fcas_curves!(sys)
+                derive_toy_offers!(sys)
             end
         end,
     )
@@ -1058,8 +1040,8 @@ end
     service_name = "TAS1_LOWERREG_STOR"
     model, _ = storage_fcas_toy_model(service_name, BidType.LOWERREG, (-20.0, -15.0, -5.0, 0.0, 10.0); decremental = true)
     container = PSI.get_optimization_container(model)
-    out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), EnergyReservoirStorage)
-    in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)
+    out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), NEMStorage)
+    in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), NEMStorage)
     for side in ("upper", "lower")
         row = PSI.JuMP.constraint_object(
             PSI.get_constraint(container, FCASJointCapacityConstraint(), FCASService, "$(service_name)_$side")["BAT1", 1],
@@ -1078,9 +1060,9 @@ end
         decremental = true, scaling = (; agc_enablement_min = -10.0, agc_max_avail = 4.0),
     )
     container = PSI.get_optimization_container(model)
-    bat = get_component(EnergyReservoirStorage, sys, "BAT1")
-    window = AustralianElectricityMarkets._FCASWindow(TOY_START, 1, TOY_RESOLUTION)
-    trap = only(AustralianElectricityMarkets._fcas_offer(window, bat, BidType.LOWERREG, OfferSide.LOAD).trapeziums)
+    bat = get_component(NEMStorage, sys, "BAT1")
+    window = AEMS._FCASWindow(TOY_START, 1, TOY_RESOLUTION)
+    trap = only(AEMS._fcas_offer(window, bat, BidType.LOWERREG, OfferSide.LOAD).trapeziums)
     @test collect(Tuple(trap)[1:5]) .* PSI.get_base_power(container) ≈ [-10.0, -8.0, -2.0, 0.0, 4.0]
 end
 
@@ -1095,9 +1077,9 @@ end
         )
         base_power = get_base_power(sys)
         container = PSI.get_optimization_container(model)
-        PSI.JuMP.fix(PSI.get_variable(container, PSI.ActivePowerOutVariable(), EnergyReservoirStorage)["BAT1", 1], 0.0; force = true)
+        PSI.JuMP.fix(PSI.get_variable(container, PSI.ActivePowerOutVariable(), NEMStorage)["BAT1", 1], 0.0; force = true)
         PSI.JuMP.fix(
-            PSI.get_variable(container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)["BAT1", 1], 6.0 / base_power; force = true,
+            PSI.get_variable(container, PSI.ActivePowerInVariable(), NEMStorage)["BAT1", 1], 6.0 / base_power; force = true,
         )
         maximize_and_solve!(container) do container
             fcas_capacity(container, service_name)["BAT1", 1]
@@ -1113,19 +1095,19 @@ end
     sys = fcas_energy_toy_system(
         2.0;
         mutate! = (sys, stamps) -> begin
-            device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+            device = PSY.get_component(NEMThermalGen, sys, duid)
             add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISEREG, (0.0, 0.0, 100.0, 100.0, 9.0), [(9.0, 10.0)])
             add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISE6SEC, (0.0, 0.0, 100.0, 100.0, 10.0), [(10.0, 10.0)])
             PSY.add_service!(sys, FCASService(; name = "TAS1_RAISEREG", region = "TAS1", bid_type = BidType.RAISEREG), [device])
             PSY.add_service!(
                 sys, FCASService(; name = "TAS1_RAISE6SEC", region = "TAS1", bid_type = BidType.RAISE6SEC), [device],
             )
-            flush_toy_fcas_curves!(sys)
+            derive_toy_offers!(sys)
         end,
     )
     # The second regulation service goes in after the toy build, which refuses a device with two
     # services of one market in its effective-offer derivation.
-    duplicate_device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+    duplicate_device = PSY.get_component(NEMThermalGen, sys, duid)
     PSY.add_service!(sys, FCASService(; name = "TAS1_RAISEREG_B", region = "TAS1", bid_type = BidType.RAISEREG), [duplicate_device])
     service_names = ["TAS1_RAISEREG", "TAS1_RAISEREG_B", "TAS1_RAISE6SEC"]
     template = fcas_toy_template(sys, service_names)
@@ -1155,22 +1137,22 @@ end
     sys = fcas_energy_toy_system(
         2.0;
         mutate! = (sys, stamps) -> begin
-            device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+            device = PSY.get_component(NEMThermalGen, sys, duid)
             add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISE6SEC, (0.0, 0.0, 100.0, 100.0, 10.0), [(10.0, 10.0)])
             # TOY_EXPENSIVE is unavailable in the toy system and carries no FCAS bid.
-            offline = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
+            offline = PSY.get_component(ThermalStandard, sys, TOY_EXPENSIVE)
             PSY.add_service!(
                 sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC), [device, offline],
             )
-            flush_toy_fcas_curves!(sys)
+            derive_toy_offers!(sys)
             # A service the template doesn't model under FCASMarket, with an unbid contributor.
             PSY.add_service!(sys, FCASService(; name = "TAS1_LOWER6SEC", region = "TAS1", bid_type = BidType.LOWER6SEC), [device])
-            flush_toy_fcas_curves!(sys)
+            derive_toy_offers!(sys)
         end,
     )
 
     @testset "unavailable devices and services not modeled by FCASMarket are skipped" begin
-        @test !PSY.get_available(PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE))
+        @test !PSY.get_available(PSY.get_component(ThermalStandard, sys, TOY_EXPENSIVE))
         @test isnothing(check_fcas_services(fcas_toy_template(sys, [service_name]), sys))
     end
 
@@ -1178,7 +1160,7 @@ end
         network = PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true)
         template = PSI.ProblemTemplate(network)
         PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
-        PSI.set_device_model!(template, PSY.ThermalStandard, PSI.FixedOutput)
+        PSI.set_device_model!(template, NEMThermalGen, PSI.FixedOutput)
         PSI.set_service_model!(template, service_name, PSI.ServiceModel(FCASService, FCASMarket, service_name))
         err = _caught(() -> check_fcas_services(template, sys))
         @test err isa ArgumentError
@@ -1191,12 +1173,12 @@ end
     sys = fcas_energy_toy_system(
         2.0;
         mutate! = (sys, stamps) -> begin
-            device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+            device = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
             add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISE6SEC, (0.0, 0.0, 100.0, 100.0, 10.0), [(10.0, 10.0)])
             PSY.add_service!(
                 sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC), [device],
             )
-            flush_toy_fcas_curves!(sys)
+            derive_toy_offers!(sys)
         end,
     )
     container = build_fcas(sys, [service_name])
@@ -1217,7 +1199,7 @@ end
     @test occursin("FCASJointCapacityConstraint and FCASJointRampingConstraint only", err.msg)
 
     # Without its effective offer forecast the device cannot be built, and the error names the setter.
-    device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+    device = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
     PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, device, "fcas_effective_RAISE6SEC")
     PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, "fcas_effective_RAISE6SEC")
     model = PSI.DecisionModel(
@@ -1227,7 +1209,7 @@ end
     PSI.set_output_dir!(model, mktempdir())
     err = _caught(() -> PSI.build_impl!(model))
     @test err isa ArgumentError
-    @test occursin("set_fcas_effective_offers!", err.msg)
+    @test occursin("set_effective_offers!", err.msg)
 end
 
 @testset "FCASMarket builds for a recurrent simulation" begin
@@ -1235,10 +1217,10 @@ end
     sys = fcas_energy_toy_system(
         2.0;
         mutate! = (sys, stamps) -> begin
-            device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+            device = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
             add_toy_fcas!(sys, device, stamps[1], length(stamps), BidType.RAISE6SEC, (0.0, 0.0, 100.0, 100.0, 10.0), [(10.0, 10.0)])
             PSY.add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC), [device])
-            flush_toy_fcas_curves!(sys)
+            derive_toy_offers!(sys)
         end,
     )
     template = fcas_toy_template(sys, [service_name])
@@ -1294,7 +1276,7 @@ end
 """
     joint_ramping_toy(initial_mw; capacity = 1000.0, raise_agc = nothing, lower_agc = nothing, extra! = nothing)
 
-A single `ThermalStandard` toy `System` (`InitialMW = initial_mw`, `capacity` MW) bidding flat
+A single `NEMThermalGen` toy `System` (`InitialMW = initial_mw`, `capacity` MW) bidding flat
 `(0, 0, capacity, capacity, capacity)` RAISEREG and LOWERREG trapeziums as `"TAS1_RAISEREG"`/
 `"TAS1_LOWERREG"`, each with an AGC ramping capability of `raise_agc`/`lower_agc` MW over one
 resolution interval when given, for AEMO *FCAS Model in NEMDE* §6.1 joint ramping tests.
@@ -1312,7 +1294,7 @@ function joint_ramping_toy(
         ],
         max(initial_mw, 1.0);
         mutate! = (sys, stamps) -> begin
-            device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+            device = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
             n = length(stamps)
             trap = (0.0, 0.0, capacity, capacity, capacity)
             add_toy_fcas!(sys, device, stamps[1], n, BidType.RAISEREG, trap, [(capacity, 10.0)])
@@ -1322,9 +1304,9 @@ function joint_ramping_toy(
             isnothing(lower_agc) ||
                 add_toy_fcas_scaling!(sys, device, stamps[1], n, BidType.LOWERREG; agc_max_avail = lower_agc)
             PSY.add_service!(sys, FCASService(; name = "TAS1_RAISEREG", region = "TAS1", bid_type = BidType.RAISEREG), [device])
-            flush_toy_fcas_curves!(sys)
+            derive_toy_offers!(sys)
             PSY.add_service!(sys, FCASService(; name = "TAS1_LOWERREG", region = "TAS1", bid_type = BidType.LOWERREG), [device])
-            flush_toy_fcas_curves!(sys)
+            derive_toy_offers!(sys)
             isnothing(extra!) || extra!(sys, device, stamps)
         end,
     )
@@ -1344,7 +1326,7 @@ end
         sys = joint_ramping_toy(450.0; raise_agc = 15.0, lower_agc = 10.0)
         container = build_fcas(sys, ["TAS1_RAISEREG", "TAS1_LOWERREG"])
         base_power = PSY.get_base_power(sys)
-        energy_var = PSI.get_variable(container, PSI.ActivePowerVariable(), PSY.ThermalStandard)[duid, 1]
+        energy_var = PSI.get_variable(container, PSI.ActivePowerVariable(), NEMThermalGen)[duid, 1]
         raise_target = fcas_capacity(container, "TAS1_RAISEREG")[duid, 1]
         lower_target = fcas_capacity(container, "TAS1_LOWERREG")[duid, 1]
         raise_row = PSI.JuMP.constraint_object(
@@ -1392,8 +1374,8 @@ end
         )
         container = PSI.get_optimization_container(model)
         base_power = PSI.get_base_power(container)
-        out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), EnergyReservoirStorage)["BAT1", 1]
-        in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)["BAT1", 1]
+        out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), NEMStorage)["BAT1", 1]
+        in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), NEMStorage)["BAT1", 1]
         gen_var = fcas_side_capacity(container, "TAS1_RAISEREG_BDU_JOINT", :gen)["BAT1", 1]
         load_var = fcas_side_capacity(container, "TAS1_RAISEREG_BDU_JOINT", :load)["BAT1", 1]
         row = PSI.JuMP.constraint_object(
@@ -1413,8 +1395,8 @@ end
             service_name, BidType.RAISEREG, (0.0, 0.0, 20.0, 20.0, 10.0); scaling = (; agc_max_avail = 5.0),
         )
         container = PSI.get_optimization_container(model)
-        out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), EnergyReservoirStorage)["BAT1", 1]
-        in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)["BAT1", 1]
+        out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), NEMStorage)["BAT1", 1]
+        in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), NEMStorage)["BAT1", 1]
         row = PSI.JuMP.constraint_object(
             PSI.get_constraint(container, FCASJointRampingConstraint(), FCASService, service_name)["BAT1", 1],
         )
@@ -1493,18 +1475,20 @@ end
     sys = fcas_energy_toy_system(
         2.0;
         mutate! = (sys, stamps) -> begin
-            device = PSY.get_component(PSY.ThermalStandard, sys, duid)
+            device = PSY.get_component(NEMThermalGen, sys, duid)
             n = length(stamps)
             add_toy_fcas!(sys, device, stamps[1], n, BidType.RAISEREG, (0.0, 0.0, 100.0, 100.0, 10.0), [(10.0, 10.0)])
             add_toy_fcas_scaling!(sys, device, stamps[1], n, BidType.RAISEREG; agc_max_avail = 5.0)
-            PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, "initial_mw")
             PSY.add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG), [device])
-            flush_toy_fcas_curves!(sys)
+            derive_toy_offers!(sys)
         end,
+    )
+    AustralianElectricityMarkets.set_observed_state!(
+        PSY.get_component(NEMThermalGen, sys, duid), AustralianElectricityMarkets.NEMObservedState(; initial_mw = 0.0, dispatch_mode = 0),
     )
     network = PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true)
     template = PSI.ProblemTemplate(network)
-    PSI.set_device_model!(template, PSY.ThermalStandard, NEMReplayDispatch)
+    PSI.set_device_model!(template, NEMThermalGen, NEMReplayDispatch)
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     PSI.set_service_model!(
         template, service_name, PSI.ServiceModel(FCASService, FCASMarket, service_name),
@@ -1565,7 +1549,7 @@ function lower6sec_slack_sys(band_mw)
         ],
         20.0;
         mutate! = (sys, stamps) -> begin
-            device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+            device = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
             add_toy_fcas!(
                 sys, device, stamps[1], length(stamps), BidType.LOWER6SEC,
                 (1.0, 5.0, 26.0, 27.0, 4.0), [(band_mw, 10.0)],
@@ -1574,7 +1558,7 @@ function lower6sec_slack_sys(band_mw)
                 sys, FCASService(; name = "TAS1_LOWER6SEC", region = "TAS1", bid_type = BidType.LOWER6SEC),
                 [device],
             )
-            flush_toy_fcas_curves!(sys)
+            derive_toy_offers!(sys)
         end,
     )
 end
@@ -1705,8 +1689,8 @@ end
             @test size(slack, 1) == 1
         end
         base_power = PSI.get_base_power(container)
-        out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), EnergyReservoirStorage)["BAT1", 1]
-        in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)["BAT1", 1]
+        out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), NEMStorage)["BAT1", 1]
+        in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), NEMStorage)["BAT1", 1]
         PSI.JuMP.fix(out_var, 30.0 / base_power; force = true)  # above the generation-side EnablementMax (25)
         PSI.JuMP.fix(in_var, 0.0; force = true)
         jm = PSI.get_jump_model(container)
@@ -1724,30 +1708,28 @@ function fcas_requirement_toy_system(bids, gcs)
     return fcas_energy_toy_system(
         2.0;
         mutate! = (sys, stamps) -> begin
-            device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+            device = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
             for (bid_type, price) in bids
                 add_toy_fcas!(sys, device, stamps[1], length(stamps), bid_type, (0.0, 0.0, 100.0, 100.0, 20.0), [(20.0, price)])
                 PSY.add_service!(
                     sys, FCASService(; name = fcas_service_name(device, bid_type), region = "1", bid_type = bid_type), [device],
                 )
-                flush_toy_fcas_curves!(sys)
+                derive_toy_offers!(sys)
             end
             for (name, sense, rhs_mw, terms, requirements) in gcs
-                rhs_pu = rhs_mw / PSY.get_base_power(sys)
                 gc = GenericConstraint(;
-                    name = name, sense = sense, rhs = rhs_pu, terms = ConstraintTerm[terms...],
+                    name = name, sense = sense, rhs = rhs_mw, terms = ConstraintTerm[terms...],
                     fcas_requirements = [FCASRequirement("1", bt) for bt in requirements],
                 )
                 PSY.add_service!(sys, gc, [device])
-                add_toy_series!(sys, gc, stamps, "rhs", fill(rhs_pu, length(stamps)); scale = 1.0)
-                add_toy_series!(sys, gc, stamps, "invoked", fill(1.0, length(stamps)); scale = 1.0)
+                add_toy_constraint_series!(sys, gc, stamps, fill(rhs_mw, length(stamps)), fill(1.0, length(stamps)))
             end
         end,
     )
 end
 
 function solve_fcas_requirement(sys, bid_types, gc_names; use_slacks = false, steps = 1, mpc = nothing)
-    device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+    device = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
     template = fcas_toy_template(sys, [fcas_service_name(device, bt) for bt in bid_types])
     for name in gc_names
         PSI.set_service_model!(
@@ -1835,14 +1817,14 @@ end
 end
 
 @testset "a bidirectional Storage regulation unit enters a constraint through its net gen + load target" begin
-    service_name = fcas_service_name(get_component(EnergyReservoirStorage, augmented_pscb_system(), "BAT1"), BidType.RAISEREG)
+    service_name = fcas_service_name(get_component(NEMStorage, augmented_pscb_system(), "BAT1"), BidType.RAISEREG)
     # Each side holds at most 10 MW; the cheaper load side (12) takes 10 and the generation side (15) the last MW.
     model = _build_bdu_regulation(service_name, 15.0, 15.0; agc_max_avail = 12.0, solve = false, requirement_mw = 11.0)
     sys = PSI.get_system(model)
     container = PSI.get_optimization_container(model)
     base_power = PSY.get_base_power(sys)
-    out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), EnergyReservoirStorage)
-    in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)
+    out_var = PSI.get_variable(container, PSI.ActivePowerOutVariable(), NEMStorage)
+    in_var = PSI.get_variable(container, PSI.ActivePowerInVariable(), NEMStorage)
     PSI.JuMP.fix(out_var["BAT1", 1], 15.0 / base_power; force = true)
     PSI.JuMP.fix(in_var["BAT1", 1], 15.0 / base_power; force = true)
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
@@ -1873,10 +1855,10 @@ end
     bid_type = BidType.RAISE6SEC
     term = UnitTerm(TOY_CHEAP, bid_type, 1.0)
     sys = fcas_requirement_toy_system([(bid_type, 10.0)], [("F_TOY", ConstraintSense.GE, 5.0, [term], [bid_type])])
-    device = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+    device = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
     # The template models a different FCAS service only, so the term's own service has no FCASMarket model.
     PSY.add_service!(sys, FCASService(; name = "1_LOWER6SEC", region = "1", bid_type = BidType.LOWER6SEC), [device])
-    flush_toy_fcas_curves!(sys)
+    derive_toy_offers!(sys)
     template = fcas_toy_template(sys, ["1_LOWER6SEC"])
     PSI.set_service_model!(template, "F_TOY", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_TOY"))
     err = _caught(() -> _buildable_gcs(sys, template))
@@ -1901,7 +1883,7 @@ end
 """
     load_fcas_toy(bids; initial = 10.0, capacity = 40.0, availability = 40.0, extra! = nothing)
 
-A toy `System` whose scheduled load `"PUMP"` (`InterruptiblePowerLoad`, `InitialMW = initial`)
+A toy `System` whose scheduled load `"PUMP"` (`NEMLoad`, `InitialMW = initial`)
 offers each `(bid_type, trapezium_mw, bands)` of `bids` on its decremental series and contributes to
 one `FCASService` named `"TAS1_<bid_type>"` per bid. `extra!(sys, load, stamps)` runs last.
 """
@@ -1911,13 +1893,13 @@ function load_fcas_toy(bids; initial = 10.0, capacity = 40.0, availability = 40.
         40.0;
         loads = ["PUMP" => toy_load(capacity, 5.0; initial, ramp_up = 1.0e4, ramp_down = 1.0e4, availability)],
         mutate! = (sys, stamps) -> begin
-            load = PSY.get_component(PSY.InterruptiblePowerLoad, sys, "PUMP")
+            load = PSY.get_component(NEMLoad, sys, "PUMP")
             for (bid_type, trapezium_mw, bands) in bids
                 add_toy_fcas!(sys, load, stamps[1], length(stamps), bid_type, trapezium_mw, bands; decremental = true)
                 PSY.add_service!(
                     sys, FCASService(; name = "TAS1_$(string(bid_type))", region = "TAS1", bid_type = bid_type), [load],
                 )
-                flush_toy_fcas_curves!(sys)
+                derive_toy_offers!(sys)
             end
             isnothing(extra!) || extra!(sys, load, stamps)
         end,
@@ -1926,7 +1908,7 @@ end
 
 "Fixes the load `duid`'s consumed MW (`ActivePowerVariable`) at `mw`."
 function fix_load_energy!(container, duid, mw)
-    var = PSI.get_variable(container, PSI.ActivePowerVariable(), PSY.InterruptiblePowerLoad)
+    var = PSI.get_variable(container, PSI.ActivePowerVariable(), NEMLoad)
     PSI.JuMP.fix(var[duid, 1], mw / PSI.get_base_power(container); force = true)
     return
 end
@@ -1959,9 +1941,9 @@ end
     container = build_fcas(sys, ["TAS1_RAISE6SEC"])
     # Maximising consumption would reach its 40 MW availability; the joint rows hold it at EnablementMax.
     maximize_and_solve!(container) do container
-        PSI.get_variable(container, PSI.ActivePowerVariable(), PSY.InterruptiblePowerLoad)["PUMP", 1]
+        PSI.get_variable(container, PSI.ActivePowerVariable(), NEMLoad)["PUMP", 1]
     end
-    var = PSI.get_variable(container, PSI.ActivePowerVariable(), PSY.InterruptiblePowerLoad)
+    var = PSI.get_variable(container, PSI.ActivePowerVariable(), NEMLoad)
     @test PSI.JuMP.value(var["PUMP", 1]) * PSI.get_base_power(container) ≈ 30.0 atol = FCAS_TOY_TOLERANCE
 end
 
@@ -2008,7 +1990,7 @@ end
     )
     raise_row, lower_row = row("TAS1_RAISEREG"), row("TAS1_LOWERREG")
     base_power = PSI.get_base_power(container)
-    energy_var = PSI.get_variable(container, PSI.ActivePowerVariable(), PSY.InterruptiblePowerLoad)["PUMP", 1]
+    energy_var = PSI.get_variable(container, PSI.ActivePowerVariable(), NEMLoad)["PUMP", 1]
     raise_target = fcas_capacity(container, "TAS1_RAISEREG")["PUMP", 1]
     lower_target = fcas_capacity(container, "TAS1_LOWERREG")["PUMP", 1]
     # Scheduled loads: consumption + LowerReg <= InitialMW + up, consumption - RaiseReg >= InitialMW - down.
@@ -2027,7 +2009,7 @@ end
         40.0;
         loads = ["PUMP" => toy_load(40.0, 5.0; initial = 10.0, ramp_up = 1.0e4, ramp_down = 1.0e4)],
         mutate! = (sys, stamps) -> begin
-            load = PSY.get_component(PSY.InterruptiblePowerLoad, sys, "PUMP")
+            load = PSY.get_component(NEMLoad, sys, "PUMP")
             add_toy_fcas!(
                 sys, load, stamps[1], length(stamps), bid_type, (0.0, 0.0, 100.0, 100.0, 20.0), [(20.0, 10.0)];
                 decremental = true,
@@ -2035,16 +2017,15 @@ end
             PSY.add_service!(
                 sys, FCASService(; name = fcas_service_name(load, bid_type), region = "1", bid_type = bid_type), [load],
             )
-            flush_toy_fcas_curves!(sys)
-            rhs_pu = 5.0 / PSY.get_base_power(sys)
+            derive_toy_offers!(sys)
+            rhs_pu = 5.0
             gc = GenericConstraint(;
                 name = "F_TOY", sense = ConstraintSense.GE, rhs = rhs_pu,
                 terms = ConstraintTerm[UnitTerm("PUMP", bid_type, 1.0)],
                 fcas_requirements = [FCASRequirement("1", bid_type)],
             )
             PSY.add_service!(sys, gc, [load])
-            add_toy_series!(sys, gc, stamps, "rhs", fill(rhs_pu, length(stamps)); scale = 1.0)
-            add_toy_series!(sys, gc, stamps, "invoked", fill(1.0, length(stamps)); scale = 1.0)
+            add_toy_constraint_series!(sys, gc, stamps, fill(rhs_pu, length(stamps)), fill(1.0, length(stamps)))
         end,
     )
     results = solve_fcas_requirement(sys, [bid_type], ["F_TOY"]; steps = 2)
@@ -2054,8 +2035,8 @@ end
 end
 
 @testset "_fcas_direction_problem: which device types can offer each FCAS direction" begin
-    thermal = PSY.get_component(PSY.ThermalStandard, fcas_energy_toy_system(2.0), TOY_CHEAP)
-    load = PSY.get_component(PSY.InterruptiblePowerLoad, load_fcas_toy([]), "PUMP")
+    thermal = PSY.get_component(NEMThermalGen, fcas_energy_toy_system(2.0), TOY_CHEAP)
+    load = PSY.get_component(NEMLoad, load_fcas_toy([]), "PUMP")
     for (device, bid_type, direction, phrase) in (
             (thermal, BidType.LOWER6SEC, FCASBidDirection.NONE, "carries neither an incremental"),
             (thermal, BidType.RAISEREG, FCASBidDirection.BOTH, "carries both an incremental"),
@@ -2070,12 +2051,12 @@ end
 
 @testset "check_fcas_services refuses an incremental FCAS bid on a load" begin
     sys = load_fcas_toy([(BidType.RAISE6SEC, (5.0, 10.0, 20.0, 30.0, 10.0), [(10.0, 10.0)])])
-    load = PSY.get_component(PSY.InterruptiblePowerLoad, sys, "PUMP")
+    load = PSY.get_component(NEMLoad, sys, "PUMP")
     @test check_fcas_services(fcas_toy_template(sys, ["TAS1_RAISE6SEC"]), sys) === nothing
 
     add_toy_fcas!(sys, load, TOY_START, 2, BidType.LOWER6SEC, (5.0, 10.0, 20.0, 30.0, 10.0), [(10.0, 10.0)])
     PSY.add_service!(sys, FCASService(; name = "TAS1_LOWER6SEC", region = "TAS1", bid_type = BidType.LOWER6SEC), [load])
-    flush_toy_fcas_curves!(sys)
+    derive_toy_offers!(sys)
     err = _caught(() -> check_fcas_services(fcas_toy_template(sys, ["TAS1_RAISE6SEC", "TAS1_LOWER6SEC"]), sys))
     @test err isa ArgumentError
     @test occursin("incremental", sprint(showerror, err))
@@ -2083,20 +2064,25 @@ end
 
 "Turns the toy `ASLOAD` into the built form of a non-scheduled load offering RAISE6SEC."
 function make_non_scheduled_fcas_load!(sys, stamps)
-    load = PSY.get_component(PSY.InterruptiblePowerLoad, sys, "ASLOAD")
-    # The built form of a non-scheduled load: zero `LoadCost`, no energy bid.
+    load = PSY.get_component(NEMLoad, sys, "ASLOAD")
+    # The built form of a non-scheduled load: an empty `NEMOfferCost`, no energy bid.
     for key in collect(PSY.get_time_series_keys(load))
         PSY.remove_time_series!(sys, PSY.get_time_series_type(key), load, PSY.get_name(key))
     end
-    PSY.set_operation_cost!(load, PSY.LoadCost(; variable = PSY.CostCurve(PSY.LinearCurve(0.0)), fixed = 0.0))
+    PSY.set_operation_cost!(load, NEMOfferCost())
     PSY.get_ext(load)["non_scheduled"] = true
-    PSY.get_ext(load)["nem_semi_scheduled"] = false
-    for name in ("max_active_power", "energy_max_avail", "ramp_up_rate", "ramp_down_rate", "initial_mw", "availability")
+    set_registration!(load, _toy_registration())
+    for name in ("max_active_power", "energy_max_avail", "ramp_up_rate", "ramp_down_rate")
         PSY.add_time_series!(
             sys, load,
             PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, zeros(length(stamps)))),
         )
     end
+    AustralianElectricityMarkets.set_telemetry!(load, nothing)
+    AustralianElectricityMarkets.set_observed_state!(load, nothing)
+    set_toy_unit_field!(sys, load, stamps, :initial_mw, zeros(length(stamps)))
+    set_toy_unit_field!(sys, load, stamps, :ramp_up_limit, zeros(length(stamps)))
+    set_toy_unit_field!(sys, load, stamps, :ramp_down_limit, zeros(length(stamps)))
     add_toy_fcas!(
         sys, load, stamps[1], length(stamps), BidType.RAISE6SEC, (0.0, 0.0, 0.0, 0.0, 20.0), [(20.0, 3.0)];
         decremental = true,
@@ -2104,7 +2090,7 @@ function make_non_scheduled_fcas_load!(sys, stamps)
     PSY.add_service!(
         sys, FCASService(; name = "TAS1_RAISE6SEC", region = "TAS1", bid_type = BidType.RAISE6SEC), [load],
     )
-    flush_toy_fcas_curves!(sys)
+    derive_toy_offers!(sys)
     return
 end
 
@@ -2124,7 +2110,7 @@ end
         fcas_capacity(container, "TAS1_RAISE6SEC")["ASLOAD", 1]
     end
     @test fcas_mw(container, "TAS1_RAISE6SEC", "ASLOAD") ≈ 20.0 atol = FCAS_TOY_TOLERANCE
-    var = PSI.get_variable(container, PSI.ActivePowerVariable(), PSY.InterruptiblePowerLoad)
+    var = PSI.get_variable(container, PSI.ActivePowerVariable(), NEMLoad)
     @test PSI.JuMP.value(var["ASLOAD", 1]) ≈ 0.0 atol = FCAS_TOY_TOLERANCE
 end
 
@@ -2137,15 +2123,14 @@ end
         loads = ["ASLOAD" => toy_load(1.0, 0.0; initial = 0.0, ramp_up = 0.0, ramp_down = 0.0, availability = 0.0)],
         mutate! = (sys, stamps) -> begin
             make_non_scheduled_fcas_load!(sys, stamps)
-            load = PSY.get_component(PSY.InterruptiblePowerLoad, sys, "ASLOAD")
-            rhs_pu = 5.0 / PSY.get_base_power(sys)
+            load = PSY.get_component(NEMLoad, sys, "ASLOAD")
+            rhs_pu = 5.0
             gc = GenericConstraint(;
                 name = "PULL_LOAD", sense = ConstraintSense.GE, rhs = rhs_pu,
                 terms = ConstraintTerm[UnitTerm("ASLOAD", BidType.ENERGY, 1.0)],
             )
             PSY.add_service!(sys, gc, [load])
-            add_toy_series!(sys, gc, stamps, "rhs", fill(rhs_pu, length(stamps)); scale = 1.0)
-            add_toy_series!(sys, gc, stamps, "invoked", fill(1.0, length(stamps)); scale = 1.0)
+            add_toy_constraint_series!(sys, gc, stamps, fill(rhs_pu, length(stamps)), fill(1.0, length(stamps)))
         end,
     )
     template = fcas_toy_template(sys, ["TAS1_RAISE6SEC"])
@@ -2162,6 +2147,6 @@ end
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     container = PSI.get_optimization_container(model)
-    var = PSI.get_variable(container, PSI.ActivePowerVariable(), PSY.InterruptiblePowerLoad)
+    var = PSI.get_variable(container, PSI.ActivePowerVariable(), NEMLoad)
     @test PSI.JuMP.value(var["ASLOAD", 1]) ≈ 0.0 atol = FCAS_TOY_TOLERANCE
 end

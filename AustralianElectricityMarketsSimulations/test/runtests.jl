@@ -29,10 +29,13 @@ write_mock_interconnector_results(AEM_TEST_REPLAY_HIVE_DIR)
 # only those, e.g. `julia --project=test test/runtests.jl fcas_market pipeline`.
 const TEST_GROUPS = [
     "time_basis" => ("Time basis", "time_basis.jl"),
+    "state" => ("AEMSim state types", "state.jl"),
     "psi_compat" => ("PSI compat", "psi_compat.jl"),
     "nem_constraints" => ("NEM constraints", "nem_constraints.jl"),
     "nem_dispatch" => ("NEM dispatch formulation", "nem_dispatch.jl"),
     "nem_dispatch_toy" => ("NEM dispatch on a toy PSCB system", "nem_dispatch_toy.jl"),
+    "bid_store_equivalence" => ("Bid store equivalence", "bid_store_equivalence.jl"),
+    "effective_offers" => ("Effective offers", "effective_offers.jl"),
     "fcas_preprocessing" => ("FCAS preprocessing", "fcas_preprocessing.jl"),
     "fcas_market" => ("FCAS market", "fcas_market.jl"),
     "interconnector_losses" => ("Interconnector losses", "interconnector_losses.jl"),

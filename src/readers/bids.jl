@@ -57,8 +57,8 @@ function read_fixed_loads(db, date_range; intervention = 0)
     start_datetime = first(date_range)
     end_datetime = last(date_range)
     days = _offer_days(start_datetime, end_datetime)
-    offers = read_hive(db, :BIDPEROFFER_D)
-    dispatch = read_hive(db, :DISPATCHLOAD)
+    offers = read_hive(db, :BIDPEROFFER_D, (start_datetime - Day(1), end_datetime + Day(1)))
+    dispatch = read_hive(db, :DISPATCHLOAD, (start_datetime, end_datetime))
     fixed_loads = _query(
         db,
         """
@@ -185,6 +185,50 @@ function read_bids(db, date_range; resolution::Union{Nothing, Dates.Period} = no
 end
 
 
+"""
+    read_offers(db, date_range; markets = NEM_MARKETS) -> DataFrame
+
+Reads the latest energy and FCAS offers of `markets` in one query: `BIDPEROFFER_D` period offers
+joined to their `BIDDAYOFFER_D` price bands, at native resolution. Each row is one
+`(SETTLEMENTDATE, INTERVAL_DATETIME, DUID, DIRECTION, BIDTYPE)` with
+`first(date_range) <= INTERVAL_DATETIME < last(date_range)`.
+
+# Arguments
+- `db`: an `AEMDB` connection.
+- `date_range`: the intervals to read (half-open).
+- `markets`: the `BidType` values to read, default `NEM_MARKETS`.
+
+# Returns
+A `DataFrame` with `SETTLEMENTDATE`, `INTERVAL_DATETIME`, `DUID`, `DIRECTION`, `BIDTYPE` (`BidType`),
+`PRICEBANDARRAY`, `BANDAVAILARRAY`, `MAXAVAIL`, `MINIMUMLOAD`, `DAILYENERGYCONSTRAINT`, `T1`, `T2`,
+`T3`, `T4`, `NORMALSTATUS`, `FIXEDLOAD`, `ROCUP`, `ROCDOWN`, `ENERGYLIMIT`, `ENABLEMENTMIN`,
+`LOWBREAKPOINT`, `HIGHBREAKPOINT` and `ENABLEMENTMAX`.
+Throws an `ArgumentError` naming any of these columns absent from the cached tables, and when a
+unit's period offers have no price bands.
+"""
+function read_offers(db, date_range; markets = NEM_MARKETS)
+    start_date = first(date_range)
+    end_date = last(date_range)
+    period_source = read_hive(db, :BIDPEROFFER_D, (start_date - Day(1), end_date + Day(1)))
+    price_source = read_hive(db, :BIDDAYOFFER_D, (start_date - Day(1), end_date + Day(1)))
+    _require_columns(
+        :BIDPEROFFER_D, _table_schema(db, period_source),
+        ["FIXEDLOAD", "ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN", "ENERGYLIMIT"],
+    )
+    _require_columns(
+        :BIDDAYOFFER_D, _table_schema(db, price_source),
+        ["MINIMUMLOAD", "DAILYENERGYCONSTRAINT", "T1", "T2", "T3", "T4", "NORMALSTATUS"],
+    )
+    offers = _massage_bids(
+        db, start_date, end_date; bid_types = collect(BidType, markets), keep_bid_type = true,
+        period_columns = ["FIXEDLOAD", "ENABLEMENTMIN", "LOWBREAKPOINT", "HIGHBREAKPOINT", "ENABLEMENTMAX", "ROCUP", "ROCDOWN", "ENERGYLIMIT"],
+        extra_price_columns = ["T1", "T2", "T3", "T4", "NORMALSTATUS"],
+    )
+    transform!(offers, :BIDTYPE => ByRow(BidType) => :BIDTYPE)
+    return offers
+end
+
+
 # SQL list literal of `bid_types`, e.g. `'RAISE6SEC', 'LOWER6SEC'`.
 _bid_type_list(bid_types) = join(("'$(string(bt))'" for bt in bid_types), ", ")
 
@@ -208,7 +252,7 @@ end
 
 
 function _period_offers_sql(db, bid_types, start_date, end_date, resolution; columns = nothing)
-    source = read_hive(db, :BIDPEROFFER_D)
+    source = read_hive(db, :BIDPEROFFER_D, (start_date - Day(1), end_date + Day(1)))
     selected = isnothing(columns) ? ["MAXAVAIL"; _band_columns(_table_schema(db, source), "BANDAVAIL")] : columns
     lower = isnothing(resolution) ? start_date : start_date - resolution
     sql = """
@@ -244,8 +288,9 @@ function _massage_bids(
         db, start_date, end_date;
         resolution::Union{Nothing, Dates.Period} = nothing, bid_types::AbstractVector{BidType} = [BidType.ENERGY],
         keep_bid_type::Bool = false, period_columns::AbstractVector{<:AbstractString} = String[],
+        extra_price_columns::AbstractVector{<:AbstractString} = String[],
     )
-    period_source = read_hive(db, :BIDPEROFFER_D)
+    period_source = read_hive(db, :BIDPEROFFER_D, (start_date - Day(1), end_date + Day(1)))
     band_columns = _band_columns(_table_schema(db, period_source), "BANDAVAIL")
     quantities = ["MAXAVAIL"; band_columns]
     isempty(period_columns) || isnothing(resolution) || throw(
@@ -262,12 +307,13 @@ function _massage_bids(
         FROM latest_period GROUP BY ALL
         """
     end
-    price_source = read_hive(db, :BIDDAYOFFER_D)
+    price_source = read_hive(db, :BIDDAYOFFER_D, (start_date - Day(1), end_date + Day(1)))
     price_columns = _band_columns(_table_schema(db, price_source), "PRICEBAND")
     price_array = join(("d.$c" for c in price_columns), ", ")
     band_array = join(("p.$c" for c in band_columns), ", ")
     period_projection = join((", p.$c" for c in period_columns))
     bid_type_column = keep_bid_type ? ", p.BIDTYPE" : ""
+    extra_projection = join((", d.$c" for c in extra_price_columns))
     append!(params, _offer_days(start_date, end_date))
     append!(params, (start_date, end_date))
     bids = _query(
@@ -277,7 +323,7 @@ function _massage_bids(
              period AS ($period),
              prices AS (
                  SELECT SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE, MINIMUMLOAD, DAILYENERGYCONSTRAINT,
-                        $(join(price_columns, ", "))
+                        $(join([extra_price_columns; price_columns], ", "))
                  FROM $price_source
                  WHERE BIDTYPE IN ($(_bid_type_list(bid_types))) AND SETTLEMENTDATE BETWEEN ? AND ?
                  QUALIFY row_number() OVER (
@@ -286,7 +332,7 @@ function _massage_bids(
              )
         SELECT p.SETTLEMENTDATE, p.DUID, p.DIRECTION, p.INTERVAL_DATETIME,
                list_value($price_array) AS PRICEBANDARRAY, list_value($band_array) AS BANDAVAILARRAY,
-               p.MAXAVAIL, d.MINIMUMLOAD, d.DAILYENERGYCONSTRAINT $bid_type_column $period_projection,
+               p.MAXAVAIL, d.MINIMUMLOAD, d.DAILYENERGYCONSTRAINT $extra_projection $bid_type_column $period_projection,
                d.DUID IS NULL AS MISSING_PRICE
         FROM period p
         LEFT JOIN prices d USING (SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE)

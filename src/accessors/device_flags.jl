@@ -10,7 +10,7 @@ energy bid, and takes part in the market only through FCAS offers.
 # Returns
 `Bool`.
 """
-is_non_scheduled_load(device) = device isa InterruptiblePowerLoad && get(get_ext(device), "non_scheduled", false) === true
+is_non_scheduled_load(device) = device isa ControllableLoad && get(get_ext(device), "non_scheduled", false) === true
 
 
 """
@@ -26,30 +26,27 @@ is_commissioned(device) = get(get_ext(device), "commissioned", true) === true
 
 
 """
-    has_schedule_classification(device) -> Bool
+    has_registration(device) -> Bool
 
-Whether [`set_nem_energy_limits!`](@ref) has classified `device` as scheduled or semi-scheduled.
+Whether `device` carries a [`NEMRegistration`](@ref), which holds its schedule type.
 
 # Returns
 `Bool`.
 """
-has_schedule_classification(device) = get(get_ext(device), "nem_semi_scheduled", nothing) isa Bool
+has_registration(device) = device isa Union{NEM_DISPATCH_DEVICE_TYPES...} && !isnothing(device.registration)
 
 
 """
     is_semi_scheduled(device) -> Bool
 
-Whether `device` is semi-scheduled, as classified by [`set_nem_energy_limits!`](@ref). Throws an
-`ArgumentError` when `device` has no classification.
+Whether `device` is semi-scheduled, from the schedule type of its [`NEMRegistration`](@ref). Throws an
+`ArgumentError` naming `device` when it has no registration.
 
 # Returns
 `Bool`.
 """
 function is_semi_scheduled(device)
-    has_schedule_classification(device) || throw(
-        ArgumentError("$(get_name(device)): missing schedule classification; call set_nem_energy_limits!"),
-    )
-    return get_ext(device)["nem_semi_scheduled"]
+    return get_registration(device).schedule_type == ScheduleType.SEMI_SCHEDULED
 end
 
 

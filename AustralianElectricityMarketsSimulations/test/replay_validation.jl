@@ -7,21 +7,19 @@ function replay_validation_system(terms; invoked = 1.0, with_off_constraint = fa
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0;
         horizon = TOY_RESOLUTION,
         mutate! = function (sys, stamps)
-            unit = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+            unit = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
             PSY.add_service!(sys, FCASService(; name = "1_RAISEREG", region = "1", bid_type = BidType.RAISEREG), [unit])
-            flush_toy_fcas_curves!(sys)
+            derive_toy_offers!(sys)
             gc = GenericConstraint(; name = "N_REVIEW", sense = ConstraintSense.LE, rhs = 1.0, terms)
             PSY.add_service!(sys, gc, [unit])
-            add_toy_series!(sys, gc, stamps, "rhs", fill(100.0, length(stamps)))
-            add_toy_series!(sys, gc, stamps, "invoked", fill(invoked, length(stamps)); scale = 1.0)
+            add_toy_constraint_series!(sys, gc, stamps, fill(100.0, length(stamps)), fill(invoked, length(stamps)))
             if with_off_constraint
                 off = GenericConstraint(;
                     name = "N_OFF", sense = ConstraintSense.LE, rhs = 1.0,
                     terms = ConstraintTerm[UnitTerm(TOY_CHEAP, BidType.ENERGY, 1.0)],
                 )
                 PSY.add_service!(sys, off, [unit])
-                add_toy_series!(sys, off, stamps, "rhs", fill(100.0, length(stamps)))
-                add_toy_series!(sys, off, stamps, "invoked", fill(1.0, length(stamps)); scale = 1.0)
+                add_toy_constraint_series!(sys, off, stamps, fill(100.0, length(stamps)), fill(1.0, length(stamps)))
             end
             return
         end,
@@ -75,7 +73,7 @@ end
     @test isnothing(check_fcas_services(template, sys))
     result = run_two_steps(sys, template)
     @test nrow(PSI.read_optimizer_stats(result.results)) == 2
-    @test haskey(PSI.get_device_models(PSI.get_template(result.model)), :EnergyReservoirStorage)
+    @test haskey(PSI.get_device_models(PSI.get_template(result.model)), :NEMStorage)
 end
 
 @testset "replay models a battery-only FCAS market through the template" begin
@@ -84,7 +82,7 @@ end
         batteries = [TOY_BATTERY => toy_battery(50.0, 30.0, 50.0, 0.0; initial = 0.0, ramp_up = 100.0)],
         horizon = TOY_RESOLUTION,
         mutate! = function (sys, stamps)
-            battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
+            battery = PSY.get_component(NEMStorage, sys, TOY_BATTERY)
             add_toy_fcas_offer!(
                 sys, battery, stamps, BidType.RAISE6SEC,
                 fill((-50.0, -40.0, 40.0, 50.0, 20.0), 2), fill([(20.0, 2.0)], 2),
@@ -246,7 +244,7 @@ end
     balance = PSI.get_variable(container, PSI.SystemBalanceSlackUp(), PSY.Area)
     @test PSI.JuMP.coefficient(objective, balance[first(axes(balance)[1]), first(axes(balance)[2])]) ≈
         per_mpc * AustralianElectricityMarkets.AREA_BALANCE_CVP_FACTOR rtol = 1.0e-12
-    ramp = PSI.get_variable(container, AEMS.UnitRampUpSlack(), PSY.ThermalStandard)
+    ramp = PSI.get_variable(container, AEMS.UnitRampUpSlack(), NEMThermalGen)
     @test all(v -> isapprox(PSI.JuMP.coefficient(objective, v), per_mpc * AEMS.UNIT_RAMP_CVP_FACTOR; rtol = 1.0e-12), ramp)
 end
 

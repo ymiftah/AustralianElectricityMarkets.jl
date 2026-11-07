@@ -7,14 +7,20 @@ function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, we
         ],
         80.0; horizon = TOY_RESOLUTION, start,
         mutate! = function (sys, stamps)
-            cheap = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+            cheap = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
             PSY.set_active_power_limits!(cheap, (min = 0.0, max = rating))
-            PSY.remove_time_series!(sys, PSY.SingleTimeSeries, cheap, "energy_max_avail")
+            # The bid's MAXAVAIL (MW) is what the derivation turns into energy_max_avail.
+            AustralianElectricityMarkets.replace_single_series!(
+                sys, cheap,
+                AustralianElectricityMarkets.single_series(
+                    AustralianElectricityMarkets.bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN),
+                    stamps[1], _toy_values(max_avail, 2), TOY_RESOLUTION,
+                ),
+            )
             base = PSY.get_base_power(sys)
-            PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "energy_max_avail", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(max_avail, 2) ./ base)))
-            PSY.get_ext(cheap)["nem_semi_scheduled"] = !isnothing(uigf)
+            set_registration!(cheap, _toy_registration(; schedule_type = isnothing(uigf) ? ScheduleType.SCHEDULED : ScheduleType.SEMI_SCHEDULED))
             if !isnothing(uigf)
-                PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "uigf", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(uigf, 2) ./ base)))
+                set_toy_unit_field!(sys, cheap, stamps, :uigf, _toy_values(uigf, 2))
             end
             if !isnothing(fixed_load)
                 PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "fixed_load", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(fixed_load, 2) ./ base)))
@@ -37,12 +43,12 @@ function energy_limit_solve(sys)
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     @test PSI.solve!(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     results = PSI.OptimizationProblemResults(model)
-    dispatch = PSI.read_variable(results, "ActivePowerVariable__ThermalStandard")
+    dispatch = PSI.read_variable(results, "ActivePowerVariable__NEMThermalGen")
     return (; results, objective = PSI.JuMP.objective_value(PSI.get_jump_model(PSI.get_optimization_container(model))), power = only(r.value for r in eachrow(dispatch) if r.name == TOY_CHEAP), violations = read_constraint_violations(results, sys))
 end
 
 function energy_slack(out, type)
-    return only(r.value for r in eachrow(PSI.read_variable(out.results, string(nameof(type)) * "__ThermalStandard")) if r.name == TOY_CHEAP)
+    return only(r.value for r in eachrow(PSI.read_variable(out.results, string(nameof(type)) * "__NEMThermalGen")) if r.name == TOY_CHEAP)
 end
 
 @testset "a static rating does not defeat the separate energy limits" begin
@@ -114,9 +120,8 @@ end
 
 @testset "missing and non-finite forecasts are rejected before solving" begin
     sys = energy_limit_system()
-    cheap = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
-    PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, cheap, "uigf")
-    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, cheap, "uigf")
+    cheap = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
+    clear_toy_uigf!(sys, cheap)
     @test_throws ArgumentError replay_template(sys)
     invalid = energy_limit_system(; uigf = [45.0, NaN])
     template = replay_template(invalid)
@@ -136,7 +141,7 @@ end
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
         container = PSI.get_optimization_container(model)
         objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
-        slack = PSI.get_variable(container, AEMS.EnergyMaxAvailSlack(), PSY.ThermalStandard)
+        slack = PSI.get_variable(container, AEMS.EnergyMaxAvailSlack(), NEMThermalGen)
         @test PSI.JuMP.coefficient(objective, slack[TOY_CHEAP, 1]) ≈ expected
     end
 end

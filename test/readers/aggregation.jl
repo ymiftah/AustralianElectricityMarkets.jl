@@ -164,3 +164,24 @@ end
     @test all(==(collect(51.0:60.0)), battery.PRICEBANDARRAY)
     @test all(==(10), length.(battery.BANDAVAILARRAY))
 end
+
+@testset "Demand reads keep the raw rows of the widened window" begin
+    # Rows of 1 January before 02:00 move to a 2024-12 partition. The week-long bucket that contains
+    # them starts in January, so its raw rows reach back into the cached previous month.
+    db = damaged_cache(
+        AEM_TEST_HIVE_DIR, :DISPATCHREGIONSUM,
+        "UPDATE input SET archive_month = '2024-12' WHERE SETTLEMENTDATE < TIMESTAMP '2025-01-01 02:00'",
+    )
+    bucket = ceil(DateTime(2025, 1, 1, 4), Week(1))
+    window = (bucket, bucket + Hour(6))
+    inwindow(df) = filter(:SETTLEMENTDATE => t -> window[1] <= t < window[2], df)
+    sorted(df) = sort(df, [:SETTLEMENTDATE, :REGIONID])
+    expected = inwindow(read_demand(db; resolution = Week(1)))
+    @test !isempty(expected)
+    @test isequal(sorted(read_demand(db, window; resolution = Week(1))), sorted(expected))
+    uigf = AustralianElectricityMarkets.Readers._read_regional_renewable_uigf
+    # The reference window starts a month earlier, so it reads every cached partition the bucket needs.
+    expected_uigf = inwindow(uigf(db, (bucket - Month(1), window[2]); resolution = Week(1), intervention = 0))
+    @test !isempty(expected_uigf)
+    @test isequal(sorted(uigf(db, window; resolution = Week(1), intervention = 0)), sorted(expected_uigf))
+end

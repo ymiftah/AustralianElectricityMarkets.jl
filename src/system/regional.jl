@@ -1,3 +1,6 @@
+# TODO This should live in `@network_configurations`
+
+
 """
     _base_system(db; as_of = nothing)
 
@@ -65,6 +68,3 @@ AustralianElectricityMarkets.table_requirements(::RegionalNetworkConfiguration) 
 
 
 AustralianElectricityMarkets.nem_system(db, ::RegionalNetworkConfiguration; kwargs...) = _base_system(db; kwargs...)
-
-
-export RegionalNetworkConfiguration

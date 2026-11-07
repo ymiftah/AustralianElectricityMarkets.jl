@@ -102,6 +102,11 @@ function create_pscb_nemweb_data(hive_root::String)
                 CONNECTIONPOINTID = fill(cp, length(duids)),
                 REGIONID = [PSCB_REGION_OF[d] for d in duids],
                 SCHEDULE_TYPE = [d == "SOLAR1" ? "SEMI-SCHEDULED" : "SCHEDULED" for d in duids],
+                # Unit loss factors, so that the bids refer to the reference node as on the mock cache.
+                TRANSMISSIONLOSSFACTOR = fill(1.0, length(duids)),
+                DISTRIBUTIONLOSSFACTOR = fill(1.0, length(duids)),
+                SECONDARY_TLF = Vector{Union{Missing, Float64}}(missing, length(duids)),
+                DISPATCHTYPE = fill("GENERATOR", length(duids)),
                 archive_month = fill(am, length(duids)),
             )
         )
@@ -339,6 +344,7 @@ function create_pscb_nemweb_data(hive_root::String)
                     ROCUP = fill(bt in PSCB_REGULATION_TYPES ? 1.0 : missing, nd),
                     ROCDOWN = fill(bt in PSCB_REGULATION_TYPES ? 1.0 : missing, nd),
                     FIXEDLOAD = fill(0.0, nd),
+                    ENERGYLIMIT = Vector{Union{Missing, Float64}}(missing, nd),
                 )
                 for b in 1:10
                     block[!, "BANDAVAIL$b"] = fill(10.0, nd)
@@ -364,6 +370,10 @@ function create_pscb_nemweb_data(hive_root::String)
                     MINIMUMLOAD = fill(0.0, nd),
                     DAILYENERGYCONSTRAINT = fill(1000.0, nd),
                     T1 = Vector{Union{Missing, Float64}}(missing, nd),
+                    T2 = Vector{Union{Missing, Float64}}(missing, nd),
+                    T3 = Vector{Union{Missing, Float64}}(missing, nd),
+                    T4 = Vector{Union{Missing, Float64}}(missing, nd),
+                    NORMALSTATUS = Vector{Union{Missing, String}}(missing, nd),
                     VERSIONNO = fill(1, nd),
                     archive_month = fill(am, nd),
                 )

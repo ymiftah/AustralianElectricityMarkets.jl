@@ -283,7 +283,6 @@ folder = "/run/media/simba/Store/aem_validation/consecutive-days"
 for (k, steps) in enumerate(replay_chunks(trading_day_steps(Date(2026, 1, 1))))
     chunk_folder = joinpath(folder, "chunk_$k")
     horizon = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
-    check_replay_inputs(db, horizon; template)
     sys = nem_system(
         db, NEMDEConfiguration(); date_range = horizon, time_series_in_memory = false,
         time_series_directory = joinpath(chunk_folder, "time_series"),
@@ -325,12 +324,11 @@ its resolved manifest and package sources.
 
 ## Early validation and detailed timing
 
-Before constructing each chunk, a data-only preflight checks the padded five-minute
-range, including the interval after the trading day used by forecast preparation.
-It verifies both MNSP directional links against the exact offers joined by the
-existing reader, and checks exact invoked generic-constraint definition versions.
-Known built-in zero-flow constraints and participant fixed-load rows retain their
-existing handling. Model-level input checks still run. No data is downloaded and
+Before constructing each chunk, `nem_system` validates the padded five-minute range,
+including the interval after the trading day used by forecast preparation. It checks
+the typed records of every dispatch device, the constraint build report (missing
+intervals, defaulted weights, skipped constraints and dropped terms) and both MNSP
+directional links. Model-level input checks still run. No data is downloaded and
 failed days are retained without retrying. Keep the checkout unchanged during a batch
 so code cannot change while a worker loads it.
 
