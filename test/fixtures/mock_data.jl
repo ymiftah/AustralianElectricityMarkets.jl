@@ -4,6 +4,7 @@ _constraint_series(gc, field::Symbol) = TimeSeries.values(get_time_series_array(
 using DataFrames
 using Dates
 using DuckDB
+import TimeSeries
 
 """
     create_mock_data(hive_root::String; complete_inputs = false)
