@@ -14,6 +14,10 @@ end
     include("isp2026.jl")
 end
 
+@testset "ISP 2026 release and archive acquisition tests" begin
+    include("isp2026_release.jl")
+end
+
 @testset "Aqua" begin
     include("aqua.jl")
 end

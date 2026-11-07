@@ -110,17 +110,22 @@ _is_transient_status(status::Integer) =
 
 
 """
-    _fetch_with_retry(url::String; headers = Pair{String, String}[], ok = (200,)) -> HTTP.Response
+    _fetch_with_retry(url::String; headers = Pair{String, String}[], ok = (200,),
+        max_attempts::Integer = _DOWNLOAD_MAX_ATTEMPTS) -> HTTP.Response
 
 GET `url`, retrying transient failures with exponential backoff.
 
 Returns the response when its status is in `ok`. Throws [`MissingDataError`](@ref) on any other
 non-transient status (404 included), or [`TransientDownloadError`](@ref) if a transient failure
 - see [`_is_transient_status`](@ref) \\- persists across [`_DOWNLOAD_MAX_ATTEMPTS`](@ref) attempts.
+`max_attempts` lowers the retry budget for callers whose failure is known not to be transient.
 """
-function _fetch_with_retry(url::String; headers = Pair{String, String}[], ok = (200,))
+function _fetch_with_retry(
+        url::String; headers = Pair{String, String}[], ok = (200,),
+        max_attempts::Integer = _DOWNLOAD_MAX_ATTEMPTS,
+    )
     last_reason = "unknown"
-    for attempt in 1:_DOWNLOAD_MAX_ATTEMPTS
+    for attempt in 1:max_attempts
         transient = false
         response = nothing
         try
@@ -152,7 +157,7 @@ function _fetch_with_retry(url::String; headers = Pair{String, String}[], ok = (
             end
         end
 
-        if transient && attempt < _DOWNLOAD_MAX_ATTEMPTS
+        if transient && attempt < max_attempts
             delay = _DOWNLOAD_BASE_DELAY_S * 2.0^(attempt - 1)
             @warn "Transient download failure; retrying" url reason = last_reason attempt delay_s = delay
             sleep(delay)
@@ -160,7 +165,7 @@ function _fetch_with_retry(url::String; headers = Pair{String, String}[], ok = (
     end
     return throw(
         TransientDownloadError(
-            "$last_reason after $_DOWNLOAD_MAX_ATTEMPTS attempts: $url\n" *
+            "$last_reason after $max_attempts attempts: $url\n" *
                 "NEMWEB is likely rate-limiting. This is NOT a missing month - re-run to gap-fill."
         )
     )

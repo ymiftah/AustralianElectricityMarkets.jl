@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- **`read_plexos_xml`/`load_isp_xml!`/`resolve_properties`**: New parsing layer for AEMO's ISP PLEXOS model (`AustralianElectricityMarketsData/src/isp2026/`). The model's XML export is a flat relational dump of 27 uniformly-shaped `t_*` tables, so one table-agnostic reader turns it into a `DataFrame` per table; those load into DuckDB under one schema per ISP scenario, since PLEXOS `object_id`s are per-file and sharing a table set would let a missing `scenario` predicate silently cross-join scenarios. `resolve_properties` implements PLEXOS property precedence — date scoping (latest `date_from` wins among overlapping open-ended records), band selection, timeslice matching against the horizon month (honouring each Timeslice's `Include` flag), and fallback to the property default — as one SQL query, because choosing the wrong record here yields a plausible wrong number rather than an error.
-
 ### Fixed
 
 - The AGC ramp rate that caps regulation and joint ramping is the larger of `DISPATCHLOAD.RAMPUPRATE`/`RAMPDOWNRATE` and the regulation availability spread over the interval, instead of the bid-capped ramp rate alone. Regulation caps now match NEMDE's; joint ramping can be tighter than NEMDE's, because the telemetered rate is not published.
@@ -560,6 +556,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AEMSim exports `replication_decision_model`, `check_replication_steps`, `check_single_financial_year`,
   `check_replication_parts`, `never_invoked_constraints` (the `:never_invoked` exclusions of a replay) and
   `AbstractMNSPSlack`. `replication_template` takes `initial_time` and `market_price_cap` keywords.
+
+- **`read_plexos_xml`/`load_isp_xml!`/`resolve_properties`**: New parsing layer for AEMO's ISP PLEXOS model (`AustralianElectricityMarketsData/src/isp2026/`). The model's XML export is a flat relational dump of 27 uniformly-shaped `t_*` tables, so one table-agnostic reader turns it into a `DataFrame` per table; those load into DuckDB under one schema per ISP scenario, since PLEXOS `object_id`s are per-file and sharing a table set would let a missing `scenario` predicate silently cross-join scenarios. `resolve_properties` implements PLEXOS property precedence — date scoping (latest `date_from` wins among overlapping open-ended records), band selection, timeslice matching against the horizon month (honouring each Timeslice's `Include` flag), and fallback to the property default — as one SQL query, because choosing the wrong record here yields a plausible wrong number rather than an error.
+- **`acquire_isp_archives`**: A built-in release record for the 2026 ISP archives (canonical filename, AEMO revision, SHA-256 and source URL each), and an acquisition step that matches archives by SHA-256 so a browser's suggested filename does not matter. AEMO serves these to browsers only, so a refused request is collected across every archive and raised once with each browser link and the destination directory.
 
 ### Removed
 
