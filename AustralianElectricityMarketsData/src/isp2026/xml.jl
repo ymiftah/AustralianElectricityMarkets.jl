@@ -125,3 +125,7 @@ function load_isp_xml!(db::AEMDB, path::AbstractString, scenario::Symbol; tables
     end
     return sort!(collect(keys(frames)))
 end
+
+function _isp_query(db::AEMDB, sql::String, params = ())
+    return DataFrame(DuckDB.execute(db.db, sql, params))
+end

@@ -27,12 +27,12 @@ end
     @test "t_object" in loaded
     @test "t_data" in loaded
 
-    counted = AustralianElectricityMarketsData._query(db, "SELECT count(*) AS n FROM step_change.t_object")
+    counted = AustralianElectricityMarketsData._isp_query(db, "SELECT count(*) AS n FROM step_change.t_object")
     @test counted.n[1] == 16
 
     # A second scenario is isolated: same object_ids, different schema.
     load_isp_xml!(db, path, :slower_growth)
-    both = AustralianElectricityMarketsData._query(
+    both = AustralianElectricityMarketsData._isp_query(
         db,
         """
         SELECT (SELECT count(*) FROM step_change.t_object) AS a,
@@ -44,7 +44,7 @@ end
 
     # Reloading the same scenario replaces rather than appends.
     load_isp_xml!(db, path, :step_change)
-    again = AustralianElectricityMarketsData._query(db, "SELECT count(*) AS n FROM step_change.t_object")
+    again = AustralianElectricityMarketsData._isp_query(db, "SELECT count(*) AS n FROM step_change.t_object")
     @test again.n[1] == 16
 
     @test_throws ArgumentError isp_scenario_schema(Symbol("drop table; --"))
@@ -99,17 +99,17 @@ end
     # Direct check of the month-matching helper: Winter (M4-10) contains July, Summer
     # (M1-3,11,12) and the day/hour timeslice Odd do not.
     winter_id = only(
-        AustralianElectricityMarketsData._query(
+        AustralianElectricityMarketsData._isp_query(
             db, "SELECT object_id FROM step_change.t_object WHERE name = 'Winter'",
         ).object_id,
     )
     summer_id = only(
-        AustralianElectricityMarketsData._query(
+        AustralianElectricityMarketsData._isp_query(
             db, "SELECT object_id FROM step_change.t_object WHERE name = 'Summer'",
         ).object_id,
     )
     odd_id = only(
-        AustralianElectricityMarketsData._query(
+        AustralianElectricityMarketsData._isp_query(
             db, "SELECT object_id FROM step_change.t_object WHERE name = 'Odd'",
         ).object_id,
     )

@@ -56,7 +56,7 @@ function resolve_properties(
     isempty(requested) && throw(ArgumentError("no properties requested for class $(class)"))
     _assert_properties_exist(db, schema, class, requested)
 
-    objects = _query(
+    objects = _isp_query(
         db,
         """
         SELECT o.name AS name, COALESCE(c.name, '-') AS category
@@ -75,7 +75,7 @@ function resolve_properties(
     tag_filter = isempty(matched_timeslices) ? "tg.data_id IS NULL" :
         "(tg.data_id IS NULL OR tg.object_id IN ($(_sql_string_list(matched_timeslices))))"
 
-    resolved = _query(
+    resolved = _isp_query(
         db,
         """
         WITH applicable AS (
@@ -127,7 +127,7 @@ end
 
 function _assert_properties_exist(db::AEMDB, schema::AbstractString, class::AbstractString, requested)
     known = Set(
-        _query(
+        _isp_query(
             db,
             """
             SELECT DISTINCT p.name AS name
@@ -150,7 +150,7 @@ function _assert_properties_exist(db::AEMDB, schema::AbstractString, class::Abst
 end
 
 function _property_defaults(db::AEMDB, schema::AbstractString, class::AbstractString, requested)
-    rows = _query(
+    rows = _isp_query(
         db,
         """
         SELECT p.name AS name, TRY_CAST(p.default_value AS DOUBLE) AS default_value
@@ -203,7 +203,7 @@ Julia rather than in SQL.
 - `Set{String}` of matching `Timeslice` object ids.
 """
 function _matching_timeslice_ids(db::AEMDB, schema::AbstractString, month::Integer)
-    rows = _query(
+    rows = _isp_query(
         db,
         """
         SELECT

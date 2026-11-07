@@ -2,6 +2,7 @@ module AustralianElectricityMarketsData
 
 using HTTP, ZipArchives, Dates
 using DuckDB, DBInterface
+using DataFrames
 using AustralianElectricityMarketsCache
 import AustralianElectricityMarketsCache: DataSource, get_filesystem, islocal,
     _parse_hive_root, _local_tmp_dir, _new_duckdb_connection, _partition_has_data,
