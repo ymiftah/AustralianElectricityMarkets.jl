@@ -115,6 +115,11 @@
     end
 
     sys = build_system()
+    # One station shared by two generators, attached after the build.
+    station = NEMStation(; station_id = "STN1", station_name = "Station One", postcode = "3000")
+    for name in ("Alta", "Brighton")
+        add_supplemental_attribute!(sys, get_component(Generator, sys, name), station)
+    end
     assert_coverage_matrix(sys)
 
     @testset "JSON round-trip" begin
@@ -137,6 +142,12 @@
             @test get_source(gc2) == get_source(gc)
             @test get_effective_date(gc2) == get_effective_date(gc)
             @test get_version_no(gc2) == get_version_no(gc)
+        end
+        for name in ("Alta", "Brighton")
+            stn = only(get_supplemental_attributes(NEMStation, get_component(Generator, sys2, name)))
+            @test stn.station_id == "STN1"
+            @test stn.station_name == "Station One"
+            @test stn.postcode == "3000"
         end
     end
 end

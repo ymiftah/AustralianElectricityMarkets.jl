@@ -182,7 +182,7 @@ function GenericConstraint(;
         ext::Dict{String, Any} = Dict{String, Any}(),
         internal::IS.InfrastructureSystemsInternal = IS.InfrastructureSystemsInternal(),
     )
-    id = ismissing(gencon_id) ? first(split(String(name), "@")) : String(gencon_id)
+    id = (ismissing(gencon_id) || isnothing(gencon_id)) ? first(split(String(name), "@")) : String(gencon_id)
     return GenericConstraint(
         String(name), available, sense, _bid_number(rhs), invoked, constraint_weight, String(description),
         id, _constraint_text(limit_type), _constraint_text(source), _constraint_time(effective_date),

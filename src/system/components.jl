@@ -427,9 +427,6 @@ function get_interfaces_dataframe(interconnectors)
         :REGIONTO => :to_area,
         :MAXMWIN => :max_flow_from,
         :MAXMWOUT => :max_flow_to,
-        :FROMREGIONLOSSSHARE => :from_region_loss_factor,
-        :LOSSCONSTANT => :loss_constant,
-        :LOSSFLOWCOEFFICIENT => :loss_flow_coefficient,
         :ICTYPE => :ic_type,
         # Make SNOWY interfaces unavailable by default, review status of this interconnector
         [:REGIONFROM, :REGIONTO] => ByRow((from_, to_) -> (from_ != "SNOWY1") && (to_ != "SNOWY1")) => :available
@@ -670,6 +667,14 @@ Attaches to each device of `devices` its station as one [`NEMStation`](@ref), sh
 instance among the devices of one station. `devices` is a generators data frame, whose rows carry
 their unit's `station_id`, `station_name` and `postcode`; `stations` accumulates the instances
 attached so far, so callers add one station's devices in any number of groups.
+
+# Arguments
+- `sys`: The `PowerSystems.System` holding the devices.
+- `devices`: A generators `DataFrame` with `name`, `station_id`, `station_name` and `postcode` columns.
+- `stations`: A `Dict` from station id to the [`NEMStation`](@ref) already created, updated in place.
+
+# Returns
+Nothing.
 """
 function _attach_stations!(sys, devices, stations)
     for row in eachrow(devices)
