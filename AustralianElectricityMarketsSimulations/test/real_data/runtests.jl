@@ -38,7 +38,6 @@ const db = aem_connect(HiveConfiguration(hive_location = REAL_HIVE))
 # executed replay of `template`; throws unless both the build and the execution succeed.
 function replay_real(steps; template = template_nemde())
     date_range = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
-    check_replay_inputs(db, date_range; template)
     sys = nem_system(db, NEMDEConfiguration(); date_range)
     skipped = prepare_replay!(sys, template, steps)
     model = PSI.DecisionModel(

@@ -58,8 +58,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `read_prices` and `read_fcas_prices` accept PowerSimulations optimization and simulation results, with the system the model was built from, and return the regional prices and FCAS prices of the solved interval.
 
-- `check_replay_inputs(db, date_range; intervention, template)` verifies from the cache alone that a replay's MNSP offers and generic constraint inputs are complete, before any system is built.
-
 - `trading_day_steps(day)` returns the 288 interval-ending timestamps of a NEM trading day, and `replay_chunks(steps; chunk)` splits a range into chunks that each fit one financial year and one trading day.
 
 - `NEMDispatchProblem`: `PSI.DecisionModel(NEMDispatchProblem, template, sys; kwargs...)` builds the NEM dispatch model.
@@ -420,6 +418,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Interconnector, MNSP and constraint data are held in typed fields instead of `ext` entries: `NEMMNSPBid`, `NEMMNSPLink` and `NEMMNSPObservedState` on an MNSP interchange, `NEMInterconnectorLimits` and `NEMInterconnectorRegistration` as supplemental attributes on an `AreaInterchange`, and `GenericConstraint.rhs` and `GenericConstraint.invoked` as time-series keys or static values.
 
 ### Changed
+
+- `nem_system(db, NEMDEConfiguration(); date_range)` validates its built inputs before returning: the typed records of every dispatch device, the constraint build report (missing intervals, defaulted weights, skipped constraints and dropped terms) and each MNSP's two directional links with a bid and observed state. It throws an `ArgumentError` listing every item at fault and how to supply it.
 
 - `set_fcas_effective_offers!` and `set_tie_break_scales!` moved from AEM to AEMSim as `set_effective_offers!`, which `prepare_replay!` calls first. `nem_system` no longer attaches the effective offers, and the FCAS offer and dispatch read accessors (`get_fcas_offer`, `get_energy_offer`, `get_initial_mw`, `get_energy_availability`, `get_storage_energy_max_avail`, `get_scaled_fcas_trapezium`, `get_fcas_agc_status`, `get_fcas_agc_ramp_capability`) moved with them.
 
@@ -783,6 +783,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DISPATCHREGIONSUM` caches `SS_SOLAR_UIGF` and `SS_WIND_UIGF`, which `set_regional_availability!` reads for the regional capacity factor in place of `SS_SOLAR_AVAILABILITY` and `SS_WIND_AVAILABILITY`. Cached months need `populate(db, :DISPATCHREGIONSUM, start, stop; force_new = true)` to gain the columns.
 
 ### Removed
+
+- `check_replay_inputs`: `nem_system` validates the same inputs while it builds the system, from the built structures rather than the cache.
 
 - `MarketBidCost` on NEM systems: no component of a replay system carries one, and the PowerSimulations
   market-bid overrides of `psi_compat.jl` and the `PiecewiseLinearBlock*Offer` variables are gone.

@@ -43,4 +43,18 @@ using Logging
     )
     prices = read_prices(db, DateTime(2025, 1, 1):Minute(5):DateTime(2025, 1, 1, 0, 10))
     @test only(prices.RRP) == 42.0
+
+    @testset "the simulation package never reads the cache" begin
+        offenders = String[]
+        source = joinpath(root, "AustralianElectricityMarketsSimulations", "src")
+        for (directory, _, files) in walkdir(source), file in files
+            file == "precompile.jl" && continue
+            path = joinpath(directory, file)
+            for (number, line) in enumerate(eachline(path))
+                occursin(r"\bAEMDB\b|\baem_connect\b|\bread_hive\b", line) || continue
+                push!(offenders, "$path:$number: $(strip(line))")
+            end
+        end
+        @test isempty(offenders) || error("AEMSim source reads the cache:\n" * join(offenders, "\n"))
+    end
 end

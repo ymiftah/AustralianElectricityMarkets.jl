@@ -69,6 +69,11 @@ end
         hive, :DISPATCHLOAD,
         "INSERT INTO input SELECT * REPLACE (1 AS INTERVENTION, INITIALMW + CASE WHEN DUID = 'BW03' THEN 10 ELSE 0 END AS INITIALMW) FROM input WHERE INTERVENTION = 0",
     )
+    # The physical run needs its own invoked constraints, as AEMO publishes them.
+    physical_db = damaged_cache(
+        physical_db.config.hive_location, :DISPATCHCONSTRAINT,
+        "INSERT INTO input SELECT * REPLACE (1 AS INTERVENTION) FROM input WHERE INTERVENTION = 0",
+    )
     physical = nem_system(physical_db, config; date_range = interval, intervention = 1)
     physical_gen = get_component(NEMRenewableGen, physical, "BW03")
     @test get_time_series_values(SingleTimeSeries, physical_gen, "observed_initial_mw"; ignore_scaling_factors = true) .- get_time_series_values(SingleTimeSeries, gen, "observed_initial_mw"; ignore_scaling_factors = true) ≈ fill(10.0, 3)
@@ -93,6 +98,78 @@ end
         @test_throws r"BW02 GEN" nem_system(db, NEMDEConfiguration(); date_range = interval)
     end
 
+end
+
+@testset "the NEMDE build validates its replay inputs" begin
+    AEM = AustralianElectricityMarkets
+    hive = mktempdir()
+    create_mock_data(hive; complete_inputs = true)
+    write_mock_interconnector_results(hive)
+    db = aem_connect(HiveConfiguration(hive_location = hive))
+    interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+
+    @testset "a dispatch device without its typed fields" begin
+        sys = nem_system(db, NEMDEConfiguration(); date_range = interval)
+        set_telemetry!(get_component(NEMThermalGen, sys, "ER01"), nothing)
+        @test_throws r"ER01.*telemetry" AEM._check_nemde_replay_inputs(sys)
+    end
+
+    @testset "an MNSP without two directional links" begin
+        damaged = damaged_cache(hive, :MNSP_INTERCONNECTOR, "DELETE FROM input WHERE LINKID = 'BLNKVIC'")
+        @test_throws r"IC2.*link" nem_system(damaged, NEMDEConfiguration(); date_range = interval)
+        # The build rejects the damaged cache itself; the check also guards a hand-edited system.
+        sys = nem_system(db, NEMDEConfiguration(); date_range = interval)
+        ic2 = get_component(AreaInterchange, sys, "IC2")
+        remove_supplemental_attribute!(sys, ic2, first(get_supplemental_attributes(AEM.NEMMNSPLink, ic2)))
+        @test_throws r"IC2.*link" AEM._check_nemde_replay_inputs(sys)
+    end
+
+    @testset "an invoked constraint without an exact GENCONDATA definition" begin
+        damaged = damaged_cache(hive, :GENCONDATA, "DELETE FROM input WHERE GENCONID = 'N_BAYSW_THERMAL'")
+        @test_throws r"GENCONID" nem_system(damaged, NEMDEConfiguration(); date_range = interval)
+    end
+
+    @testset "fixed-load constraints need no GENCONDATA" begin
+        fixed = damaged_cache(hive, :DISPATCHCONSTRAINT, "UPDATE input SET CONSTRAINTID = '\$BW01'")
+        fixed = damaged_cache(
+            fixed.config.hive_location, :BIDPEROFFER_D,
+            "UPDATE input SET FIXEDLOAD = 1.0 WHERE DUID = 'BW01' AND BIDTYPE = 'ENERGY'",
+        )
+        # Keep the table cached, with no definition of any invoked constraint.
+        without_definitions = damaged_cache(
+            fixed.config.hive_location, :GENCONDATA, "DELETE FROM input WHERE GENCONID <> 'N_BAYSW_THERMAL'",
+        )
+        @test nem_system(without_definitions, NEMDEConfiguration(); date_range = interval) isa System
+    end
+
+    @testset "exact padded coverage and versions" begin
+        t = DateTime(2025, 1, 1, 0, 5)
+        sys = nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(10)))
+        @test isempty(get_skipped_constraints(sys))
+        @test isempty(get_defaulted_constraint_weights(sys))
+        @test isempty(get_missing_constraint_intervals(sys))
+        @test isempty(get_dropped_terms(sys))
+    end
+
+    @testset "a built-in zero-flow definition needs no GENCONDATA" begin
+        zero = damaged_cache(
+            hive, :INTERCONNECTOR,
+            "INSERT INTO input SELECT 'V-S-MNSP1' AS INTERCONNECTORID, 'VIC1' AS REGIONFROM, 'SA1' AS REGIONTO, '2025-01' AS archive_month",
+        )
+        zero = damaged_cache(
+            zero.config.hive_location, :INTERCONNECTORCONSTRAINT,
+            "INSERT INTO input SELECT 'V-S-MNSP1' AS INTERCONNECTORID, TIMESTAMP '2025-01-01 00:00:00' AS EFFECTIVEDATE, " *
+                "1 AS VERSIONNO, 200.0 AS MAXMWIN, 200.0 AS MAXMWOUT, 0.1 AS FROMREGIONLOSSSHARE, 0.01 AS LOSSCONSTANT, " *
+                "0.001 AS LOSSFLOWCOEFFICIENT, 'REGULATED' AS ICTYPE, '2025-01' AS archive_month",
+        )
+        zero = damaged_cache(
+            zero.config.hive_location, :DISPATCHCONSTRAINT,
+            "UPDATE input SET CONSTRAINTID = 'SVML_ZERO', GENCONID_EFFECTIVEDATE = DATE '2013-08-21', GENCONID_VERSIONNO = 1",
+        )
+        sys = nem_system(zero, NEMDEConfiguration(); date_range = interval)
+        @test isnothing(AEM._check_nemde_replay_inputs(sys))
+        @test get_source(get_component(GenericConstraint, sys, "SVML_ZERO@2013-08-21#1")) == "built-in"
+    end
 end
 
 @testset "Replay shared inputs preserve independent setter results" begin

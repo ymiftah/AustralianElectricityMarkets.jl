@@ -79,6 +79,9 @@ function AustralianElectricityMarkets.nem_system(
     set_loss_demand_coefficients!(sys)
     set_mnsp_offers!(sys, db, date_range; intervention)
     interval_flow_limits && set_interconnector_flow_limits!(sys, db, date_range; intervention)
+
+    # 6. Validate the built inputs
+    AustralianElectricityMarkets._check_nemde_replay_inputs(sys)
     return sys
 end
 

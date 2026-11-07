@@ -81,7 +81,6 @@ include("checks/replay_inputs.jl")
 include("checks/replication_steps.jl")
 include("checks/template.jl")
 include("templates/template_nemde.jl")
-include("checks/replay_data.jl")
 include("checks/replay_range.jl")
 include("problems/optimizer.jl")
 include("problems/nem_dispatch.jl")
@@ -99,7 +98,7 @@ export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas
     fcas_upper_regulation_service, fcas_offer_sides, tie_break_series_name, tie_groups
 export StateSource, ObservedState, SimulatedState, NEMUnitState, unit_state, NEMDispatchInputs, NEMFCASInputs
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
-export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys, check_replay_inputs,
+export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
     exclude_unmodeled_services!, check_replication_steps,
     never_invoked_constraints, prepare_replay!, AbstractMNSPSlack
 export NEMDispatchProblem, nemde_optimizer, NEMDE_HIGHS_OPTIONS

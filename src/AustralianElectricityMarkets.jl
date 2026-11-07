@@ -97,6 +97,7 @@ include("system/fixed_loads.jl")
 include("system/interconnectors.jl")
 include("system/penalties.jl")
 include("system/RegionModel.jl")
+include("system/replay_checks.jl")
 
 using .RegionModel: RegionalNetworkConfiguration, NEMDEConfiguration, nem_network
 export nem_network
