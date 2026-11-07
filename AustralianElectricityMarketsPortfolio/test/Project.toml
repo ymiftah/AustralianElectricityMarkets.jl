@@ -1,0 +1,5 @@
+[deps]
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+AustralianElectricityMarketsPortfolio = "dc134ced-5ca2-4c5d-982b-09bed69fa14b"
+PowerSystemsInvestmentsPortfolios = "bed98974-b02a-5e2f-9fe0-a103f8c450dd"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"

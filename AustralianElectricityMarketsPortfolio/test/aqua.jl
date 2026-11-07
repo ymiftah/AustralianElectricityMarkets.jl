@@ -1,0 +1,3 @@
+using Aqua
+using AustralianElectricityMarketsPortfolio
+Aqua.test_all(AustralianElectricityMarketsPortfolio)
