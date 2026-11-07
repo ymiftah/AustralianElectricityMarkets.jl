@@ -34,7 +34,7 @@ implemented here, in order:
 
 # Arguments
 - `db`: an open [`AEMDB`](@ref).
-- `scenario`: schema name loaded by [`load_isp_xml!`](@ref).
+- `scenario`: schema name built by [`build_isp_cache`](@ref).
 - `class`: PLEXOS class name, e.g. `"Generator"`.
 - `properties`: property names to resolve, e.g. `["Max Capacity", "Build Cost"]`.
 - `horizon_start`: the date properties are resolved at.

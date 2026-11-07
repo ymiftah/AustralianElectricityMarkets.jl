@@ -61,6 +61,18 @@ function write_isp_fixture(path::AbstractString; broken_timeslice::Bool = false)
     broken_tag = broken_timeslice ? """
           <t_tag><data_id>20</data_id><object_id>17</object_id></t_tag>
         """ : ""
+    exercised = (
+        "t_class", "t_collection", "t_property", "t_object", "t_category",
+        "t_membership", "t_data", "t_date_from", "t_date_to", "t_band",
+        "t_tag", "t_text",
+    )
+    filler = join(
+        [
+            "<$(table)><id>1</id></$(table)>"
+                for table in setdiff(ISP_XML_TABLES, exercised)
+        ],
+        "\n      ",
+    )
     xml = """<?xml version="1.0" standalone="yes"?>
     <MasterDataSet>
       <t_class><class_id>1</class_id><name>Generator</name></t_class>
@@ -152,8 +164,37 @@ function write_isp_fixture(path::AbstractString; broken_timeslice::Bool = false)
       <t_text><data_id>8</data_id><class_id>2</class_id><value>M1-3,11,12</value></t_text>
       <t_text><data_id>9</data_id><class_id>2</class_id><value>M4-10</value></t_text>
       <t_text><data_id>10</data_id><class_id>2</class_id><value>D1,H1; D15,H1</value></t_text>
+      $(filler)
     </MasterDataSet>
     """
     write(path, xml)
     return path
+end
+
+"""
+    write_isp_cache_fixture(dir; scenarios = ["2026 ISP Step Change", "2026 ISP Slower Growth"])
+
+Write one scenario folder per entry of `scenarios`, each holding a PLEXOS XML export with one
+record in every table of [`ISP_XML_TABLES`](@ref). The first scenario's `t_object` carries two
+records and the second's three, so cross-scenario isolation is observable.
+"""
+function write_isp_cache_fixture(dir; scenarios = ["2026 ISP Step Change", "2026 ISP Slower Growth"])
+    for (index, scenario) in enumerate(scenarios)
+        folder = joinpath(dir, scenario)
+        mkpath(folder)
+        objects = index == 1 ? 2 : 3
+        records = String[]
+        for table in ISP_XML_TABLES
+            count = table == "t_object" ? objects : 1
+            for i in 1:count
+                push!(records, "<$(table)><id>$(i)</id></$(table)>")
+            end
+        end
+        write(
+            joinpath(folder, "$(scenario).xml"),
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<MasterDataSet>\n" *
+                join(records, "\n") * "\n</MasterDataSet>\n",
+        )
+    end
+    return dir
 end

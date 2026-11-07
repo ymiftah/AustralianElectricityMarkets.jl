@@ -1,13 +1,15 @@
-export read_plexos_xml, ISP_XML_TABLES
+export read_plexos_xml, isp_record_counts, ISP_XML_TABLES
 
 """
-The `t_*` tables read from a PLEXOS `MasterDataSet` export. The full file has 27; these are
-the ones needed to resolve objects, memberships, properties and their scoping.
+The 27 `t_*` tables a PLEXOS `MasterDataSet` export carries, and the full set stored in the
+ISP cache database.
 """
 const ISP_XML_TABLES = (
-    "t_object", "t_class", "t_collection", "t_membership", "t_property",
-    "t_data", "t_band", "t_date_from", "t_date_to", "t_tag", "t_text",
-    "t_category", "t_unit",
+    "t_action", "t_assembly", "t_attribute", "t_attribute_data", "t_band", "t_category",
+    "t_class", "t_class_group", "t_collection", "t_collection_report", "t_config",
+    "t_custom_column", "t_data", "t_date_from", "t_date_to", "t_membership",
+    "t_memo_data", "t_message", "t_object", "t_property", "t_property_group",
+    "t_property_report", "t_property_tag", "t_report", "t_tag", "t_text", "t_unit",
 )
 
 """
@@ -31,9 +33,7 @@ The whole 42 MB ISP file parses eagerly in ~1.7 s / ~441 MiB, so no streaming is
 - `Dict{String, DataFrame}` keyed by table name. Tables absent from the file are absent here.
 """
 function read_plexos_xml(path::AbstractString; tables = ISP_XML_TABLES)
-    isfile(path) || throw(ArgumentError("PLEXOS XML not found at $(path)"))
-    doc = XML.read(path, XML.Node)
-    root = only(filter(c -> XML.nodetype(c) == XML.Element, XML.children(doc)))
+    root = _master_dataset_root(path)
     wanted = Set(tables)
     rows = Dict{String, Vector{Dict{String, Union{String, Missing}}}}()
     for record in XML.children(root)
@@ -46,6 +46,59 @@ function read_plexos_xml(path::AbstractString; tables = ISP_XML_TABLES)
         ArgumentError("no $(join(tables, ", ")) records found in $(path); is this a PLEXOS MasterDataSet export?"),
     )
     return Dict(table => _rows_to_dataframe(rs) for (table, rs) in rows)
+end
+
+"""
+    _master_dataset_root(path::AbstractString)
+
+Read `path` and return its `MasterDataSet` root element, rejecting any other root.
+
+# Arguments
+- `path`: path to the XML file.
+
+# Returns
+- the `MasterDataSet` root XML node.
+"""
+function _master_dataset_root(path::AbstractString)
+    isfile(path) || throw(ArgumentError("PLEXOS XML not found at $(path)"))
+    doc = XML.read(path, XML.Node)
+    root = only(filter(c -> XML.nodetype(c) == XML.Element, XML.children(doc)))
+    tag = _local_xml_tag(XML.tag(root))
+    tag == "MasterDataSet" || throw(
+        ArgumentError(
+            "$(path) is not a PLEXOS MasterDataSet export: root element is $(tag)"
+        ),
+    )
+    return root
+end
+
+function _local_xml_tag(tag::AbstractString)::String
+    return last(split(tag, '}'))
+end
+
+"""
+    isp_record_counts(path::AbstractString; tables = ISP_XML_TABLES) -> Dict{String, Int}
+
+Count each table's records in the XML document, independently of
+[`read_plexos_xml`](@ref).
+
+# Arguments
+- `path`: path to the XML file.
+- `tables`: table names to count; others are skipped.
+
+# Returns
+- `Dict{String, Int}` keyed by table name. Tables absent from the file are absent here.
+"""
+function isp_record_counts(path::AbstractString; tables = ISP_XML_TABLES)::Dict{String, Int}
+    root = _master_dataset_root(path)
+    wanted = Set(tables)
+    counts = Dict{String, Int}()
+    for record in XML.children(root)
+        XML.nodetype(record) == XML.Element || continue
+        tag = XML.tag(record)
+        tag in wanted && (counts[tag] = get(counts, tag, 0) + 1)
+    end
+    return counts
 end
 
 function _record_fields(record)
@@ -71,7 +124,7 @@ function _rows_to_dataframe(rows::Vector{Dict{String, Union{String, Missing}}})
     return DataFrame([col => [get(row, col, missing) for row in rows] for col in columns])
 end
 
-export load_isp_xml!, isp_scenario_schema
+export isp_scenario_schema
 
 """
     isp_scenario_schema(scenario::Symbol)
@@ -86,44 +139,6 @@ function isp_scenario_schema(scenario::Symbol)
     occursin(r"^[A-Za-z][A-Za-z0-9_]*$", name) ||
         throw(ArgumentError("invalid scenario name $(repr(name)): expected a leading letter then letters, digits or underscores"))
     return name
-end
-
-"""
-    load_isp_xml!(db::AEMDB, path::AbstractString, scenario::Symbol; tables = ISP_XML_TABLES)
-
-Load a PLEXOS XML export into `db` under a schema named for `scenario`.
-
-Each scenario gets its own DuckDB schema because PLEXOS `object_id`s are per-file: the same
-integer means different objects in different scenarios. Isolating them by schema means the
-resolution queries can be written once against unqualified table names and simply executed
-with the schema selected, with no `scenario` predicate that a later join could forget.
-
-Reloading a scenario replaces its tables.
-
-# Arguments
-- `db`: an open [`AEMDB`](@ref).
-- `path`: path to the scenario's XML file.
-- `scenario`: schema name, e.g. `:step_change`.
-- `tables`: table names to load.
-
-# Returns
-- `Vector{String}` of loaded table names, sorted.
-"""
-function load_isp_xml!(db::AEMDB, path::AbstractString, scenario::Symbol; tables = ISP_XML_TABLES)
-    schema = isp_scenario_schema(scenario)
-    frames = read_plexos_xml(path; tables)
-    conn = DuckDB.connect(db.db)
-    try
-        DuckDB.execute(conn, "CREATE SCHEMA IF NOT EXISTS $(schema)")
-        for (table, frame) in frames
-            DuckDB.register_data_frame(conn, frame, "_isp_stage")
-            DuckDB.execute(conn, "CREATE OR REPLACE TABLE $(schema).$(table) AS SELECT * FROM _isp_stage")
-            DuckDB.unregister_table(conn, "_isp_stage")
-        end
-    finally
-        DuckDB.disconnect(conn)
-    end
-    return sort!(collect(keys(frames)))
 end
 
 function _isp_query(db::AEMDB, sql::String, params = ())
