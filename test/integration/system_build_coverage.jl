@@ -74,8 +74,13 @@
             v2 = get_component(GenericConstraint, sys, vname("N_VERSIONED_LIMIT", 2))
             @test (get_factor(only(get_terms(v1))), get_factor(only(get_terms(v2)))) == (1.0, 2.0)
             @test (get_sense(v1), get_sense(v2)) == (ConstraintSense.LE, ConstraintSense.GE)
-            @test get(v1.ext, "gencon_id", nothing) == get(v2.ext, "gencon_id", nothing) == "N_VERSIONED_LIMIT"
-
+            @test get_gencon_id(v1) == get_gencon_id(v2) == "N_VERSIONED_LIMIT"
+            @test (get_version_no(v1), get_version_no(v2)) == (1, 2)
+            @test (get_effective_date(v1), get_effective_date(v2)) ==
+                (DateTime(2025, 1, 1), DateTime(2025, 1, 1))
+            @test (get_limit_type(v1), get_limit_type(v2)) == ("THERMAL", "THERMAL")
+            @test (get_source(v1), get_source(v2)) == ("pscb", "pscb")
+            @test isempty(get_ext(v1)) && isempty(get_ext(v2))
             bat = get_component(NEMStorage, sys, "BAT1")
             for direction in (AustralianElectricityMarkets.BidDirection.GEN, AustralianElectricityMarkets.BidDirection.LOAD)
                 bid = only(b for b in AustralianElectricityMarkets.get_fcas_bids(get_operation_cost(bat)) if b.service == BidType.RAISEREG && b.direction == direction)
@@ -127,6 +132,11 @@
             @test _constraint_series(gc2, :rhs) == _constraint_series(gc, :rhs)
             @test get_constraint_weight(gc2) == get_constraint_weight(gc)
             @test get_ext(gc2) == get_ext(gc)
+            @test get_gencon_id(gc2) == get_gencon_id(gc)
+            @test get_limit_type(gc2) == get_limit_type(gc)
+            @test get_source(gc2) == get_source(gc)
+            @test get_effective_date(gc2) == get_effective_date(gc)
+            @test get_version_no(gc2) == get_version_no(gc)
         end
     end
 end

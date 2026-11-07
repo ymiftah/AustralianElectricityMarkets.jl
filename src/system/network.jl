@@ -83,7 +83,7 @@ function _set_registrations!(sys, units, factors)
             NEMRegistration(;
                 schedule_type = schedule, gen_loss_factor = factor.GEN_LOSS_FACTOR,
                 load_loss_factor = factor.LOAD_LOSS_FACTOR, registered_from = unit.REGISTERED_FROM,
-                registered_until = unit.REGISTERED_UNTIL,
+                registered_until = unit.REGISTERED_UNTIL, commissioned = unit.STATUS == "COMMISSIONED",
             ),
         )
     end

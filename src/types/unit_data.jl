@@ -8,7 +8,8 @@ AEMO's `SCHEDULE_TYPE` of a registered unit: `SCHEDULED`, `SEMI_SCHEDULED` or `N
 
 
 """
-    NEMRegistration(; schedule_type, gen_loss_factor, load_loss_factor, registered_from, registered_until)
+    NEMRegistration(; schedule_type, gen_loss_factor, load_loss_factor, registered_from, registered_until,
+        commissioned = true)
 
 A unit's registration as AEMO publishes it in `DUDETAILSUMMARY` and the loss factors. Every field is a
 static value.
@@ -19,6 +20,7 @@ static value.
 - `load_loss_factor`: `TLF` x `DLF` on the load side.
 - `registered_from`: the start of the registration.
 - `registered_until`: the end of the registration.
+- `commissioned`: whether the unit's station is commissioned.
 """
 struct NEMRegistration <: PSY.DeviceParameter
     schedule_type::ScheduleType
@@ -26,16 +28,53 @@ struct NEMRegistration <: PSY.DeviceParameter
     load_loss_factor::Float64
     registered_from::DateTime
     registered_until::DateTime
+    commissioned::Bool
 end
 
 function NEMRegistration(;
         schedule_type::ScheduleType, gen_loss_factor, load_loss_factor,
-        registered_from::DateTime, registered_until::DateTime,
+        registered_from::DateTime, registered_until::DateTime, commissioned::Bool = true,
     )
     return NEMRegistration(
-        schedule_type, Float64(gen_loss_factor), Float64(load_loss_factor), registered_from, registered_until,
+        schedule_type, Float64(gen_loss_factor), Float64(load_loss_factor), registered_from,
+        registered_until, commissioned,
     )
 end
+
+
+"""
+    NEMStation(; station_id, station_name = nothing, postcode = nothing)
+
+The station a unit belongs to, as AEMO publishes it in `STATION`, attached to the unit as a
+supplemental attribute. Units at one station share one instance.
+
+# Fields
+- `station_id`: `STATIONID`.
+- `station_name`: `STATIONNAME`, or `nothing` when unpublished.
+- `postcode`: `POSTCODE`, or `nothing` when unpublished.
+- `internal`: `InfrastructureSystems` bookkeeping.
+"""
+struct NEMStation <: PSY.SupplementalAttribute
+    station_id::String
+    station_name::Union{String, Nothing}
+    postcode::Union{String, Nothing}
+    internal::IS.InfrastructureSystemsInternal
+end
+
+function NEMStation(;
+        station_id::AbstractString, station_name = nothing, postcode = nothing,
+        internal::IS.InfrastructureSystemsInternal = IS.InfrastructureSystemsInternal(),
+    )
+    return NEMStation(
+        String(station_id), _station_text(station_name), _station_text(postcode), internal,
+    )
+end
+
+# A nullable STATION text value as a typed field: `missing` and `nothing` both mean absent.
+_station_text(x::AbstractString) = String(x)
+_station_text(::Any) = nothing
+
+IS.get_internal(station::NEMStation) = station.internal
 
 
 """

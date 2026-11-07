@@ -1,8 +1,9 @@
 """
     is_non_scheduled_load(device) -> Bool
 
-Whether `device` is a non-scheduled load (`get_scheduled_loads_dataframe`): it has no
-energy bid, and takes part in the market only through FCAS offers.
+Whether `device` is a non-scheduled load: it has no energy bid, and takes part in the market only
+through FCAS offers. A NEM build records this on the load's [`NEMRegistration`](@ref);
+`ext["non_scheduled"]`, written by a stock build, is honoured as an override.
 
 # Arguments
 - `device`: any component.
@@ -10,19 +11,28 @@ energy bid, and takes part in the market only through FCAS offers.
 # Returns
 `Bool`.
 """
-is_non_scheduled_load(device) = device isa ControllableLoad && get(get_ext(device), "non_scheduled", false) === true
+function is_non_scheduled_load(device)
+    device isa ControllableLoad || return false
+    get(get_ext(device), "non_scheduled", nothing) === true && return true
+    return has_registration(device) && device.registration.schedule_type == ScheduleType.NON_SCHEDULED
+end
 
 
 """
     is_commissioned(device) -> Bool
 
-Whether `device` is commissioned. Only a non-scheduled load records the flag; any other device is
-commissioned.
+Whether `device` is commissioned. A NEM build records it on the device's
+[`NEMRegistration`](@ref); `ext["commissioned"]`, written by a stock build, is honoured as an
+override. Any other device is commissioned.
 
 # Returns
 `Bool`.
 """
-is_commissioned(device) = get(get_ext(device), "commissioned", true) === true
+function is_commissioned(device)
+    flag = get(get_ext(device), "commissioned", nothing)
+    isnothing(flag) || return flag === true
+    return has_registration(device) ? device.registration.commissioned : true
+end
 
 
 """

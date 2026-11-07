@@ -27,10 +27,29 @@ end
         @test registration.load_loss_factor == factor.LOAD_LOSS_FACTOR
         @test registration.registered_from == unit.REGISTERED_FROM
         @test registration.registered_until == unit.REGISTERED_UNTIL
-        for key in ("nem_gen_loss_factor", "nem_load_loss_factor", "nem_semi_scheduled")
-            @test !haskey(get_ext(device), key)
-        end
+        @test isempty(get_ext(device))
     end
+
+    # Station metadata is typed, attached as one shared NEMStation per station.
+    station_of = Dict(get_name(g) => only(get_supplemental_attributes(NEMStation, g)) for g in get_components(Generator, sys))
+    for (name, station) in station_of
+        unit = units_by_duid[name]
+        @test station.station_id == unit.STATIONID
+        @test station.station_name == unit.STATIONNAME
+        @test station.postcode == unit.POSTCODE
+    end
+    @test station_of["BW02"] === station_of["BW03"]
+    @test station_of["BW03"] === station_of["BW04"]
+    @test station_of["ER01"] === station_of["ER02"]
+    @test station_of["BW02"] !== station_of["ER01"]
+
+    # The non-scheduled and commissioned flags read the typed registration, not ext.
+    asload = get_component(ControllableLoad, sys, "ASLOAD1")
+    pump = get_component(ControllableLoad, sys, "PUMP1")
+    @test is_non_scheduled_load(asload)
+    @test is_commissioned(asload)
+    @test !is_non_scheduled_load(pump)
+    @test isempty(get_ext(asload))
 
     # A device built without a registration fails the build steps that read it, naming it.
     set_registration!(get_component(NEMThermalGen, sys, "ER01"), nothing)
@@ -47,9 +66,26 @@ end
     @test_throws ArgumentError nem_system(db, config; date_range = first(interval):Minute(10):last(interval))
     @test_throws ArgumentError nem_system(db, config; date_range = first(interval):Minute(5):first(interval))
     sys = nem_system(db, config; date_range = interval)
-    for T in (Generator, ControllableLoad, Storage), device in get_components(T, sys), key in ("nem_gen_loss_factor", "nem_load_loss_factor", "nem_semi_scheduled")
-        @test !haskey(get_ext(device), key)
+    for T in (Generator, ControllableLoad, Storage), device in get_components(T, sys)
+        @test isempty(get_ext(device))
     end
+    for T in (GenericConstraint, AreaInterchange), device in get_components(T, sys)
+        @test isempty(get_ext(device))
+    end
+    gc = get_component(GenericConstraint, sys, "N_BAYSW_THERMAL@2025-01-01#1")
+    @test get_gencon_id(gc) == "N_BAYSW_THERMAL"
+    @test get_limit_type(gc) == "FCAS"
+    @test get_source(gc) == "mock"
+    @test get_effective_date(gc) == DateTime(2025, 1, 1)
+    @test get_version_no(gc) == 1
+    # Station metadata equals the units frame; the flags read the typed registration.
+    units = read_units(db; as_of = first(interval), through = last(interval) - Minute(5))
+    unit_rows = Dict(String(r.DUID) => r for r in eachrow(units))
+    station = only(get_supplemental_attributes(NEMStation, get_component(NEMRenewableGen, sys, "BW03")))
+    @test (station.station_id, station.station_name, station.postcode) ==
+        (unit_rows["BW03"].STATIONID, unit_rows["BW03"].STATIONNAME, unit_rows["BW03"].POSTCODE)
+    @test is_non_scheduled_load(get_component(NEMLoad, sys, "ASLOAD1"))
+    @test is_commissioned(get_component(NEMLoad, sys, "ASLOAD1"))
     gen = get_component(NEMRenewableGen, sys, "BW03")
     @test get_registration(gen).schedule_type == ScheduleType.SEMI_SCHEDULED
     @test get_time_series_values(SingleTimeSeries, gen, "bid_energy_max_avail_gen") ≈ [101.0, 102.0, 103.0]

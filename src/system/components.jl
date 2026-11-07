@@ -559,8 +559,9 @@ end
 """
     _add_generation!(sys, gen_df)
 
-Adds the renewable, hydro and thermal generators of `gen_df` to `sys` with zero operation costs.
-`_set_isp_generation_costs!` replaces those costs with the ISP operating costs.
+Adds the renewable, hydro and thermal generators of `gen_df` to `sys` with zero operation costs,
+each with its station attached as a [`NEMStation`](@ref). `_set_isp_generation_costs!` replaces
+those costs with the ISP operating costs.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
@@ -575,6 +576,7 @@ function _add_generation!(sys, gen_df; nem_types::Bool = false)
     renewable_type = nem_types ? NEMRenewableGen : RenewableDispatch
     hydro_type = nem_types ? NEMHydroGen : HydroDispatch
     thermal_type = nem_types ? NEMThermalGen : ThermalStandard
+    stations = Dict{String, NEMStation}()
     renewable = subset(
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:RenewableDispatch]))
     )
@@ -591,14 +593,10 @@ function _add_generation!(sys, gen_df; nem_types::Bool = false)
             power_factor = 1.0,
             operation_cost = nem_types ? NEMOfferCost() : RenewableGenerationCost(nothing),
             base_power = row[:base_power], # MVA
-            ext = Dict(
-                "postcode" => row[:postcode],
-                "station_name" => row[:station_name],
-                "station_id" => row[:station_id],
-            ),
         ) for row in eachrow(renewable)
     )
     add_components!(sys, renewable_components)
+    _attach_stations!(sys, renewable, stations)
 
     hydro = subset(
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:HydroDispatch]))
@@ -624,14 +622,10 @@ function _add_generation!(sys, gen_df; nem_types::Bool = false)
             time_limits = nothing,
             operation_cost = nem_types ? NEMOfferCost() : HydroGenerationCost(nothing),
             base_power = row[:base_power],
-            ext = Dict(
-                "postcode" => row[:postcode],
-                "station_name" => row[:station_name],
-                "station_id" => row[:station_id],
-            ),
         ) for row in eachrow(hydro)
     )
     add_components!(sys, hydro_components)
+    _attach_stations!(sys, hydro, stations)
 
     thermal = subset(
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:ThermalStandard]))
@@ -660,16 +654,32 @@ function _add_generation!(sys, gen_df; nem_types::Bool = false)
             must_run = false,
             prime_mover_type = row[:technology],
             fuel = row[:fuel_type],
-            ext = Dict(
-                "postcode" => row[:postcode],
-                "station_name" => row[:station_name],
-                "station_id" => row[:station_id],
-            ),
         ) for row in eachrow(thermal)
     )
     add_components!(sys, thermal_components)
+    _attach_stations!(sys, thermal, stations)
 
     return sys
+end
+
+
+"""
+    _attach_stations!(sys, devices, stations)
+
+Attaches to each device of `devices` its station as one [`NEMStation`](@ref), sharing a single
+instance among the devices of one station. `devices` is a generators data frame, whose rows carry
+their unit's `station_id`, `station_name` and `postcode`; `stations` accumulates the instances
+attached so far, so callers add one station's devices in any number of groups.
+"""
+function _attach_stations!(sys, devices, stations)
+    for row in eachrow(devices)
+        station_id = String(row[:station_id])
+        station = get!(stations, station_id) do
+            NEMStation(; station_id, station_name = row[:station_name], postcode = row[:postcode])
+        end
+        add_supplemental_attribute!(sys, get_component(Device, sys, row[:name]), station)
+    end
+    return
 end
 
 
@@ -800,9 +810,10 @@ end
 Adds each load as an `InterruptiblePowerLoad` with a zero `LoadCost`, or with `nem_types` as a
 [`NEMLoad`](@ref) with an empty [`NEMOfferCost`](@ref); [`set_market_bids!`](@ref) gives a scheduled
 load its decremental offer, or marks it unavailable when it has no bid. A non-scheduled load
-(`scheduled = false`) is tagged `ext["non_scheduled"] = true` (and `ext["commissioned"]`) and starts unavailable; it keeps the zero
-cost, and the dispatch limits ([`nem_system`](@ref)) fix its energy at zero. Despite the name, this builds
-every `DISPATCHTYPE = LOAD` unit of the data frame.
+(`scheduled = false`) starts unavailable; it keeps the zero cost, and the dispatch limits
+([`nem_system`](@ref)) fix its energy at zero. A stock build records `non_scheduled` and
+`commissioned` on the load's `ext`; a NEM build records them on its [`NEMRegistration`](@ref).
+Despite the name, this builds every `DISPATCHTYPE = LOAD` unit of the data frame.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
@@ -825,8 +836,10 @@ function _add_scheduled_loads!(sys, scheduled_loads_df; nem_types::Bool = false)
             max_reactive_power = 0.0,
             base_power = row[:base_power],
             operation_cost = nem_types ? NEMOfferCost() : LoadCost(; variable = CostCurve(LinearCurve(0.0)), fixed = 0.0),
-            ext = row[:scheduled] ? Dict{String, Any}() :
-                Dict{String, Any}("non_scheduled" => true, "commissioned" => row[:commissioned]),
+            # A NEM build records both flags on the load's registration; a stock build has none.
+            ext = (!nem_types && !row[:scheduled]) ?
+                Dict{String, Any}("non_scheduled" => true, "commissioned" => row[:commissioned]) :
+                Dict{String, Any}(),
         ) for row in eachrow(scheduled_loads_df)
     )
     return add_components!(sys, loads)
@@ -854,11 +867,6 @@ function _add_area_interfaces!(sys, interconnectors)
             to_area = get_component(Area, sys, row[:to_area]),
             flow_limits = (row[:max_flow_from] / BASE_POWER, row[:max_flow_to] / BASE_POWER),
             # services=[get_component(TransmissionInterface, sys, row[:name])],
-            ext = Dict(
-                "from_region_loss_factor" => row[:from_region_loss_factor],
-                "loss_constant" => row[:loss_constant],
-                "loss_flow_coefficient" => row[:loss_flow_coefficient],
-            )
         ) for row in eachrow(interconnectors)
     )
     add_components!(sys, area_interchanges)

@@ -388,7 +388,7 @@ end
     base_power = PSY.get_base_power(sys)
 
     target_gencon_ids = ("Q_STR_ALDSF_ZERO", "Q_BRDDSF01_1INV")
-    gcs = [gc for gc in PSY.get_components(GenericConstraint, sys) if get(gc.ext, "gencon_id", nothing) in target_gencon_ids]
+    gcs = [gc for gc in PSY.get_components(GenericConstraint, sys) if get_gencon_id(gc) in target_gencon_ids]
     @test length(gcs) == length(target_gencon_ids)
 
     dual_keys = Dict(
@@ -398,7 +398,7 @@ end
     violations = read_constraint_violations(results, sys)
     for gc in gcs
         name = PSY.get_name(gc)
-        gencon_id = get(gc.ext, "gencon_id", nothing)
+        gencon_id = get_gencon_id(gc)
         invoked_values = PSY.IS.get_time_series_values(
             gc, gc.invoked; start_time = first(VIOLATION_STEPS), len = length(VIOLATION_STEPS),
         )

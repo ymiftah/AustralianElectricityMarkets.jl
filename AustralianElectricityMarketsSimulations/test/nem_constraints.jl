@@ -42,12 +42,12 @@ const NEM_CONSTRAINTS_GENCON_IDS =
 """
     _gc(sys, gencon_id) -> GenericConstraint
 
-The one [`GenericConstraint`](@ref) in `sys` whose `ext["gencon_id"]` is `gencon_id`.
+The one [`GenericConstraint`](@ref) in `sys` whose `get_gencon_id` is `gencon_id`.
 `_add_nem_constraints!` names components `GENCONID@EFFECTIVEDATE#VERSIONNO`, so bare `GENCONID`
 values (this file's own fixture ids) aren't valid component names.
 """
 _gc(sys, gencon_id::AbstractString) =
-    only(gc for gc in get_components(GenericConstraint, sys) if get(gc.ext, "gencon_id", nothing) == gencon_id)
+    only(gc for gc in get_components(GenericConstraint, sys) if get_gencon_id(gc) == gencon_id)
 
 """
     _native_forecast_params(sys)
@@ -127,7 +127,7 @@ is even registered for [`GenericConstraint`](@ref).
 """
 function _remove_unused_pscb_constraints!(sys)
     for gc in collect(get_components(GenericConstraint, sys))
-        get(gc.ext, "gencon_id", nothing) == "N_VERSIONED_LIMIT" && remove_component!(sys, gc)
+        get_gencon_id(gc) == "N_VERSIONED_LIMIT" && remove_component!(sys, gc)
     end
     return
 end
@@ -612,7 +612,7 @@ function _add_zero_flow_pair!(sys, params, interconnector::AbstractString)
         gc = GenericConstraint(;
             name = name, sense = ConstraintSense.LE, rhs = 0.0,
             terms = ConstraintTerm[InterconnectorTerm(interconnector, factor)],
-            ext = Dict{String, Any}("limit_type" => "Interconnector Zero", "source" => "built-in"),
+            limit_type = "Interconnector Zero", source = "built-in",
         )
         add_service!(sys, gc, [get_component(AreaInterchange, sys, interconnector)])
         add_toy_constraint_series!(sys, gc, times, zeros(n_raw), ones(n_raw))
@@ -671,13 +671,13 @@ end
 @testset "AustralianElectricityMarkets.constraint_cvp_factor prices built-in constraints by limit type, others by their GENCONDATA weight" begin
     built_in(limit_type) = GenericConstraint(;
         name = "B", sense = ConstraintSense.LE, rhs = 0.0, terms = ConstraintTerm[],
-        ext = Dict{String, Any}("limit_type" => limit_type, "source" => "built-in"),
+        limit_type = limit_type, source = "built-in",
     )
     @test AustralianElectricityMarkets.constraint_cvp_factor(built_in("Interconnector Zero")) == AustralianElectricityMarkets.INTERCONNECTOR_ZERO_CVP_FACTOR == 1160.0
     @test_throws ArgumentError AustralianElectricityMarkets.constraint_cvp_factor(built_in("Unknown"))
     published = GenericConstraint(;
         name = "P", sense = ConstraintSense.LE, rhs = 0.0, constraint_weight = 35.0, terms = ConstraintTerm[],
-        ext = Dict{String, Any}("limit_type" => "Interconnector Zero", "source" => "AEMO"),
+        limit_type = "Interconnector Zero", source = "AEMO",
     )
     @test AustralianElectricityMarkets.constraint_cvp_factor(published) == 35.0
 end

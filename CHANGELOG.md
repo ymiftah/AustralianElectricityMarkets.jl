@@ -417,6 +417,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Interconnector, MNSP and constraint data are held in typed fields instead of `ext` entries: `NEMMNSPBid`, `NEMMNSPLink` and `NEMMNSPObservedState` on an MNSP interchange, `NEMInterconnectorLimits` and `NEMInterconnectorRegistration` as supplemental attributes on an `AreaInterchange`, and `GenericConstraint.rhs` and `GenericConstraint.invoked` as time-series keys or static values.
 
+- `GenericConstraint` holds `GENCONDATA`'s `GENCONID`, `LIMITTYPE`, `SOURCE`, `EFFECTIVEDATE` and `VERSIONNO` as typed fields, read with `get_gencon_id`, `get_limit_type`, `get_source`, `get_effective_date` and `get_version_no`. A unit's station is a shared `NEMStation` supplemental attribute, and its non-scheduled and commissioned flags are fields of its `NEMRegistration`; a `NEMDEConfiguration` build leaves every component's `ext` empty.
+
 ### Changed
 
 - `nem_system(db, NEMDEConfiguration(); date_range)` validates its built inputs before returning: the typed records of every dispatch device, the constraint build report (missing intervals, defaulted weights, skipped constraints and dropped terms) and each MNSP's two directional links with a bid and observed state. It throws an `ArgumentError` at the first failing part (devices, then the constraint build report, then MNSPs), naming every offender within that part and how to supply it.

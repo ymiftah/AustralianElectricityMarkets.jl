@@ -47,14 +47,14 @@
 
         gc_null_ext = GenericConstraint(;
             name = "F_NULL_EXT", sense = ConstraintSense.LE, rhs = 1.0,
-            ext = Dict{String, Any}(
-                "limit_type" => missing, "source" => missing,
-                "effective_date" => missing, "version_no" => missing, "gencon_id" => missing,
-            ),
+            limit_type = missing, source = missing,
+            effective_date = nothing, version_no = nothing,
         )
         @test get_limit_type(gc_null_ext) === nothing
         @test get_source(gc_null_ext) === nothing
-        @test ismissing(gc_null_ext.ext["gencon_id"])
+        @test get_effective_date(gc_null_ext) === nothing
+        @test get_version_no(gc_null_ext) === nothing
+        @test get_gencon_id(gc_null_ext) == "F_NULL_EXT"
         @test get_description(gc) == ""
         @test isempty(get_ext(gc))
         set_description!(gc, "a hand-authored test constraint")
@@ -69,6 +69,11 @@
             rhs = 137.5,
             constraint_weight = 2.0,
             description = "test constraint",
+            gencon_id = "F_ROUNDTRIP",
+            limit_type = "FCAS",
+            source = "mock",
+            effective_date = DateTime(2025, 1, 2),
+            version_no = 3,
             terms = ConstraintTerm[
                 UnitTerm("BW01", BidType.RAISE6SEC, 1.0),
                 InterconnectorTerm("IC1", -1.0),
@@ -103,6 +108,12 @@
 
         @test all(r -> get_region(r) == "TAS1", get_fcas_requirements(gc2))
         @test Set(get_service.(get_fcas_requirements(gc2))) == Set([BidType.RAISE6SEC, BidType.RAISE5MIN])
+        @test get_gencon_id(gc2) == "F_ROUNDTRIP"
+        @test get_limit_type(gc2) == "FCAS"
+        @test get_source(gc2) == "mock"
+        @test get_effective_date(gc2) == DateTime(2025, 1, 2)
+        @test get_version_no(gc2) === 3
+        @test isempty(get_ext(gc2))
     end
 end
 
@@ -278,9 +289,6 @@ end
     one_phantom = get_component(GenericConstraint, sys, vname("N_ONE_PHANTOM_TERM"))
     @test length(get_terms(one_phantom)) == 4  # CP_BAYSW's four DUIDs; PHANTOM1 dropped
     @test all(t -> get_duid(t) != "PHANTOM1", get_terms(one_phantom))
-    @test only(get_ext(one_phantom)["dropped_terms"]) ==
-        Dict("kind" => "UNIT", "key" => "PHANTOM1", "bid_type" => "ENERGY", "factor" => 2.0)
-    @test isempty(get_ext(get_component(GenericConstraint, sys, vname("N_BAYSW_THERMAL")))["dropped_terms"])
     @test isempty(get_missing_constraint_intervals(sys))
     @test isempty(get_defaulted_constraint_weights(sys))
     dropped = get_dropped_terms(sys)
@@ -290,7 +298,6 @@ end
     # A term on a scheduled load resolves: loads are part of the System.
     pump_gc = get_component(GenericConstraint, sys, vname("N_PUMP_THERMAL"))
     @test only(get_terms(pump_gc)) == UnitTerm("PUMP1", BidType.ENERGY, -1.0)
-    @test isempty(get_ext(pump_gc)["dropped_terms"])
     # A load DUID names exactly one Device, also when it has a GENUNITS row (PUMP1).
     @test get_component(Device, sys, "PUMP1") isa NEMLoad
 
@@ -330,11 +337,14 @@ end
     @test length(get_fcas_requirements(gc)) == 1
     @test only(get_fcas_requirements(gc)) == FCASRequirement("VIC1", BidType.RAISE6SEC)
 
-    @testset "AEMO provenance: description is a field, the rest live in ext" begin
+    @testset "AEMO provenance fields are typed" begin
         @test get_description(gc) isa String
-        @test !haskey(get_ext(gc), "description")
-        @test get_limit_type(gc) !== nothing
-        @test get_source(gc) !== nothing
+        @test isempty(get_ext(gc))
+        @test get_gencon_id(gc) == "F_VIC1_RAISE6SEC"
+        @test get_limit_type(gc) == "FCAS"
+        @test get_source(gc) == "mock"
+        @test get_effective_date(gc) == DateTime(2025, 1, 1)
+        @test get_version_no(gc) == 1
     end
 
     network_gc = get_component(GenericConstraint, sys, vname("N_BAYSW_THERMAL"))

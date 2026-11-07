@@ -33,7 +33,7 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
     GenericConstraint,
     get_duid, get_bid_type, get_factor, get_interconnector, get_region, get_service, get_devices,
     get_sense, get_constraint_weight, get_rhs, get_invoked,
-    get_limit_type, get_source,
+    get_limit_type, get_source, get_gencon_id, get_effective_date, get_version_no,
     get_terms, get_fcas_requirements, resolve_term_devices
 export FCASService, add_fcas_services!, Readers
 export OfferSide, offer_side, side_suffix, NEM_SERIES, NEM_TELEMETRY_SERIES, NEM_OBSERVED_SERIES, NEM_INTERCONNECTOR_SERIES, NEM_MNSP_SERIES, NEM_CONSTRAINT_SERIES, energy_offer_series_name, energy_max_avail_series_name
@@ -42,7 +42,7 @@ export get_energy_bids, get_fcas_bids, get_direction, get_offer_curves, get_max_
     get_fixed_load, get_minimum_load, get_fast_start_profile, get_daily_energy_constraint, get_normal_status,
     get_energy_limit, get_trapezium
 export NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMStorage, NEMLoad
-export NEMRegistration, NEMTelemetry, NEMObservedState, ScheduleType
+export NEMRegistration, NEMTelemetry, NEMObservedState, NEMStation, ScheduleType
 export get_registration, get_telemetry, get_observed_state, set_registration!, set_telemetry!, set_observed_state!
 export EnergyTieBreak, TIE_BREAK_SERVICE_NAME, TIE_BREAK_CVP_FACTOR
 export MARKET_PRICE_CAP_BY_FINANCIAL_YEAR, DISPATCH_INTERVAL, constraint_cvp_factor

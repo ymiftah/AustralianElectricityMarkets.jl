@@ -431,16 +431,13 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
             rhs = default_rhs_mw,
             constraint_weight = coalesce(def.GENERICCONSTRAINTWEIGHT, 1.0),
             description = coalesce(def.DESCRIPTION, ""),
+            gencon_id = gencon_id,
+            limit_type = def.LIMITTYPE,
+            source = def.SOURCE,
+            effective_date = def.EFFECTIVEDATE,
+            version_no = def.VERSIONNO,
             terms = resolved_terms,
             fcas_requirements = reqs,
-            ext = Dict{String, Any}(
-                "gencon_id" => gencon_id,
-                "limit_type" => def.LIMITTYPE,
-                "source" => def.SOURCE,
-                "effective_date" => string(def.EFFECTIVEDATE),
-                "version_no" => def.VERSIONNO,
-                "dropped_terms" => get(dropped, versioned_name, Dict{String, Any}[]),
-            ),
         )
 
         push!(

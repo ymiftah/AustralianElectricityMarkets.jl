@@ -101,8 +101,8 @@
             @test !isnothing(gc_v2)
 
             # Both versions report the same bare GENCONID despite being different components.
-            @test get(gc_v1.ext, "gencon_id", nothing) == "N_VERSIONED_LIMIT"
-            @test get(gc_v2.ext, "gencon_id", nothing) == "N_VERSIONED_LIMIT"
+            @test get_gencon_id(gc_v1) == "N_VERSIONED_LIMIT"
+            @test get_gencon_id(gc_v2) == "N_VERSIONED_LIMIT"
             @test get_name(gc_v1) != get_name(gc_v2)
 
             # The changed sense and term coefficient actually differ between the two versions.
@@ -129,7 +129,7 @@
             # the version-triple loop degenerates to the old one-constraint-per-GENCONID
             # behaviour when there is only ever one version, with no separate branch for it.
             matches = filter(
-                gc -> get(gc.ext, "gencon_id", nothing) == "F_R1_RAISE6SEC", collect(get_components(GenericConstraint, sys)),
+                gc -> get_gencon_id(gc) == "F_R1_RAISE6SEC", collect(get_components(GenericConstraint, sys)),
             )
             @test length(matches) == 1
             @test get_name(only(matches)) == vname("F_R1_RAISE6SEC")

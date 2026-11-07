@@ -133,9 +133,15 @@ and FCAS requirements. Attached to its contributing devices as a `PSY.Service`.
 - `constraint_weight`: `GENCONDATA.GENERICCONSTRAINTWEIGHT` verbatim; 1.0 for a constraint whose
   `source` is `"built-in"`, which has no `GENCONDATA` row.
 - `description`: human-readable, defaults to `""`.
+- `gencon_id`: `GENCONDATA.GENCONID` without the version suffix; defaults to the part of `name`
+  before `@`.
+- `limit_type`: `GENCONDATA.LIMITTYPE`, or `nothing` if absent.
+- `source`: `GENCONDATA.SOURCE`, or `nothing` if absent.
+- `effective_date`: `GENCONDATA.EFFECTIVEDATE`, or `nothing` if absent.
+- `version_no`: `GENCONDATA.VERSIONNO`, or `nothing` if absent.
 - `terms`: the LHS algebra, from the `SPD*` tables.
 - `fcas_requirements`: the `(region, service)` prices this constraint governs.
-- `ext`: AEMO provenance — `gencon_id`, `limit_type`, `source`, `effective_date`, `version_no`.
+- `ext`: free-form annotations; a NEMDE build leaves it empty.
 - `internal`: `InfrastructureSystems` bookkeeping.
 """
 mutable struct GenericConstraint <: PSY.Service
@@ -146,6 +152,11 @@ mutable struct GenericConstraint <: PSY.Service
     invoked::Union{IS.TimeSeriesKey, Bool}
     constraint_weight::Float64
     description::String
+    gencon_id::String
+    limit_type::Union{String, Nothing}
+    source::Union{String, Nothing}
+    effective_date::Union{DateTime, Nothing}
+    version_no::Union{Int, Nothing}
     terms::Vector{ConstraintTerm}
     fcas_requirements::Vector{FCASRequirement}
     ext::Dict{String, Any}
@@ -161,16 +172,35 @@ function GenericConstraint(;
         invoked::Union{IS.TimeSeriesKey, Bool} = true,
         constraint_weight::Float64 = 1.0,
         description::AbstractString = "",
+        gencon_id = missing,
+        limit_type = nothing,
+        source = nothing,
+        effective_date = nothing,
+        version_no = nothing,
         terms::Vector{<:ConstraintTerm} = ConstraintTerm[],
         fcas_requirements::Vector{FCASRequirement} = FCASRequirement[],
         ext::Dict{String, Any} = Dict{String, Any}(),
         internal::IS.InfrastructureSystemsInternal = IS.InfrastructureSystemsInternal(),
     )
+    id = ismissing(gencon_id) ? first(split(String(name), "@")) : String(gencon_id)
     return GenericConstraint(
         String(name), available, sense, _bid_number(rhs), invoked, constraint_weight, String(description),
-        Vector{ConstraintTerm}(terms), fcas_requirements, ext, internal,
+        id, _constraint_text(limit_type), _constraint_text(source), _constraint_time(effective_date),
+        _constraint_version(version_no), Vector{ConstraintTerm}(terms), fcas_requirements, ext, internal,
     )
 end
+
+# A nullable GENCONDATA text value as a typed field: `missing` and `nothing` both mean absent.
+_constraint_text(x::AbstractString) = String(x)
+_constraint_text(::Any) = nothing
+
+# GENCONDATA publishes the effective date as a `Date`; the field is a `DateTime` at midnight.
+_constraint_time(x::DateTime) = x
+_constraint_time(x::Date) = DateTime(x)
+_constraint_time(::Any) = nothing
+
+_constraint_version(x::Integer) = Int(x)
+_constraint_version(::Any) = nothing
 
 
 """
@@ -248,11 +278,20 @@ PSY.set_ext!(value::GenericConstraint, val) = value.ext = val
 
 
 """
+    get_gencon_id(value::GenericConstraint) -> String
+
+The constraint's `GENCONDATA.GENCONID` without the version suffix. Every version of one
+`GENCONID` shares it.
+"""
+get_gencon_id(value::GenericConstraint) = value.gencon_id
+
+
+"""
     get_limit_type(value::GenericConstraint) -> Union{String, Nothing}
 
 `GENCONDATA.LIMITTYPE`, or `nothing` if absent.
 """
-get_limit_type(value::GenericConstraint) = coalesce(get(value.ext, "limit_type", nothing), nothing)
+get_limit_type(value::GenericConstraint) = value.limit_type
 
 
 """
@@ -260,4 +299,20 @@ get_limit_type(value::GenericConstraint) = coalesce(get(value.ext, "limit_type",
 
 `GENCONDATA.SOURCE`, or `nothing` if absent.
 """
-get_source(value::GenericConstraint) = coalesce(get(value.ext, "source", nothing), nothing)
+get_source(value::GenericConstraint) = value.source
+
+
+"""
+    get_effective_date(value::GenericConstraint) -> Union{DateTime, Nothing}
+
+`GENCONDATA.EFFECTIVEDATE` at midnight, or `nothing` if absent.
+"""
+get_effective_date(value::GenericConstraint) = value.effective_date
+
+
+"""
+    get_version_no(value::GenericConstraint) -> Union{Int, Nothing}
+
+`GENCONDATA.VERSIONNO`, or `nothing` if absent.
+"""
+get_version_no(value::GenericConstraint) = value.version_no
