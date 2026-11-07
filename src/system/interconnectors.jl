@@ -43,11 +43,13 @@ function interconnector_loss_models(db, as_of::Union{Date, DateTime})
     coefficients = read_interconnector_demand_coefficients(db; as_of = as_of)
     breakpoints = read_interconnector_loss_breakpoints(db; as_of = as_of)
 
+    # TODO isn't this a groupby combine as array ?
     by_interconnector = Dict{String, Vector{Float64}}()
     for row in eachrow(breakpoints)
         push!(get!(by_interconnector, row.INTERCONNECTORID, Float64[]), row.MWBREAKPOINT)
     end
     demand_coefficients = Dict{String, Dict{String, Float64}}()
+    # TODO isn't this a groupby combine as array ?
     for row in eachrow(coefficients)
         d = get!(demand_coefficients, row.INTERCONNECTORID, Dict{String, Float64}())
         d[row.REGIONID] = row.DEMANDCOEFFICIENT

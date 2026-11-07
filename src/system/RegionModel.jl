@@ -1,12 +1,12 @@
 module RegionModel
 
 using ..AustralianElectricityMarkets
+using ..NetworkConfigurations: RegionalNetworkConfiguration, NEMDEConfiguration
 using DataFrames, Chain, Statistics
 using PowerSystems
 import PowerSystems as PSY
 using Dates
 
-include("../types/network_configurations.jl")
 include("components.jl")
 include("network.jl")
 include("regional.jl")

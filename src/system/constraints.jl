@@ -146,12 +146,6 @@ function _empty_terms()
 end
 
 
-# Whether a `$<DUID>` DISPATCHCONSTRAINT id is an Energy Inflexible Offer constraint built from bids.
-function _is_modelled_fixed_load(genconid::AbstractString, fixed_loads, interval::DateTime)
-    return startswith(genconid, "\$") && haskey(fixed_loads, genconid[2:end]) && haskey(fixed_loads[genconid[2:end]], interval)
-end
-
-
 """
     _pad_to_grid(values_by_time, grid, initial_fill) -> (series, invoked_mask)
 
@@ -175,39 +169,6 @@ function _pad_to_grid(values_by_time::Dict, grid::Vector{DateTime}, initial_fill
         series[i] = last_value
     end
     return series, mask
-end
-
-
-"""
-    _infer_resolution(grid) -> Dates.Period
-
-Spacing between consecutive points of a sorted `grid`. Falls back to `Minute(5)` for fewer
-than 2 points; warns and uses the smallest spacing if unequal.
-"""
-function _infer_resolution(grid::Vector{DateTime})
-    length(grid) < 2 && return Minute(5)
-    distinct = sort(unique(diff(grid)))
-    if length(distinct) > 1
-        @warn "nem constraints: grid spacing is not uniform (found $(join(distinct, ", "))); the stored series' fixed resolution will not match every SETTLEMENTDATE. Proceeding with the smallest spacing, $(first(distinct))."
-    end
-    return _canonical_period(first(distinct))
-end
-
-
-"""
-    _canonical_period(ms::Millisecond) -> Dates.Period
-
-Converts a `Millisecond` period to `Minute` or `Second` where it divides evenly, so a stored
-time series' resolution reads naturally (e.g. `Minute(5)`) rather than as raw milliseconds.
-"""
-function _canonical_period(ms::Millisecond)
-    if ms.value % 60_000 == 0
-        return Minute(ms.value ÷ 60_000)
-    elseif ms.value % 1000 == 0
-        return Second(ms.value ÷ 1000)
-    else
-        return ms
-    end
 end
 
 
@@ -301,13 +262,18 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
     start_date = first(date_range)
     missing_intervals = setdiff(collect(date_range)[1:(end - 1)], invoked_all.SETTLEMENTDATE)
     # Fixed loadings are unit offer data (_set_nem_fixed_loads!), so their `$DUID` rows are not generic constraints.
-    fixed_loads = _fixed_load_series(sys, fixed)
-    if DataFrames.isempty(invoked_all) && isempty(fixed_loads)
+    targets = _fixed_load_series(sys, fixed)
+    if DataFrames.isempty(invoked_all) && DataFrames.isempty(targets)
         set_build_report!(sys, NEMBuildReport(; missing_constraint_intervals = missing_intervals))
         @warn "No constraints invoked over $date_range; nothing added."
         return String[], Dict{String, Symbol}()
     end
-    invoked = filter(r -> !_is_modelled_fixed_load(r.GENCONID, fixed_loads, r.SETTLEMENTDATE), invoked_all)
+    modelled = transform(
+        targets,
+        :DUID => ByRow(duid -> "\$" * duid) => :GENCONID,
+        :INTERVAL_DATETIME => :SETTLEMENTDATE,
+    )
+    invoked = antijoin(invoked_all, select(modelled, :GENCONID, :SETTLEMENTDATE); on = [:GENCONID, :SETTLEMENTDATE])
     # Grouped by the full (GENCONID, EFFECTIVEDATE, VERSIONNO) triple, not GENCONID alone: two
     # versions must never be merged into one constraint's invoked or rhs series.
     invoked_by_version = groupby(invoked, [:GENCONID, :GENCONID_EFFECTIVEDATE, :GENCONID_VERSIONNO])
@@ -327,7 +293,6 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
     # Only fixed-load constraints were invoked: there is nothing to look up in the definition tables.
     only_fixed = DataFrames.isempty(gencon_versions)
     definitions = only_fixed ? _empty_definitions() : read_constraint_definitions(db, gencon_versions)
-    def_by_version = Dict((row.GENCONID, row.EFFECTIVEDATE, row.VERSIONNO) => row for row in eachrow(definitions))
 
     terms_long = only_fixed ? _empty_terms() : read_constraint_terms(db, gencon_versions, date_range)
 
@@ -337,8 +302,8 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
     if !isempty(zero_definitions)
         definitions = vcat(definitions, zero_definitions; cols = :union)
         terms_long = vcat(terms_long, zero_terms; cols = :union)
-        def_by_version = Dict((row.GENCONID, row.EFFECTIVEDATE, row.VERSIONNO) => row for row in eachrow(definitions))
     end
+    def_by_version = groupby(definitions, [:GENCONID, :EFFECTIVEDATE, :VERSIONNO])
     terms_by_version = groupby(terms_long, [:GENCONID, :EFFECTIVEDATE, :VERSIONNO])
 
     # Deliberately GENCONID alone, not the triple above: DISPATCH_FCAS_REQ_CONSTRAINT carries
@@ -375,7 +340,7 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
             push!(skipped_detail, _skipped_row(versioned_name, :no_terms, String[]))
             continue
         end
-        def = def_by_version[version_key]
+        def = only(eachrow(def_by_version[version_key]))
         term_rows = terms_by_version[version_key]
 
         resolved_terms = ConstraintTerm[]

@@ -191,6 +191,7 @@ function read_fcas_dispatch(db, date_range; intervention::Integer = 0)
         return cols
     end
 
+    # TODO use DataFrames.jl methods: this should be a groupby combine, or a stack / unstack
     long = DataFrame()
     for bid_type in FCAS_BID_TYPES
         bid_type_str = string(bid_type)

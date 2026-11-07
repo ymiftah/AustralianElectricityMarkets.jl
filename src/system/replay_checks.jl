@@ -1,3 +1,5 @@
+# TODO rename this is a check against the nemde configuration, it should be named nemde_checks.jl
+
 # The typed records every NEM dispatch device must carry, with the name each is reported by.
 const _NEM_DEVICE_RECORDS = (
     (get_registration, "registration"), (get_telemetry, "telemetry"), (get_observed_state, "observed state"),

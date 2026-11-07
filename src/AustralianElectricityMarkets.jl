@@ -55,8 +55,10 @@ export fcas_series_name, FCASBidDirection, fcas_bid_direction, single_series, re
     energy_offer_sides
 
 include("constants.jl")
+include("utils.jl")
 include("types/bid_types.jl")
-include("types/network_configuration.jl")
+include("network_configurations/NetworkConfigurations.jl")
+using .NetworkConfigurations: NetworkConfiguration, RegionalNetworkConfiguration, NEMDEConfiguration
 include("types/fcas.jl")
 include("types/generic_constraints.jl")
 include("types/interconnector_losses.jl")
@@ -99,13 +101,13 @@ include("system/penalties.jl")
 include("system/RegionModel.jl")
 include("system/replay_checks.jl")
 
-using .RegionModel: RegionalNetworkConfiguration, NEMDEConfiguration, nem_network
+using .RegionModel: nem_network
 export nem_network
 
 @doc (@doc AustralianElectricityMarketsCache.HiveConfiguration) HiveConfiguration
 @doc (@doc AustralianElectricityMarketsCache.aem_connect) aem_connect
-@doc (@doc RegionModel.RegionalNetworkConfiguration) RegionalNetworkConfiguration
-@doc (@doc RegionModel.NEMDEConfiguration) NEMDEConfiguration
+@doc (@doc NetworkConfigurations.RegionalNetworkConfiguration) RegionalNetworkConfiguration
+@doc (@doc NetworkConfigurations.NEMDEConfiguration) NEMDEConfiguration
 @doc (@doc RegionModel.nem_network) nem_network
 
 include("precompile.jl")

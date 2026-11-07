@@ -1,3 +1,5 @@
+# TODO no need for a module with a single helper. there shouuld be a better place for this.
+
 # The key of `device`'s `SingleTimeSeries` named `name`.
 function _series_key(device, name::AbstractString)
     for key in IS.get_time_series_keys(device)

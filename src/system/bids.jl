@@ -299,22 +299,23 @@ function set_market_bids!(
     end
     sys_units = Set(get_name(c) for T in (Generator, ControllableLoad, Storage) for c in get_components(T, sys))
     subset!(offers, :DUID => ByRow(in(sys_units)))
-    groups = Dict{Tuple{String, BidType, String}, SubDataFrame}(
-        (String(k.DUID), k.BIDTYPE, String(k.DIRECTION)) => sub for (k, sub) in pairs(groupby(offers, [:DUID, :BIDTYPE, :DIRECTION]))
-    )
+
+    groups = groupby(offers, [:DUID, :BIDTYPE, :DIRECTION])
     energy_rows(name, direction) = get(groups, (name, BidType.ENERGY, string(direction)), nothing)
 
+    device_by_name = Dict{String, Device}(
+        get_name(d) => d for T in (Generator, ControllableLoad, Storage) for d in get_components(T, sys)
+    )
     fcas_types = filter(in(markets), FCAS_BID_TYPES)
-    for T in (Generator, ControllableLoad, Storage), device in get_components(T, sys)
-        name = get_name(device)
-        for service in fcas_types, direction in (BidDirection.GEN, BidDirection.LOAD, BidDirection.BIDIRECTIONAL)
-            rows = get(groups, (name, service, string(direction)), nothing)
-            isnothing(rows) && continue
-            _write_fcas_bid!(sys, device, service, direction, rows, grid, start_date, resolution)
-            if device isa ControllableLoad && is_non_scheduled_load(device) && is_commissioned(device) &&
-                    direction == BidDirection.LOAD
-                set_available!(device, true)
-            end
+    for (key, rows) in pairs(groups)
+        service = key.BIDTYPE
+        service in fcas_types || continue
+        device = device_by_name[key.DUID]
+        direction = BidDirection(key.DIRECTION)
+        _write_fcas_bid!(sys, device, service, direction, rows, grid, start_date, resolution)
+        if device isa ControllableLoad && is_non_scheduled_load(device) && is_commissioned(device) &&
+                direction == BidDirection.LOAD
+            set_available!(device, true)
         end
     end
     # Services must exist before energy availability is set, so a unit unavailable for energy keeps them.
@@ -335,6 +336,7 @@ function set_market_bids!(
         _bid_device_energy!(sys, stor, (BidDirection.GEN, BidDirection.LOAD), groups, grid, start_date, resolution) ||
             push!(unbid, get_name(stor))
     end
+
     isempty(gen_bid_loads) || @warn "set_market_bids!: $(length(gen_bid_loads)) scheduled load(s) bid GEN, not LOAD (wholesale demand response); setting to unavailable: $(join(gen_bid_loads, ", "))"
     isempty(unbid) || @warn "set_market_bids!: $(length(unbid)) unit(s) have no bid data for a required direction; setting to unavailable: $(join(unbid, ", "))"
 

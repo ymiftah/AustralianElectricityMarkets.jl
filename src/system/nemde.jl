@@ -1,3 +1,6 @@
+# TODO This should live in `@network_configurations`
+
+
 """
     table_requirements(::NEMDEConfiguration)
 

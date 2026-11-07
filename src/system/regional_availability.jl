@@ -1,3 +1,7 @@
+# TODO again here, some operations would be better read as DataFrames.jl operations, with final conversion to
+# our types and insertion to sys
+
+
 """
     set_regional_availability!(sys, db, date_range; resolution::Dates.Period = Minute(30), intervention::Integer = 0)
 
@@ -49,7 +53,7 @@ function set_regional_availability!(
     uigf = read_uigf(db, bounds; resolution, intervention)
     limits = read_dispatch_limits(db, bounds; intervention, resolution)
     regional = Readers._read_regional_renewable_uigf(db, bounds; resolution, intervention)
-
+    # TODO those are just group bys
     uigf_at = Dict((r.DUID, r.SETTLEMENTDATE) => r.UIGF for r in eachrow(uigf))
     avail_at = Dict(
         (r.DUID, r.SETTLEMENTDATE) => r.AVAILABILITY for r in eachrow(limits) if !ismissing(r.AVAILABILITY)

@@ -1,3 +1,7 @@
+# TODO This module is hard to read. it would be easier to read if more operations were done with DtaFrames jl interfaces
+# with only conversion to our types as a last stage.
+
+
 """
     set_mnsp_offers!(sys, db, date_range; intervention = 0) -> Vector{String}
 
@@ -127,6 +131,8 @@ function set_mnsp_offers!(sys, db, date_range; intervention::Integer = 0)
             fixed = Float64[ismissing(v) ? NaN : Float64(v) for v in rows.FIXEDLOAD]
             replace_single_series!(sys, device, single_series(fixed_name, start_date, fixed, Minute(5)))
         end
+
+
         add_supplemental_attribute!(
             sys, device,
             NEMMNSPLink(;

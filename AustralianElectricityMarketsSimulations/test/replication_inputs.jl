@@ -55,10 +55,11 @@ end
     t = DateTime(2025, 1, 1, 0, 5)
     rows = DataFrame(INTERVAL_DATETIME = [t, t], DUID = ["PUMP1", "BW01"], DIRECTION = ["LOAD", "LOAD"], FIXEDLOAD = [30.0, 5.0])
     targets = AustralianElectricityMarkets._fixed_load_series(sys, rows)
-    @test targets["PUMP1"][t] == 30.0
-    @test targets["BW01"][t] == -5.0
-    @test AustralianElectricityMarkets._is_modelled_fixed_load("\$PUMP1", targets, t)
-    @test !AustralianElectricityMarkets._is_modelled_fixed_load("\$PUMP1", targets, t + Minute(5))
+    by_key = Dict((r.DUID, r.INTERVAL_DATETIME) => r.TARGET for r in eachrow(targets))
+    @test by_key[("PUMP1", t)] == 30.0
+    @test by_key[("BW01", t)] == -5.0
+    @test haskey(by_key, ("PUMP1", t))
+    @test !haskey(by_key, ("PUMP1", t + Minute(5)))
 end
 
 @testset "a cached table without the requested constraint intervals cannot replay" begin
