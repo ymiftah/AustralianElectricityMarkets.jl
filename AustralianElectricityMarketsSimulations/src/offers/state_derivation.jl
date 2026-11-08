@@ -84,7 +84,7 @@ end
 
 Whether the unit's starting output lies inside the enablement span of `trap`, AEMO *FCAS Model in
 NEMDE* §5's stranded pre-condition. The caller ANDs the result with the other §5 conditions. A
-`NaN` starting output is outside the span, so a market with an unknown starting output is disabled.
+`NaN` starting output is outside the span, so an unknown starting output leaves the offer disabled.
 
 # Arguments
 - `trap`: the FCAS trapezium.
@@ -203,10 +203,13 @@ interval, MW per minute, `(up, down)` on the net-generation axis, where generati
 consumption negative. A unit that starts on the generation side raises output at its generation-side
 rate and one that starts on the load side lowers it at its load-side rate. A unit that would reach
 zero inside the interval instead ramps over the whole interval at a rate that blends the two sides,
-so that it finishes the interval at its own rate from zero. A `NaN` rate marks a side without a bid,
-and a unit bidding one side only keeps that side's rates on the net-generation axis. A caller whose
-variable is consumed MW, a `PowerSystems.ControllableLoad`, swaps the pair onto its axis; nothing
-else does.
+so that it finishes the interval at its own rate from zero. A `NaN` rate marks a side without a bid.
+A generation bid's `ROCUP` and `ROCDOWN` are the unit's up and down rates. A load bid's `ROCUP` is
+consumption rising, so it is the unit's down rate and its `ROCDOWN` is the up rate. A
+`PowerSystems.ControllableLoad` takes `(ramp_up, ramp_down) = (down, up)`; no other device type
+reverses the pair. A load-only unit returns `(load_down, load_up)`: at a non-negative start its up
+rate is the load ramp-down rate, and its down rate the load ramp-up rate, with no blend because it
+has no generation rate to compose with.
 
 # Arguments
 - `gen_up`, `gen_down`: the generation bid's `ROCUP` and `ROCDOWN`, MW/min, `NaN` without a generation bid.
@@ -241,8 +244,8 @@ function composite_ramp_rates(
 end
 
 
-# The composite increase: the generation rate from a non-negative start, the load side's own rate
-# when it reaches zero only past the interval, zero when it cannot ramp down, else the blend.
+# The composite increase: the generation rate from a non-negative start, zero when the load side
+# cannot ramp down, the load rate when it reaches zero only past the interval, else the blend.
 function _composite_up_ramp(initial_mw::Real, gen_up::Real, load_down::Real, period::Real)
     initial_mw >= 0 && return Float64(gen_up)
     iszero(load_down) && return 0.0
@@ -251,8 +254,8 @@ function _composite_up_ramp(initial_mw::Real, gen_up::Real, load_down::Real, per
 end
 
 
-# The composite decrease: the load rate from a non-positive start, the generation side's own rate
-# when it reaches zero only past the interval, zero when it cannot ramp down, else the blend.
+# The composite decrease: the load rate from a non-positive start, zero when the generation side
+# cannot ramp down, the generation rate when it reaches zero only past the interval, else the blend.
 function _composite_down_ramp(initial_mw::Real, gen_down::Real, load_up::Real, period::Real)
     initial_mw <= 0 && return Float64(load_up)
     iszero(gen_down) && return 0.0
