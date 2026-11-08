@@ -96,9 +96,10 @@ const TOY_BATTERY = "batt1"
 const TOY_LOAD_SERVICE_ONLY = "sched_load"
 
 # A unit's offer and dispatch limits, in MW, MW/min and $/MWh. `bands` is a vector of
-# `(MW, price)` pairs in offer order.
-function toy_unit(capacity, bands; initial, ramp_up, ramp_down = 100.0, availability = capacity)
-    return (; capacity, bands, initial, ramp_up, ramp_down, availability)
+# `(MW, price)` pairs in offer order. `roc_up`/`roc_down` are the bid `ROCUP`/`ROCDOWN`, MW/min,
+# `NaN` (no bid ramp) by default.
+function toy_unit(capacity, bands; initial, ramp_up, ramp_down = 100.0, availability = capacity, roc_up = NaN, roc_down = NaN)
+    return (; capacity, bands, initial, ramp_up, ramp_down, availability, roc_up, roc_down)
 end
 
 # One value per stamp: a scalar repeats, a vector gives one value per stamp.
@@ -126,17 +127,18 @@ end
 function toy_battery(
         gen_capacity, gen_price, load_capacity, load_price;
         initial, ramp_up, ramp_down = 100.0, gen_avail = gen_capacity, load_avail = load_capacity,
+        roc_up = NaN, roc_down = NaN,
     )
     return (;
         gen_capacity, gen_price, load_capacity, load_price, initial, ramp_up, ramp_down,
-        gen_avail, load_avail,
+        gen_avail, load_avail, roc_up, roc_down,
     )
 end
 
 # A scheduled load's one-band decremental offer and dispatch limits, in MW, MW/min and $/MWh.
 # `initial` is `INITIALMW` (consumed MW, positive); `availability` is the load-side `MAXAVAIL`.
-function toy_load(capacity, price; initial, ramp_up, ramp_down = 100.0, availability = capacity)
-    return (; capacity, price, initial, ramp_up, ramp_down, availability)
+function toy_load(capacity, price; initial, ramp_up, ramp_down = 100.0, availability = capacity, roc_up = NaN, roc_down = NaN)
+    return (; capacity, price, initial, ramp_up, ramp_down, availability, roc_up, roc_down)
 end
 
 # A `NEMThermalGen` named `name` on the bus of `stock`, a `5_bus_hydro_ed_sys` thermal unit it replaces
@@ -207,7 +209,11 @@ function nem_toy_system(
     for (name, unit) in units
         gen = _toy_thermal(sys, PSY.get_component(PSY.ThermalStandard, sys, name), name)
         PSY.set_active_power_limits!(gen, (min = 0.0, max = unit.capacity))
-        _toy_energy_bid!(sys, gen, AustralianElectricityMarkets.BidDirection.GEN, stamps, _toy_offers(unit.bands, length(stamps)), _toy_values(unit.availability, length(stamps)))
+        _toy_energy_bid!(
+            sys, gen, AustralianElectricityMarkets.BidDirection.GEN, stamps,
+            _toy_offers(unit.bands, length(stamps)), _toy_values(unit.availability, length(stamps));
+            roc_up = unit.roc_up, roc_down = unit.roc_down,
+        )
         add_series!(
             gen, "max_active_power", unit.availability ./ unit.capacity;
             multiplier = PSY.get_max_active_power,
@@ -244,9 +250,17 @@ function nem_toy_system(
 
         PSY.set_available!(battery, true)
         gen_offer = PSY.PiecewiseStepData([0.0, bat.gen_capacity], [bat.gen_price])
-        _toy_energy_bid!(sys, battery, AustralianElectricityMarkets.BidDirection.GEN, stamps, fill(gen_offer, length(stamps)), _toy_values(bat.gen_avail, length(stamps)))
+        _toy_energy_bid!(
+            sys, battery, AustralianElectricityMarkets.BidDirection.GEN, stamps,
+            fill(gen_offer, length(stamps)), _toy_values(bat.gen_avail, length(stamps));
+            roc_up = bat.roc_up, roc_down = bat.roc_down,
+        )
         load_offer = PSY.PiecewiseStepData([0.0, bat.load_capacity], [bat.load_price])
-        _toy_energy_bid!(sys, battery, AustralianElectricityMarkets.BidDirection.LOAD, stamps, fill(load_offer, length(stamps)), _toy_values(bat.load_avail, length(stamps)))
+        _toy_energy_bid!(
+            sys, battery, AustralianElectricityMarkets.BidDirection.LOAD, stamps,
+            fill(load_offer, length(stamps)), _toy_values(bat.load_avail, length(stamps));
+            roc_up = bat.roc_up, roc_down = bat.roc_down,
+        )
 
         add_series!(battery, "ramp_up_rate", bat.ramp_up ./ base_power)
         add_series!(battery, "ramp_down_rate", bat.ramp_down ./ base_power)
@@ -265,7 +279,11 @@ function nem_toy_system(
         )
         PSY.add_component!(sys, scheduled)
         offer = PSY.PiecewiseStepData([0.0, ld.capacity], [ld.price])
-        _toy_energy_bid!(sys, scheduled, AustralianElectricityMarkets.BidDirection.LOAD, stamps, fill(offer, length(stamps)), _toy_values(ld.availability, length(stamps)))
+        _toy_energy_bid!(
+            sys, scheduled, AustralianElectricityMarkets.BidDirection.LOAD, stamps,
+            fill(offer, length(stamps)), _toy_values(ld.availability, length(stamps));
+            roc_up = ld.roc_up, roc_down = ld.roc_down,
+        )
         add_series!(
             scheduled, "max_active_power", ld.availability / ld.capacity;
             multiplier = PSY.get_max_active_power,
@@ -552,13 +570,15 @@ function derive_toy_offers!(sys)
 end
 
 # Records an energy bid of `device` on `direction`, with `curves` (one per stamp, as offered) and
-# `max_avail` (MW per stamp), with no ramp rate and unit loss factors of 1.
-function _toy_energy_bid!(sys, device, direction, stamps, curves, max_avail)
+# `max_avail` (MW per stamp), `roc_up`/`roc_down` (MW/min per stamp, `NaN` for no bid ramp) and unit
+# loss factors of 1.
+function _toy_energy_bid!(sys, device, direction, stamps, curves, max_avail; roc_up = NaN, roc_down = NaN)
     AEM = AustralianElectricityMarkets
     field(f::Symbol) = AEM.bid_series_name(BidType.ENERGY, f, direction)
-    nan = fill(NaN, length(stamps))
+    n = length(stamps)
     for (name, values) in (
-            (field(:offer_curves), curves), (field(:max_avail), max_avail), (field(:roc_up), nan), (field(:roc_down), nan),
+            (field(:offer_curves), curves), (field(:max_avail), max_avail),
+            (field(:roc_up), _toy_values(roc_up, n)), (field(:roc_down), _toy_values(roc_down, n)),
         )
         replace_single_series_with!(sys, device, name, values, stamps)
     end

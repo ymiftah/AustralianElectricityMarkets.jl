@@ -136,6 +136,12 @@ const _DERIVED_INPUT_FIELDS = (
 
 `device`'s [`NEMDispatchInputs`](@ref), attached by [`set_effective_offers!`](@ref). Throws an
 `ArgumentError` naming `device` when it carries none.
+
+# Arguments
+- `device`: the NEM dispatch device.
+
+# Returns
+A [`NEMDispatchInputs`](@ref).
 """
 function _dispatch_inputs_attribute(device)
     attributes = PSY.get_supplemental_attributes(NEMDispatchInputs, device)
@@ -158,23 +164,6 @@ function _inputs_series_name(device, field::Symbol)
     return PSY.get_name(key)
 end
 
-
-# The formulation reads each derived series through the device's derived-input keys. The name is taken
-# from the first device of the type, as `PowerSimulations.jl` registers one name per device type.
-PSI._get_time_series_name(::RampUpRateTimeSeriesParameter, device::PSY.Component, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
-    _inputs_series_name(device, :ramp_up)
-
-PSI._get_time_series_name(::RampDownRateTimeSeriesParameter, device::PSY.Component, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
-    _inputs_series_name(device, :ramp_down)
-
-PSI._get_time_series_name(::EnergyMaxAvailTimeSeriesParameter, device::PSY.Component, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
-    _inputs_series_name(device, :energy_availability)
-
-PSI._get_time_series_name(::PSI.ActivePowerOutTimeSeriesParameter, device::PSY.Storage, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
-    _inputs_series_name(device, :energy_availability)
-
-PSI._get_time_series_name(::PSI.ActivePowerInTimeSeriesParameter, device::PSY.Storage, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
-    _inputs_series_name(device, :energy_availability_decremental)
 
 # Throws an `ArgumentError` naming `device` unless the series behind `key` is named `expected`.
 function _require_key_name(device, key::IS.TimeSeriesKey, expected::AbstractString)

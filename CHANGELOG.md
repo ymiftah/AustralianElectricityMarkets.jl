@@ -426,10 +426,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `energy_availability[_decremental]` (the bid `MAXAVAIL` per unit of the system base, limited by
   the UIGF), the effective ramp limits (the lesser of the bid `ROCUP`/`ROCDOWN` and the telemetered
   rates), the effective regulation availability behind the AGC ramp rates, and the loss-demand
-  coefficients. The dispatch formulation reads those series through the keys, so its maximum
-  availability parameter is the bid `MAXAVAIL` and its UIGF parameter the telemetered UIGF, per unit
-  of the system base. `set_loss_demand_coefficients!` moved from AEM to AEMSim and
-  `set_effective_offers!` calls it; the derivation is exported as the pure functions
+  coefficients. The dispatch formulation's PowerSimulations time-series parameters (ramp up and down,
+  energy max availability, storage charge and discharge) resolve their series names through those
+  keys, so its maximum availability parameter is the bid `MAXAVAIL` and its UIGF parameter the
+  telemetered UIGF, per unit of the system base. `set_loss_demand_coefficients!` moved from AEM to
+  AEMSim and `set_effective_offers!` calls it; the derivation is exported as the pure functions
   `referred_offer_curves`, `effective_energy_availability`, `effective_ramp_limit`,
   `effective_ramp_limits`, `effective_regulation_enablement`, `effective_regulation_max_avail`,
   `fcas_trapezium_values`, `tie_break_scale` and `loss_demand_coefficient`.
@@ -802,6 +803,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `energy_max_avail[_decremental]` time series: the derived energy availability is
   `energy_availability[_decremental]`, which the dispatch formulation reads through the device's
   `NEMDispatchInputs`.
+
+- `energy_max_avail_series_name`: the energy availability series are named by
+  `energy_availability_series_name` (AEMSim) and held by the device's `NEMDispatchInputs`.
 
 - `check_replay_inputs`: `nem_system` validates the same inputs while it builds the system, from the built structures rather than the cache.
 

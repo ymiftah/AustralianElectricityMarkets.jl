@@ -237,23 +237,16 @@ function get_scaled_fcas_trapezium(
         get_fcas_agc_ramp_capability(component, _fcas_ramp_rate_service(component, service), initial_time, horizon; resolution = resolution) : nothing
     input_at(series, i) = (isnothing(series) || isnan(series[i])) ? nothing : series[i]
     uigf = _unit_window(component, telemetry.uigf, initial_time, horizon)
-    # The enablement the trapezium is scaled to is the intersection of its own and the AGC limits.
-    enablement_at(trap, i) = isnothing(enablement) ? (nothing, nothing) : effective_regulation_enablement(
-            get_enablement_min(trap), get_enablement_max(trap),
-            input_at(agc_enablement_min, i), input_at(agc_enablement_max, i),
-        )
 
     return [
-        let (enablement_min, enablement_max) = enablement_at(trapeziums[i], i)
-            scale_fcas_trapezium(
-                trapeziums[i];
-                agc_enablement_min = enablement_min,
-                agc_enablement_max = enablement_max,
-                agc_max_avail = input_at(agc_max_avail, i),
-                uigf = input_at(uigf, i),
-                is_regulation = is_regulation,
-            )
-        end for i in eachindex(trapeziums)
+        scale_fcas_trapezium(
+            trapeziums[i];
+            agc_enablement_min = input_at(agc_enablement_min, i),
+            agc_enablement_max = input_at(agc_enablement_max, i),
+            agc_max_avail = input_at(agc_max_avail, i),
+            uigf = input_at(uigf, i),
+            is_regulation = is_regulation,
+        ) for i in eachindex(trapeziums)
     ]
 end
 

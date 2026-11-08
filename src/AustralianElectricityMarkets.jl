@@ -36,7 +36,7 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
     get_limit_type, get_source, get_gencon_id, get_effective_date, get_version_no,
     get_terms, get_fcas_requirements, resolve_term_devices
 export FCASService, add_fcas_services!, Readers
-export OfferSide, offer_side, side_suffix, NEM_SERIES, NEM_TELEMETRY_SERIES, NEM_OBSERVED_SERIES, NEM_INTERCONNECTOR_SERIES, NEM_MNSP_SERIES, NEM_CONSTRAINT_SERIES, energy_offer_series_name, energy_max_avail_series_name
+export OfferSide, offer_side, side_suffix, NEM_SERIES, NEM_TELEMETRY_SERIES, NEM_OBSERVED_SERIES, NEM_INTERCONNECTOR_SERIES, NEM_MNSP_SERIES, NEM_CONSTRAINT_SERIES, energy_offer_series_name
 export NEMOfferCost, NEMEnergyBid, NEMFCASBid, BidDirection, FastStartProfile, FCASTrapeziumPoints, bid_value, bid_series_name
 export get_energy_bids, get_fcas_bids, get_direction, get_offer_curves, get_max_avail, get_roc_up, get_roc_down,
     get_fixed_load, get_minimum_load, get_fast_start_profile, get_daily_energy_constraint, get_normal_status,

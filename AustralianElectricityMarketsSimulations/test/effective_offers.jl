@@ -657,6 +657,33 @@ end
         @test err isa ArgumentError
         @test occursin("ER01 has no telemetry", sprint(showerror, err))
     end
+
+    @testset "dispatch ramps are the lesser of the bid and telemetry, read on the side the device bids" begin
+        # A generator bids ROCUP 2 MW/min (120 MW/h) against a 100 MW/min telemetry (6000 MW/h), so the
+        # bid binds, while its ROCDOWN 100 MW/min loses to the 50 MW/min telemetry. A scheduled load's
+        # energy bid is on its LOAD side only, and its ROCUP 4 MW/min binds the same way.
+        units = [
+            TOY_CHEAP => toy_unit(
+                100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0, ramp_down = 50.0,
+                roc_up = 2.0, roc_down = 100.0,
+            ),
+        ]
+        loads = [
+            "pump" => toy_load(
+                40.0, 300.0; initial = 20.0, ramp_up = 100.0, ramp_down = 50.0,
+                roc_up = 4.0, roc_down = 100.0,
+            ),
+        ]
+        sys = nem_toy_system(units, [60.0, 80.0]; loads)
+        base = get_base_power(sys)
+        derived(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)
+        cheap = get_component(NEMThermalGen, sys, TOY_CHEAP)
+        pump = get_component(NEMLoad, sys, "pump")
+        @test all(isapprox.(derived(cheap, NEM_SERIES.ramp_up_rate), 2.0 / base; atol = 1.0e-12))
+        @test all(isapprox.(derived(cheap, NEM_SERIES.ramp_down_rate), 50.0 / base; atol = 1.0e-12))
+        @test all(isapprox.(derived(pump, NEM_SERIES.ramp_up_rate), 4.0 / base; atol = 1.0e-12))
+        @test all(isapprox.(derived(pump, NEM_SERIES.ramp_down_rate), 50.0 / base; atol = 1.0e-12))
+    end
 end
 
 
@@ -825,7 +852,26 @@ end
         @test get_name(inputs.ramp_up) == NEM_SERIES.ramp_up_rate
         @test get_name(inputs.ramp_down) == NEM_SERIES.ramp_down_rate
         @test isnothing(inputs.energy_availability_decremental)
-        @test get_name(inputs.fcas[1].trapezium) == fcas_series_name("fcas_trapezium", inputs.fcas[1].service, inputs.fcas[1].side)
+        raise_reg = only(entry for entry in inputs.fcas if entry.service == BidType.RAISEREG && entry.side == OfferSide.GEN)
+        @test get_name(raise_reg.trapezium) == fcas_series_name("fcas_trapezium", BidType.RAISEREG, OfferSide.GEN)
+        @test get_name(raise_reg.agc_ramp) == fcas_series_name("fcas_agc_ramp_rate", BidType.RAISEREG)
+
+        # An entry exists only for a side with an offer, and an offer always writes its trapezium; one
+        # entry per (device, service) carries the service's AGC ramp rate, on the side the device bids.
+        for d in nem_dispatch_devices(sys)
+            entries = only(PSY.get_supplemental_attributes(NEMDispatchInputs, d)).fcas
+            @test all(!isnothing(entry.offer) && !isnothing(entry.trapezium) for entry in entries)
+            for service in unique(entry.service for entry in entries)
+                group = [entry for entry in entries if entry.service == service]
+                carried = [entry for entry in group if !isnothing(entry.agc_ramp)]
+                @test length(carried) <= 1
+                has_ramp = has_time_series(d, SingleTimeSeries, fcas_series_name("fcas_agc_ramp_rate", service))
+                @test length(carried) == (has_ramp ? 1 : 0)
+                if !isempty(carried) && any(entry.side == OfferSide.GEN for entry in group)
+                    @test only(carried).side == OfferSide.GEN
+                end
+            end
+        end
 
         # The availability the formulation reads is the bid MAXAVAIL per unit of the base.
         bid = only(AustralianElectricityMarkets.get_energy_bids(get_operation_cost(device)))
@@ -836,6 +882,19 @@ end
         battery = get_component(NEMStorage, sys, "BW01")
         battery_inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, battery))
         @test get_name(battery_inputs.energy_availability_decremental) == "energy_availability_decremental"
+        # A battery bids RAISEREG on both sides: the AGC ramp rate rides on the GEN-side entry.
+        reg = [entry for entry in battery_inputs.fcas if entry.service == BidType.RAISEREG]
+        @test length(reg) == 2
+        @test only(entry for entry in reg if !isnothing(entry.agc_ramp)).side == OfferSide.GEN
+    end
+
+    @testset "a device with no FCAS bid gets no fcas inputs" begin
+        sys = nem_toy_system(
+            [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], [60.0, 80.0],
+        )
+        cheap = get_component(NEMThermalGen, sys, TOY_CHEAP)
+        @test isempty(get_fcas_bids(get_operation_cost(cheap)))
+        @test isempty(only(PSY.get_supplemental_attributes(NEMDispatchInputs, cheap)).fcas)
     end
 
     @testset "the UIGF parameter reads the telemetry UIGF per unit of the base" begin

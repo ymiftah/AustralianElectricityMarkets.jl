@@ -61,6 +61,9 @@ end
 Attaches to each NEM dispatch device a [`NEMDispatchInputs`](@ref) holding the keys of the series
 [`set_effective_offers!`](@ref) derived for it, replacing any attached by an earlier call.
 
+# Arguments
+- `sys`: the `System` to add to.
+
 # Returns
 `nothing`.
 """
@@ -93,22 +96,31 @@ function _dispatch_inputs(device)
 end
 
 
-# One `NEMFCASInputs` per FCAS service and side `set_effective_offers!` wrote for `device`.
+# One `NEMFCASInputs` per side of each service `device` has an offer for: an offer always writes its
+# trapezium. A regulation service has one AGC ramp rate, so it rides on the GEN-side entry when the
+# device bids that side, and on the LOAD-side entry otherwise.
 function _fcas_inputs(device)
     inputs = NEMFCASInputs[]
-    for service in AustralianElectricityMarkets.FCAS_BID_TYPES, side in (OfferSide.GEN, OfferSide.LOAD)
-        offer = _derived_series_key(device, fcas_series_name("fcas_offer", service, side))
-        trapezium = _derived_series_key(device, fcas_series_name("fcas_trapezium", service, side))
+    for service in AustralianElectricityMarkets.FCAS_BID_TYPES
+        offers = Dict(
+            side => _derived_series_key(device, fcas_series_name("fcas_offer", service, side))
+                for side in (OfferSide.GEN, OfferSide.LOAD)
+        )
+        sides = [side for side in (OfferSide.GEN, OfferSide.LOAD) if !isnothing(offers[side])]
+        isempty(sides) && continue
         agc_ramp = service in FCAS_REGULATION_MARKETS ?
             _derived_series_key(device, fcas_series_name("fcas_agc_ramp_rate", service)) : nothing
-        (isnothing(offer) && isnothing(trapezium) && isnothing(agc_ramp)) && continue
-        push!(inputs, NEMFCASInputs(; service, side, offer, trapezium, agc_ramp))
+        for (i, side) in enumerate(sides)
+            trapezium = _derived_series_key(device, fcas_series_name("fcas_trapezium", service, side))
+            push!(inputs, NEMFCASInputs(; service, side, offer = offers[side], trapezium, agc_ramp = i == 1 ? agc_ramp : nothing))
+        end
     end
     return inputs
 end
 
 
-# The key of `device`'s `name` `SingleTimeSeries`, or `nothing` when it carries none.
+# The key of `device`'s `name` `SingleTimeSeries`, or `nothing` when it carries none: read from the
+# `System` AEMSim was given, where AEM's `_series_key` throws on a missing name.
 function _derived_series_key(device, name::AbstractString)
     for key in IS.get_time_series_keys(device)
         key isa IS.StaticTimeSeriesKey && IS.get_name(key) == name && return key
@@ -363,9 +375,12 @@ function _set_dispatch_limits!(sys::PSY.System)
         down = _bid_series(device, telemetry.ramp_down_limit, :ramp_down_limit)
         interval_hours = Dates.value(Millisecond(up.resolution)) / (1000 * 60 * 60)
         pinned = AustralianElectricityMarkets.is_non_scheduled_load(device)
+        # One ramp series per device and direction: a bidirectional unit reads the first side it bids, so
+        # its rate is per side and no cross-zero composite from Initial MW is applied.
+        ramp_side = first(energy_offer_sides(device))
         effective_up, effective_down = effective_ramp_limits(
-            _bid_ramp_rates(device, OfferSide.GEN, :roc_up, up),
-            _bid_ramp_rates(device, OfferSide.GEN, :roc_down, down),
+            _bid_ramp_rates(device, ramp_side, :roc_up, up),
+            _bid_ramp_rates(device, ramp_side, :roc_down, down),
             up.values, down.values,
         )
         ramp_up_rate = pinned ? zeros(length(up.values)) : replace(effective_up ./ 60 ./ base, NaN => 0.0)
@@ -376,8 +391,12 @@ function _set_dispatch_limits!(sys::PSY.System)
         device isa PSY.Storage && continue
         initial = _bid_series(device, AustralianElectricityMarkets.get_observed_state(device).initial_mw, :initial_mw).values ./ base
         max_avail_name = energy_availability_series_name(device, OfferSide.GEN)
-        PSY.has_time_series(device, PSY.SingleTimeSeries, max_avail_name) ||
-            throw(ArgumentError("\"$(PSY.get_name(device))\" has no energy availability; call set_market_bids! first."))
+        PSY.has_time_series(device, PSY.SingleTimeSeries, max_avail_name) || throw(
+            ArgumentError(
+                "\"$(PSY.get_name(device))\" has no energy availability; set_effective_offers! derives it " *
+                    "from an energy bid, and the device has none.",
+            ),
+        )
         max_avail = _condition_series(device, max_avail_name).values
         uigf = isnothing(telemetry.uigf) ? nothing : _bid_series(device, telemetry.uigf, :uigf).values ./ base
         availability = effective_energy_availability(max_avail, uigf, up.values, pinned)

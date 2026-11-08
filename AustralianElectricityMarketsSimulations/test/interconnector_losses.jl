@@ -490,6 +490,18 @@ end
     @test PSY.get_time_series_values(PSY.SingleTimeSeries, ic1, "loss_demand_coefficient") ≈ without_vic
 end
 
+@testset "the loss demand setter rejects a load on a bus with no area" begin
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    sys = nem_system(db, RegionalNetworkConfiguration())
+    @test_logs (:warn, r"no resolvable loss model") match_mode = :any attach_interconnector_losses!(sys, db, Date(2025, 1, 2))
+    date_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 1, 0)
+    attach_demand!(sys, db, date_range; resolution = Minute(5))
+    PSY.set_area!(PSY.get_bus(PSY.get_component(PSY.PowerLoad, sys, "VIC1 Load")), nothing)
+    err = _caught(() -> set_loss_demand_coefficients!(sys))
+    @test err isa ArgumentError
+    @test occursin("on a bus with no area", sprint(showerror, err))
+end
+
 @testset "the loss demand setter rejects a load series off the common timestamps" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
     sys = nem_system(db, RegionalNetworkConfiguration())

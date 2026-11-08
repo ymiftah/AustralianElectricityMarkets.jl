@@ -40,7 +40,7 @@ Names of the per-device `SingleTimeSeries` the setters attach, by field:
 The unit condition series are named by [`NEM_TELEMETRY_SERIES`](@ref) and [`NEM_OBSERVED_SERIES`](@ref),
 and held by the device's [`NEMTelemetry`](@ref) and [`NEMObservedState`](@ref).
 
-Offer-side series are named by [`energy_offer_series_name`](@ref), [`energy_max_avail_series_name`](@ref) and
+Offer-side series are named by [`energy_offer_series_name`](@ref) and
 [`fcas_series_name`](@ref).
 """
 const NEM_SERIES = (
@@ -96,14 +96,6 @@ const NEM_OBSERVED_SERIES = (
 Name of the series holding a device's energy offer curves on `side`.
 """
 energy_offer_series_name(side::OfferSide) = "energy_offer" * side_suffix(side)
-
-
-"""
-    energy_max_avail_series_name(side::OfferSide) -> String
-
-Name of the series holding a device's energy offer `MAXAVAIL` on `side`, system-base per-unit.
-"""
-energy_max_avail_series_name(side::OfferSide) = "energy_max_avail" * side_suffix(side)
 
 
 """

@@ -103,3 +103,28 @@ function PSI._unwrap_for_param(::EnergyBandPriceParameter, curve::IS.PiecewiseSt
     length(prices) <= n || throw(ArgumentError("energy offer has $(length(prices)) bands, more than the band axis' $n."))
     return vcat(prices, zeros(n - length(prices)))
 end
+
+
+# --- Derived series names for the NEM dispatch parameters ---
+
+# `_get_time_series_name` resolves the parameter's series name per device, so a device's derived series
+# key names the series. The device's own key is read, not the type's first device's: every device of a
+# type carries the same name, which is what lets the one-name-per-type registration work.
+#
+# The `D <: PSY.Device` constraint is required, not decorative: without it these methods are ambiguous
+# with PSI's generic `_get_time_series_name(::T, ::Component, ::DeviceModel) where {T <: ParameterType}`
+# and the model build fails. Re-check the signature when the pinned fork moves.
+PSI._get_time_series_name(::RampUpRateTimeSeriesParameter, device::PSY.Component, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
+    _inputs_series_name(device, :ramp_up)
+
+PSI._get_time_series_name(::RampDownRateTimeSeriesParameter, device::PSY.Component, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
+    _inputs_series_name(device, :ramp_down)
+
+PSI._get_time_series_name(::EnergyMaxAvailTimeSeriesParameter, device::PSY.Component, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
+    _inputs_series_name(device, :energy_availability)
+
+PSI._get_time_series_name(::PSI.ActivePowerOutTimeSeriesParameter, device::PSY.Storage, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
+    _inputs_series_name(device, :energy_availability)
+
+PSI._get_time_series_name(::PSI.ActivePowerInTimeSeriesParameter, device::PSY.Storage, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
+    _inputs_series_name(device, :energy_availability_decremental)
