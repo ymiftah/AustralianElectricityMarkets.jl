@@ -771,6 +771,25 @@ end
         @test !AEMSim._has_nem_dispatch_limits(device)
     end
 
+    @testset "removing the registered observed initial MW series fails the pre-flight" begin
+        sys = built()
+        device = get_component(NEMThermalGen, sys, "ER01")
+        @test AEMSim._has_nem_dispatch_limits(device)
+        key = AustralianElectricityMarkets.get_observed_state(device).initial_mw
+        values = get_time_series_values(SingleTimeSeries, device, get_name(key); ignore_scaling_factors = true)
+        add_time_series!(sys, device, single_series("other_initial", start_date, values, resolution))
+        AustralianElectricityMarkets.set_observed_state!(
+            device,
+            AustralianElectricityMarkets.NEMObservedState(;
+                initial_mw = AustralianElectricityMarkets._series_key(device, "other_initial"),
+                dispatch_mode = AustralianElectricityMarkets.get_observed_state(device).dispatch_mode,
+            ),
+        )
+        @test AEMSim._has_nem_dispatch_limits(device)
+        PSY.remove_time_series!(sys, SingleTimeSeries, device, "observed_initial_mw")
+        @test !AEMSim._has_nem_dispatch_limits(device)
+    end
+
     @testset "a derived input key that is not the registered series throws, naming it" begin
         sys = built()
         device = get_component(NEMThermalGen, sys, "ER01")

@@ -80,17 +80,18 @@ after `cost_function_unsynch` cleared the variant terms, so the coefficient of e
 counted once.
 
 Task 10 keeps every precomputed state-dependent series, and `PSI.get_default_time_series_names`
-(`src/formulations/dispatch.jl:46-59`) still registers `"observed_initial_mw"` and
+(`src/formulations/dispatch.jl:49-61`) still registers `"observed_initial_mw"` and
 `"telemetry_uigf"` because PowerSimulations takes one name per device type. Since the per-step
 update reads the initial MW through the device's state source, `_has_nem_dispatch_limits`
-(`src/formulations/dispatch.jl:93-123`) no longer requires the initial MW series to carry the
-registered name; the UIGF and derived-input names are still checked. A mis-keyed initial MW series
-is therefore no longer a build-time error, and the per-step update is the only reader that decides
-which series the value comes from. Task 11 removes the precomputed series; the build must then read
-the state source for the simulation's first solve. Pre-flight now requires the keyed state series to
-exist and the registered `"observed_initial_mw"` series to stay attached. The key's resolution and
-alignment against the dispatch interval are not yet validated, and become the only remaining input
-check once the build reads the state source.
+(`src/formulations/dispatch.jl:97-130`) no longer requires the initial MW series to carry the
+registered name; the UIGF and derived-input names are still checked. A key naming a missing series
+is therefore a build-time error again, while a key naming a different but existing series is not, so
+the per-step update is the reader that decides which existing series supplies the value. Task 11
+removes the precomputed series; the build must then read the state source for the simulation's first
+solve. Pre-flight now requires the keyed state series to exist and the registered
+`"observed_initial_mw"` series to stay attached. The keyed series' resolution and its alignment with
+the dispatch interval are not validated yet. Once the build reads the state source, they are the
+remaining check on the observed state, alongside the derived-input and UIGF name checks.
 
 ## Glue required by the stock objective-coefficient route
 
