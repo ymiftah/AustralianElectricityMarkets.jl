@@ -911,3 +911,233 @@ end
         @test length(raw) > 0
     end
 end
+
+
+@testset "State-dependent derivation: pure functions of the unit state" begin
+    AEMSim = AustralianElectricityMarketsSimulations
+    replay_db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
+    interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+    resolution = Minute(5)
+    Δ = interval_hours(resolution)
+
+    function replay_system()
+        sys = nem_system(replay_db, NEMDEConfiguration(); date_range = interval)
+        set_effective_offers!(sys)
+        return sys
+    end
+    values_of(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)
+
+    @testset "the max_active_power floor rises with Initial MW" begin
+        # 60 MW/h over one 5-minute interval is a 5 MW ramp-down allowance.
+        @test max_active_power_floor(100.0, 60.0, Δ, NEMUnitState(50.0, 4)) == 100.0
+        @test max_active_power_floor(0.0, 60.0, Δ, NEMUnitState(50.0, 4)) == 45.0
+        @test max_active_power_floor(0.0, 60.0, Δ, NEMUnitState(100.0, 4)) == 95.0
+        @test max_active_power_floor(0.0, 60.0, Δ, NEMUnitState(100.0, 4)) >
+            max_active_power_floor(0.0, 60.0, Δ, NEMUnitState(50.0, 4))
+    end
+
+    @testset "fixed loading is invoked outside the fast-start profile" begin
+        @test in_fast_start_profile(NEMUnitState(10.0, 1))
+        @test in_fast_start_profile(NEMUnitState(10.0, 2))
+        @test !in_fast_start_profile(NEMUnitState(10.0, 0))
+        @test !in_fast_start_profile(NEMUnitState(10.0, 3))
+        @test !in_fast_start_profile(NEMUnitState(10.0, 4))
+        @test fixed_load_invoked(50.0, NEMUnitState(10.0, 4))
+        @test !fixed_load_invoked(50.0, NEMUnitState(10.0, 2))
+        @test !fixed_load_invoked(NaN, NEMUnitState(10.0, 4))
+        @test !fixed_load_invoked(0.0, NEMUnitState(10.0, 4))
+        @test effective_fixed_load(50.0, NEMUnitState(10.0, 4)) == 50.0
+        @test effective_fixed_load(50.0, NEMUnitState(10.0, 1)) == 0.0
+        @test effective_fixed_load(NaN, NEMUnitState(10.0, 4)) == 0.0
+    end
+
+    @testset "FCAS enablement and joint ramping move with Initial MW" begin
+        # AEMO FCAS Model in NEMDE §5: the offer is enabled only while the unit is inside the
+        # enablement span, and a storage device's span is checked against its net output.
+        span = FCASTrapezium(;
+            enablement_min = 0.0, low_breakpoint = 10.0, high_breakpoint = 90.0, enablement_max = 100.0,
+            max_avail = 100.0,
+        )
+        @test fcas_state_enabled(span, NEMUnitState(50.0, 4))
+        @test !fcas_state_enabled(span, NEMUnitState(150.0, 4))
+        @test fcas_state_enabled(span, NEMUnitState(-50.0, 4))
+        @test !fcas_state_enabled(span, NEMUnitState(-50.0, 4); storage = true)
+        # §6.1: the upper joint limit is Initial MW plus the AGC capability, the lower minus it.
+        state = NEMUnitState(50.0, 4)
+        raised = NEMUnitState(80.0, 4)
+        @test fcas_ramping_limit(10.0, true, state) == 60.0
+        @test fcas_ramping_limit(10.0, false, state) == 40.0
+        @test fcas_ramping_limit(10.0, true, raised) > fcas_ramping_limit(10.0, true, state)
+        @test fcas_ramping_limit(10.0, false, raised) > fcas_ramping_limit(10.0, false, state)
+        # A bidirectional unit's two regulation sides are gated together while both pass their
+        # other pre-conditions.
+        gen = FCASTrapezium(;
+            enablement_min = 20.0, low_breakpoint = 30.0, high_breakpoint = 80.0, enablement_max = 100.0,
+            max_avail = 100.0,
+        )
+        load = FCASTrapezium(;
+            enablement_min = -100.0, low_breakpoint = -80.0, high_breakpoint = -30.0, enablement_max = -20.0,
+            max_avail = 100.0,
+        )
+        @test fcas_both_sides_state_enabled(gen, load, true, true, NEMUnitState(0.0, 4)) == (true, true)
+        @test fcas_both_sides_state_enabled(gen, load, true, true, NEMUnitState(110.0, 4)) == (false, false)
+        @test fcas_both_sides_state_enabled(gen, load, true, false, NEMUnitState(50.0, 4)) == (true, false)
+    end
+
+    @testset "the MNSP flow envelope starts from the metered flow" begin
+        @test mnsp_ramp_envelope(100.0, 2.0, 3.0, 5.0) == (110.0, 85.0)
+        @test mnsp_ramp_envelope(-50.0, 0.0, 0.0, 5.0) == (-50.0, -50.0)
+        upper, lower = mnsp_ramp_envelope(0.0, 2.0, 3.0, 5.0)
+        @test (upper, lower) == (10.0, -15.0)
+        @test isnan(first(mnsp_ramp_envelope(NaN, 2.0, 3.0, 5.0)))
+    end
+
+    @testset "the composite ramp rate clears a unit across zero" begin
+        # AEMO Dispatch Procedure Appendix C: a scheduled bidirectional unit that may move from
+        # consumption to generation inside the interval ramps at a rate blending both sides' bids.
+        # (a) Wholly on the generation side, and wholly on the load side, the starting side's own
+        # rates stand: up from the load side is its ramp-down rate, down is its ramp-up rate.
+        @test composite_ramp_rates(3.0, 4.0, 5.0, 6.0, 5.0, NEMUnitState(50.0, 4)) == (3.0, 4.0)
+        @test composite_ramp_rates(3.0, 4.0, 5.0, 6.0, 5.0, NEMUnitState(-50.0, 4)) == (6.0, 5.0)
+        # (b) AEMO's worked example: Initial MW -10, load ramp down 5 MW/min and generation ramp up
+        # 3 MW/min over five minutes give 3.8 MW/min, from -10 MW to 9 MW.
+        up, _ = composite_ramp_rates(3.0, 4.0, 5.0, 5.0, 5.0, NEMUnitState(-10.0, 4))
+        @test up ≈ 3.8
+        # The mirror from 10 MW: generation ramp down 3 MW/min and load ramp up 5 MW/min.
+        _, down = composite_ramp_rates(3.0, 3.0, 5.0, 6.0, 5.0, NEMUnitState(10.0, 4))
+        @test down ≈ ((5 - 10 / 3) * 5 + 10) / 5
+        # (c) A battery with both sides bid at -10 MW blends the load ramp down with the generation
+        # ramp up, while its down rate is the load ramp up.
+        up, down = composite_ramp_rates(3.0, 4.0, 5.0, 6.0, 5.0, NEMUnitState(-10.0, 4))
+        @test up ≈ ((5 - 10 / 6) * 3 + 10) / 5
+        @test down == 5.0
+        # A unit that bids one side only keeps that side's rates, and a zero rate cannot blend.
+        @test composite_ramp_rates(2.0, 3.0, NaN, NaN, 5.0, NEMUnitState(-10.0, 4)) == (2.0, 3.0)
+        @test composite_ramp_rates(NaN, NaN, 2.0, 3.0, 5.0, NEMUnitState(10.0, 4)) == (2.0, 3.0)
+        @test first(composite_ramp_rates(3.0, 4.0, 5.0, 0.0, 5.0, NEMUnitState(-10.0, 4))) == 0.0
+    end
+
+    @testset "the max_active_power floor with the observed state equals the written series" begin
+        sys = replay_system()
+        base = get_base_power(sys)
+        with_units_base(sys, "NATURAL_UNITS") do
+            for device in nem_dispatch_devices(sys)
+                device isa Storage && continue
+                has_time_series(device, SingleTimeSeries, NEM_SERIES.max_active_power) || continue
+                stamps = PSY.get_time_series_timestamps(SingleTimeSeries, device, NEM_SERIES.max_active_power)
+                availability = get_energy_availability(device, first(stamps), length(stamps))
+                isnothing(availability) && continue
+                ramp_down = values_of(device, NEM_SERIES.ramp_down_rate) .* 60 .* base
+                static = get_max_active_power(device)
+                written = values_of(device, NEM_SERIES.max_active_power) .* static
+                for i in eachindex(stamps)
+                    state = unit_state(ObservedState(), device, stamps[i])
+                    @test max_active_power_floor(availability[i], ramp_down[i], Δ, state) ≈ written[i] rtol = 1.0e-12
+                end
+            end
+        end
+    end
+
+    @testset "the fixed load and its invoked flag equal the written series" begin
+        sys = replay_system()
+        base = get_base_power(sys)
+        for device in nem_dispatch_devices(sys)
+            has_time_series(device, SingleTimeSeries, NEM_SERIES.fixed_load) || continue
+            stamps = PSY.get_time_series_timestamps(SingleTimeSeries, device, NEM_SERIES.fixed_load)
+            stored = values_of(device, NEM_SERIES.fixed_load)
+            invoked_stored = values_of(device, NEM_SERIES.fixed_load_invoked)
+            cost = AustralianElectricityMarkets._nem_offer_cost(device)
+            for (i, t) in enumerate(stamps)
+                state = unit_state(ObservedState(), device, t)
+                target, invoked = 0.0, 0.0
+                for bid in get_energy_bids(cost)
+                    isnothing(bid.fixed_load) && continue
+                    value = bid_value(device, bid, :fixed_load, t, 1)
+                    raw = value isa AbstractVector ? only(value) : value
+                    sign = device isa Storage && bid.direction == BidDirection.LOAD ? -1.0 : 1.0
+                    target += sign * effective_fixed_load(raw, state)
+                    invoked = max(invoked, fixed_load_invoked(raw, state) ? 1.0 : 0.0)
+                end
+                @test target / base ≈ stored[i] rtol = 1.0e-12
+                @test invoked == invoked_stored[i]
+            end
+        end
+    end
+
+    @testset "the FCAS joint ramping limit with the observed state equals the written series" begin
+        sys = replay_system()
+        base = get_base_power(sys)
+        with_units_base(sys, "NATURAL_UNITS") do
+            for device in nem_dispatch_devices(sys)
+                for service in (BidType.RAISEREG, BidType.LOWERREG)
+                    name = fcas_ramping_series_name(service)
+                    has_time_series(device, SingleTimeSeries, name) || continue
+                    stamps = PSY.get_time_series_timestamps(SingleTimeSeries, device, name)
+                    window = AEMSim._FCASWindow(first(stamps), length(stamps), resolution)
+                    caps = AEMSim._fcas_agc_ramp_caps(window, device, AEMSim._fcas_ramp_rate_service(device, service))
+                    upper = service == fcas_upper_regulation_service(device)
+                    written = [entry[1] * base for entry in values_of(device, name)]
+                    for i in eachindex(stamps)
+                        state = unit_state(ObservedState(), device, stamps[i])
+                        limit = written[i]
+                        if abs(limit) < FCAS_INACTIVE_LIMIT_MW / 2
+                            @test fcas_ramping_limit(caps[i], upper, state) ≈ limit rtol = 1.0e-12
+                        else
+                            @test limit ≈ (upper ? FCAS_INACTIVE_LIMIT_MW : -FCAS_INACTIVE_LIMIT_MW)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    @testset "FCAS enablement with the observed state equals the written masks" begin
+        sys = replay_system()
+        # The §5 pre-conditions of one side other than the stranded one, per interval of `window`.
+        function preconditions(window, device, service, decremental)
+            (; trapeziums, curves) = AEMSim._fcas_offer(window, device, service, offer_side(decremental))
+            _, availability, agc_status = AEMSim._fcas_enablement_inputs(window, device)
+            return map(1:window.horizon) do t
+                AEMSim._fcas_enabled(
+                    device, service in AustralianElectricityMarkets.FCAS_REGULATION_MARKETS, decremental,
+                    trapeziums[t], curves[t], availability(t), nothing, agc_status(t); check_stranded = false,
+                )
+            end
+        end
+        with_units_base(sys, "NATURAL_UNITS") do
+            for device in nem_dispatch_devices(sys)
+                inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, device))
+                for service in unique(entry.service for entry in inputs.fcas)
+                    direction = fcas_bid_direction(device, service)
+                    decremental = direction == FCASBidDirection.DECREMENTAL
+                    stamps = PSY.get_time_series_timestamps(
+                        SingleTimeSeries, device, fcas_series_name("fcas_trapezium", service, decremental),
+                    )
+                    window = AEMSim._FCASWindow(first(stamps), length(stamps), resolution)
+                    states = [unit_state(ObservedState(), device, t) for t in stamps]
+                    active(dec) = Bool[entry[1] > 0.0 for entry in values_of(device, fcas_effective_series_name(service, dec))]
+                    if direction == FCASBidDirection.BOTH
+                        gen_traps = AEMSim._fcas_offer(window, device, service, OfferSide.GEN).trapeziums
+                        load_traps = AEMSim._fcas_offer(window, device, service, OfferSide.LOAD).trapeziums
+                        gen_ok = preconditions(window, device, service, false)
+                        load_ok = preconditions(window, device, service, true)
+                        derived = [
+                            fcas_both_sides_state_enabled(gen_traps[i], load_traps[i], gen_ok[i], load_ok[i], states[i])
+                                for i in eachindex(states)
+                        ]
+                        @test [flag[1] for flag in derived] == active(false)
+                        @test [flag[2] for flag in derived] == active(true)
+                    else
+                        traps = AEMSim._fcas_offer(window, device, service, offer_side(decremental)).trapeziums
+                        ok = preconditions(window, device, service, decremental)
+                        derived = [
+                            ok[i] && fcas_state_enabled(traps[i], states[i]; storage = device isa Storage)
+                                for i in eachindex(states)
+                        ]
+                        @test derived == active(decremental)
+                    end
+                end
+            end
+        end
+    end
+end

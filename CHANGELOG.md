@@ -419,6 +419,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `GenericConstraint` holds `GENCONDATA`'s `GENCONID`, `LIMITTYPE`, `SOURCE`, `EFFECTIVEDATE` and `VERSIONNO` as typed fields, read with `get_gencon_id`, `get_limit_type`, `get_source`, `get_effective_date` and `get_version_no`. A unit's station is a shared `NEMStation` supplemental attribute, and its non-scheduled and commissioned flags are fields of its `NEMRegistration`; a `NEMDEConfiguration` build leaves every component's `ext` empty.
 
+- The state-dependent dispatch inputs are pure functions of a `NEMUnitState`: `max_active_power_floor`, `in_fast_start_profile`, `fixed_load_invoked` and `effective_fixed_load`, `fcas_state_enabled` and `fcas_both_sides_state_enabled`, `fcas_ramping_limit`, `mnsp_ramp_envelope`, and `composite_ramp_rates` for the composite of a bidirectional unit's generation- and load-side ramp rates across zero.
+
 ### Changed
 
 - `set_effective_offers!` writes every state-independent dispatch input once and records each
@@ -434,6 +436,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `referred_offer_curves`, `effective_energy_availability`, `effective_ramp_limit`,
   `effective_ramp_limits`, `effective_regulation_enablement`, `effective_regulation_max_avail`,
   `fcas_trapezium_values`, `tie_break_scale` and `loss_demand_coefficient`.
+
+- An energy bid's `fixed_load` holds `NaN` at the intervals where `FIXEDLOAD` is NULL, so that a
+  loading AEMO did not publish is distinct from one of zero; the field is `nothing` where it is
+  NULL over the whole range.
 
 - `nem_system(db, NEMDEConfiguration(); date_range)` validates its built inputs before returning: the typed records of every dispatch device, the constraint build report (missing intervals, defaulted weights, skipped constraints and dropped terms) and each MNSP's two directional links with a bid and observed state. It throws an `ArgumentError` at the first failing part (devices, then the constraint build report, then MNSPs), naming every offender within that part and how to supply it.
 

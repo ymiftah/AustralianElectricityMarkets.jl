@@ -57,6 +57,8 @@ include("types/interconnector_losses.jl")
 include("types/mnsp.jl")
 include("types/mnsp_limits.jl")
 include("types/state.jl")
+# The state-dependent derivation methods dispatch on NEMUnitState.
+include("offers/state_derivation.jl")
 
 include("formulations/slacks.jl")
 include("formulations/generic_constraints.jl")
@@ -101,6 +103,9 @@ export energy_availability_series_name, referred_offer_curves, effective_energy_
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,
     fcas_upper_regulation_service, fcas_offer_sides, tie_break_series_name, tie_groups
 export StateSource, ObservedState, SimulatedState, NEMUnitState, unit_state, NEMDispatchInputs, NEMFCASInputs
+export max_active_power_floor, in_fast_start_profile, fixed_load_invoked, effective_fixed_load,
+    fcas_state_enabled, fcas_both_sides_state_enabled, fcas_ramping_limit, mnsp_ramp_envelope,
+    composite_ramp_rates
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
 export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
     exclude_unmodeled_services!, check_replication_steps,

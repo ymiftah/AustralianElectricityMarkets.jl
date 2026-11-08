@@ -375,8 +375,8 @@ function _set_dispatch_limits!(sys::PSY.System)
         down = _bid_series(device, telemetry.ramp_down_limit, :ramp_down_limit)
         interval_hours = Dates.value(Millisecond(up.resolution)) / (1000 * 60 * 60)
         pinned = AustralianElectricityMarkets.is_non_scheduled_load(device)
-        # One ramp series per device and direction, read on the first side its type offers, so a
-        # bidirectional unit's rate is per side and no cross-zero composite from Initial MW is applied.
+        # One ramp series per device and direction, read on the first side its type offers: this
+        # writer keeps the per-side rate, and [`composite_ramp_rates`](@ref) is the cross-zero form.
         ramp_side = first(energy_offer_sides(device))
         effective_up, effective_down = effective_ramp_limits(
             _bid_ramp_rates(device, ramp_side, :roc_up, up),

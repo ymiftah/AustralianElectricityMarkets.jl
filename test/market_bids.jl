@@ -18,6 +18,10 @@
     _num(x) = ismissing(x) ? 0.0 : Float64(x)
     # A column of `by` on `grid`, zero where a stamp has no row or the value is NULL.
     on_grid(by, column::Symbol) = [haskey(by, t) ? _num(by[t][column]) : 0.0 for t in grid]
+    # A column of `by` on `grid`, `NaN` where a stamp has no row or the value is NULL: the fixed load.
+    nan_on_grid(by, column::Symbol) = [
+        haskey(by, t) && !ismissing(by[t][column]) ? Float64(by[t][column]) : NaN for t in grid
+    ]
     _matches(a, b) = length(a) == length(b) && all(isapprox.(a, b))
     # The offer curve of a row, with the bands of a LOAD row in reverse order (as AEMO lists them).
     function row_curve(row, direction::AEM.BidDirection)
@@ -56,6 +60,8 @@
                     if isnothing(getfield(bid, field))
                         # FIXEDLOAD of zero is no fixed load, as set_market_bids! reads it.
                         @test all(r -> ismissing(r[column]) || (field == :fixed_load && iszero(r[column])), values(by))
+                    elseif field == :fixed_load
+                        @test isequal(bid_value(device, bid, field, first(interval), n), nan_on_grid(by, column))
                     else
                         @test _matches(bid_value(device, bid, field, first(interval), n), on_grid(by, column))
                     end
@@ -119,6 +125,19 @@
         @test isnothing(er01.fixed_load)
         # BW02 carries a 50 MW fixed load at 00:10 and 00:15 only.
         @test series(get_component(Device, sys, "BW02"), AEM.bid_series_name(BidType.ENERGY, :fixed_load, AEM.BidDirection.GEN)) == [0.0, 50.0, 50.0]
+    end
+
+    @testset "a fixed load is NaN at the intervals where FIXEDLOAD is NULL" begin
+        # BW02 publishes 50 MW at 00:10 and 00:15; NULLing the 00:10 row leaves a NaN there.
+        null_db = damaged_cache(
+            AEM_TEST_HIVE_DIR, :BIDPEROFFER_D,
+            "UPDATE input SET FIXEDLOAD = NULL WHERE DUID = 'BW02' AND DIRECTION = 'GEN' AND BIDTYPE = 'ENERGY' AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:10:00'",
+        )
+        sys, _ = nem_network(null_db; as_of = first(interval), through = last(interval) - Minute(5))
+        set_market_bids!(sys, null_db, interval)
+        bw02 = get_component(Device, sys, "BW02")
+        name = AEM.bid_series_name(BidType.ENERGY, :fixed_load, AEM.BidDirection.GEN)
+        @test isequal(series(bw02, name), [0.0, NaN, 50.0])
     end
 
     @testset "fast-start profile is stored as a NTuple and read back as a FastStartProfile" begin

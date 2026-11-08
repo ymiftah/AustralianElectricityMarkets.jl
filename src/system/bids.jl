@@ -84,6 +84,10 @@ end
 _numeric_on_grid(by_time, grid, column::Symbol) =
     Float64[haskey(by_time, t) && !ismissing(by_time[t][column]) ? Float64(by_time[t][column]) : 0.0 for t in grid]
 
+# A numeric column on `grid`: the value at each stamp of `by_time`, `NaN` where it is missing or absent.
+_nan_on_grid(by_time, grid, column::Symbol) =
+    Float64[haskey(by_time, t) && !ismissing(by_time[t][column]) ? Float64(by_time[t][column]) : NaN for t in grid]
+
 # An offer curve on `grid`: the curve at each stamp of `by_time`, or a zero-width curve on the
 # prices of the earliest row where there is none.
 function _curves_on_grid(by_time, grid)
@@ -107,7 +111,8 @@ end
 Writes the energy bid of `device` in `direction` from `rows` (its `BIDPEROFFER_D` and
 `BIDDAYOFFER_D` rows of that direction, from [`read_offers`](@ref)) as one series per field, named by
 [`bid_series_name`](@ref), on `grid`, and records it in the device's [`NEMOfferCost`](@ref). A NULL
-field over every row is `nothing`; otherwise NULL intervals and intervals without a row hold zero.
+field over every row is `nothing`; otherwise NULL intervals and intervals without a row hold zero,
+except `fixed_load`, which holds `NaN` so that an unpublished loading is distinct from one of zero.
 Throws `ArgumentError` for a `MAXAVAIL` that is missing or not finite.
 """
 function _write_energy_bid!(sys, device, direction::BidDirection, rows, grid, start_date, resolution)
@@ -140,7 +145,7 @@ function _write_energy_bid!(sys, device, direction::BidDirection, rows, grid, st
         max_avail = series(:max_avail, stamp_values(:MAXAVAIL)),
         roc_up = series(:roc_up, stamp_values(:ROCUP)),
         roc_down = series(:roc_down, stamp_values(:ROCDOWN)),
-        fixed_load = series(:fixed_load, _all_null(rows, :FIXEDLOAD; zero_is_null = true) ? nothing : stamp_values(:FIXEDLOAD)),
+        fixed_load = series(:fixed_load, _all_null(rows, :FIXEDLOAD; zero_is_null = true) ? nothing : _nan_on_grid(by_time, grid, :FIXEDLOAD)),
         minimum_load = series(:minimum_load, _all_null(rows, :MINIMUMLOAD) ? nothing : stamp_values(:MINIMUMLOAD)),
         fast_start_profile = series(:fast_start_profile, fast_start),
         daily_energy_constraint = series(:daily_energy_constraint, _all_null(rows, :DAILYENERGYCONSTRAINT) ? nothing : stamp_values(:DAILYENERGYCONSTRAINT)),
