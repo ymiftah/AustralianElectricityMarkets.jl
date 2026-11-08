@@ -73,7 +73,7 @@ end
 end
 
 @testset "storage raw availability is complete and finite" begin
-    for key in ("energy_max_avail", "energy_max_avail_decremental")
+    for key in ("energy_availability", "energy_availability_decremental")
         sys = storage_availability_system()
         battery = PSY.get_component(NEMStorage, sys, TOY_BATTERY)
         PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, battery, key)

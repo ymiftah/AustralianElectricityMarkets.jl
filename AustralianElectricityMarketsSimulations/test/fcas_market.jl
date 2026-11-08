@@ -95,7 +95,7 @@ via [`add_toy_storage_initial_mw!`](@ref).
 """
 function _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
     base_power = PSY.get_base_power(sys)
-    for (name, mw) in (("energy_max_avail", PSY.get_output_active_power_limits(bat).max), ("energy_max_avail_decremental", PSY.get_input_active_power_limits(bat).max))
+    for (name, mw) in (("energy_availability", PSY.get_output_active_power_limits(bat).max), ("energy_availability_decremental", PSY.get_input_active_power_limits(bat).max))
         PSY.add_time_series!(sys, bat, AustralianElectricityMarkets.single_series(name, stamps[1], fill(mw / base_power, length(stamps)), TOY_RESOLUTION))
     end
     rating = PSY.get_output_active_power_limits(bat).max
@@ -518,7 +518,7 @@ function storage_fcas_toy_model(
     isnothing(scaling) || add_toy_fcas_scaling!(sys, bat, stamps[1], length(stamps), bid_type; scaling...)
     rating = get_output_active_power_limits(bat).max
     availability = isnothing(energy_max_avail_mw) ? (rating, rating) : energy_max_avail_mw
-    for (name, mw) in zip(("energy_max_avail", "energy_max_avail_decremental"), availability)
+    for (name, mw) in zip(("energy_availability", "energy_availability_decremental"), availability)
         PSY.remove_time_series!(sys, PSY.SingleTimeSeries, bat, name)
         PSY.add_time_series!(
             sys, bat,
@@ -2072,7 +2072,7 @@ function make_non_scheduled_fcas_load!(sys, stamps)
     PSY.set_operation_cost!(load, NEMOfferCost())
     PSY.get_ext(load)["non_scheduled"] = true
     set_registration!(load, _toy_registration())
-    for name in ("max_active_power", "energy_max_avail", "ramp_up_rate", "ramp_down_rate")
+    for name in ("max_active_power", "energy_availability", "ramp_up_rate", "ramp_down_rate")
         PSY.add_time_series!(
             sys, load,
             PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, zeros(length(stamps)))),

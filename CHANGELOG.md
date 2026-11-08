@@ -421,6 +421,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `set_effective_offers!` writes every state-independent dispatch input once and records each
+  derived series key on the device's `NEMDispatchInputs`: the energy availability
+  `energy_availability[_decremental]` (the bid `MAXAVAIL` per unit of the system base, limited by
+  the UIGF), the effective ramp limits (the lesser of the bid `ROCUP`/`ROCDOWN` and the telemetered
+  rates), the effective regulation availability behind the AGC ramp rates, and the loss-demand
+  coefficients. The dispatch formulation reads those series through the keys, so its maximum
+  availability parameter is the bid `MAXAVAIL` and its UIGF parameter the telemetered UIGF, per unit
+  of the system base. `set_loss_demand_coefficients!` moved from AEM to AEMSim and
+  `set_effective_offers!` calls it; the derivation is exported as the pure functions
+  `referred_offer_curves`, `effective_energy_availability`, `effective_ramp_limit`,
+  `effective_ramp_limits`, `effective_regulation_enablement`, `effective_regulation_max_avail`,
+  `fcas_trapezium_values`, `tie_break_scale` and `loss_demand_coefficient`.
+
 - `nem_system(db, NEMDEConfiguration(); date_range)` validates its built inputs before returning: the typed records of every dispatch device, the constraint build report (missing intervals, defaulted weights, skipped constraints and dropped terms) and each MNSP's two directional links with a bid and observed state. It throws an `ArgumentError` at the first failing part (devices, then the constraint build report, then MNSPs), naming every offender within that part and how to supply it.
 
 - `set_fcas_effective_offers!` and `set_tie_break_scales!` moved from AEM to AEMSim as `set_effective_offers!`, which `prepare_replay!` calls first. `nem_system` no longer attaches the effective offers, and the FCAS offer and dispatch read accessors (`get_fcas_offer`, `get_energy_offer`, `get_initial_mw`, `get_energy_availability`, `get_storage_energy_max_avail`, `get_scaled_fcas_trapezium`, `get_fcas_agc_status`, `get_fcas_agc_ramp_capability`) moved with them.
@@ -785,6 +798,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DISPATCHREGIONSUM` caches `SS_SOLAR_UIGF` and `SS_WIND_UIGF`, which `set_regional_availability!` reads for the regional capacity factor in place of `SS_SOLAR_AVAILABILITY` and `SS_WIND_AVAILABILITY`. Cached months need `populate(db, :DISPATCHREGIONSUM, start, stop; force_new = true)` to gain the columns.
 
 ### Removed
+
+- The `energy_max_avail[_decremental]` time series: the derived energy availability is
+  `energy_availability[_decremental]`, which the dispatch formulation reads through the device's
+  `NEMDispatchInputs`.
 
 - `check_replay_inputs`: `nem_system` validates the same inputs while it builds the system, from the built structures rather than the cache.
 

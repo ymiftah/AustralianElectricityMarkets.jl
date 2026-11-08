@@ -9,7 +9,7 @@ function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, we
         mutate! = function (sys, stamps)
             cheap = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
             PSY.set_active_power_limits!(cheap, (min = 0.0, max = rating))
-            # The bid's MAXAVAIL (MW) is what the derivation turns into energy_max_avail.
+            # The bid's MAXAVAIL (MW) is what the derivation turns into energy_availability.
             AustralianElectricityMarkets.replace_single_series!(
                 sys, cheap,
                 AustralianElectricityMarkets.single_series(

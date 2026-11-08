@@ -50,15 +50,15 @@ end
 # The derived energy-limit series names a device's dispatch reads, its UIGF key (`nothing` unless
 # semi-scheduled), and the setter that attaches them.
 function _energy_limit_series(d::PSY.Storage)
-    return energy_max_avail_series_name.((OfferSide.GEN, OfferSide.LOAD)), nothing, "call set_market_bids! for both directions"
+    return energy_availability_series_name.((OfferSide.GEN, OfferSide.LOAD)), nothing, "call set_effective_offers!"
 end
 
 function _energy_limit_series(d)
-    max_avail = energy_max_avail_series_name(OfferSide.GEN)
+    max_avail = energy_availability_series_name(OfferSide.GEN)
     if !is_semi_scheduled(d)
-        return (max_avail,), nothing, "call set_unit_conditions!"
+        return (max_avail,), nothing, "call set_effective_offers!"
     end
     uigf = AustralianElectricityMarkets.get_telemetry(d).uigf
     isnothing(uigf) && throw(ArgumentError("$(PSY.get_name(d)): semi-scheduled but has no UIGF; call set_unit_conditions!"))
-    return (max_avail,), uigf, "call set_unit_conditions!"
+    return (max_avail,), uigf, "call set_effective_offers!"
 end

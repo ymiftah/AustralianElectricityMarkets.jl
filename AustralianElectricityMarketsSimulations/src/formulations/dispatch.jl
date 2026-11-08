@@ -34,9 +34,11 @@ PSI.objective_function_multiplier(::PSI.ActivePowerVariable, ::AbstractNEMDispat
 """
     PSI.get_default_time_series_names(::Type{<:PSY.StaticInjection}, ::Type{<:AbstractNEMDispatch})
 
-Registers the time series [`AbstractNEMDispatch`](@ref) reads as parameters. Both modes register
-`"observed_initial_mw"`: `PowerSimulations.jl` copies the parent model's names onto the
-initial-conditions sub-model, which runs [`NEMReplayDispatch`](@ref) and reads it.
+Registers the time series [`AbstractNEMDispatch`](@ref) reads as parameters. The derived series are
+read through the device's [`NEMDispatchInputs`](@ref); the observed `"observed_initial_mw"` and the
+telemetered UIGF keep a name constant, because `PowerSimulations.jl` registers one name per device
+type. Both modes register `"observed_initial_mw"`: `PowerSimulations.jl` copies the parent model's
+names onto the initial-conditions sub-model, which runs [`NEMReplayDispatch`](@ref) and reads it.
 
 # Returns
 A `Dict` mapping each `PowerSimulations.TimeSeriesParameter` type to its series name.
@@ -49,7 +51,7 @@ function PSI.get_default_time_series_names(
         RampUpRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
         RampDownRateTimeSeriesParameter => NEM_SERIES.ramp_down_rate,
         InitialPowerTimeSeriesParameter => NEM_OBSERVED_SERIES.initial_mw,
-        EnergyMaxAvailTimeSeriesParameter => energy_max_avail_series_name(OfferSide.GEN),
+        EnergyMaxAvailTimeSeriesParameter => energy_availability_series_name(OfferSide.GEN),
         EnergyUIGFTimeSeriesParameter => NEM_TELEMETRY_SERIES.uigf,
         _FIXED_LOAD_SERIES...,
     )
@@ -75,8 +77,10 @@ end
 """
     _has_nem_dispatch_limits(device)
 
-Whether `device` carries every time series [`NEMReplayDispatch`](@ref) reads as a parameter, including raw
-directional availability for storage and UIGF only for semi-scheduled units.
+Whether `device` carries every derived input [`NEMReplayDispatch`](@ref) reads as a parameter, as a
+[`NEMDispatchInputs`](@ref) attribute, plus the observed initial MW of every device and the UIGF of a
+semi-scheduled one. Each input's series name must be the one the parameter registers, because
+`PowerSimulations.jl` takes one name per device type.
 
 # Arguments
 - `device`: the `PowerSystems.Component` to inspect.
@@ -93,7 +97,16 @@ function _has_nem_dispatch_limits(device)
     (isnothing(observed) || isnothing(telemetry)) && return false
     observed.initial_mw isa IS.TimeSeriesKey || return false
     _require_key_name(device, observed.initial_mw, NEM_OBSERVED_SERIES.initial_mw)
+    attributes = PSY.get_supplemental_attributes(NEMDispatchInputs, device)
+    length(attributes) == 1 || return false
+    inputs = only(attributes)
     names = PSI.get_default_time_series_names(typeof(device), NEMReplayDispatch)
+    for (param, field) in _DERIVED_INPUT_FIELDS
+        haskey(names, param) || continue
+        key = getfield(inputs, field)
+        key isa IS.TimeSeriesKey || return false
+        _require_key_name(device, key, names[param])
+    end
     uigf_required = haskey(names, EnergyUIGFTimeSeriesParameter) && is_semi_scheduled(device)
     if uigf_required
         telemetry.uigf isa IS.TimeSeriesKey || return false
@@ -106,6 +119,62 @@ function _has_nem_dispatch_limits(device)
     )
     return all(PSY.has_time_series(device, PSY.SingleTimeSeries, name) for name in required)
 end
+
+
+# The parameter type to the [`NEMDispatchInputs`](@ref) field holding its series key.
+const _DERIVED_INPUT_FIELDS = (
+    RampUpRateTimeSeriesParameter => :ramp_up,
+    RampDownRateTimeSeriesParameter => :ramp_down,
+    EnergyMaxAvailTimeSeriesParameter => :energy_availability,
+    PSI.ActivePowerOutTimeSeriesParameter => :energy_availability,
+    PSI.ActivePowerInTimeSeriesParameter => :energy_availability_decremental,
+)
+
+
+"""
+    _dispatch_inputs_attribute(device) -> NEMDispatchInputs
+
+`device`'s [`NEMDispatchInputs`](@ref), attached by [`set_effective_offers!`](@ref). Throws an
+`ArgumentError` naming `device` when it carries none.
+"""
+function _dispatch_inputs_attribute(device)
+    attributes = PSY.get_supplemental_attributes(NEMDispatchInputs, device)
+    isempty(attributes) && throw(
+        ArgumentError(
+            "\"$(PSY.get_name(device))\" carries no NEMDispatchInputs; call set_effective_offers! on the System.",
+        ),
+    )
+    return only(attributes)
+end
+
+
+# The name of the derived series behind `field` of `device`'s inputs. Throws an `ArgumentError` naming
+# `device` when the input is absent.
+function _inputs_series_name(device, field::Symbol)
+    key = getfield(_dispatch_inputs_attribute(device), field)
+    isnothing(key) && throw(
+        ArgumentError("\"$(PSY.get_name(device))\" has no derived $(field) series; call set_effective_offers! on the System."),
+    )
+    return PSY.get_name(key)
+end
+
+
+# The formulation reads each derived series through the device's derived-input keys. The name is taken
+# from the first device of the type, as `PowerSimulations.jl` registers one name per device type.
+PSI._get_time_series_name(::RampUpRateTimeSeriesParameter, device::PSY.Component, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
+    _inputs_series_name(device, :ramp_up)
+
+PSI._get_time_series_name(::RampDownRateTimeSeriesParameter, device::PSY.Component, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
+    _inputs_series_name(device, :ramp_down)
+
+PSI._get_time_series_name(::EnergyMaxAvailTimeSeriesParameter, device::PSY.Component, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
+    _inputs_series_name(device, :energy_availability)
+
+PSI._get_time_series_name(::PSI.ActivePowerOutTimeSeriesParameter, device::PSY.Storage, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
+    _inputs_series_name(device, :energy_availability)
+
+PSI._get_time_series_name(::PSI.ActivePowerInTimeSeriesParameter, device::PSY.Storage, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
+    _inputs_series_name(device, :energy_availability_decremental)
 
 # Throws an `ArgumentError` naming `device` unless the series behind `key` is named `expected`.
 function _require_key_name(device, key::IS.TimeSeriesKey, expected::AbstractString)

@@ -283,13 +283,14 @@ function nem_toy_system(
     for T in (NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMStorage, NEMLoad)
         foreach(device -> _key_toy_telemetry_limits!(sys, stamps, device), PSY.get_components(T, sys))
     end
-    isnothing(interchange) || set_loss_demand_coefficients!(sys)
     if tie_break_scales
         set_effective_offers!(sys)
     else
         AEMS._set_static_offers!(sys)
         AEMS._set_mnsp_fixed_loads!(sys)
         AEMS._set_fcas_effective_offers!(sys)
+        isnothing(interchange) || set_loss_demand_coefficients!(sys)
+        AEMS._attach_dispatch_inputs!(sys)
     end
 
     # One window per `horizon`.

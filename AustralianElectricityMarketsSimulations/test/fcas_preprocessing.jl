@@ -4,7 +4,6 @@
 function fcas_replay_system(db, date_range)
     sys, _ = constrained_system(db; date_range = date_range)
     attach_demand!(sys, db, date_range; resolution = DISPATCH_INTERVAL)
-    set_loss_demand_coefficients!(sys)
     set_market_bids!(sys, db, date_range; resolution = DISPATCH_INTERVAL)
     attach_dispatch_limits!(sys, db, date_range)
     set_effective_offers!(sys)

@@ -21,9 +21,9 @@
 
         @test PowerSystems.get_x_coords(first(values_of(er01, "energy_offer"))) == bands
         @test PowerSystems.get_y_coords(first(values_of(er01, "energy_offer"))) == prices_ascending
-        @test first(values_of(er01, "energy_max_avail")) ≈ 1.01
+        @test first(values_of(er01, "energy_availability")) ≈ 1.01
         @test PowerSystems.get_y_coords(first(values_of(bw01, "energy_offer_decremental"))) == prices_descending
-        @test first(values_of(bw01, "energy_max_avail_decremental")) ≈ 1.01
+        @test first(values_of(bw01, "energy_availability_decremental")) ≈ 1.01
         @test PowerSystems.get_y_coords(first(values_of(bw01, "fcas_offer_RAISEREG"))) == prices_ascending
         @test isequal(collect(first(values_of(bw01, "fcas_trapezium_RAISEREG"))), [0.2, 0.3, 0.9, 1.0, 0.21, NaN, NaN])
         @test PowerSystems.get_y_coords(first(values_of(asload1, "fcas_offer_RAISE6SEC_decremental"))) == prices_descending
@@ -488,7 +488,7 @@ end
             end
             rows = sort(subset(truth, :DUID => ByRow(==("BW03"))), :SETTLEMENTDATE)
             # The mock's AVAILABILITY is synthetic; the real-data gate checks the derivation against it.
-            max_avail = get_time_series_values(SingleTimeSeries, renewable, energy_max_avail_series_name(renewable, OfferSide.GEN); start_time = start_date, len = horizon)
+            max_avail = get_time_series_values(SingleTimeSeries, renewable, energy_availability_series_name(renewable, OfferSide.GEN); start_time = start_date, len = horizon)
             uigf = get_time_series_values(SingleTimeSeries, renewable, get_name(get_telemetry(renewable).uigf); start_time = start_date, len = horizon)
             @test isapprox(get_energy_availability(renewable, start_date, horizon), min.(max_avail .* get_base_power(sys), uigf); atol = 1.0e-8)
         end
@@ -590,6 +590,30 @@ end
         @test isapprox(got, expected; nans = true)
     end
 
+    @testset "a device bidding regulation on both sides has the summed bid max availability" begin
+        sys = deepcopy(sys_base)
+        set_market_bids!(sys, db, date_range; resolution = resolution)
+        set_unit_conditions!(sys, db, date_range)
+        set_effective_offers!(sys)
+        battery = get_component(NEMStorage, sys, "BW01")
+        telemetry = get_telemetry(battery)
+        up = AEMSim._bid_series(battery, telemetry.ramp_up_limit, :ramp_up_limit)
+        n = length(up.values)
+        # A telemetered availability above the combined bid leaves the bid sum binding.
+        replace_single_series!(
+            sys, battery,
+            single_series(NEM_TELEMETRY_SERIES.raise_reg_max_avail, first(up.timestamps), fill(1.0e6, n), up.resolution),
+        )
+        both = AEMSim._regulation_availability(battery, BidType.RAISEREG, telemetry.raise_reg_max_avail, up, base_power)
+        cost = AustralianElectricityMarkets._nem_offer_cost(battery)
+        @test count(b -> b.service == BidType.RAISEREG, get_fcas_bids(cost)) == 2
+        filter!(b -> !(b.service == BidType.RAISEREG && get_direction(b) == BidDirection.LOAD), get_fcas_bids(cost))
+        one = AEMSim._regulation_availability(battery, BidType.RAISEREG, telemetry.raise_reg_max_avail, up, base_power)
+        # Both sides bid the same MAXAVAIL in the fixture, so the combined availability is twice one side's.
+        @test all(both .> 0)
+        @test both ≈ 2 .* one
+    end
+
     @testset "the ramp-down floor above AVAILABILITY raises max_active_power to the floor" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
@@ -600,7 +624,7 @@ end
         device = get_component(NEMThermalGen, sys, "ER01")
         full_grid = collect(date_range)[1:(end - 1)]
         n = length(full_grid)
-        replace_single_series!(sys, device, single_series(energy_max_avail_series_name(device, OfferSide.GEN), full_grid, zeros(n)))
+        replace_single_series!(sys, device, single_series(energy_availability_series_name(device, OfferSide.GEN), full_grid, zeros(n)))
         replace_single_series!(sys, device, single_series(NEM_OBSERVED_SERIES.initial_mw, full_grid, fill(100.0, n)))
         replace_single_series!(sys, device, single_series(NEM_TELEMETRY_SERIES.ramp_down_limit, full_grid, fill(60.0, n)))
         AEMSim._set_dispatch_limits!(sys)
@@ -679,7 +703,7 @@ end
         sys = built()
         device = get_component(NEMThermalGen, sys, "ER01")
         with_units_base(sys, "NATURAL_UNITS") do
-            max_avail = get_time_series_values(SingleTimeSeries, device, energy_max_avail_series_name(device, OfferSide.GEN); start_time = start_date, len = horizon)
+            max_avail = get_time_series_values(SingleTimeSeries, device, energy_availability_series_name(device, OfferSide.GEN); start_time = start_date, len = horizon)
             @test get_energy_availability(device, start_date, horizon) ≈ max_avail .* get_base_power(sys) atol = 1.0e-9
         end
     end
@@ -707,5 +731,124 @@ end
         @test err isa ArgumentError
         @test occursin("ER01", sprint(showerror, err))
         @test occursin("other_initial", sprint(showerror, err))
+    end
+end
+
+
+@testset "State-independent derivation: pure functions and the derived-input keys" begin
+    AEMSim = AustralianElectricityMarketsSimulations
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    sys_base, _ = nem_network(db)
+    resolution = Minute(5)
+    start_date = DateTime(2025, 1, 1, 0, 0)
+    date_range = start_date:resolution:(start_date + Hour(2))
+    base_power = get_base_power(sys_base)
+
+    @testset "referred_offer_curves divides the band prices by the loss factor and rounds to cents" begin
+        curve = PiecewiseStepData([0.0, 10.0, 20.0], [10.0, 20.0])
+        referred = only(referred_offer_curves([curve], 0.9))
+        @test get_x_coords(referred) == [0.0, 10.0, 20.0]
+        @test get_y_coords(referred) == [11.11, 22.22]
+        @test get_y_coords(only(referred_offer_curves([curve], 1.0))) == [10.0, 20.0]
+    end
+
+    @testset "effective_ramp_limit takes the lesser of the bid and telemetered rates" begin
+        # ROCUP is MW/min: 3 MW/min is 180 MW/h.
+        @test effective_ramp_limit(3.0, 200.0) == 180.0
+        @test effective_ramp_limit(3.0, 120.0) == 120.0
+        @test effective_ramp_limit(NaN, 120.0) == 120.0
+        @test isnan(effective_ramp_limit(3.0, NaN))
+        up, down = effective_ramp_limits([3.0, NaN], [1.0, 2.0], [200.0, 120.0], [30.0, NaN])
+        @test up == [180.0, 120.0]
+        @test down[1] == 30.0
+        @test isnan(down[2])
+    end
+
+    @testset "effective_energy_availability limits MAXAVAIL by UIGF and zeroes the excluded intervals" begin
+        @test effective_energy_availability([10.0, 10.0], [8.0, 12.0], [60.0, 60.0], false) == [8.0, 10.0]
+        @test effective_energy_availability([10.0, 10.0], nothing, [60.0, 60.0], false) == [10.0, 10.0]
+        @test effective_energy_availability([10.0, 10.0], nothing, [60.0, NaN], false) == [10.0, 0.0]
+        @test effective_energy_availability([10.0, 10.0], [8.0, 8.0], [60.0, 60.0], true) == [0.0, 0.0]
+    end
+
+    @testset "effective_regulation_enablement takes the more restrictive of bid and AGC limits" begin
+        @test effective_regulation_enablement(20.0, 100.0, 30.0, 90.0) == (30.0, 90.0)
+        @test effective_regulation_enablement(20.0, 100.0, 10.0, 120.0) == (20.0, 100.0)
+        @test effective_regulation_enablement(20.0, 100.0, nothing, nothing) == (20.0, 100.0)
+        @test effective_regulation_enablement(20.0, 100.0, nothing, 0.0) == (20.0, 0.0)
+    end
+
+    @testset "effective_regulation_max_avail takes the lesser of the bid and telemetered values" begin
+        @test effective_regulation_max_avail(50.0, 30.0) == 30.0
+        @test effective_regulation_max_avail(20.0, 30.0) == 20.0
+        @test effective_regulation_max_avail(nothing, 30.0) == 30.0
+        @test isnan(effective_regulation_max_avail(50.0, NaN))
+    end
+
+    @testset "fcas_trapezium_values appends MAXAVAIL and the unpublished ramp rates" begin
+        @test isequal(
+            fcas_trapezium_values((20.0, 30.0, 90.0, 100.0), 50.0, 100.0),
+            (0.2, 0.3, 0.9, 1.0, 0.5, NaN, NaN),
+        )
+    end
+
+    @testset "tie_break_scale is the band width over the widest band of its group" begin
+        @test tie_break_scale(10.0, 40.0) == 0.25
+        @test tie_break_scale(40.0, 40.0) == 1.0
+        @test tie_break_scale(0.0, 0.0) == 0.0
+    end
+
+    @testset "loss_demand_coefficient sums the named regions' demand" begin
+        model = InterconnectorLossModel(;
+            interconnector = "IC1", from_region = "NSW1", to_region = "VIC1", from_region_loss_share = 0.5,
+            loss_constant = 0.0, loss_flow_coefficient = 0.0,
+            demand_coefficients = Dict("NSW1" => 0.5, "VIC1" => 1.5), breakpoints = [-100.0, 0.0, 100.0],
+        )
+        @test loss_demand_coefficient(model, Dict("NSW1" => 100.0, "VIC1" => 200.0)) == 350.0
+        @test loss_demand_coefficient(model, Dict("NSW1" => 100.0)) == 50.0
+    end
+
+    @testset "the derived series and their keys, and no energy_max_avail series" begin
+        sys = deepcopy(sys_base)
+        set_market_bids!(sys, db, date_range; resolution = resolution)
+        set_unit_conditions!(sys, db, date_range)
+        set_effective_offers!(sys)
+        names(device) = [get_name(k) for k in get_time_series_keys(device)]
+        for device in get_components(StaticInjection, sys)
+            @test !any(startswith("energy_max_avail"), names(device))
+        end
+
+        device = get_component(NEMThermalGen, sys, "ER01")
+        inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, device))
+        @test get_name(inputs.energy_availability) == "energy_availability"
+        @test get_name(inputs.energy_offer) == "energy_offer"
+        @test get_name(inputs.ramp_up) == NEM_SERIES.ramp_up_rate
+        @test get_name(inputs.ramp_down) == NEM_SERIES.ramp_down_rate
+        @test isnothing(inputs.energy_availability_decremental)
+        @test get_name(inputs.fcas[1].trapezium) == fcas_series_name("fcas_trapezium", inputs.fcas[1].service, inputs.fcas[1].side)
+
+        # The availability the formulation reads is the bid MAXAVAIL per unit of the base.
+        bid = only(AustralianElectricityMarkets.get_energy_bids(get_operation_cost(device)))
+        max_avail = get_time_series_values(SingleTimeSeries, device, get_name(bid.max_avail); ignore_scaling_factors = true)
+        @test get_time_series_values(SingleTimeSeries, device, "energy_availability"; ignore_scaling_factors = true) ≈
+            max_avail ./ base_power
+
+        battery = get_component(NEMStorage, sys, "BW01")
+        battery_inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, battery))
+        @test get_name(battery_inputs.energy_availability_decremental) == "energy_availability_decremental"
+    end
+
+    @testset "the UIGF parameter reads the telemetry UIGF per unit of the base" begin
+        sys = deepcopy(sys_base)
+        set_market_bids!(sys, db, date_range; resolution = resolution)
+        set_unit_conditions!(sys, db, date_range)
+        set_effective_offers!(sys)
+        semi = first(d for d in get_components(NEMRenewableGen, sys) if is_semi_scheduled(d))
+        inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, semi))
+        @test get_name(inputs.uigf) == NEM_TELEMETRY_SERIES.uigf
+        raw = get_time_series_values(SingleTimeSeries, semi, NEM_TELEMETRY_SERIES.uigf; ignore_scaling_factors = true)
+        @test PSI.get_multiplier_value(EnergyUIGFTimeSeriesParameter(), semi, NEMReplayDispatch()) ≈ 1 / base_power
+        @test PSI.get_multiplier_value(EnergyMaxAvailTimeSeriesParameter(), semi, NEMReplayDispatch()) == 1.0
+        @test length(raw) > 0
     end
 end

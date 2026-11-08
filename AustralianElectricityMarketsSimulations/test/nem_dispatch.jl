@@ -211,7 +211,7 @@ end
 end
 
 @testset "energy-limit preflight validates raw inputs before a build" begin
-    sys = nem_dispatch_system(; mutate! = s -> flatten_series!(s, "ER02", "energy_max_avail", -1.0))
+    sys = nem_dispatch_system(; mutate! = s -> flatten_series!(s, "ER02", "energy_availability", -1.0))
     template = ProblemTemplate(NetworkModel(AreaBalancePowerModel; use_slacks = true))
     set_nem_dispatch_models!(template, sys)
     @test_throws ArgumentError check_dispatch_envelope(template, sys, NEM_DISPATCH_START, 6)

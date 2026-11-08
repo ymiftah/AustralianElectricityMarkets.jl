@@ -79,7 +79,6 @@ function AustralianElectricityMarkets.nem_system(
 
     # 5. Time series
     set_demand!(sys, demand, date_range; resolution)
-    set_loss_demand_coefficients!(sys)
     set_mnsp_offers!(sys, db, date_range; intervention)
     interval_flow_limits && set_interconnector_flow_limits!(sys, db, date_range; intervention)
 

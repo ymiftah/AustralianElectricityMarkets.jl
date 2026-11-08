@@ -111,23 +111,23 @@ end
     get_energy_availability(component, initial_time, horizon) -> Union{Nothing, Vector{Float64}}
 
 Energy availability of `component` over `horizon` steps from `initial_time`, in `component`'s `System`'s
-current display units: the energy `MAXAVAIL` of [`set_effective_offers!`](@ref), limited by the UIGF of a
-semi-scheduled unit, and zero where the unit is a non-scheduled load or has no DISPATCHLOAD row. `nothing`
-if `component` has no energy `MAXAVAIL` series.
+current display units: the energy bid `MAXAVAIL` of [`set_effective_offers!`](@ref), limited by the UIGF of a
+semi-scheduled unit ([`effective_energy_availability`](@ref)), and zero where the unit is a non-scheduled
+load or has no DISPATCHLOAD row. `nothing` if `component` has no energy availability series.
 
 # Returns
 `Union{Nothing, Vector{Float64}}`.
 """
 function get_energy_availability(component, initial_time, horizon::Integer)
     component isa PSY.Storage && return nothing
-    name = energy_max_avail_series_name(component, OfferSide.GEN)
+    name = energy_availability_series_name(component, OfferSide.GEN)
     has_time_series(component, SingleTimeSeries, name) || return nothing
     telemetry = AustralianElectricityMarkets.get_telemetry(component)
     max_avail = get_time_series_values(SingleTimeSeries, component, name; start_time = initial_time, len = horizon)
     ramp_up = _raw_window(component, telemetry.ramp_up_limit, initial_time, horizon)
     uigf = isnothing(telemetry.uigf) ? nothing : _unit_values(component, telemetry.uigf, initial_time, horizon)
     pinned = AustralianElectricityMarkets.is_non_scheduled_load(component)
-    availability = _derived_availability(max_avail, uigf, ramp_up, pinned)
+    availability = effective_energy_availability(max_avail, uigf, ramp_up, pinned)
     return availability .* _fcas_units_multiplier(component)
 end
 
@@ -174,16 +174,15 @@ end
 """
     get_storage_energy_max_avail(component, initial_time, horizon) -> Union{Nothing, NamedTuple}
 
-`component`'s energy bid `MAXAVAIL` for each direction, as attached by
-[`set_market_bids!`](@ref), `horizon` steps from `initial_time`, in `component`'s `System`'s
-current display units.
+`component`'s energy bid `MAXAVAIL` for each direction, as [`set_effective_offers!`](@ref) derives it,
+`horizon` steps from `initial_time`, in `component`'s `System`'s current display units.
 
 # Returns
 `(gen = Vector{Float64}, load = Vector{Float64})`, or `nothing` unless both directions'
 series are attached.
 """
 function get_storage_energy_max_avail(component, initial_time, horizon::Integer)
-    gen, load = (_read_dispatch_limit_series(component, energy_max_avail_series_name(side), initial_time, horizon) for side in (OfferSide.GEN, OfferSide.LOAD))
+    gen, load = (_read_dispatch_limit_series(component, energy_availability_series_name(side), initial_time, horizon) for side in (OfferSide.GEN, OfferSide.LOAD))
     (isnothing(gen) || isnothing(load)) && return nothing
     return (; gen, load)
 end
@@ -238,16 +237,23 @@ function get_scaled_fcas_trapezium(
         get_fcas_agc_ramp_capability(component, _fcas_ramp_rate_service(component, service), initial_time, horizon; resolution = resolution) : nothing
     input_at(series, i) = (isnothing(series) || isnan(series[i])) ? nothing : series[i]
     uigf = _unit_window(component, telemetry.uigf, initial_time, horizon)
+    # The enablement the trapezium is scaled to is the intersection of its own and the AGC limits.
+    enablement_at(trap, i) = isnothing(enablement) ? (nothing, nothing) : effective_regulation_enablement(
+            get_enablement_min(trap), get_enablement_max(trap),
+            input_at(agc_enablement_min, i), input_at(agc_enablement_max, i),
+        )
 
     return [
-        scale_fcas_trapezium(
-            trapeziums[i];
-            agc_enablement_min = input_at(agc_enablement_min, i),
-            agc_enablement_max = input_at(agc_enablement_max, i),
-            agc_max_avail = input_at(agc_max_avail, i),
-            uigf = input_at(uigf, i),
-            is_regulation = is_regulation,
-        ) for i in eachindex(trapeziums)
+        let (enablement_min, enablement_max) = enablement_at(trapeziums[i], i)
+            scale_fcas_trapezium(
+                trapeziums[i];
+                agc_enablement_min = enablement_min,
+                agc_enablement_max = enablement_max,
+                agc_max_avail = input_at(agc_max_avail, i),
+                uigf = input_at(uigf, i),
+                is_regulation = is_regulation,
+            )
+        end for i in eachindex(trapeziums)
     ]
 end
 

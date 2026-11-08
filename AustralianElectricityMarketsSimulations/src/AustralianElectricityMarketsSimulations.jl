@@ -8,7 +8,7 @@ using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCAS_
     RegionTerm, UnitTerm, TIE_BREAK_CVP_FACTOR, TIE_BREAK_SERVICE_NAME, DISPATCH_INTERVAL,
     UNIT_RAMP_CVP_FACTOR, INTERCONNECTOR_FLOW_CVP_FACTOR, ENERGY_OFFER_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR,
     ENERGY_MAX_AVAIL_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR, FIXED_LOADING_CVP_FACTOR, MNSP_RAMP_CVP_FACTOR,
-    MNSP_OFFER_CVP_FACTOR, MNSP_AVAILABILITY_CVP_FACTOR, constraint_cvp_factor, energy_max_avail_series_name,
+    MNSP_OFFER_CVP_FACTOR, MNSP_AVAILABILITY_CVP_FACTOR, constraint_cvp_factor,
     energy_offer_series_name, offer_side, side_suffix, has_registration, is_semi_scheduled, get_registration, FCASBidDirection,
     fcas_bid_direction, fcas_series_name, fcas_service_name, fcas_offer_series_name,
     get_bid_type, get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_factor,
@@ -39,11 +39,13 @@ const PM = PSI.PM
 
 include("time_basis.jl")
 
+include("offers/derivation.jl")
 include("offers/accessors.jl")
 include("offers/initial_state.jl")
 include("offers/fcas_effective.jl")
 include("offers/tie_break.jl")
 include("offers/effective_offers.jl")
+include("offers/loss_demand.jl")
 
 include("types/constraint_formulations.jl")
 include("types/dispatch.jl")
@@ -92,6 +94,10 @@ include("results/interconnector_losses.jl")
 export set_effective_offers!, NEMEnergyOffer, get_energy_offer, NEMFCASOffer, get_fcas_offer,
     get_scaled_fcas_trapezium, get_fcas_agc_ramp_capability, get_fcas_agc_status, get_initial_mw,
     get_energy_availability, get_storage_energy_max_avail
+export energy_availability_series_name, referred_offer_curves, effective_energy_availability,
+    effective_ramp_limit, effective_ramp_limits, effective_regulation_enablement,
+    effective_regulation_max_avail, fcas_trapezium_values, tie_break_scale,
+    loss_demand_coefficient, set_loss_demand_coefficients!
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,
     fcas_upper_regulation_service, fcas_offer_sides, tie_break_series_name, tie_groups
 export StateSource, ObservedState, SimulatedState, NEMUnitState, unit_state, NEMDispatchInputs, NEMFCASInputs

@@ -25,8 +25,9 @@ PSI.get_multiplier_value(::PSI.ActivePowerInTimeSeriesParameter, ::PSY.Storage, 
     PSI.get_default_time_series_names(::Type{<:PSY.Storage}, ::Type{<:AbstractNEMDispatch})
 
 Registers the time series [`AbstractNEMDispatch`](@ref) reads as parameters for a battery: the
-ramp and initial-power series, and the raw generation and consumption energy offer availability. Both availability limits
-carry priced violations on the generation and consumption axes. Batteries register no `"max_active_power"` series.
+ramp and initial-power series, and the derived generation and consumption energy availability
+([`energy_availability_series_name`](@ref)). Both availability limits carry priced violations on the
+generation and consumption axes. Batteries register no `"max_active_power"` series.
 
 # Returns
 A `Dict` mapping each `PowerSimulations.TimeSeriesParameter` type to its series name.
@@ -39,8 +40,8 @@ function PSI.get_default_time_series_names(
         RampUpRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
         RampDownRateTimeSeriesParameter => NEM_SERIES.ramp_down_rate,
         InitialPowerTimeSeriesParameter => NEM_OBSERVED_SERIES.initial_mw,
-        PSI.ActivePowerOutTimeSeriesParameter => energy_max_avail_series_name(OfferSide.GEN),
-        PSI.ActivePowerInTimeSeriesParameter => energy_max_avail_series_name(OfferSide.LOAD),
+        PSI.ActivePowerOutTimeSeriesParameter => energy_availability_series_name(OfferSide.GEN),
+        PSI.ActivePowerInTimeSeriesParameter => energy_availability_series_name(OfferSide.LOAD),
         _FIXED_LOAD_SERIES...,
     )
 end

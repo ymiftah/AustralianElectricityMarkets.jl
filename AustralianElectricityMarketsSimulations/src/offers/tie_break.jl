@@ -162,7 +162,7 @@ function _set_tie_break_scales!(sys::PSY.System)
                 w_ref = maximum(bands[j].width for j in group)
                 for j in group
                     s = get!(() -> zeros(length(stamps)), scales, (devices[bands[j].name], bands[j].band))
-                    s[i] = w_ref > 0.0 ? bands[j].width / w_ref : 0.0
+                    s[i] = tie_break_scale(bands[j].width, w_ref)
                 end
             end
         end
