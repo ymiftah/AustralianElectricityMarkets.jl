@@ -87,7 +87,10 @@ update reads the initial MW through the device's state source, `_has_nem_dispatc
 registered name; the UIGF and derived-input names are still checked. A mis-keyed initial MW series
 is therefore no longer a build-time error, and the per-step update is the only reader that decides
 which series the value comes from. Task 11 removes the precomputed series; the build must then read
-the state source for the simulation's first solve.
+the state source for the simulation's first solve. Pre-flight now requires the keyed state series to
+exist and the registered `"observed_initial_mw"` series to stay attached. The key's resolution and
+alignment against the dispatch interval are not yet validated, and become the only remaining input
+check once the build reads the state source.
 
 ## Glue required by the stock objective-coefficient route
 
@@ -146,8 +149,8 @@ cannot be built at all: `EnergyBandPriceParameter` (the energy offer price) rais
 
 For a measurement, the energy and FCAS offer series were removed from the same two-unit toy, so the
 offer-removed rows are a modified toy and only the persistent-with-offers row runs the real one.
-The cells are warm timings (the model is built and solved once before the timed steps), one run per
-cell, step wall time including the HiGHS solve, single thread:
+The cells are warm timings (the model is built and solved once before the timed steps), one or two
+runs per cell, every timing shown, step wall time including the HiGHS solve, single thread:
 
 | Route | Variables | Step 1 | Step 2 |
 | --- | --- | --- | --- |

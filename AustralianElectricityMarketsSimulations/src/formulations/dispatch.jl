@@ -83,8 +83,10 @@ end
 Whether `device` carries every derived input [`NEMReplayDispatch`](@ref) reads as a parameter, as a
 [`NEMDispatchInputs`](@ref) attribute, plus the observed initial MW of every device and the UIGF of a
 semi-scheduled one. The observed initial MW may key any series name, because the per-step update
-reads it through the device's state source; every other input's series name must be the one the
-parameter registers, because `PowerSimulations.jl` takes one name per device type.
+reads it through the device's state source, but the keyed series must exist and the registered
+`"observed_initial_mw"` series must stay attached, because it supplies the simulation's first
+solve; every other input's series name must be the one the parameter registers, because
+`PowerSimulations.jl` takes one name per device type.
 
 # Arguments
 - `device`: the `PowerSystems.Component` to inspect.
@@ -100,6 +102,11 @@ function _has_nem_dispatch_limits(device)
     observed, telemetry = device.observed_state, device.telemetry
     (isnothing(observed) || isnothing(telemetry)) && return false
     observed.initial_mw isa IS.TimeSeriesKey || return false
+    PSY.has_time_series(
+        device,
+        PSY.SingleTimeSeries,
+        PSY.get_name(observed.initial_mw),
+    ) || return false
     attributes = PSY.get_supplemental_attributes(NEMDispatchInputs, device)
     length(attributes) == 1 || return false
     inputs = only(attributes)
@@ -117,8 +124,7 @@ function _has_nem_dispatch_limits(device)
     end
     required = (
         name for (param, name) in names
-            if !in(param, first.(_FIXED_LOAD_SERIES)) && param !== InitialPowerTimeSeriesParameter &&
-            param !== EnergyUIGFTimeSeriesParameter
+            if !in(param, first.(_FIXED_LOAD_SERIES)) && param !== EnergyUIGFTimeSeriesParameter
     )
     return all(PSY.has_time_series(device, PSY.SingleTimeSeries, name) for name in required)
 end
