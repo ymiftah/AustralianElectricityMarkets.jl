@@ -47,22 +47,18 @@ function _require_valid_input(name::AbstractString, values, label::AbstractStrin
 end
 
 
-# The energy-limit series a device's dispatch reads, its UIGF key (`nothing` unless semi-scheduled),
-# and the setter that attaches them: the first-solve seed and the bid availability every later solve
-# recomputes it from.
+# The derived energy-limit series names a device's dispatch reads, its UIGF key (`nothing` unless
+# semi-scheduled), and the setter that attaches them.
 function _energy_limit_series(d::PSY.Storage)
-    return (
-            _ENERGY_MAX_AVAIL_SEED_SERIES, _ENERGY_MAX_AVAIL_SEED_DECREMENTAL_SERIES,
-            energy_availability_series_name(OfferSide.GEN), energy_availability_series_name(OfferSide.LOAD),
-        ), nothing, "call set_effective_offers!"
+    return energy_availability_series_name.((OfferSide.GEN, OfferSide.LOAD)), nothing, "call set_effective_offers!"
 end
 
 function _energy_limit_series(d)
     max_avail = energy_availability_series_name(OfferSide.GEN)
     if !is_semi_scheduled(d)
-        return (_ENERGY_MAX_AVAIL_SEED_SERIES, max_avail), nothing, "call set_effective_offers!"
+        return (max_avail,), nothing, "call set_effective_offers!"
     end
     uigf = AustralianElectricityMarkets.get_telemetry(d).uigf
     isnothing(uigf) && throw(ArgumentError("$(PSY.get_name(d)): semi-scheduled but has no UIGF; call set_unit_conditions!"))
-    return (_ENERGY_MAX_AVAIL_SEED_SERIES, max_avail), uigf, "call set_effective_offers!"
+    return (max_avail,), uigf, "call set_effective_offers!"
 end

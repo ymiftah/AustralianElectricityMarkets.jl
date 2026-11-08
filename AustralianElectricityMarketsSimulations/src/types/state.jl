@@ -52,13 +52,20 @@ The state of `device` at the start of the interval beginning at `t`, read from `
 - `t`: the first timestamp of the interval.
 
 # Returns
-The [`NEMUnitState`](@ref) for an [`ObservedState`](@ref). Throws an `ArgumentError` naming `device` when it
-is not a NEM device with an observed state, and for a [`SimulatedState`](@ref), which is not implemented yet.
+The [`NEMUnitState`](@ref) for an [`ObservedState`](@ref). Throws an `ArgumentError` naming `device` and `t`
+when it is not a NEM device with an observed state, when the observed dispatch mode at `t` is not finite, and
+for a [`SimulatedState`](@ref), which is not implemented yet.
 """
 function unit_state(::ObservedState, device, t::DateTime)
     observed = AustralianElectricityMarkets.get_observed_state(device)
     initial_mw = _state_value(device, observed, :initial_mw, t)
     dispatch_mode = _state_value(device, observed, :dispatch_mode, t)
+    isfinite(dispatch_mode) || throw(
+        ArgumentError(
+            "The dispatch mode of \"$(PSY.get_name(device))\" at $(t) is not finite. " *
+                "Check that the unit has a DISPATCHLOAD row at that stamp.",
+        ),
+    )
     return NEMUnitState(Float64(initial_mw), Int(dispatch_mode))
 end
 
@@ -76,8 +83,6 @@ end
 # The build's first-solve seed series, written from `_state_source()` before the forecasts are
 # attached; later solves overwrite the same parameters from the state source each step.
 const _INITIAL_MW_SEED_SERIES = "initial_mw_seed"
-const _ENERGY_MAX_AVAIL_SEED_SERIES = "energy_max_avail_seed"
-const _ENERGY_MAX_AVAIL_SEED_DECREMENTAL_SERIES = "energy_max_avail_seed_decremental"
 const _FIXED_LOAD_SEED_SERIES = "fixed_load_seed"
 const _FIXED_LOAD_INVOKED_SEED_SERIES = "fixed_load_invoked_seed"
 
@@ -133,8 +138,7 @@ IS.deserialize(::Type{Vector{NEMFCASInputs}}, data::Vector) =
 
 """
     NEMDispatchInputs(; energy_offer = nothing, energy_offer_decremental = nothing,
-        energy_availability = nothing, energy_availability_decremental = nothing,
-        energy_max_avail = nothing, energy_max_avail_decremental = nothing, uigf = nothing,
+        energy_availability = nothing, energy_availability_decremental = nothing, uigf = nothing,
         ramp_up = nothing, ramp_down = nothing, fcas = NEMFCASInputs[])
 
 The keys of a device's derived dispatch inputs, held on the device as a supplemental attribute. Each field
@@ -145,8 +149,6 @@ is a key of a series attached to the device, or `nothing` where the input is abs
 - `energy_offer_decremental`: the derived decremental energy offer series, a price-band series in MW against \$/MWh.
 - `energy_availability`: the derived energy availability series, system-base per unit.
 - `energy_availability_decremental`: the derived decremental energy availability series, system-base per unit.
-- `energy_max_avail`: the first-solve energy availability limit series of the generation side, system-base per unit.
-- `energy_max_avail_decremental`: the first-solve energy availability limit series of the load side, system-base per unit.
 - `uigf`: the unit initial generation forecast, MW.
 - `ramp_up`: the effective ramp-up limit series, MW/h.
 - `ramp_down`: the effective ramp-down limit series, MW/h.
@@ -158,8 +160,6 @@ struct NEMDispatchInputs <: PSY.SupplementalAttribute
     energy_offer_decremental::Union{Nothing, IS.TimeSeriesKey}
     energy_availability::Union{Nothing, IS.TimeSeriesKey}
     energy_availability_decremental::Union{Nothing, IS.TimeSeriesKey}
-    energy_max_avail::Union{Nothing, IS.TimeSeriesKey}
-    energy_max_avail_decremental::Union{Nothing, IS.TimeSeriesKey}
     uigf::Union{Nothing, IS.TimeSeriesKey}
     ramp_up::Union{Nothing, IS.TimeSeriesKey}
     ramp_down::Union{Nothing, IS.TimeSeriesKey}
@@ -169,15 +169,13 @@ end
 
 function NEMDispatchInputs(;
         energy_offer = nothing, energy_offer_decremental = nothing,
-        energy_availability = nothing, energy_availability_decremental = nothing,
-        energy_max_avail = nothing, energy_max_avail_decremental = nothing, uigf = nothing,
+        energy_availability = nothing, energy_availability_decremental = nothing, uigf = nothing,
         ramp_up = nothing, ramp_down = nothing, fcas = NEMFCASInputs[],
         internal::IS.InfrastructureSystemsInternal = IS.InfrastructureSystemsInternal(),
     )
     return NEMDispatchInputs(
         energy_offer, energy_offer_decremental, energy_availability, energy_availability_decremental,
-        energy_max_avail, energy_max_avail_decremental, uigf, ramp_up, ramp_down,
-        collect(NEMFCASInputs, fcas), internal,
+        uigf, ramp_up, ramp_down, collect(NEMFCASInputs, fcas), internal,
     )
 end
 

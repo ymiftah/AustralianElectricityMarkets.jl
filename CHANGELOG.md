@@ -425,16 +425,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Replay systems no longer carry the state-dependent `"max_active_power"`, `"fixed_load"` and
   `"fixed_load_invoked"` series. `set_effective_offers!` writes the first-solve seeds
-  `"initial_mw_seed"`, `"energy_max_avail_seed[_decremental]"`, `"fixed_load_seed"` and
-  `"fixed_load_invoked_seed"` from the configured state source, and every later solve rewrites the
-  same parameters from it. The dispatch formulation recomputes, at every step, the starting MW, the
-  ramp rates (the composite cross-zero rate for a device bid on both sides), the generation and
-  consumption availability limits (the bid availability, raised to the ramp-down floor about the
-  starting output for a non-storage device), the fixed-loading target and invoked flag, and the
-  FCAS effective offers and regulation ramping limits that read the state; an MNSP link's metered
-  flow and its forward and reverse ramp envelope are refreshed per step too. State-independent
-  inputs stay build-time series. Pre-flight checks the keyed state series' five-minute resolution
-  and grid alignment, and no longer requires the default `"observed_initial_mw"` series name.
+  `"initial_mw_seed"`, `"fixed_load_seed"` and `"fixed_load_invoked_seed"` from the configured
+  state source, and every later solve rewrites the same parameters from it. The dispatch
+  formulation recomputes, at every step, the starting MW, the ramp rates (the composite cross-zero
+  rate for a device bid on both sides), the fixed-loading target and invoked flag, and the FCAS
+  effective offers and regulation ramping limits that read the state; an MNSP link's metered flow
+  and its forward and reverse ramp envelope are refreshed per step too. The energy availability
+  limits stay at the bid's `MAXAVAIL`. State-independent inputs stay build-time series. Pre-flight
+  checks the keyed state series' five-minute resolution and grid alignment, and no longer requires
+  the default `"observed_initial_mw"` series name.
 
 - `set_effective_offers!` writes every state-independent dispatch input once and records each
   derived series key on the device's `NEMDispatchInputs`: the energy availability

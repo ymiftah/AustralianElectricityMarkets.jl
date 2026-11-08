@@ -91,13 +91,10 @@ end
     @test !any(==("fixed_load"), out.violations.family)
 end
 
-@testset "the ramp-down floor absorbs the availability penalty" begin
-    # The 1 MW/min ramp-down limit holds the unit at 60 MW, which is also its availability floor
-    # (65 - 1 x 5): AEMO does not assess the 40 MW bid availability below that floor, so only the
-    # 45 MW forecast is violated, and the unit pays it rather than breach the ramp limit.
+@testset "ramping beats the combined availability and UIGF penalties" begin
     out = energy_limit_solve(energy_limit_system(; max_avail = 40.0, target = nothing, initial = 65.0, down = 1.0))
     @test out.power ≈ 60.0 atol = 1.0e-6
-    @test energy_slack(out, EnergyMaxAvailSlack) ≈ 0.0 atol = 1.0e-6
+    @test energy_slack(out, EnergyMaxAvailSlack) ≈ 20.0 atol = 1.0e-6
     @test energy_slack(out, EnergyUIGFSlack) ≈ 15.0 atol = 1.0e-6
     @test !any(==("unit_ramp"), out.violations.family)
 end

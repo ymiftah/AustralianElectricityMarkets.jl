@@ -63,7 +63,9 @@ carries no per-band cost target, and its terms are re-added by our update method
 
 State-driven values are updated through `update_container_parameter_values!` methods on the
 parameter types, not through initial conditions, in
-`AustralianElectricityMarketsSimulations/src/offers/state_updates.jl`:
+`AustralianElectricityMarketsSimulations/src/offers/state_updates.jl` for the shared helpers and in
+its `state_updates/energy.jl`, `state_updates/fcas.jl` and `state_updates/mnsp.jl` for the three
+parameter families:
 
 - `InitialPowerTimeSeriesParameter` reads `unit_state(source, device, stamp).initial_mw`, where `source` is the
   configured state source.
@@ -90,12 +92,9 @@ is therefore a build-time error again, while a key naming a different but existi
 the per-step update is the reader that decides which existing series supplies the value.
 
 Task 11 removes the precomputed state-dependent series. `set_effective_offers!` writes the
-first-solve seeds `"initial_mw_seed"`, `"energy_max_avail_seed"`,
-`"energy_max_avail_seed_decremental"`, `"fixed_load_seed"` and `"fixed_load_invoked_seed"` from the
+first-solve seeds `"initial_mw_seed"`, `"fixed_load_seed"` and `"fixed_load_invoked_seed"` from the
 configured `_state_source()`, and every later solve rewrites the same parameters from it. Each seed
-comes from the same rule function its update calls: `max_active_power_floor` about the starting
-output for a non-storage device's availability limits, the bid availability itself for a storage
-device's (its net ramp row prices the floor),
+comes from the same rule function its update calls: `_state_initial_mw` for the starting output,
 `effective_fixed_load` and `fixed_load_invoked` for the fixed loading. A unit whose dispatch rows
 begin mid-range has no dispatch mode before its registration, so its fixed-loading seed carries no
 loading there. Pre-flight now requires each keyed state series as a five-minute `SingleTimeSeries`
@@ -108,14 +107,29 @@ The per-step route covers every input that reads the state:
 
 - the starting MW (`InitialPowerTimeSeriesParameter`);
 - the ramp-up and ramp-down rates, from `composite_ramp_rates` for a device bid on both sides and
-  from its per-side effective rate otherwise;
-- the generation and consumption availability limits, from the bid availability, raised to the
-  ramp-down floor about the starting output for a non-storage device;
+  from its per-side effective rate otherwise. The composite cross-zero rate follows AEMO's Dispatch
+  Procedure (SO_OP_3705) Appendix C; the telemetered limit caps both directions;
 - the fixed-loading target and invoked flag;
 - the FCAS effective offers and regulation ramping limits, so FCAS enablement, the stranded
   pre-conditions and the joint and BDU ramping limits are recomputed at every step rather than
-  attached once at build;
+  attached once at build. AEMO's *FCAS Model in NEMDE* §5 enablement and §6.1/§6.4 ramping read
+  the starting output, in per-unit of the system base;
 - an MNSP link's metered flow and its forward and reverse ramp rates, from `mnsp_ramp_envelope`.
+  The forward and reverse rates divide the envelope by the interval so the ramp row's
+  `InitialFlow ± minutes × rate` form reproduces AEMO's limit of the target flow to the metered flow
+  plus the forward bid ramp, minus the reverse.
+
+The energy availability limits are not updated per step. The elastic energy MaxAvail row carries the
+bid's `MAXAVAIL` unchanged, from the `"energy_availability[_decremental]"` series, as it always has.
+A unit held above that availability by its ramp floor therefore faces two priced violations, and the
+LP chooses between them: the MaxAvail row's slack (AEMO's *Schedule of Constraint Violation Penalty
+Factors*, item 14, CVP factor 370) is cheaper than the ramp row's (item 3, CVP factor 1155), so it
+takes the MaxAvail slack, as NEMDE does. Raising the row to the floor would suppress that violation
+and contradict the bid.
+
+`max_active_power_floor` remains a tested pure function for the ramp-down floor arithmetic, but
+nothing in the formulation wires it: the MaxAvail row must stay at the bid value, and the ramp row
+already carries the floor. It is kept for that arithmetic and its tests, not as a formulation input.
 
 The FCAS slope parameters are stock `ConstraintCoefficientParameter`s: their values set a constraint
 coefficient through `add_coefficient_target!`, so each update method rewrites the registered
@@ -226,6 +240,16 @@ whenever a series is renamed. The scaling assumes a pure unit change: a series w
 changed would have that change hidden by the scaling, so any series in the map whose value is
 expected to move is compared separately.
 
+The FCAS slope coefficients are compared at a single stamp as well, because they scale every FCAS
+trapezium and are the input most likely to move with the per-step offer route. A `DecisionModel`
+built for 2026-06-04 05:05 reports the same `FCASUpperSlopeParameter` and
+`FCASLowerSlopeParameter` value for every SA1 device here as at `51940d8` (674 values, identical),
+so a solved-dispatch difference at a stamp whose slopes all match is a solver basis path, not a
+changed input. **Open validation item:** compare the SA1 FCAS prices and the constraint slacks of
+the 2026-06-04 05:05 interval against NEMDE. The distinguishing check is the one above: every
+contributing SA1 device's upper and lower slope stays equal to the baseline build, so a remaining
+difference is the LP's choice among degenerate optima rather than a coefficient error.
+
 ## Consequences
 
 - One writer per parameter per step. The build writes the values of the simulation's first solve,
@@ -239,7 +263,9 @@ expected to move is compared separately.
   update method, from the same source at the model's initial time, or the simulation's first solve
   runs without it.
 - A value that is not finite throws, naming the parameter, the device and the stamp, as the stock
-  time-series update does; a silent NaN would reach the solver as an opaque failure.
+  time-series update does; a silent NaN would reach the solver as an opaque failure. A stamp with
+  no `DISPATCHLOAD` row has a non-finite dispatch mode, so `unit_state` throws an `ArgumentError`
+  naming the device and the stamp rather than defaulting the mode to 0.
 - `_set_nem_fixed_loads!` is dead in production: the fixed-loading update reads the bids directly.
   It survives only because test fixtures call it to build the reference `"fixed_load"` series the
   cross-check compares against. Removing it means moving that reference into the fixture; the

@@ -532,50 +532,6 @@ end
 end
 
 
-@testset "each step's energy limit is raised to the ramp-down floor of its state" begin
-    # Alta's step-2 bid availability is 10 MW, below its 70 MW start minus the 2 MW/min ramp-down
-    # over five minutes, so the floor is 60 MW. At the build's initial time the state reads 50 MW,
-    # which puts the seed at 40 MW, and the raw availability is 10 MW: only the per-step update
-    # reaches 60 MW.
-    sys = nem_toy_system(
-        [
-            TOY_CHEAP => toy_unit(
-                100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0, ramp_down = 2.0,
-                availability = [100.0, 10.0],
-            ),
-            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 50.0, ramp_up = 100.0),
-        ],
-        100.0; horizon = TOY_RESOLUTION,
-        mutate! = function (sys, stamps)
-            alta = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
-            replace_single_series_with!(sys, alta, "later_initial_mw", [50.0, 70.0], stamps)
-            observed = get_observed_state(alta)
-            set_observed_state!(
-                alta,
-                AustralianElectricityMarkets.NEMObservedState(;
-                    initial_mw = AustralianElectricityMarkets._series_key(alta, "later_initial_mw"),
-                    dispatch_mode = observed.dispatch_mode,
-                ),
-            )
-            return
-        end,
-    )
-    out = run_replay(sys, _ST_STEP_RANGE; optimizer = _ST_OPTIMIZER)
-    dispatch = _st_dispatch_by_step(out)
-    # 60 MW of cheap generation and 40 MW of expensive. The build's 40 MW floor would hold cheap at
-    # 40 MW and cost 5600/12; the raw 10 MW availability would cost 7400/12.
-    @test dispatch[TOY_CHEAP] ≈ [100.0, 60.0] atol = 1.0e-6
-    @test dispatch[TOY_EXPENSIVE] ≈ [0.0, 40.0] atol = 1.0e-6
-    objectives = PSI.read_optimizer_stats(out.results).objective_value
-    @test objectives[1] ≈ 2000.0 / 12 atol = 1.0e-4
-    @test objectives[2] ≈ 4400.0 / 12 atol = 1.0e-4
-
-    container = PSI.get_optimization_container(out.model)
-    limit = PSI.get_parameter(container, PSI.ParameterKey(AEMS.EnergyMaxAvailTimeSeriesParameter, NEMThermalGen))
-    @test only(PSI.get_parameter_column_values(limit, TOY_CHEAP)) ≈ 60.0 / 100.0
-end
-
-
 @testset "each step's FCAS enablement and ramping limit are recomputed from the state" begin
     # Park City moves from 40 MW to 200 MW, outside its RAISE6SEC enablement band, so its offer is
     # disabled at step 2. The battery's starting output rises from 5 MW to 10 MW, so its regulation
