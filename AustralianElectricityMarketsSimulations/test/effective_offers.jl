@@ -735,7 +735,7 @@ end
         end
     end
 
-    @testset "a device whose observed key is not the observed_initial_mw series throws, naming it" begin
+    @testset "a device's observed initial MW may key any series" begin
         sys = built()
         device = get_component(NEMThermalGen, sys, "ER01")
         @test AEMSim._has_nem_dispatch_limits(device)
@@ -749,6 +749,31 @@ end
                 dispatch_mode = AustralianElectricityMarkets.get_observed_state(device).dispatch_mode,
             ),
         )
+        @test AEMSim._has_nem_dispatch_limits(device)
+    end
+
+    @testset "a derived input key that is not the registered series throws, naming it" begin
+        sys = built()
+        device = get_component(NEMThermalGen, sys, "ER01")
+        @test AEMSim._has_nem_dispatch_limits(device)
+        old = only(PSY.get_supplemental_attributes(NEMDispatchInputs, device))
+        ramps = get_time_series_values(SingleTimeSeries, device, NEM_SERIES.ramp_up_rate; ignore_scaling_factors = true)
+        add_time_series!(sys, device, single_series("other_ramp", start_date, ramps, resolution))
+        PSY.remove_supplemental_attribute!(sys, device, old)
+        PSY.add_supplemental_attribute!(
+            sys,
+            device,
+            NEMDispatchInputs(;
+                energy_offer = old.energy_offer,
+                energy_offer_decremental = old.energy_offer_decremental,
+                energy_availability = old.energy_availability,
+                energy_availability_decremental = old.energy_availability_decremental,
+                uigf = old.uigf,
+                ramp_up = AustralianElectricityMarkets._series_key(device, "other_ramp"),
+                ramp_down = old.ramp_down,
+                fcas = old.fcas,
+            ),
+        )
         err = try
             AEMSim._has_nem_dispatch_limits(device)
             nothing
@@ -757,7 +782,7 @@ end
         end
         @test err isa ArgumentError
         @test occursin("ER01", sprint(showerror, err))
-        @test occursin("other_initial", sprint(showerror, err))
+        @test occursin("other_ramp", sprint(showerror, err))
     end
 end
 

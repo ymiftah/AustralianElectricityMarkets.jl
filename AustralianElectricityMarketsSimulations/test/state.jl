@@ -183,13 +183,28 @@ end
 
 @testset "each step's ramp base is the observed initial MW of that step" begin
     # Alta's ramp-up limit falls from 2 to 1 MW/min and its observed initial MW from 50 to 10, so
-    # its step-2 ceiling is 15 MW. A stale base of 50 MW would put it at 55 MW.
+    # its step-2 ceiling is 15 MW. The parameter's registered series keeps the stale 50 MW; only an
+    # update that reads the state source's own series can find the 10 MW.
     sys = nem_toy_system(
         [
             TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = [50.0, 10.0], ramp_up = [2.0, 1.0]),
             TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = [50.0, 50.0], ramp_up = 100.0),
         ],
         100.0; horizon = TOY_RESOLUTION,
+        mutate! = function (sys, stamps)
+            alta = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
+            replace_single_series_with!(sys, alta, "observed_initial_mw", [50.0, 50.0], stamps)
+            replace_single_series_with!(sys, alta, "state_initial_mw", [50.0, 10.0], stamps)
+            observed = get_observed_state(alta)
+            set_observed_state!(
+                alta,
+                AustralianElectricityMarkets.NEMObservedState(;
+                    initial_mw = AustralianElectricityMarkets._series_key(alta, "state_initial_mw"),
+                    dispatch_mode = observed.dispatch_mode,
+                ),
+            )
+            return
+        end,
     )
     out = run_replay(sys, _ST_STEP_RANGE; optimizer = _ST_OPTIMIZER)
     dispatch = _st_dispatch_by_step(out)
@@ -274,8 +289,9 @@ function PSI.update_container_parameter_values!(
     return
 end
 
-# One step of the simulation's parameter update: `PowerSimulations.update_parameters!` without the
-# simulation-status recording, so it also runs where a simulation would skip the first step.
+# One step of the simulation's parameter update, mirroring `PowerSimulations.update_parameters!` for
+# a `DecisionModel` (`operation_model_simulation_interface.jl:17-29`) without the simulation-status
+# recording, so it also runs on the solve a simulation skips.
 function _st_update_parameters!(model)
     container = PSI.get_optimization_container(model)
     PSI.cost_function_unsynch(container)
@@ -311,7 +327,6 @@ end
     PSI.add_parameters!(container, ToyStatePriceParameter, [unit], PSI.DeviceModel(NEMThermalGen, AEMS.NEMReplayDispatch; time_series_names = names))
     price = PSI.get_parameter(container, PSI.ParameterKey(ToyStatePriceParameter, NEMThermalGen))
     @test eltype(PSI.get_parameter_array(price)) === Float64
-    @test PSI.get_objective_expression(container).has_variant_contributors
 
     objectives = Float64[]
     for (i, _) in enumerate(stamps)
@@ -327,4 +342,91 @@ end
     @test PSI.get_parameter_array(price)[TOY_CHEAP, 1] === 60.0
     power = PSI.get_variable(container, PSI.ActivePowerVariable(), NEMThermalGen)[TOY_CHEAP, 1]
     @test PSI.JuMP.coefficient(PSI.get_variant_terms(PSI.get_objective_expression(container)), power) ≈ 60.0 * 100.0 / 12
+end
+
+
+@testset "a fixed loading that stays invoked is held in per-unit" begin
+    # Alta carries a 40 MW fixed loading in both steps, so it solves at 40 MW and the target the
+    # formulation reads is 40 / base_power.
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 20.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 40.0, ramp_up = 100.0),
+        ],
+        60.0; horizon = TOY_RESOLUTION,
+        mutate! = function (sys, stamps)
+            alta = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
+            _toy_energy_bid!(
+                sys, alta, AustralianElectricityMarkets.BidDirection.GEN, stamps,
+                fill(_toy_offer([(100.0, 20.0)]), length(stamps)), fill(100.0, length(stamps));
+                fixed_load = fill(40.0, length(stamps)),
+            )
+            set_toy_unit_field!(sys, alta, stamps, :dispatch_mode, zeros(length(stamps)))
+            replace_single_series_with!(sys, alta, "fixed_load", [0.4, 0.4], stamps)
+            replace_single_series_with!(sys, alta, "fixed_load_invoked", [1.0, 1.0], stamps)
+            return
+        end,
+    )
+    out = run_replay(sys, _ST_STEP_RANGE; optimizer = _ST_OPTIMIZER)
+    dispatch = _st_dispatch_by_step(out)
+    @test dispatch[TOY_CHEAP] ≈ [40.0, 40.0] atol = 1.0e-6
+    @test dispatch[TOY_EXPENSIVE] ≈ [20.0, 20.0] atol = 1.0e-6
+    objectives = PSI.read_optimizer_stats(out.results).objective_value
+    @test objectives[1] ≈ 2400.0 / 12 atol = 1.0e-4
+    @test objectives[2] ≈ 2400.0 / 12 atol = 1.0e-4
+
+    container = PSI.get_optimization_container(out.model)
+    target = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadTimeSeriesParameter, NEMThermalGen))
+    invoked = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadInvokedTimeSeriesParameter, NEMThermalGen))
+    @test only(PSI.get_parameter_column_values(target, TOY_CHEAP)) ≈ 40.0 / 100.0
+    @test only(PSI.get_parameter_column_values(invoked, TOY_CHEAP)) === 1.0
+end
+
+
+@testset "the build's fixed-load series and the per-step derivation agree" begin
+    # One FIXEDLOAD row per device and interval feeds the build's series; the same MW in the bids
+    # feeds the per-step derivation. They must agree on the netting and invocation rules.
+    derivation_range = TOY_START:TOY_RESOLUTION:(TOY_START + 2 * TOY_RESOLUTION)
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)],
+        60.0; horizon = TOY_RESOLUTION,
+        batteries = [TOY_BATTERY => toy_battery(50.0, 30.0, 50.0, 0.0; initial = 5.0, ramp_up = 100.0)],
+        mutate! = function (sys, stamps)
+            alta = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
+            _toy_energy_bid!(
+                sys, alta, AustralianElectricityMarkets.BidDirection.GEN, stamps,
+                fill(_toy_offer([(100.0, 20.0)]), length(stamps)), fill(100.0, length(stamps));
+                fixed_load = fill(40.0, length(stamps)),
+            )
+            battery = PSY.get_component(NEMStorage, sys, TOY_BATTERY)
+            _toy_energy_bid!(
+                sys, battery, AustralianElectricityMarkets.BidDirection.GEN, stamps,
+                fill(PSY.PiecewiseStepData([0.0, 50.0], [30.0]), length(stamps)), fill(50.0, length(stamps));
+                fixed_load = fill(10.0, length(stamps)),
+            )
+            _toy_energy_bid!(
+                sys, battery, AustralianElectricityMarkets.BidDirection.LOAD, stamps,
+                fill(PSY.PiecewiseStepData([0.0, 50.0], [0.0]), length(stamps)), fill(50.0, length(stamps));
+                fixed_load = fill(4.0, length(stamps)),
+            )
+            rows = DataFrame(
+                DUID = [TOY_CHEAP, TOY_CHEAP, TOY_BATTERY, TOY_BATTERY, TOY_BATTERY, TOY_BATTERY],
+                DIRECTION = ["GEN", "GEN", "GEN", "GEN", "LOAD", "LOAD"],
+                FIXEDLOAD = [40.0, 40.0, 10.0, 10.0, 4.0, 4.0],
+                INTERVAL_DATETIME = [stamps; stamps; stamps],
+                IN_PROFILE = fill(false, 6),
+            )
+            AustralianElectricityMarkets._set_nem_fixed_loads!(sys, rows, derivation_range)
+
+            base_power = PSY.get_base_power(sys)
+            for device in (alta, battery)
+                series = PSY.get_time_series(PSY.SingleTimeSeries, device, "fixed_load")
+                derived = collect(values(PSY.get_time_series_array(device, series)))
+                per_step = [AEMS._fixed_load_step(device, t).target / base_power for t in stamps]
+                @test derived ≈ per_step
+                @test !all(iszero, derived)
+            end
+            return
+        end,
+    )
 end

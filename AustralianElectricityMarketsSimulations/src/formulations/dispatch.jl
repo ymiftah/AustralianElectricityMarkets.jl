@@ -39,6 +39,9 @@ read through the device's [`NEMDispatchInputs`](@ref); the observed `"observed_i
 telemetered UIGF keep a name constant, because `PowerSimulations.jl` registers one name per device
 type. Both modes register `"observed_initial_mw"`: `PowerSimulations.jl` copies the parent model's
 names onto the initial-conditions sub-model, which runs [`NEMReplayDispatch`](@ref) and reads it.
+The model's per-step update reads the observed initial MW through the device's state source instead,
+so the series a device keys in its `NEMObservedState` may carry any name; the registered series
+supplies only the values of the simulation's first solve.
 
 # Returns
 A `Dict` mapping each `PowerSimulations.TimeSeriesParameter` type to its series name.
@@ -79,8 +82,9 @@ end
 
 Whether `device` carries every derived input [`NEMReplayDispatch`](@ref) reads as a parameter, as a
 [`NEMDispatchInputs`](@ref) attribute, plus the observed initial MW of every device and the UIGF of a
-semi-scheduled one. Each input's series name must be the one the parameter registers, because
-`PowerSimulations.jl` takes one name per device type.
+semi-scheduled one. The observed initial MW may key any series name, because the per-step update
+reads it through the device's state source; every other input's series name must be the one the
+parameter registers, because `PowerSimulations.jl` takes one name per device type.
 
 # Arguments
 - `device`: the `PowerSystems.Component` to inspect.
@@ -96,7 +100,6 @@ function _has_nem_dispatch_limits(device)
     observed, telemetry = device.observed_state, device.telemetry
     (isnothing(observed) || isnothing(telemetry)) && return false
     observed.initial_mw isa IS.TimeSeriesKey || return false
-    _require_key_name(device, observed.initial_mw, NEM_OBSERVED_SERIES.initial_mw)
     attributes = PSY.get_supplemental_attributes(NEMDispatchInputs, device)
     length(attributes) == 1 || return false
     inputs = only(attributes)

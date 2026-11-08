@@ -1,12 +1,10 @@
-# Per-step updates of the parameters that read a unit's state: the ramp base from the observed
-# initial MW, and the fixed-loading target and invoked flag from the bid and the fast-start mode.
-# PowerSimulations calls these after it clears the objective's variant terms, so any objective term
-# a method adds is counted once.
+# Per-step updates of the parameters that read a unit's state: the ramp base, the fixed-loading
+# target and the invoked flag. PowerSimulations clears the objective's variant terms first.
 
 """
     _step_stamp(model, t) -> DateTime
 
-The first timestamp of step `t` of `model`'s current horizon, which is the horizon's first step.
+The stamp of step `t` of `model`'s current horizon; `t = 1` is the horizon's first step.
 
 # Arguments
 - `model`: the `PowerSimulations.OperationModel` whose step is being solved.
@@ -25,7 +23,7 @@ end
 
 Writes `value_at(device, stamp)` into every row of the time-series parameter `key` at every step of
 `model`'s horizon, in the units its multiplier scales. Only the devices the parameter was built for
-are written.
+are written. Throws when a value is not finite.
 
 # Arguments
 - `value_at`: `(device, stamp) -> Float64`, the value before the multiplier.
@@ -46,7 +44,13 @@ function _update_state_parameters!(value_at, container::PSI.OptimizationContaine
         device = PSY.get_component(T, system, name)
         i = parameter_array.lookup[1][uuid]
         for t in steps
-            PSI._set_param_value_at!(parent_param, Float64(value_at(device, _step_stamp(model, t))), i, t)
+            stamp = _step_stamp(model, t)
+            value = Float64(value_at(device, stamp))
+            isfinite(value) || error(
+                "The value of $(nameof(P)) for \"$(name)\" at $(stamp) is not finite. " *
+                    "Check that the unit's state and bids are valid.",
+            )
+            PSI._set_param_value_at!(parent_param, value, i, t)
         end
     end
     return
