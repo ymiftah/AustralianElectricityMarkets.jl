@@ -143,45 +143,59 @@ end
 
 
 """
-    _fcas_enabled(device, is_regulation, decremental, trap, curve, energy_max_avail, initial_mw, agc_status; check_stranded = true) -> Bool
+    _fcas_preconditions(device, is_regulation, decremental, trap, curve, energy_max_avail, agc_status) -> Bool
 
-The computable subset of AEMO's *FCAS Model in NEMDE* §5 enablement pre-conditions: `MaxAvail`
-positive; at least one priced band with positive quantity; `EnablementMax` at or above
-`EnablementMin`; the sign pre-condition (`_fcas_sign_ok`); the energy-maximum-availability
-pre-condition (`_fcas_energy_max_avail_ok`); when `check_stranded` and `initial_mw` is
-known, the "stranded" pre-condition (`initial_mw` for a `PSY.Storage` device, `Max[initial_mw,
-0]` otherwise, inside `[EnablementMin, EnablementMax]`); and, for a regulation service, `1 ==
-agc_status` whenever `agc_status` is known. The daily or profiled energy pre-condition is not
-checked.
+The computable subset of AEMO's *FCAS Model in NEMDE* §5 enablement pre-conditions other than the
+"stranded" one: `MaxAvail` positive; at least one priced band with positive quantity;
+`EnablementMax` at or above `EnablementMin`; the sign pre-condition (`_fcas_sign_ok`); the
+energy-maximum-availability pre-condition (`_fcas_energy_max_avail_ok`); and, for a regulation
+service, `1 == agc_status` whenever `agc_status` is known. The caller ANDs the result with
+[`fcas_state_stranded_ok`](@ref) or [`fcas_both_sides_stranded_ok`](@ref). The daily or profiled
+energy pre-condition is not checked.
 
 # Returns
 `Bool`.
 """
-function _fcas_enabled(
+function _fcas_preconditions(
         device::PSY.Device, is_regulation::Bool, decremental::Bool, trap::FCASTrapezium,
         curve::PSY.PiecewiseStepData,
         energy_max_avail::Union{Nothing, Float64, NamedTuple{(:gen, :load), Tuple{Float64, Float64}}},
-        initial_mw::Union{Nothing, Float64}, agc_status::Union{Nothing, Int};
-        check_stranded::Bool = true,
+        agc_status::Union{Nothing, Int},
     )
     get_max_avail(trap) > 0.0 || return false
     any(>(0.0), diff(PSY.get_x_coords(curve))) || return false
     get_enablement_max(trap) >= get_enablement_min(trap) || return false
     _fcas_sign_ok(device, is_regulation, decremental, trap) || return false
     _fcas_energy_max_avail_ok(device, is_regulation, decremental, trap, energy_max_avail) || return false
-    if check_stranded && !isnothing(initial_mw)
-        get_enablement_min(trap) <= _fcas_stranded_point(device, initial_mw) <= get_enablement_max(trap) || return false
-    end
     is_regulation && !isnothing(agc_status) && agc_status == 0 && return false
     return true
 end
 
 
-# The output §5's "stranded" pre-condition checks: `initial_mw` for storage, `Max[initial_mw, 0]` otherwise.
-_fcas_stranded_point(::PSY.Device, initial_mw::Float64) = max(initial_mw, 0.0)
+"""
+    _fcas_state_function(window, device) -> Function
 
+`device`'s state over `window` as a function of `t`, in the `System`'s current display units, the
+units the scaled FCAS trapeziums and AGC ramp capabilities are read in, or `nothing` where the
+device publishes no starting output. A `NaN` starting output stays a state whose output is `NaN`,
+which [`fcas_state_stranded_ok`](@ref) reads as outside every enablement span.
 
-_fcas_stranded_point(::PSY.Storage, initial_mw::Float64) = initial_mw
+# Returns
+A `Function` mapping `t` to a `Union{Nothing, NEMUnitState}`.
+"""
+function _fcas_state_function(window::_FCASWindow, device::PSY.Device)
+    observed = AustralianElectricityMarkets.get_observed_state(device)
+    initial = observed.initial_mw
+    isnothing(initial) && return t -> nothing
+    # The trapeziums carry the display-units multiplier, so the state must too, and in the same
+    # arithmetic (`x / base * multiplier`) so a starting output at an enablement bound compares equal.
+    base = PSY.get_system_base_power(device)
+    multiplier = _fcas_units_multiplier(device)
+    scaled(value) = NEMUnitState(value / base * multiplier, 0)
+    initial isa IS.TimeSeriesKey || return t -> scaled(initial)
+    values = IS.get_time_series_values(device, initial; start_time = window.initial_time, len = window.horizon)
+    return t -> scaled(values[t])
+end
 
 
 """
@@ -204,91 +218,71 @@ end
 
 
 """
-    _fcas_both_sides_enabled(device, gen_trap, gen_curve, load_trap, load_curve, agc_status, initial_mw, energy_max_avail) -> (Bool, Bool)
+    _fcas_scaling_inputs(window, device) -> (availability, agc_status)
 
-Whether a `PSY.Storage` device's generation-side and load-side regulation bids are enabled: each
-side's own `_fcas_enabled` pre-conditions independently (`check_stranded = false`,
-`energy_max_avail` as for a single-sided `PSY.Storage` bid), then, when `initial_mw` is known, the
-"stranded" pre-condition. When both sides pass their own pre-conditions, AEMO *FCAS Model in
-NEMDE* §5's combined form (`EnablementMin`<sub>LOAD</sub>` <= initial_mw <= EnablementMax`<sub>GEN</sub>)
-gates both together; otherwise the one side still enabled is checked against its own trapezium.
+`device`'s energy availability (`_fcas_availability`) and AGC status ([`get_fcas_agc_status`](@ref))
+over `window`, each a function of `t` returning `nothing` where unknown.
 
 # Returns
-`(gen_enabled::Bool, load_enabled::Bool)`.
+`(availability::Function, agc_status::Function)`.
 """
-function _fcas_both_sides_enabled(
-        device::PSY.Device, gen_trap::FCASTrapezium, gen_curve::PSY.PiecewiseStepData,
-        load_trap::FCASTrapezium, load_curve::PSY.PiecewiseStepData,
-        agc_status::Union{Nothing, Int}, initial_mw::Union{Nothing, Float64},
-        energy_max_avail::Union{Nothing, NamedTuple{(:gen, :load), Tuple{Float64, Float64}}},
-    )
-    gen_ok = _fcas_enabled(device, true, false, gen_trap, gen_curve, energy_max_avail, nothing, agc_status; check_stranded = false)
-    load_ok = _fcas_enabled(device, true, true, load_trap, load_curve, energy_max_avail, nothing, agc_status; check_stranded = false)
-    isnothing(initial_mw) && return gen_ok, load_ok
-    if gen_ok && load_ok
-        combined = get_enablement_min(load_trap) <= initial_mw <= get_enablement_max(gen_trap)
-        return combined, combined
-    end
-    within(trap) = get_enablement_min(trap) <= initial_mw <= get_enablement_max(trap)
-    return gen_ok && within(gen_trap), load_ok && within(load_trap)
-end
-
-
-"""
-    _fcas_enablement_inputs(window, device) -> (initial_mw, availability, agc_status)
-
-`device`'s per-interval §5 inputs over `window` (`_FCASWindow`): `InitialMW`
-([`get_initial_mw`](@ref)), energy availability (`_fcas_availability`) and AGC status ([`get_fcas_agc_status`](@ref)), each a function of `t` returning `nothing` where
-unknown.
-
-# Returns
-`(initial_mw::Function, availability::Function, agc_status::Function)`.
-"""
-function _fcas_enablement_inputs(window::_FCASWindow, device::PSY.Device)
-    initial_mw = get_initial_mw(device, window.initial_time, window.horizon)
+function _fcas_scaling_inputs(window::_FCASWindow, device::PSY.Device)
     agc_status = get_fcas_agc_status(device, window.initial_time, window.horizon)
     telemetry(series, t) = isnothing(series) ? nothing : series[t]
-    return (t -> telemetry(initial_mw, t), _fcas_availability(window, device), t -> telemetry(agc_status, t))
+    return _fcas_availability(window, device), t -> telemetry(agc_status, t)
 end
 
 
 """
-    _fcas_enabled_mask(window, device, bid_type, decremental) -> Vector{Bool}
+    _fcas_enabled_mask(window, device, bid_type, decremental; state = _fcas_state_function(window, device)) -> Vector{Bool}
 
-Per-interval `_fcas_enabled` for `device`'s one-directional `bid_type` bid, on the
-`_fcas_enablement_inputs` over `window`.
+Per-interval §5 enablement of `device`'s one-directional `bid_type` bid: the
+`_fcas_preconditions`, ANDed with [`fcas_state_stranded_ok`](@ref) where the state is known.
 
 # Returns
 `Vector{Bool}`, one entry per interval of `window`.
 """
-function _fcas_enabled_mask(window::_FCASWindow, device::PSY.Device, bid_type::BidType, decremental::Bool)
+function _fcas_enabled_mask(
+        window::_FCASWindow, device::PSY.Device, bid_type::BidType, decremental::Bool;
+        state::Function = _fcas_state_function(window, device),
+    )
     is_regulation = bid_type in FCAS_REGULATION_MARKETS
     (; trapeziums, curves) = _fcas_offer(window, device, bid_type, offer_side(decremental))
-    initial_mw, availability, agc_status = _fcas_enablement_inputs(window, device)
+    availability, agc_status = _fcas_scaling_inputs(window, device)
+    storage = device isa PSY.Storage
     return map(1:window.horizon) do t
-        _fcas_enabled(
-            device, is_regulation, decremental, trapeziums[t], curves[t], availability(t), initial_mw(t), agc_status(t),
-        )
+        _fcas_preconditions(
+            device, is_regulation, decremental, trapeziums[t], curves[t], availability(t), agc_status(t),
+        ) || return false
+        s = state(t)
+        isnothing(s) && return true
+        return fcas_state_stranded_ok(trapeziums[t], s; storage)
     end
 end
 
 
 """
-    _fcas_both_sides_enabled_mask(window, device, bid_type) -> (Vector{Bool}, Vector{Bool})
+    _fcas_both_sides_enabled_mask(window, device, bid_type; state = _fcas_state_function(window, device)) -> (Vector{Bool}, Vector{Bool})
 
-Per-interval `_fcas_both_sides_enabled` for a `PSY.Storage` device bidding regulation
-`bid_type` on both sides, on the `_fcas_enablement_inputs` over `window`.
+Per-interval §5 enablement of a `PSY.Storage` device bidding regulation `bid_type` on both sides:
+each side's `_fcas_preconditions`, then, where the state is known,
+[`fcas_both_sides_stranded_ok`](@ref).
 
 # Returns
 `(gen_enabled::Vector{Bool}, load_enabled::Vector{Bool})`.
 """
-function _fcas_both_sides_enabled_mask(window::_FCASWindow, device::PSY.Device, bid_type::BidType)
+function _fcas_both_sides_enabled_mask(
+        window::_FCASWindow, device::PSY.Device, bid_type::BidType;
+        state::Function = _fcas_state_function(window, device),
+    )
     gen, load = (_fcas_offer(window, device, bid_type, side) for side in (OfferSide.GEN, OfferSide.LOAD))
-    initial_mw, availability, agc_status = _fcas_enablement_inputs(window, device)
+    availability, agc_status = _fcas_scaling_inputs(window, device)
     flags = map(1:window.horizon) do t
-        _fcas_both_sides_enabled(
-            device, gen.trapeziums[t], gen.curves[t], load.trapeziums[t], load.curves[t], agc_status(t), initial_mw(t), availability(t),
-        )
+        gen_ok = _fcas_preconditions(device, true, false, gen.trapeziums[t], gen.curves[t], availability(t), agc_status(t))
+        load_ok = _fcas_preconditions(device, true, true, load.trapeziums[t], load.curves[t], availability(t), agc_status(t))
+        s = state(t)
+        isnothing(s) && return (gen_ok, load_ok)
+        return fcas_both_sides_stranded_ok(gen.trapeziums[t], load.trapeziums[t], gen_ok, load_ok, s)
     end
     return first.(flags), last.(flags)
 end
@@ -317,22 +311,26 @@ end
 
 
 """
-    _fcas_regulation_enabled_mask(window, device, bid_type, direction) -> Vector{Bool}
+    _fcas_regulation_enabled_mask(window, device, bid_type, direction; state = _fcas_state_function(window, device)) -> Vector{Bool}
 
 `device`'s per-interval enablement for regulation `bid_type`, for the unit as a whole:
 `_fcas_enabled_mask` for a single-sided `direction` (`INCREMENTAL` or `DECREMENTAL`), or,
 for `direction == FCASBidDirection.BOTH` (a `PSY.Storage` device bidding both sides), either side enabled
-(`_fcas_both_sides_enabled_mask`).
+(`_fcas_both_sides_enabled_mask`). `state` supplies the per-interval unit state the stranded
+pre-condition reads.
 
 # Returns
 `Vector{Bool}`, one entry per interval of `window`.
 """
-function _fcas_regulation_enabled_mask(window::_FCASWindow, device::PSY.Device, bid_type::BidType, direction::FCASBidDirection)
+function _fcas_regulation_enabled_mask(
+        window::_FCASWindow, device::PSY.Device, bid_type::BidType, direction::FCASBidDirection;
+        state::Function = _fcas_state_function(window, device),
+    )
     if direction == FCASBidDirection.BOTH
-        gen_enabled, load_enabled = _fcas_both_sides_enabled_mask(window, device, bid_type)
+        gen_enabled, load_enabled = _fcas_both_sides_enabled_mask(window, device, bid_type; state)
         return gen_enabled .| load_enabled
     end
-    return _fcas_enabled_mask(window, device, bid_type, direction == FCASBidDirection.DECREMENTAL)
+    return _fcas_enabled_mask(window, device, bid_type, direction == FCASBidDirection.DECREMENTAL; state)
 end
 
 
@@ -434,13 +432,13 @@ end
 
 
 """
-    _fcas_effective_ramping(window, device, bid_type, direction, inactive) -> Vector{NTuple{2, Float64}}
+    _fcas_effective_ramping(window, device, bid_type, direction, inactive; state = _fcas_state_function(window, device)) -> Vector{NTuple{2, Float64}}
 
 `device`'s regulation ramping limits for `bid_type` over `window`, per-unit of the system base:
 `(joint, bdu)` per interval. `joint` is the AEMO *FCAS Model in NEMDE* §6.1 right-hand side,
-`InitialMW` plus the AGC ramping capability of `_fcas_ramp_rate_service` on the upper form
-([`fcas_upper_regulation_service`](@ref)) or minus it on the lower form, and `±inactive` wherever the
-capability is zero, `InitialMW` is unknown or the unit is not enabled for `bid_type`
+[`fcas_ramping_limit`](@ref) of the AGC ramping capability of `_fcas_ramp_rate_service` on the upper
+form ([`fcas_upper_regulation_service`](@ref)) or the lower form, and `±inactive` wherever
+[`fcas_ramping_active`](@ref) is false or the unit is not enabled for `bid_type`
 (`_fcas_regulation_enabled_mask`). `bdu` is the §6.4 right-hand side of a `PSY.Storage` device
 bidding both sides, its AGC ramping capability on `bid_type`, and `inactive` where that is zero or
 for any other device.
@@ -448,19 +446,18 @@ for any other device.
 # Returns
 `Vector{NTuple{2, Float64}}`, one entry per interval of `window`.
 """
-function _fcas_effective_ramping(window::_FCASWindow, device::PSY.Device, bid_type::BidType, direction::FCASBidDirection, inactive::Float64)
+function _fcas_effective_ramping(
+        window::_FCASWindow, device::PSY.Device, bid_type::BidType, direction::FCASBidDirection, inactive::Float64;
+        state::Function = _fcas_state_function(window, device),
+    )
     caps = _fcas_agc_ramp_caps(window, device, _fcas_ramp_rate_service(device, bid_type))
-    initial_mw = get_initial_mw(device, window.initial_time, window.horizon)
-    enabled = _fcas_regulation_enabled_mask(window, device, bid_type, direction)
+    enabled = _fcas_regulation_enabled_mask(window, device, bid_type, direction; state)
     upper = bid_type == fcas_upper_regulation_service(device)
     bdu_caps = direction == FCASBidDirection.BOTH ? _fcas_agc_ramp_caps(window, device, bid_type) : nothing
     return map(1:window.horizon) do t
-        mw = isnothing(initial_mw) ? NaN : initial_mw[t]
-        joint = if iszero(caps[t]) || isnan(mw) || !enabled[t]
-            upper ? inactive : -inactive
-        else
-            upper ? mw + caps[t] : mw - caps[t]
-        end
+        s = state(t)
+        joint = (!isnothing(s) && enabled[t] && fcas_ramping_active(caps[t], s)) ?
+            fcas_ramping_limit(caps[t], upper, s) : (upper ? inactive : -inactive)
         bdu = (isnothing(bdu_caps) || iszero(bdu_caps[t])) ? inactive : bdu_caps[t]
         (joint, bdu)
     end
@@ -468,24 +465,28 @@ end
 
 
 """
-    _fcas_effective_values(window, device, bid_type, direction, inactive) -> (offers, ramping)
+    _fcas_effective_values(window, device, bid_type, direction, inactive; state = _fcas_state_function(window, device)) -> (offers, ramping)
 
 `device`'s effective FCAS offers for `bid_type` over `window`: `offers` maps each offer's
 `decremental` flag to its `_fcas_effective_offer` per interval, enabled by
 `_fcas_both_sides_enabled_mask` for a `PSY.Storage` device's regulation bid on both sides and
 by `_fcas_enabled_mask` otherwise; `ramping` is `_fcas_effective_ramping` for a
-regulation market, `nothing` otherwise.
+regulation market, `nothing` otherwise. `state` supplies the per-interval unit state the §5 and
+§6.1 rules read.
 
 # Returns
 `(offers::Dict{Bool, Vector{NTuple{15, Float64}}}, ramping::Union{Nothing, Vector{NTuple{2, Float64}}})`.
 """
-function _fcas_effective_values(window::_FCASWindow, device::PSY.Device, bid_type::BidType, direction::FCASBidDirection, inactive::Float64)
+function _fcas_effective_values(
+        window::_FCASWindow, device::PSY.Device, bid_type::BidType, direction::FCASBidDirection, inactive::Float64;
+        state::Function = _fcas_state_function(window, device),
+    )
     regulation = bid_type in FCAS_REGULATION_MARKETS
     enabled = if direction == FCASBidDirection.BOTH && device isa PSY.Storage && regulation
-        gen, load = _fcas_both_sides_enabled_mask(window, device, bid_type)
+        gen, load = _fcas_both_sides_enabled_mask(window, device, bid_type; state)
         Dict(false => gen, true => load)
     else
-        Dict(dec => _fcas_enabled_mask(window, device, bid_type, dec) for dec in fcas_offer_sides(direction))
+        Dict(dec => _fcas_enabled_mask(window, device, bid_type, dec; state) for dec in fcas_offer_sides(direction))
     end
     offers = Dict{Bool, Vector{NTuple{15, Float64}}}()
     for (decremental, mask) in enabled
@@ -493,7 +494,7 @@ function _fcas_effective_values(window::_FCASWindow, device::PSY.Device, bid_typ
         offers[decremental] = [_fcas_effective_offer(trapeziums[t], curves[t], mask[t], inactive) for t in 1:window.horizon]
     end
     regulation || return offers, nothing
-    return offers, _fcas_effective_ramping(window, device, bid_type, direction, inactive)
+    return offers, _fcas_effective_ramping(window, device, bid_type, direction, inactive; state)
 end
 
 

@@ -49,7 +49,7 @@ function PSI.get_default_time_series_names(
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
         RampUpRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
         RampDownRateTimeSeriesParameter => NEM_SERIES.ramp_down_rate,
-        EnergyMaxAvailTimeSeriesParameter => energy_availability_series_name(OfferSide.GEN),
+        EnergyMaxAvailTimeSeriesParameter => _ENERGY_MAX_AVAIL_SEED_SERIES,
         EnergyUIGFTimeSeriesParameter => NEM_TELEMETRY_SERIES.uigf,
     )
 end
@@ -123,9 +123,9 @@ end
 const _DERIVED_INPUT_FIELDS = (
     RampUpRateTimeSeriesParameter => :ramp_up,
     RampDownRateTimeSeriesParameter => :ramp_down,
-    EnergyMaxAvailTimeSeriesParameter => :energy_availability,
-    PSI.ActivePowerOutTimeSeriesParameter => :energy_availability,
-    PSI.ActivePowerInTimeSeriesParameter => :energy_availability_decremental,
+    EnergyMaxAvailTimeSeriesParameter => :energy_max_avail,
+    PSI.ActivePowerOutTimeSeriesParameter => :energy_max_avail,
+    PSI.ActivePowerInTimeSeriesParameter => :energy_max_avail_decremental,
 )
 
 

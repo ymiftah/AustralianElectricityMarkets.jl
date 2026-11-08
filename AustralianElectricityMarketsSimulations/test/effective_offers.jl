@@ -909,19 +909,23 @@ end
         @test loss_demand_coefficient(model, Dict("NSW1" => 100.0)) == 50.0
     end
 
-    @testset "the derived series and their keys, and no energy_max_avail series" begin
+    @testset "the derived series and their keys, and only the seed availability series" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
         names(device) = [get_name(k) for k in get_time_series_keys(device)]
         for device in get_components(StaticInjection, sys)
-            @test !any(startswith("energy_max_avail"), names(device))
+            # The raw availability the parameter used to read is gone; only the first-solve seeds
+            # carry an "energy_max_avail" name.
+            @test !any(==("energy_max_avail"), names(device))
+            @test !any(==("energy_max_avail_decremental"), names(device))
         end
 
         device = get_component(NEMThermalGen, sys, "ER01")
         inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, device))
         @test get_name(inputs.energy_availability) == "energy_availability"
+        @test get_name(inputs.energy_max_avail) == AustralianElectricityMarketsSimulations._ENERGY_MAX_AVAIL_SEED_SERIES
         @test get_name(inputs.energy_offer) == "energy_offer"
         @test get_name(inputs.ramp_up) == NEM_SERIES.ramp_up_rate
         @test get_name(inputs.ramp_down) == NEM_SERIES.ramp_down_rate
@@ -1161,11 +1165,11 @@ end
         # The §5 pre-conditions of one side other than the stranded one, per interval of `window`.
         function preconditions(window, device, service, decremental)
             (; trapeziums, curves) = AEMSim._fcas_offer(window, device, service, offer_side(decremental))
-            _, availability, agc_status = AEMSim._fcas_enablement_inputs(window, device)
+            availability, agc_status = AEMSim._fcas_scaling_inputs(window, device)
+            regulation = service in AustralianElectricityMarkets.FCAS_REGULATION_MARKETS
             return map(1:window.horizon) do t
-                AEMSim._fcas_enabled(
-                    device, service in AustralianElectricityMarkets.FCAS_REGULATION_MARKETS, decremental,
-                    trapeziums[t], curves[t], availability(t), nothing, agc_status(t); check_stranded = false,
+                AEMSim._fcas_preconditions(
+                    device, regulation, decremental, trapeziums[t], curves[t], availability(t), agc_status(t),
                 )
             end
         end

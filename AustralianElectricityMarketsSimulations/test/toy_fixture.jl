@@ -658,6 +658,7 @@ function fcas_toy_system(;
         alta_reg_avail = [15.0, 8.0], alta_agc = [1, 1], park_initial = [40.0, 40.0],
         batt_initial = [5.0, 5.0], batt_ramp = [240.0, 240.0], reg_req = [20.0, 20.0], r6_req = [30.0, 30.0],
         alta_ramp = [240.0, 240.0], agc_emax = [90.0, 90.0], horizon = TOY_RESOLUTION,
+        park_trap = (5.0, 10.0, 90.0, 100.0, 25.0),
     )
     units = [
         TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0, ramp_down = 100.0),
@@ -674,7 +675,7 @@ function fcas_toy_system(;
             add_toy_fcas_offer!(sys, alta, stamps, BidType.RAISEREG, [(10.0, 20.0, 80.0, 95.0, a) for a in alta_reg_avail], fill([(10.0, 5.0), (10.0, 12.0)], 2))
             add_toy_fcas_offer!(sys, alta, stamps, BidType.LOWERREG, fill((10.0, 20.0, 80.0, 95.0, 10.0), 2), fill([(10.0, 6.0)], 2))
             add_toy_fcas_offer!(sys, alta, stamps, BidType.RAISE6SEC, fill((5.0, 10.0, 70.0, 100.0, 20.0), 2), fill([(20.0, 3.0)], 2))
-            add_toy_fcas_offer!(sys, park, stamps, BidType.RAISE6SEC, fill((5.0, 10.0, 90.0, 100.0, 25.0), 2), fill([(15.0, 1.0), (10.0, 9.0)], 2))
+            add_toy_fcas_offer!(sys, park, stamps, BidType.RAISE6SEC, fill(park_trap, 2), fill([(15.0, 1.0), (10.0, 9.0)], 2))
             add_toy_fcas_offer!(sys, bat, stamps, BidType.RAISEREG, fill((0.0, 5.0, 20.0, 25.0, 10.0), 2), fill([(10.0, 15.0)], 2))
             add_toy_fcas_offer!(sys, bat, stamps, BidType.RAISEREG, fill((-25.0, -20.0, -5.0, 0.0, 10.0), 2), fill([(10.0, 12.0)], 2); decremental = true)
             add_toy_fcas_offer!(sys, bat, stamps, BidType.RAISE6SEC, fill((-50.0, -40.0, 40.0, 50.0, 20.0), 2), fill([(20.0, 2.0)], 2))

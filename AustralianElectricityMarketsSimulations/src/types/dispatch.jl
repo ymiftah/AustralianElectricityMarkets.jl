@@ -45,6 +45,7 @@ struct RampDownRateTimeSeriesParameter <: PSI.TimeSeriesParameter end
 """
     InitialPowerTimeSeriesParameter
 
-Time-series parameter for a device's `"initial_mw_seed"` series, in system-base per-unit.
+Time-series parameter for a device's `"initial_mw_seed"` series, in MW; the parameter's multiplier
+converts it to system-base per unit.
 """
 struct InitialPowerTimeSeriesParameter <: PSI.TimeSeriesParameter end

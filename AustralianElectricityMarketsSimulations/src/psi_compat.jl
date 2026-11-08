@@ -121,10 +121,10 @@ PSI._get_time_series_name(::RampDownRateTimeSeriesParameter, device::PSY.Compone
     _inputs_series_name(device, :ramp_down)
 
 PSI._get_time_series_name(::EnergyMaxAvailTimeSeriesParameter, device::PSY.Component, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
-    _inputs_series_name(device, :energy_availability)
+    _inputs_series_name(device, :energy_max_avail)
 
 PSI._get_time_series_name(::PSI.ActivePowerOutTimeSeriesParameter, device::PSY.Storage, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
-    _inputs_series_name(device, :energy_availability)
+    _inputs_series_name(device, :energy_max_avail)
 
 PSI._get_time_series_name(::PSI.ActivePowerInTimeSeriesParameter, device::PSY.Storage, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
-    _inputs_series_name(device, :energy_availability_decremental)
+    _inputs_series_name(device, :energy_max_avail_decremental)

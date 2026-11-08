@@ -419,9 +419,13 @@ end
 end
 
 
-@testset "a fixed loading that stays invoked is held in per-unit" begin
-    # Alta carries a 40 MW fixed loading in both steps, so it solves at 40 MW and the target the
-    # formulation reads is 40 / base_power.
+@testset "each step's fixed loading is recomputed from the state source" begin
+    # Alta carries a 40 MW fixed loading and is offline (dispatch mode 0) at build, so the first
+    # solve starts from the build's 40 MW seed. Before step 2 the state source moves it into its
+    # start-up profile (mode 2), where AEMO does not apply the loading: the parameter must follow
+    # the state, not the build's series. The dispatch effect of the same drop runs through a
+    # simulation in "each step's fixed loading is recomputed from the bid and the dispatch mode".
+    later_key = Ref{Any}(nothing)
     sys = nem_toy_system(
         [
             TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 20.0, ramp_up = 100.0),
@@ -436,24 +440,46 @@ end
                 fixed_load = fill(40.0, length(stamps)),
             )
             set_toy_unit_field!(sys, alta, stamps, :dispatch_mode, zeros(length(stamps)))
+            # The shape an old build wrote: Alta held at 40 MW in both steps. It is not read; the
+            # parameter comes from the bid and the step's state.
             replace_single_series_with!(sys, alta, "fixed_load", [0.4, 0.4], stamps)
             replace_single_series_with!(sys, alta, "fixed_load_invoked", [1.0, 1.0], stamps)
+            replace_single_series_with!(sys, alta, "later_dispatch_mode", [0.0, 2.0], stamps)
+            later_key[] = AustralianElectricityMarkets._series_key(alta, "later_dispatch_mode")
             return
         end,
     )
-    out = run_replay(sys, _ST_STEP_RANGE; optimizer = _ST_OPTIMIZER)
-    dispatch = _st_dispatch_by_step(out)
-    @test dispatch[TOY_CHEAP] ≈ [40.0, 40.0] atol = 1.0e-6
-    @test dispatch[TOY_EXPENSIVE] ≈ [20.0, 20.0] atol = 1.0e-6
-    objectives = PSI.read_optimizer_stats(out.results).objective_value
-    @test objectives[1] ≈ 2400.0 / 12 atol = 1.0e-4
-    @test objectives[2] ≈ 2400.0 / 12 atol = 1.0e-4
-
-    container = PSI.get_optimization_container(out.model)
+    model = PSI.DecisionModel(
+        replay_template(sys), sys; optimizer = _ST_OPTIMIZER, horizon = TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
     target = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadTimeSeriesParameter, NEMThermalGen))
     invoked = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadInvokedTimeSeriesParameter, NEMThermalGen))
+
+    PSI.set_execution_count!(model, 0)
+    PSI.solve_impl!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     @test only(PSI.get_parameter_column_values(target, TOY_CHEAP)) ≈ 40.0 / 100.0
     @test only(PSI.get_parameter_column_values(invoked, TOY_CHEAP)) === 1.0
+    # Alta is held at 40 MW at $20 and Park City supplies the other 20 MW at $80.
+    @test PSI.JuMP.objective_value(PSI.get_jump_model(container)) ≈ 2400.0 / 12 atol = 1.0e-4
+
+    alta = PSY.get_component(NEMThermalGen, PSI.get_system(model), TOY_CHEAP)
+    AustralianElectricityMarkets.set_observed_state!(
+        alta,
+        AustralianElectricityMarkets.NEMObservedState(;
+            initial_mw = AustralianElectricityMarkets.get_observed_state(alta).initial_mw,
+            dispatch_mode = later_key[],
+        ),
+    )
+    PSI.set_execution_count!(model, 1)
+    _st_update_parameters!(model)
+    PSI.solve_impl!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    @test only(PSI.get_parameter_column_values(target, TOY_CHEAP)) === 0.0
+    @test only(PSI.get_parameter_column_values(invoked, TOY_CHEAP)) === 0.0
 end
 
 
@@ -503,4 +529,100 @@ end
             return
         end,
     )
+end
+
+
+@testset "each step's energy limit is raised to the ramp-down floor of its state" begin
+    # Alta's step-2 bid availability is 10 MW, below its 70 MW start minus the 2 MW/min ramp-down
+    # over five minutes, so the floor is 60 MW. At the build's initial time the state reads 50 MW,
+    # which puts the seed at 40 MW, and the raw availability is 10 MW: only the per-step update
+    # reaches 60 MW.
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(
+                100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0, ramp_down = 2.0,
+                availability = [100.0, 10.0],
+            ),
+            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 50.0, ramp_up = 100.0),
+        ],
+        100.0; horizon = TOY_RESOLUTION,
+        mutate! = function (sys, stamps)
+            alta = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
+            replace_single_series_with!(sys, alta, "later_initial_mw", [50.0, 70.0], stamps)
+            observed = get_observed_state(alta)
+            set_observed_state!(
+                alta,
+                AustralianElectricityMarkets.NEMObservedState(;
+                    initial_mw = AustralianElectricityMarkets._series_key(alta, "later_initial_mw"),
+                    dispatch_mode = observed.dispatch_mode,
+                ),
+            )
+            return
+        end,
+    )
+    out = run_replay(sys, _ST_STEP_RANGE; optimizer = _ST_OPTIMIZER)
+    dispatch = _st_dispatch_by_step(out)
+    # 60 MW of cheap generation and 40 MW of expensive. The build's 40 MW floor would hold cheap at
+    # 40 MW and cost 5600/12; the raw 10 MW availability would cost 7400/12.
+    @test dispatch[TOY_CHEAP] ≈ [100.0, 60.0] atol = 1.0e-6
+    @test dispatch[TOY_EXPENSIVE] ≈ [0.0, 40.0] atol = 1.0e-6
+    objectives = PSI.read_optimizer_stats(out.results).objective_value
+    @test objectives[1] ≈ 2000.0 / 12 atol = 1.0e-4
+    @test objectives[2] ≈ 4400.0 / 12 atol = 1.0e-4
+
+    container = PSI.get_optimization_container(out.model)
+    limit = PSI.get_parameter(container, PSI.ParameterKey(AEMS.EnergyMaxAvailTimeSeriesParameter, NEMThermalGen))
+    @test only(PSI.get_parameter_column_values(limit, TOY_CHEAP)) ≈ 60.0 / 100.0
+end
+
+
+@testset "each step's FCAS enablement and ramping limit are recomputed from the state" begin
+    # Park City moves from 40 MW to 200 MW, outside its RAISE6SEC enablement band, so its offer is
+    # disabled at step 2. The battery's starting output rises from 5 MW to 10 MW, so its regulation
+    # joint ramping limit rises by the same 5 MW. Both differ from the build's seed.
+    inactive = FCAS_INACTIVE_LIMIT_MW / 100.0
+    sys = fcas_toy_system(park_initial = [40.0, 200.0], batt_initial = [5.0, 10.0])
+    model = PSI.DecisionModel(
+        replay_template(sys), sys; optimizer = _ST_OPTIMIZER, horizon = TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    park_limit = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FCASOfferLimitParameter, NEMThermalGen, "RAISE6SEC"))
+    battery_ramp = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FCASRampingLimitParameter, NEMStorage, "RAISEREG"))
+
+    PSI.set_execution_count!(model, 0)
+    PSI.solve_impl!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    # The additional axis is the field list: max_avail, enablement_min, enablement_max.
+    @test vec(Array(PSI.get_parameter_column_values(park_limit, TOY_EXPENSIVE))) ≈ [0.25, 0.05, 1.0]
+    @test vec(Array(PSI.get_parameter_column_values(battery_ramp, TOY_BATTERY))) ≈ [0.25, 0.2]
+
+    PSI.set_execution_count!(model, 1)
+    _st_update_parameters!(model)
+    PSI.solve_impl!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    @test vec(Array(PSI.get_parameter_column_values(park_limit, TOY_EXPENSIVE))) ≈ [0.0, -inactive, inactive]
+    @test vec(Array(PSI.get_parameter_column_values(battery_ramp, TOY_BATTERY))) ≈ [0.3, 0.2]
+end
+
+
+@testset "a starting output at the enablement maximum keeps the offer enabled" begin
+    # Park City's starting output equals its RAISE6SEC enablement maximum (95 MW), which the stranded
+    # pre-condition keeps enabled (`EnablementMin <= output <= EnablementMax`). The build seed must
+    # scale the state the way the FCAS accessor scales the trapezium; one rounding step above the
+    # bound would disable the offer.
+    sys = fcas_toy_system(park_initial = [95.0, 95.0], park_trap = (5.0, 10.0, 90.0, 95.0, 25.0))
+    model = PSI.DecisionModel(
+        replay_template(sys), sys; optimizer = _ST_OPTIMIZER, horizon = TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    park_limit = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FCASOfferLimitParameter, NEMThermalGen, "RAISE6SEC"))
+
+    PSI.set_execution_count!(model, 0)
+    PSI.solve_impl!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    @test vec(Array(PSI.get_parameter_column_values(park_limit, TOY_EXPENSIVE))) ≈ [0.25, 0.05, 0.95]
 end

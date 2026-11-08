@@ -89,14 +89,44 @@ registered name; the UIGF and derived-input names are still checked. A key namin
 is therefore a build-time error again, while a key naming a different but existing series is not, so
 the per-step update is the reader that decides which existing series supplies the value.
 
-Task 11 removes the precomputed series. `set_effective_offers!` writes the first-solve seeds
-`"initial_mw_seed"`, `"fixed_load_seed"` and `"fixed_load_invoked_seed"` from the configured
-`_state_source()`, and every later solve rewrites the same parameters from it. A unit whose
-dispatch rows begin mid-range has no dispatch mode before its registration, so its seed carries the
-starting output only and no fixed loading there. Pre-flight now requires each keyed state series as
-a five-minute `SingleTimeSeries` on the five-minute grid, and no longer requires the registered
-`"observed_initial_mw"` name. No private PowerSimulations name beyond `_set_param_value_at!` is
-used.
+Task 11 removes the precomputed state-dependent series. `set_effective_offers!` writes the
+first-solve seeds `"initial_mw_seed"`, `"energy_max_avail_seed"`,
+`"energy_max_avail_seed_decremental"`, `"fixed_load_seed"` and `"fixed_load_invoked_seed"` from the
+configured `_state_source()`, and every later solve rewrites the same parameters from it. Each seed
+comes from the same rule function its update calls: `max_active_power_floor` about the starting
+output for a non-storage device's availability limits, the bid availability itself for a storage
+device's (its net ramp row prices the floor),
+`effective_fixed_load` and `fixed_load_invoked` for the fixed loading. A unit whose dispatch rows
+begin mid-range has no dispatch mode before its registration, so its fixed-loading seed carries no
+loading there. Pre-flight now requires each keyed state series as a five-minute `SingleTimeSeries`
+on the five-minute grid, and no longer requires the registered `"observed_initial_mw"` name. The
+route uses `_set_param_value_at!` to write a `JuMP.VariableRef` parameter array and
+`_apply_coefficient_targets!` to rewrite a coefficient parameter's row; no other private
+PowerSimulations name is used.
+
+The per-step route covers every input that reads the state:
+
+- the starting MW (`InitialPowerTimeSeriesParameter`);
+- the ramp-up and ramp-down rates, from `composite_ramp_rates` for a device bid on both sides and
+  from its per-side effective rate otherwise;
+- the generation and consumption availability limits, from the bid availability, raised to the
+  ramp-down floor about the starting output for a non-storage device;
+- the fixed-loading target and invoked flag;
+- the FCAS effective offers and regulation ramping limits, so FCAS enablement, the stranded
+  pre-conditions and the joint and BDU ramping limits are recomputed at every step rather than
+  attached once at build;
+- an MNSP link's metered flow and its forward and reverse ramp rates, from `mnsp_ramp_envelope`.
+
+The FCAS slope parameters are stock `ConstraintCoefficientParameter`s: their values set a constraint
+coefficient through `add_coefficient_target!`, so each update method rewrites the registered
+coefficients after writing the values, with `_apply_coefficient_targets!`.
+
+The FCAS masks compare the starting output with the trapezium's enablement bounds, so the two must
+be in the same units by the same arithmetic. `get_fcas_trapezium` divides a stored MW coordinate by
+the system base and then multiplies by the display-units multiplier; the build seeds scale the
+starting output the same way (`x / system_base * multiplier`). Multiplying by `1 / base` instead
+puts a starting output equal to an enablement bound one rounding step above it, and the stranded
+pre-condition then disables an offer AEMO keeps enabled at that bound.
 
 ## Glue required by the stock objective-coefficient route
 
@@ -119,9 +149,10 @@ A custom update method must also mirror the stock resynchronisation
 (`set_synchronized_status!(objective, true)`); without it the next `cost_function_unsynch` leaves
 the previous step's terms in place and the coefficients accumulate.
 
-Both private names are fork internals to re-check on every fork update. `_param_to_vars` has no
-generic method, so a production objective parameter must define its own, and
-`_set_param_value_at!` is the only correct write path for a `JuMP.VariableRef` parameter array.
+These private names are fork internals to re-check on every fork update. `_param_to_vars` has no
+generic method, so a production objective parameter must define its own, `_set_param_value_at!` is
+the only correct write path for a `JuMP.VariableRef` parameter array, and
+`_apply_coefficient_targets!` is the only way a new coefficient-parameter value reaches its row.
 
 ## The toy test
 
@@ -132,10 +163,13 @@ generic method, so a production objective parameter must define its own, and
   holds a stale 50 MW. Without the state-source update the step-2 base stays 50 MW and the ceiling
   55 MW; the update is the only path to 10 MW, and the step-2 parameter column reading 10.0 is the
   discriminator.
-- fixed loading: the derived series is deliberately held at 40 MW for both steps while the bid and
-  the dispatch mode say the loading stops at step 2. A unit that still read the series would be
-  held at 40 MW in step 2; it solves at 0 MW instead. A second case keeps the loading invoked in
-  both steps and checks the parameter column is 40 / base_power with the unit dispatched at 40 MW.
+- fixed loading: the build's seed holds 40 MW where the unit is offline (dispatch mode 0), and a
+  test-only `"fixed_load"` series holds the same 40 MW in both steps. Moving the unit into its
+  start-up profile (mode 2) before step 2 makes AEMO's loading inapplicable: in the state-source
+  case the target and invoked columns fall from 0.4 and 1.0 to 0, and in the full-replay case the
+  same bid with a two-step dispatch mode carries through to the dispatch, the unit solving at 40 MW
+  then 0 MW and the objective falling from 3600/12 to 1200/12. A unit that read the series instead
+  of the state would not change in either case.
 - objective coefficient: a test-only `ObjectiveFunctionParameter` reads 12 then 60 $/MWh from a
   series. Objectives are `(20 + 12) * 100 / 12` and `(20 + 60) * 100 / 12`, and the step-2
   coefficient on active power is `60 * 100 / 12`.
@@ -169,6 +203,29 @@ include the HiGHS solve (about 0.1 ms here), and the rebuild's cost grows with m
 decisive point is not the ratio but that the rebuild route cannot carry the offer cost terms at
 all.
 
+## The replay gate's comparison
+
+The fingerprint gate compares this branch against the pre-branch baseline `51940d8` over the whole
+rebuild, so it cannot compare series names literally. The comparison maps:
+
+| Baseline name | This branch |
+| --- | --- |
+| `mnsp_<direction>_<kind>` | `link_<direction>_<kind>` |
+| `mnsp_<direction>_fixed_load` | `<direction>_fixed_load_value`, `<direction>_fixed_load_invoked_flag` |
+| `"invoked"`, `"rhs"` | `"constraint_invoked"`, `"constraint_rhs"` |
+| `"energy_max_avail[_decremental]"` | `"energy_availability[_decremental]"` |
+| `"uigf"` | `"telemetry_uigf"` |
+
+The baseline's constraint right-hand side is per unit of the system base and this branch's is MW, so
+the baseline's `rhs` values are multiplied by the system base before comparison.
+`"loss_demand_coefficient"` is a Task 6 addition with no baseline counterpart and is not compared.
+
+Both liberties have limits. A wrong rename mapping compares a renamed series against an unrelated
+one and reports equal values only where the two happen to coincide, so the mapping is reviewed
+whenever a series is renamed. The scaling assumes a pure unit change: a series whose value also
+changed would have that change hidden by the scaling, so any series in the map whose value is
+expected to move is compared separately.
+
 ## Consequences
 
 - One writer per parameter per step. The build writes the values of the simulation's first solve,
@@ -183,3 +240,7 @@ all.
   runs without it.
 - A value that is not finite throws, naming the parameter, the device and the stamp, as the stock
   time-series update does; a silent NaN would reach the solver as an opaque failure.
+- `_set_nem_fixed_loads!` is dead in production: the fixed-loading update reads the bids directly.
+  It survives only because test fixtures call it to build the reference `"fixed_load"` series the
+  cross-check compares against. Removing it means moving that reference into the fixture; the
+  removal is a follow-up of the replay cleanup, not of this change.

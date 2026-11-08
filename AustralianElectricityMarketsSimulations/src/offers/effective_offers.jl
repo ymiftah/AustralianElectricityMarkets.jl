@@ -9,11 +9,12 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
 - `"ramp_up_rate"`, `"ramp_down_rate"`, the dispatch ramp rates per unit of the system base per minute,
   and `"fcas_agc_ramp_rate_<BIDTYPE>"`, the AGC ramp rate of each regulation service, from the unit
   conditions that [`set_unit_conditions!`](@ref) attaches. The ramp rates are the lesser of the bid
-  and telemetered rates ([`effective_ramp_limits`](@ref)), and the AGC rates read the effective
-  regulation availability ([`effective_regulation_max_avail`](@ref)).
+  and telemetered rates ([`effective_ramp_limit`](@ref)), taking the composite cross-zero rate
+  ([`composite_ramp_rates`](@ref)) for a device bid on both sides, and the AGC rates read the
+  effective regulation availability ([`effective_regulation_max_avail`](@ref)).
 - `"energy_availability[_decremental]"`, the energy bid `MAXAVAIL` per unit of the system base; zero
-  for a non-scheduled load without an energy bid. This is the series the formulation reads as
-  `EnergyMaxAvailTimeSeriesParameter`.
+  for a non-scheduled load without an energy bid. This is the raw availability the FCAS pre-conditions
+  read.
 - `"fcas_offer_<BIDTYPE>[_decremental]"` and `"fcas_trapezium_<BIDTYPE>[_decremental]"`, the FCAS
   offer curves in MW and the trapezium per unit of the system base, with NaN ramp rates. A
   `BIDIRECTIONAL` FCAS bid is on the generation side.
@@ -24,9 +25,10 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
   ([`tie_break_scale`](@ref)), and the [`EnergyTieBreak`](@ref) service joining the units that carry them.
 - `"loss_demand_coefficient"`, the demand term of each loss-modelled interchange's loss factor
   ([`set_loss_demand_coefficients!`](@ref)).
-- `"initial_mw_seed"`, `"fixed_load_seed"` and `"fixed_load_invoked_seed"`, the first-solve values
-  the build reads from the configured [`StateSource`](@ref) ([`_set_state_seeds!`](@ref)); every
-  later solve rewrites the same parameters from the state source.
+- `"initial_mw_seed"`, `"energy_max_avail_seed[_decremental]"`, `"fixed_load_seed"` and
+  `"fixed_load_invoked_seed"`, the first-solve values the build reads from the configured
+  [`StateSource`](@ref) ([`_set_state_seeds!`](@ref)); every later solve rewrites the same
+  parameters from the state source.
 
 It also attaches to each NEM dispatch device a [`NEMDispatchInputs`](@ref) holding the keys of the
 dispatch-input series the formulation reads through.
@@ -62,9 +64,11 @@ end
     _set_state_seeds!(sys)
 
 Attaches each NEM dispatch device's first-solve seed series from the configured
-[`StateSource`](@ref): `"initial_mw_seed"` in MW, and, for a device whose energy bid carries a fixed
-loading, `"fixed_load_seed"` in system-base per-unit and `"fixed_load_invoked_seed"` (`1` or `0`).
-The build writes them before the forecasts are attached, so the simulation's first solve, which
+[`StateSource`](@ref): `"initial_mw_seed"` in MW, `"energy_max_avail_seed[_decremental]"` in
+system-base per-unit (the bid availability, raised to the ramp-down floor about the starting output
+for a non-storage device), and, for a device whose energy bid carries a fixed loading,
+`"fixed_load_seed"` in system-base per-unit and `"fixed_load_invoked_seed"` (`1` or `0`). The build
+writes them before the forecasts are attached, so the simulation's first solve, which
 `PowerSimulations.jl` does not update, reads the same state source every later solve recomputes
 from. Replaces existing seed series.
 
@@ -91,6 +95,7 @@ function _set_state_seeds!(sys::PSY.System)
                 sys, device,
                 single_series(_INITIAL_MW_SEED_SERIES, first(stamps), initial, resolution),
             )
+            _set_energy_max_avail_seeds!(sys, device, observed, base)
             _has_fixed_load_bid(device) || continue
             steps = [_seed_fixed_load_step(device, t, source) for t in stamps]
             replace_single_series!(
@@ -105,6 +110,34 @@ function _set_state_seeds!(sys::PSY.System)
                 ),
             )
         end
+    end
+    return
+end
+
+
+# Writes the first-solve availability limit of each energy bid side, system-base per-unit: the bid
+# availability, raised to the ramp-down floor about the starting output for a non-storage device, on
+# the availability's own grid.
+function _set_energy_max_avail_seeds!(sys::PSY.System, device, observed, base::Real)
+    inputs = _dispatch_inputs(device)
+    down_key = inputs.ramp_down
+    for (availability_key, seed_name) in (
+            (inputs.energy_availability, _ENERGY_MAX_AVAIL_SEED_SERIES),
+            (inputs.energy_availability_decremental, _ENERGY_MAX_AVAIL_SEED_DECREMENTAL_SERIES),
+        )
+        availability_key isa IS.TimeSeriesKey || continue
+        availability = _bid_series(device, availability_key, :availability)
+        initial = _aligned_mw(device, observed.initial_mw, availability)
+        down = isnothing(down_key) ? fill(0.0, length(availability.values)) : _aligned_values(device, down_key, availability)
+        hours = Dates.value(Millisecond(availability.resolution)) / (1000 * 60 * 60)
+        values = [
+            _max_avail_bound(availability.values[i], NEMUnitState(initial[i], 0), device, down[i], hours, base)
+                for i in eachindex(availability.values)
+        ]
+        replace_single_series!(
+            sys, device,
+            single_series(seed_name, first(availability.timestamps), values, availability.resolution),
+        )
     end
     return
 end
@@ -153,6 +186,8 @@ function _dispatch_inputs(device)
         energy_offer_decremental = _derived_series_key(device, energy_offer_series_name(OfferSide.LOAD)),
         energy_availability = _derived_series_key(device, energy_availability_series_name(OfferSide.GEN)),
         energy_availability_decremental = _derived_series_key(device, energy_availability_series_name(OfferSide.LOAD)),
+        energy_max_avail = _derived_series_key(device, _ENERGY_MAX_AVAIL_SEED_SERIES),
+        energy_max_avail_decremental = _derived_series_key(device, _ENERGY_MAX_AVAIL_SEED_DECREMENTAL_SERIES),
         uigf = uigf isa IS.TimeSeriesKey ? uigf : nothing,
         ramp_up = _derived_series_key(device, NEM_SERIES.ramp_up_rate),
         ramp_down = _derived_series_key(device, NEM_SERIES.ramp_down_rate),
@@ -381,6 +416,23 @@ function _aligned_values(device, key, like)
 end
 
 
+# The observed starting output over `like`'s grid, in MW. The state series stores MW, so it is read
+# without the scaling factors the surrounding system-base block applies to the other series.
+function _aligned_mw(device, key, like)
+    key isa IS.TimeSeriesKey || return fill(Float64(key), length(like.values))
+    name = IS.get_name(key)
+    stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name)
+    values = PSY.get_time_series_values(PSY.SingleTimeSeries, device, name; ignore_scaling_factors = true)
+    out = fill(NaN, length(like.values))
+    index = Dict(t => i for (i, t) in enumerate(like.timestamps))
+    for (t, value) in zip(stamps, values)
+        j = get(index, t, nothing)
+        isnothing(j) || (out[j] = Float64(value))
+    end
+    return out
+end
+
+
 # The bid ramp rate of `device` on `side` in MW/min over the grid of `like`; `NaN` where the device
 # has no bid on that side or the bid publishes no rate.
 function _bid_ramp_rates(device, side::OfferSide, field::Symbol, like)
@@ -416,7 +468,8 @@ end
 
 # Attaches the ramp rates and AGC ramp rates of each available NEM dispatch device. The ramps are the
 # lesser of the bid and telemetered rates per minute, with a non-scheduled load and a missing row at
-# zero; the AGC rates read the effective regulation availability.
+# zero; a battery bid on both sides takes the composite cross-zero rate; the AGC rates read the
+# effective regulation availability.
 function _set_dispatch_limits!(sys::PSY.System)
     base = PSY.get_base_power(sys)
     for device in AustralianElectricityMarkets.nem_dispatch_devices(sys)
@@ -427,14 +480,7 @@ function _set_dispatch_limits!(sys::PSY.System)
         down = _bid_series(device, telemetry.ramp_down_limit, :ramp_down_limit)
         interval_hours = Dates.value(Millisecond(up.resolution)) / (1000 * 60 * 60)
         pinned = AustralianElectricityMarkets.is_non_scheduled_load(device)
-        # One ramp series per device and direction, read on the first side its type offers: this
-        # writer keeps the per-side rate, and composite_ramp_rates is the cross-zero form.
-        ramp_side = first(energy_offer_sides(device))
-        effective_up, effective_down = effective_ramp_limits(
-            _bid_ramp_rates(device, ramp_side, :roc_up, up),
-            _bid_ramp_rates(device, ramp_side, :roc_down, down),
-            up.values, down.values,
-        )
+        effective_up, effective_down = _effective_ramp_rates(device, up, down, interval_hours)
         ramp_up_rate = pinned ? zeros(length(up.values)) : replace(effective_up ./ 60 ./ base, NaN => 0.0)
         ramp_down_rate = pinned ? zeros(length(down.values)) : replace(effective_down ./ 60 ./ base, NaN => 0.0)
         replace_single_series!(sys, device, single_series(NEM_SERIES.ramp_up_rate, first(up.timestamps), ramp_up_rate, up.resolution))
@@ -442,6 +488,36 @@ function _set_dispatch_limits!(sys::PSY.System)
         _set_agc_ramp_rates!(sys, device, telemetry, up, down, base, interval_hours)
     end
     return
+end
+
+
+# The per-interval ramp limits of `device` in MW/h over the grid of `up`: a device bid on both sides
+# of the energy market takes the composite cross-zero rate of both its bids, and every other device
+# the per-side rate, each capped by the telemetered limit. A stamp the inputs do not cover is NaN,
+# which leaves the telemetered rate.
+function _effective_ramp_rates(device, up, down, interval_hours::Real)
+    device isa PSY.Storage || return effective_ramp_limits(
+        _bid_ramp_rates(device, first(energy_offer_sides(device)), :roc_up, up),
+        _bid_ramp_rates(device, first(energy_offer_sides(device)), :roc_down, down),
+        up.values, down.values,
+    )
+    minutes = interval_hours * 60
+    gen_up = _bid_ramp_rates(device, OfferSide.GEN, :roc_up, up)
+    gen_down = _bid_ramp_rates(device, OfferSide.GEN, :roc_down, up)
+    load_up = _bid_ramp_rates(device, OfferSide.LOAD, :roc_up, up)
+    load_down = _bid_ramp_rates(device, OfferSide.LOAD, :roc_down, up)
+    initial = _aligned_values(device, AustralianElectricityMarkets.get_observed_state(device).initial_mw, up)
+    down_telemetry = _aligned_values(device, getproperty(device, :telemetry).ramp_down_limit, up)
+    # AEMO Dispatch Procedure (SO_OP_3705) Appendix C: the composite rate of a unit bid on both
+    # sides, compared with its SCADA ramp rate.
+    rates = [
+        composite_ramp_rates(gen_up[i], gen_down[i], load_up[i], load_down[i], minutes, NEMUnitState(initial[i], 0))
+            for i in eachindex(up.values)
+    ]
+    return (
+        [effective_ramp_limit(rates[i][1], up.values[i]) for i in eachindex(rates)],
+        [effective_ramp_limit(rates[i][2], down_telemetry[i]) for i in eachindex(rates)],
+    )
 end
 
 
