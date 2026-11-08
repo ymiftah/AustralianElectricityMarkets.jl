@@ -120,7 +120,7 @@ is a key of a series attached to the device, or `nothing` where the input is abs
 - `uigf`: the unit initial generation forecast, MW.
 - `ramp_up`: the effective ramp-up limit series, MW/h.
 - `ramp_down`: the effective ramp-down limit series, MW/h.
-- `fcas`: one [`NEMFCASInputs`](@ref) per FCAS service and side.
+- `fcas`: one [`NEMFCASInputs`](@ref) per FCAS service and side with an offer.
 - `internal`: `InfrastructureSystems` bookkeeping.
 """
 struct NEMDispatchInputs <: PSY.SupplementalAttribute

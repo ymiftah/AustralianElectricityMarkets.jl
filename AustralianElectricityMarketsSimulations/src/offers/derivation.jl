@@ -123,7 +123,8 @@ end
 
 A regulation FCAS trapezium's enablement after AEMO *FCAS Model in NEMDE* §4.1: the more restrictive
 of the bid enablement and the AGC enablement limits. A missing telemetry limit applies no
-restriction, so the bid's own breakpoint stands.
+restriction, so the bid's own breakpoint stands. A `0.0` telemetry limit is a real limit here,
+unlike [`scale_fcas_trapezium`](@ref), which treats it as absent.
 
 # Arguments
 - `enablement_min`, `enablement_max`: the bid trapezium's enablement breakpoints, MW.

@@ -26,8 +26,8 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
 - `"loss_demand_coefficient"`, the demand term of each loss-modelled interchange's loss factor
   ([`set_loss_demand_coefficients!`](@ref)).
 
-It also attaches to each NEM dispatch device a [`NEMDispatchInputs`](@ref) holding the keys of every
-series it derived, which the formulation reads those series through.
+It also attaches to each NEM dispatch device a [`NEMDispatchInputs`](@ref) holding the keys of the
+dispatch-input series the formulation reads through.
 
 The static series are written first, then the dispatch ramps and limits, then the FCAS effective offers
 and tie-break scales that read them. Existing series of these names are replaced, so a second call on the same `sys` gives the same
@@ -58,8 +58,8 @@ end
 """
     _attach_dispatch_inputs!(sys)
 
-Attaches to each NEM dispatch device a [`NEMDispatchInputs`](@ref) holding the keys of the series
-[`set_effective_offers!`](@ref) derived for it, replacing any attached by an earlier call.
+Attaches to each NEM dispatch device a [`NEMDispatchInputs`](@ref) holding the dispatch-input series
+keys [`set_effective_offers!`](@ref) derived for it, replacing any attached by an earlier call.
 
 # Arguments
 - `sys`: the `System` to add to.
@@ -78,8 +78,8 @@ function _attach_dispatch_inputs!(sys::PSY.System)
 end
 
 
-# The derived-input keys of `device`: one per series `set_effective_offers!` wrote for it, or `nothing`
-# where an input is absent.
+# The derived-input keys of `device`: one per dispatch-input series it has, or `nothing` where an
+# input is absent.
 function _dispatch_inputs(device)
     telemetry = getproperty(device, :telemetry)
     uigf = isnothing(telemetry) ? nothing : telemetry.uigf
@@ -375,8 +375,8 @@ function _set_dispatch_limits!(sys::PSY.System)
         down = _bid_series(device, telemetry.ramp_down_limit, :ramp_down_limit)
         interval_hours = Dates.value(Millisecond(up.resolution)) / (1000 * 60 * 60)
         pinned = AustralianElectricityMarkets.is_non_scheduled_load(device)
-        # One ramp series per device and direction: a bidirectional unit reads the first side it bids, so
-        # its rate is per side and no cross-zero composite from Initial MW is applied.
+        # One ramp series per device and direction, read on the first side its type offers, so a
+        # bidirectional unit's rate is per side and no cross-zero composite from Initial MW is applied.
         ramp_side = first(energy_offer_sides(device))
         effective_up, effective_down = effective_ramp_limits(
             _bid_ramp_rates(device, ramp_side, :roc_up, up),

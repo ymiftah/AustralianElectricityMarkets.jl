@@ -577,8 +577,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   band costs, violation penalties and FCAS and MNSP band costs are objective terms only.
 - **Breaking:** `fcas_bid_direction` returns the new `FCASBidDirection` enum (`NONE`,
   `INCREMENTAL`, `DECREMENTAL`, `BOTH`) instead of a `Symbol`.
-- Bid series names live in one registry: `OfferSide` (`GEN`/`LOAD`), `NEM_SERIES`,
-  `energy_max_avail_series_name` and `fcas_series_name(prefix, service[, side])`. Typed accessors
+- Bid series names live in one registry: `OfferSide` (`GEN`/`LOAD`), `NEM_SERIES` and
+  `fcas_series_name(prefix, service[, side])`. Typed accessors
   `is_semi_scheduled`, `has_schedule_classification`, `is_commissioned` and `energy_offer_sides`
   replace raw `ext` reads. Offer views `NEMEnergyOffer`/`get_energy_offer` and
   `NEMFCASOffer`/`get_fcas_offer` read one side of an offer as a bundle.
