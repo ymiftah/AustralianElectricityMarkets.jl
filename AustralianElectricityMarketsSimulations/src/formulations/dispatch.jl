@@ -35,13 +35,9 @@ PSI.objective_function_multiplier(::PSI.ActivePowerVariable, ::AbstractNEMDispat
     PSI.get_default_time_series_names(::Type{<:PSY.StaticInjection}, ::Type{<:AbstractNEMDispatch})
 
 Registers the time series [`AbstractNEMDispatch`](@ref) reads as parameters. The derived series are
-read through the device's [`NEMDispatchInputs`](@ref); the observed `"observed_initial_mw"` and the
-telemetered UIGF keep a name constant, because `PowerSimulations.jl` registers one name per device
-type. Both modes register `"observed_initial_mw"`: `PowerSimulations.jl` copies the parent model's
-names onto the initial-conditions sub-model, which runs [`NEMReplayDispatch`](@ref) and reads it.
-The model's per-step update reads the observed initial MW through the device's state source instead,
-so the series a device keys in its `NEMObservedState` may carry any name; the registered series
-supplies only the values of the simulation's first solve.
+read through the device's [`NEMDispatchInputs`](@ref), and the telemetered UIGF keeps a name
+constant. The initial-power and fixed-loading parameters are added explicitly from the build's
+first-solve seed series, so they take no entry here.
 
 # Returns
 A `Dict` mapping each `PowerSimulations.TimeSeriesParameter` type to its series name.
@@ -53,10 +49,8 @@ function PSI.get_default_time_series_names(
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
         RampUpRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
         RampDownRateTimeSeriesParameter => NEM_SERIES.ramp_down_rate,
-        InitialPowerTimeSeriesParameter => NEM_OBSERVED_SERIES.initial_mw,
         EnergyMaxAvailTimeSeriesParameter => energy_availability_series_name(OfferSide.GEN),
         EnergyUIGFTimeSeriesParameter => NEM_TELEMETRY_SERIES.uigf,
-        _FIXED_LOAD_SERIES...,
     )
 end
 
@@ -81,12 +75,10 @@ end
     _has_nem_dispatch_limits(device)
 
 Whether `device` carries every derived input [`NEMReplayDispatch`](@ref) reads as a parameter, as a
-[`NEMDispatchInputs`](@ref) attribute, plus the observed initial MW of every device and the UIGF of a
-semi-scheduled one. The observed initial MW may key any series name, because the per-step update
-reads it through the device's state source, but the keyed series must exist and the registered
-`"observed_initial_mw"` series must stay attached, because it supplies the simulation's first
-solve; every other input's series name must be the one the parameter registers, because
-`PowerSimulations.jl` takes one name per device type.
+[`NEMDispatchInputs`](@ref) attribute, and the observed state and telemetry series it reads through.
+The observed state's keyed series and the UIGF's series must exist; every derived input's series name
+must be the one the parameter registers, because `PowerSimulations.jl` takes one name per device
+type.
 
 # Arguments
 - `device`: the `PowerSystems.Component` to inspect.
@@ -122,10 +114,7 @@ function _has_nem_dispatch_limits(device)
         telemetry.uigf isa IS.TimeSeriesKey || return false
         _require_key_name(device, telemetry.uigf, NEM_TELEMETRY_SERIES.uigf)
     end
-    required = (
-        name for (param, name) in names
-            if !in(param, first.(_FIXED_LOAD_SERIES)) && param !== EnergyUIGFTimeSeriesParameter
-    )
+    required = (name for (param, name) in names if param !== EnergyUIGFTimeSeriesParameter)
     return all(PSY.has_time_series(device, PSY.SingleTimeSeries, name) for name in required)
 end
 
@@ -238,12 +227,15 @@ function PSI.construct_device!(
     for param in (
             RampUpRateTimeSeriesParameter,
             RampDownRateTimeSeriesParameter,
-            InitialPowerTimeSeriesParameter,
             EnergyMaxAvailTimeSeriesParameter,
         )
         haskey(PSI.get_time_series_names(model), param) || continue
         PSI.add_parameters!(container, param, devices, model)
     end
+    PSI.add_parameters!(
+        container, InitialPowerTimeSeriesParameter, devices, model;
+        time_series_name = _INITIAL_MW_SEED_SERIES,
+    )
     any(is_semi_scheduled, devices) &&
         PSI.add_parameters!(container, EnergyUIGFTimeSeriesParameter, devices, model)
     _add_fixed_load_arguments!(container, devices, model)
@@ -395,12 +387,12 @@ end
 function _ramp_base_accessor(container, ::Type{NEMReplayDispatch}, ::Type{T}, names, _) where {T}
     PSI.has_container_key(container, InitialPowerTimeSeriesParameter, T) || throw(
         ArgumentError(
-            "NEMReplayDispatch: the device model registers no \"observed_initial_mw\" parameter, so the " *
+            "NEMReplayDispatch: the device model registers no initial-power parameter, so the " *
                 "ramp has no base to measure against",
         ),
     )
     initial, covered = _ts_parameter_accessor(container, InitialPowerTimeSeriesParameter, T)
-    _require_coverage(names, "no \"observed_initial_mw\" time series", _SETTER_REMEDY, covered)
+    _require_coverage(names, "no initial-power time series", _SETTER_REMEDY, covered)
     return initial
 end
 

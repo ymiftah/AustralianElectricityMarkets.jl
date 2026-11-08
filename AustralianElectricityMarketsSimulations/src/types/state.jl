@@ -66,10 +66,31 @@ function unit_state(::SimulatedState, device, t::DateTime)
     throw(ArgumentError("SimulatedState is not implemented yet, so the state of $(PSY.get_name(device)) cannot be simulated"))
 end
 
+
+# The configured state source, shared by the replay build and the per-step parameter updates.
+_state_source() = ObservedState()
+
+
+# The build's first-solve seed series, written from `_state_source()` before the forecasts are
+# attached; later solves overwrite the same parameters from the state source each step.
+const _INITIAL_MW_SEED_SERIES = "initial_mw_seed"
+const _FIXED_LOAD_SEED_SERIES = "fixed_load_seed"
+const _FIXED_LOAD_INVOKED_SEED_SERIES = "fixed_load_invoked_seed"
+
 # The value of `field` at `t`: a key is read over one step, a static value is returned as stored.
 function _state_value(device, observed, field::Symbol, t::DateTime)
     value = AustralianElectricityMarkets.bid_value(device, observed, field, t, 1)
     return value isa AbstractVector ? only(value) : value
+end
+
+
+# The starting output the build seeds the first solve with. A device whose dispatch rows start
+# mid-range has no dispatch mode at the earlier stamps, so the output is read on its own.
+_state_initial_mw(source::StateSource, device, t::DateTime) = unit_state(source, device, t).initial_mw
+
+function _state_initial_mw(::ObservedState, device, t::DateTime)
+    observed = AustralianElectricityMarkets.get_observed_state(device)
+    return Float64(_state_value(device, observed, :initial_mw, t))
 end
 
 

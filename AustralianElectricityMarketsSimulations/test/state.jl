@@ -183,8 +183,8 @@ end
 
 @testset "each step's ramp base is the observed initial MW of that step" begin
     # Alta's ramp-up limit falls from 2 to 1 MW/min and its observed initial MW from 50 to 10, so
-    # its step-2 ceiling is 15 MW. The parameter's registered series keeps the stale 50 MW; only an
-    # update that reads the state source's own series can find the 10 MW.
+    # its step-2 ceiling is 15 MW. The state source's keyed series, not the series the state was
+    # first read from, carries the step-2 value the update must find.
     sys = nem_toy_system(
         [
             TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = [50.0, 10.0], ramp_up = [2.0, 1.0]),
@@ -236,8 +236,8 @@ end
                 fixed_load = fill(40.0, length(stamps)),
             )
             set_toy_unit_field!(sys, park, stamps, :dispatch_mode, [0.0, 2.0])
-            # The derived series a build over the whole range would write: Park held at 40 MW in both
-            # steps. Step 1 is left correct because the simulation does not update it, step 2 stale.
+            # The shape an old build wrote: Park held at 40 MW in both steps. It is not read; the
+            # parameter comes from the bid and the step's dispatch mode.
             replace_single_series_with!(sys, park, "fixed_load", [0.4, 0.4], stamps)
             replace_single_series_with!(sys, park, "fixed_load_invoked", [1.0, 1.0], stamps)
             return
@@ -256,6 +256,34 @@ end
     invoked = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadInvokedTimeSeriesParameter, NEMThermalGen))
     @test only(PSI.get_parameter_column_values(target, TOY_EXPENSIVE)) === 0.0
     @test only(PSI.get_parameter_column_values(invoked, TOY_EXPENSIVE)) === 0.0
+end
+
+
+@testset "the keyed state series must be dispatch-interval series on the five-minute grid" begin
+    check = AustralianElectricityMarketsSimulations._check_state_series_alignment
+    sys = System(100.0)
+    bus = _st_bus()
+    add_component!(sys, bus)
+    gen = _st_thermal("aligned", bus)
+    add_component!(sys, gen)
+    add_time_series!(sys, gen, _st_series("initial_mw", fill(50.0, 7)))
+    observed(gen, name) = AustralianElectricityMarkets.NEMObservedState(;
+        initial_mw = _st_key(gen, name), dispatch_mode = 4,
+    )
+    AustralianElectricityMarkets.set_observed_state!(gen, observed(gen, "initial_mw"))
+    @test isnothing(check(gen))
+
+    # A five-minute series off the grid cannot name the interval it starts.
+    off_grid = [DateTime(2025, 1, 1, 0, 2, 30) + k * Minute(5) for k in 0:6]
+    add_time_series!(sys, gen, SingleTimeSeries(; name = "off_grid", data = TimeArray(off_grid, fill(50.0, 7))))
+    AustralianElectricityMarkets.set_observed_state!(gen, observed(gen, "off_grid"))
+    @test_throws r"not aligned to the 5 minutes dispatch interval" check(gen)
+
+    # A longer resolution cannot supply a value for every dispatch interval.
+    half_hour = collect(DateTime(2025, 1, 1):Minute(30):DateTime(2025, 1, 1, 3))
+    add_time_series!(sys, gen, SingleTimeSeries(; name = "half_hourly", data = TimeArray(half_hour, fill(50.0, length(half_hour)))))
+    AustralianElectricityMarkets.set_observed_state!(gen, observed(gen, "half_hourly"))
+    @test_throws r"resolution 30 minutes, expected 5 minutes" check(gen)
 end
 
 
@@ -302,6 +330,52 @@ function _st_update_parameters!(model)
     PSI.update_objective_function!(container)
     PSI.set_synchronized_status!(PSI.get_objective_expression(container), true)
     return
+end
+
+
+@testset "the first solve reads the build's seed, later solves the state source" begin
+    # The seed is built from the state source before the forecasts, so a change to the keyed state
+    # after the build reaches the second solve only through the per-step update.
+    later_key = Ref{Any}(nothing)
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 50.0, ramp_up = 100.0),
+        ],
+        100.0; horizon = TOY_RESOLUTION,
+        mutate! = function (sys, stamps)
+            alta = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
+            replace_single_series_with!(sys, alta, "later_initial_mw", [50.0, 10.0], stamps)
+            later_key[] = AustralianElectricityMarkets._series_key(alta, "later_initial_mw")
+            return
+        end,
+    )
+    model = PSI.DecisionModel(
+        replay_template(sys), sys; optimizer = _ST_OPTIMIZER, horizon = TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    initial = PSI.get_parameter(container, PSI.ParameterKey(AEMS.InitialPowerTimeSeriesParameter, NEMThermalGen))
+
+    PSI.set_execution_count!(model, 0)
+    PSI.solve_impl!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    @test only(PSI.get_parameter_column_values(initial, TOY_CHEAP)) === 50.0
+
+    alta = PSY.get_component(NEMThermalGen, PSI.get_system(model), TOY_CHEAP)
+    AustralianElectricityMarkets.set_observed_state!(
+        alta,
+        AustralianElectricityMarkets.NEMObservedState(;
+            initial_mw = later_key[],
+            dispatch_mode = AustralianElectricityMarkets.get_observed_state(alta).dispatch_mode,
+        ),
+    )
+    PSI.set_execution_count!(model, 1)
+    _st_update_parameters!(model)
+    PSI.solve_impl!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    @test only(PSI.get_parameter_column_values(initial, TOY_CHEAP)) === 10.0
 end
 
 

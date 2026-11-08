@@ -423,6 +423,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Replay systems no longer carry the state-dependent `"max_active_power"`, `"fixed_load"` and
+  `"fixed_load_invoked"` series. `set_effective_offers!` writes the first-solve seeds
+  `"initial_mw_seed"`, `"fixed_load_seed"` and `"fixed_load_invoked_seed"` from the configured
+  state source, and every later solve rewrites the same parameters from it; the dispatch
+  formulation derives each interval's upper limit and fixed loading itself. Pre-flight checks the
+  keyed state series' five-minute resolution and grid alignment, and no longer requires the default
+  `"observed_initial_mw"` series name.
+
 - `set_effective_offers!` writes every state-independent dispatch input once and records each
   derived series key on the device's `NEMDispatchInputs`: the energy availability
   `energy_availability[_decremental]` (the bid `MAXAVAIL` per unit of the system base, limited by

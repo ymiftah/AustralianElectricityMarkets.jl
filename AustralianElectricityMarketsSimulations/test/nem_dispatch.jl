@@ -133,12 +133,28 @@ end
         @test NEMStorage in participants
         @test NEMLoad in participants
         generator_participants = filter(!in((NEMStorage, NEMLoad)), participants)
-        variable_sets = [setdiff(entry_types(component_keys(variable_keys, T)), [EnergyUIGFSlack]) for T in generator_participants]
-        constraint_sets = [setdiff(entry_types(component_keys(constraint_keys, T)), [EnergyUIGFConstraint]) for T in generator_participants]
+        # The UIGF and fixed-loading rows are added per device that carries the input, so a participant
+        # without one carries a narrower shape; the energy and ramp shape is the same for every participant.
+        variable_sets = [
+            setdiff(
+                entry_types(component_keys(variable_keys, T)),
+                [EnergyUIGFSlack, EnergyFixedLoadSurplusSlack, EnergyFixedLoadDeficitSlack]
+            )
+                for T in generator_participants
+        ]
+        constraint_sets = [
+            setdiff(
+                entry_types(component_keys(constraint_keys, T)),
+                [EnergyUIGFConstraint, EnergyFixedLoadConstraint]
+            )
+                for T in generator_participants
+        ]
         @test allequal(variable_sets)
         @test allequal(constraint_sets)
         @test PSI.ActivePowerVariable in first(variable_sets)
         @test PSI.RampConstraint in first(constraint_sets)
+        # The mock hive bids a fixed loading for one generator, which registers the fixed-loading rows.
+        @test any(EnergyFixedLoadConstraint in entry_types(component_keys(constraint_keys, T)) for T in generator_participants)
 
         @testset "a scheduled load gets the single-variable shape priced on its decremental offer" begin
             load_variables = entry_types(component_keys(variable_keys, NEMLoad))

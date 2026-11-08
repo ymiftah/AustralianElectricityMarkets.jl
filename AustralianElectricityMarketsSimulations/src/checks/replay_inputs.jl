@@ -7,9 +7,10 @@ of the setters that built it: with a `GenericConstraint` service model, [`get_mi
 [`get_dropped_terms`](@ref) of the constraint build (`DISPATCHCONSTRAINT`, `GENCONDATA`,
 `SPDCONNECTIONPOINTCONSTRAINT`, `SPDREGIONCONSTRAINT`, `SPDINTERCONNECTORCONSTRAINT`); the
 dispatch-limit series of the dispatch-limits build (`DISPATCHLOAD`) on every dispatch
-device; and, with a `PSY.AreaInterchange` device model, the offers of `set_mnsp_offers!`
-(`INTERCONNECTORCONSTRAINT`, `MNSP_INTERCONNECTOR`, `MNSP_DAYOFFER`, `MNSP_BIDOFFERPERIOD`,
-`DISPATCH_MNSPBIDTRK`) on every available MNSP.
+device, the resolution and five-minute alignment of the series keyed by each device's
+[`NEMObservedState`](@ref); and, with a `PSY.AreaInterchange` device model, the offers of
+`set_mnsp_offers!` (`INTERCONNECTORCONSTRAINT`, `MNSP_INTERCONNECTOR`, `MNSP_DAYOFFER`,
+`MNSP_BIDOFFERPERIOD`, `DISPATCH_MNSPBIDTRK`) on every available MNSP.
 
 # Arguments
 - `sys`: the `PSY.System` to check.
@@ -29,8 +30,51 @@ function _check_replay_system_inputs(sys::PSY.System, template::PSI.ProblemTempl
                 "build sys with nem_system(db, NEMDEConfiguration(); date_range) over the replay range before replay",
         ),
     )
+    for device in nem_dispatch_devices(sys)
+        _has_nem_dispatch_limits(device) && _check_state_series_alignment(device)
+    end
     _has_device_model(template, PSY.AreaInterchange) &&
         foreach(_check_mnsp_offers, PSY.get_components(PSY.get_available, PSY.AreaInterchange, sys))
+    return
+end
+
+
+"""
+    _check_state_series_alignment(device)
+
+Verifies that the series keyed by `device`'s [`NEMObservedState`](@ref) are dispatch-interval series:
+each is a five-minute `SingleTimeSeries` on a five-minute boundary, so the per-step state read lands
+on the interval it names.
+
+# Arguments
+- `device`: the NEM dispatch device to check.
+
+# Returns
+`nothing`. Throws an `ArgumentError` naming the device and the offending series.
+"""
+function _check_state_series_alignment(device)
+    observed = AustralianElectricityMarkets.get_observed_state(device)
+    step_ms = Dates.value(convert(Millisecond, DISPATCH_INTERVAL))
+    for key in (observed.initial_mw, observed.dispatch_mode)
+        key isa IS.TimeSeriesKey || continue
+        name = PSY.get_name(key)
+        series = PSY.get_time_series(PSY.SingleTimeSeries, device, name)
+        resolution = Dates.canonicalize(Dates.CompoundPeriod(IS.get_resolution(series)))
+        resolution == DISPATCH_INTERVAL || throw(
+            ArgumentError(
+                "\"$(PSY.get_name(device))\": its state series \"$name\" has resolution $resolution, " *
+                    "expected $DISPATCH_INTERVAL",
+            ),
+        )
+        stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name)
+        misaligned = findfirst(t -> Dates.value(t) % step_ms != 0, stamps)
+        isnothing(misaligned) || throw(
+            ArgumentError(
+                "\"$(PSY.get_name(device))\": its state series \"$name\" has the stamp $(stamps[misaligned]), " *
+                    "which is not aligned to the $DISPATCH_INTERVAL dispatch interval",
+            ),
+        )
+    end
     return
 end
 

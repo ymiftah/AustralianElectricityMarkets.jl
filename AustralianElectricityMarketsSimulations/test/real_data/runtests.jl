@@ -134,38 +134,27 @@ end
                 row.RAMPUPRATE * interval_hours(DISPATCH_INTERVAL) / PSY.get_base_power(sys) rtol = 1.0e-9
         end
 
-        @testset "the stored dispatch ceiling is max(AVAILABILITY, ramp-down floor)" begin
+        @testset "the first-solve initial MW seed is DISPATCHLOAD's INITIALMW" begin
             checked = 0
-            unpublished = 0
             mismatches = String[]
             for device in devices
-                PSY.has_time_series(device, PSY.SingleTimeSeries, "max_active_power") || continue
+                PSY.has_time_series(device, PSY.SingleTimeSeries, "initial_mw_seed") || continue
                 duid = PSY.get_name(device)
-                static_max_active_power = PSY.with_units_base(
-                    () -> PSY.get_max_active_power(device), sys, "NATURAL_UNITS",
-                )
                 series = PSY.get_time_series_values(
-                    PSY.SingleTimeSeries, device, "max_active_power"; ignore_scaling_factors = true,
+                    PSY.SingleTimeSeries, device, "initial_mw_seed"; ignore_scaling_factors = true,
                 )
-                stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, "max_active_power")
+                stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, "initial_mw_seed")
                 rows = filter(:DUID => ==(duid), limits)
                 by_time = Dict(zip(rows.SETTLEMENTDATE, eachrow(rows)))
-                pinned = AEM.is_non_scheduled_load(device)
                 for (t, value) in zip(stamps, series)
                     row = get(by_time, t, nothing)
-                    # A non-scheduled load, or a unit with no DISPATCHLOAD row, is pinned to zero.
-                    if pinned || isnothing(row)
-                        unpublished += 1
-                        iszero(value) || push!(mismatches, "$duid at $t: $value vs 0 (no published limit)")
-                        continue
-                    end
-                    expected = max(row.AVAILABILITY, row.INITIALMW - row.RAMPDOWNRATE * interval_hours(DISPATCH_INTERVAL))
+                    isnothing(row) && continue
                     checked += 1
-                    isapprox(value * static_max_active_power, expected; atol = 1.0e-6) ||
-                        push!(mismatches, "$duid at $t: $(value * static_max_active_power) vs $expected")
+                    isapprox(value, row.INITIALMW; atol = 1.0e-6) ||
+                        push!(mismatches, "$duid at $t: $value vs $(row.INITIALMW)")
                 end
             end
-            @info "Dispatch ceiling coverage" checked unpublished
+            @info "Initial MW seed coverage" checked
             @test checked > 0
             @test isempty(mismatches)
         end

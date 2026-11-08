@@ -7,8 +7,7 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
 - `"energy_offer[_decremental]"`, the energy offer curves, with prices referred to the reference node
   by the unit's loss factor and rounded to cents, by [`referred_offer_curves`](@ref).
 - `"ramp_up_rate"`, `"ramp_down_rate"`, the dispatch ramp rates per unit of the system base per minute,
-  `"max_active_power"`, the upper dispatch limit of a non-storage NEM dispatch device, and
-  `"fcas_agc_ramp_rate_<BIDTYPE>"`, the AGC ramp rate of each regulation service, from the unit
+  and `"fcas_agc_ramp_rate_<BIDTYPE>"`, the AGC ramp rate of each regulation service, from the unit
   conditions that [`set_unit_conditions!`](@ref) attaches. The ramp rates are the lesser of the bid
   and telemetered rates ([`effective_ramp_limits`](@ref)), and the AGC rates read the effective
   regulation availability ([`effective_regulation_max_avail`](@ref)).
@@ -25,6 +24,9 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
   ([`tie_break_scale`](@ref)), and the [`EnergyTieBreak`](@ref) service joining the units that carry them.
 - `"loss_demand_coefficient"`, the demand term of each loss-modelled interchange's loss factor
   ([`set_loss_demand_coefficients!`](@ref)).
+- `"initial_mw_seed"`, `"fixed_load_seed"` and `"fixed_load_invoked_seed"`, the first-solve values
+  the build reads from the configured [`StateSource`](@ref) ([`_set_state_seeds!`](@ref)); every
+  later solve rewrites the same parameters from the state source.
 
 It also attaches to each NEM dispatch device a [`NEMDispatchInputs`](@ref) holding the keys of the
 dispatch-input series the formulation reads through.
@@ -47,11 +49,74 @@ function set_effective_offers!(sys::PSY.System)
     _set_static_offers!(sys)
     _set_mnsp_fixed_loads!(sys)
     _set_dispatch_limits!(sys)
+    _set_state_seeds!(sys)
     _set_fcas_effective_offers!(sys)
     _set_tie_break_scales!(sys)
     set_loss_demand_coefficients!(sys)
     _attach_dispatch_inputs!(sys)
     return
+end
+
+
+"""
+    _set_state_seeds!(sys)
+
+Attaches each NEM dispatch device's first-solve seed series from the configured
+[`StateSource`](@ref): `"initial_mw_seed"` in MW, and, for a device whose energy bid carries a fixed
+loading, `"fixed_load_seed"` in system-base per-unit and `"fixed_load_invoked_seed"` (`1` or `0`).
+The build writes them before the forecasts are attached, so the simulation's first solve, which
+`PowerSimulations.jl` does not update, reads the same state source every later solve recomputes
+from. Replaces existing seed series.
+
+# Arguments
+- `sys`: the `System` to add to.
+
+# Returns
+`nothing`.
+"""
+function _set_state_seeds!(sys::PSY.System)
+    source = _state_source()
+    base = PSY.get_base_power(sys)
+    PSY.with_units_base(sys, "SYSTEM_BASE") do
+        for device in AustralianElectricityMarkets.nem_dispatch_devices(sys)
+            observed = AustralianElectricityMarkets.get_observed_state(device)
+            observed.initial_mw isa IS.TimeSeriesKey || continue
+            name = PSY.get_name(observed.initial_mw)
+            stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name)
+            resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, name))
+            # The seed reads the starting output only: a unit whose dispatch rows begin mid-range has
+            # no dispatch mode before its registration.
+            initial = [_state_initial_mw(source, device, t) for t in stamps]
+            replace_single_series!(
+                sys, device,
+                single_series(_INITIAL_MW_SEED_SERIES, first(stamps), initial, resolution),
+            )
+            _has_fixed_load_bid(device) || continue
+            steps = [_seed_fixed_load_step(device, t, source) for t in stamps]
+            replace_single_series!(
+                sys, device,
+                single_series(_FIXED_LOAD_SEED_SERIES, first(stamps), [step.target / base for step in steps], resolution),
+            )
+            replace_single_series!(
+                sys, device,
+                single_series(
+                    _FIXED_LOAD_INVOKED_SEED_SERIES, first(stamps),
+                    [step.invoked ? 1.0 : 0.0 for step in steps], resolution,
+                ),
+            )
+        end
+    end
+    return
+end
+
+
+# The fixed-loading seed at `stamp`; a unit whose dispatch rows start mid-range has no state at the
+# earlier stamps, so its seed there is no loading.
+function _seed_fixed_load_step(device, stamp::DateTime, source)
+    observed = AustralianElectricityMarkets.get_observed_state(device)
+    isfinite(_state_value(device, observed, :dispatch_mode, stamp)) ||
+        return (; target = 0.0, invoked = false)
+    return _fixed_load_step(device, stamp; source)
 end
 
 
@@ -294,18 +359,6 @@ function _set_static_offers!(sys::PSY.System)
 end
 
 
-# The series of one named derived or bid series of `device` as a named tuple with the timestamps, the
-# stored resolution and the values.
-function _condition_series(device, name::AbstractString)
-    array = PSY.get_time_series_array(PSY.SingleTimeSeries, device, name)
-    return (;
-        timestamps = PSY.TimeSeries.timestamp(array),
-        resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, name)),
-        values = collect(values(array)),
-    )
-end
-
-
 # The values of a telemetry key over the grid of `like`: a static value is repeated.
 function _grid_values(device, key, like)
     key isa IS.TimeSeriesKey || return fill(Float64(key), length(like.values))
@@ -361,10 +414,9 @@ function _regulation_availability(device, service::BidType, key, like, base::Rea
 end
 
 
-# Attaches the ramp rates, AGC ramp rates and upper dispatch limit of each available NEM dispatch device.
-# The ramps are the lesser of the bid and telemetered rates per minute, with a non-scheduled load and a
-# missing row at zero; the AGC rates read the effective regulation availability. The limit reads the
-# derived availability.
+# Attaches the ramp rates and AGC ramp rates of each available NEM dispatch device. The ramps are the
+# lesser of the bid and telemetered rates per minute, with a non-scheduled load and a missing row at
+# zero; the AGC rates read the effective regulation availability.
 function _set_dispatch_limits!(sys::PSY.System)
     base = PSY.get_base_power(sys)
     for device in AustralianElectricityMarkets.nem_dispatch_devices(sys)
@@ -388,28 +440,6 @@ function _set_dispatch_limits!(sys::PSY.System)
         replace_single_series!(sys, device, single_series(NEM_SERIES.ramp_up_rate, first(up.timestamps), ramp_up_rate, up.resolution))
         replace_single_series!(sys, device, single_series(NEM_SERIES.ramp_down_rate, first(down.timestamps), ramp_down_rate, down.resolution))
         _set_agc_ramp_rates!(sys, device, telemetry, up, down, base, interval_hours)
-        device isa PSY.Storage && continue
-        initial = _bid_series(device, AustralianElectricityMarkets.get_observed_state(device).initial_mw, :initial_mw).values ./ base
-        max_avail_name = energy_availability_series_name(device, OfferSide.GEN)
-        PSY.has_time_series(device, PSY.SingleTimeSeries, max_avail_name) || throw(
-            ArgumentError(
-                "\"$(PSY.get_name(device))\" has no energy availability; set_effective_offers! derives it " *
-                    "from an energy bid, and the device has none.",
-            ),
-        )
-        max_avail = _condition_series(device, max_avail_name).values
-        uigf = isnothing(telemetry.uigf) ? nothing : _bid_series(device, telemetry.uigf, :uigf).values ./ base
-        availability = effective_energy_availability(max_avail, uigf, up.values, pinned)
-        static = with_units_base(() -> PSY.get_max_active_power(device), sys, "NATURAL_UNITS")
-        ramp_down_per_hour = ramp_down_rate .* 60
-        limits = [
-            _max_active_power(availability[i], initial[i], ramp_down_per_hour[i], interval_hours) * base / static
-                for i in eachindex(availability)
-        ]
-        replace_single_series!(
-            sys, device,
-            single_series(NEM_SERIES.max_active_power, first(up.timestamps), limits, up.resolution; scaling_factor_multiplier = PSY.get_max_active_power),
-        )
     end
     return
 end

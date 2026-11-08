@@ -65,7 +65,8 @@ State-driven values are updated through `update_container_parameter_values!` met
 parameter types, not through initial conditions, in
 `AustralianElectricityMarketsSimulations/src/offers/state_updates.jl`:
 
-- `InitialPowerTimeSeriesParameter` reads `unit_state(ObservedState(), device, stamp).initial_mw`.
+- `InitialPowerTimeSeriesParameter` reads `unit_state(source, device, stamp).initial_mw`, where `source` is the
+  configured state source.
 - `FixedLoadTimeSeriesParameter` and `FixedLoadInvokedTimeSeriesParameter` recompute the target and
   the invoked flag from the device's energy bids and the dispatch mode at the step, rather than
   reading the derived fixed-load series.
@@ -86,12 +87,16 @@ update reads the initial MW through the device's state source, `_has_nem_dispatc
 (`src/formulations/dispatch.jl:97-130`) no longer requires the initial MW series to carry the
 registered name; the UIGF and derived-input names are still checked. A key naming a missing series
 is therefore a build-time error again, while a key naming a different but existing series is not, so
-the per-step update is the reader that decides which existing series supplies the value. Task 11
-removes the precomputed series; the build must then read the state source for the simulation's first
-solve. Pre-flight now requires the keyed state series to exist and the registered
-`"observed_initial_mw"` series to stay attached. The keyed series' resolution and its alignment with
-the dispatch interval are not validated yet. Once the build reads the state source, they are the
-remaining check on the observed state, alongside the derived-input and UIGF name checks.
+the per-step update is the reader that decides which existing series supplies the value.
+
+Task 11 removes the precomputed series. `set_effective_offers!` writes the first-solve seeds
+`"initial_mw_seed"`, `"fixed_load_seed"` and `"fixed_load_invoked_seed"` from the configured
+`_state_source()`, and every later solve rewrites the same parameters from it. A unit whose
+dispatch rows begin mid-range has no dispatch mode before its registration, so its seed carries the
+starting output only and no fixed loading there. Pre-flight now requires each keyed state series as
+a five-minute `SingleTimeSeries` on the five-minute grid, and no longer requires the registered
+`"observed_initial_mw"` name. No private PowerSimulations name beyond `_set_param_value_at!` is
+used.
 
 ## Glue required by the stock objective-coefficient route
 

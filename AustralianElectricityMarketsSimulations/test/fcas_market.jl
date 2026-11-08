@@ -1469,7 +1469,7 @@ end
     end
 end
 
-@testset "check_fcas_services reports a regulation contributor missing initial_mw" begin
+@testset "check_fcas_services reports a regulation contributor missing an observed initial MW" begin
     duid = TOY_CHEAP
     service_name = "TAS1_RAISEREG_CHECK"
     sys = fcas_energy_toy_system(
@@ -1497,7 +1497,7 @@ end
     @test err isa ArgumentError
     msg = sprint(showerror, err)
     @test occursin(duid, msg)
-    @test occursin("initial_mw", msg)
+    @test occursin("observed initial MW", msg)
 end
 
 @testset "elastic FCAS rows (use_slacks)" begin

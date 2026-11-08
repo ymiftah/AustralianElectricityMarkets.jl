@@ -61,7 +61,7 @@ end
     PSI.update_container_parameter_values!(container, model, key, input)
 
 Refreshes [`InitialPowerTimeSeriesParameter`](@ref) from each device's [`NEMUnitState`](@ref) at the
-step, read through [`ObservedState`](@ref). The value is the unit's starting MW, which the parameter's
+step, read through the configured [`StateSource`](@ref). The value is the unit's starting MW, which the parameter's
 multiplier converts to system-base per-unit.
 
 # Arguments
@@ -80,7 +80,7 @@ function PSI.update_container_parameter_values!(
         ::PSI.DatasetContainer{PSI.InMemoryDataset},
     ) where {T <: PSY.StaticInjection}
     _update_state_parameters!(container, model, key) do device, stamp
-        return unit_state(ObservedState(), device, stamp).initial_mw
+        return unit_state(_state_source(), device, stamp).initial_mw
     end
     return
 end
@@ -97,8 +97,8 @@ end
 
 
 # The fixed-loading target on the net-injection axis at `stamp`, MW, and whether either side applies.
-function _fixed_load_step(device, stamp::DateTime)
-    state = unit_state(ObservedState(), device, stamp)
+function _fixed_load_step(device, stamp::DateTime; source::StateSource = _state_source())
+    state = unit_state(source, device, stamp)
     gen = _fixed_load_mw(device, OfferSide.GEN, stamp)
     load = _fixed_load_mw(device, OfferSide.LOAD, stamp)
     target = if device isa PSY.Storage
@@ -114,7 +114,7 @@ end
     PSI.update_container_parameter_values!(container, model, key, input)
 
 Refreshes [`FixedLoadTimeSeriesParameter`](@ref) from each device's energy bids and
-[`NEMUnitState`](@ref) at the step, read through [`ObservedState`](@ref): the net injection at the
+[`NEMUnitState`](@ref) at the step, read through the configured [`StateSource`](@ref): the net injection at the
 device's [`effective_fixed_load`](@ref), in system-base per-unit. A storage device's load side is
 subtracted from its generation side; the loading is zero wherever it is not invoked.
 
@@ -145,7 +145,7 @@ end
     PSI.update_container_parameter_values!(container, model, key, input)
 
 Refreshes [`FixedLoadInvokedTimeSeriesParameter`](@ref) from each device's energy bids and
-[`NEMUnitState`](@ref) at the step, read through [`ObservedState`](@ref): `1` where either side's
+[`NEMUnitState`](@ref) at the step, read through the configured [`StateSource`](@ref): `1` where either side's
 loading applies and `0` otherwise.
 
 # Arguments

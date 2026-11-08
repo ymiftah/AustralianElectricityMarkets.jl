@@ -4,17 +4,25 @@ PSI.get_multiplier_value(::Union{FixedLoadTimeSeriesParameter, FixedLoadInvokedT
 
 PSI.convert_result_to_natural_units(::Type{FixedLoadTimeSeriesParameter}) = true
 
-# The parameters of the fixed-loading rows and their series; a device carries them only when it has a fixed loading.
+# The parameters of the fixed-loading rows and the build's first-solve seed series.
 const _FIXED_LOAD_SERIES = (
-    FixedLoadTimeSeriesParameter => NEM_SERIES.fixed_load,
-    FixedLoadInvokedTimeSeriesParameter => NEM_SERIES.fixed_load_invoked,
+    FixedLoadTimeSeriesParameter => _FIXED_LOAD_SEED_SERIES,
+    FixedLoadInvokedTimeSeriesParameter => _FIXED_LOAD_INVOKED_SEED_SERIES,
 )
 
 # Offset, in MW, that moves both fixed-loading rows out of reach at an interval with no fixed loading.
 const _FIXED_LOAD_INACTIVE_MW = 1.0e5
 
 
-_fixed_load_devices(devices) = [d for d in devices if PSY.has_time_series(d, PSY.SingleTimeSeries, NEM_SERIES.fixed_load)]
+"Whether `device` has an energy bid carrying a fixed loading on either side."
+function _has_fixed_load_bid(device)
+    cost = _nem_offer_cost(device)
+    isnothing(cost) && return false
+    return any(b -> !isnothing(b.fixed_load), get_energy_bids(cost))
+end
+
+
+_fixed_load_devices(devices) = [d for d in devices if _has_fixed_load_bid(d)]
 
 
 """
@@ -22,7 +30,8 @@ _fixed_load_devices(devices) = [d for d in devices if PSY.has_time_series(d, PSY
 
 Adds the fixed-loading parameters ([`FixedLoadTimeSeriesParameter`](@ref),
 [`FixedLoadInvokedTimeSeriesParameter`](@ref)) and the surplus and deficit slacks for the
-`devices` carrying a `"fixed_load"` series (built by [`nem_system`](@ref)).
+`devices` whose energy bid carries a fixed loading. The parameters read the build's seed series;
+every later solve recomputes them from the bids and the state source.
 
 # Returns
 `nothing`.
@@ -30,8 +39,8 @@ Adds the fixed-loading parameters ([`FixedLoadTimeSeriesParameter`](@ref),
 function _add_fixed_load_arguments!(container::PSI.OptimizationContainer, devices, model::PSI.DeviceModel{T, D}) where {T, D}
     fixed = _fixed_load_devices(devices)
     isempty(fixed) && return
-    for (param, _) in _FIXED_LOAD_SERIES
-        PSI.add_parameters!(container, param, fixed, model)
+    for (param, name) in _FIXED_LOAD_SERIES
+        PSI.add_parameters!(container, param, fixed, model; time_series_name = name)
     end
     PSI.add_variables!(container, EnergyFixedLoadSurplusSlack, fixed, D())
     PSI.add_variables!(container, EnergyFixedLoadDeficitSlack, fixed, D())

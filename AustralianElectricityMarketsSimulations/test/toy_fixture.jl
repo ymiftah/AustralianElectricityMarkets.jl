@@ -306,6 +306,7 @@ function nem_toy_system(
     else
         AEMS._set_static_offers!(sys)
         AEMS._set_mnsp_fixed_loads!(sys)
+        AEMS._set_state_seeds!(sys)
         AEMS._set_fcas_effective_offers!(sys)
         isnothing(interchange) || set_loss_demand_coefficients!(sys)
         AEMS._attach_dispatch_inputs!(sys)

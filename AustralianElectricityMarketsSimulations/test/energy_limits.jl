@@ -17,14 +17,20 @@ function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, we
                     stamps[1], _toy_values(max_avail, 2), TOY_RESOLUTION,
                 ),
             )
-            base = PSY.get_base_power(sys)
             set_registration!(cheap, _toy_registration(; schedule_type = isnothing(uigf) ? ScheduleType.SCHEDULED : ScheduleType.SEMI_SCHEDULED))
             if !isnothing(uigf)
                 set_toy_unit_field!(sys, cheap, stamps, :uigf, _toy_values(uigf, 2))
             end
             if !isnothing(fixed_load)
-                PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "fixed_load", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(fixed_load, 2) ./ base)))
-                PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "fixed_load_invoked", data = PSY.TimeSeries.TimeArray(stamps, fill(fixed_invoked, 2))))
+                _toy_energy_bid!(
+                    sys, cheap, AustralianElectricityMarkets.BidDirection.GEN, stamps,
+                    fill(PSY.PiecewiseStepData([0.0, 100.0], [price]), 2), _toy_values(max_avail, 2);
+                    fixed_load = _toy_values(fixed_load, 2),
+                )
+                # A fast-start profile (mode 1) leaves the loading uninvoked while the bid still carries it.
+                if iszero(fixed_invoked)
+                    set_toy_unit_field!(sys, cheap, stamps, :dispatch_mode, fill(1.0, 2))
+                end
             end
             if !isnothing(target)
                 add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, target; sense = ConstraintSense.EQ)

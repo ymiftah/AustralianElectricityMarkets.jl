@@ -350,9 +350,11 @@ end
         loads = ["PUMP" => toy_load(30.0, 10.0; initial = 0.0, ramp_up = 100.0)],
         mutate! = function (sys, stamps)
             pump = PSY.get_component(NEMLoad, sys, "PUMP")
-            base = PSY.get_base_power(sys)
-            PSY.add_time_series!(sys, pump, PSY.SingleTimeSeries(; name = "fixed_load", data = PSY.TimeSeries.TimeArray(stamps, fill(20.0 / base, 2))))
-            PSY.add_time_series!(sys, pump, PSY.SingleTimeSeries(; name = "fixed_load_invoked", data = PSY.TimeSeries.TimeArray(stamps, ones(2))))
+            _toy_energy_bid!(
+                sys, pump, AustralianElectricityMarkets.BidDirection.LOAD, stamps,
+                fill(PSY.PiecewiseStepData([0.0, 30.0], [10.0]), length(stamps)), fill(30.0, length(stamps));
+                fixed_load = fill(20.0, length(stamps)),
+            )
             return
         end,
     )
@@ -901,16 +903,26 @@ end
 end
 
 @testset "typed storage fixed-loading rows preserve net injection and invocation" begin
-    for (target, invoked) in ((20.0, 1.0), (-20.0, 1.0), (20.0, 0.0))
+    for (side, target, invoked) in ((OfferSide.GEN, 20.0, 1.0), (OfferSide.LOAD, -20.0, 1.0), (OfferSide.GEN, 20.0, 0.0))
         sys = nem_toy_system(
             [TOY_CHEAP => toy_unit(200.0, [(200.0, 20.0)]; initial = 80.0, ramp_up = 100.0)],
             80.0;
             batteries = [TOY_BATTERY => toy_battery(40.0, 50.0, 40.0, 1.0; initial = 0.0, ramp_up = 100.0)],
             mutate! = function (sys, stamps)
                 storage = PSY.get_component(NEMStorage, sys, TOY_BATTERY)
-                for (name, value) in (("fixed_load", target / PSY.get_base_power(sys)), ("fixed_load_invoked", invoked))
-                    PSY.add_time_series!(sys, storage, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(stamps, fill(value, length(stamps)))))
-                end
+                n = length(stamps)
+                _toy_energy_bid!(
+                    sys, storage, AustralianElectricityMarkets.BidDirection.GEN, stamps,
+                    fill(PSY.PiecewiseStepData([0.0, 40.0], [50.0]), n), fill(40.0, n);
+                    fixed_load = side == OfferSide.GEN ? fill(20.0, n) : nothing,
+                )
+                _toy_energy_bid!(
+                    sys, storage, AustralianElectricityMarkets.BidDirection.LOAD, stamps,
+                    fill(PSY.PiecewiseStepData([0.0, 40.0], [1.0]), n), fill(40.0, n);
+                    fixed_load = side == OfferSide.LOAD ? fill(20.0, n) : nothing,
+                )
+                # A fast-start profile (mode 1) leaves the loading uninvoked while the bid still carries it.
+                set_toy_unit_field!(sys, storage, stamps, :dispatch_mode, fill(iszero(invoked) ? 1.0 : 0.0, n))
                 return
             end,
         )

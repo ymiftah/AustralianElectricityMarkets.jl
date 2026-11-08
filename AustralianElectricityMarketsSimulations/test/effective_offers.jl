@@ -65,6 +65,10 @@
                 prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL,
             )
             add_component!(sys, gen)
+            # A static observed state keeps the build's first-solve seed out of these offer fixtures.
+            AustralianElectricityMarkets.set_observed_state!(
+                gen, AustralianElectricityMarkets.NEMObservedState(; initial_mw = 0.0, dispatch_mode = 0),
+            )
             _toy_energy_bid!(sys, gen, AustralianElectricityMarkets.BidDirection.GEN, [start, start + Minute(5)], fill(curve, 2), fill(PSY.get_base_power(sys), 2))
         end
 
@@ -97,14 +101,16 @@
             add_component!(sys, bus)
             set_area!(bus, area)
             for name in ("GEN1", "GEN2")
-                add_component!(
-                    sys, NEMThermalGen(;
-                        name = name, available = true, status = true, bus = bus,
-                        active_power = 0.0, reactive_power = 0.0, rating = 1.0,
-                        active_power_limits = (min = 0.0, max = 1.0), reactive_power_limits = nothing,
-                        ramp_limits = nothing, operation_cost = NEMOfferCost(), base_power = 100.0, time_limits = nothing,
-                        must_run = false, prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL,
-                    ),
+                gen = NEMThermalGen(;
+                    name = name, available = true, status = true, bus = bus,
+                    active_power = 0.0, reactive_power = 0.0, rating = 1.0,
+                    active_power_limits = (min = 0.0, max = 1.0), reactive_power_limits = nothing,
+                    ramp_limits = nothing, operation_cost = NEMOfferCost(), base_power = 100.0, time_limits = nothing,
+                    must_run = false, prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL,
+                )
+                add_component!(sys, gen)
+                AustralianElectricityMarkets.set_observed_state!(
+                    gen, AustralianElectricityMarkets.NEMObservedState(; initial_mw = 0.0, dispatch_mode = 0),
                 )
             end
             add_component!(
@@ -112,6 +118,10 @@
                     name = "PUMP2", available = true, bus = bus, active_power = 0.0, reactive_power = 0.0,
                     max_active_power = 1.0, max_reactive_power = 0.0, base_power = 100.0, operation_cost = NEMOfferCost(),
                 ),
+            )
+            AustralianElectricityMarkets.set_observed_state!(
+                get_component(NEMLoad, sys, "PUMP2"),
+                AustralianElectricityMarkets.NEMObservedState(; initial_mw = 0.0, dispatch_mode = 0),
             )
             return sys
         end
@@ -614,7 +624,7 @@ end
         @test both ≈ 2 .* one
     end
 
-    @testset "the ramp-down floor above AVAILABILITY raises max_active_power to the floor" begin
+    @testset "the dispatch-limit writer leaves the upper limit to the formulation" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
         set_unit_conditions!(sys, db, date_range)
@@ -628,13 +638,12 @@ end
         replace_single_series!(sys, device, single_series(NEM_OBSERVED_SERIES.initial_mw, full_grid, fill(100.0, n)))
         replace_single_series!(sys, device, single_series(NEM_TELEMETRY_SERIES.ramp_down_limit, full_grid, fill(60.0, n)))
         AEMSim._set_dispatch_limits!(sys)
-        # 100 MW less 60 MW/h over one 5-minute interval is the 95 MW floor, above the zero availability.
-        static = with_units_base(() -> get_max_active_power(device), sys, "NATURAL_UNITS")
-        got = get_time_series_values(SingleTimeSeries, device, "max_active_power"; ignore_scaling_factors = true)
-        @test isapprox(got, fill(95.0 / static, n); atol = 1.0e-12)
+        # The ramp floor above the availability is a formulation row and its slack, not a written series.
+        @test has_time_series(device, SingleTimeSeries, NEM_SERIES.ramp_down_rate)
+        @test !has_time_series(device, SingleTimeSeries, NEM_SERIES.max_active_power)
     end
 
-    @testset "a device without telemetry gets no limit series, and its telemetry accessor throws" begin
+    @testset "a device without telemetry gets no ramp series, and its telemetry accessor throws" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
         set_unit_conditions!(sys, db, date_range)
@@ -643,7 +652,6 @@ end
         set_effective_offers!(sys)
         device = get_component(NEMThermalGen, sys, "ER01")
         remove_single_series!(sys, device, NEM_SERIES.ramp_up_rate)
-        remove_single_series!(sys, device, NEM_SERIES.max_active_power)
         AustralianElectricityMarkets.set_telemetry!(device, nothing)
         AEMSim._set_dispatch_limits!(sys)
         @test !has_time_series(device, SingleTimeSeries, NEM_SERIES.ramp_up_rate)
@@ -707,12 +715,13 @@ end
         return sys
     end
 
-    @testset "a non-scheduled load has zero availability and zero max_active_power" begin
+    @testset "a non-scheduled load has zero availability and no dispatch-limit series" begin
         sys = built()
         asload = get_component(NEMLoad, sys, "ASLOAD1")
         @test AustralianElectricityMarkets.is_non_scheduled_load(asload)
         @test all(==(0.0), get_energy_availability(asload, start_date, horizon))
-        @test all(==(0.0), get_time_series_values(SingleTimeSeries, asload, NEM_SERIES.max_active_power; ignore_scaling_factors = true))
+        # The upper limit is the formulation's row, so the build writes no max_active_power series.
+        @test !has_time_series(asload, SingleTimeSeries, NEM_SERIES.max_active_power)
     end
 
     @testset "an interval with no DISPATCHLOAD row (NaN ramp) has zero availability" begin
@@ -771,7 +780,7 @@ end
         @test !AEMSim._has_nem_dispatch_limits(device)
     end
 
-    @testset "removing the registered observed initial MW series fails the pre-flight" begin
+    @testset "a re-keyed initial MW leaves the default name unused" begin
         sys = built()
         device = get_component(NEMThermalGen, sys, "ER01")
         @test AEMSim._has_nem_dispatch_limits(device)
@@ -786,8 +795,10 @@ end
             ),
         )
         @test AEMSim._has_nem_dispatch_limits(device)
+        # The state's key names the series it reads; the default name is only a convenience.
         PSY.remove_time_series!(sys, SingleTimeSeries, device, "observed_initial_mw")
-        @test !AEMSim._has_nem_dispatch_limits(device)
+        @test AEMSim._has_nem_dispatch_limits(device)
+        @test isnothing(AEMSim._check_state_series_alignment(device))
     end
 
     @testset "a derived input key that is not the registered series throws, naming it" begin
@@ -1090,53 +1101,30 @@ end
         @test first(composite_ramp_rates(3.0, 4.0, 5.0, 0.0, 5.0, NEMUnitState(-10.0, 4))) == 0.0
     end
 
-    @testset "the max_active_power floor with the observed state equals the written series" begin
+    @testset "the build writes only the first-solve seeds of the state-dependent parameters" begin
         sys = replay_system()
         base = get_base_power(sys)
-        with_units_base(sys, "NATURAL_UNITS") do
-            for device in nem_dispatch_devices(sys)
-                # A storage's max_active_power is its charge and discharge limit; the writer sets no
-                # ramp floor for it.
-                device isa Storage && continue
-                has_time_series(device, SingleTimeSeries, NEM_SERIES.max_active_power) || continue
-                stamps = PSY.get_time_series_timestamps(SingleTimeSeries, device, NEM_SERIES.max_active_power)
-                availability = get_energy_availability(device, first(stamps), length(stamps))
-                isnothing(availability) && continue
-                ramp_down = values_of(device, NEM_SERIES.ramp_down_rate) .* 60 .* base
-                static = get_max_active_power(device)
-                written = values_of(device, NEM_SERIES.max_active_power) .* static
-                for i in eachindex(stamps)
-                    state = unit_state(ObservedState(), device, stamps[i])
-                    @test max_active_power_floor(availability[i], ramp_down[i], Δ, state) ≈ written[i] rtol = 1.0e-12
-                end
-            end
-        end
-    end
-
-    @testset "the fixed load and its invoked flag equal the written series" begin
-        sys = replay_system()
-        base = get_base_power(sys)
+        source = AEMSim._state_source()
+        seen = 0
         for device in nem_dispatch_devices(sys)
-            has_time_series(device, SingleTimeSeries, NEM_SERIES.fixed_load) || continue
-            stamps = PSY.get_time_series_timestamps(SingleTimeSeries, device, NEM_SERIES.fixed_load)
-            stored = values_of(device, NEM_SERIES.fixed_load)
-            invoked_stored = values_of(device, NEM_SERIES.fixed_load_invoked)
-            cost = AustralianElectricityMarkets._nem_offer_cost(device)
-            for (i, t) in enumerate(stamps)
-                state = unit_state(ObservedState(), device, t)
-                target, invoked = 0.0, 0.0
-                for bid in get_energy_bids(cost)
-                    isnothing(bid.fixed_load) && continue
-                    value = bid_value(device, bid, :fixed_load, t, 1)
-                    raw = value isa AbstractVector ? only(value) : value
-                    sign = device isa Storage && bid.direction == BidDirection.LOAD ? -1.0 : 1.0
-                    target += sign * effective_fixed_load(raw, state)
-                    invoked = max(invoked, fixed_load_invoked(raw, state) ? 1.0 : 0.0)
-                end
-                @test target / base ≈ stored[i] rtol = 1.0e-12
-                @test invoked == invoked_stored[i]
+            @test !has_time_series(device, SingleTimeSeries, NEM_SERIES.max_active_power)
+            @test !has_time_series(device, SingleTimeSeries, NEM_SERIES.fixed_load)
+            @test !has_time_series(device, SingleTimeSeries, NEM_SERIES.fixed_load_invoked)
+            observed = AustralianElectricityMarkets.get_observed_state(device)
+            observed.initial_mw isa PowerSystems.IS.TimeSeriesKey || continue
+            seen += 1
+            stamps = PSY.get_time_series_timestamps(SingleTimeSeries, device, AEMSim._INITIAL_MW_SEED_SERIES)
+            expected = [unit_state(source, device, t).initial_mw for t in stamps]
+            @test values_of(device, AEMSim._INITIAL_MW_SEED_SERIES) ≈ expected
+            if AEMSim._has_fixed_load_bid(device)
+                steps = [AEMSim._fixed_load_step(device, t; source) for t in stamps]
+                @test values_of(device, AEMSim._FIXED_LOAD_SEED_SERIES) ≈ [step.target / base for step in steps]
+                @test values_of(device, AEMSim._FIXED_LOAD_INVOKED_SEED_SERIES) == [step.invoked ? 1.0 : 0.0 for step in steps]
+            else
+                @test !has_time_series(device, SingleTimeSeries, AEMSim._FIXED_LOAD_SEED_SERIES)
             end
         end
+        @test seen > 0
     end
 
     @testset "the FCAS joint ramping limit with the observed state equals the written series" begin

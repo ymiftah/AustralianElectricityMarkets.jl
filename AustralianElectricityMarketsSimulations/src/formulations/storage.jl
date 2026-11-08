@@ -25,8 +25,9 @@ PSI.get_multiplier_value(::PSI.ActivePowerInTimeSeriesParameter, ::PSY.Storage, 
     PSI.get_default_time_series_names(::Type{<:PSY.Storage}, ::Type{<:AbstractNEMDispatch})
 
 Registers the time series [`AbstractNEMDispatch`](@ref) reads as parameters for a battery: the
-ramp and initial-power series, and the derived generation and consumption energy availability
-([`energy_availability_series_name`](@ref)). Both availability limits carry priced violations on the
+ramp parameters and the derived generation and consumption energy availability
+([`energy_availability_series_name`](@ref)). The initial-power parameter is added explicitly from
+the build's first-solve seed series. Both availability limits carry priced violations on the
 generation and consumption axes. Batteries register no `"max_active_power"` series.
 
 # Returns
@@ -39,10 +40,8 @@ function PSI.get_default_time_series_names(
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
         RampUpRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
         RampDownRateTimeSeriesParameter => NEM_SERIES.ramp_down_rate,
-        InitialPowerTimeSeriesParameter => NEM_OBSERVED_SERIES.initial_mw,
         PSI.ActivePowerOutTimeSeriesParameter => energy_availability_series_name(OfferSide.GEN),
         PSI.ActivePowerInTimeSeriesParameter => energy_availability_series_name(OfferSide.LOAD),
-        _FIXED_LOAD_SERIES...,
     )
 end
 
@@ -78,6 +77,10 @@ function PSI.construct_device!(
         haskey(PSI.get_time_series_names(model), param) || continue
         PSI.add_parameters!(container, param, devices, model)
     end
+    PSI.add_parameters!(
+        container, InitialPowerTimeSeriesParameter, devices, model;
+        time_series_name = _INITIAL_MW_SEED_SERIES,
+    )
 
     _add_fixed_load_arguments!(container, devices, model)
 
@@ -167,7 +170,7 @@ end
 
 # Both formulations read live raw availability, independently of their ramp reference.
 _storage_parameters(::Type{<:AbstractNEMDispatch}) = (
-    RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter, InitialPowerTimeSeriesParameter,
+    RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     PSI.ActivePowerOutTimeSeriesParameter, PSI.ActivePowerInTimeSeriesParameter,
 )
 

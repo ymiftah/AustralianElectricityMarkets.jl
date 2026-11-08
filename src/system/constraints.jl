@@ -516,8 +516,10 @@ end
     add_nem_constraints!(sys, db, date_range; intervention::Integer = 0) -> nothing
 
 Reads the invoked constraints and participant fixed loadings over `date_range` from `db` and attaches
-them to `sys`: one [`GenericConstraint`](@ref) per invoked version, then each device's fixed loading
-series. Constraints skipped or dropped are recorded on `sys` (see [`get_skipped_constraints`](@ref)).
+them to `sys`: one [`GenericConstraint`](@ref) per invoked version. A unit's participant fixed
+loading is unit offer data, excluded from the generic constraints but not attached as a series; the
+replay formulation derives it from the bid and the unit state. Constraints skipped or dropped are
+recorded on `sys` (see [`get_skipped_constraints`](@ref)).
 
 # Arguments
 - `sys`: the `System` to add to.
@@ -527,11 +529,10 @@ series. Constraints skipped or dropped are recorded on `sys` (see [`get_skipped_
 
 # Returns
 `nothing`. A second call on the same system throws an `ArgumentError` at the first constraint already
-attached, and the fixed loading series are replaced.
+attached.
 """
 function add_nem_constraints!(sys, db, date_range; intervention::Integer = 0)
     invoked, fixed = _read_constraint_inputs(db, date_range; intervention)
     _add_nem_constraints!(sys, db, date_range, invoked, fixed; intervention)
-    _set_nem_fixed_loads!(sys, fixed, date_range)
     return
 end
