@@ -112,8 +112,9 @@ Writes the energy bid of `device` in `direction` from `rows` (its `BIDPEROFFER_D
 `BIDDAYOFFER_D` rows of that direction, from [`read_offers`](@ref)) as one series per field, named by
 [`bid_series_name`](@ref), on `grid`, and records it in the device's [`NEMOfferCost`](@ref). A NULL
 field over every row is `nothing`; otherwise NULL intervals and intervals without a row hold zero,
-except `fixed_load`, which holds `NaN` so that an unpublished loading is distinct from one of zero.
-Throws `ArgumentError` for a `MAXAVAIL` that is missing or not finite.
+except `fixed_load`, which holds `NaN` so that an unpublished loading is distinct from one of zero
+and is `nothing` where every row is NULL or zero. Throws `ArgumentError` for a `MAXAVAIL` that is
+missing or not finite.
 """
 function _write_energy_bid!(sys, device, direction::BidDirection, rows, grid, start_date, resolution)
     name = get_name(device)

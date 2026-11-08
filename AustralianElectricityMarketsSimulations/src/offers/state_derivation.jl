@@ -43,9 +43,10 @@ end
 """
     fixed_load_invoked(fixed_load, state::NEMUnitState) -> Bool
 
-Whether a participant fixed loading applies in the interval: `fixed_load` is positive and finite and
+Whether a participant fixed loading applies in the interval: `fixed_load` is finite and positive and
 the unit is not in its fast-start profile ([`in_fast_start_profile`](@ref)). A `NaN` loading is one
-AEMO did not publish, and a zero loading is none.
+AEMO did not publish, a zero loading is none, and a negative loading is a target on the opposite
+side of the bid, which its direction does not carry, so neither is invoked.
 
 # Arguments
 - `fixed_load`: the energy bid's `FIXEDLOAD` at the interval, MW, `NaN` where unpublished.
@@ -55,7 +56,7 @@ AEMO did not publish, and a zero loading is none.
 `Bool`.
 """
 function fixed_load_invoked(fixed_load::Real, state::NEMUnitState)
-    return !isnan(fixed_load) && fixed_load > 0.0 && !in_fast_start_profile(state)
+    return isfinite(fixed_load) && fixed_load > 0.0 && !in_fast_start_profile(state)
 end
 
 
@@ -79,11 +80,11 @@ end
 
 
 """
-    fcas_state_enabled(trap::FCASTrapezium, state::NEMUnitState; storage::Bool = false) -> Bool
+    fcas_state_stranded_ok(trap::FCASTrapezium, state::NEMUnitState; storage::Bool = false) -> Bool
 
-Whether the unit's starting output lies inside the enablement span of `trap`, which AEMO's stranded
-pre-condition requires for the offer to be enabled. A `NaN` starting output does not disable the
-offer.
+Whether the unit's starting output lies inside the enablement span of `trap`, AEMO *FCAS Model in
+NEMDE* §5's stranded pre-condition. The caller ANDs the result with the other §5 conditions. A
+`NaN` starting output is outside the span, so a market with an unknown starting output is disabled.
 
 # Arguments
 - `trap`: the FCAS trapezium.
@@ -94,20 +95,21 @@ offer.
 # Returns
 `Bool`.
 """
-function fcas_state_enabled(trap::FCASTrapezium, state::NEMUnitState; storage::Bool = false)
-    isnan(state.initial_mw) && return true
+function fcas_state_stranded_ok(trap::FCASTrapezium, state::NEMUnitState; storage::Bool = false)
     point = storage ? state.initial_mw : max(state.initial_mw, 0.0)
     return get_enablement_min(trap) <= point <= get_enablement_max(trap)
 end
 
 
 """
-    fcas_both_sides_state_enabled(gen_trap, load_trap, gen_ok, load_ok, state::NEMUnitState) -> (Bool, Bool)
+    fcas_both_sides_stranded_ok(gen_trap, load_trap, gen_ok, load_ok, state::NEMUnitState) -> (Bool, Bool)
 
-The stranded pre-condition of a bidirectional unit's regulation offer on both sides. When both sides
-pass their other pre-conditions (`gen_ok` and `load_ok`), both are enabled only while the starting
-output lies between the load side's enablement minimum and the generation side's enablement maximum;
-otherwise the side that passes them is enabled only inside its own enablement span.
+The stranded pre-condition of a bidirectional unit's regulation offer on both sides, as AEMO *FCAS
+Model in NEMDE* §5 states it. When both sides pass their other pre-conditions (`gen_ok` and
+`load_ok`), both are enabled only while the starting output lies between the load side's enablement
+minimum and the generation side's enablement maximum; otherwise the side that passes them is
+enabled only inside its own enablement span. The caller ANDs each result with that side's other §5
+conditions, and a `NaN` starting output disables both sides.
 
 # Arguments
 - `gen_trap`, `load_trap`: the generation-side and load-side FCAS trapeziums.
@@ -117,7 +119,7 @@ otherwise the side that passes them is enabled only inside its own enablement sp
 # Returns
 `(gen_enabled, load_enabled)` as `Bool`s.
 """
-function fcas_both_sides_state_enabled(
+function fcas_both_sides_stranded_ok(
         gen_trap::FCASTrapezium, load_trap::FCASTrapezium, gen_ok::Bool, load_ok::Bool, state::NEMUnitState,
     )
     mw = state.initial_mw
@@ -129,11 +131,32 @@ end
 
 
 """
+    fcas_ramping_active(capability, state::NEMUnitState) -> Bool
+
+Whether a regulation market's joint ramping row is active in the interval: the AGC ramping
+`capability` is finite and non-zero and the unit's starting output is known. The caller ANDs the
+result with the unit's enablement for the market and writes the inactive limit where it is false.
+
+# Arguments
+- `capability`: the AGC ramping capability over the interval, `0.0` where the ramp rate is absent.
+- `state`: the [`NEMUnitState`](@ref) at the start of the interval.
+
+# Returns
+`Bool`.
+"""
+function fcas_ramping_active(capability::Real, state::NEMUnitState)
+    return isfinite(capability) && !iszero(capability) && !isnan(state.initial_mw)
+end
+
+
+"""
     fcas_ramping_limit(capability, upper::Bool, state::NEMUnitState) -> Float64
 
 The joint energy and FCAS limit of one direction: `state.initial_mw` plus the AGC ramping
 `capability` on the upper form (energy is dispatched and the regulation side delivered) and minus it
-on the lower form. `capability` and the result are in the same unit as `state.initial_mw`.
+on the lower form. A `PowerSystems.ControllableLoad`'s LOWERREG row takes the upper form
+([`fcas_upper_regulation_service`](@ref)). `capability` and the result are in the same unit as
+`state.initial_mw`.
 
 # Arguments
 - `capability`: the AGC ramping capability over the interval.
@@ -176,11 +199,14 @@ end
     composite_ramp_rates(gen_up, gen_down, load_up, load_down, period_minutes, state::NEMUnitState) -> (Float64, Float64)
 
 The up and down ramp rates of a scheduled bidirectional unit whose output may cross zero inside the
-interval, MW per minute, `(up, down)`. A unit that starts on the generation side raises output at its
-generation-side rate and one that starts on the load side lowers it at its load-side rate. A unit
-that would reach zero inside the interval instead ramps over the whole interval at a rate that
-blends the two sides, so that it finishes the interval at its own rate from zero. A `NaN` rate marks
-a side without a bid, and a unit bidding one side only keeps that side's rates.
+interval, MW per minute, `(up, down)` on the net-generation axis, where generation is positive and
+consumption negative. A unit that starts on the generation side raises output at its generation-side
+rate and one that starts on the load side lowers it at its load-side rate. A unit that would reach
+zero inside the interval instead ramps over the whole interval at a rate that blends the two sides,
+so that it finishes the interval at its own rate from zero. A `NaN` rate marks a side without a bid,
+and a unit bidding one side only keeps that side's rates on the net-generation axis. A caller whose
+variable is consumed MW, a `PowerSystems.ControllableLoad`, swaps the pair onto its axis; nothing
+else does.
 
 # Arguments
 - `gen_up`, `gen_down`: the generation bid's `ROCUP` and `ROCDOWN`, MW/min, `NaN` without a generation bid.
@@ -200,14 +226,14 @@ function composite_ramp_rates(
     up = if !has_load
         Float64(gen_up)
     elseif !has_gen
-        Float64(load_up)
+        Float64(load_down)
     else
         _composite_up_ramp(state.initial_mw, gen_up, load_down, period_minutes)
     end
     down = if !has_load
         Float64(gen_down)
     elseif !has_gen
-        Float64(load_down)
+        Float64(load_up)
     else
         _composite_down_ramp(state.initial_mw, gen_down, load_up, period_minutes)
     end
@@ -215,9 +241,8 @@ function composite_ramp_rates(
 end
 
 
-# The composite increase: the generation rate from a non-negative start, zero when the load side
-# cannot ramp down, the load side's own rate when it reaches zero only past the interval, else the
-# blend.
+# The composite increase: the generation rate from a non-negative start, the load side's own rate
+# when it reaches zero only past the interval, zero when it cannot ramp down, else the blend.
 function _composite_up_ramp(initial_mw::Real, gen_up::Real, load_down::Real, period::Real)
     initial_mw >= 0 && return Float64(gen_up)
     iszero(load_down) && return 0.0
@@ -226,9 +251,8 @@ function _composite_up_ramp(initial_mw::Real, gen_up::Real, load_down::Real, per
 end
 
 
-# The composite decrease: the load rate from a non-positive start, zero when the generation side
-# cannot ramp down, the generation side's own rate when it reaches zero only past the interval, else
-# the blend.
+# The composite decrease: the load rate from a non-positive start, the generation side's own rate
+# when it reaches zero only past the interval, zero when it cannot ramp down, else the blend.
 function _composite_down_ramp(initial_mw::Real, gen_down::Real, load_up::Real, period::Real)
     initial_mw <= 0 && return Float64(load_up)
     iszero(gen_down) && return 0.0

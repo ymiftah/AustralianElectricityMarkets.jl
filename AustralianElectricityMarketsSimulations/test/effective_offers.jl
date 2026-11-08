@@ -958,10 +958,13 @@ end
             enablement_min = 0.0, low_breakpoint = 10.0, high_breakpoint = 90.0, enablement_max = 100.0,
             max_avail = 100.0,
         )
-        @test fcas_state_enabled(span, NEMUnitState(50.0, 4))
-        @test !fcas_state_enabled(span, NEMUnitState(150.0, 4))
-        @test fcas_state_enabled(span, NEMUnitState(-50.0, 4))
-        @test !fcas_state_enabled(span, NEMUnitState(-50.0, 4); storage = true)
+        @test fcas_state_stranded_ok(span, NEMUnitState(50.0, 4))
+        @test !fcas_state_stranded_ok(span, NEMUnitState(150.0, 4))
+        @test fcas_state_stranded_ok(span, NEMUnitState(-50.0, 4))
+        @test !fcas_state_stranded_ok(span, NEMUnitState(-50.0, 4); storage = true)
+        # An unknown starting output fails the pre-condition rather than passing it.
+        @test !fcas_state_stranded_ok(span, NEMUnitState(NaN, 4))
+        @test !fcas_state_stranded_ok(span, NEMUnitState(NaN, 4); storage = true)
         # §6.1: the upper joint limit is Initial MW plus the AGC capability, the lower minus it.
         state = NEMUnitState(50.0, 4)
         raised = NEMUnitState(80.0, 4)
@@ -969,6 +972,11 @@ end
         @test fcas_ramping_limit(10.0, false, state) == 40.0
         @test fcas_ramping_limit(10.0, true, raised) > fcas_ramping_limit(10.0, true, state)
         @test fcas_ramping_limit(10.0, false, raised) > fcas_ramping_limit(10.0, false, state)
+        # A zero or absent capability, or an unknown start, deactivates the ramping row.
+        @test fcas_ramping_active(10.0, state)
+        @test !fcas_ramping_active(0.0, state)
+        @test !fcas_ramping_active(NaN, state)
+        @test !fcas_ramping_active(10.0, NEMUnitState(NaN, 4))
         # A bidirectional unit's two regulation sides are gated together while both pass their
         # other pre-conditions.
         gen = FCASTrapezium(;
@@ -979,9 +987,10 @@ end
             enablement_min = -100.0, low_breakpoint = -80.0, high_breakpoint = -30.0, enablement_max = -20.0,
             max_avail = 100.0,
         )
-        @test fcas_both_sides_state_enabled(gen, load, true, true, NEMUnitState(0.0, 4)) == (true, true)
-        @test fcas_both_sides_state_enabled(gen, load, true, true, NEMUnitState(110.0, 4)) == (false, false)
-        @test fcas_both_sides_state_enabled(gen, load, true, false, NEMUnitState(50.0, 4)) == (true, false)
+        @test fcas_both_sides_stranded_ok(gen, load, true, true, NEMUnitState(0.0, 4)) == (true, true)
+        @test fcas_both_sides_stranded_ok(gen, load, true, true, NEMUnitState(110.0, 4)) == (false, false)
+        @test fcas_both_sides_stranded_ok(gen, load, true, false, NEMUnitState(50.0, 4)) == (true, false)
+        @test fcas_both_sides_stranded_ok(gen, load, true, true, NEMUnitState(NaN, 4)) == (false, false)
     end
 
     @testset "the MNSP flow envelope starts from the metered flow" begin
@@ -1005,15 +1014,16 @@ end
         @test up ≈ 3.8
         # The mirror from 10 MW: generation ramp down 3 MW/min and load ramp up 5 MW/min.
         _, down = composite_ramp_rates(3.0, 3.0, 5.0, 6.0, 5.0, NEMUnitState(10.0, 4))
-        @test down ≈ ((5 - 10 / 3) * 5 + 10) / 5
+        @test down ≈ 11 / 3
         # (c) A battery with both sides bid at -10 MW blends the load ramp down with the generation
         # ramp up, while its down rate is the load ramp up.
         up, down = composite_ramp_rates(3.0, 4.0, 5.0, 6.0, 5.0, NEMUnitState(-10.0, 4))
-        @test up ≈ ((5 - 10 / 6) * 3 + 10) / 5
+        @test up ≈ 4.0
         @test down == 5.0
-        # A unit that bids one side only keeps that side's rates, and a zero rate cannot blend.
+        # A unit that bids one side only keeps that side's rates on the net-generation axis: a
+        # load-only unit's up rate is its ramp down and its down rate its ramp up.
         @test composite_ramp_rates(2.0, 3.0, NaN, NaN, 5.0, NEMUnitState(-10.0, 4)) == (2.0, 3.0)
-        @test composite_ramp_rates(NaN, NaN, 2.0, 3.0, 5.0, NEMUnitState(10.0, 4)) == (2.0, 3.0)
+        @test composite_ramp_rates(NaN, NaN, 2.0, 3.0, 5.0, NEMUnitState(-10.0, 4)) == (3.0, 2.0)
         @test first(composite_ramp_rates(3.0, 4.0, 5.0, 0.0, 5.0, NEMUnitState(-10.0, 4))) == 0.0
     end
 
@@ -1022,6 +1032,8 @@ end
         base = get_base_power(sys)
         with_units_base(sys, "NATURAL_UNITS") do
             for device in nem_dispatch_devices(sys)
+                # A storage's max_active_power is its charge and discharge limit; the writer sets no
+                # ramp floor for it.
                 device isa Storage && continue
                 has_time_series(device, SingleTimeSeries, NEM_SERIES.max_active_power) || continue
                 stamps = PSY.get_time_series_timestamps(SingleTimeSeries, device, NEM_SERIES.max_active_power)
@@ -1075,12 +1087,14 @@ end
                     stamps = PSY.get_time_series_timestamps(SingleTimeSeries, device, name)
                     window = AEMSim._FCASWindow(first(stamps), length(stamps), resolution)
                     caps = AEMSim._fcas_agc_ramp_caps(window, device, AEMSim._fcas_ramp_rate_service(device, service))
+                    # The writer's own enablement mask is the non-state half of its ramping rule.
+                    enabled = AEMSim._fcas_regulation_enabled_mask(window, device, service, fcas_bid_direction(device, service))
                     upper = service == fcas_upper_regulation_service(device)
                     written = [entry[1] * base for entry in values_of(device, name)]
                     for i in eachindex(stamps)
                         state = unit_state(ObservedState(), device, stamps[i])
                         limit = written[i]
-                        if abs(limit) < FCAS_INACTIVE_LIMIT_MW / 2
+                        if fcas_ramping_active(caps[i], state) && enabled[i]
                             @test fcas_ramping_limit(caps[i], upper, state) ≈ limit rtol = 1.0e-12
                         else
                             @test limit ≈ (upper ? FCAS_INACTIVE_LIMIT_MW : -FCAS_INACTIVE_LIMIT_MW)
@@ -1122,7 +1136,7 @@ end
                         gen_ok = preconditions(window, device, service, false)
                         load_ok = preconditions(window, device, service, true)
                         derived = [
-                            fcas_both_sides_state_enabled(gen_traps[i], load_traps[i], gen_ok[i], load_ok[i], states[i])
+                            fcas_both_sides_stranded_ok(gen_traps[i], load_traps[i], gen_ok[i], load_ok[i], states[i])
                                 for i in eachindex(states)
                         ]
                         @test [flag[1] for flag in derived] == active(false)
@@ -1131,7 +1145,7 @@ end
                         traps = AEMSim._fcas_offer(window, device, service, offer_side(decremental)).trapeziums
                         ok = preconditions(window, device, service, decremental)
                         derived = [
-                            ok[i] && fcas_state_enabled(traps[i], states[i]; storage = device isa Storage)
+                            ok[i] && fcas_state_stranded_ok(traps[i], states[i]; storage = device isa Storage)
                                 for i in eachindex(states)
                         ]
                         @test derived == active(decremental)

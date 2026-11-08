@@ -46,7 +46,8 @@ time series that holds it on the unit, or `nothing` where AEMO publishes no valu
   `PiecewiseStepData`.
 - `max_avail`: `MAXAVAIL`, MW.
 - `roc_up`, `roc_down`: `ROCUP` and `ROCDOWN`, MW/min.
-- `fixed_load`: `FIXEDLOAD`, MW, with `NaN` at the intervals where AEMO publishes NULL.
+- `fixed_load`: `FIXEDLOAD`, MW, with `NaN` at the intervals where AEMO publishes NULL, or
+  `nothing` where every interval's value is NULL or zero.
 - `minimum_load`: `MINIMUMLOAD`, MW.
 - `fast_start_profile`: `T1` to `T4`, as a [`FastStartProfile`](@ref), in minutes.
 - `daily_energy_constraint`: `DAILYENERGYCONSTRAINT`, MWh.
