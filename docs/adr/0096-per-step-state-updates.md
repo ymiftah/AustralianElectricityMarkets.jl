@@ -119,8 +119,9 @@ The per-step route covers every input that reads the state:
   `InitialFlow ± minutes × rate` form reproduces AEMO's limit of the target flow to the metered flow
   plus the forward bid ramp, minus the reverse.
 
-The energy availability limits are not updated per step. The elastic energy MaxAvail row carries the
-bid's `MAXAVAIL` unchanged, from the `"energy_availability[_decremental]"` series, as it always has.
+The energy availability limits have no per-step override; the attached
+`energy_availability[_decremental]` series is state-independent and the elastic row carries it
+unchanged. The row takes the bid's `MAXAVAIL`, as it always has.
 A unit held above that availability by its ramp floor therefore faces two priced violations, and the
 LP chooses between them: the MaxAvail row's slack (AEMO's *Schedule of Constraint Violation Penalty
 Factors*, item 14, CVP factor 370) is cheaper than the ramp row's (item 3, CVP factor 1155), so it
@@ -270,3 +271,5 @@ difference is the LP's choice among degenerate optima rather than a coefficient 
   It survives only because test fixtures call it to build the reference `"fixed_load"` series the
   cross-check compares against. Removing it means moving that reference into the fixture; the
   removal is a follow-up of the replay cleanup, not of this change.
+- A baseline or gate run outside the gated Kaimon tool needs the coordinator's approval. A blocked
+  gate is reported, not routed around.

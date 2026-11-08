@@ -437,8 +437,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `set_effective_offers!` writes every state-independent dispatch input once and records each
   derived series key on the device's `NEMDispatchInputs`: the energy availability
-  `energy_availability[_decremental]` (the bid `MAXAVAIL` per unit of the system base, limited by
-  the UIGF), the effective ramp limits (the lesser of the bid `ROCUP`/`ROCDOWN` and the telemetered
+  `energy_availability[_decremental]` (the bid `MAXAVAIL` per unit of the system base), the
+  effective ramp limits (the lesser of the bid `ROCUP`/`ROCDOWN` and the telemetered
   rates), the effective regulation availability behind the AGC ramp rates, and the loss-demand
   coefficients. The dispatch formulation's PowerSimulations time-series parameters (ramp up and down,
   energy max availability, storage charge and discharge) resolve their series names through those
