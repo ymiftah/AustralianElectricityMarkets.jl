@@ -1,0 +1,149 @@
+# 0096. Per-step state updates in PowerSimulations
+
+## Status
+
+Accepted. Implements Task 10 of the typed-system rebuild (the ADR number 0095 is reserved for the
+typed-system decision).
+
+## Context
+
+A replay model's dispatch limits and fixed loading are read from the unit's state at the start of
+each interval: the ramp floor and ceiling about the observed initial MW, and the fixed-loading
+target from the bid's `FIXEDLOAD` and the fast-start dispatch mode. The state source
+(`ObservedState`, later `SimulatedState`) is therefore a per-step input, alongside the parameters
+PowerSimulations already refreshes from time series.
+
+PowerSimulations offers two per-step hooks:
+
+1. Initial-condition updates. `InterProblemChronology` loops over the model's existing initial
+   conditions (`src/simulation/initial_condition_update_simulation.jl:2-11`) and
+   `update_initial_conditions!` is called after `update_parameters!` for every step but the first
+   (`src/operation/operation_model_simulation_interface.jl:1-11`). The replay formulations declare
+   `PSI.requires_initialization(::NEMReplayDispatch) = false`
+   (`AustralianElectricityMarketsSimulations/src/formulations/dispatch.jl:2`), so no initial
+   conditions are built and the hook is a no-op. The state is observed data, not a value from a
+   previous solution, and the same state feeds bounds and ramp limits as well as the objective, not
+   only a variable's starting value.
+2. Parameter updates. `update_parameters!` for a `DecisionModel`
+   (`src/operation/operation_model_simulation_interface.jl:17-29`) first unsynchronises the
+   objective (`src/core/optimization_container.jl:159-167`), then calls
+   `update_parameter_values!(model, key, state)` for every parameter key, then rebuilds the
+   objective and marks it synchronised. `update_parameter_values!` dispatches to
+   `update_container_parameter_values!` (`src/parameters/update_parameters.jl:4-25`).
+
+The step is skipped entirely at `(step == 1, ix == 1)`
+(`src/simulation/simulation.jl:1044`), so the first step of every range solves with whatever the
+build wrote. Each step's horizon starts at `get_current_timestamp(model)`, equal to
+`initial_time + execution_count * interval` (`src/operation/operation_model_interface.jl:83`).
+
+Two details of the pinned fork shape the parameter route:
+
+- In a simulation the model is built for recurrent solves, so time-series parameter arrays hold
+  `JuMP.VariableRef`, not `Float64` (`src/core/optimization_container.jl:1263-1271`). Every write
+  must go through `_set_param_value_at!` (`src/core/parameters.jl:435-443`), which fixes the
+  variable; assigning into the `DenseAxisArray` directly fails with
+  `MethodError: convert(JuMP.VariableRef, 50.0)`.
+- `_apply_cost_targets!` (`src/parameters/cost_parameters.jl:127-137`), which re-adds the energy and
+  FCAS offer cost terms, is called only from the `TimeSeriesCostParameter` method of
+  `update_container_parameter_values!` (`src/parameters/cost_parameters.jl:139-158`). The update
+  loop must therefore cover every parameter key, not only the state-driven ones, or the offer cost
+  terms disappear after the first update.
+
+The controller also asked whether a state-dependent objective coefficient can be delivered with
+stock PowerSimulations, without the closed fork PR #12.
+
+## Decision
+
+State-driven values are updated through `update_container_parameter_values!` methods on the
+parameter types, not through initial conditions, in
+`AustralianElectricityMarketsSimulations/src/offers/state_updates.jl`:
+
+- `InitialPowerTimeSeriesParameter` reads `unit_state(ObservedState(), device, stamp).initial_mw`.
+- `FixedLoadTimeSeriesParameter` and `FixedLoadInvokedTimeSeriesParameter` recompute the target and
+  the invoked flag from the device's energy bids and the dispatch mode at the step, rather than
+  reading the derived fixed-load series.
+- `stamp = get_current_timestamp(model) + (t - 1) * resolution`, so a multi-step horizon reads each
+  of its own steps.
+
+A state-dependent objective coefficient uses a stock `PSI.ObjectiveFunctionParameter` subtype
+registered with the stock `add_parameters!`, whose `update_container_parameter_values!` method
+writes the coefficient into the container and re-adds the term with
+`add_to_objective_variant_expression!(container, coefficient, variable)`. The term is re-added
+after `cost_function_unsynch` cleared the variant terms, so the coefficient of each step is
+counted once.
+
+Task 10 keeps every precomputed state-dependent series and the fixed-name exception in
+`PSI.get_default_time_series_names` (`src/formulations/dispatch.jl:46-58`) and
+`_has_nem_dispatch_limits` (`src/formulations/dispatch.jl:91-121`), which require the
+`"observed_initial_mw"` and `"telemetry_uigf"` series to exist under the parameter's registered
+name. Task 11 removes them; the build must then read the state source directly for the first step.
+
+## Glue required by the stock objective-coefficient route
+
+Measured on the pinned fork (`PowerSimulations` 0.38.5, revision 81c0259, in
+`~/.julia/packages/PowerSimulations/9Yq02`).
+
+| Interface | Status | Needed |
+| --- | --- | --- |
+| `PSI.ObjectiveFunctionParameter` subtype | public | yes |
+| `_param_to_vars(::T, ::Formulation)` | private, no generic method | must be defined |
+| `PSI.get_multiplier_value(::T, ::Device, ::Formulation)` | public, no generic method | must be defined |
+| `_get_time_series_name(::T, device, model)` | default `get_time_series_names(model)[T]` (`src/parameters/add_parameters.jl:574-575`) | the parameter type needs an entry in the `DeviceModel`'s `time_series_names` |
+| `calc_additional_axes` | default `()` (`src/parameters/add_parameters.jl:690-699`) | no |
+| `_get_expected_time_series_eltype` | default `Float64` (`src/parameters/add_parameters.jl:635`) | no, and the array stays `Float64` in a simulation |
+| `set_has_variant_contributors!` | set by container creation (`src/core/optimization_container.jl:1394-1421`) and again by `add_to_objective_variant_expression!` (`src/core/optimization_container.jl:1921-1933`) | no |
+
+Nothing was blocked and PR #12 is not needed. The only private names an AEMSim objective parameter
+would extend are `_param_to_vars` and, for writing a parameter array itself, `_set_param_value_at!`.
+A custom update method must also mirror the stock resynchronisation
+(`set_synchronized_status!(objective, true)`); without it the next `cost_function_unsynch` leaves
+the previous step's terms in place and the coefficients accumulate.
+
+## The toy test
+
+`AustralianElectricityMarketsSimulations/test/state.jl` runs two 5-minute steps:
+
+- ramp base: the step-2 observed initial MW (10 MW) and ramp-up rate (1 MW/min) put one unit's
+  ceiling at 15 MW. A stale base of 50 MW would put it at 55 MW, so the dispatch discriminates.
+- fixed loading: the derived series is deliberately held at 40 MW for both steps while the bid and
+  the dispatch mode say the loading stops at step 2. A unit that still read the series would be
+  held at 40 MW in step 2; it solves at 0 MW instead.
+- objective coefficient: a test-only `ObjectiveFunctionParameter` reads 12 then 60 $/MWh from a
+  series. Objectives are `(20 + 12) * 100 / 12` and `(20 + 60) * 100 / 12`, and the step-2
+  coefficient on active power is `60 * 100 / 12`.
+
+All three pass, together with the group's existing tests.
+
+## Rejected: `rebuild_model = true`
+
+`PSI.Settings(...; rebuild_model = true)` is not a viable alternative for a replay. The model
+cannot be built at all: `EnergyBandPriceParameter` (the energy offer price) raises
+`EnergyBandPriceParameter does not support models built with rebuild_model = true` from
+`add_cost_target!` (`src/parameters/cost_parameters.jl:32`), reached from
+`AustralianElectricityMarketsSimulations/src/formulations/energy_offers.jl:204`.
+
+For a measurement, the energy and FCAS offer series were removed from the same two-unit toy so the
+rebuild route could run. Per-step wall time for the same two steps, one model, single thread:
+
+| Route | Variables | Step 1 | Step 2 |
+| --- | --- | --- | --- |
+| Persistent model, with offers | 16 | 8.4 to 8.7 ms | 0.78 to 0.83 ms |
+| Persistent model, offers removed | 10 | 6.8 ms | 0.95 ms |
+| Rebuilt model, offers removed | 10 | 11.4 to 12.5 ms | 5.53 to 5.55 ms |
+
+The 10 to 16 variable toy measures fixed overheads, not the cost on a real replay: both routes
+include the HiGHS solve (about 0.1 ms here), and the rebuild's cost grows with model size. The
+decisive point is not the ratio but that the rebuild route cannot carry the offer cost terms at
+all.
+
+## Consequences
+
+- One writer per parameter per step. The build writes the first step's values; the update methods
+  write steps 2 onward, and the first step of a range is only as correct as the build.
+- The update must stay idempotent: values are overwritten and objective terms are re-added after a
+  reset, never accumulated.
+- The update loop must keep covering every parameter key, because the offer cost terms are re-added
+  only from the `TimeSeriesCostParameter` method.
+- A formulation that prices the state in the objective must add the term at build as well as in its
+  update method, from the same source at the model's initial time, or the first step of a range
+  solves without it.

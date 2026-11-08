@@ -168,3 +168,163 @@ end
         )
     end
 end
+
+# Two 5-minute steps, the shortest range a replay can run one interval per step.
+const _ST_STEP_RANGE = TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION)
+const _ST_OPTIMIZER = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
+
+# `DUID => MW` per step, from the solved intervals in step order.
+function _st_dispatch_by_step(out)
+    dispatch = read_solved_interval(out.results, PSI.get_system(out.model)).dispatch
+    sort!(dispatch, :SETTLEMENTDATE)
+    return Dict(name => Float64.(filter(:DUID => ==(name), dispatch).TOTALCLEARED) for name in unique(dispatch.DUID))
+end
+
+
+@testset "each step's ramp base is the observed initial MW of that step" begin
+    # Alta's ramp-up limit falls from 2 to 1 MW/min and its observed initial MW from 50 to 10, so
+    # its step-2 ceiling is 15 MW. A stale base of 50 MW would put it at 55 MW.
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = [50.0, 10.0], ramp_up = [2.0, 1.0]),
+            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = [50.0, 50.0], ramp_up = 100.0),
+        ],
+        100.0; horizon = TOY_RESOLUTION,
+    )
+    out = run_replay(sys, _ST_STEP_RANGE; optimizer = _ST_OPTIMIZER)
+    dispatch = _st_dispatch_by_step(out)
+    @test dispatch[TOY_CHEAP] ≈ [60.0, 15.0] atol = 1.0e-6
+    @test dispatch[TOY_EXPENSIVE] ≈ [40.0, 85.0] atol = 1.0e-6
+    objectives = PSI.read_optimizer_stats(out.results).objective_value
+    @test objectives[1] ≈ 4400.0 / 12 atol = 1.0e-4
+    @test objectives[2] ≈ 7100.0 / 12 atol = 1.0e-4
+
+    container = PSI.get_optimization_container(out.model)
+    initial = PSI.get_parameter(container, PSI.ParameterKey(AEMS.InitialPowerTimeSeriesParameter, NEMThermalGen))
+    @test only(PSI.get_parameter_column_values(initial, TOY_CHEAP)) === 10.0
+    @test only(PSI.get_parameter_column_values(initial, TOY_EXPENSIVE)) === 50.0
+end
+
+
+@testset "each step's fixed loading is recomputed from the bid and the dispatch mode" begin
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 20.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = [40.0, 0.0], ramp_up = 100.0),
+        ],
+        60.0; horizon = TOY_RESOLUTION,
+        mutate! = function (sys, stamps)
+            park = PSY.get_component(NEMThermalGen, sys, TOY_EXPENSIVE)
+            _toy_energy_bid!(
+                sys, park, AustralianElectricityMarkets.BidDirection.GEN, stamps,
+                fill(_toy_offer([(100.0, 80.0)]), length(stamps)), fill(100.0, length(stamps));
+                fixed_load = fill(40.0, length(stamps)),
+            )
+            set_toy_unit_field!(sys, park, stamps, :dispatch_mode, [0.0, 2.0])
+            # The derived series a build over the whole range would write: Park held at 40 MW in both
+            # steps. Step 1 is left correct because the simulation does not update it, step 2 stale.
+            replace_single_series_with!(sys, park, "fixed_load", [0.4, 0.4], stamps)
+            replace_single_series_with!(sys, park, "fixed_load_invoked", [1.0, 1.0], stamps)
+            return
+        end,
+    )
+    out = run_replay(sys, _ST_STEP_RANGE; optimizer = _ST_OPTIMIZER)
+    dispatch = _st_dispatch_by_step(out)
+    @test dispatch[TOY_EXPENSIVE] ≈ [40.0, 0.0] atol = 1.0e-6
+    @test dispatch[TOY_CHEAP] ≈ [20.0, 60.0] atol = 1.0e-6
+    objectives = PSI.read_optimizer_stats(out.results).objective_value
+    @test objectives[1] ≈ 3600.0 / 12 atol = 1.0e-4
+    @test objectives[2] ≈ 1200.0 / 12 atol = 1.0e-4
+
+    container = PSI.get_optimization_container(out.model)
+    target = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadTimeSeriesParameter, NEMThermalGen))
+    invoked = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadInvokedTimeSeriesParameter, NEMThermalGen))
+    @test only(PSI.get_parameter_column_values(target, TOY_EXPENSIVE)) === 0.0
+    @test only(PSI.get_parameter_column_values(invoked, TOY_EXPENSIVE)) === 0.0
+end
+
+
+# A test-only objective coefficient: the device's `"toy_state_price"`, $/MWh, added to the objective
+# of every step from the state source. Its update mirrors what a formulation would register.
+struct ToyStatePriceParameter <: PSI.ObjectiveFunctionParameter end
+
+PSI._param_to_vars(::ToyStatePriceParameter, ::AEMS.NEMReplayDispatch) = (PSI.ActivePowerVariable,)
+
+PSI.get_multiplier_value(::ToyStatePriceParameter, ::PSY.StaticInjection, ::AEMS.NEMReplayDispatch) = 1.0
+
+function PSI.update_container_parameter_values!(
+        container::PSI.OptimizationContainer,
+        model::PSI.OperationModel,
+        key::PSI.ParameterKey{ToyStatePriceParameter, T},
+        ::PSI.DatasetContainer{PSI.InMemoryDataset},
+    ) where {T <: PSY.StaticInjection}
+    parameter_array = PSI.get_parameter_array(container, key)
+    power = PSI.get_variable(container, PSI.ActivePowerVariable(), T)
+    scale = PSI.get_base_power(container) * AEMS.interval_cost_coefficient(1.0, PSI.get_resolution(model))
+    system = PSI.get_system(model)
+    for name in axes(parameter_array)[1]
+        device = PSY.get_component(T, system, name)
+        series = AustralianElectricityMarkets._series_key(device, "toy_state_price")
+        for t in PSI.get_time_steps(container)
+            price = only(PSI.IS.get_time_series_values(device, series; start_time = AEMS._step_stamp(model, t), len = 1))
+            parameter_array[name, t] = price
+            PSI.add_to_objective_variant_expression!(container, price * scale, power[name, t])
+        end
+    end
+    return
+end
+
+# One step of the simulation's parameter update: `PowerSimulations.update_parameters!` without the
+# simulation-status recording, so it also runs where a simulation would skip the first step.
+function _st_update_parameters!(model)
+    container = PSI.get_optimization_container(model)
+    PSI.cost_function_unsynch(container)
+    input = PSI.DatasetContainer{PSI.InMemoryDataset}()
+    for key in Base.keys(PSI.get_parameters(model))
+        PSI.update_container_parameter_values!(container, model, key, input)
+    end
+    PSI.update_objective_function!(container)
+    PSI.set_synchronized_status!(PSI.get_objective_expression(container), true)
+    return
+end
+
+
+@testset "a per-step state price survives the objective unsynchronisation" begin
+    stamps = [TOY_START, TOY_START + TOY_RESOLUTION]
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 100.0, ramp_up = 100.0)],
+        100.0; horizon = TOY_RESOLUTION,
+        mutate! = (sys, stamps) -> replace_single_series_with!(sys, PSY.get_component(NEMThermalGen, sys, TOY_CHEAP), "toy_state_price", [12.0, 60.0], stamps),
+    )
+    template = replay_template(sys)
+    model = PSI.DecisionModel(
+        template, sys;
+        optimizer = _ST_OPTIMIZER, horizon = TOY_RESOLUTION, resolution = TOY_RESOLUTION,
+        interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+
+    unit = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
+    names = Dict{Type{<:PSI.ParameterType}, String}(PSI.get_time_series_names(PSI.get_model(template, NEMThermalGen)))
+    names[ToyStatePriceParameter] = "toy_state_price"
+    PSI.add_parameters!(container, ToyStatePriceParameter, [unit], PSI.DeviceModel(NEMThermalGen, AEMS.NEMReplayDispatch; time_series_names = names))
+    price = PSI.get_parameter(container, PSI.ParameterKey(ToyStatePriceParameter, NEMThermalGen))
+    @test eltype(PSI.get_parameter_array(price)) === Float64
+    @test PSI.get_objective_expression(container).has_variant_contributors
+
+    objectives = Float64[]
+    for (i, _) in enumerate(stamps)
+        PSI.set_execution_count!(model, i - 1)
+        _st_update_parameters!(model)
+        PSI.solve_impl!(model)
+        @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        push!(objectives, PSI.JuMP.objective_value(PSI.get_jump_model(container)))
+    end
+    # 100 MW at the unit's $20/MWh offer plus the state price of the step.
+    @test objectives[1] ≈ 3200.0 / 12 atol = 1.0e-4
+    @test objectives[2] ≈ 8000.0 / 12 atol = 1.0e-4
+    @test PSI.get_parameter_array(price)[TOY_CHEAP, 1] === 60.0
+    power = PSI.get_variable(container, PSI.ActivePowerVariable(), NEMThermalGen)[TOY_CHEAP, 1]
+    @test PSI.JuMP.coefficient(PSI.get_variant_terms(PSI.get_objective_expression(container)), power) ≈ 60.0 * 100.0 / 12
+end

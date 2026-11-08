@@ -571,8 +571,8 @@ end
 
 # Records an energy bid of `device` on `direction`, with `curves` (one per stamp, as offered) and
 # `max_avail` (MW per stamp), `roc_up`/`roc_down` (MW/min per stamp, `NaN` for no bid ramp) and unit
-# loss factors of 1.
-function _toy_energy_bid!(sys, device, direction, stamps, curves, max_avail; roc_up = NaN, roc_down = NaN)
+# loss factors of 1. `fixed_load`, when given, is the `FIXEDLOAD`, MW per stamp.
+function _toy_energy_bid!(sys, device, direction, stamps, curves, max_avail; roc_up = NaN, roc_down = NaN, fixed_load = nothing)
     AEM = AustralianElectricityMarkets
     field(f::Symbol) = AEM.bid_series_name(BidType.ENERGY, f, direction)
     n = length(stamps)
@@ -582,10 +582,17 @@ function _toy_energy_bid!(sys, device, direction, stamps, curves, max_avail; roc
         )
         replace_single_series_with!(sys, device, name, values, stamps)
     end
+    fixed_load_key = if isnothing(fixed_load)
+        nothing
+    else
+        replace_single_series_with!(sys, device, field(:fixed_load), _toy_values(fixed_load, n), stamps)
+        AEM._series_key(device, field(:fixed_load))
+    end
     bid = AEM.NEMEnergyBid(;
         direction, offer_curves = AEM._series_key(device, field(:offer_curves)),
         max_avail = AEM._series_key(device, field(:max_avail)),
         roc_up = AEM._series_key(device, field(:roc_up)), roc_down = AEM._series_key(device, field(:roc_down)),
+        fixed_load = fixed_load_key,
     )
     AEM._set_energy_bid!(PSY.get_operation_cost(device), bid)
     current = AEM.has_registration(device) ? AEM.get_registration(device).schedule_type : ScheduleType.SCHEDULED
