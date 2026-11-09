@@ -317,22 +317,6 @@ function PSI.update_container_parameter_values!(
     return
 end
 
-# One step of the simulation's parameter update, mirroring `PowerSimulations.update_parameters!` for
-# a `DecisionModel` (`operation_model_simulation_interface.jl:17-29`) without the simulation-status
-# recording, so it also runs on the solve a simulation skips.
-function _st_update_parameters!(model)
-    container = PSI.get_optimization_container(model)
-    PSI.cost_function_unsynch(container)
-    input = PSI.DatasetContainer{PSI.InMemoryDataset}()
-    for key in Base.keys(PSI.get_parameters(model))
-        PSI.update_container_parameter_values!(container, model, key, input)
-    end
-    PSI.update_objective_function!(container)
-    PSI.set_synchronized_status!(PSI.get_objective_expression(container), true)
-    return
-end
-
-
 @testset "the first solve reads the build's seed, later solves the state source" begin
     # The seed is built from the state source before the forecasts, so a change to the keyed state
     # after the build reaches the second solve only through the per-step update.
@@ -372,7 +356,7 @@ end
         ),
     )
     PSI.set_execution_count!(model, 1)
-    _st_update_parameters!(model)
+    _update_step_parameters!(model)
     PSI.solve_impl!(model)
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     @test only(PSI.get_parameter_column_values(initial, TOY_CHEAP)) === 10.0
@@ -405,7 +389,7 @@ end
     objectives = Float64[]
     for (i, _) in enumerate(stamps)
         PSI.set_execution_count!(model, i - 1)
-        _st_update_parameters!(model)
+        _update_step_parameters!(model)
         PSI.solve_impl!(model)
         @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
         push!(objectives, PSI.JuMP.objective_value(PSI.get_jump_model(container)))
@@ -475,7 +459,7 @@ end
         ),
     )
     PSI.set_execution_count!(model, 1)
-    _st_update_parameters!(model)
+    _update_step_parameters!(model)
     PSI.solve_impl!(model)
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     @test only(PSI.get_parameter_column_values(target, TOY_CHEAP)) === 0.0
@@ -555,7 +539,7 @@ end
     @test vec(Array(PSI.get_parameter_column_values(battery_ramp, TOY_BATTERY))) ≈ [0.25, 0.2]
 
     PSI.set_execution_count!(model, 1)
-    _st_update_parameters!(model)
+    _update_step_parameters!(model)
     PSI.solve_impl!(model)
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     @test vec(Array(PSI.get_parameter_column_values(park_limit, TOY_EXPENSIVE))) ≈ [0.0, -inactive, inactive]

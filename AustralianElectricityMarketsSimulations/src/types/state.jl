@@ -42,6 +42,28 @@ struct SimulatedState <: StateSource end
 
 
 """
+    _is_unobserved_stamp(device, t::DateTime) -> Bool
+
+Whether the build observes no dispatched state for `device` at `t`: the stamp is outside the device's
+[`NEMRegistration`](@ref) span, where AEMO publishes no `DISPATCHLOAD` row, or the device is a pinned
+non-scheduled load, which is held at zero output. A device without a registration is always observable.
+
+# Arguments
+- `device`: the NEM device.
+- `t`: the first timestamp of the interval.
+
+# Returns
+`Bool`.
+"""
+function _is_unobserved_stamp(device, t::DateTime)
+    AustralianElectricityMarkets.is_non_scheduled_load(device) && return true
+    AustralianElectricityMarkets.has_registration(device) || return false
+    registration = AustralianElectricityMarkets.get_registration(device)
+    return !AustralianElectricityMarkets._is_registered(registration, t)
+end
+
+
+"""
     unit_state(source::StateSource, device, t::DateTime) -> NEMUnitState
 
 The state of `device` at the start of the interval beginning at `t`, read from `source`.
@@ -52,20 +74,25 @@ The state of `device` at the start of the interval beginning at `t`, read from `
 - `t`: the first timestamp of the interval.
 
 # Returns
-The [`NEMUnitState`](@ref) for an [`ObservedState`](@ref). Throws an `ArgumentError` naming `device` and `t`
-when it is not a NEM device with an observed state, when the observed dispatch mode at `t` is not finite, and
-for a [`SimulatedState`](@ref), which is not implemented yet.
+The [`NEMUnitState`](@ref) for an [`ObservedState`](@ref). A stamp the build does not observe (see
+[`_is_unobserved_stamp`](@ref)) resolves to the state the build seeds there, zero output in dispatch
+mode `0`. Throws an `ArgumentError` naming `device` and `t` when it is not a NEM device with an
+observed state, when the observed dispatch mode at an observed stamp is not finite, and for a
+[`SimulatedState`](@ref), which is not implemented yet.
 """
 function unit_state(::ObservedState, device, t::DateTime)
     observed = AustralianElectricityMarkets.get_observed_state(device)
-    initial_mw = _state_value(device, observed, :initial_mw, t)
     dispatch_mode = _state_value(device, observed, :dispatch_mode, t)
-    isfinite(dispatch_mode) || throw(
-        ArgumentError(
-            "The dispatch mode of \"$(PSY.get_name(device))\" at $(t) is not finite. " *
-                "Check that the unit has a DISPATCHLOAD row at that stamp.",
-        ),
-    )
+    if !isfinite(dispatch_mode)
+        _is_unobserved_stamp(device, t) && return NEMUnitState(0.0, 0)
+        throw(
+            ArgumentError(
+                "The dispatch mode of \"$(PSY.get_name(device))\" at $(t) is not finite. " *
+                    "Check that the unit has a DISPATCHLOAD row at that stamp.",
+            ),
+        )
+    end
+    initial_mw = _state_value(device, observed, :initial_mw, t)
     return NEMUnitState(Float64(initial_mw), Int(dispatch_mode))
 end
 
@@ -93,15 +120,10 @@ function _state_value(device, observed, field::Symbol, t::DateTime)
 end
 
 
-# The starting output the build seeds the first solve with. A device whose dispatch rows start
-# mid-range has no dispatch mode at the earlier stamps, so the output is read on its own.
+# The starting output the build seeds the first solve with. It reads the same `unit_state` the
+# per-step updates call, so a stamp the build does not observe seeds the same zero the update writes.
 function _state_initial_mw(source::StateSource, device, t::DateTime)
     return unit_state(source, device, t).initial_mw
-end
-
-function _state_initial_mw(::ObservedState, device, t::DateTime)
-    observed = AustralianElectricityMarkets.get_observed_state(device)
-    return Float64(_state_value(device, observed, :initial_mw, t))
 end
 
 

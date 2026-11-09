@@ -1,5 +1,5 @@
-# Private test-only `PSI.ProblemTemplate` builders for the PSCB fixture, not part of the
-# package's public API.
+# Private test-only helpers (templates, decision models, one-step parameter updates) for the PSCB
+# fixture, not part of the package's public API.
 
 import PowerSimulations as PSI
 import PowerSystems as PSY
@@ -19,6 +19,21 @@ function _decision_model(args...; mpc = _HELPER_MPC, kwargs...)
     model = PSI.DecisionModel(args...; kwargs...)
     PSI.get_ext(PSI.get_settings(model))["market_price_cap"] = mpc
     return model
+end
+
+# One step of the simulation's parameter update, mirroring `PowerSimulations.update_parameters!` for
+# a `DecisionModel` (`operation_model_simulation_interface.jl:17-29`) without the simulation-status
+# recording, so it also runs on the solve a simulation skips.
+function _update_step_parameters!(model)
+    container = PSI.get_optimization_container(model)
+    PSI.cost_function_unsynch(container)
+    input = PSI.DatasetContainer{PSI.InMemoryDataset}()
+    for key in Base.keys(PSI.get_parameters(model))
+        PSI.update_container_parameter_values!(container, model, key, input)
+    end
+    PSI.update_objective_function!(container)
+    PSI.set_synchronized_status!(PSI.get_objective_expression(container), true)
+    return
 end
 
 "Per-area balances via `AreaBalancePowerModel`, with balance slacks priced at `mpc`. Mirrors `docs/literate/howto/interchanges.jl`."

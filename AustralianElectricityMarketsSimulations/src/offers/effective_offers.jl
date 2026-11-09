@@ -93,7 +93,7 @@ function _set_state_seeds!(sys::PSY.System)
                 single_series(_INITIAL_MW_SEED_SERIES, first(stamps), initial, resolution),
             )
             _has_fixed_load_bid(device) || continue
-            steps = [_seed_fixed_load_step(device, t, source) for t in stamps]
+            steps = [_fixed_load_step(device, t; source) for t in stamps]
             replace_single_series!(
                 sys, device,
                 single_series(_FIXED_LOAD_SEED_SERIES, first(stamps), [step.target / base for step in steps], resolution),
@@ -108,16 +108,6 @@ function _set_state_seeds!(sys::PSY.System)
         end
     end
     return
-end
-
-
-# The fixed-loading seed at `stamp`; a unit whose dispatch rows start mid-range has no state at the
-# earlier stamps, so its seed there is no loading.
-function _seed_fixed_load_step(device, stamp::DateTime, source)
-    observed = AustralianElectricityMarkets.get_observed_state(device)
-    isfinite(_state_value(device, observed, :dispatch_mode, stamp)) ||
-        return (; target = 0.0, invoked = false)
-    return _fixed_load_step(device, stamp; source)
 end
 
 

@@ -119,6 +119,12 @@ The per-step route covers every input that reads the state:
   `InitialFlow ± minutes × rate` form reproduces AEMO's limit of the target flow to the metered flow
   plus the forward bid ramp, minus the reverse.
 
+Every update method is typed `PSI.DatasetContainer{PSI.InMemoryDataset}`. A model built with any other
+parameter container does not reach these methods, so PowerSimulations' stock time-series update refills the
+parameters from the build's seed series and the whole simulation silently repeats the build's state. No build
+path in this package produces another container, so the restriction is a documented boundary rather than a
+reachable failure.
+
 The energy availability limits have no per-step override; the attached
 `energy_availability[_decremental]` series is state-independent and the elastic row carries it
 unchanged. The row takes the bid's `MAXAVAIL`, as it always has.
@@ -265,8 +271,11 @@ difference is the LP's choice among degenerate optima rather than a coefficient 
   runs without it.
 - A value that is not finite throws, naming the parameter, the device and the stamp, as the stock
   time-series update does; a silent NaN would reach the solver as an opaque failure. A stamp with
-  no `DISPATCHLOAD` row has a non-finite dispatch mode, so `unit_state` throws an `ArgumentError`
-  naming the device and the stamp rather than defaulting the mode to 0.
+  no `DISPATCHLOAD` row inside the device's registration span has a non-finite dispatch mode and is
+  a missing published row, so `unit_state` throws an `ArgumentError` naming the device and the
+  stamp rather than defaulting the mode to 0. A stamp the build does not observe at all, outside
+  the registration span or for a pinned non-scheduled load, resolves to the state the build seeds,
+  zero output in mode 0, so the first solve and the per-step updates agree.
 - `_set_nem_fixed_loads!` is dead in production: the fixed-loading update reads the bids directly.
   It survives only because test fixtures call it to build the reference `"fixed_load"` series the
   cross-check compares against. Removing it means moving that reference into the fixture; the

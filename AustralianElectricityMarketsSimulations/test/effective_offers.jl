@@ -1,6 +1,22 @@
 # Effective FCAS offers and tie-break scales, derived by `set_effective_offers!` (run by `prepare_replay!`),
 # and the accessors that read the derived inputs.
 
+# A unit first registered at `stamp`: its summary and loss-factor rows start there, and its bids and
+# dispatch rows before it are removed, as NEMWEB has them. Returns the hive location.
+function registered_from(source, duid, stamp)
+    t = "TIMESTAMP '$stamp'"
+    steps = [
+        (:DUDETAILSUMMARY, "UPDATE input SET START_DATE = $t WHERE DUID = '$duid'"),
+        (:DUDETAIL, "UPDATE input SET EFFECTIVEDATE = $t WHERE DUID = '$duid'"),
+        (:BIDPEROFFER_D, "DELETE FROM input WHERE DUID = '$duid' AND INTERVAL_DATETIME <= $t"),
+        (:DISPATCHLOAD, "DELETE FROM input WHERE DUID = '$duid' AND SETTLEMENTDATE <= $t"),
+    ]
+    for (table, query) in steps
+        source = damaged_cache(source, table, query).config.hive_location
+    end
+    return source
+end
+
 @testset "Effective offers" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
     start_date = DateTime(2025, 1, 1, 0, 0)
@@ -205,21 +221,6 @@
 
     @testset "a unit registered mid-chunk offers no FCAS where its padded stamps are" begin
         interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
-        # A unit first registered at `stamp`: its summary and loss-factor rows start there, and its
-        # bids and dispatch rows before it are removed, as NEMWEB has them.
-        function registered_from(source, duid, stamp)
-            t = "TIMESTAMP '$stamp'"
-            steps = [
-                (:DUDETAILSUMMARY, "UPDATE input SET START_DATE = $t WHERE DUID = '$duid'"),
-                (:DUDETAIL, "UPDATE input SET EFFECTIVEDATE = $t WHERE DUID = '$duid'"),
-                (:BIDPEROFFER_D, "DELETE FROM input WHERE DUID = '$duid' AND INTERVAL_DATETIME <= $t"),
-                (:DISPATCHLOAD, "DELETE FROM input WHERE DUID = '$duid' AND SETTLEMENTDATE <= $t"),
-            ]
-            for (table, query) in steps
-                source = damaged_cache(source, table, query).config.hive_location
-            end
-            return source
-        end
         late_hive = registered_from(AEM_TEST_REPLAY_HIVE_DIR, "BW02", "2025-01-01 00:10:00")
         late = nem_system(
             aem_connect(HiveConfiguration(hive_location = late_hive, filesystem = "file")), NEMDEConfiguration(); date_range = interval,
@@ -240,6 +241,35 @@
             values = get_time_series_values(SingleTimeSeries, bw02, get_name(key); ignore_scaling_factors = true)
             @test all(iszero, values[1:2])
         end
+    end
+
+    @testset "a device with no dispatch rows before its registration does not abort the replay" begin
+        # BW02 registers at 00:10, so both steps of this replay precede its first DISPATCHLOAD row. The
+        # first solve reads the build's seeds; the per-step update must resolve the same stamps to the
+        # same seed state (zero output, dispatch mode 0, no fixed loading) instead of throwing on the
+        # absent dispatch mode.
+        steps = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 10)
+        late_hive = registered_from(AEM_TEST_REPLAY_HIVE_DIR, "BW02", "2025-01-01 00:10:00")
+        late = nem_system(
+            aem_connect(HiveConfiguration(hive_location = late_hive, filesystem = "file")), NEMDEConfiguration();
+            date_range = first(steps):Minute(5):(last(steps) + 2Minute(5)),
+        )
+        out = run_replay(late, steps)
+        @test length(PSI.read_optimizer_stats(out.results).objective_value) == length(steps)
+
+        # The decision problem's final solve is step 2, at 00:10, which is still before the registration.
+        container = PSI.get_optimization_container(out.model)
+        initial = PSI.get_parameter(container, PSI.ParameterKey(AEMS.InitialPowerTimeSeriesParameter, NEMHydroGen))
+        target = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadTimeSeriesParameter, NEMHydroGen))
+        invoked = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadInvokedTimeSeriesParameter, NEMHydroGen))
+        @test only(PSI.get_parameter_column_values(initial, "BW02")) === 0.0
+        @test only(PSI.get_parameter_column_values(target, "BW02")) === 0.0
+        @test only(PSI.get_parameter_column_values(invoked, "BW02")) === 0.0
+        # The build's seeds agree with those values at both stamps, and the state the update reads there is
+        # the zero state the seed came from.
+        bw02 = get_component(NEMHydroGen, PSI.get_system(out.model), "BW02")
+        @test get_time_series_values(SingleTimeSeries, bw02, "initial_mw_seed"; ignore_scaling_factors = true)[1:2] == [0.0, 0.0]
+        @test AEMS.unit_state(AEMS.ObservedState(), bw02, last(steps)) == AEMS.NEMUnitState(0.0, 0)
     end
 end
 
