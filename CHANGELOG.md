@@ -419,6 +419,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `GenericConstraint` holds `GENCONDATA`'s `GENCONID`, `LIMITTYPE`, `SOURCE`, `EFFECTIVEDATE` and `VERSIONNO` as typed fields, read with `get_gencon_id`, `get_limit_type`, `get_source`, `get_effective_date` and `get_version_no`. A unit's station is a shared `NEMStation` supplemental attribute, and its non-scheduled and commissioned flags are fields of its `NEMRegistration`; a `NEMDEConfiguration` build leaves every component's `ext` empty.
 
+- `NEMTelemetry` and `NEMObservedState` hold a dispatch unit's telemetered limits and its observed starting state as typed fields, each a static value or a time-series key: AGC status, UIGF, the ramp up and down limits, the regulation enablement and maximum availability per side, and the `INITIALMW` and fast-start dispatch mode. `get_telemetry` and `get_observed_state` read them and `set_telemetry!` and `set_observed_state!` attach them, alongside `get_registration` / `set_registration!` for `NEMRegistration`.
+
 - The state-dependent dispatch inputs are pure functions of a `NEMUnitState`: `max_active_power_floor`, `in_fast_start_profile`, `fixed_load_invoked` and `effective_fixed_load`, `fcas_state_stranded_ok` and `fcas_both_sides_stranded_ok`, `fcas_ramping_active` and `fcas_ramping_limit`, `mnsp_ramp_envelope`, and `composite_ramp_rates` for the composite of a bidirectional unit's generation- and load-side ramp rates across zero.
 
 ### Changed

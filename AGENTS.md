@@ -77,6 +77,9 @@ front, so every group runs on its own.
 | `src/system/` | System construction and modification; RegionModel submodule |
 | `src/accessors/` | Attached component data and time-series lookup |
 | `…Simulations/src/types/`, `…Simulations/src/formulations/` | PSI types and dispatch, FCAS, constraint and loss formulations |
+| `…Simulations/src/types/state.jl` | `NEMUnitState`, the state sources (`ObservedState`, `SimulatedState`) and the derived-input attributes `NEMDispatchInputs` / `NEMFCASInputs` |
+| `…Simulations/src/offers/` | Effective offers and state-dependent inputs as pure functions (`derivation.jl`, `state_derivation.jl`, `initial_state.jl`), and the `set_...!` writers that record each series key |
+| `…Simulations/src/offers/state_updates/` | Per-step updates of the state-dependent PowerSimulations parameters, one file per formulation family |
 | `…Simulations/src/results/` | Solved and violation readers of PSI results: `read_solved_interval`, `read_constraint_violations`, and the `read_prices` / `read_fcas_prices` methods |
 | `…Simulations/src/checks/<what_is_checked>.jl` | pre-flight checks run before a build |
 | `…Simulations/src/psi_compat.jl` | shims over the pinned PowerSimulations fork |
