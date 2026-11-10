@@ -130,6 +130,18 @@ julia -O1 --project=AustralianElectricityMarketsSimulations/test \
 `--time-series-in-memory true` holds the time series in memory (default `false`, on disk), which cuts
 per-step parameter updates but raises peak memory.
 
+`--start` and `--intervals` replay one range of consecutive intervals instead of whole trading days.
+`--start` is an interval-ending time on a five-minute boundary, and the range must end within the
+trading day of `--start`. Both options must be given together, and they replace `--first`, `--last`
+and `--seed` for scheduling. This replays 10 intervals from 2026-06-04T04:05:00:
+
+```sh
+julia -O1 --project=AustralianElectricityMarketsSimulations/test \
+    scripts/replay_batch.jl \
+    --start 2026-06-04T04:05:00 --intervals 10 \
+    --output /run/media/simba/Store/aem_validation/range-2026-06-04-10
+```
+
 The seed fixes the shuffled order for the same Julia version. Change `--seed` for
 a different order. Failed days are recorded and skipped, with no automatic retry.
 If no day completes, the command exits with an error. A run with some failures

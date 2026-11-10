@@ -434,8 +434,9 @@ function main(folder, day::Date)
         end
         db = aem_connect(HiveConfiguration(hive_location = config["hive"]))
         try
+            steps = ReplayBatchSupport.replay_steps(config, day)
             result = _replay_day(
-                db, day, day_folder;
+                db, steps, day_folder;
                 optimizer, time_series_in_memory, cache_size_mib = parse(Int, config["cache-size-mib"]), on_phase,
             )
             on_phase(:export)

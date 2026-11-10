@@ -14,6 +14,8 @@ function main(args = ARGS)
 
               --first DATE          First trading day, inclusive (2026-01-01)
               --last DATE           Last trading day, inclusive (2026-06-30)
+              --start DATETIME      First interval-ending time of a single range (off: whole days)
+              --intervals N         Number of 5-minute intervals in that range (with --start)
               --hours NUMBER        Stop starting days after this wall time (10); finish the current day
               --seed INTEGER        Reproducible shuffle seed (20261026); no repeated days
               --output FOLDER       New output folder (/run/media/simba/Store/aem_validation/<UTC timestamp>_<pid>)

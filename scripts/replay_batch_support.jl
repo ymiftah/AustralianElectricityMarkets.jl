@@ -5,7 +5,7 @@ using Random
 using TOML
 using SHA
 
-export scheduled_days, trading_steps, may_start_day, parse_options, write_status,
+export scheduled_days, trading_steps, replay_steps, may_start_day, parse_options, write_status,
     memory_sample, write_csv, supervise, run_schedule
 
 # Snapshot package sources as well as scripts: a commit alone does not identify a dirty checkout.
@@ -50,13 +50,60 @@ function may_start_day(elapsed_s::Real, budget_s::Real)
     return elapsed_s < budget_s
 end
 
+# The trading day of an interval ending at `t`.
+_trading_day(t::DateTime) = Date(t - Hour(4) - Minute(5))
+
+"""
+    replay_steps(options, day::Date) -> StepRange{DateTime}
+
+Returns the interval-ending timestamps to replay for `day`: the `intervals` five-minute steps from `start`
+when `start` is set, otherwise the whole trading day.
+
+# Arguments
+- `options`: the parsed options or the `run.toml` configuration, with string values.
+- `day`: the trading day.
+
+# Returns
+A `StepRange{DateTime}` with a five-minute step.
+"""
+function replay_steps(options, day::Date)
+    isempty(options["start"]) && return trading_steps(day)
+    start = DateTime(options["start"])
+    return start:Minute(5):(start + Minute(5) * (parse(Int, options["intervals"]) - 1))
+end
+
+# Requires `--start` and `--intervals` together, and a range that stays within one trading day.
+function _validate_range(options)
+    start_text, intervals_text = options["start"], options["intervals"]
+    isempty(start_text) == isempty(intervals_text) ||
+        throw(ArgumentError("--start and --intervals must be given together"))
+    isempty(start_text) && return
+    start = try
+        DateTime(start_text)
+    catch
+        throw(ArgumentError("--start must be an ISO datetime such as 2026-06-04T04:05:00, got $start_text"))
+    end
+    second(start) == 0 && millisecond(start) == 0 && minute(start) % 5 == 0 ||
+        throw(ArgumentError("--start must lie on a 5-minute boundary, got $start_text"))
+    intervals = try
+        parse(Int, intervals_text)
+    catch
+        throw(ArgumentError("--intervals must be an integer, got $intervals_text"))
+    end
+    intervals > 0 || throw(ArgumentError("--intervals must be positive"))
+    day = _trading_day(start)
+    start + Minute(5) * (intervals - 1) <= last(trading_steps(day)) ||
+        throw(ArgumentError("--start with --intervals $intervals runs past trading day $day"))
+    return
+end
+
 function parse_options(args)
     options = Dict(
         "first" => "2026-01-01", "last" => "2026-06-30", "hours" => "10",
         "seed" => "20261026", "hive" => joinpath(homedir(), ".nemdb_cache"),
         "output" => joinpath("/run/media/simba/Store/aem_validation", Dates.format(now(UTC), "yyyymmddTHHMMSS") * "Z_$(getpid())"),
         "sample-seconds" => "5", "solver-threads" => "1", "cache-size-mib" => "64",
-        "time-series-in-memory" => "false",
+        "time-series-in-memory" => "false", "start" => "", "intervals" => "",
     )
     iseven(length(args)) || throw(ArgumentError("options require --name value pairs; use --help"))
     for i in 1:2:length(args)
@@ -78,6 +125,7 @@ function parse_options(args)
         throw(ArgumentError("--time-series-in-memory must be true or false"))
     end
     parse(Int, options["seed"])
+    _validate_range(options)
     options["output"] = abspath(expanduser(options["output"]))
     options["hive"] = abspath(expanduser(options["hive"]))
     return options
@@ -190,10 +238,14 @@ function supervise(options)
     open(joinpath(folder, "run.toml"), "w") do io
         TOML.print(io, config)
     end
-    days = scheduled_days(Date(options["first"]), Date(options["last"]), parse(Int, options["seed"]))
+    days = if isempty(options["start"])
+        scheduled_days(Date(options["first"]), Date(options["last"]), parse(Int, options["seed"]))
+    else
+        [_trading_day(DateTime(options["start"]))]
+    end
     write_csv(
         joinpath(folder, "scheduled_days.csv"), ("order", "trading_day", "start", "stop"),
-        ((i, day, first(trading_steps(day)), last(trading_steps(day))) for (i, day) in enumerate(days))
+        ((i, day, first(replay_steps(options, day)), last(replay_steps(options, day))) for (i, day) in enumerate(days))
     )
     write_status(folder, "loading")
     project = dirname(Base.active_project())
