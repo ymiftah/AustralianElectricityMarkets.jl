@@ -114,6 +114,9 @@ _deserialize_device_parameter(d::Dict) =
 IS.deserialize(::Type{Vector{ConstraintTerm}}, data::Vector) =
     ConstraintTerm[_deserialize_device_parameter(d) for d in data]
 
+IS.deserialize(::Type{Vector{Union{UnitTerm, InterconnectorTerm, RegionTerm}}}, data::Vector) =
+    Union{UnitTerm, InterconnectorTerm, RegionTerm}[_deserialize_device_parameter(d) for d in data]
+
 IS.deserialize(::Type{Vector{FCASRequirement}}, data::Vector) =
     FCASRequirement[_deserialize_device_parameter(d) for d in data]
 
@@ -157,7 +160,7 @@ mutable struct GenericConstraint <: PSY.Service
     source::Union{String, Nothing}
     effective_date::Union{DateTime, Nothing}
     version_no::Union{Int, Nothing}
-    terms::Vector{ConstraintTerm}
+    terms::Vector{Union{UnitTerm, InterconnectorTerm, RegionTerm}}
     fcas_requirements::Vector{FCASRequirement}
     ext::Dict{String, Any}
     internal::IS.InfrastructureSystemsInternal
@@ -186,7 +189,7 @@ function GenericConstraint(;
     return GenericConstraint(
         String(name), available, sense, _bid_number(rhs), invoked, constraint_weight, String(description),
         id, _constraint_text(limit_type), _constraint_text(source), _constraint_time(effective_date),
-        _constraint_version(version_no), Vector{ConstraintTerm}(terms), fcas_requirements, ext, internal,
+        _constraint_version(version_no), Vector{Union{UnitTerm, InterconnectorTerm, RegionTerm}}(terms), fcas_requirements, ext, internal,
     )
 end
 
