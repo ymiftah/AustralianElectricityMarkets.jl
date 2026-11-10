@@ -804,7 +804,7 @@ end
 
 
 """
-    _add_scheduled_loads!(sys, scheduled_loads_df)
+    _add_scheduled_loads!(sys, scheduled_loads_df; replay = false)
 
 Adds each load as an `InterruptiblePowerLoad` with a zero `LoadCost`; [`set_market_bids!`](@ref) gives
 a scheduled load its decremental offer, or marks it unavailable when it has no bid. A non-scheduled load

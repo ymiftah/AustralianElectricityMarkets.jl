@@ -5,6 +5,7 @@
 .DS_Store
 .benchmarkci
 Manifest.toml
+Manifest-v*.toml
 benchmark/*.json
 coverage
 docs/build/

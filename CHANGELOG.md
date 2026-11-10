@@ -467,7 +467,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stock `ThermalStandard`, `HydroDispatch`, `RenewableDispatch`, `InterruptiblePowerLoad` and
   `EnergyReservoirStorage` devices with a zero stock operation cost, each carrying a `NEMUnitData`;
   `NEM_DISPATCH_DEVICE_TYPES` lists these types. `RegionalNetworkConfiguration` systems carry no
-  `NEMUnitData`. Series-key fields of the NEM structs are `IS.StaticTimeSeriesKey`. Dispatch, energy prices, flows and the objective are unchanged. FCAS prices are non-unique at
+  `NEMUnitData`. Series-key fields of the NEM structs are `IS.StaticTimeSeriesKey`. `GenericConstraint.terms` holds only `UnitTerm`, `InterconnectorTerm` and `RegionTerm`. Dispatch, energy prices, flows and the objective are unchanged. FCAS prices are non-unique at
   degenerate (tied) intervals, so a replay may return a different but equally optimal FCAS price there.
 
 - `set_market_bids!` and `set_fcas_service_bids!` record each device's offers on its `NEMOfferCost`

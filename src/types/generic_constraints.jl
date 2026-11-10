@@ -106,13 +106,10 @@ get_service(v::FCASRequirement) = v.service
 
 
 # IS reads a field's concrete type back from its own `__metadata__` tag only when the field
-# serialized to a single `Dict`; an array field dispatches on the *declared* type, so
-# `Vector{ConstraintTerm}` comes back as raw `Dict`s. Resolve each element individually.
+# serialized to a single `Dict`; an array field dispatches on the *declared* type, so a
+# `Vector` of the term union comes back as raw `Dict`s. Resolve each element individually.
 _deserialize_device_parameter(d::Dict) =
     IS.deserialize(IS.get_type_from_serialization_metadata(IS.get_serialization_metadata(d)), d)
-
-IS.deserialize(::Type{Vector{ConstraintTerm}}, data::Vector) =
-    ConstraintTerm[_deserialize_device_parameter(d) for d in data]
 
 IS.deserialize(::Type{Vector{Union{UnitTerm, InterconnectorTerm, RegionTerm}}}, data::Vector) =
     Union{UnitTerm, InterconnectorTerm, RegionTerm}[_deserialize_device_parameter(d) for d in data]

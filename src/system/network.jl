@@ -1,5 +1,5 @@
 """
-    _nem_network(db; time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...) -> (sys, units, gen_df)
+    _nem_network(db; replay = false, time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...) -> (sys, units, gen_df)
 
 Builds the NEM network without operation costs: buses, loads, branches, generators, batteries,
 scheduled loads and area interfaces, with every generator's operation cost zero. Reads no ISP cost
@@ -61,6 +61,12 @@ end
 
 Attaches an empty [`NEMUnitData`](@ref) to every dispatch device of `sys`, available or not, so that
 registrations, bids and unit conditions can be written to it.
+
+# Arguments
+- `sys`: The `PowerSystems.System` object.
+
+# Returns
+`nothing`.
 """
 function _attach_nem_unit_data!(sys)
     for T in NEM_DISPATCH_DEVICE_TYPES, device in get_components(T, sys)
@@ -111,8 +117,9 @@ end
     nem_network(db; time_series_in_memory = true, as_of = nothing, through = nothing, kwargs...) -> (sys, units)
 
 Builds the NEM network without operation costs: buses, loads, branches, generators, batteries,
-scheduled loads and area interfaces. Devices are stock PowerSystems types, each carrying a
-[`NEMUnitData`](@ref) with an empty [`NEMOfferCost`](@ref). Reads no ISP cost table. `units` is the unit
+scheduled loads and area interfaces. Devices are stock PowerSystems types; each dispatch device
+(the `NEM_DISPATCH_DEVICE_TYPES` components) carries a [`NEMUnitData`](@ref) with an empty
+[`NEMOfferCost`](@ref). Reads no ISP cost table. `units` is the unit
 table as of `as_of`, or over the window `[as_of, through]` (see [`read_units`](@ref)).
 
 # Arguments

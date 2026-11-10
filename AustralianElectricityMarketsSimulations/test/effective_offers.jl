@@ -467,7 +467,7 @@ end
         @test isnothing(get_energy_offer(first(get_components(PowerLoad, sys)), OfferSide.GEN))
     end
 
-    @testset "a device that is not a NEM type has no offer view" begin
+    @testset "a device without NEM unit data has no offer view" begin
         sys = deepcopy(sys_base)
         bus = first(get_components(ACBus, sys))
         start = DateTime(2025, 1, 1)

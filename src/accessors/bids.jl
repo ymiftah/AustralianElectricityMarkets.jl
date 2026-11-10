@@ -20,7 +20,7 @@ function bid_value(component, bid, field::Symbol, start_time, len::Integer)
     return bid_value(component, bid, Val(field), start_time, len)
 end
 
-# The window of a series in its element type `T`; a static value is returned as stored.
+# The window of a series key in its element type `T`; callers return static values unchanged.
 function _bid_window_values(::Type{T}, component, key::IS.TimeSeriesKey, start_time, len::Integer) where {T}
     return IS.get_time_series_values(component, key; start_time, len)::Vector{T}
 end
@@ -30,6 +30,19 @@ function bid_value(component, bid, ::Val{F}, start_time, len::Integer) where {F}
     value = getproperty(bid, F)
     value isa IS.StaticTimeSeriesKey || return value
     return _bid_window_values(Float64, component, value, start_time, len)
+end
+
+# Telemetry enablement pairs are held as `NTuple{2, Float64}` series.
+function bid_value(component, bid, ::Val{:raise_reg_enablement}, start_time, len::Integer)
+    value = bid.raise_reg_enablement
+    value isa IS.StaticTimeSeriesKey || return value
+    return _bid_window_values(NTuple{2, Float64}, component, value, start_time, len)
+end
+
+function bid_value(component, bid, ::Val{:lower_reg_enablement}, start_time, len::Integer)
+    value = bid.lower_reg_enablement
+    value isa IS.StaticTimeSeriesKey || return value
+    return _bid_window_values(NTuple{2, Float64}, component, value, start_time, len)
 end
 
 function bid_value(component, bid, ::Val{:offer_curves}, start_time, len::Integer)

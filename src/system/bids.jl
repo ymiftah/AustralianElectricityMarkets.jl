@@ -279,7 +279,7 @@ A non-scheduled load with an FCAS bid is made available when it is commissioned.
 replace the series and the bids of the same direction and service.
 
 # Arguments
-- `sys`: The `PowerSystems.System` object, with NEM device types for the bidding units.
+- `sys`: The `PowerSystems.System` object, with NEM unit data attached to the bidding units.
 - `db`: The database connection.
 - `date_range`: The intervals to read (half-open, the last stamp exclusive).
 - `markets`: The `BidType`s to read; defaults to [`NEM_MARKETS`](@ref).

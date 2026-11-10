@@ -1,12 +1,20 @@
+# Sets runchecks without the Info line PowerSystems logs on each call.
+function _set_runchecks_quietly!(sys::PSY.System, value::Bool)
+    Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+        PSY.set_runchecks!(sys, value)
+    end
+    return
+end
+
 # Adds a NEM service whose type has no PowerSystems validation entry, without the per-component
 # "does not exist in validation configuration" warning; runchecks is restored afterwards.
 function _add_nem_service!(sys::PSY.System, service::PSY.Service, devices)
     runchecks = PSY.get_runchecks(sys)
-    PSY.set_runchecks!(sys, false)
+    _set_runchecks_quietly!(sys, false)
     try
         PSY.add_service!(sys, service, devices)
     finally
-        PSY.set_runchecks!(sys, runchecks)
+        _set_runchecks_quietly!(sys, runchecks)
     end
     return
 end

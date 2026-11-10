@@ -28,7 +28,7 @@ end
 - `side`: the [`OfferSide`](@ref) to read.
 
 # Returns
-A [`NEMEnergyOffer`](@ref), or `nothing` when `device` is not a NEM device type, has no energy
+A [`NEMEnergyOffer`](@ref), or `nothing` when `device` carries no NEM unit data, has no energy
 bid on `side`, or the offer is not attached.
 """
 function get_energy_offer(device, side::OfferSide)
@@ -74,7 +74,7 @@ Throws `ArgumentError` if `component` has no [`NEMFCASBid`](@ref) for `service` 
 series isn't attached, or they differ in length.
 
 # Returns
-A [`NEMFCASOffer`](@ref), or `nothing` when `component` is not a NEM device type.
+A [`NEMFCASOffer`](@ref), or `nothing` when `component` carries no NEM unit data.
 """
 function get_fcas_offer(component, service::BidType, side::OfferSide, initial_time, horizon::Integer; kwargs...)
     cost = _nem_offer_cost(component)

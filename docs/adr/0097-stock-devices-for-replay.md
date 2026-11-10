@@ -44,7 +44,10 @@ the device types themselves bought nothing PSY and PSI did not already provide.
 
 `NEM_DISPATCH_DEVICE_TYPES` is that stock tuple, in that order. `operation_cost` on a replay device
 is the stock zero cost the regional builder already uses. `RegionalNetworkConfiguration` and
-`NEMDEConfiguration` share one set of device builders.
+`NEMDEConfiguration` share one set of device builders. The internal builders take a `replay` keyword
+in place of the removed `nem_types`: the regional build records the non-scheduled and commissioned
+flags on the load's `ext`, while the replay build records them on its `NEMRegistration`, which lives
+in the device's `NEMUnitData`.
 
 ### `NEMUnitData`
 
@@ -81,8 +84,9 @@ a valid value for these fields. `GenericConstraint.terms` is a `Vector` of the c
   `TimeSeriesParameter` reads; the series stay on the device.
 - Unit-data reads go through `get_supplemental_attributes`, which InfrastructureSystems infers as
   `Any`; the accessors annotate the result to keep callers type-stable.
-- A stock device of a dispatch type without unit data can sit in a replay system (none does today);
-  the template check names it if it is modelled with a stock formulation.
+- A stock device of a dispatch type without unit data is not a replay unit. Under `template_nemde` it is
+  modelled by `NEMReplayDispatch`, passes `check_template_against_sys`, and is skipped by
+  `nem_dispatch_devices`; no replay build creates one.
 - Results are unchanged except for one degenerate FCAS price pair; the gate is recorded below.
 
 ## Verification
@@ -104,5 +108,6 @@ Recorded on 2026-11-11.
 - Validation warnings during the 2026-06-04 build: 2,312 before, 1,606 with stock devices (the 706
   per-device "does not exist in validation configuration" warnings for the NEM types are gone),
   and 11 once NEM services are added without validation.
+- Toggling `runchecks` around each service add is silent: the PowerSystems Info line it logs is suppressed.
 - Warm `nem_system` for 2026-06-04 (288 intervals, three fresh processes): 12.11, 12.11 and
   12.15 s, 3.49 GiB allocated; the first build in each process took 73.8 s.
