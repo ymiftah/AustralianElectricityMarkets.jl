@@ -137,7 +137,7 @@ end
 # The derived-input keys of `device`: one per dispatch-input series it has, or `nothing` where an
 # input is absent.
 function _dispatch_inputs(device)
-    telemetry = getproperty(device, :telemetry)
+    telemetry = _unit_telemetry(device)
     uigf = isnothing(telemetry) ? nothing : telemetry.uigf
     return NEMDispatchInputs(;
         energy_offer = _derived_series_key(device, energy_offer_series_name(OfferSide.GEN)),
@@ -412,7 +412,7 @@ end
 function _set_dispatch_limits!(sys::PSY.System)
     base = PSY.get_base_power(sys)
     for device in AustralianElectricityMarkets.nem_dispatch_devices(sys)
-        telemetry = getproperty(device, :telemetry)
+        telemetry = _unit_telemetry(device)
         # A unit without telemetry gets no limit series; the replay input check names it.
         isnothing(telemetry) && continue
         up = _bid_series(device, telemetry.ramp_up_limit, :ramp_up_limit)
@@ -446,7 +446,7 @@ function _effective_ramp_rates(device, up, down, interval_hours::Real)
     load_up = _bid_ramp_rates(device, OfferSide.LOAD, :roc_up, up)
     load_down = _bid_ramp_rates(device, OfferSide.LOAD, :roc_down, up)
     initial = _aligned_values(device, AustralianElectricityMarkets.get_observed_state(device).initial_mw, up)
-    down_telemetry = _aligned_values(device, getproperty(device, :telemetry).ramp_down_limit, up)
+    down_telemetry = _aligned_values(device, _unit_telemetry(device).ramp_down_limit, up)
     # AEMO Dispatch Procedure (SO_OP_3705) Appendix C: the composite rate of a unit bid on both
     # sides, compared with its SCADA ramp rate.
     rates = [

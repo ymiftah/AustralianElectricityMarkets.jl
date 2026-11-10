@@ -173,7 +173,7 @@ end
     entry_and_component(k) = (PSI.IS.Optimization.get_entry_type(k), PSI.IS.Optimization.get_component_type(k))
     @test any(k -> entry_and_component(k)[1] === FCASCapacityVariable, var_keys)
     @test any(k -> entry_and_component(k) == (InterconnectorLossVariable, PSY.AreaInterchange), var_keys)
-    @test any(k -> entry_and_component(k) == (ActivePowerOutVariable, NEMStorage), var_keys)
+    @test any(k -> entry_and_component(k) == (ActivePowerOutVariable, EnergyReservoirStorage), var_keys)
 end
 
 @testset "replay_chunks splits a replay into simulations" begin
@@ -225,7 +225,7 @@ end
     template = PSI.ProblemTemplate(
         PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true, duals = [PSI.CopperPlateBalanceConstraint]),
     )
-    for T in (NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMLoad, NEMStorage)
+    for T in (ThermalStandard, HydroDispatch, RenewableDispatch, InterruptiblePowerLoad, EnergyReservoirStorage)
         PSI.set_device_model!(template, T, AEMS.NEMReplayDispatch)
     end
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
@@ -235,7 +235,7 @@ end
     )
     result = replay_steps(db, t1:DISPATCH_INTERVAL:t2; template)
     types = Set(PSI.IS.Optimization.get_component_type(k) for k in PSI.list_variable_keys(result.results))
-    @test NEMStorage in types && !(PSY.AreaInterchange in types)
+    @test EnergyReservoirStorage in types && !(PSY.AreaInterchange in types)
     @test !any(k -> PSI.IS.Optimization.get_entry_type(k) === FCASCapacityVariable, PSI.list_variable_keys(result.results))
     @test all(ismissing, result.comparison.interconnectors.MWFLOW_solved)
     @test all(ismissing, result.comparison.fcas_prices.ROP_solved)

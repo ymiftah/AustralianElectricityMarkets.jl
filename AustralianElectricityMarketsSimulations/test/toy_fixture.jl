@@ -53,7 +53,7 @@ function clear_toy_uigf!(sys, device)
 end
 
 function _toy_telemetry_fields(device)
-    current = getproperty(device, :telemetry)
+    current = _toy_unit_field(device, :telemetry)
     isnothing(current) && return (
         agc_status = true, uigf = nothing, ramp_up_limit = NaN, ramp_down_limit = NaN,
         raise_reg_enablement = (NaN, NaN), lower_reg_enablement = (NaN, NaN),
@@ -65,7 +65,7 @@ end
 # Turns a toy unit's NaN telemetry statics into NaN series: AEM key-backs every DISPATCHLOAD limit,
 # and a NaN static cannot be written to the System JSON a simulation store holds.
 function _key_toy_telemetry_limits!(sys, stamps, device)
-    current = getproperty(device, :telemetry)
+    current = _toy_unit_field(device, :telemetry)
     isnothing(current) && return
     for field in (
             :ramp_up_limit, :ramp_down_limit, :raise_reg_max_avail, :lower_reg_max_avail,
@@ -84,7 +84,7 @@ _has_nan(value::Real) = isnan(value)
 _has_nan(value::Tuple) = any(isnan, value)
 
 function _toy_observed_fields(device)
-    current = getproperty(device, :observed_state)
+    current = _toy_unit_field(device, :observed_state)
     isnothing(current) && return (initial_mw = 0.0, dispatch_mode = 0)
     return (initial_mw = current.initial_mw, dispatch_mode = current.dispatch_mode)
 end
@@ -141,26 +141,33 @@ function toy_load(capacity, price; initial, ramp_up, ramp_down = 100.0, availabi
     return (; capacity, price, initial, ramp_up, ramp_down, availability, roc_up, roc_down)
 end
 
-# A `NEMThermalGen` named `name` on the bus of `stock`, a `5_bus_hydro_ed_sys` thermal unit it replaces
+# The telemetry or observed state of a toy unit, `nothing` while unset.
+function _toy_unit_field(device, field::Symbol)
+    unit = AustralianElectricityMarkets._nem_unit_data(device)
+    return isnothing(unit) ? nothing : getfield(unit, field)
+end
+
+# A `ThermalStandard` named `name` on the bus of `stock`, a `5_bus_hydro_ed_sys` thermal unit it replaces
 # in `sys`. Limits are placeholders the caller sets in natural units once the unit is in `sys`.
 function _toy_thermal(sys, stock, name)
-    gen = AustralianElectricityMarkets.NEMThermalGen(;
+    gen = ThermalStandard(;
         name, available = true, status = true, bus = PSY.get_bus(stock), active_power = 0.0,
         reactive_power = 0.0, rating = 1.0, active_power_limits = (min = 0.0, max = 1.0),
         reactive_power_limits = nothing, ramp_limits = nothing,
-        operation_cost = AustralianElectricityMarkets.NEMOfferCost(), base_power = PSY.get_base_power(stock),
+        operation_cost = ThermalGenerationCost(nothing), base_power = PSY.get_base_power(stock),
         time_limits = nothing, must_run = false, prime_mover_type = PSY.get_prime_mover_type(stock),
         fuel = PSY.get_fuel(stock),
     )
     PSY.remove_component!(sys, stock)
     PSY.add_component!(sys, gen)
+    AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
     return gen
 end
 
-# `5_bus_hydro_ed_sys` reduced to one area, the load on bus4 and the given `NEMThermalGen`
+# `5_bus_hydro_ed_sys` reduced to one area, the load on bus4 and the given `ThermalStandard`
 # units, each carrying its bid stack and the four dispatch-limit series over two 5-minute
 # intervals. `batteries` is a vector of `name => toy_battery(...)` pairs, each built as a
-# `NEMStorage` on bus1 with a generous static rating (never the binding limit),
+# `EnergyReservoirStorage` on bus1 with a generous static rating (never the binding limit),
 # an incremental/decremental offer curve, and the ramp/initial/energy-availability series.
 # `mutate!(sys, stamps)`, when given, runs just before the fixture's
 # `transform_single_time_series!`, so it can attach raw two-timestamp series of its own.
@@ -235,7 +242,7 @@ function nem_toy_system(
 
     bus1 = PSY.get_component(PSY.ACBus, sys, "bus1")
     for (name, bat) in batteries
-        battery = AustralianElectricityMarkets.NEMStorage(;
+        battery = EnergyReservoirStorage(;
             name = name, available = true, bus = bus1, prime_mover_type = PSY.PrimeMovers.BA,
             storage_technology_type = PSY.StorageTech.LIB, storage_capacity = 1.0,
             storage_level_limits = (min = 0.0, max = 1.0), initial_storage_capacity_level = 0.5,
@@ -244,9 +251,9 @@ function nem_toy_system(
             output_active_power_limits = (min = 0.0, max = 1.0e4),
             efficiency = (in = 1.0, out = 1.0), reactive_power = 0.0,
             reactive_power_limits = (min = -1.0, max = 1.0), base_power = base_power,
-            operation_cost = AustralianElectricityMarkets.NEMOfferCost(),
         )
         PSY.add_component!(sys, battery)
+        AustralianElectricityMarkets.attach_nem_unit_data!(sys, battery)
 
         PSY.set_available!(battery, true)
         gen_offer = PSY.PiecewiseStepData([0.0, bat.gen_capacity], [bat.gen_price])
@@ -269,15 +276,16 @@ function nem_toy_system(
         set_toy_unit_field!(sys, battery, stamps, :ramp_down_limit, _toy_values(bat.ramp_down, length(stamps)) .* 60)
     end
 
-    # Scheduled loads (`NEMLoad`) on bus1, priced on their decremental offer only.
+    # Scheduled loads (`InterruptiblePowerLoad`) on bus1, priced on their decremental offer only.
     for (name, ld) in loads
-        scheduled = AustralianElectricityMarkets.NEMLoad(;
+        scheduled = InterruptiblePowerLoad(;
             name = name, available = true, bus = bus1, active_power = ld.initial / base_power,
             reactive_power = 0.0, max_active_power = ld.capacity / base_power,
             max_reactive_power = 0.0, base_power = base_power,
-            operation_cost = AustralianElectricityMarkets.NEMOfferCost(),
+            operation_cost = LoadCost(; variable = CostCurve(LinearCurve(0.0)), fixed = 0.0),
         )
         PSY.add_component!(sys, scheduled)
+        AustralianElectricityMarkets.attach_nem_unit_data!(sys, scheduled)
         offer = PSY.PiecewiseStepData([0.0, ld.capacity], [ld.price])
         _toy_energy_bid!(
             sys, scheduled, AustralianElectricityMarkets.BidDirection.LOAD, stamps,
@@ -298,8 +306,8 @@ function nem_toy_system(
 
     isnothing(interchange) || add_toy_interchange!(sys, stamps, interchange)
     isnothing(mutate!) || mutate!(sys, stamps)
-    for T in (NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMStorage, NEMLoad)
-        foreach(device -> _key_toy_telemetry_limits!(sys, stamps, device), PSY.get_components(T, sys))
+    for T in (ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad)
+        foreach(device -> _key_toy_telemetry_limits!(sys, stamps, device), filter(AustralianElectricityMarkets.has_nem_unit_data, collect(PSY.get_components(T, sys))))
     end
     if tie_break_scales
         set_effective_offers!(sys)
@@ -415,7 +423,7 @@ function add_toy_generic_constraint!(
         rhs = first(_toy_values(rhs_mw, length(stamps))),
         terms = ConstraintTerm[UnitTerm(d, BidType.ENERGY, 1.0) for d in duids],
     )
-    PSY.add_service!(sys, gc, [PSY.get_component(AustralianElectricityMarkets.NEMThermalGen, sys, d) for d in duids])
+    PSY.add_service!(sys, gc, [PSY.get_component(ThermalStandard, sys, d) for d in duids])
     add_toy_constraint_series!(sys, gc, stamps, rhs_mw, invoked)
     return
 end
@@ -469,38 +477,38 @@ function solve_toy(
 
     base_power = PSY.get_base_power(sys)
     results = PSI.OptimizationProblemResults(model)
-    dispatch = read_variable(results, "ActivePowerVariable__NEMThermalGen")
+    dispatch = read_variable(results, "ActivePowerVariable__ThermalStandard")
     dual = only(read_dual(results, "CopperPlateBalanceConstraint__Area").value)
     container = PSI.get_optimization_container(model)
-    offers = PSI.get_variable(container, EnergyOfferBandVariable(), AustralianElectricityMarkets.NEMThermalGen, "gen")
+    offers = PSI.get_variable(container, EnergyOfferBandVariable(), ThermalStandard, "gen")
     dispatch_mw = Dict(row.name => row.value for row in eachrow(dispatch))
     battery_out_mw = Dict{String, Float64}()
     battery_in_mw = Dict{String, Float64}()
-    if !isempty(PSY.get_components(AustralianElectricityMarkets.NEMStorage, sys))
-        for row in eachrow(read_variable(results, "ActivePowerOutVariable__NEMStorage"))
+    if !isempty(PSY.get_components(EnergyReservoirStorage, sys))
+        for row in eachrow(read_variable(results, "ActivePowerOutVariable__EnergyReservoirStorage"))
             battery_out_mw[row.name] = row.value
             dispatch_mw[row.name] = get(dispatch_mw, row.name, 0.0) + row.value
         end
-        for row in eachrow(read_variable(results, "ActivePowerInVariable__NEMStorage"))
+        for row in eachrow(read_variable(results, "ActivePowerInVariable__EnergyReservoirStorage"))
             battery_in_mw[row.name] = row.value
             dispatch_mw[row.name] = get(dispatch_mw, row.name, 0.0) - row.value
         end
     end
-    has_units = !isempty(PSY.get_components(AustralianElectricityMarkets.NEMThermalGen, sys))
+    has_units = !isempty(PSY.get_components(ThermalStandard, sys))
     ramp_slack_mw = (;
-        up = has_units ? sum(read_variable(results, "UnitRampUpSlack__NEMThermalGen").value) : 0.0,
-        down = has_units ? sum(read_variable(results, "UnitRampDownSlack__NEMThermalGen").value) : 0.0,
+        up = has_units ? sum(read_variable(results, "UnitRampUpSlack__ThermalStandard").value) : 0.0,
+        down = has_units ? sum(read_variable(results, "UnitRampDownSlack__ThermalStandard").value) : 0.0,
     )
     load_mw = Dict{String, Float64}()
-    if !isempty(PSY.get_components(AustralianElectricityMarkets.NEMLoad, sys))
-        for row in eachrow(read_variable(results, "ActivePowerVariable__NEMLoad"))
+    if !isempty(PSY.get_components(InterruptiblePowerLoad, sys))
+        for row in eachrow(read_variable(results, "ActivePowerVariable__InterruptiblePowerLoad"))
             load_mw[row.name] = row.value
         end
     end
-    has_batteries = !isempty(PSY.get_components(AustralianElectricityMarkets.NEMStorage, sys))
+    has_batteries = !isempty(PSY.get_components(EnergyReservoirStorage, sys))
     storage_ramp_slack_mw = (;
-        up = has_batteries ? sum(read_variable(results, "UnitRampUpSlack__NEMStorage").value) : 0.0,
-        down = has_batteries ? sum(read_variable(results, "UnitRampDownSlack__NEMStorage").value) : 0.0,
+        up = has_batteries ? sum(read_variable(results, "UnitRampUpSlack__EnergyReservoirStorage").value) : 0.0,
+        down = has_batteries ? sum(read_variable(results, "UnitRampDownSlack__EnergyReservoirStorage").value) : 0.0,
     )
     nem_keys = [
         k for k in PSI.get_constraint_keys(container)
@@ -547,7 +555,7 @@ function add_toy_fcas_offer!(sys, device, stamps, bid_type, trapeziums, bands; d
         service = bid_type, direction, offer_curves = AEM._series_key(device, field(:offer_curves)),
         max_avail = AEM._series_key(device, field(:max_avail)), trapezium = AEM._series_key(device, field(:trapezium)),
     )
-    AEM._set_fcas_bid!(PSY.get_operation_cost(device), bid)
+    AEM._set_fcas_bid!(AEM._nem_offer_cost(device), bid)
     return
 end
 
@@ -595,7 +603,7 @@ function _toy_energy_bid!(sys, device, direction, stamps, curves, max_avail; roc
         roc_up = AEM._series_key(device, field(:roc_up)), roc_down = AEM._series_key(device, field(:roc_down)),
         fixed_load = fixed_load_key,
     )
-    AEM._set_energy_bid!(PSY.get_operation_cost(device), bid)
+    AEM._set_energy_bid!(AEM._nem_offer_cost(device), bid)
     current = AEM.has_registration(device) ? AEM.get_registration(device).schedule_type : ScheduleType.SCHEDULED
     set_registration!(device, _toy_registration(; schedule_type = current))
     return
@@ -668,10 +676,10 @@ function fcas_toy_system(;
     loads = ["pump" => toy_load(40.0, 300.0; initial = 20.0, ramp_up = 100.0)]
     return nem_toy_system(
         units, [60.0, 80.0]; batteries, loads, horizon, mutate! = (sys, stamps) -> begin
-            alta = PSY.get_component(AustralianElectricityMarkets.NEMThermalGen, sys, TOY_CHEAP)
-            park = PSY.get_component(AustralianElectricityMarkets.NEMThermalGen, sys, TOY_EXPENSIVE)
-            bat = PSY.get_component(AustralianElectricityMarkets.NEMStorage, sys, TOY_BATTERY)
-            pump = PSY.get_component(AustralianElectricityMarkets.NEMLoad, sys, "pump")
+            alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
+            park = PSY.get_component(ThermalStandard, sys, TOY_EXPENSIVE)
+            bat = PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY)
+            pump = PSY.get_component(InterruptiblePowerLoad, sys, "pump")
             add_toy_fcas_offer!(sys, alta, stamps, BidType.RAISEREG, [(10.0, 20.0, 80.0, 95.0, a) for a in alta_reg_avail], fill([(10.0, 5.0), (10.0, 12.0)], 2))
             add_toy_fcas_offer!(sys, alta, stamps, BidType.LOWERREG, fill((10.0, 20.0, 80.0, 95.0, 10.0), 2), fill([(10.0, 6.0)], 2))
             add_toy_fcas_offer!(sys, alta, stamps, BidType.RAISE6SEC, fill((5.0, 10.0, 70.0, 100.0, 20.0), 2), fill([(20.0, 3.0)], 2))

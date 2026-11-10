@@ -241,7 +241,7 @@ end
                 ),
             ],
             mutate! = function (sys, _)
-                battery = PSY.get_component(NEMStorage, sys, TOY_BATTERY)
+                battery = PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY)
                 PSY.set_input_active_power_limits!(battery, (min = 0.0, max = 5.0))
                 PSY.set_output_active_power_limits!(battery, (min = 0.0, max = 5.0))
                 return
@@ -251,7 +251,7 @@ end
         @test out.battery_in_mw[TOY_BATTERY] ≈ load atol = TOY_TOLERANCE
         @test out.battery_out_mw[TOY_BATTERY] ≈ 0.0 atol = TOY_TOLERANCE
         for variable_type in (PSI.ActivePowerOutVariable, PSI.ActivePowerInVariable)
-            variables = PSI.get_variable(out.container, variable_type(), NEMStorage)
+            variables = PSI.get_variable(out.container, variable_type(), EnergyReservoirStorage)
             @test !PSI.JuMP.has_upper_bound(variables[TOY_BATTERY, 1])
         end
     end
@@ -320,7 +320,7 @@ end
         40.0;
         loads = ["PUMP" => toy_load(30.0, 50.0; initial = 30.0, ramp_up = 100.0)],
     )
-    @test PSY.get_max_active_power(PSY.get_component(NEMLoad, sys, "PUMP")) > 0
+    @test PSY.get_max_active_power(PSY.get_component(InterruptiblePowerLoad, sys, "PUMP")) > 0
     out = solve_toy(sys)
 
     @test out.load_mw["PUMP"] ≈ 30.0 atol = TOY_TOLERANCE
@@ -349,7 +349,7 @@ end
         40.0;
         loads = ["PUMP" => toy_load(30.0, 10.0; initial = 0.0, ramp_up = 100.0)],
         mutate! = function (sys, stamps)
-            pump = PSY.get_component(NEMLoad, sys, "PUMP")
+            pump = PSY.get_component(InterruptiblePowerLoad, sys, "PUMP")
             _toy_energy_bid!(
                 sys, pump, AustralianElectricityMarkets.BidDirection.LOAD, stamps,
                 fill(PSY.PiecewiseStepData([0.0, 30.0], [10.0]), length(stamps)), fill(30.0, length(stamps));
@@ -394,14 +394,14 @@ end
             ),
         ],
         mutate! = function (s, _)
-            battery = PSY.get_component(NEMStorage, s, TOY_BATTERY)
+            battery = PSY.get_component(EnergyReservoirStorage, s, TOY_BATTERY)
             PSY.set_input_active_power_limits!(battery, (min = 0.0, max = 40.0))
             return
         end,
     )
     out = solve_toy(sys)
     mpc = AustralianElectricityMarkets._financial_year_mpc(TOY_START)
-    input_variable = PSI.get_variable(out.container, PSI.ActivePowerInVariable(), NEMStorage)
+    input_variable = PSI.get_variable(out.container, PSI.ActivePowerInVariable(), EnergyReservoirStorage)
 
     @test out.battery_in_mw[TOY_BATTERY] ≈ 50.0 atol = TOY_TOLERANCE
     @test !PSI.JuMP.has_upper_bound(input_variable[TOY_BATTERY, 1])
@@ -409,7 +409,7 @@ end
     @test out.objective ≈ (50.0 * 20.0 + 10.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * mpc) * interval_hours(DISPATCH_INTERVAL) rtol = 1.0e-8
 
     @testset "the storage ramp slack is priced at 1155 x MPC" begin
-        slack = PSI.get_variable(out.container, UnitRampUpSlack(), NEMStorage)[TOY_BATTERY, 1]
+        slack = PSI.get_variable(out.container, UnitRampUpSlack(), EnergyReservoirStorage)[TOY_BATTERY, 1]
         coefficient = PSI.JuMP.objective_function(PSI.get_jump_model(out.container)).terms[slack]
         @test coefficient ≈
             PSY.get_base_power(sys) * interval_cost_coefficient(AustralianElectricityMarkets.UNIT_RAMP_CVP_FACTOR * mpc, TOY_RESOLUTION)
@@ -627,13 +627,13 @@ end
         168.0,
     )
     scale(name, k) = PSY.get_time_series_values(
-        PSY.SingleTimeSeries, PSY.get_component(NEMThermalGen, sys, name), "tie_break_scale_$k",
+        PSY.SingleTimeSeries, PSY.get_component(ThermalStandard, sys, name), "tie_break_scale_$k",
     )
     @test scale(TOY_CHEAP, 1) ≈ [1.0, 1.0]
     @test scale(TOY_EXPENSIVE, 1) ≈ fill(46.0 / 168.0, 2)
     @test scale(third, 1) ≈ fill(122.0 / 168.0, 2)
     # Park City's $30 band ties with no other unit, so it carries no scale.
-    @test !PSY.has_time_series(PSY.get_component(NEMThermalGen, sys, TOY_EXPENSIVE), PSY.SingleTimeSeries, "tie_break_scale_2")
+    @test !PSY.has_time_series(PSY.get_component(ThermalStandard, sys, TOY_EXPENSIVE), PSY.SingleTimeSeries, "tie_break_scale_2")
 
     # A tied contributor without its scale series fails the build.
     unscaled = nem_toy_system(
@@ -646,7 +646,7 @@ end
     )
     PSY.add_service!(
         unscaled, EnergyTieBreak(; name = TIE_BREAK_SERVICE_NAME),
-        [PSY.get_component(NEMThermalGen, unscaled, n) for n in (TOY_CHEAP, TOY_EXPENSIVE)],
+        [PSY.get_component(ThermalStandard, unscaled, n) for n in (TOY_CHEAP, TOY_EXPENSIVE)],
     )
     template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
     set_nem_dispatch_models!(template, unscaled)
@@ -667,7 +667,7 @@ end
         ],
         100.0,
     )
-    # No NEMThermalGen model: PowerSimulations finds no modelled contributor of the service.
+    # No ThermalStandard model: PowerSimulations finds no modelled contributor of the service.
     template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     PSI.set_service_model!(template, TIE_BREAK_SERVICE_NAME, tie_model())
@@ -680,7 +680,7 @@ end
         batteries = [TOY_BATTERY => toy_battery(100.0, 10.0, 50.0, 1.0; initial = 0.0, ramp_up = 100.0)],
     )
     template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
-    PSI.set_device_model!(template, NEMThermalGen, NEMReplayDispatch)
+    PSI.set_device_model!(template, ThermalStandard, NEMReplayDispatch)
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     PSI.set_service_model!(template, TIE_BREAK_SERVICE_NAME, tie_model())
     model = toy_model(mixed; template)
@@ -697,7 +697,7 @@ end
         ],
         100.0,
     )
-    PSY.set_operation_cost!(PSY.get_component(NEMThermalGen, sys, TOY_CHEAP), NEMOfferCost())
+    AustralianElectricityMarkets._nem_unit_data(PSY.get_component(ThermalStandard, sys, TOY_CHEAP)).offer = NEMOfferCost()
     template = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
     set_nem_dispatch_models!(template, sys)
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
@@ -715,7 +715,7 @@ end
         ],
         50.0,
     )
-    series(name, band) = PSY.has_time_series(PSY.get_component(NEMThermalGen, sys, name), PSY.SingleTimeSeries, "tie_break_scale_$band")
+    series(name, band) = PSY.has_time_series(PSY.get_component(ThermalStandard, sys, name), PSY.SingleTimeSeries, "tie_break_scale_$band")
     for name in (TOY_CHEAP, TOY_EXPENSIVE)
         @test series(name, 1)
         @test !series(name, 2)
@@ -735,7 +735,7 @@ end
         60.0,
     )
     scale(name, k) = PSY.get_time_series_values(
-        PSY.SingleTimeSeries, PSY.get_component(NEMThermalGen, sys, name), "tie_break_scale_$k",
+        PSY.SingleTimeSeries, PSY.get_component(ThermalStandard, sys, name), "tie_break_scale_$k",
     )
     @test scale(TOY_CHEAP, 2) ≈ [0.0, 30.0 / 40.0]
     @test scale(TOY_EXPENSIVE, 2) ≈ [1.0, 1.0]
@@ -750,11 +750,11 @@ end
         ],
         50.0;
         mutate! = (sys, stamps) -> PSY.add_time_series!(
-            sys, PSY.get_component(NEMThermalGen, sys, TOY_CHEAP),
+            sys, PSY.get_component(ThermalStandard, sys, TOY_CHEAP),
             AustralianElectricityMarkets.single_series("tie_break_scale_7", TOY_START, fill(0.5, length(stamps)), TOY_RESOLUTION),
         ),
     )
-    alta = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
+    alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
     @test !PSY.has_time_series(alta, PSY.SingleTimeSeries, "tie_break_scale_7")
     @test PSY.has_time_series(alta, PSY.SingleTimeSeries, "tie_break_scale_1")
 end
@@ -777,7 +777,7 @@ include("tie_break_validation.jl")
     PSI.set_device_model!(
         template,
         PSI.DeviceModel(
-            NEMThermalGen, NEMReplayDispatch;
+            ThermalStandard, NEMReplayDispatch;
             attributes = Dict{String, Any}("filter_function" => d -> PSY.get_name(d) != TOY_EXPENSIVE),
         ),
     )
@@ -785,9 +785,9 @@ include("tie_break_validation.jl")
     model = toy_model(sys; template)
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    key = PSI.ParameterKey(TieBreakScaleParameter, NEMThermalGen, AEMS._tie_break_meta(1, false))
+    key = PSI.ParameterKey(TieBreakScaleParameter, ThermalStandard, AEMS._tie_break_meta(1, false))
     # Rows are keyed by the time-series UUID of each device's scale series.
-    ts_uuid(n) = string(PSI.IS.get_time_series_uuid(PSY.SingleTimeSeries, PSY.get_component(NEMThermalGen, sys, n), "tie_break_scale_1"))
+    ts_uuid(n) = string(PSI.IS.get_time_series_uuid(PSY.SingleTimeSeries, PSY.get_component(ThermalStandard, sys, n), "tie_break_scale_1"))
     @test Set(axes(PSI.get_parameter_array(container, key), 1)) == Set(ts_uuid(n) for n in (TOY_CHEAP, third))
 end
 
@@ -896,7 +896,7 @@ end
         PSI.get_resolution(container),
     )
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
-    slack = PSI.get_variable(container, AEMS.UnitRampUpSlack(), NEMThermalGen)
+    slack = PSI.get_variable(container, AEMS.UnitRampUpSlack(), ThermalStandard)
     for t in axes(slack)[2]
         @test PSI.JuMP.coefficient(objective, slack[TOY_CHEAP, t]) ≈ expected
     end
@@ -909,7 +909,7 @@ end
             80.0;
             batteries = [TOY_BATTERY => toy_battery(40.0, 50.0, 40.0, 1.0; initial = 0.0, ramp_up = 100.0)],
             mutate! = function (sys, stamps)
-                storage = PSY.get_component(NEMStorage, sys, TOY_BATTERY)
+                storage = PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY)
                 n = length(stamps)
                 _toy_energy_bid!(
                     sys, storage, AustralianElectricityMarkets.BidDirection.GEN, stamps,
@@ -930,7 +930,7 @@ end
         net = out.battery_out_mw[TOY_BATTERY] - out.battery_in_mw[TOY_BATTERY]
         @test net ≈ (iszero(invoked) ? 0.0 : target) atol = TOY_TOLERANCE
         container = out.container
-        T = NEMStorage
+        T = EnergyReservoirStorage
         U = PSI.get_variable(container, PSI.ActivePowerOutVariable(), T)[TOY_BATTERY, 1]
         D = PSI.get_variable(container, PSI.ActivePowerInVariable(), T)[TOY_BATTERY, 1]
         for meta in ("upper", "lower")

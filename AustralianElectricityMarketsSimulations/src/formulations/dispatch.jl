@@ -90,8 +90,8 @@ function _has_nem_dispatch_limits(device)
     if !(device isa PSY.Storage)
         has_registration(device) || return false
     end
-    (hasproperty(device, :observed_state) && hasproperty(device, :telemetry)) || return false
-    observed, telemetry = device.observed_state, device.telemetry
+    observed = _unit_observed(device)
+    telemetry = _unit_telemetry(device)
     (isnothing(observed) || isnothing(telemetry)) && return false
     observed.initial_mw isa IS.TimeSeriesKey || return false
     PSY.has_time_series(

@@ -28,9 +28,9 @@ end
         sys = nem_system(replay_db, NEMDEConfiguration(); date_range = interval)
         set_effective_offers!(sys)
         values_of(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)
-        er01 = get_component(NEMThermalGen, sys, "ER01")
-        bw01 = get_component(NEMStorage, sys, "BW01")
-        asload1 = get_component(NEMLoad, sys, "ASLOAD1")
+        er01 = get_component(ThermalStandard, sys, "ER01")
+        bw01 = get_component(EnergyReservoirStorage, sys, "BW01")
+        asload1 = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
         prices_ascending = [51.0, 52.0, 53.0, 54.0, 55.0, 56.0, 57.0, 58.0, 59.0, 60.0]
         prices_descending = reverse(prices_ascending)
         bands = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]
@@ -52,7 +52,7 @@ end
         set_effective_offers!(sys)
         horizon = length(date_range) - 1
         # ASLOAD1 is a zero-cost non-scheduled load, so its decremental offer is read from its own series.
-        asload1 = get_component(NEMLoad, sys, "ASLOAD1")
+        asload1 = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
         curves = AustralianElectricityMarkets._get_fcas_offer_curve(asload1, BidType.RAISE6SEC, start_date, horizon; decremental = true)
         offer = get_fcas_offer(asload1, BidType.RAISE6SEC, OfferSide.LOAD, start_date, horizon)
         @test offer isa NEMFCASOffer && offer.service == BidType.RAISE6SEC && offer.side == OfferSide.LOAD
@@ -71,16 +71,17 @@ end
         # Both units have a price-10 band and a price-20 band; the widths differ at price 10 (5 vs 2) and at 20 (10 vs 13).
         curves = Dict("G1" => PiecewiseStepData([0.0, 5.0, 15.0], [10.0, 20.0]), "G2" => PiecewiseStepData([0.0, 2.0, 15.0], [10.0, 20.0]))
         for (name, curve) in curves
-            gen = NEMThermalGen(;
+            gen = ThermalStandard(;
                 name = name, available = true, status = true, bus = bus,
                 active_power = 0.0, reactive_power = 0.0, rating = 1.0,
                 active_power_limits = (min = 0.0, max = 1.0), reactive_power_limits = nothing,
                 ramp_limits = nothing,
-                operation_cost = NEMOfferCost(),
+                operation_cost = ThermalGenerationCost(nothing),
                 base_power = 100.0, time_limits = nothing, must_run = false,
                 prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL,
             )
             add_component!(sys, gen)
+            AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
             # A static observed state keeps the build's first-solve seed out of these offer fixtures.
             AustralianElectricityMarkets.set_observed_state!(
                 gen, AustralianElectricityMarkets.NEMObservedState(; initial_mw = 0.0, dispatch_mode = 0),
@@ -89,7 +90,7 @@ end
         end
 
         set_effective_offers!(sys)
-        g1, g2 = get_component(NEMThermalGen, sys, "G1"), get_component(NEMThermalGen, sys, "G2")
+        g1, g2 = get_component(ThermalStandard, sys, "G1"), get_component(ThermalStandard, sys, "G2")
         @test get_time_series_values(SingleTimeSeries, g1, "tie_break_scale_1") ≈ [1.0, 1.0]
         @test get_time_series_values(SingleTimeSeries, g2, "tie_break_scale_1") ≈ [0.4, 0.4]
         @test get_time_series_values(SingleTimeSeries, g1, "tie_break_scale_2") ≈ [10.0 / 13.0, 10.0 / 13.0]
@@ -101,8 +102,8 @@ end
 
         service = get_component(EnergyTieBreak, sys2, "energy_tie_break")
         @test sort!(get_name.(get_contributing_devices(sys2, service))) == ["G1", "G2"]
-        @test get_time_series_values(SingleTimeSeries, get_component(NEMThermalGen, sys2, "G2"), "tie_break_scale_1") ≈ [0.4, 0.4]
-        @test get_time_series_values(SingleTimeSeries, get_component(NEMThermalGen, sys2, "G1"), "tie_break_scale_2") ≈ [10.0 / 13.0, 10.0 / 13.0]
+        @test get_time_series_values(SingleTimeSeries, get_component(ThermalStandard, sys2, "G2"), "tie_break_scale_1") ≈ [0.4, 0.4]
+        @test get_time_series_values(SingleTimeSeries, get_component(ThermalStandard, sys2, "G1"), "tie_break_scale_2") ≈ [10.0 / 13.0, 10.0 / 13.0]
     end
 
     @testset "energy prices are referred by the factor of their own side, and inputs are validated" begin
@@ -117,26 +118,28 @@ end
             add_component!(sys, bus)
             set_area!(bus, area)
             for name in ("GEN1", "GEN2")
-                gen = NEMThermalGen(;
+                gen = ThermalStandard(;
                     name = name, available = true, status = true, bus = bus,
                     active_power = 0.0, reactive_power = 0.0, rating = 1.0,
                     active_power_limits = (min = 0.0, max = 1.0), reactive_power_limits = nothing,
-                    ramp_limits = nothing, operation_cost = NEMOfferCost(), base_power = 100.0, time_limits = nothing,
+                    ramp_limits = nothing, operation_cost = ThermalGenerationCost(nothing), base_power = 100.0, time_limits = nothing,
                     must_run = false, prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL,
                 )
                 add_component!(sys, gen)
+                AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
                 AustralianElectricityMarkets.set_observed_state!(
                     gen, AustralianElectricityMarkets.NEMObservedState(; initial_mw = 0.0, dispatch_mode = 0),
                 )
             end
-            add_component!(
-                sys, NEMLoad(;
-                    name = "PUMP2", available = true, bus = bus, active_power = 0.0, reactive_power = 0.0,
-                    max_active_power = 1.0, max_reactive_power = 0.0, base_power = 100.0, operation_cost = NEMOfferCost(),
-                ),
+            pump = InterruptiblePowerLoad(;
+                name = "PUMP2", available = true, bus = bus, active_power = 0.0, reactive_power = 0.0,
+                max_active_power = 1.0, max_reactive_power = 0.0, base_power = 100.0,
+                operation_cost = LoadCost(; variable = CostCurve(LinearCurve(0.0)), fixed = 0.0),
             )
+            add_component!(sys, pump)
+            AustralianElectricityMarkets.attach_nem_unit_data!(sys, pump)
             AustralianElectricityMarkets.set_observed_state!(
-                get_component(NEMLoad, sys, "PUMP2"),
+                get_component(InterruptiblePowerLoad, sys, "PUMP2"),
                 AustralianElectricityMarkets.NEMObservedState(; initial_mw = 0.0, dispatch_mode = 0),
             )
             return sys
@@ -144,8 +147,8 @@ end
 
         @testset "GEN and LOAD prices use their own loss factor" begin
             sys = unit_system()
-            gen = get_component(NEMThermalGen, sys, "GEN1")
-            load = get_component(NEMLoad, sys, "PUMP2")
+            gen = get_component(ThermalStandard, sys, "GEN1")
+            load = get_component(InterruptiblePowerLoad, sys, "PUMP2")
             gen_curve = PiecewiseStepData([0.0, 10.0, 20.0], [41.0, 57.0])
             load_curve = PiecewiseStepData([0.0, 10.0, 20.0], [33.0, 61.0])
             _toy_energy_bid!(sys, gen, AustralianElectricityMarkets.BidDirection.GEN, stamps, fill(gen_curve, 2), fill(100.0, 2))
@@ -164,31 +167,28 @@ end
 
         @testset "a static energy bid is rejected, as it has no series to derive from" begin
             sys = unit_system()
-            gen = get_component(NEMThermalGen, sys, "GEN1")
-            set_operation_cost!(
-                gen,
-                NEMOfferCost(;
-                    energy = [
-                        NEMEnergyBid(;
-                            direction = AustralianElectricityMarkets.BidDirection.GEN,
-                            offer_curves = PiecewiseStepData([0.0, 10.0], [5.0]), max_avail = 10.0, roc_up = 0.0, roc_down = 0.0,
-                        ),
-                    ],
-                ),
+            gen = get_component(ThermalStandard, sys, "GEN1")
+            AustralianElectricityMarkets._nem_unit_data(gen).offer = NEMOfferCost(;
+                energy = [
+                    NEMEnergyBid(;
+                        direction = AustralianElectricityMarkets.BidDirection.GEN,
+                        offer_curves = PiecewiseStepData([0.0, 10.0], [5.0]), max_avail = 10.0, roc_up = 0.0, roc_down = 0.0,
+                    ),
+                ],
             )
             @test_throws ArgumentError set_effective_offers!(sys)
         end
 
         @testset "two FCAS bids of one service on one side are rejected" begin
             sys = unit_system()
-            gen = get_component(NEMThermalGen, sys, "GEN2")
+            gen = get_component(ThermalStandard, sys, "GEN2")
             for direction in (AustralianElectricityMarkets.BidDirection.GEN, AustralianElectricityMarkets.BidDirection.BIDIRECTIONAL)
                 name(f) = bid_series_name(BidType.RAISE6SEC, f, direction)
                 replace_single_series_with!(sys, gen, name(:offer_curves), fill(PiecewiseStepData([0.0, 10.0], [5.0]), 2), stamps)
                 replace_single_series_with!(sys, gen, name(:max_avail), fill(10.0, 2), stamps)
                 replace_single_series_with!(sys, gen, name(:trapezium), fill((0.0, 10.0, 90.0, 100.0), 2), stamps)
                 AustralianElectricityMarkets._set_fcas_bid!(
-                    get_operation_cost(gen),
+                    AustralianElectricityMarkets._nem_offer_cost(gen),
                     AustralianElectricityMarkets.NEMFCASBid(;
                         service = BidType.RAISE6SEC, direction,
                         offer_curves = AustralianElectricityMarkets._series_key(gen, name(:offer_curves)),
@@ -259,15 +259,15 @@ end
 
         # The decision problem's final solve is step 2, at 00:10, which is still before the registration.
         container = PSI.get_optimization_container(out.model)
-        initial = PSI.get_parameter(container, PSI.ParameterKey(AEMS.InitialPowerTimeSeriesParameter, NEMHydroGen))
-        target = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadTimeSeriesParameter, NEMHydroGen))
-        invoked = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadInvokedTimeSeriesParameter, NEMHydroGen))
+        initial = PSI.get_parameter(container, PSI.ParameterKey(AEMS.InitialPowerTimeSeriesParameter, HydroDispatch))
+        target = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadTimeSeriesParameter, HydroDispatch))
+        invoked = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadInvokedTimeSeriesParameter, HydroDispatch))
         @test only(PSI.get_parameter_column_values(initial, "BW02")) === 0.0
         @test only(PSI.get_parameter_column_values(target, "BW02")) === 0.0
         @test only(PSI.get_parameter_column_values(invoked, "BW02")) === 0.0
         # The build's seeds agree with those values at both stamps, and the state the update reads there is
         # the zero state the seed came from.
-        bw02 = get_component(NEMHydroGen, PSI.get_system(out.model), "BW02")
+        bw02 = get_component(HydroDispatch, PSI.get_system(out.model), "BW02")
         @test get_time_series_values(SingleTimeSeries, bw02, "initial_mw_seed"; ignore_scaling_factors = true)[1:2] == [0.0, 0.0]
         @test AEMS.unit_state(AEMS.ObservedState(), bw02, last(steps)) == AEMS.NEMUnitState(0.0, 0)
     end
@@ -290,8 +290,8 @@ end
         )
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
-        set_available!(get_component(NEMThermalGen, sys, "ER02"), false)
-        load = get_component(NEMLoad, sys, "PUMP1")
+        set_available!(get_component(ThermalStandard, sys, "ER02"), false)
+        load = get_component(InterruptiblePowerLoad, sys, "PUMP1")
         horizon = length(date_range) - 1
         trap = (0.0, 10.0, 90.0, 100.0, 20.0, NaN, NaN) ./ base_power
         for service in (BidType.RAISEREG, BidType.LOWERREG)
@@ -316,8 +316,8 @@ end
         )
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
-        set_available!(get_component(NEMThermalGen, sys, "ER02"), false)
-        load = get_component(NEMLoad, sys, "PUMP1")
+        set_available!(get_component(ThermalStandard, sys, "ER02"), false)
+        load = get_component(InterruptiblePowerLoad, sys, "PUMP1")
         horizon = length(date_range) - 1
         trap = (0.0, 10.0, 90.0, 100.0, 100.0, NaN, NaN) ./ base_power
         for service in (BidType.RAISEREG, BidType.LOWERREG)
@@ -340,7 +340,7 @@ end
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
 
-        device = get_component(NEMThermalGen, sys, "ER01")
+        device = get_component(ThermalStandard, sys, "ER01")
         full_grid = collect(date_range)[1:(end - 1)]
         horizon = length(full_grid)
         # 60 MW/h is a 5 MW AGC ramping capability over 5 minutes.
@@ -368,7 +368,7 @@ end
         set_effective_offers!(sys)
         AustralianElectricityMarketsSimulations._set_dispatch_limits!(sys)
 
-        device = get_component(NEMThermalGen, sys, "ER01")
+        device = get_component(ThermalStandard, sys, "ER01")
         initial_time = start_date
         horizon = length(date_range) - 1
 
@@ -446,7 +446,7 @@ end
         set_market_bids!(sys, db, date_range)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
-        for bat in get_components(NEMStorage, sys)
+        for bat in get_components(EnergyReservoirStorage, sys)
             gen_offer, load_offer = get_energy_offer(bat, OfferSide.GEN), get_energy_offer(bat, OfferSide.LOAD)
             ta_gen = get_time_series_array(SingleTimeSeries, bat, "energy_offer")
             ta_load = get_time_series_array(SingleTimeSeries, bat, "energy_offer_decremental")
@@ -463,7 +463,7 @@ end
             @test all(x -> 100.0 <= x <= 149.0, avail.gen)
             @test avail.gen[end] > avail.gen[1]
         end
-        @test isnothing(get_storage_energy_max_avail(first(get_components(NEMThermalGen, sys)), start_date, 1))
+        @test isnothing(get_storage_energy_max_avail(first(get_components(ThermalStandard, sys)), start_date, 1))
         @test isnothing(get_energy_offer(first(get_components(PowerLoad, sys)), OfferSide.GEN))
     end
 
@@ -487,8 +487,8 @@ end
         set_market_bids!(sys, db, date_range)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
-        gen = first(get_components(NEMThermalGen, sys))
-        storage = first(get_components(NEMStorage, sys))
+        gen = first(get_components(ThermalStandard, sys))
+        storage = first(get_components(EnergyReservoirStorage, sys))
         for (device, side) in ((gen, OfferSide.GEN), (storage, OfferSide.GEN), (storage, OfferSide.LOAD))
             offer = get_energy_offer(device, side)
             @test offer.side == side
@@ -505,9 +505,9 @@ end
         set_effective_offers!(sys)
         set_market_bids!(sys, db, second_range)
         set_effective_offers!(sys)
-        for device in vcat(collect(get_components(NEMThermalGen, sys)), collect(get_components(NEMStorage, sys)))
+        for device in vcat(collect(get_components(ThermalStandard, sys)), collect(get_components(EnergyReservoirStorage, sys)))
             get_available(device) || continue
-            for side in [AustralianElectricityMarkets._energy_offer_side(b.direction) for b in AustralianElectricityMarkets.get_energy_bids(get_operation_cost(device))]
+            for side in [AustralianElectricityMarkets._energy_offer_side(b.direction) for b in AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(device))]
                 @test get_energy_offer(device, side).timestamps[1] == second_range[1]
             end
         end
@@ -517,10 +517,10 @@ end
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range)
         attach_dispatch_limits!(sys, db, date_range)
-        set_available!(get_component(NEMThermalGen, sys, "ER02"), false)
+        set_available!(get_component(ThermalStandard, sys, "ER02"), false)
         set_effective_offers!(sys)
-        renewable = get_component(NEMRenewableGen, sys, "BW03")
-        battery = get_component(NEMStorage, sys, "BW01")
+        renewable = get_component(RenewableDispatch, sys, "BW03")
+        battery = get_component(EnergyReservoirStorage, sys, "BW01")
         with_units_base(sys, "NATURAL_UNITS") do
             for (device, duid) in ((renewable, "BW03"), (battery, "BW01"))
                 rows = sort(subset(truth, :DUID => ByRow(==(duid))), :SETTLEMENTDATE)
@@ -538,7 +538,7 @@ end
 
     @testset "get_initial_mw throws, naming the unit, when it has no observed state" begin
         sys = deepcopy(sys_base)
-        bat = get_component(NEMStorage, sys, "BW01")
+        bat = get_component(EnergyReservoirStorage, sys, "BW01")
         err = try
             get_initial_mw(bat, start_date, horizon)
             nothing
@@ -552,23 +552,23 @@ end
     @testset "get_fcas_agc_status reads back AGCSTATUS and throws for a unit with no telemetry" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range)
-        set_available!(get_component(NEMThermalGen, sys, "ER02"), false)
+        set_available!(get_component(ThermalStandard, sys, "ER02"), false)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
-        device = get_component(NEMThermalGen, sys, "ER01")
+        device = get_component(ThermalStandard, sys, "ER01")
         rows = sort(subset(scaling_truth, :DUID => ByRow(==("ER01"))), :SETTLEMENTDATE)
         @test get_fcas_agc_status(device, start_date, horizon) == round.(Int, rows.AGCSTATUS)
-        load = get_component(NEMLoad, sys, "PUMP1")
+        load = get_component(InterruptiblePowerLoad, sys, "PUMP1")
         @test get_fcas_agc_status(load, start_date, horizon) == ones(Int, horizon)
 
         bare = deepcopy(sys_base)
-        @test_throws ArgumentError get_fcas_agc_status(get_component(NEMThermalGen, bare, "ER01"), start_date, horizon)
+        @test_throws ArgumentError get_fcas_agc_status(get_component(ThermalStandard, bare, "ER01"), start_date, horizon)
     end
 
     @testset "get_fcas_agc_status is nothing at an interval with no AGCSTATUS" begin
         sys = deepcopy(sys_base)
         set_unit_conditions!(sys, db, date_range)
-        device = get_component(NEMThermalGen, sys, "ER01")
+        device = get_component(ThermalStandard, sys, "ER01")
         full_grid = collect(date_range)[1:(end - 1)]
         status = [t == first(full_grid) ? NaN : 1.0 for t in full_grid]
         replace_single_series!(sys, device, single_series(AustralianElectricityMarkets.NEM_TELEMETRY_SERIES.agc_status, full_grid, status))
@@ -620,7 +620,7 @@ end
         set_market_bids!(sys, db, date_range; resolution = resolution)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
-        asload = get_component(NEMLoad, sys, "ASLOAD1")
+        asload = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
         @test all(==(0.0), get_time_series_values(SingleTimeSeries, asload, "ramp_up_rate"; ignore_scaling_factors = true))
         rows = sort(subset(truth, :DUID => ByRow(==("ASLOAD1"))), :SETTLEMENTDATE)
         got = get_time_series_values(SingleTimeSeries, asload, fcas_series_name("fcas_agc_ramp_rate", BidType.RAISEREG))
@@ -635,7 +635,7 @@ end
         set_market_bids!(sys, db, date_range; resolution = resolution)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
-        battery = get_component(NEMStorage, sys, "BW01")
+        battery = get_component(EnergyReservoirStorage, sys, "BW01")
         telemetry = get_telemetry(battery)
         up = AEMSim._bid_series(battery, telemetry.ramp_up_limit, :ramp_up_limit)
         n = length(up.values)
@@ -658,10 +658,10 @@ end
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
         set_unit_conditions!(sys, db, date_range)
-        set_available!(get_component(NEMThermalGen, sys, "ER02"), false)
-        set_available!(get_component(NEMHydroGen, sys, "BW02"), false)
+        set_available!(get_component(ThermalStandard, sys, "ER02"), false)
+        set_available!(get_component(HydroDispatch, sys, "BW02"), false)
         set_effective_offers!(sys)
-        device = get_component(NEMThermalGen, sys, "ER01")
+        device = get_component(ThermalStandard, sys, "ER01")
         full_grid = collect(date_range)[1:(end - 1)]
         n = length(full_grid)
         replace_single_series!(sys, device, single_series(energy_availability_series_name(device, OfferSide.GEN), full_grid, zeros(n)))
@@ -677,10 +677,10 @@ end
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
         set_unit_conditions!(sys, db, date_range)
-        set_available!(get_component(NEMThermalGen, sys, "ER02"), false)
-        set_available!(get_component(NEMHydroGen, sys, "BW02"), false)
+        set_available!(get_component(ThermalStandard, sys, "ER02"), false)
+        set_available!(get_component(HydroDispatch, sys, "BW02"), false)
         set_effective_offers!(sys)
-        device = get_component(NEMThermalGen, sys, "ER01")
+        device = get_component(ThermalStandard, sys, "ER01")
         remove_single_series!(sys, device, NEM_SERIES.ramp_up_rate)
         AustralianElectricityMarkets.set_telemetry!(device, nothing)
         AEMSim._set_dispatch_limits!(sys)
@@ -715,8 +715,8 @@ end
         sys = nem_toy_system(units, [60.0, 80.0]; loads)
         base = get_base_power(sys)
         derived(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)
-        cheap = get_component(NEMThermalGen, sys, TOY_CHEAP)
-        pump = get_component(NEMLoad, sys, "pump")
+        cheap = get_component(ThermalStandard, sys, TOY_CHEAP)
+        pump = get_component(InterruptiblePowerLoad, sys, "pump")
         @test all(isapprox.(derived(cheap, NEM_SERIES.ramp_up_rate), 2.0 / base; atol = 1.0e-12))
         @test all(isapprox.(derived(cheap, NEM_SERIES.ramp_down_rate), 50.0 / base; atol = 1.0e-12))
         @test all(isapprox.(derived(pump, NEM_SERIES.ramp_up_rate), 4.0 / base; atol = 1.0e-12))
@@ -738,8 +738,8 @@ end
     function built()
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
-        set_available!(get_component(NEMThermalGen, sys, "ER02"), false)
-        set_available!(get_component(NEMHydroGen, sys, "BW02"), false)
+        set_available!(get_component(ThermalStandard, sys, "ER02"), false)
+        set_available!(get_component(HydroDispatch, sys, "BW02"), false)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
         return sys
@@ -747,7 +747,7 @@ end
 
     @testset "a non-scheduled load has zero availability and no dispatch-limit series" begin
         sys = built()
-        asload = get_component(NEMLoad, sys, "ASLOAD1")
+        asload = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
         @test AustralianElectricityMarkets.is_non_scheduled_load(asload)
         @test all(==(0.0), get_energy_availability(asload, start_date, horizon))
         # The upper limit is the formulation's row, so the build writes no max_active_power series.
@@ -756,7 +756,7 @@ end
 
     @testset "an interval with no DISPATCHLOAD row (NaN ramp) has zero availability" begin
         sys = built()
-        device = get_component(NEMThermalGen, sys, "ER01")
+        device = get_component(ThermalStandard, sys, "ER01")
         ramps = fill(60.0, length(full_grid))
         ramps[2] = NaN
         replace_single_series!(sys, device, single_series(NEM_TELEMETRY_SERIES.ramp_up_limit, full_grid, ramps))
@@ -767,7 +767,7 @@ end
 
     @testset "a scheduled unit's availability is exactly its energy MAXAVAIL" begin
         sys = built()
-        device = get_component(NEMThermalGen, sys, "ER01")
+        device = get_component(ThermalStandard, sys, "ER01")
         with_units_base(sys, "NATURAL_UNITS") do
             max_avail = get_time_series_values(SingleTimeSeries, device, energy_availability_series_name(device, OfferSide.GEN); start_time = start_date, len = horizon)
             @test get_energy_availability(device, start_date, horizon) ≈ max_avail .* get_base_power(sys) atol = 1.0e-9
@@ -776,7 +776,7 @@ end
 
     @testset "a device's observed initial MW may key any series" begin
         sys = built()
-        device = get_component(NEMThermalGen, sys, "ER01")
+        device = get_component(ThermalStandard, sys, "ER01")
         @test AEMSim._has_nem_dispatch_limits(device)
         key = AustralianElectricityMarkets.get_observed_state(device).initial_mw
         values = get_time_series_values(SingleTimeSeries, device, get_name(key); ignore_scaling_factors = true)
@@ -793,7 +793,7 @@ end
 
     @testset "a state key whose series is absent fails the pre-flight" begin
         sys = built()
-        device = get_component(NEMThermalGen, sys, "ER01")
+        device = get_component(ThermalStandard, sys, "ER01")
         @test AEMSim._has_nem_dispatch_limits(device)
         key = AustralianElectricityMarkets.get_observed_state(device).initial_mw
         values = get_time_series_values(SingleTimeSeries, device, get_name(key); ignore_scaling_factors = true)
@@ -812,7 +812,7 @@ end
 
     @testset "a re-keyed initial MW leaves the default name unused" begin
         sys = built()
-        device = get_component(NEMThermalGen, sys, "ER01")
+        device = get_component(ThermalStandard, sys, "ER01")
         @test AEMSim._has_nem_dispatch_limits(device)
         key = AustralianElectricityMarkets.get_observed_state(device).initial_mw
         values = get_time_series_values(SingleTimeSeries, device, get_name(key); ignore_scaling_factors = true)
@@ -833,7 +833,7 @@ end
 
     @testset "a derived input key that is not the registered series throws, naming it" begin
         sys = built()
-        device = get_component(NEMThermalGen, sys, "ER01")
+        device = get_component(ThermalStandard, sys, "ER01")
         @test AEMSim._has_nem_dispatch_limits(device)
         old = only(PSY.get_supplemental_attributes(NEMDispatchInputs, device))
         ramps = get_time_series_values(SingleTimeSeries, device, NEM_SERIES.ramp_up_rate; ignore_scaling_factors = true)
@@ -949,7 +949,7 @@ end
             @test !any(startswith("energy_max_avail"), names(device))
         end
 
-        device = get_component(NEMThermalGen, sys, "ER01")
+        device = get_component(ThermalStandard, sys, "ER01")
         inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, device))
         @test get_name(inputs.energy_availability) == "energy_availability"
         @test get_name(inputs.energy_offer) == "energy_offer"
@@ -978,12 +978,12 @@ end
         end
 
         # The availability the formulation reads is the bid MAXAVAIL per unit of the base.
-        bid = only(AustralianElectricityMarkets.get_energy_bids(get_operation_cost(device)))
+        bid = only(AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(device)))
         max_avail = get_time_series_values(SingleTimeSeries, device, get_name(bid.max_avail); ignore_scaling_factors = true)
         @test get_time_series_values(SingleTimeSeries, device, "energy_availability"; ignore_scaling_factors = true) ≈
             max_avail ./ base_power
 
-        battery = get_component(NEMStorage, sys, "BW01")
+        battery = get_component(EnergyReservoirStorage, sys, "BW01")
         battery_inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, battery))
         @test get_name(battery_inputs.energy_availability_decremental) == "energy_availability_decremental"
         # A battery bids RAISEREG on both sides: the AGC ramp rate rides on the GEN-side entry.
@@ -996,8 +996,8 @@ end
         sys = nem_toy_system(
             [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], [60.0, 80.0],
         )
-        cheap = get_component(NEMThermalGen, sys, TOY_CHEAP)
-        @test isempty(get_fcas_bids(get_operation_cost(cheap)))
+        cheap = get_component(ThermalStandard, sys, TOY_CHEAP)
+        @test isempty(get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(cheap)))
         @test isempty(only(PSY.get_supplemental_attributes(NEMDispatchInputs, cheap)).fcas)
     end
 
@@ -1006,7 +1006,7 @@ end
         set_market_bids!(sys, db, date_range; resolution = resolution)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
-        semi = first(d for d in get_components(NEMRenewableGen, sys) if is_semi_scheduled(d))
+        semi = first(d for d in get_components(RenewableDispatch, sys) if is_semi_scheduled(d))
         inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, semi))
         @test get_name(inputs.uigf) == NEM_TELEMETRY_SERIES.uigf
         raw = get_time_series_values(SingleTimeSeries, semi, NEM_TELEMETRY_SERIES.uigf; ignore_scaling_factors = true)

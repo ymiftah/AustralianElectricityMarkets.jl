@@ -10,8 +10,8 @@ dispatch participant of `sys` and every available `GenericConstraint` it can bui
 - `sys`: the replay system.
 
 # Returns
-`nothing`. Throws `ArgumentError` naming the first failed check: an incomplete input of `sys`, a NEM device
-type modelled with a formulation that is not an [`AbstractNEMDispatch`](@ref), a dispatch
+`nothing`. Throws `ArgumentError` naming the first failed check: an incomplete input of `sys`, a device
+carrying NEM unit data modelled with a formulation that is not an [`AbstractNEMDispatch`](@ref), a dispatch
 participant type with no device model in `template`, or an available `GenericConstraint` the template
 cannot build.
 """
@@ -19,10 +19,11 @@ function check_template_against_sys(template::PSI.ProblemTemplate, sys::PSY.Syst
     for model in values(PSI.get_device_models(template))
         T = PSI.get_component_type(model)
         formulation = PSI.get_formulation(model)
-        (any(N -> T <: N, NEM_DISPATCH_DEVICE_TYPES) && !(formulation <: AbstractNEMDispatch)) && throw(
+        formulation <: AbstractNEMDispatch && continue
+        any(AustralianElectricityMarkets.has_nem_unit_data, PSY.get_components(T, sys)) && throw(
             ArgumentError(
-                "check_template_against_sys: $(nameof(T)) is modelled with $(nameof(formulation)); " *
-                    "a NEM device type needs an AbstractNEMDispatch formulation.",
+                "check_template_against_sys: $(nameof(T)) carries NEM unit data and is modelled with " *
+                    "$(nameof(formulation)); a NEM unit needs an AbstractNEMDispatch formulation.",
             ),
         )
     end

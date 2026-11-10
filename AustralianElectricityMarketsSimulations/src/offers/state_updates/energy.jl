@@ -15,7 +15,7 @@ end
 # composite cross-zero rate of a device bid on both sides, capped by the telemetered limit.
 function _ramp_rate_at(device, up::Bool, stamp::DateTime, resolution, base::Real)
     AustralianElectricityMarkets.is_non_scheduled_load(device) && return 0.0
-    telemetry = getproperty(device, :telemetry)
+    telemetry = _unit_telemetry(device)
     telemetry_value = _state_value(device, telemetry, up ? :ramp_up_limit : :ramp_down_limit, stamp)
     telemetry_rate = isnothing(telemetry_value) ? NaN : Float64(telemetry_value)
     rate = if device isa PSY.Storage

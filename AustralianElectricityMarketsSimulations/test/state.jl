@@ -11,10 +11,10 @@ _st_bus() = ACBus(;
 )
 
 function _st_thermal(name, bus)
-    return AustralianElectricityMarkets.NEMThermalGen(;
+    return ThermalStandard(;
         name, available = true, status = true, bus, active_power = 50.0, reactive_power = 0.0,
         rating = 120.0, active_power_limits = (min = 10.0, max = 100.0), reactive_power_limits = nothing,
-        ramp_limits = nothing, operation_cost = AustralianElectricityMarkets.NEMOfferCost(), base_power = 100.0,
+        ramp_limits = nothing, operation_cost = ThermalGenerationCost(nothing), base_power = 100.0,
     )
 end
 
@@ -24,6 +24,7 @@ end
     add_component!(sys, bus)
     gen = _st_thermal("keyed", bus)
     add_component!(sys, gen)
+    AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
     mw = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]
     modes = [0.0, 1.0, 2.0, 3.0, 4.0, 0.0, 1.0]
     add_time_series!(sys, gen, _st_series("initial_mw", mw))
@@ -55,6 +56,7 @@ end
     add_component!(sys, bus)
     gen = _st_thermal("static", bus)
     add_component!(sys, gen)
+    AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
     AustralianElectricityMarkets.set_observed_state!(
         gen, AustralianElectricityMarkets.NEMObservedState(; initial_mw = 55, dispatch_mode = 1),
     )
@@ -80,6 +82,7 @@ end
 
     bare = _st_thermal("bare", bus)
     add_component!(sys, bare)
+    AustralianElectricityMarkets.attach_nem_unit_data!(sys, bare)
     @test_throws ArgumentError AustralianElectricityMarketsSimulations.unit_state(observed, bare, _ST_STAMPS[1])
 
     @test_throws ArgumentError AustralianElectricityMarketsSimulations.unit_state(
@@ -94,6 +97,7 @@ end
     add_component!(sys, bus)
     gen = _st_thermal("unit", bus)
     add_component!(sys, gen)
+    AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
     # Distinct values per series, so a key that resolves to the wrong series fails the value check.
     expected = Dict{String, Vector{Float64}}()
     for (i, name) in enumerate(("energy", "energy_dec", "avail", "uigf", "up", "down", "fcas_offer", "fcas_trap", "agc"))
@@ -119,7 +123,7 @@ end
         path = joinpath(dir, "sys.json")
         to_json(sys, path; force = true)
         restored = System(path)
-        back_gen = get_component(AustralianElectricityMarkets.NEMThermalGen, restored, "unit")
+        back_gen = get_component(ThermalStandard, restored, "unit")
         back = only(get_supplemental_attributes(AEMS.NEMDispatchInputs, back_gen))
 
         @test back.energy_offer isa _ST_IS.TimeSeriesKey
@@ -192,7 +196,7 @@ end
         ],
         100.0; horizon = TOY_RESOLUTION,
         mutate! = function (sys, stamps)
-            alta = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
+            alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
             replace_single_series_with!(sys, alta, "observed_initial_mw", [50.0, 50.0], stamps)
             replace_single_series_with!(sys, alta, "state_initial_mw", [50.0, 10.0], stamps)
             observed = get_observed_state(alta)
@@ -215,7 +219,7 @@ end
     @test objectives[2] ≈ 7100.0 / 12 atol = 1.0e-4
 
     container = PSI.get_optimization_container(out.model)
-    initial = PSI.get_parameter(container, PSI.ParameterKey(AEMS.InitialPowerTimeSeriesParameter, NEMThermalGen))
+    initial = PSI.get_parameter(container, PSI.ParameterKey(AEMS.InitialPowerTimeSeriesParameter, ThermalStandard))
     @test only(PSI.get_parameter_column_values(initial, TOY_CHEAP)) === 10.0
     @test only(PSI.get_parameter_column_values(initial, TOY_EXPENSIVE)) === 50.0
 end
@@ -229,7 +233,7 @@ end
         ],
         60.0; horizon = TOY_RESOLUTION,
         mutate! = function (sys, stamps)
-            park = PSY.get_component(NEMThermalGen, sys, TOY_EXPENSIVE)
+            park = PSY.get_component(ThermalStandard, sys, TOY_EXPENSIVE)
             _toy_energy_bid!(
                 sys, park, AustralianElectricityMarkets.BidDirection.GEN, stamps,
                 fill(_toy_offer([(100.0, 80.0)]), length(stamps)), fill(100.0, length(stamps));
@@ -252,8 +256,8 @@ end
     @test objectives[2] ≈ 1200.0 / 12 atol = 1.0e-4
 
     container = PSI.get_optimization_container(out.model)
-    target = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadTimeSeriesParameter, NEMThermalGen))
-    invoked = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadInvokedTimeSeriesParameter, NEMThermalGen))
+    target = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadTimeSeriesParameter, ThermalStandard))
+    invoked = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadInvokedTimeSeriesParameter, ThermalStandard))
     @test only(PSI.get_parameter_column_values(target, TOY_EXPENSIVE)) === 0.0
     @test only(PSI.get_parameter_column_values(invoked, TOY_EXPENSIVE)) === 0.0
 end
@@ -266,6 +270,7 @@ end
     add_component!(sys, bus)
     gen = _st_thermal("aligned", bus)
     add_component!(sys, gen)
+    AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
     add_time_series!(sys, gen, _st_series("initial_mw", fill(50.0, 7)))
     observed(gen, name) = AustralianElectricityMarkets.NEMObservedState(;
         initial_mw = _st_key(gen, name), dispatch_mode = 4,
@@ -328,7 +333,7 @@ end
         ],
         100.0; horizon = TOY_RESOLUTION,
         mutate! = function (sys, stamps)
-            alta = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
+            alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
             replace_single_series_with!(sys, alta, "later_initial_mw", [50.0, 10.0], stamps)
             later_key[] = AustralianElectricityMarkets._series_key(alta, "later_initial_mw")
             return
@@ -340,14 +345,14 @@ end
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    initial = PSI.get_parameter(container, PSI.ParameterKey(AEMS.InitialPowerTimeSeriesParameter, NEMThermalGen))
+    initial = PSI.get_parameter(container, PSI.ParameterKey(AEMS.InitialPowerTimeSeriesParameter, ThermalStandard))
 
     PSI.set_execution_count!(model, 0)
     PSI.solve_impl!(model)
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     @test only(PSI.get_parameter_column_values(initial, TOY_CHEAP)) === 50.0
 
-    alta = PSY.get_component(NEMThermalGen, PSI.get_system(model), TOY_CHEAP)
+    alta = PSY.get_component(ThermalStandard, PSI.get_system(model), TOY_CHEAP)
     AustralianElectricityMarkets.set_observed_state!(
         alta,
         AustralianElectricityMarkets.NEMObservedState(;
@@ -368,7 +373,7 @@ end
     sys = nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 100.0, ramp_up = 100.0)],
         100.0; horizon = TOY_RESOLUTION,
-        mutate! = (sys, stamps) -> replace_single_series_with!(sys, PSY.get_component(NEMThermalGen, sys, TOY_CHEAP), "toy_state_price", [12.0, 60.0], stamps),
+        mutate! = (sys, stamps) -> replace_single_series_with!(sys, PSY.get_component(ThermalStandard, sys, TOY_CHEAP), "toy_state_price", [12.0, 60.0], stamps),
     )
     template = replay_template(sys)
     model = PSI.DecisionModel(
@@ -379,11 +384,11 @@ end
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
 
-    unit = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
-    names = Dict{Type{<:PSI.ParameterType}, String}(PSI.get_time_series_names(PSI.get_model(template, NEMThermalGen)))
+    unit = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
+    names = Dict{Type{<:PSI.ParameterType}, String}(PSI.get_time_series_names(PSI.get_model(template, ThermalStandard)))
     names[ToyStatePriceParameter] = "toy_state_price"
-    PSI.add_parameters!(container, ToyStatePriceParameter, [unit], PSI.DeviceModel(NEMThermalGen, AEMS.NEMReplayDispatch; time_series_names = names))
-    price = PSI.get_parameter(container, PSI.ParameterKey(ToyStatePriceParameter, NEMThermalGen))
+    PSI.add_parameters!(container, ToyStatePriceParameter, [unit], PSI.DeviceModel(ThermalStandard, AEMS.NEMReplayDispatch; time_series_names = names))
+    price = PSI.get_parameter(container, PSI.ParameterKey(ToyStatePriceParameter, ThermalStandard))
     @test eltype(PSI.get_parameter_array(price)) === Float64
 
     objectives = Float64[]
@@ -398,7 +403,7 @@ end
     @test objectives[1] ≈ 3200.0 / 12 atol = 1.0e-4
     @test objectives[2] ≈ 8000.0 / 12 atol = 1.0e-4
     @test PSI.get_parameter_array(price)[TOY_CHEAP, 1] === 60.0
-    power = PSI.get_variable(container, PSI.ActivePowerVariable(), NEMThermalGen)[TOY_CHEAP, 1]
+    power = PSI.get_variable(container, PSI.ActivePowerVariable(), ThermalStandard)[TOY_CHEAP, 1]
     @test PSI.JuMP.coefficient(PSI.get_variant_terms(PSI.get_objective_expression(container)), power) ≈ 60.0 * 100.0 / 12
 end
 
@@ -417,7 +422,7 @@ end
         ],
         60.0; horizon = TOY_RESOLUTION,
         mutate! = function (sys, stamps)
-            alta = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
+            alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
             _toy_energy_bid!(
                 sys, alta, AustralianElectricityMarkets.BidDirection.GEN, stamps,
                 fill(_toy_offer([(100.0, 20.0)]), length(stamps)), fill(100.0, length(stamps));
@@ -439,8 +444,8 @@ end
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    target = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadTimeSeriesParameter, NEMThermalGen))
-    invoked = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadInvokedTimeSeriesParameter, NEMThermalGen))
+    target = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadTimeSeriesParameter, ThermalStandard))
+    invoked = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadInvokedTimeSeriesParameter, ThermalStandard))
 
     PSI.set_execution_count!(model, 0)
     PSI.solve_impl!(model)
@@ -450,7 +455,7 @@ end
     # Alta is held at 40 MW at $20 and Park City supplies the other 20 MW at $80.
     @test PSI.JuMP.objective_value(PSI.get_jump_model(container)) ≈ 2400.0 / 12 atol = 1.0e-4
 
-    alta = PSY.get_component(NEMThermalGen, PSI.get_system(model), TOY_CHEAP)
+    alta = PSY.get_component(ThermalStandard, PSI.get_system(model), TOY_CHEAP)
     AustralianElectricityMarkets.set_observed_state!(
         alta,
         AustralianElectricityMarkets.NEMObservedState(;
@@ -476,13 +481,13 @@ end
         60.0; horizon = TOY_RESOLUTION,
         batteries = [TOY_BATTERY => toy_battery(50.0, 30.0, 50.0, 0.0; initial = 5.0, ramp_up = 100.0)],
         mutate! = function (sys, stamps)
-            alta = PSY.get_component(NEMThermalGen, sys, TOY_CHEAP)
+            alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
             _toy_energy_bid!(
                 sys, alta, AustralianElectricityMarkets.BidDirection.GEN, stamps,
                 fill(_toy_offer([(100.0, 20.0)]), length(stamps)), fill(100.0, length(stamps));
                 fixed_load = fill(40.0, length(stamps)),
             )
-            battery = PSY.get_component(NEMStorage, sys, TOY_BATTERY)
+            battery = PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY)
             _toy_energy_bid!(
                 sys, battery, AustralianElectricityMarkets.BidDirection.GEN, stamps,
                 fill(PSY.PiecewiseStepData([0.0, 50.0], [30.0]), length(stamps)), fill(50.0, length(stamps));
@@ -528,8 +533,8 @@ end
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    park_limit = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FCASOfferLimitParameter, NEMThermalGen, "RAISE6SEC"))
-    battery_ramp = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FCASRampingLimitParameter, NEMStorage, "RAISEREG"))
+    park_limit = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FCASOfferLimitParameter, ThermalStandard, "RAISE6SEC"))
+    battery_ramp = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FCASRampingLimitParameter, EnergyReservoirStorage, "RAISEREG"))
 
     PSI.set_execution_count!(model, 0)
     PSI.solve_impl!(model)
@@ -559,7 +564,7 @@ end
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    park_limit = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FCASOfferLimitParameter, NEMThermalGen, "RAISE6SEC"))
+    park_limit = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FCASOfferLimitParameter, ThermalStandard, "RAISE6SEC"))
 
     PSI.set_execution_count!(model, 0)
     PSI.solve_impl!(model)

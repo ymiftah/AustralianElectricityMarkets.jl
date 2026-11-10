@@ -7,7 +7,7 @@ function _tie_validation_system(curves_a, curves_b; decremental = false, unround
     sys = nem_toy_system(units, 0.0; loads, tie_break_scales = false)
     PSY.clear_time_series!(sys)
     names = decremental ? ("LOAD_A", "LOAD_B") : (TOY_CHEAP, TOY_EXPENSIVE)
-    T = decremental ? NEMLoad : NEMThermalGen
+    T = decremental ? InterruptiblePowerLoad : ThermalStandard
     side = decremental ? AustralianElectricityMarkets.OfferSide.LOAD : AustralianElectricityMarkets.OfferSide.GEN
     series = AustralianElectricityMarkets.energy_offer_series_name(side)
     function setter!(sys, device, bids, start, resolution)
