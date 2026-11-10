@@ -80,16 +80,16 @@
                 @test_logs (:warn, r"WDR1") (:warn, r"PUMP2") match_mode = :any set_market_bids!(
                     sys, db, date_range; resolution = resolution,
                 )
-                for gen in get_components(NEMThermalGen, sys)
+                for gen in get_components(ThermalStandard, sys)
                     # set_market_bids! creates one value per bid interval of date_range.
                     ta = get_time_series_array(SingleTimeSeries, gen, "bid_energy_offer_curves_gen")
                     @test length(ta) == length(date_range) - 1
                 end
 
                 @testset "Scheduled loads" begin
-                    @test !get_available(get_component(NEMLoad, sys, "PUMP2"))
-                    @test !get_available(get_component(NEMLoad, sys, "WDR1"))
-                    pump = get_component(NEMLoad, sys, "PUMP1")
+                    @test !get_available(get_component(InterruptiblePowerLoad, sys, "PUMP2"))
+                    @test !get_available(get_component(InterruptiblePowerLoad, sys, "WDR1"))
+                    pump = get_component(InterruptiblePowerLoad, sys, "PUMP1")
                     @test get_available(pump)
                     ta = get_time_series_array(SingleTimeSeries, pump, "bid_energy_offer_curves_load")
                     @test length(ta) == length(date_range) - 1
@@ -98,7 +98,7 @@
                 end
 
                 @testset "Batteries" begin
-                    for bat in get_components(NEMStorage, sys)
+                    for bat in get_components(EnergyReservoirStorage, sys)
                         # GEN bids
                         ta_gen = get_time_series_array(SingleTimeSeries, bat, "bid_energy_offer_curves_gen")
                         @test length(ta_gen) == length(date_range) - 1
@@ -119,7 +119,7 @@
                         @test all(x -> 100.0 <= x <= 149.0, avail.gen)
                         @test avail.gen[end] > avail.gen[1]
                     end
-                    @test !has_time_series(first(get_components(NEMThermalGen, sys)), SingleTimeSeries, "bid_energy_max_avail_load")
+                    @test !has_time_series(first(get_components(ThermalStandard, sys)), SingleTimeSeries, "bid_energy_max_avail_load")
                     @test !has_time_series(first(get_components(PowerLoad, sys)), SingleTimeSeries, "bid_energy_offer_curves_gen")
                 end
             end
@@ -131,10 +131,10 @@
         start_date = DateTime(2025, 1, 1, 0, 0)
         date_range = start_date:Minute(5):(start_date + Hour(1))
         set_market_bids!(sys, db, date_range)
-        gen = first(get_components(NEMThermalGen, sys))
-        storage = first(get_components(NEMStorage, sys))
+        gen = first(get_components(ThermalStandard, sys))
+        storage = first(get_components(EnergyReservoirStorage, sys))
         for (device, direction) in ((gen, AustralianElectricityMarkets.BidDirection.GEN), (storage, AustralianElectricityMarkets.BidDirection.GEN), (storage, AustralianElectricityMarkets.BidDirection.LOAD))
-            bid = only(b for b in AustralianElectricityMarkets.get_energy_bids(get_operation_cost(device)) if b.direction == direction)
+            bid = only(b for b in AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(device)) if b.direction == direction)
             @test bid.offer_curves.name == AustralianElectricityMarkets.bid_series_name(AustralianElectricityMarkets.BidType.ENERGY, :offer_curves, direction)
             @test bid.max_avail.name == AustralianElectricityMarkets.bid_series_name(AustralianElectricityMarkets.BidType.ENERGY, :max_avail, direction)
             @test get_time_series_timestamps(SingleTimeSeries, device, bid.offer_curves.name)[1] == date_range[1]
@@ -149,9 +149,9 @@
         second_range = (start_date + Minute(30)):Minute(5):(start_date + Minute(90))
         set_market_bids!(sys, db, first_range)
         set_market_bids!(sys, db, second_range)
-        for device in vcat(collect(get_components(NEMThermalGen, sys)), collect(get_components(NEMStorage, sys)))
+        for device in vcat(collect(get_components(ThermalStandard, sys)), collect(get_components(EnergyReservoirStorage, sys)))
             get_available(device) || continue
-            bids = AustralianElectricityMarkets.get_energy_bids(get_operation_cost(device))
+            bids = AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(device))
             directions = [b.direction for b in bids]
             @test allunique(directions)
             @test !isempty(directions)
@@ -465,7 +465,7 @@
         @testset "attaches the operating condition of a scheduled load in natural units, through its keys" begin
             sys = deepcopy(sys_base)
             set_unit_conditions!(sys, db, date_range)
-            pump = get_component(NEMLoad, sys, "PUMP1")
+            pump = get_component(InterruptiblePowerLoad, sys, "PUMP1")
             rows = sort(subset(truth, :DUID => ByRow(==("PUMP1"))), :SETTLEMENTDATE)
             telemetry, observed = get_telemetry(pump), get_observed_state(pump)
             @test unit_values(pump, observed.initial_mw) == rows.INITIALMW
@@ -488,7 +488,7 @@
             set_market_bids!(sys, db, date_range)
             @test all(>(0.0), subset(truth, :DUID => ByRow(==("ASLOAD1"))).INITIALMW)
             set_unit_conditions!(sys, db, date_range)
-            asload = get_component(NEMLoad, sys, "ASLOAD1")
+            asload = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
             @test get_available(asload)
             @test all(==(0.0), unit_values(asload, get_observed_state(asload).initial_mw))
             # The metered ramp rates stay as published, for AGC ramping; AEMSim zeroes the ramp limits.
@@ -499,7 +499,7 @@
         @testset "a battery gets its telemetry ramps and observed initial_mw, with no UIGF" begin
             sys = deepcopy(sys_base)
             set_unit_conditions!(sys, db, date_range)
-            battery = get_component(NEMStorage, sys, "BW01")
+            battery = get_component(EnergyReservoirStorage, sys, "BW01")
             @test get_observed_state(battery).initial_mw isa TimeSeriesKey
             @test get_telemetry(battery).ramp_up_limit isa TimeSeriesKey
             @test isnothing(get_telemetry(battery).uigf)
@@ -511,11 +511,11 @@
             set_market_bids!(sys, db, semi_range)
             set_unit_conditions!(sys, db, semi_range)
             for (duid, forecast) in [("BW03", [40.0, 41.0]), ("BW04", [70.0, 69.0])]
-                gen = get_component(NEMRenewableGen, sys, duid)
+                gen = get_component(RenewableDispatch, sys, duid)
                 @test is_semi_scheduled(gen)
                 @test unit_values(gen, get_telemetry(gen).uigf) ≈ forecast
             end
-            coal = get_component(NEMThermalGen, sys, "ER01")
+            coal = get_component(ThermalStandard, sys, "ER01")
             @test !is_semi_scheduled(coal)
             @test isnothing(get_telemetry(coal).uigf)
         end
@@ -523,7 +523,7 @@
         @testset "a repeat call replaces the series with the same values" begin
             sys = deepcopy(sys_base)
             set_unit_conditions!(sys, db, date_range)
-            pump = get_component(NEMLoad, sys, "PUMP1")
+            pump = get_component(InterruptiblePowerLoad, sys, "PUMP1")
             before = unit_values(pump, get_observed_state(pump).initial_mw)
             set_unit_conditions!(sys, db, date_range)
             @test unit_values(pump, get_observed_state(pump).initial_mw) == before
@@ -583,7 +583,7 @@
                     frame.RAMPUPRATE = Union{Float64, Missing}[r.DUID == "ER01" && r.SETTLEMENTDATE == at(5) ? 0.0 : r.RAMPUPRATE for r in eachrow(frame)]
                 end
             )
-            er01 = get_component(NEMThermalGen, sys, "ER01")
+            er01 = get_component(ThermalStandard, sys, "ER01")
             @test unit_values(er01, get_telemetry(er01).ramp_up_limit)[2] == 0.0
         end
 
@@ -596,7 +596,7 @@
 
         @testset "a missing row inside a unit's registration throws, and one outside it does not" begin
             sys = deepcopy(sys_base)
-            er01 = get_component(NEMThermalGen, sys, "ER01")
+            er01 = get_component(ThermalStandard, sys, "ER01")
             set_registration!(er01, with_span(get_registration(er01), at(0), at(10)))
             @test_throws ArgumentError corrupt_and_build(
                 :DISPATCHLOAD, frame -> filter!(r -> !(r.DUID == "ER01" && r.SETTLEMENTDATE == at(5)), frame); sys,
@@ -605,11 +605,11 @@
             @test untouched(sys)
 
             sys = deepcopy(sys_base)
-            er01 = get_component(NEMThermalGen, sys, "ER01")
+            er01 = get_component(ThermalStandard, sys, "ER01")
             set_registration!(er01, with_span(get_registration(er01), at(5), at(10)))
             sys = corrupt_and_build(:DISPATCHLOAD, frame -> filter!(r -> !(r.DUID == "ER01" && r.SETTLEMENTDATE == at(0)), frame); sys)
             # Unregistered at 00:00 with no row: the ramp rates there are NaN, the limits zero.
-            er01 = get_component(NEMThermalGen, sys, "ER01")
+            er01 = get_component(ThermalStandard, sys, "ER01")
             @test isnan(unit_values(er01, get_telemetry(er01).ramp_up_limit)[1])
             @test unit_values(er01, get_observed_state(er01).initial_mw)[1] == 0.0
         end
@@ -630,7 +630,7 @@
 
         @testset "a zero static max_active_power throws, naming the DUID" begin
             sys = deepcopy(sys_base)
-            set_active_power_limits!(get_component(NEMThermalGen, sys, "ER01"), (min = 0.0, max = 0.0))
+            set_active_power_limits!(get_component(ThermalStandard, sys, "ER01"), (min = 0.0, max = 0.0))
             @test_throws ArgumentError corrupt_and_build(:DISPATCHLOAD, identity; sys)
             @test occursin("ER01: static max_active_power is 0.0", last_error[].msg)
             @test untouched(sys)
@@ -655,9 +655,9 @@
 
         @testset "an unavailable unit is excluded from the strict checks" begin
             sys = deepcopy(sys_base)
-            set_available!(get_component(NEMThermalGen, sys, "ER02"), false)
+            set_available!(get_component(ThermalStandard, sys, "ER02"), false)
             set_unit_conditions!(sys, corrupt_cache(:DISPATCHLOAD, frame -> filter!(r -> r.DUID != "ER02", frame)), check_range)
-            @test isnothing(get_component(NEMThermalGen, sys, "ER02").observed_state)
+            @test isnothing(AustralianElectricityMarkets._nem_unit_data(get_component(ThermalStandard, sys, "ER02")).observed_state)
         end
     end
 
@@ -744,15 +744,15 @@
         end
 
         @testset "loss factors are kept on the registration for AEMSim to refer prices" begin
-            @test get_registration(get_component(NEMThermalGen, sys_lf, "ER01")).gen_loss_factor ≈ 0.9 * 0.97
-            @test get_registration(get_component(NEMStorage, sys_lf, "BW01")).gen_loss_factor ≈ 0.5
-            @test get_registration(get_component(NEMStorage, sys_lf, "BW01")).load_loss_factor ≈ 0.8
+            @test get_registration(get_component(ThermalStandard, sys_lf, "ER01")).gen_loss_factor ≈ 0.9 * 0.97
+            @test get_registration(get_component(EnergyReservoirStorage, sys_lf, "BW01")).gen_loss_factor ≈ 0.5
+            @test get_registration(get_component(EnergyReservoirStorage, sys_lf, "BW01")).load_loss_factor ≈ 0.8
         end
 
         @testset "a scheduled load's decremental bid is as offered" begin
-            @test get_available(get_component(NEMLoad, sys_lf, "PUMP1"))
+            @test get_available(get_component(InterruptiblePowerLoad, sys_lf, "PUMP1"))
             @test prices(sys_lf, "PUMP1", "LOAD") ≈ raw_price("PUMP1", "LOAD")
-            @test get_registration(get_component(NEMLoad, sys_lf, "PUMP1")).load_loss_factor ≈ 0.8
+            @test get_registration(get_component(InterruptiblePowerLoad, sys_lf, "PUMP1")).load_loss_factor ≈ 0.8
         end
 
         @testset "a unit with no loss factor throws at build, naming it" begin

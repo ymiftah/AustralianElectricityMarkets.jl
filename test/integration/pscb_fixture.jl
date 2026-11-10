@@ -2,15 +2,15 @@ using PowerSystemCaseBuilder
 
 const PSB = PowerSystemCaseBuilder
 
-# Replaces a stock generator with the NEM device type that bids it, keeping its name, bus, limits
-# and parameters, and an empty `NEMOfferCost`.
+# Replaces a stock generator with a freshly built stock device of the same type, keeping its name, bus,
+# limits and parameters, and its stock operation cost.
 function _replace_with_nem_device!(sys, stock::ThermalStandard)
-    nem = NEMThermalGen(;
+    nem = ThermalStandard(;
         name = get_name(stock), available = get_available(stock), status = get_status(stock),
         bus = get_bus(stock), active_power = get_active_power(stock), reactive_power = get_reactive_power(stock),
         rating = get_rating(stock), active_power_limits = get_active_power_limits(stock),
         reactive_power_limits = get_reactive_power_limits(stock), ramp_limits = get_ramp_limits(stock),
-        operation_cost = NEMOfferCost(), base_power = get_base_power(stock), time_limits = get_time_limits(stock),
+        operation_cost = ThermalGenerationCost(nothing), base_power = get_base_power(stock), time_limits = get_time_limits(stock),
         must_run = get_must_run(stock), prime_mover_type = get_prime_mover_type(stock), fuel = get_fuel(stock),
         time_at_status = get_time_at_status(stock),
     )
@@ -20,13 +20,13 @@ function _replace_with_nem_device!(sys, stock::ThermalStandard)
 end
 
 function _replace_with_nem_device!(sys, stock::HydroDispatch)
-    nem = NEMHydroGen(;
+    nem = HydroDispatch(;
         name = get_name(stock), available = get_available(stock), bus = get_bus(stock),
         active_power = get_active_power(stock), reactive_power = get_reactive_power(stock),
         rating = get_rating(stock), prime_mover_type = get_prime_mover_type(stock),
         active_power_limits = get_active_power_limits(stock), reactive_power_limits = get_reactive_power_limits(stock),
         ramp_limits = get_ramp_limits(stock), time_limits = get_time_limits(stock), base_power = get_base_power(stock),
-        status = get_status(stock), time_at_status = get_time_at_status(stock), operation_cost = NEMOfferCost(),
+        status = get_status(stock), time_at_status = get_time_at_status(stock), operation_cost = HydroGenerationCost(nothing),
     )
     remove_component!(sys, stock)
     add_component!(sys, nem)
@@ -34,13 +34,13 @@ function _replace_with_nem_device!(sys, stock::HydroDispatch)
 end
 
 function _replace_with_nem_device!(sys, stock::HydroTurbine)
-    nem = NEMHydroGen(;
+    nem = HydroDispatch(;
         name = get_name(stock), available = get_available(stock), bus = get_bus(stock),
         active_power = get_active_power(stock), reactive_power = get_reactive_power(stock),
         rating = get_rating(stock), prime_mover_type = get_prime_mover_type(stock),
         active_power_limits = get_active_power_limits(stock), reactive_power_limits = get_reactive_power_limits(stock),
         ramp_limits = get_ramp_limits(stock), time_limits = get_time_limits(stock), base_power = get_base_power(stock),
-        operation_cost = NEMOfferCost(),
+        operation_cost = HydroGenerationCost(nothing),
     )
     remove_component!(sys, stock)
     add_component!(sys, nem)
@@ -48,11 +48,11 @@ function _replace_with_nem_device!(sys, stock::HydroTurbine)
 end
 
 function _replace_with_nem_device!(sys, stock::RenewableDispatch)
-    nem = NEMRenewableGen(;
+    nem = RenewableDispatch(;
         name = get_name(stock), available = get_available(stock), bus = get_bus(stock),
         active_power = get_active_power(stock), reactive_power = get_reactive_power(stock), rating = get_rating(stock),
         prime_mover_type = get_prime_mover_type(stock), reactive_power_limits = get_reactive_power_limits(stock),
-        power_factor = get_power_factor(stock), operation_cost = NEMOfferCost(), base_power = get_base_power(stock),
+        power_factor = get_power_factor(stock), operation_cost = RenewableGenerationCost(nothing), base_power = get_base_power(stock),
     )
     remove_component!(sys, stock)
     add_component!(sys, nem)
@@ -70,7 +70,7 @@ across two `Area`s (`"1"` and `"2"`), and is supply-adequate by construction. It
 `AreaInterchange`, `RenewableDispatch` or `EnergyReservoirStorage`, so on its own
 `_add_nem_constraints!` can never resolve an `INTERCONNECTOR` term, there is no
 semi-scheduled unit to carry a `UIGF` ceiling, and the bids' decremental
-(`LOAD`-direction) branch is never entered. One of each is added, the storage as a `NEMStorage`, which the FCAS offer views read, named so NEMWEB fixture rows
+(`LOAD`-direction) branch is never entered. One of each is added, the storage as an `EnergyReservoirStorage`, which the FCAS offer views read, named so NEMWEB fixture rows
 can key to them by `DUID`.
 
 Returned in `NATURAL_UNITS`, so component limits read as MW.
@@ -118,7 +118,7 @@ function augmented_pscb_system()
 
     add_component!(
         sys,
-        NEMStorage(;
+        EnergyReservoirStorage(;
             name = "BAT1",
             available = true,
             bus = bus_1,
@@ -135,7 +135,6 @@ function augmented_pscb_system()
             reactive_power = 0.0,
             reactive_power_limits = nothing,
             base_power = 100.0,
-            operation_cost = NEMOfferCost(),
         ),
     )
 
@@ -146,8 +145,8 @@ end
 """
     nem_pscb_system()
 
-[`augmented_pscb_system`](@ref) with its thermal, hydro and renewable units rebuilt as the NEM device
-types, each with an empty `NEMOfferCost` and a [`NEMRegistration`](@ref), so [`set_market_bids!`](@ref) can record their bids. The base
+[`augmented_pscb_system`](@ref) with its thermal, hydro and renewable units rebuilt as replay units, each
+carrying a `NEMUnitData` with an empty `NEMOfferCost` and a [`NEMRegistration`](@ref), so [`set_market_bids!`](@ref) can record their bids. The base
 case's reserve service and hydro reservoirs, which reference the stock units, are removed.
 
 # Returns
@@ -167,8 +166,8 @@ function nem_pscb_system()
         end
     end
     # Every NEM device is scheduled, open over the fixture dates, with unit loss factors.
-    for device in get_components(Device, sys)
-        device isa Union{NEM_DISPATCH_DEVICE_TYPES...} || continue
+    for T in NEM_DISPATCH_DEVICE_TYPES, device in get_components(T, sys)
+        attach_nem_unit_data!(sys, device)
         set_registration!(
             device,
             NEMRegistration(;

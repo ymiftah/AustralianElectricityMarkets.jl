@@ -52,7 +52,7 @@ end
     @test isempty(get_ext(asload))
 
     # A device built without a registration fails the build steps that read it, naming it.
-    set_registration!(get_component(NEMThermalGen, sys, "ER01"), nothing)
+    set_registration!(get_component(ThermalStandard, sys, "ER01"), nothing)
     @test_throws r"ER01 has no registration" set_unit_conditions!(sys, db, interval)
 end
 
@@ -81,12 +81,12 @@ end
     # Station metadata equals the units frame; the flags read the typed registration.
     units = read_units(db; as_of = first(interval), through = last(interval) - Minute(5))
     unit_rows = Dict(String(r.DUID) => r for r in eachrow(units))
-    station = only(get_supplemental_attributes(NEMStation, get_component(NEMRenewableGen, sys, "BW03")))
+    station = only(get_supplemental_attributes(NEMStation, get_component(RenewableDispatch, sys, "BW03")))
     @test (station.station_id, station.station_name, station.postcode) ==
         (unit_rows["BW03"].STATIONID, unit_rows["BW03"].STATIONNAME, unit_rows["BW03"].POSTCODE)
-    @test is_non_scheduled_load(get_component(NEMLoad, sys, "ASLOAD1"))
-    @test is_commissioned(get_component(NEMLoad, sys, "ASLOAD1"))
-    gen = get_component(NEMRenewableGen, sys, "BW03")
+    @test is_non_scheduled_load(get_component(InterruptiblePowerLoad, sys, "ASLOAD1"))
+    @test is_commissioned(get_component(InterruptiblePowerLoad, sys, "ASLOAD1"))
+    gen = get_component(RenewableDispatch, sys, "BW03")
     @test get_registration(gen).schedule_type == ScheduleType.SEMI_SCHEDULED
     @test get_time_series_values(SingleTimeSeries, gen, "bid_energy_max_avail_gen") ≈ [101.0, 102.0, 103.0]
     @test get_time_series_values(SingleTimeSeries, gen, "telemetry_uigf"; ignore_scaling_factors = true) ≈ [41.0, 42.0, 43.0]
@@ -100,7 +100,7 @@ end
     directory = mktempdir()
     on_disk = nem_system(db, config; date_range = interval, time_series_in_memory = false, time_series_directory = directory)
     @test !isempty(readdir(directory))
-    @test get_time_series_values(SingleTimeSeries, get_component(NEMRenewableGen, on_disk, "BW03"), "telemetry_uigf"; ignore_scaling_factors = true) ≈ [41.0, 42.0, 43.0]
+    @test get_time_series_values(SingleTimeSeries, get_component(RenewableDispatch, on_disk, "BW03"), "telemetry_uigf"; ignore_scaling_factors = true) ≈ [41.0, 42.0, 43.0]
     physical_db = damaged_cache(
         hive, :DISPATCHLOAD,
         "INSERT INTO input SELECT * REPLACE (1 AS INTERVENTION, INITIALMW + CASE WHEN DUID = 'BW03' THEN 10 ELSE 0 END AS INITIALMW) FROM input WHERE INTERVENTION = 0",
@@ -111,7 +111,7 @@ end
         "INSERT INTO input SELECT * REPLACE (1 AS INTERVENTION) FROM input WHERE INTERVENTION = 0",
     )
     physical = nem_system(physical_db, config; date_range = interval, intervention = 1)
-    physical_gen = get_component(NEMRenewableGen, physical, "BW03")
+    physical_gen = get_component(RenewableDispatch, physical, "BW03")
     @test get_time_series_values(SingleTimeSeries, physical_gen, "observed_initial_mw"; ignore_scaling_factors = true) .- get_time_series_values(SingleTimeSeries, gen, "observed_initial_mw"; ignore_scaling_factors = true) ≈ fill(10.0, 3)
     @testset "missing bids and demand cannot remove participants or create zero demand" begin
         interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 15)
@@ -146,7 +146,7 @@ end
 
     @testset "a dispatch device without its typed fields" begin
         sys = nem_system(db, NEMDEConfiguration(); date_range = interval)
-        set_telemetry!(get_component(NEMThermalGen, sys, "ER01"), nothing)
+        set_telemetry!(get_component(ThermalStandard, sys, "ER01"), nothing)
         @test_throws r"ER01.*telemetry" AEM._check_nemde_replay_inputs(sys)
     end
 
@@ -273,7 +273,7 @@ end
         set_market_bids!(sys, db, grid; resolution = Minute(5))
         set_unit_conditions!(sys, db, grid)
     end
-    for T in (PowerLoad, NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMStorage, NEMLoad), component in get_components(T, shared)
+    for T in (PowerLoad, ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad), component in get_components(T, shared)
         other = get_component(T, independent, get_name(component))
         for key in PowerSystems.get_time_series_keys(component)
             name = get_name(key)
@@ -311,9 +311,10 @@ end
     ]
     @test !isempty(others)
     @test all(d -> _zero_cost_term(get_operation_cost(d)), others)
+    @test !any(has_nem_unit_data, Iterators.flatten((generators, others)))
 end
 
-@testset "replay systems hold only NEM dispatch types" begin
+@testset "replay systems hold only NEM dispatch units" begin
     hive = mktempdir()
     create_mock_data(hive; complete_inputs = true)
     write_mock_interconnector_results(hive)
@@ -321,14 +322,14 @@ end
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     sys = nem_system(db, NEMDEConfiguration(); date_range = interval)
     for T in (ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad)
-        @test isempty(get_components(T, sys))
+        @test all(has_nem_unit_data, get_components(T, sys))
     end
     @test !any(d -> get_operation_cost(d) isa MarketBidCost, Iterators.flatten((get_components(Generator, sys), get_components(Storage, sys), get_components(ControllableLoad, sys))))
-    nem_devices = [d for T in (NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMStorage, NEMLoad) for d in get_components(T, sys)]
+    nem_devices = [d for T in (ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad) for d in get_components(T, sys)]
     @test !isempty(nem_devices)
-    @test all(d -> get_operation_cost(d) isa NEMOfferCost, nem_devices)
+    @test all(d -> AustralianElectricityMarkets._nem_offer_cost(d) isa NEMOfferCost, nem_devices)
     # Every recorded bid key resolves to a series on its device.
-    bids = [(d, b) for d in nem_devices for b in AustralianElectricityMarkets.get_energy_bids(get_operation_cost(d))]
+    bids = [(d, b) for d in nem_devices for b in AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(d))]
     @test !isempty(bids)
     for (device, bid) in bids
         @test has_time_series(device, SingleTimeSeries, bid.offer_curves.name)
@@ -341,8 +342,8 @@ end
     create_mock_data(hive; complete_inputs = true)
     db = aem_connect(HiveConfiguration(hive_location = hive))
     sys = nem_system(db, RegionalNetworkConfiguration())
-    for T in (NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMStorage, NEMLoad)
-        @test isempty(get_components(T, sys))
+    for T in (ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad)
+        @test !any(has_nem_unit_data, get_components(T, sys))
     end
     @test !isempty(get_components(ThermalStandard, sys))
 end
@@ -360,12 +361,12 @@ end
         has_time_series(device, SingleTimeSeries, fcas_offer_series_name(svc, dec))
             for device in get_components(Device, sys), svc in get_components(FCASService, sys), dec in (false, true)
     )
-    bidders = [g for g in get_components(Generator, sys) if !isempty(AustralianElectricityMarkets.get_fcas_bids(get_operation_cost(g)))]
+    bidders = [g for g in get_components(Generator, sys) if !isempty(AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(g)))]
     @test !isempty(bidders)
     for g in bidders
-        @test get_operation_cost(g) isa NEMOfferCost
+        @test AustralianElectricityMarkets._nem_offer_cost(g) isa NEMOfferCost
         @test has_time_series(g, SingleTimeSeries, AustralianElectricityMarkets.bid_series_name(BidType.RAISE6SEC, :offer_curves, AustralianElectricityMarkets.BidDirection.GEN)) ||
-            isempty(filter(b -> b.service == BidType.RAISE6SEC, AustralianElectricityMarkets.get_fcas_bids(get_operation_cost(g))))
+            isempty(filter(b -> b.service == BidType.RAISE6SEC, AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(g))))
     end
 end
 
@@ -433,8 +434,8 @@ end
             "DELETE FROM input WHERE DUID = 'BW01' AND BIDTYPE <> 'ENERGY' AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:05:00'",
         )
         sys = nem_system(partial, NEMDEConfiguration(); date_range = interval)
-        battery = get_component(NEMStorage, sys, "BW01")
-        battery_full = get_component(NEMStorage, full, "BW01")
+        battery = get_component(EnergyReservoirStorage, sys, "BW01")
+        battery_full = get_component(EnergyReservoirStorage, full, "BW01")
         trapezium = AustralianElectricityMarkets.bid_series_name(BidType.RAISE6SEC, :trapezium, AustralianElectricityMarkets.BidDirection.GEN)
         values = get_time_series_values(SingleTimeSeries, battery, trapezium; ignore_scaling_factors = true)
         @test length(values) == length(grid)
@@ -442,7 +443,7 @@ end
         @test isequal(values[2:3], get_time_series_values(SingleTimeSeries, battery_full, trapezium; ignore_scaling_factors = true)[2:3])
         # Every FCAS offer curve, whichever device carries it, spans the whole chunk.
         bidders = Iterators.flatten((get_components(Generator, sys), get_components(Storage, sys), get_components(ControllableLoad, sys)))
-        for device in bidders, bid in AustralianElectricityMarkets.get_fcas_bids(get_operation_cost(device))
+        for device in bidders, bid in AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(device))
             @test length(get_time_series_values(SingleTimeSeries, device, bid.offer_curves.name; ignore_scaling_factors = true)) == length(grid)
         end
     end
@@ -457,7 +458,7 @@ end
             "DELETE FROM input WHERE DUID = 'ASLOAD1' AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:15:00'",
         ).config.hive_location
         sys = nem_system(connect(stopped), NEMDEConfiguration(); date_range = interval)
-        load = get_component(NEMLoad, sys, "ASLOAD1")
+        load = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
         @test all(iszero, raw(load, "observed_initial_mw"))
         values = get_time_series_values(SingleTimeSeries, load, AustralianElectricityMarkets.bid_series_name(BidType.RAISE6SEC, :trapezium, AustralianElectricityMarkets.BidDirection.LOAD); ignore_scaling_factors = true)
         @test length(values) == length(grid)
@@ -469,17 +470,17 @@ end
         ended = damaged_cache(ended, :BIDPEROFFER_D, "DELETE FROM input WHERE DUID = 'BW04' AND INTERVAL_DATETIME = TIMESTAMP '2025-01-01 00:15:00'").config.hive_location
         ended = damaged_cache(ended, :DISPATCHLOAD, "DELETE FROM input WHERE DUID = 'BW04' AND SETTLEMENTDATE = TIMESTAMP '2025-01-01 00:15:00'").config.hive_location
         sys = nem_system(connect(ended), NEMDEConfiguration(); date_range = interval)
-        gen = get_component(NEMRenewableGen, sys, "BW04")
+        gen = get_component(RenewableDispatch, sys, "BW04")
         @test raw(gen, "telemetry_uigf")[3] == 0.0
     end
 
     @testset "a semi-scheduled unit registered mid-chunk has zero UIGF before registration" begin
         semi_late = registered_from(hive, "BW03", "2025-01-01 00:10:00")
         sys = nem_system(connect(semi_late), NEMDEConfiguration(); date_range = interval)
-        gen = get_component(NEMRenewableGen, sys, "BW03")
+        gen = get_component(RenewableDispatch, sys, "BW03")
         @test get_registration(gen).schedule_type == ScheduleType.SEMI_SCHEDULED
         @test raw(gen, "telemetry_uigf")[1:2] == [0.0, 0.0]
-        @test raw(gen, "telemetry_uigf")[3] ≈ raw(get_component(NEMRenewableGen, full, "BW03"), "telemetry_uigf")[3]
+        @test raw(gen, "telemetry_uigf")[3] ≈ raw(get_component(RenewableDispatch, full, "BW03"), "telemetry_uigf")[3]
     end
 
     @testset "missing rows inside a registration still throw" begin

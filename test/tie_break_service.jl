@@ -4,18 +4,19 @@
         bus = ACBus(; number = 1, name = "b1", available = true, bustype = ACBusTypes.REF, angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1), base_voltage = 130.0)
         add_component!(sys, bus)
         for name in ("G1", "G2")
-            gen = NEMThermalGen(;
+            gen = ThermalStandard(;
                 name = name, available = true, status = true, bus = bus,
                 active_power = 0.0, reactive_power = 0.0, rating = 1.0,
                 active_power_limits = (min = 0.0, max = 1.0), reactive_power_limits = nothing,
                 ramp_limits = nothing,
-                operation_cost = NEMOfferCost(),
+                operation_cost = ThermalGenerationCost(nothing),
                 base_power = 100.0, time_limits = nothing, must_run = false,
                 prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL,
             )
             add_component!(sys, gen)
+            attach_nem_unit_data!(sys, gen)
         end
-        add_service!(sys, EnergyTieBreak(; name = "energy_tie_break"), collect(get_components(NEMThermalGen, sys)))
+        add_service!(sys, EnergyTieBreak(; name = "energy_tie_break"), collect(get_components(ThermalStandard, sys)))
 
         json_path = joinpath(mktempdir(), "sys.json")
         to_json(sys, json_path)

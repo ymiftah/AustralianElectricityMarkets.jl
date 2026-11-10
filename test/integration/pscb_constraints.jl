@@ -144,26 +144,26 @@
             AustralianElectricityMarkets.bid_series_name(service, :trapezium, direction),
         ]
         bid_for(device, service, direction) = only(
-            b for b in AustralianElectricityMarkets.get_fcas_bids(get_operation_cost(device))
+            b for b in AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(device))
                 if b.service == service && b.direction == direction
         )
 
         @testset "thermal unit records a generation-side bid with its series" begin
-            gen = get_component(NEMThermalGen, sys, "Alta")
+            gen = get_component(ThermalStandard, sys, "Alta")
             bid = bid_for(gen, BidType.RAISE6SEC, AustralianElectricityMarkets.BidDirection.GEN)
             @test has_time_series(gen, SingleTimeSeries, bid.offer_curves.name)
             @test has_time_series(gen, SingleTimeSeries, bid.trapezium.name)
         end
 
         @testset "SOLAR1 (RenewableDispatch, zero cost) records a generation-side bid" begin
-            solar = get_component(NEMRenewableGen, sys, "SOLAR1")
+            solar = get_component(RenewableDispatch, sys, "SOLAR1")
             bid = bid_for(solar, BidType.RAISE6SEC, AustralianElectricityMarkets.BidDirection.GEN)
             @test has_time_series(solar, SingleTimeSeries, bid.offer_curves.name)
             @test has_time_series(solar, SingleTimeSeries, bid.trapezium.name)
         end
 
         @testset "BAT1 records both incremental and decremental bids" begin
-            bat = get_component(NEMStorage, sys, "BAT1")
+            bat = get_component(EnergyReservoirStorage, sys, "BAT1")
             for direction in (AustralianElectricityMarkets.BidDirection.GEN, AustralianElectricityMarkets.BidDirection.LOAD)
                 bid = bid_for(bat, BidType.RAISEREG, direction)
                 @test has_time_series(bat, SingleTimeSeries, bid.offer_curves.name)
@@ -172,8 +172,8 @@
         end
 
         @testset "decremental bid is storage-only, a generator's load bid is not modelled" begin
-            gen = get_component(NEMThermalGen, sys, "Alta")
-            @test !any(b -> b.direction == AustralianElectricityMarkets.BidDirection.LOAD, AustralianElectricityMarkets.get_fcas_bids(get_operation_cost(gen)))
+            gen = get_component(ThermalStandard, sys, "Alta")
+            @test !any(b -> b.direction == AustralianElectricityMarkets.BidDirection.LOAD, AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(gen)))
         end
     end
 end

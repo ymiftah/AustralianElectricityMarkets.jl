@@ -405,12 +405,17 @@ end
 
 
 """
-The concrete device types that carry NEM dispatch limits: the types [`nem_dispatch_devices`](@ref)
-collects and the replay models with its dispatch formulation.
+The stock device types that replay systems build for NEM dispatch units, in the order
+[`nem_dispatch_devices`](@ref) collects them. A replay unit is a device of one of these types that
+carries a [`NEMUnitData`](@ref).
 """
 const NEM_DISPATCH_DEVICE_TYPES = (
-    NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMLoad, NEMStorage,
+    PSY.ThermalStandard, PSY.HydroDispatch, PSY.RenewableDispatch, PSY.InterruptiblePowerLoad,
+    PSY.EnergyReservoirStorage,
 )
+
+# The five NEM device types, which the NEM-type accessors below still serve until they are deleted.
+const _NEMDeviceType = Union{NEMThermalGen, NEMHydroGen, NEMRenewableGen, NEMLoad, NEMStorage}
 
 
 # The value of a NEM device's struct field, or an `ArgumentError` naming the device when it is unset.
@@ -430,7 +435,7 @@ The [`NEMRegistration`](@ref) of the NEM device `d`. Throws an `ArgumentError` n
 # Returns
 - The [`NEMRegistration`](@ref) of `d`.
 """
-function get_registration(d::Union{NEM_DISPATCH_DEVICE_TYPES...})
+function get_registration(d::_NEMDeviceType)
     return _require_unit_data(d.registration, "registration", d)
 end
 
@@ -445,7 +450,7 @@ The [`NEMTelemetry`](@ref) of the NEM device `d`. Throws an `ArgumentError` nami
 # Returns
 - The [`NEMTelemetry`](@ref) of `d`.
 """
-function get_telemetry(d::Union{NEM_DISPATCH_DEVICE_TYPES...})
+function get_telemetry(d::_NEMDeviceType)
     return _require_unit_data(d.telemetry, "telemetry", d)
 end
 
@@ -460,7 +465,7 @@ The [`NEMObservedState`](@ref) of the NEM device `d`. Throws an `ArgumentError` 
 # Returns
 - The [`NEMObservedState`](@ref) of `d`.
 """
-function get_observed_state(d::Union{NEM_DISPATCH_DEVICE_TYPES...})
+function get_observed_state(d::_NEMDeviceType)
     return _require_unit_data(d.observed_state, "observed state", d)
 end
 
@@ -476,7 +481,7 @@ Sets the registration of the NEM device `d`, replacing any earlier one. Repeat c
 # Returns
 - `registration`.
 """
-function set_registration!(d::Union{NEM_DISPATCH_DEVICE_TYPES...}, registration)
+function set_registration!(d::_NEMDeviceType, registration)
     d.registration = registration
     return registration
 end
@@ -493,7 +498,7 @@ Sets the telemetry of the NEM device `d`, replacing any earlier one. Repeat call
 # Returns
 - `telemetry`.
 """
-function set_telemetry!(d::Union{NEM_DISPATCH_DEVICE_TYPES...}, telemetry)
+function set_telemetry!(d::_NEMDeviceType, telemetry)
     d.telemetry = telemetry
     return telemetry
 end
@@ -510,7 +515,7 @@ Sets the observed state of the NEM device `d`, replacing any earlier one. Repeat
 # Returns
 - `observed_state`.
 """
-function set_observed_state!(d::Union{NEM_DISPATCH_DEVICE_TYPES...}, observed_state)
+function set_observed_state!(d::_NEMDeviceType, observed_state)
     d.observed_state = observed_state
     return observed_state
 end

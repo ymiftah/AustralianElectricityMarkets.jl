@@ -121,6 +121,7 @@
         @test !haskey(get_ext(pump), "non_scheduled")
         # A load with a GENUNITS row is not also a generator: its DUID names exactly one Device.
         @test get_component(Device, system, "PUMP1") isa InterruptiblePowerLoad
+        @test !has_nem_unit_data(get_component(Device, system, "PUMP1"))
         @test isnothing(get_component(HydroDispatch, system, "PUMP1"))
 
         # Interconnectors/Interfaces

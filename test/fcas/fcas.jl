@@ -104,7 +104,7 @@
     @testset "fcas_service throws when a device has two services of one market" begin
         sys = first(nem_network(db))
         set_market_bids!(sys, db, date_range)
-        asload1 = get_component(NEMLoad, sys, "ASLOAD1")
+        asload1 = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
         @test fcas_service(asload1, BidType.RAISE6SEC) isa FCASService
         extra = FCASService(; name = "NSW1_RAISE6SEC_EXTRA", region = "NSW1", bid_type = BidType.RAISE6SEC)
         add_service!(sys, extra, [asload1])
@@ -160,11 +160,11 @@
     @testset "a non-scheduled load offering FCAS joins its region's services" begin
         sys = first(nem_network(db))
         (; added, excluded) = set_market_bids!(sys, db, date_range)
-        asload1 = get_component(NEMLoad, sys, "ASLOAD1")
+        asload1 = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
         @test "NSW1_RAISE6SEC" in added
         svc = get_component(FCASService, sys, "NSW1_RAISE6SEC")
         @test has_service(asload1, svc)
-        other_loads = filter(l -> get_name(l) != "ASLOAD1", collect(get_components(NEMLoad, sys)))
+        other_loads = filter(l -> get_name(l) != "ASLOAD1", collect(get_components(InterruptiblePowerLoad, sys)))
         @test !any(l -> has_service(l, svc), other_loads)
         @test !haskey(excluded, "NSW1_RAISE6SEC") || !("ASLOAD1" in excluded["NSW1_RAISE6SEC"])
     end

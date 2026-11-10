@@ -81,9 +81,9 @@
             @test (get_limit_type(v1), get_limit_type(v2)) == ("THERMAL", "THERMAL")
             @test (get_source(v1), get_source(v2)) == ("pscb", "pscb")
             @test isempty(get_ext(v1)) && isempty(get_ext(v2))
-            bat = get_component(NEMStorage, sys, "BAT1")
+            bat = get_component(EnergyReservoirStorage, sys, "BAT1")
             for direction in (AustralianElectricityMarkets.BidDirection.GEN, AustralianElectricityMarkets.BidDirection.LOAD)
-                bid = only(b for b in AustralianElectricityMarkets.get_fcas_bids(get_operation_cost(bat)) if b.service == BidType.RAISEREG && b.direction == direction)
+                bid = only(b for b in AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(bat)) if b.service == BidType.RAISEREG && b.direction == direction)
                 @test has_time_series(bat, SingleTimeSeries, bid.offer_curves.name)
                 @test has_time_series(bat, SingleTimeSeries, bid.trapezium.name)
             end

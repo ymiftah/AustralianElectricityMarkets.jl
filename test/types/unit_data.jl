@@ -19,11 +19,11 @@ _ud_bus() = ACBus(;
     magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1), base_voltage = 230.0,
 )
 
-function _ud_thermal(name, bus; kwargs...)
-    return AEM.NEMThermalGen(;
+function _ud_thermal(name, bus)
+    return ThermalStandard(;
         name, available = true, status = true, bus, active_power = 50.0, reactive_power = 0.0,
         rating = 120.0, active_power_limits = (min = 10.0, max = 100.0), reactive_power_limits = nothing,
-        ramp_limits = nothing, operation_cost = AEM.NEMOfferCost(), base_power = 100.0, kwargs...,
+        ramp_limits = nothing, operation_cost = ThermalGenerationCost(nothing), base_power = 100.0,
     )
 end
 
@@ -87,22 +87,6 @@ end
     @test keyed != obs
 end
 
-@testset "NEM device accessors throw when the struct is missing" begin
-    gen = _ud_thermal("bare", _ud_bus())
-    @test isnothing(gen.registration) && isnothing(gen.telemetry) && isnothing(gen.observed_state)
-    @test_throws ArgumentError AEM.get_registration(gen)
-    @test_throws ArgumentError AEM.get_telemetry(gen)
-    @test_throws ArgumentError AEM.get_observed_state(gen)
-
-    err = try
-        AEM.get_telemetry(gen)
-    catch e
-        e
-    end
-    @test err isa ArgumentError
-    @test err.msg == "bare has no telemetry; build it with nem_system"
-end
-
 @testset "Stock devices throw an ArgumentError naming the device" begin
     stock = ThermalStandard(;
         name = "stock_unit", available = true, status = true, bus = _ud_bus(), active_power = 50.0,
@@ -125,8 +109,13 @@ end
     end
 end
 
-@testset "NEM device setters replace the struct" begin
-    gen = _ud_thermal("settable", _ud_bus())
+@testset "NEM device setters replace the unit data field" begin
+    sys = System(100.0)
+    bus = _ud_bus()
+    add_component!(sys, bus)
+    gen = _ud_thermal("settable", bus)
+    add_component!(sys, gen)
+    AEM.attach_nem_unit_data!(sys, gen)
     reg = _ud_registration()
     @test AEM.set_registration!(gen, reg) === reg
     @test AEM.get_registration(gen) == reg
@@ -149,8 +138,10 @@ end
     sys = System(100.0)
     bus = _ud_bus()
     add_component!(sys, bus)
-    gen = _ud_thermal("unit", bus; registration = _ud_registration())
+    gen = _ud_thermal("unit", bus)
     add_component!(sys, gen)
+    AEM.attach_nem_unit_data!(sys, gen)
+    AEM.set_registration!(gen, _ud_registration())
     for name in ("initial_mw", "agc", "raise_enab")
         add_time_series!(sys, gen, _ud_series(name))
     end
@@ -169,7 +160,7 @@ end
         path = joinpath(dir, "sys.json")
         to_json(sys, path; force = true)
         restored = System(path)
-        back = get_component(AEM.NEMThermalGen, restored, "unit")
+        back = get_component(ThermalStandard, restored, "unit")
 
         @test AEM.get_registration(back) == AEM.get_registration(gen)
         @test AEM.get_telemetry(back) == AEM.get_telemetry(gen)

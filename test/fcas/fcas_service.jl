@@ -18,7 +18,7 @@
             region = get_name(get_area(get_bus(d)))
             for bid_type in FCAS_BID_TYPES
                 sides = Set(
-                    AustralianElectricityMarkets._fcas_bid_side(d, b) for b in AustralianElectricityMarkets.get_fcas_bids(get_operation_cost(d))
+                    AustralianElectricityMarkets._fcas_bid_side(d, b) for b in AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(d))
                         if b.service == bid_type
                 )
                 delete!(sides, nothing)

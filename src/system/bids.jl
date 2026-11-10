@@ -153,7 +153,7 @@ function _write_energy_bid!(sys, device, direction::BidDirection, rows, grid, st
         normal_status = series(:normal_status, normal),
         energy_limit = series(:energy_limit, _all_null(rows, :ENERGYLIMIT) ? nothing : stamp_values(:ENERGYLIMIT)),
     )
-    _set_energy_bid!(get_operation_cost(device), bid)
+    _set_energy_bid!(_nem_offer_cost(device), bid)
     return bid
 end
 
@@ -193,10 +193,9 @@ without a row hold a zero-width curve, a zero `MAXAVAIL` and a zero trapezium. T
 for a row whose trapezium is missing or out of order.
 """
 function _write_fcas_bid!(sys, device, service::BidType, direction::BidDirection, rows, grid, start_date, resolution)
-    get_operation_cost(device) isa NEMOfferCost || throw(
+    has_nem_unit_data(device) || throw(
         ArgumentError(
-            "set_market_bids!: $(get_name(device)) has a $(typeof(get_operation_cost(device))) operation cost; " *
-                "bidding devices must be NEM device types with a NEMOfferCost",
+            "set_market_bids!: $(get_name(device)) has no NEM unit data; build it with nem_system",
         ),
     )
     _check_stamps_on_grid(rows.INTERVAL_DATETIME, grid, "FCAS $(service) $(direction) rows for $(get_name(device))")
@@ -211,7 +210,7 @@ function _write_fcas_bid!(sys, device, service::BidType, direction::BidDirection
         max_avail = series(:max_avail, _numeric_on_grid(by_time, grid, :MAXAVAIL)),
         trapezium = series(:trapezium, trapezium),
     )
-    _set_fcas_bid!(get_operation_cost(device), bid)
+    _set_fcas_bid!(_nem_offer_cost(device), bid)
     return bid
 end
 
@@ -247,11 +246,8 @@ function _bid_device_energy!(sys, device, required, groups, grid, start_date, re
         set_available!(device, false)
         return false
     end
-    get_operation_cost(device) isa NEMOfferCost || throw(
-        ArgumentError(
-            "set_market_bids!: $name has a $(typeof(get_operation_cost(device))) operation cost; " *
-                "bidding devices must be NEM device types with a NEMOfferCost",
-        ),
+    has_nem_unit_data(device) || throw(
+        ArgumentError("set_market_bids!: $name has no NEM unit data; build it with nem_system"),
     )
     set_available!(device, true)
     for direction in required

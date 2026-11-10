@@ -299,7 +299,8 @@ end
     pump_gc = get_component(GenericConstraint, sys, vname("N_PUMP_THERMAL"))
     @test only(get_terms(pump_gc)) == UnitTerm("PUMP1", BidType.ENERGY, -1.0)
     # A load DUID names exactly one Device, also when it has a GENUNITS row (PUMP1).
-    @test get_component(Device, sys, "PUMP1") isa NEMLoad
+    @test get_component(Device, sys, "PUMP1") isa InterruptiblePowerLoad
+    @test has_nem_unit_data(get_component(Device, sys, "PUMP1"))
 
     skipped_table = get_skipped_constraints(sys)
     @test Set(skipped_table.constraint) == Set(keys(skipped))

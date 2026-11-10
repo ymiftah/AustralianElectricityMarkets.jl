@@ -563,22 +563,17 @@ those costs with the ISP operating costs.
 # Arguments
 - `sys`: The `PowerSystems.System` object.
 - `gen_df`: A `DataFrame` of generator data.
-- `nem_types`: build [`NEMRenewableGen`](@ref), [`NEMHydroGen`](@ref) and [`NEMThermalGen`](@ref)
-  with an empty [`NEMOfferCost`](@ref) in place of the stock types.
 
 # Returns
 `sys`.
 """
-function _add_generation!(sys, gen_df; nem_types::Bool = false)
-    renewable_type = nem_types ? NEMRenewableGen : RenewableDispatch
-    hydro_type = nem_types ? NEMHydroGen : HydroDispatch
-    thermal_type = nem_types ? NEMThermalGen : ThermalStandard
+function _add_generation!(sys, gen_df)
     stations = Dict{String, NEMStation}()
     renewable = subset(
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:RenewableDispatch]))
     )
     renewable_components = (
-        renewable_type(;
+        RenewableDispatch(;
             name = row[:name],
             available = row[:available],
             bus = get_bus(sys, row[:bus_id]),
@@ -588,7 +583,7 @@ function _add_generation!(sys, gen_df; nem_types::Bool = false)
             prime_mover_type = row[:technology],
             reactive_power_limits = nothing,  # (min = row[:reactive_power_limits_min], max = row[:reactive_power_limits_max]), # 0 MVAR to 0.25 MVAR per-unitized by device base_power
             power_factor = 1.0,
-            operation_cost = nem_types ? NEMOfferCost() : RenewableGenerationCost(nothing),
+            operation_cost = RenewableGenerationCost(nothing),
             base_power = row[:base_power], # MVA
         ) for row in eachrow(renewable)
     )
@@ -599,7 +594,7 @@ function _add_generation!(sys, gen_df; nem_types::Bool = false)
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:HydroDispatch]))
     )
     hydro_components = (
-        hydro_type(;
+        HydroDispatch(;
             name = row[:name],
             available = row[:available],
             bus = get_bus(sys, row[:bus_id]),
@@ -617,7 +612,7 @@ function _add_generation!(sys, gen_df; nem_types::Bool = false)
                 end
             ),
             time_limits = nothing,
-            operation_cost = nem_types ? NEMOfferCost() : HydroGenerationCost(nothing),
+            operation_cost = HydroGenerationCost(nothing),
             base_power = row[:base_power],
         ) for row in eachrow(hydro)
     )
@@ -628,7 +623,7 @@ function _add_generation!(sys, gen_df; nem_types::Bool = false)
         gen_df, :technology => ByRow(in(MATCH_TYPE_TO_PRIMEMOVER[:ThermalStandard]))
     )
     thermal_components = (
-        thermal_type(;
+        ThermalStandard(;
             name = row[:name],
             available = row[:available],
             status = true,
@@ -645,7 +640,7 @@ function _add_generation!(sys, gen_df; nem_types::Bool = false)
                     (up = row[:max_ramp_up], down = row[:max_ramp_down]) # per-unitized by device base_power per minute
                 end
             ), # per-unitized by device base_power per minute
-            operation_cost = nem_types ? NEMOfferCost() : ThermalGenerationCost(nothing),
+            operation_cost = ThermalGenerationCost(nothing),
             base_power = row[:base_power], # MVA
             time_limits = (up = 8.0, down = 8.0), # Hours
             must_run = false,
@@ -783,10 +778,9 @@ function _set_isp_generation_costs!(sys, gen_df)
     return sys
 end
 
-function _add_batteries!(sys, batteries_df; nem_types::Bool = false)
-    storage_type = nem_types ? NEMStorage : EnergyReservoirStorage
+function _add_batteries!(sys, batteries_df)
     battery_components = (
-        storage_type(;
+        EnergyReservoirStorage(;
             name = row[:name],
             available = row[:available],
             bus = get_bus(sys, row[:bus_id]),
@@ -812,26 +806,24 @@ end
 """
     _add_scheduled_loads!(sys, scheduled_loads_df)
 
-Adds each load as an `InterruptiblePowerLoad` with a zero `LoadCost`, or with `nem_types` as a
-[`NEMLoad`](@ref) with an empty [`NEMOfferCost`](@ref); [`set_market_bids!`](@ref) gives a scheduled
-load its decremental offer, or marks it unavailable when it has no bid. A non-scheduled load
+Adds each load as an `InterruptiblePowerLoad` with a zero `LoadCost`; [`set_market_bids!`](@ref) gives
+a scheduled load its decremental offer, or marks it unavailable when it has no bid. A non-scheduled load
 (`scheduled = false`) starts unavailable; it keeps the zero cost, and the dispatch limits
-([`nem_system`](@ref)) fix its energy at zero. A stock build records `non_scheduled` and
-`commissioned` on the load's `ext`; a NEM build records them on its [`NEMRegistration`](@ref).
+([`nem_system`](@ref)) fix its energy at zero. A regional build records `non_scheduled` and
+`commissioned` on the load's `ext`; a replay build records them on its [`NEMRegistration`](@ref).
 Despite the name, this builds every `DISPATCHTYPE = LOAD` unit of the data frame.
 
 # Arguments
 - `sys`: The `PowerSystems.System` object.
 - `scheduled_loads_df`: A `DataFrame` as returned by `get_scheduled_loads_dataframe`.
-- `nem_types`: build [`NEMLoad`](@ref)s.
+- `replay`: Record the non-scheduled flags on the registration instead of `ext`.
 
 # Returns
 The result of `add_components!`.
 """
-function _add_scheduled_loads!(sys, scheduled_loads_df; nem_types::Bool = false)
-    load_type = nem_types ? NEMLoad : InterruptiblePowerLoad
+function _add_scheduled_loads!(sys, scheduled_loads_df; replay::Bool = false)
     loads = (
-        load_type(;
+        InterruptiblePowerLoad(;
             name = row[:name],
             available = row[:available],
             bus = get_bus(sys, row[:bus_id]),
@@ -840,9 +832,9 @@ function _add_scheduled_loads!(sys, scheduled_loads_df; nem_types::Bool = false)
             max_active_power = row[:max_active_power],
             max_reactive_power = 0.0,
             base_power = row[:base_power],
-            operation_cost = nem_types ? NEMOfferCost() : LoadCost(; variable = CostCurve(LinearCurve(0.0)), fixed = 0.0),
-            # A NEM build records both flags on the load's registration; a stock build has none.
-            ext = (!nem_types && !row[:scheduled]) ?
+            operation_cost = LoadCost(; variable = CostCurve(LinearCurve(0.0)), fixed = 0.0),
+            # A replay build records both flags on the load's registration instead.
+            ext = (!replay && !row[:scheduled]) ?
                 Dict{String, Any}("non_scheduled" => true, "commissioned" => row[:commissioned]) :
                 Dict{String, Any}(),
         ) for row in eachrow(scheduled_loads_df)

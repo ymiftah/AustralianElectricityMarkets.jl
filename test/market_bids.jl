@@ -9,7 +9,7 @@
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     grid = collect(interval)[1:(end - 1)]
     series(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)
-    energy_bid(device, direction) = only(b for b in AEM.get_energy_bids(get_operation_cost(device)) if b.direction == direction)
+    energy_bid(device, direction) = only(b for b in AEM.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(device)) if b.direction == direction)
     # The `read_offers` rows of one unit, bid type and direction, keyed by interval stamp.
     function rows_by_stamp(offers, duid, bidtype::BidType, direction::AEM.BidDirection)
         keep = (offers.DUID .== duid) .& (offers.BIDTYPE .== Ref(bidtype)) .& (offers.DIRECTION .== string(direction))
@@ -120,7 +120,7 @@
     @testset "NULL fields are nothing when NULL throughout, and zero where NULL on some intervals" begin
         sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
         set_market_bids!(sys, db, interval)
-        er01 = energy_bid(get_component(NEMThermalGen, sys, "ER01"), AEM.BidDirection.GEN)
+        er01 = energy_bid(get_component(ThermalStandard, sys, "ER01"), AEM.BidDirection.GEN)
         @test isnothing(er01.energy_limit)
         @test isnothing(er01.fixed_load)
         # BW02 carries a 50 MW fixed load at 00:10 and 00:15 only.
@@ -168,18 +168,18 @@
 
     @testset "a non-scheduled load with an FCAS bid ends available and bids no energy" begin
         sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
-        asload = get_component(NEMLoad, sys, "ASLOAD1")
+        asload = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
         @test !get_available(asload)
         set_market_bids!(sys, db, interval)
         @test get_available(asload)
-        @test !isempty(AEM.get_fcas_bids(get_operation_cost(asload)))
-        @test isempty(AEM.get_energy_bids(get_operation_cost(asload)))
+        @test !isempty(AEM.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(asload)))
+        @test isempty(AEM.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(asload)))
     end
 
     @testset "loss factors are kept in each bidding unit's registration" begin
         sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
         set_market_bids!(sys, db, interval)
-        for storage in get_components(NEMStorage, sys)
+        for storage in get_components(EnergyReservoirStorage, sys)
             @test get_registration(storage).gen_loss_factor > 0.0
             @test get_registration(storage).load_loss_factor > 0.0
         end
