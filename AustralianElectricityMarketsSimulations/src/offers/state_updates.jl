@@ -37,7 +37,7 @@ are written. Throws when a value is not finite.
 """
 function _update_state_parameters!(value_at::F, container::PSI.OptimizationContainer, model::PSI.OperationModel, key::PSI.ParameterKey{P, T}) where {F, P, T}
     parameter_array = PSI.get_parameter_array(container, key)
-    parent_param::Matrix{Float64} = PSI.get_parameter_array_data(PSI.get_parameter(container, key))
+    parent_param = PSI.get_parameter_array_data(PSI.get_parameter(container, key))
     attributes = PSI.get_parameter_attributes(container, key)
     uuids::Dict{String, String} = attributes.component_name_to_ts_uuid
     _write_state_rows!(value_at, P, T, model, PSI.get_time_steps(container), parameter_array, parent_param, uuids)
@@ -45,7 +45,7 @@ function _update_state_parameters!(value_at::F, container::PSI.OptimizationConta
 end
 
 # Writes the rows of each named device, in a function of the concrete array and value types.
-function _write_state_rows!(value_at::F, ::Type{P}, ::Type{T}, model, steps, parameter_array, parent_param::Matrix{Float64}, uuids::Dict{String, String}) where {F, P, T}
+function _write_state_rows!(value_at::F, ::Type{P}, ::Type{T}, model, steps, parameter_array, parent_param, uuids::Dict{String, String}) where {F, P, T}
     system = PSI.get_system(model)
     for (name, uuid) in uuids
         device = PSY.get_component(T, system, name)::T

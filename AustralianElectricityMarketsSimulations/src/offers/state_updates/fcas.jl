@@ -33,7 +33,7 @@ function _update_fcas_parameters!(
         model::PSI.OperationModel, key::PSI.ParameterKey{P, T},
     ) where {P, T}
     parameter_array = PSI.get_parameter_array(container, key)
-    parent_param::Matrix{Float64} = PSI.get_parameter_array_data(PSI.get_parameter(container, key))
+    parent_param = PSI.get_parameter_array_data(PSI.get_parameter(container, key))
     attributes = PSI.get_parameter_attributes(container, key)
     uuids::Dict{String, String} = attributes.component_name_to_ts_uuid
     steps = PSI.get_time_steps(container)
@@ -56,7 +56,7 @@ end
 
 # Writes one device's rows of an FCAS parameter, in a function of the device's concrete type.
 function _write_fcas_device_rows!(
-        field_slice, kind::Symbol, parent_param::Matrix{Float64}, parameter_array, uuid::AbstractString,
+        field_slice, kind::Symbol, parent_param, parameter_array, uuid::AbstractString,
         model, steps, device, bid_type, decremental::Bool, base::Real, inactive::Real, window,
     )
     # The effective offers and ramping limits read the starting output, in system-base

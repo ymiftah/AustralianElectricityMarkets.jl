@@ -634,11 +634,10 @@ function add_toy_constraint_series!(sys, gc, stamps, rhs_mw, invoked)
     return
 end
 
-# The key named `name` on `gc`, preferring the deterministic one that a transform leaves beside the single series.
+# The static key named `name` on `gc`, ignoring the deterministic one a transform leaves beside it.
 function _toy_constraint_key(gc, name::AbstractString)
-    keys = [k for k in PSY.IS.get_time_series_keys(gc) if k.name == name]
-    deterministic = [k for k in keys if k.time_series_type <: PSY.DeterministicSingleTimeSeries]
-    return only(isempty(deterministic) ? keys : deterministic)
+    keys = [k for k in PSY.IS.get_time_series_keys(gc) if k.name == name && k isa PSY.IS.StaticTimeSeriesKey]
+    return only(keys)
 end
 
 # The values of `gc`'s series in `field` (`:rhs` or `:invoked`), read through its key.
