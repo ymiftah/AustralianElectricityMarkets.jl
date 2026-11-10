@@ -14,7 +14,8 @@ through FCAS offers. A NEM build records this on the load's [`NEMRegistration`](
 function is_non_scheduled_load(device)
     device isa ControllableLoad || return false
     get(get_ext(device), "non_scheduled", nothing) === true && return true
-    return has_registration(device) && get_registration(device).schedule_type == ScheduleType.NON_SCHEDULED
+    unit = _nem_unit_data(device)
+    return !isnothing(unit) && !isnothing(unit.registration) && unit.registration.schedule_type == ScheduleType.NON_SCHEDULED
 end
 
 
@@ -31,7 +32,8 @@ override. Any other device is commissioned.
 function is_commissioned(device)
     flag = get(get_ext(device), "commissioned", nothing)
     isnothing(flag) || return flag === true
-    return has_registration(device) ? get_registration(device).commissioned : true
+    unit = _nem_unit_data(device)
+    return isnothing(unit) || isnothing(unit.registration) || unit.registration.commissioned
 end
 
 

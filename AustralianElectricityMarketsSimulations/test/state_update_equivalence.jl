@@ -224,3 +224,44 @@ end
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     @test only(PSI.get_parameter_column_values(initial, TOY_CHEAP)) === 50.0
 end
+
+@testset "custom path computes each FCAS derivation once per step" begin
+    sys = fcas_toy_system()
+    template = replay_template(sys)
+    model = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, template, sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START, name = "state_update",
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    fcas_types = (FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter, FCASLowerSlopeParameter, FCASRampingLimitParameter)
+    fcas_keys = [key for key in keys(PSI.get_parameters(model)) if _parameter_type(key) in fcas_types]
+    # Each (device, bid type) pair the FCAS parameters read, counted once however many parameters read it.
+    pairs = Set{Tuple}()
+    for key in fcas_keys
+        bid_type = first(AEMS._fcas_meta_offer(key.meta))
+        for name in keys(PSI.get_parameter_attributes(container, key).component_name_to_ts_uuid)
+            push!(pairs, (name, bid_type))
+        end
+    end
+    @test !isempty(pairs)
+
+    previous = AEMS._FORCE_CUSTOM_STATE_UPDATES[]
+    AEMS._FORCE_CUSTOM_STATE_UPDATES[] = true
+    try
+        # Execution `n` of the model is the step at `TOY_START + n * TOY_RESOLUTION`, so each is compared
+        # with the stock snapshot of that stamp.
+        for (execution, stamp) in zip((0, 1), STATE_UPDATE_STEPS)
+            stock, _ = _snapshot_on_path(sys, template, stamp; custom = false)
+            stock_by_label = Dict(_key_label(key) => values for (key, values) in stock)
+            PSI.set_execution_count!(model, execution)
+            AEMS._FCAS_EVALUATIONS[] = 0
+            _update_step_parameters!(model)
+            @test AEMS._FCAS_EVALUATIONS[] == length(pairs)
+            for key in fcas_keys
+                @test isapprox(stock_by_label[_key_label(key)], _parameter_values(container, key); atol = 1.0e-12, rtol = 0)
+            end
+        end
+    finally
+        AEMS._FORCE_CUSTOM_STATE_UPDATES[] = previous
+    end
+end

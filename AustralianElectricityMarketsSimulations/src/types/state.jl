@@ -57,8 +57,9 @@ non-scheduled load, which is held at zero output. A device without a registratio
 """
 function _is_unobserved_stamp(device, t::DateTime)
     AustralianElectricityMarkets.is_non_scheduled_load(device) && return true
-    AustralianElectricityMarkets.has_registration(device) || return false
-    registration = AustralianElectricityMarkets.get_registration(device)
+    unit = AustralianElectricityMarkets._nem_unit_data(device)
+    registration = isnothing(unit) ? nothing : unit.registration
+    isnothing(registration) && return false
     return !AustralianElectricityMarkets._is_registered(registration, t)
 end
 

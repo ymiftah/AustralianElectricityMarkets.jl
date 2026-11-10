@@ -464,6 +464,10 @@ function _fcas_effective_ramping(
 end
 
 
+# Counts the derivations `_fcas_effective_values` computes, so a test can check that each is computed once per step.
+const _FCAS_EVALUATIONS = Ref(0)
+
+
 """
     _fcas_effective_values(window, device, bid_type, direction, inactive; state = _fcas_state_function(window, device)) -> (offers, ramping)
 
@@ -481,6 +485,7 @@ function _fcas_effective_values(
         window::_FCASWindow, device::PSY.Device, bid_type::BidType, direction::FCASBidDirection, inactive::Float64;
         state::Function = _fcas_state_function(window, device),
     )
+    _FCAS_EVALUATIONS[] += 1
     regulation = bid_type in FCAS_REGULATION_MARKETS
     enabled::Dict{Bool, Vector{Bool}} = if direction == FCASBidDirection.BOTH && device isa PSY.Storage && regulation
         gen, load = _fcas_both_sides_enabled_mask(window, device, bid_type; state)

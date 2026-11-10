@@ -25,6 +25,32 @@ _use_stock_state_update() = _precomputes_state_inputs(_state_source()) && !_FORC
 # Counts the custom per-step writes, so a test can check that the stock path runs none.
 const _CUSTOM_STATE_UPDATE_CALLS = Ref(0)
 
+# The `(offers, ramping)` pair of `_fcas_effective_values` for one device and bid type.
+const _FCASDerivation = Tuple{Dict{Bool, Vector{NTuple{15, Float64}}}, Union{Nothing, Vector{NTuple{2, Float64}}}}
+
+# The FCAS derivations of one model step, keyed by device UUID and bid type.
+struct _StepCache
+    timestamp::DateTime
+    execution::Int
+    fcas::Dict{Tuple{Base.UUID, BidType}, _FCASDerivation}
+end
+
+const _STEP_CACHE_KEY = "state_step_cache"
+
+# The cache of `model`'s current step, held in the model's `ext` and replaced when the step changes.
+# A step is its timestamp and execution count, so the parameters of one update share one derivation.
+function _step_cache(model::PSI.OperationModel)
+    timestamp = PSI.get_current_timestamp(model)::DateTime
+    execution = PSI.get_execution_count(model)
+    ext = PSI.get_ext(model)
+    cache = get(ext, _STEP_CACHE_KEY, nothing)
+    if !(cache isa _StepCache) || cache.timestamp != timestamp || cache.execution != execution
+        cache = _StepCache(timestamp, execution, Dict{Tuple{Base.UUID, BidType}, _FCASDerivation}())
+        ext[_STEP_CACHE_KEY] = cache
+    end
+    return cache
+end
+
 # Runs the pinned fork's stock update for `key`. A coefficient parameter's stock method also applies its targets.
 function _stock_state_update!(
         container::PSI.OptimizationContainer, model::PSI.OperationModel,

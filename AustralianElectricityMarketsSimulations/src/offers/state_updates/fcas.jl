@@ -40,35 +40,38 @@ function _update_fcas_parameters!(
     steps = PSI.get_time_steps(container)
     system = PSI.get_system(model)
     bid_type, decremental = _fcas_meta_offer(key.meta)
+    cache = _step_cache(model)
     PSY.with_units_base(system, "SYSTEM_BASE") do
         base = PSY.get_base_power(system)
         inactive = FCAS_INACTIVE_LIMIT_MW / base
         window = _FCASWindow(PSI.get_current_timestamp(model), length(steps), PSI.get_resolution(model))
         for (name, uuid) in uuids
             device = PSY.get_component(T, system, name)::T
-            _write_fcas_device_rows!(
-                field_slice, kind, parent_param, parameter_array, uuid, model, steps,
-                device, bid_type, decremental, base, inactive, window,
-            )
+            derivation = get!(cache.fcas, (IS.get_uuid(device), bid_type)) do
+                _fcas_step_derivation(window, device, bid_type, model, base, inactive)
+            end
+            _write_fcas_device_rows!(field_slice, kind, parent_param, parameter_array, uuid, steps, derivation, decremental)
         end
     end
     return
 end
 
-# Writes one device's rows of an FCAS parameter, in a function of the device's concrete type.
-function _write_fcas_device_rows!(
-        field_slice, kind::Symbol, parent_param, parameter_array, uuid::AbstractString,
-        model, steps, device, bid_type, decremental::Bool, base::Real, inactive::Real, window,
-    )
-    # The effective offers and ramping limits read the starting output, in system-base
-    # per unit, so they are rebuilt from the step's state here.
+# The FCAS derivation of `device` for `bid_type` at the step of `model`. The effective offers and
+# ramping limits read the starting output, in system-base per unit, so the state is rebuilt per step here.
+function _fcas_step_derivation(window::_FCASWindow, device, bid_type::BidType, model, base::Real, inactive::Real)
     state = t -> begin
         unit = unit_state(_state_source(), device, _step_stamp(model, t))
         return NEMUnitState(unit.initial_mw / base, unit.dispatch_mode)
     end
-    offers, ramping = _fcas_effective_values(
-        window, device, bid_type, fcas_bid_direction(device, bid_type), inactive; state,
+    return _fcas_effective_values(window, device, bid_type, fcas_bid_direction(device, bid_type), inactive; state)
+end
+
+# Writes one device's rows of an FCAS parameter from its derivation, in a function of the device's concrete type.
+function _write_fcas_device_rows!(
+        field_slice, kind::Symbol, parent_param, parameter_array, uuid::AbstractString,
+        steps, derivation::_FCASDerivation, decremental::Bool,
     )
+    offers, ramping = derivation
     values = kind === :ramping ? ramping : offers[decremental]
     i = parameter_array.lookup[1][uuid]
     for t in steps
