@@ -43,8 +43,9 @@ function PSI.update_container_parameter_values!(
         container::PSI.OptimizationContainer,
         model::PSI.OperationModel,
         key::PSI.ParameterKey{MNSPInitialFlowParameter, PSY.AreaInterchange},
-        ::PSI.DatasetContainer{PSI.InMemoryDataset},
+        input::PSI.DatasetContainer{PSI.InMemoryDataset},
     )
+    _use_stock_state_update() && return _stock_state_update!(container, model, key, input)
     _update_state_parameters!(container, model, key) do device, stamp
         return _mnsp_initial_flow(_state_source(), device, stamp)
     end
@@ -72,8 +73,9 @@ function PSI.update_container_parameter_values!(
         container::PSI.OptimizationContainer,
         model::PSI.OperationModel,
         key::PSI.ParameterKey{MNSPForwardRampRateParameter, PSY.AreaInterchange},
-        ::PSI.DatasetContainer{PSI.InMemoryDataset},
+        input::PSI.DatasetContainer{PSI.InMemoryDataset},
     )
+    _use_stock_state_update() && return _stock_state_update!(container, model, key, input)
     minutes = Dates.value(Millisecond(PSI.get_resolution(model))) / 60000
     _update_state_parameters!(container, model, key) do device, stamp
         return _mnsp_ramp_rate_at(device, true, stamp, minutes)
@@ -102,8 +104,9 @@ function PSI.update_container_parameter_values!(
         container::PSI.OptimizationContainer,
         model::PSI.OperationModel,
         key::PSI.ParameterKey{MNSPReverseRampRateParameter, PSY.AreaInterchange},
-        ::PSI.DatasetContainer{PSI.InMemoryDataset},
+        input::PSI.DatasetContainer{PSI.InMemoryDataset},
     )
+    _use_stock_state_update() && return _stock_state_update!(container, model, key, input)
     minutes = Dates.value(Millisecond(PSI.get_resolution(model))) / 60000
     _update_state_parameters!(container, model, key) do device, stamp
         return _mnsp_ramp_rate_at(device, false, stamp, minutes)

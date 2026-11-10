@@ -57,8 +57,9 @@ function PSI.update_container_parameter_values!(
         container::PSI.OptimizationContainer,
         model::PSI.OperationModel,
         key::PSI.ParameterKey{RampUpRateTimeSeriesParameter, T},
-        ::PSI.DatasetContainer{PSI.InMemoryDataset},
+        input::PSI.DatasetContainer{PSI.InMemoryDataset},
     ) where {T <: PSY.StaticInjection}
+    _use_stock_state_update() && return _stock_state_update!(container, model, key, input)
     _update_state_parameters!(container, model, key) do device, stamp
         return _ramp_rate_at(device, true, stamp, PSI.get_resolution(model), PSI.get_base_power(container))
     end
@@ -87,8 +88,9 @@ function PSI.update_container_parameter_values!(
         container::PSI.OptimizationContainer,
         model::PSI.OperationModel,
         key::PSI.ParameterKey{RampDownRateTimeSeriesParameter, T},
-        ::PSI.DatasetContainer{PSI.InMemoryDataset},
+        input::PSI.DatasetContainer{PSI.InMemoryDataset},
     ) where {T <: PSY.StaticInjection}
+    _use_stock_state_update() && return _stock_state_update!(container, model, key, input)
     _update_state_parameters!(container, model, key) do device, stamp
         return _ramp_rate_at(device, false, stamp, PSI.get_resolution(model), PSI.get_base_power(container))
     end
@@ -141,8 +143,9 @@ function PSI.update_container_parameter_values!(
         container::PSI.OptimizationContainer,
         model::PSI.OperationModel,
         key::PSI.ParameterKey{FixedLoadTimeSeriesParameter, T},
-        ::PSI.DatasetContainer{PSI.InMemoryDataset},
+        input::PSI.DatasetContainer{PSI.InMemoryDataset},
     ) where {T <: PSY.StaticInjection}
+    _use_stock_state_update() && return _stock_state_update!(container, model, key, input)
     base_power = PSI.get_base_power(container)
     _update_state_parameters!(container, model, key) do device, stamp
         return _fixed_load_step(device, stamp).target / base_power
@@ -171,8 +174,9 @@ function PSI.update_container_parameter_values!(
         container::PSI.OptimizationContainer,
         model::PSI.OperationModel,
         key::PSI.ParameterKey{FixedLoadInvokedTimeSeriesParameter, T},
-        ::PSI.DatasetContainer{PSI.InMemoryDataset},
+        input::PSI.DatasetContainer{PSI.InMemoryDataset},
     ) where {T <: PSY.StaticInjection}
+    _use_stock_state_update() && return _stock_state_update!(container, model, key, input)
     _update_state_parameters!(container, model, key) do device, stamp
         return _fixed_load_step(device, stamp).invoked ? 1.0 : 0.0
     end

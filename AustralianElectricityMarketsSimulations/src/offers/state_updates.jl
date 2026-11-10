@@ -19,6 +19,43 @@ function _step_stamp(model::PSI.OperationModel, t::Integer)
 end
 
 
+# Whether the per-step update takes the stock path: the observed series already hold each value.
+_use_stock_state_update() = _precomputes_state_inputs(_state_source()) && !_FORCE_CUSTOM_STATE_UPDATES[]
+
+# Counts the custom per-step writes, so a test can check that the stock path runs none.
+const _CUSTOM_STATE_UPDATE_CALLS = Ref(0)
+
+# Runs the pinned fork's stock update for `key`. A coefficient parameter's stock method also applies its targets.
+function _stock_state_update!(
+        container::PSI.OptimizationContainer, model::PSI.OperationModel,
+        key::PSI.ParameterKey{<:PSI.ConstraintCoefficientParameter, <:PSY.Component}, input::PSI.DatasetContainer{PSI.InMemoryDataset},
+    )
+    invoke(
+        PSI.update_container_parameter_values!,
+        Tuple{
+            PSI.OptimizationContainer, PSI.OperationModel,
+            PSI.ParameterKey{<:PSI.ConstraintCoefficientParameter, <:PSY.Component}, PSI.DatasetContainer{PSI.InMemoryDataset},
+        },
+        container, model, key, input,
+    )
+    return
+end
+
+function _stock_state_update!(
+        container::PSI.OptimizationContainer, model::PSI.OperationModel,
+        key::PSI.ParameterKey{<:PSI.ParameterType, <:PSY.Component}, input::PSI.DatasetContainer{PSI.InMemoryDataset},
+    )
+    invoke(
+        PSI.update_container_parameter_values!,
+        Tuple{
+            PSI.OptimizationContainer, PSI.OperationModel,
+            PSI.ParameterKey{<:PSI.ParameterType, <:PSY.Component}, PSI.DatasetContainer{PSI.InMemoryDataset},
+        },
+        container, model, key, input,
+    )
+    return
+end
+
 """
     _update_state_parameters!(value_at, container, model, key) -> nothing
 
@@ -36,6 +73,7 @@ are written. Throws when a value is not finite.
 `nothing`.
 """
 function _update_state_parameters!(value_at::F, container::PSI.OptimizationContainer, model::PSI.OperationModel, key::PSI.ParameterKey{P, T}) where {F, P, T}
+    _CUSTOM_STATE_UPDATE_CALLS[] += 1
     parameter_array = PSI.get_parameter_array(container, key)
     parent_param = PSI.get_parameter_array_data(PSI.get_parameter(container, key))
     attributes = PSI.get_parameter_attributes(container, key)
@@ -84,8 +122,9 @@ function PSI.update_container_parameter_values!(
         container::PSI.OptimizationContainer,
         model::PSI.OperationModel,
         key::PSI.ParameterKey{InitialPowerTimeSeriesParameter, T},
-        ::PSI.DatasetContainer{PSI.InMemoryDataset},
+        input::PSI.DatasetContainer{PSI.InMemoryDataset},
     ) where {T <: PSY.StaticInjection}
+    _use_stock_state_update() && return _stock_state_update!(container, model, key, input)
     _update_state_parameters!(container, model, key) do device, stamp
         return unit_state(_state_source(), device, stamp).initial_mw
     end

@@ -33,15 +33,20 @@ function _parameter_values(container, key::PSI.ParameterKey)
     return reshape(values, :, size(values, ndims(values)))
 end
 
-# Builds a decision model of `template` on `sys` at `t`, runs one parameter update and returns the
-# snapshot of each state-update parameter, keyed by its container key.
-function _state_update_snapshot(sys, template, t::DateTime)
+# Builds a decision model of `template` on `sys` at `t` and runs one parameter update on it.
+function _state_update_model(sys, template, t::DateTime)
     model = PSI.DecisionModel(
         AEMS.NEMDispatchProblem, template, sys; optimizer = HiGHS.Optimizer, initial_time = t, name = "state_update",
     )
     status = PSI.build!(model; output_dir = mktempdir())
     status == PSI.ModelBuildStatus.BUILT || error("The state-update model at $t failed to build ($status).")
     _update_step_parameters!(model)
+    return model
+end
+
+# Builds the model at `t` and returns the snapshot of each state-update parameter, keyed by its container key.
+function _state_update_snapshot(sys, template, t::DateTime)
+    model = _state_update_model(sys, template, t)
     container = PSI.get_optimization_container(model)
     snapshot = Dict{PSI.ParameterKey, Matrix{Float64}}(
         key => _parameter_values(container, key) for key in keys(PSI.get_parameters(model)) if _is_state_update_key(key)
@@ -50,6 +55,23 @@ function _state_update_snapshot(sys, template, t::DateTime)
     @test all(values -> size(values, 2) == steps, values(snapshot))
     return snapshot
 end
+
+# The snapshot at `t` on the custom path (`custom = true`) or the stock path, and the number of custom
+# per-step writes the update made.
+function _snapshot_on_path(sys, template, t::DateTime; custom::Bool)
+    previous = AEMS._FORCE_CUSTOM_STATE_UPDATES[]
+    AEMS._FORCE_CUSTOM_STATE_UPDATES[] = custom
+    calls = AEMS._CUSTOM_STATE_UPDATE_CALLS[]
+    try
+        snapshot = _state_update_snapshot(sys, template, t)
+        return snapshot, AEMS._CUSTOM_STATE_UPDATE_CALLS[] - calls
+    finally
+        AEMS._FORCE_CUSTOM_STATE_UPDATES[] = previous
+    end
+end
+
+# A label for a container key that is stable across models built from the same system.
+_key_label(key::PSI.ParameterKey) = (string(typeof(key)), key.meta)
 
 # One snapshot per step of `steps`, each from a decision model built at that step's stamp.
 function run_steps!(sys, template, steps)
@@ -117,4 +139,88 @@ const STATE_UPDATE_SYSTEMS = (
         @info "state-update snapshot" system = name parameters = length(first(snapshots))
     end
     @test seen == Set{DataType}(collect(STATE_UPDATE_PARAMETER_TYPES))
+end
+
+@testset "observed path equals the custom path" begin
+    for (name, build) in STATE_UPDATE_SYSTEMS
+        sys = build()
+        template = replay_template(sys)
+        for t in STATE_UPDATE_STEPS
+            stock, stock_calls = _snapshot_on_path(sys, template, t; custom = false)
+            custom, custom_calls = _snapshot_on_path(sys, template, t; custom = true)
+            @test stock_calls == 0
+            @test custom_calls > 0
+            stock_by_label = Dict(_key_label(key) => values for (key, values) in stock)
+            custom_by_label = Dict(_key_label(key) => values for (key, values) in custom)
+            @test Set(keys(stock_by_label)) == Set(keys(custom_by_label))
+            for (label, values) in custom_by_label
+                @test isapprox(stock_by_label[label], values; atol = 1.0e-12, rtol = 0)
+            end
+        end
+    end
+end
+
+@testset "stock update applies the FCAS slope coefficients" begin
+    sys = fcas_toy_system()
+    template = replay_template(sys)
+    checked = 0
+    for t in STATE_UPDATE_STEPS
+        model = _state_update_model(sys, template, t)
+        container = PSI.get_optimization_container(model)
+        for key in keys(PSI.get_parameters(model))
+            _parameter_type(key) in (FCASUpperSlopeParameter, FCASLowerSlopeParameter) || continue
+            param = PSI.get_parameter(container, key)
+            data = PSI.get_parameter_array_data(param)
+            multipliers = PSI.get_multiplier_array_data(param)
+            for target in PSI.get_coefficient_targets(PSI.get_attributes(param))
+                expected = target.scale * data[target.param_row, target.time_step] * multipliers[target.multiplier_row, target.time_step]
+                @test isapprox(PSI.JuMP.normalized_coefficient(target.constraint, target.variable), expected; atol = 1.0e-12, rtol = 0)
+                checked += 1
+            end
+        end
+    end
+    @test checked > 0
+end
+
+@testset "observed path reads the inputs prepared at build" begin
+    later_key = Ref{Any}(nothing)
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 50.0, ramp_up = 100.0),
+        ],
+        100.0; horizon = TOY_RESOLUTION,
+        mutate! = function (sys, stamps)
+            alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
+            replace_single_series_with!(sys, alta, "later_initial_mw", [50.0, 10.0], stamps)
+            later_key[] = AustralianElectricityMarkets._series_key(alta, "later_initial_mw")
+            return
+        end,
+    )
+    model = PSI.DecisionModel(
+        replay_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = TOY_RESOLUTION,
+        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    initial = PSI.get_parameter(container, PSI.ParameterKey(InitialPowerTimeSeriesParameter, ThermalStandard))
+
+    PSI.set_execution_count!(model, 0)
+    _update_step_parameters!(model)
+    PSI.solve_impl!(model)
+    @test only(PSI.get_parameter_column_values(initial, TOY_CHEAP)) === 50.0
+
+    alta = PSY.get_component(ThermalStandard, PSI.get_system(model), TOY_CHEAP)
+    AustralianElectricityMarkets.set_observed_state!(
+        alta,
+        AustralianElectricityMarkets.NEMObservedState(;
+            initial_mw = later_key[],
+            dispatch_mode = AustralianElectricityMarkets.get_observed_state(alta).dispatch_mode,
+        ),
+    )
+    PSI.set_execution_count!(model, 1)
+    _update_step_parameters!(model)
+    PSI.solve_impl!(model)
+    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    @test only(PSI.get_parameter_column_values(initial, TOY_CHEAP)) === 50.0
 end

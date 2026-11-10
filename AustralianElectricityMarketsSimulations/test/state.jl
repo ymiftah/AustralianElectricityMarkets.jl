@@ -322,49 +322,63 @@ function PSI.update_container_parameter_values!(
     return
 end
 
-@testset "the first solve reads the build's seed, later solves the state source" begin
-    # The seed is built from the state source before the forecasts, so a change to the keyed state
-    # after the build reaches the second solve only through the per-step update.
-    later_key = Ref{Any}(nothing)
-    sys = nem_toy_system(
-        [
-            TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0),
-            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 50.0, ramp_up = 100.0),
-        ],
-        100.0; horizon = TOY_RESOLUTION,
-        mutate! = function (sys, stamps)
-            alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
-            replace_single_series_with!(sys, alta, "later_initial_mw", [50.0, 10.0], stamps)
-            later_key[] = AustralianElectricityMarkets._series_key(alta, "later_initial_mw")
-            return
-        end,
-    )
-    model = PSI.DecisionModel(
-        replay_template(sys), sys; optimizer = _ST_OPTIMIZER, horizon = TOY_RESOLUTION,
-        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
-    )
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    container = PSI.get_optimization_container(model)
-    initial = PSI.get_parameter(container, PSI.ParameterKey(AEMS.InitialPowerTimeSeriesParameter, ThermalStandard))
+# Runs `f` with the custom per-step updates forced on, restoring the switch afterwards.
+function _with_custom_state_updates(f)
+    previous = AEMS._FORCE_CUSTOM_STATE_UPDATES[]
+    AEMS._FORCE_CUSTOM_STATE_UPDATES[] = true
+    try
+        return f()
+    finally
+        AEMS._FORCE_CUSTOM_STATE_UPDATES[] = previous
+    end
+end
 
-    PSI.set_execution_count!(model, 0)
-    PSI.solve_impl!(model)
-    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-    @test only(PSI.get_parameter_column_values(initial, TOY_CHEAP)) === 50.0
 
-    alta = PSY.get_component(ThermalStandard, PSI.get_system(model), TOY_CHEAP)
-    AustralianElectricityMarkets.set_observed_state!(
-        alta,
-        AustralianElectricityMarkets.NEMObservedState(;
-            initial_mw = later_key[],
-            dispatch_mode = AustralianElectricityMarkets.get_observed_state(alta).dispatch_mode,
-        ),
-    )
-    PSI.set_execution_count!(model, 1)
-    _update_step_parameters!(model)
-    PSI.solve_impl!(model)
-    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-    @test only(PSI.get_parameter_column_values(initial, TOY_CHEAP)) === 10.0
+@testset "the first solve reads the build's seed, later solves the state source (custom update path)" begin
+    _with_custom_state_updates() do
+        # The seed is built from the state source before the forecasts, so a change to the keyed state
+        # after the build reaches the second solve only through the per-step update.
+        later_key = Ref{Any}(nothing)
+        sys = nem_toy_system(
+            [
+                TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0),
+                TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 50.0, ramp_up = 100.0),
+            ],
+            100.0; horizon = TOY_RESOLUTION,
+            mutate! = function (sys, stamps)
+                alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
+                replace_single_series_with!(sys, alta, "later_initial_mw", [50.0, 10.0], stamps)
+                later_key[] = AustralianElectricityMarkets._series_key(alta, "later_initial_mw")
+                return
+            end,
+        )
+        model = PSI.DecisionModel(
+            replay_template(sys), sys; optimizer = _ST_OPTIMIZER, horizon = TOY_RESOLUTION,
+            resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+        )
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        container = PSI.get_optimization_container(model)
+        initial = PSI.get_parameter(container, PSI.ParameterKey(AEMS.InitialPowerTimeSeriesParameter, ThermalStandard))
+
+        PSI.set_execution_count!(model, 0)
+        PSI.solve_impl!(model)
+        @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        @test only(PSI.get_parameter_column_values(initial, TOY_CHEAP)) === 50.0
+
+        alta = PSY.get_component(ThermalStandard, PSI.get_system(model), TOY_CHEAP)
+        AustralianElectricityMarkets.set_observed_state!(
+            alta,
+            AustralianElectricityMarkets.NEMObservedState(;
+                initial_mw = later_key[],
+                dispatch_mode = AustralianElectricityMarkets.get_observed_state(alta).dispatch_mode,
+            ),
+        )
+        PSI.set_execution_count!(model, 1)
+        _update_step_parameters!(model)
+        PSI.solve_impl!(model)
+        @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        @test only(PSI.get_parameter_column_values(initial, TOY_CHEAP)) === 10.0
+    end
 end
 
 
@@ -408,67 +422,69 @@ end
 end
 
 
-@testset "each step's fixed loading is recomputed from the state source" begin
-    # Alta carries a 40 MW fixed loading and is offline (dispatch mode 0) at build, so the first
-    # solve starts from the build's 40 MW seed. Before step 2 the state source moves it into its
-    # start-up profile (mode 2), where AEMO does not apply the loading: the parameter must follow
-    # the state, not the build's series. The dispatch effect of the same drop runs through a
-    # simulation in "each step's fixed loading is recomputed from the bid and the dispatch mode".
-    later_key = Ref{Any}(nothing)
-    sys = nem_toy_system(
-        [
-            TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 20.0, ramp_up = 100.0),
-            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 40.0, ramp_up = 100.0),
-        ],
-        60.0; horizon = TOY_RESOLUTION,
-        mutate! = function (sys, stamps)
-            alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
-            _toy_energy_bid!(
-                sys, alta, AustralianElectricityMarkets.BidDirection.GEN, stamps,
-                fill(_toy_offer([(100.0, 20.0)]), length(stamps)), fill(100.0, length(stamps));
-                fixed_load = fill(40.0, length(stamps)),
-            )
-            set_toy_unit_field!(sys, alta, stamps, :dispatch_mode, zeros(length(stamps)))
-            # The shape an old build wrote: Alta held at 40 MW in both steps. It is not read; the
-            # parameter comes from the bid and the step's state.
-            replace_single_series_with!(sys, alta, "fixed_load", [0.4, 0.4], stamps)
-            replace_single_series_with!(sys, alta, "fixed_load_invoked", [1.0, 1.0], stamps)
-            replace_single_series_with!(sys, alta, "later_dispatch_mode", [0.0, 2.0], stamps)
-            later_key[] = AustralianElectricityMarkets._series_key(alta, "later_dispatch_mode")
-            return
-        end,
-    )
-    model = PSI.DecisionModel(
-        replay_template(sys), sys; optimizer = _ST_OPTIMIZER, horizon = TOY_RESOLUTION,
-        resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
-    )
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    container = PSI.get_optimization_container(model)
-    target = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadTimeSeriesParameter, ThermalStandard))
-    invoked = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadInvokedTimeSeriesParameter, ThermalStandard))
+@testset "each step's fixed loading is recomputed from the state source (custom update path)" begin
+    _with_custom_state_updates() do
+        # Alta carries a 40 MW fixed loading and is offline (dispatch mode 0) at build, so the first
+        # solve starts from the build's 40 MW seed. Before step 2 the state source moves it into its
+        # start-up profile (mode 2), where AEMO does not apply the loading: the parameter must follow
+        # the state, not the build's series. The dispatch effect of the same drop runs through a
+        # simulation in "each step's fixed loading is recomputed from the bid and the dispatch mode".
+        later_key = Ref{Any}(nothing)
+        sys = nem_toy_system(
+            [
+                TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 20.0, ramp_up = 100.0),
+                TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 40.0, ramp_up = 100.0),
+            ],
+            60.0; horizon = TOY_RESOLUTION,
+            mutate! = function (sys, stamps)
+                alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
+                _toy_energy_bid!(
+                    sys, alta, AustralianElectricityMarkets.BidDirection.GEN, stamps,
+                    fill(_toy_offer([(100.0, 20.0)]), length(stamps)), fill(100.0, length(stamps));
+                    fixed_load = fill(40.0, length(stamps)),
+                )
+                set_toy_unit_field!(sys, alta, stamps, :dispatch_mode, zeros(length(stamps)))
+                # The shape an old build wrote: Alta held at 40 MW in both steps. It is not read; the
+                # parameter comes from the bid and the step's state.
+                replace_single_series_with!(sys, alta, "fixed_load", [0.4, 0.4], stamps)
+                replace_single_series_with!(sys, alta, "fixed_load_invoked", [1.0, 1.0], stamps)
+                replace_single_series_with!(sys, alta, "later_dispatch_mode", [0.0, 2.0], stamps)
+                later_key[] = AustralianElectricityMarkets._series_key(alta, "later_dispatch_mode")
+                return
+            end,
+        )
+        model = PSI.DecisionModel(
+            replay_template(sys), sys; optimizer = _ST_OPTIMIZER, horizon = TOY_RESOLUTION,
+            resolution = TOY_RESOLUTION, interval = TOY_RESOLUTION, initial_time = TOY_START,
+        )
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        container = PSI.get_optimization_container(model)
+        target = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadTimeSeriesParameter, ThermalStandard))
+        invoked = PSI.get_parameter(container, PSI.ParameterKey(AEMS.FixedLoadInvokedTimeSeriesParameter, ThermalStandard))
 
-    PSI.set_execution_count!(model, 0)
-    PSI.solve_impl!(model)
-    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-    @test only(PSI.get_parameter_column_values(target, TOY_CHEAP)) ≈ 40.0 / 100.0
-    @test only(PSI.get_parameter_column_values(invoked, TOY_CHEAP)) === 1.0
-    # Alta is held at 40 MW at $20 and Park City supplies the other 20 MW at $80.
-    @test PSI.JuMP.objective_value(PSI.get_jump_model(container)) ≈ 2400.0 / 12 atol = 1.0e-4
+        PSI.set_execution_count!(model, 0)
+        PSI.solve_impl!(model)
+        @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        @test only(PSI.get_parameter_column_values(target, TOY_CHEAP)) ≈ 40.0 / 100.0
+        @test only(PSI.get_parameter_column_values(invoked, TOY_CHEAP)) === 1.0
+        # Alta is held at 40 MW at $20 and Park City supplies the other 20 MW at $80.
+        @test PSI.JuMP.objective_value(PSI.get_jump_model(container)) ≈ 2400.0 / 12 atol = 1.0e-4
 
-    alta = PSY.get_component(ThermalStandard, PSI.get_system(model), TOY_CHEAP)
-    AustralianElectricityMarkets.set_observed_state!(
-        alta,
-        AustralianElectricityMarkets.NEMObservedState(;
-            initial_mw = AustralianElectricityMarkets.get_observed_state(alta).initial_mw,
-            dispatch_mode = later_key[],
-        ),
-    )
-    PSI.set_execution_count!(model, 1)
-    _update_step_parameters!(model)
-    PSI.solve_impl!(model)
-    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-    @test only(PSI.get_parameter_column_values(target, TOY_CHEAP)) === 0.0
-    @test only(PSI.get_parameter_column_values(invoked, TOY_CHEAP)) === 0.0
+        alta = PSY.get_component(ThermalStandard, PSI.get_system(model), TOY_CHEAP)
+        AustralianElectricityMarkets.set_observed_state!(
+            alta,
+            AustralianElectricityMarkets.NEMObservedState(;
+                initial_mw = AustralianElectricityMarkets.get_observed_state(alta).initial_mw,
+                dispatch_mode = later_key[],
+            ),
+        )
+        PSI.set_execution_count!(model, 1)
+        _update_step_parameters!(model)
+        PSI.solve_impl!(model)
+        @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        @test only(PSI.get_parameter_column_values(target, TOY_CHEAP)) === 0.0
+        @test only(PSI.get_parameter_column_values(invoked, TOY_CHEAP)) === 0.0
+    end
 end
 
 

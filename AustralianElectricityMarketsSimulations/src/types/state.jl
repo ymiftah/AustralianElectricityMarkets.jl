@@ -106,6 +106,26 @@ function _state_source()
     return ObservedState()
 end
 
+"""
+    _precomputes_state_inputs(source::StateSource) -> Bool
+
+Whether the per-step parameter updates of `source` read the series that [`prepare_replay!`](@ref) attached,
+so the stock update applies. Under [`ObservedState`](@ref) the inputs are those in place when `prepare_replay!`
+ran. Under [`SimulatedState`](@ref) the custom computation runs at every step, as it also does under the test
+switch `_FORCE_CUSTOM_STATE_UPDATES`.
+
+# Arguments
+- `source`: the [`StateSource`](@ref).
+
+# Returns
+`true` for [`ObservedState`](@ref) and `false` for [`SimulatedState`](@ref).
+"""
+_precomputes_state_inputs(::ObservedState) = true
+_precomputes_state_inputs(::SimulatedState) = false
+
+# Test switch: keeps the custom per-step update under `ObservedState`.
+const _FORCE_CUSTOM_STATE_UPDATES = Ref(false)
+
 
 # The build's first-solve seed series, written from `_state_source()` before the forecasts are
 # attached; later solves overwrite the same parameters from the state source each step.

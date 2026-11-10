@@ -32,6 +32,7 @@ function _update_fcas_parameters!(
         field_slice::Function, kind::Symbol, container::PSI.OptimizationContainer,
         model::PSI.OperationModel, key::PSI.ParameterKey{P, T},
     ) where {P, T}
+    _CUSTOM_STATE_UPDATE_CALLS[] += 1
     parameter_array = PSI.get_parameter_array(container, key)
     parent_param = PSI.get_parameter_array_data(PSI.get_parameter(container, key))
     attributes = PSI.get_parameter_attributes(container, key)
@@ -105,8 +106,9 @@ function PSI.update_container_parameter_values!(
         container::PSI.OptimizationContainer,
         model::PSI.OperationModel,
         key::PSI.ParameterKey{FCASOfferLimitParameter, T},
-        ::PSI.DatasetContainer{PSI.InMemoryDataset},
+        input::PSI.DatasetContainer{PSI.InMemoryDataset},
     ) where {T <: PSY.StaticInjection}
+    _use_stock_state_update() && return _stock_state_update!(container, model, key, input)
     _update_fcas_parameters!(v -> [v[1], v[2], v[3]], :offer, container, model, key)
     return
 end
@@ -131,8 +133,9 @@ function PSI.update_container_parameter_values!(
         container::PSI.OptimizationContainer,
         model::PSI.OperationModel,
         key::PSI.ParameterKey{FCASBandWidthParameter, T},
-        ::PSI.DatasetContainer{PSI.InMemoryDataset},
+        input::PSI.DatasetContainer{PSI.InMemoryDataset},
     ) where {T <: PSY.StaticInjection}
+    _use_stock_state_update() && return _stock_state_update!(container, model, key, input)
     _update_fcas_parameters!(v -> collect(v[6:15]), :offer, container, model, key)
     return
 end
@@ -157,8 +160,9 @@ function PSI.update_container_parameter_values!(
         container::PSI.OptimizationContainer,
         model::PSI.OperationModel,
         key::PSI.ParameterKey{FCASUpperSlopeParameter, T},
-        ::PSI.DatasetContainer{PSI.InMemoryDataset},
+        input::PSI.DatasetContainer{PSI.InMemoryDataset},
     ) where {T <: PSY.StaticInjection}
+    _use_stock_state_update() && return _stock_state_update!(container, model, key, input)
     _update_fcas_parameters!(v -> v[4], :offer, container, model, key)
     _apply_fcas_slope_coefficients!(container, key)
     return
@@ -184,8 +188,9 @@ function PSI.update_container_parameter_values!(
         container::PSI.OptimizationContainer,
         model::PSI.OperationModel,
         key::PSI.ParameterKey{FCASLowerSlopeParameter, T},
-        ::PSI.DatasetContainer{PSI.InMemoryDataset},
+        input::PSI.DatasetContainer{PSI.InMemoryDataset},
     ) where {T <: PSY.StaticInjection}
+    _use_stock_state_update() && return _stock_state_update!(container, model, key, input)
     _update_fcas_parameters!(v -> v[5], :offer, container, model, key)
     _apply_fcas_slope_coefficients!(container, key)
     return
@@ -213,8 +218,9 @@ function PSI.update_container_parameter_values!(
         container::PSI.OptimizationContainer,
         model::PSI.OperationModel,
         key::PSI.ParameterKey{FCASRampingLimitParameter, T},
-        ::PSI.DatasetContainer{PSI.InMemoryDataset},
+        input::PSI.DatasetContainer{PSI.InMemoryDataset},
     ) where {T <: PSY.StaticInjection}
+    _use_stock_state_update() && return _stock_state_update!(container, model, key, input)
     _update_fcas_parameters!(v -> [v[1], v[2]], :ramping, container, model, key)
     return
 end

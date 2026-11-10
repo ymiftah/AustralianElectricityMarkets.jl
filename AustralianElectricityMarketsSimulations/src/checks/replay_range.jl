@@ -30,7 +30,8 @@ Prepares `sys` for a replay of `template` over `steps`: attaches the five-minute
 derives the effective offers ([`set_effective_offers!`](@ref)) from the bids and conditions of `sys` on the
 first call, runs the replay pre-flight checks and excludes the constraints the template cannot model. Each call
 on the same system replaces the exclusions of the previous call, as [`exclude_unmodeled_services!`](@ref)
-does; the forecasts are attached only by the first call.
+does; the forecasts are attached only by the first call. Under [`ObservedState`](@ref) the per-step
+inputs of the replay are fixed by the first call, which attaches them; a later change to the observed state is not read.
 
 # Arguments
 - `sys`: the replay system, mutated in place: its availability changes and forecasts are attached on the first call.
