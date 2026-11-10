@@ -104,66 +104,72 @@ end
     end
 end
 
-@testset "each step's MNSP operating inputs are recomputed from the step's state" begin
-    # The build sets a +30 MW metered flow with forward 600 and reverse 1200 MW/min. Before step 2 the
-    # flow flips to -40 MW and the forward and reverse envelope rates swap. The build's parameter array
-    # holds the build values at both steps, so reading the step-2 values back is the discriminator.
-    sys = _mnsp_limit_case(;
-        forward = (100.0, [(100.0, 10.0)]), reverse = (100.0, [(100.0, 10.0)]),
-        initial = 30.0, up = 600.0, down = 1200.0,
-    )
-    model = _decision_model(_loss_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
-    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
-    container = PSI.get_optimization_container(model)
-    initial = PSI.get_parameter(container, PSI.ParameterKey(AEMS.MNSPInitialFlowParameter, PSY.AreaInterchange))
-    forward = PSI.get_parameter(container, PSI.ParameterKey(AEMS.MNSPForwardRampRateParameter, PSY.AreaInterchange))
-    reverse = PSI.get_parameter(container, PSI.ParameterKey(AEMS.MNSPReverseRampRateParameter, PSY.AreaInterchange))
-    @test collect(PSI.get_parameter_column_values(initial, "IC1")) == [30.0, 30.0]
-    @test collect(PSI.get_parameter_column_values(forward, "IC1")) == [600.0, 600.0]
-    @test collect(PSI.get_parameter_column_values(reverse, "IC1")) == [1200.0, 1200.0]
-
-    # The step-2 state, as new keyed series the build never read: step 1 keeps the build's values.
-    system = PSI.get_system(model)
-    ic = PSY.get_component(PSY.AreaInterchange, system, "IC1")
-    stamps = PSY.get_time_series_timestamps(
-        PSY.SingleTimeSeries, ic, AustralianElectricityMarkets.NEM_MNSP_SERIES.initial_flow,
-    )
-    later(name, build, step2) = begin
-        values = [i == 2 ? step2 : build for i in eachindex(stamps)]
-        PSY.add_time_series!(system, ic, PSY.SingleTimeSeries(; name, data = TimeArray(stamps, values)))
-        return only(k for k in PSY.IS.get_time_series_keys(ic) if k.name == name)
-    end
-    flow_key = later("later_initial_flow", 30.0, -40.0)
-    forward_key = later("later_forward_ramp_rate", 600.0, 1200.0)
-    reverse_key = later("later_reverse_ramp_rate", 1200.0, 600.0)
-
-    observed = only(PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPObservedState, ic))
-    PSY.remove_supplemental_attribute!(system, ic, observed)
-    PSY.add_supplemental_attribute!(
-        system, ic, AustralianElectricityMarkets.NEMMNSPObservedState(; initial_flow = flow_key),
-    )
-    for (direction, key) in (
-            (AustralianElectricityMarkets.MNSPDirection.FORWARD, forward_key),
-            (AustralianElectricityMarkets.MNSPDirection.REVERSE, reverse_key),
+@testset "each step's MNSP operating inputs are recomputed from the step's state (custom update path)" begin
+    previous = AEMS._FORCE_CUSTOM_STATE_UPDATES[]
+    AEMS._FORCE_CUSTOM_STATE_UPDATES[] = true
+    try
+        # The build sets a +30 MW metered flow with forward 600 and reverse 1200 MW/min. Before step 2 the
+        # flow flips to -40 MW and the forward and reverse envelope rates swap. The build's parameter array
+        # holds the build values at both steps, so reading the step-2 values back is the discriminator.
+        sys = _mnsp_limit_case(;
+            forward = (100.0, [(100.0, 10.0)]), reverse = (100.0, [(100.0, 10.0)]),
+            initial = 30.0, up = 600.0, down = 1200.0,
         )
-        bid = only(b for b in PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPBid, ic) if b.direction == direction)
-        PSY.remove_supplemental_attribute!(system, ic, bid)
+        model = _decision_model(_loss_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        container = PSI.get_optimization_container(model)
+        initial = PSI.get_parameter(container, PSI.ParameterKey(AEMS.MNSPInitialFlowParameter, PSY.AreaInterchange))
+        forward = PSI.get_parameter(container, PSI.ParameterKey(AEMS.MNSPForwardRampRateParameter, PSY.AreaInterchange))
+        reverse = PSI.get_parameter(container, PSI.ParameterKey(AEMS.MNSPReverseRampRateParameter, PSY.AreaInterchange))
+        @test collect(PSI.get_parameter_column_values(initial, "IC1")) == [30.0, 30.0]
+        @test collect(PSI.get_parameter_column_values(forward, "IC1")) == [600.0, 600.0]
+        @test collect(PSI.get_parameter_column_values(reverse, "IC1")) == [1200.0, 1200.0]
+
+        # The step-2 state, as new keyed series the build never read: step 1 keeps the build's values.
+        system = PSI.get_system(model)
+        ic = PSY.get_component(PSY.AreaInterchange, system, "IC1")
+        stamps = PSY.get_time_series_timestamps(
+            PSY.SingleTimeSeries, ic, AustralianElectricityMarkets.NEM_MNSP_SERIES.initial_flow,
+        )
+        later(name, build, step2) = begin
+            values = [i == 2 ? step2 : build for i in eachindex(stamps)]
+            PSY.add_time_series!(system, ic, PSY.SingleTimeSeries(; name, data = TimeArray(stamps, values)))
+            return only(k for k in PSY.IS.get_time_series_keys(ic) if k.name == name)
+        end
+        flow_key = later("later_initial_flow", 30.0, -40.0)
+        forward_key = later("later_forward_ramp_rate", 600.0, 1200.0)
+        reverse_key = later("later_reverse_ramp_rate", 1200.0, 600.0)
+
+        observed = only(PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPObservedState, ic))
+        PSY.remove_supplemental_attribute!(system, ic, observed)
         PSY.add_supplemental_attribute!(
-            system, ic,
-            AustralianElectricityMarkets.NEMMNSPBid(;
-                direction, offer_curves = bid.offer_curves, max_avail = bid.max_avail,
-                ramp_up = key, fixed_load = bid.fixed_load,
-            ),
+            system, ic, AustralianElectricityMarkets.NEMMNSPObservedState(; initial_flow = flow_key),
         )
-    end
+        for (direction, key) in (
+                (AustralianElectricityMarkets.MNSPDirection.FORWARD, forward_key),
+                (AustralianElectricityMarkets.MNSPDirection.REVERSE, reverse_key),
+            )
+            bid = only(b for b in PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPBid, ic) if b.direction == direction)
+            PSY.remove_supplemental_attribute!(system, ic, bid)
+            PSY.add_supplemental_attribute!(
+                system, ic,
+                AustralianElectricityMarkets.NEMMNSPBid(;
+                    direction, offer_curves = bid.offer_curves, max_avail = bid.max_avail,
+                    ramp_up = key, fixed_load = bid.fixed_load,
+                ),
+            )
+        end
 
-    PSI.set_execution_count!(model, 1)
-    _update_step_parameters!(model)
-    PSI.solve_impl!(model)
-    @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
-    # The container is a rolling window: its first column is the step being solved, so the step-2
-    # values are there and the build's values are displaced to the later columns.
-    @test first(collect(PSI.get_parameter_column_values(initial, "IC1"))) == -40.0
-    @test first(collect(PSI.get_parameter_column_values(forward, "IC1"))) == 1200.0
-    @test first(collect(PSI.get_parameter_column_values(reverse, "IC1"))) == 600.0
+        PSI.set_execution_count!(model, 1)
+        _update_step_parameters!(model)
+        PSI.solve_impl!(model)
+        @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+        # The container is a rolling window: its first column is the step being solved, so the step-2
+        # values are there and the build's values are displaced to the later columns.
+        @test first(collect(PSI.get_parameter_column_values(initial, "IC1"))) == -40.0
+        @test first(collect(PSI.get_parameter_column_values(forward, "IC1"))) == 1200.0
+        @test first(collect(PSI.get_parameter_column_values(reverse, "IC1"))) == 600.0
+    finally
+        AEMS._FORCE_CUSTOM_STATE_UPDATES[] = previous
+    end
 end
