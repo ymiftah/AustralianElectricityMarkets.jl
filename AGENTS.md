@@ -1,7 +1,7 @@
 # AustralianElectricityMarkets.jl
 
 Julia monorepo that turns AEMO **NEMWEB (MMSDM)** market data into **PowerSystems.jl** `System`s and
-solves NEM dispatch replicas of them with **PowerSimulations.jl**. It is a Julia 1.11 workspace of
+solves NEM dispatch replicas of them with **PowerSimulations.jl**. It is a Julia 1.13 workspace of
 four packages sharing the root `Manifest.toml`:
 
 | Package | Path | Responsible for |
