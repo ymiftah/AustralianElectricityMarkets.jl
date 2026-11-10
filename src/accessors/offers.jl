@@ -1,6 +1,5 @@
-# `device`'s `NEMOfferCost`, or `nothing` for a device that is not a NEM type.
+# `device`'s `NEMOfferCost`, or `nothing` for a device without NEM unit data.
 _nem_offer_cost(::Any) = nothing
-_nem_offer_cost(device::_NEMDeviceType) = get_operation_cost(device)
 
 # A stock device's offer lives in its `NEMUnitData`.
 function _nem_offer_cost(device::PSY.Component)

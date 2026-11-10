@@ -80,7 +80,7 @@ function attach_energy_data!(sys, market) #hide
         PSY.add_time_series!(sys, device, series("bid_energy_roc_up_gen", NaN)) #hide
         PSY.add_time_series!(sys, device, series("bid_energy_roc_down_gen", NaN)) #hide
         push!( #hide
-            get_energy_bids(PSY.get_operation_cost(device)), #hide
+            get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(device)), #hide
             NEMEnergyBid( #hide
                 direction = BidDirection.GEN, offer_curves = bid_key(device, "bid_energy_offer_curves_gen"), #hide
                 max_avail = bid_key(device, "bid_energy_max_avail_gen"), roc_up = bid_key(device, "bid_energy_roc_up_gen"), #hide
@@ -140,7 +140,7 @@ function attach_fcas_data!(sys, market) #hide
         ) #hide
         PSY.add_service!(sys, service, [device]) #hide
         push!( #hide
-            get_fcas_bids(PSY.get_operation_cost(device)), #hide
+            get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(device)), #hide
             NEMFCASBid( #hide
                 service = BidType.RAISE6SEC, direction = BidDirection.GEN, #hide
                 offer_curves = bid_key(device, "bid_raise6sec_offer_curves_gen"), #hide
@@ -203,13 +203,13 @@ PSY.transform_single_time_series!(sys, 2 * RESOLUTION, RESOLUTION);
 DataFrame(
     type = [
         string(nameof(T)) for T in (
-                PSY.Area, PSY.ACBus, NEMThermalGen, NEMRenewableGen, PSY.PowerLoad,
+                PSY.Area, PSY.ACBus, PSY.ThermalStandard, PSY.RenewableDispatch, PSY.PowerLoad,
                 PSY.AreaInterchange, FCASService, GenericConstraint,
             )
     ],
     count = [
         length(PSY.get_components(T, sys)) for T in (
-                PSY.Area, PSY.ACBus, NEMThermalGen, NEMRenewableGen, PSY.PowerLoad,
+                PSY.Area, PSY.ACBus, PSY.ThermalStandard, PSY.RenewableDispatch, PSY.PowerLoad,
                 PSY.AreaInterchange, FCASService, GenericConstraint,
             )
     ],
@@ -255,8 +255,8 @@ to_dollars_per_mwh(dual) = dual / (BASE_POWER * INTERVAL_H)
 
 value_by_name(df) = Dict(Symbol(r.name) => r.value for r in eachrow(df))
 psi_dispatch = merge(
-    value_by_name(read_variable(results, "ActivePowerVariable__NEMThermalGen")),
-    value_by_name(read_variable(results, "ActivePowerVariable__NEMRenewableGen")),
+    value_by_name(read_variable(results, "ActivePowerVariable__ThermalStandard")),
+    value_by_name(read_variable(results, "ActivePowerVariable__RenewableDispatch")),
 )
 psi_price = Dict(
     r.name => to_dollars_per_mwh(r.value) for r in eachrow(read_dual(results, "CopperPlateBalanceConstraint__Area"))

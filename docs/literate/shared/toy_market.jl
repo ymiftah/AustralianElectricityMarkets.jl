@@ -5,7 +5,7 @@
 
 using Dates
 import PowerSystems as PSY
-using AustralianElectricityMarkets: NEMThermalGen, NEMRenewableGen, NEMOfferCost
+using AustralianElectricityMarkets: attach_nem_unit_data!
 
 const T0 = DateTime(2025, 1, 1, 12, 0)   # the dispatch interval being cleared
 const RESOLUTION = Minute(5)
@@ -181,13 +181,12 @@ Builds the energy part of `market` as a `PowerSystems.System` at `BASE_POWER`: o
 region, a `ThermalStandard` or `RenewableDispatch` per unit with its offer as a cost curve and its dispatch
 envelope as the active power limits (the rating for a renewable unit), a `PowerLoad` per region with a
 demand time series, and the `AreaInterchange` with its flow limits. Losses, FCAS and generic constraints
-are not added. With `nem = true` the units are `NEMThermalGen` and `NEMRenewableGen` with an empty
-`NEMOfferCost` and no cost curve: the caller attaches their offers.
+are not added. With `nem = true` the units are stock `ThermalStandard` and `RenewableDispatch` with a zero cost and an empty [`NEMUnitData`](@ref) attached, and no cost curve: the caller attaches their offers.
 
 # Arguments
 
 - `market`: the toy market, or its `energy_market`.
-- `nem`: build the NEM device types, which the replay template models, in place of the stock types.
+- `nem`: attach an empty [`NEMUnitData`](@ref) to each unit, as a replay system carries.
 
 # Returns
 
@@ -213,7 +212,9 @@ function toy_system(market::Market; nem::Bool = false)
     )
     PSY.add_components!(sys, collect(values(buses)))
     for u in market.units
-        PSY.add_component!(sys, _psy_unit(u, buses[u.region]; nem))
+        unit = _psy_unit(u, buses[u.region]; nem)
+        PSY.add_component!(sys, unit)
+        nem && attach_nem_unit_data!(sys, unit)
     end
     for r in market.regions
         mw = market.demand[r]
@@ -262,17 +263,17 @@ function _psy_unit(u::Unit, bus::PSY.ACBus; nem::Bool = false)
         PSY.PiecewiseIncrementalCurve(0.0, [0.0; cumsum(quantity.(u.bids))], price.(u.bids)),
     )
     if nem && is_semi_scheduled(u)
-        return NEMRenewableGen(;
+        return PSY.RenewableDispatch(;
             name = String(u.name), available = true, bus = bus, active_power = 0.0, reactive_power = 0.0,
             rating = ceiling_mw / BASE_POWER, prime_mover_type = PSY.PrimeMovers.WT, reactive_power_limits = nothing,
-            power_factor = 1.0, operation_cost = NEMOfferCost(), base_power = BASE_POWER,
+            power_factor = 1.0, operation_cost = PSY.RenewableGenerationCost(nothing), base_power = BASE_POWER,
         )
     elseif nem
-        return NEMThermalGen(;
+        return PSY.ThermalStandard(;
             name = String(u.name), available = true, status = true, bus = bus, active_power = 0.0, reactive_power = 0.0,
             rating = u.capacity / BASE_POWER,
             active_power_limits = (min = floor_mw / BASE_POWER, max = ceiling_mw / BASE_POWER),
-            reactive_power_limits = nothing, ramp_limits = nothing, operation_cost = NEMOfferCost(),
+            reactive_power_limits = nothing, ramp_limits = nothing, operation_cost = PSY.ThermalGenerationCost(nothing),
             base_power = BASE_POWER, time_limits = nothing, must_run = false,
             prime_mover_type = PSY.PrimeMovers.GT, fuel = PSY.ThermalFuels.NATURAL_GAS,
         )

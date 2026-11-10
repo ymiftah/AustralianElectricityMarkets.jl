@@ -233,3 +233,139 @@ function attach_nem_unit_data!(sys::PSY.System, device::PSY.Component; offer::NE
     PSY.add_supplemental_attribute!(sys, device, unit)
     return unit
 end
+
+
+"""
+    NEM_DISPATCH_DEVICE_TYPES
+
+The stock device types that replay systems build for NEM dispatch units, in the order
+[`nem_dispatch_devices`](@ref) collects them. A replay unit is a device of one of these types that
+carries a [`NEMUnitData`](@ref).
+"""
+const NEM_DISPATCH_DEVICE_TYPES = (
+    PSY.ThermalStandard, PSY.HydroDispatch, PSY.RenewableDispatch, PSY.InterruptiblePowerLoad,
+    PSY.EnergyReservoirStorage,
+)
+
+# The value of a unit data field, or an `ArgumentError` naming the device when it is unset.
+function _require_unit_data(value, what::AbstractString, d)
+    isnothing(value) && throw(ArgumentError("$(PSY.get_name(d)) has no $what; build it with nem_system"))
+    return value
+end
+
+# The unit data of a device, or an `ArgumentError` when it has none.
+function _stock_unit_data(d::PSY.Component, what::AbstractString)
+    unit = _nem_unit_data(d)
+    isnothing(unit) && throw(ArgumentError("$(PSY.get_name(d)) is not a NEM device, so it has no $what"))
+    return unit
+end
+
+# The unit data of a device that is about to be written, or an `ArgumentError` when it has none.
+function _writable_unit_data(d::PSY.Component)
+    unit = _nem_unit_data(d)
+    isnothing(unit) &&
+        throw(ArgumentError("$(PSY.get_name(d)) has no NEM unit data; attach it with attach_nem_unit_data!"))
+    return unit
+end
+
+"""
+    get_registration(d) -> NEMRegistration
+
+The [`NEMRegistration`](@ref) of the device `d`, read from its attached [`NEMUnitData`](@ref). Throws an
+`ArgumentError` naming `d` when it has none.
+
+# Arguments
+- `d`: the device, which must carry a [`NEMUnitData`](@ref) with a registration.
+
+# Returns
+- The [`NEMRegistration`](@ref) of `d`.
+"""
+function get_registration(d::PSY.Component)
+    return _require_unit_data(_stock_unit_data(d, "registration").registration, "registration", d)
+end
+
+"""
+    get_telemetry(d) -> NEMTelemetry
+
+The [`NEMTelemetry`](@ref) of the device `d`, read from its attached [`NEMUnitData`](@ref). Throws an
+`ArgumentError` naming `d` when it has none.
+
+# Arguments
+- `d`: the device, which must carry a [`NEMUnitData`](@ref) with telemetry.
+
+# Returns
+- The [`NEMTelemetry`](@ref) of `d`.
+"""
+function get_telemetry(d::PSY.Component)
+    return _require_unit_data(_stock_unit_data(d, "telemetry").telemetry, "telemetry", d)
+end
+
+"""
+    get_observed_state(d) -> NEMObservedState
+
+The [`NEMObservedState`](@ref) of the device `d`, read from its attached [`NEMUnitData`](@ref). Throws an
+`ArgumentError` naming `d` when it has none.
+
+# Arguments
+- `d`: the device, which must carry a [`NEMUnitData`](@ref) with an observed state.
+
+# Returns
+- The [`NEMObservedState`](@ref) of `d`.
+"""
+function get_observed_state(d::PSY.Component)
+    return _require_unit_data(_stock_unit_data(d, "observed state").observed_state, "observed state", d)
+end
+
+"""
+    set_registration!(d, registration::Union{Nothing, NEMRegistration})
+
+Sets the registration of the device `d` in its attached [`NEMUnitData`](@ref), replacing any earlier one.
+Repeat calls overwrite. Throws an `ArgumentError` naming `d` when it has no unit data.
+
+# Arguments
+- `d`: the device to update.
+- `registration`: the [`NEMRegistration`](@ref), or `nothing` to unset it.
+
+# Returns
+- `registration`.
+"""
+function set_registration!(d::PSY.Component, registration)
+    _writable_unit_data(d).registration = registration
+    return registration
+end
+
+"""
+    set_telemetry!(d, telemetry::Union{Nothing, NEMTelemetry})
+
+Sets the telemetry of the device `d` in its attached [`NEMUnitData`](@ref), replacing any earlier one.
+Repeat calls overwrite. Throws an `ArgumentError` naming `d` when it has no unit data.
+
+# Arguments
+- `d`: the device to update.
+- `telemetry`: the [`NEMTelemetry`](@ref), or `nothing` to unset it.
+
+# Returns
+- `telemetry`.
+"""
+function set_telemetry!(d::PSY.Component, telemetry)
+    _writable_unit_data(d).telemetry = telemetry
+    return telemetry
+end
+
+"""
+    set_observed_state!(d, observed_state::Union{Nothing, NEMObservedState})
+
+Sets the observed state of the device `d` in its attached [`NEMUnitData`](@ref), replacing any earlier one.
+Repeat calls overwrite. Throws an `ArgumentError` naming `d` when it has no unit data.
+
+# Arguments
+- `d`: the device to update.
+- `observed_state`: the [`NEMObservedState`](@ref), or `nothing` to unset it.
+
+# Returns
+- `observed_state`.
+"""
+function set_observed_state!(d::PSY.Component, observed_state)
+    _writable_unit_data(d).observed_state = observed_state
+    return observed_state
+end

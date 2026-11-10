@@ -44,7 +44,6 @@ Whether `device` carries a [`NEMRegistration`](@ref), which holds its schedule t
 `Bool`.
 """
 function has_registration(device)
-    device isa _NEMDeviceType && return !isnothing(device.registration)
     unit = _nem_unit_data(device)
     return !isnothing(unit) && !isnothing(unit.registration)
 end
