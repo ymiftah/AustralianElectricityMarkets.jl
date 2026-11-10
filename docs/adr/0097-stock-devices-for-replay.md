@@ -46,8 +46,8 @@ the device types themselves bought nothing PSY and PSI did not already provide.
 is the stock zero cost the regional builder already uses. `RegionalNetworkConfiguration` and
 `NEMDEConfiguration` share one set of device builders. The internal builders take a `replay` keyword
 in place of the removed `nem_types`: the regional build records the non-scheduled and commissioned
-flags on the load's `ext`, while the replay build records them on its `NEMRegistration`, which lives
-in the device's `NEMUnitData`.
+flags on the load's `ext`, while the replay build records them on its `NEMRegistration` (the
+`schedule_type` and `commissioned` fields), which lives in the device's `NEMUnitData`.
 
 ### `NEMUnitData`
 
