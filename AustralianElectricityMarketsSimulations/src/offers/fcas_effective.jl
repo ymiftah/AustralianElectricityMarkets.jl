@@ -482,7 +482,7 @@ function _fcas_effective_values(
         state::Function = _fcas_state_function(window, device),
     )
     regulation = bid_type in FCAS_REGULATION_MARKETS
-    enabled = if direction == FCASBidDirection.BOTH && device isa PSY.Storage && regulation
+    enabled::Dict{Bool, Vector{Bool}} = if direction == FCASBidDirection.BOTH && device isa PSY.Storage && regulation
         gen, load = _fcas_both_sides_enabled_mask(window, device, bid_type; state)
         Dict(false => gen, true => load)
     else
