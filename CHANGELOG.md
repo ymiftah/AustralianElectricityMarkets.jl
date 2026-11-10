@@ -429,6 +429,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Under `ObservedState`, the per-step updates of the 13 state-dependent parameters (initial power, ramp
+  rates, fixed loading, the five FCAS parameters and the MNSP initial flow and ramp rates) read the series
+  `prepare_replay!` attaches through the stock PowerSimulations update instead of recomputing them; a
+  10-interval replay spends 0.24 s per interval in updates instead of 4.71 s, with identical results. The
+  inputs are fixed by the first `prepare_replay!` call: a later change to the observed state is not read.
+  The custom per-step computation runs for `SimulatedState` and computes each FCAS derivation once per step.
+
+- `scripts/replay_batch.jl` replays one range with `--start DATETIME --intervals N`.
+
 - Replay systems no longer carry the state-dependent `"max_active_power"`, `"fixed_load"` and
   `"fixed_load_invoked"` series. `set_effective_offers!` writes the first-solve seeds
   `"initial_mw_seed"`, `"fixed_load_seed"` and `"fixed_load_invoked_seed"` from the configured

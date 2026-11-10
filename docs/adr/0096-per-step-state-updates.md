@@ -3,7 +3,9 @@
 ## Status
 
 Accepted. Implements Task 10 of the typed-system rebuild (the ADR number 0095 is reserved for the
-typed-system decision).
+typed-system decision). Amended by [0098](0098-precomputed-observed-state-inputs.md): under
+`ObservedState` the parameters are read from the prepared series by the stock update, and the custom
+updates described here run only for `SimulatedState`.
 
 ## Context
 
