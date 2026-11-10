@@ -516,15 +516,46 @@ function set_observed_state!(d::Union{NEM_DISPATCH_DEVICE_TYPES...}, observed_st
 end
 
 
-# Stock devices carry no NEM inputs; the NEM device methods above are more specific.
-function get_registration(d::PSY.Device)
-    throw(ArgumentError("$(PSY.get_name(d)) is not a NEM device, so it has no registration"))
+# Stock devices serve their NEM inputs from the attached `NEMUnitData`; the NEM device methods above
+# are more specific.
+# The unit data of a stock device, or an `ArgumentError` when it has none.
+function _stock_unit_data(d::PSY.Component, what::AbstractString)
+    unit = _nem_unit_data(d)
+    isnothing(unit) && throw(ArgumentError("$(PSY.get_name(d)) is not a NEM device, so it has no $what"))
+    return unit
 end
 
-function get_telemetry(d::PSY.Device)
-    throw(ArgumentError("$(PSY.get_name(d)) is not a NEM device, so it has no telemetry"))
+# The unit data of a stock device that is about to be written, or an `ArgumentError` when it has none.
+function _writable_unit_data(d::PSY.Component)
+    unit = _nem_unit_data(d)
+    isnothing(unit) &&
+        throw(ArgumentError("$(PSY.get_name(d)) has no NEM unit data; attach it with attach_nem_unit_data!"))
+    return unit
 end
 
-function get_observed_state(d::PSY.Device)
-    throw(ArgumentError("$(PSY.get_name(d)) is not a NEM device, so it has no observed state"))
+function get_registration(d::PSY.Component)
+    return _require_unit_data(_stock_unit_data(d, "registration").registration, "registration", d)
+end
+
+function get_telemetry(d::PSY.Component)
+    return _require_unit_data(_stock_unit_data(d, "telemetry").telemetry, "telemetry", d)
+end
+
+function get_observed_state(d::PSY.Component)
+    return _require_unit_data(_stock_unit_data(d, "observed state").observed_state, "observed state", d)
+end
+
+function set_registration!(d::PSY.Component, registration)
+    _writable_unit_data(d).registration = registration
+    return registration
+end
+
+function set_telemetry!(d::PSY.Component, telemetry)
+    _writable_unit_data(d).telemetry = telemetry
+    return telemetry
+end
+
+function set_observed_state!(d::PSY.Component, observed_state)
+    _writable_unit_data(d).observed_state = observed_state
+    return observed_state
 end

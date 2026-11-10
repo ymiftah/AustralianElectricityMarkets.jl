@@ -157,3 +157,79 @@ end
 function Base.:(==)(a::NEMObservedState, b::NEMObservedState)
     return all(f -> _field_equal(getfield(a, f), getfield(b, f)), fieldnames(NEMObservedState))
 end
+
+
+"""
+    NEMUnitData(; offer = NEMOfferCost(), registration = nothing, telemetry = nothing,
+        observed_state = nothing)
+
+The NEM unit data of a stock device in a replay system, attached to it as a supplemental attribute: the
+unit's offer, registration, telemetry and observed state. A `nothing` field is a value AEMO does not
+publish for the unit.
+
+# Fields
+- `offer`: the [`NEMOfferCost`](@ref) of the unit.
+- `registration`: the [`NEMRegistration`](@ref), or `nothing`.
+- `telemetry`: the [`NEMTelemetry`](@ref), or `nothing`.
+- `observed_state`: the [`NEMObservedState`](@ref), or `nothing`.
+- `internal`: `InfrastructureSystems` bookkeeping.
+"""
+mutable struct NEMUnitData <: PSY.SupplementalAttribute
+    offer::NEMOfferCost
+    registration::Union{Nothing, NEMRegistration}
+    telemetry::Union{Nothing, NEMTelemetry}
+    observed_state::Union{Nothing, NEMObservedState}
+    internal::IS.InfrastructureSystemsInternal
+end
+
+function NEMUnitData(;
+        offer::NEMOfferCost = NEMOfferCost(), registration = nothing, telemetry = nothing,
+        observed_state = nothing,
+        internal::IS.InfrastructureSystemsInternal = IS.InfrastructureSystemsInternal(),
+    )
+    return NEMUnitData(offer, registration, telemetry, observed_state, internal)
+end
+
+IS.get_internal(unit::NEMUnitData) = unit.internal
+
+# The unit data attached to `device`, or `nothing`; attachment allows at most one.
+_nem_unit_data(::Any) = nothing
+
+function _nem_unit_data(device::PSY.Component)
+    attached = collect(PSY.get_supplemental_attributes(NEMUnitData, device))
+    return isempty(attached) ? nothing : only(attached)
+end
+
+"""
+    has_nem_unit_data(device) -> Bool
+
+Whether `device` carries a [`NEMUnitData`](@ref). `false` for anything that is not a component.
+
+# Arguments
+- `device`: any component.
+
+# Returns
+`Bool`.
+"""
+has_nem_unit_data(device) = !isnothing(_nem_unit_data(device))
+
+"""
+    attach_nem_unit_data!(sys, device; offer = NEMOfferCost()) -> NEMUnitData
+
+Attaches a fresh [`NEMUnitData`](@ref) with `offer` to `device` in `sys`, and returns it. Throws an
+`ArgumentError` naming `device` when it already carries one, so repeat calls do not replace data.
+
+# Arguments
+- `sys`: the system that holds `device`.
+- `device`: the component to attach the unit data to.
+- `offer`: the [`NEMOfferCost`](@ref) of the unit.
+
+# Returns
+The attached [`NEMUnitData`](@ref).
+"""
+function attach_nem_unit_data!(sys::PSY.System, device::PSY.Component; offer::NEMOfferCost = NEMOfferCost())
+    has_nem_unit_data(device) && throw(ArgumentError("$(PSY.get_name(device)) already has NEM unit data"))
+    unit = NEMUnitData(; offer)
+    PSY.add_supplemental_attribute!(sys, device, unit)
+    return unit
+end
