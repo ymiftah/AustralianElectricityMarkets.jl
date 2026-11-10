@@ -163,7 +163,7 @@ function _add_fcas_service!(sys, region, bid_type, candidates, added, excluded)
     left_out = setdiff(get_name.(bidders), get_name.(devices))
     isempty(left_out) || (excluded[name] = sort(left_out))
     isempty(devices) && return
-    add_service!(sys, FCASService(; name = name, region = region, bid_type = bid_type), devices)
+    _add_nem_service!(sys, FCASService(; name = name, region = region, bid_type = bid_type), devices)
     push!(added, name)
     return
 end

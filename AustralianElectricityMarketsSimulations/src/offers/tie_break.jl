@@ -174,6 +174,6 @@ function _set_tie_break_scales!(sys::PSY.System)
     existing = PSY.get_component(EnergyTieBreak, sys, TIE_BREAK_SERVICE_NAME)
     isnothing(existing) || PSY.remove_component!(sys, existing)
     devices = [d for d in PSY.get_available_components(PSY.StaticInjection, sys) if _has_energy_offer(d)]
-    isempty(devices) || PSY.add_service!(sys, EnergyTieBreak(; name = TIE_BREAK_SERVICE_NAME), devices)
+    isempty(devices) || AustralianElectricityMarkets._add_nem_service!(sys, EnergyTieBreak(; name = TIE_BREAK_SERVICE_NAME), devices)
     return
 end

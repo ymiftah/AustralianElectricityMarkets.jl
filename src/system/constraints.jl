@@ -495,7 +495,7 @@ function _add_nem_constraints!(sys, db, date_range, invoked_all, fixed; interven
         ),
     )
     for entry in staged
-        add_service!(sys, entry.gc, entry.contributing_devices)
+        _add_nem_service!(sys, entry.gc, entry.contributing_devices)
         add_time_series!(
             sys, entry.gc,
             single_series(NEM_CONSTRAINT_SERIES.rhs, start_date, entry.rhs_series, resolution),

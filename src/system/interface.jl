@@ -1,3 +1,17 @@
+# Adds a NEM service whose type has no PowerSystems validation entry, without the per-component
+# "does not exist in validation configuration" warning; runchecks is restored afterwards.
+function _add_nem_service!(sys::PSY.System, service::PSY.Service, devices)
+    runchecks = PSY.get_runchecks(sys)
+    PSY.set_runchecks!(sys, false)
+    try
+        PSY.add_service!(sys, service, devices)
+    finally
+        PSY.set_runchecks!(sys, runchecks)
+    end
+    return
+end
+
+
 function table_requirements(::NetworkConfiguration)
     error("Not implemented")
 end
