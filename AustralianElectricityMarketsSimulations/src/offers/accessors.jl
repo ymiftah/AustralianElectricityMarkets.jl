@@ -123,7 +123,7 @@ function get_energy_availability(component, initial_time, horizon::Integer)
     name = energy_availability_series_name(component, OfferSide.GEN)
     has_time_series(component, SingleTimeSeries, name) || return nothing
     telemetry = AustralianElectricityMarkets.get_telemetry(component)
-    max_avail = get_time_series_values(SingleTimeSeries, component, name; start_time = initial_time, len = horizon)
+    max_avail = get_time_series_values(SingleTimeSeries, component, name; start_time = initial_time, len = horizon)::Vector{Float64}
     ramp_up = _raw_window(component, telemetry.ramp_up_limit, initial_time, horizon)
     uigf = isnothing(telemetry.uigf) ? nothing : _unit_values(component, telemetry.uigf, initial_time, horizon)
     pinned = AustralianElectricityMarkets.is_non_scheduled_load(component)
@@ -135,7 +135,7 @@ end
 # `key`'s raw values on `component` over `horizon` steps from `initial_time`; a static `key` is repeated.
 function _raw_window(component, key, initial_time, horizon::Integer)
     key isa IS.TimeSeriesKey || return fill(Float64(key), horizon)
-    return Float64.(IS.get_time_series_values(component, key; start_time = initial_time, len = horizon))
+    return Float64.(IS.get_time_series_values(component, key; start_time = initial_time, len = horizon))::Vector{Float64}
 end
 
 
@@ -166,7 +166,7 @@ end
 "`component`'s `name` `SingleTimeSeries` over `horizon` steps from `initial_time`, in display units, or `nothing`."
 function _read_dispatch_limit_series(component, name::AbstractString, initial_time, horizon::Integer)
     has_time_series(component, SingleTimeSeries, name) || return nothing
-    values = get_time_series_values(SingleTimeSeries, component, name; start_time = initial_time, len = horizon)
+    values = get_time_series_values(SingleTimeSeries, component, name; start_time = initial_time, len = horizon)::Vector{Float64}
     return values .* _fcas_units_multiplier(component)
 end
 
@@ -198,7 +198,7 @@ carries no such series; a `NaN` entry marks an interval with no input.
 function _read_optional_fcas_scaling_series(component, name::AbstractString, initial_time, horizon::Integer)
     has_time_series(component, SingleTimeSeries, name) || return nothing
     multiplier = _fcas_units_multiplier(component)
-    return get_time_series_values(SingleTimeSeries, component, name; start_time = initial_time, len = horizon) .* multiplier
+    return (get_time_series_values(SingleTimeSeries, component, name; start_time = initial_time, len = horizon) .* multiplier)::Vector{Float64}
 end
 
 

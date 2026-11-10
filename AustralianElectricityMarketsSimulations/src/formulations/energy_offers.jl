@@ -119,7 +119,7 @@ function _energy_band_count(devices)
     for d in devices, side in (OfferSide.GEN, OfferSide.LOAD)
         name = energy_offer_series_name(side)
         PSY.has_time_series(d, PSY.SingleTimeSeries, name) || continue
-        n = max(n, maximum(c -> length(PSY.get_y_coords(c)), PSY.get_time_series_values(PSY.SingleTimeSeries, d, name)))
+        n = max(n, maximum(c -> length(PSY.get_y_coords(c)), (PSY.get_time_series_values(PSY.SingleTimeSeries, d, name)::Vector{IS.PiecewiseStepData})))
     end
     return n
 end

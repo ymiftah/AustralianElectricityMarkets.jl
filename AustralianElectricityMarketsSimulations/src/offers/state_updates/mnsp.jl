@@ -3,7 +3,7 @@
 # The metered flow of `device`'s MNSP link at `stamp`, MW, from the observed state the link carries.
 function _mnsp_initial_flow(::ObservedState, device::PSY.AreaInterchange, stamp::DateTime)
     observed = only((PSY.get_supplemental_attributes(NEMMNSPObservedState, device)::Vector{NEMMNSPObservedState}))
-    return Float64(_state_value(device, observed, :initial_flow, stamp))
+    return Float64(_state_value(device, observed, Val(:initial_flow), stamp))
 end
 
 function _mnsp_initial_flow(::SimulatedState, device::PSY.AreaInterchange, stamp::DateTime)

@@ -191,7 +191,7 @@ The smallest and largest zero-referenced vertex loss of `model` over every value
 `"loss_demand_coefficient"` series, widened to include `0.0`, per-unit of the system base.
 """
 function _loss_range(device::PSY.AreaInterchange, model::InterconnectorLossModel)
-    coefficients = PSY.get_time_series_values(PSY.SingleTimeSeries, device, NEM_SERIES.loss_demand_coefficient)
+    coefficients::Vector{Float64} = PSY.get_time_series_values(PSY.SingleTimeSeries, device, NEM_SERIES.loss_demand_coefficient)
     at_zero = loss_curve_vertex_values(model, Dict{String, Float64}())
     vertex = [v + k * bp for k in coefficients for (v, bp) in zip(at_zero, model.breakpoints)]
     return min(0.0, minimum(vertex)), max(0.0, maximum(vertex))

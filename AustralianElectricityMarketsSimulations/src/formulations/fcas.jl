@@ -617,7 +617,7 @@ function _fcas_band_labels(offers, svc::FCASService)
     n = 1
     for (device, decremental) in offers
         name = fcas_offer_series_name(svc, decremental)
-        curves = PSY.get_time_series_values(PSY.SingleTimeSeries, device, name)
+        curves::Vector{IS.PiecewiseStepData} = PSY.get_time_series_values(PSY.SingleTimeSeries, device, name)
         n = max(n, maximum(c -> length(PSY.get_y_coords(c)), curves))
     end
     return string.(1:n)

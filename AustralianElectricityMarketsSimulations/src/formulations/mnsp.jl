@@ -8,7 +8,8 @@ const _MNSP_DIRECTIONS = ("forward", "reverse")
 
 # The values of the time series behind `key` on `device`, in order.
 function _series_values(device, key::IS.TimeSeriesKey)
-    return collect(values(PSY.get_time_series_array(device, IS.get_time_series(device, key))))
+    ts::PSY.SingleTimeSeries = IS.get_time_series(device, key)
+    return collect(values(PSY.get_time_series_array(device, ts)))
 end
 
 

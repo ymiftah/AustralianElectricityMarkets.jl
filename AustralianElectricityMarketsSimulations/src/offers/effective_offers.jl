@@ -217,7 +217,7 @@ _bidding_devices(sys::PSY.System) = Iterators.flatten(
 
 # The timestamps, resolution and values of a bid field's time series on `device`.
 function _bid_series(device, key::IS.TimeSeriesKey, ::Symbol)
-    ts = IS.get_time_series(device, key)
+    ts::PSY.SingleTimeSeries = IS.get_time_series(device, key)
     array = PSY.get_time_series_array(device, ts)
     return (;
         timestamps = PSY.TimeSeries.timestamp(array), resolution = IS.get_resolution(ts),

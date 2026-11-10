@@ -82,7 +82,7 @@ observed state, when the observed dispatch mode at an observed stamp is not fini
 """
 function unit_state(::ObservedState, device, t::DateTime)
     observed = AustralianElectricityMarkets.get_observed_state(device)
-    dispatch_mode = _state_value(device, observed, :dispatch_mode, t)
+    dispatch_mode = _state_value(device, observed, Val(:dispatch_mode), t)
     if !isfinite(dispatch_mode)
         _is_unobserved_stamp(device, t) && return NEMUnitState(0.0, 0)
         throw(
@@ -92,7 +92,7 @@ function unit_state(::ObservedState, device, t::DateTime)
             ),
         )
     end
-    initial_mw = _state_value(device, observed, :initial_mw, t)
+    initial_mw = _state_value(device, observed, Val(:initial_mw), t)
     return NEMUnitState(Float64(initial_mw), Int(dispatch_mode))
 end
 
@@ -114,7 +114,9 @@ const _FIXED_LOAD_SEED_SERIES = "fixed_load_seed"
 const _FIXED_LOAD_INVOKED_SEED_SERIES = "fixed_load_invoked_seed"
 
 # The value of `field` at `t`: a key is read over one step, a static value is returned as stored.
-function _state_value(device, observed, field::Symbol, t::DateTime)
+_state_value(device, observed, field::Symbol, t::DateTime) = _state_value(device, observed, Val(field), t)
+
+function _state_value(device, observed, field::Val{F}, t::DateTime) where {F}
     value = AustralianElectricityMarkets.bid_value(device, observed, field, t, 1)
     return value isa AbstractVector ? only(value) : value
 end

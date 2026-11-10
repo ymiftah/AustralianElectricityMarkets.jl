@@ -43,7 +43,7 @@ A `Dict` from constraint name to `:never_invoked`; empty when every constraint i
 function never_invoked_constraints(sys::PSY.System, steps)
     reasons = Dict{String, Symbol}()
     for gc in PSY.get_components(GenericConstraint, sys)
-        invoked = IS.get_time_series_values(
+        invoked::Vector{Float64} = IS.get_time_series_values(
             gc, _constraint_key(gc, :invoked, NEM_CONSTRAINT_SERIES.invoked);
             start_time = first(steps), len = length(steps),
         )

@@ -94,7 +94,7 @@ function _area_loss_demand(sys::PSY.System)
                 ),
             )
             total = get!(() -> zeros(Float64, length(stamps)), demand, PSY.get_name(PSY.get_area(PSY.get_bus(load))))
-            total .+= PSY.get_time_series_values(PSY.SingleTimeSeries, load, "loss_demand")
+            total .+= (PSY.get_time_series_values(PSY.SingleTimeSeries, load, "loss_demand")::Vector{Float64})
         end
     end
     return stamps, resolution, demand

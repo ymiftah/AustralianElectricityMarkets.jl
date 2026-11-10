@@ -235,7 +235,7 @@ A `Bool`.
 get_invoked(value::GenericConstraint, t::DateTime) = _constraint_value(value, value.invoked, t, Bool)
 
 function _constraint_value(value::GenericConstraint, field::IS.TimeSeriesKey, t::DateTime, ::Type{T}) where {T}
-    raw = IS.get_time_series_values(value, field; start_time = t, len = 1)
+    raw = IS.get_time_series_values(value, field; start_time = t, len = 1)::Vector{Float64}
     return T == Bool ? !iszero(only(raw)) : Float64(only(raw))
 end
 

@@ -89,7 +89,7 @@ end
 
 # The value of `device`'s series `key` at `stamp`; a static value is returned as stored.
 function _key_value(device, key::IS.TimeSeriesKey, stamp::DateTime)
-    return Float64(only(IS.get_time_series_values(device, key; start_time = stamp, len = 1)))
+    return Float64(only((IS.get_time_series_values(device, key; start_time = stamp, len = 1)::Vector{Float64})))
 end
 
 function _key_value(device, key::Real, stamp::DateTime)

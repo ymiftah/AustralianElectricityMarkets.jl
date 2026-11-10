@@ -374,10 +374,11 @@ A `Vector{Float64}`.
 function _invoked_mask(container::PSI.OptimizationContainer, gc::GenericConstraint)
     start_time = PSI.get_initial_time(container)
     key = _constraint_key(gc, :invoked, NEM_CONSTRAINT_SERIES.invoked)
-    return IS.get_time_series_values(
+    mask::Vector{Float64} = IS.get_time_series_values(
         gc, key; start_time = start_time, len = length(PSI.get_time_steps(container)),
         ignore_scaling_factors = true,
     )
+    return mask
 end
 
 

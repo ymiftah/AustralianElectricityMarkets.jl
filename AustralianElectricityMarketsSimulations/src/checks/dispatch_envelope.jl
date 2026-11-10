@@ -33,7 +33,7 @@ function _check_energy_limit_series(sys, model::PSI.DeviceModel, initial_time, n
             values = PSY.get_time_series_values(PSY.SingleTimeSeries, d, key; start_time = initial_time, len = n_intervals, ignore_scaling_factors = true)
             _require_valid_input(name, values, key)
         end
-        isnothing(uigf) || _require_valid_input(name, IS.get_time_series_values(d, uigf; start_time = initial_time, len = n_intervals), "UIGF")
+        isnothing(uigf) || _require_valid_input(name, (IS.get_time_series_values(d, uigf; start_time = initial_time, len = n_intervals)::Vector{Float64}), "UIGF")
     end
     return
 end

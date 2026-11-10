@@ -1,7 +1,7 @@
 # Per-step updates of the energy parameters: the ramp rates and the fixed loading.
 
 # The bid ramp rate of `side` at `stamp`, MW/min; `NaN` without a bid or a published rate.
-function _bid_ramp_rate_at(device, side::OfferSide, field::Symbol, stamp::DateTime)
+function _bid_ramp_rate_at(device, side::OfferSide, field::Val{F}, stamp::DateTime) where {F}
     cost = _nem_offer_cost(device)
     isnothing(cost) && return NaN
     bid = _energy_bid(cost, side)
@@ -16,20 +16,20 @@ end
 function _ramp_rate_at(device, up::Bool, stamp::DateTime, resolution, base::Real)
     AustralianElectricityMarkets.is_non_scheduled_load(device) && return 0.0
     telemetry = _unit_telemetry(device)
-    telemetry_value = _state_value(device, telemetry, up ? :ramp_up_limit : :ramp_down_limit, stamp)
+    telemetry_value = _state_value(device, telemetry, up ? Val(:ramp_up_limit) : Val(:ramp_down_limit), stamp)
     telemetry_rate = isnothing(telemetry_value) ? NaN : Float64(telemetry_value)
     rate = if device isa PSY.Storage
         minutes = Dates.value(Millisecond(resolution)) / 60000
         up_rate, down_rate = composite_ramp_rates(
-            _bid_ramp_rate_at(device, OfferSide.GEN, :roc_up, stamp),
-            _bid_ramp_rate_at(device, OfferSide.GEN, :roc_down, stamp),
-            _bid_ramp_rate_at(device, OfferSide.LOAD, :roc_up, stamp),
-            _bid_ramp_rate_at(device, OfferSide.LOAD, :roc_down, stamp),
+            _bid_ramp_rate_at(device, OfferSide.GEN, Val(:roc_up), stamp),
+            _bid_ramp_rate_at(device, OfferSide.GEN, Val(:roc_down), stamp),
+            _bid_ramp_rate_at(device, OfferSide.LOAD, Val(:roc_up), stamp),
+            _bid_ramp_rate_at(device, OfferSide.LOAD, Val(:roc_down), stamp),
             minutes, unit_state(_state_source(), device, stamp),
         )
         up ? up_rate : down_rate
     else
-        _bid_ramp_rate_at(device, first(energy_offer_sides(device)), up ? :roc_up : :roc_down, stamp)
+        _bid_ramp_rate_at(device, first(energy_offer_sides(device)), up ? Val(:roc_up) : Val(:roc_down), stamp)
     end
     limit = effective_ramp_limit(rate, telemetry_rate)
     return isfinite(limit) ? limit / 60 / base : 0.0
@@ -101,7 +101,7 @@ function _fixed_load_mw(device, side::OfferSide, stamp::DateTime)
     cost = _nem_offer_cost(device)
     bid = isnothing(cost) ? nothing : _energy_bid(cost, side)
     isnothing(bid) && return NaN
-    value = _state_value(device, bid, :fixed_load, stamp)
+    value = _state_value(device, bid, Val(:fixed_load), stamp)
     return isnothing(value) ? NaN : Float64(value)
 end
 
