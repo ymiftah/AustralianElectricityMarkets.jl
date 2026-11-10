@@ -28,32 +28,32 @@ end
 # Methods by field name, so each field's read is typed; the `Symbol` method above forwards here.
 function bid_value(component, bid, ::Val{F}, start_time, len::Integer) where {F}
     value = getproperty(bid, F)
-    value isa IS.TimeSeriesKey || return value
+    value isa IS.StaticTimeSeriesKey || return value
     return _bid_window_values(Float64, component, value, start_time, len)
 end
 
 function bid_value(component, bid, ::Val{:offer_curves}, start_time, len::Integer)
     value = bid.offer_curves
-    value isa IS.TimeSeriesKey || return value
+    value isa IS.StaticTimeSeriesKey || return value
     return _bid_window_values(PiecewiseStepData, component, value, start_time, len)
 end
 
 function bid_value(component, bid, ::Val{:normal_status}, start_time, len::Integer)
     value = bid.normal_status
-    value isa IS.TimeSeriesKey || return value
+    value isa IS.StaticTimeSeriesKey || return value
     return _bid_window_values(Float64, component, value, start_time, len) .!= 0
 end
 
 function bid_value(component, bid, ::Val{:fast_start_profile}, start_time, len::Integer)
     value = bid.fast_start_profile
-    value isa IS.TimeSeriesKey || return value
+    value isa IS.StaticTimeSeriesKey || return value
     raw = _bid_window_values(NTuple{4, Float64}, component, value, start_time, len)
     return FastStartProfile[FastStartProfile(t) for t in raw]
 end
 
 function bid_value(component, bid, ::Val{:trapezium}, start_time, len::Integer)
     value = bid.trapezium
-    value isa IS.TimeSeriesKey || return value
+    value isa IS.StaticTimeSeriesKey || return value
     raw = _bid_window_values(NTuple{4, Float64}, component, value, start_time, len)
     return FCASTrapeziumPoints[FCASTrapeziumPoints(t) for t in raw]
 end

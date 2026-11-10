@@ -93,7 +93,7 @@ function _has_nem_dispatch_limits(device)
     observed = _unit_observed(device)
     telemetry = _unit_telemetry(device)
     (isnothing(observed) || isnothing(telemetry)) && return false
-    observed.initial_mw isa IS.TimeSeriesKey || return false
+    observed.initial_mw isa IS.StaticTimeSeriesKey || return false
     PSY.has_time_series(
         device,
         PSY.SingleTimeSeries,
@@ -106,12 +106,12 @@ function _has_nem_dispatch_limits(device)
     for (param, field) in _DERIVED_INPUT_FIELDS
         haskey(names, param) || continue
         key = getfield(inputs, field)
-        key isa IS.TimeSeriesKey || return false
+        key isa IS.StaticTimeSeriesKey || return false
         _require_key_name(device, key, names[param])
     end
     uigf_required = haskey(names, EnergyUIGFTimeSeriesParameter) && is_semi_scheduled(device)
     if uigf_required
-        telemetry.uigf isa IS.TimeSeriesKey || return false
+        telemetry.uigf isa IS.StaticTimeSeriesKey || return false
         _require_key_name(device, telemetry.uigf, NEM_TELEMETRY_SERIES.uigf)
     end
     required = (name for (param, name) in names if param !== EnergyUIGFTimeSeriesParameter)

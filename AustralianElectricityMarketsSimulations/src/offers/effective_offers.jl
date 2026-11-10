@@ -81,7 +81,7 @@ function _set_state_seeds!(sys::PSY.System)
     PSY.with_units_base(sys, "SYSTEM_BASE") do
         for device in AustralianElectricityMarkets.nem_dispatch_devices(sys)
             observed = AustralianElectricityMarkets.get_observed_state(device)
-            observed.initial_mw isa IS.TimeSeriesKey || continue
+            observed.initial_mw isa IS.StaticTimeSeriesKey || continue
             name = PSY.get_name(observed.initial_mw)
             stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name)
             resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, name))
@@ -144,7 +144,7 @@ function _dispatch_inputs(device)
         energy_offer_decremental = _derived_series_key(device, energy_offer_series_name(OfferSide.LOAD)),
         energy_availability = _derived_series_key(device, energy_availability_series_name(OfferSide.GEN)),
         energy_availability_decremental = _derived_series_key(device, energy_availability_series_name(OfferSide.LOAD)),
-        uigf = uigf isa IS.TimeSeriesKey ? uigf : nothing,
+        uigf = uigf isa IS.StaticTimeSeriesKey ? uigf : nothing,
         ramp_up = _derived_series_key(device, NEM_SERIES.ramp_up_rate),
         ramp_down = _derived_series_key(device, NEM_SERIES.ramp_down_rate),
         fcas = _fcas_inputs(device),
@@ -352,7 +352,7 @@ end
 
 # The values of a telemetry key over the grid of `like`: a static value is repeated.
 function _grid_values(device, key, like)
-    key isa IS.TimeSeriesKey || return fill(Float64(key), length(like.values))
+    key isa IS.StaticTimeSeriesKey || return fill(Float64(key), length(like.values))
     return _bid_series(device, key, :availability).values
 end
 
@@ -360,7 +360,7 @@ end
 # The values of `key` on the timestamps of `like`: a static value is repeated, and a stamp the
 # series does not cover is `NaN`, so a bid on another window limits nothing.
 function _aligned_values(device, key, like)
-    key isa IS.TimeSeriesKey || return fill(Float64(key), length(like.values))
+    key isa IS.StaticTimeSeriesKey || return fill(Float64(key), length(like.values))
     series = _bid_series(device, key, :availability)
     values = fill(NaN, length(like.values))
     index = Dict(t => i for (i, t) in enumerate(like.timestamps))

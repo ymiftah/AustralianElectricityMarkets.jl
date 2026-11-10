@@ -56,7 +56,7 @@ function _check_state_series_alignment(device)
     observed = AustralianElectricityMarkets.get_observed_state(device)
     step_ms = Dates.value(convert(Millisecond, DISPATCH_INTERVAL))
     for key in (observed.initial_mw, observed.dispatch_mode)
-        key isa IS.TimeSeriesKey || continue
+        key isa IS.StaticTimeSeriesKey || continue
         name = PSY.get_name(key)
         series = PSY.get_time_series(PSY.SingleTimeSeries, device, name)
         resolution = Dates.canonicalize(Dates.CompoundPeriod(IS.get_resolution(series)))

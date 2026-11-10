@@ -145,9 +145,9 @@ when `service` is not an FCAS `BidType`.
 struct NEMFCASInputs <: PSY.DeviceParameter
     service::AustralianElectricityMarkets.BidType
     side::AustralianElectricityMarkets.OfferSide
-    offer::Union{Nothing, IS.TimeSeriesKey}
-    trapezium::Union{Nothing, IS.TimeSeriesKey}
-    agc_ramp::Union{Nothing, IS.TimeSeriesKey}
+    offer::Union{Nothing, IS.StaticTimeSeriesKey}
+    trapezium::Union{Nothing, IS.StaticTimeSeriesKey}
+    agc_ramp::Union{Nothing, IS.StaticTimeSeriesKey}
 end
 
 function NEMFCASInputs(; service, side, offer = nothing, trapezium = nothing, agc_ramp = nothing)
@@ -180,13 +180,13 @@ is a key of a series attached to the device, or `nothing` where the input is abs
 - `internal`: `InfrastructureSystems` bookkeeping.
 """
 struct NEMDispatchInputs <: PSY.SupplementalAttribute
-    energy_offer::Union{Nothing, IS.TimeSeriesKey}
-    energy_offer_decremental::Union{Nothing, IS.TimeSeriesKey}
-    energy_availability::Union{Nothing, IS.TimeSeriesKey}
-    energy_availability_decremental::Union{Nothing, IS.TimeSeriesKey}
-    uigf::Union{Nothing, IS.TimeSeriesKey}
-    ramp_up::Union{Nothing, IS.TimeSeriesKey}
-    ramp_down::Union{Nothing, IS.TimeSeriesKey}
+    energy_offer::Union{Nothing, IS.StaticTimeSeriesKey}
+    energy_offer_decremental::Union{Nothing, IS.StaticTimeSeriesKey}
+    energy_availability::Union{Nothing, IS.StaticTimeSeriesKey}
+    energy_availability_decremental::Union{Nothing, IS.StaticTimeSeriesKey}
+    uigf::Union{Nothing, IS.StaticTimeSeriesKey}
+    ramp_up::Union{Nothing, IS.StaticTimeSeriesKey}
+    ramp_down::Union{Nothing, IS.StaticTimeSeriesKey}
     fcas::Vector{NEMFCASInputs}
     internal::IS.InfrastructureSystemsInternal
 end

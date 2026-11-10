@@ -148,8 +148,8 @@ mutable struct GenericConstraint <: PSY.Service
     name::String
     available::Bool
     sense::ConstraintSense
-    rhs::Union{IS.TimeSeriesKey, Float64}
-    invoked::Union{IS.TimeSeriesKey, Bool}
+    rhs::Union{IS.StaticTimeSeriesKey, Float64}
+    invoked::Union{IS.StaticTimeSeriesKey, Bool}
     constraint_weight::Float64
     description::String
     gencon_id::String
@@ -168,8 +168,8 @@ function GenericConstraint(;
         name::AbstractString,
         available::Bool = true,
         sense::ConstraintSense,
-        rhs::Union{IS.TimeSeriesKey, Real},
-        invoked::Union{IS.TimeSeriesKey, Bool} = true,
+        rhs::Union{IS.StaticTimeSeriesKey, Real},
+        invoked::Union{IS.StaticTimeSeriesKey, Bool} = true,
         constraint_weight::Float64 = 1.0,
         description::AbstractString = "",
         gencon_id = missing,

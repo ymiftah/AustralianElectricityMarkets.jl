@@ -61,7 +61,7 @@ The `(from_to, to_from)` series keys of `device`'s [`NEMInterconnectorLimits`](@
 function _flow_limit_keys(device::PSY.AreaInterchange)
     limits = _interconnector_limits(device)
     name = PSY.get_name(device)
-    (!isnothing(limits) && limits.from_to_limit isa IS.TimeSeriesKey && limits.to_from_limit isa IS.TimeSeriesKey) ||
+    (!isnothing(limits) && limits.from_to_limit isa IS.StaticTimeSeriesKey && limits.to_from_limit isa IS.StaticTimeSeriesKey) ||
         throw(ArgumentError("AreaInterchange \"$name\" has no time-series flow limits in both directions; it requires both keys in its NEMInterconnectorLimits."))
     _require_key_name(device, limits.from_to_limit, NEM_INTERCONNECTOR_SERIES.from_to_limit)
     _require_key_name(device, limits.to_from_limit, NEM_INTERCONNECTOR_SERIES.to_from_limit)

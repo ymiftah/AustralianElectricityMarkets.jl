@@ -19,7 +19,7 @@ function _require_mnsp_fixed_loads(device::PSY.AreaInterchange)
     for dir in _MNSP_DIRECTIONS
         bid = _mnsp_bid(device, dir)
         (isnothing(bid) || isnothing(bid.fixed_load)) && continue
-        bid.fixed_load isa IS.TimeSeriesKey &&
+        bid.fixed_load isa IS.StaticTimeSeriesKey &&
             _require_key_name(device, bid.fixed_load, getproperty(NEM_MNSP_SERIES, Symbol(dir, "_fixed_load")))
     end
     for dir in _MNSP_DIRECTIONS, kind in (:value, :invoked)
@@ -64,7 +64,7 @@ function _mnsp_key_present(device::PSY.AreaInterchange, direction::AbstractStrin
     bid = _mnsp_bid(device, direction)
     isnothing(bid) && return false
     key = getproperty(bid, field)
-    key isa IS.TimeSeriesKey || return false
+    key isa IS.StaticTimeSeriesKey || return false
     _require_key_name(device, key, expected)
     return true
 end
@@ -81,7 +81,7 @@ function _mnsp_offer_series_present(device::PSY.AreaInterchange)
             for dir in _MNSP_DIRECTIONS, (field, suffix) in _MNSP_BID_KEYS
     ]
     observed = PSY.get_supplemental_attributes(NEMMNSPObservedState, device)::Vector{NEMMNSPObservedState}
-    initial = !isempty(observed) && only(observed).initial_flow isa IS.TimeSeriesKey
+    initial = !isempty(observed) && only(observed).initial_flow isa IS.StaticTimeSeriesKey
     initial && _require_key_name(device, only(observed).initial_flow, NEM_MNSP_SERIES.initial_flow)
     return vec(bids), initial
 end
@@ -107,7 +107,7 @@ Whether `device` carries a time-series flow limit in either direction, from its 
 function _has_flow_limit_series(device::PSY.AreaInterchange)
     limits = _interconnector_limits(device)
     isnothing(limits) && return false
-    return limits.from_to_limit isa IS.TimeSeriesKey || limits.to_from_limit isa IS.TimeSeriesKey
+    return limits.from_to_limit isa IS.StaticTimeSeriesKey || limits.to_from_limit isa IS.StaticTimeSeriesKey
 end
 
 

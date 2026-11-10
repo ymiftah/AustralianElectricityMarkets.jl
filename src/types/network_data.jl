@@ -54,8 +54,8 @@ value or a key of the time series that holds it on the owning `AreaInterchange`.
 - `internal`: `InfrastructureSystems` bookkeeping.
 """
 struct NEMInterconnectorLimits <: PSY.SupplementalAttribute
-    from_to_limit::Union{IS.TimeSeriesKey, Float64}
-    to_from_limit::Union{IS.TimeSeriesKey, Float64}
+    from_to_limit::Union{IS.StaticTimeSeriesKey, Float64}
+    to_from_limit::Union{IS.StaticTimeSeriesKey, Float64}
     internal::IS.InfrastructureSystemsInternal
 end
 
@@ -125,10 +125,10 @@ value or a key of the time series that holds it on that interchange.
 """
 struct NEMMNSPBid <: PSY.SupplementalAttribute
     direction::MNSPDirection
-    offer_curves::Union{IS.TimeSeriesKey, PiecewiseStepData}
-    max_avail::Union{IS.TimeSeriesKey, Float64}
-    ramp_up::Union{IS.TimeSeriesKey, Float64}
-    fixed_load::Union{Nothing, IS.TimeSeriesKey, Float64}
+    offer_curves::Union{IS.StaticTimeSeriesKey, PiecewiseStepData}
+    max_avail::Union{IS.StaticTimeSeriesKey, Float64}
+    ramp_up::Union{IS.StaticTimeSeriesKey, Float64}
+    fixed_load::Union{Nothing, IS.StaticTimeSeriesKey, Float64}
     internal::IS.InfrastructureSystemsInternal
 end
 
@@ -154,7 +154,7 @@ The MNSP's published flow from `DISPATCHINTERCONNECTORRES`, held on its `AreaInt
 - `internal`: `InfrastructureSystems` bookkeeping.
 """
 struct NEMMNSPObservedState <: PSY.SupplementalAttribute
-    initial_flow::Union{IS.TimeSeriesKey, Float64}
+    initial_flow::Union{IS.StaticTimeSeriesKey, Float64}
     internal::IS.InfrastructureSystemsInternal
 end
 

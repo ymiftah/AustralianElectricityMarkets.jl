@@ -10,7 +10,7 @@ PSI.get_default_time_series_names(::Type{GenericConstraint}, ::Type{LinearFactor
 # The series key `field` of `gc`, which must be keyed and named `expected`.
 function _constraint_key(gc::GenericConstraint, field::Symbol, expected::AbstractString)
     key = getproperty(gc, field)
-    key isa IS.TimeSeriesKey || throw(
+    key isa IS.StaticTimeSeriesKey || throw(
         ArgumentError("GenericConstraint \"$(PSY.get_name(gc))\" has a static $field; the NEM constraint formulation reads it from a series."),
     )
     _require_key_name(gc, key, expected)

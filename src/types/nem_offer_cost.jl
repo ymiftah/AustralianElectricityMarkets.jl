@@ -2,13 +2,13 @@
 # identity.
 function _keys_equal(a, b)
     a === b && return true
-    (a isa IS.TimeSeriesKey && b isa IS.TimeSeriesKey && typeof(a) == typeof(b)) || return false
+    (a isa IS.StaticTimeSeriesKey && b isa IS.StaticTimeSeriesKey && typeof(a) == typeof(b)) || return false
     return all(getfield(a, f) == getfield(b, f) for f in fieldnames(typeof(a)))
 end
 
 # Compares two bid fields: keys by value, and a key only with a key of the same type.
 function _field_equal(a, b)
-    (a isa IS.TimeSeriesKey || b isa IS.TimeSeriesKey) && return typeof(a) == typeof(b) && _keys_equal(a, b)
+    (a isa IS.StaticTimeSeriesKey || b isa IS.StaticTimeSeriesKey) && return typeof(a) == typeof(b) && _keys_equal(a, b)
     return a == b
 end
 
@@ -56,16 +56,16 @@ time series that holds it on the unit, or `nothing` where AEMO publishes no valu
 """
 struct NEMEnergyBid <: PSY.DeviceParameter
     direction::BidDirection
-    offer_curves::Union{IS.TimeSeriesKey, PiecewiseStepData}
-    max_avail::Union{IS.TimeSeriesKey, Float64}
-    roc_up::Union{IS.TimeSeriesKey, Float64}
-    roc_down::Union{IS.TimeSeriesKey, Float64}
-    fixed_load::Union{Nothing, IS.TimeSeriesKey, Float64}
-    minimum_load::Union{Nothing, IS.TimeSeriesKey, Float64}
-    fast_start_profile::Union{Nothing, IS.TimeSeriesKey, FastStartProfile}
-    daily_energy_constraint::Union{Nothing, IS.TimeSeriesKey, Float64}
-    normal_status::Union{Nothing, IS.TimeSeriesKey, Bool}
-    energy_limit::Union{Nothing, IS.TimeSeriesKey, Float64}
+    offer_curves::Union{IS.StaticTimeSeriesKey, PiecewiseStepData}
+    max_avail::Union{IS.StaticTimeSeriesKey, Float64}
+    roc_up::Union{IS.StaticTimeSeriesKey, Float64}
+    roc_down::Union{IS.StaticTimeSeriesKey, Float64}
+    fixed_load::Union{Nothing, IS.StaticTimeSeriesKey, Float64}
+    minimum_load::Union{Nothing, IS.StaticTimeSeriesKey, Float64}
+    fast_start_profile::Union{Nothing, IS.StaticTimeSeriesKey, FastStartProfile}
+    daily_energy_constraint::Union{Nothing, IS.StaticTimeSeriesKey, Float64}
+    normal_status::Union{Nothing, IS.StaticTimeSeriesKey, Bool}
+    energy_limit::Union{Nothing, IS.StaticTimeSeriesKey, Float64}
 end
 
 function NEMEnergyBid(;
@@ -104,9 +104,9 @@ One direction of a unit's offer for one FCAS market, as AEMO bid it.
 struct NEMFCASBid <: PSY.DeviceParameter
     service::BidType
     direction::BidDirection
-    offer_curves::Union{IS.TimeSeriesKey, PiecewiseStepData}
-    max_avail::Union{IS.TimeSeriesKey, Float64}
-    trapezium::Union{IS.TimeSeriesKey, FCASTrapeziumPoints}
+    offer_curves::Union{IS.StaticTimeSeriesKey, PiecewiseStepData}
+    max_avail::Union{IS.StaticTimeSeriesKey, Float64}
+    trapezium::Union{IS.StaticTimeSeriesKey, FCASTrapeziumPoints}
 end
 
 function NEMFCASBid(;

@@ -85,6 +85,14 @@ end
     @test isnothing(AEM.bid_value(nothing, _keyed_energy_bid(AEM.BidDirection.GEN), :energy_limit, DateTime(2025), 3))
 end
 
+@testset "NEMEnergyBid JSON round trip keeps its key fields" begin
+    bid = _keyed_energy_bid(AEM.BidDirection.GEN)
+    restored = _IS.deserialize(AEM.NEMEnergyBid, _IS.serialize(bid))
+    @test restored == bid
+    @test restored.max_avail isa _IS.StaticTimeSeriesKey
+    @test isnothing(restored.energy_limit)
+end
+
 @testset "NEMOfferCost serializes static and key-backed bids" begin
     cost = NEMOfferCost(;
         energy = [_static_energy_bid(AEM.BidDirection.GEN), _keyed_energy_bid(AEM.BidDirection.LOAD)],

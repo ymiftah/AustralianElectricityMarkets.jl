@@ -134,7 +134,7 @@ end
 
 # `key`'s raw values on `component` over `horizon` steps from `initial_time`; a static `key` is repeated.
 function _raw_window(component, key, initial_time, horizon::Integer)
-    key isa IS.TimeSeriesKey || return fill(Float64(key), horizon)
+    key isa IS.StaticTimeSeriesKey || return fill(Float64(key), horizon)
     return Float64.(IS.get_time_series_values(component, key; start_time = initial_time, len = horizon))::Vector{Float64}
 end
 
@@ -155,7 +155,7 @@ end
 # The `(min, max)` pair series `key` on `component` in display units, as its two vectors, or `nothing` for an absent key.
 function _unit_pair_window(component, key, initial_time, horizon::Integer)
     isnothing(key) && return nothing
-    pairs = key isa IS.TimeSeriesKey ?
+    pairs = key isa IS.StaticTimeSeriesKey ?
         IS.get_time_series_values(component, key; start_time = initial_time, len = horizon) : fill(key, horizon)
     base = PSY.get_system_base_power(component)
     multiplier = _fcas_units_multiplier(component)

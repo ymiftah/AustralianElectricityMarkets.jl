@@ -192,7 +192,7 @@ function _fcas_state_function(window::_FCASWindow, device::PSY.Device)
     base = PSY.get_system_base_power(device)
     multiplier = _fcas_units_multiplier(device)
     scaled(value) = NEMUnitState(value / base * multiplier, 0)
-    initial isa IS.TimeSeriesKey || return t -> scaled(initial)
+    initial isa IS.StaticTimeSeriesKey || return t -> scaled(initial)
     values = IS.get_time_series_values(device, initial; start_time = window.initial_time, len = window.horizon)::Vector{Float64}
     return t -> scaled(values[t])
 end

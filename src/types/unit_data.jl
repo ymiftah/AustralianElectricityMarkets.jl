@@ -96,14 +96,14 @@ value.
 - `lower_reg_max_avail`: the lower regulation maximum availability, MW.
 """
 struct NEMTelemetry <: PSY.DeviceParameter
-    agc_status::Union{IS.TimeSeriesKey, Bool}
-    uigf::Union{Nothing, IS.TimeSeriesKey, Float64}
-    ramp_up_limit::Union{IS.TimeSeriesKey, Float64}
-    ramp_down_limit::Union{IS.TimeSeriesKey, Float64}
-    raise_reg_enablement::Union{IS.TimeSeriesKey, NTuple{2, Float64}}
-    lower_reg_enablement::Union{IS.TimeSeriesKey, NTuple{2, Float64}}
-    raise_reg_max_avail::Union{IS.TimeSeriesKey, Float64}
-    lower_reg_max_avail::Union{IS.TimeSeriesKey, Float64}
+    agc_status::Union{IS.StaticTimeSeriesKey, Bool}
+    uigf::Union{Nothing, IS.StaticTimeSeriesKey, Float64}
+    ramp_up_limit::Union{IS.StaticTimeSeriesKey, Float64}
+    ramp_down_limit::Union{IS.StaticTimeSeriesKey, Float64}
+    raise_reg_enablement::Union{IS.StaticTimeSeriesKey, NTuple{2, Float64}}
+    lower_reg_enablement::Union{IS.StaticTimeSeriesKey, NTuple{2, Float64}}
+    raise_reg_max_avail::Union{IS.StaticTimeSeriesKey, Float64}
+    lower_reg_max_avail::Union{IS.StaticTimeSeriesKey, Float64}
 end
 
 function NEMTelemetry(;
@@ -145,12 +145,12 @@ holds it on the unit.
 - `dispatch_mode`: `DISPATCHMODE`, the fast-start mode from 0 to 4.
 """
 struct NEMObservedState <: PSY.DeviceParameter
-    initial_mw::Union{IS.TimeSeriesKey, Float64}
-    dispatch_mode::Union{IS.TimeSeriesKey, Int}
+    initial_mw::Union{IS.StaticTimeSeriesKey, Float64}
+    dispatch_mode::Union{IS.StaticTimeSeriesKey, Int}
 end
 
 function NEMObservedState(; initial_mw, dispatch_mode)
-    mode = dispatch_mode isa IS.TimeSeriesKey ? dispatch_mode : Int(dispatch_mode)
+    mode = dispatch_mode isa IS.StaticTimeSeriesKey ? dispatch_mode : Int(dispatch_mode)
     return NEMObservedState(_bid_number(initial_mw), mode)
 end
 

@@ -66,7 +66,7 @@ function check_fcas_services(template::PSI.ProblemTemplate, sys::PSY.System)
             problem = _fcas_direction_problem(device, bid_type, direction)
             isnothing(problem) || push!(problems, "FCASService \"$svc_name\": device \"$dname\" $problem.")
             if bid_type in FCAS_REGULATION_MARKETS && _fcas_ramp_series_positive(device, bid_type) &&
-                    !(AustralianElectricityMarkets.get_observed_state(device).initial_mw isa IS.TimeSeriesKey)
+                    !(AustralianElectricityMarkets.get_observed_state(device).initial_mw isa IS.StaticTimeSeriesKey)
                 push!(
                     problems,
                     "FCASService \"$svc_name\": device \"$dname\" ($(typeof(device))) carries a " *
