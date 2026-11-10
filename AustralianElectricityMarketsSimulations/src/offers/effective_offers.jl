@@ -79,9 +79,9 @@ function _set_state_seeds!(sys::PSY.System)
     source = _state_source()
     base = PSY.get_base_power(sys)
     PSY.with_units_base(sys, "SYSTEM_BASE") do
-        for device in AustralianElectricityMarkets.nem_dispatch_devices(sys)
+        AustralianElectricityMarkets._foreach_nem_dispatch_device(sys) do device
             observed = AustralianElectricityMarkets.get_observed_state(device)
-            observed.initial_mw isa IS.StaticTimeSeriesKey || continue
+            observed.initial_mw isa IS.StaticTimeSeriesKey || return
             name = PSY.get_name(observed.initial_mw)
             stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name)
             resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, name))
@@ -92,7 +92,7 @@ function _set_state_seeds!(sys::PSY.System)
                 sys, device,
                 single_series(_INITIAL_MW_SEED_SERIES, first(stamps), initial, resolution),
             )
-            _has_fixed_load_bid(device) || continue
+            _has_fixed_load_bid(device) || return
             steps = [_fixed_load_step(device, t; source) for t in stamps]
             replace_single_series!(
                 sys, device,
@@ -105,6 +105,7 @@ function _set_state_seeds!(sys::PSY.System)
                     [step.invoked ? 1.0 : 0.0 for step in steps], resolution,
                 ),
             )
+            return
         end
     end
     return
@@ -124,11 +125,12 @@ keys [`set_effective_offers!`](@ref) derived for it, replacing any attached by a
 `nothing`.
 """
 function _attach_dispatch_inputs!(sys::PSY.System)
-    for device in AustralianElectricityMarkets.nem_dispatch_devices(sys)
+    AustralianElectricityMarkets._foreach_nem_dispatch_device(sys) do device
         for old in (PSY.get_supplemental_attributes(NEMDispatchInputs, device)::Vector{NEMDispatchInputs})
             PSY.remove_supplemental_attribute!(sys, device, old)
         end
         PSY.add_supplemental_attribute!(sys, device, _dispatch_inputs(device))
+        return
     end
     return
 end
@@ -411,10 +413,10 @@ end
 # effective regulation availability.
 function _set_dispatch_limits!(sys::PSY.System)
     base = PSY.get_base_power(sys)
-    for device in AustralianElectricityMarkets.nem_dispatch_devices(sys)
+    AustralianElectricityMarkets._foreach_nem_dispatch_device(sys) do device
         telemetry = _unit_telemetry(device)
         # A unit without telemetry gets no limit series; the replay input check names it.
-        isnothing(telemetry) && continue
+        isnothing(telemetry) && return
         up = _bid_series(device, telemetry.ramp_up_limit, :ramp_up_limit)
         down = _bid_series(device, telemetry.ramp_down_limit, :ramp_down_limit)
         interval_hours = Dates.value(Millisecond(up.resolution)) / (1000 * 60 * 60)
@@ -425,6 +427,7 @@ function _set_dispatch_limits!(sys::PSY.System)
         replace_single_series!(sys, device, single_series(NEM_SERIES.ramp_up_rate, first(up.timestamps), ramp_up_rate, up.resolution))
         replace_single_series!(sys, device, single_series(NEM_SERIES.ramp_down_rate, first(down.timestamps), ramp_down_rate, down.resolution))
         _set_agc_ramp_rates!(sys, device, telemetry, up, down, base, interval_hours)
+        return
     end
     return
 end

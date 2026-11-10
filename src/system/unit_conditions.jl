@@ -44,12 +44,13 @@ function set_unit_conditions!(sys, db, date_range; intervention::Integer = 0)
     by_duid = Dict(String(key.DUID) => group for (key, group) in pairs(groupby(rows, :DUID)))
     problems = String[]
     staged = NamedTuple[]
-    for device in nem_dispatch_devices(sys)
+    _foreach_nem_dispatch_device(sys) do device
         device_rows = get(by_duid, get_name(device), nothing)
         by_time = isnothing(device_rows) ? Dict{DateTime, DataFrameRow}() :
             Dict(zip(device_rows.SETTLEMENTDATE, eachrow(device_rows)))
         data = _stage_unit_conditions!(problems, sys, device, by_time, grid)
         isnothing(data) || push!(staged, data)
+        return
     end
     isempty(problems) || throw(ArgumentError("set_unit_conditions!: " * join(problems, "; ") * "."))
     for data in staged

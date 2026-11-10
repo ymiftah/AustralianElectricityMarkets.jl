@@ -20,3 +20,17 @@ function nem_dispatch_devices(sys)
     end
     return devices
 end
+
+# Calls `f` on each available device of type `T` in `sys` that carries NEM unit data, in order.
+function _foreach_nem_dispatch_device_of(f::F, ::Type{T}, sys::PSY.System) where {F, T}
+    for device in get_components(get_available, T, sys)
+        has_nem_unit_data(device) && f(device)
+    end
+    return
+end
+
+# Calls `f` on each device `nem_dispatch_devices` collects, in the same order, without collecting them.
+function _foreach_nem_dispatch_device(f::F, sys::PSY.System) where {F}
+    foreach(T -> _foreach_nem_dispatch_device_of(f, T, sys), NEM_DISPATCH_DEVICE_TYPES)
+    return
+end

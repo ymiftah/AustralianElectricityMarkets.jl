@@ -30,8 +30,9 @@ function _check_replay_system_inputs(sys::PSY.System, template::PSI.ProblemTempl
                 "build sys with nem_system(db, NEMDEConfiguration(); date_range) over the replay range before replay",
         ),
     )
-    for device in nem_dispatch_devices(sys)
+    AustralianElectricityMarkets._foreach_nem_dispatch_device(sys) do device
         _has_nem_dispatch_limits(device) && _check_state_series_alignment(device)
+        return
     end
     _has_device_model(template, PSY.AreaInterchange) &&
         foreach(_check_mnsp_offers, PSY.get_components(PSY.get_available, PSY.AreaInterchange, sys))

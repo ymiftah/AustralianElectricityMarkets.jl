@@ -31,13 +31,16 @@ end
 # Every NEM dispatch device carries its registration, telemetry and observed state.
 function _check_nemde_device_records(sys)
     missing_inputs = String[]
-    for device in nem_dispatch_devices(sys), (getter, what) in _NEM_DEVICE_RECORDS
-        try
-            getter(device)
-        catch error
-            error isa ArgumentError || rethrow()
-            push!(missing_inputs, "$(PSY.get_name(device)) has no $what")
+    _foreach_nem_dispatch_device(sys) do device
+        for (getter, what) in _NEM_DEVICE_RECORDS
+            try
+                getter(device)
+            catch error
+                error isa ArgumentError || rethrow()
+                push!(missing_inputs, "$(PSY.get_name(device)) has no $what")
+            end
         end
+        return
     end
     isempty(missing_inputs) || throw(
         ArgumentError(
