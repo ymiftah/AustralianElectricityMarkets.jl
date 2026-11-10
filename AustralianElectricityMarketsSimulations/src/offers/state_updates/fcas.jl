@@ -33,8 +33,9 @@ function _update_fcas_parameters!(
         model::PSI.OperationModel, key::PSI.ParameterKey{P, T},
     ) where {P, T}
     parameter_array = PSI.get_parameter_array(container, key)
-    parent_param = PSI.get_parameter_array_data(PSI.get_parameter(container, key))
+    parent_param::Matrix{Float64} = PSI.get_parameter_array_data(PSI.get_parameter(container, key))
     attributes = PSI.get_parameter_attributes(container, key)
+    uuids::Dict{String, String} = attributes.component_name_to_ts_uuid
     steps = PSI.get_time_steps(container)
     system = PSI.get_system(model)
     bid_type, decremental = _fcas_meta_offer(key.meta)
@@ -42,23 +43,35 @@ function _update_fcas_parameters!(
         base = PSY.get_base_power(system)
         inactive = FCAS_INACTIVE_LIMIT_MW / base
         window = _FCASWindow(PSI.get_current_timestamp(model), length(steps), PSI.get_resolution(model))
-        for (name, uuid) in attributes.component_name_to_ts_uuid
-            device = PSY.get_component(T, system, name)
-            # The effective offers and ramping limits read the starting output, in system-base
-            # per unit, so they are rebuilt from the step's state here.
-            state = t -> begin
-                unit = unit_state(_state_source(), device, _step_stamp(model, t))
-                return NEMUnitState(unit.initial_mw / base, unit.dispatch_mode)
-            end
-            offers, ramping = _fcas_effective_values(
-                window, device, bid_type, fcas_bid_direction(device, bid_type), inactive; state,
+        for (name, uuid) in uuids
+            device = PSY.get_component(T, system, name)::T
+            _write_fcas_device_rows!(
+                field_slice, kind, parent_param, parameter_array, uuid, model, steps,
+                device, bid_type, decremental, base, inactive, window,
             )
-            values = kind === :ramping ? ramping : offers[decremental]
-            i = parameter_array.lookup[1][uuid]
-            for t in steps
-                PSI._set_param_value_at!(parent_param, field_slice(values[t]), i, t)
-            end
         end
+    end
+    return
+end
+
+# Writes one device's rows of an FCAS parameter, in a function of the device's concrete type.
+function _write_fcas_device_rows!(
+        field_slice, kind::Symbol, parent_param::Matrix{Float64}, parameter_array, uuid::AbstractString,
+        model, steps, device, bid_type, decremental::Bool, base::Real, inactive::Real, window,
+    )
+    # The effective offers and ramping limits read the starting output, in system-base
+    # per unit, so they are rebuilt from the step's state here.
+    state = t -> begin
+        unit = unit_state(_state_source(), device, _step_stamp(model, t))
+        return NEMUnitState(unit.initial_mw / base, unit.dispatch_mode)
+    end
+    offers, ramping = _fcas_effective_values(
+        window, device, bid_type, fcas_bid_direction(device, bid_type), inactive; state,
+    )
+    values = kind === :ramping ? ramping : offers[decremental]
+    i = parameter_array.lookup[1][uuid]
+    for t in steps
+        PSI._set_param_value_at!(parent_param, field_slice(values[t]), i, t)
     end
     return
 end

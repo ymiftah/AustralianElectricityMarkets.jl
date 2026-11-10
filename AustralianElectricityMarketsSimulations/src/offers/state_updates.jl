@@ -15,7 +15,7 @@ The stamp of step `t` of `model`'s current horizon; `t = 1` is the horizon's fir
 A `DateTime`.
 """
 function _step_stamp(model::PSI.OperationModel, t::Integer)
-    return PSI.get_current_timestamp(model) + (t - 1) * PSI.get_resolution(model)
+    return (PSI.get_current_timestamp(model)::DateTime) + (t - 1) * (PSI.get_resolution(model)::Millisecond)
 end
 
 
@@ -35,14 +35,20 @@ are written. Throws when a value is not finite.
 # Returns
 `nothing`.
 """
-function _update_state_parameters!(value_at, container::PSI.OptimizationContainer, model::PSI.OperationModel, key::PSI.ParameterKey{P, T}) where {P, T}
+function _update_state_parameters!(value_at::F, container::PSI.OptimizationContainer, model::PSI.OperationModel, key::PSI.ParameterKey{P, T}) where {F, P, T}
     parameter_array = PSI.get_parameter_array(container, key)
-    parent_param = PSI.get_parameter_array_data(PSI.get_parameter(container, key))
+    parent_param::Matrix{Float64} = PSI.get_parameter_array_data(PSI.get_parameter(container, key))
     attributes = PSI.get_parameter_attributes(container, key)
-    steps = PSI.get_time_steps(container)
+    uuids::Dict{String, String} = attributes.component_name_to_ts_uuid
+    _write_state_rows!(value_at, P, T, model, PSI.get_time_steps(container), parameter_array, parent_param, uuids)
+    return
+end
+
+# Writes the rows of each named device, in a function of the concrete array and value types.
+function _write_state_rows!(value_at::F, ::Type{P}, ::Type{T}, model, steps, parameter_array, parent_param::Matrix{Float64}, uuids::Dict{String, String}) where {F, P, T}
     system = PSI.get_system(model)
-    for (name, uuid) in attributes.component_name_to_ts_uuid
-        device = PSY.get_component(T, system, name)
+    for (name, uuid) in uuids
+        device = PSY.get_component(T, system, name)::T
         i = parameter_array.lookup[1][uuid]
         for t in steps
             stamp = _step_stamp(model, t)
