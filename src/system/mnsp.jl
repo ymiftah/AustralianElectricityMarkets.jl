@@ -112,7 +112,7 @@ function set_mnsp_offers!(sys, db, date_range; intervention::Integer = 0)
         tag = Symbol(direction)
         _remove_link_attributes!(sys, device, direction)
         if direction == "forward"
-            for old in get_supplemental_attributes(NEMMNSPObservedState, device)
+            for old in (get_supplemental_attributes(NEMMNSPObservedState, device)::Vector{NEMMNSPObservedState})
                 remove_supplemental_attribute!(sys, device, old)
             end
             replace_single_series!(sys, device, single_series(NEM_MNSP_SERIES.initial_flow, start_date, Float64.(initial.METEREDMWFLOW), Minute(5)))

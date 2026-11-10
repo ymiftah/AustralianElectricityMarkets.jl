@@ -196,7 +196,7 @@ IS.get_internal(unit::NEMUnitData) = unit.internal
 _nem_unit_data(::Any) = nothing
 
 function _nem_unit_data(device::PSY.Component)
-    attached = collect(PSY.get_supplemental_attributes(NEMUnitData, device))
+    attached = PSY.get_supplemental_attributes(NEMUnitData, device)::Vector{NEMUnitData}
     return isempty(attached) ? nothing : only(attached)
 end
 

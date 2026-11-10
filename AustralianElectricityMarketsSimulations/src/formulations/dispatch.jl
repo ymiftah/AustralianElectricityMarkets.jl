@@ -99,7 +99,7 @@ function _has_nem_dispatch_limits(device)
         PSY.SingleTimeSeries,
         PSY.get_name(observed.initial_mw),
     ) || return false
-    attributes = PSY.get_supplemental_attributes(NEMDispatchInputs, device)
+    attributes = PSY.get_supplemental_attributes(NEMDispatchInputs, device)::Vector{NEMDispatchInputs}
     length(attributes) == 1 || return false
     inputs = only(attributes)
     names = PSI.get_default_time_series_names(typeof(device), NEMReplayDispatch)
@@ -142,7 +142,7 @@ const _DERIVED_INPUT_FIELDS = (
 A [`NEMDispatchInputs`](@ref).
 """
 function _dispatch_inputs_attribute(device)
-    attributes = PSY.get_supplemental_attributes(NEMDispatchInputs, device)
+    attributes = PSY.get_supplemental_attributes(NEMDispatchInputs, device)::Vector{NEMDispatchInputs}
     isempty(attributes) && throw(
         ArgumentError(
             "\"$(PSY.get_name(device))\" carries no NEMDispatchInputs; call set_effective_offers! on the System.",

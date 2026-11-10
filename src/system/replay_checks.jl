@@ -98,17 +98,17 @@ function _check_nemde_mnsp_structure(sys)
     incomplete = String[]
     for device in get_components(AreaInterchange, sys)
         PSY.get_available(device) || continue
-        registrations = get_supplemental_attributes(NEMInterconnectorRegistration, device)
+        registrations = get_supplemental_attributes(NEMInterconnectorRegistration, device)::Vector{NEMInterconnectorRegistration}
         (isempty(registrations) || only(registrations).kind != InterconnectorKind.MNSP) && continue
         name = get_name(device)
-        links = get_supplemental_attributes(NEMMNSPLink, device)
+        links = get_supplemental_attributes(NEMMNSPLink, device)::Vector{NEMMNSPLink}
         link_ids = unique(link.link_id for link in links)
         length(links) == 2 && length(link_ids) == 2 || push!(
             incomplete,
             "$name has $(length(links)) directional link(s) with $(length(link_ids)) distinct LINKID(s), expected two",
         )
-        isempty(get_supplemental_attributes(NEMMNSPBid, device)) && push!(incomplete, "$name has no MNSP bid")
-        isempty(get_supplemental_attributes(NEMMNSPObservedState, device)) &&
+        isempty((get_supplemental_attributes(NEMMNSPBid, device)::Vector{NEMMNSPBid})) && push!(incomplete, "$name has no MNSP bid")
+        isempty((get_supplemental_attributes(NEMMNSPObservedState, device)::Vector{NEMMNSPObservedState})) &&
             push!(incomplete, "$name has no MNSP observed state")
     end
     isempty(incomplete) || throw(

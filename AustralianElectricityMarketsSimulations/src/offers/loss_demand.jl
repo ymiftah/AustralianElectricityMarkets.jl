@@ -42,13 +42,13 @@ timestamps.
 function set_loss_demand_coefficients!(sys::PSY.System)
     modelled = [
         interchange for interchange in PSY.get_components(PSY.AreaInterchange, sys) if
-            length(PSY.get_supplemental_attributes(InterconnectorLossModel, interchange)) == 1
+            length((PSY.get_supplemental_attributes(InterconnectorLossModel, interchange)::Vector{InterconnectorLossModel})) == 1
     ]
     # A system with no loss-modelled interchange needs no demand term, and may carry no loads at all.
     isempty(modelled) && return
     stamps, resolution, demand = _area_loss_demand(sys)
     for interchange in modelled
-        model = only(PSY.get_supplemental_attributes(InterconnectorLossModel, interchange))
+        model = only((PSY.get_supplemental_attributes(InterconnectorLossModel, interchange)::Vector{InterconnectorLossModel}))
         values = [
             loss_demand_coefficient(model, Dict(area => series[i] for (area, series) in demand)) for
                 i in eachindex(stamps)

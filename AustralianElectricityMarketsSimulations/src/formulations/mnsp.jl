@@ -37,7 +37,7 @@ end
 # The `NEMMNSPBid` of `device` for `direction` (`"forward"` or `"reverse"`), or `nothing` when it has none.
 function _mnsp_bid(device::PSY.AreaInterchange, direction::AbstractString)
     dir = direction == "forward" ? MNSPDirection.FORWARD : MNSPDirection.REVERSE
-    bids = [b for b in PSY.get_supplemental_attributes(NEMMNSPBid, device) if b.direction == dir]
+    bids = [b for b in (PSY.get_supplemental_attributes(NEMMNSPBid, device)::Vector{NEMMNSPBid}) if b.direction == dir]
     isempty(bids) && return nothing
     length(bids) == 1 || throw(
         ArgumentError("AreaInterchange \"$(PSY.get_name(device))\" carries $(length(bids)) NEMMNSPBid for its $direction link; it requires one."),
@@ -49,7 +49,7 @@ end
 # The `NEMMNSPLink` of `device` for `direction`, or `nothing` when it has none.
 function _mnsp_link(device::PSY.AreaInterchange, direction::AbstractString)
     dir = direction == "forward" ? MNSPDirection.FORWARD : MNSPDirection.REVERSE
-    links = [l for l in PSY.get_supplemental_attributes(NEMMNSPLink, device) if l.direction == dir]
+    links = [l for l in (PSY.get_supplemental_attributes(NEMMNSPLink, device)::Vector{NEMMNSPLink}) if l.direction == dir]
     isempty(links) && return nothing
     length(links) == 1 || throw(
         ArgumentError("AreaInterchange \"$(PSY.get_name(device))\" carries $(length(links)) NEMMNSPLink for its $direction link; it requires one."),
@@ -79,7 +79,7 @@ function _mnsp_offer_series_present(device::PSY.AreaInterchange)
         _mnsp_key_present(device, dir, field, getproperty(NEM_MNSP_SERIES, Symbol(dir, "_", suffix)))
             for dir in _MNSP_DIRECTIONS, (field, suffix) in _MNSP_BID_KEYS
     ]
-    observed = PSY.get_supplemental_attributes(NEMMNSPObservedState, device)
+    observed = PSY.get_supplemental_attributes(NEMMNSPObservedState, device)::Vector{NEMMNSPObservedState}
     initial = !isempty(observed) && only(observed).initial_flow isa IS.TimeSeriesKey
     initial && _require_key_name(device, only(observed).initial_flow, NEM_MNSP_SERIES.initial_flow)
     return vec(bids), initial

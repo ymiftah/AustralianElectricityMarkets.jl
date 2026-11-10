@@ -125,7 +125,7 @@ keys [`set_effective_offers!`](@ref) derived for it, replacing any attached by a
 """
 function _attach_dispatch_inputs!(sys::PSY.System)
     for device in AustralianElectricityMarkets.nem_dispatch_devices(sys)
-        for old in PSY.get_supplemental_attributes(NEMDispatchInputs, device)
+        for old in (PSY.get_supplemental_attributes(NEMDispatchInputs, device)::Vector{NEMDispatchInputs})
             PSY.remove_supplemental_attribute!(sys, device, old)
         end
         PSY.add_supplemental_attribute!(sys, device, _dispatch_inputs(device))

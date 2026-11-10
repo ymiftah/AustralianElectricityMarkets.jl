@@ -192,7 +192,7 @@ function set_interconnector_flow_limits!(sys, db, date_range; kwargs...)
 
     for d in get_components(AreaInterchange, sys)
         from_to, to_from = series[get_name(d)]
-        for old in get_supplemental_attributes(NEMInterconnectorLimits, d)
+        for old in (get_supplemental_attributes(NEMInterconnectorLimits, d)::Vector{NEMInterconnectorLimits})
             remove_supplemental_attribute!(sys, d, old)
         end
         replace_single_series!(sys, d, single_series(NEM_INTERCONNECTOR_SERIES.from_to_limit, full_grid, from_to))

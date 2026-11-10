@@ -43,7 +43,7 @@ The single [`NEMInterconnectorLimits`](@ref) of `device`, or `nothing` when it c
 `ArgumentError` when it carries more than one.
 """
 function _interconnector_limits(device::PSY.AreaInterchange)
-    limits = PSY.get_supplemental_attributes(NEMInterconnectorLimits, device)
+    limits = PSY.get_supplemental_attributes(NEMInterconnectorLimits, device)::Vector{NEMInterconnectorLimits}
     isempty(limits) && return nothing
     length(limits) == 1 || throw(
         ArgumentError("AreaInterchange \"$(PSY.get_name(device))\" carries $(length(limits)) NEMInterconnectorLimits; it requires one."),
@@ -94,7 +94,7 @@ The single [`InterconnectorLossModel`](@ref) attached to `device` (an `AreaInter
 zero or more than one.
 """
 function _loss_model(device::PSY.AreaInterchange)
-    models = PSY.get_supplemental_attributes(InterconnectorLossModel, device)
+    models = PSY.get_supplemental_attributes(InterconnectorLossModel, device)::Vector{InterconnectorLossModel}
     length(models) == 1 || throw(_missing_loss_model_error(PSY.get_name(device), length(models)))
     return only(models)
 end

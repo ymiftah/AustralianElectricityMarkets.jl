@@ -130,7 +130,7 @@ its [`NEMInterconnectorRegistration`](@ref) is `InterconnectorKind.MNSP`, since 
 function _check_mnsp_offers(device::PSY.AreaInterchange)
     bids, initial = _mnsp_offer_series_present(device)
     present = [bids; initial]
-    registrations = PSY.get_supplemental_attributes(NEMInterconnectorRegistration, device)
+    registrations = PSY.get_supplemental_attributes(NEMInterconnectorRegistration, device)::Vector{NEMInterconnectorRegistration}
     required = !isempty(registrations) && only(registrations).kind == InterconnectorKind.MNSP
     (required || any(present)) && !all(present) && throw(
         ArgumentError(
