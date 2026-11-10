@@ -27,10 +27,10 @@ using .ReplayBatchSupport
     @test_throws ArgumentError parse_options(["--time-series-in-memory", "yes"])
     @test dirname(parse_options(String[])["output"]) == "/run/media/simba/Store/aem_validation"
     range = parse_options(["--start", "2026-06-04T04:05:00", "--intervals", "10"])
-    @test length(replay_steps(range, Date(2026, 6, 4))) == 10
-    @test first(replay_steps(range, Date(2026, 6, 4))) == DateTime(2026, 6, 4, 4, 5)
-    @test last(replay_steps(range, Date(2026, 6, 4))) == DateTime(2026, 6, 4, 4, 50)
-    @test replay_steps(parse_options(String[]), Date(2026, 6, 4)) == trading_steps(Date(2026, 6, 4))
+    @test length(batch_steps(range, Date(2026, 6, 4))) == 10
+    @test first(batch_steps(range, Date(2026, 6, 4))) == DateTime(2026, 6, 4, 4, 5)
+    @test last(batch_steps(range, Date(2026, 6, 4))) == DateTime(2026, 6, 4, 4, 50)
+    @test batch_steps(parse_options(String[]), Date(2026, 6, 4)) == trading_steps(Date(2026, 6, 4))
     @test_throws ArgumentError parse_options(["--start", "2026-06-04T04:05:00"])
     @test_throws ArgumentError parse_options(["--intervals", "10"])
     @test_throws ArgumentError parse_options(["--start", "2026-06-04T04:07:00", "--intervals", "10"])

@@ -5,7 +5,7 @@ using Random
 using TOML
 using SHA
 
-export scheduled_days, trading_steps, replay_steps, may_start_day, parse_options, write_status,
+export scheduled_days, trading_steps, batch_steps, may_start_day, parse_options, write_status,
     memory_sample, write_csv, supervise, run_schedule
 
 # Snapshot package sources as well as scripts: a commit alone does not identify a dirty checkout.
@@ -54,7 +54,7 @@ end
 _trading_day(t::DateTime) = Date(t - Hour(4) - Minute(5))
 
 """
-    replay_steps(options, day::Date) -> StepRange{DateTime}
+    batch_steps(options, day::Date) -> StepRange{DateTime}
 
 Returns the interval-ending timestamps to replay for `day`: the `intervals` five-minute steps from `start`
 when `start` is set, otherwise the whole trading day.
@@ -66,7 +66,7 @@ when `start` is set, otherwise the whole trading day.
 # Returns
 A `StepRange{DateTime}` with a five-minute step.
 """
-function replay_steps(options, day::Date)
+function batch_steps(options, day::Date)
     isempty(options["start"]) && return trading_steps(day)
     start = DateTime(options["start"])
     return start:Minute(5):(start + Minute(5) * (parse(Int, options["intervals"]) - 1))
@@ -245,7 +245,7 @@ function supervise(options)
     end
     write_csv(
         joinpath(folder, "scheduled_days.csv"), ("order", "trading_day", "start", "stop"),
-        ((i, day, first(replay_steps(options, day)), last(replay_steps(options, day))) for (i, day) in enumerate(days))
+        ((i, day, first(batch_steps(options, day)), last(batch_steps(options, day))) for (i, day) in enumerate(days))
     )
     write_status(folder, "loading")
     project = dirname(Base.active_project())
