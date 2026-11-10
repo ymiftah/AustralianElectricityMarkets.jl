@@ -2,8 +2,9 @@
 
 ## Status
 
-Accepted. [0093](0093-nem-device-types-and-offer-cost.md) defines the NEM device types and
-`NEMOfferCost`, [0092](0092-psi-shaped-replay-interface.md) defines the replay interface, and
+Accepted; its device-type parts are superseded by [0097](0097-stock-devices-for-replay.md), under
+which replay devices are stock PowerSystems types carrying `NEMUnitData`.
+[0093](0093-nem-device-types-and-offer-cost.md) defines `NEMOfferCost`, [0092](0092-psi-shaped-replay-interface.md) defines the replay interface, and
 [0096](0096-per-step-state-updates.md) defines how the state source reaches PowerSimulations each
 step.
 

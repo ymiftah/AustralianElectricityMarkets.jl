@@ -58,7 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `read_interconnector_loss_gaps` reads each interconnector's solved loss against the loss curve at its solved flow, with the weighted marginal price of loss in `$/MWh`, as an `AustralianElectricityMarketsSimulations` function.
 
-- `read_solved_interval` reads the solved prices, dispatch, interconnector flows and FCAS prices of a PowerSimulations result in the columns of `read_published_interval`, and `read_constraint_violations` lists its elastic slacks above tolerance, naming each slack variable by the key PSI writes to result files (for example `UnitRampUpSlack__NEMHydroGen`), as `AustralianElectricityMarketsSimulations` functions.
+- `read_solved_interval` reads the solved prices, dispatch, interconnector flows and FCAS prices of a PowerSimulations result in the columns of `read_published_interval`, and `read_constraint_violations` lists its elastic slacks above tolerance, naming each slack variable by the key PSI writes to result files (for example `UnitRampUpSlack__HydroDispatch`), as `AustralianElectricityMarketsSimulations` functions.
 
 - `read_prices` and `read_fcas_prices` accept PowerSimulations optimization and simulation results, with the system the model was built from, and return the regional prices and FCAS prices of the solved interval.
 
@@ -407,10 +407,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or DISPATCHLOAD availability, and for units with no dispatch rows the region's semi-scheduled solar or
   wind UIGF capacity factor (`SS_SOLAR_UIGF`, `SS_WIND_UIGF`).
 
-- `NEMOfferCost`, the operation cost of the NEM device types, records the keys of a device's offer
-  series as `NEMEnergyBid`s (one per `OfferSide`) and `NEMFCASBid`s (one per FCAS market and side).
-  `NEMThermalGen`, `NEMHydroGen`, `NEMRenewableGen`, `NEMStorage` and `NEMLoad` are the device types
-  that carry it.
+- `NEMOfferCost` records the keys of a device's offer series as `NEMEnergyBid`s (one per `OfferSide`)
+  and `NEMFCASBid`s (one per FCAS market and side). `NEMUnitData`, a supplemental attribute, carries a
+  replay unit's `NEMOfferCost`, `NEMRegistration`, `NEMTelemetry` and `NEMObservedState`;
+  `attach_nem_unit_data!` attaches one and `has_nem_unit_data` tells a replay unit.
 
 - `set_energy_offer!(sys, device, side, curves)` and `set_fcas_offer!(sys, device, service, side,
   curves)` store offer curves as series on a device and record them on its `NEMOfferCost`, and
@@ -463,21 +463,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `set_fcas_effective_offers!` and `set_tie_break_scales!` moved from AEM to AEMSim as `set_effective_offers!`, which `prepare_replay!` calls first. `nem_system` no longer attaches the effective offers, and the FCAS offer and dispatch read accessors (`get_fcas_offer`, `get_energy_offer`, `get_initial_mw`, `get_energy_availability`, `get_storage_energy_max_avail`, `get_scaled_fcas_trapezium`, `get_fcas_agc_status`, `get_fcas_agc_ramp_capability`) moved with them.
 
-- **Breaking:** replay systems (`nem_system(db, NEMDEConfiguration(); ...)` and `nem_network`) hold the
-  NEM device types `NEMThermalGen`, `NEMHydroGen`, `NEMRenewableGen`, `NEMStorage` and `NEMLoad` in
-  place of `ThermalStandard`, `HydroDispatch`, `RenewableDispatch`, `EnergyReservoirStorage` and
-  `InterruptiblePowerLoad`. `NEM_DISPATCH_DEVICE_TYPES` lists them and result keys name them (for
-  example `ActivePowerVariable__NEMThermalGen`). `RegionalNetworkConfiguration` systems keep the stock
-  types. Dispatch, energy prices, flows and the objective are unchanged. FCAS prices are non-unique at
+- **Breaking:** replay systems (`nem_system(db, NEMDEConfiguration(); ...)` and `nem_network`) hold
+  stock `ThermalStandard`, `HydroDispatch`, `RenewableDispatch`, `InterruptiblePowerLoad` and
+  `EnergyReservoirStorage` devices with a zero stock operation cost, each carrying a `NEMUnitData`;
+  `NEM_DISPATCH_DEVICE_TYPES` lists these types. `RegionalNetworkConfiguration` systems carry no
+  `NEMUnitData`. Series-key fields of the NEM structs are `IS.StaticTimeSeriesKey`. Dispatch, energy prices, flows and the objective are unchanged. FCAS prices are non-unique at
   degenerate (tied) intervals, so a replay may return a different but equally optimal FCAS price there.
 
 - `set_market_bids!` and `set_fcas_service_bids!` record each device's offers on its `NEMOfferCost`
   through `set_energy_offer!` and `set_fcas_offer!`, and keep one `NEMEnergyBid` per side when called
   again. `set_market_bids!` throws an `ArgumentError` for a missing or non-finite `MAXAVAIL`, for every
-  device kind, and both setters throw for a bidding device whose operation cost is not a `NEMOfferCost`.
+  device kind, and both setters throw for a bidding device without `NEMUnitData`.
 
 - `get_energy_offer` and `get_fcas_offer` read through the keys of a device's `NEMOfferCost`; a device
-  that is not a NEM type has no offer (`nothing`). `EnergyTieBreak` contributors are the units with a
+  without `NEMUnitData` has no offer (`nothing`). `EnergyTieBreak` contributors are the units with a
   `NEMEnergyBid`.
 
 - AEMSim prices NEM energy offers itself: each `energy_offer` series band becomes an

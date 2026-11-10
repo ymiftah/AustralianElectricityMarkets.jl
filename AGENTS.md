@@ -137,5 +137,8 @@ bound, constraint and cost term. Record any departure from AEMO in an ADR.
   `System` JSON round-trips.
 - Simulations depends on a **pinned PowerSimulations fork** (`[sources]` in its `Project.toml`);
   check PSI behaviour against that revision, not upstream. PowerSystems is the registered release.
-- Replay systems use the NEM device types (`NEMThermalGen`, `NEMHydroGen`, `NEMRenewableGen`,
-  `NEMStorage`, `NEMLoad`) with a `NEMOfferCost`; `RegionalNetworkConfiguration` keeps stock types.
+- Replay systems use stock PowerSystems devices (`NEM_DISPATCH_DEVICE_TYPES`) each carrying a
+  `NEMUnitData` supplemental attribute (offer, registration, telemetry, observed state); a device is a
+  replay unit when `has_nem_unit_data` holds, never by its type. Regional systems carry none.
+- Series-key fields of the typed structs are `IS.StaticTimeSeriesKey`; store the static key, never a
+  forecast key.

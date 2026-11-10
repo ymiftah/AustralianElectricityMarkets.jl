@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted. Supersedes parts of [0067](0067-nem-offer-views.md) and
+Accepted; its device-type decision is superseded by
+[0097](0097-stock-devices-for-replay.md), while `NEMOfferCost` and band pricing stand. Supersedes parts of [0067](0067-nem-offer-views.md) and
 [0084](0084-native-sienna-recurrent-updates.md), listed under Supersedes.
 
 ## Context
