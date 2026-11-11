@@ -71,8 +71,9 @@ function AustralianElectricityMarkets.nem_system(
     sys, units = nem_network(db; as_of = first(date_range), through = last(date_range) - resolution, time_series_in_memory, storage...)
 
     # 4. Units, bids and services
-    (; dispatch, demand) = _nemde_energy_bids_with_coverage(sys, db, date_range, units; intervention, resolution)
-    set_market_bids!(sys, db, date_range; resolution)
+    offers = read_offers(db, date_range)
+    (; dispatch, demand) = _nemde_energy_bids_with_coverage(sys, db, date_range, units, offers; intervention, resolution)
+    AustralianElectricityMarkets._set_market_bids!(sys, offers, date_range; resolution)
     set_unit_conditions!(sys, db, date_range; intervention)
     add_nem_constraints!(sys, db, date_range; intervention)
     attach_interconnector_losses!(sys, db, first(date_range))
@@ -113,14 +114,14 @@ _required_bid_directions(device::PSY.ControllableLoad, coverage) =
 
 
 """
-    _nemde_energy_bids_with_coverage(sys, db, date_range, units; intervention = 0, resolution = Minute(5))
+    _nemde_energy_bids_with_coverage(sys, db, date_range, units, offers; intervention = 0, resolution = Minute(5))
 
 Verifies the cached bids and demand cover every interval of `date_range` (its last stamp
 excluded). Every region with a unit (`DUDETAILSUMMARY`) needs regional demand (`DISPATCHREGIONSUM`)
 at every interval. Every scheduled unit of `sys` that bids energy (`BIDPEROFFER_D`), or is
 available or metered in `DISPATCHLOAD`, needs an energy period offer with a finite non-negative
 `MAXAVAIL` at every interval of its registration (its [`NEMRegistration`](@ref) on `sys`),
-read independently of the price join with `BIDDAYOFFER_D`.
+read from `offers`, the [`read_offers`](@ref) rows of `date_range`.
 Non-scheduled units and loads are not checked.
 
 # Arguments
@@ -128,6 +129,7 @@ Non-scheduled units and loads are not checked.
 - `db`: an `AEMDB` connection.
 - `date_range`: the replay range.
 - `units`: the unit table over `date_range`, as [`nem_network`](@ref) returns it; its regions need demand.
+- `offers`: the [`read_offers`](@ref) rows of `date_range`, whose `ENERGY` rows carry the energy coverage.
 - `intervention`: the `DISPATCHLOAD` run, 0 for pricing and 1 for physical.
 - `resolution`: the spacing of the dispatch intervals that `DISPATCHLOAD` and regional demand are aggregated to.
 
@@ -135,8 +137,8 @@ Non-scheduled units and loads are not checked.
 A named tuple `(; dispatch, demand)` of the read inputs. Throws an `ArgumentError` naming
 the first unit and direction, or region, missing an input.
 """
-function _nemde_energy_bids_with_coverage(sys, db, date_range, units; intervention::Integer = 0, resolution = Minute(5))
-    bids = read_energy_bids(db, date_range)
+function _nemde_energy_bids_with_coverage(sys, db, date_range, units, offers; intervention::Integer = 0, resolution = Minute(5))
+    bids = offers[offers.BIDTYPE .== Ref(BidType.ENERGY), :]
     dispatch = read_dispatch_limits(db, date_range; intervention, resolution)
     demand = read_demand(db, date_range; resolution)
     _check_nemde_energy_bid_coverage(sys, bids, dispatch, units, demand, date_range)

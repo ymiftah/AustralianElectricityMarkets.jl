@@ -291,9 +291,14 @@ function set_market_bids!(
         sys, db, date_range;
         markets = NEM_MARKETS, resolution::Dates.Period = Minute(5),
     )
+    return _set_market_bids!(sys, read_offers(db, date_range; markets), date_range; markets, resolution)
+end
+
+# Stores the bids of `offers`, the [`read_offers`](@ref) rows of `date_range`, as [`set_market_bids!`](@ref)
+# does. Subsets `offers` in place.
+function _set_market_bids!(sys, offers::DataFrame, date_range; markets = NEM_MARKETS, resolution::Dates.Period = Minute(5))
     start_date = first(date_range)
     grid = _replay_grid(date_range, resolution)
-    offers = read_offers(db, date_range; markets)
     if resolution != Minute(5)
         offers = _aggregate_offers(offers, resolution)
         subset!(offers, :INTERVAL_DATETIME => ByRow(t -> start_date <= t < last(date_range)))
