@@ -309,10 +309,10 @@ function _massage_bids(
     end
     price_source = read_hive(db, :BIDDAYOFFER_D, (start_date - Day(1), end_date + Day(1)))
     price_columns = _band_columns(_table_schema(db, price_source), "PRICEBAND")
-    price_array = join(("d.$c" for c in price_columns), ", ")
     band_array = join(("p.$c" for c in band_columns), ", ")
+    price_selection = join(["MINIMUMLOAD", "DAILYENERGYCONSTRAINT", extra_price_columns...], ", ")
     period_projection = join((", p.$c" for c in period_columns))
-    bid_type_column = keep_bid_type ? ", p.BIDTYPE" : ""
+    bid_type_column = ", p.BIDTYPE"
     extra_projection = join((", d.$c" for c in extra_price_columns))
     append!(params, _offer_days(start_date, end_date))
     append!(params, (start_date, end_date))
@@ -322,8 +322,7 @@ function _massage_bids(
         WITH latest_period AS ($period_sql),
              period AS ($period),
              prices AS (
-                 SELECT SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE, MINIMUMLOAD, DAILYENERGYCONSTRAINT,
-                        $(join([extra_price_columns; price_columns], ", "))
+                 SELECT SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE, $price_selection
                  FROM $price_source
                  WHERE BIDTYPE IN ($(_bid_type_list(bid_types))) AND SETTLEMENTDATE BETWEEN ? AND ?
                  QUALIFY row_number() OVER (
@@ -331,7 +330,7 @@ function _massage_bids(
                  ) = 1
              )
         SELECT p.SETTLEMENTDATE, p.DUID, p.DIRECTION, p.INTERVAL_DATETIME,
-               list_value($price_array) AS PRICEBANDARRAY, list_value($band_array) AS BANDAVAILARRAY,
+               list_value($band_array) AS BANDAVAILARRAY,
                p.MAXAVAIL, d.MINIMUMLOAD, d.DAILYENERGYCONSTRAINT $extra_projection $bid_type_column $period_projection,
                d.DUID IS NULL AS MISSING_PRICE
         FROM period p
@@ -347,5 +346,22 @@ function _massage_bids(
             "missing price bids for period offers: $(join(missing_duids, ", ")); populate BIDDAYOFFER_D for the referenced trading days",
         ),
     )
+    # The price bands are one vector per trading day offer, so every row of that offer shares it.
+    bands = _query(
+        db,
+        """
+        SELECT SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE, list_value($(join(price_columns, ", "))) AS PRICEBANDARRAY
+        FROM $price_source
+        WHERE BIDTYPE IN ($(_bid_type_list(bid_types))) AND SETTLEMENTDATE BETWEEN ? AND ?
+        QUALIFY row_number() OVER (
+            PARTITION BY SETTLEMENTDATE, DUID, DIRECTION, BIDTYPE ORDER BY VERSIONNO DESC
+        ) = 1
+        """,
+        _offer_days(start_date, end_date),
+    )
+    price_bands = Dict((row.SETTLEMENTDATE, row.DUID, row.DIRECTION, row.BIDTYPE) => row.PRICEBANDARRAY for row in eachrow(bands))
+    day_offers = zip(bids.SETTLEMENTDATE, bids.DUID, bids.DIRECTION, bids.BIDTYPE)
+    insertcols!(bids, 5, :PRICEBANDARRAY => eltype(bands.PRICEBANDARRAY)[price_bands[k] for k in day_offers])
+    keep_bid_type || select!(bids, Not(:BIDTYPE))
     return select!(bids, Not(:MISSING_PRICE))
 end
