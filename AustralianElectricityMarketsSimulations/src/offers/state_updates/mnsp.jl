@@ -29,12 +29,15 @@ end
 Refreshes [`MNSPInitialFlowParameter`](@ref) from each link's metered flow at the step, read through
 the configured [`StateSource`](@ref), in MW: the starting point of the [`mnsp_ramp_envelope`](@ref)
 the formulation builds each ramp row from.
+Under [`ObservedState`](@ref) the stock PowerSimulations update refreshes it from the series that
+[`prepare_replay!`](@ref) attached. Under [`SimulatedState`](@ref), or when the custom path is forced,
+it is recomputed from each device's [`NEMUnitState`](@ref) at the step.
 
 # Arguments
 - `container`: the `PowerSimulations.OptimizationContainer` being updated.
 - `model`: the `PowerSimulations.OperationModel` whose step is being solved.
 - `key`: the `PowerSimulations.ParameterKey` of the parameter, over the link's type.
-- `input`: the simulation state, which these methods do not read.
+- `input`: the simulation state, passed to the stock update and not read by the custom one.
 
 # Returns
 `nothing`.
@@ -59,12 +62,15 @@ end
 Refreshes [`MNSPForwardRampRateParameter`](@ref) from each link's metered flow and forward and
 reverse bid ramp rates at the step, read through the configured [`StateSource`](@ref), in MW/min:
 the forward rate of the [`mnsp_ramp_envelope`](@ref).
+Under [`ObservedState`](@ref) the stock PowerSimulations update refreshes it from the series that
+[`prepare_replay!`](@ref) attached. Under [`SimulatedState`](@ref), or when the custom path is forced,
+it is recomputed from each device's [`NEMUnitState`](@ref) at the step.
 
 # Arguments
 - `container`: the `PowerSimulations.OptimizationContainer` being updated.
 - `model`: the `PowerSimulations.OperationModel` whose step is being solved.
 - `key`: the `PowerSimulations.ParameterKey` of the parameter, over the link's type.
-- `input`: the simulation state, which these methods do not read.
+- `input`: the simulation state, passed to the stock update and not read by the custom one.
 
 # Returns
 `nothing`.
@@ -90,12 +96,15 @@ end
 Refreshes [`MNSPReverseRampRateParameter`](@ref) from each link's metered flow and forward and
 reverse bid ramp rates at the step, read through the configured [`StateSource`](@ref), in MW/min:
 the reverse rate of the [`mnsp_ramp_envelope`](@ref).
+Under [`ObservedState`](@ref) the stock PowerSimulations update refreshes it from the series that
+[`prepare_replay!`](@ref) attached. Under [`SimulatedState`](@ref), or when the custom path is forced,
+it is recomputed from each device's [`NEMUnitState`](@ref) at the step.
 
 # Arguments
 - `container`: the `PowerSimulations.OptimizationContainer` being updated.
 - `model`: the `PowerSimulations.OperationModel` whose step is being solved.
 - `key`: the `PowerSimulations.ParameterKey` of the parameter, over the link's type.
-- `input`: the simulation state, which these methods do not read.
+- `input`: the simulation state, passed to the stock update and not read by the custom one.
 
 # Returns
 `nothing`.

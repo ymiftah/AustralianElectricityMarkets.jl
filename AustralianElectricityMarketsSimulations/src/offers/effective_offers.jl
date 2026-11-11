@@ -26,8 +26,8 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
 - `"loss_demand_coefficient"`, the demand term of each loss-modelled interchange's loss factor
   ([`set_loss_demand_coefficients!`](@ref)).
 - `"initial_mw_seed"`, `"fixed_load_seed"` and `"fixed_load_invoked_seed"`, the first-solve values
-  the build reads from the configured [`StateSource`](@ref) ([`_set_state_seeds!`](@ref)); every
-  later solve rewrites the same parameters from the state source.
+  the build reads from the configured [`StateSource`](@ref) ([`_set_state_seeds!`](@ref)). Under
+  `ObservedState` each later solve reads these series at its own stamp.
 
 It also attaches to each NEM dispatch device a [`NEMDispatchInputs`](@ref) holding the keys of the
 dispatch-input series the formulation reads through.
@@ -66,8 +66,7 @@ Attaches each NEM dispatch device's first-solve seed series from the configured
 [`StateSource`](@ref): `"initial_mw_seed"` in MW, and, for a device whose energy bid carries a fixed
 loading, `"fixed_load_seed"` in system-base per-unit and `"fixed_load_invoked_seed"` (`1` or `0`).
 The build writes them before the forecasts are attached, so the simulation's first solve, which
-`PowerSimulations.jl` does not update, reads the same state source every later solve recomputes
-from. Replaces existing seed series.
+`PowerSimulations.jl` does not update, starts from the values at the build's stamp. Replaces existing seed series.
 
 # Arguments
 - `sys`: the `System` to add to.

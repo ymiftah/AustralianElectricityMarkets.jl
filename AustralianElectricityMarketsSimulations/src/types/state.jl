@@ -129,7 +129,7 @@ const _FORCE_CUSTOM_STATE_UPDATES = Ref(false)
 
 
 # The build's first-solve seed series, written from `_state_source()` before the forecasts are
-# attached; later solves overwrite the same parameters from the state source each step.
+# attached. Under `ObservedState` later solves read these series; under `SimulatedState` the custom update recomputes each step.
 const _INITIAL_MW_SEED_SERIES = "initial_mw_seed"
 const _FIXED_LOAD_SEED_SERIES = "fixed_load_seed"
 const _FIXED_LOAD_INVOKED_SEED_SERIES = "fixed_load_invoked_seed"
@@ -143,8 +143,8 @@ function _state_value(device, observed, field::Val{F}, t::DateTime) where {F}
 end
 
 
-# The starting output the build seeds the first solve with. It reads the same `unit_state` the
-# per-step updates call, so a stamp the build does not observe seeds the same zero the update writes.
+# The starting output seeded into the first solve, read from `unit_state` at the stamp. A stamp with no
+# observed state seeds the zero `unit_state` returns, and observed solves read the same per-stamp values.
 function _state_initial_mw(source::StateSource, device, t::DateTime)
     return unit_state(source, device, t).initial_mw
 end

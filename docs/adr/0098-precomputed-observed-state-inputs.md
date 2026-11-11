@@ -39,8 +39,7 @@ system already held.
 ## Consequences
 
 - Updates drop to a window read per parameter; the solve is now the largest part of a step.
-- The stock path does not throw on a non-finite value where the custom path did. Non-finite inputs
-  are refused earlier by the replay pre-flight checks.
+- Both paths throw on a non-finite value; the stock message names the series rather than the device and stamp.
 - The custom path is exercised only under the test switch until `SimulatedState` is implemented. On
   that path the energy and MNSP helpers still read a unit's `NEMUnitData` several times per step.
 

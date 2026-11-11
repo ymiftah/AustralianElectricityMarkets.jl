@@ -1,6 +1,5 @@
-# Per-step updates of the state-dependent parameters. Each toy system is built as a decision model at
-# each of its stamps, the parameter update runs once, and every parameter of the state-update types is
-# snapshotted. Later changes to how those parameters are refreshed must reproduce these snapshots.
+# Per-step updates of the state-dependent parameters. The reference is the custom path, forced by a test
+# switch: the stock path, which `ObservedState` uses, must write the same values. No snapshot is stored.
 
 const STATE_UPDATE_PARAMETER_TYPES = (
     InitialPowerTimeSeriesParameter,
@@ -160,6 +159,39 @@ end
     end
 end
 
+@testset "stock and custom paths agree over two executions of one model" begin
+    covered = Set{DataType}()
+    for (name, build) in STATE_UPDATE_SYSTEMS
+        sys = build()
+        template = replay_template(sys)
+        model = PSI.DecisionModel(
+            AEMS.NEMDispatchProblem, template, sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START, name = "state_update",
+        )
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        container = PSI.get_optimization_container(model)
+        state_keys = [key for key in keys(PSI.get_parameters(model)) if _is_state_update_key(key)]
+        union!(covered, _parameter_type.(state_keys))
+        previous = AEMS._FORCE_CUSTOM_STATE_UPDATES[]
+        try
+            for execution in (0, 1)
+                PSI.set_execution_count!(model, execution)
+                AEMS._FORCE_CUSTOM_STATE_UPDATES[] = false
+                _update_step_parameters!(model)
+                stock = Dict(_key_label(key) => _parameter_values(container, key) for key in state_keys)
+                AEMS._FORCE_CUSTOM_STATE_UPDATES[] = true
+                _update_step_parameters!(model)
+                for key in state_keys
+                    @test isapprox(stock[_key_label(key)], _parameter_values(container, key); atol = 1.0e-12, rtol = 0)
+                end
+            end
+        finally
+            AEMS._FORCE_CUSTOM_STATE_UPDATES[] = previous
+        end
+        @info "two-execution comparison" system = name parameters = length(state_keys)
+    end
+    @test covered == Set{DataType}(collect(STATE_UPDATE_PARAMETER_TYPES))
+end
+
 @testset "stock update applies the FCAS slope coefficients" begin
     sys = fcas_toy_system()
     template = replay_template(sys)
@@ -223,6 +255,56 @@ end
     PSI.solve_impl!(model)
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     @test only(PSI.get_parameter_column_values(initial, TOY_CHEAP)) === 50.0
+end
+
+@testset "FCAS step cache is not shared across models or rebuilds" begin
+    sys = fcas_toy_system()
+    template = replay_template(sys)
+    fcas_types = (FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter, FCASLowerSlopeParameter, FCASRampingLimitParameter)
+    function build_model()
+        model = PSI.DecisionModel(
+            AEMS.NEMDispatchProblem, template, sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START, name = "state_update",
+        )
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        PSI.set_execution_count!(model, 0)
+        return model
+    end
+    # The (device, bid type) pairs the FCAS parameters of `model` read, counted once however many parameters read them.
+    function fcas_pair_count(model)
+        container = PSI.get_optimization_container(model)
+        pairs = Set{Tuple}()
+        for key in keys(PSI.get_parameters(model)), name in keys(PSI.get_parameter_attributes(container, key).component_name_to_ts_uuid)
+            _parameter_type(key) in fcas_types || continue
+            push!(pairs, (name, first(AEMS._fcas_meta_offer(key.meta))))
+        end
+        return length(pairs)
+    end
+
+    first_model = build_model()
+    second_model = build_model()
+    expected = fcas_pair_count(first_model)
+    @test expected > 0
+
+    previous = AEMS._FORCE_CUSTOM_STATE_UPDATES[]
+    AEMS._FORCE_CUSTOM_STATE_UPDATES[] = true
+    try
+        AEMS._FCAS_EVALUATIONS[] = 0
+        _update_step_parameters!(first_model)
+        @test AEMS._FCAS_EVALUATIONS[] == expected
+
+        AEMS._FCAS_EVALUATIONS[] = 0
+        _update_step_parameters!(second_model)
+        @test AEMS._FCAS_EVALUATIONS[] == expected
+
+        PSI.reset!(first_model)
+        @test PSI.build!(first_model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        PSI.set_execution_count!(first_model, 0)
+        AEMS._FCAS_EVALUATIONS[] = 0
+        _update_step_parameters!(first_model)
+        @test AEMS._FCAS_EVALUATIONS[] == expected
+    finally
+        AEMS._FORCE_CUSTOM_STATE_UPDATES[] = previous
+    end
 end
 
 @testset "custom path computes each FCAS derivation once per step" begin

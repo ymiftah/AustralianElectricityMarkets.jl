@@ -13,9 +13,9 @@ end
     _update_fcas_parameters!(field_slice, kind, container, model, key) -> nothing
 
 Writes the FCAS effective offer or regulation ramping limit of every device the parameter was built
-for at every step of `model`'s horizon, recomputed through [`_fcas_effective_values`](@ref) from the
-unit's [`NEMUnitState`](@ref) at the step, read through the configured [`StateSource`](@ref), and its
-[`_FCASWindow`](@ref). The values are per-unit of the system base, as the series were attached.
+for at every step of `model`'s horizon. Each device's derivation for the parameter's bid type comes from
+[`_fcas_effective_values`](@ref) at the step, once per step, and is shared by the parameters that read it.
+The values are per-unit of the system base, as the series were attached.
 `field_slice` selects the parameter's own entries of one offer or ramping-limit element.
 
 # Arguments
@@ -40,7 +40,7 @@ function _update_fcas_parameters!(
     steps = PSI.get_time_steps(container)
     system = PSI.get_system(model)
     bid_type, decremental = _fcas_meta_offer(key.meta)
-    cache = _step_cache(model)
+    cache = _step_cache(container, model)
     PSY.with_units_base(system, "SYSTEM_BASE") do
         base = PSY.get_base_power(system)
         inactive = FCAS_INACTIVE_LIMIT_MW / base
@@ -95,12 +95,15 @@ end
 Refreshes [`FCASOfferLimitParameter`](@ref) from each device's effective FCAS offer and
 [`NEMUnitState`](@ref) at the step: `MaxAvail`, `EnablementMin` and `EnablementMax`, per-unit of the
 system base.
+Under [`ObservedState`](@ref) the stock PowerSimulations update refreshes it from the series that
+[`prepare_replay!`](@ref) attached. Under [`SimulatedState`](@ref), or when the custom path is forced,
+it is recomputed from each device's [`NEMUnitState`](@ref) at the step.
 
 # Arguments
 - `container`: the `PowerSimulations.OptimizationContainer` being updated.
 - `model`: the `PowerSimulations.OperationModel` whose step is being solved.
 - `key`: the `PowerSimulations.ParameterKey` of the parameter, over the device's type.
-- `input`: the simulation state, which these methods do not read.
+- `input`: the simulation state, passed to the stock update and not read by the custom one.
 
 # Returns
 `nothing`.
@@ -122,12 +125,15 @@ end
 
 Refreshes [`FCASBandWidthParameter`](@ref) from each device's effective FCAS offer and
 [`NEMUnitState`](@ref) at the step: the ten band widths, per-unit of the system base.
+Under [`ObservedState`](@ref) the stock PowerSimulations update refreshes it from the series that
+[`prepare_replay!`](@ref) attached. Under [`SimulatedState`](@ref), or when the custom path is forced,
+it is recomputed from each device's [`NEMUnitState`](@ref) at the step.
 
 # Arguments
 - `container`: the `PowerSimulations.OptimizationContainer` being updated.
 - `model`: the `PowerSimulations.OperationModel` whose step is being solved.
 - `key`: the `PowerSimulations.ParameterKey` of the parameter, over the device's type.
-- `input`: the simulation state, which these methods do not read.
+- `input`: the simulation state, passed to the stock update and not read by the custom one.
 
 # Returns
 `nothing`.
@@ -149,12 +155,15 @@ end
 
 Refreshes [`FCASUpperSlopeParameter`](@ref) from each device's effective FCAS offer and
 [`NEMUnitState`](@ref) at the step: the upper slope coefficient.
+Under [`ObservedState`](@ref) the stock PowerSimulations update refreshes it from the series that
+[`prepare_replay!`](@ref) attached. Under [`SimulatedState`](@ref), or when the custom path is forced,
+it is recomputed from each device's [`NEMUnitState`](@ref) at the step.
 
 # Arguments
 - `container`: the `PowerSimulations.OptimizationContainer` being updated.
 - `model`: the `PowerSimulations.OperationModel` whose step is being solved.
 - `key`: the `PowerSimulations.ParameterKey` of the parameter, over the device's type.
-- `input`: the simulation state, which these methods do not read.
+- `input`: the simulation state, passed to the stock update and not read by the custom one.
 
 # Returns
 `nothing`.
@@ -177,12 +186,15 @@ end
 
 Refreshes [`FCASLowerSlopeParameter`](@ref) from each device's effective FCAS offer and
 [`NEMUnitState`](@ref) at the step: the lower slope coefficient.
+Under [`ObservedState`](@ref) the stock PowerSimulations update refreshes it from the series that
+[`prepare_replay!`](@ref) attached. Under [`SimulatedState`](@ref), or when the custom path is forced,
+it is recomputed from each device's [`NEMUnitState`](@ref) at the step.
 
 # Arguments
 - `container`: the `PowerSimulations.OptimizationContainer` being updated.
 - `model`: the `PowerSimulations.OperationModel` whose step is being solved.
 - `key`: the `PowerSimulations.ParameterKey` of the parameter, over the device's type.
-- `input`: the simulation state, which these methods do not read.
+- `input`: the simulation state, passed to the stock update and not read by the custom one.
 
 # Returns
 `nothing`.
@@ -207,12 +219,15 @@ Refreshes [`FCASRampingLimitParameter`](@ref) from each device's AGC ramping cap
 [`NEMUnitState`](@ref) at the step, through [`fcas_ramping_active`](@ref) and
 [`fcas_ramping_limit`](@ref): the joint ramping limit and the battery's BDU ramping limit, per-unit
 of the system base.
+Under [`ObservedState`](@ref) the stock PowerSimulations update refreshes it from the series that
+[`prepare_replay!`](@ref) attached. Under [`SimulatedState`](@ref), or when the custom path is forced,
+it is recomputed from each device's [`NEMUnitState`](@ref) at the step.
 
 # Arguments
 - `container`: the `PowerSimulations.OptimizationContainer` being updated.
 - `model`: the `PowerSimulations.OperationModel` whose step is being solved.
 - `key`: the `PowerSimulations.ParameterKey` of the parameter, over the device's type.
-- `input`: the simulation state, which these methods do not read.
+- `input`: the simulation state, passed to the stock update and not read by the custom one.
 
 # Returns
 `nothing`.

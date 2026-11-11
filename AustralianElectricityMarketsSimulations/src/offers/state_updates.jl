@@ -28,24 +28,27 @@ const _CUSTOM_STATE_UPDATE_CALLS = Ref(0)
 # The `(offers, ramping)` pair of `_fcas_effective_values` for one device and bid type.
 const _FCASDerivation = Tuple{Dict{Bool, Vector{NTuple{15, Float64}}}, Union{Nothing, Vector{NTuple{2, Float64}}}}
 
-# The FCAS derivations of one model step, keyed by device UUID and bid type.
+# The FCAS derivations of one model step, keyed by device UUID and bid type. The container is held by
+# identity, so a reset or rebuilt model never reads another build's derivations.
+# It assumes the unit state does not change within a step.
 struct _StepCache
     timestamp::DateTime
     execution::Int
+    container::PSI.OptimizationContainer
     fcas::Dict{Tuple{Base.UUID, BidType}, _FCASDerivation}
 end
 
 const _STEP_CACHE_KEY = "state_step_cache"
 
 # The cache of `model`'s current step, held in the model's `ext` and replaced when the step changes.
-# A step is its timestamp and execution count, so the parameters of one update share one derivation.
-function _step_cache(model::PSI.OperationModel)
+# A step is its timestamp and execution count within one container, so the parameters of one update share a derivation.
+function _step_cache(container::PSI.OptimizationContainer, model::PSI.OperationModel)
     timestamp = PSI.get_current_timestamp(model)::DateTime
     execution = PSI.get_execution_count(model)
     ext = PSI.get_ext(model)
     cache = get(ext, _STEP_CACHE_KEY, nothing)
-    if !(cache isa _StepCache) || cache.timestamp != timestamp || cache.execution != execution
-        cache = _StepCache(timestamp, execution, Dict{Tuple{Base.UUID, BidType}, _FCASDerivation}())
+    if !(cache isa _StepCache) || cache.timestamp != timestamp || cache.execution != execution || cache.container !== container
+        cache = _StepCache(timestamp, execution, container, Dict{Tuple{Base.UUID, BidType}, _FCASDerivation}())
         ext[_STEP_CACHE_KEY] = cache
     end
     return cache
@@ -134,12 +137,15 @@ end
 Refreshes [`InitialPowerTimeSeriesParameter`](@ref) from each device's [`NEMUnitState`](@ref) at the
 step, read through the configured [`StateSource`](@ref). The value is the unit's starting MW, which the parameter's
 multiplier converts to system-base per-unit.
+Under [`ObservedState`](@ref) the stock PowerSimulations update refreshes it from the series that
+[`prepare_replay!`](@ref) attached. Under [`SimulatedState`](@ref), or when the custom path is forced,
+it is recomputed from each device's [`NEMUnitState`](@ref) at the step.
 
 # Arguments
 - `container`: the `PowerSimulations.OptimizationContainer` being updated.
 - `model`: the `PowerSimulations.OperationModel` whose step is being solved.
 - `key`: the `PowerSimulations.ParameterKey` of the parameter, over the device's type.
-- `input`: the simulation state, which these methods do not read.
+- `input`: the simulation state, passed to the stock update and not read by the custom one.
 
 # Returns
 `nothing`.

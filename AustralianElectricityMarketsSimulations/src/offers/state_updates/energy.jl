@@ -43,12 +43,15 @@ Refreshes [`RampUpRateTimeSeriesParameter`](@ref) from each device's energy bids
 [`NEMUnitState`](@ref) at the step, read through the configured [`StateSource`](@ref), in system-base
 per-unit per minute: the composite cross-zero rate of a device bid on both sides or its per-side bid
 rate, capped by the telemetered limit.
+Under [`ObservedState`](@ref) the stock PowerSimulations update refreshes it from the series that
+[`prepare_replay!`](@ref) attached. Under [`SimulatedState`](@ref), or when the custom path is forced,
+it is recomputed from each device's [`NEMUnitState`](@ref) at the step.
 
 # Arguments
 - `container`: the `PowerSimulations.OptimizationContainer` being updated.
 - `model`: the `PowerSimulations.OperationModel` whose step is being solved.
 - `key`: the `PowerSimulations.ParameterKey` of the parameter, over the device's type.
-- `input`: the simulation state, which these methods do not read.
+- `input`: the simulation state, passed to the stock update and not read by the custom one.
 
 # Returns
 `nothing`.
@@ -74,12 +77,15 @@ Refreshes [`RampDownRateTimeSeriesParameter`](@ref) from each device's energy bi
 [`NEMUnitState`](@ref) at the step, read through the configured [`StateSource`](@ref), in system-base
 per-unit per minute: the composite cross-zero rate of a device bid on both sides or its per-side bid
 rate, capped by the telemetered limit.
+Under [`ObservedState`](@ref) the stock PowerSimulations update refreshes it from the series that
+[`prepare_replay!`](@ref) attached. Under [`SimulatedState`](@ref), or when the custom path is forced,
+it is recomputed from each device's [`NEMUnitState`](@ref) at the step.
 
 # Arguments
 - `container`: the `PowerSimulations.OptimizationContainer` being updated.
 - `model`: the `PowerSimulations.OperationModel` whose step is being solved.
 - `key`: the `PowerSimulations.ParameterKey` of the parameter, over the device's type.
-- `input`: the simulation state, which these methods do not read.
+- `input`: the simulation state, passed to the stock update and not read by the custom one.
 
 # Returns
 `nothing`.
@@ -129,12 +135,15 @@ Refreshes [`FixedLoadTimeSeriesParameter`](@ref) from each device's energy bids 
 [`NEMUnitState`](@ref) at the step, read through the configured [`StateSource`](@ref): the net injection at the
 device's [`effective_fixed_load`](@ref), in system-base per-unit. A storage device's load side is
 subtracted from its generation side; the loading is zero wherever it is not invoked.
+Under [`ObservedState`](@ref) the stock PowerSimulations update refreshes it from the series that
+[`prepare_replay!`](@ref) attached. Under [`SimulatedState`](@ref), or when the custom path is forced,
+it is recomputed from each device's [`NEMUnitState`](@ref) at the step.
 
 # Arguments
 - `container`: the `PowerSimulations.OptimizationContainer` being updated.
 - `model`: the `PowerSimulations.OperationModel` whose step is being solved.
 - `key`: the `PowerSimulations.ParameterKey` of the parameter, over the device's type.
-- `input`: the simulation state, which these methods do not read.
+- `input`: the simulation state, passed to the stock update and not read by the custom one.
 
 # Returns
 `nothing`.
@@ -160,12 +169,15 @@ end
 Refreshes [`FixedLoadInvokedTimeSeriesParameter`](@ref) from each device's energy bids and
 [`NEMUnitState`](@ref) at the step, read through the configured [`StateSource`](@ref): `1` where either side's
 loading applies and `0` otherwise.
+Under [`ObservedState`](@ref) the stock PowerSimulations update refreshes it from the series that
+[`prepare_replay!`](@ref) attached. Under [`SimulatedState`](@ref), or when the custom path is forced,
+it is recomputed from each device's [`NEMUnitState`](@ref) at the step.
 
 # Arguments
 - `container`: the `PowerSimulations.OptimizationContainer` being updated.
 - `model`: the `PowerSimulations.OperationModel` whose step is being solved.
 - `key`: the `PowerSimulations.ParameterKey` of the parameter, over the device's type.
-- `input`: the simulation state, which these methods do not read.
+- `input`: the simulation state, passed to the stock update and not read by the custom one.
 
 # Returns
 `nothing`.
