@@ -580,8 +580,12 @@ end
 
 # Records an energy bid of `device` on `direction`, with `curves` (one per stamp, as offered) and
 # `max_avail` (MW per stamp), `roc_up`/`roc_down` (MW/min per stamp, `NaN` for no bid ramp) and unit
-# loss factors of 1. `fixed_load`, when given, is the `FIXEDLOAD`, MW per stamp.
-function _toy_energy_bid!(sys, device, direction, stamps, curves, max_avail; roc_up = NaN, roc_down = NaN, fixed_load = nothing)
+# loss factors of 1. `fixed_load`, when given, is the `FIXEDLOAD`, MW per stamp; `fast_start_profile`, when
+# given, is a `FastStartProfile` held as a static bid value.
+function _toy_energy_bid!(
+        sys, device, direction, stamps, curves, max_avail;
+        roc_up = NaN, roc_down = NaN, fixed_load = nothing, fast_start_profile = nothing,
+    )
     AEM = AustralianElectricityMarkets
     field(f::Symbol) = AEM.bid_series_name(BidType.ENERGY, f, direction)
     n = length(stamps)
@@ -601,7 +605,7 @@ function _toy_energy_bid!(sys, device, direction, stamps, curves, max_avail; roc
         direction, offer_curves = AEM._series_key(device, field(:offer_curves)),
         max_avail = AEM._series_key(device, field(:max_avail)),
         roc_up = AEM._series_key(device, field(:roc_up)), roc_down = AEM._series_key(device, field(:roc_down)),
-        fixed_load = fixed_load_key,
+        fixed_load = fixed_load_key, fast_start_profile,
     )
     AEM._set_energy_bid!(AEM._nem_offer_cost(device), bid)
     current = AEM.has_registration(device) ? AEM.get_registration(device).schedule_type : ScheduleType.SCHEDULED
@@ -665,7 +669,7 @@ function fcas_toy_system(;
         alta_reg_avail = [15.0, 8.0], alta_agc = [1, 1], park_initial = [40.0, 40.0],
         batt_initial = [5.0, 5.0], batt_ramp = [240.0, 240.0], reg_req = [20.0, 20.0], r6_req = [30.0, 30.0],
         alta_ramp = [240.0, 240.0], agc_emax = [90.0, 90.0], horizon = TOY_RESOLUTION,
-        park_trap = (5.0, 10.0, 90.0, 100.0, 25.0),
+        park_trap = (5.0, 10.0, 90.0, 100.0, 25.0), alta_fast_start = nothing, alta_mode = nothing,
     )
     units = [
         TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0, ramp_down = 100.0),
@@ -679,6 +683,12 @@ function fcas_toy_system(;
             park = PSY.get_component(ThermalStandard, sys, TOY_EXPENSIVE)
             bat = PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY)
             pump = PSY.get_component(InterruptiblePowerLoad, sys, "pump")
+            # Alta's energy bid carries `alta_fast_start`, when given, and its observed dispatch mode is `alta_mode`.
+            isnothing(alta_fast_start) || _toy_energy_bid!(
+                sys, alta, AustralianElectricityMarkets.BidDirection.GEN, stamps,
+                _toy_offers([(100.0, 20.0)], 2), _toy_values(100.0, 2); fast_start_profile = alta_fast_start,
+            )
+            isnothing(alta_mode) || set_toy_unit_field!(sys, alta, stamps, :dispatch_mode, _toy_values(alta_mode, 2))
             add_toy_fcas_offer!(sys, alta, stamps, BidType.RAISEREG, [(10.0, 20.0, 80.0, 95.0, a) for a in alta_reg_avail], fill([(10.0, 5.0), (10.0, 12.0)], 2))
             add_toy_fcas_offer!(sys, alta, stamps, BidType.LOWERREG, fill((10.0, 20.0, 80.0, 95.0, 10.0), 2), fill([(10.0, 6.0)], 2))
             add_toy_fcas_offer!(sys, alta, stamps, BidType.RAISE6SEC, fill((5.0, 10.0, 70.0, 100.0, 20.0), 2), fill([(20.0, 3.0)], 2))

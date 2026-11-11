@@ -191,10 +191,39 @@ function _fcas_state_function(window::_FCASWindow, device::PSY.Device)
     # arithmetic (`x / base * multiplier`) so a starting output at an enablement bound compares equal.
     base = PSY.get_system_base_power(device)
     multiplier = _fcas_units_multiplier(device)
-    scaled(value) = NEMUnitState(value / base * multiplier, 0)
-    initial isa IS.StaticTimeSeriesKey || return t -> scaled(initial)
+    scaled(value, mode) = NEMUnitState(value / base * multiplier, mode)
+    modes = _fcas_dispatch_modes(window, device, observed.dispatch_mode)
+    initial isa IS.StaticTimeSeriesKey || return t -> scaled(initial, modes[t])
     values = IS.get_time_series_values(device, initial; start_time = window.initial_time, len = window.horizon)::Vector{Float64}
-    return t -> scaled(values[t])
+    return t -> scaled(values[t], modes[t])
+end
+
+
+# The observed dispatch mode of `device` over `window`, one per interval. A stamp with no published mode
+# is 0, as `unit_state` seeds an unobserved stamp.
+function _fcas_dispatch_modes(window::_FCASWindow, device::PSY.Device, dispatch_mode::Union{IS.StaticTimeSeriesKey, Int})
+    dispatch_mode isa Int && return fill(dispatch_mode, window.horizon)
+    raw = IS.get_time_series_values(device, dispatch_mode; start_time = window.initial_time, len = window.horizon)::Vector{Float64}
+    return [isfinite(m) ? Int(m) : 0 for m in raw]
+end
+
+
+# Whether each interval of `window` is one in which `device` carries a fast-start inflexibility profile:
+# a bid side's `T1` to `T4` profile with at least one positive value. A `FastStartProfile` held as a static
+# bid value applies to every interval.
+function _fcas_fast_start_flags(window::_FCASWindow, device::PSY.Device)
+    flags = fill(false, window.horizon)
+    cost = AustralianElectricityMarkets._nem_offer_cost(device)
+    isnothing(cost) && return flags
+    for bid in get_energy_bids(cost)
+        isnothing(bid.fast_start_profile) && continue
+        profiles = AustralianElectricityMarkets.bid_value(device, bid, :fast_start_profile, window.initial_time, window.horizon)
+        for t in 1:window.horizon
+            profile = profiles isa AbstractVector ? profiles[t] : profiles
+            flags[t] |= any(>(0.0), (profile.t1, profile.t2, profile.t3, profile.t4))
+        end
+    end
+    return flags
 end
 
 
@@ -439,7 +468,8 @@ end
 [`fcas_ramping_limit`](@ref) of the AGC ramping capability of `_fcas_ramp_rate_service` on the upper
 form ([`fcas_upper_regulation_service`](@ref)) or the lower form, and `±inactive` wherever
 [`fcas_ramping_active`](@ref) is false or the unit is not enabled for `bid_type`
-(`_fcas_regulation_enabled_mask`). `bdu` is the §6.4 right-hand side of a `PSY.Storage` device
+(`_fcas_regulation_enabled_mask`), or the unit is exempt ([`fcas_joint_ramping_exempt`](@ref)) on a
+fast-start interval. `bdu` is the §6.4 right-hand side of a `PSY.Storage` device
 bidding both sides, its AGC ramping capability on `bid_type`, and `inactive` where that is zero or
 for any other device.
 
@@ -452,12 +482,13 @@ function _fcas_effective_ramping(
     )
     caps = _fcas_agc_ramp_caps(window, device, _fcas_ramp_rate_service(device, bid_type))
     enabled = _fcas_regulation_enabled_mask(window, device, bid_type, direction; state)
+    fast_start = _fcas_fast_start_flags(window, device)
     upper = bid_type == fcas_upper_regulation_service(device)
     bdu_caps = direction == FCASBidDirection.BOTH ? _fcas_agc_ramp_caps(window, device, bid_type) : nothing
     return map(1:window.horizon) do t
         s = state(t)
-        joint = (!isnothing(s) && enabled[t] && fcas_ramping_active(caps[t], s)) ?
-            fcas_ramping_limit(caps[t], upper, s) : (upper ? inactive : -inactive)
+        active = !isnothing(s) && enabled[t] && fcas_ramping_active(caps[t], s) && !fcas_joint_ramping_exempt(s, fast_start[t])
+        joint = active ? fcas_ramping_limit(caps[t], upper, s) : (upper ? inactive : -inactive)
         bdu = (isnothing(bdu_caps) || iszero(bdu_caps[t])) ? inactive : bdu_caps[t]
         (joint, bdu)
     end

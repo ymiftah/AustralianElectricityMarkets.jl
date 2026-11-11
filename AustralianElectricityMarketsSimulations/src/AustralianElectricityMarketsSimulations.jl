@@ -109,7 +109,7 @@ export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas
 export StateSource, ObservedState, SimulatedState, NEMUnitState, unit_state, NEMDispatchInputs, NEMFCASInputs
 export max_active_power_floor, in_fast_start_profile, fixed_load_invoked, effective_fixed_load,
     fcas_state_stranded_ok, fcas_both_sides_stranded_ok, fcas_ramping_active, fcas_ramping_limit,
-    mnsp_ramp_envelope, composite_ramp_rates
+    fcas_joint_ramping_exempt, mnsp_ramp_envelope, composite_ramp_rates
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
 export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
     exclude_unmodeled_services!, check_replication_steps,

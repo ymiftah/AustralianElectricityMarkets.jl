@@ -150,6 +150,25 @@ end
 
 
 """
+    fcas_joint_ramping_exempt(state::NEMUnitState, fast_start::Bool) -> Bool
+
+Whether a unit's joint energy and FCAS ramping limits are not applied in the interval. AEMO's
+*FCAS Model in NEMDE* footnote 11 to Table 3 excludes a fast-start unit that starts in dispatch mode
+0, 1 or 2 from the joint ramping constraints. A unit without a fast-start profile is never exempt.
+
+# Arguments
+- `state`: the [`NEMUnitState`](@ref) at the start of the interval.
+- `fast_start`: whether the unit carries a fast-start inflexibility profile in the interval.
+
+# Returns
+`Bool`.
+"""
+function fcas_joint_ramping_exempt(state::NEMUnitState, fast_start::Bool)
+    return fast_start && state.dispatch_mode in (0, 1, 2)
+end
+
+
+"""
     fcas_ramping_limit(capability, upper::Bool, state::NEMUnitState) -> Float64
 
 The joint energy and FCAS limit of one direction: `state.initial_mw` plus the AGC ramping

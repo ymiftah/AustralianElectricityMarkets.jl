@@ -1081,6 +1081,14 @@ end
         @test !fcas_ramping_active(0.0, state)
         @test !fcas_ramping_active(NaN, state)
         @test !fcas_ramping_active(10.0, NEMUnitState(NaN, 4))
+        # AEMO FCAS Model in NEMDE footnote 11: a fast-start unit starting in modes 0, 1 or 2 is
+        # exempt from joint ramping; any other unit is not.
+        @test fcas_joint_ramping_exempt(NEMUnitState(50.0, 0), true)
+        @test fcas_joint_ramping_exempt(NEMUnitState(50.0, 1), true)
+        @test fcas_joint_ramping_exempt(NEMUnitState(50.0, 2), true)
+        @test !fcas_joint_ramping_exempt(NEMUnitState(50.0, 3), true)
+        @test !fcas_joint_ramping_exempt(NEMUnitState(50.0, 4), true)
+        @test !fcas_joint_ramping_exempt(NEMUnitState(50.0, 0), false)
         # A bidirectional unit's two regulation sides are gated together while both pass their
         # other pre-conditions.
         gen = FCASTrapezium(;
@@ -1170,12 +1178,13 @@ end
                     caps = AEMSim._fcas_agc_ramp_caps(window, device, AEMSim._fcas_ramp_rate_service(device, service))
                     # The writer's own enablement mask is the non-state half of its ramping rule.
                     enabled = AEMSim._fcas_regulation_enabled_mask(window, device, service, fcas_bid_direction(device, service))
+                    fast_start = AEMSim._fcas_fast_start_flags(window, device)
                     upper = service == fcas_upper_regulation_service(device)
                     written = [entry[1] * base for entry in values_of(device, name)]
                     for i in eachindex(stamps)
                         state = unit_state(ObservedState(), device, stamps[i])
                         limit = written[i]
-                        if fcas_ramping_active(caps[i], state) && enabled[i]
+                        if fcas_ramping_active(caps[i], state) && enabled[i] && !fcas_joint_ramping_exempt(state, fast_start[i])
                             @test fcas_ramping_limit(caps[i], upper, state) ≈ limit rtol = 1.0e-12
                         else
                             @test limit ≈ (upper ? FCAS_INACTIVE_LIMIT_MW : -FCAS_INACTIVE_LIMIT_MW)
