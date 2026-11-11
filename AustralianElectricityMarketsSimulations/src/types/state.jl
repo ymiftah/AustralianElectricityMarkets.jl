@@ -64,6 +64,17 @@ function _is_unobserved_stamp(device, t::DateTime)
 end
 
 
+# `_is_unobserved_stamp` for each of `stamps`, from one lookup of the device's registration.
+function _unobserved_stamp_mask(device, stamps::AbstractVector{DateTime})
+    n = length(stamps)
+    AustralianElectricityMarkets.is_non_scheduled_load(device) && return fill(true, n)
+    unit = AustralianElectricityMarkets._nem_unit_data(device)
+    registration = isnothing(unit) ? nothing : unit.registration
+    isnothing(registration) && return fill(false, n)
+    return [!AustralianElectricityMarkets._is_registered(registration, t) for t in stamps]
+end
+
+
 """
     unit_state(source::StateSource, device, t::DateTime) -> NEMUnitState
 
@@ -173,6 +184,33 @@ function _state_initial_mw(::ObservedState, device, t::DateTime)
     _is_unobserved_stamp(device, t) && return 0.0
     observed = AustralianElectricityMarkets.get_observed_state(device)
     return Float64(_state_value(device, observed, Val(:initial_mw), t))
+end
+
+
+"""
+    _state_initial_mw_series(source::StateSource, device, stamps::AbstractVector{DateTime}) -> Vector{Float64}
+
+The starting output in MW at each of `stamps`, as [`_state_initial_mw`](@ref) gives it stamp by stamp. Under
+[`ObservedState`](@ref) with a key-backed `initial_mw`, the series is read once over the stamps and the
+registration is looked up once per device. The stamps must be consecutive at the series' resolution.
+
+# Arguments
+- `source`: the [`StateSource`](@ref).
+- `device`: the NEM device.
+- `stamps`: the first timestamps of the intervals, consecutive at the series' resolution.
+
+# Returns
+A `Vector{Float64}` the length of `stamps`.
+"""
+function _state_initial_mw_series(::ObservedState, device, stamps::AbstractVector{DateTime})
+    observed = AustralianElectricityMarkets.get_observed_state(device)
+    values = IS.get_time_series_values(device, observed.initial_mw; start_time = first(stamps), len = length(stamps))
+    unobserved = _unobserved_stamp_mask(device, stamps)
+    return [unobserved[i] ? 0.0 : Float64(values[i]) for i in eachindex(stamps)]
+end
+
+function _state_initial_mw_series(source::StateSource, device, stamps::AbstractVector{DateTime})
+    return [_state_initial_mw(source, device, t) for t in stamps]
 end
 
 

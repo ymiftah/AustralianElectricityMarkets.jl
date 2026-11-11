@@ -618,3 +618,34 @@ end
     AustralianElectricityMarkets.set_registration!(gen, registration(_ST_STAMPS[1] - Minute(5)))
     @test_throws ArgumentError AustralianElectricityMarketsSimulations.unit_state(source, gen, _ST_STAMPS[2])
 end
+
+@testset "the vectorised seed equals the stamp-by-stamp seed, including the registration edge" begin
+    sys = System(100.0)
+    bus = _st_bus()
+    add_component!(sys, bus)
+    gen = _st_thermal("vectorised", bus)
+    add_component!(sys, gen)
+    AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
+    add_time_series!(sys, gen, _st_series("initial_mw", [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]))
+    add_time_series!(sys, gen, _st_series("dispatch_mode", [0.0, 1.0, 2.0, 3.0, 4.0, 0.0, 1.0]))
+    AustralianElectricityMarkets.set_observed_state!(
+        gen,
+        AustralianElectricityMarkets.NEMObservedState(;
+            initial_mw = _st_key(gen, "initial_mw"), dispatch_mode = _st_key(gen, "dispatch_mode"),
+        ),
+    )
+    source = AustralianElectricityMarketsSimulations.ObservedState()
+    # Registered from the second stamp, so the first is unregistered and the second is the first registered one.
+    AustralianElectricityMarkets.set_registration!(
+        gen,
+        AustralianElectricityMarkets.NEMRegistration(;
+            schedule_type = AustralianElectricityMarkets.ScheduleType.SCHEDULED, gen_loss_factor = 1.0,
+            load_loss_factor = 1.0, registered_from = _ST_STAMPS[2] - Minute(5), registered_until = DateTime(2999, 12, 31),
+        ),
+    )
+    per_stamp = [AustralianElectricityMarketsSimulations._state_initial_mw(source, gen, t) for t in _ST_STAMPS]
+    vectorised = AustralianElectricityMarketsSimulations._state_initial_mw_series(source, gen, _ST_STAMPS)
+    @test vectorised == per_stamp
+    @test vectorised[1] == 0.0
+    @test vectorised[2] == 20.0
+end

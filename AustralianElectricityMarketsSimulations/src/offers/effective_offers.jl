@@ -86,13 +86,13 @@ function _set_state_seeds!(sys::PSY.System)
             resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, name))
             # The seed reads the starting output only, so a stamp with no dispatch mode (before
             # registration or a missing DISPATCHLOAD row) still seeds.
-            initial = [_state_initial_mw(source, device, t) for t in stamps]
+            initial = _state_initial_mw_series(source, device, stamps)
             replace_single_series!(
                 sys, device,
                 single_series(_INITIAL_MW_SEED_SERIES, first(stamps), initial, resolution),
             )
             _has_fixed_load_bid(device) || return
-            steps = [_fixed_load_step(device, t; source) for t in stamps]
+            steps = _fixed_load_step_series(device, stamps; source)
             replace_single_series!(
                 sys, device,
                 single_series(_FIXED_LOAD_SEED_SERIES, first(stamps), [step.target / base for step in steps], resolution),
