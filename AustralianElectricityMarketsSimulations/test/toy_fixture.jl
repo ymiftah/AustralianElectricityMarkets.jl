@@ -541,9 +541,12 @@ end
 # Records `device`'s FCAS bid for `bid_type` from `trapeziums`, one `(EnablementMin, LowBreakpoint,
 # HighBreakpoint, EnablementMax, MaxAvail)` per stamp in MW, and `bands`, one `(MW, price)` list per
 # stamp, as the bid's series, which the formulation reads once the FCASService exists.
-function add_toy_fcas_offer!(sys, device, stamps, bid_type, trapeziums, bands; decremental = false)
+function add_toy_fcas_offer!(
+        sys, device, stamps, bid_type, trapeziums, bands;
+        decremental = false,
+        direction = decremental ? AustralianElectricityMarkets.BidDirection.LOAD : AustralianElectricityMarkets.BidDirection.GEN,
+    )
     AEM = AustralianElectricityMarkets
-    direction = decremental ? AEM.BidDirection.LOAD : AEM.BidDirection.GEN
     field(f::Symbol) = AEM.bid_series_name(bid_type, f, direction)
     curves = [PSY.PiecewiseStepData([0.0; cumsum(first.(bs))], last.(bs)) for bs in bands]
     points = [(Float64(a), Float64(b), Float64(c), Float64(d)) for (a, b, c, d, _) in trapeziums]

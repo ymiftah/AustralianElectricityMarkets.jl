@@ -356,7 +356,7 @@ end
     db = aem_connect(HiveConfiguration(hive_location = hive))
     grid = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     sys, _ = constrained_system(db; date_range = grid)
-    # The formulation's offer series are derived by AEMSim, so AEM attaches none.
+    # No stage attaches an `fcas_offer_*` series.
     @test !any(
         has_time_series(device, SingleTimeSeries, fcas_series_name("fcas_offer", get_bid_type(svc), dec))
             for device in get_components(Device, sys), svc in get_components(FCASService, sys), dec in (false, true)

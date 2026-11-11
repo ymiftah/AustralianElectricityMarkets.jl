@@ -2121,3 +2121,44 @@ end
     var = PSI.get_variable(container, PSI.ActivePowerVariable(), InterruptiblePowerLoad)
     @test PSI.JuMP.value(var["ASLOAD", 1]) ≈ 0.0 atol = FCAS_TOY_TOLERANCE
 end
+
+@testset "a GEN and a BIDIRECTIONAL bid on one side are priced from their own curves" begin
+    AEM = AustralianElectricityMarkets
+    service_name = "TOY_RAISE6SEC_MIX"
+    sys = nem_toy_system(
+        [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 2.0, ramp_up = 100.0, ramp_down = 100.0, availability = 2.0)],
+        2.0;
+        batteries = [TOY_BATTERY => toy_battery(50.0, 30.0, 50.0, 0.0; initial = 0.0, ramp_up = 100.0)],
+        mutate! = (sys, stamps) -> begin
+            alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
+            batt = PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY)
+            add_toy_fcas_offer!(
+                sys, alta, stamps, BidType.RAISE6SEC,
+                fill((0.0, 0.0, 100.0, 100.0, 10.0), 2), fill([(2.0, 10.0), (2.0, 30.0)], 2),
+            )
+            add_toy_fcas_offer!(
+                sys, batt, stamps, BidType.RAISE6SEC,
+                fill((0.0, 0.0, 50.0, 50.0, 10.0), 2), fill([(10.0, 15.0)], 2);
+                direction = AEM.BidDirection.BIDIRECTIONAL,
+            )
+            PSY.add_service!(
+                sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISE6SEC), [alta, batt],
+            )
+            return
+        end,
+    )
+    container = build_fcas(sys, [service_name])
+    price_keys = [k for k in keys(PSI.get_parameters(container)) if PSI.IS.Optimization.get_entry_type(k) === FCASBandPriceParameter]
+    # One parameter per device type's series name: the GEN unit's curve and the BIDIRECTIONAL battery's.
+    @test sort([k.meta for k in price_keys]) == ["$(service_name)_gen_1", "$(service_name)_gen_2"]
+    params = [PSI.get_parameter(container, k) for k in price_keys]
+    alta_param = only(p for p in params if TOY_CHEAP in axes(PSI.get_multiplier_array(p))[1])
+    batt_param = only(p for p in params if TOY_BATTERY in axes(PSI.get_multiplier_array(p))[1])
+    @test [PSI.get_parameter_column_refs(alta_param, TOY_CHEAP)[label, 1] for label in ("1", "2")] == [10.0, 30.0]
+    @test PSI.get_parameter_column_refs(batt_param, TOY_BATTERY)["1", 1] == 15.0
+    base_power = PSI.get_base_power(container)
+    bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, service_name)
+    variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
+    @test PSI.JuMP.coefficient(variant, bands[TOY_CHEAP, "2", 1]) ≈ base_power * 30.0 / 12
+    @test PSI.JuMP.coefficient(variant, bands[TOY_BATTERY, "1", 1]) ≈ base_power * 15.0 / 12
+end

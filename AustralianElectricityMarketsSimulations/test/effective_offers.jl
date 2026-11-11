@@ -1281,12 +1281,19 @@ end
     entry = only(i for i in fcas_inputs(bw01) if i.service == BidType.RAISEREG && i.side == OfferSide.GEN)
     @test entry.offer == bid.offer_curves
     @test !has_time_series(bw01, SingleTimeSeries, fcas_series_name("fcas_offer", BidType.RAISEREG, false))
+    # Removes BW01's RAISEREG service, so its bid is unmodelled, and derives the offers again.
+    raisereg = only(s for s in PSY.get_services(bw01) if s isa FCASService && AEM.get_bid_type(s) == BidType.RAISEREG)
+    PSY.remove_service!(bw01, raisereg)
+    set_effective_offers!(sys)
+    checked = 0
     for device in AEM.nem_dispatch_devices(sys)
         cost = AEM._nem_offer_cost(device)
         isnothing(cost) && continue
         for bid in AEM.get_fcas_bids(cost)
             isempty(AEM._fcas_services(device, bid.service)) || continue
-            @test !any(i -> i.service == bid.service && !isnothing(i.offer), fcas_inputs(device))
+            checked += 1
+            @test all(i -> i.service != bid.service || isnothing(i.offer), fcas_inputs(device))
         end
     end
+    @test checked > 0
 end
