@@ -15,9 +15,9 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
 - `"energy_availability[_decremental]"`, the energy bid `MAXAVAIL` per unit of the system base; zero
   for a non-scheduled load without an energy bid. This is the series the formulation reads as
   `EnergyMaxAvailTimeSeriesParameter`.
-- `"fcas_offer_<BIDTYPE>[_decremental]"` and `"fcas_trapezium_<BIDTYPE>[_decremental]"`, the FCAS
-  offer curves in MW and the trapezium per unit of the system base, with NaN ramp rates. A
-  `BIDIRECTIONAL` FCAS bid is on the generation side.
+- `"fcas_trapezium_<BIDTYPE>[_decremental]"`, the FCAS trapezium per unit of the system base, with NaN
+  ramp rates. The FCAS offer curves are the bids' `offer_curves` series, read through the keys of
+  [`NEMDispatchInputs`](@ref). A `BIDIRECTIONAL` FCAS bid is on the generation side.
 - `"fcas_effective_<BIDTYPE>[_decremental]"` and `"fcas_ramping_limits_<BIDTYPE>"`, the FCAS offer
   per interval after AEMO *FCAS Model in NEMDE* §4 scaling and §5 enablement, on the timestamps of
   the device's `"fcas_trapezium_<BIDTYPE>[_decremental]"` series, per-unit of the system base.
@@ -154,14 +154,14 @@ function _dispatch_inputs(device)
 end
 
 
-# One `NEMFCASInputs` per side of each service `device` has an offer for: an offer always writes its
-# trapezium. A regulation service has one AGC ramp rate, so it rides on the GEN-side entry when the
-# device bids that side, and on the LOAD-side entry otherwise.
+# One `NEMFCASInputs` per side of each service `device` has an offer for, its offer key read from the
+# device's FCAS bid. A regulation service has one AGC ramp rate, so it rides on the GEN-side entry when
+# the device bids that side, and on the LOAD-side entry otherwise.
 function _fcas_inputs(device, keys::Dict{String, IS.StaticTimeSeriesKey})
     inputs = NEMFCASInputs[]
     for service in AustralianElectricityMarkets.FCAS_BID_TYPES
         offers = Dict(
-            side => get(keys, fcas_series_name("fcas_offer", service, side), nothing)
+            side => AustralianElectricityMarkets._fcas_offer_key(device, service, side)
                 for side in (OfferSide.GEN, OfferSide.LOAD)
         )
         sides = [side for side in (OfferSide.GEN, OfferSide.LOAD) if !isnothing(offers[side])]
@@ -306,7 +306,7 @@ function _set_energy_offers!(sys::PSY.System)
     return
 end
 
-# Attaches the FCAS trapezium and offer curves of each FCAS bid the formulation models.
+# Attaches the FCAS trapezium of each FCAS bid the formulation models; the offer curves are the bid series.
 function _set_fcas_offers!(sys::PSY.System)
     base = PSY.get_base_power(sys)
     for device in _bidding_devices(sys)
@@ -333,12 +333,6 @@ function _set_fcas_offers!(sys::PSY.System)
                     fcas_series_name("fcas_trapezium", service, side), first(trapezium.timestamps), values_by_interval,
                     trapezium.resolution,
                 ),
-            )
-            isempty(AustralianElectricityMarkets._fcas_services(device, service)) && continue
-            offer = _bid_series(device, bid.offer_curves, :offer_curves)
-            replace_single_series!(
-                sys, device,
-                single_series(fcas_series_name("fcas_offer", service, side), first(offer.timestamps), offer.values, offer.resolution),
             )
         end
     end

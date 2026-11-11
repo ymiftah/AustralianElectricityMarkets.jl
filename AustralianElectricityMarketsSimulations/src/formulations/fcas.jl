@@ -608,7 +608,7 @@ end
     _fcas_band_labels(offers, svc::FCASService) -> Vector{String}
 
 Band labels `"1"` to `"n"`, `n` the most bands any offer in `offers` has over the whole of its
-offer curve series (see [`fcas_offer_series_name`](@ref)), at least 1.
+offer curve series (the `offer_curves` series of its bid, see `_fcas_offer_key`), at least 1.
 
 # Returns
 `Vector{String}`.
@@ -616,8 +616,8 @@ offer curve series (see [`fcas_offer_series_name`](@ref)), at least 1.
 function _fcas_band_labels(offers, svc::FCASService)
     n = 1
     for (device, decremental) in offers
-        name = fcas_offer_series_name(svc, decremental)
-        curves::Vector{IS.PiecewiseStepData} = PSY.get_time_series_values(PSY.SingleTimeSeries, device, name)
+        key = AustralianElectricityMarkets._fcas_offer_key(device, get_bid_type(svc), offer_side(decremental))
+        curves::Vector{IS.PiecewiseStepData} = PSY.get_time_series_values(PSY.SingleTimeSeries, device, IS.get_name(key))
         n = max(n, maximum(c -> length(PSY.get_y_coords(c)), curves))
     end
     return string.(1:n)
@@ -684,12 +684,34 @@ end
 
 
 """
+    _fcas_band_price_batches(group, svc, devices, decremental) -> Vector{Tuple{String, String, Vector}}
+
+Groups the devices of one side of an offer group by the name of their bid's offer curve series, one
+`(meta, series name, devices)` batch per name. The meta is [`_fcas_band_price_meta`](@ref)'s when the
+side has one name, and suffixed with the batch's position otherwise.
+
+# Returns
+`Vector{Tuple{String, String, Vector}}`.
+"""
+function _fcas_band_price_batches(group, svc::FCASService, devices, decremental::Bool)
+    bid_type = get_bid_type(svc)
+    names = [IS.get_name(AustralianElectricityMarkets._fcas_offer_key(device, bid_type, offer_side(decremental))) for device in devices]
+    unique_names = unique(names)
+    base = _fcas_band_price_meta(group, decremental)
+    return [
+        (length(unique_names) == 1 ? base : "$(base)_$i", name, devices[names .== name])
+            for (i, name) in enumerate(unique_names)
+    ]
+end
+
+
+"""
     _add_fcas_band_costs!(container, group, svc, devices_template)
 
 Prices the [`FCASOfferBandVariable`](@ref)s of an [`_fcas_offer_groups`](@ref) `group` through
 [`FCASBandPriceParameter`](@ref) time-series cost parameters: one per device type and side, of meta
-`"<group.meta>_gen"` or `"<group.meta>_load"`, read from the offers' service series (see
-[`fcas_offer_series_name`](@ref)). Each band's cost target is its price in `\$/MWh` times the system base
+`"<group.meta>_gen"` or `"<group.meta>_load"`, read from the bids' `offer_curves` series (see
+[`_fcas_band_price_batches`](@ref)). Each band's cost target is its price in `\$/MWh` times the system base
 power and the interval length in hours.
 
 # Arguments
@@ -704,23 +726,27 @@ power and the interval length in hours.
 function _add_fcas_band_costs!(container::PSI.OptimizationContainer, group, svc::FCASService, devices_template)
     bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, group.meta)
     labels = axes(bands)[2]
+    metas = Dict{Tuple{Bool, String}, String}()
     for decremental in (false, true)
         side = [device for (device, dec) in group.offers if dec == decremental]
         isempty(side) && continue
-        meta = _fcas_band_price_meta(group, decremental)
-        ts_name = fcas_offer_series_name(svc, decremental)
-        for D in unique(typeof.(side))
-            devices = D[device for device in side if device isa D]
-            PSI.add_parameters!(
-                container, FCASBandPriceParameter, devices, _fcas_device_model(devices_template, D);
-                meta = meta, time_series_name = ts_name,
-            )
+        for (meta, ts_name, batch) in _fcas_band_price_batches(group, svc, side, decremental)
+            for device in batch
+                metas[(decremental, PSY.get_name(device))] = meta
+            end
+            for D in unique(typeof.(batch))
+                devices = D[device for device in batch if device isa D]
+                PSI.add_parameters!(
+                    container, FCASBandPriceParameter, devices, _fcas_device_model(devices_template, D);
+                    meta = meta, time_series_name = ts_name,
+                )
+            end
         end
     end
     scale = PSI.get_base_power(container) * interval_hours(PSI.get_resolution(container))
     for (device, decremental) in group.offers, t in PSI.get_time_steps(container), (b, label) in enumerate(labels)
         dname = PSY.get_name(device)
-        key = PSI.ParameterKey(FCASBandPriceParameter, typeof(device), _fcas_band_price_meta(group, decremental))
+        key = PSI.ParameterKey(FCASBandPriceParameter, typeof(device), metas[(decremental, dname)])
         PSI.add_cost_target!(container, key, dname, (b,), t, bands[dname, label, t], scale)
     end
     return

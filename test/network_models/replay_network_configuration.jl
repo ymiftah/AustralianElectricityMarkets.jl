@@ -358,7 +358,7 @@ end
     sys, _ = constrained_system(db; date_range = grid)
     # The formulation's offer series are derived by AEMSim, so AEM attaches none.
     @test !any(
-        has_time_series(device, SingleTimeSeries, fcas_offer_series_name(svc, dec))
+        has_time_series(device, SingleTimeSeries, fcas_series_name("fcas_offer", get_bid_type(svc), dec))
             for device in get_components(Device, sys), svc in get_components(FCASService, sys), dec in (false, true)
     )
     bidders = [g for g in get_components(Generator, sys) if !isempty(AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(g)))]

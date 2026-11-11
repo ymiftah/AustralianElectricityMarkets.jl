@@ -10,7 +10,7 @@ using AustralianElectricityMarkets: BidType, ConstraintSense, FCASService, FCAS_
     ENERGY_MAX_AVAIL_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR, FIXED_LOADING_CVP_FACTOR, MNSP_RAMP_CVP_FACTOR,
     MNSP_OFFER_CVP_FACTOR, MNSP_AVAILABILITY_CVP_FACTOR, constraint_cvp_factor,
     energy_offer_series_name, offer_side, side_suffix, has_registration, is_semi_scheduled, get_registration, FCASBidDirection,
-    fcas_bid_direction, fcas_series_name, fcas_service_name, fcas_offer_series_name,
+    fcas_bid_direction, fcas_series_name, fcas_service_name,
     get_bid_type, get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_factor,
     get_interconnector, get_missing_constraint_intervals, get_region, get_sense, get_skipped_constraints,
     get_terms, loss_curve_vertex_values, is_non_scheduled_load, loss_segments, nem_dispatch_devices,

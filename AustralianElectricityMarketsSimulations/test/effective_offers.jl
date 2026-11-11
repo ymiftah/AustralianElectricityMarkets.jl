@@ -41,9 +41,9 @@ end
         @test first(values_of(er01, "energy_availability")) ≈ 1.01
         @test PowerSystems.get_y_coords(first(values_of(bw01, "energy_offer_decremental"))) == prices_descending
         @test first(values_of(bw01, "energy_availability_decremental")) ≈ 1.01
-        @test PowerSystems.get_y_coords(first(values_of(bw01, "fcas_offer_RAISEREG"))) == prices_ascending
+        @test PowerSystems.get_y_coords(first(values_of(bw01, AustralianElectricityMarkets._fcas_offer_series_name(bw01, BidType.RAISEREG, false)))) == prices_ascending
         @test isequal(collect(first(values_of(bw01, "fcas_trapezium_RAISEREG"))), [0.2, 0.3, 0.9, 1.0, 0.21, NaN, NaN])
-        @test PowerSystems.get_y_coords(first(values_of(asload1, "fcas_offer_RAISE6SEC_decremental"))) == prices_descending
+        @test PowerSystems.get_y_coords(first(values_of(asload1, AustralianElectricityMarkets._fcas_offer_series_name(asload1, BidType.RAISE6SEC, true)))) == prices_descending
     end
 
     @testset "get_fcas_offer reads the scaled trapezium and the offer curve" begin
@@ -1261,6 +1261,32 @@ end
                     end
                 end
             end
+        end
+    end
+end
+
+
+@testset "FCAS offers point at the bid series" begin
+    AEM = AustralianElectricityMarkets
+    replay_db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
+    interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
+    sys = nem_system(replay_db, NEMDEConfiguration(); date_range = interval)
+    set_effective_offers!(sys)
+    fcas_inputs(device) = only(get_supplemental_attributes(NEMDispatchInputs, device)).fcas
+    bw01 = get_component(EnergyReservoirStorage, sys, "BW01")
+    bid = only(
+        b for b in AEM.get_fcas_bids(AEM._nem_offer_cost(bw01))
+            if b.service == BidType.RAISEREG && AEM._fcas_bid_side(bw01, b) == OfferSide.GEN
+    )
+    entry = only(i for i in fcas_inputs(bw01) if i.service == BidType.RAISEREG && i.side == OfferSide.GEN)
+    @test entry.offer == bid.offer_curves
+    @test !has_time_series(bw01, SingleTimeSeries, fcas_series_name("fcas_offer", BidType.RAISEREG, false))
+    for device in AEM.nem_dispatch_devices(sys)
+        cost = AEM._nem_offer_cost(device)
+        isnothing(cost) && continue
+        for bid in AEM.get_fcas_bids(cost)
+            isempty(AEM._fcas_services(device, bid.service)) || continue
+            @test !any(i -> i.service == bid.service && !isnothing(i.offer), fcas_inputs(device))
         end
     end
 end

@@ -547,7 +547,7 @@ An available device without its curve is not skipped, so its missing data still 
 function _is_unpriced_unavailable(svc::FCASService, device::PSY.Device, bid_type::BidType)
     PSY.get_available(device) && return false
     sides = fcas_offer_sides(fcas_bid_direction(device, bid_type))
-    return !all(dec -> PSY.has_time_series(device, PSY.SingleTimeSeries, fcas_offer_series_name(svc, dec)), sides)
+    return !all(dec -> !isnothing(AustralianElectricityMarkets._fcas_offer_key(device, bid_type, offer_side(dec))), sides)
 end
 
 

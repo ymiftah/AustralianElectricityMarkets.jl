@@ -81,18 +81,61 @@ end
 
 
 """
+    _fcas_offer_key(component, service::BidType, side::OfferSide) -> Union{Nothing, IS.StaticTimeSeriesKey}
+
+The key of the offer curve series of `component`'s FCAS bid for `service` on `side`, the `offer_curves`
+field of its [`NEMFCASBid`](@ref), or `nothing` when `component` bids no such FCAS bid or has no
+`FCASService` for `service`. Throws `ArgumentError` when that field is static rather than series-backed.
+"""
+function _fcas_offer_key(component, service::BidType, side::OfferSide)
+    cost = _nem_offer_cost(component)
+    isnothing(cost) && return nothing
+    isempty(_fcas_services(component, service)) && return nothing
+    bids = get_fcas_bids(cost)
+    i = findfirst(b -> b.service == service && _fcas_bid_side(component, b) == side, bids)
+    isnothing(i) && return nothing
+    offer = bids[i].offer_curves
+    offer isa IS.StaticTimeSeriesKey || throw(
+        ArgumentError(
+            "\"$(get_name(component))\" has a static `offer_curves` field for $(string(service)); FCAS offers need a series-backed bid.",
+        ),
+    )
+    return offer
+end
+
+
+"""
+    _fcas_offer_series_name(component, service::BidType, decremental::Bool) -> String
+
+Name of the series [`_fcas_offer_key`](@ref) keys for `component`'s FCAS offer curve, `decremental`
+selecting the load side. Throws `ArgumentError` when that key is absent.
+"""
+function _fcas_offer_series_name(component, service::BidType, decremental::Bool)
+    key = _fcas_offer_key(component, service, offer_side(decremental))
+    isnothing(key) && throw(
+        ArgumentError(
+            "\"$(get_name(component))\" has no FCAS offer curve for $(string(service))" *
+                (decremental ? " (decremental)" : "") * "; call set_market_bids! first.",
+        ),
+    )
+    return IS.get_name(key)
+end
+
+
+"""
     _get_fcas_offer_curve(component, service, initial_time, horizon; decremental = false) -> Vector{PSY.PiecewiseStepData}
 
 Full-series read of `component`'s FCAS offer curve for `service`, `horizon` steps from
 `initial_time`. The series is stored in MW and divided by the system base on read. Quantities
 (`x_coords`) are then in `component`'s `System`'s current display units (MW under `NATURAL_UNITS`,
 per-unit of the system base under `SYSTEM_BASE`); prices (`y_coords`) are always \$/MW, never
-per-unitized. `decremental` selects the storage `DIRECTION == "LOAD"` series, or `name` reads the
-series of that name. Throws `ArgumentError` if the series isn't attached.
+per-unitized. `decremental` selects the load-side curve, or `name` reads the series of that name,
+by default the `offer_curves` series of the bid ([`_fcas_offer_key`](@ref)). Throws `ArgumentError` if
+the series isn't attached.
 """
 function _get_fcas_offer_curve(
         component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false,
-        name::AbstractString = fcas_offer_series_name(fcas_service(component, service), decremental),
+        name::AbstractString = _fcas_offer_series_name(component, service, decremental),
     )
     rows = _read_fcas_series("curve", component, name, service, decremental, initial_time, horizon)
     base_power = _fcas_system_base(component)

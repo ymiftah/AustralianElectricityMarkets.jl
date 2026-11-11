@@ -3,7 +3,7 @@ function _objective_cache_system()
     sys = fcas_toy_system()
     alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
     gc = PSY.get_component(GenericConstraint, sys, "F_REG")
-    curve_name = AustralianElectricityMarkets.fcas_offer_series_name(PSY.get_component(FCASService, sys, "1_RAISEREG"), false)
+    curve_name = AustralianElectricityMarkets._fcas_offer_series_name(alta, BidType.RAISEREG, false)
     replacements = (
         (alta, curve_name, [_toy_offer([(0.1, 5.0), (0.1, 12.0)]), _toy_offer([(0.1, 15.0), (0.1, 22.0)])]),
         (gc, AustralianElectricityMarkets.NEM_CONSTRAINT_SERIES.invoked, [1.0, 0.0]),
@@ -126,7 +126,7 @@ end
     device = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
     curves = [_toy_offer([(10.0, Float64(i))]) for i in 1:60]
     PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series("variable_cost", TOY_START, curves, TOY_RESOLUTION))
-    curve_name = AustralianElectricityMarkets.fcas_offer_series_name(PSY.get_component(FCASService, sys, "1_RAISEREG"), false)
+    curve_name = AustralianElectricityMarkets._fcas_offer_series_name(device, BidType.RAISEREG, false)
     PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series(curve_name, TOY_START, curves, TOY_RESOLUTION))
     PSY.transform_single_time_series!(sys, TOY_RESOLUTION, TOY_RESOLUTION)
     model = PSI.DecisionModel(

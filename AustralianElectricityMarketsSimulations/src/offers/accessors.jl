@@ -68,8 +68,8 @@ end
 
 `component`'s `service` offer on `side`, `horizon` steps from `initial_time`, in `component`'s
 `System`'s current display units: the [`get_scaled_fcas_trapezium`](@ref) trapeziums (`kwargs` are
-passed to it) and the offer curves, read from the derived `"fcas_trapezium_<service>"` and
-`"fcas_offer_<service>"` series.
+passed to it) and the offer curves, read from the bid's `offer_curves` series and the derived
+`"fcas_trapezium_<service>"` series.
 Throws `ArgumentError` if `component` has no [`NEMFCASBid`](@ref) for `service` on `side`, or either
 series isn't attached, or they differ in length.
 

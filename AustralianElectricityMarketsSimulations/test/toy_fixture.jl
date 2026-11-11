@@ -540,7 +540,7 @@ end
 
 # Records `device`'s FCAS bid for `bid_type` from `trapeziums`, one `(EnablementMin, LowBreakpoint,
 # HighBreakpoint, EnablementMax, MaxAvail)` per stamp in MW, and `bands`, one `(MW, price)` list per
-# stamp. The derivation writes its offers once the FCASService exists (see `derive_toy_offers!`).
+# stamp, as the bid's series, which the formulation reads once the FCASService exists.
 function add_toy_fcas_offer!(sys, device, stamps, bid_type, trapeziums, bands; decremental = false)
     AEM = AustralianElectricityMarkets
     direction = decremental ? AEM.BidDirection.LOAD : AEM.BidDirection.GEN
@@ -556,25 +556,6 @@ function add_toy_fcas_offer!(sys, device, stamps, bid_type, trapeziums, bands; d
         max_avail = AEM._series_key(device, field(:max_avail)), trapezium = AEM._series_key(device, field(:trapezium)),
     )
     AEM._set_fcas_bid!(AEM._nem_offer_cost(device), bid)
-    return
-end
-
-# Attaches each missing FCAS offer series from the recorded bids, for FCASServices added to a toy
-# system; existing series are left as they are, so it also works after the forecasts are built.
-function derive_toy_offers!(sys)
-    AEM = AustralianElectricityMarkets
-    for device in PSY.get_components(PSY.Device, sys)
-        cost = AEM._nem_offer_cost(device)
-        isnothing(cost) && continue
-        for bid in AEM.get_fcas_bids(cost)
-            side = AEM._fcas_bid_side(device, bid)
-            (isnothing(side) || isempty(AEM._fcas_services(device, bid.service))) && continue
-            name = AEM.fcas_series_name("fcas_offer", bid.service, side)
-            PSY.has_time_series(device, PSY.SingleTimeSeries, name) && continue
-            offer = AEMS._bid_series(device, bid.offer_curves, :offer_curves)
-            PSY.add_time_series!(sys, device, AEM.single_series(name, first(offer.timestamps), offer.values, offer.resolution))
-        end
-    end
     return
 end
 

@@ -9,7 +9,6 @@ function replay_validation_system(terms; invoked = 1.0, with_off_constraint = fa
         mutate! = function (sys, stamps)
             unit = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
             PSY.add_service!(sys, FCASService(; name = "1_RAISEREG", region = "1", bid_type = BidType.RAISEREG), [unit])
-            derive_toy_offers!(sys)
             gc = GenericConstraint(; name = "N_REVIEW", sense = ConstraintSense.LE, rhs = 1.0, terms)
             PSY.add_service!(sys, gc, [unit])
             add_toy_constraint_series!(sys, gc, stamps, fill(100.0, length(stamps)), fill(invoked, length(stamps)))

@@ -276,21 +276,3 @@ end
 function _fcas_services(device::PSY.Device, bid_type::BidType)
     return FCASService[svc for svc in PSY.get_services(device) if svc isa FCASService && get_bid_type(svc) == bid_type]
 end
-
-
-"""
-    fcas_offer_series_name(service::FCASService, decremental::Bool) -> String
-
-Name of the time series holding a device's FCAS offer curve for `service`:
-`fcas_offer_<market>`, suffixed `_decremental` for the load side. The series is attached by `set_effective_offers!` in AEMSim.
-
-# Arguments
-- `service`: the FCAS service, one per region and [`BidType`](@ref).
-- `decremental`: `true` for the load-side (`LOAD`) curve, `false` for the generation-side one.
-
-# Returns
-A `String`.
-"""
-function fcas_offer_series_name(service::FCASService, decremental::Bool)
-    return fcas_series_name("fcas_offer", get_bid_type(service), decremental)
-end
