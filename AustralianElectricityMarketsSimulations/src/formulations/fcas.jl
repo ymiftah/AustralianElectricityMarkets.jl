@@ -39,7 +39,7 @@ end
 """
     _fcas_direction(device, bid_type) -> FCASBidDirection
 
-Which of `bid_type`'s `"fcas_trapezium_<bid_type>[_decremental]"` series `device` carries. Throws
+Which of `bid_type`'s FCAS bid sides `device` carries (see `fcas_bid_direction`). Throws
 an `ArgumentError` when [`FCASMarket`](@ref) does not model that direction
 ([`_fcas_direction_problem`](@ref)).
 

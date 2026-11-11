@@ -215,7 +215,7 @@ end
 
 
 """
-    NEMFCASInputs(; service, side, offer, trapezium, agc_ramp)
+    NEMFCASInputs(; service, side, offer, trapezium, max_avail, agc_ramp)
 
 The keys of one FCAS service's inputs on a device, for one side of its market. Throws an `ArgumentError`
 when `service` is not an FCAS `BidType`.
@@ -223,8 +223,9 @@ when `service` is not an FCAS `BidType`.
 # Fields
 - `service`: the FCAS `BidType`.
 - `side`: the `OfferSide` of the offer.
-- `offer`: the derived FCAS offer curve series, a price-band series in MW against \$/MWh, or `nothing`.
-- `trapezium`: the derived FCAS trapezium series, MW, or `nothing`.
+- `offer`: the FCAS offer curve series of the bid, a price-band series in MW against \$/MWh, or `nothing`.
+- `trapezium`: the FCAS trapezium series of the bid, the four MW breakpoints, or `nothing`.
+- `max_avail`: the FCAS `MAXAVAIL` series of the bid, MW, or `nothing`.
 - `agc_ramp`: the AGC ramp rate series, in the units the unit conditions publish, or `nothing`.
 """
 struct NEMFCASInputs <: PSY.DeviceParameter
@@ -232,13 +233,16 @@ struct NEMFCASInputs <: PSY.DeviceParameter
     side::AustralianElectricityMarkets.OfferSide
     offer::Union{Nothing, IS.StaticTimeSeriesKey}
     trapezium::Union{Nothing, IS.StaticTimeSeriesKey}
+    max_avail::Union{Nothing, IS.StaticTimeSeriesKey}
     agc_ramp::Union{Nothing, IS.StaticTimeSeriesKey}
 end
 
-function NEMFCASInputs(; service, side, offer = nothing, trapezium = nothing, agc_ramp = nothing)
+function NEMFCASInputs(;
+        service, side, offer = nothing, trapezium = nothing, max_avail = nothing, agc_ramp = nothing,
+    )
     service in AustralianElectricityMarkets.FCAS_BID_TYPES ||
         throw(ArgumentError("NEMFCASInputs needs an FCAS bid type, got $(service)"))
-    return NEMFCASInputs(service, side, offer, trapezium, agc_ramp)
+    return NEMFCASInputs(service, side, offer, trapezium, max_avail, agc_ramp)
 end
 
 IS.deserialize(::Type{Vector{NEMFCASInputs}}, data::Vector) =

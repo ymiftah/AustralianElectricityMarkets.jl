@@ -35,8 +35,8 @@ Which sides of an FCAS bid a device carries: `NONE`, `INCREMENTAL` (generation s
 """
     fcas_bid_direction(device, bid_type) -> FCASBidDirection
 
-Which sides of a `bid_type` FCAS bid `device` carries, read from its `"fcas_trapezium_<bid_type>"`
-and `"fcas_trapezium_<bid_type>_decremental"` series ([`fcas_series_name`](@ref)).
+Which sides of a `bid_type` FCAS bid `device` carries, read from the [`NEMFCASBid`](@ref)s of its
+[`NEMOfferCost`](@ref) (`_fcas_bids_direction`).
 
 # Arguments
 - `device`: any component.
@@ -46,11 +46,7 @@ and `"fcas_trapezium_<bid_type>_decremental"` series ([`fcas_series_name`](@ref)
 An [`FCASBidDirection`](@ref).
 """
 function fcas_bid_direction(device, bid_type::BidType)
-    has_inc, has_dec = (has_time_series(device, SingleTimeSeries, fcas_series_name("fcas_trapezium", bid_type, dec)) for dec in (false, true))
-    has_inc && has_dec && return FCASBidDirection.BOTH
-    has_inc && return FCASBidDirection.INCREMENTAL
-    has_dec && return FCASBidDirection.DECREMENTAL
-    return FCASBidDirection.NONE
+    return _fcas_bids_direction(device, bid_type)
 end
 
 

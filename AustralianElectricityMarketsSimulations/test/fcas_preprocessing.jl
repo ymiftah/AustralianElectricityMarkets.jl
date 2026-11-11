@@ -87,6 +87,9 @@ end
     effective = PSY.get_time_series_values(PSY.SingleTimeSeries, load, "fcas_effective_RAISEREG_decremental")
     @test effective[1][1] ≈ 15.0 / PSY.get_base_power(sys)
     @test effective[2][1] == 0.0
-    submitted = PSY.get_time_series_values(PSY.SingleTimeSeries, load, "fcas_trapezium_RAISEREG_decremental")
-    @test all(t -> t[5] ≈ 15.0 / PSY.get_base_power(sys), submitted)
+    max_avail = AustralianElectricityMarkets.bid_series_name(
+        BidType.RAISEREG, :max_avail, AustralianElectricityMarkets.BidDirection.LOAD,
+    )
+    submitted = PSY.get_time_series_values(PSY.SingleTimeSeries, load, max_avail)
+    @test all(m -> m ≈ 15.0, submitted)
 end

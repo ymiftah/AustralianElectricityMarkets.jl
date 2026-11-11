@@ -15,12 +15,11 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
 - `"energy_availability[_decremental]"`, the energy bid `MAXAVAIL` per unit of the system base; zero
   for a non-scheduled load without an energy bid. This is the series the formulation reads as
   `EnergyMaxAvailTimeSeriesParameter`.
-- `"fcas_trapezium_<BIDTYPE>[_decremental]"`, the FCAS trapezium per unit of the system base, with NaN
-  ramp rates. The FCAS offer curves are the bids' `offer_curves` series, read through the keys of
-  [`NEMDispatchInputs`](@ref). A `BIDIRECTIONAL` FCAS bid is on the generation side.
 - `"fcas_effective_<BIDTYPE>[_decremental]"` and `"fcas_ramping_limits_<BIDTYPE>"`, the FCAS offer
   per interval after AEMO *FCAS Model in NEMDE* §4 scaling and §5 enablement, on the timestamps of
-  the device's `"fcas_trapezium_<BIDTYPE>[_decremental]"` series, per-unit of the system base.
+  the bid's trapezium series, per-unit of the system base. The FCAS trapeziums and offer curves are
+  the bids' series, read through the keys of [`NEMDispatchInputs`](@ref); a `BIDIRECTIONAL` FCAS bid
+  is on the generation side.
 - `"tie_break_scale_<k>[_decremental]"`, the tie-break scale of each price-tied energy band
   ([`tie_break_scale`](@ref)), and the [`EnergyTieBreak`](@ref) service joining the units that carry them.
 - `"loss_demand_coefficient"`, the demand term of each loss-modelled interchange's loss factor
@@ -154,26 +153,78 @@ function _dispatch_inputs(device)
 end
 
 
-# One `NEMFCASInputs` per side of each service `device` has an offer for, its offer key read from the
-# device's FCAS bid. A regulation service has one AGC ramp rate, so it rides on the GEN-side entry when
-# the device bids that side, and on the LOAD-side entry otherwise.
+# One `NEMFCASInputs` per side of each service `device` has an FCAS bid and a service for, keyed by the
+# bid's series. A regulation service has one AGC ramp rate, so it rides on the GEN-side entry when the
+# device bids that side, and on the LOAD-side entry otherwise.
 function _fcas_inputs(device, keys::Dict{String, IS.StaticTimeSeriesKey})
     inputs = NEMFCASInputs[]
     for service in AustralianElectricityMarkets.FCAS_BID_TYPES
-        offers = Dict(
-            side => AustralianElectricityMarkets._fcas_offer_key(device, service, side)
-                for side in (OfferSide.GEN, OfferSide.LOAD)
-        )
-        sides = [side for side in (OfferSide.GEN, OfferSide.LOAD) if !isnothing(offers[side])]
-        isempty(sides) && continue
+        isempty(AustralianElectricityMarkets._fcas_services(device, service)) && continue
+        bids = NEMFCASInputs[
+            bid for bid in (_fcas_bid_inputs(device, service, side) for side in (OfferSide.GEN, OfferSide.LOAD))
+                if !isnothing(bid)
+        ]
+        isempty(bids) && continue
         agc_ramp = service in FCAS_REGULATION_MARKETS ?
             get(keys, fcas_series_name("fcas_agc_ramp_rate", service), nothing) : nothing
-        for (i, side) in enumerate(sides)
-            trapezium = get(keys, fcas_series_name("fcas_trapezium", service, side), nothing)
-            push!(inputs, NEMFCASInputs(; service, side, offer = offers[side], trapezium, agc_ramp = i == 1 ? agc_ramp : nothing))
+        for (i, bid) in enumerate(bids)
+            push!(
+                inputs,
+                NEMFCASInputs(;
+                    service = bid.service, side = bid.side, offer = bid.offer, trapezium = bid.trapezium,
+                    max_avail = bid.max_avail, agc_ramp = i == 1 ? agc_ramp : nothing,
+                ),
+            )
         end
     end
     return inputs
+end
+
+
+"""
+    _fcas_bid_inputs(device, service::BidType, side::OfferSide) -> Union{Nothing, NEMFCASInputs}
+
+The keys of the series of `device`'s FCAS bid for `service` on `side`: its offer curves, trapezium and
+`MAXAVAIL`, with no AGC ramp rate. `nothing` when `device` has no such bid, and `nothing` for the
+`offer` field when `device` has no `FCASService` for `service`. Throws `ArgumentError` when a bid field
+is static rather than series-backed.
+
+# Arguments
+- `device`: the bidding device.
+- `service`: the FCAS `BidType`.
+- `side`: the `OfferSide` of the bid.
+
+# Returns
+A `NEMFCASInputs`, or `nothing`.
+"""
+function _fcas_bid_inputs(device, service::BidType, side::OfferSide)
+    cost = AustralianElectricityMarkets._nem_offer_cost(device)
+    isnothing(cost) && return nothing
+    bids = get_fcas_bids(cost)
+    i = findfirst(b -> b.service == service && AustralianElectricityMarkets._fcas_bid_side(device, b) == side, bids)
+    isnothing(i) && return nothing
+    bid = bids[i]
+    return NEMFCASInputs(;
+        service, side,
+        offer = AustralianElectricityMarkets._fcas_offer_key(device, service, side),
+        trapezium = _bid_series_key(device, bid.trapezium, :trapezium),
+        max_avail = _bid_series_key(device, bid.max_avail, :max_avail),
+    )
+end
+
+
+# The key of a series-backed FCAS bid field; a static field has no series to read the trapezium from.
+function _bid_series_key(device, value::IS.StaticTimeSeriesKey, ::Symbol)
+    return value
+end
+
+function _bid_series_key(device, value, field::Symbol)
+    throw(
+        ArgumentError(
+            "\"$(PSY.get_name(device))\" has a static `$(field)` field; FCAS trapeziums and MAXAVAIL need " *
+                "series-backed bid inputs, as set_market_bids! writes them.",
+        ),
+    )
 end
 
 
@@ -306,9 +357,8 @@ function _set_energy_offers!(sys::PSY.System)
     return
 end
 
-# Attaches the FCAS trapezium of each FCAS bid the formulation models; the offer curves are the bid series.
-function _set_fcas_offers!(sys::PSY.System)
-    base = PSY.get_base_power(sys)
+# Throws when two FCAS bids of one service map to the same side of a unit, as the second would overwrite the first.
+function _check_fcas_bid_sides(sys::PSY.System)
     for device in _bidding_devices(sys)
         cost = AustralianElectricityMarkets._nem_offer_cost(device)
         isnothing(cost) && continue
@@ -316,33 +366,20 @@ function _set_fcas_offers!(sys::PSY.System)
         for bid in get_fcas_bids(cost)
             side = AustralianElectricityMarkets._fcas_bid_side(device, bid)
             isnothing(side) && continue
-            service = bid.service
-            (service, side) in seen && throw(
-                ArgumentError("\"$(PSY.get_name(device))\" has two $(service) bids on the $(side) side; one is overwritten."),
+            (bid.service, side) in seen && throw(
+                ArgumentError("\"$(PSY.get_name(device))\" has two $(bid.service) bids on the $(side) side; one is overwritten."),
             )
-            push!(seen, (service, side))
-            decremental = side == OfferSide.LOAD
-            trapezium = _bid_series(device, bid.trapezium, :trapezium)
-            max_avail = _bid_series(device, bid.max_avail, :max_avail).values
-            values_by_interval = [
-                fcas_trapezium_values(trapezium.values[i], max_avail[i], base) for i in eachindex(trapezium.values)
-            ]
-            replace_single_series!(
-                sys, device,
-                single_series(
-                    fcas_series_name("fcas_trapezium", service, side), first(trapezium.timestamps), values_by_interval,
-                    trapezium.resolution,
-                ),
-            )
+            push!(seen, (bid.service, side))
         end
     end
     return
 end
 
-# The static offer series: energy and FCAS curves, `MAXAVAIL`s and trapezia, from the bids alone.
+# The static offer series: the energy curves and `MAXAVAIL`s, from the bids alone. The FCAS offers are
+# read from the bids' series, so they need no derived series.
 function _set_static_offers!(sys::PSY.System)
+    _check_fcas_bid_sides(sys)
     _set_energy_offers!(sys)
-    _set_fcas_offers!(sys)
     return
 end
 

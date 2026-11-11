@@ -68,8 +68,7 @@ end
 
 `component`'s `service` offer on `side`, `horizon` steps from `initial_time`, in `component`'s
 `System`'s current display units: the [`get_scaled_fcas_trapezium`](@ref) trapeziums (`kwargs` are
-passed to it) and the offer curves, read from the bid's `offer_curves` series and the derived
-`"fcas_trapezium_<service>"` series.
+passed to it) and the offer curves, both read from the bid's series.
 Throws `ArgumentError` if `component` has no [`NEMFCASBid`](@ref) for `service` on `side`, or either
 series isn't attached, or they differ in length.
 
@@ -203,6 +202,59 @@ end
 
 
 """
+    _fcas_trapezium_window(device, inputs, initial_time, horizon) -> Vector{FCASTrapezium}
+
+The trapeziums of the FCAS bid keyed by `inputs`, `horizon` steps from `initial_time`, per unit of the
+system base: element `i` is `fcas_trapezium_values` of the bid's four MW breakpoints and its `MAXAVAIL`
+at that step. Throws `ArgumentError` naming the bid series when a step is malformed.
+
+# Arguments
+- `device`: the bidding device.
+- `inputs`: the bid's keys, a `NEMFCASInputs` from [`_fcas_bid_inputs`](@ref).
+- `initial_time`: the first step.
+- `horizon`: the number of steps.
+
+# Returns
+`Vector{FCASTrapezium}`.
+"""
+function _fcas_trapezium_window(device, inputs, initial_time, horizon::Integer)
+    points = IS.get_time_series_values(device, inputs.trapezium; start_time = initial_time, len = horizon)
+    max_avail = IS.get_time_series_values(device, inputs.max_avail; start_time = initial_time, len = horizon)
+    base = AustralianElectricityMarkets._fcas_system_base(device)
+    name = IS.get_name(inputs.trapezium)
+    return [
+        AustralianElectricityMarkets._validate_fcas_trapezium(
+            FCASTrapezium(fcas_trapezium_values(points[i], max_avail[i], base)),
+            "\"$name\" on \"$(get_name(device))\" at step $i",
+        ) for i in eachindex(points)
+    ]
+end
+
+
+"""
+    _get_fcas_trapezium(component, service, initial_time, horizon; decremental = false) -> Vector{FCASTrapezium}
+
+The unscaled trapeziums of `component`'s FCAS bid for `service`, `horizon` steps from `initial_time`, in
+`component`'s `System`'s current display units (MW under `NATURAL_UNITS`, per-unit of the system base under
+`SYSTEM_BASE`). `decremental` selects the load-side bid. Throws `ArgumentError` if `component` has no such bid.
+
+# Returns
+`Vector{FCASTrapezium}`.
+"""
+function _get_fcas_trapezium(component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false)
+    inputs = _fcas_bid_inputs(component, service, offer_side(decremental))
+    isnothing(inputs) && throw(
+        ArgumentError(
+            "\"$(get_name(component))\" has no FCAS bid for $(string(service))" *
+                (decremental ? " (decremental)" : "") * "; call set_market_bids! first.",
+        ),
+    )
+    multiplier = AustralianElectricityMarkets._fcas_units_multiplier(component)
+    return [FCASTrapezium(Tuple(t) .* multiplier) for t in _fcas_trapezium_window(component, inputs, initial_time, horizon)]
+end
+
+
+"""
     get_scaled_fcas_trapezium(component, service, initial_time, horizon; decremental = false,
         resolution = Minute(5)) -> Vector{FCASTrapezium}
 
@@ -211,7 +263,7 @@ using the regulation enablement of `service` in `component`'s telemetry, its AGC
 `"fcas_agc_ramp_rate_<service>"` (MW/h) times `resolution` (regulation `service`s only, from
 [`set_unit_conditions!`](@ref)), and its telemetry UIGF, when attached. A `NaN` entry applies no scaling at that step. UIGF applies at every
 step. For controllable loads, raise regulation uses the physical ramp-down rate and lower
-regulation the ramp-up rate. `decremental` selects the `DIRECTION == "LOAD"` trapezium series; the AGC
+regulation the ramp-up rate. `decremental` selects the load-side bid; the AGC
 enablement/ramp/UIGF series are shared by both directions of the same device.
 
 # Returns
@@ -219,12 +271,9 @@ enablement/ramp/UIGF series are shared by both directions of the same device.
 """
 function get_scaled_fcas_trapezium(
         component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false,
-        resolution::Dates.Period = Minute(5), trapezium_name::Union{Nothing, AbstractString} = nothing,
+        resolution::Dates.Period = Minute(5),
     )
-    trapeziums = _get_fcas_trapezium(
-        component, service, initial_time, horizon; decremental,
-        name = something(trapezium_name, fcas_series_name("fcas_trapezium", service, decremental)),
-    )
+    trapeziums = _get_fcas_trapezium(component, service, initial_time, horizon; decremental)
     is_regulation = service in FCAS_REGULATION_MARKETS
     telemetry = AustralianElectricityMarkets.get_telemetry(component)
     enablement = is_regulation ? _unit_pair_window(

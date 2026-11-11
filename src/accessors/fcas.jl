@@ -59,28 +59,6 @@ end
 
 
 """
-    _get_fcas_trapezium(component, service, initial_time, horizon; decremental = false) -> Vector{FCASTrapezium}
-
-Full-series read of `component`'s FCAS trapezium for `service`, `horizon` steps from
-`initial_time`, in `component`'s `System`'s current display units (MW under `NATURAL_UNITS`,
-per-unit of the system base under `SYSTEM_BASE`). `decremental` selects the storage
-`DIRECTION == "LOAD"` series, or `name` reads the series of that name. Throws `ArgumentError` if the
-series isn't attached, or if any step holds a malformed trapezium (out-of-order limits or a negative `MaxAvail`).
-"""
-function _get_fcas_trapezium(
-        component, service::BidType, initial_time, horizon::Integer; decremental::Bool = false,
-        name::AbstractString = fcas_series_name("fcas_trapezium", service, decremental),
-    )
-    rows = _read_fcas_series("trapezium", component, name, service, decremental, initial_time, horizon)
-    multiplier = _fcas_units_multiplier(component)
-    return [
-        _validate_fcas_trapezium(FCASTrapezium(t .* multiplier), "\"$name\" on \"$(get_name(component))\" at step $i")
-            for (i, t) in enumerate(rows)
-    ]
-end
-
-
-"""
     _fcas_offer_key(component, service::BidType, side::OfferSide) -> Union{Nothing, IS.StaticTimeSeriesKey}
 
 The key of the offer curve series of `component`'s FCAS bid for `service` on `side`, the `offer_curves`

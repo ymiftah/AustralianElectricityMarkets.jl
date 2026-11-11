@@ -100,7 +100,7 @@ end
     AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
     # Distinct values per series, so a key that resolves to the wrong series fails the value check.
     expected = Dict{String, Vector{Float64}}()
-    for (i, name) in enumerate(("energy", "energy_dec", "avail", "uigf", "up", "down", "fcas_offer", "fcas_trap", "agc"))
+    for (i, name) in enumerate(("energy", "energy_dec", "avail", "uigf", "up", "down", "fcas_offer", "fcas_trap", "fcas_max", "agc"))
         values = collect(1.0:length(_ST_STAMPS)) .+ 100.0 * i
         expected[name] = values
         add_time_series!(sys, gen, _st_series(name, values))
@@ -113,7 +113,8 @@ end
             AEMS.NEMFCASInputs(;
                 service = AustralianElectricityMarkets.BidType.RAISE6SEC,
                 side = AustralianElectricityMarkets.OfferSide.GEN,
-                offer = _st_key(gen, "fcas_offer"), trapezium = _st_key(gen, "fcas_trap"), agc_ramp = _st_key(gen, "agc"),
+                offer = _st_key(gen, "fcas_offer"), trapezium = _st_key(gen, "fcas_trap"),
+                max_avail = _st_key(gen, "fcas_max"), agc_ramp = _st_key(gen, "agc"),
             ),
         ],
     )
@@ -135,6 +136,7 @@ end
         @test fcas isa AEMS.NEMFCASInputs
         @test fcas.service == AustralianElectricityMarkets.BidType.RAISE6SEC
         @test fcas.side == AustralianElectricityMarkets.OfferSide.GEN
+        @test AustralianElectricityMarkets._keys_equal(fcas.max_avail, inputs.fcas[1].max_avail)
         @test AustralianElectricityMarkets._keys_equal(fcas.agc_ramp, inputs.fcas[1].agc_ramp)
 
         # Every present key reads back the values of the series it was built from.
@@ -157,11 +159,18 @@ end
             check(getfield(back, field), getfield(inputs, field))
         end
         for (built_fcas, back_fcas) in zip(inputs.fcas, back.fcas)
-            for field in (:offer, :trapezium, :agc_ramp)
+            for field in (:offer, :trapezium, :max_avail, :agc_ramp)
                 check(getfield(back_fcas, field), getfield(built_fcas, field))
             end
         end
         @test resolved == Set(keys(expected))
+    end
+
+    @testset "NEMFCASInputs holds the MAXAVAIL key apart from the trapezium key" begin
+        AEMS = AustralianElectricityMarketsSimulations
+        inputs = AEMS.NEMFCASInputs(; service = AustralianElectricityMarkets.BidType.RAISE6SEC, side = AustralianElectricityMarkets.OfferSide.GEN)
+        @test isnothing(inputs.max_avail)
+        @test fieldnames(AEMS.NEMFCASInputs) == (:service, :side, :offer, :trapezium, :max_avail, :agc_ramp)
     end
 
     @testset "NEMFCASInputs rejects a service that is not an FCAS bid type" begin

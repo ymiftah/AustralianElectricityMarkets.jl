@@ -8,7 +8,7 @@ const FCAS_TOY_TOLERANCE = 1.0e-4
 """
     add_toy_fcas!(sys, device, initial_timestamp, n, bid_type, trapezium_mw, bands_mw_price; decremental = false)
 
-Attaches flat `"fcas_trapezium_*"` series and the offer curves as service bids over `n` steps from `initial_timestamp`,
+Attaches the flat trapezium, `MAXAVAIL` and offer curve bid series, as service bids, over `n` steps from `initial_timestamp`,
 as [`add_toy_fcas_offer!`](@ref) does.
 """
 function add_toy_fcas!(

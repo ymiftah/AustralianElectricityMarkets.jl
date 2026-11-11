@@ -588,8 +588,8 @@ end
     _attach_fcas_effective_series!(sys, device, bid_type, inactive)
 
 Attaches `device`'s [`set_effective_offers!`](@ref) series for `bid_type`, computed over the
-timestamps of its trapezium series under the dispatch process (`_fcas_effective_values`).
-No-op for a device without a `bid_type` trapezium series.
+timestamps of its bid's trapezium series under the dispatch process (`_fcas_effective_values`).
+No-op for a device without a `bid_type` FCAS bid.
 
 # Returns
 `nothing`.
@@ -597,7 +597,8 @@ No-op for a device without a `bid_type` trapezium series.
 function _attach_fcas_effective_series!(sys::PSY.System, device::PSY.Device, bid_type::BidType, inactive::Float64)
     direction = fcas_bid_direction(device, bid_type)
     direction == FCASBidDirection.NONE && return
-    trapezium = fcas_series_name("fcas_trapezium", bid_type, direction == FCASBidDirection.DECREMENTAL)
+    side = direction == FCASBidDirection.DECREMENTAL ? OfferSide.LOAD : OfferSide.GEN
+    trapezium = IS.get_name(_fcas_bid_inputs(device, bid_type, side).trapezium)
     stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, trapezium)
     resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, trapezium))
     window = _FCASWindow(first(stamps), length(stamps), resolution)

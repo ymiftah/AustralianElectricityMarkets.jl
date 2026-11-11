@@ -215,7 +215,7 @@ end
             for d in PSY.get_contributing_devices(sys, svc)
                 direction = AEM.fcas_bid_direction(d, bid_type)
                 for decremental in (direction == FCASBidDirection.BOTH ? (false, true) : (direction == FCASBidDirection.DECREMENTAL,))
-                    raw = AEM._get_fcas_trapezium(d, bid_type, first(date_range), horizon; decremental = decremental)
+                    raw = AEMS._get_fcas_trapezium(d, bid_type, first(date_range), horizon; decremental = decremental)
                     scaled = get_scaled_fcas_trapezium(d, bid_type, first(date_range), horizon; decremental = decremental)
                     n_regulation_trapeziums += length(raw)
                     n_regulation_trapeziums_scaled += count(

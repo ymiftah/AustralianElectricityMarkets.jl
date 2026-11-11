@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - FCAS offer curves are read from the bids' `offer_curves` series. The derived `fcas_offer_*` series are no longer attached, and `fcas_offer_series_name` is removed.
 
+- FCAS trapeziums are read from the bids' `trapezium` and `max_avail` series. The derived `fcas_trapezium_*` series are no longer attached, and `NEMFCASInputs` has a new `max_avail` field, the key of the bid's `MAXAVAIL` series.
+
 ### Documentation
 
 - Restored the regional how-to pages, built with `set_regional_availability!`; fixed their series plots and output directories.
