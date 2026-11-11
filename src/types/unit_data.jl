@@ -132,6 +132,10 @@ function Base.:(==)(a::NEMTelemetry, b::NEMTelemetry)
     return all(f -> _field_equal(getfield(a, f), getfield(b, f)), fieldnames(NEMTelemetry))
 end
 
+function Base.hash(a::NEMTelemetry, h::UInt)
+    return hash(Tuple(getfield(a, f) for f in fieldnames(NEMTelemetry)), h)
+end
+
 
 """
     NEMObservedState(; initial_mw, dispatch_mode)
@@ -157,6 +161,10 @@ end
 
 function Base.:(==)(a::NEMObservedState, b::NEMObservedState)
     return all(f -> _field_equal(getfield(a, f), getfield(b, f)), fieldnames(NEMObservedState))
+end
+
+function Base.hash(a::NEMObservedState, h::UInt)
+    return hash(Tuple(getfield(a, f) for f in fieldnames(NEMObservedState)), h)
 end
 
 

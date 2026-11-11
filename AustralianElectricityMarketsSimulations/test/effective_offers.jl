@@ -272,6 +272,24 @@ end
         @test get_time_series_values(SingleTimeSeries, bw02, "initial_mw_seed"; ignore_scaling_factors = true)[1:2] == [0.0, 0.0]
         @test AEMS.unit_state(AEMS.ObservedState(), bw02, last(steps)) == AEMS.NEMUnitState(0.0, 0)
     end
+
+    @testset "the first-solve seed needs the output, not the dispatch mode" begin
+        # The unit is registered at both stamps, and its dispatch mode is NaN at the second: `unit_state`
+        # throws there, but the seed reads only the output.
+        sys = nem_toy_system(
+            [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0;
+            mutate! = function (sys, stamps)
+                cheap = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
+                set_toy_unit_field!(sys, cheap, stamps, :dispatch_mode, [0.0, NaN])
+                return
+            end,
+        )
+        cheap = get_component(ThermalStandard, sys, TOY_CHEAP)
+        stamps = [TOY_START, TOY_START + TOY_RESOLUTION]
+        @test_throws ArgumentError AEMS.unit_state(AEMS.ObservedState(), cheap, last(stamps))
+        # The seed series cannot be rewritten on a transformed toy, so the seed function is read directly.
+        @test [AEMS._state_initial_mw(AEMS.ObservedState(), cheap, t) for t in stamps] == [50.0, 50.0]
+    end
 end
 
 @testset "FCAS scaling accessors" begin

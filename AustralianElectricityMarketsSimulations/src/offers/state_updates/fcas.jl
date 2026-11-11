@@ -75,7 +75,7 @@ function _write_fcas_device_rows!(
     values = kind === :ramping ? ramping : offers[decremental]
     i = parameter_array.lookup[1][uuid]
     for t in steps
-        PSI._set_param_value_at!(parent_param, field_slice(values[t]), i, t)
+        _psi_set_param_value_at!(parent_param, field_slice(values[t]), i, t)
     end
     return
 end
@@ -84,7 +84,7 @@ end
 # The slope parameters set a constraint coefficient through the stock `add_coefficient_target!`
 # registration, so a new value only reaches its row once the registered coefficients are rewritten.
 function _apply_fcas_slope_coefficients!(container::PSI.OptimizationContainer, key::PSI.ParameterKey)
-    PSI._apply_coefficient_targets!(PSI.get_parameter(container, key))
+    _psi_apply_coefficient_targets!(PSI.get_parameter(container, key))
     return
 end
 

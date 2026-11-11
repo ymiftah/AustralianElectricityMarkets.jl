@@ -33,7 +33,7 @@ end
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR))
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 15)
     sys, _ = constrained_system(db; date_range = interval)
-    @test_throws r"incomplete dispatch inputs for .*; build sys with nem_system" replay_template(sys)
+    @test_throws r"incomplete dispatch inputs for .*; prepare_replay! attaches them once sys is built with nem_system" replay_template(sys)
 end
 
 @testset "an MNSP cannot enter the regulated formulation without its offers" begin

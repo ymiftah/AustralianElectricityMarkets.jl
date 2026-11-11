@@ -84,8 +84,8 @@ function _set_state_seeds!(sys::PSY.System)
             name = PSY.get_name(observed.initial_mw)
             stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name)
             resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, name))
-            # The seed reads the starting output only: a unit whose dispatch rows begin mid-range has
-            # no dispatch mode before its registration.
+            # The seed reads the starting output only, so a stamp with no dispatch mode (before
+            # registration or a missing DISPATCHLOAD row) still seeds.
             initial = [_state_initial_mw(source, device, t) for t in stamps]
             replace_single_series!(
                 sys, device,

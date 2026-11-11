@@ -144,10 +144,30 @@ function _state_value(device, observed, field::Val{F}, t::DateTime) where {F}
 end
 
 
-# The starting output seeded into the first solve, read from `unit_state` at the stamp. A stamp with no
-# observed state seeds the zero `unit_state` returns, and observed solves read the same per-stamp values.
-function _state_initial_mw(source::StateSource, device, t::DateTime)
+"""
+    _state_initial_mw(source::StateSource, device, t::DateTime) -> Float64
+
+The starting output in MW that seeds the first solve at the stamp `t`. Reads only the output, so
+it does not need the dispatch mode.
+
+# Arguments
+- `source`: the [`StateSource`](@ref).
+- `device`: the NEM device.
+- `t`: the first timestamp of the interval.
+
+# Returns
+The output in MW: `0.0` at an unobserved stamp under [`ObservedState`](@ref), the raw observed
+`initial_mw` otherwise, and `unit_state(source, device, t).initial_mw` under
+[`SimulatedState`](@ref).
+"""
+function _state_initial_mw(source::SimulatedState, device, t::DateTime)
     return unit_state(source, device, t).initial_mw
+end
+
+function _state_initial_mw(::ObservedState, device, t::DateTime)
+    _is_unobserved_stamp(device, t) && return 0.0
+    observed = AustralianElectricityMarkets.get_observed_state(device)
+    return Float64(_state_value(device, observed, Val(:initial_mw), t))
 end
 
 

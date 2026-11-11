@@ -21,19 +21,16 @@ device, the resolution and five-minute alignment of the series keyed by each dev
 """
 function _check_replay_system_inputs(sys::PSY.System, template::PSI.ProblemTemplate)
     _has_service_model(template, GenericConstraint) && _check_replay_constraint_inputs(sys)
-    uncovered = [
-        PSY.get_name(device) for device in nem_dispatch_devices(sys) if !_has_nem_dispatch_limits(device)
-    ]
+    devices = nem_dispatch_devices(sys)
+    uncovered = [PSY.get_name(device) for device in devices if !_has_nem_dispatch_limits(device)]
     isempty(uncovered) || throw(
         ArgumentError(
             "check_template_against_sys: incomplete dispatch inputs for $(join(sort!(uncovered), ", ")); " *
-                "build sys with nem_system(db, NEMDEConfiguration(); date_range) over the replay range before replay",
+                "prepare_replay! attaches them once sys is built with nem_system(db, NEMDEConfiguration(); date_range) " *
+                "over the replay range",
         ),
     )
-    AustralianElectricityMarkets._foreach_nem_dispatch_device(sys) do device
-        _has_nem_dispatch_limits(device) && _check_state_series_alignment(device)
-        return
-    end
+    foreach(_check_state_series_alignment, devices)
     _has_device_model(template, PSY.AreaInterchange) &&
         foreach(_check_mnsp_offers, PSY.get_components(PSY.get_available, PSY.AreaInterchange, sys))
     return

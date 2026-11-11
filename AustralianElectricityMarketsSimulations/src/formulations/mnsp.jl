@@ -209,6 +209,7 @@ function _add_mnsp_link_variables!(container::PSI.OptimizationContainer, devices
     foreach(_check_mnsp_offers, devices)
     mnsp = filter(_has_mnsp_offers, collect(devices))
     isempty(mnsp) && return
+    foreach(_require_mnsp_fixed_loads, mnsp)
     time_steps = PSI.get_time_steps(container)
     names = PSY.get_name.(mnsp)
     base_power = PSI.get_base_power(container)
@@ -222,7 +223,6 @@ function _add_mnsp_link_variables!(container::PSI.OptimizationContainer, devices
     for (P, _) in _MNSP_OPERATING_SERIES
         PSI.add_parameters!(container, P, mnsp, device_model)
     end
-    foreach(_require_mnsp_fixed_loads, mnsp)
     _add_mnsp_limit_variables!(container, mnsp)
     link_var = PSI.add_variable_container!(
         container, MNSPLinkFlowVariable(), PSY.AreaInterchange, names, directions, time_steps,

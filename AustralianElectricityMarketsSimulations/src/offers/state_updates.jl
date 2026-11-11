@@ -54,37 +54,6 @@ function _step_cache(container::PSI.OptimizationContainer, model::PSI.OperationM
     return cache
 end
 
-# Runs the pinned fork's stock update for `key`. A coefficient parameter's stock method also applies its targets.
-function _stock_state_update!(
-        container::PSI.OptimizationContainer, model::PSI.OperationModel,
-        key::PSI.ParameterKey{<:PSI.ConstraintCoefficientParameter, <:PSY.Component}, input::PSI.DatasetContainer{PSI.InMemoryDataset},
-    )
-    invoke(
-        PSI.update_container_parameter_values!,
-        Tuple{
-            PSI.OptimizationContainer, PSI.OperationModel,
-            PSI.ParameterKey{<:PSI.ConstraintCoefficientParameter, <:PSY.Component}, PSI.DatasetContainer{PSI.InMemoryDataset},
-        },
-        container, model, key, input,
-    )
-    return
-end
-
-function _stock_state_update!(
-        container::PSI.OptimizationContainer, model::PSI.OperationModel,
-        key::PSI.ParameterKey{<:PSI.ParameterType, <:PSY.Component}, input::PSI.DatasetContainer{PSI.InMemoryDataset},
-    )
-    invoke(
-        PSI.update_container_parameter_values!,
-        Tuple{
-            PSI.OptimizationContainer, PSI.OperationModel,
-            PSI.ParameterKey{<:PSI.ParameterType, <:PSY.Component}, PSI.DatasetContainer{PSI.InMemoryDataset},
-        },
-        container, model, key, input,
-    )
-    return
-end
-
 """
     _update_state_parameters!(value_at, container, model, key) -> nothing
 
@@ -124,7 +93,7 @@ function _write_state_rows!(value_at::F, ::Type{P}, ::Type{T}, model, steps, par
                 "The value of $(nameof(P)) for \"$(name)\" at $(stamp) is not finite. " *
                     "Check that the unit's state and bids are valid.",
             )
-            PSI._set_param_value_at!(parent_param, value, i, t)
+            _psi_set_param_value_at!(parent_param, value, i, t)
         end
     end
     return

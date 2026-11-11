@@ -88,6 +88,10 @@ function Base.:(==)(a::NEMEnergyBid, b::NEMEnergyBid)
     return all(f -> _field_equal(getfield(a, f), getfield(b, f)), fieldnames(NEMEnergyBid))
 end
 
+function Base.hash(a::NEMEnergyBid, h::UInt)
+    return hash(Tuple(getfield(a, f) for f in fieldnames(NEMEnergyBid)), h)
+end
+
 
 """
     NEMFCASBid(; service, direction, offer_curves, max_avail, trapezium)
@@ -119,6 +123,10 @@ function Base.:(==)(a::NEMFCASBid, b::NEMFCASBid)
     return all(f -> _field_equal(getfield(a, f), getfield(b, f)), fieldnames(NEMFCASBid))
 end
 
+function Base.hash(a::NEMFCASBid, h::UInt)
+    return hash(Tuple(getfield(a, f) for f in fieldnames(NEMFCASBid)), h)
+end
+
 
 """
     NEMOfferCost(; energy = NEMEnergyBid[], fcas = NEMFCASBid[])
@@ -144,6 +152,10 @@ end
 
 function Base.:(==)(a::NEMOfferCost, b::NEMOfferCost)
     return a.energy == b.energy && a.fcas == b.fcas
+end
+
+function Base.hash(a::NEMOfferCost, h::UInt)
+    return hash((a.energy, a.fcas), h)
 end
 
 """

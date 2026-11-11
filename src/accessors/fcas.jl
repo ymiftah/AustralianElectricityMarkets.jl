@@ -50,7 +50,7 @@ function _read_fcas_series(kind::AbstractString, component, name::AbstractString
             ArgumentError(
                 "No FCAS $kind series \"$name\" attached to component \"$(get_name(component))\" " *
                     "for service $(string(service))" * (decremental ? " (decremental)" : "") *
-                    " — call set_market_bids! first.",
+                    "; call set_market_bids! first.",
             ),
         )
     end

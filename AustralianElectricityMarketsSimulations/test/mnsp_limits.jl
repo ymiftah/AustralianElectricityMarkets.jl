@@ -173,3 +173,17 @@ end
         AEMS._FORCE_CUSTOM_STATE_UPDATES[] = previous
     end
 end
+
+@testset "a missing derived MNSP fixed loading is named before the parameters are added" begin
+    sys = _mnsp_limit_case(; forward = (100.0, [(100.0, 10.0)]), fixed_forward = 30.0)
+    ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
+    name = AEMS.NEM_MNSP_FIXED_LOAD_SERIES.forward_value
+    # A transformed system holds the derived series both as a single series and as its deterministic copy.
+    PSY.has_time_series(ic, PSY.DeterministicSingleTimeSeries, name) &&
+        PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, ic, name)
+    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, ic, name)
+    status, log = _toy_build_log(_decision_model(_loss_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2)))
+    @test status == PSI.ModelBuildStatus.FAILED
+    @test occursin("has no derived MNSP fixed loading", log)
+    @test occursin(name, log)
+end
