@@ -110,9 +110,9 @@ end
     get_energy_availability(component, initial_time, horizon) -> Union{Nothing, Vector{Float64}}
 
 Energy availability of `component` over `horizon` steps from `initial_time`, in `component`'s `System`'s
-current display units: the energy bid `MAXAVAIL` of [`set_effective_offers!`](@ref), limited by the UIGF of a
-semi-scheduled unit ([`effective_energy_availability`](@ref)), and zero where the unit is a non-scheduled
-load or has no DISPATCHLOAD row. `nothing` if `component` has no energy availability series.
+current display units. It reads the energy bid `MAXAVAIL` series, limited by the UIGF of a semi-scheduled
+unit ([`effective_energy_availability`](@ref)). `nothing` when `component` has no energy bid, except that a
+non-scheduled load without one reads zeros, and always `nothing` for a `PSY.Storage`.
 
 # Returns
 `Union{Nothing, Vector{Float64}}`.
@@ -169,12 +169,12 @@ end
 """
     get_storage_energy_max_avail(component, initial_time, horizon) -> Union{Nothing, NamedTuple}
 
-`component`'s energy bid `MAXAVAIL` for each direction, as [`set_effective_offers!`](@ref) derives it,
-`horizon` steps from `initial_time`, in `component`'s `System`'s current display units.
+`component`'s energy bid `MAXAVAIL` series for each direction, `horizon` steps from `initial_time`, in
+`component`'s `System`'s current display units. Each direction is read from its own energy bid only.
 
 # Returns
 `(gen = Vector{Float64}, load = Vector{Float64})`, or `nothing` unless both directions'
-series are attached.
+energy bids have a `MAXAVAIL` series.
 """
 function get_storage_energy_max_avail(component, initial_time, horizon::Integer)
     gen = _unit_window(component, _bid_availability_key(component, OfferSide.GEN), initial_time, horizon)

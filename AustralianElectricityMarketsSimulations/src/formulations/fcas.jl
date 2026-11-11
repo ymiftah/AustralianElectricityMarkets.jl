@@ -711,7 +711,9 @@ end
 Prices the [`FCASOfferBandVariable`](@ref)s of an [`_fcas_offer_groups`](@ref) `group` through
 [`FCASBandPriceParameter`](@ref) time-series cost parameters: one per device type and side, of meta
 `"<group.meta>_gen"` or `"<group.meta>_load"`, read from the bids' `offer_curves` series (see
-[`_fcas_band_price_batches`](@ref)). Each band's cost target is its price in `\$/MWh` times the system base
+[`_fcas_band_price_batches`](@ref)). A side whose devices bid different series names gets one parameter per
+name, of metas `"<group.meta>_gen_1"`, `"<group.meta>_gen_2"`, and so on (`_load_<i>` on the load side). Each
+band's cost target is its price in `\$/MWh` times the system base
 power and the interval length in hours.
 
 # Arguments

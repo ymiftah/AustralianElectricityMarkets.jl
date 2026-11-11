@@ -105,10 +105,12 @@ function PSI._unwrap_for_param(::EnergyBandPriceParameter, curve::IS.PiecewiseSt
 end
 
 
-# --- Derived series names for the NEM dispatch parameters ---
+# --- Series names for the NEM dispatch parameters ---
 
-# `_get_time_series_name` resolves the parameter's series name per device, so a device's derived series
-# key names the series. The device's own key is read, not the type's first device's: every device of a
+# `_get_time_series_name` resolves the parameter's series name per device from its dispatch-input key; a
+# load without an energy bid is named by the zero LOAD `MAXAVAIL` series `set_effective_offers!` looks up.
+#
+# The device's own key is read, not the type's first device's: every device of a
 # type carries the same name, which is what lets the one-name-per-type registration work.
 #
 # The `D <: PSY.Device` constraint is required, not decorative: without it these methods are ambiguous

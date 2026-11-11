@@ -52,8 +52,11 @@ replay system held 25,042 static time series after `prepare_replay!` for a 288-i
 - Standing rule, stated 2026-11-11: AEMSim never writes data to the System; only AEM adds series. This
   is not yet met. `prepare_replay!` still writes derived series: the energy offers, the state seeds,
   the effective ramp and FCAS limits, the AGC ramp rates, the MNSP fixed loads, the loss demand, the
-  tie-break scales and the `NEMDispatchInputs` attributes. Moving them to AEM is follow-up work,
-  recorded here and not done in this change.
+  tie-break scales, the `EnergyTieBreak` service that carries them, the forecast transformation in
+  `_prepare_replay_forecasts!` (`transform_single_time_series!`), the availability and service changes of
+  `exclude_unmodeled_services!` (unavailable `GenericConstraint` services and the record of the exclusions),
+  and the `NEMDispatchInputs` attributes. Moving them to AEM is follow-up work, recorded here and not done in
+  this change.
 
 ## Verification
 
@@ -68,8 +71,7 @@ Recorded on 2026-11-11 at HEAD `1c57b73` plus the change in this commit.
   | `prepare_replay!`, warm (two trials) | 5.37 s, 5.55 s | 5.32 s, 5.36 s |
   | `nem_system`, warm (two trials) | 13.30 s, 11.32 s | 13.36 s, 11.37 s |
 
-- Results: the per-change gates recorded in the plan's ledger (FCAS offers and trapeziums bit-identical;
-  energy availability within the rounding above).
+- Results: FCAS offers and trapeziums are bit-identical; energy availability is within the rounding above.
 - Test suites, root and AEMSim in one process: the root suite completed with no failures. The AEMSim
   suite ran 3,924 tests with 1 failure, the known tie-break artefact of `stock_simulation`
   ("tie-break service model follows the template"), and no errors.

@@ -17,8 +17,8 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
 - `"fcas_effective_<BIDTYPE>[_decremental]"` and `"fcas_ramping_limits_<BIDTYPE>"`, the FCAS offer
   per interval after AEMO *FCAS Model in NEMDE* §4 scaling and §5 enablement, on the timestamps of
   the bid's trapezium series, per-unit of the system base. The FCAS trapeziums and offer curves are
-  the bids' series, read through the keys of [`NEMDispatchInputs`](@ref); a `BIDIRECTIONAL` FCAS bid
-  is on the generation side.
+  read from the device's [`NEMFCASBid`](@ref) keys, which [`NEMDispatchInputs`](@ref) also holds; a
+  `BIDIRECTIONAL` FCAS bid is on the generation side.
 - `"tie_break_scale_<k>[_decremental]"`, the tie-break scale of each price-tied energy band
   ([`tie_break_scale`](@ref)), and the [`EnergyTieBreak`](@ref) service joining the units that carry them.
 - `"loss_demand_coefficient"`, the demand term of each loss-modelled interchange's loss factor

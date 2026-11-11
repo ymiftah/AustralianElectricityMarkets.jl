@@ -64,6 +64,9 @@ end
 The key of the offer curve series of `component`'s FCAS bid for `service` on `side`, the `offer_curves`
 field of its [`NEMFCASBid`](@ref), or `nothing` when `component` bids no such FCAS bid or has no
 `FCASService` for `service`. Throws `ArgumentError` when that field is static rather than series-backed.
+
+# Returns
+`Union{Nothing, IS.StaticTimeSeriesKey}`.
 """
 function _fcas_offer_key(component, service::BidType, side::OfferSide)
     cost = _nem_offer_cost(component)
@@ -87,6 +90,9 @@ end
 
 Name of the series [`_fcas_offer_key`](@ref) keys for `component`'s FCAS offer curve, `decremental`
 selecting the load side. Throws `ArgumentError` when that key is absent.
+
+# Returns
+`String`.
 """
 function _fcas_offer_series_name(component, service::BidType, decremental::Bool)
     key = _fcas_offer_key(component, service, offer_side(decremental))

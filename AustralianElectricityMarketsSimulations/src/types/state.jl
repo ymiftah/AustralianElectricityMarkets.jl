@@ -260,8 +260,10 @@ is a key of a series attached to the device, or `nothing` where the input is abs
 # Fields
 - `energy_offer`: the derived incremental energy offer series, a price-band series in MW against \$/MWh.
 - `energy_offer_decremental`: the derived decremental energy offer series, a price-band series in MW against \$/MWh.
-- `energy_availability`: the derived energy availability series, system-base per unit.
-- `energy_availability_decremental`: the derived decremental energy availability series, system-base per unit.
+- `energy_availability`: the key of the energy bid's `MAXAVAIL` series, MW. A non-scheduled load without an
+  energy bid has the zero `MAXAVAIL` series that [`set_market_bids!`](@ref) writes.
+- `energy_availability_decremental`: the key of the decremental energy bid's `MAXAVAIL` series, MW, with the
+  same zero-series rule for a load.
 - `uigf`: the unit initial generation forecast, MW.
 - `ramp_up`: the effective ramp-up limit series, MW/h.
 - `ramp_down`: the effective ramp-down limit series, MW/h.
