@@ -438,6 +438,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `scripts/replay_batch.jl` replays one range with `--start DATETIME --intervals N`.
 
+- FCAS regulation joint ramping no longer applies to a fast-start unit (one whose energy bid carries a
+  T1-T4 profile) in dispatch mode 0, 1 or 2, as in AEMO's FCAS model.
+
 - Replay systems no longer carry the state-dependent `"max_active_power"`, `"fixed_load"` and
   `"fixed_load_invoked"` series. `set_effective_offers!` writes the first-solve seeds
   `"initial_mw_seed"`, `"fixed_load_seed"` and `"fixed_load_invoked_seed"` from the configured
