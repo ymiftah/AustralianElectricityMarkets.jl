@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - FCAS trapeziums are read from the bids' `trapezium` and `max_avail` series. The derived `fcas_trapezium_*` series are no longer attached, and `NEMFCASInputs` has a new `max_avail` field, the key of the bid's `MAXAVAIL` series.
 
+- `get_scaled_fcas_trapezium` drops its `trapezium_name` keyword, since the trapezium is always read from the bid.
+
+- `fcas_bid_direction` answers from the bids as soon as `set_market_bids!` has run, rather than returning `NONE` until `set_effective_offers!` attaches the derived trapezium series.
+
 ### Documentation
 
 - Restored the regional how-to pages, built with `set_regional_availability!`; fixed their series plots and output directories.

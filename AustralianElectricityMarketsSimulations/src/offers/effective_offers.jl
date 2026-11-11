@@ -357,7 +357,7 @@ function _set_energy_offers!(sys::PSY.System)
     return
 end
 
-# Throws when two FCAS bids of one service map to the same side of a unit, as the second would overwrite the first.
+# Throws when two FCAS bids of one service map to the same side of a unit: only the first is read.
 function _check_fcas_bid_sides(sys::PSY.System)
     for device in _bidding_devices(sys)
         cost = AustralianElectricityMarkets._nem_offer_cost(device)
@@ -367,7 +367,7 @@ function _check_fcas_bid_sides(sys::PSY.System)
             side = AustralianElectricityMarkets._fcas_bid_side(device, bid)
             isnothing(side) && continue
             (bid.service, side) in seen && throw(
-                ArgumentError("\"$(PSY.get_name(device))\" has two $(bid.service) bids on the $(side) side; one is overwritten."),
+                ArgumentError("\"$(PSY.get_name(device))\" has two $(bid.service) bids on the $(side) side; only the first is read."),
             )
             push!(seen, (bid.service, side))
         end

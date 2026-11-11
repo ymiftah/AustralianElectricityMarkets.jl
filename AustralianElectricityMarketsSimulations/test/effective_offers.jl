@@ -415,6 +415,63 @@ end
         @test !any(startswith("fcas_trapezium"), [get_name(k) for k in get_time_series_keys(device)])
     end
 
+    @testset "get_scaled_fcas_trapezium matches the bid series on load-side and bidirectional bids" begin
+        sys = deepcopy(sys_base)
+        set_market_bids!(sys, db, date_range; resolution = resolution)
+        set_unit_conditions!(sys, db, date_range)
+        set_effective_offers!(sys)
+        AEMS = AustralianElectricityMarketsSimulations
+        horizon = length(date_range) - 1
+        load_side_checks = 0
+        bidirectional_checks = 0
+        with_units_base(sys, "NATURAL_UNITS") do
+            base = get_base_power(sys)
+            for device in nem_dispatch_devices(sys), service in AustralianElectricityMarkets.FCAS_BID_TYPES
+                is_regulation = service in AustralianElectricityMarkets.FCAS_REGULATION_MARKETS
+                telemetry = AustralianElectricityMarkets.get_telemetry(device)
+                direction = fcas_bid_direction(device, service)
+                for side in (OfferSide.GEN, OfferSide.LOAD)
+                    inputs = AEMS._fcas_bid_inputs(device, service, side)
+                    isnothing(inputs) && continue
+                    decremental = side == OfferSide.LOAD
+                    points = get_time_series_values(SingleTimeSeries, device, get_name(inputs.trapezium); start_time = start_date, len = horizon)
+                    max_avail = get_time_series_values(SingleTimeSeries, device, get_name(inputs.max_avail); start_time = start_date, len = horizon)
+                    raw = [
+                        AustralianElectricityMarkets.FCASTrapezium(fcas_trapezium_values(points[i], max_avail[i], base) .* base)
+                            for i in 1:horizon
+                    ]
+                    # The AGC and UIGF inputs of `get_scaled_fcas_trapezium`, read from the same telemetry.
+                    enablement = is_regulation ? AEMS._unit_pair_window(
+                            device,
+                            service == BidType.RAISEREG ? telemetry.raise_reg_enablement : telemetry.lower_reg_enablement,
+                            start_date, horizon,
+                        ) : nothing
+                    agc_max = is_regulation ? AEMS.get_fcas_agc_ramp_capability(
+                            device, AEMS._fcas_ramp_rate_service(device, service), start_date, horizon; resolution = resolution,
+                        ) : nothing
+                    uigf = AEMS._unit_window(device, telemetry.uigf, start_date, horizon)
+                    input_at(series, i) = (isnothing(series) || isnan(series[i])) ? nothing : series[i]
+                    expected = [
+                        AustralianElectricityMarkets.scale_fcas_trapezium(
+                            raw[i];
+                            agc_enablement_min = is_regulation ? input_at(first(enablement), i) : nothing,
+                            agc_enablement_max = is_regulation ? input_at(last(enablement), i) : nothing,
+                            agc_max_avail = input_at(agc_max, i),
+                            uigf = input_at(uigf, i),
+                            is_regulation = is_regulation,
+                        ) for i in 1:horizon
+                    ]
+                    scaled = get_scaled_fcas_trapezium(device, service, start_date, horizon; decremental, resolution)
+                    @test all(i -> isequal(Tuple(scaled[i]), Tuple(expected[i])), 1:horizon)
+                    decremental && (load_side_checks += 1)
+                    direction == FCASBidDirection.BOTH && (bidirectional_checks += 1)
+                end
+            end
+        end
+        @test load_side_checks > 0
+        @test bidirectional_checks > 0
+    end
+
     @testset "get_scaled_fcas_trapezium narrows the trapezium wherever the AGC input is more restrictive" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
