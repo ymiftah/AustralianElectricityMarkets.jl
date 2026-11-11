@@ -743,7 +743,8 @@ function create_mock_data(hive_root::String; complete_inputs::Bool = false)
     lower_reg_enablement_min_for(duid, i) = 22.0 + duid_offset(duid) + (i % 3)
     lower_reg_enablement_max_for(duid, i) = 98.0 - duid_offset(duid) - (i % 3)
     df_dispatchload = DataFrame()
-    for i in intervals
+    # One interval before the first, so a replay starting at the first interval has its previous row.
+    for i in (first(intervals) - 1):last(intervals)
         t = base_datetime + Minute(5 * i)
         block = DataFrame(
             SETTLEMENTDATE = fill(t, m),

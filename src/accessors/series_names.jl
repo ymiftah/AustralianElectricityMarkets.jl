@@ -82,7 +82,7 @@ const NEM_TELEMETRY_SERIES = (
 
 Names of the per-device `SingleTimeSeries` that [`set_unit_conditions!`](@ref) attaches for a unit's
 [`NEMObservedState`](@ref), in AEMO's natural units: `initial_mw` (`INITIALMW`, MW) and `dispatch_mode`
-(`DISPATCHMODE`).
+(`DISPATCHMODE` of the previous interval).
 """
 const NEM_OBSERVED_SERIES = (
     initial_mw = "observed_initial_mw",

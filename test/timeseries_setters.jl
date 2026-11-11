@@ -469,7 +469,8 @@
             rows = sort(subset(truth, :DUID => ByRow(==("PUMP1"))), :SETTLEMENTDATE)
             telemetry, observed = get_telemetry(pump), get_observed_state(pump)
             @test unit_values(pump, observed.initial_mw) == rows.INITIALMW
-            @test unit_values(pump, observed.dispatch_mode) == rows.DISPATCHMODE
+            # The mode is the previous interval's DISPATCHMODE; the mock's prior row at 23:55 is mode 0.
+            @test unit_values(pump, observed.dispatch_mode) == [0.0; rows.DISPATCHMODE[1:(end - 1)]]
             @test unit_values(pump, telemetry.agc_status) == rows.AGCSTATUS
             @test unit_values(pump, telemetry.ramp_up_limit) == rows.RAMPUPRATE
             @test unit_values(pump, telemetry.ramp_down_limit) == rows.RAMPDOWNRATE
@@ -481,6 +482,30 @@
             # Ramps, the upper limit and AGC ramp rates are derived in AEMSim, not here.
             @test !has_time_series(pump, SingleTimeSeries, "ramp_up_rate")
             @test !has_time_series(pump, SingleTimeSeries, "max_active_power")
+        end
+
+        @testset "the dispatch mode at each stamp is the previous interval's DISPATCHMODE" begin
+            # PUMP1 is in modes 0, 1, 2, 3 at 00:05, 00:10, 00:15, 00:20; the grid is 00:10 to 00:20.
+            modes = Dict(
+                DateTime(2025, 1, 1, 0, 5) => 0, DateTime(2025, 1, 1, 0, 10) => 1,
+                DateTime(2025, 1, 1, 0, 15) => 2, DateTime(2025, 1, 1, 0, 20) => 3,
+            )
+            function set_modes!(frame)
+                for i in eachindex(frame.DUID)
+                    frame.DUID[i] == "PUMP1" && haskey(modes, frame.SETTLEMENTDATE[i]) || continue
+                    frame.DISPATCHMODE[i] = modes[frame.SETTLEMENTDATE[i]]
+                end
+                return
+            end
+            bad = corrupt_cache(:DISPATCHLOAD, set_modes!)
+            window = DateTime(2025, 1, 1, 0, 10):resolution:DateTime(2025, 1, 1, 0, 25)
+            sys = deepcopy(sys_base)
+            set_unit_conditions!(sys, bad, window)
+            pump = get_component(InterruptiblePowerLoad, sys, "PUMP1")
+            @test unit_values(pump, get_observed_state(pump).dispatch_mode) == [0.0, 1.0, 2.0]
+            # The other observed series still read the row at each stamp.
+            pump_rows = sort(subset(truth, :DUID => ByRow(==("PUMP1"))), :SETTLEMENTDATE)
+            @test unit_values(pump, get_observed_state(pump).initial_mw) == pump_rows.INITIALMW[3:5]
         end
 
         @testset "a non-scheduled load is pinned to zero whatever DISPATCHLOAD meters" begin
@@ -778,8 +803,9 @@ end
     date_range = start_date:Minute(5):(start_date + Hour(2))
     stamps = collect(start_date:resolution:(start_date + Hour(2) - resolution))
 
-    # Raw 5-minute intervals (index i from start_date) that round up to the stamp t.
-    raw_indices(t) = [i for i in 0:48 if ceil(start_date + Minute(5 * i), resolution) == t]
+    # Raw 5-minute intervals (index i from start_date) that round up to the stamp t. The DISPATCHLOAD
+    # fixture also has the prior row at i = -1 (23:55), which falls in the first bucket, stamped 00:00.
+    raw_indices(t, range = 0:48) = [i for i in range if ceil(start_date + Minute(5 * i), resolution) == t]
     # Fixture: BW03 UIGF is 40 + i (its AVAILABILITY is also present, so UIGF must win); BW02
     # AVAILABILITY is 87 + i % 6; regional SS_SOLAR_UIGF is 120 + i in every region, and its
     # SS_SOLAR_AVAILABILITY is 100 + i, which must not be read.
@@ -813,9 +839,9 @@ end
         pvx_capacity = with_units_base(() -> get_max_active_power(pvx), sys, "NATURAL_UNITS")
 
         # Scheduled hydro: AVAILABILITY, the minimum over each bucket.
-        @test natural_values(sys, bw02) ≈ [minimum(87 + i % 6 for i in raw_indices(t)) for t in stamps]
+        @test natural_values(sys, bw02) ≈ [minimum(87 + i % 6 for i in raw_indices(t, -1:48)) for t in stamps]
         # Semi-scheduled solar: UIGF, the mean over each bucket, not AVAILABILITY.
-        @test natural_values(sys, bw03) ≈ [mean(40 + i for i in raw_indices(t)) for t in stamps]
+        @test natural_values(sys, bw03) ≈ [mean(40 + i for i in raw_indices(t, -1:48)) for t in stamps]
         # No dispatch rows: the regional 120 + i UIGF over the 400 MW of QLD1 solar UIGF capacity.
         expected_factor = [clamp(mean(120 + i for i in raw_indices(t)) / 400.0, 0.0, 1.0) for t in stamps]
         @test natural_values(sys, pvx) ≈ expected_factor .* pvx_capacity

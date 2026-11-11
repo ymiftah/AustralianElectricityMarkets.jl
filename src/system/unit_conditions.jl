@@ -16,12 +16,15 @@ read. The values are `SingleTimeSeries` in AEMO's natural units, and their keys 
 - `"telemetry_raise_reg_max_avail"`, `"telemetry_lower_reg_max_avail"`: `RAISEREGAVAILABILITY`,
   `LOWERREGAVAILABILITY`, MW.
 - `"observed_initial_mw"`: `INITIALMW`, MW, zero where no row is published.
-- `"observed_dispatch_mode"`: `DISPATCHMODE`.
+- `"observed_dispatch_mode"`: `DISPATCHMODE` of the previous interval, the fast-start mode at the start of each
+  interval.
 
 A non-scheduled load is pinned to zero initial output, but keeps its metered ramp rates for AGC ramping.
-A ramp, regulation, AGC status or dispatch-mode value with no row at an interval is `NaN`; the telemetry `uigf` is
-zero there. Every problem across every device is raised as one `ArgumentError`, and `sys` is left
-unmodified. A repeat call replaces each series it writes, and replaces the structs on the devices.
+The read also covers the interval before the first, which supplies the first dispatch mode. A ramp, regulation or
+AGC status value with no row at an interval is `NaN`, and so is a dispatch mode whose previous interval has no row;
+the telemetry `uigf` is zero there. A registered unit with a `NaN` mode is refused by the replay state. Every problem
+across every device is raised as one `ArgumentError`, and `sys` is left unmodified. A repeat call replaces each series
+it writes, and replaces the structs on the devices.
 
 The series are read through the keys, and AEMSim derives the dispatch inputs from them. The schedule type
 and registration span of a device come from its [`NEMRegistration`](@ref).
@@ -40,7 +43,8 @@ function set_unit_conditions!(sys, db, date_range; intervention::Integer = 0)
     step(date_range) == Minute(5) || throw(ArgumentError("unit conditions require five-minute intervals"))
     grid = collect(date_range)[1:(end - 1)]
     isempty(grid) && throw(ArgumentError("unit conditions require at least one interval"))
-    rows = read_unit_conditions(db, date_range; intervention)
+    # One interval before the grid, for the dispatch mode at the first stamp.
+    rows = read_unit_conditions(db, (first(date_range) - Minute(5)):Minute(5):last(date_range); intervention)
     by_duid = Dict(String(key.DUID) => group for (key, group) in pairs(groupby(rows, :DUID)))
     problems = String[]
     staged = NamedTuple[]
@@ -171,7 +175,7 @@ function _stage_unit_conditions!(problems, sys, device, by_time, grid)
     end
     series = Pair{String, Vector}[
         NEM_OBSERVED_SERIES.initial_mw => initial_mw,
-        NEM_OBSERVED_SERIES.dispatch_mode => [_raw_value(by_time, t, :DISPATCHMODE) for t in grid],
+        NEM_OBSERVED_SERIES.dispatch_mode => [_raw_value(by_time, t - Minute(5), :DISPATCHMODE) for t in grid],
         NEM_TELEMETRY_SERIES.agc_status => [_raw_value(by_time, t, :AGCSTATUS) for t in grid],
         NEM_TELEMETRY_SERIES.ramp_up_limit => ramp_up,
         NEM_TELEMETRY_SERIES.ramp_down_limit => ramp_down,

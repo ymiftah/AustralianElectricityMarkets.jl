@@ -89,7 +89,8 @@ function unit_state(::ObservedState, device, t::DateTime)
         throw(
             ArgumentError(
                 "The dispatch mode of \"$(PSY.get_name(device))\" at $(t) is not finite. " *
-                    "Check that the unit has a DISPATCHLOAD row at that stamp.",
+                    "Check that the unit has a DISPATCHLOAD row at the previous interval (t - 5 minutes), " *
+                    "which holds its dispatch mode.",
             ),
         )
     end

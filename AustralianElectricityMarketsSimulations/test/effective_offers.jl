@@ -9,7 +9,8 @@ function registered_from(source, duid, stamp)
         (:DUDETAILSUMMARY, "UPDATE input SET START_DATE = $t WHERE DUID = '$duid'"),
         (:DUDETAIL, "UPDATE input SET EFFECTIVEDATE = $t WHERE DUID = '$duid'"),
         (:BIDPEROFFER_D, "DELETE FROM input WHERE DUID = '$duid' AND INTERVAL_DATETIME <= $t"),
-        (:DISPATCHLOAD, "DELETE FROM input WHERE DUID = '$duid' AND SETTLEMENTDATE <= $t"),
+        # Keeps the row at the registration stamp: it is the previous row of the first registered interval.
+        (:DISPATCHLOAD, "DELETE FROM input WHERE DUID = '$duid' AND SETTLEMENTDATE < $t"),
     ]
     for (table, query) in steps
         source = damaged_cache(source, table, query).config.hive_location
@@ -244,7 +245,7 @@ end
     end
 
     @testset "a device with no dispatch rows before its registration does not abort the replay" begin
-        # BW02 registers at 00:10, so both steps of this replay precede its first DISPATCHLOAD row. The
+        # BW02 registers after 00:10, so both steps of this replay precede its registration. The
         # first solve reads the build's seeds; the per-step update must resolve the same stamps to the
         # same seed state (zero output, dispatch mode 0, no fixed loading) instead of throwing on the
         # absent dispatch mode.

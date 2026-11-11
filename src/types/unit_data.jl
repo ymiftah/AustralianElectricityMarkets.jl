@@ -142,7 +142,8 @@ holds it on the unit.
 
 # Fields
 - `initial_mw`: `INITIALMW`, MW.
-- `dispatch_mode`: `DISPATCHMODE`, the fast-start mode from 0 to 4.
+- `dispatch_mode`: the fast-start mode from 0 to 4 at the start of the interval, which is the `DISPATCHMODE` of
+  the previous interval.
 """
 struct NEMObservedState <: PSY.DeviceParameter
     initial_mw::Union{IS.StaticTimeSeriesKey, Float64}
