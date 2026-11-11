@@ -15,9 +15,10 @@ PSI.get_variable_upper_bound(::PSI.ActivePowerOutVariable, ::PSY.Storage, ::Abst
 
 PSI.get_variable_upper_bound(::PSI.ActivePowerInVariable, ::PSY.Storage, ::AbstractNEMDispatch) = nothing
 
-PSI.get_multiplier_value(::PSI.ActivePowerOutTimeSeriesParameter, ::PSY.Storage, ::AbstractNEMDispatch) = 1.0
+# The energy bid MAXAVAIL series are stored in MW.
+PSI.get_multiplier_value(::PSI.ActivePowerOutTimeSeriesParameter, d::PSY.Storage, ::AbstractNEMDispatch) = 1 / PSY.get_system_base_power(d)
 
-PSI.get_multiplier_value(::PSI.ActivePowerInTimeSeriesParameter, ::PSY.Storage, ::AbstractNEMDispatch) = 1.0
+PSI.get_multiplier_value(::PSI.ActivePowerInTimeSeriesParameter, d::PSY.Storage, ::AbstractNEMDispatch) = 1 / PSY.get_system_base_power(d)
 
 #! format: on
 
@@ -25,9 +26,8 @@ PSI.get_multiplier_value(::PSI.ActivePowerInTimeSeriesParameter, ::PSY.Storage, 
     PSI.get_default_time_series_names(::Type{<:PSY.Storage}, ::Type{<:AbstractNEMDispatch})
 
 Registers the time series [`AbstractNEMDispatch`](@ref) reads as parameters for a battery: the
-ramp parameters and the derived generation and consumption energy availability
-([`energy_availability_series_name`](@ref)). The initial-power parameter is added explicitly from
-the build's first-solve seed series. Both availability limits carry priced violations on the
+ramp parameters and the generation and consumption energy bid `MAXAVAIL` series. The initial-power
+parameter is added explicitly from the build's first-solve seed series. Both availability limits carry priced violations on the
 generation and consumption axes. Batteries register no `"max_active_power"` series.
 
 # Returns
@@ -40,8 +40,8 @@ function PSI.get_default_time_series_names(
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
         RampUpRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
         RampDownRateTimeSeriesParameter => NEM_SERIES.ramp_down_rate,
-        PSI.ActivePowerOutTimeSeriesParameter => energy_availability_series_name(OfferSide.GEN),
-        PSI.ActivePowerInTimeSeriesParameter => energy_availability_series_name(OfferSide.LOAD),
+        PSI.ActivePowerOutTimeSeriesParameter => _max_avail_series_name(OfferSide.GEN),
+        PSI.ActivePowerInTimeSeriesParameter => _max_avail_series_name(OfferSide.LOAD),
     )
 end
 

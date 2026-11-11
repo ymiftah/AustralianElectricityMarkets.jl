@@ -12,9 +12,9 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
   and telemetered rates ([`effective_ramp_limit`](@ref)), taking the composite cross-zero rate
   ([`composite_ramp_rates`](@ref)) for a device bid on both sides, and the AGC rates read the
   effective regulation availability ([`effective_regulation_max_avail`](@ref)).
-- `"energy_availability[_decremental]"`, the energy bid `MAXAVAIL` per unit of the system base; zero
-  for a non-scheduled load without an energy bid. This is the series the formulation reads as
-  `EnergyMaxAvailTimeSeriesParameter`.
+- `"energy_availability"`, the zero availability of a non-scheduled load without an energy bid. A unit
+  with an energy bid reads its `MAXAVAIL` series directly, through the keys of
+  [`NEMDispatchInputs`](@ref).
 - `"fcas_effective_<BIDTYPE>[_decremental]"` and `"fcas_ramping_limits_<BIDTYPE>"`, the FCAS offer
   per interval after AEMO *FCAS Model in NEMDE* §4 scaling and §5 enablement, on the timestamps of
   the bid's trapezium series, per-unit of the system base. The FCAS trapeziums and offer curves are
@@ -138,18 +138,43 @@ end
 # input is absent.
 function _dispatch_inputs(device)
     keys = _derived_series_keys(device)
+    availability = _dispatch_availability_keys(device, keys)
     telemetry = _unit_telemetry(device)
     uigf = isnothing(telemetry) ? nothing : telemetry.uigf
     return NEMDispatchInputs(;
         energy_offer = get(keys, energy_offer_series_name(OfferSide.GEN), nothing),
         energy_offer_decremental = get(keys, energy_offer_series_name(OfferSide.LOAD), nothing),
-        energy_availability = get(keys, energy_availability_series_name(OfferSide.GEN), nothing),
-        energy_availability_decremental = get(keys, energy_availability_series_name(OfferSide.LOAD), nothing),
+        energy_availability = availability[1],
+        energy_availability_decremental = availability[2],
         uigf = uigf isa IS.StaticTimeSeriesKey ? uigf : nothing,
         ramp_up = get(keys, NEM_SERIES.ramp_up_rate, nothing),
         ramp_down = get(keys, NEM_SERIES.ramp_down_rate, nothing),
         fcas = _fcas_inputs(device, keys),
     )
+end
+
+
+# The availability keys of `device`: a battery's generation and load sides, and a generator's or load's
+# single energy side in the generation field.
+function _dispatch_availability_keys(device::PSY.Storage, keys::Dict{String, IS.StaticTimeSeriesKey})
+    return (
+        _energy_availability_key(device, keys, OfferSide.GEN),
+        _energy_availability_key(device, keys, OfferSide.LOAD),
+    )
+end
+
+function _dispatch_availability_keys(device, keys::Dict{String, IS.StaticTimeSeriesKey})
+    return (_energy_availability_key(device, keys, only(energy_offer_sides(device))), nothing)
+end
+
+
+# The key of the series `device`'s energy availability on `side` is read from: the `MAXAVAIL` of its energy
+# bid on that side, or the zero series of a non-scheduled load without one. `nothing` when neither exists.
+function _energy_availability_key(device, keys::Dict{String, IS.StaticTimeSeriesKey}, side::OfferSide)
+    cost = AustralianElectricityMarkets._nem_offer_cost(device)
+    bid = isnothing(cost) ? nothing : _energy_bid(cost, side)
+    isnothing(bid) || return _bid_series_key(device, bid.max_avail, :max_avail)
+    return get(keys, energy_availability_series_name(device, side), nothing)
 end
 
 
@@ -315,10 +340,9 @@ function _bid_axis(sys::PSY.System)
     throw(ArgumentError("set_effective_offers!: no energy bid in the system to size the zero MAXAVAIL of its non-scheduled loads."))
 end
 
-# Attaches each device's energy offer curves and energy availability, and the zero availability of a
-# non-scheduled load with no energy bid.
+# Attaches each device's energy offer curves, and the zero availability of a non-scheduled load with no
+# energy bid. A bid's MAXAVAIL is read from the bid's own series.
 function _set_energy_offers!(sys::PSY.System)
-    base = PSY.get_base_power(sys)
     axis = nothing
     for device in _bidding_devices(sys)
         cost = AustralianElectricityMarkets._nem_offer_cost(device)
@@ -342,14 +366,6 @@ function _set_energy_offers!(sys::PSY.System)
                 single_series(
                     energy_offer_series_name(side), first(curves.timestamps),
                     referred_offer_curves(curves.values, _loss_factor(device, side)), curves.resolution,
-                ),
-            )
-            max_avail = _bid_series(device, bid.max_avail, :max_avail)
-            replace_single_series!(
-                sys, device,
-                single_series(
-                    energy_availability_series_name(device, side), first(max_avail.timestamps),
-                    Float64.(max_avail.values) ./ base, max_avail.resolution,
                 ),
             )
         end

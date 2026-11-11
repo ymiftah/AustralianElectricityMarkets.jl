@@ -22,7 +22,7 @@ PSI.get_multiplier_value(::RampDownRateTimeSeriesParameter, ::PSY.StaticInjectio
 
 PSI.get_multiplier_value(::InitialPowerTimeSeriesParameter, d::PSY.StaticInjection, ::AbstractNEMDispatch) = 1 / PSY.get_system_base_power(d)
 
-PSI.get_multiplier_value(::EnergyMaxAvailTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
+PSI.get_multiplier_value(::EnergyMaxAvailTimeSeriesParameter, d::PSY.StaticInjection, ::AbstractNEMDispatch) = 1 / PSY.get_system_base_power(d)
 
 PSI.get_multiplier_value(::EnergyUIGFTimeSeriesParameter, d::PSY.StaticInjection, ::AbstractNEMDispatch) = 1 / PSY.get_system_base_power(d)
 
@@ -49,7 +49,7 @@ function PSI.get_default_time_series_names(
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
         RampUpRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
         RampDownRateTimeSeriesParameter => NEM_SERIES.ramp_down_rate,
-        EnergyMaxAvailTimeSeriesParameter => energy_availability_series_name(OfferSide.GEN),
+        EnergyMaxAvailTimeSeriesParameter => _max_avail_series_name(OfferSide.GEN),
         EnergyUIGFTimeSeriesParameter => NEM_TELEMETRY_SERIES.uigf,
     )
 end
@@ -76,9 +76,9 @@ end
 
 Whether `device` carries every derived input [`NEMReplayDispatch`](@ref) reads as a parameter, as a
 [`NEMDispatchInputs`](@ref) attribute, and the observed state and telemetry series it reads through.
-The observed state's keyed series and the UIGF's series must exist; every derived input's series name
-must be the one the parameter registers, because `PowerSimulations.jl` takes one name per device
-type.
+The observed state's keyed series and the UIGF's series must exist. The ramp series must be the names
+the parameters register; the energy availability keys name their own series, which the device's bid
+or zero series determines, so they are checked by key.
 
 # Arguments
 - `device`: the `PowerSystems.Component` to inspect.
@@ -107,16 +107,26 @@ function _has_nem_dispatch_limits(device)
         haskey(names, param) || continue
         key = getfield(inputs, field)
         key isa IS.StaticTimeSeriesKey || return false
-        _require_key_name(device, key, names[param])
+        if param in _AVAILABILITY_PARAMETERS
+            PSY.has_time_series(device, PSY.SingleTimeSeries, PSY.get_name(key)) || return false
+        else
+            _require_key_name(device, key, names[param])
+        end
     end
     uigf_required = haskey(names, EnergyUIGFTimeSeriesParameter) && is_semi_scheduled(device)
     if uigf_required
         telemetry.uigf isa IS.StaticTimeSeriesKey || return false
         _require_key_name(device, telemetry.uigf, NEM_TELEMETRY_SERIES.uigf)
     end
-    required = (name for (param, name) in names if param !== EnergyUIGFTimeSeriesParameter)
+    required = (name for (param, name) in names if param !== EnergyUIGFTimeSeriesParameter && param ∉ _AVAILABILITY_PARAMETERS)
     return all(PSY.has_time_series(device, PSY.SingleTimeSeries, name) for name in required)
 end
+
+
+# The energy availability parameters, whose series a device's own key names.
+const _AVAILABILITY_PARAMETERS = (
+    EnergyMaxAvailTimeSeriesParameter, PSI.ActivePowerOutTimeSeriesParameter, PSI.ActivePowerInTimeSeriesParameter,
+)
 
 
 # The parameter type to the [`NEMDispatchInputs`](@ref) field holding its series key.

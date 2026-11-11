@@ -227,7 +227,7 @@ end
 end
 
 @testset "energy-limit preflight validates raw inputs before a build" begin
-    sys = nem_dispatch_system(; mutate! = s -> flatten_series!(s, "ER02", "energy_availability", -1.0))
+    sys = nem_dispatch_system(; mutate! = s -> flatten_series!(s, "ER02", AustralianElectricityMarkets.bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN), -1.0))
     template = ProblemTemplate(NetworkModel(AreaBalancePowerModel; use_slacks = true))
     set_nem_dispatch_models!(template, sys)
     @test_throws ArgumentError check_dispatch_envelope(template, sys, NEM_DISPATCH_START, 6)
@@ -319,18 +319,15 @@ end
     for device in PSY.get_components(PSY.StaticInjection, sys)
         cost = AustralianElectricityMarkets._nem_offer_cost(device)
         isnothing(cost) && continue
-        names = PSI.get_default_time_series_names(typeof(device), NEMReplayDispatch)
         for bid in AustralianElectricityMarkets.get_energy_bids(cost)
-            read_name = if device isa PSY.Storage
-                PSI.get_default_time_series_names(typeof(device), NEMReplayDispatch)[
-                    AustralianElectricityMarkets._energy_offer_side(bid.direction) == OfferSide.GEN ? PSI.ActivePowerOutTimeSeriesParameter : PSI.ActivePowerInTimeSeriesParameter,
-                ]
-            else
-                names[EnergyMaxAvailTimeSeriesParameter]
-            end
-            offered = PSY.get_time_series_values(PSY.SingleTimeSeries, device, bid.max_avail.name)
-            derived = PSY.get_time_series_values(PSY.SingleTimeSeries, device, read_name)
-            @test derived ≈ offered ./ PSY.get_base_power(sys)
+            side = AustralianElectricityMarkets._energy_offer_side(bid.direction)
+            inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, device))
+            key = device isa PSY.Storage && side == OfferSide.LOAD ? inputs.energy_availability_decremental : inputs.energy_availability
+            @test PSY.get_name(key) == bid.max_avail.name
+            @test PSI.get_multiplier_value(
+                device isa PSY.Storage ? (side == OfferSide.GEN ? PSI.ActivePowerOutTimeSeriesParameter() : PSI.ActivePowerInTimeSeriesParameter()) : EnergyMaxAvailTimeSeriesParameter(),
+                device, NEMReplayDispatch(),
+            ) ≈ 1 / PSY.get_base_power(sys)
             checked += 1
         end
     end

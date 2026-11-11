@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `get_scaled_fcas_trapezium` drops its `trapezium_name` keyword, since the trapezium is always read from the bid.
 
+- The energy availability of a unit with an energy bid is read from the bid's `max_avail` series, in MW, and the derived `energy_availability[_decremental]` series are no longer attached to bidding units. Only a non-scheduled load without an energy bid keeps its zero `energy_availability` series. `NEMDispatchInputs.energy_availability` and `energy_availability_decremental` hold the bid's key, and `get_storage_energy_max_avail` and `get_energy_availability` read through those keys.
+
 - `fcas_bid_direction` answers from the bids as soon as `set_market_bids!` has run, rather than returning `NONE` until `set_effective_offers!` attaches the derived trapezium series.
 
 ### Documentation

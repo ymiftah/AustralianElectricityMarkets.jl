@@ -119,10 +119,10 @@ load or has no DISPATCHLOAD row. `nothing` if `component` has no energy availabi
 """
 function get_energy_availability(component, initial_time, horizon::Integer)
     component isa PSY.Storage && return nothing
-    name = energy_availability_series_name(component, OfferSide.GEN)
-    has_time_series(component, SingleTimeSeries, name) || return nothing
+    key = _dispatch_input_key(component, :energy_availability)
+    isnothing(key) && return nothing
     telemetry = AustralianElectricityMarkets.get_telemetry(component)
-    max_avail = get_time_series_values(SingleTimeSeries, component, name; start_time = initial_time, len = horizon)::Vector{Float64}
+    max_avail = _unit_values(component, key, initial_time, horizon)
     ramp_up = _raw_window(component, telemetry.ramp_up_limit, initial_time, horizon)
     uigf = isnothing(telemetry.uigf) ? nothing : _unit_values(component, telemetry.uigf, initial_time, horizon)
     pinned = AustralianElectricityMarkets.is_non_scheduled_load(component)
@@ -162,14 +162,6 @@ function _unit_pair_window(component, key, initial_time, horizon::Integer)
 end
 
 
-"`component`'s `name` `SingleTimeSeries` over `horizon` steps from `initial_time`, in display units, or `nothing`."
-function _read_dispatch_limit_series(component, name::AbstractString, initial_time, horizon::Integer)
-    has_time_series(component, SingleTimeSeries, name) || return nothing
-    values = get_time_series_values(SingleTimeSeries, component, name; start_time = initial_time, len = horizon)::Vector{Float64}
-    return values .* _fcas_units_multiplier(component)
-end
-
-
 """
     get_storage_energy_max_avail(component, initial_time, horizon) -> Union{Nothing, NamedTuple}
 
@@ -181,9 +173,23 @@ end
 series are attached.
 """
 function get_storage_energy_max_avail(component, initial_time, horizon::Integer)
-    gen, load = (_read_dispatch_limit_series(component, energy_availability_series_name(side), initial_time, horizon) for side in (OfferSide.GEN, OfferSide.LOAD))
+    gen = _unit_window(component, _dispatch_input_key(component, :energy_availability), initial_time, horizon)
+    load = _unit_window(component, _dispatch_input_key(component, :energy_availability_decremental), initial_time, horizon)
     (isnothing(gen) || isnothing(load)) && return nothing
     return (; gen, load)
+end
+
+
+# The key of the energy availability series of `component` for `field` (`:energy_availability` or
+# `:energy_availability_decremental`), read from its bid so it needs no attached `NEMDispatchInputs`; `nothing` when absent.
+function _dispatch_input_key(component, field::Symbol)
+    side = if component isa PSY.Storage
+        field == :energy_availability ? OfferSide.GEN : OfferSide.LOAD
+    else
+        field == :energy_availability || return nothing
+        only(energy_offer_sides(component))
+    end
+    return _energy_availability_key(component, _derived_series_keys(component), side)
 end
 
 

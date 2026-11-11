@@ -38,9 +38,9 @@ end
 
         @test PowerSystems.get_x_coords(first(values_of(er01, "energy_offer"))) == bands
         @test PowerSystems.get_y_coords(first(values_of(er01, "energy_offer"))) == prices_ascending
-        @test first(values_of(er01, "energy_availability")) ≈ 1.01
+        @test first(values_of(er01, AustralianElectricityMarkets.bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN))) ≈ 1.01 * get_base_power(sys)
         @test PowerSystems.get_y_coords(first(values_of(bw01, "energy_offer_decremental"))) == prices_descending
-        @test first(values_of(bw01, "energy_availability_decremental")) ≈ 1.01
+        @test first(values_of(bw01, AustralianElectricityMarkets.bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.LOAD))) ≈ 1.01 * get_base_power(sys)
         @test PowerSystems.get_y_coords(first(values_of(bw01, AustralianElectricityMarkets._fcas_offer_series_name(bw01, BidType.RAISEREG, false)))) == prices_ascending
         @test isequal(
             collect(
@@ -639,9 +639,9 @@ end
             end
             rows = sort(subset(truth, :DUID => ByRow(==("BW03"))), :SETTLEMENTDATE)
             # The mock's AVAILABILITY is synthetic; the real-data gate checks the derivation against it.
-            max_avail = get_time_series_values(SingleTimeSeries, renewable, energy_availability_series_name(renewable, OfferSide.GEN); start_time = start_date, len = horizon)
+            max_avail = get_time_series_values(SingleTimeSeries, renewable, bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN); start_time = start_date, len = horizon)
             uigf = get_time_series_values(SingleTimeSeries, renewable, get_name(get_telemetry(renewable).uigf); start_time = start_date, len = horizon)
-            @test isapprox(get_energy_availability(renewable, start_date, horizon), min.(max_avail .* get_base_power(sys), uigf); atol = 1.0e-8)
+            @test isapprox(get_energy_availability(renewable, start_date, horizon), min.(max_avail, uigf); atol = 1.0e-8)
         end
         # A battery's availability comes from its energy bid, not AVAILABILITY.
         @test isnothing(get_energy_availability(battery, start_date, horizon))
@@ -775,7 +775,7 @@ end
         device = get_component(ThermalStandard, sys, "ER01")
         full_grid = collect(date_range)[1:(end - 1)]
         n = length(full_grid)
-        replace_single_series!(sys, device, single_series(energy_availability_series_name(device, OfferSide.GEN), full_grid, zeros(n)))
+        replace_single_series!(sys, device, single_series(bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN), full_grid, zeros(n)))
         replace_single_series!(sys, device, single_series(NEM_OBSERVED_SERIES.initial_mw, full_grid, fill(100.0, n)))
         replace_single_series!(sys, device, single_series(NEM_TELEMETRY_SERIES.ramp_down_limit, full_grid, fill(60.0, n)))
         AEMSim._set_dispatch_limits!(sys)
@@ -880,8 +880,8 @@ end
         sys = built()
         device = get_component(ThermalStandard, sys, "ER01")
         with_units_base(sys, "NATURAL_UNITS") do
-            max_avail = get_time_series_values(SingleTimeSeries, device, energy_availability_series_name(device, OfferSide.GEN); start_time = start_date, len = horizon)
-            @test get_energy_availability(device, start_date, horizon) ≈ max_avail .* get_base_power(sys) atol = 1.0e-9
+            max_avail = get_time_series_values(SingleTimeSeries, device, bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN); start_time = start_date, len = horizon)
+            @test get_energy_availability(device, start_date, horizon) ≈ max_avail atol = 1.0e-9
         end
     end
 
@@ -1062,7 +1062,7 @@ end
 
         device = get_component(ThermalStandard, sys, "ER01")
         inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, device))
-        @test get_name(inputs.energy_availability) == "energy_availability"
+        @test get_name(inputs.energy_availability) == bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN)
         @test get_name(inputs.energy_offer) == "energy_offer"
         @test get_name(inputs.ramp_up) == NEM_SERIES.ramp_up_rate
         @test get_name(inputs.ramp_down) == NEM_SERIES.ramp_down_rate
@@ -1090,15 +1090,14 @@ end
             end
         end
 
-        # The availability the formulation reads is the bid MAXAVAIL per unit of the base.
+        # The availability the formulation reads is the bid MAXAVAIL, in MW, and no energy_availability series is written.
         bid = only(AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(device)))
-        max_avail = get_time_series_values(SingleTimeSeries, device, get_name(bid.max_avail); ignore_scaling_factors = true)
-        @test get_time_series_values(SingleTimeSeries, device, "energy_availability"; ignore_scaling_factors = true) ≈
-            max_avail ./ base_power
+        @test inputs.energy_availability == bid.max_avail
+        @test !has_time_series(device, SingleTimeSeries, "energy_availability")
 
         battery = get_component(EnergyReservoirStorage, sys, "BW01")
         battery_inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, battery))
-        @test get_name(battery_inputs.energy_availability_decremental) == "energy_availability_decremental"
+        @test get_name(battery_inputs.energy_availability_decremental) == bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.LOAD)
         # A battery bids RAISEREG on both sides: the AGC ramp rate rides on the GEN-side entry.
         reg = [entry for entry in battery_inputs.fcas if entry.service == BidType.RAISEREG]
         @test length(reg) == 2
@@ -1124,7 +1123,7 @@ end
         @test get_name(inputs.uigf) == NEM_TELEMETRY_SERIES.uigf
         raw = get_time_series_values(SingleTimeSeries, semi, NEM_TELEMETRY_SERIES.uigf; ignore_scaling_factors = true)
         @test PSI.get_multiplier_value(EnergyUIGFTimeSeriesParameter(), semi, NEMReplayDispatch()) ≈ 1 / base_power
-        @test PSI.get_multiplier_value(EnergyMaxAvailTimeSeriesParameter(), semi, NEMReplayDispatch()) == 1.0
+        @test PSI.get_multiplier_value(EnergyMaxAvailTimeSeriesParameter(), semi, NEMReplayDispatch()) ≈ 1 / base_power
         @test length(raw) > 0
     end
 end

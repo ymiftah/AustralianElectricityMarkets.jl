@@ -95,10 +95,13 @@ via [`add_toy_storage_initial_mw!`](@ref).
 """
 function _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
     base_power = PSY.get_base_power(sys)
-    for (name, mw) in (("energy_availability", PSY.get_output_active_power_limits(bat).max), ("energy_availability_decremental", PSY.get_input_active_power_limits(bat).max))
-        PSY.add_time_series!(sys, bat, AustralianElectricityMarkets.single_series(name, stamps[1], fill(mw / base_power, length(stamps)), TOY_RESOLUTION))
-    end
     rating = PSY.get_output_active_power_limits(bat).max
+    for (direction, price, mw) in (
+            (AustralianElectricityMarkets.BidDirection.GEN, 1.0, rating),
+            (AustralianElectricityMarkets.BidDirection.LOAD, 0.0, PSY.get_input_active_power_limits(bat).max),
+        )
+        _toy_energy_bid!(sys, bat, direction, stamps, fill(PSY.PiecewiseStepData([0.0, rating], [price]), length(stamps)), fill(mw, length(stamps)))
+    end
     for (side, name, price) in ((OfferSide.GEN, "energy_offer", 1.0), (OfferSide.LOAD, "energy_offer_decremental", 0.0))
         curves = fill(PSY.PiecewiseStepData([0.0, rating], [price]), length(stamps))
         AustralianElectricityMarkets.replace_single_series!(
@@ -511,11 +514,9 @@ function storage_fcas_toy_model(
     isnothing(scaling) || add_toy_fcas_scaling!(sys, bat, stamps[1], length(stamps), bid_type; scaling...)
     rating = get_output_active_power_limits(bat).max
     availability = isnothing(energy_max_avail_mw) ? (rating, rating) : energy_max_avail_mw
-    for (name, mw) in zip(("energy_availability", "energy_availability_decremental"), availability)
-        PSY.remove_time_series!(sys, PSY.SingleTimeSeries, bat, name)
-        PSY.add_time_series!(
-            sys, bat,
-            AustralianElectricityMarkets.single_series(name, stamps[1], fill(mw / get_base_power(sys), length(stamps)), TOY_RESOLUTION),
+    for (direction, mw) in zip((AustralianElectricityMarkets.BidDirection.GEN, AustralianElectricityMarkets.BidDirection.LOAD), availability)
+        replace_single_series_with!(
+            sys, bat, AustralianElectricityMarkets.bid_series_name(BidType.ENERGY, :max_avail, direction), fill(mw, length(stamps)), stamps,
         )
     end
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = bid_type), [bat])

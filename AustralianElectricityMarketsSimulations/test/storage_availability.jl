@@ -73,7 +73,8 @@ end
 end
 
 @testset "storage raw availability is complete and finite" begin
-    for key in ("energy_availability", "energy_availability_decremental")
+    for direction in (AustralianElectricityMarkets.BidDirection.GEN, AustralianElectricityMarkets.BidDirection.LOAD)
+        key = AustralianElectricityMarkets.bid_series_name(BidType.ENERGY, :max_avail, direction)
         sys = storage_availability_system()
         battery = PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY)
         PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, battery, key)

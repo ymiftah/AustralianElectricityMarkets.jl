@@ -47,18 +47,24 @@ function _require_valid_input(name::AbstractString, values, label::AbstractStrin
 end
 
 
-# The derived energy-limit series names a device's dispatch reads, its UIGF key (`nothing` unless
-# semi-scheduled), and the setter that attaches them.
+# The energy-availability series names a device's dispatch reads (its `NEMDispatchInputs` keys), its UIGF
+# key (`nothing` unless semi-scheduled), and the setter that attaches them.
 function _energy_limit_series(d::PSY.Storage)
-    return energy_availability_series_name.((OfferSide.GEN, OfferSide.LOAD)), nothing, "call set_effective_offers!"
+    inputs = _dispatch_inputs_attribute(d)
+    keys = (inputs.energy_availability, inputs.energy_availability_decremental)
+    return _key_names(keys), nothing, "call set_effective_offers!"
 end
 
 function _energy_limit_series(d)
-    max_avail = energy_availability_series_name(OfferSide.GEN)
+    inputs = _dispatch_inputs_attribute(d)
+    names = _key_names((inputs.energy_availability,))
     if !is_semi_scheduled(d)
-        return (max_avail,), nothing, "call set_effective_offers!"
+        return names, nothing, "call set_effective_offers!"
     end
     uigf = AustralianElectricityMarkets.get_telemetry(d).uigf
     isnothing(uigf) && throw(ArgumentError("$(PSY.get_name(d)): semi-scheduled but has no UIGF; call set_unit_conditions!"))
-    return (max_avail,), uigf, "call set_effective_offers!"
+    return names, uigf, "call set_effective_offers!"
 end
+
+# The names of the series behind the keys that are attached.
+_key_names(keys) = [PSY.get_name(key) for key in keys if !isnothing(key)]
