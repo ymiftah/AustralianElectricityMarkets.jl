@@ -587,3 +587,34 @@ end
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     @test vec(Array(PSI.get_parameter_column_values(park_limit, TOY_EXPENSIVE))) ≈ [0.25, 0.05, 0.95]
 end
+
+@testset "a unit's first registered stamp starts in dispatch mode 0 when its previous interval is unregistered" begin
+    sys = System(100.0)
+    bus = _st_bus()
+    add_component!(sys, bus)
+    gen = _st_thermal("first_stamp", bus)
+    add_component!(sys, gen)
+    AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
+    add_time_series!(sys, gen, _st_series("initial_mw", [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]))
+    add_time_series!(sys, gen, _st_series("dispatch_mode", [0.0, NaN, 2.0, 3.0, 4.0, 0.0, 1.0]))
+    AustralianElectricityMarkets.set_observed_state!(
+        gen,
+        AustralianElectricityMarkets.NEMObservedState(;
+            initial_mw = _st_key(gen, "initial_mw"), dispatch_mode = _st_key(gen, "dispatch_mode"),
+        ),
+    )
+    source = AustralianElectricityMarketsSimulations.ObservedState()
+    registration(from) = AustralianElectricityMarkets.NEMRegistration(;
+        schedule_type = AustralianElectricityMarkets.ScheduleType.SCHEDULED, gen_loss_factor = 1.0,
+        load_loss_factor = 1.0, registered_from = from, registered_until = DateTime(2999, 12, 31),
+    )
+
+    # Registered from the first stamp: the stamp after it is the first registered one, and its mode is NaN.
+    AustralianElectricityMarkets.set_registration!(gen, registration(_ST_STAMPS[1]))
+    @test AustralianElectricityMarketsSimulations.unit_state(source, gen, _ST_STAMPS[2]) ==
+        AustralianElectricityMarketsSimulations.NEMUnitState(20.0, 0)
+
+    # Registered earlier: the previous interval is registered, so a NaN mode is still an error.
+    AustralianElectricityMarkets.set_registration!(gen, registration(_ST_STAMPS[1] - Minute(5)))
+    @test_throws ArgumentError AustralianElectricityMarketsSimulations.unit_state(source, gen, _ST_STAMPS[2])
+end

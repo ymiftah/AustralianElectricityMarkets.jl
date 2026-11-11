@@ -77,15 +77,20 @@ The state of `device` at the start of the interval beginning at `t`, read from `
 # Returns
 The [`NEMUnitState`](@ref) for an [`ObservedState`](@ref). A stamp the build does not observe (see
 [`_is_unobserved_stamp`](@ref)) resolves to the state the build seeds there, zero output in dispatch
-mode `0`. Throws an `ArgumentError` naming `device` and `t` when it is not a NEM device with an
-observed state, when the observed dispatch mode at an observed stamp is not finite, and for a
-[`SimulatedState`](@ref), which is not implemented yet.
+mode `0`. A unit whose previous interval is outside its registration starts in dispatch mode `0` at
+its first registered stamp, with its observed output. Throws an `ArgumentError` naming `device` and `t`
+when it is not a NEM device with an observed state, when the observed dispatch mode at an observed stamp
+is not finite, and for a [`SimulatedState`](@ref), which is not implemented yet.
 """
 function unit_state(::ObservedState, device, t::DateTime)
     observed = AustralianElectricityMarkets.get_observed_state(device)
     dispatch_mode = _state_value(device, observed, Val(:dispatch_mode), t)
     if !isfinite(dispatch_mode)
         _is_unobserved_stamp(device, t) && return NEMUnitState(0.0, 0)
+        if _is_unobserved_stamp(device, t - Minute(5))
+            initial_mw = _state_value(device, observed, Val(:initial_mw), t)
+            return NEMUnitState(Float64(initial_mw), 0)
+        end
         throw(
             ArgumentError(
                 "The dispatch mode of \"$(PSY.get_name(device))\" at $(t) is not finite. " *
