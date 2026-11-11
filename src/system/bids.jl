@@ -75,8 +75,7 @@ function _bid_field!(sys, device, name::AbstractString, values, start_date, reso
         remove_single_series!(sys, device, name)
         return nothing
     end
-    replace_single_series!(sys, device, single_series(name, start_date, values, resolution))
-    return _series_key(device, name)
+    return replace_single_series!(sys, device, single_series(name, start_date, values, resolution))
 end
 
 

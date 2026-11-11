@@ -96,6 +96,25 @@
         end
     end
 
+    @testset "each bid's series keys are the keys the series were stored under" begin
+        sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
+        set_market_bids!(sys, db, interval)
+        checked = 0
+        for device in get_components(Generator, sys)
+            cost = AEM._nem_offer_cost(device)
+            isnothing(cost) && continue
+            for bid in AEM.get_energy_bids(cost), field in fieldnames(typeof(bid))
+                key = getfield(bid, field)
+                key isa PowerSystems.IS.StaticTimeSeriesKey || continue
+                checked += 1
+                stored = AEM._series_key(device, PowerSystems.IS.get_name(key))
+                @test typeof(key) == typeof(stored)
+                @test all(getfield(key, f) == getfield(stored, f) for f in fieldnames(typeof(key)))
+            end
+        end
+        @test checked > 0
+    end
+
     @testset "a LOAD offer curve is stored with its bands in reverse order" begin
         sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
         offers = read_offers(db, interval)

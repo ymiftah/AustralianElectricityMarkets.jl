@@ -124,12 +124,11 @@ Attaches `ts` to `component`, first removing an existing `SingleTimeSeries` of t
 - `ts`: The series to attach.
 
 # Returns
-`nothing`.
+The `StaticTimeSeriesKey` of the attached series.
 """
 function replace_single_series!(sys, component, ts::SingleTimeSeries)
     remove_single_series!(sys, component, get_name(ts))
-    add_time_series!(sys, component, ts)
-    return
+    return add_time_series!(sys, component, ts)
 end
 
 
