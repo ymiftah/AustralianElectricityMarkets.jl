@@ -67,4 +67,6 @@ function _energy_limit_series(d)
 end
 
 # The names of the series behind the keys that are attached.
-_key_names(keys) = [PSY.get_name(key) for key in keys if !isnothing(key)]
+function _key_names(keys)
+    return [PSY.get_name(key) for key in keys if !isnothing(key)]
+end

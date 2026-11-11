@@ -270,7 +270,8 @@ Stores the bids of each unit of `sys` for `date_range`: one [`read_offers`](@ref
 MW, \$/MWh at the connection point and MW/min. A unit's loss factors, from which AEMSim refers its
 energy prices, are on its [`NEMRegistration`](@ref) recorded by [`nem_network`](@ref).
 
-Generators bid `GEN`. Scheduled loads bid `LOAD`, and a non-scheduled load bids no energy. Storage
+Generators bid `GEN`. Scheduled loads bid `LOAD`, and a non-scheduled load bids no energy; an available one
+gets a zero `MAXAVAIL` series of the `LOAD` energy bid name instead. Storage
 devices bid both directions. A unit missing a required energy direction is set unavailable. A
 device bidding a required direction at a stamp of its registration without a row throws. FCAS bids are
 recorded for every unit, and the FCAS services of `markets` are added by [`add_fcas_services!`](@ref).
@@ -341,6 +342,13 @@ function _set_market_bids!(sys, offers::DataFrame, date_range; markets = NEM_MAR
     for stor in get_components(Storage, sys)
         _bid_device_energy!(sys, stor, (BidDirection.GEN, BidDirection.LOAD), groups, grid, start_date, resolution) ||
             push!(unbid, get_name(stor))
+    end
+
+    # A non-scheduled load has no energy bid; its energy availability is held at zero MW on the bid grid.
+    zero_availability = bid_series_name(BidType.ENERGY, :max_avail, BidDirection.LOAD)
+    for load in get_components(ControllableLoad, sys)
+        is_non_scheduled_load(load) && get_available(load) || continue
+        _bid_field!(sys, load, zero_availability, zeros(length(grid)), start_date, resolution)
     end
 
     isempty(gen_bid_loads) || @warn "set_market_bids!: $(length(gen_bid_loads)) scheduled load(s) bid GEN, not LOAD (wholesale demand response); setting to unavailable: $(join(gen_bid_loads, ", "))"

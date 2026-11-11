@@ -2045,7 +2045,8 @@ function make_non_scheduled_fcas_load!(sys, stamps)
     AustralianElectricityMarkets._nem_unit_data(load).offer = NEMOfferCost()
     PSY.get_ext(load)["non_scheduled"] = true
     set_registration!(load, _toy_registration())
-    for name in ("max_active_power", "energy_availability", "ramp_up_rate", "ramp_down_rate")
+    zero_availability = AustralianElectricityMarkets.bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.LOAD)
+    for name in ("max_active_power", zero_availability, "ramp_up_rate", "ramp_down_rate")
         PSY.add_time_series!(
             sys, load,
             PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, zeros(length(stamps)))),

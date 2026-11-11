@@ -119,8 +119,12 @@ load or has no DISPATCHLOAD row. `nothing` if `component` has no energy availabi
 """
 function get_energy_availability(component, initial_time, horizon::Integer)
     component isa PSY.Storage && return nothing
-    key = _dispatch_input_key(component, :energy_availability)
-    isnothing(key) && return nothing
+    side = only(energy_offer_sides(component))
+    key = _bid_availability_key(component, side)
+    if isnothing(key)
+        AustralianElectricityMarkets.is_non_scheduled_load(component) || return nothing
+        return zeros(horizon)
+    end
     telemetry = AustralianElectricityMarkets.get_telemetry(component)
     max_avail = _unit_values(component, key, initial_time, horizon)
     ramp_up = _raw_window(component, telemetry.ramp_up_limit, initial_time, horizon)
@@ -173,23 +177,10 @@ end
 series are attached.
 """
 function get_storage_energy_max_avail(component, initial_time, horizon::Integer)
-    gen = _unit_window(component, _dispatch_input_key(component, :energy_availability), initial_time, horizon)
-    load = _unit_window(component, _dispatch_input_key(component, :energy_availability_decremental), initial_time, horizon)
+    gen = _unit_window(component, _bid_availability_key(component, OfferSide.GEN), initial_time, horizon)
+    load = _unit_window(component, _bid_availability_key(component, OfferSide.LOAD), initial_time, horizon)
     (isnothing(gen) || isnothing(load)) && return nothing
     return (; gen, load)
-end
-
-
-# The key of the energy availability series of `component` for `field` (`:energy_availability` or
-# `:energy_availability_decremental`), read from its bid so it needs no attached `NEMDispatchInputs`; `nothing` when absent.
-function _dispatch_input_key(component, field::Symbol)
-    side = if component isa PSY.Storage
-        field == :energy_availability ? OfferSide.GEN : OfferSide.LOAD
-    else
-        field == :energy_availability || return nothing
-        only(energy_offer_sides(component))
-    end
-    return _energy_availability_key(component, _derived_series_keys(component), side)
 end
 
 

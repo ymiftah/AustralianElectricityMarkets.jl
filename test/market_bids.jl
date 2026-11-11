@@ -195,6 +195,15 @@
         @test isempty(AEM.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(asload)))
     end
 
+    @testset "an available non-scheduled load without an energy bid gets a zero LOAD MAXAVAIL series" begin
+        sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
+        asload = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
+        name = AEM.bid_series_name(BidType.ENERGY, :max_avail, AEM.BidDirection.LOAD)
+        set_market_bids!(sys, db, interval)
+        @test !isempty(series(asload, name))
+        @test all(==(0.0), series(asload, name))
+    end
+
     @testset "loss factors are kept in each bidding unit's registration" begin
         sys, _ = nem_network(db; as_of = first(interval), through = last(interval) - Minute(5))
         set_market_bids!(sys, db, interval)

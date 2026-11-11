@@ -1,22 +1,8 @@
 """
-    energy_availability_series_name(side::OfferSide) -> String
-
-Name of the series holding the zero energy availability of a non-scheduled load on `side`, system-base per unit.
-
-# Arguments
-- `side`: the [`OfferSide`](@ref).
-
-# Returns
-A `String`.
-"""
-energy_availability_series_name(side::OfferSide) = "energy_availability" * side_suffix(side)
-
-
-"""
     _max_avail_series_name(side::OfferSide) -> String
 
 Name of the energy bid `MAXAVAIL` series on `side`, the series the dispatch parameters register for
-their availability (MW). A `PSY.Storage` device, and a generator or load, is read through its own key.
+their availability (MW).
 
 # Arguments
 - `side`: the [`OfferSide`](@ref) of the energy bid.
@@ -27,24 +13,6 @@ A `String`.
 function _max_avail_series_name(side::OfferSide)
     direction = side == OfferSide.LOAD ? AustralianElectricityMarkets.BidDirection.LOAD : AustralianElectricityMarkets.BidDirection.GEN
     return AustralianElectricityMarkets.bid_series_name(BidType.ENERGY, :max_avail, direction)
-end
-
-
-"""
-    energy_availability_series_name(device, side::OfferSide) -> String
-
-Name of the series holding the zero energy availability of a non-scheduled load without an energy bid.
-It is the name of the energy bid `MAXAVAIL` series on `side`, so every load of a type reads one name.
-
-# Arguments
-- `device`: the NEM dispatch device.
-- `side`: the [`OfferSide`](@ref) of the energy bid.
-
-# Returns
-A `String`.
-"""
-function energy_availability_series_name(device, side::OfferSide)
-    return _max_avail_series_name(side)
 end
 
 

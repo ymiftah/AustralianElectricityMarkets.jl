@@ -100,7 +100,7 @@ include("results/interconnector_losses.jl")
 export set_effective_offers!, NEMEnergyOffer, get_energy_offer, NEMFCASOffer, get_fcas_offer,
     get_scaled_fcas_trapezium, get_fcas_agc_ramp_capability, get_fcas_agc_status, get_initial_mw,
     get_energy_availability, get_storage_energy_max_avail
-export energy_availability_series_name, referred_offer_curves, effective_energy_availability,
+export referred_offer_curves, effective_energy_availability,
     effective_ramp_limit, effective_ramp_limits, effective_regulation_enablement,
     effective_regulation_max_avail, fcas_trapezium_values, tie_break_scale,
     loss_demand_coefficient, set_loss_demand_coefficients!

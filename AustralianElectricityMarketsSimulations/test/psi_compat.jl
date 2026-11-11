@@ -141,12 +141,6 @@ end
             device = PSY.get_component(device_type, sys, name)
             AustralianElectricityMarkets.replace_single_series!(
                 sys, device,
-                AustralianElectricityMarkets.single_series(
-                    AEMS.energy_availability_series_name(device, side), TOY_START, fill(1.0, length(stamps)), TOY_RESOLUTION,
-                ),
-            )
-            AustralianElectricityMarkets.replace_single_series!(
-                sys, device,
                 AustralianElectricityMarkets.single_series(series, TOY_START, fill(offer(sys, stamps), length(stamps)), TOY_RESOLUTION),
             )
             return

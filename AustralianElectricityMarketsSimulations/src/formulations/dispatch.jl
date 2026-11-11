@@ -107,26 +107,33 @@ function _has_nem_dispatch_limits(device)
         haskey(names, param) || continue
         key = getfield(inputs, field)
         key isa IS.StaticTimeSeriesKey || return false
-        if param in _AVAILABILITY_PARAMETERS
-            PSY.has_time_series(device, PSY.SingleTimeSeries, PSY.get_name(key)) || return false
-        else
-            _require_key_name(device, key, names[param])
-        end
+        expected = param in _AVAILABILITY_PARAMETERS ? _availability_series_name(device, param) : names[param]
+        _require_key_name(device, key, expected)
+        PSY.has_time_series(device, PSY.SingleTimeSeries, expected) || return false
     end
     uigf_required = haskey(names, EnergyUIGFTimeSeriesParameter) && is_semi_scheduled(device)
     if uigf_required
         telemetry.uigf isa IS.StaticTimeSeriesKey || return false
         _require_key_name(device, telemetry.uigf, NEM_TELEMETRY_SERIES.uigf)
     end
-    required = (name for (param, name) in names if param !== EnergyUIGFTimeSeriesParameter && param ∉ _AVAILABILITY_PARAMETERS)
-    return all(PSY.has_time_series(device, PSY.SingleTimeSeries, name) for name in required)
+    return true
 end
 
 
-# The energy availability parameters, whose series a device's own key names.
+# The energy availability parameters; PowerSimulations.jl reads each from one series name per device type.
 const _AVAILABILITY_PARAMETERS = (
     EnergyMaxAvailTimeSeriesParameter, PSI.ActivePowerOutTimeSeriesParameter, PSI.ActivePowerInTimeSeriesParameter,
 )
+
+# The `MAXAVAIL` series name `param` reads on `device`: its energy bid side's, per direction for a battery.
+function _availability_series_name(device, param)
+    side = if device isa PSY.Storage
+        param === PSI.ActivePowerInTimeSeriesParameter ? OfferSide.LOAD : OfferSide.GEN
+    else
+        only(energy_offer_sides(device))
+    end
+    return _max_avail_series_name(side)
+end
 
 
 # The parameter type to the [`NEMDispatchInputs`](@ref) field holding its series key.

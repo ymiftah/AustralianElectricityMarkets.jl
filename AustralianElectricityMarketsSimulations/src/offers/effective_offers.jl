@@ -12,9 +12,8 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
   and telemetered rates ([`effective_ramp_limit`](@ref)), taking the composite cross-zero rate
   ([`composite_ramp_rates`](@ref)) for a device bid on both sides, and the AGC rates read the
   effective regulation availability ([`effective_regulation_max_avail`](@ref)).
-- `"energy_availability"`, the zero availability of a non-scheduled load without an energy bid. A unit
-  with an energy bid reads its `MAXAVAIL` series directly, through the keys of
-  [`NEMDispatchInputs`](@ref).
+- The energy availability is the bid's `MAXAVAIL` series, read through the keys of [`NEMDispatchInputs`](@ref);
+  a non-scheduled load without an energy bid reads the zero `MAXAVAIL` series [`set_market_bids!`](@ref) writes for it.
 - `"fcas_effective_<BIDTYPE>[_decremental]"` and `"fcas_ramping_limits_<BIDTYPE>"`, the FCAS offer
   per interval after AEMO *FCAS Model in NEMDE* §4 scaling and §5 enablement, on the timestamps of
   the bid's trapezium series, per-unit of the system base. The FCAS trapeziums and offer curves are
@@ -168,13 +167,18 @@ function _dispatch_availability_keys(device, keys::Dict{String, IS.StaticTimeSer
 end
 
 
-# The key of the series `device`'s energy availability on `side` is read from: the `MAXAVAIL` of its energy
-# bid on that side, or the zero series of a non-scheduled load without one. `nothing` when neither exists.
+# The key of `device`'s energy availability on `side`: the bid's `MAXAVAIL`, or for a device without an energy
+# bid on that side the zero `MAXAVAIL` series of a non-scheduled load. `nothing` when neither exists.
 function _energy_availability_key(device, keys::Dict{String, IS.StaticTimeSeriesKey}, side::OfferSide)
+    key = _bid_availability_key(device, side)
+    return isnothing(key) ? get(keys, _max_avail_series_name(side), nothing) : key
+end
+
+# The key of the `MAXAVAIL` series of `device`'s energy bid on `side`, or `nothing` without that bid.
+function _bid_availability_key(device, side::OfferSide)
     cost = AustralianElectricityMarkets._nem_offer_cost(device)
     bid = isnothing(cost) ? nothing : _energy_bid(cost, side)
-    isnothing(bid) || return _bid_series_key(device, bid.max_avail, :max_avail)
-    return get(keys, energy_availability_series_name(device, side), nothing)
+    return isnothing(bid) ? nothing : _bid_series_key(device, bid.max_avail, :max_avail)
 end
 
 
@@ -326,40 +330,14 @@ function _loss_factor(device, side::OfferSide)
     return side == OfferSide.LOAD ? registration.load_loss_factor : registration.gen_loss_factor
 end
 
-# The timestamps and resolution of the bid series of `sys`, which share one grid. Sizes the zero
-# offers of a non-scheduled load.
-function _bid_axis(sys::PSY.System)
-    for device in _bidding_devices(sys)
-        cost = AustralianElectricityMarkets._nem_offer_cost(device)
-        isnothing(cost) && continue
-        for bid in get_energy_bids(cost)
-            series = _bid_series(device, bid.max_avail, :max_avail)
-            return (; timestamps = series.timestamps, resolution = series.resolution)
-        end
-    end
-    throw(ArgumentError("set_effective_offers!: no energy bid in the system to size the zero MAXAVAIL of its non-scheduled loads."))
-end
-
-# Attaches each device's energy offer curves, and the zero availability of a non-scheduled load with no
-# energy bid. A bid's MAXAVAIL is read from the bid's own series.
+# Attaches each device's energy offer curves; a bid's MAXAVAIL is read from the bid's own series.
 function _set_energy_offers!(sys::PSY.System)
-    axis = nothing
     for device in _bidding_devices(sys)
         cost = AustralianElectricityMarkets._nem_offer_cost(device)
         isnothing(cost) && continue
         for side in energy_offer_sides(device)
             bid = _energy_bid(cost, side)
-            if isnothing(bid)
-                if device isa PSY.ControllableLoad && AustralianElectricityMarkets.is_non_scheduled_load(device) &&
-                        PSY.get_available(device)
-                    axis = isnothing(axis) ? _bid_axis(sys) : axis
-                    name = energy_availability_series_name(device, side)
-                    PSY.has_time_series(device, PSY.SingleTimeSeries, name) && continue
-                    zeros_on_axis = zeros(length(axis.timestamps))
-                    replace_single_series!(sys, device, single_series(name, first(axis.timestamps), zeros_on_axis, axis.resolution))
-                end
-                continue
-            end
+            isnothing(bid) && continue
             curves = _bid_series(device, bid.offer_curves, :offer_curves)
             replace_single_series!(
                 sys, device,

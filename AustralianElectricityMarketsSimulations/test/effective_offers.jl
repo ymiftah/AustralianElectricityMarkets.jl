@@ -885,6 +885,59 @@ end
         end
     end
 
+    @testset "energy availability is read from the bid MAXAVAIL" begin
+        sys = built()
+        base = PSY.get_base_power(sys)
+        BD = AustralianElectricityMarkets.BidDirection
+        bid_values(device, direction) = get_time_series_values(
+            SingleTimeSeries, device, bid_series_name(BidType.ENERGY, :max_avail, direction);
+            start_time = start_date, len = horizon, ignore_scaling_factors = true,
+        )
+        with_units_base(sys, "NATURAL_UNITS") do
+            er01 = get_component(ThermalStandard, sys, "ER01")
+            expected = AEMSim.effective_energy_availability(
+                bid_values(er01, BD.GEN) ./ base, nothing,
+                get_time_series_values(SingleTimeSeries, er01, NEM_TELEMETRY_SERIES.ramp_up_limit; start_time = start_date, len = horizon, ignore_scaling_factors = true),
+                false,
+            ) .* AEMSim._fcas_units_multiplier(er01)
+            @test get_energy_availability(er01, start_date, horizon) == expected
+            @test !has_time_series(er01, SingleTimeSeries, "energy_availability")
+            bw01 = get_component(EnergyReservoirStorage, sys, "BW01")
+            avail = get_storage_energy_max_avail(bw01, start_date, horizon)
+            multiplier = AEMSim._fcas_units_multiplier(bw01)
+            @test avail.gen == bid_values(bw01, BD.GEN) ./ base .* multiplier
+            @test avail.load == bid_values(bw01, BD.LOAD) ./ base .* multiplier
+            inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, er01))
+            @test get_name(inputs.energy_availability) == bid_series_name(BidType.ENERGY, :max_avail, BD.GEN)
+        end
+    end
+
+    @testset "a non-scheduled load without an energy bid reads zero availability and keys the zero MAXAVAIL" begin
+        sys = built()
+        asload = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
+        @test isempty(AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(asload)))
+        inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, asload))
+        name = bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.LOAD)
+        @test get_name(inputs.energy_availability) == name
+        @test all(==(0.0), get_time_series_values(SingleTimeSeries, asload, name; ignore_scaling_factors = true))
+        @test all(==(0.0), get_energy_availability(asload, start_date, horizon))
+        @test AEMSim._has_nem_dispatch_limits(asload)
+    end
+
+    @testset "an energy availability key off the registered MAXAVAIL name fails the pre-flight" begin
+        sys = built()
+        device = get_component(ThermalStandard, sys, "ER01")
+        @test AEMSim._has_nem_dispatch_limits(device)
+        old = only(PSY.get_supplemental_attributes(NEMDispatchInputs, device))
+        values = get_time_series_values(SingleTimeSeries, device, get_name(old.energy_availability); ignore_scaling_factors = true)
+        add_time_series!(sys, device, single_series("other_availability", start_date, values, resolution))
+        fields = Dict(f => getfield(old, f) for f in fieldnames(NEMDispatchInputs))
+        fields[:energy_availability] = AustralianElectricityMarkets._series_key(device, "other_availability")
+        PSY.remove_supplemental_attribute!(sys, device, old)
+        PSY.add_supplemental_attribute!(sys, device, NEMDispatchInputs(; fields...))
+        @test_throws r"other_availability" AEMSim._has_nem_dispatch_limits(device)
+    end
+
     @testset "a device's observed initial MW may key any series" begin
         sys = built()
         device = get_component(ThermalStandard, sys, "ER01")
