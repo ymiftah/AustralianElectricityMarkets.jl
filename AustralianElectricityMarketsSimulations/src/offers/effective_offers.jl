@@ -138,17 +138,18 @@ end
 # The derived-input keys of `device`: one per dispatch-input series it has, or `nothing` where an
 # input is absent.
 function _dispatch_inputs(device)
+    keys = _derived_series_keys(device)
     telemetry = _unit_telemetry(device)
     uigf = isnothing(telemetry) ? nothing : telemetry.uigf
     return NEMDispatchInputs(;
-        energy_offer = _derived_series_key(device, energy_offer_series_name(OfferSide.GEN)),
-        energy_offer_decremental = _derived_series_key(device, energy_offer_series_name(OfferSide.LOAD)),
-        energy_availability = _derived_series_key(device, energy_availability_series_name(OfferSide.GEN)),
-        energy_availability_decremental = _derived_series_key(device, energy_availability_series_name(OfferSide.LOAD)),
+        energy_offer = get(keys, energy_offer_series_name(OfferSide.GEN), nothing),
+        energy_offer_decremental = get(keys, energy_offer_series_name(OfferSide.LOAD), nothing),
+        energy_availability = get(keys, energy_availability_series_name(OfferSide.GEN), nothing),
+        energy_availability_decremental = get(keys, energy_availability_series_name(OfferSide.LOAD), nothing),
         uigf = uigf isa IS.StaticTimeSeriesKey ? uigf : nothing,
-        ramp_up = _derived_series_key(device, NEM_SERIES.ramp_up_rate),
-        ramp_down = _derived_series_key(device, NEM_SERIES.ramp_down_rate),
-        fcas = _fcas_inputs(device),
+        ramp_up = get(keys, NEM_SERIES.ramp_up_rate, nothing),
+        ramp_down = get(keys, NEM_SERIES.ramp_down_rate, nothing),
+        fcas = _fcas_inputs(device, keys),
     )
 end
 
@@ -156,19 +157,19 @@ end
 # One `NEMFCASInputs` per side of each service `device` has an offer for: an offer always writes its
 # trapezium. A regulation service has one AGC ramp rate, so it rides on the GEN-side entry when the
 # device bids that side, and on the LOAD-side entry otherwise.
-function _fcas_inputs(device)
+function _fcas_inputs(device, keys::Dict{String, IS.StaticTimeSeriesKey})
     inputs = NEMFCASInputs[]
     for service in AustralianElectricityMarkets.FCAS_BID_TYPES
         offers = Dict(
-            side => _derived_series_key(device, fcas_series_name("fcas_offer", service, side))
+            side => get(keys, fcas_series_name("fcas_offer", service, side), nothing)
                 for side in (OfferSide.GEN, OfferSide.LOAD)
         )
         sides = [side for side in (OfferSide.GEN, OfferSide.LOAD) if !isnothing(offers[side])]
         isempty(sides) && continue
         agc_ramp = service in FCAS_REGULATION_MARKETS ?
-            _derived_series_key(device, fcas_series_name("fcas_agc_ramp_rate", service)) : nothing
+            get(keys, fcas_series_name("fcas_agc_ramp_rate", service), nothing) : nothing
         for (i, side) in enumerate(sides)
-            trapezium = _derived_series_key(device, fcas_series_name("fcas_trapezium", service, side))
+            trapezium = get(keys, fcas_series_name("fcas_trapezium", service, side), nothing)
             push!(inputs, NEMFCASInputs(; service, side, offer = offers[side], trapezium, agc_ramp = i == 1 ? agc_ramp : nothing))
         end
     end
@@ -176,13 +177,14 @@ function _fcas_inputs(device)
 end
 
 
-# The key of `device`'s `name` `SingleTimeSeries`, or `nothing` when it carries none: read from the
-# `System` AEMSim was given, where AEM's `_series_key` throws on a missing name.
-function _derived_series_key(device, name::AbstractString)
+# The static `SingleTimeSeries` keys of `device` by name, read once from the `System` AEMSim was given.
+# The first key of a name wins.
+function _derived_series_keys(device)
+    keys = Dict{String, IS.StaticTimeSeriesKey}()
     for key in IS.get_time_series_keys(device)
-        key isa IS.StaticTimeSeriesKey && IS.get_name(key) == name && return key
+        key isa IS.StaticTimeSeriesKey && get!(keys, IS.get_name(key), key)
     end
-    return nothing
+    return keys
 end
 
 
