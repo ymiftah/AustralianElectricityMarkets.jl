@@ -496,8 +496,8 @@ function solve_toy(
     end
     has_units = !isempty(PSY.get_components(ThermalStandard, sys))
     ramp_slack_mw = (;
-        up = has_units ? sum(read_variable(results, "UnitRampUpSlack__ThermalStandard").value) : 0.0,
-        down = has_units ? sum(read_variable(results, "UnitRampDownSlack__ThermalStandard").value) : 0.0,
+        up = has_units ? sum(read_variable(results, "NEMUnitSlack__ThermalStandard__unit_ramp_up").value) : 0.0,
+        down = has_units ? sum(read_variable(results, "NEMUnitSlack__ThermalStandard__unit_ramp_down").value) : 0.0,
     )
     load_mw = Dict{String, Float64}()
     if !isempty(PSY.get_components(InterruptiblePowerLoad, sys))
@@ -507,8 +507,8 @@ function solve_toy(
     end
     has_batteries = !isempty(PSY.get_components(EnergyReservoirStorage, sys))
     storage_ramp_slack_mw = (;
-        up = has_batteries ? sum(read_variable(results, "UnitRampUpSlack__EnergyReservoirStorage").value) : 0.0,
-        down = has_batteries ? sum(read_variable(results, "UnitRampDownSlack__EnergyReservoirStorage").value) : 0.0,
+        up = has_batteries ? sum(read_variable(results, "NEMUnitSlack__EnergyReservoirStorage__unit_ramp_up").value) : 0.0,
+        down = has_batteries ? sum(read_variable(results, "NEMUnitSlack__EnergyReservoirStorage__unit_ramp_down").value) : 0.0,
     )
     nem_keys = [
         k for k in PSI.get_constraint_keys(container)

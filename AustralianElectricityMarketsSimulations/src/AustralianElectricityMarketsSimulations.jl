@@ -47,6 +47,7 @@ include("offers/tie_break.jl")
 include("offers/effective_offers.jl")
 include("offers/loss_demand.jl")
 
+include("types/unit_slacks.jl")
 include("types/constraint_formulations.jl")
 include("types/dispatch.jl")
 include("types/energy_limits.jl")
@@ -115,14 +116,12 @@ export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
     exclude_unmodeled_services!, check_replication_steps,
     never_invoked_constraints, prepare_replay!, MNSPSlack
 export NEMDispatchProblem, nemde_optimizer, NEMDE_HIGHS_OPTIONS
-export EnergyOfferSurplusSlack, EnergyOfferDeficitSlack,
-    EnergyDecrementalOfferSurplusSlack, EnergyDecrementalOfferDeficitSlack
 export EnergyOfferBandVariable, EnergyBandWidthParameter, EnergyBandPriceParameter, EnergyOfferBandConstraint
-export EnergyMaxAvailOutConstraint, EnergyMaxAvailInConstraint, EnergyMaxAvailOutSlack, EnergyMaxAvailInSlack
+export EnergyMaxAvailOutConstraint, EnergyMaxAvailInConstraint
 export EnergyMaxAvailTimeSeriesParameter, EnergyUIGFTimeSeriesParameter,
-    EnergyMaxAvailConstraint, EnergyUIGFConstraint, EnergyMaxAvailSlack, EnergyUIGFSlack
-export FixedLoadTimeSeriesParameter, FixedLoadInvokedTimeSeriesParameter, EnergyFixedLoadConstraint,
-    EnergyFixedLoadSurplusSlack, EnergyFixedLoadDeficitSlack
+    EnergyMaxAvailConstraint, EnergyUIGFConstraint
+export FixedLoadTimeSeriesParameter, FixedLoadInvokedTimeSeriesParameter, EnergyFixedLoadConstraint
+export NEMUnitSlack
 export NEMConstraintLHS, NEMConstraintLimit,
     NEMConstraintRHSParameter, LinearFactorLimit, FCASMarket
 export GenericConstraintSlackUp, GenericConstraintSlackDown
@@ -130,7 +129,6 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASJointCapacityLHS, FCASJointCapacityConstraint, FCASUnitConstraint, FCASSlack,
     FCASOfferBandVariable, FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter,
     FCASLowerSlopeParameter, FCASRampingLimitParameter, FCASBandPriceParameter,
-    UnitRampUpSlack, UnitRampDownSlack,
     InterconnectorFlowSlack
 export check_fcas_services, check_dispatch_envelope, check_single_financial_year
 export read_solved_interval, read_constraint_violations

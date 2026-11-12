@@ -69,8 +69,8 @@ function PSI.construct_device!(
 
     PSI.add_variables!(container, PSI.ActivePowerOutVariable, devices, D())
     PSI.add_variables!(container, PSI.ActivePowerInVariable, devices, D())
-    PSI.add_variables!(container, EnergyMaxAvailOutSlack, devices, D())
-    PSI.add_variables!(container, EnergyMaxAvailInSlack, devices, D())
+    _add_device_unit_slacks!(container, EnergyLimitMaxAvailOutVariant(), devices)
+    _add_device_unit_slacks!(container, EnergyLimitMaxAvailInVariant(), devices)
 
     _add_ramp_rate_parameters!(container, devices, model)
     for param in _storage_parameters(D)
@@ -84,8 +84,8 @@ function PSI.construct_device!(
 
     _add_fixed_load_arguments!(container, devices, model)
 
-    for S in _ENERGY_OFFER_SLACK_TYPES
-        PSI.add_variables!(container, S, devices, D())
+    for variant in _ENERGY_OFFER_SLACK_VARIANTS
+        _add_energy_offer_slack_variables!(container, variant, devices)
     end
     PSI.add_to_expression!(
         container,
@@ -158,11 +158,11 @@ function PSI.objective_function!(
     ) where {T <: PSY.Storage, D <: AbstractNEMDispatch}
     _check_energy_offer_sides(devices)
     foreach(side -> _add_energy_offer_bands!(container, devices, model, side), _energy_offer_sides(T))
-    PSI.add_proportional_cost!(container, EnergyMaxAvailOutSlack(), devices, D())
-    PSI.add_proportional_cost!(container, EnergyMaxAvailInSlack(), devices, D())
+    _add_device_unit_slack_costs!(container, EnergyLimitMaxAvailOutVariant(), devices)
+    _add_device_unit_slack_costs!(container, EnergyLimitMaxAvailInVariant(), devices)
     _add_fixed_load_costs!(container, devices, T)
-    for S in _ENERGY_OFFER_SLACK_TYPES
-        PSI.add_proportional_cost!(container, S(), devices, D())
+    for variant in _ENERGY_OFFER_SLACK_VARIANTS
+        _add_energy_offer_slack_costs!(container, variant, devices)
     end
     return
 end

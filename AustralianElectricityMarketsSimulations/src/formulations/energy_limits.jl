@@ -10,19 +10,19 @@ function _energy_limit_parameter(::Type{EnergyUIGFConstraint})
     return EnergyUIGFTimeSeriesParameter
 end
 
-function _energy_limit_slack(::Type{EnergyMaxAvailConstraint})
-    return EnergyMaxAvailSlack
+function _energy_limit_constraint_variant(::Type{EnergyMaxAvailConstraint})
+    return EnergyLimitMaxAvailVariant()
 end
 
-function _energy_limit_slack(::Type{EnergyUIGFConstraint})
-    return EnergyUIGFSlack
+function _energy_limit_constraint_variant(::Type{EnergyUIGFConstraint})
+    return EnergyLimitUIGFVariant()
 end
 
-function _energy_limit_cvp(::EnergyMaxAvailSlack)
+function _energy_limit_cvp(::EnergyLimitMaxAvailVariant)
     return ENERGY_MAX_AVAIL_CVP_FACTOR
 end
 
-function _energy_limit_cvp(::EnergyUIGFSlack)
+function _energy_limit_cvp(::EnergyLimitUIGFVariant)
     return ENERGY_UIGF_CVP_FACTOR
 end
 
@@ -50,29 +50,11 @@ function PSI.add_constraints!(
     limit, covered = _ts_parameter_accessor(container, _energy_limit_parameter(C), T)
     _require_coverage(names, "missing energy-limit series", "Call set_unit_conditions! first.", covered)
     power = PSI.get_variable(container, U(), T)
-    slack = PSI.get_variable(container, _energy_limit_slack(C)(), T)
+    slack = PSI.get_variable(container, NEMUnitSlack(), T, _nem_unit_slack_meta(_energy_limit_constraint_variant(C)))
     rows = PSI.add_constraints_container!(container, C(), T, names, steps)
     for name in names, t in steps
         rows[name, t] = _energy_limit_row!(container, C, power[name, t], slack[name, t], limit(name, t))
     end
-    return
-end
-
-"""
-    PSI.add_proportional_cost!(container, slack, devices, formulation)
-
-Prices each energy-limit surplus at its AEMO CVP times the Market Price Cap of the build's initial interval,
-converting per-unit dispatch to MW and the interval duration to hours.
-
-# Returns
-`nothing`.
-"""
-function PSI.add_proportional_cost!(
-        container::PSI.OptimizationContainer, slack::S,
-        devices::Union{Vector{T}, IS.FlattenIteratorWrapper{T}}, ::AbstractNEMDispatch,
-    ) where {S <: AbstractEnergyLimitSlack, T <: PSY.StaticInjection}
-    isempty(devices) && return
-    _add_mpc_penalty!(container, S, T, [PSY.get_name(d) for d in devices], _energy_limit_cvp(slack))
     return
 end
 
@@ -84,15 +66,15 @@ function _energy_limit_parameter(::Type{EnergyMaxAvailInConstraint})
     return PSI.ActivePowerInTimeSeriesParameter
 end
 
-function _energy_limit_slack(::Type{EnergyMaxAvailOutConstraint})
-    return EnergyMaxAvailOutSlack
+function _energy_limit_constraint_variant(::Type{EnergyMaxAvailOutConstraint})
+    return EnergyLimitMaxAvailOutVariant()
 end
 
-function _energy_limit_slack(::Type{EnergyMaxAvailInConstraint})
-    return EnergyMaxAvailInSlack
+function _energy_limit_constraint_variant(::Type{EnergyMaxAvailInConstraint})
+    return EnergyLimitMaxAvailInVariant()
 end
 
-function _energy_limit_cvp(::Union{EnergyMaxAvailOutSlack, EnergyMaxAvailInSlack})
+function _energy_limit_cvp(::Union{EnergyLimitMaxAvailOutVariant, EnergyLimitMaxAvailInVariant})
     return ENERGY_MAX_AVAIL_CVP_FACTOR
 end
 

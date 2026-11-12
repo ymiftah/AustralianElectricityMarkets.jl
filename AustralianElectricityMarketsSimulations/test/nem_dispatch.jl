@@ -135,10 +135,14 @@ end
         generator_participants = filter(!in((EnergyReservoirStorage, InterruptiblePowerLoad)), participants)
         # The UIGF and fixed-loading rows are added per device that carries the input, so a participant
         # without one carries a narrower shape; the energy and ramp shape is the same for every participant.
+        # The UIGF and fixed-loading slacks are NEMUnitSlack keys under their own metas, left out of the shape.
+        optional_slack_metas = ["energy_limit_uigf", "fixed_load_surplus", "fixed_load_deficit"]
         variable_sets = [
-            setdiff(
-                entry_types(component_keys(variable_keys, T)),
-                [EnergyUIGFSlack, EnergyFixedLoadSurplusSlack, EnergyFixedLoadDeficitSlack]
+            entry_types(
+                [
+                    k for k in component_keys(variable_keys, T)
+                        if !(IS.Optimization.get_entry_type(k) === NEMUnitSlack && k.meta in optional_slack_metas)
+                ]
             )
                 for T in generator_participants
         ]
@@ -268,11 +272,11 @@ end
         )
         @test size(constraint, 2) == 1
         @test constraint_vars(constraint["ER02", 1]) == Set([power["ER02", 1]])
-        slack_type = meta == "up" ? AEMS.UnitRampUpSlack : AEMS.UnitRampDownSlack
-        other_type = meta == "up" ? AEMS.UnitRampDownSlack : AEMS.UnitRampUpSlack
+        slack_meta = meta == "up" ? "unit_ramp_up" : "unit_ramp_down"
+        other_meta = meta == "up" ? "unit_ramp_down" : "unit_ramp_up"
         func = JuMP.constraint_object(constraint["ER02", 1]).func
-        slack = PSI.get_variable(container, slack_type(), ThermalStandard)["ER02", 1]
-        other = PSI.get_variable(container, other_type(), ThermalStandard)["ER02", 1]
+        slack = PSI.get_variable(container, AEMS.NEMUnitSlack(), ThermalStandard, slack_meta)["ER02", 1]
+        other = PSI.get_variable(container, AEMS.NEMUnitSlack(), ThermalStandard, other_meta)["ER02", 1]
         @test JuMP.coefficient(func, slack) == -1.0
         @test JuMP.coefficient(func, other) == 0.0
     end

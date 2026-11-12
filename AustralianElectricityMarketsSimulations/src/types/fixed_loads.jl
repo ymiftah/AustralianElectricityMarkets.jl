@@ -6,12 +6,3 @@ struct FixedLoadInvokedTimeSeriesParameter <: PSI.TimeSeriesParameter end
 
 "AEMO's Energy Inflexible Offer rows holding a unit's net energy at its fixed loading, metas `\"upper\"` and `\"lower\"`."
 struct EnergyFixedLoadConstraint <: PSI.ConstraintType end
-
-"Non-negative violations of a unit's fixed loading, in system-base per-unit."
-abstract type AbstractFixedLoadSlack <: PSI.VariableType end
-
-"Non-negative net energy above a unit's fixed loading."
-struct EnergyFixedLoadSurplusSlack <: AbstractFixedLoadSlack end
-
-"Non-negative net energy below a unit's fixed loading."
-struct EnergyFixedLoadDeficitSlack <: AbstractFixedLoadSlack end

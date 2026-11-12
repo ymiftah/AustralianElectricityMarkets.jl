@@ -6,18 +6,6 @@ const _VIOLATION_TOLERANCE_MW = 1.0e-6
 # `"up"` for a slack that relaxes a `<=` row and `"down"` for one that relaxes a `>=` row; the
 # FCAS families whose rows have both senses refine it per key in `_violation_direction`.
 const _VIOLATION_FAMILIES = (
-    EnergyOfferSurplusSlack => ("energy_offer", "up"),
-    EnergyOfferDeficitSlack => ("energy_offer", "down"),
-    EnergyDecrementalOfferSurplusSlack => ("energy_offer", "up"),
-    EnergyDecrementalOfferDeficitSlack => ("energy_offer", "down"),
-    EnergyMaxAvailOutSlack => ("energy_max_avail", "up"),
-    EnergyMaxAvailInSlack => ("energy_max_avail", "down"),
-    EnergyMaxAvailSlack => ("energy_max_avail", "up"),
-    EnergyUIGFSlack => ("energy_uigf", "up"),
-    EnergyFixedLoadSurplusSlack => ("fixed_load", "up"),
-    EnergyFixedLoadDeficitSlack => ("fixed_load", "down"),
-    UnitRampUpSlack => ("unit_ramp", "up"),
-    UnitRampDownSlack => ("unit_ramp", "down"),
     GenericConstraintSlackUp => ("generic_constraint", "up"),
     GenericConstraintSlackDown => ("generic_constraint", "down"),
     PSI.SystemBalanceSlackUp => ("area_balance", "up"),
@@ -43,7 +31,19 @@ _fcas_violation_family(::FCASJointRampingVariant) = ("fcas_joint_ramping", "up")
 _fcas_violation_family(::FCASMaxAvailVariant) = ("fcas_max_avail", "up")
 _fcas_violation_family(::FCASBDURampingVariant) = ("fcas_bdu_ramping", "up")
 
-# The family and default direction of a slack key, from its variant for `MNSPSlack`, `InterconnectorFlowSlack` and `FCASSlack`.
+# The family and default direction of each NEMUnitSlack variant.
+_nem_unit_violation_family(::Union{EnergyOfferSurplusVariant, EnergyOfferDecrementalSurplusVariant}) = ("energy_offer", "up")
+_nem_unit_violation_family(::Union{EnergyOfferDeficitVariant, EnergyOfferDecrementalDeficitVariant}) = ("energy_offer", "down")
+_nem_unit_violation_family(::Union{EnergyLimitMaxAvailVariant, EnergyLimitMaxAvailOutVariant}) = ("energy_max_avail", "up")
+_nem_unit_violation_family(::EnergyLimitMaxAvailInVariant) = ("energy_max_avail", "down")
+_nem_unit_violation_family(::EnergyLimitUIGFVariant) = ("energy_uigf", "up")
+_nem_unit_violation_family(::FixedLoadSurplusVariant) = ("fixed_load", "up")
+_nem_unit_violation_family(::FixedLoadDeficitVariant) = ("fixed_load", "down")
+_nem_unit_violation_family(::UnitRampUpVariant) = ("unit_ramp", "up")
+_nem_unit_violation_family(::UnitRampDownVariant) = ("unit_ramp", "down")
+
+# The family and default direction of a slack key, from its variant for `NEMUnitSlack`, `MNSPSlack`, `InterconnectorFlowSlack` and `FCASSlack`.
+_violation_kind(::Dict, ::Type{NEMUnitSlack}, meta::AbstractString) = _nem_unit_violation_family(_nem_unit_slack_variant(meta))
 _violation_kind(::Dict, ::Type{MNSPSlack}, meta::AbstractString) = _mnsp_violation_family(_mnsp_slack_variant(String(meta)))
 _violation_kind(::Dict, ::Type{FCASSlack}, meta::AbstractString) = _fcas_violation_family(_fcas_slack_variant(meta))
 _violation_kind(::Dict, ::Type{InterconnectorFlowSlack}, meta::AbstractString) =
@@ -113,14 +113,14 @@ relaxing a `<=` row and `"down"` for one relaxing a `>=` row; for `"area_balance
 
 # Returns
 A `DataFrame` with `family`, `name`, `DateTime`, `MW`, `direction` and `variable` (the slack
-variable's key as PSI encodes it in result files, e.g. `"UnitRampUpSlack__HydroDispatch"`). The
+variable's key as PSI encodes it in result files, e.g. `"NEMUnitSlack__HydroDispatch__unit_ramp_up"`). The
 unit ramp rows are those with `family == "unit_ramp"`.
 """
 function read_constraint_violations(
         results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}, sys::PSY.System,
     )
     kinds = Dict(_VIOLATION_FAMILIES)
-    is_slack(type) = type === MNSPSlack || type === InterconnectorFlowSlack || type === FCASSlack || haskey(kinds, type)
+    is_slack(type) = type === NEMUnitSlack || type === MNSPSlack || type === InterconnectorFlowSlack || type === FCASSlack || haskey(kinds, type)
     rows = NamedTuple{
         (:family, :name, :DateTime, :MW, :direction, :variable),
         Tuple{String, String, DateTime, Float64, String, String},

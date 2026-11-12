@@ -286,24 +286,6 @@ _fcas_slack_row_meta(meta::AbstractString) = String(last(split(meta, '|'; limit 
 
 
 """
-    UnitRampUpSlack
-
-Variable type for the elastic slack on the up row of a `PSI.RampConstraint` (`meta = "up"`) under an
-[`AbstractNEMDispatch`](@ref) formulation, in the units of the active power variable.
-"""
-struct UnitRampUpSlack <: PSI.VariableType end
-
-
-"""
-    UnitRampDownSlack
-
-Variable type for the elastic slack on the down row of a `PSI.RampConstraint` (`meta = "dn"`)
-under an [`AbstractNEMDispatch`](@ref) formulation, in the units of the active power variable.
-"""
-struct UnitRampDownSlack <: PSI.VariableType end
-
-
-"""
     InterconnectorFlowSlack
 
 Variable type for the elastic slack on an interconnector's flow limits, per `(interconnector, t)` in MW

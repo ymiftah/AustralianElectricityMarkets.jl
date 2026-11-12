@@ -1,14 +1,15 @@
-function _energy_offer_side(::Type{<:Union{EnergyOfferSurplusSlack, EnergyOfferDeficitSlack}})
+function _energy_offer_side(::Union{EnergyOfferSurplusVariant, EnergyOfferDeficitVariant})
     return OfferSide.GEN
 end
 
-function _energy_offer_side(::Type{<:Union{EnergyDecrementalOfferSurplusSlack, EnergyDecrementalOfferDeficitSlack}})
+function _energy_offer_side(::Union{EnergyOfferDecrementalSurplusVariant, EnergyOfferDecrementalDeficitVariant})
     return OfferSide.LOAD
 end
 
+# The (above, below) slack variants of an energy offer side.
 function _energy_offer_slacks(side::OfferSide)
-    return side == OfferSide.GEN ? (EnergyOfferSurplusSlack, EnergyOfferDeficitSlack) :
-        (EnergyDecrementalOfferSurplusSlack, EnergyDecrementalOfferDeficitSlack)
+    return side == OfferSide.GEN ? (EnergyOfferSurplusVariant(), EnergyOfferDeficitVariant()) :
+        (EnergyOfferDecrementalSurplusVariant(), EnergyOfferDecrementalDeficitVariant())
 end
 
 # The sides of the energy offer a device type bids: a scheduled load bids only its consumption.
@@ -32,44 +33,41 @@ function _energy_offer_devices(devices::Union{Vector{T}, IS.FlattenIteratorWrapp
     return T[d for d in devices if PSY.has_time_series(d, PSY.SingleTimeSeries, name)]
 end
 
-function _energy_offer_devices(devices::Union{Vector{T}, IS.FlattenIteratorWrapper{T}}, ::Type{S}) where {T, S <: AbstractEnergyOfferSlack}
-    return _energy_offer_devices(devices, _energy_offer_side(S))
+function _energy_offer_devices(devices::Union{Vector{T}, IS.FlattenIteratorWrapper{T}}, variant::_EnergyOfferVariant) where {T}
+    return _energy_offer_devices(devices, _energy_offer_side(variant))
 end
 
 """
-    PSI.add_variables!(container, slack_type, devices, formulation)
+    _add_energy_offer_slack_variables!(container, variant, devices)
 
-Allocates total-offer violation variables only for devices carrying the corresponding energy
-offer direction, using PSI's variable bounds and container construction.
+Allocates the total-offer violation variables of `variant` only for devices carrying the corresponding
+energy offer direction.
 
 # Returns
 `nothing`.
 """
-function PSI.add_variables!(
-        container::PSI.OptimizationContainer, ::Type{S},
-        devices::Union{Vector{T}, IS.FlattenIteratorWrapper{T}}, formulation::AbstractNEMDispatch,
-    ) where {S <: AbstractEnergyOfferSlack, T <: PSY.StaticInjection}
-    selected = _energy_offer_devices(devices, S)
-    isempty(selected) || PSI.add_variable!(container, S(), selected, formulation)
+function _add_energy_offer_slack_variables!(
+        container::PSI.OptimizationContainer, variant::_EnergyOfferVariant,
+        devices::Union{Vector{T}, IS.FlattenIteratorWrapper{T}},
+    ) where {T <: PSY.StaticInjection}
+    _add_device_unit_slacks!(container, variant, _energy_offer_devices(devices, variant))
     return
 end
 
 """
-    PSI.add_proportional_cost!(container, slack, devices, formulation)
+    _add_energy_offer_slack_costs!(container, variant, devices)
 
-Prices each total-offer mismatch at CVP1135 times the Market Price Cap of the build's initial interval, with system-base MW
+Prices each total-offer mismatch of `variant` at CVP1135 times the Market Price Cap of the build's initial interval, with system-base MW
 and interval-hour conversion. Submitted energy prices apply only to cleared band quantities.
 
 # Returns
 `nothing`.
 """
-function PSI.add_proportional_cost!(
-        container::PSI.OptimizationContainer, slack::S,
-        devices::Union{Vector{T}, IS.FlattenIteratorWrapper{T}}, ::AbstractNEMDispatch,
-    ) where {S <: AbstractEnergyOfferSlack, T <: PSY.StaticInjection}
-    selected = _energy_offer_devices(devices, S)
-    isempty(selected) && return
-    _add_mpc_penalty!(container, S, T, [PSY.get_name(d) for d in selected], ENERGY_OFFER_CVP_FACTOR)
+function _add_energy_offer_slack_costs!(
+        container::PSI.OptimizationContainer, variant::_EnergyOfferVariant,
+        devices::Union{Vector{T}, IS.FlattenIteratorWrapper{T}},
+    ) where {T <: PSY.StaticInjection}
+    _add_device_unit_slack_costs!(container, variant, _energy_offer_devices(devices, variant))
     return
 end
 
@@ -176,9 +174,9 @@ function _add_energy_offer_bands!(
     end
 
     power = PSI.get_variable(container, _energy_offer_power_variable(T, side)(), T)
-    above_type, below_type = _energy_offer_slacks(side)
-    above = PSI.get_variable(container, above_type(), T)
-    below = PSI.get_variable(container, below_type(), T)
+    above_variant, below_variant = _energy_offer_slacks(side)
+    above = PSI.get_variable(container, NEMUnitSlack(), T, _nem_unit_slack_meta(above_variant))
+    below = PSI.get_variable(container, NEMUnitSlack(), T, _nem_unit_slack_meta(below_variant))
     widths = PSI.get_parameter(container, EnergyBandWidthParameter(), T, meta)
     width_multiplier = PSI.get_multiplier_array(widths)
     rows = PSI.add_constraints_container!(container, EnergyOfferBandConstraint(), T, names, time_steps; meta)

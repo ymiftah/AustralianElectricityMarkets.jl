@@ -263,9 +263,9 @@ function PSI.construct_device!(
             JuMP.fix(PSI.get_variable(container, PSI.ActivePowerVariable(), T)[PSY.get_name(d), t], 0.0; force = true)
         end
     end
-    PSI.add_variables!(container, EnergyMaxAvailSlack, devices, D())
+    _add_device_unit_slacks!(container, EnergyLimitMaxAvailVariant(), devices)
     semi = _semi_scheduled_devices(devices)
-    isempty(semi) || PSI.add_variables!(container, EnergyUIGFSlack, semi, D())
+    _add_device_unit_slacks!(container, EnergyLimitUIGFVariant(), semi)
 
     _add_ramp_rate_parameters!(container, devices, model)
     haskey(PSI.get_time_series_names(model), EnergyMaxAvailTimeSeriesParameter) &&
@@ -278,8 +278,8 @@ function PSI.construct_device!(
         PSI.add_parameters!(container, EnergyUIGFTimeSeriesParameter, devices, model)
     _add_fixed_load_arguments!(container, devices, model)
 
-    for S in _ENERGY_OFFER_SLACK_TYPES
-        PSI.add_variables!(container, S, devices, D())
+    for variant in _ENERGY_OFFER_SLACK_VARIANTS
+        _add_energy_offer_slack_variables!(container, variant, devices)
     end
     PSI.add_to_expression!(
         container,
@@ -361,7 +361,7 @@ end
 Holds each device's dispatch `net_at(name, t)` within its per-interval ramp rates of its base.
 Rates are read from the `"ramp_up_rate"` and `"ramp_down_rate"` parameters in system-base per-unit
 per minute and multiplied by the interval length in minutes. Each `PSI.RampConstraint` row carries a
-[`UnitRampUpSlack`](@ref) or [`UnitRampDownSlack`](@ref) priced at [`UNIT_RAMP_CVP_FACTOR`](@ref)
+[`NEMUnitSlack`](@ref) of the `unit_ramp_up` or `unit_ramp_down` variant, priced at [`UNIT_RAMP_CVP_FACTOR`](@ref)
 times the Market Price Cap, so conflicts with the availability limits are resolved through the
 competing violation costs.
 
@@ -396,8 +396,8 @@ function _add_nem_ramp_constraints!(container::PSI.OptimizationContainer, ::Type
         container, PSI.RampConstraint(), T, names, time_steps; meta = "dn",
     )
 
-    slack_up = _add_cvp_slack!(container, UnitRampUpSlack, T, names, time_steps, UNIT_RAMP_CVP_FACTOR)
-    slack_dn = _add_cvp_slack!(container, UnitRampDownSlack, T, names, time_steps, UNIT_RAMP_CVP_FACTOR)
+    slack_up = _add_ramp_slack!(container, UnitRampUpVariant(), T, names, time_steps)
+    slack_dn = _add_ramp_slack!(container, UnitRampDownVariant(), T, names, time_steps)
 
     base_at = base_accessor(names)
     for name in names, t in time_steps
@@ -407,6 +407,15 @@ function _add_nem_ramp_constraints!(container::PSI.OptimizationContainer, ::Type
         con_dn[name, t] = JuMP.@constraint(jump_model, base - net - slack_dn[name, t] <= down_rate(name, t) * minutes)
     end
     return
+end
+
+
+# The elastic slack of a ramp row, built and priced at its variant's CVP factor.
+function _add_ramp_slack!(container::PSI.OptimizationContainer, variant::_UnitRampVariant, ::Type{T}, names, time_steps) where {T}
+    return _add_cvp_slack!(
+        container, NEMUnitSlack, T, names, time_steps, _nem_unit_slack_cvp(variant);
+        meta = _nem_unit_slack_meta(variant), label = _nem_unit_slack_label(variant),
+    )
 end
 
 
@@ -464,11 +473,11 @@ function PSI.objective_function!(
     ) where {T <: PSY.StaticInjection, D <: AbstractNEMDispatch}
     _check_energy_offer_sides(devices)
     foreach(side -> _add_energy_offer_bands!(container, devices, model, side), _energy_offer_sides(T))
-    PSI.add_proportional_cost!(container, EnergyMaxAvailSlack(), devices, D())
-    PSI.add_proportional_cost!(container, EnergyUIGFSlack(), _semi_scheduled_devices(devices), D())
+    _add_device_unit_slack_costs!(container, EnergyLimitMaxAvailVariant(), devices)
+    _add_device_unit_slack_costs!(container, EnergyLimitUIGFVariant(), _semi_scheduled_devices(devices))
     _add_fixed_load_costs!(container, devices, T)
-    for S in _ENERGY_OFFER_SLACK_TYPES
-        PSI.add_proportional_cost!(container, S(), devices, D())
+    for variant in _ENERGY_OFFER_SLACK_VARIANTS
+        _add_energy_offer_slack_costs!(container, variant, devices)
     end
     return
 end

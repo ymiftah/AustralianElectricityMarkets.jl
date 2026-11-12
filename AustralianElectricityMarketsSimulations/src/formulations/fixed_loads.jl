@@ -42,8 +42,8 @@ function _add_fixed_load_arguments!(container::PSI.OptimizationContainer, device
     for (param, name) in _FIXED_LOAD_SERIES
         PSI.add_parameters!(container, param, fixed, model; time_series_name = name)
     end
-    PSI.add_variables!(container, EnergyFixedLoadSurplusSlack, fixed, D())
-    PSI.add_variables!(container, EnergyFixedLoadDeficitSlack, fixed, D())
+    _add_device_unit_slacks!(container, FixedLoadSurplusVariant(), fixed)
+    _add_device_unit_slacks!(container, FixedLoadDeficitVariant(), fixed)
     return
 end
 
@@ -73,8 +73,8 @@ function PSI.add_constraints!(
     steps = PSI.get_time_steps(container)
     target, _ = _ts_parameter_accessor(container, FixedLoadTimeSeriesParameter, T)
     invoked, _ = _ts_parameter_accessor(container, FixedLoadInvokedTimeSeriesParameter, T)
-    surplus = PSI.get_variable(container, EnergyFixedLoadSurplusSlack(), T)
-    deficit = PSI.get_variable(container, EnergyFixedLoadDeficitSlack(), T)
+    surplus = PSI.get_variable(container, NEMUnitSlack(), T, _nem_unit_slack_meta(FixedLoadSurplusVariant()))
+    deficit = PSI.get_variable(container, NEMUnitSlack(), T, _nem_unit_slack_meta(FixedLoadDeficitVariant()))
     upper = PSI.add_constraints_container!(container, EnergyFixedLoadConstraint(), T, names, steps; meta = "upper")
     lower = PSI.add_constraints_container!(container, EnergyFixedLoadConstraint(), T, names, steps; meta = "lower")
     inactive = _FIXED_LOAD_INACTIVE_MW / PSI.get_base_power(container)
@@ -99,8 +99,8 @@ end
 function _add_fixed_load_costs!(container::PSI.OptimizationContainer, devices, ::Type{T}) where {T}
     names = PSY.get_name.(_fixed_load_devices(devices))
     isempty(names) && return
-    for slack in (EnergyFixedLoadSurplusSlack, EnergyFixedLoadDeficitSlack)
-        _add_mpc_penalty!(container, slack, T, names, FIXED_LOADING_CVP_FACTOR)
+    for variant in (FixedLoadSurplusVariant(), FixedLoadDeficitVariant())
+        _add_unit_slack_penalty!(container, variant, T, names)
     end
     return
 end
