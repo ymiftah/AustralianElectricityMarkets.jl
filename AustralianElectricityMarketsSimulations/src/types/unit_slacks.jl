@@ -11,8 +11,7 @@ container per device type and variant. The key meta is the variant's name, `"<fa
 - fixed load (`"fixed_load_..."`): `surplus` and `deficit`, the net energy above or below a fixed loading.
 - unit ramp (`"unit_ramp_..."`): `up` and `down`, the excess over a ramp rate's base.
 
-Slacks are in system-base per-unit, except that results of the ramp variants read in the units of the
-active power variable.
+Slacks are in system-base per-unit; results read in MW.
 """
 struct NEMUnitSlack <: PSI.VariableType end
 

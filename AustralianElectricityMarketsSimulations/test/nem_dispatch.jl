@@ -146,6 +146,15 @@ end
             )
                 for T in generator_participants
         ]
+        # NEMUnitSlack is one entry type, so the slack shape is compared by its metas.
+        slack_meta_sets = [
+            Set(k.meta for k in component_keys(variable_keys, T) if IS.Optimization.get_entry_type(k) === NEMUnitSlack && !(k.meta in optional_slack_metas))
+                for T in generator_participants
+        ]
+        @test allequal(slack_meta_sets)
+        for meta in ("energy_limit_max_avail", "energy_offer_surplus", "energy_offer_deficit", "unit_ramp_up", "unit_ramp_down")
+            @test meta in first(slack_meta_sets)
+        end
         constraint_sets = [
             setdiff(
                 entry_types(component_keys(constraint_keys, T)),
