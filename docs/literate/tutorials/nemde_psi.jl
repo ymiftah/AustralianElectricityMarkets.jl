@@ -456,7 +456,7 @@ plot_phases() #hide
 #         model::PSI.DeviceModel{T, D}, network_model,
 #     ) where {T <: PSY.StaticInjection, D <: AbstractNEMDispatch}
 #     devices = PSI.get_available_components(model, sys)
-#     PSI.add_constraints!(container, EnergyMaxAvailConstraint, PSI.ActivePowerVariable, devices, model, network_model)  # [!code highlight]
+#     _add_energy_limit_rows!(container, EnergyLimitMaxAvailVariant(), PSI.ActivePowerVariable, devices, model, network_model)  # [!code highlight]
 #     PSI.add_constraints!(container, PSI.RampConstraint, PSI.ActivePowerVariable, devices, model, network_model)  # [!code highlight]
 #     PSI.objective_function!(container, devices, model, PSI.get_network_formulation(network_model))  # [!code highlight]
 #     return

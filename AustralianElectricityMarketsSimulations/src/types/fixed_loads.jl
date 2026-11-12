@@ -3,6 +3,3 @@ struct FixedLoadTimeSeriesParameter <: PSI.TimeSeriesParameter end
 
 "Time-series parameter that is `1` at the intervals a unit's fixed loading applies and `0` elsewhere."
 struct FixedLoadInvokedTimeSeriesParameter <: PSI.TimeSeriesParameter end
-
-"AEMO's Energy Inflexible Offer rows holding a unit's net energy at its fixed loading, metas `\"upper\"` and `\"lower\"`."
-struct EnergyFixedLoadConstraint <: PSI.ConstraintType end

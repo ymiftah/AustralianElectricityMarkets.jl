@@ -313,9 +313,9 @@ function PSI.construct_device!(
     ) where {T <: PSY.StaticInjection, D <: AbstractNEMDispatch}
     devices = PSI.get_available_components(model, sys)
 
-    PSI.add_constraints!(container, EnergyMaxAvailConstraint, PSI.ActivePowerVariable, devices, model, network_model)
-    PSI.add_constraints!(container, EnergyUIGFConstraint, PSI.ActivePowerVariable, _semi_scheduled_devices(devices), model, network_model)
-    PSI.add_constraints!(container, EnergyFixedLoadConstraint, devices, model, network_model)
+    _add_energy_limit_rows!(container, EnergyLimitMaxAvailVariant(), PSI.ActivePowerVariable, devices, model, network_model)
+    _add_energy_limit_rows!(container, EnergyLimitUIGFVariant(), PSI.ActivePowerVariable, _semi_scheduled_devices(devices), model, network_model)
+    PSI.add_constraints!(container, NEMUnitConstraint, devices, model, network_model)
 
     PSI.add_constraints!(container, PSI.RampConstraint, PSI.ActivePowerVariable, devices, model, network_model)
 

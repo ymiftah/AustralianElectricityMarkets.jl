@@ -127,10 +127,10 @@ function PSI.construct_device!(
     ) where {T <: PSY.Storage, D <: AbstractNEMDispatch}
     devices = PSI.get_available_components(model, sys)
 
-    PSI.add_constraints!(container, EnergyMaxAvailOutConstraint, PSI.ActivePowerOutVariable, devices, model, network_model)
-    PSI.add_constraints!(container, EnergyMaxAvailInConstraint, PSI.ActivePowerInVariable, devices, model, network_model)
+    _add_energy_limit_rows!(container, EnergyLimitMaxAvailOutVariant(), PSI.ActivePowerOutVariable, devices, model, network_model)
+    _add_energy_limit_rows!(container, EnergyLimitMaxAvailInVariant(), PSI.ActivePowerInVariable, devices, model, network_model)
     PSI.add_constraints!(container, PSI.RampConstraint, PSI.ActivePowerOutVariable, devices, model, network_model)
-    PSI.add_constraints!(container, EnergyFixedLoadConstraint, devices, model, network_model)
+    PSI.add_constraints!(container, NEMUnitConstraint, devices, model, network_model)
 
     PSI.add_feedforward_constraints!(container, model, devices)
     PSI.objective_function!(container, devices, model, PSI.get_network_formulation(network_model))

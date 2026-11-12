@@ -48,6 +48,7 @@ include("offers/effective_offers.jl")
 include("offers/loss_demand.jl")
 
 include("types/unit_slacks.jl")
+include("types/unit_constraints.jl")
 include("types/constraint_formulations.jl")
 include("types/dispatch.jl")
 include("types/energy_limits.jl")
@@ -116,12 +117,10 @@ export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
     exclude_unmodeled_services!, check_replication_steps,
     never_invoked_constraints, prepare_replay!, MNSPSlack
 export NEMDispatchProblem, nemde_optimizer, NEMDE_HIGHS_OPTIONS
-export EnergyOfferBandVariable, EnergyBandWidthParameter, EnergyBandPriceParameter, EnergyOfferBandConstraint
-export EnergyMaxAvailOutConstraint, EnergyMaxAvailInConstraint
-export EnergyMaxAvailTimeSeriesParameter, EnergyUIGFTimeSeriesParameter,
-    EnergyMaxAvailConstraint, EnergyUIGFConstraint
-export FixedLoadTimeSeriesParameter, FixedLoadInvokedTimeSeriesParameter, EnergyFixedLoadConstraint
-export NEMUnitSlack
+export EnergyOfferBandVariable, EnergyBandWidthParameter, EnergyBandPriceParameter
+export EnergyMaxAvailTimeSeriesParameter, EnergyUIGFTimeSeriesParameter
+export FixedLoadTimeSeriesParameter, FixedLoadInvokedTimeSeriesParameter
+export NEMUnitSlack, NEMUnitConstraint
 export NEMConstraintLHS, NEMConstraintLimit,
     NEMConstraintRHSParameter, LinearFactorLimit, FCASMarket
 export GenericConstraintSlackUp, GenericConstraintSlackDown

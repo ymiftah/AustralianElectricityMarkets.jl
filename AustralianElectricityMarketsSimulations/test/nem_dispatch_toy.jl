@@ -933,7 +933,7 @@ end
         U = PSI.get_variable(container, PSI.ActivePowerOutVariable(), T)[TOY_BATTERY, 1]
         D = PSI.get_variable(container, PSI.ActivePowerInVariable(), T)[TOY_BATTERY, 1]
         for meta in ("upper", "lower")
-            row = PSI.get_constraint(container, AEMS.EnergyFixedLoadConstraint(), T, meta)[TOY_BATTERY, 1]
+            row = PSI.get_constraint(container, AEMS.NEMUnitConstraint(), T, "fixed_load|$meta")[TOY_BATTERY, 1]
             @test abs(PSI.JuMP.normalized_coefficient(row, U)) == 1.0
             @test PSI.JuMP.normalized_coefficient(row, U) == -PSI.JuMP.normalized_coefficient(row, D)
         end

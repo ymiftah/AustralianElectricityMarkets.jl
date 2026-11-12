@@ -140,7 +140,7 @@ end
 Prices the energy offer of the `devices` of `model` that carry the `energy_offer` series of `side`:
 one [`EnergyOfferBandVariable`](@ref) per band (labelled `"1"` to `"n"`), bounded by its [`EnergyBandWidthParameter`](@ref)
 width, summing with the offer's surplus and deficit slacks to the dispatch variable the side prices
-([`EnergyOfferBandConstraint`](@ref)), and costed through [`EnergyBandPriceParameter`](@ref) at the
+([`NEMUnitConstraint`](@ref) rows under meta `"offer_band|<side>"`), and costed through [`EnergyBandPriceParameter`](@ref) at the
 band price times the system base power and the interval hours, negative on the `LOAD` side. Band
 prices are the loss-factor referred prices of the series. Devices without the series add nothing.
 
@@ -179,7 +179,7 @@ function _add_energy_offer_bands!(
     below = PSI.get_variable(container, NEMUnitSlack(), T, _nem_unit_slack_meta(below_variant))
     widths = PSI.get_parameter(container, EnergyBandWidthParameter(), T, meta)
     width_multiplier = PSI.get_multiplier_array(widths)
-    rows = PSI.add_constraints_container!(container, EnergyOfferBandConstraint(), T, names, time_steps; meta)
+    rows = PSI.add_constraints_container!(container, NEMUnitConstraint(), T, names, time_steps; meta = "offer_band|" * meta)
     key = PSI.ParameterKey(EnergyBandPriceParameter, T, meta)
     base_power = PSI.get_base_power(container)
     direction = side == OfferSide.GEN ? 1.0 : -1.0

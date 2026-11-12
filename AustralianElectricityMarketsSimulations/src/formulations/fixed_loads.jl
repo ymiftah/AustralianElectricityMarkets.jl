@@ -49,7 +49,7 @@ end
 
 
 """
-    PSI.add_constraints!(container, ::Type{EnergyFixedLoadConstraint}, devices, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
+    PSI.add_constraints!(container, ::Type{NEMUnitConstraint}, devices, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
 
 Adds AEMO's Energy Inflexible Offer rows (*Schedule of Constraint Violation Penalty Factors* v8.0,
 item 13, "Unit = X MW") for the `devices` carrying a fixed loading: the device's net energy
@@ -62,7 +62,7 @@ its fixed loading. At an interval with no fixed loading both rows are relaxed by
 """
 function PSI.add_constraints!(
         container::PSI.OptimizationContainer,
-        ::Type{EnergyFixedLoadConstraint},
+        ::Type{NEMUnitConstraint},
         devices::IS.FlattenIteratorWrapper{T},
         ::PSI.DeviceModel{T, <:AbstractNEMDispatch},
         ::PSI.NetworkModel{<:PM.AbstractPowerModel},
@@ -75,8 +75,8 @@ function PSI.add_constraints!(
     invoked, _ = _ts_parameter_accessor(container, FixedLoadInvokedTimeSeriesParameter, T)
     surplus = PSI.get_variable(container, NEMUnitSlack(), T, _nem_unit_slack_meta(FixedLoadSurplusVariant()))
     deficit = PSI.get_variable(container, NEMUnitSlack(), T, _nem_unit_slack_meta(FixedLoadDeficitVariant()))
-    upper = PSI.add_constraints_container!(container, EnergyFixedLoadConstraint(), T, names, steps; meta = "upper")
-    lower = PSI.add_constraints_container!(container, EnergyFixedLoadConstraint(), T, names, steps; meta = "lower")
+    upper = PSI.add_constraints_container!(container, NEMUnitConstraint(), T, names, steps; meta = "fixed_load|upper")
+    lower = PSI.add_constraints_container!(container, NEMUnitConstraint(), T, names, steps; meta = "fixed_load|lower")
     inactive = _FIXED_LOAD_INACTIVE_MW / PSI.get_base_power(container)
     jm = PSI.get_jump_model(container)
     for device in fixed, t in steps

@@ -76,6 +76,10 @@ end
 component_keys(container_keys, ::Type{T}) where {T} =
     [k for k in container_keys if IS.Optimization.get_component_type(k) === T]
 
+# The metas of the NEMUnitConstraint rows of component type `T`.
+constraint_metas(constraint_keys, ::Type{T}) where {T} =
+    [k.meta for k in component_keys(constraint_keys, T) if IS.Optimization.get_entry_type(k) === NEMUnitConstraint]
+
 @testset "participants are discovered from the data, not a fixed type list" begin
     sys = nem_dispatch_system()
     types = nem_dispatch_participants(sys)
@@ -155,19 +159,24 @@ end
         for meta in ("energy_limit_max_avail", "energy_offer_surplus", "energy_offer_deficit", "unit_ramp_up", "unit_ramp_down")
             @test meta in first(slack_meta_sets)
         end
+        # NEMUnitConstraint is one entry type, so the unit row shape is compared by (entry type, meta) pairs.
+        optional_constraint_metas = ["uigf", "fixed_load|upper", "fixed_load|lower"]
         constraint_sets = [
-            setdiff(
-                entry_types(component_keys(constraint_keys, T)),
-                [EnergyUIGFConstraint, EnergyFixedLoadConstraint]
+            Set(
+                (IS.Optimization.get_entry_type(k), k.meta) for k in component_keys(constraint_keys, T)
+                    if !(IS.Optimization.get_entry_type(k) === NEMUnitConstraint && k.meta in optional_constraint_metas)
             )
                 for T in generator_participants
         ]
         @test allequal(variable_sets)
         @test allequal(constraint_sets)
         @test PSI.ActivePowerVariable in first(variable_sets)
-        @test PSI.RampConstraint in first(constraint_sets)
+        @test (PSI.RampConstraint, "up") in first(constraint_sets)
         # The mock hive bids a fixed loading for one generator, which registers the fixed-loading rows.
-        @test any(EnergyFixedLoadConstraint in entry_types(component_keys(constraint_keys, T)) for T in generator_participants)
+        @test any(
+            all(m in constraint_metas(constraint_keys, T) for m in ("fixed_load|upper", "fixed_load|lower"))
+                for T in generator_participants
+        )
 
         @testset "a scheduled load gets the single-variable shape priced on its decremental offer" begin
             load_variables = entry_types(component_keys(variable_keys, InterruptiblePowerLoad))
@@ -177,7 +186,7 @@ end
             band_metas = [k.meta for k in component_keys(variable_keys, InterruptiblePowerLoad) if IS.Optimization.get_entry_type(k) === EnergyOfferBandVariable]
             @test band_metas == ["load"]
             @test PSI.RampConstraint in load_constraints
-            @test EnergyMaxAvailConstraint in load_constraints
+            @test "max_avail" in constraint_metas(constraint_keys, InterruptiblePowerLoad)
         end
 
         @testset "a battery gets the per-direction shape instead of a single ActivePowerVariable" begin

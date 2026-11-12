@@ -24,11 +24,3 @@ Time-series cost parameter pricing [`EnergyOfferBandVariable`](@ref)s: each band
 band not offered). Meta `"gen"` or `"load"`.
 """
 struct EnergyBandPriceParameter <: PSI.TimeSeriesCostParameter end
-
-"""
-    EnergyOfferBandConstraint
-
-Constraint type of `dispatch == Σ bands + surplus - deficit` for one device and interval, over its
-[`EnergyOfferBandVariable`](@ref)s. Meta `"gen"` or `"load"`.
-"""
-struct EnergyOfferBandConstraint <: PSI.ConstraintType end
