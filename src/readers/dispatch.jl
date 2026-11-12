@@ -119,45 +119,37 @@ function read_uigf(db, date_range; resolution::Dates.Period = Minute(5), interve
 end
 
 """
-    read_energy_limits(db, date_range; intervention = 0) -> DataFrame
+    read_unit_conditions(db, date_range; intervention = 0) -> DataFrame
 
-Reads energy bid `MAXAVAIL`, the separate dispatch `UIGF`, and the effective schedule type
-for each offered unit, direction and interval in the half-open `date_range`.
+Reads each unit's operating condition from one `DISPATCHLOAD` read: the metered and dispatch
+state (`INITIALMW`, `AVAILABILITY`, `RAMPUPRATE`, `RAMPDOWNRATE`, `UIGF`, `DISPATCHMODE`,
+`AGCSTATUS`), the regulation enablement limits and the regulation availabilities, for each
+interval of the half-open `date_range`. Rates are as published: MW/h, and the ramp rates are
+the lesser of bid and telemetered rate.
 
 # Arguments
-- `db`: an `AEMDB` connection with energy offers, dispatch results and registration data.
-- `date_range`: the interval range, with an exclusive final timestamp.
-- `intervention`: the dispatch run used for UIGF.
+- `db`: an `AEMDB` connection.
+- `date_range`: the five-minute dispatch intervals to read (half-open: `start <= t < stop`).
+- `intervention`: `0` for the pricing run, `1` for the physical run.
 
 # Returns
-A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `DIRECTION`, `MAXAVAIL`, `UIGF` and
-`SCHEDULE_TYPE`. Unmatched dispatch or registration data remain `missing`.
+A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `INITIALMW`, `AVAILABILITY`, `RAMPUPRATE`,
+`RAMPDOWNRATE`, `UIGF`, `DISPATCHMODE`, `AGCSTATUS`, `RAISEREGENABLEMENTMIN`, `RAISEREGENABLEMENTMAX`,
+`LOWERREGENABLEMENTMIN`, `LOWERREGENABLEMENTMAX`, `RAISEREGAVAILABILITY` and `LOWERREGAVAILABILITY`,
+sorted by `DUID` and `SETTLEMENTDATE`. Throws an `ArgumentError` when `DISPATCHLOAD` is not cached or
+a cached partition lacks one of these columns.
 """
-function read_energy_limits(db, date_range; intervention::Integer = 0)
-    offers = select(read_energy_bids(db, date_range), :INTERVAL_DATETIME, :DUID, :DIRECTION, :MAXAVAIL)
-    uigf = _read_dispatch_table([_cast_double("UIGF")], db, :DISPATCHLOAD, "DUID", date_range; intervention)
-    leftjoin!(offers, uigf; on = [:INTERVAL_DATETIME => :SETTLEMENTDATE, :DUID])
-    summary = read_hive(db, :DUDETAILSUMMARY)
-    return _with_registered(db, offers, "nem_energy_offers") do
-        return _query(
-            db,
-            """
-            WITH sm AS (
-                SELECT * FROM $summary
-                WHERE archive_month = (SELECT max(archive_month) FROM $summary)
-            )
-            SELECT o.INTERVAL_DATETIME AS SETTLEMENTDATE, o.DUID, o.DIRECTION,
-                   TRY_CAST(o.MAXAVAIL AS DOUBLE) AS MAXAVAIL, o.UIGF, sm_at.SCHEDULE_TYPE
-            FROM nem_energy_offers o
-            -- Interval-ending rule: registered at t iff START_DATE < t <= END_DATE, so a row starting at t does not cover it.
-            LEFT JOIN LATERAL (
-                SELECT SCHEDULE_TYPE FROM sm
-                WHERE sm.DUID = o.DUID AND sm.START_DATE < o.INTERVAL_DATETIME
-                  AND (sm.END_DATE IS NULL OR sm.END_DATE >= o.INTERVAL_DATETIME)
-                ORDER BY START_DATE DESC LIMIT 1
-            ) sm_at ON true
-            ORDER BY o.DUID, o.DIRECTION, o.INTERVAL_DATETIME
-            """,
-        )
+function read_unit_conditions(db, date_range; intervention::Integer = 0)
+    columns = (
+        "INITIALMW", "AVAILABILITY", "RAMPUPRATE", "RAMPDOWNRATE", "UIGF", "DISPATCHMODE", "AGCSTATUS",
+        "RAISEREGENABLEMENTMIN", "RAISEREGENABLEMENTMAX", "LOWERREGENABLEMENTMIN", "LOWERREGENABLEMENTMAX",
+        "RAISEREGAVAILABILITY", "LOWERREGAVAILABILITY",
+    )
+    df = _read_dispatch_table(db, :DISPATCHLOAD, "DUID", date_range; intervention) do schema
+        _require_columns(:DISPATCHLOAD, schema, columns)
+        return [_cast_double(c) for c in columns]
     end
+    isempty(df) && return df
+    sort!(df, [:DUID, :SETTLEMENTDATE])
+    return df
 end

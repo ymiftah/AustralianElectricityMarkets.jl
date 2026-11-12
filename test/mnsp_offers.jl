@@ -14,6 +14,14 @@ let db = DuckDB.DB()
     DuckDB.close(db)
 end
 
+# The bid of an MNSP interchange for `direction`, and the values of one of its keys.
+function _mnsp_bid(ic, direction::AbstractString)
+    dir = direction == "forward" ? AustralianElectricityMarkets.MNSPDirection.FORWARD : AustralianElectricityMarkets.MNSPDirection.REVERSE
+    return only(b for b in get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPBid, ic) if b.direction == dir)
+end
+
+_key_values(ic, key; start = DateTime(2025, 1, 1, 11, 55), n = 2) = PowerSystems.IS.get_time_series_values(ic, key; start_time = start, len = n)
+
 @testset "MNSP offers" begin
     using AustralianElectricityMarkets
     using PowerSystems
@@ -30,19 +38,21 @@ end
         ic = get_component(AreaInterchange, sys, "IC2")
         @test get_name(get_from_area(ic)) == "NSW1"
         # Interval 11:55 carries the first offer (MAXAVAIL 594), 12:00 the rebid (400).
-        avail = get_time_series_values(SingleTimeSeries, ic, "mnsp_forward_max_avail"; start_time = first(range))
+        forward = _mnsp_bid(ic, "forward")
+        avail = _key_values(ic, forward.max_avail)
         @test avail == [594.0, 400.0]
-        curves = get_time_series_values(SingleTimeSeries, ic, "mnsp_forward_offer"; start_time = first(range))
+        curves = _key_values(ic, forward.offer_curves)
         @test get_x_coords(curves[1]) == [0.0, 100.0, 200.0, 300.0, 400.0, 494.0]
         @test get_y_coords(curves[2]) == [80.0, 61.0, 75.0, 89.0]
-        info = get_ext(ic)
-        @test info["mnsp_forward"]["link_id"] == "BLNKTAS"
-        @test info["mnsp_reverse"]["link_id"] == "BLNKVIC"
-        @test info["mnsp_reverse"]["from_region_tlf"] == 0.9907
-        @test get_time_series_values(SingleTimeSeries, ic, "mnsp_initial_flow") == [125.0, -75.0]
-        @test get_time_series_values(SingleTimeSeries, ic, "mnsp_forward_ramp_rate") == [200.0, 200.0]
-        @test get_time_series_values(SingleTimeSeries, ic, "mnsp_forward_fixed_load") == [0.0, 0.0]
-        @test get_time_series_values(SingleTimeSeries, ic, "mnsp_forward_fixed_load_invoked") == [0.0, 0.0]
+        links = get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPLink, ic)
+        @test only(l for l in links if l.direction == AustralianElectricityMarkets.MNSPDirection.FORWARD).link_id == "BLNKTAS"
+        reverse_link = only(l for l in links if l.direction == AustralianElectricityMarkets.MNSPDirection.REVERSE)
+        @test reverse_link.link_id == "BLNKVIC"
+        @test reverse_link.from_region_tlf == 0.9907
+        observed = only(get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPObservedState, ic))
+        @test _key_values(ic, observed.initial_flow) == [125.0, -75.0]
+        @test _key_values(ic, forward.ramp_up) == [200.0, 200.0]
+        @test isnothing(forward.fixed_load)  # FIXEDLOAD is NULL over the whole range
     end
 
     @testset "an MNSP without offers fails instead of changing its formulation" begin
@@ -109,7 +119,7 @@ end
         db = damaged_cache(AEM_TEST_MNSP_HIVE_DIR, :DISPATCH_MNSPBIDTRK, "DELETE FROM input WHERE LINKID = 'BLNKVIC'")
         @test_throws r"requires exactly one offer for every interval" set_mnsp_offers!(sys, db, range)
         ic = get_component(AreaInterchange, sys, "IC2")
-        @test get_time_series_values(SingleTimeSeries, ic, "mnsp_forward_max_avail") == [594.0, 400.0]
+        @test _key_values(ic, _mnsp_bid(ic, "forward").max_avail) == [594.0, 400.0]
     end
 
     @testset "regulated standing data needs no MNSP bids or tables" begin
@@ -129,7 +139,7 @@ end
     window = DateTime(2025, 1, 1, 11, 55):Minute(5):DateTime(2025, 1, 1, 12, 5)
     set_mnsp_offers!(sys, db, window)
     ic = get_component(AreaInterchange, sys, "IC2")
-    @test get_time_series_values(SingleTimeSeries, ic, "mnsp_forward_fixed_load_invoked") == [1.0, 1.0]
+    @test _key_values(ic, _mnsp_bid(ic, "forward").fixed_load) == [0.0, 0.0]  # zero is an active loading
 end
 
 @testset "MNSP starting flow follows the selected dispatch run" begin
@@ -138,5 +148,17 @@ end
     window = DateTime(2025, 1, 1, 11, 55):Minute(5):DateTime(2025, 1, 1, 12, 5)
     set_mnsp_offers!(sys, db, window; intervention = 1)
     ic = get_component(AreaInterchange, sys, "IC2")
-    @test get_time_series_values(SingleTimeSeries, ic, "mnsp_initial_flow") == [-125.0, 75.0]
+    observed = only(get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPObservedState, ic))
+    @test _key_values(ic, observed.initial_flow) == [-125.0, 75.0]
+end
+
+@testset "MNSP fixed loading is NaN at NULL intervals" begin
+    db = damaged_cache(AEM_TEST_MNSP_HIVE_DIR, :MNSP_BIDOFFERPERIOD, "UPDATE input SET FIXEDLOAD = 4 WHERE PERIODID = 95")
+    sys = nem_system(db, RegionalNetworkConfiguration())
+    window = DateTime(2025, 1, 1, 11, 55):Minute(5):DateTime(2025, 1, 1, 12, 5)
+    set_mnsp_offers!(sys, db, window)
+    forward = _mnsp_bid(get_component(AreaInterchange, sys, "IC2"), "forward")
+    raw = _key_values(get_component(AreaInterchange, sys, "IC2"), forward.fixed_load)
+    @test raw[1] == 4.0
+    @test isnan(raw[2])  # NULL at 12:00 is NaN, not zero
 end

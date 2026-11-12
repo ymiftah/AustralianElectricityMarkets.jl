@@ -2,8 +2,8 @@
 AEMO FCAS trapezium parameters for one device's offer into one FCAS market. Zero below
 `enablement_min`, ramping to `max_avail` at `low_breakpoint`, flat until `high_breakpoint`,
 ramping back to zero at `enablement_max` (AEMO, *FCAS Model in NEMDE*, §2). All MW/MW-per-minute
-fields are as returned by `_get_fcas_trapezium`: MW under `NATURAL_UNITS`, per-unit of
-the system base under `SYSTEM_BASE`.
+fields are as the Simulations package's FCAS trapezium readers return them: MW under `NATURAL_UNITS`,
+per-unit of the system base under `SYSTEM_BASE`.
 """
 struct FCASTrapezium <: PSY.DeviceParameter
     enablement_min::Float64
@@ -177,7 +177,7 @@ end
 
 """
 A `(REGIONID, BIDTYPE)` FCAS market anchor. Carries no requirement or time series of its own;
-the regional RHS lives on the governing [`GenericConstraint`](@ref)'s own `"rhs"` series.
+the regional RHS lives on the governing [`GenericConstraint`](@ref)'s own right-hand side series.
 
 # Fields
 - `name`: `"<REGIONID>_<BIDTYPE>"`.
@@ -275,23 +275,4 @@ end
 # The FCASServices for `bid_type` attached to `device`: empty when `device` does not bid that market.
 function _fcas_services(device::PSY.Device, bid_type::BidType)
     return FCASService[svc for svc in PSY.get_services(device) if svc isa FCASService && get_bid_type(svc) == bid_type]
-end
-
-
-"""
-    fcas_offer_series_name(service::FCASService, decremental::Bool) -> String
-
-Name of the time series holding a device's FCAS offer curve for `service`, the series of its
-[`FCASService`](@ref) bid. The incremental curve is named by the service and the decremental one by
-`PSY.get_decremental_service_bid_name`, as PowerSystems stores service bids.
-
-# Arguments
-- `service`: the FCAS service, one per region and [`BidType`](@ref).
-- `decremental`: `true` for the load-side (`LOAD`) curve, `false` for the generation-side one.
-
-# Returns
-A `String`.
-"""
-function fcas_offer_series_name(service::FCASService, decremental::Bool)
-    return decremental ? PSY.get_decremental_service_bid_name(service) : PSY.get_name(service)
 end

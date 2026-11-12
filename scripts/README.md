@@ -130,6 +130,18 @@ julia -O1 --project=AustralianElectricityMarketsSimulations/test \
 `--time-series-in-memory true` holds the time series in memory (default `false`, on disk), which cuts
 per-step parameter updates but raises peak memory.
 
+`--start` and `--intervals` replay one range of consecutive intervals instead of whole trading days.
+`--start` is an interval-ending time on a five-minute boundary, and the range must end within the
+trading day of `--start`. Both options must be given together, and they replace `--first`, `--last`
+and `--seed` for scheduling. This replays 10 intervals from 2026-06-04T04:05:00:
+
+```sh
+julia -O1 --project=AustralianElectricityMarketsSimulations/test \
+    scripts/replay_batch.jl \
+    --start 2026-06-04T04:05:00 --intervals 10 \
+    --output /run/media/simba/Store/aem_validation/range-2026-06-04-10
+```
+
 The seed fixes the shuffled order for the same Julia version. Change `--seed` for
 a different order. Failed days are recorded and skipped, with no automatic retry.
 If no day completes, the command exits with an error. A run with some failures
@@ -283,7 +295,6 @@ folder = "/run/media/simba/Store/aem_validation/consecutive-days"
 for (k, steps) in enumerate(replay_chunks(trading_day_steps(Date(2026, 1, 1))))
     chunk_folder = joinpath(folder, "chunk_$k")
     horizon = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
-    check_replay_inputs(db, horizon; template)
     sys = nem_system(
         db, NEMDEConfiguration(); date_range = horizon, time_series_in_memory = false,
         time_series_directory = joinpath(chunk_folder, "time_series"),
@@ -323,19 +334,18 @@ construction overhead growing across repeated builds. Instantiate the checked-ou
 before launching; keep the project source pins when reproducing a run. The worker snapshots
 its resolved manifest and package sources.
 
-## Early validation and detailed timing
+## Validation and detailed timing
 
-Before constructing each chunk, a data-only preflight checks the padded five-minute
-range, including the interval after the trading day used by forecast preparation.
-It verifies both MNSP directional links against the exact offers joined by the
-existing reader, and checks exact invoked generic-constraint definition versions.
-Known built-in zero-flow constraints and participant fixed-load rows retain their
-existing handling. Model-level input checks still run. No data is downloaded and
+`nem_system` validates its inputs as the last step of each chunk's system build, over the
+padded five-minute range including the interval after the trading day used by forecast
+preparation. It checks the typed records of every dispatch device, the constraint build
+report (missing intervals, defaulted weights, skipped constraints and dropped terms) and
+both MNSP directional links. Model-level input checks still run. No data is downloaded and
 failed days are retained without retrying. Keep the checkout unchanged during a batch
 so code cannot change while a worker loads it.
 
-`phases.csv` separates preflight, system/preprocessing, model build, execution,
-comparison and export. Each day's provenance, `runner_source/` and `package_source/` snapshots identify
+`phases.csv` separates system/preprocessing, model build, execution, comparison and export.
+Each day's provenance, `runner_source/` and `package_source/` snapshots identify
 the scripts, package sources, actual worker revision and dirty checkout state.
 
 Per-model `interval_timings.csv` is derived after `execute!` from PSI's native

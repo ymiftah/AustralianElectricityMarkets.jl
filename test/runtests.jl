@@ -34,6 +34,7 @@ const TEST_GROUPS = [
     "replay_network" => ("Replay network configuration", ["network_models/replay_network_configuration.jl"]),
     "hdf5_storage" => ("HDF5 storage resource lifetime", ["hdf5_storage.jl"]),
     "timeseries_setters" => ("Time series setter tests", ["timeseries_setters.jl", "bid_conversion.jl"]),
+    "market_bids" => ("Market bids", ["market_bids.jl"]),
     "interval_inputs" => ("Per-interval inputs", ["interval_inputs.jl"]),
     "mnsp" => ("MNSP offers", ["mnsp_offers.jl"]),
     "fcas" => ("FCAS types", ["fcas/fcas.jl"]),
@@ -45,6 +46,9 @@ const TEST_GROUPS = [
     "fcas_service" => ("PSCB FCASService", ["fcas/fcas_service.jl"]),
     "system_build_coverage" => ("System build coverage and JSON round-trip", ["integration/system_build_coverage.jl"]),
     "tie_break_service" => ("Energy tie-break service", ["tie_break_service.jl"]),
+    "nem_offer_cost" => ("NEMOfferCost", ["types/nem_offer_cost.jl"]),
+    "unit_data" => ("NEM unit data structs", ["types/unit_data.jl"]),
+    "network_data" => ("NEM network data structs", ["types/network_data.jl"]),
     "aqua" => ("Aqua", ["aqua.jl"]),
 ]
 

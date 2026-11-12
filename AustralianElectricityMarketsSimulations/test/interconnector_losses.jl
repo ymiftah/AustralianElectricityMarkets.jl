@@ -43,7 +43,7 @@ function _loss_test_system(;
         PSY.set_active_power_limits!(gen, (min = 0.0, max = limits.max))
     end
     PSY.set_available!(PSY.get_component(PSY.ThermalStandard, sys, "Solitude"), false)
-    PSY.set_available!(PSY.get_component(PSY.RenewableDispatch, sys, "SOLAR1"), false)
+    PSY.set_available!(PSY.get_component(RenewableDispatch, sys, "SOLAR1"), false)
     # Zero-cost hydro makes every marginal price zero, so the LP is indifferent to how loss
     # segments fill; thermal units carry a positive cost.
     priced_supply_only && foreach(h -> PSY.set_available!(h, false), PSY.get_components(PSY.HydroDispatch, sys))
@@ -118,6 +118,28 @@ function _solve_loss(sys)
     return model, PSI.OptimizationProblemResults(model)
 end
 
+# Adds `values` on `grid` as the `SingleTimeSeries` `name` of `ic`, replacing any earlier one, and returns its key.
+function _add_key!(sys, ic, grid, name::AbstractString, values)
+    # A transform leaves the series deterministic, which must go before its single-series origin.
+    PSY.has_time_series(ic, PSY.DeterministicSingleTimeSeries, name) && PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, ic, name)
+    PSY.has_time_series(ic, PSY.SingleTimeSeries, name) && PSY.remove_time_series!(sys, PSY.SingleTimeSeries, ic, name)
+    PSY.add_time_series!(sys, ic, PSY.SingleTimeSeries(; name, data = TimeArray(grid, values)))
+    return only(k for k in PSY.IS.get_time_series_keys(ic) if k.name == name)
+end
+
+# Gives `ic` the per-interval flow limits `from_to` and `to_from` (MW) as its `NEMInterconnectorLimits`.
+function _add_interconnector_limits!(sys, ic, grid, from_to, to_from)
+    for old in PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMInterconnectorLimits, ic)
+        PSY.remove_supplemental_attribute!(sys, ic, old)
+    end
+    limits = AustralianElectricityMarkets.NEMInterconnectorLimits(;
+        from_to_limit = _add_key!(sys, ic, grid, AustralianElectricityMarkets.NEM_INTERCONNECTOR_SERIES.from_to_limit, fill(Float64(from_to), length(grid))),
+        to_from_limit = _add_key!(sys, ic, grid, AustralianElectricityMarkets.NEM_INTERCONNECTOR_SERIES.to_from_limit, fill(Float64(to_from), length(grid))),
+    )
+    PSY.add_supplemental_attribute!(sys, ic, limits)
+    return
+end
+
 @testset "missing/ambiguous InterconnectorLossModel throws" begin
     sys = augmented_pscb_system()
     model = _decision_model(_loss_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
@@ -167,8 +189,8 @@ end
 
     container = PSI.get_optimization_container(model)
     @test !PSI.has_container_key(container, AEMS.InterconnectorLossSegmentFullVariable, PSY.AreaInterchange)
-    for key in ("InterconnectorFlowSurplusSlack__AreaInterchange", "InterconnectorFlowDeficitSlack__AreaInterchange")
-        @test all(abs.(PSI.read_variable(res, key).value) .< 1.0e-6)
+    for meta in ("surplus", "deficit")
+        @test all(abs.(PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, meta)).value) .< 1.0e-6)
     end
 
     @testset "loss split balances the from-area: generation = load + flow + share * loss" begin
@@ -264,7 +286,7 @@ end
         sys = _loss_test_system()
         if negative
             PSY.set_available!(PSY.get_component(PSY.ThermalStandard, sys, "Solitude"), true)
-            PSY.set_available!(PSY.get_component(PSY.RenewableDispatch, sys, "SOLAR1"), true)
+            PSY.set_available!(PSY.get_component(RenewableDispatch, sys, "SOLAR1"), true)
             for load in PSY.get_components(l -> PSY.get_name(PSY.get_area(PSY.get_bus(l))) == "1", PSY.PowerLoad, sys)
                 PSY.set_max_active_power!(load, 3 * PSY.get_max_active_power(load))
             end
@@ -275,11 +297,7 @@ end
         end
         load = first(PSY.get_components(PSY.PowerLoad, sys))
         grid = collect(timestamp(PSY.get_data(PSY.get_time_series(PSY.SingleTimeSeries, load, "max_active_power"))))
-        for (name, ratio) in (("from_to_flow_limit", from_to_ratio), ("to_from_flow_limit", to_from_ratio))
-            PSY.add_time_series!(
-                sys, ic1, PSY.SingleTimeSeries(; name = name, data = TimeArray(grid, fill(ratio, length(grid)))),
-            )
-        end
+        _add_interconnector_limits!(sys, ic1, grid, from_to_ratio * from_to_static, to_from_ratio * to_from_static)
         PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
         model, res = _solve_loss(sys)
         flow_df = PSI.read_variable(PSI.OptimizationProblemResults(model), "FlowActivePowerVariable__AreaInterchange")
@@ -315,12 +333,12 @@ end
     model, res = _solve_loss(sys)
 
     res = PSI.OptimizationProblemResults(model)
-    surplus = PSI.read_variable(res, "InterconnectorFlowSurplusSlack__AreaInterchange")
-    deficit = PSI.read_variable(res, "InterconnectorFlowDeficitSlack__AreaInterchange")
+    surplus = PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, "surplus"))
+    deficit = PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, "deficit"))
     @test all(isapprox.(surplus.value .+ deficit.value, 5.0; atol = 1.0e-6))
 
     container = PSI.get_optimization_container(model)
-    slack = PSI.get_variable(container, AEMS.InterconnectorFlowSurplusSlack(), PSY.AreaInterchange)["IC1", 1]
+    slack = PSI.get_variable(container, AEMS.InterconnectorFlowSlack(), PSY.AreaInterchange, "surplus")["IC1", 1]
     mpc = AEMS._container_market_price_cap(container, PSI.get_initial_time(container))
     expected = PSY.get_base_power(sys) *
         AEMS.interval_cost_coefficient(AustralianElectricityMarkets.INTERCONNECTOR_FLOW_CVP_FACTOR * mpc, PSI.get_resolution(container))
@@ -334,7 +352,7 @@ end
     ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
     PSY.set_flow_limits!(ic1, (from_to = 100.0, to_from = 5.0))
     model, res = _solve_loss(sys)
-    @test all(abs.(PSI.read_variable(res, "InterconnectorFlowSurplusSlack__AreaInterchange").value) .< 1.0e-6)
+    @test all(abs.(PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, "surplus")).value) .< 1.0e-6)
     @test all(isapprox.(PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange").value, 5.0; atol = 1.0e-6))
     unserved = PSI.read_variable(res, "SystemBalanceSlackUp__Area")
     @test sum(unserved.value) > 0
@@ -344,7 +362,7 @@ end
     mpc = AEMS._container_market_price_cap(container, PSI.get_initial_time(container))
     terms = PSI.JuMP.objective_function(PSI.get_jump_model(container)).terms
     balance = PSI.get_variable(container, PSI.SystemBalanceSlackUp(), PSY.Area)["2", 1]
-    flow = PSI.get_variable(container, AEMS.InterconnectorFlowSurplusSlack(), PSY.AreaInterchange)["IC1", 1]
+    flow = PSI.get_variable(container, AEMS.InterconnectorFlowSlack(), PSY.AreaInterchange, "surplus")["IC1", 1]
     @test terms[balance] ≈ AEMS._area_balance_slack_cost(sys, mpc)
     @test terms[flow] ≈ PSY.get_base_power(sys) *
         AEMS.interval_cost_coefficient(AustralianElectricityMarkets.INTERCONNECTOR_FLOW_CVP_FACTOR * mpc, PSI.get_resolution(container))
@@ -361,15 +379,11 @@ end
     end
     load = first(PSY.get_components(PSY.PowerLoad, sys))
     grid = collect(timestamp(PSY.get_data(PSY.get_time_series(PSY.SingleTimeSeries, load, "max_active_power"))))
-    for (name, ratio) in (("from_to_flow_limit", -0.1), ("to_from_flow_limit", 0.05))
-        PSY.add_time_series!(
-            sys, ic1, PSY.SingleTimeSeries(; name = name, data = TimeArray(grid, fill(ratio, length(grid)))),
-        )
-    end
+    _add_interconnector_limits!(sys, ic1, grid, -10.0, 5.0)
     PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
     model, res = _solve_loss(sys)
-    surplus = PSI.read_variable(res, "InterconnectorFlowSurplusSlack__AreaInterchange")
-    deficit = PSI.read_variable(res, "InterconnectorFlowDeficitSlack__AreaInterchange")
+    surplus = PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, "surplus"))
+    deficit = PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, "deficit"))
     @test all(isapprox.(surplus.value .+ deficit.value, 5.0; atol = 1.0e-4))
 end
 
@@ -424,7 +438,7 @@ end
         flow_df = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
         loss_df = PSI.read_variable(res, "InterconnectorLossVariable__AreaInterchange")
         slope = 0.05 + k
-        definitions = PSI.get_constraint(container, AEMS.InterconnectorLossDefinitionConstraint(), PSY.AreaInterchange)
+        definitions = PSI.get_constraint(container, AEMS.InterconnectorLossConstraint(), PSY.AreaInterchange, "loss_definition")
         segments = PSI.get_variable(container, AEMS.InterconnectorLossSegmentVariable(), PSY.AreaInterchange)
         flows = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
         for (t, stamp) in enumerate(sort(unique(flow_df.DateTime)))
@@ -437,6 +451,75 @@ end
             @test loss ≈ slope * flow atol = 1.0e-6
         end
     end
+end
+
+@testset "the loss demand setter evaluates each model's demand term per interval" begin
+    # The mock hive supplies real NEM magnitudes; `_loss_test_system`'s hand-built model covers the
+    # formulation side, this covers the series the setter writes from cached demand.
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    as_of = Date(2025, 1, 2)
+    sys = nem_system(db, RegionalNetworkConfiguration())
+    @test_logs (:warn, r"no resolvable loss model") match_mode = :any attach_interconnector_losses!(sys, db, as_of)
+    # No demand series yet: nothing to evaluate the loss factor at.
+    @test_throws r"no \"loss_demand\" series" set_loss_demand_coefficients!(sys)
+    date_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 1, 0)
+    attach_demand!(sys, db, date_range; resolution = Minute(5))
+    set_loss_demand_coefficients!(sys)
+    base_power = PSY.get_base_power(sys)
+    ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
+    model = only(PSY.get_supplemental_attributes(AEMS.InterconnectorLossModel, ic1))
+    loss_demand_mw(region) = PSY.with_units_base(sys, "NATURAL_UNITS") do
+        PSY.get_time_series_values(PSY.SingleTimeSeries, PSY.get_component(PSY.PowerLoad, sys, "$region Load"), "loss_demand")
+    end
+    # Per-unit coefficient times per-unit demand equals the MW coefficient times MW demand.
+    expected = sum(c / base_power .* loss_demand_mw(r) for (r, c) in model.demand_coefficients)
+    coefficient = PSY.get_time_series_values(PSY.SingleTimeSeries, ic1, "loss_demand_coefficient")
+    @test coefficient ≈ expected
+    @test any(!iszero, coefficient)
+    @test PSY.get_time_series_timestamps(PSY.SingleTimeSeries, ic1, "loss_demand_coefficient") ==
+        PSY.get_time_series_timestamps(PSY.SingleTimeSeries, PSY.get_component(PSY.PowerLoad, sys, "VIC1 Load"), "loss_demand")
+    @test !PSY.has_time_series(PSY.get_component(PSY.AreaInterchange, sys, "IC6"), PSY.SingleTimeSeries, "loss_demand_coefficient")
+
+    # An unavailable load drops out of its region's demand, and re-running replaces the series.
+    PSY.set_available!(PSY.get_component(PSY.PowerLoad, sys, "VIC1 Load"), false)
+    set_loss_demand_coefficients!(sys)
+    without_vic = sum(
+        (c / base_power .* loss_demand_mw(r) for (r, c) in model.demand_coefficients if r != "VIC1");
+        init = zeros(length(coefficient)),
+    )
+    @test PSY.get_time_series_values(PSY.SingleTimeSeries, ic1, "loss_demand_coefficient") ≈ without_vic
+end
+
+@testset "the loss demand setter rejects a load on a bus with no area" begin
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    sys = nem_system(db, RegionalNetworkConfiguration())
+    @test_logs (:warn, r"no resolvable loss model") match_mode = :any attach_interconnector_losses!(sys, db, Date(2025, 1, 2))
+    date_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 1, 0)
+    attach_demand!(sys, db, date_range; resolution = Minute(5))
+    PSY.set_area!(PSY.get_bus(PSY.get_component(PSY.PowerLoad, sys, "VIC1 Load")), nothing)
+    err = _caught(() -> set_loss_demand_coefficients!(sys))
+    @test err isa ArgumentError
+    @test occursin("on a bus with no area", sprint(showerror, err))
+end
+
+@testset "the loss demand setter rejects a load series off the common timestamps" begin
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    sys = nem_system(db, RegionalNetworkConfiguration())
+    @test_logs (:warn, r"no resolvable loss model") match_mode = :any attach_interconnector_losses!(sys, db, Date(2025, 1, 2))
+    date_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 1, 0)
+    attach_demand!(sys, db, date_range; resolution = Minute(5))
+    load = PSY.get_component(PSY.PowerLoad, sys, "VIC1 Load")
+    original = PSY.get_time_series(PSY.SingleTimeSeries, load, "loss_demand")
+    stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, load, "loss_demand")
+    values = PSY.get_time_series_values(PSY.SingleTimeSeries, load, "loss_demand")
+    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, load, "loss_demand")
+    PSY.add_time_series!(
+        sys, load,
+        single_series("loss_demand", first(stamps) + Minute(5), values, PSY.get_resolution(original)),
+    )
+    err = _caught(() -> set_loss_demand_coefficients!(sys))
+    @test err isa ArgumentError
+    @test occursin("is not on the timestamps", sprint(showerror, err))
 end
 
 @testset "loss equations use the loss_demand series when a load carries one" begin
@@ -455,7 +538,7 @@ end
     model = _decision_model(_loss_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    definitions = PSI.get_constraint(container, AEMS.InterconnectorLossDefinitionConstraint(), PSY.AreaInterchange)
+    definitions = PSI.get_constraint(container, AEMS.InterconnectorLossConstraint(), PSY.AreaInterchange, "loss_definition")
     flows = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
     for t in 1:2
         @test PSI.JuMP.normalized_coefficient(definitions["IC1", t], flows["IC1", t]) ≈ -k
@@ -488,29 +571,44 @@ end
     @test !PSI.has_container_key(container, AEMS.InterconnectorLossVariable, PSY.AreaInterchange)
 end
 
-# Operating-input helper for MNSP regressions; values use the setter's natural MW/MW-min units.
+
+# Operating-input helper for MNSP regressions; values use the setter's natural MW/MW-min units. Replaces the
+# operating keys of the link bids and the observed flow of an interchange that already has offers.
 function _mnsp_operating_series!(sys; initial = 0.0, up = 1000.0, down = 1000.0, fixed_forward = nothing, fixed_reverse = nothing)
     ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
     load = first(PSY.get_components(PSY.PowerLoad, sys))
     stamps = collect(timestamp(PSY.get_data(PSY.get_time_series(PSY.SingleTimeSeries, load, "max_active_power"))))
-    values = Pair{String, Any}["mnsp_initial_flow" => initial]
-    for (dir, ramp, fixed) in (("forward", up, fixed_forward), ("reverse", down, fixed_reverse))
-        append!(
-            values, [
-                "mnsp_$(dir)_ramp_rate" => ramp,
-                "mnsp_$(dir)_fixed_load" => (isnothing(fixed) ? 0.0 : fixed),
-                "mnsp_$(dir)_fixed_load_invoked" => (isnothing(fixed) ? 0.0 : 1.0),
-            ]
+    names = AustralianElectricityMarkets.NEM_MNSP_SERIES
+    for old in PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPObservedState, ic)
+        PSY.remove_supplemental_attribute!(sys, ic, old)
+    end
+    PSY.add_supplemental_attribute!(
+        sys, ic,
+        AustralianElectricityMarkets.NEMMNSPObservedState(;
+            initial_flow = _add_key!(sys, ic, stamps, names.initial_flow, fill(Float64(initial), length(stamps))),
+        ),
+    )
+    for (dir, direction, ramp, fixed) in (
+            ("forward", AustralianElectricityMarkets.MNSPDirection.FORWARD, up, fixed_forward),
+            ("reverse", AustralianElectricityMarkets.MNSPDirection.REVERSE, down, fixed_reverse),
+        )
+        bid = only(b for b in PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPBid, ic) if b.direction == direction)
+        PSY.remove_supplemental_attribute!(sys, ic, bid)
+        PSY.add_supplemental_attribute!(
+            sys, ic,
+            AustralianElectricityMarkets.NEMMNSPBid(;
+                direction,
+                offer_curves = bid.offer_curves,
+                max_avail = bid.max_avail,
+                ramp_up = _add_key!(sys, ic, stamps, getproperty(names, Symbol(dir, "_ramp_rate")), fill(Float64(ramp), length(stamps))),
+                fixed_load = _add_key!(
+                    sys, ic, stamps, getproperty(names, Symbol(dir, "_fixed_load")),
+                    fill(isnothing(fixed) ? NaN : Float64(fixed), length(stamps)),
+                ),
+            ),
         )
     end
-    for (name, value) in values
-        if PSY.has_time_series(ic, PSY.DeterministicSingleTimeSeries, name)
-            PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, ic, name)
-        end
-        AustralianElectricityMarkets.replace_single_series!(
-            sys, ic, PSY.SingleTimeSeries(; name, data = TimeArray(stamps, (value isa Number ? fill(Float64(value), length(stamps)) : Float64.(value)))),
-        )
-    end
+    AEMS._set_mnsp_fixed_loads!(sys)
     PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
     return ic
 end
@@ -538,14 +636,34 @@ function _attach_mnsp_offers!(
         else
             fill(curve, length(grid))
         end
-        for (name, value) in (("mnsp_$(dir)_offer", offers), ("mnsp_$(dir)_max_avail", fill(Float64(max_avail), length(grid))))
-            PSY.add_time_series!(
-                sys, ic, PSY.SingleTimeSeries(; name = name, data = TimeArray(grid, value)),
-            )
+        direction = dir == "forward" ? AustralianElectricityMarkets.MNSPDirection.FORWARD : AustralianElectricityMarkets.MNSPDirection.REVERSE
+        names = AustralianElectricityMarkets.NEM_MNSP_SERIES
+        for old in PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPBid, ic)
+            old.direction == direction && PSY.remove_supplemental_attribute!(sys, ic, old)
         end
-        PSY.get_ext(ic)["mnsp_$dir"] = Dict{String, Any}("from_region_tlf" => tlfs[1], "to_region_tlf" => tlfs[2])
+        for old in PSY.get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPLink, ic)
+            old.direction == direction && PSY.remove_supplemental_attribute!(sys, ic, old)
+        end
+        PSY.add_supplemental_attribute!(
+            sys, ic,
+            AustralianElectricityMarkets.NEMMNSPLink(;
+                direction, link_id = "TEST_$dir", from_region_tlf = tlfs[1], to_region_tlf = tlfs[2],
+                lhs_factor = 1.0, max_capacity = 1000.0,
+            ),
+        )
+        PSY.add_supplemental_attribute!(
+            sys, ic,
+            AustralianElectricityMarkets.NEMMNSPBid(;
+                direction,
+                offer_curves = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_offer")), offers),
+                max_avail = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_max_avail")), fill(Float64(max_avail), length(grid))),
+                ramp_up = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_ramp_rate")), fill(1000.0, length(grid))),
+                fixed_load = _add_key!(sys, ic, grid, getproperty(names, Symbol(dir, "_fixed_load")), fill(NaN, length(grid))),
+            ),
+        )
     end
     _mnsp_operating_series!(sys)
+    AEMS._set_mnsp_fixed_loads!(sys)
     PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
     return ic
 end
@@ -586,18 +704,25 @@ end
     @test !AEMS._has_mnsp_offers(ic)  # no offers and not an MNSP: the free-flow model
     @test isnothing(AEMS._check_mnsp_offers(ic))
 
-    PSY.get_ext(ic)["ic_type"] = "MNSP"
+    registration = AustralianElectricityMarkets.NEMInterconnectorRegistration(; kind = AustralianElectricityMarkets.InterconnectorKind.MNSP)
+    PSY.add_supplemental_attribute!(sys, ic, registration)
     @test !AEMS._has_mnsp_offers(ic)
     @test_throws r"is an MNSP with incomplete directional offer inputs" AEMS._check_mnsp_offers(ic)
+    PSY.remove_supplemental_attribute!(sys, ic, registration)
 
-    delete!(PSY.get_ext(ic), "ic_type")
     partial = _loss_test_system(;
         breakpoints = [-1000.0, 1000.0], mutate! = sys -> begin
             ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
             load = first(PSY.get_components(PSY.PowerLoad, sys))
             grid = collect(timestamp(PSY.get_data(PSY.get_time_series(PSY.SingleTimeSeries, load, "max_active_power"))))
-            PSY.add_time_series!(
-                sys, ic, PSY.SingleTimeSeries(; name = "mnsp_forward_max_avail", data = TimeArray(grid, fill(10.0, length(grid)))),
+            PSY.add_supplemental_attribute!(
+                sys, ic,
+                AustralianElectricityMarkets.NEMMNSPBid(;
+                    direction = AustralianElectricityMarkets.MNSPDirection.FORWARD,
+                    offer_curves = PSY.PiecewiseStepData([0.0, 10.0], [1.0]),
+                    max_avail = _add_key!(sys, ic, grid, AustralianElectricityMarkets.NEM_MNSP_SERIES.forward_max_avail, fill(10.0, length(grid))),
+                    ramp_up = 1.0,
+                ),
             )
         end
     )
@@ -793,7 +918,6 @@ include("mnsp_limits.jl")
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     steps = DateTime(2025, 1, 1, 0, 5):DISPATCH_INTERVAL:DateTime(2025, 1, 1, 0, 10)
     date_range = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
-    check_replay_inputs(db, date_range)
     sys = nem_system(db, NEMDEConfiguration(); date_range)
     replay = run_replay(sys, steps; folder = mktempdir())
     table = read_interconnector_loss_gaps(replay.results, sys)

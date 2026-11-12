@@ -16,31 +16,26 @@ PSI.get_variable_upper_bound(::PSI.ActivePowerVariable, ::PSY.StaticInjection, :
 
 
 # The dispatch-limit series are stored as absolute system-base per-unit.
-PSI.get_multiplier_value(::RampUpRateTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
+PSI.get_multiplier_value(::RampRateTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
 
-PSI.get_multiplier_value(::RampDownRateTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
+PSI.get_multiplier_value(::InitialPowerTimeSeriesParameter, d::PSY.StaticInjection, ::AbstractNEMDispatch) = 1 / PSY.get_system_base_power(d)
 
-PSI.get_multiplier_value(::InitialPowerTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
-
-PSI.get_multiplier_value(::EnergyMaxAvailTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
-
-PSI.get_multiplier_value(::EnergyUIGFTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
-
-PSI.get_multiplier_value(::PSI.AbstractPiecewiseLinearBreakpointParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
+PSI.get_multiplier_value(::EnergyLimitTimeSeriesParameter, d::PSY.StaticInjection, ::AbstractNEMDispatch) = 1 / PSY.get_system_base_power(d)
 
 
 PSI.objective_function_multiplier(::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = PSI.OBJECTIVE_FUNCTION_POSITIVE
-
-PSI.variable_cost(cost::PSY.OperationalCost, ::PSI.ActivePowerVariable, ::PSY.StaticInjection, ::AbstractNEMDispatch) = PSY.get_variable(cost)
 
 #! format: on
 
 """
     PSI.get_default_time_series_names(::Type{<:PSY.StaticInjection}, ::Type{<:AbstractNEMDispatch})
 
-Registers the time series [`AbstractNEMDispatch`](@ref) reads as parameters. Both modes register
-`"initial_mw"`: `PowerSimulations.jl` copies the parent model's names onto the
-initial-conditions sub-model, which runs [`NEMReplayDispatch`](@ref) and reads it.
+Registers the time series [`AbstractNEMDispatch`](@ref) reads as parameters. The derived series are
+read through the device's [`NEMDispatchInputs`](@ref). [`RampRateTimeSeriesParameter`](@ref) is registered once:
+its two directions are added with their own series names. [`EnergyLimitTimeSeriesParameter`](@ref) is added once
+per meta, each with its own series name, so its entry names the MAXAVAIL series only as a default. The
+initial-power and fixed-loading parameters are added explicitly from the build's first-solve seed series, so
+they take no entry here.
 
 # Returns
 A `Dict` mapping each `PowerSimulations.TimeSeriesParameter` type to its series name.
@@ -50,12 +45,8 @@ function PSI.get_default_time_series_names(
         ::Type{<:AbstractNEMDispatch},
     )
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
-        RampUpRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
-        RampDownRateTimeSeriesParameter => NEM_SERIES.ramp_down_rate,
-        InitialPowerTimeSeriesParameter => NEM_SERIES.initial_mw,
-        EnergyMaxAvailTimeSeriesParameter => energy_max_avail_series_name(OfferSide.GEN),
-        EnergyUIGFTimeSeriesParameter => NEM_SERIES.uigf,
-        _FIXED_LOAD_SERIES...,
+        RampRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
+        EnergyLimitTimeSeriesParameter => _max_avail_series_name(OfferSide.GEN),
     )
 end
 
@@ -79,8 +70,11 @@ end
 """
     _has_nem_dispatch_limits(device)
 
-Whether `device` carries every time series [`NEMReplayDispatch`](@ref) reads as a parameter, including raw
-directional availability for storage and UIGF only for semi-scheduled units.
+Whether `device` carries every derived input [`NEMReplayDispatch`](@ref) reads as a parameter, as a
+[`NEMDispatchInputs`](@ref) attribute, and the observed state and telemetry series it reads through.
+The observed state's keyed series and the UIGF's series must exist. The ramp series must be the names
+the parameters register; the energy availability keys name their own series, which the device's bid
+or zero series determines, so they are checked by key.
 
 # Arguments
 - `device`: the `PowerSystems.Component` to inspect.
@@ -90,16 +84,133 @@ directional availability for storage and UIGF only for semi-scheduled units.
 """
 function _has_nem_dispatch_limits(device)
     if !(device isa PSY.Storage)
-        has_schedule_classification(device) || return false
+        has_registration(device) || return false
     end
+    observed = _unit_observed(device)
+    telemetry = _unit_telemetry(device)
+    (isnothing(observed) || isnothing(telemetry)) && return false
+    observed.initial_mw isa IS.StaticTimeSeriesKey || return false
+    PSY.has_time_series(
+        device,
+        PSY.SingleTimeSeries,
+        PSY.get_name(observed.initial_mw),
+    ) || return false
+    attributes = PSY.get_supplemental_attributes(NEMDispatchInputs, device)::Vector{NEMDispatchInputs}
+    length(attributes) == 1 || return false
+    inputs = only(attributes)
     names = PSI.get_default_time_series_names(typeof(device), NEMReplayDispatch)
-    required = (
-        name for (param, name) in names
-            if !in(param, first.(_FIXED_LOAD_SERIES)) && (param !== EnergyUIGFTimeSeriesParameter || is_semi_scheduled(device))
+    for (param, direction, field) in _DERIVED_INPUT_FIELDS
+        haskey(names, param) || continue
+        key = getfield(inputs, field)
+        key isa IS.StaticTimeSeriesKey || return false
+        expected = _expected_series_name(device, names, param, direction)
+        _require_key_name(device, key, expected)
+        PSY.has_time_series(device, PSY.SingleTimeSeries, expected) || return false
+    end
+    uigf_required = haskey(names, EnergyLimitTimeSeriesParameter) && is_semi_scheduled(device)
+    if uigf_required
+        telemetry.uigf isa IS.StaticTimeSeriesKey || return false
+        _require_key_name(device, telemetry.uigf, NEM_TELEMETRY_SERIES.uigf)
+    end
+    return true
+end
+
+
+# The energy availability parameters; PowerSimulations.jl reads each from one series name per device type.
+const _AVAILABILITY_PARAMETERS = (
+    EnergyLimitTimeSeriesParameter, PSI.ActivePowerOutTimeSeriesParameter, PSI.ActivePowerInTimeSeriesParameter,
+)
+
+# The `MAXAVAIL` series name `param` reads on `device`: its energy bid side's, per direction for a battery.
+function _availability_series_name(device, param)
+    side = if device isa PSY.Storage
+        param === PSI.ActivePowerInTimeSeriesParameter ? OfferSide.LOAD : OfferSide.GEN
+    else
+        only(energy_offer_sides(device))
+    end
+    return _max_avail_series_name(side)
+end
+
+
+# The parameter type, ramp direction (`nothing` outside the ramp rates) and [`NEMDispatchInputs`](@ref)
+# field holding its series key.
+const _DERIVED_INPUT_FIELDS = (
+    (RampRateTimeSeriesParameter, RampUp(), :ramp_up),
+    (RampRateTimeSeriesParameter, RampDown(), :ramp_down),
+    (EnergyLimitTimeSeriesParameter, nothing, :energy_availability),
+    (PSI.ActivePowerOutTimeSeriesParameter, nothing, :energy_availability),
+    (PSI.ActivePowerInTimeSeriesParameter, nothing, :energy_availability_decremental),
+)
+
+# The series name `param` reads on `device`, for the ramp `direction` of a ramp rate.
+function _expected_series_name(device, names, param, direction::Union{RampUp, RampDown})
+    return _ramp_series_name(direction)
+end
+
+function _expected_series_name(device, names, param, ::Nothing)
+    return param in _AVAILABILITY_PARAMETERS ? _availability_series_name(device, param) : names[param]
+end
+
+# Adds one ramp-rate parameter of `direction`, read from the series the devices' dispatch inputs name.
+function _add_ramp_rate_parameter!(container, devices, model, direction::Union{RampUp, RampDown})
+    PSI.add_parameters!(
+        container, RampRateTimeSeriesParameter, devices, model;
+        meta = _ramp_meta(direction),
+        time_series_name = _inputs_series_name(first(devices), _ramp_input_field(direction)),
     )
-    return all(
-        PSY.has_time_series(device, PSY.SingleTimeSeries, name) for name in required
+    return
+end
+
+# Adds both ramp-rate parameters when the model registers them.
+function _add_ramp_rate_parameters!(container, devices, model)
+    haskey(PSI.get_time_series_names(model), RampRateTimeSeriesParameter) || return
+    _add_ramp_rate_parameter!(container, devices, model, RampUp())
+    _add_ramp_rate_parameter!(container, devices, model, RampDown())
+    return
+end
+
+
+"""
+    _dispatch_inputs_attribute(device) -> NEMDispatchInputs
+
+`device`'s [`NEMDispatchInputs`](@ref), attached by [`set_effective_offers!`](@ref). Throws an
+`ArgumentError` naming `device` when it carries none.
+
+# Arguments
+- `device`: the NEM dispatch device.
+
+# Returns
+A [`NEMDispatchInputs`](@ref).
+"""
+function _dispatch_inputs_attribute(device)
+    attributes = PSY.get_supplemental_attributes(NEMDispatchInputs, device)::Vector{NEMDispatchInputs}
+    isempty(attributes) && throw(
+        ArgumentError(
+            "\"$(PSY.get_name(device))\" carries no NEMDispatchInputs; call set_effective_offers! on the System.",
+        ),
     )
+    return only(attributes)
+end
+
+
+# The name of the derived series behind `field` of `device`'s inputs. Throws an `ArgumentError` naming
+# `device` when the input is absent.
+function _inputs_series_name(device, field::Symbol)
+    key = getfield(_dispatch_inputs_attribute(device), field)
+    isnothing(key) && throw(
+        ArgumentError("\"$(PSY.get_name(device))\" has no derived $(field) series; call set_effective_offers! on the System."),
+    )
+    return PSY.get_name(key)
+end
+
+
+# Throws an `ArgumentError` naming `device` unless the series behind `key` is named `expected`.
+function _require_key_name(device, key::IS.TimeSeriesKey, expected::AbstractString)
+    name = PSY.get_name(key)
+    name == expected || throw(
+        ArgumentError("\"$(PSY.get_name(device))\": its unit data holds the series \"$name\", expected \"$expected\""),
+    )
+    return
 end
 
 
@@ -120,19 +231,11 @@ function PSI.get_initial_conditions_device_model(
 end
 
 
-# Generators bid an incremental curve; a scheduled load bids only a decremental one.
-_process_market_bid_parameters!(container, devices, model) =
-    PSI.process_market_bid_parameters!(container, devices, model)
-
-_process_market_bid_parameters!(container, devices::IS.FlattenIteratorWrapper{<:PSY.ControllableLoad}, model) =
-    PSI.process_market_bid_parameters!(container, devices, model, false, true)
-
-
 """
     PSI.construct_device!(container, sys, ::PSI.ArgumentConstructStage, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
 
 Argument stage for [`AbstractNEMDispatch`](@ref): the active power variable, the separate energy
-limit and ramp parameters, the per-band bid variables, and the device's contribution to the
+limit and ramp parameters, the offer-total violation variables, and the device's contribution to the
 active power balance.
 
 # Returns
@@ -158,29 +261,30 @@ function PSI.construct_device!(
             JuMP.fix(PSI.get_variable(container, PSI.ActivePowerVariable(), T)[PSY.get_name(d), t], 0.0; force = true)
         end
     end
-    PSI.add_variables!(container, EnergyMaxAvailSlack, devices, D())
+    _add_device_unit_slacks!(container, EnergyLimitMaxAvailVariant(), devices)
     semi = _semi_scheduled_devices(devices)
-    isempty(semi) || PSI.add_variables!(container, EnergyUIGFSlack, semi, D())
+    _add_device_unit_slacks!(container, EnergyLimitUIGFVariant(), semi)
 
-    for param in (
-            RampUpRateTimeSeriesParameter,
-            RampDownRateTimeSeriesParameter,
-            InitialPowerTimeSeriesParameter,
-            EnergyMaxAvailTimeSeriesParameter,
-        )
-        haskey(PSI.get_time_series_names(model), param) || continue
-        PSI.add_parameters!(container, param, devices, model)
-    end
-    any(is_semi_scheduled, devices) &&
-        PSI.add_parameters!(container, EnergyUIGFTimeSeriesParameter, devices, model)
+    _add_ramp_rate_parameters!(container, devices, model)
+    haskey(PSI.get_time_series_names(model), EnergyLimitTimeSeriesParameter) && PSI.add_parameters!(
+        container, EnergyLimitTimeSeriesParameter, devices, model;
+        meta = _energy_limit_parameter_meta(EnergyLimitMaxAvailVariant()),
+        time_series_name = _inputs_series_name(first(devices), :energy_availability),
+    )
+    PSI.add_parameters!(
+        container, InitialPowerTimeSeriesParameter, devices, model;
+        time_series_name = _INITIAL_MW_SEED_SERIES,
+    )
+    any(is_semi_scheduled, devices) && PSI.add_parameters!(
+        container, EnergyLimitTimeSeriesParameter, devices, model;
+        meta = _energy_limit_parameter_meta(EnergyLimitUIGFVariant()),
+        time_series_name = NEM_TELEMETRY_SERIES.uigf,
+    )
     _add_fixed_load_arguments!(container, devices, model)
 
-    _process_market_bid_parameters!(container, devices, model)
-    for S in _ENERGY_OFFER_SLACK_TYPES
-        PSI.add_variables!(container, S, devices, D())
+    for variant in _ENERGY_OFFER_SLACK_VARIANTS
+        _add_energy_offer_slack_variables!(container, variant, devices)
     end
-    PSI.add_cost_expressions!(container, devices, model)
-
     PSI.add_to_expression!(
         container,
         PSI.ActivePowerBalance,
@@ -199,7 +303,7 @@ end
     PSI.construct_device!(container, sys, ::PSI.ModelConstructStage, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
 
 Model stage for [`AbstractNEMDispatch`](@ref): the elastic energy availability constraints, the ramp
-constraint and the market-bid objective.
+constraint and the energy offer bands and their objective.
 
 # Returns
 `nothing`.
@@ -213,9 +317,9 @@ function PSI.construct_device!(
     ) where {T <: PSY.StaticInjection, D <: AbstractNEMDispatch}
     devices = PSI.get_available_components(model, sys)
 
-    PSI.add_constraints!(container, EnergyMaxAvailConstraint, PSI.ActivePowerVariable, devices, model, network_model)
-    PSI.add_constraints!(container, EnergyUIGFConstraint, PSI.ActivePowerVariable, _semi_scheduled_devices(devices), model, network_model)
-    PSI.add_constraints!(container, EnergyFixedLoadConstraint, devices, model, network_model)
+    _add_energy_limit_rows!(container, EnergyLimitMaxAvailVariant(), PSI.ActivePowerVariable, devices, model, network_model)
+    _add_energy_limit_rows!(container, EnergyLimitUIGFVariant(), PSI.ActivePowerVariable, _semi_scheduled_devices(devices), model, network_model)
+    PSI.add_constraints!(container, NEMUnitConstraint, devices, model, network_model)
 
     PSI.add_constraints!(container, PSI.RampConstraint, PSI.ActivePowerVariable, devices, model, network_model)
 
@@ -261,7 +365,7 @@ end
 Holds each device's dispatch `net_at(name, t)` within its per-interval ramp rates of its base.
 Rates are read from the `"ramp_up_rate"` and `"ramp_down_rate"` parameters in system-base per-unit
 per minute and multiplied by the interval length in minutes. Each `PSI.RampConstraint` row carries a
-[`UnitRampUpSlack`](@ref) or [`UnitRampDownSlack`](@ref) priced at [`UNIT_RAMP_CVP_FACTOR`](@ref)
+[`NEMUnitSlack`](@ref) of the `unit_ramp|up` or `unit_ramp|down` variant, priced at [`UNIT_RAMP_CVP_FACTOR`](@ref)
 times the Market Price Cap, so conflicts with the availability limits are resolved through the
 competing violation costs.
 
@@ -283,8 +387,8 @@ function _add_nem_ramp_constraints!(container::PSI.OptimizationContainer, ::Type
     names = [PSY.get_name(d) for d in devices]
     isempty(names) && return
 
-    up_rate, up_covered = _ts_parameter_accessor(container, RampUpRateTimeSeriesParameter, T)
-    down_rate, down_covered = _ts_parameter_accessor(container, RampDownRateTimeSeriesParameter, T)
+    up_rate, up_covered = _ts_parameter_accessor(container, RampRateTimeSeriesParameter, T, _ramp_meta(RampUp()))
+    down_rate, down_covered = _ts_parameter_accessor(container, RampRateTimeSeriesParameter, T, _ramp_meta(RampDown()))
     _require_coverage(
         names, "no ramp rate time series", _SETTER_REMEDY, up_covered, down_covered,
     )
@@ -296,8 +400,8 @@ function _add_nem_ramp_constraints!(container::PSI.OptimizationContainer, ::Type
         container, PSI.RampConstraint(), T, names, time_steps; meta = "dn",
     )
 
-    slack_up = _add_cvp_slack!(container, UnitRampUpSlack, T, names, time_steps, UNIT_RAMP_CVP_FACTOR)
-    slack_dn = _add_cvp_slack!(container, UnitRampDownSlack, T, names, time_steps, UNIT_RAMP_CVP_FACTOR)
+    slack_up = _add_ramp_slack!(container, UnitRampUpVariant(), T, names, time_steps)
+    slack_dn = _add_ramp_slack!(container, UnitRampDownVariant(), T, names, time_steps)
 
     base_at = base_accessor(names)
     for name in names, t in time_steps
@@ -310,9 +414,18 @@ function _add_nem_ramp_constraints!(container::PSI.OptimizationContainer, ::Type
 end
 
 
+# The elastic slack of a ramp row, built and priced at its variant's CVP factor.
+function _add_ramp_slack!(container::PSI.OptimizationContainer, variant::_UnitRampVariant, ::Type{T}, names, time_steps) where {T}
+    return _add_cvp_slack!(
+        container, NEMUnitSlack, T, names, time_steps, _nem_unit_slack_cvp(variant);
+        meta = _nem_unit_slack_meta(variant), label = _nem_unit_slack_label(variant),
+    )
+end
+
+
 # Parameter arrays are keyed by time-series UUID, not device name.
-function _ts_parameter_accessor(container, ::Type{P}, ::Type{T}) where {P <: PSI.TimeSeriesParameter, T}
-    param_container = PSI.get_parameter(container, P(), T)
+function _ts_parameter_accessor(container, ::Type{P}, ::Type{T}, meta::String = "") where {P <: PSI.TimeSeriesParameter, T}
+    param_container = PSI.get_parameter(container, P(), T, meta)
     multiplier = PSI.get_multiplier_array(param_container)
     covered = Set(PSI.get_component_names(PSI.get_attributes(param_container)))
     function accessor(name, t)
@@ -325,12 +438,12 @@ end
 function _ramp_base_accessor(container, ::Type{NEMReplayDispatch}, ::Type{T}, names, _) where {T}
     PSI.has_container_key(container, InitialPowerTimeSeriesParameter, T) || throw(
         ArgumentError(
-            "NEMReplayDispatch: the device model registers no \"initial_mw\" parameter, so the " *
+            "NEMReplayDispatch: the device model registers no initial-power parameter, so the " *
                 "ramp has no base to measure against",
         ),
     )
     initial, covered = _ts_parameter_accessor(container, InitialPowerTimeSeriesParameter, T)
-    _require_coverage(names, "no \"initial_mw\" time series", _SETTER_REMEDY, covered)
+    _require_coverage(names, "no initial-power time series", _SETTER_REMEDY, covered)
     return initial
 end
 
@@ -350,8 +463,8 @@ end
 """
     PSI.objective_function!(container, devices, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_formulation)
 
-Prices an [`AbstractNEMDispatch`](@ref) device's dispatch through `PowerSimulations.jl`'s
-market-bid path, so the objective is the device's own submitted bid stack.
+Prices an [`AbstractNEMDispatch`](@ref) device's dispatch on its own submitted energy offer
+bands (`_add_energy_offer_bands!`), so the objective is the device's own bid stack.
 
 # Returns
 `nothing`.
@@ -359,15 +472,16 @@ market-bid path, so the objective is the device's own submitted bid stack.
 function PSI.objective_function!(
         container::PSI.OptimizationContainer,
         devices::IS.FlattenIteratorWrapper{T},
-        ::PSI.DeviceModel{T, D},
+        model::PSI.DeviceModel{T, D},
         ::Type{<:PM.AbstractPowerModel},
     ) where {T <: PSY.StaticInjection, D <: AbstractNEMDispatch}
-    PSI.add_variable_cost!(container, PSI.ActivePowerVariable(), devices, D())
-    PSI.add_proportional_cost!(container, EnergyMaxAvailSlack(), devices, D())
-    PSI.add_proportional_cost!(container, EnergyUIGFSlack(), _semi_scheduled_devices(devices), D())
+    _check_energy_offer_sides(devices)
+    foreach(side -> _add_energy_offer_bands!(container, devices, model, side), _energy_offer_sides(T))
+    _add_device_unit_slack_costs!(container, EnergyLimitMaxAvailVariant(), devices)
+    _add_device_unit_slack_costs!(container, EnergyLimitUIGFVariant(), _semi_scheduled_devices(devices))
     _add_fixed_load_costs!(container, devices, T)
-    for S in _ENERGY_OFFER_SLACK_TYPES
-        PSI.add_proportional_cost!(container, S(), devices, D())
+    for variant in _ENERGY_OFFER_SLACK_VARIANTS
+        _add_energy_offer_slack_costs!(container, variant, devices)
     end
     return
 end
@@ -400,7 +514,7 @@ end
     set_nem_dispatch_models!(template, sys; tie_breaks = true)
 
 Sets [`NEMReplayDispatch`](@ref) as the device model for every dispatch participant in `sys`, and, when
-`sys` carries the [`EnergyTieBreak`](@ref) of [`AustralianElectricityMarkets.set_tie_break_scales!`](@ref), its
+`sys` carries the [`EnergyTieBreak`](@ref) of [`set_effective_offers!`](@ref), its
 [`TieBreakMarket`](@ref) service model, which dispatches price-tied energy bands pro rata. Without it
 ties resolve to an arbitrary solver vertex.
 

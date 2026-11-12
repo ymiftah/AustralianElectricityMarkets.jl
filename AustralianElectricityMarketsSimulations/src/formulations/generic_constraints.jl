@@ -2,8 +2,20 @@
 
 PSI.get_default_time_series_names(::Type{GenericConstraint}, ::Type{LinearFactorLimit}) =
     Dict{Type{<:PSI.TimeSeriesParameter}, String}(
-    NEMConstraintRHSParameter => "rhs", GenericConstraintSlackCostParameter => "invoked",
+    NEMConstraintRHSParameter => NEM_CONSTRAINT_SERIES.rhs,
+    GenericConstraintSlackCostParameter => NEM_CONSTRAINT_SERIES.invoked,
 )
+
+
+# The series key `field` of `gc`, which must be keyed and named `expected`.
+function _constraint_key(gc::GenericConstraint, field::Symbol, expected::AbstractString)
+    key = getproperty(gc, field)
+    key isa IS.StaticTimeSeriesKey || throw(
+        ArgumentError("GenericConstraint \"$(PSY.get_name(gc))\" has a static $field; the NEM constraint formulation reads it from a series."),
+    )
+    _require_key_name(gc, key, expected)
+    return key
+end
 
 
 PSI.get_default_attributes(::Type{GenericConstraint}, ::Type{LinearFactorLimit}) =
@@ -344,13 +356,13 @@ function _add_gc_slack_variables!(
 end
 
 
-# --- add_constraints!: sense dispatch, honouring the "invoked" series ---
+# --- add_constraints!: sense dispatch, honouring the invoked series ---
 
 """
     _invoked_mask(container, gc) -> Vector{Float64}
 
-The `GenericConstraint`'s `"invoked"` series (`1.0`/`0.0`) over `container`'s time steps from its
-initial time.
+The `GenericConstraint`'s invoked series (`1.0`/`0.0`), read through its `invoked` key, over `container`'s
+time steps from its initial time.
 
 # Arguments
 - `container`: the optimization container being built.
@@ -361,12 +373,12 @@ A `Vector{Float64}`.
 """
 function _invoked_mask(container::PSI.OptimizationContainer, gc::GenericConstraint)
     start_time = PSI.get_initial_time(container)
-    ts_type = PSI.get_default_time_series_type(container)
-    forecast = IS.get_time_series(ts_type, gc, "invoked"; start_time = start_time, count = 1)
-    return IS.get_time_series_values(
-        gc, forecast; start_time = start_time, len = length(PSI.get_time_steps(container)),
+    key = _constraint_key(gc, :invoked, NEM_CONSTRAINT_SERIES.invoked)
+    mask::Vector{Float64} = IS.get_time_series_values(
+        gc, key; start_time = start_time, len = length(PSI.get_time_steps(container)),
         ignore_scaling_factors = true,
     )
+    return mask
 end
 
 
@@ -386,6 +398,8 @@ function PSI.add_constraints!(
     rhs_param = PSI.get_parameter(container, NEMConstraintRHSParameter(), GenericConstraint, name)
     rhs_refs = PSI.get_parameter_column_refs(rhs_param, name)
     rhs_mult = PSI.get_multiplier_array(rhs_param)
+    _constraint_key(gc, :rhs, NEM_CONSTRAINT_SERIES.rhs)
+    base_power = PSI.get_base_power(container)
     jm = PSI.get_jump_model(container)
     sense = get_sense(gc)
     slacks = PSI.get_use_slacks(model)
@@ -404,11 +418,11 @@ function PSI.add_constraints!(
             continue
         end
         con[name, t] = if sense == ConstraintSense.LE
-            JuMP.@constraint(jm, expr[name, t] <= rhs_refs[t] * rhs_mult[name, t])
+            JuMP.@constraint(jm, expr[name, t] <= rhs_refs[t] * rhs_mult[name, t] / base_power)
         elseif sense == ConstraintSense.GE
-            JuMP.@constraint(jm, expr[name, t] >= rhs_refs[t] * rhs_mult[name, t])
+            JuMP.@constraint(jm, expr[name, t] >= rhs_refs[t] * rhs_mult[name, t] / base_power)
         else
-            JuMP.@constraint(jm, expr[name, t] == rhs_refs[t] * rhs_mult[name, t])
+            JuMP.@constraint(jm, expr[name, t] == rhs_refs[t] * rhs_mult[name, t] / base_power)
         end
     end
     return
@@ -482,7 +496,7 @@ end
 
 Prices `gc`'s elastic slacks (built by [`_add_gc_slack_variables!`](@ref), a no-op unless
 `PSI.get_use_slacks(model)`) through a [`GenericConstraintSlackCostParameter`](@ref): each
-interval's cost target is its `"invoked"` value times the system base power, times
+interval's cost target is its invoked value times the system base power, times
 [`constraint_cvp_factor`](@ref) per interval, times the Market Price Cap of the service model at the
 build's initial time. A non-invoked interval's slack is free and its row is vacuous.
 `GenericConstraint`s built without slacks carry no cost of their own.

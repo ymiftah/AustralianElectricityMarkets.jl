@@ -68,7 +68,7 @@ function _set_demand!(sys, rows, date_range; resolution = Minute(5))
     end
     grid = DateTime(first(date_range)):resolution:(DateTime(last(date_range)) - resolution)
     present = Set(zip(demand.SETTLEMENTDATE, demand.name))
-    required_names = union(
+    required_names::Set{String} = union(
         Set(get_name(load) for load in get_components(get_available, PowerLoad, sys)),
         Set(get_name(area) * " Load" for area in get_components(Area, sys)),
     )

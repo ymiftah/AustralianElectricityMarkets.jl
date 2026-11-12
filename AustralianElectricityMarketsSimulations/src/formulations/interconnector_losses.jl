@@ -7,23 +7,61 @@ function PSI.convert_result_to_natural_units(::Type{InterconnectorLossSegmentVar
 end
 
 
-# PSI's flow-limit series names for `AreaInterchange`, plus the loss-factor demand coefficient.
+# PSI's flow-limit series names for `AreaInterchange`, plus the loss-factor demand coefficient. The MNSP
+# offer, availability and operating parameters are added with their series names, one type per family.
 function PSI.get_default_time_series_names(::Type{PSY.AreaInterchange}, ::Type{NEMInterconnectorLoss})
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
-        PSI.FromToFlowLimitParameter => NEM_SERIES.from_to_flow_limit,
-        PSI.ToFromFlowLimitParameter => NEM_SERIES.to_from_flow_limit,
+        PSI.FromToFlowLimitParameter => NEM_INTERCONNECTOR_SERIES.from_to_limit,
+        PSI.ToFromFlowLimitParameter => NEM_INTERCONNECTOR_SERIES.to_from_limit,
         LossDemandCoefficientParameter => NEM_SERIES.loss_demand_coefficient,
-        MNSPForwardBandWidthParameter => mnsp_series_name("forward", "offer"),
-        MNSPReverseBandWidthParameter => mnsp_series_name("reverse", "offer"),
-        MNSPForwardMaxAvailParameter => mnsp_series_name("forward", "max_avail"),
-        MNSPReverseMaxAvailParameter => mnsp_series_name("reverse", "max_avail"),
-        _MNSP_OPERATING_SERIES...,
     )
 end
 
 
 function PSI.get_multiplier_value(::LossDemandCoefficientParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss)
     return 1.0
+end
+
+# The from-to parameter holds the negated lower bound in MW, so its multiplier is -1; the constraints divide by the system base power.
+function PSI.get_multiplier_value(::PSI.FromToFlowLimitParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss)
+    return -1.0
+end
+
+function PSI.get_multiplier_value(::PSI.ToFromFlowLimitParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss)
+    return 1.0
+end
+
+
+"""
+    _interconnector_limits(device) -> Union{NEMInterconnectorLimits, Nothing}
+
+The single [`NEMInterconnectorLimits`](@ref) of `device`, or `nothing` when it carries none. Throws
+`ArgumentError` when it carries more than one.
+"""
+function _interconnector_limits(device::PSY.AreaInterchange)
+    limits = PSY.get_supplemental_attributes(NEMInterconnectorLimits, device)::Vector{NEMInterconnectorLimits}
+    isempty(limits) && return nothing
+    length(limits) == 1 || throw(
+        ArgumentError("AreaInterchange \"$(PSY.get_name(device))\" carries $(length(limits)) NEMInterconnectorLimits; it requires one."),
+    )
+    return only(limits)
+end
+
+
+"""
+    _flow_limit_keys(device) -> NamedTuple
+
+The `(from_to, to_from)` series keys of `device`'s [`NEMInterconnectorLimits`](@ref). Throws
+`ArgumentError` naming `device` unless both are keys named by [`NEM_INTERCONNECTOR_SERIES`](@ref).
+"""
+function _flow_limit_keys(device::PSY.AreaInterchange)
+    limits = _interconnector_limits(device)
+    name = PSY.get_name(device)
+    (!isnothing(limits) && limits.from_to_limit isa IS.StaticTimeSeriesKey && limits.to_from_limit isa IS.StaticTimeSeriesKey) ||
+        throw(ArgumentError("AreaInterchange \"$name\" has no time-series flow limits in both directions; it requires both keys in its NEMInterconnectorLimits."))
+    _require_key_name(device, limits.from_to_limit, NEM_INTERCONNECTOR_SERIES.from_to_limit)
+    _require_key_name(device, limits.to_from_limit, NEM_INTERCONNECTOR_SERIES.to_from_limit)
+    return (from_to = limits.from_to_limit, to_from = limits.to_from_limit)
 end
 
 # --- attached `InterconnectorLossModel` + per-interconnector validation ---
@@ -52,7 +90,7 @@ The single [`InterconnectorLossModel`](@ref) attached to `device` (an `AreaInter
 zero or more than one.
 """
 function _loss_model(device::PSY.AreaInterchange)
-    models = PSY.get_supplemental_attributes(InterconnectorLossModel, device)
+    models = PSY.get_supplemental_attributes(InterconnectorLossModel, device)::Vector{InterconnectorLossModel}
     length(models) == 1 || throw(_missing_loss_model_error(PSY.get_name(device), length(models)))
     return only(models)
 end
@@ -149,7 +187,7 @@ The smallest and largest zero-referenced vertex loss of `model` over every value
 `"loss_demand_coefficient"` series, widened to include `0.0`, per-unit of the system base.
 """
 function _loss_range(device::PSY.AreaInterchange, model::InterconnectorLossModel)
-    coefficients = PSY.get_time_series_values(PSY.SingleTimeSeries, device, NEM_SERIES.loss_demand_coefficient)
+    coefficients::Vector{Float64} = PSY.get_time_series_values(PSY.SingleTimeSeries, device, NEM_SERIES.loss_demand_coefficient)
     at_zero = loss_curve_vertex_values(model, Dict{String, Float64}())
     vertex = [v + k * bp for k in coefficients for (v, bp) in zip(at_zero, model.breakpoints)]
     return min(0.0, minimum(vertex)), max(0.0, maximum(vertex))
@@ -262,21 +300,21 @@ function _add_loss_constraints!(
     if ordered
         full_var = PSI.get_variable(container, InterconnectorLossSegmentFullVariable(), PSY.AreaInterchange)
         order_ub = PSI.add_constraints_container!(
-            container, InterconnectorLossSegmentOrderConstraint(), PSY.AreaInterchange,
-            device_names, order_labels, time_steps; meta = "ub",
+            container, InterconnectorLossConstraint(), PSY.AreaInterchange,
+            device_names, order_labels, time_steps; meta = "segment_order|ub",
         )
         order_lb = PSI.add_constraints_container!(
-            container, InterconnectorLossSegmentOrderConstraint(), PSY.AreaInterchange,
-            device_names, order_labels, time_steps; meta = "lb",
+            container, InterconnectorLossConstraint(), PSY.AreaInterchange,
+            device_names, order_labels, time_steps; meta = "segment_order|lb",
         )
     end
     flow_seg_con = PSI.add_constraints_container!(
-        container, InterconnectorFlowSegmentConstraint(), PSY.AreaInterchange,
-        device_names, time_steps,
+        container, InterconnectorLossConstraint(), PSY.AreaInterchange,
+        device_names, time_steps; meta = "flow_segment",
     )
     loss_def_con = PSI.add_constraints_container!(
-        container, InterconnectorLossDefinitionConstraint(), PSY.AreaInterchange,
-        device_names, time_steps,
+        container, InterconnectorLossConstraint(), PSY.AreaInterchange,
+        device_names, time_steps; meta = "loss_definition",
     )
     flow_var = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
     jm = PSI.get_jump_model(container)
@@ -331,8 +369,7 @@ end
 
 Bounds `PSI.FlowActivePowerVariable` by the static `flow_limits`, or by the from-to and to-from
 flow-limit parameters when every device carries those time series. Each row carries an
-[`InterconnectorFlowSurplusSlack`](@ref) (upper) or [`InterconnectorFlowDeficitSlack`](@ref)
-(lower) priced at [`INTERCONNECTOR_FLOW_CVP_FACTOR`](@ref) times the Market Price Cap, always,
+[`InterconnectorFlowSlack`](@ref) with meta `"surplus"` (upper) or `"deficit"` (lower) priced at [`INTERCONNECTOR_FLOW_CVP_FACTOR`](@ref) times the Market Price Cap, always,
 whatever the device model's `use_slacks`, as NEMDE's limit is always soft, so
 limits that conflict with each other or with the loss breakpoint range are violated at that price
 instead of making the model infeasible. The breakpoint range itself stays a hard bound. Because
@@ -360,12 +397,14 @@ function _add_flow_limit_constraint!(
     var_array = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
     jm = PSI.get_jump_model(container)
     surplus = _add_cvp_slack!(
-        container, InterconnectorFlowSurplusSlack, PSY.AreaInterchange, device_names, time_steps,
-        INTERCONNECTOR_FLOW_CVP_FACTOR,
+        container, InterconnectorFlowSlack, PSY.AreaInterchange, device_names, time_steps,
+        INTERCONNECTOR_FLOW_CVP_FACTOR;
+        meta = _interconnector_flow_meta(InterconnectorFlowSurplus()), label = "InterconnectorFlowSurplusSlack",
     )
     deficit = _add_cvp_slack!(
-        container, InterconnectorFlowDeficitSlack, PSY.AreaInterchange, device_names, time_steps,
-        INTERCONNECTOR_FLOW_CVP_FACTOR,
+        container, InterconnectorFlowSlack, PSY.AreaInterchange, device_names, time_steps,
+        INTERCONNECTOR_FLOW_CVP_FACTOR;
+        meta = _interconnector_flow_meta(InterconnectorFlowDeficit()), label = "InterconnectorFlowDeficitSlack",
     )
 
     if !all(_has_flow_limit_series.(devices))
@@ -379,6 +418,7 @@ function _add_flow_limit_constraint!(
             end
         end
     else
+        base_power = PSI.get_base_power(container)
         param_from_to = PSI.get_parameter(
             container, PSI.FromToFlowLimitParameter(), PSY.AreaInterchange,
         )
@@ -397,10 +437,10 @@ function _add_flow_limit_constraint!(
             refs_to_from = PSI.get_parameter_column_refs(param_to_from, name)
             for t in time_steps
                 con_lb[name, t] = JuMP.@constraint(
-                    jm, var_array[name, t] + deficit[name, t] >= mult_from_to[name, t] * refs_from_to[t]
+                    jm, var_array[name, t] + deficit[name, t] >= mult_from_to[name, t] * refs_from_to[t] / base_power
                 )
                 con_ub[name, t] = JuMP.@constraint(
-                    jm, var_array[name, t] - surplus[name, t] <= mult_to_from[name, t] * refs_to_from[t]
+                    jm, var_array[name, t] - surplus[name, t] <= mult_to_from[name, t] * refs_to_from[t] / base_power
                 )
             end
         end
@@ -443,16 +483,7 @@ function PSI.construct_device!(
         network_model,
     )
     if all(has_ts)
-        for device in devices
-            name = PSY.get_name(device)
-            if !all(series -> PSY.has_time_series(device, PSY.SingleTimeSeries, series), _FLOW_LIMIT_SERIES)
-                throw(
-                    ArgumentError(
-                        "AreaInterchange $name has less than two time series. It is required to add both from_to and to_from time series.",
-                    ),
-                )
-            end
-        end
+        foreach(_flow_limit_keys, devices)
         PSI.add_parameters!(container, PSI.FromToFlowLimitParameter, devices, device_model)
         PSI.add_parameters!(container, PSI.ToFromFlowLimitParameter, devices, device_model)
     end

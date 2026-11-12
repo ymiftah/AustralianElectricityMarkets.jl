@@ -47,14 +47,14 @@
 
         gc_null_ext = GenericConstraint(;
             name = "F_NULL_EXT", sense = ConstraintSense.LE, rhs = 1.0,
-            ext = Dict{String, Any}(
-                "limit_type" => missing, "source" => missing,
-                "effective_date" => missing, "version_no" => missing, "gencon_id" => missing,
-            ),
+            limit_type = missing, source = missing,
+            effective_date = nothing, version_no = nothing,
         )
         @test get_limit_type(gc_null_ext) === nothing
         @test get_source(gc_null_ext) === nothing
-        @test ismissing(gc_null_ext.ext["gencon_id"])
+        @test get_effective_date(gc_null_ext) === nothing
+        @test get_version_no(gc_null_ext) === nothing
+        @test get_gencon_id(gc_null_ext) == "F_NULL_EXT"
         @test get_description(gc) == ""
         @test isempty(get_ext(gc))
         set_description!(gc, "a hand-authored test constraint")
@@ -69,6 +69,11 @@
             rhs = 137.5,
             constraint_weight = 2.0,
             description = "test constraint",
+            gencon_id = "F_ROUNDTRIP",
+            limit_type = "FCAS",
+            source = "mock",
+            effective_date = DateTime(2025, 1, 2),
+            version_no = 3,
             terms = ConstraintTerm[
                 UnitTerm("BW01", BidType.RAISE6SEC, 1.0),
                 InterconnectorTerm("IC1", -1.0),
@@ -103,6 +108,12 @@
 
         @test all(r -> get_region(r) == "TAS1", get_fcas_requirements(gc2))
         @test Set(get_service.(get_fcas_requirements(gc2))) == Set([BidType.RAISE6SEC, BidType.RAISE5MIN])
+        @test get_gencon_id(gc2) == "F_ROUNDTRIP"
+        @test get_limit_type(gc2) == "FCAS"
+        @test get_source(gc2) == "mock"
+        @test get_effective_date(gc2) == DateTime(2025, 1, 2)
+        @test get_version_no(gc2) === 3
+        @test isempty(get_ext(gc2))
     end
 end
 
@@ -258,7 +269,7 @@ end
     start_date = DateTime(2025, 1, 1, 0, 0)
     date_range = start_date:Minute(5):(start_date + Hour(1))
 
-    sys = nem_system(db, RegionalNetworkConfiguration())
+    sys = first(nem_network(db))
     added, skipped = build_constraints!(sys, db, date_range)
 
     # Every GENCONID in mock_data.jl has exactly one invoked GENCONDATA/SPD* version, always
@@ -278,9 +289,6 @@ end
     one_phantom = get_component(GenericConstraint, sys, vname("N_ONE_PHANTOM_TERM"))
     @test length(get_terms(one_phantom)) == 4  # CP_BAYSW's four DUIDs; PHANTOM1 dropped
     @test all(t -> get_duid(t) != "PHANTOM1", get_terms(one_phantom))
-    @test only(get_ext(one_phantom)["dropped_terms"]) ==
-        Dict("kind" => "UNIT", "key" => "PHANTOM1", "bid_type" => "ENERGY", "factor" => 2.0)
-    @test isempty(get_ext(get_component(GenericConstraint, sys, vname("N_BAYSW_THERMAL")))["dropped_terms"])
     @test isempty(get_missing_constraint_intervals(sys))
     @test isempty(get_defaulted_constraint_weights(sys))
     dropped = get_dropped_terms(sys)
@@ -290,9 +298,9 @@ end
     # A term on a scheduled load resolves: loads are part of the System.
     pump_gc = get_component(GenericConstraint, sys, vname("N_PUMP_THERMAL"))
     @test only(get_terms(pump_gc)) == UnitTerm("PUMP1", BidType.ENERGY, -1.0)
-    @test isempty(get_ext(pump_gc)["dropped_terms"])
     # A load DUID names exactly one Device, also when it has a GENUNITS row (PUMP1).
     @test get_component(Device, sys, "PUMP1") isa InterruptiblePowerLoad
+    @test has_nem_unit_data(get_component(Device, sys, "PUMP1"))
 
     skipped_table = get_skipped_constraints(sys)
     @test Set(skipped_table.constraint) == Set(keys(skipped))
@@ -316,11 +324,11 @@ end
     @test vname("N_PARTIAL_COVERAGE") in added
     partial_gc = get_component(GenericConstraint, sys, vname("N_PARTIAL_COVERAGE"))
     base_power = get_base_power(sys)
-    partial_rhs = get_time_series_values(SingleTimeSeries, partial_gc, "rhs")
-    partial_invoked = get_time_series_values(SingleTimeSeries, partial_gc, "invoked")
+    partial_rhs = _constraint_series(partial_gc, :rhs)
+    partial_invoked = _constraint_series(partial_gc, :invoked)
     @test length(partial_rhs) == 12
     @test length(partial_rhs) == length(date_range) - 1  # grid spans date_range, not invocations
-    @test all(==(150.0 / base_power), partial_rhs)  # constant RHS - forward-fill is a no-op here
+    @test all(==(150.0), partial_rhs)  # constant RHS - forward-fill is a no-op here
     @test partial_invoked == [isodd(i) ? 0.0 : 1.0 for i in 0:11]
 
     gc = get_component(GenericConstraint, sys, vname("F_VIC1_RAISE6SEC"))
@@ -330,11 +338,14 @@ end
     @test length(get_fcas_requirements(gc)) == 1
     @test only(get_fcas_requirements(gc)) == FCASRequirement("VIC1", BidType.RAISE6SEC)
 
-    @testset "AEMO provenance: description is a field, the rest live in ext" begin
+    @testset "AEMO provenance fields are typed" begin
         @test get_description(gc) isa String
-        @test !haskey(get_ext(gc), "description")
-        @test get_limit_type(gc) !== nothing
-        @test get_source(gc) !== nothing
+        @test isempty(get_ext(gc))
+        @test get_gencon_id(gc) == "F_VIC1_RAISE6SEC"
+        @test get_limit_type(gc) == "FCAS"
+        @test get_source(gc) == "mock"
+        @test get_effective_date(gc) == DateTime(2025, 1, 1)
+        @test get_version_no(gc) == 1
     end
 
     network_gc = get_component(GenericConstraint, sys, vname("N_BAYSW_THERMAL"))
@@ -344,7 +355,7 @@ end
     nsw1_raise6sec = get_component(GenericConstraint, sys, vname("F_NSW1_RAISE6SEC"))
     @test any(t -> t isa InterconnectorTerm && get_interconnector(t) == "IC1", get_terms(nsw1_raise6sec))
 
-    rhs_values = get_time_series_values(SingleTimeSeries, gc, "rhs")
+    rhs_values = _constraint_series(gc, :rhs)
     @test issorted(rhs_values)  # RHS = 50.0 + 0.1*i, confirmed time-varying in Task 8
 
 
@@ -389,8 +400,8 @@ end
         @test Set(nsw1_names) == Set(expected_nsw1)
 
         # An FCAS term also reaches the region's loads that offer FCAS; an ENERGY term does not.
-        fcas_sys = nem_system(db, RegionalNetworkConfiguration())
-        set_fcas_bids!(fcas_sys, db, date_range)
+        fcas_sys = first(nem_network(db))
+        set_market_bids!(fcas_sys, db, date_range)
         fcas_names = resolve_term_devices(fcas_sys, RegionTerm("NSW1", BidType.RAISE6SEC, 1.0))
         generator_names = get_name.(AustralianElectricityMarkets._region_devices(fcas_sys, "NSW1"))
         @test Set(fcas_names) == Set(generator_names) ∪ Set(["ASLOAD1"])
@@ -450,7 +461,7 @@ end
         gap_sys = nem_system(gap_db, RegionalNetworkConfiguration())
         build_constraints!(gap_sys, gap_db, date_range)
         gap_gc = get_component(GenericConstraint, gap_sys, vname("N_BAYSW_THERMAL"))
-        rhs_len = length(get_time_series_values(SingleTimeSeries, gap_gc, "rhs"))
+        rhs_len = length(_constraint_series(gap_gc, :rhs))
         @test rhs_len == length(date_range) - 1
         @test rhs_len != length(unique(invoked_gap.SETTLEMENTDATE))
     end
@@ -489,7 +500,7 @@ end
         sys_default = nem_system(db, RegionalNetworkConfiguration())
         build_constraints!(sys_default, db, date_range)
         gc_default = get_component(GenericConstraint, sys_default, vname("N_BAYSW_THERMAL"))
-        rhs_ts_default = get_time_series(SingleTimeSeries, gc_default, "rhs")
+        rhs_ts_default = PowerSystems.IS.get_time_series(gc_default, gc_default.rhs)
         @test get_resolution(rhs_ts_default) == Minute(5)
 
 
@@ -597,14 +608,14 @@ end
             )
             gc = get_component(GenericConstraint, zero_sys, zname(id))
             @test get_sense(gc) == ConstraintSense.LE
-            @test gc.rhs == 0.0
+            @test all(==(0.0), _constraint_series(gc, :rhs))
             @test get_source(gc) == "built-in"
             @test get_limit_type(gc) == "Interconnector Zero"
             term = only(get_terms(gc))
             @test term isa InterconnectorTerm
             @test get_interconnector(term) == interconnector
             @test get_factor(term) == factor
-            rhs_z = get_time_series_values(SingleTimeSeries, gc, "rhs")
+            rhs_z = _constraint_series(gc, :rhs)
             @test all(==(0.0), rhs_z)
         end
 

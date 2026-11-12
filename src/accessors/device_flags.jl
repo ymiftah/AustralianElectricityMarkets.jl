@@ -1,8 +1,9 @@
 """
     is_non_scheduled_load(device) -> Bool
 
-Whether `device` is a non-scheduled load (`get_scheduled_loads_dataframe`): it has no
-energy bid, and takes part in the market only through FCAS offers.
+Whether `device` is a non-scheduled load: it has no energy bid, and takes part in the market only
+through FCAS offers. A NEM build records this on the load's [`NEMRegistration`](@ref);
+`ext["non_scheduled"]`, written by a stock build, is honoured as an override.
 
 # Arguments
 - `device`: any component.
@@ -10,46 +11,57 @@ energy bid, and takes part in the market only through FCAS offers.
 # Returns
 `Bool`.
 """
-is_non_scheduled_load(device) = device isa InterruptiblePowerLoad && get(get_ext(device), "non_scheduled", false) === true
+function is_non_scheduled_load(device)
+    device isa ControllableLoad || return false
+    get(get_ext(device), "non_scheduled", nothing) === true && return true
+    unit = _nem_unit_data(device)
+    return !isnothing(unit) && !isnothing(unit.registration) && unit.registration.schedule_type == ScheduleType.NON_SCHEDULED
+end
 
 
 """
     is_commissioned(device) -> Bool
 
-Whether `device` is commissioned. Only a non-scheduled load records the flag; any other device is
-commissioned.
+Whether `device` is commissioned. A NEM build records it on the device's
+[`NEMRegistration`](@ref); `ext["commissioned"]`, written by a stock build, is honoured as an
+override. Any other device is commissioned.
 
 # Returns
 `Bool`.
 """
-is_commissioned(device) = get(get_ext(device), "commissioned", true) === true
+function is_commissioned(device)
+    flag = get(get_ext(device), "commissioned", nothing)
+    isnothing(flag) || return flag === true
+    unit = _nem_unit_data(device)
+    return isnothing(unit) || isnothing(unit.registration) || unit.registration.commissioned
+end
 
 
 """
-    has_schedule_classification(device) -> Bool
+    has_registration(device) -> Bool
 
-Whether [`set_nem_energy_limits!`](@ref) has classified `device` as scheduled or semi-scheduled.
+Whether `device` carries a [`NEMRegistration`](@ref), which holds its schedule type.
 
 # Returns
 `Bool`.
 """
-has_schedule_classification(device) = get(get_ext(device), "nem_semi_scheduled", nothing) isa Bool
+function has_registration(device)
+    unit = _nem_unit_data(device)
+    return !isnothing(unit) && !isnothing(unit.registration)
+end
 
 
 """
     is_semi_scheduled(device) -> Bool
 
-Whether `device` is semi-scheduled, as classified by [`set_nem_energy_limits!`](@ref). Throws an
-`ArgumentError` when `device` has no classification.
+Whether `device` is semi-scheduled, from the schedule type of its [`NEMRegistration`](@ref). Throws an
+`ArgumentError` naming `device` when it has no registration.
 
 # Returns
 `Bool`.
 """
 function is_semi_scheduled(device)
-    has_schedule_classification(device) || throw(
-        ArgumentError("$(get_name(device)): missing schedule classification; call set_nem_energy_limits!"),
-    )
-    return get_ext(device)["nem_semi_scheduled"]
+    return get_registration(device).schedule_type == ScheduleType.SEMI_SCHEDULED
 end
 
 

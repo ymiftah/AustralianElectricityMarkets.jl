@@ -24,16 +24,20 @@ println(demand_df)
 ```
 """
 function read_demand(db, date_range = nothing; resolution::Dates.Period = Dates.Minute(5))
-    source = read_hive(db, :DISPATCHREGIONSUM)
-    dispatchload = read_hive(db, :DISPATCHLOAD)
     summary = read_hive(db, :DUDETAILSUMMARY)
     demand_where = ""
     charging_where = ""
     params = Any[]
-    if !isnothing(date_range)
+    if isnothing(date_range)
+        source = read_hive(db, :DISPATCHREGIONSUM)
+        dispatchload = read_hive(db, :DISPATCHLOAD)
+    else
         # Each rounded-up timestamp includes the raw bin ending at it, even before the requested start.
         lower = ceil(DateTime(first(date_range)), resolution) - resolution
         upper = ceil(DateTime(last(date_range)), resolution) - resolution
+        window = (lower, DateTime(last(date_range)))
+        source = read_hive(db, :DISPATCHREGIONSUM, window)
+        dispatchload = read_hive(db, :DISPATCHLOAD, window)
         charging_where = "AND SETTLEMENTDATE > ? AND SETTLEMENTDATE <= ?"
         demand_where = "AND r.SETTLEMENTDATE > ? AND r.SETTLEMENTDATE <= ?"
         append!(params, (lower, upper, lower, upper))
@@ -141,11 +145,11 @@ onto `resolution` as [`read_demand`](@ref) aggregates demand.
 A `DataFrame` with `SETTLEMENTDATE`, `REGIONID`, `SS_SOLAR_UIGF` and `SS_WIND_UIGF`.
 """
 function _read_regional_renewable_uigf(db, date_range; resolution::Dates.Period, intervention::Integer)
-    source = read_hive(db, :DISPATCHREGIONSUM)
-    schema = _table_schema(db, source)
     # Each rounded-up timestamp includes the raw bin ending at it, even before the requested start.
     lower = ceil(DateTime(first(date_range)), resolution) - resolution
     upper = ceil(DateTime(last(date_range)), resolution) - resolution
+    source = read_hive(db, :DISPATCHREGIONSUM, (lower, DateTime(last(date_range))))
+    schema = _table_schema(db, source)
     params = Any[lower, upper]
     _push_intervention!(params, schema, intervention)
     append!(params, (DateTime(first(date_range)), DateTime(last(date_range))))

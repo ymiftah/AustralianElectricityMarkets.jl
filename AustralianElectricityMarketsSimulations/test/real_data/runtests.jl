@@ -34,11 +34,11 @@ const VIOLATION_STEPS = VIOLATION_START:REAL_RESOLUTION:(VIOLATION_START + REAL_
 
 const db = aem_connect(HiveConfiguration(hive_location = REAL_HIVE))
 
-# Pre-flight checks, the system over `steps` and the two intervals after them, then the built and
-# executed replay of `template`; throws unless both the build and the execution succeed.
+# The system over `steps` and the two intervals after them, with `nem_system` validating its inputs,
+# then `prepare_replay!` and the built and executed replay of `template`; throws unless both the build
+# and the execution succeed.
 function replay_real(steps; template = template_nemde())
     date_range = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
-    check_replay_inputs(db, date_range; template)
     sys = nem_system(db, NEMDEConfiguration(); date_range)
     skipped = prepare_replay!(sys, template, steps)
     model = PSI.DecisionModel(
@@ -104,7 +104,7 @@ end
     @testset "the NEMDE System builds" begin
         areas = Set(PSY.get_name.(PSY.get_components(PSY.Area, sys)))
         @test issubset(Set(["NSW1", "QLD1", "SA1", "TAS1", "VIC1"]), areas)
-        for T in (PSY.ThermalStandard, PSY.HydroDispatch, PSY.RenewableDispatch, PSY.AreaInterchange)
+        for T in (ThermalStandard, HydroDispatch, RenewableDispatch, PSY.AreaInterchange)
             @test !isempty(PSY.get_components(T, sys))
         end
         @test !isempty(PSY.get_components(GenericConstraint, sys))
@@ -121,12 +121,12 @@ end
             row = first(
                 filter(
                     r -> r.SETTLEMENTDATE == first_stamp && coalesce(r.RAMPUPRATE, 0.0) > 0 &&
-                        !isnothing(PSY.get_component(PSY.ThermalStandard, sys, r.DUID)) &&
-                        PSY.get_available(PSY.get_component(PSY.ThermalStandard, sys, r.DUID)),
+                        !isnothing(PSY.get_component(ThermalStandard, sys, r.DUID)) &&
+                        PSY.get_available(PSY.get_component(ThermalStandard, sys, r.DUID)),
                     limits,
                 ),
             )
-            device = PSY.get_component(PSY.ThermalStandard, sys, row.DUID)
+            device = PSY.get_component(ThermalStandard, sys, row.DUID)
             stored = first(PSY.get_time_series_values(PSY.SingleTimeSeries, device, "ramp_up_rate"))
             minutes = Dates.value(Minute(REAL_RESOLUTION))
             # The formulation multiplies the stored rate by the interval in minutes.
@@ -134,38 +134,27 @@ end
                 row.RAMPUPRATE * interval_hours(DISPATCH_INTERVAL) / PSY.get_base_power(sys) rtol = 1.0e-9
         end
 
-        @testset "the stored dispatch ceiling is max(AVAILABILITY, ramp-down floor)" begin
+        @testset "the first-solve initial MW seed is DISPATCHLOAD's INITIALMW" begin
             checked = 0
-            unpublished = 0
             mismatches = String[]
             for device in devices
-                PSY.has_time_series(device, PSY.SingleTimeSeries, "max_active_power") || continue
+                PSY.has_time_series(device, PSY.SingleTimeSeries, "initial_mw_seed") || continue
                 duid = PSY.get_name(device)
-                static_max_active_power = PSY.with_units_base(
-                    () -> PSY.get_max_active_power(device), sys, "NATURAL_UNITS",
-                )
                 series = PSY.get_time_series_values(
-                    PSY.SingleTimeSeries, device, "max_active_power"; ignore_scaling_factors = true,
+                    PSY.SingleTimeSeries, device, "initial_mw_seed"; ignore_scaling_factors = true,
                 )
-                stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, "max_active_power")
+                stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, "initial_mw_seed")
                 rows = filter(:DUID => ==(duid), limits)
                 by_time = Dict(zip(rows.SETTLEMENTDATE, eachrow(rows)))
-                pinned = AEM.is_non_scheduled_load(device)
                 for (t, value) in zip(stamps, series)
                     row = get(by_time, t, nothing)
-                    # A non-scheduled load, or a unit with no DISPATCHLOAD row, is pinned to zero.
-                    if pinned || isnothing(row)
-                        unpublished += 1
-                        iszero(value) || push!(mismatches, "$duid at $t: $value vs 0 (no published limit)")
-                        continue
-                    end
-                    expected = max(row.AVAILABILITY, row.INITIALMW - row.RAMPDOWNRATE * interval_hours(DISPATCH_INTERVAL))
+                    isnothing(row) && continue
                     checked += 1
-                    isapprox(value * static_max_active_power, expected; atol = 1.0e-6) ||
-                        push!(mismatches, "$duid at $t: $(value * static_max_active_power) vs $expected")
+                    isapprox(value, row.INITIALMW; atol = 1.0e-6) ||
+                        push!(mismatches, "$duid at $t: $value vs $(row.INITIALMW)")
                 end
             end
-            @info "Dispatch ceiling coverage" checked unpublished
+            @info "Initial MW seed coverage" checked
             @test checked > 0
             @test isempty(mismatches)
         end
@@ -226,7 +215,7 @@ end
             for d in PSY.get_contributing_devices(sys, svc)
                 direction = AEM.fcas_bid_direction(d, bid_type)
                 for decremental in (direction == FCASBidDirection.BOTH ? (false, true) : (direction == FCASBidDirection.DECREMENTAL,))
-                    raw = AEM._get_fcas_trapezium(d, bid_type, first(date_range), horizon; decremental = decremental)
+                    raw = AEMS._get_fcas_trapezium(d, bid_type, first(date_range), horizon; decremental = decremental)
                     scaled = get_scaled_fcas_trapezium(d, bid_type, first(date_range), horizon; decremental = decremental)
                     n_regulation_trapeziums += length(raw)
                     n_regulation_trapeziums_scaled += count(
@@ -253,8 +242,8 @@ end
 
         # Per-side regulation reads a battery's discharge and charge separately, so the solve
         # must not charge and discharge a battery in the same interval.
-        out_keys = variable_keys(results, PSI.ActivePowerOutVariable, PSY.EnergyReservoirStorage)
-        in_keys = variable_keys(results, PSI.ActivePowerInVariable, PSY.EnergyReservoirStorage)
+        out_keys = variable_keys(results, PSI.ActivePowerOutVariable, EnergyReservoirStorage)
+        in_keys = variable_keys(results, PSI.ActivePowerInVariable, EnergyReservoirStorage)
         n_circulating = 0
         @test !isempty(out_keys) && !isempty(in_keys)
         if !isempty(out_keys) && !isempty(in_keys)
@@ -304,8 +293,8 @@ end
             bid_type = get_bid_type(svc)
             bid_type in AEM.FCAS_REGULATION_MARKETS || continue
             name = PSY.get_name(svc)
-            PSI.has_container_key(container, FCASJointRampingConstraint, FCASService, name) || continue
-            con = PSI.get_constraint(container, FCASJointRampingConstraint(), FCASService, name)
+            PSI.has_container_key(container, FCASUnitConstraint, FCASService, "joint_ramping|$(name)") || continue
+            con = PSI.get_constraint(container, FCASUnitConstraint(), FCASService, "joint_ramping|$(name)")
             for device in PSY.get_contributing_devices(sys, svc)
                 duid = PSY.get_name(device)
                 duid in axes(con, 1) || continue
@@ -388,7 +377,7 @@ end
     base_power = PSY.get_base_power(sys)
 
     target_gencon_ids = ("Q_STR_ALDSF_ZERO", "Q_BRDDSF01_1INV")
-    gcs = [gc for gc in PSY.get_components(GenericConstraint, sys) if get(gc.ext, "gencon_id", nothing) in target_gencon_ids]
+    gcs = [gc for gc in PSY.get_components(GenericConstraint, sys) if get_gencon_id(gc) in target_gencon_ids]
     @test length(gcs) == length(target_gencon_ids)
 
     dual_keys = Dict(
@@ -398,9 +387,9 @@ end
     violations = read_constraint_violations(results, sys)
     for gc in gcs
         name = PSY.get_name(gc)
-        gencon_id = get(gc.ext, "gencon_id", nothing)
-        invoked_values = PSY.get_time_series_values(
-            PSY.SingleTimeSeries, gc, "invoked"; start_time = first(VIOLATION_STEPS), len = length(VIOLATION_STEPS),
+        gencon_id = get_gencon_id(gc)
+        invoked_values = PSY.IS.get_time_series_values(
+            gc, gc.invoked; start_time = first(VIOLATION_STEPS), len = length(VIOLATION_STEPS),
         )
         invoked = invoked_values .> 0.0
         invoked_dates = collect(VIOLATION_STEPS)[invoked]

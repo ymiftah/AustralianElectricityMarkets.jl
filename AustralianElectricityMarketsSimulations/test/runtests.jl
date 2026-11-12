@@ -29,10 +29,13 @@ write_mock_interconnector_results(AEM_TEST_REPLAY_HIVE_DIR)
 # only those, e.g. `julia --project=test test/runtests.jl fcas_market pipeline`.
 const TEST_GROUPS = [
     "time_basis" => ("Time basis", "time_basis.jl"),
+    "state" => ("AEMSim state types", "state.jl"),
     "psi_compat" => ("PSI compat", "psi_compat.jl"),
     "nem_constraints" => ("NEM constraints", "nem_constraints.jl"),
     "nem_dispatch" => ("NEM dispatch formulation", "nem_dispatch.jl"),
     "nem_dispatch_toy" => ("NEM dispatch on a toy PSCB system", "nem_dispatch_toy.jl"),
+    "bid_store_equivalence" => ("Bid store equivalence", "bid_store_equivalence.jl"),
+    "effective_offers" => ("Effective offers", "effective_offers.jl"),
     "fcas_preprocessing" => ("FCAS preprocessing", "fcas_preprocessing.jl"),
     "fcas_market" => ("FCAS market", "fcas_market.jl"),
     "interconnector_losses" => ("Interconnector losses", "interconnector_losses.jl"),
@@ -44,6 +47,7 @@ const TEST_GROUPS = [
     "pipeline" => ("Replication pipeline", "pipeline.jl"),
     "recurrent_objective_cache" => ("Recurrent objective forecast cache", "recurrent_objective_cache.jl"),
     "stock_simulation" => ("Stock simulation replay", "stock_simulation.jl"),
+    "state_update_equivalence" => ("State-update parameter snapshots", "state_update_equivalence.jl"),
     "replay_workflow" => ("Replay workflow on the mock cache", "replay_workflow.jl"),
     "replay_scripts" => ("Repository replay workflow", "../../test/scripts/replay_workflow.jl"),
 ]

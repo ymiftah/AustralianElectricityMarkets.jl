@@ -14,10 +14,8 @@
     vname(gencon_id, version = 1) = "$gencon_id@2025-01-01#$version"
 
     function build_system()
-        sys = augmented_pscb_system()
-        set_fcas_bids!(sys, db, date_range)
-        give_generator_market_bid_costs!(sys)
-        set_fcas_service_bids!(sys, db, date_range)
+        sys = nem_pscb_system()
+        set_market_bids!(sys, db, date_range)
         build_constraints!(sys, db, date_range)
         attach_interconnector_losses!(sys, db, first(date_range))
         return sys
@@ -31,8 +29,8 @@
             @test !isnothing(gc_v1)
             @test !isnothing(gc_v2)
             for gc in (gc_v1, gc_v2)
-                rhs_series = get_time_series_values(SingleTimeSeries, gc, "rhs")
-                invoked_series = get_time_series_values(SingleTimeSeries, gc, "invoked")
+                rhs_series = _constraint_series(gc, :rhs)
+                invoked_series = _constraint_series(gc, :invoked)
                 @test length(rhs_series) == length(date_range) - 1
                 @test length(invoked_series) == length(date_range) - 1
             end
@@ -66,23 +64,29 @@
 
             n_partial = get_component(GenericConstraint, sys, vname("N_PARTIAL"))
             @test get_duid(only(filter(t -> t isa UnitTerm, get_terms(n_partial)))) == "SOLAR1"
-            invoked = get_time_series_values(SingleTimeSeries, n_partial, "invoked")
-            rhs = get_time_series_values(SingleTimeSeries, n_partial, "rhs")
+            invoked = _constraint_series(n_partial, :invoked)
+            rhs = _constraint_series(n_partial, :rhs)
             @test invoked == [fill(0.0, 10); fill(1.0, 15)]
             @test all(==(rhs[10]), rhs[1:10])
-            @test rhs[11:25] ≈ [(40.0 + 0.1 * i) / get_base_power(sys) for i in 10:24]
+            @test rhs[11:25] ≈ [40.0 + 0.1 * i for i in 10:24]
 
             v1 = get_component(GenericConstraint, sys, vname("N_VERSIONED_LIMIT", 1))
             v2 = get_component(GenericConstraint, sys, vname("N_VERSIONED_LIMIT", 2))
             @test (get_factor(only(get_terms(v1))), get_factor(only(get_terms(v2)))) == (1.0, 2.0)
             @test (get_sense(v1), get_sense(v2)) == (ConstraintSense.LE, ConstraintSense.GE)
-            @test get(v1.ext, "gencon_id", nothing) == get(v2.ext, "gencon_id", nothing) == "N_VERSIONED_LIMIT"
-
+            @test get_gencon_id(v1) == get_gencon_id(v2) == "N_VERSIONED_LIMIT"
+            @test (get_version_no(v1), get_version_no(v2)) == (1, 2)
+            @test (get_effective_date(v1), get_effective_date(v2)) ==
+                (DateTime(2025, 1, 1), DateTime(2025, 1, 1))
+            @test (get_limit_type(v1), get_limit_type(v2)) == ("THERMAL", "THERMAL")
+            @test (get_source(v1), get_source(v2)) == ("pscb", "pscb")
+            @test isempty(get_ext(v1)) && isempty(get_ext(v2))
             bat = get_component(EnergyReservoirStorage, sys, "BAT1")
-            @test has_time_series(bat, SingleTimeSeries, fcas_offer_series_name(fcas_service(bat, BidType.RAISEREG), false))
-            @test has_time_series(bat, SingleTimeSeries, "fcas_trapezium_RAISEREG")
-            @test has_time_series(bat, SingleTimeSeries, fcas_offer_series_name(fcas_service(bat, BidType.RAISEREG), true))
-            @test has_time_series(bat, SingleTimeSeries, "fcas_trapezium_RAISEREG_decremental")
+            for direction in (AustralianElectricityMarkets.BidDirection.GEN, AustralianElectricityMarkets.BidDirection.LOAD)
+                bid = only(b for b in AustralianElectricityMarkets.get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(bat)) if b.service == BidType.RAISEREG && b.direction == direction)
+                @test has_time_series(bat, SingleTimeSeries, bid.offer_curves.name)
+                @test has_time_series(bat, SingleTimeSeries, bid.trapezium.name)
+            end
         end
 
         @testset "FCAS market anchors" begin
@@ -96,10 +100,6 @@
             ]
             @test !isempty(devices(svc1))
             @test !isempty(devices(svc2))
-            # RAISE6SEC is a contingency market: its trapezium carries no ramp rates (stored as NaN).
-            alta = get_component(ThermalStandard, sys, "Alta")
-            @test isnothing(get_ramp_up_rate(only(AustralianElectricityMarkets._get_fcas_trapezium(alta, BidType.RAISE6SEC, start_date, 1))))
-            @test isnothing(get_ramp_down_rate(only(AustralianElectricityMarkets._get_fcas_trapezium(alta, BidType.RAISE6SEC, start_date, 1))))
         end
 
         @testset "interconnector losses" begin
@@ -115,56 +115,12 @@
     end
 
     sys = build_system()
-    assert_coverage_matrix(sys)
-
-    @testset "unit contract: per-unit under SYSTEM_BASE, native MW/\$ under NATURAL_UNITS" begin
-        gc = get_component(GenericConstraint, sys, vname("F_R1_RAISE6SEC"))
-        sundance = get_component(ThermalStandard, sys, "Sundance")
-        base_power = get_base_power(sys)
-
-        # augmented_pscb_system() leaves sys in NATURAL_UNITS - same MW/$ ranges the
-        # pre-PR-1.12 contract asserted directly off the stored fields.
-        @test get_units_base(sys) == "NATURAL_UNITS"
-        rhs_mw = PowerSystems.get_value(gc, Val(:rhs), Val(:mva))
-        limits_mw = get_active_power_limits(sundance)
-        trapezium_mw = only(AustralianElectricityMarkets._get_fcas_trapezium(sundance, BidType.RAISE6SEC, start_date, 1))
-        @test 10.0 <= rhs_mw <= 200.0
-        @test 10.0 <= limits_mw.max <= 500.0
-        @test 10.0 <= get_max_avail(trapezium_mw) <= 500.0
-
-        # Every one of those must divide by base_power under SYSTEM_BASE - the contract this
-        # PR exists to guarantee: GenericConstraint.rhs and FCASTrapezium track PSY's units
-        # base exactly like a native PSY device field does, instead of silently staying MW.
-        set_units_base_system!(sys, "SYSTEM_BASE")
-        try
-            @test PowerSystems.get_value(gc, Val(:rhs), Val(:mva)) ≈ rhs_mw / base_power
-            limits_pu = get_active_power_limits(sundance)
-            @test limits_pu.max ≈ limits_mw.max / base_power
-            trapezium_pu = only(AustralianElectricityMarkets._get_fcas_trapezium(sundance, BidType.RAISE6SEC, start_date, 1))
-            @test get_max_avail(trapezium_pu) ≈ get_max_avail(trapezium_mw) / base_power
-        finally
-            set_units_base_system!(sys, "NATURAL_UNITS")
-        end
-
-        # Switching back reproduces the original MW/$ values exactly.
-        @test PowerSystems.get_value(gc, Val(:rhs), Val(:mva)) == rhs_mw
-        @test get_active_power_limits(sundance).max == limits_mw.max
-
-        # FCAS values are per-unit of the system base; a device's own fields are per-unit of
-        # its base_power. Under DEVICE_BASE those read as the same number meaning different
-        # MW, so reading FCAS there must throw rather than return a mislabelled value.
-        @test get_base_power(sundance) != base_power
-        set_units_base_system!(sys, "DEVICE_BASE")
-        try
-            @test_throws ArgumentError AustralianElectricityMarkets._get_fcas_trapezium(
-                sundance, BidType.RAISE6SEC, start_date, 1,
-            )
-        finally
-            set_units_base_system!(sys, "NATURAL_UNITS")
-        end
-        @test get_max_avail(only(AustralianElectricityMarkets._get_fcas_trapezium(sundance, BidType.RAISE6SEC, start_date, 1))) ==
-            get_max_avail(trapezium_mw)
+    # One station shared by two generators, attached after the build.
+    station = NEMStation(; station_id = "STN1", station_name = "Station One", postcode = "3000")
+    for name in ("Alta", "Brighton")
+        add_supplemental_attribute!(sys, get_component(Generator, sys, name), station)
     end
+    assert_coverage_matrix(sys)
 
     @testset "JSON round-trip" begin
         mktpath = mktempdir()
@@ -178,9 +134,20 @@
             )
             gc, gc2 = get_component(GenericConstraint, sys, name), get_component(GenericConstraint, sys2, name)
             @test get_sense(gc2) == get_sense(gc)
-            @test PowerSystems.get_value(gc2, Val(:rhs), Val(:mva)) == PowerSystems.get_value(gc, Val(:rhs), Val(:mva))
+            @test _constraint_series(gc2, :rhs) == _constraint_series(gc, :rhs)
             @test get_constraint_weight(gc2) == get_constraint_weight(gc)
             @test get_ext(gc2) == get_ext(gc)
+            @test get_gencon_id(gc2) == get_gencon_id(gc)
+            @test get_limit_type(gc2) == get_limit_type(gc)
+            @test get_source(gc2) == get_source(gc)
+            @test get_effective_date(gc2) == get_effective_date(gc)
+            @test get_version_no(gc2) == get_version_no(gc)
+        end
+        for name in ("Alta", "Brighton")
+            stn = only(get_supplemental_attributes(NEMStation, get_component(Generator, sys2, name)))
+            @test stn.station_id == "STN1"
+            @test stn.station_name == "Station One"
+            @test stn.postcode == "3000"
         end
     end
 end

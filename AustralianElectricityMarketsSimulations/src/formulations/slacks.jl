@@ -1,31 +1,22 @@
-# Slack variables built per device through `PSI.add_variables!`, under an `AbstractNEMDispatch` model.
-const _DEVICE_SLACKS = Union{AbstractEnergyLimitSlack, AbstractEnergyOfferSlack, AbstractFixedLoadSlack}
-
 # Slack variables whose results read back in MW rather than system-base per-unit.
 const _NATURAL_UNIT_SLACKS = Union{
-    _DEVICE_SLACKS, AbstractMNSPSlack,
-    UnitRampUpSlack, UnitRampDownSlack,
+    NEMUnitSlack, MNSPSlack,
     GenericConstraintSlackUp, GenericConstraintSlackDown,
-    InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack,
-    FCASJointCapacitySlack, FCASJointRampingSlack, FCASMaxAvailSlack, FCASBDURampingSlack,
+    InterconnectorFlowSlack,
+    FCASSlack,
 }
 
-
-function PSI.get_variable_binary(::_DEVICE_SLACKS, ::Type{<:PSY.StaticInjection}, ::AbstractNEMDispatch)
-    return false
-end
-
-function PSI.get_variable_lower_bound(::_DEVICE_SLACKS, ::PSY.StaticInjection, ::AbstractNEMDispatch)
-    return 0.0
-end
-
-function PSI.get_variable_upper_bound(::_DEVICE_SLACKS, ::PSY.StaticInjection, ::AbstractNEMDispatch)
-    return nothing
-end
 
 function PSI.convert_result_to_natural_units(::Type{<:_NATURAL_UNIT_SLACKS})
     return true
 end
+
+
+# The AEMO CVP factor each unit slack variant is priced at.
+_nem_unit_slack_cvp(::_EnergyOfferVariant) = ENERGY_OFFER_CVP_FACTOR
+_nem_unit_slack_cvp(variant::_EnergyLimitVariant) = _energy_limit_cvp(variant)
+_nem_unit_slack_cvp(::_FixedLoadVariant) = FIXED_LOADING_CVP_FACTOR
+_nem_unit_slack_cvp(::_UnitRampVariant) = UNIT_RAMP_CVP_FACTOR
 
 
 """
@@ -80,4 +71,75 @@ function _add_cvp_slack!(
     slack = _add_slack_variables!(container, var_type, T, names, time_steps; meta = meta, label = label)
     _add_mpc_penalty!(container, var_type, T, names, cvp_factor; meta = meta, rate = rate)
     return slack
+end
+
+
+"""
+    _add_unit_slack_variables!(container, variant, T, names, time_steps)
+
+Builds the [`NEMUnitSlack`](@ref) variables of `variant` for `names` of `T`, keyed by the variant's meta.
+
+# Returns
+The slack variable container.
+"""
+function _add_unit_slack_variables!(
+        container::PSI.OptimizationContainer, variant, ::Type{T}, names, time_steps,
+    ) where {T}
+    return _add_slack_variables!(
+        container, NEMUnitSlack, T, names, time_steps;
+        meta = _nem_unit_slack_meta(variant), label = _nem_unit_slack_label(variant),
+    )
+end
+
+
+"""
+    _add_unit_slack_penalty!(container, variant, T, names)
+
+Prices the [`NEMUnitSlack`](@ref) variables of `variant` for `names` of `T` at the variant's CVP factor
+times the Market Price Cap ([`_add_mpc_penalty!`](@ref)).
+
+# Returns
+`nothing`.
+"""
+function _add_unit_slack_penalty!(container::PSI.OptimizationContainer, variant, ::Type{T}, names) where {T}
+    _add_mpc_penalty!(
+        container, NEMUnitSlack, T, names, _nem_unit_slack_cvp(variant); meta = _nem_unit_slack_meta(variant),
+    )
+    return
+end
+
+
+"""
+    _add_device_unit_slacks!(container, variant, devices)
+
+Builds the [`NEMUnitSlack`](@ref) variables of `variant` for `devices`, or nothing when `devices` is empty.
+
+# Returns
+`nothing`.
+"""
+function _add_device_unit_slacks!(
+        container::PSI.OptimizationContainer, variant,
+        devices::Union{Vector{T}, IS.FlattenIteratorWrapper{T}},
+    ) where {T <: PSY.StaticInjection}
+    isempty(devices) && return
+    _add_unit_slack_variables!(container, variant, T, PSY.get_name.(devices), PSI.get_time_steps(container))
+    return
+end
+
+
+"""
+    _add_device_unit_slack_costs!(container, variant, devices)
+
+Prices the [`NEMUnitSlack`](@ref) variables of `variant` for `devices`, or nothing when `devices` is empty.
+
+# Returns
+`nothing`.
+"""
+function _add_device_unit_slack_costs!(
+        container::PSI.OptimizationContainer, variant,
+        devices::Union{Vector{T}, IS.FlattenIteratorWrapper{T}},
+    ) where {T <: PSY.StaticInjection}
+    isempty(devices) && return
+    _add_unit_slack_penalty!(container, variant, T, PSY.get_name.(devices))
+    return
 end

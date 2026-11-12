@@ -15,9 +15,10 @@ PSI.get_variable_upper_bound(::PSI.ActivePowerOutVariable, ::PSY.Storage, ::Abst
 
 PSI.get_variable_upper_bound(::PSI.ActivePowerInVariable, ::PSY.Storage, ::AbstractNEMDispatch) = nothing
 
-PSI.get_multiplier_value(::PSI.ActivePowerOutTimeSeriesParameter, ::PSY.Storage, ::AbstractNEMDispatch) = 1.0
+# The energy bid MAXAVAIL series are stored in MW.
+PSI.get_multiplier_value(::PSI.ActivePowerOutTimeSeriesParameter, d::PSY.Storage, ::AbstractNEMDispatch) = 1 / PSY.get_system_base_power(d)
 
-PSI.get_multiplier_value(::PSI.ActivePowerInTimeSeriesParameter, ::PSY.Storage, ::AbstractNEMDispatch) = 1.0
+PSI.get_multiplier_value(::PSI.ActivePowerInTimeSeriesParameter, d::PSY.Storage, ::AbstractNEMDispatch) = 1 / PSY.get_system_base_power(d)
 
 #! format: on
 
@@ -25,8 +26,9 @@ PSI.get_multiplier_value(::PSI.ActivePowerInTimeSeriesParameter, ::PSY.Storage, 
     PSI.get_default_time_series_names(::Type{<:PSY.Storage}, ::Type{<:AbstractNEMDispatch})
 
 Registers the time series [`AbstractNEMDispatch`](@ref) reads as parameters for a battery: the
-ramp and initial-power series, and the raw generation and consumption energy offer availability. Both availability limits
-carry priced violations on the generation and consumption axes. Batteries register no `"max_active_power"` series.
+ramp parameters and the generation and consumption energy bid `MAXAVAIL` series. The initial-power
+parameter is added explicitly from the build's first-solve seed series. Both availability limits carry priced violations on the
+generation and consumption axes. Batteries register no `"max_active_power"` series.
 
 # Returns
 A `Dict` mapping each `PowerSimulations.TimeSeriesParameter` type to its series name.
@@ -36,12 +38,9 @@ function PSI.get_default_time_series_names(
         ::Type{<:AbstractNEMDispatch},
     )
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
-        RampUpRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
-        RampDownRateTimeSeriesParameter => NEM_SERIES.ramp_down_rate,
-        InitialPowerTimeSeriesParameter => NEM_SERIES.initial_mw,
-        PSI.ActivePowerOutTimeSeriesParameter => energy_max_avail_series_name(OfferSide.GEN),
-        PSI.ActivePowerInTimeSeriesParameter => energy_max_avail_series_name(OfferSide.LOAD),
-        _FIXED_LOAD_SERIES...,
+        RampRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
+        PSI.ActivePowerOutTimeSeriesParameter => _max_avail_series_name(OfferSide.GEN),
+        PSI.ActivePowerInTimeSeriesParameter => _max_avail_series_name(OfferSide.LOAD),
     )
 end
 
@@ -51,7 +50,7 @@ end
 
 Argument stage for a battery under [`AbstractNEMDispatch`](@ref): the per-direction active
 power variables, the ramp parameters, the raw availability
-parameters, the incremental and decremental market-bid parameters, and the device's net
+parameters, the offer-total violation variables, and the device's net
 contribution to the active power balance.
 
 # Returns
@@ -70,22 +69,24 @@ function PSI.construct_device!(
 
     PSI.add_variables!(container, PSI.ActivePowerOutVariable, devices, D())
     PSI.add_variables!(container, PSI.ActivePowerInVariable, devices, D())
-    PSI.add_variables!(container, EnergyMaxAvailOutSlack, devices, D())
-    PSI.add_variables!(container, EnergyMaxAvailInSlack, devices, D())
+    _add_device_unit_slacks!(container, EnergyLimitMaxAvailOutVariant(), devices)
+    _add_device_unit_slacks!(container, EnergyLimitMaxAvailInVariant(), devices)
 
+    _add_ramp_rate_parameters!(container, devices, model)
     for param in _storage_parameters(D)
         haskey(PSI.get_time_series_names(model), param) || continue
         PSI.add_parameters!(container, param, devices, model)
     end
+    PSI.add_parameters!(
+        container, InitialPowerTimeSeriesParameter, devices, model;
+        time_series_name = _INITIAL_MW_SEED_SERIES,
+    )
 
     _add_fixed_load_arguments!(container, devices, model)
 
-    PSI.process_market_bid_parameters!(container, devices, model, true, true)
-    for S in _ENERGY_OFFER_SLACK_TYPES
-        PSI.add_variables!(container, S, devices, D())
+    for variant in _ENERGY_OFFER_SLACK_VARIANTS
+        _add_energy_offer_slack_variables!(container, variant, devices)
     end
-    PSI.add_cost_expressions!(container, devices, model)
-
     PSI.add_to_expression!(
         container,
         PSI.ActivePowerBalance,
@@ -112,7 +113,7 @@ end
     PSI.construct_device!(container, sys, ::PSI.ModelConstructStage, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model) where {T <: PSY.Storage}
 
 Model stage for a battery under [`AbstractNEMDispatch`](@ref): the elastic directional availability
-envelope, the net ramp constraint and the market-bid objective.
+envelope, the net ramp constraint and the energy offer bands and their objective.
 
 # Returns
 `nothing`.
@@ -126,10 +127,10 @@ function PSI.construct_device!(
     ) where {T <: PSY.Storage, D <: AbstractNEMDispatch}
     devices = PSI.get_available_components(model, sys)
 
-    PSI.add_constraints!(container, EnergyMaxAvailOutConstraint, PSI.ActivePowerOutVariable, devices, model, network_model)
-    PSI.add_constraints!(container, EnergyMaxAvailInConstraint, PSI.ActivePowerInVariable, devices, model, network_model)
+    _add_energy_limit_rows!(container, EnergyLimitMaxAvailOutVariant(), PSI.ActivePowerOutVariable, devices, model, network_model)
+    _add_energy_limit_rows!(container, EnergyLimitMaxAvailInVariant(), PSI.ActivePowerInVariable, devices, model, network_model)
     PSI.add_constraints!(container, PSI.RampConstraint, PSI.ActivePowerOutVariable, devices, model, network_model)
-    PSI.add_constraints!(container, EnergyFixedLoadConstraint, devices, model, network_model)
+    PSI.add_constraints!(container, NEMUnitConstraint, devices, model, network_model)
 
     PSI.add_feedforward_constraints!(container, model, devices)
     PSI.objective_function!(container, devices, model, PSI.get_network_formulation(network_model))
@@ -141,9 +142,10 @@ end
 """
     PSI.objective_function!(container, devices, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_formulation) where {T <: PSY.Storage}
 
-Prices a battery's discharge on its incremental offer curve against
-`PowerSimulations.ActivePowerOutVariable` and its charge on its decremental offer curve
-against `PowerSimulations.ActivePowerInVariable`.
+Prices a battery's discharge on its `GEN` energy offer bands against
+`PowerSimulations.ActivePowerOutVariable` and its charge on its `LOAD` energy offer bands against
+`PowerSimulations.ActivePowerInVariable`. Throws `ArgumentError` through `_check_energy_offer_sides`
+for a battery with an energy offer on one side only.
 
 # Returns
 `nothing`.
@@ -151,16 +153,16 @@ against `PowerSimulations.ActivePowerInVariable`.
 function PSI.objective_function!(
         container::PSI.OptimizationContainer,
         devices::IS.FlattenIteratorWrapper{T},
-        ::PSI.DeviceModel{T, D},
+        model::PSI.DeviceModel{T, D},
         ::Type{<:PM.AbstractPowerModel},
     ) where {T <: PSY.Storage, D <: AbstractNEMDispatch}
-    PSI.add_variable_cost!(container, PSI.ActivePowerOutVariable(), devices, D())
-    PSI.add_variable_cost!(container, PSI.ActivePowerInVariable(), devices, D())
-    PSI.add_proportional_cost!(container, EnergyMaxAvailOutSlack(), devices, D())
-    PSI.add_proportional_cost!(container, EnergyMaxAvailInSlack(), devices, D())
+    _check_energy_offer_sides(devices)
+    foreach(side -> _add_energy_offer_bands!(container, devices, model, side), _energy_offer_sides(T))
+    _add_device_unit_slack_costs!(container, EnergyLimitMaxAvailOutVariant(), devices)
+    _add_device_unit_slack_costs!(container, EnergyLimitMaxAvailInVariant(), devices)
     _add_fixed_load_costs!(container, devices, T)
-    for S in _ENERGY_OFFER_SLACK_TYPES
-        PSI.add_proportional_cost!(container, S(), devices, D())
+    for variant in _ENERGY_OFFER_SLACK_VARIANTS
+        _add_energy_offer_slack_costs!(container, variant, devices)
     end
     return
 end
@@ -168,7 +170,6 @@ end
 
 # Both formulations read live raw availability, independently of their ramp reference.
 _storage_parameters(::Type{<:AbstractNEMDispatch}) = (
-    RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter, InitialPowerTimeSeriesParameter,
     PSI.ActivePowerOutTimeSeriesParameter, PSI.ActivePowerInTimeSeriesParameter,
 )
 

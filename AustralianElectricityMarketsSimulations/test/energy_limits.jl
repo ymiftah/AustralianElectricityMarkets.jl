@@ -7,18 +7,30 @@ function energy_limit_system(; max_avail = 100.0, uigf = 45.0, target = 60.0, we
         ],
         80.0; horizon = TOY_RESOLUTION, start,
         mutate! = function (sys, stamps)
-            cheap = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
+            cheap = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
             PSY.set_active_power_limits!(cheap, (min = 0.0, max = rating))
-            PSY.remove_time_series!(sys, PSY.SingleTimeSeries, cheap, "energy_max_avail")
-            base = PSY.get_base_power(sys)
-            PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "energy_max_avail", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(max_avail, 2) ./ base)))
-            PSY.get_ext(cheap)["nem_semi_scheduled"] = !isnothing(uigf)
+            # The bid's MAXAVAIL (MW) is what the derivation turns into energy_availability.
+            AustralianElectricityMarkets.replace_single_series!(
+                sys, cheap,
+                AustralianElectricityMarkets.single_series(
+                    AustralianElectricityMarkets.bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN),
+                    stamps[1], _toy_values(max_avail, 2), TOY_RESOLUTION,
+                ),
+            )
+            set_registration!(cheap, _toy_registration(; schedule_type = isnothing(uigf) ? ScheduleType.SCHEDULED : ScheduleType.SEMI_SCHEDULED))
             if !isnothing(uigf)
-                PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "uigf", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(uigf, 2) ./ base)))
+                set_toy_unit_field!(sys, cheap, stamps, :uigf, _toy_values(uigf, 2))
             end
             if !isnothing(fixed_load)
-                PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "fixed_load", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(fixed_load, 2) ./ base)))
-                PSY.add_time_series!(sys, cheap, PSY.SingleTimeSeries(; name = "fixed_load_invoked", data = PSY.TimeSeries.TimeArray(stamps, fill(fixed_invoked, 2))))
+                _toy_energy_bid!(
+                    sys, cheap, AustralianElectricityMarkets.BidDirection.GEN, stamps,
+                    fill(PSY.PiecewiseStepData([0.0, 100.0], [price]), 2), _toy_values(max_avail, 2);
+                    fixed_load = _toy_values(fixed_load, 2),
+                )
+                # A fast-start profile (mode 1) leaves the loading uninvoked while the bid still carries it.
+                if iszero(fixed_invoked)
+                    set_toy_unit_field!(sys, cheap, stamps, :dispatch_mode, fill(1.0, 2))
+                end
             end
             if !isnothing(target)
                 add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, target; sense = ConstraintSense.EQ)
@@ -41,22 +53,22 @@ function energy_limit_solve(sys)
     return (; results, objective = PSI.JuMP.objective_value(PSI.get_jump_model(PSI.get_optimization_container(model))), power = only(r.value for r in eachrow(dispatch) if r.name == TOY_CHEAP), violations = read_constraint_violations(results, sys))
 end
 
-function energy_slack(out, type)
-    return only(r.value for r in eachrow(PSI.read_variable(out.results, string(nameof(type)) * "__ThermalStandard")) if r.name == TOY_CHEAP)
+function energy_slack(out, meta)
+    return only(r.value for r in eachrow(PSI.read_variable(out.results, "NEMUnitSlack__ThermalStandard__" * meta)) if r.name == TOY_CHEAP)
 end
 
 @testset "a static rating does not defeat the separate energy limits" begin
     out = energy_limit_solve(energy_limit_system(; max_avail = 70.0, uigf = 65.0, rating = 30.0))
     @test out.power ≈ 60.0 atol = 1.0e-6
-    @test energy_slack(out, EnergyMaxAvailSlack) ≈ 0.0 atol = 1.0e-6
-    @test energy_slack(out, EnergyUIGFSlack) ≈ 0.0 atol = 1.0e-6
+    @test energy_slack(out, "energy_limit|max_avail") ≈ 0.0 atol = 1.0e-6
+    @test energy_slack(out, "energy_limit|uigf") ≈ 0.0 atol = 1.0e-6
 end
 
 @testset "non-conformance can violate both distinct energy limits" begin
     out = energy_limit_solve(energy_limit_system(; max_avail = 40.0))
     @test out.power ≈ 60.0 atol = 1.0e-6
-    @test energy_slack(out, EnergyMaxAvailSlack) ≈ 20.0 atol = 1.0e-6
-    @test energy_slack(out, EnergyUIGFSlack) ≈ 15.0 atol = 1.0e-6
+    @test energy_slack(out, "energy_limit|max_avail") ≈ 20.0 atol = 1.0e-6
+    @test energy_slack(out, "energy_limit|uigf") ≈ 15.0 atol = 1.0e-6
     @test only(filter(:family => ==("energy_max_avail"), out.violations).MW) ≈ 20.0 atol = 1.0e-6
     @test only(filter(:family => ==("energy_uigf"), out.violations).MW) ≈ 15.0 atol = 1.0e-6
     @test !any(==("generic_constraint"), out.violations.family)
@@ -66,8 +78,8 @@ end
 @testset "fixed loading beats MaxAvail but does not beat UIGF" begin
     out = energy_limit_solve(energy_limit_system(; max_avail = 40.0, target = nothing, fixed_load = 60.0))
     @test out.power ≈ 45.0 atol = 1.0e-6
-    @test energy_slack(out, EnergyMaxAvailSlack) ≈ 5.0 atol = 1.0e-6
-    @test energy_slack(out, EnergyUIGFSlack) ≈ 0.0 atol = 1.0e-6
+    @test energy_slack(out, "energy_limit|max_avail") ≈ 5.0 atol = 1.0e-6
+    @test energy_slack(out, "energy_limit|uigf") ≈ 0.0 atol = 1.0e-6
     fixed = only(filter(:family => ==("fixed_load"), out.violations))
     @test fixed.MW ≈ 15.0 atol = 1.0e-6
     @test fixed.direction == "down"
@@ -82,8 +94,8 @@ end
 @testset "ramping beats the combined availability and UIGF penalties" begin
     out = energy_limit_solve(energy_limit_system(; max_avail = 40.0, target = nothing, initial = 65.0, down = 1.0))
     @test out.power ≈ 60.0 atol = 1.0e-6
-    @test energy_slack(out, EnergyMaxAvailSlack) ≈ 20.0 atol = 1.0e-6
-    @test energy_slack(out, EnergyUIGFSlack) ≈ 15.0 atol = 1.0e-6
+    @test energy_slack(out, "energy_limit|max_avail") ≈ 20.0 atol = 1.0e-6
+    @test energy_slack(out, "energy_limit|uigf") ≈ 15.0 atol = 1.0e-6
     @test !any(==("unit_ramp"), out.violations.family)
 end
 
@@ -91,8 +103,8 @@ end
     for forecast in (30.0, 0.0)
         out = energy_limit_solve(energy_limit_system(; max_avail = 40.0, uigf = forecast, target = nothing, price = -1000.0))
         @test out.power ≈ forecast atol = 1.0e-6
-        @test energy_slack(out, EnergyMaxAvailSlack) ≈ 0.0 atol = 1.0e-6
-        @test energy_slack(out, EnergyUIGFSlack) ≈ 0.0 atol = 1.0e-6
+        @test energy_slack(out, "energy_limit|max_avail") ≈ 0.0 atol = 1.0e-6
+        @test energy_slack(out, "energy_limit|uigf") ≈ 0.0 atol = 1.0e-6
     end
     scheduled = energy_limit_solve(energy_limit_system(; max_avail = 40.0, uigf = nothing, target = nothing))
     @test scheduled.power ≈ 40.0 atol = 1.0e-6
@@ -114,9 +126,8 @@ end
 
 @testset "missing and non-finite forecasts are rejected before solving" begin
     sys = energy_limit_system()
-    cheap = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
-    PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, cheap, "uigf")
-    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, cheap, "uigf")
+    cheap = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
+    clear_toy_uigf!(sys, cheap)
     @test_throws ArgumentError replay_template(sys)
     invalid = energy_limit_system(; uigf = [45.0, NaN])
     template = replay_template(invalid)
@@ -136,7 +147,7 @@ end
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
         container = PSI.get_optimization_container(model)
         objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
-        slack = PSI.get_variable(container, AEMS.EnergyMaxAvailSlack(), PSY.ThermalStandard)
+        slack = PSI.get_variable(container, AEMS.NEMUnitSlack(), ThermalStandard, "energy_limit|max_avail")
         @test PSI.JuMP.coefficient(objective, slack[TOY_CHEAP, 1]) ≈ expected
     end
 end

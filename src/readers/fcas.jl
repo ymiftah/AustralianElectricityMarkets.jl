@@ -44,7 +44,7 @@ is cached.
 function read_fcas_requirements(db, date_range; intervention::Integer = 0)
     start_date = first(date_range)
     end_date = last(date_range)
-    constraint_table = read_hive(db, :DISPATCHCONSTRAINT)
+    constraint_table = read_hive(db, :DISPATCHCONSTRAINT, (start_date, end_date))
     gencon_table = read_hive(db, :GENCONDATA)
     constraint_schema = _table_schema(db, constraint_table)
     req_union_sql, params = _fcas_req_union_sql(db, start_date, end_date, intervention)
@@ -191,6 +191,7 @@ function read_fcas_dispatch(db, date_range; intervention::Integer = 0)
         return cols
     end
 
+    # TODO use DataFrames.jl methods: this should be a groupby combine, or a stack / unstack
     long = DataFrame()
     for bid_type in FCAS_BID_TYPES
         bid_type_str = string(bid_type)
@@ -207,42 +208,4 @@ function read_fcas_dispatch(db, date_range; intervention::Integer = 0)
         append!(long, block; promote = true)
     end
     return long
-end
-
-
-"""
-    read_fcas_scaling_inputs(db, date_range; intervention = 0)
-
-Reads per-interval, per-unit AEMO *FCAS Model in NEMDE* §4.1/§4.2/§5 scaling and pre-condition
-inputs from `DISPATCHLOAD`: one row per `(SETTLEMENTDATE, DUID)` with `RAISEREGENABLEMENTMIN/MAX`,
-`LOWERREGENABLEMENTMIN/MAX` (the telemetered AGC enablement limits, already the more
-restrictive of bid and telemetered per AEMO's data model), `RAMPUPRATE`/`RAMPDOWNRATE`
-(MW/h, the bid-capped ramp rate that [`read_dispatch_limits`](@ref) also reads for energy ramping),
-`RAISEREGAVAILABILITY`/`LOWERREGAVAILABILITY` (the regulation availability, MW), and `AGCSTATUS`
-(`1` while the unit is under AGC control, `0` otherwise).
-
-`intervention` selects the dispatch run: `0` is the normal (non-intervention) run
-(`INTERVENTION` is compared via `COALESCE(INTERVENTION, 0)` for partitions predating that
-column - see [`read_fcas_requirements`](@ref)).
-
-# Arguments
-- `db`: an `AEMDB` connection.
-- `date_range`: the dispatch intervals to read (half-open: `start <= t < stop`).
-- `intervention`: `0` for the pricing run, `1` for the physical run.
-
-# Returns
-A `DataFrame` with `SETTLEMENTDATE`, `DUID`, `RAISEREGENABLEMENTMIN`, `RAISEREGENABLEMENTMAX`,
-`LOWERREGENABLEMENTMIN`, `LOWERREGENABLEMENTMAX`, `RAMPUPRATE`, `RAMPDOWNRATE`,
-`RAISEREGAVAILABILITY`, `LOWERREGAVAILABILITY`, `AGCSTATUS`.
-"""
-function read_fcas_scaling_inputs(db, date_range; intervention::Integer = 0)
-    scaling_cols = (
-        "RAISEREGENABLEMENTMIN", "RAISEREGENABLEMENTMAX",
-        "LOWERREGENABLEMENTMIN", "LOWERREGENABLEMENTMAX", "RAMPUPRATE", "RAMPDOWNRATE",
-        "RAISEREGAVAILABILITY", "LOWERREGAVAILABILITY", "AGCSTATUS",
-    )
-    return _read_dispatch_table(db, :DISPATCHLOAD, "DUID", date_range; intervention) do schema
-        _require_columns(:DISPATCHLOAD, schema, scaling_cols)
-        return [_cast_double(c) for c in scaling_cols]
-    end
 end

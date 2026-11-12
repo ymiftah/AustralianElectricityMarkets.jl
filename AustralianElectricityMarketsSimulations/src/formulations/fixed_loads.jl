@@ -4,17 +4,25 @@ PSI.get_multiplier_value(::Union{FixedLoadTimeSeriesParameter, FixedLoadInvokedT
 
 PSI.convert_result_to_natural_units(::Type{FixedLoadTimeSeriesParameter}) = true
 
-# The parameters of the fixed-loading rows and their series; a device carries them only when it has a fixed loading.
+# The parameters of the fixed-loading rows and the build's first-solve seed series.
 const _FIXED_LOAD_SERIES = (
-    FixedLoadTimeSeriesParameter => NEM_SERIES.fixed_load,
-    FixedLoadInvokedTimeSeriesParameter => NEM_SERIES.fixed_load_invoked,
+    FixedLoadTimeSeriesParameter => _FIXED_LOAD_SEED_SERIES,
+    FixedLoadInvokedTimeSeriesParameter => _FIXED_LOAD_INVOKED_SEED_SERIES,
 )
 
 # Offset, in MW, that moves both fixed-loading rows out of reach at an interval with no fixed loading.
 const _FIXED_LOAD_INACTIVE_MW = 1.0e5
 
 
-_fixed_load_devices(devices) = [d for d in devices if PSY.has_time_series(d, PSY.SingleTimeSeries, NEM_SERIES.fixed_load)]
+"Whether `device` has an energy bid carrying a fixed loading on either side."
+function _has_fixed_load_bid(device)
+    cost = _nem_offer_cost(device)
+    isnothing(cost) && return false
+    return any(b -> !isnothing(b.fixed_load), get_energy_bids(cost))
+end
+
+
+_fixed_load_devices(devices) = [d for d in devices if _has_fixed_load_bid(d)]
 
 
 """
@@ -22,7 +30,8 @@ _fixed_load_devices(devices) = [d for d in devices if PSY.has_time_series(d, PSY
 
 Adds the fixed-loading parameters ([`FixedLoadTimeSeriesParameter`](@ref),
 [`FixedLoadInvokedTimeSeriesParameter`](@ref)) and the surplus and deficit slacks for the
-`devices` carrying a `"fixed_load"` series (built by [`nem_system`](@ref)).
+`devices` whose energy bid carries a fixed loading. The parameters read the build's seed series;
+every later solve recomputes them from the bids and the state source.
 
 # Returns
 `nothing`.
@@ -30,17 +39,17 @@ Adds the fixed-loading parameters ([`FixedLoadTimeSeriesParameter`](@ref),
 function _add_fixed_load_arguments!(container::PSI.OptimizationContainer, devices, model::PSI.DeviceModel{T, D}) where {T, D}
     fixed = _fixed_load_devices(devices)
     isempty(fixed) && return
-    for (param, _) in _FIXED_LOAD_SERIES
-        PSI.add_parameters!(container, param, fixed, model)
+    for (param, name) in _FIXED_LOAD_SERIES
+        PSI.add_parameters!(container, param, fixed, model; time_series_name = name)
     end
-    PSI.add_variables!(container, EnergyFixedLoadSurplusSlack, fixed, D())
-    PSI.add_variables!(container, EnergyFixedLoadDeficitSlack, fixed, D())
+    _add_device_unit_slacks!(container, FixedLoadSurplusVariant(), fixed)
+    _add_device_unit_slacks!(container, FixedLoadDeficitVariant(), fixed)
     return
 end
 
 
 """
-    PSI.add_constraints!(container, ::Type{EnergyFixedLoadConstraint}, devices, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
+    PSI.add_constraints!(container, ::Type{NEMUnitConstraint}, devices, model::PSI.DeviceModel{T, <:AbstractNEMDispatch}, network_model)
 
 Adds AEMO's Energy Inflexible Offer rows (*Schedule of Constraint Violation Penalty Factors* v8.0,
 item 13, "Unit = X MW") for the `devices` carrying a fixed loading: the device's net energy
@@ -53,7 +62,7 @@ its fixed loading. At an interval with no fixed loading both rows are relaxed by
 """
 function PSI.add_constraints!(
         container::PSI.OptimizationContainer,
-        ::Type{EnergyFixedLoadConstraint},
+        ::Type{NEMUnitConstraint},
         devices::IS.FlattenIteratorWrapper{T},
         ::PSI.DeviceModel{T, <:AbstractNEMDispatch},
         ::PSI.NetworkModel{<:PM.AbstractPowerModel},
@@ -64,10 +73,10 @@ function PSI.add_constraints!(
     steps = PSI.get_time_steps(container)
     target, _ = _ts_parameter_accessor(container, FixedLoadTimeSeriesParameter, T)
     invoked, _ = _ts_parameter_accessor(container, FixedLoadInvokedTimeSeriesParameter, T)
-    surplus = PSI.get_variable(container, EnergyFixedLoadSurplusSlack(), T)
-    deficit = PSI.get_variable(container, EnergyFixedLoadDeficitSlack(), T)
-    upper = PSI.add_constraints_container!(container, EnergyFixedLoadConstraint(), T, names, steps; meta = "upper")
-    lower = PSI.add_constraints_container!(container, EnergyFixedLoadConstraint(), T, names, steps; meta = "lower")
+    surplus = PSI.get_variable(container, NEMUnitSlack(), T, _nem_unit_slack_meta(FixedLoadSurplusVariant()))
+    deficit = PSI.get_variable(container, NEMUnitSlack(), T, _nem_unit_slack_meta(FixedLoadDeficitVariant()))
+    upper = PSI.add_constraints_container!(container, NEMUnitConstraint(), T, names, steps; meta = "fixed_load|upper")
+    lower = PSI.add_constraints_container!(container, NEMUnitConstraint(), T, names, steps; meta = "fixed_load|lower")
     inactive = _FIXED_LOAD_INACTIVE_MW / PSI.get_base_power(container)
     jm = PSI.get_jump_model(container)
     for device in fixed, t in steps
@@ -90,8 +99,8 @@ end
 function _add_fixed_load_costs!(container::PSI.OptimizationContainer, devices, ::Type{T}) where {T}
     names = PSY.get_name.(_fixed_load_devices(devices))
     isempty(names) && return
-    for slack in (EnergyFixedLoadSurplusSlack, EnergyFixedLoadDeficitSlack)
-        _add_mpc_penalty!(container, slack, T, names, FIXED_LOADING_CVP_FACTOR)
+    for variant in (FixedLoadSurplusVariant(), FixedLoadDeficitVariant())
+        _add_unit_slack_penalty!(container, variant, T, names)
     end
     return
 end

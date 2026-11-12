@@ -13,36 +13,23 @@ function offered_band_system(; bands = [(40.0, 20.0)], target = 60.0, weight = 1
     )
 end
 
-@testset "custom nonzero first breakpoints retain their dispatch offset" begin
-    for target in (45.0, 0.0)
-        sys = nem_toy_system(
-            [
-                TOY_CHEAP => toy_unit(100.0, [(40.0, 20.0)]; initial = 10.0, ramp_up = 100.0),
-                TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 20.0, ramp_up = 100.0),
-            ],
-            80.0;
-            mutate! = function (sys, stamps)
-                cheap = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
-                PSY.remove_time_series!(sys, PSY.SingleTimeSeries, cheap, "variable_cost")
-                PSY.remove_time_series!(sys, PSY.SingleTimeSeries, cheap, "incremental_initial_input")
-                curve = PSY.PiecewiseStepData([10.0, 50.0], [20.0])
-                AustralianElectricityMarkets._set_incremental_bid_cost!(sys, cheap, (piecewise_step_data = fill(curve, length(stamps)),), TOY_START, TOY_RESOLUTION)
-                add_toy_generic_constraint!(sys, stamps, TOY_CHEAP, target; sense = ConstraintSense.EQ)
-                only(PSY.get_components(GenericConstraint, sys)).constraint_weight = 1160.0
-                return
-            end,
-        )
-        out = solve_toy(sys; generic_slacks = true)
-        @test out.dispatch_mw[TOY_CHEAP] ≈ target atol = 1.0e-6
-        @test out.band_mw[(TOY_CHEAP, 1)] ≈ max(target - 10.0, 0.0) atol = 1.0e-6
-        rows = filter(:family => ==("energy_offer"), read_constraint_violations(out.results, sys))
-        if target == 0.0
-            @test only(rows.MW) ≈ 10.0 atol = 1.0e-6
-            @test only(rows.direction) == "down"
-        else
-            @test isempty(rows)
-        end
-    end
+@testset "an energy offer curve must start at 0 MW" begin
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(40.0, 20.0)]; initial = 10.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 80.0)]; initial = 20.0, ramp_up = 100.0),
+        ],
+        80.0;
+        mutate! = function (sys, stamps)
+            cheap = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
+            curve = PSY.PiecewiseStepData([10.0, 50.0], [20.0])
+            _toy_energy_bid!(sys, cheap, AustralianElectricityMarkets.BidDirection.GEN, stamps, fill(curve, length(stamps)), fill(100.0, length(stamps)))
+            return
+        end,
+    )
+    status, log = _toy_build_log(toy_model(sys; template = replay_template(sys)))
+    @test status == PSI.ModelBuildStatus.FAILED
+    @test occursin("energy offer curves must start at 0 MW", log)
 end
 
 @testset "non-conformance may exceed the total offered energy bands" begin
@@ -90,13 +77,11 @@ end
             loads = kind == :load ? [name => toy_load(40.0, 1.0; initial = 0.0, ramp_up = 100.0, availability = 100.0)] : Pair{String, Any}[],
             batteries = kind == :load ? Pair{String, Any}[] : [name => toy_battery(40.0, 50.0, 40.0, 1.0; initial = 0.0, ramp_up = 100.0, gen_avail = 100.0, load_avail = 100.0)],
             mutate! = function (sys, stamps)
-                device = PSY.get_component(kind == :load ? PSY.InterruptiblePowerLoad : PSY.EnergyReservoirStorage, sys, name)
-                gc = GenericConstraint(; name = "NC_OFFER", sense = ConstraintSense.EQ, rhs = target / PSY.get_base_power(sys), terms = ConstraintTerm[UnitTerm(name, BidType.ENERGY, 1.0)])
+                device = PSY.get_component(kind == :load ? InterruptiblePowerLoad : EnergyReservoirStorage, sys, name)
+                gc = GenericConstraint(; name = "NC_OFFER", sense = ConstraintSense.EQ, rhs = target, terms = ConstraintTerm[UnitTerm(name, BidType.ENERGY, 1.0)])
                 gc.constraint_weight = 1160.0
                 PSY.add_service!(sys, gc, [device])
-                for (key, value) in (("rhs", target / PSY.get_base_power(sys)), ("invoked", 1.0))
-                    PSY.add_time_series!(sys, gc, PSY.SingleTimeSeries(; name = key, data = PSY.TimeSeries.TimeArray(stamps, fill(value, length(stamps)))))
-                end
+                add_toy_constraint_series!(sys, gc, stamps, fill(target, length(stamps)), fill(1.0, length(stamps)))
                 return
             end,
         )
@@ -106,5 +91,66 @@ end
         rows = filter(:family => ==("energy_offer"), read_constraint_violations(out.results, sys))
         @test only(rows.MW) ≈ 20.0 atol = 1.0e-6
         @test only(rows.name) == name
+    end
+end
+
+@testset "every slack variant's key meta parses back to its variant and keeps its violation family" begin
+    kinds = Dict(AEMS._VIOLATION_FAMILIES)
+    nem_unit = [
+        (AEMS.EnergyOfferSurplusVariant(), "energy_offer|surplus", ("energy_offer", "up")),
+        (AEMS.EnergyOfferDeficitVariant(), "energy_offer|deficit", ("energy_offer", "down")),
+        (AEMS.EnergyOfferDecrementalSurplusVariant(), "energy_offer|decremental_surplus", ("energy_offer", "up")),
+        (AEMS.EnergyOfferDecrementalDeficitVariant(), "energy_offer|decremental_deficit", ("energy_offer", "down")),
+        (AEMS.EnergyLimitMaxAvailVariant(), "energy_limit|max_avail", ("energy_max_avail", "up")),
+        (AEMS.EnergyLimitUIGFVariant(), "energy_limit|uigf", ("energy_uigf", "up")),
+        (AEMS.EnergyLimitMaxAvailOutVariant(), "energy_limit|max_avail_out", ("energy_max_avail", "up")),
+        (AEMS.EnergyLimitMaxAvailInVariant(), "energy_limit|max_avail_in", ("energy_max_avail", "down")),
+        (AEMS.FixedLoadSurplusVariant(), "fixed_load|surplus", ("fixed_load", "up")),
+        (AEMS.FixedLoadDeficitVariant(), "fixed_load|deficit", ("fixed_load", "down")),
+        (AEMS.UnitRampUpVariant(), "unit_ramp|up", ("unit_ramp", "up")),
+        (AEMS.UnitRampDownVariant(), "unit_ramp|down", ("unit_ramp", "down")),
+    ]
+    for (tag, meta, family) in nem_unit
+        @test AEMS._nem_unit_slack_meta(tag) == meta
+        @test AEMS._nem_unit_slack_variant(meta) === tag
+        @test AEMS._violation_kind(kinds, AEMS.NEMUnitSlack, meta) == family
+    end
+
+    # Ramp variants take no link; every other MNSP variant is composed with the link direction.
+    mnsp = [
+        (AEMS.MNSPMaxAvailVariant(), AEMS.MNSPForwardLink(), ("mnsp_max_avail", "up")),
+        (AEMS.MNSPOfferVariant(), AEMS.MNSPReverseLink(), ("mnsp_offer", "up")),
+        (AEMS.MNSPRampUpVariant(), AEMS.MNSPForwardLink(), ("mnsp_ramp", "up")),
+        (AEMS.MNSPRampDownVariant(), AEMS.MNSPForwardLink(), ("mnsp_ramp", "down")),
+        (AEMS.MNSPFixedLoadSurplusVariant(), AEMS.MNSPForwardLink(), ("mnsp_fixed_load", "up")),
+        (AEMS.MNSPFixedLoadDeficitVariant(), AEMS.MNSPReverseLink(), ("mnsp_fixed_load", "down")),
+    ]
+    for (tag, link, family) in mnsp
+        meta = tag isa AEMS._MNSPRampVariant ? AEMS._mnsp_slack_meta(tag) : AEMS._mnsp_slack_meta(tag, link)
+        @test AEMS._mnsp_slack_variant(meta) === tag
+        @test AEMS._violation_kind(kinds, AEMS.MNSPSlack, meta) == family
+    end
+
+    # Each FCAS row family is joined to a service meta with `|`.
+    fcas = [
+        (AEMS.FCASJointCapacityVariant(), ("fcas_enablement", "up")),
+        (AEMS.FCASJointRampingVariant(), ("fcas_joint_ramping", "up")),
+        (AEMS.FCASMaxAvailVariant(), ("fcas_max_avail", "up")),
+        (AEMS.FCASBDURampingVariant(), ("fcas_bdu_ramping", "up")),
+    ]
+    for (tag, family) in fcas
+        meta = AEMS._fcas_slack_meta(tag, "NSW1_RAISEREG")
+        @test AEMS._fcas_slack_variant(meta) === tag
+        @test AEMS._violation_kind(kinds, AEMS.FCASSlack, meta) == family
+    end
+
+    interconnector = [
+        (AEMS.InterconnectorFlowSurplus(), ("interconnector_flow", "up")),
+        (AEMS.InterconnectorFlowDeficit(), ("interconnector_flow", "down")),
+    ]
+    for (tag, family) in interconnector
+        meta = AEMS._interconnector_flow_meta(tag)
+        @test AEMS._interconnector_flow_variant(meta) === tag
+        @test AEMS._violation_kind(kinds, AEMS.InterconnectorFlowSlack, meta) == family
     end
 end

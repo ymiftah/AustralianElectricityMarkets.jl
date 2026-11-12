@@ -5,13 +5,11 @@ function storage_availability_system(; target = 60.0, weight = 1160.0, initial =
         batteries = [TOY_BATTERY => toy_battery(100.0, 50.0, 100.0, 1.0; initial, ramp_up = up, ramp_down = down, gen_avail = gen, load_avail = load)],
         mutate! = function (sys, stamps)
             isnothing(target) && return
-            battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
-            gc = GenericConstraint(; name = "NC_STORAGE", sense = ConstraintSense.EQ, rhs = first(target) / PSY.get_base_power(sys), terms = ConstraintTerm[UnitTerm(TOY_BATTERY, BidType.ENERGY, 1.0)])
+            battery = PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY)
+            gc = GenericConstraint(; name = "NC_STORAGE", sense = ConstraintSense.EQ, rhs = first(target), terms = ConstraintTerm[UnitTerm(TOY_BATTERY, BidType.ENERGY, 1.0)])
             gc.constraint_weight = weight
             PSY.add_service!(sys, gc, [battery])
-            for (name, values) in (("rhs", _toy_values(target, length(stamps)) ./ PSY.get_base_power(sys)), ("invoked", ones(length(stamps))))
-                PSY.add_time_series!(sys, gc, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(stamps, values)))
-            end
+            add_toy_constraint_series!(sys, gc, stamps, _toy_values(target, length(stamps)), ones(length(stamps)))
             return
         end,
     )
@@ -75,9 +73,10 @@ end
 end
 
 @testset "storage raw availability is complete and finite" begin
-    for key in ("energy_max_avail", "energy_max_avail_decremental")
+    for direction in (AustralianElectricityMarkets.BidDirection.GEN, AustralianElectricityMarkets.BidDirection.LOAD)
+        key = AustralianElectricityMarkets.bid_series_name(BidType.ENERGY, :max_avail, direction)
         sys = storage_availability_system()
-        battery = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
+        battery = PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY)
         PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, battery, key)
         PSY.remove_time_series!(sys, PSY.SingleTimeSeries, battery, key)
         @test_throws ArgumentError check_dispatch_envelope(replay_template(sys), sys, TOY_START, 1)

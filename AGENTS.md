@@ -1,7 +1,7 @@
 # AustralianElectricityMarkets.jl
 
 Julia monorepo that turns AEMO **NEMWEB (MMSDM)** market data into **PowerSystems.jl** `System`s and
-solves NEM dispatch replicas of them with **PowerSimulations.jl**. It is a Julia 1.11 workspace of
+solves NEM dispatch replicas of them with **PowerSimulations.jl**. It is a Julia 1.13 workspace of
 four packages sharing the root `Manifest.toml`:
 
 | Package | Path | Responsible for |
@@ -77,6 +77,9 @@ front, so every group runs on its own.
 | `src/system/` | System construction and modification; RegionModel submodule |
 | `src/accessors/` | Attached component data and time-series lookup |
 | `…Simulations/src/types/`, `…Simulations/src/formulations/` | PSI types and dispatch, FCAS, constraint and loss formulations |
+| `…Simulations/src/types/state.jl` | `NEMUnitState`, the state sources (`ObservedState`, `SimulatedState`) and the derived-input attributes `NEMDispatchInputs` / `NEMFCASInputs` |
+| `…Simulations/src/offers/` | Effective offers and state-dependent inputs as pure functions (`derivation.jl`, `state_derivation.jl`, `initial_state.jl`), and the `set_...!` writers that record each series key |
+| `…Simulations/src/offers/state_updates/` | Per-step updates of the state-dependent PowerSimulations parameters, one file per formulation family |
 | `…Simulations/src/results/` | Solved and violation readers of PSI results: `read_solved_interval`, `read_constraint_violations`, and the `read_prices` / `read_fcas_prices` methods |
 | `…Simulations/src/checks/<what_is_checked>.jl` | pre-flight checks run before a build |
 | `…Simulations/src/psi_compat.jl` | shims over the pinned PowerSimulations fork |
@@ -133,4 +136,9 @@ bound, constraint and cost term. Record any departure from AEMO in an ADR.
   module: `IS.get_module` only resolves top-level package names, so submodule-nested types break
   `System` JSON round-trips.
 - Simulations depends on a **pinned PowerSimulations fork** (`[sources]` in its `Project.toml`);
-  check PSI behaviour against that revision, not upstream.
+  check PSI behaviour against that revision, not upstream. PowerSystems is the registered release.
+- Replay systems use stock PowerSystems devices (`NEM_DISPATCH_DEVICE_TYPES`) each carrying a
+  `NEMUnitData` supplemental attribute (offer, registration, telemetry, observed state); a device is a
+  replay unit when `has_nem_unit_data` holds, never by its type. Regional systems carry none.
+- Series-key fields of the typed structs are `IS.StaticTimeSeriesKey`; store the static key, never a
+  forecast key.

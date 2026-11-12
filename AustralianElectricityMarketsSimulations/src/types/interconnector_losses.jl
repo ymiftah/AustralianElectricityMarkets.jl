@@ -35,16 +35,21 @@ interconnector's segment count, and a smaller interconnector's unused cells are 
 struct InterconnectorLossSegmentVariable <: PSI.VariableType end
 
 
-"`flow[ic,t] == first_breakpoint + sum(segment flows)`, both per-unit."
-struct InterconnectorFlowSegmentConstraint <: PSI.ConstraintType end
-
-
 """
-`loss[ic,t] == losses at the first breakpoint + sum(segment slope * segment flow) + k[t] * flow[ic,t]`,
-per-unit, with segment slopes and first-breakpoint losses at zero demand and `k[t]` the
-[`LossDemandCoefficientParameter`](@ref).
+    InterconnectorLossConstraint
+
+Row over one interconnector, per-unit. The key meta names the row, and a composite meta continues after
+its first `|`:
+
+- `"flow_segment"`: `flow[ic,t] == first_breakpoint + sum(segment flows)`, indexed `(interconnector name, t)`.
+- `"loss_definition"`: `loss[ic,t] == losses at the first breakpoint + sum(segment slope * segment flow) + k[t] * flow[ic,t]`,
+  with segment slopes and first-breakpoint losses at zero demand and `k[t]` the
+  [`LossDemandCoefficientParameter`](@ref). Indexed `(interconnector name, t)`.
+- `"segment_order|ub"` and `"segment_order|lb"`: contiguous segment fill. Segment `s + 1` may carry flow only when
+  segment `s` is full (`ub`), and segment `s` is full when its fill indicator is on (`lb`). Indexed
+  `(interconnector name, segment label, t)`.
 """
-struct InterconnectorLossDefinitionConstraint <: PSI.ConstraintType end
+struct InterconnectorLossConstraint <: PSI.ConstraintType end
 
 
 """
@@ -56,16 +61,9 @@ struct InterconnectorLossSegmentFullVariable <: PSI.VariableType end
 
 
 """
-Contiguous segment fill: segment `s + 1` may carry flow only when segment `s` is full
-(`meta = "ub"`), and segment `s` is full when its fill indicator is on (`meta = "lb"`).
-"""
-struct InterconnectorLossSegmentOrderConstraint <: PSI.ConstraintType end
-
-
-"""
     LossDemandCoefficientParameter
 
-Coefficient of an interconnector's flow in its [`InterconnectorLossDefinitionConstraint`](@ref) at
+Coefficient of an interconnector's flow in its `"loss_definition"` [`InterconnectorLossConstraint`](@ref) at
 each interval: the demand term `Σ_r demand_coefficients[r] × demand[r]` of its loss factor, read
 from the `"loss_demand_coefficient"` series that `set_loss_demand_coefficients!` attaches.
 """

@@ -13,6 +13,82 @@ const TOY_START = DateTime(2025, 1, 1)
 const TOY_RESOLUTION = Minute(5)
 const TOY_TOLERANCE = 1.0e-6
 
+# The registration of a toy unit: open over every toy date, scheduled unless `schedule_type` says otherwise.
+function _toy_registration(; schedule_type = ScheduleType.SCHEDULED, gen_loss_factor = 1.0, load_loss_factor = 1.0)
+    return NEMRegistration(;
+        schedule_type, gen_loss_factor, load_loss_factor,
+        registered_from = DateTime(2000, 1, 1), registered_until = DateTime(2999, 12, 31),
+    )
+end
+
+# Holds `values`, natural units, as the series of a toy unit's telemetry or observed-state `field`, and
+# rebuilds the struct to hold its key; other fields keep their values or take the defaults.
+function set_toy_unit_field!(sys, device, stamps, field::Symbol, values)
+    observed = field in (:initial_mw, :dispatch_mode)
+    names = observed ? AustralianElectricityMarkets.NEM_OBSERVED_SERIES : AustralianElectricityMarkets.NEM_TELEMETRY_SERIES
+    name = getproperty(names, field)
+    AustralianElectricityMarkets.replace_single_series!(
+        sys, device, AustralianElectricityMarkets.single_series(name, stamps[1], values, TOY_RESOLUTION),
+    )
+    fields = merge(
+        observed ? _toy_observed_fields(device) : _toy_telemetry_fields(device),
+        NamedTuple{(field,)}((AustralianElectricityMarkets._series_key(device, name),)),
+    )
+    if observed
+        AustralianElectricityMarkets.set_observed_state!(device, AustralianElectricityMarkets.NEMObservedState(; fields...))
+    else
+        AustralianElectricityMarkets.set_telemetry!(device, AustralianElectricityMarkets.NEMTelemetry(; fields...))
+    end
+    return
+end
+
+# Removes a toy unit's UIGF series and its telemetry key.
+function clear_toy_uigf!(sys, device)
+    name = AustralianElectricityMarkets.NEM_TELEMETRY_SERIES.uigf
+    PSY.has_time_series(device, PSY.DeterministicSingleTimeSeries, name) &&
+        PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, device, name)
+    AustralianElectricityMarkets.remove_single_series!(sys, device, name)
+    AustralianElectricityMarkets.set_telemetry!(device, AustralianElectricityMarkets.NEMTelemetry(; merge(_toy_telemetry_fields(device), (uigf = nothing,))...))
+    return
+end
+
+function _toy_telemetry_fields(device)
+    current = _toy_unit_field(device, :telemetry)
+    isnothing(current) && return (
+        agc_status = true, uigf = nothing, ramp_up_limit = NaN, ramp_down_limit = NaN,
+        raise_reg_enablement = (NaN, NaN), lower_reg_enablement = (NaN, NaN),
+        raise_reg_max_avail = NaN, lower_reg_max_avail = NaN,
+    )
+    return NamedTuple{fieldnames(AustralianElectricityMarkets.NEMTelemetry)}(Tuple(getfield(current, f) for f in fieldnames(AustralianElectricityMarkets.NEMTelemetry)))
+end
+
+# Turns a toy unit's NaN telemetry statics into NaN series: AEM key-backs every DISPATCHLOAD limit,
+# and a NaN static cannot be written to the System JSON a simulation store holds.
+function _key_toy_telemetry_limits!(sys, stamps, device)
+    current = _toy_unit_field(device, :telemetry)
+    isnothing(current) && return
+    for field in (
+            :ramp_up_limit, :ramp_down_limit, :raise_reg_max_avail, :lower_reg_max_avail,
+            :raise_reg_enablement, :lower_reg_enablement,
+        )
+        value = getfield(current, field)
+        value isa Union{Real, Tuple} || continue
+        _has_nan(value) || continue
+        values = value isa Tuple ? fill(value, length(stamps)) : fill(Float64(value), length(stamps))
+        set_toy_unit_field!(sys, device, stamps, field, values)
+    end
+    return
+end
+
+_has_nan(value::Real) = isnan(value)
+_has_nan(value::Tuple) = any(isnan, value)
+
+function _toy_observed_fields(device)
+    current = _toy_unit_field(device, :observed_state)
+    isnothing(current) && return (initial_mw = 0.0, dispatch_mode = 0)
+    return (initial_mw = current.initial_mw, dispatch_mode = current.dispatch_mode)
+end
+
 # The two `5_bus_hydro_ed_sys` units the toy keeps; both sit on bus1.
 const TOY_CHEAP = "Alta"
 const TOY_EXPENSIVE = "Park City"
@@ -20,9 +96,10 @@ const TOY_BATTERY = "batt1"
 const TOY_LOAD_SERVICE_ONLY = "sched_load"
 
 # A unit's offer and dispatch limits, in MW, MW/min and $/MWh. `bands` is a vector of
-# `(MW, price)` pairs in offer order.
-function toy_unit(capacity, bands; initial, ramp_up, ramp_down = 100.0, availability = capacity)
-    return (; capacity, bands, initial, ramp_up, ramp_down, availability)
+# `(MW, price)` pairs in offer order. `roc_up`/`roc_down` are the bid `ROCUP`/`ROCDOWN`, MW/min,
+# `NaN` (no bid ramp) by default.
+function toy_unit(capacity, bands; initial, ramp_up, ramp_down = 100.0, availability = capacity, roc_up = NaN, roc_down = NaN)
+    return (; capacity, bands, initial, ramp_up, ramp_down, availability, roc_up, roc_down)
 end
 
 # One value per stamp: a scalar repeats, a vector gives one value per stamp.
@@ -50,22 +127,46 @@ end
 function toy_battery(
         gen_capacity, gen_price, load_capacity, load_price;
         initial, ramp_up, ramp_down = 100.0, gen_avail = gen_capacity, load_avail = load_capacity,
+        roc_up = NaN, roc_down = NaN,
     )
     return (;
         gen_capacity, gen_price, load_capacity, load_price, initial, ramp_up, ramp_down,
-        gen_avail, load_avail,
+        gen_avail, load_avail, roc_up, roc_down,
     )
 end
 
 # A scheduled load's one-band decremental offer and dispatch limits, in MW, MW/min and $/MWh.
 # `initial` is `INITIALMW` (consumed MW, positive); `availability` is the load-side `MAXAVAIL`.
-function toy_load(capacity, price; initial, ramp_up, ramp_down = 100.0, availability = capacity)
-    return (; capacity, price, initial, ramp_up, ramp_down, availability)
+function toy_load(capacity, price; initial, ramp_up, ramp_down = 100.0, availability = capacity, roc_up = NaN, roc_down = NaN)
+    return (; capacity, price, initial, ramp_up, ramp_down, availability, roc_up, roc_down)
+end
+
+# The telemetry or observed state of a toy unit, `nothing` while unset.
+function _toy_unit_field(device, field::Symbol)
+    unit = AustralianElectricityMarkets._nem_unit_data(device)
+    return isnothing(unit) ? nothing : getfield(unit, field)
+end
+
+# A `ThermalStandard` named `name` on the bus of `stock`, a `5_bus_hydro_ed_sys` thermal unit it replaces
+# in `sys`. Limits are placeholders the caller sets in natural units once the unit is in `sys`.
+function _toy_thermal(sys, stock, name)
+    gen = ThermalStandard(;
+        name, available = true, status = true, bus = PSY.get_bus(stock), active_power = 0.0,
+        reactive_power = 0.0, rating = 1.0, active_power_limits = (min = 0.0, max = 1.0),
+        reactive_power_limits = nothing, ramp_limits = nothing,
+        operation_cost = ThermalGenerationCost(nothing), base_power = PSY.get_base_power(stock),
+        time_limits = nothing, must_run = false, prime_mover_type = PSY.get_prime_mover_type(stock),
+        fuel = PSY.get_fuel(stock),
+    )
+    PSY.remove_component!(sys, stock)
+    PSY.add_component!(sys, gen)
+    AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
+    return gen
 end
 
 # `5_bus_hydro_ed_sys` reduced to one area, the load on bus4 and the given `ThermalStandard`
 # units, each carrying its bid stack and the four dispatch-limit series over two 5-minute
-# intervals. `batteries` is a vector of `name => toy_battery(...)` pairs, each built as an
+# intervals. `batteries` is a vector of `name => toy_battery(...)` pairs, each built as a
 # `EnergyReservoirStorage` on bus1 with a generous static rating (never the binding limit),
 # an incremental/decremental offer curve, and the ramp/initial/energy-availability series.
 # `mutate!(sys, stamps)`, when given, runs just before the fixture's
@@ -113,11 +214,12 @@ function nem_toy_system(
     end
 
     for (name, unit) in units
-        gen = PSY.get_component(PSY.ThermalStandard, sys, name)
+        gen = _toy_thermal(sys, PSY.get_component(PSY.ThermalStandard, sys, name), name)
         PSY.set_active_power_limits!(gen, (min = 0.0, max = unit.capacity))
-        AustralianElectricityMarkets._set_incremental_bid_cost!(
-            sys, gen, (piecewise_step_data = _toy_offers(unit.bands, length(stamps)),),
-            start, TOY_RESOLUTION,
+        _toy_energy_bid!(
+            sys, gen, AustralianElectricityMarkets.BidDirection.GEN, stamps,
+            _toy_offers(unit.bands, length(stamps)), _toy_values(unit.availability, length(stamps));
+            roc_up = unit.roc_up, roc_down = unit.roc_down,
         )
         add_series!(
             gen, "max_active_power", unit.availability ./ unit.capacity;
@@ -125,10 +227,10 @@ function nem_toy_system(
         )
         add_series!(gen, "ramp_up_rate", unit.ramp_up ./ base_power)
         add_series!(gen, "ramp_down_rate", unit.ramp_down ./ base_power)
-        add_series!(gen, "initial_mw", unit.initial ./ base_power)
-        add_series!(gen, "availability", unit.availability ./ base_power)
-        add_series!(gen, "energy_max_avail", unit.availability ./ base_power)
-        PSY.get_ext(gen)["nem_semi_scheduled"] = false
+        set_toy_unit_field!(sys, gen, stamps, :initial_mw, _toy_values(unit.initial, length(stamps)))
+        set_toy_unit_field!(sys, gen, stamps, :ramp_up_limit, _toy_values(unit.ramp_up, length(stamps)) .* 60)
+        set_toy_unit_field!(sys, gen, stamps, :ramp_down_limit, _toy_values(unit.ramp_down, length(stamps)) .* 60)
+        set_registration!(gen, _toy_registration())
     end
 
     load = PSY.get_component(PSY.PowerLoad, sys, "bus4")
@@ -140,7 +242,7 @@ function nem_toy_system(
 
     bus1 = PSY.get_component(PSY.ACBus, sys, "bus1")
     for (name, bat) in batteries
-        battery = PSY.EnergyReservoirStorage(;
+        battery = EnergyReservoirStorage(;
             name = name, available = true, bus = bus1, prime_mover_type = PSY.PrimeMovers.BA,
             storage_technology_type = PSY.StorageTech.LIB, storage_capacity = 1.0,
             storage_level_limits = (min = 0.0, max = 1.0), initial_storage_capacity_level = 0.5,
@@ -151,44 +253,44 @@ function nem_toy_system(
             reactive_power_limits = (min = -1.0, max = 1.0), base_power = base_power,
         )
         PSY.add_component!(sys, battery)
+        AustralianElectricityMarkets.attach_nem_unit_data!(sys, battery)
 
+        PSY.set_available!(battery, true)
         gen_offer = PSY.PiecewiseStepData([0.0, bat.gen_capacity], [bat.gen_price])
-        AustralianElectricityMarkets._set_incremental_bid_cost!(
-            sys, battery, (piecewise_step_data = fill(gen_offer, length(stamps)),),
-            start, TOY_RESOLUTION,
+        _toy_energy_bid!(
+            sys, battery, AustralianElectricityMarkets.BidDirection.GEN, stamps,
+            fill(gen_offer, length(stamps)), _toy_values(bat.gen_avail, length(stamps));
+            roc_up = bat.roc_up, roc_down = bat.roc_down,
         )
         load_offer = PSY.PiecewiseStepData([0.0, bat.load_capacity], [bat.load_price])
-        decr = AustralianElectricityMarkets.single_series(
-            "decremental_variable_cost", start, fill(load_offer, length(stamps)), TOY_RESOLUTION,
+        _toy_energy_bid!(
+            sys, battery, AustralianElectricityMarkets.BidDirection.LOAD, stamps,
+            fill(load_offer, length(stamps)), _toy_values(bat.load_avail, length(stamps));
+            roc_up = bat.roc_up, roc_down = bat.roc_down,
         )
-        PSY.set_decremental_variable_cost!(sys, battery, decr, PSY.UnitSystem.NATURAL_UNITS)
-        decr_init = AustralianElectricityMarkets.single_series(
-            "decremental_initial_input", start, fill(0.0, length(stamps)), TOY_RESOLUTION,
-        )
-        PSY.set_decremental_initial_input!(sys, battery, decr_init)
 
-        add_forecast!(battery, "energy_max_avail", bat.gen_avail ./ base_power)
-        add_forecast!(battery, "energy_max_avail_decremental", bat.load_avail ./ base_power)
         add_series!(battery, "ramp_up_rate", bat.ramp_up ./ base_power)
         add_series!(battery, "ramp_down_rate", bat.ramp_down ./ base_power)
-        add_series!(battery, "initial_mw", bat.initial ./ base_power)
+        set_toy_unit_field!(sys, battery, stamps, :initial_mw, _toy_values(bat.initial, length(stamps)))
+        set_toy_unit_field!(sys, battery, stamps, :ramp_up_limit, _toy_values(bat.ramp_up, length(stamps)) .* 60)
+        set_toy_unit_field!(sys, battery, stamps, :ramp_down_limit, _toy_values(bat.ramp_down, length(stamps)) .* 60)
     end
 
     # Scheduled loads (`InterruptiblePowerLoad`) on bus1, priced on their decremental offer only.
     for (name, ld) in loads
-        scheduled = PSY.InterruptiblePowerLoad(;
+        scheduled = InterruptiblePowerLoad(;
             name = name, available = true, bus = bus1, active_power = ld.initial / base_power,
             reactive_power = 0.0, max_active_power = ld.capacity / base_power,
             max_reactive_power = 0.0, base_power = base_power,
-            operation_cost = PSY.MarketBidCost(;
-                no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0,
-            ),
+            operation_cost = LoadCost(; variable = CostCurve(LinearCurve(0.0)), fixed = 0.0),
         )
         PSY.add_component!(sys, scheduled)
+        AustralianElectricityMarkets.attach_nem_unit_data!(sys, scheduled)
         offer = PSY.PiecewiseStepData([0.0, ld.capacity], [ld.price])
-        AustralianElectricityMarkets._set_decremental_bid_cost!(
-            sys, scheduled, (piecewise_step_data = fill(offer, length(stamps)),),
-            start, TOY_RESOLUTION,
+        _toy_energy_bid!(
+            sys, scheduled, AustralianElectricityMarkets.BidDirection.LOAD, stamps,
+            fill(offer, length(stamps)), _toy_values(ld.availability, length(stamps));
+            roc_up = ld.roc_up, roc_down = ld.roc_down,
         )
         add_series!(
             scheduled, "max_active_power", ld.availability / ld.capacity;
@@ -196,17 +298,27 @@ function nem_toy_system(
         )
         add_series!(scheduled, "ramp_up_rate", ld.ramp_up / base_power)
         add_series!(scheduled, "ramp_down_rate", ld.ramp_down / base_power)
-        add_series!(scheduled, "initial_mw", ld.initial / base_power)
-        add_series!(scheduled, "availability", ld.availability / base_power)
-        add_series!(scheduled, "energy_max_avail", ld.availability / base_power)
-        PSY.get_ext(scheduled)["nem_semi_scheduled"] = false
+        set_toy_unit_field!(sys, scheduled, stamps, :initial_mw, _toy_values(ld.initial, length(stamps)))
+        set_toy_unit_field!(sys, scheduled, stamps, :ramp_up_limit, _toy_values(ld.ramp_up, length(stamps)) .* 60)
+        set_toy_unit_field!(sys, scheduled, stamps, :ramp_down_limit, _toy_values(ld.ramp_down, length(stamps)) .* 60)
+        set_registration!(scheduled, _toy_registration())
     end
 
     isnothing(interchange) || add_toy_interchange!(sys, stamps, interchange)
     isnothing(mutate!) || mutate!(sys, stamps)
-    isnothing(interchange) || set_loss_demand_coefficients!(sys)
-    set_fcas_effective_offers!(sys)
-    tie_break_scales && set_tie_break_scales!(sys)
+    for T in (ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad)
+        foreach(device -> _key_toy_telemetry_limits!(sys, stamps, device), filter(AustralianElectricityMarkets.has_nem_unit_data, collect(PSY.get_components(T, sys))))
+    end
+    if tie_break_scales
+        set_effective_offers!(sys)
+    else
+        AEMS._set_static_offers!(sys)
+        AEMS._set_mnsp_fixed_loads!(sys)
+        AEMS._set_state_seeds!(sys)
+        AEMS._set_fcas_effective_offers!(sys)
+        isnothing(interchange) || set_loss_demand_coefficients!(sys)
+        AEMS._attach_dispatch_inputs!(sys)
+    end
 
     # One window per `horizon`.
     PSY.transform_single_time_series!(sys, horizon, TOY_RESOLUTION)
@@ -264,47 +376,55 @@ function add_toy_interchange!(sys, stamps, ic)
         ),
     )
     isnothing(ic.mnsp) && return
-    PSY.add_time_series!(sys, interchange, AustralianElectricityMarkets.single_series("mnsp_initial_flow", TOY_START, zeros(length(stamps)), TOY_RESOLUTION))
-    for dir in ("forward", "reverse"), (field, value) in (("ramp_rate", 1000.0), ("fixed_load", 0.0), ("fixed_load_invoked", 0.0))
-        PSY.add_time_series!(sys, interchange, AustralianElectricityMarkets.single_series("mnsp_$(dir)_$field", TOY_START, fill(value, length(stamps)), TOY_RESOLUTION))
-    end
+    observed = _toy_series_key(sys, interchange, AustralianElectricityMarkets.NEM_MNSP_SERIES.initial_flow, zeros(length(stamps)))
+    PSY.add_supplemental_attribute!(sys, interchange, AustralianElectricityMarkets.NEMMNSPObservedState(; initial_flow = observed))
     for (dir, offer, tlfs) in zip(("forward", "reverse"), ic.mnsp, ic.mnsp_tlfs)
         per_stamp = first(offer) isa Tuple ? collect(offer) : fill(offer, length(stamps))
         curves = [_toy_offer(bands) for (_, bands) in per_stamp]
         avail = [Float64(max_avail) for (max_avail, _) in per_stamp]
-        for (name, values) in (("mnsp_$(dir)_offer", curves), ("mnsp_$(dir)_max_avail", avail))
-            PSY.add_time_series!(sys, interchange, AustralianElectricityMarkets.single_series(name, TOY_START, values, TOY_RESOLUTION))
-        end
-        PSY.get_ext(interchange)["mnsp_$dir"] = Dict{String, Any}("from_region_tlf" => tlfs[1], "to_region_tlf" => tlfs[2])
+        direction = dir == "forward" ? AustralianElectricityMarkets.MNSPDirection.FORWARD : AustralianElectricityMarkets.MNSPDirection.REVERSE
+        PSY.add_supplemental_attribute!(
+            sys, interchange,
+            AustralianElectricityMarkets.NEMMNSPLink(;
+                direction, link_id = "TOY_$dir", from_region_tlf = tlfs[1], to_region_tlf = tlfs[2],
+                lhs_factor = 1.0, max_capacity = 1000.0,
+            ),
+        )
+        PSY.add_supplemental_attribute!(
+            sys, interchange,
+            AustralianElectricityMarkets.NEMMNSPBid(;
+                direction,
+                offer_curves = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_offer")), curves),
+                max_avail = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_max_avail")), avail),
+                ramp_up = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_ramp_rate")), fill(1000.0, length(stamps))),
+                fixed_load = _toy_series_key(sys, interchange, getproperty(AustralianElectricityMarkets.NEM_MNSP_SERIES, Symbol(dir, "_fixed_load")), fill(NaN, length(stamps))),
+            ),
+        )
     end
     return
 end
 
+# Adds `values` as the `SingleTimeSeries` `name` on `component` and returns its key.
+function _toy_series_key(sys, component, name::AbstractString, values)
+    PSY.add_time_series!(sys, component, AustralianElectricityMarkets.single_series(name, TOY_START, values, TOY_RESOLUTION))
+    return _toy_constraint_key(component, name)
+end
+
 # A single ENERGY `UnitTerm` `GenericConstraint` `name` of `sense` on `duid`'s ENERGY output at
-# `rhs_mw`, with "rhs"/"invoked" series on `stamps`, in the form `_add_nem_constraints!`
-# would produce. `rhs_mw` is a natural-MW value, stored per-unit of the system base. `rhs_mw` and
-# `invoked` take a scalar or one value per stamp.
+# `rhs_mw`, with its right-hand side and invoked mask as typed series on `stamps`, in the form
+# `_add_nem_constraints!` would produce. `rhs_mw` and `invoked` take a scalar or one value per stamp.
 function add_toy_generic_constraint!(
         sys, stamps, duid, rhs_mw; invoked = 1.0, sense = ConstraintSense.LE, name = "N_TOY_LIMIT",
     )
-    base_power = PSY.get_base_power(sys)
-    rhs_pu = _toy_values(rhs_mw, length(stamps)) ./ base_power
     duids = duid isa AbstractString ? [duid] : collect(duid)
     gc = GenericConstraint(;
         name = name,
         sense = sense,
-        rhs = first(rhs_pu),
+        rhs = first(_toy_values(rhs_mw, length(stamps))),
         terms = ConstraintTerm[UnitTerm(d, BidType.ENERGY, 1.0) for d in duids],
     )
-    PSY.add_service!(sys, gc, [PSY.get_component(PSY.ThermalStandard, sys, d) for d in duids])
-    PSY.add_time_series!(
-        sys, gc,
-        PSY.SingleTimeSeries(; name = "rhs", data = PSY.TimeSeries.TimeArray(stamps, rhs_pu)),
-    )
-    PSY.add_time_series!(
-        sys, gc,
-        PSY.SingleTimeSeries(; name = "invoked", data = PSY.TimeSeries.TimeArray(stamps, _toy_values(invoked, length(stamps)))),
-    )
+    PSY.add_service!(sys, gc, [PSY.get_component(ThermalStandard, sys, d) for d in duids])
+    add_toy_constraint_series!(sys, gc, stamps, rhs_mw, invoked)
     return
 end
 
@@ -360,13 +480,11 @@ function solve_toy(
     dispatch = read_variable(results, "ActivePowerVariable__ThermalStandard")
     dual = only(read_dual(results, "CopperPlateBalanceConstraint__Area").value)
     container = PSI.get_optimization_container(model)
-    offers = PSI.get_variable(
-        container, PSI.PiecewiseLinearBlockIncrementalOffer(), PSY.ThermalStandard,
-    )
+    offers = PSI.get_variable(container, EnergyOfferBandVariable(), ThermalStandard, "gen")
     dispatch_mw = Dict(row.name => row.value for row in eachrow(dispatch))
     battery_out_mw = Dict{String, Float64}()
     battery_in_mw = Dict{String, Float64}()
-    if !isempty(PSY.get_components(PSY.EnergyReservoirStorage, sys))
+    if !isempty(PSY.get_components(EnergyReservoirStorage, sys))
         for row in eachrow(read_variable(results, "ActivePowerOutVariable__EnergyReservoirStorage"))
             battery_out_mw[row.name] = row.value
             dispatch_mw[row.name] = get(dispatch_mw, row.name, 0.0) + row.value
@@ -376,21 +494,21 @@ function solve_toy(
             dispatch_mw[row.name] = get(dispatch_mw, row.name, 0.0) - row.value
         end
     end
-    has_units = !isempty(PSY.get_components(PSY.ThermalStandard, sys))
+    has_units = !isempty(PSY.get_components(ThermalStandard, sys))
     ramp_slack_mw = (;
-        up = has_units ? sum(read_variable(results, "UnitRampUpSlack__ThermalStandard").value) : 0.0,
-        down = has_units ? sum(read_variable(results, "UnitRampDownSlack__ThermalStandard").value) : 0.0,
+        up = has_units ? sum(read_variable(results, "NEMUnitSlack__ThermalStandard__unit_ramp|up").value) : 0.0,
+        down = has_units ? sum(read_variable(results, "NEMUnitSlack__ThermalStandard__unit_ramp|down").value) : 0.0,
     )
     load_mw = Dict{String, Float64}()
-    if !isempty(PSY.get_components(PSY.InterruptiblePowerLoad, sys))
+    if !isempty(PSY.get_components(InterruptiblePowerLoad, sys))
         for row in eachrow(read_variable(results, "ActivePowerVariable__InterruptiblePowerLoad"))
             load_mw[row.name] = row.value
         end
     end
-    has_batteries = !isempty(PSY.get_components(PSY.EnergyReservoirStorage, sys))
+    has_batteries = !isempty(PSY.get_components(EnergyReservoirStorage, sys))
     storage_ramp_slack_mw = (;
-        up = has_batteries ? sum(read_variable(results, "UnitRampUpSlack__EnergyReservoirStorage").value) : 0.0,
-        down = has_batteries ? sum(read_variable(results, "UnitRampDownSlack__EnergyReservoirStorage").value) : 0.0,
+        up = has_batteries ? sum(read_variable(results, "NEMUnitSlack__EnergyReservoirStorage__unit_ramp|up").value) : 0.0,
+        down = has_batteries ? sum(read_variable(results, "NEMUnitSlack__EnergyReservoirStorage__unit_ramp|down").value) : 0.0,
     )
     nem_keys = [
         k for k in PSI.get_constraint_keys(container)
@@ -406,8 +524,8 @@ function solve_toy(
         container = container,
         storage_ramp_slack_mw = storage_ramp_slack_mw,
         band_mw = Dict(
-            (name, band) => PSI.JuMP.value(v) * base_power
-                for ((name, band, _), v) in pairs(offers.data)
+            (name, parse(Int, label)) => PSI.JuMP.value(offers[name, label, t]) * base_power
+                for name in axes(offers, 1), label in axes(offers, 2), t in axes(offers, 3)
         ),
         price = dual / (base_power * interval_hours(DISPATCH_INTERVAL)),
         objective = PSI.JuMP.objective_value(PSI.get_jump_model(container)),
@@ -420,72 +538,113 @@ end
 
 # --- FCAS on the toy system: one `(MW, ...)` value or band list per stamp. ---
 
-# Key of the offer curves `add_toy_fcas_offer!` holds in a device's `ext` until its FCASService exists.
-const TOY_FCAS_CURVES_KEY = "toy_fcas_curves"
-
-# Attaches `device`'s `"fcas_trapezium_*"` series: `trapeziums` are
-# `(EnablementMin, LowBreakpoint, HighBreakpoint, EnablementMax, MaxAvail)` in MW, `bands` `(MW, price)` lists.
-# The offer curves become the device's service bids once its FCASService exists
-# (see `flush_toy_fcas_curves!`).
-function add_toy_fcas_offer!(sys, device, stamps, bid_type, trapeziums, bands; decremental = false)
-    base_power = PSY.get_base_power(sys)
-    suffix = decremental ? "$(string(bid_type))_decremental" : string(bid_type)
-    traps = [
-        Tuple(FCASTrapezium(; enablement_min = a / base_power, low_breakpoint = b / base_power, high_breakpoint = c / base_power, enablement_max = d / base_power, max_avail = e / base_power))
-            for (a, b, c, d, e) in trapeziums
-    ]
+# Records `device`'s FCAS bid for `bid_type` from `trapeziums`, one `(EnablementMin, LowBreakpoint,
+# HighBreakpoint, EnablementMax, MaxAvail)` per stamp in MW, and `bands`, one `(MW, price)` list per
+# stamp, as the bid's series, which the formulation reads once the FCASService exists.
+function add_toy_fcas_offer!(
+        sys, device, stamps, bid_type, trapeziums, bands;
+        decremental = false,
+        direction = decremental ? AustralianElectricityMarkets.BidDirection.LOAD : AustralianElectricityMarkets.BidDirection.GEN,
+    )
+    AEM = AustralianElectricityMarkets
+    field(f::Symbol) = AEM.bid_series_name(bid_type, f, direction)
     curves = [PSY.PiecewiseStepData([0.0; cumsum(first.(bs))], last.(bs)) for bs in bands]
-    PSY.add_time_series!(sys, device, AustralianElectricityMarkets.single_series("fcas_trapezium_$suffix", stamps[1], traps, TOY_RESOLUTION))
-    pending = get!(() -> Any[], PSY.get_ext(device), TOY_FCAS_CURVES_KEY)
-    push!(pending, (bid_type, decremental, stamps[1], curves))
-    flush_toy_fcas_curves!(sys)
+    points = [(Float64(a), Float64(b), Float64(c), Float64(d)) for (a, b, c, d, _) in trapeziums]
+    max_avail = [Float64(e) for (_, _, _, _, e) in trapeziums]
+    AEM.replace_single_series!(sys, device, AEM.single_series(field(:offer_curves), stamps[1], curves, TOY_RESOLUTION))
+    AEM.replace_single_series!(sys, device, AEM.single_series(field(:max_avail), stamps[1], max_avail, TOY_RESOLUTION))
+    AEM.replace_single_series!(sys, device, AEM.single_series(field(:trapezium), stamps[1], points, TOY_RESOLUTION))
+    bid = AEM.NEMFCASBid(;
+        service = bid_type, direction, offer_curves = AEM._series_key(device, field(:offer_curves)),
+        max_avail = AEM._series_key(device, field(:max_avail)), trapezium = AEM._series_key(device, field(:trapezium)),
+    )
+    AEM._set_fcas_bid!(AEM._nem_offer_cost(device), bid)
     return
 end
 
-# Writes each pending offer curve as the service bid of every FCASService of its bid type that its
-# device belongs to and that does not carry it yet. Give a MarketBidCost to any device without one,
-# as PowerSystems requires. Call it after adding FCASServices, since a curve waits until its service exists.
-function flush_toy_fcas_curves!(sys)
-    for device in PSY.get_components(PSY.Device, sys)
-        pending = get(PSY.get_ext(device), TOY_FCAS_CURVES_KEY, nothing)
-        isnothing(pending) && continue
-        for (bid_type, decremental, start, curves) in pending
-            for svc in PSY.get_services(device)
-                svc isa FCASService && get_bid_type(svc) == bid_type || continue
-                name = AustralianElectricityMarkets.fcas_offer_series_name(svc, decremental)
-                PSY.has_time_series(device, PSY.SingleTimeSeries, name) && continue
-                PSY.get_operation_cost(device) isa PSY.MarketBidCost || PSY.set_operation_cost!(
-                    device, PSY.MarketBidCost(; no_load_cost = 0.0, start_up = (hot = 0.0, warm = 0.0, cold = 0.0), shut_down = 0.0),
-                )
-                ts = AustralianElectricityMarkets.single_series(name, start, curves, TOY_RESOLUTION)
-                if decremental
-                    PSY.set_decremental_service_bid!(sys, device, svc, ts, PSY.UnitSystem.NATURAL_UNITS)
-                else
-                    PSY.set_service_bid!(sys, device, svc, ts, PSY.UnitSystem.NATURAL_UNITS)
-                end
-            end
-        end
+# Records an energy bid of `device` on `direction`, with `curves` (one per stamp, as offered) and
+# `max_avail` (MW per stamp), `roc_up`/`roc_down` (MW/min per stamp, `NaN` for no bid ramp) and unit
+# loss factors of 1. `fixed_load`, when given, is the `FIXEDLOAD`, MW per stamp; `fast_start_profile`, when
+# given, is a `FastStartProfile` held as a static bid value.
+function _toy_energy_bid!(
+        sys, device, direction, stamps, curves, max_avail;
+        roc_up = NaN, roc_down = NaN, fixed_load = nothing, fast_start_profile = nothing,
+    )
+    AEM = AustralianElectricityMarkets
+    field(f::Symbol) = AEM.bid_series_name(BidType.ENERGY, f, direction)
+    n = length(stamps)
+    for (name, values) in (
+            (field(:offer_curves), curves), (field(:max_avail), max_avail),
+            (field(:roc_up), _toy_values(roc_up, n)), (field(:roc_down), _toy_values(roc_down, n)),
+        )
+        replace_single_series_with!(sys, device, name, values, stamps)
     end
+    fixed_load_key = if isnothing(fixed_load)
+        nothing
+    else
+        replace_single_series_with!(sys, device, field(:fixed_load), _toy_values(fixed_load, n), stamps)
+        AEM._series_key(device, field(:fixed_load))
+    end
+    bid = AEM.NEMEnergyBid(;
+        direction, offer_curves = AEM._series_key(device, field(:offer_curves)),
+        max_avail = AEM._series_key(device, field(:max_avail)),
+        roc_up = AEM._series_key(device, field(:roc_up)), roc_down = AEM._series_key(device, field(:roc_down)),
+        fixed_load = fixed_load_key, fast_start_profile,
+    )
+    AEM._set_energy_bid!(AEM._nem_offer_cost(device), bid)
+    current = AEM.has_registration(device) ? AEM.get_registration(device).schedule_type : ScheduleType.SCHEDULED
+    set_registration!(device, _toy_registration(; schedule_type = current))
     return
 end
-# Attaches a per-stamp `SingleTimeSeries` `name`, per-unitised unless `scale` says otherwise.
+
+# Replaces the `SingleTimeSeries` `name` on `device` with `values` per stamp.
+function replace_single_series_with!(sys, device, name, values, stamps)
+    AustralianElectricityMarkets.replace_single_series!(
+        sys, device, AustralianElectricityMarkets.single_series(name, stamps[1], values, TOY_RESOLUTION),
+    )
+    return
+end
+
+# Attaches `gc`'s right-hand side (`rhs_mw`, MW) and invoked mask as its typed series, named by
+# `NEM_CONSTRAINT_SERIES`, and points `gc.rhs` and `gc.invoked` at them.
+function add_toy_constraint_series!(sys, gc, stamps, rhs_mw, invoked)
+    n = length(stamps)
+    PSY.add_time_series!(
+        sys, gc,
+        PSY.SingleTimeSeries(; name = AustralianElectricityMarkets.NEM_CONSTRAINT_SERIES.rhs, data = PSY.TimeSeries.TimeArray(stamps, _toy_values(rhs_mw, n))),
+    )
+    PSY.add_time_series!(
+        sys, gc,
+        PSY.SingleTimeSeries(; name = AustralianElectricityMarkets.NEM_CONSTRAINT_SERIES.invoked, data = PSY.TimeSeries.TimeArray(stamps, _toy_values(invoked, n))),
+    )
+    gc.rhs = _toy_constraint_key(gc, AustralianElectricityMarkets.NEM_CONSTRAINT_SERIES.rhs)
+    gc.invoked = _toy_constraint_key(gc, AustralianElectricityMarkets.NEM_CONSTRAINT_SERIES.invoked)
+    return
+end
+
+# The static key named `name` on `gc`, ignoring the deterministic one a transform leaves beside it.
+function _toy_constraint_key(gc, name::AbstractString)
+    keys = [k for k in PSY.IS.get_time_series_keys(gc) if k.name == name && k isa PSY.IS.StaticTimeSeriesKey]
+    return only(keys)
+end
+
+# The values of `gc`'s series in `field` (`:rhs` or `:invoked`), read through its key.
+_constraint_series(gc, field::Symbol) = PSY.TimeSeries.values(PSY.get_time_series_array(gc, PSY.IS.get_time_series(gc, getproperty(gc, field))))
+
 function add_toy_series!(sys, component, stamps, name, values; scale = 1 / PSY.get_base_power(sys))
     PSY.add_time_series!(sys, component, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(stamps, Float64.(values) .* scale)))
     return
 end
 # An `FCASService` `"1_<BIDTYPE>"` over `duids` and its GE requirement `name` of `rhs_mw` per stamp.
 function add_toy_fcas_market!(sys, stamps, bid_type, duids, name, rhs_mw)
-    base_power = PSY.get_base_power(sys)
     devices = [PSY.get_component(PSY.Device, sys, d) for d in duids]
     PSY.add_service!(sys, FCASService(; name = "1_$(string(bid_type))", region = "1", bid_type), devices)
     gc = GenericConstraint(;
-        name, sense = ConstraintSense.GE, rhs = rhs_mw[1] / base_power,
+        name, sense = ConstraintSense.GE, rhs = rhs_mw[1],
         terms = ConstraintTerm[UnitTerm(d, bid_type, 1.0) for d in duids], fcas_requirements = [FCASRequirement("1", bid_type)],
     )
     PSY.add_service!(sys, gc, devices)
-    add_toy_series!(sys, gc, stamps, "rhs", rhs_mw)
-    add_toy_series!(sys, gc, stamps, "invoked", [1.0, 1.0]; scale = 1.0)
-    flush_toy_fcas_curves!(sys)
+    add_toy_constraint_series!(sys, gc, stamps, rhs_mw, [1.0, 1.0])
     return
 end
 # Alta and Park City offer RAISE6SEC, Alta also RAISEREG and LOWERREG, `TOY_BATTERY` RAISEREG on both
@@ -494,6 +653,7 @@ function fcas_toy_system(;
         alta_reg_avail = [15.0, 8.0], alta_agc = [1, 1], park_initial = [40.0, 40.0],
         batt_initial = [5.0, 5.0], batt_ramp = [240.0, 240.0], reg_req = [20.0, 20.0], r6_req = [30.0, 30.0],
         alta_ramp = [240.0, 240.0], agc_emax = [90.0, 90.0], horizon = TOY_RESOLUTION,
+        park_trap = (5.0, 10.0, 90.0, 100.0, 25.0), alta_fast_start = nothing, alta_mode = nothing,
     )
     units = [
         TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0, ramp_down = 100.0),
@@ -503,29 +663,34 @@ function fcas_toy_system(;
     loads = ["pump" => toy_load(40.0, 300.0; initial = 20.0, ramp_up = 100.0)]
     return nem_toy_system(
         units, [60.0, 80.0]; batteries, loads, horizon, mutate! = (sys, stamps) -> begin
-            alta = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
-            park = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
-            bat = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
-            pump = PSY.get_component(PSY.InterruptiblePowerLoad, sys, "pump")
+            alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
+            park = PSY.get_component(ThermalStandard, sys, TOY_EXPENSIVE)
+            bat = PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY)
+            pump = PSY.get_component(InterruptiblePowerLoad, sys, "pump")
+            # Alta's energy bid carries `alta_fast_start`, when given, and its observed dispatch mode is `alta_mode`.
+            isnothing(alta_fast_start) || _toy_energy_bid!(
+                sys, alta, AustralianElectricityMarkets.BidDirection.GEN, stamps,
+                _toy_offers([(100.0, 20.0)], 2), _toy_values(100.0, 2); fast_start_profile = alta_fast_start,
+            )
+            isnothing(alta_mode) || set_toy_unit_field!(sys, alta, stamps, :dispatch_mode, _toy_values(alta_mode, 2))
             add_toy_fcas_offer!(sys, alta, stamps, BidType.RAISEREG, [(10.0, 20.0, 80.0, 95.0, a) for a in alta_reg_avail], fill([(10.0, 5.0), (10.0, 12.0)], 2))
             add_toy_fcas_offer!(sys, alta, stamps, BidType.LOWERREG, fill((10.0, 20.0, 80.0, 95.0, 10.0), 2), fill([(10.0, 6.0)], 2))
             add_toy_fcas_offer!(sys, alta, stamps, BidType.RAISE6SEC, fill((5.0, 10.0, 70.0, 100.0, 20.0), 2), fill([(20.0, 3.0)], 2))
-            add_toy_fcas_offer!(sys, park, stamps, BidType.RAISE6SEC, fill((5.0, 10.0, 90.0, 100.0, 25.0), 2), fill([(15.0, 1.0), (10.0, 9.0)], 2))
+            add_toy_fcas_offer!(sys, park, stamps, BidType.RAISE6SEC, fill(park_trap, 2), fill([(15.0, 1.0), (10.0, 9.0)], 2))
             add_toy_fcas_offer!(sys, bat, stamps, BidType.RAISEREG, fill((0.0, 5.0, 20.0, 25.0, 10.0), 2), fill([(10.0, 15.0)], 2))
             add_toy_fcas_offer!(sys, bat, stamps, BidType.RAISEREG, fill((-25.0, -20.0, -5.0, 0.0, 10.0), 2), fill([(10.0, 12.0)], 2); decremental = true)
             add_toy_fcas_offer!(sys, bat, stamps, BidType.RAISE6SEC, fill((-50.0, -40.0, 40.0, 50.0, 20.0), 2), fill([(20.0, 2.0)], 2))
             add_toy_fcas_offer!(sys, pump, stamps, BidType.LOWER6SEC, fill((0.0, 5.0, 35.0, 40.0, 10.0), 2), fill([(10.0, 4.0)], 2); decremental = true)
             add_toy_series!(sys, alta, stamps, "fcas_agc_ramp_rate_RAISEREG", alta_ramp)
             add_toy_series!(sys, alta, stamps, "fcas_agc_ramp_rate_LOWERREG", [240.0, 240.0])
-            add_toy_series!(sys, alta, stamps, "fcas_agc_enablement_max_RAISEREG", agc_emax)
-            add_toy_series!(sys, alta, stamps, "fcas_agc_status", alta_agc; scale = 1.0)
+            set_toy_unit_field!(sys, alta, stamps, :raise_reg_enablement, collect(zip(fill(NaN, 2), _toy_values(agc_emax, 2))))
+            set_toy_unit_field!(sys, alta, stamps, :agc_status, Float64.(_toy_values(alta_agc, 2)))
             add_toy_series!(sys, bat, stamps, "fcas_agc_ramp_rate_RAISEREG", batt_ramp)
-            add_toy_series!(sys, bat, stamps, "fcas_agc_status", [1, 1]; scale = 1.0)
+            set_toy_unit_field!(sys, bat, stamps, :agc_status, [1.0, 1.0])
             add_toy_fcas_market!(sys, stamps, BidType.RAISEREG, [TOY_CHEAP, TOY_BATTERY], "F_REG", reg_req)
             add_toy_fcas_market!(sys, stamps, BidType.RAISE6SEC, [TOY_CHEAP, TOY_EXPENSIVE, TOY_BATTERY], "F_R6", r6_req)
             add_toy_fcas_market!(sys, stamps, BidType.LOWER6SEC, ["pump"], "F_L6", [5.0, 5.0])
             PSY.add_service!(sys, FCASService(; name = "1_LOWERREG", region = "1", bid_type = BidType.LOWERREG), [alta])
-            flush_toy_fcas_curves!(sys)
         end,
     )
 end

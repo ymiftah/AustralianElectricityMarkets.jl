@@ -1,5 +1,5 @@
 @testset "Augmented PowerSystemCaseBuilder system" begin
-    sys = augmented_pscb_system()
+    sys = nem_pscb_system()
     @test Set(get_name(a) for a in get_components(Area, sys)) == Set(["1", "2"])
     # Each component is what the NEMWEB fixture keys to; a missing one fails the constraint tests loudly.
     @test get_name.(get_components(AreaInterchange, sys)) == ["IC1"]

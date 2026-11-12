@@ -44,7 +44,6 @@ function _replay_chunk(
     template = template_nemde()
     horizon = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
     on_phase(:preflight)
-    check_replay_inputs(db, horizon; template)
     on_phase(:system_build)
     t0 = time()
     ts_directory = time_series_in_memory ? nothing : joinpath(folder, "time_series")
@@ -435,8 +434,9 @@ function main(folder, day::Date)
         end
         db = aem_connect(HiveConfiguration(hive_location = config["hive"]))
         try
+            steps = ReplayBatchSupport.batch_steps(config, day)
             result = _replay_day(
-                db, day, day_folder;
+                db, steps, day_folder;
                 optimizer, time_series_in_memory, cache_size_mib = parse(Int, config["cache-size-mib"]), on_phase,
             )
             on_phase(:export)

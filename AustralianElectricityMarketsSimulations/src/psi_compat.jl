@@ -1,46 +1,6 @@
 # Every override of, and call into, a private PowerSimulations.jl internal. Re-check this file
 # whenever the pinned PowerSimulations revision changes.
 
-"""
-    PSI._add_pwl_constraint!(container, component, variable, formulation, breakpoints, period, band_type, constraint_type)
-
-Override of `PowerSimulations.jl`'s market-bid hook for NEM dispatch: links dispatch to its cleared
-energy bands with separately priced positive and negative mismatches
-([`EnergyOfferSurplusSlack`](@ref), [`EnergyOfferDeficitSlack`](@ref) and their decremental
-counterparts). Keeps each band's live width bound, and the first breakpoint as a constant offset,
-so no `OnVariable` is required.
-
-# Returns
-`nothing`.
-"""
-function PSI._add_pwl_constraint!(
-        container::PSI.OptimizationContainer, component::T, ::U, ::D,
-        breakpoints::Vector{<:PSI.JuMPOrFloat}, period::Int, ::Type{V}, ::Type{W},
-    ) where {
-        T <: PSY.StaticInjection, U <: PSI.VariableType, D <: AbstractNEMDispatch,
-        V <: PSI.AbstractPiecewiseLinearBlockOffer, W <: PSI.AbstractPiecewiseLinearBlockOfferConstraint,
-    }
-    jm = PSI.get_jump_model(container)
-    power = PSI.get_variable(container, U(), T)
-    bands = PSI.get_variable(container, V(), T)
-    name = PSY.get_name(component)
-    rows = PSI.lazy_container_addition!(container, W(), T, axes(power)...)
-    above_type, below_type = _energy_offer_slacks(V)
-    above = PSI.get_variable(container, above_type(), T)[name, period]
-    below = PSI.get_variable(container, below_type(), T)[name, period]
-    offset = PSI.jump_fixed_value(first(breakpoints))::Float64
-    length(breakpoints) > 1 || throw(ArgumentError("energy offers require at least one band"))
-    rows[name, period] = JuMP.@constraint(
-        jm, power[name, period] == offset +
-            sum(bands[name, k, period] for k in 1:(length(breakpoints) - 1)) + above - below
-    )
-    for k in 1:(length(breakpoints) - 1)
-        JuMP.@constraint(jm, bands[name, k, period] <= breakpoints[k + 1] - breakpoints[k])
-    end
-    return
-end
-
-
 # The service models of this package, none of which folds anything into device models or carries
 # initial-condition state.
 const _NEM_SERVICE_MODELS = Union{
@@ -79,120 +39,6 @@ A `PSI.ServiceModel` of the same service and formulation types, with default set
 """
 function PSI.get_initial_conditions_service_model(::PSI.OperationModel, service_model::_NEM_SERVICE_MODELS)
     return PSI.ServiceModel(PSI.get_component_type(service_model), PSI.get_formulation(service_model))
-end
-
-
-# Whether `cost` has offer curves on the side (`decremental`).
-function _has_offer_curves(cost::PSY.MarketBidCost, decremental::Bool)
-    curves = decremental ? PSY.get_decremental_offer_curves(cost) : PSY.get_incremental_offer_curves(cost)
-    return !isnothing(curves)
-end
-
-# Whether `cost` has no energy offer curves on either side, as for a device bidding only FCAS services.
-function _is_service_only(cost::PSY.MarketBidCost)
-    return !_has_offer_curves(cost, false) && !_has_offer_curves(cost, true)
-end
-
-# Adds the energy offer term on the side (`decremental`). A service-only cost adds nothing, and a cost
-# with a curve only on the other side throws, rather than pricing this side at zero.
-function _add_energy_offer_term!(
-        decremental::Bool, container::PSI.OptimizationContainer, component::PSY.Component,
-        cost::PSY.MarketBidCost, variable::PSI.VariableType, formulation::AbstractNEMDispatch,
-    )
-    if _has_offer_curves(cost, decremental)
-        PSI.add_pwl_term!(decremental, container, component, cost, variable, formulation)
-    elseif !_is_service_only(cost)
-        side = decremental ? "LOAD" : "GEN"
-        throw(
-            ArgumentError(
-                "$(PSY.get_name(component)): the MarketBidCost has energy offers on the other side but no $side " *
-                    "offer curve, so this side would be priced at zero. Add the $side offer curve or remove the other side's.",
-            ),
-        )
-    end
-    return
-end
-
-"""
-    PSI._add_variable_cost_to_objective!(container, ::PSI.ActivePowerOutVariable, component::PSY.Storage, cost_function::PSY.MarketBidCost, ::AbstractNEMDispatch)
-
-Override of `PowerSimulations.jl`'s private market-bid hook: prices a battery's
-discharge on its incremental (`"variable_cost"`) offer curve. A service-only cost adds nothing;
-a cost with only a decremental curve throws.
-
-# Returns
-`nothing`.
-"""
-function PSI._add_variable_cost_to_objective!(
-        container::PSI.OptimizationContainer,
-        ::T,
-        component::PSY.Storage,
-        cost_function::PSY.MarketBidCost,
-        ::V,
-    ) where {T <: PSI.ActivePowerOutVariable, V <: AbstractNEMDispatch}
-    _add_energy_offer_term!(false, container, component, cost_function, T(), V())
-    return
-end
-
-"""
-    PSI._add_variable_cost_to_objective!(container, ::PSI.ActivePowerInVariable, component::PSY.Storage, cost_function::PSY.MarketBidCost, ::AbstractNEMDispatch)
-
-Override of `PowerSimulations.jl`'s private market-bid hook: prices a battery's charge
-on its decremental (`"decremental_variable_cost"`) offer curve, so a load bid band lowers the
-objective when cleared. A service-only cost adds nothing; a cost with only an incremental curve throws.
-
-# Returns
-`nothing`.
-"""
-function PSI._add_variable_cost_to_objective!(
-        container::PSI.OptimizationContainer,
-        ::T,
-        component::PSY.Storage,
-        cost_function::PSY.MarketBidCost,
-        ::V,
-    ) where {T <: PSI.ActivePowerInVariable, V <: AbstractNEMDispatch}
-    _add_energy_offer_term!(true, container, component, cost_function, T(), V())
-    return
-end
-
-"""
-    PSI._add_variable_cost_to_objective!(container, ::PSI.ActivePowerVariable, component::PSY.ControllableLoad, cost_function::PSY.MarketBidCost, ::AbstractNEMDispatch)
-
-Override of `PowerSimulations.jl`'s private market-bid hook: prices a scheduled load's
-consumption on its decremental (`"decremental_variable_cost"`) offer curve, so a cleared load band
-lowers the objective. A service-only cost adds nothing; a cost with only an incremental curve throws.
-
-# Returns
-`nothing`.
-"""
-function PSI._add_variable_cost_to_objective!(
-        container::PSI.OptimizationContainer,
-        ::T,
-        component::PSY.ControllableLoad,
-        cost_function::PSY.MarketBidCost,
-        ::V,
-    ) where {T <: PSI.ActivePowerVariable, V <: AbstractNEMDispatch}
-    _add_energy_offer_term!(true, container, component, cost_function, T(), V())
-    return
-end
-
-"""
-    PSI._add_vom_cost_to_objective!(container, ::PSI.ActivePowerVariable, component::PSY.ControllableLoad, op_cost::PSY.MarketBidCost, ::AbstractNEMDispatch)
-
-Override of `PowerSimulations.jl`'s private market-bid hook: a scheduled load has no
-incremental offer curve to read a variable O&M cost from, so none is added.
-
-# Returns
-`nothing`.
-"""
-function PSI._add_vom_cost_to_objective!(
-        ::PSI.OptimizationContainer,
-        ::PSI.ActivePowerVariable,
-        ::PSY.ControllableLoad,
-        ::PSY.MarketBidCost,
-        ::AbstractNEMDispatch,
-    )
-    return
 end
 
 
@@ -238,4 +84,114 @@ function PSI._unwrap_for_param(::MNSPBandPriceParameter, curve::IS.PiecewiseStep
     n = length(only(expected_axs))
     length(prices) <= n || throw(ArgumentError("MNSP offer has $(length(prices)) bands, more than the band axis' $n."))
     return vcat(prices, zeros(n - length(prices)))
+end
+
+# An offer curve's band widths in MW, padded with zero-width bands to the band axis.
+function PSI._unwrap_for_param(::EnergyBandWidthParameter, curve::IS.PiecewiseStepData, expected_axs)
+    x = PSY.get_x_coords(curve)
+    iszero(first(x)) || throw(ArgumentError("energy offer curves must start at 0 MW, got $(first(x))."))
+    widths = diff(x)
+    n = length(only(expected_axs))
+    length(widths) <= n || throw(ArgumentError("energy offer has $(length(widths)) bands, more than the band axis' $n."))
+    return vcat(widths, zeros(n - length(widths)))
+end
+
+# An offer curve's band prices in $/MWh, padded with zero prices to the band axis.
+function PSI._unwrap_for_param(::EnergyBandPriceParameter, curve::IS.PiecewiseStepData, expected_axs)
+    prices = PSY.get_y_coords(curve)
+    n = length(only(expected_axs))
+    length(prices) <= n || throw(ArgumentError("energy offer has $(length(prices)) bands, more than the band axis' $n."))
+    return vcat(prices, zeros(n - length(prices)))
+end
+
+
+# --- Series names for the NEM dispatch parameters ---
+
+# `_get_time_series_name` resolves the parameter's series name per device from its dispatch-input key; a
+# load without an energy bid is named by the zero LOAD `MAXAVAIL` series `set_effective_offers!` looks up.
+# The ramp rates and the energy limits carry their series name as an `add_parameters!` argument, since one type serves several.
+#
+# The one-name-per-type registration takes the first device's series name; `_has_nem_dispatch_limits`
+# checks every device for its series.
+#
+# The `D <: PSY.Device` constraint is required, not decorative: without it these methods are ambiguous
+# with PSI's generic `_get_time_series_name(::T, ::Component, ::DeviceModel) where {T <: ParameterType}`
+# and the model build fails. Re-check the signature when the pinned fork moves.
+PSI._get_time_series_name(::PSI.ActivePowerOutTimeSeriesParameter, device::PSY.Storage, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
+    _inputs_series_name(device, :energy_availability)
+
+PSI._get_time_series_name(::PSI.ActivePowerInTimeSeriesParameter, device::PSY.Storage, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
+    _inputs_series_name(device, :energy_availability_decremental)
+
+
+# --- Stock parameter updates and the private PowerSimulations.jl calls behind them ---
+
+"""
+    _psi_set_param_value_at!(parent_param, value, i, t)
+
+Writes `value` into row `i`, column `t` of `parent_param`, through PowerSimulations.jl's private
+`_set_param_value_at!`.
+
+# Arguments
+- `parent_param`: the parameter's data array.
+- `value`: the value to write, typed as the array's element.
+- `i`: the row of the device.
+- `t`: the column of the time step.
+
+# Returns
+`nothing`.
+"""
+function _psi_set_param_value_at!(parent_param, value, i::Integer, t::Integer)
+    PSI._set_param_value_at!(parent_param, value, i, t)
+    return
+end
+
+"""
+    _psi_apply_coefficient_targets!(param)
+
+Rewrites the registered constraint coefficients of the coefficient parameter `param`, through
+PowerSimulations.jl's private `_apply_coefficient_targets!`.
+
+# Arguments
+- `param`: the `PowerSimulations.ParameterContainer` of a constraint-coefficient parameter.
+
+# Returns
+`nothing`.
+"""
+function _psi_apply_coefficient_targets!(param)
+    PSI._apply_coefficient_targets!(param)
+    return
+end
+
+# Runs the pinned fork's stock update for `key`. A coefficient parameter's stock method also applies its targets.
+function _stock_state_update!(
+        container::PSI.OptimizationContainer, model::PSI.OperationModel,
+        key::PSI.ParameterKey{<:PSI.ConstraintCoefficientParameter, <:PSY.Component}, input::PSI.DatasetContainer{PSI.InMemoryDataset},
+    )
+    invoke(
+        PSI.update_container_parameter_values!,
+        Tuple{
+            PSI.OptimizationContainer, PSI.OperationModel,
+            PSI.ParameterKey{<:PSI.ConstraintCoefficientParameter, <:PSY.Component}, PSI.DatasetContainer{PSI.InMemoryDataset},
+        },
+        container, model, key, input,
+    )
+    return
+end
+
+# Runs the pinned fork's stock update for a time-series `key`. Only time-series and constraint-coefficient
+# parameters reach it, so an objective or cost parameter has no method here.
+function _stock_state_update!(
+        container::PSI.OptimizationContainer, model::PSI.OperationModel,
+        key::PSI.ParameterKey{<:PSI.TimeSeriesParameter, <:PSY.Component}, input::PSI.DatasetContainer{PSI.InMemoryDataset},
+    )
+    invoke(
+        PSI.update_container_parameter_values!,
+        Tuple{
+            PSI.OptimizationContainer, PSI.OperationModel,
+            PSI.ParameterKey{<:PSI.ParameterType, <:PSY.Component}, PSI.DatasetContainer{PSI.InMemoryDataset},
+        },
+        container, model, key, input,
+    )
+    return
 end

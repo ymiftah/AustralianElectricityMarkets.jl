@@ -281,7 +281,7 @@ end
             @test stock_price(solved) ≈ expected[k].price atol = TOY_TOLERANCE
         end
     end
-    ramp_slack = only(values(PSI.read_realized_variables(sim.results, ["UnitRampDownSlack__EnergyReservoirStorage"])))
+    ramp_slack = only(values(PSI.read_realized_variables(sim.results, ["NEMUnitSlack__EnergyReservoirStorage__unit_ramp|down"])))
     @test all(v -> abs(v) <= TOY_TOLERANCE, ramp_slack.value)
 end
 
@@ -366,7 +366,7 @@ end
     sim = stock_simulate(sys)
     container = PSI.get_optimization_container(sim.model)
     @test PSI.built_for_recurrent_solves(container) && PSI.is_milp(container)
-    definition = PSI.get_constraint(container, AEMS.InterconnectorLossDefinitionConstraint(), PSY.AreaInterchange)[TOY_INTERCHANGE, 1]
+    definition = PSI.get_constraint(container, AEMS.InterconnectorLossConstraint(), PSY.AreaInterchange, "loss_definition")[TOY_INTERCHANGE, 1]
     flow_var = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)[TOY_INTERCHANGE, 1]
     @test PSI.JuMP.normalized_coefficient(definition, flow_var) ≈ -0.1
     for (k, t) in enumerate(STOCK_STEPS)
@@ -531,8 +531,8 @@ function reg_ramp_system(;
     ]
     return nem_toy_system(
         units, load_mw; horizon = TOY_RESOLUTION, mutate! = (sys, stamps) -> begin
-            alta = PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)
-            park = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
+            alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
+            park = PSY.get_component(ThermalStandard, sys, TOY_EXPENSIVE)
             add_toy_fcas_offer!(sys, alta, stamps, BidType.RAISEREG, fill((0.0, 0.0, 100.0, 100.0, 25.0), 2), fill([(25.0, 5.0)], 2))
             add_toy_fcas_offer!(sys, park, stamps, BidType.RAISEREG, fill((0.0, 0.0, 100.0, 100.0, 20.0), 2), fill([(20.0, 10.0)], 2))
             add_toy_series!(sys, alta, stamps, "fcas_agc_ramp_rate_RAISEREG", alta_ramp)
@@ -560,8 +560,8 @@ function bdu_reg_system(;
     ]
     return nem_toy_system(
         units, 50.0; batteries, horizon = TOY_RESOLUTION, mutate! = (sys, stamps) -> begin
-            park = PSY.get_component(PSY.ThermalStandard, sys, TOY_EXPENSIVE)
-            bat = PSY.get_component(PSY.EnergyReservoirStorage, sys, TOY_BATTERY)
+            park = PSY.get_component(ThermalStandard, sys, TOY_EXPENSIVE)
+            bat = PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY)
             add_toy_fcas_offer!(sys, park, stamps, BidType.RAISEREG, fill((0.0, 0.0, 100.0, 100.0, 20.0), 2), fill([(20.0, 10.0)], 2))
             add_toy_fcas_offer!(sys, bat, stamps, BidType.RAISEREG, gen_trap, fill([(10.0, 3.0)], 2))
             add_toy_fcas_offer!(sys, bat, stamps, BidType.RAISEREG, load_trap, fill([(10.0, 4.0)], 2); decremental = true)
@@ -635,7 +635,7 @@ end
     # Energy + RaiseReg is 70 MW in both steps: slack in step 1, at the RHS in step 2.
     @test rhs[1] - (50.0 + 20.0) ≈ 20.0 atol = TOY_TOLERANCE
     @test rhs[2] - (60.0 + 10.0) ≈ 0.0 atol = TOY_TOLERANCE
-    slack = stock_realized(sim.results, "FCASJointRampingSlack__FCASService__1_RAISEREG", TOY_CHEAP; parameter = false)
+    slack = stock_realized(sim.results, "FCASSlack__FCASService__joint_ramping|1_RAISEREG", TOY_CHEAP; parameter = false)
     @test all(abs.(slack) .<= TOY_TOLERANCE)
     # Step 2 with step 1's InitialMW (a stale RHS of 90 MW) gives Alta all 20 MW at $5.
     stale = stock_fcas_standalone(reg_ramp_system(; alta_initial = [60.0, 60.0]), STOCK_STEPS[2])
@@ -662,7 +662,7 @@ end
     @test stock_realized(sim.results, key, TOY_BATTERY; field = "bdu_ramping") ≈ [30.0, 15.0] atol = TOY_TOLERANCE
     # §6.1 for the battery: InitialMW 10 + 30, then 10 + 15; never binding (net energy 0).
     @test stock_realized(sim.results, key, TOY_BATTERY; field = "joint_ramping") ≈ [40.0, 25.0] atol = TOY_TOLERANCE
-    for name in ("FCASBDURampingSlack__FCASService__1_RAISEREG", "FCASJointRampingSlack__FCASService__1_RAISEREG")
+    for name in ("FCASSlack__FCASService__bdu_ramping|1_RAISEREG", "FCASSlack__FCASService__joint_ramping|1_RAISEREG")
         @test all(abs.(stock_realized(sim.results, name, TOY_BATTERY; parameter = false)) .<= TOY_TOLERANCE)
     end
     # Step 2 with step 1's 30 MW BDU RHS repeats step 1's dispatch.
@@ -775,7 +775,7 @@ end
         Set([AEMS.NEM_DISPATCH_DEVICE_TYPES..., PSY.PowerLoad])
     # A dispatch participant without a device model fails the template check.
     no_storage = PSI.ProblemTemplate(PSI.NetworkModel(PSI.AreaBalancePowerModel; use_slacks = true))
-    for T in (PSY.ThermalStandard, PSY.HydroDispatch, PSY.RenewableDispatch, PSY.InterruptiblePowerLoad)
+    for T in (ThermalStandard, HydroDispatch, RenewableDispatch, InterruptiblePowerLoad)
         PSI.set_device_model!(no_storage, T, AEMS.NEMReplayDispatch)
     end
     PSI.set_device_model!(no_storage, PSY.PowerLoad, PSI.StaticPowerLoad)
@@ -811,9 +811,8 @@ end
             gc = GenericConstraint(;
                 name = "N_GHOST", sense = ConstraintSense.LE, rhs = 1.0, terms = ConstraintTerm[UnitTerm("GHOST", BidType.ENERGY, 1.0)],
             )
-            PSY.add_service!(sys, gc, [PSY.get_component(PSY.ThermalStandard, sys, TOY_CHEAP)])
-            add_toy_series!(sys, gc, stamps, "rhs", [100.0, 100.0])
-            add_toy_series!(sys, gc, stamps, "invoked", [1.0, 1.0]; scale = 1.0)
+            PSY.add_service!(sys, gc, [PSY.get_component(ThermalStandard, sys, TOY_CHEAP)])
+            add_toy_constraint_series!(sys, gc, stamps, [100.0, 100.0], [1.0, 1.0])
         end,
     )
     @test_throws r"cannot model: N_GHOST \(missing_component\)" replay_template(ghost; template = with_generic_constraints!(energy_template()))
@@ -829,34 +828,44 @@ end
 @testset "MNSP metered ramp and fixed-loading inputs update between simulation steps" begin
     sys = mnsp_sentinel_system()
     ic = only(collect(PSY.get_components(PSY.AreaInterchange, sys)))
+    names = AustralianElectricityMarkets.NEM_MNSP_SERIES
+    derived = AEMS.NEM_MNSP_FIXED_LOAD_SERIES
+    # The bid's fixed loading is NaN where AEMO publishes NULL, so the first step is not invoked.
     inputs = (
-        "mnsp_initial_flow" => [0.0, 50.0],
-        "mnsp_forward_ramp_rate" => [2.0, 1.0],
-        "mnsp_reverse_ramp_rate" => [1000.0, 6.0],
-        "mnsp_forward_fixed_load" => [0.0, 20.0],
-        "mnsp_forward_fixed_load_invoked" => [0.0, 1.0],
+        names.initial_flow => [0.0, 50.0],
+        names.forward_ramp_rate => [2.0, 1.0],
+        names.reverse_ramp_rate => [1000.0, 6.0],
+        names.forward_fixed_load => [NaN, 20.0],
+    )
+    expected = (
+        names.initial_flow => [0.0, 50.0],
+        names.forward_ramp_rate => [2.0, 1.0],
+        names.reverse_ramp_rate => [1000.0, 6.0],
+        derived.forward_value => [0.0, 20.0],
+        derived.forward_invoked => [0.0, 1.0],
     )
     for (name, values) in inputs
         PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, ic, name)
         AustralianElectricityMarkets.replace_single_series!(sys, ic, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(collect(STOCK_STEPS), values)))
     end
+    AEMS._set_mnsp_fixed_loads!(sys)
     PSY.transform_single_time_series!(sys, TOY_RESOLUTION, TOY_RESOLUTION)
     sim = stock_simulate(sys)
     @test stock_flow.(sim.solved) ≈ [10.0, 20.0] atol = TOY_TOLERANCE
-    for (name, expected) in inputs
-        P = first(only(filter(pair -> last(pair) == name, AEMS._MNSP_OPERATING_SERIES)))
-        key = "$(nameof(P))__AreaInterchange"
-        @test stock_realized(sim.results, key, PSY.get_name(ic); scale = 1.0) ≈ expected atol = TOY_TOLERANCE
+    for (name, values) in expected
+        meta = first(only(filter(pair -> last(pair) == name, AEMS._MNSP_OPERATING_SERIES)))
+        key = "MNSPOperatingParameter__AreaInterchange__$meta"
+        @test stock_realized(sim.results, key, PSY.get_name(ic); scale = 1.0) ≈ values atol = TOY_TOLERANCE
     end
     container = PSI.get_optimization_container(sim.model)
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
-    for (V, factor, meta) in (
-            (AEMS.MNSPRampUpSlack, 1155.0, ""),
-            (AEMS.MNSPOfferSlack, 1135.0, "forward"),
-            (AEMS.MNSPMaxAvailSlack, 365.0, "reverse"),
-            (AEMS.MNSPFixedLoadDeficitSlack, 380.0, "forward"),
+    for (factor, meta) in (
+            (1155.0, "ramp|up"),
+            (1135.0, "offer|forward"),
+            (365.0, "max_avail|reverse"),
+            (380.0, "fixed_load|deficit|forward"),
         )
-        slack = PSI.get_variable(container, V(), PSY.AreaInterchange, meta)
+        slack = PSI.get_variable(container, AEMS.MNSPSlack(), PSY.AreaInterchange, meta)
         @test PSI.JuMP.coefficient(objective, slack[PSY.get_name(ic), 1]) ≈ factor * 17500 * 100 / 12
     end
     # The Market Price Cap is fixed per simulation: a range across 1 July is refused before build.

@@ -49,7 +49,7 @@ function read_interconnector_loss_gaps(results, sys::PSY.System)
     weights = DataFrame(interconnector = String[], from_region = String[], to_region = String[], share = Float64[])
     for d in PSY.get_components(PSY.AreaInterchange, sys)
         name = PSY.get_name(d)
-        models = PSY.get_supplemental_attributes(InterconnectorLossModel, d)
+        models = PSY.get_supplemental_attributes(InterconnectorLossModel, d)::Vector{InterconnectorLossModel}
         length(models) == 1 || continue
         model = only(models)
         push!(weights, (name, model.from_region, model.to_region, model.from_region_loss_share))

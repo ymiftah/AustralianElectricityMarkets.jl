@@ -7,9 +7,10 @@ of the setters that built it: with a `GenericConstraint` service model, [`get_mi
 [`get_dropped_terms`](@ref) of the constraint build (`DISPATCHCONSTRAINT`, `GENCONDATA`,
 `SPDCONNECTIONPOINTCONSTRAINT`, `SPDREGIONCONSTRAINT`, `SPDINTERCONNECTORCONSTRAINT`); the
 dispatch-limit series of the dispatch-limits build (`DISPATCHLOAD`) on every dispatch
-device; and, with a `PSY.AreaInterchange` device model, the offers of `set_mnsp_offers!`
-(`INTERCONNECTORCONSTRAINT`, `MNSP_INTERCONNECTOR`, `MNSP_DAYOFFER`, `MNSP_BIDOFFERPERIOD`,
-`DISPATCH_MNSPBIDTRK`) on every available MNSP.
+device, the resolution and five-minute alignment of the series keyed by each device's
+[`NEMObservedState`](@ref); and, with a `PSY.AreaInterchange` device model, the offers of
+`set_mnsp_offers!` (`INTERCONNECTORCONSTRAINT`, `MNSP_INTERCONNECTOR`, `MNSP_DAYOFFER`,
+`MNSP_BIDOFFERPERIOD`, `DISPATCH_MNSPBIDTRK`) on every available MNSP.
 
 # Arguments
 - `sys`: the `PSY.System` to check.
@@ -20,17 +21,58 @@ device; and, with a `PSY.AreaInterchange` device model, the offers of `set_mnsp_
 """
 function _check_replay_system_inputs(sys::PSY.System, template::PSI.ProblemTemplate)
     _has_service_model(template, GenericConstraint) && _check_replay_constraint_inputs(sys)
-    uncovered = [
-        PSY.get_name(device) for device in nem_dispatch_devices(sys) if !_has_nem_dispatch_limits(device)
-    ]
+    devices = nem_dispatch_devices(sys)
+    uncovered = [PSY.get_name(device) for device in devices if !_has_nem_dispatch_limits(device)]
     isempty(uncovered) || throw(
         ArgumentError(
             "check_template_against_sys: incomplete dispatch inputs for $(join(sort!(uncovered), ", ")); " *
-                "build sys with nem_system(db, NEMDEConfiguration(); date_range) over the replay range before replay",
+                "prepare_replay! attaches them once sys is built with nem_system(db, NEMDEConfiguration(); date_range) " *
+                "over the replay range",
         ),
     )
+    foreach(_check_state_series_alignment, devices)
     _has_device_model(template, PSY.AreaInterchange) &&
         foreach(_check_mnsp_offers, PSY.get_components(PSY.get_available, PSY.AreaInterchange, sys))
+    return
+end
+
+
+"""
+    _check_state_series_alignment(device)
+
+Verifies that the series keyed by `device`'s [`NEMObservedState`](@ref) are dispatch-interval series:
+each is a five-minute `SingleTimeSeries` on a five-minute boundary, so the per-step state read lands
+on the interval it names.
+
+# Arguments
+- `device`: the NEM dispatch device to check.
+
+# Returns
+`nothing`. Throws an `ArgumentError` naming the device and the offending series.
+"""
+function _check_state_series_alignment(device)
+    observed = AustralianElectricityMarkets.get_observed_state(device)
+    step_ms = Dates.value(convert(Millisecond, DISPATCH_INTERVAL))
+    for key in (observed.initial_mw, observed.dispatch_mode)
+        key isa IS.StaticTimeSeriesKey || continue
+        name = PSY.get_name(key)
+        series = PSY.get_time_series(PSY.SingleTimeSeries, device, name)
+        resolution = Dates.canonicalize(Dates.CompoundPeriod(IS.get_resolution(series)))
+        resolution == DISPATCH_INTERVAL || throw(
+            ArgumentError(
+                "\"$(PSY.get_name(device))\": its state series \"$name\" has resolution $resolution, " *
+                    "expected $DISPATCH_INTERVAL",
+            ),
+        )
+        stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name)
+        misaligned = findfirst(t -> Dates.value(t) % step_ms != 0, stamps)
+        isnothing(misaligned) || throw(
+            ArgumentError(
+                "\"$(PSY.get_name(device))\": its state series \"$name\" has the stamp $(stamps[misaligned]), " *
+                    "which is not aligned to the $DISPATCH_INTERVAL dispatch interval",
+            ),
+        )
+    end
     return
 end
 
@@ -74,9 +116,8 @@ end
 """
     _check_mnsp_offers(device)
 
-Verifies that `device` carries either none or all four of the links' offer and availability series
-of `set_mnsp_offers!`, and all four when it is an MNSP (`ext["ic_type"] == "MNSP"`), since a partial
-set cannot be modelled.
+Verifies that `device` carries either none or all of the MNSP keys of `set_mnsp_offers!`, and all of them when
+its [`NEMInterconnectorRegistration`](@ref) is `InterconnectorKind.MNSP`, since a partial set cannot be modelled.
 
 # Arguments
 - `device`: the `PSY.AreaInterchange` to check.
@@ -85,20 +126,15 @@ set cannot be modelled.
 `nothing`. Throws an `ArgumentError` naming `device` otherwise.
 """
 function _check_mnsp_offers(device::PSY.AreaInterchange)
-    present = _mnsp_offer_series_present(device)
-    required = get(PSY.get_ext(device), "ic_type", nothing) == "MNSP"
+    bids, initial = _mnsp_offer_series_present(device)
+    present = [bids; initial]
+    registrations = PSY.get_supplemental_attributes(NEMInterconnectorRegistration, device)::Vector{NEMInterconnectorRegistration}
+    required = !isempty(registrations) && only(registrations).kind == InterconnectorKind.MNSP
     (required || any(present)) && !all(present) && throw(
         ArgumentError(
             "AreaInterchange $(PSY.get_name(device)) is an MNSP with incomplete directional offer inputs; " *
                 "call set_mnsp_offers! with complete data before dispatch",
         ),
     )
-    if all(present)
-        for (_, series) in _MNSP_OPERATING_SERIES
-            PSY.has_time_series(device, PSY.SingleTimeSeries, series) || throw(
-                ArgumentError("AreaInterchange $(PSY.get_name(device)) is missing MNSP operating input $series; call set_mnsp_offers!"),
-            )
-        end
-    end
     return
 end

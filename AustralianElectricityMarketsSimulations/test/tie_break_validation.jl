@@ -1,4 +1,4 @@
-function _tie_validation_system(curves_a, curves_b; decremental = false)
+function _tie_validation_system(curves_a, curves_b; decremental = false, unrounded = false)
     units = decremental ? Pair{String, Any}[] : [
             TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
             TOY_EXPENSIVE => toy_unit(100.0, [(100.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
@@ -7,10 +7,28 @@ function _tie_validation_system(curves_a, curves_b; decremental = false)
     sys = nem_toy_system(units, 0.0; loads, tie_break_scales = false)
     PSY.clear_time_series!(sys)
     names = decremental ? ("LOAD_A", "LOAD_B") : (TOY_CHEAP, TOY_EXPENSIVE)
-    T = decremental ? PSY.InterruptiblePowerLoad : PSY.ThermalStandard
-    setter! = decremental ? AustralianElectricityMarkets._set_decremental_bid_cost! : AustralianElectricityMarkets._set_incremental_bid_cost!
+    T = decremental ? InterruptiblePowerLoad : ThermalStandard
+    side = decremental ? AustralianElectricityMarkets.OfferSide.LOAD : AustralianElectricityMarkets.OfferSide.GEN
+    series = AustralianElectricityMarkets.energy_offer_series_name(side)
+    function setter!(sys, device, bids, start, resolution)
+        n = length(bids.piecewise_step_data)
+        stamps = [start + (k - 1) * resolution for k in 1:n]
+        direction = side == OfferSide.LOAD ? AustralianElectricityMarkets.BidDirection.LOAD : AustralianElectricityMarkets.BidDirection.GEN
+        _toy_energy_bid!(sys, device, direction, stamps, copy(bids.piecewise_step_data), fill(PSY.get_base_power(sys), n))
+        return
+    end
     for (name, curves) in zip(names, (curves_a, curves_b))
         setter!(sys, PSY.get_component(T, sys, name), (; piecewise_step_data = curves), TOY_START, TOY_RESOLUTION)
+    end
+    AEMS._set_static_offers!(sys)
+    # The derivation rounds referred prices to cents; `unrounded` writes the curves as given instead.
+    if unrounded
+        for (name, curves) in zip(names, (curves_a, curves_b))
+            AustralianElectricityMarkets.replace_single_series!(
+                sys, PSY.get_component(T, sys, name),
+                AustralianElectricityMarkets.single_series(series, TOY_START, copy(curves), TOY_RESOLUTION),
+            )
+        end
     end
     return sys, TOY_START:TOY_RESOLUTION:(TOY_START + (length(curves_a) - 1) * TOY_RESOLUTION)
 end
@@ -58,7 +76,7 @@ end
     end
     sys, steps = _tie_validation_system(
         [curve([20.0, 20.0 + 2.0e-6]), curve([20.0, 20.0 + 0.75e-6])],
-        fill(curve([20.0 + 1.5e-6]), 2),
+        fill(curve([20.0 + 1.5e-6]), 2); unrounded = true,
     )
     @test_throws r"transitive ties are not supported" check_tie_break_pairs(sys, steps)
 end
@@ -71,4 +89,30 @@ end
     short_bytes = @allocated check_tie_break_pairs(sys, steps[1:1])
     full_bytes = @allocated check_tie_break_pairs(sys, steps)
     @test full_bytes <= 3 * short_bytes + 256 * 1024
+end
+
+@testset "tie-break rows bind EnergyOfferBandVariable bands" begin
+    sys = nem_toy_system(
+        [
+            TOY_CHEAP => toy_unit(100.0, [(60.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+            TOY_EXPENSIVE => toy_unit(100.0, [(40.0, 20.0)]; initial = 0.0, ramp_up = 100.0),
+        ],
+        50.0;
+        batteries = [TOY_BATTERY => toy_battery(30.0, 20.0, 10.0, 5.0; initial = 0.0, ramp_up = 100.0)],
+    )
+    out = solve_toy(sys)
+    rows = PSI.get_constraint(out.container, TieBreakConstraint(), EnergyTieBreak, TIE_BREAK_SERVICE_NAME)
+    band_variables = Set{PSI.JuMP.VariableRef}()
+    for key in PSI.get_variable_keys(out.container)
+        PSI.IS.Optimization.get_entry_type(key) === EnergyOfferBandVariable || continue
+        union!(band_variables, values(PSI.get_variable(out.container, key).data))
+    end
+    @test !isempty(rows.data)
+    for row in values(rows.data)
+        terms = PSI.JuMP.constraint_object(row).func.terms
+        bands = [v for v in keys(terms) if v in band_variables]
+        @test length(bands) == 2
+        @test all(v -> v in band_variables || startswith(PSI.JuMP.name(v), "TieBreakSlack"), keys(terms))
+    end
+    @test out.dispatch_mw[TOY_CHEAP] / 60.0 ≈ out.dispatch_mw[TOY_EXPENSIVE] / 40.0 atol = 1.0e-5
 end

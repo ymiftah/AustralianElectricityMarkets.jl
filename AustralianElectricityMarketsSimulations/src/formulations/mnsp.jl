@@ -6,16 +6,84 @@ end
 const _MNSP_DIRECTIONS = ("forward", "reverse")
 
 
-"Names of an interchange's per-interval flow-limit series, from `set_interconnector_flow_limits!`."
-const _FLOW_LIMIT_SERIES = (NEM_SERIES.from_to_flow_limit, NEM_SERIES.to_from_flow_limit)
+# The values of the time series behind `key` on `device`, in order.
+function _series_values(device, key::IS.TimeSeriesKey)
+    ts::PSY.SingleTimeSeries = IS.get_time_series(device, key)
+    return collect(values(PSY.get_time_series_array(device, ts)))
+end
 
 
-# Whether each of `device`'s four MNSP offer and availability series is attached.
+# Throws an `ArgumentError` naming `device` unless its derived fixed-loading series are attached and its bids'
+# fixed-loading keys are named as the writer names them.
+function _require_mnsp_fixed_loads(device::PSY.AreaInterchange)
+    for dir in _MNSP_DIRECTIONS
+        bid = _mnsp_bid(device, dir)
+        (isnothing(bid) || isnothing(bid.fixed_load)) && continue
+        bid.fixed_load isa IS.StaticTimeSeriesKey &&
+            _require_key_name(device, bid.fixed_load, getproperty(NEM_MNSP_SERIES, Symbol(dir, "_fixed_load")))
+    end
+    for dir in _MNSP_DIRECTIONS, kind in (:value, :invoked)
+        name = getproperty(NEM_MNSP_FIXED_LOAD_SERIES, Symbol(dir, "_", kind))
+        PSY.has_time_series(device, PSY.SingleTimeSeries, name) || throw(
+            ArgumentError(
+                "AreaInterchange \"$(PSY.get_name(device))\" has no derived MNSP fixed loading \"$name\"; " *
+                    "call set_effective_offers! before building the formulation",
+            ),
+        )
+    end
+    return
+end
+
+
+# The `NEMMNSPBid` of `device` for `direction` (`"forward"` or `"reverse"`), or `nothing` when it has none.
+function _mnsp_bid(device::PSY.AreaInterchange, direction::AbstractString)
+    dir = direction == "forward" ? MNSPDirection.FORWARD : MNSPDirection.REVERSE
+    bids = [b for b in (PSY.get_supplemental_attributes(NEMMNSPBid, device)::Vector{NEMMNSPBid}) if b.direction == dir]
+    isempty(bids) && return nothing
+    length(bids) == 1 || throw(
+        ArgumentError("AreaInterchange \"$(PSY.get_name(device))\" carries $(length(bids)) NEMMNSPBid for its $direction link; it requires one."),
+    )
+    return only(bids)
+end
+
+
+# The `NEMMNSPLink` of `device` for `direction`, or `nothing` when it has none.
+function _mnsp_link(device::PSY.AreaInterchange, direction::AbstractString)
+    dir = direction == "forward" ? MNSPDirection.FORWARD : MNSPDirection.REVERSE
+    links = [l for l in (PSY.get_supplemental_attributes(NEMMNSPLink, device)::Vector{NEMMNSPLink}) if l.direction == dir]
+    isempty(links) && return nothing
+    length(links) == 1 || throw(
+        ArgumentError("AreaInterchange \"$(PSY.get_name(device))\" carries $(length(links)) NEMMNSPLink for its $direction link; it requires one."),
+    )
+    return only(links)
+end
+
+
+# Whether `device`'s `direction` bid holds `field` as a key, which must be named `expected`.
+function _mnsp_key_present(device::PSY.AreaInterchange, direction::AbstractString, field::Symbol, expected::AbstractString)
+    bid = _mnsp_bid(device, direction)
+    isnothing(bid) && return false
+    key = getproperty(bid, field)
+    key isa IS.StaticTimeSeriesKey || return false
+    _require_key_name(device, key, expected)
+    return true
+end
+
+
+# The `(field, suffix)` of each `NEMMNSPBid` key an MNSP link carries; the suffix names its series in `NEM_MNSP_SERIES`.
+const _MNSP_BID_KEYS = ((:offer_curves, "offer"), (:max_avail, "max_avail"), (:ramp_up, "ramp_rate"))
+
+
+# Whether each of `device`'s MNSP keys is attached, in `_MNSP_DIRECTIONS` order per `_MNSP_BID_KEYS`, then the initial flow.
 function _mnsp_offer_series_present(device::PSY.AreaInterchange)
-    return [
-        PSY.has_time_series(device, PSY.SingleTimeSeries, mnsp_series_name(dir, kind))
-            for dir in _MNSP_DIRECTIONS, kind in ("offer", "max_avail")
+    bids = [
+        _mnsp_key_present(device, dir, field, getproperty(NEM_MNSP_SERIES, Symbol(dir, "_", suffix)))
+            for dir in _MNSP_DIRECTIONS, (field, suffix) in _MNSP_BID_KEYS
     ]
+    observed = PSY.get_supplemental_attributes(NEMMNSPObservedState, device)::Vector{NEMMNSPObservedState}
+    initial = !isempty(observed) && only(observed).initial_flow isa IS.StaticTimeSeriesKey
+    initial && _require_key_name(device, only(observed).initial_flow, NEM_MNSP_SERIES.initial_flow)
+    return vec(bids), initial
 end
 
 
@@ -26,45 +94,45 @@ Whether `device` carries both links' offer and availability series from `set_mns
 `_check_mnsp_offers` rejects a partial set.
 """
 function _has_mnsp_offers(device::PSY.AreaInterchange)
-    return all(_mnsp_offer_series_present(device))
+    bids, initial = _mnsp_offer_series_present(device)
+    return all(bids) && initial
 end
 
 
 """
     _has_flow_limit_series(device) -> Bool
 
-Whether `device` carries a `"from_to_flow_limit"` or `"to_from_flow_limit"` series, that is,
-per-interval flow limits.
+Whether `device` carries a time-series flow limit in either direction, from its [`NEMInterconnectorLimits`](@ref).
 """
 function _has_flow_limit_series(device::PSY.AreaInterchange)
-    return any(name -> PSY.has_time_series(device, PSY.SingleTimeSeries, name), _FLOW_LIMIT_SERIES)
+    limits = _interconnector_limits(device)
+    isnothing(limits) && return false
+    return limits.from_to_limit isa IS.StaticTimeSeriesKey || limits.to_from_limit isa IS.StaticTimeSeriesKey
 end
 
 
 """
     _mnsp_link_tlfs(device, direction) -> NamedTuple
 
-The `from` and `to` loss factors of `device`'s `direction` link, as recorded by `set_mnsp_offers!`.
-Throws `ArgumentError` when either is missing or not positive.
+The `from` and `to` loss factors of `device`'s `direction` link, as recorded by `set_mnsp_offers!` in its
+[`NEMMNSPLink`](@ref). Throws `ArgumentError` when either is not positive.
 """
 function _mnsp_link_tlfs(device::PSY.AreaInterchange, direction::AbstractString)
-    info = get(PSY.get_ext(device), "mnsp_$direction", nothing)
-    tlfs = isnothing(info) ? (nothing, nothing) : (get(info, "from_region_tlf", nothing), get(info, "to_region_tlf", nothing))
+    link = _mnsp_link(device, direction)
+    tlfs = isnothing(link) ? (nothing, nothing) : (link.from_region_tlf, link.to_region_tlf)
     all(t -> t isa Real && t > 0, tlfs) || throw(
         ArgumentError(
             "AreaInterchange \"$(PSY.get_name(device))\" has MNSP offers but no positive " *
-                "from_region_tlf and to_region_tlf for its $direction link in ext[\"mnsp_$direction\"]",
+                "from_region_tlf and to_region_tlf for its $direction link in its NEMMNSPLink",
         ),
     )
     return (from = Float64(tlfs[1]), to = Float64(tlfs[2]))
 end
 
 
-# The time-series parameters of each MNSP link direction.
-const _MNSP_PARAMETERS = (
-    forward = (width = MNSPForwardBandWidthParameter, max_avail = MNSPForwardMaxAvailParameter),
-    reverse = (width = MNSPReverseBandWidthParameter, max_avail = MNSPReverseMaxAvailParameter),
-)
+# The offer and availability series each link direction's parameters read; the direction is the key meta.
+_mnsp_offer_series(dir::AbstractString) = getproperty(NEM_MNSP_SERIES, Symbol(dir, "_offer"))
+_mnsp_max_avail_series(dir::AbstractString) = getproperty(NEM_MNSP_SERIES, Symbol(dir, "_max_avail"))
 
 
 function PSI.get_multiplier_value(
@@ -93,13 +161,13 @@ end
     _mnsp_band_labels(devices) -> Vector{String}
 
 Band labels `"1"` to `"n"`, `n` the most bands any link of an MNSP in `devices` offers over the
-whole of its `"mnsp_<direction>_offer"` series.
+whole of its offer curves.
 """
 function _mnsp_band_labels(devices)
     n = 1
     for d in devices, dir in _MNSP_DIRECTIONS
         _has_mnsp_offers(d) || continue
-        curves = PSY.get_time_series_values(PSY.SingleTimeSeries, d, mnsp_series_name(dir, "offer"))
+        curves = _series_values(d, _mnsp_bid(d, dir).offer_curves)
         n = max(n, maximum(c -> length(PSY.get_y_coords(c)), curves))
     end
     return string.(1:n)
@@ -139,6 +207,7 @@ function _add_mnsp_link_variables!(container::PSI.OptimizationContainer, devices
     foreach(_check_mnsp_offers, devices)
     mnsp = filter(_has_mnsp_offers, collect(devices))
     isempty(mnsp) && return
+    foreach(_require_mnsp_fixed_loads, mnsp)
     time_steps = PSI.get_time_steps(container)
     names = PSY.get_name.(mnsp)
     base_power = PSI.get_base_power(container)
@@ -146,11 +215,18 @@ function _add_mnsp_link_variables!(container::PSI.OptimizationContainer, devices
     labels = _mnsp_band_labels(mnsp)
     directions = collect(_MNSP_DIRECTIONS)
 
-    for dir in _MNSP_DIRECTIONS, param in _MNSP_PARAMETERS[Symbol(dir)]
-        PSI.add_parameters!(container, param, devices, device_model)
+    for dir in _MNSP_DIRECTIONS
+        PSI.add_parameters!(
+            container, MNSPBandWidthParameter, devices, device_model;
+            meta = dir, time_series_name = _mnsp_offer_series(dir),
+        )
+        PSI.add_parameters!(
+            container, MNSPMaxAvailParameter, devices, device_model;
+            meta = dir, time_series_name = _mnsp_max_avail_series(dir),
+        )
     end
-    for (P, _) in _MNSP_OPERATING_SERIES
-        PSI.add_parameters!(container, P, mnsp, device_model)
+    for (meta, series) in _MNSP_OPERATING_SERIES
+        PSI.add_parameters!(container, MNSPOperatingParameter, mnsp, device_model; meta, time_series_name = series)
     end
     _add_mnsp_limit_variables!(container, mnsp)
     link_var = PSI.add_variable_container!(
@@ -208,11 +284,10 @@ end
 
 Adds, for each device in `devices` carrying MNSP offers, the rows over the variables of
 [`_add_mnsp_link_variables!`](@ref): each band within its offered width, the bands plus an offer surplus summing to the
-link flow ([`MNSPLinkBandConstraint`](@ref)), an elastic `MAXAVAIL` limit
-([`MNSPLinkMaxAvailConstraint`](@ref)), `flow = forward - reverse` ([`MNSPLinkFlowConstraint`](@ref)),
-one direction at a time ([`MNSPLinkDirectionConstraint`](@ref)), each directional loss zero on the
-inactive link ([`MNSPLinkLossConstraint`](@ref)), and the two losses summing to the
-interconnector loss ([`MNSPLinkLossSplitConstraint`](@ref)).
+link flow (meta `"band"`), an elastic `MAXAVAIL` limit (`"max_avail"`), `flow = forward - reverse` (`"flow"`),
+one direction at a time (`"direction"`), each directional loss zero on the inactive link (`"loss|lb"` and
+`"loss|ub"`), and the two losses summing to the interconnector loss (`"loss_split"`), all rows of
+[`MNSPLinkConstraint`](@ref).
 
 # Returns
 `nothing`.
@@ -234,26 +309,26 @@ function _add_mnsp_link_constraints!(container::PSI.OptimizationContainer, devic
     loss_var = PSI.get_variable(container, InterconnectorLossVariable(), PSY.AreaInterchange)
     band_var = Dict(dir => PSI.get_variable(container, MNSPLinkBandVariable(), PSY.AreaInterchange, dir) for dir in _MNSP_DIRECTIONS)
     width = Dict(
-        dir => PSI.get_parameter(container, _MNSP_PARAMETERS[Symbol(dir)].width(), PSY.AreaInterchange)
+        dir => PSI.get_parameter(container, MNSPBandWidthParameter(), PSY.AreaInterchange, dir)
             for dir in _MNSP_DIRECTIONS
     )
     max_avail = Dict(
-        dir => PSI.get_parameter(container, _MNSP_PARAMETERS[Symbol(dir)].max_avail(), PSY.AreaInterchange)
+        dir => PSI.get_parameter(container, MNSPMaxAvailParameter(), PSY.AreaInterchange, dir)
             for dir in _MNSP_DIRECTIONS
     )
-    container_for(T; meta = IS.Optimization.CONTAINER_KEY_EMPTY_META) = PSI.add_constraints_container!(
-        container, T(), PSY.AreaInterchange, names, directions, time_steps; meta,
+    container_for(meta) = PSI.add_constraints_container!(
+        container, MNSPLinkConstraint(), PSY.AreaInterchange, names, directions, time_steps; meta,
     )
-    band_con = container_for(MNSPLinkBandConstraint)
-    avail_con = container_for(MNSPLinkMaxAvailConstraint)
-    direction_con = container_for(MNSPLinkDirectionConstraint)
-    loss_lb_con = container_for(MNSPLinkLossConstraint; meta = "lb")
-    loss_ub_con = container_for(MNSPLinkLossConstraint; meta = "ub")
+    band_con = container_for("band")
+    avail_con = container_for("max_avail")
+    direction_con = container_for("direction")
+    loss_lb_con = container_for("loss|lb")
+    loss_ub_con = container_for("loss|ub")
     link_con = PSI.add_constraints_container!(
-        container, MNSPLinkFlowConstraint(), PSY.AreaInterchange, names, time_steps,
+        container, MNSPLinkConstraint(), PSY.AreaInterchange, names, time_steps; meta = "flow",
     )
     split_con = PSI.add_constraints_container!(
-        container, MNSPLinkLossSplitConstraint(), PSY.AreaInterchange, names, time_steps,
+        container, MNSPLinkConstraint(), PSY.AreaInterchange, names, time_steps; meta = "loss_split",
     )
 
     for d in mnsp
@@ -272,8 +347,9 @@ function _add_mnsp_link_constraints!(container::PSI.OptimizationContainer, devic
                 for label in labels
                     JuMP.@constraint(jm, bands[name, label, t] <= width_mult[dir][name, label, t] * widths[dir][label, t] / base_power)
                 end
-                offer_slack = PSI.get_variable(container, MNSPOfferSlack(), PSY.AreaInterchange, dir)[name, t]
-                avail_slack = PSI.get_variable(container, MNSPMaxAvailSlack(), PSY.AreaInterchange, dir)[name, t]
+                link = _mnsp_direction_link(dir)
+                offer_slack = PSI.get_variable(container, MNSPSlack(), PSY.AreaInterchange, _mnsp_slack_meta(MNSPOfferVariant(), link))[name, t]
+                avail_slack = PSI.get_variable(container, MNSPSlack(), PSY.AreaInterchange, _mnsp_slack_meta(MNSPMaxAvailVariant(), link))[name, t]
                 band_con[name, dir, t] = JuMP.@constraint(jm, sum(bands[name, label, t] for label in labels) + offer_slack == q)
                 avail_con[name, dir, t] = JuMP.@constraint(jm, q - avail_slack <= avail_mult[dir][name, t] * avails[dir][t] / base_power)
                 on = dir == "forward" ? forward_on : 1 - forward_on
@@ -321,7 +397,7 @@ function _add_mnsp_band_costs!(container::PSI.OptimizationContainer, devices, de
     for dir in _MNSP_DIRECTIONS
         PSI.add_parameters!(
             container, MNSPBandPriceParameter, mnsp, device_model;
-            meta = dir, time_series_name = mnsp_series_name(dir, "offer"),
+            meta = dir, time_series_name = getproperty(NEM_MNSP_SERIES, Symbol(dir, "_offer")),
         )
         key = PSI.ParameterKey(MNSPBandPriceParameter, PSY.AreaInterchange, dir)
         bands = PSI.get_variable(container, MNSPLinkBandVariable(), PSY.AreaInterchange, dir)
