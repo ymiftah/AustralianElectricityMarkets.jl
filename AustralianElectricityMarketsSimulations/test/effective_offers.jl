@@ -1175,8 +1175,7 @@ end
         inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, semi))
         @test get_name(inputs.uigf) == NEM_TELEMETRY_SERIES.uigf
         raw = get_time_series_values(SingleTimeSeries, semi, NEM_TELEMETRY_SERIES.uigf; ignore_scaling_factors = true)
-        @test PSI.get_multiplier_value(EnergyUIGFTimeSeriesParameter(), semi, NEMReplayDispatch()) ≈ 1 / base_power
-        @test PSI.get_multiplier_value(EnergyMaxAvailTimeSeriesParameter(), semi, NEMReplayDispatch()) ≈ 1 / base_power
+        @test PSI.get_multiplier_value(EnergyLimitTimeSeriesParameter(), semi, NEMReplayDispatch()) ≈ 1 / base_power
         @test length(raw) > 0
     end
 end

@@ -118,7 +118,7 @@ export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
     never_invoked_constraints, prepare_replay!, MNSPSlack
 export NEMDispatchProblem, nemde_optimizer, NEMDE_HIGHS_OPTIONS
 export EnergyOfferBandVariable, EnergyBandWidthParameter, EnergyBandPriceParameter
-export EnergyMaxAvailTimeSeriesParameter, EnergyUIGFTimeSeriesParameter
+export EnergyLimitTimeSeriesParameter
 export FixedLoadTimeSeriesParameter, FixedLoadInvokedTimeSeriesParameter
 export NEMUnitSlack, NEMUnitConstraint
 export NEMConstraintLHS, NEMConstraintLimit,

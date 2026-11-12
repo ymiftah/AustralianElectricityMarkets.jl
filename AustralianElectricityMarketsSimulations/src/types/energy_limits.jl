@@ -1,5 +1,7 @@
-"Time-series parameter for raw bid MAXAVAIL in system-base per-unit."
-struct EnergyMaxAvailTimeSeriesParameter <: PSI.TimeSeriesParameter end
+"""
+    EnergyLimitTimeSeriesParameter
 
-"Time-series parameter for a semi-scheduled unit's UIGF in system-base per-unit."
-struct EnergyUIGFTimeSeriesParameter <: PSI.TimeSeriesParameter end
+Time-series parameter of an energy limit in system-base per-unit: the raw bid MAXAVAIL, with key meta
+`"max_avail"`, or a semi-scheduled unit's UIGF, with key meta `"uigf"`.
+"""
+struct EnergyLimitTimeSeriesParameter <: PSI.TimeSeriesParameter end

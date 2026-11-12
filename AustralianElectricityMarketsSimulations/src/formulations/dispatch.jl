@@ -20,9 +20,7 @@ PSI.get_multiplier_value(::RampRateTimeSeriesParameter, ::PSY.StaticInjection, :
 
 PSI.get_multiplier_value(::InitialPowerTimeSeriesParameter, d::PSY.StaticInjection, ::AbstractNEMDispatch) = 1 / PSY.get_system_base_power(d)
 
-PSI.get_multiplier_value(::EnergyMaxAvailTimeSeriesParameter, d::PSY.StaticInjection, ::AbstractNEMDispatch) = 1 / PSY.get_system_base_power(d)
-
-PSI.get_multiplier_value(::EnergyUIGFTimeSeriesParameter, d::PSY.StaticInjection, ::AbstractNEMDispatch) = 1 / PSY.get_system_base_power(d)
+PSI.get_multiplier_value(::EnergyLimitTimeSeriesParameter, d::PSY.StaticInjection, ::AbstractNEMDispatch) = 1 / PSY.get_system_base_power(d)
 
 
 PSI.objective_function_multiplier(::PSI.ActivePowerVariable, ::AbstractNEMDispatch) = PSI.OBJECTIVE_FUNCTION_POSITIVE
@@ -33,10 +31,11 @@ PSI.objective_function_multiplier(::PSI.ActivePowerVariable, ::AbstractNEMDispat
     PSI.get_default_time_series_names(::Type{<:PSY.StaticInjection}, ::Type{<:AbstractNEMDispatch})
 
 Registers the time series [`AbstractNEMDispatch`](@ref) reads as parameters. The derived series are
-read through the device's [`NEMDispatchInputs`](@ref), and the telemetered UIGF keeps a name
-constant. [`RampRateTimeSeriesParameter`](@ref) is registered once: its two directions are added with
-their own series names. The initial-power and fixed-loading parameters are added explicitly from the build's
-first-solve seed series, so they take no entry here.
+read through the device's [`NEMDispatchInputs`](@ref). [`RampRateTimeSeriesParameter`](@ref) is registered once:
+its two directions are added with their own series names. [`EnergyLimitTimeSeriesParameter`](@ref) is added once
+per meta, each with its own series name, so its entry names the MAXAVAIL series only as a default. The
+initial-power and fixed-loading parameters are added explicitly from the build's first-solve seed series, so
+they take no entry here.
 
 # Returns
 A `Dict` mapping each `PowerSimulations.TimeSeriesParameter` type to its series name.
@@ -47,8 +46,7 @@ function PSI.get_default_time_series_names(
     )
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
         RampRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
-        EnergyMaxAvailTimeSeriesParameter => _max_avail_series_name(OfferSide.GEN),
-        EnergyUIGFTimeSeriesParameter => NEM_TELEMETRY_SERIES.uigf,
+        EnergyLimitTimeSeriesParameter => _max_avail_series_name(OfferSide.GEN),
     )
 end
 
@@ -109,7 +107,7 @@ function _has_nem_dispatch_limits(device)
         _require_key_name(device, key, expected)
         PSY.has_time_series(device, PSY.SingleTimeSeries, expected) || return false
     end
-    uigf_required = haskey(names, EnergyUIGFTimeSeriesParameter) && is_semi_scheduled(device)
+    uigf_required = haskey(names, EnergyLimitTimeSeriesParameter) && is_semi_scheduled(device)
     if uigf_required
         telemetry.uigf isa IS.StaticTimeSeriesKey || return false
         _require_key_name(device, telemetry.uigf, NEM_TELEMETRY_SERIES.uigf)
@@ -120,7 +118,7 @@ end
 
 # The energy availability parameters; PowerSimulations.jl reads each from one series name per device type.
 const _AVAILABILITY_PARAMETERS = (
-    EnergyMaxAvailTimeSeriesParameter, PSI.ActivePowerOutTimeSeriesParameter, PSI.ActivePowerInTimeSeriesParameter,
+    EnergyLimitTimeSeriesParameter, PSI.ActivePowerOutTimeSeriesParameter, PSI.ActivePowerInTimeSeriesParameter,
 )
 
 # The `MAXAVAIL` series name `param` reads on `device`: its energy bid side's, per direction for a battery.
@@ -139,7 +137,7 @@ end
 const _DERIVED_INPUT_FIELDS = (
     (RampRateTimeSeriesParameter, RampUp(), :ramp_up),
     (RampRateTimeSeriesParameter, RampDown(), :ramp_down),
-    (EnergyMaxAvailTimeSeriesParameter, nothing, :energy_availability),
+    (EnergyLimitTimeSeriesParameter, nothing, :energy_availability),
     (PSI.ActivePowerOutTimeSeriesParameter, nothing, :energy_availability),
     (PSI.ActivePowerInTimeSeriesParameter, nothing, :energy_availability_decremental),
 )
@@ -268,14 +266,20 @@ function PSI.construct_device!(
     _add_device_unit_slacks!(container, EnergyLimitUIGFVariant(), semi)
 
     _add_ramp_rate_parameters!(container, devices, model)
-    haskey(PSI.get_time_series_names(model), EnergyMaxAvailTimeSeriesParameter) &&
-        PSI.add_parameters!(container, EnergyMaxAvailTimeSeriesParameter, devices, model)
+    haskey(PSI.get_time_series_names(model), EnergyLimitTimeSeriesParameter) && PSI.add_parameters!(
+        container, EnergyLimitTimeSeriesParameter, devices, model;
+        meta = _energy_limit_parameter_meta(EnergyLimitMaxAvailVariant()),
+        time_series_name = _inputs_series_name(first(devices), :energy_availability),
+    )
     PSI.add_parameters!(
         container, InitialPowerTimeSeriesParameter, devices, model;
         time_series_name = _INITIAL_MW_SEED_SERIES,
     )
-    any(is_semi_scheduled, devices) &&
-        PSI.add_parameters!(container, EnergyUIGFTimeSeriesParameter, devices, model)
+    any(is_semi_scheduled, devices) && PSI.add_parameters!(
+        container, EnergyLimitTimeSeriesParameter, devices, model;
+        meta = _energy_limit_parameter_meta(EnergyLimitUIGFVariant()),
+        time_series_name = NEM_TELEMETRY_SERIES.uigf,
+    )
     _add_fixed_load_arguments!(container, devices, model)
 
     for variant in _ENERGY_OFFER_SLACK_VARIANTS

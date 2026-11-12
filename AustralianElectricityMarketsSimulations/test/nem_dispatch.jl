@@ -347,7 +347,7 @@ end
             key = device isa PSY.Storage && side == OfferSide.LOAD ? inputs.energy_availability_decremental : inputs.energy_availability
             @test PSY.get_name(key) == bid.max_avail.name
             @test PSI.get_multiplier_value(
-                device isa PSY.Storage ? (side == OfferSide.GEN ? PSI.ActivePowerOutTimeSeriesParameter() : PSI.ActivePowerInTimeSeriesParameter()) : EnergyMaxAvailTimeSeriesParameter(),
+                device isa PSY.Storage ? (side == OfferSide.GEN ? PSI.ActivePowerOutTimeSeriesParameter() : PSI.ActivePowerInTimeSeriesParameter()) : EnergyLimitTimeSeriesParameter(),
                 device, NEMReplayDispatch(),
             ) ≈ 1 / PSY.get_base_power(sys)
             checked += 1

@@ -1,11 +1,16 @@
-function PSI.convert_result_to_natural_units(::Type{<:Union{EnergyMaxAvailTimeSeriesParameter, EnergyUIGFTimeSeriesParameter}})
+function PSI.convert_result_to_natural_units(::Type{EnergyLimitTimeSeriesParameter})
     return true
 end
 
-_energy_limit_parameter(::EnergyLimitMaxAvailVariant) = EnergyMaxAvailTimeSeriesParameter
-_energy_limit_parameter(::EnergyLimitUIGFVariant) = EnergyUIGFTimeSeriesParameter
+_energy_limit_parameter(::EnergyLimitMaxAvailVariant) = EnergyLimitTimeSeriesParameter
+_energy_limit_parameter(::EnergyLimitUIGFVariant) = EnergyLimitTimeSeriesParameter
 _energy_limit_parameter(::EnergyLimitMaxAvailOutVariant) = PSI.ActivePowerOutTimeSeriesParameter
 _energy_limit_parameter(::EnergyLimitMaxAvailInVariant) = PSI.ActivePowerInTimeSeriesParameter
+
+# The key meta of each energy limit parameter; the Out and In parameters are PowerSimulations' own, keyed without meta.
+_energy_limit_parameter_meta(::EnergyLimitMaxAvailVariant) = "max_avail"
+_energy_limit_parameter_meta(::EnergyLimitUIGFVariant) = "uigf"
+_energy_limit_parameter_meta(::Union{EnergyLimitMaxAvailOutVariant, EnergyLimitMaxAvailInVariant}) = ""
 
 # The key meta of each energy limit row in its `NEMUnitConstraint` container.
 _energy_limit_row_meta(::EnergyLimitMaxAvailVariant) = "max_avail"
@@ -55,7 +60,7 @@ function _add_energy_limit_rows!(
     isempty(devices) && return
     names = PSY.get_name.(collect(devices))
     steps = PSI.get_time_steps(container)
-    limit, covered = _ts_parameter_accessor(container, _energy_limit_parameter(variant), T)
+    limit, covered = _ts_parameter_accessor(container, _energy_limit_parameter(variant), T, _energy_limit_parameter_meta(variant))
     _require_coverage(names, "missing energy-limit series", "Call set_unit_conditions! first.", covered)
     power = PSI.get_variable(container, U(), T)
     slack = PSI.get_variable(container, NEMUnitSlack(), T, _nem_unit_slack_meta(variant))

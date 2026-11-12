@@ -109,7 +109,7 @@ end
 
 # `_get_time_series_name` resolves the parameter's series name per device from its dispatch-input key; a
 # load without an energy bid is named by the zero LOAD `MAXAVAIL` series `set_effective_offers!` looks up.
-# The ramp rates carry their series name as an `add_parameters!` argument, since one type serves both directions.
+# The ramp rates and the energy limits carry their series name as an `add_parameters!` argument, since one type serves several.
 #
 # The device's own key is read, not the type's first device's: every device of a
 # type carries the same name, which is what lets the one-name-per-type registration work.
@@ -117,9 +117,6 @@ end
 # The `D <: PSY.Device` constraint is required, not decorative: without it these methods are ambiguous
 # with PSI's generic `_get_time_series_name(::T, ::Component, ::DeviceModel) where {T <: ParameterType}`
 # and the model build fails. Re-check the signature when the pinned fork moves.
-PSI._get_time_series_name(::EnergyMaxAvailTimeSeriesParameter, device::PSY.Component, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
-    _inputs_series_name(device, :energy_availability)
-
 PSI._get_time_series_name(::PSI.ActivePowerOutTimeSeriesParameter, device::PSY.Storage, ::PSI.DeviceModel{D, B}) where {D <: PSY.Device, B <: AbstractNEMDispatch} =
     _inputs_series_name(device, :energy_availability)
 
