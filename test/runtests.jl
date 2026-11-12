@@ -49,6 +49,7 @@ const TEST_GROUPS = [
     "nem_offer_cost" => ("NEMOfferCost", ["types/nem_offer_cost.jl"]),
     "unit_data" => ("NEM unit data structs", ["types/unit_data.jl"]),
     "network_data" => ("NEM network data structs", ["types/network_data.jl"]),
+    "replay_inputs_stage" => ("Replay inputs stage", ["replay_inputs/stage.jl"]),
     "aqua" => ("Aqua", ["aqua.jl"]),
 ]
 

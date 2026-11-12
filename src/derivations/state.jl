@@ -1,4 +1,23 @@
 """
+    _max_active_power(availability, initial_mw, ramp_down_rate, Δ) -> Float64
+
+The upper dispatch limit of one unit in one interval: its `availability`, raised to the ramp-down
+floor `initial_mw - ramp_down_rate × Δ` when that floor is higher.
+
+# Arguments
+- `availability`: the dispatch envelope upper bound, in MW or per unit of the base.
+- `initial_mw`: the unit's metered output at the start of the interval, in the same unit.
+- `ramp_down_rate`: the ramp-down rate per hour, in the same unit.
+- `Δ`: the interval length in hours.
+
+# Returns
+A `Float64` in the same unit as `availability`.
+"""
+function _max_active_power(availability::Real, initial_mw::Real, ramp_down_rate::Real, Δ::Real)
+    return max(availability, initial_mw - ramp_down_rate * Δ)
+end
+
+"""
     max_active_power_floor(availability, ramp_down_rate, interval_hours, state::NEMUnitState) -> Float64
 
 The upper dispatch limit of one unit in one interval: `availability`, raised to the ramp-down floor

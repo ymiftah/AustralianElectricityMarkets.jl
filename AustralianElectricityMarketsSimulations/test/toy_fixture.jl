@@ -319,6 +319,7 @@ function nem_toy_system(
         isnothing(interchange) || set_loss_demand_coefficients!(sys)
         AEMS._attach_dispatch_inputs!(sys)
     end
+    AustralianElectricityMarkets._set_replay_inputs!(sys)
 
     # One window per `horizon`.
     PSY.transform_single_time_series!(sys, horizon, TOY_RESOLUTION)

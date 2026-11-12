@@ -36,6 +36,9 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
     get_limit_type, get_source, get_gencon_id, get_effective_date, get_version_no,
     get_terms, get_fcas_requirements, resolve_term_devices
 export FCASService, add_fcas_services!, Readers
+export NEMUnitState, max_active_power_floor, in_fast_start_profile, fixed_load_invoked, effective_fixed_load,
+    fcas_state_stranded_ok, fcas_both_sides_stranded_ok, fcas_ramping_active, fcas_ramping_limit,
+    fcas_joint_ramping_exempt, mnsp_ramp_envelope, composite_ramp_rates
 export OfferSide, offer_side, side_suffix, NEM_SERIES, NEM_TELEMETRY_SERIES, NEM_OBSERVED_SERIES, NEM_INTERCONNECTOR_SERIES, NEM_MNSP_SERIES, NEM_CONSTRAINT_SERIES, energy_offer_series_name
 export NEMOfferCost, NEMEnergyBid, NEMFCASBid, BidDirection, FastStartProfile, FCASTrapeziumPoints, bid_value, bid_series_name
 export get_energy_bids, get_fcas_bids, get_direction, get_offer_curves, get_max_avail, get_roc_up, get_roc_down,
@@ -62,6 +65,8 @@ include("types/fcas.jl")
 include("types/generic_constraints.jl")
 include("types/interconnector_losses.jl")
 include("types/tie_break.jl")
+include("types/unit_state.jl")
+include("derivations/state.jl")
 
 include("readers/Readers.jl")
 using .Readers
@@ -98,6 +103,7 @@ include("system/interconnectors.jl")
 include("system/penalties.jl")
 include("system/RegionModel.jl")
 include("system/replay_checks.jl")
+include("system/replay_inputs.jl")
 
 using .RegionModel: nem_network
 export nem_network

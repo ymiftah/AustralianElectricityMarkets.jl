@@ -138,6 +138,7 @@ function augmented_pscb_system()
         ),
     )
 
+    AustralianElectricityMarkets._set_replay_inputs!(sys)
     return sys
 end
 
@@ -176,5 +177,6 @@ function nem_pscb_system()
             ),
         )
     end
+    AustralianElectricityMarkets._set_replay_inputs!(sys)
     return sys
 end
