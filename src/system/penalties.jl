@@ -99,7 +99,7 @@ const FIXED_LOADING_CVP_FACTOR = 380.0
     FCAS_CAPACITY_CVP_FACTOR
 
 CVP factor (70) of AEMO's FCAS EnablementMin/EnablementMax constraint, item 24 of the *Schedule of
-Constraint Violation Penalty Factors* v8.0. Prices `FCASJointCapacitySlack`.
+Constraint Violation Penalty Factors* v8.0. Prices the joint capacity variant of `FCASSlack`.
 """
 const FCAS_CAPACITY_CVP_FACTOR = 70.0
 
@@ -108,7 +108,7 @@ const FCAS_CAPACITY_CVP_FACTOR = 70.0
     FCAS_RAMPING_CVP_FACTOR
 
 CVP factor (155) of AEMO's FCAS Joint Ramping constraint, item 20 of the *Schedule of Constraint
-Violation Penalty Factors* v8.0. Prices `FCASJointRampingSlack`.
+Violation Penalty Factors* v8.0. Prices the joint ramping variant of `FCASSlack`.
 """
 const FCAS_RAMPING_CVP_FACTOR = 155.0
 
@@ -117,7 +117,7 @@ const FCAS_RAMPING_CVP_FACTOR = 155.0
     FCAS_MAXAVAIL_CVP_FACTOR
 
 CVP factor (155) of AEMO's FCAS MaxAvail constraint, item 19 of the *Schedule of Constraint
-Violation Penalty Factors* v8.0. Prices `FCASMaxAvailSlack`.
+Violation Penalty Factors* v8.0. Prices the MaxAvail variant of `FCASSlack`.
 """
 const FCAS_MAXAVAIL_CVP_FACTOR = 155.0
 
@@ -126,7 +126,7 @@ const FCAS_MAXAVAIL_CVP_FACTOR = 155.0
     FCAS_BDU_RAMPING_CVP_FACTOR
 
 CVP factor (155) of AEMO's BDU Regulation FCAS SCADA Ramping constraint, item 21 of the
-*Schedule of Constraint Violation Penalty Factors* v8.0. Prices `FCASBDURampingSlack`.
+*Schedule of Constraint Violation Penalty Factors* v8.0. Prices the BDU ramping variant of `FCASSlack`.
 """
 const FCAS_BDU_RAMPING_CVP_FACTOR = 155.0
 

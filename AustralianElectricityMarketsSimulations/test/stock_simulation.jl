@@ -635,7 +635,7 @@ end
     # Energy + RaiseReg is 70 MW in both steps: slack in step 1, at the RHS in step 2.
     @test rhs[1] - (50.0 + 20.0) ≈ 20.0 atol = TOY_TOLERANCE
     @test rhs[2] - (60.0 + 10.0) ≈ 0.0 atol = TOY_TOLERANCE
-    slack = stock_realized(sim.results, "FCASJointRampingSlack__FCASService__1_RAISEREG", TOY_CHEAP; parameter = false)
+    slack = stock_realized(sim.results, "FCASSlack__FCASService__joint_ramping|1_RAISEREG", TOY_CHEAP; parameter = false)
     @test all(abs.(slack) .<= TOY_TOLERANCE)
     # Step 2 with step 1's InitialMW (a stale RHS of 90 MW) gives Alta all 20 MW at $5.
     stale = stock_fcas_standalone(reg_ramp_system(; alta_initial = [60.0, 60.0]), STOCK_STEPS[2])
@@ -662,7 +662,7 @@ end
     @test stock_realized(sim.results, key, TOY_BATTERY; field = "bdu_ramping") ≈ [30.0, 15.0] atol = TOY_TOLERANCE
     # §6.1 for the battery: InitialMW 10 + 30, then 10 + 15; never binding (net energy 0).
     @test stock_realized(sim.results, key, TOY_BATTERY; field = "joint_ramping") ≈ [40.0, 25.0] atol = TOY_TOLERANCE
-    for name in ("FCASBDURampingSlack__FCASService__1_RAISEREG", "FCASJointRampingSlack__FCASService__1_RAISEREG")
+    for name in ("FCASSlack__FCASService__bdu_ramping|1_RAISEREG", "FCASSlack__FCASService__joint_ramping|1_RAISEREG")
         @test all(abs.(stock_realized(sim.results, name, TOY_BATTERY; parameter = false)) .<= TOY_TOLERANCE)
     end
     # Step 2 with step 1's 30 MW BDU RHS repeats step 1's dispatch.

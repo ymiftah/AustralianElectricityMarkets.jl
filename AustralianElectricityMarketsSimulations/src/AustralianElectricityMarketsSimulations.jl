@@ -127,10 +127,8 @@ export NEMConstraintLHS, NEMConstraintLimit,
     NEMConstraintRHSParameter, LinearFactorLimit, FCASMarket
 export GenericConstraintSlackUp, GenericConstraintSlackDown
 export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
-    FCASJointCapacityLHS, FCASJointCapacityConstraint, FCASBDURampingConstraint,
-    FCASJointRampingConstraint, FCASJointCapacitySlack, FCASJointRampingSlack,
-    FCASMaxAvailConstraint, FCASMaxAvailSlack, FCASBDURampingSlack,
-    FCASOfferBandVariable, FCASOfferBandConstraint, FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter,
+    FCASJointCapacityLHS, FCASJointCapacityConstraint, FCASUnitConstraint, FCASSlack,
+    FCASOfferBandVariable, FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter,
     FCASLowerSlopeParameter, FCASRampingLimitParameter, FCASBandPriceParameter,
     UnitRampUpSlack, UnitRampDownSlack,
     InterconnectorFlowSlack

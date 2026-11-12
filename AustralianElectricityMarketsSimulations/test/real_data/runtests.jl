@@ -293,8 +293,8 @@ end
             bid_type = get_bid_type(svc)
             bid_type in AEM.FCAS_REGULATION_MARKETS || continue
             name = PSY.get_name(svc)
-            PSI.has_container_key(container, FCASJointRampingConstraint, FCASService, name) || continue
-            con = PSI.get_constraint(container, FCASJointRampingConstraint(), FCASService, name)
+            PSI.has_container_key(container, FCASUnitConstraint, FCASService, "joint_ramping|$(name)") || continue
+            con = PSI.get_constraint(container, FCASUnitConstraint(), FCASService, "joint_ramping|$(name)")
             for device in PSY.get_contributing_devices(sys, svc)
                 duid = PSY.get_name(device)
                 duid in axes(con, 1) || continue

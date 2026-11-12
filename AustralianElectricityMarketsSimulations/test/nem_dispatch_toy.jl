@@ -428,15 +428,15 @@ end
         PSY.add_service!(sys, service, [PSY.get_component(PSY.StaticInjection, sys, n) for n in (TOY_CHEAP, "PUMP")])
     end
     # Capacity rows: the sense follows the `_lower` suffix whatever the device.
-    @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_upper", TOY_CHEAP, "up") == "up"
-    @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_lower", TOY_CHEAP, "up") == "down"
-    @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_gen_lower", "PUMP", "up") == "down"
-    @test direction(sys, FCASJointCapacitySlack, "S_RAISEREG_load_upper", "PUMP", "up") == "up"
+    @test direction(sys, FCASSlack, "joint_capacity|S_RAISEREG_upper", TOY_CHEAP, "up") == "up"
+    @test direction(sys, FCASSlack, "joint_capacity|S_RAISEREG_lower", TOY_CHEAP, "up") == "down"
+    @test direction(sys, FCASSlack, "joint_capacity|S_RAISEREG_gen_lower", "PUMP", "up") == "down"
+    @test direction(sys, FCASSlack, "joint_capacity|S_RAISEREG_load_upper", "PUMP", "up") == "up"
     # Joint ramping: a generator's RAISEREG row is the `<=` form, a load's LOWERREG row is.
-    @test direction(sys, FCASJointRampingSlack, "S_RAISEREG", TOY_CHEAP, "up") == "up"
-    @test direction(sys, FCASJointRampingSlack, "S_LOWERREG", TOY_CHEAP, "up") == "down"
-    @test direction(sys, FCASJointRampingSlack, "S_LOWERREG", "PUMP", "up") == "up"
-    @test direction(sys, FCASJointRampingSlack, "S_RAISEREG", "PUMP", "up") == "down"
+    @test direction(sys, FCASSlack, "joint_ramping|S_RAISEREG", TOY_CHEAP, "up") == "up"
+    @test direction(sys, FCASSlack, "joint_ramping|S_LOWERREG", TOY_CHEAP, "up") == "down"
+    @test direction(sys, FCASSlack, "joint_ramping|S_LOWERREG", "PUMP", "up") == "up"
+    @test direction(sys, FCASSlack, "joint_ramping|S_RAISEREG", "PUMP", "up") == "down"
     @test direction(sys, UnitRampDownSlack, "", TOY_CHEAP, "down") == "down"
 end
 

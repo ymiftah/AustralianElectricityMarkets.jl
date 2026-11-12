@@ -72,8 +72,8 @@ struct FCASSideCapacityVariable <: PSI.VariableType end
 Expression type for a device's total regulation FCAS target in one [`FCASService`](@ref), per
 `(device, t)`: [`FCASCapacityVariable`](@ref) for a device bidding one side, or the sum of both
 [`FCASSideCapacityVariable`](@ref)s for a `PSY.Storage` device bidding both sides. This is what
-AEMO *FCAS Model in NEMDE* §6.2's joint capacity constraint, the [`FCASBDURampingConstraint`](@ref)
-and the [`FCASJointRampingConstraint`](@ref) read as "Raise Regulation FCAS Target"/"Lower
+AEMO *FCAS Model in NEMDE* §6.2's joint capacity constraint, the BDU and joint ramping rows of
+[`FCASUnitConstraint`](@ref) read as "Raise Regulation FCAS Target"/"Lower
 Regulation FCAS Target".
 """
 struct FCASUnitRegulationTarget <: PSI.ExpressionType end
@@ -106,13 +106,26 @@ struct FCASOfferBandVariable <: PSI.VariableType end
 
 
 """
-    FCASOfferBandConstraint
+    FCASUnitConstraint
 
-`Σ bands == capacity` for one contributing device's FCAS offer: its [`FCASOfferBandVariable`](@ref)s
-sum to its [`FCASCapacityVariable`](@ref), or to its [`FCASSideCapacityVariable`](@ref) on one side
-of a `PSY.Storage` device's regulation offer. Indexed `(device name, t)` with the band variable's meta.
+Constraint type for the per-unit FCAS rows of [`FCASMarket`](@ref), indexed `(device name, t)`. The key
+meta is `"<row>|<meta>"`: the row first, then the row's own container meta.
+
+- `"max_avail|<service>_maxavail"` (or `"_gen_maxavail"`/`"_load_maxavail"`): the MaxAvail limit on a
+  [`FCASCapacityVariable`](@ref) or [`FCASSideCapacityVariable`](@ref). The row is elastic when the owning
+  `PSI.ServiceModel` has `use_slacks = true`.
+- `"offer_band|<group meta>"`: `Σ bands == capacity` for one contributing device's FCAS offer, its
+  [`FCASOfferBandVariable`](@ref)s summing to its capacity variable.
+- `"joint_ramping|<service>"`: AEMO *FCAS Model in NEMDE* §6.1's joint ramping constraint, bounding a
+  contributing device's net energy dispatch combined with its [`FCASUnitRegulationTarget`](@ref) against its
+  telemetered AGC ramp from `InitialMW`.
+- `"bdu_ramping|<service>"`: AEMO *FCAS Model in NEMDE* §6.4's BDU regulating FCAS SCADA ramping constraint,
+  bounding a `PSY.Storage` device's [`FCASUnitRegulationTarget`](@ref) against the device's SCADA ramping
+  capability.
+
+Its dual, when requested, is recorded for the `"joint_ramping"` rows only.
 """
-struct FCASOfferBandConstraint <: PSI.ConstraintType end
+struct FCASUnitConstraint <: PSI.ConstraintType end
 
 
 """
@@ -163,8 +176,8 @@ struct FCASLowerSlopeParameter <: PSI.ConstraintCoefficientParameter end
 
 Time-series parameter of a device's regulation ramping limits for one regulation market, read from
 its `"fcas_ramping_limits_<BIDTYPE>"` series ([`set_effective_offers!`](@ref)), per-unit of the
-system base, with a field axis `"joint_ramping"` ([`FCASJointRampingConstraint`](@ref) right-hand
-side) and `"bdu_ramping"` ([`FCASBDURampingConstraint`](@ref) right-hand side). Keyed by device type
+system base, with a field axis `"joint_ramping"` ([`FCASUnitConstraint`](@ref) right-hand
+side) and `"bdu_ramping"` ([`FCASUnitConstraint`](@ref) right-hand side). Keyed by device type
 with meta `"<BIDTYPE>"`.
 """
 struct FCASRampingLimitParameter <: PSI.TimeSeriesParameter end
@@ -192,48 +205,6 @@ of the AEMO *FCAS Model in NEMDE* §6.2/§6.3 joint capacity constraint, boundin
 [`FCASJointCapacityLHS`](@ref) against its FCAS trapezium's enablement window.
 """
 struct FCASJointCapacityConstraint <: PSI.ConstraintType end
-
-
-"""
-    FCASBDURampingConstraint
-
-Constraint type for AEMO *FCAS Model in NEMDE* §6.4's BDU regulating FCAS SCADA ramping
-constraint, bounding a `PSY.Storage` device's [`FCASUnitRegulationTarget`](@ref) in one
-regulation [`FCASService`](@ref) against the device's SCADA ramping capability.
-"""
-struct FCASBDURampingConstraint <: PSI.ConstraintType end
-
-
-"""
-    FCASMaxAvailConstraint
-
-Constraint type for AEMO's FCAS MaxAvail limit (the effective `MaxAvail` of a service's trapezium,
-[`FCASOfferLimitParameter`](@ref)), built as a row on [`FCASCapacityVariable`](@ref) or
-[`FCASSideCapacityVariable`](@ref) per `(device, t)`, named `"<service>_maxavail"` or
-`"<service>_gen_maxavail"`/`"<service>_load_maxavail"` in its container key. The row is elastic
-when the owning `PSI.ServiceModel` has `use_slacks = true`.
-"""
-struct FCASMaxAvailConstraint <: PSI.ConstraintType end
-
-
-"""
-    FCASMaxAvailSlack
-
-Variable type for the elastic slack on an [`FCASMaxAvailConstraint`](@ref) row, built only when
-the owning `PSI.ServiceModel` has `use_slacks = true`. Priced at
-`FCAS_MAXAVAIL_CVP_FACTOR` times the Market Price Cap.
-"""
-struct FCASMaxAvailSlack <: PSI.VariableType end
-
-
-"""
-    FCASBDURampingSlack
-
-Variable type for the elastic slack on a [`FCASBDURampingConstraint`](@ref) row, built only when
-the owning `PSI.ServiceModel` has `use_slacks = true`. Priced at
-`FCAS_BDU_RAMPING_CVP_FACTOR` times the Market Price Cap.
-"""
-struct FCASBDURampingSlack <: PSI.VariableType end
 
 
 """
@@ -270,33 +241,48 @@ struct GenericConstraintSlackCostParameter <: PSI.TimeSeriesCostParameter end
 
 
 """
-    FCASJointRampingConstraint
+    FCASSlack
 
-Constraint type for AEMO *FCAS Model in NEMDE* §6.1's joint ramping constraint, bounding a
-contributing device's net energy dispatch combined with its [`FCASUnitRegulationTarget`](@ref) in
-one regulation [`FCASService`](@ref) against its telemetered AGC ramp from `InitialMW`.
+Variable type for the elastic slacks of the [`FCASMarket`](@ref) rows, built when the owning
+`PSI.ServiceModel` has `use_slacks = true`. The key meta is `"<variant>|<meta>"`: the variant first,
+then the row's own container meta.
+
+- `"joint_capacity|<meta>"`: a [`FCASJointCapacityConstraint`](@ref) row (AEMO `xxUpperDeficit`/`xxLowerSurplus`),
+  priced at `FCAS_CAPACITY_CVP_FACTOR` times the Market Price Cap.
+- `"joint_ramping|<service>"`: a joint ramping row of [`FCASUnitConstraint`](@ref) (AEMO
+  `R5REJointRampDeficit`/`L5REJointRampDeficit`), priced at `FCAS_RAMPING_CVP_FACTOR`.
+- `"max_avail|<meta>"`: a MaxAvail row of [`FCASUnitConstraint`](@ref), priced at `FCAS_MAXAVAIL_CVP_FACTOR`.
+- `"bdu_ramping|<service>"`: a BDU ramping row of [`FCASUnitConstraint`](@ref), priced at
+  `FCAS_BDU_RAMPING_CVP_FACTOR`.
 """
-struct FCASJointRampingConstraint <: PSI.ConstraintType end
+struct FCASSlack <: PSI.VariableType end
 
+struct FCASJointCapacityVariant end
+struct FCASJointRampingVariant end
+struct FCASMaxAvailVariant end
+struct FCASBDURampingVariant end
 
-"""
-    FCASJointCapacitySlack
+# The meta head of each FCAS slack variant.
+_fcas_slack_head(::FCASJointCapacityVariant) = "joint_capacity"
+_fcas_slack_head(::FCASJointRampingVariant) = "joint_ramping"
+_fcas_slack_head(::FCASMaxAvailVariant) = "max_avail"
+_fcas_slack_head(::FCASBDURampingVariant) = "bdu_ramping"
 
-Variable type for the elastic slack on a [`FCASJointCapacityConstraint`](@ref) row (AEMO
-`xxUpperDeficit`/`xxLowerSurplus`), built when the owning `PSI.ServiceModel` has
-`use_slacks = true`. Priced at `FCAS_CAPACITY_CVP_FACTOR` times the Market Price Cap.
-"""
-struct FCASJointCapacitySlack <: PSI.VariableType end
+# The key meta of an `FCASSlack` variant on a row's container meta.
+_fcas_slack_meta(variant, meta::AbstractString) = string(_fcas_slack_head(variant), "|", meta)
 
+# The variant an `FCASSlack` meta names, its first segment.
+function _fcas_slack_variant(meta::AbstractString)::Union{FCASJointCapacityVariant, FCASJointRampingVariant, FCASMaxAvailVariant, FCASBDURampingVariant}
+    head = first(split(meta, '|'; limit = 2))
+    head == "joint_capacity" && return FCASJointCapacityVariant()
+    head == "joint_ramping" && return FCASJointRampingVariant()
+    head == "max_avail" && return FCASMaxAvailVariant()
+    head == "bdu_ramping" && return FCASBDURampingVariant()
+    throw(ArgumentError("an FCASSlack has no variant named \"$head\""))
+end
 
-"""
-    FCASJointRampingSlack
-
-Variable type for the elastic slack on a [`FCASJointRampingConstraint`](@ref) row (AEMO
-`R5REJointRampDeficit`/`L5REJointRampDeficit`), built when the owning `PSI.ServiceModel` has
-`use_slacks = true`. Priced at `FCAS_RAMPING_CVP_FACTOR` times the Market Price Cap.
-"""
-struct FCASJointRampingSlack <: PSI.VariableType end
+# The row's container meta after an `FCASSlack` meta's variant, split at its first `|`.
+_fcas_slack_row_meta(meta::AbstractString) = String(last(split(meta, '|'; limit = 2)))
 
 
 """

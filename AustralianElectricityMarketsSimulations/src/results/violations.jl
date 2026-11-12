@@ -18,10 +18,6 @@ const _VIOLATION_FAMILIES = (
     EnergyFixedLoadDeficitSlack => ("fixed_load", "down"),
     UnitRampUpSlack => ("unit_ramp", "up"),
     UnitRampDownSlack => ("unit_ramp", "down"),
-    FCASMaxAvailSlack => ("fcas_max_avail", "up"),
-    FCASBDURampingSlack => ("fcas_bdu_ramping", "up"),
-    FCASJointRampingSlack => ("fcas_joint_ramping", "up"),
-    FCASJointCapacitySlack => ("fcas_enablement", "up"),
     GenericConstraintSlackUp => ("generic_constraint", "up"),
     GenericConstraintSlackDown => ("generic_constraint", "down"),
     PSI.SystemBalanceSlackUp => ("area_balance", "up"),
@@ -41,8 +37,15 @@ _mnsp_violation_family(::MNSPFixedLoadDeficitVariant) = ("mnsp_fixed_load", "dow
 _interconnector_flow_family(::InterconnectorFlowSurplus) = ("interconnector_flow", "up")
 _interconnector_flow_family(::InterconnectorFlowDeficit) = ("interconnector_flow", "down")
 
-# The family and default direction of a slack key, from its variant for `MNSPSlack` and `InterconnectorFlowSlack`.
+# The family and default direction of each FCAS slack variant.
+_fcas_violation_family(::FCASJointCapacityVariant) = ("fcas_enablement", "up")
+_fcas_violation_family(::FCASJointRampingVariant) = ("fcas_joint_ramping", "up")
+_fcas_violation_family(::FCASMaxAvailVariant) = ("fcas_max_avail", "up")
+_fcas_violation_family(::FCASBDURampingVariant) = ("fcas_bdu_ramping", "up")
+
+# The family and default direction of a slack key, from its variant for `MNSPSlack`, `InterconnectorFlowSlack` and `FCASSlack`.
 _violation_kind(::Dict, ::Type{MNSPSlack}, meta::AbstractString) = _mnsp_violation_family(_mnsp_slack_variant(String(meta)))
+_violation_kind(::Dict, ::Type{FCASSlack}, meta::AbstractString) = _fcas_violation_family(_fcas_slack_variant(meta))
 _violation_kind(::Dict, ::Type{InterconnectorFlowSlack}, meta::AbstractString) =
     _interconnector_flow_family(_interconnector_flow_variant(meta))
 _violation_kind(kinds::Dict, type::Type, ::AbstractString) = kinds[type]
@@ -62,17 +65,23 @@ _mnsp_slack_direction(::_MNSPFixedLoadVariant, meta::String, default::AbstractSt
     "$(_mnsp_link_prefix(_mnsp_slack_link(meta)))_$default"
 _mnsp_slack_direction(::_MNSPRampVariant, ::String, default::AbstractString) = default
 
+function _violation_direction(sys::PSY.System, ::Type{FCASSlack}, meta::AbstractString, name::AbstractString, default::AbstractString)
+    return _fcas_slack_direction(_fcas_slack_variant(meta), sys, _fcas_slack_row_meta(meta), name, default)
+end
+
 # Capacity keys end in `_lower` for the >= EnablementMin rows.
-function _violation_direction(::PSY.System, ::Type{FCASJointCapacitySlack}, meta::AbstractString, ::AbstractString, ::AbstractString)
-    return endswith(meta, "_lower") ? "down" : "up"
+function _fcas_slack_direction(::FCASJointCapacityVariant, ::PSY.System, row::AbstractString, ::AbstractString, ::AbstractString)
+    return endswith(row, "_lower") ? "down" : "up"
 end
 
 # Joint ramping uses the upper form for the device's upper regulation service.
-function _violation_direction(sys::PSY.System, ::Type{FCASJointRampingSlack}, meta::AbstractString, name::AbstractString, ::AbstractString)
-    service = PSY.get_component(FCASService, sys, meta)
+function _fcas_slack_direction(::FCASJointRampingVariant, sys::PSY.System, service::AbstractString, name::AbstractString, ::AbstractString)
+    svc = PSY.get_component(FCASService, sys, service)
     device = PSY.get_component(PSY.Device, sys, name)
-    return get_bid_type(service) == fcas_upper_regulation_service(device) ? "up" : "down"
+    return get_bid_type(svc) == fcas_upper_regulation_service(device) ? "up" : "down"
 end
+
+_fcas_slack_direction(::Union{FCASMaxAvailVariant, FCASBDURampingVariant}, ::PSY.System, ::AbstractString, ::AbstractString, default::AbstractString) = default
 
 
 # The stamps at which `sys`'s generic constraint `name` is invoked.
@@ -111,7 +120,7 @@ function read_constraint_violations(
         results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}, sys::PSY.System,
     )
     kinds = Dict(_VIOLATION_FAMILIES)
-    is_slack(type) = type === MNSPSlack || type === InterconnectorFlowSlack || haskey(kinds, type)
+    is_slack(type) = type === MNSPSlack || type === InterconnectorFlowSlack || type === FCASSlack || haskey(kinds, type)
     rows = NamedTuple{
         (:family, :name, :DateTime, :MW, :direction, :variable),
         Tuple{String, String, DateTime, Float64, String, String},

@@ -7,7 +7,7 @@ const _NATURAL_UNIT_SLACKS = Union{
     UnitRampUpSlack, UnitRampDownSlack,
     GenericConstraintSlackUp, GenericConstraintSlackDown,
     InterconnectorFlowSlack,
-    FCASJointCapacitySlack, FCASJointRampingSlack, FCASMaxAvailSlack, FCASBDURampingSlack,
+    FCASSlack,
 }
 
 

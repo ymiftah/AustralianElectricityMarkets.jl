@@ -283,22 +283,37 @@ end
 
 
 """
-    _add_fcas_slack!(container, model, var_type, meta, names, time_steps, cvp_factor)
+    _fcas_unit_meta(row, meta) -> String
 
-When `PSI.get_use_slacks(model)`, builds an [`_add_cvp_slack!`](@ref) slack of `var_type` per
-`(name, t)` keyed by `FCASService` and `meta`, priced at the container's Market Price Cap.
+The key meta of an [`FCASUnitConstraint`](@ref) row: `row` (`"joint_ramping"`, `"max_avail"`, `"offer_band"` or
+`"bdu_ramping"`) joined to the row's own container `meta` with `|`.
+"""
+_fcas_unit_meta(row::AbstractString, meta::AbstractString) = string(row, "|", meta)
+
+
+"""
+    _add_fcas_slack!(container, model, variant, meta, names, time_steps, cvp_factor; label)
+
+When `PSI.get_use_slacks(model)`, builds an [`_add_cvp_slack!`](@ref) [`FCASSlack`](@ref) of `variant` per
+`(name, t)`, keyed by `FCASService` and the variant's composite meta of `meta`, priced at the container's
+Market Price Cap. Its variables are named `label`.
+
+# Arguments
+- `variant`: the slack's variant tag, such as `FCASMaxAvailVariant()`.
+- `meta`: the row's own container meta, without the variant.
+- `label`: the prefix of each variable's name.
 
 # Returns
 The slack variable container, or `nothing` when `use_slacks` is `false`.
 """
 function _add_fcas_slack!(
-        container::PSI.OptimizationContainer, model::PSI.ServiceModel, var_type, meta::AbstractString,
-        names, time_steps, cvp_factor::Real,
+        container::PSI.OptimizationContainer, model::PSI.ServiceModel, variant, meta::AbstractString,
+        names, time_steps, cvp_factor::Real; label::AbstractString,
     )
     PSI.get_use_slacks(model) || return nothing
     return _add_cvp_slack!(
-        container, var_type, FCASService, names, time_steps, cvp_factor;
-        meta = meta, label = "$(nameof(var_type))_$meta",
+        container, FCASSlack, FCASService, names, time_steps, cvp_factor;
+        meta = _fcas_slack_meta(variant, meta), label = label,
     )
 end
 
@@ -311,8 +326,8 @@ variable: elastic when `slack` is a slack container, hard when it is `nothing`.
 
 # Arguments
 - `jm`: the JuMP model.
-- `variable`, `slack`: the capacity variable and the slack container of [`FCASMaxAvailSlack`](@ref), or `nothing`.
-- `con`: the [`FCASMaxAvailConstraint`](@ref) container the row is stored in, at `[dname, t]`.
+- `variable`, `slack`: the capacity variable and the slack container of [`FCASSlack`](@ref)'s MaxAvail variant, or `nothing`.
+- `con`: the [`FCASUnitConstraint`](@ref) container the row is stored in, at `[dname, t]`.
 - `max_avail`: the effective MaxAvail in per-unit, a number or a parameter.
 
 # Returns
@@ -380,9 +395,9 @@ end
 
 Builds the MaxAvail and joint capacity rows ([`_add_fcas_capacity_rows!`](@ref)) of each of
 `devices` at every time step, on its `capacity` variable and the [`FCASJointCapacityLHS`](@ref)
-expressions of meta `"<label>_upper"` and `"<label>_lower"`. The [`FCASMaxAvailConstraint`](@ref)
-and [`FCASJointCapacityConstraint`](@ref) containers and their slacks take the metas
-`"<label>_maxavail"`, `"<label>_upper"` and `"<label>_lower"`.
+expressions of meta `"<label>_upper"` and `"<label>_lower"`. The [`FCASUnitConstraint`](@ref) MaxAvail rows take the meta `"max_avail|<label>_maxavail"`, and the
+[`FCASJointCapacityConstraint`](@ref) containers the metas `"<label>_upper"` and `"<label>_lower"`. Their
+[`FCASSlack`](@ref)s take the same metas after the variant prefix.
 
 # Arguments
 - `devices`: the devices sharing the capacity variable container `capacity`.
@@ -400,26 +415,32 @@ function _add_fcas_capacity_constraints!(
     time_steps = PSI.get_time_steps(container)
     upper_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(label)_upper")
     lower_lhs = PSI.get_expression(container, FCASJointCapacityLHS(), FCASService, "$(label)_lower")
+    max_meta = "$(label)_maxavail"
+    upper_meta = "$(label)_upper"
+    lower_meta = "$(label)_lower"
     slacks = (
         max = _add_fcas_slack!(
-            container, model, FCASMaxAvailSlack, "$(label)_maxavail", names, time_steps, FCAS_MAXAVAIL_CVP_FACTOR,
+            container, model, FCASMaxAvailVariant(), max_meta, names, time_steps, FCAS_MAXAVAIL_CVP_FACTOR;
+            label = "FCASMaxAvailSlack_$max_meta",
         ),
         upper = _add_fcas_slack!(
-            container, model, FCASJointCapacitySlack, "$(label)_upper", names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
+            container, model, FCASJointCapacityVariant(), upper_meta, names, time_steps, FCAS_CAPACITY_CVP_FACTOR;
+            label = "FCASJointCapacitySlack_$upper_meta",
         ),
         lower = _add_fcas_slack!(
-            container, model, FCASJointCapacitySlack, "$(label)_lower", names, time_steps, FCAS_CAPACITY_CVP_FACTOR,
+            container, model, FCASJointCapacityVariant(), lower_meta, names, time_steps, FCAS_CAPACITY_CVP_FACTOR;
+            label = "FCASJointCapacitySlack_$lower_meta",
         ),
     )
     cons = (
         max = PSI.add_constraints_container!(
-            container, FCASMaxAvailConstraint(), FCASService, names, time_steps; meta = "$(label)_maxavail",
+            container, FCASUnitConstraint(), FCASService, names, time_steps; meta = _fcas_unit_meta("max_avail", max_meta),
         ),
         upper = PSI.add_constraints_container!(
-            container, FCASJointCapacityConstraint(), FCASService, names, time_steps; meta = "$(label)_upper",
+            container, FCASJointCapacityConstraint(), FCASService, names, time_steps; meta = upper_meta,
         ),
         lower = PSI.add_constraints_container!(
-            container, FCASJointCapacityConstraint(), FCASService, names, time_steps; meta = "$(label)_lower",
+            container, FCASJointCapacityConstraint(), FCASService, names, time_steps; meta = lower_meta,
         ),
     )
     for (device, dname, meta) in zip(devices, names, metas), t in time_steps
@@ -434,7 +455,7 @@ end
 """
     _add_fcas_joint_ramping_constraints!(container, model, jm, devices, bid_type, name, time_steps)
 
-Builds AEMO *FCAS Model in NEMDE* §6.1's [`FCASJointRampingConstraint`](@ref) for every
+Builds AEMO *FCAS Model in NEMDE* §6.1's joint ramping rows of [`FCASUnitConstraint`](@ref) for every
 contributing `device` of a regulation `FCASService` named `name`: the unit's net energy
 ([`_energy_variables`](@ref)) combined with its [`FCASUnitRegulationTarget`](@ref) against
 the `"joint_ramping"` field of its [`FCASRampingLimitParameter`](@ref), in the upper or lower form
@@ -450,11 +471,12 @@ function _add_fcas_joint_ramping_constraints!(
     )
     names = PSY.get_name.(devices)
     con = PSI.add_constraints_container!(
-        container, FCASJointRampingConstraint(), FCASService, names, time_steps; meta = name,
+        container, FCASUnitConstraint(), FCASService, names, time_steps; meta = _fcas_unit_meta("joint_ramping", name),
     )
     target = PSI.get_expression(container, FCASUnitRegulationTarget(), FCASService, name)
     slack = _add_fcas_slack!(
-        container, model, FCASJointRampingSlack, name, names, time_steps, FCAS_RAMPING_CVP_FACTOR,
+        container, model, FCASJointRampingVariant(), name, names, time_steps, FCAS_RAMPING_CVP_FACTOR;
+        label = "FCASJointRampingSlack_$name",
     )
     for device in devices
         dname = PSY.get_name(device)
@@ -518,11 +540,11 @@ function PSI.construct_service!(
         incompatible_device_types::Set{<:DataType},
         network_model::PSI.NetworkModel,
     )
-    unsupported = filter(!in((FCASJointCapacityConstraint, FCASJointRampingConstraint)), PSI.get_duals(model))
+    unsupported = filter(!in((FCASJointCapacityConstraint, FCASUnitConstraint)), PSI.get_duals(model))
     isempty(unsupported) || throw(
         ArgumentError(
             "FCASMarket records duals for FCASJointCapacityConstraint and " *
-                "FCASJointRampingConstraint only; got $(unsupported).",
+                "FCASUnitConstraint only (its joint ramping rows); got $(unsupported).",
         ),
     )
     name = PSI.get_service_name(model)
@@ -654,7 +676,7 @@ end
 
 For an [`_fcas_offer_groups`](@ref) `group`, bounds each [`FCASOfferBandVariable`](@ref) by its
 [`FCASBandWidthParameter`](@ref) width and ties the bands' sum to the group's capacity variable
-([`FCASOfferBandConstraint`](@ref), meta `group.meta`). Widths are per-unit of the system base.
+([`FCASUnitConstraint`](@ref) offer band rows, meta `"offer_band|<group.meta>"`). Widths are per-unit of the system base.
 
 # Returns
 `nothing`.
@@ -667,7 +689,7 @@ function _add_fcas_band_constraints!(container::PSI.OptimizationContainer, group
     bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, group.meta)
     labels = axes(bands)[2]
     con = PSI.add_constraints_container!(
-        container, FCASOfferBandConstraint(), FCASService, names, time_steps; meta = group.meta,
+        container, FCASUnitConstraint(), FCASService, names, time_steps; meta = _fcas_unit_meta("offer_band", group.meta),
     )
     for (device, decremental) in group.offers
         dname = PSY.get_name(device)
@@ -823,10 +845,11 @@ function PSI.construct_service!(
         both_names = PSY.get_name.(both_devices)
         target = PSI.get_expression(container, FCASUnitRegulationTarget(), FCASService, name)
         con_ramp = PSI.add_constraints_container!(
-            container, FCASBDURampingConstraint(), FCASService, both_names, time_steps; meta = name,
+            container, FCASUnitConstraint(), FCASService, both_names, time_steps; meta = _fcas_unit_meta("bdu_ramping", name),
         )
         slack_ramp = _add_fcas_slack!(
-            container, model, FCASBDURampingSlack, name, both_names, time_steps, FCAS_BDU_RAMPING_CVP_FACTOR,
+            container, model, FCASBDURampingVariant(), name, both_names, time_steps, FCAS_BDU_RAMPING_CVP_FACTOR;
+            label = "FCASBDURampingSlack_$name",
         )
         for device in both_devices
             dname = PSY.get_name(device)
@@ -853,9 +876,11 @@ function PSI.construct_service!(
         end
     end
 
-    if is_regulation && FCASJointRampingConstraint in PSI.get_duals(model)
+    if is_regulation && FCASUnitConstraint in PSI.get_duals(model)
         names = PSY.get_name.(devices)
-        PSI.add_dual_container!(container, FCASJointRampingConstraint, FCASService, names, time_steps; meta = name)
+        PSI.add_dual_container!(
+            container, FCASUnitConstraint, FCASService, names, time_steps; meta = _fcas_unit_meta("joint_ramping", name),
+        )
     end
 
     for group in groups
