@@ -366,7 +366,7 @@ end
     sim = stock_simulate(sys)
     container = PSI.get_optimization_container(sim.model)
     @test PSI.built_for_recurrent_solves(container) && PSI.is_milp(container)
-    definition = PSI.get_constraint(container, AEMS.InterconnectorLossDefinitionConstraint(), PSY.AreaInterchange)[TOY_INTERCHANGE, 1]
+    definition = PSI.get_constraint(container, AEMS.InterconnectorLossConstraint(), PSY.AreaInterchange, "loss_definition")[TOY_INTERCHANGE, 1]
     flow_var = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)[TOY_INTERCHANGE, 1]
     @test PSI.JuMP.normalized_coefficient(definition, flow_var) ≈ -0.1
     for (k, t) in enumerate(STOCK_STEPS)

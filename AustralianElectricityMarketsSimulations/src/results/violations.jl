@@ -18,8 +18,6 @@ const _VIOLATION_FAMILIES = (
     EnergyFixedLoadDeficitSlack => ("fixed_load", "down"),
     UnitRampUpSlack => ("unit_ramp", "up"),
     UnitRampDownSlack => ("unit_ramp", "down"),
-    InterconnectorFlowSurplusSlack => ("interconnector_flow", "up"),
-    InterconnectorFlowDeficitSlack => ("interconnector_flow", "down"),
     FCASMaxAvailSlack => ("fcas_max_avail", "up"),
     FCASBDURampingSlack => ("fcas_bdu_ramping", "up"),
     FCASJointRampingSlack => ("fcas_joint_ramping", "up"),
@@ -39,8 +37,14 @@ _mnsp_violation_family(::MNSPRampDownVariant) = ("mnsp_ramp", "down")
 _mnsp_violation_family(::MNSPFixedLoadSurplusVariant) = ("mnsp_fixed_load", "up")
 _mnsp_violation_family(::MNSPFixedLoadDeficitVariant) = ("mnsp_fixed_load", "down")
 
-# The family and default direction of a slack key, from its variant for `MNSPSlack`.
+# The family and default direction of each interconnector flow slack variant.
+_interconnector_flow_family(::InterconnectorFlowSurplus) = ("interconnector_flow", "up")
+_interconnector_flow_family(::InterconnectorFlowDeficit) = ("interconnector_flow", "down")
+
+# The family and default direction of a slack key, from its variant for `MNSPSlack` and `InterconnectorFlowSlack`.
 _violation_kind(::Dict, ::Type{MNSPSlack}, meta::AbstractString) = _mnsp_violation_family(_mnsp_slack_variant(String(meta)))
+_violation_kind(::Dict, ::Type{InterconnectorFlowSlack}, meta::AbstractString) =
+    _interconnector_flow_family(_interconnector_flow_variant(meta))
 _violation_kind(kinds::Dict, type::Type, ::AbstractString) = kinds[type]
 
 function _violation_direction(::PSY.System, ::Type, ::AbstractString, ::AbstractString, default::AbstractString)
@@ -107,7 +111,7 @@ function read_constraint_violations(
         results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}, sys::PSY.System,
     )
     kinds = Dict(_VIOLATION_FAMILIES)
-    is_slack(type) = type === MNSPSlack || haskey(kinds, type)
+    is_slack(type) = type === MNSPSlack || type === InterconnectorFlowSlack || haskey(kinds, type)
     rows = NamedTuple{
         (:family, :name, :DateTime, :MW, :direction, :variable),
         Tuple{String, String, DateTime, Float64, String, String},

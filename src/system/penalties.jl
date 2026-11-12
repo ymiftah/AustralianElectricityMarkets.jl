@@ -32,8 +32,8 @@ const UNIT_RAMP_CVP_FACTOR = 1155.0
     INTERCONNECTOR_FLOW_CVP_FACTOR
 
 CVP factor (1150) of AEMO's Interconnector Capacity Limit constraint, item 5 of the *Schedule of
-Constraint Violation Penalty Factors* v8.0. Prices `InterconnectorFlowSurplusSlack` and
-`InterconnectorFlowDeficitSlack`.
+Constraint Violation Penalty Factors* v8.0. Prices the surplus and deficit variants of
+`InterconnectorFlowSlack`.
 """
 const INTERCONNECTOR_FLOW_CVP_FACTOR = 1150.0
 

@@ -300,21 +300,21 @@ function _add_loss_constraints!(
     if ordered
         full_var = PSI.get_variable(container, InterconnectorLossSegmentFullVariable(), PSY.AreaInterchange)
         order_ub = PSI.add_constraints_container!(
-            container, InterconnectorLossSegmentOrderConstraint(), PSY.AreaInterchange,
-            device_names, order_labels, time_steps; meta = "ub",
+            container, InterconnectorLossConstraint(), PSY.AreaInterchange,
+            device_names, order_labels, time_steps; meta = "segment_order|ub",
         )
         order_lb = PSI.add_constraints_container!(
-            container, InterconnectorLossSegmentOrderConstraint(), PSY.AreaInterchange,
-            device_names, order_labels, time_steps; meta = "lb",
+            container, InterconnectorLossConstraint(), PSY.AreaInterchange,
+            device_names, order_labels, time_steps; meta = "segment_order|lb",
         )
     end
     flow_seg_con = PSI.add_constraints_container!(
-        container, InterconnectorFlowSegmentConstraint(), PSY.AreaInterchange,
-        device_names, time_steps,
+        container, InterconnectorLossConstraint(), PSY.AreaInterchange,
+        device_names, time_steps; meta = "flow_segment",
     )
     loss_def_con = PSI.add_constraints_container!(
-        container, InterconnectorLossDefinitionConstraint(), PSY.AreaInterchange,
-        device_names, time_steps,
+        container, InterconnectorLossConstraint(), PSY.AreaInterchange,
+        device_names, time_steps; meta = "loss_definition",
     )
     flow_var = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
     jm = PSI.get_jump_model(container)
@@ -369,7 +369,7 @@ end
 
 Bounds `PSI.FlowActivePowerVariable` by the static `flow_limits`, or by the from-to and to-from
 flow-limit parameters when every device carries those time series. Each row carries an
-[`InterconnectorFlowSurplusSlack`](@ref) (upper) or [`InterconnectorFlowDeficitSlack`](@ref)
+[`InterconnectorFlowSlack`](@ref) with meta `"surplus"` (upper) or `"deficit"` (lower)
 (lower) priced at [`INTERCONNECTOR_FLOW_CVP_FACTOR`](@ref) times the Market Price Cap, always,
 whatever the device model's `use_slacks`, as NEMDE's limit is always soft, so
 limits that conflict with each other or with the loss breakpoint range are violated at that price
@@ -398,12 +398,14 @@ function _add_flow_limit_constraint!(
     var_array = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
     jm = PSI.get_jump_model(container)
     surplus = _add_cvp_slack!(
-        container, InterconnectorFlowSurplusSlack, PSY.AreaInterchange, device_names, time_steps,
-        INTERCONNECTOR_FLOW_CVP_FACTOR,
+        container, InterconnectorFlowSlack, PSY.AreaInterchange, device_names, time_steps,
+        INTERCONNECTOR_FLOW_CVP_FACTOR;
+        meta = _interconnector_flow_meta(InterconnectorFlowSurplus()), label = "InterconnectorFlowSurplusSlack",
     )
     deficit = _add_cvp_slack!(
-        container, InterconnectorFlowDeficitSlack, PSY.AreaInterchange, device_names, time_steps,
-        INTERCONNECTOR_FLOW_CVP_FACTOR,
+        container, InterconnectorFlowSlack, PSY.AreaInterchange, device_names, time_steps,
+        INTERCONNECTOR_FLOW_CVP_FACTOR;
+        meta = _interconnector_flow_meta(InterconnectorFlowDeficit()), label = "InterconnectorFlowDeficitSlack",
     )
 
     if !all(_has_flow_limit_series.(devices))

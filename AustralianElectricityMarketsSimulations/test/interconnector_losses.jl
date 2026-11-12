@@ -189,8 +189,8 @@ end
 
     container = PSI.get_optimization_container(model)
     @test !PSI.has_container_key(container, AEMS.InterconnectorLossSegmentFullVariable, PSY.AreaInterchange)
-    for key in ("InterconnectorFlowSurplusSlack__AreaInterchange", "InterconnectorFlowDeficitSlack__AreaInterchange")
-        @test all(abs.(PSI.read_variable(res, key).value) .< 1.0e-6)
+    for meta in ("surplus", "deficit")
+        @test all(abs.(PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, meta)).value) .< 1.0e-6)
     end
 
     @testset "loss split balances the from-area: generation = load + flow + share * loss" begin
@@ -333,12 +333,12 @@ end
     model, res = _solve_loss(sys)
 
     res = PSI.OptimizationProblemResults(model)
-    surplus = PSI.read_variable(res, "InterconnectorFlowSurplusSlack__AreaInterchange")
-    deficit = PSI.read_variable(res, "InterconnectorFlowDeficitSlack__AreaInterchange")
+    surplus = PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, "surplus"))
+    deficit = PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, "deficit"))
     @test all(isapprox.(surplus.value .+ deficit.value, 5.0; atol = 1.0e-6))
 
     container = PSI.get_optimization_container(model)
-    slack = PSI.get_variable(container, AEMS.InterconnectorFlowSurplusSlack(), PSY.AreaInterchange)["IC1", 1]
+    slack = PSI.get_variable(container, AEMS.InterconnectorFlowSlack(), PSY.AreaInterchange, "surplus")["IC1", 1]
     mpc = AEMS._container_market_price_cap(container, PSI.get_initial_time(container))
     expected = PSY.get_base_power(sys) *
         AEMS.interval_cost_coefficient(AustralianElectricityMarkets.INTERCONNECTOR_FLOW_CVP_FACTOR * mpc, PSI.get_resolution(container))
@@ -352,7 +352,7 @@ end
     ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
     PSY.set_flow_limits!(ic1, (from_to = 100.0, to_from = 5.0))
     model, res = _solve_loss(sys)
-    @test all(abs.(PSI.read_variable(res, "InterconnectorFlowSurplusSlack__AreaInterchange").value) .< 1.0e-6)
+    @test all(abs.(PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, "surplus")).value) .< 1.0e-6)
     @test all(isapprox.(PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange").value, 5.0; atol = 1.0e-6))
     unserved = PSI.read_variable(res, "SystemBalanceSlackUp__Area")
     @test sum(unserved.value) > 0
@@ -362,7 +362,7 @@ end
     mpc = AEMS._container_market_price_cap(container, PSI.get_initial_time(container))
     terms = PSI.JuMP.objective_function(PSI.get_jump_model(container)).terms
     balance = PSI.get_variable(container, PSI.SystemBalanceSlackUp(), PSY.Area)["2", 1]
-    flow = PSI.get_variable(container, AEMS.InterconnectorFlowSurplusSlack(), PSY.AreaInterchange)["IC1", 1]
+    flow = PSI.get_variable(container, AEMS.InterconnectorFlowSlack(), PSY.AreaInterchange, "surplus")["IC1", 1]
     @test terms[balance] ≈ AEMS._area_balance_slack_cost(sys, mpc)
     @test terms[flow] ≈ PSY.get_base_power(sys) *
         AEMS.interval_cost_coefficient(AustralianElectricityMarkets.INTERCONNECTOR_FLOW_CVP_FACTOR * mpc, PSI.get_resolution(container))
@@ -382,8 +382,8 @@ end
     _add_interconnector_limits!(sys, ic1, grid, -10.0, 5.0)
     PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
     model, res = _solve_loss(sys)
-    surplus = PSI.read_variable(res, "InterconnectorFlowSurplusSlack__AreaInterchange")
-    deficit = PSI.read_variable(res, "InterconnectorFlowDeficitSlack__AreaInterchange")
+    surplus = PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, "surplus"))
+    deficit = PSI.read_variable(res, PSI.VariableKey(AEMS.InterconnectorFlowSlack, PSY.AreaInterchange, "deficit"))
     @test all(isapprox.(surplus.value .+ deficit.value, 5.0; atol = 1.0e-4))
 end
 
@@ -438,7 +438,7 @@ end
         flow_df = PSI.read_variable(res, "FlowActivePowerVariable__AreaInterchange")
         loss_df = PSI.read_variable(res, "InterconnectorLossVariable__AreaInterchange")
         slope = 0.05 + k
-        definitions = PSI.get_constraint(container, AEMS.InterconnectorLossDefinitionConstraint(), PSY.AreaInterchange)
+        definitions = PSI.get_constraint(container, AEMS.InterconnectorLossConstraint(), PSY.AreaInterchange, "loss_definition")
         segments = PSI.get_variable(container, AEMS.InterconnectorLossSegmentVariable(), PSY.AreaInterchange)
         flows = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
         for (t, stamp) in enumerate(sort(unique(flow_df.DateTime)))
@@ -538,7 +538,7 @@ end
     model = _decision_model(_loss_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    definitions = PSI.get_constraint(container, AEMS.InterconnectorLossDefinitionConstraint(), PSY.AreaInterchange)
+    definitions = PSI.get_constraint(container, AEMS.InterconnectorLossConstraint(), PSY.AreaInterchange, "loss_definition")
     flows = PSI.get_variable(container, PSI.FlowActivePowerVariable(), PSY.AreaInterchange)
     for t in 1:2
         @test PSI.JuMP.normalized_coefficient(definitions["IC1", t], flows["IC1", t]) ≈ -k

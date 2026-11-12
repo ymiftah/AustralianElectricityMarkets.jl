@@ -133,7 +133,7 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASOfferBandVariable, FCASOfferBandConstraint, FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter,
     FCASLowerSlopeParameter, FCASRampingLimitParameter, FCASBandPriceParameter,
     UnitRampUpSlack, UnitRampDownSlack,
-    InterconnectorFlowSurplusSlack, InterconnectorFlowDeficitSlack
+    InterconnectorFlowSlack
 export check_fcas_services, check_dispatch_envelope, check_single_financial_year
 export read_solved_interval, read_constraint_violations
 export compare_intervals, comparison_summary, read_interconnector_loss_gaps
@@ -144,8 +144,7 @@ export nem_dispatch_participants, set_nem_dispatch_models!
 export TieBreakScaleParameter, TieBreakMarket, TieBreakSlackUp,
     TieBreakSlackDown, TieBreakConstraint, check_tie_break_pairs
 export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegmentVariable,
-    InterconnectorFlowSegmentConstraint, InterconnectorLossDefinitionConstraint,
-    InterconnectorLossSegmentFullVariable, InterconnectorLossSegmentOrderConstraint,
+    InterconnectorLossConstraint, InterconnectorLossSegmentFullVariable,
     LossDemandCoefficientParameter
 export MNSPLinkFlowVariable, MNSPLinkConstraint, MNSPLinkDirectionVariable,
     MNSPLinkLossVariable, MNSPLinkBandVariable, MNSPBandWidthParameter,

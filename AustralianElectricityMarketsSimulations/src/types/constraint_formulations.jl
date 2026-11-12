@@ -318,20 +318,25 @@ struct UnitRampDownSlack <: PSI.VariableType end
 
 
 """
-    InterconnectorFlowSurplusSlack
+    InterconnectorFlowSlack
 
-Variable type for the elastic slack on an interconnector's upper flow limit (AEMO's
-`FlowSurplus`), per `(interconnector, t)` in MW per-unit of the system base. Priced at
+Variable type for the elastic slack on an interconnector's flow limits, per `(interconnector, t)` in MW
+per-unit of the system base. The key meta names the variant: `"surplus"` relaxes the upper limit (AEMO's
+`FlowSurplus`) and `"deficit"` the lower limit (AEMO's `FlowDeficit`). Both are priced at
 [`INTERCONNECTOR_FLOW_CVP_FACTOR`](@ref) times the Market Price Cap.
 """
-struct InterconnectorFlowSurplusSlack <: PSI.VariableType end
+struct InterconnectorFlowSlack <: PSI.VariableType end
 
+struct InterconnectorFlowSurplus end
+struct InterconnectorFlowDeficit end
 
-"""
-    InterconnectorFlowDeficitSlack
+# The key meta of each interconnector flow slack variant.
+_interconnector_flow_meta(::InterconnectorFlowSurplus) = "surplus"
+_interconnector_flow_meta(::InterconnectorFlowDeficit) = "deficit"
 
-Variable type for the elastic slack on an interconnector's lower flow limit (AEMO's
-`FlowDeficit`), per `(interconnector, t)` in MW per-unit of the system base. Priced at
-[`INTERCONNECTOR_FLOW_CVP_FACTOR`](@ref) times the Market Price Cap.
-"""
-struct InterconnectorFlowDeficitSlack <: PSI.VariableType end
+# The variant an `InterconnectorFlowSlack` meta names.
+function _interconnector_flow_variant(meta::AbstractString)::Union{InterconnectorFlowSurplus, InterconnectorFlowDeficit}
+    meta == "surplus" && return InterconnectorFlowSurplus()
+    meta == "deficit" && return InterconnectorFlowDeficit()
+    throw(ArgumentError("an InterconnectorFlowSlack has no variant named \"$meta\""))
+end
