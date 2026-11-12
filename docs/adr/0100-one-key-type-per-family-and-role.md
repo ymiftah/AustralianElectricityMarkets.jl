@@ -23,8 +23,9 @@ Each formulation family and PSI role has one entry type. The variant goes in the
 string `"<variant>|<existing meta>"`. The separator is `|`, never `__`.
 
 A singleton tag type stands for each variant. One boundary recovers the variant from the key's meta:
-the parser or the meta builder. Downstream, CVP penalties and natural units dispatch on the tags for the
-NEMUnit and MNSP families. For FCAS and interconnector flow they are call-site constants. Constraint rows
+the parser or the meta builder. Downstream, CVP penalties dispatch on the tags for the NEMUnit and MNSP
+families and are call-site constants for FCAS and interconnector flow; natural units dispatch on the
+entry type. Constraint rows
 and the per-step updates dispatch on the entry type. Only public PSI API is used.
 
 Device-type multiplicity is kept. The stock `DeviceModel`s of [0097](0097-stock-devices-for-replay.md)
