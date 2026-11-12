@@ -2,6 +2,12 @@ import PowerSimulations as PSI
 import PowerSystems as PSY
 const AEMS = AustralianElectricityMarketsSimulations
 
+@testset "no per-step update methods" begin
+    for f in (PSI.update_container_parameter_values!, PSI.update_parameter_values!, PSI._update_parameter_values!)
+        @test all(m -> parentmodule(m) !== AEMS, methods(f))
+    end
+end
+
 @testset "Pinned PowerSimulations.jl fork resolves the area-balance dual to an Area-keyed container" begin
     # `hasmethod` can't tell fork from stock: stock PowerSimulations already has a generic
     # `NetworkModel{T} where T<:PM.AbstractPowerModel` method that matches `AreaBalancePowerModel`

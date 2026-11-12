@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Duals: `duals = [FCASUnitConstraint]` records only the `joint_ramping` rows, not the max availability or BDU ramping rows.
   - Key strings: the `variable` column of `read_constraint_violations` and the result files carry the new key strings. For example, `RampRateTimeSeriesParameter__ThermalStandard__up`, `FCASUnitConstraint__FCASService__joint_ramping|<service>` and `NEMUnitSlack__ThermalStandard__unit_ramp|up` replace the old unit-specific and per-variant names.
 
+- The custom per-step update of the state-dependent PowerSimulations parameters is removed, along with `SimulatedState` and its export. Parameters refresh through PowerSimulations' stock update, which reads the series that `prepare_replay!` attached. `ObservedState` and `unit_state` are unchanged.
+
 ### Documentation
 
 - Restored the regional how-to pages, built with `set_regional_availability!`; fixed their series plots and output directories.

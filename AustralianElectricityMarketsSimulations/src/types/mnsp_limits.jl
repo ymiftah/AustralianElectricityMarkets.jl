@@ -54,21 +54,6 @@ _mnsp_input_meta(::MNSPInitialFlowInput) = "initial_flow"
 _mnsp_input_meta(kind::Union{MNSPRampRateInput, MNSPFixedLoadInput, MNSPFixedLoadInvokedInput}, link::Union{MNSPForwardLink, MNSPReverseLink}) =
     string(_mnsp_link_prefix(link), "_", _mnsp_input_suffix(kind))
 
-# The kind of input a meta names.
-function _mnsp_input_kind(meta::String)::_MNSPInputKind
-    meta == "initial_flow" && return MNSPInitialFlowInput()
-    endswith(meta, "_ramp_rate") && return MNSPRampRateInput()
-    endswith(meta, "_fixed_load_invoked") && return MNSPFixedLoadInvokedInput()
-    endswith(meta, "_fixed_load") && return MNSPFixedLoadInput()
-    throw(ArgumentError("an MNSPOperatingParameter has no input named \"$meta\""))
-end
-
-# The link direction a directional meta names.
-function _mnsp_input_link(meta::String)::Union{MNSPForwardLink, MNSPReverseLink}
-    startswith(meta, "forward_") && return MNSPForwardLink()
-    startswith(meta, "reverse_") && return MNSPReverseLink()
-    throw(ArgumentError("MNSPOperatingParameter meta \"$meta\" names no link direction"))
-end
 
 """
     MNSPSlack

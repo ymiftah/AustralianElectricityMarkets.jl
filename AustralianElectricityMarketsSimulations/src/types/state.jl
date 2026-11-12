@@ -1,10 +1,9 @@
 """
     StateSource
 
-Supertype for the sources of a unit's state: [`ObservedState`](@ref) reads AEMO's published state and
-[`SimulatedState`](@ref) takes the previous interval's solution. A source carries whatever it needs in its
-own fields, such as a previous solution or a fast-start mode history; [`unit_state`](@ref)`(source, device, t)`
-is the whole interface that callers use.
+Supertype for the sources of a unit's state, such as [`ObservedState`](@ref), which reads AEMO's published state.
+A source carries whatever it needs in its own fields; [`unit_state`](@ref)`(source, device, t)` is the whole
+interface that callers use.
 """
 abstract type StateSource end
 
@@ -15,15 +14,6 @@ abstract type StateSource end
 The [`StateSource`](@ref) that reads a unit's [`NEMObservedState`](@ref) from the system.
 """
 struct ObservedState <: StateSource end
-
-
-"""
-    SimulatedState()
-
-The [`StateSource`](@ref) that takes the previous interval's solution. Not implemented yet: [`unit_state`](@ref)
-throws an `ArgumentError` for it.
-"""
-struct SimulatedState <: StateSource end
 
 
 """
@@ -76,7 +66,7 @@ The [`NEMUnitState`](@ref) for an [`ObservedState`](@ref). A stamp the build doe
 mode `0`. A unit whose previous interval is outside its registration starts in dispatch mode `0` at
 its first registered stamp, with its observed output. Throws an `ArgumentError` naming `device` and `t`
 when it is not a NEM device with an observed state, when the observed dispatch mode at an observed stamp
-is not finite, and for a [`SimulatedState`](@ref), which is not implemented yet.
+is not finite.
 """
 function unit_state(::ObservedState, device, t::DateTime)
     observed = AustralianElectricityMarkets.get_observed_state(device)
@@ -99,39 +89,14 @@ function unit_state(::ObservedState, device, t::DateTime)
     return NEMUnitState(Float64(initial_mw), Int(dispatch_mode))
 end
 
-function unit_state(::SimulatedState, device, t::DateTime)
-    throw(ArgumentError("SimulatedState is not implemented yet, so the state of $(PSY.get_name(device)) cannot be simulated"))
-end
 
-
-# The configured state source, shared by the replay build and the per-step parameter updates.
+# The configured state source, shared by the replay build and the derivations.
 function _state_source()
     return ObservedState()
 end
 
-"""
-    _precomputes_state_inputs(source::StateSource) -> Bool
-
-Whether the per-step parameter updates of `source` read the series that [`prepare_replay!`](@ref) attached,
-so the stock update applies. Under [`ObservedState`](@ref) the inputs are those in place when `prepare_replay!`
-ran. Under [`SimulatedState`](@ref) the custom computation runs at every step, as it also does under the test
-switch `_FORCE_CUSTOM_STATE_UPDATES`.
-
-# Arguments
-- `source`: the [`StateSource`](@ref).
-
-# Returns
-`true` for [`ObservedState`](@ref) and `false` for [`SimulatedState`](@ref).
-"""
-_precomputes_state_inputs(::ObservedState) = true
-_precomputes_state_inputs(::SimulatedState) = false
-
-# Test switch: keeps the custom per-step update under `ObservedState`.
-const _FORCE_CUSTOM_STATE_UPDATES = Ref(false)
-
-
 # The build's first-solve seed series, written from `_state_source()` before the forecasts are
-# attached. Under `ObservedState` later solves read these series; under `SimulatedState` the custom update recomputes each step.
+# attached. The first solve reads these series, which PowerSimulations does not update.
 const _INITIAL_MW_SEED_SERIES = "initial_mw_seed"
 const _FIXED_LOAD_SEED_SERIES = "fixed_load_seed"
 const _FIXED_LOAD_INVOKED_SEED_SERIES = "fixed_load_invoked_seed"
@@ -157,14 +122,8 @@ it does not need the dispatch mode.
 - `t`: the first timestamp of the interval.
 
 # Returns
-The output in MW: `0.0` at an unobserved stamp under [`ObservedState`](@ref), the raw observed
-`initial_mw` otherwise, and `unit_state(source, device, t).initial_mw` under
-[`SimulatedState`](@ref).
+The output in MW: `0.0` at an unobserved stamp, otherwise the raw observed `initial_mw`.
 """
-function _state_initial_mw(source::SimulatedState, device, t::DateTime)
-    return unit_state(source, device, t).initial_mw
-end
-
 function _state_initial_mw(::ObservedState, device, t::DateTime)
     _is_unobserved_stamp(device, t) && return 0.0
     observed = AustralianElectricityMarkets.get_observed_state(device)

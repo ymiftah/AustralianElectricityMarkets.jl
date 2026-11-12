@@ -47,7 +47,6 @@ include("offers/accessors.jl")
 include("offers/initial_state.jl")
 include("offers/fcas_effective.jl")
 include("offers/tie_break.jl")
-include("offers/effective_offers.jl")
 include("offers/loss_demand.jl")
 
 include("types/unit_slacks.jl")
@@ -62,6 +61,7 @@ include("types/interconnector_losses.jl")
 include("types/mnsp.jl")
 include("types/mnsp_limits.jl")
 include("types/state.jl")
+include("offers/effective_offers.jl")
 
 include("formulations/slacks.jl")
 include("formulations/generic_constraints.jl")
@@ -70,10 +70,6 @@ include("checks/nem_constraints.jl")
 include("formulations/dispatch.jl")
 include("formulations/energy_limits.jl")
 include("formulations/fixed_loads.jl")
-include("offers/state_updates.jl")
-include("offers/state_updates/energy.jl")
-include("offers/state_updates/fcas.jl")
-include("offers/state_updates/mnsp.jl")
 include("formulations/energy_offers.jl")
 include("checks/dispatch_envelope.jl")
 include("formulations/storage.jl")
@@ -109,7 +105,7 @@ export referred_offer_curves, effective_energy_availability,
     loss_demand_coefficient, set_loss_demand_coefficients!
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,
     fcas_upper_regulation_service, fcas_offer_sides, tie_break_series_name, tie_groups
-export StateSource, ObservedState, SimulatedState, unit_state, NEMDispatchInputs, NEMFCASInputs
+export StateSource, ObservedState, unit_state, NEMDispatchInputs, NEMFCASInputs
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
 export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
     exclude_unmodeled_services!, check_replication_steps,

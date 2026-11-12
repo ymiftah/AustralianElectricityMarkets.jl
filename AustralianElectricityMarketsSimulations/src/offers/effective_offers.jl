@@ -57,6 +57,71 @@ function set_effective_offers!(sys::PSY.System)
 end
 
 
+# The raw `FIXEDLOAD` of `device`'s `side` energy bid at `stamp`, MW; `NaN` when the bid has none.
+function _fixed_load_mw(device, side::OfferSide, stamp::DateTime)
+    cost = _nem_offer_cost(device)
+    bid = isnothing(cost) ? nothing : _energy_bid(cost, side)
+    isnothing(bid) && return NaN
+    value = _state_value(device, bid, Val(:fixed_load), stamp)
+    return isnothing(value) ? NaN : Float64(value)
+end
+
+
+# The fixed-loading target on the net-injection axis at `stamp`, MW, and whether either side applies.
+function _fixed_load_step(device, stamp::DateTime; source::StateSource = _state_source())
+    state = unit_state(source, device, stamp)
+    gen = _fixed_load_mw(device, OfferSide.GEN, stamp)
+    load = _fixed_load_mw(device, OfferSide.LOAD, stamp)
+    target = if device isa PSY.Storage
+        effective_fixed_load(gen, state) - effective_fixed_load(load, state)
+    else
+        effective_fixed_load(gen, state) + effective_fixed_load(load, state)
+    end
+    return (; target, invoked = fixed_load_invoked(gen, state) || fixed_load_invoked(load, state))
+end
+
+
+# The raw `FIXEDLOAD` of `device`'s `side` energy bid at each of `stamps`, MW; `NaN` where the bid has none.
+function _fixed_load_mw_series(device, side::OfferSide, stamps::AbstractVector{DateTime})
+    cost = _nem_offer_cost(device)
+    bid = isnothing(cost) ? nothing : _energy_bid(cost, side)
+    isnothing(bid) && return fill(NaN, length(stamps))
+    value = bid.fixed_load
+    value isa IS.StaticTimeSeriesKey || return fill(isnothing(value) ? NaN : Float64(value), length(stamps))
+    return Float64.(IS.get_time_series_values(device, value; start_time = first(stamps), len = length(stamps)))
+end
+
+
+"""
+    _fixed_load_step_series(device, stamps::AbstractVector{DateTime}; source::StateSource = _state_source())
+
+The fixed-loading targets and invoked flags of [`_fixed_load_step`](@ref) at each of `stamps`. The bid
+fixed loadings are read once per side over the stamps; the state is read stamp by stamp.
+
+# Arguments
+- `device`: the NEM device.
+- `stamps`: the first timestamps of the intervals, consecutive at the series' resolution.
+- `source`: the [`StateSource`](@ref).
+
+# Returns
+A `Vector` the length of `stamps` of `(; target, invoked)` named tuples.
+"""
+function _fixed_load_step_series(device, stamps::AbstractVector{DateTime}; source::StateSource = _state_source())
+    gens = _fixed_load_mw_series(device, OfferSide.GEN, stamps)
+    loads = _fixed_load_mw_series(device, OfferSide.LOAD, stamps)
+    storage = device isa PSY.Storage
+    return map(eachindex(stamps)) do i
+        state = unit_state(source, device, stamps[i])
+        gen, load = gens[i], loads[i]
+        target = if storage
+            effective_fixed_load(gen, state) - effective_fixed_load(load, state)
+        else
+            effective_fixed_load(gen, state) + effective_fixed_load(load, state)
+        end
+        return (; target, invoked = fixed_load_invoked(gen, state) || fixed_load_invoked(load, state))
+    end
+end
+
 """
     _set_state_seeds!(sys)
 

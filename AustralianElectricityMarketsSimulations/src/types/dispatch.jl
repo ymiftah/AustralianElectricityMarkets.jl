@@ -40,15 +40,10 @@ struct RampUp end
 "Direction tag of the `\"down\"` [`RampRateTimeSeriesParameter`](@ref)."
 struct RampDown end
 
-# The key meta of each ramp direction, and the direction a meta names.
+# The key meta of each ramp direction.
 _ramp_meta(::RampUp) = "up"
 _ramp_meta(::RampDown) = "down"
 
-function _ramp_direction(meta::String)::Union{RampUp, RampDown}
-    meta == "up" && return RampUp()
-    meta == "down" && return RampDown()
-    throw(ArgumentError("a RampRateTimeSeriesParameter has meta \"up\" or \"down\", got \"$meta\""))
-end
 
 # The `NEMDispatchInputs` field holding each direction's series key.
 _ramp_input_field(::RampUp) = :ramp_up
