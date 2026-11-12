@@ -130,11 +130,9 @@ function _mnsp_link_tlfs(device::PSY.AreaInterchange, direction::AbstractString)
 end
 
 
-# The time-series parameters of each MNSP link direction.
-const _MNSP_PARAMETERS = (
-    forward = (width = MNSPForwardBandWidthParameter, max_avail = MNSPForwardMaxAvailParameter),
-    reverse = (width = MNSPReverseBandWidthParameter, max_avail = MNSPReverseMaxAvailParameter),
-)
+# The offer and availability series each link direction's parameters read; the direction is the key meta.
+_mnsp_offer_series(dir::AbstractString) = getproperty(NEM_MNSP_SERIES, Symbol(dir, "_offer"))
+_mnsp_max_avail_series(dir::AbstractString) = getproperty(NEM_MNSP_SERIES, Symbol(dir, "_max_avail"))
 
 
 function PSI.get_multiplier_value(
@@ -217,11 +215,18 @@ function _add_mnsp_link_variables!(container::PSI.OptimizationContainer, devices
     labels = _mnsp_band_labels(mnsp)
     directions = collect(_MNSP_DIRECTIONS)
 
-    for dir in _MNSP_DIRECTIONS, param in _MNSP_PARAMETERS[Symbol(dir)]
-        PSI.add_parameters!(container, param, devices, device_model)
+    for dir in _MNSP_DIRECTIONS
+        PSI.add_parameters!(
+            container, MNSPBandWidthParameter, devices, device_model;
+            meta = dir, time_series_name = _mnsp_offer_series(dir),
+        )
+        PSI.add_parameters!(
+            container, MNSPMaxAvailParameter, devices, device_model;
+            meta = dir, time_series_name = _mnsp_max_avail_series(dir),
+        )
     end
-    for (P, _) in _MNSP_OPERATING_SERIES
-        PSI.add_parameters!(container, P, mnsp, device_model)
+    for (meta, series) in _MNSP_OPERATING_SERIES
+        PSI.add_parameters!(container, MNSPOperatingParameter, mnsp, device_model; meta, time_series_name = series)
     end
     _add_mnsp_limit_variables!(container, mnsp)
     link_var = PSI.add_variable_container!(
@@ -305,11 +310,11 @@ function _add_mnsp_link_constraints!(container::PSI.OptimizationContainer, devic
     loss_var = PSI.get_variable(container, InterconnectorLossVariable(), PSY.AreaInterchange)
     band_var = Dict(dir => PSI.get_variable(container, MNSPLinkBandVariable(), PSY.AreaInterchange, dir) for dir in _MNSP_DIRECTIONS)
     width = Dict(
-        dir => PSI.get_parameter(container, _MNSP_PARAMETERS[Symbol(dir)].width(), PSY.AreaInterchange)
+        dir => PSI.get_parameter(container, MNSPBandWidthParameter(), PSY.AreaInterchange, dir)
             for dir in _MNSP_DIRECTIONS
     )
     max_avail = Dict(
-        dir => PSI.get_parameter(container, _MNSP_PARAMETERS[Symbol(dir)].max_avail(), PSY.AreaInterchange)
+        dir => PSI.get_parameter(container, MNSPMaxAvailParameter(), PSY.AreaInterchange, dir)
             for dir in _MNSP_DIRECTIONS
     )
     container_for(T; meta = IS.Optimization.CONTAINER_KEY_EMPTY_META) = PSI.add_constraints_container!(

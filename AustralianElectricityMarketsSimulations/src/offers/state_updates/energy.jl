@@ -39,10 +39,10 @@ end
 """
     PSI.update_container_parameter_values!(container, model, key, input)
 
-Refreshes [`RampUpRateTimeSeriesParameter`](@ref) from each device's energy bids and
+Refreshes [`RampRateTimeSeriesParameter`](@ref) from each device's energy bids and
 [`NEMUnitState`](@ref) at the step, read through the configured [`StateSource`](@ref), in system-base
 per-unit per minute: the composite cross-zero rate of a device bid on both sides or its per-side bid
-rate, capped by the telemetered limit.
+rate, capped by the telemetered limit. The key's meta selects the direction.
 Under [`ObservedState`](@ref) the stock PowerSimulations update refreshes it from the series that
 [`prepare_replay!`](@ref) attached. Under [`SimulatedState`](@ref), or when the custom path is forced,
 it is recomputed from each device's [`NEMUnitState`](@ref) at the step.
@@ -59,44 +59,22 @@ it is recomputed from each device's [`NEMUnitState`](@ref) at the step.
 function PSI.update_container_parameter_values!(
         container::PSI.OptimizationContainer,
         model::PSI.OperationModel,
-        key::PSI.ParameterKey{RampUpRateTimeSeriesParameter, T},
+        key::PSI.ParameterKey{RampRateTimeSeriesParameter, T},
         input::PSI.DatasetContainer{PSI.InMemoryDataset},
     ) where {T <: PSY.StaticInjection}
     _use_stock_state_update() && return _stock_state_update!(container, model, key, input)
+    _update_ramp_rates!(_ramp_direction(key.meta), container, model, key)
+    return
+end
+
+function _update_ramp_rates!(::RampUp, container, model, key)
     _update_state_parameters!(container, model, key) do device, stamp
         return _ramp_rate_at(device, true, stamp, PSI.get_resolution(model), PSI.get_base_power(container))
     end
     return
 end
 
-
-"""
-    PSI.update_container_parameter_values!(container, model, key, input)
-
-Refreshes [`RampDownRateTimeSeriesParameter`](@ref) from each device's energy bids and
-[`NEMUnitState`](@ref) at the step, read through the configured [`StateSource`](@ref), in system-base
-per-unit per minute: the composite cross-zero rate of a device bid on both sides or its per-side bid
-rate, capped by the telemetered limit.
-Under [`ObservedState`](@ref) the stock PowerSimulations update refreshes it from the series that
-[`prepare_replay!`](@ref) attached. Under [`SimulatedState`](@ref), or when the custom path is forced,
-it is recomputed from each device's [`NEMUnitState`](@ref) at the step.
-
-# Arguments
-- `container`: the `PowerSimulations.OptimizationContainer` being updated.
-- `model`: the `PowerSimulations.OperationModel` whose step is being solved.
-- `key`: the `PowerSimulations.ParameterKey` of the parameter, over the device's type.
-- `input`: the simulation state, passed to the stock update and not read by the custom one.
-
-# Returns
-`nothing`.
-"""
-function PSI.update_container_parameter_values!(
-        container::PSI.OptimizationContainer,
-        model::PSI.OperationModel,
-        key::PSI.ParameterKey{RampDownRateTimeSeriesParameter, T},
-        input::PSI.DatasetContainer{PSI.InMemoryDataset},
-    ) where {T <: PSY.StaticInjection}
-    _use_stock_state_update() && return _stock_state_update!(container, model, key, input)
+function _update_ramp_rates!(::RampDown, container, model, key)
     _update_state_parameters!(container, model, key) do device, stamp
         return _ramp_rate_at(device, false, stamp, PSI.get_resolution(model), PSI.get_base_power(container))
     end

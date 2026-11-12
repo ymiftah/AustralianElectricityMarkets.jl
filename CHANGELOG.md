@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `fcas_bid_direction` answers from the bids as soon as `set_market_bids!` has run, rather than returning `NONE` until `set_effective_offers!` attaches the derived trapezium series.
 
+- The ramp-rate parameters are one `RampRateTimeSeriesParameter` with key meta `"up"` or `"down"`, and the MNSP operating, band-width and availability parameters are one type each (`MNSPOperatingParameter`, `MNSPBandWidthParameter`, `MNSPMaxAvailParameter`) with the input or link direction in the key meta. `RampUpRateTimeSeriesParameter`, `RampDownRateTimeSeriesParameter` and the `MNSPForward...`/`MNSPReverse...` parameter types are removed.
+
 ### Documentation
 
 - Restored the regional how-to pages, built with `set_regional_availability!`; fixed their series plots and output directories.

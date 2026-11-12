@@ -38,8 +38,7 @@ function PSI.get_default_time_series_names(
         ::Type{<:AbstractNEMDispatch},
     )
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
-        RampUpRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
-        RampDownRateTimeSeriesParameter => NEM_SERIES.ramp_down_rate,
+        RampRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
         PSI.ActivePowerOutTimeSeriesParameter => _max_avail_series_name(OfferSide.GEN),
         PSI.ActivePowerInTimeSeriesParameter => _max_avail_series_name(OfferSide.LOAD),
     )
@@ -73,6 +72,7 @@ function PSI.construct_device!(
     PSI.add_variables!(container, EnergyMaxAvailOutSlack, devices, D())
     PSI.add_variables!(container, EnergyMaxAvailInSlack, devices, D())
 
+    _add_ramp_rate_parameters!(container, devices, model)
     for param in _storage_parameters(D)
         haskey(PSI.get_time_series_names(model), param) || continue
         PSI.add_parameters!(container, param, devices, model)
@@ -170,7 +170,6 @@ end
 
 # Both formulations read live raw availability, independently of their ramp reference.
 _storage_parameters(::Type{<:AbstractNEMDispatch}) = (
-    RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
     PSI.ActivePowerOutTimeSeriesParameter, PSI.ActivePowerInTimeSeriesParameter,
 )
 

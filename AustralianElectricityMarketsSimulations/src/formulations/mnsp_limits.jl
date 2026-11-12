@@ -1,11 +1,12 @@
+# The meta of each `MNSPOperatingParameter` to the series it reads.
 const _MNSP_OPERATING_SERIES = (
-    MNSPInitialFlowParameter => NEM_MNSP_SERIES.initial_flow,
-    MNSPForwardRampRateParameter => NEM_MNSP_SERIES.forward_ramp_rate,
-    MNSPReverseRampRateParameter => NEM_MNSP_SERIES.reverse_ramp_rate,
-    MNSPForwardFixedLoadParameter => NEM_MNSP_FIXED_LOAD_SERIES.forward_value,
-    MNSPReverseFixedLoadParameter => NEM_MNSP_FIXED_LOAD_SERIES.reverse_value,
-    MNSPForwardFixedLoadInvokedParameter => NEM_MNSP_FIXED_LOAD_SERIES.forward_invoked,
-    MNSPReverseFixedLoadInvokedParameter => NEM_MNSP_FIXED_LOAD_SERIES.reverse_invoked,
+    _mnsp_input_meta(MNSPInitialFlowInput()) => NEM_MNSP_SERIES.initial_flow,
+    _mnsp_input_meta(MNSPRampRateInput(), MNSPForwardLink()) => NEM_MNSP_SERIES.forward_ramp_rate,
+    _mnsp_input_meta(MNSPRampRateInput(), MNSPReverseLink()) => NEM_MNSP_SERIES.reverse_ramp_rate,
+    _mnsp_input_meta(MNSPFixedLoadInput(), MNSPForwardLink()) => NEM_MNSP_FIXED_LOAD_SERIES.forward_value,
+    _mnsp_input_meta(MNSPFixedLoadInput(), MNSPReverseLink()) => NEM_MNSP_FIXED_LOAD_SERIES.reverse_value,
+    _mnsp_input_meta(MNSPFixedLoadInvokedInput(), MNSPForwardLink()) => NEM_MNSP_FIXED_LOAD_SERIES.forward_invoked,
+    _mnsp_input_meta(MNSPFixedLoadInvokedInput(), MNSPReverseLink()) => NEM_MNSP_FIXED_LOAD_SERIES.reverse_invoked,
 )
 
 const _MNSP_DIRECTIONAL_SLACKS = (
@@ -17,6 +18,11 @@ const _MNSP_DIRECTIONAL_SLACKS = (
 
 function PSI.get_multiplier_value(::MNSPOperatingParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss)
     return 1.0
+end
+
+# The accessor of the `MNSPOperatingParameter` of the given input kind (and link, for a directional kind).
+function _mnsp_input_accessor(container, kind::_MNSPInputKind, link...)
+    return _ts_parameter_accessor(container, MNSPOperatingParameter, PSY.AreaInterchange, _mnsp_input_meta(kind, link...))
 end
 
 """
@@ -56,9 +62,9 @@ function _add_mnsp_operating_constraints!(container, devices)
     names, steps = PSY.get_name.(mnsp), PSI.get_time_steps(container)
     base = PSI.get_base_power(container)
     minutes = 60 * interval_hours(PSI.get_resolution(container))
-    initial, _ = _ts_parameter_accessor(container, MNSPInitialFlowParameter, T)
-    up_rate, _ = _ts_parameter_accessor(container, MNSPForwardRampRateParameter, T)
-    down_rate, _ = _ts_parameter_accessor(container, MNSPReverseRampRateParameter, T)
+    initial, _ = _mnsp_input_accessor(container, MNSPInitialFlowInput())
+    up_rate, _ = _mnsp_input_accessor(container, MNSPRampRateInput(), MNSPForwardLink())
+    down_rate, _ = _mnsp_input_accessor(container, MNSPRampRateInput(), MNSPReverseLink())
     flow = PSI.get_variable(container, PSI.FlowActivePowerVariable(), T)
     up = PSI.get_variable(container, MNSPRampUpSlack(), T)
     down = PSI.get_variable(container, MNSPRampDownSlack(), T)
@@ -70,12 +76,9 @@ function _add_mnsp_operating_constraints!(container, devices)
         lower[name, t] = JuMP.@constraint(jm, flow[name, t] + down[name, t] >= (initial(name, t) - minutes * down_rate(name, t)) / base)
     end
     links = PSI.get_variable(container, MNSPLinkFlowVariable(), T)
-    for (dir, target_type, invoked_type) in (
-            ("forward", MNSPForwardFixedLoadParameter, MNSPForwardFixedLoadInvokedParameter),
-            ("reverse", MNSPReverseFixedLoadParameter, MNSPReverseFixedLoadInvokedParameter),
-        )
-        target, _ = _ts_parameter_accessor(container, target_type, T)
-        invoked, _ = _ts_parameter_accessor(container, invoked_type, T)
+    for (dir, link) in (("forward", MNSPForwardLink()), ("reverse", MNSPReverseLink()))
+        target, _ = _mnsp_input_accessor(container, MNSPFixedLoadInput(), link)
+        invoked, _ = _mnsp_input_accessor(container, MNSPFixedLoadInvokedInput(), link)
         surplus = PSI.get_variable(container, MNSPFixedLoadSurplusSlack(), T, dir)
         deficit = PSI.get_variable(container, MNSPFixedLoadDeficitSlack(), T, dir)
         upper = PSI.add_constraints_container!(container, MNSPFixedLoadConstraint(), T, names, steps; meta = "$(dir)_upper")

@@ -118,9 +118,9 @@ end
         model = _decision_model(_loss_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
         container = PSI.get_optimization_container(model)
-        initial = PSI.get_parameter(container, PSI.ParameterKey(AEMS.MNSPInitialFlowParameter, PSY.AreaInterchange))
-        forward = PSI.get_parameter(container, PSI.ParameterKey(AEMS.MNSPForwardRampRateParameter, PSY.AreaInterchange))
-        reverse = PSI.get_parameter(container, PSI.ParameterKey(AEMS.MNSPReverseRampRateParameter, PSY.AreaInterchange))
+        initial = PSI.get_parameter(container, PSI.ParameterKey(AEMS.MNSPOperatingParameter, PSY.AreaInterchange, "initial_flow"))
+        forward = PSI.get_parameter(container, PSI.ParameterKey(AEMS.MNSPOperatingParameter, PSY.AreaInterchange, "forward_ramp_rate"))
+        reverse = PSI.get_parameter(container, PSI.ParameterKey(AEMS.MNSPOperatingParameter, PSY.AreaInterchange, "reverse_ramp_rate"))
         @test collect(PSI.get_parameter_column_values(initial, "IC1")) == [30.0, 30.0]
         @test collect(PSI.get_parameter_column_values(forward, "IC1")) == [600.0, 600.0]
         @test collect(PSI.get_parameter_column_values(reverse, "IC1")) == [1200.0, 1200.0]

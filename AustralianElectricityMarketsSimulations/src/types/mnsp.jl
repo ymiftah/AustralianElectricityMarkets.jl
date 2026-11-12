@@ -101,32 +101,18 @@ PSI.convert_result_to_natural_units(::Type{MNSPLinkBandVariable}) = true
 
 Time-series parameter of an MNSP link's offered band widths, in MW, read from its
 `"link_<direction>_offer"` series with a band axis; bands beyond an interval's offer have width
-`0.0`. [`MNSPForwardBandWidthParameter`](@ref) and [`MNSPReverseBandWidthParameter`](@ref) are the
-two links.
+`0.0`. Meta `"forward"` or `"reverse"` names the link.
 """
-abstract type MNSPBandWidthParameter <: PSI.TimeSeriesParameter end
-
-"[`MNSPBandWidthParameter`](@ref) of the forward link."
-struct MNSPForwardBandWidthParameter <: MNSPBandWidthParameter end
-
-"[`MNSPBandWidthParameter`](@ref) of the reverse link."
-struct MNSPReverseBandWidthParameter <: MNSPBandWidthParameter end
+struct MNSPBandWidthParameter <: PSI.TimeSeriesParameter end
 
 
 """
     MNSPMaxAvailParameter
 
 Time-series parameter of an MNSP link's `MAXAVAIL`, in MW, read from its
-`"link_<direction>_max_avail"` series. [`MNSPForwardMaxAvailParameter`](@ref) and
-[`MNSPReverseMaxAvailParameter`](@ref) are the two links.
+`"link_<direction>_max_avail"` series. Meta `"forward"` or `"reverse"` names the link.
 """
-abstract type MNSPMaxAvailParameter <: PSI.TimeSeriesParameter end
-
-"[`MNSPMaxAvailParameter`](@ref) of the forward link."
-struct MNSPForwardMaxAvailParameter <: MNSPMaxAvailParameter end
-
-"[`MNSPMaxAvailParameter`](@ref) of the reverse link."
-struct MNSPReverseMaxAvailParameter <: MNSPMaxAvailParameter end
+struct MNSPMaxAvailParameter <: PSI.TimeSeriesParameter end
 
 
 """

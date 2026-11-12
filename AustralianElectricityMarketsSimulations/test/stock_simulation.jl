@@ -853,8 +853,8 @@ end
     sim = stock_simulate(sys)
     @test stock_flow.(sim.solved) ≈ [10.0, 20.0] atol = TOY_TOLERANCE
     for (name, values) in expected
-        P = first(only(filter(pair -> last(pair) == name, AEMS._MNSP_OPERATING_SERIES)))
-        key = "$(nameof(P))__AreaInterchange"
+        meta = first(only(filter(pair -> last(pair) == name, AEMS._MNSP_OPERATING_SERIES)))
+        key = "MNSPOperatingParameter__AreaInterchange__$meta"
         @test stock_realized(sim.results, key, PSY.get_name(ic); scale = 1.0) ≈ values atol = TOY_TOLERANCE
     end
     container = PSI.get_optimization_container(sim.model)

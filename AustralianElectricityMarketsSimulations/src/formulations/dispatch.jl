@@ -16,9 +16,7 @@ PSI.get_variable_upper_bound(::PSI.ActivePowerVariable, ::PSY.StaticInjection, :
 
 
 # The dispatch-limit series are stored as absolute system-base per-unit.
-PSI.get_multiplier_value(::RampUpRateTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
-
-PSI.get_multiplier_value(::RampDownRateTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
+PSI.get_multiplier_value(::RampRateTimeSeriesParameter, ::PSY.StaticInjection, ::AbstractNEMDispatch) = 1.0
 
 PSI.get_multiplier_value(::InitialPowerTimeSeriesParameter, d::PSY.StaticInjection, ::AbstractNEMDispatch) = 1 / PSY.get_system_base_power(d)
 
@@ -36,7 +34,8 @@ PSI.objective_function_multiplier(::PSI.ActivePowerVariable, ::AbstractNEMDispat
 
 Registers the time series [`AbstractNEMDispatch`](@ref) reads as parameters. The derived series are
 read through the device's [`NEMDispatchInputs`](@ref), and the telemetered UIGF keeps a name
-constant. The initial-power and fixed-loading parameters are added explicitly from the build's
+constant. [`RampRateTimeSeriesParameter`](@ref) is registered once: its two directions are added with
+their own series names. The initial-power and fixed-loading parameters are added explicitly from the build's
 first-solve seed series, so they take no entry here.
 
 # Returns
@@ -47,8 +46,7 @@ function PSI.get_default_time_series_names(
         ::Type{<:AbstractNEMDispatch},
     )
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
-        RampUpRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
-        RampDownRateTimeSeriesParameter => NEM_SERIES.ramp_down_rate,
+        RampRateTimeSeriesParameter => NEM_SERIES.ramp_up_rate,
         EnergyMaxAvailTimeSeriesParameter => _max_avail_series_name(OfferSide.GEN),
         EnergyUIGFTimeSeriesParameter => NEM_TELEMETRY_SERIES.uigf,
     )
@@ -103,11 +101,11 @@ function _has_nem_dispatch_limits(device)
     length(attributes) == 1 || return false
     inputs = only(attributes)
     names = PSI.get_default_time_series_names(typeof(device), NEMReplayDispatch)
-    for (param, field) in _DERIVED_INPUT_FIELDS
+    for (param, direction, field) in _DERIVED_INPUT_FIELDS
         haskey(names, param) || continue
         key = getfield(inputs, field)
         key isa IS.StaticTimeSeriesKey || return false
-        expected = param in _AVAILABILITY_PARAMETERS ? _availability_series_name(device, param) : names[param]
+        expected = _expected_series_name(device, names, param, direction)
         _require_key_name(device, key, expected)
         PSY.has_time_series(device, PSY.SingleTimeSeries, expected) || return false
     end
@@ -136,14 +134,42 @@ function _availability_series_name(device, param)
 end
 
 
-# The parameter type to the [`NEMDispatchInputs`](@ref) field holding its series key.
+# The parameter type, ramp direction (`nothing` outside the ramp rates) and [`NEMDispatchInputs`](@ref)
+# field holding its series key.
 const _DERIVED_INPUT_FIELDS = (
-    RampUpRateTimeSeriesParameter => :ramp_up,
-    RampDownRateTimeSeriesParameter => :ramp_down,
-    EnergyMaxAvailTimeSeriesParameter => :energy_availability,
-    PSI.ActivePowerOutTimeSeriesParameter => :energy_availability,
-    PSI.ActivePowerInTimeSeriesParameter => :energy_availability_decremental,
+    (RampRateTimeSeriesParameter, RampUp(), :ramp_up),
+    (RampRateTimeSeriesParameter, RampDown(), :ramp_down),
+    (EnergyMaxAvailTimeSeriesParameter, nothing, :energy_availability),
+    (PSI.ActivePowerOutTimeSeriesParameter, nothing, :energy_availability),
+    (PSI.ActivePowerInTimeSeriesParameter, nothing, :energy_availability_decremental),
 )
+
+# The series name `param` reads on `device`, for the ramp `direction` of a ramp rate.
+function _expected_series_name(device, names, param, direction::Union{RampUp, RampDown})
+    return _ramp_series_name(direction)
+end
+
+function _expected_series_name(device, names, param, ::Nothing)
+    return param in _AVAILABILITY_PARAMETERS ? _availability_series_name(device, param) : names[param]
+end
+
+# Adds one ramp-rate parameter of `direction`, read from the series the devices' dispatch inputs name.
+function _add_ramp_rate_parameter!(container, devices, model, direction::Union{RampUp, RampDown})
+    PSI.add_parameters!(
+        container, RampRateTimeSeriesParameter, devices, model;
+        meta = _ramp_meta(direction),
+        time_series_name = _inputs_series_name(first(devices), _ramp_input_field(direction)),
+    )
+    return
+end
+
+# Adds both ramp-rate parameters when the model registers them.
+function _add_ramp_rate_parameters!(container, devices, model)
+    haskey(PSI.get_time_series_names(model), RampRateTimeSeriesParameter) || return
+    _add_ramp_rate_parameter!(container, devices, model, RampUp())
+    _add_ramp_rate_parameter!(container, devices, model, RampDown())
+    return
+end
 
 
 """
@@ -241,14 +267,9 @@ function PSI.construct_device!(
     semi = _semi_scheduled_devices(devices)
     isempty(semi) || PSI.add_variables!(container, EnergyUIGFSlack, semi, D())
 
-    for param in (
-            RampUpRateTimeSeriesParameter,
-            RampDownRateTimeSeriesParameter,
-            EnergyMaxAvailTimeSeriesParameter,
-        )
-        haskey(PSI.get_time_series_names(model), param) || continue
-        PSI.add_parameters!(container, param, devices, model)
-    end
+    _add_ramp_rate_parameters!(container, devices, model)
+    haskey(PSI.get_time_series_names(model), EnergyMaxAvailTimeSeriesParameter) &&
+        PSI.add_parameters!(container, EnergyMaxAvailTimeSeriesParameter, devices, model)
     PSI.add_parameters!(
         container, InitialPowerTimeSeriesParameter, devices, model;
         time_series_name = _INITIAL_MW_SEED_SERIES,
@@ -362,8 +383,8 @@ function _add_nem_ramp_constraints!(container::PSI.OptimizationContainer, ::Type
     names = [PSY.get_name(d) for d in devices]
     isempty(names) && return
 
-    up_rate, up_covered = _ts_parameter_accessor(container, RampUpRateTimeSeriesParameter, T)
-    down_rate, down_covered = _ts_parameter_accessor(container, RampDownRateTimeSeriesParameter, T)
+    up_rate, up_covered = _ts_parameter_accessor(container, RampRateTimeSeriesParameter, T, _ramp_meta(RampUp()))
+    down_rate, down_covered = _ts_parameter_accessor(container, RampRateTimeSeriesParameter, T, _ramp_meta(RampDown()))
     _require_coverage(
         names, "no ramp rate time series", _SETTER_REMEDY, up_covered, down_covered,
     )
@@ -390,8 +411,8 @@ end
 
 
 # Parameter arrays are keyed by time-series UUID, not device name.
-function _ts_parameter_accessor(container, ::Type{P}, ::Type{T}) where {P <: PSI.TimeSeriesParameter, T}
-    param_container = PSI.get_parameter(container, P(), T)
+function _ts_parameter_accessor(container, ::Type{P}, ::Type{T}, meta::String = "") where {P <: PSI.TimeSeriesParameter, T}
+    param_container = PSI.get_parameter(container, P(), T, meta)
     multiplier = PSI.get_multiplier_array(param_container)
     covered = Set(PSI.get_component_names(PSI.get_attributes(param_container)))
     function accessor(name, t)

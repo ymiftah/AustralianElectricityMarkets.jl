@@ -138,7 +138,7 @@ export check_fcas_services, check_dispatch_envelope, check_single_financial_year
 export read_solved_interval, read_constraint_violations
 export compare_intervals, comparison_summary, read_interconnector_loss_gaps
 export AbstractNEMDispatch, NEMReplayDispatch,
-    RampUpRateTimeSeriesParameter, RampDownRateTimeSeriesParameter,
+    RampRateTimeSeriesParameter,
     InitialPowerTimeSeriesParameter
 export nem_dispatch_participants, set_nem_dispatch_models!
 export TieBreakScaleParameter, TieBreakMarket, TieBreakSlackUp,
@@ -149,11 +149,10 @@ export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegm
     LossDemandCoefficientParameter
 export MNSPLinkFlowVariable, MNSPLinkFlowConstraint, MNSPLinkBandConstraint, MNSPLinkMaxAvailConstraint,
     MNSPLinkDirectionConstraint, MNSPLinkLossConstraint, MNSPLinkLossSplitConstraint, MNSPLinkDirectionVariable,
-    MNSPLinkLossVariable, MNSPLinkBandVariable, MNSPBandWidthParameter, MNSPForwardBandWidthParameter,
-    MNSPReverseBandWidthParameter, MNSPMaxAvailParameter, MNSPForwardMaxAvailParameter,
-    MNSPReverseMaxAvailParameter, MNSPBandPriceParameter
+    MNSPLinkLossVariable, MNSPLinkBandVariable, MNSPBandWidthParameter,
+    MNSPMaxAvailParameter, MNSPBandPriceParameter
 
-export MNSPInitialFlowParameter, MNSPForwardRampRateParameter, MNSPReverseRampRateParameter, MNSPForwardFixedLoadParameter, MNSPReverseFixedLoadParameter, MNSPForwardFixedLoadInvokedParameter, MNSPReverseFixedLoadInvokedParameter, MNSPMaxAvailSlack, MNSPOfferSlack, MNSPRampUpSlack, MNSPRampDownSlack, MNSPFixedLoadSurplusSlack, MNSPFixedLoadDeficitSlack, MNSPRampConstraint, MNSPFixedLoadConstraint
+export MNSPOperatingParameter, MNSPMaxAvailSlack, MNSPOfferSlack, MNSPRampUpSlack, MNSPRampDownSlack, MNSPFixedLoadSurplusSlack, MNSPFixedLoadDeficitSlack, MNSPRampConstraint, MNSPFixedLoadConstraint
 
 
 include("precompile.jl")

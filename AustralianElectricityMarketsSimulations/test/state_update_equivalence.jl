@@ -3,8 +3,7 @@
 
 const STATE_UPDATE_PARAMETER_TYPES = (
     InitialPowerTimeSeriesParameter,
-    RampUpRateTimeSeriesParameter,
-    RampDownRateTimeSeriesParameter,
+    RampRateTimeSeriesParameter,
     FixedLoadTimeSeriesParameter,
     FixedLoadInvokedTimeSeriesParameter,
     FCASOfferLimitParameter,
@@ -12,9 +11,7 @@ const STATE_UPDATE_PARAMETER_TYPES = (
     FCASUpperSlopeParameter,
     FCASLowerSlopeParameter,
     FCASRampingLimitParameter,
-    MNSPInitialFlowParameter,
-    MNSPForwardRampRateParameter,
-    MNSPReverseRampRateParameter,
+    MNSPOperatingParameter,
 )
 
 const STATE_UPDATE_STEPS = TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION)
@@ -111,7 +108,7 @@ function state_update_fixed_load_system()
     )
 end
 
-# The three toy systems that together carry all thirteen state-update parameter types: the FCAS
+# The three toy systems that together carry all ten state-update parameter types: the FCAS
 # system (a battery bidding both regulation sides, a scheduled load), the MNSP system and the fixed-loading system.
 const STATE_UPDATE_SYSTEMS = (
     "fcas" => fcas_toy_system,

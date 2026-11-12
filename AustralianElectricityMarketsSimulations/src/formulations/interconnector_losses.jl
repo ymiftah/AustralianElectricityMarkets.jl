@@ -7,17 +7,13 @@ function PSI.convert_result_to_natural_units(::Type{InterconnectorLossSegmentVar
 end
 
 
-# PSI's flow-limit and MNSP offer series names for `AreaInterchange`, plus the loss-factor demand coefficient.
+# PSI's flow-limit series names for `AreaInterchange`, plus the loss-factor demand coefficient. The MNSP
+# offer, availability and operating parameters are added with their series names, one type per family.
 function PSI.get_default_time_series_names(::Type{PSY.AreaInterchange}, ::Type{NEMInterconnectorLoss})
     return Dict{Type{<:PSI.TimeSeriesParameter}, String}(
         PSI.FromToFlowLimitParameter => NEM_INTERCONNECTOR_SERIES.from_to_limit,
         PSI.ToFromFlowLimitParameter => NEM_INTERCONNECTOR_SERIES.to_from_limit,
         LossDemandCoefficientParameter => NEM_SERIES.loss_demand_coefficient,
-        MNSPForwardBandWidthParameter => NEM_MNSP_SERIES.forward_offer,
-        MNSPReverseBandWidthParameter => NEM_MNSP_SERIES.reverse_offer,
-        MNSPForwardMaxAvailParameter => NEM_MNSP_SERIES.forward_max_avail,
-        MNSPReverseMaxAvailParameter => NEM_MNSP_SERIES.reverse_max_avail,
-        _MNSP_OPERATING_SERIES...,
     )
 end
 
