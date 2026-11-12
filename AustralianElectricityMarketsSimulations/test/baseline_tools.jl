@@ -39,6 +39,7 @@ end
     q["parameter/p"].u[1] = 9.0
     @test isempty(compare_snapshots(p, q))
     @test max_parameter_difference(p, q).max_abs == 8.0
+    @test max_parameter_difference(p, deepcopy(p)).key == "parameter/p"
 end
 
 @testset "stats compare the objective relatively" begin

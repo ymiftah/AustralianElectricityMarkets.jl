@@ -142,13 +142,13 @@ The largest gap among the `parameter/` tables present in both snapshots, reporte
 `(; key, max_abs)`, with an empty `key` and `max_abs = 0.0` when no parameter table is shared.
 """
 function max_parameter_difference(baseline::AbstractDict, candidate::AbstractDict)
-    best = (key = "", max_abs = 0.0)
+    best = (key = "", max_abs = -Inf)
     for key in keys(baseline)
         _kind(key) == "parameter" && haskey(candidate, key) || continue
         gap = _compare_tables("parameter", baseline[key], candidate[key], 0.0).max_abs
         gap > best.max_abs && (best = (; key, max_abs = gap))
     end
-    return best
+    return best.max_abs == -Inf ? (key = "", max_abs = 0.0) : best
 end
 
 function _parse_compare_args(args::Vector{String})
