@@ -12,54 +12,25 @@ struct MNSPLinkFlowVariable <: PSI.VariableType end
 
 
 """
-    MNSPLinkFlowConstraint
+    MNSPLinkConstraint
 
-`flow[ic,t] == forward link flow - reverse link flow`, per-unit.
+Row over one MNSP link or interconnector, per-unit. The key meta names the row, and a composite meta
+continues after its first `|`:
+
+- `"flow"`: `flow[ic,t] == forward link flow - reverse link flow`, indexed `(interconnector name, t)`.
+- `"band"`: `Σ bands + offer surplus == link flow`, indexed `(interconnector name, "forward" | "reverse", t)`.
+- `"max_avail"`: `link flow - availability surplus <= MAXAVAIL`, indexed as `"band"`.
+- `"direction"`: `link flow <= bound * on`, where `on` is [`MNSPLinkDirectionVariable`](@ref) for the forward
+  link and its complement for the reverse link, indexed as `"band"`.
+- `"loss|lb"` and `"loss|ub"`: bound one link's [`MNSPLinkLossVariable`](@ref) to zero when the link is inactive,
+  `loss >= lower * on` and `loss <= upper * on`, indexed as `"band"`.
+- `"loss_split"`: `forward loss + reverse loss == interconnector loss`, indexed `(interconnector name, t)`.
+- `"ramp|up"` and `"ramp|down"`: the signed net-flow ramp limit about metered starting flow, indexed
+  `(interconnector name, t)`.
+- `"fixed_load|<link>_upper"` and `"fixed_load|<link>_lower"`: the link's fixed-loading limit, with the
+  [`MNSPSlack`](@ref) surplus or deficit it relaxes, indexed `(interconnector name, t)`.
 """
-struct MNSPLinkFlowConstraint <: PSI.ConstraintType end
-
-
-"""
-    MNSPLinkBandConstraint
-
-`Σ bands + offer surplus == link flow` for one MNSP link, per-unit. Indexed `(interconnector name, "forward" | "reverse", t)`.
-"""
-struct MNSPLinkBandConstraint <: PSI.ConstraintType end
-
-
-"""
-    MNSPLinkMaxAvailConstraint
-
-`link flow - availability surplus <= MAXAVAIL` for one MNSP link, per-unit. Indexed `(interconnector name, "forward" | "reverse", t)`.
-"""
-struct MNSPLinkMaxAvailConstraint <: PSI.ConstraintType end
-
-
-"""
-    MNSPLinkDirectionConstraint
-
-`link flow <= bound * on`, where `on` is [`MNSPLinkDirectionVariable`](@ref) for the forward link
-and its complement for the reverse link. Indexed `(interconnector name, "forward" | "reverse", t)`.
-"""
-struct MNSPLinkDirectionConstraint <: PSI.ConstraintType end
-
-
-"""
-    MNSPLinkLossConstraint
-
-Bounds one link's [`MNSPLinkLossVariable`](@ref) to zero when the link is inactive: `meta = "lb"`
-holds `loss >= lower * on` and `meta = "ub"` holds `loss <= upper * on`. Indexed
-`(interconnector name, "forward" | "reverse", t)`.
-"""
-struct MNSPLinkLossConstraint <: PSI.ConstraintType end
-
-
-"""
-    MNSPLinkLossSplitConstraint
-
-`forward loss + reverse loss == interconnector loss`, per-unit.
-"""
-struct MNSPLinkLossSplitConstraint <: PSI.ConstraintType end
+struct MNSPLinkConstraint <: PSI.ConstraintType end
 
 
 """

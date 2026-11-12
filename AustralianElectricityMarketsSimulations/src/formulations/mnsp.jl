@@ -284,11 +284,10 @@ end
 
 Adds, for each device in `devices` carrying MNSP offers, the rows over the variables of
 [`_add_mnsp_link_variables!`](@ref): each band within its offered width, the bands plus an offer surplus summing to the
-link flow ([`MNSPLinkBandConstraint`](@ref)), an elastic `MAXAVAIL` limit
-([`MNSPLinkMaxAvailConstraint`](@ref)), `flow = forward - reverse` ([`MNSPLinkFlowConstraint`](@ref)),
-one direction at a time ([`MNSPLinkDirectionConstraint`](@ref)), each directional loss zero on the
-inactive link ([`MNSPLinkLossConstraint`](@ref)), and the two losses summing to the
-interconnector loss ([`MNSPLinkLossSplitConstraint`](@ref)).
+link flow (meta `"band"`), an elastic `MAXAVAIL` limit (`"max_avail"`), `flow = forward - reverse` (`"flow"`),
+one direction at a time (`"direction"`), each directional loss zero on the inactive link (`"loss|lb"` and
+`"loss|ub"`), and the two losses summing to the interconnector loss (`"loss_split"`), all rows of
+[`MNSPLinkConstraint`](@ref).
 
 # Returns
 `nothing`.
@@ -317,19 +316,19 @@ function _add_mnsp_link_constraints!(container::PSI.OptimizationContainer, devic
         dir => PSI.get_parameter(container, MNSPMaxAvailParameter(), PSY.AreaInterchange, dir)
             for dir in _MNSP_DIRECTIONS
     )
-    container_for(T; meta = IS.Optimization.CONTAINER_KEY_EMPTY_META) = PSI.add_constraints_container!(
-        container, T(), PSY.AreaInterchange, names, directions, time_steps; meta,
+    container_for(meta) = PSI.add_constraints_container!(
+        container, MNSPLinkConstraint(), PSY.AreaInterchange, names, directions, time_steps; meta,
     )
-    band_con = container_for(MNSPLinkBandConstraint)
-    avail_con = container_for(MNSPLinkMaxAvailConstraint)
-    direction_con = container_for(MNSPLinkDirectionConstraint)
-    loss_lb_con = container_for(MNSPLinkLossConstraint; meta = "lb")
-    loss_ub_con = container_for(MNSPLinkLossConstraint; meta = "ub")
+    band_con = container_for("band")
+    avail_con = container_for("max_avail")
+    direction_con = container_for("direction")
+    loss_lb_con = container_for("loss|lb")
+    loss_ub_con = container_for("loss|ub")
     link_con = PSI.add_constraints_container!(
-        container, MNSPLinkFlowConstraint(), PSY.AreaInterchange, names, time_steps,
+        container, MNSPLinkConstraint(), PSY.AreaInterchange, names, time_steps; meta = "flow",
     )
     split_con = PSI.add_constraints_container!(
-        container, MNSPLinkLossSplitConstraint(), PSY.AreaInterchange, names, time_steps,
+        container, MNSPLinkConstraint(), PSY.AreaInterchange, names, time_steps; meta = "loss_split",
     )
 
     for d in mnsp
@@ -348,8 +347,9 @@ function _add_mnsp_link_constraints!(container::PSI.OptimizationContainer, devic
                 for label in labels
                     JuMP.@constraint(jm, bands[name, label, t] <= width_mult[dir][name, label, t] * widths[dir][label, t] / base_power)
                 end
-                offer_slack = PSI.get_variable(container, MNSPOfferSlack(), PSY.AreaInterchange, dir)[name, t]
-                avail_slack = PSI.get_variable(container, MNSPMaxAvailSlack(), PSY.AreaInterchange, dir)[name, t]
+                link = _mnsp_direction_link(dir)
+                offer_slack = PSI.get_variable(container, MNSPSlack(), PSY.AreaInterchange, _mnsp_slack_meta(MNSPOfferVariant(), link))[name, t]
+                avail_slack = PSI.get_variable(container, MNSPSlack(), PSY.AreaInterchange, _mnsp_slack_meta(MNSPMaxAvailVariant(), link))[name, t]
                 band_con[name, dir, t] = JuMP.@constraint(jm, sum(bands[name, label, t] for label in labels) + offer_slack == q)
                 avail_con[name, dir, t] = JuMP.@constraint(jm, q - avail_slack <= avail_mult[dir][name, t] * avails[dir][t] / base_power)
                 on = dir == "forward" ? forward_on : 1 - forward_on

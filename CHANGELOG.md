@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The ramp-rate parameters are one `RampRateTimeSeriesParameter` with key meta `"up"` or `"down"`, and the MNSP operating, band-width and availability parameters are one type each (`MNSPOperatingParameter`, `MNSPBandWidthParameter`, `MNSPMaxAvailParameter`) with the input or link direction in the key meta. `RampUpRateTimeSeriesParameter`, `RampDownRateTimeSeriesParameter` and the `MNSPForward...`/`MNSPReverse...` parameter types are removed.
 
+- The MNSP slacks are one `MNSPSlack` type, with the variant and link in the key meta (`"max_avail|forward"`, `"ramp|up"`, `"fixed_load|surplus|forward"`), and the MNSP link, ramp and fixed-loading rows are one `MNSPLinkConstraint` type with the row in the key meta. `MNSPMaxAvailSlack`, `MNSPOfferSlack`, `MNSPRampUpSlack`, `MNSPRampDownSlack`, `MNSPFixedLoadSurplusSlack`, `MNSPFixedLoadDeficitSlack` and `AbstractMNSPSlack` are replaced by `MNSPSlack`; `MNSPLinkBandConstraint`, `MNSPLinkDirectionConstraint`, `MNSPLinkFlowConstraint`, `MNSPLinkLossConstraint`, `MNSPLinkLossSplitConstraint`, `MNSPLinkMaxAvailConstraint`, `MNSPRampConstraint` and `MNSPFixedLoadConstraint` are removed.
+
 ### Documentation
 
 - Restored the regional how-to pages, built with `set_regional_availability!`; fixed their series plots and output directories.

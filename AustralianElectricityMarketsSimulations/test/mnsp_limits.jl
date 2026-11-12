@@ -24,8 +24,8 @@ function _solve_mnsp_limit_case(sys; target = nothing)
     return (; model, results, violations)
 end
 
-function _mnsp_limit_value(out, V; direction = nothing)
-    frame = PSI.read_variable(out.results, PSI.VariableKey(V, PSY.AreaInterchange, something(direction, "")))
+function _mnsp_limit_value(out, meta)
+    frame = PSI.read_variable(out.results, PSI.VariableKey(AEMS.MNSPSlack, PSY.AreaInterchange, meta))
     return first(frame.value)
 end
 
@@ -33,8 +33,8 @@ end
     for (avail, width) in ((10.0, 5.0), (0.0, 0.0))
         out = _solve_mnsp_limit_case(_mnsp_limit_case(; forward = (avail, [(width, 10.0)])); target = 20.0)
         if !isnothing(out)
-            @test _mnsp_limit_value(out, AEMS.MNSPMaxAvailSlack; direction = "forward") ≈ 20.0 - avail atol = 1.0e-6
-            @test _mnsp_limit_value(out, AEMS.MNSPOfferSlack; direction = "forward") ≈ 20.0 - width atol = 1.0e-6
+            @test _mnsp_limit_value(out, "max_avail|forward") ≈ 20.0 - avail atol = 1.0e-6
+            @test _mnsp_limit_value(out, "offer|forward") ≈ 20.0 - width atol = 1.0e-6
             @test Set(out.violations.family) == Set(["mnsp_max_avail", "mnsp_offer"])
             @test all(==("forward"), out.violations.direction)
         end
@@ -45,7 +45,7 @@ end
     sys = _mnsp_limit_case(; forward = (100.0, [(100.0, 10.0)]), reverse = (0.0, [(0.0, 10.0)]))
     out = _solve_mnsp_limit_case(sys; target = -20.0)
     if !isnothing(out)
-        @test _mnsp_limit_value(out, AEMS.MNSPMaxAvailSlack; direction = "reverse") ≈ 20.0 atol = 1.0e-6
+        @test _mnsp_limit_value(out, "max_avail|reverse") ≈ 20.0 atol = 1.0e-6
         @test all(==("reverse"), out.violations.direction)
     end
 end
@@ -61,7 +61,7 @@ end
     end
     out = _solve_mnsp_limit_case(_mnsp_limit_case(; forward = (100.0, [(100.0, 10.0)]), initial = -50.0, up = 1.0); target = 20.0)
     if !isnothing(out)
-        @test _mnsp_limit_value(out, AEMS.MNSPRampUpSlack) ≈ 10.0 atol = 1.0e-6
+        @test _mnsp_limit_value(out, "ramp|up") ≈ 10.0 atol = 1.0e-6
         @test only(unique(out.violations.family)) == "mnsp_ramp"
     end
 end
@@ -69,7 +69,7 @@ end
 @testset "MNSP fixed loading is an elastic directional instruction" begin
     out = _solve_mnsp_limit_case(_mnsp_limit_case(; forward = (100.0, [(100.0, 10.0)]), fixed_forward = 30.0); target = 20.0)
     if !isnothing(out)
-        @test _mnsp_limit_value(out, AEMS.MNSPFixedLoadDeficitSlack; direction = "forward") ≈ 10.0 atol = 1.0e-6
+        @test _mnsp_limit_value(out, "fixed_load|deficit|forward") ≈ 10.0 atol = 1.0e-6
         @test only(unique(out.violations.family)) == "mnsp_fixed_load"
     end
 end
@@ -77,12 +77,12 @@ end
 @testset "MNSP down-ramp and reverse fixed-loading violations" begin
     out = _solve_mnsp_limit_case(_mnsp_limit_case(; initial = 50.0, down = 1.0); target = -20.0)
     if !isnothing(out)
-        @test _mnsp_limit_value(out, AEMS.MNSPRampDownSlack) ≈ 10.0 atol = 1.0e-6
+        @test _mnsp_limit_value(out, "ramp|down") ≈ 10.0 atol = 1.0e-6
         @test only(unique(out.violations.direction)) == "down"
     end
     out = _solve_mnsp_limit_case(_mnsp_limit_case(; fixed_reverse = 10.0); target = -20.0)
     if !isnothing(out)
-        @test _mnsp_limit_value(out, AEMS.MNSPFixedLoadSurplusSlack; direction = "reverse") ≈ 10.0 atol = 1.0e-6
+        @test _mnsp_limit_value(out, "fixed_load|surplus|reverse") ≈ 10.0 atol = 1.0e-6
         @test only(unique(out.violations.direction)) == "reverse_up"
     end
 end
@@ -91,7 +91,7 @@ end
     for (fixed, expected) in ((nothing, 0.0), (0.0, 20.0))
         out = _solve_mnsp_limit_case(_mnsp_limit_case(; forward = (100.0, [(100.0, 10.0)]), fixed_forward = fixed); target = 20.0)
         if !isnothing(out)
-            @test _mnsp_limit_value(out, AEMS.MNSPFixedLoadSurplusSlack; direction = "forward") ≈ expected atol = 1.0e-6
+            @test _mnsp_limit_value(out, "fixed_load|surplus|forward") ≈ expected atol = 1.0e-6
         end
     end
 end
@@ -99,8 +99,8 @@ end
 @testset "Fixed loading overrides commercial availability by CVP priority" begin
     out = _solve_mnsp_limit_case(_mnsp_limit_case(; forward = (0.0, [(100.0, 10.0)]), fixed_forward = 30.0))
     if !isnothing(out)
-        @test _mnsp_limit_value(out, AEMS.MNSPMaxAvailSlack; direction = "forward") ≈ 30.0 atol = 1.0e-6
-        @test _mnsp_limit_value(out, AEMS.MNSPFixedLoadDeficitSlack; direction = "forward") ≈ 0.0 atol = 1.0e-6
+        @test _mnsp_limit_value(out, "max_avail|forward") ≈ 30.0 atol = 1.0e-6
+        @test _mnsp_limit_value(out, "fixed_load|deficit|forward") ≈ 0.0 atol = 1.0e-6
     end
 end
 

@@ -16,12 +16,6 @@ const _VIOLATION_FAMILIES = (
     EnergyUIGFSlack => ("energy_uigf", "up"),
     EnergyFixedLoadSurplusSlack => ("fixed_load", "up"),
     EnergyFixedLoadDeficitSlack => ("fixed_load", "down"),
-    MNSPMaxAvailSlack => ("mnsp_max_avail", "up"),
-    MNSPOfferSlack => ("mnsp_offer", "up"),
-    MNSPRampUpSlack => ("mnsp_ramp", "up"),
-    MNSPRampDownSlack => ("mnsp_ramp", "down"),
-    MNSPFixedLoadSurplusSlack => ("mnsp_fixed_load", "up"),
-    MNSPFixedLoadDeficitSlack => ("mnsp_fixed_load", "down"),
     UnitRampUpSlack => ("unit_ramp", "up"),
     UnitRampDownSlack => ("unit_ramp", "down"),
     InterconnectorFlowSurplusSlack => ("interconnector_flow", "up"),
@@ -37,17 +31,32 @@ const _VIOLATION_FAMILIES = (
 )
 
 
+# The family and default direction of each MNSP slack variant.
+_mnsp_violation_family(::MNSPMaxAvailVariant) = ("mnsp_max_avail", "up")
+_mnsp_violation_family(::MNSPOfferVariant) = ("mnsp_offer", "up")
+_mnsp_violation_family(::MNSPRampUpVariant) = ("mnsp_ramp", "up")
+_mnsp_violation_family(::MNSPRampDownVariant) = ("mnsp_ramp", "down")
+_mnsp_violation_family(::MNSPFixedLoadSurplusVariant) = ("mnsp_fixed_load", "up")
+_mnsp_violation_family(::MNSPFixedLoadDeficitVariant) = ("mnsp_fixed_load", "down")
+
+# The family and default direction of a slack key, from its variant for `MNSPSlack`.
+_violation_kind(::Dict, ::Type{MNSPSlack}, meta::AbstractString) = _mnsp_violation_family(_mnsp_slack_variant(String(meta)))
+_violation_kind(kinds::Dict, type::Type, ::AbstractString) = kinds[type]
+
 function _violation_direction(::PSY.System, ::Type, ::AbstractString, ::AbstractString, default::AbstractString)
     return default
 end
 
-function _violation_direction(::PSY.System, ::Type{<:AbstractMNSPSlack}, meta::AbstractString, ::AbstractString, default::AbstractString)
-    return isempty(meta) ? default : "$(meta)_$default"
+function _violation_direction(::PSY.System, ::Type{MNSPSlack}, meta::AbstractString, ::AbstractString, default::AbstractString)
+    return _mnsp_slack_direction(_mnsp_slack_variant(String(meta)), String(meta), default)
 end
 
-function _violation_direction(::PSY.System, ::Type{<:Union{MNSPMaxAvailSlack, MNSPOfferSlack}}, meta::AbstractString, ::AbstractString, default::AbstractString)
-    return isempty(meta) ? default : meta
-end
+# The link of a commercial limit, the link and default of a fixed-loading slack, and the default of a ramp.
+_mnsp_slack_direction(::Union{MNSPMaxAvailVariant, MNSPOfferVariant}, meta::String, ::AbstractString) =
+    _mnsp_link_prefix(_mnsp_slack_link(meta))
+_mnsp_slack_direction(::_MNSPFixedLoadVariant, meta::String, default::AbstractString) =
+    "$(_mnsp_link_prefix(_mnsp_slack_link(meta)))_$default"
+_mnsp_slack_direction(::_MNSPRampVariant, ::String, default::AbstractString) = default
 
 # Capacity keys end in `_lower` for the >= EnablementMin rows.
 function _violation_direction(::PSY.System, ::Type{FCASJointCapacitySlack}, meta::AbstractString, ::AbstractString, ::AbstractString)
@@ -98,16 +107,17 @@ function read_constraint_violations(
         results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}, sys::PSY.System,
     )
     kinds = Dict(_VIOLATION_FAMILIES)
+    is_slack(type) = type === MNSPSlack || haskey(kinds, type)
     rows = NamedTuple{
         (:family, :name, :DateTime, :MW, :direction, :variable),
         Tuple{String, String, DateTime, Float64, String, String},
     }[]
-    slack_keys = [key for key in PSI.list_variable_keys(results) if haskey(kinds, PSI.IS.Optimization.get_entry_type(key))]
+    slack_keys = [key for key in PSI.list_variable_keys(results) if is_slack(PSI.IS.Optimization.get_entry_type(key))]
     frames = _read_variable_frames(results, slack_keys)
     invoked = Dict{String, Set{DateTime}}()
     for key in slack_keys
         type = PSI.IS.Optimization.get_entry_type(key)
-        kind = kinds[type]
+        kind = _violation_kind(kinds, type, key.meta)
         for r in eachrow(frames[key])
             r.value > _VIOLATION_TOLERANCE_MW || continue
             kind[1] == "generic_constraint" && !(r.DateTime in get!(() -> _invoked_stamps(sys, r.name), invoked, r.name)) &&

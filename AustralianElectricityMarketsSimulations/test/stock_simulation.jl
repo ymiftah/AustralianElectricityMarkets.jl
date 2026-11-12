@@ -859,13 +859,13 @@ end
     end
     container = PSI.get_optimization_container(sim.model)
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
-    for (V, factor, meta) in (
-            (AEMS.MNSPRampUpSlack, 1155.0, ""),
-            (AEMS.MNSPOfferSlack, 1135.0, "forward"),
-            (AEMS.MNSPMaxAvailSlack, 365.0, "reverse"),
-            (AEMS.MNSPFixedLoadDeficitSlack, 380.0, "forward"),
+    for (factor, meta) in (
+            (1155.0, "ramp|up"),
+            (1135.0, "offer|forward"),
+            (365.0, "max_avail|reverse"),
+            (380.0, "fixed_load|deficit|forward"),
         )
-        slack = PSI.get_variable(container, V(), PSY.AreaInterchange, meta)
+        slack = PSI.get_variable(container, AEMS.MNSPSlack(), PSY.AreaInterchange, meta)
         @test PSI.JuMP.coefficient(objective, slack[PSY.get_name(ic), 1]) ≈ factor * 17500 * 100 / 12
     end
     # The Market Price Cap is fixed per simulation: a range across 1 July is refused before build.

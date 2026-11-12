@@ -9,12 +9,25 @@ const _MNSP_OPERATING_SERIES = (
     _mnsp_input_meta(MNSPFixedLoadInvokedInput(), MNSPReverseLink()) => NEM_MNSP_FIXED_LOAD_SERIES.reverse_invoked,
 )
 
-const _MNSP_DIRECTIONAL_SLACKS = (
-    MNSPMaxAvailSlack => MNSP_AVAILABILITY_CVP_FACTOR,
-    MNSPOfferSlack => MNSP_OFFER_CVP_FACTOR,
-    MNSPFixedLoadSurplusSlack => FIXED_LOADING_CVP_FACTOR,
-    MNSPFixedLoadDeficitSlack => FIXED_LOADING_CVP_FACTOR,
+const _MNSP_LINKS = (MNSPForwardLink(), MNSPReverseLink())
+const _MNSP_DIRECTIONAL_VARIANTS = (
+    MNSPMaxAvailVariant(), MNSPOfferVariant(), MNSPFixedLoadSurplusVariant(), MNSPFixedLoadDeficitVariant(),
 )
+const _MNSP_RAMP_VARIANTS = (MNSPRampUpVariant(), MNSPRampDownVariant())
+
+# The name each MNSP slack variant had as its own type, kept as the base name of its variables.
+_mnsp_slack_name(::MNSPMaxAvailVariant) = "MNSPMaxAvailSlack"
+_mnsp_slack_name(::MNSPOfferVariant) = "MNSPOfferSlack"
+_mnsp_slack_name(::MNSPRampUpVariant) = "MNSPRampUpSlack"
+_mnsp_slack_name(::MNSPRampDownVariant) = "MNSPRampDownSlack"
+_mnsp_slack_name(::MNSPFixedLoadSurplusVariant) = "MNSPFixedLoadSurplusSlack"
+_mnsp_slack_name(::MNSPFixedLoadDeficitVariant) = "MNSPFixedLoadDeficitSlack"
+
+# The AEMO CVP factor each MNSP slack variant is priced at.
+_mnsp_slack_cvp(::MNSPMaxAvailVariant) = MNSP_AVAILABILITY_CVP_FACTOR
+_mnsp_slack_cvp(::MNSPOfferVariant) = MNSP_OFFER_CVP_FACTOR
+_mnsp_slack_cvp(::_MNSPRampVariant) = MNSP_RAMP_CVP_FACTOR
+_mnsp_slack_cvp(::_MNSPFixedLoadVariant) = FIXED_LOADING_CVP_FACTOR
 
 function PSI.get_multiplier_value(::MNSPOperatingParameter, ::PSY.AreaInterchange, ::NEMInterconnectorLoss)
     return 1.0
@@ -29,7 +42,8 @@ end
     _add_mnsp_limit_variables!(container, devices)
 
 Allocates non-negative per-unit MW violations for MNSP commercial limits, fixed loading and
-net-flow ramping. Directional variables use the link direction as their container meta.
+net-flow ramping, as [`MNSPSlack`](@ref) variables keyed by their variant and, for the directional
+variants, their link.
 
 # Returns
 `nothing`.
@@ -37,11 +51,12 @@ net-flow ramping. Directional variables use the link direction as their containe
 function _add_mnsp_limit_variables!(container, devices)
     names = PSY.get_name.(devices)
     steps = PSI.get_time_steps(container)
-    for dir in _MNSP_DIRECTIONS, (V, _) in _MNSP_DIRECTIONAL_SLACKS
-        _add_slack_variables!(container, V, PSY.AreaInterchange, names, steps; meta = dir, label = "$(nameof(V))_$dir")
+    for link in _MNSP_LINKS, v in _MNSP_DIRECTIONAL_VARIANTS
+        label = "$(_mnsp_slack_name(v))_$(_mnsp_link_prefix(link))"
+        _add_slack_variables!(container, MNSPSlack, PSY.AreaInterchange, names, steps; meta = _mnsp_slack_meta(v, link), label)
     end
-    for V in (MNSPRampUpSlack, MNSPRampDownSlack)
-        _add_slack_variables!(container, V, PSY.AreaInterchange, names, steps)
+    for v in _MNSP_RAMP_VARIANTS
+        _add_slack_variables!(container, MNSPSlack, PSY.AreaInterchange, names, steps; meta = _mnsp_slack_meta(v), label = _mnsp_slack_name(v))
     end
     return
 end
@@ -66,11 +81,11 @@ function _add_mnsp_operating_constraints!(container, devices)
     up_rate, _ = _mnsp_input_accessor(container, MNSPRampRateInput(), MNSPForwardLink())
     down_rate, _ = _mnsp_input_accessor(container, MNSPRampRateInput(), MNSPReverseLink())
     flow = PSI.get_variable(container, PSI.FlowActivePowerVariable(), T)
-    up = PSI.get_variable(container, MNSPRampUpSlack(), T)
-    down = PSI.get_variable(container, MNSPRampDownSlack(), T)
+    up = PSI.get_variable(container, MNSPSlack(), T, _mnsp_slack_meta(MNSPRampUpVariant()))
+    down = PSI.get_variable(container, MNSPSlack(), T, _mnsp_slack_meta(MNSPRampDownVariant()))
     jm = PSI.get_jump_model(container)
-    upper = PSI.add_constraints_container!(container, MNSPRampConstraint(), T, names, steps; meta = "up")
-    lower = PSI.add_constraints_container!(container, MNSPRampConstraint(), T, names, steps; meta = "down")
+    upper = PSI.add_constraints_container!(container, MNSPLinkConstraint(), T, names, steps; meta = "ramp|up")
+    lower = PSI.add_constraints_container!(container, MNSPLinkConstraint(), T, names, steps; meta = "ramp|down")
     for name in names, t in steps
         upper[name, t] = JuMP.@constraint(jm, flow[name, t] - up[name, t] <= (initial(name, t) + minutes * up_rate(name, t)) / base)
         lower[name, t] = JuMP.@constraint(jm, flow[name, t] + down[name, t] >= (initial(name, t) - minutes * down_rate(name, t)) / base)
@@ -79,10 +94,10 @@ function _add_mnsp_operating_constraints!(container, devices)
     for (dir, link) in (("forward", MNSPForwardLink()), ("reverse", MNSPReverseLink()))
         target, _ = _mnsp_input_accessor(container, MNSPFixedLoadInput(), link)
         invoked, _ = _mnsp_input_accessor(container, MNSPFixedLoadInvokedInput(), link)
-        surplus = PSI.get_variable(container, MNSPFixedLoadSurplusSlack(), T, dir)
-        deficit = PSI.get_variable(container, MNSPFixedLoadDeficitSlack(), T, dir)
-        upper = PSI.add_constraints_container!(container, MNSPFixedLoadConstraint(), T, names, steps; meta = "$(dir)_upper")
-        lower = PSI.add_constraints_container!(container, MNSPFixedLoadConstraint(), T, names, steps; meta = "$(dir)_lower")
+        surplus = PSI.get_variable(container, MNSPSlack(), T, _mnsp_slack_meta(MNSPFixedLoadSurplusVariant(), link))
+        deficit = PSI.get_variable(container, MNSPSlack(), T, _mnsp_slack_meta(MNSPFixedLoadDeficitVariant(), link))
+        upper = PSI.add_constraints_container!(container, MNSPLinkConstraint(), T, names, steps; meta = "fixed_load|$(dir)_upper")
+        lower = PSI.add_constraints_container!(container, MNSPLinkConstraint(), T, names, steps; meta = "fixed_load|$(dir)_lower")
         for device in mnsp, t in steps
             name = PSY.get_name(device)
             relax = _mnsp_link_bound(device, dir) * (1.0 - invoked(name, t))
@@ -104,11 +119,11 @@ base power and interval duration.
 """
 function _add_mnsp_limit_costs!(container, devices)
     names = PSY.get_name.(devices)
-    for dir in _MNSP_DIRECTIONS, (V, factor) in _MNSP_DIRECTIONAL_SLACKS
-        _add_mpc_penalty!(container, V, PSY.AreaInterchange, names, factor; meta = dir)
+    for link in _MNSP_LINKS, v in _MNSP_DIRECTIONAL_VARIANTS
+        _add_mpc_penalty!(container, MNSPSlack, PSY.AreaInterchange, names, _mnsp_slack_cvp(v); meta = _mnsp_slack_meta(v, link))
     end
-    for V in (MNSPRampUpSlack, MNSPRampDownSlack)
-        _add_mpc_penalty!(container, V, PSY.AreaInterchange, names, MNSP_RAMP_CVP_FACTOR)
+    for v in _MNSP_RAMP_VARIANTS
+        _add_mpc_penalty!(container, MNSPSlack, PSY.AreaInterchange, names, _mnsp_slack_cvp(v); meta = _mnsp_slack_meta(v))
     end
     return
 end

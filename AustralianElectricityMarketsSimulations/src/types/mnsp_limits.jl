@@ -70,61 +70,83 @@ function _mnsp_input_link(meta::String)::Union{MNSPForwardLink, MNSPReverseLink}
     throw(ArgumentError("MNSPOperatingParameter meta \"$meta\" names no link direction"))
 end
 
-"Non-negative violation of an MNSP operating constraint."
-abstract type AbstractMNSPSlack <: PSI.VariableType end
-
 """
-    MNSPMaxAvailSlack
+    MNSPSlack
 
-Non-negative excess over an MNSP link's availability, in system-base per-unit MW.
-"""
-struct MNSPMaxAvailSlack <: AbstractMNSPSlack end
+Non-negative violation of an MNSP operating constraint, in system-base per-unit MW. The key meta names the
+variant, followed by its link direction for the commercial limits and fixed loading:
 
-"""
-    MNSPOfferSlack
+- `"max_avail|<link>"`: excess over the link's availability.
+- `"offer|<link>"`: flow above the cleared offered bands.
+- `"ramp|up"` or `"ramp|down"`: excess over, or shortfall below, the net-flow ramp limit.
+- `"fixed_load|surplus|<link>"` or `"fixed_load|deficit|<link>"`: excess over, or shortfall below, the
+  link's fixed-loading target.
 
-Non-negative MNSP flow above cleared offered bands, in system-base per-unit MW.
+The link is `"forward"` or `"reverse"`.
 """
-struct MNSPOfferSlack <: AbstractMNSPSlack end
+struct MNSPSlack <: PSI.VariableType end
 
-"""
-    MNSPRampUpSlack
+struct MNSPMaxAvailVariant end
+struct MNSPOfferVariant end
+struct MNSPRampUpVariant end
+struct MNSPRampDownVariant end
+struct MNSPFixedLoadSurplusVariant end
+struct MNSPFixedLoadDeficitVariant end
 
-Non-negative excess over the forward net-flow ramp limit, in system-base per-unit MW.
-"""
-struct MNSPRampUpSlack <: AbstractMNSPSlack end
+const _MNSPRampVariant = Union{MNSPRampUpVariant, MNSPRampDownVariant}
+const _MNSPFixedLoadVariant = Union{MNSPFixedLoadSurplusVariant, MNSPFixedLoadDeficitVariant}
 
-"""
-    MNSPRampDownSlack
+# The variant's own segments of the meta, before any link direction.
+_mnsp_slack_head(::MNSPMaxAvailVariant) = "max_avail"
+_mnsp_slack_head(::MNSPOfferVariant) = "offer"
+_mnsp_slack_head(::MNSPRampUpVariant) = "ramp|up"
+_mnsp_slack_head(::MNSPRampDownVariant) = "ramp|down"
+_mnsp_slack_head(::MNSPFixedLoadSurplusVariant) = "fixed_load|surplus"
+_mnsp_slack_head(::MNSPFixedLoadDeficitVariant) = "fixed_load|deficit"
 
-Non-negative shortfall below the reverse net-flow ramp limit, in system-base per-unit MW.
-"""
-struct MNSPRampDownSlack <: AbstractMNSPSlack end
+# The key meta of a ramp variant, and of a directional variant on its link.
+_mnsp_slack_meta(v::_MNSPRampVariant) = _mnsp_slack_head(v)
+_mnsp_slack_meta(v::Union{MNSPMaxAvailVariant, MNSPOfferVariant, _MNSPFixedLoadVariant}, link::Union{MNSPForwardLink, MNSPReverseLink}) =
+    string(_mnsp_slack_head(v), "|", _mnsp_link_prefix(link))
 
-"""
-    MNSPFixedLoadSurplusSlack
+# Splits a meta at its first `|` into its first segment and the rest, which is empty when there is none.
+function _split_mnsp_meta(meta::AbstractString)
+    parts = split(meta, '|'; limit = 2)
+    return String(parts[1]), length(parts) == 2 ? String(parts[2]) : ""
+end
 
-Non-negative excess over a link's fixed-loading target, in system-base per-unit MW.
-"""
-struct MNSPFixedLoadSurplusSlack <: AbstractMNSPSlack end
+# The ramp variant a meta after `ramp|` names.
+function _mnsp_ramp_variant(meta::AbstractString)::_MNSPRampVariant
+    sense, _ = _split_mnsp_meta(meta)
+    sense == "up" && return MNSPRampUpVariant()
+    sense == "down" && return MNSPRampDownVariant()
+    throw(ArgumentError("an MNSPSlack ramp names \"up\" or \"down\", got \"$sense\""))
+end
 
-"""
-    MNSPFixedLoadDeficitSlack
+# The fixed-loading variant a meta after `fixed_load|` names.
+function _mnsp_fixed_load_variant(meta::AbstractString)::_MNSPFixedLoadVariant
+    sense, _ = _split_mnsp_meta(meta)
+    sense == "surplus" && return MNSPFixedLoadSurplusVariant()
+    sense == "deficit" && return MNSPFixedLoadDeficitVariant()
+    throw(ArgumentError("an MNSPSlack fixed load names \"surplus\" or \"deficit\", got \"$sense\""))
+end
 
-Non-negative shortfall below a link's fixed-loading target, in system-base per-unit MW.
-"""
-struct MNSPFixedLoadDeficitSlack <: AbstractMNSPSlack end
+# The variant an `MNSPSlack` meta names: its kind, then its ramp direction or fixed-loading sense.
+function _mnsp_slack_variant(meta::String)::Union{MNSPMaxAvailVariant, MNSPOfferVariant, _MNSPRampVariant, _MNSPFixedLoadVariant}
+    kind, rest = _split_mnsp_meta(meta)
+    kind == "max_avail" && return MNSPMaxAvailVariant()
+    kind == "offer" && return MNSPOfferVariant()
+    kind == "ramp" && return _mnsp_ramp_variant(rest)
+    kind == "fixed_load" && return _mnsp_fixed_load_variant(rest)
+    throw(ArgumentError("an MNSPSlack has no variant named \"$kind\""))
+end
 
-"""
-    MNSPRampConstraint
+# The link tag of a link direction name, `"forward"` or `"reverse"`.
+function _mnsp_direction_link(dir::AbstractString)::Union{MNSPForwardLink, MNSPReverseLink}
+    dir == "forward" && return MNSPForwardLink()
+    dir == "reverse" && return MNSPReverseLink()
+    throw(ArgumentError("an MNSP link direction is \"forward\" or \"reverse\", got \"$dir\""))
+end
 
-Signed net-flow ramp limit about metered starting flow; meta is `"up"` or `"down"`.
-"""
-struct MNSPRampConstraint <: PSI.ConstraintType end
-
-"""
-    MNSPFixedLoadConstraint
-
-Directional fixed-loading limit with a priced violation; meta identifies the link and sense.
-"""
-struct MNSPFixedLoadConstraint <: PSI.ConstraintType end
+# The link direction a directional `MNSPSlack` meta names, its last segment.
+_mnsp_slack_link(meta::String) = _mnsp_direction_link(last(split(meta, '|')))
