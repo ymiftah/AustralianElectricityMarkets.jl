@@ -111,8 +111,8 @@ end
 # load without an energy bid is named by the zero LOAD `MAXAVAIL` series `set_effective_offers!` looks up.
 # The ramp rates and the energy limits carry their series name as an `add_parameters!` argument, since one type serves several.
 #
-# The device's own key is read, not the type's first device's: every device of a
-# type carries the same name, which is what lets the one-name-per-type registration work.
+# The one-name-per-type registration takes the first device's series name; `_has_nem_dispatch_limits`
+# checks every device for its series.
 #
 # The `D <: PSY.Device` constraint is required, not decorative: without it these methods are ambiguous
 # with PSI's generic `_get_time_series_name(::T, ::Component, ::DeviceModel) where {T <: ParameterType}`

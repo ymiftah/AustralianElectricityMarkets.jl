@@ -115,7 +115,7 @@ export max_active_power_floor, in_fast_start_profile, fixed_load_invoked, effect
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
 export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
     exclude_unmodeled_services!, check_replication_steps,
-    never_invoked_constraints, prepare_replay!, MNSPSlack
+    never_invoked_constraints, prepare_replay!
 export NEMDispatchProblem, nemde_optimizer, NEMDE_HIGHS_OPTIONS
 export EnergyOfferBandVariable, EnergyBandWidthParameter, EnergyBandPriceParameter
 export EnergyLimitTimeSeriesParameter

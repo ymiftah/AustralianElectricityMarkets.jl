@@ -2,9 +2,8 @@
 const _VIOLATION_TOLERANCE_MW = 1.0e-6
 
 
-# Every elastic slack family, as `slack variable type => (family, direction)`. `direction` is
-# `"up"` for a slack that relaxes a `<=` row and `"down"` for one that relaxes a `>=` row; the
-# FCAS families whose rows have both senses refine it per key in `_violation_direction`.
+# The slack families keyed by their own variable type, as `slack variable type => (family, direction)`. `direction` is
+# `"up"` for a slack that relaxes a `<=` row and `"down"` for one that relaxes a `>=` row.
 const _VIOLATION_FAMILIES = (
     GenericConstraintSlackUp => ("generic_constraint", "up"),
     GenericConstraintSlackDown => ("generic_constraint", "down"),
@@ -12,6 +11,8 @@ const _VIOLATION_FAMILIES = (
     PSI.SystemBalanceSlackDown => ("area_balance", "down"),
 )
 
+# The slack types whose keys carry a variant meta, read by the `_violation_kind` methods.
+const _META_SLACK_TYPES = (NEMUnitSlack, MNSPSlack, InterconnectorFlowSlack, FCASSlack)
 
 # The family and default direction of each MNSP slack variant.
 _mnsp_violation_family(::MNSPMaxAvailVariant) = ("mnsp_max_avail", "up")
@@ -113,14 +114,14 @@ relaxing a `<=` row and `"down"` for one relaxing a `>=` row; for `"area_balance
 
 # Returns
 A `DataFrame` with `family`, `name`, `DateTime`, `MW`, `direction` and `variable` (the slack
-variable's key as PSI encodes it in result files, e.g. `"NEMUnitSlack__HydroDispatch__unit_ramp_up"`). The
+variable's key as PSI encodes it in result files, e.g. `"NEMUnitSlack__HydroDispatch__unit_ramp|up"`). The
 unit ramp rows are those with `family == "unit_ramp"`.
 """
 function read_constraint_violations(
         results::Union{PSI.OptimizationProblemResults, PSI.SimulationProblemResults}, sys::PSY.System,
     )
     kinds = Dict(_VIOLATION_FAMILIES)
-    is_slack(type) = type === NEMUnitSlack || type === MNSPSlack || type === InterconnectorFlowSlack || type === FCASSlack || haskey(kinds, type)
+    is_slack(type) = type in _META_SLACK_TYPES || haskey(kinds, type)
     rows = NamedTuple{
         (:family, :name, :DateTime, :MW, :direction, :variable),
         Tuple{String, String, DateTime, Float64, String, String},

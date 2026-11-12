@@ -409,7 +409,7 @@ end
     @test out.objective ≈ (50.0 * 20.0 + 10.0 * AustralianElectricityMarkets.ENERGY_MAX_AVAIL_CVP_FACTOR * mpc) * interval_hours(DISPATCH_INTERVAL) rtol = 1.0e-8
 
     @testset "the storage ramp slack is priced at 1155 x MPC" begin
-        slack = PSI.get_variable(out.container, NEMUnitSlack(), EnergyReservoirStorage, "unit_ramp_up")[TOY_BATTERY, 1]
+        slack = PSI.get_variable(out.container, NEMUnitSlack(), EnergyReservoirStorage, "unit_ramp|up")[TOY_BATTERY, 1]
         coefficient = PSI.JuMP.objective_function(PSI.get_jump_model(out.container)).terms[slack]
         @test coefficient ≈
             PSY.get_base_power(sys) * interval_cost_coefficient(AustralianElectricityMarkets.UNIT_RAMP_CVP_FACTOR * mpc, TOY_RESOLUTION)
@@ -437,7 +437,7 @@ end
     @test direction(sys, FCASSlack, "joint_ramping|S_LOWERREG", TOY_CHEAP, "up") == "down"
     @test direction(sys, FCASSlack, "joint_ramping|S_LOWERREG", "PUMP", "up") == "up"
     @test direction(sys, FCASSlack, "joint_ramping|S_RAISEREG", "PUMP", "up") == "down"
-    @test direction(sys, NEMUnitSlack, "unit_ramp_down", TOY_CHEAP, "down") == "down"
+    @test direction(sys, NEMUnitSlack, "unit_ramp|down", TOY_CHEAP, "down") == "down"
 end
 
 @testset "penalty ordering: a lower CVP row breaks before a higher one" begin
@@ -895,7 +895,7 @@ end
         PSI.get_resolution(container),
     )
     objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
-    slack = PSI.get_variable(container, AEMS.NEMUnitSlack(), ThermalStandard, "unit_ramp_up")
+    slack = PSI.get_variable(container, AEMS.NEMUnitSlack(), ThermalStandard, "unit_ramp|up")
     for t in axes(slack)[2]
         @test PSI.JuMP.coefficient(objective, slack[TOY_CHEAP, t]) ≈ expected
     end

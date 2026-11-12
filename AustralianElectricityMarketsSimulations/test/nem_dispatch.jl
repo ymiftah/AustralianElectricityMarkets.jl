@@ -140,7 +140,7 @@ end
         # The UIGF and fixed-loading rows are added per device that carries the input, so a participant
         # without one carries a narrower shape; the energy and ramp shape is the same for every participant.
         # The UIGF and fixed-loading slacks are NEMUnitSlack keys under their own metas, left out of the shape.
-        optional_slack_metas = ["energy_limit_uigf", "fixed_load_surplus", "fixed_load_deficit"]
+        optional_slack_metas = ["energy_limit|uigf", "fixed_load|surplus", "fixed_load|deficit"]
         variable_sets = [
             entry_types(
                 [
@@ -156,7 +156,7 @@ end
                 for T in generator_participants
         ]
         @test allequal(slack_meta_sets)
-        for meta in ("energy_limit_max_avail", "energy_offer_surplus", "energy_offer_deficit", "unit_ramp_up", "unit_ramp_down")
+        for meta in ("energy_limit|max_avail", "energy_offer|surplus", "energy_offer|deficit", "unit_ramp|up", "unit_ramp|down")
             @test meta in first(slack_meta_sets)
         end
         # NEMUnitConstraint is one entry type, so the unit row shape is compared by (entry type, meta) pairs.
@@ -290,8 +290,8 @@ end
         )
         @test size(constraint, 2) == 1
         @test constraint_vars(constraint["ER02", 1]) == Set([power["ER02", 1]])
-        slack_meta = meta == "up" ? "unit_ramp_up" : "unit_ramp_down"
-        other_meta = meta == "up" ? "unit_ramp_down" : "unit_ramp_up"
+        slack_meta = meta == "up" ? "unit_ramp|up" : "unit_ramp|down"
+        other_meta = meta == "up" ? "unit_ramp|down" : "unit_ramp|up"
         func = JuMP.constraint_object(constraint["ER02", 1]).func
         slack = PSI.get_variable(container, AEMS.NEMUnitSlack(), ThermalStandard, slack_meta)["ER02", 1]
         other = PSI.get_variable(container, AEMS.NEMUnitSlack(), ThermalStandard, other_meta)["ER02", 1]

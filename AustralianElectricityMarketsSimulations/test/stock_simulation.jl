@@ -281,7 +281,7 @@ end
             @test stock_price(solved) ≈ expected[k].price atol = TOY_TOLERANCE
         end
     end
-    ramp_slack = only(values(PSI.read_realized_variables(sim.results, ["NEMUnitSlack__EnergyReservoirStorage__unit_ramp_down"])))
+    ramp_slack = only(values(PSI.read_realized_variables(sim.results, ["NEMUnitSlack__EnergyReservoirStorage__unit_ramp|down"])))
     @test all(v -> abs(v) <= TOY_TOLERANCE, ramp_slack.value)
 end
 

@@ -365,7 +365,7 @@ end
 Holds each device's dispatch `net_at(name, t)` within its per-interval ramp rates of its base.
 Rates are read from the `"ramp_up_rate"` and `"ramp_down_rate"` parameters in system-base per-unit
 per minute and multiplied by the interval length in minutes. Each `PSI.RampConstraint` row carries a
-[`NEMUnitSlack`](@ref) of the `unit_ramp_up` or `unit_ramp_down` variant, priced at [`UNIT_RAMP_CVP_FACTOR`](@ref)
+[`NEMUnitSlack`](@ref) of the `unit_ramp|up` or `unit_ramp|down` variant, priced at [`UNIT_RAMP_CVP_FACTOR`](@ref)
 times the Market Price Cap, so conflicts with the availability limits are resolved through the
 competing violation costs.
 

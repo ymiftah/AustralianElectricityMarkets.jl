@@ -23,7 +23,7 @@ const MARKET_PRICE_CAP_BY_FINANCIAL_YEAR = [
 
 CVP factor (1155) of AEMO's Unit Ramp Rate constraint (`DeficitRampRate` and `SurplusRampRate`),
 item 3 of the *Schedule of Constraint Violation Penalty Factors* v8.0. Prices the
-`unit_ramp_up` and `unit_ramp_down` variants of `NEMUnitSlack`.
+`unit_ramp|up` and `unit_ramp|down` variants of `NEMUnitSlack`.
 """
 const UNIT_RAMP_CVP_FACTOR = 1155.0
 
@@ -51,7 +51,7 @@ const ENERGY_OFFER_CVP_FACTOR = 1135.0
     ENERGY_UIGF_CVP_FACTOR
 
 CVP factor (385) of AEMO's semi-scheduled UIGF constraint, item 12 of the *Schedule of Constraint
-Violation Penalty Factors* v8.0. Prices the `energy_limit_uigf` variant of `NEMUnitSlack`.
+Violation Penalty Factors* v8.0. Prices the `energy_limit|uigf` variant of `NEMUnitSlack`.
 """
 const ENERGY_UIGF_CVP_FACTOR = 385.0
 
@@ -60,8 +60,8 @@ const ENERGY_UIGF_CVP_FACTOR = 385.0
     ENERGY_MAX_AVAIL_CVP_FACTOR
 
 CVP factor (370) of AEMO's Unit MaxAvail constraint, item 14 of the *Schedule of Constraint
-Violation Penalty Factors* v8.0. Prices the `energy_limit_max_avail`, `energy_limit_max_avail_out`
-and `energy_limit_max_avail_in` variants of `NEMUnitSlack`.
+Violation Penalty Factors* v8.0. Prices the `energy_limit|max_avail`, `energy_limit|max_avail_out`
+and `energy_limit|max_avail_in` variants of `NEMUnitSlack`.
 """
 const ENERGY_MAX_AVAIL_CVP_FACTOR = 370.0
 
@@ -90,7 +90,7 @@ const INTERCONNECTOR_ZERO_CVP_FACTOR = 1160.0
 
 CVP factor (380) of AEMO's Energy Inflexible Offer constraint, a unit held at its participant
 fixed loading, item 13 of the *Schedule of Constraint Violation Penalty Factors* v8.0. Prices
-the `fixed_load_surplus` and `fixed_load_deficit` variants of `NEMUnitSlack`.
+the `fixed_load|surplus` and `fixed_load|deficit` variants of `NEMUnitSlack`.
 """
 const FIXED_LOADING_CVP_FACTOR = 380.0
 

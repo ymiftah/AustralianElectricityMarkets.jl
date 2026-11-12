@@ -76,12 +76,12 @@ function _update_state_parameters!(value_at::F, container::PSI.OptimizationConta
     parent_param = PSI.get_parameter_array_data(PSI.get_parameter(container, key))
     attributes = PSI.get_parameter_attributes(container, key)
     uuids::Dict{String, String} = attributes.component_name_to_ts_uuid
-    _write_state_rows!(value_at, P, T, model, PSI.get_time_steps(container), parameter_array, parent_param, uuids)
+    _write_state_rows!(value_at, P, T, model, PSI.get_time_steps(container), parameter_array, parent_param, uuids, key.meta)
     return
 end
 
 # Writes the rows of each named device, in a function of the concrete array and value types.
-function _write_state_rows!(value_at::F, ::Type{P}, ::Type{T}, model, steps, parameter_array, parent_param, uuids::Dict{String, String}) where {F, P, T}
+function _write_state_rows!(value_at::F, ::Type{P}, ::Type{T}, model, steps, parameter_array, parent_param, uuids::Dict{String, String}, meta::AbstractString) where {F, P, T}
     system = PSI.get_system(model)
     for (name, uuid) in uuids
         device = PSY.get_component(T, system, name)::T
@@ -90,7 +90,7 @@ function _write_state_rows!(value_at::F, ::Type{P}, ::Type{T}, model, steps, par
             stamp = _step_stamp(model, t)
             value = Float64(value_at(device, stamp))
             isfinite(value) || error(
-                "The value of $(nameof(P)) for \"$(name)\" at $(stamp) is not finite. " *
+                "The value of $(nameof(P)) with meta \"$(meta)\" for \"$(name)\" at $(stamp) is not finite. " *
                     "Check that the unit's state and bids are valid.",
             )
             _psi_set_param_value_at!(parent_param, value, i, t)

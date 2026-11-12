@@ -23,8 +23,9 @@ Each formulation family and PSI role has one entry type. The variant goes in the
 string `"<variant>|<existing meta>"`. The separator is `|`, never `__`.
 
 A singleton tag type stands for each variant. One boundary recovers the variant from the key's meta:
-the parser or the meta builder. Everything downstream dispatches on those tags: CVP penalties, natural
-units, constraint rows and the per-step updates. Only public PSI API is used.
+the parser or the meta builder. Downstream, CVP penalties and natural units dispatch on the tags for the
+NEMUnit and MNSP families. For FCAS and interconnector flow they are call-site constants. Constraint rows
+and the per-step updates dispatch on the entry type. Only public PSI API is used.
 
 Device-type multiplicity is kept. The stock `DeviceModel`s of [0097](0097-stock-devices-for-replay.md)
 still give one key per device type, so the merge is across variants, not across devices.
@@ -44,25 +45,47 @@ Not merged:
 - The FCAS upper and lower slope parameters. PSI picks the tuple unwrap by parameter type
   (`add_parameters.jl:541` and `:546`, and `update_container_parameter_values.jl:98` in the pinned fork),
   so the two must keep distinct types.
-- `FixedLoad` and `FixedLoadInvoked`. Their natural units differ.
-- `InitialPower`.
+- `FixedLoadTimeSeriesParameter` and `FixedLoadInvokedTimeSeriesParameter`. Their natural units differ.
+- `InitialPowerTimeSeriesParameter`.
 - `FCASJointCapacityConstraint`. Its dual is the FCAS price, so it keeps its own type.
 
 Union cap: a union of key types on a per-step path holds at most four members. Build-time and
-results-time parsers may flatten a larger union.
+results-time meta parsers may return a larger union, since they run outside the per-step path.
+
+Meta grammar. Each merged type's meta forms are below. Most are `<kind>|<variant or existing meta>`.
+A type whose variant is the whole meta, such as a single-direction parameter, uses a bare variant. The
+exceptions are listed in the table. The separator `|` is the only one used in composite metas.
+
+| Entry type | Meta forms |
+| --- | --- |
+| `RampRateTimeSeriesParameter` | `up`, `down` (bare variant) |
+| `MNSPOperatingParameter` | `initial_flow`, `<link>_ramp_rate`, `<link>_fixed_load`, `<link>_fixed_load_invoked`, with `<link>` `forward` or `reverse` (field names, not `\|`) |
+| `MNSPBandWidthParameter`, `MNSPMaxAvailParameter` | `forward`, `reverse` (bare variant) |
+| `MNSPSlack` | `max_avail\|<link>`, `offer\|<link>`, `ramp\|up`, `ramp\|down`, `fixed_load\|surplus\|<link>`, `fixed_load\|deficit\|<link>` |
+| `MNSPLinkConstraint` | `flow`, `band`, `max_avail`, `direction`, `loss\|lb`, `loss\|ub`, `loss_split`, `ramp\|up`, `ramp\|down`, `fixed_load\|<link>_upper`, `fixed_load\|<link>_lower` |
+| `InterconnectorFlowSlack` | `surplus`, `deficit` (bare variant) |
+| `InterconnectorLossConstraint` | `flow_segment`, `loss_definition`, `segment_order\|ub`, `segment_order\|lb` |
+| `FCASSlack` | `joint_capacity\|<meta>`, `joint_ramping\|<service>`, `max_avail\|<meta>`, `bdu_ramping\|<service>` |
+| `FCASUnitConstraint` | `joint_ramping\|<service>`, `max_avail\|<meta>`, `offer_band\|<meta>`, `bdu_ramping\|<service>` |
+| `NEMUnitSlack` | `energy_offer\|surplus`, `energy_offer\|deficit`, `energy_offer\|decremental_surplus`, `energy_offer\|decremental_deficit`, `energy_limit\|max_avail`, `energy_limit\|uigf`, `energy_limit\|max_avail_out`, `energy_limit\|max_avail_in`, `fixed_load\|surplus`, `fixed_load\|deficit`, `unit_ramp\|up`, `unit_ramp\|down` |
+| `NEMUnitConstraint` | `offer_band\|gen`, `offer_band\|load`, `max_avail`, `uigf`, `max_avail_out`, `max_avail_in`, `fixed_load\|upper`, `fixed_load\|lower` |
+| `EnergyLimitTimeSeriesParameter` | `max_avail`, `uigf` (bare variant) |
+
+The stock `PSI.RampConstraint` keeps its `up` and `dn` metas.
 
 ## Consequences
 
-- Stored result names change. For example, `MNSPSlack__AreaInterchange__ramp_up` and
-  `NEMUnitSlack__ThermalStandard__energy_offer_surplus`. The readers in `src/results` are updated, and
+- Stored result names change. For example, `MNSPSlack__AreaInterchange__ramp|up` and
+  `NEMUnitSlack__ThermalStandard__energy_offer|surplus`. The readers in `src/results` are updated, and
   nothing in `scripts/` parses the old names.
-- Per key type removed, the build saves about 0.78 s. That is below the 1.0 to 1.4 s spike marginals,
+- `|` in key names makes PSI CSV export filenames invalid on Windows. CI runs on Linux.
+- Inference saves about 0.78 s per key type removed. That is below the 1.0 to 1.4 s spike marginals,
   because shared specialisations are paid once.
 - Remaining levers, none done here:
   - Shared component keys for device parameters, via a PSI fork change. This also enables the slope
     merge above.
   - Spike A key despecialisation in the fork, measured at a saving of 47 s.
-  - The warm build gap of about 13 s per run, against 0.3 s for stock PSI.
+  - The warm build: 12.2 s per warm run against 0.33 s stock (measured).
   - The precompile workload.
 
 ## Market correctness

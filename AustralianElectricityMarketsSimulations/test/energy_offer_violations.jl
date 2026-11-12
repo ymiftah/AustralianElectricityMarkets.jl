@@ -93,3 +93,64 @@ end
         @test only(rows.name) == name
     end
 end
+
+@testset "every slack variant's key meta parses back to its variant and keeps its violation family" begin
+    kinds = Dict(AEMS._VIOLATION_FAMILIES)
+    nem_unit = [
+        (AEMS.EnergyOfferSurplusVariant(), "energy_offer|surplus", ("energy_offer", "up")),
+        (AEMS.EnergyOfferDeficitVariant(), "energy_offer|deficit", ("energy_offer", "down")),
+        (AEMS.EnergyOfferDecrementalSurplusVariant(), "energy_offer|decremental_surplus", ("energy_offer", "up")),
+        (AEMS.EnergyOfferDecrementalDeficitVariant(), "energy_offer|decremental_deficit", ("energy_offer", "down")),
+        (AEMS.EnergyLimitMaxAvailVariant(), "energy_limit|max_avail", ("energy_max_avail", "up")),
+        (AEMS.EnergyLimitUIGFVariant(), "energy_limit|uigf", ("energy_uigf", "up")),
+        (AEMS.EnergyLimitMaxAvailOutVariant(), "energy_limit|max_avail_out", ("energy_max_avail", "up")),
+        (AEMS.EnergyLimitMaxAvailInVariant(), "energy_limit|max_avail_in", ("energy_max_avail", "down")),
+        (AEMS.FixedLoadSurplusVariant(), "fixed_load|surplus", ("fixed_load", "up")),
+        (AEMS.FixedLoadDeficitVariant(), "fixed_load|deficit", ("fixed_load", "down")),
+        (AEMS.UnitRampUpVariant(), "unit_ramp|up", ("unit_ramp", "up")),
+        (AEMS.UnitRampDownVariant(), "unit_ramp|down", ("unit_ramp", "down")),
+    ]
+    for (tag, meta, family) in nem_unit
+        @test AEMS._nem_unit_slack_meta(tag) == meta
+        @test AEMS._nem_unit_slack_variant(meta) === tag
+        @test AEMS._violation_kind(kinds, AEMS.NEMUnitSlack, meta) == family
+    end
+
+    # Ramp variants take no link; every other MNSP variant is composed with the link direction.
+    mnsp = [
+        (AEMS.MNSPMaxAvailVariant(), AEMS.MNSPForwardLink(), ("mnsp_max_avail", "up")),
+        (AEMS.MNSPOfferVariant(), AEMS.MNSPReverseLink(), ("mnsp_offer", "up")),
+        (AEMS.MNSPRampUpVariant(), AEMS.MNSPForwardLink(), ("mnsp_ramp", "up")),
+        (AEMS.MNSPRampDownVariant(), AEMS.MNSPForwardLink(), ("mnsp_ramp", "down")),
+        (AEMS.MNSPFixedLoadSurplusVariant(), AEMS.MNSPForwardLink(), ("mnsp_fixed_load", "up")),
+        (AEMS.MNSPFixedLoadDeficitVariant(), AEMS.MNSPReverseLink(), ("mnsp_fixed_load", "down")),
+    ]
+    for (tag, link, family) in mnsp
+        meta = tag isa AEMS._MNSPRampVariant ? AEMS._mnsp_slack_meta(tag) : AEMS._mnsp_slack_meta(tag, link)
+        @test AEMS._mnsp_slack_variant(meta) === tag
+        @test AEMS._violation_kind(kinds, AEMS.MNSPSlack, meta) == family
+    end
+
+    # Each FCAS row family is joined to a service meta with `|`.
+    fcas = [
+        (AEMS.FCASJointCapacityVariant(), ("fcas_enablement", "up")),
+        (AEMS.FCASJointRampingVariant(), ("fcas_joint_ramping", "up")),
+        (AEMS.FCASMaxAvailVariant(), ("fcas_max_avail", "up")),
+        (AEMS.FCASBDURampingVariant(), ("fcas_bdu_ramping", "up")),
+    ]
+    for (tag, family) in fcas
+        meta = AEMS._fcas_slack_meta(tag, "NSW1_RAISEREG")
+        @test AEMS._fcas_slack_variant(meta) === tag
+        @test AEMS._violation_kind(kinds, AEMS.FCASSlack, meta) == family
+    end
+
+    interconnector = [
+        (AEMS.InterconnectorFlowSurplus(), ("interconnector_flow", "up")),
+        (AEMS.InterconnectorFlowDeficit(), ("interconnector_flow", "down")),
+    ]
+    for (tag, family) in interconnector
+        meta = AEMS._interconnector_flow_meta(tag)
+        @test AEMS._interconnector_flow_variant(meta) === tag
+        @test AEMS._violation_kind(kinds, AEMS.InterconnectorFlowSlack, meta) == family
+    end
+end

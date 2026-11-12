@@ -60,15 +60,15 @@ end
 @testset "a static rating does not defeat the separate energy limits" begin
     out = energy_limit_solve(energy_limit_system(; max_avail = 70.0, uigf = 65.0, rating = 30.0))
     @test out.power ≈ 60.0 atol = 1.0e-6
-    @test energy_slack(out, "energy_limit_max_avail") ≈ 0.0 atol = 1.0e-6
-    @test energy_slack(out, "energy_limit_uigf") ≈ 0.0 atol = 1.0e-6
+    @test energy_slack(out, "energy_limit|max_avail") ≈ 0.0 atol = 1.0e-6
+    @test energy_slack(out, "energy_limit|uigf") ≈ 0.0 atol = 1.0e-6
 end
 
 @testset "non-conformance can violate both distinct energy limits" begin
     out = energy_limit_solve(energy_limit_system(; max_avail = 40.0))
     @test out.power ≈ 60.0 atol = 1.0e-6
-    @test energy_slack(out, "energy_limit_max_avail") ≈ 20.0 atol = 1.0e-6
-    @test energy_slack(out, "energy_limit_uigf") ≈ 15.0 atol = 1.0e-6
+    @test energy_slack(out, "energy_limit|max_avail") ≈ 20.0 atol = 1.0e-6
+    @test energy_slack(out, "energy_limit|uigf") ≈ 15.0 atol = 1.0e-6
     @test only(filter(:family => ==("energy_max_avail"), out.violations).MW) ≈ 20.0 atol = 1.0e-6
     @test only(filter(:family => ==("energy_uigf"), out.violations).MW) ≈ 15.0 atol = 1.0e-6
     @test !any(==("generic_constraint"), out.violations.family)
@@ -78,8 +78,8 @@ end
 @testset "fixed loading beats MaxAvail but does not beat UIGF" begin
     out = energy_limit_solve(energy_limit_system(; max_avail = 40.0, target = nothing, fixed_load = 60.0))
     @test out.power ≈ 45.0 atol = 1.0e-6
-    @test energy_slack(out, "energy_limit_max_avail") ≈ 5.0 atol = 1.0e-6
-    @test energy_slack(out, "energy_limit_uigf") ≈ 0.0 atol = 1.0e-6
+    @test energy_slack(out, "energy_limit|max_avail") ≈ 5.0 atol = 1.0e-6
+    @test energy_slack(out, "energy_limit|uigf") ≈ 0.0 atol = 1.0e-6
     fixed = only(filter(:family => ==("fixed_load"), out.violations))
     @test fixed.MW ≈ 15.0 atol = 1.0e-6
     @test fixed.direction == "down"
@@ -94,8 +94,8 @@ end
 @testset "ramping beats the combined availability and UIGF penalties" begin
     out = energy_limit_solve(energy_limit_system(; max_avail = 40.0, target = nothing, initial = 65.0, down = 1.0))
     @test out.power ≈ 60.0 atol = 1.0e-6
-    @test energy_slack(out, "energy_limit_max_avail") ≈ 20.0 atol = 1.0e-6
-    @test energy_slack(out, "energy_limit_uigf") ≈ 15.0 atol = 1.0e-6
+    @test energy_slack(out, "energy_limit|max_avail") ≈ 20.0 atol = 1.0e-6
+    @test energy_slack(out, "energy_limit|uigf") ≈ 15.0 atol = 1.0e-6
     @test !any(==("unit_ramp"), out.violations.family)
 end
 
@@ -103,8 +103,8 @@ end
     for forecast in (30.0, 0.0)
         out = energy_limit_solve(energy_limit_system(; max_avail = 40.0, uigf = forecast, target = nothing, price = -1000.0))
         @test out.power ≈ forecast atol = 1.0e-6
-        @test energy_slack(out, "energy_limit_max_avail") ≈ 0.0 atol = 1.0e-6
-        @test energy_slack(out, "energy_limit_uigf") ≈ 0.0 atol = 1.0e-6
+        @test energy_slack(out, "energy_limit|max_avail") ≈ 0.0 atol = 1.0e-6
+        @test energy_slack(out, "energy_limit|uigf") ≈ 0.0 atol = 1.0e-6
     end
     scheduled = energy_limit_solve(energy_limit_system(; max_avail = 40.0, uigf = nothing, target = nothing))
     @test scheduled.power ≈ 40.0 atol = 1.0e-6
@@ -147,7 +147,7 @@ end
         @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
         container = PSI.get_optimization_container(model)
         objective = PSI.JuMP.objective_function(PSI.get_jump_model(container))
-        slack = PSI.get_variable(container, AEMS.NEMUnitSlack(), ThermalStandard, "energy_limit_max_avail")
+        slack = PSI.get_variable(container, AEMS.NEMUnitSlack(), ThermalStandard, "energy_limit|max_avail")
         @test PSI.JuMP.coefficient(objective, slack[TOY_CHEAP, 1]) ≈ expected
     end
 end

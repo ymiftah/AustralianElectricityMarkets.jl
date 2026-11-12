@@ -369,8 +369,7 @@ end
 
 Bounds `PSI.FlowActivePowerVariable` by the static `flow_limits`, or by the from-to and to-from
 flow-limit parameters when every device carries those time series. Each row carries an
-[`InterconnectorFlowSlack`](@ref) with meta `"surplus"` (upper) or `"deficit"` (lower)
-(lower) priced at [`INTERCONNECTOR_FLOW_CVP_FACTOR`](@ref) times the Market Price Cap, always,
+[`InterconnectorFlowSlack`](@ref) with meta `"surplus"` (upper) or `"deficit"` (lower) priced at [`INTERCONNECTOR_FLOW_CVP_FACTOR`](@ref) times the Market Price Cap, always,
 whatever the device model's `use_slacks`, as NEMDE's limit is always soft, so
 limits that conflict with each other or with the loss breakpoint range are violated at that price
 instead of making the model infeasible. The breakpoint range itself stays a hard bound. Because

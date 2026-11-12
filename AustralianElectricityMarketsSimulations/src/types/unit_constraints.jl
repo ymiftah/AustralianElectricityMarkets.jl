@@ -6,7 +6,7 @@ device type and row. The key meta names the row, composed with the row's own con
 `|`:
 
 - `"offer_band|gen"` and `"offer_band|load"`: `dispatch == Σ bands + surplus - deficit` for one device and
-  interval, over its [`EnergyOfferBandVariable`](@ref)s. Meta `"gen"` or `"load"` for the offer's side.
+  interval, over its [`EnergyOfferBandVariable`](@ref)s. The part after `|` is the offer's side, `"gen"` or `"load"`.
 - `"max_avail"`, `"uigf"`, `"max_avail_out"` and `"max_avail_in"`: the energy availability rows, the
   dispatch less its surplus at most the live limit. `"max_avail_in"` is the charging side of a battery.
 - `"fixed_load|upper"` and `"fixed_load|lower"`: AEMO's Energy Inflexible Offer rows (*Schedule of

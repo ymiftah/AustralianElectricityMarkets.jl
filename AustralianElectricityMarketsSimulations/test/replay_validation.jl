@@ -243,7 +243,7 @@ end
     balance = PSI.get_variable(container, PSI.SystemBalanceSlackUp(), PSY.Area)
     @test PSI.JuMP.coefficient(objective, balance[first(axes(balance)[1]), first(axes(balance)[2])]) ≈
         per_mpc * AustralianElectricityMarkets.AREA_BALANCE_CVP_FACTOR rtol = 1.0e-12
-    ramp = PSI.get_variable(container, AEMS.NEMUnitSlack(), ThermalStandard, "unit_ramp_up")
+    ramp = PSI.get_variable(container, AEMS.NEMUnitSlack(), ThermalStandard, "unit_ramp|up")
     @test all(v -> isapprox(PSI.JuMP.coefficient(objective, v), per_mpc * AEMS.UNIT_RAMP_CVP_FACTOR; rtol = 1.0e-12), ramp)
 end
 
