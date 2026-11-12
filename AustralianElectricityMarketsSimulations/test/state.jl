@@ -39,7 +39,7 @@ end
     first_state = AustralianElectricityMarketsSimulations.unit_state(
         AustralianElectricityMarketsSimulations.ObservedState(), gen, _ST_STAMPS[1],
     )
-    @test first_state isa AustralianElectricityMarketsSimulations.NEMUnitState
+    @test first_state isa AustralianElectricityMarkets.NEMUnitState
     @test first_state.initial_mw === 10.0
     @test first_state.dispatch_mode === 0
 
@@ -63,7 +63,7 @@ end
     state = AustralianElectricityMarketsSimulations.unit_state(
         AustralianElectricityMarketsSimulations.ObservedState(), gen, _ST_STAMPS[2],
     )
-    @test state == AustralianElectricityMarketsSimulations.NEMUnitState(55.0, 1)
+    @test state == AustralianElectricityMarkets.NEMUnitState(55.0, 1)
 end
 
 @testset "unit_state rejects devices without NEM observed state and the unimplemented source" begin
@@ -621,7 +621,7 @@ end
     # Registered from the first stamp: the stamp after it is the first registered one, and its mode is NaN.
     AustralianElectricityMarkets.set_registration!(gen, registration(_ST_STAMPS[1]))
     @test AustralianElectricityMarketsSimulations.unit_state(source, gen, _ST_STAMPS[2]) ==
-        AustralianElectricityMarketsSimulations.NEMUnitState(20.0, 0)
+        AustralianElectricityMarkets.NEMUnitState(20.0, 0)
 
     # Registered earlier: the previous interval is registered, so a NaN mode is still an error.
     AustralianElectricityMarkets.set_registration!(gen, registration(_ST_STAMPS[1] - Minute(5)))

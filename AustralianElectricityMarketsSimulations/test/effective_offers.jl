@@ -100,6 +100,7 @@ end
             )
             _toy_energy_bid!(sys, gen, AustralianElectricityMarkets.BidDirection.GEN, [start, start + Minute(5)], fill(curve, 2), fill(PSY.get_base_power(sys), 2))
         end
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
 
         set_effective_offers!(sys)
         g1, g2 = get_component(ThermalStandard, sys, "G1"), get_component(ThermalStandard, sys, "G2")
@@ -154,6 +155,7 @@ end
                 get_component(InterruptiblePowerLoad, sys, "PUMP2"),
                 AustralianElectricityMarkets.NEMObservedState(; initial_mw = 0.0, dispatch_mode = 0),
             )
+            AustralianElectricityMarkets._set_replay_inputs!(sys)
             return sys
         end
 

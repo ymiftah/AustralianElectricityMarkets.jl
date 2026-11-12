@@ -79,8 +79,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `NEMUnitState` and the state rules (`max_active_power_floor`, `in_fast_start_profile`, `fixed_load_invoked`, `effective_fixed_load`, `fcas_state_stranded_ok`, `fcas_both_sides_stranded_ok`, `fcas_ramping_active`, `fcas_ramping_limit`, `fcas_joint_ramping_exempt`, `mnsp_ramp_envelope`, `composite_ramp_rates`) move from `AustralianElectricityMarketsSimulations` to `AustralianElectricityMarkets` and are exported there; `AustralianElectricityMarketsSimulations` no longer exports them. `nem_system` calls a private replay input stage, `_set_replay_inputs!`, before its input checks; it writes nothing yet.
-
 - `compare_intervals` joins the published outcome of a set of intervals onto its solved outcome, and `comparison_summary` reports the paired gaps of each metric, as `AustralianElectricityMarketsSimulations` functions. Replay workflows and the batch worker use them in place of their private copies.
 
 - `read_interconnector_loss_gaps` reads each interconnector's solved loss against the loss curve at its solved flow, with the weighted marginal price of loss in `$/MWh`, as an `AustralianElectricityMarketsSimulations` function.
@@ -455,6 +453,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The state-dependent dispatch inputs are pure functions of a `NEMUnitState`: `max_active_power_floor`, `in_fast_start_profile`, `fixed_load_invoked` and `effective_fixed_load`, `fcas_state_stranded_ok` and `fcas_both_sides_stranded_ok`, `fcas_ramping_active` and `fcas_ramping_limit`, `mnsp_ramp_envelope`, and `composite_ramp_rates` for the composite of a bidirectional unit's generation- and load-side ramp rates across zero.
 
 ### Changed
+
+- `NEMUnitState` and the state rules (`max_active_power_floor`, `in_fast_start_profile`, `fixed_load_invoked`, `effective_fixed_load`, `fcas_state_stranded_ok`, `fcas_both_sides_stranded_ok`, `fcas_ramping_active`, `fcas_ramping_limit`, `fcas_joint_ramping_exempt`, `mnsp_ramp_envelope`, `composite_ramp_rates`) move from `AustralianElectricityMarketsSimulations` to `AustralianElectricityMarkets` and are exported there; `AustralianElectricityMarketsSimulations` no longer exports them. `nem_system` calls a private replay input stage, `_set_replay_inputs!`, before its input checks; it writes nothing yet.
 
 - Under `ObservedState`, the per-step updates of the 13 state-dependent parameters (initial power, ramp
   rates, fixed loading, the five FCAS parameters and the MNSP initial flow and ramp rates) read the series

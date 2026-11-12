@@ -193,7 +193,7 @@ end
 The joint energy and FCAS limit of one direction: `state.initial_mw` plus the AGC ramping
 `capability` on the upper form (energy is dispatched and the regulation side delivered) and minus it
 on the lower form. A `PowerSystems.ControllableLoad`'s LOWERREG row takes the upper form
-([`fcas_upper_regulation_service`](@ref)). `capability` and the result are in the same unit as
+(`fcas_upper_regulation_service`). `capability` and the result are in the same unit as
 `state.initial_mw`.
 
 # Arguments
