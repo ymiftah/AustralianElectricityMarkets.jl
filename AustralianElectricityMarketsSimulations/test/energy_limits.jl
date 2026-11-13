@@ -140,7 +140,10 @@ end
     steps = start:TOY_RESOLUTION:(start + TOY_RESOLUTION)
     optimizer = optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
     sys = energy_limit_system(; max_avail = 40.0, start)
-    @test_throws ArgumentError run_replay(sys, steps; optimizer)
+    # The financial-year rule is `nem_system`'s: a range whose replay intervals cross 1 July is refused.
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
+    crossing = (start - Minute(5)):TOY_RESOLUTION:(start + 3 * TOY_RESOLUTION)
+    @test_throws r"more than one financial year" nem_system(db, NEMDEConfiguration(); date_range = crossing)
     # The max-availability slack of TOY_CHEAP: 370 CVP x Market Price Cap x 100 MW base x 5 minutes.
     for (t, expected) in ((steps[1], 370.0 * 17_500.0 * 100.0 / 12), (steps[2], 370.0 * 20_300.0 * 100.0 / 12))
         model = PSI.DecisionModel(AEMS.NEMDispatchProblem, replay_template(sys), sys; optimizer, initial_time = t)

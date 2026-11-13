@@ -50,9 +50,9 @@ function _fi_add_fcas_offer!(sys, device, stamps, bid_type, trapeziums, bands; d
     curves = [PowerSystems.PiecewiseStepData([0.0; cumsum(first.(bs))], last.(bs)) for bs in bands]
     points = [(Float64(a), Float64(b), Float64(c), Float64(d)) for (a, b, c, d, _) in trapeziums]
     max_avail = [Float64(e) for (_, _, _, _, e) in trapeziums]
-    AEM.replace_single_series!(sys, device, AEM.single_series(field(:offer_curves), stamps[1], curves, resolution))
-    AEM.replace_single_series!(sys, device, AEM.single_series(field(:max_avail), stamps[1], max_avail, resolution))
-    AEM.replace_single_series!(sys, device, AEM.single_series(field(:trapezium), stamps[1], points, resolution))
+    replace_series_and_forecast!(sys, device, AEM.single_series(field(:offer_curves), stamps[1], curves, resolution))
+    replace_series_and_forecast!(sys, device, AEM.single_series(field(:max_avail), stamps[1], max_avail, resolution))
+    replace_series_and_forecast!(sys, device, AEM.single_series(field(:trapezium), stamps[1], points, resolution))
     bid = AEM.NEMFCASBid(;
         service = bid_type, direction, offer_curves = AEM._series_key(device, field(:offer_curves)),
         max_avail = AEM._series_key(device, field(:max_avail)), trapezium = AEM._series_key(device, field(:trapezium)),
@@ -139,7 +139,7 @@ end
         horizon = length(full_grid)
         # 60 MW/h is a 5 MW AGC ramping capability over 5 minutes.
         ramp = [t == first(full_grid) ? NaN : 60.0 for t in full_grid]
-        replace_single_series!(sys, device, single_series(AustralianElectricityMarkets.NEM_TELEMETRY_SERIES.ramp_up_limit, full_grid, ramp))
+        replace_series_and_forecast!(sys, device, single_series(AustralianElectricityMarkets.NEM_TELEMETRY_SERIES.ramp_up_limit, full_grid, ramp))
         AustralianElectricityMarkets._set_replay_inputs!(sys)
 
         raw, scaled = with_units_base(sys, "NATURAL_UNITS") do
@@ -372,7 +372,7 @@ end
         device = get_component(ThermalStandard, sys, "ER01")
         ramps = fill(60.0, length(full_grid))
         ramps[2] = NaN
-        replace_single_series!(sys, device, single_series(NEM_TELEMETRY_SERIES.ramp_up_limit, full_grid, ramps))
+        replace_series_and_forecast!(sys, device, single_series(NEM_TELEMETRY_SERIES.ramp_up_limit, full_grid, ramps))
         avail = _energy_limits_mw(device, start_date, horizon).gen
         @test avail[2] == 0.0
         @test avail[1] > 0.0

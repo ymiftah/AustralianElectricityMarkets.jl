@@ -86,3 +86,19 @@ end
     @test AEM.get_build_report(sys) == report
     @test AEM.NEMBuildReport(; unavailable_constraints = report.unavailable_constraints) != AEM.NEMBuildReport()
 end
+
+@testset "a static invoked flag decides never_invoked without a series" begin
+    AEM = AustralianElectricityMarkets
+    sys = _cs_mock_system()
+    unit = first(d for d in PowerSystems.get_components(PowerSystems.ThermalStandard, sys) if PowerSystems.get_available(d))
+    on = GenericConstraint(; name = "CS_STATIC_ON", sense = ConstraintSense.LE, rhs = 1.0, invoked = true)
+    off = GenericConstraint(; name = "CS_STATIC_OFF", sense = ConstraintSense.LE, rhs = 1.0, invoked = false)
+    for gc in (on, off)
+        AEM._add_nem_service!(sys, gc, [unit])
+    end
+    AEM._set_constraint_availability!(sys)
+    @test PowerSystems.get_available(on)
+    @test isnothing(_cs_reason(sys, "CS_STATIC_ON"))
+    @test !PowerSystems.get_available(off)
+    @test _cs_reason(sys, "CS_STATIC_OFF") == :never_invoked
+end

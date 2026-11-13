@@ -24,11 +24,11 @@ _tb_pad(curves) = [curves; fill(last(curves), _TB_N - length(curves))]
 function _tb_strip!(sys)
     AEM = AustralianElectricityMarkets
     for device in AEM._bidding_devices(sys), side in (AEM.OfferSide.GEN, AEM.OfferSide.LOAD)
-        AEM.remove_single_series!(sys, device, AEM.energy_offer_series_name(side))
+        remove_series_and_forecast!(sys, device, AEM.energy_offer_series_name(side))
     end
     for device in PowerSystems.get_components(PowerSystems.StaticInjection, sys), key in collect(PowerSystems.get_time_series_keys(device))
         startswith(PowerSystems.IS.get_name(key), "tie_break_scale_") &&
-            AEM.remove_single_series!(sys, device, PowerSystems.IS.get_name(key))
+            remove_series_and_forecast!(sys, device, PowerSystems.IS.get_name(key))
     end
     service = PowerSystems.get_component(EnergyTieBreak, sys, TIE_BREAK_SERVICE_NAME)
     isnothing(service) || PowerSystems.remove_component!(sys, service)

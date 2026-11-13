@@ -17,7 +17,7 @@ end
 function _strip_energy_offers!(sys)
     AEM = AustralianElectricityMarkets
     for device in AEM._bidding_devices(sys), name in ("energy_offer", "energy_offer_decremental")
-        AEM.remove_single_series!(sys, device, name)
+        remove_series_and_forecast!(sys, device, name)
     end
     return
 end
@@ -106,9 +106,12 @@ end
     stamps = PowerSystems.get_time_series_timestamps(PowerSystems.SingleTimeSeries, gen, max_avail_name)
     for direction in (AEM.BidDirection.GEN, AEM.BidDirection.BIDIRECTIONAL)
         name(f) = AEM.bid_series_name(AEM.BidType.RAISE6SEC, f, direction)
-        AEM.replace_single_series!(sys, gen, AEM.single_series(name(:offer_curves), first(stamps), fill(PowerSystems.PiecewiseStepData([0.0, 10.0], [5.0]), length(stamps)), Minute(5)))
-        AEM.replace_single_series!(sys, gen, AEM.single_series(name(:max_avail), first(stamps), fill(10.0, length(stamps)), Minute(5)))
-        AEM.replace_single_series!(sys, gen, AEM.single_series(name(:trapezium), first(stamps), fill((0.0, 10.0, 90.0, 100.0), length(stamps)), Minute(5)))
+        remove_series_and_forecast!(sys, gen, name(:offer_curves))
+        PowerSystems.add_time_series!(sys, gen, AEM.single_series(name(:offer_curves), first(stamps), fill(PowerSystems.PiecewiseStepData([0.0, 10.0], [5.0]), length(stamps)), Minute(5)))
+        remove_series_and_forecast!(sys, gen, name(:max_avail))
+        PowerSystems.add_time_series!(sys, gen, AEM.single_series(name(:max_avail), first(stamps), fill(10.0, length(stamps)), Minute(5)))
+        remove_series_and_forecast!(sys, gen, name(:trapezium))
+        PowerSystems.add_time_series!(sys, gen, AEM.single_series(name(:trapezium), first(stamps), fill((0.0, 10.0, 90.0, 100.0), length(stamps)), Minute(5)))
         AEM._set_fcas_bid!(
             AEM._nem_offer_cost(gen),
             AEM.NEMFCASBid(;

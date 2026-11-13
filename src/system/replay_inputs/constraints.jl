@@ -24,10 +24,11 @@ end
     _set_constraint_availability!(sys::PSY.System) -> Nothing
 
 Sets each `GenericConstraint` of `sys` unavailable when it cannot bind over the replay intervals of `sys`:
-`:never_invoked` when its invoked series is zero at every interval, else `:no_available_device` when it has
-contributing devices and none is available. The unavailable constraints are recorded in the build report, as
-[`get_unavailable_constraints`](@ref) reports them. A repeat call re-decides every constraint and replaces the
-recorded rows. Device availability must be final before the call.
+`:never_invoked` when its invoked series is zero at every interval (or its static `invoked::Bool` is `false`),
+else `:no_available_device` when it has contributing devices and none is available. The unavailable constraints
+are recorded in the build report, as [`get_unavailable_constraints`](@ref) reports them. A repeat call re-decides
+every constraint and replaces the recorded rows; it never makes an unavailable constraint available again.
+Device availability must be final before the call.
 
 # Arguments
 - `sys`: the system built by [`nem_system`](@ref).

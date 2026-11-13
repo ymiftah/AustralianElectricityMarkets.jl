@@ -35,7 +35,7 @@ _ramps_raw(device, name::AbstractString) = get_time_series_values(SingleTimeSeri
 function _ramps_set_series!(sys, device, name::AbstractString, values)
     stamps = PowerSystems.get_time_series_timestamps(SingleTimeSeries, device, name)
     data = values isa Real ? fill(Float64(values), length(stamps)) : values
-    replace_single_series!(sys, device, single_series(name, first(stamps), data, Minute(5)))
+    replace_series_and_forecast!(sys, device, single_series(name, first(stamps), data, Minute(5)))
     return
 end
 
@@ -116,7 +116,7 @@ function _ramps_strip!(sys)
     )
     AEM._foreach_nem_dispatch_device(sys) do device
         for name in names
-            remove_single_series!(sys, device, name)
+            remove_series_and_forecast!(sys, device, name)
         end
     end
     return
@@ -266,7 +266,7 @@ end
     stamps = get_time_series_timestamps(SingleTimeSeries, device, NEM_TELEMETRY_SERIES.ramp_up_limit)
     tel_up = _ramps_raw(device, NEM_TELEMETRY_SERIES.ramp_up_limit)
     tel_up[1] = NaN
-    replace_single_series!(sys, device, single_series(NEM_TELEMETRY_SERIES.ramp_up_limit, first(stamps), tel_up, Minute(5)))
+    replace_series_and_forecast!(sys, device, single_series(NEM_TELEMETRY_SERIES.ramp_up_limit, first(stamps), tel_up, Minute(5)))
     _ramps_strip!(sys)
     AEM._set_dispatch_limits!(sys)
     written = _ramps_raw(device, NEM_SERIES.ramp_up_rate)

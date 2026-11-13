@@ -1,6 +1,21 @@
 # The values of `gc`'s series in `field` (`:rhs` or `:invoked`), read through its key.
 _constraint_series(gc, field::Symbol) = PowerSystems.IS.get_time_series_values(gc, getproperty(gc, field))
 
+# Removes `device`'s series `name` with the forecast windows the replay input stage transformed from it.
+function remove_series_and_forecast!(sys, device, name)
+    PowerSystems.has_time_series(device, PowerSystems.DeterministicSingleTimeSeries, name) &&
+        PowerSystems.remove_time_series!(sys, PowerSystems.DeterministicSingleTimeSeries, device, name)
+    PowerSystems.has_time_series(device, PowerSystems.SingleTimeSeries, name) &&
+        PowerSystems.remove_time_series!(sys, PowerSystems.SingleTimeSeries, device, name)
+    return
+end
+
+# Replaces `device`'s series of the name of `ts` with `ts`, dropping the forecast windows transformed from the old one.
+function replace_series_and_forecast!(sys, device, ts)
+    remove_series_and_forecast!(sys, device, PowerSystems.get_name(ts))
+    return PowerSystems.add_time_series!(sys, device, ts)
+end
+
 using DataFrames
 using Dates
 using DuckDB

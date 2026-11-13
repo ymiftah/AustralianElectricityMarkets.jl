@@ -167,7 +167,7 @@ end
         device = get_component(ThermalStandard, sys, "ER01")
         @test AEMSim._has_nem_dispatch_limits(device)
         name = bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN)
-        PSY.remove_time_series!(sys, SingleTimeSeries, device, name)
+        remove_series_and_forecast!(sys, device, name)
         @test !AEMSim._has_nem_dispatch_limits(device)
     end
 
@@ -223,7 +223,7 @@ end
         )
         @test AEMSim._has_nem_dispatch_limits(device)
         # The state's key names the series it reads; the default name is only a convenience.
-        PSY.remove_time_series!(sys, SingleTimeSeries, device, "observed_initial_mw")
+        remove_series_and_forecast!(sys, device, "observed_initial_mw")
         @test AEMSim._has_nem_dispatch_limits(device)
         @test isnothing(AEMSim._check_state_series_alignment(device))
     end
@@ -232,7 +232,7 @@ end
         sys = built()
         device = get_component(ThermalStandard, sys, "ER01")
         @test AEMSim._has_nem_dispatch_limits(device)
-        PSY.remove_time_series!(sys, SingleTimeSeries, device, NEM_SERIES.ramp_up_rate)
+        remove_series_and_forecast!(sys, device, NEM_SERIES.ramp_up_rate)
         @test !AEMSim._has_nem_dispatch_limits(device)
     end
 end

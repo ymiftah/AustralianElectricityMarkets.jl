@@ -36,7 +36,7 @@ function flatten_series!(sys, ::Type{T}, duid, name, value) where {T}
     stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name)
     existing = PSY.get_time_series(PSY.SingleTimeSeries, device, name)
     multiplier = IS.get_scaling_factor_multiplier(existing)
-    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, device, name)
+    remove_series_and_forecast!(sys, device, name)
     PSY.add_time_series!(
         sys, device,
         PSY.SingleTimeSeries(;
@@ -263,7 +263,7 @@ end
         mutate! = function (s)
             device = PSY.get_component(ThermalStandard, s, "ER02")
             for name in ("ramp_up_rate", "ramp_down_rate")
-                PSY.remove_time_series!(s, PSY.SingleTimeSeries, device, name)
+                remove_series_and_forecast!(s, device, name)
             end
             return s
         end

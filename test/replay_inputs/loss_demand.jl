@@ -35,7 +35,7 @@ function _ld_strip!(sys)
     AEM = AustralianElectricityMarkets
     for ic in PowerSystems.get_components(PowerSystems.AreaInterchange, sys)
         PowerSystems.has_time_series(ic, PowerSystems.SingleTimeSeries, AEM.NEM_SERIES.loss_demand_coefficient) &&
-            AEM.remove_single_series!(sys, ic, AEM.NEM_SERIES.loss_demand_coefficient)
+            remove_series_and_forecast!(sys, ic, AEM.NEM_SERIES.loss_demand_coefficient)
     end
     return sys
 end
@@ -160,7 +160,7 @@ end
     AEM = AustralianElectricityMarkets
     sys = _ld_strip!(_ld_mock_system())
     load = PowerSystems.get_component(PowerSystems.PowerLoad, sys, "VIC1 Load")
-    PowerSystems.remove_time_series!(sys, PowerSystems.SingleTimeSeries, load, "loss_demand")
+    remove_series_and_forecast!(sys, load, "loss_demand")
     err = _ld_error(() -> AEM._set_loss_demand_coefficients!(sys))
     @test err isa ArgumentError
     @test occursin("no \"loss_demand\" series", sprint(showerror, err))
@@ -173,7 +173,7 @@ end
     original = PowerSystems.get_time_series(PowerSystems.SingleTimeSeries, load, "loss_demand")
     stamps = PowerSystems.get_time_series_timestamps(PowerSystems.SingleTimeSeries, load, "loss_demand")
     values = PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, load, "loss_demand")
-    PowerSystems.remove_time_series!(sys, PowerSystems.SingleTimeSeries, load, "loss_demand")
+    remove_series_and_forecast!(sys, load, "loss_demand")
     PowerSystems.add_time_series!(
         sys, load,
         AEM.single_series("loss_demand", first(stamps) + Minute(5), values, PowerSystems.get_resolution(original)),
