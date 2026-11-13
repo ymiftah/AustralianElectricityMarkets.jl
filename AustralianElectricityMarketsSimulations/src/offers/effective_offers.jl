@@ -329,26 +329,6 @@ function _derived_series_keys(device)
 end
 
 
-# The timestamps, resolution and values of a bid field's time series on `device`.
-function _bid_series(device, key::IS.TimeSeriesKey, ::Symbol)
-    ts::PSY.SingleTimeSeries = IS.get_time_series(device, key)
-    array = PSY.get_time_series_array(device, ts)
-    return (;
-        timestamps = PSY.TimeSeries.timestamp(array), resolution = IS.get_resolution(ts),
-        values = collect(values(array)),
-    )
-end
-
-# A static bid field has no series to derive the offers from.
-function _bid_series(device, value, field::Symbol)
-    throw(
-        ArgumentError(
-            "set_effective_offers!: \"$(PSY.get_name(device))\" has a static `$(field)` field; set_effective_offers! " *
-                "needs series-backed bid inputs, as set_market_bids! writes them.",
-        ),
-    )
-end
-
 # The values of a telemetry key over the grid of `like`: a static value is repeated.
 function _grid_values(device, key, like)
     key isa IS.StaticTimeSeriesKey || return fill(Float64(key), length(like.values))
