@@ -79,7 +79,7 @@ function PSI.construct_device!(
     end
     PSI.add_parameters!(
         container, InitialPowerTimeSeriesParameter, devices, model;
-        time_series_name = _INITIAL_MW_SEED_SERIES,
+        time_series_name = NEM_STATE_INPUT_SERIES.initial_mw,
     )
 
     _add_fixed_load_arguments!(container, devices, model)

@@ -21,7 +21,7 @@ abstract type AbstractNEMDispatch <: PSI.AbstractDeviceFormulation end
     NEMReplayDispatch
 
 [`AbstractNEMDispatch`](@ref) whose ramp constraint measures against the device's initial MW at every
-interval, read from the configured [`StateSource`](@ref). Intervals are decoupled.
+interval, read from the observed state series `NEM_STATE_INPUT_SERIES`. Intervals are decoupled.
 """
 struct NEMReplayDispatch <: AbstractNEMDispatch end
 

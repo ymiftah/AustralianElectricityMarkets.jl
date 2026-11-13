@@ -15,14 +15,11 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
   ([`tie_break_scale`](@ref)), and the [`EnergyTieBreak`](@ref) service joining the units that carry them.
 - `"loss_demand_coefficient"`, the demand term of each loss-modelled interchange's loss factor
   ([`set_loss_demand_coefficients!`](@ref)).
-- `"initial_mw_seed"`, `"fixed_load_seed"` and `"fixed_load_invoked_seed"`, the first-solve values
-  the build reads from the configured [`StateSource`](@ref) ([`_set_state_seeds!`](@ref)). Under
-  `ObservedState` each later solve reads these series at its own stamp.
 
 It also attaches to each NEM dispatch device a [`NEMDispatchInputs`](@ref) holding the keys of the
 dispatch-input series the formulation reads through.
 
-The ramp rates, AGC ramp rates and energy offer curves are not written here: [`nem_system`](@ref) adds them
+The ramp rates, AGC ramp rates, energy offer curves and observed-state series are not written here: [`nem_system`](@ref) adds them
 with the other replay input series, and this function reads them. Existing series of the names written here
 are replaced, so a second call on the same `sys` gives the same result. [`prepare_replay!`](@ref) calls it before attaching
 the forecasts. Call it before `transform_single_time_series!`: the series are single time series until then.
@@ -36,128 +33,10 @@ Throws `ArgumentError` when a bid this function reads is static rather than seri
 `nothing`.
 """
 function set_effective_offers!(sys::PSY.System)
-    _set_state_seeds!(sys)
     _set_fcas_effective_offers!(sys)
     _set_tie_break_scales!(sys)
     set_loss_demand_coefficients!(sys)
     _attach_dispatch_inputs!(sys)
-    return
-end
-
-
-# The raw `FIXEDLOAD` of `device`'s `side` energy bid at `stamp`, MW; `NaN` when the bid has none.
-function _fixed_load_mw(device, side::OfferSide, stamp::DateTime)
-    cost = _nem_offer_cost(device)
-    bid = isnothing(cost) ? nothing : _energy_bid(cost, side)
-    isnothing(bid) && return NaN
-    value = _state_value(device, bid, Val(:fixed_load), stamp)
-    return isnothing(value) ? NaN : Float64(value)
-end
-
-
-# The fixed-loading target on the net-injection axis at `stamp`, MW, and whether either side applies.
-function _fixed_load_step(device, stamp::DateTime; source::StateSource = _state_source())
-    state = unit_state(source, device, stamp)
-    gen = _fixed_load_mw(device, OfferSide.GEN, stamp)
-    load = _fixed_load_mw(device, OfferSide.LOAD, stamp)
-    target = if device isa PSY.Storage
-        effective_fixed_load(gen, state) - effective_fixed_load(load, state)
-    else
-        effective_fixed_load(gen, state) + effective_fixed_load(load, state)
-    end
-    return (; target, invoked = fixed_load_invoked(gen, state) || fixed_load_invoked(load, state))
-end
-
-
-# The raw `FIXEDLOAD` of `device`'s `side` energy bid at each of `stamps`, MW; `NaN` where the bid has none.
-function _fixed_load_mw_series(device, side::OfferSide, stamps::AbstractVector{DateTime})
-    cost = _nem_offer_cost(device)
-    bid = isnothing(cost) ? nothing : _energy_bid(cost, side)
-    isnothing(bid) && return fill(NaN, length(stamps))
-    value = bid.fixed_load
-    value isa IS.StaticTimeSeriesKey || return fill(isnothing(value) ? NaN : Float64(value), length(stamps))
-    return Float64.(IS.get_time_series_values(device, value; start_time = first(stamps), len = length(stamps)))
-end
-
-
-"""
-    _fixed_load_step_series(device, stamps::AbstractVector{DateTime}; source::StateSource = _state_source())
-
-The fixed-loading targets and invoked flags of [`_fixed_load_step`](@ref) at each of `stamps`. The bid
-fixed loadings are read once per side over the stamps; the state is read stamp by stamp.
-
-# Arguments
-- `device`: the NEM device.
-- `stamps`: the first timestamps of the intervals, consecutive at the series' resolution.
-- `source`: the [`StateSource`](@ref).
-
-# Returns
-A `Vector` the length of `stamps` of `(; target, invoked)` named tuples.
-"""
-function _fixed_load_step_series(device, stamps::AbstractVector{DateTime}; source::StateSource = _state_source())
-    gens = _fixed_load_mw_series(device, OfferSide.GEN, stamps)
-    loads = _fixed_load_mw_series(device, OfferSide.LOAD, stamps)
-    storage = device isa PSY.Storage
-    return map(eachindex(stamps)) do i
-        state = unit_state(source, device, stamps[i])
-        gen, load = gens[i], loads[i]
-        target = if storage
-            effective_fixed_load(gen, state) - effective_fixed_load(load, state)
-        else
-            effective_fixed_load(gen, state) + effective_fixed_load(load, state)
-        end
-        return (; target, invoked = fixed_load_invoked(gen, state) || fixed_load_invoked(load, state))
-    end
-end
-
-"""
-    _set_state_seeds!(sys)
-
-Attaches each NEM dispatch device's first-solve seed series from the configured
-[`StateSource`](@ref): `"initial_mw_seed"` in MW, and, for a device whose energy bid carries a fixed
-loading, `"fixed_load_seed"` in system-base per-unit and `"fixed_load_invoked_seed"` (`1` or `0`).
-The build writes them before the forecasts are attached, so the simulation's first solve, which
-`PowerSimulations.jl` does not update, starts from the values at the build's stamp. Replaces existing seed series.
-
-# Arguments
-- `sys`: the `System` to add to.
-
-# Returns
-`nothing`.
-"""
-function _set_state_seeds!(sys::PSY.System)
-    source = _state_source()
-    base = PSY.get_base_power(sys)
-    PSY.with_units_base(sys, "SYSTEM_BASE") do
-        AustralianElectricityMarkets._foreach_nem_dispatch_device(sys) do device
-            observed = AustralianElectricityMarkets.get_observed_state(device)
-            observed.initial_mw isa IS.StaticTimeSeriesKey || return
-            name = PSY.get_name(observed.initial_mw)
-            stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name)
-            resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, device, name))
-            # The seed reads the starting output only, so a stamp with no dispatch mode (before
-            # registration or a missing DISPATCHLOAD row) still seeds.
-            initial = _state_initial_mw_series(source, device, stamps)
-            replace_single_series!(
-                sys, device,
-                single_series(_INITIAL_MW_SEED_SERIES, first(stamps), initial, resolution),
-            )
-            _has_fixed_load_bid(device) || return
-            steps = _fixed_load_step_series(device, stamps; source)
-            replace_single_series!(
-                sys, device,
-                single_series(_FIXED_LOAD_SEED_SERIES, first(stamps), [step.target / base for step in steps], resolution),
-            )
-            replace_single_series!(
-                sys, device,
-                single_series(
-                    _FIXED_LOAD_INVOKED_SEED_SERIES, first(stamps),
-                    [step.invoked ? 1.0 : 0.0 for step in steps], resolution,
-                ),
-            )
-            return
-        end
-    end
     return
 end
 

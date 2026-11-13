@@ -91,6 +91,23 @@ const NEM_OBSERVED_SERIES = (
 
 
 """
+    NEM_STATE_INPUT_SERIES
+
+Names of the per-device `SingleTimeSeries` that the replay input stage derives from a unit's
+[`NEMObservedState`](@ref) and fixed loading, read by the dispatch formulation at each interval:
+
+- `initial_mw`: the output at the start of each interval, MW, zero at an interval the build does not observe.
+- `fixed_load`: the fixed-loading target in system-base per-unit, net injection.
+- `fixed_load_invoked`: `1` at the intervals a fixed loading applies, `0` elsewhere.
+"""
+const NEM_STATE_INPUT_SERIES = (
+    initial_mw = "initial_mw_seed",
+    fixed_load = "fixed_load_seed",
+    fixed_load_invoked = "fixed_load_invoked_seed",
+)
+
+
+"""
     energy_offer_series_name(side::OfferSide) -> String
 
 Name of the series holding a device's energy offer curves on `side`.

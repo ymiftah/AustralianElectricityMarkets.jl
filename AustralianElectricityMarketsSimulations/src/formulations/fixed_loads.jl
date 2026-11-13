@@ -4,22 +4,8 @@ PSI.get_multiplier_value(::Union{FixedLoadTimeSeriesParameter, FixedLoadInvokedT
 
 PSI.convert_result_to_natural_units(::Type{FixedLoadTimeSeriesParameter}) = true
 
-# The parameters of the fixed-loading rows and the build's first-solve seed series.
-const _FIXED_LOAD_SERIES = (
-    FixedLoadTimeSeriesParameter => _FIXED_LOAD_SEED_SERIES,
-    FixedLoadInvokedTimeSeriesParameter => _FIXED_LOAD_INVOKED_SEED_SERIES,
-)
-
 # Offset, in MW, that moves both fixed-loading rows out of reach at an interval with no fixed loading.
 const _FIXED_LOAD_INACTIVE_MW = 1.0e5
-
-
-"Whether `device` has an energy bid carrying a fixed loading on either side."
-function _has_fixed_load_bid(device)
-    cost = _nem_offer_cost(device)
-    isnothing(cost) && return false
-    return any(b -> !isnothing(b.fixed_load), get_energy_bids(cost))
-end
 
 
 _fixed_load_devices(devices) = [d for d in devices if _has_fixed_load_bid(d)]
@@ -30,8 +16,8 @@ _fixed_load_devices(devices) = [d for d in devices if _has_fixed_load_bid(d)]
 
 Adds the fixed-loading parameters ([`FixedLoadTimeSeriesParameter`](@ref),
 [`FixedLoadInvokedTimeSeriesParameter`](@ref)) and the surplus and deficit slacks for the
-`devices` whose energy bid carries a fixed loading. The parameters read the build's seed series;
-every later solve recomputes them from the bids and the state source.
+`devices` whose energy bid carries a fixed loading. The parameters read the observed-state series
+`NEM_STATE_INPUT_SERIES`, which the replay input stage writes from the bids and the observed state.
 
 # Returns
 `nothing`.
@@ -39,9 +25,11 @@ every later solve recomputes them from the bids and the state source.
 function _add_fixed_load_arguments!(container::PSI.OptimizationContainer, devices, model::PSI.DeviceModel{T, D}) where {T, D}
     fixed = _fixed_load_devices(devices)
     isempty(fixed) && return
-    for (param, name) in _FIXED_LOAD_SERIES
-        PSI.add_parameters!(container, param, fixed, model; time_series_name = name)
-    end
+    PSI.add_parameters!(container, FixedLoadTimeSeriesParameter, fixed, model; time_series_name = NEM_STATE_INPUT_SERIES.fixed_load)
+    PSI.add_parameters!(
+        container, FixedLoadInvokedTimeSeriesParameter, fixed, model;
+        time_series_name = NEM_STATE_INPUT_SERIES.fixed_load_invoked,
+    )
     _add_device_unit_slacks!(container, FixedLoadSurplusVariant(), fixed)
     _add_device_unit_slacks!(container, FixedLoadDeficitVariant(), fixed)
     return

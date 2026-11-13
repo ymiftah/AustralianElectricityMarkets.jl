@@ -273,7 +273,7 @@ function PSI.construct_device!(
     )
     PSI.add_parameters!(
         container, InitialPowerTimeSeriesParameter, devices, model;
-        time_series_name = _INITIAL_MW_SEED_SERIES,
+        time_series_name = NEM_STATE_INPUT_SERIES.initial_mw,
     )
     any(is_semi_scheduled, devices) && PSI.add_parameters!(
         container, EnergyLimitTimeSeriesParameter, devices, model;

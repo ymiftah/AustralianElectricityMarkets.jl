@@ -95,7 +95,7 @@ end
             )
             add_component!(sys, gen)
             AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
-            # A static observed state keeps the build's first-solve seed out of these offer fixtures.
+            # A static observed state keeps the observed-state series out of these offer fixtures.
             AustralianElectricityMarkets.set_observed_state!(
                 gen, AustralianElectricityMarkets.NEMObservedState(; initial_mw = 0.0, dispatch_mode = 0),
             )
@@ -188,25 +188,7 @@ end
         # the zero state the seed came from.
         bw02 = get_component(HydroDispatch, PSI.get_system(out.model), "BW02")
         @test get_time_series_values(SingleTimeSeries, bw02, "initial_mw_seed"; ignore_scaling_factors = true)[1:2] == [0.0, 0.0]
-        @test AEMS.unit_state(AEMS.ObservedState(), bw02, last(steps)) == AEMS.NEMUnitState(0.0, 0)
-    end
-
-    @testset "the first-solve seed needs the output, not the dispatch mode" begin
-        # The unit is registered at both stamps, and its dispatch mode is NaN at the second: `unit_state`
-        # throws there, but the seed reads only the output.
-        sys = nem_toy_system(
-            [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0;
-            mutate! = function (sys, stamps)
-                cheap = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
-                set_toy_unit_field!(sys, cheap, stamps, :dispatch_mode, [0.0, NaN])
-                return
-            end,
-        )
-        cheap = get_component(ThermalStandard, sys, TOY_CHEAP)
-        stamps = [TOY_START, TOY_START + TOY_RESOLUTION]
-        @test_throws ArgumentError AEMS.unit_state(AEMS.ObservedState(), cheap, last(stamps))
-        # The seed series cannot be rewritten on a transformed toy, so the seed function is read directly.
-        @test [AEMS._state_initial_mw(AEMS.ObservedState(), cheap, t) for t in stamps] == [50.0, 50.0]
+        @test only(AustralianElectricityMarkets.observed_unit_states(bw02, [last(steps)])) == AustralianElectricityMarkets.NEMUnitState(0.0, 0)
     end
 end
 
@@ -1080,32 +1062,6 @@ end
         @test first(composite_ramp_rates(3.0, 4.0, 5.0, 0.0, 5.0, NEMUnitState(-10.0, 4))) == 0.0
     end
 
-    @testset "the build writes only the first-solve seeds of the state-dependent parameters" begin
-        sys = replay_system()
-        base = get_base_power(sys)
-        source = AEMSim._state_source()
-        seen = 0
-        for device in nem_dispatch_devices(sys)
-            @test !has_time_series(device, SingleTimeSeries, NEM_SERIES.max_active_power)
-            @test !has_time_series(device, SingleTimeSeries, NEM_SERIES.fixed_load)
-            @test !has_time_series(device, SingleTimeSeries, NEM_SERIES.fixed_load_invoked)
-            observed = AustralianElectricityMarkets.get_observed_state(device)
-            observed.initial_mw isa PowerSystems.IS.TimeSeriesKey || continue
-            seen += 1
-            stamps = PSY.get_time_series_timestamps(SingleTimeSeries, device, AEMSim._INITIAL_MW_SEED_SERIES)
-            expected = [unit_state(source, device, t).initial_mw for t in stamps]
-            @test values_of(device, AEMSim._INITIAL_MW_SEED_SERIES) ≈ expected
-            if AEMSim._has_fixed_load_bid(device)
-                steps = [AEMSim._fixed_load_step(device, t; source) for t in stamps]
-                @test values_of(device, AEMSim._FIXED_LOAD_SEED_SERIES) ≈ [step.target / base for step in steps]
-                @test values_of(device, AEMSim._FIXED_LOAD_INVOKED_SEED_SERIES) == [step.invoked ? 1.0 : 0.0 for step in steps]
-            else
-                @test !has_time_series(device, SingleTimeSeries, AEMSim._FIXED_LOAD_SEED_SERIES)
-            end
-        end
-        @test seen > 0
-    end
-
     @testset "the FCAS joint ramping limit with the observed state equals the written series" begin
         sys = replay_system()
         base = get_base_power(sys)
@@ -1122,8 +1078,9 @@ end
                     fast_start = AEMSim._fcas_fast_start_flags(window, device)
                     upper = service == fcas_upper_regulation_service(device)
                     written = [entry[1] * base for entry in values_of(device, name)]
+                    states = AustralianElectricityMarkets.observed_unit_states(device, stamps)
                     for i in eachindex(stamps)
-                        state = unit_state(ObservedState(), device, stamps[i])
+                        state = states[i]
                         limit = written[i]
                         if fcas_ramping_active(caps[i], state) && enabled[i] && !fcas_joint_ramping_exempt(state, fast_start[i])
                             @test fcas_ramping_limit(caps[i], upper, state) ≈ limit rtol = 1.0e-12
@@ -1160,7 +1117,7 @@ end
                     )
                     stamps = PSY.get_time_series_timestamps(SingleTimeSeries, device, trapezium_name)
                     window = AEMSim._FCASWindow(first(stamps), length(stamps), resolution)
-                    states = [unit_state(ObservedState(), device, t) for t in stamps]
+                    states = AustralianElectricityMarkets.observed_unit_states(device, stamps)
                     active(dec) = Bool[entry[1] > 0.0 for entry in values_of(device, fcas_effective_series_name(service, dec))]
                     if direction == FCASBidDirection.BOTH
                         gen_traps = AEMSim._fcas_offer(window, device, service, OfferSide.GEN).trapeziums

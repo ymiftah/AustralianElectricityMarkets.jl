@@ -200,7 +200,7 @@ end
 
 
 # The observed dispatch mode of `device` over `window`, one per interval. A stamp with no published mode
-# is 0, as `unit_state` seeds an unobserved stamp.
+# is 0, as the observed-state inputs seed an unobserved stamp.
 function _fcas_dispatch_modes(window::_FCASWindow, device::PSY.Device, dispatch_mode::Union{IS.StaticTimeSeriesKey, Int})
     dispatch_mode isa Int && return fill(dispatch_mode, window.horizon)
     raw = IS.get_time_series_values(device, dispatch_mode; start_time = window.initial_time, len = window.horizon)::Vector{Float64}

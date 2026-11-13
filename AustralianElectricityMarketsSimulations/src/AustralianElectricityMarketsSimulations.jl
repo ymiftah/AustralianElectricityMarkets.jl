@@ -2,7 +2,7 @@ module AustralianElectricityMarketsSimulations
 
 import AustralianElectricityMarkets
 using AustralianElectricityMarkets: _bid_series, _bidding_devices, _energy_bid, _mnsp_bid, _MNSP_DIRECTIONS, BidType, ConstraintSense, FCASService, FCAS_REGULATION_MARKETS,
-    GenericConstraint, InterconnectorLossModel, InterconnectorTerm, EnergyTieBreak, NEM_SERIES, NEM_TELEMETRY_SERIES, NEM_OBSERVED_SERIES, NEM_INTERCONNECTOR_SERIES, NEM_MNSP_SERIES, NEM_MNSP_FIXED_LOAD_SERIES, NEM_CONSTRAINT_SERIES,
+    GenericConstraint, InterconnectorLossModel, InterconnectorTerm, EnergyTieBreak, NEM_SERIES, NEM_TELEMETRY_SERIES, NEM_OBSERVED_SERIES, NEM_STATE_INPUT_SERIES, NEM_INTERCONNECTOR_SERIES, NEM_MNSP_SERIES, NEM_MNSP_FIXED_LOAD_SERIES, NEM_CONSTRAINT_SERIES,
     NEMInterconnectorLimits, NEMInterconnectorRegistration, InterconnectorKind, NEMMNSPBid, NEMMNSPLink, NEMMNSPObservedState,
     MNSPDirection, OfferSide,
     RegionTerm, UnitTerm, TIE_BREAK_CVP_FACTOR, TIE_BREAK_SERVICE_NAME, DISPATCH_INTERVAL,
@@ -15,7 +15,7 @@ using AustralianElectricityMarkets: _bid_series, _bidding_devices, _energy_bid, 
     get_interconnector, get_missing_constraint_intervals, get_region, get_sense, get_skipped_constraints,
     get_terms, loss_curve_vertex_values, is_non_scheduled_load, loss_segments, nem_dispatch_devices,
     NEM_DISPATCH_DEVICE_TYPES, single_series, remove_single_series!, replace_single_series!,
-    _nem_offer_cost, _fcas_units_multiplier, _get_fcas_offer_curve, get_energy_bids,
+    _nem_offer_cost, _fcas_units_multiplier, _get_fcas_offer_curve, get_energy_bids, _has_fixed_load_bid,
     get_fcas_bids, energy_offer_sides, FCASTrapezium, get_enablement_min, get_enablement_max, get_max_avail, get_upper_slope_coeff,
     get_lower_slope_coeff, scale_fcas_trapezium,
     FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR,
@@ -102,7 +102,7 @@ export effective_energy_availability, effective_regulation_enablement, fcas_trap
     loss_demand_coefficient, set_loss_demand_coefficients!
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,
     fcas_upper_regulation_service, fcas_offer_sides, tie_break_series_name, tie_groups
-export StateSource, ObservedState, unit_state, NEMDispatchInputs, NEMFCASInputs
+export NEMDispatchInputs, NEMFCASInputs
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
 export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
     exclude_unmodeled_services!, check_replication_steps,

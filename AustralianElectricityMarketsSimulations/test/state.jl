@@ -18,73 +18,6 @@ function _st_thermal(name, bus)
     )
 end
 
-@testset "unit_state reads a key-backed observed state at each stamp" begin
-    sys = System(100.0)
-    bus = _st_bus()
-    add_component!(sys, bus)
-    gen = _st_thermal("keyed", bus)
-    add_component!(sys, gen)
-    AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
-    mw = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]
-    modes = [0.0, 1.0, 2.0, 3.0, 4.0, 0.0, 1.0]
-    add_time_series!(sys, gen, _st_series("initial_mw", mw))
-    add_time_series!(sys, gen, _st_series("dispatch_mode", modes))
-    AustralianElectricityMarkets.set_observed_state!(
-        gen,
-        AustralianElectricityMarkets.NEMObservedState(;
-            initial_mw = _st_key(gen, "initial_mw"), dispatch_mode = _st_key(gen, "dispatch_mode"),
-        ),
-    )
-
-    first_state = AustralianElectricityMarketsSimulations.unit_state(
-        AustralianElectricityMarketsSimulations.ObservedState(), gen, _ST_STAMPS[1],
-    )
-    @test first_state isa AustralianElectricityMarkets.NEMUnitState
-    @test first_state.initial_mw === 10.0
-    @test first_state.dispatch_mode === 0
-
-    third_state = AustralianElectricityMarketsSimulations.unit_state(
-        AustralianElectricityMarketsSimulations.ObservedState(), gen, _ST_STAMPS[3],
-    )
-    @test third_state.initial_mw === 30.0
-    @test third_state.dispatch_mode === 2
-end
-
-@testset "unit_state reads a static observed state" begin
-    sys = System(100.0)
-    bus = _st_bus()
-    add_component!(sys, bus)
-    gen = _st_thermal("static", bus)
-    add_component!(sys, gen)
-    AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
-    AustralianElectricityMarkets.set_observed_state!(
-        gen, AustralianElectricityMarkets.NEMObservedState(; initial_mw = 55, dispatch_mode = 1),
-    )
-    state = AustralianElectricityMarketsSimulations.unit_state(
-        AustralianElectricityMarketsSimulations.ObservedState(), gen, _ST_STAMPS[2],
-    )
-    @test state == AustralianElectricityMarkets.NEMUnitState(55.0, 1)
-end
-
-@testset "unit_state rejects devices without NEM observed state" begin
-    sys = System(100.0)
-    bus = _st_bus()
-    add_component!(sys, bus)
-    stock = ThermalStandard(;
-        name = "stock_unit", available = true, status = true, bus = bus, active_power = 50.0,
-        reactive_power = 0.0, rating = 120.0, active_power_limits = (min = 10.0, max = 100.0),
-        reactive_power_limits = nothing, ramp_limits = nothing, operation_cost = ThermalGenerationCost(nothing),
-        base_power = 100.0,
-    )
-    add_component!(sys, stock)
-    observed = AustralianElectricityMarketsSimulations.ObservedState()
-    @test_throws ArgumentError AustralianElectricityMarketsSimulations.unit_state(observed, stock, _ST_STAMPS[1])
-
-    bare = _st_thermal("bare", bus)
-    add_component!(sys, bare)
-    AustralianElectricityMarkets.attach_nem_unit_data!(sys, bare)
-    @test_throws ArgumentError AustralianElectricityMarketsSimulations.unit_state(observed, bare, _ST_STAMPS[1])
-end
 
 @testset "NEMDispatchInputs and NEMFCASInputs survive a System JSON round-trip" begin
     AEMS = AustralianElectricityMarketsSimulations
@@ -406,7 +339,7 @@ end
             for device in (alta, battery)
                 series = PSY.get_time_series(PSY.SingleTimeSeries, device, "fixed_load")
                 derived = collect(values(PSY.get_time_series_array(device, series)))
-                per_step = [AEMS._fixed_load_step(device, t).target / base_power for t in stamps]
+                per_step = [step.target / base_power for step in AustralianElectricityMarkets._fixed_load_step_series(device, stamps)]
                 @test derived ≈ per_step
                 @test !all(iszero, derived)
             end
@@ -465,66 +398,4 @@ end
     PSI.solve_impl!(model)
     @test PSI.get_run_status(model) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
     @test vec(Array(PSI.get_parameter_column_values(park_limit, TOY_EXPENSIVE))) ≈ [0.25, 0.05, 0.95]
-end
-
-@testset "a unit's first registered stamp starts in dispatch mode 0 when its previous interval is unregistered" begin
-    sys = System(100.0)
-    bus = _st_bus()
-    add_component!(sys, bus)
-    gen = _st_thermal("first_stamp", bus)
-    add_component!(sys, gen)
-    AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
-    add_time_series!(sys, gen, _st_series("initial_mw", [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]))
-    add_time_series!(sys, gen, _st_series("dispatch_mode", [0.0, NaN, 2.0, 3.0, 4.0, 0.0, 1.0]))
-    AustralianElectricityMarkets.set_observed_state!(
-        gen,
-        AustralianElectricityMarkets.NEMObservedState(;
-            initial_mw = _st_key(gen, "initial_mw"), dispatch_mode = _st_key(gen, "dispatch_mode"),
-        ),
-    )
-    source = AustralianElectricityMarketsSimulations.ObservedState()
-    registration(from) = AustralianElectricityMarkets.NEMRegistration(;
-        schedule_type = AustralianElectricityMarkets.ScheduleType.SCHEDULED, gen_loss_factor = 1.0,
-        load_loss_factor = 1.0, registered_from = from, registered_until = DateTime(2999, 12, 31),
-    )
-
-    # Registered from the first stamp: the stamp after it is the first registered one, and its mode is NaN.
-    AustralianElectricityMarkets.set_registration!(gen, registration(_ST_STAMPS[1]))
-    @test AustralianElectricityMarketsSimulations.unit_state(source, gen, _ST_STAMPS[2]) ==
-        AustralianElectricityMarkets.NEMUnitState(20.0, 0)
-
-    # Registered earlier: the previous interval is registered, so a NaN mode is still an error.
-    AustralianElectricityMarkets.set_registration!(gen, registration(_ST_STAMPS[1] - Minute(5)))
-    @test_throws ArgumentError AustralianElectricityMarketsSimulations.unit_state(source, gen, _ST_STAMPS[2])
-end
-
-@testset "the vectorised seed equals the stamp-by-stamp seed, including the registration edge" begin
-    sys = System(100.0)
-    bus = _st_bus()
-    add_component!(sys, bus)
-    gen = _st_thermal("vectorised", bus)
-    add_component!(sys, gen)
-    AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
-    add_time_series!(sys, gen, _st_series("initial_mw", [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]))
-    add_time_series!(sys, gen, _st_series("dispatch_mode", [0.0, 1.0, 2.0, 3.0, 4.0, 0.0, 1.0]))
-    AustralianElectricityMarkets.set_observed_state!(
-        gen,
-        AustralianElectricityMarkets.NEMObservedState(;
-            initial_mw = _st_key(gen, "initial_mw"), dispatch_mode = _st_key(gen, "dispatch_mode"),
-        ),
-    )
-    source = AustralianElectricityMarketsSimulations.ObservedState()
-    # Registered from the second stamp, so the first is unregistered and the second is the first registered one.
-    AustralianElectricityMarkets.set_registration!(
-        gen,
-        AustralianElectricityMarkets.NEMRegistration(;
-            schedule_type = AustralianElectricityMarkets.ScheduleType.SCHEDULED, gen_loss_factor = 1.0,
-            load_loss_factor = 1.0, registered_from = _ST_STAMPS[2] - Minute(5), registered_until = DateTime(2999, 12, 31),
-        ),
-    )
-    per_stamp = [AustralianElectricityMarketsSimulations._state_initial_mw(source, gen, t) for t in _ST_STAMPS]
-    vectorised = AustralianElectricityMarketsSimulations._state_initial_mw_series(source, gen, _ST_STAMPS)
-    @test vectorised == per_stamp
-    @test vectorised[1] == 0.0
-    @test vectorised[2] == 20.0
 end
