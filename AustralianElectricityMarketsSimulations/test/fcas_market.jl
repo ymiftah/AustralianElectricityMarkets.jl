@@ -85,7 +85,7 @@ function add_toy_storage_initial_mw!(sys, device, initial_timestamp, n::Integer,
 end
 
 """
-    _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
+    _write_toy_battery_replay_inputs!(sys, bat, stamps)
 
 Attaches `bat`'s `NEMReplayDispatch` requirements over `stamps`: a cheap generation-side and
 worthless load-side `energy_offer` series (so charging is never attractive), generous ramp rates, and
@@ -93,7 +93,7 @@ a zero net `"observed_initial_mw"` - none of these ever bind in these tests, whi
 variables directly. Callers that need a specific `"observed_initial_mw"` overwrite it afterwards, e.g.
 via [`add_toy_storage_initial_mw!`](@ref).
 """
-function _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
+function _write_toy_battery_replay_inputs!(sys, bat, stamps)
     base_power = PSY.get_base_power(sys)
     rating = PSY.get_output_active_power_limits(bat).max
     for (direction, price, mw) in (
@@ -507,7 +507,7 @@ function storage_fcas_toy_model(
     PSY.clear_time_series!(sys)
     stamps = [TOY_START, TOY_START + TOY_RESOLUTION]
     _add_flat_max_active_power!(sys, stamps)
-    _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
+    _write_toy_battery_replay_inputs!(sys, bat, stamps)
     add_toy_storage_initial_mw!(sys, bat, stamps[1], length(stamps), initial_mw)
     # The clear above drops the observed-state series the replay stage wrote, which the model reads.
     AustralianElectricityMarkets._set_observed_state_inputs!(sys)
@@ -674,7 +674,7 @@ function _build_bdu_regulation(
     if !isnothing(agc_status)
         add_toy_fcas_agc_status!(sys, bat, stamps[1], length(stamps), agc_status)
     end
-    _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
+    _write_toy_battery_replay_inputs!(sys, bat, stamps)
     if !isnothing(storage_initial_mw)
         add_toy_storage_initial_mw!(sys, bat, stamps[1], length(stamps), storage_initial_mw)
     end

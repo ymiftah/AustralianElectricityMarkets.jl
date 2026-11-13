@@ -101,6 +101,7 @@ function _has_nem_dispatch_limits(device)
     end
     uigf_required = haskey(names, EnergyLimitTimeSeriesParameter) && is_semi_scheduled(device)
     if uigf_required
+        telemetry.uigf isa IS.StaticTimeSeriesKey || return false
         PSY.has_time_series(device, PSY.SingleTimeSeries, NEM_TELEMETRY_SERIES.uigf) || return false
     end
     return true
@@ -133,7 +134,7 @@ const _DERIVED_SERIES_PARAMETERS = (
     (PSI.ActivePowerInTimeSeriesParameter, nothing),
 )
 
-# The series name `param` reads on `device`, for the ramp `direction` of a ramp rate.
+# The series a ramp-rate parameter of `direction` reads: the fixed `NEM_SERIES` ramp series.
 function _expected_series_name(device, names, param, direction::Union{RampUp, RampDown})
     return _ramp_series_name(direction)
 end
