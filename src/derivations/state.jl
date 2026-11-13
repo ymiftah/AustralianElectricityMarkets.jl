@@ -99,7 +99,7 @@ end
 
 
 """
-    fcas_state_stranded_ok(trap::FCASTrapezium, state::NEMUnitState; storage::Bool = false) -> Bool
+    fcas_state_stranded_ok(trap::FCASTrapezium, state::NEMUnitState, storage::Bool) -> Bool
 
 Whether the unit's starting output lies inside the enablement span of `trap`, AEMO *FCAS Model in
 NEMDE* §5's stranded pre-condition. The caller ANDs the result with the other §5 conditions. A
@@ -114,7 +114,7 @@ NEMDE* §5's stranded pre-condition. The caller ANDs the result with the other �
 # Returns
 `Bool`.
 """
-function fcas_state_stranded_ok(trap::FCASTrapezium, state::NEMUnitState; storage::Bool = false)
+function fcas_state_stranded_ok(trap::FCASTrapezium, state::NEMUnitState, storage::Bool)
     point = storage ? state.initial_mw : max(state.initial_mw, 0.0)
     return get_enablement_min(trap) <= point <= get_enablement_max(trap)
 end

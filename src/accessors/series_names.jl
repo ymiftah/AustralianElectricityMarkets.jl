@@ -135,6 +135,40 @@ fcas_series_name(prefix::AbstractString, service::BidType, decremental::Bool) = 
 
 
 """
+    fcas_effective_series_name(bid_type, decremental) -> String
+
+Name of the effective-offer series of one FCAS offer, `"fcas_effective_<BIDTYPE>"` with
+`"_decremental"` appended for a decremental offer.
+
+# Arguments
+- `bid_type`: the FCAS market.
+- `decremental`: whether the offer is decremental.
+
+# Returns
+A `String`.
+"""
+function fcas_effective_series_name(bid_type::BidType, decremental::Bool)
+    return fcas_series_name("fcas_effective", bid_type, decremental)
+end
+
+
+"""
+    fcas_ramping_series_name(bid_type) -> String
+
+Name of the ramping-limits series of one regulation market, `"fcas_ramping_limits_<BIDTYPE>"`.
+
+# Arguments
+- `bid_type`: the regulation market.
+
+# Returns
+A `String`.
+"""
+function fcas_ramping_series_name(bid_type::BidType)
+    return fcas_series_name("fcas_ramping_limits", bid_type)
+end
+
+
+"""
     NEM_INTERCONNECTOR_SERIES
 
 Names of the per-interval flow-limit series an interchange holds through [`NEMInterconnectorLimits`](@ref), in MW.

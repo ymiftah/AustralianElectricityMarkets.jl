@@ -464,6 +464,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The FCAS kernels `fcas_preconditions_ok`, `fcas_effective_offer` and `fcas_ramping_limits` take MW inputs and are exported from `AustralianElectricityMarkets`. `FCAS_BAND_COUNT`, `FCAS_INACTIVE_LIMIT_MW`, `fcas_effective_series_name`, `fcas_ramping_series_name`, `fcas_offer_sides` and `fcas_upper_regulation_service` move there from `AustralianElectricityMarketsSimulations`, which imports them. `fcas_state_stranded_ok` takes its `storage` flag as a positional argument.
+
 - `NEMUnitState` and the state rules (`max_active_power_floor`, `in_fast_start_profile`, `fixed_load_invoked`, `effective_fixed_load`, `fcas_state_stranded_ok`, `fcas_both_sides_stranded_ok`, `fcas_ramping_active`, `fcas_ramping_limit`, `fcas_joint_ramping_exempt`, `mnsp_ramp_envelope`, `composite_ramp_rates`) move from `AustralianElectricityMarketsSimulations` to `AustralianElectricityMarkets` and are exported there; `AustralianElectricityMarketsSimulations` no longer exports them. `nem_system` calls a private replay input stage, `_set_replay_inputs!`, before its input checks; it writes nothing yet.
 
 - Under `ObservedState`, the per-step updates of the 13 state-dependent parameters (initial power, ramp

@@ -23,7 +23,9 @@ using AustralianElectricityMarkets: _bid_series, _bidding_devices, _energy_bid, 
     _financial_year_start, get_fcas_requirements, get_service,
     NEMUnitState, max_active_power_floor, in_fast_start_profile, fixed_load_invoked, effective_fixed_load,
     fcas_state_stranded_ok, fcas_both_sides_stranded_ok, fcas_ramping_active, fcas_ramping_limit,
-    fcas_joint_ramping_exempt, mnsp_ramp_envelope, _max_active_power
+    fcas_joint_ramping_exempt, mnsp_ramp_envelope, _max_active_power,
+    FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,
+    fcas_upper_regulation_service, fcas_offer_sides, _other_regulation
 using Chain
 using DataFrames: DataFrame, ByRow, combine, eachrow, groupby, leftjoin, nrow, rename, select, sort!, transform
 using Dates

@@ -36,6 +36,8 @@ export ConstraintSense, ConstraintTerm, UnitTerm, InterconnectorTerm, RegionTerm
     get_limit_type, get_source, get_gencon_id, get_effective_date, get_version_no,
     get_terms, get_fcas_requirements, resolve_term_devices
 export FCASService, add_fcas_services!, Readers
+export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_offer_sides, fcas_upper_regulation_service,
+    fcas_preconditions_ok, fcas_effective_offer, fcas_ramping_limits
 export NEMUnitState, max_active_power_floor, in_fast_start_profile, fixed_load_invoked, effective_fixed_load,
     fcas_state_stranded_ok, fcas_both_sides_stranded_ok, fcas_ramping_active, fcas_ramping_limit,
     fcas_joint_ramping_exempt, mnsp_ramp_envelope, composite_ramp_rates,
@@ -53,7 +55,7 @@ export UNIT_RAMP_CVP_FACTOR, INTERCONNECTOR_FLOW_CVP_FACTOR, ENERGY_OFFER_CVP_FA
     ENERGY_MAX_AVAIL_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR, INTERCONNECTOR_ZERO_CVP_FACTOR, FIXED_LOADING_CVP_FACTOR,
     MNSP_RAMP_CVP_FACTOR, MNSP_OFFER_CVP_FACTOR, MNSP_AVAILABILITY_CVP_FACTOR,
     FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR, FCAS_BDU_RAMPING_CVP_FACTOR
-export fcas_series_name, FCASBidDirection, fcas_bid_direction, single_series, remove_single_series!, replace_single_series!,
+export fcas_series_name, fcas_effective_series_name, fcas_ramping_series_name, FCASBidDirection, fcas_bid_direction, single_series, remove_single_series!, replace_single_series!,
     nem_dispatch_devices, NEM_DISPATCH_DEVICE_TYPES, is_non_scheduled_load, is_commissioned, has_registration, is_semi_scheduled,
     energy_offer_sides
 
@@ -98,6 +100,7 @@ include("system/dispatch_limits.jl")
 include("system/unit_conditions.jl")
 include("system/regional_availability.jl")
 include("system/fcas.jl")
+include("derivations/fcas.jl")
 include("system/offers.jl")
 include("system/mnsp.jl")
 include("system/constraints.jl")

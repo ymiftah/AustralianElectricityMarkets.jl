@@ -1,27 +1,3 @@
-"The other regulation service: `LOWERREG` for `RAISEREG` and `RAISEREG` for `LOWERREG`."
-_other_regulation(bid_type::BidType) = bid_type == BidType.RAISEREG ? BidType.LOWERREG : BidType.RAISEREG
-
-
-"""
-    fcas_upper_regulation_service(device) -> BidType
-
-The regulation service whose target enters `device`'s upper-slope (`<= EnablementMax`) FCAS rows:
-`BidType.RAISEREG` for a generating unit, `BidType.LOWERREG` for a `PSY.ControllableLoad`, whose
-energy axis is consumption so raising consumption lowers frequency (AEMO *FCAS Model in NEMDE*
-§6.1, §6.2). The other regulation service enters the lower-slope rows.
-
-# Arguments
-- `device`: the device bidding FCAS.
-
-# Returns
-`BidType.RAISEREG` or `BidType.LOWERREG`.
-"""
-fcas_upper_regulation_service(::PSY.Device) = BidType.RAISEREG
-
-
-fcas_upper_regulation_service(::PSY.ControllableLoad) = BidType.LOWERREG
-
-
 """
     _fcas_ramp_rate_service(device, bid_type) -> BidType
 
@@ -285,7 +261,7 @@ function _fcas_enabled_mask(
         ) || return false
         s = state(t)
         isnothing(s) && return true
-        return fcas_state_stranded_ok(trapeziums[t], s; storage)
+        return fcas_state_stranded_ok(trapeziums[t], s, storage)
     end
 end
 
@@ -360,76 +336,6 @@ function _fcas_regulation_enabled_mask(
         return gen_enabled .| load_enabled
     end
     return _fcas_enabled_mask(window, device, bid_type, direction == FCASBidDirection.DECREMENTAL; state)
-end
-
-
-"""
-    FCAS_BAND_COUNT
-
-The number of price bands of an FCAS offer, `BANDAVAIL1` to `BANDAVAIL10` of `BIDPEROFFER_D`.
-"""
-const FCAS_BAND_COUNT = 10
-
-
-"""
-    FCAS_INACTIVE_LIMIT_MW
-
-Right-hand side, in MW, of an FCAS row at an interval where it does not apply (an offer not enabled
-under AEMO *FCAS Model in NEMDE* §5, or a ramping row without a ramp rate or `InitialMW`):
-`+FCAS_INACTIVE_LIMIT_MW` for a `<=` row and `-FCAS_INACTIVE_LIMIT_MW` for a `>=` row. It is two
-orders of magnitude above any one unit's energy plus FCAS, so the row never binds.
-"""
-const FCAS_INACTIVE_LIMIT_MW = 1.0e5
-
-
-"""
-    fcas_effective_series_name(bid_type, decremental) -> String
-
-Name of the [`set_effective_offers!`](@ref) series of one FCAS offer, `"fcas_effective_<BIDTYPE>"`
-with `"_decremental"` appended for a decremental offer.
-
-# Arguments
-- `bid_type`: the FCAS market.
-- `decremental`: whether the offer is decremental.
-
-# Returns
-A `String`.
-"""
-function fcas_effective_series_name(bid_type::BidType, decremental::Bool)
-    return fcas_series_name("fcas_effective", bid_type, decremental)
-end
-
-
-"""
-    fcas_ramping_series_name(bid_type) -> String
-
-Name of the [`set_effective_offers!`](@ref) series of one regulation market, `"fcas_ramping_limits_<BIDTYPE>"`.
-
-# Arguments
-- `bid_type`: the regulation market.
-
-# Returns
-A `String`.
-"""
-function fcas_ramping_series_name(bid_type::BidType)
-    return fcas_series_name("fcas_ramping_limits", bid_type)
-end
-
-
-"""
-    fcas_offer_sides(direction) -> Tuple{Vararg{Bool}}
-
-The `decremental` flag of each offer a device bidding in `direction` makes.
-
-# Arguments
-- `direction`: the [`FCASBidDirection`](@ref) of the device's offers.
-
-# Returns
-`(false,)` or `(true,)` for a single side, `(false, true)` for `BOTH`.
-"""
-function fcas_offer_sides(direction::FCASBidDirection)
-    direction == FCASBidDirection.BOTH && return (false, true)
-    return (direction == FCASBidDirection.DECREMENTAL,)
 end
 
 

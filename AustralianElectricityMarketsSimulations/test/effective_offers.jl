@@ -978,56 +978,6 @@ end
         @test effective_fixed_load(NaN, NEMUnitState(10.0, 4)) == 0.0
     end
 
-    @testset "FCAS enablement and joint ramping move with Initial MW" begin
-        # AEMO FCAS Model in NEMDE §5: the offer is enabled only while the unit is inside the
-        # enablement span, and a storage device's span is checked against its net output.
-        span = FCASTrapezium(;
-            enablement_min = 0.0, low_breakpoint = 10.0, high_breakpoint = 90.0, enablement_max = 100.0,
-            max_avail = 100.0,
-        )
-        @test fcas_state_stranded_ok(span, NEMUnitState(50.0, 4))
-        @test !fcas_state_stranded_ok(span, NEMUnitState(150.0, 4))
-        @test fcas_state_stranded_ok(span, NEMUnitState(-50.0, 4))
-        @test !fcas_state_stranded_ok(span, NEMUnitState(-50.0, 4); storage = true)
-        # An unknown starting output fails the pre-condition rather than passing it.
-        @test !fcas_state_stranded_ok(span, NEMUnitState(NaN, 4))
-        @test !fcas_state_stranded_ok(span, NEMUnitState(NaN, 4); storage = true)
-        # §6.1: the upper joint limit is Initial MW plus the AGC capability, the lower minus it.
-        state = NEMUnitState(50.0, 4)
-        raised = NEMUnitState(80.0, 4)
-        @test fcas_ramping_limit(10.0, true, state) == 60.0
-        @test fcas_ramping_limit(10.0, false, state) == 40.0
-        @test fcas_ramping_limit(10.0, true, raised) > fcas_ramping_limit(10.0, true, state)
-        @test fcas_ramping_limit(10.0, false, raised) > fcas_ramping_limit(10.0, false, state)
-        # A zero or absent capability, or an unknown start, deactivates the ramping row.
-        @test fcas_ramping_active(10.0, state)
-        @test !fcas_ramping_active(0.0, state)
-        @test !fcas_ramping_active(NaN, state)
-        @test !fcas_ramping_active(10.0, NEMUnitState(NaN, 4))
-        # AEMO FCAS Model in NEMDE footnote 11: a fast-start unit starting in modes 0, 1 or 2 is
-        # exempt from joint ramping; any other unit is not.
-        @test fcas_joint_ramping_exempt(NEMUnitState(50.0, 0), true)
-        @test fcas_joint_ramping_exempt(NEMUnitState(50.0, 1), true)
-        @test fcas_joint_ramping_exempt(NEMUnitState(50.0, 2), true)
-        @test !fcas_joint_ramping_exempt(NEMUnitState(50.0, 3), true)
-        @test !fcas_joint_ramping_exempt(NEMUnitState(50.0, 4), true)
-        @test !fcas_joint_ramping_exempt(NEMUnitState(50.0, 0), false)
-        # A bidirectional unit's two regulation sides are gated together while both pass their
-        # other pre-conditions.
-        gen = FCASTrapezium(;
-            enablement_min = 20.0, low_breakpoint = 30.0, high_breakpoint = 80.0, enablement_max = 100.0,
-            max_avail = 100.0,
-        )
-        load = FCASTrapezium(;
-            enablement_min = -100.0, low_breakpoint = -80.0, high_breakpoint = -30.0, enablement_max = -20.0,
-            max_avail = 100.0,
-        )
-        @test fcas_both_sides_stranded_ok(gen, load, true, true, NEMUnitState(0.0, 4)) == (true, true)
-        @test fcas_both_sides_stranded_ok(gen, load, true, true, NEMUnitState(110.0, 4)) == (false, false)
-        @test fcas_both_sides_stranded_ok(gen, load, true, false, NEMUnitState(50.0, 4)) == (true, false)
-        @test fcas_both_sides_stranded_ok(gen, load, true, true, NEMUnitState(NaN, 4)) == (false, false)
-    end
-
     @testset "the MNSP flow envelope starts from the metered flow" begin
         @test mnsp_ramp_envelope(100.0, 2.0, 3.0, 5.0) == (110.0, 85.0)
         @test mnsp_ramp_envelope(-50.0, 0.0, 0.0, 5.0) == (-50.0, -50.0)
@@ -1134,7 +1084,7 @@ end
                         traps = AEMSim._fcas_offer(window, device, service, offer_side(decremental)).trapeziums
                         ok = preconditions(window, device, service, decremental)
                         derived = [
-                            ok[i] && fcas_state_stranded_ok(traps[i], states[i]; storage = device isa Storage)
+                            ok[i] && fcas_state_stranded_ok(traps[i], states[i], device isa Storage)
                                 for i in eachindex(states)
                         ]
                         @test derived == active(decremental)

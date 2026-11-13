@@ -54,6 +54,7 @@ const TEST_GROUPS = [
     "replay_inputs_mnsp" => ("Replay inputs MNSP fixed loads", ["replay_inputs/mnsp.jl"]),
     "replay_inputs_ramps" => ("Replay inputs ramp rates", ["replay_inputs/ramps.jl"]),
     "replay_inputs_state" => ("Replay inputs observed state", ["replay_inputs/state.jl"]),
+    "replay_inputs_fcas_kernels" => ("Replay inputs FCAS kernels", ["replay_inputs/fcas_kernels.jl"]),
     "aqua" => ("Aqua", ["aqua.jl"]),
 ]
 
