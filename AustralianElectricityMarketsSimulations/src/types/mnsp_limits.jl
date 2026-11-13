@@ -1,18 +1,4 @@
 """
-    NEM_MNSP_FIXED_LOAD_SERIES
-
-Names of the NaN-free fixed-loading series that [`set_effective_offers!`](@ref) derives per MNSP link direction from
-the bid's `fixed_load`: `value` is the loading in MW, `0` where the bid is NULL, and `invoked` is `1` where a
-loading is published and `0` where it is NULL.
-"""
-const NEM_MNSP_FIXED_LOAD_SERIES = (
-    forward_value = "forward_fixed_load_value",
-    reverse_value = "reverse_fixed_load_value",
-    forward_invoked = "forward_fixed_load_invoked_flag",
-    reverse_invoked = "reverse_fixed_load_invoked_flag",
-)
-
-"""
     MNSPOperatingParameter
 
 Time-series parameter of an MNSP operating input in natural units. The key meta names the input:
@@ -23,11 +9,11 @@ Time-series parameter of an MNSP operating input in natural units. The key meta 
 - `"reverse_ramp_rate"`: the reverse link ramp rate, in MW/min, from the reverse bid's `ramp_up` key,
   which limits the net flow's decrease.
 - `"forward_fixed_load"` and `"reverse_fixed_load"`: the link's fixed loading, in MW, read from the
-  `NEM_MNSP_FIXED_LOAD_SERIES` `value` series that [`set_effective_offers!`](@ref) derives from the bid's
-  `fixed_load`; the bid's raw series holds NaN where AEMO publishes NULL, and the derived series holds `0` there.
+  `NEM_MNSP_FIXED_LOAD_SERIES` `value` series that [`nem_system`](@ref) writes from the bid's
+  `fixed_load`; the bid's raw series holds NaN where AEMO publishes NULL, and the written series holds `0` there.
 - `"forward_fixed_load_invoked"` and `"reverse_fixed_load_invoked"`: the fixed-loading invocation flag, `1`
   where the bid publishes a loading and `0` where it is NULL, read from the `invoked` series that
-  [`set_effective_offers!`](@ref) derives.
+  [`nem_system`](@ref) writes.
 """
 struct MNSPOperatingParameter <: PSI.TimeSeriesParameter end
 

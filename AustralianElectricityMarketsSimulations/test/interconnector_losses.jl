@@ -608,20 +608,19 @@ function _mnsp_operating_series!(sys; initial = 0.0, up = 1000.0, down = 1000.0,
             ),
         )
     end
-    AEMS._set_mnsp_fixed_loads!(sys)
-    PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
     return ic
 end
 
 """
-    _attach_mnsp_offers!(sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0), forward_after = nothing)
+    _attach_mnsp_offers!(sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0), forward_after = nothing, operating = (;))
 
 Gives `IC1` (area `"1"` to `"2"`) an MNSP offer per link and re-transforms the system's series.
 `forward` and `reverse` are `(max_avail_mw, [(band_mw, price), ...])`, constant over the loads' series
 unless `forward_after` (the same bands list) replaces the forward offer from the second timestamp on.
+`operating` holds the keywords of `_mnsp_operating_series!`, applied before the derived fixed loading is written.
 """
 function _attach_mnsp_offers!(
-        sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0), forward_after = nothing,
+        sys; forward, reverse, forward_tlfs = (1.0, 1.0), reverse_tlfs = (1.0, 1.0), forward_after = nothing, operating = (;),
     )
     ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
     load = first(PSY.get_components(PSY.PowerLoad, sys))
@@ -662,8 +661,8 @@ function _attach_mnsp_offers!(
             ),
         )
     end
-    _mnsp_operating_series!(sys)
-    AEMS._set_mnsp_fixed_loads!(sys)
+    _mnsp_operating_series!(sys; operating...)
+    AustralianElectricityMarkets._set_mnsp_fixed_loads!(sys)
     PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
     return ic
 end

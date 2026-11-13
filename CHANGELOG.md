@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The energy availability of a unit with an energy bid is read from the bid's `max_avail` series, in MW, and the derived `energy_availability[_decremental]` series are no longer attached to bidding units. `set_market_bids!` writes a zero `MAXAVAIL` series, named as the `LOAD` energy bid's, for each available non-scheduled load without an energy bid. `NEMDispatchInputs.energy_availability` and `energy_availability_decremental` hold the bid's key (the zero series' key for such a load), `get_storage_energy_max_avail` and `get_energy_availability` read the bid's series, and `energy_availability_series_name` is removed.
 
+- The MNSP fixed-loading series `NEM_MNSP_FIXED_LOAD_SERIES` (`forward_fixed_load_value`, `reverse_fixed_load_value`, `forward_fixed_load_invoked_flag`, `reverse_fixed_load_invoked_flag`) are written by `nem_system` with the NEMDE replay inputs, and `set_effective_offers!` no longer attaches them. `NEM_MNSP_FIXED_LOAD_SERIES` moves to `AustralianElectricityMarkets`.
+
 - `fcas_bid_direction` answers from the bids as soon as `set_market_bids!` has run, rather than returning `NONE` until `set_effective_offers!` attaches the derived trapezium series.
 
 - The optimisation model's key types are merged into one type per formulation family and PSI role, with the variant in the key meta. Each type below that was renamed or removed is replaced by the type named after it:

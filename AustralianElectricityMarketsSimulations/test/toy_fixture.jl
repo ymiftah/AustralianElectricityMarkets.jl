@@ -314,7 +314,6 @@ function nem_toy_system(
     if tie_break_scales
         set_effective_offers!(sys)
     else
-        AEMS._set_mnsp_fixed_loads!(sys)
         AEMS._set_state_seeds!(sys)
         AEMS._set_fcas_effective_offers!(sys)
         isnothing(interchange) || set_loss_demand_coefficients!(sys)

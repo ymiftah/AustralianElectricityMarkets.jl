@@ -287,7 +287,7 @@ end
 
 # Area 2 adds Solitude ($50) and an 80 MW load; the interchange is an MNSP whose forward link
 # offers 30 MW at $10 and 100 MW at $40 (MAXAVAIL 200) in step 1, 100 MW at $5 (MAXAVAIL 60) in step 2.
-function mnsp_sentinel_system()
+function mnsp_sentinel_system(; mutate! = nothing)
     units = [
         TOY_CHEAP => toy_unit(300.0, [(300.0, 20.0)]; initial = 100.0, ramp_up = 100.0),
         "Solitude" => toy_unit(200.0, [(200.0, 50.0)]; initial = 50.0, ramp_up = 100.0),
@@ -297,6 +297,7 @@ function mnsp_sentinel_system()
     return nem_toy_system(
         units, 50.0; horizon = TOY_RESOLUTION,
         interchange = toy_interchange(; load_mw = 80.0, breakpoints = [-1000.0, 1000.0], mnsp = (forward, reverse_link)),
+        mutate!,
     )
 end
 stock_area_price(solved, area) = only(filter(:REGIONID => ==(area), solved.prices).ROP)
@@ -826,10 +827,8 @@ end
 end
 
 @testset "MNSP metered ramp and fixed-loading inputs update between simulation steps" begin
-    sys = mnsp_sentinel_system()
-    ic = only(collect(PSY.get_components(PSY.AreaInterchange, sys)))
     names = AustralianElectricityMarkets.NEM_MNSP_SERIES
-    derived = AEMS.NEM_MNSP_FIXED_LOAD_SERIES
+    derived = AustralianElectricityMarkets.NEM_MNSP_FIXED_LOAD_SERIES
     # The bid's fixed loading is NaN where AEMO publishes NULL, so the first step is not invoked.
     inputs = (
         names.initial_flow => [0.0, 50.0],
@@ -844,12 +843,15 @@ end
         derived.forward_value => [0.0, 20.0],
         derived.forward_invoked => [0.0, 1.0],
     )
-    for (name, values) in inputs
-        PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, ic, name)
-        AustralianElectricityMarkets.replace_single_series!(sys, ic, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(collect(STOCK_STEPS), values)))
+    # The raw inputs are edited before the replay inputs are written, which derive the fixed loading from them.
+    function set_raw_inputs!(sys, _stamps)
+        ic = only(collect(PSY.get_components(PSY.AreaInterchange, sys)))
+        for (name, values) in inputs
+            AustralianElectricityMarkets.replace_single_series!(sys, ic, PSY.SingleTimeSeries(; name, data = PSY.TimeSeries.TimeArray(collect(STOCK_STEPS), values)))
+        end
     end
-    AEMS._set_mnsp_fixed_loads!(sys)
-    PSY.transform_single_time_series!(sys, TOY_RESOLUTION, TOY_RESOLUTION)
+    sys = mnsp_sentinel_system(; mutate! = set_raw_inputs!)
+    ic = only(collect(PSY.get_components(PSY.AreaInterchange, sys)))
     sim = stock_simulate(sys)
     @test stock_flow.(sim.solved) ≈ [10.0, 20.0] atol = TOY_TOLERANCE
     for (name, values) in expected

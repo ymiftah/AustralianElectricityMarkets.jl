@@ -300,3 +300,21 @@ function _composite_down_ramp(initial_mw::Real, gen_down::Real, load_up::Real, p
     abs(initial_mw / gen_down) >= period && return Float64(gen_down)
     return ((period - abs(initial_mw / gen_down)) * load_up + initial_mw) / period
 end
+
+
+"""
+    mnsp_fixed_load(raw::Float64) -> NTuple{2, Float64}
+
+The fixed-loading value and invocation flag of an MNSP link direction in one interval, from the bid's
+`FIXEDLOAD` in MW: `(0.0, 0.0)` where AEMO publishes NULL (`NaN`), otherwise `(raw, 1.0)`.
+
+# Arguments
+- `raw`: the bid's `FIXEDLOAD` at the interval, MW, `NaN` where unpublished.
+
+# Returns
+`(value, invoked)`: the loading in MW and the invocation flag.
+"""
+function mnsp_fixed_load(raw::Float64)::NTuple{2, Float64}
+    isnan(raw) && return (0.0, 0.0)
+    return (raw, 1.0)
+end

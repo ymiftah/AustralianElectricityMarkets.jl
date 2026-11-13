@@ -43,7 +43,6 @@ Throws `ArgumentError` when a bid this function reads is static rather than seri
 `nothing`.
 """
 function set_effective_offers!(sys::PSY.System)
-    _set_mnsp_fixed_loads!(sys)
     _set_dispatch_limits!(sys)
     _set_state_seeds!(sys)
     _set_fcas_effective_offers!(sys)
@@ -327,31 +326,6 @@ function _derived_series_keys(device)
         key isa IS.StaticTimeSeriesKey && get!(keys, IS.get_name(key), key)
     end
     return keys
-end
-
-
-# Derives each MNSP link direction's NaN-free fixed-loading value and invoked series from its bid's `fixed_load`
-# (NaN where AEMO publishes NULL). A bid without a fixed loading gives zeros on its availability grid.
-function _set_mnsp_fixed_loads!(sys::PSY.System)
-    for device in PSY.get_components(PSY.AreaInterchange, sys)
-        for dir in _MNSP_DIRECTIONS
-            bid = _mnsp_bid(device, dir)
-            isnothing(bid) && continue
-            series = isnothing(bid.fixed_load) ? _bid_series(device, bid.max_avail, :max_avail) :
-                _bid_series(device, bid.fixed_load, :fixed_load)
-            raw = isnothing(bid.fixed_load) ? fill(NaN, length(series.values)) : Float64.(series.values)
-            value = [isnan(v) ? 0.0 : v for v in raw]
-            invoked = [isnan(v) ? 0.0 : 1.0 for v in raw]
-            for (kind, data) in ((:value, value), (:invoked, invoked))
-                name = getproperty(NEM_MNSP_FIXED_LOAD_SERIES, Symbol(dir, "_", kind))
-                # A transformed system keeps a deterministic copy, which must go before its single series.
-                PSY.has_time_series(device, PSY.DeterministicSingleTimeSeries, name) &&
-                    PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, device, name)
-                replace_single_series!(sys, device, single_series(name, first(series.timestamps), data, series.resolution))
-            end
-        end
-    end
-    return
 end
 
 

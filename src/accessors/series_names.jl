@@ -148,6 +148,21 @@ const NEM_MNSP_SERIES = (
 
 
 """
+    NEM_MNSP_FIXED_LOAD_SERIES
+
+Names of the NaN-free fixed-loading series that [`nem_system`](@ref) writes per MNSP link direction from
+the bid's `fixed_load`: `value` is the loading in MW, `0` where the bid is NULL, and `invoked` is `1` where a
+loading is published and `0` where it is NULL.
+"""
+const NEM_MNSP_FIXED_LOAD_SERIES = (
+    forward_value = "forward_fixed_load_value",
+    reverse_value = "reverse_fixed_load_value",
+    forward_invoked = "forward_fixed_load_invoked_flag",
+    reverse_invoked = "reverse_fixed_load_invoked_flag",
+)
+
+
+"""
     NEM_CONSTRAINT_SERIES
 
 Names of the per-interval series a [`GenericConstraint`](@ref) holds through its `rhs` and `invoked` keys: the

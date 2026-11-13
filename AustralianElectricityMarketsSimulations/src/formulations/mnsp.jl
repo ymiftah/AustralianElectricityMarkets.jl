@@ -27,7 +27,7 @@ function _require_mnsp_fixed_loads(device::PSY.AreaInterchange)
         PSY.has_time_series(device, PSY.SingleTimeSeries, name) || throw(
             ArgumentError(
                 "AreaInterchange \"$(PSY.get_name(device))\" has no derived MNSP fixed loading \"$name\"; " *
-                    "call set_effective_offers! before building the formulation",
+                    "its replay inputs are written by nem_system, so build the system with it before the formulation",
             ),
         )
     end

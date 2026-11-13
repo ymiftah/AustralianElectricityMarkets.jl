@@ -1,8 +1,7 @@
 function _mnsp_limit_case(; forward = (10.0, [(5.0, 10.0)]), reverse = (100.0, [(100.0, 10.0)]), operating...)
     sys = _loss_test_system(; loss_constant = 1.0, breakpoints = [-1000.0, 1000.0], priced_supply_only = true)
     PSY.set_available!(PSY.get_component(PSY.ThermalStandard, sys, "Solitude"), true)
-    _attach_mnsp_offers!(sys; forward, reverse)
-    _mnsp_operating_series!(sys; operating...)
+    _attach_mnsp_offers!(sys; forward, reverse, operating)
     return sys
 end
 
@@ -107,7 +106,7 @@ end
 @testset "a missing derived MNSP fixed loading is named before the parameters are added" begin
     sys = _mnsp_limit_case(; forward = (100.0, [(100.0, 10.0)]), fixed_forward = 30.0)
     ic = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
-    name = AEMS.NEM_MNSP_FIXED_LOAD_SERIES.forward_value
+    name = AustralianElectricityMarkets.NEM_MNSP_FIXED_LOAD_SERIES.forward_value
     # A transformed system holds the derived series both as a single series and as its deterministic copy.
     PSY.has_time_series(ic, PSY.DeterministicSingleTimeSeries, name) &&
         PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, ic, name)
