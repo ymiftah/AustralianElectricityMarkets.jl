@@ -74,6 +74,7 @@ include("derivations/energy.jl")
 include("derivations/state.jl")
 include("derivations/ramps.jl")
 include("derivations/tie_break.jl")
+include("derivations/loss_demand.jl")
 
 include("readers/Readers.jl")
 using .Readers

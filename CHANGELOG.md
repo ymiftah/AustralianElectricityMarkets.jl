@@ -50,6 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The observed starting output and fixed-loading series of a replay unit (`initial_mw_seed`, `fixed_load_seed` and `fixed_load_invoked_seed`, named by `NEM_STATE_INPUT_SERIES`) are written by `nem_system` with the NEMDE replay inputs, and `set_effective_offers!` no longer attaches them. `observed_unit_states` reads a unit's state at each interval from its `NEMObservedState`.
 
+- The loss demand coefficient series `loss_demand_coefficient` is written by `nem_system` with the NEMDE replay inputs, once per loss-modelled interchange, and `set_effective_offers!` no longer attaches it. `set_loss_demand_coefficients!` is removed, and `loss_demand_coefficient` moves to `AustralianElectricityMarkets` without an export. `AustralianElectricityMarketsSimulations` no longer exports either name.
+
 ### Documentation
 
 - Restored the regional how-to pages, built with `set_regional_availability!`; fixed their series plots and output directories.
@@ -152,7 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   excluded): a net-energy equality at the fixed loading, weight 380, invoked at the intervals that
   carry one. Fixed loadings of units outside the system are ignored. It now also requires
   `BIDPEROFFER_D` (`FIXEDLOAD`) and `BIDDAYOFFER_D` (`T1`) to be cached.
-- `set_loss_demand_coefficients!` attaches each loss-modelled `AreaInterchange` a
+- `nem_system` attaches each loss-modelled `AreaInterchange` a
   `"loss_demand_coefficient"` series: the demand term of its loss factor at every interval.
 - `read_fixed_loads` reads participant-entered energy fixed loadings from `BIDPEROFFER_D`, skipping
   units with a fast-start inflexibility profile.
@@ -508,11 +510,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coefficients. The dispatch formulation's PowerSimulations time-series parameters (ramp up and down,
   energy max availability, storage charge and discharge) resolve their series names through those
   keys, so its maximum availability parameter is the bid `MAXAVAIL` and its UIGF parameter the
-  telemetered UIGF, per unit of the system base. `set_loss_demand_coefficients!` moved from AEM to
-  AEMSim and `set_effective_offers!` calls it; the derivation is exported as the pure functions
+  telemetered UIGF, per unit of the system base. The derivation is exported as the pure functions
   `referred_offer_curves`, `effective_energy_availability`, `effective_ramp_limit`,
   `effective_ramp_limits`, `effective_regulation_enablement`, `effective_regulation_max_avail`,
-  `fcas_trapezium_values`, `tie_break_scale` and `loss_demand_coefficient`.
+  `fcas_trapezium_values` and `tie_break_scale`.
 
 - An energy bid's `fixed_load` holds `NaN` at the intervals where `FIXEDLOAD` is NULL, so that a
   loading AEMO did not publish is distinct from one of zero; the field is `nothing` where it is
@@ -754,7 +755,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `NEMInterconnectorLoss` takes the demand term of each interval's loss factor as the flow's
   coefficient in the loss definition, driven by a `LossDemandCoefficientParameter` read from the
   `"loss_demand_coefficient"` series, so it builds in recurrent simulations. AEM's replay constructor
-  calls `set_loss_demand_coefficients!`; a model without that series fails to build.
+  writes that series; a model without it fails to build.
 - MNSP link flows are modelled per offer band (`MNSPLinkBandVariable`) with band widths,
   availability and prices read from the `"mnsp_<direction>_*"` series as parameters, so offers can
   update between simulation steps.

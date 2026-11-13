@@ -487,16 +487,6 @@ end
         @test effective_regulation_enablement(20.0, 100.0, nothing, 0.0) == (20.0, 0.0)
     end
 
-    @testset "loss_demand_coefficient sums the named regions' demand" begin
-        model = InterconnectorLossModel(;
-            interconnector = "IC1", from_region = "NSW1", to_region = "VIC1", from_region_loss_share = 0.5,
-            loss_constant = 0.0, loss_flow_coefficient = 0.0,
-            demand_coefficients = Dict("NSW1" => 0.5, "VIC1" => 1.5), breakpoints = [-100.0, 0.0, 100.0],
-        )
-        @test loss_demand_coefficient(model, Dict("NSW1" => 100.0, "VIC1" => 200.0)) == 350.0
-        @test loss_demand_coefficient(model, Dict("NSW1" => 100.0)) == 50.0
-    end
-
     @testset "the derived series and their keys, and no energy_max_avail series" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)

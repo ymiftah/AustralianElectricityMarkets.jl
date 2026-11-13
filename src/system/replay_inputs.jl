@@ -6,6 +6,7 @@ include("replay_inputs/dispatch_limits.jl")
 include("replay_inputs/state_inputs.jl")
 include("replay_inputs/fcas_effective.jl")
 include("replay_inputs/tie_break.jl")
+include("replay_inputs/loss_demand.jl")
 
 
 """
@@ -23,7 +24,9 @@ regulation ramping limits of each regulation market, named by [`fcas_ramping_ser
 system base. It reads the AGC ramp rates the third writer added and the observed state the fourth added. The sixth
 adds the tie-break scale of each price-tied energy band, named by [`tie_break_series_name`](@ref), and the
 [`EnergyTieBreak`](@ref) service joining the units that carry an energy bid. It reads the energy offer curves the first
-writer added, and checks that the price-tied pairs hold over the replay intervals.
+writer added, and checks that the price-tied pairs hold over the replay intervals. The seventh adds the demand term
+of each loss-modelled interchange's loss factor, named by [`NEM_SERIES`](@ref), from the loads' `"loss_demand"` series
+per unit of the system base. It reads the demand that [`set_demand!`](@ref) writes before the stage runs.
 Called by [`nem_system`](@ref) before its input checks.
 
 # Arguments
@@ -39,5 +42,6 @@ function _set_replay_inputs!(sys::PSY.System)
     _set_observed_state_inputs!(sys)
     _set_fcas_effective_offers!(sys)
     _set_tie_break!(sys)
+    _set_loss_demand_coefficients!(sys)
     return
 end

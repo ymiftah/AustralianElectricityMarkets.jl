@@ -309,7 +309,6 @@ function nem_toy_system(
         set_effective_offers!(sys)
     else
         _strip_toy_tie_breaks!(sys)
-        isnothing(interchange) || set_loss_demand_coefficients!(sys)
         AEMS._attach_dispatch_inputs!(sys)
     end
 

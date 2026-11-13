@@ -96,7 +96,7 @@ function _loss_test_system(;
     )
     ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
     PSY.add_supplemental_attribute!(sys, ic1, model)
-    coefficients && set_loss_demand_coefficients!(sys)
+    coefficients && AustralianElectricityMarkets._set_loss_demand_coefficients!(sys)
     # Regenerate the DeterministicSingleTimeSeries views removed above, on the fixture's own hourly grid; PSI
     # finds no load parameter to add when no PowerLoad carries one.
     PSY.transform_single_time_series!(sys, Hour(2), Hour(1))
@@ -402,12 +402,12 @@ end
     @test all(abs(gap) < 1.0e-6 for gap in gaps.gap_mw)
 end
 
-@testset "a build without the loss demand coefficient series fails, naming its setter" begin
+@testset "a build without the loss demand coefficient series fails, naming nem_system" begin
     sys = _loss_test_system(; demand_coefficients = Dict("2" => 1.0e-4), coefficients = false)
     model = _decision_model(_loss_template(sys), sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     folder = mktempdir()
     @test PSI.build!(model; output_dir = folder) == PSI.ModelBuildStatus.FAILED
-    @test any(f -> occursin("set_loss_demand_coefficients!", read(f, String)), readdir(folder; join = true))
+    @test any(f -> occursin("nem_system", read(f, String)), readdir(folder; join = true))
 end
 
 @testset "the demand term is the flow's coefficient and follows the available loads" begin
@@ -453,75 +453,6 @@ end
     end
 end
 
-@testset "the loss demand setter evaluates each model's demand term per interval" begin
-    # The mock hive supplies real NEM magnitudes; `_loss_test_system`'s hand-built model covers the
-    # formulation side, this covers the series the setter writes from cached demand.
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    as_of = Date(2025, 1, 2)
-    sys = nem_system(db, RegionalNetworkConfiguration())
-    @test_logs (:warn, r"no resolvable loss model") match_mode = :any attach_interconnector_losses!(sys, db, as_of)
-    # No demand series yet: nothing to evaluate the loss factor at.
-    @test_throws r"no \"loss_demand\" series" set_loss_demand_coefficients!(sys)
-    date_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 1, 0)
-    attach_demand!(sys, db, date_range; resolution = Minute(5))
-    set_loss_demand_coefficients!(sys)
-    base_power = PSY.get_base_power(sys)
-    ic1 = PSY.get_component(PSY.AreaInterchange, sys, "IC1")
-    model = only(PSY.get_supplemental_attributes(AEMS.InterconnectorLossModel, ic1))
-    loss_demand_mw(region) = PSY.with_units_base(sys, "NATURAL_UNITS") do
-        PSY.get_time_series_values(PSY.SingleTimeSeries, PSY.get_component(PSY.PowerLoad, sys, "$region Load"), "loss_demand")
-    end
-    # Per-unit coefficient times per-unit demand equals the MW coefficient times MW demand.
-    expected = sum(c / base_power .* loss_demand_mw(r) for (r, c) in model.demand_coefficients)
-    coefficient = PSY.get_time_series_values(PSY.SingleTimeSeries, ic1, "loss_demand_coefficient")
-    @test coefficient ≈ expected
-    @test any(!iszero, coefficient)
-    @test PSY.get_time_series_timestamps(PSY.SingleTimeSeries, ic1, "loss_demand_coefficient") ==
-        PSY.get_time_series_timestamps(PSY.SingleTimeSeries, PSY.get_component(PSY.PowerLoad, sys, "VIC1 Load"), "loss_demand")
-    @test !PSY.has_time_series(PSY.get_component(PSY.AreaInterchange, sys, "IC6"), PSY.SingleTimeSeries, "loss_demand_coefficient")
-
-    # An unavailable load drops out of its region's demand, and re-running replaces the series.
-    PSY.set_available!(PSY.get_component(PSY.PowerLoad, sys, "VIC1 Load"), false)
-    set_loss_demand_coefficients!(sys)
-    without_vic = sum(
-        (c / base_power .* loss_demand_mw(r) for (r, c) in model.demand_coefficients if r != "VIC1");
-        init = zeros(length(coefficient)),
-    )
-    @test PSY.get_time_series_values(PSY.SingleTimeSeries, ic1, "loss_demand_coefficient") ≈ without_vic
-end
-
-@testset "the loss demand setter rejects a load on a bus with no area" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    sys = nem_system(db, RegionalNetworkConfiguration())
-    @test_logs (:warn, r"no resolvable loss model") match_mode = :any attach_interconnector_losses!(sys, db, Date(2025, 1, 2))
-    date_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 1, 0)
-    attach_demand!(sys, db, date_range; resolution = Minute(5))
-    PSY.set_area!(PSY.get_bus(PSY.get_component(PSY.PowerLoad, sys, "VIC1 Load")), nothing)
-    err = _caught(() -> set_loss_demand_coefficients!(sys))
-    @test err isa ArgumentError
-    @test occursin("on a bus with no area", sprint(showerror, err))
-end
-
-@testset "the loss demand setter rejects a load series off the common timestamps" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    sys = nem_system(db, RegionalNetworkConfiguration())
-    @test_logs (:warn, r"no resolvable loss model") match_mode = :any attach_interconnector_losses!(sys, db, Date(2025, 1, 2))
-    date_range = DateTime(2025, 1, 1, 0, 0):Minute(5):DateTime(2025, 1, 1, 1, 0)
-    attach_demand!(sys, db, date_range; resolution = Minute(5))
-    load = PSY.get_component(PSY.PowerLoad, sys, "VIC1 Load")
-    original = PSY.get_time_series(PSY.SingleTimeSeries, load, "loss_demand")
-    stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, load, "loss_demand")
-    values = PSY.get_time_series_values(PSY.SingleTimeSeries, load, "loss_demand")
-    PSY.remove_time_series!(sys, PSY.SingleTimeSeries, load, "loss_demand")
-    PSY.add_time_series!(
-        sys, load,
-        single_series("loss_demand", first(stamps) + Minute(5), values, PSY.get_resolution(original)),
-    )
-    err = _caught(() -> set_loss_demand_coefficients!(sys))
-    @test err isa ArgumentError
-    @test occursin("is not on the timestamps", sprint(showerror, err))
-end
-
 @testset "loss equations use the loss_demand series when a load carries one" begin
     # `loss_demand` is 1.5x the dispatch `max_active_power` series: the demand term must follow it.
     sys = _loss_test_system(;
@@ -551,15 +482,6 @@ end
     PSI.set_device_model!(template, PSY.AreaInterchange, AEMS.NEMInterconnectorLoss)
     model = _decision_model(template, sys; optimizer = HiGHS.Optimizer, horizon = Hour(2))
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
-end
-
-@testset "the loss demand setter rejects a load on an area-less bus" begin
-    sys = _loss_test_system()
-    load = first(PSY.get_components(PSY.PowerLoad, sys))
-    PSY.set_area!(PSY.get_bus(load), nothing)
-    err = _caught(() -> set_loss_demand_coefficients!(sys))
-    @test err isa ArgumentError
-    @test occursin(PSY.get_name(load), sprint(showerror, err))
 end
 
 @testset "no available AreaInterchange builds without loss variables" begin

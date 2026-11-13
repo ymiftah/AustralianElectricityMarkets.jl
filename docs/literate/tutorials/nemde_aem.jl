@@ -194,7 +194,6 @@ function attach_generic_constraints!(sys, market) #hide
     return sys #hide
 end #hide
 attach_generic_constraints!(sys, market)
-set_loss_demand_coefficients!(sys)
 AEMSim.set_effective_offers!(sys)
 PSY.transform_single_time_series!(sys, 2 * RESOLUTION, RESOLUTION);
 
