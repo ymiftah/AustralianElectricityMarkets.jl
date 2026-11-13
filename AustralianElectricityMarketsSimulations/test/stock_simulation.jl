@@ -128,8 +128,11 @@ end
 
 @testset "a constraint invoked at no step is left out and reported with its reason" begin
     never = sentinel_system(; invoked = [0.0, 0.0])
-    @test AEMS.never_invoked_constraints(never, STOCK_STEPS) == Dict("N_TOY_LIMIT" => :never_invoked)
-    @test AEMS.never_invoked_constraints(sentinel_system(; invoked = [1.0, 0.0]), STOCK_STEPS) == Dict{String, Symbol}()
+    AustralianElectricityMarkets._set_constraint_availability!(never)
+    @test AustralianElectricityMarkets.get_unavailable_constraints(never) == DataFrame(; constraint = ["N_TOY_LIMIT"], reason = [:never_invoked])
+    invoked_once = sentinel_system(; invoked = [1.0, 0.0])
+    AustralianElectricityMarkets._set_constraint_availability!(invoked_once)
+    @test isempty(AustralianElectricityMarkets.get_unavailable_constraints(invoked_once))
     out_never = run_replay(never, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
     row_never = only(filter(:constraint => ==("N_TOY_LIMIT"), out_never.skipped_constraints))
     @test (row_never.reason, row_never.n_missing) == (:never_invoked, 0)
@@ -363,7 +366,7 @@ end
     ]
     sys = loss_curve_sentinel_system()
     ic = PSY.get_component(PSY.AreaInterchange, sys, TOY_INTERCHANGE)
-    @test PSY.get_time_series_values(PSY.SingleTimeSeries, ic, "loss_demand_coefficient") ≈ [0.05, 0.1]
+    @test PSY.get_time_series_values(PSY.SingleTimeSeries, ic, "loss_demand_coefficient") ≈ [0.05, 0.1, 0.1]
     sim = stock_simulate(sys)
     container = PSI.get_optimization_container(sim.model)
     @test PSI.built_for_recurrent_solves(container) && PSI.is_milp(container)

@@ -58,6 +58,7 @@ const TEST_GROUPS = [
     "replay_inputs_fcas" => ("Replay inputs FCAS effective offers", ["replay_inputs/fcas.jl", "replay_inputs/fcas_inputs.jl"]),
     "replay_inputs_tie_break" => ("Replay inputs tie-break scales", ["replay_inputs/tie_break.jl"]),
     "replay_inputs_loss_demand" => ("Replay inputs loss demand coefficients", ["replay_inputs/loss_demand.jl"]),
+    "replay_inputs_constraints" => ("Replay inputs constraint availability", ["replay_inputs/constraints.jl"]),
     "replay_inputs_units" => ("Replay inputs replay-unit series and accessors", ["replay_inputs/replay_units.jl"]),
     "replay_inputs_range" => ("Replay inputs forecasts and date-range rules", ["replay_inputs/range.jl"]),
     "aqua" => ("Aqua", ["aqua.jl"]),

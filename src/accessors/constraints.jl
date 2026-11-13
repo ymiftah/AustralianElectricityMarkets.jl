@@ -49,6 +49,28 @@ end
 
 
 """
+    get_unavailable_constraints(sys) -> DataFrame
+
+The built constraints that the replay inputs set unavailable, and why: `:never_invoked` when the constraint is
+invoked at no replay interval, `:no_available_device` when all its contributing devices are unavailable.
+
+# Arguments
+- `sys`: a `System` built by `nem_system`.
+
+# Returns
+A `DataFrame` with `constraint` (`String`) and `reason` (`Symbol`), sorted by constraint name. Empty when no
+constraint was made unavailable or no constraints were built into `sys`.
+"""
+function get_unavailable_constraints(sys)
+    rows = sort(get_build_report(sys).unavailable_constraints; by = r -> r["constraint"])
+    return DataFrame(;
+        constraint = String[r["constraint"] for r in rows],
+        reason = Symbol[Symbol(r["reason"]) for r in rows],
+    )
+end
+
+
+"""
     get_missing_constraint_intervals(sys) -> Vector{DateTime}
 
 The dispatch intervals of the range [`nem_system`](@ref) ran over that had no invoked

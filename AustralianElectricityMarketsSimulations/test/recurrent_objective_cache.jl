@@ -5,8 +5,8 @@ function _objective_cache_system()
     gc = PSY.get_component(GenericConstraint, sys, "F_REG")
     curve_name = AustralianElectricityMarkets._fcas_offer_series_name(alta, BidType.RAISEREG, false)
     replacements = (
-        (alta, curve_name, [_toy_offer([(0.1, 5.0), (0.1, 12.0)]), _toy_offer([(0.1, 15.0), (0.1, 22.0)])]),
-        (gc, AustralianElectricityMarkets.NEM_CONSTRAINT_SERIES.invoked, [1.0, 0.0]),
+        (alta, curve_name, [_toy_offer([(0.1, 5.0), (0.1, 12.0)]), _toy_offer([(0.1, 15.0), (0.1, 22.0)]), _toy_offer([(0.1, 15.0), (0.1, 22.0)])]),
+        (gc, AustralianElectricityMarkets.NEM_CONSTRAINT_SERIES.invoked, [1.0, 0.0, 0.0]),
     )
     for (owner, name, values) in replacements
         PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, owner, name)

@@ -31,7 +31,7 @@ end
     ramping = values(TOY_CHEAP, "fcas_ramping_limits_RAISEREG")
     @test ramping[1] == (0.5 + 0.2, inactive) && ramping[2] == (inactive, inactive)
     # The battery's §6.4 limit is its 20 MW AGC ramping capability.
-    @test last.(values(TOY_BATTERY, "fcas_ramping_limits_RAISEREG")) ≈ [0.2, 0.2]
+    @test last.(values(TOY_BATTERY, "fcas_ramping_limits_RAISEREG")) ≈ [0.2, 0.2, 0.2]
 end
 
 @testset "joint ramping is exempt for a fast-start unit in modes 0 to 2" begin

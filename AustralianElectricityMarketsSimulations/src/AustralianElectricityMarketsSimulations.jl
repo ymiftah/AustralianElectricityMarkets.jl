@@ -13,7 +13,7 @@ using AustralianElectricityMarkets: _mnsp_bid, _MNSP_DIRECTIONS, BidType, Constr
     fcas_bid_direction, fcas_series_name, fcas_service_name,
     get_bid_type, get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_factor,
     get_interconnector, get_missing_constraint_intervals, get_region, get_sense, get_skipped_constraints,
-    get_terms, loss_curve_vertex_values, is_non_scheduled_load, loss_segments, nem_dispatch_devices,
+    get_terms, get_unavailable_constraints, loss_curve_vertex_values, is_non_scheduled_load, loss_segments, nem_dispatch_devices,
     NEM_DISPATCH_DEVICE_TYPES, single_series, remove_single_series!, replace_single_series!,
     _nem_offer_cost, _fcas_units_multiplier, get_energy_bids, _has_fixed_load_bid,
     get_fcas_bids, energy_offer_sides, FCASTrapezium, get_enablement_min, get_enablement_max, get_max_avail, get_upper_slope_coeff,
@@ -96,7 +96,7 @@ export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
 export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
     exclude_unmodeled_services!,
-    never_invoked_constraints, prepare_replay!
+    prepare_replay!
 export NEMDispatchProblem, nemde_optimizer, NEMDE_HIGHS_OPTIONS
 export EnergyOfferBandVariable, EnergyBandWidthParameter, EnergyBandPriceParameter
 export EnergyLimitTimeSeriesParameter

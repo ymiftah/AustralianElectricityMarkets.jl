@@ -35,21 +35,32 @@ end
 
 @testset "excluded constraints bypass buildability checks and retain their reason" begin
     ghost = UnitTerm("GHOST", BidType.ENERGY, 1.0)
-    for reason in (:never_invoked, :manual_exclusion)
-        sys = replay_validation_system(ConstraintTerm[ghost]; invoked = 0.0)
-        exclusions = reason == :never_invoked ? AEMS.never_invoked_constraints(sys, [TOY_START]) : Dict("N_REVIEW" => reason)
-        skipped = NamedTuple[]
-        result = try
-            replay_template(sys; template = with_generic_constraints!(energy_template()), exclude_constraints = exclusions, skipped)
-        catch err
-            err
-        end
-        @test result isa PSI.ProblemTemplate
-        if result isa PSI.ProblemTemplate
-            @test !any(k -> first(k) == "N_REVIEW", keys(PSI.get_service_models(result)))
-            @test only(skipped) == (constraint = "N_REVIEW", reason = reason, n_missing = 0)
-        end
+    sys = replay_validation_system(ConstraintTerm[ghost])
+    skipped = NamedTuple[]
+    result = try
+        replay_template(
+            sys; template = with_generic_constraints!(energy_template()), exclude_constraints = Dict("N_REVIEW" => :manual_exclusion), skipped,
+        )
+    catch err
+        err
     end
+    @test result isa PSI.ProblemTemplate
+    if result isa PSI.ProblemTemplate
+        @test !any(k -> first(k) == "N_REVIEW", keys(PSI.get_service_models(result)))
+        @test only(skipped) == (constraint = "N_REVIEW", reason = :manual_exclusion, n_missing = 0)
+    end
+end
+
+@testset "a never-invoked constraint bypasses buildability checks and is unavailable from the build" begin
+    ghost = UnitTerm("GHOST", BidType.ENERGY, 1.0)
+    sys = replay_validation_system(ConstraintTerm[ghost]; invoked = 0.0)
+    AustralianElectricityMarkets._set_constraint_availability!(sys)
+    skipped = NamedTuple[]
+    result = replay_template(sys; template = with_generic_constraints!(energy_template()), skipped)
+    @test result isa PSI.ProblemTemplate
+    @test isempty(skipped)
+    @test !PSY.get_available(PSY.get_component(GenericConstraint, sys, "N_REVIEW"))
+    @test AustralianElectricityMarkets.get_unavailable_constraints(sys).reason == [:never_invoked]
 end
 
 @testset "an omitted family cannot hide a missing component in either term order" begin
@@ -149,15 +160,12 @@ end
 @testset "a never-invoked constraint stays excluded and is reported again on a reused system" begin
     ghost = UnitTerm("GHOST", BidType.ENERGY, 1.0)
     sys = replay_validation_system(ConstraintTerm[ghost]; invoked = 0.0)
+    AustralianElectricityMarkets._set_constraint_availability!(sys)
     review = PSY.get_component(GenericConstraint, sys, "N_REVIEW")
     for _ in 1:2
-        exclusions = AEMS.never_invoked_constraints(sys, [TOY_START])
-        skipped = NamedTuple[]
-        replay_template(
-            sys; template = with_generic_constraints!(energy_template()), exclude_constraints = exclusions, skipped,
-        )
+        rows = AEMS.prepare_replay!(sys, with_generic_constraints!(energy_template()), TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION))
         @test !PSY.get_available(review)
-        @test only(skipped) == (constraint = "N_REVIEW", reason = :never_invoked, n_missing = 0)
+        @test rows == DataFrame(; constraint = ["N_REVIEW"], reason = [:never_invoked], n_missing = [0])
     end
 end
 

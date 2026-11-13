@@ -56,6 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The loss demand coefficient series `loss_demand_coefficient` is written by `nem_system` with the NEMDE replay inputs, once per loss-modelled interchange, and `set_effective_offers!` no longer attaches it. `set_loss_demand_coefficients!` is removed, and `loss_demand_coefficient` moves to `AustralianElectricityMarkets` without an export. `AustralianElectricityMarketsSimulations` no longer exports either name.
 
+- The constraints the replay cannot bind are set unavailable by `nem_system`, with the NEMDE replay inputs: `:never_invoked` when the invoked series is zero at every replay interval, else `:no_available_device` when all contributing devices are unavailable. They are recorded in `NEMBuildReport.unavailable_constraints` and listed by `get_unavailable_constraints(sys)`. `prepare_replay!` returns them with `n_missing = 0`, merged with the excluded constraints, and `never_invoked_constraints` is removed.
+
 ### Documentation
 
 - Restored the regional how-to pages, built with `set_regional_availability!`; fixed their series plots and output directories.

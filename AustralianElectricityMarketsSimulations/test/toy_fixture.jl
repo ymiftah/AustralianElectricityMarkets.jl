@@ -303,6 +303,7 @@ function nem_toy_system(
     for T in (ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad)
         foreach(device -> _key_toy_telemetry_limits!(sys, stamps, device), filter(AustralianElectricityMarkets.has_nem_unit_data, collect(PSY.get_components(T, sys))))
     end
+    _extend_toy_series!(sys)
     # The replay inputs first: the dispatch parameters and FCAS offers read the series they write.
     AustralianElectricityMarkets._set_replay_inputs!(sys)
     tie_break_scales || _strip_toy_tie_breaks!(sys)
@@ -312,11 +313,35 @@ function nem_toy_system(
     return sys
 end
 
+# Repeats the last point of every raw series one step on: `nem_system` series carry one point beyond the
+# last simulated step, so the replay intervals of the toy equal its steps.
+function _extend_toy_series!(sys::PSY.System)
+    for component in PSY.get_components(PSY.Component, sys), key in collect(PSY.get_time_series_keys(component))
+        key isa PSY.IS.StaticTimeSeriesKey || continue
+        name = PSY.IS.get_name(key)
+        ts = PSY.get_time_series(PSY.SingleTimeSeries, component, name)
+        data = PSY.get_data(ts)
+        stamps = collect(PSY.TimeSeries.timestamp(data))
+        values = collect(PSY.TimeSeries.values(data))
+        extended = PSY.SingleTimeSeries(;
+            name, resolution = PSY.get_resolution(ts),
+            data = PSY.TimeSeries.TimeArray([stamps; stamps[end] + TOY_RESOLUTION], [values; values[end:end]]),
+            scaling_factor_multiplier = PSY.IS.get_scaling_factor_multiplier(ts),
+        )
+        AustralianElectricityMarkets.replace_single_series!(sys, component, extended)
+    end
+    return sys
+end
+
 # Removes the tie-break scales and the EnergyTieBreak service that the replay input stage wrote, for a fixture
 # built without tie-break scales.
 function _strip_toy_tie_breaks!(sys::PSY.System)
     for device in PSY.get_components(PSY.StaticInjection, sys), key in collect(PSY.get_time_series_keys(device))
-        startswith(PSY.IS.get_name(key), "tie_break_scale_") && AustralianElectricityMarkets.remove_single_series!(sys, device, PSY.IS.get_name(key))
+        name = PSY.IS.get_name(key)
+        startswith(name, "tie_break_scale_") || continue
+        PSY.has_time_series(device, PSY.DeterministicSingleTimeSeries, name) &&
+            PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries, device, name)
+        AustralianElectricityMarkets.remove_single_series!(sys, device, name)
     end
     service = PSY.get_component(EnergyTieBreak, sys, TIE_BREAK_SERVICE_NAME)
     isnothing(service) || PSY.remove_component!(sys, service)

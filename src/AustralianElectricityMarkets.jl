@@ -18,7 +18,7 @@ export RegionalNetworkConfiguration, NEMDEConfiguration
 export set_mnsp_offers!, set_demand!, set_market_bids!, add_nem_constraints!, set_regional_availability!
 export set_unit_conditions!, set_interconnector_flow_limits!
 export get_skipped_constraints, get_dropped_terms,
-    get_missing_constraint_intervals, get_defaulted_constraint_weights
+    get_missing_constraint_intervals, get_defaulted_constraint_weights, get_unavailable_constraints
 export NEMBuildReport, get_build_report, set_build_report!
 export MNSPDirection, InterconnectorKind, NEMInterconnectorRegistration, NEMInterconnectorLimits, NEMMNSPLink, NEMMNSPBid, NEMMNSPObservedState
 export fcas_service_name, fcas_service
