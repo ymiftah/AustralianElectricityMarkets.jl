@@ -31,7 +31,7 @@ side_suffix(side::OfferSide) = side == OfferSide.LOAD ? "_decremental" : ""
 Names of the per-device `SingleTimeSeries` the setters attach, by field:
 
 - `ramp_up_rate`, `ramp_down_rate`: the dispatch ramp rates the formulation reads, system-base per-unit
-  per minute, derived by AEMSim from the telemetry ramp limits.
+  per minute, derived by the replay input stage from the telemetry ramp limits.
 - `max_active_power`: the device's upper dispatch limit, a multiplier of its `max_active_power`.
 - `fixed_load`: a unit's participant fixed loading, net injection in system-base per-unit.
 - `fixed_load_invoked`: `1` at the intervals a fixed loading applies, `0` elsewhere.

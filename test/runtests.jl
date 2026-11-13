@@ -52,6 +52,7 @@ const TEST_GROUPS = [
     "replay_inputs_stage" => ("Replay inputs stage", ["replay_inputs/stage.jl"]),
     "replay_inputs_energy" => ("Replay inputs energy offers", ["replay_inputs/energy.jl"]),
     "replay_inputs_mnsp" => ("Replay inputs MNSP fixed loads", ["replay_inputs/mnsp.jl"]),
+    "replay_inputs_ramps" => ("Replay inputs ramp rates", ["replay_inputs/ramps.jl"]),
     "aqua" => ("Aqua", ["aqua.jl"]),
 ]
 

@@ -2046,7 +2046,8 @@ function make_non_scheduled_fcas_load!(sys, stamps)
     PSY.get_ext(load)["non_scheduled"] = true
     set_registration!(load, _toy_registration())
     zero_availability = AustralianElectricityMarkets.bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.LOAD)
-    for name in ("max_active_power", zero_availability, "ramp_up_rate", "ramp_down_rate")
+    # The ramp rates are written by the replay input stage from the zero ramp limits set below.
+    for name in ("max_active_power", zero_availability)
         PSY.add_time_series!(
             sys, load,
             PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, zeros(length(stamps)))),

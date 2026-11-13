@@ -20,7 +20,8 @@ function _tie_validation_system(curves_a, curves_b; decremental = false, unround
     for (name, curves) in zip(names, (curves_a, curves_b))
         setter!(sys, PSY.get_component(T, sys, name), (; piecewise_step_data = curves), TOY_START, TOY_RESOLUTION)
     end
-    AustralianElectricityMarkets._set_replay_inputs!(sys)
+    # Only the energy offer writer runs: the cleared system carries no unit telemetry for the ramp writer.
+    AustralianElectricityMarkets._set_referred_energy_offers!(sys)
     # The derivation rounds referred prices to cents; `unrounded` writes the curves as given instead.
     if unrounded
         for (name, curves) in zip(names, (curves_a, curves_b))

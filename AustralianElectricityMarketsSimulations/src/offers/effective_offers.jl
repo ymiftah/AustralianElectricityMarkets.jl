@@ -4,12 +4,6 @@
 Attaches the series the NEM dispatch formulation reads as effective offers, per device of `sys`, from
 the bids and unit conditions that [`nem_system`](@ref) attaches, with no database access:
 
-- `"ramp_up_rate"`, `"ramp_down_rate"`, the dispatch ramp rates per unit of the system base per minute,
-  and `"fcas_agc_ramp_rate_<BIDTYPE>"`, the AGC ramp rate of each regulation service, from the unit
-  conditions that [`set_unit_conditions!`](@ref) attaches. The ramp rates are the lesser of the bid
-  and telemetered rates ([`effective_ramp_limit`](@ref)), taking the composite cross-zero rate
-  ([`composite_ramp_rates`](@ref)) for a device bid on both sides, and the AGC rates read the
-  effective regulation availability ([`effective_regulation_max_avail`](@ref)).
 - The energy availability is the bid's `MAXAVAIL` series, read through the keys of [`NEMDispatchInputs`](@ref);
   a non-scheduled load without an energy bid reads the zero `MAXAVAIL` series [`set_market_bids!`](@ref) writes for it.
 - `"fcas_effective_<BIDTYPE>[_decremental]"` and `"fcas_ramping_limits_<BIDTYPE>"`, the FCAS offer
@@ -28,10 +22,9 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
 It also attaches to each NEM dispatch device a [`NEMDispatchInputs`](@ref) holding the keys of the
 dispatch-input series the formulation reads through.
 
-The dispatch ramps and limits are written first, then the FCAS effective offers and tie-break scales that
-read them. The energy offer curves are not written here: they are the replay input series that
-[`nem_system`](@ref) adds, and this function reads them. Existing series of these names are replaced, so a
-second call on the same `sys` gives the same result. [`prepare_replay!`](@ref) calls it before attaching
+The ramp rates, AGC ramp rates and energy offer curves are not written here: [`nem_system`](@ref) adds them
+with the other replay input series, and this function reads them. Existing series of the names written here
+are replaced, so a second call on the same `sys` gives the same result. [`prepare_replay!`](@ref) calls it before attaching
 the forecasts. Call it before `transform_single_time_series!`: the series are single time series until then.
 
 Throws `ArgumentError` when a bid this function reads is static rather than series-backed.
@@ -43,7 +36,6 @@ Throws `ArgumentError` when a bid this function reads is static rather than seri
 `nothing`.
 """
 function set_effective_offers!(sys::PSY.System)
-    _set_dispatch_limits!(sys)
     _set_state_seeds!(sys)
     _set_fcas_effective_offers!(sys)
     _set_tie_break_scales!(sys)
@@ -326,140 +318,4 @@ function _derived_series_keys(device)
         key isa IS.StaticTimeSeriesKey && get!(keys, IS.get_name(key), key)
     end
     return keys
-end
-
-
-# The values of a telemetry key over the grid of `like`: a static value is repeated.
-function _grid_values(device, key, like)
-    key isa IS.StaticTimeSeriesKey || return fill(Float64(key), length(like.values))
-    return _bid_series(device, key, :availability).values
-end
-
-
-# The values of `key` on the timestamps of `like`: a static value is repeated, and a stamp the
-# series does not cover is `NaN`, so a bid on another window limits nothing.
-function _aligned_values(device, key, like)
-    key isa IS.StaticTimeSeriesKey || return fill(Float64(key), length(like.values))
-    series = _bid_series(device, key, :availability)
-    values = fill(NaN, length(like.values))
-    index = Dict(t => i for (i, t) in enumerate(like.timestamps))
-    for (i, t) in enumerate(series.timestamps)
-        j = get(index, t, nothing)
-        isnothing(j) || (values[j] = series.values[i])
-    end
-    return values
-end
-
-
-# The bid ramp rate of `device` on `side` in MW/min over the grid of `like`; `NaN` where the device
-# has no bid on that side or the bid publishes no rate.
-function _bid_ramp_rates(device, side::OfferSide, field::Symbol, like)
-    cost = AustralianElectricityMarkets._nem_offer_cost(device)
-    isnothing(cost) && return fill(NaN, length(like.values))
-    bid = _energy_bid(cost, side)
-    isnothing(bid) && return fill(NaN, length(like.values))
-    value = getproperty(bid, field)
-    isnothing(value) && return fill(NaN, length(like.values))
-    return _aligned_values(device, value, like)
-end
-
-
-# The regulation FCAS bid `MAXAVAIL` of `device` over the grid of `like` in MW: the sum of its bids for
-# `service`, the max availability of a bidirectional unit's combined trapezium, or `NaN` when it has no
-# bid for the service or a bid misses an interval, which leaves the telemetered availability.
-function _regulation_bid_max_avail(device, service::BidType, like)
-    cost = AustralianElectricityMarkets._nem_offer_cost(device)
-    isnothing(cost) && return fill(NaN, length(like.values))
-    values = [_aligned_values(device, bid.max_avail, like) for bid in get_fcas_bids(cost) if bid.service == service]
-    isempty(values) && return fill(NaN, length(like.values))
-    return reduce((a, b) -> a .+ b, values)
-end
-
-
-# The effective availability of `service` over the grid of `like`, per unit of the system base.
-function _regulation_availability(device, service::BidType, key, like, base::Real)
-    telemetry = _grid_values(device, key, like)
-    bid = _regulation_bid_max_avail(device, service, like)
-    return [effective_regulation_max_avail(bid[i], telemetry[i]) for i in eachindex(telemetry)] ./ base
-end
-
-
-# Attaches the ramp rates and AGC ramp rates of each available NEM dispatch device. The ramps are the
-# lesser of the bid and telemetered rates per minute, with a non-scheduled load and a missing row at
-# zero; a battery bid on both sides takes the composite cross-zero rate; the AGC rates read the
-# effective regulation availability.
-function _set_dispatch_limits!(sys::PSY.System)
-    base = PSY.get_base_power(sys)
-    AustralianElectricityMarkets._foreach_nem_dispatch_device(sys) do device
-        telemetry = _unit_telemetry(device)
-        # A unit without telemetry gets no limit series; the replay input check names it.
-        isnothing(telemetry) && return
-        up = _bid_series(device, telemetry.ramp_up_limit, :ramp_up_limit)
-        down = _bid_series(device, telemetry.ramp_down_limit, :ramp_down_limit)
-        interval_hours = Dates.value(Millisecond(up.resolution)) / (1000 * 60 * 60)
-        pinned = AustralianElectricityMarkets.is_non_scheduled_load(device)
-        effective_up, effective_down = _effective_ramp_rates(device, up, down, interval_hours)
-        ramp_up_rate = pinned ? zeros(length(up.values)) : replace(effective_up ./ 60 ./ base, NaN => 0.0)
-        ramp_down_rate = pinned ? zeros(length(down.values)) : replace(effective_down ./ 60 ./ base, NaN => 0.0)
-        replace_single_series!(sys, device, single_series(NEM_SERIES.ramp_up_rate, first(up.timestamps), ramp_up_rate, up.resolution))
-        replace_single_series!(sys, device, single_series(NEM_SERIES.ramp_down_rate, first(down.timestamps), ramp_down_rate, down.resolution))
-        _set_agc_ramp_rates!(sys, device, telemetry, up, down, base, interval_hours)
-        return
-    end
-    return
-end
-
-
-# The per-interval ramp limits of `device` in MW/h over the grid of `up`: a device bid on both sides
-# of the energy market takes the composite cross-zero rate of both its bids, and every other device
-# the per-side rate, each capped by the telemetered limit. A stamp the inputs do not cover is NaN,
-# which leaves the telemetered rate.
-function _effective_ramp_rates(device, up, down, interval_hours::Real)
-    device isa PSY.Storage || return effective_ramp_limits(
-        _bid_ramp_rates(device, first(energy_offer_sides(device)), :roc_up, up),
-        _bid_ramp_rates(device, first(energy_offer_sides(device)), :roc_down, down),
-        up.values, down.values,
-    )
-    minutes = interval_hours * 60
-    gen_up = _bid_ramp_rates(device, OfferSide.GEN, :roc_up, up)
-    gen_down = _bid_ramp_rates(device, OfferSide.GEN, :roc_down, up)
-    load_up = _bid_ramp_rates(device, OfferSide.LOAD, :roc_up, up)
-    load_down = _bid_ramp_rates(device, OfferSide.LOAD, :roc_down, up)
-    initial = _aligned_values(device, AustralianElectricityMarkets.get_observed_state(device).initial_mw, up)
-    down_telemetry = _aligned_values(device, _unit_telemetry(device).ramp_down_limit, up)
-    # AEMO Dispatch Procedure (SO_OP_3705) Appendix C: the composite rate of a unit bid on both
-    # sides, compared with its SCADA ramp rate.
-    rates = [
-        composite_ramp_rates(gen_up[i], gen_down[i], load_up[i], load_down[i], minutes, NEMUnitState(initial[i], 0))
-            for i in eachindex(up.values)
-    ]
-    return (
-        [effective_ramp_limit(rates[i][1], up.values[i]) for i in eachindex(rates)],
-        [effective_ramp_limit(rates[i][2], down_telemetry[i]) for i in eachindex(rates)],
-    )
-end
-
-
-# Attaches `fcas_agc_ramp_rate_<service>` for both regulation services, from the effective regulation
-# availability. A `ControllableLoad` reads its raise regulation from the lower availability and the
-# ramp-up rate, and its lower regulation from the ramp-down rate and the raise availability.
-function _set_agc_ramp_rates!(sys::PSY.System, device, telemetry, up, down, base::Real, interval_hours::Real)
-    raise_availability = _regulation_availability(device, BidType.RAISEREG, telemetry.raise_reg_max_avail, up, base)
-    lower_availability = _regulation_availability(device, BidType.LOWERREG, telemetry.lower_reg_max_avail, up, base)
-    ramp_up, ramp_down = up.values ./ base, down.values ./ base
-    if device isa PSY.ControllableLoad
-        sides = (ramp_up => lower_availability, ramp_down => raise_availability)
-    else
-        sides = (ramp_up => raise_availability, ramp_down => lower_availability)
-    end
-    for (service, (ramp, availability)) in zip((BidType.RAISEREG, BidType.LOWERREG), sides)
-        all(isnan, availability) && continue
-        values = [_agc_ramp_rate(ramp[i], availability[i], interval_hours) for i in eachindex(ramp)]
-        all(isnan, values) && continue
-        replace_single_series!(
-            sys, device,
-            single_series(fcas_series_name("fcas_agc_ramp_rate", service), first(up.timestamps), values, up.resolution),
-        )
-    end
-    return
 end

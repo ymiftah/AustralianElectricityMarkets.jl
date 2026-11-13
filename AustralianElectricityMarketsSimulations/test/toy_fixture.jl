@@ -225,8 +225,6 @@ function nem_toy_system(
             gen, "max_active_power", unit.availability ./ unit.capacity;
             multiplier = PSY.get_max_active_power,
         )
-        add_series!(gen, "ramp_up_rate", unit.ramp_up ./ base_power)
-        add_series!(gen, "ramp_down_rate", unit.ramp_down ./ base_power)
         set_toy_unit_field!(sys, gen, stamps, :initial_mw, _toy_values(unit.initial, length(stamps)))
         set_toy_unit_field!(sys, gen, stamps, :ramp_up_limit, _toy_values(unit.ramp_up, length(stamps)) .* 60)
         set_toy_unit_field!(sys, gen, stamps, :ramp_down_limit, _toy_values(unit.ramp_down, length(stamps)) .* 60)
@@ -269,8 +267,6 @@ function nem_toy_system(
             roc_up = bat.roc_up, roc_down = bat.roc_down,
         )
 
-        add_series!(battery, "ramp_up_rate", bat.ramp_up ./ base_power)
-        add_series!(battery, "ramp_down_rate", bat.ramp_down ./ base_power)
         set_toy_unit_field!(sys, battery, stamps, :initial_mw, _toy_values(bat.initial, length(stamps)))
         set_toy_unit_field!(sys, battery, stamps, :ramp_up_limit, _toy_values(bat.ramp_up, length(stamps)) .* 60)
         set_toy_unit_field!(sys, battery, stamps, :ramp_down_limit, _toy_values(bat.ramp_down, length(stamps)) .* 60)
@@ -296,8 +292,6 @@ function nem_toy_system(
             scheduled, "max_active_power", ld.availability / ld.capacity;
             multiplier = PSY.get_max_active_power,
         )
-        add_series!(scheduled, "ramp_up_rate", ld.ramp_up / base_power)
-        add_series!(scheduled, "ramp_down_rate", ld.ramp_down / base_power)
         set_toy_unit_field!(sys, scheduled, stamps, :initial_mw, _toy_values(ld.initial, length(stamps)))
         set_toy_unit_field!(sys, scheduled, stamps, :ramp_up_limit, _toy_values(ld.ramp_up, length(stamps)) .* 60)
         set_toy_unit_field!(sys, scheduled, stamps, :ramp_down_limit, _toy_values(ld.ramp_down, length(stamps)) .* 60)

@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The MNSP fixed-loading series `NEM_MNSP_FIXED_LOAD_SERIES` (`forward_fixed_load_value`, `reverse_fixed_load_value`, `forward_fixed_load_invoked_flag`, `reverse_fixed_load_invoked_flag`) are written by `nem_system` with the NEMDE replay inputs, and `set_effective_offers!` no longer attaches them. `NEM_MNSP_FIXED_LOAD_SERIES` moves to `AustralianElectricityMarkets`.
 
+- The dispatch ramp rates `ramp_up_rate` and `ramp_down_rate` and the AGC ramp rates `fcas_agc_ramp_rate_<BIDTYPE>` are written by `nem_system` with the NEMDE replay inputs, and `set_effective_offers!` no longer attaches them. The kernels `effective_ramp_limit`, `effective_regulation_max_avail` and `agc_ramp_rate` move to `AustralianElectricityMarkets` as scalar functions; `effective_ramp_limits` and `_agc_ramp_rate` are removed.
+
 - `fcas_bid_direction` answers from the bids as soon as `set_market_bids!` has run, rather than returning `NONE` until `set_effective_offers!` attaches the derived trapezium series.
 
 - The optimisation model's key types are merged into one type per formulation family and PSI role, with the variant in the key meta. Each type below that was renamed or removed is replaced by the type named after it:

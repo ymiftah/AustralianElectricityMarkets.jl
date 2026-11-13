@@ -301,7 +301,7 @@ end
     get_fcas_agc_ramp_capability(component, service, initial_time, horizon; resolution = Minute(5)) -> Union{Nothing, Vector{Float64}}
 
 `component`'s AGC ramping capability for regulation `service` (AEMO *FCAS Model in NEMDE* §4.2):
-its `"fcas_agc_ramp_rate_<service>"` series ([`set_unit_conditions!`](@ref), MW/h) times
+its `"fcas_agc_ramp_rate_<service>"` series ([`nem_system`](@ref), MW/h) times
 `resolution`, `horizon` steps from `initial_time`, in `component`'s `System`'s current display
 units, `NaN` at an interval with no ramp rate. `nothing` if `component` carries no such series.
 

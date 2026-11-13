@@ -23,7 +23,7 @@ using AustralianElectricityMarkets: _bid_series, _bidding_devices, _energy_bid, 
     _financial_year_start, get_fcas_requirements, get_service,
     NEMUnitState, max_active_power_floor, in_fast_start_profile, fixed_load_invoked, effective_fixed_load,
     fcas_state_stranded_ok, fcas_both_sides_stranded_ok, fcas_ramping_active, fcas_ramping_limit,
-    fcas_joint_ramping_exempt, mnsp_ramp_envelope, composite_ramp_rates, _max_active_power
+    fcas_joint_ramping_exempt, mnsp_ramp_envelope, _max_active_power
 using Chain
 using DataFrames: DataFrame, ByRow, combine, eachrow, groupby, leftjoin, nrow, rename, select, sort!, transform
 using Dates
@@ -44,7 +44,6 @@ include("time_basis.jl")
 
 include("offers/derivation.jl")
 include("offers/accessors.jl")
-include("offers/initial_state.jl")
 include("offers/fcas_effective.jl")
 include("offers/tie_break.jl")
 include("offers/loss_demand.jl")
@@ -99,9 +98,7 @@ include("results/interconnector_losses.jl")
 export set_effective_offers!, NEMEnergyOffer, get_energy_offer, NEMFCASOffer, get_fcas_offer,
     get_scaled_fcas_trapezium, get_fcas_agc_ramp_capability, get_fcas_agc_status, get_initial_mw,
     get_energy_availability, get_storage_energy_max_avail
-export effective_energy_availability,
-    effective_ramp_limit, effective_ramp_limits, effective_regulation_enablement,
-    effective_regulation_max_avail, fcas_trapezium_values, tie_break_scale,
+export effective_energy_availability, effective_regulation_enablement, fcas_trapezium_values, tie_break_scale,
     loss_demand_coefficient, set_loss_demand_coefficients!
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,
     fcas_upper_regulation_service, fcas_offer_sides, tie_break_series_name, tie_groups
