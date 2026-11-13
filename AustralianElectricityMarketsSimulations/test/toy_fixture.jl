@@ -308,12 +308,24 @@ function nem_toy_system(
     if tie_break_scales
         set_effective_offers!(sys)
     else
+        _strip_toy_tie_breaks!(sys)
         isnothing(interchange) || set_loss_demand_coefficients!(sys)
         AEMS._attach_dispatch_inputs!(sys)
     end
 
     # One window per `horizon`.
     PSY.transform_single_time_series!(sys, horizon, TOY_RESOLUTION)
+    return sys
+end
+
+# Removes the tie-break scales and the EnergyTieBreak service that the replay input stage wrote, for a fixture
+# built without tie-break scales.
+function _strip_toy_tie_breaks!(sys::PSY.System)
+    for device in PSY.get_components(PSY.StaticInjection, sys), key in collect(PSY.get_time_series_keys(device))
+        startswith(PSY.IS.get_name(key), "tie_break_scale_") && AustralianElectricityMarkets.remove_single_series!(sys, device, PSY.IS.get_name(key))
+    end
+    service = PSY.get_component(EnergyTieBreak, sys, TIE_BREAK_SERVICE_NAME)
+    isnothing(service) || PSY.remove_component!(sys, service)
     return sys
 end
 

@@ -512,14 +512,6 @@ end
 
 end
 
-@testset "the tie-break pre-flight check" begin
-    moved = tie_sentinel_system(; park_price = [10.0, 12.0])
-    @test_throws ArgumentError check_tie_break_pairs(moved, STOCK_STEPS)
-    @test_throws ArgumentError run_replay(moved, STOCK_STEPS; optimizer = STOCK_OPTIMIZER)
-    @test isnothing(check_tie_break_pairs(tie_sentinel_system(), STOCK_STEPS))
-    # Prices change between steps, but no band is ever tied.
-    @test isnothing(check_tie_break_pairs(sentinel_system(), STOCK_STEPS))
-end
 
 # Alta ($20, 100 MW) and Park City ($80, 100 MW) offer RAISEREG on rectangles: Alta 25 MW at $5, Park City 20 MW at $10.
 # Alta's AGC ramp rate is `alta_ramp` MW/h (360 MW/h is 30 MW per interval); `F_REG` requires `reg_req` MW.

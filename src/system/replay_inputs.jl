@@ -5,6 +5,7 @@ include("replay_inputs/mnsp_fixed_loads.jl")
 include("replay_inputs/dispatch_limits.jl")
 include("replay_inputs/state_inputs.jl")
 include("replay_inputs/fcas_effective.jl")
+include("replay_inputs/tie_break.jl")
 
 
 """
@@ -19,7 +20,10 @@ rates, named by `fcas_series_name("fcas_agc_ramp_rate", service)`. The fourth ad
 of each replay unit and its fixed-loading target and invocation, named by [`NEM_STATE_INPUT_SERIES`](@ref). The
 fifth adds the effective FCAS offers of each FCAS-bidding unit, named by [`fcas_effective_series_name`](@ref), and the
 regulation ramping limits of each regulation market, named by [`fcas_ramping_series_name`](@ref), in per-unit of the
-system base. It reads the AGC ramp rates the third writer added and the observed state the fourth added.
+system base. It reads the AGC ramp rates the third writer added and the observed state the fourth added. The sixth
+adds the tie-break scale of each price-tied energy band, named by [`tie_break_series_name`](@ref), and the
+[`EnergyTieBreak`](@ref) service joining the units that carry an energy bid. It reads the energy offer curves the first
+writer added, and checks that the price-tied pairs hold over the replay intervals.
 Called by [`nem_system`](@ref) before its input checks.
 
 # Arguments
@@ -34,5 +38,6 @@ function _set_replay_inputs!(sys::PSY.System)
     _set_dispatch_limits!(sys)
     _set_observed_state_inputs!(sys)
     _set_fcas_effective_offers!(sys)
+    _set_tie_break!(sys)
     return
 end

@@ -50,7 +50,7 @@ export get_energy_bids, get_fcas_bids, get_direction, get_offer_curves, get_max_
     get_energy_limit, get_trapezium
 export NEMRegistration, NEMTelemetry, NEMObservedState, NEMStation, NEMUnitData, ScheduleType, attach_nem_unit_data!, has_nem_unit_data
 export get_registration, get_telemetry, get_observed_state, set_registration!, set_telemetry!, set_observed_state!
-export EnergyTieBreak, TIE_BREAK_SERVICE_NAME, TIE_BREAK_CVP_FACTOR
+export EnergyTieBreak, TIE_BREAK_SERVICE_NAME, TIE_BREAK_CVP_FACTOR, tie_break_scale, tie_groups, tie_break_series_name
 export MARKET_PRICE_CAP_BY_FINANCIAL_YEAR, DISPATCH_INTERVAL, constraint_cvp_factor
 export UNIT_RAMP_CVP_FACTOR, INTERCONNECTOR_FLOW_CVP_FACTOR, ENERGY_OFFER_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR,
     ENERGY_MAX_AVAIL_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR, INTERCONNECTOR_ZERO_CVP_FACTOR, FIXED_LOADING_CVP_FACTOR,
@@ -73,6 +73,7 @@ include("types/unit_state.jl")
 include("derivations/energy.jl")
 include("derivations/state.jl")
 include("derivations/ramps.jl")
+include("derivations/tie_break.jl")
 
 include("readers/Readers.jl")
 using .Readers

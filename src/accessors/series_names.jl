@@ -239,3 +239,20 @@ A `String`.
 function bid_series_name(service::BidType, field::Symbol, direction::BidDirection)
     return lowercase("bid_$(string(service))_$(field)_$(string(direction))")
 end
+
+
+"""
+    tie_break_series_name(band, decremental) -> String
+
+Name of the series holding segment `band`'s tie-break scale, `"tie_break_scale_<band>"` with the side suffix.
+
+# Arguments
+- `band`: the offer segment index.
+- `decremental`: whether the offer is decremental.
+
+# Returns
+A `String`.
+"""
+function tie_break_series_name(band::Int, decremental::Bool)
+    return "tie_break_scale_$(band)" * side_suffix(offer_side(decremental))
+end

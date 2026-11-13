@@ -110,7 +110,7 @@ function _check_tie_break_series(
     isempty(missing_series) || throw(
         ArgumentError(
             "tie-break: $(length(missing_series)) unit(s) with price-tied bands carry no tie-break scale forecast: " *
-                "$(join(sort!(collect(missing_series)), ", ")). Call set_effective_offers!(sys) before transform_single_time_series!.",
+                "$(join(sort!(collect(missing_series)), ", ")). Build the system with nem_system before transform_single_time_series!.",
         ),
     )
     unmodeled = String[]
@@ -187,8 +187,8 @@ are within [`TIE_BREAK_CVP_FACTOR`](@ref) of one another. `x` is a band's cleare
 [`TieBreakScaleParameter`](@ref); the [`TieBreakSlackUp`](@ref) and [`TieBreakSlackDown`](@ref)
 slacks, in system-base per-unit MW, are priced at [`TIE_BREAK_CVP_FACTOR`](@ref) `\$/MWh`. FCAS
 bands are not tied. Groups are read at build, so a recurrent build requires the same groups at
-every step ([`check_tie_break_pairs`](@ref)). Containers are keyed by [`EnergyTieBreak`](@ref) with
-the service name as meta and are not added when no band is tied. Throws an `ArgumentError` unless [`set_effective_offers!`](@ref) covered every
+every step (checked by `nem_system`). Containers are keyed by [`EnergyTieBreak`](@ref) with
+the service name as meta and are not added when no band is tied. Throws an `ArgumentError` unless the [`nem_system`](@ref) replay inputs covered every
 tied band and every contributor carrying a scale is modelled or excluded by its device model's
 `"filter_function"`.
 

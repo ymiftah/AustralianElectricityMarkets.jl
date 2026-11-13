@@ -52,7 +52,6 @@ function prepare_replay!(
     _prepare_replay_forecasts!(sys)
     check_replication_steps(sys, steps)
     check_single_financial_year(steps)
-    _has_service_model(template, EnergyTieBreak) && check_tie_break_pairs(sys, steps)
     exclude = _has_service_model(template, GenericConstraint) ?
         merge(never_invoked_constraints(sys, steps), exclude_constraints) : Dict{String, Symbol}(exclude_constraints)
     skipped = DataFrame(exclude_unmodeled_services!(sys, template; exclude_constraints = exclude))

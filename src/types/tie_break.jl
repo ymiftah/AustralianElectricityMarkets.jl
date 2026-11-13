@@ -54,7 +54,7 @@ const TIE_BREAK_CVP_FACTOR = 1.0e-6
 """
     TIE_BREAK_SERVICE_NAME
 
-Name of the [`EnergyTieBreak`](@ref) service that the replay derivation (`set_effective_offers!` in AEMSim) attaches, and of the
+Name of the [`EnergyTieBreak`](@ref) service that [`nem_system`](@ref) attaches, and of the
 tie-break service model that the NEM dispatch model set registers for it.
 """
 const TIE_BREAK_SERVICE_NAME = "energy_tie_break"

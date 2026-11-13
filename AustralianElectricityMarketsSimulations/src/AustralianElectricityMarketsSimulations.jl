@@ -9,7 +9,7 @@ using AustralianElectricityMarkets: _bid_series, _bidding_devices, _fcas_series_
     UNIT_RAMP_CVP_FACTOR, INTERCONNECTOR_FLOW_CVP_FACTOR, ENERGY_OFFER_CVP_FACTOR, ENERGY_UIGF_CVP_FACTOR,
     ENERGY_MAX_AVAIL_CVP_FACTOR, AREA_BALANCE_CVP_FACTOR, FIXED_LOADING_CVP_FACTOR, MNSP_RAMP_CVP_FACTOR,
     MNSP_OFFER_CVP_FACTOR, MNSP_AVAILABILITY_CVP_FACTOR, constraint_cvp_factor,
-    energy_offer_series_name, offer_side, side_suffix, has_registration, is_semi_scheduled, get_registration, FCASBidDirection,
+    energy_offer_series_name, offer_side, side_suffix, tie_break_series_name, tie_groups, _tie_break_offers, _tie_break_active_bands, has_registration, is_semi_scheduled, get_registration, FCASBidDirection,
     fcas_bid_direction, fcas_series_name, fcas_service_name,
     get_bid_type, get_defaulted_constraint_weights, get_devices, get_dropped_terms, get_duid, get_factor,
     get_interconnector, get_missing_constraint_intervals, get_region, get_sense, get_skipped_constraints,
@@ -45,7 +45,6 @@ include("time_basis.jl")
 
 include("offers/derivation.jl")
 include("offers/accessors.jl")
-include("offers/tie_break.jl")
 include("offers/loss_demand.jl")
 
 include("types/unit_slacks.jl")
@@ -79,7 +78,6 @@ include("formulations/mnsp_limits.jl")
 include("psi_compat.jl")
 include("formulations/fcas.jl")
 include("checks/fcas.jl")
-include("checks/tie_break.jl")
 include("checks/financial_year.jl")
 include("checks/replay_inputs.jl")
 include("checks/replication_steps.jl")
@@ -96,10 +94,10 @@ include("results/interconnector_losses.jl")
 
 
 export set_effective_offers!, NEMEnergyOffer, get_energy_offer, get_initial_mw
-export effective_regulation_enablement, tie_break_scale,
+export effective_regulation_enablement,
     loss_demand_coefficient, set_loss_demand_coefficients!
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,
-    fcas_upper_regulation_service, fcas_offer_sides, tie_break_series_name, tie_groups
+    fcas_upper_regulation_service, fcas_offer_sides
 export NEMDispatchInputs, NEMFCASInputs
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
 export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
@@ -126,7 +124,7 @@ export AbstractNEMDispatch, NEMReplayDispatch,
     InitialPowerTimeSeriesParameter
 export nem_dispatch_participants, set_nem_dispatch_models!
 export TieBreakScaleParameter, TieBreakMarket, TieBreakSlackUp,
-    TieBreakSlackDown, TieBreakConstraint, check_tie_break_pairs
+    TieBreakSlackDown, TieBreakConstraint
 export NEMInterconnectorLoss, InterconnectorLossVariable, InterconnectorLossSegmentVariable,
     InterconnectorLossConstraint, InterconnectorLossSegmentFullVariable,
     LossDemandCoefficientParameter

@@ -104,7 +104,7 @@ end
         ]
         @test any(startswith(name, "fcas_effective_") for name in series)
         # The mock's energy bands are never tied across units within an interval, so no tie-break scale is written;
-        # the EnergyTieBreak service below still records that set_effective_offers! ran.
+        # the EnergyTieBreak service below is still attached by nem_system.
         @test !any(startswith(name, "tie_break_scale_") for name in series)
         service = get_component(EnergyTieBreak, sys, TIE_BREAK_SERVICE_NAME)
         @test !isnothing(service)
@@ -485,12 +485,6 @@ end
         @test effective_regulation_enablement(20.0, 100.0, 10.0, 120.0) == (20.0, 100.0)
         @test effective_regulation_enablement(20.0, 100.0, nothing, nothing) == (20.0, 100.0)
         @test effective_regulation_enablement(20.0, 100.0, nothing, 0.0) == (20.0, 0.0)
-    end
-
-    @testset "tie_break_scale is the band width over the widest band of its group" begin
-        @test tie_break_scale(10.0, 40.0) == 0.25
-        @test tie_break_scale(40.0, 40.0) == 1.0
-        @test tie_break_scale(0.0, 0.0) == 0.0
     end
 
     @testset "loss_demand_coefficient sums the named regions' demand" begin

@@ -38,19 +38,3 @@ function effective_regulation_enablement(
     hi = isnothing(telemetry_max) ? Float64(enablement_max) : min(Float64(enablement_max), Float64(telemetry_max))
     return (lo, hi)
 end
-
-
-"""
-    tie_break_scale(width::Real, reference_width::Real) -> Float64
-
-The tie-break scale of a price-tied energy band: its `width` over the widest band of its tie group,
-`reference_width`, and zero when the group has no width.
-
-# Arguments
-- `width`: the band's MW width at the interval.
-- `reference_width`: the widest band width in the tie group at the interval.
-
-# Returns
-A `Float64`.
-"""
-tie_break_scale(width::Real, reference_width::Real) = reference_width > 0.0 ? width / reference_width : 0.0
