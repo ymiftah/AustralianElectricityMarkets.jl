@@ -184,14 +184,14 @@ end
         AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_effective_offers!(sys)
         for bat in get_components(EnergyReservoirStorage, sys)
-            gen_offer, load_offer = get_energy_offer(bat, OfferSide.GEN), get_energy_offer(bat, OfferSide.LOAD)
+            gen_offer, load_offer = AustralianElectricityMarkets._energy_offer_view(bat, OfferSide.GEN), AustralianElectricityMarkets._energy_offer_view(bat, OfferSide.LOAD)
             ta_gen = get_time_series_array(SingleTimeSeries, bat, "energy_offer")
             ta_load = get_time_series_array(SingleTimeSeries, bat, "energy_offer_decremental")
             @test gen_offer.side == OfferSide.GEN && load_offer.side == OfferSide.LOAD
             @test gen_offer.timestamps == PowerSystems.TimeSeries.timestamp(ta_gen) && gen_offer.curves == values(ta_gen)
             @test load_offer.curves == values(ta_load)
         end
-        @test isnothing(get_energy_offer(first(get_components(PowerLoad, sys)), OfferSide.GEN))
+        @test isnothing(AustralianElectricityMarkets._energy_offer_view(first(get_components(PowerLoad, sys)), OfferSide.GEN))
     end
 
     @testset "a device without NEM unit data has no offer view" begin
@@ -205,8 +205,8 @@ end
             base_power = 100.0, time_limits = nothing, must_run = false, prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL,
         )
         add_component!(sys, stock)
-        @test isnothing(get_energy_offer(stock, OfferSide.GEN))
-        @test isnothing(get_energy_offer(stock, OfferSide.LOAD))
+        @test isnothing(AustralianElectricityMarkets._energy_offer_view(stock, OfferSide.GEN))
+        @test isnothing(AustralianElectricityMarkets._energy_offer_view(stock, OfferSide.LOAD))
     end
 
     @testset "offer views of each side after set_market_bids!" begin
@@ -218,7 +218,7 @@ end
         gen = first(get_components(ThermalStandard, sys))
         storage = first(get_components(EnergyReservoirStorage, sys))
         for (device, side) in ((gen, OfferSide.GEN), (storage, OfferSide.GEN), (storage, OfferSide.LOAD))
-            offer = get_energy_offer(device, side)
+            offer = AustralianElectricityMarkets._energy_offer_view(device, side)
             @test offer.side == side
             @test offer.curves == get_time_series_values(SingleTimeSeries, device, energy_offer_series_name(side))
             @test offer.timestamps[1] == date_range[1]

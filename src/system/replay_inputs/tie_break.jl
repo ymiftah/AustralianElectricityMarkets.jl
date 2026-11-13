@@ -14,9 +14,21 @@ function _has_energy_offer(device::PSY.Component)
 end
 
 
-# The energy offer of `device` on `side` as the tie-break writer reads it, or `nothing` when `device` has no energy bid on
-# `side` or the offer series is absent.
-function _tie_break_offer(device::PSY.Component, side::OfferSide)
+"""
+    _energy_offer_view(device, side::OfferSide) -> Union{Nothing, NamedTuple}
+
+The energy offer of `device` on `side`, read from the `"energy_offer"` series of that side: its `side`, the
+`timestamps` and `resolution` of the series and its `curves` (`PiecewiseStepData`, natural units). Returns
+`nothing` when `device` has no NEM offer, no energy bid on `side`, or no offer series on `side`.
+
+# Arguments
+- `device`: the bidding device.
+- `side`: the `OfferSide` to read.
+
+# Returns
+A `NamedTuple` with fields `side`, `timestamps`, `resolution` and `curves`, or `nothing`.
+"""
+function _energy_offer_view(device::PSY.Component, side::OfferSide)
     cost = _nem_offer_cost(device)
     isnothing(cost) && return nothing
     isnothing(_energy_bid(cost, side)) && return nothing
@@ -24,7 +36,10 @@ function _tie_break_offer(device::PSY.Component, side::OfferSide)
     PSY.has_time_series(device, PSY.SingleTimeSeries, name) || return nothing
     ts = PSY.get_time_series(PSY.SingleTimeSeries, device, name)
     series = PSY.get_time_series_array(PSY.SingleTimeSeries, device, name)
-    return (; timestamps = PSY.TimeSeries.timestamp(series), resolution = IS.get_resolution(ts), curves = collect(values(series)))
+    return (;
+        side, timestamps = PSY.TimeSeries.timestamp(series), resolution = IS.get_resolution(ts),
+        curves = collect(values(series)),
+    )
 end
 
 
@@ -44,7 +59,7 @@ function _tie_break_offers(sys::PSY.System)
     for device in PSY.get_available_components(PSY.StaticInjection, sys)
         region = PSY.get_name(PSY.get_area(PSY.get_bus(device)))
         for side in (OfferSide.GEN, OfferSide.LOAD)
-            offer = _tie_break_offer(device, side)
+            offer = _energy_offer_view(device, side)
             isnothing(offer) && continue
             decremental = side == OfferSide.LOAD
             entry = get!(() -> _TieOffers((offer.timestamps, offer.resolution, [])), offers, (decremental, region))
@@ -142,6 +157,7 @@ reuse the first stamp's pair set; other stamps retain the full pair comparison.
 the differing pairs, or a stamp that is not on a region's offer curve timestamps.
 """
 function _check_tie_break_prices(sys::PSY.System, stamps)
+    isempty(stamps) && return
     all_offers = _tie_break_offers(sys)
     active = _tie_break_active_bands(all_offers)
     for ((decremental, region), entry) in all_offers
@@ -163,7 +179,7 @@ function _check_tie_break_prices(sys::PSY.System, stamps)
                 ArgumentError(
                     "tie-break: the price-tied $(decremental ? "load bid" : "offer") bands of region $region at $t " *
                         "differ from those at $(first(stamps)), e.g. $(join(changed, ", ")). Band prices change " *
-                        "between trading days; start the replay at the first interval of a trading day (04:05).",
+                        "between trading days; keep date_range within one trading day (04:05 to 04:00 next day).",
                 ),
             )
         end

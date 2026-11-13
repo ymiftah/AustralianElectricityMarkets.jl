@@ -14,6 +14,12 @@ function _tb_mock_system()
     return nem_system(db, NEMDEConfiguration(); date_range = _TB_START:Minute(5):(_TB_START + Minute(20)))
 end
 
+# The first `n` stamps of the offers written by the helpers below.
+_tb_steps(n::Int) = collect(_TB_START .+ Minute.(5 .* (0:(n - 1))))
+
+# Repeats the last of `curves` to the `_TB_N` stamps of the mock System, so every series has the same length.
+_tb_pad(curves) = [curves; fill(last(curves), _TB_N - length(curves))]
+
 # Removes the energy offers, the tie-break scales and the EnergyTieBreak service of `sys`, so the writer can run again.
 function _tb_strip!(sys)
     AEM = AustralianElectricityMarkets
@@ -186,4 +192,66 @@ end
     @test _tb_scale(sys, pump, 1; decremental = true) ≈ fill(1.0, _TB_N)
     @test _tb_scale(sys, battery, 1; decremental = true) ≈ fill(40.0 / 60.0, _TB_N)
     @test isnothing(_tb_scale(sys, pump, 1))
+end
+
+@testset "tie-pair validation preserves fallback and band eligibility" begin
+    AEM = AustralianElectricityMarkets
+    sys = _tb_mock_system()
+    curve(prices, widths = fill(50.0, length(prices))) = _tb_curve(prices, widths)
+    cases = [
+        ([curve([20.0]), curve([25.0])], [curve([20.0]), curve([25.0])], true),
+        ([curve([20.0]), curve([20.0], [0.0])], [curve([20.0]), curve([20.0], [25.0])], true),
+        ([curve([20.0, 100.0], [50.0, 0.0]), curve([20.0, 200.0], [50.0, 0.0])], [curve([20.0]), curve([20.0])], true),
+        ([curve([20.0, 30.0]), curve([20.0])], [curve([30.0]), curve([30.0])], false),
+        ([curve([20.0]), curve([20.0, 30.0])], [curve([30.0]), curve([30.0])], false),
+        ([curve([20.0]), curve([20.0, 100.0], [50.0, 0.0])], [curve([20.0]), curve([20.0])], true),
+    ]
+    for side in (AEM.OfferSide.GEN, AEM.OfferSide.LOAD)
+        for (a, b, accepted) in cases
+            _tb_strip!(sys)
+            unit_a, unit_b = _tb_units(sys, side, 2)
+            _tb_write_offers!(sys, unit_a, side, _tb_pad(a))
+            _tb_write_offers!(sys, unit_b, side, _tb_pad(b))
+            if accepted
+                @test isnothing(AEM._check_tie_break_prices(sys, _tb_steps(2)))
+            else
+                @test_throws r"differ from those at" AEM._check_tie_break_prices(sys, _tb_steps(2))
+            end
+        end
+        # The pair changes at the second and third stamps, and a stamp off the offer timestamps is refused.
+        _tb_strip!(sys)
+        unit_a, unit_b = _tb_units(sys, side, 2)
+        _tb_write_offers!(sys, unit_a, side, _tb_pad([curve([20.0]), curve([30.0]), curve([30.0])]))
+        _tb_write_offers!(sys, unit_b, side, fill(curve([30.0]), _TB_N))
+        steps = _tb_steps(3)
+        @test_throws r"differ from those at" AEM._check_tie_break_prices(sys, steps)
+        @test_throws r"is not on the offer curve timestamps" AEM._check_tie_break_prices(sys, [first(steps), last(steps) + Hour(5)])
+    end
+end
+
+@testset "an empty replay range checks nothing" begin
+    AEM = AustralianElectricityMarkets
+    sys = _tb_strip!(_tb_mock_system())
+    unit_a, unit_b = _tb_units(sys, AEM.OfferSide.GEN, 2)
+    _tb_write_offers!(sys, unit_a, AEM.OfferSide.GEN, fill(_tb_curve([20.0], [60.0]), _TB_N))
+    _tb_write_offers!(sys, unit_b, AEM.OfferSide.GEN, fill(_tb_curve([20.0], [40.0]), _TB_N))
+    @test isnothing(AEM._check_tie_break_prices(sys, DateTime[]))
+end
+
+
+@testset "unchanged prices do not allocate pair sets for every interval" begin
+    AEM = AustralianElectricityMarkets
+    sys = _tb_mock_system()
+    # The 288 stamps of the offers are the only series of the System, so their length is not the mock's.
+    PowerSystems.clear_time_series!(sys)
+    unit_a, unit_b = _tb_units(sys, AEM.OfferSide.GEN, 2)
+    stamps = _tb_steps(288)
+    flat = PowerSystems.PiecewiseStepData(collect(0.0:10.0:100.0), fill(20.0, 10))
+    _tb_write_offers!(sys, unit_a, AEM.OfferSide.GEN, fill(flat, length(stamps)))
+    _tb_write_offers!(sys, unit_b, AEM.OfferSide.GEN, fill(flat, length(stamps)))
+    AEM._check_tie_break_prices(sys, stamps[1:1])
+    AEM._check_tie_break_prices(sys, stamps)
+    short_bytes = @allocated AEM._check_tie_break_prices(sys, stamps[1:1])
+    full_bytes = @allocated AEM._check_tie_break_prices(sys, stamps)
+    @test full_bytes <= 3 * short_bytes + 256 * 1024
 end

@@ -93,7 +93,7 @@ include("results/comparison.jl")
 include("results/interconnector_losses.jl")
 
 
-export set_effective_offers!, NEMEnergyOffer, get_energy_offer, get_initial_mw
+export set_effective_offers!, get_initial_mw
 export effective_regulation_enablement,
     loss_demand_coefficient, set_loss_demand_coefficients!
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,

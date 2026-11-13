@@ -1,5 +1,5 @@
 """
-    tie_break_scale(width::Real, reference_width::Real) -> Float64
+    tie_break_scale(width::Float64, reference_width::Float64)::Float64
 
 The tie-break scale of a price-tied energy band: its `width` over the widest band of its tie group,
 `reference_width`, and zero when the group has no width.
@@ -11,7 +11,7 @@ The tie-break scale of a price-tied energy band: its `width` over the widest ban
 # Returns
 A `Float64`.
 """
-tie_break_scale(width::Real, reference_width::Real) = reference_width > 0.0 ? width / reference_width : 0.0
+tie_break_scale(width::Float64, reference_width::Float64)::Float64 = reference_width > 0.0 ? width / reference_width : 0.0
 
 
 """
