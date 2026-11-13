@@ -72,16 +72,20 @@ The sign pre-condition requires `EnablementMax >= 0` for a non-storage device, a
 bidding regulation on the generation side. A storage device's load-side regulation requires
 `EnablementMin <= 0`, and its contingency FCAS carries no sign requirement.
 
-The energy pre-condition for a non-storage device is `energy_max_avail_gen >= EnablementMin`, where a
-`NaN` `energy_max_avail_gen` is an absent availability and passes. For a storage device, load-side
-regulation requires `-energy_max_avail_load <= EnablementMax`, generation-side regulation requires
-`energy_max_avail_gen >= EnablementMin`, and contingency FCAS requires both.
+The energy pre-condition for a non-storage device is `energy_max_avail_gen >= EnablementMin`. For a
+storage device, load-side regulation requires `-energy_max_avail_load <= EnablementMax`,
+generation-side regulation requires `energy_max_avail_gen >= EnablementMin`, and contingency FCAS
+requires both. An availability of `Inf` is no limit and passes, and a `NaN` availability is data that
+fails its comparison. For a storage device the caller substitutes the static output or input rating
+when no availability is published.
+
+`total_band_width > 0` assumes the band widths are non-negative.
 
 # Arguments
 - `trap`: the effective FCAS trapezium of the interval.
-- `total_band_width`: the sum of the offer's band widths, MW; positive when a band carries quantity.
-- `energy_max_avail_gen`: the energy availability, MW; for a storage device the generation-side `MAXAVAIL`.
-- `energy_max_avail_load`: the storage device's load-side `MAXAVAIL`, MW; unused for other devices.
+- `total_band_width`: the sum of the offer's non-negative band widths, MW; positive when a band carries quantity.
+- `energy_max_avail_gen`: the energy availability, MW, `Inf` where there is no limit; for a storage device the generation-side `MAXAVAIL`.
+- `energy_max_avail_load`: the storage device's load-side `MAXAVAIL`, MW, `Inf` where there is no limit; unused for other devices.
 - `agc_status`: the AGC status of the interval; `-1` where unknown.
 - `is_regulation`: whether the service is a regulation market.
 - `decremental`: whether the offer is the load side of the device.
@@ -108,7 +112,7 @@ function fcas_preconditions_ok(
         gen_ok = energy_max_avail_gen >= get_enablement_min(trap)
         is_regulation ? (decremental ? load_ok : gen_ok) : (load_ok && gen_ok)
     else
-        isnan(energy_max_avail_gen) || energy_max_avail_gen >= get_enablement_min(trap)
+        energy_max_avail_gen >= get_enablement_min(trap)
     end
     energy_ok || return false
     return !(is_regulation && agc_status == 0)
@@ -118,17 +122,18 @@ end
 """
     fcas_effective_offer(trap, band_widths, enabled, inactive) -> NTuple{15, Float64}
 
-One interval of an FCAS offer's effective series, per-unit of the system base:
-`(MaxAvail, EnablementMin, EnablementMax, UpperSlopeCoeff, LowerSlopeCoeff, w1, ..., w10)` of the
-effective trapezium `trap` and the band widths `band_widths`, zero-padded to [`FCAS_BAND_COUNT`](@ref).
+One interval of an FCAS offer's effective series, in MW:
+`(MaxAvail, EnablementMin, EnablementMax, UpperSlopeCoeff, LowerSlopeCoeff, w1, ..., w10)`, the first
+three and the band widths in MW and the two slope coefficients dimensionless, of the effective
+trapezium `trap` and the band widths `band_widths`, zero-padded to [`FCAS_BAND_COUNT`](@ref).
 An offer that is not `enabled` has zero `MaxAvail`, slopes and widths, and enablement limits
 `-inactive` and `inactive`.
 
 # Arguments
-- `trap`: the effective FCAS trapezium of the interval.
-- `band_widths`: the band widths of the offer, per-unit, zero-padded to `FCAS_BAND_COUNT`.
+- `trap`: the effective FCAS trapezium of the interval, in MW.
+- `band_widths`: the band widths of the offer, MW, zero-padded to `FCAS_BAND_COUNT`.
 - `enabled`: whether the offer is enabled in the interval.
-- `inactive`: the enablement limit of a disabled offer, per-unit.
+- `inactive`: the enablement limit of a disabled offer, MW (`FCAS_INACTIVE_LIMIT_MW`).
 
 # Returns
 `NTuple{15, Float64}`.
@@ -147,7 +152,7 @@ end
 """
     fcas_ramping_limits(capability, bdu_capability, enabled, upper, fast_start, inactive, state::NEMUnitState) -> NTuple{2, Float64}
 
-One interval of a regulation market's ramping limits, per-unit of the system base: `(joint, bdu)`.
+One interval of a regulation market's ramping limits, in MW: `(joint, bdu)`.
 `joint` is the AEMO *FCAS Model in NEMDE* §6.1 right-hand side, [`fcas_ramping_limit`](@ref) of the
 AGC ramping `capability` on the upper or lower form, and `±inactive` where the row is inactive: the
 capability is zero or absent, the unit is not `enabled` for the market, or the unit is exempt on a
@@ -156,12 +161,12 @@ fast-start interval ([`fcas_joint_ramping_exempt`](@ref)). `bdu` is the §6.4 ri
 where that is zero. A caller with an unknown starting output writes `±inactive` itself.
 
 # Arguments
-- `capability`: the AGC ramping capability over the interval, per-unit.
-- `bdu_capability`: the AGC ramping capability of a device bidding both sides, per-unit; `0.0` otherwise.
+- `capability`: the AGC ramping capability over the interval, MW; `0.0` where the ramp rate is absent.
+- `bdu_capability`: the AGC ramping capability of a device bidding both sides, MW; `0.0` otherwise. Must not be `NaN`: callers clean a `NaN` capability to `0.0`.
 - `enabled`: whether the unit is enabled for the market in the interval.
 - `upper`: whether the joint limit is the upper form.
 - `fast_start`: whether the unit carries a fast-start inflexibility profile in the interval.
-- `inactive`: the inactive limit, per-unit.
+- `inactive`: the inactive limit, MW (`FCAS_INACTIVE_LIMIT_MW`).
 - `state`: the [`NEMUnitState`](@ref) at the start of the interval.
 
 # Returns

@@ -28,21 +28,24 @@ end
 
 @testset "FCAS pre-conditions in MW" begin
     span = _fk_span()
-    # A non-storage unit with an unknown energy availability and AGC status passes.
-    @test fcas_preconditions_ok(span, 1.0, NaN, NaN, -1, false, false, false)
+    # Inf is no energy availability limit, and passes for a non-storage unit.
+    @test fcas_preconditions_ok(span, 1.0, Inf, Inf, -1, false, false, false)
     unavailable = FCASTrapezium(; enablement_min = 0.0, low_breakpoint = 10.0, high_breakpoint = 90.0, enablement_max = 100.0, max_avail = 0.0)
-    @test !fcas_preconditions_ok(unavailable, 1.0, NaN, NaN, -1, false, false, false)
+    @test !fcas_preconditions_ok(unavailable, 1.0, Inf, Inf, -1, false, false, false)
     # At least one priced band with positive quantity.
-    @test !fcas_preconditions_ok(span, 0.0, NaN, NaN, -1, false, false, false)
+    @test !fcas_preconditions_ok(span, 0.0, Inf, Inf, -1, false, false, false)
     # Sign pre-condition: a non-storage unit needs EnablementMax >= 0.
-    @test !fcas_preconditions_ok(_fk_negative(), 1.0, NaN, NaN, -1, false, false, false)
+    @test !fcas_preconditions_ok(_fk_negative(), 1.0, Inf, Inf, -1, false, false, false)
     # Energy pre-condition for a non-storage unit: MaxAvail at or above EnablementMin.
-    @test !fcas_preconditions_ok(_fk_floor(20.0), 1.0, 10.0, NaN, -1, false, false, false)
-    @test fcas_preconditions_ok(_fk_floor(20.0), 1.0, 30.0, NaN, -1, false, false, false)
+    @test !fcas_preconditions_ok(_fk_floor(20.0), 1.0, 10.0, Inf, -1, false, false, false)
+    @test fcas_preconditions_ok(_fk_floor(20.0), 1.0, 30.0, Inf, -1, false, false, false)
+    # A NaN energy availability is data, not an absent limit, and fails the pre-condition.
+    @test !fcas_preconditions_ok(span, 1.0, NaN, Inf, -1, false, false, false)
+    @test !fcas_preconditions_ok(span, 1.0, NaN, Inf, -1, true, false, false)
     # AGC status 0 disables a regulation service only.
-    @test !fcas_preconditions_ok(span, 1.0, NaN, NaN, 0, true, false, false)
-    @test fcas_preconditions_ok(span, 1.0, NaN, NaN, 1, true, false, false)
-    @test fcas_preconditions_ok(span, 1.0, NaN, NaN, 0, false, false, false)
+    @test !fcas_preconditions_ok(span, 1.0, Inf, Inf, 0, true, false, false)
+    @test fcas_preconditions_ok(span, 1.0, Inf, Inf, 1, true, false, false)
+    @test fcas_preconditions_ok(span, 1.0, Inf, Inf, 0, false, false, false)
     # A storage device's regulation sign pre-condition is on its generation side, EnablementMax >= 0,
     # and on its load side, EnablementMin <= 0. Its contingency FCAS carries no sign requirement.
     @test !fcas_preconditions_ok(_fk_negative(), 1.0, 0.0, 60.0, -1, true, false, true)
@@ -55,6 +58,14 @@ end
     @test fcas_preconditions_ok(span, 1.0, -5.0, 200.0, -1, true, true, true)
     @test !fcas_preconditions_ok(span, 1.0, -5.0, 200.0, -1, false, true, true)
     @test fcas_preconditions_ok(span, 1.0, 50.0, 200.0, -1, false, false, true)
+    # Inf on both storage sides is no limit and passes; a NaN on either side fails its own check.
+    @test fcas_preconditions_ok(span, 1.0, Inf, Inf, -1, false, false, true)
+    @test fcas_preconditions_ok(span, 1.0, Inf, Inf, -1, true, true, true)
+    @test !fcas_preconditions_ok(span, 1.0, NaN, Inf, -1, false, false, true)
+    @test !fcas_preconditions_ok(span, 1.0, Inf, NaN, -1, false, false, true)
+    @test !fcas_preconditions_ok(span, 1.0, Inf, NaN, -1, true, true, true)
+    # Generation-side regulation reads only the generation availability, so a NaN load availability passes.
+    @test fcas_preconditions_ok(span, 1.0, Inf, NaN, -1, true, false, true)
 end
 
 @testset "FCAS state pre-conditions move with the starting output" begin
@@ -84,9 +95,8 @@ end
 
 @testset "FCAS effective offer in MW" begin
     span = _fk_span()
-    inactive = FCAS_INACTIVE_LIMIT_MW / 100.0
-    widths = (0.1, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-    @test fcas_effective_offer(span, widths, false, 1.0e5) == (0.0, -1.0e5, 1.0e5, 0.0, 0.0, ntuple(_ -> 0.0, 10)...)
+    inactive = FCAS_INACTIVE_LIMIT_MW
+    widths = (10.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     @test fcas_effective_offer(span, widths, false, inactive) == (0.0, -inactive, inactive, 0.0, 0.0, ntuple(_ -> 0.0, 10)...)
     @test fcas_effective_offer(span, widths, true, inactive) == (
         100.0, 0.0, 100.0, get_upper_slope_coeff(span), get_lower_slope_coeff(span), widths...,
@@ -95,19 +105,20 @@ end
 
 @testset "FCAS ramping limits in MW" begin
     state = NEMUnitState(50.0, 0)
+    inactive = FCAS_INACTIVE_LIMIT_MW
     # An inactive regulation market is the inactive limit on each form, and an unknown BDU ramp is inactive.
-    @test fcas_ramping_limits(0.0, 0.0, true, true, false, 1.0e5, state) == (1.0e5, 1.0e5)
-    @test fcas_ramping_limits(0.0, 0.0, false, false, false, 1.0e5, state) == (-1.0e5, 1.0e5)
+    @test fcas_ramping_limits(0.0, 0.0, true, true, false, inactive, state) == (inactive, inactive)
+    @test fcas_ramping_limits(0.0, 0.0, false, false, false, inactive, state) == (-inactive, inactive)
     # The §6.1 upper form is InitialMW plus the AGC capability, the lower form minus it.
-    @test fcas_ramping_limits(10.0, 0.0, true, true, false, 1.0e5, state) == (60.0, 1.0e5)
-    @test fcas_ramping_limits(10.0, 0.0, true, false, false, 1.0e5, state) == (40.0, 1.0e5)
+    @test fcas_ramping_limits(10.0, 0.0, true, true, false, inactive, state) == (60.0, inactive)
+    @test fcas_ramping_limits(10.0, 0.0, true, false, false, inactive, state) == (40.0, inactive)
     # A unit not enabled for the market is inactive on its form.
-    @test fcas_ramping_limits(10.0, 0.0, false, true, false, 1.0e5, state) == (1.0e5, 1.0e5)
+    @test fcas_ramping_limits(10.0, 0.0, false, true, false, inactive, state) == (inactive, inactive)
     # A fast-start unit starting in mode 1 is exempt from joint ramping.
-    @test fcas_ramping_limits(10.0, 0.0, true, true, true, 1.0e5, NEMUnitState(50.0, 1)) == (1.0e5, 1.0e5)
-    @test fcas_ramping_limits(10.0, 0.0, true, true, true, 1.0e5, NEMUnitState(50.0, 3)) == (60.0, 1.0e5)
+    @test fcas_ramping_limits(10.0, 0.0, true, true, true, inactive, NEMUnitState(50.0, 1)) == (inactive, inactive)
+    @test fcas_ramping_limits(10.0, 0.0, true, true, true, inactive, NEMUnitState(50.0, 3)) == (60.0, inactive)
     # An unknown starting output deactivates the joint row.
-    @test fcas_ramping_limits(10.0, 0.0, true, true, false, 1.0e5, NEMUnitState(NaN, 4)) == (1.0e5, 1.0e5)
+    @test fcas_ramping_limits(10.0, 0.0, true, true, false, inactive, NEMUnitState(NaN, 4)) == (inactive, inactive)
     # The §6.4 BDU limit is the AGC capability of a device bidding both sides.
-    @test fcas_ramping_limits(10.0, 0.2, true, true, false, 1.0e5, state) == (60.0, 0.2)
+    @test fcas_ramping_limits(10.0, 0.2, true, true, false, inactive, state) == (60.0, 0.2)
 end
