@@ -1,5 +1,5 @@
-# Effective FCAS offers and tie-break scales, derived by `set_effective_offers!` (run by `prepare_replay!`),
-# and the accessors that read the derived inputs.
+# Effective FCAS offers, tie-break scales and the dispatch series, written by `_set_replay_inputs!` under
+# their fixed names, and the accessors that read them.
 
 # A unit first registered at `stamp`: its summary and loss-factor rows start there, and its bids and
 # dispatch rows before it are removed, as NEMWEB has them. Returns the hive location.
@@ -28,7 +28,6 @@ end
         replay_db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
         interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
         sys = nem_system(replay_db, NEMDEConfiguration(); date_range = interval)
-        set_effective_offers!(sys)
         values_of(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)
         er01 = get_component(ThermalStandard, sys, "ER01")
         bw01 = get_component(EnergyReservoirStorage, sys, "BW01")
@@ -46,7 +45,7 @@ end
         @test PowerSystems.get_y_coords(first(values_of(asload1, AustralianElectricityMarkets._fcas_offer_series_name(asload1, BidType.RAISE6SEC, true)))) == prices_descending
     end
 
-    @testset "set_effective_offers! output survives a JSON round-trip" begin
+    @testset "the replay input series survive a JSON round-trip" begin
         sys = System(100.0)
         area = Area(; name = "NSW")
         add_component!(sys, area)
@@ -76,7 +75,6 @@ end
         end
         AustralianElectricityMarkets._set_replay_inputs!(sys)
 
-        set_effective_offers!(sys)
         g1, g2 = get_component(ThermalStandard, sys, "G1"), get_component(ThermalStandard, sys, "G2")
         @test get_time_series_values(SingleTimeSeries, g1, "tie_break_scale_1") ≈ [1.0, 1.0]
         @test get_time_series_values(SingleTimeSeries, g2, "tie_break_scale_1") ≈ [0.4, 0.4]
@@ -93,11 +91,10 @@ end
         @test get_time_series_values(SingleTimeSeries, get_component(ThermalStandard, sys2, "G1"), "tie_break_scale_2") ≈ [10.0 / 13.0, 10.0 / 13.0]
     end
 
-    @testset "NEMDE replay attaches FCAS effective offers and tie-break scales" begin
+    @testset "NEMDE replay writes FCAS effective offers and tie-break scales" begin
         replay_db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
         interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
         sys = nem_system(replay_db, NEMDEConfiguration(); date_range = interval)
-        set_effective_offers!(sys)
         series = [
             get_name(key) for device in get_components(StaticInjection, sys)
                 for key in PowerSystems.get_time_series_keys(device)
@@ -117,7 +114,6 @@ end
         late = nem_system(
             aem_connect(HiveConfiguration(hive_location = late_hive, filesystem = "file")), NEMDEConfiguration(); date_range = interval,
         )
-        set_effective_offers!(late)
         bw02 = get_component(Generator, late, "BW02")
         # BW02's RAISE6SEC is a modelled incremental bid, so its effective offer is disabled where AEMO publishes none.
         raise6 = BidType.RAISE6SEC
@@ -182,7 +178,6 @@ end
         set_market_bids!(sys, db, date_range)
         set_unit_conditions!(sys, db, date_range)
         AustralianElectricityMarkets._set_replay_inputs!(sys)
-        set_effective_offers!(sys)
         for bat in get_components(EnergyReservoirStorage, sys)
             gen_offer, load_offer = AustralianElectricityMarkets._energy_offer_view(bat, OfferSide.GEN), AustralianElectricityMarkets._energy_offer_view(bat, OfferSide.LOAD)
             ta_gen = get_time_series_array(SingleTimeSeries, bat, "energy_offer")
@@ -214,7 +209,6 @@ end
         set_market_bids!(sys, db, date_range)
         set_unit_conditions!(sys, db, date_range)
         AustralianElectricityMarkets._set_replay_inputs!(sys)
-        set_effective_offers!(sys)
         gen = first(get_components(ThermalStandard, sys))
         storage = first(get_components(EnergyReservoirStorage, sys))
         for (device, side) in ((gen, OfferSide.GEN), (storage, OfferSide.GEN), (storage, OfferSide.LOAD))
@@ -246,7 +240,6 @@ end
         attach_dispatch_limits!(sys, db, date_range)
         AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_available!(get_component(ThermalStandard, sys, "ER02"), false)
-        set_effective_offers!(sys)
         renewable = get_component(RenewableDispatch, sys, "BW03")
         battery = get_component(EnergyReservoirStorage, sys, "BW01")
         with_units_base(sys, "NATURAL_UNITS") do
@@ -324,7 +317,6 @@ end
         set_available!(get_component(HydroDispatch, sys, "BW02"), false)
         set_unit_conditions!(sys, db, date_range)
         AustralianElectricityMarkets._set_replay_inputs!(sys)
-        set_effective_offers!(sys)
         return sys
     end
 
@@ -342,8 +334,7 @@ end
         with_units_base(sys, "NATURAL_UNITS") do
             er01 = get_component(ThermalStandard, sys, "ER01")
             @test !has_time_series(er01, SingleTimeSeries, "energy_availability")
-            inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, er01))
-            @test get_name(inputs.energy_availability) == bid_series_name(BidType.ENERGY, :max_avail, BD.GEN)
+            @test AEMSim._availability_series_name(er01, EnergyLimitTimeSeriesParameter) == bid_series_name(BidType.ENERGY, :max_avail, BD.GEN)
         end
     end
 
@@ -351,25 +342,19 @@ end
         sys = built()
         asload = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
         @test isempty(AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(asload)))
-        inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, asload))
         name = bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.LOAD)
-        @test get_name(inputs.energy_availability) == name
+        @test AEMSim._availability_series_name(asload, EnergyLimitTimeSeriesParameter) == name
         @test all(==(0.0), get_time_series_values(SingleTimeSeries, asload, name; ignore_scaling_factors = true))
         @test AEMSim._has_nem_dispatch_limits(asload)
     end
 
-    @testset "an energy availability key off the registered MAXAVAIL name fails the pre-flight" begin
+    @testset "a missing registered MAXAVAIL series fails the pre-flight" begin
         sys = built()
         device = get_component(ThermalStandard, sys, "ER01")
         @test AEMSim._has_nem_dispatch_limits(device)
-        old = only(PSY.get_supplemental_attributes(NEMDispatchInputs, device))
-        values = get_time_series_values(SingleTimeSeries, device, get_name(old.energy_availability); ignore_scaling_factors = true)
-        add_time_series!(sys, device, single_series("other_availability", start_date, values, resolution))
-        fields = Dict(f => getfield(old, f) for f in fieldnames(NEMDispatchInputs))
-        fields[:energy_availability] = AustralianElectricityMarkets._series_key(device, "other_availability")
-        PSY.remove_supplemental_attribute!(sys, device, old)
-        PSY.add_supplemental_attribute!(sys, device, NEMDispatchInputs(; fields...))
-        @test_throws r"other_availability" AEMSim._has_nem_dispatch_limits(device)
+        name = bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN)
+        PSY.remove_time_series!(sys, SingleTimeSeries, device, name)
+        @test !AEMSim._has_nem_dispatch_limits(device)
     end
 
     @testset "a device's observed initial MW may key any series" begin
@@ -429,37 +414,12 @@ end
         @test isnothing(AEMSim._check_state_series_alignment(device))
     end
 
-    @testset "a derived input key that is not the registered series throws, naming it" begin
+    @testset "a missing ramp-up series fails the pre-flight" begin
         sys = built()
         device = get_component(ThermalStandard, sys, "ER01")
         @test AEMSim._has_nem_dispatch_limits(device)
-        old = only(PSY.get_supplemental_attributes(NEMDispatchInputs, device))
-        ramps = get_time_series_values(SingleTimeSeries, device, NEM_SERIES.ramp_up_rate; ignore_scaling_factors = true)
-        add_time_series!(sys, device, single_series("other_ramp", start_date, ramps, resolution))
-        PSY.remove_supplemental_attribute!(sys, device, old)
-        PSY.add_supplemental_attribute!(
-            sys,
-            device,
-            NEMDispatchInputs(;
-                energy_offer = old.energy_offer,
-                energy_offer_decremental = old.energy_offer_decremental,
-                energy_availability = old.energy_availability,
-                energy_availability_decremental = old.energy_availability_decremental,
-                uigf = old.uigf,
-                ramp_up = AustralianElectricityMarkets._series_key(device, "other_ramp"),
-                ramp_down = old.ramp_down,
-                fcas = old.fcas,
-            ),
-        )
-        err = try
-            AEMSim._has_nem_dispatch_limits(device)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
-        @test occursin("ER01", sprint(showerror, err))
-        @test occursin("other_ramp", sprint(showerror, err))
+        PSY.remove_time_series!(sys, SingleTimeSeries, device, NEM_SERIES.ramp_up_rate)
+        @test !AEMSim._has_nem_dispatch_limits(device)
     end
 end
 
@@ -492,63 +452,32 @@ end
         set_market_bids!(sys, db, date_range; resolution = resolution)
         set_unit_conditions!(sys, db, date_range)
         AustralianElectricityMarkets._set_replay_inputs!(sys)
-        set_effective_offers!(sys)
         names(device) = [get_name(k) for k in get_time_series_keys(device)]
         for device in get_components(StaticInjection, sys)
             @test !any(startswith("energy_max_avail"), names(device))
+            @test !any(startswith("fcas_trapezium"), names(device))
         end
 
         device = get_component(ThermalStandard, sys, "ER01")
-        inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, device))
-        @test get_name(inputs.energy_availability) == bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN)
-        @test get_name(inputs.energy_offer) == "energy_offer"
-        @test get_name(inputs.ramp_up) == NEM_SERIES.ramp_up_rate
-        @test get_name(inputs.ramp_down) == NEM_SERIES.ramp_down_rate
-        @test isnothing(inputs.energy_availability_decremental)
-        raise_reg = only(entry for entry in inputs.fcas if entry.service == BidType.RAISEREG && entry.side == OfferSide.GEN)
-        @test get_name(raise_reg.trapezium) == AustralianElectricityMarkets.bid_series_name(BidType.RAISEREG, :trapezium, AustralianElectricityMarkets.BidDirection.GEN)
-        @test get_name(raise_reg.max_avail) == AustralianElectricityMarkets.bid_series_name(BidType.RAISEREG, :max_avail, AustralianElectricityMarkets.BidDirection.GEN)
-        @test !any(startswith("fcas_trapezium"), [get_name(k) for k in get_time_series_keys(device)])
-        @test get_name(raise_reg.agc_ramp) == fcas_series_name("fcas_agc_ramp_rate", BidType.RAISEREG)
-
-        # An entry exists only for a side with an offer, and an offer always writes its trapezium; one
-        # entry per (device, service) carries the service's AGC ramp rate, on the side the device bids.
-        for d in nem_dispatch_devices(sys)
-            entries = only(PSY.get_supplemental_attributes(NEMDispatchInputs, d)).fcas
-            @test all(!isnothing(entry.offer) && !isnothing(entry.trapezium) for entry in entries)
-            for service in unique(entry.service for entry in entries)
-                group = [entry for entry in entries if entry.service == service]
-                carried = [entry for entry in group if !isnothing(entry.agc_ramp)]
-                @test length(carried) <= 1
-                has_ramp = has_time_series(d, SingleTimeSeries, fcas_series_name("fcas_agc_ramp_rate", service))
-                @test length(carried) == (has_ramp ? 1 : 0)
-                if !isempty(carried) && any(entry.side == OfferSide.GEN for entry in group)
-                    @test only(carried).side == OfferSide.GEN
-                end
-            end
-        end
-
-        # The availability the formulation reads is the bid MAXAVAIL, in MW, and no energy_availability series is written.
-        bid = only(AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(device)))
-        @test inputs.energy_availability == bid.max_avail
-        @test !has_time_series(device, SingleTimeSeries, "energy_availability")
+        @test has_time_series(device, SingleTimeSeries, "energy_offer")
+        @test has_time_series(device, SingleTimeSeries, NEM_SERIES.ramp_up_rate)
+        @test has_time_series(device, SingleTimeSeries, NEM_SERIES.ramp_down_rate)
+        @test AEMSim._availability_series_name(device, EnergyLimitTimeSeriesParameter) == bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN)
+        @test AEMSim._has_nem_dispatch_limits(device)
+        @test has_time_series(device, SingleTimeSeries, bid_series_name(BidType.RAISEREG, :trapezium, AustralianElectricityMarkets.BidDirection.GEN))
 
         battery = get_component(EnergyReservoirStorage, sys, "BW01")
-        battery_inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, battery))
-        @test get_name(battery_inputs.energy_availability_decremental) == bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.LOAD)
-        # A battery bids RAISEREG on both sides: the AGC ramp rate rides on the GEN-side entry.
-        reg = [entry for entry in battery_inputs.fcas if entry.service == BidType.RAISEREG]
-        @test length(reg) == 2
-        @test only(entry for entry in reg if !isnothing(entry.agc_ramp)).side == OfferSide.GEN
+        @test AEMSim._availability_series_name(battery, PSI.ActivePowerInTimeSeriesParameter) == bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.LOAD)
+        @test AEMSim._has_nem_dispatch_limits(battery)
     end
 
-    @testset "a device with no FCAS bid gets no fcas inputs" begin
+    @testset "a device with no FCAS bid gets no FCAS effective series" begin
         sys = nem_toy_system(
             [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], [60.0, 80.0],
         )
         cheap = get_component(ThermalStandard, sys, TOY_CHEAP)
         @test isempty(get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(cheap)))
-        @test isempty(only(PSY.get_supplemental_attributes(NEMDispatchInputs, cheap)).fcas)
+        @test !any(startswith("fcas_effective_"), [get_name(k) for k in get_time_series_keys(cheap)])
     end
 
     @testset "the UIGF parameter reads the telemetry UIGF per unit of the base" begin
@@ -556,10 +485,8 @@ end
         set_market_bids!(sys, db, date_range; resolution = resolution)
         set_unit_conditions!(sys, db, date_range)
         AustralianElectricityMarkets._set_replay_inputs!(sys)
-        set_effective_offers!(sys)
         semi = first(d for d in get_components(RenewableDispatch, sys) if is_semi_scheduled(d))
-        inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, semi))
-        @test get_name(inputs.uigf) == NEM_TELEMETRY_SERIES.uigf
+        @test has_time_series(semi, SingleTimeSeries, NEM_TELEMETRY_SERIES.uigf)
         raw = get_time_series_values(SingleTimeSeries, semi, NEM_TELEMETRY_SERIES.uigf; ignore_scaling_factors = true)
         @test PSI.get_multiplier_value(EnergyLimitTimeSeriesParameter(), semi, NEMReplayDispatch()) ≈ 1 / base_power
         @test length(raw) > 0
@@ -576,9 +503,7 @@ end
     Δ = interval_hours(resolution)
 
     function replay_system()
-        sys = nem_system(replay_db, NEMDEConfiguration(); date_range = interval)
-        set_effective_offers!(sys)
-        return sys
+        return nem_system(replay_db, NEMDEConfiguration(); date_range = interval)
     end
     values_of(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)
 
@@ -648,29 +573,15 @@ end
     replay_db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     sys = nem_system(replay_db, NEMDEConfiguration(); date_range = interval)
-    set_effective_offers!(sys)
-    fcas_inputs(device) = only(get_supplemental_attributes(NEMDispatchInputs, device)).fcas
     bw01 = get_component(EnergyReservoirStorage, sys, "BW01")
     bid = only(
         b for b in AEM.get_fcas_bids(AEM._nem_offer_cost(bw01))
             if b.service == BidType.RAISEREG && AEM._fcas_bid_side(bw01, b) == OfferSide.GEN
     )
-    entry = only(i for i in fcas_inputs(bw01) if i.service == BidType.RAISEREG && i.side == OfferSide.GEN)
-    @test entry.offer == bid.offer_curves
+    @test AEM._fcas_offer_key(bw01, BidType.RAISEREG, OfferSide.GEN) == bid.offer_curves
     @test !has_time_series(bw01, SingleTimeSeries, fcas_series_name("fcas_offer", BidType.RAISEREG, false))
-    # Removes BW01's RAISEREG service, so its bid is unmodelled, and derives the offers again.
+    # Removes BW01's RAISEREG service, so its bid is unmodelled and has no offer key.
     raisereg = only(s for s in PSY.get_services(bw01) if s isa FCASService && AEM.get_bid_type(s) == BidType.RAISEREG)
     PSY.remove_service!(bw01, raisereg)
-    set_effective_offers!(sys)
-    checked = 0
-    for device in AEM.nem_dispatch_devices(sys)
-        cost = AEM._nem_offer_cost(device)
-        isnothing(cost) && continue
-        for bid in AEM.get_fcas_bids(cost)
-            isempty(AEM._fcas_services(device, bid.service)) || continue
-            checked += 1
-            @test all(i -> i.service != bid.service || isnothing(i.offer), fcas_inputs(device))
-        end
-    end
-    @test checked > 0
+    @test isnothing(AEM._fcas_offer_key(bw01, BidType.RAISEREG, OfferSide.GEN))
 end

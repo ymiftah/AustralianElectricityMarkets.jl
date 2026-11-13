@@ -394,7 +394,7 @@ end
 @testset "a malformed offered trapezium is rejected before the build" begin
     duid = TOY_CHEAP
     service_name = "TAS1_RAISE6SEC"
-    # set_effective_offers!, which the toy system runs, reads every trapezium.
+    # The replay input stage reads every trapezium.
     err = _caught() do
         fcas_energy_toy_system(
             2.0;
@@ -523,7 +523,6 @@ function storage_fcas_toy_model(
     end
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = bid_type), [bat])
     AustralianElectricityMarkets._set_fcas_effective_offers!(sys)
-    set_effective_offers!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
     template = _area_balance_template(sys; mpc = 17_500.0)
@@ -699,7 +698,6 @@ function _build_bdu_regulation(
         add_toy_constraint_series!(sys, gc, stamps, fill(rhs_pu, length(stamps)), fill(1.0, length(stamps)))
     end
     AustralianElectricityMarkets._set_fcas_effective_offers!(sys)
-    set_effective_offers!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
     template = _area_balance_template(sys; mpc = 17_500.0)
@@ -1199,7 +1197,7 @@ end
     PSI.set_output_dir!(model, mktempdir())
     err = _caught(() -> PSI.build_impl!(model))
     @test err isa ArgumentError
-    @test occursin("set_effective_offers!", err.msg)
+    @test occursin("nem_system", err.msg)
 end
 
 @testset "FCASMarket builds for a recurrent simulation" begin

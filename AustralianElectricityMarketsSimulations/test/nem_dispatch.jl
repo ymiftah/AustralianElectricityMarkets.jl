@@ -24,7 +24,6 @@ function nem_dispatch_system(; mutate! = identity, data_span = NEM_DISPATCH_HORI
     set_market_bids!(sys, db, date_range; resolution = NEM_DISPATCH_RESOLUTION)
     attach_dispatch_limits!(sys, db, date_range)
     AustralianElectricityMarkets._set_replay_inputs!(sys)
-    set_effective_offers!(sys)
     mutate!(sys)
     # One window spanning the whole span, matching the single window the bid forecast carries.
     PSY.transform_single_time_series!(sys, data_span, NEM_DISPATCH_RESOLUTION)
@@ -344,16 +343,26 @@ end
         isnothing(cost) && continue
         for bid in AustralianElectricityMarkets.get_energy_bids(cost)
             side = AustralianElectricityMarkets._energy_offer_side(bid.direction)
-            inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, device))
-            key = device isa PSY.Storage && side == OfferSide.LOAD ? inputs.energy_availability_decremental : inputs.energy_availability
-            @test PSY.get_name(key) == bid.max_avail.name
-            @test PSI.get_multiplier_value(
-                device isa PSY.Storage ? (side == OfferSide.GEN ? PSI.ActivePowerOutTimeSeriesParameter() : PSI.ActivePowerInTimeSeriesParameter()) : EnergyLimitTimeSeriesParameter(),
-                device, NEMReplayDispatch(),
-            ) ≈ 1 / PSY.get_base_power(sys)
+            param = device isa PSY.Storage ?
+                (side == OfferSide.GEN ? PSI.ActivePowerOutTimeSeriesParameter : PSI.ActivePowerInTimeSeriesParameter) :
+                EnergyLimitTimeSeriesParameter
+            @test AEMS._availability_series_name(device, param) == bid.max_avail.name
+            @test PSY.has_time_series(device, PSY.SingleTimeSeries, bid.max_avail.name)
+            @test PSI.get_multiplier_value(param(), device, NEMReplayDispatch()) ≈ 1 / PSY.get_base_power(sys)
             checked += 1
         end
     end
     @test checked > 0
     @test any(d -> d isa InterruptiblePowerLoad && !isempty(AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(d))), PSY.get_components(PSY.StaticInjection, sys))
+end
+
+@testset "the derived-input attributes and the setter are removed" begin
+    @test !isdefined(AEMS, :NEMDispatchInputs)
+    @test !isdefined(AEMS, :NEMFCASInputs)
+    @test !isdefined(AEMS, :set_effective_offers!)
+    sys = nem_dispatch_system()
+    for device in PSY.get_components(PSY.StaticInjection, sys)
+        attributes = PSY.get_supplemental_attributes(PSY.SupplementalAttribute, device)
+        @test all(a -> parentmodule(typeof(a)) !== AEMS, attributes)
+    end
 end

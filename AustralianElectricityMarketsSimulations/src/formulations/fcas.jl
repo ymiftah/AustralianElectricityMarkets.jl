@@ -195,8 +195,9 @@ end
 """
     _check_fcas_effective_series(container, devices, bid_type, directions)
 
-Throws `ArgumentError` naming every device in `devices` without a forecast of its
-[`set_effective_offers!`](@ref) series for `bid_type`.
+Throws `ArgumentError` naming every device in `devices` without a series of its
+[`fcas_effective_series_name`](@ref) offer for `bid_type`, or without its [`fcas_ramping_series_name`](@ref)
+limits in a regulation market.
 
 # Returns
 `nothing`.
@@ -213,7 +214,7 @@ function _check_fcas_effective_series(container::PSI.OptimizationContainer, devi
     isempty(uncovered) || throw(
         ArgumentError(
             "FCASMarket: $(length(uncovered)) device(s) carry no effective $(string(bid_type)) offer forecast: " *
-                "$(join(uncovered, ", ")). Call set_effective_offers!(sys) before transform_single_time_series!.",
+                "$(join(uncovered, ", ")). Build the System with nem_system(db, NEMDEConfiguration(); date_range) first.",
         ),
     )
     return

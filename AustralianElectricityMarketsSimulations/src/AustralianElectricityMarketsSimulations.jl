@@ -1,7 +1,7 @@
 module AustralianElectricityMarketsSimulations
 
 import AustralianElectricityMarkets
-using AustralianElectricityMarkets: _bid_series, _bidding_devices, _fcas_series_key, _fcas_side_bid, _energy_bid, _mnsp_bid, _MNSP_DIRECTIONS, BidType, ConstraintSense, FCASService, FCAS_REGULATION_MARKETS,
+using AustralianElectricityMarkets: _mnsp_bid, _MNSP_DIRECTIONS, BidType, ConstraintSense, FCASService, FCAS_REGULATION_MARKETS,
     GenericConstraint, InterconnectorLossModel, InterconnectorTerm, EnergyTieBreak, NEM_SERIES, NEM_TELEMETRY_SERIES, NEM_OBSERVED_SERIES, NEM_STATE_INPUT_SERIES, NEM_INTERCONNECTOR_SERIES, NEM_MNSP_SERIES, NEM_MNSP_FIXED_LOAD_SERIES, NEM_CONSTRAINT_SERIES,
     NEMInterconnectorLimits, NEMInterconnectorRegistration, InterconnectorKind, NEMMNSPBid, NEMMNSPLink, NEMMNSPObservedState,
     MNSPDirection, OfferSide,
@@ -58,7 +58,6 @@ include("types/interconnector_losses.jl")
 include("types/mnsp.jl")
 include("types/mnsp_limits.jl")
 include("types/state.jl")
-include("offers/effective_offers.jl")
 
 include("formulations/slacks.jl")
 include("formulations/generic_constraints.jl")
@@ -92,11 +91,10 @@ include("results/comparison.jl")
 include("results/interconnector_losses.jl")
 
 
-export set_effective_offers!, get_initial_mw
+export get_initial_mw
 export effective_regulation_enablement
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,
     fcas_upper_regulation_service, fcas_offer_sides
-export NEMDispatchInputs, NEMFCASInputs
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
 export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
     exclude_unmodeled_services!, check_replication_steps,

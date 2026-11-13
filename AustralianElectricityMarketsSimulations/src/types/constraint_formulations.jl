@@ -132,7 +132,7 @@ struct FCASUnitConstraint <: PSI.ConstraintType end
     FCASOfferLimitParameter
 
 Time-series parameter of a device's effective FCAS offer limits for one market and side, read from
-its `"fcas_effective_<BIDTYPE>[_decremental]"` series ([`set_effective_offers!`](@ref)), per-unit
+its `"fcas_effective_<BIDTYPE>[_decremental]"` series ([`fcas_effective_series_name`](@ref)), per-unit
 of the system base, with a field axis `"max_avail"`, `"enablement_min"`, `"enablement_max"`. Keyed by
 device type with meta `"<BIDTYPE>[_decremental]"`.
 """
@@ -175,7 +175,7 @@ struct FCASLowerSlopeParameter <: PSI.ConstraintCoefficientParameter end
     FCASRampingLimitParameter
 
 Time-series parameter of a device's regulation ramping limits for one regulation market, read from
-its `"fcas_ramping_limits_<BIDTYPE>"` series ([`set_effective_offers!`](@ref)), per-unit of the
+its `"fcas_ramping_limits_<BIDTYPE>"` series ([`fcas_ramping_series_name`](@ref)), per-unit of the
 system base, with a field axis `"joint_ramping"` ([`FCASUnitConstraint`](@ref) right-hand
 side) and `"bdu_ramping"` ([`FCASUnitConstraint`](@ref) right-hand side). Keyed by device type
 with meta `"<BIDTYPE>"`.

@@ -45,10 +45,6 @@ _ramp_meta(::RampUp) = "up"
 _ramp_meta(::RampDown) = "down"
 
 
-# The `NEMDispatchInputs` field holding each direction's series key.
-_ramp_input_field(::RampUp) = :ramp_up
-_ramp_input_field(::RampDown) = :ramp_down
-
 # The series each direction reads on a device.
 _ramp_series_name(::RampUp) = NEM_SERIES.ramp_up_rate
 _ramp_series_name(::RampDown) = NEM_SERIES.ramp_down_rate

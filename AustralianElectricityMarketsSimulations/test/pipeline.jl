@@ -8,7 +8,6 @@
     )
     DuckDB.close(db.db)
     @test PowerSystems.get_time_series_counts(sys).forecast_count == 0
-    AEMS.set_effective_offers!(sys)
     @test AEMS._prepare_replay_forecasts!(sys) === sys
     forecasts = PowerSystems.get_time_series_counts(sys).forecast_count
     @test AEMS._prepare_replay_forecasts!(sys) === sys
