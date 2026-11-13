@@ -1,7 +1,7 @@
 module AustralianElectricityMarketsSimulations
 
 import AustralianElectricityMarkets
-using AustralianElectricityMarkets: _bid_series, _bidding_devices, _energy_bid, _mnsp_bid, _MNSP_DIRECTIONS, BidType, ConstraintSense, FCASService, FCAS_REGULATION_MARKETS,
+using AustralianElectricityMarkets: _bid_series, _bidding_devices, _fcas_series_key, _fcas_side_bid, _energy_bid, _mnsp_bid, _MNSP_DIRECTIONS, BidType, ConstraintSense, FCASService, FCAS_REGULATION_MARKETS,
     GenericConstraint, InterconnectorLossModel, InterconnectorTerm, EnergyTieBreak, NEM_SERIES, NEM_TELEMETRY_SERIES, NEM_OBSERVED_SERIES, NEM_STATE_INPUT_SERIES, NEM_INTERCONNECTOR_SERIES, NEM_MNSP_SERIES, NEM_MNSP_FIXED_LOAD_SERIES, NEM_CONSTRAINT_SERIES,
     NEMInterconnectorLimits, NEMInterconnectorRegistration, InterconnectorKind, NEMMNSPBid, NEMMNSPLink, NEMMNSPObservedState,
     MNSPDirection, OfferSide,

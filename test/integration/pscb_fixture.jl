@@ -176,6 +176,10 @@ function nem_pscb_system()
                 registered_from = DateTime(2000, 1, 1), registered_until = DateTime(2999, 12, 31),
             ),
         )
+        # A static observed state: the unit starts at its active power in dispatch mode 0.
+        set_observed_state!(
+            device, NEMObservedState(; initial_mw = Float64(get_active_power(device)), dispatch_mode = 0),
+        )
     end
     AustralianElectricityMarkets._set_replay_inputs!(sys)
     return sys

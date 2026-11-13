@@ -72,23 +72,119 @@ end
     @test checked > 0
 end
 
-@testset "nem_system writes the joint ramping limits of regulation markets" begin
+@testset "the written joint ramping limit equals the §6.1 rule on the observed state" begin
     AEM = AustralianElectricityMarkets
     sys = _fw_system()
-    inactive = FCAS_INACTIVE_LIMIT_MW / get_base_power(sys)
-    written = 0
-    for device in AEM._bidding_devices(sys), bid_type in FCAS_REGULATION_MARKETS
-        name = fcas_ramping_series_name(bid_type)
+    base = get_base_power(sys)
+    inactive = FCAS_INACTIVE_LIMIT_MW / base
+    active_rows = 0
+    inactive_rows = 0
+    for device in nem_dispatch_devices(sys), service in (BidType.RAISEREG, BidType.LOWERREG)
+        name = fcas_ramping_series_name(service)
         has_time_series(device, SingleTimeSeries, name) || continue
-        written += 1
-        for (joint, bdu) in _fw_written(device, name)
-            # Each limit is a finite right-hand side or the inactive limit on its own form.
-            @test isfinite(joint)
-            @test isfinite(bdu)
-            @test abs(joint) <= inactive
+        stamps = get_time_series_timestamps(SingleTimeSeries, device, name)
+        window = AEM._fcas_window(device, stamps, Minute(5), AEM._fcas_system_base(device))
+        caps = AEM._fcas_capability_values(
+            AEM._fcas_agc_capability(window, device, AEM._fcas_ramp_rate_service(device, service)), length(stamps),
+        )
+        # The writer's own enablement is the non-state half of its ramping rule.
+        direction = fcas_bid_direction(device, service)
+        sides = Dict{Bool, AEM._FCASSide}(dec => AEM._fcas_side(window, device, service, dec) for dec in AEM.fcas_offer_sides(direction))
+        enabled = AEM._fcas_regulation_enabled(window, device, service, direction, sides, AEM._fcas_energy_limits(window, device))
+        upper = service == fcas_upper_regulation_service(device)
+        written = [entry[1] for entry in _fw_written(device, name)]
+        for i in eachindex(stamps)
+            state = window.states[i]
+            if AEM.fcas_ramping_active(caps[i], state) && enabled[i] && !AEM.fcas_joint_ramping_exempt(state, window.fast_start[i])
+                @test AEM.fcas_ramping_limit(caps[i], upper, state) ≈ written[i] rtol = 1.0e-12
+                active_rows += 1
+            else
+                @test written[i] ≈ (upper ? inactive : -inactive)
+                inactive_rows += 1
+            end
         end
     end
-    @test written > 0
+    @test active_rows > 0
+    @test inactive_rows > 0
+end
+
+@testset "the written FCAS enablement equals the §5 pre-conditions and the stranded rule on the observed state" begin
+    AEM = AustralianElectricityMarkets
+    sys = _fw_system()
+    # The §5 pre-conditions of one side other than the stranded one, per interval of `window`.
+    function preconditions(window, device, service, decremental)
+        side = AEM._fcas_side(window, device, service, decremental)
+        energy = AEM._fcas_energy_limits(window, device)
+        regulation = service in FCAS_REGULATION_MARKETS
+        return map(eachindex(side.trapeziums)) do t
+            AEM.fcas_preconditions_ok(
+                side.trapeziums[t], side.total_width[t], energy.gen[t], energy.load[t], window.agc_status[t],
+                regulation, decremental, device isa PowerSystems.Storage,
+            )
+        end
+    end
+    both_sides = 0
+    one_side = 0
+    for device in nem_dispatch_devices(sys)
+        for service in unique(b.service for b in get_fcas_bids(AEM._nem_offer_cost(device)))
+            direction = fcas_bid_direction(device, service)
+            direction == FCASBidDirection.NONE && continue
+            decremental = direction == FCASBidDirection.DECREMENTAL
+            side = direction == FCASBidDirection.DECREMENTAL ? OfferSide.LOAD : OfferSide.GEN
+            bid = AEM._fcas_side_bid(device, service, side)
+            stamps = get_time_series_timestamps(SingleTimeSeries, device, PowerSystems.IS.get_name(bid.trapezium))
+            has_time_series(device, SingleTimeSeries, fcas_effective_series_name(service, decremental)) || continue
+            window = AEM._fcas_window(device, stamps, Minute(5), AEM._fcas_system_base(device))
+            active(dec) = Bool[entry[1] > 0.0 for entry in _fw_written(device, fcas_effective_series_name(service, dec))]
+            if direction == FCASBidDirection.BOTH
+                gen_traps = AEM._fcas_side(window, device, service, false).trapeziums
+                load_traps = AEM._fcas_side(window, device, service, true).trapeziums
+                gen_ok = preconditions(window, device, service, false)
+                load_ok = preconditions(window, device, service, true)
+                derived = [
+                    AEM.fcas_both_sides_stranded_ok(gen_traps[i], load_traps[i], gen_ok[i], load_ok[i], window.states[i])
+                        for i in eachindex(stamps)
+                ]
+                @test [flag[1] for flag in derived] == active(false)
+                @test [flag[2] for flag in derived] == active(true)
+                both_sides += 1
+            else
+                traps = AEM._fcas_side(window, device, service, decremental).trapeziums
+                ok = preconditions(window, device, service, decremental)
+                derived = [
+                    ok[i] && AEM.fcas_state_stranded_ok(traps[i], window.states[i], device isa PowerSystems.Storage)
+                        for i in eachindex(stamps)
+                ]
+                @test derived == active(decremental)
+                one_side += 1
+            end
+        end
+    end
+    @test one_side > 0
+end
+
+@testset "the FCAS writer refuses a missing bid, a static bid field and a device without telemetry" begin
+    AEM = AustralianElectricityMarkets
+    sys = _fw_system()
+    # A generator bids its generation side only, so it has no load-side bid.
+    generator = first(
+        d for d in AEM._bidding_devices(sys)
+            if d isa PowerSystems.ThermalStandard && fcas_bid_direction(d, BidType.RAISE6SEC) == FCASBidDirection.INCREMENTAL
+    )
+    window = AEM._fcas_window(generator, [DateTime(2025, 1, 1, 0, 5)], Minute(5), get_base_power(sys))
+    err = try
+        AEM._fcas_scaled_trapeziums(window, generator, BidType.RAISE6SEC, true)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("has no FCAS bid for RAISE6SEC on LOAD", err.msg)
+    @test occursin(get_name(generator), err.msg)
+    @test_throws ArgumentError AEM._fcas_series_key(generator, 5.0, :trapezium)
+    # A device with NEM unit data but no telemetry cannot supply its window inputs.
+    bare = first(get_components(PowerSystems.ThermalStandard, first(nem_network(aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))))))
+    @test_throws ArgumentError AEM._fcas_window(bare, [DateTime(2025, 1, 1, 0, 5)], Minute(5), 100.0)
 end
 
 @testset "a curve with more bands than FCAS_BAND_COUNT is refused" begin

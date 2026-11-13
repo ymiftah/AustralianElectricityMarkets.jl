@@ -83,9 +83,9 @@ when no availability is published.
 
 # Arguments
 - `trap`: the effective FCAS trapezium of the interval.
-- `total_band_width`: the sum of the offer's non-negative band widths, MW; positive when a band carries quantity.
-- `energy_max_avail_gen`: the energy availability, MW, `Inf` where there is no limit; for a storage device the generation-side `MAXAVAIL`.
-- `energy_max_avail_load`: the storage device's load-side `MAXAVAIL`, MW, `Inf` where there is no limit; unused for other devices.
+- `total_band_width`: the sum of the offer's non-negative band widths, in the unit of `trap`; positive when a band carries quantity.
+- `energy_max_avail_gen`: the energy availability, in the unit of `trap`, `Inf` where there is no limit; for a storage device the generation-side `MAXAVAIL`.
+- `energy_max_avail_load`: the storage device's load-side `MAXAVAIL`, in the unit of `trap`, `Inf` where there is no limit; unused for other devices.
 - `agc_status`: the AGC status of the interval; `-1` where unknown.
 - `is_regulation`: whether the service is a regulation market.
 - `decremental`: whether the offer is the load side of the device.
@@ -122,18 +122,18 @@ end
 """
     fcas_effective_offer(trap, band_widths, enabled, inactive) -> NTuple{15, Float64}
 
-One interval of an FCAS offer's effective series, in MW:
+One interval of an FCAS offer's effective series, in the unit of `trap`:
 `(MaxAvail, EnablementMin, EnablementMax, UpperSlopeCoeff, LowerSlopeCoeff, w1, ..., w10)`, the first
-three and the band widths in MW and the two slope coefficients dimensionless, of the effective
+three and the band widths in that unit and the two slope coefficients dimensionless, of the effective
 trapezium `trap` and the band widths `band_widths`, zero-padded to [`FCAS_BAND_COUNT`](@ref).
 An offer that is not `enabled` has zero `MaxAvail`, slopes and widths, and enablement limits
 `-inactive` and `inactive`.
 
 # Arguments
-- `trap`: the effective FCAS trapezium of the interval, in MW.
-- `band_widths`: the band widths of the offer, MW, zero-padded to `FCAS_BAND_COUNT`.
+- `trap`: the effective FCAS trapezium of the interval, in any one unit (MW or per-unit); the slope coefficients are dimensionless.
+- `band_widths`: the band widths of the offer, in the unit of `trap`, zero-padded to `FCAS_BAND_COUNT`.
 - `enabled`: whether the offer is enabled in the interval.
-- `inactive`: the enablement limit of a disabled offer, MW (`FCAS_INACTIVE_LIMIT_MW`).
+- `inactive`: the enablement limit of a disabled offer, in the unit of `trap` (`FCAS_INACTIVE_LIMIT_MW` converted to it).
 
 # Returns
 `NTuple{15, Float64}`.
@@ -152,7 +152,7 @@ end
 """
     fcas_ramping_limits(capability, bdu_capability, enabled, upper, fast_start, inactive, state::NEMUnitState) -> NTuple{2, Float64}
 
-One interval of a regulation market's ramping limits, in MW: `(joint, bdu)`.
+One interval of a regulation market's ramping limits, in the unit of `inactive`: `(joint, bdu)`.
 `joint` is the AEMO *FCAS Model in NEMDE* §6.1 right-hand side, [`fcas_ramping_limit`](@ref) of the
 AGC ramping `capability` on the upper or lower form, and `±inactive` where the row is inactive: the
 capability is zero or absent, the unit is not `enabled` for the market, or the unit is exempt on a
@@ -161,13 +161,13 @@ fast-start interval ([`fcas_joint_ramping_exempt`](@ref)). `bdu` is the §6.4 ri
 where that is zero. A caller with an unknown starting output writes `±inactive` itself.
 
 # Arguments
-- `capability`: the AGC ramping capability over the interval, MW; `0.0` where the ramp rate is absent.
-- `bdu_capability`: the AGC ramping capability of a device bidding both sides, MW; `0.0` otherwise. Must not be `NaN`: callers clean a `NaN` capability to `0.0`.
+- `capability`: the AGC ramping capability over the interval, in the unit of `inactive`; `0.0` where the ramp rate is absent.
+- `bdu_capability`: the AGC ramping capability of a device bidding both sides, in the unit of `inactive`; `0.0` otherwise. Must not be `NaN`: callers clean a `NaN` capability to `0.0`.
 - `enabled`: whether the unit is enabled for the market in the interval.
 - `upper`: whether the joint limit is the upper form.
 - `fast_start`: whether the unit carries a fast-start inflexibility profile in the interval.
-- `inactive`: the inactive limit, MW (`FCAS_INACTIVE_LIMIT_MW`).
-- `state`: the [`NEMUnitState`](@ref) at the start of the interval.
+- `inactive`: the inactive limit (`FCAS_INACTIVE_LIMIT_MW` converted to the unit of the capabilities and of `state`).
+- `state`: the [`NEMUnitState`](@ref) at the start of the interval, its `initial_mw` in the unit of the capabilities.
 
 # Returns
 `NTuple{2, Float64}`.

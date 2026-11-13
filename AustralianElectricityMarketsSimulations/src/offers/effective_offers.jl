@@ -106,7 +106,7 @@ end
 function _bid_availability_key(device, side::OfferSide)
     cost = AustralianElectricityMarkets._nem_offer_cost(device)
     bid = isnothing(cost) ? nothing : _energy_bid(cost, side)
-    return isnothing(bid) ? nothing : _bid_series_key(device, bid.max_avail, :max_avail)
+    return isnothing(bid) ? nothing : _fcas_series_key(device, bid.max_avail, :max_avail)
 end
 
 
@@ -155,32 +155,13 @@ is static rather than series-backed.
 A `NEMFCASInputs`, or `nothing`.
 """
 function _fcas_bid_inputs(device, service::BidType, side::OfferSide)
-    cost = AustralianElectricityMarkets._nem_offer_cost(device)
-    isnothing(cost) && return nothing
-    bids = get_fcas_bids(cost)
-    i = findfirst(b -> b.service == service && AustralianElectricityMarkets._fcas_bid_side(device, b) == side, bids)
-    isnothing(i) && return nothing
-    bid = bids[i]
+    bid = _fcas_side_bid(device, service, side)
+    isnothing(bid) && return nothing
     return NEMFCASInputs(;
         service, side,
         offer = AustralianElectricityMarkets._fcas_offer_key(device, service, side),
-        trapezium = _bid_series_key(device, bid.trapezium, :trapezium),
-        max_avail = _bid_series_key(device, bid.max_avail, :max_avail),
-    )
-end
-
-
-# The key of a series-backed FCAS bid field; a static field has no series to read the trapezium from.
-function _bid_series_key(device, value::IS.StaticTimeSeriesKey, ::Symbol)
-    return value
-end
-
-function _bid_series_key(device, value, field::Symbol)
-    throw(
-        ArgumentError(
-            "\"$(PSY.get_name(device))\" has a static `$(field)` field; FCAS trapeziums and MAXAVAIL need " *
-                "series-backed bid inputs, as set_market_bids! writes them.",
-        ),
+        trapezium = _fcas_series_key(device, bid.trapezium, :trapezium),
+        max_avail = _fcas_series_key(device, bid.max_avail, :max_avail),
     )
 end
 

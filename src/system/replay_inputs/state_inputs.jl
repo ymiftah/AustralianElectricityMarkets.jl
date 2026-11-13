@@ -146,7 +146,7 @@ Adds, for each NEM dispatch device of `sys` whose observed starting output is a 
 named by [`NEM_STATE_INPUT_SERIES`](@ref) on the timestamps of that output: `initial_mw` in MW, zero where
 the build does not observe the unit. A device whose energy bid carries a fixed loading also gets
 `fixed_load`, the target in system-base per-unit, and `fixed_load_invoked`, `1` or `0`, from
-[`_fixed_load_step_series`](@ref). A device with a static starting output, or with no observed state, gets none of them.
+[`_fixed_load_step_series`](@ref). A device with a static starting output gets none of them.
 
 # Arguments
 - `sys`: the system whose observed state [`nem_system`](@ref) attached.
@@ -157,8 +157,7 @@ the build does not observe the unit. A device whose energy bid carries a fixed l
 function _set_observed_state_inputs!(sys::PSY.System)
     base = PSY.get_base_power(sys)
     _foreach_nem_dispatch_device(sys) do device
-        observed = _nem_unit_data(device).observed_state
-        isnothing(observed) && return
+        observed = get_observed_state(device)
         observed.initial_mw isa IS.StaticTimeSeriesKey || return
         name = PSY.get_name(observed.initial_mw)
         stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, device, name)

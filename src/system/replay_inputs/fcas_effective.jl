@@ -165,8 +165,9 @@ function _fcas_window(device, stamps::Vector{DateTime}, resolution::Dates.Period
 end
 
 
-# The regulation AGC ramping capability of `device` on `service` over the window, per-unit, `NaN` at an interval with no
-# ramp rate; `nothing` when the device has no `"fcas_agc_ramp_rate_<service>"` series. The series is per-unit MW/h.
+# The regulation AGC ramping capability of `device` on `service` over the window (AEMO *FCAS Model in NEMDE* §4.2),
+# per-unit, `NaN` at an interval with no ramp rate; `nothing` when the device has no `"fcas_agc_ramp_rate_<service>"`
+# series. The series is per-unit MW/h, times the interval length in hours.
 function _fcas_agc_capability(window::_FCASWindow, device, service::BidType)
     name = fcas_series_name("fcas_agc_ramp_rate", service)
     has_time_series(device, SingleTimeSeries, name) || return nothing
@@ -212,10 +213,10 @@ function _fcas_energy_limits(window::_FCASWindow, device)
         if !(isnothing(gen) || isnothing(load))
             return (; gen, load)
         end
-        # The rating is read in the display units, so it is divided by their multiplier to be per-unit.
-        multiplier = _fcas_units_multiplier(device)
-        output = PSY.get_output_active_power_limits(device).max / multiplier
-        input = PSY.get_input_active_power_limits(device).max / multiplier
+        # The stored ratings are per-unit of the device base, so this does not depend on the display units.
+        scale = PSY.get_base_power(device) / window.base
+        output = getproperty(device, :output_active_power_limits).max * scale
+        input = getproperty(device, :input_active_power_limits).max * scale
         return (; gen = fill(output, n), load = fill(input, n))
     end
     avail = _fcas_unit_availability(window, device)

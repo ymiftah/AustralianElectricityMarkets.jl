@@ -215,16 +215,19 @@ end
             for d in PSY.get_contributing_devices(sys, svc)
                 direction = AEM.fcas_bid_direction(d, bid_type)
                 for decremental in (direction == FCASBidDirection.BOTH ? (false, true) : (direction == FCASBidDirection.DECREMENTAL,))
-                    # The writer's MW window and scaled trapeziums, against the bid's own MAXAVAIL series.
+                    # The writer's per-unit window and scaled trapeziums, against the bid's own raw values per-unit.
                     stamps = [first(date_range) + (i - 1) * Minute(5) for i in 1:horizon]
                     window = AEM._fcas_window(d, stamps, Minute(5), AEM._fcas_system_base(d))
                     scaled = AEM._fcas_side(window, d, bid_type, decremental).trapeziums
                     bid = AEM._fcas_side_bid(d, bid_type, AEM.offer_side(decremental))
                     raw_max_avail = AEM._fcas_bid_window(d, bid.max_avail, :max_avail, stamps)
+                    points = AEM._fcas_bid_window(d, bid.trapezium, :trapezium, stamps)
+                    raw = [Float64[p..., m] ./ window.base for (p, m) in zip(points, raw_max_avail)]
+                    five(t) = [t.enablement_min, t.low_breakpoint, t.high_breakpoint, t.enablement_max, t.max_avail]
+                    # Scaling only narrows: it never widens the span or raises MaxAvail.
+                    @test all(i -> five(scaled[i])[1] >= raw[i][1] && five(scaled[i])[4] <= raw[i][4] && five(scaled[i])[5] <= raw[i][5], eachindex(scaled))
                     n_regulation_trapeziums += length(scaled)
-                    n_regulation_trapeziums_scaled += count(
-                        i -> get_max_avail(scaled[i]) < raw_max_avail[i], eachindex(scaled),
-                    )
+                    n_regulation_trapeziums_scaled += count(i -> five(scaled[i]) != raw[i], eachindex(scaled))
                 end
             end
         end
