@@ -54,10 +54,8 @@ function _area_balance_template(
     return template
 end
 
-# Buildable subset of every `GenericConstraint` in `sys` for `template`.
-_buildable_gcs(sys, template; kwargs...) = AEMS._filter_buildable_generic_constraints(
-    sys, template, PSY.get_components(GenericConstraint, sys); kwargs...,
-)
+# The rows of `AEMS._diagnose_constraints` for every available `GenericConstraint` of `sys` against `template`.
+_diagnosed_gcs(sys, template) = AEMS._diagnose_constraints(sys, template, PSY.get_components(PSY.get_available, GenericConstraint, sys))
 
 # Sundance's 100 MW floor exceeds fixture demand under no-commitment dispatch; zero every
 # `ThermalStandard` floor before building an `augmented_pscb_system()` template.
@@ -109,12 +107,10 @@ function with_fcas!(template::PSI.ProblemTemplate)
     return template
 end
 
-# Adds the `template_nemde` generic-constraint service model to `template` and returns it.
-function with_generic_constraints!(template::PSI.ProblemTemplate)
-    PSI.set_service_model!(
-        template,
-        PSI.ServiceModel(GenericConstraint, LinearFactorLimit; duals = [NEMConstraintLimit], use_slacks = true),
-    )
+# Adds the `template_nemde` generic-constraint service model to `template`, excluding the constraints of
+# the `Dict` `exclude_constraints` (name => reason), and returns it.
+function with_generic_constraints!(template::PSI.ProblemTemplate; exclude_constraints = Dict{String, Symbol}())
+    PSI.set_service_model!(template, AEMS._generic_constraint_model(exclude_constraints))
     return template
 end
 
@@ -124,29 +120,29 @@ function with_tie_breaks!(template::PSI.ProblemTemplate)
     return template
 end
 
-# Replays `template` on `sys`: `exclude_unmodeled_services!` (its records appended to `skipped`), then
-# `check_template_against_sys`. Excludes components of `sys` in place and returns `template`.
+# Checks `template` against `sys` as `PSI.validate_template` does before a build, with the records of the
+# constraints it leaves out appended to `skipped`, and returns `template`.
 function replay_template(
         sys::PSY.System; template::PSI.ProblemTemplate = AEMS.template_nemde(), skipped = nothing,
-        exclude_constraints = Dict{String, Symbol}(),
     )
-    rows = AEMS.exclude_unmodeled_services!(sys, template; exclude_constraints)
-    isnothing(skipped) || append!(skipped, rows)
+    isnothing(skipped) || append!(skipped, NamedTuple.(eachrow(AEMS.replay_skipped_constraints(sys, template))))
+    AEMS._check_excluded_constraints(sys, template)
     AEMS.check_template_against_sys(template, sys)
+    AEMS._check_blocked_constraints(AEMS._blocked_constraints(sys, template))
     return template
 end
 
 """
     replay_simulation(sys, steps; optimizer, template, folder, name, simulation_name) -> (; simulation, model, skipped_constraints)
 
-Prepares `sys` with `prepare_replay!` and constructs, without building, the PSI simulation of `steps`.
+Constructs, without building, the PSI simulation of `steps` on `sys`, with the skipped constraints of `template`.
 """
 function replay_simulation(
         sys::PSY.System, steps; optimizer = nemde_optimizer(), template::PSI.ProblemTemplate = template_nemde(),
         folder::AbstractString = mktempdir(), name = "dispatch", simulation_name = "replication",
     )
-    skipped_constraints = prepare_replay!(sys, template, steps)
     model = PSI.DecisionModel(NEMDispatchProblem, template, sys; optimizer, initial_time = first(steps), name)
+    skipped_constraints = replay_skipped_constraints(sys, template)
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
     simulation = PSI.Simulation(;

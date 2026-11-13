@@ -237,3 +237,17 @@ end
     @test any(in((:unmodeled_fcas_service, :unmodeled_device_type)), result.skipped.reason)
     @test any(!ismissing, result.comparison.dispatch.TOTALCLEARED_solved)
 end
+
+@testset "the skipped-constraints report of the mock replay system" begin
+    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
+    t = DateTime(2025, 1, 1, 0, 5, 0)
+    sys = nem_system(db, NEMDEConfiguration(); date_range = t:DISPATCH_INTERVAL:(t + 3DISPATCH_INTERVAL))
+    template = template_nemde()
+    rows = replay_skipped_constraints(sys, template)
+    # The mock system leaves no constraint out under the full template.
+    @test names(rows) == ["constraint", "reason", "n_missing"]
+    @test nrow(rows) == 0
+    @test replay_skipped_constraints(sys, template) == rows
+    @test !isdefined(AEMS, :prepare_replay!)
+    @test !isdefined(AEMS, :exclude_unmodeled_services!)
+end

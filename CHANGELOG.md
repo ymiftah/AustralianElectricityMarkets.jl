@@ -58,6 +58,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The constraints the replay cannot bind are set unavailable by `nem_system`, with the NEMDE replay inputs: `:never_invoked` when the invoked series is zero at every replay interval, else `:no_available_device` when all contributing devices are unavailable. They are recorded in `NEMBuildReport.unavailable_constraints` and listed by `get_unavailable_constraints(sys)`. `prepare_replay!` returns them with `n_missing = 0`, merged with the excluded constraints, and `never_invoked_constraints` is removed.
 
+- `prepare_replay!` and `exclude_unmodeled_services!` are removed: the replay pre-flight checks run in `PSI.validate_template` of `DecisionModel{NEMDispatchProblem}`, so a replay is `nem_system`, `template_nemde()`, `DecisionModel` and `Simulation`, and a build no longer changes the availability of any constraint. `validate_template` requires forecast windows on the system, rejects an excluded constraint that is not a `GenericConstraint` of the system, throws on a constraint the template cannot model, deletes the `GenericConstraint` models of the constraints the template leaves out (a missing FCAS service model, a missing `AreaInterchange` model, or a user exclusion), and checks the energy limits over `replay_intervals(sys)`.
+
+- `replay_skipped_constraints(sys, template)` is the pure report of the constraints left out (the unavailable constraints of `nem_system`, the excluded ones and the ones the template cannot build), with the `(constraint, reason, n_missing)` columns `prepare_replay!` returned.
+
+- `template_nemde(; exclude_constraints)` takes the user exclusions as a name to reason `Dict`, applied through the `"filter_function"` and `"excluded_constraints"` attributes of the generic-constraint service model. `check_dispatch_envelope(template, sys)` takes no interval window, and `check_template_against_sys` no longer checks the generic constraints.
+
 ### Documentation
 
 - Restored the regional how-to pages, built with `set_regional_availability!`; fixed their series plots and output directories.

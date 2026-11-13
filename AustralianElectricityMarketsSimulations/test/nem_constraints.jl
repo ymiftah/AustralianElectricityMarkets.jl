@@ -412,38 +412,31 @@ end
     check_slack_costs()
 end
 
-@testset "Buildable generic constraints: the default throws one aggregated ArgumentError, and allow_partial_coverage returns the subset" begin
+@testset "Constraint diagnosis lists each unbuildable constraint with its reason, and tolerates a template that leaves FCAS out" begin
     sys = _prepared_system()
     _add_fcas_services!(sys)
     template = _area_balance_template(sys)
-    err = _caught(() -> _buildable_gcs(sys, template))
-    @test err isa ArgumentError
-    msg = sprint(showerror, err)
-    @test occursin("F_R1_RAISE6SEC", msg)
-    @test occursin("F_R2_LOWERREG", msg)
-    @test occursin("N_HYDRO_LIMIT", msg)
-    @test occursin("FCASMarket", msg)
-    @test occursin("allow_partial_coverage", msg)
-    @test !occursin("N_IC1_LIMIT", msg)
-    @test !occursin("N_PARTIAL", msg)
-
+    rows = _diagnosed_gcs(sys, template)
     expected = Set(PSY.get_name(_gc(sys, id)) for id in ("N_IC1_LIMIT", "N_PARTIAL"))
-    result = @test_logs (:warn,) _buildable_gcs(sys, template; allow_partial_coverage = true)
-    @test Set(PSY.get_name.(result)) == expected
-    @test issorted(PSY.get_name.(result))
-
-    skipped = []
-    @test_logs (:warn,) _buildable_gcs(sys, template; allow_partial_coverage = true, skipped = skipped)
     all_names = Set(PSY.get_name.(PSY.get_components(GenericConstraint, sys)))
-    @test Set(r.constraint for r in skipped) == setdiff(all_names, expected)
-    @test all(r -> r.n_missing >= 1, skipped)
+    @test Set(r.constraint for r in rows) == setdiff(all_names, expected)
+    @test issorted([r.constraint for r in rows])
+    @test all(r -> r.n_missing >= 1, rows)
+    @test all(r -> r.reason in (:unmodeled_fcas_service, :unmodeled_device_type), rows)
+    @test any(r -> startswith(r.constraint, "N_HYDRO_LIMIT"), rows)
+    # The template has no FCAS model, so an FCAS failure is tolerated; a device type it does not model is not.
+    fcas_rows = filter(r -> r.reason == :unmodeled_fcas_service, rows)
+    @test !isempty(fcas_rows)
+    @test !any(r -> r.blocking, fcas_rows)
+    @test all(r -> r.blocking, filter(r -> r.reason == :unmodeled_device_type, rows))
 end
 
-@testset "the buildable subset builds and solves under per-instance registration, where the aggregated registration throws; a left-out constraint is recorded" begin
+@testset "the buildable subset builds and solves under per-instance registration, where the aggregated registration throws; an unavailable constraint is left out" begin
     sys = _prepared_system()
     _add_fcas_services!(sys)
     template = _area_balance_template(sys)
-    buildable = _buildable_gcs(sys, template; allow_partial_coverage = true)
+    unbuildable = Set(r.constraint for r in _diagnosed_gcs(sys, template))
+    buildable = [gc for gc in PSY.get_components(PSY.get_available, GenericConstraint, sys) if PSY.get_name(gc) ∉ unbuildable]
 
     aggregated_template = _area_balance_template(sys)
     PSI.set_service_model!(
@@ -478,16 +471,18 @@ end
     ]
     @test Set(k.meta for k in nem_keys) == Set(PSY.get_name.(buildable))
 
-    # A constraint whose contributing devices are all unavailable is left out, recorded, and not a failure.
+    # A constraint made unavailable, as the build does for one whose contributing devices are all unavailable,
+    # is not diagnosed and gets no model.
     left_out = _gc(sys, "N_PARTIAL")
     PSY.set_available!.(PSY.get_contributing_devices(sys, left_out), false)
-    skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
+    PSY.set_available!(left_out, false)
     left_out_template = _area_balance_template(sys)
-    left_out_buildable = _buildable_gcs(
-        sys, left_out_template; allow_partial_coverage = true, skipped = skipped,
-    )
-    @test filter(r -> r.reason == :no_available_device, skipped) ==
-        [(constraint = PSY.get_name(left_out), reason = :no_available_device, n_missing = 0)]
+    left_out_rows = _diagnosed_gcs(sys, left_out_template)
+    @test PSY.get_name(left_out) ∉ [r.constraint for r in left_out_rows]
+    left_out_buildable = [
+        gc for gc in PSY.get_components(PSY.get_available, GenericConstraint, sys)
+            if PSY.get_name(gc) ∉ Set(r.constraint for r in left_out_rows)
+    ]
     @test PSY.get_name(left_out) ∉ PSY.get_name.(left_out_buildable)
 
     for gc in left_out_buildable
@@ -673,4 +668,60 @@ end
         limit_type = "Interconnector Zero", source = "AEMO",
     )
     @test AustralianElectricityMarkets.constraint_cvp_factor(published) == 35.0
+end
+
+@testset "validate_template: user exclusions, template-scope pruning and the checks on the System" begin
+    sys = fcas_toy_system()
+    optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
+    steps = TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION)
+    names_before = sort(PSY.get_name.(PSY.get_components(GenericConstraint, sys)))
+    @test !isempty(names_before)
+
+    # A named exclusion is reported, gets no container, and leaves the constraint available.
+    name = first(names_before)
+    template = template_nemde(; exclude_constraints = Dict(name => :manual))
+    rows = replay_skipped_constraints(sys, template)
+    @test (name, :manual, 0) in [(r.constraint, r.reason, r.n_missing) for r in eachrow(rows)]
+    model = PSI.DecisionModel(AEMS.NEMDispatchProblem, template, sys; optimizer, initial_time = TOY_START, name = "dispatch")
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    @test !any(k -> k.meta == name, PSI.get_constraint_keys(container))
+    @test !any(k -> k.meta == name, PSI.get_variable_keys(container))
+    @test PSY.get_available(PSY.get_component(GenericConstraint, sys, name))
+    # The report reads the same from the caller's template and from the model's expanded copy.
+    @test replay_skipped_constraints(sys, PSI.get_template(model)) == rows
+
+    # An unknown excluded name fails the template validation.
+    unknown = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, template_nemde(; exclude_constraints = Dict("NOPE" => :manual)), sys;
+        optimizer, initial_time = TOY_START, name = "dispatch",
+    )
+    @test_throws ArgumentError PSI.validate_template(unknown)
+
+    # A system without forecast windows names the builder.
+    bare = nem_toy_system([TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION)
+    unforecast = PSI.DecisionModel(AEMS.NEMDispatchProblem, template_nemde(), bare; optimizer, initial_time = TOY_START, name = "dispatch")
+    PSY.remove_time_series!(bare, PSY.DeterministicSingleTimeSeries)
+    @test PSY.get_time_series_counts(bare).forecast_count == 0
+    @test_throws r"nem_system\(db, NEMDEConfiguration\(\); date_range\)" PSI.validate_template(unforecast)
+end
+
+@testset "a template without FCAS reports the FCAS constraints, and the simulation builds, executes and reads back" begin
+    sys = fcas_toy_system()
+    template = with_generic_constraints!(energy_template())
+    rows = replay_skipped_constraints(sys, template)
+    @test Set(rows.constraint) == Set(["F_REG", "F_R6", "F_L6"])
+    @test all(==(:unmodeled_fcas_service), rows.reason)
+    steps = TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION)
+    optimizer = PSI.optimizer_with_attributes(HiGHS.Optimizer, "output_flag" => false)
+    counts = PSY.get_time_series_counts(sys)
+    out = run_replay(sys, steps; template, optimizer)
+    @test out.skipped_constraints == rows
+    @test nrow(read_solved_interval(out.results, sys).prices) > 0
+    @test read_constraint_violations(out.results, sys) isa DataFrame
+    # A second model and simulation on the same System build, and leave its series as they were.
+    @test PSY.get_time_series_counts(sys) == counts
+    again = run_replay(sys, steps; template, optimizer)
+    @test again.skipped_constraints == rows
+    @test PSY.get_time_series_counts(sys) == counts
 end

@@ -1842,23 +1842,22 @@ end
     PSY.add_service!(sys, FCASService(; name = "1_LOWER6SEC", region = "1", bid_type = BidType.LOWER6SEC), [device])
     template = fcas_toy_template(sys, ["1_LOWER6SEC"])
     PSI.set_service_model!(template, "F_TOY", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_TOY"))
-    err = _caught(() -> _buildable_gcs(sys, template))
+    rows = _diagnosed_gcs(sys, template)
+    @test [(r.constraint, r.reason, r.blocking) for r in rows] == [("F_TOY", :unmodeled_fcas_service, true)]
+    @test AEMS._blocked_constraints(sys, template) == [(constraint = "F_TOY", reason = :unmodeled_fcas_service)]
+    err = _caught(() -> AEMS._check_blocked_constraints(AEMS._blocked_constraints(sys, template)))
     @test err isa ArgumentError
-    @test occursin("F_TOY", sprint(showerror, err))
-    @test occursin("FCASMarket", sprint(showerror, err))
+    @test occursin("F_TOY (unmodeled_fcas_service)", sprint(showerror, err))
 
-    # Modelling the term's own service makes the filter accept it.
+    # Modelling the term's own service makes the check accept it.
     ok_template = fcas_toy_template(sys, ["1_RAISE6SEC"])
     PSI.set_service_model!(ok_template, "F_TOY", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "F_TOY"))
-    @test PSY.get_name.(_buildable_gcs(sys, ok_template)) == ["F_TOY"]
+    @test isempty(_diagnosed_gcs(sys, ok_template))
 
-    # A service whose devices are all unavailable is skipped by FCASMarket and counts as zero; the
-    # constraint, left with no available contributing device, is left out of the template rather
-    # than reported as a failure.
+    # A service whose devices are all unavailable is skipped by FCASMarket and counts as zero, so its
+    # constraint is not a failure.
     PSY.set_available!(device, false)
-    left_out = []
-    @test isempty(_buildable_gcs(sys, template; skipped = left_out))
-    @test only(left_out).reason == :no_available_device
+    @test isempty(_diagnosed_gcs(sys, template))
 end
 
 """

@@ -217,13 +217,12 @@ DataFrame(
 #
 # `template_nemde` builds the data-free replay template: `NEMReplayDispatch` for each dispatch
 # device type, the regional balance with slacks, the interconnector losses, and one service model per
-# FCAS service and per generic constraint. `exclude_unmodeled_services!` marks what the replay leaves
-# out as unavailable on `sys` and returns the skipped constraints, and `check_template_against_sys`
-# verifies the inputs and that the template models every participant.
+# FCAS service and per generic constraint. `replay_skipped_constraints` reports, without changing `sys`,
+# the constraints the replay leaves out, and `PSI.validate_template` verifies the inputs and that the
+# template models every participant when the model is built.
 
 template = template_nemde()
-skipped = exclude_unmodeled_services!(sys, template)
-check_template_against_sys(template, sys)
+skipped = replay_skipped_constraints(sys, template)
 isempty(skipped)
 
 # ## Step 3: build and solve
@@ -326,16 +325,17 @@ slack_total
 # 1. `db = aem_connect()` and `populate(db, table, start, stop)` cache the NEMWEB tables.
 # 2. `nem_system(db, NEMDEConfiguration(); date_range)` builds the populated `System`,
 #    including energy and FCAS offers, dispatch and energy limits, generic constraints and losses.
-# 3. `prepare_replay!(sys, template, steps)` runs the replay pre-flight checks. The five-minute forecast
-#    windows, the effective FCAS parameters and the tie-break scales are already derived by `nem_system`.
+# 3. The five-minute forecast windows, the effective FCAS parameters, the tie-break scales and the
+#    constraints the replay cannot bind are already derived by `nem_system`. The replay pre-flight checks run
+#    when the model is built, and `replay_skipped_constraints(sys, template)` reports the constraints left out.
 # 4. Construct, build and run a PSI simulation of the interval range `steps`:
 #
 #    ```julia
-#    skipped = prepare_replay!(sys, template, steps)
 #    model = PSI.DecisionModel(
 #        AEMSim.NEMDispatchProblem, template, sys;
 #        optimizer = AEMSim.nemde_optimizer(), initial_time = first(steps), name = "dispatch",
 #    )
+#    skipped = replay_skipped_constraints(sys, template)
 #    models = PSI.SimulationModels(; decision_models = [model])
 #    sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
 #    simulation = PSI.Simulation(;

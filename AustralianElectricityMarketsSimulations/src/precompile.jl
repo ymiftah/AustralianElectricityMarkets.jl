@@ -19,7 +19,7 @@ module _PrecompileMockData
 end
 
 # Builds, executes and reads back a two-interval replay through the public API, with the inputs and
-# steps of the replay workflow (`prepare_replay!` followed by a PSI simulation).
+# steps of the replay workflow (`nem_system` followed by a PSI simulation).
 function _precompile_workload()
     _PrecompileMockData.AVAILABLE || return
     hive = mktempdir()
@@ -37,7 +37,6 @@ function _precompile_workload()
         _PrecompileMockData.DuckDB.close(db.db)
     end
     template = template_nemde()
-    prepare_replay!(sys, template, steps)
     model = PSI.DecisionModel(
         NEMDispatchProblem, template, sys; optimizer = nemde_optimizer(), initial_time = first(steps), name = "dispatch",
     )

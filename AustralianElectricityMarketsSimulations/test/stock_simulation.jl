@@ -788,10 +788,12 @@ end
     # exclude_constraints leaves a constraint out with its reason, and rejects an unknown name.
     skipped = @NamedTuple{constraint::String, reason::Symbol, n_missing::Int}[]
     sys = sentinel_system()
-    replay_template(sys; skipped, exclude_constraints = Dict("N_TOY_LIMIT" => :never_invoked))
+    replay_template(sys; template = template_nemde(; exclude_constraints = Dict("N_TOY_LIMIT" => :never_invoked)), skipped)
     @test only(skipped) == (constraint = "N_TOY_LIMIT", reason = :never_invoked, n_missing = 0)
-    @test !PSY.get_available(PSY.get_component(GenericConstraint, sys, "N_TOY_LIMIT"))
-    @test_throws r"exclude_constraints names N_ABSENT" replay_template(sentinel_system(); exclude_constraints = Dict("N_ABSENT" => :x))
+    @test PSY.get_available(PSY.get_component(GenericConstraint, sys, "N_TOY_LIMIT"))
+    @test_throws r"exclude_constraints names N_ABSENT" replay_template(
+        sentinel_system(); template = template_nemde(; exclude_constraints = Dict("N_ABSENT" => :x)),
+    )
 end
 
 @testset "tie-break service model follows the template" begin

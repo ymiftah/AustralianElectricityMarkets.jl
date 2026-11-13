@@ -35,15 +35,14 @@ const VIOLATION_STEPS = VIOLATION_START:REAL_RESOLUTION:(VIOLATION_START + REAL_
 const db = aem_connect(HiveConfiguration(hive_location = REAL_HIVE))
 
 # The system over `steps` and the two intervals after them, with `nem_system` validating its inputs,
-# then `prepare_replay!` and the built and executed replay of `template`; throws unless both the build
-# and the execution succeed.
+# then the built and executed replay of `template`; throws unless both the build and the execution succeed.
 function replay_real(steps; template = template_nemde())
     date_range = first(steps):DISPATCH_INTERVAL:(last(steps) + 2DISPATCH_INTERVAL)
     sys = nem_system(db, NEMDEConfiguration(); date_range)
-    skipped = prepare_replay!(sys, template, steps)
     model = PSI.DecisionModel(
         NEMDispatchProblem, template, sys; optimizer = nemde_optimizer(), initial_time = first(steps), name = "dispatch",
     )
+    skipped = replay_skipped_constraints(sys, template)
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
     simulation = PSI.Simulation(;

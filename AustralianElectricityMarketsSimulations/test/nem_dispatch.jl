@@ -252,7 +252,11 @@ end
     sys = nem_dispatch_system(; mutate! = s -> flatten_series!(s, "ER02", AustralianElectricityMarkets.bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN), -1.0))
     template = ProblemTemplate(NetworkModel(AreaBalancePowerModel; use_slacks = true))
     set_nem_dispatch_models!(template, sys)
-    @test_throws ArgumentError check_dispatch_envelope(template, sys, NEM_DISPATCH_START, 6)
+    @test_throws r"single forecast window" check_dispatch_envelope(template, sys)
+    # With one window per interval the invalid series is found.
+    PSY.remove_time_series!(sys, PSY.DeterministicSingleTimeSeries)
+    PSY.transform_single_time_series!(sys, NEM_DISPATCH_RESOLUTION, NEM_DISPATCH_RESOLUTION)
+    @test_throws r"ER02 at interval 1: invalid" check_dispatch_envelope(template, sys)
 end
 
 

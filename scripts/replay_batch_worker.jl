@@ -54,10 +54,10 @@ function _replay_chunk(
     )
     system_build_s = time() - t0
 
-    t1 = time()
-    skipped = prepare_replay!(sys, template, steps)
     on_phase(:model_build)
+    t1 = time()
     model = PSI.DecisionModel(NEMDispatchProblem, template, sys; optimizer, initial_time = first(steps), name = _DECISION_NAME)
+    skipped = replay_skipped_constraints(sys, template)
     models = PSI.SimulationModels(; decision_models = [model])
     sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
     simulation = PSI.Simulation(;

@@ -37,18 +37,20 @@ end
     ghost = UnitTerm("GHOST", BidType.ENERGY, 1.0)
     sys = replay_validation_system(ConstraintTerm[ghost])
     skipped = NamedTuple[]
-    result = try
-        replay_template(
-            sys; template = with_generic_constraints!(energy_template()), exclude_constraints = Dict("N_REVIEW" => :manual_exclusion), skipped,
-        )
-    catch err
-        err
-    end
-    @test result isa PSI.ProblemTemplate
-    if result isa PSI.ProblemTemplate
-        @test !any(k -> first(k) == "N_REVIEW", keys(PSI.get_service_models(result)))
-        @test only(skipped) == (constraint = "N_REVIEW", reason = :manual_exclusion, n_missing = 0)
-    end
+    template = with_generic_constraints!(energy_template(); exclude_constraints = Dict("N_REVIEW" => :manual_exclusion))
+    @test replay_template(sys; template, skipped) isa PSI.ProblemTemplate
+    @test only(skipped) == (constraint = "N_REVIEW", reason = :manual_exclusion, n_missing = 0)
+    # The system is untouched: the constraint stays available, and the model has no container for it.
+    gc = PSY.get_component(GenericConstraint, sys, "N_REVIEW")
+    @test PSY.get_available(gc)
+    model = PSI.DecisionModel(
+        AEMS.NEMDispatchProblem, template, sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START,
+    )
+    @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+    container = PSI.get_optimization_container(model)
+    @test !any(k -> k.meta == "N_REVIEW", PSI.get_constraint_keys(container))
+    @test !any(k -> k.meta == "N_REVIEW", PSI.get_variable_keys(container))
+    @test PSY.get_available(gc)
 end
 
 @testset "a never-invoked constraint bypasses buildability checks and is unavailable from the build" begin
@@ -58,7 +60,7 @@ end
     skipped = NamedTuple[]
     result = replay_template(sys; template = with_generic_constraints!(energy_template()), skipped)
     @test result isa PSI.ProblemTemplate
-    @test isempty(skipped)
+    @test only(skipped) == (constraint = "N_REVIEW", reason = :never_invoked, n_missing = 0)
     @test !PSY.get_available(PSY.get_component(GenericConstraint, sys, "N_REVIEW"))
     @test AustralianElectricityMarkets.get_unavailable_constraints(sys).reason == [:never_invoked]
 end
@@ -132,29 +134,30 @@ end
     @test AEMS._container_market_price_cap(container, TOY_START) == 12345.0
 end
 
-@testset "each replay call replaces the exclusions of the previous call on the same system" begin
+@testset "the skipped-constraints report reads the system and the template without changing either" begin
     ghost = UnitTerm("GHOST", BidType.ENERGY, 1.0)
     sys = replay_validation_system(ConstraintTerm[ghost]; with_off_constraint = true)
     review = PSY.get_component(GenericConstraint, sys, "N_REVIEW")
     off = PSY.get_component(GenericConstraint, sys, "N_OFF")
-    PSY.set_available!(off, false)  # Unavailable in the input: no replay call may re-enable it.
-    first_skipped = NamedTuple[]
-    replay_template(
-        sys; template = with_generic_constraints!(energy_template()), exclude_constraints = Dict("N_REVIEW" => :manual_exclusion),
-        skipped = first_skipped,
-    )
-    @test !PSY.get_available(review)
+    PSY.set_available!(off, false)  # Unavailable in the input, not by the build: not reported.
+    excluding = with_generic_constraints!(energy_template(); exclude_constraints = Dict("N_REVIEW" => :manual_exclusion))
+    rows = replay_skipped_constraints(sys, excluding)
+    @test rows == DataFrame(; constraint = ["N_REVIEW"], reason = [:manual_exclusion], n_missing = [0])
+    @test PSY.get_available(review)
     @test !PSY.get_available(off)
-    @test !any(r -> r.constraint == "N_OFF", first_skipped)
-    # The second call excludes nothing, so N_REVIEW is judged afresh on its now buildable terms.
+    @test replay_skipped_constraints(sys, excluding) == rows
+    # A template without the exclusion judges N_REVIEW on its terms: the ghost term is blocking.
+    plain = with_generic_constraints!(energy_template())
+    @test replay_skipped_constraints(sys, plain) ==
+        DataFrame(; constraint = ["N_REVIEW"], reason = [:missing_component], n_missing = [1])
+    @test AEMS._blocked_constraints(sys, plain) == [(constraint = "N_REVIEW", reason = :missing_component)]
+    # With its terms made buildable the constraint is no longer reported.
     empty!(get_terms(review))
     push!(get_terms(review), UnitTerm(TOY_CHEAP, BidType.ENERGY, 1.0))
-    second_skipped = NamedTuple[]
-    replay_template(sys; template = with_generic_constraints!(energy_template()), skipped = second_skipped)
+    @test isempty(replay_skipped_constraints(sys, plain))
+    @test isempty(AEMS._blocked_constraints(sys, plain))
     @test PSY.get_available(review)
-    @test !any(r -> r.constraint == "N_REVIEW", second_skipped)
     @test !PSY.get_available(off)
-    @test !any(r -> r.constraint == "N_OFF", second_skipped)
 end
 
 @testset "a never-invoked constraint stays excluded and is reported again on a reused system" begin
@@ -163,7 +166,7 @@ end
     AustralianElectricityMarkets._set_constraint_availability!(sys)
     review = PSY.get_component(GenericConstraint, sys, "N_REVIEW")
     for _ in 1:2
-        rows = AEMS.prepare_replay!(sys, with_generic_constraints!(energy_template()), TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION))
+        rows = replay_skipped_constraints(sys, with_generic_constraints!(energy_template()))
         @test !PSY.get_available(review)
         @test rows == DataFrame(; constraint = ["N_REVIEW"], reason = [:never_invoked], n_missing = [0])
     end
@@ -299,16 +302,25 @@ end
     @test PSI.get_slack_cost(PSI.get_network_model(template)) == template_cost
 end
 
-@testset "prepare_replay! returns the skipped table and is repeatable" begin
+@testset "replay_skipped_constraints returns the skipped table and is repeatable" begin
+    @test !isdefined(AEMS, :prepare_replay!)
+    @test !isdefined(AEMS, :exclude_unmodeled_services!)
     sys = nem_toy_system(
         [TOY_CHEAP => toy_unit(100.0, [(100.0, 20.0)]; initial = 50.0, ramp_up = 100.0)], 50.0; horizon = TOY_RESOLUTION,
     )
-    steps = TOY_START:TOY_RESOLUTION:TOY_START
-    # The fixture attaches its own forecast windows, so the call keeps them and only runs the checks.
     forecasts = PSY.get_time_series_counts(sys).forecast_count
-    skipped = prepare_replay!(sys, replay_template(sys), steps)
+    skipped = replay_skipped_constraints(sys, replay_template(sys))
     @test skipped isa DataFrame
     @test names(skipped) == ["constraint", "reason", "n_missing"]
     @test PSY.get_time_series_counts(sys).forecast_count == forecasts > 0
-    @test prepare_replay!(sys, replay_template(sys), steps) == skipped
+    @test replay_skipped_constraints(sys, replay_template(sys)) == skipped
+    # A model builds from the same system and template without changing the series of the system.
+    series = PSY.get_time_series_counts(sys)
+    for _ in 1:2
+        model = PSI.DecisionModel(
+            AEMS.NEMDispatchProblem, replay_template(sys), sys; optimizer = HiGHS.Optimizer, initial_time = TOY_START,
+        )
+        @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
+        @test PSY.get_time_series_counts(sys) == series
+    end
 end

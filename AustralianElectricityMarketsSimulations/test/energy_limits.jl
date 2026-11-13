@@ -131,8 +131,7 @@ end
     @test_throws ArgumentError replay_template(sys)
     invalid = energy_limit_system(; uigf = [45.0, NaN])
     template = replay_template(invalid)
-    @test isnothing(check_dispatch_envelope(template, invalid, TOY_START, 1))
-    @test_throws ArgumentError check_dispatch_envelope(template, invalid, TOY_START, 2)
+    @test_throws r"interval 2: invalid UIGF" check_dispatch_envelope(template, invalid)
 end
 
 @testset "a simulation across 1 July is refused, and each side of the boundary prices at its own Market Price Cap" begin
