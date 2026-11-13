@@ -24,6 +24,7 @@ function _set_loss_demand_coefficients!(sys::PSY.System)
         interchange for interchange in PSY.get_components(PSY.AreaInterchange, sys) if
             length((PSY.get_supplemental_attributes(InterconnectorLossModel, interchange)::Vector{InterconnectorLossModel})) == 1
     ]
+    # A system with no loss-modelled interchange needs no demand term, and may carry no loads.
     isempty(modelled) && return
     stamps, resolution, demand = _area_loss_demand(sys)
     for interchange in modelled
@@ -64,18 +65,18 @@ function _area_loss_demand(sys::PSY.System)
     stamps = PSY.get_time_series_timestamps(PSY.SingleTimeSeries, reference, "loss_demand")
     resolution = IS.get_resolution(PSY.get_time_series(PSY.SingleTimeSeries, reference, "loss_demand"))
     demand = Dict{String, Vector{Float64}}()
-    # The coefficient multiplies per-unit demand, so the loads are read per unit of the system base.
-    with_units_base(sys, "SYSTEM_BASE") do
-        for load in loads
-            PSY.get_time_series_timestamps(PSY.SingleTimeSeries, load, "loss_demand") == stamps || throw(
-                ArgumentError(
-                    "loss demand coefficients: PowerLoad $(PSY.get_name(load))'s \"loss_demand\" series is not on " *
-                        "the timestamps of $(PSY.get_name(reference))'s.",
-                ),
-            )
-            total = get!(() -> zeros(Float64, length(stamps)), demand, PSY.get_name(PSY.get_area(PSY.get_bus(load))))
-            total .+= (PSY.get_time_series_values(PSY.SingleTimeSeries, load, "loss_demand")::Vector{Float64})
-        end
+    for load in loads
+        PSY.get_time_series_timestamps(PSY.SingleTimeSeries, load, "loss_demand") == stamps || throw(
+            ArgumentError(
+                "loss demand coefficients: PowerLoad $(PSY.get_name(load))'s \"loss_demand\" series is not on " *
+                    "the timestamps of $(PSY.get_name(reference))'s.",
+            ),
+        )
+        # Stored values times the load's per-unit max power, so the result ignores the System's units setting.
+        per_unit = PSY.get_time_series_values(PSY.SingleTimeSeries, load, "loss_demand"; ignore_scaling_factors = true) .*
+            ((PSY.get_base_power(load) / PSY.get_base_power(sys)) * load.max_active_power)
+        total = get!(() -> zeros(Float64, length(stamps)), demand, PSY.get_name(PSY.get_area(PSY.get_bus(load))))
+        total .+= per_unit
     end
     return stamps, resolution, demand
 end

@@ -95,18 +95,34 @@ end
     end
 end
 
-@testset "an unavailable load drops out of its region's demand, and a rerun after stripping gives the same series" begin
+@testset "an unavailable VIC1 load changes the coefficient of an interchange that names VIC1, and the rerun matches the expectation" begin
     AEM = AustralianElectricityMarkets
     sys = _ld_strip!(_ld_mock_system())
     AEM._set_loss_demand_coefficients!(sys)
-    ic = first(_ld_modelled(sys))
+    ic = first(ic for ic in _ld_modelled(sys) if haskey(only(PowerSystems.get_supplemental_attributes(AEM.InterconnectorLossModel, ic)).demand_coefficients, "VIC1"))
     model = only(PowerSystems.get_supplemental_attributes(AEM.InterconnectorLossModel, ic))
+    before = PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, ic, AEM.NEM_SERIES.loss_demand_coefficient)
     load = PowerSystems.get_component(PowerSystems.PowerLoad, sys, "VIC1 Load")
     PowerSystems.set_available!(load, false)
     _ld_strip!(sys)
     AEM._set_loss_demand_coefficients!(sys)
     coefficient = PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, ic, AEM.NEM_SERIES.loss_demand_coefficient)
+    @test !(coefficient ≈ before)
     @test coefficient ≈ _ld_expected(sys, model)
+end
+
+@testset "the coefficient is the same bit for bit whatever the System's units setting" begin
+    AEM = AustralianElectricityMarkets
+    sys = _ld_strip!(_ld_mock_system())
+    AEM._set_loss_demand_coefficients!(sys)
+    ics = _ld_modelled(sys)
+    series = [PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, ic, AEM.NEM_SERIES.loss_demand_coefficient) for ic in ics]
+    _ld_strip!(sys)
+    PowerSystems.with_units_base(sys, "NATURAL_UNITS") do
+        AEM._set_loss_demand_coefficients!(sys)
+    end
+    natural = [PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, ic, AEM.NEM_SERIES.loss_demand_coefficient) for ic in ics]
+    @test natural == series
 end
 
 @testset "the writer writes nothing when no interchange carries an InterconnectorLossModel" begin
