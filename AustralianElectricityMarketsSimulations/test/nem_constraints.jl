@@ -534,11 +534,6 @@ end
     @test_throws r"No published Market Price Cap" AustralianElectricityMarkets._financial_year_mpc(DateTime(2027, 7, 1, 0, 5))
 end
 
-@testset "check_single_financial_year: a range within one financial year passes, one across 1 July is refused" begin
-    AEMS.check_single_financial_year(DateTime(2025, 6, 30, 23, 55):Minute(5):DateTime(2025, 7, 1))
-    @test_throws ArgumentError AEMS.check_single_financial_year(DateTime(2025, 7, 1):Minute(5):DateTime(2025, 7, 1, 0, 5))
-end
-
 @testset "area-balance network model: unpublished year throws, a supplied cap prices the slack" begin
     # _prepared_system() is dated 2020, outside AustralianElectricityMarkets.MARKET_PRICE_CAP_BY_FINANCIAL_YEAR.
     sys = _prepared_system()

@@ -13,7 +13,7 @@ import PowerSystems as PSY
 import InfrastructureSystems as IS
 
 export HiveConfiguration, aem_connect
-export NetworkConfiguration, table_requirements, nem_system
+export NetworkConfiguration, table_requirements, nem_system, replay_intervals
 export RegionalNetworkConfiguration, NEMDEConfiguration
 export set_mnsp_offers!, set_demand!, set_market_bids!, add_nem_constraints!, set_regional_availability!
 export set_unit_conditions!, set_interconnector_flow_limits!

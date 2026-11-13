@@ -138,7 +138,6 @@ function augmented_pscb_system()
         ),
     )
 
-    AustralianElectricityMarkets._set_replay_inputs!(sys)
     return sys
 end
 
@@ -181,6 +180,8 @@ function nem_pscb_system()
             device, NEMObservedState(; initial_mw = Float64(get_active_power(device)), dispatch_mode = 0),
         )
     end
+    # The stock case's hourly series are not replay inputs, and the replay stage transforms every series to five-minute windows.
+    PowerSystems.clear_time_series!(sys)
     AustralianElectricityMarkets._set_replay_inputs!(sys)
     return sys
 end

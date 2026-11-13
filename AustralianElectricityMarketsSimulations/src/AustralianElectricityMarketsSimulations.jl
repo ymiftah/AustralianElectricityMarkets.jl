@@ -19,7 +19,7 @@ using AustralianElectricityMarkets: _mnsp_bid, _MNSP_DIRECTIONS, BidType, Constr
     get_fcas_bids, energy_offer_sides, FCASTrapezium, get_enablement_min, get_enablement_max, get_max_avail, get_upper_slope_coeff,
     FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR,
     FCAS_BDU_RAMPING_CVP_FACTOR, _financial_year_mpc,
-    _financial_year_start, get_fcas_requirements, get_service,
+    get_fcas_requirements, get_service,
     NEMUnitState, max_active_power_floor, in_fast_start_profile, fixed_load_invoked, effective_fixed_load,
     fcas_state_stranded_ok, fcas_both_sides_stranded_ok, fcas_ramping_active, fcas_ramping_limit,
     fcas_joint_ramping_exempt, mnsp_ramp_envelope, _max_active_power,
@@ -76,9 +76,7 @@ include("formulations/mnsp_limits.jl")
 include("psi_compat.jl")
 include("formulations/fcas.jl")
 include("checks/fcas.jl")
-include("checks/financial_year.jl")
 include("checks/replay_inputs.jl")
-include("checks/replication_steps.jl")
 include("checks/template.jl")
 include("templates/template_nemde.jl")
 include("checks/replay_range.jl")
@@ -97,7 +95,7 @@ export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas
     fcas_upper_regulation_service, fcas_offer_sides
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
 export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys,
-    exclude_unmodeled_services!, check_replication_steps,
+    exclude_unmodeled_services!,
     never_invoked_constraints, prepare_replay!
 export NEMDispatchProblem, nemde_optimizer, NEMDE_HIGHS_OPTIONS
 export EnergyOfferBandVariable, EnergyBandWidthParameter, EnergyBandPriceParameter
@@ -112,7 +110,7 @@ export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASOfferBandVariable, FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter,
     FCASLowerSlopeParameter, FCASRampingLimitParameter, FCASBandPriceParameter,
     InterconnectorFlowSlack
-export check_fcas_services, check_dispatch_envelope, check_single_financial_year
+export check_fcas_services, check_dispatch_envelope
 export read_solved_interval, read_constraint_violations
 export compare_intervals, comparison_summary, read_interconnector_loss_gaps
 export AbstractNEMDispatch, NEMReplayDispatch,

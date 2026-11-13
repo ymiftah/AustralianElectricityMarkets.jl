@@ -862,6 +862,4 @@ end
         slack = PSI.get_variable(container, AEMS.MNSPSlack(), PSY.AreaInterchange, meta)
         @test PSI.JuMP.coefficient(objective, slack[PSY.get_name(ic), 1]) ≈ factor * 17500 * 100 / 12
     end
-    # The Market Price Cap is fixed per simulation: a range across 1 July is refused before build.
-    @test_throws ArgumentError AEMS.check_single_financial_year(DateTime(2025, 6, 30, 23, 55):Minute(5):DateTime(2025, 7, 1, 0, 5))
 end

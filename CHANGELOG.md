@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The formulations read the replay input series under their fixed names (`NEM_SERIES`, `NEM_STATE_INPUT_SERIES`, `energy_offer_series_name`, `fcas_effective_series_name`, `fcas_ramping_series_name`), and no longer read a per-device key. `NEMDispatchInputs` and `NEMFCASInputs` are removed, `set_effective_offers!` is removed, and `prepare_replay!` no longer derives the effective offers; `nem_system` writes every replay input. The batteries' availability parameters read the bids' `MAXAVAIL` series by their default names.
 
+- The five-minute forecast windows of a replay are written by `nem_system` as its last step, so `prepare_replay!` no longer transforms the system. `replay_intervals(sys)` returns the replay interval stamps, the forecast initial times without the last one. `nem_system` requires at least three stamps in `date_range`, five minutes apart, and refuses a range whose replay intervals (all but the last two stamps) span two trading days or two financial years. `check_replication_steps` and `check_single_financial_year` are removed: the range rule is checked by `nem_system`, and no later add of a time series is allowed.
+
 - `fcas_bid_direction` answers from the bids as soon as `set_market_bids!` has run, rather than returning `NONE` until `set_effective_offers!` attaches the derived trapezium series.
 
 - The optimisation model's key types are merged into one type per formulation family and PSI role, with the variant in the key meta. Each type below that was renamed or removed is replaced by the type named after it:

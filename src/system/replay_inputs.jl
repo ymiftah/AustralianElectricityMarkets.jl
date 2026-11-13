@@ -7,6 +7,7 @@ include("replay_inputs/state_inputs.jl")
 include("replay_inputs/fcas_effective.jl")
 include("replay_inputs/tie_break.jl")
 include("replay_inputs/loss_demand.jl")
+include("replay_inputs/forecasts.jl")
 
 
 """
@@ -26,7 +27,9 @@ adds the tie-break scale of each price-tied energy band, named by [`tie_break_se
 [`EnergyTieBreak`](@ref) service joining the units that carry an energy bid. It reads the energy offer curves the first
 writer added, and checks that the price-tied pairs hold over the replay intervals. The seventh adds the demand term
 of each loss-modelled interchange's loss factor, named by [`NEM_SERIES`](@ref), from the loads' `"loss_demand"` series
-per unit of the system base. It reads the demand that [`set_demand!`](@ref) writes before the stage runs.
+per unit of the system base. It reads the demand that [`set_demand!`](@ref) writes before the stage runs. The eighth
+transforms the single time series of the system into five-minute forecast windows, through
+[`_set_replay_forecasts!`](@ref). No series may be added after it.
 Called by [`nem_system`](@ref) before its input checks.
 
 # Arguments
@@ -43,5 +46,6 @@ function _set_replay_inputs!(sys::PSY.System)
     _set_fcas_effective_offers!(sys)
     _set_tie_break!(sys)
     _set_loss_demand_coefficients!(sys)
+    _set_replay_forecasts!(sys)
     return
 end

@@ -326,9 +326,8 @@ slack_total
 # 1. `db = aem_connect()` and `populate(db, table, start, stop)` cache the NEMWEB tables.
 # 2. `nem_system(db, NEMDEConfiguration(); date_range)` builds the populated `System`,
 #    including energy and FCAS offers, dispatch and energy limits, generic constraints and losses.
-# 3. `prepare_replay!(sys, template, steps)` transforms the attached interval inputs into five-minute
-#    forecast windows and runs the replay pre-flight checks. The effective FCAS parameters and
-#    tie-break scales are already derived by `nem_system`.
+# 3. `prepare_replay!(sys, template, steps)` runs the replay pre-flight checks. The five-minute forecast
+#    windows, the effective FCAS parameters and the tie-break scales are already derived by `nem_system`.
 # 4. Construct, build and run a PSI simulation of the interval range `steps`:
 #
 #    ```julia

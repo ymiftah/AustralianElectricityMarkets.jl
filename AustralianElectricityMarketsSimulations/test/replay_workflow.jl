@@ -63,11 +63,6 @@ function same_comparison(x, y; atol = 1.0e-6)
     end
 end
 
-# A system over `date_range` with its forecast windows attached, for reading the results of a replay.
-function prepared_test_system(db, date_range)
-    return AEMS._prepare_replay_forecasts!(nem_system(db, NEMDEConfiguration(); date_range))
-end
-
 @testset "simulation runtime exposes no cache entry points" begin
     for api in (:replication_system, :read_interval_inputs, :read_published_interval, :aem_connect)
         @test !isdefined(AEMS, api)
@@ -125,7 +120,7 @@ end
 
     @testset "MNSP offers reach the replay model" begin
         # The mock offers Basslink-like links on IC2 (300 MW available) for the intervals up to 04:00.
-        sys = prepared_test_system(db, t:Minute(5):(t + Minute(10)))
+        sys = nem_system(db, NEMDEConfiguration(); date_range = t:Minute(5):(t + Minute(10)))
         ic2 = get_component(AreaInterchange, sys, "IC2")
         @test !isempty(get_supplemental_attributes(AustralianElectricityMarkets.NEMMNSPBid, ic2))
         result = replay_steps(db, t:DISPATCH_INTERVAL:t; interval_flow_limits = true)
@@ -198,7 +193,7 @@ end
         filter(:SETTLEMENTDATE => >=(t_mid), one.solver_stats).objective_value atol = 1.0e-6
 
     # The reopened results of a chunk read the same constraint violations as its live solve, and need no system.
-    sys2 = prepared_test_system(db, DateTime(2025, 1, 1, 0, 15):Minute(5):DateTime(2025, 1, 1, 0, 25))
+    sys2 = nem_system(db, NEMDEConfiguration(); date_range = DateTime(2025, 1, 1, 0, 15):Minute(5):DateTime(2025, 1, 1, 0, 25))
     reopened = PSI.get_decision_problem_results(PSI.SimulationResults(two.chunks.folder[2], "replication"), "dispatch")
     at_chunk2 = filter(:DateTime => t -> t >= t_mid, two.violations)
     @test sort(read_constraint_violations(reopened, sys2), [:DateTime, :name]) == sort(at_chunk2, [:DateTime, :name])

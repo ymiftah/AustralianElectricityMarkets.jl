@@ -69,10 +69,6 @@ end
     @test_throws r"missing.*constraint.*2030" replay_template(sys)
 end
 
-@testset "replay forecasts need attached input series" begin
-    @test_throws r"attach input time series" AEMS._prepare_replay_forecasts!(System(100.0; time_series_in_memory = true))
-end
-
 @testset "a unit registered mid-chunk passes the replay template" begin
     # BW02 is registered from 00:10 of the replay hive, so it is built for the whole chunk.
     t = "TIMESTAMP '2025-01-01 00:10:00'"
@@ -89,6 +85,5 @@ end
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
     sys = nem_system(db, NEMDEConfiguration(); date_range = interval)
     @test !isnothing(get_component(Generator, sys, "BW02"))
-    AEMS._prepare_replay_forecasts!(sys)
     @test_nowarn replay_template(sys)
 end
