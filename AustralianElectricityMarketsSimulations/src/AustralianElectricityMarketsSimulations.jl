@@ -15,9 +15,8 @@ using AustralianElectricityMarkets: _bid_series, _bidding_devices, _energy_bid, 
     get_interconnector, get_missing_constraint_intervals, get_region, get_sense, get_skipped_constraints,
     get_terms, loss_curve_vertex_values, is_non_scheduled_load, loss_segments, nem_dispatch_devices,
     NEM_DISPATCH_DEVICE_TYPES, single_series, remove_single_series!, replace_single_series!,
-    _nem_offer_cost, _fcas_units_multiplier, _get_fcas_offer_curve, get_energy_bids, _has_fixed_load_bid,
+    _nem_offer_cost, _fcas_units_multiplier, get_energy_bids, _has_fixed_load_bid,
     get_fcas_bids, energy_offer_sides, FCASTrapezium, get_enablement_min, get_enablement_max, get_max_avail, get_upper_slope_coeff,
-    get_lower_slope_coeff, scale_fcas_trapezium,
     FCAS_CAPACITY_CVP_FACTOR, FCAS_RAMPING_CVP_FACTOR, FCAS_MAXAVAIL_CVP_FACTOR,
     FCAS_BDU_RAMPING_CVP_FACTOR, _financial_year_mpc,
     _financial_year_start, get_fcas_requirements, get_service,
@@ -46,7 +45,6 @@ include("time_basis.jl")
 
 include("offers/derivation.jl")
 include("offers/accessors.jl")
-include("offers/fcas_effective.jl")
 include("offers/tie_break.jl")
 include("offers/loss_demand.jl")
 
@@ -97,10 +95,8 @@ include("results/comparison.jl")
 include("results/interconnector_losses.jl")
 
 
-export set_effective_offers!, NEMEnergyOffer, get_energy_offer, NEMFCASOffer, get_fcas_offer,
-    get_scaled_fcas_trapezium, get_fcas_agc_ramp_capability, get_fcas_agc_status, get_initial_mw,
-    get_energy_availability, get_storage_energy_max_avail
-export effective_energy_availability, effective_regulation_enablement, fcas_trapezium_values, tie_break_scale,
+export set_effective_offers!, NEMEnergyOffer, get_energy_offer, get_initial_mw
+export effective_regulation_enablement, tie_break_scale,
     loss_demand_coefficient, set_loss_demand_coefficients!
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,
     fcas_upper_regulation_service, fcas_offer_sides, tie_break_series_name, tie_groups

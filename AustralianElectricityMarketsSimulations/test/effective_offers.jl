@@ -18,6 +18,24 @@ function registered_from(source, duid, stamp)
     return source
 end
 
+
+# The FCAS writer's inputs over `horizon` intervals from `start`, as the writer reads them: the window is MW.
+function _fcas_writer_window(device, start, horizon::Integer; resolution = Minute(5))
+    AEM = AustralianElectricityMarkets
+    stamps = [start + (i - 1) * resolution for i in 1:horizon]
+    return AEM._fcas_window(device, stamps, resolution, AEM._fcas_system_base(device))
+end
+
+# The energy limits the writer reads for `device` over `horizon` intervals, in MW: `gen` and `load`.
+function _energy_limits(device, start, horizon::Integer)
+    window = _fcas_writer_window(device, start, horizon)
+    limits = AustralianElectricityMarkets._fcas_energy_limits(window, device)
+    return (; gen = limits.gen .* window.base, load = limits.load .* window.base)
+end
+
+# The energy availability of a non-storage `device` in MW over `horizon` intervals.
+_energy_availability(device, start, horizon::Integer) = _energy_limits(device, start, horizon).gen
+
 @testset "Effective offers" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
     start_date = DateTime(2025, 1, 1, 0, 0)
@@ -42,35 +60,7 @@ end
         @test PowerSystems.get_y_coords(first(values_of(bw01, "energy_offer_decremental"))) == prices_descending
         @test first(values_of(bw01, AustralianElectricityMarkets.bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.LOAD))) ≈ 1.01 * get_base_power(sys)
         @test PowerSystems.get_y_coords(first(values_of(bw01, AustralianElectricityMarkets._fcas_offer_series_name(bw01, BidType.RAISEREG, false)))) == prices_ascending
-        @test isequal(
-            collect(
-                Tuple(
-                    first(
-                        AustralianElectricityMarketsSimulations._fcas_trapezium_window(
-                            bw01, AustralianElectricityMarketsSimulations._fcas_bid_inputs(bw01, BidType.RAISEREG, OfferSide.GEN), start_date + Minute(5), 1,
-                        )
-                    )
-                )
-            ),
-            [0.2, 0.3, 0.9, 1.0, 0.21, NaN, NaN],
-        )
         @test PowerSystems.get_y_coords(first(values_of(asload1, AustralianElectricityMarkets._fcas_offer_series_name(asload1, BidType.RAISE6SEC, true)))) == prices_descending
-    end
-
-    @testset "get_fcas_offer reads the scaled trapezium and the offer curve" begin
-        sys = first(nem_network(db))
-        set_market_bids!(sys, db, date_range)
-        set_unit_conditions!(sys, db, date_range)
-        AustralianElectricityMarkets._set_replay_inputs!(sys)
-        set_effective_offers!(sys)
-        horizon = length(date_range) - 1
-        # ASLOAD1 is a zero-cost non-scheduled load, so its decremental offer is read from its own series.
-        asload1 = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
-        curves = AustralianElectricityMarkets._get_fcas_offer_curve(asload1, BidType.RAISE6SEC, start_date, horizon; decremental = true)
-        offer = get_fcas_offer(asload1, BidType.RAISE6SEC, OfferSide.LOAD, start_date, horizon)
-        @test offer isa NEMFCASOffer && offer.service == BidType.RAISE6SEC && offer.side == OfferSide.LOAD
-        @test offer.trapeziums == get_scaled_fcas_trapezium(asload1, BidType.RAISE6SEC, start_date, horizon; decremental = true)
-        @test offer.curves == curves
     end
 
     @testset "set_effective_offers! output survives a JSON round-trip" begin
@@ -192,249 +182,8 @@ end
     end
 end
 
-@testset "FCAS scaling accessors" begin
-    db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
-    hive_dir = AEM_TEST_HIVE_DIR
-    sys_base, _ = nem_network(db)
-    resolution = Minute(5)
-    start_date = DateTime(2025, 1, 1, 0, 0)
-    date_range = start_date:resolution:(start_date + Hour(2))
-    base_power = get_base_power(sys_base)
-    truth = read_unit_conditions(db, date_range)
 
-    @testset "load regulation scaling uses consumption ramp direction" begin
-        rates_db = damaged_cache(
-            hive_dir, :DISPATCHLOAD,
-            "UPDATE input SET RAMPUPRATE = 120, RAMPDOWNRATE = 60, RAISEREGENABLEMENTMIN = 0, RAISEREGENABLEMENTMAX = 0, LOWERREGENABLEMENTMIN = 0, LOWERREGENABLEMENTMAX = 0 WHERE DUID = 'PUMP1'",
-        )
-        sys = deepcopy(sys_base)
-        set_market_bids!(sys, db, date_range; resolution = resolution)
-        set_available!(get_component(ThermalStandard, sys, "ER02"), false)
-        load = get_component(InterruptiblePowerLoad, sys, "PUMP1")
-        horizon = length(date_range) - 1
-        trap = (0.0, 10.0, 90.0, 100.0, 20.0)
-        for service in (BidType.RAISEREG, BidType.LOWERREG)
-            add_toy_fcas_offer!(
-                sys, load, [start_date + (i - 1) * resolution for i in 1:horizon], service,
-                fill(trap, horizon), fill([(20.0, 10.0)], horizon); decremental = true,
-            )
-        end
-        set_unit_conditions!(sys, rates_db, date_range)
-        AustralianElectricityMarkets._set_replay_inputs!(sys)
-        set_effective_offers!(sys)
-        with_units_base(sys, "NATURAL_UNITS") do
-            raise = get_scaled_fcas_trapezium(load, BidType.RAISEREG, start_date, horizon; decremental = true)
-            lower = get_scaled_fcas_trapezium(load, BidType.LOWERREG, start_date, horizon; decremental = true)
-            @test get_max_avail.(raise) ≈ fill(5.0, horizon)
-            @test get_max_avail.(lower) ≈ fill(10.0, horizon)
-            raw = AustralianElectricityMarketsSimulations._get_fcas_trapezium(load, BidType.RAISEREG, start_date, horizon; decremental = true)
-            @test get_max_avail.(raw) == fill(20.0, horizon)
-        end
-    end
-
-    @testset "load regulation availability pairs with its own service" begin
-        rates_db = damaged_cache(
-            hive_dir, :DISPATCHLOAD,
-            "UPDATE input SET RAMPUPRATE = 180, RAMPDOWNRATE = 720, RAISEREGAVAILABILITY = 0, LOWERREGAVAILABILITY = 60, RAISEREGENABLEMENTMIN = 0, RAISEREGENABLEMENTMAX = 0, LOWERREGENABLEMENTMIN = 0, LOWERREGENABLEMENTMAX = 0 WHERE DUID = 'PUMP1'",
-        )
-        sys = deepcopy(sys_base)
-        set_market_bids!(sys, db, date_range; resolution = resolution)
-        set_available!(get_component(ThermalStandard, sys, "ER02"), false)
-        load = get_component(InterruptiblePowerLoad, sys, "PUMP1")
-        horizon = length(date_range) - 1
-        trap = (0.0, 10.0, 90.0, 100.0, 100.0)
-        for service in (BidType.RAISEREG, BidType.LOWERREG)
-            add_toy_fcas_offer!(
-                sys, load, [start_date + (i - 1) * resolution for i in 1:horizon], service,
-                fill(trap, horizon), fill([(20.0, 10.0)], horizon); decremental = true,
-            )
-        end
-        set_unit_conditions!(sys, rates_db, date_range)
-        AustralianElectricityMarkets._set_replay_inputs!(sys)
-        set_effective_offers!(sys)
-        with_units_base(sys, "NATURAL_UNITS") do
-            # 60 MW per 5 minutes is LOWERREGAVAILABILITY; the up ramp rate alone would give 15.
-            lower = get_scaled_fcas_trapezium(load, BidType.LOWERREG, start_date, horizon; decremental = true)
-            raise = get_scaled_fcas_trapezium(load, BidType.RAISEREG, start_date, horizon; decremental = true)
-            @test get_max_avail.(lower) ≈ fill(60.0, horizon)
-            @test get_max_avail.(raise) ≈ fill(60.0, horizon)
-        end
-    end
-
-    @testset "get_scaled_fcas_trapezium skips scaling only at an absent interval" begin
-        sys = deepcopy(sys_base)
-        set_market_bids!(sys, db, date_range; resolution = resolution)
-        set_unit_conditions!(sys, db, date_range)
-
-        device = get_component(ThermalStandard, sys, "ER01")
-        full_grid = collect(date_range)[1:(end - 1)]
-        horizon = length(full_grid)
-        # 60 MW/h is a 5 MW AGC ramping capability over 5 minutes.
-        ramp = [t == first(full_grid) ? NaN : 60.0 for t in full_grid]
-        replace_single_series!(sys, device, single_series(AustralianElectricityMarkets.NEM_TELEMETRY_SERIES.ramp_up_limit, full_grid, ramp))
-        AustralianElectricityMarkets._set_replay_inputs!(sys)
-        set_effective_offers!(sys)
-
-        raw, scaled = with_units_base(sys, "NATURAL_UNITS") do
-            (
-                AustralianElectricityMarketsSimulations._get_fcas_trapezium(device, BidType.RAISEREG, start_date, horizon),
-                get_scaled_fcas_trapezium(device, BidType.RAISEREG, start_date, horizon),
-            )
-        end
-        @test get_max_avail(raw[1]) > 5.0
-        # Without a ramp rate at an interval, the ramp limit there is zero, as HEAD.
-        @test get_time_series_values(SingleTimeSeries, device, "ramp_up_rate")[1] == 0.0
-        @test isequal(get_max_avail(scaled[1]), get_max_avail(raw[1]))
-        @test all(i -> isapprox(get_max_avail(scaled[i]), min(get_max_avail(raw[i]), 5.0)), 2:horizon)
-    end
-
-    @testset "FCAS trapeziums are read from the bid series" begin
-        sys = deepcopy(sys_base)
-        set_market_bids!(sys, db, date_range; resolution = resolution)
-        set_unit_conditions!(sys, db, date_range)
-        AustralianElectricityMarkets._set_replay_inputs!(sys)
-        set_effective_offers!(sys)
-        device = get_component(ThermalStandard, sys, "ER01")
-        horizon = length(date_range) - 1
-        inputs = AustralianElectricityMarketsSimulations._fcas_bid_inputs(device, BidType.RAISEREG, OfferSide.GEN)
-        window = AustralianElectricityMarketsSimulations._fcas_trapezium_window(device, inputs, start_date, horizon)
-        bid(field) = AustralianElectricityMarkets.bid_series_name(BidType.RAISEREG, field, AustralianElectricityMarkets.BidDirection.GEN)
-        points = get_time_series_values(SingleTimeSeries, device, bid(:trapezium))
-        max_avail = get_time_series_values(SingleTimeSeries, device, bid(:max_avail))
-        base = get_base_power(sys)
-        @test length(window) == horizon
-        @test all(i -> isequal(Tuple(window[i]), fcas_trapezium_values(points[i], max_avail[i], base)), eachindex(window))
-        @test !any(startswith("fcas_trapezium"), [get_name(k) for k in get_time_series_keys(device)])
-    end
-
-    @testset "get_scaled_fcas_trapezium matches the bid series on load-side and bidirectional bids" begin
-        sys = deepcopy(sys_base)
-        set_market_bids!(sys, db, date_range; resolution = resolution)
-        set_unit_conditions!(sys, db, date_range)
-        AustralianElectricityMarkets._set_replay_inputs!(sys)
-        set_effective_offers!(sys)
-        AEMS = AustralianElectricityMarketsSimulations
-        horizon = length(date_range) - 1
-        load_side_checks = 0
-        bidirectional_checks = 0
-        with_units_base(sys, "NATURAL_UNITS") do
-            base = get_base_power(sys)
-            for device in nem_dispatch_devices(sys), service in AustralianElectricityMarkets.FCAS_BID_TYPES
-                is_regulation = service in AustralianElectricityMarkets.FCAS_REGULATION_MARKETS
-                telemetry = AustralianElectricityMarkets.get_telemetry(device)
-                direction = fcas_bid_direction(device, service)
-                for side in (OfferSide.GEN, OfferSide.LOAD)
-                    inputs = AEMS._fcas_bid_inputs(device, service, side)
-                    isnothing(inputs) && continue
-                    decremental = side == OfferSide.LOAD
-                    points = get_time_series_values(SingleTimeSeries, device, get_name(inputs.trapezium); start_time = start_date, len = horizon)
-                    max_avail = get_time_series_values(SingleTimeSeries, device, get_name(inputs.max_avail); start_time = start_date, len = horizon)
-                    raw = [
-                        AustralianElectricityMarkets.FCASTrapezium(fcas_trapezium_values(points[i], max_avail[i], base) .* base)
-                            for i in 1:horizon
-                    ]
-                    # The AGC and UIGF inputs of `get_scaled_fcas_trapezium`, read from the same telemetry.
-                    enablement = is_regulation ? AEMS._unit_pair_window(
-                            device,
-                            service == BidType.RAISEREG ? telemetry.raise_reg_enablement : telemetry.lower_reg_enablement,
-                            start_date, horizon,
-                        ) : nothing
-                    agc_max = is_regulation ? AEMS.get_fcas_agc_ramp_capability(
-                            device, AEMS._fcas_ramp_rate_service(device, service), start_date, horizon; resolution = resolution,
-                        ) : nothing
-                    uigf = AEMS._unit_window(device, telemetry.uigf, start_date, horizon)
-                    input_at(series, i) = (isnothing(series) || isnan(series[i])) ? nothing : series[i]
-                    expected = [
-                        AustralianElectricityMarkets.scale_fcas_trapezium(
-                            raw[i];
-                            agc_enablement_min = is_regulation ? input_at(first(enablement), i) : nothing,
-                            agc_enablement_max = is_regulation ? input_at(last(enablement), i) : nothing,
-                            agc_max_avail = input_at(agc_max, i),
-                            uigf = input_at(uigf, i),
-                            is_regulation = is_regulation,
-                        ) for i in 1:horizon
-                    ]
-                    scaled = get_scaled_fcas_trapezium(device, service, start_date, horizon; decremental, resolution)
-                    @test all(i -> isequal(Tuple(scaled[i]), Tuple(expected[i])), 1:horizon)
-                    decremental && (load_side_checks += 1)
-                    direction == FCASBidDirection.BOTH && (bidirectional_checks += 1)
-                end
-            end
-        end
-        @test load_side_checks > 0
-        @test bidirectional_checks > 0
-    end
-
-    @testset "get_scaled_fcas_trapezium narrows the trapezium wherever the AGC input is more restrictive" begin
-        sys = deepcopy(sys_base)
-        set_market_bids!(sys, db, date_range; resolution = resolution)
-        set_unit_conditions!(sys, db, date_range)
-        AustralianElectricityMarkets._set_replay_inputs!(sys)
-        set_effective_offers!(sys)
-
-        device = get_component(ThermalStandard, sys, "ER01")
-        initial_time = start_date
-        horizon = length(date_range) - 1
-
-        raw = AustralianElectricityMarketsSimulations._get_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)
-        scaled = get_scaled_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)
-        @test length(raw) == horizon
-
-        for i in 1:horizon
-            @test get_max_avail(scaled[i]) <= get_max_avail(raw[i])
-            @test get_enablement_min(scaled[i]) >= get_enablement_min(raw[i])
-            @test get_enablement_max(scaled[i]) <= get_enablement_max(raw[i])
-        end
-        @test any(i -> get_max_avail(scaled[i]) < get_max_avail(raw[i]), 1:horizon)
-
-        # The AGC ramping capability is the MW/h ramp rate times the interval length.
-        rows = sort(subset(truth, :DUID => ByRow(==("ER01"))), :SETTLEMENTDATE)
-        for (resolution_i, hours) in ((Minute(5), 5 / 60), (Minute(30), 0.5))
-            scaled_i = with_units_base(sys, "NATURAL_UNITS") do
-                get_scaled_fcas_trapezium(
-                    device, BidType.RAISEREG, initial_time, horizon; resolution = resolution_i,
-                )
-            end
-            raw_mw = with_units_base(() -> get_max_avail.(AustralianElectricityMarketsSimulations._get_fcas_trapezium(device, BidType.RAISEREG, initial_time, horizon)), sys, "NATURAL_UNITS")
-            @test isapprox(
-                get_max_avail.(scaled_i),
-                min.(raw_mw, max.(rows.RAMPUPRATE, rows.RAISEREGAVAILABILITY .* 12) .* hours); atol = 1.0e-6,
-            )
-        end
-
-        # A contingency market carries no AGC scaling input series at all: unscaled.
-        raw_contingency = AustralianElectricityMarketsSimulations._get_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
-        scaled_contingency = get_scaled_fcas_trapezium(device, BidType.RAISE6SEC, initial_time, horizon)
-        @test all(i -> isequal(Tuple(raw_contingency[i]), Tuple(scaled_contingency[i])), 1:horizon)
-    end
-end
-
-@testset "_require_equal_length throws on mismatched trapezium/curve series lengths" begin
-    trapeziums = FCASTrapezium[
-        FCASTrapezium(;
-            enablement_min = 1.0, low_breakpoint = 2.0, high_breakpoint = 3.0,
-            enablement_max = 4.0, max_avail = 5.0,
-        ),
-    ]
-    curves = PiecewiseStepData[
-        PiecewiseStepData([0.0, 1.0], [1.0]), PiecewiseStepData([0.0, 1.0], [1.0]),
-    ]
-
-    # Create a simple mock component for testing
-    mock_bus = ACBus(; number = 1, name = "BW01", available = true, bustype = ACBusTypes.REF, angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1), base_voltage = 130.0)
-
-    err = try
-        AEMS._require_equal_length(trapeziums, curves, BidType.RAISE6SEC, mock_bus)
-        nothing
-    catch e
-        e
-    end
-    @test err isa ArgumentError
-    @test occursin("RAISE6SEC", err.msg)
-    @test occursin("BW01", err.msg)
-end
-
-@testset "Accessors of offers, dispatch limits and AGC status" begin
+@testset "Accessors of offers and dispatch limits" begin
     db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_HIVE_DIR, filesystem = "file"))
     sys_base, _ = nem_network(db)
     resolution = Minute(5)
@@ -460,7 +209,7 @@ end
             @test load_offer.curves == values(ta_load)
             # Energy MAXAVAIL per direction; the mock bids 100 + i MW on both sides, rising with i.
             avail = with_units_base(sys, "NATURAL_UNITS") do
-                get_storage_energy_max_avail(bat, start_date, horizon)
+                _energy_limits(bat, start_date, horizon)
             end
             @test !isnothing(avail)
             @test length(avail.gen) == horizon
@@ -468,7 +217,6 @@ end
             @test all(x -> 100.0 <= x <= 149.0, avail.gen)
             @test avail.gen[end] > avail.gen[1]
         end
-        @test isnothing(get_storage_energy_max_avail(first(get_components(ThermalStandard, sys)), start_date, 1))
         @test isnothing(get_energy_offer(first(get_components(PowerLoad, sys)), OfferSide.GEN))
     end
 
@@ -536,10 +284,8 @@ end
             # The mock's AVAILABILITY is synthetic; the real-data gate checks the derivation against it.
             max_avail = get_time_series_values(SingleTimeSeries, renewable, bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN); start_time = start_date, len = horizon)
             uigf = get_time_series_values(SingleTimeSeries, renewable, get_name(get_telemetry(renewable).uigf); start_time = start_date, len = horizon)
-            @test isapprox(get_energy_availability(renewable, start_date, horizon), min.(max_avail, uigf); atol = 1.0e-8)
+            @test isapprox(_energy_availability(renewable, start_date, horizon), min.(max_avail, uigf); atol = 1.0e-8)
         end
-        # A battery's availability comes from its energy bid, not AVAILABILITY.
-        @test isnothing(get_energy_availability(battery, start_date, horizon))
     end
 
     @testset "get_initial_mw throws, naming the unit, when it has no observed state" begin
@@ -555,34 +301,6 @@ end
         @test occursin("BW01", sprint(showerror, err))
     end
 
-    @testset "get_fcas_agc_status reads back AGCSTATUS and throws for a unit with no telemetry" begin
-        sys = deepcopy(sys_base)
-        set_market_bids!(sys, db, date_range)
-        set_available!(get_component(ThermalStandard, sys, "ER02"), false)
-        set_unit_conditions!(sys, db, date_range)
-        AustralianElectricityMarkets._set_replay_inputs!(sys)
-        set_effective_offers!(sys)
-        device = get_component(ThermalStandard, sys, "ER01")
-        rows = sort(subset(scaling_truth, :DUID => ByRow(==("ER01"))), :SETTLEMENTDATE)
-        @test get_fcas_agc_status(device, start_date, horizon) == round.(Int, rows.AGCSTATUS)
-        load = get_component(InterruptiblePowerLoad, sys, "PUMP1")
-        @test get_fcas_agc_status(load, start_date, horizon) == ones(Int, horizon)
-
-        bare = deepcopy(sys_base)
-        @test_throws ArgumentError get_fcas_agc_status(get_component(ThermalStandard, bare, "ER01"), start_date, horizon)
-    end
-
-    @testset "get_fcas_agc_status is nothing at an interval with no AGCSTATUS" begin
-        sys = deepcopy(sys_base)
-        set_unit_conditions!(sys, db, date_range)
-        device = get_component(ThermalStandard, sys, "ER01")
-        full_grid = collect(date_range)[1:(end - 1)]
-        status = [t == first(full_grid) ? NaN : 1.0 for t in full_grid]
-        replace_single_series!(sys, device, single_series(AustralianElectricityMarkets.NEM_TELEMETRY_SERIES.agc_status, full_grid, status))
-        status = get_fcas_agc_status(device, start_date, length(full_grid))
-        @test isnothing(status[1])
-        @test all(==(1), status[2:end])
-    end
 end
 
 @testset "Initial-state dispatch limits" begin
@@ -644,7 +362,7 @@ end
         sys = built()
         asload = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
         @test AustralianElectricityMarkets.is_non_scheduled_load(asload)
-        @test all(==(0.0), get_energy_availability(asload, start_date, horizon))
+        @test all(==(0.0), _energy_availability(asload, start_date, horizon))
         # The upper limit is the formulation's row, so the build writes no max_active_power series.
         @test !has_time_series(asload, SingleTimeSeries, NEM_SERIES.max_active_power)
     end
@@ -655,7 +373,7 @@ end
         ramps = fill(60.0, length(full_grid))
         ramps[2] = NaN
         replace_single_series!(sys, device, single_series(NEM_TELEMETRY_SERIES.ramp_up_limit, full_grid, ramps))
-        avail = get_energy_availability(device, start_date, horizon)
+        avail = _energy_availability(device, start_date, horizon)
         @test avail[2] == 0.0
         @test avail[1] > 0.0
     end
@@ -665,7 +383,7 @@ end
         device = get_component(ThermalStandard, sys, "ER01")
         with_units_base(sys, "NATURAL_UNITS") do
             max_avail = get_time_series_values(SingleTimeSeries, device, bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.GEN); start_time = start_date, len = horizon)
-            @test get_energy_availability(device, start_date, horizon) ≈ max_avail atol = 1.0e-9
+            @test _energy_availability(device, start_date, horizon) ≈ max_avail atol = 1.0e-9
         end
     end
 
@@ -679,18 +397,17 @@ end
         )
         with_units_base(sys, "NATURAL_UNITS") do
             er01 = get_component(ThermalStandard, sys, "ER01")
-            expected = AEMSim.effective_energy_availability(
-                bid_values(er01, BD.GEN) ./ base, nothing,
+            expected = AustralianElectricityMarkets.effective_energy_availability(
+                bid_values(er01, BD.GEN), nothing,
                 get_time_series_values(SingleTimeSeries, er01, NEM_TELEMETRY_SERIES.ramp_up_limit; start_time = start_date, len = horizon, ignore_scaling_factors = true),
                 false,
-            ) .* AEMSim._fcas_units_multiplier(er01)
-            @test get_energy_availability(er01, start_date, horizon) == expected
+            )
+            @test _energy_availability(er01, start_date, horizon) ≈ expected atol = 1.0e-9
             @test !has_time_series(er01, SingleTimeSeries, "energy_availability")
             bw01 = get_component(EnergyReservoirStorage, sys, "BW01")
-            avail = get_storage_energy_max_avail(bw01, start_date, horizon)
-            multiplier = AEMSim._fcas_units_multiplier(bw01)
-            @test avail.gen == bid_values(bw01, BD.GEN) ./ base .* multiplier
-            @test avail.load == bid_values(bw01, BD.LOAD) ./ base .* multiplier
+            avail = _energy_limits(bw01, start_date, horizon)
+            @test avail.gen ≈ bid_values(bw01, BD.GEN) atol = 1.0e-9
+            @test avail.load ≈ bid_values(bw01, BD.LOAD) atol = 1.0e-9
             inputs = only(PSY.get_supplemental_attributes(NEMDispatchInputs, er01))
             @test get_name(inputs.energy_availability) == bid_series_name(BidType.ENERGY, :max_avail, BD.GEN)
         end
@@ -704,7 +421,7 @@ end
         name = bid_series_name(BidType.ENERGY, :max_avail, AustralianElectricityMarkets.BidDirection.LOAD)
         @test get_name(inputs.energy_availability) == name
         @test all(==(0.0), get_time_series_values(SingleTimeSeries, asload, name; ignore_scaling_factors = true))
-        @test all(==(0.0), get_energy_availability(asload, start_date, horizon))
+        @test all(==(0.0), _energy_availability(asload, start_date, horizon))
         @test AEMSim._has_nem_dispatch_limits(asload)
     end
 
@@ -824,10 +541,10 @@ end
     base_power = get_base_power(sys_base)
 
     @testset "effective_energy_availability limits MAXAVAIL by UIGF and zeroes the excluded intervals" begin
-        @test effective_energy_availability([10.0, 10.0], [8.0, 12.0], [60.0, 60.0], false) == [8.0, 10.0]
-        @test effective_energy_availability([10.0, 10.0], nothing, [60.0, 60.0], false) == [10.0, 10.0]
-        @test effective_energy_availability([10.0, 10.0], nothing, [60.0, NaN], false) == [10.0, 0.0]
-        @test effective_energy_availability([10.0, 10.0], [8.0, 8.0], [60.0, 60.0], true) == [0.0, 0.0]
+        @test AustralianElectricityMarkets.effective_energy_availability([10.0, 10.0], [8.0, 12.0], [60.0, 60.0], false) == [8.0, 10.0]
+        @test AustralianElectricityMarkets.effective_energy_availability([10.0, 10.0], nothing, [60.0, 60.0], false) == [10.0, 10.0]
+        @test AustralianElectricityMarkets.effective_energy_availability([10.0, 10.0], nothing, [60.0, NaN], false) == [10.0, 0.0]
+        @test AustralianElectricityMarkets.effective_energy_availability([10.0, 10.0], [8.0, 8.0], [60.0, 60.0], true) == [0.0, 0.0]
     end
 
     @testset "effective_regulation_enablement takes the more restrictive of bid and AGC limits" begin
@@ -835,13 +552,6 @@ end
         @test effective_regulation_enablement(20.0, 100.0, 10.0, 120.0) == (20.0, 100.0)
         @test effective_regulation_enablement(20.0, 100.0, nothing, nothing) == (20.0, 100.0)
         @test effective_regulation_enablement(20.0, 100.0, nothing, 0.0) == (20.0, 0.0)
-    end
-
-    @testset "fcas_trapezium_values appends MAXAVAIL and the unpublished ramp rates" begin
-        @test isequal(
-            fcas_trapezium_values((20.0, 30.0, 90.0, 100.0), 50.0, 100.0),
-            (0.2, 0.3, 0.9, 1.0, 0.5, NaN, NaN),
-        )
     end
 
     @testset "tie_break_scale is the band width over the widest band of its group" begin
@@ -941,6 +651,7 @@ end
 
 
 @testset "State-dependent derivation: pure functions of the unit state" begin
+    AEM = AustralianElectricityMarkets
     AEMSim = AustralianElectricityMarketsSimulations
     replay_db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
     interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
@@ -1021,19 +732,23 @@ end
                     name = fcas_ramping_series_name(service)
                     has_time_series(device, SingleTimeSeries, name) || continue
                     stamps = PSY.get_time_series_timestamps(SingleTimeSeries, device, name)
-                    window = AEMSim._FCASWindow(first(stamps), length(stamps), resolution)
-                    caps = AEMSim._fcas_agc_ramp_caps(window, device, AEMSim._fcas_ramp_rate_service(device, service))
+                    window = AEM._fcas_window(device, stamps, resolution, AEM._fcas_system_base(device))
+                    caps = AEM._fcas_capability_values(
+                        AEM._fcas_agc_capability(window, device, AEM._fcas_ramp_rate_service(device, service)), length(stamps),
+                    )
                     # The writer's own enablement mask is the non-state half of its ramping rule.
-                    enabled = AEMSim._fcas_regulation_enabled_mask(window, device, service, fcas_bid_direction(device, service))
-                    fast_start = AEMSim._fcas_fast_start_flags(window, device)
+                    direction = fcas_bid_direction(device, service)
+                    sides = Dict{Bool, AEM._FCASSide}(dec => AEM._fcas_side(window, device, service, dec) for dec in AEM.fcas_offer_sides(direction))
+                    enabled = AEM._fcas_regulation_enabled(window, device, service, direction, sides, AEM._fcas_energy_limits(window, device))
+                    fast_start = window.fast_start
                     upper = service == fcas_upper_regulation_service(device)
                     written = [entry[1] * base for entry in values_of(device, name)]
-                    states = AustralianElectricityMarkets.observed_unit_states(device, stamps)
+                    states = window.states
                     for i in eachindex(stamps)
                         state = states[i]
                         limit = written[i]
                         if fcas_ramping_active(caps[i], state) && enabled[i] && !fcas_joint_ramping_exempt(state, fast_start[i])
-                            @test fcas_ramping_limit(caps[i], upper, state) ≈ limit rtol = 1.0e-12
+                            @test fcas_ramping_limit(caps[i], upper, state) * base ≈ limit rtol = 1.0e-12
                         else
                             @test limit ≈ (upper ? FCAS_INACTIVE_LIMIT_MW : -FCAS_INACTIVE_LIMIT_MW)
                         end
@@ -1047,12 +762,13 @@ end
         sys = replay_system()
         # The §5 pre-conditions of one side other than the stranded one, per interval of `window`.
         function preconditions(window, device, service, decremental)
-            (; trapeziums, curves) = AEMSim._fcas_offer(window, device, service, offer_side(decremental))
-            availability, agc_status = AEMSim._fcas_scaling_inputs(window, device)
-            regulation = service in AustralianElectricityMarkets.FCAS_REGULATION_MARKETS
-            return map(1:window.horizon) do t
-                AEMSim._fcas_preconditions(
-                    device, regulation, decremental, trapeziums[t], curves[t], availability(t), agc_status(t),
+            side = AEM._fcas_side(window, device, service, decremental)
+            energy = AEM._fcas_energy_limits(window, device)
+            regulation = service in AEM.FCAS_REGULATION_MARKETS
+            return map(eachindex(side.trapeziums)) do t
+                AEM.fcas_preconditions_ok(
+                    side.trapeziums[t], side.total_width[t], energy.gen[t], energy.load[t], window.agc_status[t],
+                    regulation, decremental, device isa Storage,
                 )
             end
         end
@@ -1066,12 +782,12 @@ end
                         service, :trapezium, decremental ? AustralianElectricityMarkets.BidDirection.LOAD : AustralianElectricityMarkets.BidDirection.GEN,
                     )
                     stamps = PSY.get_time_series_timestamps(SingleTimeSeries, device, trapezium_name)
-                    window = AEMSim._FCASWindow(first(stamps), length(stamps), resolution)
-                    states = AustralianElectricityMarkets.observed_unit_states(device, stamps)
+                    window = AEM._fcas_window(device, stamps, resolution, AEM._fcas_system_base(device))
+                    states = window.states
                     active(dec) = Bool[entry[1] > 0.0 for entry in values_of(device, fcas_effective_series_name(service, dec))]
                     if direction == FCASBidDirection.BOTH
-                        gen_traps = AEMSim._fcas_offer(window, device, service, OfferSide.GEN).trapeziums
-                        load_traps = AEMSim._fcas_offer(window, device, service, OfferSide.LOAD).trapeziums
+                        gen_traps = AEM._fcas_side(window, device, service, false).trapeziums
+                        load_traps = AEM._fcas_side(window, device, service, true).trapeziums
                         gen_ok = preconditions(window, device, service, false)
                         load_ok = preconditions(window, device, service, true)
                         derived = [
@@ -1081,7 +797,7 @@ end
                         @test [flag[1] for flag in derived] == active(false)
                         @test [flag[2] for flag in derived] == active(true)
                     else
-                        traps = AEMSim._fcas_offer(window, device, service, offer_side(decremental)).trapeziums
+                        traps = AEM._fcas_side(window, device, service, decremental).trapeziums
                         ok = preconditions(window, device, service, decremental)
                         derived = [
                             ok[i] && fcas_state_stranded_ok(traps[i], states[i], device isa Storage)

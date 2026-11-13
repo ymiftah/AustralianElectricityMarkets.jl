@@ -6,11 +6,8 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
 
 - The energy availability is the bid's `MAXAVAIL` series, read through the keys of [`NEMDispatchInputs`](@ref);
   a non-scheduled load without an energy bid reads the zero `MAXAVAIL` series [`set_market_bids!`](@ref) writes for it.
-- `"fcas_effective_<BIDTYPE>[_decremental]"` and `"fcas_ramping_limits_<BIDTYPE>"`, the FCAS offer
-  per interval after AEMO *FCAS Model in NEMDE* §4 scaling and §5 enablement, on the timestamps of
-  the bid's trapezium series, per-unit of the system base. The FCAS trapeziums and offer curves are
-  read from the device's [`NEMFCASBid`](@ref) keys, which [`NEMDispatchInputs`](@ref) also holds; a
-  `BIDIRECTIONAL` FCAS bid is on the generation side.
+- The FCAS offers and ramping limits are read through the keys of [`NEMDispatchInputs`](@ref); the FCAS trapeziums and
+  offer curves are read from the device's [`NEMFCASBid`](@ref) keys. A `BIDIRECTIONAL` FCAS bid is on the generation side.
 - `"tie_break_scale_<k>[_decremental]"`, the tie-break scale of each price-tied energy band
   ([`tie_break_scale`](@ref)), and the [`EnergyTieBreak`](@ref) service joining the units that carry them.
 - `"loss_demand_coefficient"`, the demand term of each loss-modelled interchange's loss factor
@@ -19,9 +16,9 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
 It also attaches to each NEM dispatch device a [`NEMDispatchInputs`](@ref) holding the keys of the
 dispatch-input series the formulation reads through.
 
-The ramp rates, AGC ramp rates, energy offer curves and observed-state series are not written here: [`nem_system`](@ref) adds them
-with the other replay input series, and this function reads them. Existing series of the names written here
-are replaced, so a second call on the same `sys` gives the same result. [`prepare_replay!`](@ref) calls it before attaching
+The ramp rates, AGC ramp rates, energy offer curves, FCAS effective offers and observed-state series are not written here:
+[`nem_system`](@ref) adds them with the other replay input series, and this function reads them. Existing series of the
+names written here are replaced, so a second call on the same `sys` gives the same result. [`prepare_replay!`](@ref) calls it before attaching
 the forecasts. Call it before `transform_single_time_series!`: the series are single time series until then.
 
 Throws `ArgumentError` when a bid this function reads is static rather than series-backed.
@@ -33,7 +30,6 @@ Throws `ArgumentError` when a bid this function reads is static rather than seri
 `nothing`.
 """
 function set_effective_offers!(sys::PSY.System)
-    _set_fcas_effective_offers!(sys)
     _set_tie_break_scales!(sys)
     set_loss_demand_coefficients!(sys)
     _attach_dispatch_inputs!(sys)

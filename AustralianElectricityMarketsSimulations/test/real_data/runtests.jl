@@ -215,11 +215,15 @@ end
             for d in PSY.get_contributing_devices(sys, svc)
                 direction = AEM.fcas_bid_direction(d, bid_type)
                 for decremental in (direction == FCASBidDirection.BOTH ? (false, true) : (direction == FCASBidDirection.DECREMENTAL,))
-                    raw = AEMS._get_fcas_trapezium(d, bid_type, first(date_range), horizon; decremental = decremental)
-                    scaled = get_scaled_fcas_trapezium(d, bid_type, first(date_range), horizon; decremental = decremental)
-                    n_regulation_trapeziums += length(raw)
+                    # The writer's MW window and scaled trapeziums, against the bid's own MAXAVAIL series.
+                    stamps = [first(date_range) + (i - 1) * Minute(5) for i in 1:horizon]
+                    window = AEM._fcas_window(d, stamps, Minute(5), AEM._fcas_system_base(d))
+                    scaled = AEM._fcas_side(window, d, bid_type, decremental).trapeziums
+                    bid = AEM._fcas_side_bid(d, bid_type, AEM.offer_side(decremental))
+                    raw_max_avail = AEM._fcas_bid_window(d, bid.max_avail, :max_avail, stamps)
+                    n_regulation_trapeziums += length(scaled)
                     n_regulation_trapeziums_scaled += count(
-                        i -> !isequal(Tuple(raw[i]), Tuple(scaled[i])), eachindex(raw),
+                        i -> get_max_avail(scaled[i]) < raw_max_avail[i], eachindex(scaled),
                     )
                 end
             end

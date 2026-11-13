@@ -509,6 +509,8 @@ function storage_fcas_toy_model(
     _add_flat_max_active_power!(sys, stamps)
     _add_toy_battery_nem_dispatch_inputs!(sys, bat, stamps)
     add_toy_storage_initial_mw!(sys, bat, stamps[1], length(stamps), initial_mw)
+    # The clear above drops the observed-state series the replay stage wrote, which the model reads.
+    AustralianElectricityMarkets._set_observed_state_inputs!(sys)
 
     add_toy_fcas!(sys, bat, stamps[1], length(stamps), bid_type, trapezium_mw, [(10.0, 50.0)]; decremental = decremental)
     isnothing(scaling) || add_toy_fcas_scaling!(sys, bat, stamps[1], length(stamps), bid_type; scaling...)
@@ -520,6 +522,7 @@ function storage_fcas_toy_model(
         )
     end
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = bid_type), [bat])
+    AustralianElectricityMarkets._set_fcas_effective_offers!(sys)
     set_effective_offers!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
@@ -593,7 +596,9 @@ end
         enablement_min = emin, low_breakpoint = emin + 1.0, high_breakpoint = emax - 1.0,
         enablement_max = emax, max_avail = 1.0,
     )
-    ok(is_regulation, decremental, t, avail) = AEMS._fcas_energy_max_avail_ok(bat, is_regulation, decremental, t, avail)
+    ok(is_regulation, decremental, t, avail) = AustralianElectricityMarkets.fcas_preconditions_ok(
+        t, 1.0, avail.gen, avail.load, -1, is_regulation, decremental, true,
+    )
 
     # Generation side: Energy Max Availability_GEN >= EnablementMin.
     @test !ok(true, false, trap(2.0, 10.0), (gen = 1.0, load = 50.0))
@@ -602,14 +607,14 @@ end
     @test !ok(true, true, trap(-10.0, -2.0), (gen = 0.0, load = 1.0))
     @test ok(true, true, trap(-10.0, -2.0), (gen = 0.0, load = 5.0))
     # Each regulation side checks only its own direction; contingency checks both.
-    @test ok(true, false, trap(-5.0, -1.0), (gen = 0.0, load = 0.0))
+    @test ok(true, false, trap(-5.0, 1.0), (gen = 0.0, load = 0.0))
     @test !ok(false, false, trap(-5.0, -1.0), (gen = 0.0, load = 0.0))
     @test !ok(false, false, trap(2.0, 10.0), (gen = 1.0, load = 50.0))
     @test ok(false, false, trap(2.0, 10.0), (gen = 5.0, load = 50.0))
     # Without the energy bid series, the static ratings stand in.
     rating = PSY.get_output_active_power_limits(bat).max
-    @test ok(false, false, trap(rating - 1.0, rating + 10.0), nothing)
-    @test !ok(false, false, trap(rating + 1.0, rating + 10.0), nothing)
+    @test ok(false, false, trap(rating - 1.0, rating + 10.0), (gen = rating, load = rating))
+    @test !ok(false, false, trap(rating + 1.0, rating + 10.0), (gen = rating, load = rating))
 end
 
 @testset "FCASMarket disables a Storage FCAS bid its energy bid availability can't reach" begin
@@ -681,6 +686,7 @@ function _build_bdu_regulation(
             agc_enablement_max = agc_enablement_max,
         )
     end
+    AustralianElectricityMarkets._set_observed_state_inputs!(sys)
     add_service!(sys, FCASService(; name = service_name, region = "TAS1", bid_type = BidType.RAISEREG), [bat])
     if !isnothing(requirement_mw)
         rhs_pu = requirement_mw
@@ -692,6 +698,7 @@ function _build_bdu_regulation(
         add_service!(sys, gc, [bat])
         add_toy_constraint_series!(sys, gc, stamps, fill(rhs_pu, length(stamps)), fill(1.0, length(stamps)))
     end
+    AustralianElectricityMarkets._set_fcas_effective_offers!(sys)
     set_effective_offers!(sys)
     PSY.transform_single_time_series!(sys, 2 * TOY_RESOLUTION, TOY_RESOLUTION)
 
@@ -1048,9 +1055,9 @@ end
     )
     container = PSI.get_optimization_container(model)
     bat = get_component(EnergyReservoirStorage, sys, "BAT1")
-    window = AEMS._FCASWindow(TOY_START, 1, TOY_RESOLUTION)
-    trap = only(AEMS._fcas_offer(window, bat, BidType.LOWERREG, OfferSide.LOAD).trapeziums)
-    @test collect(Tuple(trap)[1:5]) .* PSI.get_base_power(container) ≈ [-10.0, -8.0, -2.0, 0.0, 4.0]
+    window = AustralianElectricityMarkets._fcas_window(bat, [TOY_START], TOY_RESOLUTION, get_base_power(sys))
+    trap = only(AustralianElectricityMarkets._fcas_side(window, bat, BidType.LOWERREG, true).trapeziums)
+    @test collect(Tuple(trap)[1:5]) .* get_base_power(sys) ≈ [-10.0, -8.0, -2.0, 0.0, 4.0]
 end
 
 @testset "a Storage device's GEN-side regulation with a vertical lower slope" begin

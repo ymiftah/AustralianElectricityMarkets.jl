@@ -55,6 +55,7 @@ const TEST_GROUPS = [
     "replay_inputs_ramps" => ("Replay inputs ramp rates", ["replay_inputs/ramps.jl"]),
     "replay_inputs_state" => ("Replay inputs observed state", ["replay_inputs/state.jl"]),
     "replay_inputs_fcas_kernels" => ("Replay inputs FCAS kernels", ["replay_inputs/fcas_kernels.jl"]),
+    "replay_inputs_fcas" => ("Replay inputs FCAS effective offers", ["replay_inputs/fcas.jl", "replay_inputs/fcas_inputs.jl"]),
     "aqua" => ("Aqua", ["aqua.jl"]),
 ]
 

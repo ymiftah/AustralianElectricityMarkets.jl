@@ -17,31 +17,6 @@ end
 
 
 """
-    effective_energy_availability(max_avail, uigf, ramp_up_raw, pinned::Bool) -> Vector{Float64}
-
-The energy availability of a unit per interval, in the unit of `max_avail`: its energy `MAXAVAIL`,
-limited by `uigf` where one is published, and zero for a non-scheduled load or an interval with no
-`DISPATCHLOAD` row (a `NaN` ramp limit).
-
-# Arguments
-- `max_avail`: the energy bid `MAXAVAIL` per interval.
-- `uigf`: the unit initial generation forecast per interval, or `nothing` when the unit is not
-  semi-scheduled.
-- `ramp_up_raw`: the telemetered ramp-up limit per interval, `NaN` at an interval with no row.
-- `pinned`: whether the unit is a non-scheduled load, dispatched by constraint rather than by offer.
-
-# Returns
-A `Vector{Float64}`.
-"""
-function effective_energy_availability(max_avail::AbstractVector, uigf, ramp_up_raw::AbstractVector, pinned::Bool)
-    return [
-        (pinned || isnan(ramp_up_raw[i])) ? 0.0 : (isnothing(uigf) ? max_avail[i] : min(max_avail[i], uigf[i]))
-            for i in eachindex(max_avail)
-    ]
-end
-
-
-"""
     effective_regulation_enablement(enablement_min, enablement_max, telemetry_min, telemetry_max)
 
 A regulation FCAS trapezium's enablement after AEMO *FCAS Model in NEMDE* §4.1: the more restrictive
@@ -63,24 +38,6 @@ function effective_regulation_enablement(
     hi = isnothing(telemetry_max) ? Float64(enablement_max) : min(Float64(enablement_max), Float64(telemetry_max))
     return (lo, hi)
 end
-
-
-"""
-    fcas_trapezium_values(points, max_avail::Real, base::Real) -> NTuple{7, Float64}
-
-One interval of an FCAS trapezium series, per unit of the system base: the bid's four MW breakpoints
-and `max_avail`, then the ramp rates, which AEMO's FCAS offers do not publish (`NaN`). Returned as a
-tuple, the value type the FCAS series store and the accessors rebuild a `FCASTrapezium` from.
-
-# Arguments
-- `points`: the bid's `ENABLEMENTMIN`, `LOWBREAKPOINT`, `HIGHBREAKPOINT` and `ENABLEMENTMAX`, MW.
-- `max_avail`: the bid `MAXAVAIL`, MW.
-- `base`: the system base power, MW.
-
-# Returns
-A `NTuple{7, Float64}`.
-"""
-fcas_trapezium_values(points, max_avail::Real, base::Real) = (Float64.(points)..., Float64(max_avail), NaN, NaN) ./ base
 
 
 """

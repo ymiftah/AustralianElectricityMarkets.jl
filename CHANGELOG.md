@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The MNSP fixed-loading series `NEM_MNSP_FIXED_LOAD_SERIES` (`forward_fixed_load_value`, `reverse_fixed_load_value`, `forward_fixed_load_invoked_flag`, `reverse_fixed_load_invoked_flag`) are written by `nem_system` with the NEMDE replay inputs, and `set_effective_offers!` no longer attaches them. `NEM_MNSP_FIXED_LOAD_SERIES` moves to `AustralianElectricityMarkets`.
 
+- The effective FCAS offers `fcas_effective_<BIDTYPE>[_decremental]` and the regulation ramping limits `fcas_ramping_limits_<BIDTYPE>` are written by `nem_system` with the NEMDE replay inputs, computed in MW and written per-unit of the system base, and `set_effective_offers!` no longer attaches them. The readers only the old writer used (`get_fcas_offer`, `NEMFCASOffer`, `get_scaled_fcas_trapezium`, `get_fcas_agc_ramp_capability`, `get_fcas_agc_status`, `get_energy_availability`, `get_storage_energy_max_avail`) and `fcas_trapezium_values` are removed. `effective_energy_availability` moves to `AustralianElectricityMarkets`.
+
 - The dispatch ramp rates `ramp_up_rate` and `ramp_down_rate` and the AGC ramp rates `fcas_agc_ramp_rate_<BIDTYPE>` are written by `nem_system` with the NEMDE replay inputs, and `set_effective_offers!` no longer attaches them. The kernels `effective_ramp_limit`, `effective_regulation_max_avail` and `agc_ramp_rate` move to `AustralianElectricityMarkets` as scalar functions taking `Float64` arguments, so an integer caller gets a `MethodError`; `effective_ramp_limits` is removed.
 
 - `fcas_bid_direction` answers from the bids as soon as `set_market_bids!` has run, rather than returning `NONE` until `set_effective_offers!` attaches the derived trapezium series.

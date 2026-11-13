@@ -308,7 +308,6 @@ function nem_toy_system(
     if tie_break_scales
         set_effective_offers!(sys)
     else
-        AEMS._set_fcas_effective_offers!(sys)
         isnothing(interchange) || set_loss_demand_coefficients!(sys)
         AEMS._attach_dispatch_inputs!(sys)
     end
