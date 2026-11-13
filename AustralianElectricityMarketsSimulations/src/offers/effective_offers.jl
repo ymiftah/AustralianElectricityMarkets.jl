@@ -4,8 +4,6 @@
 Attaches the series the NEM dispatch formulation reads as effective offers, per device of `sys`, from
 the bids and unit conditions that [`nem_system`](@ref) attaches, with no database access:
 
-- `"energy_offer[_decremental]"`, the energy offer curves, with prices referred to the reference node
-  by the unit's loss factor and rounded to cents, by [`referred_offer_curves`](@ref).
 - `"ramp_up_rate"`, `"ramp_down_rate"`, the dispatch ramp rates per unit of the system base per minute,
   and `"fcas_agc_ramp_rate_<BIDTYPE>"`, the AGC ramp rate of each regulation service, from the unit
   conditions that [`set_unit_conditions!`](@ref) attaches. The ramp rates are the lesser of the bid
@@ -30,13 +28,13 @@ the bids and unit conditions that [`nem_system`](@ref) attaches, with no databas
 It also attaches to each NEM dispatch device a [`NEMDispatchInputs`](@ref) holding the keys of the
 dispatch-input series the formulation reads through.
 
-The static series are written first, then the dispatch ramps and limits, then the FCAS effective offers
-and tie-break scales that read them. Existing series of these names are replaced, so a second call on the same `sys` gives the same
-result. [`prepare_replay!`](@ref) calls it before attaching the forecasts. Call it before
-`transform_single_time_series!`: the series are single time series until then.
+The dispatch ramps and limits are written first, then the FCAS effective offers and tie-break scales that
+read them. The energy offer curves are not written here: they are the replay input series that
+[`nem_system`](@ref) adds, and this function reads them. Existing series of these names are replaced, so a
+second call on the same `sys` gives the same result. [`prepare_replay!`](@ref) calls it before attaching
+the forecasts. Call it before `transform_single_time_series!`: the series are single time series until then.
 
-Throws `ArgumentError` when a bid is static rather than series-backed, or when two FCAS bids of one
-service map to the same side of a unit.
+Throws `ArgumentError` when a bid this function reads is static rather than series-backed.
 
 # Arguments
 - `sys`: the `System` to add to.
@@ -45,7 +43,6 @@ service map to the same side of a unit.
 `nothing`.
 """
 function set_effective_offers!(sys::PSY.System)
-    _set_static_offers!(sys)
     _set_mnsp_fixed_loads!(sys)
     _set_dispatch_limits!(sys)
     _set_state_seeds!(sys)
@@ -388,60 +385,6 @@ function _energy_bid(cost, side::OfferSide)
     i = findfirst(b -> AustralianElectricityMarkets._energy_offer_side(b.direction) == side, get_energy_bids(cost))
     return isnothing(i) ? nothing : get_energy_bids(cost)[i]
 end
-
-# The loss factor that refers `side`'s prices to the reference node, from the unit's registration.
-function _loss_factor(device, side::OfferSide)
-    registration = get_registration(device)
-    return side == OfferSide.LOAD ? registration.load_loss_factor : registration.gen_loss_factor
-end
-
-# Attaches each device's energy offer curves; a bid's MAXAVAIL is read from the bid's own series.
-function _set_energy_offers!(sys::PSY.System)
-    for device in _bidding_devices(sys)
-        cost = AustralianElectricityMarkets._nem_offer_cost(device)
-        isnothing(cost) && continue
-        for side in energy_offer_sides(device)
-            bid = _energy_bid(cost, side)
-            isnothing(bid) && continue
-            curves = _bid_series(device, bid.offer_curves, :offer_curves)
-            replace_single_series!(
-                sys, device,
-                single_series(
-                    energy_offer_series_name(side), first(curves.timestamps),
-                    referred_offer_curves(curves.values, _loss_factor(device, side)), curves.resolution,
-                ),
-            )
-        end
-    end
-    return
-end
-
-# Throws when two FCAS bids of one service map to the same side of a unit: only the first is read.
-function _check_fcas_bid_sides(sys::PSY.System)
-    for device in _bidding_devices(sys)
-        cost = AustralianElectricityMarkets._nem_offer_cost(device)
-        isnothing(cost) && continue
-        seen = Set{Tuple{BidType, OfferSide}}()
-        for bid in get_fcas_bids(cost)
-            side = AustralianElectricityMarkets._fcas_bid_side(device, bid)
-            isnothing(side) && continue
-            (bid.service, side) in seen && throw(
-                ArgumentError("\"$(PSY.get_name(device))\" has two $(bid.service) bids on the $(side) side; only the first is read."),
-            )
-            push!(seen, (bid.service, side))
-        end
-    end
-    return
-end
-
-# The static offer series: the energy curves and `MAXAVAIL`s, from the bids alone. The FCAS offers are
-# read from the bids' series, so they need no derived series.
-function _set_static_offers!(sys::PSY.System)
-    _check_fcas_bid_sides(sys)
-    _set_energy_offers!(sys)
-    return
-end
-
 
 # The values of a telemetry key over the grid of `like`: a static value is repeated.
 function _grid_values(device, key, like)

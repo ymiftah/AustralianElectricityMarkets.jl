@@ -50,6 +50,7 @@ const TEST_GROUPS = [
     "unit_data" => ("NEM unit data structs", ["types/unit_data.jl"]),
     "network_data" => ("NEM network data structs", ["types/network_data.jl"]),
     "replay_inputs_stage" => ("Replay inputs stage", ["replay_inputs/stage.jl"]),
+    "replay_inputs_energy" => ("Replay inputs energy offers", ["replay_inputs/energy.jl"]),
     "aqua" => ("Aqua", ["aqua.jl"]),
 ]
 

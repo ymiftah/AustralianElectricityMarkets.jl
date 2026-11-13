@@ -20,7 +20,7 @@ function _tie_validation_system(curves_a, curves_b; decremental = false, unround
     for (name, curves) in zip(names, (curves_a, curves_b))
         setter!(sys, PSY.get_component(T, sys, name), (; piecewise_step_data = curves), TOY_START, TOY_RESOLUTION)
     end
-    AEMS._set_static_offers!(sys)
+    AustralianElectricityMarkets._set_replay_inputs!(sys)
     # The derivation rounds referred prices to cents; `unrounded` writes the curves as given instead.
     if unrounded
         for (name, curves) in zip(names, (curves_a, curves_b))

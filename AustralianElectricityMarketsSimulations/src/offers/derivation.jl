@@ -17,26 +17,6 @@ end
 
 
 """
-    referred_offer_curves(curves, factor::Real) -> Vector{PiecewiseStepData}
-
-`curves` with their band prices referred to the reference node by `factor`, AEMO's unit loss factor,
-and rounded to cents.
-
-# Arguments
-- `curves`: the price-band curves of an energy offer, in natural units.
-- `factor`: the loss factor to divide each price by.
-
-# Returns
-A `Vector{PowerSystems.PiecewiseStepData}`.
-"""
-function referred_offer_curves(curves, factor::Real)
-    return [
-        PSY.PiecewiseStepData(PSY.get_x_coords(c), round.(PSY.get_y_coords(c) ./ factor; digits = 2)) for c in curves
-    ]
-end
-
-
-"""
     effective_energy_availability(max_avail, uigf, ramp_up_raw, pinned::Bool) -> Vector{Float64}
 
 The energy availability of a unit per interval, in the unit of `max_avail`: its energy `MAXAVAIL`,

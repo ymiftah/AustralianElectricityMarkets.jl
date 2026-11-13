@@ -66,6 +66,7 @@ include("types/generic_constraints.jl")
 include("types/interconnector_losses.jl")
 include("types/tie_break.jl")
 include("types/unit_state.jl")
+include("derivations/energy.jl")
 include("derivations/state.jl")
 
 include("readers/Readers.jl")

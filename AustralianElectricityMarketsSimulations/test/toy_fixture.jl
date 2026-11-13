@@ -309,17 +309,17 @@ function nem_toy_system(
     for T in (ThermalStandard, HydroDispatch, RenewableDispatch, EnergyReservoirStorage, InterruptiblePowerLoad)
         foreach(device -> _key_toy_telemetry_limits!(sys, stamps, device), filter(AustralianElectricityMarkets.has_nem_unit_data, collect(PSY.get_components(T, sys))))
     end
+    # The replay inputs first: the effective offers and dispatch keys read the energy offer series they write.
+    AustralianElectricityMarkets._set_replay_inputs!(sys)
     if tie_break_scales
         set_effective_offers!(sys)
     else
-        AEMS._set_static_offers!(sys)
         AEMS._set_mnsp_fixed_loads!(sys)
         AEMS._set_state_seeds!(sys)
         AEMS._set_fcas_effective_offers!(sys)
         isnothing(interchange) || set_loss_demand_coefficients!(sys)
         AEMS._attach_dispatch_inputs!(sys)
     end
-    AustralianElectricityMarkets._set_replay_inputs!(sys)
 
     # One window per `horizon`.
     PSY.transform_single_time_series!(sys, horizon, TOY_RESOLUTION)

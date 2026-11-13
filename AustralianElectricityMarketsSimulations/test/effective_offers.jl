@@ -60,6 +60,7 @@ end
     @testset "get_fcas_offer reads the scaled trapezium and the offer curve" begin
         sys = first(nem_network(db))
         set_market_bids!(sys, db, date_range)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
         horizon = length(date_range) - 1
@@ -155,7 +156,6 @@ end
                 get_component(InterruptiblePowerLoad, sys, "PUMP2"),
                 AustralianElectricityMarkets.NEMObservedState(; initial_mw = 0.0, dispatch_mode = 0),
             )
-            AustralianElectricityMarkets._set_replay_inputs!(sys)
             return sys
         end
 
@@ -171,6 +171,7 @@ end
             for device in (gen, load)
                 set_registration!(device, _toy_registration(; gen_loss_factor = gen_lf, load_loss_factor = load_lf))
             end
+            AustralianElectricityMarkets._set_replay_inputs!(sys)
             set_effective_offers!(sys)
             lf_values(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)
             bid_prices(device, direction) = get_y_coords(first(lf_values(device, bid_series_name(BidType.ENERGY, :offer_curves, direction))))
@@ -190,7 +191,7 @@ end
                     ),
                 ],
             )
-            @test_throws ArgumentError set_effective_offers!(sys)
+            @test_throws ArgumentError AustralianElectricityMarkets._set_replay_inputs!(sys)
         end
 
         @testset "two FCAS bids of one service on one side are rejected" begin
@@ -211,7 +212,7 @@ end
                     ),
                 )
             end
-            @test_throws ArgumentError set_effective_offers!(sys)
+            @test_throws ArgumentError AustralianElectricityMarkets._set_replay_inputs!(sys)
         end
     end
 
@@ -322,6 +323,7 @@ end
         )
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_available!(get_component(ThermalStandard, sys, "ER02"), false)
         load = get_component(InterruptiblePowerLoad, sys, "PUMP1")
         horizon = length(date_range) - 1
@@ -351,6 +353,7 @@ end
         )
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_available!(get_component(ThermalStandard, sys, "ER02"), false)
         load = get_component(InterruptiblePowerLoad, sys, "PUMP1")
         horizon = length(date_range) - 1
@@ -375,6 +378,7 @@ end
     @testset "get_scaled_fcas_trapezium skips scaling only at an absent interval" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
 
@@ -402,6 +406,7 @@ end
     @testset "FCAS trapeziums are read from the bid series" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
         device = get_component(ThermalStandard, sys, "ER01")
@@ -420,6 +425,7 @@ end
     @testset "get_scaled_fcas_trapezium matches the bid series on load-side and bidirectional bids" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
         AEMS = AustralianElectricityMarketsSimulations
@@ -477,6 +483,7 @@ end
     @testset "get_scaled_fcas_trapezium narrows the trapezium wherever the AGC input is more restrictive" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
         AustralianElectricityMarketsSimulations._set_dispatch_limits!(sys)
@@ -557,6 +564,7 @@ end
     @testset "energy offer views and MAXAVAIL per direction" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
         for bat in get_components(EnergyReservoirStorage, sys)
@@ -598,6 +606,7 @@ end
     @testset "offer views of each side after set_market_bids!" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
         gen = first(get_components(ThermalStandard, sys))
@@ -614,9 +623,15 @@ end
         sys = deepcopy(sys_base)
         second_range = (start_date + Minute(30)):Minute(5):(start_date + Minute(90))
         set_market_bids!(sys, db, date_range)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
         set_market_bids!(sys, db, second_range)
+        # The replay inputs are add-only, so the first derivation's energy series are removed before the second.
+        for device in AustralianElectricityMarkets._bidding_devices(sys), name in ("energy_offer", "energy_offer_decremental")
+            remove_single_series!(sys, device, name)
+        end
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_effective_offers!(sys)
         for device in vcat(collect(get_components(ThermalStandard, sys)), collect(get_components(EnergyReservoirStorage, sys)))
             get_available(device) || continue
@@ -629,6 +644,7 @@ end
     @testset "initial_mw reads back as DISPATCHLOAD, and availability is the bid MAXAVAIL" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         attach_dispatch_limits!(sys, db, date_range)
         set_available!(get_component(ThermalStandard, sys, "ER02"), false)
         set_effective_offers!(sys)
@@ -665,6 +681,7 @@ end
     @testset "get_fcas_agc_status reads back AGCSTATUS and throws for a unit with no telemetry" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_available!(get_component(ThermalStandard, sys, "ER02"), false)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
@@ -731,6 +748,7 @@ end
     @testset "a non-scheduled load keeps its metered ramp for AGC and zeros its ramp limit" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
         asload = get_component(InterruptiblePowerLoad, sys, "ASLOAD1")
@@ -746,6 +764,7 @@ end
     @testset "a device bidding regulation on both sides has the summed bid max availability" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
         battery = get_component(EnergyReservoirStorage, sys, "BW01")
@@ -770,6 +789,7 @@ end
     @testset "the dispatch-limit writer leaves the upper limit to the formulation" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_unit_conditions!(sys, db, date_range)
         set_available!(get_component(ThermalStandard, sys, "ER02"), false)
         set_available!(get_component(HydroDispatch, sys, "BW02"), false)
@@ -789,6 +809,7 @@ end
     @testset "a device without telemetry gets no ramp series, and its telemetry accessor throws" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_unit_conditions!(sys, db, date_range)
         set_available!(get_component(ThermalStandard, sys, "ER02"), false)
         set_available!(get_component(HydroDispatch, sys, "BW02"), false)
@@ -851,6 +872,7 @@ end
     function built()
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_available!(get_component(ThermalStandard, sys, "ER02"), false)
         set_available!(get_component(HydroDispatch, sys, "BW02"), false)
         set_unit_conditions!(sys, db, date_range)
@@ -1041,14 +1063,6 @@ end
     date_range = start_date:resolution:(start_date + Hour(2))
     base_power = get_base_power(sys_base)
 
-    @testset "referred_offer_curves divides the band prices by the loss factor and rounds to cents" begin
-        curve = PiecewiseStepData([0.0, 10.0, 20.0], [10.0, 20.0])
-        referred = only(referred_offer_curves([curve], 0.9))
-        @test get_x_coords(referred) == [0.0, 10.0, 20.0]
-        @test get_y_coords(referred) == [11.11, 22.22]
-        @test get_y_coords(only(referred_offer_curves([curve], 1.0))) == [10.0, 20.0]
-    end
-
     @testset "effective_ramp_limit takes the lesser of the bid and telemetered rates" begin
         # ROCUP is MW/min: 3 MW/min is 180 MW/h.
         @test effective_ramp_limit(3.0, 200.0) == 180.0
@@ -1108,6 +1122,7 @@ end
     @testset "the derived series and their keys, and no energy_max_avail series" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
         names(device) = [get_name(k) for k in get_time_series_keys(device)]
@@ -1171,6 +1186,7 @@ end
     @testset "the UIGF parameter reads the telemetry UIGF per unit of the base" begin
         sys = deepcopy(sys_base)
         set_market_bids!(sys, db, date_range; resolution = resolution)
+        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_unit_conditions!(sys, db, date_range)
         set_effective_offers!(sys)
         semi = first(d for d in get_components(RenewableDispatch, sys) if is_semi_scheduled(d))
