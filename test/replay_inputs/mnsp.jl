@@ -44,9 +44,14 @@ function _check_mnsp_fixed_loads(sys)
         names = AEM.NEM_MNSP_FIXED_LOAD_SERIES
         value_name, invoked_name = getproperty(names, Symbol(dir, "_value")), getproperty(names, Symbol(dir, "_invoked"))
         written(name) = PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, ic, name; ignore_scaling_factors = true)
+        # The written series sit on the timestamps of the bid's FIXEDLOAD, or of its MAXAVAIL when it has none.
+        grid_key = isnothing(bid.fixed_load) ? bid.max_avail : bid.fixed_load
+        grid = PowerSystems.TimeSeries.timestamp(PowerSystems.get_time_series_array(ic, PowerSystems.IS.get_time_series(ic, grid_key)))
+        @test PowerSystems.get_time_series_timestamps(PowerSystems.SingleTimeSeries, ic, value_name) == grid
+        @test PowerSystems.get_time_series_timestamps(PowerSystems.SingleTimeSeries, ic, invoked_name) == grid
         if isnothing(bid.fixed_load)
-            @test written(value_name) == zeros(length(written(value_name)))
-            @test written(invoked_name) == zeros(length(written(invoked_name)))
+            @test written(value_name) == zeros(length(grid))
+            @test written(invoked_name) == zeros(length(grid))
             counts[:null] += 1
         else
             raw = collect(values(PowerSystems.get_time_series_array(ic, PowerSystems.IS.get_time_series(ic, bid.fixed_load))))
@@ -74,9 +79,9 @@ end
     counts = _check_mnsp_fixed_loads(sys)
     @test counts[:published] == 2
     ic = PowerSystems.get_component(PowerSystems.AreaInterchange, sys, "IC2")
-    get(name) = PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, ic, name; ignore_scaling_factors = true)
-    @test get("forward_fixed_load_value") == [4.0, 0.0]
-    @test get("forward_fixed_load_invoked_flag") == [1.0, 0.0]
-    @test get("reverse_fixed_load_value") == [4.0, 0.0]
-    @test get("reverse_fixed_load_invoked_flag") == [1.0, 0.0]
+    written(name) = PowerSystems.get_time_series_values(PowerSystems.SingleTimeSeries, ic, name; ignore_scaling_factors = true)
+    @test written("forward_fixed_load_value") == [4.0, 0.0]
+    @test written("forward_fixed_load_invoked_flag") == [1.0, 0.0]
+    @test written("reverse_fixed_load_value") == [4.0, 0.0]
+    @test written("reverse_fixed_load_invoked_flag") == [1.0, 0.0]
 end

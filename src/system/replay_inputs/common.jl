@@ -53,3 +53,19 @@ function _loss_factor(device, side::OfferSide)
     registration = get_registration(device)
     return side == OfferSide.LOAD ? registration.load_loss_factor : registration.gen_loss_factor
 end
+
+
+# The directions of an MNSP link, as `set_mnsp_offers!` names them.
+const _MNSP_DIRECTIONS = ("forward", "reverse")
+
+
+# The `NEMMNSPBid` of `device` for `direction` (`"forward"` or `"reverse"`), or `nothing` when it has none.
+function _mnsp_bid(device::PSY.AreaInterchange, direction::AbstractString)
+    dir = direction == "forward" ? MNSPDirection.FORWARD : MNSPDirection.REVERSE
+    bids = [b for b in (PSY.get_supplemental_attributes(NEMMNSPBid, device)::Vector{NEMMNSPBid}) if b.direction == dir]
+    isempty(bids) && return nothing
+    length(bids) == 1 || throw(
+        ArgumentError("AreaInterchange \"$(PSY.get_name(device))\" carries $(length(bids)) NEMMNSPBid for its $direction link; it requires one."),
+    )
+    return only(bids)
+end

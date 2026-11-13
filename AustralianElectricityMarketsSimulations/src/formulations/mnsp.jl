@@ -3,9 +3,6 @@ function PSI.convert_result_to_natural_units(::Type{MNSPLinkFlowVariable})
 end
 
 
-const _MNSP_DIRECTIONS = ("forward", "reverse")
-
-
 # The values of the time series behind `key` on `device`, in order.
 function _series_values(device, key::IS.TimeSeriesKey)
     ts::PSY.SingleTimeSeries = IS.get_time_series(device, key)
@@ -32,18 +29,6 @@ function _require_mnsp_fixed_loads(device::PSY.AreaInterchange)
         )
     end
     return
-end
-
-
-# The `NEMMNSPBid` of `device` for `direction` (`"forward"` or `"reverse"`), or `nothing` when it has none.
-function _mnsp_bid(device::PSY.AreaInterchange, direction::AbstractString)
-    dir = direction == "forward" ? MNSPDirection.FORWARD : MNSPDirection.REVERSE
-    bids = [b for b in (PSY.get_supplemental_attributes(NEMMNSPBid, device)::Vector{NEMMNSPBid}) if b.direction == dir]
-    isempty(bids) && return nothing
-    length(bids) == 1 || throw(
-        ArgumentError("AreaInterchange \"$(PSY.get_name(device))\" carries $(length(bids)) NEMMNSPBid for its $direction link; it requires one."),
-    )
-    return only(bids)
 end
 
 

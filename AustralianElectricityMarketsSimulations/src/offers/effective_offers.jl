@@ -329,11 +329,6 @@ function _derived_series_keys(device)
 end
 
 
-# The NEM devices of `sys` that can carry offers.
-_bidding_devices(sys::PSY.System) = Iterators.flatten(
-    (PSY.get_components(T, sys) for T in (PSY.Generator, PSY.ControllableLoad, PSY.Storage)),
-)
-
 # The timestamps, resolution and values of a bid field's time series on `device`.
 function _bid_series(device, key::IS.TimeSeriesKey, ::Symbol)
     ts::PSY.SingleTimeSeries = IS.get_time_series(device, key)
@@ -352,12 +347,6 @@ function _bid_series(device, value, field::Symbol)
                 "needs series-backed bid inputs, as set_market_bids! writes them.",
         ),
     )
-end
-
-# The energy bid of `cost` on `side`, or `nothing`.
-function _energy_bid(cost, side::OfferSide)
-    i = findfirst(b -> AustralianElectricityMarkets._energy_offer_side(b.direction) == side, get_energy_bids(cost))
-    return isnothing(i) ? nothing : get_energy_bids(cost)[i]
 end
 
 # The values of a telemetry key over the grid of `like`: a static value is repeated.
