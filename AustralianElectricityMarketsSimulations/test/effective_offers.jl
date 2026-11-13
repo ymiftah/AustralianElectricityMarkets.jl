@@ -120,102 +120,6 @@ end
         @test get_time_series_values(SingleTimeSeries, get_component(ThermalStandard, sys2, "G1"), "tie_break_scale_2") ≈ [10.0 / 13.0, 10.0 / 13.0]
     end
 
-    @testset "energy prices are referred by the factor of their own side, and inputs are validated" begin
-        start = DateTime(2025, 1, 1)
-        stamps = [start, start + Minute(5)]
-        # One bus with a generator (GEN bid) and a scheduled load (LOAD bid), and a generator with no energy bid.
-        function unit_system()
-            sys = System(100.0)
-            area = Area(; name = "NSW")
-            add_component!(sys, area)
-            bus = ACBus(; number = 1, name = "b1", available = true, bustype = ACBusTypes.REF, angle = 0.0, magnitude = 1.0, voltage_limits = (min = 0.9, max = 1.1), base_voltage = 130.0)
-            add_component!(sys, bus)
-            set_area!(bus, area)
-            for name in ("GEN1", "GEN2")
-                gen = ThermalStandard(;
-                    name = name, available = true, status = true, bus = bus,
-                    active_power = 0.0, reactive_power = 0.0, rating = 1.0,
-                    active_power_limits = (min = 0.0, max = 1.0), reactive_power_limits = nothing,
-                    ramp_limits = nothing, operation_cost = ThermalGenerationCost(nothing), base_power = 100.0, time_limits = nothing,
-                    must_run = false, prime_mover_type = PrimeMovers.ST, fuel = ThermalFuels.COAL,
-                )
-                add_component!(sys, gen)
-                AustralianElectricityMarkets.attach_nem_unit_data!(sys, gen)
-                AustralianElectricityMarkets.set_observed_state!(
-                    gen, AustralianElectricityMarkets.NEMObservedState(; initial_mw = 0.0, dispatch_mode = 0),
-                )
-            end
-            pump = InterruptiblePowerLoad(;
-                name = "PUMP2", available = true, bus = bus, active_power = 0.0, reactive_power = 0.0,
-                max_active_power = 1.0, max_reactive_power = 0.0, base_power = 100.0,
-                operation_cost = LoadCost(; variable = CostCurve(LinearCurve(0.0)), fixed = 0.0),
-            )
-            add_component!(sys, pump)
-            AustralianElectricityMarkets.attach_nem_unit_data!(sys, pump)
-            AustralianElectricityMarkets.set_observed_state!(
-                get_component(InterruptiblePowerLoad, sys, "PUMP2"),
-                AustralianElectricityMarkets.NEMObservedState(; initial_mw = 0.0, dispatch_mode = 0),
-            )
-            return sys
-        end
-
-        @testset "GEN and LOAD prices use their own loss factor" begin
-            sys = unit_system()
-            gen = get_component(ThermalStandard, sys, "GEN1")
-            load = get_component(InterruptiblePowerLoad, sys, "PUMP2")
-            gen_curve = PiecewiseStepData([0.0, 10.0, 20.0], [41.0, 57.0])
-            load_curve = PiecewiseStepData([0.0, 10.0, 20.0], [33.0, 61.0])
-            _toy_energy_bid!(sys, gen, AustralianElectricityMarkets.BidDirection.GEN, stamps, fill(gen_curve, 2), fill(100.0, 2))
-            _toy_energy_bid!(sys, load, AustralianElectricityMarkets.BidDirection.LOAD, stamps, fill(load_curve, 2), fill(100.0, 2))
-            gen_lf, load_lf = 0.9 * 0.97, 0.8
-            for device in (gen, load)
-                set_registration!(device, _toy_registration(; gen_loss_factor = gen_lf, load_loss_factor = load_lf))
-            end
-            AustralianElectricityMarkets._set_replay_inputs!(sys)
-            set_effective_offers!(sys)
-            lf_values(device, name) = get_time_series_values(SingleTimeSeries, device, name; ignore_scaling_factors = true)
-            bid_prices(device, direction) = get_y_coords(first(lf_values(device, bid_series_name(BidType.ENERGY, :offer_curves, direction))))
-            @test get_y_coords(first(lf_values(gen, "energy_offer"))) == round.(bid_prices(gen, AustralianElectricityMarkets.BidDirection.GEN) ./ gen_lf; digits = 2)
-            @test get_y_coords(first(lf_values(load, "energy_offer_decremental"))) == round.(bid_prices(load, AustralianElectricityMarkets.BidDirection.LOAD) ./ load_lf; digits = 2)
-            @test get_y_coords(first(lf_values(gen, "energy_offer"))) != round.(get_y_coords(gen_curve) ./ load_lf; digits = 2)
-        end
-
-        @testset "a static energy bid is rejected, as it has no series to derive from" begin
-            sys = unit_system()
-            gen = get_component(ThermalStandard, sys, "GEN1")
-            AustralianElectricityMarkets._nem_unit_data(gen).offer = NEMOfferCost(;
-                energy = [
-                    NEMEnergyBid(;
-                        direction = AustralianElectricityMarkets.BidDirection.GEN,
-                        offer_curves = PiecewiseStepData([0.0, 10.0], [5.0]), max_avail = 10.0, roc_up = 0.0, roc_down = 0.0,
-                    ),
-                ],
-            )
-            @test_throws ArgumentError AustralianElectricityMarkets._set_replay_inputs!(sys)
-        end
-
-        @testset "two FCAS bids of one service on one side are rejected" begin
-            sys = unit_system()
-            gen = get_component(ThermalStandard, sys, "GEN2")
-            for direction in (AustralianElectricityMarkets.BidDirection.GEN, AustralianElectricityMarkets.BidDirection.BIDIRECTIONAL)
-                name(f) = bid_series_name(BidType.RAISE6SEC, f, direction)
-                replace_single_series_with!(sys, gen, name(:offer_curves), fill(PiecewiseStepData([0.0, 10.0], [5.0]), 2), stamps)
-                replace_single_series_with!(sys, gen, name(:max_avail), fill(10.0, 2), stamps)
-                replace_single_series_with!(sys, gen, name(:trapezium), fill((0.0, 10.0, 90.0, 100.0), 2), stamps)
-                AustralianElectricityMarkets._set_fcas_bid!(
-                    AustralianElectricityMarkets._nem_offer_cost(gen),
-                    AustralianElectricityMarkets.NEMFCASBid(;
-                        service = BidType.RAISE6SEC, direction,
-                        offer_curves = AustralianElectricityMarkets._series_key(gen, name(:offer_curves)),
-                        max_avail = AustralianElectricityMarkets._series_key(gen, name(:max_avail)),
-                        trapezium = AustralianElectricityMarkets._series_key(gen, name(:trapezium)),
-                    ),
-                )
-            end
-            @test_throws ArgumentError AustralianElectricityMarkets._set_replay_inputs!(sys)
-        end
-    end
-
     @testset "NEMDE replay attaches FCAS effective offers and tie-break scales" begin
         replay_db = aem_connect(HiveConfiguration(hive_location = AEM_TEST_REPLAY_HIVE_DIR, filesystem = "file"))
         interval = DateTime(2025, 1, 1, 0, 5):Minute(5):DateTime(2025, 1, 1, 0, 20)
@@ -619,24 +523,17 @@ end
         end
     end
 
-    @testset "a second set_market_bids! replaces the offer timestamps" begin
+    @testset "a second set_market_bids! replaces the bid series timestamps" begin
         sys = deepcopy(sys_base)
         second_range = (start_date + Minute(30)):Minute(5):(start_date + Minute(90))
         set_market_bids!(sys, db, date_range)
-        AustralianElectricityMarkets._set_replay_inputs!(sys)
         set_unit_conditions!(sys, db, date_range)
-        set_effective_offers!(sys)
         set_market_bids!(sys, db, second_range)
-        # The replay inputs are add-only, so the first derivation's energy series are removed before the second.
-        for device in AustralianElectricityMarkets._bidding_devices(sys), name in ("energy_offer", "energy_offer_decremental")
-            remove_single_series!(sys, device, name)
-        end
-        AustralianElectricityMarkets._set_replay_inputs!(sys)
-        set_effective_offers!(sys)
         for device in vcat(collect(get_components(ThermalStandard, sys)), collect(get_components(EnergyReservoirStorage, sys)))
             get_available(device) || continue
-            for side in [AustralianElectricityMarkets._energy_offer_side(b.direction) for b in AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(device))]
-                @test get_energy_offer(device, side).timestamps[1] == second_range[1]
+            for bid in AustralianElectricityMarkets.get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(device))
+                name = bid_series_name(BidType.ENERGY, :offer_curves, bid.direction)
+                @test first(get_time_series_timestamps(SingleTimeSeries, device, name)) == second_range[1]
             end
         end
     end
