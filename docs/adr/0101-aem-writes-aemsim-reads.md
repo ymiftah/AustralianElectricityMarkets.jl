@@ -194,15 +194,35 @@ how the cost enters the objective, not its value. Section 5 realises the guideli
 
 ## Verification
 
-Gate: `compare.jl --invariants --mask-gc-slacks` against a local reference captured at the handover head
-(`1877ac1`), on the mock cache (3 intervals) and on 2026-06-04 (12 and 288 intervals).
+Gate: `compare.jl --invariants --mask-gc-slacks --report-only 'FCASCapacityVariable|FCASOfferBandVariable|FCASSideCapacityVariable|MNSPLinkBandVariable'`
+against a local reference captured at the handover head (`1877ac1`, Tasks 0 to 18), with the milestone head
+`52aa442` as candidate. Real runs replay 2026-06-04 from 04:05 (Apple Silicon, 32 GB, HiGHS `mip_rel_gap` 1e-8).
 
-| Measure | Reference | Milestone 1 |
+| Measure | Reference `1877ac1` | Milestone 1 `52aa442` |
 | --- | --- | --- |
-| Mock gate | | |
-| Real 1 h gate | | |
-| Real day gate | | |
-| Warm System build, one trading day | | |
-| Warm model build, one trading day | | |
-| Key types (mock / real) | 122 / 128 before the milestone | |
-| JSON round-trip of a `NEMDEConfiguration` System | | |
+| Mock gate (3 intervals) | | `GATE PASS`, max abs gap 0.0, no reported dual difference |
+| Real 1 h gate (12 intervals) | | `GATE PASS`, max abs gap 4.9e-13, no reported dual difference |
+| Real day gate (288 intervals) | | `GATE PASS`, max abs gap 2.0e-11 |
+| Warm System build, one trading day | 9.49 s (+ 0.23 s prepare) | 6.32 s (+ 0.22 s prepare) |
+| Warm model build, one trading day | 2.55 s | 2.25 s |
+| Warm total against the 20 s budget | 12.3 s | 8.8 s |
+| Key types (mock / real) | 111 / 117 | 111 / 117 |
+| JSON round-trip of a `NEMDEConfiguration` System | | forecasts, replay intervals, tie-break service and scales, band prices, build report and availability record preserved |
+
+On the real day, report-only FCAS capacity and band variables moved by at most 0.19 MW (price-tied FCAS
+offers, dispatched by solver path) and 41 non-gating duals moved, all at degenerate points: FCAS
+joint-capacity rows, three regulation requirement rows and four one-term zero-right-hand-side unit
+constraints parallel to a variable bound. The NEMDE comparison of the real day is identical to the
+reference within 1e-15 on every metric:
+
+| Metric (absolute gap to NEMDE) | n | MAE | RMSE | max |
+| --- | --- | --- | --- | --- |
+| dispatch (MW) | 152064 | 0.011696 | 1.0131 | 244.0 |
+| energy price (\$/MWh) | 1440 | 0.034695 | 0.33342 | 6.7792 |
+| FCAS price (\$/MWh) | 14400 | 0.0017119 | 0.052474 | 2.5276 |
+| interconnector flow (MW) | 1728 | 0.21873 | 5.8109 | 233.81 |
+| interconnector losses (MW) | 1728 | 0.0059055 | 0.10535 | 3.5660 |
+
+The maxima equal those of the batch statistics on the original machine (head `918ce0a`), which confirms the
+cache and environment reproduce it. The full root and Simulations suites pass; the batch runner's memory
+sampler needs Linux `/proc`, so the batch statistics and its `scripts/` tests were not run here.
