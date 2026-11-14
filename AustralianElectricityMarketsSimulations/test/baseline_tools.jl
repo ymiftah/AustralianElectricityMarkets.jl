@@ -53,7 +53,7 @@ end
     b = deepcopy(a)
     b["stats/optimizer"].objective_value[1] += 1.0e-4
     @test isempty(compare_snapshots(a, b))
-    b["stats/optimizer"].objective_value[1] += 1.0e-2
+    b["stats/optimizer"].objective_value[1] += 1.0
     @test only(compare_snapshots(a, b)).kind == "stats"
     b = deepcopy(a)
     b["stats/optimizer"].timed_solve_time[1] = 9.0
@@ -153,4 +153,26 @@ end
         report_only = [r"FCASCapacityVariable"],
     )
     @test only(r.key for r in rows if r.report) == "variable/FCASCapacityVariable__s"
+    # The worst passing gap leaves report-only keys out.
+    b["variable/x"].u[1] = 1.0 + 2.0^-40
+    rows = _gate_rows(
+        a, b; atol = 1.0e-9, allow_new = Regex[], allow_missing = Regex[], mask_gc_slacks = false,
+        report_only = [r"FCASCapacityVariable"],
+    )
+    summary = _gate_summary(rows)
+    @test isempty(summary.failures)
+    @test summary.worst == 2.0^-40
+    @test only(summary.report_rows).max_abs == 4.0
+end
+
+@testset "invariants mode throws when the energy price or every FCAS requirement dual is missing" begin
+    a = _invariant_snapshot()
+    no_energy = deepcopy(a)
+    delete!(no_energy, "dual/CopperPlateBalanceConstraint__Area")
+    @test_throws ArgumentError compare_snapshots(a, no_energy; invariants = true)
+    no_fcas = deepcopy(a)
+    for c in ("r6", "r60", "l6")
+        delete!(no_fcas, "dual/NEMConstraintLimit__GenericConstraint__$c")
+    end
+    @test_throws ArgumentError compare_snapshots(a, no_fcas; invariants = true)
 end

@@ -240,7 +240,7 @@ end
     @test abs(duals["N_TOY_LIMIT@B"][t1]) <= 1.0e-9 && abs(duals["N_TOY_LIMIT@A"][t2]) <= 1.0e-9
 end
 
-@testset "a recurrent build without slacks builds, since non-invoked rows are freed by the invocation parameter" begin
+@testset "a recurrent build without slacks builds and solves, since non-invoked rows are freed by the invocation parameter" begin
     sys = masked_system(ConstraintSense.LE, TOY_CHEAP, 60.0)
     template = replay_template(sys; template = energy_template())
     PSI.set_service_model!(template, "N_TOY_LIMIT", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "N_TOY_LIMIT"; duals = [NEMConstraintLimit]))
@@ -254,6 +254,16 @@ end
         simulation_folder = mktempdir(), initial_time = TOY_START,
     )
     @test PSI.build!(sim; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT
+    @test PSI.execute!(sim) == PSI.RunStatus.SUCCESSFULLY_FINALIZED
+    results = PSI.get_decision_problem_results(PSI.SimulationResults(sim), "hard")
+    solved = read_solved_interval(results, sys)
+    # Step 1 holds Alta at the 60 MW limit; step 2's free row lets Alta serve the whole load.
+    c = first(MASK_CASES)
+    @test PSI.read_optimizer_stats(results).objective_value ≈ c.objective atol = TOY_TOLERANCE
+    for (k, t) in enumerate(STOCK_STEPS)
+        @test stock_mw(stock_at(solved, t), TOY_CHEAP) ≈ c.cheap[k] atol = TOY_TOLERANCE
+        @test stock_mw(stock_at(solved, t), TOY_EXPENSIVE) ≈ c.expensive[k] atol = TOY_TOLERANCE
+    end
 end
 
 # A battery whose net ramp-down floor exceeds raw generation availability in step 1 only.
@@ -315,6 +325,7 @@ stock_loss(solved) = only(solved.interconnectors.MWLOSSES)
     ]
     sim = stock_simulate(mnsp_sentinel_system())
     @test PSI.is_milp(PSI.get_optimization_container(sim.model))
+    @test !PSI.get_objective_expression(PSI.get_optimization_container(sim.model)).has_variant_contributors
     for (k, t) in enumerate(STOCK_STEPS)
         ref = stock_standalone(mnsp_sentinel_system(), t)
         for (objective, solved) in ((sim.objectives[k], sim.solved[k]), (ref.objective, ref.solved))

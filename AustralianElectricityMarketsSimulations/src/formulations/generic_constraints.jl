@@ -376,6 +376,7 @@ function PSI.add_constraints!(
     rhs_refs = PSI.get_parameter_column_refs(rhs_param, name)
     rhs_mult = PSI.get_multiplier_array(rhs_param)
     _constraint_key(gc, :rhs, NEM_CONSTRAINT_SERIES.rhs)
+    _constraint_key(gc, :invoked, NEM_CONSTRAINT_SERIES.invoked)
     base_power = PSI.get_base_power(container)
     jm = PSI.get_jump_model(container)
     sense = get_sense(gc)

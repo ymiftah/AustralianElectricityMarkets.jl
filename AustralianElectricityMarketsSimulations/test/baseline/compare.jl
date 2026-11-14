@@ -7,7 +7,8 @@ using Serialization
 
 # Kinds whose values gate the comparison; `parameter` and `input` differences are reported only.
 const _GATING_KINDS = ("variable", "dual", "aux", "expression", "stats", "derived")
-const _STATS_RTOL = 1.0e-9
+# The objective tolerance is the solver's relative MIP gap (`mip_rel_gap` of `NEMDE_HIGHS_OPTIONS`).
+const _STATS_RTOL = 1.0e-8
 const _STATS_GATING_COLUMNS = ("objective_value",)
 # The duals that gate in invariants mode: the regional power-balance rows `read_prices` reads.
 const _ENERGY_PRICE_DUAL_KEY = "dual/CopperPlateBalanceConstraint__Area"
@@ -134,9 +135,20 @@ end
 
 # The snapshot reduced to the gating set of invariants mode: everything but the duals, the energy price
 # duals, and the derived FCAS dual sums. The remaining duals are returned separately as the reported set.
+# With FCAS requirements, a snapshot lacking the energy price duals or every FCAS dual sum throws, so those
+# gates cannot vanish silently.
 function _invariant_view(snapshot::AbstractDict, requirements::DataFrame)
     gating = Dict{String, DataFrame}(k => v for (k, v) in snapshot if _kind(k) != "dual" || k == _ENERGY_PRICE_DUAL_KEY)
-    merge!(gating, _fcas_dual_sums(snapshot, requirements))
+    sums = _fcas_dual_sums(snapshot, requirements)
+    if nrow(requirements) > 0
+        haskey(snapshot, _ENERGY_PRICE_DUAL_KEY) || throw(
+            ArgumentError("invariants mode: the snapshot has FCAS requirements but no $_ENERGY_PRICE_DUAL_KEY."),
+        )
+        isempty(sums) && throw(
+            ArgumentError("invariants mode: no FCAS requirement constraint of input/fcas_requirements has a dual in the snapshot."),
+        )
+    end
+    merge!(gating, sums)
     reported = Dict{String, DataFrame}(k => v for (k, v) in snapshot if _kind(k) == "dual" && k != _ENERGY_PRICE_DUAL_KEY)
     return gating, reported
 end
@@ -175,11 +187,11 @@ function _gate_rows(
 end
 
 """
-    compare_snapshots(baseline, candidate; atol = 1.0e-9, allow_new = Regex[], allow_missing = Regex[], mask_gc_slacks = false) -> Vector{NamedTuple}
+    compare_snapshots(baseline, candidate; atol = 1.0e-9, allow_new = Regex[], allow_missing = Regex[], mask_gc_slacks = false, invariants = false, report_only = Regex[]) -> Vector{NamedTuple}
 
 Compares two snapshots from [`replay_snapshot`](@ref) and returns the gating mismatches as
 `(; key, kind, max_abs)` rows. Variable, dual, auxiliary and expression values differ when they exceed
-`atol`; the optimizer objective differs beyond a relative `1e-9`. Parameter and input tables never gate.
+`atol`; the optimizer objective differs beyond the solver's relative MIP gap, `1e-8`. Parameter and input tables never gate.
 A key present on one side only is a mismatch unless a regex in `allow_new` or `allow_missing` matches it;
 rows that a key matching `allow_new` adds with all values zero do not count as a difference.
 
@@ -193,7 +205,8 @@ rows that a key matching `allow_new` adds with all values zero do not count as a
 - `invariants`: gate only the quantities unique at degenerate points: variables, auxiliary variables,
   expressions, the objective, the energy price duals (`CopperPlateBalanceConstraint`) and the sum of the
   FCAS requirement duals per (interval, region, direction), `RAISE` or `LOWER`. Other duals do not gate
-  (see [`reported_dual_differences`](@ref)). Needs `input/fcas_requirements` in a snapshot.
+  (see [`reported_dual_differences`](@ref)). Needs `input/fcas_requirements` in a snapshot, and throws
+  when a snapshot with FCAS requirements lacks the energy price duals or every FCAS requirement dual.
 
 # Returns
 A `Vector` of `(; key, kind, max_abs)` named tuples, empty when the snapshots agree.
@@ -211,7 +224,15 @@ end
     reported_dual_differences(baseline, candidate; atol = 1.0e-9) -> Vector{NamedTuple}
 
 The duals that do not gate in invariants mode (every dual but the energy price duals) that differ
-beyond `atol` or are on one side only, as `(; key, kind, max_abs)` rows sorted by decreasing gap.
+beyond `atol` or are on one side only, sorted by decreasing gap.
+
+# Arguments
+- `baseline`, `candidate`: the snapshots to compare; one needs `input/fcas_requirements`.
+- `atol`: the absolute tolerance on each dual value.
+
+# Returns
+A `Vector` of `(; key, kind, max_abs)` named tuples, `kind == "dual"`, with `max_abs = Inf` for a key on
+one side only; empty when every non-gating dual agrees.
 """
 function reported_dual_differences(baseline::AbstractDict, candidate::AbstractDict; atol::Real = 1.0e-9)
     requirements = _fcas_requirements(baseline, candidate)
@@ -282,6 +303,15 @@ function _parse_compare_args(args::Vector{String})
     return (; baseline = positional[1], candidate = positional[2], atol, allow_new, allow_missing, mask, invariants, report_only)
 end
 
+# The gate verdict of `_gate_rows` output: failures and report-only rows by decreasing gap, and the worst
+# gap among the passing gating keys (report-only keys excluded).
+function _gate_summary(rows)
+    failures = sort([r for r in rows if r.mismatch]; by = r -> r.max_abs, rev = true)
+    worst = maximum((r.max_abs for r in rows if !r.mismatch && !r.report); init = 0.0)
+    report_rows = sort([r for r in rows if r.report]; by = r -> r.max_abs, rev = true)
+    return (; failures, worst, report_rows)
+end
+
 # Prints the gate verdict for two capture folders; returns the process exit code.
 function _compare_main(args::Vector{String})
     opts = _parse_compare_args(args)
@@ -292,9 +322,7 @@ function _compare_main(args::Vector{String})
         allow_missing = opts.allow_missing, mask_gc_slacks = opts.mask, invariants = opts.invariants,
         report_only = opts.report_only,
     )
-    failures = sort([r for r in rows if r.mismatch]; by = r -> r.max_abs, rev = true)
-    worst = maximum((r.max_abs for r in rows if !r.mismatch && !r.report); init = 0.0)
-    report_rows = sort([r for r in rows if r.report]; by = r -> r.max_abs, rev = true)
+    (; failures, worst, report_rows) = _gate_summary(rows)
     isempty(report_rows) || println("report-only differences: $(length(report_rows)) key(s)")
     for r in first(report_rows, 10)
         println("  $(r.key)  max|Δ|=$(r.max_abs)")
