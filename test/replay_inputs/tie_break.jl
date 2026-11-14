@@ -153,33 +153,15 @@ end
     @test _tb_scale(sys, expensive, 2) ≈ fill(1.0, _TB_N)
 end
 
-@testset "bands of a moved price pair fail the build and name the first differing interval" begin
+@testset "transitive ties are rejected" begin
     AEM = AustralianElectricityMarkets
     sys = _tb_strip!(_tb_mock_system())
-    cheap, expensive = _tb_units(sys, AEM.OfferSide.GEN, 2)
-    # The two bands tie at the first interval only.
-    _tb_write_offers!(sys, cheap, AEM.OfferSide.GEN, [_tb_curve([20.0], [60.0]); fill(_tb_curve([25.0], [60.0]), _TB_N - 1)])
-    _tb_write_offers!(sys, expensive, AEM.OfferSide.GEN, fill(_tb_curve([20.0], [40.0]), _TB_N))
-    @test_throws r"differ from those at" AEM._set_tie_break!(sys)
-end
-
-@testset "the pair check reads the offer timestamps and rejects transitive ties" begin
-    AEM = AustralianElectricityMarkets
-    sys = _tb_strip!(_tb_mock_system())
-    cheap, expensive = _tb_units(sys, AEM.OfferSide.GEN, 2)
-    stamps = collect(_TB_START:Minute(5):(_TB_START + Minute(5 * (_TB_N - 1))))
-    _tb_write_offers!(sys, cheap, AEM.OfferSide.GEN, fill(_tb_curve([20.0], [60.0]), _TB_N))
-    _tb_write_offers!(sys, expensive, AEM.OfferSide.GEN, fill(_tb_curve([20.0], [40.0]), _TB_N))
-    @test isnothing(AEM._check_tie_break_prices(sys, stamps[1:2]))
-    @test_throws r"is not on the offer curve timestamps" AEM._check_tie_break_prices(sys, [_TB_START + Hour(5)])
-
     # Three units priced 0.8e-6 apart in a chain: the first and last are not tied, but each neighbour is.
-    sys = _tb_strip!(sys)
     a, b, c = _tb_units(sys, AEM.OfferSide.GEN, 3)
     _tb_write_offers!(sys, a, AEM.OfferSide.GEN, fill(_tb_curve([20.0], [60.0]), _TB_N))
     _tb_write_offers!(sys, b, AEM.OfferSide.GEN, fill(_tb_curve([20.0 + 0.8e-6], [60.0]), _TB_N))
     _tb_write_offers!(sys, c, AEM.OfferSide.GEN, fill(_tb_curve([20.0 + 1.6e-6], [60.0]), _TB_N))
-    @test_throws r"transitive ties are not supported" AEM._check_tie_break_prices(sys, stamps)
+    @test_throws r"transitive ties are not supported" AEM._set_tie_break!(sys)
 end
 
 @testset "the decremental side is scaled by its own tie groups" begin
@@ -192,66 +174,4 @@ end
     @test _tb_scale(sys, pump, 1; decremental = true) ≈ fill(1.0, _TB_N)
     @test _tb_scale(sys, battery, 1; decremental = true) ≈ fill(40.0 / 60.0, _TB_N)
     @test isnothing(_tb_scale(sys, pump, 1))
-end
-
-@testset "tie-pair validation preserves fallback and band eligibility" begin
-    AEM = AustralianElectricityMarkets
-    sys = _tb_mock_system()
-    curve(prices, widths = fill(50.0, length(prices))) = _tb_curve(prices, widths)
-    cases = [
-        ([curve([20.0]), curve([25.0])], [curve([20.0]), curve([25.0])], true),
-        ([curve([20.0]), curve([20.0], [0.0])], [curve([20.0]), curve([20.0], [25.0])], true),
-        ([curve([20.0, 100.0], [50.0, 0.0]), curve([20.0, 200.0], [50.0, 0.0])], [curve([20.0]), curve([20.0])], true),
-        ([curve([20.0, 30.0]), curve([20.0])], [curve([30.0]), curve([30.0])], false),
-        ([curve([20.0]), curve([20.0, 30.0])], [curve([30.0]), curve([30.0])], false),
-        ([curve([20.0]), curve([20.0, 100.0], [50.0, 0.0])], [curve([20.0]), curve([20.0])], true),
-    ]
-    for side in (AEM.OfferSide.GEN, AEM.OfferSide.LOAD)
-        for (a, b, accepted) in cases
-            _tb_strip!(sys)
-            unit_a, unit_b = _tb_units(sys, side, 2)
-            _tb_write_offers!(sys, unit_a, side, _tb_pad(a))
-            _tb_write_offers!(sys, unit_b, side, _tb_pad(b))
-            if accepted
-                @test isnothing(AEM._check_tie_break_prices(sys, _tb_steps(2)))
-            else
-                @test_throws r"differ from those at" AEM._check_tie_break_prices(sys, _tb_steps(2))
-            end
-        end
-        # The pair changes at the second and third stamps, and a stamp off the offer timestamps is refused.
-        _tb_strip!(sys)
-        unit_a, unit_b = _tb_units(sys, side, 2)
-        _tb_write_offers!(sys, unit_a, side, _tb_pad([curve([20.0]), curve([30.0]), curve([30.0])]))
-        _tb_write_offers!(sys, unit_b, side, fill(curve([30.0]), _TB_N))
-        steps = _tb_steps(3)
-        @test_throws r"differ from those at" AEM._check_tie_break_prices(sys, steps)
-        @test_throws r"is not on the offer curve timestamps" AEM._check_tie_break_prices(sys, [first(steps), last(steps) + Hour(5)])
-    end
-end
-
-@testset "an empty replay range checks nothing" begin
-    AEM = AustralianElectricityMarkets
-    sys = _tb_strip!(_tb_mock_system())
-    unit_a, unit_b = _tb_units(sys, AEM.OfferSide.GEN, 2)
-    _tb_write_offers!(sys, unit_a, AEM.OfferSide.GEN, fill(_tb_curve([20.0], [60.0]), _TB_N))
-    _tb_write_offers!(sys, unit_b, AEM.OfferSide.GEN, fill(_tb_curve([20.0], [40.0]), _TB_N))
-    @test isnothing(AEM._check_tie_break_prices(sys, DateTime[]))
-end
-
-
-@testset "unchanged prices do not allocate pair sets for every interval" begin
-    AEM = AustralianElectricityMarkets
-    sys = _tb_mock_system()
-    # The 288 stamps of the offers are the only series of the System, so their length is not the mock's.
-    PowerSystems.clear_time_series!(sys)
-    unit_a, unit_b = _tb_units(sys, AEM.OfferSide.GEN, 2)
-    stamps = _tb_steps(288)
-    flat = PowerSystems.PiecewiseStepData(collect(0.0:10.0:100.0), fill(20.0, 10))
-    _tb_write_offers!(sys, unit_a, AEM.OfferSide.GEN, fill(flat, length(stamps)))
-    _tb_write_offers!(sys, unit_b, AEM.OfferSide.GEN, fill(flat, length(stamps)))
-    AEM._check_tie_break_prices(sys, stamps[1:1])
-    AEM._check_tie_break_prices(sys, stamps)
-    short_bytes = @allocated AEM._check_tie_break_prices(sys, stamps[1:1])
-    full_bytes = @allocated AEM._check_tie_break_prices(sys, stamps)
-    @test full_bytes <= 3 * short_bytes + 256 * 1024
 end

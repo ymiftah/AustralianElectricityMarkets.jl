@@ -110,84 +110,6 @@ function _tie_break_stamp_bands(offers, i::Int, active, decremental::Bool)
 end
 
 
-# Pairs `(name_a, band_a, name_b, band_b)` of price-tied bands of different units at stamp `i`, the
-# `(name, band)` of `a` ordered before that of `b`.
-function _tie_break_pairs(offers, i::Int, active, decremental::Bool)
-    bands = _tie_break_stamp_bands(offers, i, active, decremental)
-    pairs = Set{Tuple{String, Int, String, Int}}()
-    for group in tie_groups(bands), x in 1:(length(group) - 1), y in (x + 1):length(group)
-        a, b = bands[group[x]], bands[group[y]]
-        a.name == b.name && continue
-        lo, hi = minmax((a.name, a.band), (b.name, b.band))
-        push!(pairs, (lo..., hi...))
-    end
-    return pairs
-end
-
-
-# Pair membership depends on active prices, not the widths used to scale the tie-break rows.
-function _tie_break_prices_unchanged(offers, i::Int, reference::Int, active, decremental::Bool)
-    for (device, curves) in offers
-        current = PSY.get_y_coords(curves[i])
-        initial = PSY.get_y_coords(curves[reference])
-        length(current) == length(initial) || return false
-        for k in get(active, (decremental, PSY.get_name(device)), ())
-            k <= length(current) || continue
-            current[k] == initial[k] || return false
-        end
-    end
-    return true
-end
-
-
-"""
-    _check_tie_break_prices(sys, stamps)
-
-Verifies that the price-tied energy band pairs of `sys` are the same at every stamp of `stamps`, for every
-region and direction, as a model built once and stepped through `stamps` requires. Band prices change only
-between trading days, so a range inside one trading day passes. Unchanged active-band prices and band counts
-reuse the first stamp's pair set; other stamps retain the full pair comparison.
-
-# Arguments
-- `sys`: the system whose offer curves are checked.
-- `stamps`: the interval timestamps the replay solves, the first of which is the reference.
-
-# Returns
-`nothing`. Throws `ArgumentError` naming the first interval whose pairs differ and up to five of
-the differing pairs, or a stamp that is not on a region's offer curve timestamps.
-"""
-function _check_tie_break_prices(sys::PSY.System, stamps)
-    isempty(stamps) && return
-    all_offers = _tie_break_offers(sys)
-    active = _tie_break_active_bands(all_offers)
-    for ((decremental, region), entry) in all_offers
-        offers = entry.offers
-        index = Dict(s => i for (i, s) in enumerate(entry.stamps))
-        position(t) = get(
-            () -> throw(ArgumentError("tie-break: interval $t is not on the offer curve timestamps of region $region.")),
-            index, t,
-        )
-        reference_index = position(first(stamps))
-        reference = _tie_break_pairs(offers, reference_index, active, decremental)
-        for t in Iterators.drop(stamps, 1)
-            i = position(t)
-            _tie_break_prices_unchanged(offers, i, reference_index, active, decremental) && continue
-            pairs = _tie_break_pairs(offers, i, active, decremental)
-            pairs == reference && continue
-            changed = first(sort!(collect(symdiff(pairs, reference))), 5)
-            throw(
-                ArgumentError(
-                    "tie-break: the price-tied $(decremental ? "load bid" : "offer") bands of region $region at $t " *
-                        "differ from those at $(first(stamps)), e.g. $(join(changed, ", ")). Band prices change " *
-                        "between trading days; keep date_range within one trading day (04:05 to 04:00 next day).",
-                ),
-            )
-        end
-    end
-    return
-end
-
-
 """
     _set_tie_break!(sys::PSY.System) -> Nothing
 
@@ -195,8 +117,7 @@ Adds each price-tied energy band's tie-break scale `w / w_ref` (its width over t
 tie group at that interval, 0 when the band is untied or the group has no width) as the `SingleTimeSeries`
 [`tie_break_series_name`](@ref) of its unit, where the segment index is the band's offer segment. Adds the
 [`EnergyTieBreak`](@ref) named [`TIE_BREAK_SERVICE_NAME`](@ref), with the available units that carry an energy
-bid as its contributing devices, once. Then checks that the price-tied pairs hold over the replay intervals of
-`sys`. Throws `ArgumentError` when the pairs change between intervals or a tied group is not valid. Requires
+bid as its contributing devices, once. Throws `ArgumentError` when a tied group is not valid. Requires
 the energy offer series written before it in the replay input stage.
 
 # Arguments
@@ -228,6 +149,5 @@ function _set_tie_break!(sys::PSY.System)
     end
     devices = [d for d in PSY.get_available_components(PSY.StaticInjection, sys) if _has_energy_offer(d)]
     isempty(devices) || _add_nem_service!(sys, EnergyTieBreak(; name = TIE_BREAK_SERVICE_NAME), devices)
-    _check_tie_break_prices(sys, _replay_interval_stamps(sys))
     return
 end

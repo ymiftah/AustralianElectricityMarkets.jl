@@ -106,3 +106,20 @@ end
     empty = NEMOfferCost()
     @test _IS.deserialize(NEMOfferCost, _IS.serialize(empty)) == empty
 end
+
+@testset "NEMEnergyBid band_prices default to nothing, compare by value and round-trip as a ten-tuple" begin
+    prices = (5.0, 50.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    bid = _static_energy_bid(AEM.BidDirection.GEN)
+    @test isnothing(bid.band_prices)
+    priced = AEM.NEMEnergyBid(;
+        direction = AEM.BidDirection.GEN, offer_curves = _curves(), max_avail = 100.0, roc_up = 1.5, roc_down = 2.5,
+        fixed_load = 3.0, minimum_load = 4.0, fast_start_profile = (t1 = 1.0, t2 = 2.0, t3 = 3.0, t4 = 4.0),
+        daily_energy_constraint = 500.0, normal_status = true, energy_limit = 60.0, band_prices = prices,
+    )
+    @test priced != bid
+    @test hash(priced) != hash(bid)
+    restored = _IS.deserialize(AEM.NEMEnergyBid, _IS.serialize(priced))
+    @test restored == priced
+    @test restored.band_prices isa NTuple{10, Float64}
+    @test restored.band_prices == prices
+end

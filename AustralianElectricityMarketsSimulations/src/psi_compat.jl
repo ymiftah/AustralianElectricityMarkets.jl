@@ -95,11 +95,3 @@ function PSI._unwrap_for_param(::EnergyBandWidthParameter, curve::IS.PiecewiseSt
     length(widths) <= n || throw(ArgumentError("energy offer has $(length(widths)) bands, more than the band axis' $n."))
     return vcat(widths, zeros(n - length(widths)))
 end
-
-# An offer curve's band prices in $/MWh, padded with zero prices to the band axis.
-function PSI._unwrap_for_param(::EnergyBandPriceParameter, curve::IS.PiecewiseStepData, expected_axs)
-    prices = PSY.get_y_coords(curve)
-    n = length(only(expected_axs))
-    length(prices) <= n || throw(ArgumentError("energy offer has $(length(prices)) bands, more than the band axis' $n."))
-    return vcat(prices, zeros(n - length(prices)))
-end

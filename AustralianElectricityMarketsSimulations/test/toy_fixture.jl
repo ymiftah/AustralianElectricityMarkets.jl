@@ -620,6 +620,20 @@ function _toy_energy_bid!(
     return
 end
 
+# Sets `band_prices` of each energy bid of `device` from its `energy_offer` series over every stamp, as the
+# replay input stage does for a built system.
+function _toy_set_band_prices!(device)
+    AEM = AustralianElectricityMarkets
+    cost = AEM._nem_offer_cost(device)
+    for bid in copy(AEM.get_energy_bids(cost))
+        view = AEM._energy_offer_view(device, AEM._energy_offer_side(bid.direction))
+        isnothing(view) && continue
+        prices = AEM._day_band_prices(view.curves, fill(true, length(view.curves)), PSY.get_name(device))
+        AEM._set_energy_bid!(cost, AEM._with_band_prices(bid, prices))
+    end
+    return
+end
+
 # Replaces the `SingleTimeSeries` `name` on `device` with `values` per stamp.
 function replace_single_series_with!(sys, device, name, values, stamps)
     AustralianElectricityMarkets.replace_single_series!(

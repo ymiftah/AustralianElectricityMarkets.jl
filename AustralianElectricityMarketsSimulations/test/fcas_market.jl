@@ -108,6 +108,7 @@ function _write_toy_battery_replay_inputs!(sys, bat, stamps)
             sys, bat, AustralianElectricityMarkets.single_series(name, stamps[1], curves, TOY_RESOLUTION),
         )
     end
+    _toy_set_band_prices!(bat)
     for name in ("ramp_up_rate", "ramp_down_rate")
         PSY.add_time_series!(
             sys, bat, PSY.SingleTimeSeries(; name = name, data = PSY.TimeSeries.TimeArray(stamps, fill(1.0e4 / base_power, length(stamps)))),

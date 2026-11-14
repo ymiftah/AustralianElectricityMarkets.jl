@@ -6,18 +6,18 @@ const STOCK_OPTIMIZER = PSI.JuMP.optimizer_with_attributes(
     HiGHS.Optimizer, "output_flag" => false, "mip_rel_gap" => 0.0, "mip_abs_gap" => 1.0e-10,
 )
 const STOCK_STEPS = TOY_START:TOY_RESOLUTION:(TOY_START + TOY_RESOLUTION)
-# Step 1: Alta ramp-bound at 60 MW, Park City 40 MW at $80. Step 2: N_TOY_LIMIT holds Alta at 65 MW, Park City 55 MW at $60.
+# Step 1: Alta ramp-bound at 60 MW, Park City 40 MW at $60. Step 2: N_TOY_LIMIT holds Alta at 65 MW, Park City 55 MW at $60.
 function sentinel_system(;
         alta_availability = [100.0, 90.0],
         alta_initial = [50.0, 70.0], alta_ramp_down = [100.0, 90.0], invoked = 1.0
     )
     units = [
         TOY_CHEAP => toy_unit(
-            100.0, [[(100.0, 20.0)], [(100.0, 30.0)]]; initial = alta_initial,
+            100.0, [(100.0, 20.0)]; initial = alta_initial,
             ramp_up = [2.0, 1.0], ramp_down = alta_ramp_down, availability = alta_availability,
         ),
         TOY_EXPENSIVE => toy_unit(
-            100.0, [[(100.0, 80.0)], [(100.0, 60.0)]]; initial = [40.0, 30.0],
+            100.0, [(100.0, 60.0)]; initial = [40.0, 30.0],
             ramp_up = [100.0, 90.0], ramp_down = [100.0, 90.0], availability = [100.0, 95.0],
         ),
     ]
@@ -90,8 +90,8 @@ end
 
 @testset "step 2 reads step-2 data" begin
     expected = [
-        (step = 1, cheap = 60.0, expensive = 40.0, price = 80.0, objective = 4400 / 12, limit_price = 0.0),
-        (step = 2, cheap = 65.0, expensive = 55.0, price = 60.0, objective = 5250 / 12, limit_price = -30.0),
+        (step = 1, cheap = 60.0, expensive = 40.0, price = 60.0, objective = 3600 / 12, limit_price = 0.0),
+        (step = 2, cheap = 65.0, expensive = 55.0, price = 60.0, objective = 4600 / 12, limit_price = -40.0),
     ]
     for e in expected
         k = e.step
