@@ -1,0 +1,12 @@
+[deps]
+InfrastructureSystems = "2cd47ed4-ca9b-11e9-27f2-ab636a7671f1"
+PowerSimulations = "e690365d-45e2-57bb-ac84-44ba829e73c4"
+PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
+PowerSystemsInvestments = "bed98974-b02a-5e2f-9ee0-a103f5c450dd"
+PowerSystemsInvestmentsPortfolios = "bed98974-b02a-5e2f-9fe0-a103f8c450dd"
+TimeSeries = "9e3dc215-6440-5c97-bce1-76c03772f85e"
+
+[sources]
+PowerSimulations = {rev = "fc30a298afb314d563488db852387e145ec97f9a", url = "https://github.com/ymiftah/PowerSimulations.jl.git"}
+PowerSystemsInvestments = {rev = "7874984b6fa53e0463931c8e769c0e356df71910", url = "https://github.com/Sienna-Platform/PowerSystemsInvestments.jl"}
+PowerSystemsInvestmentsPortfolios = {rev = "c1150d6eadaa3d28f36575e7232d8d77dc722cca", url = "https://github.com/Sienna-Platform/PowerSystemsInvestmentsPortfolios.jl"}

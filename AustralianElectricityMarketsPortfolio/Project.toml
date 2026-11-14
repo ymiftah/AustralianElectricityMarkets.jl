@@ -1,0 +1,29 @@
+name = "AustralianElectricityMarketsPortfolio"
+uuid = "dc134ced-5ca2-4c5d-982b-09bed69fa14b"
+version = "0.1.0"
+authors = ["Youssef Miftah <miftahyo@outlook.fr> and contributors"]
+
+[deps]
+AustralianElectricityMarketsCache = "861c3b18-d81a-4a93-a72f-84d40c351037"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+DuckDB = "d2f5444f-75bc-4fdf-ac35-56f514c445e1"
+InfrastructureSystems = "2cd47ed4-ca9b-11e9-27f2-ab636a7671f1"
+PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
+PowerSystemsInvestmentsPortfolios = "bed98974-b02a-5e2f-9fe0-a103f8c450dd"
+
+[compat]
+AustralianElectricityMarketsCache = "0.1"
+DataFrames = "1.7"
+Dates = "1"
+DuckDB = "1"
+InfrastructureSystems = "^3.1"
+PowerSystems = "5.10.0"
+PowerSystemsInvestmentsPortfolios = "0.1"
+julia = "1.11"
+
+[sources]
+AustralianElectricityMarketsCache = {path = "../AustralianElectricityMarketsCache"}
+InfrastructureSystems = {url = "https://github.com/ymiftah/InfrastructureSystems.jl.git", rev = "296ad42fd355e3dc3c211eb12c783809531a9851"}
+PowerSystems = {url = "https://github.com/ymiftah/PowerSystems.jl.git", rev = "c950c8bf165e275946995ec431938ef0b6ff22ba"}
+PowerSystemsInvestmentsPortfolios = {url = "https://github.com/Sienna-Platform/PowerSystemsInvestmentsPortfolios.jl", rev = "c1150d6eadaa3d28f36575e7232d8d77dc722cca"}

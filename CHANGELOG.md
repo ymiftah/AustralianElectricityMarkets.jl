@@ -227,6 +227,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   distributions, NEMDE error percentiles by unit/region/service/interconnector,
   memory, partial-run coverage and overlap-aware pooled comparisons.
 
+- **Complete ISP cache extraction**: Added a standalone extractor for every PLEXOS XML table and CSV trace, with persistent DuckDB storage, source provenance, trace-file mappings and source-count validation. Documented the extracted September 2026 release in `docs/analysis/isp2026-cache.md`.
+- **ISP 2026 data inventory**: Documented all 27 XML tables, populated object classes and relationships, and external trace files in the local three-scenario model package, with a machine-readable catalogue in `docs/analysis/`.
+- ISP 2026 PLEXOS XML parsing, per-scenario DuckDB loading and scalar property resolution
+  with date, band and active monthly timeslice selection.
 - `NEMDEConfiguration` builds fully populated replay systems through AEM's `nem_system`.
   AEMSim's `prepare_replication!`, `replication_simulation` and `replication_results` consume built
   systems and expose the standard PSI build, execute and results lifecycle.
@@ -553,6 +557,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `check_replication_parts`, `never_invoked_constraints` (the `:never_invoked` exclusions of a replay) and
   `AbstractMNSPSlack`. `replication_template` takes `initial_time` and `market_price_cap` keywords.
 
+- **`read_plexos_xml`/`build_isp_cache`/`resolve_properties`**: New parsing layer for AEMO's ISP PLEXOS model (`AustralianElectricityMarketsData/src/isp2026/`). The model's XML export is a flat relational dump of 27 uniformly-shaped `t_*` tables, so one table-agnostic reader turns it into a `DataFrame` per table; those load into DuckDB under one schema per ISP scenario, since PLEXOS `object_id`s are per-file and sharing a table set would let a missing `scenario` predicate silently cross-join scenarios. `resolve_properties` implements PLEXOS property precedence — date scoping (latest `date_from` wins among overlapping open-ended records), band selection, timeslice matching against the horizon month (honouring each Timeslice's `Include` flag), and fallback to the property default — as one SQL query, because choosing the wrong record here yields a plausible wrong number rather than an error.
+- **`populate_isp`/`build_isp_cache`/`isp_cache`**: The 2026 ISP model is stored in a standalone `~/.nemdb_cache/ISP/2026/isp.duckdb`, one schema per scenario holding all 27 PLEXOS tables, with a `cache_meta` record of each table's source XML, SHA-256, columns and record count. Record counts taken from the XML are compared with the parsed and the stored counts, and stored column sets must match. The database is built beside the target and renamed over it only after validation, so a failed build leaves the previous database in place. `isp_cache` opens read-only by default. `acquire_isp_archives` supplies the release archives from a local folder or the cache, matching them by SHA-256 so a browser's suggested filename does not matter.
+- **ISP trace cache**: `build_isp_cache` loads the trace CSVs into `traces` tables keyed by SHA-256, so files with identical content share one table, and records every file and Data File reference in `cache_meta`. Each scenario gains a `trace_bindings` view joining property records to their trace table, and the build fails when a reference does not resolve or resolves ambiguously. The cache layout version is 2; a database built before traces were loaded is rejected and must be rebuilt with force_new = true.
+- **`AustralianElectricityMarketsPortfolio`**: new package for the 2026 ISP PLEXOS portfolio, pinned to `PowerSystemsInvestmentsPortfolios` revision `c1150d6eadaa3d28f36575e7232d8d77dc722cca`, with its own test project and CI workflow. It resolves in its own environment rather than the root workspace, because PSIP requires HTTP 1.x while the workspace resolves 2.7.1; its PowerSystems and InfrastructureSystems pins are the same revisions the workspace uses.
+
 ### Removed
 
 - Public names `set_nem_fixed_loads!`, `add_nem_constraints!`, `set_nem_dispatch_limits!`, `set_demand!`, `get_low_breakpoint`, `get_high_breakpoint`, `get_rhs`, `set_constraint_weight!`, `get_gencon_id`, `interconnector_loss_gaps` and `check_interconnector_loss_segments`; `nem_system` builds these inputs.
@@ -611,6 +620,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `isp_cache_path` and `isp_scenario_schema` moved to `AustralianElectricityMarketsCache`. `AustralianElectricityMarketsData` still exports both.
+- `resolve_properties` moved from `AustralianElectricityMarketsData` to `AustralianElectricityMarketsPortfolio`, where it resolves on `property_id` (`resolve_property` for one property) and throws an `ArgumentError` when a property name is ambiguous within a class unless `collection_id` picks one. `AustralianElectricityMarketsData` no longer exports `resolve_properties`. A property with no declared default and no applicable record now resolves to `missing` instead of `0.0`.
 - The replay HiGHS optimizer turns off the root sub-MIP heuristics (RINS, RENS, root reduced-cost, feasibility jump), which cut slow-interval solve times about tenfold with identical solutions.
 
 - A settings-`ext` `"market_price_cap"` override no longer prices the area-balance slack. The balance slack

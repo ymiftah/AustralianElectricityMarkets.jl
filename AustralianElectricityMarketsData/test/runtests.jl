@@ -9,6 +9,17 @@ using DataFrames: nrow, DataFrame
     include("test-nemweb-load.jl")
 end
 
+@testset "ISP 2026 PLEXOS parsing tests" begin
+    include(joinpath(@__DIR__, "..", "..", "test", "fixtures", "isp2026_fixture.jl"))
+    include("isp2026.jl")
+    include("isp2026_cache.jl")
+    include("isp2026_traces.jl")
+end
+
+@testset "ISP 2026 release and archive acquisition tests" begin
+    include("isp2026_release.jl")
+end
+
 @testset "Aqua" begin
     include("aqua.jl")
 end

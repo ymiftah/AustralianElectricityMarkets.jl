@@ -25,3 +25,7 @@ flags:
     paths:
       - AustralianElectricityMarketsSimulations/src/
     carryforward: true
+  AustralianElectricityMarketsPortfolio:
+    paths:
+      - AustralianElectricityMarketsPortfolio/src/
+    carryforward: true

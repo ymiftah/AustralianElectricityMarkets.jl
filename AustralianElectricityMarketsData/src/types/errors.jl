@@ -20,3 +20,16 @@ Bulk-populating a wide date range trips NEMWEB's rate limiter easily, particular
 struct TransientDownloadError <: Exception
     msg::String
 end
+
+
+"""
+    ISPReleaseError
+
+Exception raised when the ISP archives on disk or at AEMO cannot be reconciled with the built-in
+release record: a file's SHA-256 does not match, or an archive cannot be obtained at all.
+"""
+struct ISPReleaseError <: Exception
+    msg::String
+end
+
+Base.showerror(io::IO, e::ISPReleaseError) = return print(io, e.msg)
