@@ -38,6 +38,16 @@ include(joinpath(@__DIR__, "..", "..", "literate", "shared", "toy_jump.jl")); #h
 
 sys = toy_system(market; nem = true)
 
+# A replay `System` holds its inputs as raw five-minute series with one point beyond the last
+# dispatch interval, as `nem_system` reads them from NEMWEB. The toy clears the one interval `T0`,
+# so its series cover two stamps.
+
+const STAMPS = [T0, T0 + RESOLUTION]
+PSY.clear_time_series!(sys) #hide
+for load in PSY.get_components(PSY.PowerLoad, sys) #hide
+    PSY.add_time_series!(sys, load, single_series("max_active_power", T0, fill(1.0, length(STAMPS)), RESOLUTION; scaling_factor_multiplier = PSY.get_max_active_power)) #hide
+end #hide
+
 # ### The interconnector's loss model
 #
 # Interconnector losses are shared between the two regions. The toy loss model uses a
@@ -59,32 +69,27 @@ attach_loss_model!(sys, market);
 
 # ### Market data as time series
 #
-# Energy offers, availability, ramp rates and metered initial output specify the unit's
-# feasible dispatch for the interval. For NEMWEB data, use `set_market_bids!`,
-# `set_unit_conditions!` to attach these inputs.
+# Energy offers, availability, telemetered ramp rates and metered initial output specify the unit's
+# feasible dispatch for the interval. For NEMWEB data, `set_market_bids!` and `set_unit_conditions!`
+# attach these inputs.
+
+series(name, value) = single_series(name, T0, fill(value, length(STAMPS)), RESOLUTION) #hide
+series_key(device, name) = only(k for k in PSY.get_time_series_keys(device) if PSY.IS.get_name(k) == name) #hide
+function attach_series!(sys, device, name, value) #hide
+    PSY.add_time_series!(sys, device, series(name, value)) #hide
+    return series_key(device, name) #hide
+end #hide
 
 function attach_energy_data!(sys, market) #hide
-    stamps = [T0, T0 + RESOLUTION] #hide
-    series(name, value; multiplier = nothing) = PSY.SingleTimeSeries( #hide
-        name = name, data = PSY.TimeSeries.TimeArray(stamps, fill(value, length(stamps))), #hide
-        scaling_factor_multiplier = multiplier, #hide
-    ) #hide
-    bid_key(device, name) = only(k for k in PSY.get_time_series_keys(device) if PSY.IS.get_name(k) == name) #hide
     for u in market.units #hide
         device = PSY.get_component(PSY.Generator, sys, String(u.name)) #hide
         offer = PSY.PiecewiseStepData([0.0; cumsum(quantity.(u.bids))], price.(u.bids)) #hide
-        PSY.add_time_series!( #hide
-            sys, device, PSY.SingleTimeSeries(name = "bid_energy_offer_curves_gen", data = PSY.TimeSeries.TimeArray(stamps, fill(offer, length(stamps)))), #hide
-        ) #hide
-        PSY.add_time_series!(sys, device, series("bid_energy_max_avail_gen", u.max_avail)) #hide
-        PSY.add_time_series!(sys, device, series("bid_energy_roc_up_gen", NaN)) #hide
-        PSY.add_time_series!(sys, device, series("bid_energy_roc_down_gen", NaN)) #hide
+        bid(field, value) = attach_series!(sys, device, bid_series_name(BidType.ENERGY, field, BidDirection.GEN), value) #hide
         push!( #hide
             get_energy_bids(AustralianElectricityMarkets._nem_offer_cost(device)), #hide
             NEMEnergyBid( #hide
-                direction = BidDirection.GEN, offer_curves = bid_key(device, "bid_energy_offer_curves_gen"), #hide
-                max_avail = bid_key(device, "bid_energy_max_avail_gen"), roc_up = bid_key(device, "bid_energy_roc_up_gen"), #hide
-                roc_down = bid_key(device, "bid_energy_roc_down_gen"), #hide
+                direction = BidDirection.GEN, offer_curves = bid(:offer_curves, offer), max_avail = bid(:max_avail, u.max_avail), #hide
+                roc_up = bid(:roc_up, NaN), roc_down = bid(:roc_down, NaN), #hide
             ), #hide
         ) #hide
         set_registration!( #hide
@@ -96,17 +101,27 @@ function attach_energy_data!(sys, market) #hide
             ), #hide
         ) #hide
         PSY.add_time_series!( #hide
-            sys, device, series("max_active_power", availability(u) / u.capacity; multiplier = PSY.get_max_active_power), #hide
+            sys, device, #hide
+            single_series("max_active_power", T0, fill(availability(u) / u.capacity, length(STAMPS)), RESOLUTION; scaling_factor_multiplier = PSY.get_max_active_power), #hide
         ) #hide
-        PSY.add_time_series!(sys, device, series("ramp_up_rate", u.ramp_up_mwh / 60 / BASE_POWER)) #hide
-        PSY.add_time_series!(sys, device, series("ramp_down_rate", u.ramp_down_mwh / 60 / BASE_POWER)) #hide
-        PSY.add_time_series!(sys, device, series("initial_mw", u.initial_mw / BASE_POWER)) #hide
-        if is_semi_scheduled(u) #hide
-            PSY.add_time_series!(sys, device, series("uigf", u.uigf / BASE_POWER)) #hide
-        end #hide
+        telemetry(field, value) = attach_series!(sys, device, getproperty(NEM_TELEMETRY_SERIES, field), value) #hide
+        set_telemetry!( #hide
+            device, #hide
+            NEMTelemetry( #hide
+                agc_status = false, uigf = is_semi_scheduled(u) ? telemetry(:uigf, u.uigf) : nothing, #hide
+                ramp_up_limit = telemetry(:ramp_up_limit, u.ramp_up_mwh), ramp_down_limit = telemetry(:ramp_down_limit, u.ramp_down_mwh), #hide
+                raise_reg_enablement = telemetry(:raise_reg_enablement, (NaN, NaN)), #hide
+                lower_reg_enablement = telemetry(:lower_reg_enablement, (NaN, NaN)), #hide
+                raise_reg_max_avail = telemetry(:raise_reg_max_avail, NaN), lower_reg_max_avail = telemetry(:lower_reg_max_avail, NaN), #hide
+            ), #hide
+        ) #hide
+        set_observed_state!( #hide
+            device, #hide
+            NEMObservedState(initial_mw = attach_series!(sys, device, NEM_OBSERVED_SERIES.initial_mw, u.initial_mw), dispatch_mode = 0), #hide
+        ) #hide
     end #hide
     for load in PSY.get_components(PSY.PowerLoad, sys) #hide
-        PSY.add_time_series!(sys, load, series("loss_demand", 1.0; multiplier = PSY.get_max_active_power)) #hide
+        PSY.add_time_series!(sys, load, single_series("loss_demand", T0, fill(1.0, length(STAMPS)), RESOLUTION; scaling_factor_multiplier = PSY.get_max_active_power)) #hide
     end #hide
     return sys #hide
 end #hide
@@ -118,23 +133,13 @@ attach_energy_data!(sys, market);
 # describing the FCAS capacity available at each energy dispatch level.
 
 function attach_fcas_data!(sys, market) #hide
-    series(name, value) = PSY.SingleTimeSeries(name = name, data = PSY.TimeSeries.TimeArray([T0, T0 + RESOLUTION], fill(value, 2))) #hide
-    bid_key(device, name) = only(k for k in PSY.get_time_series_keys(device) if PSY.IS.get_name(k) == name) #hide
     for n in fcas_names(market) #hide
         device = PSY.get_component(PSY.Generator, sys, n) #hide
         t = trapezium(market, n) #hide
         points = (t.enablement_min, t.low_breakpoint, t.high_breakpoint, t.enablement_max) #hide
         curve = PSY.PiecewiseStepData([0.0; cumsum(quantity.(fcas_bids(market, n)))], price.(fcas_bids(market, n))) #hide
-        stamps = [T0, T0 + RESOLUTION] #hide
-        PSY.add_time_series!( #hide
-            sys, device, #hide
-            PSY.SingleTimeSeries(name = "bid_raise6sec_trapezium_gen", data = PSY.TimeSeries.TimeArray(stamps, fill(points, 2))), #hide
-        ) #hide
-        PSY.add_time_series!(sys, device, series("bid_raise6sec_max_avail_gen", t.max_avail)) #hide
-        PSY.add_time_series!( #hide
-            sys, device, #hide
-            PSY.SingleTimeSeries(name = "bid_raise6sec_offer_curves_gen", data = PSY.TimeSeries.TimeArray(stamps, fill(curve, 2))), #hide
-        ) #hide
+        bid(field, value) = attach_series!(sys, device, bid_series_name(BidType.RAISE6SEC, field, BidDirection.GEN), value) #hide
+        offer_curves, max_avail_key, trapezium_key = bid(:offer_curves, curve), bid(:max_avail, t.max_avail), bid(:trapezium, points) #hide
         service = FCASService( #hide
             name = "$(generator_region(sys, n))_RAISE6SEC", region = generator_region(sys, n), bid_type = BidType.RAISE6SEC, #hide
         ) #hide
@@ -143,9 +148,7 @@ function attach_fcas_data!(sys, market) #hide
             get_fcas_bids(AustralianElectricityMarkets._nem_offer_cost(device)), #hide
             NEMFCASBid( #hide
                 service = BidType.RAISE6SEC, direction = BidDirection.GEN, #hide
-                offer_curves = bid_key(device, "bid_raise6sec_offer_curves_gen"), #hide
-                max_avail = bid_key(device, "bid_raise6sec_max_avail_gen"), #hide
-                trapezium = bid_key(device, "bid_raise6sec_trapezium_gen"), #hide
+                offer_curves = offer_curves, max_avail = max_avail_key, trapezium = trapezium_key, #hide
             ), #hide
         ) #hide
     end #hide
@@ -168,7 +171,6 @@ end #hide
 const SENSES = Dict(:LE => ConstraintSense.LE, :GE => ConstraintSense.GE, :EQ => ConstraintSense.EQ) #hide
 
 function attach_generic_constraints!(sys, market) #hide
-    stamps = [T0, T0 + RESOLUTION] #hide
     for gc in market.constraints #hide
         requirements = [ #hide
             FCASRequirement(; region = generator_region(sys, String(t.id)), service = BidType.RAISE6SEC) #hide
@@ -182,19 +184,22 @@ function attach_generic_constraints!(sys, market) #hide
         ) #hide
         devices = [PSY.get_component(PSY.StaticInjection, sys, String(t.id)) for t in gc.terms] #hide
         PSY.add_service!(sys, constraint, devices) #hide
-        for (series_name, value) in (AEM.NEM_CONSTRAINT_SERIES.rhs => gc.rhs, AEM.NEM_CONSTRAINT_SERIES.invoked => 1.0) #hide
-            PSY.add_time_series!( #hide
-                sys, constraint, #hide
-                PSY.SingleTimeSeries(; name = series_name, data = PSY.TimeSeries.TimeArray(stamps, fill(value, length(stamps)))), #hide
-            ) #hide
-        end #hide
-        constraint.rhs = only(k for k in PSY.get_time_series_keys(constraint) if k.name == AEM.NEM_CONSTRAINT_SERIES.rhs) #hide
-        constraint.invoked = only(k for k in PSY.get_time_series_keys(constraint) if k.name == AEM.NEM_CONSTRAINT_SERIES.invoked) #hide
+        constraint.rhs = attach_series!(sys, constraint, NEM_CONSTRAINT_SERIES.rhs, gc.rhs) #hide
+        constraint.invoked = attach_series!(sys, constraint, NEM_CONSTRAINT_SERIES.invoked, 1.0) #hide
     end #hide
     return sys #hide
 end #hide
-attach_generic_constraints!(sys, market)
-PSY.transform_single_time_series!(sys, 2 * RESOLUTION, RESOLUTION);
+attach_generic_constraints!(sys, market);
+
+# ### The derived replay inputs
+#
+# `nem_system` ends by deriving the inputs the replay reads from the raw ones: the offers referred to
+# the regional reference node, the effective FCAS trapeziums, the loss demand coefficients, the
+# tie-break scales, the starting output of each unit, and the five-minute forecast windows. The toy
+# calls the same private stage on its hand-built `System`, which then replays the one interval `T0`.
+
+AEM._set_replay_inputs!(sys)
+replay_intervals(sys)
 
 # The `System` now holds the whole market:
 
@@ -325,17 +330,20 @@ slack_total
 # 1. `db = aem_connect()` and `populate(db, table, start, stop)` cache the NEMWEB tables.
 # 2. `nem_system(db, NEMDEConfiguration(); date_range)` builds the populated `System`,
 #    including energy and FCAS offers, dispatch and energy limits, generic constraints and losses.
-# 3. The five-minute forecast windows, the effective FCAS parameters, the tie-break scales and the
-#    constraints the replay cannot bind are already derived by `nem_system`. The replay pre-flight checks run
-#    when the model is built, and `replay_skipped_constraints(sys, template)` reports the constraints left out.
-# 4. Construct, build and run a PSI simulation of the interval range `steps`:
+#    It ends with the replay input stage the toy called above, so the derived inputs and the
+#    five-minute forecast windows are already in place, and `replay_intervals(sys)` lists the
+#    intervals it can replay.
+# 3. The replay pre-flight checks run when the model is built, and
+#    `replay_skipped_constraints(sys, template)` reports the constraints left out.
+# 4. Construct, build and run a PSI simulation of the replay intervals:
 #
 #    ```julia
+#    steps = replay_intervals(sys)
+#    template = template_nemde()
 #    model = PSI.DecisionModel(
 #        AEMSim.NEMDispatchProblem, template, sys;
 #        optimizer = AEMSim.nemde_optimizer(), initial_time = first(steps), name = "dispatch",
 #    )
-#    skipped = replay_skipped_constraints(sys, template)
 #    models = PSI.SimulationModels(; decision_models = [model])
 #    sequence = PSI.SimulationSequence(; models, ini_cond_chronology = PSI.InterProblemChronology())
 #    simulation = PSI.Simulation(;

@@ -5,6 +5,8 @@
 Accepted. Amends [0096](0096-per-step-state-updates.md): the custom per-step updates it describes now
 run only for `SimulatedState`.
 
+Superseded by [0101](0101-aem-writes-aemsim-reads.md): the observed-state series are written by AEM in `nem_system`, not precomputed by AEMSim.
+
 ## Context
 
 ADR 0096 refreshes 13 state-dependent parameters at every step through custom

@@ -72,6 +72,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `template_nemde(; exclude_constraints)` takes the user exclusions as a name to reason `Dict`, applied through the `"filter_function"` and `"excluded_constraints"` attributes of the generic-constraint service model. `check_dispatch_envelope(template, sys)` takes no interval window, and `check_template_against_sys` no longer checks the generic constraints.
 
+- The problem type selects the replay mode: `NEMDispatchProblem` and the new `NEMClosedLoopDispatchProblem` are subtypes of the new `AbstractNEMDispatchProblem`. `DecisionModel{M}` fixes the horizon, resolution and interval at one dispatch interval and throws `ArgumentError` when `horizon`, `interval`, `resolution` or `ext` is passed; it records the mode in the `"closed_loop"` setting. Building a `NEMClosedLoopDispatchProblem` model fails with `closed-loop replay is not implemented`. The unit initial MW and the MNSP initial flow are read through one accessor each, so the closed-loop branch can be added without changing the constraints that use them.
+
+- `PSI.validate_template` of a `NEMDispatchProblem` checks for forecasts before dating the Market Price Cap, and refuses a system whose device or service availability changed after `nem_system` wrote the replay inputs, naming each changed component: the FCAS effective offers, tie-break membership, loss demand terms and constraint availability were derived for the recorded availability.
+
+- `nem_system`'s replay inputs refuse single time series that are not at the five-minute dispatch interval, naming the resolution found.
+
+- `get_build_report` throws `ArgumentError` for a stored report written before `unavailable_constraints` existed, instead of a `KeyError`.
+
+- `get_initial_mw` and `effective_regulation_enablement` are removed from `AustralianElectricityMarketsSimulations`: neither had a caller. Read the observed initial MW from the unit's `NEMObservedState` series; the regulation enablement is applied by `nem_system` through `scale_fcas_trapezium`.
+
 ### Documentation
 
 - Restored the regional how-to pages, built with `set_regional_availability!`; fixed their series plots and output directories.

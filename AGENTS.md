@@ -78,7 +78,9 @@ front, so every group runs on its own.
 | `src/accessors/` | Attached component data and time-series lookup |
 | `…Simulations/src/types/`, `…Simulations/src/formulations/` | PSI types and dispatch, FCAS, constraint and loss formulations |
 | `…Simulations/src/types/state.jl` | The telemetry and observed-state accessors of a replay unit, read by the dispatch pre-flight checks |
-| `…Simulations/src/offers/` | Effective offers and state-dependent inputs as pure functions (`derivation.jl`, `state_derivation.jl`, `initial_state.jl`), and the `set_...!` writers that record each series key |
+| `src/derivations/` | Scalar replay-input kernels (state, energy, ramps, FCAS, tie-break, loss demand): `Float64` inputs and an `NEMUnitState`, no System access |
+| `src/system/replay_inputs.jl`, `src/system/replay_inputs/` | `_set_replay_inputs!`, the last stage of `nem_system(db, NEMDEConfiguration(); date_range)`: one writer per input family, the forecast transform and the availability record |
+| `…Simulations/src/offers/derivation.jl` | The energy `MAXAVAIL` series name the dispatch parameters register |
 | `…Simulations/src/results/` | Solved and violation readers of PSI results: `read_solved_interval`, `read_constraint_violations`, and the `read_prices` / `read_fcas_prices` methods |
 | `…Simulations/src/checks/<what_is_checked>.jl` | pre-flight checks run before a build |
 | `…Simulations/src/psi_compat.jl` | shims over the pinned PowerSimulations fork |
@@ -141,3 +143,9 @@ bound, constraint and cost term. Record any departure from AEMO in an ADR.
   replay unit when `has_nem_unit_data` holds, never by its type. Regional systems carry none.
 - Series-key fields of the typed structs are `IS.StaticTimeSeriesKey`; store the static key, never a
   forecast key.
+- AEM writes every replay input once, in `nem_system`; AEMSim never writes to the System (no PSY/IS
+  mutator, `add_time_series!`, `set_available!` or `ext` write under `…Simulations/src/`). Set device
+  availability before `nem_system` builds the replay inputs: `validate_template` refuses a System whose
+  availability changed afterwards. The replay interface is `nem_system -> DecisionModel(NEMDispatchProblem,
+  template, sys) -> Simulation -> build! -> execute!`; `DecisionModel` takes no `horizon`, `interval` or
+  `resolution`.

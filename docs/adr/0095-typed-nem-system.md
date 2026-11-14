@@ -8,6 +8,8 @@ which replay devices are stock PowerSystems types carrying `NEMUnitData`.
 [0096](0096-per-step-state-updates.md) defines how the state source reaches PowerSimulations each
 step.
 
+Its derived-input parts (`NEMDispatchInputs`, written by AEMSim) are superseded by [0101](0101-aem-writes-aemsim-reads.md): AEM writes every replay input in `nem_system`.
+
 ## Context
 
 A replay system has three kinds of quantity:

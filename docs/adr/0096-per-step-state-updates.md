@@ -7,6 +7,8 @@ typed-system decision). Amended by [0098](0098-precomputed-observed-state-inputs
 `ObservedState` the parameters are read from the prepared series by the stock update, and the custom
 updates described here run only for `SimulatedState`.
 
+Superseded by [0101](0101-aem-writes-aemsim-reads.md): the custom per-step updates are removed, and per-step updates are PowerSimulations' stock time-series updates.
+
 ## Context
 
 A replay model's dispatch limits and fixed loading are read from the unit's state at the start of
