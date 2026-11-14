@@ -123,24 +123,3 @@ function _rows_to_dataframe(rows::Vector{Dict{String, Union{String, Missing}}})
     sort!(columns)
     return DataFrame([col => [get(row, col, missing) for row in rows] for col in columns])
 end
-
-export isp_scenario_schema
-
-"""
-    isp_scenario_schema(scenario::Symbol)
-
-Validate `scenario` as a DuckDB schema identifier and return it as a `String`.
-
-Scenario names are interpolated into DDL, so they are restricted to a leading letter followed
-by letters, digits and underscores. Anything else throws.
-"""
-function isp_scenario_schema(scenario::Symbol)
-    name = String(scenario)
-    occursin(r"^[A-Za-z][A-Za-z0-9_]*$", name) ||
-        throw(ArgumentError("invalid scenario name $(repr(name)): expected a leading letter then letters, digits or underscores"))
-    return name
-end
-
-function _isp_query(db::AEMDB, sql::String, params = ())
-    return DataFrame(DuckDB.execute(db.db, sql, params))
-end

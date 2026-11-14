@@ -7,10 +7,10 @@ four packages sharing the root `Manifest.toml`, plus one standalone package with
 | Package | Path | Responsible for |
 | --- | --- | --- |
 | `AustralianElectricityMarketsCache` | `AustralianElectricityMarketsCache/` | Shared configuration, DuckDB connections, cache metadata and partition inspection. No market readers or population pipeline. |
-| `AustralianElectricityMarketsData` | `AustralianElectricityMarketsData/` | NEMWEB download and Hive-partitioned parquet population. Depends on Cache, with no AEM, AEMSim or PowerSystems dependency. |
+| `AustralianElectricityMarketsData` | `AustralianElectricityMarketsData/` | NEMWEB download and Hive-partitioned parquet population, plus the ISP PLEXOS XML load and cache build. No PLEXOS property resolution (that lives in Portfolio). Depends on Cache, with no AEM, AEMSim or PowerSystems dependency. |
 | `AustralianElectricityMarkets` | repo root (`src/`) | Domain types, Readers submodule, PSY system construction and modification, attached-data accessors, per-interval NEM inputs and market-rule tables (CVP factors, MPC). Depends on Cache, with no Data or Simulations dependency. |
 | `AustralianElectricityMarketsSimulations` | `AustralianElectricityMarketsSimulations/` | NEMDE replication in PSI: `AbstractNEMDispatch` device formulations (batteries included), FCAS market and trapezium formulations, NEM constraint formulations, replication template, decision-model constructor and pre-flight checks. The simulation runner is in `scripts/replay_simulation.jl`. |
-| `AustralianElectricityMarketsPortfolio` | `AustralianElectricityMarketsPortfolio/` | 2026 ISP PLEXOS portfolio package, currently a scaffold. Intended to hold the ISP source records, PLEXOS property resolution and an `AEMInvestmentPortfolio` wrapping a `PSIP.Portfolio`. Depends on Cache, with no Data, AEM or Simulations dependency. Standalone: its own `Manifest.toml`, because PSIP requires HTTP 1.x while the workspace resolves 2.7.1. |
+| `AustralianElectricityMarketsPortfolio` | `AustralianElectricityMarketsPortfolio/` | 2026 ISP PLEXOS portfolio package. Holds the ISP source records (`read_isp_source`) and PLEXOS property resolution (`resolve_property`, `resolve_properties`). The `AEMInvestmentPortfolio` wrapper over a `PSIP.Portfolio` is still to come. Depends on Cache, with no Data, AEM or Simulations dependency. Standalone: its own `Manifest.toml`, because PSIP requires HTTP 1.x while the workspace resolves 2.7.1. |
 
 ## Quick start
 
@@ -73,6 +73,7 @@ front, so every group runs on its own.
 | Path | Role |
 | --- | --- |
 | `…Cache/src/tables.jl` | `_TABLE_SPECS`, table lookup and supported-table metadata |
+| `…Cache/src/isp_cache.jl` | ISP cache path and scenario schema helpers |
 | `…Data/src/nemweb_load/column_types.jl` | `COLUMN_TYPES`; unlisted columns silently become `VARCHAR` |
 | `src/AustralianElectricityMarkets.jl` | exports, includes, `@doc` re-binding of Readers/Cache/RegionModel names |
 | `src/types/` | Domain types, constructors, field accessors and type-specific calculations |
@@ -84,6 +85,7 @@ front, so every group runs on its own.
 | `…Simulations/src/psi_compat.jl` | shims over the pinned PowerSimulations fork |
 | `scripts/replay_simulation.jl` | `ReplaySimulation`: replay simulation runner (`replication_simulation`, `run_replication`, `REPLICATION_OPTIMIZER`) |
 | `scripts/replay_results.jl` | `ReplayResults`: post-processing of replay results (prices, dispatch, flows, violations) |
+| `…Portfolio/src/isp_properties.jl` | PLEXOS property resolution over ISP source records: precedence rules, timeslice matching, property catalogue |
 | `docs/adr/` | architecture decisions — design rationale goes here |
 | `docs/superpowers/plans/` | implementation plans; follow-up work is recorded here or in an ADR |
 

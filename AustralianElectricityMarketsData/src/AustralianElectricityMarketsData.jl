@@ -14,7 +14,7 @@ export populate, populate_legacy_archive, get_table, list_available_tables
 export ARCHIVE_MONTH_PARTITION
 export HiveConfiguration, AEMDB, aem_connect
 export ISPArchive, ISPRelease, ISPReleaseError, ISP_RELEASE_2026, acquire_isp_archives, isp_archives_dir
-export isp_cache_path, isp_cache, populate_isp, build_isp_cache
+export isp_cache_path, isp_scenario_schema, isp_cache, populate_isp, build_isp_cache
 
 const NEMWEB_URL = "http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/{year}/MMSDM_{year}_{month:02d}/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_DVD_{table}_{year}{month:02d}010000.zip"
 const NEMWEB_URL_ALT = "http://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM/{year}/MMSDM_{year}_{month:02d}/MMSDM_Historical_Data_SQLLoader/DATA/PUBLIC_ARCHIVE%23{table}%23FILE{part:02d}%23{year}{month:02d}010000.zip"
@@ -26,7 +26,6 @@ include("nemweb_load/download.jl")
 include("nemweb_load/populate.jl")
 include("nemweb_load/legacy.jl")
 include("isp2026/xml.jl")
-include("isp2026/properties.jl")
 include("isp2026/release.jl")
 include("isp2026/download.jl")
 include("isp2026/cache.jl")
@@ -37,5 +36,7 @@ include("isp2026/traces.jl")
 @doc (@doc AustralianElectricityMarketsCache.aem_connect) aem_connect
 @doc (@doc AustralianElectricityMarketsCache.get_table) get_table
 @doc (@doc AustralianElectricityMarketsCache.list_available_tables) list_available_tables
+@doc (@doc AustralianElectricityMarketsCache.isp_cache_path) isp_cache_path
+@doc (@doc AustralianElectricityMarketsCache.isp_scenario_schema) isp_scenario_schema
 
 end

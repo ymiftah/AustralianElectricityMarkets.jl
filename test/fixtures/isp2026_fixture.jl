@@ -1,49 +1,51 @@
+using AustralianElectricityMarketsData
+
 """
     write_isp_fixture(path::AbstractString; broken_timeslice::Bool = false)
 
 Write a miniature PLEXOS `MasterDataSet` XML exercising every property-resolution rule.
 
 Contents:
-- `GEN_SUPERSEDE` — two open-ended `Max Capacity` records (2024 => 100, 2026 => 250).
+- `GEN_SUPERSEDE`: two open-ended `Max Capacity` records (2024 => 100, 2026 => 250).
   Correct resolution at a 2026-07-01 horizon is **250** (latest `date_from` wins).
-- `GEN_EXPIRED` — a `Max Capacity` record that expired in 2025; falls back to the
+- `GEN_EXPIRED`: a `Max Capacity` record that expired in 2025; falls back to the
   property default of 42.
-- `GEN_BANDED` — a multi-band `Max Capacity` with bands 1 and 2 (10 and 20).
-- `GEN_TAGGED` — a `Max Capacity` row tagged to the active `Summer` timeslice
+- `GEN_BANDED`: a multi-band `Max Capacity` with bands 1 and 2 (10 and 20).
+- `GEN_TAGGED`: a `Max Capacity` row tagged to the active `Summer` timeslice
   (`M1-3,11,12`), which does not contain July; excluded from a 2026-07-01 resolution, so
   it falls back to the default of 42.
-- `GEN_PLAIN` — a single undated record of 77.
-- `GEN_TIMESLICE_MATCH` — a `Max Capacity` row tagged to the active `Winter` timeslice
+- `GEN_PLAIN`: a single undated record of 77.
+- `GEN_TIMESLICE_MATCH`: a `Max Capacity` row tagged to the active `Winter` timeslice
   (`M4-10`), which does contain July; resolves to its own value of 88 rather than the
   default.
-- `GEN_SPECIFICITY` — an untagged `Max Capacity` record (500, dated 2026) and a
+- `GEN_SPECIFICITY`: an untagged `Max Capacity` record (500, dated 2026) and a
   `Winter`-tagged one (33, dated 2020); the timeslice-matched record wins despite its
   older `date_from`, proving specificity outranks recency.
-- `GEN_ODD` — a `Max Capacity` row tagged to the active `Odd` timeslice, a non-month
+- `GEN_ODD`: a `Max Capacity` row tagged to the active `Odd` timeslice, a non-month
   day/hour expression (`D1,H1; D15,H1`); never matches, never throws, falls back to the
   default of 42.
-- `GEN_SELF_MONTH` — a `Max Capacity` row tagged to the active `M7` timeslice, which has
+- `GEN_SELF_MONTH`: a `Max Capacity` row tagged to the active `M7` timeslice, which has
   no `Include` text expression at all and is matched purely by its own name; resolves to
   its own value of 66 for a July horizon.
-- `GEN_INACTIVE_TAG` — a `Max Capacity` row tagged to `Retired`, an **inactive**
-  (`Include = 0`) timeslice with neither a text expression nor a month-form name — the
+- `GEN_INACTIVE_TAG`: a `Max Capacity` row tagged to `Retired`, an **inactive**
+  (`Include = 0`) timeslice with neither a text expression nor a month-form name: the
   disabled flag must exclude it before any expression lookup is attempted, so this falls
   back to the default of 42 without throwing.
 
 Five `Timeslice` objects carry a real `Include` expression via their own `Include`
 property: `Summer` = `M1-3,11,12`, `Winter` = `M4-10`, `Odd` = `D1,H1; D15,H1` (all
 active, `Include = -1`); `M7` is active with no expression, matched by name alone;
-`Retired` is inactive (`Include = 0`) with no expression and a non-month name — matching
+`Retired` is inactive (`Include = 0`) with no expression and a non-month name, matching
 AEMO's real ISP model, which disables regional seasonal timeslices this way rather than
 by omitting their `Include` records.
 
 When `broken_timeslice = true`, an additional active (`Include = -1`) `Mystery`
 timeslice is added with neither a text expression nor a month-form name, tagged to
-`GEN_BROKEN_TAG`'s `Max Capacity` record — a genuine gap that must make
-[`resolve_properties`](@ref) throw naming `Mystery`, not silently return no match. This
-is opt-in because a genuinely unresolvable active timeslice makes *every*
-`resolve_properties` call against the scenario throw, by design — it must not be present
-in the default fixture used by the other tests above.
+`GEN_BROKEN_TAG`'s `Max Capacity` record: a genuine gap that must make
+`resolve_properties` in `AustralianElectricityMarketsPortfolio` throw naming `Mystery`,
+not silently return no match. This is opt-in because a genuinely unresolvable active
+timeslice makes *every* `resolve_properties` call against the scenario throw, by design;
+it must not be present in the default fixture used by the other tests.
 """
 function write_isp_fixture(path::AbstractString; broken_timeslice::Bool = false)
     broken_objects = broken_timeslice ? """

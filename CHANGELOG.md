@@ -620,6 +620,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `isp_cache_path` and `isp_scenario_schema` moved to `AustralianElectricityMarketsCache`. `AustralianElectricityMarketsData` still exports both.
+- `resolve_properties` moved from `AustralianElectricityMarketsData` to `AustralianElectricityMarketsPortfolio`, where it resolves on `property_id` (`resolve_property` for one property) and throws an `ArgumentError` when a property name is ambiguous within a class unless `collection_id` picks one. `AustralianElectricityMarketsData` no longer exports `resolve_properties`. A property with no declared default and no applicable record now resolves to `missing` instead of `0.0`.
 - The replay HiGHS optimizer turns off the root sub-MIP heuristics (RINS, RENS, root reduced-cost, feasibility jump), which cut slow-interval solve times about tenfold with identical solutions.
 
 - A settings-`ext` `"market_price_cap"` override no longer prices the area-balance slack. The balance slack

@@ -5,26 +5,6 @@ const _ISP_RESERVED_SCHEMAS = ("cache_meta", "traces", "main", "information_sche
 const _ISP_STALE_BUILD_SECONDS = 3600
 
 """
-    isp_cache_path(config::HiveConfiguration) -> String
-
-Path of the ISP cache database, `<hive_location>/ISP/2026/isp.duckdb`.
-
-# Arguments
-- `config`: cache configuration; the cache must be on the local filesystem.
-
-# Returns
-- `String` path of the database file.
-"""
-function isp_cache_path(config::HiveConfiguration)::String
-    islocal(config) || throw(
-        ArgumentError(
-            "the ISP cache is a local DuckDB file; got filesystem = $(config.filesystem)."
-        )
-    )
-    return joinpath(config.hive_location, "ISP", "2026", "isp.duckdb")
-end
-
-"""
     isp_cache(config::HiveConfiguration; read_only = true) -> AEMDB
 
 Open the ISP cache database, which [`build_isp_cache`](@ref) creates.
