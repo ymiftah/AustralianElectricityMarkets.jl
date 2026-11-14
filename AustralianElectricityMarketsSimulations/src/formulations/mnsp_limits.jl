@@ -39,6 +39,26 @@ function _mnsp_input_accessor(container, kind::_MNSPInputKind, link...)
 end
 
 """
+    _mnsp_initial_flow_accessor(container, closed_loop) -> accessor
+
+The MNSP initial flow of a replay interval, as `accessor(name, t) -> JuMP.AffExpr` in MW: the metered
+initial flow parameter in an open-loop replay. A closed-loop replay is not implemented.
+
+# Arguments
+- `container`: the `PSI.OptimizationContainer` being built.
+- `closed_loop`: whether the model replays closed loop.
+
+# Returns
+The accessor. Throws `ArgumentError` when `closed_loop`.
+"""
+function _mnsp_initial_flow_accessor(container::PSI.OptimizationContainer, closed_loop::Bool)
+    closed_loop && throw(ArgumentError(_CLOSED_LOOP_UNSUPPORTED))
+    initial, _ = _mnsp_input_accessor(container, MNSPInitialFlowInput())
+    accessor(name, t) = convert(JuMP.AffExpr, initial(name, t))
+    return accessor
+end
+
+"""
     _add_mnsp_limit_variables!(container, devices)
 
 Allocates non-negative per-unit MW violations for MNSP commercial limits, fixed loading and
@@ -77,7 +97,7 @@ function _add_mnsp_operating_constraints!(container, devices)
     names, steps = PSY.get_name.(mnsp), PSI.get_time_steps(container)
     base = PSI.get_base_power(container)
     minutes = 60 * interval_hours(PSI.get_resolution(container))
-    initial, _ = _mnsp_input_accessor(container, MNSPInitialFlowInput())
+    initial = _mnsp_initial_flow_accessor(container, _closed_loop(container))
     up_rate, _ = _mnsp_input_accessor(container, MNSPRampRateInput(), MNSPForwardLink())
     down_rate, _ = _mnsp_input_accessor(container, MNSPRampRateInput(), MNSPReverseLink())
     flow = PSI.get_variable(container, PSI.FlowActivePowerVariable(), T)

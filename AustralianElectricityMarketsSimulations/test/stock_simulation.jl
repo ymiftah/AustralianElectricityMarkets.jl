@@ -88,6 +88,35 @@ const STOCK_SIM = stock_simulate(sentinel_system())
     end
 end
 
+@testset "the problem type selects the replay mode; closed-loop replay is refused" begin
+    @test NEMClosedLoopDispatchProblem <: AbstractNEMDispatchProblem <: PSI.DefaultDecisionProblem
+    @test NEMDispatchProblem <: AbstractNEMDispatchProblem
+    sys = sentinel_system()
+    closed = PSI.DecisionModel(
+        NEMClosedLoopDispatchProblem, replay_template(sys), sys; optimizer = STOCK_OPTIMIZER, initial_time = TOY_START,
+    )
+    @test PSI.get_ext(PSI.get_settings(closed))["closed_loop"] === true
+    err = _caught(() -> PSI.validate_template(closed))
+    @test err isa ArgumentError && occursin("closed-loop replay is not implemented", err.msg)
+    @test PSI.build!(closed; output_dir = mktempdir()) == PSI.ModelBuildStatus.FAILED
+    open_loop = PSI.DecisionModel(
+        NEMDispatchProblem, replay_template(sys), sys; optimizer = STOCK_OPTIMIZER, initial_time = TOY_START,
+    )
+    @test PSI.get_ext(PSI.get_settings(open_loop))["closed_loop"] === false
+    for kw in (:horizon, :interval, :resolution)
+        err = _caught(() -> PSI.DecisionModel(NEMDispatchProblem, replay_template(sys), sys; kw => TOY_RESOLUTION))
+        @test err isa ArgumentError && occursin(string(kw), err.msg)
+    end
+    @test_throws ArgumentError PSI.DecisionModel(NEMDispatchProblem, replay_template(sys), sys; ext = Dict{String, Any}())
+    # The state accessors refuse a closed-loop container, and read the observed state otherwise.
+    container = PSI.get_optimization_container(STOCK_SIM.model)
+    @test !AEMS._closed_loop(container)
+    @test_throws ArgumentError AEMS._initial_mw_accessor(container, ThermalStandard, true)
+    initial, covered = AEMS._initial_mw_accessor(container, ThermalStandard, false)
+    @test TOY_CHEAP in covered && initial(TOY_CHEAP, 1) isa PSI.JuMP.AffExpr
+    @test_throws ArgumentError AEMS._mnsp_initial_flow_accessor(container, true)
+end
+
 @testset "step 2 reads step-2 data" begin
     expected = [
         (step = 1, cheap = 60.0, expensive = 40.0, price = 60.0, objective = 3600 / 12, limit_price = 0.0),

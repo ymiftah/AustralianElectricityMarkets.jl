@@ -393,6 +393,34 @@ function _ts_parameter_accessor(container, ::Type{P}, ::Type{T}, meta::String = 
 end
 
 
+# Whether the model replays closed loop, from its `"closed_loop"` setting; `false` for a model without one.
+function _closed_loop(container::PSI.OptimizationContainer)
+    return get(PSI.get_ext(PSI.get_settings(container)), "closed_loop", false)::Bool
+end
+
+
+"""
+    _initial_mw_accessor(container, T, closed_loop) -> (accessor, covered)
+
+The unit initial MW of a replay interval, as `accessor(name, t) -> JuMP.AffExpr` in system-base per-unit:
+the observed initial MW parameter in an open-loop replay. A closed-loop replay is not implemented.
+
+# Arguments
+- `container`: the `PSI.OptimizationContainer` being built.
+- `T`: the component type whose `InitialPowerTimeSeriesParameter` is read.
+- `closed_loop`: whether the model replays closed loop.
+
+# Returns
+The accessor and the `Set` of device names the parameter covers. Throws `ArgumentError` when `closed_loop`.
+"""
+function _initial_mw_accessor(container::PSI.OptimizationContainer, ::Type{T}, closed_loop::Bool) where {T}
+    closed_loop && throw(ArgumentError(_CLOSED_LOOP_UNSUPPORTED))
+    initial, covered = _ts_parameter_accessor(container, InitialPowerTimeSeriesParameter, T)
+    accessor(name, t) = convert(JuMP.AffExpr, initial(name, t))
+    return accessor, covered
+end
+
+
 function _ramp_base_accessor(container, ::Type{NEMReplayDispatch}, ::Type{T}, names, _) where {T}
     PSI.has_container_key(container, InitialPowerTimeSeriesParameter, T) || throw(
         ArgumentError(
@@ -400,7 +428,7 @@ function _ramp_base_accessor(container, ::Type{NEMReplayDispatch}, ::Type{T}, na
                 "ramp has no base to measure against",
         ),
     )
-    initial, covered = _ts_parameter_accessor(container, InitialPowerTimeSeriesParameter, T)
+    initial, covered = _initial_mw_accessor(container, T, _closed_loop(container))
     _require_coverage(names, "no initial-power time series", _SETTER_REMEDY, covered)
     return initial
 end

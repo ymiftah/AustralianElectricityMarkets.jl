@@ -88,13 +88,11 @@ include("results/comparison.jl")
 include("results/interconnector_losses.jl")
 
 
-export get_initial_mw
-export effective_regulation_enablement
 export FCAS_BAND_COUNT, FCAS_INACTIVE_LIMIT_MW, fcas_effective_series_name, fcas_ramping_series_name,
     fcas_upper_regulation_service, fcas_offer_sides
 export DISPATCH_INTERVAL, interval_hours, interval_cost_coefficient, trading_day_steps, replay_chunks
 export NEM_DISPATCH_DEVICE_TYPES, template_nemde, check_template_against_sys, replay_skipped_constraints
-export NEMDispatchProblem, nemde_optimizer, NEMDE_HIGHS_OPTIONS
+export AbstractNEMDispatchProblem, NEMDispatchProblem, NEMClosedLoopDispatchProblem, nemde_optimizer, NEMDE_HIGHS_OPTIONS
 export EnergyOfferBandVariable, EnergyBandWidthParameter
 export EnergyLimitTimeSeriesParameter
 export FixedLoadTimeSeriesParameter, FixedLoadInvokedTimeSeriesParameter
