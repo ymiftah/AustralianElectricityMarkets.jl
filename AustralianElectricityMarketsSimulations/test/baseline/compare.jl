@@ -1,6 +1,7 @@
 # Compares two replay snapshots key by key. Run as a script, it compares two capture folders and
 # exits 0 when the gate passes.
 
+using Dates
 using DataFrames
 using Serialization
 
@@ -36,9 +37,25 @@ end
 _row_columns(table::DataFrame) = [n for n in names(table) if !(nonmissingtype(eltype(table[!, n])) <: Real)]
 _value_columns(table::DataFrame) = [n for n in names(table) if nonmissingtype(eltype(table[!, n])) <: Real]
 
+# `b` without the rows whose non-numeric columns are absent from `a` and whose values are all within `atol` of
+# zero (the zero-width rows of a wider axis); other extra rows stay so that the tables differ.
+function _drop_zero_extra_rows(a::DataFrame, b::DataFrame, atol::Real)
+    Set(names(a)) == Set(names(b)) || return b
+    rows = _row_columns(a)
+    isempty(rows) && return b
+    known = Set(Tuple(r[c] for c in rows) for r in eachrow(a))
+    vals = _value_columns(b)
+    keep = [
+        Tuple(r[c] for c in rows) in known || any(c -> !(ismissing(r[c]) || abs(r[c]) <= atol), vals)
+            for r in eachrow(b)
+    ]
+    return b[keep, :]
+end
+
 # The largest gap of two tables aligned on their non-numeric columns, and whether they differ.
 # Tables with other columns or row counts differ outright.
-function _compare_tables(kind::AbstractString, a::DataFrame, b::DataFrame, atol::Real)
+function _compare_tables(kind::AbstractString, a::DataFrame, b::DataFrame, atol::Real; extra_zero::Bool = false)
+    extra_zero && (b = _drop_zero_extra_rows(a, b, atol))
     Set(names(a)) == Set(names(b)) && nrow(a) == nrow(b) || return (max_abs = Inf, mismatch = true)
     b = b[!, names(a)]
     rows = _row_columns(a)
@@ -149,7 +166,7 @@ function _gate_rows(
         elseif !haskey(baseline, key)
             _allowed(key, allow_new) || push!(rows, (; key, kind, max_abs = Inf, mismatch = true))
         else
-            cmp = _compare_tables(kind, baseline[key], candidate[key], atol)
+            cmp = _compare_tables(kind, baseline[key], candidate[key], atol; extra_zero = _allowed(key, allow_new))
             push!(rows, (; key, kind, cmp.max_abs, cmp.mismatch))
         end
     end
@@ -162,7 +179,8 @@ end
 Compares two snapshots from [`replay_snapshot`](@ref) and returns the gating mismatches as
 `(; key, kind, max_abs)` rows. Variable, dual, auxiliary and expression values differ when they exceed
 `atol`; the optimizer objective differs beyond a relative `1e-9`. Parameter and input tables never gate.
-A key present on one side only is a mismatch unless a regex in `allow_new` or `allow_missing` matches it.
+A key present on one side only is a mismatch unless a regex in `allow_new` or `allow_missing` matches it;
+rows that a key matching `allow_new` adds with all values zero do not count as a difference.
 
 # Arguments
 - `baseline`, `candidate`: the snapshots to compare.

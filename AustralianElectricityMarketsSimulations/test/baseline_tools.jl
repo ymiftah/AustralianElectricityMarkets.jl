@@ -127,3 +127,12 @@ end
     @test isempty(compare_snapshots(a, other; invariants = true))
     @test only(reported_dual_differences(a, other)).key == "dual/FCASJointCapacityConstraint__Unit"
 end
+
+@testset "allow_new keys may add all-zero rows, not nonzero ones" begin
+    a = Dict("variable/band" => DataFrame(DateTime = [BT_T1], name = ["1"], value = [3.0]))
+    b = Dict("variable/band" => DataFrame(DateTime = [BT_T1, BT_T1], name = ["1", "2"], value = [3.0, 0.0]))
+    @test !isempty(compare_snapshots(a, b))
+    @test isempty(compare_snapshots(a, b; allow_new = [r"band"]))
+    b["variable/band"].value[2] = 1.0
+    @test !isempty(compare_snapshots(a, b; allow_new = [r"band"]))
+end
