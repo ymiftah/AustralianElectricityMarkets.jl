@@ -3,7 +3,7 @@
 PSI.get_default_time_series_names(::Type{GenericConstraint}, ::Type{LinearFactorLimit}) =
     Dict{Type{<:PSI.TimeSeriesParameter}, String}(
     NEMConstraintRHSParameter => NEM_CONSTRAINT_SERIES.rhs,
-    GenericConstraintInvocationParameter => NEM_CONSTRAINT_SERIES.invoked,
+    GenericConstraintInvocationMaskParameter => NEM_CONSTRAINT_SERIES.invoked,
 )
 
 
@@ -26,7 +26,7 @@ PSI.get_multiplier_value(::NEMConstraintRHSParameter, ::GenericConstraint, ::Lin
     1.0
 
 
-PSI.get_multiplier_value(::GenericConstraintInvocationParameter, ::GenericConstraint, ::LinearFactorLimit) =
+PSI.get_multiplier_value(::GenericConstraintInvocationMaskParameter, ::GenericConstraint, ::LinearFactorLimit) =
     1.0
 
 
@@ -331,7 +331,8 @@ Builds [`GenericConstraintSlackUp`](@ref)/[`GenericConstraintSlackDown`](@ref) f
 `PSI.get_use_slacks(model)`, one side per `get_sense(gc)` (`LE` → up only, `GE` → down only,
 `EQ` → both), and merges each into [`NEMConstraintLHS`](@ref): `-slack_up` on the `LE` side,
 `+slack_down` on the `GE` side, so `add_constraints!`'s stored bound becomes satisfiable by
-relaxing it rather than infeasible.
+relaxing it rather than infeasible. It also builds the unpriced [`GenericConstraintRelaxation`](@ref)
+variables, indexed `[name, "up"/"down", t]`, that `add_constraints!` enters with the invocation mask.
 A no-op when `use_slacks` is `false`.
 """
 function _add_gc_slack_variables!(
@@ -353,11 +354,44 @@ function _add_gc_slack_variables!(
             JuMP.add_to_expression!(expr[name, t], coefficient, slack[name, t])
         end
     end
+    relaxation = PSI.add_variable_container!(
+        container, GenericConstraintRelaxation(), GenericConstraint, [name], ["up", "down"], time_steps;
+        meta = name,
+    )
+    jm = PSI.get_jump_model(container)
+    for t in time_steps, side in ("up", "down")
+        relaxation[name, side, t] =
+            JuMP.@variable(jm, base_name = "GenericConstraintRelaxation_{$name,$side,$t}", lower_bound = 0.0)
+    end
     return
 end
 
 
 # --- add_constraints!: sense dispatch, honouring the invoked series ---
+
+"""
+    _invoked_mask(container, gc) -> Vector{Float64}
+
+The `GenericConstraint`'s invoked series (`1.0`/`0.0`), read through its `invoked` key, over `container`'s
+time steps from its initial time.
+
+# Arguments
+- `container`: the optimization container being built.
+- `gc`: the generic constraint owning the invocation series.
+
+# Returns
+A `Vector{Float64}`.
+"""
+function _invoked_mask(container::PSI.OptimizationContainer, gc::GenericConstraint)
+    start_time = PSI.get_initial_time(container)
+    key = _constraint_key(gc, :invoked, NEM_CONSTRAINT_SERIES.invoked)
+    mask::Vector{Float64} = IS.get_time_series_values(
+        gc, key; start_time = start_time, len = length(PSI.get_time_steps(container)),
+        ignore_scaling_factors = true,
+    )
+    return mask
+end
+
 
 function PSI.add_constraints!(
         container::PSI.OptimizationContainer,
@@ -379,20 +413,40 @@ function PSI.add_constraints!(
     base_power = PSI.get_base_power(container)
     jm = PSI.get_jump_model(container)
     sense = get_sense(gc)
-    # Every row is an Interval row; the invocation parameter frees the row of a non-invoked interval.
-    bounds = if sense == ConstraintSense.LE
-        JuMP.MOI.Interval(-Inf, 0.0)
-    elseif sense == ConstraintSense.GE
-        JuMP.MOI.Interval(0.0, Inf)
-    else
-        JuMP.MOI.Interval(0.0, 0.0)
-    end
-    invoked_key = PSI.ParameterKey(GenericConstraintInvocationParameter, GenericConstraint, name)
+    slacks = PSI.get_use_slacks(model)
+    slacks || !PSI.built_for_recurrent_solves(container) || throw(
+        ArgumentError(
+            "GenericConstraint \"$name\": a recurrent build relaxes non-invoked intervals through its " *
+                "slack-row relaxation, so its LinearFactorLimit model needs use_slacks = true.",
+        ),
+    )
+    invoked = slacks ? nothing : _invoked_mask(container, gc)
+    relaxation = slacks ? PSI.get_variable(container, GenericConstraintRelaxation(), GenericConstraint, name) : nothing
+    mask_key = PSI.ParameterKey(GenericConstraintInvocationMaskParameter, GenericConstraint, name)
     for t in time_steps
+        if !slacks && invoked[t] == 0.0
+            # PSI's dual read-back broadcasts over every cell, so a non-invoked interval keeps a
+            # vacuous, disconnected row whose dual is exactly 0.0.
+            con[name, t] = JuMP.@constraint(jm, 0.0 <= 1.0)
+            continue
+        end
+        lhs = expr[name, t]
+        # Placeholder coefficients +1/-1; the mask parameter rewrites them to `(1 - invoked) * (+-1)`.
+        if slacks
+            lhs = lhs + relaxation[name, "up", t] - relaxation[name, "down", t]
+        end
         rhs = rhs_refs[t] * rhs_mult[name, t] / base_power
-        con[name, t] = JuMP.@constraint(jm, expr[name, t] - rhs in bounds)
-        active = JuMP.MOI.get(jm, JuMP.MOI.ConstraintSet(), con[name, t])
-        PSI.add_bound_target!(container, invoked_key, name, t, con[name, t], (active.lower, active.upper))
+        con[name, t] = if sense == ConstraintSense.LE
+            JuMP.@constraint(jm, lhs <= rhs)
+        elseif sense == ConstraintSense.GE
+            JuMP.@constraint(jm, lhs >= rhs)
+        else
+            JuMP.@constraint(jm, lhs == rhs)
+        end
+        if slacks
+            PSI.add_coefficient_target!(container, mask_key, name, t, con[name, t], relaxation[name, "up", t], 1.0)
+            PSI.add_coefficient_target!(container, mask_key, name, t, con[name, t], relaxation[name, "down", t], -1.0)
+        end
     end
     return
 end
@@ -416,7 +470,7 @@ function PSI.construct_service!(
         meta = name,
     )
     PSI.add_parameters!(container, NEMConstraintRHSParameter, gc, model)
-    PSI.add_parameters!(container, GenericConstraintInvocationParameter, gc, model)
+    PSI.get_use_slacks(model) && PSI.add_parameters!(container, GenericConstraintInvocationMaskParameter, gc, model)
     return
 end
 
@@ -467,7 +521,7 @@ end
 Prices `gc`'s elastic slacks (built by [`_add_gc_slack_variables!`](@ref), a no-op unless
 `PSI.get_use_slacks(model)`) at the system base power times [`constraint_cvp_factor`](@ref) per interval
 times the Market Price Cap of the service model at the build's initial time, as constants of the
-invariant objective.
+invariant objective. The relaxation [`GenericConstraintRelaxation`](@ref) carries no cost.
 `GenericConstraint`s built without slacks carry no cost of their own.
 
 # Returns

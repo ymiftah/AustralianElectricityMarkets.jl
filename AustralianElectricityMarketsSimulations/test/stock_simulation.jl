@@ -206,9 +206,11 @@ const MASK_CASES = [
             else
                 # The masked row's dual is zero up to simplex arithmetic.
                 @test abs(new.gc) <= 1.0e-9 && abs(gc_sim[t]) <= 1.0e-9
-                # The masked row is free: its priced slack stays zero and no violation is reported.
+                # The masked row is violated (vacuous): its unpriced relaxation takes the violation, the slack stays zero, and no violation is reported.
                 slack = only(PSI.read_variable(new.results, "$(c.slack)__GenericConstraint__N_TOY_LIMIT").value)
                 @test slack == 0.0
+                relaxation = sum(PSI.read_variable(new.results, "GenericConstraintRelaxation__GenericConstraint__N_TOY_LIMIT").value)
+                @test relaxation >= (c.sense == ConstraintSense.LE ? 40.0 : 30.0) - TOY_TOLERANCE
                 v = read_constraint_violations(new.results, sys)
                 @test nrow(v) == 0 || !any(==("generic_constraint"), v.family)
             end
@@ -240,7 +242,7 @@ end
     @test abs(duals["N_TOY_LIMIT@B"][t1]) <= 1.0e-9 && abs(duals["N_TOY_LIMIT@A"][t2]) <= 1.0e-9
 end
 
-@testset "a recurrent build without slacks builds, since non-invoked rows are freed by the invocation parameter" begin
+@testset "a recurrent build without slacks throws" begin
     sys = masked_system(ConstraintSense.LE, TOY_CHEAP, 60.0)
     template = replay_template(sys; template = energy_template())
     PSI.set_service_model!(template, "N_TOY_LIMIT", PSI.ServiceModel(GenericConstraint, LinearFactorLimit, "N_TOY_LIMIT"; duals = [NEMConstraintLimit]))
@@ -253,7 +255,7 @@ end
         sequence = PSI.SimulationSequence(; models = models, ini_cond_chronology = PSI.InterProblemChronology()),
         simulation_folder = mktempdir(), initial_time = TOY_START,
     )
-    @test PSI.build!(sim; store_systems_in_results = false) == PSI.SimulationBuildStatus.BUILT
+    @test_throws ArgumentError PSI.build!(sim; store_systems_in_results = false)
 end
 
 # A battery whose net ramp-down floor exceeds raw generation availability in step 1 only.
