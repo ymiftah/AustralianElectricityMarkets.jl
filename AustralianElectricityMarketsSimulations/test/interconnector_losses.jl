@@ -660,7 +660,8 @@ end
     @test !isdefined(AEMS, :MNSPBandPriceParameter)
     @test all(k -> nameof(PSI.IS.Optimization.get_entry_type(k)) != :MNSPBandPriceParameter, keys(PSI.get_parameters(container)))
     cost_types = [PSI.IS.Optimization.get_entry_type(k) for k in keys(PSI.get_parameters(container))]
-    @test all(==(AEMS.GenericConstraintSlackCostParameter), filter(T -> T <: PSI.TimeSeriesCostParameter, cost_types))
+    @test !any(T -> T <: PSI.TimeSeriesCostParameter, cost_types)
+    @test !PSI.get_objective_expression(container).has_variant_contributors
     scale = PSI.get_base_power(container) * AEMS.interval_hours(PSI.get_resolution(container))
     invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
     for (dir, expected) in (("forward", [10.0, 25.0]), ("reverse", [10.0, 0.0]))
