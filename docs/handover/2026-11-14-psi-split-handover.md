@@ -60,12 +60,43 @@ review fixes).
    FCAS prices at degenerate points do not depend on LP structure. It needs its own ADR and a
    multi-day NEMDE check.
 
+The Task 18 review (Opus) approved `872e989..cdca8ad`. Its minor findings are yours to fix first,
+in one small commit:
+
+- **CHANGELOG.** `CHANGELOG.md:18`'s MNSP entry says "only the generic-constraint slack cost remains
+  one". That is stale, because option E removed it. Delete the clause.
+- **Units string.** The `NEMFCASBid.offer_curves` field docstring (`src/types/nem_offer_cost.jl:112`)
+  still says "\$/MW". It should be "\$/MWh".
+- **Key-name check.** `…Simulations/src/formulations/generic_constraints.jl:~382`: add
+  `_constraint_key(gc, :invoked, NEM_CONSTRAINT_SERIES.invoked)` next to the `:rhs` check, so a
+  static or misnamed `invoked` field fails with the package's clear message.
+- **`compare.jl`.**
+  - List the `invariants` and `report_only` keywords on `compare_snapshots`'s signature line.
+  - Give `reported_dual_differences` its `# Arguments` and `# Returns` sections.
+  - Add a unit test for report-only keys being excluded from the worst list.
+  - In invariants mode, assert the energy dual and the derived FCAS-sum keys exist when
+    `input/fcas_requirements` is non-empty, so those gates cannot vanish silently.
+  - The objective gate tolerance `_STATS_RTOL = 1e-9` is tighter than the solver's 1e-8 relative MIP
+    gap, so real_day can fail on solver noise; 2026-06-04 17:40 differs by 5.6e-9. Use the MIP gap
+    as the objective tolerance and record it.
+- **Coverage.**
+  - Assert `has_variant_contributors == false` on a full replay template, not only the loss test.
+  - Solve one step in `stock_simulation.jl:483-498`, a recurrent build without slacks, to prove the
+    free rows work without slacks.
+
 Known open items to fold into 19-22 (from reviews):
 
-- **Build time.** The warm System build for one trading day is about 23.0 s against 12.7 s before
-  the refactor, and the model build is about 6.3 s. The 20 s budget (System plus model) is not met.
-  Task 22 A3: profile `_set_replay_inputs!` per writer. The first lever is to stop writing the
-  `energy_offer` series and read band widths from the raw bid series.
+- **Build time.** One trading day, warm: System build 22.95 s, model build 6.33 s, skipped report
+  0.52 s, about 29.8 s in total. CP1 (after Task 14) was already 28.2 s, because the old 7.1 s
+  `prepare_replay!` work moved into the System build. Task 18 added about 1.6 s.
+  - The 20 s budget (System plus model) is not met.
+  - Task 22 A3: profile `_set_replay_inputs!` per writer.
+  - Levers: stop writing the `energy_offer` series and read band widths from the raw bid series.
+    Then the MNSP remove plus re-add of the supplemental attribute in `_set_band_prices!`
+    (`src/system/replay_inputs/prices.jl:241-242`).
+- **FCAS enablement is report-only.** It is not gated against the reference. A real FCAS dispatch
+  regression would surface only through the objective, the FCAS price sums and the per-unit NEMDE
+  comparison (`entity_errors.csv`), so check the latter at every checkpoint.
 - **Tutorial.** `docs/literate/tutorials/nemde_aem.jl` still hand-builds a System and lacks the derived
   series. Rewrite it on `nem_system` on the mock hive before the docs build.
 - **Step-range limitation.** A `Simulation` can step one forecast window beyond
