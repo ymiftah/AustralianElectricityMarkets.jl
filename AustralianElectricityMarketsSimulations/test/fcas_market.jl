@@ -460,13 +460,18 @@ end
 
     # Each band is priced at its offer price times the base power and the interval in hours.
     container = build_fcas(sys, [service_name])
-    price = PSI.get_parameter(container, FCASBandPriceParameter(), ThermalStandard, "$(service_name)_gen")
-    column = PSI.get_parameter_column_refs(price, duid)
-    @test [column[label, 1] for label in ("1", "2")] == [10.0, 30.0]
-    @test all(==(1.0), PSI.get_multiplier_array(price).data)
+    bid = AustralianElectricityMarkets._fcas_side_bid(
+        PSY.get_component(ThermalStandard, sys, duid), get_bid_type(PSY.get_component(FCASService, sys, service_name)), OfferSide.GEN,
+    )
+    @test bid.band_prices[1:2] == (10.0, 30.0)
+    @test !isdefined(AustralianElectricityMarketsSimulations, :FCASBandPriceParameter)
+    @test all(k -> nameof(PSI.IS.Optimization.get_entry_type(k)) != :FCASBandPriceParameter, keys(PSI.get_parameters(container)))
     bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, service_name)
-    variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
-    @test PSI.JuMP.coefficient(variant, bands[duid, "2", 1]) ≈ base_power * 30.0 / 12
+    invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
+    scale = base_power * interval_hours(PSI.get_resolution(container))
+    @test PSI.JuMP.coefficient(invariant, bands[duid, "1", 1]) == scale * bid.band_prices[1]
+    @test PSI.JuMP.coefficient(invariant, bands[duid, "2", 1]) == scale * bid.band_prices[2]
+    @test bid.band_prices[2] == 30.0
 end
 
 "Attaches a flat `max_active_power` of 1 p.u. over `stamps` to every load and `RenewableDispatch` in `sys`."
@@ -1221,7 +1226,7 @@ end
     @test isnothing(_caught(() -> PSI.build_impl!(model)))
 end
 
-@testset "FCAS band price parameters are native time-series cost parameters, one per device type and side" begin
+@testset "FCAS band prices are build-time objective coefficients, not parameters" begin
     sys = fcas_toy_system()
     model = PSI.DecisionModel(
         fcas_toy_template(sys, ["1_RAISEREG"]), sys;
@@ -1231,33 +1236,15 @@ end
     )
     @test PSI.build!(model; output_dir = mktempdir()) == PSI.ModelBuildStatus.BUILT
     container = PSI.get_optimization_container(model)
-    keys = [k for k in Base.keys(PSI.get_parameters(model)) if PSI.IS.Optimization.get_entry_type(k) === FCASBandPriceParameter]
-    @test !isempty(keys)
-    @test all(k -> startswith(k.meta, "1_RAISEREG"), keys)
-    @test all(k -> PSI.IS.Optimization.get_entry_type(k) <: PSI.TimeSeriesCostParameter, keys)
-    for key in keys
-        meta = String(chopsuffix(chopsuffix(key.meta, "_gen"), "_load"))
-        param = PSI.get_parameter(container, key)
-        prices = PSI.get_parameter_array(param)
-        multiplier = PSI.get_multiplier_array(param)
-        expected = copy(prices.data)
-        prices.data .= -1.0
-        # The second window, as the model's current time after one execution.
-        PSI.set_execution_count!(model, 1)
-        PSI.cost_function_unsynch(container)
-        PSI.reset_variant_terms(PSI.get_objective_expression(container))
-        PSI.update_container_parameter_values!(container, model, key, PSI.DatasetContainer{PSI.InMemoryDataset}())
-        PSI.set_execution_count!(model, 0)
-        @test prices.data == expected
-        labels = axes(prices)[2]
-        bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, meta)
-        variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
-        device = first(axes(multiplier)[1])
-        column = PSI.get_parameter_column_refs(param, device)
-        priced = findfirst(label -> column[label, 1] > 0.0, labels)
-        @test !isnothing(priced)
-        @test PSI.JuMP.coefficient(variant, bands[device, labels[priced], 1]) ==
-            column[labels[priced], 1] * (PSI.get_base_power(container) * interval_hours(TOY_RESOLUTION)) * multiplier[device, labels[priced], 1]
+    @test all(k -> nameof(PSI.IS.Optimization.get_entry_type(k)) != :FCASBandPriceParameter, Base.keys(PSI.get_parameters(model)))
+    device = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
+    bid = AustralianElectricityMarkets._fcas_side_bid(device, BidType.RAISEREG, OfferSide.GEN)
+    @test bid.band_prices[1:2] == (5.0, 12.0)
+    bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, "1_RAISEREG")
+    invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
+    scale = PSI.get_base_power(container) * interval_hours(TOY_RESOLUTION)
+    for b in 1:2
+        @test PSI.JuMP.coefficient(invariant, bands[TOY_CHEAP, string(b), 1]) == scale * bid.band_prices[b]
     end
 end
 
@@ -2156,17 +2143,15 @@ end
         end,
     )
     container = build_fcas(sys, [service_name])
-    price_keys = [k for k in keys(PSI.get_parameters(container)) if PSI.IS.Optimization.get_entry_type(k) === FCASBandPriceParameter]
-    # One parameter per device type's series name: the GEN unit's curve and the BIDIRECTIONAL battery's.
-    @test sort([k.meta for k in price_keys]) == ["$(service_name)_gen_1", "$(service_name)_gen_2"]
-    params = [PSI.get_parameter(container, k) for k in price_keys]
-    alta_param = only(p for p in params if TOY_CHEAP in axes(PSI.get_multiplier_array(p))[1])
-    batt_param = only(p for p in params if TOY_BATTERY in axes(PSI.get_multiplier_array(p))[1])
-    @test [PSI.get_parameter_column_refs(alta_param, TOY_CHEAP)[label, 1] for label in ("1", "2")] == [10.0, 30.0]
-    @test PSI.get_parameter_column_refs(batt_param, TOY_BATTERY)["1", 1] == 15.0
-    base_power = PSI.get_base_power(container)
+    @test all(k -> nameof(PSI.IS.Optimization.get_entry_type(k)) != :FCASBandPriceParameter, keys(PSI.get_parameters(container)))
+    side = AustralianElectricityMarkets.OfferSide.GEN
+    alta_prices = AEM._fcas_side_bid(PSY.get_component(ThermalStandard, sys, TOY_CHEAP), BidType.RAISE6SEC, side).band_prices
+    batt_prices = AEM._fcas_side_bid(PSY.get_component(EnergyReservoirStorage, sys, TOY_BATTERY), BidType.RAISE6SEC, side).band_prices
+    @test alta_prices[1:2] == (10.0, 30.0)
+    @test batt_prices[1] == 15.0
+    scale = PSI.get_base_power(container) * interval_hours(PSI.get_resolution(container))
     bands = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, service_name)
-    variant = PSI.get_variant_terms(PSI.get_objective_expression(container))
-    @test PSI.JuMP.coefficient(variant, bands[TOY_CHEAP, "2", 1]) ≈ base_power * 30.0 / 12
-    @test PSI.JuMP.coefficient(variant, bands[TOY_BATTERY, "1", 1]) ≈ base_power * 15.0 / 12
+    invariant = PSI.get_invariant_terms(PSI.get_objective_expression(container))
+    @test PSI.JuMP.coefficient(invariant, bands[TOY_CHEAP, "2", 1]) == scale * alta_prices[2]
+    @test PSI.JuMP.coefficient(invariant, bands[TOY_BATTERY, "1", 1]) == scale * batt_prices[1]
 end

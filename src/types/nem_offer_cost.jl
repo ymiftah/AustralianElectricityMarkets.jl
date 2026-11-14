@@ -102,7 +102,7 @@ end
 
 
 """
-    NEMFCASBid(; service, direction, offer_curves, max_avail, trapezium)
+    NEMFCASBid(; service, direction, offer_curves, max_avail, trapezium, band_prices = nothing)
 
 One direction of a unit's offer for one FCAS market, as AEMO bid it.
 
@@ -112,6 +112,8 @@ One direction of a unit's offer for one FCAS market, as AEMO bid it.
 - `offer_curves`: the ten price bands, in MW and \$/MW, as `PiecewiseStepData`.
 - `max_avail`: `MAXAVAIL`, MW.
 - `trapezium`: the [`FCASTrapeziumPoints`](@ref) of the bid, MW.
+- `band_prices`: the ten band prices of the trading day in \$/MW, padded with `0.0`, or `nothing` until the
+  replay inputs are written.
 """
 struct NEMFCASBid <: PSY.DeviceParameter
     service::BidType
@@ -119,12 +121,13 @@ struct NEMFCASBid <: PSY.DeviceParameter
     offer_curves::Union{IS.StaticTimeSeriesKey, PiecewiseStepData}
     max_avail::Union{IS.StaticTimeSeriesKey, Float64}
     trapezium::Union{IS.StaticTimeSeriesKey, FCASTrapeziumPoints}
+    band_prices::Union{Nothing, NTuple{10, Float64}}
 end
 
 function NEMFCASBid(;
-        service::BidType, direction::BidDirection, offer_curves, max_avail, trapezium,
+        service::BidType, direction::BidDirection, offer_curves, max_avail, trapezium, band_prices = nothing,
     )
-    return NEMFCASBid(service, direction, offer_curves, _bid_number(max_avail), trapezium)
+    return NEMFCASBid(service, direction, offer_curves, _bid_number(max_avail), trapezium, _band_prices(band_prices))
 end
 
 function Base.:(==)(a::NEMFCASBid, b::NEMFCASBid)

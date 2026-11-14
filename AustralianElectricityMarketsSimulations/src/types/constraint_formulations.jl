@@ -184,18 +184,6 @@ struct FCASRampingLimitParameter <: PSI.TimeSeriesParameter end
 
 
 """
-    FCASBandPriceParameter
-
-Time-series cost parameter pricing [`FCASOfferBandVariable`](@ref)s: its value is each band's offer
-price in `\$/MWh`, read from the offer's service series: the service name for the generation side and
-`"<service>_decremental"` for the load side (`0.0` for a band not offered). Each band's cost target scales the
-price by the system base power and the interval length in hours. Meta `"<group>_gen"` or `"<group>_load"`, one
-parameter per device type and side.
-"""
-struct FCASBandPriceParameter <: PSI.TimeSeriesCostParameter end
-
-
-"""
     FCASJointCapacityConstraint
 
 Constraint type for one side (named `"<service>_upper"`/`"<service>_lower"` in its container

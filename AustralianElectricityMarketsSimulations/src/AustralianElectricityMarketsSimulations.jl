@@ -105,7 +105,7 @@ export GenericConstraintSlackUp, GenericConstraintSlackDown
 export FCASCapacityVariable, FCASSideCapacityVariable, FCASUnitRegulationTarget,
     FCASJointCapacityLHS, FCASJointCapacityConstraint, FCASUnitConstraint, FCASSlack,
     FCASOfferBandVariable, FCASOfferLimitParameter, FCASBandWidthParameter, FCASUpperSlopeParameter,
-    FCASLowerSlopeParameter, FCASRampingLimitParameter, FCASBandPriceParameter,
+    FCASLowerSlopeParameter, FCASRampingLimitParameter,
     InterconnectorFlowSlack
 export check_fcas_services, check_dispatch_envelope
 export read_solved_interval, read_constraint_violations

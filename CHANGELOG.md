@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Energy band prices are typed day-constants: `NEMEnergyBid` has a new `band_prices` field (ten `\$/MWh` prices at the reference node), set by `nem_system` from the `energy_offer` series and throwing when prices vary within the replay range. `EnergyBandPriceParameter` is removed and band costs are invariant objective terms. The tie-break price-pair check is subsumed by this check. AEMO *Spot Market Operations Timetable* v1.12 s2.1: price bands in bids for Day 0 cannot be changed after 12:30 Day -1 (NER 3.8.6, 3.8.6A, 3.8.7, 3.8.7A; rebids 3.8.22).
 
+- FCAS band prices are typed day-constants: `NEMFCASBid` has a new `band_prices` field (ten `\$/MW` prices), set by `nem_system` from the bid's `offer_curves` series and throwing when prices vary within the replay range. `FCASBandPriceParameter` is removed and band costs are invariant objective terms. AEMO *FCAS Model in NEMDE* s2: prices are defined for a trading day and MW quantities for each trading interval; AEMO *Spot Market Operations Timetable* v1.12 s2.1: price bands in bids for Day 0 cannot be changed after 12:30 Day -1 (NER 3.8.7A; rebids 3.8.22).
+
 - FCAS offer curves are read from the bids' `offer_curves` series. The derived `fcas_offer_*` series are no longer attached, and `fcas_offer_series_name` is removed.
 
 - FCAS trapeziums are read from the bids' `trapezium` and `max_avail` series. The derived `fcas_trapezium_*` series are no longer attached, and `NEMFCASInputs` has a new `max_avail` field, the key of the bid's `MAXAVAIL` series.

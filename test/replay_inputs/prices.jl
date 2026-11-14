@@ -76,3 +76,52 @@ end
     _prices_replace_offer!(sys, ts -> [t < second ? flat : moved for t in ts])
     @test_throws r"vary within the replay range" AEM._set_band_prices!(sys)
 end
+
+# The FCAS bids of `sys` with a modelled side and an `offer_curves` series, as `(device, bid)`.
+function _prices_fcas_bids(sys)
+    AEM = AustralianElectricityMarkets
+    found = Tuple{Any, Any}[]
+    for device in AEM._bidding_devices(sys)
+        cost = AEM._nem_offer_cost(device)
+        isnothing(cost) && continue
+        for bid in AEM.get_fcas_bids(cost)
+            isnothing(AEM._fcas_bid_side(device, bid)) && continue
+            push!(found, (device, bid))
+        end
+    end
+    return found
+end
+
+@testset "FCAS bids of a built system carry the unreferred prices of the first replay interval" begin
+    AEM = AustralianElectricityMarkets
+    sys = _prices_mock_system()
+    checked = Dict(AEM.OfferSide.GEN => 0, AEM.OfferSide.LOAD => 0)
+    for (device, bid) in _prices_fcas_bids(sys)
+        raw = PowerSystems.get_time_series_values(
+            PowerSystems.SingleTimeSeries, device, AEM.IS.get_name(bid.offer_curves); ignore_scaling_factors = true,
+        )
+        y = PowerSystems.get_y_coords(first(raw))
+        @test bid.band_prices == ntuple(i -> i <= length(y) ? Float64(y[i]) : 0.0, 10)
+        checked[AEM._fcas_bid_side(device, bid)] += 1
+    end
+    @test checked[AEM.OfferSide.GEN] > 0
+    @test checked[AEM.OfferSide.LOAD] > 0
+end
+
+@testset "an FCAS price change inside the replay range throws naming the unit and service" begin
+    AEM = AustralianElectricityMarkets
+    sys = _prices_mock_system()
+    stamps = AEM._replay_interval_stamps(sys)
+    @test length(stamps) >= 2
+    device, bid = first(_prices_fcas_bids(sys))
+    name = AEM.IS.get_name(bid.offer_curves)
+    all_stamps = PowerSystems.get_time_series_timestamps(PowerSystems.SingleTimeSeries, device, name)
+    flat = _prices_curve([20.0, 40.0])
+    moved = _prices_curve([21.0, 40.0])
+    second = stamps[2]
+    remove_series_and_forecast!(sys, device, name)
+    PowerSystems.add_time_series!(
+        sys, device, AEM.single_series(name, first(all_stamps), [t < second ? flat : moved for t in all_stamps], Minute(5)),
+    )
+    @test_throws Regex("band prices of $(PowerSystems.get_name(device)) $(bid.service) .* vary within the replay range") AEM._set_band_prices!(sys)
+end

@@ -1,11 +1,8 @@
 # The second forecast must be served from the model cache even when its HDF5 file is unavailable.
 function _objective_cache_system()
     sys = fcas_toy_system()
-    alta = PSY.get_component(ThermalStandard, sys, TOY_CHEAP)
     gc = PSY.get_component(GenericConstraint, sys, "F_REG")
-    curve_name = AustralianElectricityMarkets._fcas_offer_series_name(alta, BidType.RAISEREG, false)
     replacements = (
-        (alta, curve_name, [_toy_offer([(0.1, 5.0), (0.1, 12.0)]), _toy_offer([(0.1, 15.0), (0.1, 22.0)]), _toy_offer([(0.1, 15.0), (0.1, 22.0)])]),
         (gc, AustralianElectricityMarkets.NEM_CONSTRAINT_SERIES.invoked, [1.0, 0.0, 0.0]),
     )
     for (owner, name, values) in replacements
@@ -46,11 +43,9 @@ end
             PSI.get_ext(PSI.get_settings(model))["market_price_cap"] = 12345.0
             @test PSI.build!(model; output_dir = joinpath(folder, "model")) == PSI.ModelBuildStatus.BUILT
             container = PSI.get_optimization_container(model)
-            keys = [k for k in Base.keys(PSI.get_parameters(model)) if PSI.IS.Optimization.get_entry_type(k) in (FCASBandPriceParameter, AEMS.GenericConstraintSlackCostParameter)]
-            price_key = only(k for k in keys if PSI.IS.Optimization.get_entry_type(k) === FCASBandPriceParameter && startswith(k.meta, "1_RAISEREG") && TOY_CHEAP in axes(PSI.get_multiplier_array(PSI.get_parameter(container, k)))[1])
-            invoked_key = only(k for k in keys if PSI.IS.Optimization.get_entry_type(k) === AEMS.GenericConstraintSlackCostParameter && k.meta == "F_REG")
+            keys = [k for k in Base.keys(PSI.get_parameters(model)) if PSI.IS.Optimization.get_entry_type(k) === AEMS.GenericConstraintSlackCostParameter]
+            invoked_key = only(k for k in keys if k.meta == "F_REG")
             _update_objective_cache_parameters!(model, keys, 0)
-            @test PSI.get_parameter_column_refs(PSI.get_parameter(container, price_key), TOY_CHEAP)["1", 1] == 5.0
             @test PSI.get_parameter_column_refs(PSI.get_parameter(container, invoked_key), "F_REG")[1] == 1.0
             slack = PSI.get_variable(container, GenericConstraintSlackDown(), GenericConstraint, "F_REG")["F_REG", 1]
             gc = PSY.get_component(GenericConstraint, sys, "F_REG")
@@ -61,13 +56,9 @@ end
             cached && mv(path, path * ".hidden")
             try
                 _update_objective_cache_parameters!(model, keys, 1)
-                @test PSI.get_parameter_column_refs(PSI.get_parameter(container, price_key), TOY_CHEAP)["1", 1] == 15.0
                 @test PSI.get_parameter_column_refs(PSI.get_parameter(container, invoked_key), "F_REG")[1] == 0.0
                 objective = PSI.get_variant_terms(PSI.get_objective_expression(container))
                 @test PSI.JuMP.coefficient(objective, slack) == 0.0
-                band_meta = String(chopsuffix(chopsuffix(price_key.meta, "_gen"), "_load"))
-                band = PSI.get_variable(container, FCASOfferBandVariable(), FCASService, band_meta)[TOY_CHEAP, "1", 1]
-                @test PSI.JuMP.coefficient(objective, band) ≈ 15.0 * 100.0 / 12
                 @test cached || isempty(PSI.get_time_series_cache(model))
             finally
                 cached && mv(path * ".hidden", path)

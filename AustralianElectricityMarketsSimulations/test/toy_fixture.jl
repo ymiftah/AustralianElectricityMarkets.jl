@@ -581,7 +581,8 @@ function add_toy_fcas_offer!(
         service = bid_type, direction, offer_curves = AEM._series_key(device, field(:offer_curves)),
         max_avail = AEM._series_key(device, field(:max_avail)), trapezium = AEM._series_key(device, field(:trapezium)),
     )
-    AEM._set_fcas_bid!(AEM._nem_offer_cost(device), bid)
+    prices = AEM._day_band_prices(curves, fill(true, length(curves)), PSY.get_name(device))
+    AEM._set_fcas_bid!(AEM._nem_offer_cost(device), AEM._with_band_prices(bid, prices))
     return
 end
 
