@@ -1,5 +1,8 @@
 # Handover: AEM/AEMSim split along PowerSimulations' design (milestone 1)
 
+> **Temporary.** Delete the whole `docs/handover/` folder before PR #237 is merged. Durable decisions
+> belong in ADR 0101 (Task 21).
+
 This file hands milestone 1 of the AEM/AEMSim refactor to an agent on a **different machine**. That
 machine has none of the original machine's validation outputs: no baseline captures and no
 `aem_validation` folder. **Your instruction is to finish the plan so that replay results match AEMO's
