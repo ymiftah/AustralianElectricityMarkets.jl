@@ -669,7 +669,7 @@ end
     PSI.set_device_model!(template, PSY.PowerLoad, PSI.StaticPowerLoad)
     status, log = _toy_build_log(toy_model(sys; template))
     @test status == PSI.ModelBuildStatus.FAILED
-    @test occursin("$TOY_CHEAP has no energy band prices", log)
+    @test occursin("$TOY_CHEAP has an energy offer series but no NEMEnergyBid on the", log)
 end
 
 @testset "empty bands priced alike do not form tie groups" begin

@@ -137,7 +137,8 @@ end
 # The day band prices of `device`'s energy bid on `side`; throws when the replay inputs have not set them.
 function _energy_band_prices(device::PSY.Component, side::OfferSide)
     bid = _energy_bid(_nem_offer_cost(device), side)
-    prices = isnothing(bid) ? nothing : bid.band_prices
+    isnothing(bid) && throw(ArgumentError("$(PSY.get_name(device)) has an energy offer series but no NEMEnergyBid on the $(side) side."))
+    prices = bid.band_prices
     isnothing(prices) && throw(ArgumentError("$(PSY.get_name(device)) has no energy band prices; run the replay input stage."))
     return prices
 end

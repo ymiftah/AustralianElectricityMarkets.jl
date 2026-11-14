@@ -19,7 +19,7 @@ _prices_curve(prices) = PowerSystems.PiecewiseStepData(collect(0.0:10.0:(10.0 * 
     @test_throws r"band prices of X vary within the replay range; a NEMDE system covers one trading day" AEM._day_band_prices(
         curves, [true, true, true], "X",
     )
-    @test AEM._day_band_prices(curves, [false, false, false], "X") == ntuple(_ -> 0.0, 10)
+    @test_throws r"X has no offer curve in the replay range" AEM._day_band_prices(curves, [false, false, false], "X")
     wide = [_prices_curve(collect(1.0:11.0))]
     @test_throws r"11 bands" AEM._day_band_prices(wide, [true], "X")
 end

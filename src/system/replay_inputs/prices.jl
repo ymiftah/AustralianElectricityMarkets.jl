@@ -5,8 +5,8 @@
     _day_band_prices(curves::Vector{PiecewiseStepData}, stamps_in_replay::AbstractVector{Bool}, label::AbstractString) -> NTuple{10, Float64}
 
 The band prices of `curves` at the first replay interval, padded with `0.0` to ten bands. Throws an
-`ArgumentError` when the prices at any other replay interval differ, or a curve in the replay range has more
-than ten bands. Returns zeros when no interval is flagged.
+`ArgumentError` when no stamp is a replay interval, the prices at any other replay interval differ, or a curve in
+the replay range has more than ten bands.
 
 # Arguments
 - `curves`: the offer curves, one per stamp.
@@ -35,7 +35,8 @@ function _day_band_prices(
             )
         end
     end
-    return something(prices, ntuple(_ -> 0.0, 10))
+    isnothing(prices) && throw(ArgumentError("$label has no offer curve in the replay range"))
+    return prices
 end
 
 

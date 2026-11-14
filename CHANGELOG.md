@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - All four packages require Julia 1.13 or later; CI tests Julia 1.13 and `pre`.
 
-- Energy band prices are typed day-constants: `NEMEnergyBid` has a new `band_prices` field (ten `\$/MWh` prices at the reference node), set by `nem_system` from the `energy_offer` series and throwing when prices vary within the replay range. `EnergyBandPriceParameter` is removed and band costs are invariant objective terms. The tie-break price-pair check is subsumed by this check.
+- Energy band prices are typed day-constants: `NEMEnergyBid` has a new `band_prices` field (ten `\$/MWh` prices at the reference node), set by `nem_system` from the `energy_offer` series and throwing when prices vary within the replay range. `EnergyBandPriceParameter` is removed and band costs are invariant objective terms. The tie-break price-pair check is subsumed by this check. AEMO *Spot Market Operations Timetable* v1.12 s2.1: price bands in bids for Day 0 cannot be changed after 12:30 Day -1 (NER 3.8.6, 3.8.6A, 3.8.7, 3.8.7A; rebids 3.8.22).
 
 - FCAS offer curves are read from the bids' `offer_curves` series. The derived `fcas_offer_*` series are no longer attached, and `fcas_offer_series_name` is removed.
 
