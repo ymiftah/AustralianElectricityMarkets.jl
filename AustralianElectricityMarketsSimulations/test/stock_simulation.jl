@@ -206,11 +206,9 @@ const MASK_CASES = [
             else
                 # The masked row's dual is zero up to simplex arithmetic.
                 @test abs(new.gc) <= 1.0e-9 && abs(gc_sim[t]) <= 1.0e-9
-                # The masked row is violated (vacuous): its unpriced relaxation takes the violation, the slack stays zero, and no violation is reported.
+                # The masked row is violated (vacuous), its slack takes the violation, and no violation is reported.
                 slack = only(PSI.read_variable(new.results, "$(c.slack)__GenericConstraint__N_TOY_LIMIT").value)
-                @test slack == 0.0
-                relaxation = sum(PSI.read_variable(new.results, "GenericConstraintRelaxation__GenericConstraint__N_TOY_LIMIT").value)
-                @test relaxation >= (c.sense == ConstraintSense.LE ? 40.0 : 30.0) - TOY_TOLERANCE
+                @test slack >= (c.sense == ConstraintSense.LE ? 40.0 : 30.0) - TOY_TOLERANCE
                 v = read_constraint_violations(new.results, sys)
                 @test nrow(v) == 0 || !any(==("generic_constraint"), v.family)
             end
