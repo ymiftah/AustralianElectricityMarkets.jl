@@ -146,7 +146,7 @@ _allowed(key::AbstractString, patterns) = any(p -> occursin(p, key), patterns)
 # Every gating key that is measured or missing on one side, with its largest gap and whether it fails.
 function _gate_rows(
         baseline::AbstractDict, candidate::AbstractDict; atol::Real, allow_new, allow_missing, mask_gc_slacks::Bool,
-        invariants::Bool = false,
+        invariants::Bool = false, report_only = Regex[],
     )
     if invariants
         requirements = _fcas_requirements(baseline, candidate)
@@ -157,17 +157,18 @@ function _gate_rows(
         baseline = _mask_gc_slacks(baseline)
         candidate = _mask_gc_slacks(candidate)
     end
-    rows = NamedTuple{(:key, :kind, :max_abs, :mismatch), Tuple{String, String, Float64, Bool}}[]
+    rows = NamedTuple{(:key, :kind, :max_abs, :mismatch, :report), Tuple{String, String, Float64, Bool, Bool}}[]
     for key in sort!(collect(union(keys(baseline), keys(candidate))))
         kind = _kind(key)
         kind in _GATING_KINDS || continue
+        report = _allowed(key, report_only)
         if !haskey(candidate, key)
-            _allowed(key, allow_missing) || push!(rows, (; key, kind, max_abs = Inf, mismatch = true))
+            _allowed(key, allow_missing) || push!(rows, (; key, kind, max_abs = Inf, mismatch = !report, report))
         elseif !haskey(baseline, key)
-            _allowed(key, allow_new) || push!(rows, (; key, kind, max_abs = Inf, mismatch = true))
+            _allowed(key, allow_new) || push!(rows, (; key, kind, max_abs = Inf, mismatch = !report, report))
         else
             cmp = _compare_tables(kind, baseline[key], candidate[key], atol; extra_zero = _allowed(key, allow_new))
-            push!(rows, (; key, kind, cmp.max_abs, cmp.mismatch))
+            push!(rows, (; key, kind, cmp.max_abs, mismatch = cmp.mismatch && !report, report = cmp.mismatch && report))
         end
     end
     return rows
@@ -188,6 +189,7 @@ rows that a key matching `allow_new` adds with all values zero do not count as a
 - `allow_new`, `allow_missing`: regexes of keys the candidate may add or lack.
 - `mask_gc_slacks`: whether generic-constraint slacks are multiplied by the invoked series on both sides
   before comparing.
+- `report_only`: regexes of keys that are compared but never gate (see the `--report-only` CLI option).
 - `invariants`: gate only the quantities unique at degenerate points: variables, auxiliary variables,
   expressions, the objective, the energy price duals (`CopperPlateBalanceConstraint`) and the sum of the
   FCAS requirement duals per (interval, region, direction), `RAISE` or `LOWER`. Other duals do not gate
@@ -199,9 +201,9 @@ A `Vector` of `(; key, kind, max_abs)` named tuples, empty when the snapshots ag
 function compare_snapshots(
         baseline::AbstractDict, candidate::AbstractDict; atol::Real = 1.0e-9,
         allow_new::AbstractVector{Regex} = Regex[], allow_missing::AbstractVector{Regex} = Regex[],
-        mask_gc_slacks::Bool = false, invariants::Bool = false,
+        mask_gc_slacks::Bool = false, invariants::Bool = false, report_only::AbstractVector{Regex} = Regex[],
     )
-    rows = _gate_rows(baseline, candidate; atol, allow_new, allow_missing, mask_gc_slacks, invariants)
+    rows = _gate_rows(baseline, candidate; atol, allow_new, allow_missing, mask_gc_slacks, invariants, report_only)
     return [(; key = r.key, kind = r.kind, max_abs = r.max_abs) for r in rows if r.mismatch]
 end
 
@@ -252,6 +254,7 @@ function _parse_compare_args(args::Vector{String})
     allow_missing = Regex[]
     mask = false
     invariants = false
+    report_only = Regex[]
     i = 1
     while i <= length(args)
         arg = args[i]
@@ -263,6 +266,8 @@ function _parse_compare_args(args::Vector{String})
             push!(allow_missing, Regex(args[i + 1])); i += 2
         elseif arg == "--mask-gc-slacks"
             mask = true; i += 1
+        elseif arg == "--report-only"
+            push!(report_only, Regex(args[i + 1])); i += 2
         elseif arg == "--invariants"
             invariants = true; i += 1
         elseif startswith(arg, "--")
@@ -272,9 +277,9 @@ function _parse_compare_args(args::Vector{String})
         end
     end
     length(positional) == 2 || error(
-        "usage: compare.jl BASELINE_DIR CANDIDATE_DIR [--atol X] [--allow-new REGEX]... [--allow-missing REGEX]... [--mask-gc-slacks] [--invariants]",
+        "usage: compare.jl BASELINE_DIR CANDIDATE_DIR [--atol X] [--allow-new REGEX]... [--allow-missing REGEX]... [--mask-gc-slacks] [--invariants] [--report-only REGEX]...",
     )
-    return (; baseline = positional[1], candidate = positional[2], atol, allow_new, allow_missing, mask, invariants)
+    return (; baseline = positional[1], candidate = positional[2], atol, allow_new, allow_missing, mask, invariants, report_only)
 end
 
 # Prints the gate verdict for two capture folders; returns the process exit code.
@@ -285,9 +290,15 @@ function _compare_main(args::Vector{String})
     rows = _gate_rows(
         baseline, candidate; atol = opts.atol, allow_new = opts.allow_new,
         allow_missing = opts.allow_missing, mask_gc_slacks = opts.mask, invariants = opts.invariants,
+        report_only = opts.report_only,
     )
     failures = sort([r for r in rows if r.mismatch]; by = r -> r.max_abs, rev = true)
     worst = maximum((r.max_abs for r in rows if !r.mismatch); init = 0.0)
+    report_rows = sort([r for r in rows if r.report]; by = r -> r.max_abs, rev = true)
+    isempty(report_rows) || println("report-only differences: $(length(report_rows)) key(s)")
+    for r in first(report_rows, 10)
+        println("  $(r.key)  max|Δ|=$(r.max_abs)")
+    end
     param = max_parameter_difference(baseline, candidate)
     if isempty(failures)
         println("GATE PASS max|Δ|=$(worst)")

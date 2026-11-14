@@ -136,3 +136,21 @@ end
     b["variable/band"].value[2] = 1.0
     @test !isempty(compare_snapshots(a, b; allow_new = [r"band"]))
 end
+
+@testset "report_only keys are compared but never gate" begin
+    a = Dict(
+        "variable/x" => DataFrame(DateTime = [BT_T1], u = [1.0]),
+        "variable/FCASCapacityVariable__s" => DataFrame(DateTime = [BT_T1], u = [1.0]),
+    )
+    b = deepcopy(a)
+    b["variable/FCASCapacityVariable__s"].u[1] = 5.0
+    @test !isempty(compare_snapshots(a, b))
+    @test isempty(compare_snapshots(a, b; report_only = [r"FCASCapacityVariable"]))
+    b["variable/x"].u[1] = 2.0
+    @test only(compare_snapshots(a, b; report_only = [r"FCASCapacityVariable"])).key == "variable/x"
+    rows = _gate_rows(
+        a, b; atol = 1.0e-9, allow_new = Regex[], allow_missing = Regex[], mask_gc_slacks = false,
+        report_only = [r"FCASCapacityVariable"],
+    )
+    @test only(r.key for r in rows if r.report) == "variable/FCASCapacityVariable__s"
+end
