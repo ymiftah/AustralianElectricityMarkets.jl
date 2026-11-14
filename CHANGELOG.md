@@ -82,6 +82,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `get_initial_mw` and `effective_regulation_enablement` are removed from `AustralianElectricityMarketsSimulations`: neither had a caller. Read the observed initial MW from the unit's `NEMObservedState` series; the regulation enablement is applied by `nem_system` through `scale_fcas_trapezium`.
 
+- The replay batch runner no longer profiles worker memory, so it runs on any platform rather than only on Linux: `--sample-seconds`, `memory.csv` and the statistics report's `memory_statistics.csv` and RSS lines are removed. Run times are unchanged: `phases.csv`, `days.csv`, `interval_timings.csv` and the per-day timing totals are still written, and the supervisor prints each phase change of the worker with its elapsed time.
+
 ### Documentation
 
 - Restored the regional how-to pages, built with `set_regional_availability!`; fixed their series plots and output directories.

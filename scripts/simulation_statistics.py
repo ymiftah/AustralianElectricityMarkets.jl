@@ -440,14 +440,10 @@ def analyze(runs, cache_windows=24):
             row["observed_span_s"] = stop - start if start is not None and stop is not None else None
             row["span_complete"] = stop is not None
             phases[row.get("trading_day")].append(row)
-        memory = list(read_csv(root / "memory.csv", warnings))
-        rss = distribution([number(row.get("rss_mib")) for row in memory])
-        rss.pop("total_s", None)
         run = {"path": str(root), "status": read_toml(root / "status.toml", warnings),
                "config": read_toml(root / "run.toml", warnings),
                "outcome": read_toml(root / "outcome.toml", warnings), "failures": failures,
-               "completed_days": len(totals), "failed_days": len(failures), "rss_mib": rss,
-               "peak_worker_rss_mib": max((number(row.get("peak_rss_mib")) or 0 for row in memory), default=None)}
+               "completed_days": len(totals), "failed_days": len(failures)}
         result["runs"].append(run)
         for folder in sorted(root.iterdir()):
             if not folder.is_dir() or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", folder.name):
@@ -557,9 +553,7 @@ def save_report(result, output):
                            ("timing_percentiles.csv", timings), ("worst_errors.csv", worst),
                            ("native_timers.csv", native), ("phase_boundaries.csv", boundaries),
                            ("slowest_intervals.csv", slow),
-                           ("over_constrained_intervals.csv", result["over_constrained_intervals"]),
-                           ("memory_statistics.csv", [{"run": run["path"], **run["rss_mib"],
-                                "peak_worker_rss_mib": run["peak_worker_rss_mib"]} for run in result["runs"]])):
+                           ("over_constrained_intervals.csv", result["over_constrained_intervals"])):
         write_csv(output / filename, rows)
     (output / "statistics.json").write_text(json.dumps(result, indent=2, allow_nan=False, default=str) + "\n")
     lines = ["# Simulation statistics", "", f"Snapshot: {result['generated_utc']}", "",
@@ -604,11 +598,9 @@ def save_report(result, output):
                 [[row["day"], row["entity"], row["paired_intervals"], *(row.get(key) for key in ("mae", "p95", "p99", "max"))]
                  for row in sorted((row for row in groups if row["metric"] == "dispatch_mw"),
                                    key=lambda row: row.get("mae", -1), reverse=True)[:20]]),
-             "", "## Worker memory and failures", ""]
+             "", "## Completed and failed days", ""]
     for run in result["runs"]:
-        lines.extend([f"- {run['path']}: {run['completed_days']} completed / {run['failed_days']} failed days; "
-                      f"sampled RSS max {format_value(run['rss_mib'].get('max'))} MiB; "
-                      f"worker high-water RSS {format_value(run['peak_worker_rss_mib'])} MiB."])
+        lines.extend([f"- {run['path']}: {run['completed_days']} completed / {run['failed_days']} failed days."])
         for failure in run["failures"]:
             lines.append(f"  - Failed {failure.get('trading_day')}; preserved error in statistics.json and the source run.")
     lines.extend(["", "## Interpretation and coverage", "", *("- " + note for note in result["notes"]),
@@ -617,7 +609,7 @@ def save_report(result, output):
         lines.append("No parser or pooling warnings.")
     lines.extend(["", "See timing_percentiles.csv for per-day phase/cohort distributions, entity_errors.csv for unit/region/service/link "
                   "coverage and percentiles, worst_errors.csv for outliers, native_timers.csv for unaggregated nested snapshots, "
-                  "slowest_intervals.csv for timing outliers, memory_statistics.csv for RSS distributions, "
+                  "slowest_intervals.csv for timing outliers, "
                   "and phase_boundaries.csv for loading/preflight/build/execute/compare/export boundaries and observed spans. "
                   "Boundary spans include framework overhead and must not be added to their internal timers.", ""])
     (output / "report.md").write_text("\n".join(lines))

@@ -6,7 +6,7 @@ using TOML
 using SHA
 
 export scheduled_days, trading_steps, batch_steps, may_start_day, parse_options, write_status,
-    memory_sample, write_csv, supervise, run_schedule
+    read_status, write_csv, supervise, run_schedule
 
 # Snapshot package sources as well as scripts: a commit alone does not identify a dirty checkout.
 function package_source_hashes(root)
@@ -102,7 +102,7 @@ function parse_options(args)
         "first" => "2026-01-01", "last" => "2026-06-30", "hours" => "10",
         "seed" => "20261026", "hive" => joinpath(homedir(), ".nemdb_cache"),
         "output" => joinpath("/run/media/simba/Store/aem_validation", Dates.format(now(UTC), "yyyymmddTHHMMSS") * "Z_$(getpid())"),
-        "sample-seconds" => "5", "solver-threads" => "1", "cache-size-mib" => "64",
+        "solver-threads" => "1", "cache-size-mib" => "64",
         "time-series-in-memory" => "false", "start" => "", "intervals" => "",
     )
     iseven(length(args)) || throw(ArgumentError("options require --name value pairs; use --help"))
@@ -112,10 +112,8 @@ function parse_options(args)
         options[key] = args[i + 1]
     end
     Date(options["first"]) <= Date(options["last"]) || throw(ArgumentError("first day must not follow last day"))
-    for key in ("hours", "sample-seconds")
-        value = parse(Float64, options[key])
-        isfinite(value) && value > 0 || throw(ArgumentError("--$key must be finite and positive"))
-    end
+    hours = parse(Float64, options["hours"])
+    isfinite(hours) && hours > 0 || throw(ArgumentError("--hours must be finite and positive"))
     for key in ("solver-threads", "cache-size-mib")
         parse(Int, options[key]) > 0 || throw(ArgumentError("--$key must be positive"))
     end
@@ -146,28 +144,11 @@ function write_status(folder, phase; trading_day = "", details = "")
     return
 end
 
-function _proc_kib(path, key)
-    for line in eachline(path)
-        startswith(line, key * ":") && return parse(Float64, split(line)[2]) / 1024
-    end
-    return missing
-end
-
-function memory_sample(pid, folder, elapsed_s)
-    status_file = joinpath(folder, "status.toml")
-    status = isfile(status_file) ? TOML.parsefile(status_file) : Dict{String, Any}()
-    proc = "/proc/$pid/status"
-    return try
-        (;
-            timestamp_utc = string(now(UTC)), elapsed_s, pid,
-            trading_day = get(status, "trading_day", ""), phase = get(status, "phase", "loading"),
-            rss_mib = _proc_kib(proc, "VmRSS"), peak_rss_mib = _proc_kib(proc, "VmHWM"),
-            virtual_mib = _proc_kib(proc, "VmSize"), available_host_mib = _proc_kib("/proc/meminfo", "MemAvailable"),
-        )
-    catch
-        isdir("/proc/$pid") && rethrow()
-        nothing
-    end
+# The trading day and phase the worker last wrote to `status.toml`, or `("", "loading")` before it writes one.
+function read_status(folder)
+    path = joinpath(folder, "status.toml")
+    status = isfile(path) ? TOML.parsefile(path) : Dict{String, Any}()
+    return (; trading_day = get(status, "trading_day", ""), phase = get(status, "phase", "loading"))
 end
 
 function _csv_cell(value)
@@ -217,7 +198,6 @@ function run_schedule(execute_day, folder, days, budget_s; elapsed)
 end
 
 function supervise(options)
-    Sys.islinux() || throw(ArgumentError("continuous process-memory sampling currently requires Linux /proc"))
     folder = options["output"]
     ispath(folder) && throw(ArgumentError("output already exists: $folder; choose a new run folder"))
     isdir(options["hive"]) || throw(ArgumentError("cache directory does not exist: $(options["hive"])"))
@@ -258,7 +238,7 @@ function supervise(options)
     ) do day, day_folder
         write_status(folder, "loading"; trading_day = string(day))
         command = `$(Base.julia_cmd()) --project=$project $script --worker $folder $day`
-        run_worker(command, folder, started_ns, parse(Float64, options["sample-seconds"]))
+        run_worker(command, folder, started_ns)
         totals = TOML.parsefile(joinpath(day_folder, "worker_outcome.toml"))
         return (; (Symbol(k) => v for (k, v) in sort!(collect(totals); by = first))...)
     end
@@ -276,8 +256,9 @@ function supervise(options)
     return
 end
 
-# The supervisor owns this child. The admission deadline never interrupts an admitted child.
-function run_worker(command::Cmd, folder, started_ns, sample_seconds; notice = true, on_sample = nothing)
+# The supervisor owns this child and polls its status every `poll_seconds`, printing the phase when it
+# changes and at least once a minute. The admission deadline never interrupts an admitted child.
+function run_worker(command::Cmd, folder, started_ns; poll_seconds = 5.0, notice = true, on_poll = nothing)
     return open(joinpath(folder, "run.log"), "a") do log
         worker = run(pipeline(command; stdout = log, stderr = log); wait = false)
         worker_pid = getpid(worker)
@@ -285,18 +266,15 @@ function run_worker(command::Cmd, folder, started_ns, sample_seconds; notice = t
         try
             while process_running(worker)
                 elapsed_s = (time_ns() - started_ns) / 1.0e9
-                sample = memory_sample(worker_pid, folder, elapsed_s)
-                if !isnothing(sample)
-                    write_csv(joinpath(folder, "memory.csv"), keys(sample), [values(sample)]; append = true)
-                    isnothing(on_sample) || on_sample(worker_pid)
-                    phase = "$(sample.trading_day) $(sample.phase)"
-                    if notice && (phase != last_phase || elapsed_s - last_notice >= 60)
-                        println("$(sample.timestamp_utc) elapsed=$(round(elapsed_s; digits = 1))s $phase pid=$worker_pid RSS=$(sample.rss_mib) MiB peak=$(sample.peak_rss_mib) MiB")
-                        flush(stdout)
-                        last_notice, last_phase = elapsed_s, phase
-                    end
+                isnothing(on_poll) || on_poll(worker_pid)
+                status = read_status(folder)
+                phase = "$(status.trading_day) $(status.phase)"
+                if notice && (phase != last_phase || elapsed_s - last_notice >= 60)
+                    println("$(now(UTC)) elapsed=$(round(elapsed_s; digits = 1))s $phase pid=$worker_pid")
+                    flush(stdout)
+                    last_notice, last_phase = elapsed_s, phase
                 end
-                sleep(sample_seconds)
+                sleep(poll_seconds)
             end
             wait(worker)
             success(worker) || throw(ProcessFailedException(worker))

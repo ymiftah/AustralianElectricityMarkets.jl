@@ -31,7 +31,7 @@ The report includes:
 
 | File | Contents |
 | --- | --- |
-| `report.md` | Runtime breakdown, timing percentiles, NEMDE errors, regional prices, unit outliers, memory and failures |
+| `report.md` | Runtime breakdown, timing percentiles, NEMDE errors, regional prices, unit outliers and failures |
 | `statistics.json` | Full report, provenance, status, warnings and coverage |
 | `runtime.csv` | Per-day totals, updates, MIP, pricing, auxiliary work, writes, state and residual time |
 | `timing_percentiles.csv` | Call counts, totals, min/mean, p5/p25/p50/p75/p90/p95/p99/max by phase and update cohort |
@@ -40,7 +40,6 @@ The report includes:
 | `worst_errors.csv` | Largest comparison errors and their interval/entity/published/solved values |
 | `over_constrained_intervals.csv` | Price-triggered intervals with a generic-constraint violation, excluded from the pooled errors in `report.md` and `statistics.json` |
 | `slowest_intervals.csv` | Slowest update, MIP, pricing and write calls per day |
-| `memory_statistics.csv` | Sampled worker RSS distributions and recorded high-water RSS, in MiB |
 | `native_timers.csv` | Native timer snapshots with their hierarchy and call counts; nested totals overlap |
 | `phase_boundaries.csv` | Loading, preflight, build, execution, comparison and export boundaries with observed phase spans |
 
@@ -112,7 +111,7 @@ echo $! > scripts/results/overnight.pid
 tail -f scripts/results/overnight-launch.log
 ```
 
-The launch log shows the output folder, current phase and memory samples. The
+The launch log shows the output folder and each phase change of the worker, with elapsed time. The
 supervisor writes the worker's detailed output to `<run folder>/run.log`.
 The machine must remain awake and the Store drive mounted during the run.
 
@@ -124,7 +123,7 @@ julia -O1 --project=AustralianElectricityMarketsSimulations/test \
     --first 2026-01-01 --last 2026-06-30 --hours 10 --seed 20261026 \
     --hive "$HOME/.nemdb_cache" \
     --output /run/media/simba/Store/aem_validation/overnight-2026-01-to-06 \
-    --sample-seconds 5 --solver-threads 1 --cache-size-mib 64
+    --solver-threads 1 --cache-size-mib 64
 ```
 
 `--time-series-in-memory true` holds the time series in memory (default `false`, on disk), which cuts
@@ -169,7 +168,7 @@ launches retain their own dependency versions.
   replica's dispatch target.
 - File-backed system time series and a 64 MiB PSI results write cache, limiting
   memory retained for time series and buffered results. Each worker exits
-  after its day; PID-tagged memory samples cover loading through export.
+  after its day.
 
 Each selected trading day contains **288 interval-ending timestamps**, from
 04:05 AEST on that date through 04:00 AEST the following date. Market timestamps
@@ -205,7 +204,7 @@ tail -f "$run/run.log"
 In another terminal:
 
 ```sh
-watch -n 10 "cat '$run/status.toml'; tail -n 3 '$run/memory.csv'; tail -n 3 '$run/days.csv'"
+watch -n 10 "cat '$run/status.toml'; tail -n 3 '$run/phases.csv'; tail -n 3 '$run/days.csv'"
 ```
 
 Some files appear only after the first day finishes. CSVs and status files are
@@ -217,21 +216,11 @@ flushed as they are written; successfully exported days survive later failures.
 | `scheduled_days.csv` | Full shuffled order, with each day's first and last interval |
 | `status.toml` | Current trading day and phase; completion/failure counts at the end |
 | `phases.csv` | UTC time and elapsed seconds at preflight, system build, model build, execution, comparison and export boundaries |
-| `memory.csv` | Periodic worker RSS, lifetime peak RSS, virtual memory and available host memory, in MiB |
 | `days.csv` | One row per successfully exported day, with interval count and timing totals |
 | `failures.csv` | One row per failed day, elapsed time and exception; created only on failure |
 | `outcome.toml` | Final completed/failed counts, elapsed time and stopping reason |
 | `run.log` | Detailed worker and PSI output |
 | `YYYY-MM-DD/` | Day's comparison CSVs, timings, violations and native PSI result stores |
-
-`memory.csv` is sampled by the parent process, independently of the Julia worker,
-so samples continue during native HiGHS calls. It includes worker package loading,
-builds, parameter updates, solves, comparisons and exports. Each day has a fresh
-worker PID; no worker is sampled between days.
-It requires Linux `/proc`. RSS covers the worker's native allocations, including
-DuckDB and HiGHS; it does not include the lightweight supervisor or filesystem
-page cache. Peak RSS is the worker's lifetime high-water mark, covering its single trading day.
-Sampling is periodic rather than a guarantee of observing every transient peak.
 
 Timing columns in `days.csv`:
 
@@ -251,7 +240,7 @@ time includes worker startup and package loading; supervisor setup and between-d
 overhead explain the remainder in overall run wall time. The fields describe overlapping measurements: do not add
 `execute_s`, `solver_s`, `timed_solve_s` and `dual_calculation_s` together.
 Daily timing totals become available when a day finishes. While it is running,
-use `status.toml`, `phases.csv`, memory samples and the native PSI logs.
+use `status.toml`, `phases.csv` and the native PSI logs.
 
 Each day folder contains:
 
@@ -320,7 +309,7 @@ end
 ```
 
 The overnight runner in `scripts/replay_batch.jl` runs this same sequence per trading
-day, writes the tables as CSVs and adds the resource samples. A loop like this has
+day, writes the tables as CSVs and records the phase timings. A loop like this has
 no ten-hour budget.
 
 The solved interconnector losses of a saved replay can be checked against the loss curve
@@ -380,7 +369,6 @@ Unavailable in schema 2 and written as `NaN`: `compilation_s` on every row, and
 timing tree. MIP, pricing and auxiliary solve times are nested in the solve span; do
 not sum both. The state update is inside `solve_and_write`, so do not subtract the
 execution timers' state update from it. The statistics report refuses to pool schema 1
-and schema 2 runs. Memory samples include
-PID and both sampled RSS and the worker's high-water RSS. Add the unmeasured residual
+and schema 2 runs. Add the unmeasured residual
 to reconcile phase totals with overall wall time; compilation/GC measurements are not
 whole-run coverage.

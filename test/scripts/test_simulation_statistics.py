@@ -169,10 +169,10 @@ class ReplayStatisticsTests(unittest.TestCase):
             report.analyze([schema_one, schema_two])
 
     def test_incomplete_final_csv_record_is_ignored(self):
-        path = self.root / "memory.csv"
-        path.write_text("timestamp,rss_mib\na,100\nb,2")
+        path = self.root / "samples.csv"
+        path.write_text("timestamp,value\na,100\nb,2")
         warnings = []
-        self.assertEqual(list(report.read_csv(path, warnings)), [{"timestamp": "a", "rss_mib": "100"}])
+        self.assertEqual(list(report.read_csv(path, warnings)), [{"timestamp": "a", "value": "100"}])
         self.assertTrue(warnings)
 
     def test_cumulative_native_snapshots_use_last_total(self):

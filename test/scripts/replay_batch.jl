@@ -19,7 +19,7 @@ using .ReplayBatchSupport
     @test_throws ArgumentError scheduled_days(Date(2026, 7, 1), Date(2026, 1, 1), 1)
     @test_throws ArgumentError parse_options(["--hours", "0"])
     @test_throws ArgumentError parse_options(["--hours", "NaN"])
-    @test_throws ArgumentError parse_options(["--sample-seconds", "-1"])
+    @test_throws ArgumentError parse_options(["--sample-seconds", "5"])
     @test_throws ArgumentError parse_options(["--unknown", "x"])
     @test_throws ArgumentError parse_options(["--output"])
     @test parse_options(String[])["time-series-in-memory"] == "false"
@@ -38,16 +38,11 @@ using .ReplayBatchSupport
     @test_throws ArgumentError parse_options(["--start", "2026-06-05T04:00:00", "--intervals", "2"])
 end
 
-@testset "memory samples and durable status" begin
+@testset "durable status and CSV escaping" begin
     mktempdir() do dir
+        @test read_status(dir) == (; trading_day = "", phase = "loading")
         write_status(dir, "model_build"; trading_day = "2026-01-01")
-        sample = memory_sample(getpid(), dir, 2.0)
-        @test sample.phase == "model_build"
-        @test sample.trading_day == "2026-01-01"
-        @test sample.rss_mib > 0
-        @test sample.peak_rss_mib >= sample.rss_mib
-        @test sample.elapsed_s == 2.0
-        @test isnothing(memory_sample(typemax(Int32), dir, 3.0))
+        @test read_status(dir) == (; trading_day = "2026-01-01", phase = "model_build")
         path = joinpath(dir, "escaped.csv")
         write_csv(path, ("name", "value"), [("a,\"b", missing), ("c\nd", 2)])
         @test read(path, String) == "name,value\n\"a,\"\"b\",\n\"c\nd\",2\n"
@@ -86,25 +81,30 @@ end
 
 @testset "day workers have independent process lifetimes" begin
     mktempdir() do folder
-        first_pid = ReplayBatchSupport.run_worker(`$(Base.julia_cmd()) --startup-file=no -e 'sleep(0.05)'`, folder, time_ns(), 0.01; notice = false)
-        second_pid = ReplayBatchSupport.run_worker(`$(Base.julia_cmd()) --startup-file=no -e 'sleep(0.05)'`, folder, time_ns(), 0.01; notice = false)
+        polled = Int[]
+        worker(code) = ReplayBatchSupport.run_worker(
+            `$(Base.julia_cmd()) --startup-file=no -e $code`, folder, time_ns();
+            poll_seconds = 0.01, notice = false, on_poll = pid -> push!(polled, pid),
+        )
+        first_pid = worker("sleep(0.5)")
+        second_pid = worker("sleep(0.5)")
         @test first_pid != second_pid
-        samples = readlines(joinpath(folder, "memory.csv"))
-        @test any(line -> occursin(",$first_pid,", line), samples)
-        @test any(line -> occursin(",$second_pid,", line), samples)
-        @test_throws ProcessFailedException ReplayBatchSupport.run_worker(`$(Base.julia_cmd()) --startup-file=no -e 'exit(2)'`, folder, time_ns(), 0.01; notice = false)
+        @test first_pid in polled && second_pid in polled
+        @test !isfile(joinpath(folder, "memory.csv"))
+        @test_throws ProcessFailedException worker("exit(2)")
     end
 end
 
-@testset "sampler failure reaps its owned child" begin
+@testset "a supervisor failure reaps its owned child" begin
     mktempdir() do folder
         owned = Ref(0)
         @test_throws ErrorException ReplayBatchSupport.run_worker(
-            `$(Base.julia_cmd()) --startup-file=no -e 'sleep(30)'`, folder, time_ns(), 0.01;
-            notice = false, on_sample = pid -> (owned[] = pid; error("sampling failed"))
+            `$(Base.julia_cmd()) --startup-file=no -e 'sleep(30)'`, folder, time_ns();
+            poll_seconds = 0.01, notice = false, on_poll = pid -> (owned[] = pid; error("polling failed"))
         )
         @test owned[] > 0
-        @test !isdir("/proc/$(owned[])")
+        # `kill -0` probes the process without signalling it; it fails once the child is reaped.
+        @test !success(ignorestatus(`kill -0 $(owned[])`))
     end
 end
 

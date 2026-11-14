@@ -20,12 +20,11 @@ function main(args = ARGS)
               --seed INTEGER        Reproducible shuffle seed (20261026); no repeated days
               --output FOLDER       New output folder (/run/media/simba/Store/aem_validation/<UTC timestamp>_<pid>)
               --hive FOLDER         Existing local market cache (~/.nemdb_cache)
-              --sample-seconds N    Worker memory sampling period (5)
               --solver-threads N    HiGHS threads (1)
               --cache-size-mib N    PSI results write cache in MiB (64)
               --time-series-in-memory B  hold time series in memory (false)
 
-            HiGHS mip_rel_gap=1e-8, mip_abs_gap=1e-10. Linux /proc required for memory sampling.
+            HiGHS mip_rel_gap=1e-8, mip_abs_gap=1e-10.
             See scripts/README.md for outputs and overnight launch commands.
             """
         )
